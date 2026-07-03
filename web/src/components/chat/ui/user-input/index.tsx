@@ -25,7 +25,10 @@ import type {
   WorkflowFileUploadAccessMode,
   WorkflowInputFormHandle,
 } from '@/components/workflow/common/workflow-input-form';
-import { transformFilesToPayload } from '@/components/workflow/common/workflow-input-form';
+import {
+  buildWorkflowInputSchemaDefaults,
+  transformFilesToPayload,
+} from '@/components/workflow/common/workflow-input-form';
 import type { InputVar } from '@/components/workflow/types/input-var';
 import AttachmentsPanel from './attachments-panel';
 import ToolbarFormPanel from './toolbar-form-panel';
@@ -101,6 +104,12 @@ interface AttachmentUIItem {
 
 // Use shared extension constants for consistent filtering
 
+function waitForToolbarFormSettle(): Promise<void> {
+  return new Promise(resolve => {
+    window.setTimeout(resolve, 120);
+  });
+}
+
 const UserInput: React.FC<UserInputProps> = ({
   onSend,
   onStop,
@@ -156,27 +165,7 @@ const UserInput: React.FC<UserInputProps> = ({
   // Compute initial form values from variable defaults (mirrors WorkflowInputForm logic)
   const computedInitialValues = useMemo<Record<string, unknown>>(() => {
     if (!toolbarForm?.variables) return {};
-    const result: Record<string, unknown> = {};
-    for (const v of toolbarForm.variables) {
-      switch (v.type) {
-        case 'checkbox':
-          result[v.variable] = typeof v.default === 'boolean' ? v.default : false;
-          break;
-        case 'number': {
-          const num = typeof v.default === 'string' ? Number(v.default) : undefined;
-          result[v.variable] = Number.isFinite(num) ? num : undefined;
-          break;
-        }
-        case 'file':
-          result[v.variable] = undefined;
-          break;
-        case 'file-list':
-          result[v.variable] = [];
-          break;
-        default:
-          result[v.variable] = typeof v.default === 'string' ? v.default : '';
-      }
-    }
+    const result = buildWorkflowInputSchemaDefaults(toolbarForm.variables);
     return { ...result, ...(toolbarForm.initialValues ?? {}) };
   }, [toolbarForm?.variables, toolbarForm?.initialValues]);
 
@@ -353,27 +342,50 @@ const UserInput: React.FC<UserInputProps> = ({
     // Block only sending while running; keep other controls active
     if (sendDisabled) return;
 
+    let currentFormValues = formValues ?? {};
+
     // Validate toolbar form via ref if present
     if (toolbarForm && (toolbarForm.variables?.length ?? 0) > 0) {
       if (formRef.current) {
-        const isValid = await formRef.current.validate();
+        let isValid = await formRef.current.validate();
+        currentFormValues = formRef.current.getValues() as Record<string, unknown>;
+        let issues = isValid ? [] : formRef.current.getValidationIssues();
+        let blockingIssues = issues.filter(issue => issue.missingRequiredValue);
+
+        if (!isValid && blockingIssues.length > 0) {
+          await waitForToolbarFormSettle();
+          isValid = await formRef.current.validate();
+          currentFormValues = formRef.current.getValues() as Record<string, unknown>;
+          issues = isValid ? [] : formRef.current.getValidationIssues();
+          blockingIssues = issues.filter(issue => issue.missingRequiredValue);
+        }
+
+        if (!isValid && blockingIssues.length === 0) {
+          isValid = true;
+        }
+
         if (!isValid) {
           toast.error(t('agents.workflow.startForm.invalidInputs'));
           // Ensure form is open to see errors
           if (!isFormOpen) setIsFormOpen(true);
           return;
         }
+
+        setFormValues(currentFormValues);
       } else {
         // Fallback for case where ref might be missing (shouldn't happen with toolbarForm)
-        const inputs = formValues ?? {};
+        const inputs = currentFormValues;
         for (const v of toolbarForm.variables) {
           if (!v.required) continue;
+          if (v.type === 'datetime' && v.default_datetime_mode === 'now') continue;
+
           const val = (inputs as Record<string, unknown>)[v.variable];
           let invalid = false;
           switch (v.type) {
             case 'text-input':
             case 'paragraph':
             case 'select':
+            case 'datetime':
               if (typeof val !== 'string' || val.trim().length === 0) invalid = true;
               break;
             case 'number':
@@ -404,7 +416,7 @@ const UserInput: React.FC<UserInputProps> = ({
       .filter(a => a.status === 'uploaded' && a.attachment)
       .map(a => a.attachment as ChatAttachment);
     const inputs = toolbarForm
-      ? transformFilesToPayload(formValues, toolbarForm.variables)
+      ? transformFilesToPayload(currentFormValues, toolbarForm.variables)
       : undefined;
     onSend({ query: trimmed, files: files.length > 0 ? files : undefined, inputs });
     // Clear input and attachments after send to reset UI state

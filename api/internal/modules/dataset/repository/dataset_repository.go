@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -176,6 +176,10 @@ func (r *datasetRepository) GetPaginatedByTenantIDsWithPermissions(ctx context.C
 	} else {
 		queryWorkspaceIDs = tenantIDs
 	}
+	allTeamWorkspaceIDs := tenantIDs
+	if allGroupTenantIDs != nil {
+		allTeamWorkspaceIDs = allGroupTenantIDs
+	}
 
 	query := r.db.WithContext(ctx).Model(&model.Dataset{}).Where("workspace_id IN ?", queryWorkspaceIDs)
 
@@ -185,21 +189,38 @@ func (r *datasetRepository) GetPaginatedByTenantIDsWithPermissions(ctx context.C
 		query = query.Where("name ILIKE ? OR description ILIKE ?", searchPattern, searchPattern)
 	}
 
-	// NOTE: Temporary simplification - dataset visibility is unified at group level.
-	// Original per-dataset permission filters (only_me, all_team, all_group, partial_members)
-	// are disabled for now to make datasets visible based on tenantIDs/allGroupTenantIDs.
-	// To avoid exposing datasets from tenants where the user is not a member,
-	// we still enforce a basic membership check for non-group-admin users.
 	if !isGroupAdmin {
 		membershipSubquery := r.db.Table("workspace_members").
 			Select("1").
 			Where("workspace_members.workspace_id = datasets.workspace_id").
 			Where("workspace_members.account_id = ?", accountID)
 
-		query = query.Where("EXISTS (?)", membershipSubquery)
-	}
+		ownerAdminSubquery := r.db.Table("workspace_members").
+			Select("1").
+			Where("workspace_members.workspace_id = datasets.workspace_id").
+			Where("workspace_members.account_id = ?", accountID).
+			Where("workspace_members.role IN ?", []workspace_model.WorkspaceMemberRole{
+				workspace_model.WorkspaceRoleOwner,
+				workspace_model.WorkspaceRoleAdmin,
+			})
 
-	// If we need fine-grained permissions again, restore the block below.
+		onlyMeCondition := r.db.Where("permission = ? AND created_by = ?", model.DatasetPermissionOnlyMe, accountID)
+		allTeamCondition := r.db.Where("permission IN ?", []model.DatasetPermissionType{
+			model.DatasetPermissionAllTeam,
+			model.DatasetPermissionAllTeamMembers,
+		}).Where("EXISTS (?)", membershipSubquery)
+		if len(allTeamWorkspaceIDs) == 0 {
+			allTeamCondition = r.db.Where("1 = 0")
+		} else {
+			allTeamCondition = allTeamCondition.Where("datasets.workspace_id IN ?", allTeamWorkspaceIDs)
+		}
+
+		query = query.Where(
+			r.db.Where("EXISTS (?)", ownerAdminSubquery).
+				Or(onlyMeCondition).
+				Or(allTeamCondition),
+		)
+	}
 
 	// Get total count
 	if err := query.Count(&total).Error; err != nil {
@@ -285,29 +306,31 @@ func (r *datasetRepository) GetByTenantIDs(
 	}
 
 	if !datasetAdmin {
+		membershipSubquery := r.db.Table("workspace_members").
+			Select("1").
+			Where("workspace_members.workspace_id = datasets.workspace_id").
+			Where("workspace_members.account_id = ?", accountID)
 
-		permissionConditions := []string{
-			`EXISTS (
-				SELECT 1 FROM workspace_members
-				WHERE workspace_members.workspace_id = datasets.workspace_id
-				AND workspace_members.account_id = ?
-				AND workspace_members.role IN ('owner', 'admin')
-				LIMIT 1
-			)`,
-			"permission = 'all_team'",
-			"(permission = 'only_me' AND created_by = ?)",
-			`EXISTS (
-				SELECT 1 FROM dataset_permissions
-				WHERE dataset_permissions.dataset_id = datasets.id
-				AND dataset_permissions.account_id = ?
-				AND dataset_permissions.has_permission = true
-				AND dataset_permissions.workspace_id = datasets.workspace_id
-				LIMIT 1
-			)`,
-		}
+		ownerAdminSubquery := r.db.Table("workspace_members").
+			Select("1").
+			Where("workspace_members.workspace_id = datasets.workspace_id").
+			Where("workspace_members.account_id = ?", accountID).
+			Where("workspace_members.role IN ?", []workspace_model.WorkspaceMemberRole{
+				workspace_model.WorkspaceRoleOwner,
+				workspace_model.WorkspaceRoleAdmin,
+			})
 
-		whereClause := "(" + strings.Join(permissionConditions, " OR ") + ")"
-		query = query.Where(whereClause, accountID, accountID, accountID)
+		onlyMeCondition := r.db.Where("permission = ? AND created_by = ?", model.DatasetPermissionOnlyMe, accountID)
+		allTeamCondition := r.db.Where("permission IN ?", []model.DatasetPermissionType{
+			model.DatasetPermissionAllTeam,
+			model.DatasetPermissionAllTeamMembers,
+		}).Where("EXISTS (?)", membershipSubquery)
+
+		query = query.Where(
+			r.db.Where("EXISTS (?)", ownerAdminSubquery).
+				Or(onlyMeCondition).
+				Or(allTeamCondition),
+		)
 	}
 
 	countQuery := query.Session(&gorm.Session{})

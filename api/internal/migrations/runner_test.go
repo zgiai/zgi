@@ -315,6 +315,35 @@ func TestWorkflowTestScenarioRecognitionTasksMigrationDefinesActiveUniqueIndex(t
 	}
 }
 
+func TestDropAnnouncementRunNodeUniqueIndexMigrationSQL(t *testing.T) {
+	upSQL := strings.Join(strings.Fields(dropAnnouncementRunNodeUniqueIndexSQL), " ")
+	if !strings.Contains(upSQL, "DROP INDEX IF EXISTS public.idx_announcements_run_node") {
+		t.Fatalf("drop announcement run/node index SQL missing expected drop: %s", upSQL)
+	}
+
+	guardSQL := strings.Join(strings.Fields(ensureNoDuplicateAnnouncementRunNodeSQL), " ")
+	for _, want := range []string{
+		"FROM public.announcements",
+		"GROUP BY workflow_run_id, node_id",
+		"HAVING COUNT(*) > 1",
+		"RAISE EXCEPTION",
+	} {
+		if !strings.Contains(guardSQL, want) {
+			t.Fatalf("announcement run/node rollback guard SQL missing %q: %s", want, guardSQL)
+		}
+	}
+
+	recreateSQL := strings.Join(strings.Fields(recreateAnnouncementRunNodeUniqueIndexSQL), " ")
+	for _, want := range []string{
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_announcements_run_node",
+		"ON public.announcements (workflow_run_id, node_id)",
+	} {
+		if !strings.Contains(recreateSQL, want) {
+			t.Fatalf("announcement run/node recreate SQL missing %q: %s", want, recreateSQL)
+		}
+	}
+}
+
 func TestLegacyBridgePreflightExcludesBackfilledTablesOnly(t *testing.T) {
 	tables := baselineTableNamesExcluding(legacyBridgeBackfilledTables)
 	seen := make(map[string]struct{}, len(tables))
@@ -329,6 +358,58 @@ func TestLegacyBridgePreflightExcludesBackfilledTablesOnly(t *testing.T) {
 	}
 	if _, ok := seen["workflow_test_settings"]; !ok {
 		t.Fatal("expected legacy bridge preflight to keep validating baseline tables not backfilled by public migrations")
+	}
+}
+
+func TestLegacyBridgeBaselinePreflightRunsOnlyBeforeInitialMarker(t *testing.T) {
+	if !shouldValidatePublicBaselineBeforeBridge(map[string]struct{}{}) {
+		t.Fatal("expected first legacy bridge run to validate the public baseline shape")
+	}
+	if shouldValidatePublicBaselineBeforeBridge(map[string]struct{}{initialSchemaMigrationID: {}}) {
+		t.Fatal("expected resumed legacy bridge run to trust migration history after the initial marker")
+	}
+	if shouldValidatePublicBaselineBeforeBridge(map[string]struct{}{
+		initialSchemaMigrationID:                        {},
+		migrationCreateChatRuntimeAndAgentVersionsID:    {},
+		migration20260526090001ID:                       {},
+		"closed_source_private_history_before_baseline": {},
+	}) {
+		t.Fatal("expected partially applied public migration history to skip initial baseline table checks")
+	}
+}
+
+func TestLegacyBridgePostRunVerifiesPublicMigrationRecords(t *testing.T) {
+	applied := make(map[string]struct{}, len(currentMigrationIDs()))
+	for _, id := range currentMigrationIDs() {
+		applied[id] = struct{}{}
+	}
+	if missing := missingPublicMigrationIDs(applied); len(missing) != 0 {
+		t.Fatalf("expected complete public migration history, got missing %v", missing)
+	}
+
+	delete(applied, migration20260526090001ID)
+	missing := missingPublicMigrationIDs(applied)
+	if len(missing) != 1 || missing[0] != migration20260526090001ID {
+		t.Fatalf("expected missing file extraction cache migration, got %v", missing)
+	}
+}
+
+func TestDataLibraryFoundationMigrationGuardsExtractionArtifactConstraint(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve caller path")
+	}
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(filename), migration202605231629280827ID+".go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+
+	if !strings.Contains(text, "pg_constraint") {
+		t.Fatal("data library extraction artifact foreign key must be guarded before ALTER TABLE")
+	}
+	if strings.Contains(text, "isDataLibraryDuplicateConstraintError") {
+		t.Fatal("migration must not suppress duplicate constraint errors after executing ALTER TABLE")
 	}
 }
 

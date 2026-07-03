@@ -2,13 +2,13 @@
 
 import { Menu } from 'lucide-react';
 import { useMemo } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 // import { QuickThemeToggle } from '@/components/theme-switcher';
 import { useT } from '@/i18n';
 import { UserMenu } from './user-menu';
 import { Logo } from '../logo';
 import { Button } from '@/components/ui/button';
-import { useCurrentWorkspace, useIsOrganizationMode } from '@/store/workspace-store';
+import { useCurrentWorkspace } from '@/store/workspace-store';
 import { useOrganizationStore } from '@/store/organization-store';
 import { cn } from '@/lib/utils';
 
@@ -17,13 +17,22 @@ interface ConsoleHeaderProps {
   onToggleMobileSidebar?: () => void;
 }
 
+function getDatasetReturnTo(value: string | null): string | null {
+  if (!value) return null;
+  if (!value.startsWith('/console/dataset/')) return null;
+  if (value.startsWith('//') || value.includes('://')) return null;
+  return value;
+}
+
 export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderProps) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const tNav = useT('navigation');
   const tDash = useT('dashboard');
   const currentWorkspace = useCurrentWorkspace();
-  const isOrganizationMode = useIsOrganizationMode();
   const currentOrganization = useOrganizationStore.use.currentOrganization();
+  const datasetReturnTo = getDatasetReturnTo(searchParams.get('returnTo'));
+  const effectivePathname = datasetReturnTo ? '/console/dataset' : pathname;
   const isDashboardRoute = pathname.startsWith('/dashboard');
 
   const pageTitle = useMemo(() => {
@@ -57,6 +66,10 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
         title: tDash('items.permissions'),
       },
       {
+        match: path => path.startsWith('/dashboard/organization/settings'),
+        title: tDash('items.organizationSettings'),
+      },
+      {
         match: path => path.startsWith('/dashboard/organization/aichat-skills'),
         title: tDash('items.aichatSkills'),
       },
@@ -85,20 +98,22 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
         title: tDash('items.modelSettings'),
       },
       {
+        match: path => path.startsWith('/dashboard/settings/parsers'),
+        title: tDash('items.parserSettings'),
+      },
+      {
         match: path => path.startsWith('/dashboard/market'),
         title: tDash('items.marketplace'),
       },
     ];
 
     return (
-      routeTitles.find(route => route.match(pathname))?.title ??
+      routeTitles.find(route => route.match(effectivePathname))?.title ??
       (isDashboardRoute ? tDash('items.dashboard') : tNav('console'))
     );
-  }, [isDashboardRoute, pathname, tDash, tNav]);
+  }, [effectivePathname, isDashboardRoute, tDash, tNav]);
 
-  const workspaceLabel = isOrganizationMode
-    ? tNav('personalSpace')
-    : currentWorkspace?.name || tNav('switchWorkspace');
+  const workspaceLabel = currentWorkspace?.name || tNav('switchWorkspace');
   const sectionLabel = isDashboardRoute ? tNav('dashboard') : tNav('console');
   const contextLabel = isDashboardRoute ? currentOrganization?.name || null : workspaceLabel;
   const contextPrefix = isDashboardRoute

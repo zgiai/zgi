@@ -74,7 +74,7 @@ workflow:
         text: |-
           运行说明
 
-          需配置。依赖：OpenAI GPT gpt-5.5 模型、通知通道。运行前请确认通知通道可用，并在输入中提供真实 owner_email。
+          需配置。依赖：OpenAI GPT-4o 模型、通知通道。运行前请确认通知通道可用，并在输入中提供真实 owner_email。
 
           调试输入：
           打开调试面板后，开始节点字段已经预填，可直接运行。
@@ -122,7 +122,7 @@ workflow:
         - input
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params: {}
         reasoning_mode: prompt

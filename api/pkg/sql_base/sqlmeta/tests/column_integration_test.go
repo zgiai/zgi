@@ -20,13 +20,7 @@ func TestColumnLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Hour)
 	defer cancel()
 
-	cfg := driver.Config{
-		DBHost: "localhost",
-		DBPort: "5432",
-		DBUser: "postgres",
-		DBPass: "Abc1234",
-		DBName: "postgres",
-	}
+	cfg := testDBConfig()
 
 	pool, err := driver.NewPool(ctx, cfg)
 	if err != nil {
@@ -182,13 +176,7 @@ func TestColumnTypeMappings(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Hour)
 	defer cancel()
 
-	cfg := driver.Config{
-		DBHost: "localhost",
-		DBPort: "5432",
-		DBUser: "postgres",
-		DBPass: "Abc1234",
-		DBName: "postgres",
-	}
+	cfg := testDBConfig()
 
 	pool, err := driver.NewPool(ctx, cfg)
 	if err != nil {
@@ -266,13 +254,7 @@ func TestListColumnsByTableName(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Hour)
 	defer cancel()
 
-	cfg := driver.Config{
-		DBHost: "localhost",
-		DBPort: "5432",
-		DBUser: "postgres",
-		DBPass: "Abc1234",
-		DBName: "postgres",
-	}
+	cfg := testDBConfig()
 
 	pool, err := driver.NewPool(ctx, cfg)
 	if err != nil {

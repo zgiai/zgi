@@ -21,23 +21,32 @@ export const SegmentHeader = React.memo(function SegmentHeader({
   onEdit,
   onDelete,
   onViewChildChunks,
+  readOnly = false,
 }: SegmentHeaderProps) {
   const t = useT('datasets');
 
   return (
     <div className="flex items-center justify-between">
       <div className="flex items-center gap-3">
-        <Checkbox
-          checked={isSelected}
-          onCheckedChange={() => onSelect(segment.id)}
-          aria-label={`${t('segments.selectSegmentLabel')} ${displayIndex}`}
-        />
+        {!readOnly && (
+          <Checkbox
+            checked={isSelected}
+            onCheckedChange={() => onSelect(segment.id)}
+            aria-label={`${t('segments.selectSegmentLabel')} ${displayIndex}`}
+          />
+        )}
         <span className="text-[var(--tag-primary-text)]">#{displayIndex}</span>
         <Badge variant="default">{t('segments.primaryChunk')}</Badge>
-        <Switch
-          checked={segment.enabled}
-          onCheckedChange={() => onToggleEnabled([segment.id], !segment.enabled)}
-        />
+        {readOnly ? (
+          <Badge variant={segment.enabled ? 'success' : 'subtle'}>
+            {segment.enabled ? t('segments.enabled') : t('segments.disabled')}
+          </Badge>
+        ) : (
+          <Switch
+            checked={segment.enabled}
+            onCheckedChange={() => onToggleEnabled([segment.id], !segment.enabled)}
+          />
+        )}
       </div>
 
       <div className="flex items-center gap-1">
@@ -55,8 +64,12 @@ export const SegmentHeader = React.memo(function SegmentHeader({
           </Button>
         )}
 
-        <Edit className="h-4 w-4 mr-2 cursor-pointer" onClick={() => onEdit(segment)} />
-        <Trash2 className="h-4 w-4 mr-2 cursor-pointer" onClick={() => onDelete([segment.id])} />
+        {!readOnly && (
+          <>
+            <Edit className="h-4 w-4 mr-2 cursor-pointer" onClick={() => onEdit(segment)} />
+            <Trash2 className="h-4 w-4 mr-2 cursor-pointer" onClick={() => onDelete([segment.id])} />
+          </>
+        )}
       </div>
     </div>
   );

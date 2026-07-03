@@ -42,13 +42,15 @@ const expectedNodeTypes = new Set([
 const localeModel = {
   'en-US': {
     provider: 'openai',
-    name: 'gpt-5.5',
+    name: 'gpt-4o',
+    displayName: 'GPT-4o',
     noteKeyword: 'Run guide',
     debugKeyword: 'Suggested test input',
   },
   'zh-Hans': {
     provider: 'openai',
-    name: 'gpt-5.5',
+    name: 'gpt-4o',
+    displayName: 'GPT-4o',
     noteKeyword: '运行说明',
     debugKeyword: '调试输入',
   },
@@ -202,8 +204,8 @@ function validateRunGuide(locale, fileName, doc, nodes) {
     fail(`${locale}/${fileName} run guide note is missing a debug input section.`);
   }
 
-  if (hasLlmNode && !noteText.includes(model.name)) {
-    fail(`${locale}/${fileName} run guide note does not mention ${model.name}.`);
+  if (hasLlmNode && !noteText.includes(model.displayName)) {
+    fail(`${locale}/${fileName} run guide note does not mention ${model.displayName}.`);
   }
 
   if (doc?.app?.mode === 'CONVERSATIONAL_WORKFLOW') {
@@ -228,9 +230,19 @@ function validateStartDefaults(locale, fileName, nodes) {
     const variables = Array.isArray(start?.data?.variables) ? start.data.variables : [];
     for (const variable of variables) {
       if (variable.type === 'file-list') continue;
+      if (variable.type === 'datetime' && variable.default_datetime_mode === 'now') continue;
       if (variable.default === undefined || variable.default === '') {
         fail(
           `${locale}/${fileName} start variable ${variable.variable} is missing a debug default.`
+        );
+      }
+      if (
+        variable.type === 'datetime' &&
+        typeof variable.default === 'string' &&
+        Number.isNaN(new Date(variable.default).getTime())
+      ) {
+        fail(
+          `${locale}/${fileName} start variable ${variable.variable} has an invalid datetime debug default.`
         );
       }
     }
@@ -244,7 +256,9 @@ function collectStringValues(value, pathParts = [], values = []) {
   }
 
   if (Array.isArray(value)) {
-    value.forEach((item, index) => collectStringValues(item, [...pathParts, String(index)], values));
+    value.forEach((item, index) =>
+      collectStringValues(item, [...pathParts, String(index)], values)
+    );
     return values;
   }
 

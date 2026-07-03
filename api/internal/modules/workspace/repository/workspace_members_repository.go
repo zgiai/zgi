@@ -7,7 +7,6 @@ import (
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -46,9 +45,7 @@ func NewWorkspaceMemberRepository(db *gorm.DB) WorkspaceMemberRepository {
 }
 
 func (r *workspaceMemberRepository) Create(ctx context.Context, join *model.WorkspaceMember) error {
-	if join.ID == "" {
-		join.ID = uuid.New().String()
-	}
+	model.ApplyWorkspaceMemberDefaults(join)
 	return r.db.WithContext(ctx).Create(join).Error
 }
 
@@ -166,7 +163,7 @@ func (r *workspaceMemberRepository) GetCurrentWorkspace(ctx context.Context, mem
 
 func (r *workspaceMemberRepository) ClearCurrentWorkspace(ctx context.Context, memberID string) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return tx.Model(&auth_model.AccountContext{}).Where("account_id = ?", memberID).Update("current_workspace_id", nil).Error
+		return tx.Model(&model.WorkspaceMember{}).Where("account_id = ?", memberID).Update("current", false).Error
 	})
 }
 

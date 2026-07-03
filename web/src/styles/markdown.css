@@ -15,7 +15,11 @@
 
 /* ========== MARKDOWN CODE WRAPPER ========== */
 .md-code-wrapper {
-  @apply rounded-md border border-border overflow-hidden bg-muted;
+  @apply max-w-full min-w-0 rounded-md border border-border overflow-hidden bg-muted;
+  width: 100%;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  contain: inline-size;
 }
 .md-code-wrapper .md-code-header {
   @apply flex items-center justify-between py-1.5 px-3 border-b border-border bg-muted;
@@ -24,10 +28,14 @@
   @apply text-xs text-foreground font-medium;
 }
 .md-code-wrapper pre {
-  @apply bg-background m-0 p-4 overflow-auto;
+  @apply max-w-full min-w-0 bg-background m-0 p-4 overflow-auto;
+  width: 100%;
+  min-inline-size: 0;
 }
 .md-code-wrapper pre code {
   @apply bg-transparent p-0 text-xs leading-5 font-mono;
+  min-width: 100%;
+  width: max-content;
 }
 .md-code-wrapper code.hljs {
   @apply bg-transparent p-0;
@@ -37,6 +45,13 @@
 .md-viewer {
   font-size: 14px;
   line-height: 1.45;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.md-viewer > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* Headings */
@@ -139,16 +154,21 @@
   @apply bg-transparent p-0;
 }
 .md-mermaid-wrapper {
-  @apply my-3 rounded-md border border-border bg-background p-3 overflow-x-auto;
+  @apply my-3 max-w-full min-w-0 rounded-md border border-border bg-background p-3 overflow-x-auto;
+  width: 100%;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  contain: inline-size;
 }
 .md-mermaid-loading {
   @apply h-36 rounded bg-muted/60;
 }
 .md-mermaid-graph {
-  @apply min-w-max;
+  @apply inline-block min-w-full;
 }
 .md-mermaid-graph svg {
-  @apply h-auto w-full max-w-none;
+  @apply h-auto max-w-none;
+  width: auto;
   color: var(--foreground);
 }
 .md-mermaid-graph svg text {
@@ -180,14 +200,16 @@
   @apply my-2 md-code-wrapper;
 }
 .md-mermaid-fallback pre {
-  @apply overflow-auto p-3 m-0;
+  @apply max-w-full overflow-auto p-3 m-0;
   font-size: 10px;
   line-height: 1.5;
 }
 
 /* Table enhancements */
 .md-viewer table {
-  @apply w-full;
+  @apply min-w-full;
+  width: max-content;
+  max-width: none;
 }
 .md-viewer th {
   @apply bg-muted/50 font-semibold text-left;

@@ -14,6 +14,7 @@ export interface UseDefaultModelByUseCaseReturn {
   value: DefaultModelValue | null;
   source: 'explicit' | 'auto' | 'none';
   isLoading: boolean;
+  isResolved: boolean;
   error: string | null;
 }
 
@@ -39,11 +40,7 @@ export function useDefaultModelByUseCase(
 ): UseDefaultModelByUseCaseReturn {
   const queryClient = useQueryClient();
 
-  const {
-    data,
-    isLoading,
-    error,
-  } = useQuery({
+  const { data, isFetched, isLoading, error } = useQuery({
     queryKey: MODEL_KEYS.defaultModel(useCase),
     queryFn: async () => {
       const response = await queryClient.ensureQueryData({
@@ -63,6 +60,7 @@ export function useDefaultModelByUseCase(
     value,
     source: data?.source ?? 'none',
     isLoading,
+    isResolved: isFetched || Boolean(error),
     error: error ? (error as Error).message : null,
   };
 }
@@ -80,7 +78,7 @@ export function useInitializeDefaultModelByUseCase({
   shouldOverwrite?: boolean;
   enabled?: boolean;
 }) {
-  const { value: defaultModel, isLoading } = useDefaultModelByUseCase(useCase);
+  const { value: defaultModel, isLoading, isResolved } = useDefaultModelByUseCase(useCase);
 
   const modelName = currentModel.model || currentModel.name || '';
   const provider = currentModel.provider || '';
@@ -99,4 +97,10 @@ export function useInitializeDefaultModelByUseCase({
       onInitialize(defaultModel);
     }
   }, [enabled, isLoading, defaultModel, shouldOverwrite, modelName, provider, onInitialize]);
+
+  return {
+    value: defaultModel,
+    isLoading,
+    isResolved,
+  };
 }

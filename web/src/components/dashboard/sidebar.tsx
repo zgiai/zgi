@@ -18,6 +18,7 @@ import {
   ChevronDown,
   ContactRound,
   CreditCard,
+  FileSearch,
   KeyRound,
   RadioTower,
   ReceiptText,
@@ -102,6 +103,12 @@ function buildDashboardGroups(t: ReturnType<typeof useT<'dashboard'>>) {
           href: '/dashboard/organization/permissions',
           icon: ShieldCheck,
         },
+        {
+          key: 'organization-settings',
+          title: t('items.organizationSettings'),
+          href: '/dashboard/organization/settings',
+          icon: Settings,
+        },
       ],
     },
     {
@@ -121,6 +128,12 @@ function buildDashboardGroups(t: ReturnType<typeof useT<'dashboard'>>) {
           title: t('items.modelSettings'),
           href: '/dashboard/settings/model',
           icon: Settings,
+        },
+        {
+          key: 'parser-settings',
+          title: t('items.parserSettings'),
+          href: '/dashboard/settings/parsers',
+          icon: FileSearch,
         },
         {
           key: 'channel',
@@ -536,7 +549,8 @@ export function DashboardMobileSidebar({
                     <div className="mt-1 space-y-0.5">
                       {group.items.map(item => {
                         const ItemIcon = item.icon || Icon;
-                        const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
+                        const isActive =
+                          pathname === item.href || pathname.startsWith(item.href + '/');
                         return (
                           <Link
                             key={item.key}

@@ -31,6 +31,8 @@ interface BatchResultItemDetailPageProps {
   agentName?: string;
 }
 
+const SHOW_RAW_DATA_ACTIONS = false;
+
 function itemStatusClass(status: string) {
   if (status === 'passed') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
   if (status === 'failed') return 'bg-red-50 text-red-700 border-red-200';
@@ -124,7 +126,8 @@ function deriveJudgeScore(item: WorkflowTestBatchItem, outputs: Record<string, u
 
 function formatJudgeScore(value: number) {
   const score = Math.max(0, Math.min(5, value));
-  return `${Number.isInteger(score) ? score.toFixed(0) : score.toFixed(1)} / 5`;
+  const rounded = Math.round(score * 10) / 10;
+  return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)} / 5`;
 }
 
 function localizeWorkflowTestError(
@@ -337,9 +340,8 @@ function fallbackExecutionStepMeta(nodeId: string): WorkflowDraftNodeMeta {
   return { id: nodeId, title: nodeId, type: '' };
 }
 
-function buildTurnTitle(role: string, index: number) {
-  const roleLabel = role || 'user';
-  return `第 ${index + 1} 轮 · ${roleLabel}`;
+function buildTurnTitle(index: number) {
+  return `第 ${index + 1} 轮`;
 }
 
 interface TurnResultSnapshot {
@@ -669,14 +671,16 @@ export function BatchResultItemDetailPage({
               </div>
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-lg font-semibold text-slate-950">{t('conversationContent')}</h2>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => openRawView(t('rawOutput'), outputs as Record<string, unknown>)}
-                >
-                  <ExternalLink className="mr-2 size-4" />
-                  {t('rawData')}
-                </Button>
+                {SHOW_RAW_DATA_ACTIONS ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openRawView(t('rawOutput'), outputs as Record<string, unknown>)}
+                  >
+                    <ExternalLink className="mr-2 size-4" />
+                    {t('rawData')}
+                  </Button>
+                ) : null}
               </div>
               {conversationTurns.length > 0 ? (
                 <div className="space-y-4">
@@ -684,32 +688,31 @@ export function BatchResultItemDetailPage({
                     const turnSnapshot = selectedItem.case_snapshot.turns?.[index];
                     return (
                       <div key={`${turn.workflowRunId || 'turn'}-${turn.turnIndex}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="text-base font-medium text-slate-950">
-                            {buildTurnTitle(turnSnapshot?.role || 'user', index)}
-                          </div>
-                          <Badge variant="outline">{turn.workflowRunId || `第 ${turn.turnIndex} 轮`}</Badge>
+                        <div className="text-base font-medium text-slate-950">
+                          {buildTurnTitle(index)}
                         </div>
                         <div className="mt-3 space-y-3">
                           <div className="rounded-xl border border-slate-200 bg-white p-4">
-                            <div className="mb-2 text-xs font-medium text-slate-500">{t('questionSnapshot')}</div>
+                            <div className="mb-2 text-xs font-medium text-slate-500">{t('userQuestion')}</div>
                             <div className="whitespace-pre-wrap text-sm text-slate-800">
                               {turn.content || turnSnapshot?.content || commonT('none')}
                             </div>
                           </div>
                           <div className="rounded-xl border border-slate-200 bg-white p-4">
-                            <div className="mb-2 text-xs font-medium text-slate-500">{t('systemReply')}</div>
+                            <div className="mb-2 text-xs font-medium text-slate-500">{t('agentReply')}</div>
                             <div className="whitespace-pre-wrap text-sm text-slate-800">
                               {turn.answer || commonT('none')}
                             </div>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => openRawView(`第 ${turn.turnIndex} 轮输出`, turn.outputs)}
-                            className="text-left text-xs text-slate-500 underline-offset-4 hover:underline"
-                          >
-                            {t('viewTurnOutputRaw')}
-                          </button>
+                          {SHOW_RAW_DATA_ACTIONS ? (
+                            <button
+                              type="button"
+                              onClick={() => openRawView(`第 ${turn.turnIndex} 轮输出`, turn.outputs)}
+                              className="text-left text-xs text-slate-500 underline-offset-4 hover:underline"
+                            >
+                              {t('viewTurnOutputRaw')}
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                     );

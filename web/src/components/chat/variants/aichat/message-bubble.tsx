@@ -4,21 +4,18 @@ import { ModelIcon } from 'modelicons';
 import { useMemo, useState } from 'react';
 import {
   AlertCircle,
+  Bot,
   CheckCircle2,
   CircleStop,
   Download,
   Eye,
   FileImage,
   FileText,
+  HelpCircle,
   Loader2,
 } from 'lucide-react';
 import MarkdownViewer from '@/components/common/markdown-viewer';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
@@ -30,6 +27,7 @@ import type {
   AIChatGeneratedFile,
   AIChatMessage,
   AIChatMessageFile,
+  AIChatUserInputRequest,
 } from '@/services/types/aichat';
 import { isSensitiveOutputBlockedValue } from '@/utils/model-output-filter';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
@@ -39,6 +37,8 @@ import {
   UserMessageToolbar,
 } from '@/components/chat/variants/aichat/message-toolbars';
 import { UniversalFilePreviewDialog } from '@/components/files/universal-file-preview-dialog';
+import { MarkdownImage } from '@/components/common/markdown-image';
+import { isOriginalPreviewImage } from '@/utils/file-helpers';
 import { AIChatAgenticTimeline } from '@/components/chat/variants/aichat/agentic-timeline';
 import {
   getAIChatMessageErrorInput,
@@ -65,7 +65,14 @@ interface AIChatMessageBubbleProps {
   onEditChange?: (value: string) => void;
   onEditCancel?: () => void;
   onEditSubmit?: (message: AIChatMessage) => void;
+  hideUserInputRequest?: boolean;
+  showAssistantModelMeta?: boolean;
+  showMemoryKey?: boolean;
+  showSkillEventDetails?: boolean;
 }
+
+const EMPTY_MESSAGE_FILES: AIChatMessageFile[] = [];
+const EMPTY_GENERATED_FILES: AIChatGeneratedFile[] = [];
 
 function formatAIChatTime(timestamp: number): string {
   if (!timestamp) return '';
@@ -98,6 +105,29 @@ function formatFileSize(size: number): string {
 function formatGeneratedFileExtension(file: AIChatGeneratedFile): string {
   const extension = file.extension || file.filename.split('.').pop() || '';
   return extension.replace(/^\./, '').toUpperCase();
+}
+
+function generatedFilePreviewUrl(file: AIChatGeneratedFile): string {
+  return file.url || '';
+}
+
+function generatedImagePreviewFiles(
+  answer: string,
+  generatedFiles: AIChatGeneratedFile[],
+  shouldShow: boolean
+): AIChatGeneratedFile[] {
+  if (!shouldShow || generatedFiles.length === 0) {
+    return [];
+  }
+
+  return generatedFiles.filter(file => {
+    const previewUrl = generatedFilePreviewUrl(file);
+    if (!previewUrl) return false;
+    if (!isOriginalPreviewImage(file.extension, file.mime_type)) return false;
+    if (answer.includes(previewUrl)) return false;
+    if (file.download_url && answer.includes(file.download_url)) return false;
+    return true;
+  });
 }
 
 interface AIChatHistoryImagePreviewProps {
@@ -262,6 +292,78 @@ function AIChatGeneratedFileCard({ file }: AIChatGeneratedFileCardProps) {
   );
 }
 
+interface AIChatGeneratedImagePreviewsProps {
+  files: AIChatGeneratedFile[];
+}
+
+function AIChatGeneratedImagePreviews({ files }: AIChatGeneratedImagePreviewsProps) {
+  if (files.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-3 flex max-w-full flex-col items-start gap-3">
+      {files.map(file => (
+        <MarkdownImage
+          key={file.file_id || generatedFilePreviewUrl(file)}
+          src={generatedFilePreviewUrl(file)}
+          alt={file.filename}
+          className="block max-w-full"
+          imageClassName="max-w-full"
+        />
+      ))}
+    </div>
+  );
+}
+
+function AIChatUserInputRequestCard({ request }: { request: AIChatUserInputRequest }) {
+  const t = useT('webapp');
+  const questions = (request.questions ?? []).filter(question => question.question?.trim());
+  if (questions.length === 0) return null;
+
+  return (
+    <div className="mt-3 max-w-2xl rounded-md border bg-background px-3 py-3 text-sm shadow-sm">
+      <div className="flex items-start gap-2">
+        <HelpCircle className="mt-0.5 size-4 shrink-0 text-primary" />
+        <div className="min-w-0 flex-1 space-y-3">
+          <div className="space-y-1">
+            <div className="font-medium text-foreground">
+              {t('consoleChat.userInputRequest.title')}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {t('consoleChat.userInputRequest.description')}
+            </div>
+          </div>
+          {questions.map((question, index) => {
+            const options = (question.options ?? []).filter(option => option.label?.trim());
+            return (
+              <div key={question.id || `${index}-${question.question}`} className="min-w-0">
+                <div className="whitespace-pre-wrap break-words font-medium text-foreground">
+                  {questions.length > 1 ? `${index + 1}. ` : ''}
+                  {question.question}
+                </div>
+                {options.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap gap-1.5 text-xs text-muted-foreground">
+                    {options.map(option => (
+                      <span
+                        key={option.label}
+                        className="max-w-full rounded-md border bg-muted/40 px-2 py-1"
+                        title={option.description || option.label}
+                      >
+                        {option.label}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /**
  * @component AIChatMessageBubble
  * @category Feature
@@ -287,6 +389,10 @@ export function AIChatMessageBubble({
   onEditChange,
   onEditCancel,
   onEditSubmit,
+  hideUserInputRequest = false,
+  showAssistantModelMeta = true,
+  showMemoryKey = true,
+  showSkillEventDetails = true,
 }: AIChatMessageBubbleProps) {
   const t = useT('webapp');
   const tGlobal = useT();
@@ -301,7 +407,6 @@ export function AIChatMessageBubble({
     message.metadata?.sensitiveOutputBlocked === true ||
     isSensitiveOutputBlockedValue(message.answer);
   const displayAnswer = isSensitiveBlocked ? tCommon('sensitiveOutput.blocked') : message.answer;
-  const answer = displayAnswer.trim();
   const hasParent = Boolean(message.parent_id);
   const branchCount = branchNavigation?.total ?? 1;
   const canCreateBranch = hasParent && branchCount < MAX_AICHAT_BRANCHES;
@@ -313,8 +418,15 @@ export function AIChatMessageBubble({
   const toolbarVisibility = isLastMessage
     ? 'opacity-100'
     : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100';
-  const files = message.metadata?.files ?? [];
-  const generatedFiles = message.metadata?.generated_files ?? [];
+  const files = message.metadata?.files ?? EMPTY_MESSAGE_FILES;
+  const generatedFiles = message.metadata?.generated_files ?? EMPTY_GENERATED_FILES;
+  const generatedImagePreviewFilesForDisplay = useMemo(
+    () => generatedImagePreviewFiles(displayAnswer, generatedFiles, !isSensitiveBlocked),
+    [displayAnswer, generatedFiles, isSensitiveBlocked]
+  );
+  const hasGeneratedImagePreviews = generatedImagePreviewFilesForDisplay.length > 0;
+  const answer = displayAnswer.trim();
+  const userInputRequest = hideUserInputRequest ? undefined : message.metadata?.user_input_request;
   const imageFiles = files.filter(file => file.kind === 'image');
   const documentFiles = files.filter(file => file.kind !== 'image');
   const historicalTimeline = useMemo<AIChatAgenticTimelineItem[]>(
@@ -388,8 +500,7 @@ export function AIChatMessageBubble({
                         {documentFiles.map(file => {
                           const isFileParsing =
                             file.parse_status === 'parsing' ||
-                            (file.content_status === 'pending' &&
-                              file.parse_status !== 'error');
+                            (file.content_status === 'pending' && file.parse_status !== 'error');
                           const isFileError = file.parse_status === 'error';
                           const isFileEmpty = file.content_status === 'empty' && !isFileError;
                           const isFileExtracted =
@@ -438,9 +549,7 @@ export function AIChatMessageBubble({
                               ) : (
                                 <FileText className="size-3.5 shrink-0" />
                               )}
-                              <span className="max-w-40 truncate text-foreground">
-                                {file.name}
-                              </span>
+                              <span className="max-w-40 truncate text-foreground">{file.name}</span>
                               <span className="shrink-0">{formatFileSize(file.size)}</span>
                               <span className="shrink-0">{label}</span>
                             </div>
@@ -464,12 +573,23 @@ export function AIChatMessageBubble({
       </div>
 
       <div className="flex justify-start gap-3">
-        <div className="mt-1 flex size-7 shrink-0 items-center justify-center rounded-full border bg-background">
-          <ModelIcon model={message.model_name || 'unknown'} size={28} />
+        <div
+          className={cn(
+            'mt-1 flex size-7 shrink-0 items-center justify-center rounded-full',
+            showAssistantModelMeta ? 'border bg-background' : 'bg-primary text-primary-foreground'
+          )}
+        >
+          {showAssistantModelMeta ? (
+            <ModelIcon model={message.model_name || 'unknown'} size={28} />
+          ) : (
+            <Bot className="size-4" />
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            {message.model_name ? <span>{message.model_name}</span> : null}
+            {showAssistantModelMeta && message.model_name ? (
+              <span>{message.model_name}</span>
+            ) : null}
             {message.created_at ? <span>{formatAIChatTime(message.created_at)}</span> : null}
             {isStreaming ? (
               <span className="inline-flex items-center gap-1">
@@ -494,45 +614,41 @@ export function AIChatMessageBubble({
               timeline={displayTimeline}
               skillDisplayById={skillDisplayById}
               defaultOpen={shouldOpenTimelineByDefault}
+              showMemoryKey={showMemoryKey}
+              showSkillEventDetails={showSkillEventDetails}
             />
           ) : null}
 
+          {answer ? (
+            <div className="prose prose-sm min-w-0 max-w-full dark:prose-invert sm:pr-4 md:pr-6 lg:pr-8 xl:pr-9">
+              <MarkdownViewer
+                className="md-viewer min-w-0 max-w-full break-words"
+                content={displayAnswer}
+                isStreaming={isStreaming}
+                renderIdentity={message.id}
+              />
+            </div>
+          ) : isStreaming && !hasTimeline && !userInputRequest && !hasGeneratedImagePreviews ? (
+            <div className="space-y-2 pt-1">
+              <Skeleton className="h-4 w-2/3" />
+              <Skeleton className="h-4 w-1/2" />
+              <Skeleton className="h-4 w-3/4" />
+            </div>
+          ) : isStopped && !hasGeneratedImagePreviews ? (
+            <div className="text-sm text-muted-foreground">{t('consoleChat.stopped')}</div>
+          ) : null}
+
+          <AIChatGeneratedImagePreviews files={generatedImagePreviewFilesForDisplay} />
+
           {generatedFiles.length > 0 ? (
-            <div className="mb-3 flex flex-wrap gap-2">
+            <div className="mt-3 flex flex-wrap gap-2">
               {generatedFiles.map(file => (
                 <AIChatGeneratedFileCard key={file.file_id} file={file} />
               ))}
             </div>
           ) : null}
 
-          {answer ? (
-            <div className="prose prose-sm min-w-0 max-w-full overflow-x-hidden dark:prose-invert sm:pr-4 md:pr-6 lg:pr-8 xl:pr-9">
-              <MarkdownViewer
-                className="md-viewer min-w-0 max-w-full overflow-x-hidden break-words"
-                content={displayAnswer}
-              />
-              {shouldHideAssistantToolbar ? null : (
-                <AssistantMessageToolbar
-                  answer={answer}
-                  canRegenerate={canRegenerateMessage}
-                  isDisabled={isSending || isStreaming}
-                  toolbarVisibility={toolbarVisibility}
-                  branchNavigation={branchNavigation}
-                  canSwitchBranch={canSwitchBranch}
-                  onRegenerate={() => onRegenerate?.(message)}
-                  onSwitchBranch={onSwitchBranch}
-                />
-              )}
-            </div>
-          ) : isStreaming && !hasTimeline ? (
-            <div className="space-y-2 pt-1">
-              <Skeleton className="h-4 w-2/3" />
-              <Skeleton className="h-4 w-1/2" />
-              <Skeleton className="h-4 w-3/4" />
-            </div>
-          ) : isStopped ? (
-            <div className="text-sm text-muted-foreground">{t('consoleChat.stopped')}</div>
-          ) : null}
+          {userInputRequest ? <AIChatUserInputRequestCard request={userInputRequest} /> : null}
 
           {isError ? (
             <div
@@ -558,9 +674,9 @@ export function AIChatMessageBubble({
             </div>
           ) : null}
 
-          {!answer && (isError || isStopped) && canRegenerateMessage && !shouldHideAssistantToolbar ? (
+          {!shouldHideAssistantToolbar && (answer || canRegenerateMessage) ? (
             <AssistantMessageToolbar
-              answer=""
+              answer={answer}
               canRegenerate={canRegenerateMessage}
               isDisabled={isSending || isStreaming}
               toolbarVisibility={toolbarVisibility}

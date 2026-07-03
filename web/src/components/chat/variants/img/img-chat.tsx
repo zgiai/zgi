@@ -28,6 +28,7 @@ export interface ImgChatProps {
   modelSelectorValue?: ModelSelectorValue;
   onModelChange?: (value: ModelSelectorValue) => void;
   inputTopNotice?: React.ReactNode;
+  conversationSearchKey?: readonly unknown[];
 }
 
 export function ImgChat({
@@ -35,6 +36,7 @@ export function ImgChat({
   modelSelectorValue,
   onModelChange,
   inputTopNotice,
+  conversationSearchKey,
 }: ImgChatProps) {
   // Controller state
   const activeId = useStore(controller.store, s => s.activeId);
@@ -99,6 +101,11 @@ export function ImgChat({
     messages,
     activeId,
   });
+  const conversationSearch = React.useCallback(
+    (query: string, limit: number) => controller.search?.(query, limit) ?? Promise.resolve([]),
+    [controller]
+  );
+  const hasConversationSearch = typeof controller.search === 'function';
 
   React.useEffect(() => {
     if (pendingPrompt) {
@@ -145,6 +152,7 @@ export function ImgChat({
                 model_config: {
                   provider: modelSelectorValue.provider,
                   model: modelSelectorValue.model,
+                  name: modelSelectorValue.model,
                 },
               }
             : {}),
@@ -201,6 +209,15 @@ export function ImgChat({
           onSelect={handleSelectChat}
           onDelete={handleDeleteChat}
           isHome={isHome}
+          search={hasConversationSearch ? conversationSearch : undefined}
+          searchKey={conversationSearchKey}
+          onSelectSearchResult={result => {
+            if (controller.loadAndSelect) {
+              void controller.loadAndSelect(result.conversationId);
+            } else {
+              handleSelectChat(result.conversationId);
+            }
+          }}
         />
       </div>
 
@@ -306,6 +323,15 @@ export function ImgChat({
             onDelete={handleDeleteChat}
             onClose={() => setIsMobileSidebarOpen(false)}
             isHome={isHome}
+            search={hasConversationSearch ? conversationSearch : undefined}
+            searchKey={conversationSearchKey}
+            onSelectSearchResult={result => {
+              if (controller.loadAndSelect) {
+                void controller.loadAndSelect(result.conversationId);
+              } else {
+                handleSelectChat(result.conversationId);
+              }
+            }}
           />
         </SheetContent>
       </Sheet>

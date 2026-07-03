@@ -485,7 +485,7 @@ function ChannelPageContent(): JSX.Element {
       </div>
 
       <ConfirmDialog
-        variant="warning"
+        variant="danger"
         open={Boolean(confirmId)}
         onOpenChange={open => !open && setConfirmId(null)}
         title={t('actions.confirmDeleteTitle')}

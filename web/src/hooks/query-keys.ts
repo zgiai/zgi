@@ -11,6 +11,8 @@ export const ORGANIZATION_KEYS = {
   lists: () => [...ORGANIZATION_KEYS.all, 'list'] as const,
   list: (params: unknown) => [...ORGANIZATION_KEYS.lists(), params] as const,
   current: () => [...ORGANIZATION_KEYS.all, 'current'] as const,
+  currentMembers: (params?: unknown) =>
+    [...ORGANIZATION_KEYS.all, 'current-members', params].filter(Boolean),
   roles: (orgId: string) => [...ORGANIZATION_KEYS.all, 'roles', orgId] as const,
   roleDetail: (orgId: string, roleId: string) =>
     [...ORGANIZATION_KEYS.all, 'role-detail', orgId, roleId] as const,
@@ -55,8 +57,17 @@ export const AGENT_KEYS = {
   list: (params: unknown) => [...AGENT_KEYS.lists(), params] as const,
   details: () => [...AGENT_KEYS.all, 'detail'] as const,
   detail: (id: string) => [...AGENT_KEYS.details(), id] as const,
+  config: (id: string) => [...AGENT_KEYS.detail(id), 'config'] as const,
+  workflowBindingCandidates: (id: string) =>
+    [...AGENT_KEYS.detail(id), 'workflow-binding-candidates'] as const,
   runnable: (workspaceId?: string | null) =>
     [...AGENT_KEYS.all, 'runnable-webapps', workspaceId || 'all'] as const,
+  runtimeRuns: (agentId: string, params: unknown) =>
+    [...AGENT_KEYS.detail(agentId), 'runtime-runs', params] as const,
+  runtimeRunDetail: (agentId: string, messageId: string) =>
+    [...AGENT_KEYS.detail(agentId), 'runtime-run-detail', messageId] as const,
+  runtimeRunSteps: (agentId: string, messageId: string) =>
+    [...AGENT_KEYS.detail(agentId), 'runtime-run-steps', messageId] as const,
 } as const;
 
 export const PROMPT_KEYS = {
@@ -83,6 +94,14 @@ export const DATASET_KEYS = {
   documents: (datasetId: string) => [...DATASET_KEYS.all, 'documents', datasetId] as const,
   documentList: (datasetId: string, params: unknown) =>
     [...DATASET_KEYS.documents(datasetId), params] as const,
+  fileCandidates: (datasetId: string, params: unknown) =>
+    [...DATASET_KEYS.all, 'file-candidates', datasetId, params] as const,
+  fileCandidateEmbeddingTask: (datasetId: string, assetId: string, requestId: string) =>
+    [...DATASET_KEYS.all, 'file-candidate-embedding-task', datasetId, assetId, requestId] as const,
+  fileRefs: (datasetId: string, params?: unknown) =>
+    params === undefined
+      ? ([...DATASET_KEYS.all, 'file-refs', datasetId] as const)
+      : ([...DATASET_KEYS.all, 'file-refs', datasetId, params] as const),
   extractionStrategies: () => [...DATASET_KEYS.all, 'extraction-strategies'] as const,
   documentDetails: (datasetId: string) => [...DATASET_KEYS.all, 'document', datasetId] as const,
   documentDetail: (datasetId: string, documentId: string) =>
@@ -160,6 +179,11 @@ export const AICHAT_KEYS = {
   skills: () => [...AICHAT_KEYS.all, 'skills'] as const,
   skill: (id: string) => [...AICHAT_KEYS.skills(), id] as const,
   skillConfig: () => [...AICHAT_KEYS.skills(), 'config'] as const,
+  skillPreference: () => [...AICHAT_KEYS.skills(), 'preference', 'me'] as const,
+  agentSkillVariables: (agentId: string, skillId: string) =>
+    [...AICHAT_KEYS.all, 'agents', agentId, 'skills', skillId, 'variables'] as const,
+  search: (query: string, limit: number) =>
+    [...AICHAT_KEYS.all, 'search', query.trim(), limit] as const,
 } as const;
 
 export const MEMORY_KEYS = {

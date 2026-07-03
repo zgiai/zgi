@@ -9,8 +9,8 @@ import (
 
 func newBackendFromConfig(cfg config.Config) (backend, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.RuntimeBackend)) {
-	case "", "preview", "process":
-		return newProcessBackend(), nil
+	case "", "preview", "process", "preview-process":
+		return newProcessBackend(cfg.DependencyRootFSDir), nil
 	case "linux-secure":
 		return newLinuxSecureBackend(cfg)
 	default:

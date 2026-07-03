@@ -3,7 +3,9 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -17,6 +19,7 @@ import (
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 
+	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/datasource/model"
 	excelimportmodel "github.com/zgiai/zgi/api/internal/modules/datasource/model/excelimport"
@@ -24,6 +27,7 @@ import (
 	excelimportrepo "github.com/zgiai/zgi/api/internal/modules/datasource/repository/excelimport"
 	excelimportsvc "github.com/zgiai/zgi/api/internal/modules/datasource/service/excelimport"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	defaultmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -32,7 +36,65 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 	sql_base "github.com/zgiai/zgi/api/pkg/sql_base"
+	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
+	"github.com/zgiai/zgi/api/pkg/sql_base/guard"
 )
+
+var errDataSourceTableNotFound = errors.New("data source table not found")
+
+const (
+	fileIngestStageParse       = "parse"
+	fileIngestStageRecognition = "recognition"
+)
+
+func fileIngestContentHash(content string) string {
+	if strings.TrimSpace(content) == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(content))
+	return fmt.Sprintf("%x", sum)
+}
+
+func fileIngestExtractionInfo(extraction databaseIngestionExtractionResult, content string) *dto.FileIngestExtractionInfo {
+	return &dto.FileIngestExtractionInfo{
+		PrimaryStrategy: extraction.PrimaryStrategy,
+		ActualStrategy:  extraction.ActualStrategy,
+		FallbackReason:  extraction.FallbackReason,
+		SourceType:      extraction.SourceType,
+		ContentHash:     fileIngestContentHash(content),
+		Attempts:        append([]dto.FileIngestAttempt(nil), extraction.Attempts...),
+	}
+}
+
+func updateFileIngestAttemptResult(extraction *databaseIngestionExtractionResult, method, result, reason string, recordCount int) {
+	if extraction == nil {
+		return
+	}
+	for i := len(extraction.Attempts) - 1; i >= 0; i-- {
+		if extraction.Attempts[i].Method != method {
+			continue
+		}
+		extraction.Attempts[i].Result = result
+		extraction.Attempts[i].Reason = reason
+		extraction.Attempts[i].RecordCount = recordCount
+		return
+	}
+	extraction.Attempts = append(extraction.Attempts, dto.FileIngestAttempt{
+		Method:      method,
+		Status:      databaseIngestionAttemptStatusCompleted,
+		Result:      result,
+		Reason:      reason,
+		RecordCount: recordCount,
+	})
+}
+
+func fileIngestAttemptMethodForExtraction(extraction databaseIngestionExtractionResult) string {
+	return databaseIngestionAttemptMethodFileParse
+}
+
+func IsDataSourceTableNotFound(err error) bool {
+	return errors.Is(err, errDataSourceTableNotFound)
+}
 
 // DataSourceService defines the interface for data source service
 type DataSourceService interface {
@@ -42,6 +104,9 @@ type DataSourceService interface {
 	GetDataSourceByID(ctx context.Context, organizationID, id, accountID string) (*dto.DataSourceResponse, error)
 	UpdateDataSource(ctx context.Context, organizationID, id, accountID string, req dto.UpdateDataSourceRequest) (*dto.DataSourceResponse, error)
 	DeleteDataSourceByID(ctx context.Context, organizationID, id string, accountID string) error
+	GetGuardPolicy(ctx context.Context, organizationID, dataSourceID string) (guard.Policy, error)
+	UpdateGuardPolicy(ctx context.Context, organizationID, dataSourceID string, policy guard.Policy) (guard.Policy, error)
+	PreviewGuard(ctx context.Context, organizationID, dataSourceID, sql string, policy *guard.Policy) (guard.Result, error)
 
 	// Table operations
 	CreateTable(ctx context.Context, organizationID, dataSourceID string, accountID string, req dto.CreateTableRequest) (*model.Table, error)
@@ -62,12 +127,14 @@ type DataSourceService interface {
 	UpdateTableRecords(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, req dto.UpdateRecordRequest) (dto.UpdateRecordResponse, error)
 	DeleteTableRecords(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, req dto.DeleteRecordRequest) (dto.DeleteRecordResponse, error)
 	QueryTableRecords(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, limit, offset int, order string) (dto.QueryRecordResponse, error)
-	ImportTableRecords(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, file io.Reader, fileName string) (dto.ImportRecordResponse, error)
-	ImportTableRecordsFromUploadFile(ctx context.Context, organizationID, dataSourceID, tableID, accountID, uploadFileID string) (dto.ImportRecordResponse, error)
+	ImportTableRecords(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, file io.Reader, fileName string, skipUnmatchedColumns bool) (dto.ImportRecordResponse, error)
+	ImportTableRecordsFromUploadFile(ctx context.Context, organizationID, dataSourceID, tableID, accountID, uploadFileID string, skipUnmatchedColumns bool) (dto.ImportRecordResponse, error)
 
 	// File analysis for table structure
 	AnalyzeFileForTable(ctx context.Context, dataSourceID, accountID, fileID string, description *string, modelSpec *dto.ModelSpec) (dto.AnalyzeFileForTableResponse, error)
 	// File ingestion into table
+	ParseFileForTableIngest(ctx context.Context, organizationID, accountID string, req dto.ParseFileForTableIngestRequest) (dto.ParseFileForTableIngestResponse, error)
+	ExtractTextToTableRecords(ctx context.Context, organizationID, accountID string, req dto.ExtractTextToTableRecordsRequest) (dto.ExtractTextToTableRecordsResponse, error)
 	IngestFileToTable(ctx context.Context, organizationID, accountID string, req dto.IngestFileToTableRequest) (dto.IngestFileToTableResponse, error)
 	BatchIngestFileToTable(ctx context.Context, organizationID, accountID string, req dto.BatchIngestFileToTableRequest) (dto.BatchIngestFileToTableResponse, error)
 
@@ -76,12 +143,16 @@ type DataSourceService interface {
 	CountOperationLogsByDataSourceID(ctx context.Context, organizationID, dataSourceID string) (int64, error)
 	ListOperationLogsByDataSourceIDWithFilters(ctx context.Context, organizationID, dataSourceID string, filters dto.SQLOperationFilter, limit, offset int) ([]*model.DataSourceSQLOperation, error)
 	CountOperationLogsByDataSourceIDWithFilters(ctx context.Context, organizationID, dataSourceID string, filters dto.SQLOperationFilter) (int64, error)
+	ListSQLAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter, limit, offset int) ([]*model.DataSourceSQLOperation, error)
+	CountSQLAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter) (int64, error)
+	GetSQLAuditDetail(ctx context.Context, organizationID, workspaceID, operationID string) (*model.DataSourceSQLOperation, error)
 
 	// Table template operations
 	GenerateTableTemplateExcel(ctx context.Context, organizationID, dataSourceID, tableID string) ([]byte, error)
 
 	// Excel import operations
 	AnalyzeExcelImport(ctx context.Context, organizationID, dataSourceID, accountID string, req dto.AnalyzeExcelImportRequest) (dto.AnalyzeExcelImportData, error)
+	RecognizeExcelImportFields(ctx context.Context, organizationID, dataSourceID, accountID, jobID string, req dto.RecognizeExcelImportRequest) (dto.RecognizeExcelImportData, error)
 	ConfirmExcelImport(ctx context.Context, organizationID, dataSourceID, accountID, jobID string, req dto.ConfirmExcelImportRequest) (dto.ConfirmExcelImportData, error)
 	GetExcelImportJob(ctx context.Context, organizationID, dataSourceID, jobID string) (*dto.ExcelImportJobResponse, error)
 	ListExcelImportErrors(ctx context.Context, organizationID, dataSourceID, jobID string, limit, offset int) (dto.ExcelImportErrorList, error)
@@ -94,36 +165,82 @@ type dataSourceService struct {
 	promptRepo                repository.PromptRepository
 	sqlOperationRepo          repository.SQLOperationRepository
 	sqlBase                   sql_base.SQLBase
+	sqlAuditRecorder          audit.Recorder
 	accountService            interfaces.AccountService
 	fileService               interfaces.FileService
 	organizationService       interfaces.OrganizationService
 	resourcePermissionService interfaces.ResourcePermissionService
 	quotaService              interfaces.QuotaService
 	llmClient                 llmclient.LLMClient
+	defaultModelResolver      defaultmodelsvc.DefaultModelResolver
+	contentParseService       contracts.ContentParseService
 	db                        *gorm.DB
 }
 
+type DataSourceServiceOption func(*dataSourceService)
+
+func WithContentParseService(contentParseService contracts.ContentParseService) DataSourceServiceOption {
+	return func(s *dataSourceService) {
+		s.contentParseService = contentParseService
+	}
+}
+
+type databaseIngestionTableContext struct {
+	DataSourceID      string
+	LLMOrganizationID string
+	Columns           dto.GetTableColumnsResponse
+}
+
 // NewDataSourceService creates a new DataSourceService
-func NewDataSourceService(repo repository.DataSourceRepository, tableRepo repository.TableRepository, promptRepo repository.PromptRepository, sqlOperationRepo repository.SQLOperationRepository, accountService interfaces.AccountService, fileService interfaces.FileService, organizationService interfaces.OrganizationService, resourcePermissionService interfaces.ResourcePermissionService, quotaService interfaces.QuotaService, llmClient llmclient.LLMClient, db *gorm.DB) DataSourceService {
-	sqlBaseClient, err := sql_base.NewSQLBaseClient()
+func NewDataSourceService(repo repository.DataSourceRepository, tableRepo repository.TableRepository, promptRepo repository.PromptRepository, sqlOperationRepo repository.SQLOperationRepository, accountService interfaces.AccountService, fileService interfaces.FileService, organizationService interfaces.OrganizationService, resourcePermissionService interfaces.ResourcePermissionService, quotaService interfaces.QuotaService, llmClient llmclient.LLMClient, defaultModelResolver defaultmodelsvc.DefaultModelResolver, db *gorm.DB, options ...DataSourceServiceOption) DataSourceService {
+	sqlAuditRecorder := audit.NewAsyncRecorder(sqlOperationRepo)
+	sqlBaseClient, err := sql_base.NewSQLBaseClient(
+		sql_base.WithAuditRecorder(sqlAuditRecorder),
+		sql_base.WithGuardPolicyProvider(func(ctx context.Context, dataSourceID string) (*guard.Policy, error) {
+			dataSource, err := repo.FindByID(ctx, dataSourceID)
+			if err != nil || dataSource == nil {
+				return nil, err
+			}
+			policy, err := guard.ParsePolicyJSON([]byte(dataSource.GuardPolicy))
+			if err != nil {
+				return nil, err
+			}
+			return &policy, nil
+		}),
+	)
 	if err != nil {
 		panic("failed to create postgres meta client: " + err.Error())
 	}
 
-	return &dataSourceService{
+	svc := &dataSourceService{
 		repo:                      repo,
 		tableRepo:                 tableRepo,
 		promptRepo:                promptRepo,
 		sqlOperationRepo:          sqlOperationRepo,
 		sqlBase:                   sqlBaseClient,
+		sqlAuditRecorder:          sqlAuditRecorder,
 		accountService:            accountService,
 		fileService:               fileService,
 		organizationService:       organizationService,
 		resourcePermissionService: resourcePermissionService,
 		quotaService:              quotaService,
 		llmClient:                 llmClient,
+		defaultModelResolver:      defaultModelResolver,
 		db:                        db,
 	}
+	for _, option := range options {
+		if option != nil {
+			option(svc)
+		}
+	}
+	return svc
+}
+
+func (s *dataSourceService) Close(ctx context.Context) error {
+	if s == nil || s.sqlAuditRecorder == nil {
+		return nil
+	}
+	return s.sqlAuditRecorder.Close(ctx)
 }
 
 // CreateDataSource creates a new data source
@@ -181,6 +298,7 @@ func (s *dataSourceService) CreateDataSource(ctx context.Context, organizationID
 		IconType:       req.IconType,
 		Icon:           req.Icon,
 		IconBackground: req.IconBackground,
+		GuardPolicy:    guard.DefaultPolicyJSON(),
 	}
 
 	if err := s.repo.Create(ctx, dataSource); err != nil {
@@ -250,6 +368,97 @@ func getStringValue(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func auditWorkspaceID(organizationID string, workspaceID *string) string {
+	if workspaceID != nil && *workspaceID != "" {
+		return *workspaceID
+	}
+	return organizationID
+}
+
+func sqlAuditContext(organizationID string, dataSource *model.DataSource, table *model.Table, accountID string, operationType string) *audit.Context {
+	if dataSource == nil {
+		return nil
+	}
+
+	auditCtx := &audit.Context{
+		OrganizationID: organizationID,
+		WorkspaceID:    auditWorkspaceID(organizationID, dataSource.WorkspaceID),
+		DataSourceID:   dataSource.ID,
+		DataSourceName: dataSource.Name,
+		ClientType:     audit.ClientTypeAPI,
+		CreatedBy:      accountID,
+		OperationType:  operationType,
+	}
+	if policy, err := guard.ParsePolicyJSON([]byte(dataSource.GuardPolicy)); err == nil {
+		auditCtx.GuardPolicy = &policy
+	}
+	if table != nil {
+		auditCtx.TableID = table.ID
+		auditCtx.TableName = table.Name
+	}
+	return auditCtx
+}
+
+func (s *dataSourceService) guardPolicyForDataSource(ctx context.Context, dataSourceID string) *guard.Policy {
+	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
+	if err != nil || dataSource == nil {
+		return nil
+	}
+	policy, err := guard.ParsePolicyJSON([]byte(dataSource.GuardPolicy))
+	if err != nil {
+		return nil
+	}
+	return &policy
+}
+
+func (s *dataSourceService) GetGuardPolicy(ctx context.Context, organizationID, dataSourceID string) (guard.Policy, error) {
+	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
+	if err != nil {
+		return guard.Policy{}, fmt.Errorf("failed to find data source: %w", err)
+	}
+	if dataSource == nil || dataSource.OrganizationID != organizationID {
+		return guard.Policy{}, fmt.Errorf("data source with id '%s' not found", dataSourceID)
+	}
+	return guard.ParsePolicyJSON([]byte(dataSource.GuardPolicy))
+}
+
+func (s *dataSourceService) UpdateGuardPolicy(ctx context.Context, organizationID, dataSourceID string, policy guard.Policy) (guard.Policy, error) {
+	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
+	if err != nil {
+		return guard.Policy{}, fmt.Errorf("failed to find data source: %w", err)
+	}
+	if dataSource == nil || dataSource.OrganizationID != organizationID {
+		return guard.Policy{}, fmt.Errorf("data source with id '%s' not found", dataSourceID)
+	}
+	policy, err = guard.NormalizeAndValidatePolicy(policy)
+	if err != nil {
+		return guard.Policy{}, fmt.Errorf("invalid sql guard policy: %w", err)
+	}
+	policyJSON, err := json.Marshal(policy)
+	if err != nil {
+		return guard.Policy{}, fmt.Errorf("failed to encode guard policy: %w", err)
+	}
+	if err := s.repo.UpdateGuardPolicy(ctx, dataSourceID, policyJSON); err != nil {
+		return guard.Policy{}, fmt.Errorf("failed to update guard policy: %w", err)
+	}
+	return policy, nil
+}
+
+func (s *dataSourceService) PreviewGuard(ctx context.Context, organizationID, dataSourceID, sql string, policy *guard.Policy) (guard.Result, error) {
+	currentPolicy, err := s.GetGuardPolicy(ctx, organizationID, dataSourceID)
+	if err != nil {
+		return guard.Result{}, err
+	}
+	if policy != nil {
+		currentPolicy = *policy
+	}
+	currentPolicy, err = guard.NormalizeAndValidatePolicy(currentPolicy)
+	if err != nil {
+		return guard.Result{}, fmt.Errorf("invalid sql guard policy: %w", err)
+	}
+	return guard.Check(sql, currentPolicy), nil
 }
 
 // GetDataSourceByName gets a specific data source by name
@@ -369,14 +578,16 @@ func (s *dataSourceService) CreateTable(ctx context.Context, organizationID, dat
 		Comment: &comment,
 	}
 
-	createdTable, err := s.sqlBase.CreateTable(ctx, createTableReq)
+	var createdTable *sql_base.Table
+	createTableSQL := fmt.Sprintf("CREATE TABLE %s ();", quoteIdentifier(tableName))
+	err = s.auditSQLOperation(ctx, organizationID, dataSourceID, "", dataSource.Name, tableName, accountID, string(model.OperationTypeCreate), createTableSQL, func() error {
+		var opErr error
+		createdTable, opErr = s.sqlBase.CreateTable(ctx, createTableReq)
+		return opErr
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
-
-	// Log the SQL operation
-	s.logSQLOperation(ctx, organizationID, dataSourceID, "", dataSource.Name, createdTable.Name, accountID, string(model.OperationTypeCreate),
-		fmt.Sprintf("CREATE TABLE %s ();", tableName))
 
 	// Create default columns after table creation
 	// id - primary key
@@ -390,7 +601,10 @@ func (s *dataSourceService) CreateTable(ctx context.Context, organizationID, dat
 		IsNullable:         boolPtr(false),
 		Comment:            stringPtr("数据的唯一标识（主键）"),
 	}
-	_, err = s.sqlBase.CreateColumn(ctx, idColumnReq)
+	err = s.auditSQLOperation(ctx, organizationID, dataSourceID, "", dataSource.Name, createdTable.Name, accountID, string(model.OperationTypeCreate), fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s bigint PRIMARY KEY", quoteIdentifier(createdTable.Name), quoteIdentifier("id")), func() error {
+		_, opErr := s.sqlBase.CreateColumn(ctx, idColumnReq)
+		return opErr
+	})
 	if err != nil {
 		// If column creation fails, try to delete the table
 		s.sqlBase.DeleteTable(ctx, createdTable.ID, true)
@@ -407,7 +621,10 @@ func (s *dataSourceService) CreateTable(ctx context.Context, organizationID, dat
 		IsNullable:         boolPtr(false),
 		Comment:            stringPtr("用户唯一标识，由系统生成"),
 	}
-	_, err = s.sqlBase.CreateColumn(ctx, uuidColumnReq)
+	err = s.auditSQLOperation(ctx, organizationID, dataSourceID, "", dataSource.Name, createdTable.Name, accountID, string(model.OperationTypeCreate), fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s uuid", quoteIdentifier(createdTable.Name), quoteIdentifier("uuid")), func() error {
+		_, opErr := s.sqlBase.CreateColumn(ctx, uuidColumnReq)
+		return opErr
+	})
 	if err != nil {
 		// If column creation fails, try to delete the table
 		s.sqlBase.DeleteTable(ctx, createdTable.ID, true)
@@ -424,7 +641,10 @@ func (s *dataSourceService) CreateTable(ctx context.Context, organizationID, dat
 		IsNullable:         boolPtr(false),
 		Comment:            stringPtr("数据创建时间"),
 	}
-	_, err = s.sqlBase.CreateColumn(ctx, createdTimeColumnReq)
+	err = s.auditSQLOperation(ctx, organizationID, dataSourceID, "", dataSource.Name, createdTable.Name, accountID, string(model.OperationTypeCreate), fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s timestamp", quoteIdentifier(createdTable.Name), quoteIdentifier("created_time")), func() error {
+		_, opErr := s.sqlBase.CreateColumn(ctx, createdTimeColumnReq)
+		return opErr
+	})
 	if err != nil {
 		// If column creation fails, try to delete the table
 		s.sqlBase.DeleteTable(ctx, createdTable.ID, true)
@@ -441,7 +661,10 @@ func (s *dataSourceService) CreateTable(ctx context.Context, organizationID, dat
 		IsNullable:         boolPtr(false),
 		Comment:            stringPtr("数据更新时间"),
 	}
-	_, err = s.sqlBase.CreateColumn(ctx, updatedTimeColumnReq)
+	err = s.auditSQLOperation(ctx, organizationID, dataSourceID, "", dataSource.Name, createdTable.Name, accountID, string(model.OperationTypeCreate), fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s timestamp", quoteIdentifier(createdTable.Name), quoteIdentifier("updated_time")), func() error {
+		_, opErr := s.sqlBase.CreateColumn(ctx, updatedTimeColumnReq)
+		return opErr
+	})
 	if err != nil {
 		// If column creation fails, try to delete the table
 		s.sqlBase.DeleteTable(ctx, createdTable.ID, true)
@@ -542,7 +765,7 @@ func (s *dataSourceService) generateRandomString(length int) string {
 func (s *dataSourceService) checkTableNameExists(ctx context.Context, tableName string) (bool, error) {
 	query := fmt.Sprintf("SELECT 1 FROM information_schema.tables WHERE table_name = '%s'",
 		strings.ReplaceAll(tableName, "'", "''"))
-	result, err := s.sqlBase.ExecuteSQL(ctx, query, nil)
+	result, err := s.sqlBase.ExecuteSQL(ctx, query, nil, nil)
 	if err != nil {
 		return false, err
 	}
@@ -623,7 +846,7 @@ func (s *dataSourceService) DeleteTable(ctx context.Context, organizationID, dat
 	// Query total row count before deletion
 	var totalRows int64
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(tableMetadata.PhysicalTableName))
-	countResult, err := s.sqlBase.ExecuteSQL(ctx, countQuery, nil)
+	countResult, err := s.sqlBase.ExecuteSQL(ctx, countQuery, nil, sqlAuditContext(organizationID, dataSource, tableMetadata, accountID, string(model.OperationTypeQuery)))
 	if err != nil {
 		// If count fails, log but continue with deletion
 		logger.WarnContext(ctx, "failed to count rows before table deletion", "table_id", tableID, "physical_table", tableMetadata.PhysicalTableName, err)
@@ -642,7 +865,15 @@ func (s *dataSourceService) DeleteTable(ctx context.Context, organizationID, dat
 		}
 	}
 
-	// Delete table and record usage in transaction
+	dropSQL := fmt.Sprintf("DROP TABLE %s CASCADE", quoteIdentifier(tableMetadata.PhysicalTableName))
+	if err := s.auditSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSource.Name, tableMetadata.Name, accountID, string(model.OperationTypeDelete), dropSQL, func() error {
+		_, opErr := s.sqlBase.DeleteTable(ctx, tableMetadata.TableID, true)
+		return opErr
+	}); err != nil {
+		return fmt.Errorf("failed to delete physical table: %w", err)
+	}
+
+	// Delete metadata and record usage in transaction after the physical table is gone.
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		// Delete associated table prompt if exists
 		err = s.promptRepo.DeleteByTableID(ctx, tableID)
@@ -650,17 +881,6 @@ func (s *dataSourceService) DeleteTable(ctx context.Context, organizationID, dat
 			// Log the error but continue with table deletion
 			logger.WarnContext(ctx, "failed to delete table prompt", "table_id", tableID, err)
 		}
-
-		// Delete table using sqlBase DeleteTable
-		_, err = s.sqlBase.DeleteTable(ctx, tableMetadata.TableID, true)
-		if err != nil {
-			// Log the error but continue with table metadata deletion
-			logger.WarnContext(ctx, "failed to delete physical table", "table_id", tableID, "physical_table", tableMetadata.PhysicalTableName, err)
-		}
-
-		// Log the SQL operation
-		s.logSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSource.Name, tableMetadata.Name, accountID, string(model.OperationTypeDelete),
-			fmt.Sprintf("DROP TABLE %s CASCADE", tableMetadata.PhysicalTableName))
 
 		// Delete table metadata
 		if err := s.tableRepo.Delete(ctx, tableID); err != nil {
@@ -826,13 +1046,14 @@ func (s *dataSourceService) UpdateTableColumns(ctx context.Context, organization
 
 	// Delete columns that are not in the incoming request
 	for _, col := range columnsToDelete {
-		_, err = s.sqlBase.DeleteColumn(ctx, col.ID, true)
+		dropColumnSQL := fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s CASCADE", quoteIdentifier(tableMetadata.PhysicalTableName), quoteIdentifier(col.Name))
+		err = s.auditSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSource.Name, tableMetadata.Name, accountID, string(model.OperationTypeUpdate), dropColumnSQL, func() error {
+			_, opErr := s.sqlBase.DeleteColumn(ctx, col.ID, true)
+			return opErr
+		})
 		if err != nil {
 			return fmt.Errorf("failed to delete column '%s': %w", col.Name, err)
 		}
-		// Log the SQL operation for column deletion with detailed information
-		s.logSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSource.Name, tableMetadata.Name, accountID, string(model.OperationTypeUpdate),
-			fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s CASCADE", tableMetadata.PhysicalTableName, col.Name))
 	}
 
 	// Update existing columns
@@ -913,7 +1134,7 @@ func (s *dataSourceService) UpdateTableColumns(ctx context.Context, organization
 					}
 
 					// Execute the update query to set NULL values to default values
-					_, err := s.sqlBase.ExecuteSQL(ctx, updateQuery, nil)
+					_, err := s.sqlBase.ExecuteSQL(ctx, updateQuery, nil, sqlAuditContext(organizationID, dataSource, tableMetadata, accountID, string(model.OperationTypeUpdate)))
 					if err != nil {
 						return fmt.Errorf("failed to update existing NULL values for column '%s': %w", col.Name, err)
 					}
@@ -923,12 +1144,6 @@ func (s *dataSourceService) UpdateTableColumns(ctx context.Context, organization
 
 		// Only perform update if something has changed
 		if needsUpdate {
-			_, err = s.sqlBase.UpdateColumn(ctx, col.ID, updateReq)
-			if err != nil {
-				return fmt.Errorf("failed to update column '%s': %w", col.Name, err)
-			}
-
-			// Log the SQL operation for column update with detailed information
 			var changes []string
 			if updateReq.Name != "" && updateReq.Name != existingCol.Name {
 				changes = append(changes, fmt.Sprintf("rename column from '%s' to '%s'", existingCol.Name, updateReq.Name))
@@ -968,7 +1183,13 @@ func (s *dataSourceService) UpdateTableColumns(ctx context.Context, organization
 				logMessage += " (no changes)"
 			}
 
-			s.logSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSource.Name, tableMetadata.Name, accountID, string(model.OperationTypeUpdate), logMessage)
+			err = s.auditSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSource.Name, tableMetadata.Name, accountID, string(model.OperationTypeUpdate), logMessage, func() error {
+				_, opErr := s.sqlBase.UpdateColumn(ctx, col.ID, updateReq)
+				return opErr
+			})
+			if err != nil {
+				return fmt.Errorf("failed to update column '%s': %w", col.Name, err)
+			}
 		}
 	}
 
@@ -991,14 +1212,10 @@ func (s *dataSourceService) UpdateTableColumns(ctx context.Context, organization
 			}
 		}
 
-		_, err = s.sqlBase.CreateColumn(ctx, createColReq)
-		if err != nil {
-			return fmt.Errorf("failed to create column '%s': %w", col.Name, err)
-		}
 		// Log the SQL operation for column creation with detailed information
 		createDetails := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s",
-			tableMetadata.PhysicalTableName,
-			col.Name,
+			quoteIdentifier(tableMetadata.PhysicalTableName),
+			quoteIdentifier(col.Name),
 			col.Type)
 		if col.Description != nil {
 			createDetails += fmt.Sprintf(" COMMENT '%s'", *col.Description)
@@ -1008,7 +1225,13 @@ func (s *dataSourceService) UpdateTableColumns(ctx context.Context, organization
 		} else {
 			createDetails += " NOT NULL"
 		}
-		s.logSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSource.Name, tableMetadata.Name, accountID, string(model.OperationTypeUpdate), createDetails)
+		err = s.auditSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSource.Name, tableMetadata.Name, accountID, string(model.OperationTypeUpdate), createDetails, func() error {
+			_, opErr := s.sqlBase.CreateColumn(ctx, createColReq)
+			return opErr
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create column '%s': %w", col.Name, err)
+		}
 	}
 
 	// Update the table's updated_by and updated_at fields
@@ -1183,7 +1406,7 @@ func (s *dataSourceService) AddTableRecords(ctx context.Context, organizationID,
 	var affectedRows int64
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		// Perform batch insert
-		rows, err := s.batchInsertRecords(ctx, organizationID, dataSourceID, tableID, dataSource.Name, table.Name, accountID, table.PhysicalTableName, validRecords, columnMap)
+		rows, err := s.batchInsertRecords(ctx, organizationID, auditWorkspaceID(organizationID, dataSource.WorkspaceID), dataSourceID, tableID, dataSource.Name, table.Name, accountID, table.PhysicalTableName, validRecords, columnMap)
 		if err != nil {
 			return fmt.Errorf("failed to insert records: %w", err)
 		}
@@ -1250,17 +1473,14 @@ func (s *dataSourceService) QueryTableRecords(ctx context.Context, organizationI
 		return dto.QueryRecordResponse{}, err
 	}
 
-	result, err := s.sqlBase.ExecuteSQL(ctx, query, nil)
+	result, err := s.sqlBase.ExecuteSQL(ctx, query, nil, sqlAuditContext(organizationID, dataSource, table, accountID, string(model.OperationTypeQuery)))
 	if err != nil {
 		return dto.QueryRecordResponse{}, fmt.Errorf("failed to execute query: %w", err)
 	}
 
-	// Log the SQL operation
-	s.logSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSource.Name, table.Name, accountID, string(model.OperationTypeQuery), query)
-
 	// 3. Build total count query
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(table.PhysicalTableName))
-	countResult, err := s.sqlBase.ExecuteSQL(ctx, countQuery, nil)
+	countResult, err := s.sqlBase.ExecuteSQL(ctx, countQuery, nil, sqlAuditContext(organizationID, dataSource, table, accountID, string(model.OperationTypeQuery)))
 	if err != nil {
 		return dto.QueryRecordResponse{}, fmt.Errorf("failed to count records: %w", err)
 	}
@@ -1346,7 +1566,7 @@ func (s *dataSourceService) validateRecord(record map[string]interface{}, column
 }
 
 // batchInsertRecords performs batch insert operation
-func (s *dataSourceService) batchInsertRecords(ctx context.Context, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, actualTableName string, records []map[string]interface{}, columnMap map[string]sql_base.Column) (int64, error) {
+func (s *dataSourceService) batchInsertRecords(ctx context.Context, organizationID, workspaceID, dataSourceID, tableID, dataSourceName, tableName, accountID, actualTableName string, records []map[string]interface{}, columnMap map[string]sql_base.Column) (int64, error) {
 	if len(records) == 0 {
 		return 0, nil
 	}
@@ -1381,40 +1601,19 @@ func (s *dataSourceService) batchInsertRecords(ctx context.Context, organization
 		strings.Join(placeholders, ", "),
 	)
 
-	// Log the SQL operation with actual values
-	logQuery := query
-	if len(values) > 0 {
-		// Replace placeholders with actual values for logging purposes
-		logQuery = query
-		for i := len(values) - 1; i >= 0; i-- {
-			placeholder := fmt.Sprintf("$%d", i+1)
-			value := values[i]
-			var valueStr string
-			if value == nil {
-				valueStr = "NULL"
-			} else {
-				switch v := value.(type) {
-				case string:
-					// Escape single quotes in string values
-					escapedValue := strings.ReplaceAll(v, "'", "''")
-					valueStr = fmt.Sprintf("'%s'", escapedValue)
-				case bool:
-					if v {
-						valueStr = "true"
-					} else {
-						valueStr = "false"
-					}
-				default:
-					valueStr = fmt.Sprintf("%v", v)
-				}
-			}
-			logQuery = strings.ReplaceAll(logQuery, placeholder, valueStr)
-		}
-	}
-
-	s.logSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, string(model.OperationTypeCreate), logQuery)
-
-	result, err := s.sqlBase.ExecuteSQL(ctx, query, values)
+	guardPolicy := s.guardPolicyForDataSource(ctx, dataSourceID)
+	result, err := s.sqlBase.ExecuteSQL(ctx, query, values, &audit.Context{
+		OrganizationID: organizationID,
+		WorkspaceID:    workspaceID,
+		DataSourceID:   dataSourceID,
+		DataSourceName: dataSourceName,
+		TableID:        tableID,
+		TableName:      tableName,
+		ClientType:     audit.ClientTypeAPI,
+		CreatedBy:      accountID,
+		OperationType:  string(model.OperationTypeCreate),
+		GuardPolicy:    guardPolicy,
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -1488,7 +1687,7 @@ func (s *dataSourceService) UpdateTableRecords(ctx context.Context, organization
 	}
 
 	// 5. Perform batch update
-	affectedRows, err := s.batchUpdateRecords(ctx, organizationID, dataSourceID, tableID, dataSource.Name, table.Name, accountID, table.PhysicalTableName, validRecords, columnMap)
+	affectedRows, err := s.batchUpdateRecords(ctx, organizationID, auditWorkspaceID(organizationID, dataSource.WorkspaceID), dataSourceID, tableID, dataSource.Name, table.Name, accountID, table.PhysicalTableName, validRecords, columnMap)
 	if err != nil {
 		return dto.UpdateRecordResponse{}, fmt.Errorf("failed to update records: %w", err)
 	}
@@ -1536,12 +1735,13 @@ func (s *dataSourceService) validateUpdateRecord(record map[string]interface{}, 
 }
 
 // batchUpdateRecords performs batch update operation
-func (s *dataSourceService) batchUpdateRecords(ctx context.Context, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, actualTableName string, records []map[string]interface{}, columnMap map[string]sql_base.Column) (int64, error) {
+func (s *dataSourceService) batchUpdateRecords(ctx context.Context, organizationID, workspaceID, dataSourceID, tableID, dataSourceName, tableName, accountID, actualTableName string, records []map[string]interface{}, columnMap map[string]sql_base.Column) (int64, error) {
 	if len(records) == 0 {
 		return 0, nil
 	}
 
 	totalAffectedRows := int64(0)
+	guardPolicy := s.guardPolicyForDataSource(ctx, dataSourceID)
 
 	// Process each record individually for update
 	for _, record := range records {
@@ -1582,41 +1782,18 @@ func (s *dataSourceService) batchUpdateRecords(ctx context.Context, organization
 			whereClause,
 		)
 
-		// Log the SQL operation with actual values
-		logQuery := query
-		if len(values) > 0 {
-			// Replace placeholders with actual values for logging purposes
-			logQuery = query
-			for i := len(values) - 1; i >= 0; i-- {
-				placeholder := fmt.Sprintf("$%d", i+1)
-				value := values[i]
-				var valueStr string
-				if value == nil {
-					valueStr = "NULL"
-				} else {
-					switch v := value.(type) {
-					case string:
-						// Escape single quotes in string values
-						escapedValue := strings.ReplaceAll(v, "'", "''")
-						valueStr = fmt.Sprintf("'%s'", escapedValue)
-					case bool:
-						if v {
-							valueStr = "true"
-						} else {
-							valueStr = "false"
-						}
-					default:
-						valueStr = fmt.Sprintf("%v", v)
-					}
-				}
-				logQuery = strings.ReplaceAll(logQuery, placeholder, valueStr)
-			}
-		}
-
-		// Log the SQL operation
-		s.logSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, string(model.OperationTypeUpdate), logQuery)
-
-		result, err := s.sqlBase.ExecuteSQL(ctx, query, values)
+		result, err := s.sqlBase.ExecuteSQL(ctx, query, values, &audit.Context{
+			OrganizationID: organizationID,
+			WorkspaceID:    workspaceID,
+			DataSourceID:   dataSourceID,
+			DataSourceName: dataSourceName,
+			TableID:        tableID,
+			TableName:      tableName,
+			ClientType:     audit.ClientTypeAPI,
+			CreatedBy:      accountID,
+			OperationType:  string(model.OperationTypeUpdate),
+			GuardPolicy:    guardPolicy,
+		})
 		if err != nil {
 			return 0, err
 		}
@@ -1649,7 +1826,7 @@ func (s *dataSourceService) DeleteTableRecords(ctx context.Context, organization
 	var affectedRows int64
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		// Perform batch delete
-		rows, err := s.batchDeleteRecords(ctx, organizationID, dataSourceID, tableID, dataSource.Name, table.Name, accountID, table.PhysicalTableName, validRecords)
+		rows, err := s.batchDeleteRecords(ctx, organizationID, auditWorkspaceID(organizationID, dataSource.WorkspaceID), dataSourceID, tableID, dataSource.Name, table.Name, accountID, table.PhysicalTableName, validRecords)
 		if err != nil {
 			return fmt.Errorf("failed to delete records: %w", err)
 		}
@@ -1717,12 +1894,13 @@ func (s *dataSourceService) validateDeleteRecord(record map[string]interface{}) 
 }
 
 // batchDeleteRecords performs batch delete operation
-func (s *dataSourceService) batchDeleteRecords(ctx context.Context, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, actualTableName string, records []map[string]interface{}) (int64, error) {
+func (s *dataSourceService) batchDeleteRecords(ctx context.Context, organizationID, workspaceID, dataSourceID, tableID, dataSourceName, tableName, accountID, actualTableName string, records []map[string]interface{}) (int64, error) {
 	if len(records) == 0 {
 		return 0, nil
 	}
 
 	totalAffectedRows := int64(0)
+	guardPolicy := s.guardPolicyForDataSource(ctx, dataSourceID)
 
 	// Process each record individually for delete
 	for _, record := range records {
@@ -1732,41 +1910,18 @@ func (s *dataSourceService) batchDeleteRecords(ctx context.Context, organization
 		query := fmt.Sprintf("DELETE FROM %s WHERE %s = $1", quoteIdentifier(actualTableName), quoteIdentifier("id"))
 		values := []interface{}{id}
 
-		// Log the SQL operation with actual values
-		logQuery := query
-		if len(values) > 0 {
-			// Replace placeholders with actual values for logging purposes
-			logQuery = query
-			for i := len(values) - 1; i >= 0; i-- {
-				placeholder := fmt.Sprintf("$%d", i+1)
-				value := values[i]
-				var valueStr string
-				if value == nil {
-					valueStr = "NULL"
-				} else {
-					switch v := value.(type) {
-					case string:
-						// Escape single quotes in string values
-						escapedValue := strings.ReplaceAll(v, "'", "''")
-						valueStr = fmt.Sprintf("'%s'", escapedValue)
-					case bool:
-						if v {
-							valueStr = "true"
-						} else {
-							valueStr = "false"
-						}
-					default:
-						valueStr = fmt.Sprintf("%v", v)
-					}
-				}
-				logQuery = strings.ReplaceAll(logQuery, placeholder, valueStr)
-			}
-		}
-
-		// Log the SQL operation
-		s.logSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, string(model.OperationTypeDelete), logQuery)
-
-		result, err := s.sqlBase.ExecuteSQL(ctx, query, values)
+		result, err := s.sqlBase.ExecuteSQL(ctx, query, values, &audit.Context{
+			OrganizationID: organizationID,
+			WorkspaceID:    workspaceID,
+			DataSourceID:   dataSourceID,
+			DataSourceName: dataSourceName,
+			TableID:        tableID,
+			TableName:      tableName,
+			ClientType:     audit.ClientTypeAPI,
+			CreatedBy:      accountID,
+			OperationType:  string(model.OperationTypeDelete),
+			GuardPolicy:    guardPolicy,
+		})
 		if err != nil {
 			return 0, err
 		}
@@ -1780,6 +1935,10 @@ func (s *dataSourceService) batchDeleteRecords(ctx context.Context, organization
 // Helper functions to create pointers
 func stringPtr(s string) *string {
 	return &s
+}
+
+func int64Ptr(value int64) *int64 {
+	return &value
 }
 
 func boolPtr(b bool) *bool {
@@ -1832,10 +1991,11 @@ func (s *dataSourceService) AnalyzeFileForTable(ctx context.Context, dataSourceI
 		}
 
 		// Get file content with database ingestion extraction settings.
-		content, err = s.extractDatabaseIngestionFileContent(ctx, fileID)
+		extraction, err := s.extractDatabaseIngestionFileContent(ctx, accountID, fileID)
 		if err != nil {
 			return dto.AnalyzeFileForTableResponse{}, fmt.Errorf("failed to get file content: %w", err)
 		}
+		content = extraction.Content
 	}
 
 	// Analyze file content to infer table structure using data source's organization scope
@@ -1848,15 +2008,6 @@ func (s *dataSourceService) AnalyzeFileForTable(ctx context.Context, dataSourceI
 		Columns: columns,
 		Content: content,
 	}, nil
-}
-
-func (s *dataSourceService) extractDatabaseIngestionFileContent(ctx context.Context, fileID string) (string, error) {
-	fallbackEnabled := false
-	return s.fileService.ExtractFileWithSetting(ctx, fileID, interfaces.FileExtractionSetting{
-		ExtractionStrategy:        dto.DocumentExtractionStrategyHyperParseMineru,
-		ExtractionFallbackEnabled: &fallbackEnabled,
-		CacheNamespace:            "database_ingestion",
-	})
 }
 
 // inferTableStructureFromFile infers table structure from file content or user prompt
@@ -2015,70 +2166,17 @@ func (s *dataSourceService) extractJSONContent(content string) (string, error) {
 	return "", fmt.Errorf("could not find matching closing bracket for json")
 }
 
-// IngestFileToTable ingests file content into a table
-func (s *dataSourceService) IngestFileToTable(ctx context.Context, organizationID, accountID string, req dto.IngestFileToTableRequest) (dto.IngestFileToTableResponse, error) {
-	// 1. Validate table existence
-	table, err := s.tableRepo.FindByID(ctx, req.TableID)
-	if err != nil {
-		return dto.IngestFileToTableResponse{}, fmt.Errorf("failed to find table: %w", err)
-	}
-	if table == nil {
-		return dto.IngestFileToTableResponse{}, fmt.Errorf("table with id '%s' not found", req.TableID)
-	}
-	dataSourceID := table.DataSourceID
-
-	// Get data source to retrieve organization scope for the LLM service
-	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
-	if err != nil {
-		return dto.IngestFileToTableResponse{}, fmt.Errorf("failed to find data source: %w", err)
-	}
-	if dataSource == nil || dataSource.WorkspaceID == nil {
-		return dto.IngestFileToTableResponse{}, fmt.Errorf("data source '%s' has no associated workspace scope", dataSourceID)
-	}
-	llmOrganizationID := organizationID
-
-	// 2. Get table columns
-	columns, err := s.GetTableColumns(ctx, organizationID, dataSourceID, req.TableID, false)
-	if err != nil {
-		return dto.IngestFileToTableResponse{}, fmt.Errorf("failed to get table columns: %w", err)
-	}
-
-	// 3. Get file content
-	content, err := s.extractDatabaseIngestionFileContent(ctx, req.FileID)
-	if err != nil {
-		return dto.IngestFileToTableResponse{}, fmt.Errorf("failed to get file content: %w", err)
-	}
-
-	// 4. Convert file content to table records using the data source's organization scope
-	records, err := s.convertFileContentToRecords(ctx, llmOrganizationID, accountID, content, columns, req.Prompt, req.Model)
-	if err != nil {
-		return dto.IngestFileToTableResponse{}, fmt.Errorf("failed to convert file content to records: %w", err)
-	}
-
-	return dto.IngestFileToTableResponse{
-		Records: records,
-		Columns: columns.Columns,
-		Message: fmt.Sprintf("Successfully parsed %d records from file", len(records)),
-		Content: content,
-	}, nil
-}
-
 // convertFileContentToRecords converts file content to table records using LLM
-func (s *dataSourceService) convertFileContentToRecords(ctx context.Context, tenantID, accountID, content string, columns dto.GetTableColumnsResponse, userPrompt *string, modelSpec *dto.ModelSpec) ([]map[string]interface{}, error) {
-	// Create column descriptions for prompt
-	var columnDescriptions strings.Builder
-	for _, col := range columns.Columns {
-		desc := "N/A"
-		if col.Description != nil {
-			desc = *col.Description
-		}
-		columnDescriptions.WriteString(fmt.Sprintf("- %s (%s): %s (IsRequired: %v)\n", col.Name, col.Type, desc, col.IsRequired))
+func (s *dataSourceService) convertFileContentToRecords(ctx context.Context, tenantID, accountID, content string, columns dto.GetTableColumnsResponse, userPrompt *string, modelSpec *dto.ModelSpec) ([]map[string]interface{}, *dto.FileIngestFieldExtraction, error) {
+	columnSchema, err := buildFileConversionColumnSchema(columns)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// Get prompt template
 	tmpl, err := prompt.GetTemplate(prompt.DatasourceFileConversion)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get prompt template: %w", err)
+		return nil, nil, fmt.Errorf("failed to get prompt template: %w", err)
 	}
 
 	// Prepare template data
@@ -2087,7 +2185,7 @@ func (s *dataSourceService) convertFileContentToRecords(ctx context.Context, ten
 		Content string
 		Prompt  *string
 	}{
-		Columns: columnDescriptions.String(),
+		Columns: columnSchema,
 		Content: content,
 		Prompt:  userPrompt,
 	}
@@ -2095,7 +2193,7 @@ func (s *dataSourceService) convertFileContentToRecords(ctx context.Context, ten
 	// Render prompt
 	promptText, err := tmpl.Render(templateData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to render prompt template: %w", err)
+		return nil, nil, fmt.Errorf("failed to render prompt template: %w", err)
 	}
 
 	// Build model slug from modelSpec
@@ -2114,74 +2212,390 @@ func (s *dataSourceService) convertFileContentToRecords(ctx context.Context, ten
 	// Call LLM via client
 	resp, err := s.llmClient.Chat(ctx, tenantID, chatReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert content with LLM: %w", err)
+		return nil, nil, fmt.Errorf("failed to convert content with LLM: %w", err)
 	}
 
 	if resp == nil || len(resp.Choices) == 0 {
-		return nil, fmt.Errorf("failed to convert content with LLM: empty response")
+		return nil, nil, fmt.Errorf("failed to convert content with LLM: empty response")
 	}
 
 	generatedContent, _ := resp.Choices[0].Message.Content.(string)
 	if generatedContent == "" {
-		return nil, fmt.Errorf("failed to convert content with LLM: empty result")
+		return nil, nil, fmt.Errorf("failed to convert content with LLM: empty result")
 	}
 
 	// Extract pure JSON content from the LLM response
 	cleanContent, err := s.extractJSONContent(generatedContent)
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract JSON from LLM response: %w", err)
+		return nil, nil, fmt.Errorf("failed to extract JSON from LLM response: %w", err)
 	}
 
-	// Parse the generated JSON
-	var records []map[string]interface{}
-	if err := json.Unmarshal([]byte(cleanContent), &records); err != nil {
-		return nil, fmt.Errorf("failed to parse LLM response: %w", err)
+	records, fieldExtraction, err := normalizeFileConversionOutput(cleanContent, columns)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse LLM response: %w", err)
 	}
 
-	// Validate records against table structure
-	for i, record := range records {
-		for _, col := range columns.Columns {
-			_, exists := record[col.Name]
-			if !exists && col.IsRequired {
-				return nil, fmt.Errorf("record %d is missing required field '%s'", i, col.Name)
-			}
+	return records, fieldExtraction, nil
+}
 
-			// Additional type validation could be added here
+func (s *dataSourceService) prepareDatabaseIngestionTable(ctx context.Context, organizationID, tableID string) (databaseIngestionTableContext, error) {
+	table, err := s.tableRepo.FindByID(ctx, tableID)
+	if err != nil {
+		return databaseIngestionTableContext{}, fmt.Errorf("failed to find table: %w", err)
+	}
+	if table == nil {
+		return databaseIngestionTableContext{}, fmt.Errorf("table with id '%s' not found", tableID)
+	}
+
+	dataSourceID := table.DataSourceID
+	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
+	if err != nil {
+		return databaseIngestionTableContext{}, fmt.Errorf("failed to find data source: %w", err)
+	}
+	if dataSource == nil || dataSource.WorkspaceID == nil {
+		return databaseIngestionTableContext{}, fmt.Errorf("data source '%s' has no associated workspace scope", dataSourceID)
+	}
+
+	columns, err := s.GetTableColumns(ctx, organizationID, dataSourceID, tableID, false)
+	if err != nil {
+		return databaseIngestionTableContext{}, fmt.Errorf("failed to get table columns: %w", err)
+	}
+
+	return databaseIngestionTableContext{
+		DataSourceID:      dataSourceID,
+		LLMOrganizationID: dataSource.OrganizationID,
+		Columns:           columns,
+	}, nil
+}
+
+// ParseFileForTableIngest parses a file into text content for table ingestion review.
+func (s *dataSourceService) ParseFileForTableIngest(ctx context.Context, organizationID, accountID string, req dto.ParseFileForTableIngestRequest) (dto.ParseFileForTableIngestResponse, error) {
+	if _, err := s.prepareDatabaseIngestionTable(ctx, organizationID, req.TableID); err != nil {
+		return dto.ParseFileForTableIngestResponse{}, err
+	}
+	result := s.parseDatabaseIngestionFileForTable(ctx, accountID, req.FileID)
+	logDatabaseIngestionFileParseResult(ctx, req.TableID, result)
+	return result, nil
+}
+
+// ExtractTextToTableRecords recognizes table records from previously parsed content.
+func (s *dataSourceService) ExtractTextToTableRecords(ctx context.Context, organizationID, accountID string, req dto.ExtractTextToTableRecordsRequest) (dto.ExtractTextToTableRecordsResponse, error) {
+	tableCtx, err := s.prepareDatabaseIngestionTable(ctx, organizationID, req.TableID)
+	if err != nil {
+		return dto.ExtractTextToTableRecordsResponse{}, err
+	}
+	result := s.extractDatabaseIngestionTextToRecords(ctx, tableCtx, accountID, req)
+	logDatabaseIngestionTextRecognitionResult(ctx, req.TableID, req.Model, result)
+	return result, nil
+}
+
+// IngestFileToTable ingests file content into a table.
+func (s *dataSourceService) IngestFileToTable(ctx context.Context, organizationID, accountID string, req dto.IngestFileToTableRequest) (dto.IngestFileToTableResponse, error) {
+	tableCtx, err := s.prepareDatabaseIngestionTable(ctx, organizationID, req.TableID)
+	if err != nil {
+		return dto.IngestFileToTableResponse{}, err
+	}
+
+	result := s.processDatabaseIngestionFile(ctx, tableCtx, accountID, req.TableID, req.FileID, req.Prompt, req.Model)
+	logDatabaseIngestionFileResult(ctx, req.TableID, result)
+	return dto.IngestFileToTableResponse{
+		FileID:          result.FileID,
+		FileName:        result.FileName,
+		Records:         result.Records,
+		Columns:         tableCtx.Columns.Columns,
+		Message:         result.Message,
+		Content:         result.Content,
+		Extraction:      result.Extraction,
+		FieldExtraction: result.FieldExtraction,
+		Stage:           result.Stage,
+		Error:           result.Error,
+	}, nil
+}
+
+func (s *dataSourceService) parseDatabaseIngestionFileForTable(ctx context.Context, accountID, fileID string) dto.ParseFileForTableIngestResponse {
+	fileInfo, err := s.fileService.GetFileByID(ctx, fileID)
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to get file info: %v", err)
+		return dto.ParseFileForTableIngestResponse{
+			FileID:  fileID,
+			Message: "",
+			Stage:   fileIngestStageParse,
+			Error:   &errMsg,
 		}
 	}
 
-	return records, nil
+	extraction, err := s.extractDatabaseIngestionFileInfoContent(ctx, accountID, fileInfo)
+	content := extraction.Content
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to get file content: %v", err)
+		return dto.ParseFileForTableIngestResponse{
+			FileID:     fileID,
+			FileName:   fileInfo.Name,
+			Message:    "",
+			Content:    content,
+			Extraction: fileIngestExtractionInfo(extraction, content),
+			Stage:      fileIngestStageParse,
+			Error:      &errMsg,
+		}
+	}
+
+	return dto.ParseFileForTableIngestResponse{
+		FileID:     fileID,
+		FileName:   fileInfo.Name,
+		Message:    "Successfully parsed file content",
+		Content:    content,
+		Extraction: fileIngestExtractionInfo(extraction, content),
+		Stage:      fileIngestStageParse,
+	}
+}
+
+func (s *dataSourceService) extractDatabaseIngestionTextToRecords(ctx context.Context, tableCtx databaseIngestionTableContext, accountID string, req dto.ExtractTextToTableRecordsRequest) dto.ExtractTextToTableRecordsResponse {
+	content := strings.TrimSpace(req.Content)
+	if content == "" {
+		errMsg := "parsed content is empty"
+		return dto.ExtractTextToTableRecordsResponse{
+			FileID:      req.FileID,
+			Records:     nil,
+			Columns:     tableCtx.Columns.Columns,
+			Message:     "",
+			ContentHash: req.ContentHash,
+			Stage:       fileIngestStageRecognition,
+			Error:       &errMsg,
+		}
+	}
+
+	contentHash := fileIngestContentHash(req.Content)
+	records, fieldExtraction, err := s.convertFileContentToRecords(ctx, tableCtx.LLMOrganizationID, accountID, req.Content, tableCtx.Columns, req.Prompt, req.Model)
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to convert file content to records: %v", err)
+		return dto.ExtractTextToTableRecordsResponse{
+			FileID:      req.FileID,
+			Records:     nil,
+			Columns:     tableCtx.Columns.Columns,
+			Message:     "",
+			ContentHash: contentHash,
+			Stage:       fileIngestStageRecognition,
+			Error:       &errMsg,
+		}
+	}
+
+	message := fmt.Sprintf("Successfully parsed %d records from file", len(records))
+	if len(records) == 0 {
+		message = "no records recognized from file"
+	}
+	return dto.ExtractTextToTableRecordsResponse{
+		FileID:          req.FileID,
+		Records:         records,
+		Columns:         tableCtx.Columns.Columns,
+		Message:         message,
+		FieldExtraction: fieldExtraction,
+		ContentHash:     contentHash,
+		Stage:           fileIngestStageRecognition,
+	}
+}
+
+func (s *dataSourceService) processDatabaseIngestionFile(ctx context.Context, tableCtx databaseIngestionTableContext, accountID, tableID, fileID string, prompt *string, modelSpec *dto.ModelSpec) dto.FileIngestResult {
+	parseResult := s.parseDatabaseIngestionFileForTable(ctx, accountID, fileID)
+	logDatabaseIngestionFileParseResult(ctx, tableID, parseResult)
+	if parseResult.Error != nil {
+		return dto.FileIngestResult{
+			FileID:     parseResult.FileID,
+			FileName:   parseResult.FileName,
+			Records:    nil,
+			Message:    "",
+			Content:    parseResult.Content,
+			Extraction: parseResult.Extraction,
+			Stage:      fileIngestStageParse,
+			Error:      parseResult.Error,
+		}
+	}
+
+	recognitionResult := s.extractDatabaseIngestionTextToRecords(ctx, tableCtx, accountID, dto.ExtractTextToTableRecordsRequest{
+		FileID:  fileID,
+		TableID: tableID,
+		Content: parseResult.Content,
+		ContentHash: func() string {
+			if parseResult.Extraction == nil {
+				return ""
+			}
+			return parseResult.Extraction.ContentHash
+		}(),
+		Prompt: prompt,
+		Model:  modelSpec,
+	})
+	logDatabaseIngestionTextRecognitionResult(ctx, tableID, modelSpec, recognitionResult)
+	extraction := databaseIngestionExtractionInfoFromDTO(parseResult.Extraction)
+	if recognitionResult.Error != nil {
+		updateFileIngestAttemptResult(&extraction, fileIngestAttemptMethodForExtraction(extraction), databaseIngestionAttemptResultError, *recognitionResult.Error, 0)
+		return dto.FileIngestResult{
+			FileID:     fileID,
+			FileName:   parseResult.FileName,
+			Records:    nil,
+			Message:    "",
+			Content:    parseResult.Content,
+			Extraction: fileIngestExtractionInfo(extraction, parseResult.Content),
+			Stage:      fileIngestStageRecognition,
+			Error:      recognitionResult.Error,
+		}
+	}
+
+	if len(recognitionResult.Records) > 0 {
+		updateFileIngestAttemptResult(&extraction, fileIngestAttemptMethodForExtraction(extraction), databaseIngestionAttemptResultRecords, "", len(recognitionResult.Records))
+	} else {
+		updateFileIngestAttemptResult(&extraction, fileIngestAttemptMethodForExtraction(extraction), databaseIngestionAttemptResultNoRecords, "no_records_recognized", 0)
+	}
+
+	return normalizeFileIngestResult(dto.FileIngestResult{
+		FileID:          fileID,
+		FileName:        parseResult.FileName,
+		Records:         recognitionResult.Records,
+		Message:         recognitionResult.Message,
+		Content:         parseResult.Content,
+		Extraction:      fileIngestExtractionInfo(extraction, parseResult.Content),
+		FieldExtraction: recognitionResult.FieldExtraction,
+		Stage:           fileIngestStageRecognition,
+		Error:           nil,
+	})
+}
+
+func databaseIngestionExtractionInfoFromDTO(info *dto.FileIngestExtractionInfo) databaseIngestionExtractionResult {
+	if info == nil {
+		return databaseIngestionExtractionResult{}
+	}
+	return databaseIngestionExtractionResult{
+		PrimaryStrategy: info.PrimaryStrategy,
+		ActualStrategy:  info.ActualStrategy,
+		FallbackReason:  info.FallbackReason,
+		SourceType:      info.SourceType,
+		Attempts:        append([]dto.FileIngestAttempt(nil), info.Attempts...),
+	}
+}
+
+func normalizeFileIngestResult(result dto.FileIngestResult) dto.FileIngestResult {
+	if result.Error == nil && len(result.Records) == 0 {
+		if strings.TrimSpace(result.Content) == "" {
+			errMsg := "no records recognized from file"
+			result.Error = &errMsg
+			result.Message = ""
+		} else if strings.TrimSpace(result.Message) == "" ||
+			strings.HasPrefix(result.Message, "Successfully parsed 0 records") {
+			result.Message = "no records recognized from file"
+		}
+	}
+	return result
+}
+
+func logDatabaseIngestionFileParseResult(ctx context.Context, tableID string, result dto.ParseFileForTableIngestResponse) {
+	contentHash := ""
+	sourceType := ""
+	var attempts []dto.FileIngestAttempt
+	if result.Extraction != nil {
+		contentHash = result.Extraction.ContentHash
+		sourceType = result.Extraction.SourceType
+		attempts = result.Extraction.Attempts
+	}
+	errorMessage := ""
+	if result.Error != nil {
+		errorMessage = *result.Error
+	}
+	logger.InfoContext(ctx, "database ingestion file parse stage completed",
+		"table_id", tableID,
+		"file_id", result.FileID,
+		"file_name", result.FileName,
+		"stage", fileIngestStageParse,
+		"error", errorMessage,
+		"content_chars", len([]rune(result.Content)),
+		"content_hash", contentHash,
+		"source_type", sourceType,
+		"attempts", attempts,
+	)
+}
+
+func logDatabaseIngestionTextRecognitionResult(ctx context.Context, tableID string, modelSpec *dto.ModelSpec, result dto.ExtractTextToTableRecordsResponse) {
+	errorMessage := ""
+	if result.Error != nil {
+		errorMessage = *result.Error
+	}
+	modelName := ""
+	modelProvider := ""
+	if modelSpec != nil {
+		modelName = modelSpec.Name
+		modelProvider = modelSpec.Provider
+	}
+	logger.InfoContext(ctx, "database ingestion text recognition stage completed",
+		"table_id", tableID,
+		"file_id", result.FileID,
+		"stage", fileIngestStageRecognition,
+		"error", errorMessage,
+		"record_count", len(result.Records),
+		"content_hash", result.ContentHash,
+		"model_provider", modelProvider,
+		"model_name", modelName,
+	)
+}
+
+func logDatabaseIngestionFileResult(ctx context.Context, tableID string, result dto.FileIngestResult) {
+	primaryStrategy := ""
+	actualStrategy := ""
+	fallbackReason := ""
+	sourceType := ""
+	contentHash := ""
+	var attempts []dto.FileIngestAttempt
+	if result.Extraction != nil {
+		primaryStrategy = result.Extraction.PrimaryStrategy
+		actualStrategy = result.Extraction.ActualStrategy
+		fallbackReason = result.Extraction.FallbackReason
+		sourceType = result.Extraction.SourceType
+		contentHash = result.Extraction.ContentHash
+		attempts = result.Extraction.Attempts
+	}
+	if result.Error == nil && len(result.Records) > 0 {
+		logger.InfoContext(ctx, "database ingestion file produced importable records",
+			"table_id", tableID,
+			"file_id", result.FileID,
+			"file_name", result.FileName,
+			"stage", result.Stage,
+			"record_count", len(result.Records),
+			"content_chars", len([]rune(result.Content)),
+			"content_hash", contentHash,
+			"source_type", sourceType,
+			"primary_strategy", primaryStrategy,
+			"actual_strategy", actualStrategy,
+			"fallback_reason", fallbackReason,
+			"attempts", attempts,
+		)
+		return
+	}
+
+	errorMessage := ""
+	if result.Error != nil {
+		errorMessage = *result.Error
+	}
+	logger.WarnContext(ctx, "database ingestion file produced no importable records",
+		"table_id", tableID,
+		"file_id", result.FileID,
+		"file_name", result.FileName,
+		"stage", result.Stage,
+		"error", errorMessage,
+		"record_count", len(result.Records),
+		"content_chars", len([]rune(result.Content)),
+		"content_hash", contentHash,
+		"source_type", sourceType,
+		"primary_strategy", primaryStrategy,
+		"actual_strategy", actualStrategy,
+		"fallback_reason", fallbackReason,
+		"attempts", attempts,
+	)
 }
 
 // BatchIngestFileToTable processes multiple files and converts their content to table records
 func (s *dataSourceService) BatchIngestFileToTable(ctx context.Context, organizationID, accountID string, req dto.BatchIngestFileToTableRequest) (dto.BatchIngestFileToTableResponse, error) {
-	// 1. Validate table existence
-	table, err := s.tableRepo.FindByID(ctx, req.TableID)
+	tableCtx, err := s.prepareDatabaseIngestionTable(ctx, organizationID, req.TableID)
 	if err != nil {
-		return dto.BatchIngestFileToTableResponse{}, fmt.Errorf("failed to find table: %w", err)
-	}
-	if table == nil {
-		return dto.BatchIngestFileToTableResponse{}, fmt.Errorf("table with id '%s' not found", req.TableID)
-	}
-	dataSourceID := table.DataSourceID
-
-	// Get data source to retrieve organization scope for the LLM service
-	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
-	if err != nil {
-		return dto.BatchIngestFileToTableResponse{}, fmt.Errorf("failed to find data source: %w", err)
-	}
-	if dataSource == nil || dataSource.WorkspaceID == nil {
-		return dto.BatchIngestFileToTableResponse{}, fmt.Errorf("data source '%s' has no associated workspace scope", dataSourceID)
-	}
-	llmOrganizationID := dataSource.OrganizationID
-
-	// 2. Get table columns
-	columns, err := s.GetTableColumns(ctx, organizationID, dataSourceID, req.TableID, false)
-	if err != nil {
-		return dto.BatchIngestFileToTableResponse{}, fmt.Errorf("failed to get table columns: %w", err)
+		return dto.BatchIngestFileToTableResponse{}, err
 	}
 
-	// 3. Process each file with concurrency control
+	// Process each file with concurrency control
 	results := make(map[string]dto.FileIngestResult)
 	successCount := 0
 
@@ -2206,73 +2620,11 @@ func (s *dataSourceService) BatchIngestFileToTable(ctx context.Context, organiza
 			// Release semaphore when done
 			defer func() { <-semaphore }()
 
-			// Get file info to retrieve file name
-			fileInfo, err := s.fileService.GetFileByID(ctx, id)
-			if err != nil {
-				errMsg := fmt.Sprintf("failed to get file info: %v", err)
-				resultChan <- result{
-					fileID: id,
-					result: dto.FileIngestResult{
-						FileID:   id,
-						FileName: "", // Can't retrieve file name if there's an error getting file info
-						Records:  nil,
-						Message:  "",
-						Error:    &errMsg,
-					},
-					err: nil, // Not an error in processing, just a file error
-				}
-				return
-			}
-
-			// Get file content
-			content, err := s.extractDatabaseIngestionFileContent(ctx, id)
-			if err != nil {
-				errMsg := fmt.Sprintf("failed to get file content: %v", err)
-				resultChan <- result{
-					fileID: id,
-					result: dto.FileIngestResult{
-						FileID:   id,
-						FileName: fileInfo.Name,
-						Records:  nil,
-						Message:  "",
-						Content:  content,
-						Error:    &errMsg,
-					},
-					err: nil,
-				}
-				return
-			}
-
-			// Convert file content to table records using the data source's organization scope
-			records, err := s.convertFileContentToRecords(ctx, llmOrganizationID, accountID, content, columns, req.Prompt, req.Model)
-			if err != nil {
-				errMsg := fmt.Sprintf("failed to convert file content to records: %v", err)
-				resultChan <- result{
-					fileID: id,
-					result: dto.FileIngestResult{
-						FileID:   id,
-						FileName: fileInfo.Name,
-						Records:  nil,
-						Message:  "",
-						Content:  content,
-						Error:    &errMsg,
-					},
-					err: nil,
-				}
-				return
-			}
-
+			fileResult := s.processDatabaseIngestionFile(ctx, tableCtx, accountID, req.TableID, id, req.Prompt, req.Model)
 			resultChan <- result{
 				fileID: id,
-				result: dto.FileIngestResult{
-					FileID:   id,
-					FileName: fileInfo.Name,
-					Records:  records,
-					Message:  fmt.Sprintf("Successfully parsed %d records from file", len(records)),
-					Content:  content,
-					Error:    nil,
-				},
-				err: nil,
+				result: fileResult,
+				err:    nil,
 			}
 		}(fileID)
 	}
@@ -2288,16 +2640,35 @@ func (s *dataSourceService) BatchIngestFileToTable(ctx context.Context, organiza
 
 	// Collect results
 	for res := range resultChan {
-		results[res.fileID] = res.result
-		if res.result.Error == nil {
+		fileResult := normalizeFileIngestResult(res.result)
+		results[res.fileID] = fileResult
+		if fileResult.Error == nil && len(fileResult.Records) > 0 {
 			successCount++
 		}
+		logDatabaseIngestionFileResult(ctx, req.TableID, fileResult)
+	}
+
+	totalCount := len(req.FileIDs)
+	failedCount := totalCount - successCount
+	message := fmt.Sprintf("Successfully processed %d out of %d files", successCount, totalCount)
+	switch {
+	case totalCount == 0:
+		message = "No files were provided"
+	case failedCount == 0:
+		message = fmt.Sprintf("Successfully processed %d out of %d files", successCount, totalCount)
+	case successCount == 0:
+		message = fmt.Sprintf("Failed to process %d files", totalCount)
+	default:
+		message = fmt.Sprintf("Processed %d out of %d files; %d failed", successCount, totalCount, failedCount)
 	}
 
 	return dto.BatchIngestFileToTableResponse{
-		Results: results,
-		Columns: columns.Columns,
-		Message: fmt.Sprintf("Successfully processed %d out of %d files", successCount, len(req.FileIDs)),
+		Results:      results,
+		Columns:      tableCtx.Columns.Columns,
+		Message:      message,
+		TotalCount:   totalCount,
+		SuccessCount: successCount,
+		FailedCount:  failedCount,
 	}, nil
 }
 
@@ -2309,7 +2680,7 @@ func (s *dataSourceService) GetTablePrompt(ctx context.Context, tableID string, 
 		return nil, fmt.Errorf("failed to find table: %w", err)
 	}
 	if table == nil {
-		return nil, fmt.Errorf("table with id '%s' not found", tableID)
+		return nil, fmt.Errorf("%w: %s", errDataSourceTableNotFound, tableID)
 	}
 
 	// Try to find existing prompt
@@ -2553,20 +2924,96 @@ func (s *dataSourceService) getDefaultForType(colType string, isRequired bool) (
 
 // logSQLOperation logs the SQL statement for audit purposes
 func (s *dataSourceService) logSQLOperation(ctx context.Context, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, operation, sqlStatement string) error {
+	now := time.Now()
+	return s.logSQLOperationWithResult(ctx, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, operation, sqlStatement, now, now, nil, guard.Result{}, false)
+}
+
+func (s *dataSourceService) auditSQLOperation(ctx context.Context, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, operation, sqlStatement string, execute func() error) error {
+	start := time.Now()
+	guardResult, guarded, guardErr := s.evaluateGuardForAuditedSQL(ctx, dataSourceID, sqlStatement)
+	var err error
+	if guardErr != nil {
+		err = guardErr
+	} else {
+		err = execute()
+	}
+	end := time.Now()
+	if logErr := s.logSQLOperationWithResult(ctx, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, operation, sqlStatement, start, end, err, guardResult, guarded); logErr != nil {
+		logger.ErrorContext(ctx, "failed to audit sql operation", "data_source_id", dataSourceID, "table_id", tableID, logErr)
+	}
+	return err
+}
+
+func (s *dataSourceService) evaluateGuardForAuditedSQL(ctx context.Context, dataSourceID, sqlStatement string) (guard.Result, bool, error) {
+	if dataSourceID == "" || s.repo == nil {
+		return guard.Result{}, false, nil
+	}
+	dataSource, err := s.repo.FindByID(ctx, dataSourceID)
+	if err != nil {
+		return guard.Result{}, false, fmt.Errorf("failed to find data source for sql guard: %w", err)
+	}
+	if dataSource == nil {
+		return guard.Result{}, false, fmt.Errorf("data source with id '%s' not found for sql guard", dataSourceID)
+	}
+	policy, err := guard.ParsePolicyJSON([]byte(dataSource.GuardPolicy))
+	if err != nil {
+		return guard.Result{}, false, fmt.Errorf("failed to parse sql guard policy: %w", err)
+	}
+	result := guard.Check(sqlStatement, policy)
+	if result.Action == guard.ActionDeny {
+		return result, true, &guard.DeniedError{Result: result}
+	}
+	return result, true, nil
+}
+
+func (s *dataSourceService) logSQLOperationWithResult(ctx context.Context, organizationID, dataSourceID, tableID, dataSourceName, tableName, accountID, operation, sqlStatement string, start, end time.Time, execErr error, guardResult guard.Result, guarded bool) error {
+	now := time.Now()
+	workspaceID := organizationID
+	if dataSourceID != "" && s.repo != nil {
+		if dataSource, err := s.repo.FindByID(ctx, dataSourceID); err == nil && dataSource != nil {
+			workspaceID = auditWorkspaceID(organizationID, dataSource.WorkspaceID)
+		}
+	}
+	durationMS := end.Sub(start).Milliseconds()
+	status := string(model.OperationStatusSuccess)
+	var errorMessage *string
+	if execErr != nil {
+		status = string(model.OperationStatusFailed)
+		msg := execErr.Error()
+		errorMessage = &msg
+	}
+
 	// Create operation log entry
 	log := &model.DataSourceSQLOperation{
 		OrganizationID: organizationID,
+		WorkspaceID:    &workspaceID,
 		DataSourceID:   dataSourceID,
 		TableID:        nil, // Initialize as nil
 		TableName:      nil, // Initialize as nil
 		DataSourceName: nil, // Initialize as nil
 		SqlStatement:   sqlStatement,
 		OperationType:  operation,
-		StartTime:      time.Now(),
-		EndTime:        time.Now(),
-		Status:         string(model.OperationStatusSuccess), // Assuming success for now
+		ClientType:     string(audit.ClientTypeAPI),
+		DurationMS:     &durationMS,
+		ErrorMessage:   errorMessage,
+		ExecutedAt:     &start,
+		StartTime:      start,
+		EndTime:        end,
+		Status:         status,
 		CreatedBy:      accountID,
-		CreatedAt:      time.Now(),
+		CreatedAt:      now,
+	}
+	if guarded {
+		verdict := string(guardResult.Verdict)
+		action := string(guardResult.Action)
+		log.GuardVerdict = &verdict
+		log.GuardAction = &action
+		if reasons, err := json.Marshal(guardResult.Reasons); err == nil {
+			log.GuardReasons = reasons
+		}
+		if policy, err := json.Marshal(guardResult.Policy); err == nil {
+			log.GuardPolicy = policy
+		}
 	}
 
 	// Only set TableID if it's not empty
@@ -2675,6 +3122,30 @@ func (s *dataSourceService) CountOperationLogsByDataSourceID(ctx context.Context
 	return count, nil
 }
 
+func (s *dataSourceService) ListSQLAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter, limit, offset int) ([]*model.DataSourceSQLOperation, error) {
+	logs, err := s.sqlOperationRepo.ListAuditByWorkspace(ctx, organizationID, workspaceID, filters, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sql audit records: %w", err)
+	}
+	return logs, nil
+}
+
+func (s *dataSourceService) CountSQLAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter) (int64, error) {
+	count, err := s.sqlOperationRepo.CountAuditByWorkspace(ctx, organizationID, workspaceID, filters)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count sql audit records: %w", err)
+	}
+	return count, nil
+}
+
+func (s *dataSourceService) GetSQLAuditDetail(ctx context.Context, organizationID, workspaceID, operationID string) (*model.DataSourceSQLOperation, error) {
+	record, err := s.sqlOperationRepo.FindAuditByWorkspaceAndID(ctx, organizationID, workspaceID, operationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sql audit record: %w", err)
+	}
+	return record, nil
+}
+
 // GenerateTableTemplateExcel generates an Excel template for a table
 func (s *dataSourceService) GenerateTableTemplateExcel(ctx context.Context, organizationID, dataSourceID, tableID string) ([]byte, error) {
 	// Get table columns without system fields
@@ -2753,7 +3224,7 @@ func (s *dataSourceService) getExampleValueForType(dataType string) string {
 }
 
 // ImportTableRecords imports records from an Excel file
-func (s *dataSourceService) ImportTableRecords(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, file io.Reader, fileName string) (dto.ImportRecordResponse, error) {
+func (s *dataSourceService) ImportTableRecords(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, file io.Reader, fileName string, skipUnmatchedColumns bool) (dto.ImportRecordResponse, error) {
 	// 1. Validate data source and table existence
 	_, _, err := s.validateDataSourceAndTable(ctx, organizationID, dataSourceID, tableID)
 	if err != nil {
@@ -2767,7 +3238,7 @@ func (s *dataSourceService) ImportTableRecords(ctx context.Context, organization
 	}
 
 	// 3. Parse Excel file
-	records, err := s.parseExcelFile(file, fileName, columnsResp.Columns)
+	records, err := s.parseExcelFile(file, fileName, columnsResp.Columns, skipUnmatchedColumns)
 	if err != nil {
 		return dto.ImportRecordResponse{}, fmt.Errorf("failed to parse Excel file: %w", err)
 	}
@@ -2794,7 +3265,7 @@ func (s *dataSourceService) ImportTableRecords(ctx context.Context, organization
 	return response, nil
 }
 
-func (s *dataSourceService) ImportTableRecordsFromUploadFile(ctx context.Context, organizationID, dataSourceID, tableID, accountID, uploadFileID string) (dto.ImportRecordResponse, error) {
+func (s *dataSourceService) ImportTableRecordsFromUploadFile(ctx context.Context, organizationID, dataSourceID, tableID, accountID, uploadFileID string, skipUnmatchedColumns bool) (dto.ImportRecordResponse, error) {
 	fileInfo, err := s.fileService.GetFileByID(ctx, uploadFileID)
 	if err != nil {
 		return dto.ImportRecordResponse{}, fmt.Errorf("failed to get file: %w", err)
@@ -2806,7 +3277,7 @@ func (s *dataSourceService) ImportTableRecordsFromUploadFile(ctx context.Context
 	if err != nil {
 		return dto.ImportRecordResponse{}, fmt.Errorf("failed to download file: %w", err)
 	}
-	return s.ImportTableRecords(ctx, organizationID, dataSourceID, tableID, accountID, bytes.NewReader(content), fileInfo.Name)
+	return s.ImportTableRecords(ctx, organizationID, dataSourceID, tableID, accountID, bytes.NewReader(content), fileInfo.Name, skipUnmatchedColumns)
 }
 
 func (s *dataSourceService) AnalyzeExcelImport(ctx context.Context, organizationID, dataSourceID, accountID string, req dto.AnalyzeExcelImportRequest) (dto.AnalyzeExcelImportData, error) {
@@ -2935,6 +3406,28 @@ func (s *dataSourceService) ConfirmExcelImport(ctx context.Context, organization
 		return dto.ConfirmExcelImportData{}, cause
 	}
 
+	createImportTable := func() (*model.Table, error) {
+		description := ""
+		if req.Table.Description != nil {
+			description = *req.Table.Description
+		}
+		table, err := s.CreateTable(ctx, organizationID, dataSourceID, accountID, dto.CreateTableRequest{
+			Name:        req.Table.Name,
+			Description: description,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create table: %w", err)
+		}
+
+		columns := excelImportTableColumns(req.Columns)
+		if len(columns) > 0 {
+			if err := s.UpdateTableColumns(ctx, organizationID, dataSourceID, table.ID, accountID, dto.UpdateTableColumnsRequest{Columns: columns}); err != nil {
+				return table, fmt.Errorf("failed to create columns: %w", err)
+			}
+		}
+		return table, nil
+	}
+
 	if job.UploadFileID == nil || *job.UploadFileID == "" {
 		return failImport(fmt.Errorf("import job has no upload file"), nil)
 	}
@@ -2972,35 +3465,9 @@ func (s *dataSourceService) ConfirmExcelImport(ctx context.Context, organization
 		return failImport(fmt.Errorf("import stopped after the first invalid row"), nil)
 	}
 
-	description := ""
-	if req.Table.Description != nil {
-		description = *req.Table.Description
-	}
-	table, err := s.CreateTable(ctx, organizationID, dataSourceID, accountID, dto.CreateTableRequest{
-		Name:        req.Table.Name,
-		Description: description,
-	})
+	table, err := createImportTable()
 	if err != nil {
-		return failImport(fmt.Errorf("failed to create table: %w", err), nil)
-	}
-
-	columns := make([]dto.TableColumn, 0, len(req.Columns))
-	for _, col := range req.Columns {
-		if col.Enabled != nil && !*col.Enabled {
-			continue
-		}
-		desc := col.Description
-		columns = append(columns, dto.TableColumn{
-			Name:        col.Name,
-			Description: &desc,
-			Type:        col.Type,
-			IsRequired:  col.IsRequired,
-		})
-	}
-	if len(columns) > 0 {
-		if err := s.UpdateTableColumns(ctx, organizationID, dataSourceID, table.ID, accountID, dto.UpdateTableColumnsRequest{Columns: columns}); err != nil {
-			return failImport(fmt.Errorf("failed to create columns: %w", err), &table.ID)
-		}
+		return failImport(err, excelImportCleanupTableID(table))
 	}
 
 	importedRows := 0
@@ -3058,6 +3525,39 @@ func (s *dataSourceService) ConfirmExcelImport(ctx context.Context, organization
 		FailedRows:   countExcelImportFailedRows(validation.Errors),
 		FailedItems:  validation.Errors,
 	}, nil
+}
+
+func excelImportCleanupTableID(table *model.Table) *string {
+	if table == nil || table.ID == "" {
+		return nil
+	}
+	return &table.ID
+}
+
+func excelImportTableColumns(columns []dto.InferredExcelColumn) []dto.TableColumn {
+	out := make([]dto.TableColumn, 0, len(columns))
+	for _, col := range columns {
+		if col.Enabled != nil && !*col.Enabled {
+			continue
+		}
+		desc := strings.TrimSpace(col.Description)
+		displayName := strings.TrimSpace(col.DisplayName)
+		sourceColumn := strings.TrimSpace(col.SourceColumn)
+		tableColumn := dto.TableColumn{
+			Name:        strings.TrimSpace(col.Name),
+			Description: &desc,
+			Type:        strings.TrimSpace(col.Type),
+			IsRequired:  col.IsRequired,
+		}
+		if displayName != "" {
+			tableColumn.DisplayName = &displayName
+		}
+		if sourceColumn != "" {
+			tableColumn.SourceColumnName = &sourceColumn
+		}
+		out = append(out, tableColumn)
+	}
+	return out
 }
 
 func (s *dataSourceService) ensureExcelImportFileReadable(ctx context.Context, organizationID, accountID string, uploadFile *dto.UploadFile) error {
@@ -3202,7 +3702,7 @@ func convertExcelImportJob(job *excelimportmodel.ImportJob) *dto.ExcelImportJobR
 }
 
 // parseExcelFile parses an Excel file and converts it to records
-func (s *dataSourceService) parseExcelFile(file io.Reader, fileName string, columns []dto.TableColumn) ([]map[string]interface{}, error) {
+func (s *dataSourceService) parseExcelFile(file io.Reader, fileName string, columns []dto.TableColumn, skipUnmatchedColumns bool) ([]map[string]interface{}, error) {
 	// Read the file content
 	fileContent, err := io.ReadAll(file)
 	if err != nil {
@@ -3226,17 +3726,34 @@ func (s *dataSourceService) parseExcelFile(file io.Reader, fileName string, colu
 	// First row is header
 	header := rows[0]
 
-	// Validate headers match table columns
 	columnMap := make(map[string]dto.TableColumn)
 	for _, col := range columns {
 		columnMap[col.Name] = col
 	}
 
-	// Check if all headers exist in table columns
-	for _, headerName := range header {
-		if _, exists := columnMap[headerName]; !exists {
+	type matchedColumn struct {
+		index int
+		name  string
+		info  dto.TableColumn
+	}
+	matchedColumns := make([]matchedColumn, 0, len(header))
+	matchedColumnNames := make(map[string]struct{})
+	for colIndex, headerName := range header {
+		columnInfo, exists := columnMap[headerName]
+		if !exists {
+			if skipUnmatchedColumns {
+				continue
+			}
 			return nil, fmt.Errorf("column '%s' does not exist in table", headerName)
 		}
+		matchedColumns = append(matchedColumns, matchedColumn{index: colIndex, name: headerName, info: columnInfo})
+		matchedColumnNames[headerName] = struct{}{}
+	}
+	if len(matchedColumns) == 0 {
+		return nil, fmt.Errorf("no matching columns found in Excel header")
+	}
+	if missing := missingRequiredImportColumns(columns, matchedColumnNames); len(missing) > 0 {
+		return nil, fmt.Errorf("missing required columns: %s", strings.Join(missing, ", "))
 	}
 
 	// Convert data rows to records
@@ -3247,21 +3764,18 @@ func (s *dataSourceService) parseExcelFile(file io.Reader, fileName string, colu
 		}
 
 		record := make(map[string]interface{})
-		for colIndex, cellValue := range row {
-			if colIndex >= len(header) {
-				continue // Skip if more cells than headers
+		for _, matched := range matchedColumns {
+			if matched.index >= len(row) {
+				continue
 			}
-
-			columnName := header[colIndex]
-			columnInfo := columnMap[columnName]
 
 			// Convert cell value based on column type
-			convertedValue, err := s.convertCellValue(cellValue, columnInfo.Type, columnInfo.IsRequired)
+			convertedValue, err := s.convertCellValue(row[matched.index], matched.info.Type, matched.info.IsRequired)
 			if err != nil {
-				return nil, fmt.Errorf("error converting value in row %d, column '%s': %w", rowIndex+2, columnName, err)
+				return nil, fmt.Errorf("error converting value in row %d, column '%s': %w", rowIndex+2, matched.name, err)
 			}
 
-			record[columnName] = convertedValue
+			record[matched.name] = convertedValue
 		}
 
 		// Validate required fields
@@ -3272,10 +3786,27 @@ func (s *dataSourceService) parseExcelFile(file io.Reader, fileName string, colu
 			}
 		}
 
+		if len(record) == 0 {
+			continue
+		}
+
 		records = append(records, record)
 	}
 
 	return records, nil
+}
+
+func missingRequiredImportColumns(columns []dto.TableColumn, matchedColumnNames map[string]struct{}) []string {
+	missing := make([]string, 0)
+	for _, col := range columns {
+		if !col.IsRequired {
+			continue
+		}
+		if _, exists := matchedColumnNames[col.Name]; !exists {
+			missing = append(missing, col.Name)
+		}
+	}
+	return missing
 }
 
 // convertCellValue converts a cell value to the appropriate type

@@ -23,6 +23,21 @@ import (
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
+func TestShouldStreamSkillPlanningIncludesQwenProvider(t *testing.T) {
+	prepared := &PreparedChat{parts: &chatRequestParts{Provider: " qWeN "}}
+
+	if !shouldStreamSkillPlanning(prepared) {
+		t.Fatal("shouldStreamSkillPlanning(qwen) = false, want true")
+	}
+}
+
+func TestShouldStreamSkillPlanningIncludesQwQModelWithoutProvider(t *testing.T) {
+	prepared := &PreparedChat{parts: &chatRequestParts{ModelName: " qwen/qwq-plus "}}
+
+	if !shouldStreamSkillPlanning(prepared) {
+		t.Fatal("shouldStreamSkillPlanning(qwq-plus) = false, want true")
+	}
+}
 func TestFinalizePreparedErrorSetsFailedMessageAsCurrentLeaf(t *testing.T) {
 	conversationID := uuid.New()
 	messageID := uuid.New()
@@ -262,7 +277,8 @@ Write concise briefs.
 			{
 				Choices: []adapter.Choice{{
 					Message: adapter.Message{
-						Role: "assistant",
+						Content: "I can help, but I need a few details first.",
+						Role:    "assistant",
 						ToolCalls: []adapter.ToolCall{{
 							ID:   "call_1",
 							Type: "function",
@@ -436,7 +452,7 @@ Use the calculator tool.
 	}
 }
 
-func TestRunPreparedSkillStreamStopsAfterConsecutiveFailedSkillToolCalls(t *testing.T) {
+func TestRunPreparedSkillStreamAllowsBatchRecoverableSkillToolFailures(t *testing.T) {
 	catalogDir := t.TempDir()
 	writeTestSkill(t, catalogDir, "limited-calculator", `---
 name: limited-calculator
@@ -454,8 +470,8 @@ max_calls_per_turn: 20
 
 Use the calculator tool.
 `)
-	toolCalls := make([]adapter.ToolCall, 0, defaultMaxConsecutiveRecoverableFailures+1)
-	for i := 0; i <= defaultMaxConsecutiveRecoverableFailures; i++ {
+	toolCalls := make([]adapter.ToolCall, 0, 10)
+	for i := 0; i < 10; i++ {
 		toolCalls = append(toolCalls, testSkillToolCall(
 			fmt.Sprintf("call_bad_%d", i),
 			"limited-calculator",
@@ -486,6 +502,11 @@ Use the calculator tool.
 						Role:      "assistant",
 						ToolCalls: toolCalls,
 					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "replanned after batch failures"},
 				}},
 			},
 		},
@@ -526,12 +547,229 @@ Use the calculator tool.
 		},
 	}
 
+	answer, _, err := svc.runPreparedSkillStream(context.Background(), context.Background(), prepared, nil, nil)
+	if err != nil {
+		t.Fatalf("runPreparedSkillStream() error = %v, want batch failures to be returned before replanning", err)
+	}
+	if answer != "replanned after batch failures" {
+		t.Fatalf("answer = %q, want final answer after batch failure round", answer)
+	}
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want 3", fakeLLM.appChatCalls)
+	}
+	if len(fakeLLM.appChatRequests) != 3 {
+		t.Fatalf("AppChat requests = %d, want 3", len(fakeLLM.appChatRequests))
+	}
+	toolResponseCount := 0
+	for _, message := range fakeLLM.appChatRequests[2].Messages {
+		if message.Role == "tool" {
+			toolResponseCount++
+		}
+	}
+	if toolResponseCount < len(toolCalls)+1 {
+		t.Fatalf("tool responses before replan = %d, want at least load + %d failed tool responses", toolResponseCount, len(toolCalls))
+	}
+}
+
+func TestRunPreparedSkillStreamStopsAfterConsecutiveFailedSkillRounds(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeTestSkill(t, catalogDir, "limited-calculator", `---
+name: limited-calculator
+description: Calculate with a low per-turn success limit.
+when_to_use: Use when testing tool call limits.
+provider_type: builtin
+provider_id: calculator
+runtime_type: tool
+tools:
+  - evaluate_expression
+max_calls_per_turn: 20
+---
+
+# Limited Calculator
+
+Use the calculator tool.
+`)
+	responses := []*adapter.ChatResponse{
+		{
+			Choices: []adapter.Choice{{
+				Message: adapter.Message{
+					Role: "assistant",
+					ToolCalls: []adapter.ToolCall{{
+						ID:   "call_load",
+						Type: "function",
+						Function: adapter.FunctionCall{
+							Name:      skills.MetaToolLoadSkill,
+							Arguments: `{"skill_id":"limited-calculator"}`,
+						},
+					}},
+				},
+			}},
+		},
+	}
+	for i := 0; i <= defaultMaxConsecutiveRecoverableFailureRounds; i++ {
+		responses = append(responses, &adapter.ChatResponse{
+			Choices: []adapter.Choice{{
+				Message: adapter.Message{
+					Role: "assistant",
+					ToolCalls: []adapter.ToolCall{
+						testSkillToolCall(
+							fmt.Sprintf("call_bad_round_%d", i),
+							"limited-calculator",
+							"evaluate_expression",
+							map[string]interface{}{"expression": "1/"},
+						),
+					},
+				},
+			}},
+		})
+	}
+	fakeLLM := &fakeAgenticLLMClient{appChatResponses: responses}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
+		t.Fatalf("register calculator provider: %v", err)
+	}
+	svc := &service{
+		repos: &repository.Repositories{
+			Message:     &recordingMessageRepository{},
+			CustomSkill: &fakeCustomSkillRepository{items: map[string]*aichatmodel.CustomSkill{}},
+		},
+		llmClient:    fakeLLM,
+		events:       newStreamEventStore(nil),
+		skillRuntime: skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir),
+	}
+	prepared := &PreparedChat{
+		Conversation: &aichatmodel.Conversation{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		Message: &aichatmodel.Message{
+			ID:       uuid.New(),
+			Metadata: map[string]interface{}{},
+		},
+		LLMRequest: &adapter.ChatRequest{
+			Messages: []adapter.Message{{Role: "user", Content: "calculate several expressions"}},
+		},
+		Scope: Scope{
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		parts: &chatRequestParts{
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{"limited-calculator"},
+		},
+	}
+
 	_, _, err := svc.runPreparedSkillStream(context.Background(), context.Background(), prepared, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "too many failed skill calls") {
-		t.Fatalf("runPreparedSkillStream() error = %v, want failed skill call limit", err)
+		t.Fatalf("runPreparedSkillStream() error = %v, want failed skill round limit", err)
 	}
-	if fakeLLM.appChatCalls != 2 {
-		t.Fatalf("AppChat calls = %d, want 2", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != defaultMaxConsecutiveRecoverableFailureRounds+2 {
+		t.Fatalf("AppChat calls = %d, want %d", fakeLLM.appChatCalls, defaultMaxConsecutiveRecoverableFailureRounds+2)
+	}
+}
+
+func TestRunPreparedSkillStreamStopsAfterTotalRecoverableFailureRounds(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeTestSkill(t, catalogDir, "limited-calculator", `---
+name: limited-calculator
+description: Calculate with a low per-turn success limit.
+when_to_use: Use when testing tool call limits.
+provider_type: builtin
+provider_id: calculator
+runtime_type: tool
+tools:
+  - evaluate_expression
+max_calls_per_turn: 50
+---
+
+# Limited Calculator
+
+Use the calculator tool.
+`)
+	responses := []*adapter.ChatResponse{
+		{
+			Choices: []adapter.Choice{{
+				Message: adapter.Message{
+					Role: "assistant",
+					ToolCalls: []adapter.ToolCall{{
+						ID:   "call_load",
+						Type: "function",
+						Function: adapter.FunctionCall{
+							Name:      skills.MetaToolLoadSkill,
+							Arguments: `{"skill_id":"limited-calculator"}`,
+						},
+					}},
+				},
+			}},
+		},
+	}
+	for i := 0; i <= defaultMaxRecoverableFailureRounds; i++ {
+		responses = append(responses, &adapter.ChatResponse{
+			Choices: []adapter.Choice{{
+				Message: adapter.Message{
+					Role: "assistant",
+					ToolCalls: []adapter.ToolCall{
+						testSkillToolCall(
+							fmt.Sprintf("call_bad_round_%d", i),
+							"limited-calculator",
+							"evaluate_expression",
+							map[string]interface{}{"expression": "1/"},
+						),
+						testSkillToolCall(
+							fmt.Sprintf("call_ok_round_%d", i),
+							"limited-calculator",
+							"evaluate_expression",
+							map[string]interface{}{"expression": fmt.Sprintf("%d+1", i)},
+						),
+					},
+				},
+			}},
+		})
+	}
+	fakeLLM := &fakeAgenticLLMClient{appChatResponses: responses}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
+		t.Fatalf("register calculator provider: %v", err)
+	}
+	svc := &service{
+		repos: &repository.Repositories{
+			Message:     &recordingMessageRepository{},
+			CustomSkill: &fakeCustomSkillRepository{items: map[string]*aichatmodel.CustomSkill{}},
+		},
+		llmClient:    fakeLLM,
+		events:       newStreamEventStore(nil),
+		skillRuntime: skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir),
+	}
+	prepared := &PreparedChat{
+		Conversation: &aichatmodel.Conversation{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		Message: &aichatmodel.Message{
+			ID:       uuid.New(),
+			Metadata: map[string]interface{}{},
+		},
+		LLMRequest: &adapter.ChatRequest{
+			Messages: []adapter.Message{{Role: "user", Content: "calculate several expressions"}},
+		},
+		Scope: Scope{
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		parts: &chatRequestParts{
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{"limited-calculator"},
+		},
+	}
+
+	_, _, err := svc.runPreparedSkillStream(context.Background(), context.Background(), prepared, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "too many failed skill calls") {
+		t.Fatalf("runPreparedSkillStream() error = %v, want failed skill round limit", err)
+	}
+	if fakeLLM.appChatCalls != defaultMaxRecoverableFailureRounds+2 {
+		t.Fatalf("AppChat calls = %d, want %d", fakeLLM.appChatCalls, defaultMaxRecoverableFailureRounds+2)
 	}
 }
 
@@ -794,6 +1032,134 @@ Write concise briefs.
 	last, _ := invocations[len(invocations)-1].(map[string]interface{})
 	if last["kind"] != "intermediate_answer" || last["message"] != "## Outline\n\nA useful draft." {
 		t.Fatalf("last invocation = %#v, want intermediate answer trace", last)
+	}
+}
+
+func TestRunPreparedSkillStreamRequestsUserInputAndStops(t *testing.T) {
+	catalogDir := t.TempDir()
+	writeTestSkill(t, catalogDir, "brief-writer", `---
+name: brief-writer
+description: Help draft short writing briefs.
+when_to_use: Use when writing a concise brief.
+---
+
+# Brief Writer
+
+Write concise briefs.
+`)
+	fakeLLM := &fakeAgenticLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_ask",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name: skills.MetaToolRequestUserInput,
+								Arguments: `{
+									"message":"I found multiple candidate sheets and need your choice before editing the file.",
+									"questions":[
+										{
+											"id":"sheet",
+											"question":"Which sheet should I process?",
+											"options":[
+												{"label":"Water"},
+												{"label":"Electricity","description":"Use the electricity sheet"}
+											]
+										},
+										{
+											"question":"Should I include a summary?",
+											"options":[{"label":"Yes"},{"label":"No"}]
+										}
+									]
+								}`,
+							},
+						}},
+					},
+				}},
+			},
+		},
+	}
+	svc := &service{
+		repos: &repository.Repositories{
+			Message:     &recordingMessageRepository{},
+			CustomSkill: &fakeCustomSkillRepository{items: map[string]*aichatmodel.CustomSkill{}},
+		},
+		llmClient:    fakeLLM,
+		events:       newStreamEventStore(nil),
+		skillRuntime: skills.NewRuntimeWithCatalog(tools.NewToolEngine(tools.NewToolManager(nil)), tools.NewToolManager(nil), catalogDir),
+	}
+	prepared := &PreparedChat{
+		Conversation: &aichatmodel.Conversation{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		Message: &aichatmodel.Message{
+			ID:       uuid.New(),
+			Metadata: map[string]interface{}{},
+		},
+		LLMRequest: &adapter.ChatRequest{
+			Messages: []adapter.Message{{Role: "user", Content: "process the sheet"}},
+		},
+		Scope: Scope{
+			OrganizationID: uuid.New(),
+			AccountID:      uuid.New(),
+		},
+		parts: &chatRequestParts{
+			SkillMode: skillModeRequired,
+			SkillIDs:  []string{"brief-writer"},
+		},
+	}
+	events := make([]StreamEvent, 0)
+
+	answer, _, err := svc.runPreparedSkillStream(context.Background(), context.Background(), prepared, nil, func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("runPreparedSkillStream() error = %v", err)
+	}
+	if answer != "I found multiple candidate sheets and need your choice before editing the file." {
+		t.Fatalf("answer = %q, want visible user input request message", answer)
+	}
+	var answerChunk string
+	var requestPayload map[string]interface{}
+	for _, event := range events {
+		if event.EventType == streamEventMessage {
+			answerChunk += stringFromAny(event.Payload["answer"])
+		}
+		if event.EventType == streamEventUserInputRequested {
+			requestPayload = event.Payload
+		}
+	}
+	if answerChunk != "I found multiple candidate sheets and need your choice before editing the file." {
+		t.Fatalf("message chunks = %q, want visible user input request message", answerChunk)
+	}
+	if requestPayload == nil {
+		t.Fatalf("user_input_requested event not emitted: %#v", events)
+	}
+	questions, _ := requestPayload["questions"].([]map[string]interface{})
+	if len(questions) != 2 || questions[0]["question"] != "Which sheet should I process?" {
+		t.Fatalf("request payload = %#v, want questions", requestPayload)
+	}
+	request, _ := prepared.Message.Metadata["user_input_request"].(map[string]interface{})
+	storedQuestions, _ := request["questions"].([]map[string]interface{})
+	if len(storedQuestions) != 2 || storedQuestions[0]["question"] != "Which sheet should I process?" {
+		t.Fatalf("metadata user_input_request = %#v, want persisted questions", request)
+	}
+	invocations, _ := prepared.Message.Metadata["skill_invocations"].([]interface{})
+	if len(invocations) == 0 {
+		t.Fatalf("skill_invocations is empty, want user input request trace")
+	}
+	last, _ := invocations[len(invocations)-1].(map[string]interface{})
+	if last["kind"] != "user_input_request" || last["message"] != "I found multiple candidate sheets and need your choice before editing the file." {
+		t.Fatalf("last invocation = %#v, want user input request trace", last)
+	}
+	if len(fakeLLM.appChatRequests) != 1 {
+		t.Fatalf("appChatRequests = %d, want one planning request before stopping", len(fakeLLM.appChatRequests))
 	}
 }
 

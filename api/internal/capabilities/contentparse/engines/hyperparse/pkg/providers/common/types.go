@@ -2,14 +2,15 @@ package common
 
 // DocumentResult is the canonical document-level result returned by all parse engines.
 type DocumentResult struct {
-	DocID       string         `json:"doc_id"`
-	FileName    string         `json:"file_name"`
-	PageCount   int            `json:"page_count"`
-	Pages       []Page         `json:"pages,omitempty"`
-	Chunks      []Chunk        `json:"chunks,omitempty"`
-	Markdown    string         `json:"markdown,omitempty"`
-	Source      string         `json:"source,omitempty"`
-	Diagnostics map[string]any `json:"diagnostics,omitempty"`
+	DocID       string            `json:"doc_id"`
+	FileName    string            `json:"file_name"`
+	PageCount   int               `json:"page_count"`
+	Pages       []Page            `json:"pages,omitempty"`
+	Chunks      []Chunk           `json:"chunks,omitempty"`
+	Markdown    string            `json:"markdown,omitempty"`
+	Source      string            `json:"source,omitempty"`
+	Diagnostics map[string]any    `json:"diagnostics,omitempty"`
+	ImageAssets map[string]string `json:"-"`
 	// ExtractOutput is the default structured output for downstream ETL-style callers.
 	ExtractOutput *ExtractOutput `json:"extract_output,omitempty"`
 }

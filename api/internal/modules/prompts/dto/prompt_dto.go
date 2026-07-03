@@ -60,6 +60,8 @@ type PromptOptimizeRequest struct {
 	Model             string `json:"model" binding:"omitempty,max=255"`
 	PromptID          string `json:"prompt_id" binding:"omitempty,uuid"`
 	Language          string `json:"language" binding:"omitempty,max=32"`
+	EditInstruction   string `json:"edit_instruction" binding:"omitempty,max=2000"`
+	TargetMaxChars    int    `json:"target_max_chars" binding:"omitempty,min=0,max=50000"`
 }
 
 type PromptOptimizationRunListRequest struct {
@@ -144,6 +146,9 @@ type PromptOptimizeResponse struct {
 	RunID             string                         `json:"run_id"`
 	Output            string                         `json:"output"`
 	Variants          PromptOptimizeVariantsResponse `json:"variants"`
+	Truncated         bool                           `json:"truncated"`
+	FinishReason      string                         `json:"finish_reason,omitempty"`
+	TargetMaxChars    int                            `json:"target_max_chars"`
 }
 
 type PromptOptimizationRunResponse struct {

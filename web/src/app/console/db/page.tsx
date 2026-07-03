@@ -3,7 +3,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { RefreshCw, Plus, Search, Database } from 'lucide-react';
+import { RefreshCw, Plus, Search } from 'lucide-react';
 import DbCard from '@/components/db/card';
 import { CreateDbDialog, EditDbDialog } from '@/components/db/dialog';
 import { useDbsBasic } from '@/hooks/db/use-dbs';
@@ -13,15 +13,13 @@ import { SkeletonGrid } from '@/components/datasets/page/skeleton-grid';
 import { DbEmptyElement, DbEmptySearchResults } from '@/components/db/empty-element';
 
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
-import { useCurrentWorkspace, useWorkspaceStore } from '@/store/workspace-store';
+import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ShieldAlert } from 'lucide-react';
-import { PersonalSpaceEmptyState } from '@/components/common/personal-space-empty-state';
 import type { Db } from '@/services/types/db';
 
 export default function DbPage() {
   const t = useT();
   const currentWorkspace = useCurrentWorkspace();
-  const isOrganizationMode = useWorkspaceStore(state => state.isOrganizationMode);
 
   // Permissions
   const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
@@ -136,11 +134,6 @@ export default function DbPage() {
               <DbEmptySearchResults
                 query={searchKeyword}
                 onClearSearch={() => setSearchKeyword('')}
-              />
-            ) : isOrganizationMode && !canManage ? (
-              <PersonalSpaceEmptyState
-                moduleType="databases"
-                icon={<Database className="w-8 h-8 text-muted-foreground" />}
               />
             ) : (
               <DbEmptyElement

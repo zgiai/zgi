@@ -394,6 +394,10 @@ func (r *fakeDocumentAssetRepository) ListAssets(ctx context.Context, filter rep
 	return []*model.DocumentAsset{r.asset}, 1, nil
 }
 
+func (r *fakeDocumentAssetRepository) UpdateCurrentResult(ctx context.Context, id uuid.UUID, patch repository.DocumentAssetCurrentResultPatch) (*model.DocumentAsset, error) {
+	return r.GetAssetByID(ctx, id)
+}
+
 func (r *fakeDocumentAssetRepository) CreateVersion(ctx context.Context, item *model.DocumentVersion) error {
 	r.createVersionCalls++
 	r.version = item

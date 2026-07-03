@@ -6,9 +6,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { SelectItem } from '@/components/ui/select';
 import { ModelIcon } from 'modelicons';
 import type { ModelItem } from '@/services/types/model';
+import type { Locale } from '@/lib/i18n';
 import type { FeatureLabels } from '../types';
 import { serializeValue } from '../utils';
 import { ModelTooltipContent } from '@/components/model/model-tooltip-content';
+import { getModelDisplayName } from '@/utils/model-label';
 
 export interface ModelRowItemProps {
   model: ModelItem;
@@ -20,6 +22,7 @@ export interface ModelRowItemProps {
   useCaseLabel: string;
   featureLabels: FeatureLabels;
   useCaseLabels: Record<string, string>;
+  locale: Locale;
 }
 
 // Model row item component with optional tooltip
@@ -33,8 +36,9 @@ export const ModelRowItem = memo(function ModelRowItem({
   useCaseLabel,
   featureLabels,
   useCaseLabels,
+  locale,
 }: ModelRowItemProps) {
-  const modelLabel = model.model_name || model.model;
+  const modelLabel = getModelDisplayName(model, locale);
   const hasFeatures = Object.values(model.features || {}).some(Boolean);
   const hasMeta =
     (model.context_window !== undefined && model.context_window > 0) ||

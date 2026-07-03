@@ -6,9 +6,15 @@ import type {
   WebAppRunSseCallbacks,
   WebAppConversationList,
   WebAppConversationDetail,
+  WebAppConversationSearchResponse,
   WebAppPrecheckResult,
 } from './types/webapp';
 import { sanitizeModelOutputValue, wrapModelOutputSseCallbacks } from '@/utils/model-output-filter';
+import {
+  getWebAppErrorCode,
+  WEBAPP_NOT_PUBLISHED_ERROR_CODE,
+  WEBAPP_OFFLINE_ERROR_CODE,
+} from '@/utils/webapp/errors';
 
 interface WebAppRunBody extends WebAppRunRequest {
   response_mode: 'streaming';
@@ -37,9 +43,19 @@ export class WebAppService {
   static async getConfig(
     versionUuid: string
   ): Promise<WebAppApiResponseData<WebAppWorkflowConfig>> {
-    return webappHttp.get<WebAppApiResponseData<WebAppWorkflowConfig>>(
-      `/console/api/workflows/${versionUuid}/config`
-    );
+    try {
+      return await webappHttp.get<WebAppApiResponseData<WebAppWorkflowConfig>>(
+        `/console/api/webapps/${versionUuid}/config`
+      );
+    } catch (error) {
+      const code = getWebAppErrorCode(error);
+      if (code === WEBAPP_OFFLINE_ERROR_CODE || code === WEBAPP_NOT_PUBLISHED_ERROR_CODE) {
+        throw error;
+      }
+      return webappHttp.get<WebAppApiResponseData<WebAppWorkflowConfig>>(
+        `/console/api/workflows/${versionUuid}/config`
+      );
+    }
   }
 
   /**
@@ -54,6 +70,25 @@ export class WebAppService {
   ): Promise<{ close: () => void }> {
     return webappHttp.ssePost(`/console/api/workflows/${versionUuid}/run`, {
       body: buildWebAppRunBody(payload),
+      callbacks: wrapModelOutputSseCallbacks(callbacks),
+      abortSignal: opts?.abortSignal,
+      onClose: opts?.onClose,
+    });
+  }
+
+  static ssePostAgentChat(
+    webAppId: string,
+    payload: WebAppRunRequest,
+    callbacks: WebAppRunSseCallbacks,
+    opts?: { abortSignal?: AbortSignal; onClose?: () => void }
+  ): Promise<{ close: () => void }> {
+    return webappHttp.ssePost(`/console/api/webapps/${webAppId}/chat`, {
+      body: {
+        query: payload.query,
+        conversation_id: payload.conversation_id,
+        response_mode: 'streaming',
+        files: payload.files,
+      },
       callbacks: wrapModelOutputSseCallbacks(callbacks),
       abortSignal: opts?.abortSignal,
       onClose: opts?.onClose,
@@ -80,6 +115,16 @@ export class WebAppService {
   ): Promise<WebAppApiResponseData<WebAppConversationList>> {
     return webappHttp.get<WebAppApiResponseData<WebAppConversationList>>(
       `/console/api/workflows/${versionUuid}/conversations`,
+      { params }
+    );
+  }
+
+  static async searchConversations(
+    versionUuid: string,
+    params: { query: string; limit?: number }
+  ): Promise<WebAppConversationSearchResponse> {
+    return webappHttp.get<WebAppConversationSearchResponse>(
+      `/console/api/workflows/${versionUuid}/search`,
       { params }
     );
   }

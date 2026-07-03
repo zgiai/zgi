@@ -31,6 +31,15 @@ func NewGenerator(llmClient client.LLMClient) *Generator {
 	return &Generator{llmClient: llmClient}
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
 // Generate returns editable suggested questions for the supplied workflow context.
 func (g *Generator) Generate(ctx context.Context, req GenerateRequest) (*GenerateResult, error) {
 	if g == nil || g.llmClient == nil {
@@ -75,6 +84,9 @@ func (g *Generator) Generate(ctx context.Context, req GenerateRequest) (*Generat
 		},
 		Temperature: &temperature,
 		MaxTokens:   &maxTokens,
+		ResponseFormat: &adapter.ResponseFormat{
+			Type: "json_object",
+		},
 	}
 
 	appCtx := &client.AppContext{
@@ -82,11 +94,15 @@ func (g *Generator) Generate(ctx context.Context, req GenerateRequest) (*Generat
 		WorkspaceID:        req.WorkspaceID,
 		BillingSubjectType: client.BillingSubjectTypeWorkspace,
 		AppID:              req.AgentID,
-		AppType:            "workflow",
+		AppType:            firstNonEmpty(req.AppType, "workflow"),
 		AccountID:          req.AccountID,
 	}
 
 	resp, err := g.llmClient.AppChat(timeoutCtx, appCtx, chatReq)
+	if err != nil && isResponseFormatUnsupportedError(err) {
+		chatReq.ResponseFormat = nil
+		resp, err = g.llmClient.AppChat(timeoutCtx, appCtx, chatReq)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -113,4 +129,18 @@ func (g *Generator) Generate(ctx context.Context, req GenerateRequest) (*Generat
 		Provider:  provider,
 		Model:     model,
 	}, nil
+}
+
+func isResponseFormatUnsupportedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "response_format") &&
+		(strings.Contains(message, "unsupported") ||
+			strings.Contains(message, "not support") ||
+			strings.Contains(message, "not_supported") ||
+			strings.Contains(message, "invalid parameter") ||
+			strings.Contains(message, "invalid_param") ||
+			strings.Contains(message, "不支持"))
 }

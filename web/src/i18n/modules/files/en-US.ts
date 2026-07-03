@@ -2,17 +2,20 @@ const messages = {
   title: 'File Management',
   eyebrow: 'Asset Library',
   description:
-    'Manage uploaded files, folders, and resource references. Files can be used for knowledge bases, database imports, and chat workflows.',
+    'Upload and manage source files. Generated chunks can be used for follow-up Q&A and knowledge base references.',
 
   // Sidebar
   sidebar: {
     storage: 'Storage',
     newFolder: 'New Folder',
     uploadFile: 'Upload File',
+    viewsTitle: 'Views',
+    fileSpaceTitle: 'File Space',
     allFiles: 'All Files',
+    needsActionFiles: 'Needs Action',
     uploadedFiles: 'Recently Uploaded',
     favorites: 'Favorites',
-    defaultFolders: 'Default Folders',
+    defaultFolders: 'Default Folder',
     noFolders: 'No folders yet',
   },
 
@@ -21,8 +24,9 @@ const messages = {
     fileName: 'File Name',
     fileType: 'File Type',
     fileSize: 'File Size',
-    relatedStatus: 'Related Status',
-    uploadDate: 'Upload Date',
+    processingStatus: 'File Status',
+    relatedStatus: 'Knowledge Base',
+    uploadDate: 'Upload Time',
     lastModified: 'Last Modified',
     actions: 'Actions',
     selectAll: 'Select All',
@@ -30,6 +34,23 @@ const messages = {
     totalItems: 'Total {total} items',
     relatedCount: 'Related {count} items',
     notRelated: 'Not Related',
+    folderNotice:
+      'You are currently in the "{name}" folder. To view all files, return to Default Folder.',
+    pendingCount: '{count} issue(s)',
+    chunkCount: '{count} chunks',
+    embeddingCount: '{count} vectors',
+    startParseDialog: {
+      title: 'Submit Parse',
+      description:
+        'Submit a parse task for "{name}". The file will go through parsing, chunking, and indexing.',
+      providerHint: 'The system will automatically choose a parse route by file type.',
+      toasts: {
+        started: 'Parse request submitted',
+        failed: 'Failed to submit parse request',
+        batchStarted: '{count} parse requests submitted',
+        batchFailed: '{count} parse requests failed to submit',
+      },
+    },
   },
 
   // File statuses
@@ -42,6 +63,15 @@ const messages = {
     archived: 'Archived',
   },
 
+  processingStatus: {
+    stored_only: 'Stored only',
+    parsing: 'Parsing',
+    confirming: 'Needs optimization',
+    generating: 'Indexing',
+    parse_failed: 'Parse failed',
+    ready: 'Ready',
+  },
+
   // Actions
   actions: {
     view: 'View',
@@ -51,12 +81,40 @@ const messages = {
     move: 'Move',
     share: 'Share',
     preview: 'Preview',
+    viewDetails: 'View Details',
     more: 'More',
     downloadFile: 'Download File',
     addToFavorites: 'Add to Favorites',
     removeFromFavorites: 'Remove from Favorites',
     bulkDelete: 'Batch Delete',
+    batchParse: 'Batch Parse',
+    batchParsing: 'Submitting...',
+    batchParseNoStoredOnly: 'No selected stored-only files can be parsed.',
+    batchMove: 'Batch Move',
+    batchUnavailable:
+      'This batch capability requires backend API support and is not available yet.',
     deleting: 'Deleting...',
+    confirmParse: 'View Issues',
+    startParse: 'Parse',
+    startParsing: 'Submitting...',
+    replaceDocument: 'Update Document',
+  },
+
+  replaceDocument: {
+    title: 'Update Document',
+    description:
+      'Replace "{name}" with a new file. Existing knowledge base references will stay linked and resync after processing.',
+    newFile: 'New document',
+    selectedFile: 'Selected: {name}',
+    fileTooLarge: 'File size cannot exceed {max}MB',
+    processingHint: 'The document will be parsed and indexed immediately after replacement.',
+    storeOnlyHint:
+      'The old content will be invalidated. Parse this document later before using it.',
+    confirm: 'Update',
+    toasts: {
+      started: 'Document update submitted',
+      failed: 'Failed to update document',
+    },
   },
 
   preview: {
@@ -68,7 +126,10 @@ const messages = {
     noFileSelected: 'No file selected',
     unsupportedTitle: 'Preview is not available for this file',
     unsupportedDescription:
-      'Original preview supports images, PDF, HTML, text-like files, DOCX, and XLSX.',
+      'Original preview supports images, PDF, HTML, text-like files, DOCX, XLSX, and XLS.',
+    unsupportedFormatTitle: '{format} preview is not supported',
+    unsupportedFormatDescription:
+      '{format} files are not supported in browser preview yet. Download the file to view it locally.',
     openInNewTab: 'Open in New Tab',
     unavailableTitle: 'Preview is unavailable',
     downloadOnlyDescription: 'Download the file to view it outside the browser preview.',
@@ -116,6 +177,363 @@ const messages = {
     byDate: 'By Date',
   },
 
+  filter: {
+    allProcessingStatuses: 'All statuses',
+    processingStatusLabel: 'File status',
+    processingStatusAll: 'All',
+    processingStatusNeedsAction: 'Needs action',
+    processingStatusReady: 'Ready',
+    processingStatusStoredOnly: 'Stored only',
+  },
+
+  detail: {
+    backToFiles: 'Back to Files',
+    backToDataset: 'Back to Knowledge Base',
+    fileBreadcrumb: 'Files',
+    datasetBreadcrumb: 'Knowledge Base',
+    previewOriginal: 'Preview Original',
+    downloadOriginal: 'Download Original',
+    processing: 'Processing',
+    fileType: '{extension} File',
+    createdAt: 'Uploaded {time}',
+    previewWorkspaceDescription:
+      'Review the original file on the left and manage generated chunks on the right.',
+    previewFocus: {
+      enter: 'Preview Layout',
+      exit: 'Restore Layout',
+    },
+    previewToggle: {
+      hideOriginal: 'Hide Original',
+      showOriginal: 'Show Original',
+    },
+    loadErrorTitle: 'Failed to load file details',
+    loadErrorDescription: 'The file may have been removed or you may not have access.',
+    processingError: 'Processing failed',
+    basicInfo: 'Basic Information',
+    fileId: 'File ID',
+    assetId: 'Asset ID',
+    storageType: 'Storage Type',
+    workspaceId: 'Workspace ID',
+    createdBy: 'Created By',
+    generationNo: 'Generation',
+    nextViews: 'Detail Views',
+    nextViewsDescription:
+      'Original preview, content chunks, index information, and retry actions will be mounted here in the following phase-one frontend tasks.',
+    processingSummary: 'Processing Summary',
+    pendingConfirmationCount: 'Optimization Issues',
+    chunkCount: 'Chunks',
+    embeddingCount: 'Vectors',
+    parseMethod: {
+      title: 'Current Parser',
+      autoDescription:
+        'The system selected the best parser automatically based on file type and available services. You can choose another parser and reparse if the result is not satisfactory.',
+      manualDescription:
+        'This file used a parser selected by the user. You can switch parsers and reparse if the result is not satisfactory.',
+      actualProvider: 'Actual: {provider}',
+      engine: 'Engine: {engine}',
+      adapter: 'Adapter: {adapter}',
+    },
+    createdDate: 'Upload Date',
+    indexInfo: 'Index Information',
+    embeddingProvider: 'Embedding Provider',
+    embeddingModel: 'Embedding Model',
+    embeddingDimension: 'Embedding Dimension',
+    vectorStatus: {
+      none: 'Vector not ready',
+      indexing: 'Vector indexing',
+      ready: 'Vector ready',
+      failed: 'Vector failed',
+    },
+    tabs: {
+      overview: 'Overview',
+      preview: 'File Preview',
+      originalPreview: 'Original File',
+      parseReview: 'Parse Review',
+      chunks: 'Chunks',
+      index: 'Index',
+      qa: 'Document Q&A',
+    },
+    workbench: {
+      title: 'Processing progress',
+      description:
+        '{pending} optimization issue(s), {chunks} chunks, and {embeddings} vectors generated.',
+      pendingHint: '{count} issue(s)',
+      banners: {
+        confirming: {
+          title: 'Quality check found marked content',
+          description: 'Quality check found {pending} item(s) to optimize in chunks.',
+        },
+        failed: {
+          title: 'Processing failed',
+          description: 'The processing flow stopped. Review the error and reparse when ready.',
+        },
+        ready: {
+          title: 'Document asset ready',
+          description:
+            '{chunks} primary chunks and {embeddings} vectors are ready for document Q&A.',
+        },
+        processing: {
+          title: 'Processing document',
+          description:
+            'The system is parsing content, generating chunks, or building the Q&A index.',
+        },
+        storedOnly: {
+          title: 'File stored only',
+          description: 'The original file is saved. Parse it to generate chunks and vectors.',
+        },
+      },
+      steps: {
+        uploaded: 'Uploaded',
+        parsed: 'Parse document',
+        quality: 'Quality check',
+        chunks: 'Generate chunks',
+        index: 'Build Q&A index',
+        ready: 'Ready',
+      },
+      stepStates: {
+        done: 'Done',
+        active: 'In progress',
+        attention: 'Needs action',
+        failed: 'Failed',
+        blocked: 'Waiting',
+        pending: 'Not started',
+      },
+    },
+    tabHints: {
+      chunksReady: '{count} chunks generated',
+      chunksWaiting: 'Waiting for generation',
+      qaReady: 'Ready for questions',
+      qaWaiting: 'Available after generation',
+    },
+    parseReview: {
+      title: 'Parse Review',
+      notReadyTitle: 'Parse review is not available',
+      notReadyDescription: 'Wait until parsing finishes and the file enters review status.',
+      loadErrorTitle: 'Failed to load parse preview',
+      loadErrorDescription: 'The parse artifact may not be ready yet.',
+      elementCount: '{count} elements',
+      pendingCount: '{count} pending',
+      pendingReviewTitle: '{count} items need review',
+      pendingReviewDescription: 'Resolve marked content before chunking and document Q&A.',
+      batchIgnore: 'Ignore All Pending',
+      jumpNext: 'Jump to Next',
+      emptyTitle: 'No parse elements',
+      emptyDescription: 'The parser did not return structured elements for this file.',
+      page: 'Page {page}',
+      sourcePageCount: '{count} pages',
+      boxes: '{count} boxes',
+      confidence: 'Confidence {value}',
+      hasLocation: 'Located',
+      sourcePreviewFallback: 'Standard preview',
+      sourcePreviewUnavailable:
+        'Original page rendering is unavailable. Showing a standard document preview instead.',
+      emptyContent: 'No text content',
+      suggestedContent: 'Suggested content',
+      keep: 'Keep',
+      saveEdit: 'Save Edit',
+      ignore: 'Ignore',
+      resolvedHint: 'This item has been resolved.',
+      status: {
+        pending: 'Pending',
+        kept: 'Kept',
+        edited: 'Edited',
+        ignored: 'Ignored',
+      },
+      reviewReasons: {
+        lowConfidenceText: 'Low text recognition confidence',
+        lowConfidenceTable: 'Low table recognition confidence',
+        lowConfidenceImageOcr: 'Low image OCR confidence',
+        reviewRequired: 'Parser marked this for human review',
+        ocrFallback: 'OCR fallback was used',
+        vlmFallback: 'Vision model fallback was used',
+        tableStructureRisk: 'Table structure may be incomplete',
+      },
+      toasts: {
+        resolved: 'Review item resolved',
+        batchIgnored: 'Pending review items ignored',
+        generateQueued: 'Review complete. Generation has started.',
+        resolveFailed: 'Failed to resolve review item',
+        batchIgnoreFailed: 'Failed to ignore review items',
+      },
+      types: {
+        title: 'Title',
+        heading: 'Heading',
+        text: 'Text',
+        paragraph: 'Paragraph',
+        table: 'Table',
+        figure: 'Figure',
+        image: 'Image',
+        formula: 'Formula',
+        list: 'List',
+        listItem: 'List item',
+        code: 'Code',
+        element: 'Element',
+      },
+    },
+    chunks: {
+      title: 'Content Chunks',
+      notReadyTitle: 'Chunks are not ready',
+      notReadyDescription: 'Chunks become available after parsing and vector generation finish.',
+      loadErrorTitle: 'Failed to load chunks',
+      loadErrorDescription: 'The chunk result may not be ready yet.',
+      total: '{count} chunks',
+      generationNo: 'Generation {value}',
+      emptyTitle: 'No chunks',
+      emptyDescription: 'No chunk result is available for this file.',
+      chunkTitle: 'Chunk {position}',
+      primary: 'Primary Chunk',
+      secondary: 'Secondary Chunk',
+      secondaryCount: 'Secondary chunks ({count})',
+      secondaryLoading: 'Loading secondary chunks...',
+      secondaryLoadError: 'Failed to load secondary chunks',
+      secondaryEmpty: 'No secondary chunks',
+      searchPlaceholder: 'Search chunk content...',
+      filters: {
+        all: 'All chunks',
+        issues: 'Needs optimization',
+        enabled: 'Enabled',
+        disabled: 'Disabled',
+      },
+      issues: {
+        badge: '{count} issue(s)',
+        title: 'This chunk has optimization issues',
+        fallback: 'Needs optimization',
+        page: 'Page {page}',
+        locate: 'Locate in source',
+        excerpt: 'Excerpt: {text}',
+        impreciseLocation: 'No precise location',
+      },
+      expandAll: 'Expand all',
+      collapseAll: 'Collapse all',
+      resegment: 'Regenerate',
+      add: 'Add chunk',
+      selectAll: 'Select all ({count} chunks)',
+      selectedCount: '{count} selected',
+      selectChunk: 'Select chunk {position}',
+      batchEnable: 'Enable',
+      batchDisable: 'Disable',
+      manageSecondary: 'Manage secondary chunks',
+      viewSecondary: 'View secondary chunks',
+      collapseSecondary: 'Collapse secondary chunks',
+      viewOriginal: 'View source',
+      edit: 'Edit',
+      editPrimaryTitle: 'Edit Primary Chunk',
+      editPrimaryDescription:
+        'This primary chunk has {count} characters. Saving will regenerate its secondary chunks and vectors.',
+      editSecondaryTitle: 'Edit Secondary Chunk',
+      editSecondaryDescription:
+        'This secondary chunk has {count} characters. Saving will rebuild its vector.',
+      delete: 'Delete',
+      characters: '{count} characters',
+      enabled: 'Enabled',
+      disabled: 'Disabled',
+      cancel: 'Cancel',
+      save: 'Save',
+      toasts: {
+        updated: 'Chunk updated',
+        batchUpdated: '{count} chunks updated',
+        updateFailed: 'Failed to update chunk',
+      },
+    },
+    index: {
+      title: 'Index Information',
+      description:
+        'File-level chunk and embedding assets generated before adding to a knowledge base.',
+      notReadyTitle: 'Index information is not ready',
+      notReadyDescription:
+        'Index metadata becomes available after chunking and embedding generation starts.',
+    },
+    qa: {
+      title: 'Document Q&A',
+      description: 'Answers questions based on the current document.',
+      notReadyTitle: 'Document Q&A is not ready',
+      notReadyDescription:
+        'Ask questions after parsing finishes and secondary chunk vectors are available.',
+      preparingTitle: 'Preparing document Q&A index',
+      preparingDescription:
+        'The temporary retrieval index is being rebuilt from the currently enabled chunks.',
+      prepareFailedTitle: 'Failed to prepare document Q&A index',
+      chunkSummary: '{count} chunks',
+      vectorSummary: '{count} vectors',
+      emptyTitle: 'Ask this document',
+      emptyDescription:
+        'After you ask, the system retrieves related secondary chunks and uses their primary chunks as context.',
+      question: 'Question',
+      answer: 'Answer',
+      answerModel: 'Answer model',
+      defaultAnswerModel: 'Default model',
+      noAvailableAnswerModels: 'No available chat models',
+      placeholder: 'Ask a question about this document...',
+      send: 'Send',
+      generating: 'Generating...',
+      askFailedTitle: 'Q&A failed',
+      askFailed: 'Failed to submit question',
+      noSources: 'No related source was found in this document.',
+      sources: 'Sources ({count})',
+      similarityRank: 'Similarity rank {rank}',
+      locateSource: 'Go to chunk',
+    },
+    reparse: {
+      action: 'Reparse',
+      reparsing: 'Submitting...',
+      confirmTitle: 'Reparse this file?',
+      confirmDescription:
+        'The current searchable asset will be unavailable while the file is parsing, chunking, and indexing again.',
+      providerLabel: 'Parser',
+      providerDescription:
+        'Parsers nearer the top are usually stronger. Disabled items are not configured or failed health checks. If the result is poor, configure MinerU or Reducto and try a stronger parser.',
+      providerReady: 'Available now',
+      providerUnavailable: 'Unavailable now',
+      configureProvider: 'Click here to configure and enable',
+      configureProviderConfirmTitle: 'Go to parser settings?',
+      configureProviderConfirmDescription:
+        'You will leave the current reparse window and open parser settings. This file has not been submitted for reparsing yet.',
+      configureProviderConfirmAction: 'Go to Settings',
+      noAvailableProvider: 'No available parser',
+      confirm: 'Reparse',
+      toasts: {
+        started: 'Reparse request submitted',
+        failed: 'Failed to submit reparse request',
+      },
+    },
+    failure: {
+      storeOnly: 'Mark as Stored Only',
+      storeOnlyUnavailable:
+        'This requires a backend status transition API and is not available yet.',
+    },
+    views: {
+      storedOnly: {
+        title: 'Stored only',
+        description:
+          'The original file is saved. Start parsing later to produce chunks and vectors.',
+      },
+      processing: {
+        title: 'Parsing in progress',
+        description:
+          'The system is extracting document content. This page refreshes every 2 seconds.',
+      },
+      confirming: {
+        title: 'Optimization issues found',
+        description:
+          'The system continued generating chunks and vectors. You can inspect and optimize marked chunk content.',
+      },
+      generating: {
+        title: 'Generating chunks and vectors',
+        description:
+          'The system is chunking content and writing embeddings. This page refreshes every 2 seconds.',
+      },
+      ready: {
+        title: 'Searchable asset ready',
+        description:
+          'Primary chunks, secondary chunks, and vectors are ready. You can inspect or edit secondary chunks next.',
+      },
+      failed: {
+        title: 'Processing failed',
+        description: 'Review the error message and retry after the retry action is available.',
+      },
+    },
+  },
+
   // Messages
   messages: {
     uploadSuccess: 'File uploaded successfully',
@@ -154,6 +572,8 @@ const messages = {
     createFolderError: 'Failed to create folder',
     updateFolderSuccess: 'Folder updated successfully',
     updateFolderError: 'Failed to update folder',
+    moveFolderSuccess: 'Folder moved successfully',
+    moveFolderError: 'Failed to move folder',
     deleteFolderSuccess: 'Folder deleted successfully',
     deleteFolderError: 'Failed to delete folder',
     createTextFileSuccess: 'Text file created successfully',
@@ -217,9 +637,51 @@ const messages = {
     storageLocation: 'Storage Location',
     selectFolder: 'Select Folder',
     defaultFolder: 'Default Folder',
+    uploadFolderRootHelp: 'Files are stored in Default Folder when no specific folder is selected.',
     sourceType: 'Source Type',
+    processingMode: 'Processing Mode',
+    processingModes: {
+      processNow: {
+        title: 'Upload and parse',
+        desc: 'Parse, chunk, and index the document immediately after upload.',
+      },
+      storeOnly: {
+        title: 'Store only',
+        desc: 'Save the original file first. You can parse it later from file details.',
+      },
+    },
+    parseProvider: 'Parse Engine',
+    parseProviderDescription:
+      'Used for automatic parsing after upload. Auto follows the current provider routing strategy.',
+    parseProviderStoreOnlyDescription:
+      'Store-only mode does not start parsing. The engine selection applies when uploading and parsing.',
+    parseProviderUnavailable: 'Unavailable',
+    parseProviderLoading: 'Checking available engines...',
+    parseProviders: {
+      auto: 'Auto (routing strategy)',
+      mineru: 'MinerU',
+      local: 'Local',
+      reducto: 'Reducto',
+      hyperparseApi: 'Hyperparse API',
+      vlm: 'Vision LLM',
+    },
+    processingHintTitle: 'Document files become searchable after parsing',
+    processingHintDescription:
+      'Images, icons, temporary files, and unsupported formats are stored without document processing.',
     uploadFiles: 'Upload Files',
+    selectedFilesTitle: '{count} file(s) selected',
+    selectedFilesPendingSummary: '{count} file(s) selected, waiting to upload.',
+    selectedFilesValidationSummary:
+      '{count} file(s) selected, {failedCount} cannot upload. Remove them to continue.',
+    selectedFilesResultSummary: '{successCount} uploaded, {failedCount} failed.',
+    removeInvalidBeforeUpload: 'Remove files that cannot upload before continuing.',
+    cannotUpload: 'Cannot upload',
     confirmUpload: 'Confirm Upload',
+    cancelUpload: 'Cancel Upload',
+    cancelUploadConfirmTitle: 'Cancel upload and close this window?',
+    cancelUploadConfirmDescription:
+      'Files that have not finished uploading will stop. Files already uploaded will be kept.',
+    cancelUploadConfirmAction: 'Close Window',
   },
 
   // Documents section (for compatibility)
@@ -235,10 +697,24 @@ const messages = {
     workspaceLabel: 'Owning Workspace',
     workspacePlaceholder: 'Select an owning workspace',
     workspaceRequired: 'Please select an owning workspace',
+    duplicateName: 'A folder with this name already exists in the same directory. Use a different name.',
     parentFolder: 'Parent Folder',
     selectParentFolder: 'Select parent folder',
+    levelHint:
+      'Folders support up to three levels. Folders at the limit cannot be selected as parent folders.',
     folderLabel: 'Folder:',
     rootFolder: 'Root Folder',
+    renameTitle: 'Rename Folder',
+    renameDescription: 'The folder name in File Space will update after saving.',
+    moveTitle: 'Move Folder',
+    moveDescription: 'Choose where to move "{name}".',
+    targetFolder: 'Target Folder',
+    actions: {
+      createChild: 'New Subfolder',
+      rename: 'Rename',
+      moveTo: 'Move to',
+      delete: 'Delete Folder',
+    },
   },
 
   // Text file creation

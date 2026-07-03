@@ -9,32 +9,29 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	appconfig "github.com/zgiai/zgi/api/config"
+	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
 	"gorm.io/gorm"
 )
 
 type Service struct {
-	db *gorm.DB
+	db               *gorm.DB
+	shortLinkService shortlinkcap.Service
 }
 
 func NewService(db *gorm.DB) *Service {
 	return &Service{db: db}
 }
 
-func (s *Service) CreateOrGetRuntimeAnnouncement(ctx context.Context, params CreateRuntimeAnnouncementParams) (*RuntimeAnnouncement, error) {
+func NewServiceWithShortLinkService(db *gorm.DB, shortLinkService shortlinkcap.Service) *Service {
+	return &Service{db: db, shortLinkService: shortLinkService}
+}
+
+func (s *Service) CreateRuntimeAnnouncement(ctx context.Context, params CreateRuntimeAnnouncementParams) (*RuntimeAnnouncement, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("announcement service is not initialized")
 	}
 	if err := validateRuntimeParams(params); err != nil {
 		return nil, err
-	}
-
-	existing, err := s.loadRuntimeAnnouncement(ctx, params.TenantID, params.WorkflowRunID, params.NodeID)
-	if err == nil {
-		return s.runtimeAnnouncementPayload(existing), nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("load announcement: %w", err)
 	}
 
 	announcement, err := buildRuntimeAnnouncement(params)
@@ -45,7 +42,7 @@ func (s *Service) CreateOrGetRuntimeAnnouncement(ctx context.Context, params Cre
 	if err != nil {
 		return nil, err
 	}
-	return s.runtimeAnnouncementPayload(created), nil
+	return s.runtimeAnnouncementPayload(ctx, created)
 }
 
 func (s *Service) GetByToken(ctx context.Context, token string) (*AnnouncementPayload, error) {
@@ -81,33 +78,23 @@ func (s *Service) createRuntimeAnnouncementWithTokenRetry(ctx context.Context, a
 			}
 			announcement.AccessToken = token
 		}
-		createErr = s.db.WithContext(ctx).Create(announcement).Error
+		createErr = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(announcement).Error; err != nil {
+				return err
+			}
+			if err := createAnnouncementShortLink(ctx, tx, announcement); err != nil {
+				return err
+			}
+			return nil
+		})
 		if createErr == nil {
 			return announcement, nil
-		}
-		if isAnnouncementRunNodeConflict(createErr) {
-			existing, err := s.loadRuntimeAnnouncement(ctx, announcement.TenantID, announcement.WorkflowRunID, announcement.NodeID)
-			if err != nil {
-				return nil, fmt.Errorf("load announcement after run/node conflict: %w", err)
-			}
-			return existing, nil
 		}
 		if !isAnnouncementTokenConflict(createErr) {
 			return nil, fmt.Errorf("create announcement: %w", createErr)
 		}
 	}
 	return nil, fmt.Errorf("create announcement after token retries: %w", createErr)
-}
-
-func (s *Service) loadRuntimeAnnouncement(ctx context.Context, tenantID, workflowRunID, nodeID string) (*Announcement, error) {
-	var existing Announcement
-	err := s.db.WithContext(ctx).
-		Where("tenant_id = ? AND workflow_run_id = ? AND node_id = ?", tenantID, workflowRunID, nodeID).
-		First(&existing).Error
-	if err != nil {
-		return nil, err
-	}
-	return &existing, nil
 }
 
 func (s *Service) CleanupExpiredAnnouncements(ctx context.Context, before time.Time) (int64, error) {
@@ -124,12 +111,23 @@ func (s *Service) CleanupExpiredAnnouncements(ctx context.Context, before time.T
 	return result.RowsAffected, nil
 }
 
-func (s *Service) runtimeAnnouncementPayload(announcement *Announcement) *RuntimeAnnouncement {
+func (s *Service) runtimeAnnouncementPayload(ctx context.Context, announcement *Announcement) (*RuntimeAnnouncement, error) {
 	payload := announcementPayload(announcement)
+	shortLink, err := s.announcementShortLink(ctx, announcement)
+	if err != nil {
+		return nil, err
+	}
+	service := s.shortLinkCapability()
+	payload.Token = shortLink.ShortToken
+	shortURL, err := service.BuildPublicURL(shortLink.ShortToken)
+	if err != nil {
+		return nil, err
+	}
+	payload.URL = shortURL
 	return &RuntimeAnnouncement{
 		Announcement: announcement,
 		Payload:      payload,
-	}
+	}, nil
 }
 
 func buildRuntimeAnnouncement(params CreateRuntimeAnnouncementParams) (*Announcement, error) {
@@ -158,13 +156,13 @@ func announcementPayload(announcement *Announcement) AnnouncementPayload {
 	return AnnouncementPayload{
 		ID:           announcement.ID,
 		Token:        announcement.AccessToken,
+		AccessToken:  announcement.AccessToken,
 		NodeID:       announcement.NodeID,
 		Title:        announcement.NodeTitle,
 		NodeTitle:    announcement.NodeTitle,
 		Content:      announcement.RenderedContent,
 		ExpirationAt: announcement.ExpirationTime.Unix(),
 		Expired:      time.Now().After(announcement.ExpirationTime),
-		URL:          announcementURL(announcement.AccessToken),
 	}
 }
 
@@ -239,12 +237,55 @@ func expirationTime(timeout TimeoutConfig) time.Time {
 	}
 }
 
-func announcementURL(token string) string {
-	base := strings.TrimRight(appconfig.Current().Console.WebURL, "/")
-	if base == "" {
-		base = strings.TrimRight(appconfig.Current().Email.ConsoleWebURL, "/")
+func (s *Service) announcementShortLink(ctx context.Context, announcement *Announcement) (*shortlinkcap.ShortLink, error) {
+	if announcement == nil {
+		return nil, fmt.Errorf("announcement is required")
 	}
-	return base + announcementURLPath + url.PathEscape(token)
+	accessToken := strings.TrimSpace(announcement.AccessToken)
+	if accessToken == "" {
+		return nil, fmt.Errorf("announcement access token is required")
+	}
+	service := s.shortLinkCapability()
+	return service.CreateOrGet(ctx, shortlinkcap.CreateOrGetRequest{
+		TargetKind:  shortlinkcap.TargetKindWorkflowAnnouncement,
+		TargetToken: accessToken,
+		TargetPath:  announcementTargetPath(accessToken),
+		ExpiresAt:   &announcement.ExpirationTime,
+	})
+}
+
+func createAnnouncementShortLink(ctx context.Context, db *gorm.DB, announcement *Announcement) error {
+	if announcement == nil {
+		return fmt.Errorf("announcement is required")
+	}
+	accessToken := strings.TrimSpace(announcement.AccessToken)
+	if accessToken == "" {
+		return fmt.Errorf("announcement access token is required")
+	}
+	shortLinkService := shortlinkcap.NewServiceWithDB(db)
+	if _, err := shortLinkService.CreateOrGet(ctx, shortlinkcap.CreateOrGetRequest{
+		TargetKind:  shortlinkcap.TargetKindWorkflowAnnouncement,
+		TargetToken: accessToken,
+		TargetPath:  announcementTargetPath(accessToken),
+		ExpiresAt:   &announcement.ExpirationTime,
+	}); err != nil {
+		return fmt.Errorf("create announcement short link: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) shortLinkCapability() shortlinkcap.Service {
+	if s != nil && s.shortLinkService != nil {
+		return s.shortLinkService
+	}
+	if s == nil {
+		return shortlinkcap.NewService(nil)
+	}
+	return shortlinkcap.NewServiceWithDB(s.db)
+}
+
+func announcementTargetPath(token string) string {
+	return announcementURLPath + url.PathEscape(token)
 }
 
 var (

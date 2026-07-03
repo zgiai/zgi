@@ -17,10 +17,14 @@ type fakeProviderAdminService struct{}
 func (f *fakeProviderAdminService) GetByID(context.Context, uuid.UUID) (*contentmodel.ProviderConfig, error) {
 	return &contentmodel.ProviderConfig{}, nil
 }
-func (f *fakeProviderAdminService) ListByScope(context.Context, string, *uuid.UUID) ([]*contentmodel.ProviderConfig, error) {
+func (f *fakeProviderAdminService) ListByScope(context.Context, string, *uuid.UUID, *uuid.UUID) ([]*contentmodel.ProviderConfig, error) {
 	return []*contentmodel.ProviderConfig{}, nil
 }
 func (f *fakeProviderAdminService) Create(context.Context, *contentmodel.ProviderConfig) error {
+	return nil
+}
+
+func (f *fakeProviderAdminService) UpsertByScopeAndKey(context.Context, *contentmodel.ProviderConfig) error {
 	return nil
 }
 func (f *fakeProviderAdminService) Update(context.Context, *contentmodel.ProviderConfig) error {

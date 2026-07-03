@@ -203,6 +203,7 @@ function inferStartVarType(v: InputVar): PrimitiveType {
     case InputVarType.TEXT_INPUT:
     case InputVarType.PARAGRAPH:
     case InputVarType.SELECT:
+    case InputVarType.DATETIME:
       return 'string';
     case InputVarType.NUMBER:
       return 'number';
@@ -595,6 +596,11 @@ export function collectForNode(node: WorkflowNode, agentType: AgentType): Upstre
           key: 'token',
           type: 'string',
           descriptionKey: 'outputDescriptions.announcement.token',
+        },
+        {
+          key: 'access_token',
+          type: 'string',
+          descriptionKey: 'outputDescriptions.announcement.access_token',
         },
         {
           key: 'url',

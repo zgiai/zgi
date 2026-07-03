@@ -4,22 +4,19 @@ import * as React from 'react';
 import { useParams, usePathname } from 'next/navigation';
 import { useDataset } from '@/hooks/dataset/use-datasets';
 import { useT } from '@/i18n';
-import { Database, Search, Cog, ShieldAlert, Network, Pencil } from 'lucide-react';
+import { FileText, Search, Cog, ShieldAlert, Network } from 'lucide-react';
 import { getSidebarCollapsed, saveSidebarCollapsed } from '@/utils/ui-local';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { useIsInitialized } from '@/store/auth-store';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { WorkspaceMismatchGuard } from '@/components/common/workspace-mismatch-guard';
-import { useWorkspaceMismatch } from '@/hooks';
 import { ICON_BG } from '@/lib/config';
 import {
   ResourceSidebar,
   ResourceSidebarHeader,
   type ResourceSidebarNavItem,
 } from '@/components/common/resource-sidebar';
-import { EditDatasetDialog } from '@/components/datasets/dialog/edit-dataset-dialog';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
-import { Button } from '@/components/ui/button';
 
 export default function DatasetDetailLayout({ children }: { children: React.ReactNode }) {
   function DatasetModelsPreloader() {
@@ -46,14 +43,10 @@ export default function DatasetDetailLayout({ children }: { children: React.Reac
   // Get dataset details for conditional rendering
   const dataset = data?.data;
 
-  // Check workspace mismatch for sidebar navigation control
-  const { isMismatch } = useWorkspaceMismatch(dataset?.workspace_id || '');
-
   // Persist collapsed state to localStorage
   const [isCollapsed, setIsCollapsed] = React.useState<boolean>(() =>
     getSidebarCollapsed('dataset', true)
   );
-  const [editOpen, setEditOpen] = React.useState(false);
   React.useEffect(() => {
     saveSidebarCollapsed('dataset', isCollapsed);
   }, [isCollapsed]);
@@ -72,7 +65,7 @@ export default function DatasetDetailLayout({ children }: { children: React.Reac
       {
         title: t('datasets.documentsTitle'),
         href: `/console/dataset/${datasetId}/documents`,
-        icon: Database,
+        icon: FileText,
       },
       {
         title: t('datasets.hitTestingTitle'),
@@ -125,86 +118,69 @@ export default function DatasetDetailLayout({ children }: { children: React.Reac
   const imgSrc = iconType === 'image' ? dataset?.icon_url : undefined;
 
   return (
-    <div className="flex h-full bg-background min-w-0">
-      <ResourceSidebar
-        isCollapsed={isCollapsed}
-        onToggleCollapse={toggleCollapse}
-        expandLabel={t('navigation.expand')}
-        collapseLabel={t('navigation.collapse')}
-        header={
-          <ResourceSidebarHeader
-            isCollapsed={isCollapsed}
-            iconType={iconType}
-            iconSrc={imgSrc}
-            icon={textIcon}
-            iconBackground={iconBackground}
-            showIdentity={false}
-            backHref="/console/dataset"
-            backLabel={t('datasets.backToDatasetList')}
-          />
-        }
-        navItems={navItems}
-        pathname={pathname}
-        isNavigationHidden={isMismatch}
-      />
-
-      {/* Main Content Area */}
-      <div className="flex flex-col grow min-w-0 relative">
-        <div className="flex min-h-14 shrink-0 items-center justify-between gap-4 border-b bg-background px-6 py-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <IconPreview
-              iconType={iconType === 'image' ? 'image' : 'text'}
-              src={iconType === 'image' ? imgSrc : ''}
+    <WorkspaceMismatchGuard
+      isLoading={isLoading}
+      targetWorkspaceId={dataset?.workspace_id || ''}
+      targetWorkspaceName={dataset?.workspace?.name}
+    >
+      <div className="flex h-full bg-background min-w-0">
+        <ResourceSidebar
+          isCollapsed={isCollapsed}
+          onToggleCollapse={toggleCollapse}
+          expandLabel={t('navigation.expand')}
+          collapseLabel={t('navigation.collapse')}
+          header={
+            <ResourceSidebarHeader
+              isCollapsed={isCollapsed}
+              iconType={iconType}
+              iconSrc={imgSrc}
               icon={textIcon}
               iconBackground={iconBackground}
-              editable={false}
-              size="sidebar"
+              showIdentity={false}
+              backHref="/console/dataset"
+              backLabel={t('datasets.backToDatasetList')}
             />
-            <div className="min-w-0">
-              <div
-                className="truncate text-sm font-semibold leading-5 text-foreground"
-                title={dataset?.name}
-              >
-                {dataset?.name || (isLoading ? t('datasets.loading') : '-')}
-              </div>
-              <div
-                className="truncate text-xs leading-5 text-muted-foreground"
-                title={dataset?.description || t('datasets.noDescription')}
-              >
-                {dataset?.description || t('datasets.noDescription')}
+          }
+          navItems={navItems}
+          pathname={pathname}
+        />
+
+        {/* Main Content Area */}
+        <div className="flex flex-col grow min-w-0 relative">
+          <div className="flex min-h-14 shrink-0 items-center justify-between gap-4 border-b bg-background px-6 py-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <IconPreview
+                iconType={iconType === 'image' ? 'image' : 'text'}
+                src={iconType === 'image' ? imgSrc : ''}
+                icon={textIcon}
+                iconBackground={iconBackground}
+                editable={false}
+                size="sidebar"
+              />
+              <div className="min-w-0">
+                <div
+                  className="truncate text-sm font-semibold leading-5 text-foreground"
+                  title={dataset?.name}
+                >
+                  {dataset?.name || (isLoading ? t('datasets.loading') : '-')}
+                </div>
+                <div
+                  className="truncate text-xs leading-5 text-muted-foreground"
+                  title={dataset?.description || t('datasets.noDescription')}
+                >
+                  {dataset?.description || t('datasets.noDescription')}
+                </div>
               </div>
             </div>
           </div>
-
-          {canManage && !isMismatch && dataset ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-8 shrink-0 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
-              onClick={() => setEditOpen(true)}
-            >
-              <Pencil className="h-4 w-4" />
-              {t('datasets.actions.edit')}
-            </Button>
-          ) : null}
-        </div>
-        <div className="flex-1 overflow-hidden">
-          <div className="h-full overflow-y-auto" id="dataset-content-area">
-            {isAuthReady && <DatasetModelsPreloader />}
-            <div className="h-full">
-              <WorkspaceMismatchGuard
-                isLoading={isLoading}
-                targetWorkspaceId={dataset?.workspace_id || ''}
-                targetWorkspaceName={dataset?.workspace?.name}
-              >
-                {children}
-              </WorkspaceMismatchGuard>
+          <div className="flex-1 overflow-hidden">
+            <div className="h-full overflow-y-auto" id="dataset-content-area">
+              {isAuthReady && <DatasetModelsPreloader />}
+              <div className="h-full">{children}</div>
             </div>
           </div>
         </div>
       </div>
-      <EditDatasetDialog open={editOpen} onOpenChange={setEditOpen} dataset={dataset} />
-    </div>
+    </WorkspaceMismatchGuard>
   );
 }

@@ -74,7 +74,7 @@ workflow:
         text: |-
           Run guide
 
-          Ready. Requires: OpenAI gpt-5.5 model. Enter text to rewrite for professional clarity.
+          Ready. Requires: OpenAI GPT-4o model. Enter text to rewrite for professional clarity.
 
           Suggested test input:
           The Start node fields are prefilled. Open Debug and run the defaults directly.
@@ -121,7 +121,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params: {}
         prompt_template:

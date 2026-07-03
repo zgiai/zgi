@@ -25,6 +25,11 @@ type AutomationWorkflowRunner interface {
 	RunAutomationWorkflow(ctx context.Context, req WorkflowRunRequest) (*WorkflowRunResult, error)
 }
 
+// AutomationWorkflowRunStatusReader is implemented by workflow services that can expose a run summary.
+type AutomationWorkflowRunStatusReader interface {
+	GetAutomationWorkflowRunStatus(ctx context.Context, req WorkflowRunStatusRequest) (*WorkflowRunStatusResult, error)
+}
+
 // WorkflowRunRequest is the normalized request passed from automation to workflow.
 type WorkflowRunRequest struct {
 	OrganizationID string
@@ -37,6 +42,16 @@ type WorkflowRunRequest struct {
 	WorkflowRef    WorkflowRef
 	Inputs         map[string]interface{}
 	Timeout        time.Duration
+	EventSink      WorkflowRunEventSink
+}
+
+// WorkflowRunEventSink receives normalized workflow run events during an automation-triggered run.
+type WorkflowRunEventSink func(WorkflowRunEvent)
+
+// WorkflowRunEvent is the event contract exposed by automation-triggered workflow runs.
+type WorkflowRunEvent struct {
+	Type    string
+	Payload map[string]interface{}
 }
 
 // WorkflowRef identifies the target workflow and version strategy.
@@ -56,6 +71,29 @@ type WorkflowRunResult struct {
 	Status        string
 	Outputs       map[string]interface{}
 	ElapsedTime   float64
+}
+
+// WorkflowRunStatusRequest identifies a previously created workflow run.
+type WorkflowRunStatusRequest struct {
+	OrganizationID string
+	WorkspaceID    string
+	AccountID      string
+	WorkflowRunID  string
+	AgentID        string
+}
+
+// WorkflowRunStatusResult captures a safe workflow run status summary.
+type WorkflowRunStatusResult struct {
+	WorkflowRunID  string
+	WorkflowID     string
+	AgentID        string
+	Version        string
+	Status         string
+	Outputs        map[string]interface{}
+	Error          string
+	ElapsedTime    float64
+	CreatedAtUnix  int64
+	FinishedAtUnix int64
 }
 
 type workflowRunnerProvider func() AutomationWorkflowRunner

@@ -6,6 +6,7 @@ import type {
   ChatController,
   ConversationTransport,
   ConversationSummary,
+  ConversationSearchResult,
   ConversationDetail,
   Pagination,
   SendMessagePayload,
@@ -120,6 +121,7 @@ const createControllerStore = () =>
 export class SingleChatController implements ChatController {
   private transport: ConversationTransport;
   public store: StoreApi<SingleChatControllerStore>;
+  private titleRefreshTimers = new Set<ReturnType<typeof setTimeout>>();
 
   readonly mode = 'singleChat' as const;
 
@@ -137,6 +139,99 @@ export class SingleChatController implements ChatController {
   updateTransport(transport: ConversationTransport): void {
     this.transport = transport;
     this.store.getState().setTransport(transport);
+  }
+
+  private conversationTitleNeedsRefresh(title?: string): boolean {
+    const normalized = (title ?? '').trim();
+    if (!normalized) return true;
+    if (normalized === 'New Conversation') return true;
+    if (normalized.startsWith('New conversation ')) return true;
+    if (/^Conversation \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(normalized)) {
+      return true;
+    }
+    return false;
+  }
+
+  private applyConversationSnapshot(detail: ConversationDetail): { needsRefresh: boolean } {
+    const summary = detail.summary;
+    const conversations = this.store.getState().conversations;
+    const current = conversations.find(
+      c => c.id === summary.id || c.conversationId === summary.conversationId
+    );
+    const nextConversations = current
+      ? conversations.map(c =>
+          c.id === current.id
+            ? {
+                ...c,
+                ...summary,
+                id: current.id,
+                conversationId: summary.conversationId || c.conversationId,
+              }
+            : c
+        )
+      : [summary, ...conversations];
+
+    this.store
+      .getState()
+      .setConversations(nextConversations.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)));
+
+    const activeDetail = this.store.getState().activeDetail;
+    if (
+      activeDetail?.summary.id === summary.id ||
+      activeDetail?.summary.conversationId === summary.conversationId
+    ) {
+      this.store.getState().setActiveDetail({
+        ...activeDetail,
+        summary: {
+          ...activeDetail.summary,
+          ...summary,
+          id: activeDetail.summary.id,
+          conversationId: summary.conversationId || activeDetail.summary.conversationId,
+        },
+      });
+    }
+
+    useChatStore.getState().initSingle({
+      id: current?.id ?? summary.id,
+      conversationId: summary.conversationId,
+      title: summary.title,
+    });
+
+    return { needsRefresh: this.conversationTitleNeedsRefresh(summary.title) };
+  }
+
+  private async refreshConversationSnapshotSilently(
+    conversationId: string
+  ): Promise<{ needsRefresh: boolean }> {
+    if (!conversationId || conversationId.startsWith('draft-')) {
+      return { needsRefresh: false };
+    }
+    try {
+      const detail = await this.transport.get(conversationId);
+      return this.applyConversationSnapshot(detail);
+    } catch (err) {
+      console.error('[SingleChatController] Failed to refresh conversation snapshot:', err);
+      return { needsRefresh: true };
+    }
+  }
+
+  private scheduleConversationTitleRefresh(conversationId: string): void {
+    if (!conversationId || conversationId.startsWith('draft-')) return;
+
+    const delays = [750, 2500, 6000, 12000];
+    const run = (index: number) => {
+      const timer = setTimeout(() => {
+        this.titleRefreshTimers.delete(timer);
+        void this.refreshConversationSnapshotSilently(conversationId).then(result => {
+          if (result.needsRefresh && index + 1 < delays.length) {
+            run(index + 1);
+          }
+        });
+      }, delays[index]);
+      this.titleRefreshTimers.add(timer);
+    };
+
+    run(0);
   }
 
   // State getters (reactive via zustand)
@@ -676,6 +771,10 @@ export class SingleChatController implements ChatController {
             },
           });
         }
+
+        if (meta.status === 'completed') {
+          this.scheduleConversationTitleRefresh(currentId);
+        }
       },
       onError: (err: Error) => {
         console.error('[SingleChatController] Send error:', err);
@@ -733,6 +832,25 @@ export class SingleChatController implements ChatController {
     } catch (err) {
       console.error('[SingleChatController] Failed to rename:', err);
     }
+  }
+
+  async search(query: string, limit: number) {
+    if (!this.transport.search) {
+      const normalizedQuery = query.trim().toLowerCase();
+      if (!normalizedQuery) return [];
+      return this.store
+        .getState()
+        .conversations.filter(conversation => conversation.title.toLowerCase().includes(normalizedQuery))
+        .slice(0, limit)
+        .map<ConversationSearchResult>(conversation => ({
+          type: 'conversation',
+          conversationId: conversation.id,
+          conversationTitle: conversation.title,
+          snippet: conversation.title,
+          updatedAt: conversation.updatedAt,
+        }));
+    }
+    return this.transport.search(query, limit);
   }
 
   subscribe(

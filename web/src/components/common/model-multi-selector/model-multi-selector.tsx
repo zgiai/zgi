@@ -12,11 +12,19 @@ import type { ModelItem, ModelList } from '@/services/types/model';
 import { Search, X, ChevronDown, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n';
+import { useLocale } from '@/hooks/use-locale';
 import { ProviderIcon } from '@/components/common/provider-icon';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ModelTooltipContent } from '@/components/model/model-tooltip-content';
-
-type ModelSelectionPolicy = 'available' | 'catalog';
+import { getModelDisplayName } from '@/utils/model-label';
+import {
+  getModelNameFromSelectionKey,
+  getModelSelectionKey,
+  isModelSelectable,
+  normalizeSelectableModelKeys,
+  normalizeSelectableModelNames,
+  type ModelSelectionPolicy,
+} from './model-selection';
 
 export interface ModelMultiSelectorProps {
   // Controlled selected model names
@@ -38,6 +46,10 @@ export interface ModelMultiSelectorProps {
   onSelectionMetaChange?: (models: ModelItem[]) => void;
   supplementalModels?: ModelItem[];
   selectionPolicy?: ModelSelectionPolicy;
+  // Restricts selectable items by `${provider}\t${model}`; undefined means no restriction.
+  selectableModelKeys?: readonly string[];
+  // Restricts selectable items by model name; undefined means no restriction.
+  selectableModelNames?: readonly string[];
 }
 
 // Group models by provider
@@ -57,34 +69,7 @@ const COLUMNS_CLASS: Record<2 | 3 | 4, string> = {
   4: 'grid-cols-4',
 };
 
-function getModelSelectionKey(model: Pick<ModelItem, 'provider' | 'model'>): string {
-  return `${model.provider || 'unknown'}\t${model.model}`;
-}
-
-function getModelNameFromSelectionKey(key: string): string {
-  const separatorIndex = key.indexOf('\t');
-  return separatorIndex >= 0 ? key.slice(separatorIndex + 1) : key;
-}
-
-function isDeprecatedModel(model: ModelItem): boolean {
-  return model.status === 'deprecated';
-}
-
-function isModelSelectable(
-  model: ModelItem,
-  selectionPolicy: ModelSelectionPolicy,
-  catalogModelKeys: ReadonlySet<string>
-): boolean {
-  if (isDeprecatedModel(model)) {
-    return false;
-  }
-
-  if (selectionPolicy === 'catalog') {
-    return catalogModelKeys.has(getModelSelectionKey(model));
-  }
-
-  return model.callable !== false && model.is_available !== false;
-}
+const EMPTY_MODEL_ITEMS: ModelItem[] = [];
 
 function ModelMultiSelectorBase({
   value,
@@ -98,10 +83,13 @@ function ModelMultiSelectorBase({
   autoCollapseOthers = false,
   providerFilter,
   onSelectionMetaChange,
-  supplementalModels = [],
+  supplementalModels = EMPTY_MODEL_ITEMS,
   selectionPolicy = 'available',
+  selectableModelKeys,
+  selectableModelNames,
 }: ModelMultiSelectorProps): JSX.Element {
   const t = useT();
+  const { locale } = useLocale();
 
   const [search, setSearch] = useState('');
 
@@ -127,9 +115,20 @@ function ModelMultiSelectorBase({
     retry: false,
   });
 
-  const catalogItems = useMemo(
-    () => (data?.data?.items ?? []).filter(item => !isDeprecatedModel(item)),
-    [data]
+  const catalogItems = useMemo(() => data?.data?.items ?? EMPTY_MODEL_ITEMS, [data]);
+  const selectableModelKeySet = useMemo(
+    () =>
+      selectableModelKeys
+        ? new Set(normalizeSelectableModelKeys(selectableModelKeys))
+        : null,
+    [selectableModelKeys]
+  );
+  const selectableModelNameSet = useMemo(
+    () =>
+      selectableModelNames
+        ? new Set(normalizeSelectableModelNames(selectableModelNames))
+        : null,
+    [selectableModelNames]
   );
 
   const catalogModelKeys = useMemo(
@@ -141,8 +140,15 @@ function ModelMultiSelectorBase({
   );
 
   const isSelectable = useCallback(
-    (model: ModelItem) => isModelSelectable(model, selectionPolicy, catalogModelKeys),
-    [catalogModelKeys, selectionPolicy]
+    (model: ModelItem) =>
+      isModelSelectable(
+        model,
+        selectionPolicy,
+        catalogModelKeys,
+        selectableModelKeySet,
+        selectableModelNameSet
+      ),
+    [catalogModelKeys, selectableModelKeySet, selectableModelNameSet, selectionPolicy]
   );
 
   const allItems = useMemo(() => {
@@ -252,6 +258,49 @@ function ModelMultiSelectorBase({
     },
     [controlled, onChange]
   );
+
+  useEffect(() => {
+    if (
+      (!selectableModelKeySet && !selectableModelNameSet) ||
+      isLoading ||
+      selected.length === 0
+    ) {
+      return;
+    }
+
+    const selectableItems = allItems.filter(isSelectable);
+    const selectableKeys = new Set(selectableItems.map(item => getModelSelectionKey(item)));
+    const selectableNames = new Set(selectableItems.map(item => item.model));
+    const selectedKeysByName = new Map<string, string[]>();
+    selectedItemKeys.forEach(key => {
+      const modelName = getModelNameFromSelectionKey(key);
+      selectedKeysByName.set(modelName, [...(selectedKeysByName.get(modelName) ?? []), key]);
+    });
+
+    const nextSelected = selected.filter(modelName => {
+      const trackedKeys = selectedKeysByName.get(modelName);
+      if (!trackedKeys || trackedKeys.length === 0) {
+        return selectableNames.has(modelName);
+      }
+      return trackedKeys.some(key => selectableKeys.has(key));
+    });
+    if (nextSelected.length === selected.length) return;
+
+    setSelectedItemKeys(prev => {
+      const nextKeys = new Set(Array.from(prev).filter(key => selectableKeys.has(key)));
+      return nextKeys.size === prev.size ? prev : nextKeys;
+    });
+    setSelected(nextSelected);
+  }, [
+    allItems,
+    isLoading,
+    isSelectable,
+    selectableModelKeySet,
+    selectableModelNameSet,
+    selected,
+    selectedItemKeys,
+    setSelected,
+  ]);
 
   const toggleSelectedName = useCallback(
     (name: string) => {
@@ -503,6 +552,7 @@ function ModelMultiSelectorBase({
                         <ul className={cn('p-2 grid gap-1', COLUMNS_CLASS[columns])}>
                           {group.models.map(m => {
                             const id = m.model;
+                            const modelLabel = getModelDisplayName(m, locale);
                             const checked = selectedSet.has(id);
                             const selectable = isSelectable(m);
                             return (
@@ -523,8 +573,8 @@ function ModelMultiSelectorBase({
                                   disabled={disabled || !selectable}
                                 />
                                 <ProviderIcon provider={m.provider} size={18} />
-                                <span className="text-xs truncate flex-1" title={m.model_name}>
-                                  {m.model_name || id}
+                                <span className="text-xs truncate flex-1" title={modelLabel}>
+                                  {modelLabel}
                                 </span>
                                 <div className="flex items-center gap-1.5 shrink-0">
                                   <Tooltip>

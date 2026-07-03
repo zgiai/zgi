@@ -12,7 +12,6 @@ import (
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/llm/tokenestimate"
-	"github.com/zgiai/zgi/api/internal/modules/memory"
 	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	redisutil "github.com/zgiai/zgi/api/pkg/redis"
@@ -35,6 +34,7 @@ const (
 	streamEventError                = "error"
 	streamEventAgentProgress        = "agent_progress"
 	streamEventIntermediateAnswer   = "agent_intermediate_answer"
+	streamEventUserInputRequested   = "user_input_requested"
 	streamEventFileParseStart       = "file_parse_start"
 	streamEventFileParseEnd         = "file_parse_end"
 	streamEventFileParseError       = "file_parse_error"
@@ -238,8 +238,4 @@ type chatRequestParts struct {
 	SkillIDs                     []string
 	ToolSkillIDs                 []string
 	SkillMode                    string
-}
-
-func userMemorySkillID() string {
-	return memory.SkillID
 }

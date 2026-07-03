@@ -8,10 +8,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/modules/llm/internal/urlguard"
 	"github.com/zgiai/zgi/api/internal/observability"
 )
 
@@ -21,6 +24,16 @@ type HTTPClient struct {
 	streamClient *http.Client // Separate client for streaming (no timeout)
 	maxRetries   int
 	authHook     func(req *http.Request) // Optional: called before each request for custom auth
+	urlPolicy    urlguard.Policy
+	guardURL     bool
+}
+
+type HTTPClientOptions struct {
+	AuthHook            func(req *http.Request)
+	GuardOutboundURL    bool
+	GuardOutboundDNS    bool
+	AllowPrivateBaseURL bool
+	URLPolicy           urlguard.Policy
 }
 
 // HTTPResponse carries the response pieces needed by transport-specific adapters.
@@ -38,11 +51,45 @@ func NewHTTPClient(timeout time.Duration, maxRetries int) *HTTPClient {
 // NewHTTPClientWithAuthHook creates an HTTP client with an optional auth hook.
 // The authHook is called on every outgoing request before it is sent.
 func NewHTTPClientWithAuthHook(timeout time.Duration, maxRetries int, authHook func(req *http.Request)) *HTTPClient {
+	return NewHTTPClientWithOptions(timeout, maxRetries, HTTPClientOptions{AuthHook: authHook})
+}
+
+func NewHTTPClientFromConfig(config *AdapterConfig, timeout time.Duration, maxRetries int) *HTTPClient {
+	opts := HTTPClientOptions{}
+	if config != nil {
+		opts.AuthHook = config.AuthHook
+		opts.GuardOutboundURL = config.GuardOutboundURL
+		opts.GuardOutboundDNS = config.GuardOutboundDNS
+		opts.AllowPrivateBaseURL = config.AllowPrivateBaseURL
+	}
+	return NewHTTPClientWithOptions(timeout, maxRetries, opts)
+}
+
+func NewHTTPClientWithOptions(timeout time.Duration, maxRetries int, opts HTTPClientOptions) *HTTPClient {
 	if timeout == 0 {
 		timeout = 60 * time.Second
 	}
 	if maxRetries == 0 {
 		maxRetries = 2 // Default to 2 retries for transient failures
+	}
+
+	policy := opts.URLPolicy
+	if opts.AllowPrivateBaseURL {
+		policy.AllowPrivate = true
+	}
+	policy.GuardDNS = opts.GuardOutboundDNS
+	var dialContext func(ctx context.Context, network, address string) (net.Conn, error)
+	var checkRedirect func(req *http.Request, via []*http.Request) error
+	if opts.GuardOutboundURL {
+		if opts.GuardOutboundDNS {
+			dialContext = guardedDialContext(policy)
+		}
+		checkRedirect = func(req *http.Request, _ []*http.Request) error {
+			if err := urlguard.ValidateURL(req.Context(), req.URL, policy); err != nil {
+				return fmt.Errorf("blocked unsafe target: %w", err)
+			}
+			return nil
+		}
 	}
 
 	// Non-streaming transport: force HTTP/1.1 to avoid HTTP/2 multiplexing issues
@@ -57,6 +104,7 @@ func NewHTTPClientWithAuthHook(timeout time.Duration, maxRetries int, authHook f
 		DisableKeepAlives:     false,
 		ForceAttemptHTTP2:     false,                                                                  // Disable HTTP/2
 		TLSNextProto:          make(map[string]func(authority string, c *tls.Conn) http.RoundTripper), // Force HTTP/1.1
+		DialContext:           dialContext,
 	}
 
 	// Streaming transport - disable keep-alives to prevent connection reuse issues
@@ -72,22 +120,72 @@ func NewHTTPClientWithAuthHook(timeout time.Duration, maxRetries int, authHook f
 		ExpectContinueTimeout: 1 * time.Second,
 		DisableKeepAlives:     true, // IMPORTANT: Disable keep-alives for streaming to avoid stale data issues
 		ResponseHeaderTimeout: 600 * time.Second,
+		DialContext:           dialContext,
 	}
 
 	return &HTTPClient{
 		client: &http.Client{
-			Timeout:   timeout,
-			Transport: observability.HTTPTransport(transport),
+			Timeout:       timeout,
+			Transport:     observability.HTTPTransport(transport),
+			CheckRedirect: checkRedirect,
 		},
 		// Stream client has no Timeout - relies on context cancellation
 		// This allows streaming responses to run for as long as needed
 		streamClient: &http.Client{
-			Timeout:   0, // No timeout for streaming - context handles cancellation
-			Transport: observability.HTTPTransport(streamTransport),
+			Timeout:       0, // No timeout for streaming - context handles cancellation
+			Transport:     observability.HTTPTransport(streamTransport),
+			CheckRedirect: checkRedirect,
 		},
 		maxRetries: maxRetries,
-		authHook:   authHook,
+		authHook:   opts.AuthHook,
+		urlPolicy:  policy,
+		guardURL:   opts.GuardOutboundURL,
 	}
+}
+
+func (c *HTTPClient) StandardClient() *http.Client {
+	if c == nil {
+		return nil
+	}
+	return c.client
+}
+
+func guardedDialContext(policy urlguard.Policy) func(ctx context.Context, network, address string) (net.Conn, error) {
+	dialer := &net.Dialer{}
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, fmt.Errorf("blocked unsafe target %q: %w", address, err)
+		}
+
+		addrs, err := urlguard.ResolveSafeHost(ctx, host, policy)
+		if err != nil {
+			return nil, fmt.Errorf("blocked unsafe target %q: %w", host, err)
+		}
+
+		var lastErr error
+		for _, addr := range addrs {
+			conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(addr.String(), port))
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+		}
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, fmt.Errorf("no resolved address for %q", host)
+	}
+}
+
+func (c *HTTPClient) validateOutboundURL(ctx context.Context, parsed *url.URL) error {
+	if c == nil || !c.guardURL {
+		return nil
+	}
+	if err := urlguard.ValidateURL(ctx, parsed, c.urlPolicy); err != nil {
+		return fmt.Errorf("blocked unsafe target: %w", err)
+	}
+	return nil
 }
 
 // isHTMLResponse checks whether the response body looks like an HTML error page
@@ -146,6 +244,9 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
+		if err := c.validateOutboundURL(ctx, req.URL); err != nil {
+			return nil, err
+		}
 
 		// Set default headers
 		req.Header.Set("Content-Type", "application/json")
@@ -164,7 +265,7 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 		resp, err = c.client.Do(req)
 		if err != nil {
 			lastErr = err
-			continue // Network error → retry
+			continue // Network error, retry
 		}
 
 		// Read body inside the loop so read failures can be retried
@@ -175,14 +276,14 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 			lastErr = fmt.Errorf("failed to read response body: %w", readErr)
 			lastStatusCode = resp.StatusCode
 			lastHeader = resp.Header.Clone()
-			continue // Body read failure → retry
+			continue // Body read failure, retry
 		}
 
 		lastStatusCode = resp.StatusCode
 		lastBody = respBody
 		lastHeader = resp.Header.Clone()
 
-		// 5xx server errors → retry
+		// 5xx server errors, retry
 		if resp.StatusCode >= 500 {
 			bodySnippet := string(respBody)
 			if len(bodySnippet) > 500 {
@@ -230,6 +331,9 @@ func (c *HTTPClient) DoStreamRequest(ctx context.Context, method, url string, he
 	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if err := c.validateOutboundURL(ctx, req.URL); err != nil {
+		return nil, err
 	}
 
 	// Set headers
@@ -292,8 +396,11 @@ func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
 		}
 
 		// Parse SSE format
-		if strings.HasPrefix(line, "data: ") {
-			data := strings.TrimPrefix(line, "data: ")
+		name, data, ok := strings.Cut(line, ":")
+		if ok && name == "data" {
+			if strings.HasPrefix(data, " ") {
+				data = strings.TrimPrefix(data, " ")
+			}
 
 			// [DONE] indicates stream end
 			if data == "[DONE]" {

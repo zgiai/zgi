@@ -74,7 +74,7 @@ workflow:
         text: |-
           Run guide
 
-          Ready. Requires: OpenAI gpt-5.5 model. Provide unstructured text to return typed fields.
+          Ready. Requires: OpenAI GPT-4o model. Provide unstructured text to return typed fields.
 
           Suggested test input:
           The Start node fields are prefilled. Open Debug and run the defaults directly.
@@ -122,7 +122,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params:
             response_format: json_object

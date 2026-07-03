@@ -75,7 +75,7 @@ workflow:
         text: |-
           Run guide
 
-          Setup required. Requires: OpenAI gpt-5.5 model, image model. Confirm the image generation model is available before running.
+          Setup required. Requires: OpenAI GPT-4o model, image model. Confirm the image generation model is available before running.
 
           Suggested test input:
           The Start node fields are prefilled. Open Debug and run the defaults directly.
@@ -123,7 +123,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params: {}
         prompt_template:

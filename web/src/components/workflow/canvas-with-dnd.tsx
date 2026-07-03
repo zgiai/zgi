@@ -35,6 +35,10 @@ interface CanvasWithDndProps {
   isReadOnly: boolean;
   agentType: string;
   agentId: string;
+  agentName?: string;
+  agentIconType?: string;
+  agentIcon?: string;
+  agentIconUrl?: string;
   onNodesChange?: OnNodesChange;
   onEdgesChange?: OnEdgesChange;
   onConnect: OnConnect;
@@ -60,6 +64,10 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
   isReadOnly,
   agentType,
   agentId,
+  agentName,
+  agentIconType,
+  agentIcon,
+  agentIconUrl,
   onNodesChange,
   onEdgesChange,
   onConnect,
@@ -215,6 +223,10 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
         <WorkflowCanvasPanels
           agentType={agentType}
           agentId={agentId}
+          agentName={agentName}
+          agentIconType={agentIconType}
+          agentIcon={agentIcon}
+          agentIconUrl={agentIconUrl}
           isReadOnly={isReadOnly}
           draggingNodeType={draggingNodeType}
           temporarilyHidden={hideRightPanels}

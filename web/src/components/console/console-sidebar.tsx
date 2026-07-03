@@ -19,7 +19,7 @@ import {
   Clock3,
   ChevronDown,
 } from 'lucide-react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -57,6 +57,13 @@ interface RootRouteItem {
 
 const STORAGE_KEY = 'zgi:console:sidebar:groups';
 
+function getDatasetReturnTo(value: string | null): string | null {
+  if (!value) return null;
+  if (!value.startsWith('/console/dataset/')) return null;
+  if (value.startsWith('//') || value.includes('://')) return null;
+  return value;
+}
+
 function isItemActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
@@ -72,11 +79,15 @@ function isRootRouteItemActive(pathname: string, item: RootRouteItem): boolean {
 
 export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const t = useT('navigation');
+  const datasetReturnTo = getDatasetReturnTo(searchParams.get('returnTo'));
+  const activePathname = datasetReturnTo ? '/console/dataset' : pathname;
 
   // Permission checking
   const { hasPermission } = useAccountPermissions();
-  const isOrganizationMode = useWorkspaceStore.use.isOrganizationMode();
+  const contextStatus = useWorkspaceStore.use.contextStatus();
+  const isWorkspaceRequired = contextStatus === 'workspace_required';
   const isDebugFocusMode = useWorkflowDebugFocusMode();
 
   // Collapsed state persisted via ui-local helpers
@@ -95,9 +106,9 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
       const raw = localStorage.getItem(STORAGE_KEY);
       return raw
         ? (JSON.parse(raw) as Record<string, boolean>)
-        : { work: true, resources: true, developer: true, management: true };
+        : { work: true, resources: true, tools: true, management: true };
     } catch {
-      return { work: true, resources: true, developer: true, management: true };
+      return { work: true, resources: true, tools: true, management: true };
     }
   });
 
@@ -150,7 +161,6 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
         title: t('resources'),
         items: [
           { title: t('agents'), href: '/console/agents', icon: Atom, permission: 'agent.view' },
-          { title: t('prompts'), href: '/console/prompts', icon: BookText, permission: 'agent.view' },
           {
             title: t('datasets'),
             href: '/console/dataset',
@@ -162,9 +172,15 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
         ],
       },
       {
-        key: 'developer',
-        title: t('developer'),
+        key: 'tools',
+        title: t('tools'),
         items: [
+          {
+            title: t('prompts'),
+            href: '/console/prompts',
+            icon: BookText,
+            permission: 'agent.view',
+          },
           {
             title: t('fileRecognition'),
             href: '/console/developer/content-parse',
@@ -196,8 +212,8 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
       .map(group => {
         let filteredItems = group.items;
 
-        // Special handling for management group in organization view
-        if (group.key === 'management' && isOrganizationMode) {
+        // Hide workspace management when the console has no usable workspace.
+        if (group.key === 'management' && isWorkspaceRequired) {
           filteredItems = filteredItems.filter(item => item.href !== '/console/workspace');
         }
 
@@ -207,7 +223,7 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
         }
 
         // Filter by permissions outside organization view
-        if (!isOrganizationMode) {
+        if (!isWorkspaceRequired) {
           filteredItems = filteredItems.filter(item => {
             if (!item.permission) return true;
             return hasPermission(item.permission);
@@ -217,7 +233,7 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
         return { ...group, items: filteredItems };
       })
       .filter(group => group.items.length > 0);
-  }, [isOrganizationMode, hasPermission, allNavGroups]);
+  }, [isWorkspaceRequired, hasPermission, allNavGroups]);
 
   const rootRouteItems = React.useMemo(
     (): RootRouteItem[] => [
@@ -279,7 +295,7 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
           if (isCollapsed) {
             return group.items.map(item => {
               const Icon = item.icon;
-              const isActive = isItemActive(pathname, item.href);
+              const isActive = isItemActive(activePathname, item.href);
               return (
                 <Link
                   key={item.href}
@@ -325,7 +341,7 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
                 <div className="mt-1 space-y-0.5">
                   {group.items.map(item => {
                     const Icon = item.icon;
-                    const isActive = isItemActive(pathname, item.href);
+                    const isActive = isItemActive(activePathname, item.href);
                     return (
                       <Link
                         key={item.href}
@@ -363,7 +379,7 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
           >
             {rootRouteItems.map(item => {
               const Icon = item.icon;
-              const isActive = isRootRouteItemActive(pathname, item);
+              const isActive = isRootRouteItemActive(activePathname, item);
 
               return (
                 <Link
@@ -454,13 +470,17 @@ export function ConsoleMobileSidebar({
   onOpenChange: (open: boolean) => void;
 }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const t = useT('navigation');
+  const datasetReturnTo = getDatasetReturnTo(searchParams.get('returnTo'));
+  const activePathname = datasetReturnTo ? '/console/dataset' : pathname;
   const { hasPermission } = useAccountPermissions();
-  const isOrganizationMode = useWorkspaceStore.use.isOrganizationMode();
+  const contextStatus = useWorkspaceStore.use.contextStatus();
+  const isWorkspaceRequired = contextStatus === 'workspace_required';
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({
     work: true,
     resources: true,
-    developer: true,
+    tools: true,
     management: true,
   });
 
@@ -512,9 +532,15 @@ export function ConsoleMobileSidebar({
         ],
       },
       {
-        key: 'developer',
-        title: t('developer'),
+        key: 'tools',
+        title: t('tools'),
         items: [
+          {
+            title: t('prompts'),
+            href: '/console/prompts',
+            icon: BookText,
+            permission: 'agent.view',
+          },
           {
             title: t('fileRecognition'),
             href: '/console/developer/content-parse',
@@ -542,7 +568,7 @@ export function ConsoleMobileSidebar({
       .map(group => {
         let items = group.items;
 
-        if (group.key === 'management' && isOrganizationMode) {
+        if (group.key === 'management' && isWorkspaceRequired) {
           items = items.filter(item => item.href !== '/console/workspace');
         }
 
@@ -550,14 +576,14 @@ export function ConsoleMobileSidebar({
           items = items.filter(item => item.href !== '/console/settings');
         }
 
-        if (!isOrganizationMode) {
+        if (!isWorkspaceRequired) {
           items = items.filter(item => !item.permission || hasPermission(item.permission));
         }
 
         return { ...group, items };
       })
       .filter(group => group.items.length > 0);
-  }, [hasPermission, isOrganizationMode, t]);
+  }, [hasPermission, isWorkspaceRequired, t]);
 
   const closeSidebar = () => onOpenChange(false);
   const toggleGroup = (key: string) => setOpenGroups(prev => ({ ...prev, [key]: !prev[key] }));
@@ -614,7 +640,7 @@ export function ConsoleMobileSidebar({
                     <div className="mt-1 space-y-0.5">
                       {group.items.map(item => {
                         const Icon = item.icon;
-                        const isActive = isItemActive(pathname, item.href);
+                        const isActive = isItemActive(activePathname, item.href);
                         return (
                           <Link
                             key={item.href}

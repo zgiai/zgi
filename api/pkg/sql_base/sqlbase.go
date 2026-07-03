@@ -2,9 +2,12 @@ package sql_base
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
+	"github.com/zgiai/zgi/api/pkg/sql_base/guard"
 )
 
 // SQLBase defines the interface for postgres-meta service
@@ -92,7 +95,7 @@ type SQLBase interface {
 	ListTypes(ctx context.Context) ([]Type, error)
 
 	// Query operations
-	ExecuteSQL(ctx context.Context, query string, params []interface{}) (*QueryResult, error)
+	ExecuteSQL(ctx context.Context, query string, params []interface{}, auditCtx *audit.Context) (*QueryResult, error)
 	FormatQuery(ctx context.Context, req FormatQueryRequest) (string, error)
 	ParseQuery(ctx context.Context, req ParseQueryRequest) (*ParsedQuery, error)
 	DeparseQuery(ctx context.Context, req DeparseQueryRequest) (string, error)
@@ -106,6 +109,50 @@ type SQLBase interface {
 	ListColumnPrivileges(ctx context.Context, opts ListColumnPrivilegesOptions) ([]ColumnPrivilege, error)
 	GrantColumnPrivileges(ctx context.Context, privileges []ColumnPrivilegeGrant) ([]ColumnPrivilege, error)
 	RevokeColumnPrivileges(ctx context.Context, privileges []ColumnPrivilegeRevoke) ([]ColumnPrivilege, error)
+}
+
+type GuardPolicyProvider func(ctx context.Context, dataSourceID string) (*guard.Policy, error)
+
+func resolveGuardPolicy(ctx context.Context, auditCtx *audit.Context, provider GuardPolicyProvider) (*guard.Policy, error) {
+	if auditCtx == nil {
+		return nil, nil
+	}
+	if auditCtx.GuardPolicy != nil {
+		return auditCtx.GuardPolicy, nil
+	}
+	if provider == nil || auditCtx.DataSourceID == "" {
+		return nil, nil
+	}
+	return provider(ctx, auditCtx.DataSourceID)
+}
+
+func checkSQLGuard(ctx context.Context, query string, auditCtx *audit.Context, provider GuardPolicyProvider) (guard.Result, bool, error) {
+	policy, err := resolveGuardPolicy(ctx, auditCtx, provider)
+	if err != nil {
+		return guard.Result{}, false, err
+	}
+	if policy == nil {
+		return guard.Result{}, false, nil
+	}
+	result := guard.Check(query, *policy)
+	if result.Action == guard.ActionDeny {
+		return result, true, &guard.DeniedError{Result: result}
+	}
+	return result, true, nil
+}
+
+func applyGuardAudit(record *audit.Record, result guard.Result, ok bool) {
+	if !ok || record == nil {
+		return
+	}
+	record.GuardVerdict = string(result.Verdict)
+	record.GuardAction = string(result.Action)
+	if reasons, err := json.Marshal(result.Reasons); err == nil {
+		record.GuardReasons = reasons
+	}
+	if policy, err := json.Marshal(result.Policy); err == nil {
+		record.GuardPolicy = policy
+	}
 }
 
 // Options structs
@@ -543,7 +590,31 @@ const (
 	SQLBaseTypeInternal SQLBaseType = "internal"
 )
 
-func NewSQLBaseClient() (SQLBase, error) {
+type clientOptions struct {
+	recorder       audit.Recorder
+	policyProvider GuardPolicyProvider
+}
+
+type Option func(*clientOptions)
+
+func WithAuditRecorder(recorder audit.Recorder) Option {
+	return func(options *clientOptions) {
+		options.recorder = recorder
+	}
+}
+
+func WithGuardPolicyProvider(provider GuardPolicyProvider) Option {
+	return func(options *clientOptions) {
+		options.policyProvider = provider
+	}
+}
+
+func NewSQLBaseClient(opts ...Option) (SQLBase, error) {
+	options := clientOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+
 	cfg := config.Current()
 	sqlBaseCfg := cfg.SQLBase
 	dbCfg := cfg.Database
@@ -557,11 +628,11 @@ func NewSQLBaseClient() (SQLBase, error) {
 
 	switch SQLBaseType(metaType) {
 	case SQLBaseTypeExternal:
-		return NewExternalClient()
+		return NewExternalClient(options.recorder, options.policyProvider)
 	case SQLBaseTypeInternal:
-		return NewInternalClient(internalHost, internalPort, internalUser, internalPassword, internalDb)
+		return NewInternalClient(internalHost, internalPort, internalUser, internalPassword, internalDb, options.recorder, options.policyProvider)
 	default:
 		// Fall back to the internal client when SQL_BASE_TYPE is empty or invalid.
-		return NewInternalClient(internalHost, internalPort, internalUser, internalPassword, internalDb)
+		return NewInternalClient(internalHost, internalPort, internalUser, internalPassword, internalDb, options.recorder, options.policyProvider)
 	}
 }

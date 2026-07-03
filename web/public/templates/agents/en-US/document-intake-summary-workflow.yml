@@ -75,7 +75,7 @@ workflow:
         text: |-
           Run guide
 
-          Ready. Requires: OpenAI gpt-5.5 model, file input. Upload documents at run time; the flow extracts text and summarizes intake facts.
+          Ready. Requires: OpenAI GPT-4o model, file input. Upload documents at run time; the flow extracts text and summarizes intake facts.
 
           Suggested test input:
           Upload a PDF/TXT/DOCX/MD sample file in the debug panel, such as meeting notes, a contract, or a service request brief.
@@ -152,7 +152,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params: {}
         prompt_template:

@@ -25,11 +25,21 @@ const (
 	promptOptimizerGoalDeep         = "deep"
 )
 
+const (
+	promptOptimizerDefaultMaxTokens     = 8192
+	promptOptimizerDeepDefaultMaxTokens = 16000
+	promptOptimizerPlatformMaxTokens    = 32000
+	promptOptimizerTargetMaxCharsLimit  = 50000
+)
+
 var promptOptimizerVariablePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?s)<zgi:(knowledge|skill)\b[^>]*>.*?</zgi:(knowledge|skill)>`),
 	regexp.MustCompile(`\{\{#[^{}]+#\}\}`),
 	regexp.MustCompile(`\{\{[^{}]+\}\}`),
 	regexp.MustCompile(`\$\{[^{}]+\}`),
 }
+
+var promptOptimizerZGITemplateBlockPattern = regexp.MustCompile(`(?s)<zgi:(slot|knowledge|skill)\b([^>]*)>(.*?)</zgi:(slot|knowledge|skill)>`)
 
 func (s *promptService) Optimize(
 	ctx context.Context,
@@ -42,14 +52,20 @@ func (s *promptService) Optimize(
 	if rawPrompt == "" {
 		return nil, fmt.Errorf("raw prompt cannot be empty")
 	}
+	optimizerPrompt := normalizePromptOptimizerInput(rawPrompt)
+	if optimizerPrompt == "" {
+		return nil, fmt.Errorf("raw prompt cannot be empty")
+	}
 	if s == nil || s.llmClient == nil || s.defaultModelSvc == nil {
 		return nil, fmt.Errorf("prompt optimizer is unavailable")
 	}
 
 	goal := normalizePromptOptimizerGoal(req.Goal)
 	preserveVariables := req.PreserveVariables == nil || *req.PreserveVariables
-	detectedVariables := detectPromptOptimizerVariables(rawPrompt)
+	detectedVariables := detectPromptOptimizerVariables(optimizerPrompt)
 	outputLanguage := promptOptimizerOutputLanguage(req.Language)
+	editInstruction := strings.TrimSpace(req.EditInstruction)
+	targetMaxChars := normalizePromptOptimizerTargetMaxChars(req.TargetMaxChars)
 
 	promptID, err := s.resolveOptimizerPromptID(ctx, organizationID, accountID, req.PromptID)
 	if err != nil {
@@ -87,10 +103,12 @@ func (s *promptService) Optimize(
 		buildPromptOptimizerChatRequest(
 			resolvedModel,
 			goal,
-			rawPrompt,
+			optimizerPrompt,
 			preserveVariables,
 			detectedVariables,
 			outputLanguage,
+			editInstruction,
+			targetMaxChars,
 			false,
 		),
 	)
@@ -101,6 +119,24 @@ func (s *promptService) Optimize(
 	output, err := parsePromptOptimizerTextResponse(response)
 	if err != nil {
 		return nil, fmt.Errorf("parse optimizer response: %w", err)
+	}
+	finishReason := promptOptimizerResponseFinishReason(response)
+	truncated := promptOptimizerFinishReasonIsTruncated(finishReason)
+	if truncated {
+		return &promptdto.PromptOptimizeResponse{
+			Goal:              goal,
+			PreserveVariables: preserveVariables,
+			DetectedVariables: detectedVariables,
+			Output:            output,
+			Variants: promptdto.PromptOptimizeVariantsResponse{
+				Safe:     output,
+				Balanced: output,
+				Advanced: output,
+			},
+			Truncated:      true,
+			FinishReason:   finishReason,
+			TargetMaxChars: targetMaxChars,
+		}, nil
 	}
 
 	run := &promptmodel.PromptOptimizationRun{
@@ -133,6 +169,8 @@ func (s *promptService) Optimize(
 			Balanced: output,
 			Advanced: output,
 		},
+		FinishReason:   finishReason,
+		TargetMaxChars: targetMaxChars,
 	}, nil
 }
 
@@ -148,14 +186,20 @@ func (s *promptService) OptimizeStream(
 	if rawPrompt == "" {
 		return nil, fmt.Errorf("raw prompt cannot be empty")
 	}
+	optimizerPrompt := normalizePromptOptimizerInput(rawPrompt)
+	if optimizerPrompt == "" {
+		return nil, fmt.Errorf("raw prompt cannot be empty")
+	}
 	if s == nil || s.llmClient == nil || s.defaultModelSvc == nil {
 		return nil, fmt.Errorf("prompt optimizer is unavailable")
 	}
 
 	goal := normalizePromptOptimizerGoal(req.Goal)
 	preserveVariables := req.PreserveVariables == nil || *req.PreserveVariables
-	detectedVariables := detectPromptOptimizerVariables(rawPrompt)
+	detectedVariables := detectPromptOptimizerVariables(optimizerPrompt)
 	outputLanguage := promptOptimizerOutputLanguage(req.Language)
+	editInstruction := strings.TrimSpace(req.EditInstruction)
+	targetMaxChars := normalizePromptOptimizerTargetMaxChars(req.TargetMaxChars)
 
 	promptID, err := s.resolveOptimizerPromptID(ctx, organizationID, accountID, req.PromptID)
 	if err != nil {
@@ -206,6 +250,7 @@ func (s *promptService) OptimizeStream(
 				"detected_variables": detectedVariables,
 				"provider":           resolvedModel.Provider,
 				"model":              resolvedModel.Model,
+				"target_max_chars":   targetMaxChars,
 			},
 		}); err != nil {
 			return nil, err
@@ -238,10 +283,12 @@ func (s *promptService) OptimizeStream(
 		buildPromptOptimizerChatRequest(
 			resolvedModel,
 			goal,
-			rawPrompt,
+			optimizerPrompt,
 			preserveVariables,
 			detectedVariables,
 			outputLanguage,
+			editInstruction,
+			targetMaxChars,
 			true,
 		),
 	)
@@ -250,6 +297,7 @@ func (s *promptService) OptimizeStream(
 	}
 
 	var builder strings.Builder
+	finishReason := ""
 	for {
 		select {
 		case <-ctx.Done():
@@ -260,6 +308,7 @@ func (s *promptService) OptimizeStream(
 				if finalOutput == "" {
 					return nil, fmt.Errorf("optimizer response output is empty")
 				}
+				truncated := promptOptimizerFinishReasonIsTruncated(finishReason)
 				if onEvent != nil {
 					if err := onEvent(PromptOptimizeStreamEvent{
 						Event: "progress",
@@ -271,35 +320,42 @@ func (s *promptService) OptimizeStream(
 						return nil, err
 					}
 				}
-				run := &promptmodel.PromptOptimizationRun{
-					OrganizationID:    organizationID,
-					WorkspaceID:       stringPtr(workspaceID),
-					PromptID:          promptID,
-					AccountID:         accountID,
-					Goal:              goal,
-					Provider:          stringPtr(resolvedModel.Provider),
-					Model:             stringPtr(resolvedModel.Model),
-					PreserveVariables: preserveVariables,
-					DetectedVariables: append([]string{}, detectedVariables...),
-					RawPrompt:         rawPrompt,
-					SafeOutput:        finalOutput,
-					BalancedOutput:    finalOutput,
-					AdvancedOutput:    finalOutput,
-				}
-				if err := s.repo.CreateOptimizationRun(ctx, run); err != nil {
-					return nil, fmt.Errorf("save prompt optimization run: %w", err)
+				runID := ""
+				if !truncated {
+					run := &promptmodel.PromptOptimizationRun{
+						OrganizationID:    organizationID,
+						WorkspaceID:       stringPtr(workspaceID),
+						PromptID:          promptID,
+						AccountID:         accountID,
+						Goal:              goal,
+						Provider:          stringPtr(resolvedModel.Provider),
+						Model:             stringPtr(resolvedModel.Model),
+						PreserveVariables: preserveVariables,
+						DetectedVariables: append([]string{}, detectedVariables...),
+						RawPrompt:         rawPrompt,
+						SafeOutput:        finalOutput,
+						BalancedOutput:    finalOutput,
+						AdvancedOutput:    finalOutput,
+					}
+					if err := s.repo.CreateOptimizationRun(ctx, run); err != nil {
+						return nil, fmt.Errorf("save prompt optimization run: %w", err)
+					}
+					runID = run.ID
 				}
 				result := &promptdto.PromptOptimizeResponse{
 					Goal:              goal,
 					PreserveVariables: preserveVariables,
 					DetectedVariables: detectedVariables,
-					RunID:             run.ID,
+					RunID:             runID,
 					Output:            finalOutput,
 					Variants: promptdto.PromptOptimizeVariantsResponse{
 						Safe:     finalOutput,
 						Balanced: finalOutput,
 						Advanced: finalOutput,
 					},
+					Truncated:      truncated,
+					FinishReason:   finishReason,
+					TargetMaxChars: targetMaxChars,
 				}
 				if onEvent != nil {
 					if err := onEvent(PromptOptimizeStreamEvent{
@@ -308,10 +364,13 @@ func (s *promptService) OptimizeStream(
 							"goal":               goal,
 							"preserve_variables": preserveVariables,
 							"detected_variables": detectedVariables,
-							"run_id":             run.ID,
+							"run_id":             runID,
 							"output":             finalOutput,
 							"provider":           resolvedModel.Provider,
 							"model":              resolvedModel.Model,
+							"truncated":          truncated,
+							"finish_reason":      finishReason,
+							"target_max_chars":   targetMaxChars,
 						},
 					}); err != nil {
 						return nil, err
@@ -321,6 +380,9 @@ func (s *promptService) OptimizeStream(
 			}
 			if chunk.Error != nil {
 				return nil, chunk.Error
+			}
+			if reason := promptOptimizerStreamFinishReason(chunk); reason != "" {
+				finishReason = reason
 			}
 			if chunk.Done {
 				continue
@@ -364,6 +426,55 @@ func normalizePromptOptimizerGoal(goal string) string {
 	}
 }
 
+func normalizePromptOptimizerTargetMaxChars(value int) int {
+	if value <= 0 {
+		return 0
+	}
+	if value > promptOptimizerTargetMaxCharsLimit {
+		return promptOptimizerTargetMaxCharsLimit
+	}
+	return value
+}
+
+func promptOptimizerMaxTokens(resolvedModel *llmdefaultservice.ResolvedModel, goal string) int {
+	fallback := promptOptimizerDefaultMaxTokens
+	if goal == promptOptimizerGoalDeep {
+		fallback = promptOptimizerDeepDefaultMaxTokens
+	}
+	if resolvedModel == nil || resolvedModel.MaxOutputTokens <= 0 {
+		return fallback
+	}
+	if resolvedModel.MaxOutputTokens > promptOptimizerPlatformMaxTokens {
+		return promptOptimizerPlatformMaxTokens
+	}
+	return resolvedModel.MaxOutputTokens
+}
+
+func promptOptimizerResponseFinishReason(resp *adapter.ChatResponse) string {
+	if resp == nil || len(resp.Choices) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(resp.Choices[0].FinishReason)
+}
+
+func promptOptimizerStreamFinishReason(resp adapter.StreamResponse) string {
+	if len(resp.Choices) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(resp.Choices[0].FinishReason)
+}
+
+func promptOptimizerFinishReasonIsTruncated(reason string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(reason))
+	if normalized == "" {
+		return false
+	}
+	return normalized == "length" ||
+		strings.Contains(normalized, "max_token") ||
+		strings.Contains(normalized, "token_limit") ||
+		strings.Contains(normalized, "output_limit")
+}
+
 func trimmedStringPtr(value string) *string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -387,6 +498,34 @@ func detectPromptOptimizerVariables(rawPrompt string) []string {
 	return variables
 }
 
+func normalizePromptOptimizerInput(rawPrompt string) string {
+	source := strings.TrimSpace(rawPrompt)
+	if source == "" {
+		return ""
+	}
+	normalized := promptOptimizerZGITemplateBlockPattern.ReplaceAllStringFunc(source, func(token string) string {
+		matches := promptOptimizerZGITemplateBlockPattern.FindStringSubmatch(token)
+		if len(matches) < 5 || matches[1] != matches[4] {
+			return token
+		}
+		if matches[1] != "slot" {
+			return token
+		}
+		return decodePromptOptimizerTemplateText(matches[3])
+	})
+	return strings.TrimSpace(normalized)
+}
+
+func decodePromptOptimizerTemplateText(value string) string {
+	return strings.NewReplacer(
+		"&quot;", `"`,
+		"&apos;", "'",
+		"&lt;", "<",
+		"&gt;", ">",
+		"&amp;", "&",
+	).Replace(value)
+}
+
 func promptOptimizerOutputLanguage(language string) string {
 	normalized := strings.ToLower(strings.TrimSpace(language))
 	switch {
@@ -399,6 +538,24 @@ func promptOptimizerOutputLanguage(language string) string {
 	default:
 		return strings.TrimSpace(language)
 	}
+}
+
+func promptOptimizerLengthInstruction(targetMaxChars int) string {
+	if targetMaxChars <= 0 {
+		return "No explicit product character limit is provided. Keep the prompt concise and directly usable."
+	}
+	return fmt.Sprintf(
+		"Final prompt must be no more than %d characters. If the source contains too much material, compress it while preserving identity, task flow, tool rules, safety/compliance, escalation rules, and prohibitions; shorten examples and repetitive explanation first. Do not add filler just to use the budget.",
+		targetMaxChars,
+	)
+}
+
+func promptOptimizerEditInstructionBlock(editInstruction string) string {
+	trimmed := strings.TrimSpace(editInstruction)
+	if trimmed == "" {
+		return "No additional user-directed edit request."
+	}
+	return trimmed + "\n\nFollow this edit request unless it conflicts with variable preservation, ZGI tag preservation, output language, or the target length."
 }
 
 func (s *promptService) resolveOptimizerPromptID(
@@ -431,13 +588,12 @@ func buildPromptOptimizerChatRequest(
 	preserveVariables bool,
 	detectedVariables []string,
 	outputLanguage string,
+	editInstruction string,
+	targetMaxChars int,
 	stream bool,
 ) *adapter.ChatRequest {
 	temperature := 0.2
-	maxTokens := 1200
-	if goal == promptOptimizerGoalDeep {
-		maxTokens = 2400
-	}
+	maxTokens := promptOptimizerMaxTokens(resolvedModel, goal)
 	return &adapter.ChatRequest{
 		Provider:    strings.TrimSpace(resolvedModel.Provider),
 		Model:       strings.TrimSpace(resolvedModel.Model),
@@ -457,6 +613,8 @@ func buildPromptOptimizerChatRequest(
 					preserveVariables,
 					detectedVariables,
 					outputLanguage,
+					editInstruction,
+					targetMaxChars,
 				),
 			},
 		},
@@ -479,7 +637,7 @@ Output requirements:
 2. Preserve the user's original intent and domain. Strengthen clarity, reliability, structure, actionability, constraints, and evaluation criteria.
 3. Use the requested system/interface language for the final optimized prompt when it is provided. If no requested system/interface language is provided, match the primary language of the user's original prompt.
 4. If the original prompt is for a system prompt, agent instruction, workflow node, RAG answer, classifier, extraction task, JSON generation, code task, email, support reply, or other specific scenario, preserve that scenario and optimize for it.
-5. If variables or placeholders are detected and variable preservation is enabled, preserve them exactly. Do not translate, remove, rename, reorder, or change their bracket syntax.
+5. If variables or placeholders are detected and variable preservation is enabled, preserve every detected variable token exactly as an opaque literal. Do not translate, remove, rename, reorder, escape, split, wrap, or change its syntax. This includes ZGI capability references such as <zgi:knowledge ...>...</zgi:knowledge> and <zgi:skill ...>...</zgi:skill>.
 6. The final prompt should usually contain a strong expert role, useful background/context, a concrete task list, output requirements, constraints/guardrails, and example requirements. For very short original prompts, enrich them with reasonable missing context instead of merely rephrasing them.
 7. Do not output a meta-prompt asking another model to optimize the prompt. Output the optimized prompt that should be used directly.`
 }
@@ -490,6 +648,8 @@ func buildPromptOptimizerUserPrompt(
 	preserveVariables bool,
 	detectedVariables []string,
 	outputLanguage string,
+	editInstruction string,
+	targetMaxChars int,
 ) string {
 	goalDescription := map[string]string{
 		promptOptimizerGoalGeneral:      "Create a balanced, high-quality prompt with clear role, context, task, constraints, and output format.",
@@ -515,6 +675,8 @@ func buildPromptOptimizerUserPrompt(
 	if strings.TrimSpace(outputLanguage) != "" {
 		languageInstruction = fmt.Sprintf("Use the system/interface language for the final optimized prompt: %s.", outputLanguage)
 	}
+	lengthInstruction := promptOptimizerLengthInstruction(targetMaxChars)
+	editInstructionBlock := promptOptimizerEditInstructionBlock(editInstruction)
 
 	if goal == promptOptimizerGoalDeep {
 		return fmt.Sprintf(`Optimize the following user prompt into one high-quality, directly usable result.
@@ -534,9 +696,13 @@ Quality bar for deep optimization:
 - The result should be substantially better than the original, not just a polished rewrite.
 - Include an expert role, inferred context, explicit task list, output format, constraints, and example requirements when the original prompt does not already provide them.
 - %s
+- %s
 - Do not use the words "CRISPE", "role and capability", "context explanation", "task statement", "output format", "case requirement", or "optimized prompt" as labels in the final answer.
 
 Optimization goal:
+%s
+
+User-directed edit request:
 %s
 
 Preserve variables:
@@ -545,8 +711,14 @@ Preserve variables:
 Detected variables:
 %s
 
+Variable preservation rules:
+- If Preserve variables is true, copy every detected variable exactly as listed.
+- Treat detected variables as immutable opaque tokens, not natural language.
+- Do not alter XML-like ZGI tags, attributes, labels, brackets, braces, punctuation, or casing.
+- The original prompt has already had editable slot wrappers removed; do not invent or reintroduce slot wrapper syntax.
+
 Original user prompt:
-%s`, languageInstruction, goalDescription, variableMode, variableList, rawPrompt)
+%s`, languageInstruction, lengthInstruction, goalDescription, editInstructionBlock, variableMode, variableList, rawPrompt)
 	}
 
 	return fmt.Sprintf(`Optimize the following user prompt into one high-quality, directly usable result.
@@ -556,7 +728,13 @@ Internally infer the role, context, task list, output format, and useful example
 Output language:
 %s
 
+Length target:
+%s
+
 Optimization goal:
+%s
+
+User-directed edit request:
 %s
 
 Preserve variables:
@@ -565,8 +743,14 @@ Preserve variables:
 Detected variables:
 %s
 
+Variable preservation rules:
+- If Preserve variables is true, copy every detected variable exactly as listed.
+- Treat detected variables as immutable opaque tokens, not natural language.
+- Do not alter XML-like ZGI tags, attributes, labels, brackets, braces, punctuation, or casing.
+- The original prompt has already had editable slot wrappers removed; do not invent or reintroduce slot wrapper syntax.
+
 Original user prompt:
-%s`, languageInstruction, goalDescription, variableMode, variableList, rawPrompt)
+%s`, languageInstruction, lengthInstruction, goalDescription, editInstructionBlock, variableMode, variableList, rawPrompt)
 }
 
 func parsePromptOptimizerTextResponse(resp *adapter.ChatResponse) (string, error) {

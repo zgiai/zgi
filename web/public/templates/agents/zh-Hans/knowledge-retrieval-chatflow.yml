@@ -75,7 +75,7 @@ workflow:
         text: |-
           运行说明
 
-          需配置。依赖：OpenAI GPT gpt-5.5 模型、知识库。先在知识检索节点绑定真实知识库。
+          需配置。依赖：OpenAI GPT-4o 模型、知识库。先在知识检索节点绑定真实知识库。
 
           调试输入：
           可在右侧调试窗口直接输入：
@@ -142,7 +142,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params: {}
         prompt_template:

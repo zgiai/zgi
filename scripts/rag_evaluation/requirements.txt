@@ -1,0 +1,5 @@
+openpyxl
+xlrd
+ragas
+datasets
+openai

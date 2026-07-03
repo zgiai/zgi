@@ -122,18 +122,24 @@ export function getLogoutRedirectUrl(): string {
 const ICON_BG_BY_DEFAULT_THEME: Record<string, string> = {
   light: '#0847f7',
   dark: 'oklch(0.922 0 0)',
-  'ai-young': 'oklch(0.35 0.25 285)',
-  'whale-orange': 'oklch(0.62 0.25 56)',
+  violet: 'oklch(0.35 0.25 285)',
+  'warm-orange': 'oklch(0.62 0.25 56)',
   'tech-blue': '#2450de',
   'graphite-cyan': '#0e7490',
   emerald: '#059669',
 };
 
 const CURRENT_DEFAULT_THEME_NAME: string = readPublicEnvRaw('NEXT_PUBLIC_DEFAULT_THEME') || 'light';
+const DEFAULT_THEME_ICON_ALIASES: Record<string, string> = {
+  'ai-young': 'violet',
+  'whale-orange': 'warm-orange',
+};
+const CURRENT_DEFAULT_THEME_ICON_KEY: string =
+  DEFAULT_THEME_ICON_ALIASES[CURRENT_DEFAULT_THEME_NAME] || CURRENT_DEFAULT_THEME_NAME;
 
 export const ICON_BG: string =
   readPublicEnvRaw('NEXT_PUBLIC_ICON_BG') ||
-  ICON_BG_BY_DEFAULT_THEME[CURRENT_DEFAULT_THEME_NAME] ||
+  ICON_BG_BY_DEFAULT_THEME[CURRENT_DEFAULT_THEME_ICON_KEY] ||
   ICON_BG_BY_DEFAULT_THEME.light;
 export const ICON_TEXT: string = readPublicEnvRaw('NEXT_PUBLIC_ICON_TEXT') || 'z';
 
@@ -180,6 +186,18 @@ export const AUTH_API_URL: string = readPublicEnvRaw('NEXT_PUBLIC_AUTH_API_URL')
  */
 export const UPLOAD_API_URL: string = readPublicEnvRaw('NEXT_PUBLIC_UPLOAD_API_URL') || '';
 
+function parsePublicEnvList(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+export const FILE_PREVIEW_ALLOWED_ORIGINS: string[] = parsePublicEnvList(
+  readPublicEnvRaw('NEXT_PUBLIC_FILE_PREVIEW_ALLOWED_ORIGINS')
+);
+
 /**
  * Market API base URL (for marketplace plugins, uses separate endpoint)
  */
@@ -207,7 +225,8 @@ export const ENABLE_THEME_SWITCH: boolean =
   readPublicEnvRaw('NEXT_PUBLIC_ENABLE_THEME_SWITCH') !== 'false';
 
 /**
- * Default theme name (light | dark | ai-young | whale-orange | tech-blue | graphite-cyan | emerald)
+ * Default theme name (light | dark | violet | warm-orange | tech-blue | graphite-cyan | emerald)
+ * Legacy values ai-young and whale-orange are still accepted.
  * Used when theme switching is disabled or no user preference is stored
  */
 export const DEFAULT_THEME_NAME: string = readPublicEnvRaw('NEXT_PUBLIC_DEFAULT_THEME') || 'light';
@@ -269,7 +288,7 @@ export const AUTH_BG_IMAGE: string = readPublicEnvRaw('NEXT_PUBLIC_AUTH_BG_IMAGE
 
 /**
  * Console AI chat conversation sidebar background image URL.
- * Used for brand-specific deployments such as AiYoung without forking chat UI.
+ * Used for brand-specific deployments without forking chat UI.
  */
 export const AICHAT_SIDEBAR_BG_IMAGE: string = resolveOptionalPublicAssetUrl(
   readPublicEnvRaw('NEXT_PUBLIC_AICHAT_SIDEBAR_BG_IMAGE')
@@ -277,7 +296,7 @@ export const AICHAT_SIDEBAR_BG_IMAGE: string = resolveOptionalPublicAssetUrl(
 
 /**
  * Web app chat conversation history sidebar background image URL.
- * Used for brand-specific deployments such as AiYoung without forking chat UI.
+ * Used for brand-specific deployments without forking chat UI.
  */
 export const WEBAPP_CHAT_SIDEBAR_BG_IMAGE: string = resolveOptionalPublicAssetUrl(
   readPublicEnvRaw('NEXT_PUBLIC_WEBAPP_CHAT_SIDEBAR_BG_IMAGE')
@@ -318,5 +337,19 @@ export const ROOT_COOKIE_DOMAIN: string = (readPublicEnvRaw('NEXT_PUBLIC_ROOT_CO
   .toLowerCase();
 
 export const ENABLE_ROOT_COOKIE_TOKEN_SYNC: boolean = ROOT_COOKIE_DOMAIN.length > 0;
+
+/**
+ * Agent detail features that are still being refined.
+ * Keep them hidden by default while retaining the implementation behind
+ * explicit public flags for local validation or customer-specific builds.
+ */
+export const ENABLE_AGENT_API_PAGE: boolean =
+  readPublicEnvRaw('NEXT_PUBLIC_ENABLE_AGENT_API_PAGE') === 'true';
+
+export const ENABLE_AGENT_BATCH_TEST_PAGE: boolean =
+  readPublicEnvRaw('NEXT_PUBLIC_ENABLE_AGENT_BATCH_TEST_PAGE') === 'true';
+
+export const ENABLE_AGENT_RUNTIME_LOGS_PAGE: boolean =
+  readPublicEnvRaw('NEXT_PUBLIC_ENABLE_AGENT_RUNTIME_LOGS_PAGE') === 'true';
 
 // Add more env variables here as needed, always use this file for env access

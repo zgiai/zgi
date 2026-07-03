@@ -17,6 +17,7 @@ type FileFolderRepository interface {
 	CreateFolder(ctx context.Context, folder *file_model.FileFolder) error
 	GetFolderByID(ctx context.Context, id string) (*file_model.FileFolder, error)
 	GetFolderByIDAndTenant(ctx context.Context, id, tenantID string) (*file_model.FileFolder, error)
+	FolderNameExists(ctx context.Context, organizationID string, workspaceID *string, parentID *string, name string, excludeFolderID *string) (bool, error)
 	UpdateFolder(ctx context.Context, id string, updates map[string]interface{}) (*file_model.FileFolder, error)
 	DeleteFolder(ctx context.Context, id string) error
 	ListFolders(ctx context.Context, tenantID string, parentID *string, page, limit int, keyword, sort string, workspaceIDs []string) ([]*file_model.FileFolder, int64, error)
@@ -30,8 +31,8 @@ type FileFolderRepository interface {
 	ListFilesInFolderWithFilters(ctx context.Context, folderID string, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time) ([]*file_model.UploadFile, int64, error)
 	ListFavoriteFileIDs(ctx context.Context, accountID string, page, limit int) ([]string, int64, error)
 	ListFilesByIDs(ctx context.Context, fileIDs []string, keyword, sort, extension string, startTime, endTime *time.Time, tenantID string) ([]*file_model.UploadFile, error)
-	ListFilesInFolderWithFiltersAndTenant(ctx context.Context, folderID string, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time, tenantID string, workspaceIDs []string) ([]*file_model.UploadFile, int64, error)
-	ListAllFilesWithFiltersAndTenant(ctx context.Context, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time, tenantID, accountID string, allowAllFolders bool, workspaceIDs []string) ([]*file_model.UploadFile, int64, error)
+	ListFilesInFolderWithFiltersAndTenant(ctx context.Context, folderID string, page, limit int, keyword, sort, extension, processingStatus string, startTime, endTime *time.Time, tenantID string, workspaceIDs []string) ([]*file_model.UploadFile, int64, error)
+	ListAllFilesWithFiltersAndTenant(ctx context.Context, page, limit int, keyword, sort, extension, processingStatus string, startTime, endTime *time.Time, tenantID, accountID string, allowAllFolders bool, workspaceIDs []string) ([]*file_model.UploadFile, int64, error)
 	ListFavoriteFilesWithFilters(ctx context.Context, accountID string, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time, tenantID string, allowAllFolders bool, workspaceIDs []string) ([]*file_model.UploadFile, int64, error)
 	MoveFileToFolder(ctx context.Context, fileID, fromFolderID, toFolderID, updatedBy string) error
 	GetFileFolderID(ctx context.Context, fileID string) (string, error)
@@ -67,7 +68,77 @@ func applyWorkspaceIDsFilter(query *gorm.DB, workspaceIDs []string, column strin
 		return query
 	}
 
+	if query != nil && query.Dialector != nil && query.Dialector.Name() == "postgres" {
+		return query.Where(column+"::text = ANY(string_to_array(?, ','))", strings.Join(filtered, ","))
+	}
+
 	return query.Where(column+" IN ?", filtered)
+}
+
+func parseProcessingStatusFilter(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+
+	parts := strings.Split(value, ",")
+	statuses := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		status := strings.TrimSpace(part)
+		if status == "" {
+			continue
+		}
+		if _, exists := seen[status]; exists {
+			continue
+		}
+		seen[status] = struct{}{}
+		statuses = append(statuses, status)
+	}
+	return statuses
+}
+
+func applyCurrentAssetProductStatusFilter(query *gorm.DB, statuses []string) *gorm.DB {
+	if len(statuses) == 0 {
+		return query
+	}
+
+	if query != nil && query.Dialector != nil && query.Dialector.Name() == "postgres" {
+		return query.Where(`
+			EXISTS (
+				SELECT 1
+				FROM data_library_document_assets AS dla
+				WHERE dla.organization_id = upload_files.organization_id::text
+					AND dla.source_file_id = upload_files.id::text
+					AND dla.deleted_at IS NULL
+					AND dla.product_status IN ?
+					AND dla.updated_at = (
+						SELECT MAX(latest_dla.updated_at)
+						FROM data_library_document_assets AS latest_dla
+						WHERE latest_dla.organization_id = upload_files.organization_id::text
+							AND latest_dla.source_file_id = upload_files.id::text
+							AND latest_dla.deleted_at IS NULL
+					)
+			)
+		`, statuses)
+	}
+
+	return query.Where(`
+		EXISTS (
+			SELECT 1
+			FROM data_library_document_assets AS dla
+			WHERE dla.organization_id = upload_files.organization_id
+				AND dla.source_file_id = upload_files.id
+				AND dla.deleted_at IS NULL
+				AND dla.product_status IN ?
+				AND dla.updated_at = (
+					SELECT MAX(latest_dla.updated_at)
+					FROM data_library_document_assets AS latest_dla
+					WHERE latest_dla.organization_id = upload_files.organization_id
+						AND latest_dla.source_file_id = upload_files.id
+						AND latest_dla.deleted_at IS NULL
+				)
+		)
+	`, statuses)
 }
 
 func NewFileFolderRepository(db *gorm.DB) FileFolderRepository {
@@ -99,6 +170,38 @@ func (r *fileFolderRepository) GetFolderByIDAndTenant(ctx context.Context, id, o
 		return nil, err
 	}
 	return &folder, nil
+}
+
+// FolderNameExists checks whether a sibling folder already uses the same name.
+func (r *fileFolderRepository) FolderNameExists(ctx context.Context, organizationID string, workspaceID *string, parentID *string, name string, excludeFolderID *string) (bool, error) {
+	var count int64
+	normalizedName := strings.TrimSpace(name)
+	query := r.db.WithContext(ctx).
+		Model(&file_model.FileFolder{}).
+		Where("organization_id = ?", organizationID).
+		Where("LOWER(name) = LOWER(?)", normalizedName)
+
+	if workspaceID == nil || strings.TrimSpace(*workspaceID) == "" {
+		query = query.Where("workspace_id IS NULL")
+	} else {
+		query = query.Where("workspace_id = ?", strings.TrimSpace(*workspaceID))
+	}
+
+	if parentID == nil || strings.TrimSpace(*parentID) == "" {
+		query = query.Where("parent_id IS NULL")
+	} else {
+		query = query.Where("parent_id = ?", strings.TrimSpace(*parentID))
+	}
+
+	if excludeFolderID != nil && strings.TrimSpace(*excludeFolderID) != "" {
+		query = query.Where("id <> ?", strings.TrimSpace(*excludeFolderID))
+	}
+
+	if err := query.Count(&count).Error; err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
 }
 
 // UpdateFolder updates a folder with the given updates
@@ -456,7 +559,7 @@ func (r *fileFolderRepository) ListFilesInFolderWithFilters(ctx context.Context,
 }
 
 // ListFilesInFolderWithFiltersAndTenant lists files in a folder with additional filters and tenant check
-func (r *fileFolderRepository) ListFilesInFolderWithFiltersAndTenant(ctx context.Context, folderID string, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time, tenantID string, workspaceIDs []string) ([]*file_model.UploadFile, int64, error) {
+func (r *fileFolderRepository) ListFilesInFolderWithFiltersAndTenant(ctx context.Context, folderID string, page, limit int, keyword, sort, extension, processingStatus string, startTime, endTime *time.Time, tenantID string, workspaceIDs []string) ([]*file_model.UploadFile, int64, error) {
 	var files []*file_model.UploadFile
 	var total int64
 
@@ -530,6 +633,11 @@ func (r *fileFolderRepository) ListFilesInFolderWithFiltersAndTenant(ctx context
 		countQuery = countQuery.Where("created_at <= ?", endTime)
 	}
 
+	if statuses := parseProcessingStatusFilter(processingStatus); len(statuses) > 0 {
+		query = applyCurrentAssetProductStatusFilter(query, statuses)
+		countQuery = applyCurrentAssetProductStatusFilter(countQuery, statuses)
+	}
+
 	// Get total count
 	if err := countQuery.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -565,7 +673,7 @@ func (r *fileFolderRepository) ListFilesInFolderWithFiltersAndTenant(ctx context
 }
 
 // ListAllFilesWithFiltersAndTenant lists all files with additional filters and tenant check
-func (r *fileFolderRepository) ListAllFilesWithFiltersAndTenant(ctx context.Context, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time, tenantID, accountID string, allowAllFolders bool, workspaceIDs []string) ([]*file_model.UploadFile, int64, error) {
+func (r *fileFolderRepository) ListAllFilesWithFiltersAndTenant(ctx context.Context, page, limit int, keyword, sort, extension, processingStatus string, startTime, endTime *time.Time, tenantID, accountID string, allowAllFolders bool, workspaceIDs []string) ([]*file_model.UploadFile, int64, error) {
 	var files []*file_model.UploadFile
 	var total int64
 
@@ -624,6 +732,11 @@ func (r *fileFolderRepository) ListAllFilesWithFiltersAndTenant(ctx context.Cont
 	if endTime != nil && !endTime.IsZero() {
 		query = query.Where("created_at <= ?", endTime)
 		countQuery = countQuery.Where("created_at <= ?", endTime)
+	}
+
+	if statuses := parseProcessingStatusFilter(processingStatus); len(statuses) > 0 {
+		query = applyCurrentAssetProductStatusFilter(query, statuses)
+		countQuery = applyCurrentAssetProductStatusFilter(countQuery, statuses)
 	}
 
 	// Get total count

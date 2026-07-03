@@ -31,7 +31,7 @@ export function WorkspaceMismatchGuard({
   const t = useT();
 
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
-  const isOrganizationMode = useWorkspaceStore.use.isOrganizationMode();
+  const contextStatus = useWorkspaceStore.use.contextStatus();
   const workspaces = useWorkspaceStore.use.workspaces();
   const updateWorkspace = useUpdateCurrentWorkspace();
 
@@ -43,23 +43,15 @@ export function WorkspaceMismatchGuard({
     );
   }
 
-  // If match or no target defined yet, pass through
-  // If in Org Mode and user is an organization admin, also allow bypass
-  const { isAdmin } = useWorkspaceStore.getState();
-  if (
-    !targetWorkspaceId ||
-    (!isOrganizationMode && currentWorkspace?.id === targetWorkspaceId) ||
-    (isOrganizationMode && isAdmin())
-  ) {
+  // If match or no target defined yet, pass through.
+  if (!targetWorkspaceId || (contextStatus === 'ready' && currentWorkspace?.id === targetWorkspaceId)) {
     return <>{children}</>;
   }
 
   // Find the target workspace in local list to see if user has access to it
   const targetWorkspace = workspaces.find(tw => tw.id === targetWorkspaceId);
   const workspaceName = targetWorkspaceName || targetWorkspace?.name || 'Unknown Workspace';
-  const currentWorkspaceName = isOrganizationMode
-    ? t('navigation.personalSpace')
-    : currentWorkspace?.name || 'Unknown Workspace';
+  const currentWorkspaceName = currentWorkspace?.name || t('navigation.switchWorkspace');
 
   const handleSwitch = () => {
     if (targetWorkspace) {
@@ -77,9 +69,7 @@ export function WorkspaceMismatchGuard({
           {t('common.workspaceMismatch.title')}
         </h2>
         <p className="text-muted-foreground max-w-md">
-          {isOrganizationMode
-            ? t('common.workspaceMismatch.descriptionInOrg', { workspaceName })
-            : t('common.workspaceMismatch.description', { workspaceName, currentWorkspaceName })}
+          {t('common.workspaceMismatch.description', { workspaceName, currentWorkspaceName })}
         </p>
         <p className="text-sm text-muted-foreground">{t('common.workspaceMismatch.actionHint')}</p>
       </div>

@@ -15,6 +15,7 @@ import (
 	extractreducto "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/reducto"
 	extractvlm "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/vlm"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/pkg/storage"
 )
 
 var extractSemaphore = make(chan struct{}, maxSemaphore())
@@ -28,14 +29,22 @@ func maxSemaphore() int {
 }
 
 type HyperparseExtractor struct {
-	filePath string
-	backend  string
+	filePath       string
+	backend        string
+	storage        storage.Storage
+	assetNamespace string
 }
 
 func NewHyperparseExtractor(filePath, backend string) *HyperparseExtractor {
+	return NewHyperparseExtractorWithStorage(filePath, backend, nil, "")
+}
+
+func NewHyperparseExtractorWithStorage(filePath, backend string, store storage.Storage, assetNamespace string) *HyperparseExtractor {
 	return &HyperparseExtractor{
-		filePath: filePath,
-		backend:  strings.ToLower(strings.TrimSpace(backend)),
+		filePath:       filePath,
+		backend:        strings.ToLower(strings.TrimSpace(backend)),
+		storage:        store,
+		assetNamespace: assetNamespace,
 	}
 }
 
@@ -63,6 +72,11 @@ func (e *HyperparseExtractor) Extract(ctx context.Context) (*dto.ExtractOutput, 
 	}()
 	if err != nil {
 		return nil, fmt.Errorf("hyperparse-sdk: parse backend=%s: %w", e.backend, err)
+	}
+	if e.backend == "mineru" {
+		if err := persistMinerUImages(e.storage, result, e.assetNamespace); err != nil {
+			return nil, fmt.Errorf("hyperparse-sdk: persist mineru images: %w", err)
+		}
 	}
 
 	output := mapResultToExtractOutput(result, e.filePath, e.backend)

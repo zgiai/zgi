@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Plus, RefreshCw, LibraryBig, ShieldAlert, WandSparkles } from 'lucide-react';
+import { Plus, RefreshCw, ShieldAlert, WandSparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -14,7 +14,7 @@ import { usePrompts, useCreatePrompt } from '@/hooks/prompt/use-prompts';
 import { PromptFormDialog } from '@/components/prompts/prompt-form-dialog';
 import { PromptOptimizerDialog } from '@/components/prompts/prompt-optimizer-dialog';
 import { PromptPlaygroundPanel } from '@/components/prompts/prompt-playground-panel';
-import { useCurrentWorkspace, useWorkspaceStore } from '@/store/workspace-store';
+import { useCurrentWorkspace } from '@/store/workspace-store';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 
 function matchesLocale(currentLocale: string, promptLocale: string): boolean {
@@ -37,7 +37,6 @@ export default function PromptsPage() {
   const { locale } = useLocale();
   const searchParams = useSearchParams();
   const currentWorkspace = useCurrentWorkspace();
-  const isOrganizationMode = useWorkspaceStore.use.isOrganizationMode();
   const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const canView = hasPermission('agent.view');
   const canManage = hasPermission('agent.manage');
@@ -97,40 +96,52 @@ export default function PromptsPage() {
   return (
     <>
       <div className="p-4 sm:p-6 lg:p-8 space-y-6 flex flex-col h-full overflow-y-auto">
-        <Tabs value={activeTab} onValueChange={value => setActiveTab(value as 'library' | 'playground')}>
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-semibold">{t('title')}</h1>
-              <TabsList>
-                <TabsTrigger value="library">{t('tabs.library')}</TabsTrigger>
-                <TabsTrigger value="playground">{t('tabs.playground')}</TabsTrigger>
-              </TabsList>
-              {activeTab === 'library' ? (
-                <Button
-                  isIcon
-                  variant="ghost"
-                  className="size-7 rounded-sm hover:bg-muted"
-                  onClick={() => void refetch()}
-                  disabled={isFetching}
-                >
-                  <RefreshCw size={16} className={isFetching ? 'animate-spin' : ''} />
-                </Button>
-              ) : null}
+        <Tabs
+          value={activeTab}
+          onValueChange={value => setActiveTab(value as 'library' | 'playground')}
+        >
+          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+            <div className="flex flex-col gap-3">
+              <div>
+                <h1 className="text-2xl font-semibold">{t('title')}</h1>
+                <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{t('description')}</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <TabsList>
+                  <TabsTrigger value="library">{t('tabs.library')}</TabsTrigger>
+                  <TabsTrigger value="playground">{t('tabs.playground')}</TabsTrigger>
+                </TabsList>
+                {activeTab === 'library' ? (
+                  <Button
+                    isIcon
+                    variant="ghost"
+                    className="size-7 rounded-sm hover:bg-muted"
+                    onClick={() => void refetch()}
+                    disabled={isFetching}
+                  >
+                    <RefreshCw size={16} className={isFetching ? 'animate-spin' : ''} />
+                  </Button>
+                ) : null}
+              </div>
             </div>
             {activeTab === 'library' ? (
-              <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex w-full flex-col gap-3 sm:flex-row sm:flex-wrap xl:w-auto xl:justify-end">
                 <Input
                   value={keyword}
                   onChange={e => setKeyword(e.target.value)}
                   placeholder={t('search.placeholder')}
-                  className="w-full sm:w-72"
+                  className="w-full sm:min-w-64 sm:flex-1 xl:w-72 xl:flex-none"
                 />
-                <Button variant="outline" onClick={() => setOptimizerOpen(true)}>
+                <Button
+                  variant="outline"
+                  className="shrink-0"
+                  onClick={() => setOptimizerOpen(true)}
+                >
                   <WandSparkles className="h-4 w-4" />
                   {t('actions.optimizePrompt')}
                 </Button>
                 {canManage ? (
-                  <Button onClick={() => setDialogOpen(true)}>
+                  <Button className="shrink-0" onClick={() => setDialogOpen(true)}>
                     <Plus className="h-4 w-4" />
                     {t('actions.newPrompt')}
                   </Button>
@@ -140,19 +151,14 @@ export default function PromptsPage() {
           </div>
 
           <TabsContent value="library" className="space-y-6">
+            <section className="space-y-1">
+              <h2 className="text-lg font-semibold">{t('tabs.library')}</h2>
+              <p className="text-sm text-muted-foreground">{t('tabs.libraryDescription')}</p>
+            </section>
             {empty ? (
-              isOrganizationMode && !canManage ? (
-                <div className="rounded-xl border border-dashed p-8 text-center text-muted-foreground">
-                  <div className="flex items-center justify-center mb-3">
-                    <LibraryBig className="w-8 h-8 text-muted-foreground" />
-                  </div>
-                  {t('states.empty')}
-                </div>
-              ) : (
-                <div className="rounded-xl border border-dashed p-8 text-center text-muted-foreground">
-                  {t('states.empty')}
-                </div>
-              )
+              <div className="rounded-xl border border-dashed p-8 text-center text-muted-foreground">
+                {t('states.empty')}
+              </div>
             ) : (
               <div className="space-y-8">
                 {(['official', 'workspace', 'personal'] as const).map(source =>
@@ -180,7 +186,10 @@ export default function PromptsPage() {
                             <div className="flex items-center gap-2 flex-wrap mt-3">
                               <Badge variant="outline">v{prompt.latest_version}</Badge>
                               {prompt.latest_labels.map(label => (
-                                <Badge key={label} variant={label === 'production' ? 'default' : 'secondary'}>
+                                <Badge
+                                  key={label}
+                                  variant={label === 'production' ? 'default' : 'secondary'}
+                                >
                                   {label}
                                 </Badge>
                               ))}
@@ -195,7 +204,11 @@ export default function PromptsPage() {
             )}
           </TabsContent>
 
-          <TabsContent value="playground">
+          <TabsContent value="playground" className="space-y-6">
+            <section className="space-y-1">
+              <h2 className="text-lg font-semibold">{t('tabs.playground')}</h2>
+              <p className="text-sm text-muted-foreground">{t('tabs.playgroundDescription')}</p>
+            </section>
             <PromptPlaygroundPanel prefillPromptId={prefillPromptId || undefined} />
           </TabsContent>
         </Tabs>

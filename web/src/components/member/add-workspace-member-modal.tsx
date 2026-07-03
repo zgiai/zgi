@@ -39,6 +39,7 @@ interface AddWorkspaceMemberModalProps {
   onOpenChange: (open: boolean) => void;
   workspaceId: string;
   workspaceName?: string;
+  initialSearchQuery?: string;
   isLoading?: boolean;
   onAdd: (memberIds: string[], roleId?: string) => Promise<BatchAddMembersResponse | void>;
 }
@@ -57,6 +58,7 @@ export function AddWorkspaceMemberModal({
   onOpenChange,
   workspaceId,
   workspaceName,
+  initialSearchQuery,
   isLoading = false,
   onAdd,
 }: AddWorkspaceMemberModalProps) {
@@ -132,12 +134,12 @@ export function AddWorkspaceMemberModal({
 
   useEffect(() => {
     if (!open) return;
-    setSearchQuery('');
+    setSearchQuery(initialSearchQuery ?? '');
     setSelectedMemberIds([]);
     setSelectedDepartmentId('all');
     setSelectedRoleId('');
     setCurrentPage(1);
-  }, [open]);
+  }, [initialSearchQuery, open]);
 
   const showAddSummary = useCallback(
     (result?: BatchAddMembersResponse | void) => {

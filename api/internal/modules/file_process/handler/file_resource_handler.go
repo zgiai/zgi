@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/zgiai/zgi/api/internal/dto"
+	datalibraryservice "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -20,6 +22,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const folderDuplicateNameMessage = "同一级目录下已存在同名文件夹，请更换名称。"
+
 // FileResourceHandler handles file and file resource-related HTTP requests
 type FileResourceHandler struct {
 	fileFolderService   service.FileFolderService
@@ -27,6 +31,7 @@ type FileResourceHandler struct {
 	accountService      interfaces.AccountService
 	enterpriseService   interfaces.OrganizationService
 	fileFavoriteService service.FileFavoriteService
+	assetSummaryService datalibraryservice.FileAssetSummaryService
 }
 
 // NewFileResourceHandler creates a new FileResourceHandler instance
@@ -36,13 +41,19 @@ func NewFileResourceHandler(
 	accountService interfaces.AccountService,
 	enterpriseService interfaces.OrganizationService,
 	fileFavoriteService service.FileFavoriteService,
+	assetSummaryServices ...datalibraryservice.FileAssetSummaryService,
 ) *FileResourceHandler {
+	var assetSummaryService datalibraryservice.FileAssetSummaryService
+	if len(assetSummaryServices) > 0 {
+		assetSummaryService = assetSummaryServices[0]
+	}
 	return &FileResourceHandler{
 		fileFolderService:   fileFolderService,
 		fileService:         fileService,
 		accountService:      accountService,
 		fileFavoriteService: fileFavoriteService,
 		enterpriseService:   enterpriseService,
+		assetSummaryService: assetSummaryService,
 	}
 }
 
@@ -223,6 +234,10 @@ func (h *FileResourceHandler) PostFolder(c *gin.Context) {
 
 	createdFolder, err := h.fileFolderService.CreateFolder(c.Request.Context(), folder)
 	if err != nil {
+		if errors.Is(err, service.ErrFolderNameConflict) {
+			response.FailWithMessage(c, response.ErrFileFolderExists, folderDuplicateNameMessage)
+			return
+		}
 		response.Fail(c, response.ErrSystemError)
 		return
 	}
@@ -390,6 +405,10 @@ func (h *FileResourceHandler) PatchFolder(c *gin.Context) {
 
 	updatedFolder, err := h.fileFolderService.UpdateFolder(c.Request.Context(), folderID, updateData)
 	if err != nil {
+		if errors.Is(err, service.ErrFolderNameConflict) {
+			response.FailWithMessage(c, response.ErrFileFolderExists, folderDuplicateNameMessage)
+			return
+		}
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
@@ -537,6 +556,7 @@ func (h *FileResourceHandler) GetFilesInFolder(c *gin.Context) {
 		req.Keyword,
 		req.Sort,
 		req.Extension,
+		req.ProcessingStatus,
 		&req.StartTime,
 		&req.EndTime,
 		organizationID,
@@ -566,6 +586,24 @@ func (h *FileResourceHandler) GetFilesInFolder(c *gin.Context) {
 				zap.Int("file_count", len(fileIDs)),
 			)
 			// Don't fail the request, just log the error and continue without favorite info
+		}
+	}
+
+	assetSummaries := map[string]datalibraryservice.FileAssetSummaryView{}
+	if h.assetSummaryService != nil {
+		assetSummaries, err = h.assetSummaryService.ListCurrentFileAssetSummaries(c.Request.Context(), datalibraryservice.FileAssetSummaryListInput{
+			OrganizationID: organizationID,
+			SourceFileIDs:  fileIDs,
+		})
+		if err != nil {
+			logger.ErrorContext(c.Request.Context(), "failed to batch get file asset processing summaries",
+				err,
+				zap.String("account_id", accountID),
+				zap.String("tenant_id", organizationID),
+				zap.Int("file_count", len(fileIDs)),
+			)
+			response.Fail(c, response.ErrSystemError)
+			return
 		}
 	}
 
@@ -599,6 +637,10 @@ func (h *FileResourceHandler) GetFilesInFolder(c *gin.Context) {
 			fileResponse.RelatedDatasetCount = relatedDatasetCount
 			// Set the generic related count field, currently equal to dataset count
 			fileResponse.RelatedCount = relatedDatasetCount
+		}
+
+		if summary, exists := assetSummaries[file.ID]; exists {
+			applyFileAssetSummaryToUploadFile(&fileResponse, summary)
 		}
 
 		fileResponses[i] = fileResponse
@@ -729,6 +771,10 @@ func (h *FileResourceHandler) MoveFolderToFolder(c *gin.Context) {
 	// Move folder to target folder
 	err = h.fileFolderService.MoveFolderToFolder(c.Request.Context(), req.FolderID, req.TargetID, accountID, organizationID)
 	if err != nil {
+		if errors.Is(err, service.ErrFolderNameConflict) {
+			response.FailWithMessage(c, response.ErrFileFolderExists, folderDuplicateNameMessage)
+			return
+		}
 		// Check for specific error messages
 		if strings.Contains(err.Error(), "cannot move folder to itself") {
 			response.FailWithMessage(c, response.ErrInvalidParam, "Cannot move folder to itself")
@@ -898,6 +944,7 @@ func (h *FileResourceHandler) ListAllFiles(c *gin.Context) {
 		req.Keyword,
 		req.Sort,
 		req.Extension,
+		req.ProcessingStatus,
 		&req.StartTime,
 		&req.EndTime,
 		organizationID,
@@ -944,6 +991,24 @@ func (h *FileResourceHandler) ListAllFiles(c *gin.Context) {
 		}
 	}
 
+	assetSummaries := map[string]datalibraryservice.FileAssetSummaryView{}
+	if h.assetSummaryService != nil {
+		assetSummaries, err = h.assetSummaryService.ListCurrentFileAssetSummaries(c.Request.Context(), datalibraryservice.FileAssetSummaryListInput{
+			OrganizationID: organizationID,
+			SourceFileIDs:  fileIDs,
+		})
+		if err != nil {
+			logger.ErrorContext(c.Request.Context(), "failed to batch get file asset processing summaries",
+				err,
+				zap.String("account_id", accountID),
+				zap.String("tenant_id", organizationID),
+				zap.Int("file_count", len(fileIDs)),
+			)
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+	}
+
 	fileResponses := make([]dto.UploadFile, len(files))
 	for i, file := range files {
 		// Convert model to DTO
@@ -977,6 +1042,10 @@ func (h *FileResourceHandler) ListAllFiles(c *gin.Context) {
 			fileResponse.RelatedCount = relatedDatasetCount
 		}
 
+		if summary, exists := assetSummaries[file.ID]; exists {
+			applyFileAssetSummaryToUploadFile(&fileResponse, summary)
+		}
+
 		fileResponses[i] = fileResponse
 	}
 
@@ -990,6 +1059,29 @@ func (h *FileResourceHandler) ListAllFiles(c *gin.Context) {
 		Total:   total,
 		Page:    req.Page,
 	})
+}
+
+func applyFileAssetSummaryToUploadFile(file *dto.UploadFile, summary datalibraryservice.FileAssetSummaryView) {
+	if file == nil {
+		return
+	}
+	file.AssetID = summary.AssetID.String()
+	file.ProcessingStatus = summary.ProductStatus
+	file.ProcessingStage = summary.ProcessingStage
+	file.ProcessingProgress = summary.ProcessingProgress
+	if summary.ActiveProcessingRequestID != nil {
+		file.ProcessingRequestID = summary.ActiveProcessingRequestID.String()
+	}
+	if summary.ProcessingRunID != nil {
+		file.ProcessingRunID = summary.ProcessingRunID.String()
+	}
+	file.GenerationNo = summary.GenerationNo
+	file.PendingConfirmCount = summary.PendingConfirmationCount
+	file.ChunkCount = summary.ChunkCount
+	file.EmbeddingCount = summary.EmbeddingCount
+	file.VectorStatus = summary.VectorStatus
+	file.LastErrorCode = summary.LastErrorCode
+	file.LastErrorMessage = summary.LastErrorMessage
 }
 
 // ListRecentFiles handles GET /file-folders/recent-files
@@ -1049,6 +1141,7 @@ func (h *FileResourceHandler) ListRecentFiles(c *gin.Context) {
 		req.Keyword,
 		req.Sort,
 		req.Extension,
+		req.ProcessingStatus,
 		&req.StartTime,
 		&req.EndTime,
 		organizationID,
@@ -1095,6 +1188,24 @@ func (h *FileResourceHandler) ListRecentFiles(c *gin.Context) {
 		}
 	}
 
+	assetSummaries := map[string]datalibraryservice.FileAssetSummaryView{}
+	if h.assetSummaryService != nil {
+		assetSummaries, err = h.assetSummaryService.ListCurrentFileAssetSummaries(c.Request.Context(), datalibraryservice.FileAssetSummaryListInput{
+			OrganizationID: organizationID,
+			SourceFileIDs:  fileIDs,
+		})
+		if err != nil {
+			logger.ErrorContext(c.Request.Context(), "failed to batch get recent file asset processing summaries",
+				err,
+				zap.String("account_id", accountID),
+				zap.String("tenant_id", organizationID),
+				zap.Int("file_count", len(fileIDs)),
+			)
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+	}
+
 	fileResponses := make([]dto.UploadFile, len(files))
 	for i, file := range files {
 		// Convert model to DTO
@@ -1124,6 +1235,10 @@ func (h *FileResourceHandler) ListRecentFiles(c *gin.Context) {
 			fileResponse.RelatedDatasetCount = relatedDatasetCount
 			// Set the generic related count field, currently equal to dataset count
 			fileResponse.RelatedCount = relatedDatasetCount
+		}
+
+		if summary, exists := assetSummaries[file.ID]; exists {
+			applyFileAssetSummaryToUploadFile(&fileResponse, summary)
 		}
 
 		fileResponses[i] = fileResponse
@@ -1223,6 +1338,24 @@ func (h *FileResourceHandler) ListFavoriteFiles(c *gin.Context) {
 		return
 	}
 
+	assetSummaries := map[string]datalibraryservice.FileAssetSummaryView{}
+	if h.assetSummaryService != nil {
+		assetSummaries, err = h.assetSummaryService.ListCurrentFileAssetSummaries(c.Request.Context(), datalibraryservice.FileAssetSummaryListInput{
+			OrganizationID: organizationID,
+			SourceFileIDs:  fileIDs,
+		})
+		if err != nil {
+			logger.ErrorContext(c.Request.Context(), "failed to batch get favorite file asset processing summaries",
+				err,
+				zap.String("account_id", accountID),
+				zap.String("tenant_id", organizationID),
+				zap.Int("file_count", len(fileIDs)),
+			)
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+	}
+
 	fileResponses := make([]dto.UploadFile, len(files))
 	for i, file := range files {
 		// Convert model to DTO
@@ -1253,6 +1386,10 @@ func (h *FileResourceHandler) ListFavoriteFiles(c *gin.Context) {
 			fileResponse.RelatedDatasetCount = relatedDatasetCount
 			// Set the generic related count field, currently equal to dataset count
 			fileResponse.RelatedCount = relatedDatasetCount
+		}
+
+		if summary, exists := assetSummaries[file.ID]; exists {
+			applyFileAssetSummaryToUploadFile(&fileResponse, summary)
 		}
 
 		fileResponses[i] = fileResponse

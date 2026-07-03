@@ -183,7 +183,12 @@ const MessageItemComponent: React.FC<MessageItemProps> = ({
               <QuestionAnswerTranscript items={questionAnswerTranscript} className="mb-3" />
             ) : null}
             {hasAi ? (
-              <MarkdownViewer className="md-viewer break-words" content={displayAnswer} />
+              <MarkdownViewer
+                className="md-viewer break-words"
+                content={displayAnswer}
+                isStreaming={isClientLoading}
+                renderIdentity={message.messageId}
+              />
             ) : isClientLoading ? (
               <div className="space-y-2">
                 <Skeleton className="h-4 w-2/3" />

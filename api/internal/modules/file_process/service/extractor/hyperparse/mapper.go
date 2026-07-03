@@ -122,6 +122,18 @@ func buildElementMetadata(base map[string]any, chunk extractcommon.Chunk, page i
 	if chunk.Confidence > 0 {
 		meta["confidence"] = chunk.Confidence
 	}
+	if len(chunk.Payload) > 0 {
+		meta["payload"] = cloneMetadata(chunk.Payload)
+		if imageURL, ok := chunk.Payload["image_url"].(string); ok && strings.TrimSpace(imageURL) != "" {
+			meta["image_url"] = strings.TrimSpace(imageURL)
+		}
+		if imageKey, ok := chunk.Payload["image_key"].(string); ok && strings.TrimSpace(imageKey) != "" {
+			meta["image_key"] = strings.TrimSpace(imageKey)
+		}
+		if originalPath, ok := chunk.Payload["original_img_path"].(string); ok && strings.TrimSpace(originalPath) != "" {
+			meta["original_img_path"] = strings.TrimSpace(originalPath)
+		}
+	}
 	return meta
 }
 

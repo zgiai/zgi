@@ -20,9 +20,19 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/zgiai/zgi/api/config"
+	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
+	workflow_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
+	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
+	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
+	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
+	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/queue"
 	"github.com/zgiai/zgi/api/pkg/response"
+	pkgscheduler "github.com/zgiai/zgi/api/pkg/scheduler"
 )
 
 func TestWorkflowRoutes_WebAppConfigIsPublic(t *testing.T) {
@@ -327,9 +337,14 @@ func newWorkflowRoutesTestRouterWithConversation(t *testing.T) (*gin.Engine, str
 	oldConfig := config.GlobalConfig
 	config.GlobalConfig = &config.Config{
 		Platform: config.PlatformConfig{Edition: "TEST"},
+		Redis:    config.RedisConfig{Host: "127.0.0.1", Port: 6379},
 		Storage: config.StorageConfig{
 			Type:            "local",
 			OpenDALBasePath: t.TempDir(),
+		},
+		TaskQueue: config.TaskQueueConfig{
+			Concurrency: 1,
+			Retention:   time.Hour,
 		},
 	}
 	t.Cleanup(func() {
@@ -353,10 +368,58 @@ func newWorkflowRoutesTestRouterWithConversation(t *testing.T) (*gin.Engine, str
 		_ = taskManager.Close()
 	})
 
+	scheduler, err := pkgscheduler.NewScheduler(config.GlobalConfig)
+	require.NoError(t, err)
+
 	router := gin.New()
 	v1Group := router.Group("/console/api")
-	RegisterWorkflowRoutes(v1Group, nil, nil, nil, db, nil, nil, nil, nil, nil, nil, nil, nil, taskManager, workflowRoutesTaskRegistry{}, nil, nil, nil)
+	RegisterWorkflowRoutes(v1Group, WorkflowRouteDeps{
+		DB:                          db,
+		AccountService:              workflowRoutesAccountService{},
+		FileService:                 workflowRoutesFileService{},
+		ContentExtractor:            workflowRoutesContentExtractor{},
+		QuotaService:                workflowRoutesQuotaService{},
+		OrganizationService:         workflowRoutesOrganizationService{},
+		LLMClient:                   struct{}{},
+		ToolEngine:                  struct{}{},
+		GraphFlowService:            &graphflow.Service{},
+		PromptResolver:              workflowRoutesPromptService{},
+		AutomationDefinitionService: workflowRoutesAutomationDefinitionService{},
+		TaskManager:                 taskManager,
+		TaskRegistry:                workflowRoutesTaskRegistry{},
+		Scheduler:                   scheduler,
+		EngineFactory:               &graph_engine.EngineFactory{},
+		AutomationRunnerSetter:      workflowRoutesAutomationRunnerSetter{},
+		ShortLinkService:            shortlinkcap.NewServiceWithDB(db),
+	})
 	return router, webAppID, userID, conversationID
+}
+
+type workflowRoutesAccountService struct{ interfaces.AccountService }
+
+func (workflowRoutesAccountService) GetCurrentWorkspace(context.Context, string) (*workspace_model.Workspace, error) {
+	return nil, nil
+}
+
+func (workflowRoutesAccountService) EnsureCurrentOrganizationID(context.Context, string) (string, error) {
+	return "", nil
+}
+
+type workflowRoutesFileService struct{ interfaces.FileService }
+type workflowRoutesContentExtractor struct{ workflow_file.ContentExtractor }
+type workflowRoutesQuotaService struct{ interfaces.QuotaService }
+type workflowRoutesOrganizationService struct{ interfaces.OrganizationService }
+
+func (workflowRoutesOrganizationService) GetOrganizationByWorkspaceID(context.Context, string) (*workspace_model.Organization, error) {
+	return &workspace_model.Organization{ID: uuid.NewString()}, nil
+}
+
+type workflowRoutesPromptService struct{ promptservice.PromptService }
+type workflowRoutesAutomationDefinitionService struct{ automationdefinition.Service }
+
+type workflowRoutesAutomationRunnerSetter struct{}
+
+func (workflowRoutesAutomationRunnerSetter) SetAutomationWorkflowRunner(automationaction.AutomationWorkflowRunner) {
 }
 
 type workflowRoutesTaskRegistry struct{}

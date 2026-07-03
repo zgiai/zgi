@@ -2,6 +2,7 @@ import type { IconType } from '@/utils/icon-helpers';
 
 // Agent type enumeration
 export enum AgentType {
+  AGENT = 'AGENT',
   WORKFLOW = 'WORKFLOW',
   CONVERSATIONAL_AGENT = 'CONVERSATIONAL_WORKFLOW',
 }
@@ -30,6 +31,7 @@ export type WebAppStatus = 'active' | 'inactive';
 // Basic agent interface (for list response)
 export interface Agent {
   id: string;
+  web_app_id?: string;
   name: string;
   description: string;
   agent_type: AgentType;
@@ -48,6 +50,7 @@ export interface Agent {
 // Agent detail interface (for detail response)
 export interface AgentDetail {
   id: string;
+  web_app_id?: string;
   name: string;
   description: string;
   agent_type: AgentType;
@@ -167,6 +170,206 @@ export interface UpdateWebAppStatusResponse {
   web_app_id: string;
   web_app_status: WebAppStatus;
   updated_at: number;
+}
+
+export interface AgentRuntimeConfig {
+  agent_id: string;
+  system_prompt: string;
+  model_provider: string;
+  model: string;
+  model_parameters: Record<string, unknown>;
+  enabled_skill_ids: string[];
+  use_memory: boolean;
+  agent_memory_enabled?: boolean;
+  agent_memory_slots?: AgentMemorySlotConfig[];
+  file_upload_enabled: boolean;
+  home_title: string;
+  input_placeholder: string;
+  theme_color: string;
+  suggested_questions: string[];
+  knowledge_dataset_ids?: string[];
+  knowledge_retrieval_config?: Record<string, unknown>;
+  database_bindings?: AgentDatabaseBinding[];
+  workflow_bindings?: AgentWorkflowBinding[];
+  updated_at: number;
+}
+
+export interface AgentDatabaseBinding {
+  data_source_id: string;
+  table_ids: string[];
+  writable_table_ids?: string[];
+}
+
+export type AgentWorkflowVersionStrategy = 'latest_published' | 'pinned';
+
+export interface AgentWorkflowBinding {
+  binding_id: string;
+  label: string;
+  description?: string;
+  agent_id: string;
+  workflow_id: string;
+  agent_type?: AgentType | string;
+  version_strategy: AgentWorkflowVersionStrategy;
+  version_uuid?: string;
+  timeout_seconds?: number;
+}
+
+export interface AgentWorkflowBindingCandidate extends AgentWorkflowBinding {
+  version?: string;
+  icon?: string;
+  icon_type?: AgentIconType | string;
+  icon_url?: string;
+  updated_at?: number;
+}
+
+export interface AgentWorkflowBindingCandidatesResponse {
+  data: AgentWorkflowBindingCandidate[];
+}
+
+export interface AgentMemorySlotConfig {
+  id?: string;
+  key: string;
+  description: string;
+  max_chars: number;
+  enabled: boolean;
+  sort_order: number;
+  created_at?: number;
+  updated_at?: number;
+  created_at_unix?: number;
+  updated_at_unix?: number;
+  created_at_iso?: string;
+  updated_at_iso?: string;
+  created_at_display?: string;
+  updated_at_display?: string;
+}
+
+export interface AgentMemoryValue extends AgentMemorySlotConfig {
+  content: string;
+}
+
+export interface AgentMemoryValuesResponse {
+  user_scope: 'account' | 'end_user';
+  user_id: string;
+  values: AgentMemoryValue[];
+}
+
+export interface UpdateAgentMemoryValueRequest {
+  key: string;
+  content: string;
+}
+
+export interface UpdateAgentRuntimeConfigRequest {
+  system_prompt: string;
+  model_provider: string;
+  model: string;
+  model_parameters: Record<string, unknown>;
+  enabled_skill_ids: string[];
+  use_memory: boolean;
+  agent_memory_enabled?: boolean;
+  agent_memory_slots?: AgentMemorySlotConfig[];
+  file_upload_enabled: boolean;
+  home_title: string;
+  input_placeholder: string;
+  theme_color: string;
+  suggested_questions: string[];
+  knowledge_dataset_ids?: string[];
+  knowledge_retrieval_config?: Record<string, unknown>;
+  database_bindings?: AgentDatabaseBinding[];
+  workflow_bindings?: AgentWorkflowBinding[];
+}
+
+export interface AgentSuggestedQuestionSkillContext {
+  id?: string;
+  name?: string;
+  description?: string;
+}
+
+export interface GenerateAgentSuggestedQuestionsRequest {
+  locale?: string;
+  count?: number;
+  provider?: string;
+  model?: string;
+  system_prompt?: string;
+  home_title?: string;
+  existing_questions?: string[];
+  skills?: AgentSuggestedQuestionSkillContext[];
+  knowledge_refs?: string[];
+}
+
+export interface AgentSuggestedQuestionCandidate {
+  text: string;
+  reason?: string;
+}
+
+export interface GenerateAgentSuggestedQuestionsResponse {
+  questions: AgentSuggestedQuestionCandidate[];
+  warnings?: string[];
+  provider?: string;
+  model?: string;
+}
+
+export interface AgentChatRequest {
+  query: string;
+  conversation_id?: string;
+  parent_id?: string;
+  files?: string[];
+  response_mode?: 'streaming' | 'blocking';
+}
+
+export interface AgentChatSseData {
+  conversation_id?: string;
+  message_id?: string;
+  parent_id?: string;
+  title?: string;
+  model?: string;
+  answer?: string;
+  message?: string;
+  status?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AgentChatSseEnvelope {
+  event?: string;
+  data?: AgentChatSseData;
+}
+
+export interface AgentChatStreamCallbacks {
+  onMessageStart?: (data: AgentChatSseData) => void;
+  onMessage?: (data: AgentChatSseData) => void;
+  onMessageEnd?: (data: AgentChatSseData) => void;
+  onError?: (error: Error | AgentChatSseData) => void;
+  onClose?: () => void;
+}
+
+export interface PublishAgentResponse {
+  agent_id: string;
+  version_uuid: string;
+  version: string;
+  web_app_id: string;
+  published_at: number;
+}
+
+export interface AgentPublishedVersion {
+  id: string;
+  agent_id: string;
+  version_uuid: string;
+  version: string;
+  description: string;
+  config_snapshot: AgentRuntimeConfig;
+  is_current: boolean;
+  created_at: number;
+}
+
+export interface AgentPublishedVersionsResponse {
+  data: AgentPublishedVersion[];
+  page: number;
+  limit: number;
+  total: number;
+  has_more: boolean;
+}
+
+export interface RollbackAgentPublishedVersionRequest {
+  version_id: string;
 }
 export interface AgentApiKeyCreateResponse {
   id: string;

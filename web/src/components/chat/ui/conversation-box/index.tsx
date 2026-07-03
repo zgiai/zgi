@@ -3,12 +3,13 @@ import type { Conversation, NodeRunStatus } from '@/components/chat/types';
 import MessageItem from '@/components/chat/ui/message-item';
 import WorkflowRunHeader from '@/components/chat/ui/workflow-run-header';
 import { ChatHomeView } from '@/components/chat/ui/chat-home-view';
-import { ChatOpeningMessage } from '@/components/chat/ui/chat-opening-message';
+import { ChatOpeningGuideView } from '@/components/chat/ui/chat-opening-guide-view';
 import { Skeleton } from '@/components/ui/skeleton';
 import { eventBus } from '@/lib/event-bus';
 import { cn } from '@/lib/utils';
 import type { OpeningGuideConfig } from '@/utils/webapp/opening-statement';
 import { SUGGESTED_QUESTIONS_LIMIT } from '@/constants/suggested-questions';
+import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 
 interface ConversationBoxProps {
   conversation: Conversation | undefined;
@@ -32,6 +33,7 @@ interface ConversationBoxProps {
   onSuggestionClick?: (text: string) => void;
   /** Optional workflow-configured opening guide to show for empty conversations */
   openingGuide?: OpeningGuideConfig;
+  openingGuideBrand?: OpeningGuideBrand;
   suggestions?: string[];
   suggestionsTitle?: string;
   showDefaultSuggestions?: boolean;
@@ -51,6 +53,7 @@ const ConversationBox: React.FC<ConversationBoxProps> = ({
   isLoading = false,
   onSuggestionClick,
   openingGuide,
+  openingGuideBrand,
   suggestions,
   suggestionsTitle,
   showDefaultSuggestions = false,
@@ -59,27 +62,6 @@ const ConversationBox: React.FC<ConversationBoxProps> = ({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const messages = useMemo(() => conversation?.messages ?? [], [conversation]);
-  const normalizedOpeningGuide = useMemo(() => {
-    if (!openingGuide) return undefined;
-
-    if (openingGuide.type === 'slogan') {
-      const slogan = typeof openingGuide.slogan === 'string' ? openingGuide.slogan.trim() : '';
-      return slogan
-        ? {
-            type: 'slogan' as const,
-            slogan,
-          }
-        : undefined;
-    }
-
-    const message = typeof openingGuide.message === 'string' ? openingGuide.message : '';
-    return message.trim()
-      ? {
-          type: 'message' as const,
-          message,
-        }
-      : undefined;
-  }, [openingGuide]);
   const normalizedSuggestions = useMemo(
     () =>
       (suggestions ?? [])
@@ -88,6 +70,18 @@ const ConversationBox: React.FC<ConversationBoxProps> = ({
         .slice(0, SUGGESTED_QUESTIONS_LIMIT),
     [suggestions]
   );
+  const normalizedOpeningGuide = useMemo(() => {
+    if (!openingGuide) return undefined;
+
+    const title = typeof openingGuide.title === 'string' ? openingGuide.title.trim() : '';
+    const message = typeof openingGuide.message === 'string' ? openingGuide.message : '';
+    return title || message.trim() || normalizedSuggestions.length > 0
+      ? {
+          title: title || undefined,
+          message: message.trim() ? message : undefined,
+        }
+      : undefined;
+  }, [normalizedSuggestions.length, openingGuide]);
   const autoFollowRef = useRef(true);
   const activeTempKeyRef = useRef<string | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -300,32 +294,19 @@ const ConversationBox: React.FC<ConversationBoxProps> = ({
         <div ref={scrollRef} className="h-full min-w-0 overflow-x-hidden overflow-y-auto p-3">
           {messages.length === 0 ? (
             normalizedOpeningGuide ? (
-              normalizedOpeningGuide.type === 'slogan' ? (
-                <div className="mx-auto flex h-full w-full min-w-0 max-w-6xl overflow-hidden">
-                  <ChatHomeView
-                    className="max-w-none"
-                    title={normalizedOpeningGuide.slogan}
-                    onSuggestionClick={onSuggestionClick}
-                    suggestions={normalizedSuggestions}
-                    suggestionsTitle={suggestionsTitle}
-                    showDefaultSuggestions={showDefaultSuggestions}
-                  />
-                  <div ref={bottomRef} />
-                </div>
-              ) : (
-                <div className="mx-auto w-full min-w-0 max-w-6xl space-y-6 pt-4">
-                  <ChatOpeningMessage content={normalizedOpeningGuide.message} />
-                  <ChatHomeView
-                    className="h-auto justify-start px-0 py-0"
-                    title=""
-                    suggestions={normalizedSuggestions}
-                    suggestionsTitle={suggestionsTitle}
-                    showDefaultSuggestions={showDefaultSuggestions}
-                    onSuggestionClick={onSuggestionClick}
-                  />
-                  <div ref={bottomRef} />
-                </div>
-              )
+              <div className="mx-auto flex h-full w-full min-w-0 max-w-6xl flex-col items-center justify-center overflow-hidden px-4 py-8">
+                <ChatOpeningGuideView
+                  title={normalizedOpeningGuide.title ?? openingGuideBrand?.title}
+                  message={normalizedOpeningGuide.message}
+                  iconType={openingGuideBrand?.iconType}
+                  icon={openingGuideBrand?.icon}
+                  iconBackground={openingGuideBrand?.iconBackground}
+                  iconSrc={openingGuideBrand?.iconSrc}
+                  suggestions={normalizedSuggestions}
+                  onSuggestionClick={onSuggestionClick}
+                />
+                <div ref={bottomRef} />
+              </div>
             ) : (
               <ChatHomeView
                 onSuggestionClick={onSuggestionClick}

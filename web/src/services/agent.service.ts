@@ -10,6 +10,16 @@ import type {
   UpdateAgentRequest,
   UpdateWebAppStatusRequest,
   UpdateWebAppStatusResponse,
+  AgentRuntimeConfig,
+  AgentWorkflowBindingCandidatesResponse,
+  UpdateAgentRuntimeConfigRequest,
+  AgentMemorySlotConfig,
+  AgentMemoryValuesResponse,
+  UpdateAgentMemoryValueRequest,
+  AgentMemoryValue,
+  PublishAgentResponse,
+  AgentPublishedVersionsResponse,
+  RollbackAgentPublishedVersionRequest,
   AgentListParams,
   AgentApiKey,
   AgentApiKeyList,
@@ -18,6 +28,8 @@ import type {
   AgentApiKeyCreateResponse,
   RunnableWebAppsData,
   RunnableWebAppsParams,
+  GenerateAgentSuggestedQuestionsRequest,
+  GenerateAgentSuggestedQuestionsResponse,
 } from './types/agent';
 import type { WebAppRunRequest, WebAppRunSseCallbacks } from './types/webapp';
 import type { ApiResponseData } from './types/common';
@@ -57,10 +69,15 @@ class AgentService extends BaseService {
   getRunnableWebApps(
     params?: RunnableWebAppsParams
   ): Promise<ApiResponseData<RunnableWebAppsData>> {
-    return this.request<ApiResponseData<RunnableWebAppsData>>('get', '/agents/runnable-webapps', {
-      params,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return this.request<ApiResponseData<RunnableWebAppsData>>(
+      'get',
+      '/agents/runnable-webapps',
+      undefined,
+      {
+        params,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
   }
 
   /**
@@ -112,6 +129,110 @@ class AgentService extends BaseService {
     data: UpdateWebAppStatusRequest
   ): Promise<ApiResponseData<UpdateWebAppStatusResponse>> {
     return this.request('patch', `/agents/${agentId}/webapp/status`, data, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  getAgentConfig(agentId: string): Promise<ApiResponseData<AgentRuntimeConfig>> {
+    return this.request('get', `/agents/${agentId}/config`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  updateAgentConfig(
+    agentId: string,
+    data: UpdateAgentRuntimeConfigRequest
+  ): Promise<ApiResponseData<AgentRuntimeConfig>> {
+    return this.request('put', `/agents/${agentId}/config`, data, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  getAgentWorkflowBindingCandidates(
+    agentId: string
+  ): Promise<ApiResponseData<AgentWorkflowBindingCandidatesResponse>> {
+    return this.request('get', `/agents/${agentId}/workflow-bindings/candidates`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  getAgentMemorySlots(
+    agentId: string
+  ): Promise<ApiResponseData<{ slots: AgentMemorySlotConfig[] }>> {
+    return this.request('get', `/agents/${agentId}/memory/slots`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  updateAgentMemorySlots(
+    agentId: string,
+    slots: AgentMemorySlotConfig[]
+  ): Promise<ApiResponseData<{ slots: AgentMemorySlotConfig[] }>> {
+    return this.request(
+      'put',
+      `/agents/${agentId}/memory/slots`,
+      { slots },
+      {
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+  }
+
+  getAgentMemoryValues(agentId: string): Promise<ApiResponseData<AgentMemoryValuesResponse>> {
+    return this.request('get', `/agents/${agentId}/memory/values`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  updateAgentMemoryValue(
+    agentId: string,
+    data: UpdateAgentMemoryValueRequest
+  ): Promise<ApiResponseData<AgentMemoryValue>> {
+    return this.request('put', `/agents/${agentId}/memory/values`, data, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  clearAgentMemoryValue(
+    agentId: string,
+    params: { key: string }
+  ): Promise<ApiResponseData<AgentMemoryValue>> {
+    return this.request(
+      'delete',
+      `/agents/${agentId}/memory/values/${encodeURIComponent(params.key)}`,
+      undefined,
+      {
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+  }
+
+  publishAgent(agentId: string): Promise<ApiResponseData<PublishAgentResponse>> {
+    return this.request('post', `/agents/${agentId}/publish`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  getPublishedVersions(agentId: string): Promise<ApiResponseData<AgentPublishedVersionsResponse>> {
+    return this.request('get', `/agents/${agentId}/published-versions`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  rollbackPublishedVersion(
+    agentId: string,
+    data: RollbackAgentPublishedVersionRequest
+  ): Promise<ApiResponseData<AgentRuntimeConfig>> {
+    return this.request('post', `/agents/${agentId}/published-versions/rollback`, data, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  generateSuggestedQuestions(
+    agentId: string,
+    data: GenerateAgentSuggestedQuestionsRequest
+  ): Promise<ApiResponseData<GenerateAgentSuggestedQuestionsResponse>> {
+    return this.request('post', `/agents/${agentId}/suggested-questions/generate`, data, {
       headers: { 'Content-Type': 'application/json' },
     });
   }

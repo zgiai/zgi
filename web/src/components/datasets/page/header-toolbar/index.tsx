@@ -1,5 +1,5 @@
 import { memo, useCallback } from 'react';
-import { Plus, RefreshCw, FolderPlus, Search, ArrowLeft } from 'lucide-react';
+import { Plus, RefreshCw, Search, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
@@ -12,8 +12,6 @@ export interface HeaderToolbarProps {
   onSearchChange: (next: string) => void;
   // Use i18n-provided strings from parent to avoid i18n dependency inside this component
   searchPlaceholder: string;
-  createFolderText?: string;
-  onCreateFolder?: () => void;
   createText: string;
   onCreateDataset?: () => void;
   onBack?: () => void;
@@ -31,8 +29,6 @@ function HeaderToolbarBase({
   searchKeyword,
   onSearchChange,
   searchPlaceholder,
-  createFolderText,
-  onCreateFolder,
   createText,
   onCreateDataset,
   onBack,
@@ -78,12 +74,6 @@ function HeaderToolbarBase({
             className="pl-9"
           />
         </div>
-        {isRootView && onCreateFolder && (
-          <Button variant="outline" onClick={onCreateFolder}>
-            <FolderPlus size={16} />
-            <span className="text-sm font-normal">{createFolderText}</span>
-          </Button>
-        )}
         {onCreateDataset && (
           <Button onClick={onCreateDataset}>
             <Plus size={16} />

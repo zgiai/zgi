@@ -74,7 +74,7 @@ workflow:
         text: |-
           运行说明
 
-          需配置。依赖：OpenAI GPT gpt-5.5 模型、图片模型。先确认图片生成模型可用，再运行素材生成。
+          需配置。依赖：OpenAI GPT-4o 模型、图片模型。先确认图片生成模型可用，再运行素材生成。
 
           调试输入：
           打开调试面板后，开始节点字段已经预填，可直接运行。
@@ -120,7 +120,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params: {}
         prompt_template:

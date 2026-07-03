@@ -12,6 +12,7 @@ export interface SearchInputProps {
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
   onRefresh?: () => void;
+  refreshLabel: string;
   disabled?: boolean;
   isFetching?: boolean;
 }
@@ -24,6 +25,7 @@ export const SearchInput = memo(function SearchInput({
   onChange,
   onKeyDown,
   onRefresh,
+  refreshLabel,
   disabled = false,
   isFetching = false,
 }: SearchInputProps) {
@@ -54,7 +56,7 @@ export const SearchInput = memo(function SearchInput({
           }}
           disabled={disabled || isFetching}
           aria-busy={isFetching}
-          aria-label="Refresh models"
+          aria-label={refreshLabel}
         >
           <RefreshCcw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
         </Button>

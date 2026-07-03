@@ -3,17 +3,65 @@ import { cn } from '@/lib/utils';
 
 interface MarkdownMermaidProps {
   chart: string;
+  cacheKey: string;
   className?: string;
   fallbackClassName?: string;
 }
 
 let mermaidInitialized = false;
 
-export function MarkdownMermaid({ chart, className, fallbackClassName }: MarkdownMermaidProps) {
+type MermaidCacheEntry =
+  | { status: 'success'; svg: string }
+  | { status: 'failed' };
+
+const MERMAID_CACHE_LIMIT = 120;
+const mermaidRenderCache = new Map<string, MermaidCacheEntry>();
+
+function sanitizeMermaidId(value: string): string {
+  const cleaned = value.replace(/[^a-zA-Z0-9_-]/g, '-').replace(/-+/g, '-');
+  return cleaned || 'diagram';
+}
+
+function readMermaidCache(key: string): MermaidCacheEntry | undefined {
+  const entry = mermaidRenderCache.get(key);
+  if (!entry) return undefined;
+  mermaidRenderCache.delete(key);
+  mermaidRenderCache.set(key, entry);
+  return entry;
+}
+
+function writeMermaidCache(key: string, entry: MermaidCacheEntry) {
+  if (mermaidRenderCache.has(key)) {
+    mermaidRenderCache.delete(key);
+  }
+  mermaidRenderCache.set(key, entry);
+  while (mermaidRenderCache.size > MERMAID_CACHE_LIMIT) {
+    const oldest = mermaidRenderCache.keys().next().value;
+    if (!oldest) break;
+    mermaidRenderCache.delete(oldest);
+  }
+}
+
+function stateFromCache(entry: MermaidCacheEntry | undefined) {
+  if (!entry) return { svg: '', failed: false, loading: true };
+  if (entry.status === 'success') return { svg: entry.svg, failed: false, loading: false };
+  return { svg: '', failed: true, loading: false };
+}
+
+export function MarkdownMermaid({
+  chart,
+  cacheKey,
+  className,
+  fallbackClassName,
+}: MarkdownMermaidProps) {
   const id = React.useId();
-  const [svg, setSvg] = React.useState('');
-  const [failed, setFailed] = React.useState(false);
-  const diagramId = React.useMemo(() => `md-mermaid-${id.replace(/[^a-zA-Z0-9_-]/g, '')}`, [id]);
+  const diagramId = React.useMemo(
+    () => `md-mermaid-${sanitizeMermaidId(cacheKey || id)}`,
+    [cacheKey, id]
+  );
+  const [renderState, setRenderState] = React.useState(() =>
+    stateFromCache(readMermaidCache(cacheKey))
+  );
 
   React.useEffect(() => {
     let active = true;
@@ -34,34 +82,40 @@ export function MarkdownMermaid({ chart, className, fallbackClassName }: Markdow
         }
 
         const { svg: output } = await mermaid.render(diagramId, chart);
+        writeMermaidCache(cacheKey, { status: 'success', svg: output });
         if (!active) return;
-        setSvg(output);
-        setFailed(false);
+        setRenderState({ svg: output, failed: false, loading: false });
       } catch {
+        writeMermaidCache(cacheKey, { status: 'failed' });
         if (!active) return;
-        setSvg('');
-        setFailed(true);
+        setRenderState({ svg: '', failed: true, loading: false });
       }
     };
 
     if (chart.trim().length === 0) {
-      setSvg('');
-      setFailed(false);
+      setRenderState({ svg: '', failed: false, loading: false });
       return () => {
         active = false;
       };
     }
 
-    setSvg('');
-    setFailed(false);
+    const cached = readMermaidCache(cacheKey);
+    if (cached) {
+      setRenderState(stateFromCache(cached));
+      return () => {
+        active = false;
+      };
+    }
+
+    setRenderState({ svg: '', failed: false, loading: true });
     void render();
 
     return () => {
       active = false;
     };
-  }, [chart, diagramId]);
+  }, [cacheKey, chart, diagramId]);
 
-  if (failed) {
+  if (renderState.failed) {
     return (
       <div className={cn('md-mermaid-fallback', fallbackClassName)}>
         <pre className="overflow-auto text-xs">
@@ -73,10 +127,10 @@ export function MarkdownMermaid({ chart, className, fallbackClassName }: Markdow
 
   return (
     <div className={cn('md-mermaid-wrapper', className)}>
-      {svg ? (
-        <div className="md-mermaid-graph" dangerouslySetInnerHTML={{ __html: svg }} />
+      {renderState.svg ? (
+        <div className="md-mermaid-graph" dangerouslySetInnerHTML={{ __html: renderState.svg }} />
       ) : (
-        <div className="md-mermaid-loading animate-pulse" />
+        <div className={cn('md-mermaid-loading', renderState.loading ? 'animate-pulse' : '')} />
       )}
     </div>
   );

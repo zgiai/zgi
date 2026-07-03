@@ -30,6 +30,7 @@ export { useEventBus } from './use-event-bus';
 export { useHitTestingHistory } from './dataset/use-hit-testing-history';
 export { useLocale } from './use-locale';
 export { useIsMobile } from './use-mobile';
+export { useMediaQuery } from './use-media-query';
 
 // Organization & Workspace hooks
 export { useManagedWorkspaces } from './workspace/use-managed-workspaces';
@@ -125,12 +126,16 @@ export {
   useUpdateDbTableRecords,
   useDeleteDbTableRecord,
 } from './db/use-db-table-records';
-export { useBatchIngestFileToTable } from './db/use-batch-ingest-file-to-table';
+export {
+  useBatchIngestFileToTable,
+  useIngestFileToTable,
+} from './db/use-batch-ingest-file-to-table';
 export {
   useAnalyzeExcelImport,
   useConfirmExcelImport,
   useExcelImportJob,
   useExcelImportErrors,
+  useRecognizeExcelImport,
 } from './db/use-excel-import';
 export { useDbTablePrompt, useUpdateDbTablePrompt } from './db/use-db-table-prompt';
 // Setup hooks
@@ -166,8 +171,12 @@ export {
   useDeleteAIChatSkill,
   useAIChatSkill,
   useAIChatSkillConfig,
+  useAIChatSkillPreference,
   useAIChatSkills,
+  useOrganizationSkillPolicy,
+  useSkillCatalog,
   useUpdateAIChatSkillConfig,
+  useUpdateAIChatSkillPreference,
 } from './aichat/use-aichat-skills';
 
 // Hook-specific types

@@ -13,6 +13,9 @@ import type {
   Agent,
   AgentDetail,
   WebAppStatus,
+  AgentRuntimeConfig,
+  UpdateAgentRuntimeConfigRequest,
+  PublishAgentResponse,
 } from '@/services/types/agent';
 import type { ApiResponseData } from '@/services/types/common';
 import { getErrorMessage } from '@/utils/error-notifications';
@@ -376,6 +379,77 @@ export function useUpdateAgent() {
         queryClient.invalidateQueries({
           queryKey: AGENT_KEYS.detail(variables.agentId),
         });
+      }
+    },
+  });
+}
+
+export function useAgentConfig(agentId: string | null, enabled: boolean = true) {
+  return useQuery<ApiResponseData<AgentRuntimeConfig>, Error>({
+    queryKey: agentId ? AGENT_KEYS.config(agentId) : AGENT_KEYS.config(''),
+    queryFn: () => agentService.getAgentConfig(agentId ?? ''),
+    enabled: enabled && Boolean(agentId),
+  });
+}
+
+export function useUpdateAgentConfig() {
+  const queryClient = useQueryClient();
+  const t = useT('agents');
+
+  return useMutation<
+    ApiResponseData<AgentRuntimeConfig>,
+    unknown,
+    { agentId: string; data: UpdateAgentRuntimeConfigRequest }
+  >({
+    mutationFn: ({ agentId, data }) => agentService.updateAgentConfig(agentId, data),
+    onSuccess: (_data, { agentId }) => {
+      queryClient.invalidateQueries({ queryKey: AGENT_KEYS.config(agentId) });
+      queryClient.invalidateQueries({ queryKey: AGENT_KEYS.detail(agentId) });
+      toast.success(t('toasts.saveSuccess'));
+    },
+    onError: (error: unknown) => {
+      toast.error(getErrorMessage(error) || t('toasts.saveFailed'));
+    },
+  });
+}
+
+export function usePublishAgent() {
+  const queryClient = useQueryClient();
+  const t = useT('agents');
+
+  return useMutation<
+    ApiResponseData<PublishAgentResponse>,
+    unknown,
+    { agentId: string; silent?: boolean }
+  >({
+    mutationFn: ({ agentId }) => agentService.publishAgent(agentId),
+    onSuccess: (data, { agentId, silent }) => {
+      const published = data?.data;
+      queryClient.setQueryData<ApiResponseData<AgentDetail>>(
+        AGENT_KEYS.detail(agentId),
+        previous =>
+          previous?.data
+            ? {
+                ...previous,
+                data: {
+                  ...previous.data,
+                  is_published: true,
+                  web_app_id: published?.web_app_id || previous.data.web_app_id,
+                  web_app_status: previous.data.web_app_status ?? 'active',
+                },
+              }
+            : previous
+      );
+      queryClient.invalidateQueries({ queryKey: AGENT_KEYS.detail(agentId) });
+      queryClient.invalidateQueries({ queryKey: AGENT_KEYS.lists() });
+      queryClient.invalidateQueries({ queryKey: [...AGENT_KEYS.all, 'runnable-webapps'] });
+      if (!silent) {
+        toast.success(t('toasts.publishSuccess'));
+      }
+    },
+    onError: (error: unknown, variables) => {
+      if (!variables?.silent) {
+        toast.error(getErrorMessage(error) || t('toasts.publishFailed'));
       }
     },
   });

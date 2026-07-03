@@ -4,10 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
+	"net/url"
+	"os"
 	"strings"
 	"time"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"go.uber.org/zap"
 )
 
 // AliyunAdapter Aliyun DashScope adapter
@@ -40,7 +46,7 @@ func NewAliyunAdapter(config *adapter.AdapterConfig) (*AliyunAdapter, error) {
 
 	return &AliyunAdapter{
 		config:     config,
-		httpClient: adapter.NewHTTPClientWithAuthHook(timeout, 3, config.AuthHook),
+		httpClient: adapter.NewHTTPClientFromConfig(config, timeout, 3),
 		baseURL:    baseURL,
 	}, nil
 }
@@ -103,27 +109,837 @@ func (a *AliyunAdapter) compatibleRerankBaseURL() string {
 	}
 	return baseURL
 }
-
 func (a *AliyunAdapter) openAICompatibleAdapter() (*OpenAIAdapter, error) {
 	return newOpenAIAdapterWithOverrides(a.config, a.openAICompatibleBaseURL())
 }
 
-// ChatCompletion executes chat completion request
+// ChatCompletion executes chat completion request.
 func (a *AliyunAdapter) ChatCompletion(ctx context.Context, request *adapter.ChatRequest) (*adapter.ChatResponse, error) {
-	openaiAdapter, err := a.openAICompatibleAdapter()
+	payload, endpoint, err := a.buildAliyunChatPayload(request, false)
 	if err != nil {
 		return nil, err
 	}
-	return openaiAdapter.ChatCompletion(ctx, request)
+
+	respBody, statusCode, err := a.httpClient.DoRequest(ctx, "POST", endpoint, a.aliyunJSONHeaders(), payload)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	if statusCode != 200 {
+		return nil, a.handleError(statusCode, respBody)
+	}
+
+	return parseAliyunChatResponse(respBody, request.Model)
 }
 
-// ChatCompletionStream executes streaming chat completion request
+// ChatCompletionStream executes streaming chat completion request.
 func (a *AliyunAdapter) ChatCompletionStream(ctx context.Context, request *adapter.ChatRequest) (<-chan adapter.StreamResponse, error) {
-	openaiAdapter, err := a.openAICompatibleAdapter()
+	payload, endpoint, err := a.buildAliyunChatPayload(request, true)
 	if err != nil {
 		return nil, err
 	}
-	return openaiAdapter.ChatCompletionStream(ctx, request)
+
+	resp, err := a.httpClient.DoStreamRequest(ctx, "POST", endpoint, a.aliyunSSEHeaders(), payload)
+	if err != nil {
+		return nil, fmt.Errorf("stream request failed: %w", err)
+	}
+	if aliyunStreamDebugEnabled() {
+		imageCount, dataURLImageCount := aliyunPayloadImageSummary(payload)
+		logger.InfoContext(ctx, "aliyun stream opened",
+			zap.String("model", request.Model),
+			zap.String("endpoint", endpoint),
+			zap.String("content_type", resp.Header.Get("Content-Type")),
+			zap.Bool("multimodal", strings.Contains(endpoint, "/multimodal-generation/")),
+			zap.Int("image_count", imageCount),
+			zap.Int("data_url_image_count", dataURLImageCount),
+		)
+	}
+
+	respChan := make(chan adapter.StreamResponse, 10)
+	dataChan := make(chan string, 10)
+	errChan := make(chan error, 1)
+
+	go adapter.ParseSSE(resp.Body, dataChan, errChan)
+
+	go func() {
+		defer close(respChan)
+		defer func() {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}()
+
+		var lastUsage *adapter.Usage
+		chunkIndex := 0
+		for {
+			select {
+			case <-ctx.Done():
+				respChan <- adapter.StreamResponse{Error: ctx.Err(), Done: true, Usage: lastUsage}
+				return
+			case err := <-errChan:
+				if err != nil {
+					if aliyunStreamDebugEnabled() {
+						logger.WarnContext(ctx, "aliyun stream parser error", zap.Error(err))
+					}
+					respChan <- adapter.StreamResponse{Error: err, Done: true, Usage: lastUsage}
+				}
+				return
+			case data, ok := <-dataChan:
+				if !ok {
+					if aliyunStreamDebugEnabled() {
+						logger.InfoContext(ctx, "aliyun stream data channel closed", zap.String("model", request.Model), zap.Int("chunk_count", chunkIndex), zap.Bool("has_usage", lastUsage != nil))
+					}
+					respChan <- adapter.StreamResponse{Done: true, Usage: lastUsage}
+					return
+				}
+
+				chunkIndex++
+				if aliyunStreamDebugEnabled() {
+					logger.InfoContext(ctx, "aliyun stream raw data", zap.String("model", request.Model), zap.Int("chunk_index", chunkIndex), zap.String("data", aliyunDebugSnippet(data, 1000)))
+				}
+				streamResp, err := parseAliyunChatStreamResponse([]byte(data), request.Model)
+				if err != nil {
+					respChan <- adapter.StreamResponse{Error: err, Done: true, Usage: lastUsage}
+					return
+				}
+				if streamResp.Usage != nil {
+					lastUsage = streamResp.Usage
+				}
+				if aliyunStreamDebugEnabled() {
+					logger.InfoContext(ctx, "aliyun stream parsed chunk",
+						zap.String("model", request.Model),
+						zap.Int("chunk_index", chunkIndex),
+						zap.Int("choices", len(streamResp.Choices)),
+						zap.Int("text_len", aliyunStreamResponseTextLen(streamResp)),
+						zap.Bool("has_usage", streamResp.Usage != nil),
+					)
+				}
+				respChan <- *streamResp
+			}
+		}
+	}()
+
+	return respChan, nil
+}
+
+func (a *AliyunAdapter) aliyunJSONHeaders() map[string]string {
+	headers := make(map[string]string, len(a.config.Headers)+3)
+	for k, v := range a.config.Headers {
+		headers[k] = v
+	}
+
+	headers["Authorization"] = fmt.Sprintf("Bearer %s", a.config.APIKey)
+	headers["Content-Type"] = "application/json"
+	headers["Accept"] = "application/json"
+	return headers
+}
+
+func (a *AliyunAdapter) aliyunSSEHeaders() map[string]string {
+	headers := a.aliyunJSONHeaders()
+	headers["Accept"] = "text/event-stream"
+	headers["X-DashScope-SSE"] = "enable"
+	return headers
+}
+
+func aliyunStreamDebugEnabled() bool {
+	return strings.TrimSpace(os.Getenv("ZGI_DEBUG_ALIYUN_STREAM")) == "1"
+}
+
+func aliyunDebugSnippet(value string, limit int) string {
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "..."
+}
+
+func aliyunStreamResponseTextLen(resp *adapter.StreamResponse) int {
+	if resp == nil || len(resp.Choices) == 0 {
+		return 0
+	}
+	text, _ := resp.Choices[0].Delta.Content.(string)
+	return len(text)
+}
+
+func aliyunPayloadImageSummary(payload map[string]interface{}) (int, int) {
+	input, ok := payload["input"].(map[string]interface{})
+	if !ok {
+		return 0, 0
+	}
+	messages, ok := input["messages"].([]map[string]interface{})
+	if !ok {
+		return 0, 0
+	}
+	imageCount := 0
+	dataURLImageCount := 0
+	for _, message := range messages {
+		content, ok := message["content"].([]map[string]interface{})
+		if !ok {
+			continue
+		}
+		for _, part := range content {
+			image, ok := part["image"].(string)
+			if !ok || strings.TrimSpace(image) == "" {
+				continue
+			}
+			imageCount++
+			if strings.HasPrefix(strings.ToLower(image), "data:image/") {
+				dataURLImageCount++
+			}
+		}
+	}
+	return imageCount, dataURLImageCount
+}
+func (a *AliyunAdapter) buildAliyunChatPayload(request *adapter.ChatRequest, stream bool) (map[string]interface{}, string, error) {
+	if request == nil {
+		return nil, "", fmt.Errorf("%w: request is required", adapter.ErrInvalidRequest)
+	}
+	if strings.TrimSpace(request.Model) == "" {
+		return nil, "", fmt.Errorf("%w: model is required", adapter.ErrInvalidRequest)
+	}
+
+	hasImage, err := aliyunMessagesHaveImage(request.Messages)
+	if err != nil {
+		return nil, "", err
+	}
+	useMultimodal := hasImage || isAliyunMultimodalChatModel(request.Model)
+	messages, err := buildAliyunChatMessages(request.Messages, useMultimodal)
+	if err != nil {
+		return nil, "", err
+	}
+
+	parameters := map[string]interface{}{"result_format": "message"}
+	if request.Temperature != nil {
+		parameters["temperature"] = *request.Temperature
+	}
+	if request.TopP != nil {
+		parameters["top_p"] = *request.TopP
+	}
+	if request.MaxTokens != nil {
+		parameters["max_tokens"] = *request.MaxTokens
+	}
+	if request.PresencePenalty != nil {
+		parameters["presence_penalty"] = *request.PresencePenalty
+	}
+	if request.FrequencyPenalty != nil {
+		parameters["frequency_penalty"] = *request.FrequencyPenalty
+	}
+	if request.Seed != nil {
+		parameters["seed"] = *request.Seed
+	}
+	if len(request.Stop) > 0 {
+		parameters["stop"] = request.Stop
+	}
+	if request.ResponseFormat != nil {
+		parameters["response_format"] = request.ResponseFormat
+	}
+	if len(request.Tools) > 0 {
+		parameters["tools"] = request.Tools
+		if request.ToolChoice != nil {
+			parameters["tool_choice"] = request.ToolChoice
+		}
+	}
+	if stream {
+		parameters["incremental_output"] = true
+		parameters["stream_options"] = map[string]interface{}{"include_usage": true}
+	}
+	for k, v := range request.AdditionalParameters {
+		parameters[k] = v
+	}
+
+	payload := map[string]interface{}{
+		"model": request.Model,
+		"input": map[string]interface{}{
+			"messages": messages,
+		},
+		"parameters": parameters,
+	}
+
+	endpointPath := "/services/aigc/text-generation/generation"
+	if useMultimodal {
+		endpointPath = "/services/aigc/multimodal-generation/generation"
+	}
+	return payload, a.nativeBaseURL() + endpointPath, nil
+}
+
+func aliyunMessagesHaveImage(messages []adapter.Message) (bool, error) {
+	for _, message := range messages {
+		hasImage, err := aliyunContentHasImage(message.Content)
+		if err != nil {
+			return false, err
+		}
+		if hasImage {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func aliyunContentHasImage(content interface{}) (bool, error) {
+	switch value := content.(type) {
+	case nil, string:
+		return false, nil
+	case []adapter.MessageContentPart:
+		for _, part := range value {
+			if part.Type == "image_url" {
+				return true, nil
+			}
+			if part.Type != "text" {
+				return false, fmt.Errorf("%w: unsupported qwen content part type %q", adapter.ErrInvalidRequest, part.Type)
+			}
+		}
+		return false, nil
+	case []interface{}:
+		for _, item := range value {
+			hasImage, err := aliyunMapContentHasImage(item)
+			if err != nil || hasImage {
+				return hasImage, err
+			}
+		}
+		return false, nil
+	default:
+		return false, fmt.Errorf("%w: unsupported qwen message content type %T", adapter.ErrInvalidRequest, content)
+	}
+}
+
+func aliyunMapContentHasImage(item interface{}) (bool, error) {
+	part, ok := item.(map[string]interface{})
+	if !ok {
+		return false, fmt.Errorf("%w: unsupported qwen content part type %T", adapter.ErrInvalidRequest, item)
+	}
+	if _, ok := part["image"]; ok {
+		return true, nil
+	}
+	partType, _ := part["type"].(string)
+	switch partType {
+	case "", "text":
+		return false, nil
+	case "image_url":
+		return true, nil
+	default:
+		return false, fmt.Errorf("%w: unsupported qwen content part type %q", adapter.ErrInvalidRequest, partType)
+	}
+}
+
+func buildAliyunChatMessages(messages []adapter.Message, multimodal bool) ([]map[string]interface{}, error) {
+	out := make([]map[string]interface{}, 0, len(messages))
+	for _, message := range messages {
+		content, err := buildAliyunMessageContent(message.Content, multimodal)
+		if err != nil {
+			return nil, err
+		}
+		next := map[string]interface{}{
+			"role":    message.Role,
+			"content": content,
+		}
+		if message.FunctionCall != nil {
+			next["function_call"] = message.FunctionCall
+		}
+		if len(message.ToolCalls) > 0 {
+			next["tool_calls"] = message.ToolCalls
+		}
+		if strings.TrimSpace(message.ToolCallID) != "" {
+			next["tool_call_id"] = message.ToolCallID
+		}
+		out = append(out, next)
+	}
+	return out, nil
+}
+
+func buildAliyunMessageContent(content interface{}, multimodal bool) (interface{}, error) {
+	switch value := content.(type) {
+	case string:
+		if multimodal {
+			return []map[string]interface{}{{"text": value}}, nil
+		}
+		return value, nil
+	case []adapter.MessageContentPart:
+		parts, hasImage, err := buildAliyunPartsFromTypedContent(value)
+		if err != nil {
+			return nil, err
+		}
+		if multimodal || hasImage {
+			return parts, nil
+		}
+		return joinAliyunTextParts(parts), nil
+	case []interface{}:
+		parts, hasImage, err := buildAliyunPartsFromInterfaceContent(value)
+		if err != nil {
+			return nil, err
+		}
+		if multimodal || hasImage {
+			return parts, nil
+		}
+		return joinAliyunTextParts(parts), nil
+	case nil:
+		return "", nil
+	default:
+		return nil, fmt.Errorf("%w: unsupported qwen message content type %T", adapter.ErrInvalidRequest, content)
+	}
+}
+
+func buildAliyunPartsFromTypedContent(content []adapter.MessageContentPart) ([]map[string]interface{}, bool, error) {
+	parts := make([]map[string]interface{}, 0, len(content))
+	hasImage := false
+	for _, part := range content {
+		switch part.Type {
+		case "text":
+			parts = append(parts, map[string]interface{}{"text": part.Text})
+		case "image_url":
+			if part.ImageURL == nil || strings.TrimSpace(part.ImageURL.URL) == "" {
+				return nil, false, fmt.Errorf("%w: qwen image_url content requires url", adapter.ErrInvalidRequest)
+			}
+			image, err := normalizeAliyunImageReference(part.ImageURL.URL)
+			if err != nil {
+				return nil, false, err
+			}
+			hasImage = true
+			parts = append(parts, map[string]interface{}{"image": image})
+		default:
+			return nil, false, fmt.Errorf("%w: unsupported qwen content part type %q", adapter.ErrInvalidRequest, part.Type)
+		}
+	}
+	return parts, hasImage, nil
+}
+
+func buildAliyunPartsFromInterfaceContent(content []interface{}) ([]map[string]interface{}, bool, error) {
+	parts := make([]map[string]interface{}, 0, len(content))
+	hasImage := false
+	for _, item := range content {
+		part, ok := item.(map[string]interface{})
+		if !ok {
+			return nil, false, fmt.Errorf("%w: unsupported qwen content part type %T", adapter.ErrInvalidRequest, item)
+		}
+		converted, image, err := buildAliyunPartFromMap(part)
+		if err != nil {
+			return nil, false, err
+		}
+		if image {
+			hasImage = true
+		}
+		parts = append(parts, converted)
+	}
+	return parts, hasImage, nil
+}
+
+func buildAliyunPartFromMap(part map[string]interface{}) (map[string]interface{}, bool, error) {
+	if text, ok := part["text"].(string); ok {
+		return map[string]interface{}{"text": text}, false, nil
+	}
+	if image, ok := part["image"].(string); ok {
+		normalized, err := normalizeAliyunImageReference(image)
+		if err != nil {
+			return nil, false, err
+		}
+		return map[string]interface{}{"image": normalized}, true, nil
+	}
+
+	partType, _ := part["type"].(string)
+	switch partType {
+	case "text":
+		text, _ := part["text"].(string)
+		return map[string]interface{}{"text": text}, false, nil
+	case "image_url":
+		imageURL, ok := part["image_url"].(map[string]interface{})
+		if !ok {
+			return nil, false, fmt.Errorf("%w: qwen image_url content requires image_url object", adapter.ErrInvalidRequest)
+		}
+		url, _ := imageURL["url"].(string)
+		normalized, err := normalizeAliyunImageReference(url)
+		if err != nil {
+			return nil, false, err
+		}
+		return map[string]interface{}{"image": normalized}, true, nil
+	default:
+		return nil, false, fmt.Errorf("%w: unsupported qwen content part type %q", adapter.ErrInvalidRequest, partType)
+	}
+}
+
+func normalizeAliyunImageReference(raw string) (string, error) {
+	image := strings.TrimSpace(raw)
+	if image == "" {
+		return "", fmt.Errorf("%w: qwen image content requires url", adapter.ErrInvalidRequest)
+	}
+	lower := strings.ToLower(image)
+	if strings.HasPrefix(lower, "data:image/") {
+		return image, nil
+	}
+	parsed, err := url.Parse(image)
+	if err != nil || parsed.Scheme == "" {
+		return "", fmt.Errorf("%w: qwen multimodal image must be a public http url or data url", adapter.ErrInvalidRequest)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("%w: qwen multimodal image must be a public http url or data url", adapter.ErrInvalidRequest)
+	}
+	host := strings.TrimSpace(parsed.Hostname())
+	if host == "" || isLocalAliyunImageHost(host) {
+		return "", fmt.Errorf("%w: qwen multimodal image must be a public http url or data url", adapter.ErrInvalidRequest)
+	}
+	return image, nil
+}
+
+func isLocalAliyunImageHost(host string) bool {
+	host = strings.ToLower(strings.Trim(host, "[]"))
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
+}
+
+func joinAliyunTextParts(parts []map[string]interface{}) string {
+	texts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if text, ok := part["text"].(string); ok && text != "" {
+			texts = append(texts, text)
+		}
+	}
+	return strings.Join(texts, "\n")
+}
+
+func isAliyunMultimodalChatModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return isAliyunQwen36ChatModel(model) || strings.Contains(model, "-vl") || strings.Contains(model, "qvq") || strings.Contains(model, "omni")
+}
+
+func isAliyunQwen36ChatModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return model == "qwen3.6-plus" ||
+		strings.HasPrefix(model, "qwen3.6-plus-") ||
+		model == "qwen3.6-flash" ||
+		strings.HasPrefix(model, "qwen3.6-flash-")
+}
+
+type aliyunChatResponse struct {
+	RequestID string `json:"request_id"`
+	Output    struct {
+		Text    string `json:"text"`
+		Choices []struct {
+			FinishReason string `json:"finish_reason"`
+			Message      struct {
+				Role             string                `json:"role"`
+				Content          interface{}           `json:"content"`
+				ReasoningContent string                `json:"reasoning_content,omitempty"`
+				FunctionCall     *adapter.FunctionCall `json:"function_call,omitempty"`
+				ToolCalls        []adapter.ToolCall    `json:"tool_calls,omitempty"`
+				ToolCallID       string                `json:"tool_call_id,omitempty"`
+			} `json:"message"`
+			Delta struct {
+				Role             string                `json:"role"`
+				Content          interface{}           `json:"content"`
+				ReasoningContent string                `json:"reasoning_content,omitempty"`
+				FunctionCall     *adapter.FunctionCall `json:"function_call,omitempty"`
+				ToolCalls        []adapter.ToolCall    `json:"tool_calls,omitempty"`
+				ToolCallID       string                `json:"tool_call_id,omitempty"`
+			} `json:"delta"`
+		} `json:"choices"`
+	} `json:"output"`
+	Usage   aliyunUsage `json:"usage"`
+	Code    string      `json:"code"`
+	Message string      `json:"message"`
+}
+
+type aliyunUsage struct {
+	InputTokens      int `json:"input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
+func (u aliyunUsage) toAdapterUsage() *adapter.Usage {
+	promptTokens := u.InputTokens
+	if promptTokens == 0 {
+		promptTokens = u.PromptTokens
+	}
+	completionTokens := u.OutputTokens
+	if completionTokens == 0 {
+		completionTokens = u.CompletionTokens
+	}
+	totalTokens := u.TotalTokens
+	if totalTokens == 0 {
+		totalTokens = promptTokens + completionTokens
+	}
+	if promptTokens == 0 && completionTokens == 0 && totalTokens == 0 {
+		return nil
+	}
+	return &adapter.Usage{PromptTokens: promptTokens, CompletionTokens: completionTokens, TotalTokens: totalTokens}
+}
+
+func parseAliyunChatResponse(body []byte, model string) (*adapter.ChatResponse, error) {
+	var upstream aliyunChatResponse
+	if err := json.Unmarshal(body, &upstream); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	if upstream.Code != "" {
+		return nil, fmt.Errorf("api error: %s - %s", upstream.Code, upstream.Message)
+	}
+
+	choices := make([]adapter.Choice, 0, len(upstream.Output.Choices))
+	for idx, choice := range upstream.Output.Choices {
+		role := strings.TrimSpace(choice.Message.Role)
+		if role == "" {
+			role = "assistant"
+		}
+		choices = append(choices, adapter.Choice{
+			Index: idx,
+			Message: adapter.Message{
+				Role:             role,
+				Content:          aliyunTextFromContent(choice.Message.Content),
+				ReasoningContent: choice.Message.ReasoningContent,
+				FunctionCall:     choice.Message.FunctionCall,
+				ToolCalls:        choice.Message.ToolCalls,
+				ToolCallID:       choice.Message.ToolCallID,
+			},
+			FinishReason: choice.FinishReason,
+		})
+	}
+	if len(choices) == 0 && upstream.Output.Text != "" {
+		choices = append(choices, adapter.Choice{Message: adapter.Message{Role: "assistant", Content: upstream.Output.Text}})
+	}
+	if len(choices) == 0 {
+		return nil, fmt.Errorf("empty choices")
+	}
+
+	return &adapter.ChatResponse{
+		ID:      upstream.RequestID,
+		Object:  "chat.completion",
+		Created: time.Now().Unix(),
+		Model:   model,
+		Choices: choices,
+		Usage:   upstream.Usage.toAdapterUsage(),
+	}, nil
+}
+
+func parseAliyunChatStreamResponse(body []byte, model string) (*adapter.StreamResponse, error) {
+	var upstream aliyunChatResponse
+	if err := json.Unmarshal(body, &upstream); err != nil {
+		return nil, fmt.Errorf("failed to parse stream data: %w", err)
+	}
+	if upstream.Code != "" {
+		return nil, fmt.Errorf("api error: %s - %s", upstream.Code, upstream.Message)
+	}
+
+	choices := make([]adapter.StreamChoice, 0, len(upstream.Output.Choices))
+	for idx, choice := range upstream.Output.Choices {
+		role := strings.TrimSpace(choice.Delta.Role)
+		if role == "" {
+			role = strings.TrimSpace(choice.Message.Role)
+		}
+		if role == "" {
+			role = "assistant"
+		}
+		content := aliyunTextFromContent(choice.Delta.Content)
+		if content == "" {
+			content = aliyunTextFromContent(choice.Message.Content)
+		}
+		choices = append(choices, adapter.StreamChoice{
+			Index: idx,
+			Delta: adapter.Message{
+				Role:             role,
+				Content:          content,
+				ReasoningContent: firstNonEmptyString(choice.Delta.ReasoningContent, choice.Message.ReasoningContent),
+				FunctionCall:     firstNonNilFunctionCall(choice.Delta.FunctionCall, choice.Message.FunctionCall),
+				ToolCalls:        firstNonEmptyToolCalls(choice.Delta.ToolCalls, choice.Message.ToolCalls),
+				ToolCallID:       firstNonEmptyString(choice.Delta.ToolCallID, choice.Message.ToolCallID),
+			},
+			FinishReason: choice.FinishReason,
+		})
+	}
+	if len(choices) == 0 && upstream.Output.Text != "" {
+		choices = append(choices, adapter.StreamChoice{
+			Index: 0,
+			Delta: adapter.Message{
+				Role:    "assistant",
+				Content: upstream.Output.Text,
+			},
+		})
+	}
+
+	return &adapter.StreamResponse{
+		ID:      upstream.RequestID,
+		Object:  "chat.completion.chunk",
+		Created: time.Now().Unix(),
+		Model:   model,
+		Choices: choices,
+		Usage:   upstream.Usage.toAdapterUsage(),
+	}, nil
+}
+
+func firstNonNilFunctionCall(values ...*adapter.FunctionCall) *adapter.FunctionCall {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func firstNonEmptyToolCalls(values ...[]adapter.ToolCall) []adapter.ToolCall {
+	for _, value := range values {
+		if len(value) > 0 {
+			return value
+		}
+	}
+	return nil
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func aliyunTextFromContent(content interface{}) string {
+	switch value := content.(type) {
+	case nil:
+		return ""
+	case string:
+		return value
+	case []interface{}:
+		texts := make([]string, 0, len(value))
+		for _, item := range value {
+			part, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if text, ok := part["text"].(string); ok && text != "" {
+				texts = append(texts, text)
+			}
+		}
+		return strings.Join(texts, "\n")
+	default:
+		return fmt.Sprintf("%v", content)
+	}
+}
+
+func buildAliyunEmbeddingsPayload(request *adapter.EmbeddingsRequest) (map[string]interface{}, error) {
+	if request == nil {
+		return nil, fmt.Errorf("%w: request is required", adapter.ErrInvalidRequest)
+	}
+	if strings.TrimSpace(request.Model) == "" {
+		return nil, fmt.Errorf("%w: model is required", adapter.ErrInvalidRequest)
+	}
+	texts, err := normalizeAliyunEmbeddingInput(request.Input)
+	if err != nil {
+		return nil, err
+	}
+
+	if isAliyunMultimodalEmbeddingModel(request.Model) {
+		contents := make([]map[string]interface{}, 0, len(texts))
+		for _, text := range texts {
+			contents = append(contents, map[string]interface{}{"text": text})
+		}
+		payload := map[string]interface{}{
+			"model": request.Model,
+			"input": map[string]interface{}{
+				"contents": contents,
+			},
+		}
+		parameters := map[string]interface{}{}
+		if request.Dimensions > 0 {
+			parameters["dimension"] = request.Dimensions
+		}
+		if len(parameters) > 0 {
+			payload["parameters"] = parameters
+		}
+		return payload, nil
+	}
+
+	payload := map[string]interface{}{
+		"model": request.Model,
+		"input": map[string]interface{}{
+			"texts": texts,
+		},
+	}
+	parameters := map[string]interface{}{}
+	if request.InputType != "" {
+		parameters["text_type"] = request.InputType
+	}
+	if request.Dimensions > 0 {
+		parameters["dimension"] = request.Dimensions
+	}
+	if len(parameters) > 0 {
+		payload["parameters"] = parameters
+	}
+	return payload, nil
+}
+
+func isAliyunMultimodalEmbeddingModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	return strings.Contains(model, "vl-embedding") ||
+		strings.Contains(model, "vision") ||
+		strings.Contains(model, "multimodal-embedding")
+}
+func normalizeAliyunEmbeddingInput(input interface{}) ([]string, error) {
+	switch value := input.(type) {
+	case string:
+		return []string{value}, nil
+	case []string:
+		return value, nil
+	case []interface{}:
+		texts := make([]string, 0, len(value))
+		for _, item := range value {
+			text, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("%w: aliyun embeddings input must contain strings", adapter.ErrInvalidRequest)
+			}
+			texts = append(texts, text)
+		}
+		return texts, nil
+	default:
+		return nil, fmt.Errorf("%w: unsupported aliyun embeddings input type %T", adapter.ErrInvalidRequest, input)
+	}
+}
+
+type aliyunEmbeddingsResponse struct {
+	Output struct {
+		Embeddings []struct {
+			Embedding []float32 `json:"embedding"`
+			TextIndex *int      `json:"text_index"`
+			Index     *int      `json:"index"`
+		} `json:"embeddings"`
+	} `json:"output"`
+	Usage   aliyunUsage `json:"usage"`
+	Code    string      `json:"code"`
+	Message string      `json:"message"`
+}
+
+func parseAliyunEmbeddingsResponse(body []byte, model string) (*adapter.EmbeddingsResponse, error) {
+	var upstream aliyunEmbeddingsResponse
+	if err := json.Unmarshal(body, &upstream); err != nil {
+		return nil, fmt.Errorf("failed to parse embeddings response: %w", err)
+	}
+	if upstream.Code != "" {
+		return nil, fmt.Errorf("api error: %s - %s", upstream.Code, upstream.Message)
+	}
+	items := make([]adapter.Embedding, 0, len(upstream.Output.Embeddings))
+	for i, item := range upstream.Output.Embeddings {
+		index := i
+		if item.TextIndex != nil {
+			index = *item.TextIndex
+		} else if item.Index != nil {
+			index = *item.Index
+		}
+		items = append(items, adapter.Embedding{
+			Object:    "embedding",
+			Embedding: item.Embedding,
+			Index:     index,
+		})
+	}
+	usage := adapter.Usage{}
+	if u := upstream.Usage.toAdapterUsage(); u != nil {
+		usage = *u
+	}
+	return &adapter.EmbeddingsResponse{
+		Object: "list",
+		Data:   items,
+		Model:  model,
+		Usage:  usage,
+	}, nil
 }
 
 // CreateResponse executes response creation request

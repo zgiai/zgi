@@ -65,7 +65,11 @@ export function RecognizeScenariosDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="lg" className="max-w-[760px] rounded-2xl">
+      <DialogContent
+        size="lg"
+        className="max-w-[760px] rounded-2xl"
+        onInteractOutside={event => event.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle>{t('title')}</DialogTitle>
           <DialogDescription>{t('description')}</DialogDescription>

@@ -8,9 +8,12 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useT } from '@/i18n';
 import { dbService } from '@/services';
 import { toast } from 'sonner';
-import { getErrorMessage } from '@/utils/error-notifications';
 import type { ApiResponseData } from '@/services/types/common';
-import type { ImportDbTableRecordsData, GetDbTableRecordsParams } from '@/services/types/db';
+import type {
+  ImportDbTableRecordsData,
+  GetDbTableRecordsParams,
+  ImportDbTableRecordsRequest,
+} from '@/services/types/db';
 import type { FileItem } from '@/services/types/file';
 import { DB_KEYS } from '@/hooks/query-keys';
 
@@ -67,7 +70,10 @@ export function useDownloadDbTableTemplate(
 /* -------------------------------------------------------------------------- */
 
 export interface UseImportDbTableRecordsReturn {
-  importRecords: (file: FileItem) => Promise<ImportDbTableRecordsData>;
+  importRecords: (
+    file: FileItem,
+    options?: Pick<ImportDbTableRecordsRequest, 'skip_unmatched_columns'>
+  ) => Promise<ImportDbTableRecordsData>;
   isPending: boolean;
   error: string | null;
   data: ImportDbTableRecordsData | null;
@@ -84,10 +90,13 @@ export function useImportDbTableRecords(
   const { mutateAsync, isPending, error, data, reset } = useMutation<
     ApiResponseData<ImportDbTableRecordsData>,
     Error,
-    FileItem
+    { file: FileItem; options?: Pick<ImportDbTableRecordsRequest, 'skip_unmatched_columns'> }
   >({
-    mutationFn: (file: FileItem) =>
-      dbService.importDbTableRecords(dbId, tableId, { upload_file_id: file.id }),
+    mutationFn: ({ file, options }) =>
+      dbService.importDbTableRecords(dbId, tableId, {
+        upload_file_id: file.id,
+        skip_unmatched_columns: options?.skip_unmatched_columns,
+      }),
     onSuccess: response => {
       // Invalidate records queries to refresh data after import
       queryClient.invalidateQueries({
@@ -105,15 +114,14 @@ export function useImportDbTableRecords(
           })
       );
     },
-    onError: err => {
-      // Show error toast
-      toast.error(getErrorMessage(err) || t('batchImport.importFailed'));
-    },
   });
 
   const importRecords = useCallback(
-    async (file: FileItem): Promise<ImportDbTableRecordsData> => {
-      const response = await mutateAsync(file);
+    async (
+      file: FileItem,
+      options?: Pick<ImportDbTableRecordsRequest, 'skip_unmatched_columns'>
+    ): Promise<ImportDbTableRecordsData> => {
+      const response = await mutateAsync({ file, options });
       return response.data;
     },
     [mutateAsync]

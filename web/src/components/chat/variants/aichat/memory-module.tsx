@@ -350,7 +350,7 @@ function MemoryEntryEditor({ entry }: { entry: AccountMemoryEntry }) {
         description={t('consoleChat.memory.deleteConfirmDescription')}
         confirmText={t('consoleChat.memory.delete')}
         cancelText={t('consoleChat.memory.cancel')}
-        variant="warning"
+        variant="danger"
         loading={deleteEntry.isPending}
         onConfirm={handleDelete}
       />

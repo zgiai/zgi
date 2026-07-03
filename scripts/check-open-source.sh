@@ -16,6 +16,12 @@ esac
 
 cd "$ROOT"
 
+if ! command -v rg >/dev/null 2>&1; then
+  echo "open-source-check: ripgrep (rg) is required" >&2
+  echo "  Install ripgrep locally or ensure CI installs it before running this check." >&2
+  exit 2
+fi
+
 allowed_binary() {
   local path="$1"
   [ -f "$ALLOWLIST" ] && grep -Fxq "$path" "$ALLOWLIST"
@@ -125,7 +131,7 @@ if [ "${#scan_targets[@]}" -gt 0 ]; then
   comment_targets=()
   for path in "${scan_targets[@]}"; do
     case "$path" in
-      *.go|*.ts|*.tsx|*.js|*.jsx|*.mjs|*.sh|*.yaml|*.yml|*.toml|*.md|*.editorconfig)
+      *.go|*.ts|*.tsx|*.js|*.jsx|*.mjs|*.sh|*.yaml|*.yml|*.toml|*.editorconfig)
         comment_targets+=("$path")
         ;;
     esac
@@ -138,17 +144,22 @@ if [ "${#scan_targets[@]}" -gt 0 ]; then
     fi
   fi
 
-  sqlite_test_targets=()
+  sqlite_source_targets=()
   for path in "${scan_targets[@]}"; do
     case "$path" in
-      api/*_test.go|api/**/*_test.go) sqlite_test_targets+=("$path") ;;
+      api/*.go|api/**/*.go)
+        case "$path" in
+          *_test.go) ;;
+          *) sqlite_source_targets+=("$path") ;;
+        esac
+        ;;
     esac
   done
-  if [ "${#sqlite_test_targets[@]}" -gt 0 ]; then
+  if [ "${#sqlite_source_targets[@]}" -gt 0 ]; then
     if rg -n --hidden \
       '(gorm\.io/driver/sqlite|github\.com/glebarez/sqlite|sqlite\.Open|file::memory:|:memory:|mode=memory)' \
-      "${sqlite_test_targets[@]}"; then
-      echo "open-source-check: SQLite-backed Go tests are not allowed; use Postgres-compatible tests instead" >&2
+      "${sqlite_source_targets[@]}"; then
+      echo "open-source-check: SQLite usage is not allowed in production API Go code" >&2
       failures=$((failures + 1))
     fi
   fi
@@ -156,6 +167,9 @@ if [ "${#scan_targets[@]}" -gt 0 ]; then
   declare -a migration_targets=()
   for path in "${scan_targets[@]}"; do
     case "$path" in
+      api/internal/migrations/*_test.go)
+        continue
+        ;;
       api/internal/migrations/[0-9]*.go)
         migration_targets+=("$path")
         ;;

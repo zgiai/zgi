@@ -28,14 +28,21 @@ const (
 	MetaToolReadSkillReference = "read_skill_reference"
 	MetaToolCallSkillTool      = "call_skill_tool"
 	MetaToolIntermediateAnswer = "submit_intermediate_answer"
+	MetaToolRequestUserInput   = "request_user_input"
 )
 
 var ErrSkillNotFound = errors.New("skill not found")
 
 type Runtime struct {
-	engine     *tools.ToolEngine
-	manager    *tools.ToolManager
-	catalogDir string
+	engine       *tools.ToolEngine
+	manager      *tools.ToolManager
+	catalogDir   string
+	scriptRunner SkillScriptRunner
+}
+
+type SkillScriptRunner interface {
+	RunSkillScript(ctx context.Context, doc SkillDocument, arguments map[string]interface{}, execCtx ExecutionContext, callID string) (*ToolInvocationResult, error)
+	Configured() bool
 }
 
 type skillLocation struct {
@@ -45,11 +52,13 @@ type skillLocation struct {
 }
 
 type ExecutionContext struct {
-	TenantID       string
-	UserID         string
-	ConversationID string
-	AppID          string
-	MessageID      string
+	OrganizationID    string
+	UserID            string
+	ConversationID    string
+	AppID             string
+	MessageID         string
+	InvokeFrom        tools.ToolInvokeFrom
+	RuntimeParameters map[string]interface{}
 }
 
 type ToolInvocationResult struct {
@@ -70,13 +79,24 @@ func NewRuntimeWithCatalog(engine *tools.ToolEngine, manager *tools.ToolManager,
 	}
 }
 
+func (r *Runtime) WithScriptRunner(scriptRunner SkillScriptRunner) *Runtime {
+	if r != nil && scriptRunner != nil && scriptRunner.Configured() {
+		r.scriptRunner = scriptRunner
+	}
+	return r
+}
+
+func (r *Runtime) ScriptsSupported() bool {
+	return r != nil && r.scriptRunner != nil && r.scriptRunner.Configured()
+}
+
 func (r *Runtime) ResolveEnabledSkills(ctx context.Context, skillIDs []string) (*ResolvedSkills, error) {
 	return r.ResolveEnabledSkillsWithCustom(ctx, skillIDs, nil)
 }
 
 func (r *Runtime) ResolveEnabledSkillsWithCustom(ctx context.Context, skillIDs []string, custom []CustomSkillCatalogEntry) (*ResolvedSkills, error) {
 	_ = ctx
-	ids := normalizeSkillIDs(skillIDs)
+	ids := withRequiredPreflightSkills(normalizeSkillIDs(skillIDs))
 	resolved := &ResolvedSkills{Skills: make([]SkillDocument, 0, len(ids))}
 	locations, err := r.skillLocations(custom)
 	if err != nil {
@@ -94,6 +114,43 @@ func (r *Runtime) ResolveEnabledSkillsWithCustom(ctx context.Context, skillIDs [
 		resolved.Skills = append(resolved.Skills, doc)
 	}
 	return resolved, nil
+}
+
+func withRequiredPreflightSkills(ids []string) []string {
+	if len(ids) == 0 {
+		return ids
+	}
+	hasPromptProfessionalizer := false
+	needsPromptProfessionalizer := false
+	for _, id := range ids {
+		switch normalizeSkillID(id) {
+		case SkillPromptProfessionalizer:
+			hasPromptProfessionalizer = true
+		case SkillImageGenerator, SkillArchitectureDiagram, SkillChartGenerator:
+			needsPromptProfessionalizer = true
+		}
+	}
+	if !needsPromptProfessionalizer || hasPromptProfessionalizer {
+		return ids
+	}
+	out := append([]string{}, ids...)
+	out = append(out, SkillPromptProfessionalizer)
+	return out
+}
+
+func RequiresPromptProfessionalizerPreflight(skillID string, toolName string) bool {
+	switch normalizeSkillID(skillID) {
+	case SkillImageGenerator:
+		switch strings.TrimSpace(toolName) {
+		case "generate_image", "edit_image":
+			return true
+		}
+	case SkillArchitectureDiagram:
+		return strings.TrimSpace(toolName) == "generate_architecture_diagram"
+	case SkillChartGenerator:
+		return strings.TrimSpace(toolName) == "generate_chart"
+	}
+	return false
 }
 
 func (r *Runtime) ListSkills(ctx context.Context) ([]SkillDiscoveryMetadata, error) {
@@ -162,6 +219,31 @@ func (r *Runtime) ListSkillsWithCustom(ctx context.Context, custom []CustomSkill
 		metadata = append(metadata, skillDiscoveryMetadata(doc))
 	}
 	return metadata, nil
+}
+
+func (r *Runtime) ListSystemSkillDocuments(ctx context.Context) ([]SkillDocument, error) {
+	_ = ctx
+	if r == nil {
+		return nil, fmt.Errorf("skill runtime is not configured")
+	}
+	locations, err := r.skillLocations(nil)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(locations))
+	for id := range locations {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	docs := make([]SkillDocument, 0, len(ids))
+	for _, id := range ids {
+		doc, err := r.loadSkillDocumentFromLocation(locations[id])
+		if err != nil {
+			return nil, err
+		}
+		docs = append(docs, doc)
+	}
+	return docs, nil
 }
 
 func (r *Runtime) SystemSkillExists(skillID string) bool {
@@ -257,6 +339,15 @@ func LoadCustomSkillDocument(root string) (SkillDocument, error) {
 	return doc, nil
 }
 
+func (r *Runtime) LoadCustomSkillDocument(root string) (SkillDocument, error) {
+	doc, err := LoadCustomSkillDocument(root)
+	if err != nil {
+		return SkillDocument{}, err
+	}
+	r.applyScriptSupport(&doc)
+	return doc, nil
+}
+
 func (r *Runtime) LoadSkill(ctx context.Context, resolved *ResolvedSkills, skillID string) (*SkillDocument, SkillTrace, error) {
 	_ = ctx
 	start := time.Now()
@@ -325,12 +416,21 @@ func (r *Runtime) CallSkillTool(
 	execCtx ExecutionContext,
 	callID string,
 ) (*ToolInvocationResult, error) {
-	if r == nil || r.engine == nil {
-		return nil, fmt.Errorf("tool engine is not configured")
+	if r == nil {
+		return nil, fmt.Errorf("skill runtime is not configured")
 	}
 	doc, ok := resolved.Get(skillID)
 	if !ok {
 		return nil, fmt.Errorf("skill %s is not enabled", normalizeSkillID(skillID))
+	}
+	if strings.TrimSpace(toolName) == SkillScriptToolRun {
+		if !doc.Metadata.ScriptsSupported || r.scriptRunner == nil {
+			return nil, fmt.Errorf("skill %s scripts are not supported", doc.Metadata.ID)
+		}
+		return r.scriptRunner.RunSkillScript(ctx, *doc, arguments, execCtx, callID)
+	}
+	if r.engine == nil {
+		return nil, fmt.Errorf("tool engine is not configured")
 	}
 	toolDef, ok := findSkillTool(*doc, toolName)
 	if !ok {
@@ -343,16 +443,17 @@ func (r *Runtime) CallSkillTool(
 
 	start := time.Now()
 	result, err := r.engine.Invoke(runCtx, tools.InvokeRequest{
-		ProviderType:   toolDef.ProviderType,
-		ProviderID:     toolDef.ProviderID,
-		ToolName:       toolDef.Name,
-		TenantID:       execCtx.TenantID,
-		UserID:         execCtx.UserID,
-		Parameters:     arguments,
-		ConversationID: execCtx.ConversationID,
-		AppID:          execCtx.AppID,
-		MessageID:      execCtx.MessageID,
-		InvokeFrom:     tools.ToolInvokeFromAIChat,
+		ProviderType:      toolDef.ProviderType,
+		ProviderID:        toolDef.ProviderID,
+		ToolName:          toolDef.Name,
+		TenantID:          execCtx.OrganizationID,
+		UserID:            execCtx.UserID,
+		Parameters:        arguments,
+		ConversationID:    execCtx.ConversationID,
+		AppID:             execCtx.AppID,
+		MessageID:         execCtx.MessageID,
+		InvokeFrom:        normalizeToolInvokeFrom(execCtx.InvokeFrom),
+		RuntimeParameters: copyStringAnyMap(execCtx.RuntimeParameters),
 	})
 	trace := SkillTrace{
 		Kind:       "tool_call",
@@ -404,13 +505,14 @@ func MetaToolsForSkillState(resolved *ResolvedSkills, loadedSkillIDs map[string]
 	loaded := normalizedLoadedSkillIDs(loadedSkillIDs)
 	tools := []llmadapter.Tool{
 		loadSkillMetaTool(resolvedSkillIDs(resolved)),
+		requestUserInputMetaTool(),
 		intermediateAnswerMetaTool(),
 	}
 	if referenceSkillIDs, referencePaths := loadedReferenceOptions(resolved, loaded); len(referenceSkillIDs) > 0 && len(referencePaths) > 0 {
 		tools = append(tools, readReferenceMetaTool(referenceSkillIDs, referencePaths))
 	}
-	if toolSkillIDs, toolNames, pairs := loadedToolOptions(resolved, loaded); len(toolSkillIDs) > 0 && len(toolNames) > 0 {
-		tools = append(tools, callSkillToolMetaTool(toolSkillIDs, toolNames, pairs))
+	if toolSkillIDs, toolNames, pairs, contracts, hasUntyped := loadedToolOptions(resolved, loaded); len(toolSkillIDs) > 0 && len(toolNames) > 0 {
+		tools = append(tools, callSkillToolMetaTool(toolSkillIDs, toolNames, pairs, contracts, hasUntyped))
 	}
 	return tools
 }
@@ -419,10 +521,11 @@ func metaTools(includeToolCaller bool) []llmadapter.Tool {
 	tools := []llmadapter.Tool{
 		loadSkillMetaTool(nil),
 		readReferenceMetaTool(nil, nil),
+		requestUserInputMetaTool(),
 		intermediateAnswerMetaTool(),
 	}
 	if includeToolCaller {
-		tools = append(tools, callSkillToolMetaTool(nil, nil, nil))
+		tools = append(tools, callSkillToolMetaTool(nil, nil, nil, nil, true))
 	}
 	return tools
 }
@@ -462,6 +565,69 @@ func readReferenceMetaTool(skillIDs []string, paths []string) llmadapter.Tool {
 	}
 }
 
+func requestUserInputMetaTool() llmadapter.Tool {
+	return llmadapter.Tool{
+		Type: "function",
+		Function: llmadapter.Function{
+			Name:        MetaToolRequestUserInput,
+			Description: "Ask the user up to five concise questions and pause this turn until they answer. Provide options only when each option is a concrete, directly usable answer. Do not include vague options such as free choice, freestyle, not sure, depends, any, or other; the user can always type freely. Use this only when missing information or ambiguity blocks reliable progress.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"message": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional user-visible explanation shown as the assistant message alongside the questions. Use this to briefly explain what has been checked, why user input is needed, and what will happen next. Do not include internal tool names, JSON, IDs, or parameter names.",
+						"maxLength":   2000,
+					},
+					"questions": map[string]interface{}{
+						"type":        "array",
+						"description": "One to five user-visible questions. Prefer one to three questions, and only ask what blocks reliable progress.",
+						"maxItems":    5,
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"id": map[string]interface{}{
+									"type":        "string",
+									"description": "Optional stable short identifier for the question. This is not shown to the user.",
+									"maxLength":   80,
+								},
+								"question": map[string]interface{}{
+									"type":        "string",
+									"description": "The natural-language question to show to the user.",
+									"maxLength":   1000,
+								},
+								"options": map[string]interface{}{
+									"type":        "array",
+									"description": "Optional concrete quick replies for this question. Every option must be a definite answer that can be used directly. Omit options for open-ended or uncertain questions.",
+									"maxItems":    5,
+									"items": map[string]interface{}{
+										"type": "object",
+										"properties": map[string]interface{}{
+											"label": map[string]interface{}{
+												"type":        "string",
+												"description": "Short user-visible option label containing a concrete answer, not a vague placeholder such as Other or Freestyle.",
+												"maxLength":   80,
+											},
+											"description": map[string]interface{}{
+												"type":        "string",
+												"description": "Optional short explanation for this option.",
+												"maxLength":   200,
+											},
+										},
+										"required": []string{"label"},
+									},
+								},
+							},
+							"required": []string{"question"},
+						},
+					},
+				},
+				"required": []string{"message", "questions"},
+			},
+		},
+	}
+}
+
 func intermediateAnswerMetaTool() llmadapter.Tool {
 	return llmadapter.Tool{
 		Type: "function",
@@ -486,11 +652,12 @@ func intermediateAnswerMetaTool() llmadapter.Tool {
 	}
 }
 
-func callSkillToolMetaTool(skillIDs []string, toolNames []string, pairs []string) llmadapter.Tool {
+func callSkillToolMetaTool(skillIDs []string, toolNames []string, pairs []string, contracts []SkillToolArgumentContract, hasUntypedTools bool) llmadapter.Tool {
 	description := "Call a tool allowed by a loaded skill after reading its instructions."
 	if len(pairs) > 0 {
 		description += " Allowed skill/tool pairs: " + strings.Join(pairs, "; ") + "."
 	}
+	argumentsSchema := callSkillToolArgumentsSchema(contracts, hasUntypedTools)
 	return llmadapter.Tool{
 		Type: "function",
 		Function: llmadapter.Function{
@@ -501,15 +668,54 @@ func callSkillToolMetaTool(skillIDs []string, toolNames []string, pairs []string
 				"properties": map[string]interface{}{
 					"skill_id":  stringSchema("The loaded skill ID that allows the tool.", skillIDs),
 					"tool_name": stringSchema("The allowed tool name to call.", toolNames),
-					"arguments": map[string]interface{}{
-						"type":        "object",
-						"description": "Arguments for the skill tool.",
-					},
+					"arguments": argumentsSchema,
 				},
 				"required": []string{"skill_id", "tool_name", "arguments"},
 			},
 		},
 	}
+}
+
+func callSkillToolArgumentsSchema(contracts []SkillToolArgumentContract, hasUntypedTools bool) map[string]interface{} {
+	schema := map[string]interface{}{
+		"type":        "object",
+		"description": "Arguments for the selected skill tool. Pass a non-empty object that satisfies the selected tool's required parameters.",
+	}
+	if len(contracts) == 0 {
+		return schema
+	}
+	options := make([]interface{}, 0, len(contracts)+1)
+	for _, contract := range contracts {
+		if len(contract.Schema) == 0 {
+			continue
+		}
+		options = append(options, contract.Schema)
+	}
+	if hasUntypedTools {
+		options = append(options, map[string]interface{}{
+			"type":        "object",
+			"description": "Arguments for a skill tool that does not expose a structured argument schema.",
+		})
+	}
+	if len(options) == 0 {
+		return schema
+	}
+	if hasUntypedTools || hasOptionalOnlyContract(contracts) {
+		schema["anyOf"] = options
+	} else {
+		schema["oneOf"] = options
+	}
+	return schema
+}
+
+func hasOptionalOnlyContract(contracts []SkillToolArgumentContract) bool {
+	for _, contract := range contracts {
+		required, _ := contract.Schema["required"].([]string)
+		if len(required) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func stringSchema(description string, values []string) map[string]interface{} {
@@ -582,15 +788,17 @@ func loadedReferenceOptions(resolved *ResolvedSkills, loaded map[string]struct{}
 	return skillIDs, paths
 }
 
-func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]string, []string, []string) {
+func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]string, []string, []string, []SkillToolArgumentContract, bool) {
 	if resolved == nil || len(loaded) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil, false
 	}
 	skillSeen := map[string]struct{}{}
 	toolSeen := map[string]struct{}{}
 	skillIDs := []string{}
 	toolNames := []string{}
 	pairs := []string{}
+	contracts := []SkillToolArgumentContract{}
+	hasUntyped := false
 	for _, doc := range resolved.Skills {
 		skillID := normalizeSkillID(doc.Metadata.ID)
 		if _, ok := loaded[skillID]; !ok || len(doc.Tools) == 0 {
@@ -611,6 +819,11 @@ func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]
 				toolSeen[name] = struct{}{}
 				toolNames = append(toolNames, name)
 			}
+			if contract, ok := SkillToolArgumentContractFor(skillID, name); ok {
+				contracts = append(contracts, contract)
+			} else {
+				hasUntyped = true
+			}
 		}
 		sort.Strings(docToolNames)
 		if len(docToolNames) > 0 {
@@ -620,7 +833,1045 @@ func loadedToolOptions(resolved *ResolvedSkills, loaded map[string]struct{}) ([]
 	sort.Strings(skillIDs)
 	sort.Strings(toolNames)
 	sort.Strings(pairs)
-	return skillIDs, toolNames, pairs
+	sort.Slice(contracts, func(i, j int) bool {
+		left := contracts[i].SkillID + "/" + contracts[i].ToolName
+		right := contracts[j].SkillID + "/" + contracts[j].ToolName
+		return left < right
+	})
+	return skillIDs, toolNames, pairs, contracts, hasUntyped
+}
+
+func SkillToolArgumentContractFor(skillID string, toolName string) (SkillToolArgumentContract, bool) {
+	skillID = normalizeSkillID(skillID)
+	toolName = strings.TrimSpace(toolName)
+	key := skillID + "/" + toolName
+	contract, ok := skillToolArgumentContracts()[key]
+	return contract, ok
+}
+
+func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
+	return map[string]SkillToolArgumentContract{
+		SkillCalculator + "/evaluate_expression": {
+			SkillID:     SkillCalculator,
+			ToolName:    "evaluate_expression",
+			Description: "Evaluate one deterministic arithmetic expression.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"expression": map[string]interface{}{
+						"type":        "string",
+						"description": "Arithmetic expression to evaluate, such as 23*17+9. Only numbers, parentheses, +, -, *, /, %, and ^ are allowed.",
+					},
+					"precision": precisionSchema(),
+				},
+				[]string{"expression"},
+			),
+			Example: map[string]interface{}{"expression": "23*17+9"},
+		},
+		SkillCalculator + "/calculate": {
+			SkillID:     SkillCalculator,
+			ToolName:    "calculate",
+			Description: "Perform deterministic binary arithmetic between two numbers.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"operation": enumStringSchema("Arithmetic operation.", []string{"add", "subtract", "multiply", "divide", "power", "mod"}),
+					"left":      numberSchema("Left operand."),
+					"right":     numberSchema("Right operand."),
+					"precision": precisionSchema(),
+				},
+				[]string{"operation", "left", "right"},
+			),
+			Example: map[string]interface{}{"operation": "multiply", "left": 23, "right": 17},
+		},
+		SkillCalculator + "/percentage": {
+			SkillID:     SkillCalculator,
+			ToolName:    "percentage",
+			Description: "Calculate percent-of, percentage change, or apply a percentage increase/decrease.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"operation": enumStringSchema("Percentage operation. percent_of/apply_* require value and percent; change requires from and to.", []string{"percent_of", "change", "apply_increase", "apply_decrease"}),
+					"value":     numberSchema("Base value for percent_of, apply_increase, and apply_decrease."),
+					"percent":   numberSchema("Percentage value, such as 15 for 15 percent."),
+					"from":      numberSchema("Original value for change."),
+					"to":        numberSchema("New value for change."),
+					"precision": precisionSchema(),
+				},
+				[]string{"operation"},
+			),
+			Example: map[string]interface{}{"operation": "percent_of", "value": 200, "percent": 15},
+		},
+		SkillFileGenerator + "/generate_file": {
+			SkillID:     SkillFileGenerator,
+			ToolName:    "generate_file",
+			Description: "Generate a downloadable file artifact from provided content.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"content":   stringValueSchema("Text content to write into the generated file. Use valid CSV content for xlsx and runnable HTML content for html."),
+					"format":    enumStringSchema("Output format.", []string{"txt", "md", "html", "json", "csv", "docx", "xlsx", "pdf"}),
+					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"title":     stringValueSchema("Optional document title used by generated HTML, XLSX, and PDF files. For XLSX, this becomes a merged title row above the table."),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"content", "format"},
+			),
+			Example: map[string]interface{}{"content": "# Report\n\nSummary...", "format": "md", "filename": "report"},
+		},
+		SkillFileGenerator + "/generate_docx": {
+			SkillID:     SkillFileGenerator,
+			ToolName:    "generate_docx",
+			Description: "Generate a styled DOCX file from a structured JSON document specification.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"document":  stringValueSchema("JSON string describing the DOCX document. Include blocks with type heading, paragraph, table, or page_break."),
+					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"title":     stringValueSchema("Optional title hint; visible content must be included in document.blocks."),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"document"},
+			),
+			Example: map[string]interface{}{
+				"document": `{"blocks":[{"type":"heading","level":1,"text":"Report","style":{"alignment":"center","font_size":18,"bold":true}},{"type":"paragraph","runs":[{"text":"Total: "},{"text":"113.47","bold":true,"color":"C00000"}]}]}`,
+				"filename": "styled-report",
+			},
+		},
+		SkillFileGenerator + "/generate_pdf": {
+			SkillID:     SkillFileGenerator,
+			ToolName:    "generate_pdf",
+			Description: "Generate a styled PDF file from self-contained HTML and inline CSS.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"html":      stringValueSchema("Self-contained HTML body or full HTML document. Do not include external URLs, scripts, iframes, or remote assets."),
+					"css":       stringValueSchema("Optional inline CSS appended to the HTML document. Prefer @page for page size and margins."),
+					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"title":     stringValueSchema("Optional title used when wrapping an HTML fragment. Visible content must be included in html."),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"html"},
+			),
+			Example: map[string]interface{}{
+				"html":     `<main><h1>Report</h1><p>Total: <strong class="amount">113.47</strong></p></main>`,
+				"css":      `@page { size: A4; margin: 18mm; } h1 { text-align: center; } .amount { color: #c00000; }`,
+				"filename": "styled-report",
+			},
+		},
+		SkillFileGenerator + "/generate_pptx": {
+			SkillID:     SkillFileGenerator,
+			ToolName:    "generate_pptx",
+			Description: "Generate an editable static PPTX presentation from a structured JSON presentation specification.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"presentation": stringValueSchema("JSON string describing the PPTX presentation. Include slides with elements of type title, text, table, or shape. Use non-overlapping boxes for readable content; omitted boxes use simple auto layout."),
+					"filename":     stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"title":        stringValueSchema("Optional title hint; visible content must be included in presentation.slides."),
+					"lifecycle":    enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"presentation"},
+			),
+			Example: map[string]interface{}{
+				"presentation": `{"layout":"wide","slides":[{"elements":[{"type":"title","text":"Quarterly Report","style":{"align":"center"}},{"type":"text","text":"Total revenue: 113.47","x":0.8,"y":1.4,"w":11.6,"h":0.8,"style":{"font_size":24,"bold":true,"color":"C00000"}}]}]}`,
+				"filename":     "quarterly-report",
+			},
+		},
+		SkillSensitiveRedaction + "/redact_text": {
+			SkillID:     SkillSensitiveRedaction,
+			ToolName:    "redact_text",
+			Description: "Detect and redact sensitive information from text. Use only after source text or parsed document content is available. Never pass unredacted content to file generation; call this tool first.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"text":     stringValueSchema("Source text to redact. Required. Do not pass binary file contents."),
+					"level":    enumStringSchema("Redaction level. Defaults to medium. Use high for external sharing, model training, logs, contracts, resumes, HR data, or customer data.", []string{"low", "medium", "high"}),
+					"strategy": enumStringSchema("Redaction strategy. Defaults to auto. Secrets, tokens, passwords, and private keys are fully hidden even under partial strategy.", []string{"auto", "partial", "full", "label"}),
+					"preserve_rules": objectSchema(
+						map[string]interface{}{
+							"keep_last_digits":  numberSchema("How many trailing digits to keep for partial masking. Must be 0-8. Defaults to 4."),
+							"keep_email_domain": booleanSchema("Whether to keep email domains during partial masking. Defaults to true."),
+							"keep_city":         booleanSchema("Whether to keep city-level address context during partial masking. Defaults to false."),
+							"keep_url_domain":   booleanSchema("Whether to keep URL domain/path while redacting sensitive query parameters. Defaults to true."),
+						},
+						nil,
+					),
+					"entity_types": map[string]interface{}{
+						"description": "Optional entity type filter. Omit to scan all supported types.",
+						"oneOf": []interface{}{
+							arraySchema("Entity types to scan.", enumStringSchema("Entity type.", []string{"phone", "email", "id_card", "bank_card", "address", "name", "customer_name", "company", "order_id", "contract_id", "secret", "token", "password", "private_key", "ip", "url_parameter"})),
+							stringValueSchema("Comma-separated entity types or JSON array string."),
+						},
+					},
+					"locale":             enumStringSchema("Locale hint. Defaults to auto.", []string{"auto", "zh-CN", "en-US"}),
+					"include_field_list": booleanSchema("Whether to return redacted field summaries. Defaults to true. Field summaries never contain complete original sensitive values."),
+				},
+				[]string{"text"},
+			),
+			Example: map[string]interface{}{
+				"text":     "Name: Zhang San, phone: 13812345678, token=abcdef1234567890",
+				"level":    "high",
+				"strategy": "auto",
+			},
+		},
+		SkillChartGenerator + "/generate_chart": {
+			SkillID:     SkillChartGenerator,
+			ToolName:    "generate_chart",
+			Description: "Generate a downloadable SVG chart artifact from structured data after prompt-professionalizer has been loaded and chart type, title, data mapping, and rendering style have been provided or confirmed. Supports radar, bar, line, pie, doughnut, scatter, and score_distribution. For generic chart requests, call request_user_input before this tool.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"chart_type":      enumStringSchema("Chart type.", []string{"radar", "bar", "line", "pie", "doughnut", "scatter", "score_distribution"}),
+					"title":           stringValueSchema("Optional chart title."),
+					"output_filename": stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"data":            chartDataSchema(),
+					"options": objectSchema(
+						map[string]interface{}{
+							"width":       numberSchema("Optional SVG width. Defaults to 900."),
+							"height":      numberSchema("Optional SVG height. Defaults to 700 for radar and 620 for bar/line."),
+							"style":       enumStringSchema("Rendering style.", []string{"simple", "business", "teaching", "comparison"}),
+							"show_values": booleanSchema("Whether to show point values. Defaults to true."),
+							"show_labels": booleanSchema("Whether to show scatter point labels. Defaults to true."),
+							"legend":      booleanSchema("Whether to show legend. Defaults to true."),
+							"grid":        booleanSchema("Whether to show grid lines. Defaults to true for bar/line."),
+						},
+						nil,
+					),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"chart_type", "data"},
+			),
+			Example: map[string]interface{}{
+				"chart_type":      "radar",
+				"title":           "Score Comparison",
+				"output_filename": "score-radar",
+				"data": map[string]interface{}{
+					"dimensions": []string{"Chinese", "Math", "English", "Physics", "Chemistry", "Biology"},
+					"max_value":  100,
+					"series": []map[string]interface{}{
+						{"name": "Class Average", "values": []int{78, 82, 80, 75, 73, 76}},
+						{"name": "Student", "values": []int{88, 92, 84, 81, 77, 86}},
+					},
+				},
+			},
+		},
+		SkillIntentRouter + "/route_intent": {
+			SkillID:     SkillIntentRouter,
+			ToolName:    "route_intent",
+			Description: "Validate and normalize a structured intent routing result. The model must classify the user's real intent first, then pass a stable task type, confidence, recommended action, evidence, missing information, routing hints, and normalized request.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"user_input":              stringValueSchema("The current user message being classified."),
+					"context_summary":         stringValueSchema("Optional concise summary of relevant conversation context."),
+					"uploaded_files":          intentUploadedFilesSchema(),
+					"intent_id":               stringValueSchema("Stable dotted lowercase identifier such as file_generation.docx or database_query.filter_records."),
+					"task_type":               enumStringSchema("Standard task type.", intentTaskTypes()),
+					"subtype":                 stringValueSchema("Optional normalized subtype such as docx, bar, filter_records, or unknown."),
+					"confidence":              boundedNumberSchema("Confidence from 0 to 1.", 0, 1),
+					"recommended_action":      enumStringSchema("Recommended next action.", intentRecommendedActions()),
+					"recommended_skill_id":    enumStringSchema("Optional target skill ID when recommended_action is call_skill.", []string{"file-generator", "chart-generator", "work-report-generator", "schedule-planner", "calculator", "internal-knowledge", "agent-knowledge", "internal-database", "agent-database", "agent-workflow"}),
+					"recommended_tool_name":   stringValueSchema("Optional target tool name when recommended_action is call_tool."),
+					"recommended_workflow_id": stringValueSchema("Optional workflow or workflow binding identifier when known."),
+					"recommended_database_id": stringValueSchema("Optional database identifier when known."),
+					"recommended_dataset_ids": intentStringArraySchema("Optional knowledge base or dataset IDs when known."),
+					"routing_hints":           intentRoutingHintsSchema(),
+					"missing_info":            intentMissingInfoSchema(),
+					"evidence":                intentStringArraySchema("Evidence strings grounded in the user input or supplied context."),
+					"normalized_request":      stringValueSchema("Concise restatement of what the user is actually asking."),
+					"alternate_intents":       intentAlternateIntentsSchema(),
+				},
+				[]string{"user_input", "intent_id", "task_type", "confidence", "recommended_action", "evidence", "normalized_request"},
+			),
+			Example: map[string]interface{}{
+				"user_input":            "Export the current report as a Word document.",
+				"intent_id":             "file_generation.docx",
+				"task_type":             "file_generation",
+				"subtype":               "docx",
+				"confidence":            0.94,
+				"recommended_action":    "call_skill",
+				"recommended_skill_id":  "file-generator",
+				"recommended_tool_name": "generate_docx",
+				"routing_hints": map[string]interface{}{
+					"requires_file_generation": true,
+				},
+				"missing_info":       []map[string]interface{}{},
+				"evidence":           []string{"User explicitly asked to export as a Word document."},
+				"normalized_request": "Generate a DOCX file from the current report.",
+			},
+		},
+		SkillArchitectureDiagram + "/generate_architecture_diagram": {
+			SkillID:     SkillArchitectureDiagram,
+			ToolName:    "generate_architecture_diagram",
+			Description: "Generate downloadable SVG and HTML technical diagram artifacts after prompt-professionalizer has been loaded and diagram type, title, scope, and rendering style have been provided or confirmed. Supports system_architecture, agent_architecture, data_flow, flowchart, comparison_matrix, sequence, state, and er. For generic diagram requests, call request_user_input before this tool.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"diagram_type":    enumStringSchema("Diagram type.", []string{"system_architecture", "agent_architecture", "data_flow", "flowchart", "comparison_matrix", "sequence", "state", "er"}),
+					"title":           stringValueSchema("Optional diagram title."),
+					"description":     stringValueSchema("Optional short subtitle or source summary."),
+					"output_filename": stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"data":            architectureDiagramDataSchema(),
+					"options": objectSchema(
+						map[string]interface{}{
+							"formats":     arraySchema("Output formats. Defaults to svg and html.", enumStringSchema("Output format.", []string{"svg", "html"})),
+							"width":       numberSchema("Optional SVG width. Defaults to 1200 and must be between 480 and 2400."),
+							"height":      numberSchema("Optional SVG height. Defaults to 760 and must be between 320 and 1800."),
+							"style":       enumStringSchema("Rendering style. Use technical for engineering docs, business for reports, presentation for slide-ready diagrams, paper for warm report visuals, and simple when unspecified.", []string{"simple", "business", "technical", "presentation", "paper"}),
+							"direction":   enumStringSchema("Layout direction.", []string{"left_to_right", "top_to_bottom"}),
+							"show_legend": booleanSchema("Whether to show legend when supported. Defaults to true."),
+							"show_labels": booleanSchema("Whether to show edge labels. Defaults to true."),
+						},
+						nil,
+					),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"diagram_type", "data"},
+			),
+			Example: map[string]interface{}{
+				"diagram_type":    "agent_architecture",
+				"title":           "RAG Agent Architecture",
+				"output_filename": "rag-agent-architecture",
+				"data": map[string]interface{}{
+					"nodes": []map[string]interface{}{
+						{"id": "user", "label": "User", "type": "actor", "layer": "input"},
+						{"id": "agent", "label": "Agent Orchestrator", "type": "agent", "layer": "agent"},
+						{"id": "retriever", "label": "Retriever", "type": "tool", "layer": "tools"},
+						{"id": "vector", "label": "Vector Store", "type": "memory", "layer": "memory"},
+						{"id": "llm", "label": "LLM", "type": "model", "layer": "model"},
+					},
+					"edges": []map[string]interface{}{
+						{"from": "user", "to": "agent", "label": "query"},
+						{"from": "agent", "to": "retriever", "label": "retrieve"},
+						{"from": "retriever", "to": "vector", "label": "search"},
+						{"from": "agent", "to": "llm", "label": "prompt + context"},
+					},
+				},
+				"options": map[string]interface{}{"style": "technical", "formats": []string{"svg", "html"}},
+			},
+		},
+		SkillImageGenerator + "/generate_image": {
+			SkillID:     SkillImageGenerator,
+			ToolName:    "generate_image",
+			Description: "Generate downloadable image files from a text prompt after prompt-professionalizer has been loaded. Supports style, aspect ratio, count, negative prompt, and optional current-user reference image URL guidance. Reference images are passed as signed URLs in the prompt, not as structured image inputs. For generic image requests, call request_user_input before this tool.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"prompt":          stringValueSchema("Required image description. Include subject, scene, composition, intended use, and constraints."),
+					"style":           imageStyleSchema(),
+					"aspect_ratio":    imageAspectRatioSchema(),
+					"count":           numberSchema("Number of candidate images. Must be an integer from 1 to 4."),
+					"negative_prompt": stringValueSchema("Optional elements, styles, or risks to avoid."),
+					"reference_image": imageFileObjectSchema("Optional current-user reference image file object or file ID. The tool places a signed URL in the prompt for loose visual guidance; it is not a structured image input."),
+					"filename":        stringValueSchema("Optional base filename. Do not include path separators or an extension."),
+					"lifecycle":       enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+					"provider":        stringValueSchema("Optional explicit image model provider. Usually omit this and use the default image generation model."),
+					"model":           stringValueSchema("Optional explicit image generation model. Usually omit this and use the default image generation model."),
+				},
+				[]string{"prompt"},
+			),
+			Example: map[string]interface{}{"prompt": "A clean product concept image of a smart desk lamp on a white studio background", "style": "product", "aspect_ratio": "1:1", "count": 1},
+		},
+		SkillImageGenerator + "/edit_image": {
+			SkillID:     SkillImageGenerator,
+			ToolName:    "edit_image",
+			Description: "Create prompt-plus-reference-URL variants or edit-style regenerated images from a current-user reference image and instruction after prompt-professionalizer has been loaded. This is not precise in-place editing and does not pass structured image input to the provider. For ambiguous edits, call request_user_input before this tool.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"image":            imageFileObjectSchema("Required current-user reference image file object or file ID. The tool places a signed URL in the prompt for loose visual guidance; it is not a structured image input."),
+					"edit_instruction": stringValueSchema("Required edit or variant instruction. State what to change, preserve, and avoid."),
+					"edit_type":        enumStringSchema("Edit type.", []string{"auto", "variant", "background", "color", "add_element", "remove_element", "style_transfer"}),
+					"style":            imageStyleSchema(),
+					"aspect_ratio":     imageAspectRatioSchema(),
+					"count":            numberSchema("Number of candidate images. Must be an integer from 1 to 4."),
+					"negative_prompt":  stringValueSchema("Optional elements, styles, or risks to avoid."),
+					"filename":         stringValueSchema("Optional base filename. Do not include path separators or an extension."),
+					"lifecycle":        enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+					"provider":         stringValueSchema("Optional explicit image model provider. Usually omit this and use the default image generation model."),
+					"model":            stringValueSchema("Optional explicit image generation model. Usually omit this and use the default image generation model."),
+				},
+				[]string{"image", "edit_instruction"},
+			),
+			Example: map[string]interface{}{"image": map[string]interface{}{"upload_file_id": "file-id"}, "edit_instruction": "Change the background to a bright office scene and keep the main product shape", "edit_type": "background", "count": 1},
+		},
+		SkillWorkReport + "/generate_file": {
+			SkillID:     SkillWorkReport,
+			ToolName:    "generate_file",
+			Description: "Generate a downloadable weekly, monthly, or work report artifact from prepared report content.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"content":   stringValueSchema("Final weekly, monthly, or work report content to write into the generated file."),
+					"format":    enumStringSchema("Output format.", []string{"txt", "md", "docx", "pdf"}),
+					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"title":     stringValueSchema("Optional document title used by generated PDF files."),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"content", "format"},
+			),
+			Example: map[string]interface{}{"content": "# Weekly Work Report\n\n## Summary\n\n...", "format": "md", "filename": "weekly-work-report"},
+		},
+		SkillContractFieldExtractor + "/generate_file": {
+			SkillID:     SkillContractFieldExtractor,
+			ToolName:    "generate_file",
+			Description: "Generate a downloadable JSON, CSV, Markdown, or text file from completed contract field extraction results. Use only after contract text and configured fields have been processed and missing fields are marked explicitly.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"content":   stringValueSchema("Final contract extraction result content to write into the generated file. Preserve missing, uncertain, conflict, confidence, evidence, and source_location fields."),
+					"format":    enumStringSchema("Output format.", []string{"json", "csv", "md", "txt"}),
+					"filename":  stringValueSchema("Optional display filename. Do not include path separators or an extension."),
+					"title":     stringValueSchema("Optional document title used by generated file formats that support titles."),
+					"lifecycle": enumStringSchema("File lifecycle. Defaults to persistent.", []string{"persistent", "temporary"}),
+				},
+				[]string{"content", "format"},
+			),
+			Example: map[string]interface{}{
+				"content":  `{"contract_summary":{"field_count":2,"extracted_count":1,"missing_count":1},"fields":[{"field_key":"contract_amount","field_label":"Contract Amount","value":"CNY 120,000","normalized_value":"120000","value_type":"money","extraction_status":"extracted","confidence":0.92,"evidence":"The total contract price is CNY 120,000.","source_location":"Section 3","notes":""},{"field_key":"renewal_clause","field_label":"Renewal Clause","value":"Not found","normalized_value":"","value_type":"clause","extraction_status":"missing","confidence":0,"evidence":"","source_location":"","notes":"No explicit renewal clause was found in the contract text."}]}`,
+				"format":   "json",
+				"filename": "contract-field-extraction",
+				"title":    "Contract Field Extraction",
+			},
+		},
+		SkillInternalKnowledge + "/list_accessible_knowledge_bases": {
+			SkillID:     SkillInternalKnowledge,
+			ToolName:    "list_accessible_knowledge_bases",
+			Description: "List knowledge bases accessible to the current AIChat user. Inspect status and fallback_used before selecting dataset IDs.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"query": stringValueSchema("Optional search text for narrowing candidate knowledge bases."),
+					"limit": numberSchema("Maximum number of knowledge bases to list. Defaults to 20 and is capped at 100."),
+				},
+				nil,
+			),
+			Example: map[string]interface{}{"query": "expense policy", "limit": 10},
+		},
+		SkillInternalKnowledge + "/retrieve_knowledge": {
+			SkillID:     SkillInternalKnowledge,
+			ToolName:    "retrieve_knowledge",
+			Description: "Retrieve relevant context from selected accessible knowledge base IDs returned by list_accessible_knowledge_bases.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"query":          stringValueSchema("The user question or refined search query."),
+					"dataset_ids":    stringArrayOrCSVSchema("Knowledge base IDs selected from list_accessible_knowledge_bases. Pass a JSON array of IDs when possible."),
+					"top_k":          numberSchema("Maximum number of retrieved chunks. Defaults to 5 and is capped at 20."),
+					"retrieval_mode": enumStringSchema("Optional retrieval mode. Omit for default hybrid mode; use graph only for relationship/entity questions.", []string{"hybrid", "vector", "graph"}),
+				},
+				[]string{"query", "dataset_ids"},
+			),
+			Example: map[string]interface{}{"query": "What is the reimbursement policy?", "dataset_ids": []string{"dataset-id"}},
+		},
+		SkillAgentKnowledge + "/retrieve_agent_knowledge": {
+			SkillID:     SkillAgentKnowledge,
+			ToolName:    "retrieve_agent_knowledge",
+			Description: "Retrieve relevant context from knowledge bases bound to the current Agent. Do not pass dataset IDs.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"query":          stringValueSchema("The user question or refined search query."),
+					"top_k":          numberSchema("Maximum number of retrieved chunks. Defaults to 5 and is capped at 20."),
+					"retrieval_mode": enumStringSchema("Optional retrieval mode. Omit for default hybrid mode; use graph only for relationship/entity questions.", []string{"hybrid", "vector", "graph"}),
+				},
+				[]string{"query"},
+			),
+			Example: map[string]interface{}{"query": "Summarize the configured product FAQ."},
+		},
+		SkillInternalDatabase + "/list_accessible_databases": databaseListContract(SkillInternalDatabase),
+		SkillInternalDatabase + "/list_database_tables":      databaseTablesContract(SkillInternalDatabase),
+		SkillInternalDatabase + "/describe_database_table":   databaseDescribeTableContract(SkillInternalDatabase),
+		SkillInternalDatabase + "/query_table_records":       databaseQueryRecordsContract(SkillInternalDatabase),
+		SkillInternalDatabase + "/insert_table_records":      databaseMutateRecordsContract(SkillInternalDatabase, "insert_table_records", "Insert records into a database table."),
+		SkillInternalDatabase + "/update_table_records":      databaseMutateRecordsContract(SkillInternalDatabase, "update_table_records", "Update records in a database table. Each record must include id."),
+		SkillInternalDatabase + "/delete_table_records":      databaseMutateRecordsContract(SkillInternalDatabase, "delete_table_records", "Delete records from a database table. Each record must include id."),
+		SkillAgentDatabase + "/list_accessible_databases":    databaseListContract(SkillAgentDatabase),
+		SkillAgentDatabase + "/list_database_tables":         databaseTablesContract(SkillAgentDatabase),
+		SkillAgentDatabase + "/describe_database_table":      databaseDescribeTableContract(SkillAgentDatabase),
+		SkillAgentDatabase + "/query_table_records":          databaseQueryRecordsContract(SkillAgentDatabase),
+		SkillAgentDatabase + "/insert_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "insert_table_records", "Insert records into an Agent-bound database table."),
+		SkillAgentDatabase + "/update_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "update_table_records", "Update records in an Agent-bound database table. Each record must include id."),
+		SkillAgentDatabase + "/delete_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "delete_table_records", "Delete records from an Agent-bound database table. Each record must include id."),
+		SkillAgentWorkflow + "/list_agent_workflows":         workflowListContract(),
+		SkillAgentWorkflow + "/run_agent_workflow":           workflowRunContract(),
+		SkillAgentWorkflow + "/get_workflow_run_status":      workflowRunStatusContract(),
+		SkillTime + "/current_time": {
+			SkillID:     SkillTime,
+			ToolName:    "current_time",
+			Description: "Get the current system time with optional timezone and format.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"format":   stringValueSchema("Optional strftime-style output format. Defaults to %Y-%m-%d %H:%M:%S."),
+					"timezone": stringValueSchema("Optional IANA timezone such as Asia/Shanghai. Defaults to UTC."),
+				},
+				nil,
+			),
+			Example: map[string]interface{}{"timezone": "Asia/Shanghai", "format": "%Y-%m-%d %H:%M:%S"},
+		},
+		SkillTime + "/date_calculate": {
+			SkillID:     SkillTime,
+			ToolName:    "date_calculate",
+			Description: "Add or subtract date intervals, or calculate the day interval between two dates.",
+			Schema: objectSchema(
+				map[string]interface{}{
+					"operation":   enumStringSchema("Operation to perform. diff requires target_date.", []string{"add", "subtract", "diff"}),
+					"base_date":   stringValueSchema("Base date in YYYY-MM-DD format. Use today or omit to use the current date."),
+					"amount":      numberSchema("Interval amount for add or subtract. Defaults to 1."),
+					"unit":        enumStringSchema("Interval unit for add or subtract.", []string{"day", "week", "month", "year"}),
+					"target_date": stringValueSchema("Target date in YYYY-MM-DD format. Required when operation is diff."),
+					"timezone":    stringValueSchema("IANA timezone used when base_date is omitted. Defaults to UTC."),
+				},
+				[]string{"operation"},
+			),
+			Example: map[string]interface{}{"operation": "add", "base_date": "today", "amount": 3, "unit": "day", "timezone": "Asia/Shanghai"},
+		},
+	}
+}
+
+func ExpectedSkillToolArguments(skillID string, toolName string) map[string]interface{} {
+	contract, ok := SkillToolArgumentContractFor(skillID, toolName)
+	if !ok {
+		return nil
+	}
+	return map[string]interface{}{
+		"skill_id":    contract.SkillID,
+		"tool_name":   contract.ToolName,
+		"description": contract.Description,
+		"schema":      contract.Schema,
+		"example":     contract.Example,
+	}
+}
+
+func databaseListContract(skillID string) SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     skillID,
+		ToolName:    "list_accessible_databases",
+		Description: "List databases accessible to the current user or bound to the current Agent.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"query": stringValueSchema("Optional search text for narrowing candidate databases."),
+				"limit": numberSchema("Maximum number of databases to list. Defaults to 20."),
+			},
+			nil,
+		),
+		Example: map[string]interface{}{"query": "customers", "limit": 10},
+	}
+}
+
+func databaseTablesContract(skillID string) SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     skillID,
+		ToolName:    "list_database_tables",
+		Description: "List tables in an accessible database.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"data_source_id": stringValueSchema("Database ID returned by list_accessible_databases."),
+				"query":          stringValueSchema("Optional search text for narrowing tables by name or description."),
+				"limit":          numberSchema("Maximum number of tables to list. Defaults to 50."),
+			},
+			[]string{"data_source_id"},
+		),
+		Example: map[string]interface{}{"data_source_id": "database-id", "query": "orders"},
+	}
+}
+
+func databaseDescribeTableContract(skillID string) SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     skillID,
+		ToolName:    "describe_database_table",
+		Description: "Describe a database table and its columns.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"data_source_id":        stringValueSchema("Database ID returned by list_accessible_databases."),
+				"table_id":              stringValueSchema("Table metadata ID returned by list_database_tables."),
+				"include_system_fields": booleanSchema("Whether to include system fields such as id and timestamps. Defaults to false."),
+			},
+			[]string{"data_source_id", "table_id"},
+		),
+		Example: map[string]interface{}{"data_source_id": "database-id", "table_id": "table-id"},
+	}
+}
+
+func databaseQueryRecordsContract(skillID string) SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     skillID,
+		ToolName:    "query_table_records",
+		Description: "Query table records with pagination and a safe order clause.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"data_source_id": stringValueSchema("Database ID returned by list_accessible_databases."),
+				"table_id":       stringValueSchema("Table metadata ID returned by list_database_tables."),
+				"limit":          numberSchema("Maximum number of records. Defaults to 20 and is capped by the backend."),
+				"offset":         numberSchema("Pagination offset. Defaults to 0."),
+				"order":          stringValueSchema("Optional safe order clause such as id DESC."),
+			},
+			[]string{"data_source_id", "table_id"},
+		),
+		Example: map[string]interface{}{"data_source_id": "database-id", "table_id": "table-id", "limit": 20},
+	}
+}
+
+func databaseMutateRecordsContract(skillID string, toolName string, description string) SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     skillID,
+		ToolName:    toolName,
+		Description: description,
+		Schema: objectSchema(
+			map[string]interface{}{
+				"data_source_id": stringValueSchema("Database ID returned by list_accessible_databases."),
+				"table_id":       stringValueSchema("Table metadata ID returned by list_database_tables."),
+				"records": map[string]interface{}{
+					"type":        "array",
+					"description": "Records to mutate. For update and delete, each record must include id.",
+					"items": map[string]interface{}{
+						"type":                 "object",
+						"additionalProperties": true,
+					},
+				},
+			},
+			[]string{"data_source_id", "table_id", "records"},
+		),
+		Example: map[string]interface{}{"data_source_id": "database-id", "table_id": "table-id", "records": []map[string]interface{}{{"id": "record-id"}}},
+	}
+}
+
+func workflowListContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentWorkflow,
+		ToolName:    "list_agent_workflows",
+		Description: "Fallback/debug list of workflows bound to the current Agent. Prefer the injected available_workflows context when it is present.",
+		Schema:      objectSchema(map[string]interface{}{}, nil),
+		Example:     map[string]interface{}{},
+	}
+}
+
+func workflowRunContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentWorkflow,
+		ToolName:    "run_agent_workflow",
+		Description: "Run an Agent-bound workflow by binding_id. Do not pass workflow_id directly. Set inputs.query to the user's current request. After a succeeded run, final answers must use primary_output or outputs and must not invent workflow output.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"binding_id": stringValueSchema("Workflow binding ID from injected available_workflows, or from list_agent_workflows if the injected list is missing or ambiguous."),
+				"inputs": map[string]interface{}{
+					"type":                 "object",
+					"description":          "Workflow input object. Include query with the user's current request unless the binding's input_schema, required_inputs, or default_input_key says otherwise; the runtime also forwards query as sys.query.",
+					"additionalProperties": true,
+					"properties": map[string]interface{}{
+						"query": stringValueSchema("The user's current request or instruction to pass into the workflow."),
+					},
+					"required": []string{"query"},
+				},
+			},
+			[]string{"binding_id", "inputs"},
+		),
+		Example: map[string]interface{}{"binding_id": "approval-flow", "inputs": map[string]interface{}{"query": "Approve refund request #123"}},
+	}
+}
+
+func workflowRunStatusContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentWorkflow,
+		ToolName:    "get_workflow_run_status",
+		Description: "Query the status and available outputs for an Agent-bound workflow run.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"workflow_run_id": stringValueSchema("Workflow run ID returned by run_agent_workflow."),
+			},
+			[]string{"workflow_run_id"},
+		),
+		Example: map[string]interface{}{"workflow_run_id": "workflow-run-id"},
+	}
+}
+
+func objectSchema(properties map[string]interface{}, required []string) map[string]interface{} {
+	if required == nil {
+		required = []string{}
+	}
+	return map[string]interface{}{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             required,
+		"additionalProperties": false,
+	}
+}
+
+func numberSchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "number",
+		"description": description,
+	}
+}
+
+func stringValueSchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "string",
+		"description": description,
+	}
+}
+
+func enumStringSchema(description string, values []string) map[string]interface{} {
+	schema := stringValueSchema(description)
+	if len(values) > 0 {
+		schema["enum"] = values
+	}
+	return schema
+}
+
+func arraySchema(description string, items map[string]interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "array",
+		"description": description,
+		"items":       items,
+	}
+}
+
+func chartDataSchema() map[string]interface{} {
+	series := arraySchema(
+		"Chart data series. Radar supports 1-2 series; bar and line support 1-8 series.",
+		objectSchema(
+			map[string]interface{}{
+				"name":   stringValueSchema("Series label."),
+				"values": arraySchema("Numeric values matching the selected chart labels length.", numberSchema("Score or metric value.")),
+				"color":  stringValueSchema("Optional #RRGGBB color."),
+			},
+			[]string{"name", "values"},
+		),
+	)
+	pieItems := arraySchema(
+		"Pie or doughnut chart items.",
+		objectSchema(
+			map[string]interface{}{
+				"label": stringValueSchema("Slice label."),
+				"value": numberSchema("Slice value."),
+				"color": stringValueSchema("Optional #RRGGBB color."),
+			},
+			[]string{"label", "value"},
+		),
+	)
+	scatterPoints := arraySchema(
+		"Scatter chart points.",
+		objectSchema(
+			map[string]interface{}{
+				"x":     numberSchema("X-axis value."),
+				"y":     numberSchema("Y-axis value."),
+				"label": stringValueSchema("Optional point label."),
+				"color": stringValueSchema("Optional #RRGGBB color."),
+			},
+			[]string{"x", "y"},
+		),
+	)
+	scoreCountBands := arraySchema(
+		"Precomputed score distribution bands.",
+		objectSchema(
+			map[string]interface{}{
+				"label": stringValueSchema("Band label such as 90-100."),
+				"count": numberSchema("Precomputed count for this band."),
+			},
+			[]string{"label", "count"},
+		),
+	)
+	scoreRangeBands := arraySchema(
+		"Score distribution bands used to count raw scores.",
+		objectSchema(
+			map[string]interface{}{
+				"label": stringValueSchema("Band label such as 90-100."),
+				"min":   numberSchema("Inclusive minimum score when calculating from raw scores."),
+				"max":   numberSchema("Inclusive maximum score when calculating from raw scores."),
+			},
+			[]string{"label", "min", "max"},
+		),
+	)
+	common := map[string]interface{}{
+		"max_value": numberSchema("Optional shared maximum value. Radar defaults to 100; bar and line auto-scale when omitted."),
+		"series":    series,
+	}
+	radarProps := copySchemaProperties(common)
+	radarProps["dimensions"] = stringArrayOrCSVSchema("Radar axis labels, such as subject names. Required for radar charts.")
+	barProps := copySchemaProperties(common)
+	barProps["categories"] = stringArrayOrCSVSchema("Bar chart category labels.")
+	lineProps := copySchemaProperties(common)
+	lineProps["x_axis"] = stringArrayOrCSVSchema("Line chart x-axis labels.")
+	lineProps["categories"] = stringArrayOrCSVSchema("Line chart x-axis labels alias.")
+	pieProps := map[string]interface{}{
+		"items": pieItems,
+	}
+	scatterProps := map[string]interface{}{
+		"x_label": stringValueSchema("Optional x-axis label."),
+		"y_label": stringValueSchema("Optional y-axis label."),
+		"x_min":   numberSchema("Optional x-axis minimum."),
+		"x_max":   numberSchema("Optional x-axis maximum."),
+		"y_min":   numberSchema("Optional y-axis minimum."),
+		"y_max":   numberSchema("Optional y-axis maximum."),
+		"points":  scatterPoints,
+	}
+	distributionCountProps := map[string]interface{}{
+		"bands":     scoreCountBands,
+		"max_value": numberSchema("Optional y-axis maximum for distribution counts."),
+	}
+	distributionRangeProps := map[string]interface{}{
+		"bands": scoreRangeBands,
+		"scores": arraySchema("Raw score values or objects with value.", map[string]interface{}{"oneOf": []interface{}{
+			numberSchema("Raw score value."),
+			objectSchema(map[string]interface{}{
+				"label": stringValueSchema("Optional score label."),
+				"value": numberSchema("Raw score value."),
+			}, []string{"value"}),
+		}}),
+		"max_value": numberSchema("Optional y-axis maximum for distribution counts."),
+	}
+
+	return map[string]interface{}{
+		"description": "Chart-specific data. Use dimensions for radar, categories for bar, x_axis or categories for line, items for pie/doughnut, points for scatter, and bands for score_distribution.",
+		"anyOf": []interface{}{
+			objectSchema(radarProps, []string{"dimensions", "series"}),
+			objectSchema(barProps, []string{"categories", "series"}),
+			objectSchema(lineProps, []string{"x_axis", "series"}),
+			objectSchema(lineProps, []string{"categories", "series"}),
+			objectSchema(pieProps, []string{"items"}),
+			objectSchema(scatterProps, []string{"points"}),
+			objectSchema(distributionCountProps, []string{"bands"}),
+			objectSchema(distributionRangeProps, []string{"bands", "scores"}),
+		},
+	}
+}
+
+func architectureDiagramDataSchema() map[string]interface{} {
+	node := objectSchema(map[string]interface{}{
+		"id":    stringValueSchema("Stable node ID. Edges must reference this value."),
+		"label": stringValueSchema("Human-readable node label."),
+		"type":  stringValueSchema("Optional node type such as frontend, service, database, agent, model, tool, memory, input, output, or approval."),
+		"group": stringValueSchema("Optional logical group."),
+		"layer": stringValueSchema("Optional layout layer used to order nodes."),
+	}, []string{"id"})
+	edge := objectSchema(map[string]interface{}{
+		"from":  stringValueSchema("Source node ID, participant name, state ID, or entity ID."),
+		"to":    stringValueSchema("Target node ID, participant name, state ID, or entity ID."),
+		"label": stringValueSchema("Optional relationship, transition, message, or data-flow label."),
+	}, []string{"from", "to"})
+	group := objectSchema(map[string]interface{}{
+		"id":    stringValueSchema("Group ID."),
+		"label": stringValueSchema("Group label."),
+	}, []string{"id"})
+	entity := objectSchema(map[string]interface{}{
+		"id":     stringValueSchema("Stable entity ID. Relationships must reference this value."),
+		"label":  stringValueSchema("Entity label."),
+		"fields": stringArrayOrCSVSchema("Optional entity fields such as id PK, user_id FK, status."),
+	}, []string{"id"})
+	matrixCells := arraySchema("Matrix cell rows. Must align with rows and columns.", map[string]interface{}{
+		"type":  "array",
+		"items": map[string]interface{}{"type": "string"},
+	})
+	nodeEdgeProps := map[string]interface{}{
+		"nodes":  arraySchema("Diagram nodes.", node),
+		"edges":  arraySchema("Diagram edges.", edge),
+		"groups": arraySchema("Optional visual or logical groups.", group),
+	}
+	return map[string]interface{}{
+		"description": "Diagram-specific data. Node-edge diagrams use nodes, edges, and optional groups; comparison_matrix uses rows, columns, and cells; sequence uses participants and messages; state uses states and transitions; er uses entities and relationships.",
+		"anyOf": []interface{}{
+			objectSchema(nodeEdgeProps, []string{"nodes", "edges"}),
+			objectSchema(map[string]interface{}{
+				"columns": stringArrayOrCSVSchema("Compared products, vendors, options, or plans."),
+				"rows":    stringArrayOrCSVSchema("Comparison criteria, features, metrics, or factors."),
+				"cells":   matrixCells,
+			}, []string{"columns", "rows", "cells"}),
+			objectSchema(map[string]interface{}{
+				"participants": stringArrayOrCSVSchema("Ordered sequence participants."),
+				"messages":     arraySchema("Ordered sequence messages.", edge),
+			}, []string{"participants", "messages"}),
+			objectSchema(map[string]interface{}{
+				"states":      arraySchema("State nodes.", node),
+				"transitions": arraySchema("State transitions.", edge),
+			}, []string{"states", "transitions"}),
+			objectSchema(map[string]interface{}{
+				"entities":      arraySchema("ER entities.", entity),
+				"relationships": arraySchema("ER relationships.", edge),
+			}, []string{"entities", "relationships"}),
+		},
+	}
+}
+
+func copySchemaProperties(input map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
+}
+
+func imageStyleSchema() map[string]interface{} {
+	return enumStringSchema("Visual style. Defaults to auto.", []string{"auto", "realistic", "illustration", "flat", "3d", "guofeng", "tech", "poster", "product", "icon", "cover"})
+}
+
+func imageAspectRatioSchema() map[string]interface{} {
+	return enumStringSchema("Image aspect ratio. Defaults to 1:1.", []string{"1:1", "16:9", "9:16", "4:3"})
+}
+
+func imageFileObjectSchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"description": description + " Supported formats: PNG, JPG, JPEG, WEBP.",
+		"anyOf": []interface{}{
+			stringValueSchema("File object encoded as JSON, or a file ID string."),
+			map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"upload_file_id": stringValueSchema("Uploaded file ID."),
+					"file_id":        stringValueSchema("Uploaded file ID."),
+					"id":             stringValueSchema("Uploaded file ID."),
+					"related_id":     stringValueSchema("Related uploaded file ID."),
+					"name":           stringValueSchema("Optional filename."),
+					"mime_type":      stringValueSchema("Optional MIME type."),
+				},
+				"additionalProperties": true,
+			},
+		},
+	}
+}
+
+func booleanSchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "boolean",
+		"description": description,
+	}
+}
+
+func stringArrayOrCSVSchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"description": description,
+		"oneOf": []interface{}{
+			map[string]interface{}{
+				"type":  "array",
+				"items": map[string]interface{}{"type": "string"},
+			},
+			map[string]interface{}{
+				"type": "string",
+			},
+		},
+	}
+}
+
+func intentStringArraySchema(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"description": description,
+		"oneOf": []interface{}{
+			map[string]interface{}{
+				"type":  "array",
+				"items": map[string]interface{}{"type": "string"},
+			},
+			map[string]interface{}{
+				"type":        "string",
+				"description": "JSON array string of strings.",
+			},
+		},
+	}
+}
+
+func boundedNumberSchema(description string, minimum float64, maximum float64) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "number",
+		"description": description,
+		"minimum":     minimum,
+		"maximum":     maximum,
+	}
+}
+
+func intentTaskTypes() []string {
+	return []string{
+		"general_qa",
+		"knowledge_retrieval",
+		"database_query",
+		"database_mutation",
+		"workflow_execution",
+		"file_generation",
+		"chart_generation",
+		"report_generation",
+		"schedule_planning",
+		"calculation",
+		"code_or_debugging",
+		"data_analysis",
+		"clarification_required",
+		"unsupported",
+	}
+}
+
+func intentRecommendedActions() []string {
+	return []string{
+		"answer_directly",
+		"call_skill",
+		"call_tool",
+		"run_workflow",
+		"query_database",
+		"mutate_database",
+		"retrieve_knowledge",
+		"request_user_input",
+		"reject_or_escalate",
+	}
+}
+
+func intentRoutingHintsSchema() map[string]interface{} {
+	return objectSchema(
+		map[string]interface{}{
+			"needs_context":             booleanSchema("Whether more conversation or domain context is needed."),
+			"uses_uploaded_files":       booleanSchema("Whether uploaded files are required for execution."),
+			"requires_database":         booleanSchema("Whether database access is required."),
+			"requires_knowledge_base":   booleanSchema("Whether knowledge retrieval is required."),
+			"requires_workflow":         booleanSchema("Whether workflow execution or inspection is required."),
+			"requires_file_generation":  booleanSchema("Whether file generation is required."),
+			"requires_chart_generation": booleanSchema("Whether chart generation is required."),
+			"requires_confirmation":     booleanSchema("Whether explicit user confirmation is required."),
+			"is_high_impact":            booleanSchema("Whether the next action is high impact."),
+			"is_multi_intent":           booleanSchema("Whether the request contains multiple task intents."),
+		},
+		nil,
+	)
+}
+
+func intentMissingInfoSchema() map[string]interface{} {
+	return arraySchema(
+		"Missing information that blocks reliable execution.",
+		objectSchema(
+			map[string]interface{}{
+				"field":    stringValueSchema("Stable missing field name such as chart_type, file_format, database_table, workflow_binding_id, or confirmation."),
+				"reason":   stringValueSchema("Why this field is required."),
+				"question": stringValueSchema("Concise user-facing question that resolves this blocker."),
+				"options":  intentStringArraySchema("Optional concrete quick-reply options, maximum five."),
+			},
+			[]string{"field", "reason", "question"},
+		),
+	)
+}
+
+func intentUploadedFilesSchema() map[string]interface{} {
+	return arraySchema(
+		"Uploaded file metadata relevant to routing. Do not include raw file contents.",
+		map[string]interface{}{
+			"anyOf": []interface{}{
+				objectSchema(intentUploadedFileProperties(), []string{"file_id"}),
+				objectSchema(intentUploadedFileProperties(), []string{"filename"}),
+			},
+		},
+	)
+}
+
+func intentUploadedFileProperties() map[string]interface{} {
+	return map[string]interface{}{
+		"file_id":   stringValueSchema("Optional file identifier."),
+		"filename":  stringValueSchema("Optional filename."),
+		"mime_type": stringValueSchema("Optional MIME type."),
+		"format":    stringValueSchema("Optional file format or extension."),
+		"role":      stringValueSchema("Optional role such as source, reference, attachment, or output_template."),
+		"summary":   stringValueSchema("Optional short file summary."),
+	}
+}
+
+func intentAlternateIntentsSchema() map[string]interface{} {
+	return arraySchema(
+		"Optional secondary plausible intents.",
+		objectSchema(
+			map[string]interface{}{
+				"intent_id":            stringValueSchema("Stable dotted lowercase identifier for the alternate intent."),
+				"task_type":            enumStringSchema("Alternate task type.", intentTaskTypes()),
+				"confidence":           boundedNumberSchema("Alternate confidence from 0 to 1.", 0, 1),
+				"recommended_action":   enumStringSchema("Optional recommended action for the alternate intent.", intentRecommendedActions()),
+				"recommended_skill_id": stringValueSchema("Optional target skill for the alternate intent."),
+			},
+			[]string{"intent_id", "task_type", "confidence"},
+		),
+	)
+}
+
+func precisionSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "number",
+		"description": "Optional decimal places to round the result to. Defaults to 6 and must be between 0 and 12.",
+		"minimum":     0,
+		"maximum":     12,
+	}
 }
 
 func SkillMetadataSystemMessage(metadata []SkillPromptMetadata) llmadapter.Message {
@@ -718,6 +1969,7 @@ func (r *Runtime) loadSkillDocumentFromLocation(location skillLocation) (SkillDo
 		return SkillDocument{}, fmt.Errorf("failed to parse skill %s: %w", id, err)
 	}
 	doc := buildSkillDocument(id, root, source, frontmatter, body)
+	r.applyScriptSupport(&doc)
 	if source == SkillSourceCustom {
 		if err := validateCustomSkillDocument(doc); err != nil {
 			return SkillDocument{}, err
@@ -735,6 +1987,7 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 	if normalizeSkillSource(source) == SkillSourceCustom && whenToUse == "" {
 		whenToUse = strings.TrimSpace(frontmatter.Description)
 	}
+	scriptPresent := hasScripts(root)
 	return SkillDocument{
 		Metadata: SkillMetadata{
 			ID:               normalizeSkillID(id),
@@ -746,15 +1999,106 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 			Tools:            append([]string{}, frontmatter.Tools...),
 			RuntimeType:      normalizeSkillRuntimeType(frontmatter.RuntimeType, frontmatter.Tools),
 			MaxCallsPerTurn:  normalizePositive(frontmatter.MaxCallsPerTurn, defaultMaxCallsPerTurn),
-			TimeoutSeconds:   normalizePositive(frontmatter.TimeoutSeconds, defaultTimeoutSeconds),
+			TimeoutSeconds:   normalizeSkillTimeout(frontmatter.TimeoutSeconds, scriptPresent),
 			References:       listReferences(root, source),
-			HasScripts:       hasScripts(root),
+			HasScripts:       scriptPresent,
 			ScriptsSupported: false,
 			RootPath:         root,
+			SupportedCallers: normalizeSkillCallers(id, source, frontmatter.SupportedCallers),
+			RequiredConfig:   normalizeSkillRequiredConfig(id, frontmatter.RequiredConfig),
 		},
 		Instructions: strings.TrimSpace(body),
 		Tools:        buildSkillToolDefinitions(frontmatter),
 	}
+}
+
+func (r *Runtime) applyScriptSupport(doc *SkillDocument) {
+	if r == nil || doc == nil || !doc.Metadata.HasScripts || !r.ScriptsSupported() {
+		return
+	}
+	doc.Metadata.ScriptsSupported = true
+	ensureScriptTool(doc)
+}
+
+func normalizeToolInvokeFrom(value tools.ToolInvokeFrom) tools.ToolInvokeFrom {
+	switch value {
+	case tools.ToolInvokeFromAgent:
+		return tools.ToolInvokeFromAgent
+	default:
+		return tools.ToolInvokeFromAIChat
+	}
+}
+
+func normalizeSkillTimeout(value int, hasScriptFiles bool) int {
+	if value > 0 {
+		return value
+	}
+	if hasScriptFiles {
+		return defaultSkillScriptTimeoutSeconds
+	}
+	return defaultTimeoutSeconds
+}
+
+func normalizeSkillCallers(id string, source string, callers []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(callers))
+	for _, raw := range callers {
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case SkillCallerAIChat:
+			if _, ok := seen[SkillCallerAIChat]; !ok {
+				seen[SkillCallerAIChat] = struct{}{}
+				out = append(out, SkillCallerAIChat)
+			}
+		case SkillCallerAgent:
+			if _, ok := seen[SkillCallerAgent]; !ok {
+				seen[SkillCallerAgent] = struct{}{}
+				out = append(out, SkillCallerAgent)
+			}
+		case SkillCallerWorkflow:
+			if _, ok := seen[SkillCallerWorkflow]; !ok {
+				seen[SkillCallerWorkflow] = struct{}{}
+				out = append(out, SkillCallerWorkflow)
+			}
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+	switch normalizeSkillID(id) {
+	case SkillInternalKnowledge, SkillInternalDatabase:
+		return []string{SkillCallerAIChat}
+	case SkillAgentKnowledge, SkillAgentDatabase, SkillAgentWorkflow:
+		return []string{SkillCallerAgent}
+	default:
+		return []string{SkillCallerAIChat, SkillCallerAgent}
+	}
+}
+
+func normalizeSkillRequiredConfig(id string, required []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(required))
+	for _, raw := range required {
+		value := strings.ToLower(strings.TrimSpace(raw))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	if len(out) == 0 && normalizeSkillID(id) == SkillAgentKnowledge {
+		out = append(out, SkillRequiredConfigAgentKnowledge)
+	}
+	if len(out) == 0 && normalizeSkillID(id) == SkillAgentDatabase {
+		out = append(out, SkillRequiredConfigAgentDatabase)
+	}
+	if len(out) == 0 && normalizeSkillID(id) == SkillAgentWorkflow {
+		out = append(out, SkillRequiredConfigAgentWorkflow)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func parseSkillMarkdown(raw []byte) (SkillFrontmatter, string, error) {
@@ -825,7 +2169,7 @@ func validateCustomSkillDocument(doc SkillDocument) error {
 	if doc.Metadata.RuntimeType != SkillRuntimeTypePrompt {
 		return fmt.Errorf("custom skill %s must use prompt runtime_type", doc.Metadata.ID)
 	}
-	if len(doc.Metadata.Tools) > 0 || len(doc.Tools) > 0 {
+	if len(doc.Metadata.Tools) > 0 || hasNonScriptTools(doc.Tools) {
 		return fmt.Errorf("custom skill %s must not declare tools", doc.Metadata.ID)
 	}
 	if err := validateSkillDocument(doc); err != nil {
@@ -878,6 +2222,35 @@ func findSkillTool(doc SkillDocument, toolName string) (SkillToolDefinition, boo
 		}
 	}
 	return SkillToolDefinition{}, false
+}
+
+func hasNonScriptTools(tools []SkillToolDefinition) bool {
+	for _, tool := range tools {
+		if strings.TrimSpace(tool.Name) != SkillScriptToolRun {
+			return true
+		}
+	}
+	return false
+}
+
+func ensureScriptTool(doc *SkillDocument) {
+	if doc == nil {
+		return
+	}
+	for _, tool := range doc.Tools {
+		if strings.TrimSpace(tool.Name) == SkillScriptToolRun {
+			return
+		}
+	}
+	doc.Tools = append(doc.Tools, scriptToolDefinition())
+}
+
+func scriptToolDefinition() SkillToolDefinition {
+	return SkillToolDefinition{
+		Name:         SkillScriptToolRun,
+		ProviderType: tools.ToolProviderTypeBuiltin,
+		ProviderID:   "skill-script",
+	}
 }
 
 func (r *Runtime) validateSkillTools(ctx context.Context, doc SkillDocument) error {

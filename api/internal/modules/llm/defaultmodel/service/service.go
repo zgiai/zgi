@@ -33,11 +33,13 @@ const (
 )
 
 type ResolvedModel struct {
-	UseCase  string                    `json:"use_case"`
-	Provider string                    `json:"provider"`
-	Model    string                    `json:"model"`
-	Params   llmsharedtypes.JSONObject `json:"params"`
-	Source   string                    `json:"source"`
+	UseCase         string                    `json:"use_case"`
+	Provider        string                    `json:"provider"`
+	Model           string                    `json:"model"`
+	ContextWindow   int                       `json:"context_window,omitempty"`
+	MaxOutputTokens int                       `json:"max_output_tokens,omitempty"`
+	Params          llmsharedtypes.JSONObject `json:"params"`
+	Source          string                    `json:"source"`
 }
 
 type DefaultModelResolver interface {
@@ -213,11 +215,13 @@ func (s *defaultModelService) resolveAutoUseCase(ctx context.Context, organizati
 	}
 
 	return &ResolvedModel{
-		UseCase:  string(useCase),
-		Provider: candidate.Provider,
-		Model:    candidate.Name,
-		Params:   llmsharedtypes.JSONObject{},
-		Source:   SourceAuto,
+		UseCase:         string(useCase),
+		Provider:        candidate.Provider,
+		Model:           candidate.Name,
+		ContextWindow:   candidate.ContextWindow,
+		MaxOutputTokens: candidate.MaxOutputTokens,
+		Params:          llmsharedtypes.JSONObject{},
+		Source:          SourceAuto,
 	}, nil
 }
 
@@ -248,11 +252,13 @@ func (s *defaultModelService) resolveExplicitUseCase(ctx context.Context, organi
 			continue
 		}
 		return &ResolvedModel{
-			UseCase:  string(useCase),
-			Provider: strings.TrimSpace(item.Provider),
-			Model:    strings.TrimSpace(item.Name),
-			Params:   llmsharedtypes.JSONObject{},
-			Source:   SourceExplicit,
+			UseCase:         string(useCase),
+			Provider:        strings.TrimSpace(item.Provider),
+			Model:           strings.TrimSpace(item.Name),
+			ContextWindow:   item.ContextWindow,
+			MaxOutputTokens: item.MaxOutputTokens,
+			Params:          llmsharedtypes.JSONObject{},
+			Source:          SourceExplicit,
 		}, nil
 	}
 
@@ -267,11 +273,13 @@ func (s *defaultModelService) resolveFromCandidates(useCase llmmodelmodel.UseCas
 			}
 			if candidate.model.Provider == explicit.Provider && candidate.model.Name == explicit.Model && containsUseCase(candidate.model.UseCases, string(useCase)) {
 				return &ResolvedModel{
-					UseCase:  string(useCase),
-					Provider: explicit.Provider,
-					Model:    explicit.Model,
-					Params:   normalizeParams(explicit.Params),
-					Source:   SourceExplicit,
+					UseCase:         string(useCase),
+					Provider:        explicit.Provider,
+					Model:           explicit.Model,
+					ContextWindow:   candidate.model.ContextWindow,
+					MaxOutputTokens: candidate.model.MaxOutputTokens,
+					Params:          normalizeParams(explicit.Params),
+					Source:          SourceExplicit,
 				}
 			}
 		}
@@ -287,11 +295,13 @@ func (s *defaultModelService) resolveFromCandidates(useCase llmmodelmodel.UseCas
 	}
 
 	return &ResolvedModel{
-		UseCase:  string(useCase),
-		Provider: candidate.Provider,
-		Model:    candidate.Name,
-		Params:   llmsharedtypes.JSONObject{},
-		Source:   SourceAuto,
+		UseCase:         string(useCase),
+		Provider:        candidate.Provider,
+		Model:           candidate.Name,
+		ContextWindow:   candidate.ContextWindow,
+		MaxOutputTokens: candidate.MaxOutputTokens,
+		Params:          llmsharedtypes.JSONObject{},
+		Source:          SourceAuto,
 	}
 }
 

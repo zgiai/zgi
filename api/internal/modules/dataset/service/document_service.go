@@ -11,7 +11,6 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/dto"
-	"github.com/zgiai/zgi/api/internal/modules/dataset/indexing"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/task"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/service/extractor"
 
@@ -29,8 +28,10 @@ import (
 )
 
 // Centralized defaults for retrieval model behavior.
-// TODO: Verify product defaults and adjust defaultRetrievalTopK accordingly if needed.
-const defaultRetrievalTopK = 2
+const (
+	defaultRetrievalTopK           = 10
+	defaultRetrievalScoreThreshold = 0.35
+)
 
 // normalizeProviderAndModel applies provider/model alias normalization so that
 // incoming values like "agicto" can be mapped to the actual configured provider key
@@ -65,11 +66,12 @@ func normalizeProviderAndModel(provider, model string) (string, string, bool) {
 
 func buildDefaultRetrievalModel() map[string]interface{} {
 	return map[string]interface{}{
-		"search_method":           "semantic_search",
-		"reranking_enable":        false,
+		"search_method":           "hybrid_search",
+		"reranking_enable":        true,
 		"reranking_model":         map[string]interface{}{"reranking_provider_name": "", "reranking_model_name": ""},
 		"top_k":                   defaultRetrievalTopK,
-		"score_threshold_enabled": false,
+		"score_threshold_enabled": true,
+		"score_threshold":         defaultRetrievalScoreThreshold,
 	}
 }
 
@@ -136,9 +138,15 @@ type DocumentServiceImpl struct {
 	tenantSvc         interfaces.WorkspaceManagementService
 	indexingService   *DocumentIndexingService
 	fileService       interfaces.FileService
+	vectorCleaner     DocumentVectorCleaner
 	indexing_runner   *DocumentIndexingService
 	taskManager       *queue.TaskManager
 	graphFlowTaskRepo *graphflow_repo.GraphFlowTaskRepository
+}
+
+// DocumentVectorCleaner deletes vector objects by metadata field.
+type DocumentVectorCleaner interface {
+	DeleteObjectsByField(ctx context.Context, className, fieldName, fieldValue string) error
 }
 
 func pointerStringValue(p *string) string {
@@ -927,6 +935,11 @@ func defaultDocumentProcessRules() map[string]interface{} {
 			"max_tokens":    500,
 			"chunk_overlap": 50,
 		},
+		"subchunk_segmentation": map[string]interface{}{
+			"separator":     "\n",
+			"max_tokens":    100,
+			"chunk_overlap": 20,
+		},
 	}
 }
 
@@ -958,6 +971,7 @@ func NewDocumentService(
 	tenantSvc interfaces.WorkspaceManagementService,
 	indexingService *DocumentIndexingService,
 	fileService interfaces.FileService,
+	vectorCleaner DocumentVectorCleaner,
 	taskManager *queue.TaskManager,
 	graphFlowTaskRepo *graphflow_repo.GraphFlowTaskRepository,
 ) DocumentService {
@@ -967,6 +981,7 @@ func NewDocumentService(
 		tenantSvc:         tenantSvc,
 		indexingService:   indexingService,
 		fileService:       fileService,
+		vectorCleaner:     vectorCleaner,
 		indexing_runner:   indexingService,
 		taskManager:       taskManager,
 		graphFlowTaskRepo: graphFlowTaskRepo,
@@ -1250,11 +1265,8 @@ func (s *DocumentServiceImpl) DeleteDocuments(ctx context.Context, datasetID str
 		return fmt.Errorf("failed to get dataset: %w", err)
 	}
 
-	// Collect all segment IDs and vector node IDs that need to be deleted
+	// Collect all segment IDs to decide whether segment-related database rows must be cleaned.
 	var allSegmentIDs []string
-	var allIndexNodeIDs []string
-	var allQuestionIDs []string // To store question IDs for vector deletion
-	var docForm = dataset.DocForm
 
 	for _, documentID := range documentIDs {
 		// Check if document exists and belongs to the dataset
@@ -1266,9 +1278,6 @@ func (s *DocumentServiceImpl) DeleteDocuments(ctx context.Context, datasetID str
 		if document.DatasetID != datasetID {
 			return fmt.Errorf("document %s does not belong to dataset %s", documentID, datasetID)
 		}
-		if docForm == "" && document.DocForm != "" {
-			docForm = document.DocForm
-		}
 
 		// Get all segments of the document
 		segments, err := s.documentRepo.GetSegmentsByDocumentID(ctx, documentID)
@@ -1279,18 +1288,11 @@ func (s *DocumentServiceImpl) DeleteDocuments(ctx context.Context, datasetID str
 		// Collect segment IDs and vector node IDs
 		for _, segment := range segments {
 			allSegmentIDs = append(allSegmentIDs, segment.ID)
-			if segment.IndexNodeID != nil {
-				allIndexNodeIDs = append(allIndexNodeIDs, *segment.IndexNodeID)
-			}
 		}
+	}
 
-		// Get all questions associated with this document directly
-		questions, err := s.documentRepo.GetAllDocumentSegmentQuestionsByDocumentID(ctx, documentID)
-		if err == nil {
-			for _, question := range questions {
-				allQuestionIDs = append(allQuestionIDs, question.ID)
-			}
-		}
+	if err := s.deleteDocumentVectorsByDocumentID(ctx, dataset, documentIDs); err != nil {
+		return err
 	}
 
 	// Trigger GraphFlow cleanup task for each document if GraphFlow is enabled
@@ -1354,53 +1356,6 @@ func (s *DocumentServiceImpl) DeleteDocuments(ctx context.Context, datasetID str
 		}
 	}
 
-	// Delete vector data asynchronously
-	if len(allIndexNodeIDs) > 0 || len(allQuestionIDs) > 0 {
-		// Create a copy of the data needed for async operation
-		go func(datasetID, tenantID, docForm string, allIndexNodeIDs, allQuestionIDs []string) {
-			// Create a new context for async operation
-			ctx := context.Background()
-			logCtx := logger.WithFields(ctx,
-				zap.String("dataset_id", datasetID),
-				zap.String("tenant_id", tenantID),
-				zap.String("doc_form", docForm),
-				zap.Int("index_node_count", len(allIndexNodeIDs)),
-				zap.Int("question_count", len(allQuestionIDs)),
-			)
-
-			// Get dataset information in the goroutine
-			dataset, err := s.datasetRepo.GetByID(ctx, datasetID)
-			if err != nil {
-				logger.WarnContext(logCtx, "failed to get dataset in async clean operation", err)
-				return
-			}
-
-			indexProcessorFactory := indexing.NewIndexProcessorFactory(indexing.IndexType(docForm), nil, s.documentRepo, nil, nil, tenantID)
-			indexProcessor, err := indexProcessorFactory.CreateIndexProcessor()
-			if err != nil {
-				logger.WarnContext(logCtx, "failed to create index processor for async clean operation", err)
-				return
-			}
-
-			// Clean data in vector database
-			bgCtx := context.Background()
-			if err := indexProcessor.Clean(bgCtx, dataset, allIndexNodeIDs, true, true); err != nil {
-				// Log error but do not interrupt operation
-				logger.WarnContext(logCtx, "failed to clean vector data in async clean operation", err)
-			}
-
-			// Additionally clean question data if any exist
-			if len(allQuestionIDs) > 0 {
-				// Use fixed QA index processor for cleaning questions
-				qaIndexProcessor := indexing.NewQAIndexProcessor(nil, nil, nil, tenantID)
-				// Use the extension method to clean only questions
-				if err := qaIndexProcessor.(indexing.QAIndexProcessorExtension).CleanQuestionsOnly(bgCtx, dataset, allQuestionIDs, true, true); err != nil {
-					logger.WarnContext(logCtx, "failed to clean question vector data in async clean operation", err)
-				}
-			}
-		}(dataset.ID, dataset.WorkspaceID, docForm, allIndexNodeIDs, allQuestionIDs)
-	}
-
 	// Delete segment-related data in database
 	if len(allSegmentIDs) > 0 {
 		// Delete child chunk data
@@ -1440,6 +1395,53 @@ func (s *DocumentServiceImpl) DeleteDocuments(ctx context.Context, datasetID str
 	// Delete documents
 	if err := s.documentRepo.DeleteByIDs(ctx, documentIDs); err != nil {
 		return fmt.Errorf("failed to delete documents: %w", err)
+	}
+
+	return nil
+}
+
+func (s *DocumentServiceImpl) deleteDocumentVectorsByDocumentID(ctx context.Context, dataset *dataset_model.Dataset, documentIDs []string) error {
+	if dataset == nil {
+		return fmt.Errorf("dataset is required for vector cleanup")
+	}
+	if len(documentIDs) == 0 {
+		return nil
+	}
+	if s.vectorCleaner == nil {
+		logger.WarnContext(ctx, "vector cleaner unavailable; skipping document vector cleanup",
+			nil,
+			zap.String("dataset_id", dataset.ID),
+			zap.String("tenant_id", dataset.WorkspaceID),
+			zap.Int("document_count", len(documentIDs)),
+		)
+		return nil
+	}
+
+	segmentClassName := dataset_model.GenCollectionNameByID(dataset.ID)
+	questionClassName := dataset_model.GenQuestionCollectionNameByID(dataset.ID)
+	seen := make(map[string]struct{}, len(documentIDs))
+
+	for _, documentID := range documentIDs {
+		documentID = strings.TrimSpace(documentID)
+		if documentID == "" {
+			continue
+		}
+		if _, ok := seen[documentID]; ok {
+			continue
+		}
+		seen[documentID] = struct{}{}
+
+		if err := s.vectorCleaner.DeleteObjectsByField(ctx, segmentClassName, "document_id", documentID); err != nil {
+			return fmt.Errorf("failed to delete vectors for document %s: %w", documentID, err)
+		}
+		if err := s.vectorCleaner.DeleteObjectsByField(ctx, questionClassName, "document_id", documentID); err != nil {
+			logger.WarnContext(ctx, "failed to delete question vectors for document",
+				err,
+				zap.String("dataset_id", dataset.ID),
+				zap.String("document_id", documentID),
+				zap.String("class_name", questionClassName),
+			)
+		}
 	}
 
 	return nil

@@ -1,15 +1,17 @@
 package handler
 
 import (
+	"context"
 	"fmt"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/zgiai/zgi/api/internal/modules/memory"
 	pluginmodel "github.com/zgiai/zgi/api/internal/modules/pluginrunner/model"
 	"github.com/zgiai/zgi/api/internal/modules/pluginrunner/service"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
-	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
@@ -97,9 +99,9 @@ type BuiltinOptionResponse struct {
 	Label tools.I18nText `json:"label"`
 }
 
-// ListBuiltinProviders returns all builtin tool providers
-// @Summary List builtin tool providers
-// @Description Retrieves all system-provided builtin tool providers with their tools and parameters
+// ListBuiltinProviders returns all tool providers available in the current organization.
+// @Summary List available tool providers
+// @Description Retrieves system-provided builtin tool providers and plugin-runner providers installed in the current organization
 // @Tags Builtin Tools
 // @Produce json
 // @Success 200 {object} response.Response{data=[]BuiltinProviderResponse} "List of builtin providers"
@@ -110,11 +112,23 @@ func (h *BuiltinToolsHandler) ListBuiltinProviders(c *gin.Context) {
 
 	var responses []BuiltinProviderResponse
 
+	visibility, err := h.builtinToolVisibility(c.Request.Context(), builtinToolVisibilityCaller(c))
+	if err != nil {
+		logger.Warn("failed to build builtin tool visibility", "error", err)
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
 	// 1. Get hardcoded builtin providers from tool manager (e.g., time)
 	providers := h.toolManager.ListProviders(tools.ToolProviderTypeBuiltin)
 	for _, provider := range providers {
 		entity := provider.GetEntity()
 		if isHiddenBuiltinProvider(entity) {
+			continue
+		}
+		var ok bool
+		entity, ok = filterBuiltinProviderEntity(entity, visibility)
+		if !ok {
 			continue
 		}
 		providerResp := h.convertProviderEntityToResponse(entity)
@@ -138,14 +152,7 @@ func (h *BuiltinToolsHandler) ListBuiltinProviders(c *gin.Context) {
 		var declarations []pluginmodel.PluginDeclaration
 		var err error
 
-		// Admin/Owner are treated as subscribed to all organization installations.
-		if middleware.IsOrganizationAdminOrOwner(c) {
-			declarations, err = h.accountInstallationService.ListDeclarationsByTenant(c.Request.Context(), organizationID)
-		} else {
-			if h.memberSubscriptionService != nil {
-				declarations, err = h.memberSubscriptionService.ListSubscribedDeclarations(c.Request.Context(), organizationID, accountID)
-			}
-		}
+		declarations, err = h.accountInstallationService.ListDeclarationsByTenant(c.Request.Context(), organizationID)
 
 		if err != nil {
 			logger.Warn("Failed to get plugin declarations", "error", err)
@@ -162,7 +169,7 @@ func (h *BuiltinToolsHandler) ListBuiltinProviders(c *gin.Context) {
 	response.Success(c, responses)
 }
 
-// GetBuiltinProvider returns a specific builtin provider
+// GetBuiltinProvider returns a specific available provider.
 // @Summary Get builtin provider by name
 // @Description Retrieves a specific builtin tool provider by its name (supports both builtin and plugin_runner types)
 // @Tags Builtin Tools
@@ -181,11 +188,24 @@ func (h *BuiltinToolsHandler) GetBuiltinProvider(c *gin.Context) {
 
 	logger.Info("API: Getting builtin provider", "provider", providerName)
 
+	visibility, err := h.builtinToolVisibility(c.Request.Context(), builtinToolVisibilityCaller(c))
+	if err != nil {
+		logger.Warn("failed to build builtin tool visibility", "error", err)
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
 	// 1. First try to get from builtin providers (toolManager)
 	provider, err := h.toolManager.GetProvider(c.Request.Context(), tools.ToolProviderTypeBuiltin, providerName, "")
 	if err == nil {
 		entity := provider.GetEntity()
 		if isHiddenBuiltinProvider(entity) {
+			response.Fail(c, response.ErrNotFound)
+			return
+		}
+		var ok bool
+		entity, ok = filterBuiltinProviderEntity(entity, visibility)
+		if !ok {
 			response.Fail(c, response.ErrNotFound)
 			return
 		}
@@ -209,32 +229,88 @@ func (h *BuiltinToolsHandler) GetBuiltinProvider(c *gin.Context) {
 			return
 		}
 
-		if middleware.IsOrganizationAdminOrOwner(c) {
-			declaration, err := h.accountInstallationService.GetDeclarationByProviderName(c.Request.Context(), organizationID, providerName)
-			if err == nil && declaration != nil {
-				providerResp := h.convertDeclarationToResponse(*declaration)
-				logger.Info("Successfully retrieved plugin provider", "provider", providerName, "type", "plugin_runner")
-				response.Success(c, providerResp)
-				return
-			}
-		} else if h.memberSubscriptionService != nil {
-			declarations, err := h.memberSubscriptionService.ListSubscribedDeclarations(c.Request.Context(), organizationID, accountID)
-			if err == nil {
-				for _, decl := range declarations {
-					if decl.Provider.Name == providerName {
-						providerResp := h.convertDeclarationToResponse(decl)
-						logger.Info("Successfully retrieved subscribed plugin provider", "provider", providerName, "type", "plugin_runner")
-						response.Success(c, providerResp)
-						return
-					}
-				}
-			}
+		declaration, err := h.accountInstallationService.GetDeclarationByProviderName(c.Request.Context(), organizationID, providerName)
+		if err == nil && declaration != nil {
+			providerResp := h.convertDeclarationToResponse(*declaration)
+			logger.Info("Successfully retrieved plugin provider", "provider", providerName, "type", "plugin_runner")
+			response.Success(c, providerResp)
+			return
 		}
 	}
 
 	// 3. Not found in either source
 	logger.Warn("Provider not found", "provider", providerName)
 	response.Fail(c, response.ErrNotFound)
+}
+
+type builtinToolVisibility struct {
+	enabled bool
+	allowed map[string]struct{}
+}
+
+func builtinToolVisibilityCaller(c *gin.Context) string {
+	caller := strings.TrimSpace(c.Query("caller"))
+	if caller != "" {
+		return caller
+	}
+	return strings.TrimSpace(c.Query("visible_for"))
+}
+
+func (h *BuiltinToolsHandler) builtinToolVisibility(ctx context.Context, caller string) (builtinToolVisibility, error) {
+	caller = strings.ToLower(strings.TrimSpace(caller))
+	if caller == "" {
+		return builtinToolVisibility{}, nil
+	}
+	runtime := skills.NewRuntime(nil, nil)
+	docs, err := runtime.ListSystemSkillDocuments(ctx)
+	if err != nil {
+		return builtinToolVisibility{}, err
+	}
+	visibility := builtinToolVisibility{
+		enabled: true,
+		allowed: map[string]struct{}{},
+	}
+	for _, doc := range docs {
+		if skills.IsHiddenSystemSkill(doc.Metadata.ID) {
+			continue
+		}
+		if !skills.SkillSupportsCaller(doc.Metadata.SupportedCallers, caller) {
+			continue
+		}
+		for _, tool := range doc.Tools {
+			if tools.NormalizeToolProviderType(tool.ProviderType) != tools.ToolProviderTypeBuiltin {
+				continue
+			}
+			providerID := strings.TrimSpace(tool.ProviderID)
+			toolName := strings.TrimSpace(tool.Name)
+			if providerID == "" || toolName == "" {
+				continue
+			}
+			visibility.allowed[builtinToolVisibilityKey(providerID, toolName)] = struct{}{}
+		}
+	}
+	return visibility, nil
+}
+
+func filterBuiltinProviderEntity(entity tools.ToolProviderEntity, visibility builtinToolVisibility) (tools.ToolProviderEntity, bool) {
+	if !visibility.enabled {
+		return entity, true
+	}
+	filteredTools := make([]tools.ToolEntity, 0, len(entity.Tools))
+	for _, tool := range entity.Tools {
+		if _, ok := visibility.allowed[builtinToolVisibilityKey(entity.Identity.Name, tool.Identity.Name)]; ok {
+			filteredTools = append(filteredTools, tool)
+		}
+	}
+	if len(filteredTools) == 0 {
+		return tools.ToolProviderEntity{}, false
+	}
+	entity.Tools = filteredTools
+	return entity, true
+}
+
+func builtinToolVisibilityKey(providerID string, toolName string) string {
+	return strings.TrimSpace(providerID) + "\x00" + strings.TrimSpace(toolName)
 }
 
 func isHiddenBuiltinProvider(entity tools.ToolProviderEntity) bool {

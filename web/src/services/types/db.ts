@@ -181,6 +181,64 @@ export interface UpdateDbTableRecordsRequest {
 /* Batch ingest from files into a table                                       */
 /* -------------------------------------------------------------------------- */
 
+// Request body for POST /console/api/data-dbs/ingest-file-to-table
+export interface IngestFileToTableRequest {
+  file_id: string;
+  prompt: string;
+  table_id: string;
+  model: AiModelRef;
+}
+
+export type TableIngestStage = 'parse' | 'recognition';
+
+export interface ParseFileForTableIngestRequest {
+  file_id: string;
+  table_id: string;
+}
+
+export interface ParseFileForTableIngestData {
+  file_id?: string;
+  file_name?: string;
+  message: string;
+  content?: string;
+  extraction?: FileIngestExtractionInfo;
+  stage?: TableIngestStage;
+  error?: string;
+}
+
+export interface ExtractTextToTableRecordsRequest {
+  file_id?: string;
+  table_id: string;
+  content: string;
+  content_hash?: string;
+  prompt: string;
+  model: AiModelRef;
+}
+
+export interface ExtractTextToTableRecordsData {
+  file_id?: string;
+  message: string;
+  records: DbTableRecord[];
+  columns: DbTableColumn[];
+  field_extraction?: FileIngestFieldExtraction;
+  content_hash?: string;
+  stage?: TableIngestStage;
+  error?: string;
+}
+
+export interface IngestFileToTableData {
+  file_id?: string;
+  file_name?: string;
+  message: string;
+  records: DbTableRecord[];
+  columns: DbTableColumn[];
+  content?: string;
+  extraction?: FileIngestExtractionInfo;
+  field_extraction?: FileIngestFieldExtraction;
+  stage?: TableIngestStage;
+  error?: string;
+}
+
 // Request body for POST /console/api/data-dbs/batch-ingest-file-to-table
 export interface BatchIngestFileToTableRequest {
   file_ids: string[];
@@ -196,12 +254,58 @@ export interface BatchIngestResultItem {
   message: string;
   records: DbTableRecord[];
   content?: string;
+  extraction?: FileIngestExtractionInfo;
+  field_extraction?: FileIngestFieldExtraction;
+  stage?: TableIngestStage;
+  error?: string;
+}
+
+export interface FileIngestExtractionInfo {
+  primary_strategy?: string;
+  actual_strategy?: string;
+  fallback_reason?: string;
+  source_type?: string;
+  content_hash?: string;
+  attempts?: FileIngestAttempt[];
+}
+
+export interface FileIngestAttempt {
+  method: 'file_parse' | string;
+  status: 'completed' | 'failed' | string;
+  result?: 'content' | 'records' | 'no_records' | 'empty_content' | 'error' | string;
+  reason?: string;
+  duration_ms?: number;
+  record_count?: number;
+}
+
+export interface FileIngestFieldExtraction {
+  records?: FileIngestRecordExtraction[];
+}
+
+export interface FileIngestRecordExtraction {
+  fields?: FileIngestFieldMatch[];
+}
+
+export interface FileIngestFieldMatch {
+  column_id: string;
+  column_name?: string;
+  value?: unknown;
+  raw_value?: unknown;
+  normalized_value?: unknown;
+  normalization_status?: 'valid' | 'normalized' | 'invalid' | 'empty' | string;
+  normalization_reason?: string;
+  evidence?: string;
+  confidence?: number;
+  reason?: string;
 }
 
 // Response data payload for batch ingest API
 export interface BatchIngestFileToTableData {
   results: Record<string, BatchIngestResultItem>;
   columns: DbTableColumn[];
+  total_count?: number;
+  success_count?: number;
+  failed_count?: number;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -311,6 +415,7 @@ export interface ImportDbTableRecordsData {
 
 export interface ImportDbTableRecordsRequest {
   upload_file_id: string;
+  skip_unmatched_columns?: boolean;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -399,6 +504,29 @@ export interface ConfirmExcelImportRequest {
     empty_row_policy: 'skip' | 'error';
     batch_size?: number;
   };
+}
+
+export interface RecognizeExcelImportTable {
+  name: string;
+  description: string;
+}
+
+export interface RecognizeExcelImportSource {
+  file_name?: string;
+  sheet_name?: string;
+}
+
+export interface RecognizeExcelImportRequest {
+  table: RecognizeExcelImportTable;
+  source?: RecognizeExcelImportSource;
+  columns: InferredExcelColumn[];
+  model: AiModelRef;
+  operator_language?: string;
+}
+
+export interface RecognizeExcelImportData {
+  table: RecognizeExcelImportTable;
+  columns: InferredExcelColumn[];
 }
 
 export interface ExcelImportFailedItem {

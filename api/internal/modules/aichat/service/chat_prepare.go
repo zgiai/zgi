@@ -11,9 +11,9 @@ import (
 	aichatdto "github.com/zgiai/zgi/api/internal/modules/aichat/dto"
 	aichatmodel "github.com/zgiai/zgi/api/internal/modules/aichat/model"
 	"github.com/zgiai/zgi/api/internal/modules/aichat/repository"
+	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
-	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/prompt"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
@@ -39,7 +39,7 @@ func (s *service) PrepareChat(ctx context.Context, scope Scope, req aichatdto.Ch
 	if err := s.applyOrganizationSkillConfig(ctx, scope, parts); err != nil {
 		return nil, err
 	}
-	conversation, err := s.resolveChatConversation(ctx, scope, req, parts.Query)
+	conversation, err := s.resolveChatConversation(ctx, scope, req, parts)
 	if err != nil {
 		return nil, err
 	}
@@ -184,9 +184,9 @@ func (s *service) getConversation(ctx context.Context, scope Scope, id uuid.UUID
 	return conversation, nil
 }
 
-func (s *service) resolveChatConversation(ctx context.Context, scope Scope, req aichatdto.ChatRequest, query string) (*aichatmodel.Conversation, error) {
+func (s *service) resolveChatConversation(ctx context.Context, scope Scope, req aichatdto.ChatRequest, parts *chatRequestParts) (*aichatmodel.Conversation, error) {
 	if strings.TrimSpace(req.ConversationID) == "" {
-		return s.createConversationForChat(ctx, scope, query)
+		return s.createConversationForChat(ctx, scope, parts)
 	}
 	conversationID, err := uuid.Parse(strings.TrimSpace(req.ConversationID))
 	if err != nil {
@@ -195,8 +195,8 @@ func (s *service) resolveChatConversation(ctx context.Context, scope Scope, req 
 	return s.getConversation(ctx, scope, conversationID)
 }
 
-func (s *service) createConversationForChat(ctx context.Context, scope Scope, query string) (*aichatmodel.Conversation, error) {
-	fallbackTitle := generateTitle(query)
+func (s *service) createConversationForChat(ctx context.Context, scope Scope, parts *chatRequestParts) (*aichatmodel.Conversation, error) {
+	fallbackTitle := initialConversationTitle()
 	conversation, err := s.CreateConversation(ctx, scope, fallbackTitle)
 	if err != nil {
 		return nil, err
@@ -204,13 +204,21 @@ func (s *service) createConversationForChat(ctx context.Context, scope Scope, qu
 	if s.titleGen == nil {
 		return conversation, nil
 	}
-	s.generateConversationTitleAsync(ctx, scope, conversation, query, fallbackTitle)
+	s.generateConversationTitleAsync(ctx, scope, conversation, parts, fallbackTitle)
 	return conversation, nil
 }
 
-func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scope, conversation *aichatmodel.Conversation, query, fallbackTitle string) {
+func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scope, conversation *aichatmodel.Conversation, parts *chatRequestParts, fallbackTitle string) {
 	if conversation == nil || s.titleGen == nil {
 		return
+	}
+	query := ""
+	preferredProvider := ""
+	preferredModel := ""
+	if parts != nil {
+		query = parts.Query
+		preferredProvider = parts.Provider
+		preferredModel = parts.ModelName
 	}
 	conversationID := conversation.ID
 	workspaceID := conversation.WorkspaceID
@@ -219,15 +227,18 @@ func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scop
 		defer cancel()
 
 		result, err := s.titleGen.Generate(titleCtx, titlegen.GenerateRequest{
-			OrganizationID: scope.OrganizationID,
-			AccountID:      scope.AccountID,
-			WorkspaceID:    workspaceID,
-			AppID:          conversationID.String(),
-			AppType:        aichatmodel.MessageBillingReasonSourceAIChat,
-			SessionID:      conversationID.String(),
-			ConversationID: conversationID.String(),
-			Messages:       []titlegen.Message{{Role: "user", Content: query}},
-			FallbackTitle:  fallbackTitle,
+			OrganizationID:    scope.OrganizationID,
+			AccountID:         scope.AccountID,
+			WorkspaceID:       workspaceID,
+			AppID:             conversationID.String(),
+			AppType:           aichatmodel.MessageBillingReasonSourceAIChat,
+			SessionID:         conversationID.String(),
+			ConversationID:    conversationID.String(),
+			Messages:          []titlegen.Message{{Role: "user", Content: query}},
+			FallbackTitle:     fallbackTitle,
+			PreferredProvider: preferredProvider,
+			PreferredModel:    preferredModel,
+			PreferredUseCase:  string(llmmodelmodel.UseCaseTextChat),
 		})
 		if err != nil {
 			logger.WarnContext(titleCtx, "failed to generate aichat conversation title", "conversation_id", conversationID.String(), err)
@@ -379,15 +390,6 @@ func (s *service) applyOrganizationSkillConfig(ctx context.Context, scope Scope,
 		return err
 	}
 	parts.SkillIDs, parts.ToolSkillIDs = filterSkillsForModel(enabled, catalog, parts)
-	if parts.UseMemory {
-		memoryEnabled, err := s.isUserMemoryEnabled(ctx, scope.AccountID)
-		if err != nil {
-			return err
-		}
-		if memoryEnabled {
-			appendUserMemorySkill(ctx, parts, catalog)
-		}
-	}
 	if len(parts.SkillIDs) == 0 {
 		parts.SkillMode = skillModeDisabled
 		return nil
@@ -618,34 +620,6 @@ func mergeUserMemoryMetadata(metadata map[string]interface{}, memoryMetadata map
 		metadata[key] = value
 	}
 	return metadata
-}
-
-func appendUserMemorySkill(ctx context.Context, parts *chatRequestParts, catalog []skills.SkillDiscoveryMetadata) {
-	_ = ctx
-	if parts == nil {
-		return
-	}
-	id := userMemorySkillID()
-	for _, item := range catalog {
-		if strings.EqualFold(strings.TrimSpace(item.ID), id) && item.Status != skills.SkillStatusInvalid {
-			parts.SkillIDs = appendUniqueSkillID(parts.SkillIDs, id)
-			parts.ToolSkillIDs = appendUniqueSkillID(parts.ToolSkillIDs, id)
-			return
-		}
-	}
-}
-
-func appendUniqueSkillID(values []string, id string) []string {
-	normalized := strings.ToLower(strings.TrimSpace(id))
-	if normalized == "" {
-		return values
-	}
-	for _, value := range values {
-		if strings.EqualFold(strings.TrimSpace(value), normalized) {
-			return values
-		}
-	}
-	return append(values, normalized)
 }
 
 func newLLMChatRequest(parts *chatRequestParts, messages []adapter.Message) *adapter.ChatRequest {

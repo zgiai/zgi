@@ -126,6 +126,9 @@ func (e *WorkflowEngine) executeNode(ctx context.Context, nodeID string, state *
 				Outputs:          state.Outputs,
 				Err:              errToReport,
 				EdgeSourceHandle: state.EdgeSourceHandle,
+				StartedAt:        state.StartTime,
+				FinishedAt:       state.EndTime,
+				ElapsedTime:      executionDuration,
 			})
 		}
 

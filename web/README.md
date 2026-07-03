@@ -60,7 +60,7 @@ Customer-specific routes should live directly in the fork under `src/app` using 
 
 ## Contributing
 
-Use the repository-level guide at [../CONTRIBUTING.md](../CONTRIBUTING.md). Web changes follow the same commit, review, and open-source hygiene rules as the rest of the monorepo.
+Use the repository-level guide at [../CONTRIBUTING.md](../CONTRIBUTING.md). Web changes follow the same commit, review, and public repository hygiene rules as the rest of the monorepo.
 
 ## License
 

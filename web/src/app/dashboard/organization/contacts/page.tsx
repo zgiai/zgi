@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
+import Link from 'next/link';
 import { useT } from '@/i18n';
 import { Switch } from '@/components/ui/switch';
-import { Search, Plus, Users, Pencil, Trash2, KeyRound } from 'lucide-react';
+import { Search, Plus, Users, Pencil, Trash2, KeyRound, UserPlus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDepartments } from '@/hooks/organization/use-departments';
 import { useDepartmentMembers } from '@/hooks/organization/use-department-members';
@@ -272,6 +273,8 @@ export default function ContactsPage() {
       : t('scopeDepartmentHint')
     : null;
   const hasMemberSearch = debouncedMemberSearchKeyword.trim().length > 0;
+  const getAssignWorkspaceHref = (member: DepartmentMember) =>
+    `/dashboard/organization/workspaces?assignMember=${encodeURIComponent(member.account_email)}`;
 
   // Handle toggle member status
   const handleToggleStatus = (member: DepartmentMember) => {
@@ -681,12 +684,39 @@ export default function ContactsPage() {
                         )}
                       </>
                     ) : (
-                      <Badge
-                        variant="outline"
-                        className="text-[10px] py-px font-medium border-dashed"
-                      >
-                        {tRoot('dashboard.organization.workspaceManagement.noWorkspaces')}
-                      </Badge>
+                      <div className="flex items-center gap-1">
+                        <Tooltip delayDuration={200}>
+                          <TooltipTrigger asChild>
+                            <Badge
+                              variant="warning"
+                              className="border-warning/30 bg-warning/10 text-[10px] font-medium text-warning"
+                            >
+                              {t('unassignedWorkspace')}
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" align="start" className="max-w-56 text-xs">
+                            {t('unassignedWorkspaceHint')}
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              asChild
+                              variant="ghost"
+                              size="xs"
+                              isIcon
+                              className="h-6 w-6 rounded-md text-primary"
+                            >
+                              <Link href={getAssignWorkspaceHref(member)}>
+                                <UserPlus className="h-3.5 w-3.5" />
+                              </Link>
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent className="text-xs">
+                            {t('assignWorkspace')}
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
                     )}
                   </div>
                 </td>
@@ -769,7 +799,9 @@ export default function ContactsPage() {
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent className="text-xs">
-                        {isOrgRootSelected ? t('removeFromOrganization') : t('removeFromDepartment')}
+                        {isOrgRootSelected
+                          ? t('removeFromOrganization')
+                          : t('removeFromDepartment')}
                       </TooltipContent>
                     </Tooltip>
                   </div>
@@ -790,6 +822,7 @@ export default function ContactsPage() {
 
       {/* Remove Member Confirmation Dialog */}
       <ConfirmDialog
+        variant="danger"
         open={deleteConfirmOpen}
         onOpenChange={setDeleteConfirmOpen}
         title={isOrgRootSelected ? t('removeOrganizationConfirm.title') : t('removeConfirm.title')}
@@ -810,7 +843,6 @@ export default function ContactsPage() {
         }
         loading={isOrgRootSelected ? isRemovingFromOrg : isRemoving}
         onConfirm={handleConfirmRemove}
-        variant="warning"
       />
 
       {/* Edit Member Dialog */}
@@ -881,7 +913,7 @@ export default function ContactsPage() {
         cancelText={t('deleteDepartment.cancel')}
         loading={isDeleting}
         onConfirm={handleConfirmDeleteDepartment}
-        variant="warning"
+        variant="danger"
       />
 
       <ConfirmDialog

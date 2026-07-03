@@ -65,6 +65,112 @@ func TestAgentsHandler_UpdateWebAppStatus_MapsInvalidStatus(t *testing.T) {
 	require.True(t, service.called)
 }
 
+func TestPublicAgentWebAppConfig_DoesNotExposeRuntimeSecrets(t *testing.T) {
+	public := publicAgentWebAppConfig(&dto.AgentWebAppRuntimeConfigResponse{
+		AgentID:     "agent-1",
+		WebAppID:    "webapp-1",
+		AgentType:   "AGENT",
+		Name:        "Agent",
+		Description: "Public description",
+		Icon:        "AG",
+		IconType:    "text",
+		IconURL:     "",
+		Version:     "20260526000000",
+		VersionUUID: "version-1",
+		Config: dto.AgentConfigResponse{
+			SystemPrompt:        "secret prompt",
+			ModelProvider:       "secret-provider",
+			Model:               "secret-model",
+			EnabledSkillIDs:     []string{"secret-skill"},
+			KnowledgeDatasetIDs: []string{"secret-dataset"},
+			DatabaseBindings: []dto.AgentDatabaseBinding{{
+				DataSourceID:     "secret-database",
+				TableIDs:         []string{"secret-table"},
+				WritableTableIDs: []string{"secret-writable-table"},
+			}},
+			HomeTitle:          "Home",
+			InputPlaceholder:   "Ask",
+			SuggestedQuestions: []string{"Q1"},
+			FileUpload:         true,
+			SupportsVision:     true,
+			AgentMemoryEnabled: true,
+		},
+	})
+
+	encoded, err := json.Marshal(public)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "system_prompt")
+	require.NotContains(t, string(encoded), "secret prompt")
+	require.NotContains(t, string(encoded), "secret-model")
+	require.NotContains(t, string(encoded), "secret-dataset")
+	require.NotContains(t, string(encoded), "database_bindings")
+	require.NotContains(t, string(encoded), "secret-database")
+	require.NotContains(t, string(encoded), "secret-table")
+	require.NotContains(t, string(encoded), "secret-writable-table")
+	require.Contains(t, string(encoded), "Home")
+	require.Contains(t, string(encoded), "file_upload_enabled")
+	require.Contains(t, string(encoded), "supports_vision")
+	require.Contains(t, string(encoded), "agent_memory_enabled")
+}
+
+func TestRequireAuthenticatedWebAppAgentWhenMemoryEnabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	published := &dto.AgentWebAppRuntimeConfigResponse{
+		Config: dto.AgentConfigResponse{AgentMemoryEnabled: true},
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/webapps/webapp-1/chat", nil)
+
+	require.False(t, requireAuthenticatedWebAppAgentWhenMemoryEnabled(c, published))
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/webapps/webapp-1/chat", nil)
+	c.Set("is_authenticated", true)
+
+	require.True(t, requireAuthenticatedWebAppAgentWhenMemoryEnabled(c, published))
+}
+
+func TestRequireAuthenticatedWebAppAgentFileAccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/webapps/webapp-1/files/upload", nil)
+
+	require.False(t, requireAuthenticatedWebAppAgentFileAccess(c))
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/webapps/webapp-1/files/upload", nil)
+	c.Set("is_authenticated", true)
+
+	require.True(t, requireAuthenticatedWebAppAgentFileAccess(c))
+}
+
+func TestAgentsHandler_GetWebAppRuntimeConfig_MapsNotPublishedError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	service := &stubWebAppStatusHandlerService{err: errAgentWebAppNotPublished}
+	handler := NewAgentsHandler(service, nil, nil, nil, nil)
+	router := gin.New()
+	router.GET("/webapps/:web_app_id/config", handler.GetWebAppRuntimeConfig)
+
+	req := httptest.NewRequest(http.MethodGet, "/webapps/33333333-3333-3333-3333-333333333333/config", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, "204009", body["code"])
+}
+
 func newWebAppStatusHandlerTestRouter(service AgentsService) *gin.Engine {
 	handler := NewAgentsHandler(service, nil, nil, nil, nil)
 	router := gin.New()
@@ -88,18 +194,6 @@ type stubWebAppStatusHandlerService struct {
 	organizationID string
 }
 
-func (s *stubWebAppStatusHandlerService) GetAgentsList(context.Context, string, string, interface{}) (interface{}, error) {
-	return nil, nil
-}
-
-func (s *stubWebAppStatusHandlerService) GetAgentsListMultipleTenants(context.Context, string, []string, interface{}) (interface{}, error) {
-	return nil, nil
-}
-
-func (s *stubWebAppStatusHandlerService) GetInternalAgentsList(context.Context, string, []string, interface{}) (interface{}, error) {
-	return nil, nil
-}
-
 func (s *stubWebAppStatusHandlerService) GetAgentsListWithPermissions(context.Context, string, dto.GetAgentsListRequest) (*dto.AgentsListResponse, error) {
 	return nil, nil
 }
@@ -118,6 +212,62 @@ func (s *stubWebAppStatusHandlerService) GetAgent(context.Context, string) (inte
 
 func (s *stubWebAppStatusHandlerService) UpdateAgent(context.Context, string, interface{}) (interface{}, error) {
 	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) GetAgentConfig(context.Context, string, string) (*dto.AgentConfigResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) GetAgentDraftRuntimeConfig(context.Context, string, string) (*dto.AgentDraftRuntimeConfigResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) UpdateAgentConfig(context.Context, string, string, dto.AgentConfigRequest) (*dto.AgentConfigResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) ListAgentWorkflowBindingCandidates(context.Context, string, string) (*dto.AgentWorkflowBindingCandidatesResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) ListAgentMemorySlots(context.Context, string, string) ([]dto.AgentMemorySlotConfig, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) ReplaceAgentMemorySlots(context.Context, string, string, []dto.AgentMemorySlotConfig) ([]dto.AgentMemorySlotConfig, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) ListAgentMemoryValues(context.Context, string, string) (*dto.AgentMemoryValuesResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) UpdateAgentMemoryValue(context.Context, string, string, dto.UpdateAgentMemoryValueRequest) (*dto.AgentMemoryValueResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) ClearAgentMemoryValue(context.Context, string, string, string) (*dto.AgentMemoryValueResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) GenerateAgentSuggestedQuestions(context.Context, string, string, *dto.GenerateAgentSuggestedQuestionsRequest) (*dto.GenerateSuggestedQuestionsResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) PublishAgent(context.Context, string, string, dto.PublishAgentRequest) (*dto.PublishAgentResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) ListAgentPublishedVersions(context.Context, string, string, int, int) (*dto.AgentPublishedVersionsResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) RollbackAgentPublishedVersion(context.Context, string, string, dto.RollbackAgentPublishedVersionRequest) (*dto.AgentConfigResponse, error) {
+	return nil, nil
+}
+
+func (s *stubWebAppStatusHandlerService) GetPublishedAgentWebAppConfig(context.Context, string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
+	return nil, s.err
 }
 
 func (s *stubWebAppStatusHandlerService) UpdateWebAppStatus(ctx context.Context, agentID string, req dto.UpdateWebAppStatusRequest) (*dto.WebAppStatusResponse, error) {

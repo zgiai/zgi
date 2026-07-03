@@ -112,7 +112,7 @@ function DbCardBase({ db, onEdit, onDeleted, className }: DbCardProps) {
       )}
 
       <ConfirmDialog
-        variant="warning"
+        variant="danger"
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         title={t('deleteConfirmTitle', { name: db.name })}

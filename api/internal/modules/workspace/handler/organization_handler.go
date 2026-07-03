@@ -1519,6 +1519,7 @@ func (h *OrganizationHandler) DirectAddMember(c *gin.Context) {
 	var req struct {
 		Name         string  `json:"name" binding:"required"`
 		Email        string  `json:"email" binding:"required,email"`
+		WorkspaceID  string  `json:"workspace_id" binding:"required"`
 		DepartmentID *string `json:"department_id,omitempty"`
 		SendEmail    *bool   `json:"send_email,omitempty"`
 	}
@@ -1529,121 +1530,23 @@ func (h *OrganizationHandler) DirectAddMember(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-
-	var deptID string
-	var respDeptID string
-	var respDeptName string
-	if req.DepartmentID != nil {
-		deptID = strings.TrimSpace(*req.DepartmentID)
-	}
-
-	if deptID != "" {
-		dept, err := h.departmentService.GetDepartment(ctx, deptID)
-		if err != nil {
-			if errors.Is(err, workspace_service.ErrDepartmentNotFound) {
-				c.JSON(http.StatusNotFound, gin.H{"code": "DepartmentNotFound", "message": err.Error()})
-				return
-			}
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-
-		if dept.OrganizationID != organizationID {
-			response.Fail(c, response.ErrInvalidParam)
-			return
-		}
-
-		respDeptID = dept.ID
-		respDeptName = dept.Name
-	}
-
-	// Check for duplicate name in organization
-	exists, err := h.organizationService.ExistsMemberByName(ctx, organizationID, req.Name, "")
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
-		return
-	}
-	if exists {
-		response.FailWithMessage(c, response.ErrInvalidParam, "member name already exists")
+	accountID := middleware.GetAccountID(c)
+	if accountID == "" {
+		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
 
-	account, err := h.accountService.GetUserThroughEmail(ctx, req.Email)
+	result, err := h.organizationService.DirectAddOrganizationMember(ctx, &shared_dto.DirectAddOrganizationMemberRequest{
+		OrganizationID:    organizationID,
+		OperatorAccountID: accountID,
+		WorkspaceID:       req.WorkspaceID,
+		Email:             req.Email,
+		Name:              req.Name,
+		DepartmentID:      req.DepartmentID,
+	})
 	if err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		account = nil
-	}
-
-	if account == nil {
-		password := helper.GenerateString(16)
-		createReq := &dto.CreateAccountRequest{
-			Name:     req.Name,
-			Email:    req.Email,
-			Password: password,
-			Language: "",
-			Timezone: "",
-			IsSetup:  false,
-		}
-
-		account, err = h.accountService.CreateAccount(ctx, createReq)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-	}
-
-	isMember, err := h.organizationService.IsOrganizationMember(ctx, organizationID, account.ID)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
+		h.handleDirectAddMemberError(c, err)
 		return
-	}
-	if !isMember {
-		addReq := &shared_dto.AddOrganizationMemberRequest{
-			OrganizationID: organizationID,
-			AccountID:      account.ID,
-			Role:           model.OrganizationRoleNormal,
-			Name:           &req.Name,
-		}
-		if err := h.organizationService.AddMember(ctx, addReq); err != nil && !strings.Contains(err.Error(), "already exists in organization") {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-	}
-
-	if deptID != "" {
-		_, err = h.departmentService.AddMemberToDepartment(ctx, organizationID, deptID, account.ID)
-		if err != nil {
-			if errors.Is(err, workspace_service.ErrDepartmentNotFound) {
-				c.JSON(http.StatusNotFound, gin.H{"code": "DepartmentNotFound", "message": err.Error()})
-				return
-			}
-			if errors.Is(err, workspace_service.ErrMemberAlreadyInDept) {
-				currentDept, deptErr := h.departmentService.GetMemberDepartment(ctx, organizationID, account.ID)
-				if deptErr != nil && !errors.Is(deptErr, workspace_service.ErrMemberNotInDept) {
-					response.Fail(c, response.ErrSystemError)
-					return
-				}
-
-				resp := gin.H{
-					"code":    "MemberAlreadyInDepartment",
-					"message": err.Error(),
-				}
-				if currentDept != nil {
-					resp["current_department"] = gin.H{
-						"id":   currentDept.ID,
-						"name": currentDept.Name,
-					}
-				}
-
-				c.JSON(http.StatusBadRequest, resp)
-				return
-			}
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
 	}
 
 	sendEmail := false
@@ -1651,11 +1554,24 @@ func (h *OrganizationHandler) DirectAddMember(c *gin.Context) {
 		sendEmail = *req.SendEmail
 	}
 
+	respDeptID := ""
+	respDeptName := ""
+	if result.Department != nil {
+		respDeptID = result.Department.ID
+		respDeptName = result.Department.Name
+	}
+
 	if sendEmail {
 		ip := c.ClientIP()
 		limited, err := h.accountService.IsEmailSendIPLimit(ctx, ip)
 		if err != nil || limited {
 			response.Fail(c, response.ErrRateLimitExceeded)
+			return
+		}
+
+		account, err := h.accountService.GetAccountByID(ctx, result.AccountID)
+		if err != nil || account == nil {
+			response.Fail(c, response.ErrSystemError)
 			return
 		}
 
@@ -1676,15 +1592,56 @@ func (h *OrganizationHandler) DirectAddMember(c *gin.Context) {
 		}
 	}
 
+	respWorkspaceID := ""
+	respWorkspaceName := ""
+	if result.Workspace != nil {
+		respWorkspaceID = result.Workspace.ID
+		respWorkspaceName = result.Workspace.Name
+	}
+
 	response.Success(c, gin.H{
-		"account_id": account.ID,
-		"name":       account.Name,
-		"email":      account.Email,
+		"account_id": result.AccountID,
+		"name":       result.Name,
+		"email":      result.Email,
 		"department": gin.H{
 			"id":   respDeptID,
 			"name": respDeptName,
 		},
+		"workspace": gin.H{
+			"id":   respWorkspaceID,
+			"name": respWorkspaceName,
+		},
 	})
+}
+
+func (h *OrganizationHandler) handleDirectAddMemberError(c *gin.Context, err error) {
+	var departmentConflict *workspace_service.MemberAlreadyInDepartmentError
+	switch {
+	case errors.Is(err, workspace_service.ErrOrganizationInvitePermissionDenied):
+		response.Fail(c, response.ErrPermissionDenied)
+	case errors.Is(err, workspace_service.ErrDirectAddWorkspaceNotFound):
+		response.Fail(c, response.ErrWorkspaceNotFound)
+	case errors.Is(err, workspace_service.ErrDirectAddWorkspaceNotInOrganization):
+		response.Fail(c, response.ErrWorkspaceNotInOrganization)
+	case errors.Is(err, workspace_service.ErrDepartmentNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"code": "DepartmentNotFound", "message": err.Error()})
+	case errors.As(err, &departmentConflict):
+		resp := gin.H{
+			"code":    "MemberAlreadyInDepartment",
+			"message": workspace_service.ErrMemberAlreadyInDept.Error(),
+		}
+		if departmentConflict.CurrentDepartment != nil {
+			resp["current_department"] = gin.H{
+				"id":   departmentConflict.CurrentDepartment.ID,
+				"name": departmentConflict.CurrentDepartment.Name,
+			}
+		}
+		c.JSON(http.StatusBadRequest, resp)
+	case errors.Is(err, workspace_service.ErrDirectAddMemberNameExists):
+		response.FailWithMessage(c, response.ErrInvalidParam, "member name already exists")
+	default:
+		response.Fail(c, response.ErrSystemError)
+	}
 }
 
 func (h *OrganizationHandler) InviteCurrentOrganizationMember(c *gin.Context) {
@@ -1703,15 +1660,16 @@ func (h *OrganizationHandler) InviteCurrentOrganizationMember(c *gin.Context) {
 		Email        string  `json:"email" binding:"required,email"`
 		Name         string  `json:"name" binding:"required"`
 		Password     string  `json:"password"`
+		WorkspaceID  string  `json:"workspace_id" binding:"required"`
 		DepartmentID *string `json:"department_id,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 		return
 	}
-
-	department, ok := h.validateInviteDepartment(c, organizationID, req.DepartmentID)
-	if !ok {
+	workspaceID := strings.TrimSpace(req.WorkspaceID)
+	if workspaceID == "" {
+		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
 
@@ -1723,22 +1681,15 @@ func (h *OrganizationHandler) InviteCurrentOrganizationMember(c *gin.Context) {
 	result, err := h.organizationService.InviteCurrentOrganizationMember(c.Request.Context(), &shared_dto.InviteCurrentOrganizationMemberRequest{
 		OrganizationID:    organizationID,
 		OperatorAccountID: accountID,
+		WorkspaceID:       workspaceID,
 		Email:             req.Email,
 		Name:              strings.TrimSpace(req.Name),
 		Password:          password,
+		DepartmentID:      req.DepartmentID,
 	})
 	if err != nil {
 		handleCurrentOrganizationMemberAdminError(c, err)
 		return
-	}
-	if department != nil {
-		if !h.addCurrentOrganizationMemberToDepartment(c, organizationID, department.ID, result.AccountID) {
-			return
-		}
-		result.Department = &shared_dto.MemberDepartmentInfo{
-			ID:   department.ID,
-			Name: department.Name,
-		}
 	}
 
 	response.Success(c, result)
@@ -1843,6 +1794,12 @@ func handleCurrentOrganizationMemberAdminError(c *gin.Context, err error) {
 		response.Fail(c, response.ErrPermissionDenied)
 	case errors.Is(err, workspace_service.ErrOrganizationMemberNotFound):
 		response.Fail(c, response.ErrAccountNotFound)
+	case errors.Is(err, workspace_service.ErrOrganizationInviteWorkspaceInvalid):
+		response.Fail(c, response.ErrWorkspaceNotInOrganization)
+	case errors.Is(err, workspace_service.ErrDepartmentNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"code": "DepartmentNotFound", "message": err.Error()})
+	case errors.Is(err, workspace_service.ErrMemberAlreadyInDept):
+		c.JSON(http.StatusBadRequest, gin.H{"code": "MemberAlreadyInDepartment", "message": err.Error()})
 	default:
 		response.Fail(c, response.ErrSystemError)
 	}
@@ -1943,18 +1900,14 @@ func (h *OrganizationHandler) UpdateMemberInfo(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+	if req.Role != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "use organization-role endpoint to update organization member role")
+		return
+	}
 
 	// Force override IDs from path/context
 	req.OrganizationID = organizationID
 	req.AccountID = targetAccountID
-
-	// Prevent non-admins from changing role
-	if req.Role != nil {
-		if !middleware.IsOrganizationAdminOrOwner(c) {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
-	}
 
 	if err := h.organizationService.UpdateMemberInfo(c.Request.Context(), &req); err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
@@ -2579,6 +2532,10 @@ func (h *OrganizationHandler) UpdateOrganizationMember(c *gin.Context) {
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 		return
 	}
+	if req.Role != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "use organization-role endpoint to update organization member role")
+		return
+	}
 
 	req.OrganizationID = organizationID
 	req.AccountID = memberID
@@ -2623,6 +2580,51 @@ func (h *OrganizationHandler) UpdateOrganizationMember(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{"result": "success"})
+}
+
+func (h *OrganizationHandler) UpdateCurrentOrganizationMemberRole(c *gin.Context) {
+	memberID := c.Param("member_id")
+	if memberID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	var req shared_dto.UpdateCurrentOrganizationMemberRoleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+
+	if err := h.organizationService.UpdateCurrentOrganizationMemberRole(c.Request.Context(), accountID, memberID, req.Role); err != nil {
+		h.handleUpdateOrganizationMemberRoleError(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{"result": "success"})
+}
+
+func (h *OrganizationHandler) handleUpdateOrganizationMemberRoleError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, workspace_service.ErrInvalidOrganizationMemberRole),
+		errors.Is(err, workspace_service.ErrOrganizationOwnerRoleImmutable),
+		errors.Is(err, workspace_service.ErrOrganizationMemberNotActive),
+		errors.Is(err, workspace_service.ErrOrganizationNotEditable):
+		response.Fail(c, response.ErrInvalidParam)
+	case errors.Is(err, workspace_service.ErrOrganizationMemberNotFound):
+		response.Fail(c, response.ErrMemberNotFound)
+	case errors.Is(err, workspace_service.ErrOrganizationPermissionDenied):
+		response.Fail(c, response.ErrPermissionDenied)
+	case errors.Is(err, workspace_service.ErrOrganizationNotFound):
+		response.Fail(c, response.ErrOrganizationNotFound)
+	default:
+		response.Fail(c, response.ErrSystemError)
+	}
 }
 
 // UpdateMemberStatus updates the status (active/inactive) of a member in organization
@@ -2801,8 +2803,11 @@ func (h *OrganizationHandler) GetCurrentOrganizationMembers(c *gin.Context) {
 	}
 
 	// Call service to get paginated data
-	search := c.Query("search")
-	pagination, err := h.organizationService.GetOrganizationMembersPaginated(c.Request.Context(), organizationID, page, limit, search)
+	keyword := c.Query("keyword")
+	if keyword == "" {
+		keyword = c.Query("search")
+	}
+	pagination, err := h.organizationService.GetOrganizationMembersPaginated(c.Request.Context(), organizationID, page, limit, keyword)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
 		return
@@ -2916,31 +2921,68 @@ func (h *OrganizationHandler) UpdateOrganization(c *gin.Context) {
 		return
 	}
 
-	// Update organization
-	err := h.organizationService.UpdateOrganization(c.Request.Context(), req.ID, &shared_dto.UpdateOrganizationRequest{
-		Name: req.Name,
+	organization, err := h.organizationService.UpdateOrganization(c.Request.Context(), req.ID, accountID, &shared_dto.UpdateOrganizationRequest{
+		Name:      req.Name,
+		ShortName: req.ShortName,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "record not found") {
-			response.Fail(c, response.ErrOrganizationNotFound)
-			return
-		}
-		response.Fail(c, response.ErrSystemError)
-		return
-	}
-
-	// Get updated organization
-	organization, err := h.organizationService.GetOrganizationByID(c.Request.Context(), req.ID)
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "record not found") {
-			response.Fail(c, response.ErrOrganizationNotFound)
-			return
-		}
-		response.Fail(c, response.ErrSystemError)
+		h.handleUpdateOrganizationError(c, err)
 		return
 	}
 
 	response.Success(c, organization)
+}
+
+func (h *OrganizationHandler) PatchOrganization(c *gin.Context) {
+	organizationID := h.getOrganizationID(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+
+	var req struct {
+		Name      string  `json:"name" binding:"required"`
+		ShortName *string `json:"short_name"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	organization, err := h.organizationService.UpdateOrganization(c.Request.Context(), organizationID, accountID, &shared_dto.UpdateOrganizationRequest{
+		Name:      req.Name,
+		ShortName: req.ShortName,
+	})
+	if err != nil {
+		h.handleUpdateOrganizationError(c, err)
+		return
+	}
+
+	response.Success(c, organization)
+}
+
+func (h *OrganizationHandler) handleUpdateOrganizationError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, workspace_service.ErrInvalidOrganizationName):
+		response.Fail(c, response.ErrInvalidParam)
+	case errors.Is(err, workspace_service.ErrOrganizationNotFound):
+		response.Fail(c, response.ErrOrganizationNotFound)
+	case errors.Is(err, workspace_service.ErrOrganizationNameExists):
+		response.Fail(c, response.ErrOrganizationExists)
+	case errors.Is(err, workspace_service.ErrOrganizationPermissionDenied):
+		response.Fail(c, response.ErrPermissionDenied)
+	case errors.Is(err, workspace_service.ErrOrganizationNotEditable):
+		response.Fail(c, response.ErrInvalidParam)
+	default:
+		response.Fail(c, response.ErrSystemError)
+	}
 }
 
 func (h *OrganizationHandler) DeleteOrganization(c *gin.Context) {
@@ -4092,9 +4134,12 @@ func (h *OrganizationHandler) RegisterRoutes(router *gin.RouterGroup) {
 		organization.PUT("/", h.UpdateOrganization)
 		organization.DELETE("/", h.DeleteOrganization)
 
+		organization.GET("/current/members", h.GetCurrentOrganizationMembers)
 		organization.POST("/current/members/invite", h.InviteCurrentOrganizationMember)
 		organization.POST("/current/members/reset-password", h.ResetCurrentOrganizationMemberPassword)
+		organization.PATCH("/current/members/:member_id/organization-role", h.UpdateCurrentOrganizationMemberRole)
 		organization.GET("/info/:organization_id", h.GetOrganizationDetails)
+		organization.PATCH("/info/:organization_id", h.PatchOrganization)
 		organization.GET("/:organization_id/workspaces", h.GetOrganizationWorkspaces)
 		organization.GET("/:organization_id/workspaces/:workspace_id", h.GetOrganizationWorkspaceDetail)
 		organization.GET("/:organization_id/workspaces/:workspace_id/available-members", h.GetOrganizationWorkspaceAvailableMembers)

@@ -3,10 +3,13 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/datasource/model"
+	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
+	"github.com/zgiai/zgi/api/pkg/sql_base/guard"
 	"gorm.io/gorm"
 
 	"github.com/google/uuid"
@@ -21,6 +24,7 @@ type DataSourceRepository interface {
 	// ListByOrganizationWithPermissionFilter lists data sources with permission filtering
 	ListByOrganizationWithPermissionFilter(ctx context.Context, organizationID, accountID string, isAdmin bool, filterWorkspaceIDs []string) ([]*model.DataSource, error)
 	Update(ctx context.Context, ds *model.DataSource) error
+	UpdateGuardPolicy(ctx context.Context, id string, policy []byte) error
 	UpdateStatus(ctx context.Context, id, status string) error
 	Delete(ctx context.Context, id string) error
 }
@@ -28,12 +32,16 @@ type DataSourceRepository interface {
 // SQLOperationRepository defines the interface for SQL operation repository
 type SQLOperationRepository interface {
 	Create(ctx context.Context, log *model.DataSourceSQLOperation) error
+	Insert(ctx context.Context, records []audit.Record) error
 	ListByTableID(ctx context.Context, tableID string, limit, offset int) ([]*model.DataSourceSQLOperation, error)
 	ListByOrganizationID(ctx context.Context, organizationID string, limit, offset int) ([]*model.DataSourceSQLOperation, error)
 	ListByDataSourceID(ctx context.Context, dataSourceID string, limit, offset int) ([]*model.DataSourceSQLOperation, error)
 	CountByDataSourceID(ctx context.Context, dataSourceID string) (int64, error)
 	ListByDataSourceIDWithFilters(ctx context.Context, dataSourceID string, filters dto.SQLOperationFilter, limit, offset int) ([]*model.DataSourceSQLOperation, error)
 	CountByDataSourceIDWithFilters(ctx context.Context, dataSourceID string, filters dto.SQLOperationFilter) (int64, error)
+	ListAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter, limit, offset int) ([]*model.DataSourceSQLOperation, error)
+	CountAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter) (int64, error)
+	FindAuditByWorkspaceAndID(ctx context.Context, organizationID, workspaceID, operationID string) (*model.DataSourceSQLOperation, error)
 }
 
 // PostgresDataSourceRepository implements DataSourceRepository using postgres
@@ -69,9 +77,13 @@ func (r *PostgresDataSourceRepository) Create(ctx context.Context, ds *model.Dat
 	ds.UpdatedAt = time.Now()
 
 	query := `
-		INSERT INTO data_sources (id, organization_id, workspace_id, name, schema_name, schema_id, description, permission, status, created_by, updated_by, created_at, updated_at, icon_type, icon, icon_background)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO data_sources (id, organization_id, workspace_id, name, schema_name, schema_id, description, permission, status, created_by, updated_by, created_at, updated_at, icon_type, icon, icon_background, guard_policy)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
+	guardPolicy := []byte(ds.GuardPolicy)
+	if len(guardPolicy) == 0 {
+		guardPolicy = guard.DefaultPolicyJSON()
+	}
 	err := r.db.WithContext(ctx).Exec(
 		query,
 		ds.ID,
@@ -90,6 +102,7 @@ func (r *PostgresDataSourceRepository) Create(ctx context.Context, ds *model.Dat
 		ds.IconType,
 		ds.Icon,
 		ds.IconBackground,
+		guardPolicy,
 	).Error
 	return err
 }
@@ -125,7 +138,7 @@ func (r *PostgresDataSourceRepository) FindByOrganizationAndName(ctx context.Con
 // ListByOrganization lists all data sources for a organization
 func (r *PostgresDataSourceRepository) ListByOrganization(ctx context.Context, organizationID string) ([]*model.DataSource, error) {
 	query := `
-		SELECT id, organization_id, workspace_id, name, schema_name, schema_id, description, permission, status, created_by, updated_by, created_at, updated_at, icon_type, icon, icon_background
+		SELECT id, organization_id, workspace_id, name, schema_name, schema_id, description, permission, status, created_by, updated_by, created_at, updated_at, icon_type, icon, icon_background, guard_policy
 		FROM data_sources
 		WHERE organization_id = ?
 		ORDER BY created_at DESC
@@ -156,6 +169,7 @@ func (r *PostgresDataSourceRepository) ListByOrganization(ctx context.Context, o
 			&ds.IconType,
 			&ds.Icon,
 			&ds.IconBackground,
+			&ds.GuardPolicy,
 		)
 		if err != nil {
 			return nil, err
@@ -173,7 +187,7 @@ func (r *PostgresDataSourceRepository) ListByOrganizationWithPermissionFilter(ct
 	// If user is admin, show all data sources
 	if isAdmin {
 		query := `
-			SELECT id, organization_id, workspace_id, name, schema_name, schema_id, description, permission, status, created_by, updated_by, created_at, updated_at, icon_type, icon, icon_background
+			SELECT id, organization_id, workspace_id, name, schema_name, schema_id, description, permission, status, created_by, updated_by, created_at, updated_at, icon_type, icon, icon_background, guard_policy
 			FROM data_sources
 			WHERE organization_id = ?
 		`
@@ -212,6 +226,7 @@ func (r *PostgresDataSourceRepository) ListByOrganizationWithPermissionFilter(ct
 				&ds.IconType,
 				&ds.Icon,
 				&ds.IconBackground,
+				&ds.GuardPolicy,
 			)
 			if err != nil {
 				return nil, err
@@ -228,7 +243,7 @@ func (r *PostgresDataSourceRepository) ListByOrganizationWithPermissionFilter(ct
 	var rows *sql.Rows
 	var err error
 	query := `
-		SELECT id, organization_id, workspace_id, name, schema_name, schema_id, description, permission, status, created_by, updated_by, created_at, updated_at, icon_type, icon, icon_background
+		SELECT id, organization_id, workspace_id, name, schema_name, schema_id, description, permission, status, created_by, updated_by, created_at, updated_at, icon_type, icon, icon_background, guard_policy
 		FROM data_sources
 		WHERE organization_id = ?
 	`
@@ -284,6 +299,7 @@ func (r *PostgresDataSourceRepository) ListByOrganizationWithPermissionFilter(ct
 			&ds.IconType,
 			&ds.Icon,
 			&ds.IconBackground,
+			&ds.GuardPolicy,
 		)
 		if err != nil {
 			return nil, err
@@ -333,6 +349,14 @@ func (r *PostgresDataSourceRepository) Update(ctx context.Context, ds *model.Dat
 	return err
 }
 
+func (r *PostgresDataSourceRepository) UpdateGuardPolicy(ctx context.Context, id string, policy []byte) error {
+	return r.db.WithContext(ctx).Exec(
+		`UPDATE data_sources SET guard_policy = ?, updated_at = NOW() WHERE id = ?`,
+		policy,
+		id,
+	).Error
+}
+
 // Delete deletes a data source record
 func (r *PostgresDataSourceRepository) Delete(ctx context.Context, id string) error {
 	query := `
@@ -354,19 +378,39 @@ func (r *PostgresSQLOperationRepository) Create(ctx context.Context, log *model.
 	}
 
 	query := `
-		INSERT INTO data_source_sql_operations (id, organization_id, data_source_id, table_id, table_name, data_source_name, sql_statement, operation_type, start_time, end_time, status, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO data_source_sql_operations (
+			id, organization_id, workspace_id, data_source_id, table_id, table_name, data_source_name,
+			sql_statement, operation_type, client_type, workflow_run_id, node_id, params_json, row_count,
+			duration_ms, error_code, error_message, executed_at, request_id, guard_verdict,
+			guard_action, guard_reasons, guard_policy, start_time, end_time, status, created_by, created_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	err := r.db.WithContext(ctx).Exec(
 		query,
 		log.ID,
 		log.OrganizationID,
+		log.WorkspaceID,
 		log.DataSourceID,
 		log.TableID,
 		log.TableName,
 		log.DataSourceName,
 		log.SqlStatement,
 		log.OperationType,
+		log.ClientType,
+		log.WorkflowRunID,
+		log.NodeID,
+		log.ParamsJSON,
+		log.RowCount,
+		log.DurationMS,
+		log.ErrorCode,
+		log.ErrorMessage,
+		log.ExecutedAt,
+		log.RequestID,
+		log.GuardVerdict,
+		log.GuardAction,
+		log.GuardReasons,
+		log.GuardPolicy,
 		log.StartTime,
 		log.EndTime,
 		log.Status,
@@ -374,6 +418,62 @@ func (r *PostgresSQLOperationRepository) Create(ctx context.Context, log *model.
 		log.CreatedAt,
 	).Error
 	return err
+}
+
+func (r *PostgresSQLOperationRepository) Insert(ctx context.Context, records []audit.Record) error {
+	for _, record := range records {
+		paramsJSON, err := json.Marshal(record.Params)
+		if err != nil {
+			paramsJSON = nil
+		}
+
+		durationMS := record.DurationMS
+		executedAt := record.ExecutedAt
+		log := &model.DataSourceSQLOperation{
+			ID:             uuid.New().String(),
+			OrganizationID: record.OrganizationID,
+			WorkspaceID:    stringPtrOrNil(record.WorkspaceID),
+			DataSourceID:   record.DataSourceID,
+			TableID:        stringPtrOrNil(record.TableID),
+			TableName:      stringPtrOrNil(record.TableName),
+			DataSourceName: stringPtrOrNil(record.DataSourceName),
+			SqlStatement:   record.SQLStatement,
+			OperationType:  record.OperationType,
+			ClientType:     string(record.ClientType),
+			WorkflowRunID:  stringPtrOrNil(record.WorkflowRunID),
+			NodeID:         stringPtrOrNil(record.NodeID),
+			ParamsJSON:     paramsJSON,
+			RowCount:       record.RowCount,
+			DurationMS:     &durationMS,
+			ErrorCode:      stringPtrOrNil(record.ErrorCode),
+			ErrorMessage:   stringPtrOrNil(record.ErrorMessage),
+			ExecutedAt:     &executedAt,
+			RequestID:      stringPtrOrNil(record.RequestID),
+			GuardVerdict:   stringPtrOrNil(record.GuardVerdict),
+			GuardAction:    stringPtrOrNil(record.GuardAction),
+			GuardReasons:   record.GuardReasons,
+			GuardPolicy:    record.GuardPolicy,
+			StartTime:      record.StartTime,
+			EndTime:        record.EndTime,
+			Status:         string(record.Status),
+			CreatedBy:      record.CreatedBy,
+			CreatedAt:      time.Now(),
+		}
+		if log.ClientType == "" {
+			log.ClientType = string(audit.ClientTypeUnknown)
+		}
+		if err := r.Create(ctx, log); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func stringPtrOrNil(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 // ListByTableID lists operation logs for a specific table
@@ -668,4 +768,92 @@ func (r *PostgresSQLOperationRepository) CountByDataSourceIDWithFilters(ctx cont
 	}
 
 	return count, nil
+}
+
+func (r *PostgresSQLOperationRepository) ListAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter, limit, offset int) ([]*model.DataSourceSQLOperation, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	var logs []*model.DataSourceSQLOperation
+	base := r.applySQLAuditFilters(
+		r.db.WithContext(ctx).Model(&model.DataSourceSQLOperation{}).
+			Where("organization_id = ? AND workspace_id = ?", organizationID, workspaceID),
+		filters,
+	)
+	ranked := base.Select("id, ROW_NUMBER() OVER (PARTITION BY COALESCE(NULLIF(request_id, ''), id::text) ORDER BY created_at DESC, id DESC) AS rn")
+	latestIDs := r.db.Table("(?) AS ranked_sql_audit", ranked).Select("id").Where("rn = 1")
+	err := r.db.WithContext(ctx).
+		Model(&model.DataSourceSQLOperation{}).
+		Where("id IN (?)", latestIDs).
+		Order("created_at DESC, id DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&logs).Error
+	return logs, err
+}
+
+func (r *PostgresSQLOperationRepository) CountAuditByWorkspace(ctx context.Context, organizationID, workspaceID string, filters dto.SQLAuditFilter) (int64, error) {
+	var count int64
+	base := r.applySQLAuditFilters(
+		r.db.WithContext(ctx).Model(&model.DataSourceSQLOperation{}).
+			Where("organization_id = ? AND workspace_id = ?", organizationID, workspaceID),
+		filters,
+	)
+	ranked := base.Select("id, ROW_NUMBER() OVER (PARTITION BY COALESCE(NULLIF(request_id, ''), id::text) ORDER BY created_at DESC, id DESC) AS rn")
+	latestIDs := r.db.Table("(?) AS ranked_sql_audit", ranked).Select("id").Where("rn = 1")
+	err := r.db.WithContext(ctx).Table("(?) AS latest_sql_audit", latestIDs).Count(&count).Error
+	return count, err
+}
+
+func (r *PostgresSQLOperationRepository) FindAuditByWorkspaceAndID(ctx context.Context, organizationID, workspaceID, operationID string) (*model.DataSourceSQLOperation, error) {
+	var log model.DataSourceSQLOperation
+	err := r.db.WithContext(ctx).
+		Model(&model.DataSourceSQLOperation{}).
+		Where("organization_id = ? AND workspace_id = ? AND id = ?", organizationID, workspaceID, operationID).
+		First(&log).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &log, nil
+}
+
+func (r *PostgresSQLOperationRepository) applySQLAuditFilters(query *gorm.DB, filters dto.SQLAuditFilter) *gorm.DB {
+	if filters.DataSourceID != nil {
+		query = query.Where("data_source_id = ?", *filters.DataSourceID)
+	}
+	if filters.TableID != nil {
+		query = query.Where("table_id = ?", *filters.TableID)
+	}
+	if filters.ClientType != nil {
+		query = query.Where("client_type = ?", *filters.ClientType)
+	}
+	if filters.WorkflowRunID != nil {
+		query = query.Where("workflow_run_id = ?", *filters.WorkflowRunID)
+	}
+	if filters.NodeID != nil {
+		query = query.Where("node_id = ?", *filters.NodeID)
+	}
+	if filters.CreatedBy != nil {
+		query = query.Where("created_by = ?", *filters.CreatedBy)
+	}
+	if filters.OperationType != nil {
+		query = query.Where("operation_type = ?", *filters.OperationType)
+	}
+	if filters.Status != nil {
+		query = query.Where("status = ?", *filters.Status)
+	}
+	if filters.StartTime != nil {
+		query = query.Where("executed_at >= ?", *filters.StartTime)
+	}
+	if filters.EndTime != nil {
+		query = query.Where("executed_at <= ?", *filters.EndTime)
+	}
+	return query
 }

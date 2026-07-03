@@ -218,9 +218,12 @@ export interface ContentParsePlaygroundProviderStatus {
   selectable: boolean;
   fallback_only: boolean;
   priority?: number;
+  route_rank?: number;
   status: ContentParseProviderStatusValue;
   reason?: string;
 }
+
+export type ContentParseFileRouteProviderStatus = ContentParsePlaygroundProviderStatus;
 
 export interface ContentParsePlaygroundOCREngineStatus {
   key: ParseOCREngine;
@@ -235,6 +238,47 @@ export interface ContentParsePlaygroundProvidersResponse {
   source: string;
   providers: ContentParsePlaygroundProviderStatus[];
   ocr_engines?: ContentParsePlaygroundOCREngineStatus[];
+}
+
+export type ParserSettingsProviderKey = 'reducto' | 'mineru';
+export type MineruParserMode = 'sidecar' | 'official';
+export type ParserSettingsStatus = 'not_configured' | 'disabled' | 'available' | 'failed' | 'unknown';
+
+export interface ParserProviderSettings {
+  provider_key: ParserSettingsProviderKey;
+  display_name: string;
+  enabled: boolean;
+  configured: boolean;
+  status: ParserSettingsStatus | string;
+  base_url?: string;
+  timeout_sec?: number;
+  api_key_configured?: boolean;
+  mode?: MineruParserMode | string;
+  official_token_configured?: boolean;
+  official_model_version?: string;
+  official_poll_interval_seconds?: number;
+  runtime_config_source: string;
+}
+
+export interface ParserSettingsListResponse {
+  items: ParserProviderSettings[];
+}
+
+export interface UpsertParserSettingsRequest {
+  enabled?: boolean;
+  api_key?: string;
+  base_url?: string;
+  timeout_sec?: number;
+  mode?: MineruParserMode;
+  official_token?: string;
+  official_model_version?: string;
+  official_poll_interval_seconds?: number;
+}
+
+export interface ContentParseFileRouteProvidersResponse {
+  source: string;
+  file_ext: string;
+  providers: ContentParseFileRouteProviderStatus[];
 }
 
 export interface ContentParsePlaygroundParseRequest {

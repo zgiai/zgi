@@ -89,6 +89,7 @@ export abstract class BaseService {
     options: {
       onProgress?: (progress: number) => void;
       additionalData?: Record<string, string>;
+      signal?: AbortSignal;
     } = {}
   ): Promise<UploadResponse> {
     const formData = new FormData();
@@ -113,6 +114,7 @@ export abstract class BaseService {
             }
           }
         : undefined,
+      signal: options.signal,
     });
   }
 }

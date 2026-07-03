@@ -22,6 +22,7 @@ import { ICON_BG, ICON_TEXT, WEBAPP_CHAT_SIDEBAR_BG_IMAGE } from '@/lib/config';
 import type { OpeningGuideConfig } from '@/utils/webapp/opening-statement';
 import { cn } from '@/lib/utils';
 import type { WorkflowFileUploadAccessMode } from '@/components/workflow/common/workflow-input-form';
+import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 
 interface ChatWithControllerProps {
   controller: ChatController;
@@ -35,6 +36,7 @@ interface ChatWithControllerProps {
   sendDisabled?: boolean;
   placeholder?: string;
   openingGuide?: OpeningGuideConfig;
+  openingGuideBrand?: OpeningGuideBrand;
   suggestions?: string[];
   suggestionsTitle?: string;
   toolbarForm?: {
@@ -66,6 +68,7 @@ interface ChatWithControllerProps {
   allowWorkspaceSwitch?: boolean;
   renderMessageAddon?: (message: Message) => React.ReactNode;
   surface?: 'default' | 'webapp';
+  conversationSearchKey?: readonly unknown[];
 }
 
 const ChatWithController: React.FC<ChatWithControllerProps> = ({
@@ -79,6 +82,7 @@ const ChatWithController: React.FC<ChatWithControllerProps> = ({
   sendDisabled,
   placeholder,
   openingGuide,
+  openingGuideBrand,
   suggestions,
   suggestionsTitle,
   toolbarForm,
@@ -100,6 +104,7 @@ const ChatWithController: React.FC<ChatWithControllerProps> = ({
   allowWorkspaceSwitch = false,
   renderMessageAddon,
   surface = 'default',
+  conversationSearchKey,
 }) => {
   const t = useT();
   const isWebappSurface = surface === 'webapp';
@@ -114,7 +119,7 @@ const ChatWithController: React.FC<ChatWithControllerProps> = ({
   let iconBackground = ICON_BG;
   let imgSrc: string | undefined = undefined;
   if (iconType === 'image') {
-    imgSrc = webappMeta?.icon || '';
+    imgSrc = webappMeta?.icon_url || webappMeta?.icon || '';
   } else if (iconType === 'text') {
     try {
       const parsed = JSON.parse(webappMeta?.icon || '{}');
@@ -144,11 +149,6 @@ const ChatWithController: React.FC<ChatWithControllerProps> = ({
     s.conversations.find(item => item.id === s.activeId)
   );
   const isLoadingDetail = useStore(controller.store, s => s.isLoadingDetail);
-
-  useEffect(() => {
-    if (!mobileDrawerOpen) return;
-    setMobileDrawerOpen(false);
-  }, [activeId, mobileDrawerOpen]);
 
   // Get active conversation from chat store for message rendering
   const conv = useChatStore(state => (activeId ? state.conversations[activeId] : undefined));
@@ -234,6 +234,7 @@ const ChatWithController: React.FC<ChatWithControllerProps> = ({
           <ConversationHistoryList
             controller={controller}
             backgroundImage={isWebappSurface ? WEBAPP_CHAT_SIDEBAR_BG_IMAGE : undefined}
+            searchKey={conversationSearchKey}
           />
         </div>
 
@@ -300,6 +301,17 @@ const ChatWithController: React.FC<ChatWithControllerProps> = ({
               isLoading={isLoadingDetail}
               onSuggestionClick={handleSuggestionClick}
               openingGuide={openingGuide}
+              openingGuideBrand={
+                webappMeta
+                  ? {
+                      title: webappMeta.title,
+                      iconType: iconType === 'image' ? 'image' : 'text',
+                      icon: textIcon,
+                      iconBackground,
+                      iconSrc: imgSrc,
+                    }
+                  : openingGuideBrand
+              }
               suggestions={suggestions}
               suggestionsTitle={suggestionsTitle}
               renderMessageAddon={renderMessageAddon}
@@ -362,7 +374,8 @@ const ChatWithController: React.FC<ChatWithControllerProps> = ({
                 controller={controller}
                 className="border-0 h-full w-full"
                 backgroundImage={isWebappSurface ? WEBAPP_CHAT_SIDEBAR_BG_IMAGE : undefined}
-                onCreateWhileDraft={() => setMobileDrawerOpen(false)}
+                onActionComplete={() => setMobileDrawerOpen(false)}
+                searchKey={conversationSearchKey}
               />
             </div>
           </div>

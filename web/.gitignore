@@ -61,3 +61,8 @@ next-env.d.ts
 # local sensitive word dictionary
 /sensitive-words/
 /src/generated/sensitive-word-automaton.ts
+
+# generated customer customization output
+/.customer-tmp/
+/src/customer/generated/
+/public/customer/

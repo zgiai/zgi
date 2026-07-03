@@ -10,6 +10,7 @@ import type {
   FormInputs,
   WorkflowInputFormHandle,
 } from '@/components/workflow/common/workflow-input-form';
+import { getInputVarSchemaDefaultValue } from '@/components/workflow/common/workflow-input-form';
 import type { WorkflowFinishedData, HistoryResult } from '../types';
 import Results from './results';
 import { useT } from '@/i18n';
@@ -35,6 +36,8 @@ interface DraftContentProps {
   isStarting: boolean;
   isRunning?: boolean;
   isStopping?: boolean;
+  stopDisabled?: boolean;
+  stopDisabledMessage?: string;
   onSubmit: (values: FormInputs) => void;
   onRunNoInputs: () => void;
   onInputChange?: (values: FormInputs) => void;
@@ -73,6 +76,8 @@ const DraftContent: React.FC<DraftContentProps> = ({
   isStarting,
   isRunning = false,
   isStopping = false,
+  stopDisabled = false,
+  stopDisabledMessage,
   onSubmit,
   onRunNoInputs,
   onInputChange,
@@ -118,7 +123,7 @@ const DraftContent: React.FC<DraftContentProps> = ({
 
     startVariables.forEach(input => {
       if (input.type === 'file' || input.type === 'file-list') return;
-      const defaultValue = (input as { default?: unknown }).default;
+      const defaultValue = getInputVarSchemaDefaultValue(input);
       if (defaultValue === undefined || defaultValue === null) return;
       if (typeof defaultValue === 'string' && defaultValue.trim().length === 0) return;
       if (typeof defaultValue === 'number' && !Number.isFinite(defaultValue)) return;
@@ -156,7 +161,7 @@ const DraftContent: React.FC<DraftContentProps> = ({
 
   const handlePrimaryAction = () => {
     if (isRunning) {
-      if (isStopping) return;
+      if (isStopping || stopDisabled) return;
       onStop?.();
       return;
     }
@@ -303,7 +308,7 @@ const DraftContent: React.FC<DraftContentProps> = ({
             size="sm"
             variant={isRunning ? 'destructive' : 'default'}
             className="h-9 min-w-[104px] rounded-md font-semibold"
-            disabled={isRunning ? isStopping : isPrimaryActionDisabled}
+            disabled={isRunning ? isStopping || stopDisabled : isPrimaryActionDisabled}
             onClick={handlePrimaryAction}
           >
             {isRunning
@@ -314,6 +319,11 @@ const DraftContent: React.FC<DraftContentProps> = ({
                   ? t('agents.workflow.rerunDebug')
                   : t('agents.workflow.runNow')}
           </Button>
+          {isRunning && stopDisabled && stopDisabledMessage ? (
+            <div className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+              {stopDisabledMessage}
+            </div>
+          ) : null}
           {shouldShowRestoreDefaults && (
             <Button
               type="button"

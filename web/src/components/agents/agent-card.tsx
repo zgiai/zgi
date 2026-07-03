@@ -19,6 +19,7 @@ import {
   Download,
   MessageSquareText,
   MoveRight,
+  Bot,
 } from 'lucide-react';
 import { useT } from '@/i18n';
 import { useDeleteAgent } from '@/hooks/agent/use-agents';
@@ -33,18 +34,21 @@ import { useExportWorkflow } from '@/hooks/workflow/use-workflow-import-export';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
+import { getAgentDetailEditHref } from '@/utils/agent-detail-routes';
 
 interface AgentCardProps {
   agent: Agent;
   /** The page index where this agent resides in the paged list */
   pageIndex: number;
+  /** Callback before navigating from the list into the agent detail page. */
+  onNavigate?: () => void;
   /** Callback when agent is deleted; provides id and page index for incremental refetch */
   onDeleted?: (id: string, pageIndex: number) => void;
 }
 
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 
-function AgentCard({ agent, onDeleted, pageIndex }: AgentCardProps) {
+function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) {
   const t = useT('agents');
   const tCommon = useT('common');
   const deleteMutation = useDeleteAgent();
@@ -60,10 +64,19 @@ function AgentCard({ agent, onDeleted, pageIndex }: AgentCardProps) {
   const { hasPermission } = useAccountPermissions();
   const canManage = hasPermission('agent.manage');
   const canMoveAssets = ['owner', 'admin'].includes(currentOrganization?.organization_role ?? '');
-  const agentHref = `/console/agents/${agent.id}/workflow`;
+  const agentHref = getAgentDetailEditHref(agent.id, agent.agent_type);
   const modeText =
-    agent.agent_type === AgentType.WORKFLOW ? t('modes.workflow') : t('modes.conversational');
-  const ModeIcon = agent.agent_type === AgentType.WORKFLOW ? Workflow : MessageSquareText;
+    agent.agent_type === AgentType.AGENT
+      ? t('modes.agent')
+      : agent.agent_type === AgentType.WORKFLOW
+        ? t('modes.workflow')
+        : t('modes.conversational');
+  const ModeIcon =
+    agent.agent_type === AgentType.AGENT
+      ? Bot
+      : agent.agent_type === AgentType.WORKFLOW
+        ? Workflow
+        : MessageSquareText;
   const isWebAppOffline = agent.is_published && agent.web_app_status === 'inactive';
   const isPublishedOnline = agent.is_published && agent.web_app_status === 'active';
   const statusText = isWebAppOffline
@@ -79,7 +92,7 @@ function AgentCard({ agent, onDeleted, pageIndex }: AgentCardProps) {
 
   return (
     <div className="relative h-48">
-      <Link href={agentHref} className="block h-full">
+      <Link href={agentHref} className="block h-full" onClick={onNavigate}>
         <Card className="flex h-full shrink-0 flex-col border border-border/80 shadow-sm transition-colors hover:border-border hover:bg-muted/20 hover:shadow-sm">
           <CardContent className="flex h-full min-w-0 flex-1 flex-col p-4">
             <div className="flex items-start justify-between gap-3">
@@ -218,7 +231,7 @@ function AgentCard({ agent, onDeleted, pageIndex }: AgentCardProps) {
       />
       {/* Delete confirmation dialog outside dropdown */}
       <ConfirmDialog
-        variant="warning"
+        variant="danger"
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         title={t('deleteConfirmTitle', { name: agent.name })}

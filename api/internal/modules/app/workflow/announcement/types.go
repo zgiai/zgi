@@ -33,6 +33,7 @@ type CreateRuntimeAnnouncementParams struct {
 type AnnouncementPayload struct {
 	ID           string `json:"id"`
 	Token        string `json:"token"`
+	AccessToken  string `json:"access_token,omitempty"`
 	NodeID       string `json:"node_id"`
 	Title        string `json:"title,omitempty"`
 	NodeTitle    string `json:"node_title,omitempty"`

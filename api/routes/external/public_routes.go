@@ -2,11 +2,10 @@ package external
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/zgiai/zgi/api/internal/container"
 )
 
 // RegisterPublicRoutes registers public API routes that don't require authentication
-func RegisterPublicRoutes(r *gin.RouterGroup, serviceContainer *container.ServiceContainer) {
+func RegisterPublicRoutes(r *gin.RouterGroup) {
 	// Health check for external API
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{

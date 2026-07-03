@@ -282,12 +282,16 @@ const messages = {
     testConnection: {
       title: 'Test Connection',
       description:
-        'Check provider-available models with the current API key first, then select one representative model to verify the key, base URL, protocol, and model match.',
+        'Checking the model list only requests provider /models. Testing the connection verifies one representative model; image models use a lightweight check and do not generate images.',
       descriptionWithModel:
-        'Using {model} to verify the key, base URL, protocol, and model match.',
+        'Testing verifies {model}. Text, embedding, and rerank models make one small request; image models use a lightweight check and do not generate images.',
+      descriptionWithModelCount:
+        'Selected {count} models. Testing verifies the first representative model; creation records model-list checks for the selected models when available.',
       button: 'Test',
       apiBaseUrlHint: 'Enter the API base URL before testing.',
       apiKeyHint: 'Enter the API key before testing.',
+      checkModelListHint:
+        'Check the model list first. The list uses the local model catalog; only models also returned by this provider can be selected.',
       selectModelHint: 'Select at least one representative model on the right before testing.',
       latency: 'Latency: {ms} ms',
       messages: {
@@ -296,6 +300,16 @@ const messages = {
         successFallback: 'The model responded successfully.',
         failedFallback: 'Check that the provider, API base URL, API key, and model match.',
         requestFailed: 'Connection test request failed',
+        imageModelFound:
+          'The provider account includes this model. No image was generated during this test.',
+        imageModelMetadataOnly:
+          'Local model configuration was verified. No image was generated because this provider does not support model-list checks.',
+        imageModelMissing:
+          'The provider-returned model list does not include this model. No image was generated.',
+        apiKeyInvalid: 'The API key is invalid or expired. Update it and try again.',
+        modelNotFound: 'The model was not found, or this provider endpoint does not support it.',
+        rateLimited: 'The provider returned a rate limit. Retry later.',
+        timeout: 'The request timed out. Retry later or check the provider connection.',
       },
       nextSteps: {
         success: 'This configuration is ready to create a channel.',
@@ -312,16 +326,22 @@ const messages = {
       },
       readiness: {
         verified: 'Connection verified. You can create the channel.',
-        failed: 'Connection failed. You can still create it, but fix the issue above first.',
-        untested: 'Connection has not been tested. Verify a representative model first.',
+        failed:
+          'Connection failed. You can still save the channel for non-key issues; confirmed API key errors must be fixed first.',
+        untested:
+          'Creation records model-list check results when available. Test the connection only when you need to confirm real call capability.',
         missingModel: 'Select at least one representative model before testing.',
       },
     },
     discoverModels: {
-      button: 'Check Models',
+      button: 'Check Model List',
       messages: {
-        success: 'Provider returned {count} available models',
-        requestFailed: 'Failed to check available models',
+        success: 'Provider model list returned {count} models',
+        supportedOnly:
+          'The list uses the local model catalog. Only models also returned by this provider can be selected; other local models cannot be selected.',
+        unsupported:
+          'This service does not support model listing. Select registered models from the local model catalog.',
+        requestFailed: 'Failed to check the model list. Non-key issues do not block saving the channel.',
       },
     },
     protocolOptions: {

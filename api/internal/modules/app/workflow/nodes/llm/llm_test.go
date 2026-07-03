@@ -14,6 +14,9 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/nodes/base"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
+	"github.com/zgiai/zgi/api/pkg/storage"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 type stubFileDownloader struct {
@@ -65,10 +68,57 @@ func setTestFileURLConfig(t *testing.T, filesURL string, serverMode string) {
 			FilesURL:  filesURL,
 			SecretKey: "test-secret",
 		},
+		Workflow: appconfig.WorkflowConfig{
+			ImageInputURLMode: appconfig.WorkflowImageInputURLModeZGIProxy,
+		},
 	}
 	t.Cleanup(func() {
 		appconfig.GlobalConfig = previous
 	})
+}
+
+func setTestWorkflowImageInputConfig(t *testing.T, cfg appconfig.Config) {
+	t.Helper()
+
+	previous := appconfig.GlobalConfig
+	appconfig.GlobalConfig = &cfg
+	t.Cleanup(func() {
+		appconfig.GlobalConfig = previous
+	})
+}
+
+func openWorkflowImageInputTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.Exec(`CREATE TABLE upload_files (
+		id text primary key,
+		key text not null,
+		mime_type text,
+		extension text,
+		storage_type text
+	)`).Error; err != nil {
+		t.Fatalf("create upload_files table: %v", err)
+	}
+	return db
+}
+
+func insertWorkflowImageInputFile(t *testing.T, db *gorm.DB, id, key, mimeType, extension, storageType string) {
+	t.Helper()
+
+	if err := db.Exec(
+		`INSERT INTO upload_files (id, key, mime_type, extension, storage_type) VALUES (?, ?, ?, ?, ?)`,
+		id,
+		key,
+		mimeType,
+		extension,
+		storageType,
+	).Error; err != nil {
+		t.Fatalf("insert upload file %s: %v", id, err)
+	}
 }
 
 // TestLLMNode_Run_Integration exercises the Node end-to-end without real network calls.
@@ -1187,5 +1237,187 @@ func TestResolveFileURLFromID_UsesSignedPreviewURL(t *testing.T) {
 	}
 	if !strings.HasPrefix(resolvedURL, "https://api.zgi.im/console/api/files/file-1/file-preview?") {
 		t.Fatalf("expected signed preview URL from resolveFileURLFromID, got %q", resolvedURL)
+	}
+}
+
+func TestResolveFileURLFromID_UsesAliyunPublicStorageURLForImage(t *testing.T) {
+	setTestWorkflowImageInputConfig(t, appconfig.Config{
+		Workflow: appconfig.WorkflowConfig{
+			ImageInputURLMode: appconfig.WorkflowImageInputURLModePublicStorageURL,
+		},
+		Storage: appconfig.StorageConfig{
+			Type: string(storage.StorageTypeAliyunOSS),
+			AliyunOSS: appconfig.AliyunOSSStorageConfig{
+				BucketName: "zgi-files",
+				Endpoint:   "oss-cn-hangzhou.aliyuncs.com",
+				Folder:     "prod",
+			},
+		},
+		App: appconfig.AppConfig{
+			FilesURL:  "https://api.zgi.im",
+			SecretKey: "test-secret",
+		},
+	})
+	db := openWorkflowImageInputTestDB(t)
+	insertWorkflowImageInputFile(t, db, "file-1", "upload_files/org-1/image.jpg", "image/jpeg", "jpg", string(storage.StorageTypeAliyunOSS))
+
+	n := &Node{db: db}
+
+	resolvedURL, err := n.resolveFileURLFromID("file-1")
+	if err != nil {
+		t.Fatalf("resolveFileURLFromID returned error: %v", err)
+	}
+
+	want := "https://zgi-files.oss-cn-hangzhou.aliyuncs.com/prod/upload_files/org-1/image.jpg"
+	if resolvedURL != want {
+		t.Fatalf("expected public storage URL %q, got %q", want, resolvedURL)
+	}
+}
+
+func TestResolveFileURLFromID_PublicBaseURLWinsForImage(t *testing.T) {
+	setTestWorkflowImageInputConfig(t, appconfig.Config{
+		Workflow: appconfig.WorkflowConfig{
+			ImageInputURLMode:       appconfig.WorkflowImageInputURLModePublicStorageURL,
+			ImageInputPublicBaseURL: "https://cdn.example.com",
+		},
+		Storage: appconfig.StorageConfig{
+			Type: string(storage.StorageTypeQiniu),
+			Qiniu: appconfig.QiniuStorageConfig{
+				Domain:   "qiniu.example.com",
+				Folder:   "qiniu-prefix",
+				UseHTTPS: true,
+			},
+		},
+		App: appconfig.AppConfig{
+			FilesURL:  "https://api.zgi.im",
+			SecretKey: "test-secret",
+		},
+	})
+	db := openWorkflowImageInputTestDB(t)
+	insertWorkflowImageInputFile(t, db, "file-1", "upload_files/org-1/image.png", "image/png", "png", string(storage.StorageTypeQiniu))
+
+	n := &Node{db: db}
+
+	resolvedURL, err := n.resolveFileURLFromID("file-1")
+	if err != nil {
+		t.Fatalf("resolveFileURLFromID returned error: %v", err)
+	}
+
+	want := "https://cdn.example.com/qiniu-prefix/upload_files/org-1/image.png"
+	if resolvedURL != want {
+		t.Fatalf("expected public storage URL %q, got %q", want, resolvedURL)
+	}
+}
+
+func TestResolveFileURLFromID_PublicStorageURLKeepsNonImageOnSignedPreview(t *testing.T) {
+	setTestWorkflowImageInputConfig(t, appconfig.Config{
+		Workflow: appconfig.WorkflowConfig{
+			ImageInputURLMode: appconfig.WorkflowImageInputURLModePublicStorageURL,
+		},
+		Storage: appconfig.StorageConfig{
+			Type: string(storage.StorageTypeAliyunOSS),
+			AliyunOSS: appconfig.AliyunOSSStorageConfig{
+				BucketName: "zgi-files",
+				Endpoint:   "oss-cn-hangzhou.aliyuncs.com",
+			},
+		},
+		App: appconfig.AppConfig{
+			FilesURL:  "https://api.zgi.im",
+			SecretKey: "test-secret",
+		},
+	})
+	db := openWorkflowImageInputTestDB(t)
+	insertWorkflowImageInputFile(t, db, "file-1", "upload_files/org-1/report.pdf", "application/pdf", "pdf", string(storage.StorageTypeAliyunOSS))
+
+	n := &Node{db: db}
+
+	resolvedURL, err := n.resolveFileURLFromID("file-1")
+	if err != nil {
+		t.Fatalf("resolveFileURLFromID returned error: %v", err)
+	}
+	if !strings.HasPrefix(resolvedURL, "https://api.zgi.im/console/api/files/file-1/file-preview?") {
+		t.Fatalf("expected non-image to keep signed preview URL, got %q", resolvedURL)
+	}
+}
+
+func TestResolveFileURLFromID_PublicStorageURLFailsWhenMissingConfig(t *testing.T) {
+	setTestWorkflowImageInputConfig(t, appconfig.Config{
+		Workflow: appconfig.WorkflowConfig{
+			ImageInputURLMode: appconfig.WorkflowImageInputURLModePublicStorageURL,
+		},
+		Storage: appconfig.StorageConfig{
+			Type: string(storage.StorageTypeS3),
+		},
+		App: appconfig.AppConfig{
+			FilesURL:  "https://api.zgi.im",
+			SecretKey: "test-secret",
+		},
+	})
+	db := openWorkflowImageInputTestDB(t)
+	insertWorkflowImageInputFile(t, db, "file-1", "upload_files/org-1/image.jpg", "image/jpeg", "jpg", string(storage.StorageTypeS3))
+
+	n := &Node{db: db}
+
+	_, err := n.resolveFileURLFromID("file-1")
+	if err == nil {
+		t.Fatalf("expected resolveFileURLFromID to fail")
+	}
+	if !strings.Contains(err.Error(), "WORKFLOW_IMAGE_INPUT_PUBLIC_BASE_URL") {
+		t.Fatalf("expected public base URL error, got %v", err)
+	}
+}
+
+func TestProcessVisionFiles_UsesPublicStorageURLForLocalImage(t *testing.T) {
+	setTestWorkflowImageInputConfig(t, appconfig.Config{
+		Workflow: appconfig.WorkflowConfig{
+			ImageInputURLMode: appconfig.WorkflowImageInputURLModePublicStorageURL,
+		},
+		Storage: appconfig.StorageConfig{
+			Type: string(storage.StorageTypeQiniu),
+			Qiniu: appconfig.QiniuStorageConfig{
+				Domain:   "cdn-qiniu.example.com",
+				UseHTTPS: true,
+				Folder:   "workflow",
+			},
+		},
+		App: appconfig.AppConfig{
+			FilesURL:  "https://api.zgi.im",
+			SecretKey: "test-secret",
+		},
+	})
+	db := openWorkflowImageInputTestDB(t)
+	insertWorkflowImageInputFile(t, db, "file-1", "upload_files/org-1/image.png", "image/png", "png", string(storage.StorageTypeQiniu))
+
+	n := &Node{db: db}
+	workflowFile := file.NewFile(
+		"tenant-1",
+		file.FileTypeImage,
+		file.FileTransferMethodLocalFile,
+		file.WithID("file-1"),
+		file.WithRelatedID("file-1"),
+		file.WithMimeType("image/png"),
+	)
+
+	processed, autoInjected, err := n.processVisionFiles(
+		[]PromptMessage{{Role: PromptMessageRoleSystem, Content: "你是诊断助手。"}},
+		[]any{workflowFile},
+		true,
+		ImageDetailHigh,
+	)
+	if err != nil {
+		t.Fatalf("processVisionFiles returned error: %v", err)
+	}
+	if !autoInjected {
+		t.Fatalf("expected autoInjected=true when only system prompt exists")
+	}
+
+	contentList, ok := processed[1].Content.([]PromptMessageContent)
+	if !ok {
+		t.Fatalf("expected synthesized user content to be multimodal, got %T", processed[1].Content)
+	}
+
+	want := "https://cdn-qiniu.example.com/workflow/upload_files/org-1/image.png"
+	if contentList[0].URL != want {
+		t.Fatalf("expected image_url %q, got %q", want, contentList[0].URL)
 	}
 }

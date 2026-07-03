@@ -11,6 +11,9 @@ type VectorDB interface {
 	// StoreVector stores a vector with metadata
 	StoreVector(ctx context.Context, id, className string, properties map[string]interface{}, vector []float64) error
 
+	// DeleteVector deletes a vector by ID from a class/collection.
+	DeleteVector(ctx context.Context, id, className string) error
+
 	// SearchVectors performs similarity search
 	SearchVectors(ctx context.Context, className string, vector []float64, limit int) ([]map[string]interface{}, error)
 
@@ -38,6 +41,15 @@ type BatchVectorDB interface {
 
 	// StoreVectors stores multiple vectors with metadata.
 	StoreVectors(ctx context.Context, objects []VectorObject) error
+}
+
+// FieldDeleteVectorDB represents a vector database that supports deleting
+// multiple objects by a metadata field in one request.
+type FieldDeleteVectorDB interface {
+	VectorDB
+
+	// DeleteObjectsByField deletes all objects whose metadata field equals the value.
+	DeleteObjectsByField(ctx context.Context, className, fieldName, fieldValue string) error
 }
 
 // BatchVectorError reports per-object failures from a batch vector write.
@@ -75,6 +87,16 @@ func NewVectorDB(cfg *config.VectorStoreConfig) (VectorDB, error) {
 type MockVectorDB struct{}
 
 func (m *MockVectorDB) StoreVector(ctx context.Context, id, className string, properties map[string]interface{}, vector []float64) error {
+	// Mock implementation - just log the operation
+	return nil
+}
+
+func (m *MockVectorDB) DeleteVector(ctx context.Context, id, className string) error {
+	// Mock implementation - just log the operation
+	return nil
+}
+
+func (m *MockVectorDB) DeleteObjectsByField(ctx context.Context, className, fieldName, fieldValue string) error {
 	// Mock implementation - just log the operation
 	return nil
 }

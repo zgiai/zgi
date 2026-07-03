@@ -133,6 +133,7 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	if err := s.validateImageRequest(req); err != nil {
 		return nil, err
 	}
+	effectiveReq := s.policyPrompt.injectImageRequest(req)
 
 	// 2. Get shadow tenant info
 	orgUUID, err := uuid.Parse(apiKey.OrganizationID)
@@ -148,13 +149,13 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	// Note: We use maxSelections=1 because we don't support fallback for image generation yet (or maybe later)
 	// Tag the request category so the router can apply capability-aware matching.
 	ctx = context.WithValue(ctx, shared.ContextKeyModelCategory, "image")
-	selections, err := s.selectProvidersWithChannelRouter(ctx, billingOrganizationID, "", req.Model, 1)
+	selections, err := s.selectProvidersWithChannelRouter(ctx, billingOrganizationID, "", effectiveReq.Model, 1)
 	if err != nil {
 		return nil, err
 	}
 	selection := selections[0] // Use the first selection (highest priority)
 
-	pricingReq := buildImagePricingRequest(req)
+	pricingReq := buildImagePricingRequest(effectiveReq)
 
 	// 4. Calculate estimated credits
 	estimatedQuote, err := s.quoteImagePricing(ctx, pricingModelRefFromSelection(selection), pricingReq)
@@ -196,7 +197,7 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	}
 
 	// 10. Call adapter
-	providerReq := buildProviderImageRequest(req)
+	providerReq := buildProviderImageRequest(effectiveReq)
 	resp, err := providerAdapter.CreateImage(ctx, &providerReq)
 	responseTime := time.Since(startTime).Milliseconds()
 	if err != nil {

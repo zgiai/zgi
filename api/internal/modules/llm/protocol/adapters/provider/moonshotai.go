@@ -42,7 +42,7 @@ func NewMoonshotAIAdapter(config *adapter.AdapterConfig) (*MoonshotAIAdapter, er
 
 	return &MoonshotAIAdapter{
 		config:     config,
-		httpClient: adapter.NewHTTPClient(timeout, maxRetries),
+		httpClient: adapter.NewHTTPClientFromConfig(config, timeout, maxRetries),
 		baseURL:    baseURL,
 	}, nil
 }

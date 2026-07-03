@@ -13,6 +13,7 @@ export interface SysImageProps {
   modelSelectorValue: ModelSelectorValue;
   onModelChange: (value: ModelSelectorValue) => void;
   inputTopNotice?: React.ReactNode;
+  conversationSearchKey?: readonly unknown[];
 }
 
 export function SysImage({
@@ -21,6 +22,7 @@ export function SysImage({
   modelSelectorValue,
   onModelChange,
   inputTopNotice,
+  conversationSearchKey,
 }: SysImageProps) {
   const t = useT('webapp');
 
@@ -52,6 +54,7 @@ export function SysImage({
       modelSelectorValue={modelSelectorValue}
       onModelChange={onModelChange}
       inputTopNotice={inputTopNotice}
+      conversationSearchKey={conversationSearchKey}
     />
   );
 }

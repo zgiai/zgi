@@ -2,12 +2,15 @@ import type enUS from './en-US';
 
 const messages: typeof enUS = {
   title: '提示词',
+  description: '管理可复用提示词，在调试台验证效果后，再把稳定版本用于智能体和工作流。',
   search: {
     placeholder: '搜索提示词',
   },
   tabs: {
     library: '提示词库',
+    libraryDescription: '查看官方模板、工作空间共享和个人提示词版本，用于智能体和工作流复用。',
     playground: '调试台',
+    playgroundDescription: '先用模型验证提示词效果，再决定是否沉淀为托管提示词或工作流配置。',
   },
   sources: {
     official: '官方模板',
@@ -82,18 +85,28 @@ const messages: typeof enUS = {
     followLabel: '跟随标签',
     pinVersion: '固定版本',
     label: '标签',
-    copyModeDescription: '选择一个版本后，会复制到当前节点中，你可以继续修改，不会影响提示词库里的原始提示词。',
+    copyModeDescription:
+      '选择一个版本后，会复制到当前节点中，你可以继续修改，不会影响提示词库里的原始提示词。',
     replaceWarningTitle: '将替换当前提示词',
-    replaceWarningDescriptionCopy: '应用这个模板后，当前节点下面已经填写的提示词内容会被替换。替换后你仍然可以继续编辑。',
-    replaceWarningDescriptionReference: '应用这个模板后，当前节点下面已经填写的提示词内容会被替换。',
+    replaceWarningDescriptionCopy:
+      '应用这个模板后，当前节点下面已经填写的提示词内容会被替换。替换后你仍然可以继续编辑。',
+    replaceWarningDescriptionReference:
+      '应用这个模板后，当前节点下面已经填写的提示词内容会被替换。',
     replaceWarningConfirm: '确认替换',
   },
   optimizer: {
     title: '优化提示词',
     description: '使用内置优化器，把原始提示词改写成更稳定、更清晰、更适合生产使用的版本。',
+    inputPanelLabel: '输入与设置',
+    inputPanelDescription: '按顺序检查原文、修改要求和优化配置。',
+    settingsPanelLabel: '优化配置',
+    settingsPanelDescription: '选择模型、优化目标、长度约束和变量保护。',
+    waitingTitle: '等待优化结果',
+    errorStateTitle: '优化未完成',
+    errorStateDescription: '调整输入或配置后，可以重新开始优化。',
     goalLabel: '优化目标',
     sourceLabel: '原始提示词',
-    sourceHelpDescription: '直接粘贴一段你想优化的提示词，再点击一个优化目标开始运行。',
+    sourceHelpDescription: '直接粘贴一段你想优化的提示词，选择目标后点击开始优化。',
     prefilledSourceDescription: '如果这里已经带入了现有内容，你可以直接修改后再优化。',
     resetSource: '恢复原文',
     sourcePlaceholder: '输入需要优化的原始提示词',
@@ -108,12 +121,18 @@ const messages: typeof enUS = {
     outputLabel: '优化结果',
     variantHint: '只生成一份更好的结果，方便快速查看；如果不满意，可以调整目标后重新优化。',
     copy: '复制结果',
+    copyPartial: '复制部分结果',
     apply: '应用结果',
     run: '开始优化',
     rerun: '重新优化',
     running: '正在优化...',
     runningDescription: '正在通过隐藏优化器生成更好的提示词...',
-    emptyState: '输入原始提示词后点击一个优化目标，即可生成一份更好的结果。',
+    emptyState: '输入原始提示词、选择优化目标后，点击开始优化生成结果。',
+    editInstructionLabel: '修改要求',
+    editInstructionDescription: '可选。用于告诉 AI 这次要定向加强、缩短、保留结构或调整语气。',
+    editInstructionPlaceholder: '例如：只增强工具调用规则、保持原结构、让语气更正式、缩短到 800 字以内',
+    targetMaxChars: '目标结果不超过 {count} 字符',
+    truncatedWarning: '优化结果因模型输出长度限制被截断。请缩短修改要求或重新优化；截断结果不能应用到系统提示词。',
     progress: {
       title: '优化进度',
       steps: {
@@ -206,7 +225,8 @@ const messages: typeof enUS = {
     },
     insights: {
       title: '引用偏差',
-      description: '当前托管引用和最近运行证据并不完全一致，这通常意味着实际运行已经开始偏离当前引用的版本或标签。',
+      description:
+        '当前托管引用和最近运行证据并不完全一致，这通常意味着实际运行已经开始偏离当前引用的版本或标签。',
       labelsOnlyInRuns: '最近运行里出现、但当前引用中没有的标签：',
       labelsOnlyInReferences: '当前引用还在使用、但最近运行里没有出现的标签：',
       versionsOnlyInRuns: '最近运行里出现、但当前引用中没有的版本：',
@@ -288,10 +308,12 @@ const messages: typeof enUS = {
     currentModelFallback: '当前模型',
     providerBillingIssue: '{model} 当前不可用，请检查模型渠道的余额/额度状态，或切换到其他模型。',
     providerBillingHintAdmin: '请前往渠道管理检查并充值模型额度，或者临时切换到其他可用模型。',
-    providerBillingHintMember: '当前模型渠道额度不足，请联系管理员充值模型额度，或者先切换到其他可用模型。',
+    providerBillingHintMember:
+      '当前模型渠道额度不足，请联系管理员充值模型额度，或者先切换到其他可用模型。',
     providerAccessDenied: '{model} 当前不可用，请检查模型渠道权限或切换到其他模型。',
     providerAccessHintAdmin: '请前往渠道管理检查该模型渠道权限配置，或者临时切换到其他可用模型。',
-    providerAccessHintMember: '当前模型渠道没有可用权限，请联系管理员检查对应模型配置，或者先切换到其他可用模型。',
+    providerAccessHintMember:
+      '当前模型渠道没有可用权限，请联系管理员检查对应模型配置，或者先切换到其他可用模型。',
     providerActionSwitchModel: '切换模型',
     providerActionManageChannels: '前往渠道管理',
     optimizerCopied: '优化后的提示词已复制',

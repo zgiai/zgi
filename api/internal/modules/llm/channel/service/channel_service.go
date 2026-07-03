@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
+	appconfig "github.com/zgiai/zgi/api/config"
 	consoleintf "github.com/zgiai/zgi/api/internal/infra/platform/console"
 	"github.com/zgiai/zgi/api/internal/modules/llm/channel/dto"
 	"github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
@@ -175,6 +176,9 @@ func (s *channelService) CreateRoute(ctx context.Context, organizationID uuid.UU
 		return nil, err
 	}
 	channelProvider := spec.Name
+	if err := validateNativeProtocolBaseURLs(spec, req.NativeProtocols); err != nil {
+		return nil, err
+	}
 
 	if err := s.ensureOllamaCustomModels(ctx, organizationID, channelProvider, req.APIBaseURL, req.APIKey, req.Models); err != nil {
 		return nil, err
@@ -502,6 +506,13 @@ func (s *channelService) UpdateRoute(ctx context.Context, organizationID, id uui
 
 	spec, err := channelprovider.ValidateConnectionFields(newChannelProvider, newAPIBaseURL)
 	if err != nil {
+		return nil, err
+	}
+	effectiveNativeProtocols := route.NativeProtocols
+	if req.NativeProtocols != nil {
+		effectiveNativeProtocols = *req.NativeProtocols
+	}
+	if err := validateNativeProtocolBaseURLs(spec, effectiveNativeProtocols); err != nil {
 		return nil, err
 	}
 	if req.APIKey != nil {
@@ -1148,6 +1159,16 @@ func isUniqueConstraintViolation(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "duplicate key")
 }
 
+func validateNativeProtocolBaseURLs(spec channelprovider.Spec, protocols model.NativeProtocolConfig) error {
+	if err := channelprovider.ValidateBaseURLForSpec(spec, "native_protocols.openai_responses.base_url", protocols.OpenAIResponses.BaseURL); err != nil {
+		return err
+	}
+	if err := channelprovider.ValidateBaseURLForSpec(spec, "native_protocols.anthropic_messages.base_url", protocols.AnthropicMessages.BaseURL); err != nil {
+		return err
+	}
+	return nil
+}
+
 // TestChannelModel tests a specific model on a channel
 func (s *channelService) TestDraftChannelModel(ctx context.Context, organizationID uuid.UUID, req *dto.DraftTestChannelModelRequest) (*dto.ChannelModelTestResult, error) {
 	spec, err := channelprovider.ValidateConnectionFields(req.ChannelProvider, req.APIBaseURL)
@@ -1193,13 +1214,17 @@ func (s *channelService) DiscoverDraftChannelModels(ctx context.Context, req *dt
 	if err := channelprovider.ValidateAPIKey(spec, req.APIKey); err != nil {
 		return nil, err
 	}
+	llmConfig := appconfig.Current().LLM
 
 	adapterInstance, err := adapter.NewAdapter(&adapter.AdapterConfig{
-		ProviderName: spec.AdapterKey,
-		APIKey:       req.APIKey,
-		BaseURL:      req.APIBaseURL,
-		Timeout:      30 * time.Second,
-		MaxRetries:   1,
+		ProviderName:        spec.AdapterKey,
+		APIKey:              req.APIKey,
+		BaseURL:             req.APIBaseURL,
+		Timeout:             30 * time.Second,
+		MaxRetries:          1,
+		GuardOutboundURL:    llmConfig.OutboundURLGuardEnabled(),
+		GuardOutboundDNS:    llmConfig.GuardOutboundDNS,
+		AllowPrivateBaseURL: channelprovider.AllowsPrivateBaseURL(spec.Name),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create %s adapter: %w", spec.Name, err)
@@ -1207,6 +1232,13 @@ func (s *channelService) DiscoverDraftChannelModels(ctx context.Context, req *dt
 
 	upstreamModels, err := adapterInstance.ListModels(ctx, req.APIKey)
 	if err != nil {
+		if adapter.IsCapabilityUnsupported(err) {
+			return &dto.DiscoverDraftChannelModelsResponse{
+				Models:           []dto.DiscoveredChannelModelView{},
+				Total:            0,
+				ListingSupported: false,
+			}, nil
+		}
 		return nil, fmt.Errorf("discover %s models: %w", spec.Name, err)
 	}
 
@@ -1241,8 +1273,9 @@ func (s *channelService) DiscoverDraftChannelModels(ctx context.Context, req *dt
 	}
 
 	return &dto.DiscoverDraftChannelModelsResponse{
-		Models: views,
-		Total:  len(views),
+		Models:           views,
+		Total:            len(views),
+		ListingSupported: true,
 	}, nil
 }
 

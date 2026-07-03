@@ -2,53 +2,92 @@ package v1
 
 import (
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
-	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
 	toolfilescheduler "github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file/scheduler"
+	datalibrarymodule "github.com/zgiai/zgi/api/internal/modules/datalibrary"
+	datalibraryservice "github.com/zgiai/zgi/api/internal/modules/datalibrary/service"
+	datalibraryworker "github.com/zgiai/zgi/api/internal/modules/datalibrary/worker"
 	dataset_repo "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
 	fileProcessHandler "github.com/zgiai/zgi/api/internal/modules/file_process/handler"
 	fileProcessRepo "github.com/zgiai/zgi/api/internal/modules/file_process/repository"
 	fileScheduler "github.com/zgiai/zgi/api/internal/modules/file_process/scheduler"
 	fileProcessService "github.com/zgiai/zgi/api/internal/modules/file_process/service"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
+	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	jwtMiddleware "github.com/zgiai/zgi/api/middleware"
-	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"github.com/zgiai/zgi/api/pkg/queue"
+	pkgscheduler "github.com/zgiai/zgi/api/pkg/scheduler"
 	"github.com/zgiai/zgi/api/pkg/storage"
 )
 
+type FileRouteDeps struct {
+	DB                         *gorm.DB
+	Storage                    storage.Storage
+	AccountService             interfaces.AccountService
+	WorkspaceManagementService interfaces.WorkspaceManagementService
+	OrganizationService        interfaces.OrganizationService
+	QuotaService               interfaces.QuotaService
+	LLMClient                  llmclient.LLMClient
+	DefaultModelService        llmdefaultservice.DefaultModelService
+	DataLibraryModule          *datalibrarymodule.Module
+	TaskManager                *queue.TaskManager
+	Scheduler                  *pkgscheduler.Scheduler
+	ScheduledFileService       interfaces.FileService
+}
+
 // registerFileRoutesLegacy keeps original implementation details.
-func registerFileRoutesLegacy(v1 *gin.RouterGroup, accountService interfaces.AccountService, serviceContainer *container.ServiceContainer) {
-	db := database.GetDB()
+func registerFileRoutesLegacy(v1 *gin.RouterGroup, deps FileRouteDeps) {
+	fileRepo := fileProcessRepo.NewFileRepository(deps.DB)
+	fileFolderRepo := fileProcessRepo.NewFileFolderRepository(deps.DB)
+	fileFavoriteRepo := fileProcessRepo.NewFileFavoriteRepository(deps.DB)
+	documentRepo := dataset_repo.NewDocumentRepository(deps.DB)
+	datasetRepo := dataset_repo.NewDatasetRepository(deps.DB)
 
-	storageClient := storage.GetStorage()
-
-	fileRepo := fileProcessRepo.NewFileRepository(db)
-	fileFolderRepo := fileProcessRepo.NewFileFolderRepository(db)
-	fileFavoriteRepo := fileProcessRepo.NewFileFavoriteRepository(db)
-	documentRepo := dataset_repo.NewDocumentRepository(db)
-	datasetRepo := dataset_repo.NewDatasetRepository(db)
-
-	// Get quota and enterprise services from service container
-	quotaService := serviceContainer.GetQuotaService()
-	enterpriseService := serviceContainer.GetOrganizationService()
-	tenantService := serviceContainer.GetTenantService()
-
-	fileService := fileProcessService.NewFileServiceWithVision(fileRepo, storageClient, db, quotaService, enterpriseService, serviceContainer.GetLLMClient(), serviceContainer.GetDefaultModelService())
-	fileFolderService := fileProcessService.NewFileResourceService(fileFolderRepo, fileRepo, documentRepo, datasetRepo, accountService)
+	fileService := fileProcessService.NewFileServiceWithVision(fileRepo, deps.Storage, deps.DB, deps.QuotaService, deps.OrganizationService, deps.LLMClient, deps.DefaultModelService)
+	if configurable, ok := fileService.(interface {
+		SetFileAssetDeletionService(deletionService datalibraryservice.FileAssetDeletionService)
+	}); ok {
+		configurable.SetFileAssetDeletionService(deps.DataLibraryModule.FileAssetDeletionService)
+	}
+	taskDispatcher := datalibraryworker.NewFileProcessTaskDispatcher(deps.TaskManager)
+	if deps.DataLibraryModule != nil && deps.DataLibraryModule.FileAssetChunkEditService != nil {
+		deps.DataLibraryModule.FileAssetChunkEditService.SetDatasetRefSyncEnqueuer(taskDispatcher)
+	}
+	fileFolderService := fileProcessService.NewFileResourceService(fileFolderRepo, fileRepo, documentRepo, datasetRepo, deps.AccountService)
 	fileFavoriteService := fileProcessService.NewFileFavoriteService(fileFavoriteRepo, fileRepo)
 
-	fileHandler := fileProcessHandler.NewFileHandler(fileService, fileFolderService, accountService, tenantService, enterpriseService)
-	fileResourceHandler := fileProcessHandler.NewFileResourceHandler(fileFolderService, fileService, accountService, enterpriseService, fileFavoriteService)
-	fileFavoriteHandler := fileProcessHandler.NewFileFavoriteHandler(fileFavoriteService, fileService, accountService)
+	fileHandler := fileProcessHandler.NewFileHandler(
+		fileService,
+		fileFolderService,
+		deps.AccountService,
+		deps.WorkspaceManagementService,
+		deps.OrganizationService,
+		fileProcessHandler.FileAssetProcessingServices{
+			StateService:                     deps.DataLibraryModule.FileAssetProcessingStateService,
+			ProcessingService:                deps.DataLibraryModule.ProcessingRequestService,
+			ParsePreviewService:              deps.DataLibraryModule.ParsePreviewService,
+			ParseConfirmationService:         deps.DataLibraryModule.ParseConfirmationService,
+			ParseArtifactConfirmationService: deps.DataLibraryModule.ParseArtifactConfirmationService,
+			FileAssetDetailService:           deps.DataLibraryModule.FileAssetDetailService,
+			FileAssetChunkService:            deps.DataLibraryModule.FileAssetChunkService,
+			FileAssetChunkEditService:        deps.DataLibraryModule.FileAssetChunkEditService,
+			FileAssetQAService:               deps.DataLibraryModule.FileAssetQAService,
+			TaskEnqueuer:                     taskDispatcher,
+		},
+	)
+	fileResourceHandler := fileProcessHandler.NewFileResourceHandler(fileFolderService, fileService, deps.AccountService, deps.OrganizationService, fileFavoriteService, deps.DataLibraryModule.FileAssetSummaryService)
+	fileFavoriteHandler := fileProcessHandler.NewFileFavoriteHandler(fileFavoriteService, fileService, deps.AccountService)
 
 	// Create image preview handler
-	imagePreviewHandler := fileProcessHandler.NewImagePreviewHandler(fileService, accountService, enterpriseService)
+	imagePreviewHandler := fileProcessHandler.NewImagePreviewHandler(fileService, deps.AccountService, deps.OrganizationService, deps.Storage)
 	toolFileHandler := tool_file.NewHTTPHandler(tool_file.GlobalToolFileManager)
 
 	files := v1.Group("/files",
-		jwtMiddleware.JWTWithOrganizationAndService(accountService),
+		jwtMiddleware.JWTWithOrganizationAndService(deps.AccountService),
 	)
 	{
 		files.GET("/upload", fileHandler.GetUploadConfig)
@@ -59,9 +98,34 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, accountService interfaces.Acc
 
 		files.GET("/metadata", fileHandler.GetFilesMetadata)
 
+		files.POST("/:file_id/processing-requests", fileHandler.CreateProcessingRequest)
+
+		files.POST("/:file_id/replacement", fileHandler.ReplaceDocument)
+
+		files.GET("/:file_id/detail", fileHandler.GetFileDetail)
+
+		files.GET("/:file_id/chunks", fileHandler.ListFileChunks)
+		files.PATCH("/:file_id/chunks/batch", fileHandler.BatchUpdateFileChunks)
+		files.PATCH("/:file_id/chunks/:chunk_id", fileHandler.UpdateFileChunk)
+		files.POST("/:file_id/qa/index", fileHandler.PrepareFileQAIndex)
+		files.POST("/:file_id/qa", fileHandler.AskFileQuestion)
+		files.POST("/:file_id/qa/stream", fileHandler.StreamFileQuestion)
+
+		files.GET("/:file_id/parse-preview", fileHandler.GetFileParsePreview)
+
+		files.GET("/:file_id/parse-confirmation-items", fileHandler.ListParseConfirmationItems)
+
+		files.POST("/:file_id/parse-confirmation-items/batch-ignore", fileHandler.BatchIgnoreParseConfirmationItems)
+
+		files.POST("/:file_id/parse-confirmation-items/:item_id/resolve", fileHandler.ResolveParseConfirmationItem)
+
 		files.GET("/:file_id/preview", fileHandler.GetFilePreview)
 
 		files.GET("/:file_id/preview-url", fileHandler.GetFileOriginalPreviewURL)
+
+		files.GET("/:file_id/source-preview", fileHandler.GetFileSourcePreviewPages)
+
+		files.GET("/:file_id/spreadsheet-preview", fileHandler.GetFileSpreadsheetPreview)
 
 		files.GET("/:file_id/download", fileHandler.DownloadFile)
 
@@ -93,7 +157,7 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, accountService interfaces.Acc
 
 	// File folder routes
 	fileFolders := v1.Group("/file-folders",
-		jwtMiddleware.JWTWithOrganizationAndService(accountService),
+		jwtMiddleware.JWTWithOrganizationAndService(deps.AccountService),
 	)
 	{
 		fileFolders.GET("", fileResourceHandler.GetFolders)
@@ -115,7 +179,7 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, accountService interfaces.Acc
 
 	// File favorites routes
 	fileFavorites := v1.Group("/file-favorites",
-		jwtMiddleware.JWTWithOrganizationAndService(accountService),
+		jwtMiddleware.JWTWithOrganizationAndService(deps.AccountService),
 	)
 	{
 		fileFavorites.POST("", fileFavoriteHandler.FavoriteFile)
@@ -131,8 +195,9 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, accountService interfaces.Acc
 	filePreview := v1.Group("/files")
 	{
 		filePreview.GET("/mineru-images", imagePreviewHandler.GetMinerUImage)
+		filePreview.GET("/document-images", imagePreviewHandler.GetDocumentImage)
 		filePreview.GET("/:file_id/file-preview",
-			jwtMiddleware.FilePreviewAuthMiddleware(accountService),
+			jwtMiddleware.FilePreviewAuthMiddleware(deps.AccountService),
 			imagePreviewHandler.GetFilePreview,
 		)
 		filePreview.GET("/tools/:tool_file_id", toolFileHandler.GetToolFile)
@@ -140,20 +205,58 @@ func registerFileRoutesLegacy(v1 *gin.RouterGroup, accountService interfaces.Acc
 }
 
 // RegisterFileRoutes now uses modular services.
-func RegisterFileRoutes(v1 *gin.RouterGroup, accountService interfaces.AccountService, serviceContainer *container.ServiceContainer) {
-	registerFileRoutesLegacy(v1, accountService, serviceContainer)
+func RegisterFileRoutes(v1 *gin.RouterGroup, deps FileRouteDeps) {
+	validateFileRouteDeps(deps)
+	registerFileRoutesLegacy(v1, deps)
 
-	scheduler := serviceContainer.GetScheduler()
-	fileService := serviceContainer.GetFileService()
-	if err := fileScheduler.RegisterFileTasks(scheduler, fileService); err != nil {
+	if err := fileScheduler.RegisterFileTasks(deps.Scheduler, deps.ScheduledFileService); err != nil {
 		logger.Error("Failed to register file scheduled tasks", err)
 	} else {
 		logger.Info("File scheduled tasks registered", nil)
 	}
 
-	if err := toolfilescheduler.RegisterToolFileTasks(scheduler, tool_file.GlobalToolFileManager); err != nil {
+	if err := toolfilescheduler.RegisterToolFileTasks(deps.Scheduler, tool_file.GlobalToolFileManager); err != nil {
 		logger.Error("Failed to register tool file scheduled tasks", err)
 	} else {
 		logger.Info("Tool file scheduled tasks registered", nil)
+	}
+}
+
+func validateFileRouteDeps(deps FileRouteDeps) {
+	if deps.DB == nil {
+		panic("file routes require db")
+	}
+	if deps.Storage == nil {
+		panic("file routes require storage")
+	}
+	if deps.AccountService == nil {
+		panic("file routes require account service")
+	}
+	if deps.WorkspaceManagementService == nil {
+		panic("file routes require workspace management service")
+	}
+	if deps.OrganizationService == nil {
+		panic("file routes require organization service")
+	}
+	if deps.QuotaService == nil {
+		panic("file routes require quota service")
+	}
+	if deps.LLMClient == nil {
+		panic("file routes require llm client")
+	}
+	if deps.DefaultModelService == nil {
+		panic("file routes require default model service")
+	}
+	if deps.DataLibraryModule == nil {
+		panic("file routes require data library module")
+	}
+	if deps.TaskManager == nil {
+		panic("file routes require task manager")
+	}
+	if deps.Scheduler == nil {
+		panic("file routes require scheduler")
+	}
+	if deps.ScheduledFileService == nil {
+		panic("file routes require scheduled file service")
 	}
 }

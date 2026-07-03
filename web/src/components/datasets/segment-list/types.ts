@@ -19,6 +19,7 @@ export interface SegmentCardProps {
   onViewAllChildSegments: (segment: SegmentDetail) => void;
   onEditChildSegment: (segmentId: string, childChunkId: string, content: string) => void;
   onDeleteChildSegment: (segmentId: string, childChunkId: string) => void;
+  readOnly?: boolean;
 }
 
 /**
@@ -34,6 +35,7 @@ export interface SegmentHeaderProps {
   onEdit: (segment: SegmentDetail) => void;
   onDelete: (segmentIds: string[]) => void;
   onViewChildChunks?: (segment: SegmentDetail) => void;
+  readOnly?: boolean;
 }
 
 /**
@@ -45,6 +47,7 @@ export interface SecondaryChunksProps {
   onViewAllChildSegments: (segment: SegmentDetail) => void;
   onEditChildSegment: (segmentId: string, childChunkId: string, content: string) => void;
   onDeleteChildSegment: (segmentId: string, childChunkId: string) => void;
+  readOnly?: boolean;
 }
 
 export interface QuestionItem {

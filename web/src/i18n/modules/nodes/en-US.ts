@@ -207,7 +207,8 @@ const messages = {
       title: 'Announcement title rendered after variables resolve',
       content: 'Announcement content rendered after variables resolve',
       expiration_time: 'Announcement expiration time formatted for display',
-      token: 'Short announcement token for building custom links',
+      token: 'Short link code for SMS link_code or custom short links',
+      access_token: 'Announcement access token for internal /n/{token} links',
       url: 'Public announcement URL',
     },
     questionAnswer: {
@@ -467,6 +468,7 @@ const messages = {
       waitingForReviewer:
         'Waiting for the reviewer to respond. The flow will continue automatically.',
       waitingForReviewerStatus: 'Waiting for reviewer',
+      stopDisabled: 'Approval is in progress. The workflow cannot be stopped manually.',
       required: 'This field is required',
       submitted: 'Approval submitted',
       alreadyCompleted: 'Approval already completed',
@@ -478,6 +480,7 @@ const messages = {
       expired: 'Approval expired',
       expiredDescription:
         'The approval form has expired. The flow will continue through the timeout branch.',
+      closedByWorkflowFailure: 'Approval closed because the workflow failed.',
       finished: 'Flow resumed',
       finishedDescription: 'The approval has been processed and the flow has finished.',
       expiresAt: 'Expires at {time}',
@@ -1005,7 +1008,8 @@ const messages = {
       helpTipTitle: 'Tip: ',
       helpTipText:
         'Most workflows work well with the default order. If you want the model to mimic a standard exchange, add an example conversation between history and the current input.',
-      systemFixedDescription: 'System prompt is fixed at the beginning and is edited in the main panel.',
+      systemFixedDescription:
+        'System prompt is fixed at the beginning and is edited in the main panel.',
       contextPlaceholder: 'Extra context',
       contextPlaceholderDescription: 'Provide the model with more information or answer examples.',
       historyPanelHint:
@@ -1311,6 +1315,7 @@ const messages = {
       select: 'Select (string)',
       number: 'Number (number)',
       checkbox: 'Checkbox (boolean)',
+      datetime: 'Date & Time (string)',
       file: 'File (file)',
       'file-list': 'File List (array[file])',
     },
@@ -1323,6 +1328,7 @@ const messages = {
       variableNameRequired: 'Variable Name is required.',
       selectNeedsOptions: 'Select type requires options',
       defaultMustBeNumber: 'Default value must be a valid number for number type',
+      defaultMustBeDateTime: 'Default value must be a valid date and time',
       maxLengthGtZero: 'Max length must be greater than 0',
       fileTypeRequired: 'At least one file type must be selected.',
       customExtensionsRequired: 'Custom file type requires at least one file extension.',
@@ -1332,6 +1338,10 @@ const messages = {
         optionsTitle: 'Options',
         addOption: 'Add Option',
         optionN: 'Option {index}',
+      },
+      dateTimeDefault: {
+        fixed: 'Fixed date and time',
+        now: 'Current date and time',
       },
       title: {
         edit: 'Edit Variable',

@@ -117,6 +117,10 @@ export default function ApiKeysPage(): JSX.Element {
   );
 
   const onCopyKey = useCallback(async (key: ApiKeyItem) => {
+    if (!key.key) {
+      return;
+    }
+
     try {
       await navigator.clipboard.writeText(key.key);
       setCopiedId(key.id);
@@ -275,18 +279,21 @@ export default function ApiKeysPage(): JSX.Element {
                       <code className="text-xs bg-muted px-2 py-1 rounded font-mono">
                         {key.key_masked}
                       </code>
-                      <Button
-                        variant="ghost"
-                        isIcon
-                        className="h-6 w-6"
-                        onClick={() => onCopyKey(key)}
-                      >
-                        {copiedId === key.id ? (
-                          <Check className="h-3 w-3 text-green-500" />
-                        ) : (
-                          <Copy className="h-3 w-3" />
-                        )}
-                      </Button>
+                      {key.key ? (
+                        <Button
+                          variant="ghost"
+                          isIcon
+                          className="h-6 w-6"
+                          aria-label={t('actions.copy')}
+                          onClick={() => onCopyKey(key)}
+                        >
+                          {copiedId === key.id ? (
+                            <Check className="h-3 w-3 text-green-500" />
+                          ) : (
+                            <Copy className="h-3 w-3" />
+                          )}
+                        </Button>
+                      ) : null}
                     </div>
                   </TableCell>
                   <TableCell>
@@ -320,9 +327,11 @@ export default function ApiKeysPage(): JSX.Element {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-36">
-                        <DropdownMenuItem onClick={() => onCopyKey(key)}>
-                          <Copy className="h-4 w-4 mr-2" /> {t('actions.copy')}
-                        </DropdownMenuItem>
+                        {key.key ? (
+                          <DropdownMenuItem onClick={() => onCopyKey(key)}>
+                            <Copy className="h-4 w-4 mr-2" /> {t('actions.copy')}
+                          </DropdownMenuItem>
+                        ) : null}
                         <DropdownMenuItem onClick={() => openEdit(key)}>
                           <Pencil className="h-4 w-4 mr-2" /> {t('actions.edit')}
                         </DropdownMenuItem>
@@ -363,7 +372,7 @@ export default function ApiKeysPage(): JSX.Element {
       )}
 
       <ConfirmDialog
-        variant="warning"
+        variant="danger"
         open={Boolean(confirmId)}
         onOpenChange={open => !open && setConfirmId(null)}
         title={t('actions.confirmDeleteTitle')}

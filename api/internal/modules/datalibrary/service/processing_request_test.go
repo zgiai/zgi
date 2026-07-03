@@ -209,6 +209,33 @@ func TestProcessingRequestServiceListsGlobalRequests(t *testing.T) {
 	}
 }
 
+func TestProcessingRequestServiceGetsScopedRequest(t *testing.T) {
+	requestID := uuid.New()
+	repo := &fakeProcessingRequestRepository{
+		current: &model.ProcessingRequest{
+			ID:             requestID,
+			OrganizationID: "org-1",
+			AssetID:        uuid.New(),
+			TargetLevel:    model.DocumentProcessingLevelVectorize,
+			Status:         model.ProcessingRequestStatusRunning,
+		},
+	}
+	svc := NewProcessingRequestService(repo)
+
+	view, err := svc.GetRequest(context.Background(), "org-1", requestID)
+	if err != nil {
+		t.Fatalf("GetRequest: %v", err)
+	}
+	if view.ID != requestID || view.OrganizationID != "org-1" {
+		t.Fatalf("view=%+v", view)
+	}
+
+	_, err = svc.GetRequest(context.Background(), "other-org", requestID)
+	if !errors.Is(err, ErrProcessingRequestNotFound) {
+		t.Fatalf("cross-org err=%v", err)
+	}
+}
+
 func TestProcessingRequestServiceListRejectsInvalidTargetLevel(t *testing.T) {
 	svc := NewProcessingRequestService(&fakeProcessingRequestRepository{})
 
@@ -319,6 +346,33 @@ func TestProcessingRequestServiceStateTransitions(t *testing.T) {
 		completed.CompletedAt == nil ||
 		completed.ExecutionMetadata["parse_artifact_id"] != "parse-1" {
 		t.Fatalf("completed=%+v", completed)
+	}
+}
+
+func TestProcessingRequestServiceUpdatesExecutionMetadataWithoutStatusTransition(t *testing.T) {
+	requestID := uuid.New()
+	repo := &fakeProcessingRequestRepository{
+		current: &model.ProcessingRequest{
+			ID:             requestID,
+			OrganizationID: "org-1",
+			AssetID:        uuid.New(),
+			TargetLevel:    model.DocumentProcessingLevelVectorize,
+			Status:         model.ProcessingRequestStatusRunning,
+		},
+	}
+	svc := NewProcessingRequestService(repo)
+
+	updated, err := svc.UpdateRequestExecutionMetadata(context.Background(), "org-1", requestID, map[string]any{
+		"progress_completed": int64(8),
+		"progress_total":     int64(20),
+	})
+	if err != nil {
+		t.Fatalf("UpdateRequestExecutionMetadata: %v", err)
+	}
+	if updated.Status != model.ProcessingRequestStatusRunning ||
+		updated.ExecutionMetadata["progress_completed"] != int64(8) ||
+		updated.ExecutionMetadata["progress_total"] != int64(20) {
+		t.Fatalf("updated=%+v", updated)
 	}
 }
 
@@ -795,6 +849,14 @@ func (r *fakeProcessingRequestRepository) StatusSummaryByAssetID(ctx context.Con
 func (r *fakeProcessingRequestRepository) QueueSummary(ctx context.Context, filter repository.ProcessingRequestQueueSummaryFilter) ([]repository.ProcessingRequestQueueSummary, error) {
 	r.lastQueueSummaryFilter = filter
 	return r.queueSummary, nil
+}
+
+func (r *fakeProcessingRequestRepository) UpdateExecutionMetadata(ctx context.Context, organizationID string, id uuid.UUID, metadata map[string]any) (*model.ProcessingRequest, error) {
+	if r.current == nil || r.current.ID != id || r.current.OrganizationID != organizationID {
+		return nil, nil
+	}
+	r.current.ExecutionMetadata = metadata
+	return r.current, nil
 }
 
 func (r *fakeProcessingRequestRepository) TransitionStatus(ctx context.Context, id uuid.UUID, patch repository.ProcessingRequestStatusPatch) (*model.ProcessingRequest, error) {

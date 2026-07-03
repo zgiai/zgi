@@ -25,8 +25,10 @@ const messages: DashboardMessages = {
     workspaces: '工作空间管理',
     contacts: '通讯录',
     permissions: '权限配置',
+    organizationSettings: '组织设置',
     aichatSkills: 'Skill 管理',
     modelSettings: '默认模型管理',
+    parserSettings: '解析器配置',
     marketplace: '插件市场',
   },
   costCenter: {
@@ -125,7 +127,6 @@ const messages: DashboardMessages = {
       instructions: {
         title: '充值说明',
         scan: '请使用微信或支付宝扫描下方二维码进行充值',
-        rate: '充值金额将自动转换为美金余额（汇率：1 USD ≈ {rate} CNY）',
         arrival: '充值成功后，余额将在 5-10 分钟内到账',
       },
       qrcode: {
@@ -334,6 +335,51 @@ const messages: DashboardMessages = {
         description: '用于根据提示词生成图片，适合控制台和工作流里的生图场景。',
       },
     },
+    parserSettings: {
+      title: '解析器配置',
+      description:
+        '配置 Reducto 和 MinerU，用于文件重新解析。除必填密钥外，其他字段会自动带上默认值，也可以按部署环境修改。',
+      actions: {
+        returnToReparse: '返回重新解析',
+        save: '保存',
+      },
+      messages: {
+        saved: '解析器配置已保存',
+        saveFailed: '解析器配置保存失败',
+      },
+      reducto: {
+        description: 'Reducto 官方解析服务。启用前需要先配置 API Key。',
+      },
+      mineru: {
+        description: 'MinerU 解析服务。选择本地服务或官方服务模式后，再配置对应字段。',
+        modes: {
+          sidecar: '本地服务',
+          official: '官方服务',
+        },
+      },
+      fields: {
+        enabled: '启用',
+        apiKey: 'API Key',
+        baseUrl: 'Base URL',
+        timeout: '超时时间（秒）',
+        mode: '模式',
+        apiUrl: 'API URL',
+        officialToken: '官方 Token',
+        modelVersion: '模型版本',
+        pollInterval: '轮询间隔（秒）',
+      },
+      placeholders: {
+        secretConfigured: '已配置，留空则保持不变',
+        secretRequired: '启用前必填',
+      },
+      status: {
+        not_configured: '未配置',
+        disabled: '已停用',
+        available: '可用',
+        failed: '异常',
+        unknown: '未知',
+      },
+    },
   },
   stats: {
     welcome: '欢迎回来，{name}！',
@@ -485,6 +531,59 @@ const messages: DashboardMessages = {
     },
   },
   organization: {
+    settings: {
+      title: '组织设置',
+      subtitle: '管理当前组织的资料与管理员权限。',
+      profileTitle: '组织资料',
+      profileDescription: '该名称会显示在组织切换器、仪表盘和组织成员视图中。',
+      permissionHint: '管理员可编辑组织资料，只有所有者可管理组织管理员。',
+      name: '组织名称',
+      namePlaceholder: '请输入组织名称',
+      currentRole: '当前角色',
+      roles: {
+        owner: '所有者',
+        admin: '管理员',
+        normal: '成员',
+      },
+      noPermission: '只有组织所有者和管理员可以更新组织设置。',
+      save: '保存修改',
+      saving: '保存中...',
+      saved: '已保存',
+      readyToSave: '有修改内容，可以保存。',
+      saveDisabledReasons: {
+        saving: '正在保存，请稍候。',
+        noPermission: '只有组织所有者和管理员可以编辑组织资料。',
+        nameRequired: '组织名称不能为空。',
+        nameTooLong: '组织名称不能超过 {max} 个字符。',
+        noChanges: '当前没有修改内容。',
+      },
+      updateSuccess: '组织已更新',
+      updateError: '组织更新失败',
+      adminManagement: {
+        title: '管理员管理',
+        description: '所有者可以为活跃成员授予或移除组织管理员权限。',
+        adminCount: '组织管理员 {count} 位',
+        ownerTitle: '所有者',
+        ownerBadge: '所有者',
+        noOwner: '未找到所有者。',
+        adminTitle: '管理员',
+        refreshing: '刷新中...',
+        demote: '移除管理员',
+        emptyAdmins: '暂无组织管理员。',
+        addTitle: '添加管理员',
+        addDescription: '搜索活跃普通成员，并将其设置为组织管理员。',
+        searchPlaceholder: '按姓名或邮箱搜索活跃成员',
+        promote: '设为管理员',
+        emptyCandidates: '没有匹配的活跃普通成员。',
+        promoteSuccess: '已添加管理员',
+        demoteSuccess: '已移除管理员',
+        updateRoleError: '管理员角色更新失败',
+        demoteConfirmTitle: '移除管理员权限',
+        demoteConfirmDescription: '确定移除“{name}”的管理员权限吗？该成员仍会保留普通成员身份。',
+        demoteConfirm: '移除管理员',
+        cancel: '取消',
+      },
+    },
     aichatSkills: {
       pageTitle: '组织 Skill',
       pageSubtitle: 'Skill 是组织可启用的 AI 能力包。模型会在需要时读取说明、参考资料或调用工具。',
@@ -535,6 +634,10 @@ const messages: DashboardMessages = {
         disabled: '未启用',
         invalid: '无效',
       },
+      scriptStatus: {
+        runnable: '脚本可运行',
+        unsupported: '脚本未启用',
+      },
       autoSave: {
         ready: '自动保存',
         saving: '保存中...',
@@ -568,7 +671,8 @@ const messages: DashboardMessages = {
         cancel: '取消',
         overwriteTitle: '将覆盖现有 Skill',
         overwriteDescription: '组织中已存在 “{skill}”。确认导入后，现有 Skill 包会被新的包替换。',
-        systemSkillNameConflict: '这个 Skill 名称已被平台内置 Skill 占用，请修改自定义 Skill 名称后再导入。',
+        systemSkillNameConflict:
+          '这个 Skill 名称已被平台内置 Skill 占用，请修改自定义 Skill 名称后再导入。',
       },
       messages: {
         saved: 'AIChat Skill 设置已保存',
@@ -818,6 +922,9 @@ const messages: DashboardMessages = {
       email: '邮箱',
       workspaces: '所属工作空间',
       allWorkspaces: '所有工作空间',
+      unassignedWorkspace: '未分配工作空间',
+      unassignedWorkspaceHint: '该成员已在组织中，但没有加入任何工作空间，暂时无法使用工作台功能。',
+      assignWorkspace: '分配工作空间',
       status: '状态',
       actions: '操作',
       active: '正常',
@@ -996,6 +1103,10 @@ const messages: DashboardMessages = {
       disband: '解散',
       people: '人',
       noWorkspaces: '暂无工作空间',
+      assignMemberBannerTitle: '为 {member} 分配工作空间',
+      assignMemberBannerDescription:
+        '请选择一个目标工作空间。进入详情后会自动打开添加成员弹窗，并用该成员邮箱进行搜索。',
+      assignMemberBackToContacts: '返回通讯录',
       loadError: '加载工作空间列表失败',
       deleteSuccess: '工作空间解散成功',
       deleteError: '解散工作空间失败',
@@ -1069,6 +1180,9 @@ const messages: DashboardMessages = {
         roleOwner: '负责人',
         roleAdmin: '管理员',
         roleMember: '成员',
+        assignMemberBannerTitle: '正在将 {member} 加入当前工作空间',
+        assignMemberBannerDescription:
+          '添加成员弹窗已按该邮箱预填搜索。选择成员和工作空间角色后即可完成分配。',
         addMemberModal: {
           title: '添加成员',
           titleWithWorkspace: '添加成员至 {workspaceName}',

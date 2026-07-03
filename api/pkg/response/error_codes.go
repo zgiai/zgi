@@ -169,6 +169,8 @@ var (
 	ErrInvalidUserType         = ErrorCode{204006, "Invalid user ID type", true}
 	ErrSystemAppCountInvalid   = ErrorCode{204007, "There must be exactly one system application", true}
 	ErrWebAppOffline           = ErrorCode{204008, "This web app is offline", true}
+	ErrWebAppNotPublished      = ErrorCode{204009, "Agent web app is not published", true}
+	ErrAgentPromptTooLong      = ErrorCode{204010, "Agent system prompt is too long", true}
 )
 
 var (
@@ -280,6 +282,7 @@ var (
 	ErrToolProviderNotFound = ErrorCode{210008, "Tool provider not found", true}
 	ErrToolInvokeFailed     = ErrorCode{210009, "Failed to invoke tool", true}
 	ErrToolParameterInvalid = ErrorCode{210010, "Invalid tool parameter", true}
+	ErrFileFolderExists     = ErrorCode{210011, "A folder with this name already exists in the same directory", true}
 )
 
 var (

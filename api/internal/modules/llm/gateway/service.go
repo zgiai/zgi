@@ -126,6 +126,7 @@ type llmGatewayServiceImpl struct {
 	cryptoService         shared.CryptoService
 	consoleProvider       pconsole.ConsoleProvider // Console provider for official channels
 	officialCreditChecker paymentservice.OfficialCreditChecker
+	policyPrompt          llmPolicyPromptInjector
 }
 
 func (s *llmGatewayServiceImpl) isModelRoutable(ctx context.Context, organizationID uuid.UUID, modelName string) (bool, error) {
@@ -232,6 +233,7 @@ func NewLLMGatewayServiceWithCrypto(
 		cryptoService:         cryptoService,
 		consoleProvider:       platformContainer.Console,
 		officialCreditChecker: paymentservice.NewConsoleOfficialCreditChecker(),
+		policyPrompt:          newLLMPolicyPromptInjector(cfg.LLMPolicyPrompt),
 	}, nil
 }
 
@@ -760,13 +762,17 @@ func (s *llmGatewayServiceImpl) createAdapterConfig(selection *ProviderSelection
 	if spec, err := channelprovider.Resolve(selection.ChannelProvider); err == nil {
 		adapterProvider = spec.AdapterKey
 	}
+	llmConfig := appconfig.Current().LLM
 
 	config := &adapter.AdapterConfig{
-		ProviderName: adapterProvider,
-		ProviderID:   selection.Provider.ID.String(),
-		BaseURL:      selection.Provider.APIBaseURL,
-		Timeout:      500 * time.Second,
-		MaxRetries:   3,
+		ProviderName:        adapterProvider,
+		ProviderID:          selection.Provider.ID.String(),
+		BaseURL:             selection.Provider.APIBaseURL,
+		Timeout:             500 * time.Second,
+		MaxRetries:          3,
+		GuardOutboundURL:    llmConfig.OutboundURLGuardEnabled(),
+		GuardOutboundDNS:    llmConfig.GuardOutboundDNS,
+		AllowPrivateBaseURL: selection.UseSystemProvider || channelprovider.AllowsPrivateBaseURL(selection.ChannelProvider),
 	}
 
 	// In V2 architecture, API key is already decrypted and passed through ProviderSelection

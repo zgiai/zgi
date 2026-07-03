@@ -42,9 +42,19 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 		return nil, newFinalizedStreamError(err)
 	}
+	preflightUsage, err := s.runUserMemoryPreflight(runCtx, persistCtx, prepared, eventCallback)
+	if err != nil {
+		if s.isStoppedContext(runCtx, prepared.Message.ID) {
+			_ = s.persistStoppedAnswer(persistCtx, prepared, "", preflightUsage)
+			return nil, ErrMessageStopped
+		}
+		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
+		return nil, newFinalizedStreamError(err)
+	}
 
 	if prepared.skillsEnabled() {
 		answer, usage, err := s.runPreparedSkillStream(runCtx, persistCtx, prepared, onChunk, eventCallback)
+		usage = mergeUsage(preflightUsage, usage)
 		if err != nil {
 			if errors.Is(err, ErrMessageStopped) {
 				_ = s.clearPreparedRuntime(persistCtx, prepared)
@@ -80,6 +90,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		return nil, newFinalizedStreamError(err)
 	}
 	answer, usage, err := s.collectStreamAnswer(runCtx, prepared, stream, onChunk)
+	usage = mergeUsage(preflightUsage, usage)
 	if err != nil {
 		if errors.Is(err, ErrMessageStopped) {
 			_ = s.clearPreparedRuntime(persistCtx, prepared)

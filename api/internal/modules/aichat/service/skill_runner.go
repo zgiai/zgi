@@ -11,17 +11,18 @@ import (
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 const (
-	defaultMaxSkillPlanningRounds            = 50
-	defaultMaxSkillStepsPerTurn              = 160
-	defaultMaxBusinessToolCallsPerSkill      = 20
-	defaultMaxRecoverableSkillFailures       = 20
-	defaultMaxConsecutiveRecoverableFailures = 5
-	intermediateAnswerChunkRunes             = 180
-	streamedIntermediateAnswerArg            = "_aichat_streamed_answer"
+	defaultMaxSkillPlanningRounds                 = 50
+	defaultMaxSkillStepsPerTurn                   = 160
+	defaultMaxBusinessToolCallsPerSkill           = 20
+	defaultMaxRecoverableFailureRounds            = 12
+	defaultMaxConsecutiveRecoverableFailureRounds = 5
+	intermediateAnswerChunkRunes                  = 180
+	streamedIntermediateAnswerArg                 = "_aichat_streamed_answer"
 )
 
 var skillPlanningFallbackProgressDelay = 800 * time.Millisecond
@@ -29,9 +30,11 @@ var skillPlanningFallbackProgressDelay = 800 * time.Millisecond
 type skillStepResult struct {
 	trace       skills.SkillTrace
 	toolMessage adapter.Message
+	answer      string
 	usedSkill   bool
 	usedTool    bool
 	recoverable bool
+	terminal    bool
 	fatalErr    error
 }
 
@@ -102,8 +105,9 @@ func (s *service) runPreparedSkillStream(
 
 	stepCount := 0
 	toolCallCount := 0
-	recoverableFailureCount := 0
-	consecutiveRecoverableFailures := 0
+	recoverableFailureRoundCount := 0
+	consecutiveRecoverableFailureRounds := 0
+	recoverableFailureCallCount := 0
 	skillToolCallCounts := map[string]int{}
 	skillUsed := false
 	loadedSkills := map[string]struct{}{}
@@ -168,6 +172,9 @@ func (s *service) runPreparedSkillStream(
 		planningMessage.ToolCalls = toolCalls
 		messages = append(messages, planningMessage)
 
+		roundHadRecoverableFailure := false
+		roundHadSuccess := false
+		var lastRecoverableTrace skills.SkillTrace
 		for _, call := range toolCalls {
 			stepCount++
 			result := s.handleProgressiveSkillCall(ctx, prepared, resolved, call, execCtx, toolCallCount, skillToolCallCounts, loadedSkills, onEvent)
@@ -176,19 +183,11 @@ func (s *service) runPreparedSkillStream(
 			s.logSkillTrace(ctx, prepared, result.trace)
 			if result.recoverable {
 				s.emitSkillError(ctx, prepared, result.trace, onEvent)
-				recoverableFailureCount++
-				consecutiveRecoverableFailures++
-				if recoverableFailureCount > defaultMaxRecoverableSkillFailures ||
-					consecutiveRecoverableFailures > defaultMaxConsecutiveRecoverableFailures {
-					err := fmt.Errorf("%w: too many failed skill calls", ErrInvalidInput)
-					trace := failedSkillTrace(result.trace.Kind, result.trace.ToolName, err)
-					trace.SkillID = result.trace.SkillID
-					trace.Arguments = result.trace.Arguments
-					s.emitSkillError(ctx, prepared, trace, onEvent)
-					return answerBuilder.String(), usage, err
-				}
+				roundHadRecoverableFailure = true
+				lastRecoverableTrace = result.trace
+				recoverableFailureCallCount++
 			} else {
-				consecutiveRecoverableFailures = 0
+				roundHadSuccess = true
 			}
 			if result.fatalErr != nil {
 				if !result.recoverable {
@@ -203,11 +202,64 @@ func (s *service) runPreparedSkillStream(
 				toolCallCount++
 				incrementSkillToolCallCount(skillToolCallCounts, result.trace.SkillID)
 			}
+			if result.answer != "" {
+				appendAnswerText(&answerBuilder, result.answer)
+				s.emitAnswerChunk(ctx, prepared, result.answer, onEvent)
+			}
+			if result.terminal {
+				logger.DebugContext(ctx, "aichat skill planning requested user input",
+					"conversation_id", prepared.Conversation.ID.String(),
+					"message_id", prepared.Message.ID.String(),
+					"skill_step_count", stepCount,
+					"tool_call_count", toolCallCount,
+				)
+				return answerBuilder.String(), usage, nil
+			}
 			messages = append(messages, result.toolMessage)
+		}
+		if roundHadRecoverableFailure {
+			recoverableFailureRoundCount++
+			if !roundHadSuccess {
+				consecutiveRecoverableFailureRounds++
+			} else {
+				consecutiveRecoverableFailureRounds = 0
+			}
+			logger.DebugContext(ctx, "aichat skill recoverable failures observed",
+				"conversation_id", prepared.Conversation.ID.String(),
+				"message_id", prepared.Message.ID.String(),
+				"failure_round_count", recoverableFailureRoundCount,
+				"consecutive_failure_rounds", consecutiveRecoverableFailureRounds,
+				"failure_call_count", recoverableFailureCallCount,
+			)
+			if recoverableFailureRoundCount > defaultMaxRecoverableFailureRounds ||
+				consecutiveRecoverableFailureRounds > defaultMaxConsecutiveRecoverableFailureRounds {
+				err := fmt.Errorf("%w: too many failed skill calls", ErrInvalidInput)
+				trace := failedSkillTrace(lastRecoverableTrace.Kind, lastRecoverableTrace.ToolName, err)
+				trace.SkillID = lastRecoverableTrace.SkillID
+				trace.Arguments = lastRecoverableTrace.Arguments
+				s.emitSkillError(ctx, prepared, trace, onEvent)
+				return answerBuilder.String(), usage, err
+			}
+		} else {
+			consecutiveRecoverableFailureRounds = 0
 		}
 	}
 
 	return answerBuilder.String(), usage, fmt.Errorf("%w: too many skill planning rounds", ErrInvalidInput)
+}
+
+func appendAnswerText(builder *strings.Builder, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	if builder.Len() > 0 {
+		current := builder.String()
+		if !strings.HasSuffix(current, "\n") {
+			builder.WriteString("\n\n")
+		}
+	}
+	builder.WriteString(text)
 }
 
 func (s *service) runSkillPlanning(
@@ -404,14 +456,25 @@ func shouldStreamSkillPlanning(prepared *PreparedChat) bool {
 	if prepared == nil || prepared.parts == nil {
 		return false
 	}
+	if isQwQModel(prepared.parts.ModelName) {
+		return true
+	}
 	provider := strings.ToLower(strings.TrimSpace(prepared.parts.Provider))
 	switch provider {
 	case "openai", "openai-compatible", "deepseek", "openrouter", "zgi-cloud", "zgi_cloud", "dashscope",
-		"aliyun", "claude", "anthropic", "moonshotai", "moonshotai-cn", "siliconflow", "agicto", "glm":
+		"aliyun", "qwen", "claude", "anthropic", "moonshotai", "moonshotai-cn", "siliconflow", "agicto", "glm":
 		return true
 	default:
 		return false
 	}
+}
+
+func isQwQModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if idx := strings.LastIndex(model, "/"); idx >= 0 {
+		model = strings.TrimSpace(model[idx+1:])
+	}
+	return strings.HasPrefix(model, "qwq")
 }
 
 func streamChoiceText(choice adapter.StreamChoice) string {
@@ -650,6 +713,12 @@ func (s *service) handleProgressiveSkillCall(
 			trace := blockedSkillGuardrailTrace(stringArg(args, "skill_id"), toolName, "skill must be loaded before calling its tools")
 			return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), false, false)
 		}
+		if skills.RequiresPromptProfessionalizerPreflight(skillID, toolName) {
+			if _, ok := loadedSkills[skills.SkillPromptProfessionalizer]; !ok {
+				trace := blockedSkillGuardrailTrace(skillID, toolName, "prompt-professionalizer must be loaded before calling this professional generation tool")
+				return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), false, false)
+			}
+		}
 		if doc, ok := resolved.Get(skillID); ok && len(doc.Tools) == 0 {
 			trace := blockedSkillGuardrailTrace(skillID, toolName, "skill does not provide callable tools")
 			return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), true, false)
@@ -665,13 +734,62 @@ func (s *service) handleProgressiveSkillCall(
 			return fatalSkillStep(trace, skills.ToolResultMessage(call.ID, errorPayload(err)), err)
 		}
 		return s.handleCallSkillTool(ctx, prepared, resolved, call.ID, args, execCtx, onEvent)
+	case skills.MetaToolRequestUserInput:
+		return s.handleRequestUserInputCall(ctx, prepared, call.ID, args, onEvent)
 	case skills.MetaToolIntermediateAnswer:
 		return s.handleIntermediateAnswerCall(ctx, prepared, call.ID, args, onEvent)
 	default:
 		err := fmt.Errorf("%w: unsupported skill meta tool %s", ErrInvalidInput, call.Function.Name)
 		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
-		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "use one of load_skill, read_skill_reference, call_skill_tool, or submit_intermediate_answer")), false, false)
+		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "use one of load_skill, request_user_input, read_skill_reference, call_skill_tool, or submit_intermediate_answer")), false, false)
 	}
+}
+
+func (s *service) handleRequestUserInputCall(
+	ctx context.Context,
+	prepared *PreparedChat,
+	callID string,
+	args map[string]interface{},
+	onEvent func(StreamEvent) error,
+) skillStepResult {
+	questions, err := normalizeUserInputRequestArgs(args)
+	if err != nil {
+		trace := failedSkillTrace("user_input_request", "", err)
+		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "call request_user_input again with one to five non-empty questions and optional short options")), false, false)
+	}
+	visibleMessage := normalizeUserInputRequestMessage(args)
+	if visibleMessage == "" {
+		err := fmt.Errorf("%w: message is required", ErrInvalidInput)
+		trace := failedSkillTrace("user_input_request", "", err)
+		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "call request_user_input again with a brief user-visible message and one to five questions")), false, false)
+	}
+	firstQuestion := userInputString(questions[0]["question"])
+	trace := skills.SkillTrace{
+		Kind:    "user_input_request",
+		Message: firstQuestion,
+		Status:  "success",
+		Arguments: map[string]interface{}{
+			"question_count": len(questions),
+			"questions":      userInputQuestionSummaries(questions),
+		},
+	}
+	if visibleMessage != "" {
+		trace.Message = visibleMessage
+	}
+	payload := userInputRequestPayload(prepared, callID, questions)
+	s.persistUserInputRequestBestEffort(ctx, prepared, payload)
+	s.emitPreparedEvent(ctx, prepared, streamEventUserInputRequested, payload, onEvent)
+	logger.DebugContext(ctx, "aichat user input requested",
+		"conversation_id", prepared.Conversation.ID.String(),
+		"message_id", prepared.Message.ID.String(),
+		"question_count", len(questions),
+	)
+	result := terminalSkillStep(trace, skills.ToolResultMessage(callID, map[string]interface{}{
+		"status":      "waiting_for_user",
+		"instruction": "The question is visible to the user. Stop this turn and wait for the next user message.",
+	}), false, false)
+	result.answer = visibleMessage
+	return result
 }
 
 func (s *service) handleIntermediateAnswerCall(
@@ -850,11 +968,11 @@ func (s *service) handleCallSkillTool(
 		trace := failedSkillTrace("tool_call", toolName, err)
 		trace.SkillID = skillID
 		trace.Arguments = argumentSummary
-		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "fix the tool_name or arguments and retry")), true, false)
+		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool_name or arguments and retry", skillID, toolName)), true, false)
 	}
 	invocation.Trace.Arguments = argumentSummary
 	if err != nil {
-		return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "fix the tool arguments based on the error and retry")), true, false)
+		return recoverableSkillStep(invocation.Trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, "fix the tool arguments based on the error and retry", skillID, toolName)), true, false)
 	}
 	invocation.Trace.Result = summarizeSkillToolResult(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages)
 	logger.DebugContext(ctx, "aichat skill tool completed",
@@ -891,6 +1009,16 @@ func recoverableSkillStep(trace skills.SkillTrace, toolMessage adapter.Message, 
 	}
 }
 
+func terminalSkillStep(trace skills.SkillTrace, toolMessage adapter.Message, usedSkill bool, usedTool bool) skillStepResult {
+	return skillStepResult{
+		trace:       trace,
+		toolMessage: toolMessage,
+		usedSkill:   usedSkill,
+		usedTool:    usedTool,
+		terminal:    true,
+	}
+}
+
 func fatalSkillStep(trace skills.SkillTrace, toolMessage adapter.Message, err error) skillStepResult {
 	return skillStepResult{
 		trace:       trace,
@@ -900,16 +1028,20 @@ func fatalSkillStep(trace skills.SkillTrace, toolMessage adapter.Message, err er
 }
 
 func (s *service) skillExecutionContext(prepared *PreparedChat) skills.ExecutionContext {
-	tenantID := prepared.Scope.OrganizationID.String()
+	runtimeParameters := map[string]interface{}{
+		"organization_id": prepared.Scope.OrganizationID.String(),
+	}
 	if prepared.Scope.WorkspaceID != nil {
-		tenantID = prepared.Scope.WorkspaceID.String()
+		runtimeParameters["workspace_id"] = prepared.Scope.WorkspaceID.String()
 	}
 	return skills.ExecutionContext{
-		TenantID:       tenantID,
-		UserID:         prepared.Scope.AccountID.String(),
-		ConversationID: prepared.Conversation.ID.String(),
-		AppID:          prepared.Conversation.ID.String(),
-		MessageID:      prepared.Message.ID.String(),
+		OrganizationID:    prepared.Scope.OrganizationID.String(),
+		UserID:            prepared.Scope.AccountID.String(),
+		ConversationID:    prepared.Conversation.ID.String(),
+		AppID:             prepared.Conversation.ID.String(),
+		MessageID:         prepared.Message.ID.String(),
+		InvokeFrom:        tools.ToolInvokeFromAIChat,
+		RuntimeParameters: runtimeParameters,
 	}
 }
 
@@ -961,12 +1093,19 @@ func agenticSkillLoopSystemMessage() adapter.Message {
 		Content: strings.Join([]string{
 			"When using skills or tools, briefly explain your next action to the user before calling a skill/tool.",
 			"After each skill/tool result, summarize what happened. If a tool call fails, explain the likely cause, fix the arguments, and retry when possible.",
+			"If a tool call fails, do not repeat the same tool with the same arguments. Re-plan from the error before retrying.",
+			"For deterministic batch work, prefer one suitable business tool call that handles the batch coherently over many small repeated tool calls.",
 			"Do not claim that you saved, remembered, updated, deleted, sent, created, changed, or completed any external action unless the corresponding skill/tool call succeeded in this turn.",
 			"Progress text sent together with tool calls is transient status text. Keep it short and do not place substantial user deliverables there.",
 			"If the current turn newly creates or substantially rewrites a user-facing deliverable before later tool/skill calls, call submit_intermediate_answer for that new deliverable before continuing.",
 			"Examples of new deliverables that should use submit_intermediate_answer when followed by more tool/skill calls: novel outlines, long-form drafts, plans, tables, code sketches, analysis sections, or generated content the user asked for.",
 			"Do not call submit_intermediate_answer merely to repeat content that was already visible in an earlier assistant answer. For requests like exporting, saving, converting, or generating a file from existing content, pass the existing content directly to the file/tool call.",
 			"Do not skip submit_intermediate_answer by postponing or summarizing a new deliverable if the user explicitly asked for it as an intermediate phase.",
+			"When required information is missing or ambiguity blocks reliable progress, call request_user_input with a brief user-visible message plus a questions array containing one to five concise questions, then stop. The message should explain what you checked, why input is needed, and what you will do next. Prefer one to three questions. Do not call any other tools in the same turn after request_user_input.",
+			"If a loaded skill says a generic or ambiguous request must trigger request_user_input, you must call request_user_input and must not replace it with normal assistant text, Markdown bullets, or numbered questions.",
+			"When calling request_user_input, put the user-visible explanation only in the request_user_input message field. Do not also repeat that explanation in assistant text outside the tool call.",
+			"Each request_user_input question should ask one decision point. Include options only when each option is a concrete, directly usable answer. Do not include vague options such as free choice, freestyle, not sure, depends, any, or other; omit options for open-ended questions because the user can type freely.",
+			"Do not use request_user_input for information already confirmed in the conversation.",
 			"When no more tool or skill calls are needed, send a natural user-facing reply that is complete and self-contained. If you did not call submit_intermediate_answer for a new requested deliverable, that reply MUST include the deliverable in full, not a compressed summary.",
 			"Do not label the user-facing reply with protocol wording such as Final Answer, final result, or their Chinese equivalents unless the user explicitly asks for that wording.",
 			"When reusing existing conversation content, refer to it explicitly, for example as the previous outline or the current branch's draft; do not duplicate the full text unless the user asks to see it again.",
@@ -1178,7 +1317,7 @@ func countSkillActionTraces(traces []skills.SkillTrace) int {
 	count := 0
 	for _, trace := range traces {
 		switch trace.Kind {
-		case "skill_load", "reference_read", "tool_call", "guardrail", "intermediate_answer":
+		case "skill_load", "reference_read", "tool_call", "guardrail", "intermediate_answer", "user_input_request":
 			count++
 		}
 	}

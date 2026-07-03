@@ -32,6 +32,8 @@ import {
   isOriginalPreviewSupported,
 } from '@/utils/file-helpers';
 import { cn } from '@/lib/utils';
+import { fileManageService } from '@/services/file-manage.service';
+import type { FileSpreadsheetPreviewResponse } from '@/services/types/file';
 
 const maxOfficePreviewBytes = 10 * 1024 * 1024;
 const maxOfficeZipEntries = 256;
@@ -44,21 +46,21 @@ const maxSpreadsheetPreviewRows = 200;
 const maxSpreadsheetPreviewColumns = 100;
 const maxCsvPreviewRows = 500;
 const maxCsvPreviewColumns = 100;
-const defaultDocxPreviewZoom = 1.15;
+const defaultDocxPreviewZoom = 0.75;
 const minDocxPreviewZoom = 0.75;
 const maxDocxPreviewZoom = 1.8;
 const docxPreviewZoomStep = 0.1;
 const htmlPreviewCsp = [
-  'default-src \'none\'',
-  'script-src \'unsafe-inline\'',
-  'style-src \'unsafe-inline\' https://fonts.googleapis.com',
+  "default-src 'none'",
+  "script-src 'unsafe-inline'",
+  "style-src 'unsafe-inline' https://fonts.googleapis.com",
   'font-src https://fonts.gstatic.com data:',
   'img-src data: blob:',
-  'connect-src \'none\'',
-  'form-action \'none\'',
-  'frame-src \'none\'',
-  'base-uri \'none\'',
-  'navigate-to \'none\'',
+  "connect-src 'none'",
+  "form-action 'none'",
+  "frame-src 'none'",
+  "base-uri 'none'",
+  "navigate-to 'none'",
 ].join('; ');
 const htmlPreviewFallbackStyle = `
   .reveal {
@@ -86,6 +88,165 @@ export interface UniversalFilePreviewDialogProps {
   error?: string | null;
   onDownload?: () => void;
   isDownloading?: boolean;
+}
+
+export interface UniversalFilePreviewContentProps {
+  file: UniversalFilePreviewDescriptor | null;
+  previewUrl?: string;
+  isLoading?: boolean;
+  error?: string | null;
+  className?: string;
+}
+
+export function UniversalFilePreviewContent({
+  file,
+  previewUrl,
+  isLoading = false,
+  error = null,
+  className,
+}: UniversalFilePreviewContentProps) {
+  const t = useT('files');
+  const isSupported = isOriginalPreviewSupported(file?.extension, file?.mimeType);
+  const isImage = isOriginalPreviewImage(file?.extension, file?.mimeType);
+  const isPdf = isOriginalPreviewPdf(file?.extension, file?.mimeType);
+  const previewKind = getOriginalPreviewKind(file?.extension, file?.mimeType);
+  const unsupportedFormatLabel = file ? getPreviewFormatLabel(file) : '';
+
+  if (!file) {
+    return (
+      <div className={cn('h-full min-h-[360px]', className)}>
+        <PreviewMessage
+          icon={<AlertCircle className="h-5 w-5" />}
+          title={t('preview.noFileSelected')}
+        />
+      </div>
+    );
+  }
+
+  if (!isSupported) {
+    return (
+      <div className={cn('h-full min-h-[360px]', className)}>
+        <PreviewMessage
+          icon={<AlertCircle className="h-5 w-5" />}
+          title={
+            unsupportedFormatLabel
+              ? t('preview.unsupportedFormatTitle', { format: unsupportedFormatLabel })
+              : t('preview.unsupportedTitle')
+          }
+          description={
+            unsupportedFormatLabel
+              ? t('preview.unsupportedFormatDescription', { format: unsupportedFormatLabel })
+              : t('preview.unsupportedDescription')
+          }
+        />
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className={cn('h-full min-h-[360px]', className)}>
+        <PreviewMessage
+          icon={<Loader2 className="h-5 w-5 animate-spin" />}
+          title={t('preview.loading')}
+        />
+      </div>
+    );
+  }
+
+  if (error || !previewUrl) {
+    return (
+      <div className={cn('h-full min-h-[360px]', className)}>
+        <PreviewMessage
+          icon={<AlertCircle className="h-5 w-5" />}
+          title={error || t('preview.unavailableTitle')}
+          description={t('preview.downloadOnlyDescription')}
+        />
+      </div>
+    );
+  }
+
+  if (isImage) {
+    return (
+      <div
+        className={cn(
+          'flex h-full min-h-0 items-center justify-center overflow-auto bg-muted/30 p-4',
+          className
+        )}
+      >
+        <img
+          src={previewUrl}
+          alt={file.name}
+          className="max-h-full max-w-full object-contain"
+        />
+      </div>
+    );
+  }
+
+  if (previewKind === 'office') {
+    return (
+      <div className={cn('h-full min-h-0', className)}>
+        <OfficePreview file={file} previewUrl={previewUrl} />
+      </div>
+    );
+  }
+
+  if (previewKind === 'csv') {
+    return (
+      <div className={cn('h-full min-h-0', className)}>
+        <CsvPreview previewUrl={previewUrl} />
+      </div>
+    );
+  }
+
+  if (previewKind === 'html') {
+    return (
+      <div className={cn('h-full min-h-0', className)}>
+        <HtmlPreview previewUrl={previewUrl} title={file.name} />
+      </div>
+    );
+  }
+
+  if (isPdf) {
+    return (
+      <iframe
+        src={previewUrl}
+        title={file.name}
+        referrerPolicy="no-referrer"
+        className={cn('h-full min-h-[60vh] w-full border-0 bg-background', className)}
+      />
+    );
+  }
+
+  if (previewKind === 'browser') {
+    return (
+      <iframe
+        src={previewUrl}
+        title={file.name}
+        sandbox=""
+        referrerPolicy="no-referrer"
+        className={cn('h-full min-h-[60vh] w-full border-0 bg-background', className)}
+      />
+    );
+  }
+
+  return (
+    <div className={cn('h-full min-h-[360px]', className)}>
+      <PreviewMessage
+        icon={<AlertCircle className="h-5 w-5" />}
+        title={
+          unsupportedFormatLabel
+            ? t('preview.unsupportedFormatTitle', { format: unsupportedFormatLabel })
+            : t('preview.unsupportedTitle')
+        }
+        description={
+          unsupportedFormatLabel
+            ? t('preview.unsupportedFormatDescription', { format: unsupportedFormatLabel })
+            : t('preview.unsupportedDescription')
+        }
+      />
+    </div>
+  );
 }
 
 /**
@@ -157,11 +318,9 @@ export function UniversalFilePreviewDialog({
     file?.previewUrl
   );
   const downloadUrl = firstNonEmptyString(previewSession?.downloadUrl, file?.downloadUrl);
-  const isSupported = isOriginalPreviewSupported(activeFile?.extension, activeFile?.mimeType);
   const extension = activeFile?.extension?.replace(/^\./, '').toUpperCase() || '';
   const title = activeFile?.name || t('preview.title');
   const isImage = isOriginalPreviewImage(activeFile?.extension, activeFile?.mimeType);
-  const isPdf = isOriginalPreviewPdf(activeFile?.extension, activeFile?.mimeType);
   const previewKind = getOriginalPreviewKind(activeFile?.extension, activeFile?.mimeType);
   const htmlExternalOpenUrl = previewKind === 'html' ? resolvedPreviewUrl : '';
   const canOpenHtmlExternally = Boolean(htmlExternalOpenUrl);
@@ -169,101 +328,6 @@ export function UniversalFilePreviewDialog({
   const openHtmlInNewTab = () => {
     if (!htmlExternalOpenUrl) return;
     window.open(htmlExternalOpenUrl, '_blank', 'noopener,noreferrer');
-  };
-
-  const renderPreview = () => {
-    if (!activeFile) {
-      return (
-        <PreviewMessage
-          icon={<AlertCircle className="h-5 w-5" />}
-          title={t('preview.noFileSelected')}
-        />
-      );
-    }
-
-    if (!isSupported) {
-      return (
-        <PreviewMessage
-          icon={<AlertCircle className="h-5 w-5" />}
-          title={t('preview.unsupportedTitle')}
-          description={t('preview.unsupportedDescription')}
-        />
-      );
-    }
-
-    if (isLoading) {
-      return (
-        <PreviewMessage
-          icon={<Loader2 className="h-5 w-5 animate-spin" />}
-          title={t('preview.loading')}
-        />
-      );
-    }
-
-    if (error || !resolvedPreviewUrl) {
-      return (
-        <PreviewMessage
-          icon={<AlertCircle className="h-5 w-5" />}
-          title={error || t('preview.unavailableTitle')}
-          description={t('preview.downloadOnlyDescription')}
-        />
-      );
-    }
-
-    if (isImage) {
-      return (
-        <div className="flex h-full min-h-0 items-center justify-center overflow-auto bg-muted/30 p-4">
-          <img
-            src={resolvedPreviewUrl}
-            alt={activeFile.name}
-            className="max-h-full max-w-full object-contain"
-          />
-        </div>
-      );
-    }
-
-    if (previewKind === 'office') {
-      return <OfficePreview file={activeFile} previewUrl={resolvedPreviewUrl} />;
-    }
-
-    if (previewKind === 'csv') {
-      return <CsvPreview previewUrl={resolvedPreviewUrl} />;
-    }
-
-    if (previewKind === 'html') {
-      return <HtmlPreview previewUrl={resolvedPreviewUrl} title={activeFile.name} />;
-    }
-
-    if (isPdf) {
-      return (
-        <iframe
-          src={resolvedPreviewUrl}
-          title={activeFile.name}
-          referrerPolicy="no-referrer"
-          className="h-full min-h-[60vh] w-full border-0 bg-background"
-        />
-      );
-    }
-
-    if (previewKind === 'browser') {
-      return (
-        <iframe
-          src={resolvedPreviewUrl}
-          title={activeFile.name}
-          sandbox=""
-          referrerPolicy="no-referrer"
-          className="h-full min-h-[60vh] w-full border-0 bg-background"
-        />
-      );
-    }
-
-    return (
-      <PreviewMessage
-        icon={<AlertCircle className="h-5 w-5" />}
-        title={t('preview.unsupportedTitle')}
-        description={t('preview.unsupportedDescription')}
-      />
-    );
   };
 
   return (
@@ -284,7 +348,14 @@ export function UniversalFilePreviewDialog({
             </div>
           </DialogHeader>
 
-          <DialogBody className="min-h-0 overflow-hidden p-0">{renderPreview()}</DialogBody>
+          <DialogBody className="min-h-0 overflow-hidden p-0">
+            <UniversalFilePreviewContent
+              file={activeFile}
+              previewUrl={resolvedPreviewUrl}
+              isLoading={isLoading}
+              error={error}
+            />
+          </DialogBody>
 
           <DialogFooter className="border-t px-5 py-3">
             {canOpenHtmlExternally ? (
@@ -332,6 +403,31 @@ function getPreviewFileKey(file: UniversalFilePreviewDescriptor): string {
   return file.id || file.name;
 }
 
+function getPreviewFormatLabel(file: UniversalFilePreviewDescriptor): string {
+  const extension = (file.extension || getFileExtension(file.name)).replace(/^\./, '').trim();
+  if (extension) return extension.toUpperCase();
+
+  const mimeType = file.mimeType?.split(';')[0].trim().toLowerCase() ?? '';
+  return previewMimeTypeLabels[mimeType] ?? mimeType;
+}
+
+function getFileExtension(filename: string): string {
+  const normalized = filename.trim();
+  const lastDotIndex = normalized.lastIndexOf('.');
+  if (lastDotIndex <= 0 || lastDotIndex === normalized.length - 1) return '';
+
+  return normalized.slice(lastDotIndex + 1);
+}
+
+const previewMimeTypeLabels: Record<string, string> = {
+  'application/msword': 'DOC',
+  'application/vnd.ms-excel': 'XLS',
+  'application/vnd.ms-powerpoint': 'PPT',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'PPTX',
+  'application/zip': 'ZIP',
+  'application/x-zip-compressed': 'ZIP',
+};
+
 interface OfficePreviewProps {
   file: UniversalFilePreviewDescriptor;
   previewUrl: string;
@@ -354,6 +450,9 @@ function OfficePreview({ file, previewUrl }: OfficePreviewProps) {
   }
   if (extension === 'xlsx') {
     return <SpreadsheetPreview previewUrl={previewUrl} />;
+  }
+  if (extension === 'xls') {
+    return <SpreadsheetPreview previewUrl={previewUrl} fileId={file.id} source="server" />;
   }
 
   return (
@@ -448,14 +547,20 @@ function HtmlPreview({ previewUrl, title }: { previewUrl: string; title: string 
 function buildIsolatedHtmlPreview(html: string): string {
   const parser = new DOMParser();
   const document = parser.parseFromString(html, 'text/html');
-  const head = document.head || document.documentElement.insertBefore(document.createElement('head'), document.body);
+  const head =
+    document.head ||
+    document.documentElement.insertBefore(document.createElement('head'), document.body);
 
-  document.querySelectorAll('base, iframe, object, embed, form, meta[http-equiv="refresh"]').forEach(node => {
-    node.remove();
-  });
-  document.querySelectorAll('script[src], script[type="module"], script[type="importmap"]').forEach(node => {
-    node.remove();
-  });
+  document
+    .querySelectorAll('base, iframe, object, embed, form, meta[http-equiv="refresh"]')
+    .forEach(node => {
+      node.remove();
+    });
+  document
+    .querySelectorAll('script[src], script[type="module"], script[type="importmap"]')
+    .forEach(node => {
+      node.remove();
+    });
   document.querySelectorAll('*').forEach(element => {
     for (const attribute of Array.from(element.attributes)) {
       const name = attribute.name.toLowerCase();
@@ -487,7 +592,10 @@ function buildIsolatedHtmlPreview(html: string): string {
 
 function isSafeHtmlPreviewUrl(value: string, attributeName: string): boolean {
   if (!value) return true;
-  const normalized = value.replace(/\s+/g, '').replace(/\u007f/g, '').toLowerCase();
+  const normalized = value
+    .replace(/\s+/g, '')
+    .replace(/\u007f/g, '')
+    .toLowerCase();
   if (
     normalized.startsWith('javascript:') ||
     normalized.startsWith('vbscript:') ||
@@ -681,7 +789,13 @@ interface SpreadsheetState {
   activeSheet: string;
 }
 
-function SpreadsheetPreview({ previewUrl }: { previewUrl: string }) {
+interface SpreadsheetPreviewProps {
+  previewUrl: string;
+  fileId?: string;
+  source?: 'xlsx' | 'server';
+}
+
+function SpreadsheetPreview({ previewUrl, fileId, source = 'xlsx' }: SpreadsheetPreviewProps) {
   const t = useT('files');
   const [state, setState] = useState<SpreadsheetState | null>(null);
   const [activeSheet, setActiveSheet] = useState('');
@@ -699,14 +813,13 @@ function SpreadsheetPreview({ previewUrl }: { previewUrl: string }) {
 
     const load = async () => {
       try {
-        const [response, jszip] = await Promise.all([
-          fetch(previewUrl, { credentials: 'include', signal: abortController.signal }),
-          import('jszip'),
-        ]);
-        if (!response.ok) throw new Error(loadErrorText);
-
-        const buffer = await readOfficePreviewBuffer(response, officeTooLargeText);
-        const sheets = await readXlsxWorkbookPreview(buffer, jszip.default, officeTooLargeText);
+        const sheets =
+          source === 'server'
+            ? await readServerSpreadsheetPreview(fileId, emptyWorkbookText)
+            : await readClientXlsxSpreadsheetPreview(previewUrl, abortController, {
+                loadErrorText,
+                officeTooLargeText,
+              });
         const firstSheet = sheets[0];
         if (!cancelled) {
           if (!firstSheet) throw new Error(emptyWorkbookText);
@@ -732,7 +845,7 @@ function SpreadsheetPreview({ previewUrl }: { previewUrl: string }) {
       cancelled = true;
       abortController.abort();
     };
-  }, [previewUrl, loadErrorText, emptyWorkbookText, officeTooLargeText]);
+  }, [previewUrl, fileId, source, loadErrorText, emptyWorkbookText, officeTooLargeText]);
 
   const currentSheet = useMemo(
     () => state?.sheets.find(item => item.name === activeSheet) ?? state?.sheets[0],
@@ -1177,6 +1290,51 @@ async function readXlsxWorkbookPreview(
   );
 
   return sheets.filter((sheet): sheet is SpreadsheetSheetPreview => sheet !== null);
+}
+
+async function readClientXlsxSpreadsheetPreview(
+  previewUrl: string,
+  abortController: AbortController,
+  messages: {
+    loadErrorText: string;
+    officeTooLargeText: string;
+  }
+): Promise<SpreadsheetSheetPreview[]> {
+  const [response, jszip] = await Promise.all([
+    fetch(previewUrl, { credentials: 'include', signal: abortController.signal }),
+    import('jszip'),
+  ]);
+  if (!response.ok) throw new Error(messages.loadErrorText);
+
+  const buffer = await readOfficePreviewBuffer(response, messages.officeTooLargeText);
+  return readXlsxWorkbookPreview(buffer, jszip.default, messages.officeTooLargeText);
+}
+
+async function readServerSpreadsheetPreview(
+  fileId: string | undefined,
+  emptyWorkbookText: string
+): Promise<SpreadsheetSheetPreview[]> {
+  if (!fileId) {
+    throw new Error(emptyWorkbookText);
+  }
+  const response = await fileManageService.getSpreadsheetPreview(fileId);
+  return normalizeServerSpreadsheetPreview(response.data);
+}
+
+function normalizeServerSpreadsheetPreview(
+  preview: FileSpreadsheetPreviewResponse | undefined
+): SpreadsheetSheetPreview[] {
+  if (!preview?.sheets?.length) return [];
+
+  return preview.sheets.map(sheet => ({
+    name: sheet.name || 'Sheet',
+    rows: sheet.rows.slice(0, maxSpreadsheetPreviewRows).map(row => ({
+      number: row.number,
+      cells: row.cells.slice(0, maxSpreadsheetPreviewColumns),
+    })),
+    columnCount: Math.min(sheet.columnCount, maxSpreadsheetPreviewColumns),
+    totalRowCount: sheet.totalRowCount,
+  }));
 }
 
 async function readSharedStrings(zip: JSZip, limitErrorText: string): Promise<string[]> {

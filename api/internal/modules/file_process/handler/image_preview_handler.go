@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
@@ -15,6 +16,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/util"
 	zgiimage "github.com/zgiai/zgi/api/pkg/image"
 	"github.com/zgiai/zgi/api/pkg/response"
+	"github.com/zgiai/zgi/api/pkg/storage"
 )
 
 // ImagePreviewHandler handles image preview HTTP requests
@@ -22,6 +24,7 @@ type ImagePreviewHandler struct {
 	fileService       interfaces.FileService
 	accountService    interfaces.AccountService
 	enterpriseService interfaces.OrganizationService
+	storage           storage.Storage
 	validator         *validator.Validate
 }
 
@@ -30,11 +33,17 @@ func NewImagePreviewHandler(
 	fileService interfaces.FileService,
 	accountService interfaces.AccountService,
 	enterpriseService interfaces.OrganizationService,
+	storageClients ...storage.Storage,
 ) *ImagePreviewHandler {
+	var storageClient storage.Storage
+	if len(storageClients) > 0 {
+		storageClient = storageClients[0]
+	}
 	return &ImagePreviewHandler{
 		fileService:       fileService,
 		accountService:    accountService,
 		enterpriseService: enterpriseService,
+		storage:           storageClient,
 		validator:         validator.New(),
 	}
 }
@@ -143,6 +152,22 @@ func (h *ImagePreviewHandler) writeTextFilePreview(c *gin.Context, uploadFile *d
 }
 
 func (h *ImagePreviewHandler) GetMinerUImage(c *gin.Context) {
+	storageKey := c.Query("key")
+	if storageKey != "" {
+		if h.storage == nil {
+			response.Fail(c, response.ErrFileNotFound)
+			return
+		}
+		content, err := h.storage.Load(storageKey)
+		if err != nil {
+			response.Fail(c, response.ErrFileNotFound)
+			return
+		}
+
+		h.writeCompressedImage(c, content)
+		return
+	}
+
 	imagePath := c.Query("path")
 	if imagePath == "" {
 		response.Fail(c, response.ErrInvalidParam)
@@ -155,6 +180,28 @@ func (h *ImagePreviewHandler) GetMinerUImage(c *gin.Context) {
 		return
 	}
 
+	h.writeCompressedImage(c, content)
+}
+
+func (h *ImagePreviewHandler) GetDocumentImage(c *gin.Context) {
+	storageKey := strings.TrimSpace(c.Query("key"))
+	if storageKey == "" || !strings.HasPrefix(storageKey, "document-images/") {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if h.storage == nil {
+		response.Fail(c, response.ErrFileNotFound)
+		return
+	}
+	content, err := h.storage.Load(storageKey)
+	if err != nil {
+		response.Fail(c, response.ErrFileNotFound)
+		return
+	}
+	h.writeCompressedImage(c, content)
+}
+
+func (h *ImagePreviewHandler) writeCompressedImage(c *gin.Context, content []byte) {
 	compressed, mimeType, err := zgiimage.CompressPreviewImage(content)
 	if err != nil {
 		response.Fail(c, response.ErrUnsupportedFileType)

@@ -184,7 +184,7 @@ func DefaultBlueprint() Blueprint {
 				ID:       "module-policy",
 				Label:    "Policy Layer",
 				Category: "Module",
-				Summary:  "The rule engine for network permissions, dependency profiles, quotas, and tenant-level controls.",
+				Summary:  "The rule engine for network permissions, dependency profiles, quotas, and organization-level controls.",
 				Capabilities: []string{
 					"Network policy",
 					"Quota control",
@@ -192,7 +192,7 @@ func DefaultBlueprint() Blueprint {
 				},
 				Actions: []string{
 					"Gate risky capabilities",
-					"Separate tenant policies",
+					"Separate organization policies",
 					"Apply runtime envelopes",
 				},
 				Metrics: []Metric{

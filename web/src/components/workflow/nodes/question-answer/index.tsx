@@ -195,15 +195,6 @@ export default function QuestionAnswerContent({ nodeId, data }: QuestionAnswerCo
         </div>
       ) : null}
 
-      {!isChoice ? (
-        <CustomHandle
-          type="source"
-          position={Position.Right}
-          id="source"
-          style={{ top: 20, right: -15 }}
-        />
-      ) : null}
-      <CustomHandle type="target" position={Position.Left} id="target" style={{ top: 20, left: -15 }} />
     </div>
   );
 }

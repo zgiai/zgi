@@ -52,7 +52,6 @@ type Executor struct {
 	httpClient        *http.Client
 	transformers      map[Language]TemplateTransformer
 	languageToRuntime map[Language]string
-	enableNetwork     bool
 }
 
 // NewExecutor creates a minimal executor
@@ -67,7 +66,6 @@ func NewExecutor(transformers ...TemplateTransformer) *Executor {
 			LanguageJavascript: "nodejs",
 			LanguageJinja2:     "python3",
 		},
-		enableNetwork: true,
 	}
 
 	for _, transformer := range transformers {
@@ -164,7 +162,7 @@ func (e *Executor) ExecuteCode(ctx context.Context, lang Language, preload, runn
 		Language:      runtime,
 		Code:          runner,
 		Preload:       preload,
-		EnableNetwork: e.enableNetwork,
+		EnableNetwork: cfg.CodeExec.EnableNetwork,
 	}
 
 	body, err := json.Marshal(payload)

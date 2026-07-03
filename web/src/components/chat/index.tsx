@@ -13,9 +13,14 @@ import type { OpeningGuideConfig } from '@/utils/webapp/opening-statement';
 
 import { SysChat, type SysChatProps } from './variants/sys/sys-chat';
 import { ImgChat } from './variants/img/img-chat';
-import { type ModelSelectorValue } from '../common/model-selector/model-selector';
+import {
+  type ModelSelectorModelProps,
+  type ModelSelectorValue,
+} from '../common/model-selector/model-selector';
 import { AIChatShell, type AIChatModelValue } from '@/components/chat/variants/aichat/aichat-chat';
+import type { AIChatUploadScope } from '@/components/chat/variants/aichat/input-area';
 import type { AIChatController } from '@/components/chat/controllers/aichat-controller';
+import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 
 interface SingleTestVariantProps {
   mode: 'singleTest';
@@ -45,6 +50,7 @@ interface SingleTestVariantProps {
   isStopping?: boolean;
   placeholder?: string;
   openingGuide?: OpeningGuideConfig;
+  openingGuideBrand?: OpeningGuideBrand;
   suggestions?: string[];
   toolbarForm?: {
     variables: InputVar[];
@@ -75,6 +81,7 @@ interface SingleChatVariantProps {
   inputDisabled?: boolean;
   placeholder?: string;
   openingGuide?: OpeningGuideConfig;
+  openingGuideBrand?: OpeningGuideBrand;
   suggestions?: string[];
   toolbarForm?: {
     variables: InputVar[];
@@ -91,6 +98,7 @@ interface SingleChatVariantProps {
   historyWindowSize?: number;
   inputTopNotice?: React.ReactNode;
   inputReplacement?: React.ReactNode;
+  conversationSearchKey?: readonly unknown[];
 }
 
 interface SysChatVariantProps extends SysChatProps {
@@ -103,13 +111,46 @@ interface ImgChatVariantProps {
   modelSelectorValue?: ModelSelectorValue;
   onModelChange?: (value: ModelSelectorValue) => void;
   inputTopNotice?: React.ReactNode;
+  conversationSearchKey?: readonly unknown[];
 }
 
 interface AIChatVariantProps {
   mode: 'aichat';
   controller: AIChatController;
   modelSelectorValue: AIChatModelValue;
+  modelProps?: ModelSelectorModelProps | null;
+  supportsVisionOverride?: boolean;
+  isModelInitializing?: boolean;
   onModelChange: (value: ModelSelectorValue) => void;
+  beforeSend?: () => boolean | Promise<boolean>;
+  variant?: 'full' | 'embedded';
+  showModelSelector?: boolean;
+  requireModel?: boolean;
+  showMemoryToggle?: boolean;
+  forcedUseMemory?: boolean;
+  enableUpload?: boolean;
+  uploadScope?: AIChatUploadScope;
+  showFileLibraryPicker?: boolean;
+  allowWorkspaceSwitch?: boolean;
+  homeBrand?: React.ReactNode;
+  homeTitle?: string;
+  homeDescription?: string;
+  suggestions?: string[];
+  inputPlaceholder?: string;
+  embeddedConversationMode?: 'none' | 'drawer';
+  embeddedConversationControlsMode?: 'internal' | 'external';
+  embeddedConversationControlsClassName?: string;
+  embeddedConversationControlsPortalId?: string;
+  renderEmbeddedConversationControls?: (controls: {
+    openConversations: () => void;
+    startNewConversation: () => void;
+    isHome: boolean;
+  }) => React.ReactNode;
+  onSelectConversation?: (id: string) => void;
+  onStartNewConversation?: () => void;
+  showAssistantModelMeta?: boolean;
+  surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
+  themeColor?: string;
 }
 
 type ChatProps =
@@ -135,6 +176,7 @@ const SingleTestChat: React.FC<SingleTestVariantProps> = ({
   isStopping,
   placeholder,
   openingGuide,
+  openingGuideBrand,
   suggestions,
   toolbarForm,
   showWorkflowNodeDetail,
@@ -153,9 +195,7 @@ const SingleTestChat: React.FC<SingleTestVariantProps> = ({
   const initSingle = useChatStore.use.initSingle();
   // Select live conversation by id to refresh UI on store updates
   const conv = useChatStore(state => state.conversations[conversation.id]);
-  const [draftSuggestion, setDraftSuggestion] = useState<{ id: number; text: string } | null>(
-    null
-  );
+  const [draftSuggestion, setDraftSuggestion] = useState<{ id: number; text: string } | null>(null);
 
   useEffect(() => {
     if (mode !== 'singleTest' || !enableInit) return;
@@ -227,6 +267,7 @@ const SingleTestChat: React.FC<SingleTestVariantProps> = ({
             allowWorkflowDetailExpand={allowWorkflowDetailExpand}
             defaultWorkflowDetailOpen={defaultWorkflowDetailOpen}
             openingGuide={openingGuide}
+            openingGuideBrand={openingGuideBrand}
             suggestions={suggestions}
             onSuggestionClick={handleSuggestionClick}
             renderMessageAddon={renderMessageAddon}
@@ -267,6 +308,7 @@ const SingleChatWrapper: React.FC<SingleChatVariantProps> = ({
   inputDisabled,
   placeholder,
   openingGuide,
+  openingGuideBrand,
   suggestions,
   toolbarForm,
   showWorkflowNodeDetail,
@@ -278,6 +320,7 @@ const SingleChatWrapper: React.FC<SingleChatVariantProps> = ({
   historyWindowSize,
   inputTopNotice,
   inputReplacement,
+  conversationSearchKey,
 }) => {
   return (
     <ChatWithController
@@ -289,6 +332,7 @@ const SingleChatWrapper: React.FC<SingleChatVariantProps> = ({
       inputDisabled={inputDisabled}
       placeholder={placeholder}
       openingGuide={openingGuide}
+      openingGuideBrand={openingGuideBrand}
       suggestions={suggestions}
       toolbarForm={toolbarForm}
       showWorkflowNodeDetail={showWorkflowNodeDetail}
@@ -300,6 +344,7 @@ const SingleChatWrapper: React.FC<SingleChatVariantProps> = ({
       historyWindowSize={historyWindowSize}
       inputTopNotice={inputTopNotice}
       inputReplacement={inputReplacement}
+      conversationSearchKey={conversationSearchKey}
     />
   );
 };
@@ -341,11 +386,16 @@ export { SingleChatController } from '@/components/chat/controllers/single-chat-
 export { WebappConversationTransport } from '@/components/chat/transports/webapp-transport';
 export { AgentAdvancedChatTransport } from '@/components/chat/transports/agent-advanced-chat-transport';
 export { AIChatTransport } from '@/components/chat/transports/aichat-transport';
-export { useAIChatController } from '@/components/chat/hooks/use-aichat-controller';
 export {
-  AIChatShell,
-  AIChatMessageBubble,
-} from '@/components/chat/variants/aichat/aichat-chat';
+  AgentRuntimeTransport,
+  createAgentDraftTransport,
+  createAgentWebAppTransport,
+} from '@/components/chat/transports/agent-runtime-transport';
+export {
+  useAIChatController,
+  useChatRuntimeController,
+} from '@/components/chat/runtime/controller/use-chat-runtime-controller';
+export { AIChatShell, AIChatMessageBubble } from '@/components/chat/variants/aichat/aichat-chat';
 export {
   buildCurrentChatPath,
   buildChatMessageTopology,

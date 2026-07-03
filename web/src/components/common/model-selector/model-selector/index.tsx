@@ -10,6 +10,8 @@ import { ModelIcon } from 'modelicons';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { ModelFeatureIcon } from '@/components/model/model-feature-icon';
 import { useProviderI18n } from '@/hooks/provider/use-provider-i18n';
+import { useLocale } from '@/hooks/use-locale';
+import { getModelDisplayName } from '@/utils/model-label';
 
 import type {
   ModelSelectorValue,
@@ -79,7 +81,11 @@ const OVERSCAN_PX = 200;
 function getModelPropsSignature(props: ModelSelectorModelProps | null): string {
   if (!props) return '__empty__';
 
-  const visionEnabled = Boolean(props.endpoints?.vision || props.use_cases?.includes('vision'));
+  const visionEnabled = Boolean(
+    props.endpoints?.vision ||
+      props.use_cases?.includes('vision') ||
+      props.input_modalities?.includes('image')
+  );
   return `${props.id}|${props.provider}|${props.model}|${props.updated_at}|${visionEnabled}`;
 }
 
@@ -104,6 +110,7 @@ export function ModelSelector({
   showCapabilities = true,
 }: ModelSelectorProps) {
   const t = useT();
+  const { locale } = useLocale();
   const getProviderName = useProviderI18n();
   const [searchQuery, setSearchQuery] = useState('');
   const [collapsedProviders, setCollapsedProviders] = useState<Set<string>>(new Set());
@@ -184,7 +191,8 @@ export function ModelSelector({
       if (
         capabilityFilter.features_vision &&
         !model.endpoints?.vision &&
-        !model.use_cases?.includes('vision')
+        !model.use_cases?.includes('vision') &&
+        !model.input_modalities?.includes('image')
       ) {
         return false;
       }
@@ -227,13 +235,13 @@ export function ModelSelector({
       const providerLower = `${p.provider.toLowerCase()} ${providerLabel.toLowerCase()}`.trim();
       const modelLower = new Map<string, string>();
       p.models.forEach(m => {
-        const l = (m.model_name || m.model).toLowerCase();
+        const l = getModelDisplayName(m, locale).toLowerCase();
         modelLower.set(m.model, l);
       });
       idx.set(p.provider, { providerLower, modelLower });
     });
     return idx;
-  }, [getProviderName, providerGroups]);
+  }, [getProviderName, locale, providerGroups]);
 
   // Filter providers and models based on search query
   const filteredProviders = useMemo(() => {
@@ -248,7 +256,8 @@ export function ModelSelector({
         const filteredModels = q
           ? sourceModels.filter(model => {
               const l =
-                idx?.modelLower.get(model.model) ?? (model.model_name || model.model).toLowerCase();
+                idx?.modelLower.get(model.model) ??
+                getModelDisplayName(model, locale).toLowerCase();
               return l.includes(q) || providerMatch;
             })
           : sourceModels;
@@ -265,7 +274,7 @@ export function ModelSelector({
         return dedupedModels.length > 0 ? { ...provider, models: dedupedModels } : null;
       })
       .filter(Boolean) as ProviderGroup[];
-  }, [providerGroups, searchQuery, searchIndex]);
+  }, [locale, providerGroups, searchQuery, searchIndex]);
 
   // Flattened rows for virtualization
   const flatRows = useMemo<FlatRow[]>(() => {
@@ -534,7 +543,7 @@ export function ModelSelector({
     if (!selected || !selected.model) return null;
     const p = modelIndex.get(selected.provider);
     const m = p?.get(selected.model);
-    const label = m?.model_name || selected.model;
+    const label = m ? getModelDisplayName(m, locale) : selected.model;
     const features = m
       ? Object.entries(m.features || {})
           .filter(([, enabled]) => enabled)
@@ -548,6 +557,7 @@ export function ModelSelector({
     value,
     modelProps,
     internalSelected,
+    locale,
     modelIndex,
   ]);
 
@@ -592,7 +602,7 @@ export function ModelSelector({
           </SelectValue>
         </SelectTrigger>
         <SelectContent
-          className="h-[400px] min-w-[300px] px-0"
+          className="h-[min(400px,var(--radix-select-content-available-height,calc(100dvh-16px)))] min-w-[300px] px-0"
           onCloseAutoFocus={e => e.preventDefault()}
           onFocusCapture={e => {
             const el = scrollRef.current;
@@ -614,6 +624,7 @@ export function ModelSelector({
                 onRefresh={() => {
                   refetch();
                 }}
+                refreshLabel={t('models.selector.empty.refresh')}
                 isFetching={isFetching}
               />
             )}
@@ -667,6 +678,7 @@ export function ModelSelector({
                           useCaseLabel={t('models.selector.tooltip.useCases')}
                           featureLabels={featureLabels}
                           useCaseLabels={useCaseLabels}
+                          locale={locale}
                         />
                       );
                     })}
@@ -676,6 +688,7 @@ export function ModelSelector({
                 !isLoading && (
                   <EmptyState
                     searchQuery={searchQuery}
+                    noModelsTitle={t('models.selector.empty.noModelsTitle')}
                     noResultsText={t('models.selector.empty.noResults')}
                     noModelsText={t('models.selector.empty.noModels', {
                       type: t(`models.selector.usecases.${modelType}`),
@@ -683,7 +696,11 @@ export function ModelSelector({
                     isAdminOrOwner={isAdminOrOwner}
                     contactAdminText={t('models.selector.empty.contactAdmin')}
                     configureText={t('models.selector.empty.configure')}
-                    modelTypeLabel={modelType}
+                    configureDescription={t('models.selector.empty.configureDescription', {
+                      type: t(`models.selector.usecases.${modelType}`),
+                    })}
+                    clearSearchText={t('models.selector.empty.clearSearch')}
+                    onClearSearch={() => setSearchQuery('')}
                   />
                 )
               )}

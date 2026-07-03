@@ -17,6 +17,12 @@ import type {
   UpdateDbTableRecordsRequest,
   BatchIngestFileToTableRequest,
   BatchIngestFileToTableData,
+  IngestFileToTableRequest,
+  IngestFileToTableData,
+  ParseFileForTableIngestRequest,
+  ParseFileForTableIngestData,
+  ExtractTextToTableRecordsRequest,
+  ExtractTextToTableRecordsData,
   DbTablePrompt,
   UpdateDbTablePromptRequest,
   AnalyzeFileForTableRequest,
@@ -28,6 +34,8 @@ import type {
   AnalyzeExcelImportData,
   ConfirmExcelImportRequest,
   ConfirmExcelImportData,
+  RecognizeExcelImportRequest,
+  RecognizeExcelImportData,
   ExcelImportJob,
   ExcelImportErrorList,
 } from './types/db';
@@ -168,6 +176,39 @@ class DbService extends BaseService {
   ): Promise<ApiResponseData<DbTableColumnsPayload>> {
     return this.request('post', `/data-dbs/analyze-file-for-table`, data, {
       timeout: 300000,
+    });
+  }
+
+  /**
+   * Parse one file into text content for table ingestion
+   */
+  parseFileForTableIngest(
+    data: ParseFileForTableIngestRequest
+  ): Promise<ApiResponseData<ParseFileForTableIngestData>> {
+    return this.request('post', `/data-dbs/parse-file-for-table-ingest`, data, {
+      timeout: 600000,
+    });
+  }
+
+  /**
+   * Extract table records from parsed text content
+   */
+  extractTextToTableRecords(
+    data: ExtractTextToTableRecordsRequest
+  ): Promise<ApiResponseData<ExtractTextToTableRecordsData>> {
+    return this.request('post', `/data-dbs/extract-text-to-table-records`, data, {
+      timeout: 600000,
+    });
+  }
+
+  /**
+   * Ingest data from one file into a table
+   */
+  ingestFileToTable(
+    data: IngestFileToTableRequest
+  ): Promise<ApiResponseData<IngestFileToTableData>> {
+    return this.request('post', `/data-dbs/ingest-file-to-table`, data, {
+      timeout: 600000,
     });
   }
 
@@ -324,6 +365,16 @@ class DbService extends BaseService {
   ): Promise<ApiResponseData<ConfirmExcelImportData>> {
     return this.request('post', `/data-dbs/${dbId}/excel-import/jobs/${jobId}/import`, data, {
       timeout: 600000,
+    });
+  }
+
+  recognizeExcelImport(
+    dbId: string,
+    jobId: string,
+    data: RecognizeExcelImportRequest
+  ): Promise<ApiResponseData<RecognizeExcelImportData>> {
+    return this.request('post', `/data-dbs/${dbId}/excel-import/jobs/${jobId}/recognize`, data, {
+      timeout: 300000,
     });
   }
 

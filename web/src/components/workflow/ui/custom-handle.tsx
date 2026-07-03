@@ -301,7 +301,8 @@ export const HandleConfigs: Record<
   | 'imageGen'
   | 'createScheduledTask'
   | 'notificationSms'
-  | 'announcement',
+  | 'announcement'
+  | 'questionAnswer',
   HandleConfig
 > = {
   start: {
@@ -344,6 +345,22 @@ export const HandleConfigs: Record<
       position: Position.Right,
       id: 'source',
       nodeType: 'answer',
+      style: { top: 20, right: 0 },
+    },
+  },
+  questionAnswer: {
+    target: {
+      type: 'target',
+      position: Position.Left,
+      id: 'target',
+      nodeType: 'question-answer',
+      style: { top: 20, right: 0 },
+    },
+    source: {
+      type: 'source',
+      position: Position.Right,
+      id: 'source',
+      nodeType: 'question-answer',
       style: { top: 20, right: 0 },
     },
   },

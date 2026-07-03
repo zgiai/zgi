@@ -6,7 +6,7 @@ services:
     container_name: zgi-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-zgiai123456}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in api/.env or your environment}
       POSTGRES_DB: ${POSTGRES_DB:-zgi}
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
@@ -111,11 +111,11 @@ services:
     container_name: zgi-redis
     ports:
       - "${REDIS_HOST_PORT:-6381}:6379"
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-zgiai123456}
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in api/.env or your environment}
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-zgiai123456}", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in api/.env or your environment}", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -131,7 +131,7 @@ services:
       - "7474:7474"  # HTTP
       - "7687:7687"  # Bolt
     environment:
-      - NEO4J_AUTH=neo4j/neo4j123456
+      - NEO4J_AUTH=${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in api/.env or your environment}
       - NEO4J_PLUGINS=["apoc"]
       - NEO4J_dbms_security_procedures_unrestricted=apoc.*
       - NEO4J_dbms_security_procedures_allowlist=apoc.*
@@ -143,7 +143,7 @@ services:
       - neo4j-data:/data
       - neo4j-logs:/logs
     healthcheck:
-      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "neo4j123456", "RETURN 1"]
+      test: ["CMD", "cypher-shell", "-u", "${NEO4J_USERNAME:-neo4j}", "-p", "${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in api/.env or your environment}", "RETURN 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -153,8 +153,9 @@ services:
 
   # Weaviate (Vector Database)
   weaviate:
-    image: semitechnologies/weaviate:1.23.0
+    image: cr.weaviate.io/semitechnologies/weaviate:1.35.4
     container_name: zgi-weaviate
+    working_dir: /go/pkg/mod
     ports:
       - "18080:8080"
     environment:
@@ -164,6 +165,8 @@ services:
       - DEFAULT_VECTORIZER_MODULE=none
       - ENABLE_MODULES=
       - CLUSTER_HOSTNAME=node1
+      - ENABLE_TOKENIZER_GSE_CH=true
+      - TOKENIZER_CONCURRENCY_COUNT=2
     volumes:
       - weaviate-data:/var/lib/weaviate
     restart: unless-stopped

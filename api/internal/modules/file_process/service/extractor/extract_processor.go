@@ -419,17 +419,30 @@ func (p *ExtractProcessor) extractWithFallback(ctx context.Context, filePath, ex
 func (p *ExtractProcessor) extractByStrategy(ctx context.Context, filePath, ext string, setting *ExtractSetting, strategy string) (*dto.ExtractOutput, error) {
 	switch p.ResolveETLType(ext, strategy) {
 	case ETLTypeUnstructured:
-		return p.unstructuredExtract(ctx, filePath, ext, setting.UploadFile, setting.ProcessRule)
-	case ETLTypeLandingAI:
-		return p.landingAIExtract(ctx, filePath, ext, setting.UploadFile)
-	case ETLTypeHyperparse:
-		output, err := p.hyperparseExtract(ctx, filePath, strategy)
+		output, err := p.unstructuredExtract(ctx, filePath, ext, setting.UploadFile, setting.ProcessRule)
 		if err != nil {
 			return nil, err
 		}
-		return p.processFigureElements(ctx, output, setting.UploadFile), nil
+		return p.persistMarkdownImageAssets(ctx, output, setting.UploadFile), nil
+	case ETLTypeLandingAI:
+		output, err := p.landingAIExtract(ctx, filePath, ext, setting.UploadFile)
+		if err != nil {
+			return nil, err
+		}
+		return p.persistMarkdownImageAssets(ctx, output, setting.UploadFile), nil
+	case ETLTypeHyperparse:
+		output, err := p.hyperparseExtract(ctx, filePath, strategy, setting.UploadFile)
+		if err != nil {
+			return nil, err
+		}
+		output = p.processFigureElements(ctx, output, setting.UploadFile)
+		return p.persistMarkdownImageAssets(ctx, output, setting.UploadFile), nil
 	default:
-		return p.defaultExtract(ctx, filePath, ext, setting.UploadFile)
+		output, err := p.defaultExtract(ctx, filePath, ext, setting.UploadFile)
+		if err != nil {
+			return nil, err
+		}
+		return p.persistMarkdownImageAssets(ctx, output, setting.UploadFile), nil
 	}
 }
 
@@ -683,13 +696,27 @@ func (p *ExtractProcessor) landingAIExtract(ctx context.Context, filePath, ext s
 	return extractor.Extract(ctx)
 }
 
-func (p *ExtractProcessor) hyperparseExtract(ctx context.Context, filePath, extractionStrategy string) (*dto.ExtractOutput, error) {
+func (p *ExtractProcessor) hyperparseExtract(ctx context.Context, filePath, extractionStrategy string, uploadFile *model.UploadFile) (*dto.ExtractOutput, error) {
 	if ext := strings.ToLower(filepath.Ext(filePath)); ext == ".md" || ext == ".markdown" || ext == ".mdx" || ext == ".txt" {
 		extractionStrategy = "local"
 	}
 
-	extractor := hyperparse.NewHyperparseExtractor(filePath, extractionStrategy)
+	extractor := hyperparse.NewHyperparseExtractorWithStorage(filePath, extractionStrategy, p.storage, mineruAssetNamespace(uploadFile))
 	return extractor.Extract(ctx)
+}
+
+func mineruAssetNamespace(uploadFile *model.UploadFile) string {
+	if uploadFile == nil {
+		return ""
+	}
+	parts := make([]string, 0, 2)
+	if organizationID := strings.TrimSpace(uploadFile.OrganizationID); organizationID != "" {
+		parts = append(parts, organizationID)
+	}
+	if id := strings.TrimSpace(uploadFile.ID); id != "" {
+		parts = append(parts, id)
+	}
+	return strings.Join(parts, "/")
 }
 
 func (p *ExtractProcessor) reductoExtract(ctx context.Context, filePath, ext string, uploadFile *model.UploadFile) (*dto.ExtractOutput, error) {

@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { IconInput } from '@/components/common/icon-input';
 import { createTextIconValue, type IconValue } from '@/components/common/icon-input/types';
+import { ModelSelector } from '@/components/common/model-selector';
 import {
   useDefaultModelByUseCase,
   useInitializeDefaultModelByUseCase,
@@ -29,11 +30,7 @@ import { useT } from '@/i18n';
 import type { Dataset } from '@/services/types/dataset';
 import { buildIconValueFromDataset, iconValueToDatasetPayload } from '@/utils/icon-helpers';
 import { isValidNameInput, getNameValidationErrors } from '@/utils/validation';
-import {
-  WorkspaceSelector,
-  type WorkspaceSelectorValue,
-} from '@/components/common/workspace-selector';
-import { useCurrentWorkspace, useIsOrganizationMode } from '@/store/workspace-store';
+import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
 import {
   EmbeddingSettings,
@@ -50,11 +47,11 @@ interface CreateDatasetDialogProps {
 }
 
 const DEFAULT_CREATE_RETRIEVAL_CONFIG: RetrievalConfig = {
-  search_method: 'semantic_search',
-  top_k: 4,
+  search_method: 'hybrid_search',
+  top_k: 10,
   score_threshold_enabled: true,
-  score_threshold: 0.5,
-  reranking_enable: false,
+  score_threshold: 0.35,
+  reranking_enable: true,
   reranking_model: { reranking_provider_name: '', reranking_model_name: '' },
 };
 
@@ -65,8 +62,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
   const isEditMode = false;
   const dataset = undefined as Dataset | undefined;
   const currentWorkspace = useCurrentWorkspace();
-  const isOrganizationMode = useIsOrganizationMode();
-  const requiresWorkspaceSelection = isOrganizationMode && !isEditMode;
 
   // Hooks for create/edit operations
   const createDatasetMutation = useCreateDataset(currentFolderId);
@@ -119,7 +114,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     };
   });
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
-  const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceSelectorValue | undefined>();
   const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfig>(
     DEFAULT_CREATE_RETRIEVAL_CONFIG
   );
@@ -169,7 +163,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
       });
       setRetrievalConfig(DEFAULT_CREATE_RETRIEVAL_CONFIG);
       setIconValue(createTextIconValue('', ICON_BG));
-      setSelectedWorkspace(undefined);
     }
   }, [dataset, open, isEditMode, initialIconValue]);
 
@@ -207,6 +200,26 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     },
   });
 
+  // Default rerank model for create mode. Reranking is mandatory; only the model is configurable.
+  useInitializeDefaultModelByUseCase({
+    useCase: 'rerank',
+    currentModel: {
+      provider: retrievalConfig.reranking_model?.reranking_provider_name,
+      model: retrievalConfig.reranking_model?.reranking_model_name,
+    },
+    enabled: open && !isEditMode,
+    onInitialize: v => {
+      setRetrievalConfig(prev => ({
+        ...prev,
+        reranking_enable: true,
+        reranking_model: {
+          reranking_provider_name: v.provider,
+          reranking_model_name: v.model,
+        },
+      }));
+    },
+  });
+
   // Typed change handler
   function handleInputChange<K extends keyof typeof formData>(
     field: K,
@@ -225,7 +238,7 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
       if (!checked) {
         setRetrievalConfig(prev => ({
           ...prev,
-          search_method: 'semantic_search',
+          search_method: 'hybrid_search',
         }));
         return;
       }
@@ -260,9 +273,8 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
 
   // Validate form and show toast for errors
   const validateForm = useCallback((): boolean => {
-    const workspaceId = requiresWorkspaceSelection
-      ? selectedWorkspace?.id || ''
-      : currentWorkspace?.id || dataset?.workspace_id || dataset?.workspace?.id || '';
+    const workspaceId =
+      currentWorkspace?.id || dataset?.workspace_id || dataset?.workspace?.id || '';
 
     // Check name validation
     if (!isNameValid) {
@@ -297,8 +309,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     currentWorkspace?.id,
     dataset?.workspace_id,
     dataset?.workspace?.id,
-    requiresWorkspaceSelection,
-    selectedWorkspace?.id,
     t,
   ]);
 
@@ -313,9 +323,8 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
       return;
     }
 
-    const workspaceId = requiresWorkspaceSelection
-      ? selectedWorkspace?.id || ''
-      : currentWorkspace?.id || dataset?.workspace_id || dataset?.workspace?.id || '';
+    const workspaceId =
+      currentWorkspace?.id || dataset?.workspace_id || dataset?.workspace?.id || '';
 
     const iconPayload = iconValueToDatasetPayload(iconValue, {
       existing: isEditMode ? dataset : undefined,
@@ -366,7 +375,7 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
             top_k: retrievalConfig.top_k,
             score_threshold: retrievalConfig.score_threshold,
             score_threshold_enabled: retrievalConfig.score_threshold_enabled,
-            reranking_enable: retrievalConfig.reranking_enable,
+            reranking_enable: true,
             reranking_model: retrievalConfig.reranking_model,
           },
         });
@@ -387,7 +396,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
         }));
         setRetrievalConfig(DEFAULT_CREATE_RETRIEVAL_CONFIG);
         setIconValue(createTextIconValue('', ICON_BG));
-        setSelectedWorkspace(undefined);
       }
     } catch (error) {
       console.error('CreateDatasetDialog submit error:', error);
@@ -452,26 +460,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                   className="resize-none min-h-[100px]"
                 />
               </div>
-
-              {requiresWorkspaceSelection ? (
-                <div className="space-y-2.5">
-                  <Label className="flex items-center gap-1 text-sm font-semibold">
-                    {t('datasets.createModal.workspaceLabel')}{' '}
-                    <span className="text-destructive">*</span>
-                  </Label>
-                  <WorkspaceSelector
-                    value={selectedWorkspace}
-                    placeholder={t('datasets.createModal.workspacePlaceholder')}
-                    autoSelectFirst
-                    onChange={workspace => setSelectedWorkspace(workspace)}
-                  />
-                  {hasSubmitted && !selectedWorkspace?.id ? (
-                    <p className="text-xs text-destructive font-medium animate-in fade-in slide-in-from-top-1">
-                      {t('datasets.validation.workspace.required')}
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
 
               {!isEditMode ? (
                 <div className="flex items-center justify-between rounded-xl border border-border/50 bg-muted/20 p-4 transition-colors hover:bg-muted/30">
@@ -562,6 +550,32 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                 />
               )}
 
+              {/* Rerank model selector - create mode only */}
+              {!isEditMode && (
+                <div className="space-y-2.5">
+                  <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    {t('datasets.createWizard.processConfig.rerankModel')}
+                  </Label>
+                  <ModelSelector
+                    modelType="rerank"
+                    value={{
+                      provider: retrievalConfig.reranking_model?.reranking_provider_name || '',
+                      model: retrievalConfig.reranking_model?.reranking_model_name || '',
+                    }}
+                    onChange={({ provider, model }) =>
+                      setRetrievalConfig(prev => ({
+                        ...prev,
+                        reranking_enable: true,
+                        reranking_model: {
+                          reranking_provider_name: provider,
+                          reranking_model_name: model,
+                        },
+                      }))
+                    }
+                  />
+                </div>
+              )}
+
               {/* Advanced Settings */}
               <div className="space-y-3">
                 <button
@@ -608,6 +622,7 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                         <RetrievalConfigCard
                           retrieval={retrievalConfig}
                           isGraphEnabled={graphFlowEnabled}
+                          showRerankingModel={false}
                           onChange={(config: RetrievalConfig) => {
                             if (config.search_method !== retrievalConfig.search_method) {
                               setHasManuallySetSearchMethod(true);

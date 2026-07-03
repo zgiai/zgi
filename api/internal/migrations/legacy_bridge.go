@@ -146,12 +146,18 @@ func legacyBridgeMigrationPlan() migrationPlan {
 			if err := validateSupportedLegacyShape(db); err != nil {
 				return err
 			}
-			if err := validatePublicBaselineTablesBeforeBridge(db); err != nil {
+			applied, err := appliedMigrationIDs(db)
+			if err != nil {
 				return err
+			}
+			if shouldValidatePublicBaselineBeforeBridge(applied) {
+				if err := validatePublicBaselineTablesBeforeBridge(db); err != nil {
+					return err
+				}
 			}
 			return markInitialSchemaApplied(db)
 		},
-		afterRun: validatePublicBaselineTables,
+		afterRun: validatePublicMigrationHistoryComplete,
 	}
 }
 
@@ -246,17 +252,6 @@ func readColumnType(db *gorm.DB, table, column string) (columnType, bool, error)
 	return columnType{dataType: rows[0].DataType, udtName: rows[0].UDTName}, true, nil
 }
 
-func validatePublicBaselineTables(db *gorm.DB) error {
-	missing, err := missingTables(db, baselineTableNames())
-	if err != nil {
-		return err
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("legacy database is missing public baseline tables after bridge migration: %s", strings.Join(missing, ", "))
-	}
-	return nil
-}
-
 func validatePublicBaselineTablesBeforeBridge(db *gorm.DB) error {
 	missing, err := missingTables(db, baselineTableNamesExcluding(legacyBridgeBackfilledTables))
 	if err != nil {
@@ -269,7 +264,15 @@ func validatePublicBaselineTablesBeforeBridge(db *gorm.DB) error {
 }
 
 func missingTables(db *gorm.DB, expected []string) ([]string, error) {
-	if len(expected) == 0 {
+	actual, err := existingPublicTables(db, expected)
+	if err != nil {
+		return nil, err
+	}
+	return missingTablesFromSet(expected, actual), nil
+}
+
+func existingPublicTables(db *gorm.DB, candidates []string) ([]string, error) {
+	if len(candidates) == 0 {
 		return nil, nil
 	}
 
@@ -280,10 +283,13 @@ func missingTables(db *gorm.DB, expected []string) ([]string, error) {
 		WHERE table_schema = 'public'
 		  AND table_type = 'BASE TABLE'
 		  AND table_name IN ?
-	`, expected).Scan(&actual).Error; err != nil {
+	`, candidates).Scan(&actual).Error; err != nil {
 		return nil, fmt.Errorf("inspect public tables: %w", err)
 	}
+	return actual, nil
+}
 
+func missingTablesFromSet(expected, actual []string) []string {
 	actualSet := make(map[string]struct{}, len(actual))
 	for _, table := range actual {
 		actualSet[table] = struct{}{}
@@ -296,7 +302,34 @@ func missingTables(db *gorm.DB, expected []string) ([]string, error) {
 		}
 	}
 	slices.Sort(missing)
-	return missing, nil
+	return missing
+}
+
+func shouldValidatePublicBaselineBeforeBridge(appliedIDs map[string]struct{}) bool {
+	_, hasBaselineMarker := appliedIDs[initialSchemaMigrationID]
+	return !hasBaselineMarker
+}
+
+func validatePublicMigrationHistoryComplete(db *gorm.DB) error {
+	applied, err := appliedMigrationIDs(db)
+	if err != nil {
+		return err
+	}
+	missing := missingPublicMigrationIDs(applied)
+	if len(missing) > 0 {
+		return fmt.Errorf("legacy database is missing public migration records after bridge migration: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+func missingPublicMigrationIDs(appliedIDs map[string]struct{}) []string {
+	var missing []string
+	for _, id := range currentMigrationIDs() {
+		if _, ok := appliedIDs[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	return missing
 }
 
 func baselineTableNames() []string {

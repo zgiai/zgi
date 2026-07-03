@@ -48,6 +48,7 @@ function toInputVars(vars: WebAppVariable[]): InputVar[] {
     required: v.required,
     max_length: v.max_length,
     default: v.default,
+    default_datetime_mode: v.default_datetime_mode,
     options: v.options,
     allowed_file_upload_methods: v.allowed_file_upload_methods,
     allowed_file_types: v.allowed_file_types,
@@ -521,6 +522,7 @@ const WebappChat: React.FC<WebappChatProps> = ({
         isStopping={isStopping}
         placeholder={inputPlaceholder}
         surface="webapp"
+        conversationSearchKey={['webapp', 'conversations', versionUuid, 'search']}
         inputReplacement={approvalInputReplacement}
         inputTopNotice={
           questionAnswerNotice ||

@@ -14,8 +14,10 @@ import (
 	"github.com/zgiai/zgi/api/internal/container"
 	grpcinfra "github.com/zgiai/zgi/api/internal/infra/grpc"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
+	workflowtest "github.com/zgiai/zgi/api/internal/modules/app/workflowtest"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	graphflowworker "github.com/zgiai/zgi/api/internal/modules/dataset/graphflow/worker"
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	"github.com/zgiai/zgi/api/pkg/queue"
 	pkgscheduler "github.com/zgiai/zgi/api/pkg/scheduler"
@@ -33,7 +35,10 @@ type runtimeParams struct {
 	GRPCListener        net.Listener `name:"grpc_listener"`
 	Config              *config.Config
 	BootstrapService    *system_service.BootstrapService
+	ServiceContainer    *container.ServiceContainer
 	GraphFlowService    *graphflow.Service
+	WorkflowTestService *workflowtest.Service
+	LLMClient           llmclient.LLMClient
 	TaskManager         *queue.TaskManager
 	TaskHandlerRegistry *container.TaskHandlerRegistrar
 	Scheduler           *pkgscheduler.Scheduler
@@ -106,10 +111,12 @@ func registerRuntime(lc fx.Lifecycle, params runtimeParams) error {
 		params.Logger,
 	)
 	registerOpenTelemetryLifecycle(lc, params.OpenTelemetry, params.Logger)
+	RegisterWorkflowTestLocalWorkerLifecycle(lc, params.Config, params.WorkflowTestService, params.LLMClient, params.Logger)
 	RegisterTaskManagerLifecycle(lc, params.TaskManager, params.TaskHandlerRegistry, params.Logger)
 	RegisterSchedulerLifecycle(lc, params.Scheduler, params.Logger)
 	RegisterGRPCServerLifecycle(lc, params.GRPCServer, params.GRPCListener, params.Logger)
 	RegisterHTTPServerLifecycle(lc, params.HTTPServer, params.HTTPListener, params.Logger)
+	RegisterSQLAuditRecorderLifecycle(lc, params.ServiceContainer, params.Logger)
 	registerSentryLifecycle(lc, params.Sentry)
 
 	return nil
@@ -128,6 +135,26 @@ func RegisterCloudBootstrapLifecycle(
 				return err
 			}
 			return nil
+		},
+	})
+}
+
+// RegisterSQLAuditRecorderLifecycle flushes queued SQL audit records during shutdown.
+func RegisterSQLAuditRecorderLifecycle(lc fx.Lifecycle, serviceContainer *container.ServiceContainer, log *zap.Logger) {
+	lc.Append(fx.Hook{
+		OnStop: func(ctx context.Context) error {
+			var closeErr error
+			if serviceContainer != nil {
+				if err := serviceContainer.CloseSQLAuditRecorder(ctx); err != nil {
+					closeErr = err
+					log.Error("failed to close workflow SQL audit recorder", zap.Error(err))
+				}
+				if err := serviceContainer.CloseDataSourceSQLAuditRecorder(ctx); err != nil {
+					closeErr = err
+					log.Error("failed to close datasource SQL audit recorder", zap.Error(err))
+				}
+			}
+			return closeErr
 		},
 	})
 }
@@ -207,6 +234,39 @@ func RegisterTaskManagerLifecycle(
 			log.Info("Stopping task manager")
 			taskManager.StopServer()
 			return taskManager.Close()
+		},
+	})
+}
+
+func RegisterWorkflowTestLocalWorkerLifecycle(
+	lc fx.Lifecycle,
+	cfg *config.Config,
+	service *workflowtest.Service,
+	client llmclient.LLMClient,
+	log *zap.Logger,
+) {
+	if cfg == nil || workflowtest.NormalizeTaskBackend(cfg.TaskQueue.WorkflowTestTaskBackend) != workflowtest.WorkflowTestTaskBackendLocal {
+		return
+	}
+	worker := workflowtest.NewLocalWorker(service, client)
+	if service != nil {
+		service.SetTaskCanceler(worker)
+	}
+	var cancel context.CancelFunc
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			var workerCtx context.Context
+			workerCtx, cancel = context.WithCancel(context.Background())
+			go worker.Start(workerCtx)
+			log.Info("Started workflow test local worker")
+			return nil
+		},
+		OnStop: func(context.Context) error {
+			if cancel != nil {
+				cancel()
+			}
+			log.Info("Stopped workflow test local worker")
+			return nil
 		},
 	})
 }

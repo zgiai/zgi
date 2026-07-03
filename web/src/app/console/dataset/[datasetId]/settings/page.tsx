@@ -67,11 +67,11 @@ export default function DatasetSettingsPage() {
     entityModel: null,
     entityModelProvider: null,
     retrievalConfig: {
-      search_method: 'semantic_search',
-      top_k: 3,
+      search_method: 'hybrid_search',
+      top_k: 10,
       score_threshold_enabled: true,
-      score_threshold: 0.5,
-      reranking_enable: false,
+      score_threshold: 0.35,
+      reranking_enable: true,
       reranking_model: {
         reranking_model_name: '',
         reranking_provider_name: '',
@@ -201,9 +201,6 @@ export default function DatasetSettingsPage() {
       icon_background: iconValue.type === 'text' ? iconValue.iconBackground : undefined,
       workspace_id: workspaceId,
       enable_graph_flow: nextGraphFlowEnabled,
-      embedding_model: currentFormData.embeddingModel || undefined,
-      embedding_model_provider:
-        currentFormData.embeddingModelProvider || dataset.embedding_model_provider || undefined,
       ...(nextGraphFlowEnabled
         ? {
             entity_model: currentFormData.entityModel || undefined,
@@ -291,7 +288,7 @@ export default function DatasetSettingsPage() {
           <Card className="border-border/80 shadow-sm">
             <CardHeader className="space-y-1.5">
               <CardTitle className="text-base">{t('datasets.settings.basicInfo')}</CardTitle>
-              <CardDescription>{t('datasets.settingsDescription')}</CardDescription>
+              <CardDescription>{t('datasets.settings.basicInfoDescription')}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
               <div className="space-y-1.5">

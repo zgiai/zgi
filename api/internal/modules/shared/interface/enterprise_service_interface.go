@@ -21,7 +21,7 @@ type OrganizationService interface {
 	CheckOrganizationNameExists(ctx context.Context, name string) (bool, error)
 	ListUserOrganizations(ctx context.Context, page, limit int, status string, accountID string) (*dto.OrganizationPaginationResponse, error)
 	GetOrganizationByID(ctx context.Context, id string) (*model.Organization, error)
-	UpdateOrganization(ctx context.Context, id string, req *dto.UpdateOrganizationRequest) error
+	UpdateOrganization(ctx context.Context, id, accountID string, req *dto.UpdateOrganizationRequest) (*model.Organization, error)
 	DeleteOrganization(ctx context.Context, id string, accountID string) error
 
 	AddWorkspace(ctx context.Context, req *dto.AddWorkspaceToOrganizationRequest) error
@@ -34,10 +34,12 @@ type OrganizationService interface {
 	GetOrganizationByWorkspaceID(ctx context.Context, workspaceID string) (*model.Organization, error)
 
 	AddMember(ctx context.Context, req *dto.AddOrganizationMemberRequest) error
+	DirectAddOrganizationMember(ctx context.Context, req *dto.DirectAddOrganizationMemberRequest) (*dto.DirectAddOrganizationMemberResponse, error)
 	InviteCurrentOrganizationMember(ctx context.Context, req *dto.InviteCurrentOrganizationMemberRequest) (*dto.InviteCurrentOrganizationMemberResponse, error)
 	ResetCurrentOrganizationMemberPassword(ctx context.Context, req *dto.ResetCurrentOrganizationMemberPasswordRequest) (*dto.ResetCurrentOrganizationMemberPasswordResponse, error)
 	RemoveMember(ctx context.Context, organizationID, accountID string) error
 	UpdateMemberRole(ctx context.Context, req *dto.UpdateOrganizationMemberRoleRequest) error
+	UpdateCurrentOrganizationMemberRole(ctx context.Context, operatorID, memberID string, role model.OrganizationRole) error
 	UpdateMemberStatus(ctx context.Context, req *dto.UpdateOrganizationMemberStatusRequest) error
 	UpdateMemberInfo(ctx context.Context, req *dto.UpdateOrganizationMemberRequest) error
 	TransferOwnership(ctx context.Context, organizationID, currentOwnerID, newOwnerID string) error

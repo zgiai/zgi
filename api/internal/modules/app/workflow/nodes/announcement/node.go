@@ -19,6 +19,7 @@ const (
 	outputContent        = "content"
 	outputExpirationTime = "expiration_time"
 	outputToken          = "token"
+	outputAccessToken    = "access_token"
 	outputURL            = "url"
 
 	expirationTimeOutputLayout = "2006-01-02 15:04:05"
@@ -117,7 +118,7 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 	renderedTitle := n.GraphRuntimeState.VariablePool.ConvertTemplate(config.Title).Text()
 	renderedContent := n.GraphRuntimeState.VariablePool.ConvertTemplate(config.Content).Markdown()
 	service := announcementruntime.NewService(database.GetDB())
-	runtimeAnnouncement, err := service.CreateOrGetRuntimeAnnouncement(ctx, announcementruntime.CreateRuntimeAnnouncementParams{
+	runtimeAnnouncement, err := service.CreateRuntimeAnnouncement(ctx, announcementruntime.CreateRuntimeAnnouncementParams{
 		TenantID:      n.TenantID,
 		AppID:         n.APPID,
 		WorkflowRunID: n.GraphRuntimeState.VariablePool.SystemVariables.WorkflowRunID,
@@ -140,6 +141,7 @@ func (n *Node) executeRun(ctx context.Context) (*shared.NodeRunResult, error) {
 		outputContent:        payload.Content,
 		outputExpirationTime: n.formatExpirationTimeForOutput(ctx, expiration),
 		outputToken:          payload.Token,
+		outputAccessToken:    payload.AccessToken,
 		outputURL:            payload.URL,
 	}
 	return &shared.NodeRunResult{

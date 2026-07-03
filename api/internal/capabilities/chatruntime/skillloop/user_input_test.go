@@ -1,0 +1,125 @@
+package skillloop
+
+import (
+	"context"
+	"testing"
+
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
+)
+
+func TestRequestUserInputCallTerminatesTurnAndEmitsEvent(t *testing.T) {
+	events := make([]Event, 0)
+	runner := &Runner{
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "openai", "required", &adapter.ChatRequest{})
+	result := runner.handleProgressiveSkillCall(
+		context.Background(),
+		prepared,
+		&skills.ResolvedSkills{},
+		adapter.ToolCall{
+			ID:   "call_ask",
+			Type: "function",
+			Function: adapter.FunctionCall{
+				Name:      skills.MetaToolRequestUserInput,
+				Arguments: `{"message":"I found multiple candidate sheets and need your choice before editing the file.","questions":[{"id":"sheet","question":"Which sheet should I process?","options":[{"label":"Water"},{"label":"Electricity","description":"Use the electricity sheet"}]},{"question":"Should I include a summary?","options":[{"label":"Yes"},{"label":"No"}]}]}`,
+			},
+		},
+		skills.ExecutionContext{},
+		0,
+		map[string]int{},
+		map[string]struct{}{},
+		nil,
+	)
+
+	if !result.terminal {
+		t.Fatalf("terminal = false, want true")
+	}
+	if result.recoverable || result.fatalErr != nil {
+		t.Fatalf("unexpected error state: recoverable=%v fatal=%v", result.recoverable, result.fatalErr)
+	}
+	if result.trace.Kind != "user_input_request" || result.trace.Message != "I found multiple candidate sheets and need your choice before editing the file." {
+		t.Fatalf("trace = %#v, want user input request trace", result.trace)
+	}
+	if result.answer != "I found multiple candidate sheets and need your choice before editing the file." {
+		t.Fatalf("answer = %q, want visible user input request message", result.answer)
+	}
+	if len(events) != 1 || events[0].Type != EventUserInputRequested {
+		t.Fatalf("events = %#v, want one user_input_requested event", events)
+	}
+	if events[0].Payload["request_id"] != "call_ask" {
+		t.Fatalf("payload = %#v, want request id", events[0].Payload)
+	}
+	questions, ok := events[0].Payload["questions"].([]map[string]interface{})
+	if !ok || len(questions) != 2 || questions[0]["question"] != "Which sheet should I process?" {
+		t.Fatalf("questions = %#v, want normalized questions", events[0].Payload["questions"])
+	}
+	options, ok := questions[0]["options"].([]map[string]interface{})
+	if !ok || len(options) != 2 || options[1]["description"] != "Use the electricity sheet" {
+		t.Fatalf("options = %#v, want normalized options", questions[0]["options"])
+	}
+}
+
+func TestRequestUserInputRejectsInvalidArguments(t *testing.T) {
+	runner := &Runner{}
+	prepared := NewPreparedChat("conv-1", "msg-1", "openai", "auto", &adapter.ChatRequest{})
+	result := runner.handleProgressiveSkillCall(
+		context.Background(),
+		prepared,
+		&skills.ResolvedSkills{},
+		adapter.ToolCall{
+			ID:   "call_ask",
+			Type: "function",
+			Function: adapter.FunctionCall{
+				Name:      skills.MetaToolRequestUserInput,
+				Arguments: `{"questions":[{"question":"","options":[{"label":"A"}]}]}`,
+			},
+		},
+		skills.ExecutionContext{},
+		0,
+		map[string]int{},
+		map[string]struct{}{},
+		nil,
+	)
+
+	if !result.recoverable || result.terminal {
+		t.Fatalf("recoverable=%v terminal=%v, want recoverable non-terminal error", result.recoverable, result.terminal)
+	}
+	if result.trace.Kind != "user_input_request" || result.trace.Status != "error" {
+		t.Fatalf("trace = %#v, want failed user input request trace", result.trace)
+	}
+}
+
+func TestRequestUserInputRequiresVisibleMessage(t *testing.T) {
+	runner := &Runner{}
+	prepared := NewPreparedChat("conv-1", "msg-1", "openai", "auto", &adapter.ChatRequest{})
+	result := runner.handleProgressiveSkillCall(
+		context.Background(),
+		prepared,
+		&skills.ResolvedSkills{},
+		adapter.ToolCall{
+			ID:   "call_ask",
+			Type: "function",
+			Function: adapter.FunctionCall{
+				Name:      skills.MetaToolRequestUserInput,
+				Arguments: `{"questions":[{"question":"Which sheet should I process?","options":[{"label":"Water"}]}]}`,
+			},
+		},
+		skills.ExecutionContext{},
+		0,
+		map[string]int{},
+		map[string]struct{}{},
+		nil,
+	)
+
+	if !result.recoverable || result.terminal {
+		t.Fatalf("recoverable=%v terminal=%v, want recoverable non-terminal error", result.recoverable, result.terminal)
+	}
+	if result.trace.Kind != "user_input_request" || result.trace.Status != "error" {
+		t.Fatalf("trace = %#v, want failed user input request trace", result.trace)
+	}
+}

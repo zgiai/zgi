@@ -53,12 +53,17 @@ function readBooleanEnv(name) {
 const basePath = normalizeBasePath(rawBasePath);
 const staticAppName = (process.env.NEXT_PUBLIC_APP_NAME ?? 'ZGI').trim() || 'ZGI';
 const staticBrandName = (process.env.NEXT_PUBLIC_BRAND_NAME ?? staticAppName).trim() || staticAppName;
-const buildCpus = readPositiveIntegerEnv('NEXT_BUILD_CPUS');
-const staticGenerationMaxConcurrency = readPositiveIntegerEnv(
-  'NEXT_STATIC_GENERATION_MAX_CONCURRENCY'
-);
-const turbopackMemoryLimitMb = readPositiveIntegerEnv('NEXT_TURBOPACK_MEMORY_LIMIT_MB');
-const webpackMemoryOptimizations = readBooleanEnv('NEXT_WEBPACK_MEMORY_OPTIMIZATIONS');
+const defaultBuildCpus = 2;
+const defaultStaticGenerationMaxConcurrency = 2;
+const defaultTurbopackMemoryLimitMb = 2048;
+const buildCpus = readPositiveIntegerEnv('NEXT_BUILD_CPUS') ?? defaultBuildCpus;
+const staticGenerationMaxConcurrency =
+  readPositiveIntegerEnv('NEXT_STATIC_GENERATION_MAX_CONCURRENCY') ??
+  defaultStaticGenerationMaxConcurrency;
+const turbopackMemoryLimitMb =
+  readPositiveIntegerEnv('NEXT_TURBOPACK_MEMORY_LIMIT_MB') ?? defaultTurbopackMemoryLimitMb;
+const webpackMemoryOptimizations =
+  readBooleanEnv('NEXT_WEBPACK_MEMORY_OPTIMIZATIONS') ?? true;
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -74,19 +79,11 @@ const nextConfig = {
   experimental: {
     optimizePackageImports: ['@radix-ui/react-icons', 'lucide-react', 'antd'],
     serverSourceMaps: false,
-    ...(buildCpus
-      ? {
-          cpus: buildCpus,
-          memoryBasedWorkersCount: false,
-        }
-      : {}),
-    ...(staticGenerationMaxConcurrency
-      ? { staticGenerationMaxConcurrency }
-      : {}),
-    ...(turbopackMemoryLimitMb
-      ? { turbopackMemoryLimit: turbopackMemoryLimitMb * 1024 * 1024 }
-      : {}),
-    ...(webpackMemoryOptimizations === undefined ? {} : { webpackMemoryOptimizations }),
+    cpus: buildCpus,
+    memoryBasedWorkersCount: false,
+    staticGenerationMaxConcurrency,
+    turbopackMemoryLimit: turbopackMemoryLimitMb * 1024 * 1024,
+    webpackMemoryOptimizations,
   },
   productionBrowserSourceMaps: false,
   pageExtensions: ['js', 'jsx', 'md', 'mdx', 'ts', 'tsx'],

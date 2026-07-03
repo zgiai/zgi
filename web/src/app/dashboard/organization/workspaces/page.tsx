@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { useT } from '@/i18n';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
@@ -39,6 +40,7 @@ function WorkspaceManagementPageContent() {
   const pageSize = 10;
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [workspaceToDelete, setWorkspaceToDelete] = useState<WorkspaceManagement | null>(null);
+  const assignMemberKeyword = searchParams.get('assignMember')?.trim() || '';
   const [workspaceDialog, setWorkspaceDialog] = useState<{
     open: boolean;
     mode: 'create' | 'edit';
@@ -232,6 +234,13 @@ function WorkspaceManagementPageContent() {
     });
   };
 
+  const getWorkspaceDetailHref = (workspaceId: string) => {
+    const query = assignMemberKeyword
+      ? `?assignMember=${encodeURIComponent(assignMemberKeyword)}`
+      : '';
+    return `/dashboard/organization/workspaces/${workspaceId}${query}`;
+  };
+
   return (
     <div className="flex h-full flex-col space-y-5 overflow-auto bg-bg-canvas/50 p-4 lg:p-6">
       {/* Header */}
@@ -257,6 +266,22 @@ function WorkspaceManagementPageContent() {
 
       {/* Main Content Area */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/80 bg-background shadow-sm">
+        {assignMemberKeyword ? (
+          <div className="flex flex-col gap-3 border-b border-warning/20 bg-warning/10 px-4 py-3 md:flex-row md:items-center md:justify-between">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-warning">
+                {t('assignMemberBannerTitle', { member: assignMemberKeyword })}
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {t('assignMemberBannerDescription')}
+              </p>
+            </div>
+            <Button asChild variant="outline" size="sm" className="shrink-0 bg-background">
+              <Link href="/dashboard/organization/contacts">{t('assignMemberBackToContacts')}</Link>
+            </Button>
+          </div>
+        ) : null}
+
         {/* Search Strip */}
         <div className="flex flex-col items-center gap-4 border-b border-border/60 bg-background p-4 md:flex-row">
           <div className="relative w-full max-w-md flex-1">
@@ -322,7 +347,7 @@ function WorkspaceManagementPageContent() {
                 <TableRow
                   key={workspace.id}
                   className="group border-b border-border/10 hover:bg-bg-canvas/40 transition-colors cursor-pointer interactive-subtle"
-                  onClick={() => router.push(`/dashboard/organization/workspaces/${workspace.id}`)}
+                  onClick={() => router.push(getWorkspaceDetailHref(workspace.id))}
                 >
                   <TableCell className="py-4 pl-6">
                     <div className="flex items-center gap-3">
@@ -421,7 +446,7 @@ function WorkspaceManagementPageContent() {
         cancelText={t('deleteConfirm.cancel')}
         loading={isDeleting}
         onConfirm={handleDeleteWorkspace}
-        variant="warning"
+        variant="danger"
       />
 
       <WorkspaceDialog

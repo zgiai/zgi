@@ -172,6 +172,28 @@ export function useCreateWorkflowTestScenarioRecognitionTask(agentId: string) {
   });
 }
 
+export function useCancelWorkflowTestScenarioRecognitionTask(agentId: string) {
+  const t = useT('agents.workflowTest.toasts');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (taskId: string) => workflowTestService.cancelScenarioRecognitionTask(agentId, taskId),
+    onSuccess: response => {
+      toast.info(t('scenariosRecognitionCancelRequested'));
+      queryClient.setQueryData(WORKFLOW_TEST_KEYS.scenarioRecognitionTaskLatest(agentId), response);
+      queryClient.setQueryData(WORKFLOW_TEST_KEYS.scenarioRecognitionTaskActive(agentId), response);
+      queryClient.invalidateQueries({
+        queryKey: WORKFLOW_TEST_KEYS.scenarioRecognitionTaskActive(agentId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: WORKFLOW_TEST_KEYS.scenarioRecognitionTaskLatest(agentId),
+      });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('scenariosRecognitionCancelFailed'));
+    },
+  });
+}
+
 export function useWorkflowTestCases(agentId: string, params?: { status?: string }) {
   return useQuery({
     queryKey: WORKFLOW_TEST_KEYS.cases(agentId, params),
@@ -204,9 +226,9 @@ export function useUpdateWorkflowTestCase(agentId: string, options?: { silent?: 
     mutationFn: ({ caseId, data }: { caseId: string; data: UpdateWorkflowTestCaseRequest }) =>
       workflowTestService.updateCase(agentId, caseId, data),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.all });
       if (!options?.silent) {
         toast.success(t('caseUpdated'));
-        queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.all });
       }
     },
     onError: error => {
@@ -331,6 +353,29 @@ export function useCreateWorkflowTestGenerationTask(agentId: string) {
     },
     onError: error => {
       toast.error(getErrorMessage(error) || t('casesGenerateFailed'));
+    },
+  });
+}
+
+export function useCancelWorkflowTestGenerationTask(agentId: string) {
+  const t = useT('agents.workflowTest.toasts');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (taskId: string) => workflowTestService.cancelGenerationTask(agentId, taskId),
+    onSuccess: response => {
+      toast.info(t('casesGenerationCancelRequested'));
+      queryClient.setQueryData(WORKFLOW_TEST_KEYS.generationTaskLatest(agentId), response);
+      queryClient.setQueryData(WORKFLOW_TEST_KEYS.generationTaskActive(agentId), response);
+      queryClient.invalidateQueries({
+        queryKey: WORKFLOW_TEST_KEYS.generationTaskActive(agentId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: WORKFLOW_TEST_KEYS.generationTaskLatest(agentId),
+      });
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.cases(agentId) });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('casesGenerationCancelFailed'));
     },
   });
 }

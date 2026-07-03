@@ -20,6 +20,8 @@ export interface User {
   extension?: UserExtension | null;
   // Additional fields from API response
   language?: string;
+  // Current selected organization ID; null means no organization context is usable yet.
+  current_organization_id?: string | null;
   // Current selected workspace ID; null means organization view mode
   current_workspace_id?: string | null;
 }

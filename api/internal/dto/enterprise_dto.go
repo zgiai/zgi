@@ -278,7 +278,8 @@ type CreateOrganizationWithWorkspaceRequest struct {
 
 // UpdateOrganizationRequest represents the request to update an enterprise group
 type UpdateOrganizationRequest struct {
-	Name string `json:"name" binding:"required"`
+	Name      string  `json:"name" binding:"required"`
+	ShortName *string `json:"short_name,omitempty"`
 }
 
 // AddWorkspaceToOrganizationRequest represents the request to add a tenant to enterprise
@@ -300,9 +301,11 @@ type AddOrganizationMemberRequest struct {
 type InviteCurrentOrganizationMemberRequest struct {
 	OrganizationID    string
 	OperatorAccountID string
+	WorkspaceID       string
 	Email             string
 	Name              string
 	Password          string
+	DepartmentID      *string
 }
 
 type InviteCurrentOrganizationMemberResponse struct {
@@ -315,9 +318,35 @@ type InviteCurrentOrganizationMemberResponse struct {
 	AlreadyMember   bool                   `json:"already_member"`
 	PasswordApplied bool                   `json:"password_applied"`
 	Department      *MemberDepartmentInfo  `json:"department,omitempty"`
+	Workspace       *MemberWorkspaceInfo   `json:"workspace,omitempty"`
+}
+
+type DirectAddOrganizationMemberRequest struct {
+	OrganizationID    string
+	OperatorAccountID string
+	WorkspaceID       string
+	Email             string
+	Name              string
+	DepartmentID      *string
+}
+
+type DirectAddOrganizationMemberResponse struct {
+	AccountID      string                `json:"account_id"`
+	Email          string                `json:"email"`
+	Name           string                `json:"name"`
+	OrganizationID string                `json:"organization_id"`
+	Department     *MemberDepartmentInfo `json:"department,omitempty"`
+	Workspace      *MemberWorkspaceInfo  `json:"workspace,omitempty"`
+	CreatedAccount bool                  `json:"created_account"`
+	AlreadyMember  bool                  `json:"already_member"`
 }
 
 type MemberDepartmentInfo struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type MemberWorkspaceInfo struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
@@ -340,6 +369,10 @@ type UpdateOrganizationMemberRoleRequest struct {
 	OrganizationID string                 `json:"organization_id" binding:"required"`
 	AccountID      string                 `json:"account_id" binding:"required"`
 	Role           model.OrganizationRole `json:"role" binding:"required"`
+}
+
+type UpdateCurrentOrganizationMemberRoleRequest struct {
+	Role model.OrganizationRole `json:"role" binding:"required"`
 }
 
 // UpdateOrganizationMemberRequest represents the request to update member info

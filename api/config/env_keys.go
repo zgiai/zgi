@@ -190,6 +190,13 @@ const (
 	// envPluginMaxPackageSize overrides the plugin package size returned by the system feature API. Default: 0.
 	envPluginMaxPackageSize = "PLUGIN_MAX_PACKAGE_SIZE"
 
+	// LLM policy prompt injection. Disabled by default for open-source deployments.
+	envLLMPolicyPromptEnabled = "LLM_POLICY_PROMPT_ENABLED"
+	// envLLMPolicyPromptFile points to a local file containing the policy prompt.
+	envLLMPolicyPromptFile = "LLM_POLICY_PROMPT_FILE"
+	// envLLMPolicyPromptText carries the policy prompt directly and takes precedence over the file.
+	envLLMPolicyPromptText = "LLM_POLICY_PROMPT_TEXT"
+
 	// Public access and signup flow.
 	// envPublicDeploymentEnabled creates a personal organization when public signup activates an account. Default: false.
 	envPublicDeploymentEnabled = "PUBLIC_DEPLOYMENT_ENABLED"
@@ -229,6 +236,8 @@ const (
 	envTaskQueueRetention = "TASK_QUEUE_RETENTION"
 	// envTaskQueueEnvPrefix sets the environment prefix used to isolate task queue keys. Default: empty.
 	envTaskQueueEnvPrefix = "TASK_QUEUE_ENV_PREFIX"
+	// envWorkflowTestTaskBackend selects how workflow test AI tasks are executed. Values: local, asynq. Default: local.
+	envWorkflowTestTaskBackend = "WORKFLOW_TEST_TASK_BACKEND"
 
 	// Vector store backend selection.
 	// envVectorStore selects the vector store backend. Default: weaviate.
@@ -307,6 +316,22 @@ const (
 	envCodeExecutionEndpoint = "CODE_EXECUTION_ENDPOINT"
 	// envCodeExecutionAPIKey sets the API key for the remote code execution service. Default: empty.
 	envCodeExecutionAPIKey = "CODE_EXECUTION_API_KEY"
+	// envCodeExecutionConnectTimeout sets the sandbox adapter connect timeout in seconds. Default: 5.
+	envCodeExecutionConnectTimeout = "CODE_EXECUTION_CONNECT_TIMEOUT_SECONDS"
+	// envCodeExecutionCreateTimeout sets the sandbox creation request timeout in seconds. Default: 10.
+	envCodeExecutionCreateTimeout = "CODE_EXECUTION_CREATE_TIMEOUT_SECONDS"
+	// envCodeExecutionUploadTimeout sets the sandbox archive upload request timeout in seconds. Default: 30.
+	envCodeExecutionUploadTimeout = "CODE_EXECUTION_UPLOAD_TIMEOUT_SECONDS"
+	// envCodeExecutionCommandTimeoutPadding sets extra HTTP time allowed beyond the skill command timeout in seconds. Default: 15.
+	envCodeExecutionCommandTimeoutPadding = "CODE_EXECUTION_COMMAND_TIMEOUT_PADDING_SECONDS"
+	// envCodeExecutionArtifactTimeout sets artifact list and download request timeout in seconds. Default: 10.
+	envCodeExecutionArtifactTimeout = "CODE_EXECUTION_ARTIFACT_TIMEOUT_SECONDS"
+	// envCodeExecutionCleanupTimeout sets sandbox cleanup request timeout in seconds. Default: 5.
+	envCodeExecutionCleanupTimeout = "CODE_EXECUTION_CLEANUP_TIMEOUT_SECONDS"
+	// envCodeExecutionEnableNetwork toggles network access for the legacy /v1/sandbox/run workflow code path. Default: false.
+	envCodeExecutionEnableNetwork = "CODE_EXECUTION_ENABLE_NETWORK"
+	// envCodeExecutionSystemOfficeProfile sets the managed dependency profile used by system Office/PDF/PPTX file tools. Default: skill-office.
+	envCodeExecutionSystemOfficeProfile = "CODE_EXECUTION_SYSTEM_OFFICE_PROFILE"
 
 	// Code execution safety limits.
 	// envCodeMaxNumber sets the largest numeric value allowed in code execution. Default: 9223372036854775807.
@@ -328,6 +353,11 @@ const (
 	envWorkflowHeartbeatInterval = "WORKFLOW_HEARTBEAT_INTERVAL"
 	// envWorkflowCleanupTimeout sets the workflow cleanup timeout in seconds. Default: 30.
 	envWorkflowCleanupTimeout = "WORKFLOW_CLEANUP_TIMEOUT"
+	// envWorkflowImageInputURLMode controls URLs passed to LLM vision for workflow image inputs.
+	// Accepted values: zgi_proxy | public_storage_url. Default: zgi_proxy.
+	envWorkflowImageInputURLMode = "WORKFLOW_IMAGE_INPUT_URL_MODE"
+	// envWorkflowImageInputPublicBaseURL sets the optional public storage/CDN base URL for workflow image inputs.
+	envWorkflowImageInputPublicBaseURL = "WORKFLOW_IMAGE_INPUT_PUBLIC_BASE_URL"
 
 	// Workflow file extraction behavior.
 	// envWorkflowFileExtractionEnabled controls whether workflow file extraction is enabled. Default: true.
@@ -561,6 +591,12 @@ const (
 	envOfficialModelSyncStrictMode = "OFFICIAL_MODEL_SYNC_STRICT_MODE"
 	// envLLMEncryptionKey sets the AES key used for LLM provider credentials. Default: empty.
 	envLLMEncryptionKey = "LLM_ENCRYPTION_KEY"
+	// envLLMGuardOutboundURL controls literal outbound URL safety checks. Default: true.
+	envLLMGuardOutboundURL = "LLM_GUARD_OUTBOUND_URL"
+	// envLLMGuardOutboundDNS controls DNS-resolved outbound address checks. Default: false.
+	envLLMGuardOutboundDNS = "LLM_GUARD_OUTBOUND_DNS"
+	// envLLMAllowPrivateBaseURL allows Ollama to target private or localhost base URLs. Default: false.
+	envLLMAllowPrivateBaseURL = "LLM_ALLOW_PRIVATE_BASE_URL"
 
 	// Automation dispatch behavior.
 	// envAutomationDispatchEnabled controls whether this API instance registers automation due-task dispatch. Default: true.

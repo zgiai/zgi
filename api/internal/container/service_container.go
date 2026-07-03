@@ -8,15 +8,22 @@ import (
 
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/config"
+	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
+	hyperparsesdk "github.com/zgiai/zgi/api/internal/capabilities/contentparse/adapters/hyperparse_sdk"
+	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
+	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
 	"github.com/zgiai/zgi/api/internal/infra/platform/console"
+	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/diagnosis"
 	workflow_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	workflowruntime "github.com/zgiai/zgi/api/internal/modules/app/workflow/runtime"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
+	workflowtest "github.com/zgiai/zgi/api/internal/modules/app/workflowtest"
 	automationaction "github.com/zgiai/zgi/api/internal/modules/automation/service/action"
 	automationdefinition "github.com/zgiai/zgi/api/internal/modules/automation/service/definition"
+	contentparsemodule "github.com/zgiai/zgi/api/internal/modules/contentparse"
 	datalibrarymodule "github.com/zgiai/zgi/api/internal/modules/datalibrary"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	dataset_repo "github.com/zgiai/zgi/api/internal/modules/dataset/repository"
@@ -63,11 +70,18 @@ import (
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/memory"
+	database_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/database"
+	imagegenerator_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/imagegenerator"
+	knowledge_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/knowledge"
+	workflow_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/workflow"
 	helper "github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/queue"
 	redisPkg "github.com/zgiai/zgi/api/pkg/redis"
 	"github.com/zgiai/zgi/api/pkg/scheduler"
+	"github.com/zgiai/zgi/api/pkg/sql_base"
+	"github.com/zgiai/zgi/api/pkg/sql_base/audit"
+	"github.com/zgiai/zgi/api/pkg/sql_base/guard"
 	"github.com/zgiai/zgi/api/pkg/storage"
 	"gorm.io/gorm"
 )
@@ -148,9 +162,12 @@ type ServiceContainer struct {
 	registerService               interfaces.RegisterService
 	fileService                   interfaces.FileService
 	contentExtractor              workflow_file.ContentExtractor
+	contentParseService           contracts.ContentParseService
 
 	// DataSource service
 	dataSourceService service.DataSourceService
+	sqlAuditRecorder  audit.Recorder
+	sqlBase           sql_base.SQLBase
 	promptModule      *promptsmodule.Module
 
 	// Data Library module
@@ -194,7 +211,11 @@ type ServiceContainer struct {
 	toolEngine *tools.ToolEngine
 
 	// Account memory
-	memoryService *memory.Service
+	memoryService      *memory.Service
+	agentMemoryService *agentmemory.Service
+
+	// Knowledge retrieval for builtin knowledge tools
+	knowledgeRetrievalService *dataset_service.KnowledgeRetrievalService
 
 	// Platform container
 	platformContainer *platform.Container
@@ -210,9 +231,11 @@ type ServiceContainer struct {
 	automationDefinitionService automationdefinition.Service
 	automationWorkflowRunner    automationaction.AutomationWorkflowRunner
 	notificationSMSService      notificationsms.Service
+	shortLinkService            shortlinkcap.Service
 
 	// Workflow engine factory
 	workflowEngineFactory *graph_engine.EngineFactory
+	workflowTestService   *workflowtest.Service
 
 	// Workflow Diagnoser
 	workflowDiagnoser *diagnosis.Diagnoser
@@ -263,6 +286,13 @@ func (c *ServiceContainer) GetTaskHandlerRegistry() *TaskHandlerRegistrar {
 		c.taskHandlerRegistry = NewTaskHandlerRegistrar()
 	}
 	return c.taskHandlerRegistry
+}
+
+func (c *ServiceContainer) GetWorkflowTestService() *workflowtest.Service {
+	if c.workflowTestService == nil {
+		c.workflowTestService = workflowtest.NewService(workflowtest.NewRepository(c.db))
+	}
+	return c.workflowTestService
 }
 
 func (c *ServiceContainer) GetTenantService() interfaces.WorkspaceManagementService {
@@ -474,6 +504,7 @@ func (c *ServiceContainer) GetOrganizationService() interfaces.OrganizationServi
 			c.getConsoleProvider(),
 			c.GetOfficialRouteBootstrapper(),
 		)
+		c.GetDatasetService().SetOrganizationService(c.organizationService)
 	}
 	return c.organizationService
 }
@@ -539,6 +570,9 @@ func (c *ServiceContainer) GetDatasetService() dataset_service.DatasetService {
 			llmClient,
 			c.GetTaskManager(),
 		)
+		if c.organizationService != nil {
+			c.datasetService.SetOrganizationService(c.organizationService)
+		}
 	}
 	return c.datasetService
 }
@@ -554,6 +588,17 @@ func (c *ServiceContainer) GetFileService() interfaces.FileService {
 		c.fileService = file_service.NewFileServiceWithVision(fileRepo, storageClient, c.db, quotaService, enterpriseService, c.GetLLMClient(), c.GetDefaultModelService())
 	}
 	return c.fileService
+}
+
+func (c *ServiceContainer) GetContentParseService() contracts.ContentParseService {
+	if c.contentParseService == nil {
+		c.contentParseService = contentparsecap.NewModule(
+			contentparsecap.WithFigureSummaryEnhancer(
+				hyperparsesdk.NewDefaultChatFigureSummaryLocalizer(c.GetLLMClient(), c.GetDefaultModelService()),
+			),
+		).Service
+	}
+	return c.contentParseService
 }
 
 func (c *ServiceContainer) GetContentExtractor() workflow_file.ContentExtractor {
@@ -582,15 +627,92 @@ func (c *ServiceContainer) GetDataSourceService() service.DataSourceService {
 		tableRepo := repository.NewPostgresTableRepository(c.db)
 		promptRepo := repository.NewPostgresPromptRepository(c.db)
 		sqlOperationRepo := repository.NewPostgresSQLOperationRepository(c.db)
-		c.dataSourceService = service.NewDataSourceService(dataSourceRepo, tableRepo, promptRepo, sqlOperationRepo, c.GetAccountService(), c.GetFileService(), c.GetOrganizationService(), c.GetResourcePermissionService(), c.GetQuotaService(), c.GetLLMClient(), c.db)
+		c.dataSourceService = service.NewDataSourceService(
+			dataSourceRepo,
+			tableRepo,
+			promptRepo,
+			sqlOperationRepo,
+			c.GetAccountService(),
+			c.GetFileService(),
+			c.GetOrganizationService(),
+			c.GetResourcePermissionService(),
+			c.GetQuotaService(),
+			c.GetLLMClient(),
+			c.GetDefaultModelService(),
+			c.db,
+			service.WithContentParseService(c.GetContentParseService()),
+		)
 	}
 
 	return c.dataSourceService
 }
 
+func (c *ServiceContainer) GetSQLAuditRecorder() audit.Recorder {
+	if c.sqlAuditRecorder == nil {
+		store := repository.NewPostgresSQLOperationRepository(c.db)
+		c.sqlAuditRecorder = audit.NewAsyncRecorder(store)
+	}
+	return c.sqlAuditRecorder
+}
+
+func (c *ServiceContainer) CloseSQLAuditRecorder(ctx context.Context) error {
+	if c == nil || c.sqlAuditRecorder == nil {
+		return nil
+	}
+	return c.sqlAuditRecorder.Close(ctx)
+}
+
+func (c *ServiceContainer) CloseDataSourceSQLAuditRecorder(ctx context.Context) error {
+	if c == nil || c.dataSourceService == nil {
+		return nil
+	}
+	closer, ok := c.dataSourceService.(interface {
+		Close(context.Context) error
+	})
+	if !ok {
+		return nil
+	}
+	return closer.Close(ctx)
+}
+
+func (c *ServiceContainer) GetSQLBase() sql_base.SQLBase {
+	if c.sqlBase == nil {
+		dataSourceRepo := repository.NewPostgresDataSourceRepository(c.db)
+		client, err := sql_base.NewSQLBaseClient(
+			sql_base.WithAuditRecorder(c.GetSQLAuditRecorder()),
+			sql_base.WithGuardPolicyProvider(func(ctx context.Context, dataSourceID string) (*guard.Policy, error) {
+				dataSource, err := dataSourceRepo.FindByID(ctx, dataSourceID)
+				if err != nil || dataSource == nil {
+					return nil, err
+				}
+				policy, err := guard.ParsePolicyJSON([]byte(dataSource.GuardPolicy))
+				if err != nil {
+					return nil, err
+				}
+				return &policy, nil
+			}),
+		)
+		if err != nil {
+			panic("failed to create sql base client: " + err.Error())
+		}
+		c.sqlBase = client
+	}
+	return c.sqlBase
+}
+
 func (c *ServiceContainer) GetDataLibraryModule() *datalibrarymodule.Module {
 	if c.dataLibraryModule == nil {
-		c.dataLibraryModule = datalibrarymodule.NewModule(c.db)
+		contentParseModule := contentparsemodule.NewModule(
+			c.db,
+			contentparsemodule.WithSystemVisionModel(c.GetLLMClient(), c.GetDefaultModelService()),
+		)
+		c.dataLibraryModule = datalibrarymodule.NewModuleWithContentParseModule(
+			c.db,
+			storage.GetStorage(),
+			contentParseModule,
+			c.GetLLMClient(),
+			c.GetDefaultModelService(),
+		)
 	}
 	return c.dataLibraryModule
 }
@@ -773,7 +895,10 @@ func (c *ServiceContainer) GetToolManager() *tools.ToolManager {
 
 		// Register builtin tool providers
 		c.toolManager.RegisterBuiltinProviders(getBuiltinToolProviders())
-		_ = c.toolManager.RegisterProvider(memory.NewProvider(c.GetMemoryService()))
+		_ = c.toolManager.RegisterProvider(knowledge_tools.NewProvider(c.GetKnowledgeRetrievalService()))
+		_ = c.toolManager.RegisterProvider(database_tools.NewProvider(c.GetDataSourceService(), c.GetOrganizationService()))
+		_ = c.toolManager.RegisterProvider(workflow_tools.NewProvider(c.GetAutomationWorkflowRunner))
+		_ = c.toolManager.RegisterProvider(imagegenerator_tools.NewProvider(c.GetFileService(), c.GetLLMClient(), c.GetDefaultModelService()))
 
 		logger.Info("ToolManager initialized with builtin providers")
 	}
@@ -793,6 +918,26 @@ func (c *ServiceContainer) GetMemoryService() *memory.Service {
 		c.memoryService = memory.NewService(c.db)
 	}
 	return c.memoryService
+}
+
+func (c *ServiceContainer) GetKnowledgeRetrievalService() *dataset_service.KnowledgeRetrievalService {
+	if c.knowledgeRetrievalService == nil {
+		c.knowledgeRetrievalService = dataset_service.NewKnowledgeRetrievalService(
+			c.db,
+			c.config,
+			c.GetLLMClient(),
+			c.GetDefaultModelService(),
+			c.GetGraphFlowService(),
+		)
+	}
+	return c.knowledgeRetrievalService
+}
+
+func (c *ServiceContainer) GetAgentMemoryService() *agentmemory.Service {
+	if c.agentMemoryService == nil {
+		c.agentMemoryService = agentmemory.NewService(c.db)
+	}
+	return c.agentMemoryService
 }
 
 func (c *ServiceContainer) GetConsoleProvider() console.ConsoleProvider {
@@ -869,6 +1014,13 @@ func (c *ServiceContainer) GetNotificationSMSService() notificationsms.Service {
 	return c.notificationSMSService
 }
 
+func (c *ServiceContainer) GetShortLinkService() shortlinkcap.Service {
+	if c.shortLinkService == nil {
+		c.shortLinkService = shortlinkcap.NewServiceWithDB(c.db)
+	}
+	return c.shortLinkService
+}
+
 func (c *ServiceContainer) SetAutomationWorkflowRunner(runner automationaction.AutomationWorkflowRunner) {
 	c.automationWorkflowRunner = runner
 }
@@ -892,6 +1044,7 @@ func (c *ServiceContainer) GetWorkflowEngineFactory() *graph_engine.EngineFactor
 			PromptResolver:              c.GetPromptService(),
 			AutomationDefinitionService: c.GetAutomationDefinitionService(),
 			NotificationSMSService:      c.GetNotificationSMSService(),
+			SQLBase:                     c.GetSQLBase(),
 		})
 		c.workflowEngineFactory = graph_engine.NewEngineFactory(10, nodeRunner)
 	}

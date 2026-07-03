@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	appconfig "github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/modules/llm/internal/urlguard"
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
 	llmmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
@@ -66,6 +68,10 @@ func (s *providerService) invalidateAvailableModelsCache(organizationID uuid.UUI
 // ============================================================================
 
 func (s *providerService) CreateGlobal(ctx context.Context, req *dto.CreateProviderRequest) (*model.LLMProvider, error) {
+	if err := validateProviderBaseURL(ctx, "api_base_url", req.APIBaseURL); err != nil {
+		return nil, err
+	}
+
 	exists, err := s.globalRepo.ExistsByName(ctx, req.Name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check provider existence: %w", err)
@@ -118,6 +124,11 @@ func (s *providerService) UpdateGlobal(ctx context.Context, id uuid.UUID, req *d
 	provider, err := s.globalRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, ErrProviderNotFound
+	}
+	if req.APIBaseURL != nil {
+		if err := validateProviderBaseURL(ctx, "api_base_url", *req.APIBaseURL); err != nil {
+			return nil, err
+		}
 	}
 
 	if req.ProviderName != nil {
@@ -175,6 +186,10 @@ func (s *providerService) DeleteGlobal(ctx context.Context, id uuid.UUID) error 
 // ============================================================================
 
 func (s *providerService) ConfigureProvider(ctx context.Context, organizationID uuid.UUID, req *dto.ConfigureProviderRequest) (*model.ProviderConfig, error) {
+	if err := validateProviderBaseURL(ctx, "custom_api_base_url", req.CustomAPIBaseURL); err != nil {
+		return nil, err
+	}
+
 	// Verify global provider exists
 	_, err := s.globalRepo.GetByID(ctx, req.ProviderID)
 	if err != nil {
@@ -225,6 +240,10 @@ func (s *providerService) ListProviderConfigs(ctx context.Context, organizationI
 // ============================================================================
 
 func (s *providerService) CreateCustom(ctx context.Context, organizationID uuid.UUID, req *dto.CreateCustomProviderRequest) (*model.CustomProvider, error) {
+	if err := validateProviderBaseURL(ctx, "api_base_url", req.APIBaseURL); err != nil {
+		return nil, err
+	}
+
 	exists, err := s.customRepo.ExistsByProvider(ctx, organizationID, req.Provider)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check provider existence: %w", err)
@@ -269,6 +288,11 @@ func (s *providerService) UpdateCustom(ctx context.Context, organizationID, id u
 	if err != nil {
 		return nil, ErrProviderNotFound
 	}
+	if req.APIBaseURL != nil {
+		if err := validateProviderBaseURL(ctx, "api_base_url", *req.APIBaseURL); err != nil {
+			return nil, err
+		}
+	}
 
 	if req.ProviderName != nil {
 		provider.ProviderName = *req.ProviderName
@@ -301,6 +325,20 @@ func (s *providerService) UpdateCustom(ctx context.Context, organizationID, id u
 
 func (s *providerService) DeleteCustom(ctx context.Context, organizationID, id uuid.UUID) error {
 	return s.customRepo.Delete(ctx, organizationID, id)
+}
+
+func validateProviderBaseURL(ctx context.Context, fieldName, raw string) error {
+	if raw == "" {
+		return nil
+	}
+	llmConfig := appconfig.Current().LLM
+	if !llmConfig.OutboundURLGuardEnabled() {
+		return nil
+	}
+	if err := urlguard.ValidateBaseURL(ctx, raw, urlguard.Policy{GuardDNS: llmConfig.GuardOutboundDNS}); err != nil {
+		return fmt.Errorf("invalid %s: %w", fieldName, err)
+	}
+	return nil
 }
 
 // ============================================================================

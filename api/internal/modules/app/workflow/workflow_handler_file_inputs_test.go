@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +28,10 @@ func (m *mockWorkflowFileService) UploadFile(ctx context.Context, filename strin
 	return nil, nil
 }
 
+func (m *mockWorkflowFileService) ReplaceFileContent(ctx context.Context, fileID string, filename string, content []byte, mimeType string, userID, tenantID string) (*dto.UploadFile, error) {
+	return nil, nil
+}
+
 func (m *mockWorkflowFileService) GetFilePreview(ctx context.Context, fileID string) (string, error) {
 	return "", nil
 }
@@ -40,6 +45,10 @@ func (m *mockWorkflowFileService) GetFile(ctx context.Context, fileID string) (s
 		return m.getFileFn(ctx, fileID)
 	}
 	return "", nil
+}
+
+func (m *mockWorkflowFileService) ExtractFileWithSetting(ctx context.Context, fileID string, _ interfaces.FileExtractionSetting) (string, error) {
+	return m.GetFile(ctx, fileID)
 }
 
 func (m *mockWorkflowFileService) GetSupportedFileTypes() []string {
@@ -133,6 +142,34 @@ func TestProcessAllFileInputs_TreatsImageExtensionAsImageEvenWhenDeclaredDocumen
 	}
 	if getFileCalled {
 		t.Fatalf("expected image input to bypass text extraction")
+	}
+}
+
+func TestProcessAllFileInputs_HandlesMissingUploadFile(t *testing.T) {
+	handler := &WorkflowHandler{
+		fileService: &mockWorkflowFileService{
+			getFileByIDFn: func(ctx context.Context, fileID string) (*dto.UploadFile, error) {
+				return nil, nil
+			},
+		},
+	}
+
+	inputs := map[string]interface{}{
+		"map": map[string]interface{}{
+			"type":            "image",
+			"transfer_method": "local_file",
+			"upload_file_id":  "missing-file",
+		},
+	}
+
+	processed := handler.processAllFileInputs(context.Background(), inputs, "tenant-1", "app-1")
+
+	got, ok := processed["map"].(string)
+	if !ok {
+		t.Fatalf("processed map = %T, want string error", processed["map"])
+	}
+	if got == "" || !strings.Contains(got, "File not found") {
+		t.Fatalf("processed map = %q, want file not found error", got)
 	}
 }
 

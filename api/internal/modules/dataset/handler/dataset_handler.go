@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
+	"gorm.io/gorm"
 )
 
 // DatasetHandler handles dataset-related HTTP requests
@@ -74,6 +76,17 @@ func NewDatasetHandler(
 	}
 }
 
+func failDatasetRead(c *gin.Context, err error, fallback response.ErrorCode) {
+	switch {
+	case errors.Is(err, service.ErrDatasetAccessDenied):
+		response.Fail(c, response.ErrDatasetPermissionDenied)
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		response.Fail(c, response.ErrDatasetNotFound)
+	default:
+		response.Fail(c, fallback)
+	}
+}
+
 // GetDatasets handles GET /datasets
 func (h *DatasetHandler) GetDatasets(c *gin.Context) {
 	// Get account and tenant IDs from context (already validated by JWTWithTenant middleware)
@@ -102,7 +115,6 @@ func (h *DatasetHandler) GetDatasets(c *gin.Context) {
 
 	// Determine tenant_id_set based on user permissions
 	var tenantIDSet map[string]bool
-	var tenantList []*workspace_model.Workspace // Using workspace_model.Workspace type
 
 	// For now, use CheckGroupAdminByWorkspace as a workaround
 	isGroupAdmin := false
@@ -128,25 +140,27 @@ func (h *DatasetHandler) GetDatasets(c *gin.Context) {
 
 	if isGroupAdmin {
 		// Admin can see all tenants
-		tenantList = allGroupTenantList
-
-		// Create tenant ID set
 		tenantIDSet = make(map[string]bool)
-		for _, tenant := range tenantList {
+		for _, tenant := range allGroupTenantList {
 			tenantIDSet[tenant.ID] = true
 		}
 	} else {
-		// Get only user's accessible tenants in the group
-		tenantList, err = h.organizationService.GetUserAllWorkspacesInOrganization(c.Request.Context(), organizationID, accountID)
+		userMemberships, err := h.tenantService.GetUserWorkspaceMemberships(c.Request.Context(), accountID)
 		if err != nil {
 			logger.Error("Failed to get user tenants in group", err)
-			tenantList = []*workspace_model.Workspace{}
+			userMemberships = nil
 		}
 
-		// Create tenant ID set
+		groupTenantIDSet := make(map[string]bool, len(allGroupTenantList))
+		for _, tenant := range allGroupTenantList {
+			groupTenantIDSet[tenant.ID] = true
+		}
+
 		tenantIDSet = make(map[string]bool)
-		for _, tenant := range tenantList {
-			tenantIDSet[tenant.ID] = true
+		for _, membership := range userMemberships {
+			if groupTenantIDSet[membership.WorkspaceID] {
+				tenantIDSet[membership.WorkspaceID] = true
+			}
 		}
 	}
 
@@ -174,6 +188,29 @@ func (h *DatasetHandler) GetDatasets(c *gin.Context) {
 			}
 		}
 		allGroupTenantIDs = filteredAllGroupTenantIDs
+	}
+
+	if h.organizationService != nil && !isGroupAdmin {
+		allTeamTenantIDs := make([]string, 0, len(tenantIDs))
+		for _, id := range tenantIDs {
+			hasPermission, err := h.organizationService.CheckWorkspaceOrganizationAnyPermission(
+				c.Request.Context(),
+				organizationID,
+				id,
+				accountID,
+				workspace_model.WorkspacePermissionKnowledgeBaseView,
+				workspace_model.WorkspacePermissionKnowledgeBaseManage,
+				workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
+			)
+			if err != nil {
+				response.Fail(c, response.ErrSystemError)
+				return
+			}
+			if hasPermission {
+				allTeamTenantIDs = append(allTeamTenantIDs, id)
+			}
+		}
+		allGroupTenantIDs = allTeamTenantIDs
 	}
 
 	if len(tenantIDs) == 0 {
@@ -335,6 +372,7 @@ func (h *DatasetHandler) PostDatasets(c *gin.Context) {
 		Name:                   req.Name,
 		Description:            &req.Description,
 		Provider:               req.Provider,
+		Permission:             req.Permission,
 		EmbeddingModel:         embeddingModel,
 		EmbeddingModelProvider: embeddingModelProvider,
 		EntityModel:            req.EntityModel,
@@ -349,6 +387,10 @@ func (h *DatasetHandler) PostDatasets(c *gin.Context) {
 
 	dataset, err := h.datasetService.CreateDataset(c.Request.Context(), createReq)
 	if err != nil {
+		if errors.Is(err, service.ErrInvalidDatasetPermission) {
+			response.Fail(c, response.ErrInvalidPermission)
+			return
+		}
 		if strings.Contains(err.Error(), "duplicate") {
 			response.Fail(c, response.ErrDatasetExists)
 			return
@@ -413,18 +455,8 @@ func (h *DatasetHandler) GetDataset(c *gin.Context) {
 	// Get dataset with permission check
 	dataset, err := h.datasetService.GetDatasetWithPermissionCheck(c.Request.Context(), datasetID, accountID, tenantID)
 	if err != nil {
-		errMsg := err.Error()
-		switch {
-		case strings.Contains(errMsg, "not found"):
-			response.Fail(c, response.ErrDatasetNotFound)
-			return
-		case strings.Contains(errMsg, "no permission"):
-			response.Fail(c, response.ErrDatasetPermissionDenied)
-			return
-		default:
-			response.Fail(c, response.ErrDatasetGetFailed)
-			return
-		}
+		failDatasetRead(c, err, response.ErrDatasetGetFailed)
+		return
 	}
 
 	// Fetch dataset stats for document count, segment count, etc.
@@ -763,15 +795,7 @@ func (h *DatasetHandler) handleHitTesting(c *gin.Context, forcedMode string) {
 	// Get and validate dataset with permission check
 	dataset, err := h.datasetService.GetDatasetWithPermissionCheck(c.Request.Context(), datasetID.String(), accountID, tenantID)
 	if err != nil {
-		if err.Error() == "dataset not found" {
-			response.Fail(c, response.ErrDatasetNotFound)
-			return
-		}
-		if err.Error() == "no permission to access this dataset" {
-			response.Fail(c, response.ErrDatasetPermissionDenied)
-			return
-		}
-		response.Fail(c, response.ErrDatasetGetFailed)
+		failDatasetRead(c, err, response.ErrDatasetGetFailed)
 		return
 	}
 
@@ -811,6 +835,7 @@ func (h *DatasetHandler) handleHitTesting(c *gin.Context, forcedMode string) {
 	if forcedMode != "" {
 		mode = forcedMode
 	}
+	recordHistory := req.RecordHistory == nil || *req.RecordHistory
 
 	result, err := h.hitTestingService.Retrieve(
 		c.Request.Context(),
@@ -823,6 +848,7 @@ func (h *DatasetHandler) handleHitTesting(c *gin.Context, forcedMode string) {
 		"hit_testing",
 		"single",
 		mode,
+		recordHistory,
 	)
 	if err != nil {
 		// Handle specific error types based on current implementation
@@ -919,15 +945,7 @@ func (h *DatasetHandler) BatchHitTesting(c *gin.Context) {
 	// Get and validate dataset with permission check
 	dataset, err := h.datasetService.GetDatasetWithPermissionCheck(c.Request.Context(), datasetID.String(), accountID, tenantID)
 	if err != nil {
-		if err.Error() == "dataset not found" {
-			response.Fail(c, response.ErrDatasetNotFound)
-			return
-		}
-		if err.Error() == "no permission to access this dataset" {
-			response.Fail(c, response.ErrDatasetPermissionDenied)
-			return
-		}
-		response.Fail(c, response.ErrDatasetGetFailed)
+		failDatasetRead(c, err, response.ErrDatasetGetFailed)
 		return
 	}
 
@@ -984,6 +1002,7 @@ func (h *DatasetHandler) BatchHitTesting(c *gin.Context) {
 			"batch_hit_testing",
 			"batch",
 			"",
+			true,
 		)
 		if err != nil {
 			// Handle specific error types based on current implementation
@@ -1048,15 +1067,7 @@ func (h *DatasetHandler) AsyncBatchHitTesting(c *gin.Context) {
 	// Get and validate dataset with permission check
 	dataset, err := h.datasetService.GetDatasetWithPermissionCheck(c.Request.Context(), datasetID.String(), accountID, organizationID)
 	if err != nil {
-		if err.Error() == "dataset not found" {
-			response.Fail(c, response.ErrDatasetNotFound)
-			return
-		}
-		if err.Error() == "no permission to access this dataset" {
-			response.Fail(c, response.ErrDatasetPermissionDenied)
-			return
-		}
-		response.Fail(c, response.ErrDatasetGetFailed)
+		failDatasetRead(c, err, response.ErrDatasetGetFailed)
 		return
 	}
 
@@ -1240,6 +1251,7 @@ func (h *DatasetHandler) processBatchHitTesting(taskID string, dataset *model.Da
 			"batch_hit_testing",
 			"batch",
 			"",
+			true,
 		)
 		if err != nil {
 			errMsg := err.Error()
@@ -1370,15 +1382,7 @@ func (h *DatasetHandler) DeleteDatasetQuery(c *gin.Context) {
 	// First check if the user has permission to access the dataset
 	_, err := h.datasetService.GetDatasetWithPermissionCheck(c.Request.Context(), datasetID, accountID, tenantID)
 	if err != nil {
-		if err.Error() == "dataset not found" {
-			response.Fail(c, response.ErrDatasetNotFound)
-			return
-		}
-		if err.Error() == "no permission to access this dataset" {
-			response.Fail(c, response.ErrDatasetPermissionDenied)
-			return
-		}
-		response.Fail(c, response.ErrSystemError)
+		failDatasetRead(c, err, response.ErrSystemError)
 		return
 	}
 
@@ -1419,15 +1423,7 @@ func (h *DatasetHandler) GetRandomDatasetQuestions(c *gin.Context) {
 	// Get and validate dataset with permission check
 	_, err = h.datasetService.GetDatasetWithPermissionCheck(c.Request.Context(), datasetID, accountID, tenantID)
 	if err != nil {
-		if err.Error() == "dataset not found" {
-			response.Fail(c, response.ErrDatasetNotFound)
-			return
-		}
-		if err.Error() == "no permission to access this dataset" {
-			response.Fail(c, response.ErrDatasetPermissionDenied)
-			return
-		}
-		response.Fail(c, response.ErrDatasetGetFailed)
+		failDatasetRead(c, err, response.ErrDatasetGetFailed)
 		return
 	}
 
@@ -1540,18 +1536,8 @@ func (h *DatasetHandler) GetDatasetErrorDocs(c *gin.Context) {
 	// Get dataset with permission check
 	_, err := h.datasetService.GetDatasetWithPermissionCheck(c.Request.Context(), datasetID, accountID, tenantID)
 	if err != nil {
-		errMsg := err.Error()
-		switch {
-		case strings.Contains(errMsg, "not found"):
-			response.Fail(c, response.ErrDatasetNotFound)
-			return
-		case strings.Contains(errMsg, "no permission"):
-			response.Fail(c, response.ErrDatasetPermissionDenied)
-			return
-		default:
-			response.Fail(c, response.ErrDatasetGetFailed)
-			return
-		}
+		failDatasetRead(c, err, response.ErrDatasetGetFailed)
+		return
 	}
 
 	// Get error documents using the newly added service method
@@ -1621,18 +1607,8 @@ func (h *DatasetHandler) PostDatasetErrorDocsRetry(c *gin.Context) {
 	// Permission check
 	_, err := h.datasetService.GetDatasetWithPermissionCheck(c.Request.Context(), datasetID, accountID, tenantID)
 	if err != nil {
-		errMsg := err.Error()
-		switch {
-		case strings.Contains(errMsg, "not found"):
-			response.Fail(c, response.ErrDatasetNotFound)
-			return
-		case strings.Contains(errMsg, "no permission"):
-			response.Fail(c, response.ErrDatasetPermissionDenied)
-			return
-		default:
-			response.Fail(c, response.ErrDatasetGetFailed)
-			return
-		}
+		failDatasetRead(c, err, response.ErrDatasetGetFailed)
+		return
 	}
 
 	var req struct {
@@ -1693,18 +1669,8 @@ func (h *DatasetHandler) GetDatasetQuestionCount(c *gin.Context) {
 	// Get dataset with permission check
 	_, err := h.datasetService.GetDatasetWithPermissionCheck(c.Request.Context(), datasetID, accountID, tenantID)
 	if err != nil {
-		errMsg := err.Error()
-		switch {
-		case strings.Contains(errMsg, "not found"):
-			response.Fail(c, response.ErrDatasetNotFound)
-			return
-		case strings.Contains(errMsg, "no permission"):
-			response.Fail(c, response.ErrDatasetPermissionDenied)
-			return
-		default:
-			response.Fail(c, response.ErrDatasetGetFailed)
-			return
-		}
+		failDatasetRead(c, err, response.ErrDatasetGetFailed)
+		return
 	}
 
 	// Get question count

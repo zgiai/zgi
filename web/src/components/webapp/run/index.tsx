@@ -35,6 +35,7 @@ import {
   getWorkflowRunCreatedAtMs,
   getWorkflowRunExecutionId,
   getWorkflowRunItemKey,
+  getWorkflowRunRoundDurationMap,
   getWorkflowRunRoundElapsedTime,
   sortWorkflowRunItems,
   sortWorkflowRunRounds,
@@ -90,6 +91,7 @@ function toInputVars(vars: WebAppVariable[], fileUploadLimit?: number): InputVar
         ? fileUploadLimit
         : v.max_length,
     default: v.default,
+    default_datetime_mode: v.default_datetime_mode,
     options: v.options,
     allowed_file_upload_methods: v.allowed_file_upload_methods,
     allowed_file_types: v.allowed_file_types,
@@ -198,6 +200,20 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   const hasUnresolvedApprovals = useCallback(
     () => hasUnresolvedApprovalEntries(approvalRuntimeStateRef.current),
     []
+  );
+  const hasBlockingApprovalStop = useCallback(
+    () =>
+      Object.values(approvalRuntimeStateRef.current.byKey).some(entry =>
+        ['waiting', 'submitting'].includes(entry.status)
+      ),
+    []
+  );
+  const isApprovalStopBlocked = useMemo(
+    () =>
+      Object.values(approvalRuntimeState.byKey).some(entry =>
+        ['waiting', 'submitting'].includes(entry.status)
+      ),
+    [approvalRuntimeState.byKey]
   );
 
   useEffect(() => {
@@ -931,6 +947,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         typeof d['elapsed_time'] === 'number' ? Math.max(0, d['elapsed_time'] as number) : 0;
       const error = typeof d['error'] === 'string' ? (d['error'] as string) : null;
       const outputs = d['outputs'];
+      const roundDurations = getWorkflowRunRoundDurationMap(d, 'iteration');
       const sess = iterationSessions.current.get(key) ?? {
         nodeId,
         title,
@@ -942,7 +959,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       sess.outputs = outputs;
       sess.rounds = sess.rounds.map(r => ({
         ...r,
-        elapsedTime: getWorkflowRunRoundElapsedTime(r),
+        elapsedTime: roundDurations.get(r.index) ?? getWorkflowRunRoundElapsedTime(r),
       }));
       iterationSessions.current.set(key, sess);
       activeIteration.current = { nodeId: null, index: null };
@@ -1062,6 +1079,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
               | Record<string, unknown>
               | undefined)
           : undefined;
+      const roundDurations = getWorkflowRunRoundDurationMap(d, 'loop');
       const sess = loopSessions.current.get(key) ?? {
         nodeId,
         title,
@@ -1075,7 +1093,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         const variables = variableMap?.[String(r.index)];
         return {
           ...r,
-          elapsedTime: getWorkflowRunRoundElapsedTime(r),
+          elapsedTime: roundDurations.get(r.index) ?? getWorkflowRunRoundElapsedTime(r),
           variables: variables ?? r.variables,
         };
       });
@@ -1101,7 +1119,12 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       );
     },
     onFinished: payload => {
-      if (hasUnresolvedApprovals()) {
+      const data = unwrap(payload) as Record<string, unknown>;
+      const status = typeof data['status'] === 'string' ? data['status'] : '';
+      const isSuccessfulTerminalStatus = !['failed', 'error', 'stopped', 'expired'].includes(
+        status.toLowerCase()
+      );
+      if (isSuccessfulTerminalStatus && hasUnresolvedApprovals()) {
         setIsRunning(false);
         setApprovalPaused(true);
         setActiveTab('input');
@@ -1113,8 +1136,6 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       workflowFinishedRef.current = true;
       rememberWorkflowRunId(null);
       throttler.flush();
-      const data = unwrap(payload) as Record<string, unknown>;
-      const status = typeof data['status'] === 'string' ? data['status'] : '';
       const outputs = data['outputs'] as unknown;
       let result: HistoryResult = { kind: 'empty' };
       if (outputs === null || outputs === undefined) {
@@ -1331,7 +1352,11 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         case 'workflow_failed':
         case 'workflow_succeeded':
         case 'workflow_completed': {
-          if (hasUnresolvedApprovals()) {
+          const isSuccessfulTerminalEvent =
+            event.event === 'workflow_finished' ||
+            event.event === 'workflow_succeeded' ||
+            event.event === 'workflow_completed';
+          if (isSuccessfulTerminalEvent && hasUnresolvedApprovals()) {
             setIsRunning(false);
             setApprovalPaused(true);
             setActiveTab('input');
@@ -1599,6 +1624,10 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   );
 
   const handleStop = useCallback(() => {
+    if (hasBlockingApprovalStop()) {
+      toast.info(globalT('nodes.approval.runtime.stopDisabled'));
+      return;
+    }
     cancel();
     cancelWorkflowRunEvents();
     workflowRunEventsActiveRef.current = false;
@@ -1612,7 +1641,16 @@ export const WebappRun: React.FC<WebappRunProps> = ({
     setIsRunning(false);
     throttler.flush();
     toast.info(t('run.stopped'));
-  }, [cancel, cancelWorkflowRunEvents, rememberWorkflowRunId, resetApprovalRuntime, t, throttler]);
+  }, [
+    cancel,
+    cancelWorkflowRunEvents,
+    globalT,
+    hasBlockingApprovalStop,
+    rememberWorkflowRunId,
+    resetApprovalRuntime,
+    t,
+    throttler,
+  ]);
 
   const handleQuestionAnswerSelect = useCallback(
     async (choice: QuestionAnswerChoice) => {
@@ -1760,7 +1798,14 @@ export const WebappRun: React.FC<WebappRunProps> = ({
         {isApprovalPending ? approvalInputContent : inputFormContent}
       </div>
       <div className="flex items-center gap-2 pt-4 px-5 border-t border-border/50 bg-card/50">
-        {isRunning ? (
+        {isApprovalPending ? (
+          <div className="flex h-11 w-full items-center justify-center gap-2 rounded-lg border bg-muted/40 text-sm font-medium text-muted-foreground">
+            <Clock3 className="size-4" />
+            {isApprovalStopBlocked
+              ? globalT('nodes.approval.runtime.stopDisabled')
+              : globalT('nodes.approval.runtime.paused')}
+          </div>
+        ) : isRunning ? (
           <Button
             onClick={handleStop}
             variant="destructive"
@@ -1768,12 +1813,10 @@ export const WebappRun: React.FC<WebappRunProps> = ({
           >
             {t('run.stop')}
           </Button>
-        ) : isApprovalPending || questionAnswerHasChoices ? (
+        ) : questionAnswerHasChoices ? (
           <div className="flex h-11 w-full items-center justify-center gap-2 rounded-lg border bg-muted/40 text-sm font-medium text-muted-foreground">
             <Clock3 className="size-4" />
-            {isApprovalPending
-              ? globalT('nodes.approval.runtime.paused')
-              : globalT('nodes.questionAnswer.runtime.chooseOne')}
+            {globalT('nodes.questionAnswer.runtime.chooseOne')}
           </div>
         ) : (
           <Button

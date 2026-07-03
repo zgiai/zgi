@@ -5,12 +5,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +28,11 @@ const (
 	defaultTimeout         = 800 * time.Second
 	defaultPollInterval    = 3 * time.Second
 	bboxScale              = 1000.0
+)
+
+var (
+	mineruMarkdownImagePattern = regexp.MustCompile(`!\[([^\]\r\n]*)\]\(([^)\r\n]+)\)`)
+	mineruHTMLImageSrcPattern  = regexp.MustCompile(`(?i)(<img\b[^>]*\bsrc\s*=\s*)(["']?)([^"'\s>]+)(["']?)`)
 )
 
 type Client struct{}
@@ -145,9 +153,10 @@ type parseResponse struct {
 }
 
 type fileResults struct {
-	MdContent   string `json:"md_content,omitempty"`
-	MiddleJSON  string `json:"middle_json,omitempty"`
-	ContentList string `json:"content_list,omitempty"`
+	MdContent   string            `json:"md_content,omitempty"`
+	MiddleJSON  string            `json:"middle_json,omitempty"`
+	ContentList string            `json:"content_list,omitempty"`
+	Images      map[string]string `json:"images,omitempty"`
 }
 
 type contentItem struct {
@@ -163,6 +172,8 @@ type contentItem struct {
 	TableFootnote any    `json:"table_footnote,omitempty"`
 	ImageCaption  any    `json:"image_caption,omitempty"`
 	ImageFootnote any    `json:"image_footnote,omitempty"`
+	ChartCaption  any    `json:"chart_caption,omitempty"`
+	ChartFootnote any    `json:"chart_footnote,omitempty"`
 }
 
 type contentItemV2 struct {
@@ -178,8 +189,16 @@ type middleJSON struct {
 }
 
 type middlePage struct {
-	PageIdx  int   `json:"page_idx"`
-	PageSize []int `json:"page_size"`
+	PageIdx       int                  `json:"page_idx"`
+	PageSize      []int                `json:"page_size"`
+	PreprocBlocks []middlePreprocBlock `json:"preproc_blocks,omitempty"`
+}
+
+type middlePreprocBlock struct {
+	Score *float64 `json:"score,omitempty"`
+	BBox  []int    `json:"bbox,omitempty"`
+	Index int      `json:"index,omitempty"`
+	Type  string   `json:"type,omitempty"`
 }
 
 func callMineruParse(ctx context.Context, filename string, data []byte) (*parseResponse, error) {
@@ -207,7 +226,7 @@ func callMineruParse(ctx context.Context, filename string, data []byte) (*parseR
 		"return_content_list": "true",
 		"return_middle_json":  "true",
 		"return_model_output": "false",
-		"return_images":       "false",
+		"return_images":       "true",
 		"response_format_zip": "false",
 	} {
 		if err := mw.WriteField(k, v); err != nil {
@@ -327,6 +346,7 @@ type officialZipArtifacts struct {
 	Markdown        string
 	MiddleJSON      string
 	ContentList     string
+	Images          map[string]string
 	MarkdownPath    string
 	MiddleJSONPath  string
 	ContentListPath string
@@ -381,6 +401,7 @@ func callOfficialMineruParse(ctx context.Context, filename string, data []byte) 
 				MdContent:   artifacts.Markdown,
 				MiddleJSON:  artifacts.MiddleJSON,
 				ContentList: artifacts.ContentList,
+				Images:      artifacts.Images,
 			},
 		},
 	}, nil
@@ -586,6 +607,19 @@ func officialReadZipArtifacts(data []byte) (*officialZipArtifacts, error) {
 				artifacts.MiddleJSON = content
 				artifacts.MiddleJSONPath = file.Name
 			}
+		case isOfficialImage(base):
+			dataURI, err := readZipImageDataURI(file, base)
+			if err != nil {
+				return nil, err
+			}
+			if artifacts.Images == nil {
+				artifacts.Images = map[string]string{}
+			}
+			for _, name := range officialImageAssetNames(file.Name) {
+				if _, exists := artifacts.Images[name]; !exists {
+					artifacts.Images[name] = dataURI
+				}
+			}
 		}
 	}
 	return artifacts, nil
@@ -604,6 +638,54 @@ func readZipFile(file *zip.File) (string, error) {
 	return string(data), nil
 }
 
+func readZipImageDataURI(file *zip.File, base string) (string, error) {
+	rc, err := file.Open()
+	if err != nil {
+		return "", fmt.Errorf("mineru official: open image zip entry %s: %w", file.Name, err)
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return "", fmt.Errorf("mineru official: read image zip entry %s: %w", file.Name, err)
+	}
+	contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(base)))
+	if contentType == "" {
+		contentType = http.DetectContentType(data)
+	}
+	if !strings.HasPrefix(contentType, "image/") {
+		return "", fmt.Errorf("mineru official: unsupported image content type %s for %s", contentType, file.Name)
+	}
+	return fmt.Sprintf("data:%s;base64,%s", contentType, base64.StdEncoding.EncodeToString(data)), nil
+}
+
+func officialImageAssetNames(name string) []string {
+	normalized := strings.Trim(strings.ReplaceAll(name, "\\", "/"), "/")
+	if normalized == "" {
+		return nil
+	}
+
+	seen := map[string]struct{}{}
+	out := make([]string, 0, 3)
+	add := func(value string) {
+		value = strings.Trim(strings.ReplaceAll(value, "\\", "/"), "/")
+		if value == "" {
+			return
+		}
+		if _, exists := seen[value]; exists {
+			return
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+
+	add(normalized)
+	if idx := strings.Index(strings.ToLower(normalized), "images/"); idx >= 0 {
+		add(normalized[idx:])
+	}
+	add(filepath.Base(normalized))
+	return out
+}
+
 func isOfficialMarkdown(base string) bool {
 	return base == "full.md" || strings.HasSuffix(base, "_full.md") || (strings.HasSuffix(base, ".md") && !strings.Contains(base, "origin"))
 }
@@ -617,6 +699,15 @@ func isOfficialContentList(base string) bool {
 
 func isOfficialMiddleJSON(base string) bool {
 	return base == "middle.json" || base == "layout.json" || strings.HasSuffix(base, "_middle.json") || strings.HasSuffix(base, "_layout.json")
+}
+
+func isOfficialImage(base string) bool {
+	switch strings.ToLower(filepath.Ext(base)) {
+	case ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff":
+		return true
+	default:
+		return false
+	}
 }
 
 func officialModelVersion(filename string) string {
@@ -723,7 +814,7 @@ func mineruToDocumentResult(filename string, resp *parseResponse) (*extractcommo
 	}
 
 	pages := buildPages(middle, items)
-	chunks := buildChunks(items)
+	chunks := buildChunks(items, middle, fr.Images)
 
 	return &extractcommon.DocumentResult{
 		DocID:     coalesce(resp.TaskID, newID()),
@@ -894,10 +985,13 @@ func buildPages(middle middleJSON, items []contentItem) []extractcommon.Page {
 	return out
 }
 
-func buildChunks(items []contentItem) []extractcommon.Chunk {
+func buildChunks(items []contentItem, middle middleJSON, imageAssets map[string]string) []extractcommon.Chunk {
+	scores := buildMineruBlockScoreLookup(middle)
 	out := make([]extractcommon.Chunk, 0, len(items))
+	pageOrder := map[int]int{}
 	for i, it := range items {
 		t, sub := mapType(it)
+		payload := buildPayload(i, it)
 		ch := extractcommon.Chunk{
 			ID:        fmt.Sprintf("mineru-%d", i),
 			Type:      t,
@@ -907,14 +1001,208 @@ func buildChunks(items []contentItem) []extractcommon.Chunk {
 			Precision: "reliable",
 			BBox:      toBBox(it.BBox),
 			Text:      extractText(it),
-			Payload:   buildPayload(i, it),
+			Payload:   payload,
+		}
+		itemPageOrder := pageOrder[it.PageIdx]
+		pageOrder[it.PageIdx] = itemPageOrder + 1
+		if score, ok := scores.scoreFor(i, itemPageOrder, it); ok {
+			ch.Confidence = score
+			payload["mineru_block_score"] = score
 		}
 		if it.TableBody != "" {
-			ch.Markdown = it.TableBody
+			tableBody := rewriteMineruContentImageReferences(it.TableBody, imageAssets)
+			ch.Text = tableBody
+			ch.Markdown = tableBody
+			payload["table_body"] = tableBody
+		}
+		if shouldUseMineruImageAsset(it) {
+			if dataURI, ok := lookupMineruContentImageDataURI(imageAssets, it.ImgPath); ok {
+				payload["original_img_path"] = it.ImgPath
+				payload["image_data_uri"] = dataURI
+				payload["image_ref_type"] = "data_uri"
+				payload["img_path"] = dataURI
+				ch.Markdown = mineruImageMarkdownWithPath(it, dataURI)
+			} else {
+				ch.Markdown = mineruImageMarkdown(it)
+			}
 		}
 		out = append(out, ch)
 	}
 	return out
+}
+
+func shouldUseMineruImageAsset(it contentItem) bool {
+	if strings.TrimSpace(it.ImgPath) == "" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(it.Type)) {
+	case "image", "chart", "figure":
+		return true
+	default:
+		return false
+	}
+}
+
+func mineruImageMarkdown(it contentItem) string {
+	return mineruImageMarkdownWithPath(it, strings.TrimSpace(it.ImgPath))
+}
+
+func mineruImageMarkdownWithPath(it contentItem, path string) string {
+	alt := strings.TrimSpace(firstString(it.ImageCaption))
+	if alt == "" {
+		alt = strings.TrimSpace(firstString(it.ChartCaption))
+	}
+	if alt == "" {
+		alt = "figure"
+	}
+	return fmt.Sprintf("![%s](%s)", alt, strings.TrimSpace(path))
+}
+
+func rewriteMineruContentImageReferences(content string, imageAssets map[string]string) string {
+	if strings.TrimSpace(content) == "" || len(imageAssets) == 0 {
+		return content
+	}
+
+	rewritten := mineruMarkdownImagePattern.ReplaceAllStringFunc(content, func(match string) string {
+		parts := mineruMarkdownImagePattern.FindStringSubmatch(match)
+		if len(parts) != 3 {
+			return match
+		}
+		if dataURI, ok := lookupMineruContentImageDataURI(imageAssets, parts[2]); ok {
+			return fmt.Sprintf("![%s](%s)", parts[1], dataURI)
+		}
+		return match
+	})
+
+	return mineruHTMLImageSrcPattern.ReplaceAllStringFunc(rewritten, func(match string) string {
+		parts := mineruHTMLImageSrcPattern.FindStringSubmatch(match)
+		if len(parts) != 5 {
+			return match
+		}
+		if dataURI, ok := lookupMineruContentImageDataURI(imageAssets, parts[3]); ok {
+			quote := parts[2]
+			if quote == "" {
+				quote = `"`
+			}
+			return parts[1] + quote + dataURI + quote
+		}
+		return match
+	})
+}
+
+func lookupMineruContentImageDataURI(images map[string]string, imagePath string) (string, bool) {
+	if len(images) == 0 {
+		return "", false
+	}
+	for _, candidate := range mineruImageAssetNameCandidates(imagePath) {
+		if value, ok := images[candidate]; ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value), true
+		}
+	}
+	return "", false
+}
+
+func mineruImageAssetNameCandidates(imagePath string) []string {
+	normalized := strings.Trim(strings.ReplaceAll(imagePath, "\\", "/"), "/")
+	if normalized == "" {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, 3)
+	add := func(value string) {
+		value = strings.Trim(strings.ReplaceAll(value, "\\", "/"), "/")
+		if value == "" {
+			return
+		}
+		if _, exists := seen[value]; exists {
+			return
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	add(normalized)
+	if idx := strings.Index(strings.ToLower(normalized), "images/"); idx >= 0 {
+		add(normalized[idx+len("images/"):])
+		add(normalized[idx:])
+	}
+	add(filepath.Base(normalized))
+	return out
+}
+
+type mineruBlockScoreLookup struct {
+	byIndex map[int]float64
+	byBBox  map[string]float64
+	byOrder map[string]float64
+}
+
+func buildMineruBlockScoreLookup(middle middleJSON) mineruBlockScoreLookup {
+	lookup := mineruBlockScoreLookup{
+		byIndex: map[int]float64{},
+		byBBox:  map[string]float64{},
+		byOrder: map[string]float64{},
+	}
+	pageOrder := map[int]int{}
+	for _, page := range middle.PdfInfo {
+		for _, block := range page.PreprocBlocks {
+			score, ok := normalizeMineruScore(block.Score)
+			if !ok {
+				continue
+			}
+			if len(block.BBox) >= 4 {
+				lookup.byBBox[mineruBBoxKey(page.PageIdx, block.BBox)] = score
+			}
+			if block.Index > 0 {
+				lookup.byIndex[block.Index] = score
+			}
+			order := pageOrder[page.PageIdx]
+			lookup.byOrder[mineruOrderKey(page.PageIdx, order)] = score
+			pageOrder[page.PageIdx] = order + 1
+		}
+	}
+	return lookup
+}
+
+func (l mineruBlockScoreLookup) scoreFor(itemIndex, pageOrder int, item contentItem) (float64, bool) {
+	if len(l.byIndex) == 0 && len(l.byBBox) == 0 && len(l.byOrder) == 0 {
+		return 0, false
+	}
+	if len(item.BBox) >= 4 {
+		if score, ok := l.byBBox[mineruBBoxKey(item.PageIdx, item.BBox)]; ok {
+			return score, true
+		}
+	}
+	if score, ok := l.byIndex[itemIndex+1]; ok {
+		return score, true
+	}
+	if score, ok := l.byOrder[mineruOrderKey(item.PageIdx, pageOrder)]; ok {
+		return score, true
+	}
+	return 0, false
+}
+
+func normalizeMineruScore(score *float64) (float64, bool) {
+	if score == nil {
+		return 0, false
+	}
+	value := *score
+	if value < 0 {
+		return 0, false
+	}
+	if value > 1 {
+		value = 1
+	}
+	return value, true
+}
+
+func mineruBBoxKey(pageIdx int, bbox []int) string {
+	if len(bbox) < 4 {
+		return fmt.Sprintf("%d:", pageIdx)
+	}
+	return fmt.Sprintf("%d:%d,%d,%d,%d", pageIdx, bbox[0], bbox[1], bbox[2], bbox[3])
+}
+
+func mineruOrderKey(pageIdx, order int) string {
+	return fmt.Sprintf("%d:%d", pageIdx, order)
 }
 
 func buildPayload(index int, it contentItem) map[string]any {
@@ -938,6 +1226,8 @@ func buildPayload(index int, it contentItem) map[string]any {
 	addAny(payload, "table_footnote", it.TableFootnote)
 	addAny(payload, "image_caption", it.ImageCaption)
 	addAny(payload, "image_footnote", it.ImageFootnote)
+	addAny(payload, "chart_caption", it.ChartCaption)
+	addAny(payload, "chart_footnote", it.ChartFootnote)
 	return payload
 }
 
@@ -978,10 +1268,10 @@ func buildStructureDiagnostics(items []contentItem, chunks []extractcommon.Chunk
 		if strings.TrimSpace(it.TableBody) != "" {
 			withTableBody++
 		}
-		if hasAny(it.TableCaption) || hasAny(it.ImageCaption) {
+		if hasAny(it.TableCaption) || hasAny(it.ImageCaption) || hasAny(it.ChartCaption) {
 			withCaption++
 		}
-		if hasAny(it.TableFootnote) || hasAny(it.ImageFootnote) {
+		if hasAny(it.TableFootnote) || hasAny(it.ImageFootnote) || hasAny(it.ChartFootnote) {
 			withFootnote++
 		}
 		if i < len(chunks) {
@@ -1023,6 +1313,10 @@ func hasAny(value any) bool {
 }
 
 func mapType(it contentItem) (string, string) {
+	if shouldUseMineruImageAsset(it) {
+		return "figure", ""
+	}
+
 	switch it.Type {
 	case "text":
 		if it.TextLevel >= 1 {
@@ -1049,13 +1343,16 @@ func extractText(it contentItem) string {
 	if it.Type == "table" && strings.TrimSpace(it.TableBody) != "" {
 		return strings.TrimSpace(it.TableBody)
 	}
-	if it.Type == "image" {
+	if shouldUseMineruImageAsset(it) {
+		return "[figure]"
+	}
+	if it.Type == "image" || it.Type == "chart" {
 		if caption := firstString(it.ImageCaption); caption != "" {
 			return caption
 		}
-	}
-	if it.Type == "image" && it.ImgPath != "" {
-		return "[figure]"
+		if caption := firstString(it.ChartCaption); caption != "" {
+			return caption
+		}
 	}
 	if it.Type == "table" {
 		return "[table]"

@@ -20,6 +20,10 @@ type GenerateCasesRequest struct {
 	TurnStrategy  string   `json:"turn_strategy,omitempty"`
 	Prompt        string   `json:"prompt,omitempty"`
 	Model         *Model   `json:"model,omitempty"`
+
+	WorkflowContext string     `json:"-"`
+	Scenarios       []Scenario `json:"-"`
+	ExistingCases   []Case     `json:"-"`
 }
 
 type CreateGenerationTaskRequest = GenerateCasesRequest
@@ -29,6 +33,7 @@ type GenerationTaskResponse struct {
 }
 
 type GeneratedCase struct {
+	ScenarioID     string `json:"scenario_id,omitempty"`
 	Content        string `json:"content"`
 	ExpectedResult string `json:"expected_result"`
 	QuestionType   string `json:"question_type"`
@@ -64,6 +69,7 @@ func normalizeGeneratedCases(result *GenerateCasesResult) ([]GeneratedCase, erro
 		}
 		expectedResult := strings.TrimSpace(item.ExpectedResult)
 		items = append(items, GeneratedCase{
+			ScenarioID:     strings.TrimSpace(item.ScenarioID),
 			Content:        content,
 			ExpectedResult: expectedResult,
 			QuestionType:   normalizeGeneratedQuestionType(questionType),
@@ -83,6 +89,8 @@ func normalizeGeneratedQuestionType(value string) string {
 		return CaseTypeExtension
 	case CaseTypeFuzzy, "模糊问题":
 		return CaseTypeFuzzy
+	case CaseTypeManual, "人工介入":
+		return CaseTypeManual
 	default:
 		return CaseTypeCore
 	}

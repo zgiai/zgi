@@ -15,6 +15,7 @@ export interface WebAppWorkflowConfigFeature {
 
 export interface WebAppFeatures {
   opening_statement_type?: 'slogan' | 'message';
+  opening_guide_version?: 2;
   opening_slogan?: string;
   opening_statement: string;
   opening_statement_enabled?: boolean;
@@ -57,6 +58,7 @@ export type WebAppInputVarType =
   | 'select'
   | 'number'
   | 'checkbox'
+  | 'datetime'
   | 'file'
   | 'file-list';
 
@@ -68,6 +70,7 @@ export interface WebAppVariable {
   required: boolean;
   max_length?: number;
   default?: string | boolean;
+  default_datetime_mode?: 'fixed' | 'now';
   options?: string[];
   // For file related vars
   allowed_file_upload_methods?: string[];
@@ -80,16 +83,25 @@ export interface WebAppWorkflowMeta {
   icon?: string;
   icon_type?: 'image' | 'text' | string;
   icon_url?: string;
-  type?: 'WORKFLOW' | 'CONVERSATIONAL_WORKFLOW' | string;
+  type?: 'WORKFLOW' | 'CONVERSATIONAL_WORKFLOW' | 'AGENT' | string;
   title: string;
   /** Agent ID for stop functionality */
   agent_id?: string;
+  web_app_id?: string;
 }
 
 export interface WebAppWorkflowConfig {
   variables: WebAppVariable[];
   features: WebAppFeatures;
   config: WebAppWorkflowMeta;
+  agent_config?: {
+    agent_memory_enabled?: boolean;
+    file_upload_enabled?: boolean;
+    supports_vision?: boolean;
+    home_title?: string;
+    input_placeholder?: string;
+    suggested_questions?: string[];
+  };
 }
 
 export interface WebAppRunRequest {
@@ -155,6 +167,20 @@ export interface WebAppConversationList {
   page: number;
   total: number;
 }
+
+export type WebAppConversationSearchResultType = 'conversation' | 'message';
+
+export interface WebAppConversationSearchResult {
+  type: WebAppConversationSearchResultType;
+  conversation_id: string;
+  conversation_title: string;
+  message_id?: string;
+  snippet: string;
+  updated_at: number;
+}
+
+export type WebAppConversationSearchResponse =
+  WebAppApiResponseData<WebAppConversationSearchResult[]>;
 
 // Conversation detail types
 export interface WebAppConversationHistoryItem {

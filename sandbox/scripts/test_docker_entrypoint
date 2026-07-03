@@ -1,0 +1,35 @@
+#!/bin/sh
+set -eu
+
+tmp="$(mktemp -d /tmp/zgi-docker-entrypoint-test.XXXXXX)"
+trap 'rm -rf "$tmp"' EXIT
+
+root="$tmp/root"
+prebuilt="$tmp/prebuilt"
+profile="skill-office"
+manifest_path="opt/zgi/profiles/$profile/manifest.json"
+
+mkdir -p "$root/$profile/opt/zgi/profiles/$profile" "$prebuilt/$profile/opt/zgi/profiles/$profile"
+printf '{"checksum":"existing"}\n' > "$root/$profile/$manifest_path"
+printf '{"checksum":"prebuilt"}\n' > "$prebuilt/$profile/$manifest_path"
+
+ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR="$root" \
+ZGI_SANDBOX_PREBUILT_DEPENDENCY_ROOTFS_DIR="$prebuilt" \
+  sh ./scripts/docker-entrypoint true
+
+if ! grep -q '"existing"' "$root/$profile/$manifest_path"; then
+  echo "expected existing dependency profile to be preserved" >&2
+  exit 1
+fi
+
+ZGI_SANDBOX_DEPENDENCY_ROOTFS_DIR="$root" \
+ZGI_SANDBOX_PREBUILT_DEPENDENCY_ROOTFS_DIR="$prebuilt" \
+ZGI_SANDBOX_PREBUILT_DEPENDENCY_OVERWRITE=true \
+  sh ./scripts/docker-entrypoint true
+
+if ! grep -q '"prebuilt"' "$root/$profile/$manifest_path"; then
+  echo "expected force overwrite to seed prebuilt dependency profile" >&2
+  exit 1
+fi
+
+echo "test-docker-entrypoint: ok"

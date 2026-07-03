@@ -1,0 +1,10 @@
+{
+  "name": "@zgi/sandbox-profile-skill-office",
+  "private": true,
+  "version": "2026.5.31",
+  "dependencies": {
+    "docx": "9.1.1",
+    "pdf-lib": "1.17.1",
+    "pptxgenjs": "3.12.0"
+  }
+}

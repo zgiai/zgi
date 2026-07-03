@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
+import { formatWorkflowElapsedMs } from '@/utils/format';
 import type { RunStatus } from '@/components/chat/types';
 import WorkflowRunNodesList, {
   type WorkflowRunNodeListItem,
@@ -16,16 +17,6 @@ interface WorkflowRunMonitorProps {
   error?: string;
   showDetail?: boolean;
   allowExpand?: boolean;
-}
-
-function formatElapsed(ms?: number): string {
-  if (!ms || ms < 0) return '-';
-  if (ms < 1000) return `${ms} ms`;
-  const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(s < 10 ? 2 : 1)} s`;
-  const m = Math.floor(s / 60);
-  const sec = Math.round(s % 60);
-  return `${m}m ${sec}s`;
 }
 
 const WorkflowRunMonitor: React.FC<WorkflowRunMonitorProps> = ({
@@ -83,7 +74,9 @@ const WorkflowRunMonitor: React.FC<WorkflowRunMonitorProps> = ({
 
         <div className="flex items-center gap-2">
           {status !== 'running' && status !== 'pending_approval' && status !== 'pending_question' && (
-            <div className="text-xs text-muted-foreground">{formatElapsed(totalElapsedMs)}</div>
+            <div className="text-xs text-muted-foreground">
+              {formatWorkflowElapsedMs(totalElapsedMs)}
+            </div>
           )}
           {status === 'running' && <Loader className="h-3.5 w-3.5 animate-spin" />}
           {(status === 'pending_approval' || status === 'pending_question') && (

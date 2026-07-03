@@ -5,6 +5,10 @@
 // Shared file extension categories used across upload filtering and UI
 export const IMAGE_EXTENSIONS: readonly string[] = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'];
 
+export function isImageExtension(extension: string | null | undefined): boolean {
+  return IMAGE_EXTENSIONS.includes((extension ?? '').trim().toLowerCase().replace(/^\./, ''));
+}
+
 export const ORIGINAL_PREVIEW_IMAGE_EXTENSIONS: readonly string[] = [
   'jpg',
   'jpeg',
@@ -26,7 +30,7 @@ export const ORIGINAL_PREVIEW_TEXT_EXTENSIONS: readonly string[] = [
   'xml',
 ];
 
-export const ORIGINAL_PREVIEW_OFFICE_EXTENSIONS: readonly string[] = ['docx', 'xlsx'];
+export const ORIGINAL_PREVIEW_OFFICE_EXTENSIONS: readonly string[] = ['docx', 'xlsx', 'xls'];
 
 export const ORIGINAL_PREVIEW_EXTENSIONS: readonly string[] = [
   'pdf',
@@ -184,6 +188,7 @@ function isOfficePreviewMimeType(mimeType: string): boolean {
   return [
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-excel',
   ].includes(mimeType);
 }
 

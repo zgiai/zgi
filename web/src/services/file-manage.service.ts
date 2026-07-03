@@ -14,15 +14,47 @@ import type {
   FileMetadataResponse,
   UploadFileRequest,
   UploadFileResponse,
+  ReplaceDocumentRequest,
+  ReplaceDocumentResponse,
   CreateFolderRequest,
   CreateFolderResponse,
   UpdateFolderRequest,
   UpdateFolderResponse,
+  MoveFolderRequest,
   CreateTextFileRequest,
   CreateTextFileResponse,
   FileOriginalPreviewUrlResponse,
+  CreateFileProcessingRequest,
+  CreateFileProcessingResponse,
+  FileDetailResponse,
+  FileParsePreviewResponse,
+  FileParseConfirmationListResponse,
+  ResolveFileParseConfirmationRequest,
+  ResolveFileParseConfirmationResponse,
+  BatchIgnoreFileParseConfirmationsRequest,
+  BatchIgnoreFileParseConfirmationsResponse,
+  ListFileChunksRequest,
+  ListFileChunksResponse,
+  UpdateFileChunkRequest,
+  UpdateFileChunkResponse,
+  BatchUpdateFileChunksRequest,
+  BatchUpdateFileChunksResponse,
+  AskFileQuestionRequest,
+  AskFileQuestionResponse,
+  PrepareFileQAIndexResponse,
+  FileQuestionStreamEvent,
+  FileSourcePreviewPagesResponse,
+  FileSpreadsheetPreviewResponse,
 } from './types/file';
 import { BaseService } from '@/lib/http/services';
+import type { SseMessage } from '@/lib/http/client';
+
+interface StreamFileQuestionCallbacks {
+  onEvent: (event: FileQuestionStreamEvent) => void;
+  onError?: (error: Error) => void;
+  onClose?: () => void;
+  abortSignal?: AbortSignal;
+}
 
 class FileManageService extends BaseService {
   /**
@@ -93,6 +125,131 @@ class FileManageService extends BaseService {
     return this.request('get', `/console/api/files/${fileId}/preview-url`);
   }
 
+  async getSourcePreviewPages(
+    fileId: string,
+    maxPages = 20
+  ): Promise<ApiResponseData<FileSourcePreviewPagesResponse>> {
+    return this.request(
+      'get',
+      `/console/api/files/${fileId}/source-preview?max_pages=${maxPages}`,
+      undefined,
+      { timeout: 120000 }
+    );
+  }
+
+  async getSpreadsheetPreview(
+    fileId: string
+  ): Promise<ApiResponseData<FileSpreadsheetPreviewResponse>> {
+    return this.request('get', `/console/api/files/${fileId}/spreadsheet-preview`, undefined, {
+      timeout: 120000,
+    });
+  }
+
+  async getFileDetail(fileId: string): Promise<ApiResponseData<FileDetailResponse>> {
+    return this.request('get', `/console/api/files/${fileId}/detail`);
+  }
+
+  async createProcessingRequest(
+    fileId: string,
+    data: CreateFileProcessingRequest
+  ): Promise<ApiResponseData<CreateFileProcessingResponse>> {
+    return this.request('post', `/console/api/files/${fileId}/processing-requests`, data);
+  }
+
+  async getParsePreview(fileId: string): Promise<ApiResponseData<FileParsePreviewResponse>> {
+    return this.request('get', `/console/api/files/${fileId}/parse-preview`);
+  }
+
+  async getParseConfirmationItems(
+    fileId: string,
+    params?: { status?: string; limit?: number; offset?: number }
+  ): Promise<ApiResponseData<FileParseConfirmationListResponse>> {
+    return this.request('get', `/console/api/files/${fileId}/parse-confirmation-items`, undefined, {
+      params,
+    });
+  }
+
+  async resolveParseConfirmationItem(
+    fileId: string,
+    itemId: string,
+    data: ResolveFileParseConfirmationRequest
+  ): Promise<ApiResponseData<ResolveFileParseConfirmationResponse>> {
+    return this.request(
+      'post',
+      `/console/api/files/${fileId}/parse-confirmation-items/${itemId}/resolve`,
+      data
+    );
+  }
+
+  async batchIgnoreParseConfirmationItems(
+    fileId: string,
+    data: BatchIgnoreFileParseConfirmationsRequest = {}
+  ): Promise<ApiResponseData<BatchIgnoreFileParseConfirmationsResponse>> {
+    return this.request(
+      'post',
+      `/console/api/files/${fileId}/parse-confirmation-items/batch-ignore`,
+      data
+    );
+  }
+
+  async getFileChunks(
+    fileId: string,
+    params?: ListFileChunksRequest
+  ): Promise<ApiResponseData<ListFileChunksResponse>> {
+    return this.request('get', `/console/api/files/${fileId}/chunks`, undefined, {
+      params,
+    });
+  }
+
+  async updateFileChunk(
+    fileId: string,
+    chunkId: string,
+    data: UpdateFileChunkRequest
+  ): Promise<ApiResponseData<UpdateFileChunkResponse>> {
+    return this.request('patch', `/console/api/files/${fileId}/chunks/${chunkId}`, data);
+  }
+
+  async batchUpdateFileChunks(
+    fileId: string,
+    data: BatchUpdateFileChunksRequest
+  ): Promise<ApiResponseData<BatchUpdateFileChunksResponse>> {
+    return this.request('patch', `/console/api/files/${fileId}/chunks/batch`, data);
+  }
+
+  async askFileQuestion(
+    fileId: string,
+    data: AskFileQuestionRequest
+  ): Promise<ApiResponseData<AskFileQuestionResponse>> {
+    return this.request('post', `/console/api/files/${fileId}/qa`, data);
+  }
+
+  async prepareFileQAIndex(fileId: string): Promise<ApiResponseData<PrepareFileQAIndexResponse>> {
+    return this.request('post', `/console/api/files/${fileId}/qa/index`);
+  }
+
+  async streamFileQuestion(
+    fileId: string,
+    data: AskFileQuestionRequest,
+    callbacks: StreamFileQuestionCallbacks
+  ): Promise<{ close: () => void }> {
+    return this.client.sse<FileQuestionStreamEvent, AskFileQuestionRequest>(
+      `/console/api/files/${fileId}/qa/stream`,
+      {
+        method: 'POST',
+        body: data,
+        abortSignal: callbacks.abortSignal,
+        skipErrorHandling: true,
+        isTerminalMessage: (message: SseMessage<unknown>) =>
+          message.event === 'done' || message.event === 'error',
+        onMessage: message => {
+          callbacks.onEvent(message.data);
+        },
+        onError: callbacks.onError,
+        onClose: callbacks.onClose,
+      }
+    );
+  }
+
   async getFilesMetadata(fileIds: string[]): Promise<ApiResponseData<FileMetadataResponse>> {
     const params = fileIds.map(id => `file_ids=${encodeURIComponent(id)}`).join('&');
     return this.request('get', `/console/api/files/metadata?${params}`);
@@ -146,8 +303,34 @@ class FileManageService extends BaseService {
     if (data.workspace_id) {
       formData.append('workspace_id', data.workspace_id);
     }
+    if (data.processing_mode) {
+      formData.append('processing_mode', data.processing_mode);
+    }
+    if (data.parse_provider) {
+      formData.append('parse_provider', data.parse_provider);
+    }
 
     return this.request('post', '/console/api/files/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+  }
+
+  async replaceDocument(
+    fileId: string,
+    data: ReplaceDocumentRequest
+  ): Promise<ApiResponseData<ReplaceDocumentResponse>> {
+    const formData = new FormData();
+    formData.append('file', data.file);
+    if (data.processing_mode) {
+      formData.append('processing_mode', data.processing_mode);
+    }
+    if (data.parse_provider) {
+      formData.append('parse_provider', data.parse_provider);
+    }
+
+    return this.request('post', `/console/api/files/${fileId}/replacement`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
@@ -178,6 +361,16 @@ class FileManageService extends BaseService {
       parent_id: data.parent_id,
     };
     return this.request('patch', `/console/api/file-folders/${folderId}`, body);
+  }
+
+  /**
+   * Move folder to another folder
+   */
+  async moveFolder(data: MoveFolderRequest): Promise<ApiResponseData<{ success: boolean }>> {
+    return this.request('post', '/console/api/file-folders/move-folder', {
+      folder_id: data.folder_id,
+      target_id: data.target_id,
+    });
   }
 
   /**

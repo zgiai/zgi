@@ -15,6 +15,8 @@ import AgentDialog from '@/components/agents/agent-dialog';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useWorkflowDebugFocusMode } from '@/components/workflow/hooks/use-debug-focus-mode';
 import { usePersistentSidebarCollapse } from '@/hooks/use-persistent-sidebar-collapse';
+import { getAgentDetailRouteAccess } from '@/utils/agent-detail-routes';
+import { markAgentListRestoreIntentFromDetail } from '@/utils/agent-list-state';
 
 interface AgentSidebarProps {
   /** When true, hide navigation items (workspace mismatch mode) */
@@ -24,8 +26,7 @@ interface AgentSidebarProps {
 /**
  * AgentSidebar — collapsible agent-specific sidebar.
  * - Shows agent summary (icon, name, desc) on top; collapsed shows only icon (smaller size)
- * - First nav item is always Edit and links to /workflow
- * - "API Key" is always present
+ * - First nav item links to the editor for the current agent type.
  * - Collapsed state persisted to localStorage
  */
 export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
@@ -35,6 +36,7 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
   const { agent, isLoading } = useAgent(agentId);
   const t = useT();
   const { hasPermission } = useAccountPermissions();
+  const canView = hasPermission('agent.view');
   const canManage = hasPermission('agent.manage');
   const [editOpen, setEditOpen] = React.useState(false);
   const isDebugFocusMode = useWorkflowDebugFocusMode();
@@ -46,14 +48,21 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
 
   const toggleCollapse = () => setIsCollapsed(prev => !prev);
   const agentData = agent?.data;
-  const editHref = `/console/agents/${agentId}/workflow`;
+  const routeAccess = React.useMemo(
+    () =>
+      getAgentDetailRouteAccess(agentId, agentData?.agent_type, {
+        canView,
+        canManage,
+      }),
+    [agentData?.agent_type, agentId, canManage, canView]
+  );
 
   const navItems: ResourceSidebarNavItem[] = React.useMemo(() => {
     const items: ResourceSidebarNavItem[] = [
-      { title: t('agents.actions.edit'), href: editHref, icon: PanelsTopLeft },
+      { title: t('agents.actions.edit'), href: routeAccess.editHref, icon: PanelsTopLeft },
     ];
 
-    if (agentData?.is_published) {
+    if (routeAccess.canShowRuntimeLogs && agentData?.is_published) {
       items.push({
         title: t('agents.workflow.webappLogs'),
         href: `/console/agents/${agentId}/logs`,
@@ -61,36 +70,41 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
       });
     }
 
-    items.push({
-      title: t('agents.apiKeys.navTitle'),
-      href: `/console/agents/${agentId}/api`,
-      icon: KeyRound,
-    });
+    if (routeAccess.canShowApiKeys) {
+      items.push({
+        title: t('agents.apiKeys.navTitle'),
+        href: `/console/agents/${agentId}/api`,
+        icon: KeyRound,
+      });
+    }
 
-    items.push({
-      title: t('agents.workflowTest.navTitle'),
-      href: `/console/agents/${agentId}/batch-test`,
-      icon: ScanSearch,
-      children: [
-        {
-          title: t('agents.workflowTest.subnav.caseLibrary'),
-          href: `/console/agents/${agentId}/batch-test`,
-          icon: BookOpen,
-          isActive: currentPathname => currentPathname === `/console/agents/${agentId}/batch-test`,
-        },
-        {
-          title: t('agents.workflowTest.subnav.batches'),
-          href: `/console/agents/${agentId}/batch-test/batches`,
-          icon: RotateCcw,
-          isActive: currentPathname =>
-            currentPathname === `/console/agents/${agentId}/batch-test/batches` ||
-            currentPathname.startsWith(`/console/agents/${agentId}/batch-test/`),
-        },
-      ],
-    });
+    if (routeAccess.canShowBatchTest) {
+      items.push({
+        title: t('agents.workflowTest.navTitle'),
+        href: `/console/agents/${agentId}/batch-test`,
+        icon: ScanSearch,
+        children: [
+          {
+            title: t('agents.workflowTest.subnav.caseLibrary'),
+            href: `/console/agents/${agentId}/batch-test`,
+            icon: BookOpen,
+            isActive: currentPathname =>
+              currentPathname === `/console/agents/${agentId}/batch-test`,
+          },
+          {
+            title: t('agents.workflowTest.subnav.batches'),
+            href: `/console/agents/${agentId}/batch-test/batches`,
+            icon: RotateCcw,
+            isActive: currentPathname =>
+              currentPathname === `/console/agents/${agentId}/batch-test/batches` ||
+              currentPathname.startsWith(`/console/agents/${agentId}/batch-test/`),
+          },
+        ],
+      });
+    }
 
     return items;
-  }, [agentData, agentId, editHref, t]);
+  }, [agentData?.is_published, agentId, routeAccess, t]);
 
   const iconType = agentData?.icon_type;
   let textIcon = agentData?.name?.slice(0, 2).toUpperCase() || ICON_TEXT;
@@ -136,6 +150,7 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
             showIdentity={false}
             backHref="/console/agents"
             backLabel={t('agents.backToAgentList')}
+            onBackClick={() => markAgentListRestoreIntentFromDetail(agentId)}
             iconActionLabel={t('agents.actions.edit')}
             onIconClick={
               canManage && !isMismatch && agentData ? () => setEditOpen(true) : undefined

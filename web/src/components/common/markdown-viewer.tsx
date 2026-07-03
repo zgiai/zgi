@@ -36,9 +36,29 @@ interface MarkdownViewerProps {
   allowRawHtml?: boolean;
   /** Optional highlight terms. Matching occurrences will be highlighted. */
   highlights?: string[];
+  /** Whether the rendered message is still receiving streamed content. */
+  isStreaming?: boolean;
+  /** Stable identity used for streamed block render caches. */
+  renderIdentity?: string;
 }
 
 import { MarkdownImage } from '@/components/common/markdown-image';
+
+interface MarkdownElementNode {
+  children?: Array<{
+    type?: string;
+    tagName?: string;
+  }>;
+}
+
+interface MarkdownImageRendererProps extends React.ImgHTMLAttributes<HTMLImageElement> {
+  children?: React.ReactNode;
+}
+
+interface MarkdownParagraphRendererProps extends React.HTMLAttributes<HTMLParagraphElement> {
+  children?: React.ReactNode;
+  node?: MarkdownElementNode;
+}
 
 const remarkPluginsList: PluggableList = [remarkGfm, remarkMath];
 const rehypePluginsList: PluggableList = [
@@ -87,6 +107,11 @@ function collectText(node: React.ReactNode): string {
     return collectText(child);
   }
   return '';
+}
+
+function containsMarkdownImageText(node: React.ReactNode): boolean {
+  const pattern = new RegExp(MARKDOWN_IMAGE_PATTERN.source);
+  return pattern.test(collectText(node));
 }
 
 // Escape special regex characters
@@ -148,7 +173,11 @@ function normalizeHashHref(href: string): string {
   return `#${normalizeAnchorId(hash)}`;
 }
 
-const MINERU_IMAGE_ENDPOINT = '/console/api/files/mineru-images';
+const DOCUMENT_IMAGE_ENDPOINTS = [
+  '/console/api/files/mineru-images',
+  '/console/api/files/document-images',
+];
+const MINERU_IMAGE_ENDPOINT = DOCUMENT_IMAGE_ENDPOINTS[0];
 const MARKDOWN_IMAGE_PATTERN = /!\[([^\]\r\n]*)\]\(([^)\r\n]+)\)/g;
 const LOCAL_IMAGE_EXTENSION_PATTERN = /\.(?:png|jpe?g|gif|webp|bmp|svg)$/i;
 
@@ -190,7 +219,7 @@ function normalizeMinerUImageSource(src: string): string {
   const value = stripMarkdownLinkBrackets(src);
   if (!value) return src;
 
-  if (value.startsWith(MINERU_IMAGE_ENDPOINT)) {
+  if (DOCUMENT_IMAGE_ENDPOINTS.some((endpoint) => value.startsWith(endpoint))) {
     return `${normalizeApiBaseUrl()}${value}`;
   }
 
@@ -212,16 +241,88 @@ function rewriteMinerUImageSources(markdown: string): string {
   });
 }
 
+interface MermaidFenceBlock {
+  closed: boolean;
+}
+
+interface FenceState {
+  char: '`' | '~';
+  length: number;
+  isMermaid: boolean;
+}
+
+function parseFenceOpen(line: string): FenceState | null {
+  const match = /^(?: {0,3})(`{3,}|~{3,})(.*)$/.exec(line);
+  if (!match) return null;
+  const marker = match[1];
+  const char = marker[0] as '`' | '~';
+  const info = match[2].trim();
+  if (char === '`' && info.includes('`')) return null;
+  const firstToken = info.split(/\s+/, 1)[0]?.replace(/^[{.]+|[}]$/g, '').toLowerCase() ?? '';
+  return {
+    char,
+    length: marker.length,
+    isMermaid: firstToken === 'mermaid',
+  };
+}
+
+function isFenceClose(line: string, fence: FenceState): boolean {
+  const match = /^(?: {0,3})(`{3,}|~{3,})(?:[ \t]*)$/.exec(line);
+  if (!match) return false;
+  const marker = match[1];
+  return marker[0] === fence.char && marker.length >= fence.length;
+}
+
+function collectMermaidFenceBlocks(markdown: string): MermaidFenceBlock[] {
+  const blocks: MermaidFenceBlock[] = [];
+  const lines = markdown.split(/\r?\n/);
+  let fence: FenceState | null = null;
+
+  for (const line of lines) {
+    if (fence) {
+      if (isFenceClose(line, fence)) {
+        if (fence.isMermaid) blocks.push({ closed: true });
+        fence = null;
+      }
+      continue;
+    }
+
+    fence = parseFenceOpen(line);
+  }
+
+  if (fence?.isMermaid) {
+    blocks.push({ closed: false });
+  }
+
+  return blocks;
+}
+
+function hashString(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function cacheIdentityPart(value: string): string {
+  return hashString(value || 'markdown-viewer');
+}
+
 const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
   content,
   className,
   allowRawHtml = true,
   highlights,
+  isStreaming = false,
+  renderIdentity,
 }) => {
   const [copiedText, setCopiedText] = React.useState<string | null>(null);
   const t = useT('webapp');
   const thinkSummary = t('chat.thoughtProcess');
   const viewerRef = React.useRef<HTMLDivElement | null>(null);
+  const viewerInstanceId = React.useId();
 
   // Preprocess content to prevent markdown parser from breaking SVG blocks with blank lines
   const processedContent = React.useMemo(() => {
@@ -255,6 +356,15 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
 
     return newContent;
   }, [content, thinkSummary]);
+
+  const mermaidFenceBlocks = React.useMemo(
+    () => collectMermaidFenceBlocks(processedContent),
+    [processedContent]
+  );
+  const markdownRenderIdentity = React.useMemo(
+    () => cacheIdentityPart(renderIdentity || viewerInstanceId),
+    [renderIdentity, viewerInstanceId]
+  );
 
   const regex = React.useMemo(() => buildUnionRegex(highlights ?? []), [highlights]);
   const highlightClass =
@@ -301,13 +411,59 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
     [regex]
   );
 
+  const renderTextWithFallbackMarkdownImages = React.useCallback(
+    (text: string, keyPrefix: string): React.ReactNode => {
+      const pattern = new RegExp(MARKDOWN_IMAGE_PATTERN.source, 'g');
+      const parts: React.ReactNode[] = [];
+      let lastIndex = 0;
+      let match: RegExpExecArray | null;
+
+      while ((match = pattern.exec(text)) !== null) {
+        const [raw, alt, rawSrc] = match;
+        const start = match.index;
+        const end = start + raw.length;
+        const normalizedSrc = normalizeMinerUImageSource(rawSrc);
+        if (start > lastIndex) {
+          parts.push(
+            <React.Fragment key={`${keyPrefix}-text-${lastIndex}`}>
+              {renderHighlightedText(text.slice(lastIndex, start))}
+            </React.Fragment>
+          );
+        }
+        parts.push(
+          <MarkdownImage
+            key={`${keyPrefix}-image-${hashString(`${normalizedSrc}:${alt}`)}-${start}`}
+            src={normalizedSrc}
+            alt={alt}
+          />
+        );
+        lastIndex = end;
+      }
+
+      if (parts.length === 0) return renderHighlightedText(text);
+      if (lastIndex < text.length) {
+        parts.push(
+          <React.Fragment key={`${keyPrefix}-text-${lastIndex}`}>
+            {renderHighlightedText(text.slice(lastIndex))}
+          </React.Fragment>
+        );
+      }
+      return parts;
+    },
+    [renderHighlightedText]
+  );
+
   // Recursively apply highlight to children, preserving element structure
   const renderChildrenWithHighlights = React.useCallback(
     (children: React.ReactNode): React.ReactNode => {
       const arr = React.Children.toArray(children);
       return arr.map((child, idx) => {
         if (typeof child === 'string') {
-          return <React.Fragment key={`txt-${idx}`}>{renderHighlightedText(child)}</React.Fragment>;
+          return (
+            <React.Fragment key={`txt-${idx}`}>
+              {renderTextWithFallbackMarkdownImages(child, `txt-${idx}`)}
+            </React.Fragment>
+          );
         }
         if (React.isValidElement(child)) {
           if (isVoidElement(child.type)) {
@@ -323,7 +479,7 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
         return child;
       });
     },
-    [renderHighlightedText]
+    [renderTextWithFallbackMarkdownImages]
   );
 
   const handleHashAnchorClick = React.useCallback(
@@ -378,6 +534,48 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
     [renderChildrenWithHighlights]
   );
 
+  const renderMarkdownImage = React.useCallback(
+    ({ children: _c, ...rest }: MarkdownImageRendererProps) => {
+      const { src, alt, className, ...props } = rest;
+      const normalizedSrc = typeof src === 'string' ? normalizeMinerUImageSource(src) : src;
+      return (
+        <MarkdownImage
+          key={
+            typeof normalizedSrc === 'string'
+              ? `md-image-${hashString(`${normalizedSrc}:${alt ?? ''}`)}`
+              : undefined
+          }
+          src={normalizedSrc as string}
+          alt={alt as string}
+          className={className}
+          {...props}
+        />
+      );
+    },
+    []
+  );
+
+  const renderParagraph = React.useCallback(
+    ({ children, node, ...rest }: MarkdownParagraphRendererProps) => {
+      const hasImage = node?.children?.some(
+        child => child.type === 'element' && child.tagName === 'img'
+      );
+
+      if (hasImage || containsMarkdownImageText(children)) {
+        return (
+          <div {...rest} className={cn('relative my-4', rest.className)}>
+            {renderChildrenWithHighlights(children)}
+          </div>
+        );
+      }
+
+      return <p {...rest}>{renderChildrenWithHighlights(children)}</p>;
+    },
+    [renderChildrenWithHighlights]
+  );
+
+  let mermaidCodeBlockIndex = 0;
+
   return (
     <div ref={viewerRef} className={cn('md-viewer', className)}>
       <ReactMarkdown
@@ -418,8 +616,8 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
           table({ children, ...rest }) {
             const cls = getClassName(rest);
             return (
-              <div className="rounded-lg border border-border overflow-hidden my-3">
-                <Table className={cn('text-sm', cls)}>{children}</Table>
+              <div className="my-3 max-w-full min-w-0 overflow-x-auto rounded-lg border border-border">
+                <Table className={cn('min-w-full text-sm', cls)}>{children}</Table>
               </div>
             );
           },
@@ -470,17 +668,10 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
           hr({ children: _c, ...rest }) {
             return <hr {...rest} />;
           },
-          img({ children: _c, ...rest }) {
-            const { src, alt, className, ...props } = rest;
-            return (
-              <MarkdownImage
-                src={src as string}
-                alt={alt as string}
-                className={className}
-                {...props}
-              />
-            );
+          pre({ children }) {
+            return <>{children}</>;
           },
+          img: renderMarkdownImage,
           code(nodeProps) {
             const isInline = hasInlineFlag(nodeProps) ? nodeProps.inline : false;
             const codeClassName = getClassName(nodeProps);
@@ -494,14 +685,22 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
                 return (
                   <Badge
                     variant="secondary"
-                    className={cn('align-[2px] font-mono text-[85%]', codeClassName)}
+                    className={cn(
+                      'max-w-full whitespace-normal break-words align-[2px] font-mono text-[85%]',
+                      codeClassName
+                    )}
                   >
                     {text}
                   </Badge>
                 );
               }
               return (
-                <code className={cn('rounded bg-muted px-1 py-0.5 text-[85%]', codeClassName)}>
+                <code
+                  className={cn(
+                    'max-w-full break-words rounded bg-muted px-1 py-0.5 text-[85%]',
+                    codeClassName
+                  )}
+                >
                   {children}
                 </code>
               );
@@ -511,6 +710,35 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
             const language = langMatch?.[1]?.toLowerCase();
             const raw = text.replace(/\n$/, '');
             const isCopied = copiedText === raw;
+            function renderCodeBlock(label: string) {
+              return (
+                <div className="group my-2 max-w-full min-w-0 overflow-hidden md-code-wrapper">
+                  <div className="md-code-header">
+                    <div className="md-code-lang">{label}</div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      isIcon
+                      aria-label="Copy code"
+                      className={cn('h-6 w-6 copy-btn')}
+                      onClick={() => handleCopy(raw)}
+                    >
+                      {isCopied ? (
+                        <Check className="text-success" size={12} />
+                      ) : (
+                        <Copy className="text-foreground" size={12} />
+                      )}
+                    </Button>
+                  </div>
+                  <pre className="max-w-full overflow-x-auto overflow-y-hidden text-xs">
+                    <code className={cn('block min-w-full w-max whitespace-pre', codeClassName)}>
+                      {children}
+                    </code>
+                  </pre>
+                </div>
+              );
+            }
+
             // Heuristic: language-less, single-line short code blocks render as a compact chip
             if (!langMatch && raw.indexOf('\n') === -1 && raw.length <= 80) {
               return (
@@ -524,52 +752,23 @@ const MarkdownViewer: React.FC<MarkdownViewerProps> = ({
               );
             }
             if (language === 'mermaid') {
-              return <MarkdownMermaid chart={raw} />;
-            }
-            return (
-              <div className="group my-2 max-w-full overflow-hidden md-code-wrapper">
-                <div className="md-code-header">
-                  <div className="md-code-lang">{langMatch?.[1] || 'code'}</div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    isIcon
-                    aria-label="Copy code"
-                    className={cn('h-6 w-6 copy-btn')}
-                    onClick={() => handleCopy(raw)}
-                  >
-                    {isCopied ? (
-                      <Check className="text-success" size={12} />
-                    ) : (
-                      <Copy className="text-foreground" size={12} />
-                    )}
-                  </Button>
-                </div>
-                <pre className="max-w-full overflow-x-auto overflow-y-hidden text-xs">
-                  <code className={cn('block min-w-max whitespace-pre', codeClassName)}>
-                    {children}
-                  </code>
-                </pre>
-              </div>
-            );
-          },
-          // Apply highlights to common text containers; skip code blocks to avoid noise
-          p({ children, node, ...rest }) {
-            // Check if paragraph contains an image element in its hast node children
-            const hasImage = node?.children?.some(
-              child => child.type === 'element' && child.tagName === 'img'
-            );
-
-            if (hasImage) {
+              const blockIndex = mermaidCodeBlockIndex;
+              mermaidCodeBlockIndex += 1;
+              const block = mermaidFenceBlocks[blockIndex];
+              if (isStreaming && block?.closed === false) {
+                return renderCodeBlock(langMatch?.[1] || 'mermaid');
+              }
               return (
-                <div {...rest} className={cn('relative my-4', rest.className)}>
-                  {renderChildrenWithHighlights(children)}
-                </div>
+                <MarkdownMermaid
+                  chart={raw}
+                  cacheKey={`${markdownRenderIdentity}:mermaid:${blockIndex}:${hashString(raw)}`}
+                />
               );
             }
-
-            return <p {...rest}>{renderChildrenWithHighlights(children)}</p>;
+            return renderCodeBlock(langMatch?.[1] || 'code');
           },
+          // Apply highlights to common text containers; skip code blocks to avoid noise
+          p: renderParagraph,
           li({ children, id, ...rest }) {
             const cls = getClassName(rest);
             const normalizedId = typeof id === 'string' ? normalizeAnchorId(id) : id;

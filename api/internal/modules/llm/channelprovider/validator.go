@@ -62,11 +62,14 @@ func TestModel(ctx context.Context, channelProvider, baseURL, apiKey, modelName 
 	startTime := time.Now()
 
 	config := &adapter.AdapterConfig{
-		ProviderName: spec.AdapterKey,
-		APIKey:       apiKey,
-		BaseURL:      baseURL,
-		Timeout:      defaultTimeout,
-		MaxRetries:   defaultMaxRetries,
+		ProviderName:        spec.AdapterKey,
+		APIKey:              apiKey,
+		BaseURL:             baseURL,
+		Timeout:             defaultTimeout,
+		MaxRetries:          defaultMaxRetries,
+		GuardOutboundURL:    outboundURLGuardEnabled(),
+		GuardOutboundDNS:    outboundDNSGuardEnabled(),
+		AllowPrivateBaseURL: AllowsPrivateBaseURL(spec.Name),
 	}
 
 	adapterInstance, err := adapter.NewAdapter(config)

@@ -2,13 +2,17 @@
 
 import { use, useEffect, useMemo } from 'react';
 import { AlertCircle } from 'lucide-react';
+import AgentWebappChat from '@/components/webapp/agent-chat';
 import WebappChat from '@/components/webapp/chat';
+import { WebAppNotPublishedState } from '@/components/webapp/not-published-state';
 import { WebappRun } from '@/components/webapp/run';
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useRunnableWebApps } from '@/hooks/agent/use-runnable-webapps';
 import { useWebAppConfig } from '@/hooks/webapp/use-webapp';
 import { useT } from '@/i18n/translations';
+import { useCurrentWorkspace } from '@/store/workspace-store';
+import { isWebAppNotPublishedError } from '@/utils/webapp/errors';
 import { detectWebappMode } from '@/utils/webapp/helpers';
 
 const RECENT_WEBAPP_STORAGE_KEY = 'zgi:webapp:recent';
@@ -21,8 +25,16 @@ export default function ConsoleWorkAppDetailPage({ params }: ConsoleWorkAppDetai
   const t = useT('webapp');
   const resolvedParams = use(params);
   const webAppId = resolvedParams.web_app_id;
-  const { items, isLoading: isListLoading } = useRunnableWebApps();
-  const { data, isLoading: isConfigLoading } = useWebAppConfig(webAppId);
+  const currentWorkspace = useCurrentWorkspace();
+  const workspaceId = currentWorkspace?.id ?? null;
+  const recentStorageKey = workspaceId
+    ? `${RECENT_WEBAPP_STORAGE_KEY}:${workspaceId}`
+    : RECENT_WEBAPP_STORAGE_KEY;
+  const { items, isLoading: isListLoading } = useRunnableWebApps({
+    workspaceId,
+    enabled: !!workspaceId,
+  });
+  const { data, error: configError, isLoading: isConfigLoading } = useWebAppConfig(webAppId);
 
   const isRunnable = useMemo(
     () => items.some(item => item.web_app_id === webAppId),
@@ -32,11 +44,11 @@ export default function ConsoleWorkAppDetailPage({ params }: ConsoleWorkAppDetai
   useEffect(() => {
     if (!isRunnable || typeof window === 'undefined') return;
 
-    const current = window.localStorage.getItem(RECENT_WEBAPP_STORAGE_KEY);
+    const current = window.localStorage.getItem(recentStorageKey);
     const ids = current ? (JSON.parse(current) as string[]) : [];
     const nextIds = [webAppId, ...ids.filter(id => id !== webAppId)].slice(0, 6);
-    window.localStorage.setItem(RECENT_WEBAPP_STORAGE_KEY, JSON.stringify(nextIds));
-  }, [isRunnable, webAppId]);
+    window.localStorage.setItem(recentStorageKey, JSON.stringify(nextIds));
+  }, [isRunnable, recentStorageKey, webAppId]);
 
   if (isListLoading || isConfigLoading) {
     return (
@@ -65,6 +77,16 @@ export default function ConsoleWorkAppDetailPage({ params }: ConsoleWorkAppDetai
     );
   }
 
+  if (isWebAppNotPublishedError(configError)) {
+    return (
+      <div className="h-full w-full p-6">
+        <Card className="h-full border-dashed">
+          <WebAppNotPublishedState />
+        </Card>
+      </div>
+    );
+  }
+
   const config = data?.data;
 
   if (!config) {
@@ -83,6 +105,14 @@ export default function ConsoleWorkAppDetailPage({ params }: ConsoleWorkAppDetai
   }
 
   const mode = detectWebappMode(config);
+
+  if (config.config?.type?.toUpperCase?.() === 'AGENT') {
+    return (
+      <div className="h-full min-h-0 w-full overflow-hidden bg-background">
+        <AgentWebappChat webAppId={webAppId} config={config} />
+      </div>
+    );
+  }
 
   if (mode === 'run') {
     return (

@@ -23,8 +23,10 @@ const messages = {
     workspaces: 'Workspace Management',
     contacts: 'Contacts',
     permissions: 'Permissions',
+    organizationSettings: 'Organization Settings',
     aichatSkills: 'Skill Management',
     modelSettings: 'Default Model Management',
+    parserSettings: 'Parser Settings',
     marketplace: 'Marketplace',
   },
   usage: {
@@ -181,6 +183,53 @@ const messages = {
         description: 'Used for prompt-based image generation in console and workflow scenarios.',
       },
     },
+    parserSettings: {
+      title: 'Parser Settings',
+      description:
+        'Configure Reducto and MinerU for document reparsing. Optional fields are prefilled with defaults and can be changed when your deployment needs different endpoints or timeouts.',
+      actions: {
+        returnToReparse: 'Back to reparse',
+        save: 'Save',
+      },
+      messages: {
+        saved: 'Parser settings saved',
+        saveFailed: 'Failed to save parser settings',
+      },
+      reducto: {
+        description:
+          'Official Reducto parsing service. Requires an API key before it can be enabled.',
+      },
+      mineru: {
+        description:
+          'MinerU parsing service. Choose local sidecar mode or official service mode, then configure the fields for that mode.',
+        modes: {
+          sidecar: 'Local sidecar',
+          official: 'Official service',
+        },
+      },
+      fields: {
+        enabled: 'Enabled',
+        apiKey: 'API key',
+        baseUrl: 'Base URL',
+        timeout: 'Timeout (seconds)',
+        mode: 'Mode',
+        apiUrl: 'API URL',
+        officialToken: 'Official token',
+        modelVersion: 'Model version',
+        pollInterval: 'Poll interval (seconds)',
+      },
+      placeholders: {
+        secretConfigured: 'Configured. Leave blank to keep unchanged.',
+        secretRequired: 'Required before enabling',
+      },
+      status: {
+        not_configured: 'Not configured',
+        disabled: 'Disabled',
+        available: 'Available',
+        failed: 'Failed',
+        unknown: 'Unknown',
+      },
+    },
   },
   costCenter: {
     title: 'Cost Center - Account Overview',
@@ -279,7 +328,6 @@ const messages = {
       instructions: {
         title: 'Instructions',
         scan: 'Scan the QR code below with WeChat or Alipay to recharge',
-        rate: 'Amount will be converted to USD balance (Rate: 1 USD ≈ {rate} CNY)',
         arrival: 'Balance will arrive within 5-10 minutes after successful payment',
       },
       qrcode: {
@@ -494,6 +542,65 @@ const messages = {
     },
   },
   organization: {
+    settings: {
+      title: 'Organization Settings',
+      subtitle: 'Manage the current organization profile and administrator access.',
+      profileTitle: 'Profile',
+      profileDescription:
+        'This name is shown in the organization switcher, dashboard, and organization member views.',
+      permissionHint:
+        'Administrators can edit organization profile. Only owners can manage organization administrators.',
+      name: 'Organization name',
+      namePlaceholder: 'Enter organization name',
+      currentRole: 'Current role',
+      roles: {
+        owner: 'Owner',
+        admin: 'Administrator',
+        normal: 'Member',
+      },
+      noPermission: 'Only organization owners and administrators can update organization settings.',
+      save: 'Save changes',
+      saving: 'Saving...',
+      saved: 'Saved',
+      readyToSave: 'Changes are ready to save.',
+      saveDisabledReasons: {
+        saving: 'Saving is in progress. Please wait.',
+        noPermission:
+          'Only organization owners and administrators can edit the organization profile.',
+        nameRequired: 'Organization name cannot be empty.',
+        nameTooLong: 'Organization name cannot exceed {max} characters.',
+        noChanges: 'There are no changes to save.',
+      },
+      updateSuccess: 'Organization updated',
+      updateError: 'Failed to update organization',
+      adminManagement: {
+        title: 'Administrator Management',
+        description:
+          'Owners can grant or remove organization administrator access for active members.',
+        adminCount: '{count} organization admins',
+        ownerTitle: 'Owner',
+        ownerBadge: 'Owner',
+        noOwner: 'No owner found.',
+        adminTitle: 'Administrators',
+        refreshing: 'Refreshing...',
+        demote: 'Remove admin',
+        emptyAdmins: 'No organization administrators yet.',
+        addTitle: 'Add administrator',
+        addDescription:
+          'Search active standard members and set them as organization administrators.',
+        searchPlaceholder: 'Search active members by name or email',
+        promote: 'Set as admin',
+        emptyCandidates: 'No active standard members match this search.',
+        promoteSuccess: 'Administrator added',
+        demoteSuccess: 'Administrator removed',
+        updateRoleError: 'Failed to update administrator role',
+        demoteConfirmTitle: 'Remove administrator access',
+        demoteConfirmDescription:
+          'Remove administrator access from "{name}"? They will remain a standard organization member.',
+        demoteConfirm: 'Remove admin',
+        cancel: 'Cancel',
+      },
+    },
     aichatSkills: {
       pageTitle: 'Organization Skills',
       pageSubtitle:
@@ -546,6 +653,10 @@ const messages = {
         enabled: 'Enabled',
         disabled: 'Disabled',
         invalid: 'Invalid',
+      },
+      scriptStatus: {
+        runnable: 'Scripts runnable',
+        unsupported: 'Scripts disabled',
       },
       autoSave: {
         ready: 'Auto-save on',
@@ -848,6 +959,10 @@ const messages = {
       email: 'Email',
       workspaces: 'Joined Workspaces',
       allWorkspaces: 'All Workspaces',
+      unassignedWorkspace: 'No workspace assigned',
+      unassignedWorkspaceHint:
+        'This member is in the organization but has not joined any workspace, so they cannot use the workbench yet.',
+      assignWorkspace: 'Assign workspace',
       status: 'Status',
       actions: 'Actions',
       active: 'Active',
@@ -1031,6 +1146,10 @@ const messages = {
       disband: 'Disband',
       people: ' people',
       noWorkspaces: 'No workspaces',
+      assignMemberBannerTitle: 'Assign a workspace for {member}',
+      assignMemberBannerDescription:
+        'Choose a target workspace. The detail page will open the add-member dialog and search by this member email.',
+      assignMemberBackToContacts: 'Back to Contacts',
       loadError: 'Failed to load workspaces',
       deleteSuccess: 'Workspace disbanded successfully',
       deleteError: 'Failed to disband workspace',
@@ -1107,6 +1226,9 @@ const messages = {
         roleOwner: 'Workspace Owner',
         roleAdmin: 'Admin',
         roleMember: 'Member',
+        assignMemberBannerTitle: 'Adding {member} to this workspace',
+        assignMemberBannerDescription:
+          'The add-member dialog is prefilled with this email. Select the member and workspace role to finish assignment.',
         addMemberModal: {
           title: 'Add Member',
           titleWithWorkspace: 'Add Member to {workspaceName}',

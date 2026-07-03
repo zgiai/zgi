@@ -192,14 +192,22 @@ func (h *WorkflowHandler) runWorkflowStream(c *gin.Context, requestedWorkspaceID
 		zap.String("workflow_run_id", workflowRunLogID),
 	)
 
-	eventRecorder := newWorkflowRunEventRecorder(workspaceID, appID, workflowRunLogID)
-	defer eventRecorder.Close()
-	sendAndRecordEvent := func(eventType string, data map[string]interface{}) {
-		publicData := sanitizeWorkflowEventData(data)
-		sendWorkflowSSEEvent(c.Request.Context(), c.Writer, eventType, publicData)
-		if eventType != workflowEventMessage && eventType != workflowEventAnswerSnapshotReady {
-			eventRecorder.Record(c.Request.Context(), eventType, publicData)
+	eventDispatcher := newWorkflowRunEventDispatcher(workspaceID, appID, workflowRunLogID, false, func(eventType string, data map[string]interface{}, stored *workflowpause.RunEventPayload) error {
+		if stored != nil {
+			sendWorkflowSSEStoredEvent(c.Request.Context(), c.Writer, workflowpause.RunEventPayload{
+				Sequence:  stored.Sequence,
+				Event:     eventType,
+				Data:      data,
+				CreatedAt: stored.CreatedAt,
+			})
+			return nil
 		}
+		sendWorkflowSSEEvent(c.Request.Context(), c.Writer, eventType, data)
+		return nil
+	})
+	defer eventDispatcher.Close(c.Request.Context())
+	sendAndRecordEvent := func(eventType string, data map[string]interface{}) {
+		eventDispatcher.Dispatch(c.Request.Context(), eventType, data)
 	}
 
 	// Send workflow started event with real database ID

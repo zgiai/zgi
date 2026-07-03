@@ -1,10 +1,10 @@
 /* Theme System Index File */
-/* This file imports all theme variants for the ZGI application */
+/* This file imports all theme variants for the application */
 
 @import './light.css';
 @import './dark.css';
-@import './ai-young.css';
-@import './whale-orange.css';
+@import './violet.css';
+@import './warm-orange.css';
 @import './tech-blue.css';
 @import './graphite-cyan.css';
 @import './emerald.css';

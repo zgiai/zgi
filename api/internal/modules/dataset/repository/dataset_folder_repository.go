@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/gorm"
 )
 
@@ -543,7 +544,6 @@ func (r *datasetFolderRepository) GetDatasetsInFolderByIDWithPagination(ctx cont
 // - only_me: Only creator can see
 // - all_team: All members of the department can see
 // - all_group: All members of the organization can see
-// - partial_members: Specific members can see (requires checking dataset_permissions table)
 // - all_team_members: All members of the department can see (legacy, treated as all_team)
 func (r *datasetFolderRepository) GetDatasetsInFolderByIDWithPaginationWithPermissions(
 	ctx context.Context,
@@ -590,14 +590,19 @@ func (r *datasetFolderRepository) GetDatasetsInFolderByIDWithPaginationWithPermi
 			Select("1").
 			Where("workspace_members.workspace_id = datasets.workspace_id").
 			Where("workspace_members.account_id = ?", accountID).
-			Where("workspace_members.role IN ?", []string{"OWNER", "ADMIN"})
+			Where("workspace_members.role IN ?", []workspace_model.WorkspaceMemberRole{
+				workspace_model.WorkspaceRoleOwner,
+				workspace_model.WorkspaceRoleAdmin,
+			})
 
 		// 2. only_me_condition: Dataset permission is only_me and user is creator
-		onlyMeCondition := r.db.Where("permission = ? AND created_by = ?", "only_me", accountID)
+		onlyMeCondition := r.db.Where("permission = ? AND created_by = ?", model.DatasetPermissionOnlyMe, accountID)
 
 		// 3. all_team_condition: Dataset permission is all_team/all_team_members and user is member of the tenant
-
-		allTeamCondition := r.db.Where("EXISTS (?)",
+		allTeamCondition := r.db.Where("permission IN ?", []model.DatasetPermissionType{
+			model.DatasetPermissionAllTeam,
+			model.DatasetPermissionAllTeamMembers,
+		}).Where("EXISTS (?)",
 			r.db.Table("workspace_members").
 				Select("1").
 				Where("workspace_members.workspace_id = datasets.workspace_id").
@@ -608,12 +613,7 @@ func (r *datasetFolderRepository) GetDatasetsInFolderByIDWithPaginationWithPermi
 		// All users in the group can see datasets with all_group permission
 		// allGroupCondition := r.db.Where("permission = ?", "all_group")
 
-		// 5. partial_members_condition: Dataset permission is partial_members and user is in the list
-		// This requires checking the dataset_permissions table (if it exists)
-		// For now, we'll skip this condition as it requires additional table structure
-		// TODO: Add partial_members support when dataset_permissions table is available
-
-		// 6. all_read_condition: Dataset permission is all_read (everyone can read)
+		// 5. all_read_condition: Dataset permission is all_read (everyone can read)
 		// allReadCondition := r.db.Where("permission = ?", "all_read")
 
 		// Combine permission conditions with OR

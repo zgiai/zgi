@@ -1,5 +1,10 @@
 export function extractPromptVariables(rawPrompt: string): string[] {
-  const patterns = [/\{\{#[^{}]+#\}\}/g, /\{\{[^{}]+\}\}/g, /\$\{[^{}]+\}/g];
+  const patterns = [
+    /<zgi:(knowledge|skill|database|table|workflow)\b[^>]*>[\s\S]*?<\/zgi:\1>/g,
+    /\{\{#[^{}]+#\}\}/g,
+    /\{\{[^{}]+\}\}/g,
+    /\$\{[^{}]+\}/g,
+  ];
   const matches = new Set<string>();
 
   for (const pattern of patterns) {

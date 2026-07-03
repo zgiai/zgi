@@ -47,6 +47,7 @@ type Config struct {
 	GraphFlow              GraphFlowConfig
 	ContentParse           ContentParseConfig
 	LLM                    LLMConfig
+	LLMPolicyPrompt        LLMPolicyPromptConfig
 	Automation             AutomationConfig
 	Tooling                ToolingConfig
 
@@ -138,6 +139,12 @@ type ConsoleConfig struct {
 	WebURL         string `json:"web_url"`
 }
 
+type LLMPolicyPromptConfig struct {
+	Enabled bool   `json:"enabled"`
+	File    string `json:"file,omitempty"`
+	Prompt  string `json:"-"`
+}
+
 type FeatureConfig struct {
 	PublicDeploymentEnabled  bool `json:"public_deployment_enabled"`
 	EnableEmailCodeLogin     bool `json:"enable_email_code_login"`
@@ -158,10 +165,11 @@ type PluginRunnerConfig struct {
 }
 
 type TaskQueueConfig struct {
-	RedisDB     int           `json:"redis_db"`
-	Concurrency int           `json:"concurrency"`
-	Retention   time.Duration `json:"-"`
-	EnvPrefix   string        `json:"env_prefix"`
+	RedisDB                 int           `json:"redis_db"`
+	Concurrency             int           `json:"concurrency"`
+	Retention               time.Duration `json:"-"`
+	EnvPrefix               string        `json:"env_prefix"`
+	WorkflowTestTaskBackend string        `json:"workflow_test_task_backend"`
 }
 
 type VectorStoreConfig struct {
@@ -199,18 +207,33 @@ type ETLConfig struct {
 }
 
 type CodeExecConfig struct {
-	Endpoint        string `json:"endpoint"`
-	APIKey          string `json:"-"`
-	MaxNumber       int64  `json:"max_number"`
-	MinNumber       int64  `json:"min_number"`
-	MaxStringLength int    `json:"max_string_length"`
+	Endpoint                     string `json:"endpoint"`
+	APIKey                       string `json:"-"`
+	ConnectTimeoutSeconds        int    `json:"connect_timeout_seconds"`
+	CreateTimeoutSeconds         int    `json:"create_timeout_seconds"`
+	UploadTimeoutSeconds         int    `json:"upload_timeout_seconds"`
+	CommandTimeoutPaddingSeconds int    `json:"command_timeout_padding_seconds"`
+	ArtifactTimeoutSeconds       int    `json:"artifact_timeout_seconds"`
+	CleanupTimeoutSeconds        int    `json:"cleanup_timeout_seconds"`
+	EnableNetwork                bool   `json:"enable_network"`
+	SystemOfficeProfile          string `json:"system_office_profile"`
+	MaxNumber                    int64  `json:"max_number"`
+	MinNumber                    int64  `json:"min_number"`
+	MaxStringLength              int    `json:"max_string_length"`
 }
 
+const (
+	WorkflowImageInputURLModeZGIProxy         = "zgi_proxy"
+	WorkflowImageInputURLModePublicStorageURL = "public_storage_url"
+)
+
 type WorkflowConfig struct {
-	ExecutionTimeout  int `json:"execution_timeout"`
-	LLMTimeout        int `json:"llm_timeout"`
-	HeartbeatInterval int `json:"heartbeat_interval"`
-	CleanupTimeout    int `json:"cleanup_timeout"`
+	ExecutionTimeout        int    `json:"execution_timeout"`
+	LLMTimeout              int    `json:"llm_timeout"`
+	HeartbeatInterval       int    `json:"heartbeat_interval"`
+	CleanupTimeout          int    `json:"cleanup_timeout"`
+	ImageInputURLMode       string `json:"image_input_url_mode"`
+	ImageInputPublicBaseURL string `json:"image_input_public_base_url"`
 }
 
 type WorkflowFileExtractionConfig struct {
@@ -368,6 +391,18 @@ type ContentParseConfig struct {
 type LLMConfig struct {
 	EncryptionKey           string `json:"-"`
 	OfficialModelStrictSync bool   `json:"official_model_strict_sync"`
+	GuardOutboundURL        bool   `json:"guard_outbound_url"`
+	GuardOutboundDNS        bool   `json:"guard_outbound_dns"`
+	AllowPrivateBaseURL     bool   `json:"allow_private_base_url"`
+
+	guardOutboundURLSet bool
+}
+
+func (c LLMConfig) OutboundURLGuardEnabled() bool {
+	if !c.guardOutboundURLSet && !c.GuardOutboundURL {
+		return true
+	}
+	return c.GuardOutboundURL
 }
 
 type AutomationConfig struct {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
+	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	dataset_model "github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/retrieval"
@@ -53,6 +54,10 @@ type stubVectorDB struct {
 }
 
 func (s *stubVectorDB) StoreVector(ctx context.Context, id, className string, properties map[string]interface{}, vector []float64) error {
+	return nil
+}
+
+func (s *stubVectorDB) DeleteVector(ctx context.Context, id, className string) error {
 	return nil
 }
 
@@ -169,6 +174,245 @@ func TestEmbeddingSearchFallbackErrorWhenNoFactoryOrDefaultModelService(t *testi
 	}
 	if !strings.Contains(err.Error(), "failed to resolve embedding service") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSearchMethodRoutingForVectorBM25Hybrid(t *testing.T) {
+	tests := []struct {
+		name                 string
+		method               string
+		wantNormalizedMethod string
+		wantHybrid           bool
+		wantBM25             bool
+		wantKnown            bool
+	}{
+		{name: "default", method: "", wantNormalizedMethod: "hybrid_search", wantHybrid: true, wantKnown: true},
+		{name: "hybrid", method: "hybrid_search", wantNormalizedMethod: "hybrid_search", wantHybrid: true, wantKnown: true},
+		{name: "unknown defaults to hybrid", method: "legacy", wantNormalizedMethod: "hybrid_search", wantHybrid: true, wantKnown: false},
+		{name: "keyword maps to BM25", method: "keyword_search", wantNormalizedMethod: "keyword_search", wantBM25: true, wantKnown: true},
+		{name: "full text maps to BM25", method: "full_text_search", wantNormalizedMethod: "full_text_search", wantBM25: true, wantKnown: true},
+		{name: "semantic single source", method: "semantic_search", wantNormalizedMethod: "semantic_search", wantKnown: true},
+		{name: "graph single source", method: "graph_search", wantNormalizedMethod: "graph_search", wantKnown: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			normalized := normalizeVectorSearchMethod(tt.method)
+			if normalized != tt.wantNormalizedMethod {
+				t.Fatalf("normalizeVectorSearchMethod(%q) = %q, want %q", tt.method, normalized, tt.wantNormalizedMethod)
+			}
+			if got := isHybridVectorBM25Method(normalized); got != tt.wantHybrid {
+				t.Fatalf("isHybridVectorBM25Method(%q) = %v, want %v", normalized, got, tt.wantHybrid)
+			}
+			if got := isBM25OnlyMethod(normalized); got != tt.wantBM25 {
+				t.Fatalf("isBM25OnlyMethod(%q) = %v, want %v", normalized, got, tt.wantBM25)
+			}
+			if got := isKnownSearchMethod(tt.method); got != tt.wantKnown {
+				t.Fatalf("isKnownSearchMethod(%q) = %v, want %v", tt.method, got, tt.wantKnown)
+			}
+		})
+	}
+}
+
+func TestRetrievalSourceResponseForHybridEvidence(t *testing.T) {
+	doc := retrieval.SearchResult{
+		ID:      "chunk-1",
+		Content: "invoice 2026",
+		Metadata: map[string]interface{}{
+			"retrieval_sources": []string{"vector", "bm25"},
+			"matched_terms":     []string{"invoice", "2026"},
+			"vector_score":      0.87,
+			"bm25_score":        5.25,
+			"vector_rank":       2,
+			"bm25_rank":         1,
+			"best_rank":         1,
+			"score":             0.064,
+			"fusion_score":      0.064,
+			"rerank_score":      0.91,
+			"final_score":       0.91,
+		},
+	}
+
+	source := retrievalSourceResponseForDoc(doc, "semantic_search", "fallback")
+	if source.Method != "hybrid_search" {
+		t.Fatalf("Method = %q, want hybrid_search", source.Method)
+	}
+	if source.Reason == "fallback" || source.Reason == "" {
+		t.Fatalf("expected hybrid reason, got %q", source.Reason)
+	}
+	if len(source.MatchedTerms) != 2 || source.MatchedTerms[0] != "invoice" || source.MatchedTerms[1] != "2026" {
+		t.Fatalf("MatchedTerms = %#v, want invoice+2026", source.MatchedTerms)
+	}
+	if len(source.RetrievalSources) != 2 || source.RetrievalSources[0] != "vector" || source.RetrievalSources[1] != "bm25" {
+		t.Fatalf("RetrievalSources = %#v, want vector+bm25", source.RetrievalSources)
+	}
+	if source.VectorScore == nil || *source.VectorScore != 0.87 {
+		t.Fatalf("VectorScore = %#v, want 0.87", source.VectorScore)
+	}
+	if source.BM25Score == nil || *source.BM25Score != 5.25 {
+		t.Fatalf("BM25Score = %#v, want 5.25", source.BM25Score)
+	}
+	if source.VectorRank == nil || *source.VectorRank != 2 {
+		t.Fatalf("VectorRank = %#v, want 2", source.VectorRank)
+	}
+	if source.BM25Rank == nil || *source.BM25Rank != 1 {
+		t.Fatalf("BM25Rank = %#v, want 1", source.BM25Rank)
+	}
+	if source.BestRank == nil || *source.BestRank != 1 {
+		t.Fatalf("BestRank = %#v, want 1", source.BestRank)
+	}
+	if source.FusionScore == nil || *source.FusionScore != 0.064 {
+		t.Fatalf("FusionScore = %#v, want 0.064", source.FusionScore)
+	}
+	if source.RerankScore == nil || *source.RerankScore != 0.91 {
+		t.Fatalf("RerankScore = %#v, want 0.91", source.RerankScore)
+	}
+	if source.FinalScore == nil || *source.FinalScore != 0.91 {
+		t.Fatalf("FinalScore = %#v, want 0.91", source.FinalScore)
+	}
+}
+
+func TestHybridRecallCandidateLimit(t *testing.T) {
+	if hybridRecallCandidateLimit != 50 {
+		t.Fatalf("hybridRecallCandidateLimit = %d, want 50", hybridRecallCandidateLimit)
+	}
+}
+
+func TestFilterAndLimitFinalRecordsSortsAndAppliesThresholdBeforeTopK(t *testing.T) {
+	records := []dto.HitTestingRecordResponse{
+		{Segment: dto.SegmentResponse{ID: "mid"}, Score: 0.72},
+		{Segment: dto.SegmentResponse{ID: "below"}, Score: 0.49},
+		{Segment: dto.SegmentResponse{ID: "high"}, Score: 0.91},
+		{Segment: dto.SegmentResponse{ID: "low"}, Score: 0.30},
+	}
+
+	got := filterAndLimitFinalRecords(records, &RetrievalOptions{
+		ScoreThresholdEnabled: true,
+		ScoreThreshold:        0.5,
+		TopK:                  2,
+	})
+
+	if len(got) != 2 {
+		t.Fatalf("len(got) = %d, want 2", len(got))
+	}
+	if got[0].Segment.ID != "high" || got[1].Segment.ID != "mid" {
+		t.Fatalf("got IDs = %q, %q; want high, mid", got[0].Segment.ID, got[1].Segment.ID)
+	}
+}
+
+func TestFilterAndLimitFinalRecordsCanReturnFewerThanTopK(t *testing.T) {
+	records := []dto.HitTestingRecordResponse{
+		{Segment: dto.SegmentResponse{ID: "below-a"}, Score: 0.49},
+		{Segment: dto.SegmentResponse{ID: "below-b"}, Score: 0.40},
+	}
+
+	got := filterAndLimitFinalRecords(records, &RetrievalOptions{
+		ScoreThresholdEnabled: true,
+		ScoreThreshold:        0.5,
+		TopK:                  5,
+	})
+
+	if len(got) != 0 {
+		t.Fatalf("len(got) = %d, want 0", len(got))
+	}
+}
+
+func TestFilterAndLimitFinalRecordsSkipsThresholdWhenDisabled(t *testing.T) {
+	records := []dto.HitTestingRecordResponse{
+		{Segment: dto.SegmentResponse{ID: "below-a"}, Score: 0.49},
+		{Segment: dto.SegmentResponse{ID: "below-b"}, Score: 0.40},
+	}
+
+	got := filterAndLimitFinalRecords(records, &RetrievalOptions{
+		ScoreThresholdEnabled: false,
+		ScoreThreshold:        0.5,
+		TopK:                  1,
+	})
+
+	if len(got) != 1 {
+		t.Fatalf("len(got) = %d, want 1", len(got))
+	}
+	if got[0].Segment.ID != "below-a" {
+		t.Fatalf("got ID = %q, want below-a", got[0].Segment.ID)
+	}
+}
+
+func TestFilterAndLimitFinalRecordsKeepsRRFFallbackBelowThreshold(t *testing.T) {
+	fusionScore := 0.0164
+	bestRank := 1
+	records := []dto.HitTestingRecordResponse{
+		{
+			Segment: dto.SegmentResponse{ID: "rrf-fallback"},
+			Score:   fusionScore,
+			RetrievalSource: &dto.RetrievalSourceResponse{
+				FusionScore: &fusionScore,
+				BestRank:    &bestRank,
+			},
+		},
+	}
+
+	got := filterAndLimitFinalRecords(records, &RetrievalOptions{
+		ScoreThresholdEnabled: true,
+		ScoreThreshold:        0.35,
+		TopK:                  5,
+	})
+
+	if len(got) != 1 {
+		t.Fatalf("len(got) = %d, want 1", len(got))
+	}
+	if got[0].Segment.ID != "rrf-fallback" {
+		t.Fatalf("got ID = %q, want rrf-fallback", got[0].Segment.ID)
+	}
+}
+
+func TestFilterAndLimitFinalRecordsAppliesThresholdToRerankScores(t *testing.T) {
+	fusionScore := 0.0164
+	rerankScore := 0.25
+	bestRank := 1
+	records := []dto.HitTestingRecordResponse{
+		{
+			Segment: dto.SegmentResponse{ID: "reranked-below-threshold"},
+			Score:   rerankScore,
+			RetrievalSource: &dto.RetrievalSourceResponse{
+				FusionScore: &fusionScore,
+				RerankScore: &rerankScore,
+				BestRank:    &bestRank,
+			},
+		},
+	}
+
+	got := filterAndLimitFinalRecords(records, &RetrievalOptions{
+		ScoreThresholdEnabled: true,
+		ScoreThreshold:        0.35,
+		TopK:                  5,
+	})
+
+	if len(got) != 0 {
+		t.Fatalf("len(got) = %d, want 0", len(got))
+	}
+}
+
+func TestSplitRerankableSearchResultsPassesThroughGraphResults(t *testing.T) {
+	docBacked := retrieval.SearchResult{
+		ID: "doc-backed",
+		Metadata: map[string]interface{}{
+			"doc_id": "doc-backed",
+		},
+	}
+	graphDoc := retrieval.SearchResult{
+		ID: "graph",
+		Metadata: map[string]interface{}{
+			"source": "graph_knowledge",
+		},
+	}
+
+	rerankable, passthrough := splitRerankableSearchResults([]retrieval.SearchResult{docBacked, graphDoc})
+
+	if len(rerankable) != 1 || rerankable[0].ID != "doc-backed" {
+		t.Fatalf("rerankable = %#v, want doc-backed only", rerankable)
+	}
+	if len(passthrough) != 1 || passthrough[0].ID != "graph" {
+		t.Fatalf("passthrough = %#v, want graph only", passthrough)
 	}
 }
 

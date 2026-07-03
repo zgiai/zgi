@@ -21,10 +21,13 @@ import type {
   AIChatMessage,
   AIChatMessageListResponse,
   AIChatRegenerateMessageRequest,
+  AIChatSearchResponse,
   AIChatSkillConfigResponse,
   AIChatSkillDetailResponse,
   AIChatSkillListResponse,
   AIChatSkillOrganizationConfig,
+  AIChatSkillPreference,
+  AIChatSkillPreferenceResponse,
   AIChatSseEnvelope,
   AIChatStopConversationResponseData,
   AIChatUpdateConversationRequest,
@@ -193,6 +196,17 @@ export const aichatService = {
     return http.put<AIChatSkillConfigResponse>(`${AICHAT_BASE_PATH}/skills/config`, payload);
   },
 
+  getSkillPreference() {
+    return http.get<AIChatSkillPreferenceResponse>(`${AICHAT_BASE_PATH}/skill-preferences/me`);
+  },
+
+  updateSkillPreference(payload: AIChatSkillPreference) {
+    return http.put<AIChatSkillPreferenceResponse>(
+      `${AICHAT_BASE_PATH}/skill-preferences/me`,
+      payload
+    );
+  },
+
   previewImportSkill(file: File) {
     const formData = new FormData();
     formData.append('file', file);
@@ -224,6 +238,12 @@ export const aichatService = {
   listConversations(params: { page?: number; limit?: number } = {}) {
     return http.get<AIChatConversationListResponse>(`${AICHAT_BASE_PATH}/conversations`, {
       params,
+    });
+  },
+
+  search(query: string, limit = 20) {
+    return http.get<AIChatSearchResponse>(`${AICHAT_BASE_PATH}/search`, {
+      params: { query, limit },
     });
   },
 

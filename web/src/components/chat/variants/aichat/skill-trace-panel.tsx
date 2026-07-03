@@ -10,6 +10,7 @@ import {
 import { useT } from '@/i18n/translations';
 import { useLocale } from '@/hooks/use-locale';
 import { cn } from '@/lib/utils';
+import { formatMs } from '@/utils/format';
 import type { AIChatSkillInvocation } from '@/services/types/aichat';
 import {
   getAIChatSkillResultDisplay,
@@ -19,6 +20,7 @@ import {
   type AIChatSkillDisplayMap,
 } from '@/components/chat/variants/aichat/skill-display';
 import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
+import { AIChatSkillResultSummary } from '@/components/chat/variants/aichat/skill-result-summary';
 
 type SkillTraceTone = 'running' | 'success' | 'error';
 type SkillTraceDebugLabel = keyof typeof SKILL_TRACE_DEBUG_LABEL_KEYS;
@@ -63,7 +65,7 @@ function getDurationText(durationMs: number | undefined): string | null {
   if (typeof durationMs !== 'number' || !Number.isFinite(durationMs)) return null;
   if (durationMs < 0) return null;
   if (durationMs === 0) return '<1ms';
-  return `${durationMs}ms`;
+  return formatMs(durationMs);
 }
 
 function formatDebugValue(value: unknown): string | null {
@@ -258,6 +260,7 @@ export function AIChatSkillTracePanel({
                           {event.detail}
                         </div>
                       ) : null}
+                      <AIChatSkillResultSummary result={event.invocation.result} className="mt-2" />
                       <dl className="mt-2 grid gap-1 rounded-md bg-muted/30 p-2 text-[11px]">
                         {skillTraceDebugRows(event.invocation, locale).map(([labelKey, value]) => {
                           const formatted = formatDebugValue(value);

@@ -1,11 +1,21 @@
 'use client';
 
 import * as React from 'react';
-import { Check, History, Loader2, MessageSquarePlus, Pencil, Trash2, X } from 'lucide-react';
+import {
+  Check,
+  History,
+  Loader2,
+  MessageSquarePlus,
+  Pencil,
+  Search,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { ConversationSearchDialog } from '@/components/chat/variants/common/conversation-search-dialog';
 import {
   ContextMenu,
   ContextMenuContent,
@@ -14,7 +24,11 @@ import {
 } from '@/components/ui/context-menu';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n/translations';
-import type { ConversationSummary } from '@/components/chat/controllers/types';
+import type {
+  ConversationSearchFn,
+  ConversationSearchResult,
+  ConversationSummary,
+} from '@/components/chat/controllers/types';
 
 function isConversationRunning(conversation: ConversationSummary): boolean {
   const metadata = conversation.metadata;
@@ -53,6 +67,9 @@ interface SidebarProps {
   className?: string;
   backgroundImage?: string;
   onClose?: () => void;
+  search?: ConversationSearchFn;
+  searchKey?: readonly unknown[];
+  onSelectSearchResult?: (result: ConversationSearchResult) => void;
 }
 
 export function Sidebar({
@@ -66,12 +83,16 @@ export function Sidebar({
   className,
   backgroundImage,
   onClose,
+  search,
+  searchKey,
+  onSelectSearchResult,
 }: SidebarProps) {
   const t = useT();
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editingTitle, setEditingTitle] = React.useState('');
   const [renamingId, setRenamingId] = React.useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = React.useState<ConversationSummary | null>(null);
+  const [searchOpen, setSearchOpen] = React.useState(false);
 
   const startEditing = React.useCallback((conversation: ConversationSummary) => {
     setEditingId(conversation.id);
@@ -151,6 +172,17 @@ export function Sidebar({
         >
           <MessageSquarePlus className="h-5 w-5" />
           {t('webapp.chat.newConversation')}
+        </Button>
+        <Button
+          className={cn(
+            'mt-2 w-full justify-start gap-2 overflow-hidden bg-muted/80 font-medium text-muted-foreground hover:bg-muted',
+            isOpen ? 'opacity-100' : 'opacity-0'
+          )}
+          variant="ghost"
+          onClick={() => setSearchOpen(true)}
+        >
+          <Search className="h-4 w-4" />
+          {t('common.search')}
         </Button>
       </div>
       <ScrollArea className="h-0 grow">
@@ -261,7 +293,7 @@ export function Sidebar({
                         ) : null}
                         {!isEditing ? (
                           <ConfirmDialog
-                            variant="warning"
+                            variant="danger"
                             title={t('webapp.chat.deleteTitle')}
                             description={t('webapp.chat.deleteDescription', {
                               conversationTitle: conv.title || t('webapp.chat.newConversation'),
@@ -309,13 +341,13 @@ export function Sidebar({
         </div>
       </ScrollArea>
       <ConfirmDialog
+        variant="danger"
         open={deleteTarget !== null}
         onOpenChange={open => {
           if (!open) {
             setDeleteTarget(null);
           }
         }}
-        variant="warning"
         title={t('webapp.chat.deleteTitle')}
         description={t('webapp.chat.deleteDescription', {
           conversationTitle: deleteTarget?.title || t('webapp.chat.newConversation'),
@@ -323,6 +355,27 @@ export function Sidebar({
         confirmText={t('common.delete')}
         cancelText={t('common.cancel')}
         onConfirm={confirmDelete}
+      />
+      <ConversationSearchDialog
+        open={searchOpen}
+        conversations={conversations}
+        activeId={activeId}
+        onOpenChange={setSearchOpen}
+        onSelect={id => {
+          onSelect(id);
+          onClose?.();
+        }}
+        onNewConversation={onNewChat}
+        onSelectSearchResult={
+          onSelectSearchResult
+            ? result => {
+                onSelectSearchResult(result);
+                onClose?.();
+              }
+            : undefined
+        }
+        search={search}
+        searchKey={searchKey}
       />
     </div>
   );

@@ -52,12 +52,19 @@ func (p *TableIndexProcessor) Transform(ctx context.Context, output *dto.Extract
 			Content:  content,
 			BBox:     element.BBox,
 			Metadata: element.Metadata,
+			Children: []dto.TransformedChildChunk{
+				{
+					Content:  content,
+					BBox:     element.BBox,
+					Metadata: cloneTableMetadata(element.Metadata),
+				},
+			},
 		})
 	}
 	return transformed, nil
 }
 
-// Load stores flat table row segments in the vector database.
+// Load stores table row child chunks in the vector database.
 func (p *TableIndexProcessor) Load(ctx context.Context, dataset *model.Dataset, chunks []dto.TransformedChunk, withKeywords bool, embeddingService embedding.EmbeddingService,
 	documentRepo datasetrepository.DocumentRepository,
 	vectorDB vectordb.VectorDB) (int, error) {
@@ -81,21 +88,42 @@ func (p *TableIndexProcessor) buildIndexingItems(dataset *model.Dataset, chunks 
 		if indexNodeID == "" {
 			return nil, fmt.Errorf("failed to get doc_id from table chunk metadata")
 		}
-		items = append(items, indexingItem{
-			IndexNodeID: indexNodeID,
-			Text:        chunk.Content,
-			ClassName:   className,
-			Properties: map[string]interface{}{
-				"text":        chunk.Content,
-				"doc_id":      indexNodeID,
-				"doc_hash":    getMetadataByKey(chunk.Metadata, "doc_hash"),
-				"document_id": getMetadataByKey(chunk.Metadata, "document_id"),
-				"dataset_id":  dataset.ID,
-			},
-			ItemType: indexingItemTypeSegment,
-		})
+		if len(chunk.Children) == 0 {
+			return nil, fmt.Errorf("failed to get child chunk from table chunk metadata")
+		}
+		for _, child := range chunk.Children {
+			childIndexNodeID := getMetadataByKey(child.Metadata, "doc_id")
+			if childIndexNodeID == "" {
+				return nil, fmt.Errorf("failed to get doc_id from table child chunk metadata")
+			}
+			items = append(items, indexingItem{
+				IndexNodeID:       childIndexNodeID,
+				Text:              child.Content,
+				ClassName:         className,
+				ParentIndexNodeID: indexNodeID,
+				Properties: map[string]interface{}{
+					"text":        child.Content,
+					"doc_id":      childIndexNodeID,
+					"doc_hash":    getMetadataByKey(child.Metadata, "doc_hash"),
+					"document_id": getMetadataByKey(chunk.Metadata, "document_id"),
+					"dataset_id":  dataset.ID,
+				},
+				ItemType: indexingItemTypeChild,
+			})
+		}
 	}
 	return items, nil
+}
+
+func cloneTableMetadata(metadata map[string]any) map[string]any {
+	if len(metadata) == 0 {
+		return map[string]any{}
+	}
+	cloned := make(map[string]any, len(metadata))
+	for key, value := range metadata {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 // Clean deletes table row vectors from the vector database.

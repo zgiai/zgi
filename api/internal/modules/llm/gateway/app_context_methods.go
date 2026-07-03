@@ -54,17 +54,18 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 	if err := s.validateCreateResponseRequest(req); err != nil {
 		return nil, err
 	}
+	effectiveReq := s.policyPrompt.injectCreateResponseRequest(req)
 
 	// 2. Check model authorization
-	if err := s.checkModelAuthorization(apiKey, appCtx, req.Model); err != nil {
+	if err := s.checkModelAuthorization(apiKey, appCtx, effectiveReq.Model); err != nil {
 		return nil, err
 	}
 
 	// 3. Estimate tokens
 	promptTokens, completionTokens, _ := s.tokenEstimator.EstimateTotalTokens(
-		req.Messages,
-		req.MaxTokens,
-		req.Model,
+		effectiveReq.Messages,
+		effectiveReq.MaxTokens,
+		effectiveReq.Model,
 	)
 
 	// 4. Select providers
@@ -77,12 +78,12 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 	if err != nil {
 		return nil, err
 	}
-	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, "", req.Model, 3)
+	providerSelections, err := s.selectProvidersWithChannelRouter(ctx, shadowOrganizationID, "", effectiveReq.Model, 3)
 	if err != nil {
 		return nil, fmt.Errorf("failed to select provider: %w", err)
 	}
 	if len(providerSelections) == 0 {
-		return nil, NewNoProviderAvailableError(req.Model, shadowOrganizationID.String())
+		return nil, NewNoProviderAvailableError(effectiveReq.Model, shadowOrganizationID.String())
 	}
 
 	// 5. Try each provider selection
@@ -130,7 +131,7 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 			continue
 		}
 
-		response, err := providerAdapter.CreateResponse(ctx, req)
+		response, err := providerAdapter.CreateResponse(ctx, effectiveReq)
 		responseTime := time.Since(startTime).Milliseconds()
 
 		if err != nil {

@@ -132,6 +132,10 @@ func TestRunScenarioRecognitionTaskUsesSnapshotAndFinishesCounts(t *testing.T) {
 		"task-1", "agent-1", "workspace-1", "account-1", GenerationTaskStatusRunning,
 		"prompt", "context", "snapshot workflow", "openai", "gpt-4.1", 0, 0, "", &now, nil, nil, now, now,
 	))
+	expectScenarioRecognitionTaskByID(mock, "task-1", scenarioRecognitionTaskRows().AddRow(
+		"task-1", "agent-1", "workspace-1", "account-1", GenerationTaskStatusRunning,
+		"prompt", "context", "snapshot workflow", "openai", "gpt-4.1", 0, 0, "", &now, nil, nil, now, now,
+	))
 	mock.ExpectQuery(`SELECT \* FROM "workflow_test_cases" WHERE agent_id = \$1 ORDER BY created_at DESC`).
 		WithArgs("agent-1").
 		WillReturnRows(caseRows(now).AddRow("case-1", "agent-1", nil, "我要退款", "处理退款", CaseTypeCore, CaseStatusEnabled, `[]`, now, now))
@@ -167,6 +171,10 @@ func TestRunScenarioRecognitionTaskUsesSnapshotAndFinishesCounts(t *testing.T) {
 	mock.ExpectQuery(`SELECT \* FROM "workflow_test_cases" WHERE agent_id = \$1 ORDER BY created_at DESC`).
 		WithArgs("agent-1").
 		WillReturnRows(caseRows(now).AddRow("case-1", "agent-1", "scenario-new", "我要退款", "处理退款", CaseTypeCore, CaseStatusEnabled, `[]`, now, now))
+	expectScenarioRecognitionTaskByID(mock, "task-1", scenarioRecognitionTaskRows().AddRow(
+		"task-1", "agent-1", "workspace-1", "account-1", GenerationTaskStatusRunning,
+		"prompt", "context", "snapshot workflow", "openai", "gpt-4.1", 0, 0, "", &now, nil, nil, now, now,
+	))
 	expectFinishScenarioRecognitionTask(mock, "task-1", GenerationTaskStatusCompleted, "", 1, 1)
 
 	err := service.RunScenarioRecognitionTask(ctx, "task-1", recognizer)

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/response"
+	"github.com/zgiai/zgi/api/pkg/sql_base/guard"
 
 	"github.com/gin-gonic/gin"
 )
@@ -382,6 +384,150 @@ func (h *DataSourceHandler) DeleteDataSourceByID(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{"message": "data source deleted successfully"})
+}
+
+func (h *DataSourceHandler) GetGuardPolicy(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+	id := c.Param("id")
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if !h.ensureDatabaseManage(c, organizationID, id, accountID) {
+		return
+	}
+	policy, err := h.service.GetGuardPolicy(c.Request.Context(), organizationID, id)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	response.Success(c, dto.GuardPolicyResponse{Policy: policy})
+}
+
+func (h *DataSourceHandler) UpdateGuardPolicy(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+	id := c.Param("id")
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	var req dto.UpdateGuardPolicyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+	if !h.ensureDatabaseManage(c, organizationID, id, accountID) {
+		return
+	}
+	if h.organizationService != nil {
+		currentPolicy, err := h.service.GetGuardPolicy(c.Request.Context(), organizationID, id)
+		if err != nil {
+			response.FailWithMessage(c, response.ErrSystemError, err.Error())
+			return
+		}
+		if req.Policy.Mode == "enforce" || currentPolicy.Mode == "enforce" {
+			isAdmin, err := h.organizationService.IsOrganizationAdminOrOwner(c.Request.Context(), organizationID, accountID)
+			if err != nil {
+				response.Fail(c, response.ErrSystemError)
+				return
+			}
+			if !isAdmin {
+				response.Fail(c, response.ErrPermissionDenied)
+				return
+			}
+		}
+	}
+	policy, err := h.service.UpdateGuardPolicy(c.Request.Context(), organizationID, id, req.Policy)
+	if err != nil {
+		if errors.Is(err, guard.ErrInvalidPolicy) {
+			response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+			return
+		}
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	response.Success(c, dto.GuardPolicyResponse{Policy: policy})
+}
+
+func (h *DataSourceHandler) PreviewGuard(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+	id := c.Param("id")
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	var req dto.PreviewGuardRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+	if !h.ensureDatabaseManage(c, organizationID, id, accountID) {
+		return
+	}
+	result, err := h.service.PreviewGuard(c.Request.Context(), organizationID, id, req.SQL, req.Policy)
+	if err != nil {
+		if errors.Is(err, guard.ErrInvalidPolicy) {
+			response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+			return
+		}
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	response.Success(c, dto.PreviewGuardResponse{Result: result})
+}
+
+func (h *DataSourceHandler) ensureDatabaseManage(c *gin.Context, organizationID, dataSourceID, accountID string) bool {
+	if dataSourceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "id is required")
+		return false
+	}
+	if h.organizationService == nil {
+		return true
+	}
+	dataSource, err := h.service.GetDataSourceByID(c.Request.Context(), organizationID, dataSourceID, accountID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+	if dataSource == nil {
+		response.Fail(c, response.ErrNotFound)
+		return false
+	}
+	workspaceID := organizationID
+	if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
+		workspaceID = *dataSource.WorkspaceID
+	}
+	hasPermission, err := h.organizationService.CheckWorkspacePermission(
+		c.Request.Context(),
+		organizationID,
+		workspaceID,
+		accountID,
+		workspace_model.WorkspacePermissionDatabaseManage,
+	)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+	if !hasPermission {
+		response.Fail(c, response.ErrPermissionDenied)
+		return false
+	}
+	return true
 }
 
 // CreateTable creates a new table in a data source
@@ -1436,7 +1582,7 @@ func (h *DataSourceHandler) ImportTableRecords(c *gin.Context) {
 			response.FailWithMessage(c, response.ErrInvalidParam, "invalid request: "+err.Error())
 			return
 		}
-		result, err := h.service.ImportTableRecordsFromUploadFile(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, req.UploadFileID)
+		result, err := h.service.ImportTableRecordsFromUploadFile(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, req.UploadFileID, req.SkipUnmatchedColumns)
 		if err != nil {
 			response.FailWithMessage(c, response.ErrSystemError, "failed to import records: "+err.Error())
 			return
@@ -1461,7 +1607,7 @@ func (h *DataSourceHandler) ImportTableRecords(c *gin.Context) {
 	defer fileContent.Close()
 
 	// Import records through service
-	result, err := h.service.ImportTableRecords(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, fileContent, file.Filename)
+	result, err := h.service.ImportTableRecords(c.Request.Context(), organizationID, dataSourceID, tableID, accountID, fileContent, file.Filename, false)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, "failed to import records: "+err.Error())
 		return
@@ -1502,6 +1648,64 @@ func (h *DataSourceHandler) IngestFileToTable(c *gin.Context) {
 
 	// Ingest file content into table
 	result, err := h.service.IngestFileToTable(c.Request.Context(), organizationID, accountID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, result)
+}
+
+// ParseFileForTableIngest parses file content for table ingestion review.
+func (h *DataSourceHandler) ParseFileForTableIngest(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	var req dto.ParseFileForTableIngestRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+
+	result, err := h.service.ParseFileForTableIngest(c.Request.Context(), organizationID, accountID, req)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, result)
+}
+
+// ExtractTextToTableRecords recognizes table records from parsed text content.
+func (h *DataSourceHandler) ExtractTextToTableRecords(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	var req dto.ExtractTextToTableRecordsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
+		return
+	}
+
+	result, err := h.service.ExtractTextToTableRecords(c.Request.Context(), organizationID, accountID, req)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
@@ -1637,6 +1841,10 @@ func (h *DataSourceHandler) GetTablePrompt(c *gin.Context) {
 	// Get prompt for table
 	prompt, err := h.service.GetTablePrompt(c.Request.Context(), tableID, lang)
 	if err != nil {
+		if service.IsDataSourceTableNotFound(err) {
+			response.Fail(c, response.ErrNotFound)
+			return
+		}
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
@@ -1946,6 +2154,153 @@ func (h *DataSourceHandler) ListOperationLogsByDataSourceID(c *gin.Context) {
 	})
 }
 
+func (h *DataSourceHandler) ListSQLAuditByWorkspace(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	workspaceID := c.Param("workspace_id")
+	if workspaceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "workspace_id is required")
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	if h.organizationService != nil {
+		hasPermission, err := h.organizationService.CheckWorkspacePermission(
+			c.Request.Context(),
+			organizationID,
+			workspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionDatabaseManage,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
+	var req dto.ListSQLAuditRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid query parameters: "+err.Error())
+		return
+	}
+
+	page := 1
+	limit := 20
+	if req.Page > 0 {
+		page = req.Page
+	}
+	if req.Limit > 0 {
+		limit = req.Limit
+	}
+	offset := (page - 1) * limit
+
+	filters := dto.SQLAuditFilter{
+		DataSourceID:  req.DataSourceID,
+		TableID:       req.TableID,
+		ClientType:    req.ClientType,
+		WorkflowRunID: req.WorkflowRunID,
+		NodeID:        req.NodeID,
+		CreatedBy:     req.CreatedBy,
+		OperationType: req.OperationType,
+		Status:        req.Status,
+		StartTime:     req.StartTime,
+		EndTime:       req.EndTime,
+	}
+
+	records, err := h.service.ListSQLAuditByWorkspace(c.Request.Context(), organizationID, workspaceID, filters, limit, offset)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	total, err := h.service.CountSQLAuditByWorkspace(c.Request.Context(), organizationID, workspaceID, filters)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	items := make([]dto.SQLAuditListItem, 0, len(records))
+	for _, record := range records {
+		items = append(items, dto.ConvertSQLOperationModelToAuditListItem(record))
+	}
+
+	response.Success(c, dto.ListSQLAuditResponse{
+		Data:    items,
+		HasMore: int64(page*limit) < total,
+		Limit:   limit,
+		Total:   total,
+		Page:    page,
+	})
+}
+
+func (h *DataSourceHandler) GetSQLAuditDetail(c *gin.Context) {
+	organizationID := util.GetOrganizationIDCompat(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidTenantId)
+		return
+	}
+
+	workspaceID := c.Param("workspace_id")
+	if workspaceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "workspace_id is required")
+		return
+	}
+
+	operationID := c.Param("operation_id")
+	if operationID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "operation_id is required")
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+
+	if h.organizationService != nil {
+		hasPermission, err := h.organizationService.CheckWorkspacePermission(
+			c.Request.Context(),
+			organizationID,
+			workspaceID,
+			accountID,
+			workspace_model.WorkspacePermissionDatabaseManage,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
+	record, err := h.service.GetSQLAuditDetail(c.Request.Context(), organizationID, workspaceID, operationID)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+	if record == nil {
+		response.Fail(c, response.ErrNotFound)
+		return
+	}
+
+	response.Success(c, dto.ConvertSQLOperationModelToAuditDetail(record))
+}
+
 // RegisterRoutes registers all data source routes
 func (h *DataSourceHandler) RegisterRoutes(router *gin.RouterGroup) {
 	authWithTenant := router.Group("", middleware.JWTWithOrganizationAndService(h.accountService))
@@ -1956,6 +2311,9 @@ func (h *DataSourceHandler) RegisterRoutes(router *gin.RouterGroup) {
 	authWithTenant.GET("/data-dbs/:id", h.GetDataSourceByID)
 	authWithTenant.PUT("/data-dbs/:id", h.UpdateDataSource)
 	authWithTenant.DELETE("/data-dbs/:id", h.DeleteDataSourceByID)
+	authWithTenant.GET("/data-dbs/:id/guard/policy", h.GetGuardPolicy)
+	authWithTenant.PUT("/data-dbs/:id/guard/policy", h.UpdateGuardPolicy)
+	authWithTenant.POST("/data-dbs/:id/guard/preview", h.PreviewGuard)
 
 	// Table operations within a data source
 	authWithTenant.POST("/data-dbs/:id/tables", h.CreateTable)
@@ -1969,9 +2327,12 @@ func (h *DataSourceHandler) RegisterRoutes(router *gin.RouterGroup) {
 	authWithTenant.PUT("/data-dbs/:id/tables/:table_id/columns", h.UpdateTableColumns)
 	authWithTenant.GET("/data-dbs/:id/tables/:table_id/columns", h.GetTableColumns)
 	authWithTenant.GET("/data-dbs/:id/sql-operations", h.ListOperationLogsByDataSourceID)
+	authWithTenant.GET("/workspaces/:workspace_id/sql-audit", h.ListSQLAuditByWorkspace)
+	authWithTenant.GET("/workspaces/:workspace_id/sql-audit/:operation_id", h.GetSQLAuditDetail)
 	authWithTenant.POST("/data-dbs/analyze-file-for-table", h.AnalyzeFileForTable)
 	authWithTenant.POST("/data-dbs/:id/excel-import/analyze", h.AnalyzeExcelImport)
 	authWithTenant.GET("/data-dbs/:id/excel-import/jobs/:job_id", h.GetExcelImportJob)
+	authWithTenant.POST("/data-dbs/:id/excel-import/jobs/:job_id/recognize", h.RecognizeExcelImportFields)
 	authWithTenant.POST("/data-dbs/:id/excel-import/jobs/:job_id/import", h.ConfirmExcelImport)
 	authWithTenant.GET("/data-dbs/:id/excel-import/jobs/:job_id/errors", h.ListExcelImportErrors)
 
@@ -1984,6 +2345,8 @@ func (h *DataSourceHandler) RegisterRoutes(router *gin.RouterGroup) {
 	authWithTenant.POST("/data-dbs/:id/tables/:table_id/records/import", h.ImportTableRecords)
 
 	// File ingestion operations
+	authWithTenant.POST("/data-dbs/parse-file-for-table-ingest", h.ParseFileForTableIngest)
+	authWithTenant.POST("/data-dbs/extract-text-to-table-records", h.ExtractTextToTableRecords)
 	authWithTenant.POST("/data-dbs/ingest-file-to-table", h.IngestFileToTable)
 	authWithTenant.POST("/data-dbs/batch-ingest-file-to-table", h.BatchIngestFileToTable)
 }

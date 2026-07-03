@@ -286,12 +286,11 @@ func TestRenderContextIncludesMemoryPolicyWithoutEntries(t *testing.T) {
 	}
 	for _, want := range []string{
 		"User memory is enabled",
-		"When to use user-memory",
-		"MUST call user-memory",
-		"memory-worthy",
-		"do not ask whether to save it",
-		"ask for confirmation only when",
-		"do not say memory was remembered",
+		"Saved memory is supplied",
+		"Do not attempt to call tools or skills",
+		"internal memory planner",
+		"Do not say memory was remembered",
+		"confirmation is required",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered context = %q, want %q", rendered, want)

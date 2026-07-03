@@ -1,15 +1,16 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChatController } from '@/components/chat/controllers/types';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Search, Trash2 } from 'lucide-react';
 import { useT } from '@/i18n';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useStore } from 'zustand';
 import { toast } from 'sonner';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { ConversationSearchDialog } from '@/components/chat/variants/common/conversation-search-dialog';
 
 function getSidebarBackgroundStyle(backgroundImage?: string): React.CSSProperties | undefined {
   if (!backgroundImage) return undefined;
@@ -27,6 +28,8 @@ interface ConversationHistoryListProps {
   className?: string;
   backgroundImage?: string;
   onCreateWhileDraft?: () => void;
+  onActionComplete?: () => void;
+  searchKey?: readonly unknown[];
 }
 
 const ConversationHistoryList: React.FC<ConversationHistoryListProps> = ({
@@ -34,11 +37,14 @@ const ConversationHistoryList: React.FC<ConversationHistoryListProps> = ({
   className,
   backgroundImage,
   onCreateWhileDraft,
+  onActionComplete,
+  searchKey,
 }) => {
   const activeId = useStore(controller.store, s => s.activeId);
   const conversations = useStore(controller.store, s => s.conversations);
   const pagination = useStore(controller.store, s => s.pagination);
   const isLoadingList = useStore(controller.store, s => s.isLoadingList);
+  const [searchOpen, setSearchOpen] = useState(false);
   const isMobile = useIsMobile();
   const t = useT();
   const activeConversation = conversations.find(item => item.id === activeId);
@@ -50,18 +56,26 @@ const ConversationHistoryList: React.FC<ConversationHistoryListProps> = ({
     if (isActiveDraft) {
       toast.info(t('webapp.chat.alreadyInDraft'));
       onCreateWhileDraft?.();
+      onActionComplete?.();
       return;
     }
     const draft = controller.createDraft(t('webapp.chat.newConversation'));
     controller.select(draft.id);
-  }, [controller, isActiveDraft, onCreateWhileDraft, t]);
+    onActionComplete?.();
+  }, [controller, isActiveDraft, onActionComplete, onCreateWhileDraft, t]);
 
   const handleSelect = useCallback(
     (id: string) => {
       controller.select(id);
+      onActionComplete?.();
     },
+    [controller, onActionComplete]
+  );
+  const conversationSearch = useCallback(
+    (query: string, limit: number) => controller.search?.(query, limit) ?? Promise.resolve([]),
     [controller]
   );
+  const hasConversationSearch = typeof controller.search === 'function';
 
   const handleRemove = useCallback(
     (id: string) => {
@@ -152,7 +166,7 @@ const ConversationHistoryList: React.FC<ConversationHistoryListProps> = ({
             </div>
             <div onClick={e => e.stopPropagation()}>
               <ConfirmDialog
-                variant="warning"
+                variant="danger"
                 title={t('webapp.chat.deleteTitle')}
                 description={t('webapp.chat.deleteDescription', {
                   conversationTitle: displayTitle,
@@ -199,6 +213,15 @@ const ConversationHistoryList: React.FC<ConversationHistoryListProps> = ({
           <Plus className="h-4 w-4" />
           {t('webapp.chat.newConversation')}
         </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="w-full justify-start gap-2 bg-muted/80 font-medium text-muted-foreground hover:bg-muted"
+          onClick={() => setSearchOpen(true)}
+        >
+          <Search className="h-4 w-4" />
+          {t('common.search')}
+        </Button>
       </div>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {isLoadingList && conversations.length === 0 ? (
@@ -226,6 +249,26 @@ const ConversationHistoryList: React.FC<ConversationHistoryListProps> = ({
           </ScrollArea>
         )}
       </div>
+      <ConversationSearchDialog
+        open={searchOpen}
+        conversations={conversations}
+        activeId={activeId}
+        onOpenChange={setSearchOpen}
+        onSelect={id => {
+          handleSelect(id);
+        }}
+        onNewConversation={handleCreate}
+        onSelectSearchResult={result => {
+          if (controller.loadAndSelect) {
+            void controller.loadAndSelect(result.conversationId);
+          } else {
+            controller.select(result.conversationId);
+          }
+          onActionComplete?.();
+        }}
+        search={hasConversationSearch ? conversationSearch : undefined}
+        searchKey={searchKey}
+      />
     </div>
   );
 };

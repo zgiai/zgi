@@ -20,7 +20,7 @@ func ConvertValue(valueType string, value any, mode ValueConversionMode) (Segmen
 		return nil, nil, fmt.Errorf("value_type is required")
 	}
 
-	normalized := strings.ToLower(strings.TrimSpace(valueType))
+	normalized := normalizeValueType(valueType)
 	if mode == ValueConversionStrict && value == nil {
 		return nil, nil, fmt.Errorf("value is required for type %s", normalized)
 	}
@@ -49,6 +49,21 @@ func ConvertValue(valueType string, value any, mode ValueConversionMode) (Segmen
 			return nil, nil, fmt.Errorf("unsupported value_type %s", normalized)
 		}
 		return &StringSegment{Value: fmt.Sprintf("%v", value)}, []string{fmt.Sprintf("unsupported value_type %s, defaulted to string", normalized)}, nil
+	}
+}
+
+func normalizeValueType(valueType string) string {
+	switch strings.ToLower(strings.TrimSpace(valueType)) {
+	case "array[string]":
+		return "array_string"
+	case "array[number]":
+		return "array_number"
+	case "array[object]":
+		return "array_object"
+	case "array[boolean]":
+		return "array_boolean"
+	default:
+		return strings.ToLower(strings.TrimSpace(valueType))
 	}
 }
 

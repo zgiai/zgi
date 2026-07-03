@@ -75,7 +75,7 @@ workflow:
         text: |-
           Run guide
 
-          Ready. Requires: OpenAI gpt-5.5 model. Paste meeting notes or transcript to extract decisions and follow-ups.
+          Ready. Requires: OpenAI GPT-4o model. Paste meeting notes or transcript to extract decisions and follow-ups.
 
           Suggested test input:
           Type this in the debug chat:
@@ -115,7 +115,7 @@ workflow:
         variables: []
         model:
           provider: openai
-          name: gpt-5.5
+          name: gpt-4o
           mode: chat
           completion_params: {}
         prompt_template:
