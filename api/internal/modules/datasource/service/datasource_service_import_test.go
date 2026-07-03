@@ -203,6 +203,9 @@ func TestWithSourceColumnNamesMatchesHeadersByDisplayName(t *testing.T) {
 	if got[0].SourceColumnName == nil || *got[0].SourceColumnName != "手机号" {
 		t.Fatalf("got[0].SourceColumnName = %v, want 手机号", got[0].SourceColumnName)
 	}
+	if got[0].DisplayName == nil || *got[0].DisplayName != "手机号" {
+		t.Fatalf("got[0].DisplayName = %v, want 手机号", got[0].DisplayName)
+	}
 	if got[1].SourceColumnName == nil || *got[1].SourceColumnName != "用户ID" {
 		t.Fatalf("got[1].SourceColumnName = %v, want 用户ID", got[1].SourceColumnName)
 	}

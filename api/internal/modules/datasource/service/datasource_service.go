@@ -2679,6 +2679,7 @@ func (s *dataSourceService) inferTableStructureFromFile(ctx context.Context, ten
 
 	type llmTableColumn struct {
 		Name        string `json:"Name"`
+		DisplayName string `json:"DisplayName"`
 		Type        string `json:"Type"`
 		IsRequired  bool   `json:"IsRequired"`
 		Description string `json:"Description"`
@@ -2691,12 +2692,16 @@ func (s *dataSourceService) inferTableStructureFromFile(ctx context.Context, ten
 
 	for _, llmCol := range llmColumns {
 		description := llmCol.Description
-		columns = append(columns, dto.TableColumn{
+		column := dto.TableColumn{
 			Name:        llmCol.Name,
 			Type:        llmCol.Type,
 			IsRequired:  llmCol.IsRequired,
 			Description: &description,
-		})
+		}
+		if displayName := strings.TrimSpace(llmCol.DisplayName); displayName != "" {
+			column.DisplayName = &displayName
+		}
+		columns = append(columns, column)
 	}
 
 	return columns, nil
