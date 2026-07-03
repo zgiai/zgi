@@ -137,7 +137,7 @@ func (s *agentsService) listAgentSkillCandidatesForWorkspace(ctx context.Context
 		}
 		out = append(out, dto.AgentSkillCandidate{
 			SkillID:          skillID,
-			Name:             strings.TrimSpace(item.Name),
+			Name:             agentSkillCandidateDisplayName(item, skillID),
 			Description:      strings.TrimSpace(item.Description),
 			WhenToUse:        strings.TrimSpace(item.WhenToUse),
 			Source:           strings.TrimSpace(item.Source),
@@ -150,6 +150,21 @@ func (s *agentsService) listAgentSkillCandidatesForWorkspace(ctx context.Context
 		})
 	}
 	return out, nil
+}
+
+func agentSkillCandidateDisplayName(item skills.SkillDiscoveryMetadata, skillID string) string {
+	for _, name := range []string{
+		item.Display.Label["zh_Hans"],
+		item.Display.Label["en_US"],
+		item.Name,
+		skillID,
+	} {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			return name
+		}
+	}
+	return ""
 }
 
 func (s *agentsService) ListAgentDatabaseCandidates(ctx context.Context, agentID, accountID string, req dto.AgentDatabaseCandidatesRequest) (*dto.AgentDatabaseCandidatesResponse, error) {

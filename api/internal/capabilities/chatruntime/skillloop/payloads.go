@@ -642,6 +642,17 @@ func recoverableSkillToolErrorPayload(err error, nextAction string, skillID stri
 	return payload
 }
 
+func plannerFeedbackAdvisoryPayload(message string, nextAction string, skillID string, toolName string) map[string]interface{} {
+	return map[string]interface{}{
+		"status":      "advisory",
+		"advisory":    "completed_read_step_already_satisfied",
+		"message":     strings.TrimSpace(message),
+		"next_action": strings.TrimSpace(nextAction),
+		"skill_id":    strings.TrimSpace(skillID),
+		"tool_name":   strings.TrimSpace(toolName),
+	}
+}
+
 func guardrailPayload(trace skills.SkillTrace) map[string]interface{} {
 	return map[string]interface{}{
 		"error":     trace.Error,

@@ -85,10 +85,11 @@ func TestToolGovernanceFrozenFastPathUsesOperationPlanEvidence(t *testing.T) {
 						"tool_name": "delete_agent",
 					},
 					map[string]interface{}{
-						"id":        updateStepID,
-						"status":    operationPlanStepStatusPending,
-						"skill_id":  skills.SkillAgentManagement,
-						"tool_name": "update_agent_config",
+						"id":                      updateStepID,
+						"status":                  operationPlanStepStatusPending,
+						"skill_id":                skills.SkillAgentManagement,
+						"tool_name":               "update_agent_config",
+						"expected_updated_fields": []interface{}{"home_title", "input_placeholder", "theme_color"},
 					},
 				},
 				"step_status": map[string]interface{}{
@@ -115,6 +116,398 @@ func TestToolGovernanceFrozenFastPathUsesOperationPlanEvidence(t *testing.T) {
 
 	if ok {
 		t.Fatalf("toolGovernanceFrozenFastPathAnswer() = (%q, true), want pending update step to keep skill loop running", answer)
+	}
+}
+
+func TestToolGovernanceFrozenSimpleConfigFastPathWaitsForPendingIdentityUpdate(t *testing.T) {
+	identityStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_identity")
+	configStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{Query: "update agent identity and config"},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status": operationPlanStatusRunning,
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        identityStepID,
+						"status":    operationPlanStepStatusPending,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "update_agent_identity",
+					},
+					map[string]interface{}{
+						"id":        configStepID,
+						"status":    operationPlanStepStatusCompleted,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "update_agent_config",
+						operationPlanExpectedUpdatedFieldsKey: []interface{}{
+							"system_prompt",
+							"home_title",
+							"suggested_questions",
+						},
+					},
+				},
+				"step_status": map[string]interface{}{
+					identityStepID: operationPlanStepStatusPending,
+					configStepID:   operationPlanStepStatusCompleted,
+				},
+				"pending_next_action": operationPlanToolStepTitle(skills.SkillAgentManagement, "update_agent_identity"),
+			},
+		}},
+	}
+	trace := skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":     "completed",
+			"agent_id":   "agent-1",
+			"agent_name": "Support Agent",
+			"updated_fields": []interface{}{
+				"system_prompt",
+				"home_title",
+				"suggested_questions",
+			},
+		},
+	}
+
+	answer, ok := toolGovernanceFrozenSimpleAgentConfigFastPathAnswer(prepared, trace)
+	if ok {
+		t.Fatalf("toolGovernanceFrozenSimpleAgentConfigFastPathAnswer() = (%q, true), want pending identity update to keep skill loop running", answer)
+	}
+}
+
+func TestToolGovernanceFrozenFastPathAggregatesCompletedIdentityAndConfig(t *testing.T) {
+	identityStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_identity")
+	configStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{Query: "update agent identity and homepage title"},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status": operationPlanStatusCompleted,
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        identityStepID,
+						"status":    operationPlanStepStatusCompleted,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "update_agent_identity",
+					},
+					map[string]interface{}{
+						"id":                                  configStepID,
+						"status":                              operationPlanStepStatusCompleted,
+						"skill_id":                            skills.SkillAgentManagement,
+						"tool_name":                           "update_agent_config",
+						operationPlanExpectedUpdatedFieldsKey: []interface{}{"home_title"},
+					},
+				},
+				"step_status": map[string]interface{}{
+					identityStepID: operationPlanStepStatusCompleted,
+					configStepID:   operationPlanStepStatusCompleted,
+				},
+			},
+			"skill_invocations": []interface{}{
+				map[string]interface{}{
+					"kind":      "tool_call",
+					"status":    "success",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_identity",
+					"result": map[string]interface{}{
+						"status":         "completed",
+						"effect":         "updated",
+						"agent_id":       "agent-1",
+						"agent_name":     "Support Agent Edited",
+						"updated_fields": []interface{}{"name", "description", "icon"},
+					},
+				},
+			},
+		}},
+	}
+	trace := skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":         "completed",
+			"agent_id":       "agent-1",
+			"agent_name":     "Support Agent Edited",
+			"updated_fields": []interface{}{"home_title"},
+			"home_title":     "Welcome Home",
+		},
+	}
+	prepared.Message.Metadata = mergeFrozenContinuationToolTraceMetadata(prepared.Message.Metadata, trace)
+	prepared.Message.Metadata = preparedResultMetadata(prepared.Message.Metadata, nil)
+
+	answer, ok := toolGovernanceFrozenFastPathAnswer(prepared, trace)
+	if !ok {
+		t.Fatal("toolGovernanceFrozenFastPathAnswer() ok = false, want aggregate answer")
+	}
+	for _, want := range []string{
+		"Support Agent Edited",
+		"\u57fa\u7840\u4fe1\u606f",
+		"\u8fd0\u884c\u914d\u7f6e",
+		"Welcome Home",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, want %q", answer, want)
+		}
+	}
+}
+
+func TestToolGovernanceFrozenFastPathCoversAgentIdentityUpdate(t *testing.T) {
+	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_identity")
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{Query: "把当前智能体描述改成八次更新，不要切换页面"},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status": operationPlanStatusRunning,
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        updateStepID,
+						"status":    operationPlanStepStatusPending,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "update_agent_identity",
+					},
+					map[string]interface{}{
+						"id":     "observe_current_page",
+						"title":  "Observe current page result",
+						"status": operationPlanStepStatusPending,
+					},
+				},
+				"step_status": map[string]interface{}{
+					updateStepID:           operationPlanStepStatusPending,
+					"observe_current_page": operationPlanStepStatusPending,
+				},
+				"pending_next_action": operationPlanToolStepTitle(skills.SkillAgentManagement, "update_agent_identity"),
+			},
+		}},
+	}
+	trace := skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_identity",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":         "completed",
+			"effect":         "updated",
+			"agent_id":       "agent-1",
+			"agent_name":     "客服智能体",
+			"updated_fields": []interface{}{"description"},
+		},
+	}
+	ensureOperationPlanInvocationStep(prepared.Message.Metadata, skillInvocationFromTrace(trace, 0))
+
+	answer, ok := toolGovernanceFrozenFastPathAnswer(prepared, trace)
+	if !ok {
+		t.Fatalf("toolGovernanceFrozenFastPathAnswer() ok = false, want identity update result to finish governed turn; metadata=%#v", prepared.Message.Metadata)
+	}
+	for _, want := range []string{"智能体「客服智能体」", "描述"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, want %q", answer, want)
+		}
+	}
+}
+
+func TestToolGovernanceFrozenFastPathCoversConfigUpdateWithStalePreRead(t *testing.T) {
+	readStepID := operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config")
+	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{Query: "Change the current Agent home title, input placeholder, and theme color. Do not change other config."},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status": operationPlanStatusRunning,
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        readStepID,
+						"status":    operationPlanStepStatusPending,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "get_agent_config",
+					},
+					map[string]interface{}{
+						"id":        updateStepID,
+						"status":    operationPlanStepStatusPending,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "update_agent_config",
+					},
+					map[string]interface{}{
+						"id":     "observe",
+						"title":  "Observe result",
+						"status": operationPlanStepStatusPending,
+					},
+				},
+				"step_status": map[string]interface{}{
+					readStepID:   operationPlanStepStatusPending,
+					updateStepID: operationPlanStepStatusPending,
+					"observe":    operationPlanStepStatusPending,
+				},
+				"pending_next_action": operationPlanToolStepTitle(skills.SkillAgentManagement, "update_agent_config"),
+			},
+		}},
+	}
+	trace := skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":            "completed",
+			"effect":            "updated",
+			"agent_id":          "agent-1",
+			"agent_name":        "Support Agent",
+			"home_title":        "AIChat Display Smoke",
+			"input_placeholder": "Ask me anything",
+			"theme_color":       "emerald",
+			"updated_fields": []interface{}{
+				"home_title",
+				"input_placeholder",
+				"theme_color",
+			},
+		},
+	}
+	ensureOperationPlanInvocationStep(prepared.Message.Metadata, skillInvocationFromTrace(trace, 0))
+
+	answer, ok := toolGovernanceFrozenFastPathAnswer(prepared, trace)
+	if !ok {
+		t.Fatalf("toolGovernanceFrozenFastPathAnswer() ok = false, want config update to close despite stale pre-read; metadata=%#v", prepared.Message.Metadata)
+	}
+	for _, want := range []string{"Support Agent", "AIChat Display Smoke", "Ask me anything", "emerald"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, want %q", answer, want)
+		}
+	}
+}
+
+func TestMergeFrozenContinuationToolTraceMetadataClosesAgentConfigPlan(t *testing.T) {
+	readStepID := operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config")
+	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
+	knowledgeStepID := operationPlanToolStepID(skills.SkillAgentManagement, "list_agent_knowledge_candidates")
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": operationPlanStatusRunning,
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        readStepID,
+					"status":    operationPlanStepStatusCompleted,
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "get_agent_config",
+				},
+				map[string]interface{}{
+					"id":                                   updateStepID,
+					"status":                               operationPlanStepStatusPending,
+					"skill_id":                             skills.SkillAgentManagement,
+					"tool_name":                            "update_agent_config",
+					operationPlanExpectedUpdatedFieldsKey:  []interface{}{"knowledge_dataset_ids", "database_bindings", "workflow_bindings"},
+					operationPlanExpectedBindingActionsKey: "knowledge_dataset_ids:unbind,database_bindings:unbind,workflow_bindings:unbind",
+				},
+				map[string]interface{}{
+					"id":        knowledgeStepID,
+					"status":    operationPlanStepStatusPending,
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "list_agent_knowledge_candidates",
+				},
+				map[string]interface{}{
+					"id":     "observe",
+					"title":  "Observe result",
+					"status": operationPlanStepStatusPending,
+				},
+			},
+			"step_status": map[string]interface{}{
+				readStepID:      operationPlanStepStatusCompleted,
+				updateStepID:    operationPlanStepStatusPending,
+				knowledgeStepID: operationPlanStepStatusPending,
+				"observe":       operationPlanStepStatusPending,
+			},
+			"pending_next_action": operationPlanToolStepTitle(skills.SkillAgentManagement, "update_agent_config"),
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":       "tool_call",
+				"skill_id":   skills.SkillAgentManagement,
+				"tool_name":  "update_agent_config",
+				"status":     "approved",
+				"runtime_id": "tool_call:agent-management:update_agent_config::#1",
+			},
+			map[string]interface{}{
+				"kind":       "tool_governance",
+				"skill_id":   skills.SkillAgentManagement,
+				"tool_name":  "update_agent_config",
+				"status":     "success",
+				"runtime_id": "tool_governance:corr-config",
+			},
+		},
+	}
+	trace := skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":           "completed",
+			"effect":           "updated",
+			"agent_id":         "agent-1",
+			"agent_name":       "Support Agent",
+			"satisfied_fields": []interface{}{"knowledge_dataset_ids", "database_bindings", "workflow_bindings"},
+			"binding_final_states": []interface{}{
+				map[string]interface{}{
+					"field":                "knowledge_dataset_ids",
+					"binding_kind":         "knowledge_base",
+					"change_action":        "satisfied",
+					"final_resource_count": 0,
+				},
+				map[string]interface{}{
+					"field":                "database_bindings",
+					"binding_kind":         "database_table",
+					"change_action":        "satisfied",
+					"final_resource_count": 0,
+				},
+				map[string]interface{}{
+					"field":                "workflow_bindings",
+					"binding_kind":         "workflow",
+					"change_action":        "satisfied",
+					"final_resource_count": 0,
+				},
+			},
+		},
+	}
+
+	metadata = mergeFrozenContinuationToolTraceMetadata(metadata, trace)
+	metadata = preparedResultMetadata(metadata, nil)
+
+	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	var toolCall map[string]interface{}
+	for _, invocation := range invocations {
+		if strings.EqualFold(stringFromAny(invocation["kind"]), "tool_call") &&
+			strings.EqualFold(stringFromAny(invocation["skill_id"]), skills.SkillAgentManagement) &&
+			strings.EqualFold(stringFromAny(invocation["tool_name"]), "update_agent_config") {
+			toolCall = invocation
+		}
+	}
+	if len(toolCall) == 0 {
+		t.Fatalf("skill_invocations = %#v, want merged update_agent_config tool_call", invocations)
+	}
+	if got := stringFromAny(toolCall["runtime_id"]); got != "tool_call:agent-management:update_agent_config::#1" {
+		t.Fatalf("tool_call runtime_id = %q, want existing approved runtime id; invocation=%#v", got, toolCall)
+	}
+	if result := mapFromOperationContext(toolCall["result"]); len(result) == 0 || stringFromAny(result["agent_name"]) != "Support Agent" {
+		t.Fatalf("tool_call result = %#v, want continuation tool result", toolCall["result"])
+	}
+
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusCompleted {
+		t.Fatalf("plan status = %q, want completed; plan=%#v", got, plan)
+	}
+	if got := operationPlanStepStatusForTest(plan, updateStepID); got != operationPlanStepStatusCompleted {
+		t.Fatalf("update step status = %q, want completed; plan=%#v", got, plan)
+	}
+	for _, covered := range []string{knowledgeStepID, "observe"} {
+		if got := operationPlanStepStatusForTest(plan, covered); got != operationPlanStepStatusCompleted {
+			t.Fatalf("%s status = %q, want covered completed; plan=%#v", covered, got, plan)
+		}
+	}
+	summary := mapFromOperationContext(metadata["operation_result_summary"])
+	latest := mapFromOperationContext(summary["latest_tool_result"])
+	if stringFromAny(latest["tool_name"]) != "update_agent_config" {
+		t.Fatalf("operation_result_summary.latest_tool_result = %#v, want update_agent_config", latest)
 	}
 }
 

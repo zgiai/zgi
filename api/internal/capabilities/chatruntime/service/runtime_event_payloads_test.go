@@ -485,6 +485,7 @@ func TestAgentManagementIntentRecognizesNearbyAgentMutation(t *testing.T) {
 	for _, query := range []string{
 		"\u4fee\u6539\u667a\u80fd\u4f53\u540d\u79f0",
 		"\u628a\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\u7684\u56fe\u6807\u6539\u6389",
+		"\u8bf7\u628a\u5f53\u524d\u667a\u80fd\u4f53\u7684\u56fe\u8868\u751f\u6210\u5668 Skill \u89e3\u7ed1/\u505c\u7528",
 		"agent.update_identity",
 	} {
 		if !isAgentManagementIntent(query) {

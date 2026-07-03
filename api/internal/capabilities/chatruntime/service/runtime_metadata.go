@@ -106,6 +106,7 @@ func mergeSkillTraceMetadata(source map[string]interface{}, traces []skills.Skil
 	}
 	applySkillInvocationSummary(metadata, invocations)
 	applyOperationPlanInvocationState(metadata, invocations)
+	applyOperationPlanPlannerFeedbackState(metadata, traces)
 	return metadata
 }
 

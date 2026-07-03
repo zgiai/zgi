@@ -357,11 +357,13 @@ func TestSummarizeToolResultPreservesAgentConfigUpdatedFields(t *testing.T) {
 	result := SummarizeToolResult(skills.SkillAgentManagement, "update_agent_config", []tools.ToolInvokeMessage{{
 		Type: tools.ToolInvokeMessageTypeJSON,
 		Data: map[string]interface{}{
-			"status":         "completed",
-			"effect":         "updated",
-			"agent_id":       "agent-1",
-			"workspace_id":   "workspace-1",
-			"updated_fields": []string{"model_provider", "model", "home_title"},
+			"status":           "completed",
+			"effect":           "updated",
+			"agent_id":         "agent-1",
+			"workspace_id":     "workspace-1",
+			"requested_fields": []string{"model_provider", "model", "home_title", "theme_color"},
+			"satisfied_fields": []string{"model_provider", "model", "home_title", "theme_color"},
+			"updated_fields":   []string{"model_provider", "model", "home_title"},
 			"config": map[string]interface{}{
 				"system_prompt":        "full prompt should stay out of compact trace",
 				"model_provider":       "deepseek",
@@ -370,6 +372,7 @@ func TestSummarizeToolResultPreservesAgentConfigUpdatedFields(t *testing.T) {
 				"agent_memory_enabled": true,
 				"file_upload":          true,
 				"enabled_skill_ids":    []interface{}{"time"},
+				"suggested_questions":  []interface{}{"配置是否已保存？", "模型是否可用？"},
 			},
 		},
 	}})
@@ -381,6 +384,10 @@ func TestSummarizeToolResultPreservesAgentConfigUpdatedFields(t *testing.T) {
 	if !ok || len(fields) != 3 || fields[0] != "model_provider" || fields[1] != "model" || fields[2] != "home_title" {
 		t.Fatalf("updated_fields = %#v, want exact field evidence", result["updated_fields"])
 	}
+	satisfiedFields, ok := result["satisfied_fields"].([]string)
+	if !ok || len(satisfiedFields) != 4 || satisfiedFields[3] != "theme_color" {
+		t.Fatalf("satisfied_fields = %#v, want requested satisfied field evidence", result["satisfied_fields"])
+	}
 	if _, ok := result["config"]; ok {
 		t.Fatalf("config should not be included in compact trace result: %#v", result)
 	}
@@ -389,6 +396,13 @@ func TestSummarizeToolResultPreservesAgentConfigUpdatedFields(t *testing.T) {
 	}
 	if result["agent_memory_enabled"] != true || result["file_upload"] != true || result["enabled_skill_count"] != 1 {
 		t.Fatalf("config evidence = %#v, want compact switches/counts", result)
+	}
+	questions, ok := result["suggested_questions"].([]string)
+	if !ok || len(questions) != 2 || questions[0] != "配置是否已保存？" || questions[1] != "模型是否可用？" {
+		t.Fatalf("suggested_questions = %#v, want compact question text evidence", result["suggested_questions"])
+	}
+	if result["suggested_question_count"] != 2 {
+		t.Fatalf("suggested_question_count = %#v, want 2", result["suggested_question_count"])
 	}
 }
 
@@ -414,6 +428,25 @@ func TestSummarizeToolResultPreservesAgentConfigReadModelEvidence(t *testing.T) 
 	}
 	if _, ok := result["config"]; ok {
 		t.Fatalf("config should not be included in compact trace result: %#v", result)
+	}
+}
+
+func TestSummarizeToolResultPreservesAgentConfigDatabaseTableCount(t *testing.T) {
+	result := SummarizeToolResult(skills.SkillAgentManagement, "get_agent_config", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":   "completed",
+			"agent_id": "agent-1",
+			"config": map[string]interface{}{
+				"database_bindings": []interface{}{
+					map[string]interface{}{"table_ids": []interface{}{"table-1", "table-2"}},
+				},
+			},
+		},
+	}})
+
+	if result["database_binding_count"] != 1 || result["database_table_count"] != 2 {
+		t.Fatalf("database evidence = %#v/%#v, want binding count 1 and table count 2", result["database_binding_count"], result["database_table_count"])
 	}
 }
 
@@ -668,6 +701,72 @@ func TestSummarizeToolResultPreservesAgentSkillBindingEvidence(t *testing.T) {
 	}
 	if _, ok := result["config"]; ok {
 		t.Fatalf("config should not be included in compact trace result: %#v", result)
+	}
+}
+
+func TestSummarizeToolResultPreservesAgentCandidateSamples(t *testing.T) {
+	result := SummarizeToolResult(skills.SkillAgentManagement, "list_agent_database_tables", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status": "completed",
+			"count":  2,
+			"tables": []interface{}{
+				map[string]interface{}{"table_id": "table-1", "name": "customers", "selected": false, "writable": true},
+				map[string]interface{}{"table_id": "table-2", "name": "orders", "selected": false, "writable": false},
+			},
+			"binding_candidates": []interface{}{
+				map[string]interface{}{
+					"id":       "database-1:table-1",
+					"name":     "customers",
+					"selected": false,
+					"writable": true,
+					"binding": map[string]interface{}{
+						"data_source_id": "database-1",
+						"table_ids":      []interface{}{"table-1"},
+					},
+				},
+			},
+		},
+	}})
+
+	if result["candidates_count"] != 2 {
+		t.Fatalf("summary = %#v, want table candidates count", result)
+	}
+	samples := recordsFromAny(result["candidate_samples"])
+	if len(samples) != 1 {
+		t.Fatalf("candidate_samples = %#v, want one binding sample", result["candidate_samples"])
+	}
+	if samples[0]["id"] != "database-1:table-1" || samples[0]["name"] != "customers" {
+		t.Fatalf("candidate sample = %#v, want compact id/name", samples[0])
+	}
+	binding := recordFromAny(samples[0]["binding"])
+	if binding["data_source_id"] != "database-1" {
+		t.Fatalf("candidate binding = %#v, want data_source_id", binding)
+	}
+	if got := compactStringList(binding["table_ids"], 3, 64); len(got) != 1 || got[0] != "table-1" {
+		t.Fatalf("candidate binding table_ids = %#v, want table-1", binding["table_ids"])
+	}
+}
+
+func TestSummarizeToolResultPreservesAgentSkillCandidateEmptyCount(t *testing.T) {
+	result := SummarizeToolResult(skills.SkillAgentManagement, "list_agent_skill_candidates", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status": "completed",
+			"query":  "missing-skill",
+			"count":  0,
+			"data":   []interface{}{},
+		},
+	}})
+
+	if result["count"] != 0 {
+		t.Fatalf("summary count = %#v, want 0; result=%#v", result["count"], result)
+	}
+	if result["candidates_count"] != 0 {
+		t.Fatalf("summary candidates_count = %#v, want 0; result=%#v", result["candidates_count"], result)
+	}
+	if result["query"] != "missing-skill" {
+		t.Fatalf("summary query = %#v, want missing-skill", result["query"])
 	}
 }
 

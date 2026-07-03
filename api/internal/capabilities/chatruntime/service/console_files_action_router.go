@@ -774,8 +774,10 @@ func isAgentManagementIntent(query string) bool {
 	}
 	operationTerms := []string{
 		"create", "new", "add", "edit", "update", "rename", "delete", "remove", "config", "configure", "prompt", "model", "icon", "description",
+		"bind", "unbind", "enable", "disable", "detach", "clear",
 		"\u521b\u5efa", "\u65b0\u5efa", "\u6dfb\u52a0", "\u7f16\u8f91", "\u4fee\u6539", "\u66f4\u65b0", "\u6539\u540d", "\u5220\u9664", "\u5220\u6389",
 		"\u914d\u7f6e", "\u63d0\u793a\u8bcd", "\u6a21\u578b", "\u56fe\u6807", "\u63cf\u8ff0",
+		"\u7ed1\u5b9a", "\u89e3\u7ed1", "\u542f\u7528", "\u7981\u7528", "\u505c\u7528", "\u79fb\u9664", "\u6e05\u7a7a",
 	}
 	return agentManagementOperationNearAgent(text, agentTerms, operationTerms)
 }

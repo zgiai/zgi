@@ -7,6 +7,7 @@ import (
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
@@ -3438,9 +3439,10 @@ func TestSkillLoopFinalAnswerGuardBlocksIncompleteAgentBindingMutations(t *testi
 		t.Fatal("guard allowed final answer after database binding without workflow binding")
 	}
 	if result.SkillID != skills.SkillAgentManagement ||
-		result.ToolName != "replace_agent_workflow_bindings" ||
-		!strings.Contains(result.SystemMessage, "replace_agent_database_bindings, replace_agent_workflow_bindings") {
-		t.Fatalf("guard result = %#v, want missing workflow binding instruction", result)
+		result.ToolName != "update_agent_config" ||
+		!strings.Contains(result.SystemMessage, "replace_agent_database_bindings, replace_agent_workflow_bindings") ||
+		!strings.Contains(result.SystemMessage, "replace_agent_workflow_bindings") {
+		t.Fatalf("guard result = %#v, want unified config update instruction with missing workflow evidence", result)
 	}
 
 	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
@@ -3465,6 +3467,462 @@ func TestSkillLoopFinalAnswerGuardBlocksIncompleteAgentBindingMutations(t *testi
 	})
 	if blocked {
 		t.Fatal("guard blocked after workflow binding was attempted and can be explained")
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardRequiresAgentConfigReadEvidence(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "这个智能体启用了哪些 Skill？只告诉我当前状态，不要修改任何配置。",
+			SkillIDs:  []string{skills.SkillAgentManagement},
+			SkillMode: skillModeAuto,
+			RawOperationContext: map[string]interface{}{
+				"resources": []interface{}{
+					map[string]interface{}{
+						"resource_type": "agent",
+						"resource_id":   "agent-1",
+						"title":         "Support Agent",
+						"selected":      true,
+						"can_edit":      true,
+					},
+				},
+			},
+		},
+	}
+
+	if !agentManagementConfigReadRequested(prepared.parts.Query) {
+		t.Fatal("agentManagementConfigReadRequested() = false, want read-only Skill binding state query")
+	}
+	if agentManagementConfigUpdateRequested(prepared.parts.Query) ||
+		agentManagementIdentityUpdateRequested(prepared.parts.Query) ||
+		agentManagementSkillBindingRequested(prepared.parts.Query) ||
+		len(requiredAgentBindingMutationTools(prepared.parts.Query)) > 0 {
+		t.Fatal("explicit read-only config query was classified as an Agent mutation")
+	}
+	if current := currentConsoleAgentID(prepared.parts); current != "agent-1" {
+		t.Fatalf("currentConsoleAgentID() = %q, want agent-1", current)
+	}
+
+	guard := skillLoopAgentManagementFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopAgentManagementFinalAnswerGuard() = nil, want Agent config read guard without console navigator")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "当前未启用任何 Skill。",
+	})
+	if !blocked {
+		t.Fatal("guard allowed Agent config answer without get_agent_config evidence")
+	}
+	if result.SkillID != skills.SkillAgentManagement ||
+		result.ToolName != "get_agent_config" ||
+		!strings.Contains(result.SystemMessage, "Call agent-management/get_agent_config") {
+		t.Fatalf("guard result = %#v, want get_agent_config instruction", result)
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "根据配置读取结果，当前未启用任何 Skill。",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillAgentManagement, ToolName: "get_agent_config"},
+		},
+	})
+	if blocked {
+		t.Fatal("guard blocked after successful get_agent_config evidence")
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "我无法读取当前配置：get_agent_config 调用失败。",
+		AttemptedToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillAgentManagement, ToolName: "get_agent_config"},
+		},
+	})
+	if blocked {
+		t.Fatal("guard blocked after attempted get_agent_config evidence that can be explained")
+	}
+}
+
+func TestSkillLoopFinalAnswerGuardRequiresFirstVisibleAgentConfigReadEvidence(t *testing.T) {
+	query := "\u8bf7\u53ea\u8bfb\u68c0\u67e5\u5f53\u524d\u9875\u9762\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\u7684\u914d\u7f6e\uff1a\u8bfb\u53d6\u5b83\u7684\u57fa\u7840\u4fe1\u606f\u3001\u8fd0\u884c\u914d\u7f6e\u548c\u53ef\u7f16\u8f91\u9879\u76ee\uff0c\u4e0d\u8981\u4fee\u6539\u4efb\u4f55\u8d44\u4ea7\u3002"
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          query,
+			SkillIDs:       []string{skills.SkillAgentManagement},
+			SkillMode:      skillModeAuto,
+			RuntimeContext: "/console/agents",
+			RawOperationContext: map[string]interface{}{
+				"resources": []interface{}{
+					map[string]interface{}{
+						"resource_type": "page",
+						"resource_id":   "/console/agents",
+						"title":         "Agent list",
+					},
+					map[string]interface{}{
+						"resource_type": "agent",
+						"resource_id":   "agent-first",
+						"title":         "First Agent",
+						"href":          "/console/agents/agent-first/agent",
+						"can_edit":      true,
+					},
+					map[string]interface{}{
+						"resource_type": "agent",
+						"resource_id":   "agent-second",
+						"title":         "Second Agent",
+						"href":          "/console/agents/agent-second/agent",
+						"can_edit":      true,
+					},
+				},
+			},
+		},
+	}
+
+	if current := currentConsoleAgentID(prepared.parts); current != "" {
+		t.Fatalf("currentConsoleAgentID() = %q, want empty for multi-Agent list without selection", current)
+	}
+	if target := agentManagementConfigReadTargetID(prepared.parts); target != "agent-first" {
+		t.Fatalf("agentManagementConfigReadTargetID() = %q, want first visible Agent", target)
+	}
+	guard := skillLoopAgentManagementFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopAgentManagementFinalAnswerGuard() = nil, want first visible Agent config read guard")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "\u6839\u636e\u9875\u9762\u4e0a\u4e0b\u6587\uff0c\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\u7684\u6a21\u578b\u662f DeepSeek Chat\u3002",
+	})
+	if !blocked {
+		t.Fatal("guard allowed first visible Agent config answer without get_agent_config evidence")
+	}
+	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "get_agent_config" {
+		t.Fatalf("guard result = %#v, want agent-management/get_agent_config", result)
+	}
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "\u6839\u636e get_agent_config \u7ed3\u679c\uff0c\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\u914d\u7f6e\u5df2\u8bfb\u53d6\u3002",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillAgentManagement, ToolName: "get_agent_config"},
+		},
+	})
+	if blocked {
+		t.Fatal("guard blocked first visible Agent config answer after successful get_agent_config evidence")
+	}
+}
+
+func TestSkillLoopPlanToolGuardBlocksUnrequestedAgentConfigMutationForReadOnlyNavigation(t *testing.T) {
+	query := "\u8bf7\u6253\u5f00\u521a\u521a\u521b\u5efa\u7684\u6d4b\u8bd5\u667a\u80fd\u4f53 GOAL-CONFIG \u7684\u8be6\u60c5/\u7f16\u8f91\u9875\u9762\u3002\u53ea\u505a\u5bfc\u822a\u548c\u786e\u8ba4\u5f53\u524d\u9875\u9762\u4e0a\u4e0b\u6587\uff0c\u4e0d\u8981\u4fee\u6539\u4efb\u4f55\u914d\u7f6e\u3002"
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"status":             operationPlanStatusRunning,
+					"original_user_goal": query,
+					"steps": []interface{}{
+						map[string]interface{}{
+							"id":        operationPlanRouteStepID("/console/agents/agent-1/agent", 1),
+							"skill_id":  skills.SkillConsoleNavigator,
+							"tool_name": "navigate",
+							"status":    operationPlanStepStatusCompleted,
+						},
+						map[string]interface{}{
+							"id":        operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config"),
+							"skill_id":  skills.SkillAgentManagement,
+							"tool_name": "get_agent_config",
+							"status":    operationPlanStepStatusCompleted,
+						},
+					},
+				},
+			},
+		},
+		parts: &chatRequestParts{
+			Query:          query,
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/agents/agent-1/agent",
+			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement},
+			SkillMode:      skillModeAuto,
+		},
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
+		Tools: []skills.SkillToolDefinition{{
+			Name: "update_agent_config",
+			Governance: &toolgovernance.Manifest{
+				Effect:    toolgovernance.EffectUpdate,
+				AssetType: "agent",
+				RiskLevel: toolgovernance.RiskLevelMedium,
+			},
+		}},
+	}}}
+
+	guard := skillLoopPlanToolCallGuardWithResolved(prepared, resolved)
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Arguments: map[string]interface{}{
+			"agent_id":          "agent-1",
+			"system_prompt":     "unexpected prompt",
+			"home_title":        "unexpected title",
+			"input_placeholder": "unexpected placeholder",
+		},
+	})
+
+	if !blocked {
+		t.Fatal("plan tool guard allowed update_agent_config for a read-only navigation request")
+	}
+	if result.ToolName != "update_agent_config" ||
+		!strings.Contains(result.SystemMessage, "latest user request explicitly asks to read") {
+		t.Fatalf("guard result = %#v, want unplanned mutation block for update_agent_config", result)
+	}
+}
+
+func TestSkillLoopPlanToolGuardBlocksStalePlannedAgentConfigMutationForLatestReadOnlyRequest(t *testing.T) {
+	query := "复测只读配置闭环：请只读取当前 Agent 配置并回答当前首页标题、模型 provider/model、绑定的 Skill/知识库/数据库表/工作流数量。不要修改任何配置，不要发起审批，不要查询可用模型或候选资源。"
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"status":             operationPlanStatusRunning,
+					"original_user_goal": "请修改当前智能体配置",
+					"steps": []interface{}{
+						map[string]interface{}{
+							"id":        operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config"),
+							"skill_id":  skills.SkillAgentManagement,
+							"tool_name": "get_agent_config",
+							"status":    operationPlanStepStatusCompleted,
+						},
+						map[string]interface{}{
+							"id":        operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config"),
+							"skill_id":  skills.SkillAgentManagement,
+							"tool_name": "update_agent_config",
+							"status":    operationPlanStepStatusPending,
+						},
+					},
+				},
+			},
+		},
+		parts: &chatRequestParts{
+			Query:          query,
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/agents/agent-1/agent",
+			SkillIDs:       []string{skills.SkillAgentManagement},
+			SkillMode:      skillModeAuto,
+		},
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
+		Tools: []skills.SkillToolDefinition{{
+			Name: "update_agent_config",
+			Governance: &toolgovernance.Manifest{
+				Effect:    toolgovernance.EffectUpdate,
+				AssetType: "agent",
+				RiskLevel: toolgovernance.RiskLevelMedium,
+			},
+		}},
+	}}}
+
+	guard := skillLoopPlanToolCallGuardWithResolved(prepared, resolved)
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Arguments: map[string]interface{}{
+			"agent_id":   "agent-1",
+			"home_title": "unexpected title",
+		},
+	})
+
+	if !blocked {
+		t.Fatal("plan tool guard allowed stale update_agent_config despite latest read-only request")
+	}
+	if result.ToolName != "update_agent_config" ||
+		!strings.Contains(result.SystemMessage, "latest user request explicitly asks to read") {
+		t.Fatalf("guard result = %#v, want latest-read-only mutation block", result)
+	}
+}
+
+func TestSkillLoopPlanToolGuardAllowsAgentConfigUpdateWithExcludedFields(t *testing.T) {
+	query := strings.Join([]string{
+		"Update current Agent runtime config: set system prompt to CONFIG-SMOKE prompt;",
+		"set home title to CONFIG-SMOKE home;",
+		"set input placeholder to CONFIG-SMOKE placeholder;",
+		"set opening questions to Check config, Generate a test reply, Explain capability.",
+		"Do not modify name, description, icon, model, bindings, memory, or file upload.",
+		"After completion check config again and verify the updated fields.",
+	}, " ")
+	if !agentManagementConfigUpdateRequested(query) {
+		t.Fatal("agentManagementConfigUpdateRequested() = false, want explicit runtime config update")
+	}
+	if agentManagementExplicitReadOnlyConfigCheck(query) {
+		t.Fatal("agentManagementExplicitReadOnlyConfigCheck() = true, want false for update request with excluded fields")
+	}
+	if agentManagementGoalForbidsUnrequestedMutation(query, "update_agent_config") {
+		t.Fatal("agentManagementGoalForbidsUnrequestedMutation() = true, want update_agent_config allowed")
+	}
+	fields := agentManagementExpectedConfigUpdateFields(query)
+	for _, want := range []string{"system_prompt", "home_title", "input_placeholder", "suggested_questions"} {
+		if !stringSliceContainsFold(fields, want) {
+			t.Fatalf("expected config fields = %#v, missing %s", fields, want)
+		}
+	}
+	for _, unexpected := range []string{"model", "agent_memory_enabled", "file_upload_enabled"} {
+		if stringSliceContainsFold(fields, unexpected) {
+			t.Fatalf("expected config fields = %#v, want excluded field %s absent", fields, unexpected)
+		}
+	}
+
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"status":             operationPlanStatusRunning,
+					"original_user_goal": query,
+					"steps": []interface{}{
+						map[string]interface{}{
+							"id":        operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config"),
+							"skill_id":  skills.SkillAgentManagement,
+							"tool_name": "get_agent_config",
+							"status":    operationPlanStepStatusCompleted,
+						},
+						map[string]interface{}{
+							"id":        operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config"),
+							"skill_id":  skills.SkillAgentManagement,
+							"tool_name": "update_agent_config",
+							"status":    operationPlanStepStatusPending,
+						},
+					},
+				},
+			},
+		},
+		parts: &chatRequestParts{
+			Query:          query,
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/agents/agent-1/agent",
+			SkillIDs:       []string{skills.SkillAgentManagement},
+			SkillMode:      skillModeAuto,
+		},
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
+		Tools: []skills.SkillToolDefinition{{
+			Name: "update_agent_config",
+			Governance: &toolgovernance.Manifest{
+				Effect:    toolgovernance.EffectUpdate,
+				AssetType: "agent",
+				RiskLevel: toolgovernance.RiskLevelMedium,
+			},
+		}},
+	}}}
+
+	guard := skillLoopPlanToolCallGuardWithResolved(prepared, resolved)
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Arguments: map[string]interface{}{
+			"agent_id":            "agent-1",
+			"system_prompt":       "CONFIG-SMOKE prompt",
+			"home_title":          "CONFIG-SMOKE home",
+			"input_placeholder":   "CONFIG-SMOKE placeholder",
+			"suggested_questions": []interface{}{"Check config", "Generate a test reply", "Explain capability"},
+		},
+	})
+
+	if blocked {
+		t.Fatalf("guard blocked requested update_agent_config with excluded fields: %#v", result)
+	}
+}
+
+func TestAgentManagementExplicitlyNegatedCreateDeleteBlocksOnlyThoseTools(t *testing.T) {
+	query := strings.Join([]string{
+		"Update the current Agent description to AIChat edit loop regression.",
+		"Set icon to puzzle and set home title to Edit loop regression.",
+		"Do not create or delete Agents.",
+		"After approval, reread the config and verify only those requested fields changed.",
+	}, " ")
+	if agentManagementCreateRequested(query) {
+		t.Fatalf("agentManagementCreateRequested(%q) = true, want false for negated create", query)
+	}
+	if agentManagementDeleteRequested(query) {
+		t.Fatalf("agentManagementDeleteRequested(%q) = true, want false for negated delete", query)
+	}
+	for _, toolName := range []string{"create_agent", "delete_agent", "delete_agents"} {
+		if !agentManagementGoalForbidsUnrequestedMutation(query, toolName) {
+			t.Fatalf("agentManagementGoalForbidsUnrequestedMutation(%q, %q) = false, want forbidden", query, toolName)
+		}
+	}
+	for _, toolName := range []string{"update_agent_identity", "update_agent_config"} {
+		if agentManagementGoalForbidsUnrequestedMutation(query, toolName) {
+			t.Fatalf("agentManagementGoalForbidsUnrequestedMutation(%q, %q) = true, want allowed", query, toolName)
+		}
+	}
+}
+
+func TestSkillLoopPlanToolGuardUsesOriginalGoalForApprovalContinuationForbiddenAgentDelete(t *testing.T) {
+	originalGoal := strings.Join([]string{
+		"Update the current Agent description to AIChat edit loop regression.",
+		"Set icon to puzzle and set home title to Edit loop regression.",
+		"Do not create or delete Agents.",
+		"After approval, reread the config and verify only those requested fields changed.",
+	}, " ")
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"status":             operationPlanStatusRunning,
+					"original_user_goal": originalGoal,
+					"steps": []interface{}{
+						map[string]interface{}{
+							"id":        operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_identity"),
+							"skill_id":  skills.SkillAgentManagement,
+							"tool_name": "update_agent_identity",
+							"status":    operationPlanStepStatusCompleted,
+						},
+						map[string]interface{}{
+							"id":        operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config"),
+							"skill_id":  skills.SkillAgentManagement,
+							"tool_name": "update_agent_config",
+							"status":    operationPlanStepStatusCompleted,
+						},
+					},
+				},
+			},
+		},
+		parts: &chatRequestParts{
+			Query:          "approved",
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/agents/agent-1/agent",
+			SkillIDs:       []string{skills.SkillAgentManagement},
+			SkillMode:      skillModeAuto,
+		},
+	}
+
+	guard := skillLoopPlanToolCallGuard(prepared)
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agents",
+		Arguments: map[string]interface{}{
+			"agent_ids": []interface{}{"agent-1"},
+		},
+	})
+	if !blocked {
+		t.Fatal("plan tool guard allowed delete_agents even though the original approved goal explicitly forbids delete")
+	}
+	if result.ToolName != "delete_agents" ||
+		!strings.Contains(result.SystemMessage, "Do not request governance approval") {
+		t.Fatalf("guard result = %#v, want forbidden delete guidance", result)
+	}
+}
+
+func TestAgentManagementSkillBindingIntentAllowsExplicitBindWithNoRepeatClause(t *testing.T) {
+	query := "\u8bf7\u628a Skill\u300c\u56fe\u8868\u751f\u6210\u5668\u300d\u7ed1\u5b9a\u5230\u8fd9\u4e2a\u667a\u80fd\u4f53\uff1b\u5982\u679c\u5b83\u5df2\u7ecf\u7ed1\u5b9a\uff0c\u8bf7\u5982\u5b9e\u8bf4\u660e\u5e76\u4e0d\u8981\u91cd\u590d\u7ed1\u5b9a\u3002"
+	if !agentManagementSkillBindingRequested(query) {
+		t.Fatal("agentManagementSkillBindingRequested() = false, want explicit Skill bind intent despite no-repeat clause")
+	}
+	if !agentManagementConfigUpdateRequested(query) {
+		t.Fatal("agentManagementConfigUpdateRequested() = false, want update_agent_config to match explicit Skill bind intent")
+	}
+}
+
+func TestAgentManagementSkillBindingIntentAllowsExplicitBindWithPostReadVerificationClause(t *testing.T) {
+	query := "\u8bf7\u5148\u8bfb\u53d6\u5b83\u5f53\u524d\u771f\u5b9e\u914d\u7f6e\uff1b\u5982\u679c Skill\u300c\u56fe\u8868\u751f\u6210\u5668\u300d\u5f53\u524d\u672a\u7ed1\u5b9a\uff0c\u8bf7\u628a\u5b83\u7ed1\u5b9a\u5230\u8fd9\u4e2a\u667a\u80fd\u4f53\uff1b\u5982\u679c\u5df2\u7ecf\u7ed1\u5b9a\uff0c\u8bf7\u5982\u5b9e\u8bf4\u660e\u5e76\u4e0d\u8981\u91cd\u590d\u7ed1\u5b9a\u3002\u66f4\u65b0\u5b8c\u6210\u540e\u5fc5\u987b\u518d\u6b21\u8bfb\u53d6\u8be5\u667a\u80fd\u4f53\u914d\u7f6e\u9a8c\u8bc1\uff0c\u5e76\u8bf4\u660e\u590d\u8bfb\u914d\u7f6e\u540e\u5b83\u662f\u5426\u5904\u4e8e\u5df2\u7ed1\u5b9a\u72b6\u6001\u3002"
+	if !agentManagementSkillBindingRequested(query) {
+		t.Fatal("agentManagementSkillBindingRequested() = false, want explicit Skill bind intent despite post-read state question")
+	}
+	if !agentManagementConfigUpdateRequested(query) {
+		t.Fatal("agentManagementConfigUpdateRequested() = false, want update_agent_config to match explicit Skill bind intent with post-read verification")
 	}
 }
 
@@ -3525,6 +3983,104 @@ func TestSkillLoopUserInputGuardBlocksResolvedAgentBatchDeleteConfirmation(t *te
 	})
 	if !blocked {
 		t.Fatal("guard did not block redundant Agent delete confirmation")
+	}
+	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "delete_agents" {
+		t.Fatalf("guard result = %#v, want agent-management/delete_agents", result)
+	}
+	for _, want := range []string{
+		"Tool governance owns the approval card",
+		"Visible Agent One",
+		"Visible Agent Two",
+		"delete_agents",
+		"agent-1",
+		"agent-2",
+	} {
+		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
+			t.Fatalf("guard message missing %q in message:\n%s\nsystem:\n%s", want, result.Message, result.SystemMessage)
+		}
+	}
+}
+
+func TestSkillLoopUserInputGuardBlocksAgentConfigMutationConfirmation(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "\u8bf7\u628a Skill\u300c\u56fe\u8868\u751f\u6210\u5668\u300d\u7ed1\u5b9a\u5230\u8fd9\u4e2a\u667a\u80fd\u4f53\uff1b\u9700\u8981\u5ba1\u6279\u65f6\u6211\u4f1a\u540c\u610f\u3002",
+			SkillIDs:  []string{skills.SkillAgentManagement},
+			SkillMode: skillModeAuto,
+			RawOperationContext: map[string]interface{}{
+				"resources": []interface{}{
+					map[string]interface{}{
+						"resource_type": "agent",
+						"resource_id":   "agent-1",
+						"title":         "Support Agent",
+						"selected":      true,
+						"can_edit":      true,
+					},
+				},
+			},
+		},
+	}
+
+	guard := skillLoopUserInputGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopUserInputGuard() = nil, want guard for concrete Agent config mutation")
+	}
+	result, blocked := guard(skillloop.UserInputGuardRequest{
+		Message: "\u5df2\u786e\u8ba4\u56fe\u8868\u751f\u6210\u5668\u5f53\u524d\u672a\u7ed1\u5b9a\uff0c\u8bf7\u786e\u8ba4\u662f\u5426\u6267\u884c\u7ed1\u5b9a\u64cd\u4f5c\u3002",
+		Questions: []map[string]interface{}{
+			{
+				"id":       "confirm_bind",
+				"question": "\u662f\u5426\u786e\u8ba4\u5c06 Skill\u300c\u56fe\u8868\u751f\u6210\u5668\u300d\u7ed1\u5b9a\u5230\u8be5\u667a\u80fd\u4f53\uff1f",
+				"options": []map[string]interface{}{
+					{"label": "\u786e\u8ba4\uff0c\u6267\u884c\u7ed1\u5b9a"},
+				},
+			},
+		},
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{SkillID: skills.SkillAgentManagement, ToolName: "get_agent_config"},
+		},
+	})
+	if !blocked {
+		t.Fatal("guard did not block redundant Agent config mutation confirmation")
+	}
+	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "update_agent_config" {
+		t.Fatalf("guard result = %#v, want agent-management/update_agent_config", result)
+	}
+	for _, want := range []string{
+		"concrete Agent configuration change request",
+		"Tool governance owns the approval card",
+		"agent-management/update_agent_config",
+	} {
+		if !strings.Contains(result.Message, want) {
+			t.Fatalf("user input guard message missing %q in:\n%s", want, result.Message)
+		}
+	}
+}
+
+func TestSkillLoopUserInputGuardBlocksSidebarAgentDeleteConfirmationWithoutInitialSkillID(t *testing.T) {
+	parts := consoleAgentsVisibleTargetsTestParts("\u8bf7\u6279\u91cf\u5220\u9664\u5f53\u524d\u9875\u9762\u524d\u4e24\u4e2a\u540d\u5b57\u4ee5 AICHAT-GOAL-BIND-SMOKE \u5f00\u5934\u7684\u6d4b\u8bd5\u667a\u80fd\u4f53\u3002\u53ea\u5220\u9664\u8fd9\u4e24\u4e2a\u6d4b\u8bd5\u667a\u80fd\u4f53\u3002")
+	parts.SkillIDs = []string{skills.SkillConsoleNavigator}
+	prepared := &PreparedChat{parts: parts}
+
+	guard := skillLoopUserInputGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopUserInputGuard() = nil, want guard from contextual visible Agent evidence")
+	}
+	result, blocked := guard(skillloop.UserInputGuardRequest{
+		Message: "\u5373\u5c06\u6279\u91cf\u5220\u9664\u5f53\u524d\u9875\u9762\u524d\u4e24\u4e2a AICHAT-GOAL-BIND-SMOKE \u5f00\u5934\u7684\u6d4b\u8bd5\u667a\u80fd\u4f53\u3002\u9700\u8981\u4f60\u786e\u8ba4\u624d\u80fd\u6267\u884c\u3002",
+		Questions: []map[string]interface{}{
+			{
+				"id":       "confirm_delete",
+				"question": "\u786e\u8ba4\u5220\u9664 Visible Agent One \u548c Visible Agent Two \u8fd9\u4e24\u4e2a\u6d4b\u8bd5\u667a\u80fd\u4f53\u5417\uff1f",
+				"options": []map[string]interface{}{
+					{"label": "\u786e\u8ba4\u5220\u9664"},
+					{"label": "\u53d6\u6d88"},
+				},
+			},
+		},
+	})
+	if !blocked {
+		t.Fatal("guard did not block redundant sidebar Agent delete confirmation")
 	}
 	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "delete_agents" {
 		t.Fatalf("guard result = %#v, want agent-management/delete_agents", result)

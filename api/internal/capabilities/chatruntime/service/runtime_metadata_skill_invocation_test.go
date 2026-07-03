@@ -296,6 +296,161 @@ func TestMergeSkillTraceMetadataOmitsPlannerFeedback(t *testing.T) {
 	}
 }
 
+func TestMergeSkillTraceMetadataRecordsMissingAgentTargetPlannerFeedbackInOperationPlan(t *testing.T) {
+	deleteStepID := operationPlanToolStepID(skills.SkillAgentManagement, "delete_agent")
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": operationPlanStatusRunning,
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        deleteStepID,
+					"status":    operationPlanStepStatusPending,
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "delete_agent",
+					"asset_target": map[string]interface{}{
+						"effect":     "delete",
+						"asset_type": "agent",
+					},
+				},
+			},
+			"step_status": map[string]interface{}{
+				deleteStepID: operationPlanStepStatusPending,
+			},
+		},
+	}
+
+	metadata = mergeSkillTraceMetadata(metadata, []skills.SkillTrace{{
+		Kind:     "planner_feedback",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "list_agents",
+		Status:   "advisory",
+		Arguments: map[string]interface{}{
+			"next_step":                  "answer_missing_agent_target",
+			"reason":                     "agent_target_resolution_exhausted",
+			"target_name":                "AICHAT-NOT-EXIST",
+			"previous_list_agents_calls": 2,
+			"empty_result_calls":         2,
+		},
+	}})
+
+	if invocations := skillInvocationsFromMetadata(metadata["skill_invocations"]); len(invocations) != 0 {
+		t.Fatalf("skill_invocations = %#v, want no user-visible planner feedback", invocations)
+	}
+	if metadata["guardrail_count"] != 0 {
+		t.Fatalf("guardrail_count = %#v, want 0", metadata["guardrail_count"])
+	}
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusFailed {
+		t.Fatalf("operation_plan.status = %q, want %q; plan=%#v", got, operationPlanStatusFailed, plan)
+	}
+	stepStatus := mapFromOperationContext(plan["step_status"])
+	if got := stringFromAny(stepStatus[deleteStepID]); got != operationPlanStepStatusFailed {
+		t.Fatalf("step_status[%s] = %q, want %q; plan=%#v", deleteStepID, got, operationPlanStepStatusFailed, plan)
+	}
+	targetResolution := mapFromOperationContext(plan["target_resolution"])
+	if got := stringFromAny(targetResolution["status"]); got != "missing" {
+		t.Fatalf("target_resolution.status = %q, want missing; target_resolution=%#v", got, targetResolution)
+	}
+	if got := stringFromAny(targetResolution["target_name"]); got != "AICHAT-NOT-EXIST" {
+		t.Fatalf("target_resolution.target_name = %q, want AICHAT-NOT-EXIST", got)
+	}
+	deviations := mapSliceFromAny(plan["deviations"])
+	foundDeviation := false
+	for _, deviation := range deviations {
+		if stringFromAny(deviation["skill_id"]) == skills.SkillAgentManagement &&
+			stringFromAny(deviation["tool_name"]) == "list_agents" &&
+			stringFromAny(deviation["reason"]) == "agent_target_resolution_exhausted" &&
+			stringFromAny(deviation["outcome"]) == "failed" {
+			foundDeviation = true
+			break
+		}
+	}
+	if !foundDeviation {
+		t.Fatalf("deviations = %#v, want failed agent target resolution deviation", deviations)
+	}
+	strategyState := mapFromOperationContext(plan["strategy_state"])
+	lastFeedback := mapFromOperationContext(strategyState["last_feedback"])
+	if got := stringFromAny(lastFeedback["next_step"]); got != "answer_missing_agent_target" {
+		t.Fatalf("strategy_state.last_feedback.next_step = %q, want answer_missing_agent_target; state=%#v", got, strategyState)
+	}
+	failedSteps := mapSliceFromAny(plan["failed_steps"])
+	if len(failedSteps) != 1 || stringFromAny(failedSteps[0]["id"]) != deleteStepID {
+		t.Fatalf("failed_steps = %#v, want failed delete step %s", failedSteps, deleteStepID)
+	}
+}
+
+func TestFinalizeOperationPlanMarksMissingAgentTargetFromEmptyListEvidence(t *testing.T) {
+	deleteStepID := operationPlanToolStepID(skills.SkillAgentManagement, "delete_agent")
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":             operationPlanStatusRunning,
+			"original_user_goal": "请删除不存在的智能体 AICHAT-NOT-EXIST-FINALIZE。",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        deleteStepID,
+					"status":    operationPlanStepStatusPending,
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "delete_agent",
+					"asset_target": map[string]interface{}{
+						"effect":     "delete",
+						"asset_type": "agent",
+					},
+				},
+			},
+			"step_status": map[string]interface{}{
+				deleteStepID: operationPlanStepStatusPending,
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "list_agents",
+				"status":    "success",
+				"result": map[string]interface{}{
+					"status":       "completed",
+					"count":        0,
+					"agents_count": 0,
+				},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "list_agents",
+				"status":    "success",
+				"result": map[string]interface{}{
+					"status":       "completed",
+					"count":        0,
+					"agents_count": 0,
+				},
+			},
+		},
+	}
+
+	finalizeOperationPlanForResult(metadata)
+
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusFailed {
+		t.Fatalf("operation_plan.status = %q, want %q; plan=%#v", got, operationPlanStatusFailed, plan)
+	}
+	targetResolution := mapFromOperationContext(plan["target_resolution"])
+	if got := stringFromAny(targetResolution["target_name"]); got != "AICHAT-NOT-EXIST-FINALIZE" {
+		t.Fatalf("target_resolution.target_name = %q, want AICHAT-NOT-EXIST-FINALIZE; target_resolution=%#v", got, targetResolution)
+	}
+	if got := stringFromAny(targetResolution["reason"]); got != "agent_target_resolution_exhausted" {
+		t.Fatalf("target_resolution.reason = %q, want agent_target_resolution_exhausted", got)
+	}
+	stepStatus := mapFromOperationContext(plan["step_status"])
+	if got := stringFromAny(stepStatus[deleteStepID]); got != operationPlanStepStatusFailed {
+		t.Fatalf("step_status[%s] = %q, want %q; plan=%#v", deleteStepID, got, operationPlanStepStatusFailed, plan)
+	}
+	strategyState := mapFromOperationContext(plan["strategy_state"])
+	lastFeedback := mapFromOperationContext(strategyState["last_feedback"])
+	if got := stringFromAny(lastFeedback["reason"]); got != "agent_target_resolution_exhausted" {
+		t.Fatalf("strategy_state.last_feedback.reason = %q, want agent_target_resolution_exhausted; state=%#v", got, strategyState)
+	}
+}
+
 func TestMergeClientActionMetadataDoesNotReviveInternalPlannerGuardrail(t *testing.T) {
 	metadata := map[string]interface{}{
 		"skill_invocations": []interface{}{

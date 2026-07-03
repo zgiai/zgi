@@ -1223,6 +1223,36 @@ func TestSystemToolSkillsExposeArgumentContracts(t *testing.T) {
 	}
 }
 
+func TestAgentManagementUsesUnifiedConfigBindingTool(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillAgentManagement})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillAgentManagement)
+	if !ok {
+		t.Fatalf("agent management skill was not resolved")
+	}
+	names := toolNames(doc.Tools)
+	nameSet := map[string]struct{}{}
+	for _, name := range names {
+		nameSet[name] = struct{}{}
+	}
+	if _, ok := nameSet["update_agent_config"]; !ok {
+		t.Fatalf("agent management tools = %v, want update_agent_config", names)
+	}
+	for _, legacy := range []string{
+		"replace_agent_skill_bindings",
+		"replace_agent_knowledge_bindings",
+		"replace_agent_database_bindings",
+		"replace_agent_workflow_bindings",
+	} {
+		if _, ok := nameSet[legacy]; ok {
+			t.Fatalf("agent management tools expose legacy binding tool %q: %v", legacy, names)
+		}
+	}
+}
+
 func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 	tests := []struct {
 		skillID  string
@@ -1290,6 +1320,55 @@ func TestExpectedSkillToolArgumentsForFileReaderListVisibleFiles(t *testing.T) {
 	properties, ok := schema["properties"].(map[string]interface{})
 	if !ok || len(properties) != 0 {
 		t.Fatalf("properties = %#v, want no arguments", schema["properties"])
+	}
+}
+
+func TestExpectedSkillToolArgumentsForAgentManagementListAvailableModels(t *testing.T) {
+	expected := ExpectedSkillToolArguments(SkillAgentManagement, "list_available_models")
+	if expected == nil {
+		t.Fatalf("ExpectedSkillToolArguments() = nil")
+	}
+	schema, ok := expected["schema"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("schema type = %T, want map[string]interface{}", expected["schema"])
+	}
+	required, ok := schema["required"].([]string)
+	if ok && len(required) > 0 {
+		t.Fatalf("required = %#v, want no required arguments", required)
+	}
+	properties, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("properties missing from %#v", schema)
+	}
+	for _, property := range []string{"use_case", "provider", "limit"} {
+		if _, ok := properties[property]; !ok {
+			t.Fatalf("property %s missing from %#v", property, properties)
+		}
+	}
+	useCase, ok := properties["use_case"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("use_case schema missing from %#v", properties)
+	}
+	if !schemaEnumContains(useCase, "text-chat") || !schemaEnumContains(useCase, "function-calling") {
+		t.Fatalf("use_case enum = %#v, want text-chat and function-calling", useCase["enum"])
+	}
+}
+
+func TestAgentManagementSkillConstrainsMissingTargetSearch(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(defaultSkillCatalogDir(), SkillAgentManagement, "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read agent-management SKILL.md: %v", err)
+	}
+	content := string(raw)
+	for _, want := range []string{
+		"do at most one exact-name `list_agents` search",
+		"one broader workspace list/check",
+		"stop without requesting governance approval or deleting/modifying anything",
+		"Do not keep retrying with near-duplicate keywords",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("agent-management SKILL.md missing search convergence guidance %q", want)
+		}
 	}
 }
 
@@ -1662,6 +1741,26 @@ func hasRequired(schema map[string]interface{}, required string) bool {
 	if ok {
 		for _, value := range rawValues {
 			if value == required {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func schemaEnumContains(schema map[string]interface{}, want string) bool {
+	values, ok := schema["enum"].([]string)
+	if ok {
+		for _, value := range values {
+			if value == want {
+				return true
+			}
+		}
+	}
+	rawValues, ok := schema["enum"].([]interface{})
+	if ok {
+		for _, value := range rawValues {
+			if value == want {
 				return true
 			}
 		}

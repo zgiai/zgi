@@ -118,6 +118,97 @@ func TestRunPreparedSkillStreamUsesCompletionVerifierForInitialTurn(t *testing.T
 	}
 }
 
+func TestRunPreparedSkillStreamMarksPlanFailedWhenVerifierStopsWithReplacementAnswer(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writePostVerifierServiceTestSkill(t, catalogDir, "post-verifier-test")
+
+	llm := &toolGovernanceStreamLLM{
+		appChatResponses: []*adapter.ChatResponse{
+			postVerifierServiceTestChatResponse("Agent configuration was updated."),
+			postVerifierServiceTestChatResponse(`{"status":"failed","reason":"update_agent_config was not executed","missing_steps":["tool:agent-management/update_agent_config"],"unsupported_claims":["Agent configuration was updated"],"final_answer":"\u6211\u8fd8\u4e0d\u80fd\u786e\u8ba4\u667a\u80fd\u4f53\u914d\u7f6e\u5df2\u66f4\u65b0\uff0c\u56e0\u4e3a update_agent_config \u8fd8\u6ca1\u6709\u6267\u884c\u3002"}`),
+		},
+	}
+	runtime := skills.NewRuntimeWithCatalog(nil, nil, catalogDir)
+	svc := NewServiceWithSkillRuntime(nil, llm, nil, nil, nil, nil, nil, runtime, nil).(*service)
+
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
+	parts := &chatRequestParts{
+		Query:     "Update the current Agent model and system prompt.",
+		Surface:   aiChatSurfaceContextualSidebar,
+		SkillMode: skillModeAuto,
+		SkillIDs:  []string{"post-verifier-test"},
+		Provider:  "deepseek",
+	}
+	metadata := streamingMessageMetadataWithTaskID(parts, messageID.String())
+	metadata["operation_plan"] = map[string]interface{}{
+		"version":             operationPlanVersion,
+		"task_id":             messageID.String(),
+		"status":              operationPlanStatusRunning,
+		"pending_next_action": "Run tool:agent-management/update_agent_config",
+		"steps": []interface{}{
+			map[string]interface{}{
+				"id":        updateStepID,
+				"status":    operationPlanStepStatusPending,
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+			},
+		},
+		"step_status": map[string]interface{}{
+			updateStepID: operationPlanStepStatusPending,
+		},
+	}
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{
+			ID:             conversationID,
+			OrganizationID: organizationID,
+			AccountID:      accountID,
+		},
+		Message: &runtimemodel.Message{
+			ID:             messageID,
+			ConversationID: conversationID,
+			Metadata:       metadata,
+		},
+		LLMRequest: &adapter.ChatRequest{
+			Messages: []adapter.Message{{Role: "user", Content: parts.Query}},
+		},
+		Scope: Scope{
+			OrganizationID: organizationID,
+			AccountID:      accountID,
+		},
+		parts: parts,
+	}
+
+	answer, _, err := svc.runPreparedSkillStream(ctx, ctx, prepared, nil, nil)
+	if err != nil {
+		t.Fatalf("runPreparedSkillStream() error = %v", err)
+	}
+	if !strings.Contains(answer, "update_agent_config") {
+		t.Fatalf("answer = %q, want honest verifier replacement", answer)
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusFailed {
+		t.Fatalf("operation_plan status = %q, want failed; plan=%#v", got, plan)
+	}
+	if got := stringFromAny(plan["pending_next_action"]); got != "none" {
+		t.Fatalf("pending_next_action = %q, want none; plan=%#v", got, plan)
+	}
+	if got := operationPlanStepStatusForTest(plan, updateStepID); got != operationPlanStepStatusFailed {
+		t.Fatalf("%s status = %q, want failed; plan=%#v", updateStepID, got, plan)
+	}
+	verification := mapFromOperationContext(plan["completion_verification"])
+	if got := stringFromAny(verification["status"]); got != "failed" {
+		t.Fatalf("completion_verification.status = %q, want failed", got)
+	}
+	if missing := stringSliceFromAny(verification["missing_steps"]); len(missing) != 1 || missing[0] != updateStepID {
+		t.Fatalf("completion_verification.missing_steps = %#v, want update step", missing)
+	}
+}
+
 func TestRunPreparedSkillStreamDoesNotUseLegacyFinalAnswerGuardForConsoleFileDelete(t *testing.T) {
 	ctx := context.Background()
 	llm := &toolGovernanceStreamLLM{

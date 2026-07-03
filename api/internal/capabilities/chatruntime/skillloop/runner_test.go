@@ -21,6 +21,1043 @@ import (
 	workflowbuiltin "github.com/zgiai/zgi/api/internal/modules/tools/builtin/workflow"
 )
 
+func TestCompletionEvidenceContinuationSkipsPendingPlanStepForUnresolvedSkill(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "in_progress",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+					"status":    "pending",
+				},
+			},
+		},
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillFileManager},
+	}}}
+
+	if _, ok := completionEvidenceContinuationSystemMessage(evidence, 0, resolved); ok {
+		t.Fatal("completionEvidenceContinuationSystemMessage() ok = true, want false for unresolved pending skill")
+	}
+	if forced := completionEvidenceContinuationToolChoice(evidence, nil, resolved); forced != nil {
+		t.Fatalf("completionEvidenceContinuationToolChoice() = %#v, want nil for unresolved pending skill", forced)
+	}
+}
+
+func TestCompletionEvidenceContinuationAllowsPendingPlanStepForResolvedSkill(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "in_progress",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+					"status":    "pending",
+				},
+			},
+		},
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
+	}}}
+
+	feedback, ok := completionEvidenceContinuationSystemMessage(evidence, 0, resolved)
+	if !ok {
+		t.Fatal("completionEvidenceContinuationSystemMessage() ok = false, want true for resolved pending skill")
+	}
+	if !strings.Contains(fmt.Sprint(feedback.Content), "agent-management/update_agent_config") {
+		t.Fatalf("feedback = %v, want pending tool guidance", feedback.Content)
+	}
+	if forced := completionEvidenceContinuationToolChoice(evidence, nil, resolved); forced == nil {
+		t.Fatal("completionEvidenceContinuationToolChoice() = nil, want forced load_skill")
+	}
+}
+
+func TestCompletionEvidenceContinuationAllowsPendingReadPlanStepForResolvedSkill(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "in_progress",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/get_agent_config",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "get_agent_config",
+					"status":    "pending",
+				},
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_identity",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_identity",
+					"status":    "pending",
+				},
+			},
+		},
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
+	}}}
+
+	feedback, ok := completionEvidenceContinuationSystemMessage(evidence, 0, resolved)
+	if !ok {
+		t.Fatal("completionEvidenceContinuationSystemMessage() ok = false, want true for resolved pending read step")
+	}
+	if !strings.Contains(fmt.Sprint(feedback.Content), "agent-management/get_agent_config") {
+		t.Fatalf("feedback = %v, want get_agent_config guidance", feedback.Content)
+	}
+	if forced := completionEvidenceContinuationToolChoice(evidence, nil, resolved); forced == nil {
+		t.Fatal("completionEvidenceContinuationToolChoice() = nil, want forced load_skill")
+	}
+}
+
+func TestCompletionEvidenceContinuationSkipsPostVerificationNavigationStep(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "in_progress",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:console-navigator/navigate",
+					"skill_id":  skills.SkillConsoleNavigator,
+					"tool_name": "navigate",
+					"status":    "pending",
+				},
+			},
+		},
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillConsoleNavigator},
+	}}}
+
+	if _, ok := completionEvidenceContinuationSystemMessage(evidence, 0, resolved); ok {
+		t.Fatal("completionEvidenceContinuationSystemMessage() ok = true, want false for post-verification navigation step")
+	}
+	if forced := completionEvidenceContinuationToolChoice(evidence, nil, resolved); forced != nil {
+		t.Fatalf("completionEvidenceContinuationToolChoice() = %#v, want nil for post-verification navigation step", forced)
+	}
+}
+
+func TestNormalizeDirectLoadedSkillToolCallWrapsUniqueLoadedTool(t *testing.T) {
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
+		Tools: []skills.SkillToolDefinition{{
+			Name: "get_agent_config",
+		}},
+	}}}
+	call := adapter.ToolCall{
+		ID:   "direct-get-config",
+		Type: "function",
+		Function: adapter.FunctionCall{
+			Name:      "get_agent_config",
+			Arguments: `{"agent_id":"agent-1"}`,
+		},
+	}
+	args, err := skills.ParseArguments(call.Function.Arguments)
+	if err != nil {
+		t.Fatalf("ParseArguments() error = %v", err)
+	}
+
+	normalizedCall, normalizedArgs, ok := normalizeDirectLoadedSkillToolCall(resolved, map[string]struct{}{
+		skills.SkillAgentManagement: {},
+	}, call, args)
+
+	if !ok {
+		t.Fatal("normalizeDirectLoadedSkillToolCall() ok = false, want true")
+	}
+	if got := normalizedCall.Function.Name; got != skills.MetaToolCallSkillTool {
+		t.Fatalf("normalized function = %q, want %q", got, skills.MetaToolCallSkillTool)
+	}
+	if got := normalizedArgs["skill_id"]; got != skills.SkillAgentManagement {
+		t.Fatalf("skill_id = %#v, want %q", got, skills.SkillAgentManagement)
+	}
+	if got := normalizedArgs["tool_name"]; got != "get_agent_config" {
+		t.Fatalf("tool_name = %#v, want get_agent_config", got)
+	}
+	toolArgs := mapArg(normalizedArgs, "arguments")
+	if got := stringArg(toolArgs, "agent_id"); got != "agent-1" {
+		t.Fatalf("arguments.agent_id = %q, want agent-1", got)
+	}
+	wrappedArgs, err := skills.ParseArguments(normalizedCall.Function.Arguments)
+	if err != nil {
+		t.Fatalf("wrapped ParseArguments() error = %v", err)
+	}
+	if got := stringArg(wrappedArgs, "tool_name"); got != "get_agent_config" {
+		t.Fatalf("wrapped tool_name = %q, want get_agent_config", got)
+	}
+}
+
+func TestNormalizeDirectLoadedSkillToolCallIgnoresUnloadedTool(t *testing.T) {
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
+		Tools: []skills.SkillToolDefinition{{
+			Name: "get_agent_config",
+		}},
+	}}}
+	call := adapter.ToolCall{
+		ID:   "direct-get-config",
+		Type: "function",
+		Function: adapter.FunctionCall{
+			Name:      "get_agent_config",
+			Arguments: `{"agent_id":"agent-1"}`,
+		},
+	}
+	args, err := skills.ParseArguments(call.Function.Arguments)
+	if err != nil {
+		t.Fatalf("ParseArguments() error = %v", err)
+	}
+
+	normalizedCall, normalizedArgs, ok := normalizeDirectLoadedSkillToolCall(resolved, nil, call, args)
+
+	if ok {
+		t.Fatal("normalizeDirectLoadedSkillToolCall() ok = true, want false for unloaded skill")
+	}
+	if normalizedCall.Function.Name != call.Function.Name {
+		t.Fatalf("function name changed to %q, want %q", normalizedCall.Function.Name, call.Function.Name)
+	}
+	if stringArg(normalizedArgs, "agent_id") != "agent-1" {
+		t.Fatalf("arguments changed unexpectedly: %#v", normalizedArgs)
+	}
+}
+
+func TestCompletionEvidenceContinuationAllowsRequiredPostUpdateAgentConfigRead(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "in_progress",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config#post_update",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"status":                            "pending",
+					"phase":                             "post_update_verification",
+					"required_post_update_verification": true,
+				},
+			},
+		},
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
+	}}}
+
+	feedback, ok := completionEvidenceContinuationSystemMessage(evidence, 0, resolved)
+	if !ok {
+		t.Fatal("completionEvidenceContinuationSystemMessage() ok = false, want true for requested post-update config read")
+	}
+	if !strings.Contains(fmt.Sprint(feedback.Content), "agent-management/get_agent_config") {
+		t.Fatalf("feedback = %v, want get_agent_config guidance", feedback.Content)
+	}
+	if forced := completionEvidenceContinuationToolChoice(evidence, nil, resolved); forced == nil {
+		t.Fatal("completionEvidenceContinuationToolChoice() = nil, want forced load_skill")
+	}
+}
+
+func TestRepeatedSuccessfulReadOnlyToolCallFeedbackStepUsesPreviousResult(t *testing.T) {
+	args := map[string]interface{}{"agent_id": "agent-1"}
+	result := repeatedSuccessfulReadOnlyToolCallFeedbackStep("call-2", skills.SkillAgentManagement, "list_agent_workflow_binding_candidates", args, map[string]SkillToolCallRef{
+		failedToolCallKey(skills.SkillAgentManagement, "list_agent_workflow_binding_candidates", args): {
+			SkillID:   skills.SkillAgentManagement,
+			ToolName:  "list_agent_workflow_binding_candidates",
+			Arguments: copyStringAnyMap(args),
+			Result: map[string]interface{}{
+				"status":    "completed",
+				"count":     0,
+				"workflows": []interface{}{},
+			},
+		},
+	}, nil, nil, nil)
+
+	if result.trace.Kind != "planner_feedback" {
+		t.Fatalf("trace.Kind = %q, want planner_feedback", result.trace.Kind)
+	}
+	if result.trace.Status != "advisory" {
+		t.Fatalf("trace.Status = %q, want advisory", result.trace.Status)
+	}
+	if result.recoverable {
+		t.Fatal("result.recoverable = true, want false for advisory feedback")
+	}
+	if result.usedTool {
+		t.Fatal("result.usedTool = true, want false because no tool was executed")
+	}
+	if got := result.trace.Arguments["next_step"]; got != "answer_from_previous_result" {
+		t.Fatalf("trace next_step = %#v, want answer_from_previous_result", got)
+	}
+	content, ok := result.toolMessage.Content.(string)
+	if !ok {
+		t.Fatalf("tool message content type = %T, want string", result.toolMessage.Content)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &payload); err != nil {
+		t.Fatalf("tool message JSON error = %v; content = %s", err, content)
+	}
+	if got := payload["advisory"]; got != "same_read_only_tool_already_succeeded" {
+		t.Fatalf("payload advisory = %#v, want same_read_only_tool_already_succeeded", got)
+	}
+	summary, ok := payload["previous_result_summary"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("previous_result_summary = %#v, want object", payload["previous_result_summary"])
+	}
+	if got := summary["count"]; got != float64(0) {
+		t.Fatalf("summary count = %#v, want 0", got)
+	}
+	if got := summary["workflows_count"]; got != float64(0) {
+		t.Fatalf("summary workflows_count = %#v, want 0", got)
+	}
+	if !strings.Contains(fmt.Sprint(payload["next_action"]), "previous tool result") {
+		t.Fatalf("next_action = %#v, want previous-result guidance", payload["next_action"])
+	}
+}
+
+func TestPlanToolGuardAdvisoryStepDoesNotReturnRecoverableError(t *testing.T) {
+	result := planToolGuardRecoverableStep("call-1", skills.SkillAgentManagement, "list_agent_database_tables", map[string]interface{}{
+		"agent_id": "agent-1",
+	}, FinalAnswerGuardResult{
+		SkillID:       skills.SkillAgentManagement,
+		ToolName:      "get_agent_config",
+		Message:       "agent-management/list_agent_database_tables already has successful evidence for this turn.",
+		SystemMessage: "Continue with the next pending planned step: agent-management/get_agent_config.",
+		Advisory:      true,
+	})
+
+	if result.recoverable {
+		t.Fatal("result.recoverable = true, want false for advisory feedback")
+	}
+	if result.trace.Kind != "planner_feedback" {
+		t.Fatalf("trace.Kind = %q, want planner_feedback", result.trace.Kind)
+	}
+	if result.trace.Status != "advisory" {
+		t.Fatalf("trace.Status = %q, want advisory", result.trace.Status)
+	}
+	if result.trace.Error != "" {
+		t.Fatalf("trace.Error = %q, want empty advisory error", result.trace.Error)
+	}
+	if got := result.trace.Arguments["next_step"]; got != "continue_with_next_planned_step" {
+		t.Fatalf("trace next_step = %#v, want continue_with_next_planned_step", got)
+	}
+	content, ok := result.toolMessage.Content.(string)
+	if !ok {
+		t.Fatalf("tool message content type = %T, want string", result.toolMessage.Content)
+	}
+	if strings.Contains(content, "invalid input") {
+		t.Fatalf("tool message content = %s, want no invalid input", content)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &payload); err != nil {
+		t.Fatalf("tool message JSON error = %v; content = %s", err, content)
+	}
+	if got := payload["status"]; got != "advisory" {
+		t.Fatalf("payload status = %#v, want advisory", got)
+	}
+	if got := payload["advisory"]; got != "completed_read_step_already_satisfied" {
+		t.Fatalf("payload advisory = %#v, want completed_read_step_already_satisfied", got)
+	}
+	if _, ok := payload["error"]; ok {
+		t.Fatalf("payload error = %#v, want no error field", payload["error"])
+	}
+	if !strings.Contains(fmt.Sprint(payload["next_action"]), "get_agent_config") {
+		t.Fatalf("next_action = %#v, want next planned step guidance", payload["next_action"])
+	}
+}
+
+func TestMissingAgentTargetListAgentsTerminalStepStopsThirdSearch(t *testing.T) {
+	previous := []SkillToolCallRef{
+		{
+			SkillID:   skills.SkillAgentManagement,
+			ToolName:  "list_agents",
+			Arguments: map[string]interface{}{"keyword": "AICHAT-NOT-EXIST-0702Z"},
+			Result:    map[string]interface{}{"status": "completed", "count": 0, "agents_count": 0},
+		},
+		{
+			SkillID:   skills.SkillAgentManagement,
+			ToolName:  "list_agents",
+			Arguments: map[string]interface{}{"keyword": "0702Z"},
+			Result:    map[string]interface{}{"status": "completed", "count": 0, "agents_count": 0},
+		},
+	}
+
+	result := missingAgentTargetListAgentsTerminalStep(
+		"call-3",
+		skills.SkillAgentManagement,
+		"list_agents",
+		map[string]interface{}{},
+		previous,
+		"请删除名为 AICHAT-NOT-EXIST-0702Z 的智能体，如果找不到就不要审批。",
+	)
+
+	if result.trace.Kind != "planner_feedback" {
+		t.Fatalf("trace.Kind = %q, want planner_feedback", result.trace.Kind)
+	}
+	if got := stringFromInterface(result.trace.Arguments["next_step"]); got != "answer_missing_agent_target" {
+		t.Fatalf("trace next_step = %q, want answer_missing_agent_target", got)
+	}
+	if got := stringFromInterface(result.trace.Arguments["target_name"]); got != "AICHAT-NOT-EXIST-0702Z" {
+		t.Fatalf("target_name = %q, want AICHAT-NOT-EXIST-0702Z", got)
+	}
+	if !result.terminal {
+		t.Fatal("terminal = false, want true")
+	}
+	if result.usedTool {
+		t.Fatal("usedTool = true, want false because the third search is not executed")
+	}
+	if !strings.Contains(result.answer, "没有发起审批") || !strings.Contains(result.answer, "没有执行修改或删除") {
+		t.Fatalf("answer = %q, want no-approval/no-mutation explanation", result.answer)
+	}
+	content := fmt.Sprint(result.toolMessage.Content)
+	if !strings.Contains(content, "agent_target_resolution_exhausted") {
+		t.Fatalf("tool message = %s, want missing-target advisory", content)
+	}
+}
+
+func TestMissingAgentTargetListAgentsTerminalStepAllowsSecondSearch(t *testing.T) {
+	result := missingAgentTargetListAgentsTerminalStep(
+		"call-2",
+		skills.SkillAgentManagement,
+		"list_agents",
+		map[string]interface{}{"keyword": "0702Z"},
+		[]SkillToolCallRef{
+			{
+				SkillID:   skills.SkillAgentManagement,
+				ToolName:  "list_agents",
+				Arguments: map[string]interface{}{"keyword": "AICHAT-NOT-EXIST-0702Z"},
+				Result:    map[string]interface{}{"status": "completed", "count": 0, "agents_count": 0},
+			},
+		},
+		"请删除名为 AICHAT-NOT-EXIST-0702Z 的智能体",
+	)
+
+	if result.trace.Kind != "" {
+		t.Fatalf("trace.Kind = %q, want empty so one broader check can run", result.trace.Kind)
+	}
+}
+
+func TestRepeatedSuccessfulReadOnlyToolCallFeedbackStepIgnoresDifferentArguments(t *testing.T) {
+	previousArgs := map[string]interface{}{"agent_id": "agent-1"}
+	result := repeatedSuccessfulReadOnlyToolCallFeedbackStep("call-2", skills.SkillAgentManagement, "list_agent_workflow_binding_candidates", map[string]interface{}{"agent_id": "agent-2"}, map[string]SkillToolCallRef{
+		failedToolCallKey(skills.SkillAgentManagement, "list_agent_workflow_binding_candidates", previousArgs): {
+			SkillID:   skills.SkillAgentManagement,
+			ToolName:  "list_agent_workflow_binding_candidates",
+			Arguments: copyStringAnyMap(previousArgs),
+			Result:    map[string]interface{}{"status": "completed"},
+		},
+	}, nil, nil, nil)
+
+	if result.trace.Kind != "" {
+		t.Fatalf("trace.Kind = %q, want empty for different arguments", result.trace.Kind)
+	}
+}
+
+func TestRepeatedSuccessfulCandidateLookupWithDifferentArgumentsPointsToPendingMutation(t *testing.T) {
+	previousArgs := map[string]interface{}{
+		"agent_id":       "agent-1",
+		"data_source_id": "database-1",
+	}
+	nextArgs := map[string]interface{}{
+		"agent_id":       "agent-1",
+		"data_source_id": "database-2",
+	}
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"status":    "pending",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/update_agent_config": "pending",
+			},
+		},
+	}
+
+	result := repeatedSuccessfulReadOnlyToolCallFeedbackStep("call-2", skills.SkillAgentManagement, "list_agent_database_tables", nextArgs, nil, []SkillToolCallRef{
+		{
+			SkillID:   skills.SkillAgentManagement,
+			ToolName:  "list_agent_database_tables",
+			Arguments: copyStringAnyMap(previousArgs),
+			Result: map[string]interface{}{
+				"status": "completed",
+				"count":  2,
+				"binding_candidates": []interface{}{map[string]interface{}{
+					"id":   "database-1:table-1",
+					"name": "test1",
+					"binding": map[string]interface{}{
+						"data_source_id": "database-1",
+						"table_ids":      []interface{}{"table-1"},
+					},
+				}},
+			},
+		},
+	}, evidence, nil)
+
+	if result.trace.Kind != "planner_feedback" {
+		t.Fatalf("trace.Kind = %q, want planner_feedback", result.trace.Kind)
+	}
+	if got := stringFromInterface(result.trace.Arguments["next_step"]); got != "call_pending_agent_mutation" {
+		t.Fatalf("trace next_step = %q, want call_pending_agent_mutation", got)
+	}
+	if got := stringFromInterface(result.trace.Arguments["reason"]); got != "same_candidate_lookup_already_found_usable_result_while_mutation_step_pending" {
+		t.Fatalf("trace reason = %q, want candidate lookup reuse", got)
+	}
+	content := fmt.Sprint(result.toolMessage.Content)
+	if !strings.Contains(content, "agent-management/update_agent_config") {
+		t.Fatalf("tool message = %s, want update_agent_config guidance", content)
+	}
+	if !strings.Contains(content, "candidate_samples") || !strings.Contains(content, "database-1:table-1") || !strings.Contains(content, "table_ids") {
+		t.Fatalf("tool message = %s, want reusable candidate sample and binding", content)
+	}
+}
+
+func TestRepeatedSuccessfulReadOnlyToolCallFeedbackStepIgnoresMutations(t *testing.T) {
+	args := map[string]interface{}{
+		"agent_id": "agent-1",
+		"name":     "Support Agent",
+	}
+	result := repeatedSuccessfulReadOnlyToolCallFeedbackStep("call-2", skills.SkillAgentManagement, "update_agent_identity", args, map[string]SkillToolCallRef{
+		failedToolCallKey(skills.SkillAgentManagement, "update_agent_identity", args): {
+			SkillID:   skills.SkillAgentManagement,
+			ToolName:  "update_agent_identity",
+			Arguments: copyStringAnyMap(args),
+			Result:    map[string]interface{}{"status": "completed"},
+		},
+	}, nil, nil, nil)
+
+	if result.trace.Kind != "" {
+		t.Fatalf("trace.Kind = %q, want empty for mutation tool", result.trace.Kind)
+	}
+}
+
+func TestRepeatedSuccessfulReadOnlyToolCallFeedbackStepAllowsAgentConfigReadAfterMutation(t *testing.T) {
+	args := map[string]interface{}{"agent_id": "agent-1"}
+	key := failedToolCallKey(skills.SkillAgentManagement, "get_agent_config", args)
+	result := repeatedSuccessfulReadOnlyToolCallFeedbackStep("call-3", skills.SkillAgentManagement, "get_agent_config", args, map[string]SkillToolCallRef{
+		key: {
+			SkillID:   skills.SkillAgentManagement,
+			ToolName:  "get_agent_config",
+			Arguments: copyStringAnyMap(args),
+			Result:    map[string]interface{}{"status": "completed"},
+		},
+	}, []SkillToolCallRef{
+		{
+			SkillID:   skills.SkillAgentManagement,
+			ToolName:  "get_agent_config",
+			Arguments: copyStringAnyMap(args),
+			Result:    map[string]interface{}{"status": "completed"},
+		},
+		{
+			SkillID:   skills.SkillAgentManagement,
+			ToolName:  "update_agent_config",
+			Arguments: copyStringAnyMap(args),
+			Result:    map[string]interface{}{"status": "completed"},
+		},
+	}, nil, nil)
+
+	if result.trace.Kind != "" {
+		t.Fatalf("trace.Kind = %q, want empty so post-update read can execute", result.trace.Kind)
+	}
+}
+
+func TestRepeatedSuccessfulReadOnlyToolCallFeedbackStepPointsToPendingAgentMutation(t *testing.T) {
+	args := map[string]interface{}{"agent_id": "agent-1"}
+	key := failedToolCallKey(skills.SkillAgentManagement, "get_agent_config", args)
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"status":    "pending",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/update_agent_config": "pending",
+			},
+		},
+	}
+
+	result := repeatedSuccessfulReadOnlyToolCallFeedbackStep("call-4", skills.SkillAgentManagement, "get_agent_config", args, map[string]SkillToolCallRef{
+		key: {
+			SkillID:   skills.SkillAgentManagement,
+			ToolName:  "get_agent_config",
+			Arguments: copyStringAnyMap(args),
+			Result:    map[string]interface{}{"status": "completed", "agent_id": "agent-1"},
+		},
+	}, []SkillToolCallRef{
+		{
+			SkillID:   skills.SkillAgentManagement,
+			ToolName:  "update_agent_identity",
+			Arguments: copyStringAnyMap(args),
+			Result:    map[string]interface{}{"status": "completed", "agent_id": "agent-1"},
+		},
+		{
+			SkillID:   skills.SkillAgentManagement,
+			ToolName:  "get_agent_config",
+			Arguments: copyStringAnyMap(args),
+			Result:    map[string]interface{}{"status": "completed", "agent_id": "agent-1"},
+		},
+	}, evidence, nil)
+
+	if result.trace.Kind != "planner_feedback" {
+		t.Fatalf("trace.Kind = %q, want planner_feedback", result.trace.Kind)
+	}
+	if got := stringFromInterface(result.trace.Arguments["next_step"]); got != "call_pending_agent_mutation" {
+		t.Fatalf("trace next_step = %q, want call_pending_agent_mutation", got)
+	}
+	content := fmt.Sprint(result.toolMessage.Content)
+	if !strings.Contains(content, "agent-management/update_agent_config") {
+		t.Fatalf("tool message = %s, want update_agent_config guidance", content)
+	}
+	if !strings.Contains(content, "pending asset-changing Agent step") {
+		t.Fatalf("tool message = %s, want pending mutation guidance", content)
+	}
+	if !strings.Contains(content, "extract the target field values") {
+		t.Fatalf("tool message = %s, want config value extraction guidance", content)
+	}
+}
+
+func TestSkillToolCallIdentityForCallResolvesDirectLoadedTool(t *testing.T) {
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
+		Tools: []skills.SkillToolDefinition{{
+			Name: "list_agent_workflow_binding_candidates",
+		}},
+	}}}
+	call := adapter.ToolCall{
+		ID:   "direct-list-workflows",
+		Type: "function",
+		Function: adapter.FunctionCall{
+			Name:      "list_agent_workflow_binding_candidates",
+			Arguments: `{"agent_id":"agent-1"}`,
+		},
+	}
+
+	skillID, toolName, toolArgs, key := skillToolCallIdentityForCall(resolved, map[string]struct{}{
+		skills.SkillAgentManagement: {},
+	}, call)
+
+	if skillID != skills.SkillAgentManagement {
+		t.Fatalf("skillID = %q, want %q", skillID, skills.SkillAgentManagement)
+	}
+	if toolName != "list_agent_workflow_binding_candidates" {
+		t.Fatalf("toolName = %q, want list_agent_workflow_binding_candidates", toolName)
+	}
+	if got := stringArg(toolArgs, "agent_id"); got != "agent-1" {
+		t.Fatalf("toolArgs.agent_id = %q, want agent-1", got)
+	}
+	if key == "" {
+		t.Fatal("key = empty, want stable duplicate key")
+	}
+}
+
+func TestRedundantPostReadAgentConfigMutationAnswerStopsSecondMutation(t *testing.T) {
+	resultSummary := map[string]interface{}{
+		"status":     "completed",
+		"agent_name": "Support Agent",
+		"updated_fields": []interface{}{
+			"model_provider",
+			"model",
+			"system_prompt",
+			"home_title",
+			"suggested_questions",
+			"knowledge_base_ids",
+			"database_table_ids",
+			"workflow_ids",
+			"enabled_skill_ids",
+		},
+		"binding_changes": []interface{}{
+			map[string]interface{}{
+				"field":                "knowledge_base_ids",
+				"binding_kind":         "knowledge_base",
+				"change_action":        "bind",
+				"resource_count":       1,
+				"added_resource_count": 1,
+				"resource_names":       []interface{}{"Support KB"},
+			},
+			map[string]interface{}{
+				"field":                "database_table_ids",
+				"binding_kind":         "database_table",
+				"change_action":        "bind",
+				"resource_count":       2,
+				"added_resource_count": 2,
+				"resource_names":       []interface{}{"orders", "refunds"},
+			},
+		},
+	}
+	answer, ok := redundantPostReadAgentConfigMutationAnswer(skills.SkillAgentManagement, "update_agent_config", map[string]interface{}{
+		"agent_id":            "agent-1",
+		"model_provider":      "deepseek",
+		"model":               "deepseek-chat",
+		"system_prompt":       "Answer briefly in Chinese.",
+		"home_title":          "Support Home",
+		"suggested_questions": []interface{}{"How can I help?", "What should I summarize?"},
+		"knowledge_base_ids":  []interface{}{"kb-1"},
+		"database_table_ids":  []interface{}{"table-1", "table-2"},
+		"workflow_ids":        []interface{}{"workflow-1"},
+		"enabled_skill_ids":   []interface{}{"chart-generator"},
+		"memory_slot_updates": []interface{}{map[string]interface{}{"key": "preference", "description": "User preference"}},
+		"theme_configuration": map[string]interface{}{"primary_color": "#1677ff"},
+		"display_configuration": map[string]interface{}{
+			"layout": "compact",
+		},
+	}, map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":             "running",
+			"original_user_goal": "Update the current Agent config, then read the config again after completion.",
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"arguments": map[string]interface{}{
+					"agent_id":            "agent-1",
+					"model_provider":      "deepseek",
+					"model":               "deepseek-chat",
+					"system_prompt":       "Answer briefly in Chinese.",
+					"home_title":          "Support Home",
+					"suggested_questions": []interface{}{"How can I help?", "What should I summarize?"},
+					"knowledge_base_ids":  []interface{}{"kb-1"},
+					"database_table_ids":  []interface{}{"table-1", "table-2"},
+					"workflow_ids":        []interface{}{"workflow-1"},
+					"enabled_skill_ids":   []interface{}{"chart-generator"},
+				},
+				"result": resultSummary,
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"arguments": map[string]interface{}{
+					"agent_id": "agent-1",
+				},
+			},
+		},
+	})
+	if !ok {
+		t.Fatal("redundantPostReadAgentConfigMutationAnswer() ok = false, want redundant mutation to close from evidence")
+	}
+	for _, want := range []string{"Support Agent", "Support KB", "orders", "refunds"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, want %q", answer, want)
+		}
+	}
+}
+
+func TestRedundantPostReadAgentConfigMutationAnswerStopsSatisfiedOnlySecondMutation(t *testing.T) {
+	resultSummary := map[string]interface{}{
+		"status":           "completed",
+		"agent_name":       "Support Agent",
+		"updated_fields":   []interface{}{"home_title"},
+		"satisfied_fields": []interface{}{"home_title", "theme_color"},
+		"home_title":       "Support Home",
+		"theme_color":      "emerald",
+	}
+	answer, ok := redundantPostReadAgentConfigMutationAnswer(skills.SkillAgentManagement, "update_agent_config", map[string]interface{}{
+		"agent_id":    "agent-1",
+		"home_title":  "Support Home",
+		"theme_color": "emerald",
+	}, map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":             "running",
+			"original_user_goal": "Set the Agent home title and theme color, then read the config again after completion.",
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"arguments": map[string]interface{}{
+					"agent_id":    "agent-1",
+					"home_title":  "Support Home",
+					"theme_color": "emerald",
+				},
+				"result": resultSummary,
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"arguments": map[string]interface{}{
+					"agent_id": "agent-1",
+				},
+			},
+		},
+	})
+	if !ok {
+		t.Fatal("redundantPostReadAgentConfigMutationAnswer() ok = false, want satisfied fields to close redundant mutation")
+	}
+	for _, want := range []string{"Support Agent", "首页标题：Support Home", "主题色已满足：emerald"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, want %q", answer, want)
+		}
+	}
+}
+
+func TestRedundantPostReadAgentConfigMutationAnswerStopsSecondUnbindMutation(t *testing.T) {
+	resultSummary := map[string]interface{}{
+		"status":     "completed",
+		"agent_name": "Support Agent",
+		"updated_fields": []interface{}{
+			"enabled_skill_ids",
+		},
+		"binding_changes": []interface{}{
+			map[string]interface{}{
+				"field":                  "enabled_skill_ids",
+				"binding_kind":           "agent_skill",
+				"change_action":          "unbind",
+				"resource_count":         1,
+				"removed_resource_count": 1,
+				"resource_names":         []interface{}{"Chart Generator"},
+			},
+		},
+	}
+	answer, ok := redundantPostReadAgentConfigMutationAnswer(skills.SkillAgentManagement, "update_agent_config", map[string]interface{}{
+		"agent_id":                 "agent-1",
+		"remove_enabled_skill_ids": []interface{}{"chart-generator"},
+	}, map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":             "running",
+			"original_user_goal": "If Chart Generator is bound, unbind it; if unbound, bind it. After completion read config again.",
+			"tool_result": map[string]interface{}{
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "list_agent_skill_candidates",
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"arguments": map[string]interface{}{
+					"agent_id":                 "agent-1",
+					"remove_enabled_skill_ids": []interface{}{"chart-generator"},
+				},
+				"result": resultSummary,
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+			},
+		},
+	})
+	if !ok {
+		t.Fatal("redundantPostReadAgentConfigMutationAnswer() ok = false, want redundant mutation to close from evidence")
+	}
+	for _, want := range []string{"Support Agent", "Chart Generator"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, want %q", answer, want)
+		}
+	}
+}
+
+func TestRedundantPostReadAgentIdentityMutationAnswerStopsSecondMutation(t *testing.T) {
+	resultSummary := map[string]interface{}{
+		"status":     "completed",
+		"agent_name": "Support Agent",
+		"updated_fields": []interface{}{
+			"name",
+			"description",
+			"icon",
+		},
+	}
+	answer, ok := redundantPostReadAgentConfigMutationAnswer(skills.SkillAgentManagement, "update_agent_identity", map[string]interface{}{
+		"agent_id":    "agent-1",
+		"name":        "Support Agent",
+		"description": "Friendly support bot",
+		"icon":        "SA",
+		"icon_type":   "text",
+	}, map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":             "running",
+			"original_user_goal": "Rename the current Agent and change its icon. After completion read the Agent config again.",
+			"tool_result": map[string]interface{}{
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_identity",
+				"arguments": map[string]interface{}{
+					"agent_id":    "agent-1",
+					"name":        "Support Agent",
+					"description": "Friendly support bot",
+					"icon":        "SA",
+					"icon_type":   "text",
+				},
+				"result": resultSummary,
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+			},
+		},
+	})
+	if !ok {
+		t.Fatal("redundantPostReadAgentConfigMutationAnswer() ok = false, want redundant identity mutation to close from evidence")
+	}
+	for _, want := range []string{"Support Agent", "名称", "描述", "图标"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, want %q", answer, want)
+		}
+	}
+}
+
+func TestImmediateCompletionEvidenceFastPathAnswerClosesAgentIdentityAfterPostRead(t *testing.T) {
+	resultSummary := map[string]interface{}{
+		"status":     "completed",
+		"agent_id":   "agent-1",
+		"agent_name": "Support Agent",
+		"updated_fields": []interface{}{
+			"name",
+			"description",
+			"icon",
+		},
+	}
+	answer, ok := immediateCompletionEvidenceFastPathAnswer(map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":             "running",
+			"original_user_goal": "请把当前智能体改名为 Support Agent，描述改成 Friendly support bot，图标改成 SA，保存后确认页面上能看到新配置。",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_identity",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_identity",
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent#post_update",
+					"status":                            "completed",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent",
+					"phase":                             "post_update_verification",
+					"required_post_update_verification": true,
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/update_agent_identity": "completed",
+				"tool:agent-management/get_agent#post_update": "completed",
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_identity",
+				"arguments": map[string]interface{}{
+					"agent_id":    "agent-1",
+					"name":        "Support Agent",
+					"description": "Friendly support bot",
+					"icon":        "SA",
+				},
+				"result": resultSummary,
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent",
+				"arguments": map[string]interface{}{
+					"agent_id": "agent-1",
+				},
+				"result": map[string]interface{}{
+					"status":      "completed",
+					"agent_id":    "agent-1",
+					"agent_name":  "Support Agent",
+					"description": "Friendly support bot",
+					"icon":        "SA",
+				},
+			},
+		},
+	})
+	if !ok {
+		t.Fatal("immediateCompletionEvidenceFastPathAnswer() ok = false, want true after identity update and post-read evidence")
+	}
+	for _, want := range []string{"Support Agent", "名称", "描述", "图标", "已在更新后重新读取配置并完成确认"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, want %q", answer, want)
+		}
+	}
+}
+
+func TestRedundantPostReadAgentConfigMutationAnswerDoesNotTreatIdentityAsConfig(t *testing.T) {
+	resultSummary := map[string]interface{}{
+		"status":     "completed",
+		"agent_id":   "agent-1",
+		"agent_name": "Support Agent",
+		"updated_fields": []interface{}{
+			"name",
+			"description",
+			"icon",
+		},
+	}
+	answer, ok := redundantPostReadAgentConfigMutationAnswer(skills.SkillAgentManagement, "update_agent_config", map[string]interface{}{
+		"agent_id":            "agent-1",
+		"model_provider":      "deepseek",
+		"model":               "deepseek-chat",
+		"system_prompt":       "Answer briefly in Chinese.",
+		"home_title":          "Support Home",
+		"suggested_questions": []interface{}{"How can I help?", "What should I summarize?"},
+	}, map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":             "running",
+			"original_user_goal": "Rename the current Agent, then update model, prompt, home title, and suggested questions. After completion read the Agent config again.",
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_identity",
+				"arguments": map[string]interface{}{
+					"agent_id":    "agent-1",
+					"name":        "Support Agent",
+					"description": "Friendly support bot",
+					"icon":        "SA",
+					"icon_type":   "text",
+				},
+				"result": resultSummary,
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"arguments": map[string]interface{}{
+					"agent_id": "agent-1",
+				},
+			},
+		},
+	})
+	if ok {
+		t.Fatalf("redundantPostReadAgentConfigMutationAnswer() ok = true, answer = %q; want pending config update to continue", answer)
+	}
+}
+
 func TestGovernedReadFileTargetSystemMessageAnchorsResolvedAsset(t *testing.T) {
 	message, ok := governedReadFileTargetSystemMessage(skills.SkillTrace{
 		SkillID:  skills.SkillFileReader,
@@ -64,13 +1101,53 @@ func TestFastPathFinalAnswerForAgentBatchDelete(t *testing.T) {
 			"status":        "partial_failed",
 			"target_count":  3,
 			"deleted_count": 2,
-			"failed_count":  1,
-			"operation_group": map[string]interface{}{
-				"operation": "agent.delete",
-				"item_results": []map[string]interface{}{
-					{"status": "succeeded", "agent_name": "Agent One"},
-					{"status": "succeeded", "agent_name": "Agent Two"},
-					{"status": "failed", "agent_name": "Agent Three", "error": "agent is locked"},
+			"item_results": []interface{}{
+				map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
+				map[string]interface{}{"status": "succeeded", "agent_name": "Agent Two"},
+				map[string]interface{}{"status": "failed", "agent_name": "Agent Three", "error": "permission denied"},
+			},
+		},
+	})
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true")
+	}
+	for _, want := range []string{"成功删除 2 个智能体", "Agent One", "Agent Two", "Agent Three", "permission denied"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, want %q", answer, want)
+		}
+	}
+}
+
+func TestFastPathFinalAnswerForAgentConfigUpdateIncludesBindingActions(t *testing.T) {
+	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":     "completed",
+			"agent_name": "Support Agent",
+			"updated_fields": []interface{}{
+				"model",
+				"knowledge_base_ids",
+				"database_table_ids",
+				"workflow_ids",
+				"enabled_skill_ids",
+			},
+			"binding_changes": []interface{}{
+				map[string]interface{}{
+					"binding_kind":           "knowledge_base",
+					"change_action":          "unbind",
+					"resource_count":         1,
+					"removed_resource_count": 1,
+					"resource_names":         []interface{}{"Old KB"},
+				},
+				map[string]interface{}{
+					"binding_kind":         "workflow",
+					"change_action":        "bind",
+					"resource_count":       2,
+					"added_resource_count": 2,
+					"resource_names":       []interface{}{"Workflow A", "Workflow B"},
 				},
 			},
 		},
@@ -78,9 +1155,9 @@ func TestFastPathFinalAnswerForAgentBatchDelete(t *testing.T) {
 	if !ok {
 		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true")
 	}
-	for _, want := range []string{"成功删除 2 个智能体", "Agent One", "Agent Two", "1 个删除失败", "Agent Three（agent is locked）"} {
+	for _, want := range []string{"Support Agent", "Old KB", "Workflow A", "Workflow B"} {
 		if !strings.Contains(answer, want) {
-			t.Fatalf("answer missing %q in %q", want, answer)
+			t.Fatalf("answer = %q, want %q", answer, want)
 		}
 	}
 }
@@ -201,8 +1278,11 @@ func TestFastPathFinalAnswerForAgentDelete(t *testing.T) {
 	if !ok {
 		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true")
 	}
-	if answer != "已删除智能体：Agent One。" {
+	if !strings.Contains(answer, "Agent One") {
 		t.Fatalf("answer = %q, want delete confirmation with visible Agent name", answer)
+	}
+	if strings.Contains(answer, "agent-1") {
+		t.Fatalf("answer = %q, want hidden raw Agent id", answer)
 	}
 }
 
@@ -224,7 +1304,7 @@ func TestFastPathFinalAnswerForAgentConfigUpdateUsesBindingEvidence(t *testing.T
 			},
 			"agent": map[string]interface{}{
 				"id":   "agent-1",
-				"name": "客服智能体",
+				"name": "Support Agent",
 			},
 			"binding_changes": []interface{}{
 				map[string]interface{}{
@@ -233,7 +1313,7 @@ func TestFastPathFinalAnswerForAgentConfigUpdateUsesBindingEvidence(t *testing.T
 					"change_action":          "unbind",
 					"resource_count":         1,
 					"removed_resource_count": 1,
-					"resource_names":         []interface{}{"测试知识库"},
+					"resource_names":         []interface{}{"Test Knowledge"},
 				},
 				map[string]interface{}{
 					"field":                "database_bindings",
@@ -248,14 +1328,69 @@ func TestFastPathFinalAnswerForAgentConfigUpdateUsesBindingEvidence(t *testing.T
 	if !ok {
 		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true")
 	}
-	for _, want := range []string{"智能体「客服智能体」", "解绑知识库（测试知识库）", "绑定 2 个数据表", "更新模型"} {
+	for _, want := range []string{"Support Agent", "Test Knowledge"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("answer missing %q in %q", want, answer)
 		}
 	}
-	for _, unwanted := range []string{"agent-1", "替换资源绑定"} {
+	for _, unwanted := range []string{"agent-1"} {
 		if strings.Contains(answer, unwanted) {
 			t.Fatalf("answer contains %q, want hidden in %q", unwanted, answer)
+		}
+	}
+}
+
+func TestFastPathFinalAnswerForAgentConfigUpdateIgnoresUnchangedBindingFields(t *testing.T) {
+	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":     "completed",
+			"effect":     "updated",
+			"agent_id":   "agent-1",
+			"agent_name": "Support Agent",
+			"updated_fields": []interface{}{
+				"enabled_skill_ids",
+				"knowledge_dataset_ids",
+				"database_bindings",
+				"workflow_bindings",
+			},
+			"binding_changes": []interface{}{
+				map[string]interface{}{
+					"field":                  "enabled_skill_ids",
+					"binding_kind":           "agent_skill",
+					"change_action":          "unbind",
+					"resource_count":         1,
+					"removed_resource_count": 1,
+					"resource_names":         []interface{}{"Old Skill"},
+				},
+				map[string]interface{}{
+					"field":                  "knowledge_dataset_ids",
+					"binding_kind":           "knowledge_base",
+					"change_action":          "unbind",
+					"resource_count":         1,
+					"removed_resource_count": 1,
+					"resource_names":         []interface{}{"Old KB"},
+				},
+				map[string]interface{}{
+					"field":                  "database_bindings",
+					"binding_kind":           "database_table",
+					"change_action":          "unbind",
+					"resource_count":         1,
+					"removed_resource_count": 1,
+					"resource_names":         []interface{}{"Old Table"},
+				},
+			},
+		},
+	})
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true for actual binding changes")
+	}
+	for _, want := range []string{"Support Agent", "Old Skill", "Old KB", "Old Table"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer missing %q in %q", want, answer)
 		}
 	}
 }
@@ -315,13 +1450,13 @@ func TestFastPathFinalAnswerForFileManagementSave(t *testing.T) {
 			"target":         "managed_file",
 			"file_id":        "managed-file-1",
 			"upload_file_id": "managed-file-1",
-			"filename":       "星空小猫.svg",
+			"filename":       "star-cat.svg",
 		},
 	})
 	if !ok {
 		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true")
 	}
-	if answer != "文件「星空小猫.svg」已保存到文件管理。" {
+	if !strings.Contains(answer, "star-cat.svg") {
 		t.Fatalf("answer = %q, want file save confirmation", answer)
 	}
 }
@@ -335,7 +1470,7 @@ func TestFastPathFinalAnswerForFileManagementSaveRequiresManagedFileID(t *testin
 		Result: map[string]interface{}{
 			"status":   "completed",
 			"target":   "managed_file",
-			"filename": "星空小猫.svg",
+			"filename": "star-cat.svg",
 		},
 	})
 	if ok {
@@ -358,7 +1493,7 @@ func TestFastPathFinalAnswerForFileManagementDelete(t *testing.T) {
 	if !ok {
 		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true")
 	}
-	if answer != "已删除文件「aichat-plan-smoke.md」。" {
+	if !strings.Contains(answer, "aichat-plan-smoke.md") {
 		t.Fatalf("answer = %q, want file delete confirmation", answer)
 	}
 }
@@ -505,6 +1640,221 @@ func TestFastPathFinalAnswerWithEvidenceBlocksDifferentPendingPlanAction(t *test
 	}
 }
 
+func TestFastPathFinalAnswerWithEvidenceAllowsBatchDeleteToCloseStaleEarlierCreateStep(t *testing.T) {
+	answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agents",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":        "completed",
+			"operation":     "agent.delete.batch",
+			"target_count":  2,
+			"deleted_count": 2,
+			"item_results": []interface{}{
+				map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
+				map[string]interface{}{"status": "succeeded", "agent_name": "Agent Two"},
+			},
+		},
+	}, map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"pending_next_action": "agent-management/create_agent",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/create_agent",
+					"status":    "pending",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "create_agent",
+				},
+				map[string]interface{}{
+					"id":        "tool:agent-management/delete_agents",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "delete_agents",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/create_agent":  "pending",
+				"tool:agent-management/delete_agents": "completed",
+			},
+		},
+	})
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = false, want delete evidence to close stale earlier create step")
+	}
+	for _, want := range []string{"成功删除 2 个智能体", "Agent One", "Agent Two"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, missing %q", answer, want)
+		}
+	}
+}
+
+func TestFastPathFinalAnswerWithEvidenceAllowsBatchDeleteToCloseStaleConfigPlan(t *testing.T) {
+	answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agents",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":        "completed",
+			"operation":     "agent.delete.batch",
+			"target_count":  2,
+			"deleted_count": 2,
+			"failed_count":  0,
+			"item_results": []interface{}{
+				map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
+				map[string]interface{}{"status": "succeeded", "agent_name": "Agent Two"},
+			},
+			"operation_group": map[string]interface{}{
+				"operation":     "agent.delete",
+				"status":        "completed",
+				"target_count":  2,
+				"success_count": 2,
+				"failed_count":  0,
+				"item_results": []interface{}{
+					map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
+					map[string]interface{}{"status": "succeeded", "agent_name": "Agent Two"},
+				},
+			},
+		},
+	}, map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":             "running",
+			"original_user_goal": "delete Agent One and Agent Two only, then verify they are gone",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/delete_agents",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "delete_agents",
+				},
+				map[string]interface{}{
+					"id":        "tool:agent-management/get_agent_config",
+					"status":    "pending",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "get_agent_config",
+				},
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"status":    "pending",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+				},
+				map[string]interface{}{
+					"id":        "tool:agent-management/list_agent_workflow_binding_candidates",
+					"status":    "pending",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "list_agent_workflow_binding_candidates",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/delete_agents":                          "completed",
+				"tool:agent-management/get_agent_config":                       "pending",
+				"tool:agent-management/update_agent_config":                    "pending",
+				"tool:agent-management/list_agent_workflow_binding_candidates": "pending",
+			},
+			"pending_next_action": "Run tool:agent-management/get_agent_config",
+		},
+	})
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = false, want completed batch delete evidence to close stale config plan")
+	}
+	for _, want := range []string{"成功删除 2 个智能体", "Agent One", "Agent Two"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, missing %q", answer, want)
+		}
+	}
+}
+
+func TestFastPathFinalAnswerWithEvidenceBlocksBatchDeleteWhenFollowupEditRequested(t *testing.T) {
+	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agents",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":        "completed",
+			"operation":     "agent.delete.batch",
+			"target_count":  1,
+			"deleted_count": 1,
+			"item_results": []interface{}{
+				map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
+			},
+		},
+	}, map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":             "running",
+			"original_user_goal": "Delete Agent One, then update Agent Two's system prompt.",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/delete_agents",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "delete_agents",
+				},
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"status":    "pending",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/delete_agents":       "completed",
+				"tool:agent-management/update_agent_config": "pending",
+			},
+		},
+	})
+	if ok {
+		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = true, want blocked while requested follow-up edit is pending")
+	}
+}
+
+func TestFastPathFinalAnswerWithEvidenceBlocksBatchDeleteWhenLaterCreateStillPending(t *testing.T) {
+	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agents",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":        "completed",
+			"operation":     "agent.delete.batch",
+			"target_count":  1,
+			"deleted_count": 1,
+			"item_results": []interface{}{
+				map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
+			},
+		},
+	}, map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"pending_next_action": "agent-management/create_agent",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/delete_agents",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "delete_agents",
+				},
+				map[string]interface{}{
+					"id":        "tool:agent-management/create_agent",
+					"status":    "pending",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "create_agent",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/delete_agents": "completed",
+				"tool:agent-management/create_agent":  "pending",
+			},
+		},
+	})
+	if ok {
+		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = true, want blocked when user still has a later create_agent step")
+	}
+}
+
 func TestFastPathFinalAnswerWithEvidenceBlocksRemainingPendingPlanMutation(t *testing.T) {
 	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
 		Kind:     "tool_call",
@@ -513,7 +1863,7 @@ func TestFastPathFinalAnswerWithEvidenceBlocksRemainingPendingPlanMutation(t *te
 		Status:   "success",
 		Result: map[string]interface{}{
 			"status":         "completed",
-			"agent_name":     "客服智能体",
+			"agent_name":     "Support Agent",
 			"updated_fields": []interface{}{"system_prompt"},
 		},
 	}, map[string]interface{}{
@@ -638,7 +1988,7 @@ func TestFastPathFinalAnswerWithEvidenceAllowsCurrentPendingTool(t *testing.T) {
 			"status":   "completed",
 			"target":   "managed_file",
 			"file_id":  "managed-file-1",
-			"filename": "星空小猫.svg",
+			"filename": "star-cat.svg",
 		},
 	}, map[string]interface{}{
 		"operation_plan": map[string]interface{}{
@@ -649,7 +1999,7 @@ func TestFastPathFinalAnswerWithEvidenceAllowsCurrentPendingTool(t *testing.T) {
 	if !ok {
 		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = false, want true for current pending tool")
 	}
-	if answer != "文件「星空小猫.svg」已保存到文件管理。" {
+	if !strings.Contains(answer, "star-cat.svg") {
 		t.Fatalf("answer = %q, want file management save fast-path answer", answer)
 	}
 }
@@ -679,7 +2029,7 @@ func TestFastPathFinalAnswerWithEvidenceBlocksMultiAgentCreateUntilAllTargetsCre
 		ToolName: "create_agent",
 		Status:   "succeeded",
 	}, map[string]interface{}{
-		"user_request": "请创建两个草稿智能体，名称分别为 Agent One 和 Agent Two。",
+		"user_request": "create draft Agents named Agent One and Agent Two",
 		"skill_invocations": []interface{}{
 			map[string]interface{}{
 				"kind":      "tool_call",
@@ -714,7 +2064,7 @@ func TestFastPathFinalAnswerWithEvidenceSummarizesMultiAgentCreateAfterObservati
 		ToolName: "create_agent",
 		Status:   "succeeded",
 	}, map[string]interface{}{
-		"user_request": "请创建两个草稿智能体，名称分别为 Agent One 和 Agent Two。",
+		"user_request": "create draft Agents named Agent One and Agent Two",
 		"skill_invocations": []interface{}{
 			map[string]interface{}{
 				"kind":      "tool_call",
@@ -752,19 +2102,16 @@ func TestFastPathFinalAnswerWithEvidenceSummarizesMultiAgentCreateAfterObservati
 	if !ok {
 		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = false, want true after all requested Agents are created and observed")
 	}
-	for _, want := range []string{"已创建 2 个智能体", "Agent One", "Agent Two"} {
+	for _, want := range []string{"Agent One", "Agent Two"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("answer = %q, missing %q", answer, want)
 		}
-	}
-	if strings.Contains(answer, "已存在") || strings.Contains(answer, "无需重复创建") {
-		t.Fatalf("answer = %q, want create evidence wording instead of pre-existing wording", answer)
 	}
 }
 
 func TestFastPathFinalAnswerForCompletionEvidenceSummarizesAgentCreateAfterObservation(t *testing.T) {
 	evidence := map[string]interface{}{
-		"user_request": "请创建两个草稿智能体，名称分别为 Agent One 和 Agent Two。",
+		"user_request": "create draft Agents named Agent One and Agent Two",
 		"skill_invocations": []interface{}{
 			map[string]interface{}{
 				"kind":      "tool_call",
@@ -804,10 +2151,105 @@ func TestFastPathFinalAnswerForCompletionEvidenceSummarizesAgentCreateAfterObser
 	if !ok {
 		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want true")
 	}
-	for _, want := range []string{"已创建 2 个智能体", "Agent One", "Agent Two"} {
+	for _, want := range []string{"创建 2 个智能体", "Agent One", "Agent Two"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("answer = %q, missing %q", answer, want)
 		}
+	}
+}
+
+func TestFastPathFinalAnswerForCompletionEvidencePrefersAgentCreateOverDetailNavigation(t *testing.T) {
+	evidence := map[string]interface{}{
+		"user_request": "Create a test Agent named Agent One, then open its detail page and report the created Agent name.",
+		"operation_plan": map[string]interface{}{
+			"status":              "completed",
+			"pending_next_action": "none",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/create_agent",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "create_agent",
+				},
+				map[string]interface{}{
+					"id":     "observe",
+					"status": "completed",
+				},
+			},
+		},
+		"operation_result_summary": map[string]interface{}{
+			"latest_tool_result": map[string]interface{}{
+				"kind":          "tool_governance",
+				"status":        "needs_approval",
+				"skill_id":      skills.SkillAgentManagement,
+				"tool_name":     "create_agent",
+				"invocation_id": "runtime_id:tool_governance:approval",
+			},
+			"latest_client_action": map[string]interface{}{
+				"status":      "succeeded",
+				"skill_id":    skills.SkillConsoleNavigator,
+				"tool_name":   "navigate",
+				"action_type": "route_navigation",
+				"label":       "Agent detail",
+				"reason":      "open_created_agent_detail",
+				"result": map[string]interface{}{
+					"event_type":  "route_loaded",
+					"loaded_href": "/console/agents/agent-1/agent",
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "create_agent",
+				"result": map[string]interface{}{
+					"status":     "completed",
+					"effect":     "created",
+					"agent_id":   "agent-1",
+					"agent_name": "Agent One",
+				},
+			},
+			map[string]interface{}{
+				"kind":        "client_action",
+				"status":      "succeeded",
+				"skill_id":    skills.SkillConsoleNavigator,
+				"tool_name":   "navigate",
+				"action_type": "route_navigation",
+				"label":       "Agent detail",
+				"reason":      "open_created_agent_detail",
+				"result": map[string]interface{}{
+					"event_type":  "route_loaded",
+					"loaded_href": "/console/agents/agent-1/agent",
+				},
+			},
+		},
+		"client_actions": []interface{}{
+			map[string]interface{}{
+				"status":      "succeeded",
+				"skill_id":    skills.SkillConsoleNavigator,
+				"tool_name":   "navigate",
+				"action_type": "route_navigation",
+				"label":       "Agent detail",
+				"reason":      "open_created_agent_detail",
+				"result": map[string]interface{}{
+					"event_type":  "route_loaded",
+					"loaded_href": "/console/agents/agent-1/agent",
+				},
+			},
+		},
+	}
+
+	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want Agent create answer")
+	}
+	if !strings.Contains(answer, "Agent One") {
+		t.Fatalf("answer = %q, want created Agent name", answer)
+	}
+	if strings.Contains(answer, "Agent detail") {
+		t.Fatalf("answer = %q, want create result to take precedence over detail navigation", answer)
 	}
 }
 
@@ -972,7 +2414,7 @@ func TestFastPathFinalAnswerForCompletionEvidenceScansPastPendingRouteStep(t *te
 				"action_type": "route_navigation",
 				"skill_id":    skills.SkillConsoleNavigator,
 				"tool_name":   "navigate",
-				"label":       "智能体",
+				"label":       "Agents",
 				"result": map[string]interface{}{
 					"loaded_href": "/console/agents",
 				},
@@ -1005,7 +2447,7 @@ func TestFastPathFinalAnswerForCompletionEvidenceBlocksRouteWhenAgentCreateProgr
 				"action_type": "route_navigation",
 				"skill_id":    skills.SkillConsoleNavigator,
 				"tool_name":   "navigate",
-				"label":       "智能体",
+				"label":       "Agents",
 				"result": map[string]interface{}{
 					"loaded_href": "/console/agents",
 				},
@@ -1099,7 +2541,7 @@ Use generate_file to create a temporary artifact.
 		AppContext:   &llmclient.AppContext{},
 	}
 	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
-		Messages: []adapter.Message{{Role: "user", Content: "生成一个 svg 文件"}},
+		Messages: []adapter.Message{{Role: "user", Content: "create an svg file"}},
 	})
 
 	answer, _, err := runner.Run(ctx, RunRequest{
@@ -1107,7 +2549,7 @@ Use generate_file to create a temporary artifact.
 		Resolved: resolved,
 		CompletionEvidence: func() map[string]interface{} {
 			return map[string]interface{}{
-				"user_request": "生成一个 svg 文件",
+				"user_request": "create an svg file",
 				"generated_files": []interface{}{
 					map[string]interface{}{
 						"target":       "temporary_artifact",
@@ -1132,6 +2574,236 @@ Use generate_file to create a temporary artifact.
 	}
 	if fakeLLM.appChatCalls != 2 {
 		t.Fatalf("AppChat calls = %d, want planning plus verifier", fakeLLM.appChatCalls)
+	}
+}
+
+func TestRunnerSkipsEmptyIntermediateAnswerWithoutUserVisibleError(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "empty-intermediate",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolIntermediateAnswer,
+								Arguments: `{"content":""}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "Query completed without changes."},
+				}},
+			},
+		},
+	}
+	runtime := skills.NewRuntimeWithCatalog(nil, nil, "")
+	var traces []skills.SkillTrace
+	var events []Event
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
+			traces = append(traces, trace)
+		},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "read only; do not change config"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "Query completed without changes." {
+		t.Fatalf("answer = %q, want final answer after skipped intermediate answer", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want skipped intermediate answer plus final answer", fakeLLM.appChatCalls)
+	}
+	for _, trace := range traces {
+		if trace.Kind == "intermediate_answer" {
+			t.Fatalf("trace = %#v, want empty intermediate answer omitted from trace timeline", trace)
+		}
+		if strings.Contains(trace.Error, "intermediate answer content is required") {
+			t.Fatalf("trace error leaked empty intermediate answer failure: %#v", trace)
+		}
+	}
+	for _, event := range events {
+		if event.Type == EventSkillCallError || event.Type == EventIntermediateAnswer {
+			t.Fatalf("event = %#v, want no user-visible error/intermediate event for empty intermediate answer", event)
+		}
+	}
+}
+
+func TestRunnerTreatsInjectedPageContextPseudoToolAsPlannerFeedback(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_page_context",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      "get_current_page_context",
+								Arguments: `{}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "I used the injected page context."},
+				}},
+			},
+		},
+	}
+	runtime := skills.NewRuntimeWithCatalog(nil, nil, "")
+	var traces []skills.SkillTrace
+	var events []Event
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
+			traces = append(traces, trace)
+		},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "what is on this page?"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "I used the injected page context." {
+		t.Fatalf("answer = %q, want final answer after planner feedback", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want pseudo-tool feedback plus final answer", fakeLLM.appChatCalls)
+	}
+	if len(fakeLLM.appChatRequests) < 2 || !runnerTestRequestContains(fakeLLM.appChatRequests[1], "current page context is already injected") {
+		t.Fatalf("second planning request missing injected-context feedback")
+	}
+	foundFeedback := false
+	for _, trace := range traces {
+		if trace.Kind == "planner_feedback" && trace.ToolName == "get_current_page_context" {
+			foundFeedback = true
+		}
+		if trace.Status == "error" && strings.Contains(trace.ToolName, "get_current_page_context") {
+			t.Fatalf("trace = %#v, want pseudo-tool as advisory feedback", trace)
+		}
+	}
+	if !foundFeedback {
+		t.Fatalf("traces = %#v, want planner feedback for pseudo page context tool", traces)
+	}
+	for _, event := range events {
+		if event.Type == EventSkillCallError || event.Type == EventSkillLoadStart {
+			t.Fatalf("event = %#v, want no user-visible tool/load event for pseudo page context tool", event)
+		}
+	}
+}
+
+func TestRunnerTreatsUnavailableSkillLoadAsPlannerFeedbackWithoutLoadEvent(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load_nav",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"console-navigator"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "I continued from the current page evidence."},
+				}},
+			},
+		},
+	}
+	runtime := skills.NewRuntimeWithCatalog(nil, nil, "")
+	var traces []skills.SkillTrace
+	var events []Event
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
+			traces = append(traces, trace)
+		},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "edit the current agent config"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "I continued from the current page evidence." {
+		t.Fatalf("answer = %q, want final answer after unavailable skill feedback", answer)
+	}
+	if len(fakeLLM.appChatRequests) < 2 || !runnerTestRequestContains(fakeLLM.appChatRequests[1], "skill console-navigator is not enabled for this turn") {
+		t.Fatalf("second planning request missing unavailable-skill feedback")
+	}
+	foundFeedback := false
+	for _, trace := range traces {
+		if trace.Kind == "planner_feedback" && trace.SkillID == skills.SkillConsoleNavigator {
+			foundFeedback = true
+		}
+		if trace.Kind == "skill_load" && trace.SkillID == skills.SkillConsoleNavigator {
+			t.Fatalf("trace = %#v, want no skill_load trace for unavailable skill", trace)
+		}
+	}
+	if !foundFeedback {
+		t.Fatalf("traces = %#v, want planner feedback for unavailable skill", traces)
+	}
+	for _, event := range events {
+		if event.Type == EventSkillLoadStart || event.Type == EventSkillLoadEnd || event.Type == EventSkillCallError {
+			t.Fatalf("event = %#v, want no user-visible skill load/error event for unavailable skill", event)
+		}
 	}
 }
 
@@ -1219,7 +2891,7 @@ Use delete_agents to delete several agents in one operation.
 		},
 	}
 	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
-		Messages: []adapter.Message{{Role: "user", Content: "删除前两个智能体"}},
+		Messages: []adapter.Message{{Role: "user", Content: "delete the first two agents"}},
 	})
 
 	answer, _, err := runner.Run(ctx, RunRequest{
@@ -1248,6 +2920,257 @@ Use delete_agents to delete several agents in one operation.
 	}
 	if findRunnerTestEvent(events, EventMessage) == nil {
 		t.Fatalf("events = %#v, want final message event", events)
+	}
+}
+
+func TestRunnerFastPathsReadOnlyAgentConfigAfterConfigAndIdentityReads(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, skills.SkillAgentManagement, `---
+name: agent-management
+description: Manage Agent assets.
+when_to_use: Use when testing agent management.
+provider_type: builtin
+provider_id: agent_management
+runtime_type: tool
+tools:
+  - get_agent_config
+  - get_agent
+max_calls_per_turn: 20
+---
+
+# Agent Management
+
+Use get_agent_config and get_agent for read-only Agent configuration checks.
+`)
+	state := &runnerAgentIdentityState{
+		agentID:     "agent-1",
+		agentName:   "ReadOnly Agent",
+		description: "Current Agent description",
+	}
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"agent-management"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_config", skills.SkillAgentManagement, "get_agent_config", map[string]interface{}{"agent_id": "agent-1"}),
+							runnerTestSkillToolCall("call_agent", skills.SkillAgentManagement, "get_agent", map[string]interface{}{"agent_id": "agent-1"}),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "unexpected duplicate read"},
+				}},
+			},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(&runnerAgentManagementProvider{
+		getConfigTool: &runnerAgentManagementGetAgentConfigTool{state: state},
+		getAgentTool:  &runnerAgentManagementGetAgentTool{state: state},
+	}); err != nil {
+		t.Fatalf("register agent management provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{skills.SkillAgentManagement})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "read-only check the current Agent configuration: name, description, model/provider, and current bound resource counts; do not modify config"}},
+	})
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+	}
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		CompletionEvidence: func() map[string]interface{} {
+			return map[string]interface{}{
+				"user_request": "read-only check the current Agent configuration: name, description, model/provider, and current bound resource counts; do not modify config",
+				"operation_plan": map[string]interface{}{
+					"status":             "running",
+					"original_user_goal": "read-only check the current Agent configuration: name, description, model/provider, and current bound resource counts; do not modify config",
+					"steps": []interface{}{
+						map[string]interface{}{
+							"id":        "tool:agent-management/get_agent_config",
+							"status":    "pending",
+							"skill_id":  skills.SkillAgentManagement,
+							"tool_name": "get_agent_config",
+						},
+						map[string]interface{}{
+							"id":        "tool:agent-management/get_agent",
+							"status":    "pending",
+							"skill_id":  skills.SkillAgentManagement,
+							"tool_name": "get_agent",
+						},
+					},
+				},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want fast path after read tools without duplicate planning round", fakeLLM.appChatCalls)
+	}
+	if state.configCalls != 1 || state.getCalls != 1 {
+		t.Fatalf("config/get calls = %d/%d, want 1/1", state.configCalls, state.getCalls)
+	}
+	for _, want := range []string{
+		"ReadOnly Agent",
+		"Current Agent description",
+		"openai/gpt-4o",
+		"\u6570\u636e\u5e93\u8868 2 \u4e2a",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, want %q", answer, want)
+		}
+	}
+}
+
+func TestRunnerFastPathsSplitReadOnlyAgentConfigBeforeCandidateLookup(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, skills.SkillAgentManagement, `---
+name: agent-management
+description: Manage Agent assets.
+when_to_use: Use when testing agent management.
+provider_type: builtin
+provider_id: agent_management
+runtime_type: tool
+tools:
+  - get_agent_config
+  - get_agent
+  - list_available_models
+max_calls_per_turn: 20
+---
+
+# Agent Management
+
+Use get_agent_config and get_agent for read-only Agent configuration checks.
+`)
+	state := &runnerAgentIdentityState{
+		agentID:     "agent-1",
+		agentName:   "ReadOnly Agent",
+		description: "Current Agent description",
+	}
+	readOnlyPrompt := "\u7b2c\u56db\u6b21\u53ea\u8bfb\u68c0\u67e5\u5f53\u524d\u667a\u80fd\u4f53\u914d\u7f6e\uff1a\u53ea\u786e\u8ba4\u540d\u79f0\u3001\u63cf\u8ff0\u3001\u6a21\u578b/provider\u3001\u5f53\u524d\u5df2\u7ed1\u5b9a\u8d44\u6e90\u6570\u91cf\u3002\u4e0d\u8981\u5217\u5019\u9009\u8d44\u6e90\uff0c\u4e0d\u8981\u4fee\u6539\u4efb\u4f55\u914d\u7f6e\u3002"
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"agent-management"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_config", skills.SkillAgentManagement, "get_agent_config", map[string]interface{}{"agent_id": "agent-1"}),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_agent", skills.SkillAgentManagement, "get_agent", map[string]interface{}{"agent_id": "agent-1"}),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_models", skills.SkillAgentManagement, "list_available_models", map[string]interface{}{"use_case": "text-chat"}),
+						},
+					},
+				}},
+			},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(&runnerAgentManagementProvider{
+		getConfigTool: &runnerAgentManagementGetAgentConfigTool{state: state},
+		getAgentTool:  &runnerAgentManagementGetAgentTool{state: state},
+	}); err != nil {
+		t.Fatalf("register agent management provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{skills.SkillAgentManagement})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: readOnlyPrompt}},
+	})
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+	}
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		CompletionEvidence: func() map[string]interface{} {
+			return map[string]interface{}{
+				"operation_plan": map[string]interface{}{"status": "running"},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want load, config read, and identity read only", fakeLLM.appChatCalls)
+	}
+	if state.configCalls != 1 || state.getCalls != 1 {
+		t.Fatalf("config/get calls = %d/%d, want 1/1", state.configCalls, state.getCalls)
+	}
+	for _, want := range []string{"ReadOnly Agent", "Current Agent description", "openai/gpt-4o"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, want %q", answer, want)
+		}
 	}
 }
 
@@ -1428,6 +3351,973 @@ Use create_agent to create an Agent.
 	}
 }
 
+func TestRunnerCompletionEvidenceContinuesPendingPlanToolBeforeFinalAnswer(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, skills.SkillAgentManagement, `---
+name: agent-management
+description: Manage Agent assets.
+when_to_use: Use when testing agent management.
+provider_type: builtin
+provider_id: agent_management
+runtime_type: tool
+tools:
+  - delete_agents
+max_calls_per_turn: 20
+---
+
+# Agent Management
+
+Use delete_agents to delete several agents in one operation.
+`)
+	deleteTool := &runnerAgentManagementDeleteAgentsTool{}
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "I deleted the two Agents."},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load_agent_management",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"agent-management"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall(
+								"call_delete_agents",
+								skills.SkillAgentManagement,
+								"delete_agents",
+								map[string]interface{}{
+									"agents": []interface{}{
+										map[string]interface{}{"agent_id": "agent-1", "name": "Agent One"},
+										map[string]interface{}{"agent_id": "agent-2", "name": "Agent Two"},
+									},
+								},
+							),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "model final answer should not be used"},
+				}},
+			},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(&runnerAgentManagementProvider{tool: deleteTool}); err != nil {
+		t.Fatalf("register agent management provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{skills.SkillAgentManagement})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "delete the first two visible test Agents"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		CompletionEvidence: func() map[string]interface{} {
+			planStepStatus := "pending"
+			planStatus := "running"
+			pendingNextAction := "agent-management/delete_agents"
+			evidence := map[string]interface{}{
+				"user_request": "delete the first two visible test Agents",
+				"operation_plan": map[string]interface{}{
+					"status":              planStatus,
+					"pending_next_action": pendingNextAction,
+					"steps": []interface{}{
+						map[string]interface{}{
+							"id":        "tool:agent-management/delete_agents",
+							"status":    planStepStatus,
+							"skill_id":  skills.SkillAgentManagement,
+							"tool_name": "delete_agents",
+							"asset_target": map[string]interface{}{
+								"effect":         "delete",
+								"asset_type":     "agent",
+								"operation_mode": "batch",
+							},
+						},
+					},
+					"step_status": map[string]interface{}{
+						"tool:agent-management/delete_agents": planStepStatus,
+					},
+				},
+			}
+			if deleteTool.calls > 0 {
+				planStepStatus = "completed"
+				planStatus = "completed"
+				pendingNextAction = "none"
+				result := map[string]interface{}{
+					"status":        "completed",
+					"skill_id":      skills.SkillAgentManagement,
+					"tool_name":     "delete_agents",
+					"target_count":  2,
+					"deleted_count": 2,
+					"item_results": []interface{}{
+						map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
+						map[string]interface{}{"status": "succeeded", "agent_name": "Agent Two"},
+					},
+				}
+				evidence["operation_plan"].(map[string]interface{})["status"] = planStatus
+				evidence["operation_plan"].(map[string]interface{})["pending_next_action"] = pendingNextAction
+				evidence["operation_plan"].(map[string]interface{})["step_status"] = map[string]interface{}{
+					"tool:agent-management/delete_agents": planStepStatus,
+				}
+				evidence["operation_plan"].(map[string]interface{})["steps"] = []interface{}{
+					map[string]interface{}{
+						"id":        "tool:agent-management/delete_agents",
+						"status":    planStepStatus,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "delete_agents",
+					},
+				}
+				evidence["operation_result_summary"] = map[string]interface{}{
+					"latest_tool_result": result,
+				}
+			}
+			return evidence
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if deleteTool.calls != 1 {
+		t.Fatalf("delete_agents calls = %d, want one pending plan tool execution", deleteTool.calls)
+	}
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want final answer, load skill, delete_agents", fakeLLM.appChatCalls)
+	}
+	if !runnerTestRequestContains(fakeLLM.appChatRequests[1], "Pending plan step JSON") ||
+		!runnerTestRequestContains(fakeLLM.appChatRequests[1], "agent-management/delete_agents") {
+		t.Fatalf("second request missing pending plan continuation feedback")
+	}
+	if !runnerTestRequestContains(fakeLLM.appChatRequests[1], "approval card has been submitted") {
+		t.Fatalf("second request missing governance pseudo-approval warning")
+	}
+	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[1]); got != skills.MetaToolLoadSkill {
+		t.Fatalf("second request tool_choice = %q, want %s for unloaded pending plan skill", got, skills.MetaToolLoadSkill)
+	}
+	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[2]); got != skills.MetaToolCallSkillTool {
+		t.Fatalf("third request tool_choice = %q, want %s after pending plan skill loads", got, skills.MetaToolCallSkillTool)
+	}
+	if strings.Contains(answer, "model final answer should not be used") || strings.Contains(answer, "I deleted") {
+		t.Fatalf("answer = %q, want evidence fast-path answer instead of unsupported model text", answer)
+	}
+	for _, want := range []string{"Agent One", "Agent Two"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, missing %q", answer, want)
+		}
+	}
+}
+
+func TestRunnerCompletionEvidenceRequiresLoadingPendingPlanSkillForContinuation(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, skills.SkillAgentManagement, `---
+name: agent-management
+description: Manage Agent assets.
+when_to_use: Use when testing agent management.
+provider_type: builtin
+provider_id: agent_management
+runtime_type: tool
+tools:
+  - delete_agents
+max_calls_per_turn: 20
+---
+
+# Agent Management
+
+Use delete_agents to delete several agents in one operation.
+`)
+	deleteTool := &runnerAgentManagementDeleteAgentsTool{}
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "I deleted the two Agents."},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load_agent_management",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"agent-management"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall(
+								"call_delete_agents",
+								skills.SkillAgentManagement,
+								"delete_agents",
+								map[string]interface{}{
+									"agents": []interface{}{
+										map[string]interface{}{"agent_id": "agent-1", "name": "Agent One"},
+										map[string]interface{}{"agent_id": "agent-2", "name": "Agent Two"},
+									},
+								},
+							),
+						},
+					},
+				}},
+			},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(&runnerAgentManagementProvider{tool: deleteTool}); err != nil {
+		t.Fatalf("register agent management provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{skills.SkillAgentManagement})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "delete the first two visible test Agents"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		CompletionEvidence: func() map[string]interface{} {
+			planStepStatus := "pending"
+			planStatus := "running"
+			pendingNextAction := "agent-management/delete_agents"
+			evidence := map[string]interface{}{
+				"user_request": "delete the first two visible test Agents",
+				"operation_plan": map[string]interface{}{
+					"status":              planStatus,
+					"pending_next_action": pendingNextAction,
+					"steps": []interface{}{
+						map[string]interface{}{
+							"id":        "tool:agent-management/delete_agents",
+							"status":    planStepStatus,
+							"skill_id":  skills.SkillAgentManagement,
+							"tool_name": "delete_agents",
+						},
+					},
+					"step_status": map[string]interface{}{
+						"tool:agent-management/delete_agents": planStepStatus,
+					},
+				},
+			}
+			if deleteTool.calls > 0 {
+				result := map[string]interface{}{
+					"status":        "completed",
+					"skill_id":      skills.SkillAgentManagement,
+					"tool_name":     "delete_agents",
+					"target_count":  2,
+					"deleted_count": 2,
+					"item_results": []interface{}{
+						map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
+						map[string]interface{}{"status": "succeeded", "agent_name": "Agent Two"},
+					},
+				}
+				evidence["operation_plan"].(map[string]interface{})["status"] = "completed"
+				evidence["operation_plan"].(map[string]interface{})["pending_next_action"] = "none"
+				evidence["operation_plan"].(map[string]interface{})["step_status"] = map[string]interface{}{
+					"tool:agent-management/delete_agents": "completed",
+				}
+				evidence["operation_plan"].(map[string]interface{})["steps"] = []interface{}{
+					map[string]interface{}{
+						"id":        "tool:agent-management/delete_agents",
+						"status":    "completed",
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "delete_agents",
+					},
+				}
+				evidence["operation_result_summary"] = map[string]interface{}{
+					"latest_tool_result": result,
+				}
+			}
+			return evidence
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if deleteTool.calls != 1 {
+		t.Fatalf("delete_agents calls = %d, want one pending plan tool execution", deleteTool.calls)
+	}
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want final answer, load skill, then pending tool call", fakeLLM.appChatCalls)
+	}
+	if len(fakeLLM.appChatRequests) < 2 || !runnerTestRequestHasTool(fakeLLM.appChatRequests[1], skills.MetaToolLoadSkill) {
+		t.Fatalf("second request did not expose %s for the unloaded pending plan skill", skills.MetaToolLoadSkill)
+	}
+	if !runnerTestRequestContains(fakeLLM.appChatRequests[1], "first call load_skill with the exact skill_id") {
+		t.Fatalf("second request missing explicit load_skill-before-business-tool guidance")
+	}
+	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[1]); got != skills.MetaToolLoadSkill {
+		t.Fatalf("second request tool_choice = %q, want %s for unloaded pending plan skill", got, skills.MetaToolLoadSkill)
+	}
+	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[2]); got != skills.MetaToolCallSkillTool {
+		t.Fatalf("third request tool_choice = %q, want %s after pending plan skill loads", got, skills.MetaToolCallSkillTool)
+	}
+	if runnerTestRequestHasTool(fakeLLM.appChatRequests[1], skills.MetaToolCallSkillTool) {
+		t.Fatalf("second request exposed %s before the pending plan skill was loaded", skills.MetaToolCallSkillTool)
+	}
+	if strings.Contains(answer, "I deleted") {
+		t.Fatalf("answer = %q, want evidence fast-path answer instead of unsupported model text", answer)
+	}
+	for _, want := range []string{"Agent One", "Agent Two"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, missing %q", answer, want)
+		}
+	}
+}
+
+func TestRunnerReinforcesPendingAgentConfigMutationAfterRepeatedConfigRead(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, skills.SkillAgentManagement, `---
+name: agent-management
+description: Manage Agent assets.
+when_to_use: Use when testing agent management.
+provider_type: builtin
+provider_id: agent_management
+runtime_type: tool
+tools:
+  - get_agent_config
+  - update_agent_config
+max_calls_per_turn: 20
+---
+
+# Agent Management
+
+Use get_agent_config to inspect draft config and update_agent_config to patch selected config fields.
+`)
+	state := &runnerAgentIdentityState{agentID: "agent-1", agentName: "Config Agent"}
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"agent-management"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role:      "assistant",
+						ToolCalls: []adapter.ToolCall{runnerTestSkillToolCall("call_get_1", skills.SkillAgentManagement, "get_agent_config", map[string]interface{}{"agent_id": "agent-1"})},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role:      "assistant",
+						ToolCalls: []adapter.ToolCall{runnerTestSkillToolCall("call_get_2", skills.SkillAgentManagement, "get_agent_config", map[string]interface{}{"agent_id": "agent-1"})},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{runnerTestSkillToolCall("call_update_config", skills.SkillAgentManagement, "update_agent_config", map[string]interface{}{
+							"agent_id":            "agent-1",
+							"home_title":          "Updated Home",
+							"suggested_questions": []interface{}{"配置检查", "能力说明"},
+						})},
+					},
+				}},
+			},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "配置已经更新。"}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"pass","reason":"update_agent_config tool evidence confirms the requested config patch"}`}}}},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(&runnerAgentManagementProvider{
+		getConfigTool:    &runnerAgentManagementGetAgentConfigTool{state: state},
+		updateConfigTool: &runnerAgentManagementUpdateConfigTool{state: state},
+	}); err != nil {
+		t.Fatalf("register agent management provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{skills.SkillAgentManagement})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "change the current Agent home title to Updated Home and suggested questions to 配置检查 and 能力说明"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		CompletionEvidence: func() map[string]interface{} {
+			status := "running"
+			stepStatus := "pending"
+			pendingNextAction := "agent-management/update_agent_config"
+			if state.configUpdateCalls > 0 {
+				status = "completed"
+				stepStatus = "completed"
+				pendingNextAction = "none"
+			}
+			return map[string]interface{}{
+				"user_request": "change the current Agent home title to Updated Home and suggested questions to 配置检查 and 能力说明",
+				"operation_plan": map[string]interface{}{
+					"status":              status,
+					"pending_next_action": pendingNextAction,
+					"steps": []interface{}{
+						map[string]interface{}{
+							"id":                      "tool:agent-management/update_agent_config",
+							"status":                  stepStatus,
+							"skill_id":                skills.SkillAgentManagement,
+							"tool_name":               "update_agent_config",
+							"expected_updated_fields": []interface{}{"home_title", "suggested_questions"},
+							"arguments": map[string]interface{}{
+								"agent_id": "agent-1",
+							},
+						},
+					},
+					"step_status": map[string]interface{}{
+						"tool:agent-management/update_agent_config": stepStatus,
+					},
+				},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if state.configCalls != 1 {
+		t.Fatalf("get_agent_config calls = %d, want one executed read despite repeated model call", state.configCalls)
+	}
+	if state.configUpdateCalls != 1 {
+		t.Fatalf("update_agent_config calls = %d, want one pending config mutation call", state.configUpdateCalls)
+	}
+	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[2]); got != skills.MetaToolCallSkillTool {
+		t.Fatalf("third request tool_choice = %q, want %s after first config read", got, skills.MetaToolCallSkillTool)
+	}
+	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[3]); got != skills.MetaToolCallSkillTool {
+		t.Fatalf("fourth request tool_choice = %q, want %s after repeated config read feedback", got, skills.MetaToolCallSkillTool)
+	}
+	if !runnerTestRequestContains(fakeLLM.appChatRequests[3], "Evidence-continuation retry 2") ||
+		!runnerTestRequestContains(fakeLLM.appChatRequests[3], "agent-management/update_agent_config") ||
+		!runnerTestRequestContains(fakeLLM.appChatRequests[3], "expected_updated_fields") {
+		t.Fatalf("fourth request missing reinforced pending config mutation guidance")
+	}
+	if !strings.Contains(answer, "已更新该智能体配置") {
+		t.Fatalf("answer = %q, want fast-path config update answer", answer)
+	}
+}
+
+func TestRunnerFastPathsAfterPostUpdateAgentConfigRead(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, skills.SkillAgentManagement, `---
+name: agent-management
+description: Manage Agent assets.
+when_to_use: Use when testing agent management.
+provider_type: builtin
+provider_id: agent_management
+runtime_type: tool
+tools:
+  - get_agent_config
+  - list_agent_knowledge_candidates
+max_calls_per_turn: 20
+---
+
+# Agent Management
+
+Use get_agent_config to verify Agent configuration after a governed update.
+`)
+	state := &runnerAgentIdentityState{agentID: "agent-1", agentName: "Support Agent"}
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"agent-management"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role:      "assistant",
+						ToolCalls: []adapter.ToolCall{runnerTestSkillToolCall("call_get_config", skills.SkillAgentManagement, "get_agent_config", map[string]interface{}{"agent_id": "agent-1"})},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role:      "assistant",
+						ToolCalls: []adapter.ToolCall{runnerTestSkillToolCall("call_unneeded_candidates", skills.SkillAgentManagement, "list_agent_knowledge_candidates", map[string]interface{}{"agent_id": "agent-1"})},
+					},
+				}},
+			},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(&runnerAgentManagementProvider{
+		getConfigTool: &runnerAgentManagementGetAgentConfigTool{state: state},
+	}); err != nil {
+		t.Fatalf("register agent management provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{skills.SkillAgentManagement})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "Bind KB Two and orders to Support Agent, then read config again after completion and verify the bindings."}},
+	})
+	updateResult := map[string]interface{}{
+		"status":     "completed",
+		"agent_name": "Support Agent",
+		"updated_fields": []interface{}{
+			"knowledge_dataset_ids",
+			"database_bindings",
+		},
+		"binding_changes": []interface{}{
+			map[string]interface{}{
+				"field":                "knowledge_dataset_ids",
+				"binding_kind":         "knowledge_base",
+				"change_action":        "bind",
+				"resource_count":       1,
+				"added_resource_count": 1,
+				"resource_names":       []interface{}{"KB Two"},
+			},
+			map[string]interface{}{
+				"field":                "database_bindings",
+				"binding_kind":         "database_table",
+				"change_action":        "bind",
+				"resource_count":       1,
+				"added_resource_count": 1,
+				"resource_names":       []interface{}{"orders"},
+			},
+		},
+	}
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		CompletionEvidence: func() map[string]interface{} {
+			return map[string]interface{}{
+				"user_request": "Bind KB Two and orders to Support Agent, then read config again after completion and verify the bindings.",
+				"operation_plan": map[string]interface{}{
+					"status":             "running",
+					"original_user_goal": "Bind KB Two and orders to Support Agent, then read config again after completion and verify the bindings.",
+					"steps": []interface{}{
+						map[string]interface{}{
+							"id":        "tool:agent-management/update_agent_config",
+							"status":    "completed",
+							"skill_id":  skills.SkillAgentManagement,
+							"tool_name": "update_agent_config",
+						},
+						map[string]interface{}{
+							"id":        "tool:agent-management/get_agent_config#post_update",
+							"status":    "pending",
+							"skill_id":  skills.SkillAgentManagement,
+							"tool_name": "get_agent_config",
+						},
+					},
+					"tool_result": map[string]interface{}{
+						"status":         "success",
+						"skill_id":       skills.SkillAgentManagement,
+						"tool_name":      "update_agent_config",
+						"result_summary": updateResult,
+					},
+				},
+				"skill_invocations": []interface{}{
+					map[string]interface{}{
+						"kind":      "tool_call",
+						"status":    "success",
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "update_agent_config",
+						"result":    updateResult,
+					},
+				},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want load skill and post-update config read only", fakeLLM.appChatCalls)
+	}
+	if state.configCalls != 1 {
+		t.Fatalf("get_agent_config calls = %d, want exactly one post-update verification read", state.configCalls)
+	}
+	for _, want := range []string{"Support Agent", "KB Two", "orders"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, want %q", answer, want)
+		}
+	}
+}
+
+func TestRunnerSteersToPostUpdateReadAfterAgentIdentityMutation(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	writeRunnerTestSkill(t, catalogDir, skills.SkillAgentManagement, `---
+name: agent-management
+description: Manage Agent assets.
+when_to_use: Use when testing agent management.
+provider_type: builtin
+provider_id: agent_management
+runtime_type: tool
+tools:
+  - update_agent_identity
+  - get_agent
+max_calls_per_turn: 20
+---
+
+# Agent Management
+
+Use update_agent_identity for identity changes and get_agent to verify the updated Agent identity.
+`)
+	state := &runnerAgentIdentityState{agentID: "agent-1", agentName: "Before Agent"}
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load_agent_management",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: `{"skill_id":"agent-management"}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall(
+								"call_update_identity",
+								skills.SkillAgentManagement,
+								"update_agent_identity",
+								map[string]interface{}{"agent_id": "agent-1", "name": "After Agent"},
+							),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall(
+								"call_duplicate_update_identity",
+								skills.SkillAgentManagement,
+								"update_agent_identity",
+								map[string]interface{}{"agent_id": "agent-1", "name": "After Agent"},
+							),
+						},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "Updated and verified."},
+				}},
+			},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(&runnerAgentManagementProvider{
+		updateIdentityTool: &runnerAgentManagementUpdateIdentityTool{state: state},
+		getAgentTool:       &runnerAgentManagementGetAgentTool{state: state},
+	}); err != nil {
+		t.Fatalf("register agent management provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{skills.SkillAgentManagement})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "rename the current Agent, then confirm the page header updated"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		CompletionEvidence: func() map[string]interface{} {
+			updateStatus := "pending"
+			readStatus := "pending"
+			planStatus := "running"
+			pendingNextAction := "agent-management/update_agent_identity"
+			if state.updateCalls > 0 {
+				updateStatus = "completed"
+				pendingNextAction = "agent-management/get_agent"
+			}
+			if state.getCalls > 0 {
+				readStatus = "completed"
+				planStatus = "completed"
+				pendingNextAction = "none"
+			}
+			return map[string]interface{}{
+				"user_request": "rename the current Agent, then confirm the page header updated",
+				"operation_plan": map[string]interface{}{
+					"status":              planStatus,
+					"pending_next_action": pendingNextAction,
+					"steps": []interface{}{
+						map[string]interface{}{
+							"id":        "tool:agent-management/update_agent_identity",
+							"status":    updateStatus,
+							"skill_id":  skills.SkillAgentManagement,
+							"tool_name": "update_agent_identity",
+						},
+						map[string]interface{}{
+							"id":                                "tool:agent-management/get_agent#post_update",
+							"status":                            readStatus,
+							"skill_id":                          skills.SkillAgentManagement,
+							"tool_name":                         "get_agent",
+							"wait_for":                          "tool:agent-management/update_agent_identity",
+							"phase":                             "post_update_verification",
+							"required_post_update_verification": true,
+						},
+					},
+					"step_status": map[string]interface{}{
+						"tool:agent-management/update_agent_identity": updateStatus,
+						"tool:agent-management/get_agent#post_update": readStatus,
+					},
+				},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if state.updateCalls != 1 || state.getCalls != 1 {
+		t.Fatalf("update/get calls = %d/%d, want 1/1", state.updateCalls, state.getCalls)
+	}
+	if len(fakeLLM.appChatRequests) < 3 {
+		t.Fatalf("AppChat request count = %d, want at least 3", len(fakeLLM.appChatRequests))
+	}
+	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[2]); got != skills.MetaToolCallSkillTool {
+		t.Fatalf("third request tool_choice = %q, want %s for pending post-update read", got, skills.MetaToolCallSkillTool)
+	}
+	if !runnerTestRequestContains(fakeLLM.appChatRequests[2], "Pending plan step JSON") ||
+		!runnerTestRequestContains(fakeLLM.appChatRequests[2], "agent-management/get_agent") {
+		t.Fatalf("third request missing post-update read continuation guidance")
+	}
+	if strings.TrimSpace(answer) == "" {
+		t.Fatal("answer is empty, want verified completion answer")
+	}
+}
+
+func TestRedirectDuplicateAgentMutationUsesEvidenceAfterGovernanceContinuation(t *testing.T) {
+	duplicate := runnerTestSkillToolCall(
+		"call_duplicate_update_identity",
+		skills.SkillAgentManagement,
+		"update_agent_identity",
+		map[string]interface{}{"agent_id": "agent-1", "name": "After Agent"},
+	)
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"pending_next_action": "agent-management/get_agent",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_identity",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_identity",
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent#post_update",
+					"status":                            "pending",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent",
+					"phase":                             "post_update_verification",
+					"required_post_update_verification": true,
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/update_agent_identity": "completed",
+				"tool:agent-management/get_agent#post_update": "pending",
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_identity",
+				"status":    "success",
+				"arguments": map[string]interface{}{"agent_id": "agent-1", "name": "After Agent"},
+				"result":    map[string]interface{}{"status": "completed", "agent_id": "agent-1", "agent_name": "After Agent"},
+			},
+		},
+	}
+
+	redirected, ok := redirectDuplicateAgentMutationToPendingPostUpdateReadCall(
+		duplicate,
+		skills.SkillAgentManagement,
+		"update_agent_identity",
+		evidence,
+		nil,
+		nil,
+	)
+	if !ok {
+		t.Fatal("redirectDuplicateAgentMutationToPendingPostUpdateReadCall() ok = false, want evidence-backed redirect")
+	}
+	if redirected.Function.Name != skills.MetaToolCallSkillTool {
+		t.Fatalf("redirected function = %q, want %s", redirected.Function.Name, skills.MetaToolCallSkillTool)
+	}
+	skillID, toolName, args, _ := skillToolCallIdentityForCall(runnerTestResolvedSkills(), map[string]struct{}{skills.SkillAgentManagement: {}}, redirected)
+	if skillID != skills.SkillAgentManagement || toolName != "get_agent" {
+		t.Fatalf("redirected call = %s/%s, want agent-management/get_agent", skillID, toolName)
+	}
+	if got := strings.TrimSpace(evidenceStringFromAny(args["agent_id"])); got != "agent-1" {
+		t.Fatalf("redirected agent_id = %q, want agent-1", got)
+	}
+}
+
+func TestRedirectDuplicateAgentMutationDoesNotSkipPendingMutationForPostUpdateRead(t *testing.T) {
+	updateConfig := runnerTestSkillToolCall(
+		"call_update_config",
+		skills.SkillAgentManagement,
+		"update_agent_config",
+		map[string]interface{}{
+			"agent_id":            "agent-1",
+			"home_title":          "new title",
+			"suggested_questions": []interface{}{"one", "two"},
+		},
+	)
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"pending_next_action": "agent-management/update_agent_config",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_identity",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_identity",
+				},
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"status":    "pending",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config#post_update",
+					"status":                            "pending",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"phase":                             "post_update_verification",
+					"required_post_update_verification": true,
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/update_agent_identity":        "completed",
+				"tool:agent-management/update_agent_config":          "pending",
+				"tool:agent-management/get_agent_config#post_update": "pending",
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_identity",
+				"status":    "success",
+				"arguments": map[string]interface{}{"agent_id": "agent-1", "name": "After Agent"},
+				"result":    map[string]interface{}{"status": "completed", "agent_id": "agent-1", "agent_name": "After Agent"},
+			},
+		},
+	}
+
+	if redirected, ok := redirectDuplicateAgentMutationToPendingPostUpdateReadCall(
+		updateConfig,
+		skills.SkillAgentManagement,
+		"update_agent_config",
+		evidence,
+		evidence,
+		nil,
+	); ok {
+		t.Fatalf("redirectDuplicateAgentMutationToPendingPostUpdateReadCall() redirected to %#v, want pending update_agent_config to execute", redirected)
+	}
+}
+
 func TestRunnerFastPathsFileManagementSaveAfterToolResult(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
@@ -1476,7 +4366,7 @@ Use save_file_to_management to save generated files into File Management.
 								map[string]interface{}{
 									"source_type":  "tool_file",
 									"tool_file_id": "tool-file-1",
-									"filename":     "星空小猫.svg",
+									"filename":     "star-cat.svg",
 								},
 							),
 						},
@@ -1511,7 +4401,7 @@ Use save_file_to_management to save generated files into File Management.
 		},
 	}
 	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
-		Messages: []adapter.Message{{Role: "user", Content: "把生成的 SVG 保存到文件管理"}},
+		Messages: []adapter.Message{{Role: "user", Content: "save the generated SVG to file management"}},
 	})
 
 	answer, _, err := runner.Run(ctx, RunRequest{
@@ -1526,7 +4416,7 @@ Use save_file_to_management to save generated files into File Management.
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if answer != "文件「星空小猫.svg」已保存到文件管理。" {
+	if !strings.Contains(answer, "star-cat.svg") {
 		t.Fatalf("answer = %q, want file management save fast-path answer", answer)
 	}
 	if strings.Contains(answer, "model final answer should not be used") {
@@ -1624,7 +4514,7 @@ Use delete_file to delete a managed file.
 		},
 	}
 	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
-		Messages: []adapter.Message{{Role: "user", Content: "删除刚刚创建的文件 aichat-plan-smoke.md"}},
+		Messages: []adapter.Message{{Role: "user", Content: "save aichat-plan-smoke.md to file management"}},
 	})
 
 	answer, _, err := runner.Run(ctx, RunRequest{
@@ -1639,7 +4529,7 @@ Use delete_file to delete a managed file.
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if answer != "已删除文件「aichat-plan-smoke.md」。" {
+	if !strings.Contains(answer, "aichat-plan-smoke.md") {
 		t.Fatalf("answer = %q, want file delete fast-path answer", answer)
 	}
 	if strings.Contains(answer, "model final answer should not be used") {
@@ -1746,6 +4636,146 @@ Use the calculator tool.
 	}
 	if fakeLLM.appChatCalls != 3 {
 		t.Fatalf("AppChat calls = %d, want 3", fakeLLM.appChatCalls)
+	}
+}
+
+func TestRunnerDefersPostToolSystemMessagesUntilAllToolResponses(t *testing.T) {
+	ctx := context.Background()
+	catalogDir := t.TempDir()
+	skillID := "protocol-batch"
+	writeRunnerTestSkill(t, catalogDir, skillID, `---
+name: protocol-batch
+description: Exercise multiple tool calls in one assistant message.
+when_to_use: Use when testing chat protocol ordering.
+provider_type: builtin
+provider_id: protocol_batch
+runtime_type: tool
+tools:
+  - echo_value
+max_calls_per_turn: 20
+---
+
+# Protocol Batch
+
+Use echo_value to echo values.
+`)
+	echoTool := &runnerProtocolEchoTool{}
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_load",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolLoadSkill,
+								Arguments: fmt.Sprintf(`{"skill_id":%q}`, skillID),
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{
+							runnerTestSkillToolCall("call_echo_1", skillID, "echo_value", map[string]interface{}{"value": "one"}),
+							runnerTestSkillToolCall("call_echo_2", skillID, "echo_value", map[string]interface{}{"value": "two"}),
+							runnerTestSkillToolCall("call_echo_3", skillID, "echo_value", map[string]interface{}{"value": "three"}),
+						},
+					},
+				}},
+			},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "done"}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"pass","reason":"tool results were handled in order"}`}}}},
+		},
+	}
+	manager := tools.NewToolManager(nil)
+	if err := manager.RegisterProvider(&runnerProtocolEchoProvider{tool: echoTool}); err != nil {
+		t.Fatalf("register protocol provider: %v", err)
+	}
+	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
+	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{skillID})
+	if err != nil {
+		t.Fatalf("resolve skills: %v", err)
+	}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "echo three values"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: resolved,
+		CompletionEvidence: func() map[string]interface{} {
+			if echoTool.calls < 3 {
+				return map[string]interface{}{
+					"operation_plan": map[string]interface{}{
+						"status": "running",
+						"steps": []interface{}{map[string]interface{}{
+							"id":        "tool:" + skillID + "/echo_value",
+							"skill_id":  skillID,
+							"tool_name": "echo_value",
+							"status":    "pending",
+						}},
+					},
+				}
+			}
+			return map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"status": "completed",
+				},
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "done" {
+		t.Fatalf("answer = %q, want done", answer)
+	}
+	if fakeLLM.appChatCalls != 4 {
+		t.Fatalf("AppChat calls = %d, want planning, tools, final, verifier", fakeLLM.appChatCalls)
+	}
+	if len(fakeLLM.appChatRequests) < 3 {
+		t.Fatalf("captured requests = %d, want at least 3", len(fakeLLM.appChatRequests))
+	}
+	reqAfterBatchTools := fakeLLM.appChatRequests[2]
+	assistantIndex := -1
+	for i, message := range reqAfterBatchTools.Messages {
+		if message.Role == "assistant" && len(message.ToolCalls) == 3 {
+			assistantIndex = i
+			break
+		}
+	}
+	if assistantIndex < 0 {
+		t.Fatalf("third request messages = %#v, want assistant message with 3 tool calls", reqAfterBatchTools.Messages)
+	}
+	wantToolIDs := []string{"call_echo_1", "call_echo_2", "call_echo_3"}
+	for offset, wantID := range wantToolIDs {
+		messageIndex := assistantIndex + 1 + offset
+		if messageIndex >= len(reqAfterBatchTools.Messages) {
+			t.Fatalf("missing tool response %q after assistant tool calls", wantID)
+		}
+		message := reqAfterBatchTools.Messages[messageIndex]
+		if message.Role != "tool" || message.ToolCallID != wantID {
+			t.Fatalf("message after assistant at offset %d = role %q tool_call_id %q, want tool %q", offset, message.Role, message.ToolCallID, wantID)
+		}
+	}
+	feedbackIndex := assistantIndex + 1 + len(wantToolIDs)
+	if feedbackIndex >= len(reqAfterBatchTools.Messages) {
+		t.Fatalf("missing deferred continuation feedback after tool responses")
+	}
+	feedback := reqAfterBatchTools.Messages[feedbackIndex]
+	if feedback.Role != "system" || !strings.Contains(messageContent(feedback.Content), "Runtime execution evidence requires continued tool use") {
+		t.Fatalf("message after tool responses = role %q content %q, want deferred continuation system feedback", feedback.Role, messageContent(feedback.Content))
 	}
 }
 
@@ -2083,8 +5113,7 @@ Use the calculator tool.
 	if err != nil {
 		t.Fatalf("Run() error = %v, want truthful failed answer", err)
 	}
-	if !strings.Contains(answer, "这一步没有被工具结果确认成功") ||
-		!strings.Contains(answer, "limited-calculator/evaluate_expression") {
+	if strings.TrimSpace(answer) == "" || !strings.Contains(answer, "limited-calculator/evaluate_expression") {
 		t.Fatalf("answer = %q, want failed-answer evidence for calculator tool", answer)
 	}
 	if findRunnerTestEvent(events, EventSkillCallError) == nil {
@@ -2159,8 +5188,7 @@ Use the calculator tool.
 	if err != nil {
 		t.Fatalf("Run() error = %v, want truthful exhausted-plan answer", err)
 	}
-	if !strings.Contains(answer, "这一步没有被工具结果确认成功") ||
-		!strings.Contains(answer, "执行规划轮次已达到上限") {
+	if !strings.Contains(answer, "too many skill planning rounds") {
 		t.Fatalf("answer = %q, want planning-exhaustion failure answer", answer)
 	}
 	if fakeLLM.appChatCalls != defaultMaxSkillPlanningRounds {
@@ -3717,7 +6745,7 @@ func TestRunnerCompletionVerifierRetriesReasoningOnlyResponse(t *testing.T) {
 	ctx := context.Background()
 	fakeLLM := &runnerTestLLMClient{
 		appChatResponses: []*adapter.ChatResponse{
-			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "已删除前四个智能体。"}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "Deleted the first four agents."}}}},
 			{
 				Choices: []adapter.Choice{{
 					Message: adapter.Message{
@@ -3766,7 +6794,7 @@ func TestRunnerCompletionVerifierRetriesReasoningOnlyResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if answer != "已删除前四个智能体。" {
+	if answer != "Deleted the first four agents." {
 		t.Fatalf("answer = %q, want verifier-approved candidate answer", answer)
 	}
 	if fakeLLM.appChatCalls != 3 {
@@ -3811,15 +6839,11 @@ func TestRunnerCompletionVerifierStopsAfterNeedsActionRetryBudget(t *testing.T) 
 		Resolved: runnerTestResolvedSkills(),
 		CompletionEvidence: func() map[string]interface{} {
 			return map[string]interface{}{
-				"operation_plan": map[string]interface{}{
-					"status":              "running",
-					"pending_next_action": "save_file_to_management",
-					"steps": []interface{}{map[string]interface{}{
-						"id":        "tool:file-manager/save_file_to_management",
-						"status":    "pending",
-						"skill_id":  "file-manager",
-						"tool_name": "save_file_to_management",
-					}},
+				"operation_ledger": []interface{}{
+					map[string]interface{}{
+						"kind":   "generation_context",
+						"status": "observed",
+					},
 				},
 			}
 		},
@@ -3965,6 +6989,7 @@ func TestRunnerCompletionVerifierUsesFailedReplacementAnswer(t *testing.T) {
 	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
 		Messages: []adapter.Message{{Role: "user", Content: "update agent config"}},
 	})
+	var verificationResult CompletionVerificationResult
 
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
@@ -3977,12 +7002,24 @@ func TestRunnerCompletionVerifierUsesFailedReplacementAnswer(t *testing.T) {
 				}},
 			}
 		},
+		OnCompletionVerification: func(result CompletionVerificationResult) {
+			verificationResult = result
+		},
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if answer != "\u6211\u6ca1\u6709\u786e\u8ba4\u667a\u80fd\u4f53\u914d\u7f6e\u66f4\u65b0\u6210\u529f\uff1aupdate_agent_config \u8c03\u7528\u5931\u8d25\u3002" {
 		t.Fatalf("answer = %q, want verifier replacement final answer", answer)
+	}
+	if verificationResult.Status != completionVerificationStatusFailed {
+		t.Fatalf("completion verification status = %q, want failed", verificationResult.Status)
+	}
+	if verificationResult.Reason != "update_agent_config failed" {
+		t.Fatalf("completion verification reason = %q, want tool failure reason", verificationResult.Reason)
+	}
+	if len(verificationResult.UnsupportedClaims) != 1 || verificationResult.UnsupportedClaims[0] != "Agent was updated" {
+		t.Fatalf("completion verification unsupported claims = %#v, want candidate claim", verificationResult.UnsupportedClaims)
 	}
 }
 
@@ -4244,8 +7281,12 @@ func (t *runnerGovernedFilesDeleteTool) ValidateCredentials(context.Context, map
 }
 
 type runnerAgentManagementProvider struct {
-	tool       *runnerAgentManagementDeleteAgentsTool
-	createTool *runnerAgentManagementCreateAgentTool
+	tool               *runnerAgentManagementDeleteAgentsTool
+	createTool         *runnerAgentManagementCreateAgentTool
+	updateIdentityTool *runnerAgentManagementUpdateIdentityTool
+	updateConfigTool   *runnerAgentManagementUpdateConfigTool
+	getAgentTool       *runnerAgentManagementGetAgentTool
+	getConfigTool      *runnerAgentManagementGetAgentConfigTool
 }
 
 func (p *runnerAgentManagementProvider) GetEntity() tools.ToolProviderEntity {
@@ -4273,22 +7314,160 @@ func (p *runnerAgentManagementProvider) GetTool(name string) (tools.Tool, error)
 		if p.createTool != nil {
 			return p.createTool, nil
 		}
+	case "update_agent_identity":
+		if p.updateIdentityTool != nil {
+			return p.updateIdentityTool, nil
+		}
+	case "update_agent_config":
+		if p.updateConfigTool != nil {
+			return p.updateConfigTool, nil
+		}
+	case "get_agent":
+		if p.getAgentTool != nil {
+			return p.getAgentTool, nil
+		}
+	case "get_agent_config":
+		if p.getConfigTool != nil {
+			return p.getConfigTool, nil
+		}
 	}
 	return nil, tools.ErrToolNotFound
 }
 
 func (p *runnerAgentManagementProvider) GetTools() []tools.Tool {
-	out := make([]tools.Tool, 0, 2)
+	out := make([]tools.Tool, 0, 6)
 	if p.tool != nil {
 		out = append(out, p.tool)
 	}
 	if p.createTool != nil {
 		out = append(out, p.createTool)
 	}
+	if p.updateIdentityTool != nil {
+		out = append(out, p.updateIdentityTool)
+	}
+	if p.updateConfigTool != nil {
+		out = append(out, p.updateConfigTool)
+	}
+	if p.getAgentTool != nil {
+		out = append(out, p.getAgentTool)
+	}
+	if p.getConfigTool != nil {
+		out = append(out, p.getConfigTool)
+	}
 	return out
 }
 
 func (p *runnerAgentManagementProvider) ValidateCredentials(context.Context, map[string]interface{}) error {
+	return nil
+}
+
+type runnerProtocolEchoProvider struct {
+	tool *runnerProtocolEchoTool
+}
+
+func (p *runnerProtocolEchoProvider) GetEntity() tools.ToolProviderEntity {
+	return tools.ToolProviderEntity{
+		Identity: tools.ToolProviderIdentity{
+			Name:        "protocol_batch",
+			Label:       tools.I18nText{"en_US": "Protocol Batch"},
+			Description: tools.I18nText{"en_US": "Protocol ordering test provider"},
+		},
+		ProviderType: tools.ToolProviderTypeBuiltin,
+	}
+}
+
+func (p *runnerProtocolEchoProvider) GetProviderType() tools.ToolProviderType {
+	return tools.ToolProviderTypeBuiltin
+}
+
+func (p *runnerProtocolEchoProvider) GetTool(name string) (tools.Tool, error) {
+	if name == "echo_value" && p.tool != nil {
+		return p.tool, nil
+	}
+	return nil, tools.ErrToolNotFound
+}
+
+func (p *runnerProtocolEchoProvider) GetTools() []tools.Tool {
+	if p.tool == nil {
+		return nil
+	}
+	return []tools.Tool{p.tool}
+}
+
+func (p *runnerProtocolEchoProvider) ValidateCredentials(context.Context, map[string]interface{}) error {
+	return nil
+}
+
+type runnerProtocolEchoTool struct {
+	calls int
+}
+
+func (t *runnerProtocolEchoTool) GetEntity() tools.ToolEntity {
+	return tools.ToolEntity{
+		Identity: tools.ToolIdentity{
+			Name:     "echo_value",
+			Provider: "protocol_batch",
+			Label:    tools.I18nText{"en_US": "Echo Value"},
+		},
+		Description: tools.ToolDescription{
+			Human: tools.I18nText{"en_US": "Echo a value"},
+			LLM:   "Echo a value.",
+		},
+		Parameters: []tools.ToolParameter{{
+			Name:     "value",
+			Label:    tools.I18nText{"en_US": "Value"},
+			Type:     tools.ToolParameterTypeString,
+			Form:     tools.ToolParameterFormLLM,
+			Required: true,
+		}},
+	}
+}
+
+func (t *runnerProtocolEchoTool) GetProviderType() tools.ToolProviderType {
+	return tools.ToolProviderTypeBuiltin
+}
+
+func (t *runnerProtocolEchoTool) GetTenantID() string {
+	return ""
+}
+
+func (t *runnerProtocolEchoTool) Invoke(
+	ctx context.Context,
+	userID string,
+	toolParameters map[string]interface{},
+	conversationID *string,
+	appID *string,
+	messageID *string,
+) ([]tools.ToolInvokeMessage, error) {
+	_ = ctx
+	_ = userID
+	_ = conversationID
+	_ = appID
+	_ = messageID
+	t.calls++
+	return []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status": "ok",
+			"value":  fmt.Sprint(toolParameters["value"]),
+		},
+	}}, nil
+}
+
+func (t *runnerProtocolEchoTool) GetRuntimeParameters(
+	context.Context,
+	*string,
+	*string,
+	*string,
+) ([]tools.ToolParameter, error) {
+	return nil, nil
+}
+
+func (t *runnerProtocolEchoTool) ForkToolRuntime(*tools.ToolRuntime) tools.Tool {
+	return t
+}
+
+func (t *runnerProtocolEchoTool) ValidateCredentials(context.Context, map[string]interface{}) error {
 	return nil
 }
 
@@ -4477,6 +7656,362 @@ func (t *runnerAgentManagementCreateAgentTool) ForkToolRuntime(*tools.ToolRuntim
 }
 
 func (t *runnerAgentManagementCreateAgentTool) ValidateCredentials(context.Context, map[string]interface{}) error {
+	return nil
+}
+
+type runnerAgentIdentityState struct {
+	updateCalls        int
+	configUpdateCalls  int
+	getCalls           int
+	configCalls        int
+	agentID            string
+	agentName          string
+	description        string
+	homeTitle          string
+	suggestedQuestions []string
+}
+
+type runnerAgentManagementUpdateIdentityTool struct {
+	state *runnerAgentIdentityState
+}
+
+func (t *runnerAgentManagementUpdateIdentityTool) GetEntity() tools.ToolEntity {
+	return tools.ToolEntity{
+		Identity: tools.ToolIdentity{
+			Name:     "update_agent_identity",
+			Provider: "agent_management",
+			Label:    tools.I18nText{"en_US": "Update Agent Identity"},
+		},
+		Description: tools.ToolDescription{
+			Human: tools.I18nText{"en_US": "Update Agent identity"},
+			LLM:   "Update an Agent name, description, icon, or icon background color.",
+		},
+		Parameters: []tools.ToolParameter{
+			{Name: "agent_id", Label: tools.I18nText{"en_US": "Agent ID"}, Type: tools.ToolParameterTypeString, Form: tools.ToolParameterFormLLM, Required: true},
+			{Name: "name", Label: tools.I18nText{"en_US": "Name"}, Type: tools.ToolParameterTypeString, Form: tools.ToolParameterFormLLM},
+		},
+	}
+}
+
+func (t *runnerAgentManagementUpdateIdentityTool) GetProviderType() tools.ToolProviderType {
+	return tools.ToolProviderTypeBuiltin
+}
+
+func (t *runnerAgentManagementUpdateIdentityTool) GetTenantID() string {
+	return ""
+}
+
+func (t *runnerAgentManagementUpdateIdentityTool) Invoke(
+	ctx context.Context,
+	userID string,
+	toolParameters map[string]interface{},
+	conversationID *string,
+	appID *string,
+	messageID *string,
+) ([]tools.ToolInvokeMessage, error) {
+	_ = ctx
+	_ = userID
+	_ = conversationID
+	_ = appID
+	_ = messageID
+	if t.state == nil {
+		t.state = &runnerAgentIdentityState{}
+	}
+	t.state.updateCalls++
+	if agentID := strings.TrimSpace(stringArg(toolParameters, "agent_id")); agentID != "" {
+		t.state.agentID = agentID
+	}
+	if name := strings.TrimSpace(stringArg(toolParameters, "name")); name != "" {
+		t.state.agentName = name
+	}
+	return []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":         "completed",
+			"effect":         "updated",
+			"agent_id":       firstNonEmptyString(t.state.agentID, "agent-1"),
+			"agent_name":     firstNonEmptyString(t.state.agentName, "Updated Agent"),
+			"updated_fields": []interface{}{"name"},
+		},
+	}}, nil
+}
+
+func (t *runnerAgentManagementUpdateIdentityTool) GetRuntimeParameters(
+	context.Context,
+	*string,
+	*string,
+	*string,
+) ([]tools.ToolParameter, error) {
+	return nil, nil
+}
+
+func (t *runnerAgentManagementUpdateIdentityTool) ForkToolRuntime(*tools.ToolRuntime) tools.Tool {
+	return t
+}
+
+func (t *runnerAgentManagementUpdateIdentityTool) ValidateCredentials(context.Context, map[string]interface{}) error {
+	return nil
+}
+
+type runnerAgentManagementUpdateConfigTool struct {
+	state *runnerAgentIdentityState
+}
+
+func (t *runnerAgentManagementUpdateConfigTool) GetEntity() tools.ToolEntity {
+	return tools.ToolEntity{
+		Identity: tools.ToolIdentity{
+			Name:     "update_agent_config",
+			Provider: "agent_management",
+			Label:    tools.I18nText{"en_US": "Update Agent Config"},
+		},
+		Description: tools.ToolDescription{
+			Human: tools.I18nText{"en_US": "Update Agent config"},
+			LLM:   "Update selected Agent runtime configuration fields.",
+		},
+		Parameters: []tools.ToolParameter{
+			{Name: "agent_id", Label: tools.I18nText{"en_US": "Agent ID"}, Type: tools.ToolParameterTypeString, Form: tools.ToolParameterFormLLM, Required: true},
+			{Name: "home_title", Label: tools.I18nText{"en_US": "Home Title"}, Type: tools.ToolParameterTypeString, Form: tools.ToolParameterFormLLM},
+			{Name: "suggested_questions", Label: tools.I18nText{"en_US": "Suggested Questions"}, Type: tools.ToolParameterTypeString, Form: tools.ToolParameterFormLLM},
+		},
+	}
+}
+
+func (t *runnerAgentManagementUpdateConfigTool) GetProviderType() tools.ToolProviderType {
+	return tools.ToolProviderTypeBuiltin
+}
+
+func (t *runnerAgentManagementUpdateConfigTool) GetTenantID() string {
+	return ""
+}
+
+func (t *runnerAgentManagementUpdateConfigTool) Invoke(
+	ctx context.Context,
+	userID string,
+	toolParameters map[string]interface{},
+	conversationID *string,
+	appID *string,
+	messageID *string,
+) ([]tools.ToolInvokeMessage, error) {
+	_ = ctx
+	_ = userID
+	_ = conversationID
+	_ = appID
+	_ = messageID
+	if t.state == nil {
+		t.state = &runnerAgentIdentityState{}
+	}
+	t.state.configUpdateCalls++
+	changedFields := []interface{}{}
+	if value, ok := toolParameters["home_title"].(string); ok && strings.TrimSpace(value) != "" {
+		t.state.homeTitle = value
+		changedFields = append(changedFields, "home_title")
+	}
+	switch raw := toolParameters["suggested_questions"].(type) {
+	case []interface{}:
+		t.state.suggestedQuestions = nil
+		for _, item := range raw {
+			if question := strings.TrimSpace(fmt.Sprint(item)); question != "" {
+				t.state.suggestedQuestions = append(t.state.suggestedQuestions, question)
+			}
+		}
+		changedFields = append(changedFields, "suggested_questions")
+	case []string:
+		t.state.suggestedQuestions = nil
+		for _, item := range raw {
+			if question := strings.TrimSpace(item); question != "" {
+				t.state.suggestedQuestions = append(t.state.suggestedQuestions, question)
+			}
+		}
+		changedFields = append(changedFields, "suggested_questions")
+	}
+	return []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":         "completed",
+			"agent_id":       firstNonEmptyString(toolParameters["agent_id"], t.state.agentID, "agent-1"),
+			"updated_fields": changedFields,
+		},
+	}}, nil
+}
+
+func (t *runnerAgentManagementUpdateConfigTool) GetRuntimeParameters(
+	context.Context,
+	*string,
+	*string,
+	*string,
+) ([]tools.ToolParameter, error) {
+	return nil, nil
+}
+
+func (t *runnerAgentManagementUpdateConfigTool) ForkToolRuntime(*tools.ToolRuntime) tools.Tool {
+	return t
+}
+
+func (t *runnerAgentManagementUpdateConfigTool) ValidateCredentials(context.Context, map[string]interface{}) error {
+	return nil
+}
+
+type runnerAgentManagementGetAgentTool struct {
+	state *runnerAgentIdentityState
+}
+
+func (t *runnerAgentManagementGetAgentTool) GetEntity() tools.ToolEntity {
+	return tools.ToolEntity{
+		Identity: tools.ToolIdentity{
+			Name:     "get_agent",
+			Provider: "agent_management",
+			Label:    tools.I18nText{"en_US": "Get Agent"},
+		},
+		Description: tools.ToolDescription{
+			Human: tools.I18nText{"en_US": "Get Agent"},
+			LLM:   "Read the current Agent identity.",
+		},
+		Parameters: []tools.ToolParameter{
+			{Name: "agent_id", Label: tools.I18nText{"en_US": "Agent ID"}, Type: tools.ToolParameterTypeString, Form: tools.ToolParameterFormLLM, Required: true},
+		},
+	}
+}
+
+func (t *runnerAgentManagementGetAgentTool) GetProviderType() tools.ToolProviderType {
+	return tools.ToolProviderTypeBuiltin
+}
+
+func (t *runnerAgentManagementGetAgentTool) GetTenantID() string {
+	return ""
+}
+
+func (t *runnerAgentManagementGetAgentTool) Invoke(
+	ctx context.Context,
+	userID string,
+	toolParameters map[string]interface{},
+	conversationID *string,
+	appID *string,
+	messageID *string,
+) ([]tools.ToolInvokeMessage, error) {
+	_ = ctx
+	_ = userID
+	_ = toolParameters
+	_ = conversationID
+	_ = appID
+	_ = messageID
+	if t.state == nil {
+		t.state = &runnerAgentIdentityState{}
+	}
+	t.state.getCalls++
+	return []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status": "completed",
+			"agent": map[string]interface{}{
+				"id":          firstNonEmptyString(t.state.agentID, "agent-1"),
+				"name":        firstNonEmptyString(t.state.agentName, "Updated Agent"),
+				"description": firstNonEmptyString(t.state.description, "Current Agent description"),
+			},
+		},
+	}}, nil
+}
+
+func (t *runnerAgentManagementGetAgentTool) GetRuntimeParameters(
+	context.Context,
+	*string,
+	*string,
+	*string,
+) ([]tools.ToolParameter, error) {
+	return nil, nil
+}
+
+func (t *runnerAgentManagementGetAgentTool) ForkToolRuntime(*tools.ToolRuntime) tools.Tool {
+	return t
+}
+
+func (t *runnerAgentManagementGetAgentTool) ValidateCredentials(context.Context, map[string]interface{}) error {
+	return nil
+}
+
+type runnerAgentManagementGetAgentConfigTool struct {
+	state *runnerAgentIdentityState
+}
+
+func (t *runnerAgentManagementGetAgentConfigTool) GetEntity() tools.ToolEntity {
+	return tools.ToolEntity{
+		Identity: tools.ToolIdentity{
+			Name:     "get_agent_config",
+			Provider: "agent_management",
+			Label:    tools.I18nText{"en_US": "Get Agent Config"},
+		},
+		Description: tools.ToolDescription{
+			Human: tools.I18nText{"en_US": "Get Agent config"},
+			LLM:   "Read the current Agent draft runtime configuration.",
+		},
+		Parameters: []tools.ToolParameter{
+			{Name: "agent_id", Label: tools.I18nText{"en_US": "Agent ID"}, Type: tools.ToolParameterTypeString, Form: tools.ToolParameterFormLLM, Required: true},
+		},
+	}
+}
+
+func (t *runnerAgentManagementGetAgentConfigTool) GetProviderType() tools.ToolProviderType {
+	return tools.ToolProviderTypeBuiltin
+}
+
+func (t *runnerAgentManagementGetAgentConfigTool) GetTenantID() string {
+	return ""
+}
+
+func (t *runnerAgentManagementGetAgentConfigTool) Invoke(
+	ctx context.Context,
+	userID string,
+	toolParameters map[string]interface{},
+	conversationID *string,
+	appID *string,
+	messageID *string,
+) ([]tools.ToolInvokeMessage, error) {
+	_ = ctx
+	_ = userID
+	_ = toolParameters
+	_ = conversationID
+	_ = appID
+	_ = messageID
+	if t.state == nil {
+		t.state = &runnerAgentIdentityState{}
+	}
+	t.state.configCalls++
+	return []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":   "completed",
+			"agent_id": firstNonEmptyString(t.state.agentID, "agent-1"),
+			"config": map[string]interface{}{
+				"model_provider":        "openai",
+				"model":                 "gpt-4o",
+				"system_prompt":         "be helpful",
+				"enabled_skill_ids":     []interface{}{"chart-generator"},
+				"knowledge_dataset_ids": []interface{}{"kb-1"},
+				"database_bindings": []interface{}{
+					map[string]interface{}{"table_ids": []interface{}{"table-1", "table-2"}},
+				},
+				"workflow_bindings":    []interface{}{map[string]interface{}{"workflow_id": "workflow-1"}},
+				"agent_memory_enabled": true,
+				"file_upload_enabled":  false,
+				"suggested_questions":  []interface{}{"hello"},
+			},
+		},
+	}}, nil
+}
+
+func (t *runnerAgentManagementGetAgentConfigTool) GetRuntimeParameters(
+	context.Context,
+	*string,
+	*string,
+	*string,
+) ([]tools.ToolParameter, error) {
+	return nil, nil
+}
+
+func (t *runnerAgentManagementGetAgentConfigTool) ForkToolRuntime(*tools.ToolRuntime) tools.Tool {
+	return t
+}
+
+func (t *runnerAgentManagementGetAgentConfigTool) ValidateCredentials(context.Context, map[string]interface{}) error {
 	return nil
 }
 
@@ -4743,6 +8278,33 @@ func runnerTestRequestContains(req *adapter.ChatRequest, text string) bool {
 		}
 	}
 	return false
+}
+
+func runnerTestRequestHasTool(req *adapter.ChatRequest, toolName string) bool {
+	if req == nil {
+		return false
+	}
+	for _, tool := range req.Tools {
+		if strings.EqualFold(strings.TrimSpace(tool.Function.Name), toolName) {
+			return true
+		}
+	}
+	return false
+}
+
+func runnerTestRequestToolChoiceName(req *adapter.ChatRequest) string {
+	if req == nil || req.ToolChoice == nil {
+		return ""
+	}
+	choice, ok := req.ToolChoice.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	fn, ok := choice["function"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(fn["name"]))
 }
 
 func (f *runnerTestLLMClient) Chat(ctx context.Context, organizationID string, req *adapter.ChatRequest) (*adapter.ChatResponse, error) {

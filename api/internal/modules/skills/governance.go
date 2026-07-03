@@ -103,6 +103,7 @@ func governanceAssetEnrichmentCandidates(params map[string]interface{}, runtimeA
 		return runtimeAssets
 	}
 	visibleAssets := append([]toolgovernance.AssetRef{}, assetRefsFromAny(params["console_files_visible_files"])...)
+	visibleAssets = append(visibleAssets, assetRefsFromAny(params["console_agents_recent_agent_updates"])...)
 	for _, key := range []string{
 		"console_agents_visible_agents",
 		"console_agent_visible_agents",
@@ -159,8 +160,9 @@ func enrichArgumentAssetRefs(argumentAssets []toolgovernance.AssetRef, runtimeAs
 		if !ok {
 			continue
 		}
-		if out[idx].Name == "" || matchedByID {
-			out[idx].Name = runtimeAsset.Name
+		runtimeName := strings.TrimSpace(runtimeAsset.Name)
+		if runtimeName != "" && (out[idx].Name == "" || matchedByID) {
+			out[idx].Name = runtimeName
 		}
 		if out[idx].WorkspaceID == "" {
 			out[idx].WorkspaceID = runtimeAsset.WorkspaceID

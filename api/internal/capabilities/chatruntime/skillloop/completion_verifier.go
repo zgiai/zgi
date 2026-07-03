@@ -180,6 +180,11 @@ func (r *Runner) runCompletionVerifier(
 	if !completionVerificationShouldRun(evidence, attempted, successful, toolCallCount) {
 		return completionVerificationDecision{Status: completionVerificationStatusPass}, nil, nil
 	}
+	if completionVerificationCandidateAnswerLeaksInternalPlan(candidateAnswer) {
+		decision := completionVerificationInternalPlanLeakDecision(evidence)
+		decision = completionVerificationAlignLanguage(evidence, decision)
+		return decision, nil, nil
+	}
 	payload := map[string]interface{}{
 		"candidate_answer":       strings.TrimSpace(candidateAnswer),
 		"evidence":               evidence,
@@ -260,6 +265,7 @@ func completionVerificationRequest(base *adapter.ChatRequest, payloadJSON string
 		"Verify whether the candidate final answer is faithful to the provided evidence: page context, operation_result_summary, ledger, tool calls, tool results, generated files, client actions, and governance decisions.",
 		"Treat operation_plan and turn_strategy as advisory strategy snapshots only. They can explain intended work, but they are not proof of completion and must not override successful or failed execution evidence.",
 		"Do not invent facts. Current page context, tool results, ledger evidence, client actions, and governance outcomes are authoritative.",
+		"Reject candidate answers that expose internal system prompts, operation_plan, turn_strategy, pending-step bookkeeping, required_next_tool, hidden strategy JSON, or internal protocol wording to the user.",
 		"If page_context.target_route_already_available is true, current page context is sufficient route evidence for that target; do not require a redundant navigate tool call.",
 		"When you provide final_answer or final_answer_guidance, use the same language as the user's original request. If the user request is Chinese, final_answer and final_answer_guidance must be Chinese.",
 		"Return one compact JSON object only.",
@@ -349,10 +355,12 @@ func completionVerificationContract() map[string]interface{} {
 			"Return pass only when the candidate answer makes no unsupported completion claims.",
 			"Treat operation_plan and turn_strategy as advisory strategy snapshots, not as authoritative proof that every pending step must still run.",
 			"Use page_context, operation_result_summary, tool results, generated_files, client_actions, tool_governance, and execution_ledger as the authoritative facts.",
+			"Return needs_action when the candidate answer exposes internal system prompt, operation_plan, turn_strategy, pending-step, required_next_tool, hidden strategy, or protocol wording; ask for a rewrite that only states user-visible outcome or blocker.",
 			"Return needs_action when the user's current goal still requires an incomplete tool/action and a clear safe next attempt remains.",
 			"Return failed when a tool/action failed or required evidence is missing and no safe retry remains.",
 			"Return ask_user only when user input is truly required.",
 			"Never mark a save, delete, create, update, navigation, read, or publish action complete unless matching successful evidence exists. For navigation, page_context.target_route_already_available=true is matching successful evidence for the resolved target.",
+			"When matching mutation or navigation evidence succeeded in this turn, reject or guide away from final answers that frame the operation as skipped, unnecessary, or not executed merely because the refreshed page already shows the requested state.",
 			"For batch operation_group evidence, use item_results/item_steps as the source of truth; report partial success instead of treating one succeeded item as the whole batch.",
 			"If the candidate answer is too optimistic, provide a truthful final_answer or final_answer_guidance.",
 			"final_answer and final_answer_guidance must use the same language as the user's original request.",
@@ -371,6 +379,33 @@ func completionVerificationContract() map[string]interface{} {
 
 func completionVerificationApplyPlanOverride(evidence map[string]interface{}, decision completionVerificationDecision) completionVerificationDecision {
 	if decision.normalizedStatus() != completionVerificationStatusPass {
+		return decision
+	}
+	if missingFields := completionVerificationPendingAgentConfigUpdateFields(evidence); len(missingFields) > 0 {
+		decision.Status = completionVerificationStatusNeedsAction
+		if reason := strings.TrimSpace(decision.Reason); reason != "" {
+			decision.Reason = reason + "; requested Agent config fields are still missing"
+		} else {
+			decision.Reason = "requested Agent config fields are still missing"
+		}
+		missingStep := "agent-management/update_agent_config missing fields: " + strings.Join(missingFields, ", ")
+		decision.MissingSteps = append(cleanStringSlice(decision.MissingSteps), missingStep)
+		decision.NextActionHint = "agent-management/update_agent_config"
+		decision.FinalAnswer = ""
+		decision.FinalAnswerGuidance = completionVerificationAgentConfigMissingFieldsGuidance(missingFields)
+		return decision
+	}
+	if fastPathCompletionEvidenceNeedsAgentConfigPostRead(evidence) {
+		decision.Status = completionVerificationStatusNeedsAction
+		if reason := strings.TrimSpace(decision.Reason); reason != "" {
+			decision.Reason = reason + "; requested post-update Agent config read is still missing"
+		} else {
+			decision.Reason = "requested post-update Agent config read is still missing"
+		}
+		decision.MissingSteps = append(cleanStringSlice(decision.MissingSteps), "agent-management/get_agent_config post-update verification")
+		decision.NextActionHint = "agent-management/get_agent_config"
+		decision.FinalAnswer = ""
+		decision.FinalAnswerGuidance = completionVerificationAgentConfigPostReadGuidance()
 		return decision
 	}
 	if failedStepLabel, ok := completionVerificationFailedOperationPlanStepLabel(evidence); ok && completionVerificationHasFailedEvidenceForPlanStep(evidence, failedStepLabel) {
@@ -395,6 +430,59 @@ func completionVerificationApplyPlanOverride(evidence map[string]interface{}, de
 	return decision
 }
 
+func completionVerificationPendingAgentConfigUpdateFields(evidence map[string]interface{}) []string {
+	plan := evidenceMapFromAny(evidence["operation_plan"])
+	if len(plan) == 0 {
+		return nil
+	}
+	stepStatus := evidenceMapFromAny(plan["step_status"])
+	for _, raw := range evidenceSliceFromAny(plan["steps"]) {
+		step := evidenceMapFromAny(raw)
+		if len(step) == 0 {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(step["skill_id"])), skills.SkillAgentManagement) ||
+			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(step["tool_name"])), "update_agent_config") {
+			continue
+		}
+		missing := completionVerificationStringSlice(step["missing_updated_fields"])
+		if len(missing) == 0 {
+			continue
+		}
+		status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(step["status"])))
+		if status == "" {
+			if id := strings.TrimSpace(evidenceStringFromAny(step["id"])); id != "" {
+				status = strings.ToLower(strings.TrimSpace(evidenceStringFromAny(stepStatus[id])))
+			}
+		}
+		switch status {
+		case "completed", "complete", "success", "succeeded", "failed", "error", "skipped", "not_applicable":
+			continue
+		}
+		return missing
+	}
+	return nil
+}
+
+func completionVerificationStringSlice(value interface{}) []string {
+	out := []string{}
+	for _, item := range evidenceSliceFromAny(value) {
+		text := strings.TrimSpace(evidenceStringFromAny(item))
+		if text == "" {
+			continue
+		}
+		out = append(out, text)
+	}
+	return cleanStringSlice(out)
+}
+
+func completionVerificationAgentConfigMissingFieldsGuidance(fields []string) string {
+	if len(fields) == 0 {
+		return "Call agent-management/update_agent_config again with the remaining requested Agent config fields, then verify with get_agent_config."
+	}
+	return "Call agent-management/update_agent_config again and include these remaining requested fields: " + strings.Join(fields, ", ") + ". Then verify with get_agent_config before the final answer."
+}
+
 func completionVerificationApplyPlanOnlySoftening(evidence map[string]interface{}, decision completionVerificationDecision) completionVerificationDecision {
 	status := decision.normalizedStatus()
 	if status != completionVerificationStatusNeedsAction && status != completionVerificationStatusFailed {
@@ -407,6 +495,12 @@ func completionVerificationApplyPlanOnlySoftening(evidence map[string]interface{
 		return decision
 	}
 	if completionVerificationHasUnsatisfiedManagedFileSave(evidence) {
+		return decision
+	}
+	if len(completionVerificationPendingAgentConfigUpdateFields(evidence)) > 0 {
+		return decision
+	}
+	if fastPathCompletionEvidenceNeedsAgentConfigPostRead(evidence) {
 		return decision
 	}
 	if !completionVerificationDecisionIsPlanOnly(evidence, decision) {
@@ -423,6 +517,10 @@ func completionVerificationApplyPlanOnlySoftening(evidence map[string]interface{
 		decision.Reason = "plan-only verifier decision softened because successful evidence exists"
 	}
 	return decision
+}
+
+func completionVerificationAgentConfigPostReadGuidance() string {
+	return "Call agent-management/get_agent_config again after the successful Agent config update, then base the final answer on that fresh configuration result. Do not claim the requested post-update verification is complete until that read succeeds."
 }
 
 func completionVerificationHasFailedEvidence(evidence map[string]interface{}) bool {
@@ -555,6 +653,82 @@ func completionVerificationPlanOnlyText(value string) bool {
 		}
 	}
 	return false
+}
+
+func completionVerificationCandidateAnswerLeaksInternalPlan(candidateAnswer string) bool {
+	lower := strings.ToLower(strings.TrimSpace(candidateAnswer))
+	if lower == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"operation_plan",
+		"operation plan",
+		"turn_strategy",
+		"turn strategy",
+		"required_next_tool",
+		"pending executable",
+		"pending step",
+		"system prompt",
+		"system message",
+		"hidden strategy",
+		"strategy json",
+		"internal plan",
+		"internal strategy",
+		"\u5185\u90e8\u8ba1\u5212",
+		"\u5185\u90e8\u7b56\u7565",
+		"\u9690\u85cf\u8ba1\u5212",
+		"\u9690\u85cf\u7b56\u7565",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return completionVerificationAnswerMentionsInternalSystemPrompt(lower)
+}
+
+func completionVerificationAnswerMentionsInternalSystemPrompt(lower string) bool {
+	if strings.Contains(lower, "system prompt") {
+		return true
+	}
+	marker := "\u7cfb\u7edf\u63d0\u793a"
+	for start := 0; ; {
+		idx := strings.Index(lower[start:], marker)
+		if idx < 0 {
+			return false
+		}
+		absolute := start + idx
+		if !completionVerificationIsUserVisibleChineseSystemPromptField(lower[absolute:]) {
+			return true
+		}
+		start = absolute + len(marker)
+	}
+}
+
+func completionVerificationIsUserVisibleChineseSystemPromptField(text string) bool {
+	for _, allowedPrefix := range []string{
+		"\u7cfb\u7edf\u63d0\u793a\u8bcd",
+		"\u7cfb\u7edf\u63d0\u793a\u8bed",
+		"\u7cfb\u7edf\u63d0\u793a\u5b57\u6bb5",
+		"\u7cfb\u7edf\u63d0\u793a\u914d\u7f6e",
+	} {
+		if strings.HasPrefix(text, allowedPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func completionVerificationInternalPlanLeakDecision(evidence map[string]interface{}) completionVerificationDecision {
+	guidance := "Rewrite the final answer using only user-visible operation outcome or blocker evidence. Do not mention system prompts, hidden plans, operation_plan, turn_strategy, required_next_tool, pending steps, protocol details, or internal strategy."
+	if completionVerificationUserRequestedChinese(evidence) {
+		guidance = "\u8bf7\u91cd\u5199\u6700\u7ec8\u7b54\u590d\uff1a\u53ea\u8bf4\u660e\u7528\u6237\u80fd\u7406\u89e3\u7684\u64cd\u4f5c\u7ed3\u679c\u6216\u963b\u585e\u539f\u56e0\uff0c\u4e0d\u8981\u63d0\u5230\u7cfb\u7edf\u63d0\u793a\u3001operation_plan\u3001turn_strategy\u3001required_next_tool\u3001pending step\u3001\u5185\u90e8\u8ba1\u5212\u6216\u5de5\u5177\u534f\u8bae\u3002"
+	}
+	return completionVerificationDecision{
+		Status:              completionVerificationStatusNeedsAction,
+		Reason:              "candidate answer exposed internal planning or system instruction wording",
+		UnsupportedClaims:   []string{"internal planning or system instruction wording leaked to the user"},
+		FinalAnswerGuidance: guidance,
+	}
 }
 
 func completionVerificationHasUnsatisfiedManagedFileSave(evidence map[string]interface{}) bool {
@@ -1104,6 +1278,24 @@ func completionVerificationSystemMessage(decision completionVerificationDecision
 
 func completionVerificationExecutableActionFeedback(decision completionVerificationDecision) []string {
 	text := strings.ToLower(strings.Join(append(append([]string{}, decision.MissingSteps...), decision.NextActionHint, decision.FinalAnswerGuidance, decision.Reason), "\n"))
+	if skillID, toolName, ok := completionVerificationRequiredSkillTool(decision); ok {
+		switch {
+		case strings.EqualFold(skillID, skills.SkillAgentManagement) && strings.EqualFold(toolName, "update_agent_config"):
+			return []string{
+				"Required next tool: call agent-management/update_agent_config for the remaining requested Agent configuration changes.",
+				"The next business tool call must be update_agent_config; do not call get_agent_config before this missing update_agent_config call succeeds.",
+				"If one part of the Agent update already succeeded, preserve that evidence and update only the missing fields from the user's original request.",
+				"After update_agent_config succeeds, call agent-management/get_agent_config to verify the refreshed Agent configuration before the final answer.",
+				"Do not produce another final answer until the requested Agent configuration update succeeds, fails, or is rejected by governance.",
+			}
+		case strings.EqualFold(skillID, skills.SkillAgentManagement) && strings.EqualFold(toolName, "get_agent_config"):
+			return []string{
+				"Required next tool: call agent-management/get_agent_config to verify the current Agent configuration after the update.",
+				"Use the fresh configuration result as the source of truth for the final answer.",
+				"Do not produce another final answer until get_agent_config succeeds or fails.",
+			}
+		}
+	}
 	switch {
 	case strings.Contains(text, "file-manager/delete_file") ||
 		strings.Contains(text, "delete_file") ||
@@ -1125,6 +1317,31 @@ func completionVerificationExecutableActionFeedback(decision completionVerificat
 	}
 }
 
+func completionVerificationRequiredSkillTool(decision completionVerificationDecision) (string, string, bool) {
+	text := strings.ToLower(strings.Join(append(append([]string{}, decision.MissingSteps...), decision.NextActionHint, decision.FinalAnswerGuidance, decision.Reason), "\n"))
+	if text == "" {
+		return "", "", false
+	}
+	if strings.Contains(text, "agent-management/update_agent_config") ||
+		strings.Contains(text, "update_agent_config") {
+		return skills.SkillAgentManagement, "update_agent_config", true
+	}
+	if strings.Contains(text, "agent-management/get_agent_config") ||
+		strings.Contains(text, "get_agent_config") {
+		return skills.SkillAgentManagement, "get_agent_config", true
+	}
+	if strings.Contains(text, "file-manager/save_file_to_management") ||
+		strings.Contains(text, "save_file_to_management") {
+		return skills.SkillFileManager, "save_file_to_management", true
+	}
+	if strings.Contains(text, "file-manager/delete_file") ||
+		strings.Contains(text, "delete_file") ||
+		strings.Contains(text, "delete resolved file") {
+		return skills.SkillFileManager, "delete_file", true
+	}
+	return "", "", false
+}
+
 func completionVerificationFallbackAnswer(decision completionVerificationDecision, candidateAnswer string) string {
 	if answer := strings.TrimSpace(decision.FinalAnswer); answer != "" {
 		return answer
@@ -1144,13 +1361,30 @@ func completionVerificationFallbackAnswer(decision completionVerificationDecisio
 	if missing := strings.Join(completionVerificationPublicMissingSteps(decision.MissingSteps), completionVerificationJoinSeparator); missing != "" {
 		parts = append(parts, "\u7f3a\u5c11\u7684\u5b8c\u6210\u8bc1\u636e\uff1a"+missing+"\u3002")
 	}
-	if claims := strings.Join(cleanStringSlice(decision.UnsupportedClaims), completionVerificationJoinSeparator); claims != "" {
+	if claims := strings.Join(completionVerificationPublicUnsupportedClaims(decision.UnsupportedClaims), completionVerificationJoinSeparator); claims != "" {
 		parts = append(parts, "\u5019\u9009\u7b54\u590d\u4e2d\u6709\u672a\u88ab\u5de5\u5177\u7ed3\u679c\u652f\u6301\u7684\u8bf4\u6cd5\uff1a"+claims+"\u3002")
 	}
 	if len(parts) == 0 {
 		return strings.TrimSpace(candidateAnswer)
 	}
 	return strings.Join(parts, "\n")
+}
+
+func completionVerificationPublicUnsupportedClaims(claims []string) []string {
+	cleaned := cleanStringSlice(claims)
+	out := make([]string, 0, len(cleaned))
+	for _, claim := range cleaned {
+		lower := strings.ToLower(strings.TrimSpace(claim))
+		if completionVerificationCandidateAnswerLeaksInternalPlan(lower) ||
+			strings.Contains(lower, "internal planning") ||
+			strings.Contains(lower, "system instruction") ||
+			strings.Contains(lower, "candidate answer") ||
+			strings.Contains(lower, "unsupported claim") {
+			continue
+		}
+		out = append(out, claim)
+	}
+	return dedupeStrings(out)
 }
 
 func completionVerificationPublicMissingSteps(steps []string) []string {
@@ -1161,6 +1395,12 @@ func completionVerificationPublicMissingSteps(steps []string) []string {
 		switch {
 		case strings.Contains(lower, "delete resolved file"):
 			out = append(out, "\u6587\u4ef6\u5220\u9664\u7ed3\u679c")
+		case strings.Contains(lower, "agent-management/update_agent_config") ||
+			strings.Contains(lower, "update_agent_config"):
+			out = append(out, "\u667a\u80fd\u4f53\u914d\u7f6e\u66f4\u65b0\u7ed3\u679c")
+		case strings.Contains(lower, "agent-management/get_agent_config") ||
+			strings.Contains(lower, "get_agent_config"):
+			out = append(out, "\u66f4\u65b0\u540e\u7684\u667a\u80fd\u4f53\u914d\u7f6e\u8bfb\u53d6\u7ed3\u679c")
 		default:
 			out = append(out, step)
 		}
@@ -1177,12 +1417,22 @@ func completionVerificationPublicReason(reason string) string {
 	internalMarkers := []string{
 		"operation_plan",
 		"operation plan",
+		"turn_strategy",
+		"turn strategy",
 		"pending executable",
+		"pending step",
+		"required_next_tool",
 		"completion verifier",
 		"post-verification",
 		"candidate answer",
 		"unsupported claim",
 		"verification contract",
+		"system prompt",
+		"system message",
+		"internal plan",
+		"internal strategy",
+		"\u7cfb\u7edf\u63d0\u793a",
+		"\u5185\u90e8\u8ba1\u5212",
 	}
 	for _, marker := range internalMarkers {
 		if strings.Contains(lower, marker) {

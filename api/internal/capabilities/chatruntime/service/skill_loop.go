@@ -24,6 +24,8 @@ var managedFileTargetPattern = regexp.MustCompile(`(?i)([^\s，,。；;、：:�
 
 var runtimeContextRoutePattern = regexp.MustCompile(`(?i)(?:^|[\s,;])route=([^\s,;]+)`)
 
+var agentManagementSkillIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
 func (p *PreparedChat) skillsEnabled() bool {
 	return p != nil && chatPartsSkillsEnabled(p.parts)
 }
@@ -106,8 +108,37 @@ func (s *service) runPreparedSkillStreamWithCompletionVerifier(
 		AdditionalSystemMessages: skillLoopAdditionalSystemMessages(prepared),
 		PlanToolGuard:            skillLoopPlanToolCallGuardWithResolved(prepared, resolved),
 		CompletionEvidence:       skillLoopCompletionEvidence(prepared),
+		CurrentMetadata:          skillLoopCurrentMetadata(prepared),
+		OnCompletionVerification: skillLoopCompletionVerificationResult(prepared),
 		OnChunk:                  onChunk,
 	})
+}
+
+func skillLoopCurrentMetadata(prepared *PreparedChat) func() map[string]interface{} {
+	return func() map[string]interface{} {
+		if prepared == nil || prepared.Message == nil {
+			return nil
+		}
+		return copyStringAnyMap(prepared.Message.Metadata)
+	}
+}
+
+func skillLoopCompletionVerificationResult(prepared *PreparedChat) func(skillloop.CompletionVerificationResult) {
+	return func(result skillloop.CompletionVerificationResult) {
+		if prepared == nil || prepared.Message == nil {
+			return
+		}
+		metadata := copyStringAnyMap(prepared.Message.Metadata)
+		applyOperationPlanCompletionVerificationResult(
+			metadata,
+			result.Status,
+			result.Reason,
+			result.MissingSteps,
+			result.UnsupportedClaims,
+			result.NextActionHint,
+		)
+		prepared.Message.Metadata = metadata
+	}
 }
 
 func skillLoopCompletionEvidence(prepared *PreparedChat) skillloop.CompletionEvidenceFunc {
@@ -122,13 +153,17 @@ func skillLoopCompletionEvidence(prepared *PreparedChat) skillloop.CompletionEvi
 		if len(prepared.parts.SkillIDs) > 0 {
 			evidence["configured_skill_ids"] = append([]string{}, prepared.parts.SkillIDs...)
 		}
-		if pageContext := skillLoopCompletionPageContextEvidence(prepared.parts); len(pageContext) > 0 {
+		pageContext := skillLoopCompletionPageContextEvidence(prepared.parts)
+		if len(pageContext) > 0 {
 			evidence["page_context"] = pageContext
 		}
 		if prepared.Message == nil {
 			return evidence
 		}
 		metadata := skillLoopCompletionEvidenceMetadata(prepared.Message.Metadata)
+		if len(pageContext) > 0 {
+			applyOperationPlanPageEvidence(metadata, pageContext)
+		}
 		prepared.Message.Metadata = metadata
 		for _, key := range []string{
 			"turn_strategy",
@@ -139,6 +174,7 @@ func skillLoopCompletionEvidence(prepared *PreparedChat) skillloop.CompletionEvi
 			"client_actions",
 			"tool_governance",
 			consoleFilesContextSnapshotKey,
+			consoleAgentsContextSnapshotKey,
 		} {
 			if value, ok := metadata[key]; ok && value != nil {
 				evidence[key] = value
@@ -427,17 +463,53 @@ func skillLoopCompletionPlanSummary(plan map[string]interface{}) map[string]inte
 	summary := map[string]interface{}{}
 	for _, key := range []string{
 		"status",
+		"intent",
 		"pending_next_action",
 		"current_page",
 		"original_user_goal",
+		"risk_level",
+		"approval",
 		"operation_group_status",
 	} {
-		if value, ok := plan[key]; ok && value != nil {
-			summary[key] = value
+		if value := strings.TrimSpace(stringFromAny(plan[key])); value != "" {
+			summary[key] = compactForPrompt(value, 500)
 		}
+	}
+	if value, ok := plan["approval_required"].(bool); ok {
+		summary["approval_required"] = value
+	}
+	if actions := stringSliceFromAny(plan["approval_actions"]); len(actions) > 0 {
+		summary["approval_actions"] = compactStringSliceForPrompt(actions, 8, 180)
+	}
+	if criteria := stringSliceFromAny(plan["success_criteria"]); len(criteria) > 0 {
+		summary["success_criteria"] = compactStringSliceForPrompt(criteria, 8, 240)
+	}
+	if criteria := stringSliceFromAny(plan["completion_criteria"]); len(criteria) > 0 {
+		summary["completion_criteria"] = compactStringSliceForPrompt(criteria, 8, 240)
+	}
+	if target := mapFromOperationContext(plan["asset_target"]); len(target) > 0 {
+		summary["asset_target"] = target
+	}
+	if stepStatus := mapFromOperationContext(plan["step_status"]); len(stepStatus) > 0 {
+		summary["step_status"] = stepStatus
 	}
 	if toolResult := mapFromOperationContext(plan["tool_result"]); len(toolResult) > 0 {
 		summary["tool_result"] = toolResult
+	}
+	if assetState := mapFromOperationContext(plan["asset_state"]); len(assetState) > 0 {
+		summary["asset_state"] = assetState
+	}
+	if pageEvidence := operationPlanCompactPageEvidence(mapFromOperationContext(plan["page_evidence"])); len(pageEvidence) > 0 {
+		summary["page_evidence"] = pageEvidence
+	}
+	if state := mapFromOperationContext(plan["strategy_state"]); len(state) > 0 {
+		summary["strategy_state"] = state
+	}
+	if completedSteps := operationPlanCompactProgressStepRecords(plan["completed_steps"], 8); len(completedSteps) > 0 {
+		summary["completed_steps"] = completedSteps
+	}
+	if failedSteps := operationPlanCompactProgressStepRecords(plan["failed_steps"], 8); len(failedSteps) > 0 {
+		summary["failed_steps"] = failedSteps
 	}
 	if group := mapFromOperationContext(plan["operation_group"]); len(group) > 0 {
 		summary["operation_group"] = operationPlanCompactOperationGroup(group)
@@ -454,10 +526,40 @@ func skillLoopCompletionPlanSummary(plan map[string]interface{}) map[string]inte
 	if blockedDeviations := skillLoopCompletionPlanDeviations(plan["blocked_deviations"], 8); len(blockedDeviations) > 0 {
 		summary["blocked_deviations"] = blockedDeviations
 	}
+	if steps := operationPlanCompactStepsForPrompt(plan["steps"], 8); len(steps) > 0 {
+		summary["steps"] = steps
+	}
 	if len(summary) == 0 {
 		return nil
 	}
 	return summary
+}
+
+func operationPlanCompactStepsForPrompt(value interface{}, limit int) []interface{} {
+	steps := mapSliceFromAny(value)
+	if len(steps) == 0 || limit <= 0 {
+		return nil
+	}
+	promptSteps := operationPlanPromptSteps(steps, limit)
+	out := make([]interface{}, 0, len(promptSteps))
+	for _, step := range promptSteps {
+		item := map[string]interface{}{}
+		for _, key := range []string{"id", "title", "status", "skill_id", "tool_name"} {
+			if value := strings.TrimSpace(stringFromAny(step[key])); value != "" {
+				item[key] = compactForPrompt(value, 180)
+			}
+		}
+		if index := intValueFromAny(step["sequence_index"]); index > 0 {
+			item["sequence_index"] = index
+		}
+		if target := mapFromOperationContext(step["asset_target"]); len(target) > 0 {
+			item["asset_target"] = target
+		}
+		if len(item) > 0 {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func skillLoopCompletionPlanDeviations(value interface{}, limit int) []interface{} {
@@ -494,6 +596,9 @@ func skillLoopCompletionToolResults(invocations []map[string]interface{}, limit 
 	for i := len(invocations) - 1; i >= 0 && len(out) < limit; i-- {
 		invocation := invocations[i]
 		if !operationPlanInvocationIsActionable(invocation) {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "tool_governance") {
 			continue
 		}
 		result := operationPlanToolResult(invocation)
@@ -547,11 +652,24 @@ func skillLoopCompletionOperationGroups(metadata map[string]interface{}, limit i
 }
 
 func restrictResolvedSkillsForTurnStrategy(parts *chatRequestParts, resolved *skills.ResolvedSkills) *skills.ResolvedSkills {
-	return resolved
+	if parts == nil || resolved == nil || len(resolved.Skills) == 0 {
+		return resolved
+	}
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		return resolved
+	}
+	return filterResolvedSkillsByAllowedIDs(resolved, turnStrategyAllowedSkillIDs(strategy), false)
 }
 
 func restrictResolvedSkillsForPreparedTurn(prepared *PreparedChat, resolved *skills.ResolvedSkills) *skills.ResolvedSkills {
-	return resolved
+	if prepared == nil || resolved == nil || len(resolved.Skills) == 0 {
+		return resolved
+	}
+	if allowed := operationPlanAllowedSkillIDs(prepared); len(allowed) > 0 {
+		return filterResolvedSkillsByAllowedIDs(resolved, allowed, false)
+	}
+	return restrictResolvedSkillsForTurnStrategy(prepared.parts, resolved)
 }
 
 func operationPlanAllowedSkillIDs(prepared *PreparedChat) map[string]struct{} {
@@ -563,7 +681,7 @@ func operationPlanAllowedSkillIDs(prepared *PreparedChat) map[string]struct{} {
 		return nil
 	}
 	allowed := map[string]struct{}{}
-	for _, step := range operationPlanPendingExecutableSteps(plan, 8) {
+	for _, step := range operationPlanPendingExecutableStepsForToolExposure(plan, 8) {
 		skillID := strings.TrimSpace(stringFromAny(step["skill_id"]))
 		if skillID == "" {
 			continue
@@ -572,9 +690,6 @@ func operationPlanAllowedSkillIDs(prepared *PreparedChat) map[string]struct{} {
 		toolName := strings.TrimSpace(stringFromAny(step["tool_name"]))
 		if skills.RequiresPromptProfessionalizerPreflight(skillID, toolName) {
 			allowed[skills.SkillPromptProfessionalizer] = struct{}{}
-		}
-		if operationPlanStepIsRoute(step) {
-			break
 		}
 	}
 	if len(allowed) == 0 {
@@ -624,12 +739,14 @@ func turnStrategyAllowedSkillIDs(strategy *AIChatTurnStrategy) map[string]struct
 	}
 	if strategy.RequiredNextTool != nil {
 		addTool(*strategy.RequiredNextTool)
-		return allowed
 	}
 	for _, tool := range strategy.PlannedTools {
 		addTool(tool)
 	}
 	if len(allowed) > 0 {
+		if turnStrategyHasPostUpdateVerificationTool(strategy) {
+			add(skills.SkillConsoleNavigator)
+		}
 		return allowed
 	}
 	if !turnStrategyIntentShouldRestrictToPrimary(strategy.Intent) {
@@ -642,6 +759,23 @@ func turnStrategyAllowedSkillIDs(strategy *AIChatTurnStrategy) map[string]struct
 		return nil
 	}
 	return allowed
+}
+
+func turnStrategyHasPostUpdateVerificationTool(strategy *AIChatTurnStrategy) bool {
+	if strategy == nil {
+		return false
+	}
+	for _, tool := range strategy.PlannedTools {
+		stepID := strings.TrimSpace(tool.StepID)
+		if stepID == "" {
+			continue
+		}
+		if strings.EqualFold(stepID, operationPlanPostUpdateAgentConfigReadStepID()) ||
+			strings.EqualFold(stepID, operationPlanPostUpdateAgentIdentityReadStepID()) {
+			return true
+		}
+	}
+	return false
 }
 
 func turnStrategyIntentShouldRestrictToPrimary(intent string) bool {
@@ -668,6 +802,7 @@ func skillLoopPlanToolCallGuard(prepared *PreparedChat) skillloop.ToolCallGuard 
 
 func skillLoopPlanToolCallGuardWithResolved(prepared *PreparedChat, resolved *skills.ResolvedSkills) skillloop.ToolCallGuard {
 	contextualGuard := skillLoopToolCallGuard(prepared)
+	operationPlanCompletedOnEntry := skillLoopOperationPlanStatusCompleted(prepared)
 	return func(req skillloop.ToolCallGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
 		if contextualGuard != nil && skillLoopShouldApplyContextualPlanGuard(prepared) {
 			if guardResult, blocked := contextualGuard(req); blocked {
@@ -677,13 +812,17 @@ func skillLoopPlanToolCallGuardWithResolved(prepared *PreparedChat, resolved *sk
 				return guardResult, true
 			}
 		}
-		allowed := skillLoopAllowedPlannedTools(prepared)
-		if len(allowed) == 0 && !skillLoopShouldRestrictToOperationPlan(prepared) {
-			return skillloop.FinalAnswerGuardResult{}, false
-		}
 		skillID := strings.TrimSpace(req.SkillID)
 		toolName := strings.TrimSpace(req.ToolName)
 		if skillID == "" {
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		if skillLoopShouldBlockAgentCapabilityExplanationTool(prepared, skillID) {
+			recordOperationPlanToolBlockedDeviation(prepared.Message.Metadata, skillID, toolName, "agent_management_capability_explanation_uses_page_context")
+			return skillLoopAgentCapabilityExplanationToolGuardResult(skillID, toolName), true
+		}
+		allowed := skillLoopAllowedPlannedTools(prepared)
+		if len(allowed) == 0 && !skillLoopShouldRestrictToOperationPlan(prepared) {
 			return skillloop.FinalAnswerGuardResult{}, false
 		}
 		if toolName == "" {
@@ -695,11 +834,54 @@ func skillLoopPlanToolCallGuardWithResolved(prepared *PreparedChat, resolved *sk
 		if toolName == "" && skillLoopAllowedToolsContainSkill(allowed, skillID) {
 			return skillloop.FinalAnswerGuardResult{}, false
 		}
+		if skillLoopShouldAllowReadyPlannedNavigationTool(prepared, skillID, toolName, req.Arguments) {
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
 		if skillLoopShouldBlockRepeatedLoadedNavigation(prepared, skillID, toolName, req.Arguments) {
 			return skillLoopRepeatedLoadedNavigationGuardResult(req.Arguments), true
 		}
+		if skillLoopShouldBlockRedundantAgentCreateAfterCompletedCreate(prepared, req) {
+			recordOperationPlanToolBlockedDeviation(prepared.Message.Metadata, skillID, toolName, "model_repeated_single_agent_create_after_create_completed")
+			return skillLoopRedundantAgentCreateAfterCompletedCreateGuardResult(req.Arguments), true
+		}
+		if skillLoopShouldBlockRedundantAgentIdentityUpdateAfterCreate(prepared, req) {
+			recordOperationPlanToolBlockedDeviation(prepared.Message.Metadata, skillID, toolName, "model_repeated_create_identity_fields_after_agent_create")
+			return skillLoopRedundantAgentIdentityUpdateAfterCreateGuardResult(req.Arguments), true
+		}
+		if skillLoopShouldBlockUnrequestedAgentConfigUpdateAfterCreate(prepared, req) {
+			recordOperationPlanToolBlockedDeviation(prepared.Message.Metadata, skillID, toolName, "model_requested_post_create_config_update_not_in_user_goal")
+			return skillLoopUnrequestedAgentConfigUpdateAfterCreateGuardResult(req.Arguments), true
+		}
+		if skillLoopShouldBlockReadOnlyAgentCandidateLookup(prepared, skillID, toolName) {
+			recordOperationPlanToolBlockedDeviation(prepared.Message.Metadata, skillID, toolName, "readonly_agent_config_check_does_not_need_candidate_lookup")
+			return skillLoopReadOnlyAgentCandidateLookupGuardResult(skillID, toolName), true
+		}
+		if skillLoopShouldBlockUnrequestedAgentIconBackgroundUpdate(prepared, req) {
+			recordOperationPlanToolBlockedDeviation(prepared.Message.Metadata, skillID, toolName, "model_included_unrequested_agent_icon_background")
+			return skillLoopUnrequestedAgentIconBackgroundUpdateGuardResult(req.Arguments), true
+		}
+		if issue, blocked := skillLoopShouldBlockOverbroadAgentCandidateSelectionUpdate(prepared, req); blocked {
+			recordOperationPlanToolBlockedDeviation(prepared.Message.Metadata, skillID, toolName, "model_selected_too_many_agent_binding_candidates")
+			return skillLoopOverbroadAgentCandidateSelectionUpdateGuardResult(issue), true
+		}
+		if issue, blocked := skillLoopShouldBlockInvalidAgentSkillBindingUpdate(req); blocked {
+			recordOperationPlanToolBlockedDeviation(prepared.Message.Metadata, skillID, toolName, "model_used_unresolved_agent_skill_binding_target")
+			return skillLoopInvalidAgentSkillBindingUpdateGuardResult(issue), true
+		}
 		if skillLoopShouldBlockDuplicateMutationToolCall(prepared, resolved, req) {
 			return skillLoopDuplicateMutationGuardResult(skillID, toolName), true
+		}
+		if result, blocked := skillLoopCompletedReadStepRepeatGuard(prepared, skillID, toolName); blocked {
+			recordOperationPlanToolBlockedDeviation(prepared.Message.Metadata, skillID, toolName, "model_repeated_completed_read_step_before_pending_plan_step")
+			return result, true
+		}
+		if !operationPlanCompletedOnEntry && skillLoopShouldBlockEmptyAgentIdentityUpdate(req) {
+			recordOperationPlanToolBlockedDeviation(prepared.Message.Metadata, skillID, toolName, "model_requested_empty_agent_identity_update")
+			return skillLoopEmptyAgentIdentityUpdateGuardResult(req.Arguments), true
+		}
+		if skillLoopShouldBlockCurrentRequestForbiddenAgentMutation(prepared, skillID, toolName) {
+			recordOperationPlanToolBlockedDeviation(prepared.Message.Metadata, skillID, toolName, "latest_user_request_forbids_agent_mutation")
+			return skillLoopCurrentRequestForbiddenAgentMutationGuardResult(skillID, toolName), true
 		}
 		if skillLoopToolAllowed(allowed, skillID, toolName) {
 			return skillloop.FinalAnswerGuardResult{}, false
@@ -749,6 +931,67 @@ func skillLoopPlanToolCallGuardWithResolved(prepared *PreparedChat, resolved *sk
 	}
 }
 
+func skillLoopCompletedReadStepRepeatGuard(prepared *PreparedChat, skillID string, toolName string) (skillloop.FinalAnswerGuardResult, bool) {
+	if prepared == nil || prepared.Message == nil || prepared.parts == nil {
+		return skillloop.FinalAnswerGuardResult{}, false
+	}
+	skillID = strings.TrimSpace(skillID)
+	toolName = strings.TrimSpace(toolName)
+	if skillID == "" || toolName == "" || !skillLoopToolNameLooksReadOnly(toolName) {
+		return skillloop.FinalAnswerGuardResult{}, false
+	}
+	if skillLoopCompletedReadStepCanReplayBeforePending(skillID, toolName) {
+		return skillloop.FinalAnswerGuardResult{}, false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 || strings.EqualFold(strings.TrimSpace(stringFromAny(plan["status"])), operationPlanStatusCompleted) {
+		return skillloop.FinalAnswerGuardResult{}, false
+	}
+	if !operationPlanHasToolStepWithStatus(plan, skillID, toolName, operationPlanStepStatusCompleted) {
+		return skillloop.FinalAnswerGuardResult{}, false
+	}
+	pending := operationPlanPendingExecutableStepsForToolExposure(plan, 1)
+	if len(pending) == 0 {
+		return skillloop.FinalAnswerGuardResult{}, false
+	}
+	next := pending[0]
+	nextSkillID := strings.TrimSpace(stringFromAny(next["skill_id"]))
+	nextToolName := strings.TrimSpace(stringFromAny(next["tool_name"]))
+	if nextSkillID == "" || nextToolName == "" ||
+		(strings.EqualFold(nextSkillID, skillID) && strings.EqualFold(nextToolName, toolName)) {
+		return skillloop.FinalAnswerGuardResult{}, false
+	}
+	message := strings.Join([]string{
+		skillID + "/" + toolName + " already has successful evidence for this turn.",
+		"Continue with the next pending planned step: " + nextSkillID + "/" + nextToolName + ".",
+	}, " ")
+	systemMessage := strings.Join([]string{
+		message,
+		"Do not repeat the completed read/list/search/observe tool.",
+		"Use the existing tool result already present in the conversation context.",
+		"Call the next pending planned tool instead; if required IDs are still missing, explain the missing evidence instead of looping.",
+	}, " ")
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:       nextSkillID,
+		ToolName:      nextToolName,
+		Message:       message,
+		SystemMessage: systemMessage,
+		Advisory:      true,
+	}, true
+}
+
+func skillLoopCompletedReadStepCanReplayBeforePending(skillID string, toolName string) bool {
+	if strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentManagement) {
+		switch strings.TrimSpace(toolName) {
+		case "get_agent", "get_agent_config", "list_available_models":
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
 func skillLoopShouldApplyContextualPlanGuard(prepared *PreparedChat) bool {
 	if prepared == nil || prepared.Message == nil || prepared.parts == nil {
 		return false
@@ -757,6 +1000,913 @@ func skillLoopShouldApplyContextualPlanGuard(prepared *PreparedChat) bool {
 		return true
 	}
 	return isContinuationIntent(prepared.parts.Query) && generatedFileMetadataHasAnyArtifact(prepared.Message.Metadata)
+}
+
+func skillLoopOperationPlanStatusCompleted(prepared *PreparedChat) bool {
+	if prepared == nil || prepared.Message == nil {
+		return false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	return len(plan) > 0 && strings.EqualFold(strings.TrimSpace(stringFromAny(plan["status"])), operationPlanStatusCompleted)
+}
+
+func skillLoopShouldBlockAgentCapabilityExplanationTool(prepared *PreparedChat, skillID string) bool {
+	return prepared != nil &&
+		prepared.Message != nil &&
+		prepared.parts != nil &&
+		strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentManagement) &&
+		isAgentManagementCapabilityExplanationIntent(prepared.parts.Query)
+}
+
+func skillLoopAgentCapabilityExplanationToolGuardResult(skillID string, toolName string) skillloop.FinalAnswerGuardResult {
+	message := "Agent-management tools are not needed for this capability explanation"
+	if strings.TrimSpace(toolName) != "" {
+		message = "agent-management/" + strings.TrimSpace(toolName) + " is not needed for this capability explanation"
+	}
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:  skillID,
+		ToolName: toolName,
+		Message:  message,
+		SystemMessage: strings.Join([]string{
+			"This turn asks for a capability explanation or a summary of visible Agent page context.",
+			"Answer directly from the injected current page context and the known supported Agent-management actions.",
+			"Supported Agent-management actions in this contextual sidebar MVP include creating draft Agents; deleting one or more visible Agents with governance approval; opening Agent detail pages when requested; editing Agent name, description, icon, system prompt, suggested questions, home title, input placeholder, theme color, model provider/model pair, model parameters, Agent memory switch, file-upload switch, and memory slots; and binding or unbinding Agent skills, knowledge bases, database tables, and workflows after exact candidates are resolved.",
+			"Unsupported actions include publishing, rolling back, invoking or chatting with Agents, managing API keys, and controlling WebApp online/offline state.",
+			"Do not load agent-management, do not call list/read/candidate tools, do not navigate, and do not mutate assets.",
+		}, " "),
+	}
+}
+
+func skillLoopShouldBlockEmptyAgentIdentityUpdate(req skillloop.ToolCallGuardRequest) bool {
+	return strings.EqualFold(strings.TrimSpace(req.SkillID), skills.SkillAgentManagement) &&
+		strings.EqualFold(strings.TrimSpace(req.ToolName), "update_agent_identity") &&
+		!agentIdentityUpdateHasRequestedFields(req.Arguments)
+}
+
+func skillLoopEmptyAgentIdentityUpdateGuardResult(arguments map[string]interface{}) skillloop.FinalAnswerGuardResult {
+	agentID := strings.TrimSpace(firstNonEmptyString(arguments["agent_id"], arguments["id"], arguments["asset_id"]))
+	message := "update_agent_identity was called without any identity fields"
+	if agentID != "" {
+		message = "update_agent_identity was called for Agent " + agentID + " without any identity fields"
+	}
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_identity",
+		Message:  message,
+		SystemMessage: strings.Join([]string{
+			message + ".",
+			"This would not change the Agent name, description, or icon, so do not request governance approval for it.",
+			"Use the existing create/update/read evidence to continue, call a read tool if verification is still needed, or provide the final answer truthfully from the ledger.",
+		}, " "),
+	}
+}
+
+func skillLoopShouldBlockUnrequestedAgentIconBackgroundUpdate(prepared *PreparedChat, req skillloop.ToolCallGuardRequest) bool {
+	if prepared == nil || prepared.parts == nil ||
+		!strings.EqualFold(strings.TrimSpace(req.SkillID), skills.SkillAgentManagement) ||
+		!strings.EqualFold(strings.TrimSpace(req.ToolName), "update_agent_identity") {
+		return false
+	}
+	if _, ok := req.Arguments["icon_background"]; !ok {
+		return false
+	}
+	goal := operationPlanAmendmentGoal(prepared)
+	if strings.TrimSpace(goal) == "" {
+		goal = prepared.parts.Query
+	}
+	return !agentManagementIconBackgroundRequested(goal)
+}
+
+func agentManagementIconBackgroundRequested(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return false
+	}
+	return containsAnySubstring(text, []string{
+		"icon background", "icon bg", "background color", "background colour", "background",
+		"icon color", "icon colour",
+		"\u56fe\u6807\u80cc\u666f", "\u56fe\u6807\u80cc\u666f\u8272", "\u56fe\u6807\u5e95\u8272", "\u56fe\u6807\u989c\u8272",
+		"\u80cc\u666f\u8272", "\u5e95\u8272",
+	})
+}
+
+func skillLoopUnrequestedAgentIconBackgroundUpdateGuardResult(arguments map[string]interface{}) skillloop.FinalAnswerGuardResult {
+	agentID := strings.TrimSpace(firstNonEmptyString(arguments["agent_id"], arguments["id"], arguments["asset_id"]))
+	message := "update_agent_identity included icon_background that the user did not request"
+	if agentID != "" {
+		message = "update_agent_identity included icon_background for Agent " + agentID + ", but the user did not request an icon background change"
+	}
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_identity",
+		Message:  message,
+		SystemMessage: strings.Join([]string{
+			message + ".",
+			"Do not request governance approval for unrequested identity fields.",
+			"Retry agent-management/update_agent_identity without icon_background, preserving only the user-requested fields such as name, description, icon_type, and icon.",
+			"If the user explicitly asks for an icon background, background color, or icon color, then icon_background may be included.",
+		}, " "),
+	}
+}
+
+func skillLoopShouldBlockRedundantAgentCreateAfterCompletedCreate(prepared *PreparedChat, req skillloop.ToolCallGuardRequest) bool {
+	if prepared == nil || prepared.Message == nil || prepared.parts == nil ||
+		!strings.EqualFold(strings.TrimSpace(req.SkillID), skills.SkillAgentManagement) ||
+		!strings.EqualFold(strings.TrimSpace(req.ToolName), "create_agent") {
+		return false
+	}
+	goal := operationPlanAmendmentGoal(prepared)
+	if strings.TrimSpace(goal) == "" || !agentManagementCreateRequested(strings.ToLower(strings.TrimSpace(goal))) {
+		return false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 || !operationPlanHasToolStepWithStatus(plan, skills.SkillAgentManagement, "create_agent", operationPlanStepStatusCompleted) {
+		return false
+	}
+	requestedCount := agentManagementCreateRequestedCount(goal)
+	requestedTargets := agentCreateTargetNamesFromText(goal)
+	if len(requestedTargets) > requestedCount {
+		requestedCount = len(requestedTargets)
+	}
+	if requestedCount > 1 {
+		return false
+	}
+	if len(matchingSkillToolCalls(req.SuccessfulToolCalls, skills.SkillAgentManagement, "create_agent")) > 0 ||
+		len(successfulMetadataToolCalls(prepared.Message.Metadata, skills.SkillAgentManagement, "create_agent")) > 0 {
+		return true
+	}
+	name := strings.ToLower(strings.TrimSpace(firstNonEmptyString(req.Arguments["name"], req.Arguments["agent_name"])))
+	if name == "" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(goal), name)
+}
+
+func skillLoopRedundantAgentCreateAfterCompletedCreateGuardResult(arguments map[string]interface{}) skillloop.FinalAnswerGuardResult {
+	name := strings.TrimSpace(firstNonEmptyString(arguments["name"], arguments["agent_name"]))
+	message := "create_agent was already completed for this turn"
+	if name != "" {
+		message = "create_agent was already completed for Agent " + name
+	}
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "create_agent",
+		Message:  message,
+		SystemMessage: strings.Join([]string{
+			message + ".",
+			"Do not call create_agent again for the same single-Agent creation goal.",
+			"Use the existing create result, current page route, and any read/observe evidence to verify the Agent and provide the final answer.",
+		}, " "),
+	}
+}
+
+func skillLoopShouldBlockRedundantAgentIdentityUpdateAfterCreate(prepared *PreparedChat, req skillloop.ToolCallGuardRequest) bool {
+	if prepared == nil || prepared.Message == nil || prepared.parts == nil ||
+		!strings.EqualFold(strings.TrimSpace(req.SkillID), skills.SkillAgentManagement) ||
+		!strings.EqualFold(strings.TrimSpace(req.ToolName), "update_agent_identity") ||
+		!agentIdentityUpdateHasRequestedFields(req.Arguments) {
+		return false
+	}
+	goal := operationPlanAmendmentGoal(prepared)
+	if strings.TrimSpace(goal) == "" || !agentManagementCreateRequested(strings.ToLower(strings.TrimSpace(goal))) {
+		return false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 || !operationPlanHasToolStepWithStatus(plan, skills.SkillAgentManagement, "create_agent", operationPlanStepStatusCompleted) {
+		return false
+	}
+	if agentManagementPostCreateIdentityEditRequested(goal) {
+		return false
+	}
+	if skillLoopAgentIdentityUpdateAlreadyCoveredByCreate(prepared, req) {
+		return true
+	}
+	return agentIdentityUpdateRepeatsCreateGoal(goal, req.Arguments)
+}
+
+func agentManagementPostCreateIdentityEditRequested(query string) bool {
+	secondary := strings.ToLower(strings.TrimSpace(agentManagementSecondaryIntentQuery(query)))
+	if secondary == "" {
+		return false
+	}
+	if !containsAnySubstring(secondary, []string{
+		"then change", "then update", "then rename", "and then change", "and then update", "after creating, change",
+		"after creation, change", "after it is created, change",
+		"\u7136\u540e\u4fee\u6539", "\u7136\u540e\u66f4\u65b0", "\u7136\u540e\u6539", "\u7136\u540e\u6539\u540d",
+		"\u518d\u4fee\u6539", "\u518d\u66f4\u65b0", "\u518d\u6539", "\u518d\u6539\u540d",
+		"\u521b\u5efa\u540e\u4fee\u6539", "\u521b\u5efa\u540e\u66f4\u65b0", "\u521b\u5efa\u540e\u6539",
+		"\u521b\u5efa\u6210\u529f\u540e\u4fee\u6539", "\u521b\u5efa\u6210\u529f\u540e\u66f4\u65b0", "\u521b\u5efa\u6210\u529f\u540e\u6539",
+	}) {
+		return false
+	}
+	return containsPositiveAgentManagementResourceMarker(secondary, []string{
+		"rename", "name", "description", "icon",
+		"\u6539\u540d", "\u540d\u79f0", "\u540d\u5b57", "\u63cf\u8ff0", "\u56fe\u6807",
+	})
+}
+
+func agentIdentityUpdateRepeatsCreateGoal(query string, arguments map[string]interface{}) bool {
+	goal := strings.ToLower(strings.TrimSpace(query))
+	if goal == "" || len(arguments) == 0 {
+		return false
+	}
+	matchedSemanticField := false
+	for _, key := range []string{"name", "agent_name", "description", "icon"} {
+		value, ok := arguments[key]
+		if !ok {
+			continue
+		}
+		text := strings.ToLower(strings.TrimSpace(stringFromAny(value)))
+		if text == "" {
+			continue
+		}
+		matchedSemanticField = true
+		if !strings.Contains(goal, text) {
+			return false
+		}
+	}
+	return matchedSemanticField
+}
+
+func skillLoopRedundantAgentIdentityUpdateAfterCreateGuardResult(arguments map[string]interface{}) skillloop.FinalAnswerGuardResult {
+	agentID := strings.TrimSpace(firstNonEmptyString(arguments["agent_id"], arguments["id"], arguments["asset_id"]))
+	message := "update_agent_identity repeats identity fields already covered by create_agent"
+	if agentID != "" {
+		message = "update_agent_identity repeats identity fields already covered by create_agent for Agent " + agentID
+	}
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_identity",
+		Message:  message,
+		SystemMessage: strings.Join([]string{
+			message + ".",
+			"The create_agent step already covers the requested name, description, or icon for this newly created Agent.",
+			"Do not request another governance approval for the same identity fields.",
+			"Use the create_agent result and current page evidence to verify the Agent and provide the final answer.",
+		}, " "),
+	}
+}
+
+func skillLoopShouldBlockUnrequestedAgentConfigUpdateAfterCreate(prepared *PreparedChat, req skillloop.ToolCallGuardRequest) bool {
+	if prepared == nil || prepared.Message == nil || prepared.parts == nil ||
+		!strings.EqualFold(strings.TrimSpace(req.SkillID), skills.SkillAgentManagement) ||
+		!strings.EqualFold(strings.TrimSpace(req.ToolName), "update_agent_config") {
+		return false
+	}
+	goal := operationPlanAmendmentGoal(prepared)
+	if strings.TrimSpace(goal) == "" || !agentManagementCreateRequested(strings.ToLower(strings.TrimSpace(goal))) {
+		return false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 || !operationPlanHasToolStepWithStatus(plan, skills.SkillAgentManagement, "create_agent", operationPlanStepStatusCompleted) {
+		return false
+	}
+	if agentManagementPostCreateConfigEditRequested(goal) {
+		return false
+	}
+	if len(matchingSkillToolCalls(req.SuccessfulToolCalls, skills.SkillAgentManagement, "create_agent")) > 0 {
+		return true
+	}
+	return len(successfulMetadataToolCalls(prepared.Message.Metadata, skills.SkillAgentManagement, "create_agent")) > 0 ||
+		operationPlanHasToolStepWithStatus(plan, skills.SkillAgentManagement, "create_agent", operationPlanStepStatusCompleted)
+}
+
+func agentManagementPostCreateConfigEditRequested(query string) bool {
+	secondary := strings.ToLower(strings.TrimSpace(agentManagementSecondaryIntentQuery(query)))
+	if secondary == "" {
+		return false
+	}
+	return agentManagementConfigUpdateRequested(secondary) ||
+		agentManagementSkillBindingRequested(secondary) ||
+		len(requiredAgentBindingMutationTools(secondary)) > 0
+}
+
+func skillLoopUnrequestedAgentConfigUpdateAfterCreateGuardResult(arguments map[string]interface{}) skillloop.FinalAnswerGuardResult {
+	agentID := strings.TrimSpace(firstNonEmptyString(arguments["agent_id"], arguments["id"], arguments["asset_id"]))
+	message := "update_agent_config is not part of the current create-Agent goal"
+	if agentID != "" {
+		message = "update_agent_config is not part of the current create-Agent goal for Agent " + agentID
+	}
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Message:  message,
+		SystemMessage: strings.Join([]string{
+			message + ".",
+			"The user asked to create the Agent and open or inspect its detail page, but did not ask to change runtime configuration, suggested questions, model, bindings, memory, file upload, theme, or other config fields after creation.",
+			"Do not request another governance approval for config changes inferred only from the detail page UI.",
+			"Use the create_agent result, current route/page evidence, and read-only verification if needed to provide the final answer.",
+		}, " "),
+	}
+}
+
+func skillLoopShouldBlockReadOnlyAgentCandidateLookup(prepared *PreparedChat, skillID string, toolName string) bool {
+	if prepared == nil || prepared.parts == nil ||
+		!strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentManagement) {
+		return false
+	}
+	toolName = strings.TrimSpace(toolName)
+	if !agentManagementToolIsReadOnlyCandidateLookup(toolName) {
+		return false
+	}
+	goal := operationPlanAmendmentGoal(prepared)
+	if strings.TrimSpace(goal) == "" || !agentManagementConfigReadRequested(goal) {
+		return false
+	}
+	explicitReadOnly := agentManagementExplicitReadOnlyConfigCheck(goal)
+	if !explicitReadOnly && skillLoopPlanHasAgentManagementMutationStep(prepared) {
+		return false
+	}
+	mutationRequested := agentManagementConfigUpdateRequested(goal) ||
+		agentManagementSkillBindingRequested(goal) ||
+		len(requiredAgentBindingMutationTools(goal)) > 0
+	if mutationRequested && !explicitReadOnly {
+		return false
+	}
+	if agentManagementCandidateLookupExplicitlyNegated(goal) {
+		return true
+	}
+	if agentManagementReadOnlyCandidateToolRequested(goal, toolName) {
+		return false
+	}
+	if strings.EqualFold(toolName, "list_available_models") {
+		return !agentManagementModelCandidateReadRequested(goal) && !agentManagementModelSelectionRequested(goal)
+	}
+	if strings.EqualFold(toolName, "list_agents") {
+		return agentManagementCurrentAgentIDFromParts(prepared.parts) != "" && !agentManagementSearchOrBroadListRequested(goal)
+	}
+	return true
+}
+
+func agentManagementToolIsReadOnlyCandidateLookup(toolName string) bool {
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "list_agent_skill_candidates",
+		"list_agent_knowledge_candidates",
+		"list_agent_database_candidates",
+		"list_agent_database_tables",
+		"list_agent_workflow_binding_candidates",
+		"list_available_models",
+		"list_agents":
+		return true
+	default:
+		return false
+	}
+}
+
+func skillLoopPlanHasAgentManagementMutationStep(prepared *PreparedChat) bool {
+	if prepared == nil || prepared.Message == nil {
+		return false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 {
+		return false
+	}
+	for _, step := range mapSliceFromAny(plan["steps"]) {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skills.SkillAgentManagement) {
+			continue
+		}
+		toolName := strings.TrimSpace(stringFromAny(step["tool_name"]))
+		if toolName == "" || !skillLoopToolNameLooksAssetMutation(toolName) {
+			continue
+		}
+		status := operationPlanNormalizeStepStatus(firstNonEmptyString(step["status"], mapFromOperationContext(plan["step_status"])[strings.TrimSpace(stringFromAny(step["id"]))]))
+		if status != operationPlanStepStatusFailed {
+			return true
+		}
+	}
+	return false
+}
+
+func agentManagementExplicitReadOnlyConfigCheck(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(agentManagementSecondaryIntentQuery(query)))
+	if query == "" {
+		return false
+	}
+	if agentManagementExplicitMutationOverridesReadOnlyConfigCheck(query) {
+		return false
+	}
+	hasReadOnlyMarker := containsAnySubstring(query, []string{
+		"read-only",
+		"readonly",
+		"read only",
+		"only read",
+		"inspect",
+		"check",
+		"view",
+		"\u53ea\u8bfb",
+		"\u53ea\u8bfb\u53d6",
+		"\u53ea\u68c0\u67e5",
+		"\u4ec5\u68c0\u67e5",
+		"\u53ea\u786e\u8ba4",
+		"\u4ec5\u786e\u8ba4",
+		"\u67e5\u770b",
+		"\u68c0\u67e5",
+	})
+	if !hasReadOnlyMarker {
+		return false
+	}
+	if agentManagementCandidateLookupExplicitlyNegated(query) {
+		return true
+	}
+	return containsAnySubstring(query, []string{
+		"do not modify",
+		"don't modify",
+		"dont modify",
+		"do not edit",
+		"don't edit",
+		"dont edit",
+		"do not update",
+		"don't update",
+		"dont update",
+		"do not change",
+		"don't change",
+		"dont change",
+		"without modifying",
+		"without changing",
+		"no modification",
+		"no config changes",
+		"do not request approval",
+		"don't request approval",
+		"dont request approval",
+		"do not ask for approval",
+		"don't ask for approval",
+		"dont ask for approval",
+		"without approval",
+		"no approval",
+		"\u4e0d\u8981\u4fee\u6539",
+		"\u4e0d\u4fee\u6539",
+		"\u522b\u4fee\u6539",
+		"\u4e0d\u8981\u7f16\u8f91",
+		"\u4e0d\u7f16\u8f91",
+		"\u4e0d\u8981\u66f4\u65b0",
+		"\u4e0d\u66f4\u65b0",
+		"\u4e0d\u8981\u66f4\u6539",
+		"\u4e0d\u66f4\u6539",
+		"\u4e0d\u8981\u6539",
+		"\u4e0d\u6539",
+		"\u4e0d\u8981\u53d8\u66f4",
+		"\u4e0d\u53d8\u66f4",
+		"\u4e0d\u8981\u53d1\u8d77\u5ba1\u6279",
+		"\u4e0d\u53d1\u8d77\u5ba1\u6279",
+		"\u4e0d\u8981\u5ba1\u6279",
+		"\u4e0d\u5ba1\u6279",
+		"\u65e0\u9700\u5ba1\u6279",
+	})
+}
+
+func agentManagementExplicitMutationOverridesReadOnlyConfigCheck(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(query)))
+	if query == "" {
+		return false
+	}
+	if strings.Contains(query, "update_agent_config") ||
+		strings.Contains(query, "update_agent_identity") ||
+		strings.Contains(query, "create_agent") ||
+		strings.Contains(query, "delete_agent") ||
+		agentManagementCreateRequested(query) ||
+		agentManagementDeleteRequested(query) ||
+		agentManagementExplicitConfigAssignmentRequested(query) ||
+		agentManagementExplicitIdentityAssignmentRequested(query) ||
+		agentManagementSkillBindingRequested(query) ||
+		len(requiredAgentBindingMutationTools(query)) > 0 {
+		return true
+	}
+	return false
+}
+
+func agentManagementExplicitConfigAssignmentRequested(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" || !agentManagementMutationVerbRequested(query) || len(agentManagementExpectedConfigUpdateFields(query)) == 0 {
+		return false
+	}
+	return containsAnySubstring(query, []string{
+		"set ",
+		" to ",
+		"update ",
+		"change ",
+		"modify ",
+		"replace ",
+		"switch ",
+		"enable ",
+		"disable ",
+		"\u8bbe\u7f6e",
+		"\u8bbe\u4e3a",
+		"\u8bbe\u6210",
+		"\u6539\u4e3a",
+		"\u6539\u6210",
+		"\u66f4\u65b0",
+		"\u66f4\u6539",
+		"\u66ff\u6362",
+		"\u5207\u6362",
+		"\u542f\u7528",
+		"\u7981\u7528",
+	})
+}
+
+func agentManagementExplicitIdentityAssignmentRequested(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" || !agentManagementMutationVerbRequested(query) {
+		return false
+	}
+	return containsPositiveAgentManagementResourceMarker(query, []string{
+		"rename", "name", "description", "icon",
+		"\u6539\u540d", "\u540d\u79f0", "\u540d\u5b57", "\u63cf\u8ff0", "\u56fe\u6807",
+	})
+}
+
+func agentManagementCandidateLookupExplicitlyNegated(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(agentManagementSecondaryIntentQuery(query)))
+	if query == "" {
+		return false
+	}
+	return containsAnySubstring(query, []string{
+		"do not query available models",
+		"do not list available models",
+		"do not query candidate resources",
+		"do not list candidate resources",
+		"do not list candidate",
+		"do not list candidates",
+		"do not query candidates",
+		"don't list candidate",
+		"don't list candidates",
+		"don't query candidates",
+		"without listing candidates",
+		"no candidate list",
+		"no candidates",
+		"\u4e0d\u8981\u67e5\u8be2\u53ef\u7528\u6a21\u578b\u6216\u5019\u9009\u8d44\u6e90",
+		"\u4e0d\u8981\u67e5\u8be2\u53ef\u7528\u6a21\u578b",
+		"\u4e0d\u8981\u67e5\u8be2\u5019\u9009\u8d44\u6e90",
+		"\u4e0d\u8981\u67e5\u8be2\u5019\u9009",
+		"\u4e0d\u8981\u67e5\u770b\u53ef\u7528\u6a21\u578b",
+		"\u4e0d\u8981\u67e5\u770b\u5019\u9009\u8d44\u6e90",
+		"\u4e0d\u8981\u5217\u5019\u9009",
+		"\u4e0d\u8981\u5217\u51fa\u5019\u9009",
+		"\u4e0d\u8981\u5217\u51fa\u53ef\u7528\u6a21\u578b",
+		"\u4e0d\u8981\u5217\u51fa\u5019\u9009\u8d44\u6e90",
+		"\u4e0d\u8981\u67e5\u770b\u5019\u9009",
+		"\u4e0d\u8981\u62c9\u5019\u9009",
+		"\u4e0d\u8981\u5019\u9009",
+		"\u4e0d\u67e5\u53ef\u7528\u6a21\u578b",
+		"\u4e0d\u67e5\u5019\u9009\u8d44\u6e90",
+		"\u4e0d\u67e5\u5019\u9009",
+		"\u4e0d\u7528\u5217\u5019\u9009",
+		"\u65e0\u9700\u5217\u5019\u9009",
+		"\u65e0\u9700\u67e5\u8be2\u53ef\u7528\u6a21\u578b",
+		"\u65e0\u9700\u67e5\u8be2\u5019\u9009\u8d44\u6e90",
+		"\u4e0d\u8981\u5217\u53ef\u7ed1\u5b9a",
+		"\u4e0d\u8981\u67e5\u770b\u53ef\u7ed1\u5b9a",
+		"\u4e0d\u8981\u5217\u53ef\u9009",
+		"\u4e0d\u8981\u67e5\u770b\u53ef\u9009",
+	})
+}
+
+func agentManagementModelCandidateReadRequested(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(agentManagementSecondaryIntentQuery(query)))
+	if query == "" {
+		return false
+	}
+	if !containsAnySubstring(query, []string{
+		"model", "provider", "\u6a21\u578b", "\u4f9b\u5e94\u5546",
+	}) {
+		return false
+	}
+	return containsAnySubstring(query, []string{
+		"available", "candidate", "candidates", "selectable", "supported", "list",
+		"\u53ef\u7528", "\u5019\u9009", "\u53ef\u9009", "\u652f\u6301", "\u5217\u51fa",
+	})
+}
+
+func agentManagementSearchOrBroadListRequested(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(agentManagementSecondaryIntentQuery(query)))
+	if query == "" {
+		return false
+	}
+	return containsAnySubstring(query, []string{
+		"search", "find", "list agents", "all agents", "what agents", "which agents",
+		"\u641c\u7d22", "\u67e5\u627e", "\u5217\u51fa\u667a\u80fd\u4f53", "\u6240\u6709\u667a\u80fd\u4f53", "\u6709\u54ea\u4e9b\u667a\u80fd\u4f53",
+	})
+}
+
+func skillLoopReadOnlyAgentCandidateLookupGuardResult(skillID string, toolName string) skillloop.FinalAnswerGuardResult {
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:  strings.TrimSpace(skillID),
+		ToolName: strings.TrimSpace(toolName),
+		Message:  "read-only Agent configuration checks do not need candidate lookup",
+		SystemMessage: strings.Join([]string{
+			"The user is asking for a read-only current Agent configuration check.",
+			"Do not call candidate-list tools, list_agent_database_tables, list_available_models, or list_agents just to inspect current config or bound resource counts.",
+			"Use the current page evidence and agent-management/get_agent_config result as the authoritative evidence.",
+			"Only call candidate tools when the user explicitly asks what resources/models are available or when a bind, unbind, replace, or model-change operation needs exact IDs.",
+			"Provide the final answer now from the existing evidence; do not call more tools for this read-only check.",
+		}, " "),
+	}
+}
+
+type agentCandidateSelectionUpdateIssue struct {
+	OverLimitFields []string
+	InvalidSkillIDs []string
+}
+
+type agentSkillBindingUpdateIssue struct {
+	InvalidSkillIDs []string
+}
+
+func skillLoopShouldBlockInvalidAgentSkillBindingUpdate(req skillloop.ToolCallGuardRequest) (agentSkillBindingUpdateIssue, bool) {
+	if !strings.EqualFold(strings.TrimSpace(req.SkillID), skills.SkillAgentManagement) ||
+		!strings.EqualFold(strings.TrimSpace(req.ToolName), "update_agent_config") ||
+		len(req.Arguments) == 0 {
+		return agentSkillBindingUpdateIssue{}, false
+	}
+	issue := agentSkillBindingUpdateIssue{}
+	for _, field := range []string{"enabled_skill_ids", "add_enabled_skill_ids", "remove_enabled_skill_ids"} {
+		for _, skillID := range skillLoopStringListArgument(req.Arguments, field) {
+			skillID = strings.TrimSpace(skillID)
+			if skillID != "" && !skillLoopLooksLikeAgentSkillID(skillID) {
+				issue.InvalidSkillIDs = appendUniqueStrings(issue.InvalidSkillIDs, skillID)
+			}
+		}
+	}
+	return issue, len(issue.InvalidSkillIDs) > 0
+}
+
+func skillLoopInvalidAgentSkillBindingUpdateGuardResult(issue agentSkillBindingUpdateIssue) skillloop.FinalAnswerGuardResult {
+	message := "update_agent_config includes unresolved Agent Skill binding targets"
+	details := []string{}
+	if len(issue.InvalidSkillIDs) > 0 {
+		details = append(details, "Invalid skill values: "+strings.Join(issue.InvalidSkillIDs, ", ")+".")
+	}
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Message:  message,
+		SystemMessage: strings.Join(append([]string{
+			message + ".",
+			"Do not request governance approval for Agent Skill binding changes unless the target Skill is resolved to a real skill_id.",
+			"Call list_agent_skill_candidates with the user's requested Skill name when needed.",
+			"If no matching candidate is returned, stop this Skill binding change and tell the user no matching Skill was found.",
+			"Use only candidate.skill_id values in enabled_skill_ids, add_enabled_skill_ids, or remove_enabled_skill_ids; display names belong only in display_names.",
+		}, details...), " "),
+	}
+}
+
+func skillLoopShouldBlockOverbroadAgentCandidateSelectionUpdate(prepared *PreparedChat, req skillloop.ToolCallGuardRequest) (agentCandidateSelectionUpdateIssue, bool) {
+	if prepared == nil || prepared.parts == nil ||
+		!strings.EqualFold(strings.TrimSpace(req.SkillID), skills.SkillAgentManagement) ||
+		!strings.EqualFold(strings.TrimSpace(req.ToolName), "update_agent_config") ||
+		len(req.Arguments) == 0 {
+		return agentCandidateSelectionUpdateIssue{}, false
+	}
+	goal := operationPlanAmendmentGoal(prepared)
+	if !agentBindingExplicitCandidateSelectionMutationRequested(goal) {
+		return agentCandidateSelectionUpdateIssue{}, false
+	}
+
+	issue := agentCandidateSelectionUpdateIssue{}
+	addOverLimit := func(field string, count int) {
+		if count > 1 {
+			issue.OverLimitFields = appendUniqueStrings(issue.OverLimitFields, field)
+		}
+	}
+	addOverLimit("skills", len(skillLoopStringListArgument(req.Arguments, "add_enabled_skill_ids")))
+	addOverLimit("skills", len(skillLoopStringListArgument(req.Arguments, "enabled_skill_ids")))
+	addOverLimit("knowledge bases", len(skillLoopStringListArgument(req.Arguments, "add_knowledge_dataset_ids")))
+	addOverLimit("knowledge bases", len(skillLoopStringListArgument(req.Arguments, "knowledge_dataset_ids")))
+	addOverLimit("database tables", skillLoopAgentDatabaseBindingTargetCount(req.Arguments["add_database_bindings"]))
+	addOverLimit("database tables", skillLoopAgentDatabaseBindingTargetCount(req.Arguments["database_bindings"]))
+	addOverLimit("workflows", skillLoopAgentBindingObjectCount(req.Arguments["add_workflow_bindings"]))
+	addOverLimit("workflows", skillLoopAgentBindingObjectCount(req.Arguments["workflow_bindings"]))
+
+	for _, skillID := range append(skillLoopStringListArgument(req.Arguments, "add_enabled_skill_ids"), skillLoopStringListArgument(req.Arguments, "enabled_skill_ids")...) {
+		if skillID = strings.TrimSpace(skillID); skillID != "" && !skillLoopLooksLikeAgentSkillID(skillID) {
+			issue.InvalidSkillIDs = appendUniqueStrings(issue.InvalidSkillIDs, skillID)
+		}
+	}
+
+	return issue, len(issue.OverLimitFields) > 0 || len(issue.InvalidSkillIDs) > 0
+}
+
+func skillLoopOverbroadAgentCandidateSelectionUpdateGuardResult(issue agentCandidateSelectionUpdateIssue) skillloop.FinalAnswerGuardResult {
+	message := "update_agent_config selected invalid or too many Agent binding candidates"
+	details := []string{}
+	if len(issue.OverLimitFields) > 0 {
+		details = append(details, "Fields over the requested one-candidate limit: "+strings.Join(issue.OverLimitFields, ", ")+".")
+	}
+	if len(issue.InvalidSkillIDs) > 0 {
+		details = append(details, "Skill values that look like display names instead of IDs: "+strings.Join(issue.InvalidSkillIDs, ", ")+".")
+	}
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Message:  message,
+		SystemMessage: strings.Join(append([]string{
+			message + ".",
+			"The user asked to choose at most one candidate for each requested resource type, so do not request governance approval for a broader update.",
+			"Retry update_agent_config only if the mutation is still needed, with at most one add_enabled_skill_ids value, one add_knowledge_dataset_ids value, one database table binding, and one workflow binding.",
+			"For skills, pass the candidate id from list_agent_skill_candidates, not the display name.",
+			"For database tables, copy one binding_candidates[].binding object from list_agent_database_tables instead of recombining IDs manually.",
+		}, details...), " "),
+	}
+}
+
+func skillLoopStringListArgument(args map[string]interface{}, key string) []string {
+	if args == nil {
+		return nil
+	}
+	return skillLoopStringListFromAny(args[key])
+}
+
+func skillLoopStringListFromAny(value interface{}) []string {
+	switch typed := value.(type) {
+	case nil:
+		return nil
+	case []string:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text := strings.TrimSpace(item); text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	case []interface{}:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text := strings.TrimSpace(fmt.Sprint(item)); text != "" && text != "<nil>" {
+				out = append(out, text)
+			}
+		}
+		return out
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" {
+			return nil
+		}
+		var stringItems []string
+		if err := json.Unmarshal([]byte(text), &stringItems); err == nil {
+			return skillLoopStringListFromAny(stringItems)
+		}
+		var anyItems []interface{}
+		if err := json.Unmarshal([]byte(text), &anyItems); err == nil {
+			return skillLoopStringListFromAny(anyItems)
+		}
+		return []string{text}
+	default:
+		text := strings.TrimSpace(fmt.Sprint(value))
+		if text == "" || text == "<nil>" {
+			return nil
+		}
+		return []string{text}
+	}
+}
+
+func skillLoopAgentBindingObjectCount(value interface{}) int {
+	items, ok := skillLoopObjectListFromAny(value)
+	if ok {
+		return len(items)
+	}
+	return len(skillLoopStringListFromAny(value))
+}
+
+func skillLoopAgentDatabaseBindingTargetCount(value interface{}) int {
+	items, ok := skillLoopObjectListFromAny(value)
+	if !ok {
+		return len(skillLoopStringListFromAny(value))
+	}
+	total := 0
+	for _, item := range items {
+		targets := []string{}
+		for _, key := range []string{
+			"table_ids",
+			"writable_table_ids",
+			"database_table_ids",
+			"database_table_keys",
+			"resource_ids",
+			"ids",
+		} {
+			targets = appendUniqueStrings(targets, skillLoopStringListFromAny(item[key])...)
+		}
+		for _, key := range []string{
+			"table_id",
+			"writable_table_id",
+			"database_table_id",
+			"resource_id",
+			"id",
+		} {
+			targets = appendUniqueStrings(targets, skillLoopStringListFromAny(item[key])...)
+		}
+		if len(targets) == 0 {
+			total++
+			continue
+		}
+		total += len(targets)
+	}
+	return total
+}
+
+func skillLoopObjectListFromAny(value interface{}) ([]map[string]interface{}, bool) {
+	switch typed := value.(type) {
+	case nil:
+		return nil, false
+	case []map[string]interface{}:
+		out := make([]map[string]interface{}, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, copyStringAnyMap(item))
+		}
+		return out, true
+	case []interface{}:
+		out := mapSliceFromAny(typed)
+		if len(out) == 0 && len(typed) > 0 {
+			return nil, false
+		}
+		return out, true
+	case map[string]interface{}:
+		return []map[string]interface{}{copyStringAnyMap(typed)}, true
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" {
+			return []map[string]interface{}{}, true
+		}
+		var items []map[string]interface{}
+		if err := json.Unmarshal([]byte(text), &items); err == nil {
+			return items, true
+		}
+		var item map[string]interface{}
+		if err := json.Unmarshal([]byte(text), &item); err == nil {
+			return []map[string]interface{}{item}, true
+		}
+		return nil, false
+	default:
+		out := mapSliceFromAny(value)
+		if len(out) == 0 {
+			return nil, false
+		}
+		return out, true
+	}
+}
+
+func skillLoopLooksLikeAgentSkillID(value string) bool {
+	value = strings.TrimSpace(value)
+	return value != "" && agentManagementSkillIDPattern.MatchString(value)
+}
+
+func skillLoopShouldBlockCurrentRequestForbiddenAgentMutation(prepared *PreparedChat, skillID string, toolName string) bool {
+	if prepared == nil || prepared.parts == nil ||
+		!strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentManagement) ||
+		!skillLoopToolNameLooksAssetMutation(toolName) {
+		return false
+	}
+	if agentManagementGoalForbidsUnrequestedMutation(prepared.parts.Query, toolName) {
+		return true
+	}
+	if !agentManagementShouldConsultOriginalGoalForMutationGuard(prepared.parts.Query) || prepared.Message == nil {
+		return false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	originalGoal := strings.TrimSpace(stringFromAny(plan["original_user_goal"]))
+	if originalGoal == "" || strings.EqualFold(originalGoal, strings.TrimSpace(prepared.parts.Query)) {
+		return false
+	}
+	return agentManagementGoalForbidsUnrequestedMutation(originalGoal, toolName)
+}
+
+func agentManagementShouldConsultOriginalGoalForMutationGuard(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return true
+	}
+	if agentManagementOperationalIntentTakesPrecedence(text) ||
+		agentManagementExplicitNoMutationRequested(text) ||
+		agentManagementExplicitReadOnlyConfigCheck(text) ||
+		agentManagementReadOnlyGoalRejectsMutation(text) {
+		return false
+	}
+	if isContinuationIntent(text) {
+		return true
+	}
+	if len([]rune(text)) > 24 {
+		return false
+	}
+	return containsAnySubstring(text, []string{
+		"agree", "approved", "approve", "yes", "ok", "okay", "confirmed", "confirm",
+		"\u540c\u610f", "\u5df2\u540c\u610f", "\u6279\u51c6", "\u5df2\u6279\u51c6", "\u786e\u8ba4", "\u53ef\u4ee5", "\u884c", "\u597d", "\u597d\u7684",
+	})
+}
+
+func skillLoopCurrentRequestForbiddenAgentMutationGuardResult(skillID string, toolName string) skillloop.FinalAnswerGuardResult {
+	message := "latest user request forbids this Agent mutation"
+	if strings.TrimSpace(toolName) != "" {
+		message = strings.TrimSpace(toolName) + " is forbidden by the latest read-only Agent request"
+	}
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:  strings.TrimSpace(skillID),
+		ToolName: strings.TrimSpace(toolName),
+		Message:  message,
+		SystemMessage: strings.Join([]string{
+			message + ".",
+			"The latest user request explicitly asks to read, inspect, or verify the current Agent state without modifying configuration.",
+			"Do not request governance approval for Agent updates in this turn, even if an older operation plan still contains a pending mutation.",
+			"Answer from the current page evidence and successful agent-management/get_agent_config or get_agent results. If those results are missing, call only the required read tool.",
+		}, " "),
+	}
 }
 
 func skillLoopShouldBlockDuplicateMutationToolCall(prepared *PreparedChat, resolved *skills.ResolvedSkills, req skillloop.ToolCallGuardRequest) bool {
@@ -774,7 +1924,13 @@ func skillLoopShouldBlockDuplicateMutationToolCall(prepared *PreparedChat, resol
 	if !skillLoopToolNameLooksAssetMutation(toolName) {
 		return false
 	}
+	if skillLoopRepeatedAgentCreateTargetAlreadySucceeded(prepared, req) {
+		return true
+	}
 	if skillLoopToolCallAlreadyAttemptedWithSameArguments(req) {
+		return true
+	}
+	if skillLoopSingleTargetAgentMutationAlreadySucceeded(prepared, req) {
 		return true
 	}
 	for _, call := range successfulMetadataToolCalls(prepared.Message.Metadata, skillID, toolName) {
@@ -783,6 +1939,189 @@ func skillLoopShouldBlockDuplicateMutationToolCall(prepared *PreparedChat, resol
 		}
 	}
 	return false
+}
+
+func skillLoopRepeatedAgentCreateTargetAlreadySucceeded(prepared *PreparedChat, req skillloop.ToolCallGuardRequest) bool {
+	if prepared == nil || prepared.Message == nil ||
+		!strings.EqualFold(strings.TrimSpace(req.SkillID), skills.SkillAgentManagement) ||
+		!strings.EqualFold(strings.TrimSpace(req.ToolName), "create_agent") {
+		return false
+	}
+	calls := append(successfulMetadataToolCalls(prepared.Message.Metadata, skills.SkillAgentManagement, "create_agent"),
+		matchingSkillToolCalls(req.SuccessfulToolCalls, skills.SkillAgentManagement, "create_agent")...)
+	if agentManagementCreateTargetAlreadySucceeded(calls, req.Arguments) {
+		return true
+	}
+	return agentCreateProgressTargetAlreadyCompleted(prepared.Message.Metadata, req.Arguments)
+}
+
+func agentCreateProgressTargetAlreadyCompleted(metadata map[string]interface{}, args map[string]interface{}) bool {
+	name := strings.ToLower(strings.TrimSpace(firstNonEmptyString(args["name"], args["agent_name"])))
+	if name == "" {
+		return false
+	}
+	for _, completed := range agentCreateCompletedTargetNamesFromProgress(metadata) {
+		if strings.EqualFold(strings.TrimSpace(completed), name) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentCreateCompletedTargetNamesFromProgress(metadata map[string]interface{}) []string {
+	progress := mapFromOperationContext(metadataValue(metadata, "agent_create_progress"))
+	if len(progress) == 0 {
+		ledger := mapFromOperationContext(metadataValue(metadata, "execution_ledger"))
+		progress = mapFromOperationContext(ledger["agent_create_progress"])
+		if len(progress) == 0 {
+			summary := mapFromOperationContext(ledger["summary"])
+			progress = mapFromOperationContext(summary["agent_create_progress"])
+		}
+	}
+	return stringSliceFromAny(progress["completed_targets"])
+}
+
+func skillLoopSingleTargetAgentMutationAlreadySucceeded(prepared *PreparedChat, req skillloop.ToolCallGuardRequest) bool {
+	if prepared == nil || prepared.Message == nil {
+		return false
+	}
+	skillID := strings.TrimSpace(req.SkillID)
+	toolName := strings.TrimSpace(req.ToolName)
+	if !strings.EqualFold(skillID, skills.SkillAgentManagement) {
+		return false
+	}
+	switch strings.ToLower(toolName) {
+	case "update_agent_config", "update_agent_identity":
+	default:
+		return false
+	}
+	if len(matchingSkillToolCalls(req.SuccessfulToolCalls, skillID, toolName)) > 0 {
+		return true
+	}
+	if skillLoopAgentIdentityUpdateAlreadyCoveredByCreate(prepared, req) {
+		return true
+	}
+	return len(successfulMetadataToolCalls(prepared.Message.Metadata, skillID, toolName)) > 0
+}
+
+func skillLoopAgentIdentityUpdateAlreadyCoveredByCreate(prepared *PreparedChat, req skillloop.ToolCallGuardRequest) bool {
+	if prepared == nil || prepared.Message == nil ||
+		!strings.EqualFold(strings.TrimSpace(req.SkillID), skills.SkillAgentManagement) ||
+		!strings.EqualFold(strings.TrimSpace(req.ToolName), "update_agent_identity") ||
+		!agentIdentityUpdateHasRequestedFields(req.Arguments) {
+		return false
+	}
+	createCalls := append(successfulMetadataToolCalls(prepared.Message.Metadata, skills.SkillAgentManagement, "create_agent"),
+		matchingSkillToolCalls(req.SuccessfulToolCalls, skills.SkillAgentManagement, "create_agent")...)
+	for _, call := range createCalls {
+		if agentIdentityUpdateRepeatsCreateCall(call, req.Arguments) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentIdentityUpdateHasRequestedFields(arguments map[string]interface{}) bool {
+	for _, key := range []string{"name", "description", "icon_type", "icon", "icon_background"} {
+		if _, ok := arguments[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func agentIdentityUpdateRepeatsCreateCall(call skillloop.SkillToolCallRef, updateArgs map[string]interface{}) bool {
+	updateAgentID := strings.TrimSpace(firstNonEmptyString(updateArgs["agent_id"], updateArgs["id"], updateArgs["asset_id"]))
+	createdAgentID, hasCreatedAgentID := agentCreateIdentityEvidence(call, "agent_id")
+	if updateAgentID != "" {
+		if !hasCreatedAgentID || updateAgentID != createdAgentID {
+			return false
+		}
+	}
+	matchedField := false
+	for _, key := range []string{"name", "description", "icon_type", "icon", "icon_background"} {
+		requested, ok := updateArgs[key]
+		if !ok {
+			continue
+		}
+		matchedField = true
+		created, hasCreated := agentCreateIdentityEvidence(call, key)
+		if !hasCreated || strings.TrimSpace(stringFromAny(requested)) != created {
+			return false
+		}
+	}
+	return matchedField
+}
+
+func agentCreateIdentityEvidence(call skillloop.SkillToolCallRef, key string) (string, bool) {
+	nestedAgent := mapFromOperationContext(call.Result["agent"])
+	switch key {
+	case "agent_id":
+		return firstAgentIdentityEvidenceValue(
+			identityEvidenceCandidate{values: call.Result, key: "agent_id"},
+			identityEvidenceCandidate{values: call.Result, key: "id"},
+			identityEvidenceCandidate{values: nestedAgent, key: "agent_id"},
+			identityEvidenceCandidate{values: nestedAgent, key: "id"},
+			identityEvidenceCandidate{values: call.Arguments, key: "agent_id"},
+			identityEvidenceCandidate{values: call.Arguments, key: "id"},
+		)
+	case "name":
+		return firstAgentIdentityEvidenceValue(
+			identityEvidenceCandidate{values: call.Result, key: "agent_name"},
+			identityEvidenceCandidate{values: call.Result, key: "name"},
+			identityEvidenceCandidate{values: nestedAgent, key: "name"},
+			identityEvidenceCandidate{values: call.Arguments, key: "name"},
+		)
+	case "description":
+		return firstAgentIdentityEvidenceValue(
+			identityEvidenceCandidate{values: call.Result, key: "agent_description"},
+			identityEvidenceCandidate{values: call.Result, key: "description"},
+			identityEvidenceCandidate{values: nestedAgent, key: "description"},
+			identityEvidenceCandidate{values: call.Arguments, key: "description"},
+		)
+	case "icon_type":
+		return firstAgentIdentityEvidenceValue(
+			identityEvidenceCandidate{values: call.Result, key: "agent_icon_type"},
+			identityEvidenceCandidate{values: call.Result, key: "icon_type"},
+			identityEvidenceCandidate{values: nestedAgent, key: "icon_type"},
+			identityEvidenceCandidate{values: call.Arguments, key: "icon_type"},
+		)
+	case "icon":
+		return firstAgentIdentityEvidenceValue(
+			identityEvidenceCandidate{values: call.Result, key: "agent_icon"},
+			identityEvidenceCandidate{values: call.Result, key: "icon"},
+			identityEvidenceCandidate{values: nestedAgent, key: "icon"},
+			identityEvidenceCandidate{values: call.Arguments, key: "icon"},
+		)
+	case "icon_background":
+		return firstAgentIdentityEvidenceValue(
+			identityEvidenceCandidate{values: call.Result, key: "agent_icon_background"},
+			identityEvidenceCandidate{values: call.Result, key: "icon_background"},
+			identityEvidenceCandidate{values: nestedAgent, key: "icon_background"},
+			identityEvidenceCandidate{values: call.Arguments, key: "icon_background"},
+		)
+	default:
+		return "", false
+	}
+}
+
+type identityEvidenceCandidate struct {
+	values map[string]interface{}
+	key    string
+}
+
+func firstAgentIdentityEvidenceValue(candidates ...identityEvidenceCandidate) (string, bool) {
+	for _, candidate := range candidates {
+		if candidate.values == nil {
+			continue
+		}
+		value, ok := candidate.values[candidate.key]
+		if !ok {
+			continue
+		}
+		return strings.TrimSpace(stringFromAny(value)), true
+	}
+	return "", false
 }
 
 func skillLoopShouldAllowUnplannedGovernedReadTool(prepared *PreparedChat, resolved *skills.ResolvedSkills, skillID string, toolName string) bool {
@@ -837,10 +2176,10 @@ func skillLoopDuplicateMutationGuardResult(skillID string, toolName string) skil
 	return skillloop.FinalAnswerGuardResult{
 		SkillID:  strings.TrimSpace(skillID),
 		ToolName: strings.TrimSpace(toolName),
-		Message:  "the same mutating tool call was already attempted with matching arguments",
+		Message:  "the asset-changing tool call was already attempted or completed in this turn",
 		SystemMessage: strings.Join([]string{
-			"The same asset-changing tool call was already attempted with matching arguments.",
-			"Do not repeat the identical operation.",
+			"The asset-changing tool call was already attempted or completed in this turn.",
+			"Do not repeat the operation unless a distinct pending plan step still requires it.",
 			"Use the existing tool result as evidence, adjust the arguments if a real retry is required, or provide a truthful answer from the ledger.",
 		}, " "),
 	}
@@ -910,6 +2249,10 @@ func skillLoopShouldAllowGovernedMutationDeviation(prepared *PreparedChat, resol
 		return false
 	}
 	if !skillLoopToolHasGovernedMutationEffect(resolved, skillID, toolName) {
+		return false
+	}
+	if strings.EqualFold(skillID, skills.SkillAgentManagement) &&
+		agentManagementGoalForbidsUnrequestedMutation(operationPlanAmendmentGoal(prepared), toolName) {
 		return false
 	}
 	return !skillLoopToolCallAlreadyAttemptedWithSameArguments(req)
@@ -1006,6 +2349,10 @@ func skillLoopShouldAllowRepeatedPlannedMutation(prepared *PreparedChat, req ski
 		return false
 	}
 	requestedCount := agentManagementCreateRequestedCount(goal)
+	requestedTargets := agentCreateTargetNamesFromText(goal)
+	if len(requestedTargets) > requestedCount {
+		requestedCount = len(requestedTargets)
+	}
 	if requestedCount <= 1 {
 		return false
 	}
@@ -1013,7 +2360,10 @@ func skillLoopShouldAllowRepeatedPlannedMutation(prepared *PreparedChat, req ski
 	if agentManagementUniqueCreateTargetCount(calls) >= requestedCount {
 		return false
 	}
-	return !agentManagementCreateTargetAlreadySucceeded(calls, req.Arguments)
+	if agentManagementCreateTargetAlreadySucceeded(calls, req.Arguments) {
+		return false
+	}
+	return agentManagementCreateTargetAllowedByRequestedTargets(requestedTargets, req.Arguments)
 }
 
 func agentManagementCreateRequestedCount(query string) int {
@@ -1150,6 +2500,37 @@ func agentManagementCreateTargetAlreadySucceeded(calls []skillloop.SkillToolCall
 	return false
 }
 
+func agentManagementCreateTargetAllowedByRequestedTargets(requestedTargets []string, args map[string]interface{}) bool {
+	if len(requestedTargets) == 0 {
+		return true
+	}
+	name := strings.ToLower(strings.TrimSpace(firstNonEmptyString(args["name"], args["agent_name"])))
+	if name == "" {
+		return false
+	}
+	for _, target := range requestedTargets {
+		if strings.ToLower(strings.TrimSpace(target)) == name {
+			return true
+		}
+	}
+	return false
+}
+
+func skillLoopShouldAllowReadyPlannedNavigationTool(prepared *PreparedChat, skillID string, toolName string, args map[string]interface{}) bool {
+	if prepared == nil || prepared.Message == nil || prepared.parts == nil {
+		return false
+	}
+	if !isConsoleNavigatorNavigateTool(skillID, toolName) || !skillIDEnabled(prepared.parts.SkillIDs, skillID) {
+		return false
+	}
+	href := normalizeConsoleNavigationGuardHref(skillToolCallArgumentString(args, "href"))
+	if href == "" || !strings.HasPrefix(href, "/console") {
+		return false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	return operationPlanHasReadyDependentRouteTarget(plan, href)
+}
+
 func skillLoopShouldAllowUnplannedNavigationTool(prepared *PreparedChat, skillID string, toolName string, args map[string]interface{}) bool {
 	if prepared == nil || prepared.Message == nil || prepared.parts == nil {
 		return false
@@ -1165,7 +2546,66 @@ func skillLoopShouldAllowUnplannedNavigationTool(prepared *PreparedChat, skillID
 	if href == "" || !strings.HasPrefix(href, "/console") {
 		return false
 	}
+	if operationPlanHasPendingRouteTargetWaitingForPlanStep(plan, href) {
+		return false
+	}
 	return !operationPlanHasCompletedRouteTarget(plan, href)
+}
+
+func operationPlanHasReadyDependentRouteTarget(plan map[string]interface{}, href string) bool {
+	href = normalizeConsoleNavigationGuardHref(href)
+	if len(plan) == 0 || href == "" {
+		return false
+	}
+	stepStatus := mapFromOperationContext(plan["step_status"])
+	for _, step := range mapSliceFromAny(plan["steps"]) {
+		if !operationPlanStepIsRoute(step) {
+			continue
+		}
+		target := operationPlanStepTargetPage(step)
+		if target == "" || href != normalizeConsoleNavigationGuardHref(target) {
+			continue
+		}
+		waitFor := strings.TrimSpace(stringFromAny(step["wait_for"]))
+		if waitFor == "" || strings.EqualFold(waitFor, "continue") {
+			continue
+		}
+		id := strings.TrimSpace(stringFromAny(step["id"]))
+		status := operationPlanNormalizeStepStatus(firstNonEmptyString(step["status"], stepStatus[id]))
+		if status == operationPlanStepStatusCompleted || status == operationPlanStepStatusFailed {
+			continue
+		}
+		if operationPlanStepWaitForReadyFromPlan(step, stepStatus) {
+			return true
+		}
+	}
+	return false
+}
+
+func operationPlanHasPendingRouteTargetWaitingForPlanStep(plan map[string]interface{}, href string) bool {
+	href = normalizeConsoleNavigationGuardHref(href)
+	if len(plan) == 0 || href == "" {
+		return false
+	}
+	stepStatus := mapFromOperationContext(plan["step_status"])
+	for _, step := range mapSliceFromAny(plan["steps"]) {
+		if !operationPlanStepIsRoute(step) {
+			continue
+		}
+		target := operationPlanStepTargetPage(step)
+		if target == "" || href != normalizeConsoleNavigationGuardHref(target) {
+			continue
+		}
+		id := strings.TrimSpace(stringFromAny(step["id"]))
+		status := operationPlanNormalizeStepStatus(firstNonEmptyString(step["status"], stepStatus[id]))
+		if status == operationPlanStepStatusCompleted {
+			continue
+		}
+		if !operationPlanStepWaitForReadyFromPlan(step, stepStatus) {
+			return true
+		}
+	}
+	return false
 }
 
 func operationPlanHasCompletedRouteTarget(plan map[string]interface{}, href string) bool {
@@ -1237,6 +2677,9 @@ func skillLoopToolNameLooksAssetMutation(toolName string) bool {
 	if toolName == "" {
 		return false
 	}
+	if skillLoopToolNameHasReadOnlyShape(toolName) {
+		return false
+	}
 	for _, marker := range []string{
 		"create", "delete", "remove", "update", "replace", "save", "write", "rename",
 		"bind", "unbind", "publish", "run", "execute", "send", "archive", "trash", "import",
@@ -1255,6 +2698,14 @@ func skillLoopToolNameLooksReadOnly(toolName string) bool {
 		return false
 	}
 	if skillLoopToolNameLooksAssetMutation(toolName) {
+		return false
+	}
+	return skillLoopToolNameHasReadOnlyShape(toolName)
+}
+
+func skillLoopToolNameHasReadOnlyShape(toolName string) bool {
+	toolName = strings.ToLower(strings.TrimSpace(toolName))
+	if toolName == "" {
 		return false
 	}
 	for _, prefix := range []string{"list_", "get_", "read_", "search_", "query_", "observe_"} {
@@ -1342,6 +2793,9 @@ func skillLoopCanAmendOperationPlanForTool(prepared *PreparedChat, skillID strin
 		return false
 	}
 	if strings.EqualFold(skillID, skills.SkillAgentManagement) {
+		if agentManagementGoalForbidsUnrequestedMutation(goal, toolName) {
+			return false
+		}
 		return agentManagementToolMatchesUserGoal(goal, toolName)
 	}
 	if strings.EqualFold(skillID, skills.SkillConsoleNavigator) && strings.EqualFold(toolName, "navigate") {
@@ -1386,8 +2840,7 @@ func operationPlanHasToolStepWithStatus(plan map[string]interface{}, skillID str
 			!strings.EqualFold(strings.TrimSpace(stringFromAny(step["tool_name"])), toolName) {
 			continue
 		}
-		id := strings.TrimSpace(stringFromAny(step["id"]))
-		stepState := operationPlanNormalizeStepStatus(firstNonEmptyString(step["status"], stepStatus[id]))
+		stepState := operationPlanStepResolvedStatus(step, stepStatus)
 		if stepState == status {
 			return true
 		}
@@ -1401,11 +2854,14 @@ func agentManagementToolMatchesUserGoal(goal string, toolName string) bool {
 	if goal == "" || toolName == "" {
 		return false
 	}
+	if isAgentManagementCapabilityExplanationIntent(goal) {
+		return false
+	}
 	switch toolName {
 	case "list_agents":
 		return agentManagementReadRequested(goal) || containsAnySubstring(goal, []string{"agent", "\u667a\u80fd\u4f53"})
 	case "get_agent", "get_agent_config":
-		return agentManagementReadRequested(goal) || agentManagementConfigReadRequested(goal)
+		return agentManagementReadRequested(goal) || agentManagementConfigReadRequested(goal) || len(agentManagementReadOnlyBindingCandidateTools(goal)) > 0
 	case "create_agent":
 		return agentManagementCreateRequested(goal)
 	case "delete_agent":
@@ -1417,16 +2873,228 @@ func agentManagementToolMatchesUserGoal(goal string, toolName string) bool {
 	case "list_available_models":
 		return agentManagementModelSelectionRequested(goal)
 	case "update_agent_config":
-		return agentManagementConfigUpdateRequested(goal)
-	case "list_agent_skill_candidates", "replace_agent_skill_bindings":
+		return agentManagementConfigUpdateRequested(goal) ||
+			agentManagementSkillBindingRequested(goal) ||
+			len(requiredAgentBindingMutationTools(goal)) > 0
+	case "list_agent_skill_candidates":
+		return agentManagementSkillBindingCandidateLookupNeeded(goal) || agentManagementReadOnlyCandidateToolRequested(goal, toolName)
+	case "replace_agent_skill_bindings":
 		return agentManagementSkillBindingRequested(goal)
-	case "list_agent_knowledge_candidates", "replace_agent_knowledge_bindings",
-		"list_agent_database_candidates", "list_agent_database_tables", "replace_agent_database_bindings",
-		"list_agent_workflow_binding_candidates", "replace_agent_workflow_bindings":
+	case "list_agent_knowledge_candidates", "list_agent_database_candidates", "list_agent_database_tables", "list_agent_workflow_binding_candidates":
+		return agentManagementBindingCandidateLookupNeededForTool(goal, toolName) || agentManagementReadOnlyCandidateToolRequested(goal, toolName)
+	case "replace_agent_knowledge_bindings", "replace_agent_database_bindings", "replace_agent_workflow_bindings":
 		return len(requiredAgentBindingMutationTools(goal)) > 0
 	default:
 		return false
 	}
+}
+
+func agentManagementReadOnlyCandidateToolRequested(goal string, toolName string) bool {
+	toolName = strings.ToLower(strings.TrimSpace(toolName))
+	if toolName == "" {
+		return false
+	}
+	for _, requested := range agentManagementReadOnlyBindingCandidateTools(goal) {
+		if strings.EqualFold(strings.TrimSpace(requested), toolName) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentManagementReadOnlyGoalRejectsMutation(goal string) bool {
+	query := strings.ToLower(strings.TrimSpace(agentManagementSecondaryIntentQuery(goal)))
+	if query == "" || len(agentManagementReadOnlyBindingCandidateTools(query)) == 0 {
+		return false
+	}
+	if agentManagementCreateRequested(query) ||
+		agentManagementDeleteRequested(query) ||
+		agentManagementIdentityUpdateRequested(query) ||
+		agentManagementSkillBindingRequested(query) ||
+		len(requiredAgentBindingMutationTools(query)) > 0 {
+		return false
+	}
+	if agentManagementExplicitNoMutationRequested(query) || agentBindingReadOnlyRequested(query) {
+		return true
+	}
+	return !agentManagementCreateRequested(query) &&
+		!agentManagementDeleteRequested(query) &&
+		!agentManagementIdentityUpdateRequested(query) &&
+		!agentManagementConfigUpdateRequested(query) &&
+		!agentManagementSkillBindingRequested(query) &&
+		len(requiredAgentBindingMutationTools(query)) == 0
+}
+
+func agentManagementGoalForbidsUnrequestedMutation(goal string, toolName string) bool {
+	toolName = strings.TrimSpace(toolName)
+	if toolName == "" || !skillLoopToolNameLooksAssetMutation(toolName) {
+		return false
+	}
+	if agentManagementGoalExplicitlyForbidsTool(goal, toolName) {
+		return true
+	}
+	if agentManagementReadOnlyGoalRejectsMutation(goal) {
+		return true
+	}
+	if agentManagementExplicitReadOnlyConfigCheck(goal) {
+		return true
+	}
+	if !agentManagementExplicitNoMutationRequested(goal) {
+		return false
+	}
+	return !agentManagementToolMatchesUserGoal(goal, toolName)
+}
+
+func agentManagementGoalExplicitlyForbidsTool(goal string, toolName string) bool {
+	toolName = strings.TrimSpace(toolName)
+	if toolName == "" {
+		return false
+	}
+	switch toolName {
+	case "create_agent":
+		return agentManagementMutationExplicitlyNegated(goal, []string{
+			"create", "add", "new",
+			"\u521b\u5efa", "\u65b0\u5efa", "\u65b0\u589e",
+		}) && !agentManagementCreateRequested(goal)
+	case "delete_agent", "delete_agents":
+		return agentManagementMutationExplicitlyNegated(goal, []string{
+			"delete", "remove",
+			"\u5220\u9664", "\u5220\u6389", "\u79fb\u9664", "\u6e05\u7406",
+		}) && !agentManagementDeleteRequested(goal)
+	default:
+		return false
+	}
+}
+
+func agentManagementMutationExplicitlyNegated(goal string, markers []string) bool {
+	text := strings.ToLower(strings.TrimSpace(stripQuotedIntentPayloads(goal)))
+	if text == "" || !containsAnySubstring(text, []string{"agent", "\u667a\u80fd\u4f53"}) {
+		return false
+	}
+	hasNegatedMarker := false
+	hasUnnegatedMarker := false
+	for _, marker := range markers {
+		marker = strings.TrimSpace(strings.ToLower(marker))
+		if marker == "" {
+			continue
+		}
+		searchFrom := 0
+		for {
+			idx := strings.Index(text[searchFrom:], marker)
+			if idx < 0 {
+				break
+			}
+			absoluteIdx := searchFrom + idx
+			if !agentManagementMutationMarkerIsEmbeddedIdentifier(text, absoluteIdx, marker) &&
+				!agentManagementMutationMarkerIsNavigationNoun(text, absoluteIdx, marker) &&
+				agentManagementMutationMarkerNegated(text, absoluteIdx) {
+				hasNegatedMarker = true
+			} else if !agentManagementMutationMarkerIsEmbeddedIdentifier(text, absoluteIdx, marker) &&
+				!agentManagementMutationMarkerIsNavigationNoun(text, absoluteIdx, marker) {
+				hasUnnegatedMarker = true
+			}
+			searchFrom = absoluteIdx + len(marker)
+			if searchFrom >= len(text) {
+				break
+			}
+		}
+	}
+	return hasNegatedMarker && !hasUnnegatedMarker
+}
+
+func agentManagementExplicitNoMutationRequested(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return false
+	}
+	if containsAnySubstring(text, []string{
+		"read-only",
+		"readonly",
+		"read only",
+		"only read",
+		"only inspect",
+		"only view",
+		"only navigate",
+		"just read",
+		"just inspect",
+		"just view",
+		"just navigate",
+		"do not modify",
+		"don't modify",
+		"dont modify",
+		"do not change",
+		"don't change",
+		"dont change",
+		"do not update",
+		"don't update",
+		"dont update",
+		"do not edit",
+		"don't edit",
+		"dont edit",
+		"without modifying",
+		"without changing",
+		"without updating",
+		"leave unchanged",
+		"keep unchanged",
+		"do not request approval",
+		"don't request approval",
+		"dont request approval",
+		"do not ask for approval",
+		"don't ask for approval",
+		"dont ask for approval",
+		"without approval",
+		"no approval",
+	}) {
+		return true
+	}
+	compact := strings.NewReplacer(
+		" ", "",
+		"\t", "",
+		"\n", "",
+		"\r", "",
+		",", "",
+		".", "",
+		";", "",
+		":", "",
+		"\uff0c", "",
+		"\u3002", "",
+		"\uff1b", "",
+		"\uff1a", "",
+		"\u3001", "",
+	).Replace(text)
+	return containsAnySubstring(compact, []string{
+		"\u53ea\u8bfb",
+		"\u53ea\u8bfb\u53d6",
+		"\u53ea\u67e5\u770b",
+		"\u53ea\u770b",
+		"\u53ea\u6253\u5f00",
+		"\u53ea\u5bfc\u822a",
+		"\u53ea\u505a\u5bfc\u822a",
+		"\u53ea\u505a\u67e5\u770b",
+		"\u53ea\u505a\u8bfb\u53d6",
+		"\u4e0d\u4fee\u6539",
+		"\u4e0d\u8981\u4fee\u6539",
+		"\u522b\u4fee\u6539",
+		"\u4e0d\u66f4\u6539",
+		"\u4e0d\u8981\u66f4\u6539",
+		"\u4e0d\u7f16\u8f91",
+		"\u4e0d\u8981\u7f16\u8f91",
+		"\u4e0d\u8c03\u6574",
+		"\u4e0d\u8981\u8c03\u6574",
+		"\u4e0d\u53d8\u66f4",
+		"\u4e0d\u8981\u53d8\u66f4",
+		"\u4e0d\u8981\u4fee\u6539\u914d\u7f6e",
+		"\u4e0d\u8981\u4fee\u6539\u4efb\u4f55\u914d\u7f6e",
+		"\u4e0d\u4fee\u6539\u914d\u7f6e",
+		"\u4e0d\u8981\u53d1\u8d77\u5ba1\u6279",
+		"\u4e0d\u53d1\u8d77\u5ba1\u6279",
+		"\u4e0d\u8981\u5ba1\u6279",
+		"\u4e0d\u5ba1\u6279",
+		"\u65e0\u9700\u5ba1\u6279",
+		"\u65e0\u9700\u4fee\u6539",
+		"\u4fdd\u6301\u4e0d\u53d8",
+		"\u4fdd\u6301\u539f\u6837",
+	})
 }
 
 func skillLoopShouldRestrictToOperationPlan(prepared *PreparedChat) bool {
@@ -1463,7 +3131,11 @@ func skillLoopAllowedPlannedTools(prepared *PreparedChat) map[string]struct{} {
 		return nil
 	}
 	allowed := map[string]struct{}{}
-	for _, step := range operationPlanPendingExecutableSteps(plan, 8) {
+	stepStatus := mapFromOperationContext(plan["step_status"])
+	for _, step := range operationPlanPendingExecutableStepsForToolExposure(plan, 8) {
+		if !operationPlanStepWaitForReadyFromPlan(step, stepStatus) {
+			continue
+		}
 		skillID := strings.TrimSpace(stringFromAny(step["skill_id"]))
 		toolName := strings.TrimSpace(stringFromAny(step["tool_name"]))
 		if skillID == "" || toolName == "" {
@@ -1473,15 +3145,23 @@ func skillLoopAllowedPlannedTools(prepared *PreparedChat) map[string]struct{} {
 		if skills.RequiresPromptProfessionalizerPreflight(skillID, toolName) {
 			allowed[skillLoopToolWildcardAllowKey(skills.SkillPromptProfessionalizer)] = struct{}{}
 		}
-		if operationPlanStepIsRoute(step) {
-			break
-		}
 	}
 	addOperationPlanReplayableTools(plan, allowed)
 	if len(allowed) == 0 {
 		return nil
 	}
 	return allowed
+}
+
+func operationPlanStepWaitForReadyFromPlan(step map[string]interface{}, stepStatus map[string]interface{}) bool {
+	waitFor := strings.TrimSpace(stringFromAny(step["wait_for"]))
+	if waitFor == "" || strings.EqualFold(waitFor, "continue") {
+		return true
+	}
+	if len(stepStatus) == 0 {
+		return false
+	}
+	return operationPlanNormalizeStepStatus(stringFromAny(stepStatus[waitFor])) == operationPlanStepStatusCompleted
 }
 
 func addOperationPlanReplayableTools(plan map[string]interface{}, allowed map[string]struct{}) {
@@ -1618,6 +3298,9 @@ func skillRuntimeParametersForPrepared(prepared *PreparedChat) map[string]interf
 		params["workspace_id"] = workspaceID
 	}
 	params = applySkillToolGovernanceRuntimeParameters(params, prepared)
+	if recentAgents := consoleAgentsRecentMutationPayloads(prepared); len(recentAgents) > 0 {
+		params["console_agents_recent_agent_updates"] = recentAgents
+	}
 	if prepared != nil && prepared.parts != nil && isConsoleFilesContext(prepared.parts.RuntimeContext, prepared.parts.RawOperationContext, prepared.parts.OperationContext) {
 		params["console_files_page"] = true
 		if visibleFiles := consoleFilesPromptVisibleFiles(prepared.parts); len(visibleFiles) > 0 {
@@ -1626,6 +3309,10 @@ func skillRuntimeParametersForPrepared(prepared *PreparedChat) map[string]interf
 	}
 	if prepared != nil && prepared.parts != nil && isConsoleAgentsContext(prepared.parts.RuntimeContext, prepared.parts.RawOperationContext, prepared.parts.OperationContext) {
 		params["console_agents_page"] = true
+		if route := consoleRouteFromRuntimeContext(prepared.parts.RuntimeContext); route != "" {
+			params["console_current_route"] = route
+			params["console_agents_current_route"] = route
+		}
 		if visibleAgents := consoleAgentsPromptVisibleAgents(prepared.parts); len(visibleAgents) > 0 {
 			params["console_agents_visible_agents"] = visibleAgents
 		}
@@ -1636,6 +3323,147 @@ func skillRuntimeParametersForPrepared(prepared *PreparedChat) map[string]interf
 		}
 	}
 	return params
+}
+
+func consoleAgentsRecentMutationPayloads(prepared *PreparedChat) []map[string]interface{} {
+	if prepared == nil || prepared.Message == nil {
+		return nil
+	}
+	byID := map[string]map[string]interface{}{}
+	order := []string{}
+	addPayload := func(payload map[string]interface{}) {
+		agentID := strings.TrimSpace(firstNonEmptyString(payload["agent_id"], payload["id"]))
+		if agentID == "" {
+			return
+		}
+		if _, exists := byID[agentID]; !exists {
+			order = append(order, agentID)
+		}
+		byID[agentID] = mergeConsoleAgentPayload(byID[agentID], payload)
+	}
+	if payload := consoleAgentPayloadFromOperationToolResult(mapFromOperationContext(prepared.Message.Metadata["operation_plan"])); len(payload) > 0 {
+		addPayload(payload)
+	}
+	if payload := consoleAgentPayloadFromOperationToolResult(mapFromOperationContext(prepared.Message.Metadata["operation_result_summary"])); len(payload) > 0 {
+		addPayload(payload)
+	}
+	invocations := skillInvocationsFromMetadata(prepared.Message.Metadata["skill_invocations"])
+	for _, invocation := range invocations {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["skill_id"])), skills.SkillAgentManagement) ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["status"])), "success") {
+			continue
+		}
+		switch strings.TrimSpace(stringFromAny(invocation["tool_name"])) {
+		case "create_agent", "update_agent_identity", "update_agent_config", "replace_agent_skill_bindings", "replace_agent_knowledge_bindings", "replace_agent_database_bindings", "replace_agent_workflow_bindings":
+		default:
+			continue
+		}
+		payload := consoleAgentPayloadFromInvocationResult(mapFromOperationContext(invocation["result"]))
+		agentID := strings.TrimSpace(firstNonEmptyString(payload["agent_id"], payload["id"]))
+		if agentID == "" {
+			continue
+		}
+		addPayload(payload)
+	}
+	if len(order) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, len(order))
+	for _, agentID := range order {
+		if payload := byID[agentID]; len(payload) > 0 {
+			out = append(out, payload)
+		}
+	}
+	return out
+}
+
+func consoleAgentPayloadFromOperationToolResult(plan map[string]interface{}) map[string]interface{} {
+	if len(plan) == 0 {
+		return nil
+	}
+	candidates := []map[string]interface{}{}
+	for _, key := range []string{"tool_result", "latest_tool_result", "result_summary"} {
+		if candidate := mapFromOperationContext(plan[key]); len(candidate) > 0 {
+			candidates = append(candidates, candidate)
+			if summary := mapFromOperationContext(candidate["result_summary"]); len(summary) > 0 {
+				candidates = append(candidates, summary)
+			}
+		}
+	}
+	for _, candidate := range candidates {
+		if len(candidate) == 0 {
+			continue
+		}
+		if skillID := strings.TrimSpace(stringFromAny(candidate["skill_id"])); skillID != "" &&
+			!strings.EqualFold(skillID, skills.SkillAgentManagement) {
+			continue
+		}
+		switch strings.TrimSpace(stringFromAny(candidate["tool_name"])) {
+		case "", "create_agent", "update_agent_identity", "update_agent_config", "replace_agent_skill_bindings", "replace_agent_knowledge_bindings", "replace_agent_database_bindings", "replace_agent_workflow_bindings":
+		default:
+			continue
+		}
+		if payload := consoleAgentPayloadFromInvocationResult(candidate); len(payload) > 0 {
+			return payload
+		}
+	}
+	return nil
+}
+
+func consoleAgentPayloadFromInvocationResult(result map[string]interface{}) map[string]interface{} {
+	if len(result) == 0 {
+		return nil
+	}
+	payload := map[string]interface{}{}
+	agent := mapFromOperationContext(result["agent"])
+	copyConsoleAgentPayloadFields(payload, agent)
+	copyConsoleAgentPayloadFields(payload, result)
+	if id := strings.TrimSpace(firstNonEmptyString(payload["agent_id"], payload["id"], result["agent_id"], result["id"])); id != "" {
+		payload["agent_id"] = id
+		payload["id"] = id
+		if _, ok := payload["href"]; !ok {
+			payload["href"] = "/console/agents/" + id + "/agent"
+		}
+	}
+	if name := strings.TrimSpace(firstNonEmptyString(payload["name"], payload["agent_name"], result["agent_name"])); name != "" {
+		payload["name"] = name
+		payload["agent_name"] = name
+	}
+	if workspaceID := strings.TrimSpace(firstNonEmptyString(payload["workspace_id"], result["workspace_id"])); workspaceID != "" {
+		payload["workspace_id"] = workspaceID
+	}
+	return payload
+}
+
+func mergeConsoleAgentPayload(existing map[string]interface{}, latest map[string]interface{}) map[string]interface{} {
+	if len(existing) == 0 {
+		return copyStringAnyMap(latest)
+	}
+	out := copyStringAnyMap(existing)
+	copyConsoleAgentPayloadFields(out, latest)
+	return out
+}
+
+func copyConsoleAgentPayloadFields(target map[string]interface{}, source map[string]interface{}) {
+	if target == nil || len(source) == 0 {
+		return
+	}
+	for _, key := range []string{
+		"id",
+		"agent_id",
+		"name",
+		"agent_name",
+		"description",
+		"workspace_id",
+		"icon_url",
+		"icon_type",
+		"icon",
+		"href",
+	} {
+		if value, ok := source[key]; ok && value != nil && strings.TrimSpace(fmt.Sprint(value)) != "" {
+			target[key] = value
+		}
+	}
 }
 
 func preparedSkillWorkspaceID(prepared *PreparedChat) string {
@@ -1690,6 +3518,26 @@ func contextualAIChatTurnStrategyMessage(prepared *PreparedChat) (adapter.Messag
 		"Do not expose this strategy JSON, internal IDs, or raw fields to the user.",
 		"Turn strategy JSON: " + string(encoded),
 	}, "\n")
+	if strings.EqualFold(strings.TrimSpace(strategy.Intent), "explain_agent_management_limit") {
+		content = strings.Join([]string{
+			"ZGI AIChat turn strategy guidance:",
+			"This is an explanation-only strategy for an Agent-management capability that is outside the current AIChat MVP.",
+			"Answer directly from the strategy and current page context. Do not load skills, do not call tools, do not request governance approval, and do not mutate Agent assets.",
+			"Do not expose this strategy JSON, internal IDs, or raw fields to the user.",
+			"Turn strategy JSON: " + string(encoded),
+		}, "\n")
+	} else if strings.EqualFold(strings.TrimSpace(strategy.Intent), "explain_agent_management_capabilities") {
+		content = strings.Join([]string{
+			"ZGI AIChat turn strategy guidance:",
+			"This is an explanation-only strategy for the contextual Agent-management assistant capabilities.",
+			"Answer directly from current page context and the known Agent-management capability summary. Do not load skills, do not call tools, do not query bindable resources, do not navigate, and do not mutate Agent assets.",
+			"Known supported Agent-management actions in this sidebar MVP: create draft Agents; delete one or more visible Agents with governance approval; open an Agent detail page when requested; edit Agent name, description, icon, system prompt, suggested questions, home title, input placeholder, theme color, model provider/model pair, model parameters, Agent memory switch, file-upload switch, and memory slots; bind or unbind Agent skills, knowledge bases, database tables, and workflows after resolving exact candidates.",
+			"Known unsupported actions: publish, roll back, invoke or chat with an Agent, manage API keys, and control WebApp online/offline state.",
+			"If the user asks for visible Agent names, use the injected current page context instead of calling list_agents.",
+			"Do not expose this strategy JSON, internal IDs, or raw fields to the user.",
+			"Turn strategy JSON: " + string(encoded),
+		}, "\n")
+	}
 	return adapter.Message{Role: "system", Content: content}, true
 }
 
@@ -1719,9 +3567,11 @@ type AIChatTurnStrategy struct {
 }
 
 type AIChatTurnStrategyTool struct {
-	SkillID   string            `json:"skill_id"`
-	ToolName  string            `json:"tool_name"`
-	Arguments map[string]string `json:"arguments"`
+	SkillID       string            `json:"skill_id"`
+	ToolName      string            `json:"tool_name"`
+	Arguments     map[string]string `json:"arguments"`
+	StepID        string            `json:"step_id,omitempty"`
+	WaitForStepID string            `json:"wait_for_step_id,omitempty"`
 }
 
 type AIChatTurnStrategyRouteStep struct {
@@ -1790,6 +3640,10 @@ func contextualAIChatTurnStrategyFromParts(parts *chatRequestParts) *AIChatTurnS
 	}
 
 	switch {
+	case isUnsupportedAgentManagementOperationIntent(parts):
+		strategy = contextualUnsupportedAgentManagementStrategy(parts, strategy)
+	case isAgentManagementCapabilityExplanationIntent(parts.Query):
+		strategy = contextualAgentManagementCapabilityExplanationStrategy(parts, strategy)
 	case isAgentManagementIntent(parts.Query):
 		strategy = contextualAgentManagementStrategy(parts, strategy)
 	case isConsoleNavigationIntent(parts.Query) && consoleNavigationResolvedTargetCount(parts.Query) > 1:
@@ -1896,6 +3750,8 @@ func appendAgentManagementPlannedTools(parts *chatRequestParts, strategy *AIChat
 	if query == "" {
 		return strategy
 	}
+	strategy = pruneAgentManagementPlannedToolsForQuery(parts, strategy, query)
+	secondaryQuery := agentManagementSecondaryIntentQuery(query)
 	deleteRequested := agentManagementDeleteRequested(query)
 	createReferenceOnly := deleteRequested && agentManagementCreateMentionIsDeleteTargetReference(query)
 	if createReferenceOnly {
@@ -1905,56 +3761,749 @@ func appendAgentManagementPlannedTools(parts *chatRequestParts, strategy *AIChat
 		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "create_agent", nil)
 	}
 	if deleteRequested {
+		deleteToolName := "delete_agent"
 		if agentManagementBatchDeleteRequested(query) {
-			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "delete_agents", nil)
+			deleteToolName = "delete_agents"
+		}
+		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, deleteToolName, nil)
+		if agentManagementCurrentDetailDeleteNeedsListNavigation(parts, query) &&
+			skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
+			deleteStepID := operationPlanToolStepID(skills.SkillAgentManagement, deleteToolName)
+			strategy = appendPlannedToolWithStep(
+				strategy,
+				skills.SkillConsoleNavigator,
+				"navigate",
+				map[string]string{
+					"href":   "/console/agents",
+					"reason": "return to Agent list after deleting the current Agent detail page",
+				},
+				operationPlanRouteStepID("/console/agents", 1),
+				deleteStepID,
+			)
+			strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
+				"after deleting the current Agent detail page, console-navigator/navigate returns to /console/agents before the final answer",
+			)
+			strategy.ObservationPoints = appendUniqueStrings(strategy.ObservationPoints, "route_loaded:/console/agents")
 		} else {
-			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "delete_agent", nil)
+			strategy.Avoid = appendUniqueStrings(strategy.Avoid,
+				"do not navigate after Agent deletion unless deleting the current Agent detail page or the user explicitly asked to open a page",
+			)
 		}
 		if !agentManagementDeleteHasExplicitFollowupMutation(query) {
 			return strategy
 		}
 	}
-	if agentManagementConfigReadRequested(query) ||
-		agentManagementConfigUpdateRequested(query) ||
-		agentManagementSkillBindingRequested(query) ||
-		len(requiredAgentBindingMutationTools(query)) > 0 {
-		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "get_agent_config", nil)
+	configUpdateRequested := agentManagementConfigUpdateRequested(secondaryQuery)
+	identityUpdateRequested := agentManagementIdentityUpdateRequested(secondaryQuery)
+	skillBindingRequested := agentManagementSkillBindingRequested(secondaryQuery)
+	requiredBindingTools := requiredAgentBindingMutationTools(secondaryQuery)
+	expectedBindingActions := agentManagementExpectedConfigBindingActions(secondaryQuery)
+	currentAgentArgs := agentManagementCurrentAgentToolArguments(parts)
+	for _, toolName := range agentManagementReadOnlyBindingCandidateTools(secondaryQuery) {
+		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, toolName, currentAgentArgs)
 	}
-	if agentManagementIdentityUpdateRequested(query) {
-		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "update_agent_identity", nil)
+	if agentManagementConfigReadRequested(secondaryQuery) ||
+		configUpdateRequested ||
+		skillBindingRequested ||
+		len(requiredBindingTools) > 0 {
+		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "get_agent_config", currentAgentArgs)
 	}
-	if agentManagementModelSelectionRequested(query) {
+	if identityUpdateRequested {
+		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "update_agent_identity", currentAgentArgs)
+	}
+	if agentManagementModelSelectionRequested(secondaryQuery) {
 		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_available_models", nil)
 	}
-	if agentManagementConfigUpdateRequested(query) {
-		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "update_agent_config", nil)
+	if configUpdateRequested {
+		strategy = appendAgentManagementUpdateConfigPlannedTool(strategy, secondaryQuery, currentAgentArgs)
 	}
-	if agentManagementSkillBindingRequested(query) {
-		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_agent_skill_candidates", nil)
+	if agentManagementSkillBindingCandidateLookupNeeded(secondaryQuery) {
+		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_agent_skill_candidates", agentManagementSkillCandidateToolArguments(parts, secondaryQuery))
 	}
-	requiredBindingTools := requiredAgentBindingMutationTools(query)
 	for _, toolName := range requiredBindingTools {
+		if !agentManagementBindingMutationNeedsCandidateLookup(toolName, expectedBindingActions) {
+			continue
+		}
 		switch toolName {
 		case "replace_agent_knowledge_bindings":
-			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_agent_knowledge_candidates", nil)
+			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_agent_knowledge_candidates", currentAgentArgs)
 		case "replace_agent_database_bindings":
-			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_agent_database_candidates", nil)
-			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_agent_database_tables", nil)
+			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_agent_database_candidates", currentAgentArgs)
+			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_agent_database_tables", currentAgentArgs)
 		case "replace_agent_workflow_bindings":
-			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_agent_workflow_binding_candidates", nil)
+			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_agent_workflow_binding_candidates", currentAgentArgs)
 		}
 	}
-	if agentManagementSkillBindingRequested(query) || len(requiredBindingTools) > 0 {
-		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "update_agent_config", nil)
+	if skillBindingRequested || len(requiredBindingTools) > 0 {
+		strategy = appendAgentManagementUpdateConfigPlannedTool(strategy, secondaryQuery, currentAgentArgs)
+	}
+	if agentManagementPostUpdateReadRequested(query) &&
+		(identityUpdateRequested ||
+			configUpdateRequested ||
+			skillBindingRequested ||
+			len(requiredBindingTools) > 0) {
+		waitForStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
+		if identityUpdateRequested &&
+			!configUpdateRequested &&
+			!skillBindingRequested &&
+			len(requiredBindingTools) == 0 {
+			waitForStepID = operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_identity")
+			strategy = appendPostUpdateAgentIdentityReadPlannedTool(strategy, waitForStepID)
+			return strategy
+		}
+		strategy = appendPostUpdateAgentConfigReadPlannedTool(strategy, waitForStepID)
 	}
 	if len(strategy.PlannedTools) == 0 {
 		if agentManagementReadRequested(query) {
-			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "get_agent", nil)
+			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "get_agent", currentAgentArgs)
 		} else if !agentManagementVisibleContextResolvesUserTarget(parts, query) {
 			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_agents", nil)
 		}
 	}
 	return strategy
+}
+
+func agentManagementCurrentAgentToolArguments(parts *chatRequestParts) map[string]string {
+	if agentID := agentManagementCurrentAgentIDFromParts(parts); agentID != "" {
+		return map[string]string{"agent_id": agentID}
+	}
+	return nil
+}
+
+func agentManagementSkillCandidateToolArguments(parts *chatRequestParts, query string) map[string]string {
+	args := mergeTurnStrategyToolArguments(nil, agentManagementCurrentAgentToolArguments(parts))
+	if candidateQuery := agentManagementSkillCandidateQuery(query); candidateQuery != "" {
+		args = mergeTurnStrategyToolArguments(args, map[string]string{"query": candidateQuery})
+	}
+	return args
+}
+
+func agentManagementSkillCandidateQuery(query string) string {
+	text := strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(agentManagementSecondaryIntentQuery(query)))
+	if text == "" {
+		return ""
+	}
+	if value := agentManagementExplicitCandidateQueryValue(text); value != "" {
+		return value
+	}
+	return agentManagementQuotedResourceNameAfterMarkers(text, []string{"skill", "\u6280\u80fd"})
+}
+
+func agentManagementExplicitCandidateQueryValue(text string) string {
+	lower := strings.ToLower(text)
+	anchor := "list_agent_skill_candidates"
+	anchorIndex := strings.Index(lower, anchor)
+	if anchorIndex < 0 {
+		return ""
+	}
+	tail := text[anchorIndex+len(anchor):]
+	queryIndex := strings.Index(strings.ToLower(tail), "query")
+	if queryIndex < 0 {
+		return ""
+	}
+	return trimAgentManagementCandidateQueryValue(tail[queryIndex+len("query"):])
+}
+
+func trimAgentManagementCandidateQueryValue(value string) string {
+	runes := []rune(strings.TrimSpace(value))
+	start := 0
+	for start < len(runes) {
+		r := runes[start]
+		if unicode.IsSpace(r) || strings.ContainsRune(":=\u540d\u4e3a\u7528\u4e3a\u662f\uff1a\uff0c,;'\u201c\u201d\"\u300c\u300d`", r) {
+			start++
+			continue
+		}
+		break
+	}
+	runes = runes[start:]
+	end := 0
+	for end < len(runes) {
+		r := runes[end]
+		if r == '\n' || r == '\r' || strings.ContainsRune(",.;\uff0c\u3002\uff1b\u3001", r) {
+			break
+		}
+		end++
+		if end >= 80 {
+			break
+		}
+	}
+	return strings.Trim(strings.TrimSpace(string(runes[:end])), "`\"'\u201c\u201d\u300c\u300d")
+}
+
+func agentManagementQuotedResourceNameAfterMarkers(text string, markers []string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	lower := strings.ToLower(text)
+	for _, marker := range markers {
+		marker = strings.ToLower(strings.TrimSpace(marker))
+		if marker == "" {
+			continue
+		}
+		searchFrom := 0
+		for {
+			index := strings.Index(lower[searchFrom:], marker)
+			if index < 0 {
+				break
+			}
+			index += searchFrom
+			tail := text[index+len(marker):]
+			if value := firstQuotedValue(tail); value != "" {
+				return value
+			}
+			searchFrom = index + len(marker)
+			if searchFrom >= len(lower) {
+				break
+			}
+		}
+	}
+	return ""
+}
+
+func firstQuotedValue(text string) string {
+	pairs := []struct {
+		open  rune
+		close rune
+	}{
+		{'\u300c', '\u300d'},
+		{'\u300a', '\u300b'},
+		{'\u201c', '\u201d'},
+		{'"', '"'},
+		{'\'', '\''},
+		{'`', '`'},
+	}
+	runes := []rune(text)
+	for _, pair := range pairs {
+		start := -1
+		for i, r := range runes {
+			if i > 80 {
+				break
+			}
+			if r == pair.open {
+				start = i + 1
+				break
+			}
+		}
+		if start < 0 {
+			continue
+		}
+		for i := start; i < len(runes); i++ {
+			if runes[i] == pair.close {
+				return strings.TrimSpace(string(runes[start:i]))
+			}
+		}
+	}
+	return ""
+}
+
+func agentManagementCurrentAgentIDFromParts(parts *chatRequestParts) string {
+	if parts == nil || !isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		return ""
+	}
+	if agentID := agentIDFromConsoleAgentPageRoute(consoleRouteFromRuntimeContext(parts.RuntimeContext)); agentID != "" {
+		return agentID
+	}
+	agents := consoleAgentsPromptVisibleAgents(parts)
+	selectedID := ""
+	selectedCount := 0
+	for _, agent := range agents {
+		selected, _ := agent["selected"].(bool)
+		if !selected {
+			continue
+		}
+		if id := strings.TrimSpace(firstNonEmptyString(agent["agent_id"], agent["id"], agent["resource_id"])); id != "" {
+			selectedID = id
+			selectedCount++
+		}
+	}
+	if selectedCount == 1 {
+		return selectedID
+	}
+	return ""
+}
+
+func agentManagementCurrentDetailDeleteNeedsListNavigation(parts *chatRequestParts, query string) bool {
+	if parts == nil || !agentManagementDeleteRequested(query) || consoleNavigationRequestNegated(query) {
+		return false
+	}
+	currentRoute := consoleRouteFromRuntimeContext(parts.RuntimeContext)
+	if !isConsoleAgentDetailRoute(currentRoute) {
+		return false
+	}
+	currentAgentID := agentManagementCurrentAgentIDFromParts(parts)
+	if currentAgentID == "" {
+		currentAgentID = agentIDFromConsoleAgentPageRoute(currentRoute)
+	}
+	if currentAgentID == "" {
+		return false
+	}
+	if targets := resolvedAgentDeleteTargetsForUserInputGuard(parts); len(targets) > 0 {
+		if len(targets) != 1 {
+			return false
+		}
+		targetID := strings.TrimSpace(firstNonEmptyString(targets[0]["agent_id"], targets[0]["id"]))
+		return targetID == "" || strings.EqualFold(targetID, currentAgentID)
+	}
+	normalized := normalizeConsoleNavigationQuery(query)
+	return containsAnySubstring(normalized, []string{
+		"current agent", "this agent", "current page", "this page",
+		"\u5f53\u524d\u667a\u80fd\u4f53", "\u8fd9\u4e2a\u667a\u80fd\u4f53", "\u5f53\u524d\u9875", "\u8fd9\u4e2a\u9875\u9762",
+	})
+}
+
+func agentManagementBindingMutationNeedsCandidateLookup(toolName string, expectedActions map[string]string) bool {
+	field, _ := agentBindingRequirementFieldAndKind(toolName)
+	if field == "" {
+		return true
+	}
+	action := operationPlanCanonicalAgentConfigBindingAction(expectedActions[field])
+	if action == "" {
+		return true
+	}
+	return action != "unbind"
+}
+
+func agentManagementSkillBindingCandidateLookupNeeded(query string) bool {
+	if !agentManagementSkillBindingRequested(query) {
+		return false
+	}
+	action := operationPlanCanonicalAgentConfigBindingAction(
+		agentBindingExpectedActionForResource(query, []string{"skill", "\u6280\u80fd"}),
+	)
+	if action == "unbind" && agentManagementSkillUnbindUsesCurrentBindingSet(query) {
+		return false
+	}
+	return true
+}
+
+func agentManagementSkillUnbindUsesCurrentBindingSet(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(agentManagementSecondaryIntentQuery(query))))
+	if text == "" {
+		return false
+	}
+	if action := operationPlanCanonicalAgentConfigBindingAction(agentBindingExpectedActionForResource(text, []string{"skill", "\u6280\u80fd"})); action != "unbind" {
+		return false
+	}
+	return containsAnySubstring(text, []string{
+		"all skill", "all skills", "every skill", "all binding", "all bindings",
+		"current binding", "current bindings", "existing binding", "existing bindings",
+		"\u5168\u90e8", "\u6240\u6709", "\u90fd",
+		"\u5f53\u524d\u7ed1\u5b9a", "\u5f53\u524d\u5df2\u7ed1\u5b9a", "\u73b0\u6709\u7ed1\u5b9a", "\u5df2\u6709\u7ed1\u5b9a",
+	})
+}
+
+func agentManagementBindingCandidateLookupNeededForTool(query string, toolName string) bool {
+	expectedActions := agentManagementExpectedConfigBindingActions(query)
+	for _, requiredTool := range requiredAgentBindingMutationTools(query) {
+		if !strings.EqualFold(strings.TrimSpace(requiredTool), strings.TrimSpace(toolName)) {
+			continue
+		}
+		return agentManagementBindingMutationNeedsCandidateLookup(requiredTool, expectedActions)
+	}
+	return false
+}
+
+func agentIDFromConsoleAgentPageRoute(route string) string {
+	route = strings.TrimSpace(route)
+	if route == "" {
+		return ""
+	}
+	const prefix = "/console/agents/"
+	idx := strings.Index(route, prefix)
+	if idx < 0 {
+		return ""
+	}
+	rest := strings.TrimPrefix(route[idx:], prefix)
+	agentID, _, _ := strings.Cut(rest, "/")
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" || agentID == "new" {
+		return ""
+	}
+	return agentID
+}
+
+func appendAgentManagementUpdateConfigPlannedTool(strategy *AIChatTurnStrategy, query string, baseArgs map[string]string) *AIChatTurnStrategy {
+	fields := agentManagementExpectedConfigUpdateFields(query)
+	bindingActions := agentManagementExpectedConfigBindingActions(query)
+	if len(fields) == 0 && len(bindingActions) == 0 {
+		return appendPlannedTool(strategy, skills.SkillAgentManagement, "update_agent_config", baseArgs)
+	}
+	args := mergeTurnStrategyToolArguments(nil, baseArgs)
+	if args == nil {
+		args = map[string]string{}
+	}
+	if len(fields) > 0 {
+		args[operationPlanExpectedUpdatedFieldsKey] = strings.Join(fields, ",")
+	}
+	if encodedActions := operationPlanEncodeAgentConfigBindingActions(bindingActions); encodedActions != "" {
+		args[operationPlanExpectedBindingActionsKey] = encodedActions
+	}
+	return appendPlannedTool(strategy, skills.SkillAgentManagement, "update_agent_config", args)
+}
+
+func agentManagementExpectedConfigUpdateFields(query string) []string {
+	text := strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(agentManagementSecondaryIntentQuery(query))))
+	if text == "" {
+		return nil
+	}
+	fields := []string{}
+	add := func(field string) {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			return
+		}
+		fields = appendUniqueStrings(fields, field)
+	}
+	if agentManagementModelSelectionRequested(text) {
+		add("model")
+	}
+	if containsPositiveAgentManagementResourceMarker(text, []string{"system prompt", "prompt", "\u7cfb\u7edf\u63d0\u793a\u8bcd", "\u63d0\u793a\u8bcd"}) {
+		add("system_prompt")
+	}
+	if containsPositiveAgentManagementResourceMarker(text, []string{"model parameter", "temperature", "top_p", "\u6a21\u578b\u53c2\u6570", "\u6e29\u5ea6"}) {
+		add("model_parameters")
+	}
+	if containsPositiveAgentManagementResourceMarker(text, []string{"file upload", "\u6587\u4ef6\u4e0a\u4f20"}) {
+		add("file_upload_enabled")
+	}
+	if containsPositiveAgentManagementResourceMarker(text, []string{"memory", "\u8bb0\u5fc6"}) {
+		add("agent_memory_enabled")
+	}
+	if containsPositiveAgentManagementResourceMarker(text, []string{"home_title", "home title", "homepage_title", "homepage title", "\u9996\u9875\u6807\u9898", "\u9996\u9875\u6587\u6848"}) {
+		add("home_title")
+	}
+	if containsPositiveAgentManagementResourceMarker(text, []string{"placeholder", "input placeholder", "\u5360\u4f4d", "\u8f93\u5165\u6846\u63d0\u793a"}) {
+		add("input_placeholder")
+	}
+	if containsPositiveAgentManagementResourceMarker(text, []string{"theme color", "theme", "display color", "\u4e3b\u9898\u8272", "\u4e3b\u9898", "\u5c55\u793a\u989c\u8272"}) {
+		add("theme_color")
+	}
+	if containsPositiveAgentManagementResourceMarker(text, []string{
+		"opening question", "suggested question", "starter question", "example question",
+		"\u5f00\u573a\u95ee\u9898", "\u5efa\u8bae\u95ee\u9898", "\u793a\u4f8b\u95ee\u9898", "\u5f15\u5bfc\u95ee\u9898",
+	}) {
+		add("suggested_questions")
+	}
+	if agentManagementSkillBindingRequested(text) {
+		add("enabled_skill_ids")
+	}
+	requiredBindingTools := requiredAgentBindingMutationTools(text)
+	for _, toolName := range requiredBindingTools {
+		switch toolName {
+		case "replace_agent_knowledge_bindings":
+			add("knowledge_dataset_ids")
+		case "replace_agent_database_bindings":
+			add("database_bindings")
+		case "replace_agent_workflow_bindings":
+			add("workflow_bindings")
+		}
+	}
+	return fields
+}
+
+func agentManagementExpectedConfigBindingActions(query string) map[string]string {
+	text := strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(agentManagementSecondaryIntentQuery(query))))
+	if text == "" {
+		return nil
+	}
+	actions := map[string]string{}
+	add := func(field string, markers []string, enabled bool) {
+		if !enabled {
+			return
+		}
+		action := agentBindingExpectedActionForResource(text, markers)
+		if action == "" {
+			return
+		}
+		if canonical := operationPlanAgentConfigCanonicalField(field); canonical != "" {
+			actions[canonical] = action
+		}
+	}
+	add("enabled_skill_ids", []string{"skill", "\u6280\u80fd"}, agentManagementSkillBindingRequested(text))
+	requiredBindingTools := requiredAgentBindingMutationTools(text)
+	add("knowledge_dataset_ids", []string{"knowledge", "\u77e5\u8bc6\u5e93"}, stringSliceContainsFold(requiredBindingTools, "replace_agent_knowledge_bindings"))
+	add("database_bindings", []string{"database", "table", "\u6570\u636e\u5e93", "\u6570\u636e\u8868"}, stringSliceContainsFold(requiredBindingTools, "replace_agent_database_bindings"))
+	add("workflow_bindings", []string{"workflow", "\u5de5\u4f5c\u6d41"}, stringSliceContainsFold(requiredBindingTools, "replace_agent_workflow_bindings"))
+	if len(actions) == 0 {
+		return nil
+	}
+	return actions
+}
+
+func agentBindingExpectedActionForResource(query string, resourceMarkers []string) string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" || len(resourceMarkers) == 0 {
+		return ""
+	}
+	if action := agentBindingTrailingListActionForResource(query, resourceMarkers); action != "" {
+		return action
+	}
+	resourceClauses := agentBindingResourceClauses(query)
+	matchingClauses := []string{}
+	for _, clause := range resourceClauses {
+		if !containsAnySubstring(clause, resourceMarkers) {
+			continue
+		}
+		matchingClauses = append(matchingClauses, clause)
+		for _, segment := range agentBindingActionSegments(clause) {
+			if !containsAnySubstring(segment, resourceMarkers) {
+				continue
+			}
+			if action := agentBindingExpectedActionFromText(segment); action != "" {
+				return action
+			}
+		}
+	}
+	for _, clause := range matchingClauses {
+		if action := agentBindingExpectedActionFromText(clause); action != "" {
+			return action
+		}
+	}
+	return agentBindingExpectedActionFromText(query)
+}
+
+func agentBindingTrailingListActionForResource(query string, resourceMarkers []string) string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" || len(resourceMarkers) == 0 {
+		return ""
+	}
+	resourceIndex := -1
+	for _, marker := range resourceMarkers {
+		marker = strings.ToLower(strings.TrimSpace(marker))
+		if marker == "" {
+			continue
+		}
+		if index := strings.Index(query, marker); index >= 0 && (resourceIndex < 0 || index < resourceIndex) {
+			resourceIndex = index
+		}
+	}
+	if resourceIndex < 0 {
+		return ""
+	}
+	trailing := query[resourceIndex:]
+	for _, marker := range []string{
+		"\u5168\u90e8\u89e3\u7ed1",
+		"\u5168\u90fd\u89e3\u7ed1",
+		"\u90fd\u89e3\u7ed1",
+		"\u4e00\u5e76\u89e3\u7ed1",
+		"\u4e00\u6b21\u6027\u89e3\u7ed1",
+		"\u5168\u90e8\u53d6\u6d88\u5173\u8054",
+		"\u90fd\u53d6\u6d88\u5173\u8054",
+		"\u5168\u90e8\u6e05\u7a7a",
+		"\u90fd\u6e05\u7a7a",
+		"\u5168\u90e8\u79fb\u9664",
+		"\u90fd\u79fb\u9664",
+	} {
+		if containsUnnegatedAgentManagementMutationMarker(trailing, marker) {
+			return "unbind"
+		}
+	}
+	for _, marker := range []string{
+		"\u5168\u90e8\u7ed1\u5b9a",
+		"\u5168\u90fd\u7ed1\u5b9a",
+		"\u90fd\u7ed1\u5b9a",
+		"\u4e00\u5e76\u7ed1\u5b9a",
+		"\u4e00\u6b21\u6027\u7ed1\u5b9a",
+		"\u5168\u90e8\u5173\u8054",
+		"\u90fd\u5173\u8054",
+	} {
+		if containsUnnegatedAgentManagementMutationMarker(trailing, marker) {
+			return "bind"
+		}
+	}
+	return ""
+}
+
+func agentBindingActionSegments(text string) []string {
+	text = strings.ToLower(strings.TrimSpace(text))
+	if text == "" {
+		return nil
+	}
+	replacer := strings.NewReplacer(
+		" and ", "\uff0c",
+		" then ", "\uff0c",
+		"\u7136\u540e", "\uff0c",
+		"\u5e76\u4e14", "\uff0c",
+		"\u5e76", "\uff0c",
+		"\u4ee5\u53ca", "\uff0c",
+		"\u548c", "\uff0c",
+		"\u4e0e", "\uff0c",
+		"\u53ca", "\uff0c",
+	)
+	text = replacer.Replace(text)
+	segments := strings.FieldsFunc(text, func(r rune) bool {
+		switch r {
+		case ',', '.', ';', '\n', '\r', '\uff0c', '\u3002', '\uff1b', '\u3001':
+			return true
+		default:
+			return false
+		}
+	})
+	out := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		segment = strings.TrimSpace(segment)
+		if segment != "" {
+			out = append(out, segment)
+		}
+	}
+	return out
+}
+
+func agentBindingExpectedActionFromText(text string) string {
+	text = strings.ToLower(strings.TrimSpace(text))
+	if text == "" {
+		return ""
+	}
+	for _, marker := range []string{
+		"\u66ff\u6362",
+		"replace",
+		"switch",
+	} {
+		if containsUnnegatedAgentManagementMutationMarker(text, marker) {
+			return "replace"
+		}
+	}
+	for _, marker := range []string{
+		"\u89e3\u7ed1",
+		"\u7981\u7528",
+		"\u505c\u7528",
+		"\u53d6\u6d88\u5173\u8054",
+		"\u5220\u9664",
+		"\u79fb\u9664",
+		"\u6e05\u7a7a",
+		"unbind",
+		"disable",
+		"detach",
+		"delete",
+		"remove",
+		"clear",
+	} {
+		if containsUnnegatedAgentManagementMutationMarker(text, marker) {
+			return "unbind"
+		}
+	}
+	for _, marker := range []string{
+		"\u7ed1\u5b9a",
+		"\u542f\u7528",
+		"\u5173\u8054",
+		"\u6dfb\u52a0",
+		"\u65b0\u589e",
+		"bind",
+		"enable",
+		"associate",
+		"add",
+	} {
+		if containsUnnegatedAgentManagementMutationMarker(text, marker) {
+			return "bind"
+		}
+	}
+	if agentBindingExplicitCandidateSelectionMutationRequested(text) {
+		return "bind"
+	}
+	return ""
+}
+
+func pruneAgentManagementPlannedToolsForQuery(parts *chatRequestParts, strategy *AIChatTurnStrategy, query string) *AIChatTurnStrategy {
+	if strategy == nil {
+		return strategy
+	}
+	allowed := agentManagementAllowedPlannedToolSet(parts, query)
+	if len(allowed) == 0 {
+		return strategy
+	}
+	filtered := make([]AIChatTurnStrategyTool, 0, len(strategy.PlannedTools))
+	for _, tool := range strategy.PlannedTools {
+		if !strings.EqualFold(strings.TrimSpace(tool.SkillID), skills.SkillAgentManagement) {
+			filtered = append(filtered, tool)
+			continue
+		}
+		toolName := strings.ToLower(strings.TrimSpace(tool.ToolName))
+		if _, ok := allowed[toolName]; ok {
+			filtered = append(filtered, tool)
+		}
+	}
+	strategy.PlannedTools = filtered
+	return strategy
+}
+
+func agentManagementAllowedPlannedToolSet(parts *chatRequestParts, query string) map[string]struct{} {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return nil
+	}
+	allowed := map[string]struct{}{}
+	add := func(toolName string) {
+		toolName = strings.ToLower(strings.TrimSpace(toolName))
+		if toolName != "" {
+			allowed[toolName] = struct{}{}
+		}
+	}
+
+	secondaryQuery := agentManagementSecondaryIntentQuery(query)
+	deleteRequested := agentManagementDeleteRequested(query)
+	createReferenceOnly := deleteRequested && agentManagementCreateMentionIsDeleteTargetReference(query)
+	if !createReferenceOnly && agentManagementCreateRequested(query) {
+		add("create_agent")
+	}
+	if deleteRequested {
+		if agentManagementBatchDeleteRequested(query) {
+			add("delete_agents")
+		} else {
+			add("delete_agent")
+		}
+		if !agentManagementDeleteHasExplicitFollowupMutation(query) {
+			return allowed
+		}
+	}
+	if agentManagementConfigReadRequested(secondaryQuery) ||
+		agentManagementConfigUpdateRequested(secondaryQuery) ||
+		agentManagementSkillBindingRequested(secondaryQuery) ||
+		len(requiredAgentBindingMutationTools(secondaryQuery)) > 0 {
+		add("get_agent_config")
+	}
+	if agentManagementIdentityUpdateRequested(secondaryQuery) {
+		add("update_agent_identity")
+	}
+	if agentManagementModelSelectionRequested(secondaryQuery) {
+		add("list_available_models")
+	}
+	for _, toolName := range agentManagementReadOnlyBindingCandidateTools(secondaryQuery) {
+		add(toolName)
+	}
+	if agentManagementConfigUpdateRequested(secondaryQuery) {
+		add("update_agent_config")
+	}
+	expectedBindingActions := agentManagementExpectedConfigBindingActions(secondaryQuery)
+	if agentManagementSkillBindingCandidateLookupNeeded(secondaryQuery) {
+		add("list_agent_skill_candidates")
+		add("update_agent_config")
+	}
+	for _, toolName := range requiredAgentBindingMutationTools(secondaryQuery) {
+		if !agentManagementBindingMutationNeedsCandidateLookup(toolName, expectedBindingActions) {
+			add("update_agent_config")
+			continue
+		}
+		switch toolName {
+		case "replace_agent_knowledge_bindings":
+			add("list_agent_knowledge_candidates")
+			add("update_agent_config")
+		case "replace_agent_database_bindings":
+			add("list_agent_database_candidates")
+			add("list_agent_database_tables")
+			add("update_agent_config")
+		case "replace_agent_workflow_bindings":
+			add("list_agent_workflow_binding_candidates")
+			add("update_agent_config")
+		}
+	}
+	if len(allowed) == 0 {
+		if agentManagementReadRequested(query) {
+			add("get_agent")
+		} else if !agentManagementVisibleContextResolvesUserTarget(parts, query) {
+			add("list_agents")
+		}
+	}
+	return allowed
 }
 
 func agentManagementDeleteHasExplicitFollowupMutation(query string) bool {
@@ -1963,16 +4512,38 @@ func agentManagementDeleteHasExplicitFollowupMutation(query string) bool {
 		return false
 	}
 	for _, phrase := range []string{
-		"after deleting", "after delete", "then edit", "then update", "then modify", "and edit", "and update", "and modify",
-		"\u5220\u9664\u540e", "\u5220\u5b8c\u540e", "\u7136\u540e\u4fee\u6539", "\u7136\u540e\u7f16\u8f91", "\u7136\u540e\u66f4\u65b0",
-		"\u518d\u4fee\u6539", "\u518d\u7f16\u8f91", "\u518d\u66f4\u65b0", "\u540c\u65f6\u4fee\u6539", "\u540c\u65f6\u7f16\u8f91", "\u540c\u65f6\u66f4\u65b0",
-		"\u5e76\u4fee\u6539", "\u5e76\u7f16\u8f91", "\u5e76\u66f4\u65b0",
+		"then edit", "then update", "then modify", "then create", "then add", "then bind", "then unbind",
+		"and edit", "and update", "and modify", "and create", "and add", "and bind", "and unbind",
+		"\u7136\u540e\u4fee\u6539", "\u7136\u540e\u7f16\u8f91", "\u7136\u540e\u66f4\u65b0", "\u7136\u540e\u521b\u5efa", "\u7136\u540e\u65b0\u5efa", "\u7136\u540e\u7ed1\u5b9a", "\u7136\u540e\u89e3\u7ed1",
+		"\u518d\u4fee\u6539", "\u518d\u7f16\u8f91", "\u518d\u66f4\u65b0", "\u518d\u521b\u5efa", "\u518d\u65b0\u5efa", "\u518d\u7ed1\u5b9a", "\u518d\u89e3\u7ed1",
+		"\u540c\u65f6\u4fee\u6539", "\u540c\u65f6\u7f16\u8f91", "\u540c\u65f6\u66f4\u65b0", "\u540c\u65f6\u521b\u5efa", "\u540c\u65f6\u65b0\u5efa", "\u540c\u65f6\u7ed1\u5b9a", "\u540c\u65f6\u89e3\u7ed1",
+		"\u5e76\u4fee\u6539", "\u5e76\u7f16\u8f91", "\u5e76\u66f4\u65b0", "\u5e76\u521b\u5efa", "\u5e76\u65b0\u5efa", "\u5e76\u7ed1\u5b9a", "\u5e76\u89e3\u7ed1",
 	} {
 		if strings.Contains(text, phrase) {
 			return true
 		}
 	}
+	for _, marker := range []string{"after deleting", "after delete", "after deletion", "\u5220\u9664\u540e", "\u5220\u5b8c\u540e"} {
+		idx := strings.Index(text, marker)
+		if idx < 0 {
+			continue
+		}
+		tail := strings.TrimSpace(text[idx+len(marker):])
+		if agentManagementFollowupMutationRequested(tail) {
+			return true
+		}
+	}
 	return false
+}
+
+func agentManagementFollowupMutationRequested(text string) bool {
+	text = strings.ToLower(strings.TrimSpace(text))
+	if text == "" {
+		return false
+	}
+	return agentManagementCreateRequested(text) ||
+		agentManagementMutationVerbRequested(text) ||
+		agentBindingMutationRequested(text)
 }
 
 func agentManagementVisibleContextResolvesUserTarget(parts *chatRequestParts, query string) bool {
@@ -2012,19 +4583,50 @@ func agentManagementVisibleContextResolvesUserTarget(parts *chatRequestParts, qu
 }
 
 func agentManagementCreateRequested(query string) bool {
-	if strings.Contains(query, "create_agent") ||
-		containsAnySubstring(query, []string{"create agent", "new agent", "add agent", "\u521b\u5efa\u667a\u80fd\u4f53", "\u65b0\u5efa\u667a\u80fd\u4f53"}) {
-		return true
-	}
-	if !containsAnySubstring(query, []string{"agent", "\u667a\u80fd\u4f53"}) {
+	raw := strings.ToLower(strings.TrimSpace(query))
+	if raw == "" {
 		return false
 	}
-	for _, marker := range []string{"create", "new", "add", "\u521b\u5efa", "\u65b0\u5efa", "\u65b0\u589e"} {
-		if containsUnnegatedAgentManagementMutationMarker(query, marker) {
+	if strings.Contains(raw, "create_agent") {
+		return true
+	}
+	text := agentManagementCreateIntentText(raw)
+	if text == "" || !containsAnySubstring(text, []string{"agent", "\u667a\u80fd\u4f53"}) {
+		return false
+	}
+	if containsAnySubstring(text, []string{"create agent", "create an agent", "create a new agent", "add agent", "add an agent", "add a new agent", "\u521b\u5efa\u667a\u80fd\u4f53", "\u65b0\u5efa\u667a\u80fd\u4f53"}) {
+		return true
+	}
+	for _, pattern := range []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\b(?:create|add|new)\s+(?:a\s+|an\s+|one\s+|[0-9]+\s+|two\s+|three\s+|four\s+|five\s+)?(?:temporary\s+|draft\s+|test\s+|new\s+)*agents?\b`),
+	} {
+		if pattern.MatchString(text) {
+			return true
+		}
+	}
+	for _, marker := range []string{"\u521b\u5efa", "\u65b0\u5efa", "\u65b0\u589e"} {
+		if containsUnnegatedAgentManagementMutationMarker(text, marker) {
 			return true
 		}
 	}
 	return false
+}
+
+func agentManagementCreateIntentText(query string) string {
+	text := stripAgentManagementCreateFieldPayloads(query)
+	for _, marker := range []string{
+		"name to", "rename to", "change name to", "set name to",
+		"description to", "desc to", "change description to", "set description to",
+		"icon to", "change icon to", "set icon to",
+		"title to", "home title to", "homepage title to", "opening question to", "suggested question to",
+		"\u540d\u79f0\u6539\u4e3a", "\u540d\u79f0\u6539\u6210", "\u540d\u5b57\u6539\u4e3a", "\u540d\u5b57\u6539\u6210",
+		"\u63cf\u8ff0\u6539\u4e3a", "\u63cf\u8ff0\u6539\u6210", "\u63cf\u8ff0\u8bbe\u7f6e\u4e3a",
+		"\u56fe\u6807\u6539\u4e3a", "\u56fe\u6807\u6539\u6210", "\u56fe\u6807\u8bbe\u7f6e\u4e3a",
+		"\u9996\u9875\u6807\u9898\u6539\u4e3a", "\u9996\u9875\u6807\u9898\u8bbe\u7f6e\u4e3a", "\u5f00\u573a\u95ee\u9898\u6539\u4e3a", "\u5efa\u8bae\u95ee\u9898\u6539\u4e3a",
+	} {
+		text = removeAgentManagementCreateAssignmentPayload(text, marker)
+	}
+	return strings.ToLower(strings.TrimSpace(text))
 }
 
 func agentManagementCreateMentionIsDeleteTargetReference(query string) bool {
@@ -2044,8 +4646,8 @@ func agentManagementCreateMentionIsDeleteTargetReference(query string) bool {
 	}
 	return containsAnySubstring(text, []string{
 		"just created", "newly created", "already created", "previously created", "created agent", "created agents",
-		"\u521a\u521a\u521b\u5efa", "\u521a\u521b\u5efa", "\u65b0\u521b\u5efa", "\u5df2\u521b\u5efa", "\u5df2\u7ecf\u521b\u5efa",
-		"\u521a\u521a\u65b0\u5efa", "\u521a\u65b0\u5efa", "\u65b0\u5efa\u7684", "\u5df2\u65b0\u5efa", "\u5df2\u7ecf\u65b0\u5efa",
+		"\u521a\u521a\u521b\u5efa", "\u521a\u521b\u5efa", "\u521a\u624d\u521b\u5efa", "\u65b0\u521b\u5efa", "\u5df2\u521b\u5efa", "\u5df2\u7ecf\u521b\u5efa",
+		"\u521a\u521a\u65b0\u5efa", "\u521a\u65b0\u5efa", "\u521a\u624d\u65b0\u5efa", "\u65b0\u5efa\u7684", "\u5df2\u65b0\u5efa", "\u5df2\u7ecf\u65b0\u5efa",
 		"\u521b\u5efa\u7684\u8fd9", "\u521b\u5efa\u7684\u4e24", "\u521b\u5efa\u7684\u51e0", "\u521b\u5efa\u7684\u667a\u80fd\u4f53",
 	})
 }
@@ -2057,8 +4659,13 @@ func agentManagementDeleteRequested(query string) bool {
 	}
 	originalText := text
 	text = stripQuotedIntentPayloads(text)
-	if strings.Contains(text, "delete_agent") ||
-		containsAnySubstring(text, []string{"delete agent", "delete agents", "remove agent", "remove agents", "\u5220\u9664\u667a\u80fd\u4f53", "\u5220\u6389\u667a\u80fd\u4f53"}) {
+	return agentManagementExplicitDeleteRequestedInText(text, originalText)
+}
+
+func agentManagementExplicitDeleteRequestedInText(text string, originalText string) bool {
+	text = strings.ToLower(strings.TrimSpace(text))
+	originalText = strings.ToLower(strings.TrimSpace(originalText))
+	if strings.Contains(text, "delete_agent") || strings.Contains(text, "delete_agents") {
 		return true
 	}
 	if !containsAnySubstring(text, []string{"agent", "\u667a\u80fd\u4f53"}) &&
@@ -2066,16 +4673,101 @@ func agentManagementDeleteRequested(query string) bool {
 		return false
 	}
 	for _, marker := range []string{"delete", "remove", "\u5220\u9664", "\u5220\u6389", "\u79fb\u9664", "\u6e05\u7406"} {
-		if containsUnnegatedAgentManagementMutationMarker(text, marker) {
+		if containsUnnegatedAgentManagementDeleteMarker(text, marker) {
 			return true
 		}
 	}
 	return false
 }
 
+func containsUnnegatedAgentManagementDeleteMarker(text string, marker string) bool {
+	marker = strings.TrimSpace(strings.ToLower(marker))
+	if text == "" || marker == "" {
+		return false
+	}
+	searchFrom := 0
+	for {
+		idx := strings.Index(text[searchFrom:], marker)
+		if idx < 0 {
+			return false
+		}
+		absoluteIdx := searchFrom + idx
+		if !agentManagementMutationMarkerIsNavigationNoun(text, absoluteIdx, marker) &&
+			!agentManagementMutationMarkerNegated(text, absoluteIdx) &&
+			!agentManagementDeleteMarkerReferencesBindingMutation(text, absoluteIdx, marker) {
+			return true
+		}
+		searchFrom = absoluteIdx + len(marker)
+		if searchFrom >= len(text) {
+			return false
+		}
+	}
+}
+
+func agentManagementDeleteMarkerReferencesBindingMutation(text string, markerStart int, marker string) bool {
+	marker = strings.TrimSpace(strings.ToLower(marker))
+	if text == "" || marker == "" || markerStart < 0 || markerStart+len(marker) > len(text) {
+		return false
+	}
+	switch marker {
+	case "remove":
+		if strings.HasPrefix(text[markerStart:], "remove_") {
+			return true
+		}
+	case "delete", "\u5220\u9664", "\u5220\u6389", "\u79fb\u9664", "\u6e05\u7406":
+	default:
+		return false
+	}
+	clause := agentManagementClauseAt(text, markerStart)
+	if clause == "" {
+		return false
+	}
+	if containsAnySubstring(clause, []string{"delete agent", "delete agents", "remove agent", "remove agents", "\u5220\u9664\u667a\u80fd\u4f53", "\u5220\u6389\u667a\u80fd\u4f53"}) {
+		return false
+	}
+	hasBindingResource := containsAnySubstring(clause, []string{
+		"skill", "knowledge", "database", "table", "workflow", "binding", "bindings",
+		"\u6280\u80fd", "\u77e5\u8bc6\u5e93", "\u6570\u636e\u5e93", "\u6570\u636e\u8868", "\u5de5\u4f5c\u6d41", "\u7ed1\u5b9a", "\u5173\u8054",
+	})
+	hasBindingOperation := containsAnySubstring(clause, []string{
+		"unbind", "detach", "disable", "remove_", "remove binding", "delete binding", "clear binding",
+		"\u89e3\u7ed1", "\u53d6\u6d88\u5173\u8054", "\u79fb\u9664\u7ed1\u5b9a", "\u5220\u9664\u7ed1\u5b9a", "\u6e05\u7a7a\u7ed1\u5b9a",
+	})
+	return hasBindingResource && hasBindingOperation
+}
+
+func agentManagementClauseAt(text string, markerStart int) string {
+	if markerStart < 0 || markerStart > len(text) {
+		return ""
+	}
+	start := agentManagementClauseStart(text, markerStart)
+	end := len(text)
+	for _, separator := range []string{
+		"\uff0c", "\u3002", "\uff1b", "\uff1a", "\uff01", "\uff1f",
+		",", ".", ";", ":", "!", "?", "\n", "\r",
+	} {
+		if separator == "" {
+			continue
+		}
+		if idx := strings.Index(text[markerStart:], separator); idx >= 0 && markerStart+idx < end {
+			end = markerStart + idx
+		}
+	}
+	if start > end {
+		return ""
+	}
+	return strings.TrimSpace(text[start:end])
+}
+
 func agentManagementDeleteMentionIsOnlyDescriptive(text string) bool {
 	text = strings.ToLower(strings.TrimSpace(text))
 	if text == "" || !containsAnySubstring(text, []string{"agent", "\u667a\u80fd\u4f53"}) {
+		return false
+	}
+	if agentManagementCreateDeleteMentionIsTestPurpose(text) {
+		return true
+	}
+	if agentManagementExplicitDeleteRequestedInText(stripQuotedIntentPayloads(text), text) {
 		return false
 	}
 	if containsAnySubstring(text, []string{"create", "new", "add", "\u521b\u5efa", "\u65b0\u5efa", "\u65b0\u589e"}) &&
@@ -2088,6 +4780,59 @@ func agentManagementDeleteMentionIsOnlyDescriptive(text string) bool {
 			"\u53ef\u5220\u9664", "\u53ef\u4ee5\u5220\u9664",
 		}) {
 		return true
+	}
+	return false
+}
+
+func agentManagementCreateDeleteMentionIsTestPurpose(text string) bool {
+	text = strings.ToLower(strings.TrimSpace(text))
+	if text == "" || !agentManagementCreateRequested(text) {
+		return false
+	}
+	if agentManagementCreateThenDeleteRequested(text) {
+		return false
+	}
+	return containsAnySubstring(text, []string{
+		"batch delete regression",
+		"batch deletion regression",
+		"delete regression",
+		"deletion regression",
+		"batch delete test",
+		"batch deletion test",
+		"delete test object",
+		"deletion test object",
+		"delete smoke",
+		"deletion smoke",
+		"\u6279\u91cf\u5220\u9664\u56de\u5f52",
+		"\u6279\u91cf\u5220\u9664\u6d4b\u8bd5",
+		"\u5220\u9664\u56de\u5f52",
+		"\u5220\u9664\u6d4b\u8bd5",
+		"\u5220\u9664\u5192\u70df",
+		"\u5220\u9664\u5bf9\u8c61",
+		"\u7528\u4e8e\u6279\u91cf\u5220\u9664",
+		"\u7528\u4e8e\u5220\u9664",
+	})
+}
+
+func agentManagementCreateThenDeleteRequested(text string) bool {
+	text = strings.ToLower(strings.TrimSpace(text))
+	if text == "" {
+		return false
+	}
+	for _, phrase := range []string{
+		"after creating", "after creation", "after it is created", "after they are created", "once created",
+		"then delete", "then remove", "and delete", "and remove",
+		"\u521b\u5efa\u540e", "\u521b\u5efa\u6210\u529f\u540e", "\u65b0\u5efa\u540e", "\u65b0\u5efa\u6210\u529f\u540e", "\u5b8c\u6210\u540e",
+		"\u7136\u540e\u5220\u9664", "\u7136\u540e\u5220\u6389", "\u7136\u540e\u6e05\u7406", "\u5e76\u5220\u9664", "\u5e76\u5220\u6389", "\u5e76\u6e05\u7406",
+	} {
+		idx := strings.Index(text, phrase)
+		if idx < 0 {
+			continue
+		}
+		tail := strings.TrimSpace(text[idx:])
+		if agentManagementExplicitDeleteRequestedInText(stripQuotedIntentPayloads(tail), tail) {
+			return true
+		}
 	}
 	return false
 }
@@ -2122,7 +4867,6 @@ func agentManagementBatchDeleteRequested(query string) bool {
 			"\u8fd9\u51e0\u4e2a",
 			"\u5168\u90e8",
 			"\u6240\u6709",
-			"\u524d",
 			"\u9009\u4e2d",
 		})
 }
@@ -2133,35 +4877,532 @@ func agentManagementReadRequested(query string) bool {
 }
 
 func agentManagementConfigReadRequested(query string) bool {
+	query = agentManagementSecondaryIntentQuery(query)
+	if agentManagementDefaultConfigReferenceOnly(query) {
+		return false
+	}
 	return strings.Contains(query, "get_agent_config") ||
-		containsAnySubstring(query, []string{
+		agentManagementBindingReadRequested(query) ||
+		containsPositiveAgentManagementResourceMarker(query, []string{
 			"agent config", "agent configuration", "config", "configuration", "current model", "model name", "provider",
 			"\u667a\u80fd\u4f53\u914d\u7f6e", "\u914d\u7f6e", "\u5f53\u524d\u6a21\u578b", "\u6a21\u578b\u540d\u79f0", "\u4f9b\u5e94\u5546",
 		})
 }
 
+func agentManagementPostUpdateConfigReadRequested(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return false
+	}
+	if !containsAnySubstring(text, []string{
+		"config", "configuration", "binding", "bindings",
+		"\u914d\u7f6e", "\u7ed1\u5b9a", "\u89e3\u7ed1",
+	}) {
+		return false
+	}
+	if containsAnySubstring(text, []string{
+		"read config again",
+		"read the config again",
+		"read configuration again",
+		"reread config",
+		"re-read config",
+		"read back config",
+		"verify by reading",
+		"verify config after",
+		"confirm config after",
+		"check config after",
+		"after update read",
+		"after updating read",
+		"after completion read",
+		"after completing read",
+		"\u518d\u6b21\u8bfb\u53d6",
+		"\u91cd\u65b0\u8bfb\u53d6",
+		"\u590d\u8bfb\u914d\u7f6e",
+		"\u8bfb\u53d6\u914d\u7f6e\u9a8c\u8bc1",
+		"\u8bfb\u914d\u7f6e\u9a8c\u8bc1",
+		"\u5b8c\u6210\u540e\u8bfb\u53d6",
+		"\u5b8c\u6210\u540e\u518d\u6b21\u8bfb\u53d6",
+		"\u5b8c\u6210\u540e\u91cd\u65b0\u8bfb\u53d6",
+		"\u5b8c\u6210\u540e\u5fc5\u987b\u518d\u6b21\u8bfb\u53d6",
+		"\u5b8c\u6210\u540e\u786e\u8ba4",
+		"\u5b8c\u6210\u540e\u68c0\u67e5",
+		"\u5b8c\u6210\u540e\u6838\u5bf9",
+		"\u66f4\u65b0\u5b8c\u6210\u540e\u8bfb\u53d6",
+		"\u66f4\u65b0\u5b8c\u6210\u540e\u518d\u6b21\u8bfb\u53d6",
+		"\u66f4\u65b0\u5b8c\u6210\u540e\u5fc5\u987b\u518d\u6b21\u8bfb\u53d6",
+		"\u66f4\u65b0\u5b8c\u6210\u540e\u786e\u8ba4",
+		"\u66f4\u65b0\u5b8c\u6210\u540e\u68c0\u67e5",
+		"\u66f4\u65b0\u540e\u786e\u8ba4",
+		"\u6539\u5b8c\u540e\u786e\u8ba4",
+		"\u4fee\u6539\u540e\u786e\u8ba4",
+		"\u64cd\u4f5c\u5b8c\u6210\u540e\u518d\u6b21\u8bfb\u53d6",
+	}) {
+		return true
+	}
+	hasAfterMarker := containsAnySubstring(text, []string{
+		"after update", "after updating", "after completion", "after completing", "when done",
+		"\u5b8c\u6210\u540e", "\u66f4\u65b0\u5b8c\u6210\u540e", "\u66f4\u65b0\u540e", "\u4fee\u6539\u5b8c\u6210\u540e", "\u4fee\u6539\u540e", "\u6539\u5b8c\u540e", "\u64cd\u4f5c\u5b8c\u6210\u540e", "\u4e4b\u540e",
+	})
+	hasReadMarker := containsAnySubstring(text, []string{
+		"read again", "reread", "re-read", "read back", "check again", "inspect again", "confirm", "verify",
+		"\u518d\u6b21\u8bfb\u53d6", "\u518d\u8bfb", "\u590d\u8bfb", "\u91cd\u65b0\u8bfb\u53d6", "\u518d\u68c0\u67e5", "\u518d\u770b", "\u786e\u8ba4", "\u68c0\u67e5", "\u6838\u5bf9", "\u9a8c\u8bc1",
+	})
+	return hasAfterMarker && hasReadMarker
+}
+
+func agentManagementPostUpdateReadRequested(query string) bool {
+	if agentManagementPostUpdateConfigReadRequested(query) {
+		return true
+	}
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return false
+	}
+	hasAfterMarker := containsAnySubstring(text, []string{
+		"after update", "after updating", "after completion", "after completing", "when done",
+		"\u5b8c\u6210\u540e", "\u66f4\u65b0\u5b8c\u6210\u540e", "\u66f4\u65b0\u540e", "\u4fee\u6539\u5b8c\u6210\u540e", "\u4fee\u6539\u540e", "\u6539\u5b8c\u540e", "\u64cd\u4f5c\u5b8c\u6210\u540e", "\u4e4b\u540e",
+	})
+	hasReadMarker := containsAnySubstring(text, []string{
+		"read again", "reread", "re-read", "read back", "check again", "inspect again", "observe", "verify", "confirm",
+		"\u518d\u6b21\u8bfb\u53d6", "\u518d\u8bfb", "\u590d\u8bfb", "\u91cd\u65b0\u8bfb\u53d6", "\u518d\u68c0\u67e5", "\u518d\u770b", "\u89c2\u5bdf", "\u9a8c\u8bc1", "\u786e\u8ba4", "\u68c0\u67e5", "\u6838\u5bf9",
+	})
+	if hasAfterMarker && hasReadMarker {
+		return true
+	}
+	return containsAnySubstring(text, []string{
+		"\u91cd\u65b0\u8bfb\u53d6/\u89c2\u5bdf",
+		"\u518d\u6b21\u8bfb\u53d6/\u89c2\u5bdf",
+		"\u5b8c\u6210\u540e\u786e\u8ba4",
+		"\u5b8c\u6210\u540e\u68c0\u67e5",
+		"\u5b8c\u6210\u540e\u6838\u5bf9",
+		"\u6539\u5b8c\u540e\u786e\u8ba4",
+		"\u4fee\u6539\u540e\u786e\u8ba4",
+		"\u66f4\u65b0\u540e\u786e\u8ba4",
+		"reread/observe",
+		"read/observe",
+	})
+}
+
+func agentManagementDefaultConfigReferenceOnly(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(stripAgentManagementCreateFieldPayloads(query)))
+	if text == "" {
+		return false
+	}
+	if !containsAnySubstring(text, []string{
+		"default model", "default config", "default configuration", "use default", "keep default",
+		"\u9ed8\u8ba4\u6a21\u578b", "\u9ed8\u8ba4\u914d\u7f6e", "\u9ed8\u8ba4\u7684\u6a21\u578b", "\u9ed8\u8ba4\u7684\u914d\u7f6e",
+		"\u4f7f\u7528\u9ed8\u8ba4", "\u53ef\u4f7f\u7528\u9ed8\u8ba4", "\u4fdd\u6301\u9ed8\u8ba4",
+	}) {
+		return false
+	}
+	if containsAnySubstring(text, []string{
+		"tell me", "show", "view", "inspect", "read", "check", "current", "what", "which",
+		"\u544a\u8bc9", "\u67e5\u770b", "\u8bfb\u53d6", "\u68c0\u67e5", "\u5c55\u793a", "\u5f53\u524d", "\u662f\u4ec0\u4e48", "\u600e\u4e48\u6837", "\u6709\u54ea\u4e9b",
+	}) {
+		return false
+	}
+	if containsAnySubstring(text, []string{
+		"set model", "switch model", "replace model", "change model", "set provider", "switch provider",
+		"\u8bbe\u7f6e\u6a21\u578b", "\u5207\u6362\u6a21\u578b", "\u66ff\u6362\u6a21\u578b", "\u6539\u6210\u9ed8\u8ba4\u6a21\u578b",
+		"\u8bbe\u7f6e\u4e3a\u9ed8\u8ba4\u6a21\u578b", "\u6539\u4e3a\u9ed8\u8ba4\u6a21\u578b",
+	}) {
+		return false
+	}
+	return true
+}
+
 func agentManagementIdentityUpdateRequested(query string) bool {
+	query = agentManagementSecondaryIntentQuery(query)
+	query = stripAgentManagementFinalAnswerInstruction(query)
 	return strings.Contains(query, "update_agent_identity") ||
+		agentManagementBroadEditableConfigRequested(query) ||
 		(agentManagementMutationVerbRequested(query) &&
-			containsAnySubstring(query, []string{
+			containsPositiveAgentManagementResourceMarker(query, []string{
 				"rename", "name", "description", "icon",
 				"\u6539\u540d", "\u540d\u79f0", "\u540d\u5b57", "\u63cf\u8ff0", "\u56fe\u6807",
 			}))
 }
 
+func stripAgentManagementFinalAnswerInstruction(query string) string {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return ""
+	}
+	cut := -1
+	for _, marker := range []string{
+		"final answer",
+		"final reply",
+		"last answer",
+		"last reply",
+		"\u6700\u7ec8\u56de\u7b54",
+		"\u6700\u7ec8\u56de\u590d",
+		"\u6700\u540e\u56de\u7b54",
+		"\u6700\u540e\u56de\u590d",
+		"\u6700\u540e\u8bf4\u660e",
+		"\u5982\u5b9e\u56de\u7b54",
+		"\u5199\u6e05\u695a",
+		"\u8bf4\u660e\u5b9e\u9645",
+		"\u56de\u7b54\u8bf7",
+		"\u8bf7\u56de\u7b54",
+	} {
+		if idx := strings.Index(text, marker); idx > 0 && (cut < 0 || idx < cut) {
+			cut = idx
+		}
+	}
+	if cut < 0 {
+		return text
+	}
+	return strings.TrimSpace(text[:cut])
+}
+
 func agentManagementModelSelectionRequested(query string) bool {
-	return strings.Contains(query, "list_available_models") ||
-		(agentManagementMutationVerbRequested(query) &&
-			containsAnySubstring(query, []string{"model", "provider", "\u6a21\u578b", "\u4f9b\u5e94\u5546"}))
+	query = agentManagementSecondaryIntentQuery(query)
+	if strings.Contains(query, "list_available_models") {
+		return true
+	}
+	if !agentManagementMutationVerbRequested(query) {
+		return false
+	}
+	return containsPositiveAgentManagementResourceMarker(query, []string{
+		"set model",
+		"switch model",
+		"replace model",
+		"change model",
+		"update model",
+		"modify model",
+		"use model",
+		"model to",
+		"model:",
+		"set provider",
+		"switch provider",
+		"replace provider",
+		"change provider",
+		"update provider",
+		"modify provider",
+		"provider to",
+		"provider:",
+		"\u8bbe\u7f6e\u6a21\u578b",
+		"\u5207\u6362\u6a21\u578b",
+		"\u66ff\u6362\u6a21\u578b",
+		"\u66f4\u6362\u6a21\u578b",
+		"\u4fee\u6539\u6a21\u578b",
+		"\u66f4\u65b0\u6a21\u578b",
+		"\u6a21\u578b\u6539\u4e3a",
+		"\u6a21\u578b\u8bbe\u4e3a",
+		"\u6a21\u578b\u5207\u6362",
+		"\u6a21\u578b\u66ff\u6362",
+		"\u6a21\u578b\u66f4\u6362",
+		"\u8bbe\u7f6e provider",
+		"\u5207\u6362 provider",
+		"\u66ff\u6362 provider",
+		"\u66f4\u6362 provider",
+		"provider \u6539\u4e3a",
+		"provider \u8bbe\u4e3a",
+		"\u4f9b\u5e94\u5546\u6539\u4e3a",
+		"\u4f9b\u5e94\u5546\u8bbe\u4e3a",
+	})
 }
 
 func agentManagementConfigUpdateRequested(query string) bool {
+	query = agentManagementSecondaryIntentQuery(query)
 	return strings.Contains(query, "update_agent_config") ||
+		agentManagementBroadEditableConfigRequested(query) ||
+		agentManagementSkillBindingRequested(query) ||
+		len(requiredAgentBindingMutationTools(query)) > 0 ||
 		(agentManagementMutationVerbRequested(query) &&
-			containsAnySubstring(query, []string{
+			containsPositiveAgentManagementResourceMarker(query, []string{
 				"system prompt", "prompt", "model", "provider", "file upload", "memory", "home title", "placeholder",
+				"opening question", "suggested question", "starter question", "theme", "display",
 				"\u7cfb\u7edf\u63d0\u793a\u8bcd", "\u63d0\u793a\u8bcd", "\u6a21\u578b", "\u4f9b\u5e94\u5546", "\u6587\u4ef6\u4e0a\u4f20", "\u8bb0\u5fc6", "\u9996\u9875", "\u5360\u4f4d",
+				"\u5f00\u573a\u95ee\u9898", "\u5efa\u8bae\u95ee\u9898", "\u793a\u4f8b\u95ee\u9898", "\u5f15\u5bfc\u95ee\u9898", "\u4e3b\u9898", "\u5c55\u793a",
 			}))
+}
+
+func agentManagementBroadEditableConfigRequested(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(query)))
+	if text == "" || !agentManagementMutationVerbRequested(text) {
+		return false
+	}
+	if agentManagementExplicitNoMutationRequested(text) {
+		return false
+	}
+	if !containsAnySubstring(text, []string{"agent", "\u667a\u80fd\u4f53"}) {
+		return false
+	}
+	return containsAnySubstring(text, []string{
+		"all editable",
+		"all configurable",
+		"everything editable",
+		"everything configurable",
+		"everything you can edit",
+		"everything you can modify",
+		"all you can edit",
+		"all you can modify",
+		"as much as possible",
+		"\u6240\u6709\u4f60\u80fd\u4fee\u6539",
+		"\u6240\u6709\u53ef\u4fee\u6539",
+		"\u6240\u6709\u80fd\u4fee\u6539",
+		"\u6240\u6709\u4f60\u80fd\u7f16\u8f91",
+		"\u6240\u6709\u53ef\u7f16\u8f91",
+		"\u6240\u6709\u80fd\u7f16\u8f91",
+		"\u6240\u6709\u53ef\u914d\u7f6e",
+		"\u5168\u90e8\u53ef\u4fee\u6539",
+		"\u5168\u90e8\u80fd\u4fee\u6539",
+		"\u5168\u90e8\u53ef\u7f16\u8f91",
+		"\u5168\u90e8\u53ef\u914d\u7f6e",
+		"\u5c3d\u53ef\u80fd\u8fdb\u884c\u64cd\u4f5c",
+		"\u5c3d\u53ef\u80fd\u4fee\u6539",
+		"\u5c3d\u53ef\u80fd\u7f16\u8f91",
+		"\u80fd\u6539\u7684\u90fd\u6539",
+		"\u80fd\u4fee\u6539\u7684\u90fd\u4fee\u6539",
+		"\u80fd\u7f16\u8f91\u7684\u90fd\u7f16\u8f91",
+		"\u6240\u6709\u4fee\u6539\u9879",
+		"\u6240\u6709\u53ef\u64cd\u4f5c",
+		"\u53ef\u64cd\u4f5c\u7684\u90fd",
+	})
+}
+
+func containsPositiveAgentManagementResourceMarker(query string, markers []string) bool {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return false
+	}
+	for _, marker := range markers {
+		marker = strings.ToLower(strings.TrimSpace(marker))
+		if marker == "" {
+			continue
+		}
+		searchFrom := 0
+		for {
+			idx := strings.Index(text[searchFrom:], marker)
+			if idx < 0 {
+				break
+			}
+			absoluteIdx := searchFrom + idx
+			if agentManagementResourceMarkerEmbeddedInAnotherPhrase(text, absoluteIdx, marker) {
+				searchFrom = absoluteIdx + len(marker)
+				if searchFrom >= len(text) {
+					break
+				}
+				continue
+			}
+			if !agentManagementResourceMarkerNegatedInClause(text, absoluteIdx) {
+				return true
+			}
+			searchFrom = absoluteIdx + len(marker)
+			if searchFrom >= len(text) {
+				break
+			}
+		}
+	}
+	return false
+}
+
+func agentManagementResourceMarkerEmbeddedInAnotherPhrase(text string, markerStart int, marker string) bool {
+	if markerStart <= 0 {
+		return false
+	}
+	marker = strings.ToLower(strings.TrimSpace(marker))
+	switch marker {
+	case "\u6539\u540d":
+		return strings.HasSuffix(text[:markerStart], "\u4fee")
+	default:
+		return false
+	}
+}
+
+func agentManagementResourceMarkerNegatedInClause(text string, markerStart int) bool {
+	if markerStart <= 0 {
+		return false
+	}
+	if agentManagementResourceMarkerNegatedInListScope(text, markerStart) {
+		return true
+	}
+	clauseStart := agentManagementClauseStart(text, markerStart)
+	prefix := strings.TrimSpace(text[clauseStart:markerStart])
+	if prefix == "" {
+		return false
+	}
+	if containsAnySubstring(prefix, []string{
+		"do not", "don't", "dont", "without", "never", "not ", "no ",
+		"keep unchanged", "leave unchanged", "keep the same", "keep ", "preserve ", "retain ", "unchanged",
+		"do not say", "don't say", "dont say", "do not claim", "don't claim", "dont claim",
+		"do not mention", "don't mention", "dont mention", "do not report", "don't report", "dont report",
+	}) {
+		return true
+	}
+	compact := strings.NewReplacer(
+		" ", "",
+		"\t", "",
+		"\n", "",
+		"\r", "",
+		",", "",
+		".", "",
+		";", "",
+		":", "",
+		"\uff0c", "",
+		"\u3002", "",
+		"\uff1b", "",
+		"\uff1a", "",
+		"\u3001", "",
+	).Replace(prefix)
+	if containsAnySubstring(compact, []string{
+		"\u4e0d\u6539",
+		"\u4e0d\u8981\u6539",
+		"\u522b\u6539",
+		"\u4e0d\u7528\u6539",
+		"\u4e0d\u4fee\u6539",
+		"\u4e0d\u8981\u4fee\u6539",
+		"\u522b\u4fee\u6539",
+		"\u4e0d\u66f4\u6539",
+		"\u4e0d\u8981\u66f4\u6539",
+		"\u4e0d\u53d8\u66f4",
+		"\u4e0d\u8bbe\u7f6e",
+		"\u4e0d\u5207\u6362",
+		"\u4e0d\u66ff\u6362",
+		"\u4e0d\u7ed1\u5b9a",
+		"\u4e0d\u5173\u8054",
+		"\u4e0d\u89e3\u7ed1",
+		"\u4e0d\u8981\u52a8",
+		"\u65e0\u9700",
+		"\u4e0d\u9700\u8981",
+		"\u4fdd\u6301\u4e0d\u53d8",
+		"\u4fdd\u6301\u539f\u6837",
+		"\u7ef4\u6301\u539f\u6837",
+		"\u4fdd\u7559",
+		"\u4e0d\u8981\u8bf4",
+		"\u522b\u8bf4",
+		"\u4e0d\u8981\u58f0\u79f0",
+		"\u522b\u58f0\u79f0",
+		"\u4e0d\u8981\u5ba3\u79f0",
+		"\u4e0d\u8981\u56de\u7b54",
+		"\u4e0d\u8981\u56de\u590d",
+		"\u4e0d\u8981\u63d0\u5230",
+		"\u4e0d\u8981\u5199",
+		"\u4e0d\u8981\u8f93\u51fa",
+	}) {
+		return true
+	}
+	return agentManagementMutationMarkerNegated(text, markerStart)
+}
+
+func agentManagementResourceMarkerNegatedInListScope(text string, markerStart int) bool {
+	if markerStart <= 0 || markerStart > len(text) {
+		return false
+	}
+	sentenceStart := agentManagementNegatedListScopeStart(text, markerStart)
+	prefix := strings.ToLower(strings.TrimSpace(text[sentenceStart:markerStart]))
+	if prefix == "" {
+		return false
+	}
+	negationStart := agentManagementLastNegatedListIntro(prefix)
+	if negationStart < 0 {
+		return false
+	}
+	tail := prefix[negationStart:]
+	if containsAnySubstring(tail, []string{
+		" but ", " however ", " except ", " unless ", " then ", " and then ",
+		"\u4f46", "\u4f46\u662f", "\u4e0d\u8fc7", "\u9664\u975e", "\u7136\u540e",
+	}) {
+		return false
+	}
+	return true
+}
+
+func agentManagementNegatedListScopeStart(text string, markerStart int) int {
+	if markerStart <= 0 || markerStart > len(text) {
+		return 0
+	}
+	start := 0
+	for _, separator := range []string{
+		"\u3002", "\uff1b", "\uff01", "\uff1f",
+		".", ";", "!", "?", "\n", "\r",
+	} {
+		if separator == "" {
+			continue
+		}
+		if idx := strings.LastIndex(text[:markerStart], separator); idx >= 0 && idx+len(separator) > start {
+			start = idx + len(separator)
+		}
+	}
+	return start
+}
+
+func agentManagementLastNegatedListIntro(prefix string) int {
+	prefix = strings.ToLower(strings.TrimSpace(prefix))
+	if prefix == "" {
+		return -1
+	}
+	best := -1
+	for _, marker := range []string{
+		"do not change", "don't change", "dont change",
+		"do not modify", "don't modify", "dont modify",
+		"do not update", "don't update", "dont update",
+		"do not edit", "don't edit", "dont edit",
+		"do not set", "don't set", "dont set",
+		"do not switch", "don't switch", "dont switch",
+		"do not replace", "don't replace", "dont replace",
+		"without changing", "without modifying", "without updating",
+		"keep unchanged", "leave unchanged", "keep the same", "preserve",
+	} {
+		if idx := strings.LastIndex(prefix, marker); idx > best {
+			best = idx
+		}
+	}
+	compact := strings.NewReplacer(
+		" ", "",
+		"\t", "",
+		"\n", "",
+		"\r", "",
+		",", "",
+		";", "",
+		":", "",
+		"\uff0c", "",
+		"\uff1b", "",
+		"\uff1a", "",
+		"\u3001", "",
+	).Replace(prefix)
+	for _, marker := range []string{
+		"\u4e0d\u6539",
+		"\u4e0d\u8981\u6539",
+		"\u522b\u6539",
+		"\u4e0d\u7528\u6539",
+		"\u4e0d\u4fee\u6539",
+		"\u4e0d\u8981\u4fee\u6539",
+		"\u522b\u4fee\u6539",
+		"\u4e0d\u66f4\u6539",
+		"\u4e0d\u8981\u66f4\u6539",
+		"\u4e0d\u8981\u52a8",
+		"\u65e0\u9700\u4fee\u6539",
+		"\u4fdd\u6301\u4e0d\u53d8",
+		"\u4fdd\u6301\u539f\u6837",
+		"\u7ef4\u6301\u539f\u6837",
+		"\u4fdd\u7559",
+	} {
+		if idx := strings.LastIndex(compact, marker); idx >= 0 && idx > best {
+			best = idx
+		}
+	}
+	return best
+}
+
+func agentManagementClauseStart(text string, markerStart int) int {
+	if markerStart <= 0 || markerStart > len(text) {
+		return 0
+	}
+	start := 0
+	for _, separator := range []string{
+		"\uff0c", "\u3002", "\uff1b", "\uff1a", "\uff01", "\uff1f",
+		",", ".", ";", ":", "!", "?", "\n", "\r",
+	} {
+		if separator == "" {
+			continue
+		}
+		if idx := strings.LastIndex(text[:markerStart], separator); idx >= 0 && idx+len(separator) > start {
+			start = idx + len(separator)
+		}
+	}
+	return start
 }
 
 func agentManagementMutationVerbRequested(query string) bool {
@@ -2171,7 +5412,7 @@ func agentManagementMutationVerbRequested(query string) bool {
 	}
 	for _, marker := range []string{
 		"update", "edit", "modify", "change", "set", "replace", "switch", "enable", "disable", "bind", "unbind", "save",
-		"\u4fee\u6539", "\u7f16\u8f91", "\u66f4\u65b0", "\u8bbe\u7f6e", "\u6539\u4e3a", "\u6362\u6210", "\u66ff\u6362", "\u5207\u6362", "\u542f\u7528", "\u7981\u7528", "\u7ed1\u5b9a", "\u89e3\u7ed1", "\u4fdd\u5b58",
+		"\u4fee\u6539", "\u7f16\u8f91", "\u66f4\u65b0", "\u8bbe\u7f6e", "\u6539\u4e3a", "\u6362\u6210", "\u66ff\u6362", "\u5207\u6362", "\u542f\u7528", "\u7981\u7528", "\u505c\u7528", "\u7ed1\u5b9a", "\u89e3\u7ed1", "\u4fdd\u5b58",
 	} {
 		if containsUnnegatedAgentManagementMutationMarker(text, marker) {
 			return true
@@ -2192,13 +5433,174 @@ func containsUnnegatedAgentManagementMutationMarker(text string, marker string) 
 			return false
 		}
 		absoluteIdx := searchFrom + idx
-		if !agentManagementMutationMarkerNegated(text, absoluteIdx) {
+		if !agentManagementMutationMarkerIsEmbeddedIdentifier(text, absoluteIdx, marker) &&
+			!agentManagementMutationMarkerIsNavigationNoun(text, absoluteIdx, marker) &&
+			!agentManagementMutationMarkerIsReadOnlyCandidateQualifier(text, absoluteIdx, marker) &&
+			!agentManagementMutationMarkerIsBindingStateDescription(text, absoluteIdx, marker) &&
+			!agentManagementMutationMarkerNegated(text, absoluteIdx) {
 			return true
 		}
 		searchFrom = absoluteIdx + len(marker)
 		if searchFrom >= len(text) {
 			return false
 		}
+	}
+}
+
+func agentManagementMutationMarkerIsEmbeddedIdentifier(text string, markerStart int, marker string) bool {
+	marker = strings.TrimSpace(strings.ToLower(marker))
+	if text == "" || marker == "" || markerStart < 0 || markerStart+len(marker) > len(text) {
+		return false
+	}
+	if !agentManagementASCIIIdentifierMarker(marker) {
+		return false
+	}
+	before := byte(0)
+	if markerStart > 0 {
+		before = text[markerStart-1]
+	}
+	after := byte(0)
+	if end := markerStart + len(marker); end < len(text) {
+		after = text[end]
+	}
+	return agentManagementIdentifierByte(before) || agentManagementIdentifierByte(after)
+}
+
+func agentManagementASCIIIdentifierMarker(marker string) bool {
+	for i := 0; i < len(marker); i++ {
+		b := marker[i]
+		if b < 'a' || b > 'z' {
+			return false
+		}
+	}
+	return marker != ""
+}
+
+func agentManagementIdentifierByte(b byte) bool {
+	return (b >= 'a' && b <= 'z') ||
+		(b >= 'A' && b <= 'Z') ||
+		(b >= '0' && b <= '9') ||
+		b == '_' ||
+		b == '-'
+}
+
+func agentManagementMutationMarkerIsBindingStateDescription(text string, markerStart int, marker string) bool {
+	marker = strings.TrimSpace(strings.ToLower(marker))
+	if marker == "" || markerStart < 0 || markerStart+len(marker) > len(text) {
+		return false
+	}
+	switch marker {
+	case "\u7ed1\u5b9a", "\u5173\u8054", "\u542f\u7528":
+	default:
+		return false
+	}
+	prefixStart := markerStart - 36
+	if prefixStart < 0 {
+		prefixStart = 0
+	}
+	prefix := text[prefixStart:markerStart]
+	for _, statePrefix := range []string{
+		"\u5f53\u524d",
+		"\u76ee\u524d",
+		"\u73b0\u5728",
+		"\u5df2",
+		"\u5df2\u7ecf",
+		"\u5df2\u88ab",
+		"\u5f53\u524d\u5df2",
+		"\u76ee\u524d\u5df2",
+		"\u73b0\u5728\u5df2",
+		"\u672a",
+		"\u5c1a\u672a",
+	} {
+		if strings.HasSuffix(prefix, statePrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentManagementMutationMarkerIsReadOnlyCandidateQualifier(text string, markerStart int, marker string) bool {
+	marker = strings.TrimSpace(strings.ToLower(marker))
+	if marker == "" || markerStart < 0 || markerStart+len(marker) > len(text) {
+		return false
+	}
+	switch marker {
+	case "\u7ed1\u5b9a":
+		prefixStart := markerStart - 48
+		if prefixStart < 0 {
+			prefixStart = 0
+		}
+		prefix := text[prefixStart:markerStart]
+		if strings.HasSuffix(prefix, "\u53ef") {
+			return true
+		}
+		suffixEnd := markerStart + len(marker) + 48
+		if suffixEnd > len(text) {
+			suffixEnd = len(text)
+		}
+		suffix := text[markerStart+len(marker) : suffixEnd]
+		if !containsAnySubstring(prefix, []string{
+			"\u53ea\u8bfb",
+			"\u53ea\u8bfb\u53d6",
+			"\u8bfb\u53d6",
+			"\u67e5\u770b",
+			"\u5217\u51fa",
+			"\u68c0\u67e5",
+		}) {
+			return false
+		}
+		return containsAnySubstring(suffix, []string{
+			"\u5019\u9009",
+			"\u5217\u8868",
+			"\u54ea\u4e9b",
+			"\u6570\u91cf",
+			"skill",
+			"\u6280\u80fd",
+			"\u77e5\u8bc6\u5e93",
+			"\u6570\u636e\u5e93",
+			"\u6570\u636e\u5e93\u8868",
+			"\u6570\u636e\u8868",
+			"\u5de5\u4f5c\u6d41",
+		})
+	case "bind":
+		suffix := text[markerStart+len(marker):]
+		if strings.HasPrefix(suffix, "able") || strings.HasPrefix(suffix, "-able") || strings.HasPrefix(suffix, "ing candidate") || strings.HasPrefix(suffix, "ing candidates") {
+			return true
+		}
+		prefixStart := markerStart - 64
+		if prefixStart < 0 {
+			prefixStart = 0
+		}
+		prefix := text[prefixStart:markerStart]
+		return containsAnySubstring(suffix, []string{"candidate", "candidates", "list", "count"}) &&
+			containsAnySubstring(prefix, []string{"read", "read-only", "readonly", "show", "view", "list", "check", "inspect"})
+	default:
+		return false
+	}
+}
+
+func agentManagementMutationMarkerIsNavigationNoun(text string, markerStart int, marker string) bool {
+	marker = strings.TrimSpace(strings.ToLower(marker))
+	if marker == "" || markerStart < 0 || markerStart+len(marker) > len(text) {
+		return false
+	}
+	suffix := strings.TrimLeft(text[markerStart+len(marker):], " \t\r\n/\\-_\uff0f")
+	switch marker {
+	case "edit":
+		return strings.HasPrefix(suffix, "page") ||
+			strings.HasPrefix(suffix, "view") ||
+			strings.HasPrefix(suffix, "detail page") ||
+			strings.HasPrefix(suffix, "details page") ||
+			strings.HasPrefix(suffix, "detail view") ||
+			strings.HasPrefix(suffix, "details view")
+	case "\u7f16\u8f91":
+		return strings.HasPrefix(suffix, "\u9875") ||
+			strings.HasPrefix(suffix, "\u9875\u9762") ||
+			strings.HasPrefix(suffix, "\u8be6\u60c5") ||
+			strings.HasPrefix(suffix, "\u8be6\u60c5\u9875") ||
+			strings.HasPrefix(suffix, "\u8be6\u60c5\u9875\u9762")
+	default:
+		return false
 	}
 }
 
@@ -2246,6 +5648,64 @@ func stripQuotedIntentPayloads(text string) string {
 	return b.String()
 }
 
+func agentManagementSecondaryIntentQuery(query string) string {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return ""
+	}
+	if !agentManagementCreateRequested(text) {
+		return text
+	}
+	return stripAgentManagementCreateFieldPayloads(text)
+}
+
+func stripAgentManagementCreateFieldPayloads(text string) string {
+	text = strings.ToLower(strings.TrimSpace(stripQuotedIntentPayloads(text)))
+	if text == "" {
+		return ""
+	}
+	for _, marker := range []string{
+		"name is", "name:", "named", "called",
+		"description is", "description:", "desc:", "described as",
+		"icon is", "icon:", "icon as", "use icon", "with icon",
+		"\u540d\u79f0\u4e3a", "\u540d\u5b57\u4e3a", "\u540d\u4e3a", "\u53eb",
+		"\u63cf\u8ff0\u4e3a", "\u63cf\u8ff0\u5199\u4e3a", "\u63cf\u8ff0\u90fd\u5199", "\u63cf\u8ff0\uff1a", "\u63cf\u8ff0:",
+		"\u56fe\u6807\u4e3a", "\u56fe\u6807\u8bbe\u7f6e\u4e3a", "\u56fe\u6807\u4f7f\u7528", "\u4f7f\u7528\u56fe\u6807",
+	} {
+		text = removeAgentManagementCreateAssignmentPayload(text, marker)
+	}
+	return strings.TrimSpace(text)
+}
+
+func removeAgentManagementCreateAssignmentPayload(text string, marker string) string {
+	marker = strings.ToLower(strings.TrimSpace(marker))
+	if text == "" || marker == "" {
+		return text
+	}
+	for {
+		lower := strings.ToLower(text)
+		idx := strings.Index(lower, marker)
+		if idx < 0 {
+			return strings.TrimSpace(text)
+		}
+		start := idx + len(marker)
+		end := len(text)
+		for _, stop := range []string{
+			"\uff0c", "\u3002", "\uff1b", "\u3001", ";", ".", "\n", "\r",
+			" then ", " and then ", " after ",
+			"\u7136\u540e", "\u518d", "\u540c\u65f6", "\u5e76", "\u521b\u5efa\u540e", "\u5b8c\u6210\u540e",
+		} {
+			if stop == "" {
+				continue
+			}
+			if relative := strings.Index(lower[start:], stop); relative >= 0 && start+relative < end {
+				end = start + relative
+			}
+		}
+		text = strings.TrimSpace(text[:idx] + " " + text[end:])
+	}
+}
+
 func agentManagementMutationMarkerNegated(text string, markerStart int) bool {
 	if markerStart <= 0 {
 		return false
@@ -2258,8 +5718,15 @@ func agentManagementMutationMarkerNegated(text string, markerStart int) bool {
 	if prefix == "" {
 		return false
 	}
+	if agentManagementEnglishOrNegationPrefix(prefix) {
+		return true
+	}
 	if containsAnySuffix(prefix, []string{
 		"do not", "don't", "dont", "without", "never", "no", "do not make any",
+		"do not bind or", "don't bind or", "dont bind or", "without binding or",
+		"do not add or", "don't add or", "dont add or", "without adding or",
+		"do not enable or", "don't enable or", "dont enable or", "without enabling or",
+		"do not associate or", "don't associate or", "dont associate or", "without associating or",
 	}) {
 		return true
 	}
@@ -2295,7 +5762,154 @@ func agentManagementMutationMarkerNegated(text string, markerStart int) bool {
 		"\u4e0d\u7528\u6dfb\u52a0\u6216",
 		"\u65e0\u9700\u6dfb\u52a0\u6216",
 		"\u4e0d\u9700\u8981\u6dfb\u52a0\u6216",
-	})
+		"\u4e0d\u8981\u7ed1\u5b9a\u6216",
+		"\u4e0d\u7ed1\u5b9a\u6216",
+		"\u4e0d\u7528\u7ed1\u5b9a\u6216",
+		"\u65e0\u9700\u7ed1\u5b9a\u6216",
+		"\u4e0d\u9700\u8981\u7ed1\u5b9a\u6216",
+		"\u4e0d\u8981\u542f\u7528\u6216",
+		"\u4e0d\u542f\u7528\u6216",
+		"\u4e0d\u7528\u542f\u7528\u6216",
+		"\u65e0\u9700\u542f\u7528\u6216",
+		"\u4e0d\u9700\u8981\u542f\u7528\u6216",
+		"\u4e0d\u8981\u5173\u8054\u6216",
+		"\u4e0d\u5173\u8054\u6216",
+		"\u4e0d\u7528\u5173\u8054\u6216",
+		"\u65e0\u9700\u5173\u8054\u6216",
+		"\u4e0d\u9700\u8981\u5173\u8054\u6216",
+	}) || agentManagementMutationMarkerHasListNegationPrefix(prefix)
+}
+
+func agentManagementEnglishOrNegationPrefix(prefix string) bool {
+	prefix = strings.TrimSpace(strings.ToLower(prefix))
+	if prefix == "" || !strings.HasSuffix(prefix, " or") {
+		return false
+	}
+	for _, marker := range []string{
+		"do not ",
+		"don't ",
+		"dont ",
+		"without ",
+		"never ",
+		"no ",
+	} {
+		if strings.LastIndex(prefix, marker) >= 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func agentManagementMutationMarkerHasListNegationPrefix(prefix string) bool {
+	prefix = strings.TrimSpace(strings.ToLower(prefix))
+	if prefix == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"do not", "don't", "dont", "without", "never", "no",
+		"\u4e0d\u8981", "\u4e0d\u7528", "\u65e0\u9700", "\u4e0d\u9700\u8981", "\u4e0d\u505a", "\u7981\u6b62", "\u522b", "\u4e0d",
+	} {
+		idx := strings.LastIndex(prefix, marker)
+		if idx < 0 {
+			continue
+		}
+		tail := strings.TrimSpace(prefix[idx+len(marker):])
+		if tail == "" {
+			continue
+		}
+		if agentManagementEnglishMutationListTail(tail) || agentManagementChineseMutationListTail(tail) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentManagementEnglishMutationListTail(tail string) bool {
+	tail = strings.NewReplacer(
+		",", " ",
+		".", " ",
+		";", " ",
+		":", " ",
+		"/", " ",
+		"\\", " ",
+		"(", " ",
+		")", " ",
+		"[", " ",
+		"]", " ",
+		"{", " ",
+		"}", " ",
+	).Replace(strings.ToLower(strings.TrimSpace(tail)))
+	if tail == "" {
+		return false
+	}
+	for _, token := range strings.Fields(tail) {
+		switch token {
+		case "and", "or", "nor", "also", "then", "any", "the", "this", "that",
+			"modify", "modifying", "modified",
+			"edit", "editing", "edited",
+			"change", "changing", "changed",
+			"update", "updating", "updated",
+			"set", "setting",
+			"replace", "replacing", "replaced",
+			"switch", "switching", "switched",
+			"enable", "enabling", "enabled",
+			"disable", "disabling", "disabled",
+			"bind", "binding", "bound",
+			"unbind", "unbinding", "unbound",
+			"create", "creating", "created",
+			"add", "adding", "added",
+			"delete", "deleting", "deleted",
+			"remove", "removing", "removed",
+			"save", "saving", "saved",
+			"asset", "assets", "resource", "resources", "config", "configuration":
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func agentManagementChineseMutationListTail(tail string) bool {
+	tail = strings.NewReplacer(
+		" ", "",
+		"\t", "",
+		"\n", "",
+		"\r", "",
+		",", "",
+		".", "",
+		";", "",
+		":", "",
+		"\uff0c", "",
+		"\u3002", "",
+		"\uff1b", "",
+		"\uff1a", "",
+		"\u3001", "",
+	).Replace(strings.TrimSpace(tail))
+	if tail == "" {
+		return false
+	}
+	for steps := 0; tail != "" && steps < 128; steps++ {
+		matched := false
+		for _, piece := range []string{
+			"\u4fee\u6539", "\u66f4\u6539", "\u7f16\u8f91", "\u8c03\u6574", "\u53d8\u66f4", "\u66f4\u65b0",
+			"\u8bbe\u7f6e", "\u66ff\u6362", "\u5207\u6362", "\u542f\u7528", "\u7981\u7528", "\u505c\u7528",
+			"\u7ed1\u5b9a", "\u89e3\u7ed1", "\u5173\u8054", "\u6dfb\u52a0", "\u521b\u5efa", "\u65b0\u5efa",
+			"\u65b0\u589e", "\u5220\u9664", "\u79fb\u9664", "\u4fdd\u5b58",
+			"\u6216\u8005", "\u4ee5\u53ca", "\u4efb\u4f55", "\u914d\u7f6e", "\u8d44\u6e90", "\u8d44\u4ea7",
+			"\u548c", "\u6216", "\u53ca", "\u4e0e", "\u4e5f",
+		} {
+			if strings.HasPrefix(tail, piece) {
+				tail = strings.TrimPrefix(tail, piece)
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return tail == ""
 }
 
 func containsAnySuffix(text string, suffixes []string) bool {
@@ -2313,13 +5927,27 @@ func containsAnySuffix(text string, suffixes []string) bool {
 }
 
 func agentManagementSkillBindingRequested(query string) bool {
+	query = agentManagementSecondaryIntentQuery(query)
 	return strings.Contains(query, "list_agent_skill_candidates") ||
 		strings.Contains(query, "replace_agent_skill_bindings") ||
-		(!agentManagementSkillBindingNoop(query) && containsAnySubstring(query, []string{
+		agentManagementSkillBindingRequestedByIntent(query)
+}
+
+func agentManagementSkillBindingRequestedByIntent(query string) bool {
+	if agentManagementSkillBindingNoop(query) {
+		return false
+	}
+	if !agentBindingStateReadOnlyQuestionRequested(query) &&
+		agentBindingSoftMutationRequested(query) &&
+		containsAnySubstring(query, []string{"skill", "\u6280\u80fd"}) {
+		return true
+	}
+	return (agentBindingMutationRequested(query) && containsAnySubstring(query, []string{"skill", "\u6280\u80fd"})) ||
+		containsAnySubstring(query, []string{
 			"agent skill", "skill binding", "enable skill", "disable skill", "add skill", "remove skill", "delete skill", "bind skill",
-			"\u6dfb\u52a0 skill", "\u6dfb\u52a0\u8fd9\u4e2a skill", "\u65b0\u589e skill", "\u542f\u7528 skill", "\u7981\u7528 skill", "\u7ed1\u5b9a skill", "\u79fb\u9664 skill", "\u5220\u9664 skill",
-			"\u6280\u80fd\u5019\u9009", "\u6dfb\u52a0\u6280\u80fd", "\u65b0\u589e\u6280\u80fd", "\u542f\u7528\u6280\u80fd", "\u7981\u7528\u6280\u80fd", "\u7ed1\u5b9a\u6280\u80fd", "\u79fb\u9664\u6280\u80fd", "\u5220\u9664\u6280\u80fd",
-		}))
+			"\u6dfb\u52a0 skill", "\u6dfb\u52a0\u8fd9\u4e2a skill", "\u65b0\u589e skill", "\u542f\u7528 skill", "\u7981\u7528 skill", "\u505c\u7528 skill", "\u7ed1\u5b9a skill", "\u79fb\u9664 skill", "\u5220\u9664 skill",
+			"\u6dfb\u52a0\u6280\u80fd", "\u65b0\u589e\u6280\u80fd", "\u542f\u7528\u6280\u80fd", "\u7981\u7528\u6280\u80fd", "\u505c\u7528\u6280\u80fd", "\u7ed1\u5b9a\u6280\u80fd", "\u79fb\u9664\u6280\u80fd", "\u5220\u9664\u6280\u80fd",
+		})
 }
 
 func agentManagementSkillBindingNoop(query string) bool {
@@ -2327,15 +5955,24 @@ func agentManagementSkillBindingNoop(query string) bool {
 	if text == "" || !containsAnySubstring(text, []string{"skill", "\u6280\u80fd"}) {
 		return false
 	}
+	if agentBindingNoBindScopeCoversResource(text, []string{"skill", "\u6280\u80fd"}, append(agentBindingNoopScopeMarkers(), agentBindingPreserveScopeMarkers()...)) {
+		return true
+	}
 	return containsAnySubstring(text, []string{
 		"do not add or remove", "don't add or remove", "dont add or remove", "without adding or removing",
 		"do not add skill", "don't add skill", "dont add skill", "do not remove skill", "don't remove skill", "dont remove skill",
+		"do not bind skill", "don't bind skill", "dont bind skill", "do not unbind skill", "don't unbind skill", "dont unbind skill",
+		"do not bind or unbind", "don't bind or unbind", "dont bind or unbind",
 		"do not delete skill", "don't delete skill", "dont delete skill", "do not change skill", "don't change skill", "dont change skill",
-		"leave skill unchanged", "keep skill unchanged",
+		"do not touch skill", "don't touch skill", "dont touch skill",
+		"leave skill unchanged", "keep skill unchanged", "preserve skill", "retain skill",
 		"\u4e0d\u8981\u6dfb\u52a0\u6216\u5220\u9664", "\u4e0d\u6dfb\u52a0\u6216\u5220\u9664", "\u65e0\u9700\u6dfb\u52a0\u6216\u5220\u9664",
 		"\u4e0d\u8981\u6dfb\u52a0 skill", "\u4e0d\u6dfb\u52a0 skill", "\u65e0\u9700\u6dfb\u52a0 skill", "\u4e0d\u8981\u5220\u9664 skill", "\u4e0d\u5220\u9664 skill",
+		"\u4e0d\u8981\u7ed1\u5b9a skill", "\u4e0d\u7ed1\u5b9a skill", "\u4e0d\u8981\u89e3\u7ed1 skill", "\u4e0d\u89e3\u7ed1 skill", "\u4e0d\u8981\u7ed1\u5b9a\u6216\u89e3\u7ed1 skill",
 		"\u4e0d\u8981\u6dfb\u52a0\u6280\u80fd", "\u4e0d\u6dfb\u52a0\u6280\u80fd", "\u65e0\u9700\u6dfb\u52a0\u6280\u80fd", "\u4e0d\u8981\u5220\u9664\u6280\u80fd", "\u4e0d\u5220\u9664\u6280\u80fd",
-		"\u4e0d\u8981\u4fee\u6539 skill", "\u4e0d\u6539 skill", "\u4fdd\u6301 skill", "\u4e0d\u8981\u4fee\u6539\u6280\u80fd", "\u4e0d\u6539\u6280\u80fd", "\u4fdd\u6301\u6280\u80fd",
+		"\u4e0d\u8981\u7ed1\u5b9a\u6280\u80fd", "\u4e0d\u7ed1\u5b9a\u6280\u80fd", "\u4e0d\u8981\u89e3\u7ed1\u6280\u80fd", "\u4e0d\u89e3\u7ed1\u6280\u80fd", "\u4e0d\u8981\u7ed1\u5b9a\u6216\u89e3\u7ed1\u6280\u80fd",
+		"\u4e0d\u8981\u4fee\u6539 skill", "\u4e0d\u6539 skill", "\u4fdd\u6301 skill", "\u4fdd\u7559 skill", "\u4e0d\u8981\u4fee\u6539\u6280\u80fd", "\u4e0d\u6539\u6280\u80fd", "\u4fdd\u6301\u6280\u80fd", "\u4fdd\u7559\u6280\u80fd",
+		"\u4e0d\u8981\u52a8 skill", "\u522b\u52a8 skill", "\u4e0d\u8981\u52a8\u6280\u80fd", "\u522b\u52a8\u6280\u80fd",
 	})
 }
 
@@ -2348,6 +5985,40 @@ func appendArtifactProducerPlannedTool(parts *chatRequestParts, strategy *AIChat
 }
 
 func appendPlannedTool(strategy *AIChatTurnStrategy, skillID string, toolName string, arguments map[string]string) *AIChatTurnStrategy {
+	return appendPlannedToolWithStep(strategy, skillID, toolName, arguments, "", "")
+}
+
+func appendPostUpdateAgentConfigReadPlannedTool(strategy *AIChatTurnStrategy, waitForStepID string) *AIChatTurnStrategy {
+	waitForStepID = strings.TrimSpace(waitForStepID)
+	if waitForStepID == "" {
+		waitForStepID = operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
+	}
+	return appendPlannedToolWithStep(
+		strategy,
+		skills.SkillAgentManagement,
+		"get_agent_config",
+		nil,
+		operationPlanPostUpdateAgentConfigReadStepID(),
+		waitForStepID,
+	)
+}
+
+func appendPostUpdateAgentIdentityReadPlannedTool(strategy *AIChatTurnStrategy, waitForStepID string) *AIChatTurnStrategy {
+	waitForStepID = strings.TrimSpace(waitForStepID)
+	if waitForStepID == "" {
+		waitForStepID = operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_identity")
+	}
+	return appendPlannedToolWithStep(
+		strategy,
+		skills.SkillAgentManagement,
+		"get_agent",
+		nil,
+		operationPlanPostUpdateAgentIdentityReadStepID(),
+		waitForStepID,
+	)
+}
+
+func appendPlannedToolWithStep(strategy *AIChatTurnStrategy, skillID string, toolName string, arguments map[string]string, stepID string, waitForStepID string) *AIChatTurnStrategy {
 	if strategy == nil {
 		return strategy
 	}
@@ -2356,9 +6027,15 @@ func appendPlannedTool(strategy *AIChatTurnStrategy, skillID string, toolName st
 	if skillID == "" || toolName == "" {
 		return strategy
 	}
-	id := operationPlanToolStepID(skillID, toolName)
-	for _, existing := range strategy.PlannedTools {
-		if operationPlanToolStepID(existing.SkillID, existing.ToolName) == id {
+	id := strings.TrimSpace(stepID)
+	if id == "" {
+		id = operationPlanToolStepID(skillID, toolName)
+	}
+	for idx, existing := range strategy.PlannedTools {
+		if aiChatTurnStrategyToolStepID(existing) == id {
+			if len(arguments) > 0 {
+				strategy.PlannedTools[idx].Arguments = mergeTurnStrategyToolArguments(strategy.PlannedTools[idx].Arguments, arguments)
+			}
 			return strategy
 		}
 	}
@@ -2369,8 +6046,79 @@ func appendPlannedTool(strategy *AIChatTurnStrategy, skillID string, toolName st
 	if len(arguments) > 0 {
 		tool.Arguments = arguments
 	}
+	if strings.TrimSpace(stepID) != "" {
+		tool.StepID = strings.TrimSpace(stepID)
+	}
+	if strings.TrimSpace(waitForStepID) != "" {
+		tool.WaitForStepID = strings.TrimSpace(waitForStepID)
+	}
 	strategy.PlannedTools = append(strategy.PlannedTools, tool)
 	return strategy
+}
+
+func mergeTurnStrategyToolArguments(current map[string]string, additions map[string]string) map[string]string {
+	if len(additions) == 0 {
+		return current
+	}
+	next := map[string]string{}
+	for key, value := range current {
+		key = strings.TrimSpace(key)
+		if key != "" {
+			next[key] = value
+		}
+	}
+	for key, value := range additions {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" || value == "" {
+			continue
+		}
+		if key == operationPlanExpectedUpdatedFieldsKey {
+			next[key] = strings.Join(mergeCommaSeparatedValues(next[key], value), ",")
+			continue
+		}
+		if key == operationPlanExpectedBindingActionsKey {
+			next[key] = mergeAgentConfigBindingActionSpecs(next[key], value)
+			continue
+		}
+		if strings.TrimSpace(next[key]) == "" {
+			next[key] = value
+		}
+	}
+	if len(next) == 0 {
+		return nil
+	}
+	return next
+}
+
+func mergeAgentConfigBindingActionSpecs(values ...string) string {
+	merged := map[string]string{}
+	for _, value := range values {
+		for field, action := range operationPlanAgentConfigBindingActionsFromAny(value) {
+			merged[field] = action
+		}
+	}
+	return operationPlanEncodeAgentConfigBindingActions(merged)
+}
+
+func mergeCommaSeparatedValues(values ...string) []string {
+	out := []string{}
+	for _, value := range values {
+		for _, item := range strings.Split(value, ",") {
+			item = strings.TrimSpace(item)
+			if item != "" {
+				out = appendUniqueStrings(out, item)
+			}
+		}
+	}
+	return out
+}
+
+func aiChatTurnStrategyToolStepID(tool AIChatTurnStrategyTool) string {
+	if id := strings.TrimSpace(tool.StepID); id != "" {
+		return id
+	}
+	return operationPlanToolStepID(tool.SkillID, tool.ToolName)
 }
 
 func removePlannedTool(strategy *AIChatTurnStrategy, skillID string, toolName string) *AIChatTurnStrategy {
@@ -2393,6 +6141,202 @@ func chatPartsSkillsEnabled(parts *chatRequestParts) bool {
 	return parts != nil && parts.SkillMode != skillModeDisabled && len(parts.SkillIDs) > 0
 }
 
+func isUnsupportedAgentManagementOperationIntent(parts *chatRequestParts) bool {
+	if parts == nil || !agentManagementUnsupportedOperationRequested(parts.Query) {
+		return false
+	}
+	return isAgentManagementIntent(parts.Query) ||
+		isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext)
+}
+
+func agentManagementUnsupportedOperationRequested(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return false
+	}
+	markers := []string{
+		"publish_agent",
+		"rollback_agent",
+		"invoke_agent",
+		"api_key",
+		"api keys",
+		"api key",
+		"api-key",
+		"apikey",
+		"webapp_online",
+		"webapp_offline",
+		"webapp online",
+		"webapp offline",
+		"web app online",
+		"web app offline",
+		"publish agent",
+		"publish this agent",
+		"publish the agent",
+		"roll back agent",
+		"rollback agent",
+		"invoke agent",
+		"call agent",
+		"run agent",
+		"\u53d1\u5e03",
+		"\u4e0a\u7ebf",
+		"\u4e0b\u7ebf",
+		"\u56de\u6eda",
+		"\u8c03\u7528\u667a\u80fd\u4f53",
+		"\u8fd0\u884c\u667a\u80fd\u4f53",
+		"\u8bbf\u95ee\u5bc6\u94a5",
+		"\u63a5\u53e3\u5bc6\u94a5",
+		"\u521b\u5efa\u5bc6\u94a5",
+		"\u521b\u5efa api key",
+	}
+	return containsAnySubstring(text, markers)
+}
+
+func isAgentManagementCapabilityExplanationIntent(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" || !containsAnySubstring(text, []string{"agent", "\u667a\u80fd\u4f53"}) {
+		return false
+	}
+	if agentManagementOperationalIntentTakesPrecedence(text) {
+		return false
+	}
+	return containsAnySubstring(text, []string{
+		"what can you do",
+		"what can you help",
+		"how can you help",
+		"your capabilities",
+		"your capability",
+		"current capabilities",
+		"agent management capabilities",
+		"agent management operations",
+		"which agent management",
+		"explain your role",
+		"\u80fd\u505a\u4ec0\u4e48",
+		"\u53ef\u4ee5\u505a\u4ec0\u4e48",
+		"\u80fd\u5e2e\u6211\u505a\u4ec0\u4e48",
+		"\u80fd\u591f\u5e2e\u6211\u505a",
+		"\u80fd\u5e2e\u6211\u505a\u54ea\u4e9b",
+		"\u80fd\u5e2e\u52a9\u6211\u505a\u54ea\u4e9b",
+		"\u53ef\u4ee5\u5e2e\u6211\u505a\u54ea\u4e9b",
+		"\u4f60\u7684\u80fd\u529b",
+		"\u5f53\u524d\u80fd\u529b",
+		"\u4f60\u7684\u4f5c\u7528",
+		"\u4f60\u662f\u505a\u4ec0\u4e48\u7684",
+		"\u54ea\u4e9b agent \u7ba1\u7406\u64cd\u4f5c",
+		"\u54ea\u4e9b\u667a\u80fd\u4f53\u7ba1\u7406\u64cd\u4f5c",
+	})
+}
+
+func agentManagementOperationalIntentTakesPrecedence(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return false
+	}
+	if agentManagementIdentityAssignmentRequested(query) ||
+		agentManagementModelSelectionRequested(query) ||
+		agentManagementConfigUpdateRequested(query) {
+		return true
+	}
+	if agentManagementExplicitNoMutationRequested(query) {
+		return false
+	}
+	if agentBindingMutationRequested(query) {
+		return true
+	}
+	return agentManagementCreateRequested(query) ||
+		agentManagementDeleteRequested(query)
+}
+
+func agentManagementIdentityAssignmentRequested(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return false
+	}
+	return strings.Contains(text, "update_agent_identity") ||
+		containsAnySubstring(text, []string{
+			"rename",
+			"name to",
+			"change name",
+			"set name",
+			"description to",
+			"desc to",
+			"change description",
+			"set description",
+			"update description",
+			"icon to",
+			"change icon",
+			"set icon",
+			"update icon",
+			"\u540d\u79f0\u6539\u4e3a",
+			"\u540d\u79f0\u6539\u6210",
+			"\u540d\u5b57\u6539\u4e3a",
+			"\u540d\u5b57\u6539\u6210",
+			"\u63cf\u8ff0\u6539\u4e3a",
+			"\u63cf\u8ff0\u6539\u6210",
+			"\u63cf\u8ff0\u8bbe\u7f6e\u4e3a",
+			"\u56fe\u6807\u6539\u4e3a",
+			"\u56fe\u6807\u6539\u6210",
+			"\u56fe\u6807\u8bbe\u7f6e\u4e3a",
+		})
+}
+
+func contextualAgentManagementCapabilityExplanationStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
+	if strategy == nil {
+		return nil
+	}
+	strategy.Intent = "explain_agent_management_capabilities"
+	strategy.TargetPage = firstNonEmptyString(contextualTurnCurrentPage(parts), "/console/agents")
+	strategy.RouteRequired = false
+	strategy.PrimarySkills = nil
+	strategy.SupportingSkills = nil
+	strategy.RequiredNextTool = nil
+	strategy.RemainingRouteSequence = nil
+	strategy.PlannedTools = nil
+	strategy.AssetEffect = "none"
+	strategy.AssetRisk = "low"
+	strategy.Approval = "none"
+	strategy.SuccessCriteria = []string{
+		"answer the user's capability or current-page summary question directly from injected page context",
+		"if asked for visible Agent names, use current visible Agent page context instead of list_agents",
+		"describe supported Agent-management actions without querying bindable resources or mutating assets",
+	}
+	strategy.ObservationPoints = []string{"current_page_context", "console_agents_visible_agents"}
+	strategy.Avoid = appendUniqueStrings(strategy.Avoid,
+		"do not load agent-management only to explain AIChat capabilities",
+		"do not call list_agents, get_agent_config, list_available_models, or binding candidate tools for a capability explanation",
+		"do not navigate or request governance approval for explanation-only Agent-management questions",
+	)
+	return strategy
+}
+
+func contextualUnsupportedAgentManagementStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
+	if strategy == nil {
+		return nil
+	}
+	strategy.Intent = "explain_agent_management_limit"
+	strategy.TargetPage = firstNonEmptyString(contextualTurnCurrentPage(parts), agentManagementTargetPage(parts, strategy), "/console/agents")
+	strategy.RouteRequired = false
+	strategy.PrimarySkills = nil
+	strategy.SupportingSkills = nil
+	strategy.RequiredNextTool = nil
+	strategy.RemainingRouteSequence = nil
+	strategy.PlannedTools = nil
+	strategy.AssetEffect = "none"
+	strategy.AssetRisk = "low"
+	strategy.Approval = "none"
+	strategy.SuccessCriteria = []string{
+		"explain that this AIChat Agent-management MVP cannot publish Agents, roll back versions, invoke Agents, manage API keys, or change WebApp online/offline state",
+		"do not request governance approval or mutate Agent configuration for unsupported Agent-management operations",
+		"if the user also requested supported Agent edits, ask whether to continue with only the supported subset instead of making a partial mutation silently",
+	}
+	strategy.ObservationPoints = nil
+	strategy.Avoid = appendUniqueStrings(strategy.Avoid,
+		"do not load agent-management for unsupported publish, rollback, invocation, API key, or WebApp online/offline requests",
+		"do not call list/read candidate tools just to prove an unsupported MVP capability is unavailable",
+		"do not claim that unsupported Agent operations succeeded",
+	)
+	return strategy
+}
+
 func contextualAgentManagementStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
 	strategy.Intent = "manage_agent_asset"
 	strategy.TargetPage = agentManagementTargetPage(parts, strategy)
@@ -2411,7 +6355,20 @@ func contextualAgentManagementStrategy(parts *chatRequestParts, strategy *AIChat
 	primary := append([]string(nil), strategy.PrimarySkills...)
 	supporting := append([]string(nil), strategy.SupportingSkills...)
 	if isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
-		strategy.RouteRequired = false
+		if detailTarget, ok := agentManagementExplicitDetailNavigationTarget(parts); ok {
+			strategy.TargetPage = detailTarget.Href
+			strategy.RouteRequired = !consoleNavigationRouteAlreadyAvailable(parts, detailTarget.Href) &&
+				!clientActionContinuationLoadedRoute(parts, detailTarget.Href)
+			if strategy.RouteRequired && skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
+				primary = appendUniqueStrings(primary, skills.SkillConsoleNavigator)
+			}
+			strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
+				"console-navigator/navigate opens the explicitly requested Agent detail page before claiming it is open",
+			)
+			strategy.ObservationPoints = appendUniqueStrings(strategy.ObservationPoints, "route_loaded:"+detailTarget.Href)
+		} else {
+			strategy.RouteRequired = false
+		}
 		if skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) {
 			primary = appendUniqueStrings(primary, skills.SkillAgentManagement)
 		}
@@ -2463,6 +6420,79 @@ func agentManagementTargetPage(parts *chatRequestParts, strategy *AIChatTurnStra
 		}
 	}
 	return "/console/agents"
+}
+
+func agentManagementExplicitDetailNavigationTarget(parts *chatRequestParts) (consoleNavigationRouteHint, bool) {
+	if parts == nil {
+		return consoleNavigationRouteHint{}, false
+	}
+	normalized := normalizeConsoleNavigationQuery(parts.Query)
+	if normalized == "" || createdAgentDetailNavigationNegated(normalized) {
+		return consoleNavigationRouteHint{}, false
+	}
+	if !containsAnySubstring(normalized, []string{
+		"open", "enter", "detail", "details", "edit page", "configuration page", "config page", "settings page",
+		"\u6253\u5f00", "\u8fdb\u5165", "\u8be6\u60c5", "\u7f16\u8f91\u9875", "\u914d\u7f6e\u9875", "\u8bbe\u7f6e\u9875",
+	}) {
+		return consoleNavigationRouteHint{}, false
+	}
+	if agentManagementDeleteRequested(normalized) {
+		return consoleNavigationRouteHint{}, false
+	}
+	agents := visibleAgentsForAgentManagementTargetResolution(parts)
+	matches := make([]visibleConsoleAgentResource, 0, 1)
+	for _, agent := range agents {
+		name := normalizeConsoleNavigationQuery(agent.Title)
+		if name == "" || !strings.Contains(normalized, name) {
+			continue
+		}
+		matches = append(matches, agent)
+	}
+	if len(matches) == 1 {
+		href := normalizeAgentDetailHref(matches[0].Href)
+		if href == "" && strings.TrimSpace(matches[0].ID) != "" {
+			href = "/console/agents/" + strings.TrimSpace(matches[0].ID) + "/agent"
+		}
+		if href != "" {
+			return consoleNavigationRouteHint{Href: href, Label: firstNonEmptyString(matches[0].Title, "Agent detail")}, true
+		}
+	}
+	if len(matches) > 1 {
+		return consoleNavigationRouteHint{}, false
+	}
+	if containsAnySubstring(normalized, []string{"current agent", "this agent", "\u5f53\u524d\u667a\u80fd\u4f53", "\u8fd9\u4e2a\u667a\u80fd\u4f53"}) {
+		for _, agent := range agents {
+			if !agent.Selected {
+				continue
+			}
+			if href := normalizeAgentDetailHref(agent.Href); href != "" {
+				return consoleNavigationRouteHint{Href: href, Label: firstNonEmptyString(agent.Title, "Agent detail")}, true
+			}
+		}
+	}
+	return consoleNavigationRouteHint{}, false
+}
+
+func visibleAgentsForAgentManagementTargetResolution(parts *chatRequestParts) []visibleConsoleAgentResource {
+	if parts == nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := []visibleConsoleAgentResource{}
+	for _, source := range []map[string]interface{}{parts.RawOperationContext, parts.OperationContext} {
+		for _, agent := range visibleAgentResources(source) {
+			id := strings.TrimSpace(agent.ID)
+			if id == "" {
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			out = append(out, agent)
+		}
+	}
+	return out
 }
 
 func isConsoleAgentDetailRoute(value string) bool {
@@ -2893,7 +6923,7 @@ func contextualConsoleAgentsSkillMessage(prepared *PreparedChat) (adapter.Messag
 		{"skill_id": skills.SkillAgentManagement, "tool_name": "delete_agent", "purpose": "delete one resolved Agent after governance approval"},
 		{"skill_id": skills.SkillAgentManagement, "tool_name": "delete_agents", "purpose": "delete multiple resolved visible/listed Agents as one governed frozen batch"},
 		{"skill_id": skills.SkillAgentManagement, "tool_name": "get_agent_config", "purpose": "read one Agent's draft runtime config"},
-		{"skill_id": skills.SkillAgentManagement, "tool_name": "update_agent_config", "purpose": "patch supported draft runtime config fields, including complete skill/knowledge/database/workflow binding lists when exact candidates are known"},
+		{"skill_id": skills.SkillAgentManagement, "tool_name": "update_agent_config", "purpose": "patch supported draft runtime config fields; use add/remove binding fields for specific skill/knowledge/database/workflow bind or unbind changes"},
 		{"skill_id": skills.SkillAgentManagement, "tool_name": "replace_agent_memory_slots", "purpose": "replace one Agent's draft memory slot list"},
 		{"skill_id": skills.SkillAgentManagement, "tool_name": "list_agent_knowledge_candidates", "purpose": "list knowledge bases in the target Agent workspace before binding"},
 		{"skill_id": skills.SkillAgentManagement, "tool_name": "list_agent_database_candidates", "purpose": "list databases in the target Agent workspace before binding tables"},
@@ -2924,16 +6954,20 @@ func contextualConsoleAgentsSkillMessage(prepared *PreparedChat) (adapter.Messag
 		"Use agent-management for explicit Agent list, create, edit identity, delete, inspect draft config, update supported draft config, replace Agent memory slots, or edit knowledge/database/workflow bindings.",
 		"When Agent management JSON includes visible_agents and the user refers to visible Agents, selected Agents, the current page, the current Agent, first-N/top-N Agents, or these Agents, treat visible_agents as authoritative resolved targets. Use their agent_id/name/href directly; do not call list_agents only to rediscover the same visible targets.",
 		"Use list_agents only when visible_agents is missing or insufficient, the user asks to search/find Agents by name, asks what Agents exist beyond the visible page context, or gives a name without an exact visible match.",
-		"For binding edits, read current config or list exact candidates only when the needed current binding set or candidate IDs/names are not already present in page context or prior tool results. When exact data is known, prefer one update_agent_config call with the full desired skill/knowledge/database/workflow replacement lists. The replace_agent_*_bindings tools remain available for single-section compatibility. Never guess resource IDs and never bind resources from another workspace.",
+		"For read-only current Agent configuration checks, get_agent_config is enough for identity, model/provider, prompt, memory/file upload settings, and currently bound resource counts. Do not call candidate-list tools or list_agent_database_tables just to inspect current counts; use candidate tools only when the user asks what resources are available/bindable/selectable, or when a bind/unbind/replace operation needs exact resource IDs.",
+		"For binding edits, read current config or list exact candidates only when the needed current binding set or candidate IDs/names are not already present in page context or prior tool results. For specific bind/unbind changes, prefer one update_agent_config call with add_enabled_skill_ids/remove_enabled_skill_ids, add_knowledge_dataset_ids/remove_knowledge_dataset_ids, add_database_bindings/remove_database_bindings, or add_workflow_bindings/remove_workflow_bindings so unmentioned bindings are preserved. Use full replacement lists or replace_agent_*_bindings only when the user asks to replace or clear an entire binding section. Never pass resources the user wants to unbind as the final replacement list. Never guess resource IDs and never bind resources from another workspace.",
 		"Do not publish, roll back, invoke Agents, manage API keys, or change WebApp online/offline state in this MVP. If the user asks for those, explain the limit.",
 		"For edits, deletes, and config updates, resolve the Agent first and pass the exact agent_id. Do not invent IDs.",
 		"When the user asks to create a new Agent, create_agent must succeed before any edit of that new Agent. If create_agent fails or is not allowed, do not update the currently visible Agent as a fallback; report the actual failure.",
 		"Before changing an Agent model, call agent-management/list_available_models with the appropriate use_case, then pass the returned provider/model pair to update_agent_config.",
+		"Do not call get_current_page_context; current page context is already injected into this turn as page evidence, not exposed as a callable tool.",
 		"Tool governance owns approval for mutations. Do not ask for a separate natural-language confirmation when governance will pause the turn.",
 		"For plural, range, first-N, selected, or page-list Agent deletion requests, call delete_agents once with an agents array containing the exact frozen targets and visible names. Do not loop delete_agent for batch deletion.",
+		"After updating one current Agent detail page, verify from the mutation result and current page evidence. Do not call list_agents only to verify that same single Agent; if structured post-update state is still needed, use get_agent_config with the current agent_id.",
 		"After ordinary edit, binding, unbinding, or Agent list-page batch deletion succeeds, prefer refreshed page context or asset observation over navigation. Do not navigate only to prove the mutation happened.",
 		"Do not navigate after deleting Agents from the list page.",
 	}
+	lines = append(lines, agentManagementActiveConfigPlanGuidance(prepared)...)
 	if navigationAllowed {
 		lines = append(lines,
 			"If the current operation plan includes console-navigator/navigate, treat it as a route hint: call it only when the user goal still needs that page and current context has not already satisfied the step.",
@@ -2942,10 +6976,98 @@ func contextualConsoleAgentsSkillMessage(prepared *PreparedChat) (adapter.Messag
 	} else {
 		lines = append(lines,
 			"Avoid console-navigator/navigate during Agent inspection, identity edit, or config edit turns unless the user explicitly asked to open another page or the current goal cannot proceed from current page evidence.",
+			"Because console-navigator/navigate is not available in the tools JSON for this turn, do not say you need to navigate, open, enter, or switch pages. Continue from the current Agent page evidence.",
 		)
 	}
 	lines = append(lines, "Agent management JSON: "+string(encoded))
 	return adapter.Message{Role: "system", Content: strings.Join(lines, "\n")}, true
+}
+
+func agentManagementActiveConfigPlanGuidance(prepared *PreparedChat) []string {
+	if prepared == nil || prepared.Message == nil {
+		return nil
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 {
+		return nil
+	}
+	var updateStep map[string]interface{}
+	for _, step := range mapSliceFromAny(plan["steps"]) {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skills.SkillAgentManagement) ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(step["tool_name"])), "update_agent_config") {
+			continue
+		}
+		updateStep = step
+		break
+	}
+	if len(updateStep) == 0 {
+		return nil
+	}
+	expectedFields := compactStringSliceForPrompt(
+		stringSliceFromAny(updateStep[operationPlanExpectedUpdatedFieldsKey]),
+		12,
+		80,
+	)
+	expectedActions := operationPlanAgentConfigBindingActionsFromAny(updateStep[operationPlanExpectedBindingActionsKey])
+	if len(expectedFields) == 0 && len(expectedActions) == 0 {
+		return nil
+	}
+	lines := []string{}
+	if len(expectedFields) > 0 {
+		lines = append(lines, "Active Agent config plan expects update_agent_config to satisfy these fields before the final answer: "+strings.Join(expectedFields, ", ")+".")
+	}
+	if len(expectedActions) > 0 {
+		actionPairs := agentManagementConfigBindingActionPairs(expectedActions)
+		if len(actionPairs) > 0 {
+			lines = append(lines, "Active Agent config plan expects these binding actions in the same user goal: "+strings.Join(actionPairs, ", ")+".")
+		}
+		removeArgs := agentManagementConfigRemoveArgsForExpectedUnbinds(expectedActions)
+		if len(removeArgs) > 0 {
+			lines = append(lines,
+				"For expected unbind actions, use get_agent_config/current page evidence to build one update_agent_config call containing all applicable remove fields: "+strings.Join(removeArgs, ", ")+".",
+				"Do not replace a governed mutation with a natural-language confirmation; call the governed update tool so the approval card freezes the actual operation.",
+				"Do not finish after a partial binding edit. If any expected remove field cannot be constructed, report exactly which field lacks evidence instead of claiming completion.",
+			)
+		}
+	}
+	return lines
+}
+
+func agentManagementConfigBindingActionPairs(actions map[string]string) []string {
+	if len(actions) == 0 {
+		return nil
+	}
+	pairs := []string{}
+	for _, field := range []string{"enabled_skill_ids", "knowledge_dataset_ids", "database_bindings", "workflow_bindings"} {
+		action := operationPlanCanonicalAgentConfigBindingAction(actions[field])
+		if action == "" {
+			continue
+		}
+		pairs = append(pairs, field+"="+action)
+	}
+	return pairs
+}
+
+func agentManagementConfigRemoveArgsForExpectedUnbinds(actions map[string]string) []string {
+	if len(actions) == 0 {
+		return nil
+	}
+	argByField := map[string]string{
+		"enabled_skill_ids":     "remove_enabled_skill_ids",
+		"knowledge_dataset_ids": "remove_knowledge_dataset_ids",
+		"database_bindings":     "remove_database_bindings",
+		"workflow_bindings":     "remove_workflow_bindings",
+	}
+	args := []string{}
+	for _, field := range []string{"enabled_skill_ids", "knowledge_dataset_ids", "database_bindings", "workflow_bindings"} {
+		if operationPlanCanonicalAgentConfigBindingAction(actions[field]) != "unbind" {
+			continue
+		}
+		if arg := argByField[field]; arg != "" {
+			args = append(args, arg)
+		}
+	}
+	return args
 }
 
 func agentManagementNavigationGuidanceAllowed(prepared *PreparedChat) bool {
@@ -3836,19 +7958,31 @@ func skillLoopConsoleNavigationFinalAnswerGuard(prepared *PreparedChat) skillloo
 
 func skillLoopAgentManagementFinalAnswerGuard(prepared *PreparedChat) skillloop.FinalAnswerGuard {
 	if prepared == nil || prepared.parts == nil ||
-		!skillIDEnabled(prepared.parts.SkillIDs, skills.SkillAgentManagement) ||
-		!skillIDEnabled(prepared.parts.SkillIDs, skills.SkillConsoleNavigator) {
+		!skillIDEnabled(prepared.parts.SkillIDs, skills.SkillAgentManagement) {
 		return nil
 	}
+	hasConsoleNavigator := skillIDEnabled(prepared.parts.SkillIDs, skills.SkillConsoleNavigator)
 	currentAgentID := currentConsoleAgentID(prepared.parts)
+	configReadTargetID := agentManagementConfigReadTargetID(prepared.parts)
 	deleteTarget := consoleNavigationRouteHint{Href: "/console/agents", Label: "Agent list"}
-	wantsCreatedDetail := wantsCreatedAgentDetailNavigation(prepared.parts.Query)
-	requiredBindingTools := requiredAgentBindingMutationTools(prepared.parts.Query)
-	if currentAgentID == "" && !wantsCreatedDetail {
+	wantsCreatedDetail := hasConsoleNavigator && wantsCreatedAgentDetailNavigation(prepared.parts.Query)
+	requiredBindingTools := agentBindingGuardRequiredTools(prepared.parts.Query)
+	requiresConfigRead := configReadTargetID != "" &&
+		agentManagementConfigReadRequested(prepared.parts.Query) &&
+		!agentManagementConfigUpdateRequested(prepared.parts.Query) &&
+		!agentManagementIdentityUpdateRequested(prepared.parts.Query) &&
+		!agentManagementSkillBindingRequested(prepared.parts.Query) &&
+		len(requiredBindingTools) == 0
+	if currentAgentID == "" && !wantsCreatedDetail && !requiresConfigRead {
 		return nil
 	}
 	return func(req skillloop.FinalAnswerGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
-		if missingTool := firstMissingAgentManagementTool(req, requiredBindingTools); missingTool != "" {
+		if requiresConfigRead &&
+			!finalAnswerGuardHasSuccessfulTool(req, skills.SkillAgentManagement, "get_agent_config") &&
+			!finalAnswerGuardHasAttemptedTool(req, skills.SkillAgentManagement, "get_agent_config") {
+			return agentConfigReadRequiresToolGuardResult(), true
+		}
+		if missingTool := firstMissingAgentBindingMutation(req, requiredBindingTools); missingTool != "" {
 			return agentBindingRequiresMutationGuardResult(missingTool, requiredBindingTools), true
 		}
 		if wantsCreatedDetail {
@@ -3862,7 +7996,7 @@ func skillLoopAgentManagementFinalAnswerGuard(prepared *PreparedChat) skillloop.
 				}), true
 			}
 		}
-		if currentAgentID == "" || !finalAnswerGuardHasAgentDeleteCall(req.SuccessfulToolCalls, currentAgentID) {
+		if !hasConsoleNavigator || currentAgentID == "" || !finalAnswerGuardHasAgentDeleteCall(req.SuccessfulToolCalls, currentAgentID) {
 			return skillloop.FinalAnswerGuardResult{}, false
 		}
 		if finalAnswerGuardHasExactConsoleNavigateCall(req.SuccessfulToolCalls, deleteTarget.Href) ||
@@ -3873,9 +8007,196 @@ func skillLoopAgentManagementFinalAnswerGuard(prepared *PreparedChat) skillloop.
 	}
 }
 
-func requiredAgentBindingMutationTools(query string) []string {
+func agentManagementConfigReadTargetID(parts *chatRequestParts) string {
+	if parts == nil || !isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		return ""
+	}
+	if agentID := currentConsoleAgentID(parts); agentID != "" {
+		return agentID
+	}
+	visible := consoleAgentsPromptVisibleAgents(parts)
+	if len(visible) == 0 {
+		return ""
+	}
+	query := strings.ToLower(strings.TrimSpace(parts.Query))
+	if query == "" {
+		return ""
+	}
+	if targets := agentDeleteTargetsMatchingQueryText(visible, query); len(targets) == 1 {
+		return strings.TrimSpace(firstNonEmptyString(targets[0]["agent_id"], targets[0]["id"]))
+	}
+	if agentManagementFirstVisibleAgentRequested(query) {
+		return strings.TrimSpace(firstNonEmptyString(visible[0]["agent_id"], visible[0]["id"], visible[0]["resource_id"]))
+	}
+	return ""
+}
+
+func agentManagementFirstVisibleAgentRequested(query string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(query))
-	if normalized == "" || !hasAgentBindingMutationMarker(normalized) {
+	if normalized == "" {
+		return false
+	}
+	compact := strings.NewReplacer(
+		" ", "",
+		"\t", "",
+		"\n", "",
+		"\r", "",
+		",", "",
+		".", "",
+		";", "",
+		":", "",
+		"\uff0c", "",
+		"\u3002", "",
+		"\uff1b", "",
+		"\uff1a", "",
+		"\u3001", "",
+	).Replace(normalized)
+	return containsAnySubstring(normalized, []string{
+		"first visible agent",
+		"first agent",
+		"first one",
+		"top one",
+		"top agent",
+	}) || containsAnySubstring(compact, []string{
+		"\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53",
+		"\u7b2c1\u4e2a\u667a\u80fd\u4f53",
+		"\u7b2c\u4e00\u4e2aagent",
+		"\u7b2c1\u4e2aagent",
+		"\u9996\u4e2a\u667a\u80fd\u4f53",
+		"\u7b2c\u4e00\u4e2a",
+		"\u7b2c1\u4e2a",
+		"\u7b2c\u4e00\u6761",
+		"\u7b2c1\u6761",
+		"\u9996\u4e2a",
+	})
+}
+
+func agentConfigReadRequiresToolGuardResult() skillloop.FinalAnswerGuardResult {
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "get_agent_config",
+		Message:  "The user asked for the current Agent configuration, but no agent-management/get_agent_config evidence exists yet.",
+		SystemMessage: strings.Join([]string{
+			"The candidate final answer is premature for this Agent configuration question.",
+			"Call agent-management/get_agent_config for the current Agent before answering.",
+			"Base the final answer only on the tool result and page evidence.",
+			"If get_agent_config fails, explain that failure truthfully instead of inferring enabled skills, model, provider, bindings, or other configuration from unsupported assumptions.",
+		}, " "),
+	}
+}
+
+func agentBindingGuardRequiredTools(query string) []string {
+	normalized := strings.ToLower(strings.TrimSpace(query))
+	if normalized == "" {
+		return nil
+	}
+	required := append([]string(nil), requiredAgentBindingMutationTools(normalized)...)
+	if agentManagementSkillBindingRequested(normalized) {
+		required = appendUniqueStrings(required, "replace_agent_skill_bindings")
+	}
+	return required
+}
+
+func firstMissingAgentBindingMutation(req skillloop.FinalAnswerGuardRequest, requiredTools []string) string {
+	for _, toolName := range requiredTools {
+		toolName = strings.TrimSpace(toolName)
+		if toolName == "" {
+			continue
+		}
+		if agentBindingMutationRequirementSatisfied(req, toolName) {
+			continue
+		}
+		return toolName
+	}
+	return ""
+}
+
+func agentBindingMutationRequirementSatisfied(req skillloop.FinalAnswerGuardRequest, toolName string) bool {
+	if finalAnswerGuardHasSuccessfulTool(req, skills.SkillAgentManagement, toolName) ||
+		finalAnswerGuardHasAttemptedTool(req, skills.SkillAgentManagement, toolName) {
+		return true
+	}
+	if agentBindingUpdateConfigCoversTool(req.SuccessfulToolCalls, toolName) {
+		return true
+	}
+	return agentBindingUpdateConfigAttemptedWithoutSuccessfulResult(req)
+}
+
+func agentBindingUpdateConfigAttemptedWithoutSuccessfulResult(req skillloop.FinalAnswerGuardRequest) bool {
+	if finalAnswerGuardHasSuccessfulTool(req, skills.SkillAgentManagement, "update_agent_config") {
+		return false
+	}
+	return finalAnswerGuardHasAttemptedTool(req, skills.SkillAgentManagement, "update_agent_config")
+}
+
+func agentBindingUpdateConfigCoversTool(calls []skillloop.SkillToolCallRef, toolName string) bool {
+	for _, call := range calls {
+		if !strings.EqualFold(strings.TrimSpace(call.SkillID), skills.SkillAgentManagement) ||
+			!strings.EqualFold(strings.TrimSpace(call.ToolName), "update_agent_config") {
+			continue
+		}
+		if agentBindingUpdateConfigResultCoversTool(call.Result, toolName) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentBindingUpdateConfigResultCoversTool(result map[string]interface{}, toolName string) bool {
+	field, kind := agentBindingRequirementFieldAndKind(toolName)
+	if field == "" && kind == "" {
+		return false
+	}
+	if field != "" && stringSliceContainsFold(stringSliceFromAny(result["updated_fields"]), field) {
+		return true
+	}
+	for _, key := range []string{"binding_changes", "config_changes"} {
+		for _, change := range mapSliceFromAny(result[key]) {
+			if field != "" && strings.EqualFold(strings.TrimSpace(stringFromAny(change["field"])), field) {
+				return true
+			}
+			if kind != "" && strings.EqualFold(strings.TrimSpace(stringFromAny(change["binding_kind"])), kind) {
+				return true
+			}
+		}
+	}
+	if kind != "" && strings.EqualFold(strings.TrimSpace(stringFromAny(result["binding_kind"])), kind) {
+		return true
+	}
+	return false
+}
+
+func agentBindingRequirementFieldAndKind(toolName string) (string, string) {
+	switch strings.TrimSpace(toolName) {
+	case "replace_agent_skill_bindings":
+		return "enabled_skill_ids", "agent_skill"
+	case "replace_agent_knowledge_bindings":
+		return "knowledge_dataset_ids", "knowledge_base"
+	case "replace_agent_database_bindings":
+		return "database_bindings", "database_table"
+	case "replace_agent_workflow_bindings":
+		return "workflow_bindings", "workflow"
+	default:
+		return "", ""
+	}
+}
+
+func stringSliceContainsFold(values []string, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), target) {
+			return true
+		}
+	}
+	return false
+}
+
+func requiredAgentBindingMutationTools(query string) []string {
+	normalized := strings.ToLower(strings.TrimSpace(agentManagementSecondaryIntentQuery(query)))
+	if normalized == "" || !agentBindingMutationRequested(normalized) {
 		return nil
 	}
 	required := make([]string, 0, 3)
@@ -3904,29 +8225,385 @@ func requiredAgentBindingMutationTools(query string) []string {
 }
 
 func hasAgentBindingMutationMarker(query string) bool {
+	return agentBindingMutationRequested(query)
+}
+
+func agentBindingMutationRequested(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return false
+	}
+	if agentBindingExplicitCandidateSelectionMutationRequested(query) {
+		return true
+	}
 	for _, marker := range []string{
 		"replace_agent_knowledge_bindings",
 		"replace_agent_database_bindings",
 		"replace_agent_workflow_bindings",
-		"\u7ed1\u5b9a",
 		"\u89e3\u7ed1",
-		"\u5173\u8054",
+		"\u7981\u7528",
+		"\u505c\u7528",
 		"\u53d6\u6d88\u5173\u8054",
 		"\u66ff\u6362",
 		"\u6dfb\u52a0",
+		"\u65b0\u589e",
+		"\u5220\u9664",
 		"\u79fb\u9664",
 		"\u6e05\u7a7a",
-		"bind",
 		"unbind",
-		"binding",
-		"associate",
+		"disable",
 		"detach",
+		"delete",
 		"replace",
 		"add",
 		"remove",
 		"clear",
 	} {
-		if strings.Contains(query, marker) {
+		if containsUnnegatedAgentManagementMutationMarker(query, marker) {
+			return true
+		}
+	}
+	if agentBindingReadOnlyRequested(query) {
+		return false
+	}
+	return agentBindingSoftMutationRequested(query)
+}
+
+func agentBindingExplicitCandidateSelectionMutationRequested(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return false
+	}
+	resourceMarkers := []string{
+		"skill", "\u6280\u80fd",
+		"knowledge", "\u77e5\u8bc6\u5e93",
+		"database", "table", "\u6570\u636e\u5e93", "\u6570\u636e\u8868",
+		"workflow", "\u5de5\u4f5c\u6d41",
+		"resource", "\u8d44\u6e90",
+	}
+	if agentBindingNoBindScopeCoversResource(query, resourceMarkers, append(agentBindingNoopScopeMarkers(), agentBindingPreserveScopeMarkers()...)) {
+		return false
+	}
+	if !containsAnySubstring(query, []string{
+		"\u7ed1\u5b9a",
+		"\u542f\u7528",
+		"\u5173\u8054",
+		"bind",
+		"enable",
+		"associate",
+	}) {
+		return false
+	}
+	return containsAnySubstring(query, []string{
+		"\u5404\u9009\u62e9",
+		"\u5404\u9009",
+		"\u9009\u62e9 1",
+		"\u9009\u62e91",
+		"\u9009 1",
+		"\u90091",
+		"\u9009\u62e9\u4e00",
+		"\u9009\u4e00",
+		"\u9009\u62e9\u4e00\u4e2a",
+		"\u9009\u4e00\u4e2a",
+		"\u5b58\u5728\u5019\u9009",
+		"\u6709\u5019\u9009",
+		"select one",
+		"choose one",
+		"pick one",
+		"select 1",
+		"choose 1",
+		"pick 1",
+		"candidate exists",
+		"candidates exist",
+	})
+}
+
+func agentManagementBindingReadRequested(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(agentManagementSecondaryIntentQuery(query)))
+	if query == "" || !agentBindingReadOnlyRequested(query) {
+		return false
+	}
+	return containsAnySubstring(query, []string{
+		"skill", "knowledge", "database", "table", "workflow", "binding", "bound", "enabled",
+		"\u6280\u80fd", "\u77e5\u8bc6\u5e93", "\u6570\u636e\u5e93", "\u6570\u636e\u8868", "\u5de5\u4f5c\u6d41", "\u7ed1\u5b9a", "\u5173\u8054", "\u542f\u7528",
+	})
+}
+
+func agentManagementReadOnlyBindingCandidateTools(query string) []string {
+	query = strings.ToLower(strings.TrimSpace(agentManagementSecondaryIntentQuery(query)))
+	if query == "" || !agentManagementBindingCandidateReadRequested(query) {
+		return nil
+	}
+	tools := []string{}
+	add := func(toolName string) {
+		tools = appendUniqueStrings(tools, toolName)
+	}
+	if agentManagementBindingCandidateGenericResourceRequested(query) {
+		add("list_agent_skill_candidates")
+		add("list_agent_knowledge_candidates")
+		add("list_agent_database_candidates")
+		add("list_agent_database_tables")
+		add("list_agent_workflow_binding_candidates")
+		return tools
+	}
+	if agentManagementBindingCandidateReadResourceRequested(query, []string{"skill", "\u6280\u80fd"}) {
+		add("list_agent_skill_candidates")
+	}
+	if agentManagementBindingCandidateReadResourceRequested(query, []string{"knowledge", "\u77e5\u8bc6\u5e93"}) {
+		add("list_agent_knowledge_candidates")
+	}
+	if agentManagementBindingCandidateReadResourceRequested(query, []string{"database", "table", "\u6570\u636e\u5e93", "\u6570\u636e\u8868", "\u8868"}) {
+		add("list_agent_database_candidates")
+		add("list_agent_database_tables")
+	}
+	if agentManagementBindingCandidateReadResourceRequested(query, []string{"workflow", "\u5de5\u4f5c\u6d41"}) {
+		add("list_agent_workflow_binding_candidates")
+	}
+	return tools
+}
+
+func agentManagementBindingCandidateReadRequested(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return false
+	}
+	for _, scope := range agentManagementBindingCandidateReadScopes(query) {
+		if containsAnySubstring(scope, []string{
+			"skill", "knowledge", "database", "table", "workflow", "binding", "bindings", "resource", "resources",
+			"\u6280\u80fd", "\u77e5\u8bc6\u5e93", "\u6570\u636e\u5e93", "\u6570\u636e\u8868", "\u5de5\u4f5c\u6d41", "\u7ed1\u5b9a", "\u5173\u8054", "\u8d44\u6e90",
+		}) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentManagementBindingCandidateReadResourceRequested(query string, resourceMarkers []string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" || len(resourceMarkers) == 0 {
+		return false
+	}
+	for _, scope := range agentManagementBindingCandidateReadScopes(query) {
+		if agentManagementCandidateScopeContainsPositiveResource(scope, resourceMarkers) {
+			return true
+		}
+	}
+	if agentManagementBindingCandidateGenericResourceRequested(query) &&
+		containsPositiveAgentManagementResourceMarker(query, resourceMarkers) {
+		return true
+	}
+	return false
+}
+
+func agentManagementBindingCandidateReadScopes(query string) []string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return nil
+	}
+	markers := []string{
+		"candidate", "candidates", "available binding", "available bindings", "available to bind", "bindable",
+		"\u5019\u9009", "\u53ef\u7ed1\u5b9a", "\u53ef\u5173\u8054", "\u53ef\u7528\u4e8e\u7ed1\u5b9a", "\u53ef\u9009",
+	}
+	scopes := []string{}
+	for _, marker := range markers {
+		marker = strings.ToLower(strings.TrimSpace(marker))
+		if marker == "" {
+			continue
+		}
+		searchFrom := 0
+		for {
+			idx := strings.Index(query[searchFrom:], marker)
+			if idx < 0 {
+				break
+			}
+			markerStart := searchFrom + idx
+			start := agentManagementCandidateScopeStart(query, markerStart)
+			end := agentBindingNoBindScopeEnd(query, markerStart)
+			if start < end {
+				scopes = appendUniqueStrings(scopes, strings.TrimSpace(query[start:end]))
+			}
+			searchFrom = markerStart + len(marker)
+		}
+	}
+	return scopes
+}
+
+func agentManagementBindingCandidateGenericResourceRequested(query string) bool {
+	for _, scope := range agentManagementBindingCandidateReadScopes(query) {
+		if containsAnySubstring(scope, []string{
+			"resource", "resources", "binding resource", "binding resources",
+			"\u8d44\u6e90", "\u7ed1\u5b9a\u8d44\u6e90", "\u5173\u8054\u8d44\u6e90",
+		}) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentManagementCandidateScopeStart(query string, markerStart int) int {
+	if markerStart <= 0 {
+		return 0
+	}
+	start := 0
+	prefix := query[:markerStart]
+	for _, delimiter := range []string{
+		"\u3002",
+		"\uff1b",
+		";",
+		".",
+		"\n",
+		"\r",
+		" but ",
+		" except ",
+		"\u4f46\u662f",
+		"\u4f46",
+		"\u4e0d\u8fc7",
+	} {
+		if delimiter == "" {
+			continue
+		}
+		if idx := strings.LastIndex(prefix, delimiter); idx >= 0 && idx+len(delimiter) > start {
+			start = idx + len(delimiter)
+		}
+	}
+	return start
+}
+
+func agentManagementCandidateScopeContainsPositiveResource(scope string, resourceMarkers []string) bool {
+	scope = strings.ToLower(strings.TrimSpace(scope))
+	if scope == "" || len(resourceMarkers) == 0 {
+		return false
+	}
+	for _, marker := range resourceMarkers {
+		marker = strings.ToLower(strings.TrimSpace(marker))
+		if marker == "" {
+			continue
+		}
+		searchFrom := 0
+		for {
+			idx := strings.Index(scope[searchFrom:], marker)
+			if idx < 0 {
+				break
+			}
+			start := searchFrom + idx
+			if !agentManagementResourceMentionCoveredByNoop(scope, start) {
+				return true
+			}
+			searchFrom = start + len(marker)
+		}
+	}
+	return false
+}
+
+func agentManagementResourceMentionCoveredByNoop(text string, markerStart int) bool {
+	if markerStart <= 0 {
+		return false
+	}
+	prefixStart := agentManagementCandidateScopeStart(text, markerStart)
+	prefix := text[prefixStart:markerStart]
+	return containsAnySubstring(prefix, append(agentBindingNoopScopeMarkers(), agentBindingPreserveScopeMarkers()...))
+}
+
+func agentBindingReadOnlyRequested(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return false
+	}
+	if agentBindingHardMutationRequested(query) {
+		return false
+	}
+	if agentBindingSoftMutationRequested(query) {
+		return false
+	}
+	return agentBindingStateReadOnlyQuestionRequested(query)
+}
+
+func agentBindingStateReadOnlyQuestionRequested(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return false
+	}
+	hasBindingStateMarker := containsAnySubstring(query, []string{
+		"bound", "enabled", "associated", "current bindings", "enabled skill", "enabled skills", "bound skill", "bound skills",
+		"\u5df2\u7ed1\u5b9a", "\u7ed1\u5b9a\u4e86", "\u7ed1\u5b9a\u7684", "\u7ed1\u5b9a\u4e86\u54ea\u4e9b", "\u5df2\u5173\u8054", "\u5173\u8054\u4e86", "\u5173\u8054\u7684",
+		"\u5df2\u542f\u7528", "\u542f\u7528\u4e86", "\u542f\u7528\u7684", "\u542f\u7528\u4e86\u54ea\u4e9b",
+	})
+	if !hasBindingStateMarker {
+		return false
+	}
+	return containsAnySubstring(query, []string{
+		"show", "view", "inspect", "read", "check", "list", "tell me", "what", "which", "whether", "current",
+		"\u67e5\u770b", "\u770b\u770b", "\u8bfb\u53d6", "\u68c0\u67e5", "\u5217\u51fa", "\u544a\u8bc9", "\u54ea\u4e9b", "\u4ec0\u4e48", "\u662f\u5426", "\u5f53\u524d",
+	})
+}
+
+func agentBindingHardMutationRequested(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"replace_agent_knowledge_bindings",
+		"replace_agent_database_bindings",
+		"replace_agent_workflow_bindings",
+		"\u89e3\u7ed1",
+		"\u7981\u7528",
+		"\u505c\u7528",
+		"\u53d6\u6d88\u5173\u8054",
+		"\u66ff\u6362",
+		"\u6dfb\u52a0",
+		"\u65b0\u589e",
+		"\u5220\u9664",
+		"\u79fb\u9664",
+		"\u6e05\u7a7a",
+		"unbind",
+		"disable",
+		"detach",
+		"delete",
+		"replace",
+		"add",
+		"remove",
+		"clear",
+	} {
+		if containsUnnegatedAgentManagementMutationMarker(query, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentBindingSoftMutationRequested(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return false
+	}
+	if containsAnySubstring(query, []string{
+		"please bind", "please enable", "please associate", "only bind", "bind one", "bind the first", "enable one", "enable the first",
+		"\u8bf7\u7ed1\u5b9a", "\u8bf7\u542f\u7528", "\u8bf7\u5173\u8054", "\u5e2e\u6211\u7ed1\u5b9a", "\u5e2e\u6211\u542f\u7528", "\u5e2e\u6211\u5173\u8054",
+		"\u53ea\u7ed1\u5b9a", "\u53ea\u542f\u7528", "\u53ea\u5173\u8054", "\u7ed1\u5b9a\u4e00", "\u542f\u7528\u4e00", "\u5173\u8054\u4e00",
+		"\u7ed1\u5b9a\u7b2c", "\u542f\u7528\u7b2c", "\u5173\u8054\u7b2c", "\u7ed1\u5b9a\u5230", "\u5173\u8054\u5230",
+		"\u4e00\u6b21\u6027\u7ed1\u5b9a", "\u4e00\u6b21\u7ed1\u5b9a", "\u7533\u8bf7\u5ba1\u6279\u7ed1\u5b9a",
+	}) {
+		return true
+	}
+	if agentBindingStateReadOnlyQuestionRequested(query) {
+		return false
+	}
+	if containsAnySubstring(query, []string{
+		"bound", "enabled", "associated",
+		"\u5df2\u7ed1\u5b9a", "\u7ed1\u5b9a\u4e86", "\u7ed1\u5b9a\u7684", "\u5df2\u542f\u7528", "\u542f\u7528\u4e86", "\u542f\u7528\u7684", "\u5df2\u5173\u8054", "\u5173\u8054\u4e86", "\u5173\u8054\u7684",
+	}) {
+		return false
+	}
+	for _, marker := range []string{
+		"\u7ed1\u5b9a",
+		"\u542f\u7528",
+		"\u5173\u8054",
+		"bind",
+		"enable",
+		"associate",
+	} {
+		if containsUnnegatedAgentManagementMutationMarker(query, marker) {
 			return true
 		}
 	}
@@ -3949,23 +8626,9 @@ func agentBindingResourceNoop(query string, resource string) bool {
 	if !resourceMarkerFound {
 		return false
 	}
-	noBindMarkers := []string{
-		"\u4e0d\u8981\u7ed1\u5b9a",
-		"\u4e0d\u8981\u5173\u8054",
-		"\u4e0d\u7ed1\u5b9a",
-		"\u4e0d\u5173\u8054",
-		"\u65e0\u9700\u7ed1\u5b9a",
-		"\u65e0\u9700\u5173\u8054",
-		"do not bind",
-		"don't bind",
-		"dont bind",
-		"do not associate",
-		"don't associate",
-		"dont associate",
-		"no binding",
-		"without binding",
-	}
-	if containsAnySubstring(query, noBindMarkers) {
+	noBindMarkers := agentBindingNoopScopeMarkers()
+	noBindMarkers = append(noBindMarkers, agentBindingPreserveScopeMarkers()...)
+	if agentBindingNoBindScopeCoversResource(query, resourceMarkers[resource], noBindMarkers) {
 		return true
 	}
 	noopMarkers := []string{
@@ -3975,16 +8638,150 @@ func agentBindingResourceNoop(query string, resource string) bool {
 		"\u4e0d\u53d8",
 		"keep",
 		"preserve",
+		"retain",
 		"unchanged",
 	}
-	for _, resourceMarker := range resourceMarkers[resource] {
-		for _, noopMarker := range noopMarkers {
-			if strings.Contains(query, resourceMarker+noopMarker) || strings.Contains(query, noopMarker+resourceMarker) {
-				return true
-			}
+	for _, clause := range agentBindingResourceClauses(query) {
+		if !containsAnySubstring(clause, resourceMarkers[resource]) {
+			continue
+		}
+		if containsAnySubstring(clause, noBindMarkers) || containsAnySubstring(clause, noopMarkers) {
+			return true
 		}
 	}
 	return false
+}
+
+func agentBindingNoopScopeMarkers() []string {
+	return []string{
+		"\u4e0d\u8981\u7ed1\u5b9a",
+		"\u4e0d\u8981\u5173\u8054",
+		"\u4e0d\u8981\u4fee\u6539",
+		"\u4e0d\u8981\u8c03\u6574",
+		"\u4e0d\u8981\u66f4\u6539",
+		"\u4e0d\u7ed1\u5b9a",
+		"\u4e0d\u5173\u8054",
+		"\u4e0d\u4fee\u6539",
+		"\u4e0d\u8c03\u6574",
+		"\u4e0d\u66f4\u6539",
+		"\u65e0\u9700\u7ed1\u5b9a",
+		"\u65e0\u9700\u5173\u8054",
+		"\u4e0d\u8981\u52a8",
+		"\u522b\u52a8",
+		"do not bind",
+		"don't bind",
+		"dont bind",
+		"do not associate",
+		"don't associate",
+		"dont associate",
+		"do not modify",
+		"don't modify",
+		"dont modify",
+		"do not change",
+		"don't change",
+		"dont change",
+		"do not update",
+		"don't update",
+		"dont update",
+		"do not touch",
+		"don't touch",
+		"dont touch",
+		"no binding",
+		"without binding",
+	}
+}
+
+func agentBindingPreserveScopeMarkers() []string {
+	return []string{
+		"\u4fdd\u7559",
+		"\u4fdd\u6301",
+		"keep",
+		"preserve",
+		"retain",
+	}
+}
+
+func agentBindingNoBindScopeCoversResource(query string, resourceMarkers []string, noBindMarkers []string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" || len(resourceMarkers) == 0 || len(noBindMarkers) == 0 {
+		return false
+	}
+	for _, marker := range noBindMarkers {
+		marker = strings.ToLower(strings.TrimSpace(marker))
+		if marker == "" {
+			continue
+		}
+		searchFrom := 0
+		for {
+			idx := strings.Index(query[searchFrom:], marker)
+			if idx < 0 {
+				break
+			}
+			start := searchFrom + idx
+			scope := query[start:agentBindingNoBindScopeEnd(query, start)]
+			if containsAnySubstring(scope, resourceMarkers) {
+				return true
+			}
+			searchFrom = start + len(marker)
+		}
+	}
+	return false
+}
+
+func agentBindingNoBindScopeEnd(query string, start int) int {
+	end := len(query)
+	for _, delimiter := range []string{
+		"\u3002",
+		"\uff1b",
+		";",
+		".",
+		"\n",
+		"\r",
+		" but ",
+		" except ",
+		"\u4f46\u662f",
+		"\u4f46",
+		"\u4e0d\u8fc7",
+	} {
+		if delimiter == "" {
+			continue
+		}
+		if relative := strings.Index(query[start:], delimiter); relative >= 0 && start+relative < end {
+			end = start + relative
+		}
+	}
+	return end
+}
+
+func agentBindingResourceClauses(query string) []string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return nil
+	}
+	replacer := strings.NewReplacer(
+		"\u4f46\u662f", "\uff0c",
+		"\u4f46", "\uff0c",
+		"\u4e0d\u8fc7", "\uff0c",
+		" but ", ",",
+		" except ", ",",
+	)
+	query = replacer.Replace(query)
+	clauses := strings.FieldsFunc(query, func(r rune) bool {
+		switch r {
+		case ',', '.', ';', '\n', '\r', '\uff0c', '\u3002', '\uff1b', '\u3001':
+			return true
+		default:
+			return false
+		}
+	})
+	out := make([]string, 0, len(clauses))
+	for _, clause := range clauses {
+		clause = strings.TrimSpace(clause)
+		if clause != "" {
+			out = append(out, clause)
+		}
+	}
+	return out
 }
 
 func firstMissingAgentManagementTool(req skillloop.FinalAnswerGuardRequest, toolNames []string) string {
@@ -4002,20 +8799,29 @@ func firstMissingAgentManagementTool(req skillloop.FinalAnswerGuardRequest, tool
 }
 
 func agentBindingRequiresMutationGuardResult(missingTool string, requiredTools []string) skillloop.FinalAnswerGuardResult {
-	toolList := strings.Join(requiredTools, ", ")
+	acceptedTools := []string{
+		"update_agent_config",
+		"replace_agent_skill_bindings",
+		"replace_agent_knowledge_bindings",
+		"replace_agent_database_bindings",
+		"replace_agent_workflow_bindings",
+	}
+	toolList := strings.Join(acceptedTools, ", ")
 	messageLines := []string{
-		"The user explicitly requested Agent binding changes, but at least one required binding update tool has not run yet.",
-		"Before claiming completion, call the missing agent-management tool.",
+		"The user explicitly requested Agent binding changes, but at least one requested binding section has no mutation evidence yet.",
+		"Before claiming completion, call agent-management/update_agent_config with the remaining section or the appropriate compatibility binding tool.",
 	}
 	systemLines := []string{
 		"The candidate final answer is premature for this Agent binding request.",
-		"Required agent-management binding tools for this turn: " + toolList + ".",
-		"Call " + missingTool + " with the resolved candidate arguments before producing a final answer.",
-		"If a required tool fails, explain that failure; do not claim the binding was completed.",
+		"Requested binding sections still missing evidence: " + strings.Join(requiredTools, ", ") + ".",
+		"Accepted agent-management binding mutation tools for this turn: " + toolList + ".",
+		"The currently missing section maps to compatibility tool: " + missingTool + ".",
+		"Prefer update_agent_config when the current config and exact candidate IDs are known, because it can update multiple binding sections in one governed call.",
+		"If a mutation tool fails, explain that failure; do not claim the binding was completed.",
 	}
 	return skillloop.FinalAnswerGuardResult{
 		SkillID:       skills.SkillAgentManagement,
-		ToolName:      missingTool,
+		ToolName:      "update_agent_config",
 		Message:       strings.Join(messageLines, " "),
 		SystemMessage: strings.Join(systemLines, " "),
 	}
@@ -4068,15 +8874,24 @@ func wantsCreatedAgentDetailNavigation(query string) bool {
 func createdAgentDetailNavigationNegated(normalized string) bool {
 	return containsAnySubstring(normalized, []string{
 		"do not navigate", "don't navigate", "dont navigate",
+		"do not switch pages", "don't switch pages", "dont switch pages",
 		"do not open", "don't open", "dont open",
 		"do not enter", "don't enter", "dont enter",
-		"without navigating", "without opening",
-		"stay on the list", "stay on current page",
-		"\u4e0d\u8981\u5bfc\u822a", "\u4e0d\u8981\u8df3\u8f6c", "\u4e0d\u8981\u6253\u5f00", "\u4e0d\u8981\u8fdb\u5165",
-		"\u4e0d\u7528\u5bfc\u822a", "\u4e0d\u7528\u8df3\u8f6c", "\u4e0d\u7528\u6253\u5f00", "\u4e0d\u7528\u8fdb\u5165",
-		"\u65e0\u9700\u5bfc\u822a", "\u65e0\u9700\u8df3\u8f6c", "\u65e0\u9700\u6253\u5f00", "\u65e0\u9700\u8fdb\u5165",
-		"\u7559\u5728\u5217\u8868", "\u7559\u5728\u5f53\u524d\u9875",
+		"without navigating", "without opening", "without switching pages",
+		"stay on the list", "stay on current page", "stay on the current page",
+		"\u4e0d\u8981\u5bfc\u822a", "\u4e0d\u8981\u8df3\u8f6c", "\u4e0d\u8981\u5207\u6362", "\u4e0d\u8981\u5207\u6362\u9875\u9762", "\u4e0d\u8981\u5207\u6362\u5230\u5176\u4ed6\u9875\u9762", "\u4e0d\u8981\u6253\u5f00", "\u4e0d\u8981\u8fdb\u5165",
+		"\u4e0d\u7528\u5bfc\u822a", "\u4e0d\u7528\u8df3\u8f6c", "\u4e0d\u7528\u5207\u6362", "\u4e0d\u7528\u5207\u6362\u9875\u9762", "\u4e0d\u7528\u6253\u5f00", "\u4e0d\u7528\u8fdb\u5165",
+		"\u65e0\u9700\u5bfc\u822a", "\u65e0\u9700\u8df3\u8f6c", "\u65e0\u9700\u5207\u6362", "\u65e0\u9700\u5207\u6362\u9875\u9762", "\u65e0\u9700\u6253\u5f00", "\u65e0\u9700\u8fdb\u5165",
+		"\u7559\u5728\u5217\u8868", "\u7559\u5728\u5f53\u524d\u9875", "\u7559\u5728\u5f53\u524d\u9875\u9762",
 	})
+}
+
+func consoleNavigationRequestNegated(query string) bool {
+	normalized := normalizeConsoleNavigationQuery(query)
+	if normalized == "" {
+		return false
+	}
+	return createdAgentDetailNavigationNegated(normalized)
 }
 
 func createdAgentDetailHrefFromCalls(calls []skillloop.SkillToolCallRef) string {
@@ -4295,6 +9110,16 @@ func consoleNavigationContextContainsRoute(context map[string]interface{}, href 
 			continue
 		}
 		metadata := mapFromOperationContext(resource["metadata"])
+		resourceType := strings.ToLower(strings.TrimSpace(firstNonEmptyString(
+			resource["resource_type"],
+			resource["type"],
+			resource["kind"],
+			metadata["resource_kind"],
+			metadata["type"],
+		)))
+		if resourceType != "page" {
+			continue
+		}
 		for _, value := range []interface{}{
 			resource["href"],
 			resource["route"],
@@ -4331,6 +9156,9 @@ func resolveConsoleNavigationTargetForPrepared(prepared *PreparedChat) (consoleN
 
 func resolveConsoleNavigationTargetForParts(parts *chatRequestParts) (consoleNavigationRouteHint, bool) {
 	if parts == nil {
+		return consoleNavigationRouteHint{}, false
+	}
+	if consoleNavigationRequestNegated(parts.Query) {
 		return consoleNavigationRouteHint{}, false
 	}
 	if requiresConsoleFilesRouteBeforeManagedFileCreate(parts) {
@@ -4529,11 +9357,16 @@ func isFileManagerDeleteToolCall(skillID string, toolName string) bool {
 
 func skillLoopUserInputGuard(prepared *PreparedChat) skillloop.UserInputGuard {
 	finalGuard := skillLoopFinalAnswerGuard(prepared)
-	if finalGuard == nil && !skillLoopAgentManagementDeleteUserInputGuardEnabled(prepared) {
+	if finalGuard == nil &&
+		!skillLoopAgentManagementDeleteUserInputGuardEnabled(prepared) &&
+		!skillLoopAgentManagementMutationUserInputGuardEnabled(prepared) {
 		return nil
 	}
 	return func(req skillloop.UserInputGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
 		if result, blocked := skillLoopAgentManagementDeleteUserInputGuard(prepared, req); blocked {
+			return result, true
+		}
+		if result, blocked := skillLoopAgentManagementMutationUserInputGuard(prepared, req); blocked {
 			return result, true
 		}
 		if finalGuard == nil {
@@ -4567,11 +9400,94 @@ func skillLoopUserInputGuard(prepared *PreparedChat) skillloop.UserInputGuard {
 	}
 }
 
+func skillLoopAgentManagementMutationUserInputGuardEnabled(prepared *PreparedChat) bool {
+	if prepared == nil || prepared.parts == nil || !skillIDEnabled(prepared.parts.SkillIDs, skills.SkillAgentManagement) {
+		return false
+	}
+	query := prepared.parts.Query
+	return agentManagementConfigUpdateRequested(query) ||
+		agentManagementIdentityUpdateRequested(query) ||
+		agentManagementSkillBindingRequested(query) ||
+		len(requiredAgentBindingMutationTools(query)) > 0
+}
+
+func skillLoopAgentManagementMutationUserInputGuard(prepared *PreparedChat, req skillloop.UserInputGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
+	if !skillLoopAgentManagementMutationUserInputGuardEnabled(prepared) ||
+		!agentManagementUserInputAsksMutationConfirmation(req) ||
+		agentManagementMutationToolAlreadyAttempted(req.AttemptedToolCalls) ||
+		agentManagementMutationToolAlreadyAttempted(req.SuccessfulToolCalls) {
+		return skillloop.FinalAnswerGuardResult{}, false
+	}
+	toolName := agentManagementPreferredMutationToolForUserInputGuard(prepared.parts.Query)
+	message := strings.Join([]string{
+		"The request_user_input call was blocked because the user already gave a concrete Agent configuration change request.",
+		"Tool governance owns the approval card for this asset-changing operation; do not ask for a separate natural-language confirmation.",
+		"Call agent-management/" + toolName + " with the resolved Agent target and exact intended patch, then wait for the governed tool result.",
+		"If an exact resource id is still missing, collect read/list evidence with agent-management tools instead of asking the user to confirm the already stated intent.",
+	}, " ")
+	return skillloop.FinalAnswerGuardResult{
+		SkillID:       skills.SkillAgentManagement,
+		ToolName:      toolName,
+		Message:       message,
+		SystemMessage: message,
+	}, true
+}
+
+func agentManagementPreferredMutationToolForUserInputGuard(query string) string {
+	if agentManagementConfigUpdateRequested(query) ||
+		agentManagementSkillBindingRequested(query) ||
+		len(requiredAgentBindingMutationTools(query)) > 0 ||
+		agentManagementModelSelectionRequested(query) {
+		return "update_agent_config"
+	}
+	if agentManagementIdentityUpdateRequested(query) {
+		return "update_agent_identity"
+	}
+	return "update_agent_config"
+}
+
+func agentManagementMutationToolAlreadyAttempted(calls []skillloop.SkillToolCallRef) bool {
+	for _, call := range calls {
+		if !strings.EqualFold(strings.TrimSpace(call.SkillID), skills.SkillAgentManagement) {
+			continue
+		}
+		switch strings.TrimSpace(call.ToolName) {
+		case "update_agent_config", "update_agent_identity",
+			"replace_agent_skill_bindings", "replace_agent_knowledge_bindings",
+			"replace_agent_database_bindings", "replace_agent_workflow_bindings", "replace_agent_memory_slots":
+			return true
+		}
+	}
+	return false
+}
+
+func agentManagementUserInputAsksMutationConfirmation(req skillloop.UserInputGuardRequest) bool {
+	text := strings.ToLower(strings.TrimSpace(req.Message + "\n" + userInputRequestQuestionsText(req.Questions)))
+	if text == "" {
+		return false
+	}
+	if !containsAnySubstring(text, []string{
+		"confirm", "confirmation", "approval", "approve", "whether", "should i", "shall i", "permission",
+		"\u786e\u8ba4", "\u662f\u5426", "\u6279\u51c6", "\u540c\u610f", "\u6388\u6743",
+	}) {
+		return false
+	}
+	return containsAnySubstring(text, []string{
+		"config", "configuration", "update", "modify", "change", "bind", "unbind", "enable", "disable", "associate", "detach",
+		"skill", "knowledge", "database", "table", "workflow", "model", "provider", "prompt", "question", "theme",
+		"\u914d\u7f6e", "\u4fee\u6539", "\u66f4\u65b0", "\u53d8\u66f4", "\u7ed1\u5b9a", "\u89e3\u7ed1", "\u542f\u7528", "\u7981\u7528", "\u505c\u7528", "\u5173\u8054",
+		"\u6280\u80fd", "\u77e5\u8bc6\u5e93", "\u6570\u636e\u5e93", "\u6570\u636e\u8868", "\u5de5\u4f5c\u6d41", "\u6a21\u578b", "\u63d0\u793a\u8bcd", "\u95ee\u9898", "\u4e3b\u9898",
+	})
+}
+
 func skillLoopAgentManagementDeleteUserInputGuardEnabled(prepared *PreparedChat) bool {
-	return prepared != nil &&
-		prepared.parts != nil &&
-		skillIDEnabled(prepared.parts.SkillIDs, skills.SkillAgentManagement) &&
-		agentManagementDeleteRequested(prepared.parts.Query)
+	if prepared == nil || prepared.parts == nil || !agentManagementDeleteRequested(prepared.parts.Query) {
+		return false
+	}
+	if skillIDEnabled(prepared.parts.SkillIDs, skills.SkillAgentManagement) {
+		return true
+	}
+	return isContextualAIChatSurface(prepared.parts.Surface) && len(consoleAgentsPromptVisibleAgents(prepared.parts)) > 0
 }
 
 func skillLoopAgentManagementDeleteUserInputGuard(prepared *PreparedChat, req skillloop.UserInputGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
@@ -6495,16 +11411,6 @@ func finalAnswerGuardBatchAgentDeleteHasTarget(call skillloop.SkillToolCallRef, 
 	}
 	if hasItemEvidence {
 		return false
-	}
-	for _, item := range mapSliceFromAny(call.Arguments["agents"]) {
-		if strings.TrimSpace(firstNonEmptyString(
-			item["agent_id"],
-			item["id"],
-			item["asset_id"],
-			item["resource_id"],
-		)) == agentID {
-			return true
-		}
 	}
 	return false
 }

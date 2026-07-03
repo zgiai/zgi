@@ -468,6 +468,7 @@ func (r *Runtime) CallSkillTool(
 		executionArguments = rewritten
 		governanceArgumentRewrite = rewriteSummary
 	}
+	executionArguments = r.enrichToolGovernanceArguments(ctx, toolDef, executionArguments, execCtx)
 
 	governanceDecision, governed, preflight, err := r.preflightToolGovernance(ctx, *doc, toolDef, executionArguments, execCtx, callID)
 	if preflight != nil {
@@ -541,6 +542,29 @@ func (r *Runtime) CallSkillTool(
 			Content:    toolMessagesContent(messages),
 		},
 	}, nil
+}
+
+func (r *Runtime) enrichToolGovernanceArguments(ctx context.Context, toolDef SkillToolDefinition, arguments map[string]interface{}, execCtx ExecutionContext) map[string]interface{} {
+	if r == nil || r.engine == nil {
+		return arguments
+	}
+	enriched, err := r.engine.EnrichGovernanceArguments(ctx, tools.InvokeRequest{
+		ProviderType:      toolDef.ProviderType,
+		ProviderID:        toolDef.ProviderID,
+		ToolName:          toolDef.Name,
+		TenantID:          execCtx.OrganizationID,
+		UserID:            execCtx.UserID,
+		Parameters:        arguments,
+		ConversationID:    execCtx.ConversationID,
+		AppID:             execCtx.AppID,
+		MessageID:         execCtx.MessageID,
+		InvokeFrom:        normalizeToolInvokeFrom(execCtx.InvokeFrom),
+		RuntimeParameters: copyStringAnyMap(execCtx.RuntimeParameters),
+	})
+	if err != nil || enriched == nil {
+		return arguments
+	}
+	return enriched
 }
 
 func appendGovernanceRewriteObservation(messages []tools.ToolInvokeMessage, decision toolgovernance.Decision, rewrite map[string]interface{}) []tools.ToolInvokeMessage {
@@ -1550,6 +1574,7 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 		SkillAgentWorkflow + "/list_agent_workflows":         workflowListContract(),
 		SkillAgentWorkflow + "/run_agent_workflow":           workflowRunContract(),
 		SkillAgentWorkflow + "/get_workflow_run_status":      workflowRunStatusContract(),
+		SkillAgentManagement + "/list_available_models":      agentManagementListAvailableModelsContract(),
 		SkillTime + "/current_time": {
 			SkillID:     SkillTime,
 			ToolName:    "current_time",
@@ -1580,6 +1605,23 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 			),
 			Example: map[string]interface{}{"operation": "add", "base_date": "today", "amount": 3, "unit": "day", "timezone": "Asia/Shanghai"},
 		},
+	}
+}
+
+func agentManagementListAvailableModelsContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentManagement,
+		ToolName:    "list_available_models",
+		Description: "List Agent runtime model candidates available to the current organization. Use this before changing an Agent model, then pass one returned item's provider and model together to update_agent_config.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"use_case": enumStringSchema("Optional model use case. Defaults to text-chat for normal Agent runtime replacement. Use all only when the user asks to inspect every model.", []string{"text-chat", "reasoning", "vision", "function-calling", "all"}),
+				"provider": stringValueSchema("Optional provider slug filter, such as openai or deepseek."),
+				"limit":    numberSchema("Optional maximum number of model candidates. Defaults to 20 and is capped by the backend."),
+			},
+			nil,
+		),
+		Example: map[string]interface{}{"use_case": "text-chat", "limit": 20},
 	}
 }
 

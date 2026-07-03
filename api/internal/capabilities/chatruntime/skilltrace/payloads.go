@@ -266,6 +266,8 @@ func summarizeAgentManagementResult(toolName string, payload map[string]interfac
 		result := compactFields(payload, "status", "use_case", "provider", "count", "total", "truncated")
 		result["models_count"] = collectionLen(payload["models"])
 		return result
+	case "list_agent_skill_candidates":
+		return compactAgentBindingCandidateListResult(payload, "data", "skills", "agent_skills", "candidates")
 	case "list_agent_knowledge_candidates", "list_agent_knowledge_binding_candidates":
 		return compactAgentBindingCandidateListResult(payload, "knowledge_bases", "datasets", "candidates")
 	case "list_agent_database_candidates", "list_agent_database_binding_candidates":
@@ -304,7 +306,76 @@ func compactAgentBindingCandidateListResult(payload map[string]interface{}, coll
 		}
 	}
 	result["candidates_count"] = count
+	if samples := compactAgentCandidateSamples(payload, 3, collectionKeys...); len(samples) > 0 {
+		result["candidate_samples"] = samples
+	}
 	return result
+}
+
+func compactAgentCandidateSamples(payload map[string]interface{}, limit int, collectionKeys ...string) []map[string]interface{} {
+	if len(payload) == 0 || limit <= 0 {
+		return nil
+	}
+	if len(recordsFromAny(payload["binding_candidates"])) > 0 {
+		collectionKeys = append([]string{"binding_candidates"}, collectionKeys...)
+	}
+	for _, key := range collectionKeys {
+		records := recordsFromAny(payload[key])
+		if len(records) == 0 {
+			continue
+		}
+		out := make([]map[string]interface{}, 0, min(len(records), limit))
+		for _, record := range records {
+			item := compactAgentCandidateSample(record)
+			if len(item) == 0 {
+				continue
+			}
+			out = append(out, item)
+			if len(out) >= limit {
+				break
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return nil
+}
+
+func compactAgentCandidateSample(record map[string]interface{}) map[string]interface{} {
+	if len(record) == 0 {
+		return nil
+	}
+	item := map[string]interface{}{}
+	if id := firstNonEmptyString(record["id"], record["skill_id"], record["dataset_id"], record["knowledge_base_id"], record["data_source_id"], record["table_id"], record["workflow_id"], record["binding_id"]); id != "" {
+		item["id"] = id
+	}
+	if name := firstNonEmptyString(record["name"], record["title"], record["label"], record["display_name"], record["dataset_name"], record["database_name"], record["table_name"], record["workflow_name"]); name != "" {
+		item["name"] = name
+	}
+	for _, key := range []string{"selected", "writable"} {
+		if value, ok := record[key]; ok {
+			item[key] = value
+		}
+	}
+	if binding := compactAgentCandidateBinding(record["binding"]); len(binding) > 0 {
+		item["binding"] = binding
+	}
+	return item
+}
+
+func compactAgentCandidateBinding(value interface{}) map[string]interface{} {
+	binding := recordFromAny(value)
+	if len(binding) == 0 {
+		return nil
+	}
+	item := map[string]interface{}{}
+	for _, key := range []string{"data_source_id", "table_ids", "writable_table_ids", "agent_id", "workflow_id", "binding_id", "version_strategy", "version_uuid", "timeout_seconds"} {
+		if value, ok := binding[key]; ok && value != nil && value != "" {
+			item[key] = value
+		}
+	}
+	return item
 }
 
 func compactAgentBindingOperationResult(payload map[string]interface{}, bindingKind string) map[string]interface{} {
@@ -538,7 +609,7 @@ func stringSliceFromAny(value interface{}) []string {
 }
 
 func compactAgentManagementOperationResult(payload map[string]interface{}) map[string]interface{} {
-	result := compactFields(payload, "status", "effect", "agent_id", "agent_name", "href", "route_after_delete", "workspace_id", "updated_fields", "reversible", "operation_type", "operation_group_id", "target_count", "deleted_count", "failed_count", "requires_refresh", "refresh_target", "error")
+	result := compactFields(payload, "status", "effect", "agent_id", "agent_name", "href", "route_after_delete", "workspace_id", "requested_fields", "satisfied_fields", "updated_fields", "reversible", "operation_type", "operation_group_id", "target_count", "deleted_count", "failed_count", "requires_refresh", "refresh_target", "error")
 	if result == nil {
 		result = map[string]interface{}{}
 	}
@@ -585,6 +656,7 @@ func compactAgentConfigOperationResult(payload map[string]interface{}) map[strin
 		"removed_resource_names",
 		"final_resource_count",
 		"final_resource_names",
+		"binding_final_states",
 		"config_changes",
 		"binding_changes",
 	} {
@@ -616,6 +688,7 @@ func compactAgentConfigOperationResult(payload map[string]interface{}) map[strin
 		"enabled_skill_count":       collectionLen(config["enabled_skill_ids"]),
 		"knowledge_dataset_count":   collectionLen(config["knowledge_dataset_ids"]),
 		"database_binding_count":    collectionLen(config["database_bindings"]),
+		"database_table_count":      agentConfigDatabaseTableCount(config["database_bindings"]),
 		"workflow_binding_count":    collectionLen(config["workflow_bindings"]),
 		"suggested_question_count":  collectionLen(config["suggested_questions"]),
 		"model_parameter_count":     len(recordFromAny(config["model_parameters"])),
@@ -627,7 +700,23 @@ func compactAgentConfigOperationResult(payload map[string]interface{}) map[strin
 			result[key] = count
 		}
 	}
+	if questions := compactStringList(config["suggested_questions"], 6, 120); len(questions) > 0 {
+		result["suggested_questions"] = questions
+	}
 	return result
+}
+
+func agentConfigDatabaseTableCount(value interface{}) int {
+	count := 0
+	for _, binding := range recordsFromAny(value) {
+		tableIDs := compactStringList(firstPresent(binding, "table_ids", "tableIds"), 100, 120)
+		if len(tableIDs) > 0 {
+			count += len(tableIDs)
+			continue
+		}
+		count++
+	}
+	return count
 }
 
 func summarizeFileReaderResult(toolName string, payload map[string]interface{}) map[string]interface{} {
@@ -893,6 +982,49 @@ func interfaceSlice(value interface{}) []interface{} {
 	default:
 		return nil
 	}
+}
+
+func compactStringList(value interface{}, limit int, maxRunes int) []string {
+	if value == nil || limit <= 0 || maxRunes <= 0 {
+		return nil
+	}
+	var raw []string
+	switch typed := value.(type) {
+	case []string:
+		raw = typed
+	case []interface{}:
+		raw = make([]string, 0, len(typed))
+		for _, item := range typed {
+			raw = append(raw, stringFromAny(item))
+		}
+	default:
+		reflected := reflect.ValueOf(value)
+		if reflected.Kind() != reflect.Array && reflected.Kind() != reflect.Slice {
+			return nil
+		}
+		bytes, err := json.Marshal(value)
+		if err != nil {
+			return nil
+		}
+		if err := json.Unmarshal(bytes, &raw); err != nil {
+			return nil
+		}
+	}
+	out := make([]string, 0, min(len(raw), limit))
+	for _, item := range raw {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if runes := []rune(item); len(runes) > maxRunes {
+			item = string(runes[:maxRunes]) + "..."
+		}
+		out = append(out, item)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
 }
 
 func collectionLen(value interface{}) int {

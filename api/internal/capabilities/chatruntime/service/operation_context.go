@@ -21,14 +21,21 @@ type operationSummaryKey struct {
 var operationResourceSummaryKeys = []operationSummaryKey{
 	{Source: "id", Target: "id"},
 	{Source: "resource_id", Target: "id"},
+	{Source: "resource_id", Target: "resource_id"},
+	{Source: "agent_id", Target: "agent_id"},
 	{Source: "type", Target: "type"},
 	{Source: "resource_type", Target: "type"},
+	{Source: "resource_type", Target: "resource_type"},
 	{Source: "kind", Target: "kind"},
 	{Source: "name", Target: "name"},
+	{Source: "title", Target: "name"},
+	{Source: "title", Target: "title"},
 	{Source: "label", Target: "label"},
+	{Source: "href", Target: "href"},
 	{Source: "source", Target: "source"},
 	{Source: "status", Target: "status"},
 	{Source: "scope", Target: "scope"},
+	{Source: "workspace_id", Target: "workspace_id"},
 }
 
 var operationCapabilitySummaryKeys = []operationSummaryKey{

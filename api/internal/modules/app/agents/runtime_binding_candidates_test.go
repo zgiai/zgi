@@ -46,6 +46,7 @@ func TestListAgentSkillCandidatesFiltersByAgentCallerAndSelection(t *testing.T) 
 				ID:               "chart-generator",
 				Name:             "Chart generator",
 				Description:      "Generate charts",
+				Display:          skills.SkillDisplayMetadata{Label: map[string]string{"en_US": "Chart Generator", "zh_Hans": "Chart Generator Localized"}},
 				Status:           skills.SkillStatusActive,
 				SupportedCallers: []string{runtimemodel.ConversationCallerAgent},
 			},
@@ -86,6 +87,9 @@ func TestListAgentSkillCandidatesFiltersByAgentCallerAndSelection(t *testing.T) 
 	}
 	if resp.Data[0].SkillID != "chart-generator" || !resp.Data[0].Selected {
 		t.Fatalf("candidate = %#v, want selected chart-generator", resp.Data[0])
+	}
+	if resp.Data[0].Name != "Chart Generator Localized" {
+		t.Fatalf("candidate name = %q, want localized display label", resp.Data[0].Name)
 	}
 
 	resp, err = service.ListAgentSkillCandidates(context.Background(), agentID.String(), accountID, dto.AgentSkillCandidatesRequest{

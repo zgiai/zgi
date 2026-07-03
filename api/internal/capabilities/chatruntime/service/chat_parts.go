@@ -346,6 +346,9 @@ func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) 
 	if snapshot := consoleFilesContextSnapshot(parts); snapshot != nil {
 		metadata[consoleFilesContextSnapshotKey] = snapshot
 	}
+	if snapshot := consoleAgentsContextSnapshot(parts); snapshot != nil {
+		metadata[consoleAgentsContextSnapshotKey] = snapshot
+	}
 	if parts.Attachments != nil && len(parts.Attachments.Files) > 0 {
 		metadata["files"] = parts.Attachments.metadataFiles()
 		metadata["file_count"] = len(parts.Attachments.Files)

@@ -62,6 +62,7 @@ func TestListConversationsBySurfaceNormalizesSurface(t *testing.T) {
 
 func TestUpdateConversationAllowsPausedRuntimeMessageAsCurrentLeaf(t *testing.T) {
 	for _, status := range []string{
+		runtimemodel.MessageStatusPending,
 		runtimemodel.MessageStatusWaitingApproval,
 		runtimemodel.MessageStatusWaitingQuestion,
 		runtimemodel.MessageStatusWaitingClientAction,

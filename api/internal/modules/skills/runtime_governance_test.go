@@ -406,6 +406,46 @@ func TestCallSkillToolGovernanceRewritesReadArgumentsToResolvedAsset(t *testing.
 	}
 }
 
+func TestCallSkillToolGovernanceUsesToolArgumentEnrichmentBeforePreflight(t *testing.T) {
+	runtime, resolved, readTool := governedRuntimeWithReadToolForTest(t)
+	readTool.enrich = func(arguments map[string]interface{}) map[string]interface{} {
+		out := copyStringAnyMap(arguments)
+		out["file_name"] = "Readable File.md"
+		return out
+	}
+	invocation, err := runtime.CallSkillTool(
+		context.Background(),
+		resolved,
+		"governed-files",
+		"read_file",
+		map[string]interface{}{"file_id": "file-1"},
+		ExecutionContext{
+			ConversationID: "conversation-1",
+			RuntimeParameters: map[string]interface{}{
+				"tool_governance": map[string]interface{}{
+					"permission_tier": "basic",
+					"assets": []map[string]interface{}{
+						{"id": "file-1", "type": "file", "workspace_id": "workspace-1"},
+					},
+				},
+			},
+		},
+		"call_read",
+	)
+	if err != nil {
+		t.Fatalf("CallSkillTool() error = %v", err)
+	}
+	if invocation == nil || invocation.Trace.Governance == nil {
+		t.Fatalf("invocation = %#v, want governance trace", invocation)
+	}
+	if got := fmt.Sprint(invocation.Trace.Arguments["file_name"]); got != "Readable File.md" {
+		t.Fatalf("trace file_name = %q, want Readable File.md", got)
+	}
+	if assets := invocation.Trace.Governance.Assets; len(assets) != 1 || assets[0].Name != "Readable File.md" {
+		t.Fatalf("governance assets = %#v, want enriched file name", assets)
+	}
+}
+
 func TestPolicyToolGovernanceEnrichesArgumentAssetFromRuntimeAsset(t *testing.T) {
 	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
 	decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{
@@ -471,6 +511,56 @@ func TestPolicyToolGovernancePrefersRuntimeAssetNameWhenIDMatches(t *testing.T) 
 	}
 	if len(decision.Assets) != 1 || decision.Assets[0].ID != "file-1" || decision.Assets[0].Name != "codex-smoke.txt" {
 		t.Fatalf("assets = %#v, want trusted runtime asset name", decision.Assets)
+	}
+}
+
+func TestPolicyToolGovernancePrefersRecentAgentUpdateOverVisibleSnapshot(t *testing.T) {
+	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
+	decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{
+		Manifest: toolgovernance.Manifest{
+			ToolID:                  "agent.update_config",
+			Domain:                  "agents",
+			Effect:                  toolgovernance.EffectUpdate,
+			AssetType:               "agent",
+			RiskLevel:               toolgovernance.RiskLevelMedium,
+			RequiresAssetResolution: true,
+		},
+		SkillID:  "agent-management",
+		ToolName: "update_agent_config",
+		Arguments: map[string]interface{}{
+			"agent_id":   "agent-1",
+			"agent_name": "Fresh Agent",
+			"agents": []map[string]interface{}{{
+				"agent_id":   "agent-1",
+				"name":       "Fresh Agent",
+				"agent_name": "Fresh Agent",
+			}},
+			"home_title": "Updated Home",
+		},
+		ExecutionContext: ExecutionContext{
+			ConversationID: "conversation-1",
+			RuntimeParameters: map[string]interface{}{
+				"tool_governance_permission_tier": "basic",
+				"console_agents_recent_agent_updates": []map[string]interface{}{{
+					"id":           "agent-1",
+					"name":         "Fresh Agent",
+					"agent_name":   "Fresh Agent",
+					"workspace_id": "workspace-1",
+				}},
+				"console_agents_visible_agents": []map[string]interface{}{{
+					"id":           "agent-1",
+					"name":         "Stale Visible Agent",
+					"agent_name":   "Stale Visible Agent",
+					"workspace_id": "workspace-1",
+				}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DecideSkillTool() error = %v", err)
+	}
+	if len(decision.Assets) != 1 || decision.Assets[0].ID != "agent-1" || decision.Assets[0].Name != "Fresh Agent" {
+		t.Fatalf("assets = %#v, want recent Agent update name", decision.Assets)
 	}
 }
 
@@ -865,7 +955,8 @@ func (p *governedReadProviderForTest) ValidateCredentials(context.Context, map[s
 }
 
 type governedReadToolForTest struct {
-	calls []string
+	calls  []string
+	enrich func(map[string]interface{}) map[string]interface{}
 }
 
 func (t *governedReadToolForTest) GetEntity() tools.ToolEntity {
@@ -922,6 +1013,15 @@ func (t *governedReadToolForTest) Invoke(
 			"content":        "test file content",
 		},
 	}}, nil
+}
+
+func (t *governedReadToolForTest) EnrichGovernanceArguments(ctx context.Context, userID string, toolParameters map[string]interface{}) map[string]interface{} {
+	_ = ctx
+	_ = userID
+	if t.enrich == nil {
+		return toolParameters
+	}
+	return t.enrich(toolParameters)
 }
 
 func (t *governedReadToolForTest) GetRuntimeParameters(

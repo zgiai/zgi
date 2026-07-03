@@ -592,6 +592,11 @@ func agentCreateCompletedTargetNames(metadata map[string]interface{}) []string {
 	for _, call := range calls {
 		name := strings.TrimSpace(firstNonEmptyString(call.Result["agent_name"], call.Result["name"], call.Arguments["name"]))
 		if name == "" {
+			if agent := governanceMapFromAny(call.Result["agent"]); len(agent) > 0 {
+				name = strings.TrimSpace(firstNonEmptyString(agent["agent_name"], agent["name"]))
+			}
+		}
+		if name == "" {
 			continue
 		}
 		key := strings.ToLower(name)

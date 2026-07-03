@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"unicode"
@@ -48,12 +49,21 @@ const (
 	defaultAgentTextIconBackground           = "#0847f7"
 )
 
+var allowedAgentThemeColors = []string{"default", "blue", "emerald", "violet", "rose", "amber", "slate"}
+
 type WorkspacePermissionService interface {
 	CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspacemodel.WorkspacePermissionCode) (bool, error)
 }
 
 type AvailableModelsService interface {
 	ListAvailable(ctx context.Context, organizationID uuid.UUID, provider string, useCase string) ([]*llmmodelservice.AvailableModel, error)
+}
+
+type agentConfigDisplayNames struct {
+	Skills         map[string]string
+	KnowledgeBases map[string]string
+	DatabaseTables map[string]string
+	Workflows      map[string]string
 }
 
 type Provider struct {
@@ -91,7 +101,7 @@ func NewProvider(agentsService interfaces.AgentsService, workspacePerms Workspac
 	provider.RegisterTool(newDeleteAgentTool(agentsService))
 	provider.RegisterTool(newDeleteAgentsTool(agentsService))
 	provider.RegisterTool(newGetAgentConfigTool(agentsService))
-	provider.RegisterTool(newUpdateAgentConfigTool(agentsService))
+	provider.RegisterTool(newUpdateAgentConfigTool(agentsService, availableModels))
 	provider.RegisterTool(newReplaceAgentMemorySlotsTool(agentsService))
 	provider.RegisterTool(newListAgentSkillCandidatesTool(agentsService))
 	provider.RegisterTool(newListAgentKnowledgeCandidatesTool(agentsService))
@@ -148,7 +158,7 @@ func newListAgentsTool(agentsService interfaces.AgentsService) tools.Tool {
 	return &listAgentsTool{agentToolBase: newAgentToolBase(agentToolEntity(
 		ToolListAgents,
 		"List Agents",
-		"List or search Agent assets visible to the current AIChat user in the current workspace. Use this only when current page visible_agents are missing, insufficient, ambiguous, or the user asks to search beyond the visible page.",
+		"List or search Agent assets visible to the current AIChat user in the current workspace. Use this only when current page visible_agents are missing, insufficient, ambiguous, or the user asks to search beyond the visible page. For named mutation targets, do at most one exact-name search and one broader list/check before reporting a missing target; do not repeat near-duplicate searches.",
 		"list",
 		[]tools.ToolParameter{
 			stringParameter("workspace_id", "Workspace ID", "Optional workspace ID. Usually omit so current AIChat workspace context is used.", false),
@@ -241,16 +251,20 @@ func newGetAgentConfigTool(agentsService interfaces.AgentsService) tools.Tool {
 	), agentsService, nil, nil)}
 }
 
-func newUpdateAgentConfigTool(agentsService interfaces.AgentsService) tools.Tool {
+func newUpdateAgentConfigTool(agentsService interfaces.AgentsService, availableModels ...AvailableModelsService) tools.Tool {
+	var models AvailableModelsService
+	if len(availableModels) > 0 {
+		models = availableModels[0]
+	}
 	return &updateAgentConfigTool{agentToolBase: newAgentToolBase(agentToolEntity(
 		ToolUpdateAgentConfig,
 		"Update Agent Config",
-		"Patch selected draft runtime configuration fields for one resolved AGENT asset. Omitted fields are preserved. Prefer this tool for one-step config changes, including complete skill/knowledge/database/workflow binding replacement after exact candidates are known.",
+		"Patch selected draft runtime configuration fields for one resolved AGENT asset. Omitted fields are preserved. Prefer add/remove binding parameters for specific bind/unbind requests, and use full replacement lists only when the user asks to replace or clear an entire section.",
 		"sliders-horizontal",
 		[]tools.ToolParameter{
 			stringParameter("agent_id", "Agent ID", "Required Agent ID from page context, list_agents, or governed asset resolution. Do not invent IDs.", true),
 			stringParameter("system_prompt", "System prompt", "Optional replacement system prompt.", false),
-			stringParameter("model_provider", "Model provider", "Required whenever model is provided. Use the exact provider returned by list_available_models.", false),
+			stringParameter("model_provider", "Model provider", "Required whenever model is provided. When changing this field, also provide model from the same list_available_models item.", false),
 			stringParameter("model", "Model", "Optional replacement model ID. When changing this field, also provide model_provider from the same list_available_models item.", false),
 			objectParameter("model_parameters", "Model parameters", "Optional replacement model parameter object.", false),
 			stringArrayParameter("enabled_skill_ids", "Enabled skill IDs", "Optional full list of enabled user-selectable skill IDs.", false),
@@ -261,11 +275,20 @@ func newUpdateAgentConfigTool(agentsService interfaces.AgentsService) tools.Tool
 			stringParameter("theme_color", "Theme color", "Optional theme color: default, blue, emerald, violet, rose, amber, or slate.", false),
 			stringArrayParameter("suggested_questions", "Suggested questions", "Optional full list of suggested questions.", false),
 			stringArrayParameter("knowledge_dataset_ids", "Knowledge dataset IDs", "Optional full replacement list of knowledge dataset IDs. Use [] to clear knowledge bindings.", false),
+			stringArrayParameter("add_enabled_skill_ids", "Add enabled skill IDs", "Optional skill IDs to add to the current enabled skill list. Prefer this for binding one or more skills without replacing the whole list.", false),
+			stringArrayParameter("remove_enabled_skill_ids", "Remove enabled skill IDs", "Optional skill IDs to remove from the current enabled skill list. Prefer this for unbinding specific skills.", false),
+			stringArrayParameter("add_knowledge_dataset_ids", "Add knowledge dataset IDs", "Optional knowledge dataset IDs to add to the current binding list.", false),
+			stringArrayParameter("remove_knowledge_dataset_ids", "Remove knowledge dataset IDs", "Optional knowledge dataset IDs to remove from the current binding list.", false),
 			objectParameter("knowledge_retrieval_config", "Knowledge retrieval config", "Optional replacement knowledge retrieval config object. Omit to preserve it.", false),
-			stringParameter("database_bindings", "Database bindings", "Optional JSON array replacing database bindings. Each item supports data_source_id, table_ids, and optional writable_table_ids. Use [] to clear.", false),
+			stringParameter("database_bindings", "Database bindings", "Optional JSON array replacing database bindings. Each item supports data_source_id, table_ids, optional writable_table_ids, or id/database_table_ids in data_source_id:table_id form. Prefer copying binding_candidates[].binding from list_agent_database_tables. Use [] to clear.", false),
+			stringParameter("add_database_bindings", "Add database bindings", "Optional JSON array of database table bindings to add to the current bindings. Prefer copying binding_candidates[].binding from list_agent_database_tables.", false),
+			stringParameter("remove_database_bindings", "Remove database bindings", "Optional JSON array of database table bindings to remove from the current bindings. Prefer copying current database_bindings from get_agent_config.", false),
 			stringParameter("workflow_bindings", "Workflow bindings", "Optional JSON array replacing workflow bindings. Each item supports binding_id, label, agent_id, workflow_id, version_strategy, optional version_uuid, and timeout_seconds. Use [] to clear.", false),
+			stringParameter("add_workflow_bindings", "Add workflow bindings", "Optional JSON array of workflow bindings to add to the current bindings.", false),
+			stringParameter("remove_workflow_bindings", "Remove workflow bindings", "Optional JSON array of workflow bindings to remove from the current bindings.", false),
+			objectParameter("display_names", "Display names", "Optional evidence-only display names for governance cards and event summaries. Supports skills, knowledge_bases, database_tables, and workflows.", false),
 		},
-	), agentsService, nil, nil)}
+	), agentsService, nil, models)}
 }
 
 func newReplaceAgentMemorySlotsTool(agentsService interfaces.AgentsService) tools.Tool {
@@ -300,11 +323,12 @@ func newReplaceAgentSkillBindingsTool(agentsService interfaces.AgentsService) to
 	return &replaceAgentSkillBindingsTool{agentToolBase: newAgentToolBase(agentToolEntity(
 		ToolReplaceAgentSkillBindings,
 		"Replace Agent Skill Bindings",
-		"Replace the complete user-selectable Agent skill list for one resolved AGENT asset. Use candidate data already present in page context or prior tool results when exact; otherwise call list_agent_skill_candidates first. Prefer update_agent_config for multi-section config edits, and preserve existing skill IDs unless the user asked to remove them.",
+		"Replace the complete user-selectable Agent skill list for one resolved AGENT asset. Prefer update_agent_config add_enabled_skill_ids/remove_enabled_skill_ids for specific bind or unbind requests. Use this only for full replacement or clearing all user-selected skills.",
 		"sparkles",
 		[]tools.ToolParameter{
 			stringParameter("agent_id", "Agent ID", "Required Agent ID from page context, list_agents, or governed asset resolution. Do not invent IDs.", true),
 			stringArrayParameter("skill_ids", "Skill IDs", "Required full list of enabled user-selectable skill IDs. Use [] to clear all user-selectable skills.", true),
+			objectParameter("display_names", "Display names", "Optional evidence-only display names for governance cards and event summaries. Supports skills.", false),
 		},
 	), agentsService, nil, nil)}
 }
@@ -344,7 +368,7 @@ func newListAgentDatabaseTablesTool(agentsService interfaces.AgentsService) tool
 	return &listAgentDatabaseTablesTool{agentToolBase: newAgentToolBase(agentToolEntity(
 		ToolListAgentDatabaseTables,
 		"List Agent Database Tables",
-		"List tables from one database candidate that can be bound to the resolved Agent. The database must belong to the Agent's workspace.",
+		"List tables from one database candidate that can be bound to the resolved Agent. The database must belong to the Agent's workspace. For binding, copy a returned binding_candidates[].binding object into update_agent_config add_database_bindings instead of manually recombining data_source_id and table_id.",
 		"table",
 		[]tools.ToolParameter{
 			stringParameter("agent_id", "Agent ID", "Required Agent ID from page context, list_agents, or governed asset resolution. Do not invent IDs.", true),
@@ -378,12 +402,13 @@ func newReplaceAgentKnowledgeBindingsTool(agentsService interfaces.AgentsService
 	return &replaceAgentKnowledgeBindingsTool{agentToolBase: newAgentToolBase(agentToolEntity(
 		ToolReplaceAgentKnowledgeBindings,
 		"Replace Agent Knowledge Bindings",
-		"Replace the Agent's complete knowledge dataset binding list while preserving all other draft config fields. Use exact candidate data already present in page context or prior tool results when available; otherwise call list_agent_knowledge_candidates first. Prefer update_agent_config for multi-section config edits.",
+		"Replace the Agent's complete knowledge dataset binding list while preserving all other draft config fields. Prefer update_agent_config add_knowledge_dataset_ids/remove_knowledge_dataset_ids for specific bind or unbind requests. Use [] only when clearing all knowledge bindings.",
 		"library",
 		[]tools.ToolParameter{
 			stringParameter("agent_id", "Agent ID", "Required Agent ID from page context, list_agents, or governed asset resolution. Do not invent IDs.", true),
 			stringArrayParameter("dataset_ids", "Dataset IDs", "Required full replacement list of knowledge dataset IDs. Use [] to clear knowledge bindings.", true),
 			objectParameter("retrieval_config", "Retrieval config", "Optional JSON object replacing knowledge retrieval config. Omit to preserve current retrieval config.", false),
+			objectParameter("display_names", "Display names", "Optional evidence-only display names for governance cards and event summaries. Supports knowledge_bases.", false),
 		},
 	), agentsService, nil, nil)}
 }
@@ -392,11 +417,12 @@ func newReplaceAgentDatabaseBindingsTool(agentsService interfaces.AgentsService)
 	return &replaceAgentDatabaseBindingsTool{agentToolBase: newAgentToolBase(agentToolEntity(
 		ToolReplaceAgentDatabaseBindings,
 		"Replace Agent Database Bindings",
-		"Replace the Agent's complete database binding list while preserving all other draft config fields. Use exact candidate/table data already present in page context or prior tool results when available; otherwise call database candidate tools first. Prefer update_agent_config for multi-section config edits.",
+		"Replace the Agent's complete database binding list while preserving all other draft config fields. Prefer update_agent_config add_database_bindings/remove_database_bindings for specific bind or unbind requests. Use [] only when clearing all database bindings.",
 		"database",
 		[]tools.ToolParameter{
 			stringParameter("agent_id", "Agent ID", "Required Agent ID from page context, list_agents, or governed asset resolution. Do not invent IDs.", true),
 			stringParameter("bindings", "Bindings", "Required JSON array replacing database bindings. Each item supports data_source_id, table_ids, and optional writable_table_ids. Use [] to clear.", true),
+			objectParameter("display_names", "Display names", "Optional evidence-only display names for governance cards and event summaries. Supports database_tables.", false),
 		},
 	), agentsService, nil, nil)}
 }
@@ -405,11 +431,12 @@ func newReplaceAgentWorkflowBindingsTool(agentsService interfaces.AgentsService)
 	return &replaceAgentWorkflowBindingsTool{agentToolBase: newAgentToolBase(agentToolEntity(
 		ToolReplaceAgentWorkflowBindings,
 		"Replace Agent Workflow Bindings",
-		"Replace the Agent's complete workflow binding list while preserving all other draft config fields. Use exact candidate data already present in page context or prior tool results when available; otherwise call list_agent_workflow_binding_candidates first. Prefer update_agent_config for multi-section config edits.",
+		"Replace the Agent's complete workflow binding list while preserving all other draft config fields. Prefer update_agent_config add_workflow_bindings/remove_workflow_bindings for specific bind or unbind requests. Use [] only when clearing all workflow bindings.",
 		"workflow",
 		[]tools.ToolParameter{
 			stringParameter("agent_id", "Agent ID", "Required Agent ID from page context, list_agents, or governed asset resolution. Do not invent IDs.", true),
 			stringParameter("bindings", "Bindings", "Required JSON array replacing workflow bindings. Each item supports binding_id, label, agent_id, workflow_id, version_strategy, optional version_uuid, and timeout_seconds. Use [] to clear.", true),
+			objectParameter("display_names", "Display names", "Optional evidence-only display names for governance cards and event summaries. Supports workflows.", false),
 		},
 	), agentsService, nil, nil)}
 }
@@ -570,7 +597,7 @@ func (t *getAgentTool) Invoke(ctx context.Context, userID string, params map[str
 	if err != nil {
 		return nil, err
 	}
-	agentID := requiredAgentID(params)
+	agentID := t.resolveAgentID(ctx, scope, params)
 	if agentID == "" {
 		return nil, fmt.Errorf("agent_id is required")
 	}
@@ -641,7 +668,7 @@ func (t *updateAgentIdentityTool) Invoke(ctx context.Context, userID string, par
 	if err != nil {
 		return nil, err
 	}
-	agentID := requiredAgentID(params)
+	agentID := t.resolveAgentID(ctx, scope, params)
 	if agentID == "" {
 		return nil, fmt.Errorf("agent_id is required")
 	}
@@ -693,7 +720,7 @@ func (t *deleteAgentTool) Invoke(ctx context.Context, userID string, params map[
 	if err != nil {
 		return nil, err
 	}
-	agentID := requiredAgentID(params)
+	agentID := t.resolveAgentID(ctx, scope, params)
 	if agentID == "" {
 		return nil, fmt.Errorf("agent_id is required")
 	}
@@ -706,6 +733,18 @@ func (t *deleteAgentTool) Invoke(ctx context.Context, userID string, params map[
 	payload["href"] = "/console/agents"
 	payload["route_after_delete"] = "/console/agents"
 	payload["reversible"] = false
+	if _, ok := payload["agent_name"]; !ok {
+		if name := strings.TrimSpace(firstStringFromMap(params, "agent_name", "agentName", "name", "asset_name", "resource_name")); name != "" {
+			payload["agent_name"] = name
+			agentPayload := mapFromAny(payload["agent"])
+			if len(agentPayload) == 0 {
+				agentPayload = map[string]interface{}{}
+			}
+			agentPayload["name"] = name
+			agentPayload["agent_name"] = name
+			payload["agent"] = agentPayload
+		}
+	}
 	return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(payload)}, nil
 }
 
@@ -816,7 +855,7 @@ func (t *getAgentConfigTool) Invoke(ctx context.Context, userID string, params m
 	if err != nil {
 		return nil, err
 	}
-	agentID := requiredAgentID(params)
+	agentID := t.resolveAgentID(ctx, scope, params)
 	if agentID == "" {
 		return nil, fmt.Errorf("agent_id is required")
 	}
@@ -836,11 +875,12 @@ func (t *updateAgentConfigTool) Invoke(ctx context.Context, userID string, param
 	_ = conversationID
 	_ = appID
 	_ = messageID
+	params = agentConfigParams(params)
 	scope, err := t.scope(userID)
 	if err != nil {
 		return nil, err
 	}
-	agentID := requiredAgentID(params)
+	agentID := t.resolveAgentID(ctx, scope, params)
 	if agentID == "" {
 		return nil, fmt.Errorf("agent_id is required")
 	}
@@ -848,26 +888,83 @@ func (t *updateAgentConfigTool) Invoke(ctx context.Context, userID string, param
 	if err != nil {
 		return nil, err
 	}
-	if _, hasModel := optionalStringParam(params, "model"); hasModel {
-		if _, hasProvider := optionalStringParam(params, "model_provider"); !hasProvider {
+	_, hasModel := optionalStringParam(params, "model")
+	requestedProvider, hasProvider := optionalStringParam(params, "model_provider")
+	if hasModel {
+		if !hasProvider {
 			return nil, fmt.Errorf("model_provider is required when changing model; call list_available_models and pass the selected model.provider with model.model")
 		}
 	}
-	req, changedFields, err := mergeAgentConfigRequest(current.Config, params)
+	if hasProvider && !hasModel && !strings.EqualFold(strings.TrimSpace(requestedProvider), strings.TrimSpace(current.Config.ModelProvider)) {
+		return nil, fmt.Errorf("model is required when changing model_provider; call list_available_models and pass the selected model.provider with model.model")
+	}
+	if hasModel || hasProvider {
+		if err := t.validateRequestedModelPair(ctx, scope, params); err != nil {
+			return nil, err
+		}
+	}
+	if err := t.enrichAgentWorkflowBindingParams(ctx, scope, agentID, params,
+		agentWorkflowBindingParamSpec{Key: "workflow_bindings", RequirePersistable: true},
+		agentWorkflowBindingParamSpec{Key: "add_workflow_bindings", RequirePersistable: true},
+		agentWorkflowBindingParamSpec{Key: "remove_workflow_bindings"},
+	); err != nil {
+		return nil, err
+	}
+	t.enrichAgentDatabaseRemovalParams(ctx, scope, agentID, current, params)
+	req, requestedFields, err := mergeAgentConfigRequest(current.Config, params)
 	if err != nil {
 		return nil, err
 	}
-	if len(changedFields) == 0 {
+	if len(requestedFields) == 0 {
 		return nil, fmt.Errorf("at least one config field is required")
 	}
+	changedFields := actualAgentConfigChangedFields(current.Config, req, requestedFields)
 	updated, err := t.agentsService.UpdateAgentConfig(t.scopedContext(ctx, scope), agentID, scope.AccountID, req)
 	if err != nil {
 		return nil, err
 	}
-	agent := t.agentPayloadForResult(ctx, scope, agentID)
-	payload := agentConfigMutationPayload("updated", agentID, current.WorkspaceID, &current.Config, updated, agent)
+	agent := agentPayloadWithParamFallback(t.agentPayloadForResult(ctx, scope, agentID), params)
+	displayNames := t.enrichAgentConfigDisplayNames(ctx, scope, agentID, &current.Config, updated, agentConfigDisplayNamesFromParams(params))
+	payload := agentConfigMutationPayload("updated", agentID, current.WorkspaceID, &current.Config, updated, agent, displayNames)
+	if updated != nil {
+		changedFields = actualAgentConfigChangedFields(current.Config, agentConfigRequestFromResponse(*updated), requestedFields)
+		payload["satisfied_fields"] = append([]string(nil), requestedFields...)
+	}
+	payload["requested_fields"] = append([]string(nil), requestedFields...)
 	payload["updated_fields"] = append([]string(nil), changedFields...)
+	mergeAgentConfigBindingFinalStates(payload, requestedFields, updated, displayNames)
 	return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(payload)}, nil
+}
+
+func (t *updateAgentConfigTool) validateRequestedModelPair(ctx context.Context, scope agentScope, params map[string]interface{}) error {
+	if t.availableModels == nil {
+		return nil
+	}
+	provider, hasProvider := optionalStringParam(params, "model_provider")
+	model, hasModel := optionalStringParam(params, "model")
+	if !hasProvider && !hasModel {
+		return nil
+	}
+	if strings.TrimSpace(provider) == "" || strings.TrimSpace(model) == "" {
+		return fmt.Errorf("model_provider and model are required together when changing agent model")
+	}
+	organizationID, err := uuid.Parse(scope.OrganizationID)
+	if err != nil {
+		return fmt.Errorf("invalid organization_id: %w", err)
+	}
+	models, err := t.availableModels.ListAvailable(ctx, organizationID, provider, defaultAgentModelListUseCase)
+	if err != nil {
+		return fmt.Errorf("list available models for agent model validation: %w", err)
+	}
+	for _, item := range models {
+		if item == nil {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(item.Provider), provider) && strings.TrimSpace(item.Name) == model {
+			return nil
+		}
+	}
+	return fmt.Errorf("model %q is not available for provider %q with use_case %q; call list_available_models and pass a returned provider/model pair", model, provider, defaultAgentModelListUseCase)
 }
 
 func (t *replaceAgentMemorySlotsTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
@@ -878,7 +975,7 @@ func (t *replaceAgentMemorySlotsTool) Invoke(ctx context.Context, userID string,
 	if err != nil {
 		return nil, err
 	}
-	agentID := requiredAgentID(params)
+	agentID := t.resolveAgentID(ctx, scope, params)
 	if agentID == "" {
 		return nil, fmt.Errorf("agent_id is required")
 	}
@@ -924,7 +1021,7 @@ func (t *listAgentSkillCandidatesTool) Invoke(ctx context.Context, userID string
 	if err != nil {
 		return nil, err
 	}
-	agentID := requiredAgentID(params)
+	agentID := t.resolveAgentID(ctx, scope, params)
 	if agentID == "" {
 		return nil, fmt.Errorf("agent_id is required")
 	}
@@ -959,7 +1056,7 @@ func (t *listAgentKnowledgeCandidatesTool) Invoke(ctx context.Context, userID st
 	if err != nil {
 		return nil, err
 	}
-	agentID := requiredAgentID(params)
+	agentID := t.resolveAgentID(ctx, scope, params)
 	if agentID == "" {
 		return nil, fmt.Errorf("agent_id is required")
 	}
@@ -995,7 +1092,7 @@ func (t *listAgentDatabaseCandidatesTool) Invoke(ctx context.Context, userID str
 	if err != nil {
 		return nil, err
 	}
-	agentID := requiredAgentID(params)
+	agentID := t.resolveAgentID(ctx, scope, params)
 	if agentID == "" {
 		return nil, fmt.Errorf("agent_id is required")
 	}
@@ -1033,7 +1130,7 @@ func (t *listAgentDatabaseTablesTool) Invoke(ctx context.Context, userID string,
 	if err != nil {
 		return nil, err
 	}
-	agentID := requiredAgentID(params)
+	agentID := t.resolveAgentID(ctx, scope, params)
 	if agentID == "" {
 		return nil, fmt.Errorf("agent_id is required")
 	}
@@ -1053,15 +1150,16 @@ func (t *listAgentDatabaseTablesTool) Invoke(ctx context.Context, userID string,
 		return nil, err
 	}
 	return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(map[string]interface{}{
-		"status":           "completed",
-		"agent_id":         resp.AgentID,
-		"workspace_id":     resp.WorkspaceID,
-		"data_source_id":   resp.DataSourceID,
-		"query":            resp.Query,
-		"count":            resp.Count,
-		"include_columns":  resp.IncludeColumns,
-		"include_selected": resp.IncludeSelected,
-		"tables":           resp.Data,
+		"status":             "completed",
+		"agent_id":           resp.AgentID,
+		"workspace_id":       resp.WorkspaceID,
+		"data_source_id":     resp.DataSourceID,
+		"query":              resp.Query,
+		"count":              resp.Count,
+		"include_columns":    resp.IncludeColumns,
+		"include_selected":   resp.IncludeSelected,
+		"tables":             resp.Data,
+		"binding_candidates": agentDatabaseTableBindingCandidates(resp.Data),
 	})}, nil
 }
 
@@ -1076,7 +1174,7 @@ func (t *listAgentWorkflowBindingCandidatesTool) Invoke(ctx context.Context, use
 	if err != nil {
 		return nil, err
 	}
-	agentID := requiredAgentID(params)
+	agentID := t.resolveAgentID(ctx, scope, params)
 	if agentID == "" {
 		return nil, fmt.Errorf("agent_id is required")
 	}
@@ -1115,7 +1213,7 @@ func (t *replaceAgentSkillBindingsTool) Invoke(ctx context.Context, userID strin
 	if err != nil {
 		return nil, err
 	}
-	agentID := requiredAgentID(params)
+	agentID := t.resolveAgentID(ctx, scope, params)
 	if agentID == "" {
 		return nil, fmt.Errorf("agent_id is required")
 	}
@@ -1133,8 +1231,11 @@ func (t *replaceAgentSkillBindingsTool) Invoke(ctx context.Context, userID strin
 	if err != nil {
 		return nil, err
 	}
-	agent := t.agentPayloadForResult(ctx, scope, agentID)
-	return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(agentConfigMutationPayload("updated", agentID, current.WorkspaceID, &current.Config, updated, agent))}, nil
+	agent := agentPayloadWithParamFallback(t.agentPayloadForResult(ctx, scope, agentID), params)
+	displayNames := t.enrichAgentConfigDisplayNames(ctx, scope, agentID, &current.Config, updated, agentConfigDisplayNamesFromParams(params))
+	payload := agentConfigMutationPayload("updated", agentID, current.WorkspaceID, &current.Config, updated, agent, displayNames)
+	mergeAgentConfigBindingFinalStates(payload, []string{"enabled_skill_ids"}, updated, displayNames)
+	return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(payload)}, nil
 }
 
 func (t *replaceAgentKnowledgeBindingsTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
@@ -1148,7 +1249,7 @@ func (t *replaceAgentKnowledgeBindingsTool) Invoke(ctx context.Context, userID s
 	if err != nil {
 		return nil, err
 	}
-	agentID := requiredAgentID(params)
+	agentID := t.resolveAgentID(ctx, scope, params)
 	if agentID == "" {
 		return nil, fmt.Errorf("agent_id is required")
 	}
@@ -1171,8 +1272,11 @@ func (t *replaceAgentKnowledgeBindingsTool) Invoke(ctx context.Context, userID s
 	if err != nil {
 		return nil, err
 	}
-	agent := t.agentPayloadForResult(ctx, scope, agentID)
-	return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(agentConfigMutationPayload("updated", agentID, current.WorkspaceID, &current.Config, updated, agent))}, nil
+	agent := agentPayloadWithParamFallback(t.agentPayloadForResult(ctx, scope, agentID), params)
+	displayNames := t.enrichAgentConfigDisplayNames(ctx, scope, agentID, &current.Config, updated, agentConfigDisplayNamesFromParams(params))
+	payload := agentConfigMutationPayload("updated", agentID, current.WorkspaceID, &current.Config, updated, agent, displayNames)
+	mergeAgentConfigBindingFinalStates(payload, []string{"knowledge_dataset_ids"}, updated, displayNames)
+	return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(payload)}, nil
 }
 
 func (t *replaceAgentDatabaseBindingsTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
@@ -1186,7 +1290,7 @@ func (t *replaceAgentDatabaseBindingsTool) Invoke(ctx context.Context, userID st
 	if err != nil {
 		return nil, err
 	}
-	agentID := requiredAgentID(params)
+	agentID := t.resolveAgentID(ctx, scope, params)
 	if agentID == "" {
 		return nil, fmt.Errorf("agent_id is required")
 	}
@@ -1207,8 +1311,11 @@ func (t *replaceAgentDatabaseBindingsTool) Invoke(ctx context.Context, userID st
 	if err != nil {
 		return nil, err
 	}
-	agent := t.agentPayloadForResult(ctx, scope, agentID)
-	return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(agentConfigMutationPayload("updated", agentID, current.WorkspaceID, &current.Config, updated, agent))}, nil
+	agent := agentPayloadWithParamFallback(t.agentPayloadForResult(ctx, scope, agentID), params)
+	displayNames := t.enrichAgentConfigDisplayNames(ctx, scope, agentID, &current.Config, updated, agentConfigDisplayNamesFromParams(params))
+	payload := agentConfigMutationPayload("updated", agentID, current.WorkspaceID, &current.Config, updated, agent, displayNames)
+	mergeAgentConfigBindingFinalStates(payload, []string{"database_bindings"}, updated, displayNames)
+	return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(payload)}, nil
 }
 
 func (t *replaceAgentWorkflowBindingsTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
@@ -1222,7 +1329,7 @@ func (t *replaceAgentWorkflowBindingsTool) Invoke(ctx context.Context, userID st
 	if err != nil {
 		return nil, err
 	}
-	agentID := requiredAgentID(params)
+	agentID := t.resolveAgentID(ctx, scope, params)
 	if agentID == "" {
 		return nil, fmt.Errorf("agent_id is required")
 	}
@@ -1232,6 +1339,16 @@ func (t *replaceAgentWorkflowBindingsTool) Invoke(ctx context.Context, userID st
 	}
 	if !ok {
 		return nil, fmt.Errorf("bindings is required")
+	}
+	params["bindings"] = bindings
+	if err := t.enrichAgentWorkflowBindingParams(ctx, scope, agentID, params,
+		agentWorkflowBindingParamSpec{Key: "bindings", RequirePersistable: true},
+	); err != nil {
+		return nil, err
+	}
+	bindings, _, err = agentWorkflowBindingsParam(params, "bindings")
+	if err != nil {
+		return nil, err
 	}
 	current, err := t.agentsService.GetAgentDraftRuntimeConfig(t.scopedContext(ctx, scope), agentID, scope.AccountID)
 	if err != nil {
@@ -1243,8 +1360,11 @@ func (t *replaceAgentWorkflowBindingsTool) Invoke(ctx context.Context, userID st
 	if err != nil {
 		return nil, err
 	}
-	agent := t.agentPayloadForResult(ctx, scope, agentID)
-	return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(agentConfigMutationPayload("updated", agentID, current.WorkspaceID, &current.Config, updated, agent))}, nil
+	agent := agentPayloadWithParamFallback(t.agentPayloadForResult(ctx, scope, agentID), params)
+	displayNames := t.enrichAgentConfigDisplayNames(ctx, scope, agentID, &current.Config, updated, agentConfigDisplayNamesFromParams(params))
+	payload := agentConfigMutationPayload("updated", agentID, current.WorkspaceID, &current.Config, updated, agent, displayNames)
+	mergeAgentConfigBindingFinalStates(payload, []string{"workflow_bindings"}, updated, displayNames)
+	return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(payload)}, nil
 }
 
 func (t *listAvailableModelsTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
@@ -1314,6 +1434,329 @@ func (t agentToolBase) scopedContext(ctx context.Context, scope agentScope) cont
 	return ctx
 }
 
+func (t agentToolBase) enrichAgentConfigDisplayNames(ctx context.Context, scope agentScope, agentID string, before *dto.AgentConfigResponse, after *dto.AgentConfigResponse, displayNames agentConfigDisplayNames) agentConfigDisplayNames {
+	if t.agentsService == nil || before == nil || after == nil {
+		return displayNames
+	}
+	displayNames = t.enrichAgentConfigSkillDisplayNames(ctx, scope, agentID, before, after, displayNames)
+	displayNames = t.enrichAgentConfigKnowledgeDisplayNames(ctx, scope, agentID, before, after, displayNames)
+	displayNames = t.enrichAgentConfigDatabaseDisplayNames(ctx, scope, agentID, before, after, displayNames)
+	displayNames = t.enrichAgentConfigWorkflowDisplayNames(ctx, scope, agentID, before, after, displayNames)
+	return displayNames
+}
+
+func (t agentToolBase) enrichAgentConfigSkillDisplayNames(ctx context.Context, scope agentScope, agentID string, before *dto.AgentConfigResponse, after *dto.AgentConfigResponse, displayNames agentConfigDisplayNames) agentConfigDisplayNames {
+	neededSkillIDs := changedStringSetKeys(before.EnabledSkillIDs, after.EnabledSkillIDs, displayNames.Skills)
+	if len(neededSkillIDs) == 0 {
+		return displayNames
+	}
+	resp, err := t.agentsService.ListAgentSkillCandidates(t.scopedContext(ctx, scope), agentID, scope.AccountID, dto.AgentSkillCandidatesRequest{
+		Limit:           maxAgentBindingCandidateListPageSize,
+		IncludeSelected: true,
+	})
+	if err != nil || resp == nil {
+		return displayNames
+	}
+	needed := stringSetFromSlice(neededSkillIDs)
+	if displayNames.Skills == nil {
+		displayNames.Skills = map[string]string{}
+	}
+	for _, candidate := range resp.Data {
+		skillID := strings.TrimSpace(candidate.SkillID)
+		if skillID == "" {
+			continue
+		}
+		if _, ok := needed[skillID]; !ok {
+			continue
+		}
+		if name := agentSkillDisplayName(candidate.SkillID, candidate.Name); name != "" && !strings.EqualFold(name, skillID) {
+			displayNames.Skills[skillID] = name
+		}
+	}
+	for _, skillID := range neededSkillIDs {
+		if name := strings.TrimSpace(displayNames.Skills[skillID]); name != "" && !strings.EqualFold(name, skillID) {
+			continue
+		}
+		if name := agentSkillDisplayName(skillID, ""); name != "" && !strings.EqualFold(name, skillID) {
+			displayNames.Skills[skillID] = name
+		}
+	}
+	return displayNames
+}
+
+func agentSkillDisplayName(skillID string, candidates ...string) string {
+	skillID = strings.TrimSpace(skillID)
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" && !strings.EqualFold(candidate, skillID) {
+			return candidate
+		}
+	}
+	return titleFromIdentifier(skillID)
+}
+
+func titleFromIdentifier(value string) string {
+	words := strings.FieldsFunc(strings.TrimSpace(value), func(r rune) bool {
+		return r == '-' || r == '_' || unicode.IsSpace(r)
+	})
+	if len(words) == 0 {
+		return ""
+	}
+	for i, word := range words {
+		runes := []rune(strings.ToLower(word))
+		if len(runes) == 0 {
+			continue
+		}
+		runes[0] = unicode.ToUpper(runes[0])
+		words[i] = string(runes)
+	}
+	return strings.Join(words, " ")
+}
+
+func (t agentToolBase) enrichAgentConfigKnowledgeDisplayNames(ctx context.Context, scope agentScope, agentID string, before *dto.AgentConfigResponse, after *dto.AgentConfigResponse, displayNames agentConfigDisplayNames) agentConfigDisplayNames {
+	neededDatasetIDs := changedStringSetKeys(before.KnowledgeDatasetIDs, after.KnowledgeDatasetIDs, displayNames.KnowledgeBases)
+	if len(neededDatasetIDs) == 0 {
+		return displayNames
+	}
+	resp, err := t.agentsService.ListAgentKnowledgeCandidates(t.scopedContext(ctx, scope), agentID, scope.AccountID, dto.AgentKnowledgeCandidatesRequest{
+		Limit:           maxAgentBindingCandidateListPageSize,
+		IncludeSelected: true,
+	})
+	if err != nil || resp == nil {
+		return displayNames
+	}
+	needed := stringSetFromSlice(neededDatasetIDs)
+	if displayNames.KnowledgeBases == nil {
+		displayNames.KnowledgeBases = map[string]string{}
+	}
+	for _, candidate := range resp.Data {
+		datasetID := strings.TrimSpace(candidate.DatasetID)
+		if datasetID == "" {
+			continue
+		}
+		if _, ok := needed[datasetID]; !ok {
+			continue
+		}
+		if name := strings.TrimSpace(candidate.Name); name != "" && !strings.EqualFold(name, datasetID) {
+			displayNames.KnowledgeBases[datasetID] = name
+		}
+	}
+	return displayNames
+}
+
+func (t agentToolBase) enrichAgentConfigDatabaseDisplayNames(ctx context.Context, scope agentScope, agentID string, before *dto.AgentConfigResponse, after *dto.AgentConfigResponse, displayNames agentConfigDisplayNames) agentConfigDisplayNames {
+	neededByDataSource := changedDatabaseTableKeys(before.DatabaseBindings, after.DatabaseBindings, displayNames.DatabaseTables)
+	if len(neededByDataSource) == 0 {
+		return displayNames
+	}
+	if displayNames.DatabaseTables == nil {
+		displayNames.DatabaseTables = map[string]string{}
+	}
+	for dataSourceID, tableIDs := range neededByDataSource {
+		for _, tableID := range tableIDs {
+			clearSyntheticDatabaseDisplayName(displayNames.DatabaseTables, dataSourceID, tableID)
+		}
+		resp, err := t.agentsService.ListAgentDatabaseTables(t.scopedContext(ctx, scope), agentID, scope.AccountID, dto.AgentDatabaseTablesRequest{
+			DataSourceID:    dataSourceID,
+			Limit:           maxAgentBindingCandidateListPageSize,
+			IncludeSelected: true,
+		})
+		if err != nil || resp == nil {
+			continue
+		}
+		needed := stringSetFromSlice(tableIDs)
+		for _, candidate := range resp.Data {
+			tableID := strings.TrimSpace(candidate.TableID)
+			if tableID == "" {
+				continue
+			}
+			if _, ok := needed[tableID]; !ok {
+				continue
+			}
+			if name := strings.TrimSpace(candidate.Name); name != "" && !strings.EqualFold(name, tableID) {
+				displayNames.DatabaseTables[dataSourceID+":"+tableID] = name
+				displayNames.DatabaseTables[tableID] = name
+			}
+		}
+	}
+	return displayNames
+}
+
+func (t agentToolBase) enrichAgentConfigWorkflowDisplayNames(ctx context.Context, scope agentScope, agentID string, before *dto.AgentConfigResponse, after *dto.AgentConfigResponse, displayNames agentConfigDisplayNames) agentConfigDisplayNames {
+	neededWorkflowKeys := changedWorkflowKeys(before.WorkflowBindings, after.WorkflowBindings, displayNames.Workflows)
+	if len(neededWorkflowKeys) == 0 {
+		return displayNames
+	}
+	resp, err := t.agentsService.ListAgentWorkflowBindingCandidates(t.scopedContext(ctx, scope), agentID, scope.AccountID, dto.AgentWorkflowBindingCandidatesRequest{
+		Limit:              maxAgentBindingCandidateListPageSize,
+		IncludeStartInputs: false,
+		IncludeSelected:    true,
+	})
+	if err != nil || resp == nil {
+		return displayNames
+	}
+	needed := stringSetFromSlice(neededWorkflowKeys)
+	if displayNames.Workflows == nil {
+		displayNames.Workflows = map[string]string{}
+	}
+	for _, candidate := range resp.Data {
+		name := strings.TrimSpace(candidate.Label)
+		if name == "" {
+			continue
+		}
+		for _, key := range []string{candidate.BindingID, candidate.WorkflowID, candidate.AgentID} {
+			key = strings.TrimSpace(key)
+			if key == "" {
+				continue
+			}
+			if _, ok := needed[key]; !ok {
+				continue
+			}
+			if !strings.EqualFold(name, key) {
+				displayNames.Workflows[key] = name
+			}
+		}
+	}
+	return displayNames
+}
+
+func changedStringSetKeys(before []string, after []string, displayNames map[string]string) []string {
+	beforeSet := stringSetFromSlice(before)
+	afterSet := stringSetFromSlice(after)
+	if stringSetsEqual(beforeSet, afterSet) {
+		return nil
+	}
+	return missingDisplayNameKeys(appendUniqueStrings(sortedSetKeys(beforeSet), sortedSetKeys(afterSet)...), displayNames)
+}
+
+func changedDatabaseTableKeys(before []dto.AgentDatabaseBinding, after []dto.AgentDatabaseBinding, displayNames map[string]string) map[string][]string {
+	beforeSet, _ := databaseBindingResourceSet(before, nil)
+	afterSet, _ := databaseBindingResourceSet(after, nil)
+	if stringSetsEqual(beforeSet, afterSet) {
+		return nil
+	}
+	keys := missingDatabaseDisplayNameKeys(appendUniqueStrings(sortedSetKeys(beforeSet), sortedSetKeys(afterSet)...), displayNames)
+	if len(keys) == 0 {
+		return nil
+	}
+	out := map[string][]string{}
+	for _, key := range keys {
+		dataSourceID, tableID, ok := strings.Cut(key, ":")
+		if !ok {
+			continue
+		}
+		dataSourceID = strings.TrimSpace(dataSourceID)
+		tableID = strings.TrimSpace(tableID)
+		if dataSourceID == "" || tableID == "" {
+			continue
+		}
+		out[dataSourceID] = appendUniqueStrings(out[dataSourceID], tableID)
+	}
+	return out
+}
+
+func missingDatabaseDisplayNameKeys(keys []string, displayNames map[string]string) []string {
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		_, tableID, ok := strings.Cut(key, ":")
+		if !ok {
+			continue
+		}
+		name := displayNameForResource(displayNames, key, tableID)
+		if name != "" && !syntheticAgentConfigDisplayName(name) {
+			continue
+		}
+		out = append(out, key)
+	}
+	return out
+}
+
+func clearSyntheticDatabaseDisplayName(displayNames map[string]string, dataSourceID string, tableID string) {
+	if displayNames == nil {
+		return
+	}
+	for _, key := range []string{strings.TrimSpace(dataSourceID) + ":" + strings.TrimSpace(tableID), strings.TrimSpace(tableID)} {
+		if key == "" || key == ":" {
+			continue
+		}
+		if syntheticAgentConfigDisplayName(displayNames[key]) {
+			delete(displayNames, key)
+		}
+	}
+}
+
+func syntheticAgentConfigDisplayName(name string) bool {
+	normalized := strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(name))), " ")
+	if normalized == "" {
+		return false
+	}
+	prefixes := []string{
+		"database binding",
+		"database table binding",
+		"database table",
+		"data table binding",
+		"workflow binding",
+		"knowledge binding",
+		"skill binding",
+		"agent binding",
+		"binding",
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(normalized, prefix+" ") && syntheticDisplayNameOrdinalSuffix(strings.TrimSpace(strings.TrimPrefix(normalized, prefix))) {
+			return true
+		}
+	}
+
+	compact := strings.ReplaceAll(normalized, " ", "")
+	for _, prefix := range []string{"数据库绑定", "数据表绑定", "数据库表", "工作流绑定", "知识库绑定", "技能绑定", "智能体绑定", "绑定"} {
+		if strings.HasPrefix(compact, prefix) && syntheticDisplayNameOrdinalSuffix(strings.TrimPrefix(compact, prefix)) {
+			return true
+		}
+	}
+	return false
+}
+
+func syntheticDisplayNameOrdinalSuffix(value string) bool {
+	value = strings.TrimSpace(strings.TrimPrefix(value, "#"))
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func changedWorkflowKeys(before []dto.AgentWorkflowBinding, after []dto.AgentWorkflowBinding, displayNames map[string]string) []string {
+	beforeSet, _ := workflowBindingResourceSet(before, nil)
+	afterSet, _ := workflowBindingResourceSet(after, nil)
+	if stringSetsEqual(beforeSet, afterSet) {
+		return nil
+	}
+	return missingDisplayNameKeys(appendUniqueStrings(sortedSetKeys(beforeSet), sortedSetKeys(afterSet)...), displayNames)
+}
+
+func missingDisplayNameKeys(keys []string, displayNames map[string]string) []string {
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if displayNameForResource(displayNames, key) != "" {
+			continue
+		}
+		out = append(out, key)
+	}
+	return out
+}
+
 func (t agentToolBase) ensureWorkspaceAgentManage(ctx context.Context, scope agentScope, workspaceID string) error {
 	if t.workspacePerms == nil {
 		return fmt.Errorf("workspace permission service is not configured")
@@ -1336,6 +1779,20 @@ func (t agentToolBase) agentPayloadForResult(ctx context.Context, scope agentSco
 			payload = agentPayload(agent)
 		}
 	}
+	if latest := recentAgentPayloadForResult(t.Runtime(), agentID); len(latest) > 0 {
+		if len(payload) == 0 {
+			payload = latest
+		} else {
+			overlayAgentPayloadFields(payload, latest)
+		}
+	}
+	if fallback := visibleAgentPayloadForResult(t.Runtime(), agentID); len(fallback) > 0 {
+		if len(payload) == 0 {
+			payload = fallback
+		} else {
+			fillMissingAgentPayloadFields(payload, fallback)
+		}
+	}
 	if len(payload) == 0 {
 		payload = map[string]interface{}{}
 	}
@@ -1350,6 +1807,499 @@ func (t agentToolBase) agentPayloadForResult(ctx context.Context, scope agentSco
 		if _, ok := payload["workspace_id"]; !ok {
 			payload["workspace_id"] = workspaceID
 		}
+	}
+	return payload
+}
+
+func (t agentToolBase) resolveAgentIDParam(params map[string]interface{}) string {
+	agentID := requiredAgentID(params)
+	if agentID == "" {
+		return ""
+	}
+	if visible := visibleAgentPayloadForIdentifier(t.Runtime(), agentID); len(visible) > 0 {
+		if resolvedID := strings.TrimSpace(firstStringFromMap(visible, "id", "agent_id")); resolvedID != "" {
+			return resolvedID
+		}
+	}
+	return agentID
+}
+
+func (t agentToolBase) resolveAgentID(ctx context.Context, scope agentScope, params map[string]interface{}) string {
+	agentID := t.resolveAgentIDParam(params)
+	if agentID == "" {
+		agentID = t.resolveCurrentAgentIDFromRuntime()
+	}
+	if agentID == "" {
+		return ""
+	}
+	if _, err := uuid.Parse(agentID); err == nil {
+		return agentID
+	}
+	if resolvedID := t.resolveAgentIDByUniqueWorkspaceName(ctx, scope, agentID); resolvedID != "" {
+		return resolvedID
+	}
+	return agentID
+}
+
+func (t agentToolBase) resolveCurrentAgentIDFromRuntime() string {
+	runtime := t.Runtime()
+	if runtime == nil || len(runtime.RuntimeParameters) == 0 {
+		return ""
+	}
+	if explicit := strings.TrimSpace(firstStringFromMap(
+		runtime.RuntimeParameters,
+		"current_agent_id",
+		"console_current_agent_id",
+		"console_agent_id",
+	)); explicit != "" {
+		return explicit
+	}
+	for _, key := range []string{
+		"console_current_route",
+		"console_agents_current_route",
+		"current_page",
+		"runtime_route",
+		"route",
+	} {
+		if agentID := agentIDFromConsoleAgentRoute(stringValue(runtime.RuntimeParameters, key)); agentID != "" {
+			return agentID
+		}
+	}
+	visible := visibleAgentsFromRuntime(runtime)
+	selectedID := ""
+	selectedCount := 0
+	for _, agent := range visible {
+		selected, _ := boolParam(agent, "selected")
+		if !selected {
+			continue
+		}
+		if id := strings.TrimSpace(firstStringFromMap(agent, "agent_id", "id")); id != "" {
+			selectedID = id
+			selectedCount++
+		}
+	}
+	if selectedCount == 1 {
+		return selectedID
+	}
+	return ""
+}
+
+func agentIDFromConsoleAgentRoute(route string) string {
+	route = strings.TrimSpace(route)
+	if route == "" {
+		return ""
+	}
+	const prefix = "/console/agents/"
+	idx := strings.Index(route, prefix)
+	if idx < 0 {
+		return ""
+	}
+	rest := strings.TrimPrefix(route[idx:], prefix)
+	if rest == "" {
+		return ""
+	}
+	agentID, _, _ := strings.Cut(rest, "/")
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" || agentID == "new" {
+		return ""
+	}
+	return agentID
+}
+
+func (t agentToolBase) resolveAgentIDByUniqueWorkspaceName(ctx context.Context, scope agentScope, name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" || t.agentsService == nil {
+		return ""
+	}
+	workspaceID := strings.TrimSpace(scope.WorkspaceID)
+	if workspaceID == "" {
+		return ""
+	}
+	resp, err := t.agentsService.GetAgentsListWithPermissions(t.scopedContext(ctx, scope), scope.AccountID, dto.GetAgentsListRequest{
+		Page:        1,
+		Limit:       defaultAgentListPageSize,
+		PageSize:    defaultAgentListPageSize,
+		WorkspaceID: workspaceID,
+		Keyword:     name,
+	})
+	if err != nil || resp == nil {
+		return ""
+	}
+	resolvedID := ""
+	matchCount := 0
+	for _, item := range resp.Data {
+		if !strings.EqualFold(strings.TrimSpace(item.Name), name) {
+			continue
+		}
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			continue
+		}
+		matchCount++
+		resolvedID = id
+	}
+	if matchCount == 1 {
+		return resolvedID
+	}
+	if resp.Total == 1 && len(resp.Data) == 1 {
+		return strings.TrimSpace(resp.Data[0].ID)
+	}
+	return ""
+}
+
+func (t agentToolBase) EnrichGovernanceArguments(ctx context.Context, userID string, params map[string]interface{}) map[string]interface{} {
+	enriched := agentConfigParams(params)
+	normalizeAgentConfigGovernanceParams(t.GetEntity().Identity.Name, enriched)
+	scope, err := t.scope(userID)
+	if err != nil {
+		return enriched
+	}
+	t.enrichSingleAgentGovernanceArguments(ctx, scope, enriched)
+	t.enrichAgentConfigGovernanceChangedFieldsPreview(ctx, scope, enriched)
+	t.enrichAgentConfigGovernanceDisplayNames(ctx, scope, enriched)
+	t.enrichBatchAgentGovernanceArguments(ctx, scope, enriched)
+	return enriched
+}
+
+func normalizeAgentConfigGovernanceParams(toolName string, params map[string]interface{}) {
+	if len(params) == 0 {
+		return
+	}
+	setIfMissing := func(target string, source string) {
+		if _, exists := params[target]; exists {
+			return
+		}
+		if value, ok := params[source]; ok {
+			params[target] = value
+		}
+	}
+	switch strings.TrimSpace(toolName) {
+	case ToolReplaceAgentSkillBindings:
+		setIfMissing("enabled_skill_ids", "skill_ids")
+	case ToolReplaceAgentKnowledgeBindings:
+		setIfMissing("knowledge_dataset_ids", "dataset_ids")
+	case ToolReplaceAgentDatabaseBindings:
+		setIfMissing("database_bindings", "bindings")
+	case ToolReplaceAgentWorkflowBindings:
+		setIfMissing("workflow_bindings", "bindings")
+	}
+}
+
+func (t agentToolBase) enrichAgentConfigGovernanceChangedFieldsPreview(ctx context.Context, scope agentScope, params map[string]interface{}) {
+	if t.agentsService == nil {
+		return
+	}
+	agentID := requiredAgentID(params)
+	if agentID == "" {
+		return
+	}
+	current, err := t.agentsService.GetAgentDraftRuntimeConfig(t.scopedContext(ctx, scope), agentID, scope.AccountID)
+	if err != nil || current == nil {
+		return
+	}
+	t.enrichAgentDatabaseRemovalParams(ctx, scope, agentID, current, params)
+	req, requestedFields, err := mergeAgentConfigRequest(current.Config, params)
+	if err != nil || len(requestedFields) == 0 {
+		return
+	}
+	params["changed_fields_preview"] = actualAgentConfigChangedFields(current.Config, req, requestedFields)
+}
+
+func (t agentToolBase) enrichAgentConfigGovernanceDisplayNames(ctx context.Context, scope agentScope, params map[string]interface{}) {
+	if t.agentsService == nil || !hasAgentConfigBindingParam(params) {
+		return
+	}
+	agentID := requiredAgentID(params)
+	if agentID == "" {
+		return
+	}
+	current, err := t.agentsService.GetAgentDraftRuntimeConfig(t.scopedContext(ctx, scope), agentID, scope.AccountID)
+	if err != nil || current == nil {
+		return
+	}
+	t.enrichAgentDatabaseRemovalParams(ctx, scope, agentID, current, params)
+	req, changedFields, err := mergeAgentConfigRequest(current.Config, params)
+	if err != nil || len(changedFields) == 0 {
+		return
+	}
+	if !agentConfigChangedFieldsIncludeBinding(changedFields) {
+		return
+	}
+	after := agentConfigResponseFromRequest(current.Config, req)
+	displayNames := t.enrichAgentConfigDisplayNames(ctx, scope, agentID, &current.Config, &after, agentConfigDisplayNamesFromParams(params))
+	mergeAgentConfigDisplayNamesIntoParams(params, displayNames)
+	mergeAgentConfigBindingChangesPreviewIntoParams(params, agentConfigBindingChanges(&current.Config, &after, displayNames))
+}
+
+func (t agentToolBase) enrichSingleAgentGovernanceArguments(ctx context.Context, scope agentScope, params map[string]interface{}) {
+	agentID := requiredAgentID(params)
+	if agentID == "" {
+		return
+	}
+	visibleAgent := visibleAgentPayloadForIdentifier(t.Runtime(), agentID)
+	if resolvedID := strings.TrimSpace(firstStringFromMap(visibleAgent, "id", "agent_id")); resolvedID != "" {
+		agentID = resolvedID
+		params["agent_id"] = resolvedID
+	} else {
+		if resolvedID := t.resolveAgentIDByUniqueWorkspaceName(ctx, scope, agentID); resolvedID != "" {
+			agentID = resolvedID
+			params["agent_id"] = resolvedID
+		}
+	}
+	agent := t.agentPayloadForResult(ctx, scope, agentID)
+	if len(agent) == 0 {
+		agent = visibleAgent
+	}
+	if name := strings.TrimSpace(firstStringFromMap(agent, "name", "agent_name")); name != "" {
+		params["agent_name"] = name
+	}
+	if workspaceID := strings.TrimSpace(firstStringFromMap(agent, "workspace_id", "workspaceId")); workspaceID != "" {
+		if strings.TrimSpace(firstStringFromMap(params, "workspace_id", "workspaceId")) == "" {
+			params["workspace_id"] = workspaceID
+		}
+	}
+	syncSingleAgentGovernanceTarget(params, agentID, agent)
+}
+
+func (t agentToolBase) enrichBatchAgentGovernanceArguments(ctx context.Context, scope agentScope, params map[string]interface{}) {
+	if _, ok := params["agents"]; ok {
+		return
+	}
+	targets, err := agentBatchDeleteTargets(params, t.Runtime())
+	if err != nil || len(targets) == 0 {
+		return
+	}
+	agents := make([]map[string]interface{}, 0, len(targets))
+	for _, target := range targets {
+		agent := t.agentPayloadForResult(ctx, scope, target.ID)
+		item := map[string]interface{}{
+			"agent_id": target.ID,
+			"id":       target.ID,
+			"type":     "agent",
+		}
+		if name := firstNonEmptyString(target.Name, firstStringFromMap(agent, "name", "agent_name")); name != "" {
+			item["name"] = name
+			item["agent_name"] = name
+		}
+		if workspaceID := firstNonEmptyString(target.WorkspaceID, firstStringFromMap(agent, "workspace_id", "workspaceId"), scope.WorkspaceID); workspaceID != "" {
+			item["workspace_id"] = workspaceID
+		}
+		agents = append(agents, item)
+	}
+	params["agents"] = agents
+}
+
+func syncSingleAgentGovernanceTarget(params map[string]interface{}, agentID string, agent map[string]interface{}) {
+	if len(params) == 0 {
+		return
+	}
+	agentID = strings.TrimSpace(firstNonEmptyString(agentID, firstStringFromMap(params, "agent_id", "agentId", "id")))
+	if agentID == "" {
+		return
+	}
+	name := strings.TrimSpace(firstNonEmptyString(
+		firstStringFromMap(agent, "name", "agent_name"),
+		firstStringFromMap(params, "agent_name", "agentName", "name"),
+	))
+	workspaceID := strings.TrimSpace(firstNonEmptyString(
+		firstStringFromMap(agent, "workspace_id", "workspaceId"),
+		firstStringFromMap(params, "workspace_id", "workspaceId"),
+	))
+	if name == "" && workspaceID == "" {
+		return
+	}
+	for _, key := range []string{"agents", "targets", "assets"} {
+		value, ok := params[key]
+		if !ok || value == nil {
+			continue
+		}
+		targets, err := agentBatchDeleteTargetsFromAny(value)
+		if err != nil || len(targets) == 0 {
+			continue
+		}
+		matched := false
+		for _, target := range targets {
+			if strings.TrimSpace(target.ID) == agentID {
+				matched = true
+				break
+			}
+		}
+		if !matched && len(targets) != 1 {
+			continue
+		}
+		records := make([]map[string]interface{}, 0, len(targets))
+		for _, target := range targets {
+			id := strings.TrimSpace(target.ID)
+			if id == "" {
+				id = agentID
+			}
+			item := map[string]interface{}{
+				"agent_id": id,
+				"id":       id,
+				"type":     "agent",
+			}
+			targetName := strings.TrimSpace(target.Name)
+			if id == agentID && name != "" {
+				targetName = name
+			}
+			if targetName != "" {
+				item["name"] = targetName
+				item["agent_name"] = targetName
+			}
+			targetWorkspaceID := strings.TrimSpace(target.WorkspaceID)
+			if id == agentID && workspaceID != "" {
+				targetWorkspaceID = workspaceID
+			}
+			if targetWorkspaceID != "" {
+				item["workspace_id"] = targetWorkspaceID
+			}
+			records = append(records, item)
+		}
+		params[key] = records
+		return
+	}
+	if name == "" {
+		return
+	}
+	params["agents"] = []map[string]interface{}{{
+		"agent_id":     agentID,
+		"id":           agentID,
+		"type":         "agent",
+		"name":         name,
+		"agent_name":   name,
+		"workspace_id": workspaceID,
+	}}
+}
+
+func visibleAgentPayloadForResult(runtime *tools.ToolRuntime, agentID string) map[string]interface{} {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return nil
+	}
+	for _, item := range visibleAgentsFromRuntime(runtime) {
+		payload := agentPayload(item)
+		if firstStringFromMap(payload, "id", "agent_id") == agentID {
+			return payload
+		}
+	}
+	return nil
+}
+
+func recentAgentPayloadForResult(runtime *tools.ToolRuntime, agentID string) map[string]interface{} {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return nil
+	}
+	for _, item := range recentAgentPayloadsFromRuntime(runtime) {
+		payload := agentPayload(item)
+		if firstStringFromMap(payload, "id", "agent_id") == agentID {
+			return payload
+		}
+	}
+	return nil
+}
+
+func visibleAgentPayloadForIdentifier(runtime *tools.ToolRuntime, identifier string) map[string]interface{} {
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return nil
+	}
+	var nameMatch map[string]interface{}
+	nameMatches := 0
+	for _, item := range recentAgentPayloadsFromRuntime(runtime) {
+		payload := agentPayload(item)
+		if firstStringFromMap(payload, "id", "agent_id") == identifier {
+			return payload
+		}
+		if strings.EqualFold(strings.TrimSpace(firstStringFromMap(payload, "name", "agent_name")), identifier) {
+			nameMatches++
+			nameMatch = payload
+		}
+	}
+	for _, item := range visibleAgentsFromRuntime(runtime) {
+		payload := agentPayload(item)
+		if firstStringFromMap(payload, "id", "agent_id") == identifier {
+			return payload
+		}
+		if strings.EqualFold(strings.TrimSpace(firstStringFromMap(payload, "name", "agent_name")), identifier) {
+			nameMatches++
+			nameMatch = payload
+		}
+	}
+	if nameMatches == 1 {
+		return nameMatch
+	}
+	return nil
+}
+
+func recentAgentPayloadsFromRuntime(runtime *tools.ToolRuntime) []map[string]interface{} {
+	if runtime == nil || len(runtime.RuntimeParameters) == 0 {
+		return nil
+	}
+	return mapsFromAny(runtime.RuntimeParameters["console_agents_recent_agent_updates"])
+}
+
+func fillMissingAgentPayloadFields(payload map[string]interface{}, fallback map[string]interface{}) {
+	for _, key := range []string{
+		"name",
+		"agent_name",
+		"description",
+		"workspace_id",
+		"icon_url",
+		"icon_type",
+		"icon",
+		"href",
+	} {
+		if _, ok := payload[key]; ok {
+			continue
+		}
+		if value, ok := fallback[key]; ok {
+			payload[key] = value
+		}
+	}
+}
+
+func overlayAgentPayloadFields(payload map[string]interface{}, latest map[string]interface{}) {
+	if payload == nil || len(latest) == 0 {
+		return
+	}
+	for _, key := range []string{
+		"name",
+		"agent_name",
+		"description",
+		"icon_url",
+		"icon_type",
+		"icon",
+		"href",
+		"workspace_id",
+	} {
+		if value, ok := latest[key]; ok && value != nil && strings.TrimSpace(fmt.Sprint(value)) != "" {
+			payload[key] = value
+		}
+	}
+}
+
+func agentPayloadWithParamFallback(agent map[string]interface{}, params map[string]interface{}) map[string]interface{} {
+	payload := agentPayload(agent)
+	if len(payload) == 0 {
+		payload = map[string]interface{}{}
+	}
+	fallback := map[string]interface{}{}
+	if name := strings.TrimSpace(firstStringFromMap(params, "agent_name", "agentName", "name", "asset_name", "resource_name")); name != "" {
+		fallback["name"] = name
+		fallback["agent_name"] = name
+	}
+	if workspaceID := strings.TrimSpace(firstStringFromMap(params, "workspace_id", "workspaceId")); workspaceID != "" {
+		fallback["workspace_id"] = workspaceID
+	}
+	if iconType := strings.TrimSpace(firstStringFromMap(params, "icon_type", "iconType")); iconType != "" {
+		fallback["icon_type"] = iconType
+	}
+	if icon := strings.TrimSpace(firstStringFromMap(params, "icon")); icon != "" {
+		fallback["icon"] = icon
+	}
+	if len(fallback) > 0 {
+		fillMissingAgentPayloadFields(payload, fallback)
 	}
 	return payload
 }
@@ -1476,6 +2426,7 @@ func agentScopeFromRuntime(runtime *tools.ToolRuntime, tenantID string, userID s
 }
 
 func mergeAgentConfigRequest(current dto.AgentConfigResponse, params map[string]interface{}) (dto.AgentConfigRequest, []string, error) {
+	params = agentConfigParams(params)
 	req := agentConfigRequestFromResponse(current)
 	changedFields := make([]string, 0, 12)
 	if value, ok := optionalStringParam(params, "system_prompt"); ok {
@@ -1496,7 +2447,15 @@ func mergeAgentConfigRequest(current dto.AgentConfigResponse, params map[string]
 	}
 	if value, ok := stringSliceParam(params, "enabled_skill_ids"); ok {
 		req.EnabledSkillIDs = value
-		changedFields = append(changedFields, "enabled_skill_ids")
+		changedFields = appendAgentConfigChangedField(changedFields, "enabled_skill_ids")
+	}
+	if value, ok := stringSliceParam(params, "add_enabled_skill_ids"); ok {
+		req.EnabledSkillIDs = addStringsToSet(req.EnabledSkillIDs, value)
+		changedFields = appendAgentConfigChangedField(changedFields, "enabled_skill_ids")
+	}
+	if value, ok := stringSliceParam(params, "remove_enabled_skill_ids"); ok {
+		req.EnabledSkillIDs = removeStringsFromSet(req.EnabledSkillIDs, value)
+		changedFields = appendAgentConfigChangedField(changedFields, "enabled_skill_ids")
 	}
 	if value, ok := boolParam(params, "agent_memory_enabled"); ok {
 		req.AgentMemoryEnabled = value
@@ -1515,6 +2474,11 @@ func mergeAgentConfigRequest(current dto.AgentConfigResponse, params map[string]
 		changedFields = append(changedFields, "input_placeholder")
 	}
 	if value, ok := optionalStringParam(params, "theme_color"); ok {
+		normalized, err := normalizeAgentThemeColor(value)
+		if err != nil {
+			return dto.AgentConfigRequest{}, nil, err
+		}
+		value = normalized
 		req.ThemeColor = value
 		changedFields = append(changedFields, "theme_color")
 	}
@@ -1524,11 +2488,19 @@ func mergeAgentConfigRequest(current dto.AgentConfigResponse, params map[string]
 	}
 	if value, ok := stringSliceParam(params, "knowledge_dataset_ids"); ok {
 		req.KnowledgeDatasetIDs = value
-		changedFields = append(changedFields, "knowledge_dataset_ids")
+		changedFields = appendAgentConfigChangedField(changedFields, "knowledge_dataset_ids")
 	}
 	if value, ok := stringSliceParam(params, "dataset_ids"); ok {
 		req.KnowledgeDatasetIDs = value
-		changedFields = append(changedFields, "knowledge_dataset_ids")
+		changedFields = appendAgentConfigChangedField(changedFields, "knowledge_dataset_ids")
+	}
+	if value, ok := stringSliceParam(params, "add_knowledge_dataset_ids"); ok {
+		req.KnowledgeDatasetIDs = addStringsToSet(req.KnowledgeDatasetIDs, value)
+		changedFields = appendAgentConfigChangedField(changedFields, "knowledge_dataset_ids")
+	}
+	if value, ok := stringSliceParam(params, "remove_knowledge_dataset_ids"); ok {
+		req.KnowledgeDatasetIDs = removeStringsFromSet(req.KnowledgeDatasetIDs, value)
+		changedFields = appendAgentConfigChangedField(changedFields, "knowledge_dataset_ids")
 	}
 	if value, ok, err := optionalMapParam(params, "knowledge_retrieval_config"); err != nil {
 		return req, nil, err
@@ -1540,15 +2512,707 @@ func mergeAgentConfigRequest(current dto.AgentConfigResponse, params map[string]
 		return req, nil, err
 	} else if ok {
 		req.DatabaseBindings = bindings
-		changedFields = append(changedFields, "database_bindings")
+		changedFields = appendAgentConfigChangedField(changedFields, "database_bindings")
+	}
+	if bindings, ok, err := agentDatabaseBindingsParam(params, "add_database_bindings"); err != nil {
+		return req, nil, err
+	} else if ok {
+		req.DatabaseBindings = addAgentDatabaseBindings(req.DatabaseBindings, bindings)
+		changedFields = appendAgentConfigChangedField(changedFields, "database_bindings")
+	}
+	if bindings, ok, err := agentDatabaseBindingsParam(params, "remove_database_bindings"); err != nil {
+		return req, nil, err
+	} else if ok {
+		req.DatabaseBindings = removeAgentDatabaseBindings(req.DatabaseBindings, bindings)
+		changedFields = appendAgentConfigChangedField(changedFields, "database_bindings")
 	}
 	if bindings, ok, err := agentWorkflowBindingsParam(params, "workflow_bindings"); err != nil {
 		return req, nil, err
 	} else if ok {
 		req.WorkflowBindings = bindings
-		changedFields = append(changedFields, "workflow_bindings")
+		changedFields = appendAgentConfigChangedField(changedFields, "workflow_bindings")
+	}
+	if bindings, ok, err := agentWorkflowBindingsParam(params, "add_workflow_bindings"); err != nil {
+		return req, nil, err
+	} else if ok {
+		req.WorkflowBindings = addAgentWorkflowBindings(req.WorkflowBindings, bindings)
+		changedFields = appendAgentConfigChangedField(changedFields, "workflow_bindings")
+	}
+	if bindings, ok, err := agentWorkflowBindingsParam(params, "remove_workflow_bindings"); err != nil {
+		return req, nil, err
+	} else if ok {
+		req.WorkflowBindings = removeAgentWorkflowBindings(req.WorkflowBindings, bindings)
+		changedFields = appendAgentConfigChangedField(changedFields, "workflow_bindings")
 	}
 	return req, changedFields, nil
+}
+
+func appendAgentConfigChangedField(fields []string, field string) []string {
+	field = strings.TrimSpace(field)
+	if field == "" {
+		return fields
+	}
+	for _, existing := range fields {
+		if existing == field {
+			return fields
+		}
+	}
+	return append(fields, field)
+}
+
+func addStringsToSet(current []string, additions []string) []string {
+	return appendUniqueStrings(current, additions...)
+}
+
+func removeStringsFromSet(current []string, removals []string) []string {
+	if len(current) == 0 || len(removals) == 0 {
+		return append([]string(nil), current...)
+	}
+	removeSet := stringSetFromSlice(removals)
+	out := make([]string, 0, len(current))
+	for _, value := range current {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, remove := removeSet[trimmed]; remove {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func addAgentDatabaseBindings(current []dto.AgentDatabaseBinding, additions []dto.AgentDatabaseBinding) []dto.AgentDatabaseBinding {
+	out := normalizeAgentDatabaseBindings(current)
+	indexByDataSource := make(map[string]int, len(out))
+	for idx, binding := range out {
+		indexByDataSource[strings.TrimSpace(binding.DataSourceID)] = idx
+	}
+	for _, addition := range normalizeAgentDatabaseBindings(additions) {
+		dataSourceID := strings.TrimSpace(addition.DataSourceID)
+		if dataSourceID == "" {
+			continue
+		}
+		if idx, ok := indexByDataSource[dataSourceID]; ok {
+			out[idx].TableIDs = appendUniqueStrings(out[idx].TableIDs, addition.TableIDs...)
+			out[idx].WritableTableIDs = appendUniqueStrings(out[idx].WritableTableIDs, addition.WritableTableIDs...)
+			continue
+		}
+		indexByDataSource[dataSourceID] = len(out)
+		out = append(out, addition)
+	}
+	return out
+}
+
+func removeAgentDatabaseBindings(current []dto.AgentDatabaseBinding, removals []dto.AgentDatabaseBinding) []dto.AgentDatabaseBinding {
+	if len(current) == 0 || len(removals) == 0 {
+		return normalizeAgentDatabaseBindings(current)
+	}
+	removeSources := map[string]struct{}{}
+	removeTables := map[string]struct{}{}
+	for _, removal := range normalizeAgentDatabaseBindings(removals) {
+		dataSourceID := strings.TrimSpace(removal.DataSourceID)
+		if dataSourceID == "" {
+			continue
+		}
+		if len(removal.TableIDs) == 0 {
+			removeSources[dataSourceID] = struct{}{}
+			continue
+		}
+		for _, tableID := range removal.TableIDs {
+			removeTables[dataSourceID+":"+strings.TrimSpace(tableID)] = struct{}{}
+		}
+	}
+	out := make([]dto.AgentDatabaseBinding, 0, len(current))
+	for _, binding := range normalizeAgentDatabaseBindings(current) {
+		dataSourceID := strings.TrimSpace(binding.DataSourceID)
+		if _, removeSource := removeSources[dataSourceID]; removeSource {
+			continue
+		}
+		next := dto.AgentDatabaseBinding{
+			DataSourceID:     dataSourceID,
+			TableIDs:         make([]string, 0, len(binding.TableIDs)),
+			WritableTableIDs: make([]string, 0, len(binding.WritableTableIDs)),
+		}
+		for _, tableID := range binding.TableIDs {
+			tableID = strings.TrimSpace(tableID)
+			if tableID == "" {
+				continue
+			}
+			if _, remove := removeTables[dataSourceID+":"+tableID]; remove {
+				continue
+			}
+			next.TableIDs = append(next.TableIDs, tableID)
+		}
+		for _, tableID := range binding.WritableTableIDs {
+			tableID = strings.TrimSpace(tableID)
+			if tableID == "" {
+				continue
+			}
+			if _, remove := removeTables[dataSourceID+":"+tableID]; remove {
+				continue
+			}
+			next.WritableTableIDs = append(next.WritableTableIDs, tableID)
+		}
+		if len(next.TableIDs) == 0 {
+			continue
+		}
+		out = append(out, next)
+	}
+	return out
+}
+
+func (t agentToolBase) enrichAgentDatabaseRemovalParams(ctx context.Context, scope agentScope, agentID string, current *dto.AgentDraftRuntimeConfigResponse, params map[string]interface{}) {
+	if current == nil || len(params) == 0 {
+		return
+	}
+	removals, ok, err := agentDatabaseBindingsParam(params, "remove_database_bindings")
+	if err != nil || !ok || len(removals) == 0 {
+		return
+	}
+	normalized := t.resolveAgentDatabaseRemovalBindings(ctx, scope, agentID, current.Config.DatabaseBindings, removals, agentConfigDisplayNamesFromParams(params).DatabaseTables)
+	if len(normalized) == 0 {
+		return
+	}
+	params["remove_database_bindings"] = normalized
+}
+
+type agentDatabaseTableRef struct {
+	DataSourceID string
+	TableID      string
+}
+
+func (t agentToolBase) resolveAgentDatabaseRemovalBindings(ctx context.Context, scope agentScope, agentID string, current []dto.AgentDatabaseBinding, removals []dto.AgentDatabaseBinding, displayNames map[string]string) []dto.AgentDatabaseBinding {
+	current = normalizeAgentDatabaseBindings(current)
+	removals = normalizeAgentDatabaseBindings(removals)
+	if len(current) == 0 || len(removals) == 0 {
+		return removals
+	}
+	exact := map[string]agentDatabaseTableRef{}
+	byTableID := map[string][]agentDatabaseTableRef{}
+	for _, binding := range current {
+		dataSourceID := strings.TrimSpace(binding.DataSourceID)
+		for _, tableID := range binding.TableIDs {
+			tableID = strings.TrimSpace(tableID)
+			if dataSourceID == "" || tableID == "" {
+				continue
+			}
+			ref := agentDatabaseTableRef{DataSourceID: dataSourceID, TableID: tableID}
+			exact[dataSourceID+":"+tableID] = ref
+			byTableID[tableID] = append(byTableID[tableID], ref)
+		}
+	}
+	if displayNames == nil {
+		displayNames = map[string]string{}
+	}
+	displayNames = t.enrichCurrentDatabaseDisplayNames(ctx, scope, agentID, current, displayNames)
+	byName := map[string][]agentDatabaseTableRef{}
+	for key, ref := range exact {
+		if name := databaseRemovalNameKey(displayNameForResource(displayNames, key, ref.TableID)); name != "" {
+			byName[name] = append(byName[name], ref)
+		}
+	}
+
+	collector := map[string][]string{}
+	add := func(ref agentDatabaseTableRef) {
+		if strings.TrimSpace(ref.DataSourceID) == "" || strings.TrimSpace(ref.TableID) == "" {
+			return
+		}
+		collector[ref.DataSourceID] = appendUniqueStrings(collector[ref.DataSourceID], ref.TableID)
+	}
+	addOriginal := func(removal dto.AgentDatabaseBinding, tableID string) {
+		dataSourceID := strings.TrimSpace(removal.DataSourceID)
+		tableID = strings.TrimSpace(tableID)
+		if dataSourceID == "" {
+			return
+		}
+		if tableID == "" {
+			if _, ok := collector[dataSourceID]; !ok {
+				collector[dataSourceID] = nil
+			}
+			return
+		}
+		collector[dataSourceID] = appendUniqueStrings(collector[dataSourceID], tableID)
+	}
+
+	for _, removal := range removals {
+		dataSourceID := strings.TrimSpace(removal.DataSourceID)
+		if dataSourceID == "" {
+			continue
+		}
+		if len(removal.TableIDs) == 0 {
+			addOriginal(removal, "")
+			continue
+		}
+		for _, tableID := range removal.TableIDs {
+			tableID = strings.TrimSpace(tableID)
+			if tableID == "" {
+				continue
+			}
+			if ref, ok := exact[dataSourceID+":"+tableID]; ok {
+				add(ref)
+				continue
+			}
+			if refs := byTableID[tableID]; len(refs) == 1 {
+				add(refs[0])
+				continue
+			}
+			if name := databaseRemovalNameKey(displayNameForResource(displayNames, dataSourceID+":"+tableID, tableID)); name != "" {
+				if refs := byName[name]; len(refs) == 1 {
+					add(refs[0])
+					continue
+				}
+			}
+			addOriginal(removal, tableID)
+		}
+	}
+	return databaseRemovalBindingsFromCollector(collector)
+}
+
+func (t agentToolBase) enrichCurrentDatabaseDisplayNames(ctx context.Context, scope agentScope, agentID string, bindings []dto.AgentDatabaseBinding, displayNames map[string]string) map[string]string {
+	if t.agentsService == nil || len(bindings) == 0 {
+		return displayNames
+	}
+	if displayNames == nil {
+		displayNames = map[string]string{}
+	}
+	for _, binding := range bindings {
+		dataSourceID := strings.TrimSpace(binding.DataSourceID)
+		if dataSourceID == "" {
+			continue
+		}
+		missing := false
+		for _, tableID := range binding.TableIDs {
+			tableID = strings.TrimSpace(tableID)
+			if tableID == "" {
+				continue
+			}
+			if displayNameForResource(displayNames, dataSourceID+":"+tableID, tableID) == "" {
+				missing = true
+				break
+			}
+		}
+		if !missing {
+			continue
+		}
+		resp, err := t.agentsService.ListAgentDatabaseTables(t.scopedContext(ctx, scope), agentID, scope.AccountID, dto.AgentDatabaseTablesRequest{
+			DataSourceID:    dataSourceID,
+			Limit:           maxAgentBindingCandidateListPageSize,
+			IncludeSelected: true,
+		})
+		if err != nil || resp == nil {
+			continue
+		}
+		for _, candidate := range resp.Data {
+			tableID := strings.TrimSpace(candidate.TableID)
+			name := strings.TrimSpace(candidate.Name)
+			if tableID == "" || name == "" || strings.EqualFold(name, tableID) {
+				continue
+			}
+			displayNames[dataSourceID+":"+tableID] = name
+			displayNames[tableID] = name
+		}
+	}
+	return displayNames
+}
+
+func databaseRemovalNameKey(name string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(name))), " ")
+}
+
+func databaseRemovalBindingsFromCollector(values map[string][]string) []dto.AgentDatabaseBinding {
+	dataSourceIDs := make([]string, 0, len(values))
+	for dataSourceID := range values {
+		dataSourceIDs = append(dataSourceIDs, dataSourceID)
+	}
+	dataSourceIDs = sortedStrings(dataSourceIDs)
+	out := make([]dto.AgentDatabaseBinding, 0, len(dataSourceIDs))
+	for _, dataSourceID := range dataSourceIDs {
+		tables := sortedStrings(append([]string(nil), values[dataSourceID]...))
+		out = append(out, dto.AgentDatabaseBinding{
+			DataSourceID: dataSourceID,
+			TableIDs:     tables,
+		})
+	}
+	return out
+}
+
+func normalizeAgentDatabaseBindings(bindings []dto.AgentDatabaseBinding) []dto.AgentDatabaseBinding {
+	out := make([]dto.AgentDatabaseBinding, 0, len(bindings))
+	for _, binding := range bindings {
+		dataSourceID := strings.TrimSpace(binding.DataSourceID)
+		if dataSourceID == "" {
+			continue
+		}
+		normalized := dto.AgentDatabaseBinding{
+			DataSourceID:     dataSourceID,
+			TableIDs:         appendUniqueStrings(nil, binding.TableIDs...),
+			WritableTableIDs: appendUniqueStrings(nil, binding.WritableTableIDs...),
+		}
+		if len(normalized.TableIDs) == 0 && len(normalized.WritableTableIDs) > 0 {
+			normalized.TableIDs = appendUniqueStrings(nil, normalized.WritableTableIDs...)
+		}
+		out = append(out, normalized)
+	}
+	return out
+}
+
+func addAgentWorkflowBindings(current []dto.AgentWorkflowBinding, additions []dto.AgentWorkflowBinding) []dto.AgentWorkflowBinding {
+	out := normalizeAgentWorkflowBindings(current)
+	indexByKey := make(map[string]int, len(out))
+	for idx, binding := range out {
+		if key := agentWorkflowBindingKey(binding); key != "" {
+			indexByKey[key] = idx
+		}
+	}
+	for _, addition := range normalizeAgentWorkflowBindings(additions) {
+		key := agentWorkflowBindingKey(addition)
+		if key == "" {
+			continue
+		}
+		if idx, ok := indexByKey[key]; ok {
+			out[idx] = addition
+			continue
+		}
+		indexByKey[key] = len(out)
+		out = append(out, addition)
+	}
+	return out
+}
+
+func removeAgentWorkflowBindings(current []dto.AgentWorkflowBinding, removals []dto.AgentWorkflowBinding) []dto.AgentWorkflowBinding {
+	if len(current) == 0 || len(removals) == 0 {
+		return normalizeAgentWorkflowBindings(current)
+	}
+	removeKeys := map[string]struct{}{}
+	for _, removal := range normalizeAgentWorkflowBindings(removals) {
+		for _, key := range agentWorkflowBindingKeys(removal) {
+			removeKeys[key] = struct{}{}
+		}
+	}
+	out := make([]dto.AgentWorkflowBinding, 0, len(current))
+	for _, binding := range normalizeAgentWorkflowBindings(current) {
+		remove := false
+		for _, key := range agentWorkflowBindingKeys(binding) {
+			if _, ok := removeKeys[key]; ok {
+				remove = true
+				break
+			}
+		}
+		if remove {
+			continue
+		}
+		out = append(out, binding)
+	}
+	return out
+}
+
+func normalizeAgentWorkflowBindings(bindings []dto.AgentWorkflowBinding) []dto.AgentWorkflowBinding {
+	out := make([]dto.AgentWorkflowBinding, 0, len(bindings))
+	for _, binding := range bindings {
+		binding.BindingID = strings.TrimSpace(binding.BindingID)
+		binding.WorkflowID = strings.TrimSpace(binding.WorkflowID)
+		binding.AgentID = strings.TrimSpace(binding.AgentID)
+		if agentWorkflowBindingKey(binding) == "" {
+			continue
+		}
+		out = append(out, binding)
+	}
+	return out
+}
+
+type agentWorkflowBindingParamSpec struct {
+	Key                string
+	RequirePersistable bool
+}
+
+func (t agentToolBase) enrichAgentWorkflowBindingParams(ctx context.Context, scope agentScope, agentID string, params map[string]interface{}, specs ...agentWorkflowBindingParamSpec) error {
+	if len(params) == 0 || agentID == "" || len(specs) == 0 {
+		return nil
+	}
+	var candidates map[string]dto.AgentWorkflowBindingCandidate
+	var candidateErr error
+	for _, spec := range specs {
+		key := strings.TrimSpace(spec.Key)
+		if key == "" {
+			continue
+		}
+		bindings, ok, err := agentWorkflowBindingsParam(params, key)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		if len(bindings) == 0 {
+			params[key] = bindings
+			continue
+		}
+		if agentWorkflowBindingsNeedCandidateCompletion(bindings, spec.RequirePersistable) && candidates == nil && candidateErr == nil {
+			candidates, candidateErr = t.agentWorkflowBindingCandidatesByKey(ctx, scope, agentID)
+		}
+		if candidateErr != nil {
+			return candidateErr
+		}
+		completed := make([]dto.AgentWorkflowBinding, 0, len(bindings))
+		for _, binding := range bindings {
+			binding = completeAgentWorkflowBindingFromCandidates(binding, candidates)
+			if spec.RequirePersistable && !agentWorkflowBindingPersistable(binding) {
+				return fmt.Errorf("%s contains workflow binding %q without agent_id and workflow_id; call list_agent_workflow_binding_candidates and pass the returned candidate object", key, agentWorkflowBindingKey(binding))
+			}
+			completed = append(completed, binding)
+		}
+		params[key] = completed
+	}
+	return nil
+}
+
+func agentWorkflowBindingsNeedCandidateCompletion(bindings []dto.AgentWorkflowBinding, requirePersistable bool) bool {
+	if !requirePersistable {
+		return false
+	}
+	for _, binding := range bindings {
+		if !agentWorkflowBindingPersistable(binding) {
+			return true
+		}
+	}
+	return false
+}
+
+func (t agentToolBase) agentWorkflowBindingCandidatesByKey(ctx context.Context, scope agentScope, agentID string) (map[string]dto.AgentWorkflowBindingCandidate, error) {
+	resp, err := t.agentsService.ListAgentWorkflowBindingCandidates(t.scopedContext(ctx, scope), agentID, scope.AccountID, dto.AgentWorkflowBindingCandidatesRequest{
+		Limit:              maxAgentBindingCandidateListPageSize,
+		IncludeStartInputs: false,
+		IncludeSelected:    true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list agent workflow binding candidates: %w", err)
+	}
+	out := map[string]dto.AgentWorkflowBindingCandidate{}
+	if resp == nil {
+		return out, nil
+	}
+	for _, candidate := range resp.Data {
+		for _, key := range []string{candidate.BindingID, candidate.WorkflowID, candidate.AgentID} {
+			key = strings.TrimSpace(key)
+			if key == "" {
+				continue
+			}
+			out[key] = candidate
+		}
+	}
+	return out, nil
+}
+
+func completeAgentWorkflowBindingFromCandidates(binding dto.AgentWorkflowBinding, candidates map[string]dto.AgentWorkflowBindingCandidate) dto.AgentWorkflowBinding {
+	for _, key := range agentWorkflowBindingKeys(binding) {
+		candidate, ok := candidates[strings.TrimSpace(key)]
+		if !ok {
+			continue
+		}
+		return completeAgentWorkflowBindingFromCandidate(binding, candidate)
+	}
+	return binding
+}
+
+func completeAgentWorkflowBindingFromCandidate(binding dto.AgentWorkflowBinding, candidate dto.AgentWorkflowBindingCandidate) dto.AgentWorkflowBinding {
+	if strings.TrimSpace(binding.BindingID) == "" {
+		binding.BindingID = candidate.BindingID
+	}
+	if strings.TrimSpace(binding.Label) == "" {
+		binding.Label = candidate.Label
+	}
+	if strings.TrimSpace(binding.Description) == "" {
+		binding.Description = candidate.Description
+	}
+	if strings.TrimSpace(binding.AgentID) == "" {
+		binding.AgentID = candidate.AgentID
+	}
+	if strings.TrimSpace(binding.WorkflowID) == "" {
+		binding.WorkflowID = candidate.WorkflowID
+	}
+	if strings.TrimSpace(binding.AgentType) == "" {
+		binding.AgentType = candidate.AgentType
+	}
+	if strings.TrimSpace(binding.VersionStrategy) == "" {
+		binding.VersionStrategy = candidate.VersionStrategy
+	}
+	if strings.TrimSpace(binding.VersionUUID) == "" {
+		binding.VersionUUID = candidate.VersionUUID
+	}
+	if len(binding.StartInputs) == 0 && len(candidate.StartInputs) > 0 {
+		binding.StartInputs = append([]dto.AgentWorkflowStartInput(nil), candidate.StartInputs...)
+	}
+	if len(binding.RequiredInputs) == 0 && len(candidate.RequiredInputs) > 0 {
+		binding.RequiredInputs = append([]string(nil), candidate.RequiredInputs...)
+	}
+	if strings.TrimSpace(binding.DefaultInputKey) == "" {
+		binding.DefaultInputKey = candidate.DefaultInputKey
+	}
+	return binding
+}
+
+func agentWorkflowBindingPersistable(binding dto.AgentWorkflowBinding) bool {
+	return strings.TrimSpace(binding.BindingID) != "" &&
+		strings.TrimSpace(binding.AgentID) != "" &&
+		strings.TrimSpace(binding.WorkflowID) != ""
+}
+
+func agentWorkflowBindingKey(binding dto.AgentWorkflowBinding) string {
+	return firstNonEmptyString(binding.BindingID, binding.WorkflowID, binding.AgentID)
+}
+
+func agentWorkflowBindingKeys(binding dto.AgentWorkflowBinding) []string {
+	return appendUniqueStrings(nil, binding.BindingID, binding.WorkflowID, binding.AgentID)
+}
+
+func actualAgentConfigChangedFields(before dto.AgentConfigResponse, after dto.AgentConfigRequest, requestedFields []string) []string {
+	if len(requestedFields) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(requestedFields))
+	seen := map[string]struct{}{}
+	for _, field := range requestedFields {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		if _, ok := seen[field]; ok {
+			continue
+		}
+		seen[field] = struct{}{}
+		if !agentConfigFieldActuallyChanged(before, after, field) {
+			continue
+		}
+		out = append(out, field)
+	}
+	return out
+}
+
+func agentConfigFieldActuallyChanged(before dto.AgentConfigResponse, after dto.AgentConfigRequest, field string) bool {
+	switch strings.TrimSpace(field) {
+	case "system_prompt":
+		return before.SystemPrompt != after.SystemPrompt
+	case "model_provider":
+		return before.ModelProvider != after.ModelProvider
+	case "model":
+		return before.Model != after.Model
+	case "model_parameters":
+		return !reflect.DeepEqual(before.ModelParameters, after.ModelParameters)
+	case "enabled_skill_ids":
+		return !agentConfigStringSetsEqual(before.EnabledSkillIDs, after.EnabledSkillIDs)
+	case "agent_memory_enabled":
+		return before.AgentMemoryEnabled != after.AgentMemoryEnabled
+	case "file_upload_enabled":
+		return before.FileUpload != after.FileUpload
+	case "home_title":
+		return before.HomeTitle != after.HomeTitle
+	case "input_placeholder":
+		return before.InputPlaceholder != after.InputPlaceholder
+	case "theme_color":
+		return before.ThemeColor != after.ThemeColor
+	case "suggested_questions":
+		return !reflect.DeepEqual(before.SuggestedQuestions, after.SuggestedQuestions)
+	case "knowledge_dataset_ids":
+		return !agentConfigStringSetsEqual(before.KnowledgeDatasetIDs, after.KnowledgeDatasetIDs)
+	case "knowledge_retrieval_config":
+		return !reflect.DeepEqual(before.KnowledgeRetrievalConfig, after.KnowledgeRetrievalConfig)
+	case "database_bindings":
+		return !agentConfigDatabaseBindingsEqual(before.DatabaseBindings, after.DatabaseBindings)
+	case "workflow_bindings":
+		return !agentConfigWorkflowBindingsEqual(before.WorkflowBindings, after.WorkflowBindings)
+	default:
+		return true
+	}
+}
+
+func agentConfigStringSetsEqual(before []string, after []string) bool {
+	return stringSetsEqual(stringSetFromSlice(before), stringSetFromSlice(after))
+}
+
+func agentConfigDatabaseBindingsEqual(before []dto.AgentDatabaseBinding, after []dto.AgentDatabaseBinding) bool {
+	beforeSet, _ := databaseBindingResourceSet(before, nil)
+	afterSet, _ := databaseBindingResourceSet(after, nil)
+	return stringSetsEqual(beforeSet, afterSet)
+}
+
+func agentConfigWorkflowBindingsEqual(before []dto.AgentWorkflowBinding, after []dto.AgentWorkflowBinding) bool {
+	beforeSet, _ := workflowBindingResourceSet(before, nil)
+	afterSet, _ := workflowBindingResourceSet(after, nil)
+	return stringSetsEqual(beforeSet, afterSet)
+}
+
+func agentConfigParams(params map[string]interface{}) map[string]interface{} {
+	normalized := copyStringAnyMap(params)
+	config := agentConfigWrapperParam(params)
+	if len(config) == 0 {
+		return normalized
+	}
+	for _, key := range agentConfigWrapperKeys() {
+		if _, exists := normalized[key]; exists {
+			continue
+		}
+		if value, ok := config[key]; ok {
+			normalized[key] = value
+		}
+	}
+	return normalized
+}
+
+func agentConfigWrapperParam(params map[string]interface{}) map[string]interface{} {
+	if params == nil {
+		return nil
+	}
+	value, ok := params["config"]
+	if !ok || value == nil {
+		return nil
+	}
+	if text, ok := value.(string); ok {
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return nil
+		}
+		out := map[string]interface{}{}
+		if err := json.Unmarshal([]byte(text), &out); err != nil {
+			return nil
+		}
+		return out
+	}
+	return mapFromAny(value)
+}
+
+func agentConfigWrapperKeys() []string {
+	return []string{
+		"agent_id",
+		"id",
+		"asset_id",
+		"system_prompt",
+		"model_provider",
+		"model",
+		"model_parameters",
+		"enabled_skill_ids",
+		"add_enabled_skill_ids",
+		"remove_enabled_skill_ids",
+		"agent_memory_enabled",
+		"file_upload_enabled",
+		"home_title",
+		"input_placeholder",
+		"theme_color",
+		"suggested_questions",
+		"knowledge_dataset_ids",
+		"dataset_ids",
+		"add_knowledge_dataset_ids",
+		"remove_knowledge_dataset_ids",
+		"knowledge_retrieval_config",
+		"database_bindings",
+		"add_database_bindings",
+		"remove_database_bindings",
+		"workflow_bindings",
+		"add_workflow_bindings",
+		"remove_workflow_bindings",
+		"display_names",
+	}
 }
 
 func agentConfigRequestFromResponse(current dto.AgentConfigResponse) dto.AgentConfigRequest {
@@ -1572,7 +3236,112 @@ func agentConfigRequestFromResponse(current dto.AgentConfigResponse) dto.AgentCo
 	}
 }
 
-func agentConfigMutationPayload(effect string, agentID string, workspaceID string, before *dto.AgentConfigResponse, config *dto.AgentConfigResponse, agent map[string]interface{}) map[string]interface{} {
+func agentConfigResponseFromRequest(current dto.AgentConfigResponse, req dto.AgentConfigRequest) dto.AgentConfigResponse {
+	after := current
+	after.SystemPrompt = req.SystemPrompt
+	after.ModelProvider = req.ModelProvider
+	after.Model = req.Model
+	after.ModelParameters = copyStringAnyMap(req.ModelParameters)
+	after.EnabledSkillIDs = append([]string(nil), req.EnabledSkillIDs...)
+	after.AgentMemoryEnabled = req.AgentMemoryEnabled
+	after.FileUpload = req.FileUpload
+	after.HomeTitle = req.HomeTitle
+	after.InputPlaceholder = req.InputPlaceholder
+	after.ThemeColor = req.ThemeColor
+	after.SuggestedQuestions = append([]string(nil), req.SuggestedQuestions...)
+	after.KnowledgeDatasetIDs = append([]string(nil), req.KnowledgeDatasetIDs...)
+	after.KnowledgeRetrievalConfig = copyStringAnyMap(req.KnowledgeRetrievalConfig)
+	after.DatabaseBindings = append([]dto.AgentDatabaseBinding(nil), req.DatabaseBindings...)
+	after.WorkflowBindings = append([]dto.AgentWorkflowBinding(nil), req.WorkflowBindings...)
+	return after
+}
+
+func hasAgentConfigBindingParam(params map[string]interface{}) bool {
+	if len(params) == 0 {
+		return false
+	}
+	for _, key := range []string{
+		"enabled_skill_ids",
+		"add_enabled_skill_ids",
+		"remove_enabled_skill_ids",
+		"knowledge_dataset_ids",
+		"dataset_ids",
+		"add_knowledge_dataset_ids",
+		"remove_knowledge_dataset_ids",
+		"database_bindings",
+		"add_database_bindings",
+		"remove_database_bindings",
+		"workflow_bindings",
+		"add_workflow_bindings",
+		"remove_workflow_bindings",
+	} {
+		if _, ok := params[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func agentConfigChangedFieldsIncludeBinding(fields []string) bool {
+	for _, field := range fields {
+		switch field {
+		case "enabled_skill_ids", "knowledge_dataset_ids", "database_bindings", "workflow_bindings":
+			return true
+		}
+	}
+	return false
+}
+
+func mergeAgentConfigDisplayNamesIntoParams(params map[string]interface{}, displayNames agentConfigDisplayNames) {
+	if len(params) == 0 {
+		return
+	}
+	nested := mapFromAny(params["display_names"])
+	if nested == nil {
+		nested = map[string]interface{}{}
+	}
+	mergeAgentConfigDisplayNameGroup(nested, "skills", displayNames.Skills)
+	mergeAgentConfigDisplayNameGroup(nested, "knowledge_bases", displayNames.KnowledgeBases)
+	mergeAgentConfigDisplayNameGroup(nested, "database_tables", displayNames.DatabaseTables)
+	mergeAgentConfigDisplayNameGroup(nested, "workflows", displayNames.Workflows)
+	if len(nested) > 0 {
+		params["display_names"] = nested
+	}
+}
+
+func mergeAgentConfigBindingChangesPreviewIntoParams(params map[string]interface{}, changes []map[string]interface{}) {
+	if len(params) == 0 || len(changes) == 0 {
+		return
+	}
+	params["binding_changes_preview"] = changes
+	params["config_changes_preview"] = changes
+	if primary := primaryAgentConfigBindingChange(changes); len(primary) > 0 {
+		params["binding_change_preview"] = primary
+	}
+}
+
+func mergeAgentConfigDisplayNameGroup(target map[string]interface{}, key string, values map[string]string) {
+	if len(values) == 0 {
+		return
+	}
+	group := mapFromAny(target[key])
+	if group == nil {
+		group = map[string]interface{}{}
+	}
+	for id, name := range values {
+		id = strings.TrimSpace(id)
+		name = strings.TrimSpace(name)
+		if id == "" || name == "" || strings.EqualFold(id, name) {
+			continue
+		}
+		group[id] = name
+	}
+	if len(group) > 0 {
+		target[key] = group
+	}
+}
+
+func agentConfigMutationPayload(effect string, agentID string, workspaceID string, before *dto.AgentConfigResponse, config *dto.AgentConfigResponse, agent map[string]interface{}, displayNames agentConfigDisplayNames) map[string]interface{} {
 	agent = agentPayload(agent)
 	if len(agent) == 0 {
 		agent = map[string]interface{}{}
@@ -1597,12 +3366,22 @@ func agentConfigMutationPayload(effect string, agentID string, workspaceID strin
 		payload["agent_name"] = name
 	}
 	if config != nil {
+		payload["model_provider"] = config.ModelProvider
+		payload["model"] = config.Model
+		payload["agent_memory_enabled"] = config.AgentMemoryEnabled
+		payload["file_upload_enabled"] = config.FileUpload
+		payload["home_title"] = config.HomeTitle
+		payload["input_placeholder"] = config.InputPlaceholder
+		payload["theme_color"] = config.ThemeColor
+		payload["suggested_questions"] = append([]string(nil), config.SuggestedQuestions...)
+		payload["suggested_question_count"] = len(config.SuggestedQuestions)
+		payload["enabled_skill_ids"] = append([]string(nil), config.EnabledSkillIDs...)
 		payload["knowledge_dataset_ids"] = append([]string(nil), config.KnowledgeDatasetIDs...)
 		payload["knowledge_retrieval_config"] = copyStringAnyMap(config.KnowledgeRetrievalConfig)
 		payload["database_bindings"] = append([]dto.AgentDatabaseBinding(nil), config.DatabaseBindings...)
 		payload["workflow_bindings"] = append([]dto.AgentWorkflowBinding(nil), config.WorkflowBindings...)
 	}
-	if changes := agentConfigBindingChanges(before, config); len(changes) > 0 {
+	if changes := agentConfigBindingChanges(before, config, displayNames); len(changes) > 0 {
 		payload["config_changes"] = changes
 		payload["binding_changes"] = changes
 		if primary := primaryAgentConfigBindingChange(changes); len(primary) > 0 {
@@ -1610,12 +3389,16 @@ func agentConfigMutationPayload(effect string, agentID string, workspaceID strin
 				"binding_kind",
 				"change_action",
 				"resource_count",
+				"resource_ids",
 				"resource_names",
 				"added_resource_count",
+				"added_resource_ids",
 				"added_resource_names",
 				"removed_resource_count",
+				"removed_resource_ids",
 				"removed_resource_names",
 				"final_resource_count",
+				"final_resource_ids",
 				"final_resource_names",
 			} {
 				if value, ok := primary[field]; ok {
@@ -1627,21 +3410,133 @@ func agentConfigMutationPayload(effect string, agentID string, workspaceID strin
 	return payload
 }
 
-func agentConfigBindingChanges(before *dto.AgentConfigResponse, after *dto.AgentConfigResponse) []map[string]interface{} {
+func mergeAgentConfigBindingFinalStates(payload map[string]interface{}, requestedFields []string, config *dto.AgentConfigResponse, displayNames agentConfigDisplayNames) {
+	if len(payload) == 0 || config == nil {
+		return
+	}
+	states := agentConfigBindingFinalStates(requestedFields, config, displayNames)
+	if len(states) == 0 {
+		return
+	}
+	payload["binding_final_states"] = states
+	if len(states) != 1 {
+		return
+	}
+	state := states[0]
+	for _, field := range []string{
+		"field",
+		"binding_kind",
+		"change_action",
+		"final_resource_count",
+		"final_resource_ids",
+		"final_resource_names",
+	} {
+		if _, exists := payload[field]; exists {
+			continue
+		}
+		if value, ok := state[field]; ok {
+			payload[field] = value
+		}
+	}
+}
+
+func agentConfigBindingFinalStates(requestedFields []string, config *dto.AgentConfigResponse, displayNames agentConfigDisplayNames) []map[string]interface{} {
+	if config == nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	states := make([]map[string]interface{}, 0, 4)
+	add := func(field string, state map[string]interface{}) {
+		field = strings.TrimSpace(field)
+		if field == "" || len(state) == 0 {
+			return
+		}
+		if _, ok := seen[field]; ok {
+			return
+		}
+		seen[field] = struct{}{}
+		states = append(states, state)
+	}
+	for _, field := range requestedFields {
+		switch strings.TrimSpace(field) {
+		case "enabled_skill_ids":
+			add("enabled_skill_ids", agentConfigStringBindingFinalState("enabled_skill_ids", "agent_skill", config.EnabledSkillIDs, displayNames.Skills))
+		case "knowledge_dataset_ids", "dataset_ids":
+			add("knowledge_dataset_ids", agentConfigStringBindingFinalState("knowledge_dataset_ids", "knowledge_base", config.KnowledgeDatasetIDs, displayNames.KnowledgeBases))
+		case "database_bindings":
+			add("database_bindings", agentConfigDatabaseBindingFinalState(config.DatabaseBindings, displayNames.DatabaseTables))
+		case "workflow_bindings":
+			add("workflow_bindings", agentConfigWorkflowBindingFinalState(config.WorkflowBindings, displayNames.Workflows))
+		}
+	}
+	return states
+}
+
+func agentConfigStringBindingFinalState(field string, kind string, values []string, displayNames map[string]string) map[string]interface{} {
+	finalKeys := sortedSetKeys(stringSetFromSlice(values))
+	finalNames := make([]string, 0, len(finalKeys))
+	for _, key := range finalKeys {
+		if name := displayNameForResource(displayNames, key); name != "" {
+			finalNames = append(finalNames, name)
+		}
+	}
+	state := agentConfigChangePayload(field, kind, len(finalKeys), finalNames, 0, nil, 0, nil)
+	state["change_action"] = "satisfied"
+	addAgentConfigChangeResourceIDs(state, finalKeys, nil, nil)
+	return state
+}
+
+func agentConfigDatabaseBindingFinalState(bindings []dto.AgentDatabaseBinding, displayNames map[string]string) map[string]interface{} {
+	finalSet, finalNamesByKey := databaseBindingResourceSet(bindings, displayNames)
+	finalKeys := sortedSetKeys(finalSet)
+	state := agentConfigChangePayload(
+		"database_bindings",
+		"database_table",
+		len(finalKeys),
+		resourceNamesForKeys(finalKeys, finalNamesByKey),
+		0,
+		nil,
+		0,
+		nil,
+	)
+	state["change_action"] = "satisfied"
+	addAgentConfigChangeResourceIDs(state, finalKeys, nil, nil)
+	return state
+}
+
+func agentConfigWorkflowBindingFinalState(bindings []dto.AgentWorkflowBinding, displayNames map[string]string) map[string]interface{} {
+	finalSet, finalNamesByKey := workflowBindingResourceSet(bindings, displayNames)
+	finalKeys := sortedSetKeys(finalSet)
+	state := agentConfigChangePayload(
+		"workflow_bindings",
+		"workflow",
+		len(finalKeys),
+		resourceNamesForKeys(finalKeys, finalNamesByKey),
+		0,
+		nil,
+		0,
+		nil,
+	)
+	state["change_action"] = "satisfied"
+	addAgentConfigChangeResourceIDs(state, finalKeys, nil, nil)
+	return state
+}
+
+func agentConfigBindingChanges(before *dto.AgentConfigResponse, after *dto.AgentConfigResponse, displayNames agentConfigDisplayNames) []map[string]interface{} {
 	if before == nil || after == nil {
 		return nil
 	}
 	changes := make([]map[string]interface{}, 0, 4)
-	if change := agentConfigStringSetChange("enabled_skill_ids", "agent_skill", before.EnabledSkillIDs, after.EnabledSkillIDs, nil); len(change) > 0 {
+	if change := agentConfigStringSetChange("enabled_skill_ids", "agent_skill", before.EnabledSkillIDs, after.EnabledSkillIDs, displayNames.Skills); len(change) > 0 {
 		changes = append(changes, change)
 	}
-	if change := agentConfigStringSetChange("knowledge_dataset_ids", "knowledge_base", before.KnowledgeDatasetIDs, after.KnowledgeDatasetIDs, nil); len(change) > 0 {
+	if change := agentConfigStringSetChange("knowledge_dataset_ids", "knowledge_base", before.KnowledgeDatasetIDs, after.KnowledgeDatasetIDs, displayNames.KnowledgeBases); len(change) > 0 {
 		changes = append(changes, change)
 	}
-	if change := agentConfigDatabaseBindingChange(before.DatabaseBindings, after.DatabaseBindings); len(change) > 0 {
+	if change := agentConfigDatabaseBindingChange(before.DatabaseBindings, after.DatabaseBindings, displayNames.DatabaseTables); len(change) > 0 {
 		changes = append(changes, change)
 	}
-	if change := agentConfigWorkflowBindingChange(before.WorkflowBindings, after.WorkflowBindings); len(change) > 0 {
+	if change := agentConfigWorkflowBindingChange(before.WorkflowBindings, after.WorkflowBindings, displayNames.Workflows); len(change) > 0 {
 		changes = append(changes, change)
 	}
 	return changes
@@ -1676,9 +3571,13 @@ func primaryAgentConfigBindingChange(changes []map[string]interface{}) map[strin
 		"added_resource_count":   added,
 		"removed_resource_count": removed,
 		"final_resource_count":   agentConfigChangesFinalCount(changes),
+		"final_resource_ids":     agentConfigChangesValues(changes, "final_resource_ids"),
 		"final_resource_names":   agentConfigChangesNames(changes, "final_resource_names"),
+		"added_resource_ids":     agentConfigChangesValues(changes, "added_resource_ids"),
 		"added_resource_names":   agentConfigChangesNames(changes, "added_resource_names"),
+		"removed_resource_ids":   agentConfigChangesValues(changes, "removed_resource_ids"),
 		"removed_resource_names": agentConfigChangesNames(changes, "removed_resource_names"),
+		"resource_ids":           agentConfigPrimaryChangeValues(action, changes),
 		"resource_names":         agentConfigPrimaryChangeNames(action, changes),
 	}
 }
@@ -1701,19 +3600,55 @@ func agentConfigStringSetChange(field string, kind string, before []string, afte
 	addedKeys := sortedSetDiff(afterSet, beforeSet)
 	removedKeys := sortedSetDiff(beforeSet, afterSet)
 	finalKeys := sortedSetKeys(afterSet)
-	return agentConfigChangePayload(field, kind, len(finalKeys), names(finalKeys), len(addedKeys), names(addedKeys), len(removedKeys), names(removedKeys))
+	change := agentConfigChangePayload(field, kind, len(finalKeys), names(finalKeys), len(addedKeys), names(addedKeys), len(removedKeys), names(removedKeys))
+	addAgentConfigChangeResourceIDs(change, finalKeys, addedKeys, removedKeys)
+	return change
 }
 
-func agentConfigDatabaseBindingChange(before []dto.AgentDatabaseBinding, after []dto.AgentDatabaseBinding) map[string]interface{} {
-	beforeSet, beforeNames := databaseBindingResourceSet(before)
-	afterSet, afterNames := databaseBindingResourceSet(after)
+func addAgentConfigChangeResourceIDs(change map[string]interface{}, finalKeys []string, addedKeys []string, removedKeys []string) {
+	if len(change) == 0 {
+		return
+	}
+	if len(finalKeys) > 0 {
+		change["final_resource_ids"] = append([]string(nil), finalKeys...)
+	}
+	if len(addedKeys) > 0 {
+		change["added_resource_ids"] = append([]string(nil), addedKeys...)
+	}
+	if len(removedKeys) > 0 {
+		change["removed_resource_ids"] = append([]string(nil), removedKeys...)
+	}
+	switch firstStringFromMap(change, "change_action") {
+	case "bind":
+		if len(addedKeys) > 0 {
+			change["resource_ids"] = append([]string(nil), addedKeys...)
+		}
+	case "unbind":
+		if len(removedKeys) > 0 {
+			change["resource_ids"] = append([]string(nil), removedKeys...)
+		}
+	case "replace":
+		ids := appendUniqueStrings(addedKeys, removedKeys...)
+		if len(ids) > 0 {
+			change["resource_ids"] = ids
+		}
+	default:
+		if len(finalKeys) > 0 {
+			change["resource_ids"] = append([]string(nil), finalKeys...)
+		}
+	}
+}
+
+func agentConfigDatabaseBindingChange(before []dto.AgentDatabaseBinding, after []dto.AgentDatabaseBinding, displayNames map[string]string) map[string]interface{} {
+	beforeSet, beforeNames := databaseBindingResourceSet(before, displayNames)
+	afterSet, afterNames := databaseBindingResourceSet(after, displayNames)
 	if stringSetsEqual(beforeSet, afterSet) {
 		return nil
 	}
 	addedKeys := sortedSetDiff(afterSet, beforeSet)
 	removedKeys := sortedSetDiff(beforeSet, afterSet)
 	finalKeys := sortedSetKeys(afterSet)
-	return agentConfigChangePayload(
+	change := agentConfigChangePayload(
 		"database_bindings",
 		"database_table",
 		len(finalKeys),
@@ -1723,18 +3658,20 @@ func agentConfigDatabaseBindingChange(before []dto.AgentDatabaseBinding, after [
 		len(removedKeys),
 		resourceNamesForKeys(removedKeys, beforeNames),
 	)
+	addAgentConfigChangeResourceIDs(change, finalKeys, addedKeys, removedKeys)
+	return change
 }
 
-func agentConfigWorkflowBindingChange(before []dto.AgentWorkflowBinding, after []dto.AgentWorkflowBinding) map[string]interface{} {
-	beforeSet, beforeNames := workflowBindingResourceSet(before)
-	afterSet, afterNames := workflowBindingResourceSet(after)
+func agentConfigWorkflowBindingChange(before []dto.AgentWorkflowBinding, after []dto.AgentWorkflowBinding, displayNames map[string]string) map[string]interface{} {
+	beforeSet, beforeNames := workflowBindingResourceSet(before, displayNames)
+	afterSet, afterNames := workflowBindingResourceSet(after, displayNames)
 	if stringSetsEqual(beforeSet, afterSet) {
 		return nil
 	}
 	addedKeys := sortedSetDiff(afterSet, beforeSet)
 	removedKeys := sortedSetDiff(beforeSet, afterSet)
 	finalKeys := sortedSetKeys(afterSet)
-	return agentConfigChangePayload(
+	change := agentConfigChangePayload(
 		"workflow_bindings",
 		"workflow",
 		len(finalKeys),
@@ -1744,6 +3681,8 @@ func agentConfigWorkflowBindingChange(before []dto.AgentWorkflowBinding, after [
 		len(removedKeys),
 		resourceNamesForKeys(removedKeys, beforeNames),
 	)
+	addAgentConfigChangeResourceIDs(change, finalKeys, addedKeys, removedKeys)
+	return change
 }
 
 func agentConfigChangePayload(field string, kind string, finalCount int, finalNames []string, addedCount int, addedNames []string, removedCount int, removedNames []string) map[string]interface{} {
@@ -1792,7 +3731,7 @@ func agentConfigChangePayload(field string, kind string, finalCount int, finalNa
 	return change
 }
 
-func databaseBindingResourceSet(bindings []dto.AgentDatabaseBinding) (map[string]struct{}, map[string]string) {
+func databaseBindingResourceSet(bindings []dto.AgentDatabaseBinding, displayNames map[string]string) (map[string]struct{}, map[string]string) {
 	set := map[string]struct{}{}
 	names := map[string]string{}
 	for _, binding := range bindings {
@@ -1804,12 +3743,15 @@ func databaseBindingResourceSet(bindings []dto.AgentDatabaseBinding) (map[string
 			}
 			key := dataSourceID + ":" + tableID
 			set[key] = struct{}{}
+			if name := displayNameForResource(displayNames, key, tableID); name != "" {
+				names[key] = name
+			}
 		}
 	}
 	return set, names
 }
 
-func workflowBindingResourceSet(bindings []dto.AgentWorkflowBinding) (map[string]struct{}, map[string]string) {
+func workflowBindingResourceSet(bindings []dto.AgentWorkflowBinding, displayNames map[string]string) (map[string]struct{}, map[string]string) {
 	set := map[string]struct{}{}
 	names := map[string]string{}
 	for _, binding := range bindings {
@@ -1818,11 +3760,126 @@ func workflowBindingResourceSet(bindings []dto.AgentWorkflowBinding) (map[string
 			continue
 		}
 		set[key] = struct{}{}
-		if name := strings.TrimSpace(binding.Label); name != "" && !strings.EqualFold(name, key) {
+		if name := firstNonEmptyString(
+			displayNameForResource(displayNames, key, binding.WorkflowID, binding.AgentID),
+			strings.TrimSpace(binding.Label),
+		); name != "" && !strings.EqualFold(name, key) {
 			names[key] = name
 		}
 	}
 	return set, names
+}
+
+func agentConfigDisplayNamesFromParams(params map[string]interface{}) agentConfigDisplayNames {
+	return agentConfigDisplayNames{
+		Skills: mergeAgentConfigDisplayNameMaps(params,
+			[]string{"skill_names", "enabled_skill_names", "agent_skill_names"},
+			[]string{"skills", "agent_skills", "enabled_skills"},
+		),
+		KnowledgeBases: mergeAgentConfigDisplayNameMaps(params,
+			[]string{"knowledge_dataset_names", "dataset_names", "knowledge_base_names"},
+			[]string{"knowledge", "knowledge_bases", "datasets"},
+		),
+		DatabaseTables: mergeAgentConfigDisplayNameMaps(params,
+			[]string{"database_table_names", "table_names"},
+			[]string{"database_tables", "tables"},
+		),
+		Workflows: mergeAgentConfigDisplayNameMaps(params,
+			[]string{"workflow_names", "workflow_binding_names"},
+			[]string{"workflows", "workflow_bindings"},
+		),
+	}
+}
+
+func mergeAgentConfigDisplayNameMaps(params map[string]interface{}, topLevelKeys []string, nestedKeys []string) map[string]string {
+	out := map[string]string{}
+	for _, key := range topLevelKeys {
+		appendAgentConfigDisplayNames(out, valueForKey(params, key))
+	}
+	if nested := mapFromAny(valueForKey(params, "display_names")); len(nested) > 0 {
+		for _, key := range append(append([]string{}, topLevelKeys...), nestedKeys...) {
+			appendAgentConfigDisplayNames(out, nested[key])
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func appendAgentConfigDisplayNames(out map[string]string, value interface{}) {
+	if out == nil {
+		return
+	}
+	if mapped := mapFromAny(value); len(mapped) > 0 {
+		for key, rawName := range mapped {
+			key = strings.TrimSpace(key)
+			name := displayNameFromAny(rawName)
+			if key == "" || name == "" || strings.EqualFold(key, name) {
+				continue
+			}
+			out[key] = name
+		}
+		return
+	}
+	for _, item := range interfaceSlice(value) {
+		mapped := mapFromAny(item)
+		if len(mapped) == 0 {
+			continue
+		}
+		dataSourceID := firstStringFromMap(mapped, "data_source_id")
+		tableID := firstStringFromMap(mapped, "table_id")
+		key := firstStringFromMap(
+			mapped,
+			"id",
+			"skill_id",
+			"dataset_id",
+			"data_source_id",
+			"table_id",
+			"binding_id",
+			"workflow_id",
+			"agent_id",
+		)
+		name := firstStringFromMap(mapped, "name", "display_name", "label", "title")
+		if key == "" || name == "" || strings.EqualFold(key, name) {
+			continue
+		}
+		out[key] = name
+		if dataSourceID != "" && tableID != "" {
+			out[dataSourceID+":"+tableID] = name
+		}
+	}
+}
+
+func displayNameForResource(names map[string]string, keys ...string) string {
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if name := displayNameFromAny(names[key]); name != "" && !strings.EqualFold(name, key) {
+			return name
+		}
+	}
+	return ""
+}
+
+func displayNameFromAny(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	mapped := mapFromAny(value)
+	if len(mapped) > 0 {
+		return firstStringFromMap(mapped, "name", "display_name", "label", "title")
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func valueForKey(params map[string]interface{}, key string) interface{} {
+	if params == nil {
+		return nil
+	}
+	return params[key]
 }
 
 func resourceNamesForKeys(keys []string, names map[string]string) []string {
@@ -1888,10 +3945,14 @@ func sortedStrings(values []string) []string {
 }
 
 func agentConfigChangesNames(changes []map[string]interface{}, field string) []string {
+	return agentConfigChangesValues(changes, field)
+}
+
+func agentConfigChangesValues(changes []map[string]interface{}, field string) []string {
 	out := make([]string, 0)
 	for _, change := range changes {
-		for _, name := range stringSliceFromAny(change[field]) {
-			out = appendUniqueStrings(out, name)
+		for _, value := range stringSliceFromAny(change[field]) {
+			out = appendUniqueStrings(out, value)
 		}
 	}
 	return out
@@ -1906,17 +3967,25 @@ func agentConfigChangesFinalCount(changes []map[string]interface{}) int {
 }
 
 func agentConfigPrimaryChangeNames(action string, changes []map[string]interface{}) []string {
+	return agentConfigPrimaryChangeValuesForField(action, changes, "added_resource_names", "removed_resource_names")
+}
+
+func agentConfigPrimaryChangeValues(action string, changes []map[string]interface{}) []string {
+	return agentConfigPrimaryChangeValuesForField(action, changes, "added_resource_ids", "removed_resource_ids")
+}
+
+func agentConfigPrimaryChangeValuesForField(action string, changes []map[string]interface{}, addedField string, removedField string) []string {
 	switch action {
 	case "bind":
-		return agentConfigChangesNames(changes, "added_resource_names")
+		return agentConfigChangesValues(changes, addedField)
 	case "unbind":
-		return agentConfigChangesNames(changes, "removed_resource_names")
+		return agentConfigChangesValues(changes, removedField)
 	default:
-		names := agentConfigChangesNames(changes, "added_resource_names")
-		for _, name := range agentConfigChangesNames(changes, "removed_resource_names") {
-			names = appendUniqueStrings(names, name)
+		values := agentConfigChangesValues(changes, addedField)
+		for _, value := range agentConfigChangesValues(changes, removedField) {
+			values = appendUniqueStrings(values, value)
 		}
-		return names
+		return values
 	}
 }
 
@@ -1990,6 +4059,15 @@ func agentOperationPayload(effect string, agent interface{}) map[string]interfac
 	}
 	if name := strings.TrimSpace(stringValue(agentMap, "name")); name != "" {
 		payload["agent_name"] = name
+	}
+	if description := strings.TrimSpace(stringValue(agentMap, "description")); description != "" {
+		payload["agent_description"] = description
+	}
+	if iconType := strings.TrimSpace(stringValue(agentMap, "icon_type")); iconType != "" {
+		payload["agent_icon_type"] = iconType
+	}
+	if icon := strings.TrimSpace(stringValue(agentMap, "icon")); icon != "" {
+		payload["agent_icon"] = icon
 	}
 	if workspaceID := strings.TrimSpace(firstNonEmptyString(stringValue(agentMap, "workspace_id"), stringValue(agentMap, "tenant_id"))); workspaceID != "" {
 		payload["workspace_id"] = workspaceID
@@ -2307,6 +4385,16 @@ func normalizeAgentModelUseCase(raw string) string {
 	default:
 		return value
 	}
+}
+
+func normalizeAgentThemeColor(raw string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	for _, allowed := range allowedAgentThemeColors {
+		if value == allowed {
+			return value, nil
+		}
+	}
+	return "", fmt.Errorf("theme_color must be one of %s", strings.Join(allowedAgentThemeColors, ", "))
 }
 
 func validAgentModelUseCases() []string {
@@ -2761,7 +4849,82 @@ func decodeAgentDatabaseBindings(data []byte) ([]dto.AgentDatabaseBinding, error
 	if err := json.Unmarshal(data, &bindings); err != nil {
 		return nil, fmt.Errorf("bindings must be a JSON array of database binding objects: %w", err)
 	}
+	var rawItems []map[string]interface{}
+	if err := json.Unmarshal(data, &rawItems); err == nil {
+		for idx, raw := range rawItems {
+			if idx >= len(bindings) {
+				break
+			}
+			bindings[idx] = normalizeAgentDatabaseBindingAliases(bindings[idx], raw)
+		}
+	}
 	return bindings, nil
+}
+
+func agentDatabaseTableBindingCandidates(tables []dto.AgentDatabaseTableCandidate) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(tables))
+	for _, table := range tables {
+		dataSourceID := strings.TrimSpace(table.DataSourceID)
+		tableID := strings.TrimSpace(table.TableID)
+		if dataSourceID == "" || tableID == "" {
+			continue
+		}
+		binding := map[string]interface{}{
+			"data_source_id": dataSourceID,
+			"table_ids":      []string{tableID},
+		}
+		out = append(out, map[string]interface{}{
+			"id":             dataSourceID + ":" + tableID,
+			"data_source_id": dataSourceID,
+			"table_id":       tableID,
+			"name":           strings.TrimSpace(table.Name),
+			"selected":       table.Selected,
+			"writable":       table.Writable,
+			"binding":        binding,
+		})
+	}
+	return out
+}
+
+func normalizeAgentDatabaseBindingAliases(binding dto.AgentDatabaseBinding, raw map[string]interface{}) dto.AgentDatabaseBinding {
+	if len(raw) == 0 {
+		return binding
+	}
+	if tableID := firstStringFromMap(raw, "table_id"); tableID != "" {
+		binding.TableIDs = appendUniqueStrings(binding.TableIDs, tableID)
+	}
+	if writableTableID := firstStringFromMap(raw, "writable_table_id"); writableTableID != "" {
+		binding.WritableTableIDs = appendUniqueStrings(binding.WritableTableIDs, writableTableID)
+	}
+	for _, key := range []string{"database_table_id", "database_table_ids", "database_table_keys", "resource_id", "resource_ids", "id", "ids"} {
+		for _, compound := range stringSliceFromAny(raw[key]) {
+			dataSourceID, tableID, ok := splitAgentDatabaseTableBindingKey(compound)
+			if !ok {
+				continue
+			}
+			if strings.TrimSpace(binding.DataSourceID) == "" {
+				binding.DataSourceID = dataSourceID
+			}
+			if !strings.EqualFold(strings.TrimSpace(binding.DataSourceID), dataSourceID) {
+				continue
+			}
+			binding.TableIDs = appendUniqueStrings(binding.TableIDs, tableID)
+		}
+	}
+	return binding
+}
+
+func splitAgentDatabaseTableBindingKey(value string) (string, string, bool) {
+	left, right, ok := strings.Cut(strings.TrimSpace(value), ":")
+	if !ok {
+		return "", "", false
+	}
+	dataSourceID := strings.TrimSpace(left)
+	tableID := strings.TrimSpace(right)
+	if dataSourceID == "" || tableID == "" {
+		return "", "", false
+	}
+	return dataSourceID, tableID, true
 }
 
 func agentWorkflowBindingsParam(params map[string]interface{}, keys ...string) ([]dto.AgentWorkflowBinding, bool, error) {
@@ -2835,6 +4998,35 @@ func mapFromAny(value interface{}) map[string]interface{} {
 			return nil
 		}
 		return out
+	}
+}
+
+func mapsFromAny(value interface{}) []map[string]interface{} {
+	switch typed := value.(type) {
+	case nil:
+		return nil
+	case []map[string]interface{}:
+		out := make([]map[string]interface{}, 0, len(typed))
+		for _, item := range typed {
+			if len(item) > 0 {
+				out = append(out, copyStringAnyMap(item))
+			}
+		}
+		return out
+	case []interface{}:
+		out := make([]map[string]interface{}, 0, len(typed))
+		for _, item := range typed {
+			if mapped := mapFromAny(item); len(mapped) > 0 {
+				out = append(out, mapped)
+			}
+		}
+		return out
+	default:
+		mapped := mapFromAny(value)
+		if len(mapped) == 0 {
+			return nil
+		}
+		return []map[string]interface{}{mapped}
 	}
 }
 

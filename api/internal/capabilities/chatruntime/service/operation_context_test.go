@@ -129,6 +129,43 @@ func TestOperationContextRecordedAsOperationLedger(t *testing.T) {
 	}
 }
 
+func TestOperationLedgerKeepsAgentTitleAndHrefSummary(t *testing.T) {
+	parts, err := normalizeChatRequest(runtimedto.ChatRequest{
+		Query: "Open Support Agent.",
+		Model: "test-model",
+		OperationContext: map[string]interface{}{
+			"resources": []interface{}{
+				map[string]interface{}{
+					"resource_id":   "agent-1",
+					"resource_type": "agent",
+					"title":         "Support Agent",
+					"href":          "/console/agents/agent-1/agent",
+					"metadata": map[string]interface{}{
+						"agent_id": "agent-1",
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("normalizeChatRequest() error = %v", err)
+	}
+
+	message := newStreamingMessage(uuid.New(), nil, parts)
+	ledger := mapFromOperationContext(message.Metadata["operation_ledger"])
+	resources := mapSliceFromAny(ledger["resources"])
+	if len(resources) != 1 {
+		t.Fatalf("ledger resources = %#v, want one Agent summary", ledger["resources"])
+	}
+	resource := resources[0]
+	if resource["id"] != "agent-1" || resource["resource_id"] != "agent-1" || resource["name"] != "Support Agent" || resource["title"] != "Support Agent" {
+		t.Fatalf("resource identity summary = %#v, want id/title/name preserved", resource)
+	}
+	if resource["href"] != "/console/agents/agent-1/agent" || resource["resource_type"] != "agent" {
+		t.Fatalf("resource route/type summary = %#v, want href and resource_type preserved", resource)
+	}
+}
+
 func TestRegenerateRequestCarriesOperationContext(t *testing.T) {
 	original := consoleFilesSnapshotTestParts("summary the second Excel", []consoleFilesTestFile{
 		{

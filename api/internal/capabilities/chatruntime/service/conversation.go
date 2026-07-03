@@ -409,6 +409,8 @@ func (s *service) validateCurrentLeafMessage(ctx context.Context, scope Scope, c
 		return fmt.Errorf("%w: current leaf message belongs to another conversation", ErrInvalidInput)
 	}
 	switch message.Status {
+	case runtimemodel.MessageStatusPending:
+		return nil
 	case runtimemodel.MessageStatusCompleted,
 		runtimemodel.MessageStatusStopped,
 		runtimemodel.MessageStatusError,

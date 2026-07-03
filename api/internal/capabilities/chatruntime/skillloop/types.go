@@ -123,6 +123,8 @@ type RunRequest struct {
 	ToolCallGuard            ToolCallGuard
 	PlanToolGuard            ToolCallGuard
 	CompletionEvidence       CompletionEvidenceFunc
+	CurrentMetadata          func() map[string]interface{}
+	OnCompletionVerification func(CompletionVerificationResult)
 	OnChunk                  func(string) error
 }
 
@@ -133,6 +135,15 @@ type UserInputGuard func(UserInputGuardRequest) (FinalAnswerGuardResult, bool)
 type ToolCallGuard func(ToolCallGuardRequest) (FinalAnswerGuardResult, bool)
 
 type CompletionEvidenceFunc func() map[string]interface{}
+
+type CompletionVerificationResult struct {
+	Status            string
+	Reason            string
+	MissingSteps      []string
+	UnsupportedClaims []string
+	NextActionHint    string
+	FinalAnswer       string
+}
 
 type FinalAnswerGuardRequest struct {
 	Answer              string
@@ -148,6 +159,7 @@ type FinalAnswerGuardResult struct {
 	ToolName      string
 	Message       string
 	SystemMessage string
+	Advisory      bool
 }
 
 type UserInputGuardRequest struct {

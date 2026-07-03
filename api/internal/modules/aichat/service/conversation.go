@@ -186,7 +186,14 @@ func (s *service) validateCurrentLeafMessage(ctx context.Context, scope Scope, c
 		return fmt.Errorf("%w: current leaf message belongs to another conversation", ErrInvalidInput)
 	}
 	switch message.Status {
-	case aichatmodel.MessageStatusCompleted, aichatmodel.MessageStatusStopped, aichatmodel.MessageStatusError:
+	case aichatmodel.MessageStatusPending:
+		return nil
+	case aichatmodel.MessageStatusCompleted,
+		aichatmodel.MessageStatusStopped,
+		aichatmodel.MessageStatusError,
+		aichatmodel.MessageStatusWaitingApproval,
+		aichatmodel.MessageStatusWaitingQuestion,
+		aichatmodel.MessageStatusWaitingClientAction:
 		return nil
 	case aichatmodel.MessageStatusStreaming:
 		if conversation.RuntimeStatus == aichatmodel.ConversationRuntimeStatusStreaming &&

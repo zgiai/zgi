@@ -33,6 +33,11 @@ func TestVisibleAgentProgressText(t *testing.T) {
 			want:  "\u8ba9\u6211\u770b\u770b\u662f\u5426\u53ef\u4ee5\u5bfc\u822a\u5230\u914d\u7f6e\u9875\u9762\u6765\u8fdb\u884c\u4fee\u6539\u3002",
 		},
 		{
+			name:  "drops assertive navigation progress without tool evidence",
+			input: "\u6211\u9700\u8981\u5148\u5bfc\u822a\u5230\u667a\u80fd\u4f53\u9875\u9762\uff0c\u7136\u540e\u4fee\u6539\u63cf\u8ff0\u3002",
+			want:  "",
+		},
+		{
 			name:  "keeps only the first visible sentence",
 			input: "I will check the editable configuration first. Then I will apply the update.",
 			want:  "I will check the editable configuration first.",
@@ -52,13 +57,60 @@ func TestVisibleAgentProgressText(t *testing.T) {
 	}
 }
 
+func TestLocalizedAgentProgressText(t *testing.T) {
+	const chineseFallback = "\u6211\u5148\u786e\u8ba4\u5f53\u524d\u4fe1\u606f\uff0c\u518d\u7ee7\u7eed\u5904\u7406\u3002"
+
+	tests := []struct {
+		name     string
+		userText string
+		progress string
+		want     string
+	}{
+		{
+			name:     "keeps Chinese progress for Chinese request",
+			userText: "\u5e2e\u6211\u4fee\u6539\u8fd9\u4e2a\u667a\u80fd\u4f53",
+			progress: "\u6211\u5148\u786e\u8ba4\u5f53\u524d\u914d\u7f6e\uff0c\u518d\u7ee7\u7eed\u5904\u7406\u3002",
+			want:     "\u6211\u5148\u786e\u8ba4\u5f53\u524d\u914d\u7f6e\uff0c\u518d\u7ee7\u7eed\u5904\u7406\u3002",
+		},
+		{
+			name:     "localizes English progress for Chinese request",
+			userText: "\u4fee\u6539\u8fd9\u4e2a\u667a\u80fd\u4f53\u7684\u5f00\u573a\u95ee\u9898",
+			progress: "Let me start by loading the agent-management skill and reading the current config.",
+			want:     chineseFallback,
+		},
+		{
+			name:     "keeps English progress for English request",
+			userText: "Update this agent's suggested questions",
+			progress: "I will check the editable configuration first. Then I will apply the update.",
+			want:     "I will check the editable configuration first.",
+		},
+		{
+			name:     "still drops internal protocol progress",
+			userText: "\u4fee\u6539\u8fd9\u4e2a\u667a\u80fd\u4f53",
+			progress: "I will call get_agent_config before update_agent_config.",
+			want:     "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := localizedAgentProgressText(tt.userText, tt.progress); got != tt.want {
+				t.Fatalf("localizedAgentProgressText() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAgenticSkillLoopSystemMessageProgressGuidance(t *testing.T) {
 	content := messageContent(AgenticSkillLoopSystemMessage().Content)
 	for _, want := range []string{
 		"at most one brief, high-level user-facing progress sentence",
+		"same language as the user's latest request",
+		"If the user writes in Chinese, progress text must be Chinese",
 		"Do not narrate every tool call",
 		"current page evidence",
 		"Do not start every task by listing resources or navigating",
+		"Do not announce that you need to navigate",
+		"describe the outcome as executed and verified",
 		"submit_intermediate_answer is for substantial user-facing deliverables only",
 	} {
 		if !strings.Contains(content, want) {

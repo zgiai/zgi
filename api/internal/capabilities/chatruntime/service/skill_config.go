@@ -343,9 +343,14 @@ func allowAIChatAgentManagementSkill(parts *chatRequestParts) bool {
 	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
 		return false
 	}
-	return isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
-		(hasConsoleAgentsReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
-			hasConsoleAgentsManageCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext))
+	if !isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		return false
+	}
+	if contextualAIChatAgentManagementMutationRequested(parts) {
+		return hasConsoleAgentsManageCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext)
+	}
+	return hasConsoleAgentsReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
+		hasConsoleAgentsManageCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext)
 }
 
 func addContextualAIChatSkillIDs(enabled []string, organizationEnabled []string, catalog []skills.SkillDiscoveryMetadata, parts *chatRequestParts) []string {
@@ -368,9 +373,7 @@ func addContextualAIChatSkillIDsWithCapabilities(enabled []string, organizationE
 	if capabilities.Navigation {
 		enabled = addSkillIDIfAvailable(enabled, organizationEnabled, catalog, skills.SkillConsoleNavigator, runtimemodel.ConversationCallerAIChat)
 	}
-	if (isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
-		contextualAIChatAgentManagementToolingRequested(parts)) &&
-		(capabilities.AgentRead || capabilities.AgentManage) {
+	if shouldAddAIChatAgentManagementSkill(parts, capabilities) {
 		enabled = addRuntimeManagedSkillIDIfAvailable(enabled, catalog, skills.SkillAgentManagement, runtimemodel.ConversationCallerAIChat)
 	}
 	if !isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
@@ -389,6 +392,20 @@ func addContextualAIChatSkillIDsWithCapabilities(enabled []string, organizationE
 		enabled = addRuntimeManagedSkillIDIfAvailable(enabled, catalog, skills.SkillFileManager, runtimemodel.ConversationCallerAIChat)
 	}
 	return enabled
+}
+
+func shouldAddAIChatAgentManagementSkill(parts *chatRequestParts, capabilities contextualAIChatSkillCapabilities) bool {
+	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
+		return false
+	}
+	if !isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
+		!contextualAIChatAgentManagementToolingRequested(parts) {
+		return false
+	}
+	if contextualAIChatAgentManagementMutationRequested(parts) {
+		return capabilities.AgentManage
+	}
+	return capabilities.AgentRead || capabilities.AgentManage
 }
 
 func contextualAIChatSkillCapabilitiesFromClientContext(parts *chatRequestParts) contextualAIChatSkillCapabilities {

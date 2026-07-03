@@ -52,12 +52,13 @@ func TestSystemAssetToolsDeclareGovernance(t *testing.T) {
 		{SkillAgentManagement, "list_agent_database_candidates", toolgovernance.EffectRead, "database_table", toolgovernance.RiskLevelLow, false},
 		{SkillAgentManagement, "list_agent_database_tables", toolgovernance.EffectRead, "database_table", toolgovernance.RiskLevelLow, false},
 		{SkillAgentManagement, "list_agent_workflow_binding_candidates", toolgovernance.EffectRead, "workflow", toolgovernance.RiskLevelLow, false},
+		{SkillAgentManagement, "list_available_models", toolgovernance.EffectRead, "llm_model", toolgovernance.RiskLevelLow, false},
+		{SkillAgentManagement, "create_agent", toolgovernance.EffectCreate, "agent", toolgovernance.RiskLevelMedium, false},
+		{SkillAgentManagement, "update_agent_identity", toolgovernance.EffectUpdate, "agent", toolgovernance.RiskLevelMedium, true},
+		{SkillAgentManagement, "update_agent_config", toolgovernance.EffectUpdate, "agent", toolgovernance.RiskLevelMedium, true},
+		{SkillAgentManagement, "replace_agent_memory_slots", toolgovernance.EffectUpdate, "agent", toolgovernance.RiskLevelMedium, true},
 		{SkillAgentManagement, "delete_agent", toolgovernance.EffectDelete, "agent", toolgovernance.RiskLevelHigh, true},
 		{SkillAgentManagement, "delete_agents", toolgovernance.EffectDelete, "agent", toolgovernance.RiskLevelHigh, true},
-		{SkillAgentManagement, "replace_agent_skill_bindings", toolgovernance.EffectUpdate, "agent_skill", toolgovernance.RiskLevelMedium, true},
-		{SkillAgentManagement, "replace_agent_knowledge_bindings", toolgovernance.EffectUpdate, "knowledge_base", toolgovernance.RiskLevelMedium, true},
-		{SkillAgentManagement, "replace_agent_database_bindings", toolgovernance.EffectUpdate, "database_table", toolgovernance.RiskLevelHigh, true},
-		{SkillAgentManagement, "replace_agent_workflow_bindings", toolgovernance.EffectUpdate, "workflow", toolgovernance.RiskLevelHigh, true},
 	}
 
 	resolved, err := runtime.ResolveEnabledSkills(context.Background(), uniqueGovernanceSkillIDs(expected))

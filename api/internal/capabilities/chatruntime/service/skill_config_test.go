@@ -157,6 +157,32 @@ func TestEffectiveAgentSkillIDsAutoAddsHiddenKnowledge(t *testing.T) {
 	}
 }
 
+func TestEffectiveAgentSkillIDsRejectsSidebarManagedAssetSkills(t *testing.T) {
+	catalog := []skills.SkillDiscoveryMetadata{
+		{ID: skills.SkillAgentKnowledge, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}, RequiredConfig: []string{skills.SkillRequiredConfigAgentKnowledge}},
+		{ID: skills.SkillAgentManagement, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
+		{ID: skills.SkillConsoleNavigator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+		{ID: skills.SkillFileManager, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+	}
+
+	got := effectiveAgentSkillIDs(
+		[]string{
+			skills.SkillAgentManagement,
+			skills.SkillFileManager,
+			skills.SkillConsoleNavigator,
+			skills.SkillCalculator,
+			skills.SkillAgentKnowledge,
+		},
+		catalog,
+		&RunConfig{KnowledgeDatasetIDs: []string{"dataset-1"}},
+	)
+	want := []string{skills.SkillAgentKnowledge, skills.SkillCalculator}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("effectiveAgentSkillIDs() = %#v, want %#v", got, want)
+	}
+}
+
 func TestEffectiveAgentSkillIDsSkipsKnowledgeWithoutDatasets(t *testing.T) {
 	catalog := []skills.SkillDiscoveryMetadata{
 		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
@@ -558,6 +584,61 @@ func TestTrustedContextualAIChatSkillCapabilitiesUseAgentManagePermission(t *tes
 	}
 }
 
+func TestAddContextualAIChatSkillIDsRequiresAgentManageForCrossPageMutation(t *testing.T) {
+	workspaceID := uuid.New()
+	catalog := contextualAIChatFileSkillCatalogForTest()
+	organizationEnabled := []string{skills.SkillCalculator, skills.SkillConsoleNavigator}
+	parts := contextualConsoleFilesAllCapabilityPartsForTest()
+	parts.Query = "create two temporary agents in the current workspace"
+	resources := parts.RawOperationContext["resources"].([]interface{})
+	pageResource := resources[0].(map[string]interface{})
+	metadata := pageResource["metadata"].(map[string]interface{})
+	metadata["workspace_id"] = workspaceID.String()
+
+	readOnlyPerms := &skillConfigWorkspacePermissionService{
+		allowed: map[workspacemodel.WorkspacePermissionCode]bool{
+			workspacemodel.WorkspacePermissionAgentView:   true,
+			workspacemodel.WorkspacePermissionAgentManage: false,
+		},
+	}
+	readOnlyCapabilities := (&service{workspacePerms: readOnlyPerms}).trustedContextualAIChatSkillCapabilities(context.Background(), Scope{
+		OrganizationID: uuid.New(),
+		AccountID:      uuid.New(),
+	}, parts)
+	readOnly := addContextualAIChatSkillIDsWithCapabilities(
+		[]string{skills.SkillCalculator},
+		organizationEnabled,
+		catalog,
+		parts,
+		readOnlyCapabilities,
+	)
+	wantReadOnly := []string{skills.SkillCalculator, skills.SkillConsoleNavigator}
+	if !reflect.DeepEqual(readOnly, wantReadOnly) {
+		t.Fatalf("read-only cross-page mutation skills = %#v, want %#v", readOnly, wantReadOnly)
+	}
+
+	managePerms := &skillConfigWorkspacePermissionService{
+		allowed: map[workspacemodel.WorkspacePermissionCode]bool{
+			workspacemodel.WorkspacePermissionAgentManage: true,
+		},
+	}
+	manageCapabilities := (&service{workspacePerms: managePerms}).trustedContextualAIChatSkillCapabilities(context.Background(), Scope{
+		OrganizationID: uuid.New(),
+		AccountID:      uuid.New(),
+	}, parts)
+	allowed := addContextualAIChatSkillIDsWithCapabilities(
+		[]string{skills.SkillCalculator},
+		organizationEnabled,
+		catalog,
+		parts,
+		manageCapabilities,
+	)
+	wantAllowed := []string{skills.SkillAgentManagement, skills.SkillCalculator, skills.SkillConsoleNavigator}
+	if !reflect.DeepEqual(allowed, wantAllowed) {
+		t.Fatalf("managed cross-page mutation skills = %#v, want %#v", allowed, wantAllowed)
+	}
+}
+
 func TestTrustedContextualAIChatSkillCapabilitiesUsesOperationContextWorkspace(t *testing.T) {
 	workspaceID := uuid.New()
 	parts := contextualConsoleFilesAllCapabilityPartsForTest()
@@ -947,12 +1028,87 @@ func TestSkillRuntimeParametersForPreparedAddsConsoleAgentsVisibleAgents(t *test
 	if params["console_agents_page"] != true {
 		t.Fatalf("console_agents_page = %#v, want true", params["console_agents_page"])
 	}
+	if params["console_current_route"] != "/console/agents" || params["console_agents_current_route"] != "/console/agents" {
+		t.Fatalf("console agent route params = %#v / %#v, want /console/agents", params["console_current_route"], params["console_agents_current_route"])
+	}
 	agents, ok := params["console_agents_visible_agents"].([]map[string]interface{})
 	if !ok || len(agents) != 1 {
 		t.Fatalf("console_agents_visible_agents = %#v, want one visible agent", params["console_agents_visible_agents"])
 	}
 	if agents[0]["agent_id"] != "agent-1" || agents[0]["name"] != "Support Bot" || agents[0]["type"] != "agent" {
 		t.Fatalf("visible agent = %#v, want agent-1 named Support Bot", agents[0])
+	}
+}
+
+func TestSkillRuntimeParametersForPreparedAddsRecentAgentMutationUpdates(t *testing.T) {
+	prepared := &PreparedChat{
+		Scope:     Scope{OrganizationID: uuid.New()},
+		RunConfig: RunConfig{},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"skill_invocations": []interface{}{
+				map[string]interface{}{
+					"kind":      "tool_call",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_identity",
+					"status":    "success",
+					"result": map[string]interface{}{
+						"status":      "completed",
+						"agent_id":    "agent-1",
+						"agent_name":  "Updated Support Bot",
+						"description": "updated description",
+						"agent": map[string]interface{}{
+							"id":           "agent-1",
+							"name":         "Updated Support Bot",
+							"workspace_id": "workspace-1",
+						},
+					},
+				},
+			},
+		}},
+		parts: contextualConsoleAgentsManageCapabilityPartsForTest(),
+	}
+
+	params := skillRuntimeParametersForPrepared(prepared)
+	recent, ok := params["console_agents_recent_agent_updates"].([]map[string]interface{})
+	if !ok || len(recent) != 1 {
+		t.Fatalf("console_agents_recent_agent_updates = %#v, want one recent Agent update", params["console_agents_recent_agent_updates"])
+	}
+	if recent[0]["agent_id"] != "agent-1" || recent[0]["name"] != "Updated Support Bot" || recent[0]["description"] != "updated description" {
+		t.Fatalf("recent Agent update = %#v, want updated identity evidence", recent[0])
+	}
+}
+
+func TestSkillRuntimeParametersForPreparedAddsRecentAgentMutationFromOperationPlan(t *testing.T) {
+	prepared := &PreparedChat{
+		Scope:     Scope{OrganizationID: uuid.New()},
+		RunConfig: RunConfig{},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"tool_result": map[string]interface{}{
+					"kind":      "tool_call",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_identity",
+					"status":    "success",
+					"result_summary": map[string]interface{}{
+						"status":       "completed",
+						"effect":       "updated",
+						"agent_id":     "agent-1",
+						"agent_name":   "Plan Result Agent",
+						"workspace_id": "workspace-1",
+					},
+				},
+			},
+		}},
+		parts: contextualConsoleAgentsManageCapabilityPartsForTest(),
+	}
+
+	params := skillRuntimeParametersForPrepared(prepared)
+	recent, ok := params["console_agents_recent_agent_updates"].([]map[string]interface{})
+	if !ok || len(recent) != 1 {
+		t.Fatalf("console_agents_recent_agent_updates = %#v, want one recent Agent update", params["console_agents_recent_agent_updates"])
+	}
+	if recent[0]["agent_id"] != "agent-1" || recent[0]["name"] != "Plan Result Agent" || recent[0]["workspace_id"] != "workspace-1" {
+		t.Fatalf("recent Agent update = %#v, want operation_plan result evidence", recent[0])
 	}
 }
 

@@ -2,6 +2,7 @@ package skillloop
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -41,6 +42,10 @@ func (r *Runner) handleProgressiveSkillCall(
 		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
 		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "fix the JSON arguments and retry the same tool call")), false, false)
 	}
+	if normalizedCall, normalizedArgs, ok := normalizeDirectLoadedSkillToolCall(resolved, loadedSkills, call, args); ok {
+		call = normalizedCall
+		args = normalizedArgs
+	}
 	switch call.Function.Name {
 	case skills.MetaToolLoadSkill:
 		skillID := normalizedSkillArg(args, "skill_id")
@@ -67,6 +72,9 @@ func (r *Runner) handleProgressiveSkillCall(
 		skillID := normalizedSkillArg(args, "skill_id")
 		toolName := stringArg(args, "tool_name")
 		toolArgs := mapArg(args, "arguments")
+		if strings.EqualFold(toolName, skills.MetaToolRequestUserInput) {
+			return r.handleRequestUserInputCall(ctx, prepared, call.ID, toolArgs, userInputGuard, onEvent)
+		}
 		if _, ok := loadedSkills[skillID]; !ok {
 			trace := blockedSkillGuardrailTrace(stringArg(args, "skill_id"), toolName, "skill must be loaded before calling its tools")
 			return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), false, false)
@@ -122,10 +130,89 @@ func (r *Runner) handleProgressiveSkillCall(
 	case skills.MetaToolIntermediateAnswer:
 		return r.handleIntermediateAnswerCall(ctx, prepared, call.ID, args, onEvent)
 	default:
+		if isInjectedContextPseudoToolName(call.Function.Name) {
+			return injectedContextPseudoToolFeedbackStep(call.ID, call.Function.Name)
+		}
 		err := fmt.Errorf("%w: unsupported skill meta tool %s", ErrInvalidInput, call.Function.Name)
 		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
 		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "use one of load_skill, request_user_input, read_skill_reference, call_skill_tool, or submit_intermediate_answer")), false, false)
 	}
+}
+
+func normalizeDirectLoadedSkillToolCall(
+	resolved *skills.ResolvedSkills,
+	loadedSkills map[string]struct{},
+	call adapter.ToolCall,
+	args map[string]interface{},
+) (adapter.ToolCall, map[string]interface{}, bool) {
+	toolName := strings.TrimSpace(call.Function.Name)
+	if toolName == "" || isSkillMetaToolName(toolName) {
+		return call, args, false
+	}
+	skillID, ok := uniqueLoadedSkillForToolName(resolved, loadedSkills, toolName)
+	if !ok {
+		return call, args, false
+	}
+	normalizedArgs := map[string]interface{}{
+		"skill_id":  skillID,
+		"tool_name": toolName,
+		"arguments": copyStringAnyMap(args),
+	}
+	encoded, err := json.Marshal(normalizedArgs)
+	if err != nil {
+		return call, args, false
+	}
+	call.Function.Name = skills.MetaToolCallSkillTool
+	call.Function.Arguments = string(encoded)
+	return call, normalizedArgs, true
+}
+
+func isSkillMetaToolName(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case skills.MetaToolLoadSkill,
+		skills.MetaToolReadSkillReference,
+		skills.MetaToolCallSkillTool,
+		skills.MetaToolIntermediateAnswer,
+		skills.MetaToolRequestUserInput:
+		return true
+	default:
+		return false
+	}
+}
+
+func isInjectedContextPseudoToolName(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "get_current_page_context", "read_current_page_context", "observe_current_page_context":
+		return true
+	default:
+		return false
+	}
+}
+
+func uniqueLoadedSkillForToolName(resolved *skills.ResolvedSkills, loadedSkills map[string]struct{}, toolName string) (string, bool) {
+	if resolved == nil || len(loadedSkills) == 0 || strings.TrimSpace(toolName) == "" {
+		return "", false
+	}
+	matchedSkillID := ""
+	for _, doc := range resolved.Skills {
+		skillID := strings.ToLower(strings.TrimSpace(doc.Metadata.ID))
+		if skillID == "" {
+			continue
+		}
+		if _, ok := loadedSkills[skillID]; !ok {
+			continue
+		}
+		for _, tool := range doc.Tools {
+			if !strings.EqualFold(strings.TrimSpace(tool.Name), toolName) {
+				continue
+			}
+			if matchedSkillID != "" && !strings.EqualFold(matchedSkillID, skillID) {
+				return "", false
+			}
+			matchedSkillID = skillID
+		}
+	}
+	return matchedSkillID, matchedSkillID != ""
 }
 
 func planToolGuardRecoverableStep(callID string, skillID string, toolName string, args map[string]interface{}, result FinalAnswerGuardResult) skillStepResult {
@@ -133,17 +220,38 @@ func planToolGuardRecoverableStep(callID string, skillID string, toolName string
 	if message == "" {
 		message = "tool is outside the current operation plan"
 	}
+	nextAction := strings.TrimSpace(result.SystemMessage)
+	if nextAction == "" {
+		nextAction = "continue with the pending tool from the current operation plan or answer from verified evidence"
+	}
+	if result.Advisory {
+		trace := plannerFeedbackTrace(skillID, toolName, nil)
+		if len(args) > 0 {
+			trace.Arguments = summarizeSkillToolArguments(skillID, toolName, args)
+		}
+		trace.Arguments["next_step"] = "continue_with_next_planned_step"
+		trace.Arguments["advisory"] = "completed_read_step_already_satisfied"
+		return successfulSkillStep(trace, skills.ToolResultMessage(callID, plannerFeedbackAdvisoryPayload(message, nextAction, skillID, toolName)), false, false)
+	}
 	err := fmt.Errorf("%w: %s", ErrInvalidInput, message)
 	trace := plannerFeedbackTrace(skillID, toolName, err)
 	if len(args) > 0 {
 		trace.Arguments = summarizeSkillToolArguments(skillID, toolName, args)
 		trace.Arguments["next_step"] = "continue_planning"
 	}
-	nextAction := strings.TrimSpace(result.SystemMessage)
-	if nextAction == "" {
-		nextAction = "continue with the pending tool from the current operation plan or answer from verified evidence"
-	}
 	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, nextAction, skillID, toolName)), false, false)
+}
+
+func injectedContextPseudoToolFeedbackStep(callID string, toolName string) skillStepResult {
+	err := fmt.Errorf("%w: current page context is already injected into the conversation, not exposed as a callable tool", ErrInvalidInput)
+	trace := plannerFeedbackTrace("", toolName, err)
+	trace.Arguments["next_step"] = "use_injected_context"
+	nextAction := strings.Join([]string{
+		"Do not call page context pseudo-tools.",
+		"Use the current page context and visible resource evidence already provided in the conversation.",
+		"If that evidence is insufficient, use an enabled read/list/search skill tool or ask the user a concise question.",
+	}, " ")
+	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, nextAction)), false, false)
 }
 
 func (r *Runner) handleRequestUserInputCall(
@@ -213,9 +321,10 @@ func (r *Runner) handleIntermediateAnswerCall(
 ) skillStepResult {
 	content := strings.TrimSpace(stringArg(args, "content"))
 	if content == "" {
-		err := fmt.Errorf("%w: intermediate answer content is required", ErrInvalidInput)
-		trace := failedSkillTrace("intermediate_answer", "", err)
-		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "call submit_intermediate_answer again with non-empty content")), false, false)
+		return successfulSkillStep(skills.SkillTrace{}, skills.ToolResultMessage(callID, map[string]interface{}{
+			"status":      "skipped",
+			"instruction": "No intermediate answer was shown because content was empty. Continue with the task and provide a normal final answer when ready.",
+		}), false, false)
 	}
 	title := strings.TrimSpace(stringArg(args, "title"))
 	answerID := strings.TrimSpace(stringArg(args, streamedIntermediateAnswerArg+"_id"))
@@ -314,6 +423,9 @@ func (r *Runner) handleLoadSkillCall(
 	onEvent func(Event) error,
 ) skillStepResult {
 	skillID := stringArg(args, "skill_id")
+	if _, ok := resolved.Get(skillID); !ok {
+		return unavailableSkillLoadFeedbackStep(callID, skillID)
+	}
 	r.emitEvent(EventSkillLoadStart, skillLoadPayload(prepared, skillID))
 	doc, trace, err := r.SkillRuntime.LoadSkill(ctx, resolved, skillID)
 	if err != nil {
@@ -327,6 +439,15 @@ func (r *Runner) handleLoadSkillCall(
 	)
 	r.emitEvent(EventSkillLoadEnd, skillLoadEndPayload(prepared, trace))
 	return successfulSkillStep(trace, skills.ToolResultMessage(callID, skillDocumentPayload(doc)), true, false)
+}
+
+func unavailableSkillLoadFeedbackStep(callID string, skillID string) skillStepResult {
+	normalizedSkillID := strings.ToLower(strings.TrimSpace(skillID))
+	err := fmt.Errorf("%w: skill %s is not enabled for this turn", ErrInvalidInput, normalizedSkillID)
+	trace := plannerFeedbackTrace(normalizedSkillID, "", err)
+	trace.Arguments["next_step"] = "choose_enabled_skill_or_continue_from_context"
+	nextAction := "Choose an enabled skill_id from the exposed metadata. If the unavailable skill was console-navigator, continue from current page evidence unless navigation is explicitly required and available."
+	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, nextAction)), false, false)
 }
 
 func (r *Runner) handleReadReferenceCall(

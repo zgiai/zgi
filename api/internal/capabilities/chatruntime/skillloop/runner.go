@@ -102,9 +102,11 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	completionVerificationRetryCount := 0
 	evidenceContinuationRetryCount := 0
 	finalizingProgressEmitted := false
+	forcedToolChoiceForNextRound := interface{}(nil)
 	skillToolCallCounts := map[string]int{}
 	attemptedToolCalls := []SkillToolCallRef{}
 	successfulToolCalls := []SkillToolCallRef{}
+	successfulToolCallsByKey := map[string]SkillToolCallRef{}
 	failedToolCallReasons := map[string]string{}
 	skillUsed := false
 	loadedSkills := map[string]struct{}{}
@@ -134,6 +136,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		planningReq.Stream = false
 		planningReq.Tools = skills.MetaToolsForSkillState(resolved, loadedSkills)
 		planningReq.ToolChoice = "auto"
+		if forcedToolChoiceForNextRound != nil {
+			planningReq.ToolChoice = forcedToolChoiceForNextRound
+			forcedToolChoiceForNextRound = nil
+		}
 
 		planningResult, err := r.runSkillPlanning(ctx, prepared, planningReq, round, req.OnChunk, suppressFinalAnswerStream)
 		if err != nil {
@@ -173,18 +179,32 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 		}
 		if len(toolCalls) == 0 && postVerificationConfigured {
-			if feedback, shouldContinue := completionEvidenceContinuationSystemMessage(completionEvidenceForFastPath(req), evidenceContinuationRetryCount); shouldContinue {
+			evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
+			if feedback, shouldContinue := completionEvidenceContinuationSystemMessage(evidence, evidenceContinuationRetryCount, resolved); shouldContinue {
 				evidenceContinuationRetryCount++
 				if evidenceContinuationRetryCount <= defaultMaxCompletionVerificationRetries {
 					if planningResult.answerStreamed && text != "" {
 						r.emitAnswerRetract(ctx, prepared, text, nil)
 					}
 					messages = append(messages, feedback)
+					forcedToolChoiceForNextRound = completionEvidenceContinuationToolChoice(evidence, loadedSkills, resolved)
 					continue
 				}
 			}
+			if answer, ok := immediateCompletionEvidenceFastPathAnswer(evidence); ok {
+				if planningResult.answerStreamed && text != "" {
+					r.emitAnswerRetract(ctx, prepared, text, nil)
+				}
+				appendAnswerText(&answerBuilder, answer)
+				r.emitAnswerChunk(ctx, prepared, answer, nil)
+				logger.DebugContext(ctx, "aichat skill loop completed from immediate completion evidence fast path",
+					"conversation_id", prepared.Conversation.ID.String(),
+					"message_id", prepared.Message.ID.String(),
+				)
+				return answerBuilder.String(), usage, nil
+			}
 			if !finalizingProgressEmitted && (toolCallCount > 0 || len(attemptedToolCalls) > 0 || len(successfulToolCalls) > 0) {
-				if r.emitAgentProgress(ctx, prepared, completionVerificationFinalizingProgressText(prepared, completionEvidenceForFastPath(req)), nil) {
+				if r.emitAgentProgress(ctx, prepared, completionVerificationFinalizingProgressText(prepared, evidence), nil) {
 					finalizingProgressEmitted = true
 				}
 			}
@@ -196,16 +216,21 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					"message_id", prepared.Message.ID.String(),
 					err,
 				)
-				text = completionVerificationFallbackAnswer(completionVerificationDecision{
+				decision := completionVerificationDecision{
 					Status: completionVerificationStatusFailed,
 					Reason: "\u6700\u7ec8\u7b54\u6848\u540e\u6821\u9a8c\u6682\u65f6\u4e0d\u53ef\u7528\uff0c\u56e0\u6b64\u4e0d\u80fd\u53ef\u9760\u786e\u8ba4\u672c\u8f6e\u64cd\u4f5c\u5df2\u7ecf\u5b8c\u6210\u3002",
-				}, text)
+				}
+				text = completionVerificationFallbackAnswer(decision, text)
+				notifyCompletionVerificationResult(req, decision, text)
 			} else {
 				switch decision.normalizedStatus() {
 				case completionVerificationStatusPass:
 					completionVerificationRetryCount = 0
-					if strings.TrimSpace(text) == "" {
-						if answer, ok := FastPathFinalAnswerForCompletionEvidence(completionEvidenceForFastPath(req)); ok {
+					evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
+					if answer, ok := FastPathPreferredFinalAnswerForCompletionEvidence(evidence, text); ok {
+						text = answer
+					} else if strings.TrimSpace(text) == "" {
+						if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
 							text = answer
 						}
 					}
@@ -213,20 +238,29 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					completionVerificationRetryCount++
 					if completionVerificationRetryCount > defaultMaxCompletionVerificationRetries {
 						text = completionVerificationFallbackAnswer(decision, text)
+						notifyCompletionVerificationResult(req, decision, text)
 					} else {
 						messages = append(messages, completionVerificationSystemMessage(decision, text, completionVerificationRetryCount))
+						if forced := completionVerificationFeedbackToolChoice(decision, loadedSkills, resolved); forced != nil {
+							forcedToolChoiceForNextRound = forced
+						}
 						continue
 					}
 				case completionVerificationStatusFailed, completionVerificationStatusAskUser:
 					if replacement := strings.TrimSpace(decision.FinalAnswer); replacement != "" {
 						text = replacement
 						completionVerificationRetryCount = 0
+						notifyCompletionVerificationResult(req, decision, text)
 					} else {
 						completionVerificationRetryCount++
 						if completionVerificationRetryCount > defaultMaxCompletionVerificationRetries {
 							text = completionVerificationFallbackAnswer(decision, text)
+							notifyCompletionVerificationResult(req, decision, text)
 						} else {
 							messages = append(messages, completionVerificationSystemMessage(decision, text, completionVerificationRetryCount))
+							if forced := completionVerificationFeedbackToolChoice(decision, loadedSkills, resolved); forced != nil {
+								forcedToolChoiceForNextRound = forced
+							}
 							continue
 						}
 					}
@@ -234,8 +268,12 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					completionVerificationRetryCount++
 					if completionVerificationRetryCount > defaultMaxCompletionVerificationRetries {
 						text = completionVerificationFallbackAnswer(decision, text)
+						notifyCompletionVerificationResult(req, decision, text)
 					} else {
 						messages = append(messages, completionVerificationSystemMessage(decision, text, completionVerificationRetryCount))
+						if forced := completionVerificationFeedbackToolChoice(decision, loadedSkills, resolved); forced != nil {
+							forcedToolChoiceForNextRound = forced
+						}
 						continue
 					}
 				}
@@ -283,14 +321,63 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		roundHadRecoverableFailure := false
 		roundHadSuccess := false
 		var lastRecoverableTrace skills.SkillTrace
+		roundDeferredSystemMessages := []adapter.Message{}
+		var roundCompletionFeedback adapter.Message
+		roundCompletionFeedbackQueued := false
 		for _, call := range toolCalls {
 			stepCount++
-			callSkillID, callToolName, callToolArgs, failedCallKey := repeatedFailedToolCallKeyForCall(call)
+			callSkillID, callToolName, callToolArgs, failedCallKey := skillToolCallIdentityForCall(resolved, loadedSkills, call)
+			callEvidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
+			if redirected, ok := redirectDuplicateAgentMutationToPendingPostUpdateReadCall(call, callSkillID, callToolName, callEvidence, currentMetadataForRun(req), successfulToolCalls); ok {
+				call = redirected
+				callSkillID, callToolName, callToolArgs, failedCallKey = skillToolCallIdentityForCall(resolved, loadedSkills, call)
+			}
+			if answer, ok := redundantPostReadAgentConfigMutationAnswer(callSkillID, callToolName, callToolArgs, callEvidence); ok {
+				appendAnswerText(&answerBuilder, answer)
+				r.emitAnswerChunk(ctx, prepared, answer, nil)
+				logger.DebugContext(ctx, "aichat skill loop completed before redundant post-read agent config mutation",
+					"conversation_id", prepared.Conversation.ID.String(),
+					"message_id", prepared.Message.ID.String(),
+					"skill_id", callSkillID,
+					"tool_name", callToolName,
+				)
+				return answerBuilder.String(), usage, nil
+			}
+			if fastPathAgentReadOnlyConfigToolName(callSkillID, callToolName) {
+				if answer, ok := agentReadOnlyConfigFastPathAnswerFromEvidence(callEvidence); ok {
+					appendAnswerText(&answerBuilder, answer)
+					r.emitAnswerChunk(ctx, prepared, answer, nil)
+					logger.DebugContext(ctx, "aichat skill loop completed before redundant read-only agent config call",
+						"conversation_id", prepared.Conversation.ID.String(),
+						"message_id", prepared.Message.ID.String(),
+						"skill_id", callSkillID,
+						"tool_name", callToolName,
+					)
+					return answerBuilder.String(), usage, nil
+				}
+			}
+			if answer, ok := agentReadOnlyConfigFastPathAnswerBeforeRedundantLookup(callSkillID, callToolName, callEvidence); ok {
+				appendAnswerText(&answerBuilder, answer)
+				r.emitAnswerChunk(ctx, prepared, answer, nil)
+				logger.DebugContext(ctx, "aichat skill loop completed before redundant read-only agent candidate lookup",
+					"conversation_id", prepared.Conversation.ID.String(),
+					"message_id", prepared.Message.ID.String(),
+					"skill_id", callSkillID,
+					"tool_name", callToolName,
+				)
+				return answerBuilder.String(), usage, nil
+			}
 			result := skillStepResult{}
 			if failedCallKey != "" {
 				if reason := failedToolCallReasons[failedCallKey]; strings.TrimSpace(reason) != "" {
 					result = repeatedFailedToolCallRecoverableStep(call.ID, callSkillID, callToolName, callToolArgs, reason)
 				}
+			}
+			if result.trace.Kind == "" {
+				result = repeatedSuccessfulReadOnlyToolCallFeedbackStep(call.ID, callSkillID, callToolName, callToolArgs, successfulToolCallsByKey, successfulToolCalls, callEvidence, currentMetadataForRun(req))
+			}
+			if result.trace.Kind == "" {
+				result = missingAgentTargetListAgentsTerminalStep(call.ID, callSkillID, callToolName, callToolArgs, successfulToolCalls, prepared.Query)
 			}
 			if result.trace.Kind == "" {
 				result = r.handleProgressiveSkillCall(ctx, prepared, resolved, call, req.ExecutionContext, toolCallCount, skillToolCallCounts, loadedSkills, userInputGuardState{
@@ -304,9 +391,28 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					successfulToolCalls: append([]SkillToolCallRef{}, successfulToolCalls...),
 				}, nil)
 			}
+			if strings.TrimSpace(result.trace.Kind) == "" {
+				if result.toolMessage.Role != "" || result.toolMessage.ToolCallID != "" || result.toolMessage.Content != nil {
+					messages = append(messages, result.toolMessage)
+				}
+				continue
+			}
 			traces = append(traces, result.trace)
 			r.recordTrace(traces, result.trace)
 			r.logSkillTrace(ctx, prepared, result.trace)
+			if postVerificationConfigured && plannerFeedbackRequestsPendingMutation(result.trace) {
+				evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
+				if !roundCompletionFeedbackQueued {
+					if feedback, shouldContinue := completionEvidenceContinuationSystemMessage(evidence, evidenceContinuationRetryCount, resolved); shouldContinue {
+						evidenceContinuationRetryCount++
+						roundCompletionFeedback = feedback
+						roundCompletionFeedbackQueued = true
+					}
+				}
+				if forced := completionEvidenceContinuationToolChoice(evidence, loadedSkills, resolved); forced != nil {
+					forcedToolChoiceForNextRound = forced
+				}
+			}
 			if result.recoverable && failedCallKey != "" && strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") {
 				failedToolCallReasons[failedCallKey] = strings.TrimSpace(result.trace.Error)
 				if failedToolCallReasons[failedCallKey] == "" {
@@ -351,8 +457,23 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 						Arguments: copyStringAnyMap(result.trace.Arguments),
 						Result:    copyStringAnyMap(result.toolResult),
 					})
+					if failedCallKey != "" {
+						successfulToolCallsByKey[failedCallKey] = SkillToolCallRef{
+							SkillID:   strings.TrimSpace(callSkillID),
+							ToolName:  strings.TrimSpace(callToolName),
+							Arguments: copyStringAnyMap(callToolArgs),
+							Result:    copyStringAnyMap(result.toolResult),
+						}
+					}
 					finalAnswerGuardBlockCount = 0
 					evidenceContinuationRetryCount = 0
+				}
+			}
+			if postVerificationConfigured &&
+				strings.EqualFold(strings.TrimSpace(result.trace.Kind), "skill_load") &&
+				strings.EqualFold(strings.TrimSpace(result.trace.Status), "success") {
+				if forced := completionEvidenceContinuationToolChoice(completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls), loadedSkills, resolved); forced != nil {
+					forcedToolChoiceForNextRound = forced
 				}
 			}
 			if result.pendingApproval != nil {
@@ -367,10 +488,22 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			if result.pendingClientAction != nil {
 				return answerBuilder.String(), usage, &ClientActionPendingError{Payload: result.pendingClientAction}
 			}
-			if answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(result.trace, completionEvidenceForFastPath(req)); ok {
+			fastPathEvidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
+			if answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(fastPathTraceWithToolResult(result.trace, result.toolResult), fastPathEvidence); ok {
 				appendAnswerText(&answerBuilder, answer)
 				r.emitAnswerChunk(ctx, prepared, answer, nil)
 				logger.DebugContext(ctx, "aichat skill loop completed through tool result fast path",
+					"conversation_id", prepared.Conversation.ID.String(),
+					"message_id", prepared.Message.ID.String(),
+					"skill_id", result.trace.SkillID,
+					"tool_name", result.trace.ToolName,
+				)
+				return answerBuilder.String(), usage, nil
+			}
+			if answer, ok := FastPathFinalAnswerForCompletionEvidence(fastPathEvidence); ok {
+				appendAnswerText(&answerBuilder, answer)
+				r.emitAnswerChunk(ctx, prepared, answer, nil)
+				logger.DebugContext(ctx, "aichat skill loop completed through accumulated evidence fast path",
 					"conversation_id", prepared.Conversation.ID.String(),
 					"message_id", prepared.Message.ID.String(),
 					"skill_id", result.trace.SkillID,
@@ -393,8 +526,31 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			messages = append(messages, result.toolMessage)
 			if message, ok := governedReadFileTargetSystemMessage(result.trace); ok {
-				messages = append(messages, message)
+				roundDeferredSystemMessages = append(roundDeferredSystemMessages, message)
 			}
+			if postVerificationConfigured &&
+				strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") &&
+				strings.EqualFold(strings.TrimSpace(result.trace.Status), "success") {
+				evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
+				if !roundCompletionFeedbackQueued {
+					if feedback, shouldContinue := completionEvidenceContinuationSystemMessage(evidence, evidenceContinuationRetryCount, resolved); shouldContinue {
+						evidenceContinuationRetryCount++
+						roundCompletionFeedback = feedback
+						roundCompletionFeedbackQueued = true
+						if forced := completionEvidenceContinuationToolChoice(evidence, loadedSkills, resolved); forced != nil {
+							forcedToolChoiceForNextRound = forced
+						}
+					}
+				} else if forced := completionEvidenceContinuationToolChoice(evidence, loadedSkills, resolved); forced != nil {
+					forcedToolChoiceForNextRound = forced
+				}
+			}
+		}
+		if len(roundDeferredSystemMessages) > 0 {
+			messages = append(messages, roundDeferredSystemMessages...)
+		}
+		if roundCompletionFeedbackQueued {
+			messages = append(messages, roundCompletionFeedback)
 		}
 		if roundHadRecoverableFailure {
 			recoverableFailureRoundCount++
@@ -442,7 +598,14 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	return answerBuilder.String(), usage, err
 }
 
-func completionEvidenceContinuationSystemMessage(evidence map[string]interface{}, retryCount int) (adapter.Message, bool) {
+func completionEvidenceContinuationSystemMessage(evidence map[string]interface{}, retryCount int, resolved *skills.ResolvedSkills) (adapter.Message, bool) {
+	if feedback, ok := completionEvidenceContinuationAgentCreateSystemMessage(evidence, retryCount); ok {
+		return feedback, true
+	}
+	return completionEvidenceContinuationPendingPlanStepSystemMessage(evidence, retryCount, resolved)
+}
+
+func completionEvidenceContinuationAgentCreateSystemMessage(evidence map[string]interface{}, retryCount int) (adapter.Message, bool) {
 	progress := evidenceMapFromAny(evidence["agent_create_progress"])
 	if len(progress) == 0 {
 		return adapter.Message{}, false
@@ -480,6 +643,249 @@ func completionEvidenceContinuationSystemMessage(evidence map[string]interface{}
 	return adapter.Message{Role: "system", Content: content}, true
 }
 
+func completionEvidenceContinuationPendingPlanStepSystemMessage(evidence map[string]interface{}, retryCount int, resolved *skills.ResolvedSkills) (adapter.Message, bool) {
+	step, ok := completionVerificationPendingExecutablePlanStep(evidence)
+	if !ok {
+		return adapter.Message{}, false
+	}
+	action := completionVerificationPlanStepLabel(step)
+	if strings.TrimSpace(action) == "" {
+		return adapter.Message{}, false
+	}
+	if completionEvidenceContinuationShouldSkipPendingPlanStep(step, action) {
+		return adapter.Message{}, false
+	}
+	if !completionEvidencePlanStepSkillResolved(step, resolved) {
+		return adapter.Message{}, false
+	}
+	payloadJSON, err := json.Marshal(map[string]interface{}{
+		"required_next_tool": action,
+		"plan_step":          step,
+	})
+	if err != nil {
+		payloadJSON = []byte(fmt.Sprint(step))
+	}
+	content := strings.Join([]string{
+		fmt.Sprintf("Runtime execution evidence requires continued tool use before a final answer. Evidence-continuation retry %d of %d.", retryCount+1, defaultMaxCompletionVerificationRetries),
+		"The operation plan is an advisory strategy snapshot, not proof of completion. It currently has an executable pending tool step with no successful evidence.",
+		"If the current page context and available tools still support this action, load the required skill if needed and call the required tool. Resolve arguments from the latest user request, page context, and visible asset evidence.",
+		"If the pending step is agent-management/update_agent_config and the plan_step lists expected_updated_fields, use those fields as the required config patch and extract their target values from the user's latest request; do not repeat an identical get_agent_config call when it already succeeded earlier in this turn.",
+		"If only load_skill is available for that skill, first call load_skill with the exact skill_id from required_next_tool, then call call_skill_tool with the exact skill_id/tool_name after the skill loads.",
+		"Do not tell the user an approval card has been submitted unless a governed tool call actually returned a pending governance event. Governance approval cards are created by tool calls, not by natural-language progress text.",
+		"If the action is impossible because context, permissions, or tool capability is missing, call the appropriate read/list tool when that can resolve the missing context; otherwise stop and explain the exact blocker truthfully.",
+		"Do not answer as complete until successful tool evidence and any required page observation evidence exist for this pending step.",
+		"Pending plan step JSON:\n" + string(payloadJSON),
+	}, "\n")
+	return adapter.Message{Role: "system", Content: content}, true
+}
+
+func completionEvidenceContinuationToolChoice(evidence map[string]interface{}, loadedSkills map[string]struct{}, resolved *skills.ResolvedSkills) interface{} {
+	step, ok := completionVerificationPendingExecutablePlanStep(evidence)
+	if !ok {
+		return nil
+	}
+	action := completionVerificationPlanStepLabel(step)
+	if strings.TrimSpace(action) == "" {
+		return nil
+	}
+	if completionEvidenceContinuationShouldSkipPendingPlanStep(step, action) {
+		return nil
+	}
+	if !completionEvidencePlanStepSkillResolved(step, resolved) {
+		return nil
+	}
+	skillID := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(step["skill_id"])))
+	toolName := strings.TrimSpace(evidenceStringFromAny(step["tool_name"]))
+	if skillID == "" || toolName == "" {
+		return nil
+	}
+	loaded := normalizedLoadedSkillSet(loadedSkills)
+	if _, ok := loaded[skillID]; !ok {
+		return forcedFunctionToolChoice(skills.MetaToolLoadSkill)
+	}
+	return forcedFunctionToolChoice(skills.MetaToolCallSkillTool)
+}
+
+func completionVerificationFeedbackToolChoice(decision completionVerificationDecision, loadedSkills map[string]struct{}, resolved *skills.ResolvedSkills) interface{} {
+	skillID, toolName, ok := completionVerificationRequiredSkillTool(decision)
+	if !ok || strings.TrimSpace(skillID) == "" || strings.TrimSpace(toolName) == "" {
+		return nil
+	}
+	if !resolvedSkillContains(resolved, skillID) {
+		return nil
+	}
+	loaded := normalizedLoadedSkillSet(loadedSkills)
+	if _, ok := loaded[strings.ToLower(strings.TrimSpace(skillID))]; !ok {
+		return forcedFunctionToolChoice(skills.MetaToolLoadSkill)
+	}
+	return forcedFunctionToolChoice(skills.MetaToolCallSkillTool)
+}
+
+func resolvedSkillContains(resolved *skills.ResolvedSkills, skillID string) bool {
+	if resolved == nil {
+		return false
+	}
+	for _, resolvedSkillID := range resolved.SkillIDs() {
+		if strings.EqualFold(strings.TrimSpace(resolvedSkillID), strings.TrimSpace(skillID)) {
+			return true
+		}
+	}
+	return false
+}
+
+func completionEvidenceForFastPathWithSuccessfulToolCalls(req RunRequest, successful []SkillToolCallRef) map[string]interface{} {
+	evidence := completionEvidenceForFastPath(req)
+	if len(successful) == 0 {
+		return evidence
+	}
+	if evidence == nil {
+		evidence = map[string]interface{}{}
+	} else {
+		evidence = copyStringAnyMap(evidence)
+	}
+	invocations := evidenceSliceFromAny(evidence["skill_invocations"])
+	existingInvocations := map[string]struct{}{}
+	for _, raw := range invocations {
+		invocation := evidenceMapFromAny(raw)
+		if len(invocation) == 0 || !strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "tool_call") {
+			continue
+		}
+		signature := skillToolCallEvidenceSignature(
+			stringFromAny(invocation["skill_id"]),
+			stringFromAny(invocation["tool_name"]),
+			evidenceMapFromAny(invocation["arguments"]),
+			evidenceMapFromAny(invocation["result"]),
+		)
+		if signature != "" {
+			existingInvocations[signature] = struct{}{}
+		}
+	}
+	for _, call := range successful {
+		skillID := strings.TrimSpace(call.SkillID)
+		toolName := strings.TrimSpace(call.ToolName)
+		if skillID == "" || toolName == "" {
+			continue
+		}
+		signature := skillToolCallEvidenceSignature(skillID, toolName, call.Arguments, call.Result)
+		if _, ok := existingInvocations[signature]; ok && signature != "" {
+			continue
+		}
+		invocation := map[string]interface{}{
+			"kind":      "tool_call",
+			"status":    "success",
+			"skill_id":  skillID,
+			"tool_name": toolName,
+		}
+		if len(call.Arguments) > 0 {
+			invocation["arguments"] = copyStringAnyMap(call.Arguments)
+		}
+		if len(call.Result) > 0 {
+			invocation["result"] = copyStringAnyMap(call.Result)
+		}
+		invocations = append(invocations, invocation)
+		if signature != "" {
+			existingInvocations[signature] = struct{}{}
+		}
+	}
+	if len(invocations) > 0 {
+		evidence["skill_invocations"] = invocations
+	}
+	return evidence
+}
+
+func skillToolCallEvidenceSignature(skillID string, toolName string, arguments map[string]interface{}, result map[string]interface{}) string {
+	skillID = strings.TrimSpace(skillID)
+	toolName = strings.TrimSpace(toolName)
+	if skillID == "" || toolName == "" {
+		return ""
+	}
+	payload := map[string]interface{}{
+		"skill_id":  skillID,
+		"tool_name": toolName,
+	}
+	if len(arguments) > 0 {
+		payload["arguments"] = arguments
+	}
+	if len(result) > 0 {
+		payload["result"] = result
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return skillID + "/" + toolName
+	}
+	return string(data)
+}
+
+func completionEvidenceContinuationShouldSkipPendingPlanStep(step map[string]interface{}, action string) bool {
+	if completionEvidencePlanStepIsRequiredPostUpdateAgentConfigRead(step) {
+		return false
+	}
+	skillID := strings.TrimSpace(evidenceStringFromAny(step["skill_id"]))
+	toolName := strings.TrimSpace(evidenceStringFromAny(step["tool_name"]))
+	if completionEvidenceContinuationIsConsoleNavigateTool(skillID, toolName) {
+		return true
+	}
+	return fastPathPendingActionIsRoutePostVerification(action)
+}
+
+func completionEvidenceContinuationIsConsoleNavigateTool(skillID string, toolName string) bool {
+	return strings.EqualFold(strings.TrimSpace(skillID), skills.SkillConsoleNavigator) &&
+		strings.EqualFold(strings.TrimSpace(toolName), "navigate")
+}
+
+func completionEvidencePlanStepSkillResolved(step map[string]interface{}, resolved *skills.ResolvedSkills) bool {
+	skillID := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(step["skill_id"])))
+	if skillID == "" {
+		return false
+	}
+	for _, resolvedSkillID := range resolved.SkillIDs() {
+		if strings.EqualFold(strings.TrimSpace(resolvedSkillID), skillID) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizedLoadedSkillSet(loadedSkills map[string]struct{}) map[string]struct{} {
+	if len(loadedSkills) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(loadedSkills))
+	for skillID := range loadedSkills {
+		if normalized := strings.ToLower(strings.TrimSpace(skillID)); normalized != "" {
+			out[normalized] = struct{}{}
+		}
+	}
+	return out
+}
+
+func forcedFunctionToolChoice(name string) interface{} {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	return map[string]interface{}{
+		"type": "function",
+		"function": map[string]interface{}{
+			"name": name,
+		},
+	}
+}
+
+func notifyCompletionVerificationResult(req RunRequest, decision completionVerificationDecision, finalAnswer string) {
+	if req.OnCompletionVerification == nil {
+		return
+	}
+	req.OnCompletionVerification(CompletionVerificationResult{
+		Status:            decision.normalizedStatus(),
+		Reason:            strings.TrimSpace(decision.Reason),
+		MissingSteps:      append([]string(nil), decision.MissingSteps...),
+		UnsupportedClaims: append([]string(nil), decision.UnsupportedClaims...),
+		NextActionHint:    strings.TrimSpace(decision.NextActionHint),
+		FinalAnswer:       strings.TrimSpace(finalAnswer),
+	})
+}
+
 func evidenceStringSliceFromAny(value interface{}) []string {
 	switch typed := value.(type) {
 	case []string:
@@ -509,17 +915,201 @@ func evidenceStringSliceFromAny(value interface{}) []string {
 }
 
 func repeatedFailedToolCallKeyForCall(call adapter.ToolCall) (string, string, map[string]interface{}, string) {
-	if !strings.EqualFold(strings.TrimSpace(call.Function.Name), skills.MetaToolCallSkillTool) {
-		return "", "", nil, ""
-	}
+	return skillToolCallIdentityForCall(nil, nil, call)
+}
+
+func skillToolCallIdentityForCall(resolved *skills.ResolvedSkills, loadedSkills map[string]struct{}, call adapter.ToolCall) (string, string, map[string]interface{}, string) {
 	args, err := skills.ParseArguments(call.Function.Arguments)
 	if err != nil {
 		return "", "", nil, ""
+	}
+	if !strings.EqualFold(strings.TrimSpace(call.Function.Name), skills.MetaToolCallSkillTool) {
+		toolName := strings.TrimSpace(call.Function.Name)
+		if toolName == "" || isSkillMetaToolName(toolName) {
+			return "", "", nil, ""
+		}
+		skillID, ok := uniqueLoadedSkillForToolName(resolved, loadedSkills, toolName)
+		if !ok {
+			return "", "", nil, ""
+		}
+		toolArgs := copyStringAnyMap(args)
+		return skillID, toolName, toolArgs, failedToolCallKey(skillID, toolName, toolArgs)
 	}
 	skillID := normalizedSkillArg(args, "skill_id")
 	toolName := stringArg(args, "tool_name")
 	toolArgs := mapArg(args, "arguments")
 	return skillID, toolName, toolArgs, failedToolCallKey(skillID, toolName, toolArgs)
+}
+
+func redirectDuplicateAgentMutationToPendingPostUpdateReadCall(call adapter.ToolCall, skillID string, toolName string, evidence map[string]interface{}, metadata map[string]interface{}, successfulToolCalls []SkillToolCallRef) (adapter.ToolCall, bool) {
+	if !isAgentManagementMutationTool(skillID, toolName) ||
+		(!successfulAgentManagementMutationExists(successfulToolCalls) &&
+			!successfulAgentManagementMutationExistsInEvidence(evidence) &&
+			!successfulAgentManagementMutationExistsInEvidence(metadata)) {
+		return adapter.ToolCall{}, false
+	}
+	step, ok := completionVerificationPendingExecutablePlanStep(evidence)
+	if ok && !completionEvidencePlanStepIsRequiredPostUpdateAgentRead(step) {
+		return adapter.ToolCall{}, false
+	}
+	if !ok {
+		step, ok = pendingPostUpdateAgentReadStepFromMetadata(metadata)
+		if !ok {
+			return adapter.ToolCall{}, false
+		}
+	}
+	pendingSkillID := strings.TrimSpace(evidenceStringFromAny(step["skill_id"]))
+	pendingToolName := strings.TrimSpace(evidenceStringFromAny(step["tool_name"]))
+	if !strings.EqualFold(pendingSkillID, skills.SkillAgentManagement) {
+		return adapter.ToolCall{}, false
+	}
+	switch strings.ToLower(pendingToolName) {
+	case "get_agent", "get_agent_config":
+	default:
+		return adapter.ToolCall{}, false
+	}
+	agentID := successfulAgentMutationAgentID(successfulToolCalls)
+	if agentID == "" {
+		agentID = successfulAgentMutationAgentIDFromEvidence(evidence)
+	}
+	if agentID == "" {
+		agentID = successfulAgentMutationAgentIDFromEvidence(metadata)
+	}
+	if agentID == "" {
+		return adapter.ToolCall{}, false
+	}
+	payload, err := json.Marshal(map[string]interface{}{
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": pendingToolName,
+		"arguments": map[string]interface{}{
+			"agent_id": agentID,
+		},
+	})
+	if err != nil {
+		return adapter.ToolCall{}, false
+	}
+	call.Function.Name = skills.MetaToolCallSkillTool
+	call.Function.Arguments = string(payload)
+	return call, true
+}
+
+func currentMetadataForRun(req RunRequest) map[string]interface{} {
+	if req.CurrentMetadata == nil {
+		return nil
+	}
+	return copyStringAnyMap(req.CurrentMetadata())
+}
+
+func pendingPostUpdateAgentReadStepFromMetadata(metadata map[string]interface{}) (map[string]interface{}, bool) {
+	if len(metadata) == 0 {
+		return nil, false
+	}
+	plan := evidenceMapFromAny(metadata["operation_plan"])
+	if len(plan) == 0 {
+		return nil, false
+	}
+	stepStatus := evidenceMapFromAny(plan["step_status"])
+	for _, raw := range evidenceSliceFromAny(plan["steps"]) {
+		step := evidenceMapFromAny(raw)
+		if len(step) == 0 || !completionEvidencePlanStepIsRequiredPostUpdateAgentRead(step) {
+			continue
+		}
+		status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(step["status"])))
+		if status == "" {
+			stepID := strings.TrimSpace(evidenceStringFromAny(step["id"]))
+			status = strings.ToLower(strings.TrimSpace(evidenceStringFromAny(stepStatus[stepID])))
+		}
+		switch status {
+		case "completed", "complete", "success", "succeeded", "failed", "error", "skipped", "not_applicable":
+			continue
+		default:
+			return step, true
+		}
+	}
+	return nil, false
+}
+
+func isAgentManagementMutationTool(skillID string, toolName string) bool {
+	if !strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentManagement) {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "update_agent_identity", "update_agent_config",
+		"replace_agent_skill_bindings", "replace_agent_knowledge_bindings",
+		"replace_agent_database_bindings", "replace_agent_workflow_bindings",
+		"replace_agent_memory_slots":
+		return true
+	default:
+		return false
+	}
+}
+
+func successfulAgentManagementMutationExists(calls []SkillToolCallRef) bool {
+	for _, call := range calls {
+		if isAgentManagementMutationTool(call.SkillID, call.ToolName) {
+			return true
+		}
+	}
+	return false
+}
+
+func successfulAgentManagementMutationExistsInEvidence(evidence map[string]interface{}) bool {
+	for _, invocation := range completionVerificationEvidenceInvocations(evidence) {
+		if !completionVerificationInvocationSucceeded(invocation) {
+			continue
+		}
+		if isAgentManagementMutationTool(evidenceStringFromAny(invocation["skill_id"]), evidenceStringFromAny(invocation["tool_name"])) {
+			return true
+		}
+	}
+	return false
+}
+
+func successfulAgentMutationAgentID(calls []SkillToolCallRef) string {
+	for i := len(calls) - 1; i >= 0; i-- {
+		call := calls[i]
+		if !isAgentManagementMutationTool(call.SkillID, call.ToolName) {
+			continue
+		}
+		for _, value := range []interface{}{
+			call.Result["agent_id"],
+			call.Result["id"],
+			call.Arguments["agent_id"],
+			call.Arguments["id"],
+		} {
+			if text := strings.TrimSpace(evidenceStringFromAny(value)); text != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func successfulAgentMutationAgentIDFromEvidence(evidence map[string]interface{}) string {
+	invocations := completionVerificationEvidenceInvocations(evidence)
+	for i := len(invocations) - 1; i >= 0; i-- {
+		invocation := invocations[i]
+		if !completionVerificationInvocationSucceeded(invocation) ||
+			!isAgentManagementMutationTool(evidenceStringFromAny(invocation["skill_id"]), evidenceStringFromAny(invocation["tool_name"])) {
+			continue
+		}
+		args := evidenceMapFromAny(invocation["arguments"])
+		result := evidenceMapFromAny(invocation["result"])
+		if len(result) == 0 {
+			result = evidenceMapFromAny(invocation["result_summary"])
+		}
+		for _, value := range []interface{}{
+			result["agent_id"],
+			result["id"],
+			args["agent_id"],
+			args["id"],
+		} {
+			if text := strings.TrimSpace(evidenceStringFromAny(value)); text != "" {
+				return text
+			}
+		}
+	}
+	return ""
 }
 
 func failedToolCallKey(skillID string, toolName string, args map[string]interface{}) string {
@@ -554,6 +1144,684 @@ func repeatedFailedToolCallRecoverableStep(callID string, skillID string, toolNa
 	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, nextAction, skillID, toolName)), false, false)
 }
 
+func repeatedSuccessfulReadOnlyToolCallFeedbackStep(callID string, skillID string, toolName string, args map[string]interface{}, successfulToolCallsByKey map[string]SkillToolCallRef, successfulToolCalls []SkillToolCallRef, evidence map[string]interface{}, metadata map[string]interface{}) skillStepResult {
+	if !skillToolCallLooksReadOnly(skillID, toolName) {
+		return skillStepResult{}
+	}
+	key := failedToolCallKey(skillID, toolName, args)
+	if key == "" {
+		return skillStepResult{}
+	}
+	previous, ok := successfulToolCallsByKey[key]
+	if !ok {
+		if candidatePrevious, candidateOK := previousSuccessfulAgentCandidateLookup(skillID, toolName, successfulToolCalls); candidateOK {
+			if step, pendingOK := repeatedReadOnlyPendingAgentMutationStep(skillID, toolName, evidence, metadata); pendingOK {
+				trace := plannerFeedbackTrace(skillID, toolName, nil)
+				trace.Arguments = summarizeSkillToolArguments(skillID, toolName, args)
+				trace.Arguments["next_step"] = "call_pending_agent_mutation"
+				trace.Arguments["reason"] = "same_candidate_lookup_already_found_usable_result_while_mutation_step_pending"
+				trace.Arguments["required_next_tool"] = completionVerificationPlanStepLabel(step)
+				return successfulSkillStep(trace, skills.ToolResultMessage(callID, repeatedSuccessfulReadOnlyPendingMutationPayload(skillID, toolName, candidatePrevious, step)), false, false)
+			}
+		}
+		return skillStepResult{}
+	}
+	if repeatedReadOnlyToolShouldRunAfterMutation(skillID, toolName, args, successfulToolCalls) {
+		return skillStepResult{}
+	}
+	if step, ok := repeatedReadOnlyPendingAgentMutationStep(skillID, toolName, evidence, metadata); ok {
+		trace := plannerFeedbackTrace(skillID, toolName, nil)
+		trace.Arguments = summarizeSkillToolArguments(skillID, toolName, args)
+		trace.Arguments["next_step"] = "call_pending_agent_mutation"
+		trace.Arguments["reason"] = "same_read_only_tool_already_succeeded_while_mutation_step_pending"
+		trace.Arguments["required_next_tool"] = completionVerificationPlanStepLabel(step)
+		return successfulSkillStep(trace, skills.ToolResultMessage(callID, repeatedSuccessfulReadOnlyPendingMutationPayload(skillID, toolName, previous, step)), false, false)
+	}
+	trace := plannerFeedbackTrace(skillID, toolName, nil)
+	trace.Arguments = summarizeSkillToolArguments(skillID, toolName, args)
+	trace.Arguments["next_step"] = "answer_from_previous_result"
+	trace.Arguments["reason"] = "same_read_only_tool_already_succeeded"
+	return successfulSkillStep(trace, skills.ToolResultMessage(callID, repeatedSuccessfulReadOnlyToolCallPayload(skillID, toolName, previous)), false, false)
+}
+
+func missingAgentTargetListAgentsTerminalStep(callID string, skillID string, toolName string, args map[string]interface{}, successfulToolCalls []SkillToolCallRef, userQuery string) skillStepResult {
+	if !strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentManagement) ||
+		!strings.EqualFold(strings.TrimSpace(toolName), "list_agents") {
+		return skillStepResult{}
+	}
+	previousLookups := 0
+	emptyLookups := 0
+	broadLookups := 0
+	for _, call := range successfulToolCalls {
+		if !strings.EqualFold(strings.TrimSpace(call.SkillID), skills.SkillAgentManagement) ||
+			!strings.EqualFold(strings.TrimSpace(call.ToolName), "list_agents") {
+			continue
+		}
+		previousLookups++
+		if !agentListAgentsArgsHasKeyword(call.Arguments) {
+			broadLookups++
+		}
+		if agentListAgentsResultCount(call.Result) == 0 {
+			emptyLookups++
+		}
+	}
+	if previousLookups < 2 {
+		return skillStepResult{}
+	}
+	if emptyLookups < 2 && !(emptyLookups >= 1 && broadLookups >= 1) {
+		return skillStepResult{}
+	}
+	targetName := agentTargetNameFromQuery(userQuery)
+	if targetName == "" {
+		targetName = strings.TrimSpace(stringArg(args, "keyword"))
+	}
+	trace := plannerFeedbackTrace(skillID, toolName, nil)
+	trace.Arguments = summarizeSkillToolArguments(skillID, toolName, args)
+	trace.Arguments["next_step"] = "answer_missing_agent_target"
+	trace.Arguments["reason"] = "agent_target_resolution_exhausted"
+	trace.Arguments["previous_list_agents_calls"] = previousLookups
+	trace.Arguments["empty_result_calls"] = emptyLookups
+	if targetName != "" {
+		trace.Arguments["target_name"] = targetName
+	}
+	payload := map[string]interface{}{
+		"status":                     "completed",
+		"advisory":                   "agent_target_resolution_exhausted",
+		"skill_id":                   strings.TrimSpace(skillID),
+		"tool_name":                  strings.TrimSpace(toolName),
+		"target_name":                targetName,
+		"previous_list_agents_calls": previousLookups,
+		"empty_result_calls":         emptyLookups,
+		"next_action":                "Stop calling list_agents in this turn. Answer from the existing target-resolution evidence; do not request governance approval and do not run mutation tools for an unresolved Agent target.",
+	}
+	result := terminalSkillStep(trace, skills.ToolResultMessage(callID, payload), true, false)
+	result.answer = missingAgentTargetFinalAnswer(userQuery, targetName)
+	return result
+}
+
+func agentListAgentsArgsHasKeyword(args map[string]interface{}) bool {
+	if len(args) == 0 {
+		return false
+	}
+	value, ok := args["keyword"]
+	if !ok || value == nil {
+		return false
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed) != ""
+	case map[string]interface{}:
+		return true
+	default:
+		return strings.TrimSpace(fmt.Sprint(value)) != ""
+	}
+}
+
+func agentListAgentsResultCount(result map[string]interface{}) int {
+	for _, key := range []string{"agents_count", "count", "total", "target_count"} {
+		if count, ok := intFromAny(result[key]); ok {
+			return count
+		}
+	}
+	if count := repeatedSuccessfulReadOnlyResultCollectionLength(result["agents"]); count >= 0 {
+		return count
+	}
+	return -1
+}
+
+func agentTargetNameFromQuery(query string) string {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return ""
+	}
+	for _, pattern := range []*regexp.Regexp{
+		regexp.MustCompile(`名为\s*[「"“']?([^」"”'，。；、,\s]+)`),
+		regexp.MustCompile(`名称为\s*[「"“']?([^」"”'，。；、,\s]+)`),
+		regexp.MustCompile(`named\s+[「"“']?([^」"”'，。；、,\s]+)`),
+		regexp.MustCompile(`called\s+[「"“']?([^」"”'，。；、,\s]+)`),
+	} {
+		if match := pattern.FindStringSubmatch(query); len(match) > 1 {
+			return strings.TrimSpace(match[1])
+		}
+	}
+	tokenPattern := regexp.MustCompile(`(?i)\b[A-Z][A-Z0-9_.:-]{2,}\b`)
+	matches := tokenPattern.FindAllString(query, -1)
+	for _, match := range matches {
+		upper := strings.ToUpper(match)
+		if strings.Contains(upper, "AGENT") || strings.Contains(upper, "AICHAT") {
+			return strings.TrimSpace(match)
+		}
+	}
+	return ""
+}
+
+func missingAgentTargetFinalAnswer(userQuery string, targetName string) string {
+	if containsCJK(userQuery) {
+		if targetName != "" {
+			return fmt.Sprintf("无法完成这次智能体操作：在当前工作空间中没有解析到名为「%s」的智能体。已根据已有搜索结果确认没有匹配目标，所以我没有发起审批，也没有执行修改或删除。", targetName)
+		}
+		return "无法完成这次智能体操作：已有搜索结果没有解析到明确的目标智能体，所以我没有发起审批，也没有执行修改或删除。"
+	}
+	if targetName != "" {
+		return fmt.Sprintf("I couldn't complete this Agent operation because no Agent named %q was resolved in the current workspace. I did not request approval and did not modify or delete anything.", targetName)
+	}
+	return "I couldn't complete this Agent operation because the target Agent could not be resolved. I did not request approval and did not modify or delete anything."
+}
+
+func previousSuccessfulAgentCandidateLookup(skillID string, toolName string, successfulToolCalls []SkillToolCallRef) (SkillToolCallRef, bool) {
+	if !agentCandidateLookupTool(skillID, toolName) {
+		return SkillToolCallRef{}, false
+	}
+	for i := len(successfulToolCalls) - 1; i >= 0; i-- {
+		call := successfulToolCalls[i]
+		if !strings.EqualFold(strings.TrimSpace(call.SkillID), strings.TrimSpace(skillID)) ||
+			!strings.EqualFold(strings.TrimSpace(call.ToolName), strings.TrimSpace(toolName)) {
+			continue
+		}
+		if agentCandidateLookupResultUsable(call.Result) {
+			return call, true
+		}
+	}
+	return SkillToolCallRef{}, false
+}
+
+func agentCandidateLookupTool(skillID string, toolName string) bool {
+	if !strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentManagement) {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "list_agent_skill_candidates",
+		"list_agent_knowledge_candidates",
+		"list_agent_database_candidates",
+		"list_agent_database_tables",
+		"list_agent_workflow_binding_candidates":
+		return true
+	default:
+		return false
+	}
+}
+
+func agentCandidateLookupResultUsable(result map[string]interface{}) bool {
+	if len(result) == 0 {
+		return false
+	}
+	if status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(result["status"]))); status == "error" || status == "failed" {
+		return false
+	}
+	for _, key := range []string{"count", "total", "target_count"} {
+		if count, ok := intFromAny(result[key]); ok {
+			return count > 0
+		}
+	}
+	for _, key := range []string{"items", "agents", "skills", "knowledge_bases", "databases", "database_tables", "workflows", "models"} {
+		if count := repeatedSuccessfulReadOnlyResultCollectionLength(result[key]); count >= 0 {
+			return count > 0
+		}
+	}
+	return true
+}
+
+func repeatedReadOnlyPendingAgentMutationStep(skillID string, toolName string, evidence map[string]interface{}, metadata map[string]interface{}) (map[string]interface{}, bool) {
+	if !strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentManagement) {
+		return nil, false
+	}
+	if !skillToolCallLooksReadOnly(skillID, toolName) {
+		return nil, false
+	}
+	for _, source := range []map[string]interface{}{evidence, metadata} {
+		if step, ok := firstPendingAgentMutationPlanStep(source); ok {
+			return step, true
+		}
+	}
+	return nil, false
+}
+
+func firstPendingAgentMutationPlanStep(source map[string]interface{}) (map[string]interface{}, bool) {
+	if len(source) == 0 {
+		return nil, false
+	}
+	plan := evidenceMapFromAny(source["operation_plan"])
+	if len(plan) == 0 {
+		return nil, false
+	}
+	steps, _ := fastPathPendingExecutablePlanSteps(plan, 20)
+	for _, step := range steps {
+		if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(step["skill_id"])), skills.SkillAgentManagement) {
+			continue
+		}
+		if !isAgentManagementMutationTool(evidenceStringFromAny(step["skill_id"]), evidenceStringFromAny(step["tool_name"])) {
+			continue
+		}
+		return copyStringAnyMap(step), true
+	}
+	return nil, false
+}
+
+func repeatedReadOnlyToolShouldRunAfterMutation(skillID string, toolName string, args map[string]interface{}, successfulToolCalls []SkillToolCallRef) bool {
+	if !strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentManagement) {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "get_agent", "get_agent_config":
+	default:
+		return false
+	}
+	key := failedToolCallKey(skillID, toolName, args)
+	if key == "" {
+		return false
+	}
+	for i := len(successfulToolCalls) - 1; i >= 0; i-- {
+		call := successfulToolCalls[i]
+		if failedToolCallKey(call.SkillID, call.ToolName, call.Arguments) == key {
+			return false
+		}
+		if isAgentManagementMutationTool(call.SkillID, call.ToolName) {
+			return true
+		}
+	}
+	return false
+}
+
+func skillToolCallLooksReadOnly(skillID string, toolName string) bool {
+	skillID = strings.ToLower(strings.TrimSpace(skillID))
+	toolName = strings.ToLower(strings.TrimSpace(toolName))
+	if skillID == "" || toolName == "" {
+		return false
+	}
+	for _, prefix := range []string{"get_", "list_", "read_", "search_"} {
+		if strings.HasPrefix(toolName, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func repeatedSuccessfulReadOnlyToolCallPayload(skillID string, toolName string, previous SkillToolCallRef) map[string]interface{} {
+	return map[string]interface{}{
+		"status":                  "completed",
+		"advisory":                "same_read_only_tool_already_succeeded",
+		"skill_id":                strings.TrimSpace(skillID),
+		"tool_name":               strings.TrimSpace(toolName),
+		"message":                 "This read-only tool call with identical arguments already succeeded earlier in this turn.",
+		"previous_result_summary": summarizeRepeatedSuccessfulReadOnlyResult(previous.Result),
+		"next_action":             "Do not call the same read-only tool with identical arguments again. Answer from the previous tool result already present in the message history; if that result is empty, say there are no matching candidates.",
+	}
+}
+
+func repeatedSuccessfulReadOnlyPendingMutationPayload(skillID string, toolName string, previous SkillToolCallRef, step map[string]interface{}) map[string]interface{} {
+	required := completionVerificationPlanStepLabel(step)
+	if required == "" {
+		required = strings.TrimSpace(evidenceStringFromAny(step["id"]))
+	}
+	nextAction := strings.Join([]string{
+		"Do not call the same read-only tool with identical arguments again.",
+		"The current operation plan still has a pending asset-changing Agent step.",
+		"Call the required pending tool next using the latest user request, page context, and previous read result.",
+		"For Agent config updates, extract the target field values from the user's latest request and include them in the update_agent_config arguments; do not wait for another read-only config call when the same read already succeeded.",
+		"After the mutation succeeds, read the Agent configuration again only if verification is still required.",
+	}, " ")
+	if required != "" {
+		nextAction = fmt.Sprintf("Required next tool: %s. %s", required, nextAction)
+	}
+	return map[string]interface{}{
+		"status":                  "completed",
+		"advisory":                "pending_mutation_step_after_repeated_read_only_tool",
+		"skill_id":                strings.TrimSpace(skillID),
+		"tool_name":               strings.TrimSpace(toolName),
+		"required_next_tool":      required,
+		"plan_step":               copyStringAnyMap(step),
+		"message":                 "This read-only tool call already succeeded, but the operation plan still has an asset-changing Agent step pending.",
+		"previous_result_summary": summarizeRepeatedSuccessfulReadOnlyResult(previous.Result),
+		"next_action":             nextAction,
+	}
+}
+
+func plannerFeedbackRequestsPendingMutation(trace skills.SkillTrace) bool {
+	if !strings.EqualFold(strings.TrimSpace(trace.Kind), "planner_feedback") {
+		return false
+	}
+	if got := strings.TrimSpace(evidenceStringFromAny(trace.Arguments["next_step"])); !strings.EqualFold(got, "call_pending_agent_mutation") {
+		return false
+	}
+	required := strings.TrimSpace(evidenceStringFromAny(trace.Arguments["required_next_tool"]))
+	return required != ""
+}
+
+func summarizeRepeatedSuccessfulReadOnlyResult(result map[string]interface{}) map[string]interface{} {
+	if len(result) == 0 {
+		return nil
+	}
+	summary := map[string]interface{}{}
+	for _, key := range []string{"status", "count", "total", "target_count", "success_count", "failed_count", "agent_id", "agent_name"} {
+		if value, ok := result[key]; ok {
+			summary[key] = value
+		}
+	}
+	for _, key := range []string{"items", "agents", "skills", "knowledge_bases", "databases", "database_tables", "workflows", "models"} {
+		if count := repeatedSuccessfulReadOnlyResultCollectionLength(result[key]); count >= 0 {
+			summary[key+"_count"] = count
+		}
+	}
+	if samples := repeatedSuccessfulReadOnlyCandidateSamples(result, 3); len(samples) > 0 {
+		summary["candidate_samples"] = samples
+	}
+	if len(summary) == 0 {
+		summary["available"] = true
+	}
+	return summary
+}
+
+func repeatedSuccessfulReadOnlyCandidateSamples(result map[string]interface{}, limit int) []map[string]interface{} {
+	if len(result) == 0 || limit <= 0 {
+		return nil
+	}
+	for _, key := range []string{
+		"binding_candidates",
+		"skills",
+		"knowledge_bases",
+		"databases",
+		"database_tables",
+		"tables",
+		"workflows",
+		"models",
+		"items",
+	} {
+		records := evidenceMapsFromAny(result[key])
+		if len(records) == 0 {
+			continue
+		}
+		out := make([]map[string]interface{}, 0, min(len(records), limit))
+		for _, record := range records {
+			item := repeatedSuccessfulReadOnlyCandidateSample(record)
+			if len(item) == 0 {
+				continue
+			}
+			out = append(out, item)
+			if len(out) >= limit {
+				break
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return nil
+}
+
+func repeatedSuccessfulReadOnlyCandidateSample(record map[string]interface{}) map[string]interface{} {
+	if len(record) == 0 {
+		return nil
+	}
+	item := map[string]interface{}{}
+	if id := firstNonEmptyString(record["id"], record["skill_id"], record["dataset_id"], record["knowledge_base_id"], record["data_source_id"], record["table_id"], record["workflow_id"], record["binding_id"]); id != "" {
+		item["id"] = id
+	}
+	if name := firstNonEmptyString(record["name"], record["title"], record["label"], record["display_name"], record["dataset_name"], record["database_name"], record["table_name"], record["workflow_name"], record["model"]); name != "" {
+		item["name"] = name
+	}
+	for _, key := range []string{"selected", "writable", "provider", "model"} {
+		if value, ok := record[key]; ok && value != nil && value != "" {
+			item[key] = value
+		}
+	}
+	if binding := repeatedSuccessfulReadOnlyCandidateBinding(record["binding"]); len(binding) > 0 {
+		item["binding"] = binding
+	}
+	return item
+}
+
+func repeatedSuccessfulReadOnlyCandidateBinding(value interface{}) map[string]interface{} {
+	binding := evidenceMapFromAny(value)
+	if len(binding) == 0 {
+		return nil
+	}
+	item := map[string]interface{}{}
+	for _, key := range []string{"data_source_id", "table_ids", "writable_table_ids", "agent_id", "workflow_id", "binding_id", "version_strategy", "version_uuid", "timeout_seconds"} {
+		if value, ok := binding[key]; ok && value != nil && value != "" {
+			item[key] = value
+		}
+	}
+	return item
+}
+
+func repeatedSuccessfulReadOnlyResultCollectionLength(value interface{}) int {
+	switch typed := value.(type) {
+	case []interface{}:
+		return len(typed)
+	case []map[string]interface{}:
+		return len(typed)
+	case []string:
+		return len(typed)
+	default:
+		return -1
+	}
+}
+
+func redundantPostReadAgentConfigMutationAnswer(skillID string, toolName string, args map[string]interface{}, evidence map[string]interface{}) (string, bool) {
+	if !strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentManagement) ||
+		!agentConfigMutationToolCanCloseFromPostRead(toolName) {
+		return "", false
+	}
+	if !fastPathGoalRequestsAgentConfigPostRead(evidence) {
+		return "", false
+	}
+	if !fastPathHasSuccessfulAgentConfigReadAfterUpdate(evidence) {
+		return "", false
+	}
+	if !agentConfigRedundantMutationCoveredByEvidence(toolName, args, evidence) {
+		return "", false
+	}
+	return agentConfigPostUpdateVerifiedFastPathAnswerFromEvidence(evidence)
+}
+
+func immediateCompletionEvidenceFastPathAnswer(evidence map[string]interface{}) (string, bool) {
+	if !fastPathEvidenceHasSuccessfulAgentConfigUpdate(evidence) {
+		return "", false
+	}
+	if !fastPathHasSuccessfulAgentConfigReadAfterUpdate(evidence) {
+		return "", false
+	}
+	return FastPathFinalAnswerForCompletionEvidence(evidence)
+}
+
+func agentConfigMutationToolCanCloseFromPostRead(toolName string) bool {
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "update_agent_config", "update_agent_identity":
+		return true
+	default:
+		return false
+	}
+}
+
+func agentConfigRedundantMutationCoveredByEvidence(toolName string, args map[string]interface{}, evidence map[string]interface{}) bool {
+	trace, ok := fastPathLatestSuccessfulAgentConfigUpdateTrace(evidence)
+	if !ok {
+		return false
+	}
+	toolName = strings.ToLower(strings.TrimSpace(toolName))
+	if !strings.EqualFold(strings.TrimSpace(trace.ToolName), toolName) {
+		return false
+	}
+	if !agentConfigMutationTargetsSame(args, trace) {
+		return false
+	}
+	switch toolName {
+	case "update_agent_identity":
+		return stringSetContainsAll(
+			agentIdentityFieldsFromResult(trace.Result),
+			agentIdentityFieldsFromArguments(args),
+		)
+	case "update_agent_config":
+		return stringSetContainsAll(
+			agentConfigFieldsFromResult(trace.Result),
+			agentConfigFieldsFromArguments(args),
+		)
+	default:
+		return false
+	}
+}
+
+func agentConfigMutationTargetsSame(args map[string]interface{}, trace skills.SkillTrace) bool {
+	pending := strings.TrimSpace(firstNonEmptyString(args["agent_id"], args["id"]))
+	completed := strings.TrimSpace(firstNonEmptyString(
+		trace.Arguments["agent_id"],
+		trace.Arguments["id"],
+		trace.Result["agent_id"],
+		trace.Result["id"],
+	))
+	if completed == "" {
+		if agent := payloadMap(trace.Result, "agent"); len(agent) > 0 {
+			completed = strings.TrimSpace(firstNonEmptyString(agent["agent_id"], agent["id"]))
+		}
+	}
+	return pending == "" || completed == "" || pending == completed
+}
+
+func agentIdentityFieldsFromArguments(args map[string]interface{}) map[string]struct{} {
+	fields := map[string]struct{}{}
+	for _, field := range []string{"name", "description", "icon", "icon_type", "icon_background"} {
+		if _, ok := args[field]; ok {
+			fields[agentIdentityCanonicalField(field)] = struct{}{}
+		}
+	}
+	return fields
+}
+
+func agentIdentityFieldsFromResult(result map[string]interface{}) map[string]struct{} {
+	fields := map[string]struct{}{}
+	for _, field := range sanitizedStringListArgumentValue(result["updated_fields"]) {
+		if canonical := agentIdentityCanonicalField(field); canonical != "" {
+			fields[canonical] = struct{}{}
+		}
+	}
+	return fields
+}
+
+func agentIdentityCanonicalField(field string) string {
+	switch strings.TrimSpace(field) {
+	case "name":
+		return "name"
+	case "description":
+		return "description"
+	case "icon", "icon_type", "icon_background":
+		return "icon"
+	default:
+		return ""
+	}
+}
+
+func agentConfigFieldsFromArguments(args map[string]interface{}) map[string]struct{} {
+	fields := map[string]struct{}{}
+	for key := range args {
+		if canonical := agentConfigCanonicalFieldFromArgument(key); canonical != "" {
+			fields[canonical] = struct{}{}
+		}
+	}
+	return fields
+}
+
+func agentConfigFieldsFromResult(result map[string]interface{}) map[string]struct{} {
+	fields := map[string]struct{}{}
+	for _, field := range sanitizedStringListArgumentValue(result["updated_fields"]) {
+		if canonical := agentConfigCanonicalFieldFromResult(field); canonical != "" {
+			fields[canonical] = struct{}{}
+		}
+	}
+	for _, field := range sanitizedStringListArgumentValue(result["satisfied_fields"]) {
+		if canonical := agentConfigCanonicalFieldFromResult(field); canonical != "" {
+			fields[canonical] = struct{}{}
+		}
+	}
+	for _, change := range agentConfigChangeMaps(result) {
+		if canonical := agentConfigCanonicalFieldFromResult(firstNonEmptyString(change["field"], change["binding_kind"])); canonical != "" {
+			fields[canonical] = struct{}{}
+		}
+	}
+	return fields
+}
+
+func agentConfigCanonicalFieldFromArgument(field string) string {
+	switch strings.TrimSpace(field) {
+	case "system_prompt":
+		return "system_prompt"
+	case "model", "model_provider":
+		return "model"
+	case "model_parameters":
+		return "model_parameters"
+	case "enabled_skill_ids", "add_enabled_skill_ids", "remove_enabled_skill_ids":
+		return "enabled_skill_ids"
+	case "agent_memory_enabled":
+		return "agent_memory_enabled"
+	case "file_upload_enabled":
+		return "file_upload_enabled"
+	case "home_title":
+		return "home_title"
+	case "input_placeholder":
+		return "input_placeholder"
+	case "theme_color":
+		return "theme_color"
+	case "suggested_questions":
+		return "suggested_questions"
+	case "knowledge_dataset_ids", "dataset_ids", "add_knowledge_dataset_ids", "remove_knowledge_dataset_ids":
+		return "knowledge_dataset_ids"
+	case "knowledge_retrieval_config":
+		return "knowledge_retrieval_config"
+	case "database_bindings", "add_database_bindings", "remove_database_bindings":
+		return "database_bindings"
+	case "workflow_bindings", "add_workflow_bindings", "remove_workflow_bindings":
+		return "workflow_bindings"
+	default:
+		return ""
+	}
+}
+
+func agentConfigCanonicalFieldFromResult(field string) string {
+	switch strings.TrimSpace(field) {
+	case "system_prompt":
+		return "system_prompt"
+	case "model", "model_provider":
+		return "model"
+	case "model_parameters":
+		return "model_parameters"
+	case "enabled_skill_ids", "agent_skill":
+		return "enabled_skill_ids"
+	case "agent_memory_enabled":
+		return "agent_memory_enabled"
+	case "file_upload_enabled":
+		return "file_upload_enabled"
+	case "home_title":
+		return "home_title"
+	case "input_placeholder":
+		return "input_placeholder"
+	case "theme_color":
+		return "theme_color"
+	case "suggested_questions":
+		return "suggested_questions"
+	case "knowledge_dataset_ids", "dataset_ids", "knowledge_base":
+		return "knowledge_dataset_ids"
+	case "knowledge_retrieval_config":
+		return "knowledge_retrieval_config"
+	case "database_bindings", "database_table":
+		return "database_bindings"
+	case "workflow_bindings", "workflow":
+		return "workflow_bindings"
+	default:
+		return ""
+	}
+}
+
+func stringSetContainsAll(have map[string]struct{}, want map[string]struct{}) bool {
+	if len(want) == 0 {
+		return false
+	}
+	for field := range want {
+		if _, ok := have[field]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func recoverableFailureFinalAnswer(trace skills.SkillTrace, err error) string {
 	reason := strings.TrimSpace(trace.Error)
 	if reason == "" && err != nil {
@@ -577,7 +1845,7 @@ func recoverableFailureFinalAnswer(trace skills.SkillTrace, err error) string {
 }
 
 func planningRoundsExhaustedFinalAnswer(err error) string {
-	reason := "执行规划轮次已达到上限，无法确认本轮操作已经完成。"
+	reason := "\u6267\u884c\u89c4\u5212\u8f6e\u6b21\u5df2\u8fbe\u5230\u4e0a\u9650\uff0c\u65e0\u6cd5\u786e\u8ba4\u672c\u8f6e\u64cd\u4f5c\u5df2\u7ecf\u5b8c\u6210\u3002"
 	if err != nil {
 		reason = reason + " " + err.Error()
 	}
@@ -832,7 +2100,7 @@ func utf16CodeUnitLength(text string) int {
 }
 
 func (r *Runner) emitAgentProgress(ctx context.Context, prepared *PreparedChat, text string, _ func(Event) error) bool {
-	content := visibleAgentProgressText(text)
+	content := localizedAgentProgressText(preparedUserText(prepared), text)
 	if content == "" {
 		return false
 	}
@@ -952,6 +2220,17 @@ func preparedUserText(prepared *PreparedChat) string {
 	return strings.TrimSpace(prepared.Query)
 }
 
+func localizedAgentProgressText(userText string, text string) string {
+	content := visibleAgentProgressText(text)
+	if content == "" {
+		return ""
+	}
+	if containsCJK(userText) && !containsCJK(content) {
+		return "\u6211\u5148\u786e\u8ba4\u5f53\u524d\u4fe1\u606f\uff0c\u518d\u7ee7\u7eed\u5904\u7406\u3002"
+	}
+	return content
+}
+
 func visibleAgentProgressText(text string) string {
 	content := strings.TrimSpace(text)
 	if content == "" {
@@ -1003,6 +2282,25 @@ func looksLikeInternalAgentProgress(text string) bool {
 			return true
 		}
 	}
+	for _, fragment := range []string{
+		"i need to navigate",
+		"i need to open",
+		"i will navigate first",
+		"i will open first",
+		"first navigate",
+		"first open the page",
+		"\u6211\u9700\u8981\u5148\u5bfc\u822a",
+		"\u6211\u9700\u8981\u5148\u6253\u5f00",
+		"\u6211\u9700\u8981\u5148\u8fdb\u5165",
+		"\u6211\u5148\u5bfc\u822a",
+		"\u5148\u5bfc\u822a\u5230",
+		"\u5148\u6253\u5f00\u9875\u9762",
+		"\u5148\u8fdb\u5165\u9875\u9762",
+	} {
+		if strings.Contains(lower, fragment) {
+			return true
+		}
+	}
 	return false
 }
 
@@ -1013,7 +2311,7 @@ func firstAgentProgressSentence(text string) string {
 	}
 	for index, char := range text {
 		switch char {
-		case '\n', '。', '！', '？', '!', '?':
+		case '\n', '\u3002', '\uff1b', '\uff01', '\uff1f', '!', '?':
 			return strings.TrimSpace(text[:index+len(string(char))])
 		case '.':
 			rest := text[index+1:]
@@ -1045,15 +2343,19 @@ func truncateRunes(text string, maxRunes int) string {
 func agenticSkillLoopSystemMessage() adapter.Message {
 	return adapter.Message{Role: "system", Content: strings.Join([]string{
 		"When using skills or tools, you may provide at most one brief, high-level user-facing progress sentence when it helps the user understand a multi-step operation.",
+		"All user-facing progress, reasoning, request_user_input text, submit_intermediate_answer text, and final answers must use the same language as the user's latest request. If the user writes in Chinese, progress text must be Chinese.",
 		"Do not narrate every tool call, internal plan step, tool name, tool arguments, IDs, protocol details, or bookkeeping status.",
 		"If you share progress or reasoning, frame it around the user's goal, current page evidence, and the next useful action; do not expose a rigid hidden checklist.",
 		"Do not start every task by listing resources or navigating. If current page context, recent tool results, or visible resolved targets are enough, act from that evidence directly.",
+		"Do not announce that you need to navigate, open, enter, or switch pages unless a visible console navigation tool is available and you are about to call it. If no navigation tool is available, say you will continue from current page evidence.",
 		"When an additional system message contains required_next_tool, treat it as an important planned next step, not as a reason to ignore fresh evidence. Load and call it when the current page context and prior tool/client-action evidence show it is still needed; do not repeat the same navigation or business tool after matching evidence already satisfies the step.",
 		"After each skill/tool result, continue with the next necessary action or final answer. Summarize only user-relevant outcomes, not internal bookkeeping.",
 		"If a tool call fails, explain the likely user-relevant cause, fix the arguments, and retry when possible.",
 		"If a tool call fails, do not repeat the same tool with the same arguments. Re-plan from the error before retrying.",
 		"For deterministic batch work, prefer one suitable business tool call that handles the batch coherently over many small repeated tool calls.",
 		"Do not claim that you saved, remembered, updated, deleted, sent, created, changed, or completed any external action unless the corresponding skill/tool call succeeded in this turn.",
+		"Do not claim that a governance approval card has been submitted or is waiting unless a governed skill/tool call actually returned a pending governance event.",
+		"If a save, update, delete, create, bind, unbind, publish, or navigation tool succeeded in this turn, describe the outcome as executed and verified from the tool/page evidence; do not say it was unnecessary or skipped just because the refreshed page already shows the requested state.",
 		"Progress text sent together with tool calls is transient status text. Keep it short and do not place substantial user deliverables there.",
 		"submit_intermediate_answer is for substantial user-facing deliverables only; do not use it for progress, plans, tool status, internal reasoning, or protocol narration.",
 		"If the current turn newly creates or substantially rewrites a user-facing deliverable before later tool/skill calls, call submit_intermediate_answer for that new deliverable before continuing.",

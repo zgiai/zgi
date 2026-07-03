@@ -184,6 +184,7 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 		return nil, err
 	}
 	restoreConsoleFilesContextFromMetadata(parts, message.Metadata, continuation.Event)
+	restoreConsoleAgentsContextFromMetadata(parts, message.Metadata, continuation.Event)
 	parts.Attachments = attachmentBundleFromMessageMetadata(message.Metadata)
 	if configured, ok := stringSliceValue(message.Metadata["configured_skill_ids"]); ok && len(configured) > 0 {
 		parts.ConfiguredSkillIDs = configured
@@ -328,6 +329,7 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		} else {
 			invocation.Trace = enrichSkillTraceResultFromMessages(invocation.Trace, invocation.Messages)
 			timeline.RecordInvocationEnd(invocation.Trace)
+			s.persistFrozenContinuationToolTraceBestEffort(persistCtx, prepared, invocation.Trace)
 			for _, artifact := range skillArtifactsFromToolMessages(prepared, invocation.Trace, invocation.Messages) {
 				s.persistGeneratedArtifactBestEffort(persistCtx, prepared, artifact)
 				timeline.Emit(streamEventSkillArtifactCreated, artifact)
@@ -401,11 +403,238 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, true, nil
 }
 
+func (s *service) persistFrozenContinuationToolTraceBestEffort(ctx context.Context, prepared *PreparedChat, trace skills.SkillTrace) {
+	if prepared == nil || prepared.Message == nil {
+		return
+	}
+	metadata := mergeFrozenContinuationToolTraceMetadata(prepared.Message.Metadata, trace)
+	prepared.Message.Metadata = metadata
+	if s == nil || s.repos == nil || s.repos.Message == nil {
+		return
+	}
+	_ = s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata)
+}
+
+func mergeFrozenContinuationToolTraceMetadata(source map[string]interface{}, trace skills.SkillTrace) map[string]interface{} {
+	metadata := copyStringAnyMap(source)
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	if strings.TrimSpace(trace.SkillID) == "" || strings.TrimSpace(trace.ToolName) == "" {
+		return metadata
+	}
+	if strings.TrimSpace(trace.Kind) == "" || strings.EqualFold(strings.TrimSpace(trace.Kind), "tool_governance") {
+		trace.Kind = "tool_call"
+	}
+	if strings.TrimSpace(trace.Status) == "" {
+		trace.Status = "success"
+	}
+	invocation := skillInvocationFromTrace(trace, 0)
+	if runtimeID := latestMatchingToolCallRuntimeID(metadata, trace.SkillID, trace.ToolName); runtimeID != "" {
+		invocation["runtime_id"] = runtimeID
+	}
+	return mergeSkillInvocationMetadata(metadata, []map[string]interface{}{invocation})
+}
+
+func latestMatchingToolCallRuntimeID(metadata map[string]interface{}, skillID string, toolName string) string {
+	skillID = strings.TrimSpace(skillID)
+	toolName = strings.TrimSpace(toolName)
+	if len(metadata) == 0 || skillID == "" || toolName == "" {
+		return ""
+	}
+	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	for idx := len(invocations) - 1; idx >= 0; idx-- {
+		invocation := invocations[idx]
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "tool_call") ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["skill_id"])), skillID) ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["tool_name"])), toolName) {
+			continue
+		}
+		if runtimeID := strings.TrimSpace(stringFromAny(invocation["runtime_id"])); runtimeID != "" {
+			return runtimeID
+		}
+	}
+	return ""
+}
+
 func toolGovernanceFrozenFastPathAnswer(prepared *PreparedChat, trace skills.SkillTrace) (string, bool) {
+	if prepared != nil && prepared.Message != nil {
+		evidence := skillLoopCompletionEvidence(prepared)()
+		if answer, ok := skillloop.FastPathFinalAnswerForAgentMutationEvidence(evidence, trace); ok {
+			return answer, true
+		}
+	}
+	if answer, ok := toolGovernanceFrozenSimpleAgentConfigFastPathAnswer(prepared, trace); ok {
+		return answer, true
+	}
 	if prepared == nil || prepared.Message == nil {
 		return skillloop.FastPathFinalAnswerForToolTrace(trace)
 	}
 	return skillloop.FastPathFinalAnswerForToolTraceWithEvidence(trace, skillLoopCompletionEvidence(prepared)())
+}
+
+func toolGovernanceFrozenSimpleAgentConfigFastPathAnswer(prepared *PreparedChat, trace skills.SkillTrace) (string, bool) {
+	if prepared == nil || prepared.Message == nil ||
+		!strings.EqualFold(strings.TrimSpace(trace.SkillID), skills.SkillAgentManagement) ||
+		!strings.EqualFold(strings.TrimSpace(trace.ToolName), "update_agent_config") {
+		return "", false
+	}
+	status := strings.ToLower(strings.TrimSpace(trace.Status))
+	if status != "success" && status != "succeeded" && status != "completed" {
+		return "", false
+	}
+	answer, ok := skillloop.FastPathFinalAnswerForToolTrace(trace)
+	if !ok {
+		return "", false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 || toolGovernanceFrozenPlanRequiresPostUpdateRead(plan) {
+		return "", false
+	}
+	if toolGovernanceFrozenPlanHasPendingAgentMutationOtherThan(plan, trace.ToolName) {
+		return "", false
+	}
+	expectedFields := toolGovernanceFrozenPlanExpectedAgentConfigFields(plan)
+	if len(expectedFields) == 0 {
+		expectedFields = operationPlanAgentConfigFieldsFromResult(trace.Result)
+	}
+	if len(expectedFields) == 0 || !toolGovernanceFrozenSimpleAgentConfigFields(expectedFields) {
+		return "", false
+	}
+	updatedFields := operationPlanAgentConfigFieldsFromResult(trace.Result)
+	for _, field := range expectedFields {
+		if !stringSliceContainsFold(updatedFields, field) {
+			return "", false
+		}
+	}
+	return answer, true
+}
+
+func toolGovernanceFrozenPlanHasPendingAgentMutationOtherThan(plan map[string]interface{}, completedToolName string) bool {
+	if len(plan) == 0 {
+		return false
+	}
+	completedToolName = strings.ToLower(strings.TrimSpace(completedToolName))
+	stepStatus := mapFromOperationContext(plan["step_status"])
+	for _, step := range mapSliceFromAny(plan["steps"]) {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skills.SkillAgentManagement) {
+			continue
+		}
+		toolName := strings.ToLower(strings.TrimSpace(stringFromAny(step["tool_name"])))
+		if toolName == "" || toolName == completedToolName || !toolGovernanceFrozenPlanAgentToolIsMutation(toolName) {
+			continue
+		}
+		id := strings.TrimSpace(stringFromAny(step["id"]))
+		status := operationPlanNormalizeStepStatus(firstNonEmptyString(step["status"], stepStatus[id]))
+		if status == operationPlanStepStatusCompleted || status == operationPlanStepStatusFailed {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func toolGovernanceFrozenPlanAgentToolIsMutation(toolName string) bool {
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "create_agent", "delete_agent", "delete_agents", "update_agent_identity", "update_agent_config",
+		"replace_agent_memory_slots", "replace_agent_skill_bindings", "replace_agent_knowledge_bindings",
+		"replace_agent_database_bindings", "replace_agent_workflow_bindings":
+		return true
+	default:
+		return false
+	}
+}
+
+func toolGovernanceFrozenPlanExpectedAgentConfigFields(plan map[string]interface{}) []string {
+	for _, step := range mapSliceFromAny(plan["steps"]) {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skills.SkillAgentManagement) ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(step["tool_name"])), "update_agent_config") {
+			continue
+		}
+		if fields := operationPlanNormalizedAgentConfigFieldsFromAny(step[operationPlanExpectedUpdatedFieldsKey]); len(fields) > 0 {
+			return fields
+		}
+		args := mapFromOperationContext(step["arguments"])
+		if fields := operationPlanNormalizedAgentConfigFieldsFromAny(args[operationPlanExpectedUpdatedFieldsKey]); len(fields) > 0 {
+			return fields
+		}
+	}
+	return nil
+}
+
+func toolGovernanceFrozenSimpleAgentConfigFields(fields []string) bool {
+	if len(fields) == 0 {
+		return false
+	}
+	for _, field := range fields {
+		switch strings.TrimSpace(field) {
+		case "system_prompt", "model_provider", "model", "model_parameters",
+			"agent_memory_enabled", "file_upload_enabled",
+			"home_title", "input_placeholder", "theme_color", "suggested_questions":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func toolGovernanceFrozenPlanRequiresPostUpdateRead(plan map[string]interface{}) bool {
+	if len(plan) == 0 {
+		return false
+	}
+	goal := strings.ToLower(strings.TrimSpace(firstNonEmptyString(
+		plan["original_user_goal"],
+		plan["user_goal"],
+		plan["objective"],
+	)))
+	if goal != "" {
+		hasAfter := strings.Contains(goal, "after update") ||
+			strings.Contains(goal, "after completion") ||
+			strings.Contains(goal, "then read") ||
+			strings.Contains(goal, "read/observe") ||
+			strings.Contains(goal, "read again") ||
+			strings.Contains(goal, "verify") ||
+			strings.Contains(goal, "confirm") ||
+			strings.Contains(goal, "\u5b8c\u6210\u540e") ||
+			strings.Contains(goal, "\u4e4b\u540e") ||
+			strings.Contains(goal, "\u518d\u6b21\u8bfb\u53d6") ||
+			strings.Contains(goal, "\u91cd\u65b0\u8bfb\u53d6") ||
+			strings.Contains(goal, "\u9a8c\u8bc1")
+		if hasAfter {
+			return true
+		}
+	}
+	for _, step := range mapSliceFromAny(plan["steps"]) {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skills.SkillAgentManagement) {
+			continue
+		}
+		toolName := strings.ToLower(strings.TrimSpace(stringFromAny(step["tool_name"])))
+		if toolName != "get_agent_config" && toolName != "get_agent" {
+			continue
+		}
+		if toolGovernanceBoolFromAny(step["required_post_update_verification"]) ||
+			strings.EqualFold(strings.TrimSpace(stringFromAny(step["phase"])), "post_update_verification") {
+			return true
+		}
+		id := strings.ToLower(strings.TrimSpace(stringFromAny(step["id"])))
+		if strings.Contains(id, "post_update") {
+			return true
+		}
+	}
+	return false
+}
+
+func toolGovernanceBoolFromAny(value interface{}) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.EqualFold(strings.TrimSpace(typed), "true") ||
+			strings.EqualFold(strings.TrimSpace(typed), "yes") ||
+			strings.EqualFold(strings.TrimSpace(typed), "1")
+	default:
+		return false
+	}
 }
 
 func toolGovernanceFrozenContinuationNeedsSkillLoop(prepared *PreparedChat) bool {

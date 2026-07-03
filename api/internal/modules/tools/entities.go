@@ -277,6 +277,13 @@ type Tool interface {
 	ValidateCredentials(ctx context.Context, credentials map[string]interface{}) error
 }
 
+// ToolGovernanceArgumentEnricher is an optional extension for tools that can
+// make governance approval payloads more user-readable before invocation is
+// frozen.
+type ToolGovernanceArgumentEnricher interface {
+	EnrichGovernanceArguments(ctx context.Context, userID string, toolParameters map[string]interface{}) map[string]interface{}
+}
+
 // ============================================
 // Tool Provider Interface
 // ============================================

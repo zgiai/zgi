@@ -90,6 +90,58 @@ func TestRecentExecutionContextDoesNotIncludeGenericToolResult(t *testing.T) {
 	}
 }
 
+func TestRecentExecutionContextOmitsAgentManagementArgumentShapeSummaries(t *testing.T) {
+	message := &runtimemodel.Message{
+		Query:  "update agent runtime config",
+		Status: runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"skill_invocations": []interface{}{
+				map[string]interface{}{
+					"kind":      "tool_call",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "get_agent_config",
+					"status":    "success",
+					"arguments": map[string]interface{}{
+						"agent_id": map[string]interface{}{"type": "string", "length": 36},
+					},
+					"result": map[string]interface{}{
+						"status":            "completed",
+						"agent_id":          "agent-1",
+						"model_provider":    "openai",
+						"model":             "gpt-4o",
+						"home_title":        "Agent Home",
+						"input_placeholder": "Ask the agent",
+						"theme_color":       "emerald",
+					},
+				},
+			},
+		},
+	}
+
+	recent, stats := buildRecentExecutionContextMessage([]*runtimemodel.Message{message})
+
+	if recent == nil {
+		t.Fatal("recent execution context = nil, want message")
+	}
+	content, ok := recent.Content.(string)
+	if !ok {
+		t.Fatalf("recent content type = %T, want string", recent.Content)
+	}
+	for _, forbidden := range []string{`arguments=`, `"type":"string"`, `"length":36`, "map[length:36 type:string]"} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("recent execution context leaked unusable argument shape %q: %s", forbidden, content)
+		}
+	}
+	for _, want := range []string{"result=", "agent-1", "model_provider", "openai", "home_title", "Agent Home", "theme_color", "emerald"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("recent execution context missing %q: %s", want, content)
+		}
+	}
+	if stats.IncludedToolEvents != 1 {
+		t.Fatalf("IncludedToolEvents = %d, want 1", stats.IncludedToolEvents)
+	}
+}
+
 func TestRecentExecutionContextOmitsGuardrailHistory(t *testing.T) {
 	message := &runtimemodel.Message{
 		Query:  "continue",
@@ -374,6 +426,48 @@ func TestPreparedResultMetadataStoresOperationResultSummary(t *testing.T) {
 	}
 	if got := intValueFromAny(summary["success_count"]); got != 1 {
 		t.Fatalf("operation_result_summary.success_count = %d, want 1; summary=%#v", got, summary)
+	}
+}
+
+func TestPreparedResultMetadataRecomputesStaleOperationResultSummary(t *testing.T) {
+	metadata := preparedResultMetadata(map[string]interface{}{
+		"operation_result_summary": map[string]interface{}{
+			"source":              "execution_summary",
+			"plan_status":         operationPlanStatusRunning,
+			"pending_next_action": "Run tool:agent-management/update_agent_config",
+			"tool_name":           "list_agent_database_tables",
+		},
+		"operation_plan": map[string]interface{}{
+			"status":              operationPlanStatusCompleted,
+			"pending_next_action": "none",
+			"tool_result": map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result_summary": map[string]interface{}{
+					"status":                  "completed",
+					"agent_id":                "agent-1",
+					"knowledge_dataset_count": 1,
+					"database_binding_count":  1,
+					"workflow_binding_count":  1,
+				},
+			},
+		},
+	}, nil)
+
+	summary := mapFromOperationContext(metadata["operation_result_summary"])
+	if len(summary) == 0 {
+		t.Fatalf("operation_result_summary missing in metadata: %#v", metadata)
+	}
+	if got := stringFromAny(summary["plan_status"]); got != operationPlanStatusCompleted {
+		t.Fatalf("operation_result_summary.plan_status = %q, want completed; summary=%#v", got, summary)
+	}
+	if got := stringFromAny(summary["pending_next_action"]); got != "none" {
+		t.Fatalf("operation_result_summary.pending_next_action = %q, want none; summary=%#v", got, summary)
+	}
+	if got := stringFromAny(summary["tool_name"]); got != "get_agent_config" {
+		t.Fatalf("operation_result_summary.tool_name = %q, want post-update get_agent_config; summary=%#v", got, summary)
 	}
 }
 
@@ -721,6 +815,74 @@ func TestCompactOperationPlanForPromptIncludesPlanDeviations(t *testing.T) {
 	}
 	if got := stringFromAny(blockedDeviations[0]["outcome"]); got != "blocked" {
 		t.Fatalf("compact blocked deviation outcome = %q, want blocked", got)
+	}
+}
+
+func TestCompactOperationPlanForPromptKeepsRiskApprovalAndSuccessCriteria(t *testing.T) {
+	compact := compactOperationPlanForPrompt(map[string]interface{}{
+		"version":           operationPlanVersion,
+		"task_id":           "task-agent-config",
+		"status":            operationPlanStatusRunning,
+		"risk_level":        "medium",
+		"approval":          "agent-management mutations are governed",
+		"approval_required": true,
+		"approval_actions": []interface{}{
+			"tool:agent-management/update_agent_config",
+		},
+		"success_criteria": []interface{}{
+			"update_agent_config succeeds for the requested Agent",
+			"page observation confirms the updated Agent configuration",
+		},
+		"completion_criteria": []interface{}{
+			"final answer reports only observed configuration changes",
+		},
+		"page_evidence": map[string]interface{}{
+			"current_page": "/console/agents/agent-1/agent",
+			"resources": []interface{}{
+				map[string]interface{}{
+					"resource_type": "agent",
+					"id":            "agent-1",
+					"title":         "Support Agent",
+				},
+			},
+		},
+		"completed_steps": []interface{}{
+			map[string]interface{}{
+				"id":        "tool:agent-management/list_agent_knowledge_candidates",
+				"status":    operationPlanStepStatusCompleted,
+				"title":     "list knowledge candidates",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "list_agent_knowledge_candidates",
+			},
+		},
+		"failed_steps": []interface{}{
+			map[string]interface{}{
+				"id":        "tool:agent-management/update_agent_config",
+				"status":    operationPlanStepStatusFailed,
+				"title":     "update agent config",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"error":     "provider/model pair is invalid",
+			},
+		},
+	})
+
+	if compact["risk_level"] != "medium" || compact["approval"] != "agent-management mutations are governed" || compact["approval_required"] != true {
+		t.Fatalf("compact plan risk/approval = %#v, want preserved fields", compact)
+	}
+	assertStringSliceContains(t, stringSliceFromAny(compact["approval_actions"]), "tool:agent-management/update_agent_config")
+	assertStringSliceContains(t, stringSliceFromAny(compact["success_criteria"]), "update_agent_config succeeds for the requested Agent")
+	assertStringSliceContains(t, stringSliceFromAny(compact["completion_criteria"]), "final answer reports only observed configuration changes")
+	if pageEvidence := mapFromOperationContext(compact["page_evidence"]); pageEvidence["current_page"] != "/console/agents/agent-1/agent" {
+		t.Fatalf("compact page_evidence = %#v, want current page evidence", pageEvidence)
+	}
+	completedSteps := mapSliceFromAny(compact["completed_steps"])
+	if len(completedSteps) != 1 || stringFromAny(completedSteps[0]["tool_name"]) != "list_agent_knowledge_candidates" {
+		t.Fatalf("compact completed_steps = %#v, want candidate list step", compact["completed_steps"])
+	}
+	failedSteps := mapSliceFromAny(compact["failed_steps"])
+	if len(failedSteps) != 1 || stringFromAny(failedSteps[0]["error"]) != "provider/model pair is invalid" {
+		t.Fatalf("compact failed_steps = %#v, want failure reason", compact["failed_steps"])
 	}
 }
 

@@ -19,7 +19,7 @@ func TestCompletionVerificationFallbackAnswerUsesReadableChinese(t *testing.T) {
 	for _, fragment := range []string{
 		completionVerificationFallbackFailed,
 		"update_agent_config failed",
-		"\u7f3a\u5c11\u7684\u5b8c\u6210\u8bc1\u636e\uff1aagent-management/update_agent_config\u3002",
+		"\u7f3a\u5c11\u7684\u5b8c\u6210\u8bc1\u636e\uff1a\u667a\u80fd\u4f53\u914d\u7f6e\u66f4\u65b0\u7ed3\u679c\u3002",
 		"\u5019\u9009\u7b54\u590d\u4e2d\u6709\u672a\u88ab\u5de5\u5177\u7ed3\u679c\u652f\u6301\u7684\u8bf4\u6cd5\uff1a\u5df2\u5b8c\u6210\u3002",
 	} {
 		if !strings.Contains(answer, fragment) {
@@ -31,6 +31,80 @@ func TestCompletionVerificationFallbackAnswerUsesReadableChinese(t *testing.T) {
 			t.Fatalf("answer contains mojibake marker %q: %q", mojibake, answer)
 		}
 	}
+}
+
+func TestCompletionVerificationSystemMessageMapsAgentConfigNeedsActionToTools(t *testing.T) {
+	message := completionVerificationSystemMessage(completionVerificationDecision{
+		Status:       completionVerificationStatusNeedsAction,
+		Reason:       "final answer lacks tool evidence",
+		MissingSteps: []string{"Run tool:agent-management/update_agent_config", "Run tool:agent-management/get_agent_config (post-update verification)"},
+	}, "\u5df2\u5b8c\u6210\u3002", 1)
+	content := messageContent(message.Content)
+
+	for _, fragment := range []string{
+		"Required next tool: call agent-management/update_agent_config",
+		"update only the missing fields",
+		"call agent-management/get_agent_config",
+		"Do not produce another final answer until the requested Agent configuration update succeeds",
+	} {
+		if !strings.Contains(content, fragment) {
+			t.Fatalf("system message = %q, want fragment %q", content, fragment)
+		}
+	}
+}
+
+func TestCompletionVerificationFallbackAnswerMapsAgentConfigEvidenceLabels(t *testing.T) {
+	answer := completionVerificationFallbackAnswer(completionVerificationDecision{
+		Status:       completionVerificationStatusFailed,
+		Reason:       "final answer lacks tool evidence",
+		MissingSteps: []string{"Run tool:agent-management/update_agent_config", "Run tool:agent-management/get_agent_config (post-update verification)"},
+	}, "\u5df2\u5b8c\u6210\u3002")
+
+	if strings.Contains(answer, "agent-management/update_agent_config") ||
+		strings.Contains(answer, "agent-management/get_agent_config") {
+		t.Fatalf("answer leaks internal Agent config tool labels: %q", answer)
+	}
+	for _, fragment := range []string{
+		"\u667a\u80fd\u4f53\u914d\u7f6e\u66f4\u65b0\u7ed3\u679c",
+		"\u66f4\u65b0\u540e\u7684\u667a\u80fd\u4f53\u914d\u7f6e\u8bfb\u53d6\u7ed3\u679c",
+	} {
+		if !strings.Contains(answer, fragment) {
+			t.Fatalf("answer = %q, want fragment %q", answer, fragment)
+		}
+	}
+}
+
+func TestCompletionVerificationFeedbackToolChoiceForAgentConfigNeedsAction(t *testing.T) {
+	decision := completionVerificationDecision{
+		Status:       completionVerificationStatusNeedsAction,
+		MissingSteps: []string{"Run tool:agent-management/update_agent_config"},
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
+		{Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement}},
+	}}
+
+	unloadedChoice := completionVerificationFeedbackToolChoice(decision, nil, resolved)
+	if got := functionToolChoiceName(unloadedChoice); got != skills.MetaToolLoadSkill {
+		t.Fatalf("unloaded tool choice = %q, want %s", got, skills.MetaToolLoadSkill)
+	}
+
+	loadedChoice := completionVerificationFeedbackToolChoice(decision, map[string]struct{}{skills.SkillAgentManagement: {}}, resolved)
+	if got := functionToolChoiceName(loadedChoice); got != skills.MetaToolCallSkillTool {
+		t.Fatalf("loaded tool choice = %q, want %s", got, skills.MetaToolCallSkillTool)
+	}
+}
+
+func functionToolChoiceName(choice interface{}) string {
+	root, ok := choice.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	fn, ok := root["function"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	name, _ := fn["name"].(string)
+	return name
 }
 
 func TestCompletionVerificationFallbackAnswerHidesInternalReason(t *testing.T) {
@@ -74,6 +148,47 @@ func TestCompletionVerificationAlignLanguageDropsEnglishReplacementForChineseUse
 	}
 	if decision.LanguageHint != "zh-Hans" {
 		t.Fatalf("LanguageHint = %q, want zh-Hans", decision.LanguageHint)
+	}
+}
+
+func TestCompletionVerificationDetectsInternalPlanLeak(t *testing.T) {
+	answer := "\u867d\u7136\u7cfb\u7edf\u63d0\u793a\u7ee7\u7eed\u6267\u884c update_agent_config\uff0c\u4f46\u6211\u6ca1\u6709\u627e\u5230\u5019\u9009 Skill\u3002"
+	if !completionVerificationCandidateAnswerLeaksInternalPlan(answer) {
+		t.Fatalf("completionVerificationCandidateAnswerLeaksInternalPlan(%q) = false, want true", answer)
+	}
+
+	decision := completionVerificationInternalPlanLeakDecision(map[string]interface{}{
+		"user_request": "\u8bf7\u7ed1\u5b9a Skill",
+	})
+	if got := decision.normalizedStatus(); got != completionVerificationStatusNeedsAction {
+		t.Fatalf("decision status = %q, want needs_action", got)
+	}
+	if !strings.Contains(decision.FinalAnswerGuidance, "\u4e0d\u8981\u63d0\u5230\u7cfb\u7edf\u63d0\u793a") {
+		t.Fatalf("FinalAnswerGuidance = %q, want Chinese guidance hiding internal prompts", decision.FinalAnswerGuidance)
+	}
+}
+
+func TestCompletionVerificationAllowsAgentSystemPromptField(t *testing.T) {
+	answer := "\u5f53\u524d\u667a\u80fd\u4f53\u7684\u53ef\u7f16\u8f91\u9879\u5305\u62ec\u540d\u79f0\u3001\u63cf\u8ff0\u3001\u56fe\u6807\u3001\u6a21\u578b\u548c\u7cfb\u7edf\u63d0\u793a\u8bcd\uff1b\u672c\u8f6e\u53ea\u8bfb\u68c0\u67e5\uff0c\u6ca1\u6709\u6267\u884c\u53d8\u66f4\u64cd\u4f5c\u3002"
+	if completionVerificationCandidateAnswerLeaksInternalPlan(answer) {
+		t.Fatalf("completionVerificationCandidateAnswerLeaksInternalPlan(%q) = true, want false", answer)
+	}
+}
+
+func TestCompletionVerificationFallbackAnswerHidesInternalUnsupportedClaims(t *testing.T) {
+	answer := completionVerificationFallbackAnswer(completionVerificationDecision{
+		Status:            completionVerificationStatusNeedsAction,
+		Reason:            "candidate answer exposed internal planning or system instruction wording",
+		UnsupportedClaims: []string{"internal planning or system instruction wording leaked to the user"},
+	}, "")
+
+	for _, leaked := range []string{"internal planning", "system instruction", "candidate answer", "unsupported claim"} {
+		if strings.Contains(strings.ToLower(answer), leaked) {
+			t.Fatalf("answer leaks internal verifier claim %q: %q", leaked, answer)
+		}
+	}
+	if !strings.Contains(answer, completionVerificationFallbackUnknown) {
+		t.Fatalf("answer = %q, want neutral fallback", answer)
 	}
 }
 
@@ -145,6 +260,9 @@ func TestCompletionVerificationContractTreatsPlanAsAdvisory(t *testing.T) {
 	if !strings.Contains(rules, "page_context") ||
 		!strings.Contains(rules, "target_route_already_available") {
 		t.Fatalf("rules = %q, want current page route evidence language", rules)
+	}
+	if !strings.Contains(rules, "operation as skipped, unnecessary, or not executed") {
+		t.Fatalf("rules = %q, want mutation evidence wording guidance", rules)
 	}
 	if strings.Contains(rules, "operation_plan still has a pending executable tool step") {
 		t.Fatalf("rules = %q, must not force pending plan steps as hard verifier failures", rules)
@@ -260,6 +378,130 @@ func TestCompletionVerificationApplyPlanOverrideKeepsPassForPlanOnlyFailure(t *t
 	}
 }
 
+func TestCompletionVerificationApplyPlanOverrideRequiresRequestedPostUpdateConfigRead(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":             "running",
+			"original_user_goal": "Bind Chart Generator, then read config again after completion and verify the binding state.",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config#post_update",
+					"status":                            "pending",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"phase":                             "post_update_verification",
+					"required_post_update_verification": true,
+				},
+			},
+			"tool_result": map[string]interface{}{
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"result_summary": map[string]interface{}{
+					"status":     "completed",
+					"agent_name": "Support Agent",
+					"updated_fields": []interface{}{
+						"enabled_skill_ids",
+					},
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+			},
+		},
+	}
+
+	decision := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
+		Status: completionVerificationStatusPass,
+		Reason: "candidate answer claims completion",
+	})
+
+	if got := decision.normalizedStatus(); got != completionVerificationStatusNeedsAction {
+		t.Fatalf("decision status = %q, want needs_action; decision=%#v", got, decision)
+	}
+	if !strings.Contains(strings.Join(decision.MissingSteps, ","), "get_agent_config") {
+		t.Fatalf("MissingSteps = %#v, want post-update get_agent_config", decision.MissingSteps)
+	}
+	if !strings.Contains(decision.FinalAnswerGuidance, "get_agent_config") {
+		t.Fatalf("FinalAnswerGuidance = %q, want get_agent_config guidance", decision.FinalAnswerGuidance)
+	}
+}
+
+func TestCompletionVerificationApplyPlanOverrideRequiresRemainingAgentConfigFields(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "running",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":                     "tool:agent-management/update_agent_config",
+					"status":                 "pending",
+					"skill_id":               skills.SkillAgentManagement,
+					"tool_name":              "update_agent_config",
+					"missing_updated_fields": []interface{}{"system_prompt", "home_title", "suggested_questions"},
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/update_agent_config": "pending",
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"result": map[string]interface{}{
+					"status":         "completed",
+					"updated_fields": []interface{}{"model"},
+				},
+			},
+		},
+	}
+
+	decision := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
+		Status: completionVerificationStatusPass,
+		Reason: "candidate answer claims completion",
+	})
+
+	if got := decision.normalizedStatus(); got != completionVerificationStatusNeedsAction {
+		t.Fatalf("decision status = %q, want needs_action; decision=%#v", got, decision)
+	}
+	joinedMissing := strings.Join(decision.MissingSteps, ",")
+	for _, want := range []string{"agent-management/update_agent_config", "system_prompt", "home_title", "suggested_questions"} {
+		if !strings.Contains(joinedMissing, want) {
+			t.Fatalf("MissingSteps = %#v, want fragment %q", decision.MissingSteps, want)
+		}
+	}
+	if decision.NextActionHint != "agent-management/update_agent_config" {
+		t.Fatalf("NextActionHint = %q, want agent-management/update_agent_config", decision.NextActionHint)
+	}
+	if decision.FinalAnswer != "" {
+		t.Fatalf("FinalAnswer = %q, want empty needs-action answer", decision.FinalAnswer)
+	}
+	for _, want := range []string{"update_agent_config", "system_prompt", "home_title", "suggested_questions"} {
+		if !strings.Contains(decision.FinalAnswerGuidance, want) {
+			t.Fatalf("FinalAnswerGuidance = %q, want fragment %q", decision.FinalAnswerGuidance, want)
+		}
+	}
+}
+
 func TestCompletionVerificationApplyPlanOverrideIgnoresUnrelatedFailedEvidence(t *testing.T) {
 	decision := completionVerificationApplyPlanOverride(map[string]interface{}{
 		"operation_plan": map[string]interface{}{
@@ -334,6 +576,96 @@ func TestCompletionVerificationApplyPlanOnlySofteningIgnoresPlanOnlyFailedStatus
 	}
 	if len(decision.MissingSteps) != 0 {
 		t.Fatalf("MissingSteps = %#v, want cleared stale plan-only missing steps", decision.MissingSteps)
+	}
+}
+
+func TestCompletionVerificationApplyPlanOnlySofteningKeepsRequestedPostUpdateConfigRead(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":             "running",
+			"original_user_goal": "Update the Agent config, then read config again after completion.",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config#post_update",
+					"status":                            "pending",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"phase":                             "post_update_verification",
+					"required_post_update_verification": true,
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+			},
+		},
+	}
+
+	decision := completionVerificationApplyPlanOnlySoftening(evidence, completionVerificationDecision{
+		Status:       completionVerificationStatusNeedsAction,
+		Reason:       "operation_plan still has pending step",
+		MissingSteps: []string{"agent-management/get_agent_config"},
+	})
+
+	if got := decision.normalizedStatus(); got != completionVerificationStatusNeedsAction {
+		t.Fatalf("decision status = %q, want needs_action; decision=%#v", got, decision)
+	}
+	if len(decision.MissingSteps) == 0 {
+		t.Fatalf("MissingSteps cleared unexpectedly; decision=%#v", decision)
+	}
+}
+
+func TestCompletionVerificationApplyPlanOnlySofteningKeepsRemainingAgentConfigFields(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "running",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":                     "tool:agent-management/update_agent_config",
+					"status":                 "pending",
+					"skill_id":               skills.SkillAgentManagement,
+					"tool_name":              "update_agent_config",
+					"missing_updated_fields": []interface{}{"system_prompt"},
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+			},
+		},
+	}
+
+	decision := completionVerificationApplyPlanOnlySoftening(evidence, completionVerificationDecision{
+		Status:       completionVerificationStatusNeedsAction,
+		Reason:       "operation_plan still has pending step",
+		MissingSteps: []string{"agent-management/update_agent_config"},
+	})
+
+	if got := decision.normalizedStatus(); got != completionVerificationStatusNeedsAction {
+		t.Fatalf("decision status = %q, want needs_action; decision=%#v", got, decision)
+	}
+	if len(decision.MissingSteps) == 0 {
+		t.Fatalf("MissingSteps cleared unexpectedly; decision=%#v", decision)
 	}
 }
 

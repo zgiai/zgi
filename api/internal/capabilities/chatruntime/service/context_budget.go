@@ -601,14 +601,16 @@ func recentOperationResultSummarySection(branch []*runtimemodel.Message, budget 
 }
 
 func operationResultSummaryForPrompt(metadata map[string]interface{}) map[string]interface{} {
+	executionSummary := skillLoopCompletionExecutionSummary(metadata)
+	if len(executionSummary) > 0 {
+		if summary := sanitizeOperationResultSummaryForPrompt(skillLoopCompletionOperationResultSummary(executionSummary)); len(summary) > 0 {
+			return summary
+		}
+	}
 	if summary := mapFromOperationContext(metadataValue(metadata, "operation_result_summary")); len(summary) > 0 {
 		return sanitizeOperationResultSummaryForPrompt(summary)
 	}
-	executionSummary := skillLoopCompletionExecutionSummary(metadata)
-	if len(executionSummary) == 0 {
-		return nil
-	}
-	return sanitizeOperationResultSummaryForPrompt(skillLoopCompletionOperationResultSummary(executionSummary))
+	return nil
 }
 
 func sanitizeOperationResultSummaryForPrompt(summary map[string]interface{}) map[string]interface{} {
@@ -697,10 +699,22 @@ func compactOperationPlanForPrompt(plan map[string]interface{}) map[string]inter
 		return nil
 	}
 	out := map[string]interface{}{}
-	for _, key := range []string{"version", "task_id", "intent", "status", "pending_next_action", "original_user_goal"} {
+	for _, key := range []string{"version", "task_id", "intent", "status", "pending_next_action", "original_user_goal", "risk_level", "approval"} {
 		if value := strings.TrimSpace(stringFromAny(plan[key])); value != "" {
 			out[key] = compactForPrompt(value, 500)
 		}
+	}
+	if value, ok := plan["approval_required"].(bool); ok {
+		out["approval_required"] = value
+	}
+	if actions := stringSliceFromAny(plan["approval_actions"]); len(actions) > 0 {
+		out["approval_actions"] = compactStringSliceForPrompt(actions, 8, 180)
+	}
+	if criteria := stringSliceFromAny(plan["success_criteria"]); len(criteria) > 0 {
+		out["success_criteria"] = compactStringSliceForPrompt(criteria, 8, 240)
+	}
+	if criteria := stringSliceFromAny(plan["completion_criteria"]); len(criteria) > 0 {
+		out["completion_criteria"] = compactStringSliceForPrompt(criteria, 8, 240)
 	}
 	if target := mapFromOperationContext(plan["asset_target"]); len(target) > 0 {
 		out["asset_target"] = target
@@ -714,36 +728,23 @@ func compactOperationPlanForPrompt(plan map[string]interface{}) map[string]inter
 	if assetState := mapFromOperationContext(plan["asset_state"]); len(assetState) > 0 {
 		out["asset_state"] = assetState
 	}
+	if pageEvidence := operationPlanCompactPageEvidence(mapFromOperationContext(plan["page_evidence"])); len(pageEvidence) > 0 {
+		out["page_evidence"] = pageEvidence
+	}
+	if completedSteps := operationPlanCompactProgressStepRecords(plan["completed_steps"], 8); len(completedSteps) > 0 {
+		out["completed_steps"] = completedSteps
+	}
+	if failedSteps := operationPlanCompactProgressStepRecords(plan["failed_steps"], 8); len(failedSteps) > 0 {
+		out["failed_steps"] = failedSteps
+	}
 	if deviations := skillLoopCompletionPlanDeviations(plan["deviations"], 6); len(deviations) > 0 {
 		out["deviations"] = deviations
 	}
 	if blockedDeviations := skillLoopCompletionPlanDeviations(plan["blocked_deviations"], 6); len(blockedDeviations) > 0 {
 		out["blocked_deviations"] = blockedDeviations
 	}
-	steps := mapSliceFromAny(plan["steps"])
-	if len(steps) > 0 {
-		promptSteps := operationPlanPromptSteps(steps, 8)
-		compacted := make([]interface{}, 0, len(promptSteps))
-		for _, step := range promptSteps {
-			item := map[string]interface{}{}
-			for _, key := range []string{"id", "title", "status", "skill_id", "tool_name"} {
-				if value := strings.TrimSpace(stringFromAny(step[key])); value != "" {
-					item[key] = compactForPrompt(value, 180)
-				}
-			}
-			if index := intValueFromAny(step["sequence_index"]); index > 0 {
-				item["sequence_index"] = index
-			}
-			if target := mapFromOperationContext(step["asset_target"]); len(target) > 0 {
-				item["asset_target"] = target
-			}
-			if len(item) > 0 {
-				compacted = append(compacted, item)
-			}
-		}
-		if len(compacted) > 0 {
-			out["steps"] = compacted
-		}
+	if steps := operationPlanCompactStepsForPrompt(plan["steps"], 8); len(steps) > 0 {
+		out["steps"] = steps
 	}
 	return out
 }
@@ -1195,7 +1196,7 @@ func formatToolHistoryInvocation(index int, invocation map[string]interface{}) s
 	if errText := strings.TrimSpace(stringFromAny(invocation["error"])); errText != "" {
 		parts = append(parts, "error="+compactForPrompt(errText, 240))
 	}
-	if args := compactJSONForPrompt(invocation["arguments"], recentTraceArgumentBudgetChars); args != "" {
+	if args := compactToolHistoryArgumentsForPrompt(invocation); args != "" {
 		parts = append(parts, "arguments="+args)
 	}
 	if result := compactToolHistoryResultForPrompt(invocation); result != "" {
@@ -1204,11 +1205,68 @@ func formatToolHistoryInvocation(index int, invocation map[string]interface{}) s
 	return strings.Join(parts, " ") + "\n"
 }
 
+func compactToolHistoryArgumentsForPrompt(invocation map[string]interface{}) string {
+	args := mapFromOperationContext(invocation["arguments"])
+	if len(args) == 0 {
+		return ""
+	}
+	skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
+	toolName := strings.TrimSpace(stringFromAny(invocation["tool_name"]))
+	if skillID == skills.SkillAgentManagement {
+		return ""
+	}
+	filtered := map[string]interface{}{}
+	for key, value := range args {
+		key = strings.TrimSpace(key)
+		if key == "" || toolHistoryArgumentValueIsShapeSummary(value) {
+			continue
+		}
+		filtered[key] = value
+	}
+	if len(filtered) == 0 {
+		return ""
+	}
+	switch skillID {
+	case skills.SkillFileReader, skills.SkillFileManager, skills.SkillConsoleNavigator:
+	default:
+		if toolName == "" {
+			return ""
+		}
+	}
+	return compactJSONForPrompt(filtered, recentTraceArgumentBudgetChars)
+}
+
+func toolHistoryArgumentValueIsShapeSummary(value interface{}) bool {
+	shape := mapFromOperationContext(value)
+	if len(shape) == 0 {
+		return false
+	}
+	typeValue := strings.TrimSpace(stringFromAny(shape["type"]))
+	if typeValue == "" {
+		return false
+	}
+	switch typeValue {
+	case "string", "array", "object":
+	default:
+		return false
+	}
+	if _, ok := shape["length"]; ok {
+		return true
+	}
+	if _, ok := shape["keys"]; ok {
+		return true
+	}
+	return false
+}
+
 func compactToolHistoryResultForPrompt(invocation map[string]interface{}) string {
 	if strings.TrimSpace(stringFromAny(invocation["kind"])) != "tool_call" {
 		return ""
 	}
 	skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
+	if skillID == skills.SkillAgentManagement {
+		return compactAgentManagementToolHistoryResultForPrompt(invocation)
+	}
 	if skillID != skills.SkillFileReader && skillID != skills.SkillFileManager {
 		return ""
 	}
@@ -1226,6 +1284,51 @@ func compactToolHistoryResultForPrompt(invocation map[string]interface{}) string
 	}
 	result := redactedToolHistoryResultValue(invocation["result"], 0)
 	return compactJSONForPrompt(result, recentTraceResultBudgetChars)
+}
+
+func compactAgentManagementToolHistoryResultForPrompt(invocation map[string]interface{}) string {
+	result := mapFromOperationContext(invocation["result"])
+	if len(result) == 0 {
+		return ""
+	}
+	out := map[string]interface{}{}
+	for _, key := range []string{
+		"status",
+		"agent_id",
+		"agent_name",
+		"name",
+		"href",
+		"agent_href",
+		"workspace_id",
+		"agent_workspace_id",
+		"model_provider",
+		"model",
+		"requested_fields",
+		"satisfied_fields",
+		"updated_fields",
+		"config_changes",
+		"binding_changes",
+		"enabled_skill_ids",
+		"knowledge_dataset_ids",
+		"database_bindings",
+		"workflow_bindings",
+		"home_title",
+		"input_placeholder",
+		"theme_color",
+		"suggested_questions",
+		"agent_memory_enabled",
+		"file_upload_enabled",
+	} {
+		if value, ok := result[key]; ok {
+			if redacted := redactedToolHistoryResultValue(value, 0); redacted != nil {
+				out[key] = redacted
+			}
+		}
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	return compactJSONForPrompt(out, recentTraceResultBudgetChars)
 }
 
 func redactedToolHistoryResultValue(value interface{}, depth int) interface{} {
@@ -1326,6 +1429,44 @@ func compactForPrompt(value string, maxChars int) string {
 		return string(runes[:maxChars])
 	}
 	return string(runes[:maxChars-12]) + "...[truncated]"
+}
+
+func compactStringSliceForPrompt(values []string, limit int, maxChars int) []string {
+	if limit <= 0 || maxChars <= 0 || len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, minInt(len(values), limit))
+	for _, value := range values {
+		value = compactForPrompt(value, maxChars)
+		if value == "" {
+			continue
+		}
+		out = append(out, value)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func stringSliceFromAny(value interface{}) []string {
+	switch typed := value.(type) {
+	case []string:
+		return append([]string(nil), typed...)
+	case []interface{}:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text := strings.TrimSpace(fmt.Sprint(item)); text != "" && text != "<nil>" {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		if text := strings.TrimSpace(fmt.Sprint(value)); text != "" && text != "<nil>" {
+			return []string{text}
+		}
+		return nil
+	}
 }
 
 func appendBudgetedLine(builder *strings.Builder, budget int, line string) bool {

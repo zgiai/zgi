@@ -65,6 +65,49 @@ func TestRequestUserInputCallTerminatesTurnAndEmitsEvent(t *testing.T) {
 	}
 }
 
+func TestRequestUserInputNestedInCallSkillToolTerminatesTurn(t *testing.T) {
+	events := make([]Event, 0)
+	runner := &Runner{
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "openai", "required", &adapter.ChatRequest{})
+	result := runner.handleProgressiveSkillCall(
+		context.Background(),
+		prepared,
+		&skills.ResolvedSkills{},
+		adapter.ToolCall{
+			ID:   "call_nested_ask",
+			Type: "function",
+			Function: adapter.FunctionCall{
+				Name:      skills.MetaToolCallSkillTool,
+				Arguments: `{"skill_id":"agent-management","tool_name":"request_user_input","arguments":{"message":"I need you to choose one existing Agent.","questions":[{"id":"agent","question":"Which Agent should I use?","options":[{"label":"Use existing"}]}]}}`,
+			},
+		},
+		skills.ExecutionContext{},
+		0,
+		map[string]int{},
+		map[string]struct{}{},
+		userInputGuardState{},
+		nil,
+	)
+
+	if !result.terminal || result.recoverable || result.fatalErr != nil {
+		t.Fatalf("result = %#v, want terminal user input request", result)
+	}
+	if result.trace.Kind != "user_input_request" || result.trace.Status != "success" {
+		t.Fatalf("trace = %#v, want successful user input request", result.trace)
+	}
+	if len(events) != 1 || events[0].Type != EventUserInputRequested {
+		t.Fatalf("events = %#v, want one user_input_requested event", events)
+	}
+	if events[0].Payload["request_id"] != "call_nested_ask" {
+		t.Fatalf("payload = %#v, want nested call id as request id", events[0].Payload)
+	}
+}
+
 func TestRequestUserInputRejectsInvalidArguments(t *testing.T) {
 	runner := &Runner{}
 	prepared := NewPreparedChat("conv-1", "msg-1", "openai", "auto", &adapter.ChatRequest{})

@@ -13,6 +13,10 @@ const (
 	MessageStatusError     = "error"
 	MessageStatusStopped   = "stopped"
 
+	MessageStatusWaitingApproval     = "waiting_approval"
+	MessageStatusWaitingQuestion     = "waiting_question"
+	MessageStatusWaitingClientAction = "waiting_client_action"
+
 	MessageBillingReasonSourceAIChat = "aichat"
 )
 
