@@ -67,11 +67,11 @@ export default function DatasetSettingsPage() {
     entityModel: null,
     entityModelProvider: null,
     retrievalConfig: {
-      search_method: 'semantic_search',
-      top_k: 3,
+      search_method: 'hybrid_search',
+      top_k: 10,
       score_threshold_enabled: true,
-      score_threshold: 0.5,
-      reranking_enable: false,
+      score_threshold: 0.35,
+      reranking_enable: true,
       reranking_model: {
         reranking_model_name: '',
         reranking_provider_name: '',
