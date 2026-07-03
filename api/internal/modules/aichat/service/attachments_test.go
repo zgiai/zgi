@@ -121,24 +121,30 @@ func TestExtractPreparedAttachments_LocalImageExceedsLimitFails(t *testing.T) {
 	}
 }
 
-func TestHistoricalUserMessage_ImagePrepareFailureReturnsError(t *testing.T) {
+func TestHistoricalUserMessage_SkipsUnavailableHistoricalImage(t *testing.T) {
 	svc := &service{fileService: &fakeAttachmentFileService{
 		fileURL:     "http://localhost:2670/console/api/files/file-1/file-preview?sign=test",
 		downloadErr: errors.New("download failed"),
 	}}
-	msg := &aichatmodel.Message{Metadata: map[string]interface{}{
-		"files": []interface{}{map[string]interface{}{
-			"id":             "file-1",
-			"name":           "cat.png",
-			"extension":      ".png",
-			"mime_type":      "image/png",
-			"kind":           attachmentKindImage,
-			"content_status": attachmentContentStatusVision,
-		}},
-	}}
+	msg := &aichatmodel.Message{
+		Query: "later question",
+		Metadata: map[string]interface{}{
+			"files": []interface{}{map[string]interface{}{
+				"id":             "file-1",
+				"name":           "cat.png",
+				"extension":      ".png",
+				"mime_type":      "image/png",
+				"kind":           attachmentKindImage,
+				"content_status": attachmentContentStatusVision,
+			}},
+		},
+	}
 
-	_, err := svc.historicalUserMessage(context.Background(), msg, true)
-	if err == nil || !strings.Contains(err.Error(), "failed to prepare historical image input") {
-		t.Fatalf("historicalUserMessage() error = %v, want historical image error", err)
+	got, err := svc.historicalUserMessage(context.Background(), msg, true)
+	if err != nil {
+		t.Fatalf("historicalUserMessage() error = %v", err)
+	}
+	if got == nil || got.Content != "later question" {
+		t.Fatalf("historicalUserMessage() = %#v, want text-only historical message", got)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 const (
@@ -467,7 +468,8 @@ func (s *service) historicalImageParts(ctx context.Context, bundle *attachmentBu
 		}
 		imageURL, err := s.prepareVisionImageURL(ctx, &file)
 		if err != nil {
-			return nil, fmt.Errorf("failed to prepare historical image input: %w", err)
+			logger.WarnContext(ctx, "skipping unavailable historical image input", "file_id", file.ID, "file_name", file.Name, err)
+			continue
 		}
 		parts = append(parts, multimodal.BuildImageURLPart(imageURL, file.VisionDetail))
 	}

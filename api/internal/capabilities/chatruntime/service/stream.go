@@ -124,7 +124,8 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 		return nil, newFinalizedStreamError(err)
 	}
-	answer, callUsage, err := s.collectStreamAnswer(runCtx, prepared, stream, onChunk)
+	modelChunkCallback := modelStreamChunkCallback(eventCallback, onChunk)
+	answer, callUsage, err := s.collectStreamAnswerWithEvents(runCtx, prepared, stream, eventCallback, modelChunkCallback)
 	usage := mergeUsage(preflightUsage, callUsage)
 	if err != nil {
 		s.persistModelInvocationBestEffort(persistCtx, prepared, skillloop.ModelInvocationTrace{

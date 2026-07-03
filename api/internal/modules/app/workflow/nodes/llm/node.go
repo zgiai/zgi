@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"mime"
 	"net/url"
 	"reflect"
 	"regexp"
@@ -2083,6 +2084,9 @@ func (n *Node) processVisionFiles(
 				MimeType: safeDeref(f.MimeType),
 				Detail:   visionDetail,
 			}
+			if filePrompt.MimeType == "" {
+				filePrompt.MimeType = inferWorkflowMediaMIMEType(safeDeref(f.Extension))
+			}
 			if err := n.inlineMediaContentIfNeeded(&filePrompt, f); err != nil {
 				return nil, false, err
 			}
@@ -2112,6 +2116,9 @@ func (n *Node) processVisionFiles(
 				MimeType: getStringFromMap(f, "mime_type"),
 				Base64:   getStringFromMap(f, "base64_data"),
 				Detail:   visionDetail,
+			}
+			if filePrompt.MimeType == "" {
+				filePrompt.MimeType = inferWorkflowMediaMIMEType(firstNonEmptyString(getStringFromMap(f, "extension"), getStringFromMap(f, "ext")))
 			}
 			if err := n.inlineMediaContentFromMapIfNeeded(&filePrompt, f); err != nil {
 				return nil, false, err
@@ -2283,6 +2290,9 @@ func (n *Node) inlineMediaContentByFileID(prompt *PromptMessageContent, fileID s
 	default:
 		return nil
 	}
+	if prompt.Type == PromptMessageContentTypeImage && strings.TrimSpace(prompt.MimeType) == "" {
+		return fmt.Errorf("workflow local image mime type is required for inline data")
+	}
 
 	content, err := n.fileLoader.DownloadFile(context.Background(), fileID)
 	if err != nil {
@@ -2295,6 +2305,17 @@ func (n *Node) inlineMediaContentByFileID(prompt *PromptMessageContent, fileID s
 	prompt.Base64 = base64.StdEncoding.EncodeToString(content)
 	prompt.URL = ""
 	return nil
+}
+
+func inferWorkflowMediaMIMEType(extension string) string {
+	extension = strings.TrimSpace(extension)
+	if extension == "" {
+		return ""
+	}
+	if !strings.HasPrefix(extension, ".") {
+		extension = "." + extension
+	}
+	return mime.TypeByExtension(strings.ToLower(extension))
 }
 
 func shouldKeepWorkflowMediaURL(rawURL string) bool {

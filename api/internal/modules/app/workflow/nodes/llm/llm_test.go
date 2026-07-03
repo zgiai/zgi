@@ -1175,7 +1175,7 @@ func TestProcessVisionFiles_InlinesLocalImage(t *testing.T) {
 		file.FileTransferMethodLocalFile,
 		file.WithID("file-1"),
 		file.WithRelatedID("file-1"),
-		file.WithMimeType("image/jpeg"),
+		file.WithExtension(".jpg"),
 	)
 
 	processed, autoInjected, err := n.processVisionFiles(
@@ -1200,6 +1200,9 @@ func TestProcessVisionFiles_InlinesLocalImage(t *testing.T) {
 	}
 	if contentList[0].URL != "" {
 		t.Fatalf("expected local image URL to be cleared, got %q", contentList[0].URL)
+	}
+	if contentList[0].MimeType != "image/jpeg" {
+		t.Fatalf("expected local image mime type to be inferred as image/jpeg, got %q", contentList[0].MimeType)
 	}
 }
 
