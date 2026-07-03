@@ -2095,6 +2095,56 @@ func TestFastPathCompletionEvidenceClosesReadOnlyAgentCandidateLookup(t *testing
 	}
 }
 
+func TestFastPathCompletionEvidenceReportsMissingRequestedAgentCandidate(t *testing.T) {
+	missingName := "NEVER-EXISTS-KB-1783071933871"
+	request := "\u8bf7\u5c1d\u8bd5\u628a\u540d\u4e3a " + missingName + " \u7684\u77e5\u8bc6\u5e93\u7ed1\u5b9a\u5230\u667a\u80fd\u4f53 AICHAT-GOAL-EDIT\u3002\u8bf7\u5148\u641c\u7d22\u53ef\u7ed1\u5b9a\u77e5\u8bc6\u5e93\u5019\u9009\uff0c\u5982\u679c\u6ca1\u6709\u8fd9\u4e2a\u77e5\u8bc6\u5e93\uff0c\u4e0d\u8981\u53d1\u8d77\u5ba1\u6279\uff0c\u4e0d\u8981\u8c03\u7528 update_agent_config\uff0c\u76f4\u63a5\u544a\u8bc9\u6211\u627e\u4e0d\u5230\u3002"
+	evidence := map[string]interface{}{
+		"user_request": request,
+		"operation_plan": map[string]interface{}{
+			"original_user_goal": request,
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/list_agent_knowledge_candidates",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "list_agent_knowledge_candidates",
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			agentCandidateLookupInvocationForTest("list_agent_knowledge_candidates", 2, []map[string]interface{}{
+				{"id": "kb-1", "name": "\u6d4b\u8bd5\u5e932"},
+				{"id": "kb-2", "name": "\u6d4b\u8bd5\u5e93"},
+			}),
+		},
+	}
+
+	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want candidate miss closed without approval")
+	}
+	for _, want := range []string{
+		"\u672a\u627e\u5230\u540d\u4e3a\u300c" + missingName + "\u300d\u7684\u77e5\u8bc6\u5e93",
+		"\u672a\u4fee\u6539\u914d\u7f6e",
+		"\u672a\u53d1\u8d77\u5ba1\u6279",
+		"\u77e5\u8bc6\u5e93\uff1a2 \u4e2a",
+		"\u6d4b\u8bd5\u5e932",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, want substring %q", answer, want)
+		}
+	}
+	for _, forbidden := range []string{
+		"\u5df2\u7ed1\u5b9a",
+		"\u5df2\u66f4\u65b0",
+		"\u5df2\u4fee\u6539",
+	} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("answer = %q, want no misleading success substring %q", answer, forbidden)
+		}
+	}
+}
+
 func TestFastPathCompletionEvidenceWaitsForGenericBindableResourceSweep(t *testing.T) {
 	request := "Read-only inspect the first Agent basic info, runtime config, editable items, and the current workspace bindable resources count. Do not modify, bind, unbind, create, or delete assets."
 	evidence := map[string]interface{}{

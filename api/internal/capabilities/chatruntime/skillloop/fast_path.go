@@ -3,6 +3,7 @@ package skillloop
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode"
 
@@ -1288,6 +1289,9 @@ func agentCandidateLookupFastPathAnswerFromEvidence(evidence map[string]interfac
 		return "", false
 	}
 	parts := []string{"\u5df2\u5b8c\u6210\u53ea\u8bfb\u67e5\u8be2\uff0c\u672a\u4fee\u6539\u914d\u7f6e\uff0c\u672a\u53d1\u8d77\u5ba1\u6279\u3002"}
+	if missing := fastPathMissingRequestedAgentCandidates(evidence, results); len(missing) > 0 {
+		parts = append(parts, strings.Join(missing, "\n"))
+	}
 	if configAnswer != "" {
 		parts = append(parts, configAnswer)
 		if fastPathGoalRequestsAgentEditableSummary(evidence) {
@@ -1296,6 +1300,112 @@ func agentCandidateLookupFastPathAnswerFromEvidence(evidence map[string]interfac
 	}
 	parts = append(parts, "\u53ef\u7ed1\u5b9a\u8d44\u6e90\u5019\u9009\uff1a\n"+strings.Join(sections, "\n"))
 	return strings.Join(parts, "\n\n"), true
+}
+
+func fastPathMissingRequestedAgentCandidates(evidence map[string]interface{}, results map[string]map[string]interface{}) []string {
+	goal := fastPathRawAgentGoalText(evidence)
+	if goal == "" || len(results) == 0 {
+		return nil
+	}
+	missing := []string{}
+	for _, item := range []struct {
+		toolName string
+		label    string
+		patterns []string
+	}{
+		{toolName: "list_agent_skill_candidates", label: "\u0053\u006b\u0069\u006c\u006c", patterns: []string{"Skill", "\u6280\u80fd"}},
+		{toolName: "list_agent_knowledge_candidates", label: "\u77e5\u8bc6\u5e93", patterns: []string{"\u77e5\u8bc6\u5e93", `knowledge\s*base`}},
+		{toolName: "list_agent_database_candidates", label: "\u6570\u636e\u5e93", patterns: []string{"\u6570\u636e\u5e93", `database`}},
+		{toolName: "list_agent_database_tables", label: "\u6570\u636e\u5e93\u8868", patterns: []string{"\u6570\u636e\u5e93\u8868", "\u6570\u636e\u8868", `database\s*table`, `table`}},
+		{toolName: "list_agent_workflow_binding_candidates", label: "\u5de5\u4f5c\u6d41", patterns: []string{"\u5de5\u4f5c\u6d41", `workflow`}},
+	} {
+		result, ok := results[item.toolName]
+		if !ok {
+			continue
+		}
+		names := fastPathRequestedAgentCandidateNames(goal, item.patterns)
+		if len(names) == 0 {
+			continue
+		}
+		candidateNames := fastPathCandidateLookupAllNames(result)
+		if !fastPathCandidateLookupCanProveAbsence(result, candidateNames) {
+			continue
+		}
+		candidateSet := map[string]struct{}{}
+		for _, name := range candidateNames {
+			if normalized := fastPathNormalizeCandidateName(name); normalized != "" {
+				candidateSet[normalized] = struct{}{}
+			}
+		}
+		for _, name := range names {
+			normalized := fastPathNormalizeCandidateName(name)
+			if normalized == "" {
+				continue
+			}
+			if _, ok := candidateSet[normalized]; ok {
+				continue
+			}
+			missing = append(missing, fmt.Sprintf("\u672a\u627e\u5230\u540d\u4e3a\u300c%s\u300d\u7684%s\uff1b\u56e0\u6b64\u672a\u4fee\u6539\u914d\u7f6e\uff0c\u672a\u53d1\u8d77\u5ba1\u6279\u3002", strings.TrimSpace(name), item.label))
+		}
+	}
+	return dedupeStrings(missing)
+}
+
+func fastPathRawAgentGoalText(evidence map[string]interface{}) string {
+	plan := evidenceMapFromAny(evidence["operation_plan"])
+	return strings.TrimSpace(firstNonEmptyString(
+		evidence["latest_user_request"],
+		evidence["user_request"],
+		evidence["query"],
+		evidence["original_user_goal"],
+		evidence["user_goal"],
+		plan["original_user_goal"],
+		plan["user_goal"],
+	))
+}
+
+func fastPathRequestedAgentCandidateNames(goal string, resourcePatterns []string) []string {
+	goal = strings.TrimSpace(goal)
+	if goal == "" || len(resourcePatterns) == 0 {
+		return nil
+	}
+	resource := strings.Join(resourcePatterns, "|")
+	patterns := []string{
+		`(?i)(?:\x{540d}\x{4e3a}|\x{540d}\x{53eb}|\x{540d}\x{79f0}\x{4e3a}|\x{53eb})\s*[\x{300c}\x{201c}"']?([^\x{300c}\x{300d}\x{201c}\x{201d}"'\x{ff0c},\x{3002}\x{ff1b};\n]+?)[\x{300d}\x{201d}"']?\s*(?:\x{7684})?\s*(?:` + resource + `)`,
+		`(?i)(?:named|called|name)\s+["']?([^"'\n,.;\x{ff0c}\x{3002}\x{ff1b}]{1,80}?)["']?\s+(?:` + resource + `)`,
+		`(?i)(?:` + resource + `)\s+(?:named|called)\s+["']?([^"'\n,.;\x{ff0c}\x{3002}\x{ff1b}]{1,80}?)["']?`,
+	}
+	names := []string{}
+	for _, pattern := range patterns {
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			continue
+		}
+		for _, match := range re.FindAllStringSubmatch(goal, -1) {
+			if len(match) < 2 {
+				continue
+			}
+			name := fastPathCleanRequestedCandidateName(match[1])
+			if name != "" {
+				names = append(names, name)
+			}
+		}
+	}
+	return dedupeStrings(names)
+}
+
+func fastPathCleanRequestedCandidateName(name string) string {
+	name = strings.TrimSpace(name)
+	name = strings.Trim(name, " \t\r\n\u300c\u300d\u201c\u201d\"'`\uff0c,\u3002.;\uff1b:\uff1a")
+	return strings.TrimSpace(name)
+}
+
+func fastPathCandidateLookupCanProveAbsence(result map[string]interface{}, names []string) bool {
+	count := firstNonNegativeInt(result["count"], result["candidates_count"], result["total"])
+	if count == 0 {
+		return true
+	}
+	return len(names) >= count
 }
 
 func fastPathGoalExplicitlyForbidsAgentMutation(evidence map[string]interface{}) bool {
@@ -1527,6 +1637,14 @@ func fastPathCandidateLookupSampleNames(result map[string]interface{}, limit int
 	if limit <= 0 {
 		limit = 5
 	}
+	names := fastPathCandidateLookupAllNames(result)
+	if len(names) > limit {
+		return names[:limit]
+	}
+	return names
+}
+
+func fastPathCandidateLookupAllNames(result map[string]interface{}) []string {
 	sources := []interface{}{
 		result["candidate_samples"],
 		result["binding_candidates"],
@@ -1557,16 +1675,15 @@ func fastPathCandidateLookupSampleNames(result map[string]interface{}, limit int
 				continue
 			}
 			names = append(names, name)
-			if len(dedupeStrings(names)) >= limit {
-				return dedupeStrings(names)[:limit]
-			}
 		}
 	}
-	deduped := dedupeStrings(names)
-	if len(deduped) > limit {
-		return deduped[:limit]
-	}
-	return deduped
+	return dedupeStrings(names)
+}
+
+func fastPathNormalizeCandidateName(text string) string {
+	text = fastPathCleanRequestedCandidateName(text)
+	text = strings.ToLower(text)
+	return strings.Join(strings.Fields(text), " ")
 }
 
 // FastPathPreferredFinalAnswerForCompletionEvidence returns a narrow
