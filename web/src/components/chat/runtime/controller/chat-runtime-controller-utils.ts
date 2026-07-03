@@ -3,7 +3,33 @@ import type { AIChatControllerState } from '@/components/chat/controllers/aichat
 import { generateClientId } from '@/utils/client-id';
 
 export function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error || 'Unknown error');
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (error && typeof error === 'object') {
+    const record = error as Record<string, unknown>;
+    const response = record.response;
+    if (response && typeof response === 'object') {
+      const responseData = (response as Record<string, unknown>).data;
+      if (responseData && typeof responseData === 'object') {
+        const data = responseData as Record<string, unknown>;
+        const message = data.message ?? data.error ?? data.errorMessage;
+        if (typeof message === 'string' && message.trim()) {
+          return message;
+        }
+      }
+    }
+
+    for (const key of ['message', 'error', 'errorMessage', 'details'] as const) {
+      const value = record[key];
+      if (typeof value === 'string' && value.trim()) {
+        return value;
+      }
+    }
+  }
+
+  return String(error || 'Unknown error');
 }
 
 export function isAbortError(error: unknown): boolean {

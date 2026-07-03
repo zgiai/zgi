@@ -397,6 +397,13 @@ export function useWorkflowContinuationActions({
               }
               return;
             }
+            const suppressError =
+              (toolGovernanceDecision || clientActionResult) &&
+              isContinuationLikelyStartedError(error);
+            if (suppressError) {
+              syncContinuationState();
+              return;
+            }
             setControllerState(current => ({
               ...current,
               error:
@@ -481,6 +488,13 @@ export function useWorkflowContinuationActions({
             if (clientActionResult || toolGovernanceDecision) {
               throw error instanceof Error ? error : new Error(errorMessage);
             }
+            return;
+          }
+          if (
+            (toolGovernanceDecision || clientActionResult) &&
+            isContinuationLikelyStartedError(error)
+          ) {
+            syncContinuationState();
             return;
           }
           setControllerState(current => ({
