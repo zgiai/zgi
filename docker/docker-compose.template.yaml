@@ -83,7 +83,7 @@ services:
   weaviate:
     profiles:
       - knowledge
-    image: cr.weaviate.io/semitechnologies/weaviate:1.35.4
+    image: ${WEAVIATE_IMAGE:-cr.weaviate.io/semitechnologies/weaviate:1.38.2}
     working_dir: /go/pkg/mod
     environment:
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
