@@ -12,6 +12,7 @@ import (
 
 type RAGEvaluationRouteDeps struct {
 	AccountService            interfaces.AccountService
+	OrganizationService       interfaces.OrganizationService
 	KnowledgeRetrievalService *datasetService.KnowledgeRetrievalService
 	LLMClient                 llmclient.LLMClient
 	DefaultModelService       llmdefaultservice.DefaultModelService
@@ -24,6 +25,7 @@ func RegisterRAGEvaluationRoutes(router *gin.RouterGroup, deps RAGEvaluationRout
 		deps.KnowledgeRetrievalService,
 		deps.LLMClient,
 		deps.DefaultModelService,
+		deps.OrganizationService,
 	)
 
 	authWithTenant := router.Group("", middleware.JWTWithOrganizationAndService(deps.AccountService))
@@ -33,6 +35,9 @@ func RegisterRAGEvaluationRoutes(router *gin.RouterGroup, deps RAGEvaluationRout
 func validateRAGEvaluationRouteDeps(deps RAGEvaluationRouteDeps) {
 	if deps.AccountService == nil {
 		panic("rag evaluation routes require account service")
+	}
+	if deps.OrganizationService == nil {
+		panic("rag evaluation routes require organization service")
 	}
 	if deps.KnowledgeRetrievalService == nil {
 		panic("rag evaluation routes require knowledge retrieval service")

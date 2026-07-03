@@ -59,6 +59,7 @@ type KnowledgeScope struct {
 // KnowledgeDatasetSummary is the model-facing dataset summary used for selection.
 type KnowledgeDatasetSummary struct {
 	DatasetID       string `json:"dataset_id"`
+	WorkspaceID     string `json:"workspace_id,omitempty"`
 	Name            string `json:"name"`
 	Description     string `json:"description,omitempty"`
 	Provider        string `json:"provider,omitempty"`
@@ -261,6 +262,7 @@ func (s *KnowledgeRetrievalService) ListAccessibleDatasets(ctx context.Context, 
 		}
 		out = append(out, KnowledgeDatasetSummary{
 			DatasetID:       dataset.ID,
+			WorkspaceID:     dataset.WorkspaceID,
 			Name:            dataset.Name,
 			Description:     stringPtrValue(dataset.Description),
 			Provider:        dataset.Provider,

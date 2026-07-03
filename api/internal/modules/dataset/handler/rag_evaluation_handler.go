@@ -12,7 +12,9 @@ import (
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	llmruntime "github.com/zgiai/zgi/api/internal/modules/llm/runtime"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	sharedmodel "github.com/zgiai/zgi/api/internal/modules/shared/model"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
@@ -27,6 +29,7 @@ type RAGEvaluationHandler struct {
 	knowledgeRetrieval *datasetservice.KnowledgeRetrievalService
 	llmClient          client.LLMClient
 	defaultModel       llmdefaultservice.DefaultModelService
+	organization       interfaces.OrganizationService
 }
 
 type RAGEvaluationRequest struct {
@@ -55,16 +58,18 @@ func NewRAGEvaluationHandler(
 	knowledgeRetrieval *datasetservice.KnowledgeRetrievalService,
 	llmClient client.LLMClient,
 	defaultModel llmdefaultservice.DefaultModelService,
+	organization interfaces.OrganizationService,
 ) *RAGEvaluationHandler {
 	return &RAGEvaluationHandler{
 		knowledgeRetrieval: knowledgeRetrieval,
 		llmClient:          llmClient,
 		defaultModel:       defaultModel,
+		organization:       organization,
 	}
 }
 
 func (h *RAGEvaluationHandler) BatchEvaluate(c *gin.Context) {
-	if h == nil || h.knowledgeRetrieval == nil || h.llmClient == nil || h.defaultModel == nil {
+	if h == nil || h.knowledgeRetrieval == nil || h.llmClient == nil || h.defaultModel == nil || h.organization == nil {
 		response.FailWithMessage(c, response.ErrSystemError, "rag evaluation service is not configured")
 		return
 	}
@@ -91,14 +96,28 @@ func (h *RAGEvaluationHandler) BatchEvaluate(c *gin.Context) {
 		return
 	}
 
+	workspaceID := util.GetWorkspaceID(c)
+	organizationID := util.GetOrganizationID(c)
+	if organizationID == "" {
+		organizationID = workspaceID
+	}
 	scope := datasetservice.KnowledgeScope{
-		WorkspaceID:    util.GetWorkspaceID(c),
-		OrganizationID: util.GetOrganizationID(c),
+		WorkspaceID:    workspaceID,
+		OrganizationID: organizationID,
 		AccountID:      c.GetString("account_id"),
 	}
-	datasetID, err := h.resolveDatasetID(c.Request.Context(), scope, req.KnowledgeBaseName)
+	dataset, err := h.resolveDataset(c.Request.Context(), scope, req.KnowledgeBaseName)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		return
+	}
+	ok, err := h.checkRetrievalPermission(c.Request.Context(), scope, dataset.WorkspaceID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	if !ok {
+		response.Fail(c, response.ErrPermissionDenied)
 		return
 	}
 
@@ -118,17 +137,17 @@ func (h *RAGEvaluationHandler) BatchEvaluate(c *gin.Context) {
 
 	out := RAGEvaluationBatchResponse{Data: make([]RAGEvaluationItemResponse, 0, len(inputs))}
 	for _, userInput := range inputs {
-		item := h.evaluateOne(c.Request.Context(), scope, datasetID, req.KnowledgeBaseName, userInput, topK, req.ScoreThreshold, req.RetrievalMode, model)
+		item := h.evaluateOne(c.Request.Context(), scope, dataset.DatasetID, req.KnowledgeBaseName, userInput, topK, req.ScoreThreshold, req.RetrievalMode, model)
 		out.Data = append(out.Data, item)
 	}
 
 	response.Success(c, out)
 }
 
-func (h *RAGEvaluationHandler) resolveDatasetID(ctx context.Context, scope datasetservice.KnowledgeScope, name string) (string, error) {
+func (h *RAGEvaluationHandler) resolveDataset(ctx context.Context, scope datasetservice.KnowledgeScope, name string) (datasetservice.KnowledgeDatasetSummary, error) {
 	list, err := h.knowledgeRetrieval.ListAccessibleDatasets(ctx, scope, name, 100)
 	if err != nil {
-		return "", fmt.Errorf("failed to list accessible knowledge bases: %w", err)
+		return datasetservice.KnowledgeDatasetSummary{}, fmt.Errorf("failed to list accessible knowledge bases: %w", err)
 	}
 
 	matches := make([]datasetservice.KnowledgeDatasetSummary, 0)
@@ -138,16 +157,31 @@ func (h *RAGEvaluationHandler) resolveDatasetID(ctx context.Context, scope datas
 		}
 	}
 	if len(matches) == 0 {
-		return "", fmt.Errorf("knowledge base %q was not found or is not accessible", name)
+		return datasetservice.KnowledgeDatasetSummary{}, fmt.Errorf("knowledge base %q was not found or is not accessible", name)
 	}
 	if len(matches) > 1 {
 		ids := make([]string, 0, len(matches))
 		for _, match := range matches {
 			ids = append(ids, match.DatasetID)
 		}
-		return "", fmt.Errorf("knowledge base name %q matched multiple datasets: %s", name, strings.Join(ids, ", "))
+		return datasetservice.KnowledgeDatasetSummary{}, fmt.Errorf("knowledge base name %q matched multiple datasets: %s", name, strings.Join(ids, ", "))
 	}
-	return matches[0].DatasetID, nil
+	return matches[0], nil
+}
+
+func (h *RAGEvaluationHandler) checkRetrievalPermission(ctx context.Context, scope datasetservice.KnowledgeScope, workspaceID string) (bool, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		workspaceID = strings.TrimSpace(scope.WorkspaceID)
+	}
+	return h.organization.CheckWorkspaceOrganizationAnyPermission(
+		ctx,
+		strings.TrimSpace(scope.OrganizationID),
+		workspaceID,
+		strings.TrimSpace(scope.AccountID),
+		workspace_model.WorkspacePermissionKnowledgeBaseRetrievalTest,
+		workspace_model.WorkspacePermissionKnowledgeBaseManage,
+	)
 }
 
 func (h *RAGEvaluationHandler) evaluateOne(

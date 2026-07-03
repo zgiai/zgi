@@ -143,8 +143,14 @@ func FuseVectorBM25Results(query string, vectorResults, bm25Results []SearchResu
 			candidate.bm25Rank = rank + 1
 		}
 		candidate.hasBM25 = true
-		if result.Score > candidate.bm25Score {
-			candidate.bm25Score = result.Score
+		bm25Score := result.Score
+		if result.Metadata != nil {
+			if rawBM25Score, ok := numericBM25Score(result.Metadata["bm25_score"]); ok {
+				bm25Score = rawBM25Score
+			}
+		}
+		if bm25Score > candidate.bm25Score {
+			candidate.bm25Score = bm25Score
 		}
 		candidate.result = mergeResult(candidate.result, result)
 	}

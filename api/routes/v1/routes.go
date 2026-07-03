@@ -121,6 +121,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	// ---------- RAG Evaluation ----------
 	RegisterRAGEvaluationRoutes(v1, RAGEvaluationRouteDeps{
 		AccountService:            accountService,
+		OrganizationService:       serviceContainer.GetOrganizationService(),
 		KnowledgeRetrievalService: serviceContainer.GetKnowledgeRetrievalService(),
 		LLMClient:                 serviceContainer.GetLLMClient(),
 		DefaultModelService:       serviceContainer.GetDefaultModelService(),

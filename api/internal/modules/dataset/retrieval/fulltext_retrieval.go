@@ -77,7 +77,8 @@ func (s *FullTextRetrievalService) Search(ctx context.Context, className string,
 				if !ok || docID == "" {
 					continue
 				}
-				score := extractBM25Score(r, i)
+				bm25Score := extractBM25Score(r, i)
+				score := fallbackBM25RankScore(i)
 				result := SearchResult{
 					ID:    docID,
 					Score: score,
@@ -91,7 +92,8 @@ func (s *FullTextRetrievalService) Search(ctx context.Context, className string,
 				// Add metadata
 				result.Metadata = make(map[string]interface{})
 				result.Metadata["doc_id"] = docID
-				result.Metadata["bm25_score"] = score
+				result.Metadata["bm25_score"] = bm25Score
+				result.Metadata["bm25_rank_score"] = score
 				if datasetID, ok := r["dataset_id"].(string); ok {
 					result.Metadata["dataset_id"] = datasetID
 				}
@@ -122,15 +124,19 @@ func (s *FullTextRetrievalService) Search(ctx context.Context, className string,
 	}
 	results := s.index.Search(tokens, opts.Limit)
 	var searchResults []SearchResult
-	for _, r := range results {
+	for i, r := range results {
 		content := ""
 		if s.segmentMap != nil {
 			content = s.segmentMap[r.DocID]
 		}
 
 		searchResults = append(searchResults, SearchResult{
-			ID:      r.DocID,
-			Score:   r.Score,
+			ID:    r.DocID,
+			Score: fallbackBM25RankScore(i),
+			Metadata: map[string]interface{}{
+				"bm25_score":      r.Score,
+				"bm25_rank_score": fallbackBM25RankScore(i),
+			},
 			Content: content,
 		})
 	}

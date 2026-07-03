@@ -337,6 +337,85 @@ func TestFilterAndLimitFinalRecordsSkipsThresholdWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestFilterAndLimitFinalRecordsKeepsRRFFallbackBelowThreshold(t *testing.T) {
+	fusionScore := 0.0164
+	bestRank := 1
+	records := []dto.HitTestingRecordResponse{
+		{
+			Segment: dto.SegmentResponse{ID: "rrf-fallback"},
+			Score:   fusionScore,
+			RetrievalSource: &dto.RetrievalSourceResponse{
+				FusionScore: &fusionScore,
+				BestRank:    &bestRank,
+			},
+		},
+	}
+
+	got := filterAndLimitFinalRecords(records, &RetrievalOptions{
+		ScoreThresholdEnabled: true,
+		ScoreThreshold:        0.35,
+		TopK:                  5,
+	})
+
+	if len(got) != 1 {
+		t.Fatalf("len(got) = %d, want 1", len(got))
+	}
+	if got[0].Segment.ID != "rrf-fallback" {
+		t.Fatalf("got ID = %q, want rrf-fallback", got[0].Segment.ID)
+	}
+}
+
+func TestFilterAndLimitFinalRecordsAppliesThresholdToRerankScores(t *testing.T) {
+	fusionScore := 0.0164
+	rerankScore := 0.25
+	bestRank := 1
+	records := []dto.HitTestingRecordResponse{
+		{
+			Segment: dto.SegmentResponse{ID: "reranked-below-threshold"},
+			Score:   rerankScore,
+			RetrievalSource: &dto.RetrievalSourceResponse{
+				FusionScore: &fusionScore,
+				RerankScore: &rerankScore,
+				BestRank:    &bestRank,
+			},
+		},
+	}
+
+	got := filterAndLimitFinalRecords(records, &RetrievalOptions{
+		ScoreThresholdEnabled: true,
+		ScoreThreshold:        0.35,
+		TopK:                  5,
+	})
+
+	if len(got) != 0 {
+		t.Fatalf("len(got) = %d, want 0", len(got))
+	}
+}
+
+func TestSplitRerankableSearchResultsPassesThroughGraphResults(t *testing.T) {
+	docBacked := retrieval.SearchResult{
+		ID: "doc-backed",
+		Metadata: map[string]interface{}{
+			"doc_id": "doc-backed",
+		},
+	}
+	graphDoc := retrieval.SearchResult{
+		ID: "graph",
+		Metadata: map[string]interface{}{
+			"source": "graph_knowledge",
+		},
+	}
+
+	rerankable, passthrough := splitRerankableSearchResults([]retrieval.SearchResult{docBacked, graphDoc})
+
+	if len(rerankable) != 1 || rerankable[0].ID != "doc-backed" {
+		t.Fatalf("rerankable = %#v, want doc-backed only", rerankable)
+	}
+	if len(passthrough) != 1 || passthrough[0].ID != "graph" {
+		t.Fatalf("passthrough = %#v, want graph only", passthrough)
+	}
+}
+
 type mockGraphLLMClient struct {
 	lastOrganizationID string
 }

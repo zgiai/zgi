@@ -123,6 +123,31 @@ func TestFuseVectorBM25ResultsDoesNotUseRawScoreAsCrossSourceTieBreaker(t *testi
 	}
 }
 
+func TestFuseVectorBM25ResultsPreservesRawBM25ScoreFromMetadata(t *testing.T) {
+	bm25Results := []SearchResult{
+		{
+			ID:      "bm25",
+			Content: "invoice 2026",
+			Score:   1.0,
+			Metadata: map[string]interface{}{
+				"bm25_score": 7.25,
+			},
+		},
+	}
+
+	results := FuseVectorBM25Results("invoice", nil, bm25Results, 10, HybridFusionConfig{
+		RRFK:       60,
+		BM25Weight: 0.4,
+	})
+
+	if len(results) != 1 {
+		t.Fatalf("result count = %d, want 1", len(results))
+	}
+	if results[0].Metadata["bm25_score"] != 7.25 {
+		t.Fatalf("bm25_score = %#v, want raw score 7.25", results[0].Metadata["bm25_score"])
+	}
+}
+
 func TestFuseVectorBM25ResultsDoesNotTruncateWhenLimitIsZero(t *testing.T) {
 	vectorResults := []SearchResult{
 		{ID: "v1", Content: "vector one", Score: 0.9},

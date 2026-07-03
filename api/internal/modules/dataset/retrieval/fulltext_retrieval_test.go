@@ -36,11 +36,14 @@ func TestFullTextRetrievalUsesWeaviateBM25Score(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("result count = %d, want 1", len(results))
 	}
-	if results[0].Score != 7.25 {
-		t.Fatalf("score = %v, want 7.25", results[0].Score)
+	if results[0].Score != 1.0 {
+		t.Fatalf("score = %v, want normalized rank score 1.0", results[0].Score)
 	}
 	if results[0].Metadata["bm25_score"] != 7.25 {
 		t.Fatalf("bm25_score = %#v, want 7.25", results[0].Metadata["bm25_score"])
+	}
+	if results[0].Metadata["bm25_rank_score"] != 1.0 {
+		t.Fatalf("bm25_rank_score = %#v, want 1.0", results[0].Metadata["bm25_rank_score"])
 	}
 }
 
@@ -77,6 +80,12 @@ func TestFullTextRetrievalFallsBackToLocalBM25OnWeaviateError(t *testing.T) {
 	}
 	if results[0].Score <= 0 {
 		t.Fatalf("local BM25 score should be positive, got %v", results[0].Score)
+	}
+	if results[0].Score > 1 {
+		t.Fatalf("local BM25 public score should be normalized, got %v", results[0].Score)
+	}
+	if results[0].Metadata["bm25_score"] == nil {
+		t.Fatalf("expected raw local BM25 score in metadata")
 	}
 }
 

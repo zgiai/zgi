@@ -58,10 +58,10 @@ ZGI_KNOWLEDGE_BASE_NAME="your-knowledge-base-name"
 ZGI_RAG_EVAL_TOP_K="10"
 ZGI_RAG_EVAL_SCORE_THRESHOLD="0.35"
 
-RAGAS_PROVIDER="aliyun"
-RAGAS_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
-RAGAS_LLM_MODEL="qwen-plus"
-RAGAS_EMBEDDING_MODEL="text-embedding-v4"
+RAGAS_PROVIDER="auto"
+RAGAS_BASE_URL=""
+RAGAS_LLM_MODEL=""
+RAGAS_EMBEDDING_MODEL=""
 RAGAS_ENABLE_THINKING="false"
 RAGAS_BATCH_SIZE="50"
 RAGAS_MAX_WORKERS="8"
@@ -150,7 +150,7 @@ Valid ranges:
 | `--ragas-base-url` | `RAGAS_BASE_URL` | OpenAI-compatible API base URL |
 | `--ragas-llm-model` | `RAGAS_LLM_MODEL` | Judge LLM model |
 | `--ragas-embedding-model` | `RAGAS_EMBEDDING_MODEL` | Embedding model for Ragas metrics |
-| `--ragas-enable-thinking` | `RAGAS_ENABLE_THINKING` | DashScope thinking mode, usually `false` |
+| `--ragas-enable-thinking` | `RAGAS_ENABLE_THINKING` | Provider-specific thinking mode flag, usually `false` |
 | `--ragas-batch-size` | `RAGAS_BATCH_SIZE` | Rows per Ragas batch |
 | `--ragas-max-workers` | `RAGAS_MAX_WORKERS` | Ragas concurrency |
 | `--ragas-limit` | none | Limit rows sent to Ragas after backend collection |
@@ -230,13 +230,10 @@ Check `ZGI_KNOWLEDGE_BASE_NAME`. The script matches by knowledge-base name in th
 
 ### Ragas API key missing
 
-Set one of:
+Set `RAGAS_API_KEY` for the judge model provider:
 
 ```env
 RAGAS_API_KEY="..."
-ALIYUN_API_KEY="..."
-DASHSCOPE_API_KEY="..."
-OPENAI_API_KEY="..."
 ```
 
 ### Ragas is slow
@@ -256,4 +253,3 @@ python run_ragas_eval.py --limit 10 --ragas-limit 10
 ### Existing dataset is stale
 
 If you changed retrieval code or knowledge-base data, do not reuse the existing `.ragas.dataset.json`. Press Enter when prompted to recollect backend data, or delete the old dataset file under `middle/`.
-

@@ -384,15 +384,18 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 	// Unified Reranking: rerank all fused candidates, then keep final top_k.
 	// In hybrid mode this is vector top 50 + BM25 top 50 after RRF dedup.
 	if options.RerankingEnable && isValidRerankingModelConfig(options.RerankingModel) && s.rerankService != nil && len(allDocuments) > 0 {
-		rerankedDocuments, err := s.applyReranking(ctx, dataset, query, allDocuments, options)
-		if err != nil {
-			logger.Warn("Unified Reranking failed", map[string]interface{}{
-				"dataset_id": dataset.ID,
-				"error":      err.Error(),
-			})
-			// Fallback: continue with original scores (merged list)
-		} else {
-			allDocuments = rerankedDocuments
+		rerankableDocuments, passthroughDocuments := splitRerankableSearchResults(allDocuments)
+		if len(rerankableDocuments) > 0 {
+			rerankedDocuments, err := s.applyReranking(ctx, dataset, query, rerankableDocuments, options)
+			if err != nil {
+				logger.Warn("Unified Reranking failed", map[string]interface{}{
+					"dataset_id": dataset.ID,
+					"error":      err.Error(),
+				})
+				// Fallback: continue with original scores (merged list)
+			} else {
+				allDocuments = append(rerankedDocuments, passthroughDocuments...)
+			}
 		}
 	}
 
@@ -704,7 +707,10 @@ func (s *RetrievalService) fullTextIndexSearch(ctx context.Context, dataset *dat
 
 	for i := range results {
 		results[i].Metadata = cloneSearchMetadata(results[i].Metadata)
-		results[i].Metadata["bm25_score"] = results[i].Score
+		if results[i].Metadata["bm25_score"] == nil {
+			results[i].Metadata["bm25_score"] = results[i].Score
+		}
+		results[i].Metadata["bm25_rank_score"] = results[i].Score
 		results[i].Metadata["retrieval_sources"] = []string{"bm25"}
 		results[i].Metadata["matched_terms"] = matchedQueryTerms(query, results[i].Content)
 		results[i].Metadata["fusion_score"] = results[i].Score
@@ -747,6 +753,30 @@ func isKnownSearchMethod(searchMethod string) bool {
 	default:
 		return false
 	}
+}
+
+func splitRerankableSearchResults(documents []retrieval.SearchResult) ([]retrieval.SearchResult, []retrieval.SearchResult) {
+	rerankable := make([]retrieval.SearchResult, 0, len(documents))
+	passthrough := make([]retrieval.SearchResult, 0)
+	for _, doc := range documents {
+		if isRerankableSearchResult(doc) {
+			rerankable = append(rerankable, doc)
+		} else {
+			passthrough = append(passthrough, doc)
+		}
+	}
+	return rerankable, passthrough
+}
+
+func isRerankableSearchResult(doc retrieval.SearchResult) bool {
+	if doc.Metadata == nil {
+		return false
+	}
+	if source, _ := doc.Metadata["source"].(string); source == "graph_knowledge" {
+		return false
+	}
+	docID, _ := doc.Metadata["doc_id"].(string)
+	return strings.TrimSpace(docID) != ""
 }
 
 func matchedQueryTerms(query, content string) []string {
@@ -994,7 +1024,7 @@ func filterAndLimitFinalRecords(records []dto.HitTestingRecordResponse, options 
 	if options != nil && options.ScoreThresholdEnabled {
 		filtered = make([]dto.HitTestingRecordResponse, 0, len(records))
 		for _, record := range records {
-			if record.Score >= options.ScoreThreshold {
+			if !shouldApplyFinalScoreThreshold(record) || record.Score >= options.ScoreThreshold {
 				filtered = append(filtered, record)
 			}
 		}
@@ -1004,6 +1034,14 @@ func filterAndLimitFinalRecords(records []dto.HitTestingRecordResponse, options 
 		filtered = filtered[:options.TopK]
 	}
 	return filtered
+}
+
+func shouldApplyFinalScoreThreshold(record dto.HitTestingRecordResponse) bool {
+	source := record.RetrievalSource
+	if source == nil {
+		return true
+	}
+	return !(source.RerankScore == nil && source.FusionScore != nil && source.BestRank != nil)
 }
 
 func (s *RetrievalService) updateRecordHitCount(ctx context.Context, records []dto.HitTestingRecordResponse) {

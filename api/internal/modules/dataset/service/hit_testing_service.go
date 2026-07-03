@@ -443,9 +443,12 @@ func (s *hitTestingService) getRetrievalOptions(ctx context.Context, retrievalMo
 		}
 	}
 
-	// Reranking is mandatory in the current retrieval pipeline.
-	options.RerankingEnable = true
-	if !isValidRerankingModelConfig(options.RerankingModel) {
+	options.SearchMethod = normalizeVectorSearchMethod(options.SearchMethod)
+
+	// Reranking is mandatory for vector/BM25 retrieval. Graph-only results are not
+	// doc-backed chunks and cannot be sent to the reranker.
+	options.RerankingEnable = options.SearchMethod != "graph_search"
+	if options.RerankingEnable && !isValidRerankingModelConfig(options.RerankingModel) {
 		resolvedModel, err := llmruntime.NewModelResolver(s.defaultModelSvc).ResolveDefault(ctx, dataset.OrganizationID, shared_model.ModelTypeRerank)
 		if err == nil && resolvedModel != nil {
 			logger.Info("Using default rerank model", map[string]interface{}{
@@ -472,8 +475,6 @@ func (s *hitTestingService) getRetrievalOptions(ctx context.Context, retrievalMo
 	if !options.ScoreThresholdEnabled {
 		options.ScoreThreshold = 0.0
 	}
-
-	options.SearchMethod = normalizeVectorSearchMethod(options.SearchMethod)
 
 	// Warn when semantic or hybrid search is requested but vector retrieval is unavailable.
 	if (options.SearchMethod == "semantic_search" || options.SearchMethod == "hybrid_search") && s.retrievalService.vectorRetrieval == nil {
