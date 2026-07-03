@@ -247,7 +247,7 @@ export default function BatchTesting(props: BatchTestingProps) {
         queries: filteredQuestions.map(item => item.question),
         retrieval_model: {
           search_method: normalizedSearchMethod,
-          reranking_enable: retrievalConfig.reranking_enable,
+          reranking_enable: true,
           reranking_model: retrievalConfig.reranking_model,
           top_k: retrievalConfig.top_k,
           score_threshold_enabled: retrievalConfig.score_threshold_enabled,

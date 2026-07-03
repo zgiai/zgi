@@ -1682,8 +1682,10 @@ func (ir *IndexingRunner) ensureVectorClass(ctx context.Context, className strin
 	// Other fields (doc_id, doc_hash, document_id, dataset_id) are stored as dynamic properties
 	properties := []map[string]interface{}{
 		{
-			"name":     "text",
-			"dataType": []string{"text"},
+			"name":            "text",
+			"dataType":        []string{"text"},
+			"tokenization":    "gse_ch",
+			"indexSearchable": true,
 		},
 	}
 

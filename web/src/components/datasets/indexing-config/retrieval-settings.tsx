@@ -25,6 +25,8 @@ interface RetrievalSettingsProps {
   retrieval: RetrievalConfig;
   disabled?: boolean;
   isGraphEnabled?: boolean;
+  rerankingLabel?: string;
+  showRerankingModel?: boolean;
   onChange?: (retrieval: RetrievalConfig) => void;
 }
 
@@ -34,10 +36,10 @@ export interface RetrievalSettingsRef {
 
 // Default values for initialization
 const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
-  search_method: 'semantic_search',
-  top_k: 3,
+  search_method: 'hybrid_search',
+  top_k: 10,
   score_threshold_enabled: true,
-  score_threshold: 0.5,
+  score_threshold: 0.35,
   reranking_enable: true,
   reranking_model: {
     reranking_provider_name: '',
@@ -78,7 +80,17 @@ function SettingLabelWithTooltip({
 }
 
 export const RetrievalSettings = forwardRef<RetrievalSettingsRef, RetrievalSettingsProps>(
-  ({ retrieval, disabled = false, isGraphEnabled = false, onChange }, ref) => {
+  (
+    {
+      retrieval,
+      disabled = false,
+      isGraphEnabled = false,
+      rerankingLabel,
+      showRerankingModel = true,
+      onChange,
+    },
+    ref
+  ) => {
     const t = useT('datasets');
     const initializedRef = useRef(false);
     // Track if the latest local state change was user-initiated to avoid notifying on initial sync
@@ -92,7 +104,7 @@ export const RetrievalSettings = forwardRef<RetrievalSettingsRef, RetrievalSetti
         score_threshold_enabled:
           retrieval.score_threshold_enabled ?? DEFAULT_RETRIEVAL_CONFIG.score_threshold_enabled,
         score_threshold: retrieval.score_threshold ?? DEFAULT_RETRIEVAL_CONFIG.score_threshold,
-        reranking_enable: retrieval.reranking_enable ?? DEFAULT_RETRIEVAL_CONFIG.reranking_enable,
+        reranking_enable: true,
         reranking_model: retrieval.reranking_model ?? DEFAULT_RETRIEVAL_CONFIG.reranking_model,
       };
 
@@ -110,7 +122,7 @@ export const RetrievalSettings = forwardRef<RetrievalSettingsRef, RetrievalSetti
         score_threshold_enabled:
           retrieval.score_threshold_enabled ?? DEFAULT_RETRIEVAL_CONFIG.score_threshold_enabled,
         score_threshold: retrieval.score_threshold ?? DEFAULT_RETRIEVAL_CONFIG.score_threshold,
-        reranking_enable: retrieval.reranking_enable ?? DEFAULT_RETRIEVAL_CONFIG.reranking_enable,
+        reranking_enable: true,
         reranking_model: retrieval.reranking_model ?? DEFAULT_RETRIEVAL_CONFIG.reranking_model,
       });
       setTopKInput(String(newTopK));
@@ -125,15 +137,17 @@ export const RetrievalSettings = forwardRef<RetrievalSettingsRef, RetrievalSetti
         provider: localRetrieval.reranking_model?.reranking_provider_name,
         model: localRetrieval.reranking_model?.reranking_model_name,
       },
-      enabled: Boolean(localRetrieval.reranking_enable),
+      enabled: showRerankingModel,
       onInitialize: v => {
-        setLocalRetrieval(prev => ({
-          ...prev,
+        const next = {
+          ...localRetrieval,
           reranking_model: {
             reranking_provider_name: v.provider,
             reranking_model_name: v.model,
           },
-        }));
+        };
+        setLocalRetrieval(next);
+        onChange?.(next);
       },
     });
 
@@ -143,6 +157,7 @@ export const RetrievalSettings = forwardRef<RetrievalSettingsRef, RetrievalSetti
       () => ({
         getFormData: () => ({
           ...localRetrieval,
+          reranking_enable: true,
         }),
       }),
       [localRetrieval]
@@ -207,8 +222,14 @@ export const RetrievalSettings = forwardRef<RetrievalSettingsRef, RetrievalSetti
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="hybrid_search">
+                    {t('hitTesting.methods.hybrid_search')}
+                  </SelectItem>
                   <SelectItem value="semantic_search">
                     {t('hitTesting.methods.semantic_search')}
+                  </SelectItem>
+                  <SelectItem value="full_text_search">
+                    {t('hitTesting.methods.full_text_search')}
                   </SelectItem>
                   {isGraphEnabled && (
                     <SelectItem value="graph_search">
@@ -289,27 +310,12 @@ export const RetrievalSettings = forwardRef<RetrievalSettingsRef, RetrievalSetti
                 </div>
               </div>
             </div>
-            <div className="space-y-2 pb-4">
-              <div className="flex items-center justify-between">
+            {showRerankingModel && (
+              <div className="space-y-2 pb-4">
                 <SettingLabelWithTooltip
-                  label={t('createWizard.processConfig.enableReranking')}
+                  label={rerankingLabel ?? t('createWizard.processConfig.rerankModel')}
                   tooltip={t('createWizard.processConfig.rerankingHelp')}
                 />
-                <Switch
-                  checked={localRetrieval.reranking_enable}
-                  onCheckedChange={checked => {
-                    // Toggle reranking and set mode for model selector in a user-initiated batch
-                    updateLocalRetrieval('reranking_enable', checked);
-                    // When enabling rerank, prefill default rerank model if empty
-                    if (checked) {
-                      updateLocalRetrieval('reranking_model', localRetrieval.reranking_model);
-                    }
-                  }}
-                  disabled={disabled}
-                />
-              </div>
-              {/* Show model selector when reranking is enabled for non-hybrid search */}
-              {localRetrieval.reranking_enable && (
                 <div className="space-y-2">
                   <ModelSelector
                     modelType="rerank"
@@ -327,8 +333,8 @@ export const RetrievalSettings = forwardRef<RetrievalSettingsRef, RetrievalSetti
                     disabled={disabled}
                   />
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </div>
       </TooltipProvider>

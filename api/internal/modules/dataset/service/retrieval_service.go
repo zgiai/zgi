@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
@@ -142,6 +142,8 @@ type RetrievalOptions struct {
 	GraphWeight           float64 // Final weight for graph score (e.g., 0.3)
 }
 
+const hybridRecallCandidateLimit = 50
+
 // Retrieve Main retrieval method
 func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.Dataset, query string, options *RetrievalOptions) ([]dto.HitTestingRecordResponse, *dto.GraphExecution, error) {
 	if query == "" {
@@ -181,23 +183,18 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 	var allDocuments []retrieval.SearchResult
 	var exceptions []string
 
-	maxWorkers := runtime.NumCPU()
-	if maxWorkers > 10 {
-		maxWorkers = 10
-	}
-
 	type result struct {
 		documents      []retrieval.SearchResult
 		graphExecution *dto.GraphExecution
 		err            error
 	}
 
-	resultChan := make(chan result, 4) // 4 threads: keyword, embedding, full_text, graph
+	resultChan := make(chan result, 3) // hybrid/vector/BM25 plus graph
 	pending := 0
 
 	// Determine retrieval mode
 	// RetrievalMode controls which search types to run:
-	// - "vector": run all vector-based searches (semantic, keyword, full_text)
+	// - "vector": run vector/BM25 retrieval without graph search
 	// - "graph": run only graph search
 	// - "hybrid" or "": run both vector and graph searches
 	runVector := true
@@ -208,35 +205,33 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 		runVector = false
 	}
 
-	//  hybrid_search
-	searchScoreThreshold := options.ScoreThreshold
+	searchMethod := normalizeVectorSearchMethod(options.SearchMethod)
+	options.SearchMethod = searchMethod
+
+	// Retrieval threshold is applied only after child hits are aggregated back to parent records.
+	searchScoreThreshold := 0.0
 	searchTopK := options.TopK
-	if options.SearchMethod == "hybrid_search" {
-		searchScoreThreshold = 0.0
-		searchTopK = 10
+	if isHybridVectorBM25Method(searchMethod) {
+		searchTopK = hybridRecallCandidateLimit
 	}
 
 	// When RetrievalMode is "vector" or "hybrid", run vector-based searches
 	// SearchMethod can be used to filter which specific vector searches to run:
-	// - "keyword_search": run only keyword search
+	// - "keyword_search": run BM25 lexical search for compatibility
 	// - "semantic_search": run only embedding search
-	// - "full_text_search": run only full-text search
-	// - "hybrid_search": run all vector searches
+	// - "full_text_search": run only BM25 full-text search
+	// - "hybrid_search": run vector + BM25 hybrid fusion
 	// - "graph_search": run no vector searches (handled separately)
-	// - empty or other values: run all vector searches by default
 	if runVector {
-		// Determine which vector searches to run based on SearchMethod
-		// If SearchMethod is empty or not recognized, run all by default
-		runKeyword := options.SearchMethod == "" || options.SearchMethod == "keyword_search" || options.SearchMethod == "hybrid_search"
-		runSemantic := options.SearchMethod == "" || options.SearchMethod == "semantic_search" || options.SearchMethod == "hybrid_search"
-		runFullText := options.SearchMethod == "" || options.SearchMethod == "full_text_search" || options.SearchMethod == "hybrid_search"
+		runHybrid := isHybridVectorBM25Method(searchMethod)
+		runSemantic := searchMethod == "semantic_search"
+		runBM25 := isBM25OnlyMethod(searchMethod)
 
-		// keyword_search
-		if runKeyword && s.keywordRetrieval != nil {
+		if runHybrid && (s.vectorRetrieval != nil || s.fullTextRetrieval != nil) {
 			pending++
 			go func() {
-				documents, err := s.keywordSearch(ctx, dataset, query, options)
-				logger.DebugContext(logCtx, "keyword retrieval completed",
+				documents, err := s.hybridVectorBM25Search(ctx, dataset, query, searchTopK, searchScoreThreshold, options)
+				logger.DebugContext(logCtx, "vector+BM25 hybrid retrieval completed",
 					err,
 					zap.Int("documents_count", len(documents)),
 				)
@@ -244,7 +239,6 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 			}()
 		}
 
-		// embedding_search
 		if runSemantic && s.vectorRetrieval != nil {
 			pending++
 			go func() {
@@ -257,12 +251,11 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 			}()
 		}
 
-		// full_text_search
-		if runFullText && s.fullTextRetrieval != nil {
+		if runBM25 && s.fullTextRetrieval != nil {
 			pending++
 			go func() {
 				documents, err := s.fullTextIndexSearch(ctx, dataset, query, searchTopK, searchScoreThreshold, options)
-				logger.DebugContext(logCtx, "full-text retrieval completed",
+				logger.DebugContext(logCtx, "BM25 retrieval completed",
 					err,
 					zap.Int("documents_count", len(documents)),
 				)
@@ -343,27 +336,10 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 		}
 	}
 
-	// Note: Score threshold filtering is handled within individual search methods
-
-	// Note: Score threshold filtering is handled within individual search methods
-	// to avoid issues with full-text search
-	// where scores may be 0.0 when reranking is not enabled
-
-	// Sort semantic documents by score descending before truncation
-	// This ensures we keep the highest scoring results
+	// Sort semantic documents by score descending before merging.
 	sort.SliceStable(semanticDocuments, func(i, j int) bool {
 		return semanticDocuments[i].Score > semanticDocuments[j].Score
 	})
-
-	// Merge semantic results with graph results (GraphFlow now returns real chunks)
-	// FIX: Keep a larger pool for unified reranking, avoid early truncation
-	retrievalLimit := options.TopK
-	if options.RerankingEnable {
-		retrievalLimit = options.TopK * 3
-	}
-	if retrievalLimit > 0 && len(semanticDocuments) > retrievalLimit {
-		semanticDocuments = semanticDocuments[:retrievalLimit]
-	}
 
 	// Deduplicate by segment ID and Content (graph results may overlap with semantic results or contain duplicates)
 	seenIDs := make(map[string]bool)
@@ -405,9 +381,9 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 		zap.Int("unique_documents_count", len(allDocuments)),
 	)
 
-	// Unified Reranking: Rerank ALL documents (Semantic + Graph) together
-	// This ensures graph results are properly ordered by relevance relative to semantic results
-	if options.RerankingEnable && options.RerankingModel != nil && s.rerankService != nil && len(allDocuments) > 0 {
+	// Unified Reranking: rerank all fused candidates, then keep final top_k.
+	// In hybrid mode this is vector top 50 + BM25 top 50 after RRF dedup.
+	if options.RerankingEnable && isValidRerankingModelConfig(options.RerankingModel) && s.rerankService != nil && len(allDocuments) > 0 {
 		rerankedDocuments, err := s.applyReranking(ctx, dataset, query, allDocuments, options)
 		if err != nil {
 			logger.Warn("Unified Reranking failed", map[string]interface{}{
@@ -425,19 +401,20 @@ func (s *RetrievalService) Retrieve(ctx context.Context, dataset *dataset_model.
 		return allDocuments[i].Score > allDocuments[j].Score
 	})
 
-	// Update hit count for segments
-	s.updateSegmentHitCount(ctx, allDocuments)
+	// convertSearchResults - real chunks from both semantic and graph search
+	records := s.convertSearchResultsToRecords(allDocuments, dataset.ID, options)
+	records = filterAndLimitFinalRecords(records, options)
+
+	// Update hit count for final parent records only.
+	s.updateRecordHitCount(ctx, records)
 
 	logger.Info("Retrieval results summary", map[string]interface{}{
 		"query":             query,
 		"semantic_docs":     len(semanticDocuments),
 		"graph_docs":        len(graphDocuments),
-		"final_docs_count":  len(allDocuments),
+		"final_docs_count":  len(records),
 		"enable_graph_flow": dataset.EnableGraphFlow,
 	})
-
-	// convertSearchResults - real chunks from both semantic and graph search
-	records := s.convertSearchResultsToRecords(allDocuments, dataset.ID, options)
 	return records, finalExecution, nil
 }
 
@@ -491,7 +468,7 @@ func (s *RetrievalService) keywordSearch(ctx context.Context, dataset *dataset_m
 
 	searchOpts := retrieval.SearchOptions{
 		Limit:          options.TopK,
-		ScoreThreshold: options.ScoreThreshold,
+		ScoreThreshold: 0.0,
 		DocumentIDs:    options.DocumentIDsFilter,
 		Filter:         options.Filter,
 	}
@@ -538,6 +515,63 @@ func (s *RetrievalService) keywordSearch(ctx context.Context, dataset *dataset_m
 	return results, nil
 }
 
+func (s *RetrievalService) hybridVectorBM25Search(ctx context.Context, dataset *dataset_model.Dataset, query string, topK int, scoreThreshold float64, options *RetrievalOptions) ([]retrieval.SearchResult, error) {
+	type branchResult struct {
+		source    string
+		documents []retrieval.SearchResult
+		err       error
+	}
+
+	resultChan := make(chan branchResult, 2)
+	pending := 0
+
+	if s.vectorRetrieval != nil {
+		pending++
+		go func() {
+			documents, err := s.embeddingSearch(ctx, dataset, query, topK, scoreThreshold, options)
+			resultChan <- branchResult{source: "vector", documents: documents, err: err}
+		}()
+	}
+
+	if s.fullTextRetrieval != nil {
+		pending++
+		go func() {
+			documents, err := s.fullTextIndexSearch(ctx, dataset, query, topK, scoreThreshold, options)
+			resultChan <- branchResult{source: "bm25", documents: documents, err: err}
+		}()
+	}
+
+	var vectorDocuments []retrieval.SearchResult
+	var bm25Documents []retrieval.SearchResult
+	var errors []string
+	for i := 0; i < pending; i++ {
+		res := <-resultChan
+		if res.err != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", res.source, res.err))
+			continue
+		}
+		if res.source == "vector" {
+			vectorDocuments = res.documents
+		} else {
+			bm25Documents = res.documents
+		}
+	}
+
+	if len(vectorDocuments) == 0 && len(bm25Documents) == 0 && len(errors) > 0 {
+		return nil, fmt.Errorf("vector+BM25 retrieval failed: %s", strings.Join(errors, "; "))
+	}
+	if len(errors) > 0 {
+		logger.Warn("Vector+BM25 retrieval continuing with partial results", map[string]interface{}{
+			"dataset_id":     dataset.ID,
+			"errors":         errors,
+			"vector_results": len(vectorDocuments),
+			"bm25_results":   len(bm25Documents),
+		})
+	}
+
+	return retrieval.FuseVectorBM25Results(query, vectorDocuments, bm25Documents, 0, retrieval.DefaultHybridFusionConfig()), nil
+}
+
 // embeddingSearch Vector search
 func (s *RetrievalService) embeddingSearch(ctx context.Context, dataset *dataset_model.Dataset, query string, topK int, scoreThreshold float64, options *RetrievalOptions) ([]retrieval.SearchResult, error) {
 	if s.vectorRetrieval == nil {
@@ -569,7 +603,7 @@ func (s *RetrievalService) embeddingSearch(ctx context.Context, dataset *dataset
 
 	searchOpts := retrieval.SearchOptions{
 		Limit:          topK,
-		ScoreThreshold: scoreThreshold,
+		ScoreThreshold: 0.0,
 		DocumentIDs:    options.DocumentIDsFilter,
 		Filter:         options.Filter,
 		PreQAExtension: options.PreQAExtension, // Pass the PreQAExtension option
@@ -580,12 +614,9 @@ func (s *RetrievalService) embeddingSearch(ctx context.Context, dataset *dataset
 		options.RerankingModel != nil &&
 		options.SearchMethod == "semantic_search"
 
-	vectorScoreThreshold := scoreThreshold
 	vectorTopK := topK
 	if useRankingModel {
-		vectorScoreThreshold = 0.0
 		vectorTopK = 10
-		searchOpts.ScoreThreshold = vectorScoreThreshold
 		searchOpts.Limit = vectorTopK
 	}
 
@@ -593,6 +624,14 @@ func (s *RetrievalService) embeddingSearch(ctx context.Context, dataset *dataset
 	documents, err := s.vectorRetrieval.Search(ctx, className, query, searchOpts)
 	if err != nil {
 		return nil, err
+	}
+
+	for i := range documents {
+		documents[i].Metadata = cloneSearchMetadata(documents[i].Metadata)
+		documents[i].Metadata["vector_score"] = documents[i].Score
+		documents[i].Metadata["retrieval_sources"] = []string{"vector"}
+		documents[i].Metadata["fusion_score"] = documents[i].Score
+		documents[i].Metadata["score"] = documents[i].Score
 	}
 
 	return documents, nil
@@ -612,7 +651,7 @@ func (s *RetrievalService) fullTextIndexSearch(ctx context.Context, dataset *dat
 
 	searchOpts := retrieval.SearchOptions{
 		Limit:          topK,
-		ScoreThreshold: scoreThreshold,
+		ScoreThreshold: 0.0,
 		DocumentIDs:    options.DocumentIDsFilter,
 		Filter:         options.Filter,
 		PreQAExtension: options.PreQAExtension, // Pass the PreQAExtension option
@@ -663,26 +702,73 @@ func (s *RetrievalService) fullTextIndexSearch(ctx context.Context, dataset *dat
 		}
 	}
 
-	// Apply reranking if enabled
-	if options.RerankingEnable &&
-		options.RerankingModel != nil &&
-		options.RerankingModel["reranking_model_name"] != nil &&
-		options.RerankingModel["reranking_provider_name"] != nil &&
-		options.SearchMethod == "full_text_search" {
-
-		rerankedResults, err := s.applyReranking(ctx, dataset, query, results, options)
-		if err != nil {
-			logger.Warn("Reranking failed in full text search", map[string]interface{}{
-				"dataset_id": dataset.ID,
-				"error":      err.Error(),
-			})
-			// If reranking fails, continue with original results
-			return results, nil
-		}
-		return rerankedResults, nil
+	for i := range results {
+		results[i].Metadata = cloneSearchMetadata(results[i].Metadata)
+		results[i].Metadata["bm25_score"] = results[i].Score
+		results[i].Metadata["retrieval_sources"] = []string{"bm25"}
+		results[i].Metadata["matched_terms"] = matchedQueryTerms(query, results[i].Content)
+		results[i].Metadata["fusion_score"] = results[i].Score
+		results[i].Metadata["score"] = results[i].Score
 	}
 
 	return results, nil
+}
+
+func cloneSearchMetadata(metadata map[string]interface{}) map[string]interface{} {
+	if metadata == nil {
+		return make(map[string]interface{})
+	}
+	cloned := make(map[string]interface{}, len(metadata)+4)
+	for key, value := range metadata {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func normalizeVectorSearchMethod(searchMethod string) string {
+	if searchMethod == "" || !isKnownSearchMethod(searchMethod) {
+		return "hybrid_search"
+	}
+	return searchMethod
+}
+
+func isHybridVectorBM25Method(searchMethod string) bool {
+	return searchMethod == "hybrid_search"
+}
+
+func isBM25OnlyMethod(searchMethod string) bool {
+	return searchMethod == "full_text_search" || searchMethod == "keyword_search"
+}
+
+func isKnownSearchMethod(searchMethod string) bool {
+	switch searchMethod {
+	case "", "hybrid_search", "semantic_search", "full_text_search", "keyword_search", "graph_search":
+		return true
+	default:
+		return false
+	}
+}
+
+func matchedQueryTerms(query, content string) []string {
+	content = strings.ToLower(content)
+	seen := make(map[string]struct{})
+	terms := make([]string, 0)
+	for _, term := range strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		term = strings.TrimSpace(term)
+		if term == "" {
+			continue
+		}
+		if _, ok := seen[term]; ok {
+			continue
+		}
+		seen[term] = struct{}{}
+		if strings.Contains(content, term) {
+			terms = append(terms, term)
+		}
+	}
+	return terms
 }
 
 // escapeQueryForSearch escapes special characters in query for search
@@ -735,19 +821,8 @@ func (s *RetrievalService) applyReranking(ctx context.Context, dataset *dataset_
 		dataset.ID,
 	)
 
-	// Apply post-processing
-	scoreThresholdPtr := &options.ScoreThreshold
-	topK := options.TopK
-	topN := topK
-	topNPtr := &topN
-
-	// Use top_n=top_k unless fewer documents are available.
-	if topK > len(dtoDocuments) {
-		topN = len(dtoDocuments)
-		topNPtr = &topN
-	}
-
-	rerankedDocuments, rerankErr := dataPostProcessor.Invoke(ctx, query, dtoDocuments, scoreThresholdPtr, topNPtr)
+	// Apply reranking only. Threshold and top_k are applied later at parent-record level.
+	rerankedDocuments, rerankErr := dataPostProcessor.Invoke(ctx, query, dtoDocuments, nil, nil)
 	if rerankErr != nil {
 		logger.Warn("Reranking failed in embedding search", map[string]interface{}{
 			"dataset_id": dataset.ID,
@@ -765,6 +840,10 @@ func (s *RetrievalService) applyReranking(ctx context.Context, dataset *dataset_
 		if s, ok := doc.Metadata["score"].(float64); ok {
 			score = s
 		}
+		if doc.Metadata == nil {
+			doc.Metadata = map[string]interface{}{}
+		}
+		doc.Metadata["final_score"] = score
 
 		id := ""
 		if idVal, ok := doc.Metadata["id"].(string); ok {
@@ -780,6 +859,177 @@ func (s *RetrievalService) applyReranking(ctx context.Context, dataset *dataset_
 	}
 
 	return resultDocuments, nil
+}
+
+func retrievalSourceResponseForDoc(doc retrieval.SearchResult, fallbackMethod, fallbackReason string) *dto.RetrievalSourceResponse {
+	source := &dto.RetrievalSourceResponse{
+		Method: fallbackMethod,
+		Reason: fallbackReason,
+	}
+	if doc.Metadata == nil {
+		return source
+	}
+
+	sources := searchMetadataStringSlice(doc.Metadata["retrieval_sources"])
+	matchedTerms := searchMetadataStringSlice(doc.Metadata["matched_terms"])
+	source.RetrievalSources = sources
+	source.MatchedTerms = matchedTerms
+	source.VectorScore = searchMetadataFloatPtr(doc.Metadata["vector_score"])
+	source.BM25Score = searchMetadataFloatPtr(doc.Metadata["bm25_score"])
+	source.VectorRank = searchMetadataIntPtr(doc.Metadata["vector_rank"])
+	source.BM25Rank = searchMetadataIntPtr(doc.Metadata["bm25_rank"])
+	source.BestRank = searchMetadataIntPtr(doc.Metadata["best_rank"])
+	source.FusionScore = searchMetadataFloatPtr(doc.Metadata["fusion_score"])
+	if source.FusionScore == nil {
+		source.FusionScore = searchMetadataFloatPtr(doc.Metadata["score"])
+	}
+	source.RerankScore = searchMetadataFloatPtr(doc.Metadata["rerank_score"])
+	source.FinalScore = searchMetadataFloatPtr(doc.Metadata["final_score"])
+	if source.FinalScore == nil {
+		finalScore := doc.Score
+		source.FinalScore = &finalScore
+	}
+
+	hasVector := containsString(sources, "vector")
+	hasBM25 := containsString(sources, "bm25")
+	switch {
+	case hasVector && hasBM25:
+		source.Method = "hybrid_search"
+		source.Reason = "向量语义与BM25词面混合匹配"
+	case hasBM25:
+		source.Method = "full_text_search"
+		source.Reason = "BM25全文匹配"
+	case hasVector:
+		source.Method = "semantic_search"
+		source.Reason = "语义相似度匹配"
+	}
+	return source
+}
+
+func searchMetadataFloatPtr(value interface{}) *float64 {
+	switch typed := value.(type) {
+	case float64:
+		return &typed
+	case float32:
+		v := float64(typed)
+		return &v
+	case int:
+		v := float64(typed)
+		return &v
+	case int64:
+		v := float64(typed)
+		return &v
+	case int32:
+		v := float64(typed)
+		return &v
+	default:
+		return nil
+	}
+}
+
+func searchMetadataIntPtr(value interface{}) *int {
+	switch typed := value.(type) {
+	case int:
+		return &typed
+	case int64:
+		v := int(typed)
+		return &v
+	case int32:
+		v := int(typed)
+		return &v
+	case float64:
+		if typed == math.Trunc(typed) {
+			v := int(typed)
+			return &v
+		}
+		return nil
+	case float32:
+		floatValue := float64(typed)
+		if floatValue == math.Trunc(floatValue) {
+			v := int(floatValue)
+			return &v
+		}
+		return nil
+	default:
+		return nil
+	}
+}
+
+func searchMetadataStringSlice(value interface{}) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []interface{}:
+		items := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text, ok := item.(string); ok && text != "" {
+				items = append(items, text)
+			}
+		}
+		return items
+	default:
+		return nil
+	}
+}
+
+func containsString(items []string, item string) bool {
+	for _, candidate := range items {
+		if candidate == item {
+			return true
+		}
+	}
+	return false
+}
+
+func filterAndLimitFinalRecords(records []dto.HitTestingRecordResponse, options *RetrievalOptions) []dto.HitTestingRecordResponse {
+	if len(records) == 0 {
+		return records
+	}
+
+	sort.SliceStable(records, func(i, j int) bool {
+		return records[i].Score > records[j].Score
+	})
+
+	filtered := records
+	if options != nil && options.ScoreThresholdEnabled {
+		filtered = make([]dto.HitTestingRecordResponse, 0, len(records))
+		for _, record := range records {
+			if record.Score >= options.ScoreThreshold {
+				filtered = append(filtered, record)
+			}
+		}
+	}
+
+	if options != nil && options.TopK > 0 && len(filtered) > options.TopK {
+		filtered = filtered[:options.TopK]
+	}
+	return filtered
+}
+
+func (s *RetrievalService) updateRecordHitCount(ctx context.Context, records []dto.HitTestingRecordResponse) {
+	if len(records) == 0 {
+		return
+	}
+
+	seen := make(map[string]struct{}, len(records))
+	segmentIDs := make([]string, 0, len(records))
+	for _, record := range records {
+		segmentID := strings.TrimSpace(record.Segment.ID)
+		if segmentID == "" || record.MatchType == dto.MatchTypeGraphKnowledge {
+			continue
+		}
+		if _, ok := seen[segmentID]; ok {
+			continue
+		}
+		seen[segmentID] = struct{}{}
+		segmentIDs = append(segmentIDs, segmentID)
+	}
+	if len(segmentIDs) == 0 {
+		return
+	}
+	if err := s.incrementSegmentHitCount(ctx, segmentIDs); err != nil {
+		logger.Error("Failed to increment final record hit count", err)
+	}
 }
 
 // convertSearchResultsToRecords Convert search results to record responses
@@ -1055,12 +1305,9 @@ func (s *RetrievalService) convertSearchResultsToRecords(documents []retrieval.S
 					"y": 0.1,
 					// TODO: Implement complete TSNE position calculation
 				},
-				ChildChunks: childChunks,
-				MatchType:   matchType,
-				RetrievalSource: &dto.RetrievalSourceResponse{
-					Method: "semantic_search",
-					Reason: "语义相似度匹配（问答对）",
-				},
+				ChildChunks:     childChunks,
+				MatchType:       matchType,
+				RetrievalSource: retrievalSourceResponseForDoc(doc, "semantic_search", "语义相似度匹配（问答对）"),
 			}
 
 			// If the segment has a child chunk mapping, update the score and child chunk information
@@ -1242,12 +1489,9 @@ func (s *RetrievalService) convertSearchResultsToRecords(documents []retrieval.S
 							"x": 0.1,
 							"y": 0.1,
 						},
-						ChildChunks: []dto.ChildChunkResponse{childChunkResp},
-						MatchType:   dto.MatchTypeOriginal,
-						RetrievalSource: &dto.RetrievalSourceResponse{
-							Method: "semantic_search",
-							Reason: "语义相似度匹配（父子索引）",
-						},
+						ChildChunks:     []dto.ChildChunkResponse{childChunkResp},
+						MatchType:       dto.MatchTypeOriginal,
+						RetrievalSource: retrievalSourceResponseForDoc(doc, "semantic_search", "语义相似度匹配（父子索引）"),
 					}
 					records = append(records, record)
 				} else {
@@ -1409,8 +1653,9 @@ func (s *RetrievalService) convertSearchResultsToRecords(documents []retrieval.S
 						"y": 0.1,
 						// TODO: Implement complete TSNE position calculation
 					},
-					ChildChunks: childChunks,
-					MatchType:   matchType,
+					ChildChunks:     childChunks,
+					MatchType:       matchType,
+					RetrievalSource: retrievalSourceResponseForDoc(doc, "semantic_search", "语义相似度匹配"),
 				}
 
 				// If the segment has a child chunk mapping, update the score and child chunk information
@@ -1853,8 +2098,7 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 		// Therefore, we use a much more relaxed threshold here to avoid starvation.
 		minScore := options.SemanticMinScore
 		if minScore <= 0 {
-			// Relaxed default for entity-level matching: 0.15 lower than global threshold, but not below 0.55
-			minScore = math.Max(0.55, options.ScoreThreshold-0.15)
+			minScore = 0.55
 		}
 		if boundary.Type == graphflow_retrieval.BoundaryTypeAnchored && options.AnchoredMinScore > 0 {
 			minScore = options.AnchoredMinScore
@@ -2273,23 +2517,9 @@ func (s *RetrievalService) graphSearch(ctx context.Context, dataset *dataset_mod
 		return results[i].Score > results[j].Score
 	})
 
-	// Apply score threshold filtering if enabled
-	if options != nil && options.ScoreThresholdEnabled {
-		filteredResults := make([]retrieval.SearchResult, 0)
-		for _, res := range results {
-			if res.Score >= options.ScoreThreshold {
-				filteredResults = append(filteredResults, res)
-			}
-		}
-		results = filteredResults
-	}
 	logger.Debug("Sort results by score descending to ensure stable ordering", map[string]interface{}{
 		"source": results,
 	})
-	// Apply TopK limit
-	if options != nil && options.TopK > 0 && len(results) > options.TopK*2 {
-		results = results[:options.TopK*2]
-	}
 
 	// Clamp scores to a maximum of 1.0 to preserve true absolute differences for final display
 	for i := range results {
