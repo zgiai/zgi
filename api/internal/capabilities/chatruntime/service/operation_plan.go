@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -71,6 +72,9 @@ func operationPlanFromTurnStrategy(taskID string, parts *chatRequestParts, strat
 		},
 		"completion_criteria": operationPlanCompletionCriteria(steps),
 	}
+	if structuredPlan := operationPlanStructuredPlanFromTurnStrategy(strategy); len(structuredPlan) > 0 {
+		plan["structured_plan"] = structuredPlan
+	}
 	if strings.TrimSpace(strategy.CurrentPage) != "" {
 		plan["current_page"] = strings.TrimSpace(strategy.CurrentPage)
 	}
@@ -87,6 +91,24 @@ func operationPlanRiskLevel(strategy *AIChatTurnStrategy) string {
 		return ""
 	}
 	return strings.TrimSpace(strategy.AssetRisk)
+}
+
+func operationPlanStructuredPlanFromTurnStrategy(strategy *AIChatTurnStrategy) map[string]interface{} {
+	if strategy == nil || strategy.StructuredPlan == nil {
+		return nil
+	}
+	encoded, err := json.Marshal(strategy.StructuredPlan)
+	if err != nil {
+		return nil
+	}
+	out := map[string]interface{}{}
+	if err := json.Unmarshal(encoded, &out); err != nil {
+		return nil
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func operationPlanApprovalPolicy(strategy *AIChatTurnStrategy) string {
@@ -540,6 +562,11 @@ func operationPlanSyncStrategyState(plan map[string]interface{}) {
 	operationPlanStrategyStateSetInterfaceSlice(state, "failed_steps", operationPlanCompactProgressStepRecords(plan["failed_steps"], 12))
 	operationPlanStrategyStateSetInterfaceSlice(state, "plan_deviations", skillLoopCompletionPlanDeviations(plan["deviations"], 12))
 	operationPlanStrategyStateSetInterfaceSlice(state, "blocked_deviations", skillLoopCompletionPlanDeviations(plan["blocked_deviations"], 12))
+	if structuredPlan := mapFromOperationContext(plan["structured_plan"]); len(structuredPlan) > 0 {
+		state["structured_plan"] = structuredPlan
+	} else {
+		delete(state, "structured_plan")
+	}
 	state["completed_step_count"] = len(mapSliceFromAny(plan["completed_steps"]))
 	state["failed_step_count"] = len(mapSliceFromAny(plan["failed_steps"]))
 	state["plan_deviation_count"] = len(mapSliceFromAny(plan["deviations"]))

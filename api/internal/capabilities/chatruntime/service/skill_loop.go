@@ -3564,6 +3564,7 @@ type AIChatTurnStrategy struct {
 	RequiredNextTool       *AIChatTurnStrategyTool       `json:"required_next_tool,omitempty"`
 	RemainingRouteSequence []AIChatTurnStrategyRouteStep `json:"remaining_route_sequence,omitempty"`
 	PlannedTools           []AIChatTurnStrategyTool      `json:"planned_tools,omitempty"`
+	StructuredPlan         *AIChatStructuredPlan         `json:"structured_plan,omitempty"`
 }
 
 type AIChatTurnStrategyTool struct {
@@ -3790,7 +3791,7 @@ func appendAgentManagementPlannedTools(parts *chatRequestParts, strategy *AIChat
 			)
 		}
 		if !agentManagementDeleteHasExplicitFollowupMutation(query) {
-			return strategy
+			return attachAgentManagementStructuredPlan(parts, strategy, query)
 		}
 	}
 	configUpdateRequested := agentManagementConfigUpdateRequested(secondaryQuery)
@@ -3860,7 +3861,7 @@ func appendAgentManagementPlannedTools(parts *chatRequestParts, strategy *AIChat
 			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_agents", nil)
 		}
 	}
-	return strategy
+	return attachAgentManagementStructuredPlan(parts, strategy, query)
 }
 
 func agentManagementCurrentAgentToolArguments(parts *chatRequestParts) map[string]string {
