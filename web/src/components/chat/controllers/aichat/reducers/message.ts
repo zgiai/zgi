@@ -320,6 +320,17 @@ export function applyMessageStartState(
   const nextStreamingByMessageId = {
     ...current.streamingByMessageId,
   };
+  Object.values(current.streamingByMessageId).forEach(streaming => {
+    if (
+      streaming.conversation_id === payload.conversation_id &&
+      streaming.message_id !== payload.message_id &&
+      (streaming.status === 'completed' ||
+        streaming.status === 'stopped' ||
+        streaming.status === 'error')
+    ) {
+      delete nextStreamingByMessageId[streaming.message_id];
+    }
+  });
   if (shouldMigrateDraftConversation && context.previousConversationId) {
     delete nextMessagesByConversation[context.previousConversationId];
     delete nextMessagePaginationByConversation[context.previousConversationId];
@@ -641,9 +652,12 @@ export function applyMessageEndState(
   if (
     previousStreaming &&
     nextTimeline.length &&
+    // Keep the final runtime timeline until the next turn so live rendering and
+    // hydrated history reconcile through the same timeline merge path.
     (terminalStatus === 'waiting_approval' ||
       terminalStatus === 'waiting_client_action' ||
       terminalStatus === 'waiting_question' ||
+      terminalStatus === 'completed' ||
       terminalStatus === 'error' ||
       terminalStatus === 'stopped')
   ) {

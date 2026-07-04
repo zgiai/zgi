@@ -162,12 +162,56 @@ interface SkillTimelineViewModel {
   tone: TimelineTone;
 }
 
+type ProgressTimelineItem = Extract<AIChatAgenticTimelineItem, { type: 'progress_text' }>;
+type IntermediateAnswerTimelineItem = Extract<
+  AIChatAgenticTimelineItem,
+  { type: 'intermediate_answer' }
+>;
 type MemoryTimelineItem = Extract<AIChatAgenticTimelineItem, { type: 'memory_event' }>;
 type GovernanceTimelineItem = Extract<
   AIChatAgenticTimelineItem,
   { type: 'tool_governance_decision' }
 >;
 type WorkflowTimelineItem = Extract<AIChatAgenticTimelineItem, { type: 'workflow_run' }>;
+
+type TimelineRenderItem =
+  | {
+      renderType: 'transient_progress';
+      key: string;
+      item: ProgressTimelineItem;
+      content: string;
+    }
+  | {
+      renderType: 'progress_markdown';
+      key: string;
+      item: ProgressTimelineItem;
+      content: string;
+    }
+  | {
+      renderType: 'intermediate_answer';
+      key: string;
+      item: IntermediateAnswerTimelineItem;
+    }
+  | {
+      renderType: 'memory';
+      key: string;
+      item: MemoryTimelineItem;
+    }
+  | {
+      renderType: 'tool_governance';
+      key: string;
+      item: GovernanceTimelineItem;
+    }
+  | {
+      renderType: 'workflow';
+      key: string;
+      item: WorkflowTimelineItem;
+    }
+  | {
+      renderType: 'skill';
+      key: string;
+      view: SkillTimelineViewModel;
+    };
 
 interface ToolGovernanceDecisionViewModel {
   title: string;
@@ -2891,34 +2935,10 @@ function WorkflowTimelineRow({ item }: { item: WorkflowTimelineItem }) {
   );
 }
 
-function isProgressTextItem(
-  item: AIChatAgenticTimelineItem | SkillTimelineViewModel
-): item is Extract<AIChatAgenticTimelineItem, { type: 'progress_text' }> {
-  return 'type' in item && item.type === 'progress_text';
-}
-
 function isIntermediateAnswerItem(
-  item: AIChatAgenticTimelineItem | SkillTimelineViewModel
-): item is Extract<AIChatAgenticTimelineItem, { type: 'intermediate_answer' }> {
-  return 'type' in item && item.type === 'intermediate_answer';
-}
-
-function isMemoryEventItem(
-  item: AIChatAgenticTimelineItem | SkillTimelineViewModel
-): item is Extract<AIChatAgenticTimelineItem, { type: 'memory_event' }> {
-  return 'type' in item && item.type === 'memory_event';
-}
-
-function isToolGovernanceTimelineItem(
-  item: AIChatAgenticTimelineItem | SkillTimelineViewModel
-): item is GovernanceTimelineItem {
-  return 'type' in item && item.type === 'tool_governance_decision';
-}
-
-function isWorkflowTimelineItem(
-  item: AIChatAgenticTimelineItem | SkillTimelineViewModel
-): item is WorkflowTimelineItem {
-  return 'type' in item && item.type === 'workflow_run';
+  item: AIChatAgenticTimelineItem
+): item is IntermediateAnswerTimelineItem {
+  return item.type === 'intermediate_answer';
 }
 
 function isTerminalMessageStatus(status: AIChatMessage['status'] | undefined): boolean {
@@ -3046,11 +3066,23 @@ function routeNavigationAlreadyLoaded(invocation: AIChatSkillInvocation): boolea
   return invocationString(result.event_type) === 'route_already_loaded';
 }
 
+function timelineSkillInvocation(
+  item: AIChatAgenticTimelineItem | SkillTimelineViewModel
+): AIChatSkillInvocation | null {
+  if ('item' in item) {
+    return item.item.invocation;
+  }
+  if (item.type === 'skill_event') {
+    return item.invocation;
+  }
+  return null;
+}
+
 function routeNavigationEventKey(
   item: AIChatAgenticTimelineItem | SkillTimelineViewModel
 ): string | null {
-  if (!('item' in item)) return null;
-  const invocation = item.item.invocation;
+  const invocation = timelineSkillInvocation(item);
+  if (!invocation) return null;
   if (!invocationIsRouteNavigation(invocation)) {
     return null;
   }
@@ -3058,24 +3090,23 @@ function routeNavigationEventKey(
   return href ? href.toLowerCase() : null;
 }
 
-function compactAdjacentDuplicateRouteNavigationEvents<
+function compactDuplicateRouteNavigationEvents<
   T extends AIChatAgenticTimelineItem | SkillTimelineViewModel,
 >(items: T[]): T[] {
-  const compacted: T[] = [];
-  for (const item of items) {
-    const previous = compacted[compacted.length - 1];
-    const currentRouteKey = routeNavigationEventKey(item);
-    if (
-      previous &&
-      currentRouteKey &&
-      routeNavigationEventKey(previous) === currentRouteKey
-    ) {
-      compacted[compacted.length - 1] = item;
-      continue;
+  const lastIndexByRouteKey = new Map<string, number>();
+  items.forEach((item, index) => {
+    const routeKey = routeNavigationEventKey(item);
+    if (routeKey) {
+      lastIndexByRouteKey.set(routeKey, index);
     }
-    compacted.push(item);
+  });
+  if (lastIndexByRouteKey.size === 0) {
+    return items;
   }
-  return compacted;
+  return items.filter((item, index) => {
+    const routeKey = routeNavigationEventKey(item);
+    return !routeKey || lastIndexByRouteKey.get(routeKey) === index;
+  });
 }
 
 function completedClientActionKey(invocation: AIChatSkillInvocation): string | null {
@@ -3131,6 +3162,14 @@ function isCompletedSuccessfulSkillLoad(
     item.type === 'skill_event' &&
     item.invocation.kind === 'skill_load' &&
     invocationStatusIsSuccessful(item.invocation)
+  );
+}
+
+function isInternalReferenceReadSkillEvent(item: AIChatAgenticTimelineItem): boolean {
+  return (
+    item.type === 'skill_event' &&
+    item.invocation.kind === 'reference_read' &&
+    getInvocationTone(item.invocation) !== 'error'
   );
 }
 
@@ -3332,6 +3371,227 @@ function buildTransientProgressText(
   return t(key);
 }
 
+function filterTimelineForRendering(
+  timeline: AIChatAgenticTimelineItem[],
+  messageStatus: AIChatMessage['status'] | undefined,
+  governanceCorrelationIds: ReadonlySet<string>,
+  enableToolGovernanceApprovals: boolean
+): AIChatAgenticTimelineItem[] {
+  const terminalGovernedToolCorrelationIds = new Set(
+    timeline.flatMap(item => {
+      if (item.type !== 'skill_event' || !isTerminalGovernedToolExecution(item.invocation)) {
+        return [];
+      }
+      return [
+        governedSkillInvocationCorrelationId(item.invocation),
+        governedSkillInvocationApprovedByCorrelationId(item.invocation),
+      ].filter((correlationId): correlationId is string => Boolean(correlationId));
+    })
+  );
+  const finalGovernanceOperationKeys = new Set(
+    timeline
+      .filter(
+        (item): item is GovernanceTimelineItem =>
+          item.type === 'tool_governance_decision' && isFinalGovernanceOutcome(item)
+      )
+      .map(governanceOperationDedupeKey)
+      .filter((key): key is string => Boolean(key))
+  );
+  const completedClientActionKeys = new Set(
+    timeline.flatMap(item => {
+      if (item.type !== 'skill_event') return [];
+      const key = completedClientActionKey(item.invocation);
+      return key ? [key] : [];
+    })
+  );
+
+  return compactDuplicateRouteNavigationEvents(
+    compactTerminalProgressText(
+      compactTerminalIntermediateAnswers(timeline, messageStatus),
+      messageStatus
+    ).filter(
+      item =>
+        !isGovernedSkillEvent(item, governanceCorrelationIds) &&
+        !isSupersededToolGovernanceSkillEvent(item, terminalGovernedToolCorrelationIds) &&
+        !isSupersededByClientActionSkillEvent(item, completedClientActionKeys) &&
+        !isInternalReferenceReadSkillEvent(item) &&
+        !isCompletedSuccessfulSkillLoad(item, messageStatus) &&
+        !(
+          item.type === 'tool_governance_decision' &&
+          governanceItemCorrelationId(item) &&
+          terminalGovernedToolCorrelationIds.has(governanceItemCorrelationId(item) ?? '')
+        ) &&
+        !(
+          item.type === 'tool_governance_decision' &&
+          isSupersededResolvedApprovalGovernanceItem(item, finalGovernanceOperationKeys)
+        ) &&
+        !(
+          enableToolGovernanceApprovals &&
+          item.type === 'tool_governance_decision' &&
+          isToolGovernanceNeedsApproval(item)
+        )
+    )
+  );
+}
+
+function skillTimelineViewModel(
+  item: Extract<AIChatAgenticTimelineItem, { type: 'skill_event' }>,
+  skillDisplayById: AIChatSkillDisplayMap,
+  locale: string,
+  t: WebappTranslator
+): SkillTimelineViewModel {
+  const skillId = item.invocation.skill_id || t('consoleChat.skills.trace.unknownSkill');
+  const skill = skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId, locale);
+  const tone = getInvocationTone(item.invocation);
+
+  return {
+    item,
+    skill,
+    tone,
+    title: buildSkillTitle(item.invocation, skill, tone, locale, t, skillDisplayById),
+    detail:
+      getAIChatSkillResultDisplay(item.invocation, locale) ||
+      item.invocation.message ||
+      item.invocation.error,
+  };
+}
+
+function timelineRenderItem(
+  item: AIChatAgenticTimelineItem,
+  skillDisplayById: AIChatSkillDisplayMap,
+  locale: string,
+  t: WebappTranslator
+): TimelineRenderItem {
+  switch (item.type) {
+    case 'progress_text':
+      if (isTransientProgressItem(item)) {
+        return {
+          renderType: 'transient_progress',
+          key: item.id,
+          item,
+          content: buildTransientProgressText(item, skillDisplayById, locale, t),
+        };
+      }
+      return {
+        renderType: 'progress_markdown',
+        key: item.id,
+        item,
+        content: buildProgressText(item, skillDisplayById, locale, t),
+      };
+    case 'intermediate_answer':
+      return { renderType: 'intermediate_answer', key: item.id, item };
+    case 'memory_event':
+      return { renderType: 'memory', key: item.id, item };
+    case 'tool_governance_decision':
+      return { renderType: 'tool_governance', key: item.id, item };
+    case 'workflow_run':
+      return { renderType: 'workflow', key: item.id, item };
+    case 'skill_event':
+      return {
+        renderType: 'skill',
+        key: item.id,
+        view: skillTimelineViewModel(item, skillDisplayById, locale, t),
+      };
+  }
+}
+
+function buildTimelineRenderItems(
+  timeline: AIChatAgenticTimelineItem[],
+  skillDisplayById: AIChatSkillDisplayMap,
+  locale: string,
+  t: WebappTranslator,
+  messageStatus: AIChatMessage['status'] | undefined,
+  governanceCorrelationIds: ReadonlySet<string>,
+  enableToolGovernanceApprovals: boolean
+): TimelineRenderItem[] {
+  return filterTimelineForRendering(
+    timeline,
+    messageStatus,
+    governanceCorrelationIds,
+    enableToolGovernanceApprovals
+  ).map(item => timelineRenderItem(item, skillDisplayById, locale, t));
+}
+
+function TimelineRenderRow({
+  item,
+  skillDisplayById,
+  showMemoryKey,
+  showSkillEventDetails,
+  enableToolGovernanceApprovals,
+  onToolGovernanceDecision,
+}: {
+  item: TimelineRenderItem;
+  skillDisplayById: AIChatSkillDisplayMap;
+  showMemoryKey: boolean;
+  showSkillEventDetails: boolean;
+  enableToolGovernanceApprovals: boolean;
+  onToolGovernanceDecision?: (
+    payload: AIChatToolGovernanceDecisionSubmitPayload
+  ) => void | Promise<void>;
+}) {
+  switch (item.renderType) {
+    case 'transient_progress':
+      return (
+        <div className="border-l-2 border-muted-foreground/15 py-0.5 pl-3 text-xs text-muted-foreground/70 animate-pulse">
+          <span>{item.content}</span>
+        </div>
+      );
+    case 'progress_markdown':
+      return (
+        <div
+          className={cn(
+            assistantMarkdownClassName,
+            'border-l-2 border-muted-foreground/20 pl-3 text-foreground'
+          )}
+        >
+          <MarkdownViewer
+            className="md-viewer min-w-0 max-w-full overflow-hidden break-words"
+            content={item.content}
+            renderIdentity={item.item.id}
+          />
+        </div>
+      );
+    case 'intermediate_answer':
+      return <IntermediateAnswerTimelineRow item={item.item} />;
+    case 'memory':
+      return <MemoryTimelineRow item={item.item} showMemoryKey={showMemoryKey} />;
+    case 'tool_governance':
+      return (
+        <ToolGovernanceDecisionRow
+          item={item.item}
+          skillDisplayById={skillDisplayById}
+          enableToolGovernanceApprovals={enableToolGovernanceApprovals}
+          onToolGovernanceDecision={onToolGovernanceDecision}
+        />
+      );
+    case 'workflow':
+      return <WorkflowTimelineRow item={item.item} />;
+    case 'skill':
+      return <SkillTimelineRow event={item.view} showDetails={showSkillEventDetails} />;
+  }
+}
+
+function IntermediateAnswerTimelineRow({ item }: { item: IntermediateAnswerTimelineItem }) {
+  return (
+    <div className="space-y-1.5 border-l-2 border-muted-foreground/20 pl-3">
+      {item.title || item.status === 'streaming' ? (
+        <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          {item.status === 'streaming' ? <Loader2 className="size-3 animate-spin" /> : null}
+          {item.title ? <span>{item.title}</span> : null}
+        </div>
+      ) : null}
+      <div className={assistantMarkdownClassName}>
+        <MarkdownViewer
+          className="md-viewer min-w-0 max-w-full overflow-hidden break-words"
+          content={item.content}
+          isStreaming={item.status === 'streaming'}
+          renderIdentity={item.answer_id || item.id}
+        />
+      </div>
+    </div>
+  );
+}
+
 export function AIChatAgenticTimeline({
   timeline,
   skillDisplayById,
@@ -3409,86 +3669,29 @@ export function AIChatAgenticTimeline({
     [timeline]
   );
 
-  const events = useMemo(() => {
-    const terminalGovernedToolCorrelationIds = new Set(
-      timeline.flatMap(item => {
-        if (item.type !== 'skill_event' || !isTerminalGovernedToolExecution(item.invocation)) {
-          return [];
-        }
-        return [
-          governedSkillInvocationCorrelationId(item.invocation),
-          governedSkillInvocationApprovedByCorrelationId(item.invocation),
-        ].filter((correlationId): correlationId is string => Boolean(correlationId));
-      })
-    );
-    const finalGovernanceOperationKeys = new Set(
-      timeline
-        .filter(
-          (item): item is GovernanceTimelineItem =>
-            item.type === 'tool_governance_decision' && isFinalGovernanceOutcome(item)
-        )
-        .map(governanceOperationDedupeKey)
-        .filter((key): key is string => Boolean(key))
-    );
-    const completedClientActionKeys = new Set(
-      timeline
-        .flatMap(item => {
-          if (item.type !== 'skill_event') return [];
-          const key = completedClientActionKey(item.invocation);
-          return key ? [key] : [];
-        })
-    );
+  const renderItems = useMemo(
+    () =>
+      buildTimelineRenderItems(
+        timeline,
+        skillDisplayById,
+        locale,
+        t,
+        messageStatus,
+        governanceCorrelationIds,
+        enableToolGovernanceApprovals
+      ),
+    [
+      enableToolGovernanceApprovals,
+      governanceCorrelationIds,
+      locale,
+      messageStatus,
+      skillDisplayById,
+      t,
+      timeline,
+    ]
+  );
 
-    return compactAdjacentDuplicateRouteNavigationEvents(compactTerminalProgressText(
-      compactTerminalIntermediateAnswers(timeline, messageStatus),
-      messageStatus
-    )
-      .filter(
-        item =>
-          !isGovernedSkillEvent(item, governanceCorrelationIds) &&
-          !isSupersededToolGovernanceSkillEvent(item, terminalGovernedToolCorrelationIds) &&
-          !isSupersededByClientActionSkillEvent(item, completedClientActionKeys) &&
-          !isCompletedSuccessfulSkillLoad(item, messageStatus) &&
-          !(
-            item.type === 'tool_governance_decision' &&
-            governanceItemCorrelationId(item) &&
-            terminalGovernedToolCorrelationIds.has(governanceItemCorrelationId(item) ?? '')
-          ) &&
-          !(
-            item.type === 'tool_governance_decision' &&
-            isSupersededResolvedApprovalGovernanceItem(item, finalGovernanceOperationKeys)
-          ) &&
-          !(
-            enableToolGovernanceApprovals &&
-            item.type === 'tool_governance_decision' &&
-            isToolGovernanceNeedsApproval(item)
-          )
-      )
-      .map(item => {
-        if (item.type === 'progress_text') return item;
-        if (item.type === 'intermediate_answer') return item;
-        if (item.type === 'memory_event') return item;
-        if (item.type === 'tool_governance_decision') return item;
-        if (item.type === 'workflow_run') return item;
-
-        const skillId = item.invocation.skill_id || t('consoleChat.skills.trace.unknownSkill');
-        const skill = skillDisplayById[skillId] ?? getFallbackAIChatSkillDisplayInfo(skillId, locale);
-        const tone = getInvocationTone(item.invocation);
-
-        return {
-          item,
-          skill,
-          tone,
-          title: buildSkillTitle(item.invocation, skill, tone, locale, t, skillDisplayById),
-          detail:
-            getAIChatSkillResultDisplay(item.invocation, locale) ||
-            item.invocation.message ||
-            item.invocation.error,
-        };
-      }));
-  }, [enableToolGovernanceApprovals, governanceCorrelationIds, locale, messageStatus, skillDisplayById, t, timeline]);
-
-  if (events.length === 0) return null;
+  if (renderItems.length === 0) return null;
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen} className="mb-3 w-full min-w-0 max-w-full">
@@ -3510,74 +3713,22 @@ export function AIChatAgenticTimeline({
           </CollapsibleTrigger>
         </Button>
         <span className="text-[11px] text-muted-foreground">
-          {t('consoleChat.skills.trace.eventCount', { count: events.length })}
+          {t('consoleChat.skills.trace.eventCount', { count: renderItems.length })}
         </span>
       </div>
       <CollapsibleContent>
         <div className="min-w-0 space-y-2">
-          {events.map(item =>
-            isProgressTextItem(item) ? (
-              isTransientProgressItem(item) ? (
-                <div
-                  key={item.id}
-                  className="border-l-2 border-muted-foreground/15 py-0.5 pl-3 text-xs text-muted-foreground/70 animate-pulse"
-                >
-                  <span>{buildTransientProgressText(item, skillDisplayById, locale, t)}</span>
-                </div>
-              ) : (
-                <div
-                  key={item.id}
-                  className={cn(
-                    assistantMarkdownClassName,
-                    'border-l-2 border-muted-foreground/20 pl-3 text-foreground'
-                  )}
-                >
-                  <MarkdownViewer
-                    className="md-viewer min-w-0 max-w-full overflow-hidden break-words"
-                    content={buildProgressText(item, skillDisplayById, locale, t)}
-                    renderIdentity={item.id}
-                  />
-                </div>
-              )
-            ) : isIntermediateAnswerItem(item) ? (
-              <div key={item.id} className="space-y-1.5 border-l-2 border-muted-foreground/20 pl-3">
-                {item.title || item.status === 'streaming' ? (
-                  <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                    {item.status === 'streaming' ? (
-                      <Loader2 className="size-3 animate-spin" />
-                    ) : null}
-                    {item.title ? <span>{item.title}</span> : null}
-                  </div>
-                ) : null}
-                <div className={assistantMarkdownClassName}>
-                  <MarkdownViewer
-                    className="md-viewer min-w-0 max-w-full overflow-hidden break-words"
-                    content={item.content}
-                    isStreaming={item.status === 'streaming'}
-                    renderIdentity={item.answer_id || item.id}
-                  />
-                </div>
-              </div>
-            ) : isMemoryEventItem(item) ? (
-              <MemoryTimelineRow key={item.id} item={item} showMemoryKey={showMemoryKey} />
-            ) : isToolGovernanceTimelineItem(item) ? (
-              <ToolGovernanceDecisionRow
-                key={item.id}
-                item={item}
-                skillDisplayById={skillDisplayById}
-                enableToolGovernanceApprovals={enableToolGovernanceApprovals}
-                onToolGovernanceDecision={onToolGovernanceDecision}
-              />
-            ) : isWorkflowTimelineItem(item) ? (
-              <WorkflowTimelineRow key={item.id} item={item} />
-            ) : (
-              <SkillTimelineRow
-                key={item.item.id}
-                event={item}
-                showDetails={showSkillEventDetails}
-              />
-            )
-          )}
+          {renderItems.map(item => (
+            <TimelineRenderRow
+              key={item.key}
+              item={item}
+              skillDisplayById={skillDisplayById}
+              showMemoryKey={showMemoryKey}
+              showSkillEventDetails={showSkillEventDetails}
+              enableToolGovernanceApprovals={enableToolGovernanceApprovals}
+              onToolGovernanceDecision={onToolGovernanceDecision}
+            />
+          ))}
         </div>
       </CollapsibleContent>
     </Collapsible>

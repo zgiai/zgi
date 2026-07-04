@@ -80,7 +80,7 @@ func routeNavigationClientActionRequiredPayload(prepared *PreparedChat, trace sk
 		actionID = href
 	}
 	actionID = "route_navigation:" + actionID
-	payload := map[string]interface{}{
+	payload := withRuntimePayloadTimestamp(map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"action_id":       actionID,
@@ -91,8 +91,7 @@ func routeNavigationClientActionRequiredPayload(prepared *PreparedChat, trace sk
 		"tool_name":       strings.TrimSpace(trace.ToolName),
 		"href":            href,
 		"result":          copyStringAnyMap(result),
-		"created_at":      time.Now().Unix(),
-	}
+	})
 	if label := strings.TrimSpace(stringFromAny(result["label"])); label != "" {
 		payload["label"] = label
 	}
@@ -148,7 +147,7 @@ func agentManagementRouteNavigationClientActionRequiredPayload(prepared *Prepare
 		"label":      label,
 		"reason":     reason,
 	}
-	return map[string]interface{}{
+	return withRuntimePayloadTimestamp(map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"action_id":       actionID,
@@ -161,8 +160,7 @@ func agentManagementRouteNavigationClientActionRequiredPayload(prepared *Prepare
 		"label":           label,
 		"reason":          reason,
 		"result":          result,
-		"created_at":      time.Now().Unix(),
-	}
+	})
 }
 
 func createdAgentClientActionShouldOpenDetail(prepared *PreparedChat) bool {
@@ -295,7 +293,7 @@ func assetObservationClientActionRequiredPayload(prepared *PreparedChat, trace s
 	}
 	actionID := firstNonEmptyPayloadText(audit["correlation_id"], callID, trace.SkillID+":"+trace.ToolName)
 	actionID = "asset_observation:" + actionID
-	payload := map[string]interface{}{
+	payload := withRuntimePayloadTimestamp(map[string]interface{}{
 		"conversation_id":       prepared.Conversation.ID.String(),
 		"message_id":            prepared.Message.ID.String(),
 		"action_id":             actionID,
@@ -309,8 +307,7 @@ func assetObservationClientActionRequiredPayload(prepared *PreparedChat, trace s
 		"asset_operation_audit": copyStringAnyMap(audit),
 		"observation_requested": true,
 		"refresh_before_resume": true,
-		"created_at":            time.Now().Unix(),
-	}
+	})
 	if correlationID := strings.TrimSpace(payloadValueText(audit["correlation_id"])); correlationID != "" {
 		payload["correlation_id"] = correlationID
 	}
@@ -356,6 +353,13 @@ func skillTracePayloadIDs(prepared *PreparedChat) skilltrace.PayloadIDs {
 		ConversationID: prepared.Conversation.ID.String(),
 		MessageID:      prepared.Message.ID.String(),
 	}
+}
+
+func withRuntimePayloadTimestamp(payload map[string]interface{}) map[string]interface{} {
+	now := time.Now()
+	payload["created_at"] = now.Unix()
+	payload["created_at_ms"] = now.UnixMilli()
+	return payload
 }
 
 func assetOperationAuditFromTrace(trace skills.SkillTrace) map[string]interface{} {

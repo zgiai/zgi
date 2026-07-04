@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -409,7 +410,7 @@ func (h *Handler) StreamConversationEvents(c *gin.Context) {
 
 	setupSSE(c)
 	err = h.service.StreamConversationEvents(c.Request.Context(), scope, conversationID, messageID, c.Query("after_id"), func(event runtimeservice.StreamEvent) error {
-		return writeSSEEvent(c, event.ID, event.EventType, event.Payload)
+		return writeStreamEvent(c, event)
 	})
 	if err != nil {
 		logger.WarnContext(c.Request.Context(), "aichat event stream failed", "conversation_id", conversationID.String(), "message_id", messageID.String(), err)
@@ -482,7 +483,7 @@ func (h *Handler) RegenerateMessage(c *gin.Context) {
 	result, err := h.service.RunPreparedStream(c.Request.Context(), prepared, func(chunk string) error {
 		return client.writeChunk(prepared, chunk)
 	}, func(event runtimeservice.StreamEvent) error {
-		return writeSSEEvent(c, event.ID, event.EventType, event.Payload)
+		return writeStreamEvent(c, event)
 	})
 	if err != nil {
 		if errors.Is(err, runtimeservice.ErrMessageStopped) {
@@ -522,7 +523,7 @@ func (h *Handler) Chat(c *gin.Context) {
 	result, err := h.service.RunPreparedStream(c.Request.Context(), prepared, func(chunk string) error {
 		return client.writeChunk(prepared, chunk)
 	}, func(event runtimeservice.StreamEvent) error {
-		return writeSSEEvent(c, event.ID, event.EventType, event.Payload)
+		return writeStreamEvent(c, event)
 	})
 	if err != nil {
 		if errors.Is(err, runtimeservice.ErrMessageStopped) {
@@ -547,14 +548,18 @@ func writeChatStart(c *gin.Context, prepared *runtimeservice.PreparedChat) {
 		"model":           prepared.Message.ModelName,
 		"replace":         prepared.ReplaceRoot,
 		"created_at":      prepared.Message.CreatedAt.Unix(),
+		"created_at_ms":   prepared.Message.CreatedAt.UnixMilli(),
 	})
 }
 
 func writeChatChunk(c *gin.Context, prepared *runtimeservice.PreparedChat, chunk string) error {
+	now := time.Now()
 	return writeSSE(c, "message", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"answer":          chunk,
+		"created_at":      now.Unix(),
+		"created_at_ms":   now.UnixMilli(),
 	})
 }
 
@@ -689,8 +694,12 @@ func writeSSE(c *gin.Context, event string, data interface{}) error {
 	return writeSSEEvent(c, "", event, data)
 }
 
+func writeStreamEvent(c *gin.Context, event runtimeservice.StreamEvent) error {
+	return writeSSEEvent(c, event.ID, event.EventType, event.Payload)
+}
+
 func writeSSEEvent(c *gin.Context, id string, event string, data interface{}) error {
-	payload := gin.H{"event": event, "data": data}
+	payload := gin.H{"event": event, "data": enrichSSEPayload(id, data)}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -705,6 +714,93 @@ func writeSSEEvent(c *gin.Context, id string, event string, data interface{}) er
 	}
 	c.Writer.Flush()
 	return nil
+}
+
+func enrichSSEPayload(id string, data interface{}) interface{} {
+	payload, ok := cloneSSEPayload(data)
+	if !ok {
+		return data
+	}
+	id = strings.TrimSpace(id)
+	if id != "" {
+		payload["event_id"] = id
+	}
+	if createdAtMS, sequence := redisStreamIDParts(id); createdAtMS > 0 {
+		payload["created_at_ms"] = createdAtMS
+		payload["created_at"] = createdAtMS / 1000
+		payload["sequence"] = sequence
+		return payload
+	}
+	if _, ok := payload["created_at_ms"]; !ok {
+		if createdAt := int64FromInterface(payload["created_at"]); createdAt > 0 {
+			payload["created_at_ms"] = createdAt * 1000
+		}
+	}
+	return payload
+}
+
+func cloneSSEPayload(data interface{}) (gin.H, bool) {
+	switch typed := data.(type) {
+	case gin.H:
+		cloned := make(gin.H, len(typed)+4)
+		for key, value := range typed {
+			cloned[key] = value
+		}
+		return cloned, true
+	case map[string]interface{}:
+		cloned := make(gin.H, len(typed)+4)
+		for key, value := range typed {
+			cloned[key] = value
+		}
+		return cloned, true
+	default:
+		return nil, false
+	}
+}
+
+func redisStreamIDParts(id string) (int64, int64) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return 0, 0
+	}
+	parts := strings.SplitN(id, "-", 2)
+	if len(parts) != 2 {
+		return 0, 0
+	}
+	createdAtMS, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || createdAtMS <= 0 {
+		return 0, 0
+	}
+	sequenceRaw := parts[1]
+	if index := strings.Index(sequenceRaw, ":"); index >= 0 {
+		sequenceRaw = sequenceRaw[:index]
+	}
+	sequence, err := strconv.ParseInt(sequenceRaw, 10, 64)
+	if err != nil || sequence < 0 {
+		sequence = 0
+	}
+	return createdAtMS, sequence
+}
+
+func int64FromInterface(value interface{}) int64 {
+	switch typed := value.(type) {
+	case int:
+		return int64(typed)
+	case int64:
+		return typed
+	case int32:
+		return int64(typed)
+	case float64:
+		return int64(typed)
+	case json.Number:
+		parsed, _ := typed.Int64()
+		return parsed
+	case string:
+		parsed, _ := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
+		return parsed
+	default:
+		return 0
+	}
 }
 
 func pagination(c *gin.Context, defaultPage, defaultLimit, maxLimit int) (int, int) {

@@ -655,8 +655,8 @@ func sortSkillInvocationsForMetadata(invocations []map[string]interface{}) []map
 		return invocations
 	}
 	sort.SliceStable(invocations, func(i, j int) bool {
-		leftAt, leftOK := skillInvocationTimelineUnix(invocations[i])
-		rightAt, rightOK := skillInvocationTimelineUnix(invocations[j])
+		leftAt, leftOK := skillInvocationTimelineMilliseconds(invocations[i])
+		rightAt, rightOK := skillInvocationTimelineMilliseconds(invocations[j])
 		if leftOK != rightOK {
 			return leftOK
 		}
@@ -666,6 +666,17 @@ func sortSkillInvocationsForMetadata(invocations []map[string]interface{}) []map
 		return leftAt < rightAt
 	})
 	return invocations
+}
+
+func skillInvocationTimelineMilliseconds(invocation map[string]interface{}) (int64, bool) {
+	if at, ok := unixMillisecondsFromAny(invocation["created_at_ms"]); ok {
+		return at, true
+	}
+	at, ok := skillInvocationTimelineUnix(invocation)
+	if !ok {
+		return 0, false
+	}
+	return at * 1000, true
 }
 
 func skillInvocationTimelineUnix(invocation map[string]interface{}) (int64, bool) {
@@ -715,6 +726,51 @@ func unixSecondsFromAny(value interface{}) (int64, bool) {
 		}
 		if timestamp, err := time.Parse(time.RFC3339, text); err == nil {
 			return timestamp.Unix(), true
+		}
+		return 0, false
+	default:
+		return 0, false
+	}
+}
+
+func unixMillisecondsFromAny(value interface{}) (int64, bool) {
+	switch typed := value.(type) {
+	case int:
+		return int64(typed), true
+	case int32:
+		return int64(typed), true
+	case int64:
+		return typed, true
+	case uint:
+		return int64(typed), true
+	case uint32:
+		return int64(typed), true
+	case uint64:
+		if typed > uint64(^uint64(0)>>1) {
+			return 0, false
+		}
+		return int64(typed), true
+	case float32:
+		return int64(typed), true
+	case float64:
+		return int64(typed), true
+	case json.Number:
+		parsed, err := typed.Int64()
+		if err == nil {
+			return parsed, true
+		}
+		return 0, false
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" {
+			return 0, false
+		}
+		parsed, err := strconv.ParseInt(text, 10, 64)
+		if err == nil {
+			return parsed, true
+		}
+		if timestamp, err := time.Parse(time.RFC3339Nano, text); err == nil {
+			return timestamp.UnixMilli(), true
 		}
 		return 0, false
 	default:
@@ -783,6 +839,12 @@ func skillInvocationFromTrace(trace skills.SkillTrace, index int) map[string]int
 	} else if createdAt := numericValueFromMap(trace.Result, "created_at"); createdAt != nil {
 		invocation["created_at"] = createdAt
 	}
+	if createdAtMS := numericValueFromMap(trace.Arguments, "created_at_ms"); createdAtMS != nil {
+		invocation["created_at_ms"] = createdAtMS
+	} else if createdAtMS := numericValueFromMap(trace.Result, "created_at_ms"); createdAtMS != nil {
+		invocation["created_at_ms"] = createdAtMS
+	}
+	normalizeSkillInvocationTimelineFields(invocation)
 	return sanitizeSkillInvocationForMetadata(compactSkillInvocation(invocation))
 }
 
@@ -899,20 +961,48 @@ func fileReaderMetadataFileSummary(file map[string]interface{}) map[string]inter
 }
 
 func newSkillInvocation(kind, skillID, toolName, status string, values map[string]interface{}) map[string]interface{} {
-	invocation := map[string]interface{}{
-		"kind":       strings.TrimSpace(kind),
-		"skill_id":   strings.TrimSpace(skillID),
-		"tool_name":  strings.TrimSpace(toolName),
-		"status":     strings.TrimSpace(status),
-		"created_at": time.Now().Unix(),
+	if values == nil {
+		values = map[string]interface{}{}
 	}
+	now := time.Now()
+	invocation := map[string]interface{}{
+		"kind":          strings.TrimSpace(kind),
+		"skill_id":      strings.TrimSpace(skillID),
+		"tool_name":     strings.TrimSpace(toolName),
+		"status":        strings.TrimSpace(status),
+		"created_at":    now.Unix(),
+		"created_at_ms": now.UnixMilli(),
+	}
+	_, hasProvidedCreatedAt := values["created_at"]
+	_, hasProvidedCreatedAtMS := values["created_at_ms"]
 	for key, value := range values {
 		invocation[key] = value
 	}
+	if hasProvidedCreatedAt && !hasProvidedCreatedAtMS {
+		delete(invocation, "created_at_ms")
+	}
+	normalizeSkillInvocationTimelineFields(invocation)
 	if strings.TrimSpace(stringFromAny(invocation["runtime_id"])) == "" {
 		invocation["runtime_id"] = invocationRuntimeIdentity(invocation)
 	}
 	return compactSkillInvocation(invocation)
+}
+
+func normalizeSkillInvocationTimelineFields(invocation map[string]interface{}) {
+	if len(invocation) == 0 {
+		return
+	}
+	if createdAtMS, ok := unixMillisecondsFromAny(invocation["created_at_ms"]); ok && createdAtMS > 0 {
+		invocation["created_at_ms"] = createdAtMS
+		if _, ok := unixSecondsFromAny(invocation["created_at"]); !ok {
+			invocation["created_at"] = createdAtMS / 1000
+		}
+		return
+	}
+	if createdAt, ok := unixSecondsFromAny(invocation["created_at"]); ok && createdAt > 0 {
+		invocation["created_at"] = createdAt
+		invocation["created_at_ms"] = createdAt * 1000
+	}
 }
 
 func compactSkillInvocation(invocation map[string]interface{}) map[string]interface{} {

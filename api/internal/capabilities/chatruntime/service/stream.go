@@ -265,15 +265,13 @@ func (s *service) ensureRecoverableEventStream(ctx context.Context, conversation
 	if !conversationHasActiveMessage(conversation, messageID) {
 		return false, nil
 	}
-	if err := onEvent(StreamEvent{
-		EventType: streamEventError,
-		Payload: map[string]interface{}{
-			"conversation_id": conversation.ID.String(),
-			"message_id":      messageID.String(),
-			"message":         streamEventsExpiredError,
-		},
-		CreatedAt: time.Now().Unix(),
-	}); err != nil {
+	now := time.Now()
+	event := newStreamEvent("", streamEventError, map[string]interface{}{
+		"conversation_id": conversation.ID.String(),
+		"message_id":      messageID.String(),
+		"message":         streamEventsExpiredError,
+	}, now.Unix(), now.UnixMilli())
+	if err := onEvent(*event); err != nil {
 		return false, err
 	}
 	return false, nil
@@ -476,11 +474,14 @@ func (s *service) deliverStreamEvent(ctx context.Context, messageID uuid.UUID, e
 	if event == nil || onEvent == nil {
 		return
 	}
+	event.hydratePayloadEnvelope()
 	if err := onEvent(StreamEvent{
-		ID:        event.ID,
-		EventType: event.EventType,
-		Payload:   event.Payload,
-		CreatedAt: event.CreatedAt,
+		ID:          event.ID,
+		EventType:   event.EventType,
+		Payload:     event.Payload,
+		CreatedAt:   event.CreatedAt,
+		CreatedAtMS: event.CreatedAtMS,
+		Sequence:    event.Sequence,
 	}); err != nil {
 		logger.WarnContext(context.WithoutCancel(ctx), "failed to deliver aichat stream event to client", "message_id", messageID.String(), "event_type", event.EventType, err)
 	}
@@ -587,17 +588,22 @@ func (s *service) emitPreparedEvent(ctx context.Context, prepared *PreparedChat,
 		return
 	}
 	if event == nil {
+		now := time.Now()
 		event = &StreamEvent{
-			EventType: eventType,
-			Payload:   payload,
-			CreatedAt: time.Now().Unix(),
+			EventType:   eventType,
+			Payload:     payload,
+			CreatedAt:   now.Unix(),
+			CreatedAtMS: now.UnixMilli(),
 		}
+		event.hydratePayloadEnvelope()
 	}
 	if err := onEvent(StreamEvent{
-		ID:        event.ID,
-		EventType: event.EventType,
-		Payload:   event.Payload,
-		CreatedAt: event.CreatedAt,
+		ID:          event.ID,
+		EventType:   event.EventType,
+		Payload:     event.Payload,
+		CreatedAt:   event.CreatedAt,
+		CreatedAtMS: event.CreatedAtMS,
+		Sequence:    event.Sequence,
 	}); err != nil {
 		logger.WarnContext(ctx, "failed to deliver aichat stream event", "message_id", prepared.Message.ID.String(), "event_type", eventType, err)
 	}

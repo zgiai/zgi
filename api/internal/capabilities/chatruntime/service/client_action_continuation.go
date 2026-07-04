@@ -988,8 +988,7 @@ func clientActionResultPayload(prepared *PreparedChat, event map[string]interfac
 		payload["message_id"] = prepared.Message.ID.String()
 	}
 	payload["event_type"] = streamEventClientActionResult
-	payload["created_at"] = time.Now().Unix()
-	return payload
+	return withRuntimePayloadTimestamp(payload)
 }
 
 func clientActionObservationRecord(event map[string]interface{}, req runtimedto.ClientActionResultRequest) map[string]interface{} {

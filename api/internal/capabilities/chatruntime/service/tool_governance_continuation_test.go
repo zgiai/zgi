@@ -119,6 +119,59 @@ func TestToolGovernanceFrozenFastPathUsesOperationPlanEvidence(t *testing.T) {
 	}
 }
 
+func TestToolGovernanceFrozenFastPathWaitsForPendingRouteFollowup(t *testing.T) {
+	deleteStepID := operationPlanToolStepID(skills.SkillAgentManagement, "delete_agents")
+	routeStepID := operationPlanRouteStepID("/console/agents/agent-4/agent", 1)
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{Query: "delete then open the first remaining agent"},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status": operationPlanStatusRunning,
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        deleteStepID,
+						"status":    operationPlanStepStatusCompleted,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "delete_agents",
+					},
+					map[string]interface{}{
+						"id":        routeStepID,
+						"status":    operationPlanStepStatusPending,
+						"skill_id":  skills.SkillConsoleNavigator,
+						"tool_name": "navigate",
+						"wait_for":  deleteStepID,
+						"asset_target": map[string]interface{}{
+							"page": "/console/agents/agent-4/agent",
+						},
+					},
+				},
+				"step_status": map[string]interface{}{
+					deleteStepID: operationPlanStepStatusCompleted,
+					routeStepID:  operationPlanStepStatusPending,
+				},
+				"pending_next_action": operationPlanToolStepTitle(skills.SkillConsoleNavigator, "navigate"),
+			},
+		}},
+	}
+
+	answer, ok := toolGovernanceFrozenFastPathAnswer(prepared, skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agents",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":        "completed",
+			"target_count":  3,
+			"deleted_count": 3,
+			"failed_count":  0,
+		},
+	})
+
+	if ok {
+		t.Fatalf("toolGovernanceFrozenFastPathAnswer() = (%q, true), want pending route step to keep skill loop running", answer)
+	}
+}
+
 func TestToolGovernanceFrozenSimpleConfigFastPathWaitsForPendingIdentityUpdate(t *testing.T) {
 	identityStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_identity")
 	configStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")

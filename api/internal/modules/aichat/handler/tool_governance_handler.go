@@ -75,7 +75,7 @@ func (h *Handler) ContinueToolGovernanceDecision(c *gin.Context) {
 
 	setupSSE(c)
 	_, err = h.service.RunToolGovernanceDecisionStream(c.Request.Context(), scope, conversationID, messageID, correlationID, req, func(event runtimeservice.StreamEvent) error {
-		return writeSSEEvent(c, event.ID, event.EventType, event.Payload)
+		return writeStreamEvent(c, event)
 	})
 	if err != nil {
 		if errors.Is(err, runtimeservice.ErrMessageStopped) || runtimeservice.IsFinalizedStreamError(err) {
@@ -119,7 +119,7 @@ func (h *Handler) ContinueClientAction(c *gin.Context) {
 
 	setupSSE(c)
 	_, err = h.service.RunClientActionContinuationStream(c.Request.Context(), scope, conversationID, messageID, actionID, req, func(event runtimeservice.StreamEvent) error {
-		return writeSSEEvent(c, event.ID, event.EventType, event.Payload)
+		return writeStreamEvent(c, event)
 	})
 	if err != nil {
 		if errors.Is(err, runtimeservice.ErrMessageStopped) || runtimeservice.IsFinalizedStreamError(err) {

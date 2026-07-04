@@ -1227,11 +1227,8 @@ export function AIChatMessageBubble({
     [message]
   );
   const displayTimeline = useMemo(
-    () =>
-      message.status === 'completed'
-        ? historicalTimeline
-        : dedupeTimelineItems(mergeRuntimeTimelineWithMessageTimeline(historicalTimeline, timeline)),
-    [historicalTimeline, message.status, timeline]
+    () => dedupeTimelineItems(mergeRuntimeTimelineWithMessageTimeline(historicalTimeline, timeline)),
+    [historicalTimeline, timeline]
   );
   const hasTimeline = displayTimeline.length > 0;
   const streamingStatus = useMemo(

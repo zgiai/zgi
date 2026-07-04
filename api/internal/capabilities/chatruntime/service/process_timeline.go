@@ -112,8 +112,9 @@ func (r *processTimelineRecorder) RecordInvocationEnd(trace skills.SkillTrace) {
 	}
 	invocation := skillInvocationFromTrace(trace, 0)
 	invocation["runtime_id"] = r.runtimeIDForEnd(invocation)
-	r.persistInvocation(invocation)
 	payload := skillCallEndPayload(r.prepared, trace)
+	fillInvocationTimelineFromPayload(invocation, payload)
+	r.persistInvocation(invocation)
 	copyInvocationRuntimeFields(payload, invocation)
 	r.Emit(streamEventSkillCallEnd, payload)
 	r.service.logSkillTrace(r.ctx, r.prepared, trace)
@@ -131,8 +132,9 @@ func (r *processTimelineRecorder) RecordInvocationError(trace skills.SkillTrace)
 	}
 	invocation := skillInvocationFromTrace(trace, 0)
 	invocation["runtime_id"] = r.runtimeIDForEnd(invocation)
-	r.persistInvocation(invocation)
 	payload := skillCallErrorPayload(r.prepared, trace)
+	fillInvocationTimelineFromPayload(invocation, payload)
+	r.persistInvocation(invocation)
 	copyInvocationRuntimeFields(payload, invocation)
 	r.Emit(streamEventSkillCallError, payload)
 	r.service.logSkillTrace(r.ctx, r.prepared, trace)
@@ -155,39 +157,34 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 	}
 	switch eventType {
 	case streamEventSkillLoadStart:
-		invocation := newSkillInvocation("skill_load", payloadString(payload, "skill_id"), "", "loading", map[string]interface{}{
-			"created_at": payload["created_at"],
-		})
+		invocation := newSkillInvocation("skill_load", payloadString(payload, "skill_id"), "", "loading", invocationTimelineFields(payload, nil))
 		invocation["runtime_id"] = r.runtimeIDForStart(invocation)
 		return invocation
 	case streamEventSkillLoadEnd:
-		invocation := newSkillInvocation("skill_load", payloadString(payload, "skill_id"), "", payloadStatus(payload, "success"), map[string]interface{}{
+		invocation := newSkillInvocation("skill_load", payloadString(payload, "skill_id"), "", payloadStatus(payload, "success"), invocationTimelineFields(payload, map[string]interface{}{
 			"duration_ms": payload["duration_ms"],
-			"created_at":  payload["created_at"],
-		})
+		}))
 		invocation["runtime_id"] = r.runtimeIDForEnd(invocation)
 		return invocation
 	case streamEventSkillReferenceRead:
-		invocation := newSkillInvocation("reference_read", payloadString(payload, "skill_id"), "", payloadStatus(payload, "success"), map[string]interface{}{
+		invocation := newSkillInvocation("reference_read", payloadString(payload, "skill_id"), "", payloadStatus(payload, "success"), invocationTimelineFields(payload, map[string]interface{}{
 			"path":        payloadString(payload, "path"),
 			"duration_ms": payload["duration_ms"],
-			"created_at":  payload["created_at"],
-		})
+		}))
 		invocation["runtime_id"] = r.runtimeIDForStandalone(invocation)
 		return invocation
 	case streamEventToolGovernanceDecision:
-		invocation := newSkillInvocation("tool_governance", payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), payloadStatus(payload, "needs_approval"), map[string]interface{}{
+		invocation := newSkillInvocation("tool_governance", payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), payloadStatus(payload, "needs_approval"), invocationTimelineFields(payload, map[string]interface{}{
 			"conversation_id":       payload["conversation_id"],
 			"message_id":            payload["message_id"],
 			"duration_ms":           payload["duration_ms"],
-			"created_at":            payload["created_at"],
 			"governance":            governanceMapFromAny(payload["governance"]),
 			"asset_operation_audit": governanceMapFromAny(payload["asset_operation_audit"]),
 			"approval_status":       payload["approval_status"],
 			"result": map[string]interface{}{
 				"approval_event": governanceMapFromAny(payload["approval_event"]),
 			},
-		})
+		}))
 		if runtimeID := toolGovernanceRuntimeIDFromEvent(payload); runtimeID != "" {
 			invocation["runtime_id"] = runtimeID
 		} else {
@@ -195,10 +192,9 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 		}
 		return invocation
 	case streamEventSkillCallStart:
-		invocation := newSkillInvocation("tool_call", payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), "running", map[string]interface{}{
-			"arguments":  payloadMap(payload, "arguments_summary", "arguments"),
-			"created_at": payload["created_at"],
-		})
+		invocation := newSkillInvocation("tool_call", payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), "running", invocationTimelineFields(payload, map[string]interface{}{
+			"arguments": payloadMap(payload, "arguments_summary", "arguments"),
+		}))
 		invocation["runtime_id"] = r.runtimeIDForStart(invocation)
 		return invocation
 	case streamEventSkillCallEnd:
@@ -206,15 +202,14 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 		if kind == "" {
 			kind = "tool_call"
 		}
-		invocation := newSkillInvocation(kind, payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), payloadStatus(payload, "success"), map[string]interface{}{
+		invocation := newSkillInvocation(kind, payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), payloadStatus(payload, "success"), invocationTimelineFields(payload, map[string]interface{}{
 			"duration_ms":     payload["duration_ms"],
 			"message":         payloadString(payload, "message"),
 			"result":          payloadMap(payload, "result"),
 			"governance":      governanceMapFromAny(payload["governance"]),
 			"conversation_id": payload["conversation_id"],
 			"message_id":      payload["message_id"],
-			"created_at":      payload["created_at"],
-		})
+		}))
 		if kind == "tool_governance" {
 			if runtimeID := toolGovernanceRuntimeIDFromEvent(payload); runtimeID != "" {
 				invocation["runtime_id"] = runtimeID
@@ -226,7 +221,7 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 		}
 		return invocation
 	case streamEventClientActionRequired:
-		invocation := newSkillInvocation("client_action", payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), payloadStatus(payload, "waiting_client_action"), map[string]interface{}{
+		invocation := newSkillInvocation("client_action", payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), payloadStatus(payload, "waiting_client_action"), invocationTimelineFields(payload, map[string]interface{}{
 			"action_id":             payloadString(payload, "action_id"),
 			"action_type":           payloadString(payload, "action_type"),
 			"href":                  payloadString(payload, "href"),
@@ -240,8 +235,7 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 			"asset_operation_audit": governanceMapFromAny(payload["asset_operation_audit"]),
 			"conversation_id":       payload["conversation_id"],
 			"message_id":            payload["message_id"],
-			"created_at":            payload["created_at"],
-		})
+		}))
 		invocation["runtime_id"] = "client_action:" + payloadString(payload, "action_id")
 		return invocation
 	case streamEventSkillCallError:
@@ -253,22 +247,20 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 				kind = "tool_call"
 			}
 		}
-		invocation := newSkillInvocation(kind, payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), payloadStatus(payload, "error"), map[string]interface{}{
+		invocation := newSkillInvocation(kind, payloadString(payload, "skill_id"), payloadString(payload, "tool_name"), payloadStatus(payload, "error"), invocationTimelineFields(payload, map[string]interface{}{
 			"duration_ms": payload["duration_ms"],
 			"message":     payloadString(payload, "message"),
 			"error":       payloadString(payload, "message"),
-			"created_at":  payload["created_at"],
-		})
+		}))
 		invocation["runtime_id"] = r.runtimeIDForEnd(invocation)
 		return invocation
 	case streamEventIntermediateAnswer:
 		answerID := payloadString(payload, "answer_id")
-		invocation := newSkillInvocation("intermediate_answer", "", "", intermediateAnswerStatus(payload), map[string]interface{}{
-			"answer_id":  answerID,
-			"title":      payloadString(payload, "title"),
-			"message":    r.intermediateAnswerMessage(answerID, payloadText(payload, "content"), payloadBool(payload, "delta")),
-			"created_at": payload["created_at"],
-		})
+		invocation := newSkillInvocation("intermediate_answer", "", "", intermediateAnswerStatus(payload), invocationTimelineFields(payload, map[string]interface{}{
+			"answer_id": answerID,
+			"title":     payloadString(payload, "title"),
+			"message":   r.intermediateAnswerMessage(answerID, payloadText(payload, "content"), payloadBool(payload, "delta")),
+		}))
 		if answerID != "" {
 			invocation["runtime_id"] = invocationRuntimeIdentity(invocation)
 		} else {
@@ -406,6 +398,8 @@ func (r *processTimelineRecorder) persistGovernedToolCallSuspension(payload map[
 	delete(r.openRuntimeIDs, base)
 	invocation := newSkillInvocation("tool_call", skillID, toolName, toolCallStatus, map[string]interface{}{
 		"runtime_id":             runtimeID,
+		"created_at":             payload["created_at"],
+		"created_at_ms":          payload["created_at_ms"],
 		"governance":             governanceMapFromAny(payload["governance"]),
 		"asset_operation_audit":  governanceMapFromAny(payload["asset_operation_audit"]),
 		"approval_status":        payload["approval_status"],
@@ -468,6 +462,35 @@ func payloadString(payload map[string]interface{}, key string) string {
 	return strings.TrimSpace(stringFromAny(payload[key]))
 }
 
+func invocationTimelineFields(payload map[string]interface{}, values map[string]interface{}) map[string]interface{} {
+	if values == nil {
+		values = map[string]interface{}{}
+	}
+	if len(payload) == 0 {
+		return values
+	}
+	if _, exists := values["created_at"]; !exists {
+		values["created_at"] = payload["created_at"]
+	}
+	if _, exists := values["created_at_ms"]; !exists {
+		values["created_at_ms"] = payload["created_at_ms"]
+	}
+	return values
+}
+
+func fillInvocationTimelineFromPayload(invocation map[string]interface{}, payload map[string]interface{}) {
+	if len(invocation) == 0 || len(payload) == 0 {
+		return
+	}
+	if _, ok := invocation["created_at"]; !ok {
+		invocation["created_at"] = payload["created_at"]
+	}
+	if _, ok := invocation["created_at_ms"]; !ok {
+		invocation["created_at_ms"] = payload["created_at_ms"]
+	}
+	normalizeSkillInvocationTimelineFields(invocation)
+}
+
 func payloadText(payload map[string]interface{}, key string) string {
 	return stringFromAny(payload[key])
 }
@@ -504,7 +527,7 @@ func copyInvocationRuntimeFields(payload map[string]interface{}, invocation map[
 	if len(payload) == 0 || len(invocation) == 0 {
 		return
 	}
-	for _, key := range []string{"kind", "runtime_id", "path", "answer_id"} {
+	for _, key := range []string{"kind", "runtime_id", "path", "answer_id", "created_at", "created_at_ms"} {
 		if value, ok := invocation[key]; ok && value != nil {
 			payload[key] = value
 		}

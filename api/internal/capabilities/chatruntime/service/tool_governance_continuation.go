@@ -458,6 +458,9 @@ func latestMatchingToolCallRuntimeID(metadata map[string]interface{}, skillID st
 }
 
 func toolGovernanceFrozenFastPathAnswer(prepared *PreparedChat, trace skills.SkillTrace) (string, bool) {
+	if toolGovernanceFrozenPlanHasPendingFollowup(prepared, trace) {
+		return "", false
+	}
 	if prepared != nil && prepared.Message != nil {
 		evidence := skillLoopCompletionEvidence(prepared)()
 		if answer, ok := skillloop.FastPathFinalAnswerForAgentMutationEvidence(evidence, trace); ok {
@@ -471,6 +474,29 @@ func toolGovernanceFrozenFastPathAnswer(prepared *PreparedChat, trace skills.Ski
 		return skillloop.FastPathFinalAnswerForToolTrace(trace)
 	}
 	return skillloop.FastPathFinalAnswerForToolTraceWithEvidence(trace, skillLoopCompletionEvidence(prepared)())
+}
+
+func toolGovernanceFrozenPlanHasPendingFollowup(prepared *PreparedChat, trace skills.SkillTrace) bool {
+	if prepared == nil || prepared.Message == nil || len(prepared.Message.Metadata) == 0 {
+		return false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 {
+		return false
+	}
+	for _, step := range operationPlanPendingExecutableSteps(plan, 8) {
+		skillID := strings.TrimSpace(stringFromAny(step["skill_id"]))
+		toolName := strings.TrimSpace(stringFromAny(step["tool_name"]))
+		if skillID == "" && toolName == "" {
+			continue
+		}
+		if strings.EqualFold(skillID, strings.TrimSpace(trace.SkillID)) &&
+			strings.EqualFold(toolName, strings.TrimSpace(trace.ToolName)) {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func toolGovernanceFrozenSimpleAgentConfigFastPathAnswer(prepared *PreparedChat, trace skills.SkillTrace) (string, bool) {

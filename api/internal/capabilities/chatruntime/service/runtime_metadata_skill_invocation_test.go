@@ -586,3 +586,68 @@ func TestMergeToolGovernanceDecisionMetadataUpdatesOperationPlan(t *testing.T) {
 		t.Fatalf("step_status[%s] = %q, want %q until save result evidence arrives; plan=%#v", stepID, got, operationPlanStepStatusPending, plan)
 	}
 }
+
+func TestMergeToolGovernanceDecisionMetadataRejectedGovernanceClosesOperationPlan(t *testing.T) {
+	stepID := operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management")
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              operationPlanStatusRunning,
+			"pending_next_action": "Save generated file",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        stepID,
+					"status":    operationPlanStepStatusPending,
+					"skill_id":  skills.SkillFileManager,
+					"tool_name": "save_file_to_management",
+				},
+			},
+			"step_status": map[string]interface{}{
+				stepID: operationPlanStepStatusPending,
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":       "tool_governance",
+				"skill_id":   skills.SkillFileManager,
+				"tool_name":  "save_file_to_management",
+				"status":     "needs_approval",
+				"runtime_id": "tool_governance:corr-save",
+				"governance": map[string]interface{}{
+					"status":            "needs_approval",
+					"correlation_id":    "corr-save",
+					"requires_approval": true,
+					"approval_event": map[string]interface{}{
+						"correlation_id": "corr-save",
+						"skill_id":       skills.SkillFileManager,
+						"tool_name":      "save_file_to_management",
+						"tool_id":        "file.create",
+					},
+				},
+			},
+		},
+	}
+
+	metadata = mergeToolGovernanceDecisionMetadata(metadata, map[string]interface{}{
+		"correlation_id":  "corr-save",
+		"skill_id":        skills.SkillFileManager,
+		"tool_name":       "save_file_to_management",
+		"approval_status": "rejected",
+		"status":          "rejected",
+	})
+
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusFailed {
+		t.Fatalf("operation_plan.status = %q, want %q after rejected governance decision; plan=%#v", got, operationPlanStatusFailed, plan)
+	}
+	if got := stringFromAny(plan["pending_next_action"]); got != "none" {
+		t.Fatalf("operation_plan.pending_next_action = %q, want none after rejection; plan=%#v", got, plan)
+	}
+	stepStatus := mapFromOperationContext(plan["step_status"])
+	if got := stringFromAny(stepStatus[stepID]); got != operationPlanStepStatusFailed {
+		t.Fatalf("step_status[%s] = %q, want %q after rejected governance decision; plan=%#v", stepID, got, operationPlanStepStatusFailed, plan)
+	}
+	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	if len(invocations) != 1 || stringFromAny(invocations[0]["status"]) != "rejected" {
+		t.Fatalf("skill_invocations = %#v, want governance invocation status rejected", invocations)
+	}
+}

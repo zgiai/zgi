@@ -472,11 +472,35 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
   );
 }
 
+function timelineEventIdOrderValue(eventId?: string | null): number | null {
+  if (!eventId) return null;
+  const match = /^(\d+)-(\d+)(?::|$)/.exec(eventId.trim());
+  if (!match) return null;
+  const timestamp = Number(match[1]);
+  const sequence = Number(match[2]);
+  if (!Number.isSafeInteger(timestamp) || !Number.isSafeInteger(sequence)) return null;
+  return timestamp + sequence / 1_000_000;
+}
+
+function timelineItemEventId(item: AIChatAgenticTimelineItem): string | null | undefined {
+  return 'event_id' in item ? item.event_id : undefined;
+}
+
+function timelineItemOrderValue(item: AIChatAgenticTimelineItem): number {
+  const eventOrder = timelineEventIdOrderValue(timelineItemEventId(item));
+  if (eventOrder !== null) return eventOrder;
+  if (typeof item.created_at === 'number' && Number.isFinite(item.created_at)) {
+    return item.created_at * 1000;
+  }
+  return Number.MAX_SAFE_INTEGER;
+}
+
 function sortTimelineItems(timeline: AIChatAgenticTimelineItem[]): AIChatAgenticTimelineItem[] {
   return [...timeline].sort((left, right) => {
-    const leftAt = left.created_at ?? Number.MAX_SAFE_INTEGER;
-    const rightAt = right.created_at ?? Number.MAX_SAFE_INTEGER;
-    return leftAt - rightAt || left.id.localeCompare(right.id);
+    return (
+      timelineItemOrderValue(left) - timelineItemOrderValue(right) ||
+      left.id.localeCompare(right.id)
+    );
   });
 }
 
@@ -859,10 +883,10 @@ export function mergeRuntimeTimelineWithMessageTimeline(
   runtimeTimeline?: AIChatAgenticTimelineItem[]
 ): AIChatAgenticTimelineItem[] {
   if (!runtimeTimeline?.length) {
-    return messageTimeline;
+    return sortTimelineItems(dedupeTimelineItems(messageTimeline));
   }
   if (!messageTimeline.length) {
-    return runtimeTimeline;
+    return sortTimelineItems(dedupeTimelineItems(runtimeTimeline));
   }
 
   const messageByIdentity = new Map(

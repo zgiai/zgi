@@ -18,28 +18,26 @@ type PayloadIDs struct {
 
 // SkillCallStartPayload builds the public skill_call_start event payload.
 func SkillCallStartPayload(ids PayloadIDs, skillID string, toolName string, argumentsSummary map[string]interface{}) map[string]interface{} {
-	return map[string]interface{}{
+	return withPayloadTimestamp(map[string]interface{}{
 		"conversation_id":   ids.ConversationID,
 		"message_id":        ids.MessageID,
 		"skill_id":          skillID,
 		"tool_name":         toolName,
 		"arguments":         argumentsSummary,
 		"arguments_summary": argumentsSummary,
-		"created_at":        time.Now().Unix(),
-	}
+	})
 }
 
 // SkillCallEndPayload builds the public skill_call_end event payload.
 func SkillCallEndPayload(ids PayloadIDs, trace skills.SkillTrace, includeKind bool) map[string]interface{} {
-	payload := map[string]interface{}{
+	payload := withPayloadTimestamp(map[string]interface{}{
 		"conversation_id": ids.ConversationID,
 		"message_id":      ids.MessageID,
 		"skill_id":        trace.SkillID,
 		"tool_name":       trace.ToolName,
 		"duration_ms":     trace.DurationMS,
 		"status":          trace.Status,
-		"created_at":      time.Now().Unix(),
-	}
+	})
 	if includeKind {
 		payload["kind"] = trace.Kind
 	}
@@ -56,15 +54,14 @@ func SkillCallEndPayload(ids PayloadIDs, trace skills.SkillTrace, includeKind bo
 }
 
 func ToolGovernanceDecisionPayload(ids PayloadIDs, trace skills.SkillTrace) map[string]interface{} {
-	payload := map[string]interface{}{
+	payload := withPayloadTimestamp(map[string]interface{}{
 		"conversation_id": ids.ConversationID,
 		"message_id":      ids.MessageID,
 		"skill_id":        trace.SkillID,
 		"tool_name":       trace.ToolName,
 		"status":          trace.Status,
 		"duration_ms":     trace.DurationMS,
-		"created_at":      time.Now().Unix(),
-	}
+	})
 	if trace.Governance != nil {
 		payload["governance"] = trace.Governance
 		payload["correlation_id"] = trace.Governance.CorrelationID
@@ -90,7 +87,7 @@ func SkillCallErrorPayload(ids PayloadIDs, trace skills.SkillTrace, status strin
 	if strings.TrimSpace(trace.Kind) == "guardrail" && strings.TrimSpace(trace.Status) != "" {
 		resolvedStatus = strings.TrimSpace(trace.Status)
 	}
-	payload := map[string]interface{}{
+	payload := withPayloadTimestamp(map[string]interface{}{
 		"conversation_id": ids.ConversationID,
 		"message_id":      ids.MessageID,
 		"skill_id":        trace.SkillID,
@@ -98,8 +95,7 @@ func SkillCallErrorPayload(ids PayloadIDs, trace skills.SkillTrace, status strin
 		"duration_ms":     trace.DurationMS,
 		"status":          resolvedStatus,
 		"message":         trace.Error,
-		"created_at":      time.Now().Unix(),
-	}
+	})
 	if includeKind {
 		payload["kind"] = trace.Kind
 	}
@@ -111,42 +107,39 @@ func SkillCallErrorPayload(ids PayloadIDs, trace skills.SkillTrace, status strin
 
 // SkillLoadPayload builds the public skill_load_start event payload.
 func SkillLoadPayload(ids PayloadIDs, skillID string) map[string]interface{} {
-	return map[string]interface{}{
+	return withPayloadTimestamp(map[string]interface{}{
 		"conversation_id": ids.ConversationID,
 		"message_id":      ids.MessageID,
 		"skill_id":        skillID,
-		"created_at":      time.Now().Unix(),
-	}
+	})
 }
 
 // SkillLoadEndPayload builds the public skill_load_end event payload.
 func SkillLoadEndPayload(ids PayloadIDs, trace skills.SkillTrace) map[string]interface{} {
-	return map[string]interface{}{
+	return withPayloadTimestamp(map[string]interface{}{
 		"conversation_id": ids.ConversationID,
 		"message_id":      ids.MessageID,
 		"skill_id":        trace.SkillID,
 		"duration_ms":     trace.DurationMS,
 		"status":          trace.Status,
-		"created_at":      time.Now().Unix(),
-	}
+	})
 }
 
 // SkillReferenceReadPayload builds the public skill_reference_read event payload.
 func SkillReferenceReadPayload(ids PayloadIDs, trace skills.SkillTrace, path string) map[string]interface{} {
-	return map[string]interface{}{
+	return withPayloadTimestamp(map[string]interface{}{
 		"conversation_id": ids.ConversationID,
 		"message_id":      ids.MessageID,
 		"skill_id":        trace.SkillID,
 		"path":            path,
 		"duration_ms":     trace.DurationMS,
 		"status":          trace.Status,
-		"created_at":      time.Now().Unix(),
-	}
+	})
 }
 
 // IntermediateAnswerPayload builds the public agent_intermediate_answer event payload.
 func IntermediateAnswerPayload(ids PayloadIDs, trace skills.SkillTrace, answerID string, content string, index int, done bool, status string) map[string]interface{} {
-	return map[string]interface{}{
+	return withPayloadTimestamp(map[string]interface{}{
 		"conversation_id": ids.ConversationID,
 		"message_id":      ids.MessageID,
 		"answer_id":       answerID,
@@ -156,8 +149,14 @@ func IntermediateAnswerPayload(ids PayloadIDs, trace skills.SkillTrace, answerID
 		"index":           index,
 		"done":            done,
 		"status":          status,
-		"created_at":      time.Now().Unix(),
-	}
+	})
+}
+
+func withPayloadTimestamp(payload map[string]interface{}) map[string]interface{} {
+	now := time.Now()
+	payload["created_at"] = now.Unix()
+	payload["created_at_ms"] = now.UnixMilli()
+	return payload
 }
 
 // SkillArtifactsFromToolMessages extracts public file artifacts from tool messages.
@@ -1046,7 +1045,7 @@ func skillArtifactFromToolFile(ids PayloadIDs, trace skills.SkillTrace, message 
 	if downloadURL == "" {
 		downloadURL = appendDownloadQuery(url)
 	}
-	artifact := map[string]interface{}{
+	artifact := withPayloadTimestamp(map[string]interface{}{
 		"conversation_id": ids.ConversationID,
 		"message_id":      ids.MessageID,
 		"artifact_type":   "file",
@@ -1060,8 +1059,7 @@ func skillArtifactFromToolFile(ids PayloadIDs, trace skills.SkillTrace, message 
 		"url":             url,
 		"download_url":    downloadURL,
 		"transfer_method": stringFromAny(file["transfer_method"]),
-		"created_at":      time.Now().Unix(),
-	}
+	})
 	if fileType := stringFromAny(file["type"]); fileType != "" {
 		artifact["file_type"] = fileType
 	}
@@ -1094,7 +1092,7 @@ func skillArtifactFromManagedFileJSON(ids PayloadIDs, trace skills.SkillTrace, p
 	if fileID == "" {
 		return nil
 	}
-	artifact := map[string]interface{}{
+	artifact := withPayloadTimestamp(map[string]interface{}{
 		"conversation_id": ids.ConversationID,
 		"message_id":      ids.MessageID,
 		"artifact_type":   "file",
@@ -1109,8 +1107,7 @@ func skillArtifactFromManagedFileJSON(ids PayloadIDs, trace skills.SkillTrace, p
 		"target":          "managed_file",
 		"workspace_id":    firstNonEmptyString(payload["workspace_id"], file["workspace_id"]),
 		"transfer_method": firstNonEmptyString(payload["transfer_method"]),
-		"created_at":      time.Now().Unix(),
-	}
+	})
 	for _, field := range []string{"folder_id", "source_type", "source_file_id", "source_url", "url", "download_url"} {
 		if value := firstNonEmptyString(payload[field], file[field]); value != "" {
 			artifact[field] = value

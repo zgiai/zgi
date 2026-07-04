@@ -551,11 +551,15 @@ func mergeToolGovernanceDecisionMetadata(source map[string]interface{}, event ma
 			if toolGovernanceCorrelationID(toolGovernanceDecisionEventFromInvocation(invocation)) != correlationID {
 				continue
 			}
-			invocations[index] = mergeInvocation(invocation, map[string]interface{}{
+			update := map[string]interface{}{
 				"approval_status":       event["approval_status"],
 				"governance":            event["governance"],
 				"asset_operation_audit": event["asset_operation_audit"],
-			})
+			}
+			if status := rejectedGovernanceInvocationStatusFromApproval(event["approval_status"]); status != "" && canUpdateGovernedToolCallStatus(invocation) {
+				update["status"] = status
+			}
+			invocations[index] = mergeInvocation(invocation, update)
 			continue
 		}
 		if kind == "tool_call" && governedToolCallMatchesDecision(invocation, event, correlationID) {
@@ -596,6 +600,13 @@ func resolvedToolCallStatusFromApproval(value interface{}) string {
 	default:
 		return ""
 	}
+}
+
+func rejectedGovernanceInvocationStatusFromApproval(value interface{}) string {
+	if strings.TrimSpace(stringFromAny(value)) == "rejected" {
+		return "rejected"
+	}
+	return ""
 }
 
 func canUpdateGovernedToolCallStatus(invocation map[string]interface{}) bool {
