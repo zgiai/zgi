@@ -339,6 +339,15 @@ const messages: DashboardMessages = {
       title: '解析器配置',
       description:
         '配置 Reducto 和 MinerU，用于文件重新解析。除必填密钥外，其他字段会自动带上默认值，也可以按部署环境修改。',
+      guide: {
+        title: '不知道选哪个解析服务？',
+        description:
+          '只需要任选 Reducto 或 MinerU 配置成功一个，就可以获得更好的 PDF、Office、表格和扫描件解析效果。',
+        reductoRecommendation: '海外或英文场景优先推荐 Reducto。',
+        mineruRecommendation: '中国大陆或中文场景优先推荐 MinerU 官方服务。',
+        openReducto: '获取 Reducto API Key',
+        openMineru: '获取 MinerU Token',
+      },
       actions: {
         returnToReparse: '返回重新解析',
         save: '保存',
@@ -353,9 +362,27 @@ const messages: DashboardMessages = {
       },
       reducto: {
         description: 'Reducto 官方解析服务。启用前需要先配置 API Key。',
+        help: {
+          title: '如何获取 Reducto API Key',
+          action: '打开 Reducto Studio',
+          steps: {
+            signIn: '打开 Reducto Studio，并注册或登录账号。',
+            createKey: '在侧边栏进入 API Keys，点击 Create new API key。',
+            pasteKey: '复制生成的 API Key，粘贴到这里后保存。',
+          },
+        },
       },
       mineru: {
         description: 'MinerU 解析服务。选择本地服务或官方服务模式后，再配置对应字段。',
+        help: {
+          title: '如何获取 MinerU 官方 Token',
+          action: '打开 MinerU Token 管理',
+          steps: {
+            signIn: '打开 MinerU API 管理页面，并注册或登录账号。',
+            createToken: '进入 Token 或 API 管理页面，创建官方 Token。',
+            pasteToken: '复制生成的 Token，粘贴到这里后保存。',
+          },
+        },
         modes: {
           sidecar: '本地服务',
           official: '官方服务',

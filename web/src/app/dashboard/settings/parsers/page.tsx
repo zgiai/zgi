@@ -5,7 +5,16 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CheckCircle2, FileSearch, Loader2, RefreshCw, Save, Settings2, XCircle } from 'lucide-react';
+import {
+  CheckCircle2,
+  ExternalLink,
+  FileSearch,
+  Loader2,
+  RefreshCw,
+  Save,
+  Settings2,
+  XCircle,
+} from 'lucide-react';
 import { useT, type AllTranslationKeys } from '@/i18n';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -24,6 +33,8 @@ import type {
 import { cn } from '@/lib/utils';
 
 const PARSER_SETTINGS_QUERY_KEY = ['content-parse', 'parser-settings'] as const;
+const REDUCTO_STUDIO_URL = 'https://studio.reducto.ai';
+const MINERU_TOKEN_URL = 'https://mineru.net/apiManage/token';
 
 const REDUCTO_DEFAULTS = {
   enabled: false,
@@ -219,6 +230,8 @@ export default function ParserSettingsPage() {
         ) : null}
       </div>
 
+      <ParserSetupGuide />
+
       <div className="grid gap-4">
         <div ref={reductoRef}>
           <ParserCardShell
@@ -233,6 +246,16 @@ export default function ParserSettingsPage() {
                 enabled={reducto.enabled}
                 onChange={enabled => setReducto(prev => ({ ...prev, enabled }))}
                 label={t('dashboard.configuration.parserSettings.fields.enabled')}
+              />
+              <ProviderSetupHelp
+                title={t('dashboard.configuration.parserSettings.reducto.help.title')}
+                steps={[
+                  t('dashboard.configuration.parserSettings.reducto.help.steps.signIn'),
+                  t('dashboard.configuration.parserSettings.reducto.help.steps.createKey'),
+                  t('dashboard.configuration.parserSettings.reducto.help.steps.pasteKey'),
+                ]}
+                actionLabel={t('dashboard.configuration.parserSettings.reducto.help.action')}
+                actionHref={REDUCTO_STUDIO_URL}
               />
               <Field label={t('dashboard.configuration.parserSettings.fields.apiKey')}>
                 <Input
@@ -389,6 +412,75 @@ function ParserCardShell({
   );
 }
 
+function ParserSetupGuide() {
+  const t = useT();
+  return (
+    <section className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="space-y-1">
+          <div className="text-sm font-semibold">
+            {t('dashboard.configuration.parserSettings.guide.title')}
+          </div>
+          <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
+            {t('dashboard.configuration.parserSettings.guide.description')}
+          </p>
+          <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm font-medium leading-6 text-foreground/80">
+            <span>{t('dashboard.configuration.parserSettings.guide.reductoRecommendation')}</span>
+            <span>{t('dashboard.configuration.parserSettings.guide.mineruRecommendation')}</span>
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Button variant="outline" size="sm" asChild>
+            <a href={REDUCTO_STUDIO_URL} target="_blank" rel="noreferrer" className="gap-2">
+              {t('dashboard.configuration.parserSettings.guide.openReducto')}
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          </Button>
+          <Button variant="outline" size="sm" asChild>
+            <a href={MINERU_TOKEN_URL} target="_blank" rel="noreferrer" className="gap-2">
+              {t('dashboard.configuration.parserSettings.guide.openMineru')}
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ProviderSetupHelp({
+  title,
+  steps,
+  actionLabel,
+  actionHref,
+}: {
+  title: string;
+  steps: string[];
+  actionLabel: string;
+  actionHref: string;
+}) {
+  return (
+    <div className="rounded-lg border bg-muted/20 px-3 py-3">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="space-y-2">
+          <div className="text-sm font-medium">{title}</div>
+          <ol className="list-decimal space-y-1 pl-5 text-xs leading-5 text-muted-foreground">
+            {steps.map(step => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+        </div>
+        <Button variant="outline" size="sm" asChild className="shrink-0">
+          <a href={actionHref} target="_blank" rel="noreferrer" className="gap-2">
+            {actionLabel}
+            <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function StatusBadge({ status }: { status?: ParserProviderSettings }) {
   const t = useT();
   const value = status?.status ?? 'not_configured';
@@ -504,6 +596,16 @@ function OfficialMineruFields({
   const t = useT();
   return (
     <>
+      <ProviderSetupHelp
+        title={t('dashboard.configuration.parserSettings.mineru.help.title')}
+        steps={[
+          t('dashboard.configuration.parserSettings.mineru.help.steps.signIn'),
+          t('dashboard.configuration.parserSettings.mineru.help.steps.createToken'),
+          t('dashboard.configuration.parserSettings.mineru.help.steps.pasteToken'),
+        ]}
+        actionLabel={t('dashboard.configuration.parserSettings.mineru.help.action')}
+        actionHref={MINERU_TOKEN_URL}
+      />
       <Field label={t('dashboard.configuration.parserSettings.fields.officialToken')}>
         <Input
           type="password"
