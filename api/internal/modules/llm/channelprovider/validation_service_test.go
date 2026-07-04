@@ -28,7 +28,24 @@ func (f *fakeModelLookupRepo) ListByNames(_ context.Context, names []string) ([]
 }
 
 func (f *fakeModelLookupRepo) ListAvailableByNames(_ context.Context, names []string, provider string, useCase string) ([]*llmmodelmodel.LLMModel, error) {
-	return nil, errors.New("not implemented")
+	result := make([]*llmmodelmodel.LLMModel, 0, len(names))
+	for _, name := range names {
+		modelRecord, ok := f.models[name]
+		if !ok || modelRecord == nil {
+			continue
+		}
+		if provider != "" && modelRecord.Provider != "" && modelRecord.Provider != provider {
+			continue
+		}
+		if modelRecord.Status == llmmodelmodel.ModelStatusDeprecated {
+			continue
+		}
+		if useCase != "" && !containsString([]string(modelRecord.UseCases), useCase) {
+			continue
+		}
+		result = append(result, modelRecord)
+	}
+	return result, nil
 }
 
 func (f *fakeModelLookupRepo) ListAvailableFiltered(_ context.Context, provider string, useCase string) ([]*llmmodelmodel.LLMModel, error) {
@@ -54,7 +71,7 @@ func (f *fakeModelLookupRepo) GetByProviderAndName(context.Context, string, stri
 	return nil, errors.New("not implemented")
 }
 
-func (f *fakeModelLookupRepo) List(_ context.Context, _ *uuid.UUID, _, _ string, _ *bool, _, _ int) ([]*llmmodelmodel.LLMModel, int64, error) {
+func (f *fakeModelLookupRepo) List(_ context.Context, _ *uuid.UUID, _, _, _ string, _ *bool, _, _ int) ([]*llmmodelmodel.LLMModel, int64, error) {
 	result := make([]*llmmodelmodel.LLMModel, 0, len(f.models))
 	for _, modelRecord := range f.models {
 		result = append(result, modelRecord)
@@ -625,6 +642,52 @@ func TestValidatorValidateModelsForCreation_OpenAICompatibleRejectsConflictingDu
 	require.Contains(t, err.Error(), "conflicting use cases")
 	require.Equal(t, 1, privateModels.listCalls)
 	require.Equal(t, 0, fakeAdapter.chatCalls)
+}
+
+func TestValidatorValidateModelsForCreation_ScopesGlobalModelsToChannelProvider(t *testing.T) {
+	modelRepo := &fakeModelLookupRepo{
+		models: map[string]*llmmodelmodel.LLMModel{
+			"gpt-4o": {
+				Model:    "gpt-4o",
+				Provider: "openai",
+				UseCases: llmmodelmodel.StringArray{
+					"text-chat",
+				},
+			},
+		},
+	}
+	validator := NewValidator(nil, nil)
+	validator.modelRepo = modelRepo
+	adapterCreated := false
+	validator.newAdapter = func(*adapter.AdapterConfig) (adapter.LLMProviderAdapter, error) {
+		adapterCreated = true
+		return &fakeValidationAdapter{}, nil
+	}
+
+	result, err := validator.ValidateModelsForCreation(
+		context.Background(),
+		uuid.Nil,
+		"qwen",
+		"key",
+		"",
+		[]string{"gpt-4o"},
+	)
+	require.Error(t, err)
+	require.NotNil(t, result)
+	require.Contains(t, err.Error(), "gpt-4o")
+	require.False(t, adapterCreated)
+
+	result, err = validator.ValidateModelsForCreation(
+		context.Background(),
+		uuid.Nil,
+		"openai-compatible",
+		"key",
+		"https://example.com/v1",
+		[]string{"gpt-4o"},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, validationModeMetadataOnly, result.Report[keyValidationMode])
 }
 
 func TestValidatorTestModel_RejectsConflictingTestMethod(t *testing.T) {

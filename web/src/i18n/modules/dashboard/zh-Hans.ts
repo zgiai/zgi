@@ -20,6 +20,7 @@ const messages: DashboardMessages = {
     usageDetails: '使用详情',
     llmProviders: '模型管理',
     channel: '渠道管理',
+    pricingPolicy: '计费策略',
     apiKeys: 'API 令牌',
     organization: '组织与成员',
     workspaces: '工作空间管理',
@@ -339,19 +340,50 @@ const messages: DashboardMessages = {
       title: '解析器配置',
       description:
         '配置 Reducto 和 MinerU，用于文件重新解析。除必填密钥外，其他字段会自动带上默认值，也可以按部署环境修改。',
+      guide: {
+        title: '不知道选哪个解析服务？',
+        description:
+          '只需要任选 Reducto 或 MinerU 配置成功一个，就可以获得更好的 PDF、Office、表格和扫描件解析效果。',
+        reductoRecommendation: '海外或英文场景优先推荐 Reducto。',
+        mineruRecommendation: '中国大陆或中文场景优先推荐 MinerU 官方服务。',
+        openReducto: '获取 Reducto API Key',
+        openMineru: '获取 MinerU Token',
+      },
       actions: {
         returnToReparse: '返回重新解析',
         save: '保存',
+        check: '检查可用性',
       },
       messages: {
         saved: '解析器配置已保存',
+        savedAndValidated: '解析器配置已保存并验证通过',
         saveFailed: '解析器配置保存失败',
+        checked: '解析器可用性检查通过',
+        checkFailed: '解析器可用性检查失败',
       },
       reducto: {
         description: 'Reducto 官方解析服务。启用前需要先配置 API Key。',
+        help: {
+          title: '如何获取 Reducto API Key',
+          action: '打开 Reducto Studio',
+          steps: {
+            signIn: '打开 Reducto Studio，并注册或登录账号。',
+            createKey: '在侧边栏进入 API Keys，点击 Create new API key。',
+            pasteKey: '复制生成的 API Key，粘贴到这里后保存。',
+          },
+        },
       },
       mineru: {
         description: 'MinerU 解析服务。选择本地服务或官方服务模式后，再配置对应字段。',
+        help: {
+          title: '如何获取 MinerU 官方 Token',
+          action: '打开 MinerU Token 管理',
+          steps: {
+            signIn: '打开 MinerU API 管理页面，并注册或登录账号。',
+            createToken: '进入 Token 或 API 管理页面，创建官方 Token。',
+            pasteToken: '复制生成的 Token，粘贴到这里后保存。',
+          },
+        },
         modes: {
           sidecar: '本地服务',
           official: '官方服务',
@@ -371,6 +403,9 @@ const messages: DashboardMessages = {
       placeholders: {
         secretConfigured: '已配置，留空则保持不变',
         secretRequired: '启用前必填',
+      },
+      hints: {
+        baseUrl: '填写服务根地址，系统会自动拼接具体接口路径。',
       },
       status: {
         not_configured: '未配置',
@@ -432,8 +467,11 @@ const messages: DashboardMessages = {
       },
       noCriticalIssues: '当前没有阻塞核心流程的配置问题。',
       missingItem: '{label} 未配置',
+      parserServiceMissing:
+        '当前未配置可用的三方解析服务。上传并解析时会使用本地解析服务，复杂版式、表格和扫描件效果可能较差。',
       actions: {
         configureModels: '配置模型',
+        configureParserService: '去配置解析服务',
         contactAdmin: '联系管理员',
         createKnowledge: '创建知识库',
         createAgent: '创建智能体',

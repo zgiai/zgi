@@ -2,8 +2,11 @@ package skills
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -31,23 +34,9 @@ func (r *Runtime) skillLocations(custom []CustomSkillCatalogEntry) (map[string]s
 	if r == nil {
 		return nil, fmt.Errorf("skill runtime is not configured")
 	}
-	entries, err := os.ReadDir(r.catalogDir)
+	locations, err := r.systemSkillLocations()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read skill catalog: %w", err)
-	}
-	locations := make(map[string]skillLocation, len(entries)+len(custom))
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		id := normalizeSkillID(entry.Name())
-		if id == "" {
-			continue
-		}
-		if !isValidSkillName(id) {
-			return nil, fmt.Errorf("invalid skill directory %s: use lowercase letters, numbers, and hyphens only", entry.Name())
-		}
-		locations[id] = skillLocation{ID: id, Root: filepath.Join(r.catalogDir, id), Source: SkillSourceSystem}
+		return nil, err
 	}
 	for _, entry := range custom {
 		id := normalizeSkillID(entry.SkillID)
@@ -66,6 +55,77 @@ func (r *Runtime) skillLocations(custom []CustomSkillCatalogEntry) (map[string]s
 	return locations, nil
 }
 
+func (r *Runtime) systemSkillLocations() (map[string]skillLocation, error) {
+	locations, errs, err := r.systemSkillLocationsFromEntries(false)
+	if err != nil {
+		return nil, err
+	}
+	if joined := errors.Join(errs...); joined != nil {
+		return nil, joined
+	}
+	return locations, nil
+}
+
+func (r *Runtime) systemSkillLocationsBestEffort() (map[string]skillLocation, []error, error) {
+	return r.systemSkillLocationsFromEntries(true)
+}
+
+func (r *Runtime) systemSkillLocationsFromEntries(bestEffort bool) (map[string]skillLocation, []error, error) {
+	entries, embedded, err := r.systemCatalogEntries()
+	if err != nil {
+		return nil, nil, err
+	}
+	locations := make(map[string]skillLocation, len(entries))
+	errs := make([]error, 0)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		id := normalizeSkillID(entry.Name())
+		if id == "" {
+			continue
+		}
+		if !isValidSkillName(id) {
+			err := fmt.Errorf("invalid skill directory %s: use lowercase letters, numbers, and hyphens only", entry.Name())
+			if !bestEffort {
+				return nil, nil, err
+			}
+			errs = append(errs, err)
+			continue
+		}
+		location := skillLocation{ID: id, Root: filepath.Join(r.catalogDir, id), Source: SkillSourceSystem}
+		if embedded {
+			location.Root = path.Join("catalog", id)
+			location.Embedded = true
+		}
+		locations[id] = location
+	}
+	return locations, errs, nil
+}
+
+func (r *Runtime) systemCatalogEntries() ([]fs.DirEntry, bool, error) {
+	dir := strings.TrimSpace(r.catalogDir)
+	if dir == "" {
+		dir = defaultCatalogDir
+	}
+	entries, err := os.ReadDir(dir)
+	if err == nil {
+		return entries, false, nil
+	}
+	if !isDefaultCatalogDir(dir) {
+		return nil, false, fmt.Errorf("failed to read skill catalog: %w", err)
+	}
+	entries, embeddedErr := embeddedSkillCatalog.ReadDir("catalog")
+	if embeddedErr != nil {
+		return nil, false, fmt.Errorf("failed to read skill catalog: filesystem: %v; embedded: %w", err, embeddedErr)
+	}
+	return entries, true, nil
+}
+
+func isDefaultCatalogDir(dir string) bool {
+	return filepath.Clean(strings.TrimSpace(dir)) == filepath.Clean(defaultCatalogDir)
+}
+
 func listReferences(root string, source string) []SkillReference {
 	if normalizeSkillSource(source) == SkillSourceCustom {
 		refs := listRootTextReferences(root)
@@ -74,6 +134,41 @@ func listReferences(root string, source string) []SkillReference {
 	}
 	refs := listReferencesUnder(filepath.Join(root, "references"), "references", true)
 	sort.Slice(refs, func(i, j int) bool { return refs[i].Path < refs[j].Path })
+	return refs
+}
+
+func listLocationReferences(location skillLocation) []SkillReference {
+	if normalizeSkillSource(location.Source) == SkillSourceCustom {
+		return listReferences(location.Root, SkillSourceCustom)
+	}
+	if location.Embedded {
+		refs := listEmbeddedReferencesUnder(path.Join(location.Root, "references"), "references", true)
+		sort.Slice(refs, func(i, j int) bool { return refs[i].Path < refs[j].Path })
+		return refs
+	}
+	return listReferences(location.Root, SkillSourceSystem)
+}
+
+func listEmbeddedReferencesUnder(root string, pathPrefix string, stripPrefix bool) []SkillReference {
+	entries, err := embeddedSkillCatalog.ReadDir(filepath.ToSlash(root))
+	if err != nil {
+		return nil
+	}
+	refs := make([]SkillReference, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !isReadableReferenceFile(name) {
+			continue
+		}
+		refPath := name
+		if !stripPrefix {
+			refPath = filepath.ToSlash(filepath.Join(pathPrefix, name))
+		}
+		refs = append(refs, SkillReference{Path: refPath, Name: name, FullPath: path.Join(root, name), Embedded: true})
+	}
 	return refs
 }
 
@@ -124,20 +219,54 @@ func hasScripts(root string) bool {
 	return err == nil && len(entries) > 0
 }
 
+func hasLocationScripts(location skillLocation) bool {
+	if location.Embedded {
+		entries, err := embeddedSkillCatalog.ReadDir(path.Join(location.Root, "scripts"))
+		return err == nil && len(entries) > 0
+	}
+	return hasScripts(location.Root)
+}
+
+func readSkillLocationFile(location skillLocation, relativePath string) ([]byte, error) {
+	clean := filepath.ToSlash(filepath.Clean(strings.TrimSpace(relativePath)))
+	if clean == "." || strings.HasPrefix(clean, "../") || clean == ".." || filepath.IsAbs(clean) {
+		return nil, fmt.Errorf("invalid skill path")
+	}
+	if location.Embedded {
+		return embeddedSkillCatalog.ReadFile(path.Join(location.Root, clean))
+	}
+	return os.ReadFile(filepath.Join(location.Root, filepath.FromSlash(clean)))
+}
+
 func referenceFullPath(doc SkillDocument, referencePath string) (string, error) {
+	ref, err := skillReference(doc, referencePath)
+	if err != nil {
+		return "", err
+	}
+	return ref.FullPath, nil
+}
+
+func skillReference(doc SkillDocument, referencePath string) (SkillReference, error) {
 	clean := filepath.ToSlash(filepath.Clean(strings.TrimSpace(referencePath)))
 	if clean == "." || strings.HasPrefix(clean, "../") || clean == ".." || filepath.IsAbs(clean) {
-		return "", fmt.Errorf("invalid skill reference path")
+		return SkillReference{}, fmt.Errorf("invalid skill reference path")
 	}
 	for _, ref := range doc.Metadata.References {
 		if filepath.ToSlash(ref.Path) == clean {
 			if strings.TrimSpace(ref.FullPath) == "" {
-				return "", fmt.Errorf("invalid skill reference path")
+				return SkillReference{}, fmt.Errorf("invalid skill reference path")
 			}
-			return ref.FullPath, nil
+			return ref, nil
 		}
 	}
-	return "", fmt.Errorf("skill reference %s is not available", clean)
+	return SkillReference{}, fmt.Errorf("skill reference %s is not available", clean)
+}
+
+func readSkillReference(ref SkillReference) ([]byte, error) {
+	if ref.Embedded {
+		return embeddedSkillCatalog.ReadFile(filepath.ToSlash(ref.FullPath))
+	}
+	return os.ReadFile(ref.FullPath)
 }
 
 func isReadableReferenceFile(name string) bool {

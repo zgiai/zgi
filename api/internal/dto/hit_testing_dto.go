@@ -106,10 +106,19 @@ type HitTestingRecordResponse struct {
 
 // RetrievalSourceResponse explains why a segment was returned
 type RetrievalSourceResponse struct {
-	Method          string   `json:"method"`                     // "semantic_search", "full_text_search", "graph_knowledge"
-	Reason          string   `json:"reason,omitempty"`           // Human-readable explanation
-	MatchedTerms    []string `json:"matched_terms,omitempty"`    // For full-text: matched keywords
-	MatchedEntities []string `json:"matched_entities,omitempty"` // For graph: matched entity names
+	Method           string   `json:"method"`                      // "semantic_search", "full_text_search", "hybrid_search", "graph_knowledge"
+	Reason           string   `json:"reason,omitempty"`            // Human-readable explanation
+	RetrievalSources []string `json:"retrieval_sources,omitempty"` // Low-level retrieval sources such as "vector" and "bm25"
+	MatchedTerms     []string `json:"matched_terms,omitempty"`     // For full-text: matched keywords
+	MatchedEntities  []string `json:"matched_entities,omitempty"`  // For graph: matched entity names
+	VectorScore      *float64 `json:"vector_score,omitempty"`      // Raw vector score before fusion
+	BM25Score        *float64 `json:"bm25_score,omitempty"`        // Raw BM25 score before fusion
+	VectorRank       *int     `json:"vector_rank,omitempty"`       // Rank in vector result list
+	BM25Rank         *int     `json:"bm25_rank,omitempty"`         // Rank in BM25 result list
+	BestRank         *int     `json:"best_rank,omitempty"`         // Best rank across retrieval sources
+	FusionScore      *float64 `json:"fusion_score,omitempty"`      // Final fused retrieval score
+	RerankScore      *float64 `json:"rerank_score,omitempty"`      // Rerank model score after fusion
+	FinalScore       *float64 `json:"final_score,omitempty"`       // Final score returned to the UI
 }
 
 // RetrievalPipelineResponse shows the retrieval process summary

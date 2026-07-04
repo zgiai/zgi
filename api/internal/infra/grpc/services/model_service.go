@@ -44,7 +44,7 @@ func (s *ModelService) ListModels(ctx context.Context, req *pb.ListModelsRequest
 
 	// Query models.
 	// Keep the legacy protobuf field empty; protocol is no longer part of channel/model routing.
-	models, total, err := s.repo.List(ctx, nil, req.Provider, "", isActive, offset, limit)
+	models, total, err := s.repo.List(ctx, nil, req.Provider, "", "", isActive, offset, limit)
 	if err != nil {
 		logger.ErrorContext(ctx, "Model gRPC list failed",
 			zap.String("provider", req.Provider),

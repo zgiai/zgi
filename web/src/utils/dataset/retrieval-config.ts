@@ -8,9 +8,13 @@ export function normalizeDatasetSearchMethod(
   searchMethod: SearchMethod | undefined,
   isGraphEnabled: boolean
 ): SearchMethod {
-  if (!isGraphEnabled) {
-    return 'semantic_search';
+  if (!searchMethod) {
+    return 'hybrid_search';
   }
 
-  return searchMethod === 'graph_search' ? 'graph_search' : 'semantic_search';
+  if (searchMethod === 'graph_search') {
+    return isGraphEnabled ? 'graph_search' : 'hybrid_search';
+  }
+
+  return searchMethod;
 }

@@ -146,17 +146,20 @@ func (r *RerankModelRunner) Run(ctx context.Context, query string, documents []d
 		"model": r.modelName,
 	})
 
+	rerankedDocuments := make([]dto.Document, 0, len(rerankResults))
 	for _, result := range rerankResults {
 		if result.Index >= 0 && result.Index < len(documents) {
-			if documents[result.Index].Metadata == nil {
-				documents[result.Index].Metadata = map[string]interface{}{}
+			document := documents[result.Index]
+			if document.Metadata == nil {
+				document.Metadata = map[string]interface{}{}
 			}
-			documents[result.Index].Metadata["score"] = result.Score
-			documents[result.Index].Metadata["rerank_score"] = result.Score
+			document.Metadata["score"] = result.Score
+			document.Metadata["rerank_score"] = result.Score
+			rerankedDocuments = append(rerankedDocuments, document)
 		}
 	}
 
-	return documents, nil
+	return rerankedDocuments, nil
 }
 
 // Weights represents weights for hybrid search

@@ -93,7 +93,8 @@ type LLMModule struct {
 	APIKeyHandler           *apikeyhandler.APIKeyHandler
 
 	// Gateway
-	GatewayRouter *gateway.ChannelRouter
+	GatewayRouter          *gateway.ChannelRouter
+	PricingFallbackHandler *gateway.PricingFallbackHandler
 
 	// Modules (for convenience)
 	ProviderModule       *provider.Module
@@ -161,7 +162,6 @@ func NewLLMModule(db *gorm.DB, crypto shared.CryptoService, tenantService interf
 	m.TenantRouteRepo = channelModule.TenantRouteRepo
 	m.ChannelSvc = channelModule.Service
 	m.ChannelHandler = channelModule.Handler
-	m.LLMModelModule.AvailableModelsSvc.SetOfficialRouteBootstrapper(channelModule.Service)
 
 	// Initialize APIKey Module (requires TenantService, AccountService and EnterpriseService)
 	if tenantService != nil && accountService != nil && enterpriseService != nil {
@@ -180,7 +180,7 @@ func NewLLMModule(db *gorm.DB, crypto shared.CryptoService, tenantService interf
 	m.WorkspaceQuotaHandler = m.WorkspaceQuotaModule.Handler
 
 	// Initialize Availability Module
-	m.AvailabilityModule = availability.NewModule(m.ModelRepo, m.TenantRouteRepo, m.ProviderModule.GlobalRepo, m.ProviderModule.ConfigRepo)
+	m.AvailabilityModule = availability.NewModule(m.ModelRepo, m.ModelCfgRepo, m.TenantRouteRepo, m.ProviderModule.GlobalRepo, m.ProviderModule.ConfigRepo)
 	m.AvailabilityHandler = m.AvailabilityModule.Handler
 
 	// Initialize ModelMeta Module (for syncing model metadata from modelmeta.dev)
@@ -189,6 +189,7 @@ func NewLLMModule(db *gorm.DB, crypto shared.CryptoService, tenantService interf
 
 	// Initialize Gateway
 	m.GatewayRouter = gateway.NewChannelRouter(db, crypto, m.LLMModelModule.PrivateModelLookupSvc)
+	m.PricingFallbackHandler = gateway.NewPricingFallbackHandler(db)
 
 	// Inject PlatformContainer for official channels (Cloud mode)
 	platformContainer, err := platform.NewContainer(db)

@@ -634,6 +634,10 @@ const messages: FilesMessages = {
     processingHintTitle: '文档解析后才会进入可检索状态',
     processingHintDescription:
       '图片、图标、临时文件和暂不支持的格式会按仅存储处理，不进入文档处理链路。',
+    parserFallbackWarningTitle: '未配置可用的三方解析服务',
+    parserFallbackWarningDescription:
+      '当前未配置可用的三方解析服务。上传并解析时会使用本地解析服务，复杂版式、表格和扫描件效果可能较差。',
+    configureParserService: '去配置解析服务',
     uploadFiles: '上传文件',
     selectedFilesTitle: '已选择 {count} 个文件',
     selectedFilesPendingSummary: '已选择 {count} 个文件，等待上传。',

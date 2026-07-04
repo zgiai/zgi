@@ -34,7 +34,7 @@ const (
 )
 
 type modelLookupRepository interface {
-	ListByNames(ctx context.Context, names []string) ([]*llmmodelmodel.LLMModel, error)
+	ListAvailableByNames(ctx context.Context, names []string, provider string, useCase string) ([]*llmmodelmodel.LLMModel, error)
 }
 
 type cachedModelCapability struct {
@@ -508,7 +508,11 @@ func (v *Validator) resolveModelCapabilities(ctx context.Context, organizationID
 				return nil, newUnregisteredModelError(remaining[0])
 			}
 
-			records, err := v.modelRepo.ListByNames(ctx, remaining)
+			lookupProvider := ""
+			if isProviderScopedPrivateModelValidation(spec) {
+				lookupProvider = spec.LookupProvider
+			}
+			records, err := v.modelRepo.ListAvailableByNames(ctx, remaining, lookupProvider, "")
 			if err != nil {
 				return nil, fmt.Errorf("failed to load model metadata: %w", err)
 			}

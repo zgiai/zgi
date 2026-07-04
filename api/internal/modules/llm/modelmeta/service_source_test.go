@@ -56,6 +56,46 @@ func TestSyncAllProvidersUsesRemoteProviderDiscovery(t *testing.T) {
 	require.Equal(t, "qwen", requestedModelsProvider)
 }
 
+func TestSyncAllProvidersPaginatesRemoteProviderDiscovery(t *testing.T) {
+	requestedProviderPages := make(map[string]bool)
+	requestedModelProviders := make(map[string]bool)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/providers":
+			page := r.URL.Query().Get("page")
+			requestedProviderPages[page] = true
+			w.Header().Set("Content-Type", "application/json")
+			if page == "1" {
+				_, _ = w.Write([]byte(`{"object":"list","data":[{"provider":"qwen"}],"page":1,"page_size":100,"total":2,"total_pages":2}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"object":"list","data":[{"provider":"openai"}],"page":2,"page_size":100,"total":2,"total_pages":2}`))
+		case "/models":
+			requestedModelProviders[r.URL.Query().Get("provider")] = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"object":"list","data":[],"page":1,"page_size":100,"total":0,"total_pages":1}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	svc := &Service{
+		apiBaseURL: server.URL,
+		httpClient: server.Client(),
+	}
+
+	results, err := svc.SyncAllProviders(context.Background())
+
+	require.NoError(t, err)
+	require.Contains(t, results, "qwen")
+	require.Contains(t, results, "openai")
+	require.True(t, requestedProviderPages["1"])
+	require.True(t, requestedProviderPages["2"])
+	require.True(t, requestedModelProviders["qwen"])
+	require.True(t, requestedModelProviders["openai"])
+}
+
 func TestSyncProviderModelsFullSyncMarksMissingActiveModelsDeprecated(t *testing.T) {
 	db := newCatalogApplyTestDB(t)
 	insertCatalogApplyProvider(t, db, "qwen", false)

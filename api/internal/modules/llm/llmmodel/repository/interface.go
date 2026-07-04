@@ -16,7 +16,7 @@ type ModelRepository interface {
 	ListAvailableByNames(ctx context.Context, names []string, provider string, useCase string) ([]*model.LLMModel, error)
 	ListAvailableFiltered(ctx context.Context, provider string, useCase string) ([]*model.LLMModel, error)
 	GetByProviderAndName(ctx context.Context, provider string, name string) (*model.LLMModel, error)
-	List(ctx context.Context, providerID *uuid.UUID, provider string, useCase string, isActive *bool, offset, limit int) ([]*model.LLMModel, int64, error)
+	List(ctx context.Context, providerID *uuid.UUID, provider string, useCase string, status string, isActive *bool, offset, limit int) ([]*model.LLMModel, int64, error)
 	Update(ctx context.Context, m *model.LLMModel) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	ListByProvider(ctx context.Context, providerID string) ([]*model.LLMModel, error)

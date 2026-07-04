@@ -252,11 +252,6 @@ func (s *hitTestingService) Retrieve(ctx context.Context, dataset *dataset_model
 	options := s.getRetrievalOptions(ctx, retrievalModel, dataset)
 	options.RetrievalMode = retrievalMode
 
-	// For hit-testing endpoints, we want to run all available searches regardless of SearchMethod.
-	// SearchMethod filtering should only apply to workflow knowledge retrieval nodes.
-	// Setting SearchMethod to empty string ensures all vector searches run when RetrievalMode is "vector" or "hybrid".
-	options.SearchMethod = ""
-
 	if options.TopK > limit {
 		options.TopK = limit
 	}
@@ -362,11 +357,11 @@ func (s *hitTestingService) Retrieve(ctx context.Context, dataset *dataset_model
 // getRetrievalOptions Get retrieval options
 func (s *hitTestingService) getRetrievalOptions(ctx context.Context, retrievalModel map[string]interface{}, dataset *dataset_model.Dataset) *RetrievalOptions {
 	options := &RetrievalOptions{
-		TopK:                  2, // Default retrieval limit
-		SearchMethod:          "semantic_search",
-		ScoreThreshold:        0.0,
-		ScoreThresholdEnabled: false,
-		RerankingEnable:       false,
+		TopK:                  10, // Default retrieval limit
+		SearchMethod:          "hybrid_search",
+		ScoreThreshold:        0.35,
+		ScoreThresholdEnabled: true,
+		RerankingEnable:       true,
 		RerankingMode:         "reranking_model", // Default reranking mode
 		PreQAExtension:        false,             // Default value for PreQAExtension
 		HopDepth:              3,                 // Knowledge graph search depth (Normal/Single mode)
@@ -387,8 +382,6 @@ func (s *hitTestingService) getRetrievalOptions(ctx context.Context, retrievalMo
 		model = map[string]interface{}(dataset.RetrievalConfig)
 	}
 
-	rerankExplicitlyDisabled := false
-
 	if model != nil {
 		if k, ok := model["top_k"].(float64); ok {
 			options.TopK = int(k)
@@ -404,9 +397,6 @@ func (s *hitTestingService) getRetrievalOptions(ctx context.Context, retrievalMo
 		}
 		if rerankEnable, ok := model["reranking_enable"].(bool); ok {
 			options.RerankingEnable = rerankEnable
-			if !rerankEnable {
-				rerankExplicitlyDisabled = true
-			}
 		}
 		if rerankModel, ok := model["reranking_model"].(map[string]interface{}); ok {
 			options.RerankingModel = rerankModel
@@ -453,23 +443,31 @@ func (s *hitTestingService) getRetrievalOptions(ctx context.Context, retrievalMo
 		}
 	}
 
-	// Auto-enable Reranking if available and not explicitly disabled
-	// This helps with queries like "Who is X?" by bridging the semantic gap
-	if !options.RerankingEnable && !rerankExplicitlyDisabled {
+	options.SearchMethod = normalizeVectorSearchMethod(options.SearchMethod)
+
+	// Reranking is mandatory for vector/BM25 retrieval. Graph-only results are not
+	// doc-backed chunks and cannot be sent to the reranker.
+	options.RerankingEnable = options.SearchMethod != "graph_search"
+	if options.RerankingEnable && !isValidRerankingModelConfig(options.RerankingModel) {
 		resolvedModel, err := llmruntime.NewModelResolver(s.defaultModelSvc).ResolveDefault(ctx, dataset.OrganizationID, shared_model.ModelTypeRerank)
 		if err == nil && resolvedModel != nil {
-			logger.Info("Auto-enabling Reranking with default model", map[string]interface{}{
+			logger.Info("Using default rerank model", map[string]interface{}{
 				"dataset_id": dataset.ID,
 				"model":      resolvedModel.Model,
 				"provider":   resolvedModel.Provider,
 			})
-			options.RerankingEnable = true
-			if options.RerankingModel == nil {
-				options.RerankingModel = map[string]interface{}{
-					"reranking_provider_name": resolvedModel.Provider,
-					"reranking_model_name":    resolvedModel.Model,
-				}
+			options.RerankingModel = map[string]interface{}{
+				"reranking_provider_name": resolvedModel.Provider,
+				"reranking_model_name":    resolvedModel.Model,
 			}
+		} else if err != nil {
+			logger.Warn("Failed to resolve mandatory rerank model; retrieval will fall back to fused ordering if rerank is unavailable", map[string]interface{}{
+				"dataset_id": dataset.ID,
+				"error":      err.Error(),
+			})
+			options.RerankingModel = nil
+		} else {
+			options.RerankingModel = nil
 		}
 	}
 
@@ -478,9 +476,9 @@ func (s *hitTestingService) getRetrievalOptions(ctx context.Context, retrievalMo
 		options.ScoreThreshold = 0.0
 	}
 
-	// Warn when semantic search is requested but vector retrieval is unavailable
-	if options.SearchMethod == "semantic_search" && s.retrievalService.vectorRetrieval == nil {
-		logger.Warn("semantic_search selected but vector retrieval is unavailable; falling back to keyword_search with adjusted threshold", map[string]interface{}{
+	// Warn when semantic or hybrid search is requested but vector retrieval is unavailable.
+	if (options.SearchMethod == "semantic_search" || options.SearchMethod == "hybrid_search") && s.retrievalService.vectorRetrieval == nil {
+		logger.Warn("vector retrieval selected but vector retrieval is unavailable; falling back to keyword_search with adjusted threshold", map[string]interface{}{
 			"original_search_method":   options.SearchMethod,
 			"fallback_search_method":   "keyword_search",
 			"original_score_threshold": options.ScoreThreshold,
@@ -497,6 +495,15 @@ func (s *hitTestingService) getRetrievalOptions(ctx context.Context, retrievalMo
 	}
 
 	return options
+}
+
+func isValidRerankingModelConfig(model map[string]interface{}) bool {
+	if model == nil {
+		return false
+	}
+	provider, _ := model["reranking_provider_name"].(string)
+	name, _ := model["reranking_model_name"].(string)
+	return strings.TrimSpace(provider) != "" && strings.TrimSpace(name) != ""
 }
 
 // fallbackRetrieve Fallback retrieval method when primary retrieval method fails

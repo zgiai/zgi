@@ -885,13 +885,13 @@ func shouldAutoEnableLangfuseDirectExport(endpoint string, tracesEndpoint string
 
 func loadModelMetaConfig(cfg *Config, source *envSource) {
 	cfg.ModelMeta = ModelMetaConfig{
-		APIURL: source.string("", envModelMetaAPIURL),
+		APIURL: source.string("https://models.zgi.ai", envModelMetaAPIURL),
 	}
 }
 
 func loadNeo4jConfig(cfg *Config, source *envSource) {
 	cfg.Neo4j = Neo4jConfig{
-		URI:      source.string("bolt://localhost:7687", envNeo4jURI),
+		URI:      source.string("", envNeo4jURI),
 		Username: source.string("neo4j", envNeo4jUsername),
 		Password: source.string("", envNeo4jPassword),
 		Database: source.string("neo4j", envNeo4jDatabase),

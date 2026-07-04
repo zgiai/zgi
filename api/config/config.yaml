@@ -97,4 +97,4 @@ workflow:
   cleanup_timeout: 30     # Timeout for cleanup operations in seconds
 
 modelmeta:
-  api_url: "https://api.modelmeta.dev"  # ZGI appends /v1 internally; leave empty to disable remote sync.
+  api_url: "https://models.zgi.ai"  # ZGI appends /v1 internally.

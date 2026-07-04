@@ -60,6 +60,8 @@ type PublishedModel struct {
 	InputPrice             float64
 	OutputPrice            float64
 	CachedInputPrice       float64
+	InputPriceConfigured   bool
+	OutputPriceConfigured  bool
 	UseCases               []string
 	InputModalities        []string
 	OutputModalities       []string
@@ -99,10 +101,13 @@ func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCa
 			if skippedProviders[model.Provider] {
 				continue
 			}
-			if err := txService.upsertPublishedModel(ctx, model); err != nil {
+			applied, err := txService.upsertPublishedModel(ctx, model)
+			if err != nil {
 				return err
 			}
-			modelKeys = append(modelKeys, catalogModelKey{Provider: model.Provider, Model: model.Model})
+			if applied {
+				modelKeys = append(modelKeys, catalogModelKey{Provider: model.Provider, Model: model.Model})
+			}
 		}
 		if _, err := txService.markMissingModelsDeprecated(ctx, modelKeys); err != nil {
 			return err
@@ -139,20 +144,20 @@ func (s *Service) upsertPublishedProvider(ctx context.Context, provider Publishe
 	return false, s.updatePublishedProvider(ctx, existing.ID, provider)
 }
 
-func (s *Service) upsertPublishedModel(ctx context.Context, model PublishedModel) error {
+func (s *Service) upsertPublishedModel(ctx context.Context, model PublishedModel) (bool, error) {
 	existing, err := s.findExistingPublishedModel(ctx, model.Provider, model.Model)
 	if err == gorm.ErrRecordNotFound {
-		return s.createPublishedModel(ctx, model)
+		return true, s.createPublishedModel(ctx, model)
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if existing.DeletedAt.Valid {
-		return nil
+		return false, nil
 	}
 
-	return s.updatePublishedModel(ctx, existing.ID, model)
+	return true, s.updatePublishedModel(ctx, existing.ID, model)
 }
 
 type existingProviderForSync struct {
@@ -317,6 +322,15 @@ func (s *Service) markMissingModelsDeprecated(ctx context.Context, appliedModels
 		"status":     llmmodel.ModelStatusDeprecated,
 		"updated_at": time.Now().UTC(),
 	}
+	if hasColumn(s.db, "llm_models", "replacement_provider") {
+		updates["replacement_provider"] = ""
+	}
+	if hasColumn(s.db, "llm_models", "replacement_model") {
+		updates["replacement_model"] = ""
+	}
+	if hasColumn(s.db, "llm_models", "deprecation_reason") {
+		updates["deprecation_reason"] = ""
+	}
 	tx := query.Updates(updates)
 	if tx.Error != nil {
 		return 0, tx.Error
@@ -440,6 +454,12 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 		"cached_input_price": normalizePublishedPrice(model.CachedInputPrice),
 	}
 
+	if hasColumn(db, "llm_models", "input_price_configured") {
+		values["input_price_configured"] = model.InputPriceConfigured
+	}
+	if hasColumn(db, "llm_models", "output_price_configured") {
+		values["output_price_configured"] = model.OutputPriceConfigured
+	}
 	if hasColumn(db, "llm_models", "family_default") {
 		values["family_default"] = model.FamilyDefault
 	}
@@ -458,6 +478,7 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 	if len(model.ConfigParameters) > 0 && hasColumn(db, "llm_models", "config_parameters") {
 		values["config_parameters"] = serializeConfigParameters(model.ConfigParameters)
 	}
+	applyPublishedLifecycleColumns(db, values, model)
 
 	endpointColumns := endpointColumnsForPublishedModel(useCases, model.Endpoints, model.EndpointsAuthoritative)
 	for key, value := range endpointColumns {
@@ -475,7 +496,6 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 			values[key] = value
 		}
 	}
-	applyPublishedLifecycleColumns(db, values, model)
 
 	return values
 }

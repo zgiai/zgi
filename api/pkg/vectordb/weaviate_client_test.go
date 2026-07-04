@@ -3,8 +3,10 @@ package vectordb
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/zgiai/zgi/api/config"
@@ -187,5 +189,63 @@ func TestWeaviateDeleteObjectsByFieldDoesNotTreatEndpointNotFoundAsMissingClass(
 
 	if err := client.DeleteObjectsByField(context.Background(), "Dataset_1", "document_id", "doc-1"); err == nil {
 		t.Fatalf("endpoint 404 should return an error")
+	}
+}
+
+func TestWeaviateSearchByFullTextRequestsBM25Score(t *testing.T) {
+	var graphQLBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/schema":
+			_, _ = w.Write([]byte(`{"classes":[{"class":"Dataset_1"}]}`))
+		case "/v1/graphql":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read graphql body: %v", err)
+			}
+			graphQLBody = string(body)
+			_, _ = w.Write([]byte(`{
+				"data": {
+					"Get": {
+						"Dataset_1": [
+							{
+								"_additional": {"id": "chunk-1", "score": 7.25},
+								"doc_id": "chunk-1",
+								"dataset_id": "dataset-1",
+								"document_id": "document-1",
+								"doc_hash": "hash-1",
+								"text": "invoice 2026"
+							}
+						]
+					}
+				}
+			}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := NewWeaviateClient(&config.VectorStoreConfig{WeaviateEndpoint: server.URL})
+	results, err := client.SearchByFullText(context.Background(), "Dataset_1", "invoice", 3)
+	if err != nil {
+		t.Fatalf("SearchByFullText returned error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("result count = %d, want 1", len(results))
+	}
+	if !strings.Contains(graphQLBody, "score") {
+		t.Fatalf("graphql query did not request _additional.score: %s", graphQLBody)
+	}
+	if strings.Contains(graphQLBody, "vector") {
+		t.Fatalf("graphql query should not request vector payload for BM25: %s", graphQLBody)
+	}
+	additional, ok := results[0]["_additional"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing _additional in result: %#v", results[0])
+	}
+	if additional["score"] != 7.25 {
+		t.Fatalf("score = %#v, want 7.25", additional["score"])
 	}
 }

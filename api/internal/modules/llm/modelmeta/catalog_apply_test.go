@@ -13,20 +13,20 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestFeatureColumnsForPublishedModelIncludesAttachment(t *testing.T) {
-	values := featureColumnsForPublishedModel(&llmmodel.ModelFeatures{
-		Attachment: true,
-	}, nil)
-
-	require.True(t, values["attachment"])
-}
-
 type catalogApplyCacheInvalidatorFake struct {
 	calls int
 }
 
 func (f *catalogApplyCacheInvalidatorFake) InvalidateModelCache(context.Context) {
 	f.calls++
+}
+
+func TestFeatureColumnsForPublishedModelIncludesAttachment(t *testing.T) {
+	values := featureColumnsForPublishedModel(&llmmodel.ModelFeatures{
+		Attachment: true,
+	}, nil)
+
+	require.True(t, values["attachment"])
 }
 
 func openCatalogApplyTestDB(t *testing.T) *gorm.DB {
