@@ -113,7 +113,9 @@ func applyPricingQuoteToBillingContext(bc *BillingContext, quote PricingQuote) {
 	bc.OutputCost = decimal.NewFromInt(quote.OutputCredits)
 	bc.TotalCost = decimal.NewFromInt(quote.TotalCredits)
 	bc.PricingSource = quote.PricingSource
-	bc.UsageSource = quote.UsageSource
+	if bc.UsageSource != UsageSourceEstimatedUsage && quote.UsageSource != "" {
+		bc.UsageSource = quote.UsageSource
+	}
 	bc.PricingSnapshot = quote.PricingSnapshot
 }
 

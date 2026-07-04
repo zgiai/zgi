@@ -234,6 +234,14 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 		return nil, callErr
 	}
 
+	if !providerSelection.UseSystemProvider {
+		usage, estimated := s.completeChatUsageFromText(normalizedReq, response.Usage, chatResponseText(response), 0)
+		response.Usage = usage
+		if estimated {
+			markEstimatedUsageSource(billingCtx, response.Usage)
+		}
+	}
+
 	// Success - settle billing
 	tSettle := time.Now()
 	if err := s.settleChatSuccess(ctx, billingCtx, providerSelection, channelID, response.Usage, response.Settlement, responseTime); err != nil {

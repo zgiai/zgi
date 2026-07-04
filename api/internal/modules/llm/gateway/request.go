@@ -493,10 +493,12 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 	}
 
 	if decision.UseSystemProvider {
-		if usage != nil {
+		if hasBillableTokenUsage(usage) {
 			billingCtx.PromptTokens = usage.PromptTokens
 			billingCtx.CompletionTokens = usage.CompletionTokens
 			billingCtx.TotalTokens = usage.TotalTokens
+		} else {
+			clearBillingContextTokenUsage(billingCtx)
 		}
 		billingCtx.Status = "success"
 		billingCtx.ResponseTime = responseTime
@@ -576,6 +578,15 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 	return nil
 }
 
+func clearBillingContextTokenUsage(billingCtx *BillingContext) {
+	if billingCtx == nil {
+		return
+	}
+	billingCtx.PromptTokens = 0
+	billingCtx.CompletionTokens = 0
+	billingCtx.TotalTokens = 0
+}
+
 // settleEmbeddingsSuccess settles billing for a successful embeddings/rerank completion
 func (s *llmGatewayServiceImpl) settleEmbeddingsSuccess(
 	ctx context.Context,
@@ -617,6 +628,20 @@ func (s *llmGatewayServiceImpl) settleEmbeddingsSuccess(
 			s.healthTracker.RecordSuccess(*channelID)
 		}
 		return nil
+	}
+
+	if actualTokens <= 0 {
+		providerName := ""
+		modelName := ""
+		if providerSelection != nil {
+			providerName = providerSelection.Provider.Provider
+			modelName = providerSelection.Model.Model
+		}
+		err := missingTokenUsageError(providerName, modelName)
+		if settleErr := s.handleProviderError(ctx, billingCtx, providerSelection, channelID, responseTime, 0, err); settleErr != nil {
+			return settleErr
+		}
+		return err
 	}
 
 	quote, err := s.quoteTokenPricingForSettlement(ctx, billingCtx, pricingModelRefFromBillingContext(billingCtx), actualTokens, 0)

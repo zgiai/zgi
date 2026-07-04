@@ -68,6 +68,19 @@ func TestBuildUsageBill_NormalizesTimes(t *testing.T) {
 			t.Fatalf("SettledAt=%s before RequestCreatedAt=%s", bill.SettledAt, bill.RequestCreatedAt)
 		}
 	})
+
+	t.Run("writes usage source column", func(t *testing.T) {
+		found := false
+		for _, column := range usageBillUpsertColumns {
+			if column == "usage_source" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("usageBillUpsertColumns does not contain %q", "usage_source")
+		}
+	})
 }
 
 func TestBuildUsageBill_PartialKeepsRecordedUsageAndPoints(t *testing.T) {

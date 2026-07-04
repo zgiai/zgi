@@ -395,13 +395,8 @@ func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
 			continue
 		}
 
-		// Parse SSE format
-		name, data, ok := strings.Cut(line, ":")
-		if ok && name == "data" {
-			if strings.HasPrefix(data, " ") {
-				data = strings.TrimPrefix(data, " ")
-			}
-
+		// Parse SSE data lines. Both "data: value" and "data:value" are valid.
+		if data, ok := parseSSEDataLine(line); ok {
 			// [DONE] indicates stream end
 			if data == "[DONE]" {
 				close(dataChan)
@@ -428,6 +423,17 @@ func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
 	}
 
 	close(dataChan)
+}
+
+func parseSSEDataLine(line string) (string, bool) {
+	name, value, ok := strings.Cut(line, ":")
+	if !ok || name != "data" {
+		return "", false
+	}
+	if strings.HasPrefix(value, " ") {
+		value = strings.TrimPrefix(value, " ")
+	}
+	return value, true
 }
 
 // ParseSSEEvents parses Server-Sent Events while preserving event names and raw data.

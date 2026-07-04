@@ -428,9 +428,9 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 		}
 
 		// Collect text chunks for tracing (non-blocking, best effort)
-		if response.Choices != nil && len(response.Choices) > 0 {
-			if content, ok := response.Choices[0].Delta.Content.(string); ok && content != "" {
-				collectedChunks.WriteString(content)
+		for _, choice := range response.Choices {
+			if text := messageCompletionText(choice.Delta); strings.TrimSpace(text) != "" {
+				collectedChunks.WriteString(text)
 			}
 		}
 
@@ -470,6 +470,29 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 			s.healthTracker.RecordFailure(ctx, *channelID, autoBan)
 		}
 	} else {
+		if settlement == nil && !useSystemProvider {
+			var currentUsage *adapter.Usage
+			if sawUsage {
+				currentUsage = &adapter.Usage{
+					PromptTokens:     totalPromptTokens,
+					CompletionTokens: totalCompletionTokens,
+					TotalTokens:      totalPromptTokens + totalCompletionTokens,
+				}
+			} else if doneResponse != nil {
+				currentUsage = doneResponse.Usage
+			}
+			if estimated, estimatedUsage := s.completeChatUsageFromText(req, currentUsage, collectedChunks.String(), totalPromptTokens); estimated != nil && (!sawUsage || estimatedUsage) {
+				sawUsage = true
+				totalPromptTokens = estimated.PromptTokens
+				totalCompletionTokens = estimated.CompletionTokens
+				if estimatedUsage {
+					markEstimatedUsageSource(billingCtx, estimated)
+				}
+				if doneResponse != nil {
+					doneResponse.Usage = estimated
+				}
+			}
+		}
 		if !sawUsage && settlement == nil {
 			modelName := ""
 			if llmModel != nil {
@@ -528,10 +551,13 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 			return
 		}
 
-		// Use estimated tokens (already set from billingCtx)
-		billingCtx.PromptTokens = totalPromptTokens
-		billingCtx.CompletionTokens = totalCompletionTokens
-		billingCtx.TotalTokens = totalPromptTokens + totalCompletionTokens
+		if useSystemProvider && !sawUsage {
+			clearBillingContextTokenUsage(billingCtx)
+		} else {
+			billingCtx.PromptTokens = totalPromptTokens
+			billingCtx.CompletionTokens = totalCompletionTokens
+			billingCtx.TotalTokens = totalPromptTokens + totalCompletionTokens
+		}
 
 		billingCtx.Status = billingContextStatusSuccess
 
