@@ -254,6 +254,44 @@ func TestContractFieldExtractorSystemSkillMetadata(t *testing.T) {
 	}
 }
 
+func TestDefaultRuntimeUsesEmbeddedSystemCatalog(t *testing.T) {
+	previousWorkingDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(previousWorkingDir); err != nil {
+			t.Fatalf("failed to restore working directory: %v", err)
+		}
+	})
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+
+	runtime := NewRuntime(nil, nil)
+	if !runtime.SystemSkillExists(SkillFileGenerator) {
+		t.Fatalf("expected embedded %s skill to exist", SkillFileGenerator)
+	}
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillFileGenerator})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillFileGenerator)
+	if !ok {
+		t.Fatalf("file generator skill was not resolved")
+	}
+	if len(doc.Metadata.References) == 0 {
+		t.Fatalf("embedded file generator references are empty")
+	}
+	content, _, err := runtime.ReadReference(context.Background(), resolved, SkillFileGenerator, "format-md.md")
+	if err != nil {
+		t.Fatalf("ReadReference() error = %v", err)
+	}
+	if !strings.Contains(content, "Markdown") {
+		t.Fatalf("embedded reference content looks wrong: %q", content)
+	}
+}
+
 func TestSchedulePlannerSystemSkillMetadata(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillSchedulePlanner})

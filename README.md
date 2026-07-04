@@ -117,6 +117,8 @@ make dev-web
 Read the product documentation at [`docs.zgi.ai`](https://docs.zgi.ai).
 
 Repository-local README files are kept for development and contribution notes.
+For deployment behavior such as the embedded system skill catalog, see
+[`docker/README.md`](docker/README.md#system-skill-catalog).
 
 ## Contributing
 

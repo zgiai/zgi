@@ -181,6 +181,7 @@ type SkillReference struct {
 	Path     string `json:"path"`
 	Name     string `json:"name"`
 	FullPath string `json:"-"`
+	Embedded bool   `json:"-"`
 }
 
 type SkillTrace struct {

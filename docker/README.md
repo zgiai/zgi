@@ -97,6 +97,20 @@ Local default endpoints:
 On first launch, open the gateway URL and create the first administrator account.
 ZGI does not ship with a default administrator account. Use your own email and a strong password.
 
+## System Skill Catalog
+
+The API ships with the built-in system skill catalog embedded in the Go binary.
+This means a Docker image or standalone API binary can start with the default
+skills available even when the source tree is not mounted beside the process.
+
+For local development, if `api/internal/modules/skills/catalog` exists on disk,
+the API reads that directory first so contributors can edit catalog files and
+rebuild normally. If that directory is not present, the embedded catalog is used
+automatically.
+
+Custom skills are still loaded from the workspace storage path and are not
+embedded in the binary.
+
 ## AIChat / Agent Knowledge Smoke Checks
 
 When smoke testing local AIChat or Agent knowledge retrieval changes, rebuild the
