@@ -3,9 +3,12 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -220,6 +223,47 @@ func TestPricingEngineQuoteTokensSpecificAdminRuleBeatsEarlierWildcard(t *testin
 	}
 }
 
+func TestPricingEngineQuoteTokensPreservesConfiguredInputWhenOutputFallsBack(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	modelID := uuid.New()
+	insertPricingModel(t, db, modelID, "openai", "5", "0", true, false, "[]")
+
+	_, err := SavePricingFallbackConfig(context.Background(), db, UpdatePricingFallbackRequest{
+		Enabled: true,
+		OverrideRules: []PricingFallbackRule{
+			{
+				ID:                  "token.chat.input.override",
+				Operation:           PricingOperationChat,
+				Meter:               PricingMeterInputToken,
+				PriceUSDPer1MTokens: "9",
+			},
+			{
+				ID:                  "token.chat.output.override",
+				Operation:           PricingOperationChat,
+				Meter:               PricingMeterOutputToken,
+				PriceUSDPer1MTokens: "4",
+			},
+		},
+	}, "test")
+	if err != nil {
+		t.Fatalf("save override: %v", err)
+	}
+
+	quote, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
+		ModelID: modelID,
+		Source:  PricingModelSourceGlobal,
+	}, 1000, 1000)
+	if err != nil {
+		t.Fatalf("QuoteTokens returned error: %v", err)
+	}
+	if quote.InputCredits != 5000 || quote.OutputCredits != 4000 {
+		t.Fatalf("credits = %d/%d, want configured input 5000 and fallback output 4000", quote.InputCredits, quote.OutputCredits)
+	}
+	if quote.InputRuleID != "" || quote.OutputRuleID != "token.chat.output.override" {
+		t.Fatalf("rule ids = %q/%q, want only output fallback rule", quote.InputRuleID, quote.OutputRuleID)
+	}
+}
+
 func TestPricingEngineQuoteTokensFailsWhenFallbackDisabled(t *testing.T) {
 	db := openPricingEngineTestDB(t)
 	if _, err := SavePricingFallbackConfig(context.Background(), db, UpdatePricingFallbackRequest{Enabled: false}, "test"); err != nil {
@@ -280,6 +324,44 @@ func TestPricingEngineQuoteImageUsesCodeFallbackAndMultipliesCount(t *testing.T)
 	}
 }
 
+func TestPricingEngineQuoteImagePreservesLegacyModelPrices(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	modelID := uuid.New()
+	insertPricingModel(t, db, modelID, "openai", "1", "2", false, false, "[]")
+	n := 2
+
+	quote, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{
+		ModelID: modelID,
+		Source:  PricingModelSourceGlobal,
+	}, &adapter.ImageRequest{Model: "legacy-image", N: &n})
+	if err != nil {
+		t.Fatalf("QuoteImage returned error: %v", err)
+	}
+	if quote.TotalCredits != 6000000 {
+		t.Fatalf("total credits = %d, want legacy USD price 6000000", quote.TotalCredits)
+	}
+	if quote.PricingSource != PricingSourceUpstreamModelPrice {
+		t.Fatalf("pricing source = %q, want upstream", quote.PricingSource)
+	}
+}
+
+func TestPricingEngineQuoteImageCanonicalizesProviderAlias(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	modelID := uuid.New()
+	insertPricingModelNamed(t, db, modelID, "dashscope", "wanx-image", "0", "0", false, false, "[]")
+
+	quote, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{
+		ModelID: modelID,
+		Source:  PricingModelSourceGlobal,
+	}, &adapter.ImageRequest{Model: "wanx-image"})
+	if err != nil {
+		t.Fatalf("QuoteImage returned error: %v", err)
+	}
+	if quote.TotalCredits != 160 {
+		t.Fatalf("total credits = %d, want qwen alias default 160", quote.TotalCredits)
+	}
+}
+
 func TestPricingEngineQuoteImageSnapshotExplainsTheBill(t *testing.T) {
 	db := openPricingEngineTestDB(t)
 	n := 2
@@ -297,6 +379,65 @@ func TestPricingEngineQuoteImageSnapshotExplainsTheBill(t *testing.T) {
 	}
 	if snapshot["credits_per_image"] != float64(160) || snapshot["image_count"] != float64(2) {
 		t.Fatalf("snapshot = %#v, want qwen credits_per_image=160 image_count=2", snapshot)
+	}
+}
+
+func TestPricingEngineQuoteTokensUsesPassthroughIdentityForFallback(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	_, err := SavePricingFallbackConfig(context.Background(), db, UpdatePricingFallbackRequest{
+		Enabled: true,
+		OverrideRules: []PricingFallbackRule{
+			{
+				ID:                  "token.chat.input.wildcard",
+				Operation:           PricingOperationChat,
+				Meter:               PricingMeterInputToken,
+				Provider:            "*",
+				Model:               "*",
+				PriceUSDPer1MTokens: "9",
+			},
+			{
+				ID:                  "token.chat.output.wildcard",
+				Operation:           PricingOperationChat,
+				Meter:               PricingMeterOutputToken,
+				Provider:            "*",
+				Model:               "*",
+				PriceUSDPer1MTokens: "9",
+			},
+			{
+				ID:                  "token.chat.input.deepseek",
+				Operation:           PricingOperationChat,
+				Meter:               PricingMeterInputToken,
+				Provider:            "deepseek",
+				Model:               "deepseek-chat",
+				PriceUSDPer1MTokens: "3",
+			},
+			{
+				ID:                  "token.chat.output.deepseek",
+				Operation:           PricingOperationChat,
+				Meter:               PricingMeterOutputToken,
+				Provider:            "deepseek",
+				Model:               "deepseek-chat",
+				PriceUSDPer1MTokens: "4",
+			},
+		},
+	}, "test")
+	if err != nil {
+		t.Fatalf("save override: %v", err)
+	}
+
+	quote, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
+		Source:   PricingModelSourcePassthrough,
+		Provider: "deepseek",
+		Model:    "deepseek-chat",
+	}, 1000, 1000)
+	if err != nil {
+		t.Fatalf("QuoteTokens returned error: %v", err)
+	}
+	if quote.TotalCredits != 7000 {
+		t.Fatalf("total credits = %d, want passthrough-specific rule credits 7000", quote.TotalCredits)
+	}
+	if quote.InputRuleID != "token.chat.input.deepseek" || quote.OutputRuleID != "token.chat.output.deepseek" {
+		t.Fatalf("rule ids = %q/%q, want deepseek-specific rules", quote.InputRuleID, quote.OutputRuleID)
 	}
 }
 
@@ -523,6 +664,42 @@ func TestPricingEngineHasColumnCachesResult(t *testing.T) {
 	}
 	if !engine.hasColumn("llm_models", "image_prices") {
 		t.Fatalf("second hasColumn returned false, want cached true after table drop")
+	}
+}
+
+func TestPricingFallbackSuperAdminRequired(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := openPricingEngineTestDB(t)
+	if err := db.Exec(`CREATE TABLE accounts (
+		id text PRIMARY KEY,
+		is_super_admin boolean,
+		deleted_at datetime
+	)`).Error; err != nil {
+		t.Fatalf("create accounts: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO accounts (id, is_super_admin) VALUES ('regular', false), ('super', true)`).Error; err != nil {
+		t.Fatalf("insert accounts: %v", err)
+	}
+
+	handler := NewPricingFallbackHandler(db)
+	statusFor := func(accountID string) int {
+		router := gin.New()
+		router.GET("/pricing/fallback",
+			func(c *gin.Context) { c.Set("account_id", accountID) },
+			handler.SuperAdminRequired(),
+			func(c *gin.Context) { c.Status(http.StatusNoContent) },
+		)
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/pricing/fallback", nil)
+		router.ServeHTTP(recorder, req)
+		return recorder.Code
+	}
+
+	if got := statusFor("regular"); got != http.StatusForbidden {
+		t.Fatalf("regular status = %d, want 403", got)
+	}
+	if got := statusFor("super"); got != http.StatusNoContent {
+		t.Fatalf("super status = %d, want 204", got)
 	}
 }
 

@@ -32,6 +32,8 @@ type PricingModelRef struct {
 	ModelID   uuid.UUID
 	Source    PricingModelSource
 	Operation PricingOperation
+	Provider  string
+	Model     string
 }
 
 type PricingQuote struct {
@@ -157,6 +159,8 @@ func (e *pricingEngine) QuoteImage(ctx context.Context, ref PricingModelRef, req
 		ModelID:   ref.ModelID,
 		Source:    ref.Source,
 		Operation: PricingOperationImage,
+		Provider:  ref.Provider,
+		Model:     ref.Model,
 	})
 
 	model, found, err := e.loadModel(ctx, ref)
@@ -187,6 +191,9 @@ func (e *pricingEngine) QuoteImage(ctx context.Context, ref PricingModelRef, req
 			if matchImagePricingRule(&r, prices, &matched) {
 				return quoteConfiguredImageRule(model, &r, matched, count)
 			}
+		}
+		if !configured && legacyImagePriceConfigured(model) {
+			return quoteLegacyImagePrice(model, &r, count)
 		}
 	}
 
@@ -224,37 +231,52 @@ func (e *pricingEngine) quoteTokensWithFallback(
 		return PricingQuote{}, fmt.Errorf("missing token pricing and fallback pricing is disabled")
 	}
 
-	provider, modelName := pricingModelIdentity(model, found)
+	provider, modelName := pricingModelIdentity(ref, model, found)
 	var inputRule PricingFallbackRule
 	var outputRule PricingFallbackRule
 	var inputPrice decimal.Decimal
 	var outputPrice decimal.Decimal
 	var ruleIDs []string
+	inputFromModel := false
+	outputFromModel := false
 
 	if requiredPrices.input {
-		inputRule, err = findTokenFallbackRule(config.EffectiveRules, ref.Operation, PricingMeterInputToken, provider, modelName)
-		if err != nil {
-			return PricingQuote{}, err
+		if model != nil && model.InputPriceConfigured {
+			inputPrice = model.InputPrice
+			inputFromModel = true
+		} else {
+			inputRule, err = findTokenFallbackRule(config.EffectiveRules, ref.Operation, PricingMeterInputToken, provider, modelName)
+			if err != nil {
+				return PricingQuote{}, err
+			}
+			inputPrice, err = parseFallbackTokenPrice(inputRule)
+			if err != nil {
+				return PricingQuote{}, err
+			}
+			ruleIDs = append(ruleIDs, inputRule.ID)
 		}
-		inputPrice, err = parseFallbackTokenPrice(inputRule)
-		if err != nil {
-			return PricingQuote{}, err
-		}
-		ruleIDs = append(ruleIDs, inputRule.ID)
 	}
 	if requiredPrices.output {
-		outputRule, err = findTokenFallbackRule(config.EffectiveRules, ref.Operation, PricingMeterOutputToken, provider, modelName)
-		if err != nil {
-			return PricingQuote{}, err
+		if model != nil && model.OutputPriceConfigured {
+			outputPrice = model.OutputPrice
+			outputFromModel = true
+		} else {
+			outputRule, err = findTokenFallbackRule(config.EffectiveRules, ref.Operation, PricingMeterOutputToken, provider, modelName)
+			if err != nil {
+				return PricingQuote{}, err
+			}
+			outputPrice, err = parseFallbackTokenPrice(outputRule)
+			if err != nil {
+				return PricingQuote{}, err
+			}
+			ruleIDs = append(ruleIDs, outputRule.ID)
 		}
-		outputPrice, err = parseFallbackTokenPrice(outputRule)
-		if err != nil {
-			return PricingQuote{}, err
-		}
-		ruleIDs = append(ruleIDs, outputRule.ID)
 	}
 
-	source := fallbackPricingSource(inputRule, outputRule)
+	source := PricingSourceUpstreamModelPrice
+	if len(ruleIDs) > 0 {
+		source = fallbackPricingSource(inputRule, outputRule)
+	}
 	ruleID := strings.Join(ruleIDs, ",")
 	inputUSD := tokenUSD(inputPrice, promptTokens)
 	outputUSD := tokenUSD(outputPrice, completionTokens)
@@ -273,6 +295,8 @@ func (e *pricingEngine) quoteTokensWithFallback(
 		"output_rule_id":                 outputRule.ID,
 		"input_rule_source":              inputRule.PricingSource,
 		"output_rule_source":             outputRule.PricingSource,
+		"input_price_from_model":         inputFromModel,
+		"output_price_from_model":        outputFromModel,
 	})
 
 	quote := newUSDQuote(inputUSD, outputUSD, source, ruleID, UsageSourceProviderUsage, snapshot)
@@ -303,7 +327,8 @@ func (e *pricingEngine) quoteImageWithFallback(
 		return PricingQuote{}, fmt.Errorf("missing image pricing and fallback pricing is disabled")
 	}
 
-	provider, modelName := pricingModelIdentity(model, found)
+	provider, modelName := pricingModelIdentity(ref, model, found)
+	provider = canonicalImagePricingProvider(provider)
 	if provider == "" || provider == "*" {
 		provider = inferImagePricingProvider(req)
 	}
@@ -360,8 +385,24 @@ func quoteConfiguredImageRule(model *pricingModelRecord, req *adapter.ImageReque
 	}, nil
 }
 
+func legacyImagePriceConfigured(model *pricingModelRecord) bool {
+	if model == nil {
+		return false
+	}
+	return model.InputPriceConfigured ||
+		model.OutputPriceConfigured ||
+		model.InputPrice.IsPositive() ||
+		model.OutputPrice.IsPositive()
+}
+
+func quoteLegacyImagePrice(model *pricingModelRecord, req *adapter.ImageRequest, count int64) (PricingQuote, error) {
+	totalUSD := model.InputPrice.Add(model.OutputPrice).Mul(decimal.NewFromInt(count))
+	snapshot := legacyImagePricingSnapshot(model, req, count)
+	return newOutputOnlyUSDQuote(totalUSD, PricingSourceUpstreamModelPrice, "", UsageSourceRequestParameters, snapshot), nil
+}
+
 func configuredImagePricingSnapshot(model *pricingModelRecord, req *adapter.ImageRequest, rule llmmodel.PricingRule, count int64, usdPerImage float64, creditsPerImage int64) datatypes.JSON {
-	provider, modelName := pricingModelIdentity(model, model != nil)
+	provider, modelName := pricingModelIdentity(PricingModelRef{}, model, model != nil)
 	return buildPricingSnapshot(map[string]interface{}{
 		"pricing_source":    PricingSourceUpstreamModelPrice,
 		"usage_source":      UsageSourceRequestParameters,
@@ -377,6 +418,26 @@ func configuredImagePricingSnapshot(model *pricingModelRecord, req *adapter.Imag
 		"rule_id":           rule.ID,
 		"usd_per_image":     usdPerImage,
 		"credits_per_image": creditsPerImage,
+	})
+}
+
+func legacyImagePricingSnapshot(model *pricingModelRecord, req *adapter.ImageRequest, count int64) datatypes.JSON {
+	provider, modelName := pricingModelIdentity(PricingModelRef{}, model, model != nil)
+	return buildPricingSnapshot(map[string]interface{}{
+		"pricing_source":       PricingSourceUpstreamModelPrice,
+		"usage_source":         UsageSourceRequestParameters,
+		"operation":            PricingOperationImage,
+		"model_id":             pricingModelID(model),
+		"provider":             provider,
+		"model":                modelName,
+		"request_model":        strings.TrimSpace(req.Model),
+		"size":                 strings.TrimSpace(req.Size),
+		"quality":              strings.TrimSpace(req.Quality),
+		"style":                strings.TrimSpace(req.Style),
+		"image_count":          count,
+		"input_usd_per_image":  model.InputPrice.String(),
+		"output_usd_per_image": model.OutputPrice.String(),
+		"legacy_image_price":   true,
 	})
 }
 
@@ -403,6 +464,8 @@ func normalizePricingModelRef(ref PricingModelRef) PricingModelRef {
 	if ref.Operation == "" {
 		ref.Operation = PricingOperationChat
 	}
+	ref.Provider = strings.TrimSpace(ref.Provider)
+	ref.Model = strings.TrimSpace(ref.Model)
 	return ref
 }
 
@@ -746,11 +809,18 @@ func fallbackPricingSource(inputRule, outputRule PricingFallbackRule) PricingSou
 	return PricingSourceCodeDefaultFallback
 }
 
-func pricingModelIdentity(model *pricingModelRecord, found bool) (string, string) {
-	if !found || model == nil {
-		return "", ""
+func pricingModelIdentity(ref PricingModelRef, model *pricingModelRecord, found bool) (string, string) {
+	provider := strings.TrimSpace(ref.Provider)
+	modelName := strings.TrimSpace(ref.Model)
+	if found && model != nil {
+		if strings.TrimSpace(model.Provider) != "" {
+			provider = strings.TrimSpace(model.Provider)
+		}
+		if strings.TrimSpace(model.Name) != "" {
+			modelName = strings.TrimSpace(model.Name)
+		}
 	}
-	return strings.TrimSpace(model.Provider), strings.TrimSpace(model.Name)
+	return provider, modelName
 }
 
 func pricingModelID(model *pricingModelRecord) string {
@@ -778,6 +848,21 @@ func inferImagePricingProvider(req *adapter.ImageRequest) string {
 		return "openai"
 	default:
 		return "*"
+	}
+}
+
+func canonicalImagePricingProvider(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "dashscope", "alibaba", "aliyun":
+		return "qwen"
+	case "volcengine":
+		return "doubao"
+	case "gcp-imagen":
+		return "gcp"
+	case "mj-proxy":
+		return "midjourney"
+	default:
+		return strings.TrimSpace(provider)
 	}
 }
 

@@ -108,6 +108,44 @@ func RegisterPricingFallbackRoutes(group *gin.RouterGroup, handler *PricingFallb
 	group.PUT("/pricing/fallback", handler.Update)
 }
 
+func (h *PricingFallbackHandler) SuperAdminRequired() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		accountID := strings.TrimSpace(c.GetString("account_id"))
+		if accountID == "" {
+			response.Fail(c, response.ErrUnauthorized)
+			c.Abort()
+			return
+		}
+		if h == nil || h.db == nil {
+			response.Fail(c, response.ErrSystemError)
+			c.Abort()
+			return
+		}
+
+		var row struct {
+			IsSuperAdmin bool `gorm:"column:is_super_admin"`
+		}
+		tx := h.db.WithContext(c.Request.Context()).
+			Table("accounts").
+			Select("is_super_admin").
+			Where("id = ? AND deleted_at IS NULL", accountID).
+			Limit(1).
+			Scan(&row)
+		if tx.Error != nil {
+			response.Fail(c, response.ErrSystemError)
+			c.Abort()
+			return
+		}
+		if tx.RowsAffected == 0 || !row.IsSuperAdmin {
+			response.Fail(c, response.ErrPermissionDenied)
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
 func (h *PricingFallbackHandler) Get(c *gin.Context) {
 	config, err := LoadPricingFallbackConfig(c.Request.Context(), h.db)
 	if err != nil {

@@ -62,7 +62,7 @@ func RegisterConsoleRoutes(r *gin.RouterGroup, m *LLMModule) {
 		}
 		if m.PricingFallbackHandler != nil {
 			pricingFallbackAdmin := llmWithOrg.Group("")
-			pricingFallbackAdmin.Use(middleware.EnterpriseAdminOrOwnerRequired())
+			pricingFallbackAdmin.Use(m.PricingFallbackHandler.SuperAdminRequired())
 			gateway.RegisterPricingFallbackRoutes(pricingFallbackAdmin, m.PricingFallbackHandler)
 		}
 
@@ -212,7 +212,7 @@ func RegisterCommonRoutes(r *gin.RouterGroup, m *LLMModule) {
 	}
 	if m.PricingFallbackHandler != nil {
 		pricingFallbackAdmin := r.Group("")
-		pricingFallbackAdmin.Use(middleware.EnterpriseAdminOrOwnerRequired())
+		pricingFallbackAdmin.Use(m.PricingFallbackHandler.SuperAdminRequired())
 		gateway.RegisterPricingFallbackRoutes(pricingFallbackAdmin, m.PricingFallbackHandler)
 	}
 }

@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/shopspring/decimal"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -61,9 +62,22 @@ func pricingModelRefFromSelection(selection *ProviderSelection) PricingModelRef 
 	if selection == nil {
 		return PricingModelRef{Source: PricingModelSourceGlobal}
 	}
+	provider := strings.TrimSpace(selection.Model.Provider)
+	if provider == "" {
+		provider = strings.TrimSpace(selection.ChannelProvider)
+	}
+	if provider == "" {
+		provider = strings.TrimSpace(selection.Provider.Provider)
+	}
+	model := strings.TrimSpace(selection.Model.Model)
+	if model == "" {
+		model = strings.TrimSpace(selection.Model.ModelName)
+	}
 	return normalizePricingModelRef(PricingModelRef{
-		ModelID: selection.Model.ID,
-		Source:  selection.ModelSource,
+		ModelID:  selection.Model.ID,
+		Source:   selection.ModelSource,
+		Provider: provider,
+		Model:    model,
 	})
 }
 
@@ -75,6 +89,8 @@ func pricingModelRefFromBillingContext(bc *BillingContext) PricingModelRef {
 		ModelID:   bc.ModelID,
 		Source:    bc.ModelSource,
 		Operation: bc.PricingOperation,
+		Provider:  bc.ProviderName,
+		Model:     bc.ModelName,
 	})
 }
 

@@ -38,7 +38,7 @@ func (f *availabilityModelRepoFake) ListAvailableFiltered(context.Context, strin
 func (f *availabilityModelRepoFake) GetByProviderAndName(context.Context, string, string) (*llmmodel.LLMModel, error) {
 	return nil, errors.New("not implemented")
 }
-func (f *availabilityModelRepoFake) List(context.Context, *uuid.UUID, string, string, *bool, int, int) ([]*llmmodel.LLMModel, int64, error) {
+func (f *availabilityModelRepoFake) List(context.Context, *uuid.UUID, string, string, string, *bool, int, int) ([]*llmmodel.LLMModel, int64, error) {
 	return nil, 0, errors.New("not implemented")
 }
 func (f *availabilityModelRepoFake) Update(context.Context, *llmmodel.LLMModel) error {
