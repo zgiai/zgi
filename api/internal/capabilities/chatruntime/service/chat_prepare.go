@@ -10,6 +10,7 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
 	"github.com/zgiai/zgi/api/internal/prompt"
@@ -45,7 +46,7 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
-	conversation, err := s.resolveChatConversation(ctx, scope, caller, req, parts.Query)
+	conversation, err := s.resolveChatConversation(ctx, scope, caller, req, parts)
 	if err != nil {
 		return nil, err
 	}
@@ -241,9 +242,9 @@ func (s *service) getConversation(ctx context.Context, scope Scope, id uuid.UUID
 	return conversation, nil
 }
 
-func (s *service) resolveChatConversation(ctx context.Context, scope Scope, caller Caller, req runtimedto.ChatRequest, query string) (*runtimemodel.Conversation, error) {
+func (s *service) resolveChatConversation(ctx context.Context, scope Scope, caller Caller, req runtimedto.ChatRequest, parts *chatRequestParts) (*runtimemodel.Conversation, error) {
 	if strings.TrimSpace(req.ConversationID) == "" {
-		return s.createConversationForChat(ctx, scope, caller, query)
+		return s.createConversationForChat(ctx, scope, caller, parts)
 	}
 	conversationID, err := uuid.Parse(strings.TrimSpace(req.ConversationID))
 	if err != nil {
@@ -256,8 +257,8 @@ func (s *service) resolveChatConversation(ctx context.Context, scope Scope, call
 	return conversation, nil
 }
 
-func (s *service) createConversationForChat(ctx context.Context, scope Scope, caller Caller, query string) (*runtimemodel.Conversation, error) {
-	fallbackTitle := generateTitle(query)
+func (s *service) createConversationForChat(ctx context.Context, scope Scope, caller Caller, parts *chatRequestParts) (*runtimemodel.Conversation, error) {
+	fallbackTitle := initialConversationTitle()
 	conversation, err := s.CreateConversationForCaller(ctx, scope, caller, fallbackTitle)
 	if err != nil {
 		return nil, err
@@ -265,13 +266,21 @@ func (s *service) createConversationForChat(ctx context.Context, scope Scope, ca
 	if s.titleGen == nil {
 		return conversation, nil
 	}
-	s.generateConversationTitleAsync(ctx, scope, conversation, query, fallbackTitle)
+	s.generateConversationTitleAsync(ctx, scope, conversation, parts, fallbackTitle)
 	return conversation, nil
 }
 
-func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, query, fallbackTitle string) {
+func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, parts *chatRequestParts, fallbackTitle string) {
 	if conversation == nil || s.titleGen == nil {
 		return
+	}
+	query := ""
+	preferredProvider := ""
+	preferredModel := ""
+	if parts != nil {
+		query = parts.Query
+		preferredProvider = parts.Provider
+		preferredModel = parts.ModelName
 	}
 	conversationID := conversation.ID
 	workspaceID := conversation.WorkspaceID
@@ -280,15 +289,18 @@ func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scop
 		defer cancel()
 
 		result, err := s.titleGen.Generate(titleCtx, titlegen.GenerateRequest{
-			OrganizationID: scope.OrganizationID,
-			AccountID:      scope.AccountID,
-			WorkspaceID:    workspaceID,
-			AppID:          conversationID.String(),
-			AppType:        runtimemodel.MessageBillingReasonSourceAIChat,
-			SessionID:      conversationID.String(),
-			ConversationID: conversationID.String(),
-			Messages:       []titlegen.Message{{Role: "user", Content: query}},
-			FallbackTitle:  fallbackTitle,
+			OrganizationID:    scope.OrganizationID,
+			AccountID:         scope.AccountID,
+			WorkspaceID:       workspaceID,
+			AppID:             conversationID.String(),
+			AppType:           runtimemodel.MessageBillingReasonSourceAIChat,
+			SessionID:         conversationID.String(),
+			ConversationID:    conversationID.String(),
+			Messages:          []titlegen.Message{{Role: "user", Content: query}},
+			FallbackTitle:     fallbackTitle,
+			PreferredProvider: preferredProvider,
+			PreferredModel:    preferredModel,
+			PreferredUseCase:  string(llmmodelmodel.UseCaseTextChat),
 		})
 		if err != nil {
 			logger.WarnContext(titleCtx, "failed to generate aichat conversation title", "conversation_id", conversationID.String(), err)

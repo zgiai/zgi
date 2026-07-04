@@ -87,6 +87,8 @@ type ConfigCache interface {
 	GetShadowTenantInfo(ctx context.Context, organizationID uuid.UUID) (*ShadowTenantInfo, error)
 	// InvalidateModel invalidates model cache
 	InvalidateModel(ctx context.Context, id uuid.UUID, name string)
+	// InvalidateModelCache invalidates all cached model records
+	InvalidateModelCache(ctx context.Context)
 	// InvalidateProvider invalidates provider cache
 	InvalidateProvider(ctx context.Context, name string)
 }

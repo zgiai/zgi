@@ -83,7 +83,8 @@ services:
   weaviate:
     profiles:
       - knowledge
-    image: semitechnologies/weaviate:1.23.0
+    image: cr.weaviate.io/semitechnologies/weaviate:1.35.4
+    working_dir: /go/pkg/mod
     environment:
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
       PERSISTENCE_DATA_PATH: /var/lib/weaviate
@@ -91,6 +92,8 @@ services:
       DEFAULT_VECTORIZER_MODULE: none
       ENABLE_MODULES: ""
       CLUSTER_HOSTNAME: node1
+      ENABLE_TOKENIZER_GSE_CH: "true"
+      TOKENIZER_CONCURRENCY_COUNT: "2"
     volumes:
       - weaviate-data:/var/lib/weaviate
     ports:

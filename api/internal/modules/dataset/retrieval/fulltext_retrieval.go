@@ -2,6 +2,8 @@ package retrieval
 
 import (
 	"context"
+	"encoding/json"
+	"strconv"
 
 	"github.com/zgiai/zgi/api/pkg/indexing"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -71,15 +73,15 @@ func (s *FullTextRetrievalService) Search(ctx context.Context, className string,
 			// Successfully used Weaviate BM25 search
 			var searchResults []SearchResult
 			for i, r := range results {
-				// Weaviate BM25 results are ordered by relevance, assign decreasing
-				// scores based on position to avoid threshold filtering
-				positionScore := 1.0 - float64(i)*0.05
-				if positionScore < 0.1 {
-					positionScore = 0.1
+				docID, ok := r["doc_id"].(string)
+				if !ok || docID == "" {
+					continue
 				}
+				bm25Score := extractBM25Score(r, i)
+				score := fallbackBM25RankScore(i)
 				result := SearchResult{
-					ID:    r["doc_id"].(string),
-					Score: positionScore,
+					ID:    docID,
+					Score: score,
 				}
 
 				// Add content if available
@@ -89,9 +91,9 @@ func (s *FullTextRetrievalService) Search(ctx context.Context, className string,
 
 				// Add metadata
 				result.Metadata = make(map[string]interface{})
-				if docID, ok := r["doc_id"].(string); ok {
-					result.Metadata["doc_id"] = docID
-				}
+				result.Metadata["doc_id"] = docID
+				result.Metadata["bm25_score"] = bm25Score
+				result.Metadata["bm25_rank_score"] = score
 				if datasetID, ok := r["dataset_id"].(string); ok {
 					result.Metadata["dataset_id"] = datasetID
 				}
@@ -122,17 +124,64 @@ func (s *FullTextRetrievalService) Search(ctx context.Context, className string,
 	}
 	results := s.index.Search(tokens, opts.Limit)
 	var searchResults []SearchResult
-	for _, r := range results {
+	for i, r := range results {
 		content := ""
 		if s.segmentMap != nil {
 			content = s.segmentMap[r.DocID]
 		}
 
 		searchResults = append(searchResults, SearchResult{
-			ID:      r.DocID,
-			Score:   r.Score,
+			ID:    r.DocID,
+			Score: fallbackBM25RankScore(i),
+			Metadata: map[string]interface{}{
+				"bm25_score":      r.Score,
+				"bm25_rank_score": fallbackBM25RankScore(i),
+			},
 			Content: content,
 		})
 	}
 	return searchResults, nil
+}
+
+func extractBM25Score(result map[string]interface{}, rank int) float64 {
+	if additional, ok := result["_additional"].(map[string]interface{}); ok {
+		if score, ok := numericBM25Score(additional["score"]); ok {
+			return score
+		}
+	}
+	if score, ok := numericBM25Score(result["score"]); ok {
+		return score
+	}
+	return fallbackBM25RankScore(rank)
+}
+
+func numericBM25Score(value interface{}) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case int32:
+		return float64(typed), true
+	case json.Number:
+		score, err := typed.Float64()
+		return score, err == nil
+	case string:
+		score, err := strconv.ParseFloat(typed, 64)
+		return score, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func fallbackBM25RankScore(rank int) float64 {
+	score := 1.0 - float64(rank)*0.05
+	if score < 0.1 {
+		return 0.1
+	}
+	return score
 }

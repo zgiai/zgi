@@ -592,6 +592,14 @@ const messages = {
     importSuccess: 'Import completed',
     importFailed: 'Import failed',
     importResult: 'Total: {total}, Success: {success}, Failed: {failed}',
+    skipUnmatchedColumns: 'Skip unmatched fields',
+    skipUnmatchedColumnsDesc:
+      'Columns that do not exist in the current table will not be imported. Required fields still need values.',
+    errors: {
+      noMatchingColumns: 'No Excel headers match the current table fields. Check the header row and try again.',
+      missingRequiredColumns:
+        'Excel is missing required fields: {fields}. Add these columns and try again, or make the fields optional first.',
+    },
   },
   excelImport: {
     title: 'Import Excel',

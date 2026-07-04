@@ -360,6 +360,35 @@ func (c *answerOutputCoordinator) HasOutput() bool {
 	return c.messageSent
 }
 
+func (c *answerOutputCoordinator) HasCompleteOutput() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.messageSent {
+		return false
+	}
+	for _, emitter := range c.emitters {
+		if emitter == nil {
+			continue
+		}
+		switch emitter.lifecycle {
+		case answerEmitterUnknown:
+			continue
+		case answerEmitterSkipped:
+			continue
+		case answerEmitterCompleted:
+			if !emitter.drained {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func (c *answerOutputCoordinator) FullAnswer() string {
 	if c == nil {
 		return ""
@@ -454,6 +483,9 @@ func (c *answerOutputCoordinator) MarkNodeFinished(nodeID string, nodeType strin
 
 func (c *answerOutputCoordinator) MarkNodeFinishedScoped(scope answerOutputScope, nodeID string, nodeType string, status string, outputs map[string]any, err error) {
 	if c == nil {
+		return
+	}
+	if status == string(workflow_shared.PAUSED) {
 		return
 	}
 	c.emitMu.Lock()

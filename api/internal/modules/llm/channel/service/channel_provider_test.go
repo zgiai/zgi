@@ -348,7 +348,7 @@ func (f *fakeModelRepo) ListAvailableFiltered(_ context.Context, provider string
 func (f *fakeModelRepo) GetByProviderAndName(context.Context, string, string) (*llmmodelmodel.LLMModel, error) {
 	return nil, errors.New("not implemented")
 }
-func (f *fakeModelRepo) List(context.Context, *uuid.UUID, string, string, *bool, int, int) ([]*llmmodelmodel.LLMModel, int64, error) {
+func (f *fakeModelRepo) List(context.Context, *uuid.UUID, string, string, string, *bool, int, int) ([]*llmmodelmodel.LLMModel, int64, error) {
 	return append([]*llmmodelmodel.LLMModel(nil), f.models...), int64(len(f.models)), nil
 }
 func (f *fakeModelRepo) Update(context.Context, *llmmodelmodel.LLMModel) error {
@@ -611,6 +611,34 @@ func TestCreateRoute_RejectsValidationFailureWithoutPersistence(t *testing.T) {
 	require.Nil(t, credSvc.createdReq)
 }
 
+func TestCreateRoute_RejectsUnsupportedNativeProtocol(t *testing.T) {
+	repo := &fakeTenantRouteRepo{}
+	credSvc := &fakeTenantCredentialService{}
+	validator := &fakeChannelValidator{}
+	svc := &channelService{
+		tenantRouteRepo:   repo,
+		tenantCredService: credSvc,
+		validator:         validator,
+		modelRepo:         &fakeModelRepo{},
+	}
+
+	_, err := svc.CreateRoute(context.Background(), uuid.New(), &channeldto.CreateRouteRequest{
+		Name:            "Mistral Route",
+		ChannelProvider: "mistral",
+		APIKey:          "test-key",
+		Models:          []string{"mistral-large"},
+		NativeProtocols: channelmodel.NativeProtocolConfig{
+			OpenAIResponses: channelmodel.NativeProtocolEndpoint{Enabled: true},
+		},
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "native_protocols.openai_responses")
+	require.Equal(t, 0, validator.createCalls)
+	require.Nil(t, repo.created)
+	require.Nil(t, credSvc.createdReq)
+}
+
 func TestCreateRoute_ReturnsValidationWarningsInView(t *testing.T) {
 	repo := &fakeTenantRouteRepo{}
 	credSvc := &fakeTenantCredentialService{}
@@ -729,6 +757,40 @@ func TestUpdateRoute_UsesCreationValidationLogic(t *testing.T) {
 	require.Equal(t, []string{"qwen2.5-14b-instruct", "qwen-image-2.0"}, repo.updated.Models)
 	require.Equal(t, []string{"representative models failed validation: qwen-image-2.0 [image-gen] (unauthorized)"}, view.Warnings)
 	require.Contains(t, view.ValidationReport, "failed_models")
+}
+
+func TestUpdateRoute_RejectsUnsupportedNativeProtocol(t *testing.T) {
+	credID := uuid.New()
+	orgID := uuid.New()
+	routeID := uuid.New()
+	repo := &fakeTenantRouteRepo{
+		routeByID: &channelmodel.LLMRoute{
+			ID:              routeID,
+			OrganizationID:  orgID,
+			Type:            "PRIVATE",
+			CredentialID:    &credID,
+			Name:            "Existing Route",
+			ChannelProvider: "mistral",
+			Models:          []string{"mistral-large"},
+			IsEnabled:       true,
+		},
+	}
+	svc := &channelService{
+		tenantRouteRepo:   repo,
+		tenantCredService: &fakeTenantCredentialService{cred: &credentialmodel.TenantCredential{ID: credID}},
+		validator:         &fakeChannelValidator{},
+		modelRepo:         &fakeModelRepo{},
+	}
+
+	_, err := svc.UpdateRoute(context.Background(), orgID, routeID, &channeldto.UpdateRouteRequest{
+		NativeProtocols: &channelmodel.NativeProtocolConfig{
+			AnthropicMessages: channelmodel.NativeProtocolEndpoint{Enabled: true},
+		},
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "native_protocols.anthropic_messages")
+	require.Nil(t, repo.updated)
 }
 
 func TestUpdateRoute_AutoEnablesNewModelsWithoutOverwritingExistingConfig(t *testing.T) {

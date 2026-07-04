@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
+	appconfig "github.com/zgiai/zgi/api/config"
 	consoleintf "github.com/zgiai/zgi/api/internal/infra/platform/console"
 	"github.com/zgiai/zgi/api/internal/modules/llm/channel/dto"
 	"github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
@@ -179,6 +180,9 @@ func (s *channelService) CreateRoute(ctx context.Context, organizationID uuid.UU
 		return nil, err
 	}
 
+	if err := validateRouteNativeProtocols(channelProvider, req.NativeProtocols); err != nil {
+		return nil, err
+	}
 	if err := s.ensureOllamaCustomModels(ctx, organizationID, channelProvider, req.APIBaseURL, req.APIKey, req.Models); err != nil {
 		return nil, err
 	}
@@ -524,6 +528,14 @@ func (s *channelService) UpdateRoute(ctx context.Context, organizationID, id uui
 		}
 	}
 
+	newNativeProtocols := route.NativeProtocols
+	if req.NativeProtocols != nil {
+		newNativeProtocols = *req.NativeProtocols
+	}
+	if err := validateRouteNativeProtocols(newChannelProvider, newNativeProtocols); err != nil {
+		return nil, err
+	}
+
 	coreChanged := req.ChannelProvider != nil || req.Models != nil || req.APIBaseURL != nil || req.APIKey != nil
 	if coreChanged && !route.IsOfficial {
 		apiKey := ""
@@ -649,13 +661,29 @@ func (s *channelService) validateRouteModelNames(ctx context.Context, organizati
 	return nil
 }
 
+func validateRouteNativeProtocols(channelProvider string, protocols model.NativeProtocolConfig) error {
+	if protocols.OpenAIResponses.Enabled {
+		capability := channelprovider.OpenAIResponsesCapability(channelProvider)
+		if !capability.Supported {
+			return fmt.Errorf("native_protocols.openai_responses is not supported by channel_provider %q", channelProvider)
+		}
+	}
+	if protocols.AnthropicMessages.Enabled {
+		capability := channelprovider.AnthropicMessagesCapability(channelProvider)
+		if !capability.Supported {
+			return fmt.Errorf("native_protocols.anthropic_messages is not supported by channel_provider %q", channelProvider)
+		}
+	}
+	return nil
+}
+
 func (s *channelService) loadActiveModelNameIndexes(ctx context.Context, organizationID uuid.UUID) ([]string, map[string]string, error) {
 	exactNames := make([]string, 0)
 	legacyShortNames := make(map[string]string)
 
 	if s != nil && s.modelRepo != nil {
 		activeOnly := true
-		models, _, err := s.modelRepo.List(ctx, nil, "", "", &activeOnly, 0, 10000)
+		models, _, err := s.modelRepo.List(ctx, nil, "", "", "active", &activeOnly, 0, 10000)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1213,6 +1241,7 @@ func (s *channelService) DiscoverDraftChannelModels(ctx context.Context, req *dt
 	if err := channelprovider.ValidateAPIKey(spec, req.APIKey); err != nil {
 		return nil, err
 	}
+	llmConfig := appconfig.Current().LLM
 
 	adapterInstance, err := adapter.NewAdapter(&adapter.AdapterConfig{
 		ProviderName:        spec.AdapterKey,
@@ -1220,7 +1249,8 @@ func (s *channelService) DiscoverDraftChannelModels(ctx context.Context, req *dt
 		BaseURL:             req.APIBaseURL,
 		Timeout:             30 * time.Second,
 		MaxRetries:          1,
-		GuardOutboundURL:    true,
+		GuardOutboundURL:    llmConfig.OutboundURLGuardEnabled(),
+		GuardOutboundDNS:    llmConfig.GuardOutboundDNS,
 		AllowPrivateBaseURL: channelprovider.AllowsPrivateBaseURL(spec.Name),
 	})
 	if err != nil {

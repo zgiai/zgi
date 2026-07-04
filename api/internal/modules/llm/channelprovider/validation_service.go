@@ -771,7 +771,8 @@ func (v *Validator) newAdapterForProvider(adapterKey, baseURL, apiKey string) (a
 		BaseURL:             baseURL,
 		Timeout:             defaultTimeout,
 		MaxRetries:          defaultMaxRetries,
-		GuardOutboundURL:    true,
+		GuardOutboundURL:    outboundURLGuardEnabled(),
+		GuardOutboundDNS:    outboundDNSGuardEnabled(),
 		AllowPrivateBaseURL: AllowsPrivateBaseURL(adapterKey),
 	})
 }

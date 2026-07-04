@@ -119,8 +119,9 @@ services:
 
   # Weaviate (Vector Database)
   weaviate:
-    image: semitechnologies/weaviate:1.23.0
+    image: cr.weaviate.io/semitechnologies/weaviate:1.35.4
     container_name: zgi-weaviate
+    working_dir: /go/pkg/mod
     ports:
       - "18080:8080"
     environment:
@@ -130,6 +131,8 @@ services:
       - DEFAULT_VECTORIZER_MODULE=none
       - ENABLE_MODULES=
       - CLUSTER_HOSTNAME=node1
+      - ENABLE_TOKENIZER_GSE_CH=true
+      - TOKENIZER_CONCURRENCY_COUNT=2
     volumes:
       - weaviate-data:/var/lib/weaviate
     restart: unless-stopped

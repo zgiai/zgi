@@ -135,7 +135,7 @@ func TestLoadRestoresBusinessEnvKeys(t *testing.T) {
 		"EMAIL_SMTP_USE_TLS":              "false",
 		"EMAIL_SMTP_OPPORTUNISTIC_TLS":    "false",
 		"TASK_QUEUE_RETENTION":            "24h",
-		"MODELMETA_API_URL":               "https://api.modelmeta.dev",
+		"MODELMETA_API_URL":               "https://models.zgi.ai",
 		"WORKFLOW_EXECUTION_TIMEOUT":      "300",
 		"WORKFLOW_LLM_TIMEOUT":            "120",
 		"WORKFLOW_HEARTBEAT_INTERVAL":     "5",
@@ -168,8 +168,8 @@ func TestLoadRestoresBusinessEnvKeys(t *testing.T) {
 	if cfg.Upload.BatchUploadLimit != 10 {
 		t.Fatalf("cfg.Upload.BatchUploadLimit = %d, want 10", cfg.Upload.BatchUploadLimit)
 	}
-	if cfg.ModelMeta.APIURL != "https://api.modelmeta.dev" {
-		t.Fatalf("cfg.ModelMeta.APIURL = %q, want %q", cfg.ModelMeta.APIURL, "https://api.modelmeta.dev")
+	if cfg.ModelMeta.APIURL != "https://models.zgi.ai" {
+		t.Fatalf("cfg.ModelMeta.APIURL = %q, want %q", cfg.ModelMeta.APIURL, "https://models.zgi.ai")
 	}
 	if cfg.Workflow.ExecutionTimeout != 300 || cfg.Workflow.LLMTimeout != 120 ||
 		cfg.Workflow.HeartbeatInterval != 5 || cfg.Workflow.CleanupTimeout != 30 {
@@ -183,7 +183,7 @@ func TestLoadRestoresBusinessEnvKeys(t *testing.T) {
 	}
 }
 
-func TestLoadModelMetaDefaultsToEmptyAPIURL(t *testing.T) {
+func TestLoadModelMetaDefaultsToZGICuratedAPIURL(t *testing.T) {
 	cfg, err := config.LoadFromFile(writeEnvFile(t, map[string]string{
 		"SERVER_MODE":                  "release",
 		"ENV":                          "production",
@@ -195,8 +195,8 @@ func TestLoadModelMetaDefaultsToEmptyAPIURL(t *testing.T) {
 		t.Fatalf("config.LoadFromFile() error = %v, want nil", err)
 	}
 
-	if cfg.ModelMeta.APIURL != "" {
-		t.Fatalf("cfg.ModelMeta.APIURL = %q, want empty when MODELMETA_API_URL is not configured", cfg.ModelMeta.APIURL)
+	if cfg.ModelMeta.APIURL != "https://models.zgi.ai" {
+		t.Fatalf("cfg.ModelMeta.APIURL = %q, want default curated model source", cfg.ModelMeta.APIURL)
 	}
 }
 
@@ -316,6 +316,54 @@ func TestLoadLLMEncryptionKeyUsesOnlyCanonicalKey(t *testing.T) {
 
 	if cfg.LLM.EncryptionKey != "test-llm-main-encryption-key-32!" {
 		t.Fatalf("cfg.LLM.EncryptionKey = %q, want canonical LLM encryption key", cfg.LLM.EncryptionKey)
+	}
+}
+
+func TestLoadLLMOutboundGuardDefaults(t *testing.T) {
+	cfg, err := config.LoadFromFile(writeEnvFile(t, map[string]string{
+		"SERVER_MODE":                  "release",
+		"ENV":                          "production",
+		"SECRET_KEY":                   "test-secret",
+		"EMAIL_MAIL_DEFAULT_SEND_FROM": "noreply@example.com",
+		"EMAIL_RESEND_API_KEY":         "test-api-key",
+	}))
+	if err != nil {
+		t.Fatalf("config.LoadFromFile() error = %v, want nil", err)
+	}
+
+	if !cfg.LLM.GuardOutboundURL {
+		t.Fatal("cfg.LLM.GuardOutboundURL = false, want true")
+	}
+	if !cfg.LLM.OutboundURLGuardEnabled() {
+		t.Fatal("cfg.LLM.OutboundURLGuardEnabled() = false, want true")
+	}
+	if cfg.LLM.GuardOutboundDNS {
+		t.Fatal("cfg.LLM.GuardOutboundDNS = true, want false")
+	}
+}
+
+func TestLoadLLMOutboundGuardOverrides(t *testing.T) {
+	cfg, err := config.LoadFromFile(writeEnvFile(t, map[string]string{
+		"SERVER_MODE":                  "release",
+		"ENV":                          "production",
+		"SECRET_KEY":                   "test-secret",
+		"EMAIL_MAIL_DEFAULT_SEND_FROM": "noreply@example.com",
+		"EMAIL_RESEND_API_KEY":         "test-api-key",
+		"LLM_GUARD_OUTBOUND_URL":       "false",
+		"LLM_GUARD_OUTBOUND_DNS":       "true",
+	}))
+	if err != nil {
+		t.Fatalf("config.LoadFromFile() error = %v, want nil", err)
+	}
+
+	if cfg.LLM.GuardOutboundURL {
+		t.Fatal("cfg.LLM.GuardOutboundURL = true, want false")
+	}
+	if cfg.LLM.OutboundURLGuardEnabled() {
+		t.Fatal("cfg.LLM.OutboundURLGuardEnabled() = true, want false")
+	}
+	if !cfg.LLM.GuardOutboundDNS {
+		t.Fatal("cfg.LLM.GuardOutboundDNS = false, want true")
 	}
 }
 

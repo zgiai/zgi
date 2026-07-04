@@ -447,7 +447,7 @@ const (
 	envSentryEnvironment = "SENTRY_ENVIRONMENT"
 
 	// Dependency services.
-	// envModelMetaAPIURL sets the ModelMeta API base URL. Default: empty, which disables remote sync.
+	// envModelMetaAPIURL sets the ModelMeta-compatible API base URL. Default: https://models.zgi.ai.
 	envModelMetaAPIURL = "MODELMETA_API_URL"
 	// envNeo4jURI sets the Neo4j connection URI. Default: empty, which disables GraphFlow Neo4j integration.
 	envNeo4jURI = "NEO4J_URI"
@@ -591,6 +591,10 @@ const (
 	envOfficialModelSyncStrictMode = "OFFICIAL_MODEL_SYNC_STRICT_MODE"
 	// envLLMEncryptionKey sets the AES key used for LLM provider credentials. Default: empty.
 	envLLMEncryptionKey = "LLM_ENCRYPTION_KEY"
+	// envLLMGuardOutboundURL controls literal outbound URL safety checks. Default: true.
+	envLLMGuardOutboundURL = "LLM_GUARD_OUTBOUND_URL"
+	// envLLMGuardOutboundDNS controls DNS-resolved outbound address checks. Default: false.
+	envLLMGuardOutboundDNS = "LLM_GUARD_OUTBOUND_DNS"
 	// envLLMAllowPrivateBaseURL allows Ollama to target private or localhost base URLs. Default: false.
 	envLLMAllowPrivateBaseURL = "LLM_ALLOW_PRIVATE_BASE_URL"
 

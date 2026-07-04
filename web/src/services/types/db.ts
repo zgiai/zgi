@@ -415,6 +415,7 @@ export interface ImportDbTableRecordsData {
 
 export interface ImportDbTableRecordsRequest {
   upload_file_id: string;
+  skip_unmatched_columns?: boolean;
 }
 
 /* -------------------------------------------------------------------------- */

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -40,6 +41,9 @@ type UsageBill struct {
 	OfficialPoints    int64            `gorm:"column:official_points;not null;default:0"`
 	PrivatePoints     int64            `gorm:"column:private_points;not null;default:0"`
 	TotalPoints       int64            `gorm:"column:total_points;not null;default:0"`
+	PricingSource     PricingSource    `gorm:"column:pricing_source;type:varchar(50);not null;default:''"`
+	UsageSource       UsageSource      `gorm:"column:usage_source;type:varchar(50);not null;default:''"`
+	PricingSnapshot   datatypes.JSON   `gorm:"column:pricing_snapshot;type:jsonb;not null;default:'{}'"`
 	ResponseTimeMS    int64            `gorm:"column:response_time_ms;not null;default:0"`
 	ErrorCode         *string          `gorm:"column:error_code;type:varchar(100)"`
 	ErrorMessage      *string          `gorm:"column:error_message;type:text"`

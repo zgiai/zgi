@@ -20,6 +20,7 @@ const messages: DashboardMessages = {
     usageDetails: '使用详情',
     llmProviders: '模型管理',
     channel: '渠道管理',
+    pricingPolicy: '计费策略',
     apiKeys: 'API 令牌',
     organization: '组织与成员',
     workspaces: '工作空间管理',
