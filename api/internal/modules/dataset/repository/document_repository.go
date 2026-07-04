@@ -1124,16 +1124,38 @@ func (r *DocumentRepositoryImpl) EnableDocuments(ctx context.Context, datasetID 
 	}
 
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		enableableDocumentIDs, err := r.enableableDocumentIDs(ctx, tx, datasetID, documentIDs)
+		if err != nil {
+			return err
+		}
+		if len(enableableDocumentIDs) == 0 {
+			return nil
+		}
 		if err := tx.Model(&model.Document{}).
-			Where("dataset_id = ? AND id IN ?", datasetID, documentIDs).
+			Where("dataset_id = ? AND id IN ?", datasetID, enableableDocumentIDs).
 			Updates(updates).Error; err != nil {
 			return err
 		}
 
 		return tx.Model(&model.DocumentSegment{}).
-			Where("dataset_id = ? AND document_id IN ?", datasetID, documentIDs).
+			Where("dataset_id = ? AND document_id IN ?", datasetID, enableableDocumentIDs).
 			Updates(updates).Error
 	})
+}
+
+func (r *DocumentRepositoryImpl) enableableDocumentIDs(ctx context.Context, tx *gorm.DB, datasetID string, documentIDs []string) ([]string, error) {
+	var ids []string
+	err := tx.WithContext(ctx).Model(&model.Document{}).
+		Where("dataset_id = ? AND id IN ?", datasetID, documentIDs).
+		Where(`NOT EXISTS (
+			SELECT 1
+			FROM data_library_knowledge_base_asset_refs refs
+			WHERE refs.dataset_document_id = documents.id
+			  AND refs.deleted_at IS NULL
+			  AND refs.sync_status <> ?
+		)`, "synced").
+		Pluck("id", &ids).Error
+	return ids, err
 }
 
 // DisableDocuments disables multiple documents by setting their enabled flag to false

@@ -114,6 +114,7 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 			lastErr = err
 			continue
 		}
+		lockTokenPricingQuote(billingCtx, quote)
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.responses")
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
@@ -222,7 +223,9 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 	var lastErr error
 	for attemptIdx, providerSelection := range providerSelections {
 		requestID := uuid.New().String()
-		quote, err := s.quoteTokenPricing(ctx, pricingModelRefFromSelection(providerSelection), promptTokens, 0)
+		modelRef := pricingModelRefFromSelection(providerSelection)
+		modelRef.Operation = PricingOperationEmbedding
+		quote, err := s.quoteTokenPricing(ctx, modelRef, promptTokens, 0)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to calculate credits: %w", err)
 			continue
@@ -249,6 +252,8 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 			lastErr = err
 			continue
 		}
+		billingCtx.PricingOperation = PricingOperationEmbedding
+		lockTokenPricingQuote(billingCtx, quote)
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.embeddings")
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
@@ -342,7 +347,9 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 	var lastErr error
 	for attemptIdx, providerSelection := range providerSelections {
 		requestID := uuid.New().String()
-		quote, err := s.quoteTokenPricing(ctx, pricingModelRefFromSelection(providerSelection), promptTokens, 0)
+		modelRef := pricingModelRefFromSelection(providerSelection)
+		modelRef.Operation = PricingOperationRerank
+		quote, err := s.quoteTokenPricing(ctx, modelRef, promptTokens, 0)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to calculate credits: %w", err)
 			continue
@@ -369,6 +376,8 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 			lastErr = err
 			continue
 		}
+		billingCtx.PricingOperation = PricingOperationRerank
+		lockTokenPricingQuote(billingCtx, quote)
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.rerank")
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 

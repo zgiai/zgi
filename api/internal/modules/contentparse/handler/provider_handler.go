@@ -33,7 +33,12 @@ func (h *ProviderHandler) ListProviders(c *gin.Context) {
 		response.FailWithMessage(c, response.ErrInvalidParam, "invalid workspace_id")
 		return
 	}
-	items, err := h.service.ListByScope(c.Request.Context(), scope, workspaceID)
+	organizationID, err := parseOptionalUUID(c.Query("organization_id"))
+	if err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid organization_id")
+		return
+	}
+	items, err := h.service.ListByScope(c.Request.Context(), scope, organizationID, workspaceID)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return

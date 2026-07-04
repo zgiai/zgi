@@ -162,8 +162,10 @@ func ensureIndexingVectorClasses(ctx context.Context, vectorDB vectordb.VectorDB
 func defaultVectorClassProperties() []map[string]interface{} {
 	return []map[string]interface{}{
 		{
-			"name":     "text",
-			"dataType": []string{"text"},
+			"name":            "text",
+			"dataType":        []string{"text"},
+			"tokenization":    "gse_ch",
+			"indexSearchable": true,
 		},
 	}
 }

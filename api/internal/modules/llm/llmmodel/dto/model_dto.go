@@ -64,6 +64,7 @@ type ListModelRequest struct {
 	Provider   string     `form:"provider"`  // Filter by provider name (e.g., "openai", "anthropic")
 	UseCase    string     `form:"use_case"`  // Filter by use case (e.g., "text-chat", "embedding")
 	UseCases   []string   `form:"use_cases"` // Filter by usage scenarios (comma-separated)
+	Status     string     `form:"status"`    // Filter by lifecycle status (e.g., "active", "deprecated")
 	IsActive   *bool      `form:"is_active"`
 	Page       int        `form:"page,default=1"`
 	PageSize   int        `form:"page_size,default=1000"`

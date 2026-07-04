@@ -519,6 +519,11 @@ func mergeParentChunkMetadata(left, right map[string]any) map[string]any {
 			merged["page"] = page
 		}
 	}
+	issues := make([]any, 0)
+	seen := make(map[string]struct{})
+	issues = appendQualityIssues(issues, seen, merged)
+	issues = appendQualityIssues(issues, seen, right)
+	setQualityIssueMetadata(merged, issues)
 
 	deleteMergedParentIdentity(merged)
 	return merged

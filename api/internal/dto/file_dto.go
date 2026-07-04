@@ -70,15 +70,18 @@ type FileFolderListRequest struct {
 
 // FileListInFolderRequest represents request for listing files in a folder
 type FileListInFolderRequest struct {
-	Page        int       `form:"page" binding:"omitempty,min=1"`
-	Limit       int       `form:"limit" binding:"omitempty,min=1,max=100"`
-	Keyword     string    `form:"keyword"`
-	Sort        string    `form:"sort"`
-	StartTime   time.Time `form:"start_time"`
-	EndTime     time.Time `form:"end_time"`
-	Extension   string    `form:"extension"` // File extension filter
-	FolderID    string    `form:"folder_id"` // Folder ID, empty or not provided means root folder
-	WorkspaceID string    `form:"workspace_id"`
+	Page      int       `form:"page" binding:"omitempty,min=1"`
+	Limit     int       `form:"limit" binding:"omitempty,min=1,max=100"`
+	Keyword   string    `form:"keyword"`
+	Sort      string    `form:"sort"`
+	StartTime time.Time `form:"start_time"`
+	EndTime   time.Time `form:"end_time"`
+	Extension string    `form:"extension"` // File extension filter
+	// ProcessingStatus filters by the current file asset product status. Multiple
+	// values can be comma-separated, for example "parse_failed,ready".
+	ProcessingStatus string `form:"processing_status"`
+	FolderID         string `form:"folder_id"` // Folder ID, empty or not provided means root folder
+	WorkspaceID      string `form:"workspace_id"`
 }
 
 // FileFolderResponse represents response for file folder
@@ -145,17 +148,23 @@ type CreateTextFileRequest struct {
 }
 
 type FileUploadResponse struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Size         int64     `json:"size"`
-	Extension    string    `json:"extension"`
-	MimeType     string    `json:"mime_type"`
-	CreatedBy    string    `json:"created_by"`
-	CreatedAt    time.Time `json:"created_at"`
-	Hash         string    `json:"hash,omitempty"`
-	SourceURL    string    `json:"source_url,omitempty"`
-	TeamTenantID *string   `json:"team_tenant_id,omitempty"`
-	WorkspaceID  *string   `json:"workspace_id,omitempty"`
+	ID                  string    `json:"id"`
+	Name                string    `json:"name"`
+	Size                int64     `json:"size"`
+	Extension           string    `json:"extension"`
+	MimeType            string    `json:"mime_type"`
+	CreatedBy           string    `json:"created_by"`
+	CreatedAt           time.Time `json:"created_at"`
+	Hash                string    `json:"hash,omitempty"`
+	SourceURL           string    `json:"source_url,omitempty"`
+	TeamTenantID        *string   `json:"team_tenant_id,omitempty"`
+	WorkspaceID         *string   `json:"workspace_id,omitempty"`
+	AssetID             string    `json:"asset_id,omitempty"`
+	ProcessingMode      string    `json:"processing_mode,omitempty"`
+	ProcessingStatus    string    `json:"processing_status,omitempty"`
+	ProcessingRequestID string    `json:"processing_request_id,omitempty"`
+	ProcessingRunID     string    `json:"processing_run_id,omitempty"`
+	GenerationNo        int64     `json:"generation_no,omitempty"`
 }
 
 type FileUploadConfigResponse struct {
@@ -246,6 +255,19 @@ type UploadFile struct {
 	IsTemporary         bool          `json:"is_temporary"`
 	RelatedDatasetCount int           `json:"related_dataset_count"`
 	RelatedCount        int           `json:"related_count"`
+	AssetID             string        `json:"asset_id,omitempty"`
+	ProcessingStatus    string        `json:"processing_status,omitempty"`
+	ProcessingStage     string        `json:"processing_stage,omitempty"`
+	ProcessingProgress  int           `json:"processing_progress,omitempty"`
+	ProcessingRequestID string        `json:"processing_request_id,omitempty"`
+	ProcessingRunID     string        `json:"processing_run_id,omitempty"`
+	GenerationNo        int64         `json:"generation_no,omitempty"`
+	PendingConfirmCount int64         `json:"pending_confirmation_count,omitempty"`
+	ChunkCount          int64         `json:"chunk_count,omitempty"`
+	EmbeddingCount      int64         `json:"embedding_count,omitempty"`
+	VectorStatus        string        `json:"vector_status,omitempty"`
+	LastErrorCode       string        `json:"last_error_code,omitempty"`
+	LastErrorMessage    string        `json:"last_error_message,omitempty"`
 
 	// Favorite field
 	IsFavorite bool `json:"is_favorite"`

@@ -30,6 +30,7 @@ type FileUploadConfigResponse struct {
 type FileService interface {
 	GetUploadConfig() *FileUploadConfigResponse
 	UploadFile(ctx context.Context, filename string, content []byte, mimeType string, userID, tenantID string, userRole model.CreatedByRole, source *FileSource, teamTenantID *string, isTemporary bool, isIcon bool) (*dto.UploadFile, error)
+	ReplaceFileContent(ctx context.Context, fileID string, filename string, content []byte, mimeType string, userID, tenantID string) (*dto.UploadFile, error)
 	GetFilePreview(ctx context.Context, fileID string) (string, error)
 	GetFilePreviewWithOCR(ctx context.Context, fileID string, enableOCR bool) (string, error)
 	GetFile(ctx context.Context, fileID string) (string, error)

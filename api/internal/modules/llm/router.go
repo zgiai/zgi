@@ -7,6 +7,7 @@ import (
 	channelhandler "github.com/zgiai/zgi/api/internal/modules/llm/channel/handler"
 	credentialhandler "github.com/zgiai/zgi/api/internal/modules/llm/credential/handler"
 	defaultmodelhandler "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/handler"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	llmmodelhandler "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/handler"
 	providerhandler "github.com/zgiai/zgi/api/internal/modules/llm/provider/handler"
 	statisticshandler "github.com/zgiai/zgi/api/internal/modules/llm/statistics/handler"
@@ -58,6 +59,11 @@ func RegisterConsoleRoutes(r *gin.RouterGroup, m *LLMModule) {
 			workspaceQuotaAdmin := llmWithOrg.Group("")
 			workspaceQuotaAdmin.Use(middleware.EnterpriseAdminOrOwnerRequired())
 			workspacequotahandler.RegisterWorkspaceQuotaRoutes(workspaceQuotaAdmin, m.WorkspaceQuotaHandler)
+		}
+		if m.PricingFallbackHandler != nil {
+			pricingFallbackAdmin := llmWithOrg.Group("")
+			pricingFallbackAdmin.Use(middleware.EnterpriseAdminOrOwnerRequired())
+			gateway.RegisterPricingFallbackRoutes(pricingFallbackAdmin, m.PricingFallbackHandler)
 		}
 
 	}
@@ -203,5 +209,10 @@ func RegisterCommonRoutes(r *gin.RouterGroup, m *LLMModule) {
 		workspaceQuotaAdmin := r.Group("")
 		workspaceQuotaAdmin.Use(middleware.EnterpriseAdminOrOwnerRequired())
 		workspacequotahandler.RegisterWorkspaceQuotaRoutes(workspaceQuotaAdmin, m.WorkspaceQuotaHandler)
+	}
+	if m.PricingFallbackHandler != nil {
+		pricingFallbackAdmin := r.Group("")
+		pricingFallbackAdmin.Use(middleware.EnterpriseAdminOrOwnerRequired())
+		gateway.RegisterPricingFallbackRoutes(pricingFallbackAdmin, m.PricingFallbackHandler)
 	}
 }

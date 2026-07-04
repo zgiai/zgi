@@ -131,7 +131,7 @@ if [ "${#scan_targets[@]}" -gt 0 ]; then
   comment_targets=()
   for path in "${scan_targets[@]}"; do
     case "$path" in
-      *.go|*.ts|*.tsx|*.js|*.jsx|*.mjs|*.sh|*.yaml|*.yml|*.toml|*.md|*.editorconfig)
+      *.go|*.ts|*.tsx|*.js|*.jsx|*.mjs|*.sh|*.yaml|*.yml|*.toml|*.editorconfig)
         comment_targets+=("$path")
         ;;
     esac

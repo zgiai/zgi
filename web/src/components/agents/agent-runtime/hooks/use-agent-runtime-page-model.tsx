@@ -73,8 +73,8 @@ function createAgentKnowledgeDatasetFallback(
     embedding_model_provider: '',
     embedding_available: false,
     retrieval_config: {
-      search_method: 'semantic_search',
-      reranking_enable: false,
+      search_method: 'hybrid_search',
+      reranking_enable: true,
       top_k: 0,
       score_threshold_enabled: false,
       score_threshold: 0,

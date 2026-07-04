@@ -95,12 +95,24 @@ export default function HitTestingPage() {
   const supportsGraphFlow = !!dataset?.enable_graph_flow && !isExternalDataSource;
   // Initialize retrieval config (defaults, then hydrate from dataset.retrieval_model_dict once)
   const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfig>({
-    search_method: 'semantic_search',
-    reranking_enable: false,
-    top_k: 4,
+    search_method: 'hybrid_search',
+    reranking_enable: true,
+    top_k: 10,
     score_threshold_enabled: false,
-    score_threshold: 0.5,
+    score_threshold: 0.35,
   });
+  const vectorPanelTitle = (() => {
+    switch (retrievalConfig.search_method) {
+      case 'hybrid_search':
+        return t('hitTesting.hybridResults');
+      case 'full_text_search':
+        return t('hitTesting.bm25Results');
+      case 'semantic_search':
+        return t('hitTesting.vectorResults');
+      default:
+        return t('hitTesting.results');
+    }
+  })();
   // Comparison mode: show both vector and graph results side by side
   // Persist to localStorage
   const COMPARISON_MODE_KEY = 'hit-testing-comparison-mode';
@@ -124,7 +136,7 @@ export default function HitTestingPage() {
     );
     const hydrated: RetrievalConfig = {
       search_method: normalizedSearchMethod,
-      reranking_enable: !!server.reranking_enable,
+      reranking_enable: true,
       reranking_model: server.reranking_model
         ? {
             reranking_provider_name: server.reranking_model.reranking_provider_name,
@@ -151,12 +163,15 @@ export default function HitTestingPage() {
   };
 
   // Real hit testing function
-  const handleHitTesting = async () => {
-    if (!query.trim()) return;
+  const handleHitTesting = async (options?: { queryText?: string; recordHistory?: boolean }) => {
+    const queryText = (options?.queryText ?? query).trim();
+    if (!queryText) return;
+
+    const recordHistory = options?.recordHistory ?? true;
 
     const retrievalModel = {
       search_method: retrievalConfig.search_method,
-      reranking_enable: retrievalConfig.reranking_enable,
+      reranking_enable: true,
       reranking_model: retrievalConfig.reranking_model,
       top_k: retrievalConfig.top_k,
       score_threshold_enabled: retrievalConfig.score_threshold_enabled,
@@ -169,18 +184,21 @@ export default function HitTestingPage() {
       // External data source: use external retrieval hook
       if (isExternalDataSource) {
         const result = await externalRetrieval.mutateAsync({
-          query: query.trim(),
+          query: queryText,
           external_retrieval_model: {
             search_method: retrievalConfig.search_method,
             top_k: retrievalConfig.top_k,
             score_threshold_enabled: retrievalConfig.score_threshold_enabled,
             score_threshold: retrievalConfig.score_threshold,
-            reranking_enable: retrievalConfig.reranking_enable,
+            reranking_enable: true,
           },
+          record_history: recordHistory,
         });
         // Store in externalResults for external data source
         setExternalResults(result.data);
-        await refreshHistory();
+        if (recordHistory) {
+          await refreshHistory();
+        }
         return;
       }
 
@@ -191,8 +209,9 @@ export default function HitTestingPage() {
         setIsGraphSearching(true);
 
         const requestData = {
-          query: query.trim(),
+          query: queryText,
           retrieval_model: retrievalModel,
+          record_history: recordHistory,
         };
 
         const [vectorResponse, graphResponse] = await Promise.allSettled([
@@ -220,26 +239,34 @@ export default function HitTestingPage() {
         }
 
         if (hasSuccessfulRetrieval) {
-          await refreshHistory();
+          if (recordHistory) {
+            await refreshHistory();
+          }
         }
       } else if (retrievalConfig.search_method === 'graph_search' && supportsGraphFlow) {
         // Graph search mode: only call graph retrieval
         setIsGraphSearching(true);
         const result = await graphRetrieval.mutateAsync({
-          query: query.trim(),
+          query: queryText,
           retrieval_model: retrievalModel,
+          record_history: recordHistory,
         });
         setGraphResults(result.data);
-        await refreshHistory();
+        if (recordHistory) {
+          await refreshHistory();
+        }
       } else {
         // Semantic search mode (default): only call vector retrieval
         setIsVectorSearching(true);
         const result = await vectorRetrieval.mutateAsync({
-          query: query.trim(),
+          query: queryText,
           retrieval_model: retrievalModel,
+          record_history: recordHistory,
         });
         setVectorResults(result.data);
-        await refreshHistory();
+        if (recordHistory) {
+          await refreshHistory();
+        }
       }
     } catch (error) {
       console.error('Hit testing failed:', error);
@@ -253,7 +280,10 @@ export default function HitTestingPage() {
 
   // Load query from history
   const handleLoadFromHistory = (record: HitTestingRecord) => {
+    if (isSearching) return;
+
     setQuery(record.content);
+    void handleHitTesting({ queryText: record.content, recordHistory: false });
   };
 
   // Handle config save
@@ -266,7 +296,7 @@ export default function HitTestingPage() {
         top_k: config.top_k,
         score_threshold_enabled: config.score_threshold_enabled,
         score_threshold: config.score_threshold,
-        reranking_enable: config.reranking_enable,
+        reranking_enable: true,
         reranking_model: config.reranking_model,
       },
     };
@@ -376,7 +406,7 @@ export default function HitTestingPage() {
                 {/* Vector Results Panel */}
                 <div className="flex-1 min-w-0 border-r overflow-hidden">
                   <ResultsPanel
-                    title={t('hitTesting.vectorResults')}
+                    title={vectorPanelTitle}
                     results={
                       vectorResults
                         ? vectorResults.records.filter(
@@ -463,7 +493,7 @@ export default function HitTestingPage() {
             ) : (
               // Semantic search mode (default): show vector results only
               <ResultsPanel
-                title={t('hitTesting.vectorResults')}
+                title={vectorPanelTitle}
                 results={vectorResults?.records ?? undefined}
                 isSearching={isVectorSearching}
                 type="vector"

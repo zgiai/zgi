@@ -18,6 +18,7 @@ const messages = {
     usageDetails: 'Usage Details',
     llmProviders: 'Model Management',
     channel: 'Channel Management',
+    pricingPolicy: 'Billing Policy',
     apiKeys: 'API Keys',
     organization: 'Organization & Members',
     workspaces: 'Workspace Management',
@@ -26,6 +27,7 @@ const messages = {
     organizationSettings: 'Organization Settings',
     aichatSkills: 'Skill Management',
     modelSettings: 'Default Model Management',
+    parserSettings: 'Parser Settings',
     marketplace: 'Marketplace',
   },
   usage: {
@@ -180,6 +182,53 @@ const messages = {
       'image-gen': {
         title: 'Default Image Generation Model',
         description: 'Used for prompt-based image generation in console and workflow scenarios.',
+      },
+    },
+    parserSettings: {
+      title: 'Parser Settings',
+      description:
+        'Configure Reducto and MinerU for document reparsing. Optional fields are prefilled with defaults and can be changed when your deployment needs different endpoints or timeouts.',
+      actions: {
+        returnToReparse: 'Back to reparse',
+        save: 'Save',
+      },
+      messages: {
+        saved: 'Parser settings saved',
+        saveFailed: 'Failed to save parser settings',
+      },
+      reducto: {
+        description:
+          'Official Reducto parsing service. Requires an API key before it can be enabled.',
+      },
+      mineru: {
+        description:
+          'MinerU parsing service. Choose local sidecar mode or official service mode, then configure the fields for that mode.',
+        modes: {
+          sidecar: 'Local sidecar',
+          official: 'Official service',
+        },
+      },
+      fields: {
+        enabled: 'Enabled',
+        apiKey: 'API key',
+        baseUrl: 'Base URL',
+        timeout: 'Timeout (seconds)',
+        mode: 'Mode',
+        apiUrl: 'API URL',
+        officialToken: 'Official token',
+        modelVersion: 'Model version',
+        pollInterval: 'Poll interval (seconds)',
+      },
+      placeholders: {
+        secretConfigured: 'Configured. Leave blank to keep unchanged.',
+        secretRequired: 'Required before enabling',
+      },
+      status: {
+        not_configured: 'Not configured',
+        disabled: 'Disabled',
+        available: 'Available',
+        failed: 'Failed',
+        unknown: 'Unknown',
       },
     },
   },

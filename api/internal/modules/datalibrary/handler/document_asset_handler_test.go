@@ -856,7 +856,7 @@ func TestDocumentAssetHandlerListAssetKnowledgeBaseRefsScopesAssetAndOrganizatio
 				OrganizationID: "org-1",
 				DatasetID:      "dataset-1",
 				AssetID:        assetID,
-				VersionID:      versionID,
+				VersionID:      &versionID,
 				Status:         model.KnowledgeBaseAssetRefStatusActive,
 			},
 		},
@@ -928,7 +928,7 @@ func TestDocumentAssetHandlerListKnowledgeBaseAssetRefsFiltersDatasetAndVersion(
 				OrganizationID: "org-1",
 				DatasetID:      "dataset-1",
 				AssetID:        assetID,
-				VersionID:      versionID,
+				VersionID:      &versionID,
 			},
 		},
 		total: 1,
@@ -1006,7 +1006,7 @@ func TestDocumentAssetHandlerCreatesKnowledgeBaseAssetRef(t *testing.T) {
 			WorkspaceID:        &workspaceID,
 			DatasetID:          "dataset-1",
 			AssetID:            assetID,
-			VersionID:          versionID,
+			VersionID:          &versionID,
 			ChunkArtifactSetID: &chunkSetID,
 			VectorArtifactID:   &vectorID,
 			Status:             model.KnowledgeBaseAssetRefStatusActive,
@@ -1028,7 +1028,8 @@ func TestDocumentAssetHandlerCreatesKnowledgeBaseAssetRef(t *testing.T) {
 		*refSvc.created.WorkspaceID != workspaceID ||
 		refSvc.created.DatasetID != "dataset-1" ||
 		refSvc.created.AssetID != assetID ||
-		refSvc.created.VersionID != versionID ||
+		refSvc.created.VersionID == nil ||
+		*refSvc.created.VersionID != versionID ||
 		refSvc.created.ChunkArtifactSetID == nil ||
 		*refSvc.created.ChunkArtifactSetID != chunkSetID ||
 		refSvc.created.VectorArtifactID == nil ||
@@ -1406,6 +1407,10 @@ func (s *fakeProcessingRequestService) CreatePlannedRequest(ctx context.Context,
 	return s.view, s.err
 }
 
+func (s *fakeProcessingRequestService) GetRequest(ctx context.Context, organizationID string, id uuid.UUID) (*service.ProcessingRequestView, error) {
+	return s.view, s.err
+}
+
 func (s *fakeProcessingRequestService) ListRequests(ctx context.Context, filter repository.ProcessingRequestListFilter) ([]*service.ProcessingRequestView, int64, error) {
 	s.lastFilter = filter
 	return s.views, s.total, s.err
@@ -1457,6 +1462,13 @@ func (s *fakeProcessingRequestService) StartRequest(ctx context.Context, organiz
 	s.lastStartOrganizationID = organizationID
 	s.lastStartID = id
 	s.lastStartExecutorKey = executorKey
+	return s.view, s.err
+}
+
+func (s *fakeProcessingRequestService) UpdateRequestExecutionMetadata(ctx context.Context, organizationID string, id uuid.UUID, metadata map[string]any) (*service.ProcessingRequestView, error) {
+	s.lastCompleteOrganizationID = organizationID
+	s.lastCompleteID = id
+	s.lastCompleteMetadata = metadata
 	return s.view, s.err
 }
 
@@ -1514,9 +1526,37 @@ func (s *fakeKnowledgeBaseAssetRefService) FindActiveRefView(ctx context.Context
 	return s.view, s.err
 }
 
+func (s *fakeKnowledgeBaseAssetRefService) FindActiveAssetRefView(ctx context.Context, organizationID string, datasetID string, assetID uuid.UUID) (*service.KnowledgeBaseAssetRefView, error) {
+	return s.view, s.err
+}
+
+func (s *fakeKnowledgeBaseAssetRefService) ListActiveAssetRefViews(ctx context.Context, organizationID string, assetID uuid.UUID) ([]*service.KnowledgeBaseAssetRefView, error) {
+	return s.views, s.err
+}
+
 func (s *fakeKnowledgeBaseAssetRefService) DisableRef(ctx context.Context, organizationID string, id uuid.UUID) (*service.KnowledgeBaseAssetRefView, error) {
 	s.lastDisableOrganizationID = organizationID
 	s.lastDisableID = id
+	return s.view, s.err
+}
+
+func (s *fakeKnowledgeBaseAssetRefService) MarkRefPending(ctx context.Context, organizationID string, id uuid.UUID) (*service.KnowledgeBaseAssetRefView, uuid.UUID, error) {
+	return s.view, uuid.New(), s.err
+}
+
+func (s *fakeKnowledgeBaseAssetRefService) MarkRefSyncing(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID) (*service.KnowledgeBaseAssetRefView, error) {
+	return s.view, s.err
+}
+
+func (s *fakeKnowledgeBaseAssetRefService) MarkRefSynced(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, datasetDocumentID uuid.UUID, generationNo int64) (*service.KnowledgeBaseAssetRefView, error) {
+	return s.view, s.err
+}
+
+func (s *fakeKnowledgeBaseAssetRefService) MarkRefFailed(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage string) (*service.KnowledgeBaseAssetRefView, error) {
+	return s.view, s.err
+}
+
+func (s *fakeKnowledgeBaseAssetRefService) RemoveRef(ctx context.Context, organizationID string, id uuid.UUID) (*service.KnowledgeBaseAssetRefView, error) {
 	return s.view, s.err
 }
 

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -23,11 +24,14 @@ type HTTPClient struct {
 	streamClient *http.Client // Separate client for streaming (no timeout)
 	maxRetries   int
 	authHook     func(req *http.Request) // Optional: called before each request for custom auth
+	urlPolicy    urlguard.Policy
+	guardURL     bool
 }
 
 type HTTPClientOptions struct {
 	AuthHook            func(req *http.Request)
 	GuardOutboundURL    bool
+	GuardOutboundDNS    bool
 	AllowPrivateBaseURL bool
 	URLPolicy           urlguard.Policy
 }
@@ -55,6 +59,7 @@ func NewHTTPClientFromConfig(config *AdapterConfig, timeout time.Duration, maxRe
 	if config != nil {
 		opts.AuthHook = config.AuthHook
 		opts.GuardOutboundURL = config.GuardOutboundURL
+		opts.GuardOutboundDNS = config.GuardOutboundDNS
 		opts.AllowPrivateBaseURL = config.AllowPrivateBaseURL
 	}
 	return NewHTTPClientWithOptions(timeout, maxRetries, opts)
@@ -72,10 +77,13 @@ func NewHTTPClientWithOptions(timeout time.Duration, maxRetries int, opts HTTPCl
 	if opts.AllowPrivateBaseURL {
 		policy.AllowPrivate = true
 	}
+	policy.GuardDNS = opts.GuardOutboundDNS
 	var dialContext func(ctx context.Context, network, address string) (net.Conn, error)
 	var checkRedirect func(req *http.Request, via []*http.Request) error
 	if opts.GuardOutboundURL {
-		dialContext = guardedDialContext(policy)
+		if opts.GuardOutboundDNS {
+			dialContext = guardedDialContext(policy)
+		}
 		checkRedirect = func(req *http.Request, _ []*http.Request) error {
 			if err := urlguard.ValidateURL(req.Context(), req.URL, policy); err != nil {
 				return fmt.Errorf("blocked unsafe target: %w", err)
@@ -130,6 +138,8 @@ func NewHTTPClientWithOptions(timeout time.Duration, maxRetries int, opts HTTPCl
 		},
 		maxRetries: maxRetries,
 		authHook:   opts.AuthHook,
+		urlPolicy:  policy,
+		guardURL:   opts.GuardOutboundURL,
 	}
 }
 
@@ -166,6 +176,16 @@ func guardedDialContext(policy urlguard.Policy) func(ctx context.Context, networ
 		}
 		return nil, fmt.Errorf("no resolved address for %q", host)
 	}
+}
+
+func (c *HTTPClient) validateOutboundURL(ctx context.Context, parsed *url.URL) error {
+	if c == nil || !c.guardURL {
+		return nil
+	}
+	if err := urlguard.ValidateURL(ctx, parsed, c.urlPolicy); err != nil {
+		return fmt.Errorf("blocked unsafe target: %w", err)
+	}
+	return nil
 }
 
 // isHTMLResponse checks whether the response body looks like an HTML error page
@@ -224,6 +244,9 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
+		if err := c.validateOutboundURL(ctx, req.URL); err != nil {
+			return nil, err
+		}
 
 		// Set default headers
 		req.Header.Set("Content-Type", "application/json")
@@ -242,7 +265,7 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 		resp, err = c.client.Do(req)
 		if err != nil {
 			lastErr = err
-			continue // Network error → retry
+			continue // Network error, retry
 		}
 
 		// Read body inside the loop so read failures can be retried
@@ -253,14 +276,14 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 			lastErr = fmt.Errorf("failed to read response body: %w", readErr)
 			lastStatusCode = resp.StatusCode
 			lastHeader = resp.Header.Clone()
-			continue // Body read failure → retry
+			continue // Body read failure, retry
 		}
 
 		lastStatusCode = resp.StatusCode
 		lastBody = respBody
 		lastHeader = resp.Header.Clone()
 
-		// 5xx server errors → retry
+		// 5xx server errors, retry
 		if resp.StatusCode >= 500 {
 			bodySnippet := string(respBody)
 			if len(bodySnippet) > 500 {
@@ -308,6 +331,9 @@ func (c *HTTPClient) DoStreamRequest(ctx context.Context, method, url string, he
 	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if err := c.validateOutboundURL(ctx, req.URL); err != nil {
+		return nil, err
 	}
 
 	// Set headers

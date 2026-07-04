@@ -67,6 +67,32 @@ func TestImageFilenameAndMIME(t *testing.T) {
 	}
 }
 
+func TestBuildPDFPageImageContentUsesImageURLParts(t *testing.T) {
+	content := buildPDFPageImageContent("sample.pdf", []string{
+		"data:image/png;base64,page1",
+		"data:image/png;base64,page2",
+	})
+
+	if len(content) != 3 {
+		t.Fatalf("content length=%d want 3", len(content))
+	}
+	if got := content[0]["type"]; got != "text" {
+		t.Fatalf("first part type=%v want text", got)
+	}
+	for idx, part := range content[1:] {
+		if got := part["type"]; got != "image_url" {
+			t.Fatalf("part %d type=%v want image_url", idx+1, got)
+		}
+		if _, ok := part["file"]; ok {
+			t.Fatalf("part %d unexpectedly contains file payload: %#v", idx+1, part)
+		}
+		imageURL, ok := part["image_url"].(map[string]any)
+		if !ok || imageURL["url"] == "" {
+			t.Fatalf("part %d image_url=%#v want url", idx+1, part["image_url"])
+		}
+	}
+}
+
 func TestVLMConfigPrefersUnifiedVLMEnv(t *testing.T) {
 	clearVLMEnv(t)
 	t.Setenv("VLM_API_KEY", "vlm-key")

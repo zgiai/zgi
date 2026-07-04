@@ -2,6 +2,7 @@
 
 import React, { memo } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   DropdownMenu,
@@ -18,8 +19,6 @@ import type { Dataset } from '@/services/types/dataset';
 import { useState } from 'react';
 import { IconPreview } from '../common/icon-input/icon-preview';
 import MoveDatasetModal from '@/components/datasets/modal/move-dataset-modal';
-import { eventBus } from '@/lib/event-bus';
-import type { OpenDatasetDialogPayload } from '@/components/datasets/dialog/types';
 import { Badge } from '../ui/badge';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { ICON_BG } from '@/lib/config';
@@ -39,6 +38,7 @@ interface DatasetCardProps {
 function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: DatasetCardProps) {
   const t = useT('datasets');
   const tCommon = useT('common');
+  const router = useRouter();
   const deleteMutation = useDeleteDataset();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
@@ -114,11 +114,8 @@ function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: Dataset
                   <DropdownMenuItem
                     inset
                     onSelect={() => {
-                      eventBus.publish<OpenDatasetDialogPayload>('dataset:open-dialog', {
-                        mode: 'edit',
-                        dataset,
-                        currentFolderId: currentFolderId,
-                      });
+                      sessionStorage.setItem('dataset_prev_folder_id', currentFolderId || '');
+                      router.push(`/console/dataset/${dataset.id}/settings`);
                     }}
                   >
                     <Pencil className="h-4 w-4" />

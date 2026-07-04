@@ -12,11 +12,13 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/dataset/graphflow"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
 	datasourceservice "github.com/zgiai/zgi/api/internal/modules/datasource/service"
+	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	memorymodule "github.com/zgiai/zgi/api/internal/modules/memory"
 	promptservice "github.com/zgiai/zgi/api/internal/modules/prompts/service"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"github.com/zgiai/zgi/api/internal/modules/shared/titlegen"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
 	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -51,10 +53,22 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	)
 
 	agentMemoryService := agentmemory.NewService(db)
+	var defaultModelResolver llmdefaultservice.DefaultModelResolver
+	var titleGenerator titlegen.Service
+	if graphFlowService != nil {
+		defaultModelResolver = graphFlowService.DefaultModelSvc
+		if graphFlowService.DefaultModelSvc != nil {
+			titleGenerator = titlegen.NewServiceWithRouteModelProvider(
+				llmClient,
+				graphFlowService.DefaultModelSvc,
+				titlegen.NewTenantRouteModelProvider(channelrepo.NewTenantRouteRepository(db)),
+			)
+		}
+	}
 	chatRuntimeService := runtimeservice.NewServiceWithSkillRuntime(
 		runtimerepo.NewRepositories(db),
 		llmClient,
-		nil,
+		titleGenerator,
 		runtimeservice.NewDatabaseModelSpecResolver(db),
 		fileService,
 		contentExtractor,
@@ -63,10 +77,6 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 		memoryService,
 		agentMemoryService,
 	)
-	var defaultModelResolver llmdefaultservice.DefaultModelResolver
-	if graphFlowService != nil {
-		defaultModelResolver = graphFlowService.DefaultModelSvc
-	}
 	service := app.NewAgentsService(repo, accountService, tenantService, workflowService, chatRuntimeService, agentMemoryService, dataSourceService, knowledgeRetrievalService, resourcePermissionService, enterpriseService, quotaService, fileService, llmClient, defaultModelResolver, db)
 	appHandler := app.NewAgentsHandler(service, tenantService, accountService, enterpriseService, db, chatRuntimeService)
 	appHandler.SetFileService(fileService)

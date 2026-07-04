@@ -100,11 +100,13 @@ func TestTokenEstimator_EmbeddingTokenIDInputCountsTokens(t *testing.T) {
 	}{
 		{name: "token ids", input: []int{1, 2, 3}, want: 3},
 		{name: "token id batches", input: [][]int{{1, 2}, {3, 4, 5}}, want: 5},
+		{name: "string slice", input: []string{"antidisestablishmentarianism"}, want: 6},
 		{name: "json token ids", input: []interface{}{float64(1), float64(2), float64(3)}, want: 3},
 		{name: "json token id batches", input: []interface{}{
 			[]interface{}{float64(1), float64(2)},
 			[]interface{}{float64(3), float64(4), float64(5)},
 		}, want: 5},
+		{name: "interface token id batches", input: []interface{}{[]interface{}{float64(1), float64(2)}, []interface{}{float64(3)}}, want: 3},
 	}
 
 	for _, tt := range tests {

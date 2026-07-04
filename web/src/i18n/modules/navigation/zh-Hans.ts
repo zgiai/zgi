@@ -17,7 +17,7 @@ const messages: NavigationMessages = {
   agents: '智能体',
   prompts: '提示词',
   dbs: '数据库',
-  files: '文件',
+  files: '文件管理',
   chat: '对话',
   member: '成员',
   memberDesc: '管理工作空间成员和权限',

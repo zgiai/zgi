@@ -197,7 +197,7 @@ func (te *TokenEstimator) EstimateEmbeddingTokens(input interface{}, model strin
 	case string:
 		return te.estimateTextTokensForModel(model, v)
 	case []interface{}:
-		return te.estimateEmbeddingInterfaceSliceTokens(v, model)
+		return te.estimateEmbeddingItemTokens(v, model)
 	case []string:
 		totalTokens := 0
 		for _, s := range v {
@@ -212,39 +212,28 @@ func (te *TokenEstimator) EstimateEmbeddingTokens(input interface{}, model strin
 			totalTokens += len(tokens)
 		}
 		return totalTokens
+	default:
+		return 0
 	}
-
-	return 0
 }
 
-func (te *TokenEstimator) estimateEmbeddingInterfaceSliceTokens(input []interface{}, model string) int {
-	totalTokens := 0
-	for _, item := range input {
-		switch v := item.(type) {
-		case string:
-			totalTokens += te.estimateTextTokensForModel(model, v)
-		case float64:
-			totalTokens++
-		case int:
-			totalTokens++
-		case []interface{}:
-			totalTokens += countInterfaceTokenIDs(v)
-		case []int:
-			totalTokens += len(v)
+func (te *TokenEstimator) estimateEmbeddingItemTokens(input interface{}, model string) int {
+	switch v := input.(type) {
+	case string:
+		return te.estimateTextTokensForModel(model, v)
+	case []int:
+		return len(v)
+	case []interface{}:
+		totalTokens := 0
+		for _, item := range v {
+			totalTokens += te.estimateEmbeddingItemTokens(item, model)
 		}
+		return totalTokens
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, json.Number:
+		return 1
+	default:
+		return 0
 	}
-	return totalTokens
-}
-
-func countInterfaceTokenIDs(input []interface{}) int {
-	totalTokens := 0
-	for _, item := range input {
-		switch item.(type) {
-		case float64, int:
-			totalTokens++
-		}
-	}
-	return totalTokens
 }
 
 // EstimateRerankTokens estimates tokens for rerank request

@@ -16,6 +16,7 @@ export const SecondaryChunks = React.memo(function SecondaryChunks({
   onViewAllChildSegments,
   onEditChildSegment,
   onDeleteChildSegment,
+  readOnly = false,
 }: SecondaryChunksProps) {
   const t = useT('datasets');
 
@@ -49,9 +50,7 @@ export const SecondaryChunks = React.memo(function SecondaryChunks({
           onClick={() => onViewAllChildSegments(segment)}
         >
           <ExternalLink className="h-3 w-3 mr-1" />
-          {segment?.child_chunks && segment.child_chunks.length > 0
-            ? t('documents.viewAll')
-            : t('segments.add')}
+          {t('documents.viewAll')}
         </Badge>
       </div>
 
@@ -68,24 +67,26 @@ export const SecondaryChunks = React.memo(function SecondaryChunks({
               <span className="text-sm text-muted-foreground break-words whitespace-pre-wrap flex-1 min-w-0 line-clamp-2">
                 {child.content}
               </span>
-              <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  className="h-6 w-6 p-0"
-                  onClick={() => onEditChildSegment(segment.id, child.id, child.content)}
-                >
-                  <Pencil className="h-3 w-3" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  className="h-6 w-6 p-0 text-destructive hover:text-destructive"
-                  onClick={() => handleDeleteClick(child.id)}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </Button>
-              </div>
+              {!readOnly && (
+                <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className="h-6 w-6 p-0"
+                    onClick={() => onEditChildSegment(segment.id, child.id, child.content)}
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className="h-6 w-6 p-0 text-destructive hover:text-destructive"
+                    onClick={() => handleDeleteClick(child.id)}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -93,16 +94,17 @@ export const SecondaryChunks = React.memo(function SecondaryChunks({
         <div className="text-sm text-muted-foreground text-center my-2">{t('segments.noData')}</div>
       )}
 
-      {/* Delete confirmation dialog */}
-      <ConfirmDialog
-        open={deleteConfirmOpen}
-        onOpenChange={setDeleteConfirmOpen}
-        title={t('segments.childSegmentDeleteConfirm')}
-        confirmText={t('actions.delete')}
-        cancelText={t('cancel')}
-        onConfirm={handleConfirmDelete}
-        variant="danger"
-      />
+      {!readOnly && (
+        <ConfirmDialog
+          open={deleteConfirmOpen}
+          onOpenChange={setDeleteConfirmOpen}
+          title={t('segments.childSegmentDeleteConfirm')}
+          confirmText={t('actions.delete')}
+          cancelText={t('cancel')}
+          onConfirm={handleConfirmDelete}
+          variant="danger"
+        />
+      )}
     </div>
   );
 });

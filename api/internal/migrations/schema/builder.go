@@ -90,6 +90,26 @@ func (b *Builder) UpdateRowsWhereEqual(table, setColumn string, setValue any, wh
 	return nil
 }
 
+func (b *Builder) UpdateRowsWhereNotEqual(table, setColumn string, setValue any, whereColumn string, whereValue any) error {
+	for _, name := range []string{table, setColumn, whereColumn} {
+		if err := validateIdent(name); err != nil {
+			return err
+		}
+	}
+
+	statement := fmt.Sprintf(
+		"UPDATE %s SET %s = ? WHERE %s <> ?",
+		quoteTable(table),
+		quoteIdent(setColumn),
+		quoteIdent(whereColumn),
+	)
+	b.executedStatements = append(b.executedStatements, statement)
+	if err := b.db.Exec(statement, setValue, whereValue).Error; err != nil {
+		return fmt.Errorf("execute data fix statement %s: %w", preview(statement), err)
+	}
+	return nil
+}
+
 func (b *Builder) HasTable(table string) (bool, error) {
 	if err := validateIdent(table); err != nil {
 		return false, err

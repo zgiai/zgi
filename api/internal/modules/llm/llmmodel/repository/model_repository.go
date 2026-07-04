@@ -12,7 +12,7 @@ type modelRepository struct {
 	db *gorm.DB
 }
 
-const availableModelColumns = "id, provider, name, display_name, use_cases, reasoning, function_calling, structured_output, temperature, top_p, presence_penalty, frequency_penalty, logit_bias, seed, stop, max_stop_sequences, vision, json_mode, streaming, chat_completions, embeddings, image_generation, speech_generation, transcription, moderation, realtime, batch, assistants, responses, system_prompt, logprobs, web_search, file_search, code_interpreter, computer_use, mcp, parallel_tool_calls, reasoning_effort, context_window, max_output_tokens, is_active"
+const availableModelColumns = "id, provider, name, display_name, status, use_cases, reasoning, function_calling, structured_output, temperature, top_p, presence_penalty, frequency_penalty, logit_bias, seed, stop, max_stop_sequences, vision, json_mode, streaming, chat_completions, embeddings, image_generation, speech_generation, transcription, moderation, realtime, batch, assistants, responses, system_prompt, logprobs, web_search, file_search, code_interpreter, computer_use, mcp, parallel_tool_calls, reasoning_effort, context_window, max_output_tokens, is_active"
 
 // NewModelRepository creates a new global model repository
 func NewModelRepository(db *gorm.DB) ModelRepository {
@@ -82,7 +82,7 @@ func (r *modelRepository) GetByProviderAndName(ctx context.Context, provider str
 	return &m, nil
 }
 
-func (r *modelRepository) List(ctx context.Context, providerID *uuid.UUID, provider string, useCase string, isActive *bool, offset, limit int) ([]*model.LLMModel, int64, error) {
+func (r *modelRepository) List(ctx context.Context, providerID *uuid.UUID, provider string, useCase string, status string, isActive *bool, offset, limit int) ([]*model.LLMModel, int64, error) {
 	var models []*model.LLMModel
 	var total int64
 
@@ -96,20 +96,23 @@ func (r *modelRepository) List(ctx context.Context, providerID *uuid.UUID, provi
 			Where("p.id = ?", *providerID)
 	}
 	if provider != "" {
-		query = query.Where("provider = ?", provider)
+		query = query.Where("llm_models.provider = ?", provider)
 	}
 	if useCase != "" {
-		query = query.Where("? = ANY(use_cases)", useCase)
+		query = query.Where("? = ANY(llm_models.use_cases)", useCase)
+	}
+	if status != "" {
+		query = query.Where("llm_models.status = ?", status)
 	}
 	if isActive != nil {
-		query = query.Where("is_active = ?", *isActive)
+		query = query.Where("llm_models.is_active = ?", *isActive)
 	}
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	if err := query.Order("sort_order ASC, name ASC").Offset(offset).Limit(limit).Find(&models).Error; err != nil {
+	if err := query.Order("llm_models.sort_order ASC, llm_models.name ASC").Offset(offset).Limit(limit).Find(&models).Error; err != nil {
 		return nil, 0, err
 	}
 
@@ -120,7 +123,7 @@ func (r *modelRepository) availableModelQuery(ctx context.Context, provider stri
 	query := r.db.WithContext(ctx).
 		Model(&model.LLMModel{}).
 		Select(availableModelColumns).
-		Where("is_active = ?", true)
+		Where("is_active = ? AND status = ?", true, model.ModelStatusActive)
 	if provider != "" {
 		query = query.Where("provider = ?", provider)
 	}

@@ -59,6 +59,7 @@ type KnowledgeScope struct {
 // KnowledgeDatasetSummary is the model-facing dataset summary used for selection.
 type KnowledgeDatasetSummary struct {
 	DatasetID       string `json:"dataset_id"`
+	WorkspaceID     string `json:"workspace_id,omitempty"`
 	Name            string `json:"name"`
 	Description     string `json:"description,omitempty"`
 	Provider        string `json:"provider,omitempty"`
@@ -261,6 +262,7 @@ func (s *KnowledgeRetrievalService) ListAccessibleDatasets(ctx context.Context, 
 		}
 		out = append(out, KnowledgeDatasetSummary{
 			DatasetID:       dataset.ID,
+			WorkspaceID:     dataset.WorkspaceID,
 			Name:            dataset.Name,
 			Description:     stringPtrValue(dataset.Description),
 			Provider:        dataset.Provider,
@@ -580,8 +582,9 @@ func knowledgeRateLimitScopeID(scope KnowledgeScope) string {
 }
 
 func (s *KnowledgeRetrievalService) retrieveDataset(ctx context.Context, dataset *dataset_model.Dataset, query string, retrievalConfig map[string]interface{}, topK int, retrievalMode string) ([]dto.HitTestingRecordResponse, *dto.GraphExecution, error) {
+	effectiveRetrievalConfig := mergeKnowledgeRetrievalConfig(dataset.RetrievalConfig, retrievalConfig)
 	if dataset.Provider == "external" {
-		response, err := s.hitTesting.ExternalRetrieve(ctx, dataset, query, "", retrievalConfig)
+		response, err := s.hitTesting.ExternalRetrieve(ctx, dataset, query, "", effectiveRetrievalConfig)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -598,7 +601,7 @@ func (s *KnowledgeRetrievalService) retrieveDataset(ctx context.Context, dataset
 		}
 		return response.Records, response.GraphExecution, nil
 	}
-	options := s.hitTesting.getRetrievalOptions(ctx, retrievalConfig, dataset)
+	options := s.hitTesting.getRetrievalOptions(ctx, effectiveRetrievalConfig, dataset)
 	options.TopK = topK
 	options.RetrievalMode = normalizeRetrievalMode(retrievalMode)
 	records, graphExecution, err := s.retrievalService.Retrieve(ctx, dataset, query, options)
@@ -606,6 +609,20 @@ func (s *KnowledgeRetrievalService) retrieveDataset(ctx context.Context, dataset
 		return nil, nil, err
 	}
 	return records, graphExecution, nil
+}
+
+func mergeKnowledgeRetrievalConfig(base map[string]interface{}, overrides map[string]interface{}) map[string]interface{} {
+	if base == nil && overrides == nil {
+		return nil
+	}
+	merged := make(map[string]interface{}, len(base)+len(overrides))
+	for key, value := range base {
+		merged[key] = value
+	}
+	for key, value := range overrides {
+		merged[key] = value
+	}
+	return merged
 }
 
 func (s *KnowledgeRetrievalService) agentKnowledgeConfig(ctx context.Context, agentID string) ([]string, map[string]interface{}, error) {

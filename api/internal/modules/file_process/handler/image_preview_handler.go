@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
@@ -179,6 +180,24 @@ func (h *ImagePreviewHandler) GetMinerUImage(c *gin.Context) {
 		return
 	}
 
+	h.writeCompressedImage(c, content)
+}
+
+func (h *ImagePreviewHandler) GetDocumentImage(c *gin.Context) {
+	storageKey := strings.TrimSpace(c.Query("key"))
+	if storageKey == "" || !strings.HasPrefix(storageKey, "document-images/") {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if h.storage == nil {
+		response.Fail(c, response.ErrFileNotFound)
+		return
+	}
+	content, err := h.storage.Load(storageKey)
+	if err != nil {
+		response.Fail(c, response.ErrFileNotFound)
+		return
+	}
 	h.writeCompressedImage(c, content)
 }
 

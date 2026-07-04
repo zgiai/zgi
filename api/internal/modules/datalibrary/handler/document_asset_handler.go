@@ -944,7 +944,7 @@ func (h *DocumentAssetHandler) CreateKnowledgeBaseAssetRef(c *gin.Context) {
 		WorkspaceID:        asset.WorkspaceID,
 		DatasetID:          req.DatasetID,
 		AssetID:            assetID,
-		VersionID:          versionID,
+		VersionID:          &versionID,
 		ChunkArtifactSetID: chunkSetID,
 		VectorArtifactID:   vectorID,
 		MetadataJSON:       req.MetadataJSON,

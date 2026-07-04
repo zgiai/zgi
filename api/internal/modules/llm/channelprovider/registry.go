@@ -123,6 +123,9 @@ func ValidateBaseURLForSpec(spec Spec, fieldName, raw string) error {
 	if strings.TrimSpace(raw) == "" {
 		return nil
 	}
+	if !outboundURLGuardEnabled() {
+		return nil
+	}
 	if err := urlguard.ValidateBaseURL(context.Background(), raw, URLGuardPolicy(spec)); err != nil {
 		return fmt.Errorf("invalid %s for channel_provider %q: %w", fieldName, spec.Name, err)
 	}
@@ -153,7 +156,10 @@ func ValidateConnectionFields(rawProvider, apiBaseURL string) (Spec, error) {
 }
 
 func URLGuardPolicy(spec Spec) urlguard.Policy {
-	return urlguard.Policy{AllowPrivate: AllowsPrivateBaseURL(spec.Name)}
+	return urlguard.Policy{
+		AllowPrivate: AllowsPrivateBaseURL(spec.Name),
+		GuardDNS:     outboundDNSGuardEnabled(),
+	}
 }
 
 func AllowsPrivateBaseURL(rawProvider string) bool {
@@ -162,6 +168,14 @@ func AllowsPrivateBaseURL(rawProvider string) bool {
 		return false
 	}
 	return spec.Name == "ollama" && appconfig.Current().LLM.AllowPrivateBaseURL
+}
+
+func outboundURLGuardEnabled() bool {
+	return appconfig.Current().LLM.OutboundURLGuardEnabled()
+}
+
+func outboundDNSGuardEnabled() bool {
+	return appconfig.Current().LLM.GuardOutboundDNS
 }
 
 // SupportsOpenAIResponses reports whether the channel provider supports native OpenAI Responses.

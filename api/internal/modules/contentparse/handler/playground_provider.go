@@ -17,7 +17,11 @@ func (h *PlaygroundHandler) catalogForRequest(c *gin.Context) (*contracts.ParseP
 		return nil, "", errors.New("content parse playground is not initialized")
 	}
 	if h.catalogs != nil {
-		return h.catalogs.Resolve(c.Request.Context(), parseContextUUID(c, "workspace_id", "tenant_id"))
+		return h.catalogs.Resolve(
+			c.Request.Context(),
+			parseContextUUID(c, "organization_id", "tenant_id"),
+			parseContextUUID(c, "workspace_id", "tenant_id"),
+		)
 	}
 	if h.catalog == nil {
 		return nil, "", errors.New("content parse provider catalog is empty")
@@ -42,6 +46,9 @@ func (h *PlaygroundHandler) planRequest(req contracts.ParseRequest, provider str
 			req.EngineHint = plan.Primary.EngineName
 		}
 		return plan, req, plan.Primary.AdapterName, nil
+	}
+	if !routing.FileExtensionAllowsProvider(req.FileName, provider) {
+		return nil, req, "", fmt.Errorf("content parse provider %q is not supported for file %q", provider, req.FileName)
 	}
 
 	for _, item := range catalog.Providers {
@@ -80,6 +87,39 @@ func forcedRoutePlan(profile contracts.ParseProfile, provider contracts.ParsePro
 		Metadata: map[string]any{
 			"forced_provider": true,
 		},
+	}
+}
+
+func buildFileRouteProviderStatuses(fileName string, catalog *contracts.ParseProviderCatalog, health *contracts.ParseHealth) ([]playgroundProviderStatus, string) {
+	names, ext := routing.FileExtensionProviderOrder(fileName)
+	statuses := make([]playgroundProviderStatus, 0, len(names))
+	for index, name := range names {
+		statuses = append(statuses, buildFileRouteProviderStatus(name, index, catalog, health))
+	}
+	return statuses, ext
+}
+
+func buildFileRouteProviderStatus(name string, routeRank int, catalog *contracts.ParseProviderCatalog, health *contracts.ParseHealth) playgroundProviderStatus {
+	if catalog != nil {
+		for _, provider := range catalog.Providers {
+			if strings.ToLower(strings.TrimSpace(provider.Name)) != name {
+				continue
+			}
+			status := buildPlaygroundProviderStatus(provider, health)
+			status.RouteRank = routeRank
+			return status
+		}
+	}
+	return playgroundProviderStatus{
+		Key:         name,
+		DisplayName: name,
+		Type:        string(contracts.ParseProviderTypeBuiltin),
+		Configured:  false,
+		Available:   false,
+		Selectable:  false,
+		RouteRank:   routeRank,
+		Status:      "not_configured",
+		Reason:      "provider is not configured",
 	}
 }
 

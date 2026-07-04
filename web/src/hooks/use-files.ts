@@ -19,6 +19,7 @@ import type {
   CreateFolderResponse,
   UpdateFolderRequest,
   UpdateFolderResponse,
+  MoveFolderRequest,
   CreateTextFileRequest,
   CreateTextFileResponse,
   GetAllFilesRequest,
@@ -46,8 +47,12 @@ export const FILE_FOLDERS_KEY = 'file-folders';
 export const UPLOAD_FILE_KEY = 'upload-file';
 export const CREATE_FOLDER_KEY = 'create-folder';
 export const UPDATE_FOLDER_KEY = 'update-folder';
+export const MOVE_FOLDER_KEY = 'move-folder';
 export const DELETE_FOLDER_KEY = 'delete-folder';
 export const CREATE_TEXT_FILE_KEY = 'create-text-file';
+
+const isFileFolderListQuery = (queryKey: readonly unknown[]) =>
+  queryKey[0] === FILE_FOLDERS_KEY && queryKey[1] !== 'detail';
 
 interface FilesQueryScope {
   workspace_id?: string;
@@ -71,6 +76,7 @@ export interface UseAllFilesOptions {
   keyword?: string;
   sort?: string;
   extension?: string;
+  processingStatus?: string;
   workspaceId?: string;
 }
 
@@ -200,6 +206,7 @@ const getFilesKey = (
   keyword?: string,
   sort?: string,
   extension?: string,
+  processingStatus?: string,
   workspaceId?: string
 ) => {
   return [
@@ -212,6 +219,7 @@ const getFilesKey = (
       keyword: keyword?.trim() || '',
       sort: sort?.trim() || '',
       extension: extension || '',
+      processingStatus: processingStatus || '',
       workspaceId: workspaceId || '',
     },
   ];
@@ -223,6 +231,8 @@ const getFilesKey = (
 const getServiceMethod = (category: FileCategory) => {
   switch (category) {
     case 'all':
+      return fileManageService.getAllFiles.bind(fileManageService);
+    case 'needs_action':
       return fileManageService.getAllFiles.bind(fileManageService);
     case 'uploaded':
       return fileManageService.getRecentFiles.bind(fileManageService);
@@ -276,18 +286,30 @@ export function useFiles(
     sort,
     category = 'all',
     extension,
+    processingStatus,
     workspaceId,
   } = options;
+  const effectiveProcessingStatus =
+    processingStatus || (category === 'needs_action' ? 'parse_failed' : undefined);
 
   // Reset to page 1 when search keyword, sort, category, or extension changes
   React.useEffect(() => {
     setCurrentPage(1);
-  }, [keyword, sort, category, extension, workspaceId]);
+  }, [keyword, sort, category, extension, effectiveProcessingStatus, workspaceId]);
 
   const serviceMethod = getServiceMethod(category);
 
   const { data, isLoading, isFetching, error } = useQuery<ApiResponseData<AllFilesResponse>>({
-    queryKey: getFilesKey(category, limit, currentPage, keyword, sort, extension, workspaceId),
+    queryKey: getFilesKey(
+      category,
+      limit,
+      currentPage,
+      keyword,
+      sort,
+      extension,
+      effectiveProcessingStatus,
+      workspaceId
+    ),
     queryFn: async () => {
       return serviceMethod({
         page: String(currentPage),
@@ -295,6 +317,7 @@ export function useFiles(
         keyword,
         sort,
         extension,
+        processing_status: effectiveProcessingStatus,
         workspace_id: workspaceId,
       });
     },
@@ -769,7 +792,10 @@ export function useCreateFolder(): {
           if (key[1] === 'children') {
             const parentId = key[2];
             const workspaceId = key[3];
-            return parentId === variables.parent_id && (!workspaceId || workspaceId === targetWorkspaceId);
+            return (
+              parentId === variables.parent_id &&
+              (!workspaceId || workspaceId === targetWorkspaceId)
+            );
           }
 
           const workspaceId = key[1];
@@ -802,7 +828,6 @@ export function useUpdateFolder(): {
 } {
   const t = useT('files');
   const queryClient = useQueryClient();
-  const currentWorkspaceId = useCurrentWorkspace()?.id;
 
   const { mutateAsync: updateFolderMutation, isPending: isUpdating } = useMutation({
     mutationFn: async ({ folderId, data }: { folderId: string; data: UpdateFolderRequest }) => {
@@ -814,16 +839,10 @@ export function useUpdateFolder(): {
       if (folderId) {
         queryClient.invalidateQueries({ queryKey: [FILE_FOLDERS_KEY, 'detail', folderId] });
       }
-      // Invalidate if unfiltered or current workspace
+      // Refresh root and nested folder lists so renamed or moved child folders update in the sidebar.
       queryClient.invalidateQueries({
         queryKey: [FILE_FOLDERS_KEY],
-        predicate: query => {
-          const key = query.queryKey;
-          if (key[0] !== FILE_FOLDERS_KEY) return false;
-          if (key[1] === 'detail') return false;
-          const tId = key[1];
-          return !tId || tId === currentWorkspaceId;
-        },
+        predicate: query => isFileFolderListQuery(query.queryKey),
       });
     },
     onError: error => {
@@ -843,6 +862,43 @@ export function useUpdateFolder(): {
 }
 
 /**
+ * Move folder hook
+ */
+export function useMoveFolder(): {
+  moveFolder: (data: MoveFolderRequest) => Promise<void>;
+  isMoving: boolean;
+} {
+  const t = useT('files');
+  const queryClient = useQueryClient();
+
+  const { mutateAsync: moveFolderMutation, isPending: isMoving } = useMutation({
+    mutationFn: async (data: MoveFolderRequest) => {
+      await fileManageService.moveFolder(data);
+    },
+    onSuccess: () => {
+      toast.success(t('toast.moveFolderSuccess'));
+      queryClient.invalidateQueries({
+        queryKey: [FILE_FOLDERS_KEY],
+        predicate: query => isFileFolderListQuery(query.queryKey),
+      });
+    },
+    onError: error => {
+      const message = (error as { message?: string }).message ?? t('toast.moveFolderError');
+      toast.error(message);
+    },
+  });
+
+  const moveFolder = async (data: MoveFolderRequest) => {
+    return await moveFolderMutation(data);
+  };
+
+  return {
+    moveFolder,
+    isMoving,
+  };
+}
+
+/**
  * Delete folder hook with optimistic updates
  */
 export function useDeleteFolder(): {
@@ -851,7 +907,6 @@ export function useDeleteFolder(): {
 } {
   const t = useT('files');
   const queryClient = useQueryClient();
-  const currentWorkspaceId = useCurrentWorkspace()?.id;
 
   const { mutateAsync: deleteFolderMutation, isPending: isDeleting } = useMutation({
     mutationFn: async (folderId: string) => {
@@ -862,16 +917,10 @@ export function useDeleteFolder(): {
       if (folderId) {
         queryClient.removeQueries({ queryKey: [FILE_FOLDERS_KEY, 'detail', folderId] });
       }
-      // Invalidate if unfiltered or current workspace
+      // Refresh root and nested folder lists so deleted child folders disappear from the sidebar.
       queryClient.invalidateQueries({
         queryKey: [FILE_FOLDERS_KEY],
-        predicate: query => {
-          const key = query.queryKey;
-          if (key[0] !== FILE_FOLDERS_KEY) return false;
-          if (key[1] === 'detail') return false;
-          const tId = key[1];
-          return !tId || tId === currentWorkspaceId;
-        },
+        predicate: query => isFileFolderListQuery(query.queryKey),
       });
     },
     onError: error => {

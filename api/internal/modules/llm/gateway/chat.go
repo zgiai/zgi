@@ -191,6 +191,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 	if err != nil {
 		return nil, err
 	}
+	lockTokenPricingQuote(billingCtx, quote)
 	ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.chat")
 	ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
@@ -413,6 +414,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 	if err != nil {
 		return nil, err
 	}
+	lockTokenPricingQuote(billingCtx, quote)
 	billingCtx.PromptTokens = promptTokens
 	billingCtx.CompletionTokens = completionTokens
 	ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.chat.stream")

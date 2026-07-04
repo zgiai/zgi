@@ -19,7 +19,7 @@ import {
   Clock3,
   ChevronDown,
 } from 'lucide-react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -57,6 +57,13 @@ interface RootRouteItem {
 
 const STORAGE_KEY = 'zgi:console:sidebar:groups';
 
+function getDatasetReturnTo(value: string | null): string | null {
+  if (!value) return null;
+  if (!value.startsWith('/console/dataset/')) return null;
+  if (value.startsWith('//') || value.includes('://')) return null;
+  return value;
+}
+
 function isItemActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
@@ -72,7 +79,10 @@ function isRootRouteItemActive(pathname: string, item: RootRouteItem): boolean {
 
 export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const t = useT('navigation');
+  const datasetReturnTo = getDatasetReturnTo(searchParams.get('returnTo'));
+  const activePathname = datasetReturnTo ? '/console/dataset' : pathname;
 
   // Permission checking
   const { hasPermission } = useAccountPermissions();
@@ -285,7 +295,7 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
           if (isCollapsed) {
             return group.items.map(item => {
               const Icon = item.icon;
-              const isActive = isItemActive(pathname, item.href);
+              const isActive = isItemActive(activePathname, item.href);
               return (
                 <Link
                   key={item.href}
@@ -331,7 +341,7 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
                 <div className="mt-1 space-y-0.5">
                   {group.items.map(item => {
                     const Icon = item.icon;
-                    const isActive = isItemActive(pathname, item.href);
+                    const isActive = isItemActive(activePathname, item.href);
                     return (
                       <Link
                         key={item.href}
@@ -369,7 +379,7 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
           >
             {rootRouteItems.map(item => {
               const Icon = item.icon;
-              const isActive = isRootRouteItemActive(pathname, item);
+              const isActive = isRootRouteItemActive(activePathname, item);
 
               return (
                 <Link
@@ -460,7 +470,10 @@ export function ConsoleMobileSidebar({
   onOpenChange: (open: boolean) => void;
 }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const t = useT('navigation');
+  const datasetReturnTo = getDatasetReturnTo(searchParams.get('returnTo'));
+  const activePathname = datasetReturnTo ? '/console/dataset' : pathname;
   const { hasPermission } = useAccountPermissions();
   const contextStatus = useWorkspaceStore.use.contextStatus();
   const isWorkspaceRequired = contextStatus === 'workspace_required';
@@ -627,7 +640,7 @@ export function ConsoleMobileSidebar({
                     <div className="mt-1 space-y-0.5">
                       {group.items.map(item => {
                         const Icon = item.icon;
-                        const isActive = isItemActive(pathname, item.href);
+                        const isActive = isItemActive(activePathname, item.href);
                         return (
                           <Link
                             key={item.href}

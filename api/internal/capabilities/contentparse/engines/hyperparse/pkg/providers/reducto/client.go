@@ -193,7 +193,7 @@ func parse(ctx context.Context, input string) (*parseResponse, error) {
 			"chunking": map[string]any{"chunk_mode": "variable"},
 		},
 		"settings": map[string]any{
-			"return_images": []string{"figure", "table"},
+			"return_images": []string{"figure"},
 		},
 		"enhance": map[string]any{
 			"summarize_figures": true,

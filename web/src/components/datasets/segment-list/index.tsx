@@ -42,6 +42,7 @@ interface SegmentListProps {
 
 export function SegmentList({ datasetId, documentId }: SegmentListProps) {
   const t = useT('datasets');
+  const readOnly = true;
 
   // Use document segments hook for segment CRUD and state management
   const {
@@ -280,15 +281,11 @@ export function SegmentList({ datasetId, documentId }: SegmentListProps) {
             {allExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
             {allExpanded ? t('segments.collapseAll') : t('segments.expandAll')}
           </Button>
-          <Button onClick={handleCreateSegment} size="lg" className="h-9">
-            <Plus className="h-4 w-4" />
-            {t('segments.create')}
-          </Button>
         </div>
       </div>
 
       {/* Batch actions */}
-      {someSelected && (
+      {!readOnly && someSelected && (
         <div className="flex justify-center gap-x-2 items-center absolute left-[50%] translate-x-[-50%] bottom-16 z-20 py-1 px-2 rounded-[10px] bg-background border border-secondary-foreground shadow-md">
           <span className="text-sm text-accent-foreground">
             {t('segments.selectCount', { count: selectedCount })}
@@ -320,7 +317,7 @@ export function SegmentList({ datasetId, documentId }: SegmentListProps) {
       {/* Segments list */}
       <div className="space-y-3">
         {/* Select all header */}
-        {segments.length > 0 && (
+        {!readOnly && segments.length > 0 && (
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg">
             <Checkbox
               checked={allSelected}
@@ -356,10 +353,6 @@ export function SegmentList({ datasetId, documentId }: SegmentListProps) {
           <Card>
             <CardContent className="p-8 text-center">
               <p className="text-muted-foreground">{t('segments.noSegments')}</p>
-              <Button onClick={handleCreateSegment} className="mt-4" size="sm">
-                <Plus className="h-4 w-4 mr-1" />
-                {t('segments.createFirst')}
-              </Button>
             </CardContent>
           </Card>
         ) : (
@@ -386,6 +379,7 @@ export function SegmentList({ datasetId, documentId }: SegmentListProps) {
               onViewAllChildSegments={handleViewChildChunks}
               onEditChildSegment={handleEditChildSegment}
               onDeleteChildSegment={handleDeleteChildSegment}
+              readOnly={readOnly}
             />
           ))
         )}
@@ -404,25 +398,29 @@ export function SegmentList({ datasetId, documentId }: SegmentListProps) {
       </div>
 
       {/* Child Segment Edit Dialog */}
-      <ChildSegmentEditDialog
-        open={isChildSegmentEditDialogOpen}
-        onClose={() => {
-          setIsChildSegmentEditDialogOpen(false);
-          setEditingChildSegment(null);
-        }}
-        initialContent={editingChildSegment?.content ?? ''}
-        isLoading={updateChildSegmentMutation.isPending}
-        onSave={handleSaveChildSegment}
-      />
+      {!readOnly && (
+        <ChildSegmentEditDialog
+          open={isChildSegmentEditDialogOpen}
+          onClose={() => {
+            setIsChildSegmentEditDialogOpen(false);
+            setEditingChildSegment(null);
+          }}
+          initialContent={editingChildSegment?.content ?? ''}
+          isLoading={updateChildSegmentMutation.isPending}
+          onSave={handleSaveChildSegment}
+        />
+      )}
 
       {/* Segment Edit Dialog */}
-      <SegmentEditDialog
-        open={isSegmentEditDialogOpen}
-        onClose={() => setIsSegmentEditDialogOpen(false)}
-        segment={editingSegment}
-        isLoading={isSegmentMutating}
-        onSave={handleSaveSegment}
-      />
+      {!readOnly && (
+        <SegmentEditDialog
+          open={isSegmentEditDialogOpen}
+          onClose={() => setIsSegmentEditDialogOpen(false)}
+          segment={editingSegment}
+          isLoading={isSegmentMutating}
+          onSave={handleSaveSegment}
+        />
+      )}
 
       {/* Child Segments Dialog */}
       {viewingChildSegmentsParent && (

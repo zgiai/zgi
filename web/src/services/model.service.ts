@@ -21,6 +21,8 @@ import type {
   DefaultModelRecord,
   ResolvedDefaultModelList,
   UpsertDefaultModelRequest,
+  PricingFallbackConfig,
+  UpdatePricingFallbackConfigRequest,
 } from './types/model';
 
 // model management temporary service
@@ -120,6 +122,18 @@ export class ModelService extends BaseService {
     params?: GetCustomModelsParams
   ): Promise<ApiResponseData<CustomModelListResponse>> {
     return this.request('get', '/models/custom', undefined, { params });
+  }
+
+  // GET /console/api/llm/pricing/fallback
+  getPricingFallback(): Promise<ApiResponseData<PricingFallbackConfig>> {
+    return this.request('get', '/pricing/fallback');
+  }
+
+  // PUT /console/api/llm/pricing/fallback
+  updatePricingFallback(
+    data: UpdatePricingFallbackConfigRequest
+  ): Promise<ApiResponseData<PricingFallbackConfig>> {
+    return this.request('put', '/pricing/fallback', data);
   }
 }
 

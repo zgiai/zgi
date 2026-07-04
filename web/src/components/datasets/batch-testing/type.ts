@@ -1,3 +1,5 @@
+import type { SearchMethod } from '@/services/types/dataset';
+
 export interface Response {
   code: string;
   data: BatchTestData;
@@ -119,7 +121,7 @@ export interface TsnePosition {
 export interface BatchHitTestingRequest {
   queries: string[];
   retrieval_model: {
-    search_method: 'semantic_search' | 'graph_search';
+    search_method: SearchMethod;
     reranking_enable: boolean;
     reranking_model?: {
       reranking_provider_name: string;
