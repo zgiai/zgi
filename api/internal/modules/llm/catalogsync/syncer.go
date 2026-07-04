@@ -215,6 +215,18 @@ func (s *Synchronizer) applyPublishedVersion(ctx context.Context, client catalog
 		return err
 	}
 
+	catalog := catalogFromResponse(resp)
+
+	service := modelmeta.NewService(s.db)
+	if err := service.ApplyPublishedCatalog(ctx, catalog); err != nil {
+		_ = service.RecordPublishedCatalogSyncError(ctx, err.Error())
+		return err
+	}
+
+	return nil
+}
+
+func catalogFromResponse(resp *pb.GetPublishedCatalogResponse) modelmeta.PublishedCatalog {
 	catalog := modelmeta.PublishedCatalog{
 		Version:     resp.GetVersion(),
 		PublishedAt: time.UnixMilli(resp.GetPublishedAt()).UTC(),
@@ -277,16 +289,13 @@ func (s *Synchronizer) applyPublishedVersion(ctx context.Context, client catalog
 			Features:               publishedModelFeatures(model.GetFeatures()),
 			Tools:                  publishedModelTools(model.GetTools()),
 			Parameters:             publishedModelParameters(model.GetParameters()),
+			ReplacementProvider:    model.GetReplacementProvider(),
+			ReplacementModel:       model.GetReplacementModel(),
+			DeprecationReason:      model.GetDeprecationReason(),
 		})
 	}
 
-	service := modelmeta.NewService(s.db)
-	if err := service.ApplyPublishedCatalog(ctx, catalog); err != nil {
-		_ = service.RecordPublishedCatalogSyncError(ctx, err.Error())
-		return err
-	}
-
-	return nil
+	return catalog
 }
 
 func publishedModelEndpoints(source *pb.CatalogModelEndpoints) *llmmodel.ModelEndpoints {

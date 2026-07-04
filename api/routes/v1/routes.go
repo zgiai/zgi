@@ -89,6 +89,8 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		QuotaService:               serviceContainer.GetQuotaService(),
 		LLMClient:                  serviceContainer.GetLLMClient(),
 		DefaultModelService:        serviceContainer.GetDefaultModelService(),
+		DataLibraryModule:          serviceContainer.GetDataLibraryModule(),
+		TaskManager:                serviceContainer.GetTaskManager(),
 		Scheduler:                  serviceContainer.GetScheduler(),
 		ScheduledFileService:       serviceContainer.GetFileService(),
 	})
@@ -116,6 +118,15 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		ResourcePermissionService:  serviceContainer.GetResourcePermissionService(),
 	})
 
+	// ---------- RAG Evaluation ----------
+	RegisterRAGEvaluationRoutes(v1, RAGEvaluationRouteDeps{
+		AccountService:            accountService,
+		OrganizationService:       serviceContainer.GetOrganizationService(),
+		KnowledgeRetrievalService: serviceContainer.GetKnowledgeRetrievalService(),
+		LLMClient:                 serviceContainer.GetLLMClient(),
+		DefaultModelService:       serviceContainer.GetDefaultModelService(),
+	})
+
 	// ---------- Content Parse ----------
 	RegisterContentParseRoutes(v1, ContentParseRouteDeps{
 		DB:                  db,
@@ -128,6 +139,8 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterDataLibraryRoutes(v1, DataLibraryRouteDeps{
 		AccountService:    accountService,
 		DataLibraryModule: serviceContainer.GetDataLibraryModule(),
+		TaskManager:       serviceContainer.GetTaskManager(),
+		TaskRegistry:      serviceContainer.GetTaskHandlerRegistry(),
 	})
 
 	// ---------- DataSource ----------

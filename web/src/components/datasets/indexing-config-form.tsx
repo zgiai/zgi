@@ -84,6 +84,7 @@ export interface FormRef {
  */
 export const DatasetIndexingConfigForm = forwardRef<FormRef, DatasetIndexingConfigFormProps>(
   ({ data, onChange, className, isSettingMode = false, currentDataset }, ref) => {
+    const t = useT('datasets');
     const graphFlowEnabled = Boolean(data.enableGraphFlow ?? currentDataset?.enable_graph_flow);
     const defaultRerankModel = useDefaultModelByUseCase('rerank');
     const { models: rerankModels } = useAvailableModels({ use_case: 'rerank' });
@@ -154,9 +155,9 @@ export const DatasetIndexingConfigForm = forwardRef<FormRef, DatasetIndexingConf
           incomingRetrieval.search_method,
           graphFlowEnabled
         ),
-        top_k: incomingRetrieval.top_k ?? 3,
+        top_k: incomingRetrieval.top_k ?? 10,
         score_threshold_enabled: incomingRetrieval.score_threshold_enabled ?? true,
-        score_threshold: incomingRetrieval.score_threshold ?? 0.5,
+        score_threshold: incomingRetrieval.score_threshold ?? 0.35,
         reranking_enable: incomingRetrieval.reranking_enable ?? true,
         reranking_model: incomingRetrieval.reranking_model ?? {
           reranking_model_name: defaultRerankModelData?.model || '',
@@ -285,7 +286,7 @@ export const DatasetIndexingConfigForm = forwardRef<FormRef, DatasetIndexingConf
                   model: data.embeddingModel || '',
                 }}
                 onChange={handleEmbeddingModelChange}
-                disabled={isModelAndRetrievalConfigDisabled}
+                disabled
               />
             </div>
           )}
@@ -316,6 +317,7 @@ export const DatasetIndexingConfigForm = forwardRef<FormRef, DatasetIndexingConf
                 retrieval={retrieval as RetrievalConfig}
                 disabled={isModelAndRetrievalConfigDisabled}
                 isGraphEnabled={graphFlowEnabled}
+                rerankingLabel={t('createWizard.processConfig.changeRerankModel')}
               />
             </div>
           )}

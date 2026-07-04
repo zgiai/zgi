@@ -5,12 +5,14 @@ import type {
   Pagination,
   SendMessagePayload,
   ChatRunCallbacks,
+  ConversationSearchResult,
 } from '@/components/chat/controllers/types';
 import { WebAppService } from '@/services/webapp.service';
 import type {
   WebAppConversation,
   WebAppConversationDetail,
   WebAppConversationMessageItem,
+  WebAppConversationSearchResult,
 } from '@/services/types/webapp';
 import type { Message, NodeInfo, TerminalRunStatus } from '@/components/chat/types';
 import { normalizeMessageRunStatus } from '@/components/chat/types';
@@ -110,6 +112,17 @@ function mapWebAppConversationDetailToDetail(data: WebAppConversationDetail): Co
   };
 }
 
+function mapWebAppSearchResult(item: WebAppConversationSearchResult): ConversationSearchResult {
+  return {
+    type: item.type,
+    conversationId: item.conversation_id,
+    conversationTitle: item.conversation_title,
+    messageId: item.message_id,
+    snippet: item.snippet,
+    updatedAt: item.updated_at * 1000,
+  };
+}
+
 export class WebappConversationTransport implements ConversationTransport {
   private onTaskIdCallback?: (taskId: string) => void;
 
@@ -183,6 +196,11 @@ export class WebappConversationTransport implements ConversationTransport {
       console.error('[WebappTransport] Failed to delete conversation:', err);
       throw err;
     }
+  }
+
+  async search(query: string, limit: number): Promise<ConversationSearchResult[]> {
+    const response = await WebAppService.searchConversations(this.versionUuid, { query, limit });
+    return (response.data ?? []).map(mapWebAppSearchResult);
   }
 
   send(payload: SendMessagePayload, callbacks: ChatRunCallbacks, abortSignal?: AbortSignal): void {

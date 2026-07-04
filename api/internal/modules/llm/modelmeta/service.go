@@ -20,8 +20,9 @@ import (
 )
 
 const (
-	modelMetaAPIVersion = "v1"
-	priceScale          = 4
+	modelMetaAPIVersion     = "v1"
+	defaultModelMetaAPIBase = "https://models.zgi.ai"
+	priceScale              = 4
 )
 
 var errModelMetaAPIURLNotConfigured = errors.New("MODELMETA_API_URL is not configured")
@@ -32,9 +33,7 @@ const (
 	SyncResultStatusFailed  = "failed"
 )
 
-var syncProviders = []string{"openai", "anthropic", "cohere", "google", "qwen", "deepseek", "glm", "moonshot"}
-
-// Service handles model metadata synchronization from modelmeta.dev
+// Service handles model metadata synchronization from a ModelMeta-compatible source.
 type Service struct {
 	db         *gorm.DB
 	httpClient *http.Client
@@ -55,7 +54,7 @@ func NewService(db *gorm.DB) *Service {
 func resolveModelMetaAPIBase() string {
 	cfg := appconfig.GlobalConfig
 	if cfg == nil || strings.TrimSpace(cfg.ModelMeta.APIURL) == "" {
-		return ""
+		return normalizeModelMetaAPIBase(defaultModelMetaAPIBase)
 	}
 	return normalizeModelMetaAPIBase(cfg.ModelMeta.APIURL)
 }
@@ -75,7 +74,7 @@ func (s *Service) HasConfiguredAPIBaseURL() bool {
 	return s != nil && strings.TrimSpace(s.apiBaseURL) != ""
 }
 
-// ModelMetaResponse represents the response from modelmeta.dev API
+// ModelMetaResponse represents the response from a ModelMeta-compatible API.
 type ModelMetaResponse struct {
 	Data       []ModelMetaData `json:"data"`
 	Object     string          `json:"object"`
@@ -85,7 +84,7 @@ type ModelMetaResponse struct {
 	TotalPages int             `json:"total_pages"`
 }
 
-// ModelMetaProvider represents a provider from modelmeta.dev API
+// ModelMetaProvider represents a provider from a ModelMeta-compatible API.
 type ModelMetaProvider struct {
 	ID          string                 `json:"id"`
 	Object      string                 `json:"object"`
@@ -105,7 +104,7 @@ type ModelMetaProvider struct {
 	UpdatedAt   int64                  `json:"updated_at"`
 }
 
-// ModelMetaProviderResponse represents the provider list response from modelmeta.dev
+// ModelMetaProviderResponse represents the provider list response from a ModelMeta-compatible API.
 type ModelMetaProviderResponse struct {
 	Data       []ModelMetaProvider `json:"data"`
 	Total      int                 `json:"total"`
@@ -114,7 +113,7 @@ type ModelMetaProviderResponse struct {
 	TotalPages int                 `json:"total_pages"`
 }
 
-// ModelMetaData represents a model from modelmeta.dev
+// ModelMetaData represents a model from a ModelMeta-compatible API.
 type ModelMetaData struct {
 	ID               string                 `json:"id"`
 	Object           string                 `json:"object"`
@@ -215,7 +214,7 @@ type DiffField struct {
 	NewValue interface{} `json:"new_value"`
 }
 
-// SyncProviderModels syncs models for a specific provider from modelmeta.dev
+// SyncProviderModels syncs models for a specific provider from the configured ModelMeta-compatible source.
 // If modelNames is provided and not empty, only sync those specific models.
 // If modelNames is nil or empty, sync all models (backward compatible).
 func (s *Service) SyncProviderModels(ctx context.Context, provider string, modelNames []string) (*SyncResult, error) {
@@ -226,7 +225,6 @@ func (s *Service) SyncProviderModels(ctx context.Context, provider string, model
 		Errors:   []string{},
 	}
 
-	// Fetch all models from modelmeta.dev
 	allModels, err := s.fetchProviderModels(provider)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch models: %w", err)
@@ -295,19 +293,29 @@ func resolveSyncResultStatus(successModels, failedModels int) string {
 
 // SyncAllProviders syncs models for all providers
 func (s *Service) SyncAllProviders(ctx context.Context) (map[string]*SyncResult, error) {
+	providers, err := s.fetchProviders()
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch providers: %w", err)
+	}
+
 	results := make(map[string]*SyncResult)
 
-	for _, provider := range syncProviders {
-		result, err := s.SyncProviderModels(ctx, provider, nil) // nil = sync all models
+	for _, provider := range providers {
+		providerName := strings.TrimSpace(provider.Provider)
+		if providerName == "" {
+			continue
+		}
+
+		result, err := s.SyncProviderModels(ctx, providerName, nil) // nil = sync all models
 		if err != nil {
-			results[provider] = &SyncResult{
-				Provider: provider,
+			results[providerName] = &SyncResult{
+				Provider: providerName,
 				Status:   SyncResultStatusFailed,
 				Errors:   []string{err.Error()},
 			}
 			continue
 		}
-		results[provider] = result
+		results[providerName] = result
 	}
 
 	return results, nil
@@ -459,7 +467,7 @@ func (s *Service) ComputeDeprecated(ctx context.Context, provider string) (*Depr
 	return result, nil
 }
 
-// GetModelInfo retrieves model information from modelmeta.dev
+// GetModelInfo retrieves model information from the configured ModelMeta-compatible source.
 func (s *Service) GetModelInfo(provider, modelName string) (*ModelMetaData, error) {
 	models, err := s.fetchProviderModels(provider)
 	if err != nil {
@@ -475,7 +483,7 @@ func (s *Service) GetModelInfo(provider, modelName string) (*ModelMetaData, erro
 	return nil, fmt.Errorf("model %s not found for provider %s", modelName, provider)
 }
 
-// fetchProviderModels fetches ALL models for a provider from modelmeta.dev
+// fetchProviderModels fetches ALL models for a provider from the configured ModelMeta-compatible source.
 // It paginates through all pages (page_size=100) to avoid the default 20-model limit.
 func (s *Service) fetchProviderModels(provider string) ([]ModelMetaData, error) {
 	if !s.HasConfiguredAPIBaseURL() {
@@ -526,7 +534,7 @@ func (s *Service) fetchProviderModels(provider string) ([]ModelMetaData, error) 
 	}
 
 	// Deduplicate by model name: last occurrence wins (most up-to-date data).
-	// modelmeta.dev may return multiple entries for the same model identifier
+	// ModelMeta-compatible sources may return multiple entries for the same model identifier
 	// (e.g. gpt-3.5-turbo appears twice with different context_window values).
 	seen := make(map[string]int, len(allModels))
 	var deduped []ModelMetaData

@@ -159,43 +159,9 @@ func (h *WorkflowHandler) runWorkflowByVersionUUIDInternal(c *gin.Context, versi
 		}
 		req.Inputs["sys.version_uuid"] = versionUUID
 
-		// Determine workflow run type based on workflow type
-		runType := "WORKFLOW"
-		if workflowType == "chat" {
-			runType = "CONVERSATION_WORKFLOW"
-			req.Inputs["sys.workflow_type"] = "chat"
-
-			query, _ := req.Inputs["query"].(string)
-			conversationID, _ := req.Inputs["conversation_id"].(string)
-
-			if conversationID != "" {
-				logger.DebugContext(c.Request.Context(), "workflow version run continuing conversation", zap.String("conversation_id", conversationID))
-
-				latestMessageID, err := h.getLatestMessageID(conversationID)
-				if err == nil && latestMessageID != "" {
-					req.Inputs["sys.parent_message_id"] = latestMessageID
-					logger.DebugContext(c.Request.Context(), "workflow version run parent message set", zap.Bool("has_parent_message_id", true))
-				}
-
-				req.Inputs["sys.conversation_id"] = conversationID
-				req.Inputs["sys.dialogue_count"] = h.getDialogueCount(conversationID)
-			} else {
-				req.Inputs["sys.conversation_id"] = ""
-				req.Inputs["sys.parent_message_id"] = ""
-				req.Inputs["sys.dialogue_count"] = 1
-				logger.DebugContext(c.Request.Context(), "workflow version run starting new conversation")
-			}
-
-			if query != "" {
-				req.Inputs["sys.query"] = query
-			}
-
-			if req.Inputs["conversation_params"] == nil {
-				req.Inputs["conversation_params"] = map[string]interface{}{
-					"from_source": "account",
-					"invoke_from": string(InvokeFromWebApp),
-				}
-			}
+		runType := webAppWorkflowRunType(workflowType)
+		if runType == "CONVERSATION_WORKFLOW" {
+			h.prepareWebAppConversationRunInputs(c.Request.Context(), req.Inputs, "workflow version run")
 		}
 
 		// Run workflow with streaming (isDraft=false for published version)
@@ -377,47 +343,60 @@ func (h *WorkflowHandler) runWorkflowByWebAppIDInternal(c *gin.Context, webAppID
 	}
 	req.Inputs["sys.web_app_id"] = webAppID
 
-	// Determine workflow run type based on workflow type
-	runType := "WORKFLOW"
-	if workflowType == "chat" {
-		runType = "CONVERSATION_WORKFLOW"
-		req.Inputs["sys.workflow_type"] = "chat"
-
-		query, _ := req.Inputs["query"].(string)
-		conversationID, _ := req.Inputs["conversation_id"].(string)
-
-		if conversationID != "" {
-			logger.DebugContext(c.Request.Context(), "web app workflow run continuing conversation", zap.String("conversation_id", conversationID))
-
-			latestMessageID, err := h.getLatestMessageID(conversationID)
-			if err == nil && latestMessageID != "" {
-				req.Inputs["sys.parent_message_id"] = latestMessageID
-				logger.DebugContext(c.Request.Context(), "web app workflow run parent message set", zap.Bool("has_parent_message_id", true))
-			}
-
-			req.Inputs["sys.conversation_id"] = conversationID
-			req.Inputs["sys.dialogue_count"] = h.getDialogueCount(conversationID)
-		} else {
-			req.Inputs["sys.conversation_id"] = ""
-			req.Inputs["sys.parent_message_id"] = ""
-			req.Inputs["sys.dialogue_count"] = 1
-			logger.DebugContext(c.Request.Context(), "web app workflow run starting new conversation")
-		}
-
-		if query != "" {
-			req.Inputs["sys.query"] = query
-		}
-
-		if req.Inputs["conversation_params"] == nil {
-			req.Inputs["conversation_params"] = map[string]interface{}{
-				"from_source": "account",
-				"invoke_from": string(InvokeFromWebApp),
-			}
-		}
+	runType := webAppWorkflowRunType(workflowType)
+	if runType == "CONVERSATION_WORKFLOW" {
+		h.prepareWebAppConversationRunInputs(c.Request.Context(), req.Inputs, "web app workflow run")
 	}
 
 	// Run workflow with streaming (isDraft=false for published version)
 	h.runWorkflowStream(c, tenantID, agentID, req, accountID, false, runType, "web-app")
 	return
 
+}
+
+func webAppWorkflowRunType(workflowType string) string {
+	if strings.TrimSpace(workflowType) == string(dto.WorkflowTypeChat) {
+		return "CONVERSATION_WORKFLOW"
+	}
+	return "WORKFLOW"
+}
+
+func (h *WorkflowHandler) prepareWebAppConversationRunInputs(ctx context.Context, inputs map[string]interface{}, logPrefix string) {
+	if inputs == nil {
+		return
+	}
+
+	inputs["sys.workflow_type"] = "chat"
+
+	query, _ := inputs["query"].(string)
+	conversationID, _ := inputs["conversation_id"].(string)
+
+	if conversationID != "" {
+		logger.DebugContext(ctx, logPrefix+" continuing conversation", zap.String("conversation_id", conversationID))
+
+		latestMessageID, err := h.getLatestMessageID(conversationID)
+		if err == nil && latestMessageID != "" {
+			inputs["sys.parent_message_id"] = latestMessageID
+			logger.DebugContext(ctx, logPrefix+" parent message set", zap.Bool("has_parent_message_id", true))
+		}
+
+		inputs["sys.conversation_id"] = conversationID
+		inputs["sys.dialogue_count"] = h.getDialogueCount(conversationID)
+	} else {
+		inputs["sys.conversation_id"] = ""
+		inputs["sys.parent_message_id"] = ""
+		inputs["sys.dialogue_count"] = 1
+		logger.DebugContext(ctx, logPrefix+" starting new conversation")
+	}
+
+	if query != "" {
+		inputs["sys.query"] = query
+	}
+
+	if inputs["conversation_params"] == nil {
+		inputs["conversation_params"] = map[string]interface{}{
+			"from_source": "account",
+			"invoke_from": string(InvokeFromWebApp),
+		}
+	}
 }

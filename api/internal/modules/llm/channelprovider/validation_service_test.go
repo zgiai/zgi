@@ -54,7 +54,7 @@ func (f *fakeModelLookupRepo) GetByProviderAndName(context.Context, string, stri
 	return nil, errors.New("not implemented")
 }
 
-func (f *fakeModelLookupRepo) List(_ context.Context, _ *uuid.UUID, _, _ string, _ *bool, _, _ int) ([]*llmmodelmodel.LLMModel, int64, error) {
+func (f *fakeModelLookupRepo) List(_ context.Context, _ *uuid.UUID, _, _, _ string, _ *bool, _, _ int) ([]*llmmodelmodel.LLMModel, int64, error) {
 	result := make([]*llmmodelmodel.LLMModel, 0, len(f.models))
 	for _, modelRecord := range f.models {
 		result = append(result, modelRecord)

@@ -12,6 +12,7 @@ import (
 
 type fakeProviderConfigRepository struct {
 	system    []*model.ProviderConfig
+	org       map[uuid.UUID][]*model.ProviderConfig
 	workspace map[uuid.UUID][]*model.ProviderConfig
 	err       error
 }
@@ -24,13 +25,16 @@ func (f *fakeProviderConfigRepository) GetByID(context.Context, uuid.UUID) (*mod
 	return nil, nil
 }
 
-func (f *fakeProviderConfigRepository) GetByScopeAndKey(context.Context, string, *uuid.UUID, string) (*model.ProviderConfig, error) {
+func (f *fakeProviderConfigRepository) GetByScopeAndKey(context.Context, string, *uuid.UUID, *uuid.UUID, string) (*model.ProviderConfig, error) {
 	return nil, nil
 }
 
-func (f *fakeProviderConfigRepository) ListByScope(_ context.Context, scope string, workspaceID *uuid.UUID) ([]*model.ProviderConfig, error) {
+func (f *fakeProviderConfigRepository) ListByScope(_ context.Context, scope string, organizationID, workspaceID *uuid.UUID) ([]*model.ProviderConfig, error) {
 	if f.err != nil {
 		return nil, f.err
+	}
+	if scope == "organization" && organizationID != nil {
+		return f.org[*organizationID], nil
 	}
 	if scope == "workspace" && workspaceID != nil {
 		return f.workspace[*workspaceID], nil
@@ -39,6 +43,10 @@ func (f *fakeProviderConfigRepository) ListByScope(_ context.Context, scope stri
 		return f.system, nil
 	}
 	return nil, nil
+}
+
+func (f *fakeProviderConfigRepository) UpsertByScopeAndKey(context.Context, *model.ProviderConfig) error {
+	return nil
 }
 
 func (f *fakeProviderConfigRepository) Update(context.Context, *model.ProviderConfig) error {
@@ -105,7 +113,7 @@ func TestProviderCatalogResolverMergesSystemAndWorkspaceConfigs(t *testing.T) {
 		},
 	}
 
-	catalog, source, err := NewProviderCatalogResolver(repo, fallback).Resolve(context.Background(), &workspaceID)
+	catalog, source, err := NewProviderCatalogResolver(repo, fallback).Resolve(context.Background(), nil, &workspaceID)
 	if err != nil {
 		t.Fatalf("resolve catalog: %v", err)
 	}
@@ -155,7 +163,7 @@ func TestProviderCatalogResolverDoesNotEnableDBOnlyRemoteWithoutRuntimeConfig(t 
 		},
 	}}
 
-	catalog, source, err := NewProviderCatalogResolver(repo, fallback).Resolve(context.Background(), nil)
+	catalog, source, err := NewProviderCatalogResolver(repo, fallback).Resolve(context.Background(), nil, nil)
 	if err != nil {
 		t.Fatalf("resolve catalog: %v", err)
 	}
@@ -193,7 +201,7 @@ func TestProviderCatalogResolverFallsBackToLocalOnlyWhenRepositoryUnavailable(t 
 	}}
 	repo := &fakeProviderConfigRepository{err: errors.New("database unavailable")}
 
-	catalog, source, err := NewProviderCatalogResolver(repo, fallback).Resolve(context.Background(), nil)
+	catalog, source, err := NewProviderCatalogResolver(repo, fallback).Resolve(context.Background(), nil, nil)
 	if err != nil {
 		t.Fatalf("resolve catalog: %v", err)
 	}

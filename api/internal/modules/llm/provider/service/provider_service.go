@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	appconfig "github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/modules/llm/internal/urlguard"
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
@@ -330,7 +331,11 @@ func validateProviderBaseURL(ctx context.Context, fieldName, raw string) error {
 	if raw == "" {
 		return nil
 	}
-	if err := urlguard.ValidateBaseURL(ctx, raw, urlguard.Policy{}); err != nil {
+	llmConfig := appconfig.Current().LLM
+	if !llmConfig.OutboundURLGuardEnabled() {
+		return nil
+	}
+	if err := urlguard.ValidateBaseURL(ctx, raw, urlguard.Policy{GuardDNS: llmConfig.GuardOutboundDNS}); err != nil {
 		return fmt.Errorf("invalid %s: %w", fieldName, err)
 	}
 	return nil
@@ -727,7 +732,7 @@ func (s *providerService) GetProviderDetail(ctx context.Context, organizationID 
 // ToggleModel enables or disables a model for an organization under a provider
 func (s *providerService) ToggleModel(ctx context.Context, organizationID uuid.UUID, provider string, modelName string, isEnabled bool) error {
 	// Find the model by provider name and model name
-	models, _, err := s.modelRepo.List(ctx, nil, "", "", nil, 0, 10000)
+	models, _, err := s.modelRepo.List(ctx, nil, "", "", "", nil, 0, 10000)
 	if err != nil {
 		return fmt.Errorf("failed to list models: %w", err)
 	}

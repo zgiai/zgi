@@ -29,6 +29,7 @@ export const SegmentCard = React.memo(function SegmentCard({
   onViewAllChildSegments,
   onEditChildSegment,
   onDeleteChildSegment,
+  readOnly = false,
 }: SegmentCardProps) {
   const t = useT('datasets');
 
@@ -46,6 +47,7 @@ export const SegmentCard = React.memo(function SegmentCard({
             onEdit={onEdit}
             onDelete={onDelete}
             onViewChildChunks={onViewChildChunks}
+            readOnly={readOnly}
           />
 
           {/* Content */}
@@ -93,6 +95,7 @@ export const SegmentCard = React.memo(function SegmentCard({
               onViewAllChildSegments={onViewAllChildSegments}
               onEditChildSegment={onEditChildSegment}
               onDeleteChildSegment={onDeleteChildSegment}
+              readOnly={readOnly}
             />
           )}
         </div>

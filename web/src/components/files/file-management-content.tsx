@@ -3,7 +3,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { FileSidebar } from '@/components/files/file-sidebar';
 import { FileList } from '@/components/files/file-list';
-import { UploadDialog, type UploadConfig } from '@/components/files/upload-dialog';
 import { CreateFolderDialog, type CreateFolderData } from '@/components/files/create-folder-dialog';
 import {
   CreateTextFileDialog,
@@ -23,7 +22,6 @@ import {
   Info,
   Upload,
   PanelLeft,
-  FolderPlus,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -34,9 +32,18 @@ import {
   DialogBody,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import {
   DropdownMenu,
@@ -52,6 +59,8 @@ import {
   useCreateFolder,
   useCreateTextFile,
   useFileFolders,
+  useUpdateFolder,
+  useMoveFolder,
   useDeleteFolder,
   FILE_FOLDERS_KEY,
   STORAGE_USAGE_KEY,
@@ -64,15 +73,23 @@ import { filterLowercaseExtensions } from '@/utils/file-helpers';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useAuthStore } from '@/store/auth-store';
 import { useWorkspaceStore } from '@/store/workspace-store';
-import type { FileFolder } from '@/services/types/file';
-import type { FileItem } from '@/services/types/file';
+import type { FileAssetProductStatus, FileFolder, FileItem } from '@/services/types/file';
 import { cn } from '@/lib/utils';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { useJoinedWorkspaces } from '@/hooks/workspace/use-joined-workspaces';
 import { useUpdateCurrentWorkspace } from '@/hooks/workspace/use-update-current-workspace';
 import { fileManageService } from '@/services/file-manage.service';
+import { toast } from 'sonner';
 import type { Organization } from '@/services/types/organization';
 import type { Workspace } from '@/store/workspace-store';
+import {
+  MAX_FILE_FOLDER_LEVEL,
+  getDescendantFolderIds,
+  getFolderSubtreeHeight,
+  loadFileFolderOptions,
+  type FileFolderOption,
+} from './file-folder-levels';
+import { FILE_MANAGEMENT_UPLOAD_ACCEPT_EXT } from './file-upload-policy';
 
 export interface FileManagementContentProps {
   /** Enable file selection mode */
@@ -91,26 +108,94 @@ export interface FileManagementContentProps {
   allowWorkspaceSwitch?: boolean;
 }
 
-const SYSTEM_FILE_CATEGORIES = new Set(['all', 'uploaded', 'default']);
+const SYSTEM_FILE_CATEGORIES = new Set(['all', 'needs_action', 'uploaded', 'default']);
+
+function normalizeFolderName(name: string) {
+  return name.trim().toLocaleLowerCase();
+}
+
+function normalizeFolderParentId(parentId: string | null | undefined) {
+  return parentId || '';
+}
+
+function hasSiblingFolderName(
+  folders: FileFolder[],
+  name: string,
+  parentId: string | null | undefined,
+  excludeFolderId?: string
+) {
+  const normalizedName = normalizeFolderName(name);
+  const normalizedParentId = normalizeFolderParentId(parentId);
+
+  return folders.some(
+    folder =>
+      folder.id !== excludeFolderId &&
+      normalizeFolderName(folder.name) === normalizedName &&
+      normalizeFolderParentId(folder.parent_id) === normalizedParentId
+  );
+}
+
+type FileProcessingStatusFilter = 'all' | 'needs_action' | 'ready' | 'stored_only';
+
+const FILE_PROCESSING_STATUS_FILTERS: Array<{
+  id: FileProcessingStatusFilter;
+  labelKey: 'all' | 'needsAction' | 'ready' | 'storedOnly';
+}> = [
+  { id: 'all', labelKey: 'all' },
+  { id: 'needs_action', labelKey: 'needsAction' },
+  { id: 'ready', labelKey: 'ready' },
+  { id: 'stored_only', labelKey: 'storedOnly' },
+];
+
+function getFileProcessingStatus(file: FileItem): FileAssetProductStatus | string {
+  return file.processing_status || 'stored_only';
+}
+
+function getEffectiveFileProcessingStatus(file: FileItem): FileAssetProductStatus | string {
+  return getFileProcessingStatus(file);
+}
+
+function getProcessingStatusQueryParam(filter: FileProcessingStatusFilter): string | undefined {
+  switch (filter) {
+    case 'needs_action':
+      return 'parse_failed';
+    case 'ready':
+      return 'ready';
+    case 'stored_only':
+      return 'stored_only';
+    case 'all':
+    default:
+      return undefined;
+  }
+}
 
 const waitForMinimumRefreshDuration = () =>
   new Promise<void>(resolve => {
     setTimeout(resolve, 1000);
   });
 
-async function getFolderDepth(folderId: string) {
+async function getFolderInfo(folderId: string) {
   let depth = 0;
+  let name = '';
   let currentId = folderId;
 
   while (currentId) {
     const response = await fileManageService.getFileFolder(currentId);
     const folder = response.data;
     depth += 1;
+    if (depth === 1) {
+      name = folder.name;
+    }
 
     if (!folder.parent_id) break;
     currentId = folder.parent_id;
   }
 
+  return { depth, name };
+}
+
+async function getFolderDepth(folderId: string) {
+  const { depth } = await getFolderInfo(folderId);
   return depth;
 }
 
@@ -396,6 +481,198 @@ function FileSelectorSpaceSwitcherDialog({
   );
 }
 
+interface RenameFolderDialogProps {
+  folder: FileFolder | null;
+  open: boolean;
+  isSubmitting: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: (name: string) => void;
+}
+
+function RenameFolderDialog({
+  folder,
+  open,
+  isSubmitting,
+  onOpenChange,
+  onConfirm,
+}: RenameFolderDialogProps) {
+  const t = useT();
+  const [name, setName] = useState('');
+
+  useEffect(() => {
+    if (open) {
+      setName(folder?.name ?? '');
+    }
+  }, [folder?.name, open]);
+
+  const trimmedName = name.trim();
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[420px]">
+        <DialogHeader>
+          <DialogTitle>{t('files.folder.renameTitle')}</DialogTitle>
+          <DialogDescription>{t('files.folder.renameDescription')}</DialogDescription>
+        </DialogHeader>
+        <form
+          className="space-y-4"
+          onSubmit={event => {
+            event.preventDefault();
+            if (trimmedName) {
+              onConfirm(trimmedName);
+            }
+          }}
+        >
+          <div className="space-y-2">
+            <Label htmlFor="rename-folder-name">{t('files.folder.folderName')}</Label>
+            <Input
+              id="rename-folder-name"
+              value={name}
+              onChange={event => setName(event.target.value)}
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+              {t('common.cancel')}
+            </Button>
+            <Button type="submit" disabled={!trimmedName || isSubmitting}>
+              {t('common.confirm')}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface MoveFolderDialogProps {
+  folder: FileFolder | null;
+  folders: FileFolder[];
+  open: boolean;
+  isSubmitting: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: (targetId: string) => void;
+}
+
+function MoveFolderDialog({
+  folder,
+  folders,
+  open,
+  isSubmitting,
+  onOpenChange,
+  onConfirm,
+}: MoveFolderDialogProps) {
+  const t = useT();
+  const [targetId, setTargetId] = useState('root');
+  const [targetOptions, setTargetOptions] = useState<FileFolderOption[]>([]);
+  const [isTargetOptionsLoading, setIsTargetOptionsLoading] = useState(false);
+  const currentParentId = folder?.parent_id || 'root';
+  const normalizedTargetId = targetId === 'root' ? '' : targetId;
+  const isSameTarget = targetId === currentParentId;
+
+  useEffect(() => {
+    if (!open) return;
+
+    let ignore = false;
+
+    const loadTargetOptions = async () => {
+      setIsTargetOptionsLoading(true);
+
+      try {
+        const options = await loadFileFolderOptions(
+          folders,
+          folder?.workspace_id,
+          MAX_FILE_FOLDER_LEVEL
+        );
+        if (!ignore) {
+          setTargetOptions(options);
+        }
+      } catch {
+        if (!ignore) {
+          setTargetOptions(folders.map(targetFolder => ({ ...targetFolder, depth: 1 })));
+        }
+      } finally {
+        if (!ignore) {
+          setIsTargetOptionsLoading(false);
+        }
+      }
+    };
+
+    void loadTargetOptions();
+
+    return () => {
+      ignore = true;
+    };
+  }, [folder?.workspace_id, folders, open]);
+
+  useEffect(() => {
+    if (open) {
+      setTargetId(folder?.parent_id || 'root');
+    }
+  }, [folder?.parent_id, open]);
+
+  const descendantFolderIds = folder
+    ? getDescendantFolderIds(folder.id, targetOptions)
+    : new Set<string>();
+  const movingSubtreeHeight = folder ? getFolderSubtreeHeight(folder.id, targetOptions) : 1;
+  const allowedTargetOptions = targetOptions.filter(
+    targetFolder =>
+      targetFolder.id !== folder?.id &&
+      !descendantFolderIds.has(targetFolder.id) &&
+      targetFolder.depth + movingSubtreeHeight <= MAX_FILE_FOLDER_LEVEL
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[420px]">
+        <DialogHeader>
+          <DialogTitle>{t('files.folder.moveTitle')}</DialogTitle>
+          <DialogDescription>
+            {t('files.folder.moveDescription', { name: folder?.name ?? '' })}
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="px-6 pb-6"
+          onSubmit={event => {
+            event.preventDefault();
+            if (!isSameTarget) {
+              onConfirm(normalizedTargetId);
+            }
+          }}
+        >
+          <div className="space-y-2.5">
+            <Label htmlFor="move-folder-target">{t('files.folder.targetFolder')}</Label>
+            <Select value={targetId} onValueChange={setTargetId} disabled={isTargetOptionsLoading}>
+              <SelectTrigger id="move-folder-target" isLoading={isTargetOptionsLoading}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="root">{t('files.upload.defaultFolder')}</SelectItem>
+                {allowedTargetOptions.map(targetFolder => (
+                  <SelectItem key={targetFolder.id} value={targetFolder.id}>
+                    <span style={{ paddingLeft: `${(targetFolder.depth - 1) * 16}px` }}>
+                      {targetFolder.name}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter className="px-0 pb-0 pt-8">
+            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+              {t('common.cancel')}
+            </Button>
+            <Button type="submit" disabled={isSameTarget || isSubmitting}>
+              {t('files.folder.actions.moveTo')}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 const FileManagementContent = ({
   selectionMode = false,
   selectedFileIds = [],
@@ -406,14 +683,18 @@ const FileManagementContent = ({
   allowWorkspaceSwitch = false,
 }: FileManagementContentProps): React.ReactNode => {
   const [searchValue, setSearchValue] = useState('');
+  const [processingStatusFilter, setProcessingStatusFilter] =
+    useState<FileProcessingStatusFilter>('all');
   const [activeCategory, setActiveCategory] = useState('all');
   const [activeFolderDepth, setActiveFolderDepth] = useState(0);
+  const [activeFolderName, setActiveFolderName] = useState('');
   const [createFolderInitialParentId, setCreateFolderInitialParentId] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<string[]>(selectedFileIds);
   const [spaceSwitcherOpen, setSpaceSwitcherOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const t = useT();
+  const tFiles = useT('files');
   const tNavigation = useT('navigation');
   const queryClient = useQueryClient();
   const isMobile = useIsMobile();
@@ -427,14 +708,20 @@ const FileManagementContent = ({
 
   const { createFolder } = useCreateFolder();
   const { createTextFile, isCreating: isCreatingTextFile } = useCreateTextFile();
+  const { updateFolder, isUpdating: isUpdatingFolder } = useUpdateFolder();
+  const { moveFolder, isMoving: isMovingFolder } = useMoveFolder();
   const { deleteFolder, isDeleting: isDeletingFolder } = useDeleteFolder();
   const { folders } = useFileFolders(workspaceId);
+  const knownActiveFolderName = SYSTEM_FILE_CATEGORIES.has(activeCategory)
+    ? ''
+    : (folders.find(folder => folder.id === activeCategory)?.name ?? '');
 
   const { hasPermission } = useAccountPermissions();
   const canManage = hasPermission('file.manage');
   const canCreateFolder = hasPermission('file.move_create');
   const canUpload = hasPermission('file.upload_create');
-  const canCreateInActiveFolder = canCreateFolder && activeFolderDepth >= 0 && activeFolderDepth < 2;
+  const canCreateInActiveFolder =
+    canCreateFolder && activeFolderDepth >= 0 && activeFolderDepth < MAX_FILE_FOLDER_LEVEL;
   const { organizations } = useOrganizations(isAuthenticated);
   const showOrganizationSwitcher = isAuthenticated && organizations.length > 1;
   const currentSpaceLabel = currentWorkspace?.name || tNavigation('switchWorkspace');
@@ -462,6 +749,8 @@ const FileManagementContent = ({
   // Convert acceptExt array to extension string format (comma-separated, lowercase, no leading dots)
   const extensionParam =
     acceptExt.length > 0 ? filterLowercaseExtensions(acceptExt).join(',') : undefined;
+  const uploadAcceptExt = acceptExt.length > 0 ? acceptExt : [...FILE_MANAGEMENT_UPLOAD_ACCEPT_EXT];
+  const processingStatusParam = getProcessingStatusQueryParam(processingStatusFilter);
 
   const { files, currentPage, totalPages, total, isLoading, isFetching, error, goToPage, reload } =
     useFiles('20', {
@@ -469,8 +758,59 @@ const FileManagementContent = ({
       keyword: debouncedSearchValue,
       sort: 'created_at',
       extension: extensionParam,
+      processingStatus: processingStatusParam,
       workspaceId: workspaceId,
     });
+  const countProcessingStatuses = {
+    needs_action: getProcessingStatusQueryParam('needs_action'),
+    ready: getProcessingStatusQueryParam('ready'),
+    stored_only: getProcessingStatusQueryParam('stored_only'),
+  };
+  const allFilesCount = useFiles('1', {
+    category: activeCategory,
+    keyword: debouncedSearchValue,
+    sort: 'created_at',
+    extension: extensionParam,
+    workspaceId: workspaceId,
+  });
+  const needsActionFilesCount = useFiles('1', {
+    category: activeCategory,
+    keyword: debouncedSearchValue,
+    sort: 'created_at',
+    extension: extensionParam,
+    processingStatus: countProcessingStatuses.needs_action,
+    workspaceId: workspaceId,
+  });
+  const readyFilesCount = useFiles('1', {
+    category: activeCategory,
+    keyword: debouncedSearchValue,
+    sort: 'created_at',
+    extension: extensionParam,
+    processingStatus: countProcessingStatuses.ready,
+    workspaceId: workspaceId,
+  });
+  const storedOnlyFilesCount = useFiles('1', {
+    category: activeCategory,
+    keyword: debouncedSearchValue,
+    sort: 'created_at',
+    extension: extensionParam,
+    processingStatus: countProcessingStatuses.stored_only,
+    workspaceId: workspaceId,
+  });
+
+  const displayedFiles = files;
+  const displayedTotal = total;
+  const hasActiveProcessingFiles = files.some(file => {
+    const status = getEffectiveFileProcessingStatus(file);
+    return status === 'parsing' || status === 'generating';
+  });
+  const processingStatusFilterCounts: Record<FileProcessingStatusFilter, number> = {
+    all: allFilesCount.total,
+    needs_action:
+      activeCategory === 'needs_action' ? allFilesCount.total : needsActionFilesCount.total,
+    ready: activeCategory === 'needs_action' ? 0 : readyFilesCount.total,
+    stored_only: activeCategory === 'needs_action' ? 0 : storedOnlyFilesCount.total,
+  };
 
   const prevPropRef = useRef<string[]>(selectedFileIds);
   const prevInternalRef = useRef<string[]>(selectedFiles);
@@ -496,15 +836,27 @@ const FileManagementContent = ({
         !prevInternalRef.current.every((id, idx) => selectedFiles[idx] === id);
 
       if (internalChanged) {
-        onSelectionChange(selectedFiles, files);
+        onSelectionChange(selectedFiles, displayedFiles);
         prevInternalRef.current = selectedFiles;
       }
     }
-  }, [selectionMode, selectedFiles, onSelectionChange, files]);
+  }, [selectionMode, selectedFiles, onSelectionChange, displayedFiles]);
 
   const isRefreshPending = isRefreshing || isFetching;
 
-  const handleRefresh = async () => {
+  useEffect(() => {
+    if (!hasActiveProcessingFiles) {
+      return undefined;
+    }
+
+    const interval = window.setInterval(() => {
+      void reload();
+    }, 2000);
+
+    return () => window.clearInterval(interval);
+  }, [hasActiveProcessingFiles, reload]);
+
+  const handleRefresh = useCallback(async () => {
     if (isRefreshing) return;
 
     setIsRefreshing(true);
@@ -521,7 +873,18 @@ const FileManagementContent = ({
     } finally {
       setIsRefreshing(false);
     }
-  };
+  }, [goToPage, isRefreshing, queryClient, reload]);
+
+  const hasAutoRefreshedRef = useRef(false);
+
+  useEffect(() => {
+    if (hasAutoRefreshedRef.current) {
+      return;
+    }
+
+    hasAutoRefreshedRef.current = true;
+    void handleRefresh();
+  }, [handleRefresh]);
 
   const handleSelectionChange = (selectedIds: string[]) => {
     setSelectedFiles(selectedIds);
@@ -529,6 +892,7 @@ const FileManagementContent = ({
 
   const handleCategoryChange = useCallback((category: string) => {
     setActiveCategory(category);
+    setProcessingStatusFilter('all');
     setSelectedFiles([]);
     setMobileSidebarOpen(false);
   }, []);
@@ -536,17 +900,20 @@ const FileManagementContent = ({
   useEffect(() => {
     if (SYSTEM_FILE_CATEGORIES.has(activeCategory)) {
       setActiveFolderDepth(0);
+      setActiveFolderName('');
       return;
     }
 
     let ignore = false;
     setActiveFolderDepth(-1);
+    setActiveFolderName(knownActiveFolderName);
 
     const loadActiveFolderDepth = async () => {
       try {
-        const depth = await getFolderDepth(activeCategory);
+        const { depth, name } = await getFolderInfo(activeCategory);
         if (!ignore) {
           setActiveFolderDepth(depth);
+          setActiveFolderName(name);
         }
       } catch {
         if (!ignore) {
@@ -560,9 +927,14 @@ const FileManagementContent = ({
     return () => {
       ignore = true;
     };
-  }, [activeCategory]);
+  }, [activeCategory, knownActiveFolderName]);
 
   const [createFolderDialogOpen, setCreateFolderDialogOpen] = useState(false);
+
+  const handleCreateChildFolder = useCallback((folder: FileFolder) => {
+    setCreateFolderInitialParentId(folder.id);
+    setCreateFolderDialogOpen(true);
+  }, []);
 
   const handleNewFolder = useCallback(async () => {
     if (SYSTEM_FILE_CATEGORIES.has(activeCategory)) {
@@ -573,7 +945,7 @@ const FileManagementContent = ({
 
     try {
       const depth = await getFolderDepth(activeCategory);
-      setCreateFolderInitialParentId(depth <= 1 ? activeCategory : '');
+      setCreateFolderInitialParentId(depth < MAX_FILE_FOLDER_LEVEL ? activeCategory : '');
     } catch {
       setCreateFolderInitialParentId('');
     }
@@ -582,6 +954,11 @@ const FileManagementContent = ({
 
   const handleCreateFolderConfirm = useCallback(
     async (data: CreateFolderData) => {
+      if (hasSiblingFolderName(folders, data.name, data.parent_id)) {
+        toast.error(t('files.folder.duplicateName'));
+        return;
+      }
+
       const createdFolder = await createFolder({
         name: data.name,
         parent_id: data.parent_id,
@@ -593,33 +970,18 @@ const FileManagementContent = ({
       reload();
       goToPage(1);
     },
-    [createFolder, goToPage, reload]
+    [createFolder, folders, goToPage, reload, t]
   );
 
   const handleUpload = () => {
-    openAddDialog();
+    setSelectedFolderId(initialUploadFolderId);
+    setSelectedUploadWorkspaceId(workspaceId || '');
+    setCreateLocalFileDialogOpen(true);
   };
-
-  const [addDialogOpen, setAddDialogOpen] = useState(false);
-  const openAddDialog = useCallback(() => setAddDialogOpen(true), []);
 
   const [createTextFileDialogOpen, setCreateTextFileDialogOpen] = useState(false);
   const [selectedFolderId, setSelectedFolderId] = useState<string>('');
   const [selectedUploadWorkspaceId, setSelectedUploadWorkspaceId] = useState<string>('');
-
-  const handleUploadConfirm = useCallback((config: UploadConfig) => {
-    setAddDialogOpen(false);
-    setSelectedUploadWorkspaceId(config.workspaceId);
-
-    if (config.mode === 'text') {
-      setSelectedFolderId(config.folderId);
-      setCreateTextFileDialogOpen(true);
-    } else {
-      // Always use dialog for file upload
-      setSelectedFolderId(config.folderId);
-      setCreateLocalFileDialogOpen(true);
-    }
-  }, []);
 
   const [createLocalFileDialogOpen, setCreateLocalFileDialogOpen] = useState(false);
 
@@ -649,14 +1011,58 @@ const FileManagementContent = ({
     goToPage(1);
   }, [goToPage, reload]);
 
-  const initialUploadFolderId =
-    SYSTEM_FILE_CATEGORIES.has(activeCategory) ? '' : activeCategory;
-
+  const initialUploadFolderId = SYSTEM_FILE_CATEGORIES.has(activeCategory) ? '' : activeCategory;
   const selectedFolder = folders.find(f => f.id === selectedFolderId);
   const selectedFolderName = selectedFolder?.name || t('files.upload.defaultFolder');
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [folderToDelete, setFolderToDelete] = useState<FileFolder | null>(null);
+  const [folderToRename, setFolderToRename] = useState<FileFolder | null>(null);
+  const [folderToMove, setFolderToMove] = useState<FileFolder | null>(null);
+
+  const handleFolderRename = useCallback((folder: FileFolder) => {
+    setFolderToRename(folder);
+  }, []);
+
+  const handleRenameConfirm = useCallback(
+    async (name: string) => {
+      if (!folderToRename) return;
+
+      if (hasSiblingFolderName(folders, name, folderToRename.parent_id, folderToRename.id)) {
+        toast.error(t('files.folder.duplicateName'));
+        return;
+      }
+
+      await updateFolder(folderToRename.id, {
+        name,
+        parent_id: folderToRename.parent_id || '',
+      });
+      setFolderToRename(null);
+    },
+    [folderToRename, folders, t, updateFolder]
+  );
+
+  const handleFolderMove = useCallback((folder: FileFolder) => {
+    setFolderToMove(folder);
+  }, []);
+
+  const handleMoveConfirm = useCallback(
+    async (targetId: string) => {
+      if (!folderToMove) return;
+
+      if (hasSiblingFolderName(folders, folderToMove.name, targetId, folderToMove.id)) {
+        toast.error(t('files.folder.duplicateName'));
+        return;
+      }
+
+      await moveFolder({
+        folder_id: folderToMove.id,
+        target_id: targetId,
+      });
+      setFolderToMove(null);
+    },
+    [folderToMove, folders, moveFolder, t]
+  );
 
   const handleFolderDelete = useCallback((folder: FileFolder) => {
     setFolderToDelete(folder);
@@ -679,8 +1085,11 @@ const FileManagementContent = ({
     <FileSidebar
       activeItemId={activeCategory}
       onItemClick={handleCategoryChange}
-      onNewFolder={selectionMode && canCreateInActiveFolder ? handleNewFolder : undefined}
-      onUpload={selectionMode && canUpload ? handleUpload : undefined}
+      onNewFolder={canCreateInActiveFolder ? handleNewFolder : undefined}
+      onUpload={canUpload ? handleUpload : undefined}
+      onFolderCreateChild={canCreateFolder ? handleCreateChildFolder : undefined}
+      onFolderRename={canManage ? handleFolderRename : undefined}
+      onFolderMove={canManage ? handleFolderMove : undefined}
       onFolderDelete={canManage ? handleFolderDelete : undefined}
       workspaceId={workspaceId}
       flushTop
@@ -697,10 +1106,10 @@ const FileManagementContent = ({
         )}
         onClick={() => setSpaceSwitcherOpen(true)}
       >
-          <div className="flex min-w-0 items-center gap-2">
-            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-              <Users className="h-3 w-3" />
-            </div>
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+            <Users className="h-3 w-3" />
+          </div>
           <span
             className={cn(
               'truncate font-medium',
@@ -821,6 +1230,8 @@ const FileManagementContent = ({
       </div>
     ) : null;
 
+  const shouldShowPagination = !isLoading && files.length > 0 && totalPages > 1;
+
   const fileContent = error ? (
     <div className="flex h-full items-center justify-center">
       <div className="text-center">
@@ -832,18 +1243,19 @@ const FileManagementContent = ({
   ) : (
     <>
       <FileList
-        files={files}
-        total={total}
+        files={displayedFiles}
+        total={displayedTotal}
         selectedFiles={selectedFiles}
         onSelectionChange={ids => {
           handleSelectionChange(ids);
-          onSelectionChange?.(ids, files);
-          onFilesChange?.(files.filter(file => ids.includes(file.id)));
+          onSelectionChange?.(ids, displayedFiles);
+          onFilesChange?.(displayedFiles.filter(file => ids.includes(file.id)));
         }}
         maxCount={maxCount}
         isLoading={isLoading}
         selectionMode={selectionMode}
         activeCategory={activeCategory}
+        folderNoticeName={activeFolderName}
         mobileEmptyActionLabel={mobilePrimaryActionLabel}
         mobileEmptyDescription={mobileEmptyDescription}
         onMobileEmptyAction={() => {
@@ -860,7 +1272,7 @@ const FileManagementContent = ({
           setMobileSidebarOpen(true);
         }}
       />
-      {!isLoading && files.length > 0 && totalPages > 1 ? (
+      {shouldShowPagination ? (
         <div
           className={cn(
             'shrink-0 border-t',
@@ -981,8 +1393,8 @@ const FileManagementContent = ({
           </div>
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 bg-bg-canvas">
-          <div className="flex w-52 shrink-0 flex-col border-r bg-background">
+        <div className="flex min-h-0 flex-1 bg-background text-foreground">
+          <div className="flex w-[208px] shrink-0 flex-col border-r bg-background">
             {spaceSwitcherButton ? (
               <div className="shrink-0 border-b px-4 py-2">{spaceSwitcherButton}</div>
             ) : null}
@@ -991,87 +1403,98 @@ const FileManagementContent = ({
           </div>
 
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            <div className="sticky top-0 z-10 border-b bg-bg-canvas/95 px-6 py-5 backdrop-blur">
-              <div className="flex min-w-0 items-start justify-between gap-4">
+            <div className="shrink-0 border-b bg-background px-4 py-3 lg:px-7">
+              <div className="flex min-h-14 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div className="min-w-0">
-                  <div className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-                    {t('files.eyebrow')}
+                  <div className="flex min-w-0 items-center gap-2">
+                    <h1 className="text-[28px] font-semibold leading-tight tracking-normal text-foreground">
+                      {t('files.title')}
+                    </h1>
+                    <Button
+                      isIcon
+                      variant="ghost"
+                      className="size-8 rounded-lg text-muted-foreground hover:bg-muted"
+                      onClick={handleRefresh}
+                      disabled={isRefreshPending}
+                      aria-label={t('common.refresh')}
+                    >
+                      <RefreshCw className={`${isRefreshPending ? 'animate-spin' : ''} h-4 w-4`} />
+                    </Button>
                   </div>
-                  <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground">
-                    {t('files.title')}
-                  </h1>
-                  <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+                  <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
                     {t('files.description')}
                   </p>
                 </div>
 
-                <div className="flex shrink-0 items-center gap-2">
-                  <Button
-                    isIcon
-                    variant="outline"
-                    className="size-9 rounded-md bg-background shadow-none"
-                    onClick={handleRefresh}
-                    disabled={isRefreshPending}
-                    aria-label={t('common.refresh')}
-                  >
-                    <RefreshCw className={`${isRefreshPending ? 'animate-spin' : ''} h-4 w-4`} />
-                  </Button>
-                  {canCreateInActiveFolder ? (
-                    <Button
-                      variant="outline"
-                      className="h-9 gap-2 rounded-md bg-background px-3 shadow-none"
-                      onClick={handleNewFolder}
-                    >
-                      <FolderPlus className="h-4 w-4" />
-                      {t('files.sidebar.newFolder')}
-                    </Button>
-                  ) : null}
-                  {canUpload ? (
-                    <Button className="h-9 gap-2 rounded-md px-3" onClick={handleUpload}>
-                      <Upload className="h-4 w-4" />
-                      {t('files.sidebar.uploadFile')}
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-
-              <div className="mt-4 flex items-center gap-3">
-                <div className="relative w-full max-w-xl">
+                <div className="relative w-full max-w-[280px] self-end lg:w-[300px] lg:max-w-none">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     placeholder={t('files.search.placeholder')}
                     value={searchValue}
                     onChange={e => setSearchValue(e.target.value)}
-                    className="h-9 rounded-md bg-background pl-9 shadow-none"
+                    className="h-10 rounded-lg bg-background pl-9 text-sm shadow-sm"
                   />
                 </div>
-                {searchValue.trim() ? (
-                  <Button
-                    variant="ghost"
-                    className="h-9 rounded-md px-3 text-muted-foreground"
-                    onClick={() => setSearchValue('')}
-                  >
-                    {t('common.clear')}
-                  </Button>
-                ) : null}
               </div>
             </div>
 
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-6 pb-6 pt-4">
-              <div className="flex h-full flex-col overflow-hidden rounded-lg border border-border/80 bg-background shadow-sm">
-                {fileContent}
+            <div className="shrink-0 border-b bg-background">
+              <div className="flex min-h-10 items-center gap-2 px-4 py-1.5 lg:px-7">
+                <span className="mr-1 text-sm font-semibold text-foreground">
+                  {t('files.filter.processingStatusLabel')}
+                </span>
+                <div
+                  className="flex flex-wrap items-center gap-2"
+                  role="tablist"
+                  aria-label={t('files.filter.processingStatusLabel')}
+                >
+                  {FILE_PROCESSING_STATUS_FILTERS.map(filter => {
+                    const active = processingStatusFilter === filter.id;
+                    const label = (() => {
+                      switch (filter.labelKey) {
+                        case 'needsAction':
+                          return tFiles('filter.processingStatusNeedsAction');
+                        case 'ready':
+                          return tFiles('filter.processingStatusReady');
+                        case 'storedOnly':
+                          return tFiles('filter.processingStatusStoredOnly');
+                        case 'all':
+                        default:
+                          return tFiles('filter.processingStatusAll');
+                      }
+                    })();
+
+                    return (
+                      <Button
+                        key={filter.id}
+                        type="button"
+                        variant="ghost"
+                        size="default"
+                        className={cn(
+                          'h-8 rounded-lg border border-transparent px-3 text-sm font-medium text-muted-foreground shadow-none hover:border-border hover:bg-muted/60 hover:text-foreground',
+                          active && 'border-border bg-muted text-foreground hover:bg-muted'
+                        )}
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => setProcessingStatusFilter(filter.id)}
+                      >
+                        {label}
+                        <span className="ml-1 text-[11px] text-muted-foreground">
+                          {processingStatusFilterCounts[filter.id]}
+                        </span>
+                      </Button>
+                    );
+                  })}
+                </div>
               </div>
+            </div>
+
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+              {fileContent}
             </div>
           </div>
         </div>
       )}
-      {/* Upload Dialog */}
-      <UploadDialog
-        open={addDialogOpen}
-        onOpenChange={setAddDialogOpen}
-        onConfirm={handleUploadConfirm}
-        initialFolderId={initialUploadFolderId}
-      />
       {/* Create Folder Dialog */}
       <CreateFolderDialog
         open={createFolderDialogOpen}
@@ -1094,8 +1517,31 @@ const FileManagementContent = ({
         onOpenChange={setCreateLocalFileDialogOpen}
         folderId={selectedFolderId}
         workspaceId={selectedUploadWorkspaceId || workspaceId}
-        acceptExt={acceptExt}
+        acceptExt={uploadAcceptExt}
         onUploadComplete={handleFileUploadComplete}
+      />
+      <RenameFolderDialog
+        open={!!folderToRename}
+        onOpenChange={open => {
+          if (!open) {
+            setFolderToRename(null);
+          }
+        }}
+        folder={folderToRename}
+        isSubmitting={isUpdatingFolder}
+        onConfirm={handleRenameConfirm}
+      />
+      <MoveFolderDialog
+        open={!!folderToMove}
+        onOpenChange={open => {
+          if (!open) {
+            setFolderToMove(null);
+          }
+        }}
+        folder={folderToMove}
+        folders={folders}
+        isSubmitting={isMovingFolder}
+        onConfirm={handleMoveConfirm}
       />
       {/* Delete Folder Confirmation Dialog (only for full page mode) */}
       <ConfirmDialog

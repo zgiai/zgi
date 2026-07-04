@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
+	appconfig "github.com/zgiai/zgi/api/config"
 	consoleintf "github.com/zgiai/zgi/api/internal/infra/platform/console"
 	"github.com/zgiai/zgi/api/internal/modules/llm/channel/dto"
 	"github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
@@ -682,7 +683,7 @@ func (s *channelService) loadActiveModelNameIndexes(ctx context.Context, organiz
 
 	if s != nil && s.modelRepo != nil {
 		activeOnly := true
-		models, _, err := s.modelRepo.List(ctx, nil, "", "", &activeOnly, 0, 10000)
+		models, _, err := s.modelRepo.List(ctx, nil, "", "", "active", &activeOnly, 0, 10000)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1240,6 +1241,7 @@ func (s *channelService) DiscoverDraftChannelModels(ctx context.Context, req *dt
 	if err := channelprovider.ValidateAPIKey(spec, req.APIKey); err != nil {
 		return nil, err
 	}
+	llmConfig := appconfig.Current().LLM
 
 	adapterInstance, err := adapter.NewAdapter(&adapter.AdapterConfig{
 		ProviderName:        spec.AdapterKey,
@@ -1247,7 +1249,8 @@ func (s *channelService) DiscoverDraftChannelModels(ctx context.Context, req *dt
 		BaseURL:             req.APIBaseURL,
 		Timeout:             30 * time.Second,
 		MaxRetries:          1,
-		GuardOutboundURL:    true,
+		GuardOutboundURL:    llmConfig.OutboundURLGuardEnabled(),
+		GuardOutboundDNS:    llmConfig.GuardOutboundDNS,
 		AllowPrivateBaseURL: channelprovider.AllowsPrivateBaseURL(spec.Name),
 	})
 	if err != nil {

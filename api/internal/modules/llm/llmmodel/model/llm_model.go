@@ -23,16 +23,19 @@ type LLMModel struct {
 	Provider string `gorm:"type:varchar(100);not null;index:idx_model_provider" json:"provider"` // References LLMProvider.Provider
 
 	// Basic info (ModelMeta aligned)
-	Object        string     `gorm:"-" json:"object"` // Fixed value "model" (not stored in DB)
-	Model         string     `gorm:"type:varchar(100);not null;index:idx_model_name;column:name" json:"model"`
-	ModelName     string     `gorm:"type:varchar(200);not null;column:display_name" json:"model_name"`
-	Family        string     `gorm:"type:varchar(100);index" json:"family,omitempty"` // Model family (GPT-4, Claude)
-	FamilyName    string     `gorm:"type:varchar(200)" json:"family_name,omitempty"`  // Family display name (e.g., "GPT-4o")
-	ParentID      *uuid.UUID `gorm:"type:uuid;index" json:"parent_id,omitempty"`      // Parent model ID for version relationships
-	FamilyDefault bool       `gorm:"default:false" json:"family_default"`             // Whether this is the default model in its family
-	Status        string     `gorm:"type:varchar(20);default:'active'" json:"status"` // active, deprecated
-	Tagline       string     `gorm:"type:text" json:"tagline,omitempty"`              // Short description
-	Description   string     `gorm:"type:text" json:"description,omitempty"`
+	Object              string     `gorm:"-" json:"object"` // Fixed value "model" (not stored in DB)
+	Model               string     `gorm:"type:varchar(100);not null;index:idx_model_name;column:name" json:"model"`
+	ModelName           string     `gorm:"type:varchar(200);not null;column:display_name" json:"model_name"`
+	Family              string     `gorm:"type:varchar(100);index" json:"family,omitempty"` // Model family (GPT-4, Claude)
+	FamilyName          string     `gorm:"type:varchar(200)" json:"family_name,omitempty"`  // Family display name (e.g., "GPT-4o")
+	ParentID            *uuid.UUID `gorm:"type:uuid;index" json:"parent_id,omitempty"`      // Parent model ID for version relationships
+	FamilyDefault       bool       `gorm:"default:false" json:"family_default"`             // Whether this is the default model in its family
+	Status              string     `gorm:"type:varchar(20);default:'active'" json:"status"` // active, deprecated
+	ReplacementProvider string     `gorm:"type:varchar(100);column:replacement_provider" json:"replacement_provider,omitempty"`
+	ReplacementModel    string     `gorm:"type:varchar(100);column:replacement_model" json:"replacement_model,omitempty"`
+	DeprecationReason   string     `gorm:"type:text;column:deprecation_reason" json:"deprecation_reason,omitempty"`
+	Tagline             string     `gorm:"type:text" json:"tagline,omitempty"` // Short description
+	Description         string     `gorm:"type:text" json:"description,omitempty"`
 
 	// Flags (ModelHub-aligned)
 	IsFlagship bool   `gorm:"default:false" json:"is_flagship"`                     // Featured model

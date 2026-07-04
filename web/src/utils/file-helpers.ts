@@ -30,7 +30,7 @@ export const ORIGINAL_PREVIEW_TEXT_EXTENSIONS: readonly string[] = [
   'xml',
 ];
 
-export const ORIGINAL_PREVIEW_OFFICE_EXTENSIONS: readonly string[] = ['docx', 'xlsx'];
+export const ORIGINAL_PREVIEW_OFFICE_EXTENSIONS: readonly string[] = ['docx', 'xlsx', 'xls'];
 
 export const ORIGINAL_PREVIEW_EXTENSIONS: readonly string[] = [
   'pdf',
@@ -188,6 +188,7 @@ function isOfficePreviewMimeType(mimeType: string): boolean {
   return [
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-excel',
   ].includes(mimeType);
 }
 

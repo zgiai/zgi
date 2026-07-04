@@ -10,6 +10,7 @@ import (
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	llmmodeldto "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/dto"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared/types"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"gorm.io/gorm"
 )
@@ -47,7 +48,7 @@ func (f *availableModelRepoFake) ListAvailableFiltered(context.Context, string, 
 func (f *availableModelRepoFake) GetByProviderAndName(context.Context, string, string) (*llmmodel.LLMModel, error) {
 	return nil, errors.New("not implemented")
 }
-func (f *availableModelRepoFake) List(context.Context, *uuid.UUID, string, string, *bool, int, int) ([]*llmmodel.LLMModel, int64, error) {
+func (f *availableModelRepoFake) List(context.Context, *uuid.UUID, string, string, string, *bool, int, int) ([]*llmmodel.LLMModel, int64, error) {
 	return f.models, int64(len(f.models)), nil
 }
 func (f *availableModelRepoFake) Update(context.Context, *llmmodel.LLMModel) error {
@@ -429,5 +430,17 @@ func TestModelAvailabilityBatchMatchesSingleDeprecatedModel(t *testing.T) {
 	}
 	if got.Message != single.Message {
 		t.Fatalf("batch message = %q, want single message %q", got.Message, single.Message)
+	}
+}
+
+func TestContainsUseCaseKeepsImageModelsOutOfTextChat(t *testing.T) {
+	if containsUseCase(types.StringArray{"image-gen"}, "text-chat") {
+		t.Fatal("image-gen model must not match text-chat")
+	}
+	if !containsUseCase(types.StringArray{"image-gen"}, "image-gen") {
+		t.Fatal("image-gen model must match image-gen")
+	}
+	if containsUseCase(types.StringArray{"text-chat"}, "image-gen") {
+		t.Fatal("text-chat model must not match image-gen")
 	}
 }

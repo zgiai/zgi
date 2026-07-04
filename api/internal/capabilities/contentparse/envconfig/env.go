@@ -42,9 +42,15 @@ func lookupOverride(key string) (string, bool) {
 }
 
 func WithOverrides(values map[string]string, fn func()) {
-	if len(values) == 0 {
+	_ = WithOverridesResult(values, func() error {
 		fn()
-		return
+		return nil
+	})
+}
+
+func WithOverridesResult(values map[string]string, fn func() error) error {
+	if len(values) == 0 {
+		return fn()
 	}
 
 	overrideMu.Lock()
@@ -71,7 +77,7 @@ func WithOverrides(values map[string]string, fn func()) {
 		}
 	}()
 
-	fn()
+	return fn()
 }
 
 func isTestBinary() bool {

@@ -18,6 +18,7 @@ type FileRepository interface {
 	UpdateContentText(ctx context.Context, id string, contentText string) error
 	GetExtractionCache(ctx context.Context, fileID, cacheKey string) (*file_model.FileExtractionCache, error)
 	UpsertExtractionCache(ctx context.Context, cache *file_model.FileExtractionCache) error
+	DeleteExtractionCaches(ctx context.Context, fileID string) error
 	Update(ctx context.Context, id string, updates map[string]interface{}) error
 	MarkAsUsed(ctx context.Context, id, usedBy string) error
 	ListByTenantID(ctx context.Context, tenantID, accountID string, allowAllFolders bool, workspaceID string, page, pageSize int, keyword, sort, extension string, startTime, endTime *time.Time) ([]*file_model.UploadFile, int64, error)
@@ -115,6 +116,12 @@ func (r *fileRepository) UpsertExtractionCache(ctx context.Context, cache *file_
 		},
 		DoUpdates: clause.AssignmentColumns([]string{"content", "source", "updated_at"}),
 	}).Create(cache).Error
+}
+
+func (r *fileRepository) DeleteExtractionCaches(ctx context.Context, fileID string) error {
+	return r.db.WithContext(ctx).
+		Where("file_id = ?", fileID).
+		Delete(&file_model.FileExtractionCache{}).Error
 }
 
 func (r *fileRepository) Update(ctx context.Context, id string, updates map[string]interface{}) error {
@@ -369,13 +376,15 @@ func (r *fileRepository) Delete(ctx context.Context, id string) error {
 	})
 }
 
-// CheckIfFileIsUsed checks if a file is used by any documents
+// CheckIfFileIsUsed checks if a file is referenced by active knowledge-base asset refs.
 func (r *fileRepository) CheckIfFileIsUsed(ctx context.Context, id string) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).
-		Model(&file_model.UploadFile{}).
-		Where("upload_files.id = ?", id).
-		Joins("JOIN documents ON upload_files.id::text = documents.file_id").
+		Table("data_library_document_assets AS assets").
+		Joins("JOIN data_library_knowledge_base_asset_refs AS refs ON refs.asset_id = assets.id AND refs.deleted_at IS NULL").
+		Joins("JOIN datasets ON datasets.id = refs.dataset_id").
+		Where("assets.source_file_id = ? AND assets.deleted_at IS NULL", id).
+		Distinct("refs.dataset_id").
 		Count(&count).Error
 
 	if err != nil {

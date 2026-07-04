@@ -282,6 +282,7 @@ var (
 	ErrToolProviderNotFound = ErrorCode{210008, "Tool provider not found", true}
 	ErrToolInvokeFailed     = ErrorCode{210009, "Failed to invoke tool", true}
 	ErrToolParameterInvalid = ErrorCode{210010, "Invalid tool parameter", true}
+	ErrFileFolderExists     = ErrorCode{210011, "A folder with this name already exists in the same directory", true}
 )
 
 var (

@@ -762,6 +762,7 @@ func (s *llmGatewayServiceImpl) createAdapterConfig(selection *ProviderSelection
 	if spec, err := channelprovider.Resolve(selection.ChannelProvider); err == nil {
 		adapterProvider = spec.AdapterKey
 	}
+	llmConfig := appconfig.Current().LLM
 
 	config := &adapter.AdapterConfig{
 		ProviderName:        adapterProvider,
@@ -769,7 +770,8 @@ func (s *llmGatewayServiceImpl) createAdapterConfig(selection *ProviderSelection
 		BaseURL:             selection.Provider.APIBaseURL,
 		Timeout:             500 * time.Second,
 		MaxRetries:          3,
-		GuardOutboundURL:    true,
+		GuardOutboundURL:    llmConfig.OutboundURLGuardEnabled(),
+		GuardOutboundDNS:    llmConfig.GuardOutboundDNS,
 		AllowPrivateBaseURL: selection.UseSystemProvider || channelprovider.AllowsPrivateBaseURL(selection.ChannelProvider),
 	}
 

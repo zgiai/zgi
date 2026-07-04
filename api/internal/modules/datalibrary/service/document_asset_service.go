@@ -14,6 +14,7 @@ var (
 	ErrOrganizationIDRequired = errors.New("organization_id is required")
 	ErrSourceFileIDRequired   = errors.New("source_file_id is required")
 	ErrAssetIDRequired        = errors.New("asset_id is required")
+	ErrContentHashRequired    = errors.New("content_hash is required")
 )
 
 type DocumentAssetService interface {

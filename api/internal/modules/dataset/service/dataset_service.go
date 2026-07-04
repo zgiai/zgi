@@ -324,12 +324,12 @@ func (s *datasetService) CreateDataset(ctx context.Context, req *CreateDatasetRe
 	// Set default retrieval_config if not provided
 	if dataset.RetrievalConfig == nil {
 		dataset.RetrievalConfig = map[string]interface{}{
-			"search_method":           "semantic_search",
-			"reranking_enable":        false,
+			"search_method":           "hybrid_search",
+			"reranking_enable":        true,
 			"reranking_model":         map[string]interface{}{"reranking_provider_name": "", "reranking_model_name": ""},
-			"top_k":                   4,
-			"score_threshold_enabled": false,
-			"score_threshold":         0.5,
+			"top_k":                   10,
+			"score_threshold_enabled": true,
+			"score_threshold":         0.35,
 		}
 	}
 
@@ -486,12 +486,6 @@ func (s *datasetService) UpdateDataset(ctx context.Context, req *UpdateDatasetRe
 	if req.Description != nil {
 		dataset.Description = req.Description
 	}
-	if req.EmbeddingModel != nil {
-		dataset.EmbeddingModel = req.EmbeddingModel
-	}
-	if req.EmbeddingModelProvider != nil {
-		dataset.EmbeddingModelProvider = req.EmbeddingModelProvider
-	}
 	if req.EntityModel != nil {
 		dataset.EntityModel = req.EntityModel
 	}
@@ -575,6 +569,46 @@ func (s *datasetService) DeleteDataset(ctx context.Context, datasetID, accountID
 
 	// Step 3: Delete dataset and record usage decrease in transaction
 	return s.db.Transaction(func(tx *gorm.DB) error {
+		now := time.Now()
+
+		if err := tx.WithContext(ctx).
+			Table("data_library_knowledge_base_asset_refs").
+			Where("dataset_id = ? AND deleted_at IS NULL", datasetID).
+			Update("deleted_at", now).Error; err != nil {
+			return fmt.Errorf("failed to delete dataset file asset refs: %w", err)
+		}
+
+		if err := tx.WithContext(ctx).
+			Where("dataset_id = ?", datasetID).
+			Delete(&model.ChildChunk{}).Error; err != nil {
+			return fmt.Errorf("failed to delete dataset child chunks: %w", err)
+		}
+
+		if err := tx.WithContext(ctx).
+			Where("dataset_id = ?", datasetID).
+			Delete(&model.DocumentSegmentQuestion{}).Error; err != nil {
+			return fmt.Errorf("failed to delete dataset segment questions: %w", err)
+		}
+
+		segmentUpdates := map[string]interface{}{
+			"is_deleted":            true,
+			"deleted_at":            &now,
+			"graph_indexing_status": "deleted",
+			"status":                "deleted",
+		}
+		if err := tx.WithContext(ctx).
+			Model(&model.DocumentSegment{}).
+			Where("dataset_id = ? AND deleted_at IS NULL", datasetID).
+			Updates(segmentUpdates).Error; err != nil {
+			return fmt.Errorf("failed to delete dataset document segments: %w", err)
+		}
+
+		if err := tx.WithContext(ctx).
+			Where("dataset_id = ?", datasetID).
+			Delete(&model.Document{}).Error; err != nil {
+			return fmt.Errorf("failed to delete dataset documents: %w", err)
+		}
+
 		// Delete dataset
 		if err := tx.WithContext(ctx).Delete(&model.Dataset{}, "id = ?", datasetID).Error; err != nil {
 			return fmt.Errorf("failed to delete dataset: %w", err)

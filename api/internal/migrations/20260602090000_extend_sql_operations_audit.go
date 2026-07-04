@@ -2,11 +2,11 @@ package migrations
 
 import mschema "github.com/zgiai/zgi/api/internal/migrations/schema"
 
-const migration20260602090000ID = "20260602090000_extend_sql_operations_audit"
+const migrationExtendSQLOperationsAuditID = "20260602090000_extend_sql_operations_audit"
 
 func init() {
 	registerSchemaMigration(
-		migration20260602090000ID,
+		migrationExtendSQLOperationsAuditID,
 		upExtendSQLOperationsAudit,
 		nil,
 	)

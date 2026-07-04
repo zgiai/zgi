@@ -150,6 +150,9 @@ func localImageVLMSetting() string {
 
 func (c *Client) parseLight(ctx context.Context, filename string, data []byte) (*extractcommon.DocumentResult, error) {
 	ext := strings.ToLower(strings.TrimSpace(filepath.Ext(filename)))
+	if isLocalSpreadsheetExt(ext) {
+		return parseLocalExtraFormat(filename, data, ext)
+	}
 	doc, err := hyperparse.NewClient().ParseBytes(ctx, filename, data)
 	if err != nil {
 		if !supportsLocalExtraExt(ext) {
@@ -159,6 +162,15 @@ func (c *Client) parseLight(ctx context.Context, filename string, data []byte) (
 	}
 	out := c.documentToResult(doc, filename)
 	return out, nil
+}
+
+func isLocalSpreadsheetExt(ext string) bool {
+	switch ext {
+	case ".csv", ".tsv", ".xlsx", ".xls":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Client) documentToResult(doc *coremodel.Document, filename string) *extractcommon.DocumentResult {

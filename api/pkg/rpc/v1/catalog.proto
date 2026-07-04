@@ -78,6 +78,9 @@ message CatalogModel {
     CatalogModelFeatures features = 29;
     CatalogModelTools tools = 30;
     CatalogModelParameters parameters = 31;
+    string replacement_provider = 32;
+    string replacement_model = 33;
+    string deprecation_reason = 34;
 }
 
 message CatalogModelEndpoints {

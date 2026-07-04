@@ -23,6 +23,21 @@ import (
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
+func TestShouldStreamSkillPlanningIncludesQwenProvider(t *testing.T) {
+	prepared := &PreparedChat{parts: &chatRequestParts{Provider: " qWeN "}}
+
+	if !shouldStreamSkillPlanning(prepared) {
+		t.Fatal("shouldStreamSkillPlanning(qwen) = false, want true")
+	}
+}
+
+func TestShouldStreamSkillPlanningIncludesQwQModelWithoutProvider(t *testing.T) {
+	prepared := &PreparedChat{parts: &chatRequestParts{ModelName: " qwen/qwq-plus "}}
+
+	if !shouldStreamSkillPlanning(prepared) {
+		t.Fatal("shouldStreamSkillPlanning(qwq-plus) = false, want true")
+	}
+}
 func TestFinalizePreparedErrorSetsFailedMessageAsCurrentLeaf(t *testing.T) {
 	conversationID := uuid.New()
 	messageID := uuid.New()

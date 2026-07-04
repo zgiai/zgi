@@ -152,6 +152,7 @@ export function ImgChat({
                 model_config: {
                   provider: modelSelectorValue.provider,
                   model: modelSelectorValue.model,
+                  name: modelSelectorValue.model,
                 },
               }
             : {}),
@@ -210,6 +211,13 @@ export function ImgChat({
           isHome={isHome}
           search={hasConversationSearch ? conversationSearch : undefined}
           searchKey={conversationSearchKey}
+          onSelectSearchResult={result => {
+            if (controller.loadAndSelect) {
+              void controller.loadAndSelect(result.conversationId);
+            } else {
+              handleSelectChat(result.conversationId);
+            }
+          }}
         />
       </div>
 
@@ -317,6 +325,13 @@ export function ImgChat({
             isHome={isHome}
             search={hasConversationSearch ? conversationSearch : undefined}
             searchKey={conversationSearchKey}
+            onSelectSearchResult={result => {
+              if (controller.loadAndSelect) {
+                void controller.loadAndSelect(result.conversationId);
+              } else {
+                handleSelectChat(result.conversationId);
+              }
+            }}
           />
         </SheetContent>
       </Sheet>

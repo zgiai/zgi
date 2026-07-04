@@ -247,7 +247,7 @@ func (s *segmentServiceImpl) CreateSegment(ctx context.Context, documentID, data
 		className := model.GenCollectionNameByID(datasetID)
 
 		classProperties := []map[string]interface{}{
-			{"name": "text", "dataType": []string{"text"}},
+			{"name": "text", "dataType": []string{"text"}, "tokenization": "gse_ch", "indexSearchable": true},
 		}
 
 		if err := s.vectorDB.CreateClass(backgroundCtx, className, classProperties); err != nil && !strings.Contains(err.Error(), "already exists") {
@@ -671,7 +671,7 @@ func (s *segmentServiceImpl) deleteSegmentVector(ctx context.Context, datasetID,
 
 func defaultSegmentVectorClassProperties() []map[string]interface{} {
 	return []map[string]interface{}{
-		{"name": "text", "dataType": []string{"text"}},
+		{"name": "text", "dataType": []string{"text"}, "tokenization": "gse_ch", "indexSearchable": true},
 	}
 }
 

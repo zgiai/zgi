@@ -25,8 +25,9 @@ type Module struct {
 type ModuleOption func(*moduleOptions)
 
 type moduleOptions struct {
-	extraAdapters     []ParseAdapter
-	providerOverrides []contracts.ParseProviderConfig
+	extraAdapters         []ParseAdapter
+	providerOverrides     []contracts.ParseProviderConfig
+	figureSummaryEnhancer hyperparsesdk.FigureSummaryEnhancer
 }
 
 func WithAdapters(adapters ...ParseAdapter) ModuleOption {
@@ -41,6 +42,12 @@ func WithProviderOverrides(providers ...contracts.ParseProviderConfig) ModuleOpt
 	}
 }
 
+func WithFigureSummaryEnhancer(enhancer hyperparsesdk.FigureSummaryEnhancer) ModuleOption {
+	return func(opts *moduleOptions) {
+		opts.figureSummaryEnhancer = enhancer
+	}
+}
+
 func NewModule(options ...ModuleOption) *Module {
 	opts := moduleOptions{}
 	for _, option := range options {
@@ -49,7 +56,7 @@ func NewModule(options ...ModuleOption) *Module {
 		}
 	}
 
-	sdkAdapter := hyperparsesdk.NewAdapter()
+	sdkAdapter := hyperparsesdk.NewAdapterWithFigureSummaryEnhancer(opts.figureSummaryEnhancer)
 	apiAdapter := hyperparseapi.NewAdapter()
 	catalog := DefaultProviderCatalog()
 	for _, provider := range opts.providerOverrides {

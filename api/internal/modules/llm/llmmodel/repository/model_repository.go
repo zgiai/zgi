@@ -82,7 +82,7 @@ func (r *modelRepository) GetByProviderAndName(ctx context.Context, provider str
 	return &m, nil
 }
 
-func (r *modelRepository) List(ctx context.Context, providerID *uuid.UUID, provider string, useCase string, isActive *bool, offset, limit int) ([]*model.LLMModel, int64, error) {
+func (r *modelRepository) List(ctx context.Context, providerID *uuid.UUID, provider string, useCase string, status string, isActive *bool, offset, limit int) ([]*model.LLMModel, int64, error) {
 	var models []*model.LLMModel
 	var total int64
 
@@ -96,20 +96,23 @@ func (r *modelRepository) List(ctx context.Context, providerID *uuid.UUID, provi
 			Where("p.id = ?", *providerID)
 	}
 	if provider != "" {
-		query = query.Where("provider = ?", provider)
+		query = query.Where("llm_models.provider = ?", provider)
 	}
 	if useCase != "" {
-		query = query.Where("? = ANY(use_cases)", useCase)
+		query = query.Where("? = ANY(llm_models.use_cases)", useCase)
+	}
+	if status != "" {
+		query = query.Where("llm_models.status = ?", status)
 	}
 	if isActive != nil {
-		query = query.Where("is_active = ?", *isActive)
+		query = query.Where("llm_models.is_active = ?", *isActive)
 	}
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	if err := query.Order("sort_order ASC, name ASC").Offset(offset).Limit(limit).Find(&models).Error; err != nil {
+	if err := query.Order("llm_models.sort_order ASC, llm_models.name ASC").Offset(offset).Limit(limit).Find(&models).Error; err != nil {
 		return nil, 0, err
 	}
 

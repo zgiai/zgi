@@ -27,7 +27,7 @@ func TestKnowledgeBaseAssetRefServiceValidatesRequiredFields(t *testing.T) {
 			item: &model.KnowledgeBaseAssetRef{
 				DatasetID: "dataset-1",
 				AssetID:   assetID,
-				VersionID: versionID,
+				VersionID: &versionID,
 			},
 			err: ErrOrganizationIDRequired,
 		},
@@ -36,7 +36,7 @@ func TestKnowledgeBaseAssetRefServiceValidatesRequiredFields(t *testing.T) {
 			item: &model.KnowledgeBaseAssetRef{
 				OrganizationID: "org-1",
 				AssetID:        assetID,
-				VersionID:      versionID,
+				VersionID:      &versionID,
 			},
 			err: ErrDatasetIDRequired,
 		},
@@ -45,18 +45,9 @@ func TestKnowledgeBaseAssetRefServiceValidatesRequiredFields(t *testing.T) {
 			item: &model.KnowledgeBaseAssetRef{
 				OrganizationID: "org-1",
 				DatasetID:      "dataset-1",
-				VersionID:      versionID,
+				VersionID:      &versionID,
 			},
 			err: ErrAssetIDRequired,
-		},
-		{
-			name: "requires version",
-			item: &model.KnowledgeBaseAssetRef{
-				OrganizationID: "org-1",
-				DatasetID:      "dataset-1",
-				AssetID:        assetID,
-			},
-			err: ErrVersionIDRequired,
 		},
 	}
 
@@ -83,9 +74,6 @@ func TestKnowledgeBaseAssetRefServiceValidatesRequiredFields(t *testing.T) {
 	if _, err := svc.FindActiveRefView(ctx, "org-1", "dataset-1", uuid.Nil, versionID); !errors.Is(err, ErrAssetIDRequired) {
 		t.Fatalf("FindActiveRefView asset error=%v", err)
 	}
-	if _, err := svc.FindActiveRefView(ctx, "org-1", "dataset-1", assetID, uuid.Nil); !errors.Is(err, ErrVersionIDRequired) {
-		t.Fatalf("FindActiveRefView version error=%v", err)
-	}
 	if _, err := svc.DisableRef(ctx, "", uuid.New()); !errors.Is(err, ErrOrganizationIDRequired) {
 		t.Fatalf("DisableRef organization error=%v", err)
 	}
@@ -108,7 +96,7 @@ func TestKnowledgeBaseAssetRefServiceCreatesReadOnlyView(t *testing.T) {
 		OrganizationID:     "org-1",
 		DatasetID:          "dataset-1",
 		AssetID:            assetID,
-		VersionID:          versionID,
+		VersionID:          &versionID,
 		ChunkArtifactSetID: &chunkSetID,
 		VectorArtifactID:   &vectorID,
 		Status:             model.KnowledgeBaseAssetRefStatusActive,
@@ -129,7 +117,8 @@ func TestKnowledgeBaseAssetRefServiceCreatesReadOnlyView(t *testing.T) {
 		view.OrganizationID != "org-1" ||
 		view.DatasetID != "dataset-1" ||
 		view.AssetID != assetID ||
-		view.VersionID != versionID ||
+		view.VersionID == nil ||
+		*view.VersionID != versionID ||
 		view.ChunkArtifactSetID == nil ||
 		*view.ChunkArtifactSetID != chunkSetID ||
 		view.VectorArtifactID == nil ||
@@ -154,7 +143,7 @@ func TestKnowledgeBaseAssetRefServiceCreateRefRecordsKnowledgeBaseReuseEvent(t *
 		OrganizationID:     "org-1",
 		DatasetID:          "dataset-1",
 		AssetID:            assetID,
-		VersionID:          versionID,
+		VersionID:          &versionID,
 		ChunkArtifactSetID: &chunkSetID,
 		VectorArtifactID:   &vectorID,
 		CreatedBy:          "account-1",
@@ -190,7 +179,7 @@ func TestKnowledgeBaseAssetRefServiceCreateRefReturnsExistingActiveRef(t *testin
 			OrganizationID: "org-1",
 			DatasetID:      "dataset-1",
 			AssetID:        assetID,
-			VersionID:      versionID,
+			VersionID:      &versionID,
 			Status:         model.KnowledgeBaseAssetRefStatusActive,
 		},
 	}
@@ -201,7 +190,7 @@ func TestKnowledgeBaseAssetRefServiceCreateRefReturnsExistingActiveRef(t *testin
 		OrganizationID: "org-1",
 		DatasetID:      "dataset-1",
 		AssetID:        assetID,
-		VersionID:      versionID,
+		VersionID:      &versionID,
 	})
 	if err != nil {
 		t.Fatalf("CreateRef: %v", err)
@@ -219,13 +208,14 @@ func TestKnowledgeBaseAssetRefServiceCreateRefReturnsExistingActiveRef(t *testin
 
 func TestKnowledgeBaseAssetRefServiceDisablesRef(t *testing.T) {
 	refID := uuid.New()
+	versionID := uuid.New()
 	repo := &fakeKnowledgeBaseAssetRefRepository{
 		item: &model.KnowledgeBaseAssetRef{
 			ID:             refID,
 			OrganizationID: "org-1",
 			DatasetID:      "dataset-1",
 			AssetID:        uuid.New(),
-			VersionID:      uuid.New(),
+			VersionID:      &versionID,
 			Status:         model.KnowledgeBaseAssetRefStatusDisabled,
 		},
 	}
@@ -264,7 +254,7 @@ func TestKnowledgeBaseAssetRefServiceListsAndFindsRefs(t *testing.T) {
 			OrganizationID: "org-1",
 			DatasetID:      "dataset-1",
 			AssetID:        assetID,
-			VersionID:      versionID,
+			VersionID:      &versionID,
 			Status:         model.KnowledgeBaseAssetRefStatusActive,
 		},
 		items: []*model.KnowledgeBaseAssetRef{
@@ -273,7 +263,7 @@ func TestKnowledgeBaseAssetRefServiceListsAndFindsRefs(t *testing.T) {
 				OrganizationID: "org-1",
 				DatasetID:      "dataset-1",
 				AssetID:        assetID,
-				VersionID:      versionID,
+				VersionID:      &versionID,
 				Status:         model.KnowledgeBaseAssetRefStatusActive,
 			},
 		},
@@ -315,6 +305,59 @@ func TestKnowledgeBaseAssetRefServiceListsAndFindsRefs(t *testing.T) {
 	}
 }
 
+func TestKnowledgeBaseAssetRefServiceUpdatesSyncState(t *testing.T) {
+	refID := uuid.New()
+	documentID := uuid.New()
+	repo := &fakeKnowledgeBaseAssetRefRepository{
+		item: &model.KnowledgeBaseAssetRef{
+			ID:             refID,
+			OrganizationID: "org-1",
+			DatasetID:      "dataset-1",
+			AssetID:        uuid.New(),
+			SyncStatus:     model.KnowledgeBaseAssetRefSyncStatusPending,
+		},
+	}
+	svc := NewKnowledgeBaseAssetRefService(repo)
+
+	pending, syncRunID, err := svc.MarkRefPending(context.Background(), "org-1", refID)
+	if err != nil {
+		t.Fatalf("MarkRefPending: %v", err)
+	}
+	if pending == nil || syncRunID == uuid.Nil || repo.lastSyncRunID != syncRunID {
+		t.Fatalf("pending=%+v sync_run_id=%s repo_sync_run_id=%s", pending, syncRunID, repo.lastSyncRunID)
+	}
+
+	syncing, err := svc.MarkRefSyncing(context.Background(), "org-1", refID, syncRunID)
+	if err != nil {
+		t.Fatalf("MarkRefSyncing: %v", err)
+	}
+	if syncing == nil || repo.lastSyncStatus != model.KnowledgeBaseAssetRefSyncStatusSyncing {
+		t.Fatalf("syncing=%+v status=%s", syncing, repo.lastSyncStatus)
+	}
+
+	synced, err := svc.MarkRefSynced(context.Background(), "org-1", refID, syncRunID, documentID, 12)
+	if err != nil {
+		t.Fatalf("MarkRefSynced: %v", err)
+	}
+	if synced == nil ||
+		repo.lastDatasetDocumentID != documentID ||
+		repo.lastSyncedGenerationNo != 12 ||
+		repo.lastSyncStatus != model.KnowledgeBaseAssetRefSyncStatusSynced {
+		t.Fatalf("synced=%+v doc=%s generation=%d status=%s", synced, repo.lastDatasetDocumentID, repo.lastSyncedGenerationNo, repo.lastSyncStatus)
+	}
+
+	failed, err := svc.MarkRefFailed(context.Background(), "org-1", refID, syncRunID, "sync_error", "failed to sync")
+	if err != nil {
+		t.Fatalf("MarkRefFailed: %v", err)
+	}
+	if failed == nil ||
+		repo.lastSyncStatus != model.KnowledgeBaseAssetRefSyncStatusFailed ||
+		repo.lastErrorCode != "sync_error" ||
+		repo.lastErrorMessage != "failed to sync" {
+		t.Fatalf("failed=%+v status=%s code=%s message=%s", failed, repo.lastSyncStatus, repo.lastErrorCode, repo.lastErrorMessage)
+	}
+}
+
 type fakeKnowledgeBaseAssetRefRepository struct {
 	created                  *model.KnowledgeBaseAssetRef
 	item                     *model.KnowledgeBaseAssetRef
@@ -330,6 +373,13 @@ type fakeKnowledgeBaseAssetRefRepository struct {
 	lastUpdateOrganizationID string
 	lastUpdateID             uuid.UUID
 	lastUpdateStatus         string
+	lastSyncRunID            uuid.UUID
+	lastSyncStatus           string
+	lastDatasetDocumentID    uuid.UUID
+	lastSyncedGenerationNo   int64
+	lastErrorCode            string
+	lastErrorMessage         string
+	softDeleted              bool
 }
 
 func (r *fakeKnowledgeBaseAssetRefRepository) Create(ctx context.Context, item *model.KnowledgeBaseAssetRef) error {
@@ -360,6 +410,22 @@ func (r *fakeKnowledgeBaseAssetRefRepository) FindActive(ctx context.Context, or
 	return r.item, nil
 }
 
+func (r *fakeKnowledgeBaseAssetRefRepository) FindActiveByAsset(ctx context.Context, organizationID string, datasetID string, assetID uuid.UUID) (*model.KnowledgeBaseAssetRef, error) {
+	r.lastFindOrganizationID = organizationID
+	r.lastFindDatasetID = datasetID
+	r.lastFindAssetID = assetID
+	if r.active != nil {
+		return r.active, nil
+	}
+	return r.item, nil
+}
+
+func (r *fakeKnowledgeBaseAssetRefRepository) ListActiveByAsset(ctx context.Context, organizationID string, assetID uuid.UUID) ([]*model.KnowledgeBaseAssetRef, error) {
+	r.lastFindOrganizationID = organizationID
+	r.lastFindAssetID = assetID
+	return r.items, nil
+}
+
 func (r *fakeKnowledgeBaseAssetRefRepository) CountActiveByAssetID(ctx context.Context, organizationID string, assetID uuid.UUID) (int64, error) {
 	return r.activeCount, nil
 }
@@ -368,5 +434,66 @@ func (r *fakeKnowledgeBaseAssetRefRepository) UpdateStatus(ctx context.Context, 
 	r.lastUpdateOrganizationID = organizationID
 	r.lastUpdateID = id
 	r.lastUpdateStatus = status
+	return r.item, nil
+}
+
+func (r *fakeKnowledgeBaseAssetRefRepository) MarkPending(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage *string) (*model.KnowledgeBaseAssetRef, error) {
+	r.lastUpdateOrganizationID = organizationID
+	r.lastUpdateID = id
+	r.lastSyncRunID = syncRunID
+	r.lastSyncStatus = model.KnowledgeBaseAssetRefSyncStatusPending
+	if r.item != nil {
+		r.item.SyncRunID = &syncRunID
+		r.item.SyncStatus = model.KnowledgeBaseAssetRefSyncStatusPending
+	}
+	return r.item, nil
+}
+
+func (r *fakeKnowledgeBaseAssetRefRepository) MarkSyncing(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID) (*model.KnowledgeBaseAssetRef, error) {
+	r.lastUpdateOrganizationID = organizationID
+	r.lastUpdateID = id
+	r.lastSyncRunID = syncRunID
+	r.lastSyncStatus = model.KnowledgeBaseAssetRefSyncStatusSyncing
+	if r.item != nil {
+		r.item.SyncStatus = model.KnowledgeBaseAssetRefSyncStatusSyncing
+	}
+	return r.item, nil
+}
+
+func (r *fakeKnowledgeBaseAssetRefRepository) MarkSynced(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, datasetDocumentID uuid.UUID, generationNo int64, syncedAt time.Time) (*model.KnowledgeBaseAssetRef, error) {
+	r.lastUpdateOrganizationID = organizationID
+	r.lastUpdateID = id
+	r.lastSyncRunID = syncRunID
+	r.lastDatasetDocumentID = datasetDocumentID
+	r.lastSyncedGenerationNo = generationNo
+	r.lastSyncStatus = model.KnowledgeBaseAssetRefSyncStatusSynced
+	if r.item != nil {
+		r.item.DatasetDocumentID = &datasetDocumentID
+		r.item.SyncedGenerationNo = &generationNo
+		r.item.LastSyncedAt = &syncedAt
+		r.item.SyncStatus = model.KnowledgeBaseAssetRefSyncStatusSynced
+	}
+	return r.item, nil
+}
+
+func (r *fakeKnowledgeBaseAssetRefRepository) MarkFailed(ctx context.Context, organizationID string, id uuid.UUID, syncRunID uuid.UUID, errorCode, errorMessage string) (*model.KnowledgeBaseAssetRef, error) {
+	r.lastUpdateOrganizationID = organizationID
+	r.lastUpdateID = id
+	r.lastSyncRunID = syncRunID
+	r.lastSyncStatus = model.KnowledgeBaseAssetRefSyncStatusFailed
+	r.lastErrorCode = errorCode
+	r.lastErrorMessage = errorMessage
+	if r.item != nil {
+		r.item.SyncStatus = model.KnowledgeBaseAssetRefSyncStatusFailed
+		r.item.SyncErrorCode = &errorCode
+		r.item.SyncErrorMessage = &errorMessage
+	}
+	return r.item, nil
+}
+
+func (r *fakeKnowledgeBaseAssetRefRepository) SoftDelete(ctx context.Context, organizationID string, id uuid.UUID) (*model.KnowledgeBaseAssetRef, error) {
+	r.lastUpdateOrganizationID = organizationID
+	r.lastUpdateID = id
+	r.softDeleted = true
 	return r.item, nil
 }

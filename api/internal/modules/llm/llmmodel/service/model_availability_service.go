@@ -96,7 +96,7 @@ func (s *modelAvailabilityService) BatchCheckAvailability(ctx context.Context, o
 
 	// Get all global models to map names to providers.
 	// Using a large limit to get all relevant models
-	allModels, _, err := s.modelRepo.List(ctx, nil, "", "", nil, 0, 1000)
+	allModels, _, err := s.modelRepo.List(ctx, nil, "", "", "", nil, 0, 1000)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list models: %w", err)
 	}
