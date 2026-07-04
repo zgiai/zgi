@@ -2,6 +2,7 @@ package skills
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -55,11 +56,27 @@ func (r *Runtime) skillLocations(custom []CustomSkillCatalogEntry) (map[string]s
 }
 
 func (r *Runtime) systemSkillLocations() (map[string]skillLocation, error) {
-	entries, embedded, err := r.systemCatalogEntries()
+	locations, errs, err := r.systemSkillLocationsFromEntries(false)
 	if err != nil {
 		return nil, err
 	}
+	if joined := errors.Join(errs...); joined != nil {
+		return nil, joined
+	}
+	return locations, nil
+}
+
+func (r *Runtime) systemSkillLocationsBestEffort() (map[string]skillLocation, []error, error) {
+	return r.systemSkillLocationsFromEntries(true)
+}
+
+func (r *Runtime) systemSkillLocationsFromEntries(bestEffort bool) (map[string]skillLocation, []error, error) {
+	entries, embedded, err := r.systemCatalogEntries()
+	if err != nil {
+		return nil, nil, err
+	}
 	locations := make(map[string]skillLocation, len(entries))
+	errs := make([]error, 0)
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -69,7 +86,12 @@ func (r *Runtime) systemSkillLocations() (map[string]skillLocation, error) {
 			continue
 		}
 		if !isValidSkillName(id) {
-			return nil, fmt.Errorf("invalid skill directory %s: use lowercase letters, numbers, and hyphens only", entry.Name())
+			err := fmt.Errorf("invalid skill directory %s: use lowercase letters, numbers, and hyphens only", entry.Name())
+			if !bestEffort {
+				return nil, nil, err
+			}
+			errs = append(errs, err)
+			continue
 		}
 		location := skillLocation{ID: id, Root: filepath.Join(r.catalogDir, id), Source: SkillSourceSystem}
 		if embedded {
@@ -78,7 +100,7 @@ func (r *Runtime) systemSkillLocations() (map[string]skillLocation, error) {
 		}
 		locations[id] = location
 	}
-	return locations, nil
+	return locations, errs, nil
 }
 
 func (r *Runtime) systemCatalogEntries() ([]fs.DirEntry, bool, error) {

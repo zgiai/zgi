@@ -292,6 +292,40 @@ func TestDefaultRuntimeUsesEmbeddedSystemCatalog(t *testing.T) {
 	}
 }
 
+func TestListSystemSkillsBestEffortSkipsInvalidCatalogDirectories(t *testing.T) {
+	catalog := t.TempDir()
+	validRoot := filepath.Join(catalog, "valid-skill")
+	if err := os.MkdirAll(validRoot, 0o755); err != nil {
+		t.Fatalf("MkdirAll(validRoot) error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(catalog, "Invalid_Skill"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(invalidRoot) error = %v", err)
+	}
+	skill := `---
+name: valid-skill
+description: valid test skill
+when_to_use: use this valid test skill
+runtime_type: prompt
+---
+Follow the test instructions.
+`
+	if err := os.WriteFile(filepath.Join(validRoot, "SKILL.md"), []byte(skill), 0o644); err != nil {
+		t.Fatalf("WriteFile(SKILL.md) error = %v", err)
+	}
+
+	runtime := NewRuntimeWithCatalog(nil, nil, catalog)
+	metadata, err := runtime.ListSystemSkillsBestEffort(context.Background())
+	if err == nil {
+		t.Fatalf("ListSystemSkillsBestEffort() error = nil, want invalid directory error")
+	}
+	if !strings.Contains(err.Error(), "Invalid_Skill") {
+		t.Fatalf("ListSystemSkillsBestEffort() error = %q, want invalid directory name", err)
+	}
+	if len(metadata) != 1 || metadata[0].ID != "valid-skill" {
+		t.Fatalf("metadata = %#v, want only valid-skill", metadata)
+	}
+}
+
 func TestSchedulePlannerSystemSkillMetadata(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillSchedulePlanner})
