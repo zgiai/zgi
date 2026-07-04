@@ -421,8 +421,13 @@ func TestContextualSidebarStructuredPlanCoversNavigationTool(t *testing.T) {
 	structured := mapFromOperationContext(operationPlan["structured_plan"])
 	compact := operationPlanCompactStructuredPlanForPrompt(structured, 4)
 	operations := mapSliceFromAny(compact["operations"])
-	if len(operations) != 1 || stringFromAny(operations[0]["skill_id"]) != skills.SkillConsoleNavigator {
-		t.Fatalf("compact structured operations = %#v, want skill_id %s", operations, skills.SkillConsoleNavigator)
+	if len(operations) != 1 ||
+		stringFromAny(operations[0]["action"]) != "navigate" ||
+		stringFromAny(operations[0]["resource_type"]) != "page" {
+		t.Fatalf("compact structured operations = %#v, want navigation phase without exact tool script", operations)
+	}
+	if stringFromAny(operations[0]["skill_id"]) != "" || stringFromAny(operations[0]["tool_name"]) != "" {
+		t.Fatalf("compact structured operations = %#v, want no model-facing skill/tool prescription", operations)
 	}
 }
 
@@ -494,12 +499,22 @@ func TestAgentManagementStructuredPlanIncludedInOperationPlanState(t *testing.T)
 		t.Fatalf("strategy message content type = %T, want string", message.Content)
 	}
 	for _, want := range []string{
-		"structured_plan.required_tool_sequence",
 		"structured_plan.operations",
+		"planning_contract",
+		"phase/status checklist",
 		"Do not claim a structured operation is complete",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("strategy message missing %q in:\n%s", want, content)
+		}
+	}
+	for _, unexpected := range []string{
+		"required_tool_sequence",
+		"planned_tools",
+		"required_next_tool",
+	} {
+		if strings.Contains(content, unexpected) {
+			t.Fatalf("strategy message contains %q, want model-facing plan without exact tool script:\n%s", unexpected, content)
 		}
 	}
 }

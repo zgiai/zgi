@@ -106,7 +106,7 @@ func (s *service) runPreparedSkillStreamWithCompletionVerifier(
 		Prepared:                 loopPrepared,
 		Resolved:                 resolved,
 		ExecutionContext:         s.skillExecutionContext(prepared),
-		AdditionalSystemMessages: skillLoopAdditionalSystemMessages(prepared),
+		AdditionalSystemMessages: skillLoopAdditionalSystemMessagesForResolved(prepared, resolved),
 		PlanToolGuard:            skillLoopPlanToolCallGuardWithResolved(prepared, resolved),
 		ToolArgumentResolver:     skillLoopToolArgumentResolver(prepared),
 		CompletionEvidence:       skillLoopCompletionEvidence(prepared),
@@ -144,26 +144,25 @@ func skillLoopResolveBoundToolArguments(prepared *PreparedChat, req skillloop.To
 			binding = map[string]string{"agent_id": aiChatStructuredFirstCreatedAgentIDExpr}
 		}
 	}
-	if len(binding) == 0 {
-		return nil, false
-	}
 	resolved := copyStringAnyMap(req.Arguments)
 	changed := false
-	for key, expr := range binding {
-		key = strings.TrimSpace(key)
-		expr = strings.TrimSpace(expr)
-		if key == "" || expr == "" {
-			continue
+	if len(binding) > 0 {
+		for key, expr := range binding {
+			key = strings.TrimSpace(key)
+			expr = strings.TrimSpace(expr)
+			if key == "" || expr == "" {
+				continue
+			}
+			value, ok := skillLoopResolveToolArgBindingExpression(prepared, req, expr)
+			if !ok || value == "" {
+				continue
+			}
+			if strings.TrimSpace(stringFromAny(resolved[key])) == value {
+				continue
+			}
+			resolved[key] = value
+			changed = true
 		}
-		value, ok := skillLoopResolveToolArgBindingExpression(prepared, req, expr)
-		if !ok || value == "" {
-			continue
-		}
-		if strings.TrimSpace(stringFromAny(resolved[key])) == value {
-			continue
-		}
-		resolved[key] = value
-		changed = true
 	}
 	if !changed {
 		return nil, false
@@ -228,6 +227,7 @@ func skillLoopCompletionVerificationResult(prepared *PreparedChat) func(skillloo
 		if prepared == nil || prepared.Message == nil {
 			return
 		}
+		result = skillloop.ReconcileCompletionVerificationResultWithEvidence(skillLoopCompletionEvidence(prepared)(), result)
 		metadata := copyStringAnyMap(prepared.Message.Metadata)
 		applyOperationPlanCompletionVerificationResult(
 			metadata,
@@ -667,9 +667,6 @@ func operationPlanCompactStructuredPlanForPrompt(value interface{}, limit int) m
 	if operations := operationPlanCompactStructuredOperationsForPrompt(plan["operations"], limit); len(operations) > 0 {
 		out["operations"] = operations
 	}
-	if sequence := operationPlanCompactStructuredToolSequenceForPrompt(plan["required_tool_sequence"], limit); len(sequence) > 0 {
-		out["required_tool_sequence"] = sequence
-	}
 	if goals := operationPlanCompactCapabilityGoals(plan["capability_goals"], 6); len(goals) > 0 {
 		out["capability_goals"] = goals
 	}
@@ -700,11 +697,8 @@ func operationPlanCompactStructuredOperationsForPrompt(value interface{}, limit 
 			"action",
 			"resource_type",
 			"resource_name",
-			"skill_id",
-			"tool_name",
 			"effect",
 			"if_missing",
-			"output_alias",
 			"status",
 			"last_invocation_id",
 			"last_invocation_kind",
@@ -717,9 +711,6 @@ func operationPlanCompactStructuredOperationsForPrompt(value interface{}, limit 
 		}
 		if fields := stringSliceFromAny(operation["fields"]); len(fields) > 0 {
 			compact["fields"] = compactStringSliceForPrompt(fields, 8, 160)
-		}
-		if binding := cleanStringAnyStringMap(mapFromOperationContext(operation["args_binding"])); len(binding) > 0 {
-			compact["args_binding"] = binding
 		}
 		if group := mapFromOperationContext(operation["operation_group"]); len(group) > 0 {
 			compact["operation_group"] = operationPlanCompactOperationGroup(group)
@@ -4495,6 +4486,10 @@ func preparedSkillWorkspaceID(prepared *PreparedChat) string {
 }
 
 func skillLoopAdditionalSystemMessages(prepared *PreparedChat) []adapter.Message {
+	return skillLoopAdditionalSystemMessagesForResolved(prepared, nil)
+}
+
+func skillLoopAdditionalSystemMessagesForResolved(prepared *PreparedChat, resolved *skills.ResolvedSkills) []adapter.Message {
 	if prepared == nil {
 		return nil
 	}
@@ -4505,10 +4500,10 @@ func skillLoopAdditionalSystemMessages(prepared *PreparedChat) []adapter.Message
 	if message, ok := contextualAIChatTurnStrategyMessage(prepared); ok {
 		messages = append(messages, message)
 	}
-	if message, ok := contextualConsoleNavigationSkillMessage(prepared); ok {
+	if message, ok := contextualConsoleNavigationSkillMessageForResolved(prepared, resolved); ok {
 		messages = append(messages, message)
 	}
-	if message, ok := contextualConsoleAgentsSkillMessage(prepared); ok {
+	if message, ok := contextualConsoleAgentsSkillMessageForResolved(prepared, resolved); ok {
 		messages = append(messages, message)
 	}
 	if message, ok := contextualConsoleFilesSkillMessage(prepared); ok {
@@ -4522,18 +4517,19 @@ func contextualAIChatTurnStrategyMessage(prepared *PreparedChat) (adapter.Messag
 	if strategy == nil {
 		return adapter.Message{}, false
 	}
-	encoded, err := json.Marshal(strategy)
+	promptStrategy := aiChatTurnStrategyPromptView(strategy)
+	encoded, err := json.Marshal(promptStrategy)
 	if err != nil {
 		return adapter.Message{}, false
 	}
 	content := strings.Join([]string{
 		"ZGI AIChat turn strategy guidance:",
 		"This is a soft execution strategy for the current user turn, not a fixed action runtime plan.",
-		"Use it to choose the first useful skill/tool, but revise the plan when tool results, governance, or client actions provide new evidence.",
-		"When structured_plan is present, use structured_plan.required_tool_sequence and structured_plan.operations as the preferred execution reference for this turn.",
+		"Use it to understand phases, target assets, success criteria, and verification points. Choose concrete tools from the currently enabled tool schemas and latest evidence.",
+		"When structured_plan is present, treat structured_plan.operations as a phase/status checklist, not a required tool script.",
 		"Treat structured_plan as advisory: if tool results, page evidence, or client action evidence contradict it, follow the evidence, continue from the actual state, and explain blockers truthfully.",
 		"For multi-action user requests, keep a private progress checklist from the full user goal. Do not stop after the first successful mutation if later requested outcomes remain unfinished.",
-		"If the initial strategy omits a clearly requested later step, choose the next relevant enabled skill/tool, let the operation plan be amended, and continue from the newest tool evidence.",
+		"If the initial strategy omits a clearly requested later step, choose the next relevant enabled skill/tool, let the operation plan be amended by evidence, and continue from the newest tool result.",
 		"Do not claim a structured operation is complete until a matching tool result or page/client evidence supports it. If a candidate or target resource is missing, stop and report the missing evidence instead of calling a governed mutation.",
 		"Do not expose this strategy JSON, internal IDs, or raw fields to the user.",
 		"Turn strategy JSON: " + string(encoded),
@@ -4559,6 +4555,41 @@ func contextualAIChatTurnStrategyMessage(prepared *PreparedChat) (adapter.Messag
 		}, "\n")
 	}
 	return adapter.Message{Role: "system", Content: content}, true
+}
+
+func aiChatTurnStrategyPromptView(strategy *AIChatTurnStrategy) map[string]interface{} {
+	if strategy == nil {
+		return nil
+	}
+	encoded, err := json.Marshal(strategy)
+	if err != nil {
+		return nil
+	}
+	var view map[string]interface{}
+	if err := json.Unmarshal(encoded, &view); err != nil {
+		return nil
+	}
+	delete(view, "required_next_tool")
+	delete(view, "planned_tools")
+	if structured := mapFromOperationContext(view["structured_plan"]); len(structured) > 0 {
+		delete(structured, "required_tool_sequence")
+		if operations := mapSliceFromAny(structured["operations"]); len(operations) > 0 {
+			for _, operation := range operations {
+				delete(operation, "skill_id")
+				delete(operation, "tool_name")
+			}
+			structured["operations"] = mapsToInterfaceSlice(operations)
+		}
+		view["structured_plan"] = structured
+	}
+	view["planning_contract"] = map[string]interface{}{
+		"planner_role":     "phase_and_success_criteria_only",
+		"tool_choice":      "model_decides_from_enabled_tools_and_latest_evidence",
+		"verification":     "compare tool/page evidence to success criteria before final answer",
+		"retry_policy":     "retry only when the latest evidence explains a recoverable issue; otherwise report the blocker",
+		"completion_basis": "final answers must be grounded in successful tool results or page/client observations",
+	}
+	return view
 }
 
 // AIChatTurnStrategy is the typed, internal plan hint for one contextual sidebar turn.
@@ -4739,7 +4770,7 @@ func finalizeAIChatTurnStrategy(parts *chatRequestParts, strategy *AIChatTurnStr
 	}
 	strategy.RemainingRouteSequence = remainingConsoleNavigationRouteSequence(parts, target)
 	strategy.Avoid = appendUniqueStrings(strategy.Avoid,
-		"treat required_next_tool as the preferred next route action, but if current page evidence already satisfies the target or a low-risk observe/read/list step is needed, continue from evidence and record the deviation instead of forcing a redundant route",
+		"treat the route target as a preferred next phase, but if current page evidence already satisfies the target or a low-risk observe/read/list step is needed, continue from evidence and record the deviation instead of forcing a redundant route",
 	)
 	return enrichAIChatTurnStrategyPlannedTools(parts, strategy)
 }
@@ -8919,7 +8950,14 @@ var consoleNavigationRouteHints = []consoleNavigationRouteHint{
 }
 
 func contextualConsoleNavigationSkillMessage(prepared *PreparedChat) (adapter.Message, bool) {
+	return contextualConsoleNavigationSkillMessageForResolved(prepared, nil)
+}
+
+func contextualConsoleNavigationSkillMessageForResolved(prepared *PreparedChat, resolved *skills.ResolvedSkills) (adapter.Message, bool) {
 	if prepared == nil || prepared.parts == nil || !skillIDEnabled(prepared.parts.SkillIDs, skills.SkillConsoleNavigator) {
+		return adapter.Message{}, false
+	}
+	if !skillLoopResolvedToolAvailable(resolved, skills.SkillConsoleNavigator, "navigate") {
 		return adapter.Message{}, false
 	}
 
@@ -8953,7 +8991,7 @@ func contextualConsoleNavigationSkillMessage(prepared *PreparedChat) (adapter.Me
 		}
 		if !clientActionContinuationLoadedRoute(prepared.parts, target.Href) &&
 			!consoleNavigationRouteAlreadyAvailable(prepared.parts, target.Href) {
-			payload["required_next_tool"] = map[string]interface{}{
+			payload["preferred_route_action"] = map[string]interface{}{
 				"skill_id":  skills.SkillConsoleNavigator,
 				"tool_name": "navigate",
 				"arguments": map[string]string{
@@ -8973,7 +9011,7 @@ func contextualConsoleNavigationSkillMessage(prepared *PreparedChat) (adapter.Me
 		"ZGI console navigation guidance:",
 		"Use console-navigator/navigate when the user asks to open, go to, enter, switch to, or navigate to a known ZGI console module page.",
 		"When the user explicitly asks to save, upload, import, or write a file into File Management from another console page, navigate to /console/files only if the current page context is not already Files and the File Management page context is still needed for the save.",
-		"When required_next_tool is present in Console navigation JSON, treat it as the preferred next route action, not an immutable script: load console-navigator if needed and call navigate when the current page does not already match the target.",
+		"When preferred_route_action is present in Console navigation JSON, treat it as a suggested route phase, not an immutable script: load console-navigator if needed and call navigate only when the current page does not already match the target.",
 		"If current page evidence already satisfies the target, or a low-risk observe/read/list step is needed to complete the user's goal, continue from that evidence instead of forcing a redundant navigate call.",
 		"When remaining_route_sequence has more than one pending route, complete exactly one navigate call, wait for the frontend route_loaded continuation, then continue with the next pending route from the resumed context.",
 		"Do not use request_user_input when the destination is resolved from the site map.",
@@ -8986,6 +9024,10 @@ func contextualConsoleNavigationSkillMessage(prepared *PreparedChat) (adapter.Me
 }
 
 func contextualConsoleAgentsSkillMessage(prepared *PreparedChat) (adapter.Message, bool) {
+	return contextualConsoleAgentsSkillMessageForResolved(prepared, nil)
+}
+
+func contextualConsoleAgentsSkillMessageForResolved(prepared *PreparedChat, resolved *skills.ResolvedSkills) (adapter.Message, bool) {
 	if prepared == nil || prepared.parts == nil {
 		return adapter.Message{}, false
 	}
@@ -8994,7 +9036,7 @@ func contextualConsoleAgentsSkillMessage(prepared *PreparedChat) (adapter.Messag
 		!isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
 		return adapter.Message{}, false
 	}
-	tools := []map[string]string{
+	tools := filterAgentManagementPromptToolsForResolved(resolved, []map[string]string{
 		{"skill_id": skills.SkillAgentManagement, "tool_name": "list_agents", "purpose": "list or search Agents when visible page context is missing or insufficient"},
 		{"skill_id": skills.SkillAgentManagement, "tool_name": "get_agent", "purpose": "read one Agent's basic details"},
 		{"skill_id": skills.SkillAgentManagement, "tool_name": "create_agent", "purpose": "create one draft AGENT in the current workspace"},
@@ -9012,11 +9054,14 @@ func contextualConsoleAgentsSkillMessage(prepared *PreparedChat) (adapter.Messag
 		{"skill_id": skills.SkillAgentManagement, "tool_name": "replace_agent_database_bindings", "purpose": "replace one Agent's complete draft database table binding list"},
 		{"skill_id": skills.SkillAgentManagement, "tool_name": "replace_agent_workflow_bindings", "purpose": "replace one Agent's complete draft workflow binding list"},
 		{"skill_id": skills.SkillAgentManagement, "tool_name": "list_available_models", "purpose": "list user-available models by use_case before replacing an Agent model"},
-	}
+	})
 	navigationAllowed := agentManagementNavigationGuidanceAllowed(prepared)
-	if navigationAllowed {
+	navigationToolAvailable := navigationAllowed && skillLoopResolvedToolAvailable(resolved, skills.SkillConsoleNavigator, "navigate")
+	if navigationToolAvailable {
 		tools = append(tools, map[string]string{"skill_id": skills.SkillConsoleNavigator, "tool_name": "navigate", "purpose": "open a resolved Agent detail href only when the goal still needs that page and current context is insufficient"})
 	}
+	listAgentsAvailable := agentManagementPromptToolListed(tools, skills.SkillAgentManagement, "list_agents")
+	getAgentAvailable := agentManagementPromptToolListed(tools, skills.SkillAgentManagement, "get_agent")
 	payload := map[string]interface{}{
 		"page":                    "console.agents",
 		"preferred_skill":         skills.SkillAgentManagement,
@@ -9032,9 +9077,8 @@ func contextualConsoleAgentsSkillMessage(prepared *PreparedChat) (adapter.Messag
 		"ZGI Agent management guidance:",
 		"Use agent-management for explicit Agent list, create, edit identity, delete, inspect draft config, update supported draft config, replace Agent memory slots, or edit knowledge/database/workflow bindings.",
 		"Use the Agent capability model as the semantic contract for planning: skill-backed capabilities require a matching enabled Skill; file upload and memory are config switches; model changes require a provider/model pair; knowledge, database, and workflow access are binding changes.",
+		"The tools array in Agent management JSON is the authoritative callable tool list for this turn. Do not call any agent-management or console-navigator tool that is absent from that tools array.",
 		"When Agent management JSON includes visible_agents and the user refers to visible Agents, selected Agents, the current page, the current Agent, first-N/top-N Agents, or these Agents, treat visible_agents as authoritative resolved targets. Use their agent_id/name/href directly; do not call list_agents only to rediscover the same visible targets.",
-		"Use list_agents only when visible_agents is missing or insufficient, the user asks to search/find Agents by name, asks what Agents exist beyond the visible page context, or gives a name without an exact visible match.",
-		"For read-only current Agent configuration checks, get_agent_config is enough for identity, model/provider, prompt, memory/file upload settings, and currently bound resource counts. Do not call candidate-list tools or list_agent_database_tables just to inspect current counts; use candidate tools only when the user asks what resources are available/bindable/selectable, or when a bind/unbind/replace operation needs exact resource IDs.",
 		"For binding edits, read current config or list exact candidates only when the needed current binding set or candidate IDs/names are not already present in page context or prior tool results. For specific bind/unbind changes, prefer one update_agent_config call with add_enabled_skill_ids/remove_enabled_skill_ids, add_knowledge_dataset_ids/remove_knowledge_dataset_ids, add_database_bindings/remove_database_bindings, or add_workflow_bindings/remove_workflow_bindings so unmentioned bindings are preserved. Use full replacement lists or replace_agent_*_bindings only when the user asks to replace or clear an entire binding section. Never pass resources the user wants to unbind as the final replacement list. Never guess resource IDs and never bind resources from another workspace.",
 		"Do not publish, roll back, invoke Agents, manage API keys, or change WebApp online/offline state in this MVP. If the user asks for those, explain the limit.",
 		"For edits, deletes, and config updates, resolve the Agent first and pass the exact agent_id. Do not invent IDs.",
@@ -9047,10 +9091,21 @@ func contextualConsoleAgentsSkillMessage(prepared *PreparedChat) (adapter.Messag
 		"After ordinary edit, binding, unbinding, or Agent list-page batch deletion succeeds, prefer refreshed page context or asset observation over navigation. Do not navigate only to prove the mutation happened.",
 		"Do not navigate after deleting Agents from the list page.",
 	}
+	if listAgentsAvailable {
+		lines = append(lines, "Use list_agents only when visible_agents is missing or insufficient, the user asks to search/find Agents by name, asks what Agents exist beyond the visible page context, or gives a name without an exact visible match.")
+	} else {
+		lines = append(lines, "Because list_agents is absent from the tools array for this turn, do not call list_agents; use visible_agents, prior tool results, or an available read/config tool instead.")
+	}
+	if getAgentAvailable {
+		lines = append(lines, "Use get_agent only for basic Agent details when page context or get_agent_config is insufficient.")
+	} else {
+		lines = append(lines, "Because get_agent is absent from the tools array for this turn, do not call get_agent; use get_agent_config or current page evidence for Agent details.")
+	}
+	lines = append(lines, "For read-only current Agent configuration checks, get_agent_config is enough for identity, model/provider, prompt, memory/file upload settings, and currently bound resource counts. Do not call candidate-list tools or list_agent_database_tables just to inspect current counts; use candidate tools only when the user asks what resources are available/bindable/selectable, or when a bind/unbind/replace operation needs exact resource IDs.")
 	lines = append(lines, agentManagementCapabilityDefinitionGuidance()...)
 	lines = append(lines, agentManagementActiveCapabilityGoalGuidance(prepared)...)
 	lines = append(lines, agentManagementActiveConfigPlanGuidance(prepared)...)
-	if navigationAllowed {
+	if navigationToolAvailable {
 		lines = append(lines,
 			"If the current operation plan includes console-navigator/navigate, treat it as a route hint: call it only when the user goal still needs that page and current context has not already satisfied the step.",
 			"If delete_agent or delete_agents succeeds while the current route is a deleted Agent detail page and the operation plan requires returning to the list, call console-navigator/navigate with /console/agents before the final answer. Do not navigate after deleting Agents from the list page.",
@@ -9063,6 +9118,54 @@ func contextualConsoleAgentsSkillMessage(prepared *PreparedChat) (adapter.Messag
 	}
 	lines = append(lines, "Agent management JSON: "+string(encoded))
 	return adapter.Message{Role: "system", Content: strings.Join(lines, "\n")}, true
+}
+
+func filterAgentManagementPromptToolsForResolved(resolved *skills.ResolvedSkills, tools []map[string]string) []map[string]string {
+	if resolved == nil {
+		return tools
+	}
+	filtered := make([]map[string]string, 0, len(tools))
+	for _, tool := range tools {
+		skillID := strings.TrimSpace(tool["skill_id"])
+		toolName := strings.TrimSpace(tool["tool_name"])
+		if skillLoopResolvedToolAvailable(resolved, skillID, toolName) {
+			filtered = append(filtered, tool)
+		}
+	}
+	return filtered
+}
+
+func agentManagementPromptToolListed(tools []map[string]string, skillID string, toolName string) bool {
+	for _, tool := range tools {
+		if strings.EqualFold(strings.TrimSpace(tool["skill_id"]), skillID) &&
+			strings.EqualFold(strings.TrimSpace(tool["tool_name"]), toolName) {
+			return true
+		}
+	}
+	return false
+}
+
+func skillLoopResolvedToolAvailable(resolved *skills.ResolvedSkills, skillID string, toolName string) bool {
+	if resolved == nil {
+		return true
+	}
+	skillID = strings.TrimSpace(skillID)
+	toolName = strings.TrimSpace(toolName)
+	if skillID == "" || toolName == "" {
+		return false
+	}
+	for _, doc := range resolved.Skills {
+		if !strings.EqualFold(strings.TrimSpace(doc.Metadata.ID), skillID) {
+			continue
+		}
+		for _, tool := range doc.Tools {
+			if strings.EqualFold(strings.TrimSpace(tool.Name), toolName) {
+				return true
+			}
+		}
+		return false
+	}
+	return false
 }
 
 func agentManagementCapabilityDefinitionGuidance() []string {
@@ -9860,7 +9963,7 @@ func skillLoopTemporaryFileGenerateFinalAnswerGuard(prepared *PreparedChat) skil
 			}, " "),
 			SystemMessage: strings.Join([]string{
 				"The candidate final answer is premature for this temporary file generation request.",
-				"Load the required skill if needed, then call call_skill_tool with skill_id \"" + skillID + "\" and tool_name \"" + toolName + "\".",
+				"Load the selected skill if needed, then call call_skill_tool with skill_id \"" + skillID + "\" and tool_name \"" + toolName + "\" when generation is still needed.",
 				"Use the requested filename, format, and content. Keep lifecycle/target temporary and do not call file-manager/save_file_to_management.",
 				"Only after the artifact-producing tool succeeds may you tell the user the temporary file was generated.",
 			}, " "),
@@ -14449,7 +14552,7 @@ func consoleFilesGuardTargetArgumentHint(targets []map[string]interface{}, toolN
 		payload["arguments"] = map[string]interface{}{"file_id": refs[0].FileID}
 	} else {
 		payload["arguments"] = map[string]interface{}{"file_ids": consoleFilesGuardTargetFileIDs(targets)}
-		payload["call_instruction"] = "Call the required tool once per resolved target if the tool schema accepts only a single file_id."
+		payload["call_instruction"] = "Call this tool once per resolved target if the tool schema accepts only a single file_id."
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {

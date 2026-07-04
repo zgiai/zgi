@@ -328,7 +328,7 @@ func agentManagementStructuredPlanFromStrategy(parts *chatRequestParts, strategy
 		RequiresApproval:     agentManagementStructuredPlanRequiresApproval(tools),
 		ReadBeforeWrite:      agentManagementStructuredPlanReadBeforeWrite(tools),
 		CompletionCriteria: []string{
-			"execute only the structured Agent-management operations represented by required_tool_sequence",
+			"execute only the structured Agent-management operations relevant to the user's request",
 			"after each mutation tool returns, verify completion from the tool result before the final answer",
 			"if a requested candidate resource is missing, do not call the mutation tool; report the missing resource explicitly",
 		},

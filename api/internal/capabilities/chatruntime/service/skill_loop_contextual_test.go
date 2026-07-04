@@ -597,7 +597,7 @@ func TestContextualAIChatTurnStrategyPlansRouteBeforeManagedFileCreate(t *testin
 		skills.SkillFileManager,
 		"exactly one temporary artifact",
 		"asset_observation:file.create",
-		"preferred next route action",
+		"preferred next phase",
 		"low-risk observe/read/list step",
 	} {
 		if !strings.Contains(content, want) {
@@ -3057,8 +3057,8 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleNavigationGuidance(t *testi
 	for _, want := range []string{
 		"ZGI console navigation guidance",
 		"console-navigator/navigate",
-		"required_next_tool",
-		"preferred next route action",
+		"preferred_route_action",
+		"suggested route phase",
 		"not an immutable script",
 		"low-risk observe/read/list step",
 		"remaining_route_sequence",
@@ -3078,7 +3078,8 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleNavigationGuidance(t *testi
 		}
 	}
 	if strings.Contains(content, "the next skill-loop action is constrained") ||
-		strings.Contains(content, "before answering, asking the user, or using another business tool") {
+		strings.Contains(content, "before answering, asking the user, or using another business tool") ||
+		strings.Contains(content, "required_next_tool") {
 		t.Fatalf("console navigation guidance still contains hard required_next_tool wording:\n%s", content)
 	}
 }

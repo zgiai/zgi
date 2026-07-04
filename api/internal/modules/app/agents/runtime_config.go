@@ -609,7 +609,7 @@ func normalizeAgentEnabledSkillIDs(input []string) []string {
 	out := make([]string, 0, len(input))
 	for _, raw := range input {
 		id := strings.ToLower(strings.TrimSpace(raw))
-		if id == "" || skills.IsHiddenSystemSkill(id) {
+		if id == "" || !skills.IsUserSelectableSystemSkill(id) {
 			continue
 		}
 		if _, ok := seen[id]; ok {

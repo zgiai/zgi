@@ -17,6 +17,7 @@ func TestNormalizeAgentEnabledSkillIDsRemovesRuntimeManagedSkills(t *testing.T) 
 		skills.SkillAgentKnowledge,
 		skills.SkillAgentWorkflow,
 		skills.SkillUserMemory,
+		skills.SkillIntentRouter,
 		skills.SkillCalculator,
 		skills.SkillCalculator,
 		"  time  ",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
@@ -126,10 +127,13 @@ func (s *agentsService) listAgentSkillCandidatesForWorkspace(ctx context.Context
 	out := make([]dto.AgentSkillCandidate, 0, len(metadata))
 	for _, item := range metadata {
 		skillID := strings.ToLower(strings.TrimSpace(item.ID))
-		if skillID == "" || skills.IsHiddenSystemSkill(skillID) {
+		if skillID == "" {
 			continue
 		}
-		if item.Status == skills.SkillStatusInvalid {
+		if !item.Enabled || item.Status == skills.SkillStatusInvalid {
+			continue
+		}
+		if !skills.IsUserSelectableSystemSkill(skillID) {
 			continue
 		}
 		if !skills.SkillSupportsCaller(item.SupportedCallers, runtimemodel.ConversationCallerAgent) {
@@ -371,12 +375,66 @@ func matchesAgentCandidateQuery(query string, values ...string) bool {
 	if query == "" {
 		return true
 	}
+	searchText := strings.Builder{}
 	for _, value := range values {
-		if strings.Contains(strings.ToLower(strings.TrimSpace(value)), query) {
+		normalized := normalizeAgentCandidateSearchText(value)
+		if strings.Contains(normalized, query) {
+			return true
+		}
+		searchText.WriteByte(' ')
+		searchText.WriteString(normalized)
+	}
+	tokens := agentCandidateQueryTokens(query)
+	if len(tokens) == 0 {
+		return true
+	}
+	search := searchText.String()
+	for _, token := range tokens {
+		if !agentCandidateSearchContainsToken(search, token) {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeAgentCandidateSearchText(value string) string {
+	return strings.ToLower(strings.TrimSpace(strings.NewReplacer("-", " ", "_", " ", "/", " ").Replace(value)))
+}
+
+func agentCandidateQueryTokens(query string) []string {
+	fields := strings.FieldsFunc(normalizeAgentCandidateSearchText(query), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	out := make([]string, 0, len(fields))
+	for _, field := range fields {
+		if field == "" {
+			continue
+		}
+		out = append(out, field)
+	}
+	return out
+}
+
+func agentCandidateSearchContainsToken(search, token string) bool {
+	for _, variant := range agentCandidateQueryTokenVariants(token) {
+		if strings.Contains(search, variant) {
 			return true
 		}
 	}
 	return false
+}
+
+func agentCandidateQueryTokenVariants(token string) []string {
+	switch token {
+	case "generation":
+		return []string{"generation", "generate", "generator"}
+	case "generate":
+		return []string{"generate", "generator", "generation"}
+	case "files":
+		return []string{"files", "file"}
+	default:
+		return []string{token}
+	}
 }
 
 func selectedStringIDSet(ids []string) map[string]struct{} {

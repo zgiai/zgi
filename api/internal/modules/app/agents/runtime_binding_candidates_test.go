@@ -47,24 +47,28 @@ func TestListAgentSkillCandidatesFiltersByAgentCallerAndSelection(t *testing.T) 
 				Name:             "Chart generator",
 				Description:      "Generate charts",
 				Display:          skills.SkillDisplayMetadata{Label: map[string]string{"en_US": "Chart Generator", "zh_Hans": "Chart Generator Localized"}},
+				Enabled:          true,
 				Status:           skills.SkillStatusActive,
 				SupportedCallers: []string{runtimemodel.ConversationCallerAgent},
 			},
 			{
 				ID:               "page-only",
 				Name:             "Page only",
+				Enabled:          true,
 				Status:           skills.SkillStatusActive,
 				SupportedCallers: []string{runtimemodel.ConversationCallerAIChat},
 			},
 			{
 				ID:               "broken",
 				Name:             "Broken",
+				Enabled:          true,
 				Status:           skills.SkillStatusInvalid,
 				SupportedCallers: []string{runtimemodel.ConversationCallerAgent},
 			},
 			{
 				ID:               skills.SkillAgentDatabase,
 				Name:             "Agent database",
+				Enabled:          true,
 				Status:           skills.SkillStatusActive,
 				SupportedCallers: []string{runtimemodel.ConversationCallerAgent},
 			},
@@ -101,6 +105,67 @@ func TestListAgentSkillCandidatesFiltersByAgentCallerAndSelection(t *testing.T) 
 	}
 	if len(resp.Data) != 0 {
 		t.Fatalf("len(Data) = %d, want hidden/invalid/non-agent/selected skills excluded", len(resp.Data))
+	}
+}
+
+func TestListAgentSkillCandidatesExcludesRuntimeManagedRouterAndMatchesFileGeneration(t *testing.T) {
+	agentID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	agentWorkspaceID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	accountID := "99999999-9999-9999-9999-999999999999"
+	creatorID := uuid.MustParse(accountID)
+	repo := &stubWebAppStatusRepository{
+		agent: &Agent{
+			ID:         agentID,
+			TenantID:   agentWorkspaceID,
+			AgentsType: "AGENT",
+			CreatedBy:  &creatorID,
+		},
+		config: &AgentsConfig{AgentsID: agentID},
+	}
+	service := &agentsService{
+		agentsRepo:     repo,
+		accountService: &stubWebAppStatusAccountService{isEditor: true},
+		chatRuntimeService: &stubAgentBindingChatRuntimeService{skills: []skills.SkillDiscoveryMetadata{
+			{
+				ID:               skills.SkillIntentRouter,
+				Name:             "Intent Router",
+				Description:      "Use for file generation routing",
+				Enabled:          true,
+				Status:           skills.SkillStatusActive,
+				SupportedCallers: []string{runtimemodel.ConversationCallerAgent},
+			},
+			{
+				ID:               skills.SkillFileGenerator,
+				Name:             "File Generator",
+				Description:      "Generate downloadable files from provided content",
+				WhenToUse:        "Use when the user asks to create or produce a file",
+				Enabled:          true,
+				Status:           skills.SkillStatusActive,
+				SupportedCallers: []string{runtimemodel.ConversationCallerAgent},
+			},
+			{
+				ID:               "disabled-file-tool",
+				Name:             "Disabled file tool",
+				Description:      "Generate files",
+				Enabled:          false,
+				Status:           skills.SkillStatusActive,
+				SupportedCallers: []string{runtimemodel.ConversationCallerAgent},
+			},
+		}},
+	}
+
+	resp, err := service.ListAgentSkillCandidates(context.Background(), agentID.String(), accountID, dto.AgentSkillCandidatesRequest{
+		Query: "file generation",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("ListAgentSkillCandidates() error = %v", err)
+	}
+	if len(resp.Data) != 1 {
+		t.Fatalf("len(Data) = %d, want only file-generator, data = %#v", len(resp.Data), resp.Data)
+	}
+	if resp.Data[0].SkillID != skills.SkillFileGenerator {
+		t.Fatalf("SkillID = %q, want %q", resp.Data[0].SkillID, skills.SkillFileGenerator)
 	}
 }
 

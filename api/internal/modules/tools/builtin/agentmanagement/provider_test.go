@@ -3046,6 +3046,62 @@ func TestListAvailableModelsToolFiltersByUseCaseAndProvider(t *testing.T) {
 	}
 }
 
+func TestListAvailableModelsToolRanksQueryMatches(t *testing.T) {
+	organizationID := uuid.New()
+	available := &fakeAvailableModelsService{
+		models: []*llmmodelservice.AvailableModel{
+			{
+				ID:          uuid.New(),
+				Provider:    "deepseek",
+				Name:        "deepseek-chat",
+				DisplayName: "DeepSeek-Chat (V3)",
+				UseCases:    []string{"text-chat"},
+			},
+			{
+				ID:          uuid.New(),
+				Provider:    "deepseek",
+				Name:        "deepseek-v4-flash",
+				DisplayName: "DeepSeek-V4-Flash",
+				UseCases:    []string{"text-chat"},
+			},
+		},
+	}
+	tool := newListAvailableModelsTool(available).ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   organizationID.String(),
+		InvokeFrom: tools.ToolInvokeFromAIChat,
+	})
+	messages, err := tool.Invoke(context.Background(), uuid.New().String(), map[string]interface{}{
+		"use_case": "text-chat",
+		"provider": "deepseek",
+		"query":    "deepseek flash",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	payload := messages[0].Data
+	if payload["query"] != "deepseek flash" || payload["matched_count"] != 1 {
+		t.Fatalf("query metadata = %#v, want query deepseek flash matched_count 1", payload)
+	}
+	models, ok := payload["models"].([]map[string]interface{})
+	if !ok || len(models) != 2 {
+		t.Fatalf("models = %#v, want two model payloads", payload["models"])
+	}
+	if models[0]["provider"] != "deepseek" || models[0]["model"] != "deepseek-v4-flash" {
+		t.Fatalf("first model = %#v, want deepseek/deepseek-v4-flash match first", models[0])
+	}
+	firstMatch := mapFromAny(models[0]["match"])
+	if firstMatch["matched"] != true {
+		t.Fatalf("first match = %#v, want matched true", firstMatch)
+	}
+	secondMatch := mapFromAny(models[1]["match"])
+	if secondMatch["matched"] != false {
+		t.Fatalf("second match = %#v, want matched false", secondMatch)
+	}
+	if available.organizationID != organizationID || available.provider != "deepseek" || available.useCase != "text-chat" {
+		t.Fatalf("available model lookup = org %s provider %q useCase %q, want %s/deepseek/text-chat", available.organizationID, available.provider, available.useCase, organizationID)
+	}
+}
+
 func TestNormalizeAgentModelUseCaseDefaultsToTextChat(t *testing.T) {
 	if got := normalizeAgentModelUseCase(""); got != "text-chat" {
 		t.Fatalf("normalizeAgentModelUseCase(\"\") = %q, want text-chat", got)

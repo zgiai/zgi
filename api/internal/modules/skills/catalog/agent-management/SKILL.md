@@ -468,6 +468,7 @@ For read-only questions such as “can this Agent generate files?” or “does 
 - `agent_id`: required resolved Agent ID.
 - Optional supported config fields. Omitted fields are preserved by the tool; do not send publish fields.
 - For model replacement, `model_provider` and `model` must be provided together from the same `list_available_models` result item. Never pass only one of them, because model IDs can collide across providers and provider-only changes can leave an invalid pair.
+- For model replacement from a natural-language model phrase, call `list_available_models` with `query` set to the user's phrase (for example `deepseek flash`). Use the returned ranking and `match` evidence to choose one returned provider/model pair, then pass only that pair to `update_agent_config`. If no returned item matches the requested phrase, do not guess; ask for clarification or explain the available options.
 - `enabled_skill_ids`: optional full list of enabled user-selectable skill IDs. Use `[]` to clear all user-selectable skills.
 - `add_enabled_skill_ids`: optional skill IDs to add while preserving all existing skills.
 - `remove_enabled_skill_ids`: optional skill IDs to unbind while preserving all other existing skills.
@@ -489,9 +490,10 @@ For read-only questions such as “can this Agent generate files?” or “does 
 
 - `use_case`: optional model use case. Defaults to `text-chat` for Agent runtime model replacement. Use `all` only when the user asks to inspect every available model.
 - `provider`: optional provider slug filter.
+- `query`: optional natural-language model phrase. Matching models are ranked first and include `match` evidence.
 - `limit`: optional maximum result count, capped at 100.
 
-The result includes `models[].provider`, `models[].model`, `models[].model_name`, `models[].use_cases`, and key capability flags. Use exactly those returned `provider` and `model` values together when calling `update_agent_config`.
+The result includes `models[].provider`, `models[].model`, `models[].model_name`, `models[].use_cases`, optional `models[].match`, and key capability flags. Use exactly those returned `provider` and `model` values together when calling `update_agent_config`.
 
 `replace_agent_memory_slots` accepts:
 

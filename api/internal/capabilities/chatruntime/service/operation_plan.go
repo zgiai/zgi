@@ -2652,7 +2652,8 @@ func operationPlanStepResolvedStatus(step map[string]interface{}, stepStatus map
 		return ""
 	}
 	if id := strings.TrimSpace(stringFromAny(step["id"])); id != "" {
-		if status := operationPlanNormalizeStepStatus(stringFromAny(stepStatus[id])); status != "" {
+		if rawStatus, ok := stepStatus[id]; ok {
+			status := operationPlanNormalizeStepStatus(stringFromAny(rawStatus))
 			return status
 		}
 	}

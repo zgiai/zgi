@@ -8906,6 +8906,65 @@ func TestContextualConsoleAgentsSkillMessageOmitsNavigatorWhenPlanDoesNotAllowNa
 	}
 }
 
+func TestContextualConsoleAgentsSkillMessageFiltersUnavailableResolvedTools(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "更新当前智能体配置",
+			Surface:        aiChatSurfaceContextualSidebar,
+			SkillMode:      skillModeAuto,
+			SkillIDs:       []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator},
+			RuntimeContext: "route=/console/agents",
+			RawOperationContext: map[string]interface{}{
+				"resources": []interface{}{
+					map[string]interface{}{
+						"resource_type": "page",
+						"href":          "/console/agents",
+					},
+					map[string]interface{}{
+						"resource_type": "agent",
+						"id":            "agent-1",
+						"title":         "测试智能体",
+						"href":          "/console/agents/agent-1/agent",
+					},
+				},
+			},
+		},
+	}
+	prepared.parts.OperationContext = prepared.parts.RawOperationContext
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
+		{
+			Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
+			Tools: []skills.SkillToolDefinition{
+				{Name: "get_agent_config"},
+				{Name: "update_agent_config"},
+				{Name: "list_available_models"},
+			},
+		},
+	}}
+
+	message, ok := contextualConsoleAgentsSkillMessageForResolved(prepared, resolved)
+	if !ok {
+		t.Fatal("contextualConsoleAgentsSkillMessageForResolved() = false, want message")
+	}
+	content := stringFromAny(message.Content)
+	for _, unexpected := range []string{`"tool_name":"list_agents"`, `"tool_name":"get_agent"`, `"tool_name":"navigate"`} {
+		if strings.Contains(content, unexpected) {
+			t.Fatalf("message content exposes unavailable tool %s: %s", unexpected, content)
+		}
+	}
+	for _, want := range []string{
+		`"tool_name":"get_agent_config"`,
+		`"tool_name":"update_agent_config"`,
+		"tools array in Agent management JSON is the authoritative callable tool list",
+		"Because list_agents is absent from the tools array",
+		"Because get_agent is absent from the tools array",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("message content missing %q: %s", want, content)
+		}
+	}
+}
+
 func TestOperationPlanUpdatesFromSkillInvocation(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:     "\u751f\u6210\u4e00\u4e2a\u4e34\u65f6 SVG \u6587\u4ef6",

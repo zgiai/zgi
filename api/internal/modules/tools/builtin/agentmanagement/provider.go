@@ -450,6 +450,7 @@ func newListAvailableModelsTool(availableModels AvailableModelsService) tools.To
 		[]tools.ToolParameter{
 			stringParameter("use_case", "Use case", "Optional use_case filter. Defaults to text-chat for Agent runtime model replacement. Valid values include text-chat, vision, image-gen, embedding, rerank, speech-to-text, text-to-speech, realtime-audio, video-gen, moderation, reasoning, and function-calling.", false),
 			stringParameter("provider", "Provider", "Optional provider slug filter, for example openai, deepseek, or anthropic.", false),
+			stringParameter("query", "Query", "Optional natural-language or partial model query, for example deepseek flash. Matching models are ranked first and include match evidence.", false),
 			numberParameter("limit", "Limit", "Optional maximum number of models to return, capped at 100.", false),
 		},
 	), nil, nil, availableModels)}
@@ -967,6 +968,75 @@ func (t *updateAgentConfigTool) validateRequestedModelPair(ctx context.Context, 
 	return fmt.Errorf("model %q is not available for provider %q with use_case %q; call list_available_models and pass a returned provider/model pair", model, provider, defaultAgentModelListUseCase)
 }
 
+func availableAgentModelMatchesHint(model *llmmodelservice.AvailableModel, hint string) bool {
+	if model == nil {
+		return false
+	}
+	tokens := agentModelHintTokens(hint)
+	if len(tokens) == 0 {
+		return false
+	}
+	candidate := compactAgentModelText(strings.Join([]string{
+		model.Provider,
+		model.Name,
+		model.DisplayName,
+	}, " "))
+	if candidate == "" {
+		return false
+	}
+	for _, token := range tokens {
+		if !strings.Contains(candidate, token) {
+			return false
+		}
+	}
+	return true
+}
+
+func agentModelHintTokens(hint string) []string {
+	normalized := strings.ToLower(strings.TrimSpace(hint))
+	if normalized == "" {
+		return nil
+	}
+	tokens := []string{}
+	seen := map[string]struct{}{}
+	for _, raw := range strings.FieldsFunc(normalized, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		token := compactAgentModelText(raw)
+		if token == "" || agentModelHintTokenIsGeneric(token) {
+			continue
+		}
+		if _, ok := seen[token]; ok {
+			continue
+		}
+		seen[token] = struct{}{}
+		tokens = append(tokens, token)
+	}
+	if compact := compactAgentModelText(normalized); compact != "" && len(tokens) == 0 {
+		tokens = append(tokens, compact)
+	}
+	return tokens
+}
+
+func compactAgentModelText(value string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(value) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func agentModelHintTokenIsGeneric(token string) bool {
+	switch token {
+	case "model", "llm", "ai", "agent", "chat", "text", "use", "using", "to", "as", "is", "the":
+		return true
+	default:
+		return false
+	}
+}
+
 func (t *replaceAgentMemorySlotsTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
 	_ = conversationID
 	_ = appID
@@ -1396,6 +1466,12 @@ func (t *listAvailableModelsTool) Invoke(ctx context.Context, userID string, par
 		return nil, err
 	}
 	limit := intParam(params, "limit", defaultAgentModelListPageSize, maxAgentModelListPageSize)
+	query := strings.TrimSpace(firstNonEmptyString(
+		stringValue(params, "query"),
+		stringValue(params, "model_query"),
+	))
+	models = rankAgentModelsForQuery(models, query)
+	matchedCount := countAgentModelMatches(models, query)
 	total := len(models)
 	if limit <= 0 || limit > maxAgentModelListPageSize {
 		limit = defaultAgentModelListPageSize
@@ -1406,18 +1482,20 @@ func (t *listAvailableModelsTool) Invoke(ctx context.Context, userID string, par
 	}
 	items := make([]map[string]interface{}, 0, len(models))
 	for _, model := range models {
-		items = append(items, availableAgentModelPayload(model))
+		items = append(items, availableAgentModelPayloadWithQuery(model, query))
 	}
 	payload := map[string]interface{}{
 		"status":          "completed",
 		"use_case":        useCase,
 		"provider":        provider,
+		"query":           query,
+		"matched_count":   matchedCount,
 		"count":           len(items),
 		"total":           total,
 		"truncated":       truncated,
 		"models":          items,
 		"valid_use_cases": validAgentModelUseCases(),
-		"usage_hint":      "Use model.provider as update_agent_config model_provider and model.model as update_agent_config model.",
+		"usage_hint":      "Choose the best matching returned model from this list. Use model.provider as update_agent_config model_provider and model.model as update_agent_config model; do not guess provider/model pairs.",
 	}
 	return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(payload)}, nil
 }
@@ -4416,10 +4494,14 @@ func isValidAgentModelUseCase(value string) bool {
 }
 
 func availableAgentModelPayload(model *llmmodelservice.AvailableModel) map[string]interface{} {
+	return availableAgentModelPayloadWithQuery(model, "")
+}
+
+func availableAgentModelPayloadWithQuery(model *llmmodelservice.AvailableModel, query string) map[string]interface{} {
 	if model == nil {
 		return map[string]interface{}{}
 	}
-	return map[string]interface{}{
+	payload := map[string]interface{}{
 		"id":                model.ID.String(),
 		"provider":          model.Provider,
 		"model":             model.Name,
@@ -4451,6 +4533,87 @@ func availableAgentModelPayload(model *llmmodelservice.AvailableModel) map[strin
 			"supports_stop":              model.Parameters.SupportsStop,
 			"max_stop_sequences":         model.Parameters.MaxStopSequences,
 		},
+	}
+	if match := agentModelQueryMatchPayload(model, query); len(match) > 0 {
+		payload["match"] = match
+	}
+	return payload
+}
+
+func rankAgentModelsForQuery(models []*llmmodelservice.AvailableModel, query string) []*llmmodelservice.AvailableModel {
+	if strings.TrimSpace(query) == "" || len(models) <= 1 {
+		return models
+	}
+	matched := make([]*llmmodelservice.AvailableModel, 0, len(models))
+	unmatched := make([]*llmmodelservice.AvailableModel, 0, len(models))
+	for _, model := range models {
+		if availableAgentModelMatchesHint(model, query) {
+			matched = append(matched, model)
+			continue
+		}
+		unmatched = append(unmatched, model)
+	}
+	if len(matched) == 0 {
+		return models
+	}
+	out := make([]*llmmodelservice.AvailableModel, 0, len(models))
+	out = append(out, matched...)
+	out = append(out, unmatched...)
+	return out
+}
+
+func countAgentModelMatches(models []*llmmodelservice.AvailableModel, query string) int {
+	if strings.TrimSpace(query) == "" {
+		return 0
+	}
+	count := 0
+	for _, model := range models {
+		if availableAgentModelMatchesHint(model, query) {
+			count++
+		}
+	}
+	return count
+}
+
+func agentModelQueryMatchPayload(model *llmmodelservice.AvailableModel, query string) map[string]interface{} {
+	query = strings.TrimSpace(query)
+	if query == "" || model == nil {
+		return nil
+	}
+	tokens := agentModelHintTokens(query)
+	if len(tokens) == 0 {
+		return map[string]interface{}{
+			"query":   query,
+			"matched": false,
+			"reason":  "query did not contain model-specific tokens",
+		}
+	}
+	candidate := compactAgentModelText(strings.Join([]string{
+		model.Provider,
+		model.Name,
+		model.DisplayName,
+	}, " "))
+	matchedTokens := []string{}
+	missingTokens := []string{}
+	for _, token := range tokens {
+		if strings.Contains(candidate, token) {
+			matchedTokens = append(matchedTokens, token)
+			continue
+		}
+		missingTokens = append(missingTokens, token)
+	}
+	matched := len(missingTokens) == 0
+	reason := "not all query tokens matched this model"
+	if matched {
+		reason = "all query tokens matched provider, model id, or display name"
+	}
+	return map[string]interface{}{
+		"query":          query,
+		"matched":        matched,
+		"score":          len(matchedTokens),
+		"matched_tokens": matchedTokens,
+		"missing_tokens": missingTokens,
+		"reason":         reason,
 	}
 }
 
