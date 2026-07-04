@@ -9,7 +9,6 @@ The default `docker-compose.yaml` starts the full local stack so first-time user
 - PostgreSQL
 - Redis
 - Weaviate
-- Neo4j
 - Sandbox
 - Runner
 - API
@@ -19,7 +18,7 @@ The helper also supports a lightweight core mode for contributors who only need 
 
 - `./dev/start-docker --core` starts only nginx, API, web, PostgreSQL, and Redis.
 - `./dev/start-docker --runtime` starts the core stack plus Sandbox and Runner.
-- `./dev/start-docker --knowledge` starts the core stack plus Weaviate and Neo4j.
+- `./dev/start-docker --knowledge` starts the core stack plus Weaviate.
 - `./dev/start-docker --full` starts the same full stack as the default.
 
 When started from `docker/`, `sandbox` reuses the shared root Postgres and Redis services:
@@ -47,7 +46,7 @@ To start only the core stack plus runtime services for code execution and plugin
 ./dev/start-docker --runtime
 ```
 
-To start only the core stack plus knowledge services for vector and graph retrieval:
+To start only the core stack plus knowledge services for vector retrieval:
 
 ```bash
 ./dev/start-docker --knowledge
@@ -130,8 +129,6 @@ Host ports can be changed in `docker/.env`:
 - PostgreSQL: `${POSTGRES_PORT:-5434}`
 - Redis: `${REDIS_HOST_PORT:-6381}`
 - Weaviate: `${WEAVIATE_PORT:-18080}`
-- Neo4j HTTP: `${NEO4J_HTTP_PORT:-7474}`
-- Neo4j Bolt: `${NEO4J_BOLT_PORT:-7687}`
 
 Application images can also be changed in `docker/.env` with `API_IMAGE_NAME`,
 `WEB_IMAGE_NAME`, `SANDBOX_IMAGE_NAME`, `RUNNER_IMAGE_NAME`, and `IMAGE_TAG`.
@@ -146,8 +143,6 @@ Internal Docker network ports:
 - Runner: `2665`
 - PostgreSQL: `5432`
 - Redis: `6379`
-- Neo4j HTTP: `7474`
-- Neo4j Bolt: `7687`
 
 ## Notes
 
@@ -157,10 +152,10 @@ Internal Docker network ports:
 - `dev/check-env` compares local env files with their templates and reports missing keys, changed values, and extra local keys without modifying anything.
 - `dev/check-env --sync` creates a timestamped backup next to each env file and appends only template keys that are currently missing.
 - `docker/.env` is intentionally small and only carries compose-level orchestration values such as the public gateway port and shared infrastructure defaults.
-- The default Docker stack intentionally starts Weaviate, Neo4j, Sandbox, and Runner so knowledge base, code execution, and plugin features work during first-time evaluation.
-- `./dev/start-docker --core` wires `VECTOR_STORE=mock`, disables Neo4j, clears the code execution endpoint, and disables plugin runner integration for the current run.
+- The default Docker stack intentionally starts Weaviate, Sandbox, and Runner so knowledge base, code execution, and plugin features work during first-time evaluation.
+- `./dev/start-docker --core` wires `VECTOR_STORE=mock`, clears the code execution endpoint, and disables plugin runner integration for the current run.
 - `./dev/start-docker --runtime` wires `CODE_EXECUTION_ENDPOINT`, `PLUGIN_RUNNER_ENABLED`, and `PLUGIN_RUNNER_URL` for the current run.
-- `./dev/start-docker --knowledge` wires `VECTOR_STORE`, `WEAVIATE_ENDPOINT`, and `NEO4J_URI` for the current run.
+- `./dev/start-docker --knowledge` wires `VECTOR_STORE` and `WEAVIATE_ENDPOINT` for the current run.
 - `sandbox` is wired differently in product mode versus standalone mode:
   product mode reuses the shared root Postgres / Redis, while standalone mode keeps its own bundled Postgres / Redis.
 - `./dev/start-docker --china` currently wires China mainland build mirrors for `api`, `sandbox`, and `runner` through compose build args.

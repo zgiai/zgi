@@ -188,21 +188,52 @@ const messages = {
       title: 'Parser Settings',
       description:
         'Configure Reducto and MinerU for document reparsing. Optional fields are prefilled with defaults and can be changed when your deployment needs different endpoints or timeouts.',
+      guide: {
+        title: 'Not sure which parser to choose?',
+        description:
+          'Configure either Reducto or MinerU successfully to get better PDF, Office, table, and scanned document parsing.',
+        reductoRecommendation: 'Reducto is recommended for overseas or English-heavy use cases.',
+        mineruRecommendation: 'MinerU official service is recommended for Mainland China or Chinese-heavy use cases.',
+        openReducto: 'Get Reducto API key',
+        openMineru: 'Get MinerU token',
+      },
       actions: {
         returnToReparse: 'Back to reparse',
         save: 'Save',
+        check: 'Check availability',
       },
       messages: {
         saved: 'Parser settings saved',
+        savedAndValidated: 'Parser settings saved and validated',
         saveFailed: 'Failed to save parser settings',
+        checked: 'Parser availability check passed',
+        checkFailed: 'Parser availability check failed',
       },
       reducto: {
         description:
           'Official Reducto parsing service. Requires an API key before it can be enabled.',
+        help: {
+          title: 'How to get a Reducto API key',
+          action: 'Open Reducto Studio',
+          steps: {
+            signIn: 'Open Reducto Studio, then sign up or sign in.',
+            createKey: 'Go to API Keys in the sidebar, then click Create new API key.',
+            pasteKey: 'Copy the generated API key, paste it here, then save.',
+          },
+        },
       },
       mineru: {
         description:
           'MinerU parsing service. Choose local sidecar mode or official service mode, then configure the fields for that mode.',
+        help: {
+          title: 'How to get a MinerU official token',
+          action: 'Open MinerU Token Management',
+          steps: {
+            signIn: 'Open the MinerU API management page, then sign up or sign in.',
+            createToken: 'Go to Token or API management, then create an official token.',
+            pasteToken: 'Copy the generated token, paste it here, then save.',
+          },
+        },
         modes: {
           sidecar: 'Local sidecar',
           official: 'Official service',
@@ -222,6 +253,10 @@ const messages = {
       placeholders: {
         secretConfigured: 'Configured. Leave blank to keep unchanged.',
         secretRequired: 'Required before enabling',
+      },
+      hints: {
+        baseUrl:
+          'Enter the service root URL. The system automatically appends the endpoint path.',
       },
       status: {
         not_configured: 'Not configured',
@@ -440,8 +475,11 @@ const messages = {
       },
       noCriticalIssues: 'No critical setup issues are blocking core workflows.',
       missingItem: '{label} is missing',
+      parserServiceMissing:
+        'No available third-party parser is configured. Upload-and-parse will use local parsing, which may perform worse on complex layouts, tables, and scanned files.',
       actions: {
         configureModels: 'Configure models',
+        configureParserService: 'Configure parser service',
         contactAdmin: 'Contact admin',
         createKnowledge: 'Create knowledge base',
         createAgent: 'Create agent',

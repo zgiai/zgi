@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   Dialog,
   DialogContent,
@@ -14,8 +16,8 @@ import {
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { FileUpload, type FileUploadRef } from '@/components/common/file-upload';
 import { toast } from 'sonner';
-import { FolderOpen, RefreshCw } from 'lucide-react';
-import { useQueryClient } from '@tanstack/react-query';
+import { AlertCircle, FolderOpen, RefreshCw } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { FILES_QUERY_KEY, useFileFolders } from '@/hooks/use-files';
 import { useUploadConfig } from '@/hooks/use-upload';
 import { Label } from '@/components/ui/label';
@@ -29,6 +31,7 @@ import { useCurrentWorkspace, useIsOrganizationMode } from '@/store';
 import { FolderTreeNode } from './folder-tree-node';
 import { cn } from '@/lib/utils';
 import type { FileParseProviderKey, FileUploadProcessingMode } from '@/services/types/file';
+import { contentParseService } from '@/services/content-parse.service';
 import {
   MAX_FILE_FOLDER_TREE_LEVEL,
   getFileFolderAncestorIds,
@@ -62,6 +65,7 @@ const CreateLocalFileDialog = ({
   onUploadComplete,
 }: CreateLocalFileDialogProps) => {
   const t = useT();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const currentWorkspace = useCurrentWorkspace();
   const isOrganizationMode = useIsOrganizationMode();
@@ -83,8 +87,22 @@ const CreateLocalFileDialog = ({
   const [selectedProcessingMode, setSelectedProcessingMode] =
     useState<FileUploadProcessingMode>(processingMode);
   const { data: uploadConfig } = useUploadConfig({ enabled: open });
+  const { data: parserSettingsData, isSuccess: isParserSettingsSuccess } = useQuery({
+    queryKey: ['content-parse', 'parser-settings'],
+    queryFn: () => contentParseService.listParserSettings(),
+    enabled: open,
+    staleTime: 60_000,
+    retry: false,
+  });
   const maxSizeMB = uploadConfig?.file_size_limit ?? 15;
   const maxCount = uploadConfig?.batch_count_limit ?? 100;
+  const hasAvailableThirdPartyParser = (parserSettingsData?.data.items ?? []).some(
+    item =>
+      (item.provider_key === 'reducto' || item.provider_key === 'mineru') &&
+      item.enabled &&
+      item.configured &&
+      item.status === 'available'
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -362,6 +380,28 @@ const CreateLocalFileDialog = ({
                   className="h-full"
                 />
               </RadioCardGroup>
+              {selectedProcessingMode === 'process_now' &&
+              isParserSettingsSuccess &&
+              !hasAvailableThirdPartyParser ? (
+                <Alert className="border-warning/40 bg-warning/10">
+                  <AlertCircle className="h-4 w-4 text-warning" />
+                  <AlertTitle className="text-sm font-semibold">
+                    {t('files.upload.parserFallbackWarningTitle')}
+                  </AlertTitle>
+                  <AlertDescription className="flex flex-col gap-3 text-sm leading-5 text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                    <span>{t('files.upload.parserFallbackWarningDescription')}</span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0"
+                      onClick={() => router.push('/dashboard/settings/parsers')}
+                    >
+                      {t('files.upload.configureParserService')}
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              ) : null}
             </div>
           </div>
         </DialogBody>
