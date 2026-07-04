@@ -29,11 +29,12 @@ const (
 )
 
 type PricingModelRef struct {
-	ModelID   uuid.UUID
-	Source    PricingModelSource
-	Operation PricingOperation
-	Provider  string
-	Model     string
+	OrganizationID uuid.UUID
+	ModelID        uuid.UUID
+	Source         PricingModelSource
+	Operation      PricingOperation
+	Provider       string
+	Model          string
 }
 
 type PricingQuote struct {
@@ -156,11 +157,12 @@ func (e *pricingEngine) QuoteImage(ctx context.Context, ref PricingModelRef, req
 		return PricingQuote{}, fmt.Errorf("image pricing request is nil")
 	}
 	ref = normalizePricingModelRef(PricingModelRef{
-		ModelID:   ref.ModelID,
-		Source:    ref.Source,
-		Operation: PricingOperationImage,
-		Provider:  ref.Provider,
-		Model:     ref.Model,
+		OrganizationID: ref.OrganizationID,
+		ModelID:        ref.ModelID,
+		Source:         ref.Source,
+		Operation:      PricingOperationImage,
+		Provider:       ref.Provider,
+		Model:          ref.Model,
 	})
 
 	model, found, err := e.loadModel(ctx, ref)
@@ -223,7 +225,7 @@ func (e *pricingEngine) quoteTokensWithFallback(
 	promptTokens int,
 	completionTokens int,
 ) (PricingQuote, error) {
-	config, err := LoadPricingFallbackConfig(ctx, e.db)
+	config, err := LoadPricingFallbackConfig(ctx, e.db, ref.OrganizationID)
 	if err != nil {
 		return PricingQuote{}, err
 	}
@@ -319,7 +321,7 @@ func (e *pricingEngine) quoteImageWithFallback(
 	req *adapter.ImageRequest,
 	count int64,
 ) (PricingQuote, error) {
-	config, err := LoadPricingFallbackConfig(ctx, e.db)
+	config, err := LoadPricingFallbackConfig(ctx, e.db, ref.OrganizationID)
 	if err != nil {
 		return PricingQuote{}, err
 	}

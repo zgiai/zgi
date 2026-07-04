@@ -35,7 +35,7 @@ func openPricingEngineTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("create llm_models: %v", err)
 	}
 	if err := db.Exec(`CREATE TABLE llm_pricing_fallback_overrides (
-		id text PRIMARY KEY,
+		organization_id text PRIMARY KEY,
 		enabled boolean,
 		rules json,
 		updated_by text,
@@ -62,6 +62,18 @@ func insertPricingModelNamed(t *testing.T, db *gorm.DB, modelID uuid.UUID, provi
 	).Error; err != nil {
 		t.Fatalf("insert model: %v", err)
 	}
+}
+
+func savePricingFallbackForOrg(t *testing.T, db *gorm.DB, organizationID uuid.UUID, req UpdatePricingFallbackRequest) {
+	t.Helper()
+	if _, err := SavePricingFallbackConfig(context.Background(), db, organizationID, req, "test"); err != nil {
+		t.Fatalf("save override: %v", err)
+	}
+}
+
+func enableDefaultPricingFallbackForOrg(t *testing.T, db *gorm.DB, organizationID uuid.UUID) {
+	t.Helper()
+	savePricingFallbackForOrg(t, db, organizationID, UpdatePricingFallbackRequest{Enabled: true})
 }
 
 func TestPricingEngineQuoteTokensUsesStoredModelPricesWhenConfigured(t *testing.T) {
@@ -104,29 +116,24 @@ func TestPricingEngineQuoteTokensConfiguredZeroIsFree(t *testing.T) {
 	}
 }
 
-func TestPricingEngineQuoteTokensUnconfiguredZeroUsesCodeFallback(t *testing.T) {
+func TestPricingEngineQuoteTokensUnconfiguredZeroFailsWithoutOrganizationFallback(t *testing.T) {
 	db := openPricingEngineTestDB(t)
 	modelID := uuid.New()
 	insertPricingModel(t, db, modelID, "openai", "0", "0", false, false, "[]")
 
-	quote, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
+	_, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
 		ModelID: modelID,
 		Source:  PricingModelSourceGlobal,
 	}, 1000, 1000)
-	if err != nil {
-		t.Fatalf("QuoteTokens returned error: %v", err)
-	}
-	if quote.TotalCredits != 3000 {
-		t.Fatalf("total credits = %d, want 3000", quote.TotalCredits)
-	}
-	if quote.PricingSource != PricingSourceCodeDefaultFallback {
-		t.Fatalf("pricing source = %q, want code default", quote.PricingSource)
+	if err == nil {
+		t.Fatalf("QuoteTokens error = nil, want missing organization fallback error")
 	}
 }
 
 func TestPricingEngineQuoteTokensUsesAdminFallbackBeforeCodeDefault(t *testing.T) {
 	db := openPricingEngineTestDB(t)
-	_, err := SavePricingFallbackConfig(context.Background(), db, UpdatePricingFallbackRequest{
+	organizationID := uuid.New()
+	savePricingFallbackForOrg(t, db, organizationID, UpdatePricingFallbackRequest{
 		Enabled: true,
 		OverrideRules: []PricingFallbackRule{
 			{
@@ -142,12 +149,11 @@ func TestPricingEngineQuoteTokensUsesAdminFallbackBeforeCodeDefault(t *testing.T
 				PriceUSDPer1MTokens: "4",
 			},
 		},
-	}, "test")
-	if err != nil {
-		t.Fatalf("save override: %v", err)
-	}
+	})
 
-	quote, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{}, 1000, 1000)
+	quote, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
+		OrganizationID: organizationID,
+	}, 1000, 1000)
 	if err != nil {
 		t.Fatalf("QuoteTokens returned error: %v", err)
 	}
@@ -159,12 +165,53 @@ func TestPricingEngineQuoteTokensUsesAdminFallbackBeforeCodeDefault(t *testing.T
 	}
 }
 
+func TestPricingEngineQuoteTokensOrganizationFallbackIsScoped(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	organizationA := uuid.New()
+	organizationB := uuid.New()
+	savePricingFallbackForOrg(t, db, organizationA, UpdatePricingFallbackRequest{
+		Enabled: true,
+		OverrideRules: []PricingFallbackRule{
+			{
+				ID:                  "token.chat.input.org-a",
+				Operation:           PricingOperationChat,
+				Meter:               PricingMeterInputToken,
+				PriceUSDPer1MTokens: "3",
+			},
+			{
+				ID:                  "token.chat.output.org-a",
+				Operation:           PricingOperationChat,
+				Meter:               PricingMeterOutputToken,
+				PriceUSDPer1MTokens: "4",
+			},
+		},
+	})
+
+	quote, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
+		OrganizationID: organizationA,
+	}, 1000, 1000)
+	if err != nil {
+		t.Fatalf("QuoteTokens for organization A returned error: %v", err)
+	}
+	if quote.TotalCredits != 7000 {
+		t.Fatalf("organization A total credits = %d, want 7000", quote.TotalCredits)
+	}
+
+	_, err = NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
+		OrganizationID: organizationB,
+	}, 1000, 1000)
+	if err == nil {
+		t.Fatalf("QuoteTokens for organization B error = nil, want missing fallback config error")
+	}
+}
+
 func TestPricingEngineQuoteTokensSpecificAdminRuleBeatsEarlierWildcard(t *testing.T) {
 	db := openPricingEngineTestDB(t)
+	organizationID := uuid.New()
 	modelID := uuid.New()
 	insertPricingModelNamed(t, db, modelID, "deepseek", "deepseek-chat", "0", "0", false, false, "[]")
 
-	_, err := SavePricingFallbackConfig(context.Background(), db, UpdatePricingFallbackRequest{
+	savePricingFallbackForOrg(t, db, organizationID, UpdatePricingFallbackRequest{
 		Enabled: true,
 		OverrideRules: []PricingFallbackRule{
 			{
@@ -200,14 +247,12 @@ func TestPricingEngineQuoteTokensSpecificAdminRuleBeatsEarlierWildcard(t *testin
 				PriceUSDPer1MTokens: "4",
 			},
 		},
-	}, "test")
-	if err != nil {
-		t.Fatalf("save override: %v", err)
-	}
+	})
 
 	quote, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
-		ModelID: modelID,
-		Source:  PricingModelSourceGlobal,
+		OrganizationID: organizationID,
+		ModelID:        modelID,
+		Source:         PricingModelSourceGlobal,
 	}, 1000, 1000)
 	if err != nil {
 		t.Fatalf("QuoteTokens returned error: %v", err)
@@ -225,10 +270,11 @@ func TestPricingEngineQuoteTokensSpecificAdminRuleBeatsEarlierWildcard(t *testin
 
 func TestPricingEngineQuoteTokensPreservesConfiguredInputWhenOutputFallsBack(t *testing.T) {
 	db := openPricingEngineTestDB(t)
+	organizationID := uuid.New()
 	modelID := uuid.New()
 	insertPricingModel(t, db, modelID, "openai", "5", "0", true, false, "[]")
 
-	_, err := SavePricingFallbackConfig(context.Background(), db, UpdatePricingFallbackRequest{
+	savePricingFallbackForOrg(t, db, organizationID, UpdatePricingFallbackRequest{
 		Enabled: true,
 		OverrideRules: []PricingFallbackRule{
 			{
@@ -244,14 +290,12 @@ func TestPricingEngineQuoteTokensPreservesConfiguredInputWhenOutputFallsBack(t *
 				PriceUSDPer1MTokens: "4",
 			},
 		},
-	}, "test")
-	if err != nil {
-		t.Fatalf("save override: %v", err)
-	}
+	})
 
 	quote, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
-		ModelID: modelID,
-		Source:  PricingModelSourceGlobal,
+		OrganizationID: organizationID,
+		ModelID:        modelID,
+		Source:         PricingModelSourceGlobal,
 	}, 1000, 1000)
 	if err != nil {
 		t.Fatalf("QuoteTokens returned error: %v", err)
@@ -266,13 +310,39 @@ func TestPricingEngineQuoteTokensPreservesConfiguredInputWhenOutputFallsBack(t *
 
 func TestPricingEngineQuoteTokensFailsWhenFallbackDisabled(t *testing.T) {
 	db := openPricingEngineTestDB(t)
-	if _, err := SavePricingFallbackConfig(context.Background(), db, UpdatePricingFallbackRequest{Enabled: false}, "test"); err != nil {
-		t.Fatalf("save override: %v", err)
-	}
+	organizationID := uuid.New()
+	savePricingFallbackForOrg(t, db, organizationID, UpdatePricingFallbackRequest{Enabled: false})
 
-	_, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{}, 1000, 0)
+	_, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
+		OrganizationID: organizationID,
+	}, 1000, 0)
 	if err == nil {
 		t.Fatalf("QuoteTokens error = nil, want fallback disabled error")
+	}
+}
+
+func TestPricingEngineQuoteTokensEmbeddingAndRerankRequireOnlyInputPrice(t *testing.T) {
+	for _, operation := range []PricingOperation{PricingOperationEmbedding, PricingOperationRerank} {
+		t.Run(string(operation), func(t *testing.T) {
+			db := openPricingEngineTestDB(t)
+			modelID := uuid.New()
+			insertPricingModel(t, db, modelID, "openai", "1", "0", true, false, "[]")
+
+			quote, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
+				ModelID:   modelID,
+				Source:    PricingModelSourceGlobal,
+				Operation: operation,
+			}, 1000, 1000)
+			if err != nil {
+				t.Fatalf("QuoteTokens returned error: %v", err)
+			}
+			if quote.TotalCredits != 1000 {
+				t.Fatalf("total credits = %d, want input-only credits 1000", quote.TotalCredits)
+			}
+			if !quote.InputTokenPriceResolved || quote.OutputTokenPriceResolved {
+				t.Fatalf("resolved input/output = %v/%v, want input only", quote.InputTokenPriceResolved, quote.OutputTokenPriceResolved)
+			}
+		})
 	}
 }
 
@@ -303,15 +373,33 @@ func TestPricingEngineQuoteImageUsesConfiguredImagePrices(t *testing.T) {
 	}
 }
 
+func TestPricingEngineQuoteImageFailsWithoutOrganizationFallback(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	modelID := uuid.New()
+	insertPricingModel(t, db, modelID, "openai", "0", "0", false, false, "[]")
+
+	_, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{
+		OrganizationID: uuid.New(),
+		ModelID:        modelID,
+		Source:         PricingModelSourceGlobal,
+	}, &adapter.ImageRequest{Model: "gpt-image-1"})
+	if err == nil {
+		t.Fatalf("QuoteImage error = nil, want missing organization fallback error")
+	}
+}
+
 func TestPricingEngineQuoteImageUsesCodeFallbackAndMultipliesCount(t *testing.T) {
 	db := openPricingEngineTestDB(t)
+	organizationID := uuid.New()
+	enableDefaultPricingFallbackForOrg(t, db, organizationID)
 	modelID := uuid.New()
 	insertPricingModel(t, db, modelID, "openai", "0", "0", false, false, "[]")
 	n := 2
 
 	quote, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{
-		ModelID: modelID,
-		Source:  PricingModelSourceGlobal,
+		OrganizationID: organizationID,
+		ModelID:        modelID,
+		Source:         PricingModelSourceGlobal,
 	}, &adapter.ImageRequest{Model: "gpt-image-1", N: &n})
 	if err != nil {
 		t.Fatalf("QuoteImage returned error: %v", err)
@@ -347,12 +435,15 @@ func TestPricingEngineQuoteImagePreservesLegacyModelPrices(t *testing.T) {
 
 func TestPricingEngineQuoteImageCanonicalizesProviderAlias(t *testing.T) {
 	db := openPricingEngineTestDB(t)
+	organizationID := uuid.New()
+	enableDefaultPricingFallbackForOrg(t, db, organizationID)
 	modelID := uuid.New()
 	insertPricingModelNamed(t, db, modelID, "dashscope", "wanx-image", "0", "0", false, false, "[]")
 
 	quote, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{
-		ModelID: modelID,
-		Source:  PricingModelSourceGlobal,
+		OrganizationID: organizationID,
+		ModelID:        modelID,
+		Source:         PricingModelSourceGlobal,
 	}, &adapter.ImageRequest{Model: "wanx-image"})
 	if err != nil {
 		t.Fatalf("QuoteImage returned error: %v", err)
@@ -364,9 +455,13 @@ func TestPricingEngineQuoteImageCanonicalizesProviderAlias(t *testing.T) {
 
 func TestPricingEngineQuoteImageSnapshotExplainsTheBill(t *testing.T) {
 	db := openPricingEngineTestDB(t)
+	organizationID := uuid.New()
+	enableDefaultPricingFallbackForOrg(t, db, organizationID)
 	n := 2
 
-	quote, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{}, &adapter.ImageRequest{Model: "qwen-image", N: &n})
+	quote, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{
+		OrganizationID: organizationID,
+	}, &adapter.ImageRequest{Model: "qwen-image", N: &n})
 	if err != nil {
 		t.Fatalf("QuoteImage returned error: %v", err)
 	}
@@ -384,7 +479,8 @@ func TestPricingEngineQuoteImageSnapshotExplainsTheBill(t *testing.T) {
 
 func TestPricingEngineQuoteTokensUsesPassthroughIdentityForFallback(t *testing.T) {
 	db := openPricingEngineTestDB(t)
-	_, err := SavePricingFallbackConfig(context.Background(), db, UpdatePricingFallbackRequest{
+	organizationID := uuid.New()
+	savePricingFallbackForOrg(t, db, organizationID, UpdatePricingFallbackRequest{
 		Enabled: true,
 		OverrideRules: []PricingFallbackRule{
 			{
@@ -420,15 +516,13 @@ func TestPricingEngineQuoteTokensUsesPassthroughIdentityForFallback(t *testing.T
 				PriceUSDPer1MTokens: "4",
 			},
 		},
-	}, "test")
-	if err != nil {
-		t.Fatalf("save override: %v", err)
-	}
+	})
 
 	quote, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
-		Source:   PricingModelSourcePassthrough,
-		Provider: "deepseek",
-		Model:    "deepseek-chat",
+		OrganizationID: organizationID,
+		Source:         PricingModelSourcePassthrough,
+		Provider:       "deepseek",
+		Model:          "deepseek-chat",
 	}, 1000, 1000)
 	if err != nil {
 		t.Fatalf("QuoteTokens returned error: %v", err)
@@ -443,7 +537,8 @@ func TestPricingEngineQuoteTokensUsesPassthroughIdentityForFallback(t *testing.T
 
 func TestPricingEngineQuoteImageAdminWildcardDoesNotOverrideSpecificDefault(t *testing.T) {
 	db := openPricingEngineTestDB(t)
-	_, err := SavePricingFallbackConfig(context.Background(), db, UpdatePricingFallbackRequest{
+	organizationID := uuid.New()
+	savePricingFallbackForOrg(t, db, organizationID, UpdatePricingFallbackRequest{
 		Enabled: true,
 		OverrideRules: []PricingFallbackRule{
 			{
@@ -459,12 +554,11 @@ func TestPricingEngineQuoteImageAdminWildcardDoesNotOverrideSpecificDefault(t *t
 				PricingSource: PricingSourceAdminFallback,
 			},
 		},
-	}, "test")
-	if err != nil {
-		t.Fatalf("save override: %v", err)
-	}
+	})
 
-	quote, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{}, &adapter.ImageRequest{Model: "qwen-image"})
+	quote, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{
+		OrganizationID: organizationID,
+	}, &adapter.ImageRequest{Model: "qwen-image"})
 	if err != nil {
 		t.Fatalf("QuoteImage returned error: %v", err)
 	}
@@ -475,7 +569,9 @@ func TestPricingEngineQuoteImageAdminWildcardDoesNotOverrideSpecificDefault(t *t
 		t.Fatalf("pricing source = %q, want code default", quote.PricingSource)
 	}
 
-	unknownQuote, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{}, &adapter.ImageRequest{Model: "unknown-image-model"})
+	unknownQuote, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{
+		OrganizationID: organizationID,
+	}, &adapter.ImageRequest{Model: "unknown-image-model"})
 	if err != nil {
 		t.Fatalf("QuoteImage for unknown provider returned error: %v", err)
 	}
@@ -489,7 +585,8 @@ func TestPricingEngineQuoteImageAdminWildcardDoesNotOverrideSpecificDefault(t *t
 
 func TestPricingEngineQuoteImageAdminSpecificOverridesSpecificDefault(t *testing.T) {
 	db := openPricingEngineTestDB(t)
-	_, err := SavePricingFallbackConfig(context.Background(), db, UpdatePricingFallbackRequest{
+	organizationID := uuid.New()
+	savePricingFallbackForOrg(t, db, organizationID, UpdatePricingFallbackRequest{
 		Enabled: true,
 		OverrideRules: []PricingFallbackRule{
 			{
@@ -505,12 +602,11 @@ func TestPricingEngineQuoteImageAdminSpecificOverridesSpecificDefault(t *testing
 				PricingSource: PricingSourceAdminFallback,
 			},
 		},
-	}, "test")
-	if err != nil {
-		t.Fatalf("save override: %v", err)
-	}
+	})
 
-	quote, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{}, &adapter.ImageRequest{Model: "qwen-image"})
+	quote, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{
+		OrganizationID: organizationID,
+	}, &adapter.ImageRequest{Model: "qwen-image"})
 	if err != nil {
 		t.Fatalf("QuoteImage returned error: %v", err)
 	}
@@ -524,12 +620,12 @@ func TestPricingEngineQuoteImageAdminSpecificOverridesSpecificDefault(t *testing
 
 func TestPricingEngineQuoteTokensZeroEstimateFailsWhenFallbackDisabled(t *testing.T) {
 	db := openPricingEngineTestDB(t)
-	if _, err := SavePricingFallbackConfig(context.Background(), db, UpdatePricingFallbackRequest{Enabled: false}, "test"); err != nil {
-		t.Fatalf("save override: %v", err)
-	}
+	organizationID := uuid.New()
+	savePricingFallbackForOrg(t, db, organizationID, UpdatePricingFallbackRequest{Enabled: false})
 
 	_, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
-		Operation: PricingOperationEmbedding,
+		OrganizationID: organizationID,
+		Operation:      PricingOperationEmbedding,
 	}, 0, 0)
 	if err == nil {
 		t.Fatalf("QuoteTokens error = nil, want missing price error before provider")
@@ -538,9 +634,12 @@ func TestPricingEngineQuoteTokensZeroEstimateFailsWhenFallbackDisabled(t *testin
 
 func TestPricingEngineQuoteTokensZeroEstimateLocksEmbeddingInputFallback(t *testing.T) {
 	db := openPricingEngineTestDB(t)
+	organizationID := uuid.New()
+	enableDefaultPricingFallbackForOrg(t, db, organizationID)
 
 	quote, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
-		Operation: PricingOperationEmbedding,
+		OrganizationID: organizationID,
+		Operation:      PricingOperationEmbedding,
 	}, 0, 0)
 	if err != nil {
 		t.Fatalf("QuoteTokens returned error: %v", err)
@@ -566,9 +665,12 @@ func TestPricingEngineQuoteTokensZeroEstimateLocksEmbeddingInputFallback(t *test
 
 func TestPricingEngineQuoteTokensZeroEstimateLocksChatInputAndOutputFallback(t *testing.T) {
 	db := openPricingEngineTestDB(t)
+	organizationID := uuid.New()
+	enableDefaultPricingFallbackForOrg(t, db, organizationID)
 
 	quote, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
-		Operation: PricingOperationChat,
+		OrganizationID: organizationID,
+		Operation:      PricingOperationChat,
 	}, 0, 0)
 	if err != nil {
 		t.Fatalf("QuoteTokens returned error: %v", err)
@@ -588,8 +690,9 @@ func TestPricingEngineQuoteTokensZeroEstimateLocksChatInputAndOutputFallback(t *
 
 func TestSavePricingFallbackConfigRejectsDuplicateTargets(t *testing.T) {
 	db := openPricingEngineTestDB(t)
+	organizationID := uuid.New()
 
-	_, err := SavePricingFallbackConfig(context.Background(), db, UpdatePricingFallbackRequest{
+	_, err := SavePricingFallbackConfig(context.Background(), db, organizationID, UpdatePricingFallbackRequest{
 		Enabled: true,
 		OverrideRules: []PricingFallbackRule{
 			{
@@ -667,39 +770,60 @@ func TestPricingEngineHasColumnCachesResult(t *testing.T) {
 	}
 }
 
-func TestPricingFallbackSuperAdminRequired(t *testing.T) {
+func TestPricingFallbackHandlerUsesCurrentOrganization(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := openPricingEngineTestDB(t)
-	if err := db.Exec(`CREATE TABLE accounts (
-		id text PRIMARY KEY,
-		is_super_admin boolean,
-		deleted_at datetime
-	)`).Error; err != nil {
-		t.Fatalf("create accounts: %v", err)
-	}
-	if err := db.Exec(`INSERT INTO accounts (id, is_super_admin) VALUES ('regular', false), ('super', true)`).Error; err != nil {
-		t.Fatalf("insert accounts: %v", err)
-	}
-
+	organizationA := uuid.New()
+	organizationB := uuid.New()
 	handler := NewPricingFallbackHandler(db)
-	statusFor := func(accountID string) int {
-		router := gin.New()
-		router.GET("/pricing/fallback",
-			func(c *gin.Context) { c.Set("account_id", accountID) },
-			handler.SuperAdminRequired(),
-			func(c *gin.Context) { c.Status(http.StatusNoContent) },
-		)
-		recorder := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/pricing/fallback", nil)
-		router.ServeHTTP(recorder, req)
-		return recorder.Code
+
+	router := gin.New()
+	router.PUT("/pricing/fallback",
+		func(c *gin.Context) {
+			c.Set("organization_id", organizationA.String())
+			c.Set("account_id", "account-a")
+		},
+		handler.Update,
+	)
+	router.GET("/pricing/fallback",
+		func(c *gin.Context) {
+			c.Set("organization_id", c.Query("organization_id"))
+		},
+		handler.Get,
+	)
+
+	updateRecorder := httptest.NewRecorder()
+	updateReq := httptest.NewRequest(http.MethodPut, "/pricing/fallback", strings.NewReader(`{"enabled":true}`))
+	updateReq.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(updateRecorder, updateReq)
+	if updateRecorder.Code != http.StatusOK {
+		t.Fatalf("update status = %d, want 200 body=%s", updateRecorder.Code, updateRecorder.Body.String())
 	}
 
-	if got := statusFor("regular"); got != http.StatusForbidden {
-		t.Fatalf("regular status = %d, want 403", got)
+	getConfig := func(organizationID uuid.UUID) PricingFallbackConfigResponse {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/pricing/fallback?organization_id="+organizationID.String(), nil)
+		router.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("get status = %d, want 200 body=%s", recorder.Code, recorder.Body.String())
+		}
+		var resp struct {
+			Data PricingFallbackConfigResponse `json:"data"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal response: %v", err)
+		}
+		return resp.Data
 	}
-	if got := statusFor("super"); got != http.StatusNoContent {
-		t.Fatalf("super status = %d, want 204", got)
+
+	configA := getConfig(organizationA)
+	if !configA.Enabled {
+		t.Fatalf("organization A enabled = false, want true")
+	}
+	configB := getConfig(organizationB)
+	if configB.Enabled {
+		t.Fatalf("organization B enabled = true, want false")
 	}
 }
 

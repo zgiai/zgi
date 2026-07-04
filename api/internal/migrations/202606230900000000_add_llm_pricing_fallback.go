@@ -68,8 +68,8 @@ func upAddLLMPricingFallback(schema *mschema.Builder) error {
 		return nil
 	}
 	return schema.Create("llm_pricing_fallback_overrides", func(table *mschema.Blueprint) {
-		table.String("id", 64).NotNull().Primary()
-		table.Boolean("enabled").DefaultSQL("true").NotNull()
+		table.UUID("organization_id").NotNull().Primary()
+		table.Boolean("enabled").DefaultSQL("false").NotNull()
 		table.JSONB("rules").DefaultSQL("'[]'::jsonb").NotNull()
 		table.String("updated_by", 100).DefaultSQL("''").NotNull()
 		table.TimestampsTz()

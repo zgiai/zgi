@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
@@ -74,10 +75,11 @@ func pricingModelRefFromSelection(selection *ProviderSelection) PricingModelRef 
 		model = strings.TrimSpace(selection.Model.ModelName)
 	}
 	return normalizePricingModelRef(PricingModelRef{
-		ModelID:  selection.Model.ID,
-		Source:   selection.ModelSource,
-		Provider: provider,
-		Model:    model,
+		OrganizationID: selection.OrganizationID,
+		ModelID:        selection.Model.ID,
+		Source:         selection.ModelSource,
+		Provider:       provider,
+		Model:          model,
 	})
 }
 
@@ -85,12 +87,17 @@ func pricingModelRefFromBillingContext(bc *BillingContext) PricingModelRef {
 	if bc == nil {
 		return PricingModelRef{Source: PricingModelSourceGlobal}
 	}
+	var organizationID uuid.UUID
+	if parsed, err := uuid.Parse(strings.TrimSpace(bc.OrganizationID)); err == nil {
+		organizationID = parsed
+	}
 	return normalizePricingModelRef(PricingModelRef{
-		ModelID:   bc.ModelID,
-		Source:    bc.ModelSource,
-		Operation: bc.PricingOperation,
-		Provider:  bc.ProviderName,
-		Model:     bc.ModelName,
+		OrganizationID: organizationID,
+		ModelID:        bc.ModelID,
+		Source:         bc.ModelSource,
+		Operation:      bc.PricingOperation,
+		Provider:       bc.ProviderName,
+		Model:          bc.ModelName,
 	})
 }
 

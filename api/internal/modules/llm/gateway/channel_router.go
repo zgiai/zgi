@@ -48,6 +48,7 @@ const (
 // ProviderSelection represents the selected provider configuration for API calls
 // This is used by the billing and service layers
 type ProviderSelection struct {
+	OrganizationID    uuid.UUID
 	Provider          providermodel.LLMProvider
 	Model             llmmodel.LLMModel
 	ModelSource       PricingModelSource
@@ -744,6 +745,7 @@ func (cs *ChannelSelection) ConvertToProviderSelectionWithCache(ctx context.Cont
 			return nil, err
 		}
 		return &ProviderSelection{
+			OrganizationID:    cs.OrganizationID,
 			Provider:          *customProvider,
 			Model:             modelForSelection(cs),
 			ModelSource:       pricingModelSourceFromChannelModelSource(cs.ModelSource),
@@ -803,6 +805,7 @@ func (cs *ChannelSelection) ConvertToProviderSelectionWithCache(ctx context.Cont
 	}
 
 	return &ProviderSelection{
+		OrganizationID:    cs.OrganizationID,
 		Provider:          *provider,
 		Model:             modelForSelection(cs),
 		ModelSource:       pricingModelSourceFromChannelModelSource(cs.ModelSource),

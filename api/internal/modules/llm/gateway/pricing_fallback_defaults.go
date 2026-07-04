@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/datatypes"
@@ -49,8 +50,6 @@ const (
 	UsageSourceRequestParameters UsageSource = "request_parameters"
 )
 
-const pricingFallbackOverrideID = "default"
-
 type PricingFallbackRule struct {
 	ID                  string           `json:"id"`
 	Enabled             *bool            `json:"enabled,omitempty"`
@@ -80,12 +79,12 @@ type UpdatePricingFallbackRequest struct {
 }
 
 type pricingFallbackOverrideRecord struct {
-	ID        string         `gorm:"column:id;primaryKey;size:64"`
-	Enabled   bool           `gorm:"column:enabled;not null;default:true"`
-	Rules     datatypes.JSON `gorm:"column:rules;type:jsonb;not null;default:'[]'"`
-	UpdatedBy string         `gorm:"column:updated_by;size:100"`
-	CreatedAt time.Time      `gorm:"column:created_at;not null;default:CURRENT_TIMESTAMP"`
-	UpdatedAt time.Time      `gorm:"column:updated_at;not null;default:CURRENT_TIMESTAMP"`
+	OrganizationID uuid.UUID      `gorm:"column:organization_id;primaryKey;type:uuid"`
+	Enabled        bool           `gorm:"column:enabled;not null;default:false"`
+	Rules          datatypes.JSON `gorm:"column:rules;type:jsonb;not null;default:'[]'"`
+	UpdatedBy      string         `gorm:"column:updated_by;size:100"`
+	CreatedAt      time.Time      `gorm:"column:created_at;not null;default:CURRENT_TIMESTAMP"`
+	UpdatedAt      time.Time      `gorm:"column:updated_at;not null;default:CURRENT_TIMESTAMP"`
 }
 
 func (pricingFallbackOverrideRecord) TableName() string {
@@ -108,46 +107,12 @@ func RegisterPricingFallbackRoutes(group *gin.RouterGroup, handler *PricingFallb
 	group.PUT("/pricing/fallback", handler.Update)
 }
 
-func (h *PricingFallbackHandler) SuperAdminRequired() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		accountID := strings.TrimSpace(c.GetString("account_id"))
-		if accountID == "" {
-			response.Fail(c, response.ErrUnauthorized)
-			c.Abort()
-			return
-		}
-		if h == nil || h.db == nil {
-			response.Fail(c, response.ErrSystemError)
-			c.Abort()
-			return
-		}
-
-		var row struct {
-			IsSuperAdmin bool `gorm:"column:is_super_admin"`
-		}
-		tx := h.db.WithContext(c.Request.Context()).
-			Table("accounts").
-			Select("is_super_admin").
-			Where("id = ? AND deleted_at IS NULL", accountID).
-			Limit(1).
-			Scan(&row)
-		if tx.Error != nil {
-			response.Fail(c, response.ErrSystemError)
-			c.Abort()
-			return
-		}
-		if tx.RowsAffected == 0 || !row.IsSuperAdmin {
-			response.Fail(c, response.ErrPermissionDenied)
-			c.Abort()
-			return
-		}
-
-		c.Next()
-	}
-}
-
 func (h *PricingFallbackHandler) Get(c *gin.Context) {
-	config, err := LoadPricingFallbackConfig(c.Request.Context(), h.db)
+	organizationID, ok := pricingFallbackOrganizationIDFromContext(c)
+	if !ok {
+		return
+	}
+	config, err := LoadPricingFallbackConfig(c.Request.Context(), h.db, organizationID)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrInvalidParams, err.Error())
 		return
@@ -161,12 +126,25 @@ func (h *PricingFallbackHandler) Update(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParams)
 		return
 	}
-	config, err := SavePricingFallbackConfig(c.Request.Context(), h.db, req, "")
+	organizationID, ok := pricingFallbackOrganizationIDFromContext(c)
+	if !ok {
+		return
+	}
+	config, err := SavePricingFallbackConfig(c.Request.Context(), h.db, organizationID, req, c.GetString("account_id"))
 	if err != nil {
 		response.FailWithMessage(c, response.ErrInvalidParams, err.Error())
 		return
 	}
 	response.Success(c, config)
+}
+
+func pricingFallbackOrganizationIDFromContext(c *gin.Context) (uuid.UUID, bool) {
+	organizationID, err := uuid.Parse(strings.TrimSpace(c.GetString("organization_id")))
+	if err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid organization_id")
+		return uuid.Nil, false
+	}
+	return organizationID, true
 }
 
 func DefaultPricingFallbackRules() []PricingFallbackRule {
@@ -209,22 +187,21 @@ func imageFallbackRule(id string, provider string, credits int64) PricingFallbac
 	}
 }
 
-func LoadPricingFallbackConfig(ctx context.Context, db *gorm.DB) (PricingFallbackConfigResponse, error) {
+func LoadPricingFallbackConfig(ctx context.Context, db *gorm.DB, organizationID uuid.UUID) (PricingFallbackConfigResponse, error) {
 	defaultRules := DefaultPricingFallbackRules()
 	config := PricingFallbackConfigResponse{
-		Enabled:       true,
-		DefaultRules:  defaultRules,
-		OverrideRules: []PricingFallbackRule{},
+		Enabled:        false,
+		DefaultRules:   defaultRules,
+		OverrideRules:  []PricingFallbackRule{},
+		EffectiveRules: effectivePricingFallbackRules(defaultRules, nil),
 	}
-	if db == nil {
-		config.EffectiveRules = effectivePricingFallbackRules(defaultRules, nil)
+	if db == nil || organizationID == uuid.Nil {
 		return config, nil
 	}
 
-	record, found, err := loadPricingFallbackOverrideRecord(ctx, db)
+	record, found, err := loadPricingFallbackOverrideRecord(ctx, db, organizationID)
 	if err != nil {
 		if isMissingPricingTableError(err, "llm_pricing_fallback_overrides") {
-			config.EffectiveRules = effectivePricingFallbackRules(defaultRules, nil)
 			return config, nil
 		}
 		return PricingFallbackConfigResponse{}, err
@@ -243,9 +220,12 @@ func LoadPricingFallbackConfig(ctx context.Context, db *gorm.DB) (PricingFallbac
 	return config, nil
 }
 
-func SavePricingFallbackConfig(ctx context.Context, db *gorm.DB, req UpdatePricingFallbackRequest, updatedBy string) (PricingFallbackConfigResponse, error) {
+func SavePricingFallbackConfig(ctx context.Context, db *gorm.DB, organizationID uuid.UUID, req UpdatePricingFallbackRequest, updatedBy string) (PricingFallbackConfigResponse, error) {
 	if db == nil {
 		return PricingFallbackConfigResponse{}, fmt.Errorf("database is not configured")
+	}
+	if organizationID == uuid.Nil {
+		return PricingFallbackConfigResponse{}, fmt.Errorf("organization_id is required")
 	}
 	rules, err := normalizePricingFallbackOverrideRules(req.OverrideRules)
 	if err != nil {
@@ -257,16 +237,16 @@ func SavePricingFallbackConfig(ctx context.Context, db *gorm.DB, req UpdatePrici
 	}
 	now := time.Now().UTC()
 	values := map[string]interface{}{
-		"id":         pricingFallbackOverrideID,
-		"enabled":    req.Enabled,
-		"rules":      datatypes.JSON(raw),
-		"updated_by": strings.TrimSpace(updatedBy),
-		"created_at": now,
-		"updated_at": now,
+		"organization_id": organizationID,
+		"enabled":         req.Enabled,
+		"rules":           datatypes.JSON(raw),
+		"updated_by":      strings.TrimSpace(updatedBy),
+		"created_at":      now,
+		"updated_at":      now,
 	}
 	if err := db.WithContext(ctx).
 		Clauses(clause.OnConflict{
-			Columns: []clause.Column{{Name: "id"}},
+			Columns: []clause.Column{{Name: "organization_id"}},
 			DoUpdates: clause.Assignments(map[string]interface{}{
 				"enabled":    req.Enabled,
 				"rules":      datatypes.JSON(raw),
@@ -278,13 +258,13 @@ func SavePricingFallbackConfig(ctx context.Context, db *gorm.DB, req UpdatePrici
 		Create(values).Error; err != nil {
 		return PricingFallbackConfigResponse{}, fmt.Errorf("save pricing fallback override: %w", err)
 	}
-	return LoadPricingFallbackConfig(ctx, db)
+	return LoadPricingFallbackConfig(ctx, db, organizationID)
 }
 
-func loadPricingFallbackOverrideRecord(ctx context.Context, db *gorm.DB) (*pricingFallbackOverrideRecord, bool, error) {
+func loadPricingFallbackOverrideRecord(ctx context.Context, db *gorm.DB, organizationID uuid.UUID) (*pricingFallbackOverrideRecord, bool, error) {
 	var record pricingFallbackOverrideRecord
 	err := db.WithContext(ctx).
-		Where("id = ?", pricingFallbackOverrideID).
+		Where("organization_id = ?", organizationID).
 		First(&record).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
