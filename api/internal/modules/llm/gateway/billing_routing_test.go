@@ -465,6 +465,47 @@ func TestBillingRouting_HandleProviderError_ZeroesTokenUsageBeforeSettle(t *test
 	}
 }
 
+func TestBillingRouting_SettleNativeUsageFallbackError_UsesErrorSettle(t *testing.T) {
+	remote := &fakeBillingProvider{checkBalanceResult: true}
+	local := &fakeBillingProvider{checkBalanceResult: true}
+	s := &llmGatewayServiceImpl{
+		billing:       remote,
+		localBilling:  local,
+		healthTracker: NewChannelHealthTracker(nil),
+	}
+	ps := &ProviderSelection{
+		UseSystemProvider: false,
+		Provider:          providermodel.LLMProvider{Provider: "openai"},
+		Model:             llmmodel.LLMModel{Model: "gpt-5"},
+	}
+	bc := &BillingContext{
+		UseSystemProvider: false,
+		PromptTokens:      10,
+		CompletionTokens:  5,
+		TotalTokens:       15,
+		ActualCredits:     30,
+	}
+	err := errors.New("failed to parse native response body for usage fallback")
+
+	settleErr := s.settleNativeUsageFallbackError(context.Background(), bc, ps, nil, 23, 0, err)
+
+	if settleErr != nil {
+		t.Fatalf("settle native usage fallback error = %v", settleErr)
+	}
+	if local.settleCalls != 1 {
+		t.Fatalf("local settle calls = %d, want 1", local.settleCalls)
+	}
+	if local.lastSettle == nil || local.lastSettle.Status != "error" {
+		t.Fatalf("local settle = %+v, want error settle", local.lastSettle)
+	}
+	if local.lastSettle.ActualCredits != 0 || local.lastSettle.TotalTokens != 0 {
+		t.Fatalf("error settle actual/total = %d/%d, want 0/0", local.lastSettle.ActualCredits, local.lastSettle.TotalTokens)
+	}
+	if !strings.Contains(local.lastSettle.ErrorMessage, "native response body") {
+		t.Fatalf("error message = %q, want native response body context", local.lastSettle.ErrorMessage)
+	}
+}
+
 func TestBillingRouting_HandleProviderError_SettleFailure_ReturnsBillingSettleFailed(t *testing.T) {
 	remote := &fakeBillingProvider{checkBalanceResult: true}
 	local := &fakeBillingProvider{
@@ -1126,6 +1167,32 @@ func TestBillingRouting_SplitsTotalOnlyChatUsage(t *testing.T) {
 	}
 }
 
+func TestBillingRouting_PreservesProviderTotalWhenEstimatedCompletionIsLarger(t *testing.T) {
+	s := &llmGatewayServiceImpl{tokenEstimator: NewTokenEstimator()}
+	req := &adapter.ChatRequest{
+		Model:    "qwen3.5:4b",
+		Messages: []adapter.Message{{Role: "user", Content: "hi"}},
+	}
+	resp := &adapter.ChatResponse{
+		Usage: &adapter.Usage{TotalTokens: 2},
+		Choices: []adapter.Choice{{
+			Message: adapter.Message{Role: "assistant", Content: strings.Repeat("long-output", 20)},
+		}},
+	}
+
+	usage := s.estimateMissingChatUsage(req, resp)
+
+	if usage == nil {
+		t.Fatal("usage = nil, want preserved provider total")
+	}
+	if usage.TotalTokens != 2 {
+		t.Fatalf("total tokens = %d, want provider total 2", usage.TotalTokens)
+	}
+	if usage.PromptTokens+usage.CompletionTokens > usage.TotalTokens {
+		t.Fatalf("usage = %+v, want prompt+completion capped by provider total", usage)
+	}
+}
+
 func TestBillingRouting_SettleEmbeddingSuccessRejectsZeroTokens(t *testing.T) {
 	remote := &fakeBillingProvider{checkBalanceResult: true}
 	local := &fakeBillingProvider{checkBalanceResult: true}
@@ -1294,6 +1361,48 @@ func TestBillingRouting_EstimatesMissingAnthropicUsageInRawBody(t *testing.T) {
 	}
 	if _, ok := usageBody["total_tokens"]; ok {
 		t.Fatalf("anthropic response body usage = %#v, want no total_tokens", usageBody)
+	}
+}
+
+func TestNativeResponseText_IgnoresMetadataJSONButKeepsTextPayloads(t *testing.T) {
+	tests := []struct {
+		name string
+		body json.RawMessage
+		want string
+	}{
+		{
+			name: "responses metadata",
+			body: json.RawMessage(`{"type":"response.created","response":{"id":"resp_1"}}`),
+			want: "",
+		},
+		{
+			name: "anthropic stop metadata",
+			body: json.RawMessage(`{"type":"message_stop"}`),
+			want: "",
+		},
+		{
+			name: "content block metadata",
+			body: json.RawMessage(`{"type":"content_block_start","content_block":{"type":"text"}}`),
+			want: "",
+		},
+		{
+			name: "text delta",
+			body: json.RawMessage(`{"type":"response.output_text.delta","delta":"hello"}`),
+			want: "hello",
+		},
+		{
+			name: "plain text fallback",
+			body: json.RawMessage(`hello`),
+			want: "hello",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := nativeResponseText(tt.body); got != tt.want {
+				t.Fatalf("nativeResponseText() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -1516,8 +1625,12 @@ func TestBillingRouting_HandleNativeStreamBilling_InjectsResponsesUsageIntoTermi
 		healthTracker:  NewChannelHealthTracker(nil),
 		tokenEstimator: NewTokenEstimator(),
 	}
-	in := make(chan adapter.RawStreamEvent, 4)
-	out := make(chan adapter.RawStreamEvent, 5)
+	in := make(chan adapter.RawStreamEvent, 5)
+	out := make(chan adapter.RawStreamEvent, 6)
+	in <- adapter.RawStreamEvent{
+		Event: "response.created",
+		Data:  json.RawMessage(`{"type":"response.created","response":{"id":"resp_1"}}`),
+	}
 	in <- adapter.RawStreamEvent{
 		Event: "response.output_text.delta",
 		Data:  json.RawMessage(`{"type":"response.output_text.delta","delta":"Hel"}`),
@@ -1550,14 +1663,14 @@ func TestBillingRouting_HandleNativeStreamBilling_InjectsResponsesUsageIntoTermi
 	for event := range out {
 		got = append(got, event)
 	}
-	if len(got) != 4 {
-		t.Fatalf("raw events = %d, want 4", len(got))
+	if len(got) != 5 {
+		t.Fatalf("raw events = %d, want 5", len(got))
 	}
-	if got[2].Event != "response.completed" {
-		t.Fatalf("terminal event = %q, want response.completed", got[2].Event)
+	if got[3].Event != "response.completed" {
+		t.Fatalf("terminal event = %q, want response.completed", got[3].Event)
 	}
 	var payload map[string]any
-	if err := json.Unmarshal(got[2].Data, &payload); err != nil {
+	if err := json.Unmarshal(got[3].Data, &payload); err != nil {
 		t.Fatalf("terminal data is not JSON: %v", err)
 	}
 	responseBody, _ := payload["response"].(map[string]any)
@@ -1566,8 +1679,8 @@ func TestBillingRouting_HandleNativeStreamBilling_InjectsResponsesUsageIntoTermi
 	if usageBody["input_tokens"].(float64) != 10 || usageBody["output_tokens"].(float64) != expectedCompletion {
 		t.Fatalf("terminal usage = %#v, want injected usage", usageBody)
 	}
-	if !got[3].Done || got[3].Usage == nil {
-		t.Fatalf("done event = %+v, want done with usage", got[3])
+	if !got[4].Done || got[4].Usage == nil {
+		t.Fatalf("done event = %+v, want done with usage", got[4])
 	}
 	if local.lastSettle == nil || local.lastSettle.Status != "success" {
 		t.Fatalf("local settle = %+v, want success", local.lastSettle)

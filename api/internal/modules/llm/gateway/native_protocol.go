@@ -235,7 +235,14 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 		}
 
 		if _, err := s.ensureNativeResponseUsageForSelection(providerSelection, billingCtx, response, model, bodyFormat); err != nil {
-			return nil, err
+			if settleErr := s.settleNativeUsageFallbackError(ctx, billingCtx, providerSelection, channelID, responseTime, attemptIdx, err); settleErr != nil {
+				return nil, settleErr
+			}
+			lastErr = err
+			if attemptIdx < len(providerSelections)-1 {
+				continue
+			}
+			return nil, fmt.Errorf("all providers failed: %w", lastErr)
 		}
 		if err := s.settleChatSuccess(ctx, billingCtx, providerSelection, channelID, response.Usage, response.Settlement, responseTime); err != nil {
 			return nil, err
@@ -372,6 +379,21 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 		return nil, fmt.Errorf("all providers failed: %w", lastErr)
 	}
 	return nil, NewNoProviderAvailableError(model, shadowOrganizationID.String())
+}
+
+func (s *llmGatewayServiceImpl) settleNativeUsageFallbackError(
+	ctx context.Context,
+	billingCtx *BillingContext,
+	providerSelection *ProviderSelection,
+	channelID *uuid.UUID,
+	responseTime int64,
+	attemptIdx int,
+	err error,
+) error {
+	if err == nil {
+		return nil
+	}
+	return s.handleProviderError(ctx, billingCtx, providerSelection, channelID, responseTime, attemptIdx, err)
 }
 
 func (s *llmGatewayServiceImpl) handleNativeStreamBilling(

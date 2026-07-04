@@ -546,9 +546,6 @@ func nativeResponseText(body json.RawMessage) string {
 	}
 	var text strings.Builder
 	collectNativeText(&text, value)
-	if text.Len() == 0 {
-		return string(body)
-	}
 	return text.String()
 }
 
