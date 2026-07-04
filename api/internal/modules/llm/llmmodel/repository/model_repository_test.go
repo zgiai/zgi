@@ -144,6 +144,8 @@ func createFullModelRepositoryTestTable(t *testing.T, db *gorm.DB) {
 			cost_rate TEXT,
 			input_price NUMERIC,
 			output_price NUMERIC,
+			input_price_configured BOOLEAN DEFAULT false,
+			output_price_configured BOOLEAN DEFAULT false,
 			cached_input_price NUMERIC,
 			cost_cache_read NUMERIC,
 			cost_cache_write NUMERIC,

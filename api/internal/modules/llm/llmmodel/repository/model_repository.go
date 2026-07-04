@@ -123,8 +123,7 @@ func (r *modelRepository) availableModelQuery(ctx context.Context, provider stri
 	query := r.db.WithContext(ctx).
 		Model(&model.LLMModel{}).
 		Select(availableModelColumns).
-		Where("is_active = ?", true).
-		Where("status = ?", "active")
+		Where("is_active = ? AND status = ?", true, model.ModelStatusActive)
 	if provider != "" {
 		query = query.Where("provider = ?", provider)
 	}

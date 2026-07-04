@@ -18,6 +18,7 @@ const messages = {
     usageDetails: 'Usage Details',
     llmProviders: 'Model Management',
     channel: 'Channel Management',
+    pricingPolicy: 'Billing Policy',
     apiKeys: 'API Keys',
     organization: 'Organization & Members',
     workspaces: 'Workspace Management',

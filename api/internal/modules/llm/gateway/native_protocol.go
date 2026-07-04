@@ -199,6 +199,7 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 			lastErr = err
 			continue
 		}
+		lockTokenPricingQuote(billingCtx, quote)
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, traceName)
 		ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
@@ -326,6 +327,7 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 			lastErr = err
 			continue
 		}
+		lockTokenPricingQuote(billingCtx, quote)
 		billingCtx.PromptTokens = promptTokens
 		billingCtx.CompletionTokens = completionTokens
 		ctx = withLLMLangfuseTraceContext(ctx, billingCtx, traceName)

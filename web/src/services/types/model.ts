@@ -292,3 +292,38 @@ export interface ToggleProviderModelsRequest {
 export interface BatchToggleModelsResponse {
   [key: string]: unknown;
 }
+
+export type PricingFallbackOperation = 'chat' | 'embedding' | 'rerank' | 'image_generation';
+export type PricingFallbackMeter = 'input_token' | 'output_token' | 'image';
+export type PricingFallbackSource =
+  | 'upstream_model_price'
+  | 'admin_fallback'
+  | 'code_default_fallback';
+
+export interface PricingFallbackRule {
+  id: string;
+  enabled?: boolean;
+  operation: PricingFallbackOperation;
+  meter: PricingFallbackMeter;
+  provider?: string;
+  model?: string;
+  size?: string;
+  quality?: string;
+  style?: string;
+  unit?: string;
+  price_usd_per_1m_tokens?: string;
+  credits?: number;
+  pricing_source?: PricingFallbackSource;
+}
+
+export interface PricingFallbackConfig {
+  enabled: boolean;
+  default_rules: PricingFallbackRule[];
+  override_rules: PricingFallbackRule[];
+  effective_rules: PricingFallbackRule[];
+}
+
+export interface UpdatePricingFallbackConfigRequest {
+  enabled: boolean;
+  override_rules: PricingFallbackRule[];
+}

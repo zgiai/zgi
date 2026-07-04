@@ -536,7 +536,7 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 		billingCtx.Status = billingContextStatusSuccess
 
 		if !useSystemProvider {
-			quote, err := s.quoteTokenPricing(ctx, pricingModelRefFromBillingContext(billingCtx), billingCtx.PromptTokens, billingCtx.CompletionTokens)
+			quote, err := s.quoteTokenPricingForSettlement(ctx, billingCtx, pricingModelRefFromBillingContext(billingCtx), billingCtx.PromptTokens, billingCtx.CompletionTokens)
 			if err != nil {
 				outputChan <- adapter.StreamResponse{Error: fmt.Errorf("failed to calculate credits: %w", err)}
 				return

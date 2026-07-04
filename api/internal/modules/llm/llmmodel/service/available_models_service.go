@@ -14,7 +14,6 @@ import (
 	providerrepo "github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared/types"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
-	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 // ModelScene represents different business scenarios for model selection
@@ -67,7 +66,7 @@ type AvailableModelsService interface {
 	InvalidateTenantCache(organizationID uuid.UUID)
 	// InvalidateGlobalCache is kept for callers that still notify global model changes.
 	InvalidateGlobalCache()
-	// SetOfficialRouteBootstrapper injects the cloud-only bootstrapper used for defensive fallback.
+	// SetOfficialRouteBootstrapper is kept for compatibility; listing available models is read-only.
 	SetOfficialRouteBootstrapper(bootstrapper interfaces.OfficialRouteBootstrapper)
 }
 
@@ -80,7 +79,6 @@ type availableModelsService struct {
 	globalProviderRepo providerrepo.ProviderRepository
 	providerConfigRepo providerrepo.ProviderConfigRepository
 	customProviderRepo providerrepo.CustomProviderRepository
-	officialBootstrap  interfaces.OfficialRouteBootstrapper
 
 	// Tenant config cache (per-tenant)
 	tenantCache   map[uuid.UUID]*tenantCacheEntry
@@ -152,13 +150,9 @@ func (s *availableModelsService) ListAvailable(ctx context.Context, organization
 	}
 
 	// Get tenant enabled routes to filter models
-	enabledRoutes := s.loadEnabledRoutes(ctx, organizationID)
-	if !hasOfficialRoute(enabledRoutes) && s.officialBootstrap != nil {
-		if err := s.officialBootstrap.InitOfficialChannel(ctx, organizationID); err != nil {
-			logger.Warn("Failed to bootstrap official route for available models: %v", err)
-		} else {
-			enabledRoutes = s.loadEnabledRoutes(ctx, organizationID)
-		}
+	enabledRoutes, err := s.loadEnabledRoutes(ctx, organizationID)
+	if err != nil {
+		return nil, err
 	}
 
 	// Build set of available models from tenant routes
@@ -185,11 +179,7 @@ func (s *availableModelsService) ListAvailable(ctx context.Context, organization
 	// Get tenant config from cache
 	tenantEntry, err := s.getTenantCache(ctx, organizationID)
 	if err != nil {
-		// Log error but continue with empty config
-		logger.Warn("Failed to get tenant cache, using defaults: %v", err)
-		tenantEntry = &tenantCacheEntry{
-			configs: make(map[uuid.UUID]*model.ModelConfig),
-		}
+		return nil, err
 	}
 
 	// Build result
@@ -399,8 +389,7 @@ func (s *availableModelsService) ListAvailable(ctx context.Context, organization
 	return result, nil
 }
 
-func (s *availableModelsService) SetOfficialRouteBootstrapper(bootstrapper interfaces.OfficialRouteBootstrapper) {
-	s.officialBootstrap = bootstrapper
+func (s *availableModelsService) SetOfficialRouteBootstrapper(_ interfaces.OfficialRouteBootstrapper) {
 }
 
 // RefreshCache forces a cache refresh for a tenant
@@ -419,22 +408,12 @@ func (s *availableModelsService) InvalidateTenantCache(organizationID uuid.UUID)
 func (s *availableModelsService) InvalidateGlobalCache() {
 }
 
-func (s *availableModelsService) loadEnabledRoutes(ctx context.Context, organizationID uuid.UUID) []*channelmodel.LLMRoute {
+func (s *availableModelsService) loadEnabledRoutes(ctx context.Context, organizationID uuid.UUID) ([]*channelmodel.LLMRoute, error) {
 	enabledRoutes, err := s.routeRepo.GetEnabledRoutes(ctx, organizationID)
 	if err != nil {
-		logger.Warn("Failed to get enabled routes: %v", err)
-		return nil
+		return nil, err
 	}
-	return enabledRoutes
-}
-
-func hasOfficialRoute(routes []*channelmodel.LLMRoute) bool {
-	for _, route := range routes {
-		if route != nil && route.IsOfficial {
-			return true
-		}
-	}
-	return false
+	return enabledRoutes, nil
 }
 
 func (s *availableModelsService) listAvailableGlobalModels(ctx context.Context, availableModelNames map[string]bool, provider string, useCase string) ([]*model.LLMModel, error) {
@@ -486,19 +465,13 @@ func (s *availableModelsService) refreshTenantCacheAndReturn(ctx context.Context
 
 	configs, err := s.configRepo.ListAvailableConfigs(ctx, organizationID)
 	if err != nil {
-		// If we have stale cache, return it
-		if entry, ok := s.tenantCache[organizationID]; ok {
-			logger.Warn("Failed to refresh tenant config cache, using stale data: %v", err)
-			return entry, nil
-		}
 		return nil, err
 	}
 
 	// Fetch custom models from database
 	customs, _, err := s.customRepo.List(ctx, organizationID, nil, "", "", boolPtr(true), 0, 10000)
 	if err != nil {
-		logger.Warn("Failed to fetch custom models: %v", err)
-		customs = nil // Continue without custom models
+		return nil, err
 	}
 
 	// Build config map

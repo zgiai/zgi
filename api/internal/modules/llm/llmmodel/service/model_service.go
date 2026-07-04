@@ -37,6 +37,10 @@ func parseOptionalModelPrice(value string, field string) (decimal.Decimal, error
 	return price, nil
 }
 
+func modelPriceConfigured(value string) bool {
+	return strings.TrimSpace(value) != ""
+}
+
 type modelService struct {
 	globalRepo         repository.ModelRepository
 	configRepo         repository.ModelConfigRepository
@@ -112,26 +116,34 @@ func (s *modelService) CreateGlobal(ctx context.Context, req *dto.CreateModelReq
 		return nil, err
 	}
 
-	costInput, _ := decimal.NewFromString(req.InputPrice)
-	costOutput, _ := decimal.NewFromString(req.OutputPrice)
+	costInput, err := parseOptionalModelPrice(req.InputPrice, "input_price")
+	if err != nil {
+		return nil, err
+	}
+	costOutput, err := parseOptionalModelPrice(req.OutputPrice, "output_price")
+	if err != nil {
+		return nil, err
+	}
 
 	m := &model.LLMModel{
-		Provider:          req.Provider,
-		Model:             req.Name,
-		ModelName:         req.DisplayName,
-		UseCases:          model.StringArray(model.EnsureUseCases(req.UseCases, nil)),
-		ContextWindow:     req.ContextWindow,
-		MaxOutputTokens:   req.MaxOutputTokens,
-		InputPrice:        costInput,
-		OutputPrice:       costOutput,
-		SupportsVision:    req.SupportsVision,
-		SupportsToolCall:  req.SupportsToolCall,
-		SupportsStreaming: req.SupportsStreaming,
-		SupportsReasoning: req.SupportsReasoning,
-		KnowledgeCutoff:   req.KnowledgeCutoff,
-		Description:       req.Description,
-		ConfigParameters:  configParameters,
-		IsActive:          true,
+		Provider:              req.Provider,
+		Model:                 req.Name,
+		ModelName:             req.DisplayName,
+		UseCases:              model.StringArray(model.EnsureUseCases(req.UseCases, nil)),
+		ContextWindow:         req.ContextWindow,
+		MaxOutputTokens:       req.MaxOutputTokens,
+		InputPrice:            costInput,
+		OutputPrice:           costOutput,
+		InputPriceConfigured:  modelPriceConfigured(req.InputPrice),
+		OutputPriceConfigured: modelPriceConfigured(req.OutputPrice),
+		SupportsVision:        req.SupportsVision,
+		SupportsToolCall:      req.SupportsToolCall,
+		SupportsStreaming:     req.SupportsStreaming,
+		SupportsReasoning:     req.SupportsReasoning,
+		KnowledgeCutoff:       req.KnowledgeCutoff,
+		Description:           req.Description,
+		ConfigParameters:      configParameters,
+		IsActive:              true,
 	}
 
 	if err := s.globalRepo.Create(ctx, m); err != nil {
@@ -170,10 +182,20 @@ func (s *modelService) UpdateGlobal(ctx context.Context, id uuid.UUID, req *dto.
 		m.MaxOutputTokens = *req.MaxOutputTokens
 	}
 	if req.InputPrice != nil {
-		m.InputPrice, _ = decimal.NewFromString(*req.InputPrice)
+		price, err := parseOptionalModelPrice(*req.InputPrice, "input_price")
+		if err != nil {
+			return nil, err
+		}
+		m.InputPrice = price
+		m.InputPriceConfigured = modelPriceConfigured(*req.InputPrice)
 	}
 	if req.OutputPrice != nil {
-		m.OutputPrice, _ = decimal.NewFromString(*req.OutputPrice)
+		price, err := parseOptionalModelPrice(*req.OutputPrice, "output_price")
+		if err != nil {
+			return nil, err
+		}
+		m.OutputPrice = price
+		m.OutputPriceConfigured = modelPriceConfigured(*req.OutputPrice)
 	}
 	if req.SupportsVision != nil {
 		m.SupportsVision = *req.SupportsVision
@@ -344,28 +366,33 @@ func (s *modelService) CreateCustom(ctx context.Context, organizationID uuid.UUI
 	}
 
 	m := &model.CustomModel{
-		OrganizationID:   organizationID,
-		ProviderID:       providerID,
-		Provider:         req.Provider,
-		Name:             req.Name,
-		DisplayName:      req.DisplayName,
-		UseCases:         model.StringArray(useCases),
-		ContextWindow:    req.ContextWindow,
-		MaxOutputTokens:  req.MaxOutputTokens,
-		InputPrice:       costInput,
-		OutputPrice:      costOutput,
-		KnowledgeCutoff:  req.KnowledgeCutoff,
-		Description:      req.Description,
-		IsActive:         true,
-		Endpoints:        endpoints,
-		Features:         features,
-		Tools:            tools,
-		Parameters:       parameters,
-		ConfigParameters: configParameters,
+		OrganizationID:        organizationID,
+		ProviderID:            providerID,
+		Provider:              req.Provider,
+		Name:                  req.Name,
+		DisplayName:           req.DisplayName,
+		UseCases:              model.StringArray(useCases),
+		ContextWindow:         req.ContextWindow,
+		MaxOutputTokens:       req.MaxOutputTokens,
+		InputPrice:            costInput,
+		OutputPrice:           costOutput,
+		InputPriceConfigured:  modelPriceConfigured(req.InputPrice),
+		OutputPriceConfigured: modelPriceConfigured(req.OutputPrice),
+		KnowledgeCutoff:       req.KnowledgeCutoff,
+		Description:           req.Description,
+		IsActive:              true,
+		Endpoints:             endpoints,
+		Features:              features,
+		Tools:                 tools,
+		Parameters:            parameters,
+		ConfigParameters:      configParameters,
 	}
 
 	if err := s.customRepo.Create(ctx, m); err != nil {
 		return nil, fmt.Errorf("failed to create custom model: %w", err)
+	}
+	if s.availableModels != nil {
+		s.availableModels.InvalidateTenantCache(organizationID)
 	}
 
 	return m, nil
@@ -420,6 +447,7 @@ func (s *modelService) UpdateCustom(ctx context.Context, organizationID, id uuid
 			return nil, err
 		}
 		m.InputPrice = price
+		m.InputPriceConfigured = modelPriceConfigured(*req.InputPrice)
 	}
 	if req.OutputPrice != nil {
 		price, err := parseOptionalModelPrice(*req.OutputPrice, "output_price")
@@ -427,6 +455,7 @@ func (s *modelService) UpdateCustom(ctx context.Context, organizationID, id uuid
 			return nil, err
 		}
 		m.OutputPrice = price
+		m.OutputPriceConfigured = modelPriceConfigured(*req.OutputPrice)
 	}
 	if req.KnowledgeCutoff != nil {
 		m.KnowledgeCutoff = *req.KnowledgeCutoff
@@ -466,12 +495,21 @@ func (s *modelService) UpdateCustom(ctx context.Context, organizationID, id uuid
 	if err := s.customRepo.Update(ctx, m); err != nil {
 		return nil, fmt.Errorf("failed to update custom model: %w", err)
 	}
+	if s.availableModels != nil {
+		s.availableModels.InvalidateTenantCache(organizationID)
+	}
 
 	return m, nil
 }
 
 func (s *modelService) DeleteCustom(ctx context.Context, organizationID, id uuid.UUID) error {
-	return s.customRepo.Delete(ctx, organizationID, id)
+	if err := s.customRepo.Delete(ctx, organizationID, id); err != nil {
+		return err
+	}
+	if s.availableModels != nil {
+		s.availableModels.InvalidateTenantCache(organizationID)
+	}
+	return nil
 }
 
 func (s *modelService) GetModelParameters(ctx context.Context, organizationID uuid.UUID, provider, modelName string) (model.ConfigParameters, error) {
@@ -612,10 +650,12 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 			OpenWeights:   m.OpenWeights,
 
 			// Pricing (per million tokens)
-			Currency:         getCurrencyOrDefault(m.Currency),
-			InputPrice:       costInput,
-			OutputPrice:      costOutput,
-			CachedInputPrice: cachedInputPrice,
+			Currency:              getCurrencyOrDefault(m.Currency),
+			InputPrice:            costInput,
+			OutputPrice:           costOutput,
+			InputPriceConfigured:  m.InputPriceConfigured,
+			OutputPriceConfigured: m.OutputPriceConfigured,
+			CachedInputPrice:      cachedInputPrice,
 
 			// Context
 			ContextWindow:   m.ContextWindow,
@@ -746,9 +786,11 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 			OpenWeights:   false,
 
 			// Pricing (per million tokens)
-			Currency:    "USD",
-			InputPrice:  customInputPrice,
-			OutputPrice: customOutputPrice,
+			Currency:              "USD",
+			InputPrice:            customInputPrice,
+			OutputPrice:           customOutputPrice,
+			InputPriceConfigured:  m.InputPriceConfigured,
+			OutputPriceConfigured: m.OutputPriceConfigured,
 
 			// Context
 			ContextWindow:   m.ContextWindow,

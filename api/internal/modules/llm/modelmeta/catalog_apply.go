@@ -60,6 +60,8 @@ type PublishedModel struct {
 	InputPrice             float64
 	OutputPrice            float64
 	CachedInputPrice       float64
+	InputPriceConfigured   bool
+	OutputPriceConfigured  bool
 	UseCases               []string
 	InputModalities        []string
 	OutputModalities       []string
@@ -79,7 +81,7 @@ type PublishedModel struct {
 }
 
 func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCatalog) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txService := *s
 		txService.db = tx
 
@@ -113,6 +115,13 @@ func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCa
 
 		return txService.upsertCatalogSyncState(ctx, catalog.Version, catalog.PublishedAt, "")
 	})
+	if err != nil {
+		return err
+	}
+	if invalidator := currentModelCacheInvalidator(); invalidator != nil {
+		invalidator.InvalidateModelCache(ctx)
+	}
+	return nil
 }
 
 func (s *Service) RecordPublishedCatalogSyncError(ctx context.Context, message string) error {
@@ -441,6 +450,12 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 		"cached_input_price": normalizePublishedPrice(model.CachedInputPrice),
 	}
 
+	if hasColumn(db, "llm_models", "input_price_configured") {
+		values["input_price_configured"] = model.InputPriceConfigured
+	}
+	if hasColumn(db, "llm_models", "output_price_configured") {
+		values["output_price_configured"] = model.OutputPriceConfigured
+	}
 	if hasColumn(db, "llm_models", "family_default") {
 		values["family_default"] = model.FamilyDefault
 	}
