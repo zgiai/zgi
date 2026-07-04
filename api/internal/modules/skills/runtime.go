@@ -162,7 +162,7 @@ func (r *Runtime) ListSystemSkillsBestEffort(ctx context.Context) ([]SkillDiscov
 	if r == nil {
 		return nil, fmt.Errorf("skill runtime is not configured")
 	}
-	locations, err := r.systemSkillLocations()
+	locations, errs, err := r.systemSkillLocationsBestEffort()
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +172,6 @@ func (r *Runtime) ListSystemSkillsBestEffort(ctx context.Context) ([]SkillDiscov
 	}
 	sort.Strings(ids)
 	metadata := make([]SkillDiscoveryMetadata, 0, len(ids))
-	errs := make([]error, 0)
 	for _, id := range ids {
 		doc, err := r.loadSkillDocumentFromLocation(locations[id])
 		if err != nil {
