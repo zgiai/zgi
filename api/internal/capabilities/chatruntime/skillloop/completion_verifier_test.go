@@ -444,6 +444,335 @@ func TestCompletionVerificationApplyPlanOverrideRequiresRequestedPostUpdateConfi
 	}
 }
 
+func TestCompletionVerificationApplyPlanOverrideUsesLatestPostUpdateAgentConfigRead(t *testing.T) {
+	preRead := map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "get_agent_config",
+		"result": map[string]interface{}{
+			"status":              "completed",
+			"agent_id":            "agent-1",
+			"model_provider":      "openai",
+			"model":               "gpt-4o",
+			"file_upload_enabled": false,
+		},
+	}
+	update := map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "update_agent_config",
+		"arguments": map[string]interface{}{
+			"expected_updated_fields": []interface{}{"model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+			"expected_binding_actions": map[string]interface{}{
+				"enabled_skill_ids": "bind",
+			},
+			"model_provider":        "deepseek",
+			"model":                 "deepseek-v4-flash",
+			"system_prompt":         "You are a professional fiction writing assistant. Your core capabilities include story planning�",
+			"file_upload_enabled":   true,
+			"add_enabled_skill_ids": "[\"file-generator\"]",
+		},
+		"result": map[string]interface{}{
+			"status":         "completed",
+			"agent_id":       "agent-1",
+			"updated_fields": []interface{}{"model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+		},
+	}
+	postRead := map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "get_agent_config",
+		"result": map[string]interface{}{
+			"status":              "completed",
+			"agent_id":            "agent-1",
+			"model_provider":      "deepseek",
+			"model":               "deepseek-v4-flash",
+			"system_prompt":       "You are a professional fiction writing assistant. Your core capabilities include story planning, file generation, and upload-aware drafting.",
+			"file_upload_enabled": true,
+			"enabled_skill_ids":   []string{"file-generator"},
+		},
+	}
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "completed",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":                       "tool:agent-management/update_agent_config",
+					"status":                   "completed",
+					"skill_id":                 skills.SkillAgentManagement,
+					"tool_name":                "update_agent_config",
+					"expected_updated_fields":  []interface{}{"model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+					"expected_binding_actions": map[string]interface{}{"enabled_skill_ids": "bind"},
+					"arguments": map[string]interface{}{
+						"model_provider":        "deepseek",
+						"model":                 "deepseek-v4-flash",
+						"system_prompt":         "You are a professional fiction writing assistant. Your core capabilities include story planning�",
+						"file_upload_enabled":   true,
+						"add_enabled_skill_ids": "[\"file-generator\"]",
+					},
+				},
+			},
+		},
+		"skill_invocations": []interface{}{preRead, update, postRead},
+		"execution_summary": map[string]interface{}{
+			"tool_results": []interface{}{postRead, update, preRead},
+		},
+	}
+
+	decision := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
+		Status: completionVerificationStatusPass,
+		Reason: "candidate answer claims completion",
+	})
+
+	if got := decision.normalizedStatus(); got != completionVerificationStatusPass {
+		t.Fatalf("decision status = %q, want pass using latest post-update read; decision=%#v", got, decision)
+	}
+	if mismatches := completionVerificationAgentConfigMismatches(evidence); len(mismatches) > 0 {
+		t.Fatalf("completionVerificationAgentConfigMismatches() = %#v, want none", mismatches)
+	}
+
+	reconciled := ReconcileCompletionVerificationResultWithEvidence(evidence, CompletionVerificationResult{
+		Status:         completionVerificationStatusNeedsAction,
+		Reason:         "requested Agent config state was not verified",
+		MissingSteps:   []string{"agent-management/get_agent_config enabled_skill_ids missing bound target: file-generator"},
+		NextActionHint: "agent-management/update_agent_config",
+	})
+	if got := reconciled.Status; got != completionVerificationStatusPass {
+		t.Fatalf("reconciled status = %q, want pass; result=%#v", got, reconciled)
+	}
+	if len(reconciled.MissingSteps) != 0 || reconciled.NextActionHint != "" {
+		t.Fatalf("reconciled = %#v, want cleared missing steps and next action", reconciled)
+	}
+}
+
+func TestCompletionVerificationAgentConfigBindingUsesCandidateAliases(t *testing.T) {
+	update := map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "update_agent_config",
+		"arguments": map[string]interface{}{
+			"expected_updated_fields": []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+			"expected_binding_actions": map[string]interface{}{
+				"enabled_skill_ids": "bind",
+			},
+			"model_provider":        "deepseek",
+			"model":                 "deepseek-v4-flash",
+			"system_prompt":         "Write fiction and generate files when needed.",
+			"file_upload_enabled":   true,
+			"add_enabled_skill_ids": []interface{}{"文件生成器"},
+		},
+		"result": map[string]interface{}{
+			"status":              "completed",
+			"agent_id":            "agent-1",
+			"updated_fields":      []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+			"satisfied_fields":    []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+			"enabled_skill_ids":   []string{"file-generator"},
+			"file_upload_enabled": true,
+		},
+	}
+	postRead := map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "get_agent_config",
+		"result": map[string]interface{}{
+			"status":              "completed",
+			"agent_id":            "agent-1",
+			"model_provider":      "deepseek",
+			"model":               "deepseek-v4-flash",
+			"system_prompt":       "Write fiction and generate files when needed.",
+			"file_upload_enabled": true,
+			"enabled_skill_ids":   []interface{}{"file-generator"},
+		},
+	}
+	candidateLookup := map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "list_agent_skill_candidates",
+		"result": map[string]interface{}{
+			"status": "completed",
+			"candidate_samples": []interface{}{
+				map[string]interface{}{
+					"id":       "file-generator",
+					"name":     "文件生成器",
+					"selected": true,
+				},
+			},
+		},
+	}
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":             "completed",
+			"original_user_goal": "模型配置为 deepseek flash，提示词要能生成文件和上传文件，完成后重新读取配置确认。",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":                       "tool:agent-management/update_agent_config",
+					"status":                   "completed",
+					"skill_id":                 skills.SkillAgentManagement,
+					"tool_name":                "update_agent_config",
+					"expected_updated_fields":  []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+					"expected_binding_actions": map[string]interface{}{"enabled_skill_ids": "bind"},
+					"arguments": map[string]interface{}{
+						"model_provider":        "deepseek",
+						"model":                 "deepseek-v4-flash",
+						"system_prompt":         "Write fiction and generate files when needed.",
+						"file_upload_enabled":   true,
+						"add_enabled_skill_ids": []interface{}{"文件生成器"},
+					},
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config#post_update",
+					"status":                            "completed",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"required_post_update_verification": true,
+				},
+			},
+		},
+		"skill_invocations": []interface{}{candidateLookup, update, postRead},
+		"completion_verification": map[string]interface{}{
+			"status":           completionVerificationStatusNeedsAction,
+			"reason":           "requested Agent config state was not verified",
+			"missing_steps":    []interface{}{"agent-management/get_agent_config enabled_skill_ids missing bound target: 文件生成器"},
+			"next_action_hint": "agent-management/update_agent_config",
+		},
+	}
+
+	if mismatches := completionVerificationAgentConfigMismatches(evidence); len(mismatches) > 0 {
+		t.Fatalf("completionVerificationAgentConfigMismatches() = %#v, want none", mismatches)
+	}
+	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want verified fast-path answer")
+	}
+	if strings.Contains(answer, "不能确认") {
+		t.Fatalf("answer = %q, want no unsupported uncertainty", answer)
+	}
+	reconciled := ReconcileCompletionVerificationResultWithEvidence(evidence, CompletionVerificationResult{
+		Status:         completionVerificationStatusNeedsAction,
+		Reason:         "requested Agent config state was not verified",
+		MissingSteps:   []string{"agent-management/get_agent_config enabled_skill_ids missing bound target: 文件生成器"},
+		NextActionHint: "agent-management/update_agent_config",
+	})
+	if got := reconciled.Status; got != completionVerificationStatusPass {
+		t.Fatalf("reconciled status = %q, want pass; result=%#v", got, reconciled)
+	}
+}
+
+func TestCompletionVerificationAgentConfigBindingUsesStringifiedMutationEvidence(t *testing.T) {
+	update := map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "update_agent_config",
+		"arguments": map[string]interface{}{
+			"model_provider":        "deepseek",
+			"model":                 "deepseek-v4-flash",
+			"system_prompt":         "Write fiction and generate files when needed.",
+			"file_upload_enabled":   true,
+			"add_enabled_skill_ids": "[\"file-generator\"]",
+		},
+		"result": map[string]interface{}{
+			"status":              "completed",
+			"agent_id":            "agent-1",
+			"agent_name":          "Novel Writer",
+			"model_provider":      "deepseek",
+			"model":               "deepseek-v4-flash",
+			"system_prompt":       "Write fiction and generate files when needed.",
+			"file_upload_enabled": true,
+			"enabled_skill_ids":   []interface{}{"file-generator"},
+			"satisfied_fields":    []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+		},
+	}
+	postRead := map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "get_agent_config",
+		"arguments": map[string]interface{}{
+			"agent_id": map[string]interface{}{"type": "string", "length": 36},
+		},
+		"result": map[string]interface{}{
+			"status":              "completed",
+			"agent_id":            "agent-1",
+			"agent_name":          "Novel Writer",
+			"model_provider":      "deepseek",
+			"model":               "deepseek-v4-flash",
+			"system_prompt":       "Write fiction and generate files when needed.",
+			"file_upload_enabled": true,
+			"enabled_skill_ids":   []interface{}{"file-generator"},
+		},
+	}
+	candidateLookup := map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "list_agent_skill_candidates",
+		"arguments": map[string]interface{}{
+			"query":    map[string]interface{}{"type": "string", "length": 15},
+			"agent_id": map[string]interface{}{"type": "string", "length": 36},
+		},
+		"result": map[string]interface{}{
+			"status": "completed",
+			"candidate_samples": []interface{}{
+				map[string]interface{}{"id": "content-summary", "name": "Content Summary"},
+				map[string]interface{}{"id": "file-generator", "name": "File Generator", "selected": true},
+			},
+		},
+	}
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "completed",
+			"pending_next_action": "none",
+			"step_status": map[string]interface{}{
+				"tool:agent-management/update_agent_config":          "completed",
+				"tool:agent-management/get_agent_config#post_update": "completed",
+			},
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":                       "tool:agent-management/update_agent_config",
+					"status":                   "completed",
+					"skill_id":                 skills.SkillAgentManagement,
+					"tool_name":                "update_agent_config",
+					"expected_updated_fields":  []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+					"expected_binding_actions": "enabled_skill_ids:bind",
+					"arguments": map[string]interface{}{
+						"config_goal":              "create a writing agent with DeepSeek Flash, file upload, and file generation",
+						"expected_updated_fields":  "model_provider,model,system_prompt,file_upload_enabled,enabled_skill_ids",
+						"expected_binding_actions": "enabled_skill_ids:bind",
+					},
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config#post_update",
+					"status":                            "completed",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"required_post_update_verification": true,
+				},
+			},
+		},
+		"skill_invocations": []interface{}{update, postRead, candidateLookup},
+	}
+
+	if mismatches := completionVerificationAgentConfigMismatches(evidence); len(mismatches) > 0 {
+		t.Fatalf("completionVerificationAgentConfigMismatches() = %#v, want none", mismatches)
+	}
+	decision := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
+		Status: completionVerificationStatusPass,
+	})
+	if got := decision.normalizedStatus(); got != completionVerificationStatusPass {
+		t.Fatalf("completionVerificationApplyPlanOverride status = %q, want pass; decision=%#v", got, decision)
+	}
+	if _, ok := FastPathFinalAnswerForCompletionEvidence(evidence); !ok {
+		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want verified final answer")
+	}
+}
+
 func TestCompletionVerificationApplyPlanOverrideRequiresRemainingAgentConfigFields(t *testing.T) {
 	evidence := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
@@ -647,6 +976,84 @@ func TestCompletionVerificationApplyPlanOverridePassesBoundEnabledSkillInPostRea
 	}
 }
 
+func TestCompletionVerificationApplyPlanOverridePassesBoundEnabledSkillFromInvocationArgumentsAfterStaleRead(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "running",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":                       "tool:agent-management/update_agent_config",
+					"status":                   "completed",
+					"skill_id":                 skills.SkillAgentManagement,
+					"tool_name":                "update_agent_config",
+					"expected_updated_fields":  []interface{}{"enabled_skill_ids"},
+					"expected_binding_actions": map[string]interface{}{"enabled_skill_ids": "bind"},
+					"arguments": map[string]interface{}{
+						"expected_binding_actions": "enabled_skill_ids:bind",
+					},
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config#post_update",
+					"status":                            "completed",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"phase":                             "post_update_verification",
+					"required_post_update_verification": true,
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result": map[string]interface{}{
+					"status":              "completed",
+					"enabled_skill_ids":   []interface{}{},
+					"file_upload_enabled": false,
+				},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"arguments": map[string]interface{}{
+					"add_enabled_skill_ids": "[\"file-generator\"]",
+				},
+				"result": map[string]interface{}{
+					"status":            "completed",
+					"updated_fields":    []interface{}{"enabled_skill_ids"},
+					"enabled_skill_ids": []interface{}{"file-generator"},
+				},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result": map[string]interface{}{
+					"status":            "completed",
+					"enabled_skill_ids": []interface{}{"file-generator"},
+				},
+			},
+		},
+	}
+
+	decision := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
+		Status: completionVerificationStatusPass,
+		Reason: "candidate answer is supported by post-update config",
+	})
+
+	if got := decision.normalizedStatus(); got != completionVerificationStatusPass {
+		t.Fatalf("decision status = %q, want pass; decision=%#v", got, decision)
+	}
+	if len(decision.MissingSteps) != 0 {
+		t.Fatalf("MissingSteps = %#v, want none", decision.MissingSteps)
+	}
+}
+
 func TestCompletionVerificationApplyPlanOverrideRequiresModelPairInPostRead(t *testing.T) {
 	evidence := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
@@ -714,6 +1121,92 @@ func TestCompletionVerificationApplyPlanOverrideRequiresModelPairInPostRead(t *t
 		if !strings.Contains(joinedMissing, want) {
 			t.Fatalf("MissingSteps = %#v, want fragment %q", decision.MissingSteps, want)
 		}
+	}
+}
+
+func TestCompletionVerificationApplyPlanOverrideUsesConfigGoalModelHint(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":             "completed",
+			"original_user_goal": "创建智能体，模型配置为deepseek flash，写好提示词需要让agent能生成文件和上传文件。",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":                      "tool:agent-management/update_agent_config",
+					"status":                  "completed",
+					"skill_id":                skills.SkillAgentManagement,
+					"tool_name":               "update_agent_config",
+					"expected_updated_fields": []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+					"arguments": map[string]interface{}{
+						"model_provider": "deepseek",
+						"model":          "deepseek-chat",
+						"config_goal":    "模型配置为deepseek flash，写好提示词需要让agent能生成文件和上传文件。",
+					},
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config#post_update",
+					"status":                            "completed",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"phase":                             "post_update_verification",
+					"required_post_update_verification": true,
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"arguments": map[string]interface{}{
+					"model_provider":          "deepseek",
+					"model":                   "deepseek-chat",
+					"config_goal":             "模型配置为deepseek flash，写好提示词需要让agent能生成文件和上传文件。",
+					"expected_updated_fields": "model_provider,model,system_prompt,file_upload_enabled,enabled_skill_ids",
+				},
+				"result": map[string]interface{}{
+					"status":              "completed",
+					"model_provider":      "deepseek",
+					"model":               "deepseek-chat",
+					"updated_fields":      []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+					"enabled_skill_ids":   []interface{}{"file-generator"},
+					"file_upload_enabled": true,
+				},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result": map[string]interface{}{
+					"status": "completed",
+					"config": map[string]interface{}{
+						"model_provider":      "deepseek",
+						"model":               "deepseek-chat",
+						"enabled_skill_ids":   []interface{}{"file-generator"},
+						"file_upload_enabled": true,
+					},
+				},
+			},
+		},
+	}
+
+	decision := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
+		Status: completionVerificationStatusPass,
+		Reason: "candidate answer claims the requested Agent config is complete",
+	})
+
+	if got := decision.normalizedStatus(); got != completionVerificationStatusNeedsAction {
+		t.Fatalf("decision status = %q, want needs_action; decision=%#v", got, decision)
+	}
+	joinedMissing := strings.Join(decision.MissingSteps, ",")
+	for _, want := range []string{"model mismatch", "deepseek flash"} {
+		if !strings.Contains(joinedMissing, want) {
+			t.Fatalf("MissingSteps = %#v, want fragment %q", decision.MissingSteps, want)
+		}
+	}
+	if decision.NextActionHint != "agent-management/update_agent_config" {
+		t.Fatalf("NextActionHint = %q, want agent-management/update_agent_config", decision.NextActionHint)
 	}
 }
 

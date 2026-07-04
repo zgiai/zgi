@@ -437,8 +437,19 @@ func (r *Runner) handleLoadSkillCall(
 	onEvent func(Event) error,
 ) skillStepResult {
 	skillID := stringArg(args, "skill_id")
-	if _, ok := resolved.Get(skillID); !ok {
+	doc, ok := resolved.Get(skillID)
+	if !ok {
 		return unavailableSkillLoadFeedbackStep(callID, skillID)
+	}
+	canonicalSkillID := strings.TrimSpace(doc.Metadata.ID)
+	if canonicalSkillID == "" {
+		canonicalSkillID = strings.TrimSpace(skillID)
+	}
+	if _, alreadyLoaded := loadedSkills[canonicalSkillID]; alreadyLoaded {
+		return skillStepResult{
+			toolMessage: skills.ToolResultMessage(callID, skillDocumentPayload(doc)),
+			usedSkill:   true,
+		}
 	}
 	r.emitEvent(EventSkillLoadStart, skillLoadPayload(prepared, skillID))
 	doc, trace, err := r.SkillRuntime.LoadSkill(ctx, resolved, skillID)

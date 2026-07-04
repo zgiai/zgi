@@ -672,7 +672,7 @@ func userInputGuardrailPayload(result FinalAnswerGuardResult, blockedMessage str
 		"blocked_questions": userInputQuestionSummaries(questions),
 		"skill_id":          strings.TrimSpace(result.SkillID),
 		"tool_name":         strings.TrimSpace(result.ToolName),
-		"next_step":         "continue planning and call the required skill/tool instead of asking the user to clarify information already resolved in runtime context",
+		"next_step":         "continue from available runtime context and use the next useful skill/tool instead of asking the user to clarify information already resolved in runtime context",
 	}
 }
 
@@ -688,6 +688,6 @@ func toolCallGuardrailPayload(result FinalAnswerGuardResult, blockedSkillID stri
 		"skill_id":       strings.TrimSpace(result.SkillID),
 		"tool_name":      strings.TrimSpace(result.ToolName),
 		"model_feedback": nextStep,
-		"next_step":      "continue planning with the required skill/tool before retrying the blocked action",
+		"next_step":      "continue from available evidence and use the next useful skill/tool before retrying the blocked action",
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
@@ -36,6 +37,85 @@ type completionVerificationDecision struct {
 	FinalAnswer         string   `json:"final_answer"`
 	FinalAnswerGuidance string   `json:"final_answer_guidance"`
 	LanguageHint        string   `json:"-"`
+}
+
+// ReconcileCompletionVerificationResultWithEvidence applies deterministic
+// evidence checks after the model verifier returns. It only clears Agent config
+// verification needs_action results when the latest tool evidence now proves the
+// requested config state, so real tool failures and unrelated verifier findings
+// are still preserved.
+func ReconcileCompletionVerificationResultWithEvidence(evidence map[string]interface{}, result CompletionVerificationResult) CompletionVerificationResult {
+	if _, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
+		result.Status = completionVerificationStatusPass
+		result.Reason = strings.TrimSpace(firstNonEmptyString(
+			result.Reason,
+			"latest tool evidence satisfies the requested operation",
+		))
+		result.MissingSteps = nil
+		result.UnsupportedClaims = nil
+		result.NextActionHint = ""
+		result.FinalAnswer = ""
+		return result
+	}
+	decision := completionVerificationReconcileDecisionWithEvidence(evidence, completionVerificationDecision{
+		Status:            result.Status,
+		Reason:            result.Reason,
+		MissingSteps:      result.MissingSteps,
+		UnsupportedClaims: result.UnsupportedClaims,
+		NextActionHint:    result.NextActionHint,
+		FinalAnswer:       result.FinalAnswer,
+	})
+	if decision.normalizedStatus() != completionVerificationStatusPass || strings.EqualFold(strings.TrimSpace(result.Status), strings.TrimSpace(decision.Status)) {
+		return result
+	}
+	result.Status = completionVerificationStatusPass
+	result.Reason = strings.TrimSpace(firstNonEmptyString(decision.Reason, result.Reason, "latest Agent config evidence satisfied requested state"))
+	result.MissingSteps = nil
+	result.UnsupportedClaims = nil
+	result.NextActionHint = ""
+	result.FinalAnswer = ""
+	return result
+}
+
+func completionVerificationReconcileDecisionWithEvidence(evidence map[string]interface{}, decision completionVerificationDecision) completionVerificationDecision {
+	status := decision.normalizedStatus()
+	if status != completionVerificationStatusNeedsAction || !completionVerificationDecisionLooksLikeAgentConfigNeedsAction(decision) {
+		return decision
+	}
+	optimistic := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
+		Status: completionVerificationStatusPass,
+		Reason: "latest evidence satisfies requested Agent config verification",
+	})
+	if optimistic.normalizedStatus() != completionVerificationStatusPass {
+		return decision
+	}
+	return completionVerificationDecision{
+		Status: completionVerificationStatusPass,
+		Reason: strings.TrimSpace(firstNonEmptyString(
+			decision.Reason,
+			"latest Agent config evidence satisfied requested state",
+		)),
+	}
+}
+
+func completionVerificationDecisionLooksLikeAgentConfigNeedsAction(decision completionVerificationDecision) bool {
+	values := append([]string{}, decision.MissingSteps...)
+	values = append(values, decision.NextActionHint, decision.Reason, decision.FinalAnswerGuidance)
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		if strings.Contains(value, "agent-management/get_agent_config") ||
+			strings.Contains(value, "agent-management/update_agent_config") ||
+			strings.Contains(value, "agent config") ||
+			strings.Contains(value, "enabled_skill_ids") ||
+			strings.Contains(value, "file_upload_enabled") ||
+			strings.Contains(value, "model_provider") {
+			return true
+		}
+	}
+	return false
 }
 
 func (d completionVerificationDecision) normalizedStatus() string {
@@ -171,11 +251,9 @@ func (r *Runner) runCompletionVerifier(
 	if r == nil || r.LLMClient == nil || prepared == nil || prepared.LLMRequest == nil {
 		return completionVerificationDecision{Status: completionVerificationStatusPass}, nil, nil
 	}
-	evidence := map[string]interface{}{}
-	if req.CompletionEvidence != nil {
-		for key, value := range req.CompletionEvidence() {
-			evidence[key] = value
-		}
+	evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successful)
+	if evidence == nil {
+		evidence = map[string]interface{}{}
 	}
 	if !completionVerificationShouldRun(evidence, attempted, successful, toolCallCount) {
 		return completionVerificationDecision{Status: completionVerificationStatusPass}, nil, nil
@@ -234,6 +312,7 @@ func (r *Runner) runCompletionVerifier(
 		if err == nil {
 			decision = completionVerificationApplyPlanOnlySoftening(evidence, decision)
 			decision = completionVerificationApplyPlanOverride(evidence, decision)
+			decision = completionVerificationReconcileDecisionWithEvidence(evidence, decision)
 			decision = completionVerificationAlignLanguage(evidence, decision)
 			return decision, usage, nil
 		}
@@ -487,10 +566,23 @@ func completionVerificationPendingAgentConfigUpdateFields(evidence map[string]in
 func completionVerificationStringSlice(value interface{}) []string {
 	switch typed := value.(type) {
 	case string:
+		trimmed := strings.TrimSpace(typed)
+		if strings.HasPrefix(trimmed, "[") {
+			var decoded []interface{}
+			if err := json.Unmarshal([]byte(trimmed), &decoded); err == nil {
+				return completionVerificationStringSlice(decoded)
+			}
+			var decodedStrings []string
+			if err := json.Unmarshal([]byte(trimmed), &decodedStrings); err == nil {
+				return cleanStringSlice(decodedStrings)
+			}
+		}
 		parts := strings.FieldsFunc(typed, func(r rune) bool {
 			return r == ',' || r == ';' || r == '，' || r == '；' || r == '\n' || r == '\t'
 		})
 		return cleanStringSlice(parts)
+	case []string:
+		return cleanStringSlice(typed)
 	}
 	out := []string{}
 	for _, item := range evidenceSliceFromAny(value) {
@@ -646,6 +738,9 @@ func completionVerificationAgentConfigFieldTarget(field string, source map[strin
 	out := map[string]interface{}{}
 	switch field {
 	case "model":
+		if hint := completionVerificationAgentModelHint(source); hint != "" {
+			out["model_hint"] = hint
+		}
 		if completionVerificationMapHasKey(source, "model_provider") {
 			out["model_provider"] = source["model_provider"]
 		} else if completionVerificationMapHasKey(source, "provider") {
@@ -662,6 +757,90 @@ func completionVerificationAgentConfigFieldTarget(field string, source map[strin
 		}
 	}
 	return out
+}
+
+func completionVerificationAgentModelHint(source map[string]interface{}) string {
+	for _, key := range []string{"model_query", "model_hint", "target_model", "desired_model", "requested_model"} {
+		if value := strings.TrimSpace(evidenceStringFromAny(source[key])); value != "" {
+			return value
+		}
+	}
+	return completionVerificationExtractAgentModelHint(evidenceStringFromAny(source["config_goal"]))
+}
+
+func completionVerificationExtractAgentModelHint(goal string) string {
+	if strings.TrimSpace(goal) == "" {
+		return ""
+	}
+	lower := strings.ToLower(goal)
+	markers := []string{
+		"模型配置为",
+		"模型设置为",
+		"模型改为",
+		"模型换成",
+		"模型使用",
+		"模型用",
+		"使用模型",
+		"model configured as",
+		"model set to",
+		"model should be",
+		"model is",
+		"model:",
+		"model",
+	}
+	bestIndex := -1
+	bestMarker := ""
+	for _, marker := range markers {
+		if index := strings.Index(lower, marker); index >= 0 && (bestIndex < 0 || index < bestIndex) {
+			bestIndex = index
+			bestMarker = marker
+		}
+	}
+	if bestIndex < 0 {
+		return ""
+	}
+	start := bestIndex + len(bestMarker)
+	if start > len(goal) {
+		return ""
+	}
+	rest := completionVerificationTrimAgentModelHintPrefix(goal[start:])
+	if rest == "" {
+		return ""
+	}
+	stop := len(rest)
+	for index, r := range rest {
+		switch r {
+		case '，', '。', '；', ';', ',', '.', '\n', '\r':
+			stop = index
+			goto done
+		}
+	}
+done:
+	hint := strings.TrimSpace(rest[:stop])
+	if len([]rune(hint)) > 80 {
+		hint = string([]rune(hint)[:80])
+	}
+	return strings.Trim(hint, " \t\r\n\"'`“”‘’")
+}
+
+func completionVerificationTrimAgentModelHintPrefix(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimLeft(value, " \t\r\n:：")
+	for {
+		trimmed := strings.TrimSpace(value)
+		lower := strings.ToLower(trimmed)
+		next := trimmed
+		for _, prefix := range []string{"配置为", "设置为", "改为", "换成", "使用", "为", "是", "成", "到", "to ", "as ", "use ", "using "} {
+			if strings.HasPrefix(lower, prefix) {
+				next = strings.TrimSpace(trimmed[len(prefix):])
+				break
+			}
+		}
+		if next == trimmed {
+			return trimmed
+		}
+		value = next
+	}
 }
 
 func completionVerificationCanonicalAgentConfigFields(value interface{}) []string {
@@ -733,6 +912,10 @@ func completionVerificationAgentConfigFieldMismatches(evidence map[string]interf
 	for field, target := range expectations {
 		switch field {
 		case "model":
+			if hint := strings.TrimSpace(evidenceStringFromAny(target["model_hint"])); hint != "" &&
+				!completionVerificationAgentModelActualMatchesHint(configRead, hint) {
+				mismatches = append(mismatches, "agent-management/get_agent_config model mismatch: requested model hint "+hint+" was not verified")
+			}
 			provider := strings.TrimSpace(evidenceStringFromAny(target["model_provider"]))
 			model := strings.TrimSpace(evidenceStringFromAny(target["model"]))
 			if provider != "" {
@@ -753,7 +936,7 @@ func completionVerificationAgentConfigFieldMismatches(evidence map[string]interf
 				continue
 			}
 			actual := strings.TrimSpace(firstNonEmptyString(config[field], configRead[field]))
-			if actual != want {
+			if !completionVerificationAgentConfigTextMatches(want, actual) {
 				mismatches = append(mismatches, "agent-management/get_agent_config "+field+" mismatch")
 			}
 		case "suggested_questions":
@@ -779,6 +962,80 @@ func completionVerificationAgentConfigFieldMismatches(evidence map[string]interf
 	return cleanStringSlice(mismatches)
 }
 
+func completionVerificationAgentModelActualMatchesHint(configRead map[string]interface{}, hint string) bool {
+	tokens := completionVerificationAgentModelHintTokens(hint)
+	if len(tokens) == 0 {
+		return true
+	}
+	config := completionVerificationAgentConfigMap(configRead)
+	actual := completionVerificationCompactAgentModelText(strings.Join([]string{
+		evidenceStringFromAny(config["model_provider"]),
+		evidenceStringFromAny(config["provider"]),
+		evidenceStringFromAny(config["model"]),
+		evidenceStringFromAny(config["model_name"]),
+		evidenceStringFromAny(config["display_name"]),
+		evidenceStringFromAny(configRead["model_provider"]),
+		evidenceStringFromAny(configRead["provider"]),
+		evidenceStringFromAny(configRead["model"]),
+		evidenceStringFromAny(configRead["model_name"]),
+		evidenceStringFromAny(configRead["display_name"]),
+	}, " "))
+	if actual == "" {
+		return false
+	}
+	for _, token := range tokens {
+		if !strings.Contains(actual, token) {
+			return false
+		}
+	}
+	return true
+}
+
+func completionVerificationAgentModelHintTokens(hint string) []string {
+	normalized := strings.ToLower(strings.TrimSpace(hint))
+	if normalized == "" {
+		return nil
+	}
+	tokens := []string{}
+	seen := map[string]struct{}{}
+	for _, raw := range strings.FieldsFunc(normalized, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		token := completionVerificationCompactAgentModelText(raw)
+		if token == "" || completionVerificationAgentModelHintTokenIsGeneric(token) {
+			continue
+		}
+		if _, ok := seen[token]; ok {
+			continue
+		}
+		seen[token] = struct{}{}
+		tokens = append(tokens, token)
+	}
+	if compact := completionVerificationCompactAgentModelText(normalized); compact != "" && len(tokens) == 0 {
+		tokens = append(tokens, compact)
+	}
+	return tokens
+}
+
+func completionVerificationCompactAgentModelText(value string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(value) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func completionVerificationAgentModelHintTokenIsGeneric(token string) bool {
+	switch token {
+	case "model", "llm", "ai", "chat", "text", "use", "using", "to", "as", "is", "the":
+		return true
+	default:
+		return false
+	}
+}
+
 func completionVerificationAgentConfigBindingMismatches(evidence map[string]interface{}) []string {
 	expectations := completionVerificationAgentConfigBindingExpectations(evidence)
 	if len(expectations) == 0 {
@@ -797,18 +1054,18 @@ func completionVerificationAgentConfigBindingMismatches(evidence map[string]inte
 		switch expectation.Action {
 		case "bind", "add", "replace":
 			for _, target := range expectation.Targets {
-				if !completionVerificationStringSliceContainsFold(actualIDs, target) {
+				if !completionVerificationAgentConfigBindingTargetSatisfied(evidence, actualIDs, expectation.Field, target) {
 					mismatches = append(mismatches, "agent-management/get_agent_config "+expectation.Field+" missing bound target: "+target)
 				}
 			}
 			if expectation.Action == "replace" {
-				for _, extra := range completionVerificationUnexpectedAgentConfigBindingTargets(actualIDs, expectation.Targets) {
+				for _, extra := range completionVerificationUnexpectedAgentConfigBindingTargets(evidence, expectation.Field, actualIDs, expectation.Targets) {
 					mismatches = append(mismatches, "agent-management/get_agent_config "+expectation.Field+" contains unexpected target after replace: "+extra)
 				}
 			}
 		case "unbind", "remove":
 			for _, target := range expectation.Targets {
-				if completionVerificationStringSliceContainsFold(actualIDs, target) {
+				if completionVerificationAgentConfigBindingTargetSatisfied(evidence, actualIDs, expectation.Field, target) {
 					mismatches = append(mismatches, "agent-management/get_agent_config "+expectation.Field+" still contains removed target: "+target)
 				}
 			}
@@ -817,15 +1074,44 @@ func completionVerificationAgentConfigBindingMismatches(evidence map[string]inte
 	return cleanStringSlice(mismatches)
 }
 
-func completionVerificationUnexpectedAgentConfigBindingTargets(actual []string, expected []string) []string {
+func completionVerificationAgentConfigBindingTargetSatisfied(evidence map[string]interface{}, actual []string, field string, target string) bool {
+	for _, alias := range completionVerificationAgentConfigBindingTargetAliases(evidence, field, target) {
+		if completionVerificationStringSliceContainsFold(actual, alias) {
+			return true
+		}
+	}
+	return false
+}
+
+func completionVerificationAgentConfigBindingTargetAliases(evidence map[string]interface{}, field string, target string) []string {
+	aliases := []string{target}
+	if strings.EqualFold(strings.TrimSpace(field), "enabled_skill_ids") {
+		for _, candidate := range fastPathAgentSkillCandidates(fastPathSuccessfulAgentCandidateLookupResults(evidence)["list_agent_skill_candidates"]) {
+			refs := cleanStringSlice([]string{candidate.ID, candidate.Name})
+			for _, ref := range refs {
+				if strings.EqualFold(strings.TrimSpace(ref), strings.TrimSpace(target)) {
+					aliases = append(aliases, refs...)
+					break
+				}
+			}
+		}
+	}
+	return cleanStringSlice(dedupeStrings(aliases))
+}
+
+func completionVerificationUnexpectedAgentConfigBindingTargets(evidence map[string]interface{}, field string, actual []string, expected []string) []string {
 	actual = cleanStringSlice(dedupeStrings(actual))
 	expected = cleanStringSlice(dedupeStrings(expected))
 	if len(actual) == 0 || len(expected) == 0 {
 		return nil
 	}
+	expectedAliases := []string{}
+	for _, target := range expected {
+		expectedAliases = append(expectedAliases, completionVerificationAgentConfigBindingTargetAliases(evidence, field, target)...)
+	}
 	out := []string{}
 	for _, item := range actual {
-		if !completionVerificationStringSliceContainsFold(expected, item) {
+		if !completionVerificationStringSliceContainsFold(expectedAliases, item) {
 			out = append(out, item)
 		}
 	}
@@ -1046,6 +1332,15 @@ func completionVerificationInvocationArguments(invocation map[string]interface{}
 }
 
 func completionVerificationLatestAgentConfigReadResult(evidence map[string]interface{}) (map[string]interface{}, bool) {
+	if result, ok := completionVerificationLatestAgentConfigReadResultAfterUpdate(evidence); ok {
+		return result, true
+	}
+	if result, ok := fastPathLatestSuccessfulAgentConfigReadResultAfterUpdate(evidence); ok {
+		return result, true
+	}
+	if result, ok := fastPathLatestSuccessfulAgentReadResult(evidence, "get_agent_config"); ok {
+		return result, true
+	}
 	invocations := completionVerificationEvidenceInvocations(evidence)
 	for i := len(invocations) - 1; i >= 0; i-- {
 		invocation := invocations[i]
@@ -1064,6 +1359,51 @@ func completionVerificationLatestAgentConfigReadResult(evidence map[string]inter
 			continue
 		}
 		return result, true
+	}
+	return nil, false
+}
+
+func completionVerificationLatestAgentConfigReadResultAfterUpdate(evidence map[string]interface{}) (map[string]interface{}, bool) {
+	scan := func(invocations []map[string]interface{}) (map[string]interface{}, bool) {
+		seenUpdate := false
+		var latest map[string]interface{}
+		for _, invocation := range invocations {
+			if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["skill_id"])), skills.SkillAgentManagement) {
+				continue
+			}
+			toolName := strings.TrimSpace(evidenceStringFromAny(invocation["tool_name"]))
+			switch {
+			case strings.EqualFold(toolName, "update_agent_config") && completionVerificationInvocationSucceeded(invocation):
+				seenUpdate = true
+				latest = nil
+			case seenUpdate && strings.EqualFold(toolName, "get_agent_config") && completionVerificationInvocationSucceeded(invocation):
+				result := evidenceMapFromAny(invocation["result"])
+				if len(result) == 0 {
+					result = evidenceMapFromAny(invocation["result_summary"])
+				}
+				if len(result) == 0 {
+					result = evidenceMapFromAny(invocation["tool_result"])
+				}
+				if len(result) > 0 {
+					latest = result
+				}
+			}
+		}
+		if len(latest) == 0 {
+			return nil, false
+		}
+		return latest, true
+	}
+	if result, ok := scan(evidenceMapsFromAny(evidence["skill_invocations"])); ok {
+		return result, true
+	}
+	if ledger := evidenceMapFromAny(evidence["execution_ledger"]); len(ledger) > 0 {
+		if result, ok := scan(evidenceMapsFromAny(ledger["skill_invocations"])); ok {
+			return result, true
+		}
+		if result, ok := scan(evidenceMapsFromAny(evidenceMapFromAny(ledger["summary"])["skill_invocations"])); ok {
+			return result, true
+		}
 	}
 	return nil, false
 }
@@ -1101,6 +1441,7 @@ func completionVerificationAgentConfigCollectionIDs(result map[string]interface{
 		case "enabled_skill_ids":
 			appendFrom(source["skill_ids"])
 			appendFrom(source["agent_skill_ids"])
+			appendFrom(source["enabled_skill_refs"])
 			appendFrom(source["enabled_skills"])
 			appendFrom(source["skills"])
 			appendFrom(source["agent_skills"])
@@ -1215,6 +1556,18 @@ func completionVerificationAgentConfigBindingIDsForField(field string, value int
 		)
 		out = append(out,
 			completionVerificationStringSlice(item["id"])...,
+		)
+		out = append(out,
+			completionVerificationStringSlice(item["name"])...,
+		)
+		out = append(out,
+			completionVerificationStringSlice(item["label"])...,
+		)
+		out = append(out,
+			completionVerificationStringSlice(item["title"])...,
+		)
+		out = append(out,
+			completionVerificationStringSlice(item["display_name"])...,
 		)
 	case "knowledge_dataset_ids":
 		out = append(out,
@@ -1344,6 +1697,77 @@ func completionVerificationStringSlicesEqual(want []string, actual []string) boo
 		}
 	}
 	return true
+}
+
+func completionVerificationAgentConfigTextMatches(want string, actual string) bool {
+	want = strings.TrimSpace(want)
+	actual = strings.TrimSpace(actual)
+	if want == "" {
+		return true
+	}
+	if actual == want {
+		return true
+	}
+	if completionVerificationTextEvidenceLooksTruncated(want, actual) &&
+		completionVerificationCommonPrefixRuneLen(want, actual) >= 20 {
+		return true
+	}
+	for _, prefix := range []string{
+		completionVerificationTrimTextEvidencePrefix(want),
+		completionVerificationTrimTextEvidencePrefix(actual),
+	} {
+		if len([]rune(prefix)) < 20 {
+			continue
+		}
+		if strings.HasPrefix(want, prefix) && strings.HasPrefix(actual, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func completionVerificationTrimTextEvidencePrefix(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimRight(value, ".…\uFFFD?")
+	return strings.TrimSpace(value)
+}
+
+func completionVerificationTextEvidenceLooksTruncated(a string, b string) bool {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a == "" || b == "" {
+		return false
+	}
+	hasMarker := func(value string) bool {
+		return strings.HasSuffix(value, "...") ||
+			strings.HasSuffix(value, "..") ||
+			strings.HasSuffix(value, "…") ||
+			strings.HasSuffix(value, "\uFFFD") ||
+			strings.HasSuffix(value, "?")
+	}
+	if hasMarker(a) || hasMarker(b) {
+		return true
+	}
+	shorter, longer := len([]rune(a)), len([]rune(b))
+	if shorter > longer {
+		shorter, longer = longer, shorter
+	}
+	return shorter >= 20 && longer >= shorter*2
+}
+
+func completionVerificationCommonPrefixRuneLen(a string, b string) int {
+	ar := []rune(strings.TrimSpace(a))
+	br := []rune(strings.TrimSpace(b))
+	limit := len(ar)
+	if len(br) < limit {
+		limit = len(br)
+	}
+	for i := 0; i < limit; i++ {
+		if ar[i] != br[i] {
+			return i
+		}
+	}
+	return limit
 }
 
 func completionVerificationHasFailedEvidence(evidence map[string]interface{}) bool {

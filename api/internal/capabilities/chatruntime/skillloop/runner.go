@@ -109,7 +109,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	successfulToolCallsByKey := map[string]SkillToolCallRef{}
 	failedToolCallReasons := map[string]string{}
 	skillUsed := false
-	loadedSkills := map[string]struct{}{}
+	loadedSkills := initialLoadedSkillsForRun(req, resolved)
 	maxSkillSteps := maxSkillStepsForTurn(resolved)
 	postVerificationConfigured := req.CompletionEvidence != nil
 	finalAnswerGuard := req.FinalAnswerGuard
@@ -180,17 +180,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		}
 		if len(toolCalls) == 0 && postVerificationConfigured {
 			evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
-			if feedback, shouldContinue := completionEvidenceContinuationSystemMessage(evidence, evidenceContinuationRetryCount, resolved); shouldContinue {
-				evidenceContinuationRetryCount++
-				if evidenceContinuationRetryCount <= defaultMaxCompletionVerificationRetries {
-					if planningResult.answerStreamed && text != "" {
-						r.emitAnswerRetract(ctx, prepared, text, nil)
-					}
-					messages = append(messages, feedback)
-					forcedToolChoiceForNextRound = completionEvidenceContinuationToolChoice(evidence, loadedSkills, resolved)
-					continue
-				}
-			}
 			if answer, ok := immediateCompletionEvidenceFastPathAnswer(evidence); ok {
 				if planningResult.answerStreamed && text != "" {
 					r.emitAnswerRetract(ctx, prepared, text, nil)
@@ -202,6 +191,17 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					"message_id", prepared.Message.ID.String(),
 				)
 				return answerBuilder.String(), usage, nil
+			}
+			if feedback, shouldContinue := completionEvidenceContinuationSystemMessage(evidence, evidenceContinuationRetryCount, resolved); shouldContinue {
+				evidenceContinuationRetryCount++
+				if evidenceContinuationRetryCount <= defaultMaxCompletionVerificationRetries {
+					if planningResult.answerStreamed && text != "" {
+						r.emitAnswerRetract(ctx, prepared, text, nil)
+					}
+					messages = append(messages, feedback)
+					forcedToolChoiceForNextRound = completionEvidenceContinuationToolChoice(evidence, loadedSkills, resolved)
+					continue
+				}
 			}
 			if !finalizingProgressEmitted && (toolCallCount > 0 || len(attemptedToolCalls) > 0 || len(successfulToolCalls) > 0) {
 				if r.emitAgentProgress(ctx, prepared, completionVerificationFinalizingProgressText(prepared, evidence), nil) {
@@ -220,7 +220,13 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					Status: completionVerificationStatusFailed,
 					Reason: "\u6700\u7ec8\u7b54\u6848\u540e\u6821\u9a8c\u6682\u65f6\u4e0d\u53ef\u7528\uff0c\u56e0\u6b64\u4e0d\u80fd\u53ef\u9760\u786e\u8ba4\u672c\u8f6e\u64cd\u4f5c\u5df2\u7ecf\u5b8c\u6210\u3002",
 				}
-				text = completionVerificationFallbackAnswer(decision, text)
+				if answer, ok := completionEvidenceVerifiedFinalAnswer(req, successfulToolCalls, text); ok {
+					text = answer
+					decision.Status = completionVerificationStatusPass
+					decision.Reason = "latest tool evidence satisfies the requested operation"
+				} else {
+					text = completionVerificationFallbackAnswer(decision, text)
+				}
 				notifyCompletionVerificationResult(req, decision, text)
 			} else {
 				switch decision.normalizedStatus() {
@@ -229,15 +235,36 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
 					if answer, ok := FastPathPreferredFinalAnswerForCompletionEvidence(evidence, text); ok {
 						text = answer
+					} else if answer := strings.TrimSpace(decision.FinalAnswer); answer != "" {
+						text = answer
 					} else if strings.TrimSpace(text) == "" {
 						if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
 							text = answer
 						}
 					}
+					notifyCompletionVerificationResult(req, decision, text)
 				case completionVerificationStatusNeedsAction:
+					if answer, ok := completionEvidenceVerifiedFinalAnswer(req, successfulToolCalls, text); ok {
+						text = answer
+						decision.Status = completionVerificationStatusPass
+						decision.Reason = "latest tool evidence satisfies the requested operation"
+						decision.MissingSteps = nil
+						decision.NextActionHint = ""
+						completionVerificationRetryCount = 0
+						notifyCompletionVerificationResult(req, decision, text)
+						break
+					}
 					completionVerificationRetryCount++
 					if completionVerificationRetryCount > defaultMaxCompletionVerificationRetries {
-						text = completionVerificationFallbackAnswer(decision, text)
+						if answer, ok := completionEvidenceVerifiedFinalAnswer(req, successfulToolCalls, text); ok {
+							text = answer
+							decision.Status = completionVerificationStatusPass
+							decision.Reason = "latest tool evidence satisfies the requested operation"
+							decision.MissingSteps = nil
+							decision.NextActionHint = ""
+						} else {
+							text = completionVerificationFallbackAnswer(decision, text)
+						}
 						notifyCompletionVerificationResult(req, decision, text)
 					} else {
 						messages = append(messages, completionVerificationSystemMessage(decision, text, completionVerificationRetryCount))
@@ -254,7 +281,15 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					} else {
 						completionVerificationRetryCount++
 						if completionVerificationRetryCount > defaultMaxCompletionVerificationRetries {
-							text = completionVerificationFallbackAnswer(decision, text)
+							if answer, ok := completionEvidenceVerifiedFinalAnswer(req, successfulToolCalls, text); ok {
+								text = answer
+								decision.Status = completionVerificationStatusPass
+								decision.Reason = "latest tool evidence satisfies the requested operation"
+								decision.MissingSteps = nil
+								decision.NextActionHint = ""
+							} else {
+								text = completionVerificationFallbackAnswer(decision, text)
+							}
 							notifyCompletionVerificationResult(req, decision, text)
 						} else {
 							messages = append(messages, completionVerificationSystemMessage(decision, text, completionVerificationRetryCount))
@@ -267,7 +302,15 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				default:
 					completionVerificationRetryCount++
 					if completionVerificationRetryCount > defaultMaxCompletionVerificationRetries {
-						text = completionVerificationFallbackAnswer(decision, text)
+						if answer, ok := completionEvidenceVerifiedFinalAnswer(req, successfulToolCalls, text); ok {
+							text = answer
+							decision.Status = completionVerificationStatusPass
+							decision.Reason = "latest tool evidence satisfies the requested operation"
+							decision.MissingSteps = nil
+							decision.NextActionHint = ""
+						} else {
+							text = completionVerificationFallbackAnswer(decision, text)
+						}
 						notifyCompletionVerificationResult(req, decision, text)
 					} else {
 						messages = append(messages, completionVerificationSystemMessage(decision, text, completionVerificationRetryCount))
@@ -393,6 +436,13 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				}, nil)
 			}
 			if strings.TrimSpace(result.trace.Kind) == "" {
+				if result.usedSkill {
+					skillUsed = true
+				}
+				if result.usedTool {
+					toolCallCount++
+					incrementSkillToolCallCount(skillToolCallCounts, result.trace.SkillID)
+				}
 				if result.toolMessage.Role != "" || result.toolMessage.ToolCallID != "" || result.toolMessage.Content != nil {
 					messages = append(messages, result.toolMessage)
 				}
@@ -660,21 +710,21 @@ func completionEvidenceContinuationPendingPlanStepSystemMessage(evidence map[str
 		return adapter.Message{}, false
 	}
 	payloadJSON, err := json.Marshal(map[string]interface{}{
-		"required_next_tool": action,
-		"plan_step":          step,
+		"suggested_next_tool": action,
+		"pending_tool_step":   step,
 	})
 	if err != nil {
 		payloadJSON = []byte(fmt.Sprint(step))
 	}
 	content := strings.Join([]string{
 		fmt.Sprintf("Runtime execution evidence requires continued tool use before a final answer. Evidence-continuation retry %d of %d.", retryCount+1, defaultMaxCompletionVerificationRetries),
-		"The operation plan is an advisory strategy snapshot, not proof of completion. It currently has an executable pending tool step with no successful evidence.",
-		"If the current page context and available tools still support this action, load the required skill if needed and call the required tool. Resolve arguments from the latest user request, page context, and visible asset evidence.",
-		"If the pending step is agent-management/update_agent_config, use plan_step.config_goal as the user-facing configuration target and infer concrete update_agent_config arguments from the tool schema, latest user request, page context, and prior read results; extract the target field values from the latest user request and read result. If plan_step also lists expected_updated_fields, treat them as verification hints rather than the only allowed fields. Do not repeat an identical get_agent_config call when it already succeeded earlier in this turn.",
-		"If only load_skill is available for that skill, first call load_skill with the exact skill_id from required_next_tool, then call call_skill_tool with the exact skill_id/tool_name after the skill loads.",
+		"The operation plan is an advisory strategy snapshot, not proof of completion. It currently has a pending phase with no successful evidence.",
+		"If the current page context and available tools still support this action, load the suggested skill if needed and call the suggested tool. Resolve arguments from the latest user request, page context, and visible asset evidence.",
+		"If the pending step is agent-management/update_agent_config, use pending_tool_step.config_goal as the user-facing configuration target and infer concrete update_agent_config arguments from the tool schema, latest user request, page context, and prior read results; extract the target field values from the latest user request and read result. If pending_tool_step also lists expected_updated_fields, treat them as verification hints rather than the only allowed fields. Do not repeat an identical get_agent_config call when it already succeeded earlier in this turn.",
+		"If only load_skill is available for that skill, first call load_skill with the exact skill_id from suggested_next_tool, then call call_skill_tool with the exact skill_id/tool_name after the skill loads.",
 		"Do not tell the user an approval card has been submitted unless a governed tool call actually returned a pending governance event. Governance approval cards are created by tool calls, not by natural-language progress text.",
 		"If the action is impossible because context, permissions, or tool capability is missing, call the appropriate read/list tool when that can resolve the missing context; otherwise stop and explain the exact blocker truthfully.",
-		"Do not answer as complete until successful tool evidence and any required page observation evidence exist for this pending step.",
+		"Do not answer as complete until successful tool evidence and any required page observation evidence exist for this pending phase.",
 		"Pending plan step JSON:\n" + string(payloadJSON),
 	}, "\n")
 	return adapter.Message{Role: "system", Content: content}, true
@@ -732,6 +782,62 @@ func resolvedSkillContains(resolved *skills.ResolvedSkills, skillID string) bool
 		}
 	}
 	return false
+}
+
+func initialLoadedSkillsForRun(req RunRequest, resolved *skills.ResolvedSkills) map[string]struct{} {
+	loaded := map[string]struct{}{}
+	add := func(skillID string) {
+		if canonical, ok := canonicalResolvedSkillID(resolved, skillID); ok {
+			loaded[canonical] = struct{}{}
+		}
+	}
+	metadata := currentMetadataForRun(req)
+	for _, skillID := range evidenceStringSliceFromAny(metadata["loaded_skill_ids"]) {
+		add(skillID)
+	}
+	for _, skillID := range evidenceStringSliceFromAny(metadata["loaded_skills"]) {
+		add(skillID)
+	}
+	appendLoadedFromInvocations := func(invocations []map[string]interface{}) {
+		for _, invocation := range invocations {
+			if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["kind"])), "skill_load") {
+				continue
+			}
+			if !completionVerificationInvocationSucceeded(invocation) {
+				continue
+			}
+			add(evidenceStringFromAny(invocation["skill_id"]))
+		}
+	}
+	appendLoadedFromInvocations(evidenceMapsFromAny(metadata["skill_invocations"]))
+	ledger := evidenceMapFromAny(metadata["execution_ledger"])
+	appendLoadedFromInvocations(evidenceMapsFromAny(ledger["skill_invocations"]))
+	appendLoadedFromInvocations(evidenceMapsFromAny(evidenceMapFromAny(ledger["summary"])["skill_invocations"]))
+	return loaded
+}
+
+func canonicalResolvedSkillID(resolved *skills.ResolvedSkills, skillID string) (string, bool) {
+	skillID = strings.TrimSpace(skillID)
+	if skillID == "" || resolved == nil {
+		return "", false
+	}
+	for _, resolvedSkillID := range resolved.SkillIDs() {
+		if strings.EqualFold(strings.TrimSpace(resolvedSkillID), skillID) {
+			return strings.TrimSpace(resolvedSkillID), true
+		}
+	}
+	return "", false
+}
+
+func completionEvidenceVerifiedFinalAnswer(req RunRequest, successful []SkillToolCallRef, candidate string) (string, bool) {
+	evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successful)
+	if answer, ok := FastPathPreferredFinalAnswerForCompletionEvidence(evidence, candidate); ok {
+		return answer, true
+	}
+	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
+		return answer, true
+	}
+	return "", false
 }
 
 func completionEvidenceForFastPathWithSuccessfulToolCalls(req RunRequest, successful []SkillToolCallRef) map[string]interface{} {
@@ -1457,19 +1563,19 @@ func repeatedSuccessfulReadOnlyPendingMutationPayload(skillID string, toolName s
 	nextAction := strings.Join([]string{
 		"Do not call the same read-only tool with identical arguments again.",
 		"The current operation plan still has a pending asset-changing Agent step.",
-		"Call the required pending tool next using the latest user request, page context, and previous read result.",
+		"Call the suggested pending tool next when the latest user request, page context, and previous read result still show that the mutation is needed.",
 		"For Agent config updates, use the plan_step config_goal and the update_agent_config tool schema to infer concrete arguments and extract the target field values; do not wait for another read-only config call when the same read already succeeded.",
 		"After the mutation succeeds, read the Agent configuration again only if verification is still required.",
 	}, " ")
 	if required != "" {
-		nextAction = fmt.Sprintf("Required next tool: %s. %s", required, nextAction)
+		nextAction = fmt.Sprintf("Suggested next tool: %s. %s", required, nextAction)
 	}
 	return map[string]interface{}{
 		"status":                  "completed",
 		"advisory":                "pending_mutation_step_after_repeated_read_only_tool",
 		"skill_id":                strings.TrimSpace(skillID),
 		"tool_name":               strings.TrimSpace(toolName),
-		"required_next_tool":      required,
+		"suggested_next_tool":     required,
 		"plan_step":               copyStringAnyMap(step),
 		"message":                 "This read-only tool call already succeeded, but the operation plan still has an asset-changing Agent step pending.",
 		"previous_result_summary": summarizeRepeatedSuccessfulReadOnlyResult(previous.Result),
@@ -1485,6 +1591,9 @@ func plannerFeedbackRequestsPendingMutation(trace skills.SkillTrace) bool {
 		return false
 	}
 	required := strings.TrimSpace(evidenceStringFromAny(trace.Arguments["required_next_tool"]))
+	if required == "" {
+		required = strings.TrimSpace(evidenceStringFromAny(trace.Arguments["suggested_next_tool"]))
+	}
 	return required != ""
 }
 
@@ -1919,7 +2028,7 @@ func runFinalAnswerGuard(guard FinalAnswerGuard, req FinalAnswerGuardRequest) (F
 	}
 	result.Message = strings.TrimSpace(result.Message)
 	if result.Message == "" {
-		result.Message = "The previous candidate final answer was blocked because a required skill/tool call has not succeeded in this turn. Continue planning and call the required skill/tool before claiming completion."
+		result.Message = "The previous candidate final answer was blocked because the claimed outcome lacks successful skill/tool evidence in this turn. Continue from the latest evidence, call the next useful tool if it is still needed, and only then claim completion."
 	}
 	return result, true
 }
@@ -1934,7 +2043,7 @@ func runUserInputGuard(guard UserInputGuard, req UserInputGuardRequest) (FinalAn
 	}
 	result.Message = strings.TrimSpace(result.Message)
 	if result.Message == "" {
-		result.Message = "The requested user clarification was blocked because runtime context already contains the information needed to continue. Continue planning and call the required skill/tool before asking the user."
+		result.Message = "The requested user clarification was blocked because runtime context already contains the information needed to continue. Continue from the latest evidence and use the next useful tool before asking the user."
 	}
 	return result, true
 }
@@ -1949,7 +2058,7 @@ func runToolCallGuard(guard ToolCallGuard, req ToolCallGuardRequest) (FinalAnswe
 	}
 	result.Message = strings.TrimSpace(result.Message)
 	if result.Message == "" {
-		result.Message = "The requested skill tool call was blocked because it would run the task in the wrong order. Continue planning and call the required skill/tool first."
+		result.Message = "The requested skill tool call was blocked because it would run the task in the wrong order. Continue from the latest evidence and use the next useful tool first."
 	}
 	return result, true
 }
@@ -2360,7 +2469,7 @@ func agenticSkillLoopSystemMessage() adapter.Message {
 		"If you share progress or reasoning, frame it around the user's goal, current page evidence, and the next useful action; do not expose a rigid hidden checklist.",
 		"Do not start every task by listing resources or navigating. If current page context, recent tool results, or visible resolved targets are enough, act from that evidence directly.",
 		"Do not announce that you need to navigate, open, enter, or switch pages unless a visible console navigation tool is available and you are about to call it. If no navigation tool is available, say you will continue from current page evidence.",
-		"When an additional system message contains required_next_tool, treat it as an important planned next step, not as a reason to ignore fresh evidence. Load and call it when the current page context and prior tool/client-action evidence show it is still needed; do not repeat the same navigation or business tool after matching evidence already satisfies the step.",
+		"When an additional system message contains preferred_route_action or suggested_next_tool, treat it as an advisory next phase, not as a reason to ignore fresh evidence. Load and call it when the current page context and prior tool/client-action evidence show it is still needed; do not repeat the same navigation or business tool after matching evidence already satisfies the step.",
 		"After each skill/tool result, continue with the next necessary action or final answer. Summarize only user-relevant outcomes, not internal bookkeeping.",
 		"If a tool call fails, explain the likely user-relevant cause, fix the arguments, and retry when possible.",
 		"If a tool call fails, do not repeat the same tool with the same arguments. Re-plan from the error before retrying.",

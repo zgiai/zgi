@@ -77,6 +77,177 @@ func TestCompletionEvidenceContinuationAllowsPendingPlanStepForResolvedSkill(t *
 	}
 }
 
+func TestInitialLoadedSkillsForRunRestoresMetadataState(t *testing.T) {
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
+		{Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement}},
+		{Metadata: skills.SkillMetadata{ID: skills.SkillFileGenerator}},
+	}}
+	loaded := initialLoadedSkillsForRun(RunRequest{
+		CurrentMetadata: func() map[string]interface{} {
+			return map[string]interface{}{
+				"loaded_skill_ids": []interface{}{"AGENT-MANAGEMENT", "missing-skill"},
+				"skill_invocations": []interface{}{
+					map[string]interface{}{
+						"kind":     "skill_load",
+						"status":   "success",
+						"skill_id": skills.SkillFileGenerator,
+					},
+				},
+			}
+		},
+	}, resolved)
+
+	for _, skillID := range []string{skills.SkillAgentManagement, skills.SkillFileGenerator} {
+		if _, ok := loaded[skillID]; !ok {
+			t.Fatalf("loaded[%q] missing; got %#v", skillID, loaded)
+		}
+	}
+	if _, ok := loaded["missing-skill"]; ok {
+		t.Fatalf("loaded includes unresolved skill: %#v", loaded)
+	}
+}
+
+func TestHandleLoadSkillCallDoesNotEmitEventForAlreadyLoadedSkill(t *testing.T) {
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{
+			ID:          skills.SkillAgentManagement,
+			Name:        "Agent Management",
+			Description: "Manage agents.",
+			RuntimeType: "prompt",
+		},
+		Instructions: "# Agent Management\n",
+	}}}
+	runner := &Runner{
+		SkillRuntime: skills.NewRuntime(nil, nil),
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{})
+	loaded := map[string]struct{}{skills.SkillAgentManagement: {}}
+	events := []Event{}
+
+	result := runner.handleLoadSkillCall(
+		context.Background(),
+		prepared,
+		resolved,
+		"call-1",
+		map[string]interface{}{"skill_id": skills.SkillAgentManagement},
+		loaded,
+		func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	)
+
+	if len(events) != 0 {
+		t.Fatalf("events = %#v, want no duplicated skill_load events", events)
+	}
+	if result.trace.Kind != "" {
+		t.Fatalf("trace = %#v, want no timeline trace for already loaded skill", result.trace)
+	}
+	if _, ok := loaded[skills.SkillAgentManagement]; !ok {
+		t.Fatalf("loaded skill was removed: %#v", loaded)
+	}
+	if !result.usedSkill {
+		t.Fatal("usedSkill = false, want true for already loaded skill")
+	}
+	if result.toolMessage.Role == "" || result.toolMessage.ToolCallID == "" || result.toolMessage.Content == nil {
+		t.Fatalf("toolMessage = %#v, want skill document tool message", result.toolMessage)
+	}
+}
+
+func TestCompletionEvidenceVerifiedFinalAnswerOverridesStaleNeedsActionText(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "completed",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":                                "tool:agent-management/update_agent_config",
+					"status":                            "completed",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "update_agent_config",
+					"expected_updated_fields":           []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+					"expected_binding_actions":          map[string]interface{}{"enabled_skill_ids": "bind"},
+					"requires_post_update_verification": true,
+					"arguments": map[string]interface{}{
+						"model_provider":        "deepseek",
+						"model":                 "deepseek-v4-flash",
+						"system_prompt":         "Write fiction and generate files when needed.",
+						"file_upload_enabled":   true,
+						"add_enabled_skill_ids": []interface{}{"file-generator"},
+					},
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config#post_update",
+					"status":                            "completed",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"required_post_update_verification": true,
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"arguments": map[string]interface{}{
+					"expected_updated_fields":  []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+					"expected_binding_actions": map[string]interface{}{"enabled_skill_ids": "bind"},
+					"model_provider":           "deepseek",
+					"model":                    "deepseek-v4-flash",
+					"system_prompt":            "Write fiction and generate files when needed.",
+					"file_upload_enabled":      true,
+					"add_enabled_skill_ids":    []interface{}{"file-generator"},
+				},
+				"result": map[string]interface{}{
+					"status":              "completed",
+					"agent_id":            "agent-created-1",
+					"agent_name":          "小说创作大师",
+					"updated_fields":      []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+					"satisfied_fields":    []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+					"model_provider":      "deepseek",
+					"model":               "deepseek-v4-flash",
+					"file_upload_enabled": true,
+					"enabled_skill_ids":   []interface{}{"file-generator"},
+				},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result": map[string]interface{}{
+					"status":              "completed",
+					"agent_id":            "agent-created-1",
+					"agent_name":          "小说创作大师",
+					"model_provider":      "deepseek",
+					"model":               "deepseek-v4-flash",
+					"system_prompt":       "Write fiction and generate files when needed.",
+					"file_upload_enabled": true,
+					"enabled_skill_ids":   []interface{}{"file-generator"},
+				},
+			},
+		},
+	}
+
+	answer, ok := completionEvidenceVerifiedFinalAnswer(RunRequest{
+		CompletionEvidence: func() map[string]interface{} {
+			return evidence
+		},
+	}, nil, "我还不能确认这个操作已经完成。")
+	if !ok {
+		t.Fatal("completionEvidenceVerifiedFinalAnswer() ok = false, want tool evidence to override stale needs_action text")
+	}
+	if strings.Contains(answer, "不能确认") || strings.Contains(strings.ToLower(answer), "cannot confirm") {
+		t.Fatalf("answer = %q, want confirmed evidence-grounded result", answer)
+	}
+	for _, want := range []string{"deepseek-v4-flash", "文件上传"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, want %q", answer, want)
+		}
+	}
+}
+
 func TestCompletionEvidenceContinuationAllowsPendingReadPlanStepForResolvedSkill(t *testing.T) {
 	evidence := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
@@ -6959,6 +7130,56 @@ func TestRunnerCompletionEvidenceDisablesLegacyFinalAnswerGuard(t *testing.T) {
 	}
 	if answer != "The operation is complete." {
 		t.Fatalf("answer = %q, want verifier-approved candidate answer", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want planning and verifier only", fakeLLM.appChatCalls)
+	}
+}
+
+func TestRunnerCompletionVerifierPassUsesVerifierFinalAnswer(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "\u6211\u8fd8\u4e0d\u80fd\u786e\u8ba4\u8fd9\u4e2a\u64cd\u4f5c\u5df2\u7ecf\u5b8c\u6210\u3002"}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"pass","reason":"tool evidence supports completion","final_answer":"\u5df2\u5b8c\u6210\uff1a\u667a\u80fd\u4f53\u5df2\u521b\u5efa\u5e76\u914d\u7f6e\u5b8c\u6210\u3002"}`}}}},
+		},
+	}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "\u521b\u5efa\u4e00\u4e2a\u667a\u80fd\u4f53\u5e76\u5b8c\u6210\u914d\u7f6e"}},
+	})
+	var verificationResult CompletionVerificationResult
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
+		CompletionEvidence: func() map[string]interface{} {
+			return map[string]interface{}{
+				"operation_plan": map[string]interface{}{"status": "completed"},
+				"skill_invocations": []interface{}{map[string]interface{}{
+					"kind": "tool_call", "status": "success", "skill_id": "test-skill", "tool_name": "test_tool",
+				}},
+			}
+		},
+		OnCompletionVerification: func(result CompletionVerificationResult) {
+			verificationResult = result
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "\u5df2\u5b8c\u6210\uff1a\u667a\u80fd\u4f53\u5df2\u521b\u5efa\u5e76\u914d\u7f6e\u5b8c\u6210\u3002" {
+		t.Fatalf("answer = %q, want verifier final answer", answer)
+	}
+	if verificationResult.Status != completionVerificationStatusPass {
+		t.Fatalf("completion verification status = %q, want pass", verificationResult.Status)
+	}
+	if verificationResult.FinalAnswer != answer {
+		t.Fatalf("completion verification final answer = %q, want %q", verificationResult.FinalAnswer, answer)
 	}
 	if fakeLLM.appChatCalls != 2 {
 		t.Fatalf("AppChat calls = %d, want planning and verifier only", fakeLLM.appChatCalls)
