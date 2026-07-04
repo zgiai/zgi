@@ -61,7 +61,7 @@ type LLMModule struct {
 	// Database
 	DB *gorm.DB
 
-	// IsCloudMode indicates whether the system is running in Cloud mode (ZGI_EDITION=CLOUD)
+	// IsCloudMode indicates whether the system is running in Cloud mode (ZGI_RUN_MODE=cloud)
 	IsCloudMode bool
 
 	// Repositories

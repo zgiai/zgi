@@ -184,7 +184,7 @@ func RegisterCommonRoutes(r *gin.RouterGroup, m *LLMModule) {
 		tenantChannels.POST("/:id/test/model", m.ChannelHandler.TestChannelModel)
 		tenantChannels.POST("/:id/test/batch", m.ChannelHandler.BatchTestChannelModels)
 
-		// Cloud-only: platform channel management (ZGI_EDITION=CLOUD)
+		// Cloud-only: platform channel management (ZGI_RUN_MODE=cloud)
 		if m.IsCloudMode {
 			tenantChannels.GET("/platform", m.ChannelHandler.GetPlatformChannel)
 			tenantChannels.PUT("/platform", m.ChannelHandler.UpdatePlatformChannelSettings)

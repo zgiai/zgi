@@ -270,7 +270,7 @@ func loadJWTConfig(cfg *Config, source *envSource) error {
 		ExpireDays:     expireMinutes / (24 * 60),
 		ExpireDuration: time.Duration(expireMinutes) * time.Minute,
 		JWTExpire:      time.Duration(expireMinutes) * time.Minute,
-		Issuer:         source.string("SELF_HOSTED", envZGIEdition),
+		Issuer:         platformRunMode(source),
 	}
 	return nil
 }
@@ -370,7 +370,7 @@ func loadConsoleConfig(cfg *Config, source *envSource) {
 
 func loadPlatformConfig(cfg *Config, source *envSource) {
 	cfg.Platform = PlatformConfig{
-		Edition:                  source.string("SELF_HOSTED", envZGIEdition),
+		Edition:                  platformRunMode(source),
 		AdminPass:                source.string("", envZGIAdminPass),
 		OrgInviteDefaultPassword: source.string("", envZGIOrgInviteDefaultPassword),
 		CloudBootstrap: CloudBootstrapConfig{
@@ -379,6 +379,20 @@ func loadPlatformConfig(cfg *Config, source *envSource) {
 			AdminPassword: source.string("", envCloudBootstrapAdminPassword),
 		},
 	}
+}
+
+func platformRunMode(source *envSource) string {
+	mode := source.string("SELF_HOSTED", envZGIRunMode)
+	return normalizePlatformRunMode(mode)
+}
+
+func normalizePlatformRunMode(mode string) string {
+	normalized := strings.ToUpper(strings.TrimSpace(mode))
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	if normalized == "" {
+		return "SELF_HOSTED"
+	}
+	return normalized
 }
 
 func loadFeatureConfig(cfg *Config, source *envSource) {
