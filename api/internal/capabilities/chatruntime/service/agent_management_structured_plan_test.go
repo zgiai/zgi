@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/modules/skills"
@@ -23,8 +24,8 @@ func TestAgentManagementStructuredPlanCapturesBindingUpdate(t *testing.T) {
 	if got := plan.SchemaVersion; got != aiChatStructuredPlanVersion {
 		t.Fatalf("structured plan schema = %q, want %q", got, aiChatStructuredPlanVersion)
 	}
-	if got := plan.Intent; got != "agent.update_bindings" {
-		t.Fatalf("structured plan intent = %q, want agent.update_bindings; plan=%#v", got, plan)
+	if got := plan.Intent; got != "agent.update_config" {
+		t.Fatalf("structured plan intent = %q, want agent.update_config; plan=%#v", got, plan)
 	}
 	for _, want := range []string{
 		"get_agent_config",
@@ -47,17 +48,381 @@ func TestAgentManagementStructuredPlanCapturesBindingUpdate(t *testing.T) {
 		{action: "read_candidates", resourceType: "knowledge_base"},
 		{action: "read_candidates", resourceType: "database_table"},
 		{action: "read_candidates", resourceType: "workflow"},
-		{action: "bind", resourceType: "skill"},
-		{action: "bind", resourceType: "knowledge_base"},
-		{action: "bind", resourceType: "database_table"},
-		{action: "bind", resourceType: "workflow"},
+		{action: "update", resourceType: "agent_config"},
 	} {
 		if !structuredPlanHasOperation(plan, want.action, want.resourceType) {
 			t.Fatalf("structured plan operations = %#v, missing %s/%s", plan.Operations, want.action, want.resourceType)
 		}
 	}
+	var updateGoal string
+	for _, operation := range plan.Operations {
+		if operation.Action == "update" && operation.ResourceType == "agent_config" {
+			updateGoal = operation.Goal
+			break
+		}
+	}
+	if !strings.Contains(updateGoal, "\u7ed1\u5b9a") {
+		t.Fatalf("structured update operation goal = %q, want semantic binding goal preserved; plan=%#v", updateGoal, plan)
+	}
 	if len(plan.ValidationWarnings) != 0 {
 		t.Fatalf("structured plan warnings = %#v, want none", plan.ValidationWarnings)
+	}
+}
+
+func TestAgentManagementStructuredPlanBindsCreateThenEditTarget(t *testing.T) {
+	parts := &chatRequestParts{
+		Query:     "create a new novelist agent, then set its model to gpt-4o",
+		Surface:   aiChatSurfaceContextualSidebar,
+		SkillMode: skillModeAuto,
+		SkillIDs:  []string{skills.SkillAgentManagement},
+	}
+	strategy := attachAgentManagementStructuredPlan(parts, &AIChatTurnStrategy{
+		Intent: "manage_agent_asset",
+		PlannedTools: []AIChatTurnStrategyTool{
+			{
+				SkillID:  skills.SkillAgentManagement,
+				ToolName: "create_agent",
+				Arguments: map[string]string{
+					"name": "Novelist",
+				},
+			},
+			{
+				SkillID:  skills.SkillAgentManagement,
+				ToolName: "update_agent_config",
+				Arguments: map[string]string{
+					"model_provider": "openai",
+					"model":          "gpt-4o",
+				},
+			},
+		},
+	}, parts.Query)
+	if strategy == nil || strategy.StructuredPlan == nil {
+		t.Fatalf("StructuredPlan = %#v, want create-and-edit plan", strategy)
+	}
+	tools := strategy.StructuredPlan.RequiredToolSequence
+	if len(tools) != 2 {
+		t.Fatalf("required tools = %#v, want create and update", tools)
+	}
+	if got := tools[0].OutputAlias; got != aiChatStructuredCreatedAgentsOutputAlias {
+		t.Fatalf("create output alias = %q, want %q", got, aiChatStructuredCreatedAgentsOutputAlias)
+	}
+	if got := tools[1].ArgsBinding["agent_id"]; got != aiChatStructuredFirstCreatedAgentIDExpr {
+		t.Fatalf("update args_binding.agent_id = %q, want %q", got, aiChatStructuredFirstCreatedAgentIDExpr)
+	}
+
+	operationPlan := operationPlanFromTurnStrategy("task-create-edit-binding", parts, strategy)
+	structured := mapFromOperationContext(operationPlan["structured_plan"])
+	requiredTools := mapSliceFromAny(structured["required_tool_sequence"])
+	if len(requiredTools) != 2 {
+		t.Fatalf("operation_plan structured tools = %#v, want two tools", requiredTools)
+	}
+	createTool := requiredTools[0]
+	if got := stringFromAny(createTool["output_alias"]); got != aiChatStructuredCreatedAgentsOutputAlias {
+		t.Fatalf("operation_plan create output_alias = %q, want %q", got, aiChatStructuredCreatedAgentsOutputAlias)
+	}
+	updateBinding := cleanStringAnyStringMap(mapFromOperationContext(requiredTools[1]["args_binding"]))
+	if got := updateBinding["agent_id"]; got != aiChatStructuredFirstCreatedAgentIDExpr {
+		t.Fatalf("operation_plan update args_binding.agent_id = %q, want %q", got, aiChatStructuredFirstCreatedAgentIDExpr)
+	}
+}
+
+func TestAgentManagementStructuredPlanBindsCreateThenCapabilityConfigTarget(t *testing.T) {
+	parts := &chatRequestParts{
+		Query:          "创建一个小说创作智能体，让它能生成文件、能上传文件，并使用适合复杂推理的模型。",
+		Surface:        aiChatSurfaceContextualSidebar,
+		RuntimeContext: "route=/console/agents",
+		SkillMode:      skillModeAuto,
+		SkillIDs:       []string{skills.SkillAgentManagement},
+	}
+
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil || strategy.StructuredPlan == nil {
+		t.Fatalf("StructuredPlan = %#v, want create-and-capability-edit plan", strategy)
+	}
+	plan := strategy.StructuredPlan
+	for _, want := range []string{
+		"create_agent",
+		"get_agent_config",
+		"list_available_models",
+		"list_agent_skill_candidates",
+		"update_agent_config",
+	} {
+		if !structuredPlanHasTool(plan, want) {
+			t.Fatalf("structured plan required tools = %#v, missing %s", plan.RequiredToolSequence, want)
+		}
+	}
+
+	for _, tool := range plan.RequiredToolSequence {
+		switch strings.TrimSpace(tool.ToolName) {
+		case "get_agent_config", "list_agent_skill_candidates", "update_agent_config":
+			if got := tool.ArgsBinding["agent_id"]; got != aiChatStructuredFirstCreatedAgentIDExpr {
+				t.Fatalf("%s args_binding.agent_id = %q, want %q; tool=%#v plan=%#v", tool.ToolName, got, aiChatStructuredFirstCreatedAgentIDExpr, tool, plan)
+			}
+		case "list_available_models":
+			if got := strings.TrimSpace(tool.ArgsBinding["agent_id"]); got != "" {
+				t.Fatalf("list_available_models args_binding.agent_id = %q, want empty because model lookup is org-scoped; tool=%#v", got, tool)
+			}
+		}
+	}
+
+	if got := structuredPlanOperationForTool(plan, "list_agent_skill_candidates").Arguments["query"]; got != "file generation" {
+		t.Fatalf("list_agent_skill_candidates query = %q, want file generation; plan=%#v", got, plan)
+	}
+	updateOperation := structuredPlanOperationForActionAndResource(plan, "update", "agent_config")
+	for _, want := range []string{"model", "enabled_skill_ids", "file_upload_enabled"} {
+		if !stringSliceContainsFold(updateOperation.Fields, want) {
+			t.Fatalf("update operation fields = %#v, missing %q; operation=%#v plan=%#v", updateOperation.Fields, want, updateOperation, plan)
+		}
+	}
+	for _, want := range []string{agentCapabilitySkillBacked, agentCapabilityAcceptUploaded, agentCapabilityModelSelection} {
+		if !agentCapabilityGoalsContain(plan.CapabilityGoals, want) {
+			t.Fatalf("capability goals = %#v, missing %s", plan.CapabilityGoals, want)
+		}
+	}
+
+	operationPlan := operationPlanFromTurnStrategy("task-create-agent-capability-config", parts, strategy)
+	updateStep := operationPlanStepForTest(operationPlan, operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config"))
+	fields := operationPlanNormalizedAgentConfigFieldsFromAny(updateStep[operationPlanExpectedUpdatedFieldsKey])
+	for _, want := range []string{"model_provider", "model", "enabled_skill_ids", "file_upload_enabled"} {
+		if !stringSliceContainsFold(fields, want) {
+			t.Fatalf("operation plan update fields = %#v, missing %q; step=%#v plan=%#v", fields, want, updateStep, operationPlan)
+		}
+	}
+	actions := operationPlanAgentConfigBindingActionsFromAny(updateStep[operationPlanExpectedBindingActionsKey])
+	if got := actions["enabled_skill_ids"]; got != "bind" {
+		t.Fatalf("operation plan binding actions = %#v, want enabled_skill_ids:bind; step=%#v", actions, updateStep)
+	}
+	postReadStep := operationPlanStepForTest(operationPlan, operationPlanPostUpdateAgentConfigReadStepID())
+	postReadBinding := cleanStringAnyStringMap(mapFromOperationContext(postReadStep["args_binding"]))
+	if got := postReadBinding["agent_id"]; got != aiChatStructuredFirstCreatedAgentIDExpr {
+		t.Fatalf("post-update read args_binding.agent_id = %q, want %q; step=%#v plan=%#v", got, aiChatStructuredFirstCreatedAgentIDExpr, postReadStep, operationPlan)
+	}
+	if got := stringFromAny(postReadStep["wait_for"]); got != operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config") {
+		t.Fatalf("post-update read wait_for = %q, want update_agent_config step; step=%#v", got, postReadStep)
+	}
+}
+
+func TestAgentManagementStructuredPlanBindsCreateThenChineseCapabilityConfigTarget(t *testing.T) {
+	parts := &chatRequestParts{
+		Query:          "\u521b\u5efa\u4e00\u4e2a\u5c0f\u8bf4\u521b\u4f5c\u667a\u80fd\u4f53\uff0c\u8ba9\u5b83\u80fd\u591f\u751f\u6210\u6587\u4ef6\u3001\u80fd\u591f\u4e0a\u4f20\u6587\u4ef6\uff0c\u5e76\u4f7f\u7528\u9002\u5408\u590d\u6742\u63a8\u7406\u7684\u6a21\u578b\u3002",
+		Surface:        aiChatSurfaceContextualSidebar,
+		RuntimeContext: "route=/console/agents",
+		SkillMode:      skillModeAuto,
+		SkillIDs:       []string{skills.SkillAgentManagement},
+	}
+
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil || strategy.StructuredPlan == nil {
+		t.Fatalf("StructuredPlan = %#v, want create-and-capability-edit plan", strategy)
+	}
+	plan := strategy.StructuredPlan
+	for _, want := range []string{
+		"create_agent",
+		"get_agent_config",
+		"list_available_models",
+		"list_agent_skill_candidates",
+		"update_agent_config",
+	} {
+		if !structuredPlanHasTool(plan, want) {
+			t.Fatalf("structured plan required tools = %#v, missing %s", plan.RequiredToolSequence, want)
+		}
+	}
+
+	for _, toolName := range []string{"get_agent_config", "list_agent_skill_candidates", "update_agent_config"} {
+		tool := structuredPlanToolForTest(plan, toolName)
+		if got := tool.ArgsBinding["agent_id"]; got != aiChatStructuredFirstCreatedAgentIDExpr {
+			t.Fatalf("%s args_binding.agent_id = %q, want %q; tool=%#v plan=%#v", toolName, got, aiChatStructuredFirstCreatedAgentIDExpr, tool, plan)
+		}
+	}
+
+	if got := structuredPlanOperationForTool(plan, "list_agent_skill_candidates").Arguments["query"]; got != "file generation" {
+		t.Fatalf("list_agent_skill_candidates query = %q, want file generation; plan=%#v", got, plan)
+	}
+	updateOperation := structuredPlanOperationForActionAndResource(plan, "update", "agent_config")
+	for _, want := range []string{"model", "enabled_skill_ids", "file_upload_enabled"} {
+		if !stringSliceContainsFold(updateOperation.Fields, want) {
+			t.Fatalf("update operation fields = %#v, missing %q; operation=%#v plan=%#v", updateOperation.Fields, want, updateOperation, plan)
+		}
+	}
+	for _, want := range []string{agentCapabilitySkillBacked, agentCapabilityAcceptUploaded, agentCapabilityModelSelection} {
+		if !agentCapabilityGoalsContain(plan.CapabilityGoals, want) {
+			t.Fatalf("capability goals = %#v, missing %s", plan.CapabilityGoals, want)
+		}
+	}
+
+	operationPlan := operationPlanFromTurnStrategy("task-create-agent-chinese-capability-config", parts, strategy)
+	updateStep := operationPlanStepForTest(operationPlan, operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config"))
+	fields := operationPlanNormalizedAgentConfigFieldsFromAny(updateStep[operationPlanExpectedUpdatedFieldsKey])
+	for _, want := range []string{"model_provider", "model", "enabled_skill_ids", "file_upload_enabled"} {
+		if !stringSliceContainsFold(fields, want) {
+			t.Fatalf("operation plan update fields = %#v, missing %q; step=%#v plan=%#v", fields, want, updateStep, operationPlan)
+		}
+	}
+	actions := operationPlanAgentConfigBindingActionsFromAny(updateStep[operationPlanExpectedBindingActionsKey])
+	if got := actions["enabled_skill_ids"]; got != "bind" {
+		t.Fatalf("operation plan binding actions = %#v, want enabled_skill_ids:bind; step=%#v", actions, updateStep)
+	}
+}
+
+func TestAgentManagementStructuredPlanPreservesLookupArguments(t *testing.T) {
+	parts := &chatRequestParts{
+		Query:          "Switch the current Agent to a model suited for complex reasoning, use_case=reasoning, and enable capability file generation.",
+		Surface:        aiChatSurfaceContextualSidebar,
+		RuntimeContext: "route=/console/agents/agent-1/agent",
+		SkillMode:      skillModeAuto,
+		SkillIDs:       []string{skills.SkillAgentManagement},
+	}
+
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil || strategy.StructuredPlan == nil {
+		t.Fatalf("StructuredPlan = %#v, want Agent-management structured plan", strategy)
+	}
+	modelOperation := structuredPlanOperationForTool(strategy.StructuredPlan, "list_available_models")
+	if got := modelOperation.Arguments["use_case"]; got != "reasoning" {
+		t.Fatalf("list_available_models structured operation arguments.use_case = %q, want reasoning; operation=%#v plan=%#v", got, modelOperation, strategy.StructuredPlan)
+	}
+	skillOperation := structuredPlanOperationForTool(strategy.StructuredPlan, "list_agent_skill_candidates")
+	if got := skillOperation.Arguments["query"]; got != "file generation" {
+		t.Fatalf("list_agent_skill_candidates structured operation arguments.query = %q, want file generation; operation=%#v plan=%#v", got, skillOperation, strategy.StructuredPlan)
+	}
+	var modelGoal AIChatAgentCapabilityGoal
+	for _, goal := range strategy.StructuredPlan.CapabilityGoals {
+		if goal.CapabilityID == agentCapabilityModelSelection {
+			modelGoal = goal
+			break
+		}
+	}
+	if modelGoal.CapabilityID == "" {
+		t.Fatalf("capability goals = %#v, want model selection goal", strategy.StructuredPlan.CapabilityGoals)
+	}
+	if got := modelGoal.CandidateTool; got != "list_available_models" {
+		t.Fatalf("model capability candidate_tool = %q, want list_available_models; goal=%#v", got, modelGoal)
+	}
+	if got := modelGoal.CandidateUseCase; got != "reasoning" {
+		t.Fatalf("model capability candidate_use_case = %q, want reasoning; goal=%#v", got, modelGoal)
+	}
+}
+
+func TestAgentManagementStructuredPlanUsesCapabilityGoalsForConfigContract(t *testing.T) {
+	parts := &chatRequestParts{
+		Query:          "继续处理",
+		Surface:        aiChatSurfaceContextualSidebar,
+		RuntimeContext: "route=/console/agents/agent-1/agent",
+		SkillMode:      skillModeAuto,
+		SkillIDs:       []string{skills.SkillAgentManagement},
+	}
+	strategy := attachAgentManagementStructuredPlan(parts, &AIChatTurnStrategy{
+		Intent: "manage_agent_asset",
+		PlannedTools: []AIChatTurnStrategyTool{
+			{SkillID: skills.SkillAgentManagement, ToolName: "get_agent_config"},
+			{
+				SkillID:  skills.SkillAgentManagement,
+				ToolName: "list_agent_skill_candidates",
+				Arguments: map[string]string{
+					"query": "file generation",
+				},
+			},
+			{SkillID: skills.SkillAgentManagement, ToolName: "update_agent_config"},
+		},
+		CapabilityGoals: []AIChatAgentCapabilityGoal{{
+			CapabilityID:         agentCapabilitySkillBacked,
+			GoalAction:           agentCapabilityActionBind,
+			DisplayName:          "file generation",
+			RequiredConfigFields: []string{"enabled_skill_ids"},
+			RequiredBindingActions: map[string]string{
+				"enabled_skill_ids": "bind",
+			},
+			CandidateTool:  "list_agent_skill_candidates",
+			CandidateQuery: "file generation",
+			VerifyBy:       []string{"get_agent_config.enabled_skill_ids contains the selected Skill"},
+		}},
+	}, parts.Query)
+	if strategy == nil || strategy.StructuredPlan == nil {
+		t.Fatalf("StructuredPlan = %#v, want capability-driven Agent-management plan", strategy)
+	}
+	if got := strategy.StructuredPlan.Intent; got != "agent.update_bindings" {
+		t.Fatalf("StructuredPlan.Intent = %q, want agent.update_bindings; plan=%#v", got, strategy.StructuredPlan)
+	}
+	var bindOperation *AIChatStructuredOperation
+	for idx := range strategy.StructuredPlan.Operations {
+		operation := &strategy.StructuredPlan.Operations[idx]
+		if operation.Action == "bind" && operation.ResourceType == "skill" {
+			bindOperation = operation
+			break
+		}
+	}
+	if bindOperation == nil {
+		t.Fatalf("structured operations = %#v, want semantic skill bind operation from capability goal", strategy.StructuredPlan.Operations)
+	}
+	if !stringSliceContainsFold(bindOperation.Fields, "enabled_skill_ids") {
+		t.Fatalf("bind operation fields = %#v, want enabled_skill_ids; operation=%#v", bindOperation.Fields, bindOperation)
+	}
+	if len(strategy.StructuredPlan.ValidationWarnings) != 0 {
+		t.Fatalf("ValidationWarnings = %#v, want candidate lookup accepted from planned tools", strategy.StructuredPlan.ValidationWarnings)
+	}
+
+	plan := operationPlanFromTurnStrategy("task-capability-driven-bind", parts, strategy)
+	updateStep := operationPlanStepForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config"))
+	fields := stringSliceFromAny(updateStep[operationPlanExpectedUpdatedFieldsKey])
+	if !stringSliceContainsFold(fields, "enabled_skill_ids") {
+		t.Fatalf("operation plan update fields = %#v, want enabled_skill_ids from capability goal; step=%#v plan=%#v", fields, updateStep, plan)
+	}
+	actions := operationPlanAgentConfigBindingActionsFromAny(updateStep[operationPlanExpectedBindingActionsKey])
+	if got := actions["enabled_skill_ids"]; got != "bind" {
+		t.Fatalf("operation plan binding actions = %#v, want enabled_skill_ids:bind from capability goal; step=%#v plan=%#v", actions, updateStep, plan)
+	}
+}
+
+func agentCapabilityGoalsContain(goals []AIChatAgentCapabilityGoal, capabilityID string) bool {
+	for _, goal := range goals {
+		if goal.CapabilityID == capabilityID {
+			return true
+		}
+	}
+	return false
+}
+
+func TestContextualSidebarStructuredPlanCoversNavigationTool(t *testing.T) {
+	parts := &chatRequestParts{
+		Query:     "open file management",
+		Surface:   aiChatSurfaceContextualSidebar,
+		SkillMode: skillModeAuto,
+		SkillIDs:  []string{skills.SkillConsoleNavigator},
+	}
+	strategy := attachContextualSidebarStructuredPlan(parts, &AIChatTurnStrategy{
+		Intent:     "navigate_console_page",
+		TargetPage: "/console/files",
+		PlannedTools: []AIChatTurnStrategyTool{{
+			SkillID:  skills.SkillConsoleNavigator,
+			ToolName: "navigate",
+			Arguments: map[string]string{
+				"href": "/console/files",
+			},
+		}},
+	}, parts.Query)
+	if strategy == nil || strategy.StructuredPlan == nil {
+		t.Fatalf("StructuredPlan = %#v, want generic sidebar plan", strategy)
+	}
+	plan := strategy.StructuredPlan
+	if got := plan.Domain; got != "console_navigation" {
+		t.Fatalf("structured plan domain = %q, want console_navigation; plan=%#v", got, plan)
+	}
+	if len(plan.Operations) != 1 {
+		t.Fatalf("structured plan operations = %#v, want one navigation operation", plan.Operations)
+	}
+	operation := plan.Operations[0]
+	if operation.SkillID != skills.SkillConsoleNavigator ||
+		operation.ToolName != "navigate" ||
+		operation.Action != "navigate" ||
+		operation.ResourceType != "page" {
+		t.Fatalf("navigation operation = %#v, want console-navigator navigate page operation", operation)
+	}
+	operationPlan := operationPlanFromTurnStrategy("task-generic-sidebar-structured", parts, strategy)
+	structured := mapFromOperationContext(operationPlan["structured_plan"])
+	compact := operationPlanCompactStructuredPlanForPrompt(structured, 4)
+	operations := mapSliceFromAny(compact["operations"])
+	if len(operations) != 1 || stringFromAny(operations[0]["skill_id"]) != skills.SkillConsoleNavigator {
+		t.Fatalf("compact structured operations = %#v, want skill_id %s", operations, skills.SkillConsoleNavigator)
 	}
 }
 
@@ -85,6 +450,9 @@ func TestAgentManagementStructuredPlanDoesNotCreateForExistingReference(t *testi
 	}
 	if structuredPlanHasOperation(plan, "create", "agent") {
 		t.Fatalf("structured plan operations = %#v, want no Agent create operation", plan.Operations)
+	}
+	if !structuredPlanHasOperation(plan, "read_candidates", "knowledge_base") {
+		t.Fatalf("structured plan operations = %#v, missing knowledge_base candidate read operation", plan.Operations)
 	}
 	if !structuredPlanHasOperation(plan, "bind", "knowledge_base") {
 		t.Fatalf("structured plan operations = %#v, missing knowledge_base bind operation", plan.Operations)
@@ -114,6 +482,126 @@ func TestAgentManagementStructuredPlanIncludedInOperationPlanState(t *testing.T)
 	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "delete_agents")); got != operationPlanStepStatusPending {
 		t.Fatalf("delete_agents status = %q, want pending; plan=%#v", got, plan)
 	}
+	if operation := structuredOperationForTest(structured, "delete", "agent"); stringFromAny(operation["status"]) != operationPlanStepStatusPending {
+		t.Fatalf("structured delete operation = %#v, want pending status", operation)
+	}
+	message, ok := contextualAIChatTurnStrategyMessage(&PreparedChat{parts: parts})
+	if !ok {
+		t.Fatal("contextualAIChatTurnStrategyMessage() missing, want structured plan guidance")
+	}
+	content, ok := message.Content.(string)
+	if !ok {
+		t.Fatalf("strategy message content type = %T, want string", message.Content)
+	}
+	for _, want := range []string{
+		"structured_plan.required_tool_sequence",
+		"structured_plan.operations",
+		"Do not claim a structured operation is complete",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("strategy message missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestAgentManagementStructuredPlanStatusFollowsToolResult(t *testing.T) {
+	parts := &chatRequestParts{
+		Query:     "\u5220\u9664\u5f53\u524d\u9875\u9762\u7684\u524d\u4e24\u4e2a\u667a\u80fd\u4f53",
+		Surface:   aiChatSurfaceContextualSidebar,
+		SkillMode: skillModeAuto,
+		SkillIDs:  []string{skills.SkillAgentManagement},
+	}
+	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{Intent: "manage_agent_asset"})
+	metadata := map[string]interface{}{
+		"operation_plan": operationPlanFromTurnStrategy("task-agent-structured-plan-status", parts, strategy),
+	}
+
+	applyOperationPlanInvocationState(metadata, []map[string]interface{}{{
+		"kind":       "tool_call",
+		"status":     "success",
+		"runtime_id": "tool#1",
+		"skill_id":   skills.SkillAgentManagement,
+		"tool_name":  "delete_agents",
+		"result": map[string]interface{}{
+			"status":        "completed",
+			"target_count":  2,
+			"deleted_count": 2,
+			"failed_count":  0,
+			"operation_group": map[string]interface{}{
+				"id":            "agent.delete.batch:structured-plan",
+				"type":          "batch",
+				"operation":     "agent.delete",
+				"asset_type":    "agent",
+				"status":        "completed",
+				"target_count":  2,
+				"success_count": 2,
+				"failed_count":  0,
+				"item_results": []interface{}{
+					map[string]interface{}{"agent_id": "agent-1", "agent_name": "Agent One", "status": "succeeded"},
+					map[string]interface{}{"agent_id": "agent-2", "agent_name": "Agent Two", "status": "succeeded"},
+				},
+			},
+		},
+	}})
+
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	structured := mapFromOperationContext(plan["structured_plan"])
+	if got := stringFromAny(structured["status"]); got != operationPlanStatusCompleted {
+		t.Fatalf("structured_plan.status = %q, want completed; structured=%#v", got, structured)
+	}
+	counts := mapFromOperationContext(structured["operation_counts"])
+	if got := intValueFromAny(counts["completed"]); got != 1 {
+		t.Fatalf("structured_plan.operation_counts = %#v, want completed=1", counts)
+	}
+	operation := structuredOperationForTest(structured, "delete", "agent")
+	if got := stringFromAny(operation["status"]); got != operationPlanStepStatusCompleted {
+		t.Fatalf("structured delete operation status = %q, want completed; operation=%#v", got, operation)
+	}
+	if got := stringFromAny(operation["last_invocation_id"]); got != "runtime_id:tool#1" {
+		t.Fatalf("structured delete operation last_invocation_id = %q, want runtime_id:tool#1; operation=%#v", got, operation)
+	}
+	if items := mapSliceFromAny(operation["item_steps"]); len(items) != 2 {
+		t.Fatalf("structured delete operation item_steps = %#v, want two item facts", operation["item_steps"])
+	}
+	summary := skillLoopCompletionPlanSummary(plan)
+	summaryStructured := mapFromOperationContext(summary["structured_plan"])
+	if got := stringFromAny(summaryStructured["status"]); got != operationPlanStatusCompleted {
+		t.Fatalf("summary.structured_plan.status = %q, want completed; summary=%#v", got, summaryStructured)
+	}
+}
+
+func TestAgentManagementStructuredPlanStatusFollowsToolFailure(t *testing.T) {
+	parts := &chatRequestParts{
+		Query:     "\u5220\u9664\u5f53\u524d\u9875\u9762\u7684\u524d\u4e24\u4e2a\u667a\u80fd\u4f53",
+		Surface:   aiChatSurfaceContextualSidebar,
+		SkillMode: skillModeAuto,
+		SkillIDs:  []string{skills.SkillAgentManagement},
+	}
+	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{Intent: "manage_agent_asset"})
+	metadata := map[string]interface{}{
+		"operation_plan": operationPlanFromTurnStrategy("task-agent-structured-plan-failure", parts, strategy),
+	}
+
+	applyOperationPlanInvocationState(metadata, []map[string]interface{}{{
+		"kind":      "tool_call",
+		"status":    "error",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "delete_agents",
+		"error":     "delete denied by governance",
+	}})
+
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	structured := mapFromOperationContext(plan["structured_plan"])
+	if got := stringFromAny(structured["status"]); got != operationPlanStatusFailed {
+		t.Fatalf("structured_plan.status = %q, want failed; structured=%#v", got, structured)
+	}
+	operation := structuredOperationForTest(structured, "delete", "agent")
+	if got := stringFromAny(operation["status"]); got != operationPlanStepStatusFailed {
+		t.Fatalf("structured delete operation status = %q, want failed; operation=%#v", got, operation)
+	}
+	if got := stringFromAny(operation["error"]); got != "delete denied by governance" {
+		t.Fatalf("structured delete operation error = %q, want governance error; operation=%#v", got, operation)
+	}
 }
 
 func structuredPlanHasTool(plan *AIChatStructuredPlan, toolName string) bool {
@@ -133,4 +621,50 @@ func structuredPlanHasOperation(plan *AIChatStructuredPlan, action string, resou
 		}
 	}
 	return false
+}
+
+func structuredPlanToolForTest(plan *AIChatStructuredPlan, toolName string) AIChatTurnStrategyTool {
+	if plan == nil {
+		return AIChatTurnStrategyTool{}
+	}
+	for _, tool := range plan.RequiredToolSequence {
+		if strings.EqualFold(tool.ToolName, toolName) {
+			return tool
+		}
+	}
+	return AIChatTurnStrategyTool{}
+}
+
+func structuredPlanOperationForTool(plan *AIChatStructuredPlan, toolName string) AIChatStructuredOperation {
+	if plan == nil {
+		return AIChatStructuredOperation{}
+	}
+	for _, operation := range plan.Operations {
+		if strings.EqualFold(operation.ToolName, toolName) {
+			return operation
+		}
+	}
+	return AIChatStructuredOperation{}
+}
+
+func structuredPlanOperationForActionAndResource(plan *AIChatStructuredPlan, action string, resourceType string) AIChatStructuredOperation {
+	if plan == nil {
+		return AIChatStructuredOperation{}
+	}
+	for _, operation := range plan.Operations {
+		if strings.EqualFold(strings.TrimSpace(operation.Action), strings.TrimSpace(action)) &&
+			strings.EqualFold(strings.TrimSpace(operation.ResourceType), strings.TrimSpace(resourceType)) {
+			return operation
+		}
+	}
+	return AIChatStructuredOperation{}
+}
+
+func structuredOperationForTest(plan map[string]interface{}, action string, resourceType string) map[string]interface{} {
+	for _, operation := range mapSliceFromAny(plan["operations"]) {
+		if stringFromAny(operation["action"]) == action && stringFromAny(operation["resource_type"]) == resourceType {
+			return operation
+		}
+	}
+	return nil
 }

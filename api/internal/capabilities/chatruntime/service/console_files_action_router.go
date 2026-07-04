@@ -77,7 +77,9 @@ func isConsoleFilesPageToken(value string) bool {
 }
 
 func isConsoleAgentsContext(runtimeContext string, contexts ...map[string]interface{}) bool {
-	if consoleNavigationLoadedHrefMatchesTarget(consoleRouteFromRuntimeContext(runtimeContext), "/console/agents") {
+	route := consoleRouteFromRuntimeContext(runtimeContext)
+	if consoleNavigationLoadedHrefMatchesTarget(route, "/console/agents") ||
+		isConsoleAgentDetailRoute(route) {
 		return true
 	}
 	for _, ctx := range contexts {
@@ -771,6 +773,9 @@ func isAgentManagementIntent(query string) bool {
 	agentTerms := []string{"agent", "\u667a\u80fd\u4f53"}
 	if !containsAnySubstring(text, agentTerms) {
 		return false
+	}
+	if agentManagementConfigUpdateRequested(text) || agentManagementSkillBindingRequested(text) {
+		return true
 	}
 	operationTerms := []string{
 		"create", "new", "add", "edit", "update", "rename", "delete", "remove", "config", "configure", "prompt", "model", "icon", "description",

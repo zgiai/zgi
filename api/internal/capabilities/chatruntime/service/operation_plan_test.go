@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -314,6 +315,88 @@ func TestContinuationOperationPlanCarriesPriorGoalAndPendingTool(t *testing.T) {
 	}
 	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillFileGenerator, "generate_file")); got != "" {
 		t.Fatalf("current continuation plan unexpectedly re-added generator step with status %q; plan=%#v", got, plan)
+	}
+}
+
+func TestContinuationStrategyPreservesPendingAgentStepBinding(t *testing.T) {
+	createStepID := operationPlanToolStepID(skills.SkillAgentManagement, "create_agent")
+	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
+	parts := consoleAgentDetailTestParts("继续处理")
+	parts.RecentOperationPlans = []map[string]interface{}{{
+		"version":            operationPlanVersion,
+		"task_id":            "task-create-agent-then-configure",
+		"original_user_goal": "create an Agent and make it able to generate files",
+		"intent":             "manage_agent_asset",
+		"status":             operationPlanStatusRunning,
+		"steps": []interface{}{
+			map[string]interface{}{
+				"id":           createStepID,
+				"status":       operationPlanStepStatusCompleted,
+				"skill_id":     skills.SkillAgentManagement,
+				"tool_name":    "create_agent",
+				"output_alias": aiChatStructuredCreatedAgentsOutputAlias,
+			},
+			map[string]interface{}{
+				"id":        updateStepID,
+				"status":    operationPlanStepStatusPending,
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"wait_for":  createStepID,
+				"args_binding": map[string]interface{}{
+					"agent_id": aiChatStructuredFirstCreatedAgentIDExpr,
+				},
+				operationPlanExpectedUpdatedFieldsKey: []interface{}{"enabled_skill_ids"},
+				operationPlanExpectedBindingActionsKey: map[string]interface{}{
+					"enabled_skill_ids": "bind",
+				},
+			},
+		},
+		"step_status": map[string]interface{}{
+			createStepID: operationPlanStepStatusCompleted,
+			updateStepID: operationPlanStepStatusPending,
+		},
+		"pending_next_action": "Update the newly created Agent config",
+	}}
+
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want continuation strategy")
+	}
+	tool := aiChatTurnStrategyPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_config")
+	if tool == nil {
+		t.Fatalf("PlannedTools = %#v, missing update_agent_config", strategy.PlannedTools)
+	}
+	if got := tool.ArgsBinding["agent_id"]; got != aiChatStructuredFirstCreatedAgentIDExpr {
+		t.Fatalf("update_agent_config ArgsBinding.agent_id = %q, want %q; tool=%#v", got, aiChatStructuredFirstCreatedAgentIDExpr, tool)
+	}
+	if got := strings.TrimSpace(tool.WaitForStepID); got != "" {
+		t.Fatalf("update_agent_config WaitForStepID = %q, want empty for already-satisfied historical dependency; tool=%#v", got, tool)
+	}
+	fields := operationPlanNormalizedAgentConfigFieldsFromAny(tool.Arguments[operationPlanExpectedUpdatedFieldsKey])
+	if !stringSliceContainsFold(fields, "enabled_skill_ids") {
+		t.Fatalf("update_agent_config expected fields = %#v, want enabled_skill_ids preserved from pending step; tool=%#v", fields, tool)
+	}
+	toolActions := operationPlanAgentConfigBindingActionsFromAny(tool.Arguments[operationPlanExpectedBindingActionsKey])
+	if got := toolActions["enabled_skill_ids"]; got != "bind" {
+		t.Fatalf("update_agent_config expected binding actions = %#v, want enabled_skill_ids:bind preserved from pending step; tool=%#v", toolActions, tool)
+	}
+
+	plan := operationPlanFromTurnStrategy("task-continue-create-agent-config", parts, strategy)
+	updateStep := operationPlanStepForTest(plan, updateStepID)
+	binding := mapFromOperationContext(updateStep["args_binding"])
+	if got := stringFromAny(binding["agent_id"]); got != aiChatStructuredFirstCreatedAgentIDExpr {
+		t.Fatalf("operation plan update args_binding.agent_id = %q, want %q; step=%#v plan=%#v", got, aiChatStructuredFirstCreatedAgentIDExpr, updateStep, plan)
+	}
+	if got := strings.TrimSpace(stringFromAny(updateStep["wait_for"])); got != "" {
+		t.Fatalf("operation plan update wait_for = %q, want empty after continuation rehydration; step=%#v plan=%#v", got, updateStep, plan)
+	}
+	planFields := operationPlanNormalizedAgentConfigFieldsFromAny(updateStep[operationPlanExpectedUpdatedFieldsKey])
+	if !stringSliceContainsFold(planFields, "enabled_skill_ids") {
+		t.Fatalf("operation plan update expected fields = %#v, want enabled_skill_ids preserved; step=%#v plan=%#v", planFields, updateStep, plan)
+	}
+	actions := operationPlanAgentConfigBindingActionsFromAny(updateStep[operationPlanExpectedBindingActionsKey])
+	if got := actions["enabled_skill_ids"]; got != "bind" {
+		t.Fatalf("operation plan update expected binding actions = %#v, want enabled_skill_ids:bind; step=%#v", actions, updateStep)
 	}
 }
 
@@ -724,8 +807,14 @@ func TestAgentBindingCandidateSelectionPlansMutationAfterCandidateReads(t *testi
 		}
 	}
 	updateArgs := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, "update_agent_config")
-	if actions := stringFromAny(updateArgs[operationPlanExpectedBindingActionsKey]); actions == "" {
-		t.Fatalf("update_agent_config args = %#v, want expected binding actions", updateArgs)
+	actions := operationPlanAgentConfigBindingActionsFromAny(updateArgs[operationPlanExpectedBindingActionsKey])
+	for _, want := range []string{"enabled_skill_ids", "knowledge_dataset_ids", "database_bindings", "workflow_bindings"} {
+		if actions[want] != "bind" {
+			t.Fatalf("update_agent_config expected binding action %s = %#v, want bind; args=%#v actions=%#v", want, actions[want], updateArgs, actions)
+		}
+	}
+	if goal := stringFromAny(updateArgs[operationPlanConfigGoalKey]); !strings.Contains(goal, "\u7ed1\u5b9a") {
+		t.Fatalf("update_agent_config args = %#v, want semantic binding goal", updateArgs)
 	}
 
 	metadata := streamingMessageMetadataWithTaskID(parts, "task-agent-bind-after-candidates")
@@ -786,11 +875,81 @@ func TestSkillLoopPlanToolGuardBlocksOverbroadAgentCandidateSelectionUpdate(t *t
 	if !blocked {
 		t.Fatal("overbroad update_agent_config was allowed, want candidate selection guard to block before governance")
 	}
+	if !result.Advisory {
+		t.Fatalf("guard Advisory = false, want planner-feedback advisory instead of recoverable error")
+	}
 	if !strings.Contains(result.SystemMessage, "at most one") {
 		t.Fatalf("guard system message = %q, want one-candidate guidance", result.SystemMessage)
 	}
 	if !strings.Contains(result.SystemMessage, "display name") {
 		t.Fatalf("guard system message = %q, want skill ID/display-name guidance", result.SystemMessage)
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if blockedDeviations := mapSliceFromAny(plan["blocked_deviations"]); len(blockedDeviations) != 0 {
+		t.Fatalf("blocked_deviations = %#v, want advisory guard recorded as ordinary deviation", blockedDeviations)
+	}
+	if deviations := mapSliceFromAny(plan["deviations"]); len(deviations) == 0 {
+		t.Fatalf("deviations = %#v, want advisory guard deviation recorded", deviations)
+	}
+}
+
+func TestSkillLoopPlanToolGuardBlocksPartialAgentModelPairBeforeApproval(t *testing.T) {
+	query := "Switch the current Agent model to gpt-4o using an available provider/model pair."
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     query,
+			Surface:   aiChatSurfaceContextualSidebar,
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{skills.SkillAgentManagement},
+		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status":             operationPlanStatusRunning,
+				"original_user_goal": query,
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config"),
+						"status":    operationPlanStepStatusPending,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "update_agent_config",
+					},
+				},
+				"step_status": map[string]interface{}{
+					operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config"): operationPlanStepStatusPending,
+				},
+			},
+		}},
+	}
+
+	guard := skillLoopPlanToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopPlanToolCallGuard() = nil, want guard")
+	}
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Arguments: map[string]interface{}{
+			"agent_id": "agent-1",
+			"model":    "gpt-4o",
+		},
+	})
+	if !blocked {
+		t.Fatal("partial model update was allowed, want provider/model pair guard before governance")
+	}
+	if !result.Advisory {
+		t.Fatalf("guard Advisory = false, want planner-feedback advisory instead of recoverable error")
+	}
+	for _, want := range []string{"model_provider", "list_available_models", "model_provider and model together"} {
+		if !strings.Contains(result.SystemMessage, want) {
+			t.Fatalf("guard system message = %q, missing %q", result.SystemMessage, want)
+		}
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if blockedDeviations := mapSliceFromAny(plan["blocked_deviations"]); len(blockedDeviations) != 0 {
+		t.Fatalf("blocked_deviations = %#v, want advisory guard recorded as ordinary deviation", blockedDeviations)
+	}
+	if deviations := mapSliceFromAny(plan["deviations"]); len(deviations) == 0 {
+		t.Fatalf("deviations = %#v, want advisory guard deviation recorded", deviations)
 	}
 }
 
@@ -840,11 +999,18 @@ func TestSkillLoopPlanToolGuardBlocksUnresolvedAgentSkillBindingBeforeApproval(t
 	if !blocked {
 		t.Fatal("unresolved display-name Skill binding was allowed, want guard to block before governance approval")
 	}
+	if !result.Advisory {
+		t.Fatalf("guard Advisory = false, want planner-feedback advisory instead of recoverable error")
+	}
 	if !strings.Contains(result.SystemMessage, "no matching Skill was found") {
 		t.Fatalf("guard system message = %q, want missing Skill guidance", result.SystemMessage)
 	}
 	if !strings.Contains(result.SystemMessage, "candidate.skill_id") {
 		t.Fatalf("guard system message = %q, want candidate skill_id guidance", result.SystemMessage)
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if blockedDeviations := mapSliceFromAny(plan["blocked_deviations"]); len(blockedDeviations) != 0 {
+		t.Fatalf("blocked_deviations = %#v, want advisory guard recorded as ordinary deviation", blockedDeviations)
 	}
 }
 
@@ -1395,7 +1561,7 @@ func TestPreparedResultMetadataClosesReadOnlyCandidateLookupStaleMutationPlan(t 
 	}
 }
 
-func TestAgentConfigPlanTracksExpectedUpdatedFields(t *testing.T) {
+func TestAgentConfigPlanMapsCapabilityFieldsAndPreservesConfigGoal(t *testing.T) {
 	parts := &chatRequestParts{
 		Query: strings.Join([]string{
 			"请编辑当前智能体：",
@@ -1424,19 +1590,25 @@ func TestAgentConfigPlanTracksExpectedUpdatedFields(t *testing.T) {
 		t.Fatalf("update_agent_config step missing; plan=%#v", plan)
 	}
 	fields := stringSliceFromAny(step[operationPlanExpectedUpdatedFieldsKey])
-	for _, want := range []string{"model", "system_prompt", "home_title", "theme_color", "suggested_questions"} {
-		if !stringSliceContains(fields, want) {
-			t.Fatalf("expected_updated_fields = %#v, missing %q; plan=%#v", fields, want, plan)
-		}
-	}
 	args := mapFromOperationContext(step["arguments"])
 	if got := strings.TrimSpace(stringFromAny(args["agent_id"])); got != "agent-1" {
 		t.Fatalf("update_agent_config arguments.agent_id = %q, want agent-1; step=%#v", got, step)
 	}
+	for _, want := range []string{"model", "system_prompt"} {
+		if !stringSliceContains(fields, want) {
+			t.Fatalf("expected_updated_fields = %#v, missing %q; plan=%#v", fields, want, plan)
+		}
+	}
 	for _, unexpected := range []string{"enabled_skill_ids", "knowledge_dataset_ids", "database_bindings", "workflow_bindings"} {
 		if stringSliceContains(fields, unexpected) {
-			t.Fatalf("expected_updated_fields = %#v, want no %q for explicit no-binding query; plan=%#v", fields, unexpected, plan)
+			t.Fatalf("expected_updated_fields = %#v, want no binding field mapping for %q; plan=%#v", fields, unexpected, plan)
 		}
+	}
+	if capabilityGoals := mapSliceFromAny(plan["capability_goals"]); len(capabilityGoals) == 0 {
+		t.Fatalf("capability_goals = %#v, want model/system prompt capability goals; plan=%#v", capabilityGoals, plan)
+	}
+	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(goal, "系统提示词") || !strings.Contains(goal, "首页标题") {
+		t.Fatalf("config_goal = %q, want preserved semantic config target; step=%#v plan=%#v", goal, step, plan)
 	}
 }
 
@@ -1484,10 +1656,13 @@ func TestAgentDisplayConfigEditDoesNotPlanModelLookup(t *testing.T) {
 			t.Fatalf("expected_updated_fields = %#v, missing %q; plan=%#v", fields, want, plan)
 		}
 	}
-	for _, unexpected := range []string{"model", "enabled_skill_ids", "knowledge_dataset_ids", "database_bindings", "workflow_bindings"} {
+	for _, unexpected := range []string{"model", "model_provider", "enabled_skill_ids", "knowledge_dataset_ids", "database_bindings", "workflow_bindings"} {
 		if stringSliceContains(fields, unexpected) {
 			t.Fatalf("expected_updated_fields = %#v, want no %q for display config edit; plan=%#v", fields, unexpected, plan)
 		}
+	}
+	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(goal, "开场问题") {
+		t.Fatalf("config_goal = %q, want natural-language opening-question target preserved; plan=%#v", goal, plan)
 	}
 }
 
@@ -1527,8 +1702,10 @@ func TestAgentDisplayConfigRetryWithSuggestedQuestionCurrentModelDoesNotPlanMode
 			t.Fatalf("expected_updated_fields = %#v, missing %q; plan=%#v", fields, want, plan)
 		}
 	}
-	if stringSliceContains(fields, "model") {
-		t.Fatalf("expected_updated_fields = %#v, want no model field for negated display config retry; plan=%#v", fields, plan)
+	for _, unexpected := range []string{"model", "model_provider"} {
+		if stringSliceContains(fields, unexpected) {
+			t.Fatalf("expected_updated_fields = %#v, want no %s field for semantic config retry; plan=%#v", fields, unexpected, plan)
+		}
 	}
 }
 
@@ -1554,26 +1731,786 @@ func TestAgentConfigPlanTracksExpectedBindingActions(t *testing.T) {
 		t.Fatalf("update_agent_config step missing; plan=%#v", plan)
 	}
 	fields := stringSliceFromAny(step[operationPlanExpectedUpdatedFieldsKey])
-	for _, want := range []string{"knowledge_dataset_ids", "database_bindings"} {
-		if !stringSliceContains(fields, want) {
-			t.Fatalf("expected_updated_fields = %#v, missing %q; plan=%#v", fields, want, plan)
-		}
-	}
-	for _, unexpected := range []string{"enabled_skill_ids", "workflow_bindings"} {
+	for _, unexpected := range []string{"enabled_skill_ids", "knowledge_dataset_ids", "database_bindings", "workflow_bindings"} {
 		if stringSliceContains(fields, unexpected) {
-			t.Fatalf("expected_updated_fields = %#v, want no %q; plan=%#v", fields, unexpected, plan)
+			t.Fatalf("expected_updated_fields = %#v, want binding actions kept separate from updated fields for %q; plan=%#v", fields, unexpected, plan)
 		}
 	}
 	actions := operationPlanAgentConfigBindingActionsFromAny(step[operationPlanExpectedBindingActionsKey])
-	for _, field := range []string{"knowledge_dataset_ids", "database_bindings"} {
-		if actions[field] != "unbind" {
-			t.Fatalf("expected_binding_actions[%s] = %#v, want unbind; actions=%#v plan=%#v", field, actions[field], actions, plan)
+	for _, want := range []string{"knowledge_dataset_ids", "database_bindings"} {
+		if actions[want] != "unbind" {
+			t.Fatalf("expected_binding_actions[%s] = %#v, want unbind; actions=%#v plan=%#v", want, actions[want], actions, plan)
 		}
 	}
 	for _, unexpected := range []string{"enabled_skill_ids", "workflow_bindings"} {
 		if actions[unexpected] != "" {
 			t.Fatalf("expected_binding_actions[%s] = %#v, want absent; actions=%#v plan=%#v", unexpected, actions[unexpected], actions, plan)
 		}
+	}
+	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(goal, "知识库") || !strings.Contains(goal, "数据表") {
+		t.Fatalf("config_goal = %q, want semantic binding goal preserved; plan=%#v", goal, plan)
+	}
+}
+
+func TestAgentBindingCapabilityGoalsExposeConfigFields(t *testing.T) {
+	goals := agentManagementCapabilityGoalsForQuery("请把当前智能体的知识库和数据库表都解绑，不要动 Skill 或工作流。")
+	for _, want := range []string{"knowledge_dataset_ids", "database_bindings"} {
+		found := false
+		for _, goal := range goals {
+			if goal.RequiredBindingActions[want] != "unbind" {
+				continue
+			}
+			found = true
+			if !stringSliceContains(goal.RequiredConfigFields, want) {
+				t.Fatalf("capability goal required_config_fields = %#v, want %q; goal=%#v goals=%#v", goal.RequiredConfigFields, want, goal, goals)
+			}
+			for _, boundary := range []string{"current_config_read_only", "candidate_lookup_only", "natural_language_claim_only"} {
+				if !stringSliceContains(goal.NotSufficient, boundary) {
+					t.Fatalf("capability goal not_sufficient = %#v, want %q; goal=%#v goals=%#v", goal.NotSufficient, boundary, goal, goals)
+				}
+			}
+			if strings.TrimSpace(goal.Meaning) == "" {
+				t.Fatalf("capability goal meaning is empty; goal=%#v goals=%#v", goal, goals)
+			}
+			if len(goal.EnableBy) == 0 {
+				t.Fatalf("capability goal enable_by is empty; goal=%#v goals=%#v", goal, goals)
+			}
+		}
+		if !found {
+			t.Fatalf("capability goals = %#v, want unbind goal for %s", goals, want)
+		}
+	}
+}
+
+func TestAgentReadOnlyBindingStatusCapabilityGoalsInspectConfigFields(t *testing.T) {
+	query := "\u8bf7\u67e5\u770b\u8fd9\u4e2a\u667a\u80fd\u4f53\u5f53\u524d\u7ed1\u5b9a\u4e86\u54ea\u4e9b\u77e5\u8bc6\u5e93\u3001\u6570\u636e\u8868\u548c\u5de5\u4f5c\u6d41\u3002"
+	if !agentBindingStateReadOnlyQuestionRequested(query) {
+		t.Fatalf("agentBindingStateReadOnlyQuestionRequested(%q) = false, want true", query)
+	}
+	if agentBindingMutationRequested(query) {
+		t.Fatalf("agentBindingMutationRequested(%q) = true, want read-only", query)
+	}
+	goals := agentManagementCapabilityGoalsForQuery(query)
+	for _, want := range []struct {
+		capabilityID string
+		field        string
+	}{
+		{agentCapabilityKnowledgeBinding, "knowledge_dataset_ids"},
+		{agentCapabilityDatabaseBinding, "database_bindings"},
+		{agentCapabilityWorkflowBinding, "workflow_bindings"},
+	} {
+		var got AIChatAgentCapabilityGoal
+		for _, goal := range goals {
+			if goal.CapabilityID == want.capabilityID {
+				got = goal
+				break
+			}
+		}
+		if got.CapabilityID == "" {
+			t.Fatalf("capability goals = %#v, missing %s", goals, want.capabilityID)
+		}
+		if got.GoalAction != agentCapabilityActionInspect {
+			t.Fatalf("%s goal_action = %q, want inspect; goal=%#v", want.capabilityID, got.GoalAction, got)
+		}
+		if !stringSliceContains(got.RequiredConfigFields, want.field) {
+			t.Fatalf("%s required_config_fields = %#v, want %s; goal=%#v", want.capabilityID, got.RequiredConfigFields, want.field, got)
+		}
+		if len(got.RequiredBindingActions) != 0 {
+			t.Fatalf("%s required_binding_actions = %#v, want none for read-only status", want.capabilityID, got.RequiredBindingActions)
+		}
+		if strings.TrimSpace(got.Meaning) == "" || len(got.VerifyBy) == 0 {
+			t.Fatalf("%s goal lacks semantic evidence contract; goal=%#v", want.capabilityID, got)
+		}
+	}
+	if fields := agentManagementCapabilityExpectedConfigFields(query); len(fields) != 0 {
+		t.Fatalf("agentManagementCapabilityExpectedConfigFields(%q) = %#v, want no update fields for read-only binding status", query, fields)
+	}
+	if actions := agentManagementCapabilityExpectedBindingActions(query); len(actions) != 0 {
+		t.Fatalf("agentManagementCapabilityExpectedBindingActions(%q) = %#v, want no binding actions for read-only binding status", query, actions)
+	}
+
+	parts := &chatRequestParts{
+		Query:          query,
+		Surface:        aiChatSurfaceContextualSidebar,
+		RuntimeContext: "route=/console/agents/agent-1/agent",
+		SkillMode:      skillModeAuto,
+		SkillIDs: []string{
+			skills.SkillAgentManagement,
+			skills.SkillConsoleNavigator,
+		},
+	}
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "get_agent_config") {
+		t.Fatalf("PlannedTools = %#v, missing get_agent_config for binding status", strategy.PlannedTools)
+	}
+	for _, unexpected := range []string{
+		"list_agent_knowledge_candidates",
+		"list_agent_database_candidates",
+		"list_agent_database_tables",
+		"list_agent_workflow_binding_candidates",
+		"update_agent_config",
+		"replace_agent_knowledge_bindings",
+		"replace_agent_database_bindings",
+		"replace_agent_workflow_bindings",
+	} {
+		if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, unexpected) {
+			t.Fatalf("PlannedTools = %#v, want no %s for read-only binding status", strategy.PlannedTools, unexpected)
+		}
+	}
+	plan := operationPlanFromTurnStrategy("task-agent-read-only-binding-status", parts, strategy)
+	capabilityGoals := mapSliceFromAny(plan["capability_goals"])
+	for _, want := range []string{agentCapabilityKnowledgeBinding, agentCapabilityDatabaseBinding, agentCapabilityWorkflowBinding} {
+		if !operationPlanCapabilityGoalsContainForTest(capabilityGoals, want) {
+			t.Fatalf("capability_goals = %#v, missing %s; plan=%#v", capabilityGoals, want, plan)
+		}
+	}
+	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")); got != "" {
+		t.Fatalf("update_agent_config step status = %q, want absent; plan=%#v", got, plan)
+	}
+}
+
+func TestAgentSkillBackedCapabilityGoalExposesEvidenceBoundaries(t *testing.T) {
+	goals := agentManagementCapabilityGoalsForQuery("让这个智能体能够生成文件")
+	if len(goals) != 1 {
+		t.Fatalf("capability goals = %#v, want one skill-backed capability goal", goals)
+	}
+	goal := goals[0]
+	if goal.CapabilityID != agentCapabilitySkillBacked {
+		t.Fatalf("capability_id = %q, want %q; goal=%#v", goal.CapabilityID, agentCapabilitySkillBacked, goal)
+	}
+	for _, boundary := range []string{"system_prompt_only", "file_upload_enabled_only", "candidate_lookup_only", "natural_language_claim_only"} {
+		if !stringSliceContains(goal.NotSufficient, boundary) {
+			t.Fatalf("not_sufficient = %#v, want %q; goal=%#v", goal.NotSufficient, boundary, goal)
+		}
+	}
+	if !strings.Contains(goal.Meaning, "enabled_skill_ids") {
+		t.Fatalf("meaning = %q, want enabled_skill_ids semantics; goal=%#v", goal.Meaning, goal)
+	}
+	if len(goal.EnableBy) == 0 || !stringSliceContains(goal.RequiredConfigFields, "enabled_skill_ids") {
+		t.Fatalf("goal = %#v, want enable path and enabled_skill_ids field", goal)
+	}
+	maps := agentCapabilityGoalsToMaps(goals)
+	if len(maps) != 1 {
+		t.Fatalf("agentCapabilityGoalsToMaps = %#v, want one mapped goal", maps)
+	}
+	for _, key := range []string{"meaning", "enable_by", "not_sufficient", "verify_by"} {
+		if _, ok := maps[0][key]; !ok {
+			t.Fatalf("mapped capability goal = %#v, missing key %q", maps[0], key)
+		}
+	}
+	compact := operationPlanCompactCapabilityGoals(mapsToInterfaceSlice(maps), 1)
+	if len(compact) != 1 {
+		t.Fatalf("compact capability goals = %#v, want one compact goal", compact)
+	}
+	compactGoal := mapFromOperationContext(compact[0])
+	for _, key := range []string{"meaning", "enable_by", "not_sufficient", "verify_by"} {
+		if _, ok := compactGoal[key]; !ok {
+			t.Fatalf("compact capability goal = %#v, missing key %q", compactGoal, key)
+		}
+	}
+}
+
+func TestAgentCapabilityModelRecognizesChineseSkillBackedCapability(t *testing.T) {
+	query := "\u8ba9\u8fd9\u4e2a\u667a\u80fd\u4f53\u80fd\u591f\u751f\u6210\u6587\u4ef6"
+	goals := agentManagementCapabilityGoalsForQuery(query)
+	var goal AIChatAgentCapabilityGoal
+	for _, candidate := range goals {
+		if candidate.CapabilityID == agentCapabilitySkillBacked {
+			goal = candidate
+			break
+		}
+	}
+	if goal.CapabilityID == "" {
+		t.Fatalf("capability goals = %#v, missing skill-backed file generation capability for query %q", goals, query)
+	}
+	if goal.GoalAction != agentCapabilityActionEnable {
+		t.Fatalf("goal_action = %q, want %q; goal=%#v", goal.GoalAction, agentCapabilityActionEnable, goal)
+	}
+	if goal.CandidateTool != "list_agent_skill_candidates" || goal.CandidateQuery != "file generation" {
+		t.Fatalf("candidate evidence = tool %q query %q, want file-generation skill lookup; goal=%#v", goal.CandidateTool, goal.CandidateQuery, goal)
+	}
+	if got := goal.RequiredBindingActions["enabled_skill_ids"]; got != "bind" {
+		t.Fatalf("required_binding_actions[enabled_skill_ids] = %q, want bind; goal=%#v", got, goal)
+	}
+	for _, boundary := range []string{"system_prompt_only", "file_upload_enabled_only", "candidate_lookup_only", "natural_language_claim_only"} {
+		if !stringSliceContains(goal.NotSufficient, boundary) {
+			t.Fatalf("not_sufficient = %#v, missing %q; goal=%#v", goal.NotSufficient, boundary, goal)
+		}
+	}
+}
+
+func TestAgentCapabilityModelCoversMVPConfigContracts(t *testing.T) {
+	tests := []struct {
+		name          string
+		query         string
+		capabilityID  string
+		fields        []string
+		bindingAction map[string]string
+		candidateTool string
+	}{
+		{
+			name:         "model provider pair",
+			query:        "switch this agent to gpt-4o for complex reasoning",
+			capabilityID: agentCapabilityModelSelection,
+			fields:       []string{"model_provider", "model"},
+		},
+		{
+			name:         "system prompt",
+			query:        "update this agent system prompt to be a careful novelist assistant",
+			capabilityID: agentCapabilitySystemPrompt,
+			fields:       []string{"system_prompt"},
+		},
+		{
+			name:         "file upload",
+			query:        "allow this agent to upload files",
+			capabilityID: agentCapabilityAcceptUploaded,
+			fields:       []string{"file_upload_enabled"},
+		},
+		{
+			name:         "skill-backed file generation",
+			query:        "make this agent able to generate files",
+			capabilityID: agentCapabilitySkillBacked,
+			fields:       []string{"enabled_skill_ids"},
+			bindingAction: map[string]string{
+				"enabled_skill_ids": "bind",
+			},
+			candidateTool: "list_agent_skill_candidates",
+		},
+		{
+			name:         "knowledge binding",
+			query:        "bind a knowledge base to this agent",
+			capabilityID: agentCapabilityKnowledgeBinding,
+			fields:       []string{"knowledge_dataset_ids"},
+			bindingAction: map[string]string{
+				"knowledge_dataset_ids": "bind",
+			},
+		},
+		{
+			name:         "database binding",
+			query:        "bind a database table to this agent",
+			capabilityID: agentCapabilityDatabaseBinding,
+			fields:       []string{"database_bindings"},
+			bindingAction: map[string]string{
+				"database_bindings": "bind",
+			},
+		},
+		{
+			name:         "workflow binding",
+			query:        "bind a workflow to this agent",
+			capabilityID: agentCapabilityWorkflowBinding,
+			fields:       []string{"workflow_bindings"},
+			bindingAction: map[string]string{
+				"workflow_bindings": "bind",
+			},
+		},
+		{
+			name:         "memory",
+			query:        "enable agent memory for this agent",
+			capabilityID: agentCapabilityMemory,
+			fields:       []string{"agent_memory_enabled"},
+		},
+		{
+			name:         "suggested questions",
+			query:        "set suggested_questions to Check config and Generate reply",
+			capabilityID: agentCapabilitySuggestedQuestion,
+			fields:       []string{"suggested_questions"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			goals := agentManagementCapabilityGoalsForQuery(tt.query)
+			var goal AIChatAgentCapabilityGoal
+			for _, candidate := range goals {
+				if candidate.CapabilityID == tt.capabilityID {
+					goal = candidate
+					break
+				}
+			}
+			if goal.CapabilityID == "" {
+				t.Fatalf("capability goals = %#v, missing %s for query %q", goals, tt.capabilityID, tt.query)
+			}
+			for _, field := range tt.fields {
+				if !stringSliceContains(goal.RequiredConfigFields, field) {
+					t.Fatalf("required_config_fields = %#v, missing %q; goal=%#v", goal.RequiredConfigFields, field, goal)
+				}
+			}
+			for field, action := range tt.bindingAction {
+				if got := goal.RequiredBindingActions[field]; got != action {
+					t.Fatalf("required_binding_actions[%s] = %q, want %q; goal=%#v", field, got, action, goal)
+				}
+			}
+			if tt.candidateTool != "" && goal.CandidateTool != tt.candidateTool {
+				t.Fatalf("candidate_tool = %q, want %q; goal=%#v", goal.CandidateTool, tt.candidateTool, goal)
+			}
+			if strings.TrimSpace(goal.Meaning) == "" ||
+				len(goal.EnableBy) == 0 ||
+				len(goal.NotSufficient) == 0 ||
+				len(goal.VerifyBy) == 0 {
+				t.Fatalf("goal lacks semantic contract details; goal=%#v", goal)
+			}
+		})
+	}
+}
+
+func TestAgentCapabilityDefinitionsForPromptExposeMVPContracts(t *testing.T) {
+	definitions := agentManagementCapabilityDefinitionsForPrompt()
+	if len(definitions) == 0 {
+		t.Fatal("agentManagementCapabilityDefinitionsForPrompt() = empty, want prompt-facing capability model")
+	}
+	byID := map[string]map[string]interface{}{}
+	for _, definition := range definitions {
+		id := stringFromAny(definition["capability_id"])
+		if id != "" {
+			byID[id] = definition
+		}
+	}
+
+	model := byID[agentCapabilityModelSelection]
+	for _, field := range []string{"model_provider", "model"} {
+		if !stringSliceContainsFold(stringSliceFromAny(model["required_config_fields"]), field) {
+			t.Fatalf("model capability definition = %#v, missing required field %s", model, field)
+		}
+	}
+	if stringFromAny(model["candidate_tool"]) != "list_available_models" {
+		t.Fatalf("model capability definition = %#v, want list_available_models candidate tool", model)
+	}
+	for _, want := range []string{"model_provider", "model"} {
+		if !strings.Contains(fmt.Sprint(model["verify_by"]), want) {
+			t.Fatalf("model capability verify_by = %#v, want %s evidence", model["verify_by"], want)
+		}
+	}
+
+	systemPrompt := byID[agentCapabilitySystemPrompt]
+	if !stringSliceContainsFold(stringSliceFromAny(systemPrompt["required_config_fields"]), "system_prompt") {
+		t.Fatalf("system-prompt capability definition = %#v, want system_prompt field", systemPrompt)
+	}
+	if !strings.Contains(fmt.Sprint(systemPrompt["not_sufficient"]), "tool_binding_or_resource_access_claim") {
+		t.Fatalf("system-prompt not_sufficient = %#v, want resource-access boundary", systemPrompt["not_sufficient"])
+	}
+
+	fileUpload := byID[agentCapabilityAcceptUploaded]
+	if !stringSliceContainsFold(stringSliceFromAny(fileUpload["required_config_fields"]), "file_upload_enabled") {
+		t.Fatalf("file-upload capability definition = %#v, want file_upload_enabled config field", fileUpload)
+	}
+	if stringSliceContainsFold(stringSliceFromAny(fileUpload["required_config_fields"]), "enabled_skill_ids") {
+		t.Fatalf("file-upload capability definition = %#v, should not require skill binding", fileUpload)
+	}
+
+	memory := byID[agentCapabilityMemory]
+	if !stringSliceContainsFold(stringSliceFromAny(memory["required_config_fields"]), "agent_memory_enabled") {
+		t.Fatalf("memory capability definition = %#v, want agent_memory_enabled config field", memory)
+	}
+	if !strings.Contains(fmt.Sprint(memory["not_sufficient"]), "system_prompt_only") {
+		t.Fatalf("memory not_sufficient = %#v, want prompt-only boundary", memory["not_sufficient"])
+	}
+
+	suggestedQuestions := byID[agentCapabilitySuggestedQuestion]
+	if !stringSliceContainsFold(stringSliceFromAny(suggestedQuestions["required_config_fields"]), "suggested_questions") {
+		t.Fatalf("suggested-questions capability definition = %#v, want suggested_questions config field", suggestedQuestions)
+	}
+	if !strings.Contains(fmt.Sprint(suggestedQuestions["verify_by"]), "suggested_questions") {
+		t.Fatalf("suggested-questions verify_by = %#v, want suggested_questions evidence", suggestedQuestions["verify_by"])
+	}
+
+	skillBacked := byID[agentCapabilitySkillBacked]
+	if !stringSliceContainsFold(stringSliceFromAny(skillBacked["required_config_fields"]), "enabled_skill_ids") {
+		t.Fatalf("skill-backed capability definition = %#v, want enabled_skill_ids config field", skillBacked)
+	}
+	if got := stringFromAny(skillBacked["candidate_tool"]); got != "list_agent_skill_candidates" {
+		t.Fatalf("skill-backed candidate_tool = %q, want list_agent_skill_candidates; definition=%#v", got, skillBacked)
+	}
+	actions := operationPlanAgentConfigBindingActionsFromAny(skillBacked["required_binding_actions"])
+	if got := actions["enabled_skill_ids"]; got != "bind" {
+		t.Fatalf("skill-backed required_binding_actions = %#v, want enabled_skill_ids bind; definition=%#v", actions, skillBacked)
+	}
+	if !strings.Contains(fmt.Sprint(skillBacked["examples"]), "file generation") {
+		t.Fatalf("skill-backed examples = %#v, want file generation example", skillBacked["examples"])
+	}
+
+	for _, want := range []struct {
+		capabilityID string
+		field        string
+	}{
+		{agentCapabilityKnowledgeBinding, "knowledge_dataset_ids"},
+		{agentCapabilityDatabaseBinding, "database_bindings"},
+		{agentCapabilityWorkflowBinding, "workflow_bindings"},
+	} {
+		definition := byID[want.capabilityID]
+		actions := operationPlanAgentConfigBindingActionsFromAny(definition["required_binding_actions"])
+		if got := actions[want.field]; got != "bind" {
+			t.Fatalf("%s required_binding_actions = %#v, want %s bind; definition=%#v", want.capabilityID, actions, want.field, definition)
+		}
+		if len(stringSliceFromAny(definition["candidate_tools"])) == 0 {
+			t.Fatalf("%s definition = %#v, want candidate_tools for binding resolution", want.capabilityID, definition)
+		}
+	}
+	for _, capabilityID := range []string{
+		agentCapabilityModelSelection,
+		agentCapabilitySystemPrompt,
+		agentCapabilityAcceptUploaded,
+		agentCapabilityMemory,
+		agentCapabilitySuggestedQuestion,
+		agentCapabilitySkillBacked,
+		agentCapabilityKnowledgeBinding,
+		agentCapabilityDatabaseBinding,
+		agentCapabilityWorkflowBinding,
+	} {
+		definition := byID[capabilityID]
+		if len(definition) == 0 {
+			t.Fatalf("missing MVP capability definition %s; definitions=%#v", capabilityID, definitions)
+		}
+		for _, key := range []string{"meaning", "enable_by", "not_sufficient", "verify_by"} {
+			if value, ok := definition[key]; !ok || fmt.Sprint(value) == "" || fmt.Sprint(value) == "[]" {
+				t.Fatalf("%s definition missing %s semantic contract: %#v", capabilityID, key, definition)
+			}
+		}
+	}
+}
+
+func TestAgentCapabilityStatusTargetMarkersCoverMVPModel(t *testing.T) {
+	markers := agentManagementCapabilityStatusTargetMarkers()
+	for _, want := range []string{
+		"file generation",
+		"file upload",
+		"memory capability",
+		"knowledge base",
+		"database table",
+		"workflow",
+		"\u751f\u6210\u6587\u4ef6",
+		"\u4e0a\u4f20\u6587\u4ef6",
+		"\u8bb0\u5fc6\u80fd\u529b",
+		"\u77e5\u8bc6\u5e93",
+		"\u6570\u636e\u8868",
+		"\u5de5\u4f5c\u6d41",
+	} {
+		if !stringSliceContainsFold(markers, want) {
+			t.Fatalf("agentManagementCapabilityStatusTargetMarkers() = %#v, missing %q", markers, want)
+		}
+	}
+	if !agentManagementCapabilityStatusTargetMentioned("\u8fd9\u4e2a Agent \u662f\u5426\u5df2\u5f00\u542f\u8bb0\u5fc6\u80fd\u529b\uff1f") {
+		t.Fatal("agentManagementCapabilityStatusTargetMentioned(memory status query) = false, want true")
+	}
+	if !agentManagementCapabilityStatusTargetMentioned("\u8fd9\u4e2a Agent \u80fd\u5426\u751f\u6210\u6587\u4ef6\uff1f") {
+		t.Fatal("agentManagementCapabilityStatusTargetMentioned(file-generation query) = false, want true")
+	}
+}
+
+func TestAgentConfigOnlyCapabilityDescriptorsDriveStatusAndMutation(t *testing.T) {
+	tests := []struct {
+		name         string
+		field        string
+		mutationText string
+		statusText   string
+		capabilityID string
+	}{
+		{
+			name:         "file upload",
+			field:        "file_upload_enabled",
+			mutationText: "allow this agent to upload files",
+			statusText:   "is file upload enabled for this agent?",
+			capabilityID: agentCapabilityAcceptUploaded,
+		},
+		{
+			name:         "agent memory",
+			field:        "agent_memory_enabled",
+			mutationText: "enable agent memory for this agent",
+			statusText:   "这个 Agent 是否已开启记忆能力？",
+			capabilityID: agentCapabilityMemory,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			descriptor, ok := agentManagementConfigOnlyCapabilityDescriptorForField(tt.field)
+			if !ok {
+				t.Fatalf("descriptor for %s missing", tt.field)
+			}
+			if descriptor.CapabilityID != tt.capabilityID {
+				t.Fatalf("descriptor capability id = %q, want %q", descriptor.CapabilityID, tt.capabilityID)
+			}
+			if len(descriptor.Markers) == 0 || len(descriptor.EnableVerify) == 0 || len(descriptor.InspectVerify) == 0 {
+				t.Fatalf("descriptor lacks semantic contract detail: %#v", descriptor)
+			}
+			if !descriptor.ContinuationEnable {
+				t.Fatalf("descriptor ContinuationEnable = false, want true for MVP config-only capability: %#v", descriptor)
+			}
+			if !operationPlanConfigCapabilityContinuationFieldCanEnable(tt.field) {
+				t.Fatalf("operationPlanConfigCapabilityContinuationFieldCanEnable(%q) = false, want descriptor-driven true", tt.field)
+			}
+			if !agentManagementConfigOnlyCapabilityRequested(tt.mutationText, tt.field) {
+				t.Fatalf("agentManagementConfigOnlyCapabilityRequested(%q, %q) = false, want true", tt.mutationText, tt.field)
+			}
+			if !agentManagementConfigCapabilityStatusRequested(tt.statusText, tt.field) {
+				t.Fatalf("agentManagementConfigCapabilityStatusRequested(%q, %q) = false, want true", tt.statusText, tt.field)
+			}
+			goals := agentManagementCapabilityGoalsForQuery(tt.statusText)
+			var goal AIChatAgentCapabilityGoal
+			for _, candidate := range goals {
+				if candidate.CapabilityID == tt.capabilityID {
+					goal = candidate
+					break
+				}
+			}
+			if goal.CapabilityID == "" {
+				t.Fatalf("capability goals = %#v, missing %s", goals, tt.capabilityID)
+			}
+			if got := canonicalAgentCapabilityAction(goal.GoalAction); got != agentCapabilityActionInspect {
+				t.Fatalf("status goal action = %q, want inspect; goal=%#v", got, goal)
+			}
+			if !stringSliceContainsFold(goal.RequiredConfigFields, tt.field) {
+				t.Fatalf("status goal fields = %#v, missing %s; goal=%#v", goal.RequiredConfigFields, tt.field, goal)
+			}
+		})
+	}
+	for _, field := range []string{"model", "system_prompt", "enabled_skill_ids", "knowledge_dataset_ids", "database_bindings", "workflow_bindings"} {
+		if operationPlanConfigCapabilityContinuationFieldCanEnable(field) {
+			t.Fatalf("operationPlanConfigCapabilityContinuationFieldCanEnable(%q) = true, want false for non config-only continuation field", field)
+		}
+	}
+}
+
+func TestAgentBindingCapabilityDescriptorsDriveResourceTools(t *testing.T) {
+	for _, descriptor := range agentManagementBindingCapabilityDescriptors() {
+		t.Run(descriptor.field, func(t *testing.T) {
+			if descriptor.capabilityID == "" ||
+				descriptor.field == "" ||
+				descriptor.mutationTool == "" ||
+				descriptor.meaning == "" ||
+				descriptor.resolveBy == "" ||
+				len(descriptor.markers) == 0 ||
+				len(descriptor.candidateTools) == 0 {
+				t.Fatalf("binding descriptor lacks semantic tool contract: %#v", descriptor)
+			}
+			if got := operationPlanAgentResourceBindingFieldForCapability(descriptor.capabilityID); got != descriptor.field {
+				t.Fatalf("field for capability %q = %q, want %q", descriptor.capabilityID, got, descriptor.field)
+			}
+			if got := operationPlanAgentResourceBindingCapabilityForField(descriptor.field); got != descriptor.capabilityID {
+				t.Fatalf("capability for field %q = %q, want %q", descriptor.field, got, descriptor.capabilityID)
+			}
+			goal := agentCapabilityGoalWithDefaults(AIChatAgentCapabilityGoal{
+				CapabilityID:         descriptor.capabilityID,
+				GoalAction:           agentCapabilityActionBind,
+				RequiredConfigFields: []string{descriptor.field},
+			})
+			if goal.Meaning != descriptor.meaning {
+				t.Fatalf("default binding goal meaning = %q, want descriptor meaning %q; goal=%#v", goal.Meaning, descriptor.meaning, goal)
+			}
+			for _, want := range []string{
+				descriptor.resolveBy,
+				"update_agent_config " + descriptor.field + " with the requested binding action",
+				"verify get_agent_config." + descriptor.field + " reflects the requested binding state",
+			} {
+				if !stringSliceContainsFold(goal.EnableBy, want) {
+					t.Fatalf("default binding goal enable_by = %#v, missing %q; goal=%#v", goal.EnableBy, want, goal)
+				}
+			}
+			if agentCapabilityGoalContributesExpectedConfigFields(goal) {
+				t.Fatalf("agentCapabilityGoalContributesExpectedConfigFields(%#v) = true, want false for binding capability", goal)
+			}
+			if got := operationPlanResourceBindingCandidateToolsForField(descriptor.field); !reflect.DeepEqual(got, descriptor.candidateTools) {
+				t.Fatalf("candidate tools for %s = %#v, want %#v", descriptor.field, got, descriptor.candidateTools)
+			}
+
+			steps := operationPlanResourceBindingCandidateSteps([]string{descriptor.field}, "agent-1")
+			for _, toolName := range descriptor.candidateTools {
+				if operationPlanStepForTest(map[string]interface{}{"steps": mapsToInterfaceSlice(steps)}, operationPlanToolStepID(skills.SkillAgentManagement, toolName)) == nil {
+					t.Fatalf("candidate steps = %#v, missing %s", steps, toolName)
+				}
+			}
+
+			mutationQuery := "unbind this agent " + descriptor.markers[0]
+			if !stringSliceContainsFold(requiredAgentBindingMutationTools(mutationQuery), descriptor.mutationTool) {
+				t.Fatalf("required mutation tools for %q = %#v, missing %s", mutationQuery, requiredAgentBindingMutationTools(mutationQuery), descriptor.mutationTool)
+			}
+
+			candidateQuery := "show available bindable " + descriptor.markers[0]
+			gotTools := agentManagementReadOnlyBindingCandidateTools(candidateQuery)
+			for _, toolName := range descriptor.candidateTools {
+				if !stringSliceContainsFold(gotTools, toolName) {
+					t.Fatalf("read-only candidate tools for %q = %#v, missing %s", candidateQuery, gotTools, toolName)
+				}
+			}
+		})
+	}
+}
+
+func TestAgentBindingToolDescriptorsDriveGuardAndResultCoverage(t *testing.T) {
+	for _, descriptor := range agentBindingToolDescriptors() {
+		t.Run(descriptor.toolName, func(t *testing.T) {
+			if descriptor.field == "" || descriptor.bindingKind == "" || descriptor.toolName == "" {
+				t.Fatalf("binding tool descriptor lacks field, kind, or tool name: %#v", descriptor)
+			}
+
+			field, kind := agentBindingRequirementFieldAndKind(descriptor.toolName)
+			if field != descriptor.field || kind != descriptor.bindingKind {
+				t.Fatalf("agentBindingRequirementFieldAndKind(%q) = (%q, %q), want (%q, %q)",
+					descriptor.toolName, field, kind, descriptor.field, descriptor.bindingKind)
+			}
+
+			requiredTools := agentBindingGuardRequiredToolsFromActions(map[string]string{
+				descriptor.field: "bind",
+			})
+			if !stringSliceContainsFold(requiredTools, descriptor.toolName) {
+				t.Fatalf("agentBindingGuardRequiredToolsFromActions(%s bind) = %#v, missing %s",
+					descriptor.field, requiredTools, descriptor.toolName)
+			}
+
+			updatedFieldsResult := map[string]interface{}{
+				"updated_fields": []interface{}{descriptor.field},
+			}
+			if !agentBindingUpdateConfigResultCoversTool(updatedFieldsResult, descriptor.toolName) {
+				t.Fatalf("updated_fields result %#v does not cover %s", updatedFieldsResult, descriptor.toolName)
+			}
+
+			bindingChangesResult := map[string]interface{}{
+				"binding_changes": []interface{}{
+					map[string]interface{}{"binding_kind": descriptor.bindingKind},
+				},
+			}
+			if !agentBindingUpdateConfigResultCoversTool(bindingChangesResult, descriptor.toolName) {
+				t.Fatalf("binding_changes result %#v does not cover %s", bindingChangesResult, descriptor.toolName)
+			}
+		})
+	}
+}
+
+func TestAgentConfigFieldDescriptorsDriveCanonicalFieldsAndBindingActions(t *testing.T) {
+	for _, descriptor := range agentManagementConfigFieldDescriptors() {
+		t.Run(descriptor.field, func(t *testing.T) {
+			if descriptor.field == "" {
+				t.Fatalf("config field descriptor has empty field: %#v", descriptor)
+			}
+			if got := operationPlanAgentConfigCanonicalField(descriptor.field); got != descriptor.field {
+				t.Fatalf("operationPlanAgentConfigCanonicalField(%q) = %q, want %q", descriptor.field, got, descriptor.field)
+			}
+			for _, alias := range descriptor.aliases {
+				if got := operationPlanAgentConfigCanonicalField(alias); got != descriptor.field {
+					t.Fatalf("operationPlanAgentConfigCanonicalField(%q) = %q, want %q", alias, got, descriptor.field)
+				}
+			}
+			for _, marker := range descriptor.explicitMarkers {
+				fields := agentManagementExplicitConfigFieldsFromText("please update " + marker)
+				if !stringSliceContainsFold(fields, descriptor.field) {
+					t.Fatalf("agentManagementExplicitConfigFieldsFromText(%q) = %#v, missing %s", marker, fields, descriptor.field)
+				}
+			}
+			for _, marker := range descriptor.semanticMarkers {
+				query := "please update " + marker
+				if !agentManagementConfigFieldSemanticMarkerRequested(query, descriptor.field) {
+					t.Fatalf("agentManagementConfigFieldSemanticMarkerRequested(%q, %q) = false, want true", query, descriptor.field)
+				}
+				if !agentManagementConfigCapabilityMarkerRequested(query) {
+					t.Fatalf("agentManagementConfigCapabilityMarkerRequested(%q) = false, want true from descriptor marker %q", query, marker)
+				}
+			}
+			for action, markers := range descriptor.bindingActionMarkers {
+				canonicalAction := operationPlanCanonicalAgentConfigBindingAction(action)
+				if canonicalAction == "" {
+					t.Fatalf("binding action %q for %s is not canonical", action, descriptor.field)
+				}
+				for _, marker := range markers {
+					actions := agentManagementExpectedConfigBindingActions("please apply " + marker)
+					if got := actions[descriptor.field]; got != canonicalAction {
+						t.Fatalf("agentManagementExpectedConfigBindingActions(%q)[%s] = %q, want %q; actions=%#v",
+							marker, descriptor.field, got, canonicalAction, actions)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestAgentConfigFieldSemanticDescriptorsDriveCapabilityGoals(t *testing.T) {
+	tests := []struct {
+		name         string
+		query        string
+		capabilityID string
+		field        string
+	}{
+		{
+			name:         "system prompt",
+			query:        "please update this agent prompt to be a careful novelist",
+			capabilityID: agentCapabilitySystemPrompt,
+			field:        "system_prompt",
+		},
+		{
+			name:         "suggested questions",
+			query:        "please update this agent suggested question examples",
+			capabilityID: agentCapabilitySuggestedQuestion,
+			field:        "suggested_questions",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			goals := agentManagementCapabilityGoalsForQuery(tc.query)
+			var got AIChatAgentCapabilityGoal
+			for _, goal := range goals {
+				if goal.CapabilityID == tc.capabilityID {
+					got = goal
+					break
+				}
+			}
+			if got.CapabilityID == "" {
+				t.Fatalf("capability goals = %#v, missing %s", goals, tc.capabilityID)
+			}
+			if !stringSliceContainsFold(got.RequiredConfigFields, tc.field) {
+				t.Fatalf("required config fields = %#v, missing %s; goal=%#v", got.RequiredConfigFields, tc.field, got)
+			}
+			fields := agentManagementCapabilityExpectedConfigFields(tc.query)
+			if !stringSliceContainsFold(fields, tc.field) {
+				t.Fatalf("agentManagementCapabilityExpectedConfigFields(%q) = %#v, missing %s", tc.query, fields, tc.field)
+			}
+		})
+	}
+}
+
+func TestAgentCapabilityMutationDrivesConfigUpdatePermission(t *testing.T) {
+	mutationQuery := "make this agent able to generate charts"
+	if !agentManagementCapabilityRequiresConfigMutation(mutationQuery) {
+		t.Fatalf("agentManagementCapabilityRequiresConfigMutation(%q) = false, want true", mutationQuery)
+	}
+	if !agentManagementConfigUpdateRequested(mutationQuery) {
+		t.Fatalf("agentManagementConfigUpdateRequested(%q) = false, want capability mutation to request config update", mutationQuery)
+	}
+	if !agentManagementToolMatchesUserGoal(mutationQuery, "update_agent_config") {
+		t.Fatalf("agentManagementToolMatchesUserGoal(%q, update_agent_config) = false, want true", mutationQuery)
+	}
+
+	statusQuery := "can this agent generate charts?"
+	if !agentManagementCapabilityStatusQuestionRequested(statusQuery) {
+		t.Fatalf("agentManagementCapabilityStatusQuestionRequested(%q) = false, want true", statusQuery)
+	}
+	if agentManagementCapabilityRequiresConfigMutation(statusQuery) {
+		t.Fatalf("agentManagementCapabilityRequiresConfigMutation(%q) = true, want read-only status question", statusQuery)
+	}
+}
+
+func TestAgentSkillBackedCapabilityDescriptorNormalizesQueries(t *testing.T) {
+	mixedQuery := "\u8ba9\u8fd9\u4e2a\u667a\u80fd\u4f53\u80fd\u751f\u6210\u6587\u4ef6\u548c\u4e0a\u4f20\u6587\u4ef6"
+	if got := agentManagementSkillCapabilityCandidateQuery(mixedQuery); got != "file generation" {
+		t.Fatalf("agentManagementSkillCapabilityCandidateQuery(%q) = %q, want file generation", mixedQuery, got)
+	}
+	if !agentManagementFileUploadConfigCapabilityRequested(mixedQuery) {
+		t.Fatalf("agentManagementFileUploadConfigCapabilityRequested(%q) = false, want true", mixedQuery)
+	}
+	goals := agentManagementCapabilityGoalsForQuery(mixedQuery)
+	for _, want := range []string{agentCapabilitySkillBacked, agentCapabilityAcceptUploaded} {
+		if !agentCapabilityGoalsContainForTest(goals, want) {
+			t.Fatalf("capability goals = %#v, missing %s", goals, want)
+		}
+	}
+
+	statusQuery := "\u8fd9\u4e2a agent \u80fd\u751f\u6210\u6587\u4ef6\u5417"
+	if got := agentManagementCapabilityStatusCandidateQuery(statusQuery); got != "file generation" {
+		t.Fatalf("agentManagementCapabilityStatusCandidateQuery(%q) = %q, want file generation", statusQuery, got)
+	}
+	chartQuery := "make this agent able to generate charts"
+	if got := agentManagementSkillCapabilityCandidateQuery(chartQuery); got != "chart" {
+		t.Fatalf("agentManagementSkillCapabilityCandidateQuery(%q) = %q, want chart", chartQuery, got)
 	}
 }
 
@@ -1671,6 +2608,9 @@ func TestAgentConfigCurrentBindingUnbindDoesNotPlanBindOrCandidateLookup(t *test
 			t.Fatalf("expected_binding_actions[%s] = %#v, want unbind; actions=%#v plan=%#v", field, actions[field], actions, plan)
 		}
 	}
+	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(goal, "解绑") {
+		t.Fatalf("config_goal = %q, want semantic unbind goal preserved; plan=%#v", goal, plan)
+	}
 }
 
 func TestAgentConfigCurrentBindingUnbindAllResourcesDoesNotPlanCandidateLookup(t *testing.T) {
@@ -1718,9 +2658,13 @@ func TestAgentConfigCurrentBindingUnbindAllResourcesDoesNotPlanCandidateLookup(t
 			t.Fatalf("expected_binding_actions[%s] = %#v, want unbind; actions=%#v plan=%#v", field, actions[field], actions, plan)
 		}
 	}
+	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(goal, "都解绑") {
+		t.Fatalf("config_goal = %q, want semantic unbind-all goal preserved; plan=%#v", goal, plan)
+	}
 
+	metadata := map[string]interface{}{"operation_plan": plan}
 	prepared := &PreparedChat{
-		Message: &runtimemodel.Message{Metadata: map[string]interface{}{"operation_plan": plan}},
+		Message: &runtimemodel.Message{Metadata: metadata},
 		parts:   parts,
 	}
 	allowed := skillLoopAllowedPlannedTools(prepared)
@@ -1771,6 +2715,9 @@ func TestAgentConfigTrailingUnbindAllDoesNotTreatBoundSkillAsBind(t *testing.T) 
 			t.Fatalf("plan expected_binding_actions[%s] = %#v, want unbind; actions=%#v plan=%#v", field, planActions[field], planActions, plan)
 		}
 	}
+	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(goal, "解绑定") && !strings.Contains(goal, "解绑") {
+		t.Fatalf("config_goal = %q, want semantic unbind-all goal preserved; plan=%#v", goal, plan)
+	}
 }
 
 func TestAgentManagementGuidanceSurfacesExpectedUnbindPlanFields(t *testing.T) {
@@ -1790,8 +2737,9 @@ func TestAgentManagementGuidanceSurfacesExpectedUnbindPlanFields(t *testing.T) {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
 	}
 	plan := operationPlanFromTurnStrategy("task-agent-guidance-unbind-all", parts, strategy)
+	metadata := map[string]interface{}{"operation_plan": plan}
 	prepared := &PreparedChat{
-		Message: &runtimemodel.Message{Metadata: map[string]interface{}{"operation_plan": plan}},
+		Message: &runtimemodel.Message{Metadata: metadata},
 		parts:   parts,
 	}
 	message, ok := contextualConsoleAgentsSkillMessage(prepared)
@@ -1801,21 +2749,131 @@ func TestAgentManagementGuidanceSurfacesExpectedUnbindPlanFields(t *testing.T) {
 	content := stringFromAny(message.Content)
 
 	for _, want := range []string{
-		"Active Agent config plan expects update_agent_config",
-		"enabled_skill_ids=unbind",
-		"knowledge_dataset_ids=unbind",
-		"database_bindings=unbind",
-		"workflow_bindings=unbind",
 		"remove_enabled_skill_ids",
 		"remove_knowledge_dataset_ids",
 		"remove_database_bindings",
 		"remove_workflow_bindings",
-		"Do not replace a governed mutation with a natural-language confirmation",
-		"Do not finish after a partial binding edit",
+		"Active Agent config plan expects these binding actions",
+		"enabled_skill_ids=unbind",
+		"knowledge_dataset_ids=unbind",
+		"database_bindings=unbind",
+		"workflow_bindings=unbind",
+		"For binding edits, read current config or list exact candidates only when the needed current binding set or candidate IDs/names are not already present",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("agent guidance missing %q\ncontent:\n%s", want, content)
 		}
+	}
+}
+
+func TestAgentManagementGuidanceSurfacesActiveCapabilityGoals(t *testing.T) {
+	query := "\u8ba9\u8fd9\u4e2aagent\u80fd\u751f\u6210\u6587\u4ef6"
+	parts := consoleAgentDetailTestParts(query)
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	plan := operationPlanFromTurnStrategy("task-agent-capability-guidance", parts, strategy)
+	if goals := mapSliceFromAny(plan["capability_goals"]); len(goals) == 0 {
+		t.Fatalf("capability_goals = %#v, want generated-file capability goal; plan=%#v", plan["capability_goals"], plan)
+	}
+	metadata := map[string]interface{}{"operation_plan": plan}
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{Metadata: metadata},
+		parts:   parts,
+	}
+	message, ok := contextualConsoleAgentsSkillMessage(prepared)
+	if !ok {
+		t.Fatal("contextualConsoleAgentsSkillMessage() ok = false, want guidance")
+	}
+	content := stringFromAny(message.Content)
+
+	for _, want := range []string{
+		"Active Agent capability goals JSON",
+		"agent.skill_backed_capability",
+		"meaning",
+		"enable_by",
+		"not_sufficient",
+		"verify_by",
+		"enabled_skill_ids",
+		"Use capability goal meaning/enable_by/not_sufficient/verify_by",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("agent guidance missing capability contract %q\ncontent:\n%s", want, content)
+		}
+	}
+}
+
+func TestAgentCapabilityUpdateRouteContextBeatsTemporaryFileGeneration(t *testing.T) {
+	query := "\u8ba9\u5f53\u524d Agent \u80fd\u591f\u751f\u6210\u6587\u4ef6"
+	parts := &chatRequestParts{
+		Query:          query,
+		Surface:        aiChatSurfaceContextualSidebar,
+		RuntimeContext: "route=/console/agents/agent-1/agent",
+		SkillMode:      skillModeAuto,
+		SkillIDs: []string{
+			skills.SkillAgentManagement,
+			skills.SkillFileGenerator,
+		},
+	}
+	if !isTemporaryFileGenerateIntent(query) {
+		t.Fatalf("isTemporaryFileGenerateIntent(%q) = false, want true to cover ambiguous file-generation wording", query)
+	}
+	if !isAgentManagementCapabilityUpdateIntent(parts) {
+		t.Fatalf("isAgentManagementCapabilityUpdateIntent(%q) = false, want Agent capability update from detail route", query)
+	}
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	if strategy.Intent != "manage_agent_asset" {
+		t.Fatalf("strategy.Intent = %q, want manage_agent_asset; strategy=%#v", strategy.Intent, strategy)
+	}
+	if !stringSliceContainsFold(strategy.PrimarySkills, skills.SkillAgentManagement) {
+		t.Fatalf("PrimarySkills = %#v, want agent-management", strategy.PrimarySkills)
+	}
+	if stringSliceContainsFold(strategy.PrimarySkills, skills.SkillFileGenerator) {
+		t.Fatalf("PrimarySkills = %#v, want no file-generator for Agent capability update", strategy.PrimarySkills)
+	}
+	for _, want := range []string{"get_agent_config", "list_agent_skill_candidates", "update_agent_config"} {
+		if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, want) {
+			t.Fatalf("PlannedTools = %#v, missing agent-management/%s", strategy.PlannedTools, want)
+		}
+	}
+	plan := operationPlanFromTurnStrategy("task-agent-capability-route-context", parts, strategy)
+	if got := stringFromAny(plan["intent"]); got != "manage_agent_asset" {
+		t.Fatalf("operation_plan.intent = %q, want manage_agent_asset; plan=%#v", got, plan)
+	}
+	capabilityGoals := mapSliceFromAny(plan["capability_goals"])
+	if len(capabilityGoals) != 1 || stringFromAny(capabilityGoals[0]["capability_id"]) != agentCapabilitySkillBacked {
+		t.Fatalf("capability_goals = %#v, want skill-backed capability goal; plan=%#v", capabilityGoals, plan)
+	}
+}
+
+func TestAgentDetailRouteStillAllowsPlainTemporaryFileGeneration(t *testing.T) {
+	query := "\u751f\u6210\u4e00\u4e2a SVG \u6587\u4ef6\uff0c\u5185\u5bb9\u968f\u610f"
+	parts := &chatRequestParts{
+		Query:          query,
+		Surface:        aiChatSurfaceContextualSidebar,
+		RuntimeContext: "route=/console/agents/agent-1/agent",
+		SkillMode:      skillModeAuto,
+		SkillIDs: []string{
+			skills.SkillAgentManagement,
+			skills.SkillFileGenerator,
+		},
+	}
+	if isAgentManagementCapabilityUpdateIntent(parts) {
+		t.Fatalf("isAgentManagementCapabilityUpdateIntent(%q) = true, want plain file generation to stay temporary", query)
+	}
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	if strategy.Intent != "generate_temporary_file_artifact" {
+		t.Fatalf("strategy.Intent = %q, want generate_temporary_file_artifact; strategy=%#v", strategy.Intent, strategy)
+	}
+	if !stringSliceContainsFold(strategy.PrimarySkills, skills.SkillFileGenerator) {
+		t.Fatalf("PrimarySkills = %#v, want file-generator", strategy.PrimarySkills)
 	}
 }
 
@@ -2843,6 +3901,86 @@ func TestAgentBindingFinalAnswerGuardAcceptsUnifiedUpdateAgentConfig(t *testing.
 	}
 }
 
+func TestAgentBindingFinalAnswerGuardUsesOperationPlanBindingContract(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "继续处理",
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/agents/agent-1/agent",
+			SkillMode:      skillModeAuto,
+			SkillIDs: []string{
+				skills.SkillAgentManagement,
+				skills.SkillConsoleNavigator,
+			},
+			OperationContext: map[string]interface{}{
+				"resources": []interface{}{
+					map[string]interface{}{
+						"agent_id": "agent-1",
+						"type":     "agent",
+						"id":       "agent-1",
+						"name":     "Support Agent",
+						"href":     "/console/agents/agent-1/agent",
+						"selected": true,
+					},
+				},
+			},
+		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config"),
+						"status":    operationPlanStepStatusPending,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "update_agent_config",
+						operationPlanExpectedBindingActionsKey: map[string]interface{}{
+							"knowledge_dataset_ids": "bind",
+						},
+					},
+				},
+				"capability_goals": []interface{}{
+					map[string]interface{}{
+						"capability_id": agentCapabilityKnowledgeBinding,
+						"goal_action":   agentCapabilityActionBind,
+						"required_binding_actions": map[string]interface{}{
+							"knowledge_dataset_ids": "bind",
+						},
+					},
+				},
+			},
+		}},
+	}
+	guard := skillLoopAgentManagementFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopAgentManagementFinalAnswerGuard() = nil, want guard from plan binding contract")
+	}
+
+	blockedResult, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "已经处理完成。",
+	})
+	if !blocked {
+		t.Fatal("guard without mutation = not blocked, want operation-plan binding requirement")
+	}
+	if blockedResult.ToolName != "update_agent_config" {
+		t.Fatalf("blocked tool = %q, want update_agent_config", blockedResult.ToolName)
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "已经处理完成。",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:  skills.SkillAgentManagement,
+			ToolName: "update_agent_config",
+			Result: map[string]interface{}{
+				"agent_id":       "agent-1",
+				"updated_fields": []interface{}{"knowledge_dataset_ids"},
+			},
+		}},
+	})
+	if blocked {
+		t.Fatal("guard blocked update_agent_config evidence, want operation-plan binding requirement satisfied")
+	}
+}
+
 func TestAgentConfigReadOnlyQuestionPlansOnlyConfigRead(t *testing.T) {
 	for _, query := range []string{
 		"Tell me the current Agent model name and provider from its config. Do not modify any configuration.",
@@ -3161,7 +4299,7 @@ func TestAgentIdentityEditPlansPostUpdateReadWhenUserRequestsObservation(t *test
 	}
 }
 
-func TestAgentIdentityPostUpdateReadKeepsConsoleNavigatorAvailable(t *testing.T) {
+func TestAgentIdentityPostUpdateReadDoesNotAddConsoleNavigatorAutomatically(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:          "\u628a\u5f53\u524d\u667a\u80fd\u4f53\u7684\u540d\u79f0\u6539\u4e3a Support Agent\uff0c\u63cf\u8ff0\u6539\u4e3a smoke\u3002\u5b8c\u6210\u540e\u786e\u8ba4\u9875\u9762\u9876\u90e8\u5df2\u66f4\u65b0\u3002",
 		Surface:        aiChatSurfaceContextualSidebar,
@@ -3179,9 +4317,9 @@ func TestAgentIdentityPostUpdateReadKeepsConsoleNavigatorAvailable(t *testing.T)
 
 	filtered := restrictResolvedSkillsForTurnStrategy(parts, resolved)
 	got := filtered.SkillIDs()
-	want := []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator}
+	want := []string{skills.SkillAgentManagement}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("filtered skill ids = %#v, want Agent management plus console navigator for post-update page confirmation %#v", got, want)
+		t.Fatalf("filtered skill ids = %#v, want only planned Agent management tools without implicit navigator %#v", got, want)
 	}
 }
 
@@ -3213,6 +4351,10 @@ func TestAgentModelOnlyEditDoesNotPlanIdentityFromNegatedExclusions(t *testing.T
 	if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_identity") {
 		t.Fatalf("PlannedTools = %#v, want no agent-management/update_agent_identity for model-only query", strategy.PlannedTools)
 	}
+	modelListArgs := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, "list_available_models")
+	if got := modelListArgs["use_case"]; got != "text-chat" {
+		t.Fatalf("list_available_models args use_case = %q, want text-chat; args=%#v strategy=%#v", got, modelListArgs, strategy)
+	}
 
 	metadata := streamingMessageMetadataWithTaskID(parts, "task-agent-model-only")
 	plan := metadata["operation_plan"].(map[string]interface{})
@@ -3223,6 +4365,58 @@ func TestAgentModelOnlyEditDoesNotPlanIdentityFromNegatedExclusions(t *testing.T
 	}
 	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_identity")); got != "" {
 		t.Fatalf("update_agent_identity step status = %#v, want absent; plan=%#v", got, plan)
+	}
+	modelListStep := operationPlanStepForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "list_available_models"))
+	modelListStepArgs := mapFromOperationContext(modelListStep["arguments"])
+	if got := stringFromAny(modelListStepArgs["use_case"]); got != "text-chat" {
+		t.Fatalf("list_available_models step arguments.use_case = %q, want text-chat; step=%#v plan=%#v", got, modelListStep, plan)
+	}
+	updateStep := operationPlanStepForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config"))
+	fields := stringSliceFromAny(updateStep[operationPlanExpectedUpdatedFieldsKey])
+	for _, want := range []string{"model_provider", "model"} {
+		if !stringSliceContainsFold(fields, want) {
+			t.Fatalf("expected_updated_fields = %#v, want provider/model pair field %s; step=%#v plan=%#v", fields, want, updateStep, plan)
+		}
+	}
+	capabilityGoals := mapSliceFromAny(plan["capability_goals"])
+	if len(capabilityGoals) != 1 || stringFromAny(capabilityGoals[0]["capability_id"]) != agentCapabilityModelSelection {
+		t.Fatalf("capability_goals = %#v, want only model selection goal; plan=%#v", capabilityGoals, plan)
+	}
+	goalFields := stringSliceFromAny(capabilityGoals[0]["required_config_fields"])
+	for _, want := range []string{"model_provider", "model"} {
+		if !stringSliceContainsFold(goalFields, want) {
+			t.Fatalf("capability goal required_config_fields = %#v, want provider/model pair field %s", goalFields, want)
+		}
+	}
+}
+
+func TestAgentModelSelectionUseCaseArgumentFollowsExplicitCapability(t *testing.T) {
+	query := "Switch the current Agent to a model suited for complex reasoning, use_case=reasoning. Use the returned provider/model pair and only update model/provider."
+	parts := &chatRequestParts{
+		Query:          query,
+		Surface:        aiChatSurfaceContextualSidebar,
+		RuntimeContext: "route=/console/agents/agent-1/agent",
+		SkillMode:      skillModeAuto,
+		SkillIDs: []string{
+			skills.SkillAgentManagement,
+			skills.SkillConsoleNavigator,
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	args := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, "list_available_models")
+	if got := args["use_case"]; got != "reasoning" {
+		t.Fatalf("list_available_models args use_case = %q, want reasoning; args=%#v strategy=%#v", got, args, strategy)
+	}
+
+	plan := operationPlanFromTurnStrategy("task-agent-model-reasoning", parts, strategy)
+	step := operationPlanStepForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "list_available_models"))
+	stepArgs := mapFromOperationContext(step["arguments"])
+	if got := stringFromAny(stepArgs["use_case"]); got != "reasoning" {
+		t.Fatalf("list_available_models step arguments.use_case = %q, want reasoning; step=%#v plan=%#v", got, step, plan)
 	}
 }
 
@@ -3263,6 +4457,1250 @@ func TestAgentModelOnlyEditDoesNotPlanIdentityFromRealSmokePrompt(t *testing.T) 
 	plan := metadata["operation_plan"].(map[string]interface{})
 	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_identity")); got != "" {
 		t.Fatalf("update_agent_identity step status = %#v, want absent; plan=%#v", got, plan)
+	}
+}
+
+func TestAgentCapabilityStatusQuestionPlansReadOnlyConfigInspect(t *testing.T) {
+	query := "\u8fd9\u4e2aagent\u80fd\u751f\u6210\u6587\u4ef6\u5417"
+	if !agentManagementCapabilityStatusQuestionRequested(query) {
+		t.Fatalf("agentManagementCapabilityStatusQuestionRequested(%q) = false, want true", query)
+	}
+	if agentManagementConfigUpdateRequested(query) {
+		t.Fatalf("agentManagementConfigUpdateRequested(%q) = true, want false for capability-status question", query)
+	}
+	if agentManagementSkillBindingRequested(query) {
+		t.Fatalf("agentManagementSkillBindingRequested(%q) = true, want false for capability-status question", query)
+	}
+
+	parts := consoleAgentDetailTestParts(query)
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	if strategy.Intent != "inspect_agent_config" {
+		t.Fatalf("strategy.Intent = %q, want inspect_agent_config; strategy=%#v", strategy.Intent, strategy)
+	}
+	if strategy.RouteRequired {
+		t.Fatalf("strategy.RouteRequired = true, want false for current Agent detail inspect; strategy=%#v", strategy)
+	}
+	for _, want := range []string{"get_agent_config", "list_agent_skill_candidates"} {
+		if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, want) {
+			t.Fatalf("PlannedTools = %#v, missing agent-management/%s", strategy.PlannedTools, want)
+		}
+		args := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, want)
+		if args["agent_id"] != "agent-1" {
+			t.Fatalf("PlannedTools = %#v, %s args agent_id = %q, want agent-1", strategy.PlannedTools, want, args["agent_id"])
+		}
+	}
+	candidateArgs := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, "list_agent_skill_candidates")
+	if candidateArgs["query"] != "file generation" {
+		t.Fatalf("list_agent_skill_candidates args = %#v, want query file generation", candidateArgs)
+	}
+	if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_config") {
+		t.Fatalf("PlannedTools = %#v, want no update_agent_config for capability-status question", strategy.PlannedTools)
+	}
+
+	metadata := streamingMessageMetadataWithTaskID(parts, "task-agent-capability-status")
+	plan := metadata["operation_plan"].(map[string]interface{})
+	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")); got != "" {
+		t.Fatalf("update_agent_config step status = %#v, want absent; plan=%#v", got, plan)
+	}
+	capabilityGoals := mapSliceFromAny(plan["capability_goals"])
+	if len(capabilityGoals) != 1 || stringFromAny(capabilityGoals[0]["capability_id"]) != agentCapabilitySkillBacked {
+		t.Fatalf("capability_goals = %#v, want one skill-backed inspect goal; plan=%#v", capabilityGoals, plan)
+	}
+	if got := stringFromAny(capabilityGoals[0]["goal_action"]); got != agentCapabilityActionInspect {
+		t.Fatalf("capability goal action = %q, want %q; goal=%#v", got, agentCapabilityActionInspect, capabilityGoals[0])
+	}
+	if actions := operationPlanAgentConfigBindingActionsFromAny(capabilityGoals[0]["required_binding_actions"]); len(actions) > 0 {
+		t.Fatalf("read-only capability goal required_binding_actions = %#v, want none", actions)
+	}
+}
+
+func TestAgentCapabilityStatusQuestionPlansSVGReadOnlySkillInspect(t *testing.T) {
+	query := "\u8fd9\u4e2a Agent \u662f\u5426\u652f\u6301\u751f\u6210 SVG\uff1f"
+	if !agentManagementCapabilityStatusQuestionRequested(query) {
+		t.Fatalf("agentManagementCapabilityStatusQuestionRequested(%q) = false, want true", query)
+	}
+	if got := agentManagementCapabilityStatusCandidateQuery(query); got != "file generation" {
+		t.Fatalf("agentManagementCapabilityStatusCandidateQuery(%q) = %q, want file generation", query, got)
+	}
+	if agentManagementConfigUpdateRequested(query) {
+		t.Fatalf("agentManagementConfigUpdateRequested(%q) = true, want false for read-only SVG capability status", query)
+	}
+
+	parts := consoleAgentDetailTestParts(query)
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	if strategy.Intent != "inspect_agent_config" {
+		t.Fatalf("strategy.Intent = %q, want inspect_agent_config; strategy=%#v", strategy.Intent, strategy)
+	}
+	if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_config") {
+		t.Fatalf("PlannedTools = %#v, want no update_agent_config for read-only SVG capability status", strategy.PlannedTools)
+	}
+	for _, want := range []string{"get_agent_config", "list_agent_skill_candidates"} {
+		if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, want) {
+			t.Fatalf("PlannedTools = %#v, missing agent-management/%s", strategy.PlannedTools, want)
+		}
+	}
+	candidateArgs := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, "list_agent_skill_candidates")
+	if candidateArgs["query"] != "file generation" {
+		t.Fatalf("list_agent_skill_candidates args = %#v, want query file generation", candidateArgs)
+	}
+
+	plan := operationPlanFromTurnStrategy("task-agent-svg-capability-status", parts, strategy)
+	capabilityGoals := mapSliceFromAny(plan["capability_goals"])
+	if len(capabilityGoals) != 1 || stringFromAny(capabilityGoals[0]["capability_id"]) != agentCapabilitySkillBacked {
+		t.Fatalf("capability_goals = %#v, want one skill-backed inspect goal; plan=%#v", capabilityGoals, plan)
+	}
+	if got := stringFromAny(capabilityGoals[0]["goal_action"]); got != agentCapabilityActionInspect {
+		t.Fatalf("capability goal action = %q, want %q; goal=%#v", got, agentCapabilityActionInspect, capabilityGoals[0])
+	}
+	if got := stringFromAny(capabilityGoals[0]["candidate_query"]); got != "file generation" {
+		t.Fatalf("capability candidate_query = %q, want file generation; goal=%#v", got, capabilityGoals[0])
+	}
+	if actions := operationPlanAgentConfigBindingActionsFromAny(capabilityGoals[0]["required_binding_actions"]); len(actions) > 0 {
+		t.Fatalf("read-only SVG capability required_binding_actions = %#v, want none", actions)
+	}
+}
+
+func TestAgentCapabilityStatusQuestionPlansFileUploadInspectGoal(t *testing.T) {
+	query := "\u8fd9\u4e2aagent\u80fd\u4e0a\u4f20\u6587\u4ef6\u5417"
+	if !agentManagementCapabilityStatusQuestionRequested(query) {
+		t.Fatalf("agentManagementCapabilityStatusQuestionRequested(%q) = false, want true", query)
+	}
+	if agentManagementConfigUpdateRequested(query) {
+		t.Fatalf("agentManagementConfigUpdateRequested(%q) = true, want false for read-only file-upload question", query)
+	}
+
+	parts := consoleAgentDetailTestParts(query)
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	if strategy.Intent != "inspect_agent_config" {
+		t.Fatalf("strategy.Intent = %q, want inspect_agent_config; strategy=%#v", strategy.Intent, strategy)
+	}
+	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "get_agent_config") {
+		t.Fatalf("PlannedTools = %#v, missing get_agent_config", strategy.PlannedTools)
+	}
+	if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "list_agent_skill_candidates") {
+		t.Fatalf("PlannedTools = %#v, want no Skill candidate lookup for file-upload status", strategy.PlannedTools)
+	}
+	if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_config") {
+		t.Fatalf("PlannedTools = %#v, want no update_agent_config for file-upload status", strategy.PlannedTools)
+	}
+
+	plan := operationPlanFromTurnStrategy("task-agent-file-upload-status", parts, strategy)
+	capabilityGoals := mapSliceFromAny(plan["capability_goals"])
+	if len(capabilityGoals) != 1 || stringFromAny(capabilityGoals[0]["capability_id"]) != agentCapabilityAcceptUploaded {
+		t.Fatalf("capability_goals = %#v, want only file-upload status goal; plan=%#v", capabilityGoals, plan)
+	}
+	if got := stringFromAny(capabilityGoals[0]["goal_action"]); got != agentCapabilityActionInspect {
+		t.Fatalf("capability goal action = %q, want %q; goal=%#v", got, agentCapabilityActionInspect, capabilityGoals[0])
+	}
+	fields := stringSliceFromAny(capabilityGoals[0]["required_config_fields"])
+	if len(fields) != 1 || fields[0] != "file_upload_enabled" {
+		t.Fatalf("required_config_fields = %#v, want file_upload_enabled", fields)
+	}
+}
+
+func TestAgentCapabilityStatusQuestionTreatsEnabledFileUploadAsReadOnly(t *testing.T) {
+	query := "\u8fd9\u4e2a Agent \u662f\u5426\u5df2\u7ecf\u542f\u7528\u6587\u4ef6\u4e0a\u4f20\uff1f"
+	if !agentManagementCapabilityStatusQuestionRequested(query) {
+		t.Fatalf("agentManagementCapabilityStatusQuestionRequested(%q) = false, want true", query)
+	}
+	if agentManagementConfigUpdateRequested(query) {
+		t.Fatalf("agentManagementConfigUpdateRequested(%q) = true, want false for already-enabled status question", query)
+	}
+	if agentManagementFileUploadConfigCapabilityRequested(query) {
+		t.Fatalf("agentManagementFileUploadConfigCapabilityRequested(%q) = true, want read-only inspect", query)
+	}
+
+	parts := consoleAgentDetailTestParts(query)
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	if strategy.Intent != "inspect_agent_config" {
+		t.Fatalf("strategy.Intent = %q, want inspect_agent_config; strategy=%#v", strategy.Intent, strategy)
+	}
+	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "get_agent_config") {
+		t.Fatalf("PlannedTools = %#v, missing get_agent_config", strategy.PlannedTools)
+	}
+	if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_config") {
+		t.Fatalf("PlannedTools = %#v, want no update_agent_config for already-enabled file-upload status", strategy.PlannedTools)
+	}
+	plan := operationPlanFromTurnStrategy("task-agent-file-upload-enabled-status", parts, strategy)
+	capabilityGoals := mapSliceFromAny(plan["capability_goals"])
+	if len(capabilityGoals) != 1 || stringFromAny(capabilityGoals[0]["capability_id"]) != agentCapabilityAcceptUploaded {
+		t.Fatalf("capability_goals = %#v, want file-upload inspect goal; plan=%#v", capabilityGoals, plan)
+	}
+	if got := stringFromAny(capabilityGoals[0]["goal_action"]); got != agentCapabilityActionInspect {
+		t.Fatalf("capability goal action = %q, want inspect; goal=%#v", got, capabilityGoals[0])
+	}
+}
+
+func TestAgentCapabilityStatusQuestionPlansMemoryInspectGoal(t *testing.T) {
+	query := "\u8fd9\u4e2aagent\u6709\u8bb0\u5fc6\u80fd\u529b\u5417"
+	if !agentManagementCapabilityStatusQuestionRequested(query) {
+		t.Fatalf("agentManagementCapabilityStatusQuestionRequested(%q) = false, want true", query)
+	}
+	if agentManagementConfigUpdateRequested(query) {
+		t.Fatalf("agentManagementConfigUpdateRequested(%q) = true, want false for read-only memory question", query)
+	}
+
+	parts := consoleAgentDetailTestParts(query)
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	if strategy.Intent != "inspect_agent_config" {
+		t.Fatalf("strategy.Intent = %q, want inspect_agent_config; strategy=%#v", strategy.Intent, strategy)
+	}
+	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "get_agent_config") {
+		t.Fatalf("PlannedTools = %#v, missing get_agent_config", strategy.PlannedTools)
+	}
+	if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_config") {
+		t.Fatalf("PlannedTools = %#v, want no update_agent_config for memory status", strategy.PlannedTools)
+	}
+
+	plan := operationPlanFromTurnStrategy("task-agent-memory-status", parts, strategy)
+	capabilityGoals := mapSliceFromAny(plan["capability_goals"])
+	if len(capabilityGoals) != 1 || stringFromAny(capabilityGoals[0]["capability_id"]) != agentCapabilityMemory {
+		t.Fatalf("capability_goals = %#v, want only memory status goal; plan=%#v", capabilityGoals, plan)
+	}
+	if got := stringFromAny(capabilityGoals[0]["goal_action"]); got != agentCapabilityActionInspect {
+		t.Fatalf("capability goal action = %q, want %q; goal=%#v", got, agentCapabilityActionInspect, capabilityGoals[0])
+	}
+	fields := stringSliceFromAny(capabilityGoals[0]["required_config_fields"])
+	if len(fields) != 1 || fields[0] != "agent_memory_enabled" {
+		t.Fatalf("required_config_fields = %#v, want agent_memory_enabled", fields)
+	}
+}
+
+func TestAgentCapabilityStatusQuestionTreatsEnabledMemoryAsReadOnly(t *testing.T) {
+	query := "\u8fd9\u4e2a Agent \u662f\u5426\u5df2\u5f00\u542f\u8bb0\u5fc6\u80fd\u529b\uff1f"
+	if !agentManagementCapabilityStatusQuestionRequested(query) {
+		t.Fatalf("agentManagementCapabilityStatusQuestionRequested(%q) = false, want true", query)
+	}
+	if agentManagementConfigUpdateRequested(query) {
+		t.Fatalf("agentManagementConfigUpdateRequested(%q) = true, want false for already-enabled memory status question", query)
+	}
+	if agentManagementMemoryConfigCapabilityRequested(query) {
+		t.Fatalf("agentManagementMemoryConfigCapabilityRequested(%q) = true, want read-only inspect", query)
+	}
+
+	parts := consoleAgentDetailTestParts(query)
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	if strategy.Intent != "inspect_agent_config" {
+		t.Fatalf("strategy.Intent = %q, want inspect_agent_config; strategy=%#v", strategy.Intent, strategy)
+	}
+	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "get_agent_config") {
+		t.Fatalf("PlannedTools = %#v, missing get_agent_config", strategy.PlannedTools)
+	}
+	if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_config") {
+		t.Fatalf("PlannedTools = %#v, want no update_agent_config for already-enabled memory status", strategy.PlannedTools)
+	}
+	plan := operationPlanFromTurnStrategy("task-agent-memory-enabled-status", parts, strategy)
+	capabilityGoals := mapSliceFromAny(plan["capability_goals"])
+	if len(capabilityGoals) != 1 || stringFromAny(capabilityGoals[0]["capability_id"]) != agentCapabilityMemory {
+		t.Fatalf("capability_goals = %#v, want memory inspect goal; plan=%#v", capabilityGoals, plan)
+	}
+	if got := stringFromAny(capabilityGoals[0]["goal_action"]); got != agentCapabilityActionInspect {
+		t.Fatalf("capability goal action = %q, want inspect; goal=%#v", got, capabilityGoals[0])
+	}
+}
+
+func TestAgentMemoryCapabilityEnableRequestPlansConfigMutation(t *testing.T) {
+	query := "\u8ba9\u5f53\u524d Agent \u5177\u5907\u957f\u671f\u8bb0\u5fc6\u80fd\u529b"
+	if agentManagementCapabilityStatusQuestionRequested(query) {
+		t.Fatalf("agentManagementCapabilityStatusQuestionRequested(%q) = true, want false for memory mutation request", query)
+	}
+	if !agentManagementMemoryConfigCapabilityRequested(query) {
+		t.Fatalf("agentManagementMemoryConfigCapabilityRequested(%q) = false, want true", query)
+	}
+	if !agentManagementConfigUpdateRequested(query) {
+		t.Fatalf("agentManagementConfigUpdateRequested(%q) = false, want true", query)
+	}
+
+	parts := consoleAgentDetailTestParts(query)
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	if strategy.Intent != "manage_agent_asset" {
+		t.Fatalf("strategy.Intent = %q, want manage_agent_asset; strategy=%#v", strategy.Intent, strategy)
+	}
+	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "get_agent_config") {
+		t.Fatalf("PlannedTools = %#v, missing get_agent_config", strategy.PlannedTools)
+	}
+	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_config") {
+		t.Fatalf("PlannedTools = %#v, missing update_agent_config", strategy.PlannedTools)
+	}
+	updateArgs := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, "update_agent_config")
+	fields := operationPlanNormalizedAgentConfigFieldsFromAny(updateArgs[operationPlanExpectedUpdatedFieldsKey])
+	if !stringSliceContainsFold(fields, "agent_memory_enabled") {
+		t.Fatalf("update_agent_config expected fields = %#v, missing agent_memory_enabled; args=%#v", fields, updateArgs)
+	}
+	if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "list_agent_skill_candidates") {
+		t.Fatalf("PlannedTools = %#v, want no skill candidate lookup for memory config setting", strategy.PlannedTools)
+	}
+
+	plan := operationPlanFromTurnStrategy("task-agent-memory-enable", parts, strategy)
+	capabilityGoals := mapSliceFromAny(plan["capability_goals"])
+	if len(capabilityGoals) != 1 || stringFromAny(capabilityGoals[0]["capability_id"]) != agentCapabilityMemory {
+		t.Fatalf("capability_goals = %#v, want one memory capability goal; plan=%#v", capabilityGoals, plan)
+	}
+	if got := stringFromAny(capabilityGoals[0]["goal_action"]); got != agentCapabilityActionUpdate {
+		t.Fatalf("capability goal action = %q, want %q; goal=%#v", got, agentCapabilityActionUpdate, capabilityGoals[0])
+	}
+	goalFields := stringSliceFromAny(capabilityGoals[0]["required_config_fields"])
+	if len(goalFields) != 1 || goalFields[0] != "agent_memory_enabled" {
+		t.Fatalf("capability required_config_fields = %#v, want agent_memory_enabled", goalFields)
+	}
+}
+
+func TestAgentCapabilityEnableRequestStillPlansMutation(t *testing.T) {
+	query := "\u8ba9\u8fd9\u4e2aagent\u80fd\u751f\u6210\u6587\u4ef6"
+	if agentManagementCapabilityStatusQuestionRequested(query) {
+		t.Fatalf("agentManagementCapabilityStatusQuestionRequested(%q) = true, want false for mutation request", query)
+	}
+	if !agentManagementConfigUpdateRequested(query) {
+		t.Fatalf("agentManagementConfigUpdateRequested(%q) = false, want true for enable-capability request", query)
+	}
+
+	parts := consoleAgentDetailTestParts(query)
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	if strategy.Intent != "manage_agent_asset" {
+		t.Fatalf("strategy.Intent = %q, want manage_agent_asset; strategy=%#v", strategy.Intent, strategy)
+	}
+	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "get_agent_config") {
+		t.Fatalf("PlannedTools = %#v, missing get_agent_config", strategy.PlannedTools)
+	}
+	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "list_agent_skill_candidates") {
+		t.Fatalf("PlannedTools = %#v, missing list_agent_skill_candidates", strategy.PlannedTools)
+	}
+	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_config") {
+		t.Fatalf("PlannedTools = %#v, missing update_agent_config", strategy.PlannedTools)
+	}
+	updateArgs := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, "update_agent_config")
+	actions := operationPlanAgentConfigBindingActionsFromAny(updateArgs[operationPlanExpectedBindingActionsKey])
+	if actions["enabled_skill_ids"] != "bind" {
+		t.Fatalf("update_agent_config args = %#v, want enabled_skill_ids:bind for generated-file capability", updateArgs)
+	}
+	fields := operationPlanNormalizedAgentConfigFieldsFromAny(updateArgs[operationPlanExpectedUpdatedFieldsKey])
+	if !stringSliceContainsFold(fields, "enabled_skill_ids") {
+		t.Fatalf("update_agent_config args = %#v, want enabled_skill_ids expected field", updateArgs)
+	}
+	plan := operationPlanFromTurnStrategy("task-agent-capability-enable", parts, strategy)
+	capabilityGoals := mapSliceFromAny(plan["capability_goals"])
+	if len(capabilityGoals) != 1 || stringFromAny(capabilityGoals[0]["capability_id"]) != agentCapabilitySkillBacked {
+		t.Fatalf("capability_goals = %#v, want one skill-backed enable goal; plan=%#v", capabilityGoals, plan)
+	}
+	if got := stringFromAny(capabilityGoals[0]["goal_action"]); got != agentCapabilityActionEnable {
+		t.Fatalf("capability goal action = %q, want %q; goal=%#v", got, agentCapabilityActionEnable, capabilityGoals[0])
+	}
+	goalActions := operationPlanAgentConfigBindingActionsFromAny(capabilityGoals[0]["required_binding_actions"])
+	if got := goalActions["enabled_skill_ids"]; got != "bind" {
+		t.Fatalf("capability required_binding_actions = %#v, want enabled_skill_ids:bind", goalActions)
+	}
+}
+
+func TestAgentCapabilityContinuationUsesPriorCandidateInsteadOfOldDelete(t *testing.T) {
+	previousQuery := "\u8fd9\u4e2aagent\u80fd\u751f\u6210\u6587\u4ef6\u5417"
+	previousMessage := &runtimemodel.Message{
+		ID:     uuid.New(),
+		Query:  previousQuery,
+		Status: runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"version":             operationPlanVersion,
+				"status":              operationPlanStatusCompleted,
+				"pending_next_action": "none",
+				"intent":              "inspect_agent_config",
+				"original_user_goal":  previousQuery,
+				"capability_goals": []interface{}{
+					map[string]interface{}{
+						"capability_id": agentCapabilitySkillBacked,
+						"display_name":  "skill-backed capability",
+						"required_binding_actions": map[string]interface{}{
+							"enabled_skill_ids": "bind",
+						},
+						"candidate_tool":  "list_agent_skill_candidates",
+						"candidate_query": "file generation",
+					},
+				},
+			},
+			"skill_invocations": []interface{}{
+				agentManagementToolInvocationForTest("get_agent_config", "tool_call:agent-management:get_agent_config::#1", map[string]interface{}{
+					"status":            "success",
+					"agent_id":          "agent-1",
+					"agent_name":        "Novel Agent",
+					"enabled_skill_ids": []interface{}{"calculator"},
+				}),
+				agentManagementToolInvocationForTest("list_agent_skill_candidates", "tool_call:agent-management:list_agent_skill_candidates::#1", map[string]interface{}{
+					"status": "success",
+					"candidate_samples": []interface{}{
+						map[string]interface{}{"id": "file-generator", "name": "File Generator"},
+					},
+				}),
+			},
+		},
+	}
+	parts := consoleAgentDetailTestParts("\u8fdb\u884c\u5904\u7406")
+	parts.SkillIDs = []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator}
+	applyRecentOperationPlansFromBranch(parts, []*runtimemodel.Message{previousMessage})
+	if len(parts.RecentOperationPlans) == 0 {
+		t.Fatalf("RecentOperationPlans = %#v, want synthesized capability continuation plan", parts.RecentOperationPlans)
+	}
+	recent := parts.RecentOperationPlans[0]
+	if got := stringFromAny(recent["derived_from"]); got != "recent_agent_capability_status" {
+		t.Fatalf("derived_from = %q, want recent_agent_capability_status; plan=%#v", got, recent)
+	}
+	if got := operationPlanStepStatusForTest(recent, operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")); got != operationPlanStepStatusPending {
+		t.Fatalf("update_agent_config status = %q, want pending; plan=%#v", got, recent)
+	}
+	capabilityGoals := mapSliceFromAny(recent["capability_goals"])
+	if len(capabilityGoals) != 1 || stringFromAny(capabilityGoals[0]["capability_id"]) != agentCapabilitySkillBacked {
+		t.Fatalf("capability_goals = %#v, want one skill-backed continuation goal; plan=%#v", capabilityGoals, recent)
+	}
+	if got := stringFromAny(capabilityGoals[0]["goal_action"]); got != agentCapabilityActionEnable {
+		t.Fatalf("capability goal action = %q, want %q; goal=%#v", got, agentCapabilityActionEnable, capabilityGoals[0])
+	}
+	goalActions := operationPlanAgentConfigBindingActionsFromAny(capabilityGoals[0]["required_binding_actions"])
+	if got := goalActions["enabled_skill_ids"]; got != "bind" {
+		t.Fatalf("capability required_binding_actions = %#v, want enabled_skill_ids:bind", goalActions)
+	}
+
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want continuation strategy")
+	}
+	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_config") {
+		t.Fatalf("PlannedTools = %#v, missing update_agent_config from synthesized continuation", strategy.PlannedTools)
+	}
+	if len(strategy.CapabilityGoals) != 1 || strategy.CapabilityGoals[0].CapabilityID != agentCapabilitySkillBacked {
+		t.Fatalf("strategy.CapabilityGoals = %#v, want skill-backed continuation goal", strategy.CapabilityGoals)
+	}
+	if strategy.CapabilityGoals[0].GoalAction != agentCapabilityActionEnable {
+		t.Fatalf("strategy capability action = %q, want %q; goals=%#v", strategy.CapabilityGoals[0].GoalAction, agentCapabilityActionEnable, strategy.CapabilityGoals)
+	}
+	if got := strategy.CapabilityGoals[0].RequiredBindingActions["enabled_skill_ids"]; got != "bind" {
+		t.Fatalf("strategy capability binding actions = %#v, want enabled_skill_ids:bind", strategy.CapabilityGoals[0].RequiredBindingActions)
+	}
+	if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "delete_agent") ||
+		aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "delete_agents") {
+		t.Fatalf("PlannedTools = %#v, want no stale delete tools for weak continuation", strategy.PlannedTools)
+	}
+	metadata := streamingMessageMetadataWithTaskID(parts, "task-agent-capability-continuation")
+	currentPlan := mapFromOperationContext(metadata["operation_plan"])
+	currentGoals := mapSliceFromAny(currentPlan["capability_goals"])
+	if len(currentGoals) != 1 || stringFromAny(currentGoals[0]["capability_id"]) != agentCapabilitySkillBacked {
+		t.Fatalf("current operation_plan capability_goals = %#v, want skill-backed continuation goal; plan=%#v", currentGoals, currentPlan)
+	}
+	structured := mapFromOperationContext(currentPlan["structured_plan"])
+	structuredGoals := mapSliceFromAny(structured["capability_goals"])
+	if len(structuredGoals) != 1 || stringFromAny(structuredGoals[0]["capability_id"]) != agentCapabilitySkillBacked {
+		t.Fatalf("structured_plan capability_goals = %#v, want skill-backed continuation goal; plan=%#v", structuredGoals, currentPlan)
+	}
+}
+
+func TestAgentCapabilityContinuationStopsAtNewerTerminalAgentMutation(t *testing.T) {
+	capabilityQuery := "\u8fd9\u4e2aagent\u80fd\u751f\u6210\u6587\u4ef6\u5417"
+	capabilityMessage := &runtimemodel.Message{
+		ID:     uuid.New(),
+		Query:  capabilityQuery,
+		Status: runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"version":             operationPlanVersion,
+				"status":              operationPlanStatusCompleted,
+				"pending_next_action": "none",
+				"intent":              "inspect_agent_config",
+				"original_user_goal":  capabilityQuery,
+				"capability_goals": []interface{}{
+					map[string]interface{}{
+						"capability_id": agentCapabilitySkillBacked,
+						"goal_action":   agentCapabilityActionInspect,
+						"display_name":  "skill-backed capability",
+						"required_binding_actions": map[string]interface{}{
+							"enabled_skill_ids": "bind",
+						},
+						"candidate_tool":  "list_agent_skill_candidates",
+						"candidate_query": "file generation",
+					},
+				},
+			},
+			"skill_invocations": []interface{}{
+				agentManagementToolInvocationForTest("get_agent_config", "tool_call:agent-management:get_agent_config::#1", map[string]interface{}{
+					"status":            "success",
+					"agent_id":          "agent-1",
+					"agent_name":        "Novel Agent",
+					"enabled_skill_ids": []interface{}{"calculator"},
+				}),
+				agentManagementToolInvocationForTest("list_agent_skill_candidates", "tool_call:agent-management:list_agent_skill_candidates::#1", map[string]interface{}{
+					"status": "success",
+					"candidate_samples": []interface{}{
+						map[string]interface{}{"id": "file-generator", "name": "File Generator"},
+					},
+				}),
+			},
+		},
+	}
+	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
+	newerMutationMessage := &runtimemodel.Message{
+		ID:     uuid.New(),
+		Query:  "\u4fee\u6539\u8fd9\u4e2aagent\u7684\u63cf\u8ff0",
+		Status: runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"version":             operationPlanVersion,
+				"status":              operationPlanStatusCompleted,
+				"pending_next_action": "none",
+				"intent":              "agent.update_config",
+				"original_user_goal":  "\u4fee\u6539\u8fd9\u4e2aagent\u7684\u63cf\u8ff0",
+				"steps": []interface{}{map[string]interface{}{
+					"id":        updateStepID,
+					"status":    operationPlanStepStatusCompleted,
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+				}},
+				"step_status": map[string]interface{}{
+					updateStepID: operationPlanStepStatusCompleted,
+				},
+			},
+		},
+	}
+	parts := consoleAgentDetailTestParts("\u8fdb\u884c\u5904\u7406")
+	parts.SkillIDs = []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator}
+	if plan := recentAgentCapabilityContinuationPlan(parts, []*runtimemodel.Message{capabilityMessage, newerMutationMessage}); len(plan) > 0 {
+		t.Fatalf("recentAgentCapabilityContinuationPlan() = %#v, want nil after newer terminal Agent mutation", plan)
+	}
+	applyRecentOperationPlansFromBranch(parts, []*runtimemodel.Message{capabilityMessage, newerMutationMessage})
+	for _, plan := range parts.RecentOperationPlans {
+		if got := stringFromAny(plan["derived_from"]); got == "recent_agent_capability_status" {
+			t.Fatalf("RecentOperationPlans synthesized stale capability continuation after newer terminal mutation: %#v", plan)
+		}
+	}
+}
+
+func TestAgentCapabilityContinuationOnlyUsesReadOnlyCapabilityInspection(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		planStatus string
+		intent     string
+		goalAction string
+	}{
+		{
+			name:       "previous_enable_goal",
+			planStatus: operationPlanStatusCompleted,
+			intent:     "agent.update_bindings",
+			goalAction: agentCapabilityActionEnable,
+		},
+		{
+			name:       "failed_inspect_goal",
+			planStatus: operationPlanStatusFailed,
+			intent:     "inspect_agent_config",
+			goalAction: agentCapabilityActionInspect,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			previousMessage := &runtimemodel.Message{
+				ID:     uuid.New(),
+				Query:  "\u8ba9\u8fd9\u4e2aagent\u80fd\u751f\u6210\u6587\u4ef6",
+				Status: runtimemodel.MessageStatusCompleted,
+				Metadata: map[string]interface{}{
+					"operation_plan": map[string]interface{}{
+						"version":             operationPlanVersion,
+						"status":              tt.planStatus,
+						"pending_next_action": "none",
+						"intent":              tt.intent,
+						"original_user_goal":  "\u8ba9\u8fd9\u4e2aagent\u80fd\u751f\u6210\u6587\u4ef6",
+						"capability_goals": []interface{}{
+							map[string]interface{}{
+								"capability_id":   agentCapabilitySkillBacked,
+								"goal_action":     tt.goalAction,
+								"display_name":    "skill-backed capability",
+								"candidate_tool":  "list_agent_skill_candidates",
+								"candidate_query": "file generation",
+							},
+						},
+					},
+					"skill_invocations": []interface{}{
+						agentManagementToolInvocationForTest("get_agent_config", "tool_call:agent-management:get_agent_config::#1", map[string]interface{}{
+							"status":            "success",
+							"agent_id":          "agent-1",
+							"agent_name":        "Novel Agent",
+							"enabled_skill_ids": []interface{}{"calculator"},
+						}),
+						agentManagementToolInvocationForTest("list_agent_skill_candidates", "tool_call:agent-management:list_agent_skill_candidates::#1", map[string]interface{}{
+							"status": "success",
+							"candidate_samples": []interface{}{
+								map[string]interface{}{"id": "file-generator", "name": "File Generator"},
+							},
+						}),
+					},
+				},
+			}
+			parts := consoleAgentDetailTestParts("\u7ee7\u7eed")
+			parts.SkillIDs = []string{skills.SkillAgentManagement}
+			if plan := recentAgentCapabilityContinuationPlan(parts, []*runtimemodel.Message{previousMessage}); len(plan) > 0 {
+				t.Fatalf("recentAgentCapabilityContinuationPlan() = %#v, want nil for non-read-only prior capability state", plan)
+			}
+		})
+	}
+}
+
+func TestAgentCapabilityContinuationActionConfirmationUsesPriorCandidate(t *testing.T) {
+	for _, query := range []string{
+		"\u90a3\u5c31\u505a",
+		"\u5c31\u8fd9\u4e48\u505a",
+		"\u6309\u8fd9\u4e2a\u505a",
+		"\u6309\u8fd9\u4e2a\u5904\u7406",
+	} {
+		t.Run(query, func(t *testing.T) {
+			if !isContinuationIntent(query) {
+				t.Fatalf("isContinuationIntent(%q) = false, want true", query)
+			}
+			previousQuery := "\u8fd9\u4e2aagent\u80fd\u751f\u6210\u6587\u4ef6\u5417"
+			previousMessage := &runtimemodel.Message{
+				ID:     uuid.New(),
+				Query:  previousQuery,
+				Status: runtimemodel.MessageStatusCompleted,
+				Metadata: map[string]interface{}{
+					"operation_plan": map[string]interface{}{
+						"version":             operationPlanVersion,
+						"status":              operationPlanStatusCompleted,
+						"pending_next_action": "none",
+						"intent":              "inspect_agent_config",
+						"original_user_goal":  previousQuery,
+						"capability_goals": []interface{}{
+							map[string]interface{}{
+								"capability_id": agentCapabilitySkillBacked,
+								"display_name":  "skill-backed capability",
+								"required_binding_actions": map[string]interface{}{
+									"enabled_skill_ids": "bind",
+								},
+								"candidate_tool":  "list_agent_skill_candidates",
+								"candidate_query": "file generation",
+							},
+						},
+					},
+					"skill_invocations": []interface{}{
+						agentManagementToolInvocationForTest("get_agent_config", "tool_call:agent-management:get_agent_config::#1", map[string]interface{}{
+							"status":            "success",
+							"agent_id":          "agent-1",
+							"agent_name":        "Novel Agent",
+							"enabled_skill_ids": []interface{}{"calculator"},
+						}),
+						agentManagementToolInvocationForTest("list_agent_skill_candidates", "tool_call:agent-management:list_agent_skill_candidates::#1", map[string]interface{}{
+							"status": "success",
+							"candidate_samples": []interface{}{
+								map[string]interface{}{"id": "file-generator", "name": "File Generator"},
+							},
+						}),
+					},
+				},
+			}
+			parts := consoleAgentDetailTestParts(query)
+			parts.SkillIDs = []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator}
+			applyRecentOperationPlansFromBranch(parts, []*runtimemodel.Message{previousMessage})
+			if len(parts.RecentOperationPlans) == 0 {
+				t.Fatalf("RecentOperationPlans = %#v, want synthesized capability continuation plan", parts.RecentOperationPlans)
+			}
+			strategy := contextualAIChatTurnStrategyFromParts(parts)
+			if strategy == nil {
+				t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want continuation strategy")
+			}
+			if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_config") {
+				t.Fatalf("PlannedTools = %#v, missing update_agent_config from action-confirmation continuation", strategy.PlannedTools)
+			}
+			updateArgs := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, "update_agent_config")
+			if got := stringFromAny(updateArgs["candidate_skill_id"]); got != "file-generator" {
+				t.Fatalf("update_agent_config args = %#v, want candidate_skill_id file-generator", updateArgs)
+			}
+			if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "delete_agent") ||
+				aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "delete_agents") {
+				t.Fatalf("PlannedTools = %#v, want no stale delete tools for action-confirmation continuation", strategy.PlannedTools)
+			}
+		})
+	}
+}
+
+func TestAgentConfigCapabilityContinuationEnablesPriorFileUploadStatus(t *testing.T) {
+	previousQuery := "\u8fd9\u4e2aagent\u80fd\u4e0a\u4f20\u6587\u4ef6\u5417"
+	previousMessage := &runtimemodel.Message{
+		ID:     uuid.New(),
+		Query:  previousQuery,
+		Status: runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"version":             operationPlanVersion,
+				"status":              operationPlanStatusCompleted,
+				"pending_next_action": "none",
+				"intent":              "inspect_agent_config",
+				"original_user_goal":  previousQuery,
+				"capability_goals": []interface{}{
+					map[string]interface{}{
+						"capability_id":          agentCapabilityAcceptUploaded,
+						"goal_action":            agentCapabilityActionInspect,
+						"display_name":           "file upload",
+						"required_config_fields": []interface{}{"file_upload_enabled"},
+						"verify_by":              []interface{}{"get_agent_config reports the current file_upload_enabled state"},
+					},
+				},
+			},
+			"skill_invocations": []interface{}{
+				agentManagementToolInvocationForTest("get_agent_config", "tool_call:agent-management:get_agent_config::#1", map[string]interface{}{
+					"status":              "success",
+					"agent_id":            "agent-1",
+					"agent_name":          "Upload Agent",
+					"file_upload_enabled": false,
+				}),
+			},
+		},
+	}
+	parts := consoleAgentDetailTestParts("\u5f00\u59cb\u5904\u7406")
+	parts.SkillIDs = []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator}
+	applyRecentOperationPlansFromBranch(parts, []*runtimemodel.Message{previousMessage})
+	if len(parts.RecentOperationPlans) == 0 {
+		t.Fatalf("RecentOperationPlans = %#v, want synthesized config capability continuation plan", parts.RecentOperationPlans)
+	}
+	recent := parts.RecentOperationPlans[0]
+	if got := stringFromAny(recent["derived_from"]); got != "recent_agent_config_capability_status" {
+		t.Fatalf("derived_from = %q, want recent_agent_config_capability_status; plan=%#v", got, recent)
+	}
+	updateStep := operationPlanStepForTest(recent, operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config"))
+	if len(updateStep) == 0 {
+		t.Fatalf("operation_plan steps = %#v, missing update_agent_config", recent["steps"])
+	}
+	args := mapFromOperationContext(updateStep["arguments"])
+	if !operationPlanBoolValue(args["file_upload_enabled"]) {
+		t.Fatalf("update_agent_config arguments = %#v, want file_upload_enabled=true", args)
+	}
+	fields := stringSliceFromAny(updateStep[operationPlanExpectedUpdatedFieldsKey])
+	if len(fields) != 1 || fields[0] != "file_upload_enabled" {
+		t.Fatalf("expected_updated_fields = %#v, want file_upload_enabled; step=%#v", fields, updateStep)
+	}
+	capabilityGoals := mapSliceFromAny(recent["capability_goals"])
+	if len(capabilityGoals) != 1 || stringFromAny(capabilityGoals[0]["capability_id"]) != agentCapabilityAcceptUploaded {
+		t.Fatalf("capability_goals = %#v, want file-upload continuation goal; plan=%#v", capabilityGoals, recent)
+	}
+	if got := stringFromAny(capabilityGoals[0]["goal_action"]); got != agentCapabilityActionEnable {
+		t.Fatalf("capability goal action = %q, want %q; goal=%#v", got, agentCapabilityActionEnable, capabilityGoals[0])
+	}
+
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want continuation strategy")
+	}
+	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_config") {
+		t.Fatalf("PlannedTools = %#v, missing update_agent_config from config capability continuation", strategy.PlannedTools)
+	}
+	updateArgs := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, "update_agent_config")
+	if updateArgs["file_upload_enabled"] != "true" {
+		t.Fatalf("update_agent_config args = %#v, want file_upload_enabled=true", updateArgs)
+	}
+	if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "list_agent_skill_candidates") {
+		t.Fatalf("PlannedTools = %#v, want no Skill candidate lookup for config-only continuation", strategy.PlannedTools)
+	}
+	metadata := streamingMessageMetadataWithTaskID(parts, "task-agent-config-capability-continuation")
+	currentPlan := mapFromOperationContext(metadata["operation_plan"])
+	currentGoals := mapSliceFromAny(currentPlan["capability_goals"])
+	if len(currentGoals) != 1 || stringFromAny(currentGoals[0]["capability_id"]) != agentCapabilityAcceptUploaded {
+		t.Fatalf("current operation_plan capability_goals = %#v, want file-upload continuation goal; plan=%#v", currentGoals, currentPlan)
+	}
+}
+
+func TestAgentConfigCapabilityContinuationEnablesPriorMemoryStatus(t *testing.T) {
+	previousQuery := "\u8fd9\u4e2aagent\u6709\u8bb0\u5fc6\u80fd\u529b\u5417"
+	previousMessage := &runtimemodel.Message{
+		ID:     uuid.New(),
+		Query:  previousQuery,
+		Status: runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"version":             operationPlanVersion,
+				"status":              operationPlanStatusCompleted,
+				"pending_next_action": "none",
+				"intent":              "inspect_agent_config",
+				"original_user_goal":  previousQuery,
+				"capability_goals": []interface{}{
+					map[string]interface{}{
+						"capability_id":          agentCapabilityMemory,
+						"goal_action":            agentCapabilityActionInspect,
+						"display_name":           "agent memory",
+						"required_config_fields": []interface{}{"agent_memory_enabled"},
+						"verify_by":              []interface{}{"get_agent_config reports the current agent_memory_enabled state"},
+					},
+				},
+			},
+			"skill_invocations": []interface{}{
+				agentManagementToolInvocationForTest("get_agent_config", "tool_call:agent-management:get_agent_config::#1", map[string]interface{}{
+					"status":               "success",
+					"agent_id":             "agent-1",
+					"agent_name":           "Memory Agent",
+					"agent_memory_enabled": false,
+				}),
+			},
+		},
+	}
+	parts := consoleAgentDetailTestParts("\u90a3\u5c31\u505a")
+	parts.SkillIDs = []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator}
+	applyRecentOperationPlansFromBranch(parts, []*runtimemodel.Message{previousMessage})
+	if len(parts.RecentOperationPlans) == 0 {
+		t.Fatalf("RecentOperationPlans = %#v, want synthesized memory capability continuation plan", parts.RecentOperationPlans)
+	}
+	recent := parts.RecentOperationPlans[0]
+	if got := stringFromAny(recent["derived_from"]); got != "recent_agent_config_capability_status" {
+		t.Fatalf("derived_from = %q, want recent_agent_config_capability_status; plan=%#v", got, recent)
+	}
+	updateStep := operationPlanStepForTest(recent, operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config"))
+	args := mapFromOperationContext(updateStep["arguments"])
+	if !operationPlanBoolValue(args["agent_memory_enabled"]) {
+		t.Fatalf("update_agent_config arguments = %#v, want agent_memory_enabled=true", args)
+	}
+	fields := stringSliceFromAny(updateStep[operationPlanExpectedUpdatedFieldsKey])
+	if len(fields) != 1 || fields[0] != "agent_memory_enabled" {
+		t.Fatalf("expected_updated_fields = %#v, want agent_memory_enabled; step=%#v", fields, updateStep)
+	}
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want continuation strategy")
+	}
+	updateArgs := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, "update_agent_config")
+	if updateArgs["agent_memory_enabled"] != "true" {
+		t.Fatalf("update_agent_config args = %#v, want agent_memory_enabled=true", updateArgs)
+	}
+	if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "list_agent_skill_candidates") {
+		t.Fatalf("PlannedTools = %#v, want no Skill candidate lookup for memory config continuation", strategy.PlannedTools)
+	}
+}
+
+func TestAgentConfigCapabilityContinuationRequiresExplicitFalseEvidence(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		configResult map[string]interface{}
+	}{
+		{
+			name: "missing_file_upload_field",
+			configResult: map[string]interface{}{
+				"status":     "success",
+				"agent_id":   "agent-1",
+				"agent_name": "Upload Agent",
+			},
+		},
+		{
+			name: "already_enabled",
+			configResult: map[string]interface{}{
+				"status":              "success",
+				"agent_id":            "agent-1",
+				"agent_name":          "Upload Agent",
+				"file_upload_enabled": true,
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			previousQuery := "\u8fd9\u4e2aagent\u80fd\u4e0a\u4f20\u6587\u4ef6\u5417"
+			previousMessage := &runtimemodel.Message{
+				ID:     uuid.New(),
+				Query:  previousQuery,
+				Status: runtimemodel.MessageStatusCompleted,
+				Metadata: map[string]interface{}{
+					"operation_plan": map[string]interface{}{
+						"version":             operationPlanVersion,
+						"status":              operationPlanStatusCompleted,
+						"pending_next_action": "none",
+						"intent":              "inspect_agent_config",
+						"original_user_goal":  previousQuery,
+						"capability_goals": []interface{}{
+							map[string]interface{}{
+								"capability_id":          agentCapabilityAcceptUploaded,
+								"goal_action":            agentCapabilityActionInspect,
+								"display_name":           "file upload",
+								"required_config_fields": []interface{}{"file_upload_enabled"},
+							},
+						},
+					},
+					"skill_invocations": []interface{}{
+						agentManagementToolInvocationForTest("get_agent_config", "tool_call:agent-management:get_agent_config::#1", tt.configResult),
+					},
+				},
+			}
+			parts := consoleAgentDetailTestParts("\u5f00\u59cb\u5904\u7406")
+			parts.SkillIDs = []string{skills.SkillAgentManagement}
+			if plan := recentAgentCapabilityContinuationPlan(parts, []*runtimemodel.Message{previousMessage}); len(plan) > 0 {
+				t.Fatalf("recentAgentCapabilityContinuationPlan() = %#v, want nil without explicit false field evidence", plan)
+			}
+		})
+	}
+}
+
+func TestAgentResourceBindingContinuationPlansCandidatesAndBindForEmptyPriorStatus(t *testing.T) {
+	previousQuery := "\u8fd9\u4e2aagent\u5f53\u524d\u7ed1\u5b9a\u4e86\u54ea\u4e9b\u77e5\u8bc6\u5e93\u3001\u6570\u636e\u8868\u548c\u5de5\u4f5c\u6d41"
+	previousMessage := &runtimemodel.Message{
+		ID:     uuid.New(),
+		Query:  previousQuery,
+		Status: runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"version":             operationPlanVersion,
+				"status":              operationPlanStatusCompleted,
+				"pending_next_action": "none",
+				"intent":              "inspect_agent_config",
+				"original_user_goal":  previousQuery,
+				"capability_goals": []interface{}{
+					map[string]interface{}{
+						"capability_id":          agentCapabilityKnowledgeBinding,
+						"goal_action":            agentCapabilityActionInspect,
+						"display_name":           "knowledge base binding",
+						"required_config_fields": []interface{}{"knowledge_dataset_ids"},
+					},
+					map[string]interface{}{
+						"capability_id":          agentCapabilityDatabaseBinding,
+						"goal_action":            agentCapabilityActionInspect,
+						"display_name":           "database table binding",
+						"required_config_fields": []interface{}{"database_bindings"},
+					},
+					map[string]interface{}{
+						"capability_id":          agentCapabilityWorkflowBinding,
+						"goal_action":            agentCapabilityActionInspect,
+						"display_name":           "workflow binding",
+						"required_config_fields": []interface{}{"workflow_bindings"},
+					},
+				},
+			},
+			"skill_invocations": []interface{}{
+				agentManagementToolInvocationForTest("get_agent_config", "tool_call:agent-management:get_agent_config::#1", map[string]interface{}{
+					"status":                "success",
+					"agent_id":              "agent-1",
+					"agent_name":            "Resource Agent",
+					"knowledge_dataset_ids": []interface{}{},
+					"database_bindings":     []interface{}{},
+					"workflow_bindings":     []interface{}{},
+				}),
+			},
+		},
+	}
+	parts := consoleAgentDetailTestParts("\u90a3\u5c31\u5904\u7406")
+	parts.SkillIDs = []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator}
+	sourcePlan := mapFromOperationContext(previousMessage.Metadata["operation_plan"])
+	configResult := latestSuccessfulAgentToolResult(previousMessage.Metadata, "get_agent_config")
+	if len(configResult) == 0 {
+		t.Fatalf("latestSuccessfulAgentToolResult() = %#v, want get_agent_config result", configResult)
+	}
+	if fields := operationPlanResourceBindingContinuationFields(sourcePlan, configResult); len(fields) == 0 {
+		t.Fatalf("operationPlanResourceBindingContinuationFields() = %#v, want missing resource binding fields; sourcePlan=%#v config=%#v", fields, sourcePlan, configResult)
+	}
+	if direct := recentAgentCapabilityContinuationPlan(parts, []*runtimemodel.Message{previousMessage}); len(direct) == 0 {
+		t.Fatalf("recentAgentCapabilityContinuationPlan() = nil, want synthesized resource-binding continuation plan")
+	}
+	applyRecentOperationPlansFromBranch(parts, []*runtimemodel.Message{previousMessage})
+	if len(parts.RecentOperationPlans) == 0 {
+		t.Fatalf("RecentOperationPlans = %#v, want synthesized resource-binding continuation plan", parts.RecentOperationPlans)
+	}
+	recent := parts.RecentOperationPlans[0]
+	if got := stringFromAny(recent["derived_from"]); got != "recent_agent_binding_status" {
+		t.Fatalf("derived_from = %q, want recent_agent_binding_status; plan=%#v", got, recent)
+	}
+	for _, want := range []string{
+		"list_agent_knowledge_candidates",
+		"list_agent_database_candidates",
+		"list_agent_database_tables",
+		"list_agent_workflow_binding_candidates",
+		"update_agent_config",
+	} {
+		if got := operationPlanStepStatusForTest(recent, operationPlanToolStepID(skills.SkillAgentManagement, want)); got != operationPlanStepStatusPending {
+			t.Fatalf("%s status = %q, want pending; plan=%#v", want, got, recent)
+		}
+	}
+	updateStep := operationPlanStepForTest(recent, operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config"))
+	actions := operationPlanAgentConfigBindingActionsFromAny(updateStep[operationPlanExpectedBindingActionsKey])
+	for _, field := range []string{"knowledge_dataset_ids", "database_bindings", "workflow_bindings"} {
+		if actions[field] != "bind" {
+			t.Fatalf("expected_binding_actions[%s] = %#v, want bind; actions=%#v plan=%#v", field, actions[field], actions, recent)
+		}
+	}
+	capabilityGoals := mapSliceFromAny(recent["capability_goals"])
+	for _, want := range []string{agentCapabilityKnowledgeBinding, agentCapabilityDatabaseBinding, agentCapabilityWorkflowBinding} {
+		if !operationPlanCapabilityGoalsContainForTest(capabilityGoals, want) {
+			t.Fatalf("capability_goals = %#v, missing %s; plan=%#v", capabilityGoals, want, recent)
+		}
+	}
+
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want continuation strategy")
+	}
+	for _, want := range []string{
+		"list_agent_knowledge_candidates",
+		"list_agent_database_candidates",
+		"list_agent_database_tables",
+		"list_agent_workflow_binding_candidates",
+		"update_agent_config",
+	} {
+		if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, want) {
+			t.Fatalf("PlannedTools = %#v, missing %s from synthesized resource-binding continuation", strategy.PlannedTools, want)
+		}
+	}
+	updateArgs := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, "update_agent_config")
+	strategyActions := operationPlanAgentConfigBindingActionsFromAny(updateArgs[operationPlanExpectedBindingActionsKey])
+	for _, field := range []string{"knowledge_dataset_ids", "database_bindings", "workflow_bindings"} {
+		if strategyActions[field] != "bind" {
+			t.Fatalf("strategy update_agent_config actions[%s] = %#v, want bind; args=%#v", field, strategyActions[field], updateArgs)
+		}
+	}
+	updateTool := aiChatTurnStrategyPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_config")
+	if updateTool == nil {
+		t.Fatal("update_agent_config planned tool missing")
+	}
+	expectedWaitFor := operationPlanToolStepID(skills.SkillAgentManagement, "list_agent_workflow_binding_candidates")
+	if got := strings.TrimSpace(updateTool.WaitForStepID); got != expectedWaitFor {
+		t.Fatalf("update_agent_config wait_for = %q, want pending candidate step %q; tool=%#v", got, expectedWaitFor, updateTool)
+	}
+}
+
+func TestOperationPlanPendingWaitForStepIDOnlyKeepsUnfinishedDependencies(t *testing.T) {
+	candidateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "list_agent_skill_candidates")
+	updateStep := map[string]interface{}{
+		"id":        operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config"),
+		"status":    operationPlanStepStatusPending,
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "update_agent_config",
+		"wait_for":  candidateStepID,
+	}
+	candidateStep := map[string]interface{}{
+		"id":        candidateStepID,
+		"status":    operationPlanStepStatusPending,
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "list_agent_skill_candidates",
+	}
+	plan := map[string]interface{}{
+		"steps":       []interface{}{candidateStep, updateStep},
+		"step_status": map[string]interface{}{candidateStepID: operationPlanStepStatusPending},
+	}
+	if got := operationPlanPendingWaitForStepID(plan, updateStep); got != candidateStepID {
+		t.Fatalf("operationPlanPendingWaitForStepID() = %q, want %q for pending dependency", got, candidateStepID)
+	}
+	plan["step_status"] = map[string]interface{}{candidateStepID: operationPlanStepStatusCompleted}
+	if got := operationPlanPendingWaitForStepID(plan, updateStep); got != "" {
+		t.Fatalf("operationPlanPendingWaitForStepID() = %q, want empty after dependency completed", got)
+	}
+}
+
+func TestAgentResourceBindingCandidateContinuationUsesPriorCandidateResults(t *testing.T) {
+	previousQuery := "\u53ea\u8bfb\u67e5\u770b\u8fd9\u4e2aagent\u5f53\u524d\u53ef\u7ed1\u5b9a\u7684\u77e5\u8bc6\u5e93\u3001\u6570\u636e\u8868\u548c\u5de5\u4f5c\u6d41\u5019\u9009"
+	previousMessage := &runtimemodel.Message{
+		ID:     uuid.New(),
+		Query:  previousQuery,
+		Status: runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"version":             operationPlanVersion,
+				"status":              operationPlanStatusCompleted,
+				"pending_next_action": "none",
+				"intent":              "agent.inspect_candidates",
+				"original_user_goal":  previousQuery,
+				"capability_goals": []interface{}{
+					map[string]interface{}{
+						"capability_id":          agentCapabilityKnowledgeBinding,
+						"goal_action":            agentCapabilityActionInspect,
+						"display_name":           "knowledge base binding",
+						"required_config_fields": []interface{}{"knowledge_dataset_ids"},
+					},
+					map[string]interface{}{
+						"capability_id":          agentCapabilityDatabaseBinding,
+						"goal_action":            agentCapabilityActionInspect,
+						"display_name":           "database table binding",
+						"required_config_fields": []interface{}{"database_bindings"},
+					},
+					map[string]interface{}{
+						"capability_id":          agentCapabilityWorkflowBinding,
+						"goal_action":            agentCapabilityActionInspect,
+						"display_name":           "workflow binding",
+						"required_config_fields": []interface{}{"workflow_bindings"},
+					},
+				},
+			},
+			"skill_invocations": []interface{}{
+				agentManagementToolInvocationForTest("list_agent_knowledge_candidates", "tool_call:agent-management:list_agent_knowledge_candidates::#1", map[string]interface{}{
+					"status": "success",
+					"items": []interface{}{
+						map[string]interface{}{"id": "kb-1", "name": "Knowledge One"},
+					},
+				}),
+				agentManagementToolInvocationForTest("list_agent_database_tables", "tool_call:agent-management:list_agent_database_tables::#1", map[string]interface{}{
+					"status": "success",
+					"binding_candidates": []interface{}{
+						map[string]interface{}{
+							"id":   "db-1:table-1",
+							"name": "Orders",
+							"binding": map[string]interface{}{
+								"data_source_id": "db-1",
+								"table_id":       "table-1",
+							},
+						},
+					},
+				}),
+				agentManagementToolInvocationForTest("list_agent_workflow_binding_candidates", "tool_call:agent-management:list_agent_workflow_binding_candidates::#1", map[string]interface{}{
+					"status": "success",
+					"items": []interface{}{
+						map[string]interface{}{"id": "wf-1", "name": "Workflow One"},
+					},
+				}),
+			},
+		},
+	}
+	parts := consoleAgentDetailTestParts("\u8fdb\u884c\u5904\u7406")
+	parts.SkillIDs = []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator}
+	applyRecentOperationPlansFromBranch(parts, []*runtimemodel.Message{previousMessage})
+	if len(parts.RecentOperationPlans) == 0 {
+		t.Fatalf("RecentOperationPlans = %#v, want synthesized candidate-based resource-binding continuation plan", parts.RecentOperationPlans)
+	}
+	recent := parts.RecentOperationPlans[0]
+	if got := stringFromAny(recent["derived_from"]); got != "recent_agent_binding_candidates" {
+		t.Fatalf("derived_from = %q, want recent_agent_binding_candidates; plan=%#v", got, recent)
+	}
+	for _, unexpected := range []string{
+		"list_agent_knowledge_candidates",
+		"list_agent_database_candidates",
+		"list_agent_database_tables",
+		"list_agent_workflow_binding_candidates",
+	} {
+		if got := operationPlanStepStatusForTest(recent, operationPlanToolStepID(skills.SkillAgentManagement, unexpected)); got != "" {
+			t.Fatalf("%s status = %q, want absent because prior candidate results are reused; plan=%#v", unexpected, got, recent)
+		}
+	}
+	updateStep := operationPlanStepForTest(recent, operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config"))
+	if len(updateStep) == 0 {
+		t.Fatalf("operation_plan steps = %#v, missing update_agent_config", recent["steps"])
+	}
+	actions := operationPlanAgentConfigBindingActionsFromAny(updateStep[operationPlanExpectedBindingActionsKey])
+	for _, field := range []string{"knowledge_dataset_ids", "database_bindings", "workflow_bindings"} {
+		if actions[field] != "bind" {
+			t.Fatalf("expected_binding_actions[%s] = %#v, want bind; actions=%#v plan=%#v", field, actions[field], actions, recent)
+		}
+	}
+	if policy := stringFromAny(mapFromOperationContext(updateStep["arguments"])["candidate_selection_policy"]); !strings.Contains(policy, "reuse successful candidate results") {
+		t.Fatalf("candidate_selection_policy = %q, want prior-candidate reuse guidance; step=%#v", policy, updateStep)
+	}
+	if got := operationPlanStepStatusForTest(recent, operationPlanPostUpdateAgentConfigReadStepID()); got != operationPlanStepStatusPending {
+		t.Fatalf("post-update get_agent_config status = %q, want pending; plan=%#v", got, recent)
+	}
+
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want continuation strategy")
+	}
+	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_config") {
+		t.Fatalf("PlannedTools = %#v, missing update_agent_config from candidate-based continuation", strategy.PlannedTools)
+	}
+	if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "list_agent_database_tables") {
+		t.Fatalf("PlannedTools = %#v, want no repeated list_agent_database_tables after prior candidate results", strategy.PlannedTools)
+	}
+	updateArgs := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, "update_agent_config")
+	strategyActions := operationPlanAgentConfigBindingActionsFromAny(updateArgs[operationPlanExpectedBindingActionsKey])
+	for _, field := range []string{"knowledge_dataset_ids", "database_bindings", "workflow_bindings"} {
+		if strategyActions[field] != "bind" {
+			t.Fatalf("strategy update_agent_config actions[%s] = %#v, want bind; args=%#v", field, strategyActions[field], updateArgs)
+		}
+	}
+}
+
+func TestAgentResourceBindingContinuationRequiresExplicitEmptyBindingEvidence(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		configResult map[string]interface{}
+	}{
+		{
+			name: "missing_binding_field",
+			configResult: map[string]interface{}{
+				"status":     "success",
+				"agent_id":   "agent-1",
+				"agent_name": "Resource Agent",
+			},
+		},
+		{
+			name: "already_bound",
+			configResult: map[string]interface{}{
+				"status":                "success",
+				"agent_id":              "agent-1",
+				"agent_name":            "Resource Agent",
+				"knowledge_dataset_ids": []interface{}{"kb-1"},
+			},
+		},
+		{
+			name: "count_reports_existing_binding",
+			configResult: map[string]interface{}{
+				"status":                  "success",
+				"agent_id":                "agent-1",
+				"agent_name":              "Resource Agent",
+				"knowledge_dataset_count": 1,
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			previousQuery := "\u8fd9\u4e2aagent\u5f53\u524d\u7ed1\u5b9a\u4e86\u54ea\u4e9b\u77e5\u8bc6\u5e93"
+			previousMessage := &runtimemodel.Message{
+				ID:     uuid.New(),
+				Query:  previousQuery,
+				Status: runtimemodel.MessageStatusCompleted,
+				Metadata: map[string]interface{}{
+					"operation_plan": map[string]interface{}{
+						"version":             operationPlanVersion,
+						"status":              operationPlanStatusCompleted,
+						"pending_next_action": "none",
+						"intent":              "inspect_agent_config",
+						"original_user_goal":  previousQuery,
+						"capability_goals": []interface{}{
+							map[string]interface{}{
+								"capability_id":          agentCapabilityKnowledgeBinding,
+								"goal_action":            agentCapabilityActionInspect,
+								"display_name":           "knowledge base binding",
+								"required_config_fields": []interface{}{"knowledge_dataset_ids"},
+							},
+						},
+					},
+					"skill_invocations": []interface{}{
+						agentManagementToolInvocationForTest("get_agent_config", "tool_call:agent-management:get_agent_config::#1", tt.configResult),
+					},
+				},
+			}
+			parts := consoleAgentDetailTestParts("\u7ee7\u7eed")
+			parts.SkillIDs = []string{skills.SkillAgentManagement}
+			if plan := recentAgentCapabilityContinuationPlan(parts, []*runtimemodel.Message{previousMessage}); len(plan) > 0 {
+				t.Fatalf("recentAgentCapabilityContinuationPlan() = %#v, want nil without explicit empty binding evidence", plan)
+			}
+		})
+	}
+}
+
+func TestAgentConfigUpdatePatchFieldDetection(t *testing.T) {
+	if agentConfigUpdateHasPatchFields(map[string]interface{}{
+		"agent_id":                    "agent-1",
+		operationPlanConfigGoalKey:    "\u8fd9\u4e2aagent\u80fd\u751f\u6210\u6587\u4ef6\u5417",
+		"expected_updated_fields":     "",
+		"expected_binding_actions":    "",
+		"changed_fields_preview":      "",
+		"current_agent_display_name":  "Agent",
+		"current_agent_visible_index": 1,
+	}) {
+		t.Fatal("agentConfigUpdateHasPatchFields() = true for planning-only args, want false")
+	}
+	if !agentConfigUpdateHasPatchFields(map[string]interface{}{
+		"agent_id":            "agent-1",
+		"file_upload_enabled": false,
+	}) {
+		t.Fatal("agentConfigUpdateHasPatchFields() = false for explicit false file_upload_enabled patch, want true")
 	}
 }
 
@@ -4421,6 +6859,9 @@ func TestSkillLoopPlanToolGuardBlocksEmptyAgentIdentityUpdate(t *testing.T) {
 	if !blocked {
 		t.Fatal("empty update_agent_identity was allowed, want blocked before governance")
 	}
+	if !result.Advisory {
+		t.Fatalf("guard result Advisory = false, want advisory no-op identity guidance")
+	}
 	if result.ToolName != "update_agent_identity" {
 		t.Fatalf("guard result tool = %q, want update_agent_identity", result.ToolName)
 	}
@@ -4429,7 +6870,115 @@ func TestSkillLoopPlanToolGuardBlocksEmptyAgentIdentityUpdate(t *testing.T) {
 	}
 }
 
-func TestSkillLoopPlanToolGuardBlocksUnrequestedAgentIconBackgroundUpdate(t *testing.T) {
+func TestSkillLoopPlanToolGuardBlocksEmptyAgentConfigUpdate(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "\u8fd9\u4e2aagent\u80fd\u751f\u6210\u6587\u4ef6\u5417",
+			Surface:   aiChatSurfaceContextualSidebar,
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{skills.SkillAgentManagement},
+		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status": operationPlanStatusRunning,
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config"),
+						"status":    operationPlanStepStatusPending,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "get_agent_config",
+					},
+				},
+				"step_status": map[string]interface{}{
+					operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config"): operationPlanStepStatusPending,
+				},
+			},
+		}},
+	}
+
+	guard := skillLoopPlanToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopPlanToolCallGuard() = nil, want guard")
+	}
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Arguments: map[string]interface{}{
+			"agent_id":                 "agent-1",
+			operationPlanConfigGoalKey: "\u8fd9\u4e2aagent\u80fd\u751f\u6210\u6587\u4ef6\u5417",
+		},
+	})
+	if !blocked {
+		t.Fatal("empty update_agent_config was allowed, want blocked before governance")
+	}
+	if !result.Advisory {
+		t.Fatalf("guard result Advisory = false, want advisory no-op config guidance")
+	}
+	if result.ToolName != "update_agent_config" {
+		t.Fatalf("guard result tool = %q, want update_agent_config", result.ToolName)
+	}
+	if !strings.Contains(result.SystemMessage, "config_goal is only a planning note") {
+		t.Fatalf("guard system message = %q, want planning-note guidance", result.SystemMessage)
+	}
+}
+
+func TestSkillLoopPlanToolGuardStrategyDenoiseResultsAreAdvisory(t *testing.T) {
+	tests := []struct {
+		name   string
+		result skillloop.FinalAnswerGuardResult
+	}{
+		{
+			name: "capability explanation",
+			result: skillLoopAgentCapabilityExplanationToolGuardResult(
+				skills.SkillAgentManagement,
+				"list_agents",
+			),
+		},
+		{
+			name: "empty identity update",
+			result: skillLoopEmptyAgentIdentityUpdateGuardResult(map[string]interface{}{
+				"agent_id": "agent-1",
+			}),
+		},
+		{
+			name: "empty config update",
+			result: skillLoopEmptyAgentConfigUpdateGuardResult(map[string]interface{}{
+				"agent_id": "agent-1",
+			}),
+		},
+		{
+			name: "redundant create",
+			result: skillLoopRedundantAgentCreateAfterCompletedCreateGuardResult(map[string]interface{}{
+				"name": "Smoke",
+			}),
+		},
+		{
+			name: "redundant identity update",
+			result: skillLoopRedundantAgentIdentityUpdateAfterCreateGuardResult(map[string]interface{}{
+				"agent_id": "agent-1",
+			}),
+		},
+		{
+			name: "repeated loaded navigation",
+			result: skillLoopRepeatedLoadedNavigationGuardResult(map[string]interface{}{
+				"href": "/console/agents",
+			}),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !tt.result.Advisory {
+				t.Fatalf("guard result Advisory = false, want strategy guidance to be advisory: %#v", tt.result)
+			}
+			if strings.TrimSpace(tt.result.SystemMessage) == "" {
+				t.Fatalf("guard result SystemMessage is empty: %#v", tt.result)
+			}
+		})
+	}
+}
+
+func TestSkillLoopPlanToolGuardRecordsUnrequestedAgentIconBackgroundUpdate(t *testing.T) {
 	prepared := preparedAgentIdentityUpdateGuardTestChat("change the current Agent name to Smoke, description to edited, and icon to rocket")
 
 	guard := skillLoopPlanToolCallGuard(prepared)
@@ -4448,11 +6997,22 @@ func TestSkillLoopPlanToolGuardBlocksUnrequestedAgentIconBackgroundUpdate(t *tes
 			"icon_background": "#0f766e",
 		},
 	})
-	if !blocked {
-		t.Fatal("update_agent_identity with unrequested icon_background was allowed")
+	if blocked {
+		t.Fatalf("update_agent_identity with unrequested icon_background was blocked, want planned mutation allowed with deviation recorded: %#v", result)
 	}
-	if !strings.Contains(result.SystemMessage, "without icon_background") {
-		t.Fatalf("guard system message = %q, want retry guidance without icon_background", result.SystemMessage)
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	deviations := mapSliceFromAny(plan["deviations"])
+	found := false
+	for _, deviation := range deviations {
+		if stringFromAny(deviation["reason"]) == "model_included_unrequested_agent_icon_background" &&
+			stringFromAny(deviation["skill_id"]) == skills.SkillAgentManagement &&
+			stringFromAny(deviation["tool_name"]) == "update_agent_identity" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("tool_deviations = %#v, want unrequested icon_background deviation recorded", deviations)
 	}
 }
 
@@ -4573,7 +7133,7 @@ func TestSkillLoopPlanToolGuardAllowsPlannedReadEvidenceReplay(t *testing.T) {
 	}
 }
 
-func TestSkillLoopPlanToolGuardBlocksReadOnlyAgentConfigCandidateLookup(t *testing.T) {
+func TestSkillLoopPlanToolGuardRespectsExplicitCandidateLookupNegation(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
 			Query:     "read-only check the current agent configuration: name, description, model/provider, and current bound resource counts; do not list candidates or modify config",
@@ -4607,8 +7167,8 @@ func TestSkillLoopPlanToolGuardBlocksReadOnlyAgentConfigCandidateLookup(t *testi
 	if !agentManagementCandidateLookupExplicitlyNegated(goal) {
 		t.Fatalf("agentManagementCandidateLookupExplicitlyNegated(%q) = false, want true", goal)
 	}
-	if !skillLoopShouldBlockReadOnlyAgentCandidateLookup(prepared, skills.SkillAgentManagement, "list_agent_database_tables") {
-		t.Fatalf("skillLoopShouldBlockReadOnlyAgentCandidateLookup(%q) = false, want true", goal)
+	if skillLoopShouldAllowReadOnlyAgentCandidateLookup(prepared, skills.SkillAgentManagement, "list_agent_database_tables") {
+		t.Fatalf("skillLoopShouldAllowReadOnlyAgentCandidateLookup(%q) = true, want false when candidate lookup is explicitly negated", goal)
 	}
 
 	guard := skillLoopPlanToolCallGuard(prepared)
@@ -4617,13 +7177,53 @@ func TestSkillLoopPlanToolGuardBlocksReadOnlyAgentConfigCandidateLookup(t *testi
 	}
 	result, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "list_agent_database_tables"})
 	if !blocked {
-		t.Fatal("list_agent_database_tables was allowed, want read-only config guard to block candidate lookup")
+		t.Fatal("list_agent_database_tables was allowed, want explicit candidate lookup negation to block it")
 	}
-	if !strings.Contains(result.SystemMessage, "read-only current Agent configuration check") {
-		t.Fatalf("guard system message = %q, want read-only config guidance", result.SystemMessage)
+	if !result.Advisory {
+		t.Fatalf("guard result Advisory = false, want advisory unplanned-tool guidance")
 	}
 	if _, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "list_available_models"}); !blocked {
-		t.Fatal("list_available_models was allowed, want read-only config guard to block model candidate lookup")
+		t.Fatal("list_available_models was allowed, want explicit candidate lookup negation to block it")
+	}
+}
+
+func TestSkillLoopPlanToolGuardAllowsReadOnlyAgentCandidateLookupAsEvidence(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "read-only check the current agent configuration and gather candidate evidence if it helps; do not modify config",
+			Surface:   aiChatSurfaceContextualSidebar,
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{skills.SkillAgentManagement},
+		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status": operationPlanStatusRunning,
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config"),
+						"status":    operationPlanStepStatusPending,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "get_agent_config",
+					},
+				},
+				"step_status": map[string]interface{}{
+					operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config"): operationPlanStepStatusPending,
+				},
+				"original_user_goal": "read-only check the current agent configuration and gather candidate evidence if it helps; do not modify config",
+			},
+		}},
+	}
+
+	goal := operationPlanAmendmentGoal(prepared)
+	if !agentManagementExplicitReadOnlyConfigCheck(goal) {
+		t.Fatalf("agentManagementExplicitReadOnlyConfigCheck(%q) = false, want true", goal)
+	}
+	if !skillLoopShouldAllowReadOnlyAgentCandidateLookup(prepared, skills.SkillAgentManagement, "list_agent_database_tables") {
+		t.Fatalf("skillLoopShouldAllowReadOnlyAgentCandidateLookup(%q) = false, want read-only evidence lookup allowed", goal)
+	}
+	guard := skillLoopPlanToolCallGuard(prepared)
+	if result, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "list_agent_database_tables"}); blocked {
+		t.Fatalf("list_agent_database_tables was blocked, want read-only evidence lookup allowed: %#v", result)
 	}
 }
 
@@ -4657,6 +7257,33 @@ func TestSkillLoopPlanToolGuardAllowsExplicitAgentCandidateLookup(t *testing.T) 
 	guard := skillLoopPlanToolCallGuard(prepared)
 	if _, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "list_agent_knowledge_candidates"}); blocked {
 		t.Fatal("list_agent_knowledge_candidates was blocked, want explicit bindable resource query allowed")
+	}
+}
+
+func TestSkillLoopPlanToolGuardAllowsCapabilityStatusSkillCandidateLookup(t *testing.T) {
+	query := "\u8fd9\u4e2aagent\u80fd\u751f\u6210\u6587\u4ef6\u5417"
+	parts := consoleAgentDetailTestParts(query)
+	metadata := streamingMessageMetadataWithTaskID(parts, "task-agent-capability-status-guard")
+	prepared := &PreparedChat{
+		parts: parts,
+		Message: &runtimemodel.Message{
+			Metadata: metadata,
+		},
+	}
+	goal := operationPlanAmendmentGoal(prepared)
+	if !agentManagementCapabilityQuestionNeedsSkillCandidateLookup(goal) {
+		t.Fatalf("agentManagementCapabilityQuestionNeedsSkillCandidateLookup(%q) = false, want true", goal)
+	}
+	if !skillLoopShouldAllowReadOnlyAgentCandidateLookup(prepared, skills.SkillAgentManagement, "list_agent_skill_candidates") {
+		t.Fatalf("skillLoopShouldAllowReadOnlyAgentCandidateLookup(%q, list_agent_skill_candidates) = false, want true", goal)
+	}
+
+	guard := skillLoopPlanToolCallGuard(prepared)
+	if result, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "get_agent_config"}); blocked {
+		t.Fatalf("get_agent_config was blocked: %#v", result)
+	}
+	if result, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "list_agent_skill_candidates"}); blocked {
+		t.Fatalf("list_agent_skill_candidates was blocked: %#v", result)
 	}
 }
 
@@ -4747,18 +7374,19 @@ func TestSkillLoopPlanToolGuardAllowsUnplannedEvidenceToolDeviation(t *testing.T
 	}
 	plan = mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
 	blockedDeviations := mapSliceFromAny(plan["blocked_deviations"])
-	if len(blockedDeviations) != 1 {
-		t.Fatalf("blocked_deviations = %#v, want one blocked mutation deviation", blockedDeviations)
+	if len(blockedDeviations) != 0 {
+		t.Fatalf("blocked_deviations = %#v, want empty for advisory planner feedback", blockedDeviations)
 	}
-	if got := stringFromAny(blockedDeviations[0]["outcome"]); got != "blocked" {
-		t.Fatalf("blocked deviation outcome = %q, want blocked; plan=%#v", got, plan)
+	deviations = mapSliceFromAny(plan["deviations"])
+	if len(deviations) != 2 {
+		t.Fatalf("deviations = %#v, want evidence deviation plus advisory planner feedback", deviations)
 	}
 	state := mapFromOperationContext(plan["strategy_state"])
-	if got := intValueFromAny(state["blocked_deviation_count"]); got != 1 {
-		t.Fatalf("strategy_state.blocked_deviation_count = %#v, want 1; state=%#v", state["blocked_deviation_count"], state)
+	if got := intValueFromAny(state["blocked_deviation_count"]); got != 0 {
+		t.Fatalf("strategy_state.blocked_deviation_count = %#v, want 0 for advisory planner feedback; state=%#v", state["blocked_deviation_count"], state)
 	}
-	if latest := mapFromOperationContext(state["last_blocked_deviation"]); latest["tool_name"] != "update_agent_identity" {
-		t.Fatalf("strategy_state.last_blocked_deviation = %#v, want update_agent_identity", latest)
+	if latest := mapFromOperationContext(state["last_plan_deviation"]); latest["tool_name"] != "update_agent_identity" {
+		t.Fatalf("strategy_state.last_plan_deviation = %#v, want update_agent_identity", latest)
 	}
 }
 
@@ -6334,6 +8962,7 @@ func TestOperationPlanToolResultIncludesAgentConfigEvidence(t *testing.T) {
 			"model_provider":         "deepseek",
 			"model":                  "deepseek-chat",
 			"agent_memory_enabled":   true,
+			"enabled_skill_ids":      []string{"chart-generator", "file-generator"},
 			"enabled_skill_count":    2,
 			"system_prompt":          "full prompt should not be copied into operation plan result",
 			"knowledge_dataset_ids":  []string{"kb-1"},
@@ -6366,6 +8995,16 @@ func TestOperationPlanToolResultIncludesAgentConfigEvidence(t *testing.T) {
 	}
 	if _, ok := summary["knowledge_dataset_ids"]; ok {
 		t.Fatalf("result_summary should not copy raw binding ids: %#v", summary)
+	}
+	skillRefs := stringSliceFromAny(summary["enabled_skill_refs"])
+	if len(skillRefs) != 2 || skillRefs[0] != "chart-generator" || skillRefs[1] != "file-generator" {
+		t.Fatalf("enabled_skill_refs = %#v, want bounded skill reference evidence; summary=%#v", summary["enabled_skill_refs"], summary)
+	}
+	if refs := stringSliceFromAny(summary["knowledge_dataset_refs"]); len(refs) != 1 || refs[0] != "kb-1" {
+		t.Fatalf("knowledge_dataset_refs = %#v, want bounded dataset reference evidence; summary=%#v", summary["knowledge_dataset_refs"], summary)
+	}
+	if _, ok := summary["enabled_skill_ids"]; ok {
+		t.Fatalf("result_summary should not copy raw enabled_skill_ids field: %#v", summary)
 	}
 }
 
@@ -6457,6 +9096,10 @@ func TestOperationPlanToolResultDerivesAgentBindingCountsFromConfig(t *testing.T
 	summary := mapFromOperationContext(toolResult["result_summary"])
 	if summary["enabled_skill_count"] != 2 {
 		t.Fatalf("enabled_skill_count = %#v, want 2; summary=%#v", summary["enabled_skill_count"], summary)
+	}
+	refs := stringSliceFromAny(summary["enabled_skill_refs"])
+	if len(refs) != 2 || refs[0] != "chart-generator" || refs[1] != "file-reader" {
+		t.Fatalf("enabled_skill_refs = %#v, want config skill refs; summary=%#v", summary["enabled_skill_refs"], summary)
 	}
 	if _, ok := summary["config"]; ok {
 		t.Fatalf("result_summary should not copy full config: %#v", summary)
@@ -7932,10 +10575,44 @@ func TestAgentManagementCurrentDetailDeletePlansSingleDeleteThenListNavigation(t
 		Message: &runtimemodel.Message{Metadata: metadata},
 	}
 	allowedSkills := operationPlanAllowedSkillIDs(prepared)
-	for _, want := range []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator} {
-		if _, ok := allowedSkills[want]; !ok {
-			t.Fatalf("allowed skills = %#v, missing %s for planned delete plus post-delete navigation", allowedSkills, want)
+	if _, ok := allowedSkills[skills.SkillAgentManagement]; !ok {
+		t.Fatalf("allowed skills = %#v, missing %s for ready delete step", allowedSkills, skills.SkillAgentManagement)
+	}
+	if _, ok := allowedSkills[skills.SkillConsoleNavigator]; ok {
+		t.Fatalf("allowed skills = %#v, want no console navigator exposure before delete_agent completes", allowedSkills)
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
+		{
+			Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
+			Tools: []skills.SkillToolDefinition{
+				{Name: "delete_agent"},
+				{Name: "update_agent_config"},
+			},
+		},
+		{
+			Metadata: skills.SkillMetadata{ID: skills.SkillConsoleNavigator},
+			Tools:    []skills.SkillToolDefinition{{Name: "navigate"}},
+		},
+	}}
+	filtered := restrictResolvedSkillsForPreparedTurn(prepared, resolved)
+	filteredToolNames := func(skillID string) []string {
+		for _, doc := range filtered.Skills {
+			if !strings.EqualFold(doc.Metadata.ID, skillID) {
+				continue
+			}
+			names := make([]string, 0, len(doc.Tools))
+			for _, tool := range doc.Tools {
+				names = append(names, tool.Name)
+			}
+			return names
 		}
+		return nil
+	}
+	if got := filteredToolNames(skills.SkillAgentManagement); !reflect.DeepEqual(got, []string{"delete_agent"}) {
+		t.Fatalf("filtered agent-management tools = %#v, want only delete_agent before route is ready", got)
+	}
+	if got := filteredToolNames(skills.SkillConsoleNavigator); !reflect.DeepEqual(got, []string{"navigate"}) {
+		t.Fatalf("filtered console-navigator tools = %#v, want navigate exposed for same-loop continuation", got)
 	}
 	allowedTools := skillLoopAllowedPlannedTools(prepared)
 	if !skillLoopToolAllowed(allowedTools, skills.SkillAgentManagement, "delete_agent") {
@@ -7968,6 +10645,14 @@ func TestAgentManagementCurrentDetailDeletePlansSingleDeleteThenListNavigation(t
 			"agent_name": "Current Detail Agent",
 		},
 	}})
+	allowedSkills = operationPlanAllowedSkillIDs(prepared)
+	if _, ok := allowedSkills[skills.SkillConsoleNavigator]; !ok {
+		t.Fatalf("allowed skills = %#v, missing console navigator after delete_agent completes", allowedSkills)
+	}
+	filtered = restrictResolvedSkillsForPreparedTurn(prepared, resolved)
+	if got := filteredToolNames(skills.SkillConsoleNavigator); !reflect.DeepEqual(got, []string{"navigate"}) {
+		t.Fatalf("filtered console-navigator tools = %#v, want navigate after delete_agent completes", got)
+	}
 	allowedTools = skillLoopAllowedPlannedTools(prepared)
 	if !skillLoopToolAllowed(allowedTools, skills.SkillConsoleNavigator, "navigate") {
 		t.Fatalf("allowed tools = %#v, want navigate ready after delete_agent completes", allowedTools)
@@ -8081,6 +10766,396 @@ func TestAgentManagementDeleteThenFollowupMutationStillPlansAfterDelete(t *testi
 	}
 }
 
+func TestAgentManagementDeleteThenCreateAndConfigurePlansNewAgentUpdate(t *testing.T) {
+	query := "\u5220\u6389\u9875\u9762\u4e2d\u7684\u524d\u4e24\u4e2a\u667a\u80fd\u4f53\uff0c\u7136\u540e\u521b\u5efa\u4e00\u4e2a\u65b0\u7684\u667a\u80fd\u4f53\uff0c\u53d6\u540d\u53eb\u5c0f\u8bf4\u521b\u4f5c\u5927\u5e08\uff0c\u6a21\u578b\u914d\u7f6e\u4e3adeepseek flash\uff0c\u5199\u597d\u63d0\u793a\u8bcd\u9700\u8981\u8ba9agent\u80fd\u751f\u6210\u6587\u4ef6\u548c\u4e0a\u4f20\u6587\u4ef6\u3002"
+	if !agentManagementDeleteHasExplicitFollowupMutation(query) {
+		t.Fatalf("agentManagementDeleteHasExplicitFollowupMutation(%q) = false, want true", query)
+	}
+	parts := consoleAgentsVisibleTargetsTestParts(query)
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	for _, want := range []string{
+		"delete_agents",
+		"create_agent",
+		"get_agent_config",
+		"list_available_models",
+		"list_agent_skill_candidates",
+		"update_agent_config",
+	} {
+		if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, want) {
+			t.Fatalf("PlannedTools = %#v, missing agent-management/%s", strategy.PlannedTools, want)
+		}
+	}
+	skillCandidateArgs := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, "list_agent_skill_candidates")
+	if got := skillCandidateArgs["query"]; got != "file generation" {
+		t.Fatalf("list_agent_skill_candidates query = %q, want canonical skill-backed capability query file generation", got)
+	}
+	if strategy.StructuredPlan == nil {
+		t.Fatalf("StructuredPlan = nil; strategy=%#v", strategy)
+	}
+	if got := strategy.StructuredPlan.Intent; got != "agent.batch_delete_then_create_and_edit" {
+		t.Fatalf("StructuredPlan.Intent = %q, want agent.batch_delete_then_create_and_edit; plan=%#v", got, strategy.StructuredPlan)
+	}
+	toolIndex := func(toolName string) int {
+		for idx, tool := range strategy.StructuredPlan.RequiredToolSequence {
+			if strings.EqualFold(tool.ToolName, toolName) {
+				return idx
+			}
+		}
+		return -1
+	}
+	deleteIndex := toolIndex("delete_agents")
+	createIndex := toolIndex("create_agent")
+	candidateIndex := toolIndex("list_agent_skill_candidates")
+	updateIndex := toolIndex("update_agent_config")
+	if deleteIndex < 0 || createIndex < 0 || candidateIndex < 0 || updateIndex < 0 ||
+		!(deleteIndex < createIndex && createIndex < candidateIndex && candidateIndex < updateIndex) {
+		t.Fatalf("structured tool sequence = %#v, want delete_agents before create_agent before list_agent_skill_candidates before update_agent_config", strategy.StructuredPlan.RequiredToolSequence)
+	}
+	var updateTool AIChatTurnStrategyTool
+	var createTool AIChatTurnStrategyTool
+	for _, tool := range strategy.StructuredPlan.RequiredToolSequence {
+		if strings.EqualFold(tool.ToolName, "create_agent") {
+			createTool = tool
+		}
+		if strings.EqualFold(tool.ToolName, "update_agent_config") {
+			updateTool = tool
+		}
+	}
+	if got := strings.TrimSpace(createTool.OutputAlias); got != aiChatStructuredCreatedAgentsOutputAlias {
+		t.Fatalf("create_agent output_alias = %q, want %q; tool=%#v", got, aiChatStructuredCreatedAgentsOutputAlias, createTool)
+	}
+	if got := updateTool.ArgsBinding["agent_id"]; got != aiChatStructuredFirstCreatedAgentIDExpr {
+		t.Fatalf("update_agent_config args_binding.agent_id = %q, want %q; tool=%#v", got, aiChatStructuredFirstCreatedAgentIDExpr, updateTool)
+	}
+	if got := strings.TrimSpace(updateTool.WaitForStepID); got != operationPlanToolStepID(skills.SkillAgentManagement, "create_agent") {
+		t.Fatalf("update_agent_config wait_for = %q, want create_agent step; tool=%#v", got, updateTool)
+	}
+	plan := operationPlanFromTurnStrategy("task-delete-create-configure-agent", parts, strategy)
+	structured := mapFromOperationContext(plan["structured_plan"])
+	if got := stringFromAny(structured["intent"]); got != "agent.batch_delete_then_create_and_edit" {
+		t.Fatalf("operation_plan.structured_plan.intent = %q, want composite intent; plan=%#v", got, plan)
+	}
+	createStep := operationPlanStepForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "create_agent"))
+	if got := stringFromAny(createStep["output_alias"]); got != aiChatStructuredCreatedAgentsOutputAlias {
+		t.Fatalf("create_agent step output_alias = %q, want %q; step=%#v plan=%#v", got, aiChatStructuredCreatedAgentsOutputAlias, createStep, plan)
+	}
+	updateStep := operationPlanStepForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config"))
+	if got := stringFromAny(updateStep["wait_for"]); got != operationPlanToolStepID(skills.SkillAgentManagement, "create_agent") {
+		t.Fatalf("update_agent_config step wait_for = %q, want create_agent step; step=%#v plan=%#v", got, updateStep, plan)
+	}
+	binding := mapFromOperationContext(updateStep["args_binding"])
+	if got := stringFromAny(binding["agent_id"]); got != aiChatStructuredFirstCreatedAgentIDExpr {
+		t.Fatalf("update_agent_config step args_binding.agent_id = %q, want %q; step=%#v plan=%#v", got, aiChatStructuredFirstCreatedAgentIDExpr, updateStep, plan)
+	}
+	fields := stringSliceFromAny(updateStep[operationPlanExpectedUpdatedFieldsKey])
+	for _, want := range []string{"model", "system_prompt", "enabled_skill_ids", "file_upload_enabled"} {
+		if !stringSliceContainsFold(fields, want) {
+			t.Fatalf("expected_updated_fields = %#v, want semantic capability field %s; step=%#v", fields, want, updateStep)
+		}
+	}
+	if goal := stringFromAny(updateStep[operationPlanConfigGoalKey]); !strings.Contains(goal, "\u4e0a\u4f20\u6587\u4ef6") || !strings.Contains(goal, "\u751f\u6210\u6587\u4ef6") {
+		t.Fatalf("config_goal = %q, want preserved semantic config and capability goal; step=%#v plan=%#v", goal, updateStep, plan)
+	}
+	actions := operationPlanAgentConfigBindingActionsFromAny(updateStep[operationPlanExpectedBindingActionsKey])
+	if got := actions["enabled_skill_ids"]; got != "bind" {
+		t.Fatalf("expected_binding_actions = %#v, want enabled_skill_ids:bind for generated-file capability; step=%#v", actions, updateStep)
+	}
+	capabilityGoals := mapSliceFromAny(plan["capability_goals"])
+	if len(capabilityGoals) == 0 {
+		t.Fatalf("capability_goals = %#v, want Agent capability goals; plan=%#v", plan["capability_goals"], plan)
+	}
+}
+
+func TestAgentManagementFileUploadCapabilityDoesNotPlanSkillBinding(t *testing.T) {
+	for _, query := range []string{
+		"\u8ba9\u5f53\u524dagent\u80fd\u4e0a\u4f20\u6587\u4ef6",
+		"\u8ba9\u5f53\u524d Agent \u80fd\u591f\u4e0a\u4f20\u6587\u4ef6",
+	} {
+		t.Run(query, func(t *testing.T) {
+			parts := &chatRequestParts{
+				Query:          query,
+				Surface:        aiChatSurfaceContextualSidebar,
+				RuntimeContext: "route=/console/agents/agent-1/agent",
+				SkillMode:      skillModeAuto,
+				SkillIDs: []string{
+					skills.SkillAgentManagement,
+					skills.SkillFileManager,
+				},
+			}
+			if !isAgentManagementCapabilityUpdateIntent(parts) {
+				t.Fatalf("isAgentManagementCapabilityUpdateIntent(%q) = false, want Agent file-upload capability update", query)
+			}
+			strategy := contextualAIChatTurnStrategyFromParts(parts)
+			if strategy == nil {
+				t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+			}
+			if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_config") {
+				t.Fatalf("PlannedTools = %#v, missing agent-management/update_agent_config", strategy.PlannedTools)
+			}
+			if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "list_agent_skill_candidates") {
+				t.Fatalf("PlannedTools = %#v, want no Skill candidate lookup for file-upload config setting", strategy.PlannedTools)
+			}
+			if stringSliceContainsFold(strategy.PrimarySkills, skills.SkillFileManager) {
+				t.Fatalf("PrimarySkills = %#v, want no file-manager for Agent file-upload capability setting", strategy.PrimarySkills)
+			}
+			plan := operationPlanFromTurnStrategy("task-agent-file-upload-config", parts, strategy)
+			updateStep := operationPlanStepForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config"))
+			fields := stringSliceFromAny(updateStep[operationPlanExpectedUpdatedFieldsKey])
+			if !stringSliceContainsFold(fields, "file_upload_enabled") {
+				t.Fatalf("expected_updated_fields = %#v, want file_upload_enabled for file-upload capability; step=%#v plan=%#v", fields, updateStep, plan)
+			}
+			if stringSliceContainsFold(fields, "enabled_skill_ids") {
+				t.Fatalf("expected_updated_fields = %#v, want no enabled_skill_ids for file-upload config setting", fields)
+			}
+			if goal := stringFromAny(updateStep[operationPlanConfigGoalKey]); !strings.Contains(goal, "\u4e0a\u4f20\u6587\u4ef6") {
+				t.Fatalf("config_goal = %q, want preserved file-upload config goal; step=%#v plan=%#v", goal, updateStep, plan)
+			}
+			if actions := operationPlanAgentConfigBindingActionsFromAny(updateStep[operationPlanExpectedBindingActionsKey]); len(actions) > 0 {
+				t.Fatalf("expected_binding_actions = %#v, want none for file-upload config setting", actions)
+			}
+			capabilityGoals := mapSliceFromAny(plan["capability_goals"])
+			if len(capabilityGoals) != 1 || stringFromAny(capabilityGoals[0]["capability_id"]) != agentCapabilityAcceptUploaded {
+				t.Fatalf("capability_goals = %#v, want only file-upload capability goal", capabilityGoals)
+			}
+			if got := stringFromAny(capabilityGoals[0]["goal_action"]); got != agentCapabilityActionEnable {
+				t.Fatalf("capability goal action = %q, want %q; goal=%#v", got, agentCapabilityActionEnable, capabilityGoals[0])
+			}
+		})
+	}
+}
+
+func TestAgentManagementCurrentAgentCompositeCapabilityPlan(t *testing.T) {
+	query := "\u8ba9\u5f53\u524d Agent \u80fd\u751f\u6210\u6587\u4ef6\u3001\u80fd\u4e0a\u4f20\u6587\u4ef6\uff0c\u5e76\u4f7f\u7528\u9002\u5408\u590d\u6742\u63a8\u7406\u7684\u6a21\u578b\u3002"
+	parts := &chatRequestParts{
+		Query:          query,
+		Surface:        aiChatSurfaceContextualSidebar,
+		RuntimeContext: "route=/console/agents/agent-1/agent",
+		SkillMode:      skillModeAuto,
+		SkillIDs: []string{
+			skills.SkillAgentManagement,
+			skills.SkillConsoleNavigator,
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	for _, want := range []string{"get_agent_config", "list_available_models", "list_agent_skill_candidates", "update_agent_config"} {
+		if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, want) {
+			t.Fatalf("PlannedTools = %#v, missing agent-management/%s", strategy.PlannedTools, want)
+		}
+	}
+	for _, unexpected := range []struct {
+		skillID  string
+		toolName string
+	}{
+		{skills.SkillAgentManagement, "list_agents"},
+		{skills.SkillConsoleNavigator, "navigate"},
+	} {
+		if aiChatTurnStrategyHasPlannedToolForTest(strategy, unexpected.skillID, unexpected.toolName) {
+			t.Fatalf("PlannedTools = %#v, want current Agent detail page capability edit without redundant %s/%s", strategy.PlannedTools, unexpected.skillID, unexpected.toolName)
+		}
+	}
+	modelArgs := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, "list_available_models")
+	if got := modelArgs["use_case"]; got != "reasoning" {
+		t.Fatalf("list_available_models args use_case = %q, want reasoning; args=%#v", got, modelArgs)
+	}
+	skillArgs := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, "list_agent_skill_candidates")
+	if got := skillArgs["query"]; got != "file generation" {
+		t.Fatalf("list_agent_skill_candidates query = %q, want canonical generated-file capability query", got)
+	}
+	updateArgs := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, "update_agent_config")
+	fields := operationPlanNormalizedAgentConfigFieldsFromAny(updateArgs[operationPlanExpectedUpdatedFieldsKey])
+	for _, want := range []string{"model_provider", "model", "enabled_skill_ids", "file_upload_enabled"} {
+		if !stringSliceContainsFold(fields, want) {
+			t.Fatalf("update_agent_config expected fields = %#v, missing %q; args=%#v", fields, want, updateArgs)
+		}
+	}
+	actions := operationPlanAgentConfigBindingActionsFromAny(updateArgs[operationPlanExpectedBindingActionsKey])
+	if got := actions["enabled_skill_ids"]; got != "bind" {
+		t.Fatalf("update_agent_config binding actions = %#v, want enabled_skill_ids:bind; args=%#v", actions, updateArgs)
+	}
+
+	plan := operationPlanFromTurnStrategy("task-current-agent-composite-capability", parts, strategy)
+	capabilityGoals := mapSliceFromAny(plan["capability_goals"])
+	for _, want := range []string{agentCapabilitySkillBacked, agentCapabilityAcceptUploaded, agentCapabilityModelSelection} {
+		if !operationPlanCapabilityGoalsContainForTest(capabilityGoals, want) {
+			t.Fatalf("capability_goals = %#v, missing %s; plan=%#v", capabilityGoals, want, plan)
+		}
+	}
+	if got := operationPlanStepStatusForTest(plan, operationPlanPostUpdateAgentConfigReadStepID()); got != operationPlanStepStatusPending {
+		t.Fatalf("post-update get_agent_config step status = %q, want pending for capability verification; plan=%#v", got, plan)
+	}
+	structured := mapFromOperationContext(plan["structured_plan"])
+	operations := mapSliceFromAny(structured["operations"])
+	if !operationPlanStructuredOperationHasArgumentForTest(operations, "list_available_models", "use_case", "reasoning") {
+		t.Fatalf("structured operations = %#v, want list_available_models use_case=reasoning", operations)
+	}
+	if !operationPlanStructuredOperationHasArgumentForTest(operations, "list_agent_skill_candidates", "query", skillArgs["query"]) {
+		t.Fatalf("structured operations = %#v, want list_agent_skill_candidates query %q", operations, skillArgs["query"])
+	}
+}
+
+func TestAgentManagementCurrentAgentCompositeCapabilityPlanWaitsForCandidateLookups(t *testing.T) {
+	query := "\u8ba9\u5f53\u524d Agent \u80fd\u751f\u6210\u6587\u4ef6\u3001\u80fd\u4e0a\u4f20\u6587\u4ef6\uff0c\u5e76\u4f7f\u7528\u9002\u5408\u590d\u6742\u63a8\u7406\u7684\u6a21\u578b\u3002"
+	parts := &chatRequestParts{
+		Query:          query,
+		Surface:        aiChatSurfaceContextualSidebar,
+		RuntimeContext: "route=/console/agents/agent-1/agent",
+		SkillMode:      skillModeAuto,
+		SkillIDs:       []string{skills.SkillAgentManagement},
+	}
+
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	plan := operationPlanFromTurnStrategy("task-current-agent-composite-capability-wait", parts, strategy)
+	if updateTool := aiChatTurnStrategyPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_config"); updateTool == nil {
+		t.Fatalf("PlannedTools = %#v, missing agent-management/update_agent_config", strategy.PlannedTools)
+	}
+	updateStep := operationPlanStepForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config"))
+	waitForAll := stringSliceFromAny(updateStep["wait_for_all"])
+	for _, want := range []string{
+		operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config"),
+		operationPlanToolStepID(skills.SkillAgentManagement, "list_available_models"),
+		operationPlanToolStepID(skills.SkillAgentManagement, "list_agent_skill_candidates"),
+	} {
+		if !stringSliceContainsFold(waitForAll, want) {
+			t.Fatalf("update_agent_config wait_for_all = %#v, missing %s; step=%#v plan=%#v", waitForAll, want, updateStep, plan)
+		}
+	}
+
+	metadata := map[string]interface{}{"operation_plan": plan}
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{Metadata: metadata},
+		parts:   parts,
+	}
+	allowed := skillLoopAllowedPlannedTools(prepared)
+	if skillLoopToolAllowed(allowed, skills.SkillAgentManagement, "update_agent_config") {
+		t.Fatalf("allowed planned tools = %#v, want update_agent_config hidden until candidate lookups complete", allowed)
+	}
+	for _, want := range []string{"get_agent_config", "list_available_models", "list_agent_skill_candidates"} {
+		if !skillLoopToolAllowed(allowed, skills.SkillAgentManagement, want) {
+			t.Fatalf("allowed planned tools = %#v, want %s ready before update", allowed, want)
+		}
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
+		Tools: []skills.SkillToolDefinition{
+			{Name: "get_agent_config"},
+			{Name: "list_available_models"},
+			{Name: "list_agent_skill_candidates"},
+			{Name: "update_agent_config"},
+		},
+	}}}
+	filtered := restrictResolvedSkillsForPreparedTurn(prepared, resolved)
+	filteredNames := []string{}
+	if len(filtered.Skills) == 1 {
+		for _, tool := range filtered.Skills[0].Tools {
+			filteredNames = append(filteredNames, tool.Name)
+		}
+	}
+	for _, want := range []string{"get_agent_config", "list_available_models", "list_agent_skill_candidates", "update_agent_config"} {
+		if !stringSliceContainsFold(filteredNames, want) {
+			t.Fatalf("filtered planned tools = %#v, want %s exposed for same-loop continuation", filteredNames, want)
+		}
+	}
+
+	applyOperationPlanInvocationState(metadata, []map[string]interface{}{
+		{
+			"kind":      "tool_call",
+			"status":    "success",
+			"skill_id":  skills.SkillAgentManagement,
+			"tool_name": "get_agent_config",
+			"result":    map[string]interface{}{"agent_id": "agent-1"},
+		},
+		{
+			"kind":      "tool_call",
+			"status":    "success",
+			"skill_id":  skills.SkillAgentManagement,
+			"tool_name": "list_available_models",
+			"result":    map[string]interface{}{"models": []interface{}{map[string]interface{}{"provider": "openai", "model": "gpt-4o"}}},
+		},
+		{
+			"kind":      "tool_call",
+			"status":    "success",
+			"skill_id":  skills.SkillAgentManagement,
+			"tool_name": "list_agent_skill_candidates",
+			"result":    map[string]interface{}{"skills": []interface{}{map[string]interface{}{"id": "file-generator", "name": "file-generator"}}},
+		},
+	})
+	allowed = skillLoopAllowedPlannedTools(prepared)
+	if !skillLoopToolAllowed(allowed, skills.SkillAgentManagement, "update_agent_config") {
+		t.Fatalf("allowed planned tools = %#v, want update_agent_config ready after candidate lookups complete", allowed)
+	}
+}
+
+func TestAgentManagementDeleteThenPostDeleteDetailEditPlansRemainingAgent(t *testing.T) {
+	query := "\u5e2e\u6211\u5220\u9664\u672c\u9875\u9762\u524d\u4e09\u4e2a\u667a\u80fd\u4f53\uff0c\u7136\u540e\u5728\u5220\u9664\u540e\u8fdb\u5165\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\u7684\u8be6\u60c5\uff0c\u628a\u8fd9\u4e2a\u667a\u80fd\u4f53\u6539\u9020\u4e3a\u4e00\u4e2a\u5c0f\u8bf4\u521b\u4f5c\u667a\u80fd\u4f53\uff0c\u6a21\u578b\u4f7f\u7528gpt-4o"
+	if !agentManagementDeleteHasExplicitFollowupMutation(query) {
+		t.Fatalf("agentManagementDeleteHasExplicitFollowupMutation(%q) = false, want true", query)
+	}
+	parts := consoleAgentsVisibleTargetsTestPartsWithAgentNames(query, []string{
+		"PostVerify Agent One",
+		"PostVerify Agent Two",
+		"PostVerify Agent Three",
+		"Remaining Novel Agent",
+	})
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	for _, want := range []struct {
+		skillID  string
+		toolName string
+	}{
+		{skills.SkillAgentManagement, "delete_agents"},
+		{skills.SkillConsoleNavigator, "navigate"},
+		{skills.SkillAgentManagement, "get_agent_config"},
+		{skills.SkillAgentManagement, "update_agent_identity"},
+		{skills.SkillAgentManagement, "list_available_models"},
+		{skills.SkillAgentManagement, "update_agent_config"},
+	} {
+		if !aiChatTurnStrategyHasPlannedToolForTest(strategy, want.skillID, want.toolName) {
+			t.Fatalf("PlannedTools = %#v, missing %s/%s", strategy.PlannedTools, want.skillID, want.toolName)
+		}
+	}
+	routeArgs := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillConsoleNavigator, "navigate")
+	if got := routeArgs["href"]; got != "/console/agents/agent-4/agent" {
+		t.Fatalf("navigate args = %#v, want href /console/agents/agent-4/agent", routeArgs)
+	}
+	configArgs := aiChatTurnStrategyPlannedToolArgumentsForTest(strategy, skills.SkillAgentManagement, "update_agent_config")
+	if got := configArgs["agent_id"]; got != "agent-4" {
+		t.Fatalf("update_agent_config args = %#v, want agent_id agent-4", configArgs)
+	}
+	fields := canonicalAgentCapabilityConfigFields(strings.Split(configArgs[operationPlanExpectedUpdatedFieldsKey], ","))
+	for _, want := range []string{"model", "system_prompt"} {
+		if !stringSliceContains(fields, want) {
+			t.Fatalf("update_agent_config args = %#v, expected_updated_fields=%#v missing %s", configArgs, fields, want)
+		}
+	}
+	if goal := configArgs[operationPlanConfigGoalKey]; !strings.Contains(goal, "\u5c0f\u8bf4") || !strings.Contains(goal, "gpt-4o") {
+		t.Fatalf("update_agent_config args = %#v, want semantic config_goal for novel agent and model", configArgs)
+	}
+	routeStepID := operationPlanRouteStepID("/console/agents/agent-4/agent", 1)
+	if tool := aiChatTurnStrategyPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_config"); tool == nil || tool.WaitForStepID != routeStepID {
+		t.Fatalf("update_agent_config planned tool = %#v, want wait_for %s", tool, routeStepID)
+	}
+	plan := operationPlanFromTurnStrategy("task-delete-then-edit", parts, strategy)
+	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")); got != operationPlanStepStatusPending {
+		t.Fatalf("update_agent_config step status = %q, want pending; plan=%#v", got, plan)
+	}
+	if pending := operationPlanPendingExecutableSteps(plan, 4); len(pending) == 0 ||
+		stringFromAny(pending[0]["tool_name"]) != "delete_agents" {
+		t.Fatalf("operationPlanPendingExecutableSteps() = %#v, want delete_agents first; plan=%#v", pending, plan)
+	}
+}
+
 func TestAgentManagementExplicitVisibleAgentDetailPlansNavigate(t *testing.T) {
 	parts := consoleAgentsVisibleTargetsTestParts("open Visible Agent One detail page and edit its description")
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
@@ -8127,6 +11202,378 @@ func TestSkillLoopPlanGuardAllowsListAgentsForResolvedVisibleAgentTargets(t *tes
 	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
 	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "list_agents")); got != operationPlanStepStatusPending {
 		t.Fatalf("list_agents amended step status = %#v, want pending; plan=%#v", got, plan)
+	}
+}
+
+func TestSkillLoopPlanGuardRedirectsRepeatedDeleteToPendingRouteStep(t *testing.T) {
+	deleteStepID := operationPlanToolStepID(skills.SkillAgentManagement, "delete_agents")
+	routeStepID := operationPlanRouteStepID("/console/agents/agent-3/agent", 1)
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "delete the first two agents, then open the remaining first agent detail",
+			Surface:   aiChatSurfaceContextualSidebar,
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator},
+		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status": operationPlanStatusRunning,
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        deleteStepID,
+						"status":    operationPlanStepStatusCompleted,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "delete_agents",
+					},
+					map[string]interface{}{
+						"id":        routeStepID,
+						"status":    operationPlanStepStatusPending,
+						"skill_id":  skills.SkillConsoleNavigator,
+						"tool_name": "navigate",
+						"wait_for":  deleteStepID,
+					},
+				},
+				"step_status": map[string]interface{}{
+					deleteStepID: operationPlanStepStatusCompleted,
+					routeStepID:  operationPlanStepStatusPending,
+				},
+			},
+		}},
+	}
+
+	guard := skillLoopPlanToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopPlanToolCallGuard() = nil, want guard")
+	}
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agents",
+	})
+	if !blocked {
+		t.Fatal("delete_agents was allowed after completed delete step")
+	}
+	if result.SkillID != skills.SkillConsoleNavigator || result.ToolName != "navigate" || !result.Advisory {
+		t.Fatalf("guard result = %#v, want advisory redirect to console-navigator/navigate", result)
+	}
+	if !strings.Contains(result.SystemMessage, "Do not repeat completed asset mutation tools") {
+		t.Fatalf("guard system message = %q, want completed mutation guidance", result.SystemMessage)
+	}
+}
+
+func TestSkillLoopPlanGuardKeepsCreateAndEditOnCreatedAgent(t *testing.T) {
+	createStepID := operationPlanToolStepID(skills.SkillAgentManagement, "create_agent")
+	updateConfigStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "帮我创建一个智能体，创建后进入第一个智能体的详情，把这个智能体改造为一个小说创作智能体，可用随意发挥，模型使用gpt-4o",
+			Surface:   aiChatSurfaceContextualSidebar,
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator},
+		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status": operationPlanStatusRunning,
+				"structured_plan": map[string]interface{}{
+					"intent": "agent.create_and_edit",
+				},
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        createStepID,
+						"status":    operationPlanStepStatusCompleted,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "create_agent",
+					},
+					map[string]interface{}{
+						"id":        updateConfigStepID,
+						"status":    operationPlanStepStatusPending,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "update_agent_config",
+						"wait_for":  createStepID,
+					},
+				},
+				"step_status": map[string]interface{}{
+					createStepID:       operationPlanStepStatusCompleted,
+					updateConfigStepID: operationPlanStepStatusPending,
+				},
+			},
+			"skill_invocations": []interface{}{
+				map[string]interface{}{
+					"kind":      "tool_call",
+					"status":    "success",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "create_agent",
+					"arguments": map[string]interface{}{
+						"name": "Created Novelist",
+					},
+					"result": map[string]interface{}{
+						"agent_id":   "created-agent-1",
+						"agent_name": "Created Novelist",
+					},
+				},
+			},
+		}},
+	}
+
+	guard := skillLoopPlanToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopPlanToolCallGuard() = nil, want guard")
+	}
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Arguments: map[string]interface{}{
+			"agent_id":       "stale-agent-1",
+			"model_provider": "openai",
+			"model":          "gpt-4o",
+			"system_prompt":  "You are a novelist assistant.",
+		},
+	})
+	if !blocked {
+		t.Fatal("update_agent_config with stale agent id was allowed")
+	}
+	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "update_agent_config" || !result.Advisory {
+		t.Fatalf("guard result = %#v, want advisory agent-management/update_agent_config result", result)
+	}
+	if !strings.Contains(result.SystemMessage, "created-agent-1") ||
+		!strings.Contains(result.SystemMessage, "created earlier in this same turn") {
+		t.Fatalf("guard system message = %q, want created agent target guidance", result.SystemMessage)
+	}
+
+	if _, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Arguments: map[string]interface{}{
+			"agent_id":       "created-agent-1",
+			"model_provider": "openai",
+			"model":          "gpt-4o",
+			"system_prompt":  "You are a novelist assistant.",
+		},
+	}); blocked {
+		t.Fatal("update_agent_config with created agent id was blocked")
+	}
+}
+
+func TestSkillLoopToolArgumentResolverRewritesCreateAndEditAgentID(t *testing.T) {
+	prepared := preparedChatWithCreatedAgentBinding("$created_agents[index=0].agent_id", []skillloop.SkillToolCallRef{{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "create_agent",
+		Arguments: map[string]interface{}{
+			"name": "Created Novelist",
+		},
+		Result: map[string]interface{}{
+			"agent_id":   "created-agent-1",
+			"agent_name": "Created Novelist",
+		},
+	}})
+
+	args, changed := skillLoopResolveBoundToolArguments(prepared, skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Arguments: map[string]interface{}{
+			"agent_id":       "stale-agent-1",
+			"model_provider": "openai",
+			"model":          "gpt-4o",
+		},
+	})
+	if !changed {
+		t.Fatal("skillLoopResolveBoundToolArguments changed = false, want true")
+	}
+	if got := stringFromAny(args["agent_id"]); got != "created-agent-1" {
+		t.Fatalf("resolved agent_id = %q, want created-agent-1; args=%#v", got, args)
+	}
+}
+
+func TestSkillLoopToolArgumentResolverSelectsCreatedAgentByName(t *testing.T) {
+	prepared := preparedChatWithCreatedAgentBinding("$created_agents[name=Beta].agent_id", []skillloop.SkillToolCallRef{
+		{
+			SkillID:  skills.SkillAgentManagement,
+			ToolName: "create_agent",
+			Arguments: map[string]interface{}{
+				"name": "Alpha",
+			},
+			Result: map[string]interface{}{
+				"agent_id":   "agent-alpha",
+				"agent_name": "Alpha",
+			},
+		},
+		{
+			SkillID:  skills.SkillAgentManagement,
+			ToolName: "create_agent",
+			Arguments: map[string]interface{}{
+				"name": "Beta",
+			},
+			Result: map[string]interface{}{
+				"agent_id":   "agent-beta",
+				"agent_name": "Beta",
+			},
+		},
+	})
+
+	args, changed := skillLoopResolveBoundToolArguments(prepared, skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Arguments: map[string]interface{}{
+			"agent_id": "stale-agent-1",
+			"model":    "gpt-4o",
+		},
+	})
+	if !changed {
+		t.Fatal("skillLoopResolveBoundToolArguments changed = false, want true")
+	}
+	if got := stringFromAny(args["agent_id"]); got != "agent-beta" {
+		t.Fatalf("resolved agent_id = %q, want agent-beta; args=%#v", got, args)
+	}
+}
+
+func TestSkillLoopPlanGuardBlocksUnresolvedCreatedAgentBinding(t *testing.T) {
+	prepared := preparedChatWithCreatedAgentBinding("$created_agents[index=0].agent_id", nil)
+	guard := skillLoopPlanToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopPlanToolCallGuard() = nil, want guard")
+	}
+
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Arguments: map[string]interface{}{
+			"model_provider": "openai",
+			"model":          "gpt-4o",
+		},
+	})
+	if !blocked {
+		t.Fatal("update_agent_config with unresolved created Agent binding was allowed")
+	}
+	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "update_agent_config" {
+		t.Fatalf("guard result = %#v, want agent-management/update_agent_config", result)
+	}
+	if !result.Advisory {
+		t.Fatalf("guard result = %#v, want advisory planner feedback instead of recoverable blocking feedback", result)
+	}
+	for _, want := range []string{"create_agent", "current page Agent"} {
+		if !strings.Contains(result.SystemMessage, want) {
+			t.Fatalf("guard system message = %q, want %q", result.SystemMessage, want)
+		}
+	}
+}
+
+func preparedChatWithCreatedAgentBinding(agentIDBinding string, createCalls []skillloop.SkillToolCallRef) *PreparedChat {
+	invocations := make([]interface{}, 0, len(createCalls))
+	for _, call := range createCalls {
+		invocations = append(invocations, map[string]interface{}{
+			"kind":      "tool_call",
+			"status":    "success",
+			"skill_id":  call.SkillID,
+			"tool_name": call.ToolName,
+			"arguments": call.Arguments,
+			"result":    call.Result,
+		})
+	}
+	return &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "create and edit an agent",
+			Surface:   aiChatSurfaceContextualSidebar,
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{skills.SkillAgentManagement},
+		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status": operationPlanStatusRunning,
+				"structured_plan": map[string]interface{}{
+					"intent": "agent.create_and_edit",
+					"required_tool_sequence": []interface{}{
+						map[string]interface{}{
+							"skill_id":     skills.SkillAgentManagement,
+							"tool_name":    "create_agent",
+							"output_alias": aiChatStructuredCreatedAgentsOutputAlias,
+						},
+						map[string]interface{}{
+							"skill_id":  skills.SkillAgentManagement,
+							"tool_name": "update_agent_config",
+							"args_binding": map[string]interface{}{
+								"agent_id": agentIDBinding,
+							},
+						},
+					},
+				},
+			},
+			"skill_invocations": invocations,
+		}},
+	}
+}
+
+func TestSkillLoopPlanGuardRedirectsRepeatedDeleteAfterRouteToConfigRead(t *testing.T) {
+	deleteStepID := operationPlanToolStepID(skills.SkillAgentManagement, "delete_agents")
+	routeStepID := operationPlanRouteStepID("/console/agents/agent-3/agent", 1)
+	configStepID := operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config")
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "delete the first two agents, then edit the first remaining agent",
+			Surface:   aiChatSurfaceContextualSidebar,
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator},
+		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status":              operationPlanStatusRunning,
+				"pending_next_action": operationPlanToolStepTitle(skills.SkillAgentManagement, "get_agent_config"),
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        deleteStepID,
+						"status":    operationPlanStepStatusCompleted,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "delete_agents",
+					},
+					map[string]interface{}{
+						"id":        routeStepID,
+						"status":    operationPlanStepStatusCompleted,
+						"skill_id":  skills.SkillConsoleNavigator,
+						"tool_name": "navigate",
+						"wait_for":  deleteStepID,
+					},
+					map[string]interface{}{
+						"id":        configStepID,
+						"status":    operationPlanStepStatusPending,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "get_agent_config",
+						"wait_for":  routeStepID,
+					},
+					map[string]interface{}{
+						"id":        operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_identity"),
+						"status":    operationPlanStepStatusPending,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "update_agent_identity",
+						"wait_for":  routeStepID,
+					},
+				},
+				"step_status": map[string]interface{}{
+					deleteStepID: operationPlanStepStatusCompleted,
+					routeStepID:  operationPlanStepStatusCompleted,
+					configStepID: operationPlanStepStatusPending,
+					operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_identity"): operationPlanStepStatusPending,
+				},
+			},
+		}},
+	}
+
+	guard := skillLoopPlanToolCallGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopPlanToolCallGuard() = nil, want guard")
+	}
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agents",
+	})
+	if !blocked {
+		t.Fatal("delete_agents was allowed after completed delete and route steps")
+	}
+	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "get_agent_config" || !result.Advisory {
+		t.Fatalf("guard result = %#v, want advisory redirect to agent-management/get_agent_config", result)
+	}
+	if _, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "get_agent_config",
+	}); blocked {
+		t.Fatal("get_agent_config was blocked, want current pending plan step allowed")
 	}
 }
 
@@ -9053,6 +12500,37 @@ func aiChatTurnStrategyHasPlannedToolForTest(strategy *AIChatTurnStrategy, skill
 	return false
 }
 
+func operationPlanCapabilityGoalsContainForTest(goals []map[string]interface{}, capabilityID string) bool {
+	for _, goal := range goals {
+		if stringFromAny(goal["capability_id"]) == capabilityID {
+			return true
+		}
+	}
+	return false
+}
+
+func agentCapabilityGoalsContainForTest(goals []AIChatAgentCapabilityGoal, capabilityID string) bool {
+	for _, goal := range goals {
+		if goal.CapabilityID == capabilityID {
+			return true
+		}
+	}
+	return false
+}
+
+func operationPlanStructuredOperationHasArgumentForTest(operations []map[string]interface{}, toolName string, argKey string, argValue string) bool {
+	for _, operation := range operations {
+		if !strings.EqualFold(stringFromAny(operation["tool_name"]), toolName) {
+			continue
+		}
+		args := mapFromOperationContext(operation["arguments"])
+		if stringFromAny(args[argKey]) == argValue {
+			return true
+		}
+	}
+	return false
+}
+
 func aiChatTurnStrategyPlannedToolArgumentsForTest(strategy *AIChatTurnStrategy, skillID, toolName string) map[string]string {
 	if strategy == nil {
 		return nil
@@ -9060,6 +12538,19 @@ func aiChatTurnStrategyPlannedToolArgumentsForTest(strategy *AIChatTurnStrategy,
 	for _, tool := range strategy.PlannedTools {
 		if tool.SkillID == skillID && tool.ToolName == toolName {
 			return tool.Arguments
+		}
+	}
+	return nil
+}
+
+func aiChatTurnStrategyPlannedToolForTest(strategy *AIChatTurnStrategy, skillID, toolName string) *AIChatTurnStrategyTool {
+	if strategy == nil {
+		return nil
+	}
+	for idx := range strategy.PlannedTools {
+		tool := &strategy.PlannedTools[idx]
+		if tool.SkillID == skillID && tool.ToolName == toolName {
+			return tool
 		}
 	}
 	return nil
@@ -9090,27 +12581,31 @@ func aiChatTurnStrategyAvoidContainsForTest(strategy *AIChatTurnStrategy, fragme
 }
 
 func consoleAgentsVisibleTargetsTestParts(query string) *chatRequestParts {
-	context := map[string]interface{}{
-		"resources": []interface{}{
-			map[string]interface{}{
-				"resource_type": "page",
-				"href":          "/console/agents",
-			},
-			map[string]interface{}{
-				"resource_type": "agent",
-				"id":            "agent-1",
-				"title":         "Visible Agent One",
-				"href":          "/console/agents/agent-1/agent",
-				"visible_index": 1,
-			},
-			map[string]interface{}{
-				"resource_type": "agent",
-				"id":            "agent-2",
-				"title":         "Visible Agent Two",
-				"href":          "/console/agents/agent-2/agent",
-				"visible_index": 2,
-			},
+	return consoleAgentsVisibleTargetsTestPartsWithAgentNames(query, []string{
+		"Visible Agent One",
+		"Visible Agent Two",
+	})
+}
+
+func consoleAgentsVisibleTargetsTestPartsWithAgentNames(query string, names []string) *chatRequestParts {
+	resources := []interface{}{
+		map[string]interface{}{
+			"resource_type": "page",
+			"href":          "/console/agents",
 		},
+	}
+	for idx, name := range names {
+		id := fmt.Sprintf("agent-%d", idx+1)
+		resources = append(resources, map[string]interface{}{
+			"resource_type": "agent",
+			"id":            id,
+			"title":         name,
+			"href":          "/console/agents/" + id + "/agent",
+			"visible_index": idx + 1,
+		})
+	}
+	context := map[string]interface{}{
+		"resources": resources,
 	}
 	return &chatRequestParts{
 		Query:               query,
@@ -9495,6 +12990,335 @@ func TestOperationPlanPendingNextActionStopsAfterRejectedSaveBeforeDelete(t *tes
 	}
 	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillFileManager, "delete_file")); got != operationPlanStepStatusPending {
 		t.Fatalf("delete step status = %#v, want pending but not next action", got)
+	}
+}
+
+func TestOperationPlanFailedAgentDeleteIsTerminalForContinuation(t *testing.T) {
+	plan := map[string]interface{}{
+		"version":             operationPlanVersion,
+		"status":              operationPlanStatusFailed,
+		"pending_next_action": "none",
+		"intent":              "manage_agent_asset",
+		"original_user_goal":  "delete the first two visible agents",
+		"steps": []interface{}{
+			map[string]interface{}{
+				"id":        operationPlanToolStepID(skills.SkillAgentManagement, "delete_agents"),
+				"title":     "Delete visible agents",
+				"status":    operationPlanStepStatusFailed,
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "delete_agents",
+			},
+			map[string]interface{}{
+				"id":        operationPlanToolStepID(skills.SkillConsoleNavigator, "navigate"),
+				"title":     "Open agent list",
+				"status":    operationPlanStepStatusPending,
+				"skill_id":  skills.SkillConsoleNavigator,
+				"tool_name": "navigate",
+			},
+		},
+		"step_status": map[string]interface{}{
+			operationPlanToolStepID(skills.SkillAgentManagement, "delete_agents"): operationPlanStepStatusFailed,
+			operationPlanToolStepID(skills.SkillConsoleNavigator, "navigate"):     operationPlanStepStatusPending,
+		},
+	}
+
+	if operationPlanHasIncompleteWork(plan) {
+		t.Fatalf("operationPlanHasIncompleteWork(%#v) = true, want terminal failed plan", plan)
+	}
+	parts := &chatRequestParts{RecentOperationPlans: []map[string]interface{}{plan}}
+	if recentOperationPlanHasPendingSkill(parts, skills.SkillAgentManagement) {
+		t.Fatalf("recentOperationPlanHasPendingSkill(..., %q) = true, want failed plan to be terminal", skills.SkillAgentManagement)
+	}
+}
+
+func TestOperationPlanRejectedAgentDeleteIsTerminalForContinuation(t *testing.T) {
+	deleteStepID := operationPlanToolStepID(skills.SkillAgentManagement, "delete_agents")
+	plan := map[string]interface{}{
+		"version":             operationPlanVersion,
+		"status":              "rejected",
+		"pending_next_action": "none",
+		"intent":              "manage_agent_asset",
+		"original_user_goal":  "delete the first two visible agents",
+		"steps": []interface{}{map[string]interface{}{
+			"id":        deleteStepID,
+			"title":     "Delete visible agents",
+			"status":    "rejected",
+			"skill_id":  skills.SkillAgentManagement,
+			"tool_name": "delete_agents",
+		}},
+		"step_status": map[string]interface{}{
+			deleteStepID: "rejected",
+		},
+	}
+
+	if operationPlanHasIncompleteWork(plan) {
+		t.Fatalf("operationPlanHasIncompleteWork(%#v) = true, want rejected plan to be terminal", plan)
+	}
+	parts := &chatRequestParts{RecentOperationPlans: []map[string]interface{}{plan}}
+	if recentOperationPlanHasPendingSkill(parts, skills.SkillAgentManagement) {
+		t.Fatalf("recentOperationPlanHasPendingSkill(..., %q) = true, want rejected plan to be terminal", skills.SkillAgentManagement)
+	}
+}
+
+func TestAgentContinuationDoesNotReviveFailedDeletePlan(t *testing.T) {
+	previousPlan := map[string]interface{}{
+		"version":             operationPlanVersion,
+		"task_id":             "task-agent-delete-rejected",
+		"status":              operationPlanStatusFailed,
+		"pending_next_action": "none",
+		"intent":              "manage_agent_asset",
+		"original_user_goal":  "delete the first two visible agents",
+		"steps": []interface{}{map[string]interface{}{
+			"id":        operationPlanToolStepID(skills.SkillAgentManagement, "delete_agents"),
+			"title":     "Delete visible agents",
+			"status":    operationPlanStepStatusFailed,
+			"skill_id":  skills.SkillAgentManagement,
+			"tool_name": "delete_agents",
+		}},
+		"step_status": map[string]interface{}{
+			operationPlanToolStepID(skills.SkillAgentManagement, "delete_agents"): operationPlanStepStatusFailed,
+		},
+	}
+	previousMessage := &runtimemodel.Message{
+		Query:  "delete the first two visible agents",
+		Status: runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"operation_plan": previousPlan,
+		},
+	}
+	parts := consoleAgentsVisibleTargetsTestParts("\u8fdb\u884c\u5904\u7406")
+	applyRecentOperationPlansFromBranch(parts, []*runtimemodel.Message{previousMessage})
+	if len(parts.RecentOperationPlans) == 0 {
+		t.Fatalf("RecentOperationPlans = %#v, want failed plan retained as context evidence", parts.RecentOperationPlans)
+	}
+
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want continuation strategy")
+	}
+	if strategy.Intent != "continue_previous_task" {
+		t.Fatalf("Intent = %q, want continue_previous_task", strategy.Intent)
+	}
+	if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "delete_agent") ||
+		aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "delete_agents") {
+		t.Fatalf("PlannedTools = %#v, want no stale delete tools after failed high-risk plan", strategy.PlannedTools)
+	}
+	if stringSliceContainsFold(strategy.PrimarySkills, skills.SkillAgentManagement) ||
+		stringSliceContainsFold(strategy.SupportingSkills, skills.SkillAgentManagement) {
+		t.Fatalf("skills = primary %#v supporting %#v, want no agent-management exposure without an incomplete plan", strategy.PrimarySkills, strategy.SupportingSkills)
+	}
+}
+
+func TestAgentActionConfirmationDoesNotReviveFailedDeletePlan(t *testing.T) {
+	previousPlan := map[string]interface{}{
+		"version":             operationPlanVersion,
+		"task_id":             "task-agent-delete-rejected",
+		"status":              operationPlanStatusFailed,
+		"pending_next_action": "none",
+		"intent":              "manage_agent_asset",
+		"original_user_goal":  "delete the first two visible agents",
+		"steps": []interface{}{map[string]interface{}{
+			"id":        operationPlanToolStepID(skills.SkillAgentManagement, "delete_agents"),
+			"title":     "Delete visible agents",
+			"status":    operationPlanStepStatusFailed,
+			"skill_id":  skills.SkillAgentManagement,
+			"tool_name": "delete_agents",
+		}},
+		"step_status": map[string]interface{}{
+			operationPlanToolStepID(skills.SkillAgentManagement, "delete_agents"): operationPlanStepStatusFailed,
+		},
+	}
+	previousMessage := &runtimemodel.Message{
+		Query:  "delete the first two visible agents",
+		Status: runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"operation_plan": previousPlan,
+		},
+	}
+	parts := consoleAgentsVisibleTargetsTestParts("\u90a3\u5c31\u505a")
+	applyRecentOperationPlansFromBranch(parts, []*runtimemodel.Message{previousMessage})
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want continuation strategy")
+	}
+	if strategy.Intent != "continue_previous_task" {
+		t.Fatalf("Intent = %q, want continue_previous_task", strategy.Intent)
+	}
+	if aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "delete_agent") ||
+		aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "delete_agents") {
+		t.Fatalf("PlannedTools = %#v, want no stale delete tools after failed high-risk plan", strategy.PlannedTools)
+	}
+	if stringSliceContainsFold(strategy.PrimarySkills, skills.SkillAgentManagement) ||
+		stringSliceContainsFold(strategy.SupportingSkills, skills.SkillAgentManagement) {
+		t.Fatalf("skills = primary %#v supporting %#v, want no agent-management exposure without an incomplete plan", strategy.PrimarySkills, strategy.SupportingSkills)
+	}
+}
+
+func TestAgentContinuationGuardBlocksTerminalCompletedDeleteRevival(t *testing.T) {
+	deleteStepID := operationPlanToolStepID(skills.SkillAgentManagement, "delete_agents")
+	previousPlan := map[string]interface{}{
+		"version":             operationPlanVersion,
+		"task_id":             "task-agent-delete-completed",
+		"status":              operationPlanStatusCompleted,
+		"pending_next_action": "none",
+		"intent":              "manage_agent_asset",
+		"original_user_goal":  "delete the first two visible agents",
+		"steps": []interface{}{map[string]interface{}{
+			"id":        deleteStepID,
+			"title":     "Delete visible agents",
+			"status":    operationPlanStepStatusCompleted,
+			"skill_id":  skills.SkillAgentManagement,
+			"tool_name": "delete_agents",
+		}},
+		"step_status": map[string]interface{}{
+			deleteStepID: operationPlanStepStatusCompleted,
+		},
+	}
+	parts := consoleAgentsVisibleTargetsTestParts("\u8fdb\u884c\u5904\u7406")
+	parts.RecentOperationPlans = []map[string]interface{}{previousPlan}
+	metadata := streamingMessageMetadataWithTaskID(parts, "task-weak-continuation-after-delete")
+	prepared := &PreparedChat{
+		parts:   parts,
+		Message: &runtimemodel.Message{Metadata: metadata},
+	}
+
+	guard := skillLoopPlanToolCallGuard(prepared)
+	result, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "delete_agents"})
+	if !blocked {
+		t.Fatal("delete_agents was allowed for weak continuation after terminal completed delete")
+	}
+	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "delete_agents" ||
+		!strings.Contains(result.SystemMessage, "weak continuation") ||
+		!strings.Contains(result.SystemMessage, "terminal history") {
+		t.Fatalf("guard result = %#v, want terminal-history weak-continuation block", result)
+	}
+	if _, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "list_agents"}); blocked {
+		t.Fatal("list_agents was blocked, want read-only Agent evidence allowed after terminal mutation")
+	}
+}
+
+func TestAgentContinuationGuardBlocksTerminalRejectedDeleteRevival(t *testing.T) {
+	deleteStepID := operationPlanToolStepID(skills.SkillAgentManagement, "delete_agents")
+	previousPlan := map[string]interface{}{
+		"version":             operationPlanVersion,
+		"task_id":             "task-agent-delete-rejected",
+		"status":              "rejected",
+		"pending_next_action": "none",
+		"intent":              "manage_agent_asset",
+		"original_user_goal":  "delete the first two visible agents",
+		"steps": []interface{}{map[string]interface{}{
+			"id":        deleteStepID,
+			"title":     "Delete visible agents",
+			"status":    "rejected",
+			"skill_id":  skills.SkillAgentManagement,
+			"tool_name": "delete_agents",
+		}},
+		"step_status": map[string]interface{}{
+			deleteStepID: "rejected",
+		},
+	}
+	parts := consoleAgentsVisibleTargetsTestParts("\u8fdb\u884c\u5904\u7406")
+	parts.RecentOperationPlans = []map[string]interface{}{previousPlan}
+	metadata := streamingMessageMetadataWithTaskID(parts, "task-weak-continuation-after-rejected-delete")
+	prepared := &PreparedChat{
+		parts:   parts,
+		Message: &runtimemodel.Message{Metadata: metadata},
+	}
+
+	guard := skillLoopPlanToolCallGuard(prepared)
+	result, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "delete_agents"})
+	if !blocked {
+		t.Fatal("delete_agents was allowed for weak continuation after terminal rejected delete")
+	}
+	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "delete_agents" ||
+		!strings.Contains(result.SystemMessage, "rejected") ||
+		!strings.Contains(result.SystemMessage, "terminal history") {
+		t.Fatalf("guard result = %#v, want rejected terminal-history weak-continuation block", result)
+	}
+	if _, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "list_agents"}); blocked {
+		t.Fatal("list_agents was blocked, want read-only Agent evidence allowed after rejected mutation")
+	}
+}
+
+func TestAgentContinuationGuardBlocksTerminalCompletedCreateRevival(t *testing.T) {
+	createStepID := operationPlanToolStepID(skills.SkillAgentManagement, "create_agent")
+	previousPlan := map[string]interface{}{
+		"version":             operationPlanVersion,
+		"task_id":             "task-agent-create-completed",
+		"status":              operationPlanStatusCompleted,
+		"pending_next_action": "none",
+		"intent":              "manage_agent_asset",
+		"original_user_goal":  "create a novelist Agent",
+		"steps": []interface{}{map[string]interface{}{
+			"id":        createStepID,
+			"title":     "Create Agent",
+			"status":    operationPlanStepStatusCompleted,
+			"skill_id":  skills.SkillAgentManagement,
+			"tool_name": "create_agent",
+		}},
+		"step_status": map[string]interface{}{
+			createStepID: operationPlanStepStatusCompleted,
+		},
+	}
+	parts := consoleAgentsVisibleTargetsTestParts("\u8fdb\u884c\u5904\u7406")
+	parts.RecentOperationPlans = []map[string]interface{}{previousPlan}
+	metadata := streamingMessageMetadataWithTaskID(parts, "task-weak-continuation-after-create")
+	prepared := &PreparedChat{
+		parts:   parts,
+		Message: &runtimemodel.Message{Metadata: metadata},
+	}
+
+	guard := skillLoopPlanToolCallGuard(prepared)
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "create_agent",
+		Arguments: map[string]interface{}{
+			"name": "Novel Agent",
+		},
+	})
+	if !blocked {
+		t.Fatal("create_agent was allowed for weak continuation after terminal completed create")
+	}
+	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "create_agent" ||
+		!strings.Contains(result.SystemMessage, "weak continuation") ||
+		!strings.Contains(result.SystemMessage, "terminal history") {
+		t.Fatalf("guard result = %#v, want terminal-history weak-continuation block for create_agent", result)
+	}
+	if _, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "list_agents"}); blocked {
+		t.Fatal("list_agents was blocked, want read-only Agent evidence allowed after completed create")
+	}
+}
+
+func TestAgentContinuationGuardAllowsExplicitNewDeleteAfterTerminalPlan(t *testing.T) {
+	deleteStepID := operationPlanToolStepID(skills.SkillAgentManagement, "delete_agents")
+	previousPlan := map[string]interface{}{
+		"version":             operationPlanVersion,
+		"task_id":             "task-agent-delete-completed",
+		"status":              operationPlanStatusCompleted,
+		"pending_next_action": "none",
+		"intent":              "manage_agent_asset",
+		"original_user_goal":  "delete the first visible agent",
+		"steps": []interface{}{map[string]interface{}{
+			"id":        deleteStepID,
+			"status":    operationPlanStepStatusCompleted,
+			"skill_id":  skills.SkillAgentManagement,
+			"tool_name": "delete_agents",
+		}},
+		"step_status": map[string]interface{}{
+			deleteStepID: operationPlanStepStatusCompleted,
+		},
+	}
+	parts := consoleAgentsVisibleTargetsTestParts("\u7ee7\u7eed\u5220\u9664\u5269\u4e0b\u7684\u667a\u80fd\u4f53")
+	parts.RecentOperationPlans = []map[string]interface{}{previousPlan}
+	metadata := streamingMessageMetadataWithTaskID(parts, "task-explicit-delete-after-terminal")
+	prepared := &PreparedChat{
+		parts:   parts,
+		Message: &runtimemodel.Message{Metadata: metadata},
+	}
+
+	guard := skillLoopPlanToolCallGuard(prepared)
+	if _, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "delete_agents"}); blocked {
+		t.Fatal("delete_agents was blocked, want explicit new delete request to be replannable")
 	}
 }
 

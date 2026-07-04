@@ -35,6 +35,159 @@ func TestFastPathFinalAnswerForToolTraceCoversAgentIdentityUpdate(t *testing.T) 
 	}
 }
 
+func TestFastPathCompletionEvidenceWaitsForPostDeleteNavigationAndEdit(t *testing.T) {
+	goal := "\u5e2e\u6211\u5220\u9664\u672c\u9875\u9762\u524d\u4e24\u4e2a\u667a\u80fd\u4f53\uff0c\u7136\u540e\u5728\u5220\u9664\u540e\u8fdb\u5165\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\u7684\u8be6\u60c5\uff0c\u628a\u8fd9\u4e2a\u667a\u80fd\u4f53\u6539\u9020\u4e3a\u4e00\u4e2a\u5c0f\u8bf4\u521b\u4f5c\u667a\u80fd\u4f53"
+	plan := map[string]interface{}{
+		"status":              "running",
+		"original_user_goal":  goal,
+		"pending_next_action": "Navigate to page",
+		"steps": []interface{}{
+			map[string]interface{}{
+				"id":        "tool:agent-management/delete_agents",
+				"status":    "completed",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "delete_agents",
+			},
+			map[string]interface{}{
+				"id":        "route:/console/agents/agent-3/agent",
+				"status":    "pending",
+				"skill_id":  skills.SkillConsoleNavigator,
+				"tool_name": "navigate",
+			},
+			map[string]interface{}{
+				"id":        "tool:agent-management/update_agent_config",
+				"status":    "pending",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"wait_for":  "route:/console/agents/agent-3/agent",
+			},
+		},
+		"step_status": map[string]interface{}{
+			"tool:agent-management/delete_agents":       "completed",
+			"route:/console/agents/agent-3/agent":       "pending",
+			"tool:agent-management/update_agent_config": "pending",
+		},
+		"tool_result": map[string]interface{}{
+			"kind":      "tool_call",
+			"status":    "success",
+			"skill_id":  skills.SkillAgentManagement,
+			"tool_name": "delete_agents",
+			"result_summary": map[string]interface{}{
+				"status":        "completed",
+				"target_count":  2,
+				"deleted_count": 2,
+				"item_results": []interface{}{
+					map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
+					map[string]interface{}{"status": "succeeded", "agent_name": "Agent Two"},
+				},
+			},
+		},
+	}
+	if answer, ok := FastPathFinalAnswerForCompletionEvidence(map[string]interface{}{
+		"user_request":   goal,
+		"operation_plan": plan,
+	}); ok {
+		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = (%q, true), want blocked until route/edit steps run", answer)
+	}
+}
+
+func TestFastPathCompletionEvidenceWaitsForPendingStructuredPlanOperation(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "running",
+			"structured_plan": map[string]interface{}{
+				"schema_version": "aichat.structured_plan.v1",
+				"domain":         "agent_management",
+				"intent":         "agent.batch_delete_then_edit",
+				"operations": []interface{}{
+					map[string]interface{}{
+						"status":    "completed",
+						"action":    "delete",
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "delete_agents",
+					},
+					map[string]interface{}{
+						"status":    "pending",
+						"action":    "navigate",
+						"skill_id":  skills.SkillConsoleNavigator,
+						"tool_name": "navigate",
+					},
+					map[string]interface{}{
+						"status":    "pending",
+						"action":    "update",
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "update_agent_config",
+					},
+				},
+			},
+			"tool_result": map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "delete_agents",
+				"result_summary": map[string]interface{}{
+					"status":         "completed",
+					"operation_type": "agent.delete.batch",
+					"target_count":   2,
+					"deleted_count":  2,
+					"item_results": []interface{}{
+						map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
+						map[string]interface{}{"status": "succeeded", "agent_name": "Agent Two"},
+					},
+				},
+			},
+		},
+	}
+
+	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
+		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = (%q, true), want blocked until structured operations finish", answer)
+	}
+}
+
+func TestFastPathCompletionEvidenceAllowsCompletedStructuredPlanOperation(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "completed",
+			"structured_plan": map[string]interface{}{
+				"schema_version": "aichat.structured_plan.v1",
+				"domain":         "agent_management",
+				"intent":         "agent.batch_delete",
+				"operations": []interface{}{
+					map[string]interface{}{
+						"status":    "completed",
+						"action":    "delete",
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "delete_agents",
+					},
+				},
+			},
+			"tool_result": map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "delete_agents",
+				"result_summary": map[string]interface{}{
+					"status":         "completed",
+					"operation_type": "agent.delete.batch",
+					"target_count":   1,
+					"deleted_count":  1,
+					"item_results": []interface{}{
+						map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
+					},
+				},
+			},
+		},
+	}
+
+	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want completed structured operation to close")
+	}
+	if !strings.Contains(answer, "1") {
+		t.Fatalf("answer = %q, want completed delete summary", answer)
+	}
+}
+
 func TestFastPathCompletionEvidenceUsesIdentityUpdateAfterGetAgentRead(t *testing.T) {
 	answer, ok := FastPathFinalAnswerForCompletionEvidence(map[string]interface{}{
 		"operation_plan": map[string]interface{}{
@@ -1041,6 +1194,81 @@ func TestFastPathFinalAnswerForCompletionEvidenceAllowsRequestedPostUpdateConfig
 		if !strings.Contains(answer, want) {
 			t.Fatalf("answer = %q, want %q", answer, want)
 		}
+	}
+}
+
+func TestFastPathFinalAnswerForCompletionEvidenceBlocksAgentConfigMismatchAfterPostRead(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":             "completed",
+			"original_user_goal": "Update Agent config and read config again after completion.",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":                      "tool:agent-management/update_agent_config",
+					"skill_id":                skills.SkillAgentManagement,
+					"tool_name":               "update_agent_config",
+					"status":                  "completed",
+					"expected_updated_fields": []interface{}{"suggested_questions"},
+					"arguments": map[string]interface{}{
+						"suggested_questions": []interface{}{"Question A", "Question B"},
+					},
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"arguments": map[string]interface{}{
+					"expected_updated_fields": []interface{}{"suggested_questions"},
+					"suggested_questions":     []interface{}{"Question A", "Question B"},
+				},
+				"result": map[string]interface{}{
+					"status":         "completed",
+					"agent_name":     "Support Agent",
+					"updated_fields": []interface{}{"suggested_questions"},
+					"config": map[string]interface{}{
+						"suggested_questions": []interface{}{"Question A", "Question B"},
+					},
+				},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result": map[string]interface{}{
+					"status":     "completed",
+					"agent_name": "Support Agent",
+					"config": map[string]interface{}{
+						"suggested_questions": []interface{}{"Question A"},
+					},
+				},
+			},
+		},
+	}
+
+	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
+		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = (%q, true), want blocked by post-read suggested_questions mismatch", answer)
+	}
+	if answer, ok := FastPathPreferredFinalAnswerForCompletionEvidence(evidence, "done"); ok {
+		t.Fatalf("FastPathPreferredFinalAnswerForCompletionEvidence() = (%q, true), want blocked by post-read suggested_questions mismatch", answer)
+	}
+	trace := skills.SkillTrace{
+		Kind:     "tool_call",
+		Status:   "success",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Result: map[string]interface{}{
+			"status":         "completed",
+			"agent_name":     "Support Agent",
+			"updated_fields": []interface{}{"suggested_questions"},
+		},
+	}
+	if answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(trace, evidence); ok {
+		t.Fatalf("FastPathFinalAnswerForToolTraceWithEvidence() = (%q, true), want blocked by post-read suggested_questions mismatch", answer)
 	}
 }
 
@@ -2088,6 +2316,252 @@ func TestFastPathCompletionEvidenceClosesReadOnlyAgentCandidateLookup(t *testing
 		"\u5de5\u4f5c\u6d41\uff1a1 \u4e2a",
 		"\u56fe\u8868\u751f\u6210\u5668",
 		"test1",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, want substring %q", answer, want)
+		}
+	}
+}
+
+func TestFastPathCompletionEvidenceAnswersUnboundSkillBackedCapabilityStatus(t *testing.T) {
+	request := "\u8fd9\u4e2a Agent \u80fd\u751f\u6210\u6587\u4ef6\u5417"
+	evidence := map[string]interface{}{
+		"user_request": request,
+		"operation_plan": map[string]interface{}{
+			"original_user_goal": request,
+			"intent":             "inspect_agent_config",
+			"capability_goals": []interface{}{
+				map[string]interface{}{
+					"capability_id":   "agent.skill_backed_capability",
+					"candidate_tool":  "list_agent_skill_candidates",
+					"candidate_query": "file generation",
+					"required_binding_actions": map[string]interface{}{
+						"enabled_skill_ids": "bind",
+					},
+				},
+			},
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/get_agent_config",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "get_agent_config",
+				},
+				map[string]interface{}{
+					"id":        "tool:agent-management/list_agent_skill_candidates",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "list_agent_skill_candidates",
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result": map[string]interface{}{
+					"status":     "completed",
+					"agent_name": "Novel Agent",
+					"config": map[string]interface{}{
+						"enabled_skill_ids": []interface{}{"calculator"},
+					},
+				},
+			},
+			agentCandidateLookupInvocationForTest("list_agent_skill_candidates", 1, []map[string]interface{}{
+				{"id": "file-generator", "name": "File Generator"},
+			}),
+		},
+	}
+
+	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want skill-backed capability status answer")
+	}
+	for _, want := range []string{
+		"Novel Agent",
+		"\u5c1a\u672a\u5177\u5907",
+		"File Generator",
+		"file-generator",
+		"\u672a\u4fee\u6539\u914d\u7f6e",
+		"\u672a\u53d1\u8d77\u5ba1\u6279",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, want substring %q", answer, want)
+		}
+	}
+	if strings.Contains(answer, "\u5df2\u5177\u5907\u8be5\u6280\u80fd\u578b\u80fd\u529b") {
+		t.Fatalf("answer = %q, want no enabled capability claim", answer)
+	}
+}
+
+func TestFastPathCompletionEvidenceAnswersBoundSkillBackedCapabilityStatus(t *testing.T) {
+	request := "\u8fd9\u4e2a Agent \u80fd\u751f\u6210\u6587\u4ef6\u5417"
+	evidence := map[string]interface{}{
+		"user_request": request,
+		"operation_plan": map[string]interface{}{
+			"original_user_goal": request,
+			"intent":             "inspect_agent_config",
+			"capability_goals": []interface{}{
+				map[string]interface{}{
+					"capability_id":   "agent.skill_backed_capability",
+					"candidate_tool":  "list_agent_skill_candidates",
+					"candidate_query": "file generation",
+					"required_binding_actions": map[string]interface{}{
+						"enabled_skill_ids": "bind",
+					},
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result": map[string]interface{}{
+					"status":     "completed",
+					"agent_name": "Writer Agent",
+					"config": map[string]interface{}{
+						"enabled_skill_ids": []interface{}{"file-generator"},
+					},
+				},
+			},
+			agentCandidateLookupInvocationForTest("list_agent_skill_candidates", 1, []map[string]interface{}{
+				{"id": "file-generator", "name": "File Generator"},
+			}),
+		},
+	}
+
+	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want bound skill capability status answer")
+	}
+	for _, want := range []string{
+		"Writer Agent",
+		"\u5df2\u5177\u5907\u8be5\u6280\u80fd\u578b\u80fd\u529b",
+		"File Generator",
+		"file-generator",
+		"\u672a\u4fee\u6539\u914d\u7f6e",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, want substring %q", answer, want)
+		}
+	}
+}
+
+func TestFastPathCompletionEvidenceAnswersSkillBackedStatusFromSummaryRefs(t *testing.T) {
+	request := "\u8fd9\u4e2a Agent \u80fd\u751f\u6210\u6587\u4ef6\u5417"
+	evidence := map[string]interface{}{
+		"user_request": request,
+		"operation_plan": map[string]interface{}{
+			"original_user_goal": request,
+			"intent":             "inspect_agent_config",
+			"capability_goals": []interface{}{
+				map[string]interface{}{
+					"capability_id":   "agent.skill_backed_capability",
+					"candidate_tool":  "list_agent_skill_candidates",
+					"candidate_query": "file generation",
+					"required_binding_actions": map[string]interface{}{
+						"enabled_skill_ids": "bind",
+					},
+				},
+			},
+		},
+		"execution_summary": map[string]interface{}{
+			"tool_results": []interface{}{
+				map[string]interface{}{
+					"kind":      "tool_call",
+					"status":    "success",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "get_agent_config",
+					"result_summary": map[string]interface{}{
+						"status":              "completed",
+						"agent_name":          "Compressed Agent",
+						"enabled_skill_count": 1,
+						"enabled_skill_refs":  []interface{}{"file-generator"},
+					},
+				},
+				map[string]interface{}{
+					"kind":      "tool_call",
+					"status":    "success",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "list_agent_skill_candidates",
+					"result_summary": map[string]interface{}{
+						"status": "completed",
+						"candidate_samples": []interface{}{
+							map[string]interface{}{"id": "file-generator", "name": "File Generator"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want compressed summary capability status answer")
+	}
+	for _, want := range []string{
+		"Compressed Agent",
+		"\u5df2\u5177\u5907\u8be5\u6280\u80fd\u578b\u80fd\u529b",
+		"File Generator",
+		"file-generator",
+		"\u672a\u4fee\u6539\u914d\u7f6e",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, want substring %q", answer, want)
+		}
+	}
+}
+
+func TestFastPathCompletionEvidenceAnswersBooleanAgentCapabilityStatus(t *testing.T) {
+	request := "\u8fd9\u4e2a Agent \u80fd\u4e0a\u4f20\u6587\u4ef6\u5417\uff1f\u5b83\u6709\u8bb0\u5fc6\u5417\uff1f"
+	evidence := map[string]interface{}{
+		"user_request": request,
+		"operation_plan": map[string]interface{}{
+			"original_user_goal": request,
+			"intent":             "inspect_agent_config",
+			"capability_goals": []interface{}{
+				map[string]interface{}{
+					"capability_id":          "agent.accept_uploaded_files",
+					"required_config_fields": []interface{}{"file_upload_enabled"},
+				},
+				map[string]interface{}{
+					"capability_id":          "agent.memory",
+					"required_config_fields": []interface{}{"agent_memory_enabled"},
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result": map[string]interface{}{
+					"status":     "completed",
+					"agent_name": "Config Agent",
+					"config": map[string]interface{}{
+						"file_upload_enabled":  true,
+						"agent_memory_enabled": false,
+					},
+				},
+			},
+		},
+	}
+
+	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want boolean capability status answer")
+	}
+	for _, want := range []string{
+		"Config Agent",
+		"\u6587\u4ef6\u4e0a\u4f20\uff1a\u5df2\u5f00\u542f",
+		"\u8bb0\u5fc6\uff1a\u672a\u5f00\u542f",
+		"\u672a\u4fee\u6539\u914d\u7f6e",
+		"\u672a\u53d1\u8d77\u5ba1\u6279",
 	} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("answer = %q, want substring %q", answer, want)

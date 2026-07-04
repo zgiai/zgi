@@ -3649,6 +3649,10 @@ func TestSkillLoopPlanToolGuardBlocksUnrequestedAgentConfigMutationForReadOnlyNa
 		}},
 	}}}
 
+	if !skillLoopShouldBlockCurrentRequestForbiddenAgentMutation(prepared, skills.SkillAgentManagement, "update_agent_config") {
+		t.Fatal("current request forbidden mutation guard did not recognize latest read-only request")
+	}
+
 	guard := skillLoopPlanToolCallGuardWithResolved(prepared, resolved)
 	result, blocked := guard(skillloop.ToolCallGuardRequest{
 		SkillID:  skills.SkillAgentManagement,
@@ -3703,6 +3707,13 @@ func TestSkillLoopPlanToolGuardBlocksStalePlannedAgentConfigMutationForLatestRea
 			SkillMode:      skillModeAuto,
 		},
 	}
+	prepared.parts.Query = strings.Join([]string{
+		"Regression read-only config loop:",
+		"only read the current Agent config and answer the current home title, provider/model,",
+		"and the number of bound Skill/knowledge/database table/workflow resources.",
+		"Do not modify any configuration, do not request approval,",
+		"and do not query available models or candidate resources.",
+	}, " ")
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
 		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
 		Tools: []skills.SkillToolDefinition{{
@@ -3714,6 +3725,10 @@ func TestSkillLoopPlanToolGuardBlocksStalePlannedAgentConfigMutationForLatestRea
 			},
 		}},
 	}}}
+
+	if !skillLoopShouldBlockCurrentRequestForbiddenAgentMutation(prepared, skills.SkillAgentManagement, "update_agent_config") {
+		t.Fatal("current request forbidden mutation guard did not recognize latest read-only request")
+	}
 
 	guard := skillLoopPlanToolCallGuardWithResolved(prepared, resolved)
 	result, blocked := guard(skillloop.ToolCallGuardRequest{
@@ -3753,9 +3768,9 @@ func TestSkillLoopPlanToolGuardAllowsAgentConfigUpdateWithExcludedFields(t *test
 		t.Fatal("agentManagementGoalForbidsUnrequestedMutation() = true, want update_agent_config allowed")
 	}
 	fields := agentManagementExpectedConfigUpdateFields(query)
-	for _, want := range []string{"system_prompt", "home_title", "input_placeholder", "suggested_questions"} {
+	for _, want := range []string{"system_prompt"} {
 		if !stringSliceContainsFold(fields, want) {
-			t.Fatalf("expected config fields = %#v, missing %s", fields, want)
+			t.Fatalf("expected config fields = %#v, missing requested field %s", fields, want)
 		}
 	}
 	for _, unexpected := range []string{"model", "agent_memory_enabled", "file_upload_enabled"} {

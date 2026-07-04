@@ -349,8 +349,8 @@ func TestPlanToolGuardAdvisoryStepDoesNotReturnRecoverableError(t *testing.T) {
 	if got := payload["status"]; got != "advisory" {
 		t.Fatalf("payload status = %#v, want advisory", got)
 	}
-	if got := payload["advisory"]; got != "completed_read_step_already_satisfied" {
-		t.Fatalf("payload advisory = %#v, want completed_read_step_already_satisfied", got)
+	if got := payload["advisory"]; got != "planner_feedback" {
+		t.Fatalf("payload advisory = %#v, want planner_feedback", got)
 	}
 	if _, ok := payload["error"]; ok {
 		t.Fatalf("payload error = %#v, want no error field", payload["error"])
@@ -1640,7 +1640,7 @@ func TestFastPathFinalAnswerWithEvidenceBlocksDifferentPendingPlanAction(t *test
 	}
 }
 
-func TestFastPathFinalAnswerWithEvidenceAllowsBatchDeleteToCloseStaleEarlierCreateStep(t *testing.T) {
+func TestFastPathFinalAnswerWithEvidenceBlocksBatchDeleteWithEarlierPendingCreateStep(t *testing.T) {
 	answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
 		Kind:     "tool_call",
 		SkillID:  skills.SkillAgentManagement,
@@ -1681,16 +1681,12 @@ func TestFastPathFinalAnswerWithEvidenceAllowsBatchDeleteToCloseStaleEarlierCrea
 		},
 	})
 	if !ok {
-		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = false, want delete evidence to close stale earlier create step")
+		return
 	}
-	for _, want := range []string{"成功删除 2 个智能体", "Agent One", "Agent Two"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer = %q, missing %q", answer, want)
-		}
-	}
+	t.Fatalf("FastPathFinalAnswerForToolTraceWithEvidence() = (%q, true), want blocked while create_agent is still pending", answer)
 }
 
-func TestFastPathFinalAnswerWithEvidenceAllowsBatchDeleteToCloseStaleConfigPlan(t *testing.T) {
+func TestFastPathFinalAnswerWithEvidenceBlocksBatchDeleteWithPendingConfigPlan(t *testing.T) {
 	answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
 		Kind:     "tool_call",
 		SkillID:  skills.SkillAgentManagement,
@@ -1758,13 +1754,9 @@ func TestFastPathFinalAnswerWithEvidenceAllowsBatchDeleteToCloseStaleConfigPlan(
 		},
 	})
 	if !ok {
-		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = false, want completed batch delete evidence to close stale config plan")
+		return
 	}
-	for _, want := range []string{"成功删除 2 个智能体", "Agent One", "Agent Two"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer = %q, missing %q", answer, want)
-		}
-	}
+	t.Fatalf("FastPathFinalAnswerForToolTraceWithEvidence() = (%q, true), want blocked while config/read steps are still pending", answer)
 }
 
 func TestFastPathFinalAnswerWithEvidenceBlocksBatchDeleteWhenFollowupEditRequested(t *testing.T) {

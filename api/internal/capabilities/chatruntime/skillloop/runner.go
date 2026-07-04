@@ -384,6 +384,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					guard:               userInputGuard,
 					toolCallGuard:       toolCallGuard,
 					planToolGuard:       req.PlanToolGuard,
+					argumentResolver:    req.ToolArgumentResolver,
 					round:               round,
 					skillUsed:           skillUsed,
 					toolCallCount:       toolCallCount,
@@ -669,7 +670,7 @@ func completionEvidenceContinuationPendingPlanStepSystemMessage(evidence map[str
 		fmt.Sprintf("Runtime execution evidence requires continued tool use before a final answer. Evidence-continuation retry %d of %d.", retryCount+1, defaultMaxCompletionVerificationRetries),
 		"The operation plan is an advisory strategy snapshot, not proof of completion. It currently has an executable pending tool step with no successful evidence.",
 		"If the current page context and available tools still support this action, load the required skill if needed and call the required tool. Resolve arguments from the latest user request, page context, and visible asset evidence.",
-		"If the pending step is agent-management/update_agent_config and the plan_step lists expected_updated_fields, use those fields as the required config patch and extract their target values from the user's latest request; do not repeat an identical get_agent_config call when it already succeeded earlier in this turn.",
+		"If the pending step is agent-management/update_agent_config, use plan_step.config_goal as the user-facing configuration target and infer concrete update_agent_config arguments from the tool schema, latest user request, page context, and prior read results; extract the target field values from the latest user request and read result. If plan_step also lists expected_updated_fields, treat them as verification hints rather than the only allowed fields. Do not repeat an identical get_agent_config call when it already succeeded earlier in this turn.",
 		"If only load_skill is available for that skill, first call load_skill with the exact skill_id from required_next_tool, then call call_skill_tool with the exact skill_id/tool_name after the skill loads.",
 		"Do not tell the user an approval card has been submitted unless a governed tool call actually returned a pending governance event. Governance approval cards are created by tool calls, not by natural-language progress text.",
 		"If the action is impossible because context, permissions, or tool capability is missing, call the appropriate read/list tool when that can resolve the missing context; otherwise stop and explain the exact blocker truthfully.",
@@ -1457,7 +1458,7 @@ func repeatedSuccessfulReadOnlyPendingMutationPayload(skillID string, toolName s
 		"Do not call the same read-only tool with identical arguments again.",
 		"The current operation plan still has a pending asset-changing Agent step.",
 		"Call the required pending tool next using the latest user request, page context, and previous read result.",
-		"For Agent config updates, extract the target field values from the user's latest request and include them in the update_agent_config arguments; do not wait for another read-only config call when the same read already succeeded.",
+		"For Agent config updates, use the plan_step config_goal and the update_agent_config tool schema to infer concrete arguments and extract the target field values; do not wait for another read-only config call when the same read already succeeded.",
 		"After the mutation succeeds, read the Agent configuration again only if verification is still required.",
 	}, " ")
 	if required != "" {
@@ -1951,6 +1952,17 @@ func runToolCallGuard(guard ToolCallGuard, req ToolCallGuardRequest) (FinalAnswe
 		result.Message = "The requested skill tool call was blocked because it would run the task in the wrong order. Continue planning and call the required skill/tool first."
 	}
 	return result, true
+}
+
+func runToolArgumentResolver(resolver ToolArgumentResolver, req ToolCallGuardRequest) (map[string]interface{}, bool) {
+	if resolver == nil {
+		return nil, false
+	}
+	resolved, changed := resolver(req)
+	if !changed {
+		return nil, false
+	}
+	return copyStringAnyMap(resolved), true
 }
 
 func finalAnswerGuardrailTrace(result FinalAnswerGuardResult) skills.SkillTrace {

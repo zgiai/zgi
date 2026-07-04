@@ -122,6 +122,7 @@ type RunRequest struct {
 	UserInputGuard           UserInputGuard
 	ToolCallGuard            ToolCallGuard
 	PlanToolGuard            ToolCallGuard
+	ToolArgumentResolver     ToolArgumentResolver
 	CompletionEvidence       CompletionEvidenceFunc
 	CurrentMetadata          func() map[string]interface{}
 	OnCompletionVerification func(CompletionVerificationResult)
@@ -133,6 +134,8 @@ type FinalAnswerGuard func(FinalAnswerGuardRequest) (FinalAnswerGuardResult, boo
 type UserInputGuard func(UserInputGuardRequest) (FinalAnswerGuardResult, bool)
 
 type ToolCallGuard func(ToolCallGuardRequest) (FinalAnswerGuardResult, bool)
+
+type ToolArgumentResolver func(ToolCallGuardRequest) (map[string]interface{}, bool)
 
 type CompletionEvidenceFunc func() map[string]interface{}
 

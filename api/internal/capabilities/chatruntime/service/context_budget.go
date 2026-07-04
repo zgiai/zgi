@@ -716,6 +716,9 @@ func compactOperationPlanForPrompt(plan map[string]interface{}) map[string]inter
 	if criteria := stringSliceFromAny(plan["completion_criteria"]); len(criteria) > 0 {
 		out["completion_criteria"] = compactStringSliceForPrompt(criteria, 8, 240)
 	}
+	if goals := operationPlanCompactCapabilityGoals(plan["capability_goals"], 6); len(goals) > 0 {
+		out["capability_goals"] = goals
+	}
 	if target := mapFromOperationContext(plan["asset_target"]); len(target) > 0 {
 		out["asset_target"] = target
 	}
@@ -831,8 +834,10 @@ func operationPlanHasIncompleteWork(plan map[string]interface{}) bool {
 	if len(plan) == 0 {
 		return false
 	}
-	status := strings.TrimSpace(stringFromAny(plan["status"]))
-	if status != "" && status != operationPlanStatusCompleted {
+	if operationPlanIsTerminal(plan) {
+		return false
+	}
+	if status := strings.TrimSpace(stringFromAny(plan["status"])); status != "" {
 		return true
 	}
 	if pending := strings.TrimSpace(stringFromAny(plan["pending_next_action"])); pending != "" && !strings.EqualFold(pending, "none") {

@@ -18,6 +18,7 @@ type userInputGuardState struct {
 	guard               UserInputGuard
 	toolCallGuard       ToolCallGuard
 	planToolGuard       ToolCallGuard
+	argumentResolver    ToolArgumentResolver
 	round               int
 	skillUsed           bool
 	toolCallCount       int
@@ -88,6 +89,19 @@ func (r *Runner) handleProgressiveSkillCall(
 		if doc, ok := resolved.Get(skillID); ok && len(doc.Tools) == 0 {
 			trace := blockedSkillGuardrailTrace(skillID, toolName, "skill does not provide callable tools")
 			return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), true, false)
+		}
+		if resolvedArgs, ok := runToolArgumentResolver(userInputGuard.argumentResolver, ToolCallGuardRequest{
+			SkillID:             skillID,
+			ToolName:            toolName,
+			Arguments:           copyStringAnyMap(toolArgs),
+			Round:               userInputGuard.round,
+			SkillUsed:           userInputGuard.skillUsed,
+			ToolCallCount:       userInputGuard.toolCallCount,
+			AttemptedToolCalls:  append([]SkillToolCallRef{}, userInputGuard.attemptedToolCalls...),
+			SuccessfulToolCalls: append([]SkillToolCallRef{}, userInputGuard.successfulToolCalls...),
+		}); ok {
+			toolArgs = resolvedArgs
+			args["arguments"] = toolArgs
 		}
 		if guardResult, blocked := runToolCallGuard(userInputGuard.planToolGuard, ToolCallGuardRequest{
 			SkillID:             skillID,
@@ -230,7 +244,7 @@ func planToolGuardRecoverableStep(callID string, skillID string, toolName string
 			trace.Arguments = summarizeSkillToolArguments(skillID, toolName, args)
 		}
 		trace.Arguments["next_step"] = "continue_with_next_planned_step"
-		trace.Arguments["advisory"] = "completed_read_step_already_satisfied"
+		trace.Arguments["advisory"] = "planner_feedback"
 		return successfulSkillStep(trace, skills.ToolResultMessage(callID, plannerFeedbackAdvisoryPayload(message, nextAction, skillID, toolName)), false, false)
 	}
 	err := fmt.Errorf("%w: %s", ErrInvalidInput, message)

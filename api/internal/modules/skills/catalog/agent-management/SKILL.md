@@ -406,6 +406,22 @@ Use this skill for governed Agent asset operations in the contextual AIChat side
 23. After `create_agent` succeeds, route to `/console/agents/{agentId}/agent` only when the user asked to open the new Agent or the operation needs the detail page for follow-up edits. If the frontend client action already loaded that route, do not navigate again.
 24. If `delete_agent` succeeds while the current page is that Agent's detail page, or `delete_agents` succeeds and includes the current detail Agent, use `console-navigator` to route to `/console/agents` before the final answer. When deleting multiple Agents from the list page, do not navigate after the first item; rely on page refresh/observation and the batch `item_results`.
 
+## Agent Capability Semantics
+
+Use capability semantics to decide what configuration or binding actually proves that an Agent has the capability the user requested. Do not equate a natural-language prompt change with tool/data access unless the matching configuration evidence also exists.
+
+- **Model capability**: powered by the pair `model_provider` + `model`. Resolve candidates with `list_available_models`, update both fields together with `update_agent_config`, then verify the same pair with `get_agent_config`.
+- **Persona or behavior**: powered by `system_prompt`. This changes how the Agent should behave, but it does not add tools, file generation, databases, knowledge, workflow access, or memory by itself.
+- **File upload capability**: powered by `file_upload_enabled`. This lets users upload files into the Agent chat surface; it does not let the Agent generate files or manage File Management assets.
+- **Skill-backed capability**: powered by `enabled_skill_ids`. For requests such as “make this Agent able to generate files/charts/images or use a tool,” resolve a matching Skill with `list_agent_skill_candidates`, bind the returned Skill ID with `update_agent_config.add_enabled_skill_ids`, and verify `get_agent_config.enabled_skill_ids`.
+- **Memory capability**: powered by `agent_memory_enabled` and, when the user asks for concrete memory slots, `replace_agent_memory_slots`. A prompt saying “remember things” is not persistent memory.
+- **Knowledge access**: powered by `knowledge_dataset_ids`. Resolve exact knowledge candidates when needed, bind or unbind with the matching `add_knowledge_dataset_ids` / `remove_knowledge_dataset_ids`, then verify `get_agent_config`.
+- **Database table access**: powered by `database_bindings`. Resolve database and table candidates with the candidate tools, copy returned binding objects into `add_database_bindings` / `remove_database_bindings`, then verify `get_agent_config`.
+- **Workflow access**: powered by `workflow_bindings`. Resolve workflow binding candidates, use `add_workflow_bindings` / `remove_workflow_bindings`, then verify `get_agent_config`.
+- **Suggested questions**: powered by `suggested_questions`. This only changes starter prompts shown to users.
+
+For read-only questions such as “can this Agent generate files?” or “does this Agent have memory?”, inspect the relevant config and candidate evidence, then answer from that evidence without mutating. If the capability is missing and the user later says “进行处理/继续/那就做,” continue from the inspected capability goal instead of starting an unrelated old action.
+
 ## Tool Usage
 
 `list_agents` accepts:

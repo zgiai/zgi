@@ -502,6 +502,585 @@ func TestCompletionVerificationApplyPlanOverrideRequiresRemainingAgentConfigFiel
 	}
 }
 
+func TestCompletionVerificationApplyPlanOverrideRequiresBoundEnabledSkillInPostRead(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "running",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":                       "tool:agent-management/update_agent_config",
+					"status":                   "completed",
+					"skill_id":                 skills.SkillAgentManagement,
+					"tool_name":                "update_agent_config",
+					"expected_updated_fields":  []interface{}{"enabled_skill_ids"},
+					"expected_binding_actions": map[string]interface{}{"enabled_skill_ids": "bind"},
+					"arguments": map[string]interface{}{
+						"candidate_skill_id": "file-generator",
+					},
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config#post_update",
+					"status":                            "completed",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"phase":                             "post_update_verification",
+					"required_post_update_verification": true,
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"arguments": map[string]interface{}{
+					"add_enabled_skill_ids": []interface{}{"file-generator"},
+				},
+				"result": map[string]interface{}{
+					"status":         "completed",
+					"updated_fields": []interface{}{"enabled_skill_ids"},
+				},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result": map[string]interface{}{
+					"status": "completed",
+					"config": map[string]interface{}{
+						"enabled_skill_ids": []interface{}{"chart-generator"},
+					},
+				},
+			},
+		},
+	}
+
+	decision := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
+		Status: completionVerificationStatusPass,
+		Reason: "candidate answer claims completion",
+	})
+
+	if got := decision.normalizedStatus(); got != completionVerificationStatusNeedsAction {
+		t.Fatalf("decision status = %q, want needs_action; decision=%#v", got, decision)
+	}
+	joinedMissing := strings.Join(decision.MissingSteps, ",")
+	for _, want := range []string{"enabled_skill_ids", "file-generator"} {
+		if !strings.Contains(joinedMissing, want) {
+			t.Fatalf("MissingSteps = %#v, want fragment %q", decision.MissingSteps, want)
+		}
+	}
+	if decision.NextActionHint != "agent-management/update_agent_config" {
+		t.Fatalf("NextActionHint = %q, want agent-management/update_agent_config", decision.NextActionHint)
+	}
+	if !strings.Contains(decision.FinalAnswerGuidance, "file-generator") {
+		t.Fatalf("FinalAnswerGuidance = %q, want missing skill guidance", decision.FinalAnswerGuidance)
+	}
+}
+
+func TestCompletionVerificationApplyPlanOverridePassesBoundEnabledSkillInPostRead(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "running",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":                       "tool:agent-management/update_agent_config",
+					"status":                   "completed",
+					"skill_id":                 skills.SkillAgentManagement,
+					"tool_name":                "update_agent_config",
+					"expected_updated_fields":  []interface{}{"enabled_skill_ids"},
+					"expected_binding_actions": map[string]interface{}{"enabled_skill_ids": "bind"},
+					"arguments": map[string]interface{}{
+						"candidate_skill_id": "file-generator",
+					},
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config#post_update",
+					"status":                            "completed",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"phase":                             "post_update_verification",
+					"required_post_update_verification": true,
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"arguments": map[string]interface{}{
+					"add_enabled_skill_ids": []interface{}{"file-generator"},
+				},
+				"result": map[string]interface{}{
+					"status":         "completed",
+					"updated_fields": []interface{}{"enabled_skill_ids"},
+				},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result": map[string]interface{}{
+					"status": "completed",
+					"config": map[string]interface{}{
+						"enabled_skill_ids": []interface{}{"chart-generator", "file-generator"},
+					},
+				},
+			},
+		},
+	}
+
+	decision := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
+		Status: completionVerificationStatusPass,
+		Reason: "candidate answer is supported by post-update config",
+	})
+
+	if got := decision.normalizedStatus(); got != completionVerificationStatusPass {
+		t.Fatalf("decision status = %q, want pass; decision=%#v", got, decision)
+	}
+	if len(decision.MissingSteps) != 0 {
+		t.Fatalf("MissingSteps = %#v, want none", decision.MissingSteps)
+	}
+}
+
+func TestCompletionVerificationApplyPlanOverrideRequiresModelPairInPostRead(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "running",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":                      "tool:agent-management/update_agent_config",
+					"status":                  "completed",
+					"skill_id":                skills.SkillAgentManagement,
+					"tool_name":               "update_agent_config",
+					"expected_updated_fields": []interface{}{"model_provider", "model"},
+					"arguments": map[string]interface{}{
+						"model_provider": "openai",
+						"model":          "gpt-4o",
+					},
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config#post_update",
+					"status":                            "completed",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"phase":                             "post_update_verification",
+					"required_post_update_verification": true,
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"arguments": map[string]interface{}{
+					"model_provider": "openai",
+					"model":          "gpt-4o",
+				},
+				"result": map[string]interface{}{"status": "completed", "updated_fields": []interface{}{"model_provider", "model"}},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result": map[string]interface{}{
+					"status": "completed",
+					"config": map[string]interface{}{
+						"model_provider": "deepseek",
+						"model":          "deepseek-chat",
+					},
+				},
+			},
+		},
+	}
+
+	decision := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
+		Status: completionVerificationStatusPass,
+		Reason: "candidate answer claims the model was replaced",
+	})
+
+	if got := decision.normalizedStatus(); got != completionVerificationStatusNeedsAction {
+		t.Fatalf("decision status = %q, want needs_action; decision=%#v", got, decision)
+	}
+	joinedMissing := strings.Join(decision.MissingSteps, ",")
+	for _, want := range []string{"model_provider", "openai", "model", "gpt-4o"} {
+		if !strings.Contains(joinedMissing, want) {
+			t.Fatalf("MissingSteps = %#v, want fragment %q", decision.MissingSteps, want)
+		}
+	}
+}
+
+func TestCompletionVerificationApplyPlanOverrideRequiresBooleanConfigInPostRead(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "running",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":                      "tool:agent-management/update_agent_config",
+					"status":                  "completed",
+					"skill_id":                skills.SkillAgentManagement,
+					"tool_name":               "update_agent_config",
+					"expected_updated_fields": []interface{}{"agent_memory_enabled", "file_upload_enabled"},
+					"arguments": map[string]interface{}{
+						"agent_memory_enabled": true,
+						"file_upload_enabled":  true,
+					},
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config#post_update",
+					"status":                            "completed",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"phase":                             "post_update_verification",
+					"required_post_update_verification": true,
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"arguments": map[string]interface{}{
+					"agent_memory_enabled": true,
+					"file_upload_enabled":  true,
+				},
+				"result": map[string]interface{}{"status": "completed", "updated_fields": []interface{}{"agent_memory_enabled", "file_upload_enabled"}},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result": map[string]interface{}{
+					"status": "completed",
+					"config": map[string]interface{}{
+						"agent_memory_enabled": true,
+						"file_upload_enabled":  false,
+					},
+				},
+			},
+		},
+	}
+
+	decision := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
+		Status: completionVerificationStatusPass,
+		Reason: "candidate answer claims upload and memory are enabled",
+	})
+
+	if got := decision.normalizedStatus(); got != completionVerificationStatusNeedsAction {
+		t.Fatalf("decision status = %q, want needs_action; decision=%#v", got, decision)
+	}
+	joinedMissing := strings.Join(decision.MissingSteps, ",")
+	if !strings.Contains(joinedMissing, "file_upload_enabled") {
+		t.Fatalf("MissingSteps = %#v, want file_upload_enabled mismatch", decision.MissingSteps)
+	}
+	if strings.Contains(joinedMissing, "agent_memory_enabled") {
+		t.Fatalf("MissingSteps = %#v, want no agent_memory_enabled mismatch when post-read confirms it", decision.MissingSteps)
+	}
+}
+
+func TestCompletionVerificationApplyPlanOverrideRequiresSuggestedQuestionsInPostRead(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "running",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":                      "tool:agent-management/update_agent_config",
+					"status":                  "completed",
+					"skill_id":                skills.SkillAgentManagement,
+					"tool_name":               "update_agent_config",
+					"expected_updated_fields": []interface{}{"suggested_questions"},
+					"arguments": map[string]interface{}{
+						"suggested_questions": []interface{}{"hello", "status"},
+					},
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config#post_update",
+					"status":                            "completed",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"phase":                             "post_update_verification",
+					"required_post_update_verification": true,
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"arguments": map[string]interface{}{
+					"suggested_questions": []interface{}{"hello", "status"},
+				},
+				"result": map[string]interface{}{"status": "completed", "updated_fields": []interface{}{"suggested_questions"}},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result": map[string]interface{}{
+					"status": "completed",
+					"config": map[string]interface{}{
+						"suggested_questions": []interface{}{"hello"},
+					},
+				},
+			},
+		},
+	}
+
+	decision := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
+		Status: completionVerificationStatusPass,
+		Reason: "candidate answer claims suggested questions were updated",
+	})
+
+	if got := decision.normalizedStatus(); got != completionVerificationStatusNeedsAction {
+		t.Fatalf("decision status = %q, want needs_action; decision=%#v", got, decision)
+	}
+	joinedMissing := strings.Join(decision.MissingSteps, ",")
+	if !strings.Contains(joinedMissing, "suggested_questions mismatch") {
+		t.Fatalf("MissingSteps = %#v, want suggested_questions mismatch", decision.MissingSteps)
+	}
+	if !strings.Contains(decision.FinalAnswerGuidance, "update_agent_config") ||
+		!strings.Contains(decision.FinalAnswerGuidance, "get_agent_config") {
+		t.Fatalf("FinalAnswerGuidance = %q, want retry and post-read guidance", decision.FinalAnswerGuidance)
+	}
+}
+
+func TestCompletionVerificationApplyPlanOverrideRequiresResourceBindingsInPostRead(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "running",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":                       "tool:agent-management/update_agent_config",
+					"status":                   "completed",
+					"skill_id":                 skills.SkillAgentManagement,
+					"tool_name":                "update_agent_config",
+					"expected_updated_fields":  []interface{}{"knowledge_dataset_ids", "database_bindings", "workflow_bindings"},
+					"expected_binding_actions": "knowledge_dataset_ids:bind,database_bindings:bind,workflow_bindings:bind",
+					"arguments": map[string]interface{}{
+						"add_knowledge_dataset_ids": []interface{}{"kb-1"},
+						"add_database_bindings":     `[{"data_source_id":"db-1","table_ids":["table-1"]}]`,
+						"add_workflow_bindings":     []interface{}{map[string]interface{}{"workflow_id": "workflow-1"}},
+					},
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config#post_update",
+					"status":                            "completed",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"phase":                             "post_update_verification",
+					"required_post_update_verification": true,
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"arguments": map[string]interface{}{
+					"add_knowledge_dataset_ids": []interface{}{"kb-1"},
+					"add_database_bindings": []interface{}{map[string]interface{}{
+						"data_source_id": "db-1",
+						"table_ids":      []interface{}{"table-1"},
+					}},
+					"add_workflow_bindings": []interface{}{map[string]interface{}{"workflow_id": "workflow-1"}},
+				},
+				"result": map[string]interface{}{"status": "completed", "updated_fields": []interface{}{"knowledge_dataset_ids", "database_bindings", "workflow_bindings"}},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result": map[string]interface{}{
+					"status": "completed",
+					"config": map[string]interface{}{
+						"knowledge_dataset_ids": []interface{}{"kb-1"},
+						"database_bindings": []interface{}{map[string]interface{}{
+							"data_source_id": "db-1",
+							"table_ids":      []interface{}{"table-1"},
+						}},
+						"workflow_bindings": []interface{}{},
+					},
+				},
+			},
+		},
+	}
+
+	decision := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
+		Status: completionVerificationStatusPass,
+		Reason: "candidate answer claims all resources are bound",
+	})
+
+	if got := decision.normalizedStatus(); got != completionVerificationStatusNeedsAction {
+		t.Fatalf("decision status = %q, want needs_action; decision=%#v", got, decision)
+	}
+	joinedMissing := strings.Join(decision.MissingSteps, ",")
+	if !strings.Contains(joinedMissing, "workflow-1") {
+		t.Fatalf("MissingSteps = %#v, want missing workflow binding", decision.MissingSteps)
+	}
+	for _, unexpected := range []string{"kb-1", "table-1"} {
+		if strings.Contains(joinedMissing, unexpected) {
+			t.Fatalf("MissingSteps = %#v, did not expect confirmed target %q", decision.MissingSteps, unexpected)
+		}
+	}
+}
+
+func TestCompletionVerificationApplyPlanOverrideDetectsExtraTargetsAfterReplace(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "running",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":                       "tool:agent-management/update_agent_config",
+					"status":                   "completed",
+					"skill_id":                 skills.SkillAgentManagement,
+					"tool_name":                "update_agent_config",
+					"expected_updated_fields":  []interface{}{"enabled_skill_ids", "database_bindings"},
+					"expected_binding_actions": map[string]interface{}{"enabled_skill_ids": "replace", "database_bindings": "replace"},
+					"arguments": map[string]interface{}{
+						"enabled_skill_ids": []interface{}{"file-generator"},
+						"database_bindings": []interface{}{map[string]interface{}{
+							"data_source_id": "db-1",
+							"table_ids":      []interface{}{"table-1"},
+						}},
+					},
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config#post_update",
+					"status":                            "completed",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"phase":                             "post_update_verification",
+					"required_post_update_verification": true,
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"arguments": map[string]interface{}{
+					"enabled_skill_ids": []interface{}{"file-generator"},
+					"database_bindings": []interface{}{map[string]interface{}{
+						"data_source_id": "db-1",
+						"table_ids":      []interface{}{"table-1"},
+					}},
+				},
+				"result": map[string]interface{}{"status": "completed", "updated_fields": []interface{}{"enabled_skill_ids", "database_bindings"}},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result": map[string]interface{}{
+					"status": "completed",
+					"config": map[string]interface{}{
+						"enabled_skill_ids": []interface{}{"file-generator", "chart-generator"},
+						"database_bindings": []interface{}{map[string]interface{}{
+							"data_source_id": "db-1",
+							"table_ids":      []interface{}{"table-1", "table-2"},
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	decision := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
+		Status: completionVerificationStatusPass,
+		Reason: "candidate answer claims replacement succeeded",
+	})
+
+	if got := decision.normalizedStatus(); got != completionVerificationStatusNeedsAction {
+		t.Fatalf("decision status = %q, want needs_action; decision=%#v", got, decision)
+	}
+	joinedMissing := strings.Join(decision.MissingSteps, ",")
+	for _, want := range []string{"unexpected target after replace", "chart-generator", "table-2"} {
+		if !strings.Contains(joinedMissing, want) {
+			t.Fatalf("MissingSteps = %#v, want fragment %q", decision.MissingSteps, want)
+		}
+	}
+}
+
+func TestCompletionVerificationApplyPlanOverrideIgnoresWorkflowBindingIDDuringReplace(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "running",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":                       "tool:agent-management/update_agent_config",
+					"status":                   "completed",
+					"skill_id":                 skills.SkillAgentManagement,
+					"tool_name":                "update_agent_config",
+					"expected_updated_fields":  []interface{}{"workflow_bindings"},
+					"expected_binding_actions": map[string]interface{}{"workflow_bindings": "replace"},
+					"arguments": map[string]interface{}{
+						"workflow_bindings": []interface{}{map[string]interface{}{"workflow_id": "workflow-1"}},
+					},
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"arguments": map[string]interface{}{
+					"workflow_bindings": []interface{}{map[string]interface{}{"workflow_id": "workflow-1"}},
+				},
+				"result": map[string]interface{}{"status": "completed", "updated_fields": []interface{}{"workflow_bindings"}},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result": map[string]interface{}{
+					"status": "completed",
+					"config": map[string]interface{}{
+						"workflow_bindings": []interface{}{map[string]interface{}{
+							"binding_id":  "binding-1",
+							"workflow_id": "workflow-1",
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	decision := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
+		Status: completionVerificationStatusPass,
+		Reason: "candidate answer claims workflow replacement succeeded",
+	})
+
+	if got := decision.normalizedStatus(); got != completionVerificationStatusPass {
+		t.Fatalf("decision status = %q, want pass; decision=%#v", got, decision)
+	}
+	joinedMissing := strings.Join(decision.MissingSteps, ",")
+	if strings.Contains(joinedMissing, "binding-1") {
+		t.Fatalf("MissingSteps = %#v, should not treat workflow binding_id as an extra target", decision.MissingSteps)
+	}
+}
+
 func TestCompletionVerificationApplyPlanOverrideIgnoresUnrelatedFailedEvidence(t *testing.T) {
 	decision := completionVerificationApplyPlanOverride(map[string]interface{}{
 		"operation_plan": map[string]interface{}{

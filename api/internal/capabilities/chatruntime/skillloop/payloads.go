@@ -645,7 +645,7 @@ func recoverableSkillToolErrorPayload(err error, nextAction string, skillID stri
 func plannerFeedbackAdvisoryPayload(message string, nextAction string, skillID string, toolName string) map[string]interface{} {
 	return map[string]interface{}{
 		"status":      "advisory",
-		"advisory":    "completed_read_step_already_satisfied",
+		"advisory":    "planner_feedback",
 		"message":     strings.TrimSpace(message),
 		"next_action": strings.TrimSpace(nextAction),
 		"skill_id":    strings.TrimSpace(skillID),

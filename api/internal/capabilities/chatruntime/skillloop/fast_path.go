@@ -70,8 +70,14 @@ func FastPathFinalAnswerForToolTraceWithEvidence(trace skills.SkillTrace, eviden
 	if fastPathAgentConfigUpdateNeedsPostRead(trace, evidence) {
 		return "", false
 	}
+	if fastPathHasAgentConfigTargetMismatch(evidence) {
+		return "", false
+	}
 	if fastPathTraceIsSuccessfulAgentRead(trace) && fastPathGoalRequestsAgentConfigMutation(evidence) {
 		return "", false
+	}
+	if answer, ok := agentCapabilityStatusFastPathAnswerFromEvidence(evidence); ok {
+		return answer, true
 	}
 	if answer, ok := agentReadOnlyConfigFastPathAnswerWithEvidence(trace, evidence); ok {
 		return answer, true
@@ -1085,10 +1091,16 @@ func FastPathFinalAnswerForCompletionEvidence(evidence map[string]interface{}) (
 	if fastPathCompletionEvidenceNeedsAgentConfigPostRead(evidence) {
 		return "", false
 	}
+	if fastPathHasAgentConfigTargetMismatch(evidence) {
+		return "", false
+	}
 	if answer, ok := agentMultiMutationFastPathAnswerFromEvidence(evidence); ok {
 		return answer, true
 	}
 	if answer, ok := agentConfigPostUpdateVerifiedFastPathAnswerFromEvidence(evidence); ok {
+		return answer, true
+	}
+	if answer, ok := agentCapabilityStatusFastPathAnswerFromEvidence(evidence); ok {
 		return answer, true
 	}
 	if answer, ok := agentCandidateLookupFastPathAnswerFromEvidence(evidence); ok {
@@ -1161,6 +1173,234 @@ func agentMultiMutationFastPathAnswerFromEvidence(evidence map[string]interface{
 		target = "\u667a\u80fd\u4f53\u300c" + agentName + "\u300d"
 	}
 	return "\u5df2\u5b8c\u6210" + target + "\u7684\u591a\u9879\u914d\u7f6e\u66f4\u65b0\uff1a\n- " + strings.Join(details, "\n- ") + "\u3002", true
+}
+
+func agentCapabilityStatusFastPathAnswerFromEvidence(evidence map[string]interface{}) (string, bool) {
+	plan := evidenceMapFromAny(evidence["operation_plan"])
+	goals := fastPathAgentCapabilityGoals(plan)
+	if len(goals) == 0 || fastPathReadOnlyAgentConfigBlockedByMutation(evidence) {
+		return "", false
+	}
+	configResult, hasConfig := fastPathLatestSuccessfulAgentReadResult(evidence, "get_agent_config")
+	if !hasConfig {
+		return "", false
+	}
+
+	lines := []string{}
+	for _, goal := range goals {
+		capabilityID := strings.ToLower(strings.TrimSpace(stringFromAny(goal["capability_id"])))
+		switch capabilityID {
+		case "agent.skill_backed_capability":
+			line, ok := agentSkillBackedCapabilityStatusLine(evidence, goal, configResult)
+			if !ok {
+				return "", false
+			}
+			lines = append(lines, line)
+		case "agent.accept_uploaded_files":
+			line, ok := agentBooleanConfigCapabilityStatusLine(configResult, "file_upload_enabled", "\u6587\u4ef6\u4e0a\u4f20")
+			if !ok {
+				return "", false
+			}
+			lines = append(lines, line)
+		case "agent.memory":
+			line, ok := agentBooleanConfigCapabilityStatusLine(configResult, "agent_memory_enabled", "\u8bb0\u5fc6")
+			if !ok {
+				return "", false
+			}
+			lines = append(lines, line)
+		default:
+			continue
+		}
+	}
+	if len(lines) == 0 {
+		return "", false
+	}
+
+	agentName := agentCapabilityStatusAgentName(configResult)
+	prefix := "\u5df2\u6839\u636e get_agent_config"
+	if agentName != "" {
+		prefix += "\u68c0\u67e5\u667a\u80fd\u4f53\u300c" + agentName + "\u300d"
+	} else {
+		prefix += "\u68c0\u67e5\u5f53\u524d\u667a\u80fd\u4f53"
+	}
+	return prefix + "\uff1a\n- " + strings.Join(dedupeStrings(lines), "\n- ") + "\n\n\u672c\u8f6e\u53ea\u8bfb\u68c0\u67e5\uff0c\u672a\u4fee\u6539\u914d\u7f6e\uff0c\u672a\u53d1\u8d77\u5ba1\u6279\u3002", true
+}
+
+func fastPathAgentCapabilityGoals(plan map[string]interface{}) []map[string]interface{} {
+	if len(plan) == 0 {
+		return nil
+	}
+	goals := mapSliceFromAny(plan["capability_goals"])
+	if len(goals) > 0 {
+		return goals
+	}
+	structured := evidenceMapFromAny(plan["structured_plan"])
+	return mapSliceFromAny(structured["capability_goals"])
+}
+
+func agentSkillBackedCapabilityStatusLine(evidence map[string]interface{}, goal map[string]interface{}, configResult map[string]interface{}) (string, bool) {
+	results := fastPathSuccessfulAgentCandidateLookupResults(evidence)
+	candidateResult, hasCandidateResult := results["list_agent_skill_candidates"]
+	needsCandidate := strings.EqualFold(strings.TrimSpace(stringFromAny(goal["candidate_tool"])), "list_agent_skill_candidates") ||
+		strings.TrimSpace(stringFromAny(goal["candidate_query"])) != ""
+	if needsCandidate && !hasCandidateResult {
+		return "", false
+	}
+
+	candidates := fastPathAgentSkillCandidates(candidateResult)
+	enabledRefs, hasConcreteRefs := agentCapabilityEnabledSkillRefs(configResult)
+	if len(candidates) == 0 {
+		count := firstNonNegativeInt(candidateResult["count"], candidateResult["candidates_count"], candidateResult["total"])
+		if hasCandidateResult && count == 0 {
+			return "\u672a\u627e\u5230\u5339\u914d\u7684 Skill \u5019\u9009\uff0c\u56e0\u6b64\u65e0\u6cd5\u8bc1\u660e\u8be5\u6280\u80fd\u578b\u80fd\u529b\u53ef\u901a\u8fc7\u7ed1\u5b9a Skill \u5f00\u542f", true
+		}
+		if !hasConcreteRefs && agentCapabilityEnabledSkillCount(configResult) > 0 {
+			return "\u5df2\u7ed1\u5b9a Skill\uff0c\u4f46\u5de5\u5177\u7ed3\u679c\u672a\u8fd4\u56de\u5177\u4f53 Skill ID\uff0c\u65e0\u6cd5\u786e\u8ba4\u8be5\u6280\u80fd\u578b\u80fd\u529b\u662f\u5426\u5df2\u5f00\u542f", true
+		}
+		return "\u5f53\u524d\u672a\u8fd4\u56de\u53ef\u7528\u7684 Skill \u5019\u9009\u8bc1\u636e\uff0c\u65e0\u6cd5\u786e\u8ba4\u8be5\u6280\u80fd\u578b\u80fd\u529b", true
+	}
+
+	for _, candidate := range candidates {
+		if agentCapabilitySkillRefSetContains(enabledRefs, candidate.ID) ||
+			agentCapabilitySkillRefSetContains(enabledRefs, candidate.Name) {
+			return "\u5df2\u5177\u5907\u8be5\u6280\u80fd\u578b\u80fd\u529b\uff1a\u5df2\u542f\u7528 Skill\u300c" + candidate.Display() + "\u300d", true
+		}
+	}
+	if hasConcreteRefs || agentCapabilityEnabledSkillCount(configResult) == 0 {
+		return "\u5c1a\u672a\u5177\u5907\u8be5\u6280\u80fd\u578b\u80fd\u529b\uff1aget_agent_config \u672a\u663e\u793a\u5df2\u542f\u7528\u5019\u9009 Skill\u300c" + candidates[0].Display() + "\u300d\uff1b\u5982\u9700\u5f00\u542f\uff0c\u9700\u7ed1\u5b9a\u8be5 Skill", true
+	}
+	return "\u65e0\u6cd5\u786e\u8ba4\u8be5\u6280\u80fd\u578b\u80fd\u529b\u662f\u5426\u5df2\u5f00\u542f\uff1aget_agent_config \u53ea\u8fd4\u56de\u4e86 Skill \u6570\u91cf\uff0c\u672a\u8fd4\u56de\u5177\u4f53 ID\uff1b\u5019\u9009 Skill \u5305\u62ec\u300c" + candidates[0].Display() + "\u300d", true
+}
+
+type agentSkillCapabilityCandidate struct {
+	ID   string
+	Name string
+}
+
+func (candidate agentSkillCapabilityCandidate) Display() string {
+	switch {
+	case candidate.Name != "" && candidate.ID != "" && !strings.EqualFold(candidate.Name, candidate.ID):
+		return candidate.Name + "\uff08" + candidate.ID + "\uff09"
+	case candidate.Name != "":
+		return candidate.Name
+	default:
+		return candidate.ID
+	}
+}
+
+func fastPathAgentSkillCandidates(result map[string]interface{}) []agentSkillCapabilityCandidate {
+	if len(result) == 0 {
+		return nil
+	}
+	sources := []interface{}{
+		result["candidate_samples"],
+		result["binding_candidates"],
+		result["candidates"],
+		result["items"],
+		result["skills"],
+	}
+	candidates := []agentSkillCapabilityCandidate{}
+	seen := map[string]struct{}{}
+	for _, source := range sources {
+		for _, item := range mapSliceFromAny(source) {
+			id := strings.TrimSpace(firstNonEmptyString(item["id"], item["skill_id"], item["tool_id"]))
+			name := strings.TrimSpace(firstNonEmptyString(item["name"], item["label"], item["title"], item["display_name"], id))
+			key := strings.ToLower(strings.TrimSpace(firstNonEmptyString(id, name)))
+			if key == "" {
+				continue
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			candidates = append(candidates, agentSkillCapabilityCandidate{ID: id, Name: name})
+		}
+	}
+	return candidates
+}
+
+func agentBooleanConfigCapabilityStatusLine(configResult map[string]interface{}, field string, label string) (string, bool) {
+	config := payloadMap(configResult, "config")
+	value, ok := firstPresentValue(configResult[field], config[field])
+	if !ok {
+		return "", false
+	}
+	if boolFromAny(value) {
+		return label + "\uff1a\u5df2\u5f00\u542f", true
+	}
+	return label + "\uff1a\u672a\u5f00\u542f", true
+}
+
+func firstPresentValue(values ...interface{}) (interface{}, bool) {
+	for _, value := range values {
+		if value != nil {
+			return value, true
+		}
+	}
+	return nil, false
+}
+
+func agentCapabilityStatusAgentName(configResult map[string]interface{}) string {
+	config := payloadMap(configResult, "config")
+	agent := payloadMap(configResult, "agent")
+	return strings.TrimSpace(firstNonEmptyString(
+		configResult["agent_name"],
+		configResult["name"],
+		agent["agent_name"],
+		agent["name"],
+		config["agent_name"],
+		config["name"],
+	))
+}
+
+func agentCapabilityEnabledSkillRefs(configResult map[string]interface{}) (map[string]struct{}, bool) {
+	refs := map[string]struct{}{}
+	add := func(value string) {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value != "" {
+			refs[value] = struct{}{}
+		}
+	}
+	config := payloadMap(configResult, "config")
+	for _, value := range sanitizedStringListArgumentValue(firstNonEmptyValue(
+		configResult["enabled_skill_ids"],
+		configResult["skill_ids"],
+		configResult["enabled_skill_refs"],
+		config["enabled_skill_ids"],
+		config["skill_ids"],
+		config["enabled_skill_refs"],
+	)) {
+		add(value)
+	}
+	for _, key := range []string{"enabled_skills", "skills"} {
+		for _, source := range []map[string]interface{}{configResult, config} {
+			for _, item := range mapSliceFromAny(source[key]) {
+				add(firstNonEmptyString(item["id"], item["skill_id"], item["tool_id"]))
+				add(firstNonEmptyString(item["name"], item["label"], item["title"], item["display_name"]))
+			}
+		}
+	}
+	return refs, len(refs) > 0
+}
+
+func agentCapabilityEnabledSkillCount(configResult map[string]interface{}) int {
+	config := payloadMap(configResult, "config")
+	for _, key := range []string{"enabled_skill_count", "skill_count"} {
+		if count := firstNonNegativeInt(configResult[key], config[key]); count >= 0 {
+			return count
+		}
+	}
+	refs, _ := agentCapabilityEnabledSkillRefs(configResult)
+	return len(refs)
+}
+
+func agentCapabilitySkillRefSetContains(refs map[string]struct{}, value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return false
+	}
+	_, ok := refs[value]
+	return ok
 }
 
 func fastPathHasPendingExecutablePlanStep(plan map[string]interface{}) bool {
@@ -1693,14 +1933,29 @@ func fastPathNormalizeCandidateName(text string) string {
 // loop completed but should not let the model reinterpret the mutation as a
 // no-op.
 func FastPathPreferredFinalAnswerForCompletionEvidence(evidence map[string]interface{}, candidate string) (string, bool) {
-	answer, ok := agentConfigPostUpdateVerifiedFastPathAnswerFromEvidence(evidence)
-	if !ok {
+	if fastPathHasAgentConfigTargetMismatch(evidence) {
 		return "", false
 	}
-	if strings.TrimSpace(candidate) == answer {
+	answer, ok := agentConfigPostUpdateVerifiedFastPathAnswerFromEvidence(evidence)
+	if !ok && !fastPathCompletionEvidenceNeedsAgentConfigPostRead(evidence) {
+		answer, ok = latestAgentConfigUpdateFastPathAnswerFromEvidence(evidence)
+	}
+	if !ok || strings.TrimSpace(candidate) == answer {
 		return "", false
 	}
 	return answer, true
+}
+
+func latestAgentConfigUpdateFastPathAnswerFromEvidence(evidence map[string]interface{}) (string, bool) {
+	trace, ok := fastPathLatestSuccessfulAgentConfigUpdateTrace(evidence)
+	if !ok {
+		return "", false
+	}
+	if fastPathBlockedByPendingPlanActionAfterPostUpdateRead(trace, evidence) ||
+		fastPathBlockedByPendingPlanAction(trace, evidence) {
+		return "", false
+	}
+	return agentConfigOrIdentityUpdateFastPathAnswer(trace)
 }
 
 func agentConfigPostUpdateVerifiedFastPathAnswerFromEvidence(evidence map[string]interface{}) (string, bool) {
@@ -1708,6 +1963,9 @@ func agentConfigPostUpdateVerifiedFastPathAnswerFromEvidence(evidence map[string
 		return "", false
 	}
 	if !fastPathHasSuccessfulAgentConfigReadAfterUpdate(evidence) {
+		return "", false
+	}
+	if fastPathHasAgentConfigTargetMismatch(evidence) {
 		return "", false
 	}
 	if trace, ok := fastPathLatestSuccessfulAgentConfigUpdateTrace(evidence); ok {
@@ -1734,6 +1992,48 @@ func agentConfigPostUpdateVerifiedFastPathAnswerFromEvidence(evidence map[string
 		return answer + "已在更新后重新读取配置并完成确认。", true
 	}
 	return "", false
+}
+
+func fastPathHasAgentConfigTargetMismatch(evidence map[string]interface{}) bool {
+	if _, ok := fastPathLatestSuccessfulAgentConfigReadResultAfterUpdate(evidence); !ok {
+		return false
+	}
+	return len(completionVerificationAgentConfigMismatches(evidence)) > 0
+}
+
+func fastPathLatestSuccessfulAgentConfigReadResultAfterUpdate(evidence map[string]interface{}) (map[string]interface{}, bool) {
+	invocations := fastPathInvocationSequence(evidence)
+	latestUpdateIndex := -1
+	for index, invocation := range invocations {
+		trace, ok := fastPathTraceFromInvocation(invocation)
+		if !ok || !fastPathTraceIsSuccessfulAgentConfigUpdate(trace) {
+			continue
+		}
+		latestUpdateIndex = index
+	}
+	if latestUpdateIndex < 0 {
+		return nil, false
+	}
+	for index := len(invocations) - 1; index > latestUpdateIndex; index-- {
+		invocation := invocations[index]
+		if !fastPathInvocationSucceeded(invocation) ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["skill_id"])), skills.SkillAgentManagement) ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["tool_name"])), "get_agent_config") {
+			continue
+		}
+		result := copyFastPathResultMap(evidenceMapFromAny(invocation["result"]))
+		if len(result) == 0 {
+			result = copyFastPathResultMap(evidenceMapFromAny(invocation["result_summary"]))
+		}
+		if len(result) == 0 {
+			result = copyFastPathResultMap(evidenceMapFromAny(invocation["tool_result"]))
+		}
+		if len(result) == 0 {
+			continue
+		}
+		return result, true
+	}
+	return nil, false
 }
 
 func agentConfigOrIdentityUpdateFastPathAnswer(trace skills.SkillTrace) (string, bool) {
@@ -1979,6 +2279,9 @@ func fastPathBlockedByPendingPlanAction(trace skills.SkillTrace, evidence map[st
 	pendingSteps, hasPlanSteps := fastPathPendingExecutablePlanSteps(plan, 8)
 	if hasPlanSteps {
 		for _, step := range pendingSteps {
+			if fastPathPlanStepIsRoute(step) && fastPathPendingRouteStepHasPendingDependents(plan, step) {
+				return true
+			}
 			if fastPathPendingPlanStepSatisfiedByTrace(trace, step, plan) {
 				continue
 			}
@@ -2092,10 +2395,29 @@ func fastPathPendingExecutablePlanActions(plan map[string]interface{}, limit int
 
 func fastPathPendingExecutablePlanSteps(plan map[string]interface{}, limit int) ([]map[string]interface{}, bool) {
 	steps := mapSliceFromAny(plan["steps"])
-	if len(steps) == 0 || limit <= 0 {
-		return nil, len(steps) > 0
+	structuredSteps, hasStructuredSteps := fastPathPendingStructuredPlanSteps(plan, limit)
+	hasPlanSteps := len(steps) > 0 || hasStructuredSteps
+	if limit <= 0 {
+		return nil, hasPlanSteps
 	}
 	pendingSteps := make([]map[string]interface{}, 0, limit)
+	seen := map[string]struct{}{}
+	appendStep := func(step map[string]interface{}) {
+		if len(step) == 0 || len(pendingSteps) >= limit {
+			return
+		}
+		key := fastPathPlanStepAction(step)
+		if key == "" {
+			key = strings.ToLower(strings.TrimSpace(firstNonEmptyString(step["id"], step["title"])))
+		}
+		if key != "" {
+			if _, ok := seen[key]; ok {
+				return
+			}
+			seen[key] = struct{}{}
+		}
+		pendingSteps = append(pendingSteps, step)
+	}
 	for _, step := range steps {
 		if !fastPathPlanStepBlocksCompletion(step) {
 			continue
@@ -2108,24 +2430,107 @@ func fastPathPendingExecutablePlanSteps(plan map[string]interface{}, limit int) 
 		if fastPathPlanStepAction(step) == "" {
 			continue
 		}
-		pendingSteps = append(pendingSteps, step)
-		if len(pendingSteps) >= limit {
+		appendStep(step)
+	}
+	for _, step := range structuredSteps {
+		appendStep(step)
+	}
+	return pendingSteps, hasPlanSteps
+}
+
+func fastPathPendingStructuredPlanSteps(plan map[string]interface{}, limit int) ([]map[string]interface{}, bool) {
+	structured := evidenceMapFromAny(plan["structured_plan"])
+	if len(structured) == 0 {
+		return nil, false
+	}
+	operations := mapSliceFromAny(structured["operations"])
+	source := operations
+	hasStructuredSteps := len(operations) > 0
+	if len(source) == 0 {
+		source = mapSliceFromAny(structured["required_tool_sequence"])
+		hasStructuredSteps = len(source) > 0
+	}
+	if len(source) == 0 || limit <= 0 {
+		return nil, hasStructuredSteps
+	}
+	defaultSkillID := fastPathStructuredPlanDefaultSkillID(structured)
+	pending := make([]map[string]interface{}, 0, limit)
+	for index, item := range source {
+		step := fastPathStructuredPlanItemAsStep(item, defaultSkillID, index)
+		if !fastPathPlanStepBlocksCompletion(step) || fastPathPlanStepAction(step) == "" {
+			continue
+		}
+		status := fastPathNormalizePlanStepStatus(firstNonEmptyString(step["status"], item["status"]))
+		if status == "completed" || status == "failed" {
+			continue
+		}
+		step["status"] = status
+		pending = append(pending, step)
+		if len(pending) >= limit {
 			break
 		}
 	}
-	return pendingSteps, true
+	return pending, hasStructuredSteps
+}
+
+func fastPathStructuredPlanItemAsStep(item map[string]interface{}, defaultSkillID string, index int) map[string]interface{} {
+	if len(item) == 0 {
+		return nil
+	}
+	skillID := strings.TrimSpace(firstNonEmptyString(item["skill_id"], defaultSkillID))
+	toolName := strings.TrimSpace(stringFromAny(item["tool_name"]))
+	action := strings.TrimSpace(stringFromAny(item["action"]))
+	resourceType := strings.TrimSpace(stringFromAny(item["resource_type"]))
+	id := strings.TrimSpace(firstNonEmptyString(item["id"], item["step_id"]))
+	if id == "" {
+		id = fastPathStructuredPlanSyntheticStepID(skillID, toolName, action, resourceType, index)
+	}
+	step := map[string]interface{}{
+		"id":       id,
+		"status":   strings.TrimSpace(stringFromAny(item["status"])),
+		"skill_id": skillID,
+	}
+	if toolName != "" {
+		step["tool_name"] = toolName
+	}
+	if action != "" {
+		step["action"] = action
+	}
+	if resourceType != "" {
+		step["resource_type"] = resourceType
+	}
+	for _, key := range []string{"title", "wait_for", "wait_for_step_id", "phase"} {
+		if value := strings.TrimSpace(stringFromAny(item[key])); value != "" {
+			step[key] = value
+		}
+	}
+	return step
+}
+
+func fastPathStructuredPlanSyntheticStepID(skillID string, toolName string, action string, resourceType string, index int) string {
+	switch {
+	case skillID != "" && toolName != "":
+		return fmt.Sprintf("structured:%s/%s#%d", strings.ToLower(skillID), strings.ToLower(toolName), index)
+	case action != "" || resourceType != "":
+		return fmt.Sprintf("structured:%s:%s#%d", strings.ToLower(action), strings.ToLower(resourceType), index)
+	default:
+		return fmt.Sprintf("structured:operation#%d", index)
+	}
+}
+
+func fastPathStructuredPlanDefaultSkillID(structured map[string]interface{}) string {
+	if len(structured) == 0 {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(stringFromAny(structured["domain"]))) {
+	case "agent_management":
+		return skills.SkillAgentManagement
+	default:
+		return ""
+	}
 }
 
 func fastPathPendingPlanStepSatisfiedByTrace(trace skills.SkillTrace, step map[string]interface{}, plan map[string]interface{}) bool {
-	if fastPathTraceIsSuccessfulAgentBatchDelete(trace) {
-		if fastPathPlanStepIsAgentCreate(step) {
-			return fastPathAgentCreateStepIsStaleBeforeCompletedBatchDelete(step, plan)
-		}
-		if fastPathPlanStepIsStaleAgentConfigAfterBatchDelete(step, plan) {
-			return true
-		}
-		return false
-	}
 	if !fastPathPlanStepIsAgentCreate(step) {
 		if fastPathTraceIsSuccessfulAgentConfigUpdate(trace) && fastPathPlanStepIsAgentIdentityUpdate(step) {
 			return fastPathAgentIdentityStepIsStaleForConfigUpdate(plan)
@@ -2201,113 +2606,6 @@ func fastPathAgentUpdateEffectIsSuccessful(result map[string]interface{}) bool {
 func fastPathPlanStepIsAgentIdentityUpdate(step map[string]interface{}) bool {
 	return strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skills.SkillAgentManagement) &&
 		strings.EqualFold(strings.TrimSpace(stringFromAny(step["tool_name"])), "update_agent_identity")
-}
-
-func fastPathPlanStepIsStaleAgentConfigAfterBatchDelete(step map[string]interface{}, plan map[string]interface{}) bool {
-	if !fastPathPlanStepIsAgentConfigOrBindingTool(step) {
-		return false
-	}
-	return fastPathOriginalGoalRequestsAgentDeleteOnly(plan)
-}
-
-func fastPathPlanStepIsAgentConfigOrBindingTool(step map[string]interface{}) bool {
-	if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skills.SkillAgentManagement) {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(stringFromAny(step["tool_name"]))) {
-	case "get_agent_config",
-		"update_agent_identity",
-		"update_agent_config",
-		"list_available_models",
-		"list_agent_skill_candidates",
-		"list_agent_knowledge_candidates",
-		"list_agent_database_candidates",
-		"list_agent_database_tables",
-		"list_agent_workflow_binding_candidates",
-		"replace_agent_skill_bindings",
-		"replace_agent_knowledge_bindings",
-		"replace_agent_database_bindings",
-		"replace_agent_workflow_bindings",
-		"replace_agent_memory_slots":
-		return true
-	default:
-		return false
-	}
-}
-
-func fastPathOriginalGoalRequestsAgentDeleteOnly(plan map[string]interface{}) bool {
-	goal := strings.ToLower(strings.TrimSpace(firstNonEmptyString(
-		plan["original_user_goal"],
-		plan["user_goal"],
-		plan["objective"],
-	)))
-	if goal == "" {
-		return false
-	}
-	if !fastPathGoalRequestsAgentDelete(goal) {
-		return false
-	}
-	return !fastPathGoalRequestsPostDeleteAgentMutation(goal)
-}
-
-func fastPathGoalRequestsAgentDelete(goal string) bool {
-	if !strings.Contains(goal, "agent") && !strings.Contains(goal, "\u667a\u80fd\u4f53") {
-		return false
-	}
-	return strings.Contains(goal, "delete") ||
-		strings.Contains(goal, "remove") ||
-		strings.Contains(goal, "\u5220\u9664") ||
-		strings.Contains(goal, "\u5220\u6389") ||
-		strings.Contains(goal, "\u6e05\u7406")
-}
-
-func fastPathGoalRequestsPostDeleteAgentMutation(goal string) bool {
-	for _, phrase := range []string{
-		"then edit", "then update", "then modify", "then create", "then add", "then bind", "then unbind",
-		"and edit", "and update", "and modify", "and create", "and add", "and bind", "and unbind",
-		"\u7136\u540e\u4fee\u6539", "\u7136\u540e\u7f16\u8f91", "\u7136\u540e\u66f4\u65b0", "\u7136\u540e\u521b\u5efa", "\u7136\u540e\u65b0\u5efa", "\u7136\u540e\u7ed1\u5b9a", "\u7136\u540e\u89e3\u7ed1",
-		"\u518d\u4fee\u6539", "\u518d\u7f16\u8f91", "\u518d\u66f4\u65b0", "\u518d\u521b\u5efa", "\u518d\u65b0\u5efa", "\u518d\u7ed1\u5b9a", "\u518d\u89e3\u7ed1",
-		"\u540c\u65f6\u4fee\u6539", "\u540c\u65f6\u7f16\u8f91", "\u540c\u65f6\u66f4\u65b0", "\u540c\u65f6\u521b\u5efa", "\u540c\u65f6\u65b0\u5efa", "\u540c\u65f6\u7ed1\u5b9a", "\u540c\u65f6\u89e3\u7ed1",
-		"\u5e76\u4fee\u6539", "\u5e76\u7f16\u8f91", "\u5e76\u66f4\u65b0", "\u5e76\u521b\u5efa", "\u5e76\u65b0\u5efa", "\u5e76\u7ed1\u5b9a", "\u5e76\u89e3\u7ed1",
-	} {
-		if strings.Contains(goal, phrase) {
-			return true
-		}
-	}
-	for _, marker := range []string{"after deleting", "after delete", "after deletion", "\u5220\u9664\u540e", "\u5220\u5b8c\u540e"} {
-		idx := strings.Index(goal, marker)
-		if idx < 0 {
-			continue
-		}
-		tail := strings.TrimSpace(goal[idx+len(marker):])
-		if fastPathPostDeleteTailHasAgentMutation(tail) {
-			return true
-		}
-	}
-	return false
-}
-
-func fastPathPostDeleteTailHasAgentMutation(tail string) bool {
-	tail = strings.ToLower(strings.TrimSpace(tail))
-	if tail == "" {
-		return false
-	}
-	if fastPathContainsNegatedMutation(tail) {
-		return false
-	}
-	return containsAnyFastPathSubstring(tail, []string{
-		"edit", "update", "modify", "change", "set", "replace", "switch", "enable", "disable", "bind", "unbind", "create", "add",
-		"\u4fee\u6539", "\u7f16\u8f91", "\u66f4\u65b0", "\u8bbe\u7f6e", "\u6539\u4e3a", "\u6362\u6210", "\u66ff\u6362", "\u5207\u6362", "\u542f\u7528", "\u7981\u7528", "\u505c\u7528", "\u7ed1\u5b9a", "\u89e3\u7ed1", "\u521b\u5efa", "\u65b0\u5efa", "\u6dfb\u52a0", "\u65b0\u589e",
-	})
-}
-
-func fastPathContainsNegatedMutation(text string) bool {
-	return containsAnyFastPathSubstring(text, []string{
-		"do not edit", "do not update", "do not modify", "do not change", "do not create", "do not add", "do not bind", "do not unbind",
-		"don't edit", "don't update", "don't modify", "don't change", "don't create", "don't add", "don't bind", "don't unbind",
-		"\u4e0d\u8981\u4fee\u6539", "\u4e0d\u8981\u7f16\u8f91", "\u4e0d\u8981\u66f4\u65b0", "\u4e0d\u8981\u6539", "\u4e0d\u8981\u521b\u5efa", "\u4e0d\u8981\u65b0\u5efa", "\u4e0d\u8981\u6dfb\u52a0", "\u4e0d\u8981\u7ed1\u5b9a", "\u4e0d\u8981\u89e3\u7ed1",
-		"\u4e0d\u4fee\u6539", "\u4e0d\u7f16\u8f91", "\u4e0d\u66f4\u65b0", "\u4e0d\u6539", "\u4e0d\u521b\u5efa", "\u4e0d\u65b0\u5efa", "\u4e0d\u6dfb\u52a0", "\u4e0d\u7ed1\u5b9a", "\u4e0d\u89e3\u7ed1",
-	})
 }
 
 func containsAnyFastPathSubstring(text string, needles []string) bool {
@@ -2456,44 +2754,6 @@ func fastPathPlanStepIsAgentCreate(step map[string]interface{}) bool {
 		strings.EqualFold(strings.TrimSpace(stringFromAny(step["tool_name"])), "create_agent")
 }
 
-func fastPathAgentCreateStepIsStaleBeforeCompletedBatchDelete(createStep map[string]interface{}, plan map[string]interface{}) bool {
-	steps := mapSliceFromAny(plan["steps"])
-	if len(steps) == 0 {
-		return false
-	}
-	createIndex := fastPathPlanStepIndex(steps, createStep)
-	if createIndex < 0 {
-		return false
-	}
-	for index, step := range steps {
-		if index <= createIndex || !fastPathPlanStepIsCompletedAgentBatchDelete(step, plan) {
-			continue
-		}
-		return true
-	}
-	return false
-}
-
-func fastPathPlanStepIndex(steps []map[string]interface{}, target map[string]interface{}) int {
-	targetID := strings.TrimSpace(stringFromAny(target["id"]))
-	for index, step := range steps {
-		if targetID != "" && strings.TrimSpace(stringFromAny(step["id"])) == targetID {
-			return index
-		}
-	}
-	return -1
-}
-
-func fastPathPlanStepIsCompletedAgentBatchDelete(step map[string]interface{}, plan map[string]interface{}) bool {
-	if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skills.SkillAgentManagement) ||
-		!strings.EqualFold(strings.TrimSpace(stringFromAny(step["tool_name"])), "delete_agents") {
-		return false
-	}
-	id := strings.TrimSpace(stringFromAny(step["id"]))
-	status := fastPathNormalizePlanStepStatus(firstNonEmptyString(step["status"], fastPathPlanStepStatusValue(plan["step_status"], id)))
-	return status == "completed"
-}
-
 func fastPathPlanStepStatusValue(statuses interface{}, id string) string {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -2559,6 +2819,33 @@ func fastPathPlanStepIsRoute(step map[string]interface{}) bool {
 		skillID == skills.SkillConsoleNavigator ||
 		toolName == "navigate" ||
 		toolName == "route"
+}
+
+func fastPathPendingRouteStepHasPendingDependents(plan map[string]interface{}, routeStep map[string]interface{}) bool {
+	routeID := strings.TrimSpace(stringFromAny(routeStep["id"]))
+	if len(plan) == 0 || routeID == "" {
+		return false
+	}
+	stepStatus := evidenceMapFromAny(plan["step_status"])
+	for _, step := range mapSliceFromAny(plan["steps"]) {
+		if len(step) == 0 || strings.TrimSpace(stringFromAny(step["id"])) == routeID {
+			continue
+		}
+		waitFor := strings.TrimSpace(firstNonEmptyString(step["wait_for"], step["wait_for_step_id"]))
+		if waitFor != routeID {
+			continue
+		}
+		if !fastPathPlanStepBlocksCompletion(step) || fastPathPlanStepAction(step) == "" {
+			continue
+		}
+		stepID := strings.TrimSpace(stringFromAny(step["id"]))
+		status := fastPathNormalizePlanStepStatus(firstNonEmptyString(step["status"], stepStatus[stepID]))
+		if status == "completed" || status == "failed" {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func fastPathNormalizePlanStepStatus(status string) string {

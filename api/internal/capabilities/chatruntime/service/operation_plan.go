@@ -24,6 +24,7 @@ const (
 
 	operationPlanExpectedUpdatedFieldsKey  = "expected_updated_fields"
 	operationPlanExpectedBindingActionsKey = "expected_binding_actions"
+	operationPlanConfigGoalKey             = "config_goal"
 )
 
 func operationPlanFromTurnStrategy(taskID string, parts *chatRequestParts, strategy *AIChatTurnStrategy) map[string]interface{} {
@@ -71,6 +72,9 @@ func operationPlanFromTurnStrategy(taskID string, parts *chatRequestParts, strat
 			"on_repeated_failure":  "stop_and_report_actual_tool_result",
 		},
 		"completion_criteria": operationPlanCompletionCriteria(steps),
+	}
+	if goals := agentCapabilityGoalsToMaps(strategy.CapabilityGoals); len(goals) > 0 {
+		plan["capability_goals"] = mapsToInterfaceSlice(goals)
 	}
 	if structuredPlan := operationPlanStructuredPlanFromTurnStrategy(strategy); len(structuredPlan) > 0 {
 		plan["structured_plan"] = structuredPlan
@@ -172,7 +176,915 @@ func applyRecentOperationPlansFromBranch(parts *chatRequestParts, branch []*runt
 	if parts == nil || len(parts.RecentOperationPlans) > 0 {
 		return
 	}
-	parts.RecentOperationPlans = recentContinuationOperationPlans(branch, recentContinuationTurnLimit)
+	plans := recentContinuationOperationPlans(branch, recentContinuationTurnLimit)
+	if !recentOperationPlansContainIncompleteWork(plans) {
+		if plan := recentAgentCapabilityContinuationPlan(parts, branch); len(plan) > 0 {
+			plans = append([]map[string]interface{}{plan}, plans...)
+		}
+	}
+	parts.RecentOperationPlans = plans
+}
+
+func recentOperationPlansContainIncompleteWork(plans []map[string]interface{}) bool {
+	for _, plan := range plans {
+		if operationPlanHasIncompleteWork(plan) {
+			return true
+		}
+	}
+	return false
+}
+
+func recentAgentCapabilityContinuationPlan(parts *chatRequestParts, branch []*runtimemodel.Message) map[string]interface{} {
+	if parts == nil || !isContinuationIntent(parts.Query) || !skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) {
+		return nil
+	}
+	for i := len(branch) - 1; i >= 0; i-- {
+		message := branch[i]
+		if message == nil || !isUsableAssistantHistoryStatus(message.Status) {
+			continue
+		}
+		plan := mapFromOperationContext(metadataValue(message.Metadata, "operation_plan"))
+		if len(plan) == 0 || operationPlanHasIncompleteWork(plan) {
+			continue
+		}
+		if operationPlanIsTerminal(plan) && operationPlanContainsAgentMutationStep(plan) {
+			return nil
+		}
+		if operationPlanIsTerminalFailure(plan) {
+			continue
+		}
+		configResult := latestSuccessfulAgentToolResult(message.Metadata, "get_agent_config")
+		if configPlan := buildAgentConfigCapabilityContinuationPlan(parts, message, plan, configResult); len(configPlan) > 0 {
+			return configPlan
+		}
+		if bindingPlan := buildAgentResourceBindingCapabilityContinuationPlan(parts, message, plan, configResult); len(bindingPlan) > 0 {
+			return bindingPlan
+		}
+		if bindingPlan := buildAgentResourceBindingCandidateContinuationPlan(parts, message, plan); len(bindingPlan) > 0 {
+			return bindingPlan
+		}
+		if !operationPlanHasInspectableSkillBackedCapabilityGoal(plan) {
+			continue
+		}
+		candidateResult := latestSuccessfulAgentToolResult(message.Metadata, "list_agent_skill_candidates")
+		candidateID, candidateName := agentSkillCandidateFromResult(candidateResult)
+		if candidateID == "" {
+			continue
+		}
+		if stringSliceContainsFold(agentConfigEnabledSkillIDsFromResult(configResult), candidateID) {
+			continue
+		}
+		return buildAgentCapabilityBindingContinuationPlan(parts, message, plan, configResult, candidateID, candidateName)
+	}
+	return nil
+}
+
+func buildAgentConfigCapabilityContinuationPlan(parts *chatRequestParts, message *runtimemodel.Message, sourcePlan map[string]interface{}, configResult map[string]interface{}) map[string]interface{} {
+	goals, fields := operationPlanConfigCapabilityContinuationGoals(sourcePlan, configResult)
+	if len(fields) == 0 {
+		return nil
+	}
+	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
+	readStepID := operationPlanPostUpdateAgentConfigReadStepID()
+	agentID := strings.TrimSpace(firstNonEmptyString(configResult["agent_id"], configResult["id"]))
+	agentName := strings.TrimSpace(firstNonEmptyString(configResult["agent_name"], configResult["name"]))
+	if agentID == "" {
+		agentID = agentManagementCurrentAgentIDFromParts(parts)
+	}
+	configGoal := agentConfigCapabilityContinuationGoalText(goals, fields)
+	args := map[string]interface{}{
+		operationPlanExpectedUpdatedFieldsKey: fields,
+		operationPlanConfigGoalKey:            configGoal,
+	}
+	for _, field := range fields {
+		args[field] = "true"
+	}
+	if agentID != "" {
+		args["agent_id"] = agentID
+	}
+	updateStep := map[string]interface{}{
+		"id":                                  updateStepID,
+		"title":                               operationPlanToolStepTitle(skills.SkillAgentManagement, "update_agent_config"),
+		"status":                              operationPlanStepStatusPending,
+		"skill_id":                            skills.SkillAgentManagement,
+		"tool_name":                           "update_agent_config",
+		"required_evidence":                   operationPlanToolStepEvidence(skills.SkillAgentManagement, "update_agent_config"),
+		"arguments":                           args,
+		operationPlanExpectedUpdatedFieldsKey: fields,
+		operationPlanConfigGoalKey:            configGoal,
+		"asset_target":                        operationPlanAgentManagementAssetTarget("update_agent_config"),
+	}
+	readStep := map[string]interface{}{
+		"id":                                  readStepID,
+		"title":                               operationPlanToolStepTitle(skills.SkillAgentManagement, "get_agent_config"),
+		"status":                              operationPlanStepStatusPending,
+		"skill_id":                            skills.SkillAgentManagement,
+		"tool_name":                           "get_agent_config",
+		"wait_for":                            updateStepID,
+		"required_evidence":                   operationPlanToolStepEvidence(skills.SkillAgentManagement, "get_agent_config"),
+		"required_post_update_verification":   true,
+		"phase":                               "post_update_verification",
+		operationPlanExpectedUpdatedFieldsKey: fields,
+		"asset_target":                        map[string]interface{}{"effect": "read", "asset_type": "agent"},
+	}
+	if agentID != "" {
+		readStep["arguments"] = map[string]interface{}{"agent_id": agentID}
+	}
+	stepStatus := map[string]interface{}{
+		updateStepID: operationPlanStepStatusPending,
+		readStepID:   operationPlanStepStatusPending,
+	}
+	steps := []map[string]interface{}{updateStep, readStep}
+	assetTarget := map[string]interface{}{"effect": "update", "asset_type": "agent"}
+	if agentID != "" {
+		assetTarget["agent_id"] = agentID
+	}
+	if agentName != "" {
+		assetTarget["agent_name"] = agentName
+	}
+	taskID := "pending-agent-config-capability"
+	if message != nil && message.ID.String() != "" {
+		taskID += ":" + message.ID.String()
+	}
+	plan := map[string]interface{}{
+		"version":             operationPlanVersion,
+		"task_id":             taskID,
+		"original_user_goal":  firstNonEmptyString(sourcePlan["original_user_goal"], "Enable the previously inspected Agent configuration capability"),
+		"surface":             normalizeAIChatSurface(parts.Surface),
+		"intent":              "agent.update_config",
+		"status":              operationPlanStatusRunning,
+		"steps":               mapsToInterfaceSlice(steps),
+		"step_status":         stepStatus,
+		"asset_target":        assetTarget,
+		"target_resource":     assetTarget,
+		"risk_level":          "medium",
+		"approval":            "governed_tool",
+		"approval_required":   true,
+		"approval_actions":    []interface{}{updateStepID},
+		"success_criteria":    operationPlanConfigCapabilityContinuationCriteria(fields),
+		"pending_next_action": operationPlanPendingNextAction(steps),
+		"derived_from":        "recent_agent_config_capability_status",
+		"completion_criteria": operationPlanCompletionCriteria(steps),
+		"retry_policy": map[string]interface{}{
+			"max_retries_per_step": 2,
+			"on_repeated_failure":  "stop_and_report_actual_tool_result",
+		},
+	}
+	if len(goals) > 0 {
+		plan["capability_goals"] = mapsToInterfaceSlice(agentCapabilityGoalsToMaps(goals))
+	}
+	applyOperationPlanProgress(plan, steps, stepStatus, "", "")
+	return plan
+}
+
+func operationPlanConfigCapabilityContinuationGoals(sourcePlan map[string]interface{}, configResult map[string]interface{}) ([]AIChatAgentCapabilityGoal, []string) {
+	if len(sourcePlan) == 0 || len(configResult) == 0 {
+		return nil, nil
+	}
+	fields := []string{}
+	out := []AIChatAgentCapabilityGoal{}
+	for _, goal := range agentCapabilityGoalsFromOperationPlan(sourcePlan) {
+		if canonicalAgentCapabilityAction(goal.GoalAction) != agentCapabilityActionInspect ||
+			strings.EqualFold(goal.CapabilityID, agentCapabilitySkillBacked) ||
+			len(goal.RequiredBindingActions) > 0 {
+			continue
+		}
+		nextFields := []string{}
+		for _, field := range canonicalAgentCapabilityConfigFields(goal.RequiredConfigFields) {
+			if !operationPlanConfigCapabilityContinuationFieldCanEnable(field) {
+				continue
+			}
+			enabled, ok := agentConfigResultBooleanFieldState(configResult, field)
+			if !ok || enabled {
+				continue
+			}
+			nextFields = appendUniqueStrings(nextFields, field)
+			fields = appendUniqueStrings(fields, field)
+		}
+		if len(nextFields) == 0 {
+			continue
+		}
+		goal.GoalAction = agentCapabilityActionEnable
+		goal.RequiredConfigFields = nextFields
+		goal.VerifyBy = operationPlanConfigCapabilityContinuationVerifyBy(nextFields)
+		out = appendAgentCapabilityGoals(out, goal)
+	}
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	return out, fields
+}
+
+func operationPlanConfigCapabilityContinuationFieldCanEnable(field string) bool {
+	descriptor, ok := agentManagementConfigOnlyCapabilityDescriptorForField(field)
+	return ok && descriptor.ContinuationEnable
+}
+
+func agentConfigResultBooleanFieldEnabled(result map[string]interface{}, field string) bool {
+	enabled, ok := agentConfigResultBooleanFieldState(result, field)
+	return ok && enabled
+}
+
+func agentConfigResultBooleanFieldState(result map[string]interface{}, field string) (bool, bool) {
+	value, ok := agentConfigResultFieldValue(result, field)
+	if !ok {
+		return false, false
+	}
+	return operationPlanBoolValue(value), true
+}
+
+func agentConfigResultFieldValue(result map[string]interface{}, field string) (interface{}, bool) {
+	field = operationPlanAgentConfigCanonicalField(field)
+	if field == "" || len(result) == 0 {
+		return nil, false
+	}
+	if value, ok := result[field]; ok {
+		return value, true
+	}
+	config := mapFromOperationContext(result["config"])
+	if value, ok := config[field]; ok {
+		return value, true
+	}
+	return nil, false
+}
+
+func agentConfigCapabilityContinuationGoalText(goals []AIChatAgentCapabilityGoal, fields []string) string {
+	names := []string{}
+	for _, goal := range goals {
+		if name := strings.TrimSpace(firstNonEmptyString(goal.DisplayName, goal.CapabilityID)); name != "" {
+			names = appendUniqueStrings(names, name)
+		}
+	}
+	if len(names) == 0 {
+		names = appendUniqueStrings(names, fields...)
+	}
+	return "Enable previously inspected Agent capability by setting " + strings.Join(fields, ", ") + " to true: " + strings.Join(names, ", ")
+}
+
+func operationPlanConfigCapabilityContinuationCriteria(fields []string) []interface{} {
+	criteria := []interface{}{}
+	for _, field := range fields {
+		field = operationPlanAgentConfigCanonicalField(field)
+		if field == "" {
+			continue
+		}
+		criteria = append(criteria, "set Agent config "+field+" to true")
+		criteria = append(criteria, "verify get_agent_config."+field+" is true before the final answer")
+	}
+	return criteria
+}
+
+func operationPlanConfigCapabilityContinuationVerifyBy(fields []string) []string {
+	verifyBy := []string{}
+	for _, field := range fields {
+		field = operationPlanAgentConfigCanonicalField(field)
+		if field != "" {
+			verifyBy = appendUniqueStrings(verifyBy, "get_agent_config."+field+" is true")
+		}
+	}
+	return verifyBy
+}
+
+func buildAgentResourceBindingCapabilityContinuationPlan(parts *chatRequestParts, message *runtimemodel.Message, sourcePlan map[string]interface{}, configResult map[string]interface{}) map[string]interface{} {
+	fields := operationPlanResourceBindingContinuationFields(sourcePlan, configResult)
+	if len(fields) == 0 {
+		return nil
+	}
+	agentID := strings.TrimSpace(firstNonEmptyString(configResult["agent_id"], configResult["id"]))
+	agentName := strings.TrimSpace(firstNonEmptyString(configResult["agent_name"], configResult["name"]))
+	return buildAgentResourceBindingContinuationPlanForFields(
+		parts,
+		message,
+		sourcePlan,
+		fields,
+		agentID,
+		agentName,
+		"recent_agent_binding_status",
+		"Bind resources for the previously inspected empty Agent bindings",
+		"select one current-workspace candidate for each missing binding field; skip unavailable resource types and report them truthfully",
+		true,
+	)
+}
+
+func buildAgentResourceBindingCandidateContinuationPlan(parts *chatRequestParts, message *runtimemodel.Message, sourcePlan map[string]interface{}) map[string]interface{} {
+	if message == nil {
+		return nil
+	}
+	fields := operationPlanResourceBindingCandidateContinuationFields(sourcePlan, message.Metadata)
+	if len(fields) == 0 {
+		return nil
+	}
+	return buildAgentResourceBindingContinuationPlanForFields(
+		parts,
+		message,
+		sourcePlan,
+		fields,
+		agentManagementCurrentAgentIDFromParts(parts),
+		"",
+		"recent_agent_binding_candidates",
+		"Bind candidates from the previously inspected Agent binding resources",
+		"reuse successful candidate results already available in recent execution context; choose at most one current-workspace candidate for each requested binding field and report unavailable resource types truthfully",
+		false,
+	)
+}
+
+func buildAgentResourceBindingContinuationPlanForFields(parts *chatRequestParts, message *runtimemodel.Message, sourcePlan map[string]interface{}, fields []string, agentID string, agentName string, derivedFrom string, fallbackGoal string, candidateSelectionPolicy string, includeCandidateSteps bool) map[string]interface{} {
+	fields = canonicalAgentCapabilityConfigFields(fields)
+	if len(fields) == 0 {
+		return nil
+	}
+	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
+	readStepID := operationPlanPostUpdateAgentConfigReadStepID()
+	if agentID == "" {
+		agentID = agentManagementCurrentAgentIDFromParts(parts)
+	}
+	expectedActions := map[string]interface{}{}
+	for _, field := range fields {
+		expectedActions[field] = "bind"
+	}
+	configGoal := operationPlanResourceBindingContinuationGoalText(fields)
+	steps := []map[string]interface{}{}
+	if includeCandidateSteps {
+		steps = operationPlanResourceBindingCandidateSteps(fields, agentID)
+	}
+	updateArgs := map[string]interface{}{
+		operationPlanExpectedBindingActionsKey: expectedActions,
+		operationPlanConfigGoalKey:             configGoal,
+		"candidate_selection_policy":           strings.TrimSpace(candidateSelectionPolicy),
+	}
+	if updateArgs["candidate_selection_policy"] == "" {
+		delete(updateArgs, "candidate_selection_policy")
+	}
+	if agentID != "" {
+		updateArgs["agent_id"] = agentID
+	}
+	updateStep := map[string]interface{}{
+		"id":                                   updateStepID,
+		"title":                                operationPlanToolStepTitle(skills.SkillAgentManagement, "update_agent_config"),
+		"status":                               operationPlanStepStatusPending,
+		"skill_id":                             skills.SkillAgentManagement,
+		"tool_name":                            "update_agent_config",
+		"required_evidence":                    operationPlanToolStepEvidence(skills.SkillAgentManagement, "update_agent_config"),
+		"arguments":                            updateArgs,
+		operationPlanExpectedBindingActionsKey: expectedActions,
+		operationPlanConfigGoalKey:             configGoal,
+		"asset_target":                         operationPlanAgentManagementAssetTarget("update_agent_config"),
+	}
+	if len(steps) > 0 {
+		if lastID := strings.TrimSpace(stringFromAny(steps[len(steps)-1]["id"])); lastID != "" {
+			updateStep["wait_for"] = lastID
+		}
+	}
+	readStep := map[string]interface{}{
+		"id":                                   readStepID,
+		"title":                                operationPlanToolStepTitle(skills.SkillAgentManagement, "get_agent_config"),
+		"status":                               operationPlanStepStatusPending,
+		"skill_id":                             skills.SkillAgentManagement,
+		"tool_name":                            "get_agent_config",
+		"wait_for":                             updateStepID,
+		"required_evidence":                    operationPlanToolStepEvidence(skills.SkillAgentManagement, "get_agent_config"),
+		"required_post_update_verification":    true,
+		"phase":                                "post_update_verification",
+		operationPlanExpectedBindingActionsKey: expectedActions,
+		"asset_target":                         map[string]interface{}{"effect": "read", "asset_type": "agent"},
+	}
+	if agentID != "" {
+		readStep["arguments"] = map[string]interface{}{"agent_id": agentID}
+	}
+	steps = append(steps, updateStep, readStep)
+	stepStatus := map[string]interface{}{}
+	for _, step := range steps {
+		if id := strings.TrimSpace(stringFromAny(step["id"])); id != "" {
+			stepStatus[id] = operationPlanStepStatusPending
+		}
+	}
+	assetTarget := map[string]interface{}{"effect": "update", "asset_type": "agent"}
+	if agentID != "" {
+		assetTarget["agent_id"] = agentID
+	}
+	if agentName != "" {
+		assetTarget["agent_name"] = agentName
+	}
+	taskID := "pending-agent-resource-bindings"
+	if message != nil && message.ID.String() != "" {
+		taskID += ":" + message.ID.String()
+	}
+	derivedFrom = strings.TrimSpace(derivedFrom)
+	if derivedFrom == "" {
+		derivedFrom = "recent_agent_binding_status"
+	}
+	fallbackGoal = strings.TrimSpace(fallbackGoal)
+	if fallbackGoal == "" {
+		fallbackGoal = "Bind resources for the previously inspected Agent bindings"
+	}
+	plan := map[string]interface{}{
+		"version":             operationPlanVersion,
+		"task_id":             taskID,
+		"original_user_goal":  firstNonEmptyString(sourcePlan["original_user_goal"], fallbackGoal),
+		"surface":             normalizeAIChatSurface(parts.Surface),
+		"intent":              "agent.update_bindings",
+		"status":              operationPlanStatusRunning,
+		"steps":               mapsToInterfaceSlice(steps),
+		"step_status":         stepStatus,
+		"asset_target":        assetTarget,
+		"target_resource":     assetTarget,
+		"risk_level":          "medium",
+		"approval":            "governed_tool",
+		"approval_required":   true,
+		"approval_actions":    []interface{}{updateStepID},
+		"success_criteria":    operationPlanResourceBindingContinuationCriteria(fields),
+		"pending_next_action": operationPlanPendingNextAction(steps),
+		"derived_from":        derivedFrom,
+		"completion_criteria": operationPlanCompletionCriteria(steps),
+		"retry_policy": map[string]interface{}{
+			"max_retries_per_step": 2,
+			"on_repeated_failure":  "stop_and_report_actual_tool_result",
+		},
+	}
+	if goals := operationPlanAgentResourceBindingContinuationGoals(fields, sourcePlan); len(goals) > 0 {
+		plan["capability_goals"] = mapsToInterfaceSlice(agentCapabilityGoalsToMaps(goals))
+	}
+	applyOperationPlanProgress(plan, steps, stepStatus, "", "")
+	return plan
+}
+
+func operationPlanResourceBindingCandidateContinuationFields(sourcePlan map[string]interface{}, metadata map[string]interface{}) []string {
+	if len(sourcePlan) == 0 || len(metadata) == 0 {
+		return nil
+	}
+	fields := []string{}
+	for _, goal := range agentCapabilityGoalsFromOperationPlan(sourcePlan) {
+		if canonicalAgentCapabilityAction(goal.GoalAction) != agentCapabilityActionInspect {
+			continue
+		}
+		field := operationPlanAgentResourceBindingFieldForCapability(goal.CapabilityID)
+		if field == "" || !operationPlanResourceBindingCandidateEvidenceAvailable(metadata, field) {
+			continue
+		}
+		fields = appendUniqueStrings(fields, field)
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+	return fields
+}
+
+func operationPlanResourceBindingCandidateEvidenceAvailable(metadata map[string]interface{}, field string) bool {
+	for _, toolName := range operationPlanResourceBindingCandidateToolsForField(field) {
+		result := latestSuccessfulAgentToolResult(metadata, toolName)
+		if operationPlanAgentCandidateResultHasItems(result) {
+			return true
+		}
+	}
+	return false
+}
+
+func operationPlanResourceBindingCandidateToolsForField(field string) []string {
+	return agentManagementBindingCapabilityCandidateTools(field)
+}
+
+func operationPlanAgentCandidateResultHasItems(result map[string]interface{}) bool {
+	if len(result) == 0 {
+		return false
+	}
+	if firstPositiveIntValue(result["count"], result["candidate_count"], result["total"]) > 0 {
+		return true
+	}
+	for _, key := range []string{
+		"candidate_samples",
+		"candidates",
+		"items",
+		"skills",
+		"knowledge_bases",
+		"databases",
+		"tables",
+		"binding_candidates",
+		"workflows",
+	} {
+		if len(mapSliceFromAny(result[key])) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func operationPlanResourceBindingContinuationFields(sourcePlan map[string]interface{}, configResult map[string]interface{}) []string {
+	if len(sourcePlan) == 0 || len(configResult) == 0 {
+		return nil
+	}
+	fields := []string{}
+	for _, goal := range agentCapabilityGoalsFromOperationPlan(sourcePlan) {
+		if canonicalAgentCapabilityAction(goal.GoalAction) != agentCapabilityActionInspect {
+			continue
+		}
+		capabilityField := operationPlanAgentResourceBindingFieldForCapability(goal.CapabilityID)
+		if capabilityField == "" {
+			continue
+		}
+		goalFields := canonicalAgentCapabilityConfigFields(goal.RequiredConfigFields)
+		if len(goalFields) == 0 {
+			goalFields = []string{capabilityField}
+		}
+		for _, field := range goalFields {
+			field = operationPlanAgentConfigCanonicalField(field)
+			if field == "" || field != capabilityField {
+				continue
+			}
+			count, ok := agentConfigResultCollectionFieldCount(configResult, field)
+			if !ok || count != 0 {
+				continue
+			}
+			fields = appendUniqueStrings(fields, field)
+		}
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+	return fields
+}
+
+func operationPlanAgentResourceBindingFieldForCapability(capabilityID string) string {
+	descriptor, ok := agentManagementBindingCapabilityDescriptorForCapability(capabilityID)
+	if !ok {
+		return ""
+	}
+	return operationPlanAgentConfigCanonicalField(descriptor.field)
+}
+
+func agentConfigResultCollectionFieldCount(result map[string]interface{}, field string) (int, bool) {
+	field = operationPlanAgentConfigCanonicalField(field)
+	if field == "" || len(result) == 0 {
+		return 0, false
+	}
+	if value, ok := agentConfigResultFieldValue(result, field); ok {
+		if count, ok := operationPlanCollectionLen(value); ok {
+			return count, true
+		}
+	}
+	countKey := operationPlanAgentBindingCountKey(field)
+	if countKey == "" {
+		return 0, false
+	}
+	if value, ok := result[countKey]; ok {
+		return intValueFromAny(value), true
+	}
+	if config := mapFromOperationContext(result["config"]); len(config) > 0 {
+		if value, ok := config[countKey]; ok {
+			return intValueFromAny(value), true
+		}
+	}
+	return 0, false
+}
+
+func operationPlanAgentBindingCountKey(field string) string {
+	switch operationPlanAgentConfigCanonicalField(field) {
+	case "knowledge_dataset_ids":
+		return "knowledge_dataset_count"
+	case "database_bindings":
+		return "database_binding_count"
+	case "workflow_bindings":
+		return "workflow_binding_count"
+	default:
+		return ""
+	}
+}
+
+func operationPlanResourceBindingCandidateSteps(fields []string, agentID string) []map[string]interface{} {
+	steps := []map[string]interface{}{}
+	add := func(toolName string) {
+		toolName = strings.TrimSpace(toolName)
+		if toolName == "" {
+			return
+		}
+		stepID := operationPlanToolStepID(skills.SkillAgentManagement, toolName)
+		for _, existing := range steps {
+			if strings.EqualFold(strings.TrimSpace(stringFromAny(existing["id"])), stepID) {
+				return
+			}
+		}
+		step := map[string]interface{}{
+			"id":                stepID,
+			"title":             operationPlanToolStepTitle(skills.SkillAgentManagement, toolName),
+			"status":            operationPlanStepStatusPending,
+			"skill_id":          skills.SkillAgentManagement,
+			"tool_name":         toolName,
+			"required_evidence": operationPlanToolStepEvidence(skills.SkillAgentManagement, toolName),
+			"asset_target":      operationPlanAgentManagementAssetTarget(toolName),
+		}
+		if agentID != "" {
+			step["arguments"] = map[string]interface{}{"agent_id": agentID}
+		}
+		steps = append(steps, step)
+	}
+	for _, field := range fields {
+		for _, toolName := range agentManagementBindingCapabilityCandidateTools(field) {
+			add(toolName)
+		}
+	}
+	return steps
+}
+
+func operationPlanResourceBindingContinuationGoalText(fields []string) string {
+	names := []string{}
+	for _, field := range fields {
+		names = appendUniqueStrings(names, operationPlanAgentResourceBindingDisplayName(field))
+	}
+	if len(names) == 0 {
+		names = appendUniqueStrings(names, fields...)
+	}
+	return "Bind current-workspace candidates for previously inspected empty Agent bindings: " + strings.Join(names, ", ")
+}
+
+func operationPlanAgentResourceBindingDisplayName(field string) string {
+	descriptor, ok := agentManagementBindingCapabilityDescriptorForField(field)
+	if !ok {
+		return field
+	}
+	if strings.TrimSpace(descriptor.resourceName) != "" {
+		return descriptor.resourceName
+	}
+	return descriptor.displayName
+}
+
+func operationPlanResourceBindingContinuationCriteria(fields []string) []interface{} {
+	criteria := []interface{}{}
+	for _, field := range fields {
+		name := operationPlanAgentResourceBindingDisplayName(field)
+		criteria = append(criteria, "resolve current-workspace candidates for "+name)
+		criteria = append(criteria, "bind one selected "+name+" candidate when available")
+		criteria = append(criteria, "verify get_agent_config."+operationPlanAgentConfigCanonicalField(field)+" reflects the binding result before the final answer")
+	}
+	return criteria
+}
+
+func operationPlanAgentResourceBindingContinuationGoals(fields []string, sourcePlan map[string]interface{}) []AIChatAgentCapabilityGoal {
+	if len(fields) == 0 {
+		return nil
+	}
+	userIntent := strings.TrimSpace(stringFromAny(sourcePlan["original_user_goal"]))
+	goals := []AIChatAgentCapabilityGoal{}
+	for _, field := range fields {
+		field = operationPlanAgentConfigCanonicalField(field)
+		capabilityID := operationPlanAgentResourceBindingCapabilityForField(field)
+		if capabilityID == "" {
+			continue
+		}
+		goal := agentCapabilityGoalWithDefaults(AIChatAgentCapabilityGoal{
+			CapabilityID:         capabilityID,
+			GoalAction:           agentCapabilityActionBind,
+			DisplayName:          operationPlanAgentResourceBindingDisplayName(field),
+			UserIntent:           truncateRunes(userIntent, 240),
+			RequiredConfigFields: []string{field},
+			RequiredBindingActions: map[string]string{
+				field: "bind",
+			},
+			VerifyBy: []string{"get_agent_config." + field + " reflects the selected binding result"},
+		})
+		goals = appendAgentCapabilityGoals(goals, goal)
+	}
+	return goals
+}
+
+func operationPlanAgentResourceBindingCapabilityForField(field string) string {
+	descriptor, ok := agentManagementBindingCapabilityDescriptorForField(field)
+	if !ok {
+		return ""
+	}
+	return descriptor.capabilityID
+}
+
+func operationPlanIsTerminalFailure(plan map[string]interface{}) bool {
+	switch strings.ToLower(strings.TrimSpace(stringFromAny(plan["status"]))) {
+	case operationPlanStatusFailed, "error", "rejected", "blocked":
+		return true
+	default:
+		return false
+	}
+}
+
+func operationPlanHasInspectableSkillBackedCapabilityGoal(plan map[string]interface{}) bool {
+	if len(plan) == 0 {
+		return false
+	}
+	if operationPlanHasSkillBackedCapabilityGoalWithAction(plan, agentCapabilityActionInspect) {
+		return true
+	}
+	if !strings.EqualFold(strings.TrimSpace(stringFromAny(plan["intent"])), "inspect_agent_config") {
+		return false
+	}
+	return operationPlanHasSkillBackedCapabilityGoalWithAction(plan, "")
+}
+
+func operationPlanHasSkillBackedCapabilityGoalWithAction(plan map[string]interface{}, action string) bool {
+	action = canonicalAgentCapabilityAction(action)
+	for _, goal := range mapSliceFromAny(plan["capability_goals"]) {
+		if operationPlanSkillBackedCapabilityGoalMatchesAction(goal, action) {
+			return true
+		}
+	}
+	structured := mapFromOperationContext(plan["structured_plan"])
+	for _, goal := range mapSliceFromAny(structured["capability_goals"]) {
+		if operationPlanSkillBackedCapabilityGoalMatchesAction(goal, action) {
+			return true
+		}
+	}
+	return false
+}
+
+func operationPlanSkillBackedCapabilityGoalMatchesAction(goal map[string]interface{}, action string) bool {
+	if !strings.EqualFold(strings.TrimSpace(stringFromAny(goal["capability_id"])), agentCapabilitySkillBacked) {
+		return false
+	}
+	if action == "" {
+		return true
+	}
+	return canonicalAgentCapabilityAction(stringFromAny(goal["goal_action"])) == action
+}
+
+func latestSuccessfulAgentToolResult(metadata map[string]interface{}, toolName string) map[string]interface{} {
+	toolName = strings.TrimSpace(toolName)
+	if toolName == "" {
+		return nil
+	}
+	invocations := skillInvocationMaps(metadata)
+	for i := len(invocations) - 1; i >= 0; i-- {
+		invocation := invocations[i]
+		if strings.TrimSpace(stringFromAny(invocation["kind"])) != "tool_call" ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["status"])), "success") ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["skill_id"])), skills.SkillAgentManagement) ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["tool_name"])), toolName) {
+			continue
+		}
+		return mapFromOperationContext(invocation["result"])
+	}
+	return nil
+}
+
+func agentSkillCandidateFromResult(result map[string]interface{}) (string, string) {
+	for _, key := range []string{"candidate_samples", "candidates", "items", "skills"} {
+		for _, item := range mapSliceFromAny(result[key]) {
+			id := strings.TrimSpace(firstNonEmptyString(item["id"], item["skill_id"]))
+			name := strings.TrimSpace(firstNonEmptyString(item["name"], item["title"], id))
+			if id != "" {
+				return id, name
+			}
+		}
+	}
+	id := strings.TrimSpace(firstNonEmptyString(result["id"], result["skill_id"]))
+	name := strings.TrimSpace(firstNonEmptyString(result["name"], result["title"], id))
+	return id, name
+}
+
+func agentConfigEnabledSkillIDsFromResult(result map[string]interface{}) []string {
+	values := []string{}
+	addFrom := func(value interface{}) {
+		for _, item := range stringSliceFromAny(value) {
+			values = appendUniqueStrings(values, item)
+		}
+		for _, item := range mapSliceFromAny(value) {
+			if id := strings.TrimSpace(firstNonEmptyString(item["id"], item["skill_id"])); id != "" {
+				values = appendUniqueStrings(values, id)
+			}
+		}
+	}
+	addFrom(result["enabled_skill_ids"])
+	addFrom(result["enabled_skills"])
+	if config := mapFromOperationContext(result["config"]); len(config) > 0 {
+		addFrom(config["enabled_skill_ids"])
+		addFrom(config["enabled_skills"])
+	}
+	return values
+}
+
+func buildAgentCapabilityBindingContinuationPlan(parts *chatRequestParts, message *runtimemodel.Message, sourcePlan map[string]interface{}, configResult map[string]interface{}, candidateID string, candidateName string) map[string]interface{} {
+	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
+	readStepID := operationPlanPostUpdateAgentConfigReadStepID()
+	agentID := strings.TrimSpace(firstNonEmptyString(configResult["agent_id"], configResult["id"]))
+	agentName := strings.TrimSpace(firstNonEmptyString(configResult["agent_name"], configResult["name"]))
+	if agentID == "" {
+		agentID = agentManagementCurrentAgentIDFromParts(parts)
+	}
+	if candidateName == "" {
+		candidateName = candidateID
+	}
+	configGoal := strings.TrimSpace("Bind Skill " + candidateName + " (" + candidateID + ") to satisfy the previously inspected Agent capability.")
+	args := map[string]interface{}{
+		operationPlanExpectedUpdatedFieldsKey:  []interface{}{"enabled_skill_ids"},
+		operationPlanExpectedBindingActionsKey: map[string]interface{}{"enabled_skill_ids": "bind"},
+		operationPlanConfigGoalKey:             configGoal,
+		"candidate_skill_id":                   candidateID,
+	}
+	if agentID != "" {
+		args["agent_id"] = agentID
+	}
+	updateStep := map[string]interface{}{
+		"id":                                   updateStepID,
+		"title":                                operationPlanToolStepTitle(skills.SkillAgentManagement, "update_agent_config"),
+		"status":                               operationPlanStepStatusPending,
+		"skill_id":                             skills.SkillAgentManagement,
+		"tool_name":                            "update_agent_config",
+		"required_evidence":                    operationPlanToolStepEvidence(skills.SkillAgentManagement, "update_agent_config"),
+		"arguments":                            args,
+		operationPlanExpectedUpdatedFieldsKey:  []interface{}{"enabled_skill_ids"},
+		operationPlanExpectedBindingActionsKey: map[string]interface{}{"enabled_skill_ids": "bind"},
+		operationPlanConfigGoalKey:             configGoal,
+		"asset_target":                         operationPlanAgentManagementAssetTarget("update_agent_config"),
+	}
+	readStep := map[string]interface{}{
+		"id":                                   readStepID,
+		"title":                                operationPlanToolStepTitle(skills.SkillAgentManagement, "get_agent_config"),
+		"status":                               operationPlanStepStatusPending,
+		"skill_id":                             skills.SkillAgentManagement,
+		"tool_name":                            "get_agent_config",
+		"wait_for":                             updateStepID,
+		"required_evidence":                    operationPlanToolStepEvidence(skills.SkillAgentManagement, "get_agent_config"),
+		"required_post_update_verification":    true,
+		"phase":                                "post_update_verification",
+		operationPlanExpectedUpdatedFieldsKey:  []interface{}{"enabled_skill_ids"},
+		operationPlanExpectedBindingActionsKey: map[string]interface{}{"enabled_skill_ids": "bind"},
+		"asset_target":                         map[string]interface{}{"effect": "read", "asset_type": "agent"},
+	}
+	if agentID != "" {
+		readStep["arguments"] = map[string]interface{}{"agent_id": agentID}
+	}
+	stepStatus := map[string]interface{}{
+		updateStepID: operationPlanStepStatusPending,
+		readStepID:   operationPlanStepStatusPending,
+	}
+	steps := []map[string]interface{}{updateStep, readStep}
+	assetTarget := map[string]interface{}{"effect": "update", "asset_type": "agent"}
+	if agentID != "" {
+		assetTarget["agent_id"] = agentID
+	}
+	if agentName != "" {
+		assetTarget["agent_name"] = agentName
+	}
+	taskID := "pending-agent-capability"
+	if message != nil && message.ID.String() != "" {
+		taskID += ":" + message.ID.String()
+	}
+	plan := map[string]interface{}{
+		"version":             operationPlanVersion,
+		"task_id":             taskID,
+		"original_user_goal":  firstNonEmptyString(sourcePlan["original_user_goal"], "Enable the previously inspected Agent capability"),
+		"surface":             normalizeAIChatSurface(parts.Surface),
+		"intent":              "agent.update_bindings",
+		"status":              operationPlanStatusRunning,
+		"steps":               mapsToInterfaceSlice(steps),
+		"step_status":         stepStatus,
+		"asset_target":        assetTarget,
+		"target_resource":     assetTarget,
+		"risk_level":          "medium",
+		"approval":            "governed_tool",
+		"approval_required":   true,
+		"approval_actions":    []interface{}{updateStepID},
+		"success_criteria":    []interface{}{"bind the selected candidate Skill to enabled_skill_ids", "verify the updated Agent config before the final answer"},
+		"pending_next_action": operationPlanPendingNextAction(steps),
+		"derived_from":        "recent_agent_capability_status",
+		"completion_criteria": operationPlanCompletionCriteria(steps),
+		"retry_policy": map[string]interface{}{
+			"max_retries_per_step": 2,
+			"on_repeated_failure":  "stop_and_report_actual_tool_result",
+		},
+	}
+	if goals := operationPlanAgentCapabilityBindingContinuationGoals(sourcePlan); len(goals) > 0 {
+		plan["capability_goals"] = mapsToInterfaceSlice(goals)
+	}
+	applyOperationPlanProgress(plan, steps, stepStatus, "", "")
+	return plan
+}
+
+func operationPlanAgentCapabilityBindingContinuationGoals(sourcePlan map[string]interface{}) []map[string]interface{} {
+	goals := mapSliceFromAny(sourcePlan["capability_goals"])
+	if len(goals) == 0 {
+		if structured := mapFromOperationContext(sourcePlan["structured_plan"]); len(structured) > 0 {
+			goals = mapSliceFromAny(structured["capability_goals"])
+		}
+	}
+	if len(goals) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, len(goals))
+	for _, goal := range goals {
+		if len(goal) == 0 {
+			continue
+		}
+		next := map[string]interface{}{}
+		for key, value := range goal {
+			next[key] = value
+		}
+		if strings.EqualFold(strings.TrimSpace(stringFromAny(next["capability_id"])), agentCapabilitySkillBacked) {
+			next["goal_action"] = agentCapabilityActionEnable
+			next["required_config_fields"] = []interface{}{"enabled_skill_ids"}
+			next["required_binding_actions"] = map[string]interface{}{"enabled_skill_ids": "bind"}
+			next["verify_by"] = []interface{}{"get_agent_config.enabled_skill_ids contains the selected candidate skill id"}
+		}
+		out = append(out, next)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func recentOperationPlanOriginalGoal(parts *chatRequestParts) string {
@@ -193,6 +1105,23 @@ func firstIncompleteRecentOperationPlan(parts *chatRequestParts) map[string]inte
 		}
 	}
 	return nil
+}
+
+func recentOperationPlanHasPendingSkill(parts *chatRequestParts, skillID string) bool {
+	skillID = strings.TrimSpace(skillID)
+	if parts == nil || skillID == "" {
+		return false
+	}
+	plan := firstIncompleteRecentOperationPlan(parts)
+	if len(plan) == 0 {
+		return false
+	}
+	for _, step := range operationPlanPendingExecutableStepsForToolExposure(plan, 8) {
+		if strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skillID) {
+			return true
+		}
+	}
+	return false
 }
 
 func applyRecentOperationPlanToContinuationStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
@@ -220,7 +1149,11 @@ func applyRecentOperationPlanToContinuationStrategy(parts *chatRequestParts, str
 	if pending := strings.TrimSpace(stringFromAny(plan["pending_next_action"])); pending != "" {
 		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria, "complete pending plan step: "+pending)
 	}
-	for _, step := range operationPlanPendingExecutableSteps(plan, 3) {
+	if goals := agentCapabilityGoalsFromOperationPlan(plan); len(goals) > 0 {
+		strategy.CapabilityGoals = appendAgentCapabilityGoals(strategy.CapabilityGoals, goals...)
+		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria, agentCapabilityGoalSuccessCriteria(goals)...)
+	}
+	for _, step := range operationPlanPendingExecutableSteps(plan, 6) {
 		skillID := strings.TrimSpace(stringFromAny(step["skill_id"]))
 		toolName := strings.TrimSpace(stringFromAny(step["tool_name"]))
 		if skillID == "" || !skillIDEnabled(parts.SkillIDs, skillID) {
@@ -228,14 +1161,14 @@ func applyRecentOperationPlanToContinuationStrategy(parts *chatRequestParts, str
 		}
 		strategy.PrimarySkills = appendUniqueStrings(strategy.PrimarySkills, skillID)
 		if toolName != "" {
-			args := map[string]string(nil)
+			args := operationPlanStepArgumentsForTurnStrategy(step)
 			if operationPlanStepIsRoute(step) {
 				if href := operationPlanStepTargetPage(step); href != "" {
 					strategy.TargetPage = href
-					args = map[string]string{"href": href}
+					args = mergeTurnStrategyToolArguments(args, map[string]string{"href": href})
 				}
 			}
-			strategy = appendPlannedTool(strategy, skillID, toolName, args)
+			strategy = appendPlannedToolFromOperationPlanStep(strategy, plan, step, args)
 		}
 		if operationPlanStepIsRoute(step) {
 			strategy.RouteRequired = true
@@ -243,6 +1176,177 @@ func applyRecentOperationPlanToContinuationStrategy(parts *chatRequestParts, str
 		}
 	}
 	return strategy
+}
+
+func appendPlannedToolFromOperationPlanStep(strategy *AIChatTurnStrategy, plan map[string]interface{}, step map[string]interface{}, args map[string]string) *AIChatTurnStrategy {
+	if strategy == nil || len(step) == 0 {
+		return strategy
+	}
+	skillID := strings.TrimSpace(stringFromAny(step["skill_id"]))
+	toolName := strings.TrimSpace(stringFromAny(step["tool_name"]))
+	if skillID == "" || toolName == "" {
+		return strategy
+	}
+	stepID := strings.TrimSpace(stringFromAny(step["id"]))
+	waitForStepID := operationPlanPendingWaitForStepID(plan, step)
+	strategy = appendPlannedToolWithStep(strategy, skillID, toolName, args, stepID, waitForStepID)
+	toolStepID := stepID
+	if toolStepID == "" {
+		toolStepID = operationPlanToolStepID(skillID, toolName)
+	}
+	for idx, tool := range strategy.PlannedTools {
+		if aiChatTurnStrategyToolStepID(tool) != toolStepID {
+			continue
+		}
+		if binding := cleanStringAnyStringMap(mapFromOperationContext(step["args_binding"])); len(binding) > 0 {
+			strategy.PlannedTools[idx].ArgsBinding = mergeTurnStrategyToolArguments(strategy.PlannedTools[idx].ArgsBinding, binding)
+		}
+		if outputAlias := strings.TrimSpace(stringFromAny(step["output_alias"])); outputAlias != "" {
+			strategy.PlannedTools[idx].OutputAlias = outputAlias
+		}
+		return strategy
+	}
+	return strategy
+}
+
+func operationPlanPendingWaitForStepID(plan map[string]interface{}, step map[string]interface{}) string {
+	waitForIDs := operationPlanStepWaitForIDs(step)
+	if len(waitForIDs) == 0 || len(plan) == 0 {
+		return ""
+	}
+	stepStatus := mapFromOperationContext(plan["step_status"])
+	for _, waitFor := range waitForIDs {
+		for _, candidate := range mapSliceFromAny(plan["steps"]) {
+			if strings.TrimSpace(stringFromAny(candidate["id"])) != waitFor {
+				continue
+			}
+			status := operationPlanStepResolvedStatus(candidate, stepStatus)
+			if status == operationPlanStepStatusCompleted || status == operationPlanStepStatusFailed {
+				break
+			}
+			if !operationPlanStepBlocksCompletion(candidate) {
+				break
+			}
+			return waitFor
+		}
+	}
+	return ""
+}
+
+func operationPlanStepWaitForIDs(step map[string]interface{}) []string {
+	if len(step) == 0 {
+		return nil
+	}
+	out := []string{}
+	if waitFor := strings.TrimSpace(stringFromAny(step["wait_for"])); waitFor != "" && !strings.EqualFold(waitFor, "continue") {
+		out = append(out, waitFor)
+	}
+	for _, waitFor := range stringSliceFromAny(step["wait_for_all"]) {
+		waitFor = strings.TrimSpace(waitFor)
+		if waitFor == "" || strings.EqualFold(waitFor, "continue") || stringSliceContainsFold(out, waitFor) {
+			continue
+		}
+		out = append(out, waitFor)
+	}
+	return out
+}
+
+func operationPlanAgentConfigUpdateWaitForAllStepIDs(step map[string]interface{}, previousSteps []map[string]interface{}) []string {
+	if len(step) == 0 ||
+		!strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skills.SkillAgentManagement) ||
+		!strings.EqualFold(strings.TrimSpace(stringFromAny(step["tool_name"])), "update_agent_config") {
+		return nil
+	}
+	required := operationPlanAgentConfigUpdateRequiredReadTools(step)
+	if len(required) == 0 {
+		return nil
+	}
+	existing := map[string]struct{}{}
+	if waitFor := strings.TrimSpace(stringFromAny(step["wait_for"])); waitFor != "" {
+		existing[waitFor] = struct{}{}
+	}
+	deps := []string{}
+	for _, previous := range previousSteps {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(previous["skill_id"])), skills.SkillAgentManagement) {
+			continue
+		}
+		toolName := strings.TrimSpace(stringFromAny(previous["tool_name"]))
+		if _, ok := required[toolName]; !ok {
+			continue
+		}
+		id := strings.TrimSpace(stringFromAny(previous["id"]))
+		if id == "" {
+			id = operationPlanToolStepID(skills.SkillAgentManagement, toolName)
+		}
+		if _, ok := existing[id]; ok || stringSliceContainsFold(deps, id) {
+			continue
+		}
+		deps = append(deps, id)
+	}
+	return deps
+}
+
+func operationPlanAgentConfigUpdateRequiredReadTools(step map[string]interface{}) map[string]struct{} {
+	required := map[string]struct{}{}
+	fields := operationPlanNormalizedAgentConfigFieldsFromAny(step[operationPlanExpectedUpdatedFieldsKey])
+	actions := operationPlanAgentConfigBindingActionsFromAny(step[operationPlanExpectedBindingActionsKey])
+	for _, field := range fields {
+		switch field {
+		case "model", "model_provider":
+			required["list_available_models"] = struct{}{}
+		case "enabled_skill_ids":
+			if action := operationPlanCanonicalAgentConfigBindingAction(actions[field]); action != "unbind" {
+				required["list_agent_skill_candidates"] = struct{}{}
+			}
+		case "knowledge_dataset_ids":
+			if action := operationPlanCanonicalAgentConfigBindingAction(actions[field]); action != "unbind" {
+				required["list_agent_knowledge_candidates"] = struct{}{}
+			}
+		case "database_bindings":
+			if action := operationPlanCanonicalAgentConfigBindingAction(actions[field]); action != "unbind" {
+				required["list_agent_database_candidates"] = struct{}{}
+				required["list_agent_database_tables"] = struct{}{}
+			}
+		case "workflow_bindings":
+			if action := operationPlanCanonicalAgentConfigBindingAction(actions[field]); action != "unbind" {
+				required["list_agent_workflow_binding_candidates"] = struct{}{}
+			}
+		}
+	}
+	if len(required) == 0 {
+		return nil
+	}
+	required["get_agent_config"] = struct{}{}
+	return required
+}
+
+func operationPlanStepArgumentsForTurnStrategy(step map[string]interface{}) map[string]string {
+	args := mapFromOperationContext(step["arguments"])
+	out := cleanStringAnyStringMap(args)
+	if fields := operationPlanNormalizedAgentConfigFieldsFromAny(step[operationPlanExpectedUpdatedFieldsKey]); len(fields) > 0 {
+		out = mergeTurnStrategyToolArguments(out, map[string]string{
+			operationPlanExpectedUpdatedFieldsKey: strings.Join(fields, ","),
+		})
+	}
+	for _, key := range []string{
+		operationPlanConfigGoalKey,
+		"candidate_skill_id",
+		"target_skill_id",
+		"agent_skill_id",
+	} {
+		if value := strings.TrimSpace(stringFromAny(step[key])); value != "" {
+			out = mergeTurnStrategyToolArguments(out, map[string]string{key: value})
+		}
+	}
+	if actions := operationPlanAgentConfigBindingActionsFromAny(step[operationPlanExpectedBindingActionsKey]); len(actions) > 0 {
+		out = mergeTurnStrategyToolArguments(out, map[string]string{
+			operationPlanExpectedBindingActionsKey: operationPlanEncodeAgentConfigBindingActions(actions),
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func operationPlanPendingExecutableSteps(plan map[string]interface{}, limit int) []map[string]interface{} {
@@ -372,11 +1476,30 @@ func operationPlanStepsFromTurnStrategy(strategy *AIChatTurnStrategy) []map[stri
 				}
 			}
 		}
-		if expected := operationPlanNormalizedAgentConfigFieldsFromAny(tool.Arguments[operationPlanExpectedUpdatedFieldsKey]); len(expected) > 0 {
+		if binding := cleanStringMapForOperationPlan(tool.ArgsBinding); len(binding) > 0 {
+			step["args_binding"] = binding
+		}
+		if outputAlias := strings.TrimSpace(tool.OutputAlias); outputAlias != "" {
+			step["output_alias"] = outputAlias
+		}
+		expected := operationPlanNormalizedAgentConfigFieldsFromAny(tool.Arguments[operationPlanExpectedUpdatedFieldsKey])
+		if len(expected) == 0 && strings.EqualFold(skillID, skills.SkillAgentManagement) &&
+			strings.EqualFold(toolName, "update_agent_config") {
+			expected = agentCapabilityGoalsExpectedConfigFields(strategy.CapabilityGoals)
+		}
+		if len(expected) > 0 {
 			step[operationPlanExpectedUpdatedFieldsKey] = expected
 			step["field_completion_mode"] = "cumulative"
 		}
-		if expectedActions := operationPlanAgentConfigBindingActionsFromAny(tool.Arguments[operationPlanExpectedBindingActionsKey]); len(expectedActions) > 0 {
+		if goal := strings.TrimSpace(tool.Arguments[operationPlanConfigGoalKey]); goal != "" {
+			step[operationPlanConfigGoalKey] = truncateRunes(goal, 500)
+		}
+		expectedActions := operationPlanAgentConfigBindingActionsFromAny(tool.Arguments[operationPlanExpectedBindingActionsKey])
+		if len(expectedActions) == 0 && strings.EqualFold(skillID, skills.SkillAgentManagement) &&
+			strings.EqualFold(toolName, "update_agent_config") {
+			expectedActions = agentCapabilityGoalsExpectedBindingActions(strategy.CapabilityGoals)
+		}
+		if len(expectedActions) > 0 {
 			step[operationPlanExpectedBindingActionsKey] = expectedActions
 		}
 		if strings.EqualFold(stepID, operationPlanPostUpdateAgentConfigReadStepID()) ||
@@ -386,6 +1509,9 @@ func operationPlanStepsFromTurnStrategy(strategy *AIChatTurnStrategy) []map[stri
 		}
 		if target := operationPlanToolStepAssetTarget(skillID, toolName); len(target) > 0 {
 			step["asset_target"] = target
+		}
+		if deps := operationPlanAgentConfigUpdateWaitForAllStepIDs(step, steps); len(deps) > 0 {
+			step["wait_for_all"] = deps
 		}
 		add(step)
 	}
@@ -516,7 +1642,122 @@ func applyOperationPlanProgress(plan map[string]interface{}, steps []map[string]
 	completed, failed := operationPlanProgressStepRecords(steps, stepStatus)
 	plan["completed_steps"] = mapsToInterfaceSlice(completed)
 	plan["failed_steps"] = mapsToInterfaceSlice(failed)
+	operationPlanApplyStructuredPlanProgress(plan, steps, stepStatus)
 	operationPlanSyncStrategyState(plan)
+}
+
+func operationPlanApplyStructuredPlanProgress(plan map[string]interface{}, steps []map[string]interface{}, stepStatus map[string]interface{}) {
+	structured := mapFromOperationContext(plan["structured_plan"])
+	if len(structured) == 0 {
+		return
+	}
+	operations := mapSliceFromAny(structured["operations"])
+	if len(operations) == 0 {
+		return
+	}
+	defaultSkillID := operationPlanStructuredPlanDefaultSkillID(structured)
+	counts := map[string]int{
+		operationPlanStepStatusPending:   0,
+		operationPlanStepStatusCompleted: 0,
+		operationPlanStepStatusFailed:    0,
+	}
+	for _, operation := range operations {
+		status := operationPlanStepStatusPending
+		if step := operationPlanStructuredPlanMatchingStep(steps, stepStatus, operation, defaultSkillID); len(step) > 0 {
+			status = operationPlanStepResolvedStatus(step, stepStatus)
+			if status == "" {
+				status = operationPlanStepStatusPending
+			}
+			operation["status"] = status
+			operationPlanCopyStructuredOperationStepFields(operation, step)
+		} else {
+			if existing := strings.TrimSpace(stringFromAny(operation["status"])); existing != "" {
+				status = operationPlanNormalizeStepStatus(existing)
+			}
+			operation["status"] = status
+		}
+		counts[status]++
+	}
+	structured["operations"] = mapsToInterfaceSlice(operations)
+	structured["operation_counts"] = map[string]interface{}{
+		"pending":   counts[operationPlanStepStatusPending],
+		"completed": counts[operationPlanStepStatusCompleted],
+		"failed":    counts[operationPlanStepStatusFailed],
+		"total":     len(operations),
+	}
+	switch {
+	case counts[operationPlanStepStatusFailed] > 0:
+		structured["status"] = operationPlanStatusFailed
+	case counts[operationPlanStepStatusCompleted] == len(operations):
+		structured["status"] = operationPlanStatusCompleted
+	default:
+		structured["status"] = operationPlanStatusRunning
+	}
+	plan["structured_plan"] = structured
+}
+
+func operationPlanStructuredPlanDefaultSkillID(structured map[string]interface{}) string {
+	if len(structured) == 0 {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(stringFromAny(structured["domain"]))) {
+	case "agent_management":
+		return skills.SkillAgentManagement
+	default:
+		return ""
+	}
+}
+
+func operationPlanStructuredPlanMatchingStep(steps []map[string]interface{}, stepStatus map[string]interface{}, operation map[string]interface{}, defaultSkillID string) map[string]interface{} {
+	toolName := strings.TrimSpace(stringFromAny(operation["tool_name"]))
+	if toolName == "" {
+		return nil
+	}
+	skillID := strings.TrimSpace(stringFromAny(operation["skill_id"]))
+	if skillID == "" {
+		skillID = defaultSkillID
+	}
+	var firstMatch map[string]interface{}
+	for _, step := range steps {
+		if skillID != "" && !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skillID) {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["tool_name"])), toolName) {
+			continue
+		}
+		if firstMatch == nil {
+			firstMatch = step
+		}
+		status := operationPlanStepResolvedStatus(step, stepStatus)
+		if status == operationPlanStepStatusFailed || status == operationPlanStepStatusCompleted {
+			return step
+		}
+	}
+	return firstMatch
+}
+
+func operationPlanCopyStructuredOperationStepFields(operation map[string]interface{}, step map[string]interface{}) {
+	if len(operation) == 0 || len(step) == 0 {
+		return
+	}
+	for _, key := range []string{"last_invocation_id", "last_invocation_kind", "error"} {
+		value := strings.TrimSpace(stringFromAny(step[key]))
+		if value == "" {
+			delete(operation, key)
+			continue
+		}
+		operation[key] = compactForPrompt(value, 500)
+	}
+	if group := mapFromOperationContext(step["operation_group"]); len(group) > 0 {
+		operation["operation_group"] = operationPlanCompactOperationGroup(group)
+	} else {
+		delete(operation, "operation_group")
+	}
+	if itemSteps := operationPlanCompactOperationItems(step["item_steps"], 20); len(itemSteps) > 0 {
+		operation["item_steps"] = itemSteps
+	} else {
+		delete(operation, "item_steps")
+	}
 }
 
 func operationPlanSyncStrategyState(plan map[string]interface{}) {
@@ -558,6 +1799,7 @@ func operationPlanSyncStrategyState(plan map[string]interface{}) {
 		delete(state, "current_page_evidence")
 	}
 	operationPlanStrategyStateSetInterfaceSlice(state, "plan_steps", operationPlanCompactStepsForPrompt(plan["steps"], 12))
+	operationPlanStrategyStateSetInterfaceSlice(state, "capability_goals", operationPlanCompactCapabilityGoals(plan["capability_goals"], 8))
 	operationPlanStrategyStateSetInterfaceSlice(state, "completed_steps", operationPlanCompactProgressStepRecords(plan["completed_steps"], 12))
 	operationPlanStrategyStateSetInterfaceSlice(state, "failed_steps", operationPlanCompactProgressStepRecords(plan["failed_steps"], 12))
 	operationPlanStrategyStateSetInterfaceSlice(state, "plan_deviations", skillLoopCompletionPlanDeviations(plan["deviations"], 12))
@@ -2782,38 +4024,11 @@ func operationPlanStringListFromAny(value interface{}) []string {
 }
 
 func operationPlanAgentConfigCanonicalField(field string) string {
-	switch strings.TrimSpace(field) {
-	case "system_prompt":
-		return "system_prompt"
-	case "model", "model_provider":
-		return "model"
-	case "model_parameters":
-		return "model_parameters"
-	case "enabled_skill_ids", "add_enabled_skill_ids", "remove_enabled_skill_ids", "agent_skill":
-		return "enabled_skill_ids"
-	case "agent_memory_enabled":
-		return "agent_memory_enabled"
-	case "file_upload_enabled":
-		return "file_upload_enabled"
-	case "home_title":
-		return "home_title"
-	case "input_placeholder":
-		return "input_placeholder"
-	case "theme_color":
-		return "theme_color"
-	case "suggested_questions":
-		return "suggested_questions"
-	case "knowledge_dataset_ids", "dataset_ids", "add_knowledge_dataset_ids", "remove_knowledge_dataset_ids", "knowledge_base":
-		return "knowledge_dataset_ids"
-	case "knowledge_retrieval_config":
-		return "knowledge_retrieval_config"
-	case "database_bindings", "add_database_bindings", "remove_database_bindings", "database_table":
-		return "database_bindings"
-	case "workflow_bindings", "add_workflow_bindings", "remove_workflow_bindings", "workflow":
-		return "workflow_bindings"
-	default:
+	descriptor, ok := agentManagementConfigFieldDescriptorForAlias(field)
+	if !ok {
 		return ""
 	}
+	return descriptor.field
 }
 
 func appendOperationPlanFields(current []string, additions ...string) []string {
@@ -3113,6 +4328,9 @@ func operationPlanCompactProgressStepRecords(value interface{}, limit int) []int
 			if value := strings.TrimSpace(stringFromAny(step[key])); value != "" {
 				compact[key] = compactForPrompt(value, 240)
 			}
+		}
+		if waitForAll := stringSliceFromAny(step["wait_for_all"]); len(waitForAll) > 0 {
+			compact["wait_for_all"] = waitForAll
 		}
 		if target := mapFromOperationContext(step["asset_target"]); len(target) > 0 {
 			compact["asset_target"] = target
@@ -4099,6 +5317,7 @@ func operationPlanAgentManagementResultSummary(payload map[string]interface{}) m
 		result["operation_group"] = operationPlanCompactOperationGroup(group)
 	}
 	operationPlanAddAgentConfigCounts(result, payload)
+	operationPlanAddAgentConfigReferenceSamples(result, payload)
 	return result
 }
 
@@ -4151,6 +5370,76 @@ func operationPlanAddAgentConfigCounts(result map[string]interface{}, payload ma
 	operationPlanAddCollectionCount(result, config, "suggested_questions", "suggested_question_count")
 	operationPlanAddCollectionCount(result, payload, "agent_memory_slots", "memory_slot_config_count")
 	operationPlanAddCollectionCount(result, config, "agent_memory_slots", "memory_slot_config_count")
+}
+
+func operationPlanAddAgentConfigReferenceSamples(result map[string]interface{}, payload map[string]interface{}) {
+	if len(result) == 0 || len(payload) == 0 {
+		return
+	}
+	config := mapFromOperationContext(payload["config"])
+	operationPlanAddCollectionRefs(result, "enabled_skill_refs", payload["enabled_skill_ids"], config["enabled_skill_ids"])
+	operationPlanAddCollectionRefs(result, "knowledge_dataset_refs", payload["knowledge_dataset_ids"], config["knowledge_dataset_ids"])
+	operationPlanAddCollectionRefs(result, "database_binding_refs", payload["database_bindings"], config["database_bindings"])
+	operationPlanAddCollectionRefs(result, "workflow_binding_refs", payload["workflow_bindings"], config["workflow_bindings"])
+}
+
+func operationPlanAddCollectionRefs(result map[string]interface{}, outKey string, values ...interface{}) {
+	if len(result) == 0 || strings.TrimSpace(outKey) == "" {
+		return
+	}
+	if _, exists := result[outKey]; exists {
+		return
+	}
+	refs := operationPlanCollectionReferenceSamples(values...)
+	if len(refs) == 0 {
+		return
+	}
+	result[outKey] = refs
+}
+
+func operationPlanCollectionReferenceSamples(values ...interface{}) []string {
+	const maxRefs = 8
+	refs := make([]string, 0, maxRefs)
+	seen := map[string]struct{}{}
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		value = truncateRunes(value, 96)
+		key := strings.ToLower(value)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		refs = append(refs, value)
+	}
+	for _, value := range values {
+		for _, text := range sanitizedStringListArgumentValue(value) {
+			if len(refs) >= maxRefs {
+				return refs
+			}
+			add(text)
+		}
+		for _, item := range mapSliceFromAny(value) {
+			if len(refs) >= maxRefs {
+				return refs
+			}
+			add(firstNonEmptyString(
+				item["id"],
+				item["skill_id"],
+				item["dataset_id"],
+				item["database_table_id"],
+				item["table_id"],
+				item["workflow_id"],
+				item["name"],
+				item["label"],
+				item["title"],
+				item["display_name"],
+			))
+		}
+	}
+	return refs
 }
 
 func operationPlanAddCollectionCount(result map[string]interface{}, source map[string]interface{}, collectionKey string, countKey string) {

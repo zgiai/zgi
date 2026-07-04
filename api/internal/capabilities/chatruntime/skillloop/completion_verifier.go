@@ -355,6 +355,7 @@ func completionVerificationContract() map[string]interface{} {
 			"Return pass only when the candidate answer makes no unsupported completion claims.",
 			"Treat operation_plan and turn_strategy as advisory strategy snapshots, not as authoritative proof that every pending step must still run.",
 			"Use page_context, operation_result_summary, tool results, generated_files, client_actions, tool_governance, and execution_ledger as the authoritative facts.",
+			"For Agent configuration changes, treat operation_plan steps' config_goal as the user-visible target, and treat expected_updated_fields plus expected_binding_actions as verification requirements when matching concrete target values are present in plan steps, tool arguments, or post-update reads.",
 			"Return needs_action when the candidate answer exposes internal system prompt, operation_plan, turn_strategy, pending-step, required_next_tool, hidden strategy, or protocol wording; ask for a rewrite that only states user-visible outcome or blocker.",
 			"Return needs_action when the user's current goal still requires an incomplete tool/action and a clear safe next attempt remains.",
 			"Return failed when a tool/action failed or required evidence is missing and no safe retry remains.",
@@ -406,6 +407,25 @@ func completionVerificationApplyPlanOverride(evidence map[string]interface{}, de
 		decision.NextActionHint = "agent-management/get_agent_config"
 		decision.FinalAnswer = ""
 		decision.FinalAnswerGuidance = completionVerificationAgentConfigPostReadGuidance()
+		return decision
+	}
+	if mismatches := completionVerificationAgentConfigMismatches(evidence); len(mismatches) > 0 {
+		decision.Status = completionVerificationStatusNeedsAction
+		if reason := strings.TrimSpace(decision.Reason); reason != "" {
+			decision.Reason = reason + "; requested Agent config state was not verified"
+		} else {
+			decision.Reason = "requested Agent config state was not verified"
+		}
+		for _, mismatch := range mismatches {
+			decision.MissingSteps = append(cleanStringSlice(decision.MissingSteps), mismatch)
+		}
+		if completionVerificationAgentConfigNeedsPostRead(mismatches) {
+			decision.NextActionHint = "agent-management/get_agent_config"
+		} else {
+			decision.NextActionHint = "agent-management/update_agent_config"
+		}
+		decision.FinalAnswer = ""
+		decision.FinalAnswerGuidance = completionVerificationAgentConfigMismatchGuidance(mismatches)
 		return decision
 	}
 	if failedStepLabel, ok := completionVerificationFailedOperationPlanStepLabel(evidence); ok && completionVerificationHasFailedEvidenceForPlanStep(evidence, failedStepLabel) {
@@ -465,8 +485,18 @@ func completionVerificationPendingAgentConfigUpdateFields(evidence map[string]in
 }
 
 func completionVerificationStringSlice(value interface{}) []string {
+	switch typed := value.(type) {
+	case string:
+		parts := strings.FieldsFunc(typed, func(r rune) bool {
+			return r == ',' || r == ';' || r == '，' || r == '；' || r == '\n' || r == '\t'
+		})
+		return cleanStringSlice(parts)
+	}
 	out := []string{}
 	for _, item := range evidenceSliceFromAny(value) {
+		if len(evidenceMapFromAny(item)) > 0 {
+			continue
+		}
 		text := strings.TrimSpace(evidenceStringFromAny(item))
 		if text == "" {
 			continue
@@ -503,6 +533,9 @@ func completionVerificationApplyPlanOnlySoftening(evidence map[string]interface{
 	if fastPathCompletionEvidenceNeedsAgentConfigPostRead(evidence) {
 		return decision
 	}
+	if len(completionVerificationAgentConfigMismatches(evidence)) > 0 {
+		return decision
+	}
 	if !completionVerificationDecisionIsPlanOnly(evidence, decision) {
 		return decision
 	}
@@ -521,6 +554,796 @@ func completionVerificationApplyPlanOnlySoftening(evidence map[string]interface{
 
 func completionVerificationAgentConfigPostReadGuidance() string {
 	return "Call agent-management/get_agent_config again after the successful Agent config update, then base the final answer on that fresh configuration result. Do not claim the requested post-update verification is complete until that read succeeds."
+}
+
+type completionVerificationAgentConfigBindingExpectation struct {
+	Field   string
+	Action  string
+	Targets []string
+}
+
+func completionVerificationAgentConfigMismatches(evidence map[string]interface{}) []string {
+	return cleanStringSlice(append(
+		completionVerificationAgentConfigFieldMismatches(evidence),
+		completionVerificationAgentConfigBindingMismatches(evidence)...,
+	))
+}
+
+func completionVerificationAgentConfigFieldExpectations(evidence map[string]interface{}) map[string]map[string]interface{} {
+	plan := evidenceMapFromAny(evidence["operation_plan"])
+	if len(plan) == 0 {
+		return nil
+	}
+	expectations := map[string]map[string]interface{}{}
+	for _, raw := range evidenceSliceFromAny(plan["steps"]) {
+		step := evidenceMapFromAny(raw)
+		if len(step) == 0 {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(step["skill_id"])), skills.SkillAgentManagement) ||
+			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(step["tool_name"])), "update_agent_config") {
+			continue
+		}
+		if completionVerificationPlanStepClearlyTerminalWithoutSuccess(plan, step) {
+			continue
+		}
+		fields := completionVerificationCanonicalAgentConfigFields(step["expected_updated_fields"])
+		if len(fields) == 0 {
+			continue
+		}
+		for _, source := range []map[string]interface{}{step, evidenceMapFromAny(step["arguments"])} {
+			completionVerificationMergeAgentConfigFieldTargets(expectations, fields, source)
+		}
+	}
+	for _, invocation := range completionVerificationEvidenceInvocations(evidence) {
+		if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["skill_id"])), skills.SkillAgentManagement) ||
+			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["tool_name"])), "update_agent_config") {
+			continue
+		}
+		if !completionVerificationInvocationSucceeded(invocation) {
+			continue
+		}
+		args := completionVerificationInvocationArguments(invocation)
+		if len(args) == 0 {
+			continue
+		}
+		fields := completionVerificationCanonicalAgentConfigFields(args["expected_updated_fields"])
+		if len(fields) == 0 {
+			fields = completionVerificationCanonicalAgentConfigFieldsFromArguments(args)
+		}
+		completionVerificationMergeAgentConfigFieldTargets(expectations, fields, args)
+	}
+	if len(expectations) == 0 {
+		return nil
+	}
+	return expectations
+}
+
+func completionVerificationMergeAgentConfigFieldTargets(expectations map[string]map[string]interface{}, fields []string, source map[string]interface{}) {
+	if len(source) == 0 || len(fields) == 0 {
+		return
+	}
+	for _, field := range fields {
+		target := completionVerificationAgentConfigFieldTarget(field, source)
+		if len(target) == 0 {
+			continue
+		}
+		current := expectations[field]
+		if current == nil {
+			current = map[string]interface{}{}
+			expectations[field] = current
+		}
+		for key, value := range target {
+			current[key] = value
+		}
+	}
+}
+
+func completionVerificationAgentConfigFieldTarget(field string, source map[string]interface{}) map[string]interface{} {
+	if len(source) == 0 {
+		return nil
+	}
+	out := map[string]interface{}{}
+	switch field {
+	case "model":
+		if completionVerificationMapHasKey(source, "model_provider") {
+			out["model_provider"] = source["model_provider"]
+		} else if completionVerificationMapHasKey(source, "provider") {
+			out["model_provider"] = source["provider"]
+		}
+		if completionVerificationMapHasKey(source, "model") {
+			out["model"] = source["model"]
+		} else if completionVerificationMapHasKey(source, "model_name") {
+			out["model"] = source["model_name"]
+		}
+	case "system_prompt", "agent_memory_enabled", "file_upload_enabled", "home_title", "input_placeholder", "theme_color", "suggested_questions":
+		if completionVerificationMapHasKey(source, field) {
+			out["value"] = source[field]
+		}
+	}
+	return out
+}
+
+func completionVerificationCanonicalAgentConfigFields(value interface{}) []string {
+	fields := completionVerificationStringSlice(value)
+	out := []string{}
+	for _, field := range fields {
+		if canonical := completionVerificationCanonicalAgentConfigField(field); canonical != "" {
+			out = append(out, canonical)
+		}
+	}
+	return cleanStringSlice(dedupeStrings(out))
+}
+
+func completionVerificationCanonicalAgentConfigFieldsFromArguments(args map[string]interface{}) []string {
+	if len(args) == 0 {
+		return nil
+	}
+	out := []string{}
+	for key := range args {
+		if canonical := completionVerificationCanonicalAgentConfigField(key); canonical != "" {
+			out = append(out, canonical)
+		}
+	}
+	return cleanStringSlice(dedupeStrings(out))
+}
+
+func completionVerificationCanonicalAgentConfigField(field string) string {
+	switch strings.ToLower(strings.TrimSpace(field)) {
+	case "model", "model_provider", "provider":
+		return "model"
+	case "system_prompt":
+		return "system_prompt"
+	case "agent_memory_enabled", "use_memory":
+		return "agent_memory_enabled"
+	case "file_upload_enabled":
+		return "file_upload_enabled"
+	case "home_title":
+		return "home_title"
+	case "input_placeholder":
+		return "input_placeholder"
+	case "theme_color":
+		return "theme_color"
+	case "suggested_questions":
+		return "suggested_questions"
+	case "enabled_skill_ids", "add_enabled_skill_ids", "remove_enabled_skill_ids", "agent_skill", "skill", "skills":
+		return "enabled_skill_ids"
+	case "knowledge_dataset_ids", "dataset_ids", "add_knowledge_dataset_ids", "remove_knowledge_dataset_ids", "knowledge_base":
+		return "knowledge_dataset_ids"
+	case "database_bindings", "add_database_bindings", "remove_database_bindings", "database_table":
+		return "database_bindings"
+	case "workflow_bindings", "add_workflow_bindings", "remove_workflow_bindings", "workflow":
+		return "workflow_bindings"
+	default:
+		return ""
+	}
+}
+
+func completionVerificationAgentConfigFieldMismatches(evidence map[string]interface{}) []string {
+	expectations := completionVerificationAgentConfigFieldExpectations(evidence)
+	if len(expectations) == 0 {
+		return nil
+	}
+	configRead, ok := completionVerificationLatestAgentConfigReadResult(evidence)
+	if !ok {
+		return []string{"agent-management/get_agent_config post-update verification missing"}
+	}
+	config := completionVerificationAgentConfigMap(configRead)
+	mismatches := []string{}
+	for field, target := range expectations {
+		switch field {
+		case "model":
+			provider := strings.TrimSpace(evidenceStringFromAny(target["model_provider"]))
+			model := strings.TrimSpace(evidenceStringFromAny(target["model"]))
+			if provider != "" {
+				actualProvider := strings.TrimSpace(firstNonEmptyString(config["model_provider"], config["provider"], configRead["model_provider"], configRead["provider"]))
+				if !strings.EqualFold(actualProvider, provider) {
+					mismatches = append(mismatches, "agent-management/get_agent_config model_provider mismatch: want "+provider+", got "+firstNonEmptyDisplay(actualProvider, "<empty>"))
+				}
+			}
+			if model != "" {
+				actualModel := strings.TrimSpace(firstNonEmptyString(config["model"], config["model_name"], configRead["model"], configRead["model_name"]))
+				if !strings.EqualFold(actualModel, model) {
+					mismatches = append(mismatches, "agent-management/get_agent_config model mismatch: want "+model+", got "+firstNonEmptyDisplay(actualModel, "<empty>"))
+				}
+			}
+		case "system_prompt", "home_title", "input_placeholder", "theme_color":
+			want := strings.TrimSpace(evidenceStringFromAny(target["value"]))
+			if want == "" {
+				continue
+			}
+			actual := strings.TrimSpace(firstNonEmptyString(config[field], configRead[field]))
+			if actual != want {
+				mismatches = append(mismatches, "agent-management/get_agent_config "+field+" mismatch")
+			}
+		case "suggested_questions":
+			want := completionVerificationStringSlice(target["value"])
+			if len(want) == 0 {
+				continue
+			}
+			actual := completionVerificationStringSlice(firstNonEmptyValue(config[field], configRead[field]))
+			if !completionVerificationStringSlicesEqual(want, actual) {
+				mismatches = append(mismatches, "agent-management/get_agent_config suggested_questions mismatch")
+			}
+		case "agent_memory_enabled", "file_upload_enabled":
+			want, ok := completionVerificationBoolFromAny(target["value"])
+			if !ok {
+				continue
+			}
+			actual, ok := completionVerificationBoolFromAny(firstNonEmptyValue(config[field], configRead[field]))
+			if !ok || actual != want {
+				mismatches = append(mismatches, "agent-management/get_agent_config "+field+" mismatch: want "+strconv.FormatBool(want))
+			}
+		}
+	}
+	return cleanStringSlice(mismatches)
+}
+
+func completionVerificationAgentConfigBindingMismatches(evidence map[string]interface{}) []string {
+	expectations := completionVerificationAgentConfigBindingExpectations(evidence)
+	if len(expectations) == 0 {
+		return nil
+	}
+	configRead, ok := completionVerificationLatestAgentConfigReadResult(evidence)
+	if !ok {
+		return []string{"agent-management/get_agent_config post-update verification missing"}
+	}
+	mismatches := []string{}
+	for _, expectation := range expectations {
+		if len(expectation.Targets) == 0 {
+			continue
+		}
+		actualIDs := completionVerificationAgentConfigCollectionIDs(configRead, expectation.Field)
+		switch expectation.Action {
+		case "bind", "add", "replace":
+			for _, target := range expectation.Targets {
+				if !completionVerificationStringSliceContainsFold(actualIDs, target) {
+					mismatches = append(mismatches, "agent-management/get_agent_config "+expectation.Field+" missing bound target: "+target)
+				}
+			}
+			if expectation.Action == "replace" {
+				for _, extra := range completionVerificationUnexpectedAgentConfigBindingTargets(actualIDs, expectation.Targets) {
+					mismatches = append(mismatches, "agent-management/get_agent_config "+expectation.Field+" contains unexpected target after replace: "+extra)
+				}
+			}
+		case "unbind", "remove":
+			for _, target := range expectation.Targets {
+				if completionVerificationStringSliceContainsFold(actualIDs, target) {
+					mismatches = append(mismatches, "agent-management/get_agent_config "+expectation.Field+" still contains removed target: "+target)
+				}
+			}
+		}
+	}
+	return cleanStringSlice(mismatches)
+}
+
+func completionVerificationUnexpectedAgentConfigBindingTargets(actual []string, expected []string) []string {
+	actual = cleanStringSlice(dedupeStrings(actual))
+	expected = cleanStringSlice(dedupeStrings(expected))
+	if len(actual) == 0 || len(expected) == 0 {
+		return nil
+	}
+	out := []string{}
+	for _, item := range actual {
+		if !completionVerificationStringSliceContainsFold(expected, item) {
+			out = append(out, item)
+		}
+	}
+	return cleanStringSlice(dedupeStrings(out))
+}
+
+func completionVerificationAgentConfigNeedsPostRead(mismatches []string) bool {
+	for _, mismatch := range mismatches {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(mismatch)), "post-update verification missing") {
+			return true
+		}
+	}
+	return false
+}
+
+func completionVerificationAgentConfigMismatchGuidance(mismatches []string) string {
+	if len(mismatches) == 0 {
+		return "Verify the requested Agent config state with get_agent_config before the final answer."
+	}
+	return "The post-update Agent config read did not confirm the requested state: " + strings.Join(mismatches, "; ") + ". If the change is still needed, call agent-management/update_agent_config with the concrete target values, then call get_agent_config again and base the final answer on that result."
+}
+
+func completionVerificationAgentConfigBindingExpectations(evidence map[string]interface{}) []completionVerificationAgentConfigBindingExpectation {
+	plan := evidenceMapFromAny(evidence["operation_plan"])
+	if len(plan) == 0 {
+		return nil
+	}
+	expectations := []completionVerificationAgentConfigBindingExpectation{}
+	for _, raw := range evidenceSliceFromAny(plan["steps"]) {
+		step := evidenceMapFromAny(raw)
+		if len(step) == 0 {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(step["skill_id"])), skills.SkillAgentManagement) ||
+			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(step["tool_name"])), "update_agent_config") {
+			continue
+		}
+		if completionVerificationPlanStepClearlyTerminalWithoutSuccess(plan, step) {
+			continue
+		}
+		actions := completionVerificationAgentConfigBindingActionsFromAny(step["expected_binding_actions"])
+		for field, action := range actions {
+			field = completionVerificationCanonicalAgentConfigBindingField(field)
+			action = completionVerificationCanonicalAgentConfigBindingAction(action)
+			if field == "" || action == "" {
+				continue
+			}
+			targets := completionVerificationAgentConfigBindingTargets(evidence, step, field, action)
+			expectations = append(expectations, completionVerificationAgentConfigBindingExpectation{
+				Field:   field,
+				Action:  action,
+				Targets: targets,
+			})
+		}
+	}
+	return completionVerificationMergeAgentConfigBindingExpectations(expectations)
+}
+
+func completionVerificationPlanStepClearlyTerminalWithoutSuccess(plan map[string]interface{}, step map[string]interface{}) bool {
+	status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(step["status"])))
+	if status == "" {
+		stepStatus := evidenceMapFromAny(plan["step_status"])
+		if id := strings.TrimSpace(evidenceStringFromAny(step["id"])); id != "" {
+			status = strings.ToLower(strings.TrimSpace(evidenceStringFromAny(stepStatus[id])))
+		}
+	}
+	switch status {
+	case "failed", "error", "skipped", "not_applicable", "rejected":
+		return true
+	default:
+		return false
+	}
+}
+
+func completionVerificationAgentConfigBindingActionsFromAny(value interface{}) map[string]string {
+	out := map[string]string{}
+	if typed := evidenceMapFromAny(value); len(typed) > 0 {
+		for rawField, rawAction := range typed {
+			field := completionVerificationCanonicalAgentConfigBindingField(rawField)
+			action := completionVerificationCanonicalAgentConfigBindingAction(evidenceStringFromAny(rawAction))
+			if field != "" && action != "" {
+				out[field] = action
+			}
+		}
+		return out
+	}
+	text := strings.TrimSpace(evidenceStringFromAny(value))
+	if text == "" {
+		return out
+	}
+	for _, part := range strings.FieldsFunc(text, func(r rune) bool {
+		return r == ',' || r == ';' || r == '，' || r == '；' || r == '\n' || r == '\t'
+	}) {
+		field, action, ok := strings.Cut(part, ":")
+		if !ok {
+			field, action, ok = strings.Cut(part, "=")
+		}
+		if !ok {
+			continue
+		}
+		canonicalField := completionVerificationCanonicalAgentConfigBindingField(field)
+		canonicalAction := completionVerificationCanonicalAgentConfigBindingAction(action)
+		if canonicalField != "" && canonicalAction != "" {
+			out[canonicalField] = canonicalAction
+		}
+	}
+	return out
+}
+
+func completionVerificationCanonicalAgentConfigBindingField(field string) string {
+	switch completionVerificationCanonicalAgentConfigField(field) {
+	case "enabled_skill_ids":
+		return "enabled_skill_ids"
+	case "knowledge_dataset_ids":
+		return "knowledge_dataset_ids"
+	case "database_bindings":
+		return "database_bindings"
+	case "workflow_bindings":
+		return "workflow_bindings"
+	default:
+		return ""
+	}
+}
+
+func completionVerificationCanonicalAgentConfigBindingAction(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "bind", "add", "append":
+		return "bind"
+	case "unbind", "remove", "delete":
+		return "unbind"
+	case "replace", "set":
+		return "replace"
+	default:
+		return ""
+	}
+}
+
+func completionVerificationAgentConfigBindingTargets(evidence map[string]interface{}, step map[string]interface{}, field string, action string) []string {
+	targets := []string{}
+	targets = completionVerificationAppendAgentConfigBindingTargets(targets, evidenceMapFromAny(step["arguments"]), field, action)
+	for _, invocation := range completionVerificationEvidenceInvocations(evidence) {
+		if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["skill_id"])), skills.SkillAgentManagement) ||
+			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["tool_name"])), "update_agent_config") {
+			continue
+		}
+		if !completionVerificationInvocationSucceeded(invocation) {
+			continue
+		}
+		targets = completionVerificationAppendAgentConfigBindingTargets(targets, completionVerificationInvocationArguments(invocation), field, action)
+	}
+	return cleanStringSlice(dedupeStrings(targets))
+}
+
+func completionVerificationAppendAgentConfigBindingTargets(targets []string, source map[string]interface{}, field string, action string) []string {
+	if len(source) == 0 {
+		return targets
+	}
+	switch field {
+	case "enabled_skill_ids":
+		targets = append(targets, completionVerificationStringSlice(source["candidate_skill_id"])...)
+		targets = append(targets, completionVerificationStringSlice(source["target_skill_id"])...)
+		targets = append(targets, completionVerificationStringSlice(source["agent_skill_id"])...)
+		switch action {
+		case "bind":
+			targets = append(targets, completionVerificationStringSlice(source["add_enabled_skill_ids"])...)
+			targets = append(targets, completionVerificationStringSlice(source["enabled_skill_ids"])...)
+		case "unbind":
+			targets = append(targets, completionVerificationStringSlice(source["remove_enabled_skill_ids"])...)
+		case "replace":
+			targets = append(targets, completionVerificationStringSlice(source["enabled_skill_ids"])...)
+		}
+	case "knowledge_dataset_ids":
+		targets = append(targets, completionVerificationStringSlice(source["candidate_knowledge_dataset_id"])...)
+		targets = append(targets, completionVerificationStringSlice(source["knowledge_dataset_id"])...)
+		targets = append(targets, completionVerificationStringSlice(source["dataset_id"])...)
+		switch action {
+		case "bind":
+			targets = append(targets, completionVerificationStringSlice(source["add_knowledge_dataset_ids"])...)
+			targets = append(targets, completionVerificationStringSlice(source["knowledge_dataset_ids"])...)
+			targets = append(targets, completionVerificationStringSlice(source["dataset_ids"])...)
+		case "unbind":
+			targets = append(targets, completionVerificationStringSlice(source["remove_knowledge_dataset_ids"])...)
+		case "replace":
+			targets = append(targets, completionVerificationStringSlice(source["knowledge_dataset_ids"])...)
+			targets = append(targets, completionVerificationStringSlice(source["dataset_ids"])...)
+		}
+	case "database_bindings":
+		switch action {
+		case "bind":
+			targets = append(targets, completionVerificationAgentConfigBindingIDs(source["add_database_bindings"])...)
+			targets = append(targets, completionVerificationAgentConfigBindingIDs(source["database_bindings"])...)
+		case "unbind":
+			targets = append(targets, completionVerificationAgentConfigBindingIDs(source["remove_database_bindings"])...)
+		case "replace":
+			targets = append(targets, completionVerificationAgentConfigBindingIDs(source["database_bindings"])...)
+		}
+	case "workflow_bindings":
+		switch action {
+		case "bind":
+			targets = append(targets, completionVerificationAgentConfigBindingIDs(source["add_workflow_bindings"])...)
+			targets = append(targets, completionVerificationAgentConfigBindingIDs(source["workflow_bindings"])...)
+		case "unbind":
+			targets = append(targets, completionVerificationAgentConfigBindingIDs(source["remove_workflow_bindings"])...)
+		case "replace":
+			targets = append(targets, completionVerificationAgentConfigBindingIDs(source["workflow_bindings"])...)
+		}
+	}
+	return targets
+}
+
+func completionVerificationInvocationArguments(invocation map[string]interface{}) map[string]interface{} {
+	for _, key := range []string{"arguments", "args", "input", "tool_arguments"} {
+		if args := evidenceMapFromAny(invocation[key]); len(args) > 0 {
+			return args
+		}
+	}
+	return nil
+}
+
+func completionVerificationLatestAgentConfigReadResult(evidence map[string]interface{}) (map[string]interface{}, bool) {
+	invocations := completionVerificationEvidenceInvocations(evidence)
+	for i := len(invocations) - 1; i >= 0; i-- {
+		invocation := invocations[i]
+		if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["skill_id"])), skills.SkillAgentManagement) ||
+			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["tool_name"])), "get_agent_config") {
+			continue
+		}
+		if !completionVerificationInvocationSucceeded(invocation) {
+			continue
+		}
+		result := evidenceMapFromAny(invocation["result"])
+		if len(result) == 0 {
+			result = evidenceMapFromAny(invocation["result_summary"])
+		}
+		if len(result) == 0 {
+			continue
+		}
+		return result, true
+	}
+	return nil, false
+}
+
+func completionVerificationAgentConfigCollectionIDs(result map[string]interface{}, collectionKey string) []string {
+	if len(result) == 0 {
+		return nil
+	}
+	out := []string{}
+	appendFrom := func(value interface{}) {
+		for _, item := range completionVerificationStringSlice(value) {
+			out = append(out, item)
+		}
+		for _, raw := range evidenceSliceFromAny(value) {
+			item := evidenceMapFromAny(raw)
+			if len(item) == 0 {
+				continue
+			}
+			out = append(out, completionVerificationAgentConfigBindingIDsForField(collectionKey, item)...)
+		}
+	}
+	sources := []map[string]interface{}{result}
+	if config := evidenceMapFromAny(result["config"]); len(config) > 0 {
+		sources = append(sources, config)
+	}
+	if agent := evidenceMapFromAny(result["agent"]); len(agent) > 0 {
+		sources = append(sources, agent)
+		if config := evidenceMapFromAny(agent["config"]); len(config) > 0 {
+			sources = append(sources, config)
+		}
+	}
+	for _, source := range sources {
+		appendFrom(source[collectionKey])
+		switch collectionKey {
+		case "enabled_skill_ids":
+			appendFrom(source["skill_ids"])
+			appendFrom(source["agent_skill_ids"])
+			appendFrom(source["enabled_skills"])
+			appendFrom(source["skills"])
+			appendFrom(source["agent_skills"])
+		case "knowledge_dataset_ids":
+			appendFrom(source["dataset_ids"])
+			appendFrom(source["knowledge_base_ids"])
+			appendFrom(source["knowledge_bases"])
+		case "database_bindings":
+			appendFrom(source["database_table_ids"])
+			appendFrom(source["table_ids"])
+			out = append(out, completionVerificationAgentConfigBindingIDsForField(collectionKey, source["database_bindings"])...)
+		case "workflow_bindings":
+			appendFrom(source["workflow_ids"])
+			out = append(out, completionVerificationAgentConfigBindingIDsForField(collectionKey, source["workflow_bindings"])...)
+		}
+	}
+	return cleanStringSlice(dedupeStrings(out))
+}
+
+func completionVerificationAgentConfigMap(result map[string]interface{}) map[string]interface{} {
+	if len(result) == 0 {
+		return nil
+	}
+	if config := evidenceMapFromAny(result["config"]); len(config) > 0 {
+		return config
+	}
+	agent := evidenceMapFromAny(result["agent"])
+	if config := evidenceMapFromAny(agent["config"]); len(config) > 0 {
+		return config
+	}
+	return result
+}
+
+func completionVerificationAgentConfigBindingIDs(value interface{}) []string {
+	if text, ok := value.(string); ok {
+		trimmed := strings.TrimSpace(text)
+		if strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, "{") {
+			var decoded interface{}
+			if err := json.Unmarshal([]byte(trimmed), &decoded); err == nil {
+				return completionVerificationAgentConfigBindingIDs(decoded)
+			}
+		}
+	}
+	out := []string{}
+	out = append(out, completionVerificationStringSlice(value)...)
+	for _, raw := range evidenceSliceFromAny(value) {
+		item := evidenceMapFromAny(raw)
+		if len(item) == 0 {
+			continue
+		}
+		out = append(out,
+			completionVerificationStringSlice(item["id"])...,
+		)
+		out = append(out,
+			completionVerificationStringSlice(item["binding_id"])...,
+		)
+		out = append(out,
+			completionVerificationStringSlice(item["resource_id"])...,
+		)
+		out = append(out,
+			completionVerificationStringSlice(item["knowledge_dataset_id"])...,
+		)
+		out = append(out,
+			completionVerificationStringSlice(item["dataset_id"])...,
+		)
+		out = append(out,
+			completionVerificationStringSlice(item["database_id"])...,
+		)
+		out = append(out,
+			completionVerificationStringSlice(item["data_source_id"])...,
+		)
+		out = append(out,
+			completionVerificationStringSlice(item["table_id"])...,
+		)
+		out = append(out,
+			completionVerificationStringSlice(item["table_ids"])...,
+		)
+		out = append(out,
+			completionVerificationStringSlice(item["workflow_id"])...,
+		)
+	}
+	return cleanStringSlice(dedupeStrings(out))
+}
+
+func completionVerificationAgentConfigBindingIDsForField(field string, value interface{}) []string {
+	field = strings.TrimSpace(field)
+	if text, ok := value.(string); ok {
+		trimmed := strings.TrimSpace(text)
+		if strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, "{") {
+			var decoded interface{}
+			if err := json.Unmarshal([]byte(trimmed), &decoded); err == nil {
+				return completionVerificationAgentConfigBindingIDsForField(field, decoded)
+			}
+		}
+	}
+	out := completionVerificationStringSlice(value)
+	for _, raw := range evidenceSliceFromAny(value) {
+		item := evidenceMapFromAny(raw)
+		if len(item) == 0 {
+			continue
+		}
+		out = append(out, completionVerificationAgentConfigBindingIDsForField(field, item)...)
+	}
+	item := evidenceMapFromAny(value)
+	if len(item) == 0 {
+		return cleanStringSlice(dedupeStrings(out))
+	}
+	switch field {
+	case "enabled_skill_ids":
+		out = append(out,
+			completionVerificationStringSlice(item["skill_id"])...,
+		)
+		out = append(out,
+			completionVerificationStringSlice(item["id"])...,
+		)
+	case "knowledge_dataset_ids":
+		out = append(out,
+			completionVerificationStringSlice(item["knowledge_dataset_id"])...,
+		)
+		out = append(out,
+			completionVerificationStringSlice(item["dataset_id"])...,
+		)
+		if len(out) == 0 {
+			out = append(out,
+				completionVerificationStringSlice(item["id"])...,
+			)
+		}
+	case "database_bindings":
+		out = append(out,
+			completionVerificationStringSlice(item["data_source_id"])...,
+		)
+		out = append(out,
+			completionVerificationStringSlice(item["database_id"])...,
+		)
+		out = append(out,
+			completionVerificationStringSlice(item["table_id"])...,
+		)
+		out = append(out,
+			completionVerificationStringSlice(item["table_ids"])...,
+		)
+	case "workflow_bindings":
+		out = append(out,
+			completionVerificationStringSlice(item["workflow_id"])...,
+		)
+		if len(out) == 0 {
+			out = append(out,
+				completionVerificationStringSlice(item["id"])...,
+			)
+		}
+	default:
+		out = append(out, completionVerificationAgentConfigBindingIDs(value)...)
+	}
+	return cleanStringSlice(dedupeStrings(out))
+}
+
+func completionVerificationMapHasKey(source map[string]interface{}, key string) bool {
+	if len(source) == 0 {
+		return false
+	}
+	_, ok := source[key]
+	return ok
+}
+
+func completionVerificationBoolFromAny(value interface{}) (bool, bool) {
+	switch typed := value.(type) {
+	case bool:
+		return typed, true
+	case string:
+		trimmed := strings.ToLower(strings.TrimSpace(typed))
+		switch trimmed {
+		case "true", "1", "yes", "enabled", "on":
+			return true, true
+		case "false", "0", "no", "disabled", "off":
+			return false, true
+		default:
+			return false, false
+		}
+	case int:
+		return typed != 0, true
+	case int64:
+		return typed != 0, true
+	case float64:
+		return typed != 0, true
+	default:
+		return false, false
+	}
+}
+
+func firstNonEmptyDisplay(value string, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		return value
+	}
+	return fallback
+}
+
+func completionVerificationMergeAgentConfigBindingExpectations(expectations []completionVerificationAgentConfigBindingExpectation) []completionVerificationAgentConfigBindingExpectation {
+	if len(expectations) == 0 {
+		return nil
+	}
+	byKey := map[string]int{}
+	out := make([]completionVerificationAgentConfigBindingExpectation, 0, len(expectations))
+	for _, expectation := range expectations {
+		if expectation.Field == "" || expectation.Action == "" {
+			continue
+		}
+		key := expectation.Field + "\x00" + expectation.Action
+		if idx, ok := byKey[key]; ok {
+			out[idx].Targets = cleanStringSlice(dedupeStrings(append(out[idx].Targets, expectation.Targets...)))
+			continue
+		}
+		expectation.Targets = cleanStringSlice(dedupeStrings(expectation.Targets))
+		byKey[key] = len(out)
+		out = append(out, expectation)
+	}
+	return out
+}
+
+func completionVerificationStringSliceContainsFold(values []string, want string) bool {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return false
+	}
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), want) {
+			return true
+		}
+	}
+	return false
+}
+
+func completionVerificationStringSlicesEqual(want []string, actual []string) bool {
+	want = cleanStringSlice(want)
+	actual = cleanStringSlice(actual)
+	if len(want) != len(actual) {
+		return false
+	}
+	for idx := range want {
+		if strings.TrimSpace(want[idx]) != strings.TrimSpace(actual[idx]) {
+			return false
+		}
+	}
+	return true
 }
 
 func completionVerificationHasFailedEvidence(evidence map[string]interface{}) bool {
