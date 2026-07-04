@@ -64,8 +64,43 @@ func TestToolGovernanceFrozenContinuationNeedsSkillLoopForPendingOperationPlan(t
 	plan["steps"] = mapsToInterfaceSlice(steps)
 	plan["step_status"] = stepStatus
 
+	if toolGovernanceFrozenContinuationNeedsSkillLoop(prepared) {
+		t.Fatal("toolGovernanceFrozenContinuationNeedsSkillLoop() = true, want false once no executable follow-up remains")
+	}
+}
+
+func TestToolGovernanceFrozenContinuationNeedsSkillLoopForPendingPostUpdateRead(t *testing.T) {
+	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
+	readStepID := operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config")
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        updateStepID,
+						"status":    operationPlanStepStatusCompleted,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "update_agent_config",
+					},
+					map[string]interface{}{
+						"id":                                readStepID,
+						"status":                            operationPlanStepStatusPending,
+						"skill_id":                          skills.SkillAgentManagement,
+						"tool_name":                         "get_agent_config",
+						"required_post_update_verification": true,
+					},
+				},
+				"step_status": map[string]interface{}{
+					updateStepID: operationPlanStepStatusCompleted,
+					readStepID:   operationPlanStepStatusPending,
+				},
+			},
+		}},
+	}
+
 	if !toolGovernanceFrozenContinuationNeedsSkillLoop(prepared) {
-		t.Fatal("toolGovernanceFrozenContinuationNeedsSkillLoop() = false, want true so completed governed operations still pass post verification")
+		t.Fatal("toolGovernanceFrozenContinuationNeedsSkillLoop() = false, want true for pending post-update verification read")
 	}
 }
 

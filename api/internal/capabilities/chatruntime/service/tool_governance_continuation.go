@@ -668,10 +668,17 @@ func toolGovernanceFrozenContinuationNeedsSkillLoop(prepared *PreparedChat) bool
 	if prepared == nil || prepared.parts == nil || prepared.Message == nil {
 		return false
 	}
-	if len(mapFromOperationContext(prepared.Message.Metadata["operation_plan"])) > 0 {
+	if plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"]); toolGovernanceFrozenPlanHasPendingExecutableFollowup(plan) {
 		return true
 	}
 	return len(managedFileCreateMissingSaveTargets(prepared.parts, prepared.Message.Metadata, nil)) > 0
+}
+
+func toolGovernanceFrozenPlanHasPendingExecutableFollowup(plan map[string]interface{}) bool {
+	if len(plan) == 0 {
+		return false
+	}
+	return len(operationPlanPendingExecutableSteps(plan, 8)) > 0
 }
 
 func remapLegacyFileDeleteFrozenInvocation(frozen toolgovernance.FrozenInvocation) toolgovernance.FrozenInvocation {
