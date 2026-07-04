@@ -2,8 +2,10 @@ package skillloop
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
@@ -48,6 +50,9 @@ func TestRequestUserInputCallTerminatesTurnAndEmitsEvent(t *testing.T) {
 	}
 	if result.answer != "I found multiple candidate sheets and need your choice before editing the file." {
 		t.Fatalf("answer = %q, want visible user input request message", result.answer)
+	}
+	if result.pendingUserInput == nil || result.pendingUserInput["request_id"] != "call_ask" {
+		t.Fatalf("pendingUserInput = %#v, want request payload", result.pendingUserInput)
 	}
 	if len(events) != 1 || events[0].Type != EventUserInputRequested {
 		t.Fatalf("events = %#v, want one user_input_requested event", events)
@@ -100,6 +105,9 @@ func TestRequestUserInputNestedInCallSkillToolTerminatesTurn(t *testing.T) {
 	if result.trace.Kind != "user_input_request" || result.trace.Status != "success" {
 		t.Fatalf("trace = %#v, want successful user input request", result.trace)
 	}
+	if result.pendingUserInput == nil || result.pendingUserInput["request_id"] != "call_nested_ask" {
+		t.Fatalf("pendingUserInput = %#v, want nested request payload", result.pendingUserInput)
+	}
 	if len(events) != 1 || events[0].Type != EventUserInputRequested {
 		t.Fatalf("events = %#v, want one user_input_requested event", events)
 	}
@@ -136,6 +144,53 @@ func TestRequestUserInputRejectsInvalidArguments(t *testing.T) {
 	}
 	if result.trace.Kind != "user_input_request" || result.trace.Status != "error" {
 		t.Fatalf("trace = %#v, want failed user input request trace", result.trace)
+	}
+}
+
+func TestRunnerReturnsPendingErrorForRequestUserInput(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "call_ask",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolRequestUserInput,
+								Arguments: `{"message":"I need one more decision before continuing.","questions":[{"id":"target","question":"Which target should I use?","options":[{"label":"Current page"}]}]}`,
+							},
+						}},
+					},
+				}},
+			},
+		},
+	}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntimeWithCatalog(nil, nil, ""),
+		AppContext:   &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "continue the task"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
+	})
+
+	var pending *UserInputPendingError
+	if !errors.As(err, &pending) {
+		t.Fatalf("Run() error = %v, want UserInputPendingError", err)
+	}
+	if pending.Payload["request_id"] != "call_ask" {
+		t.Fatalf("pending payload = %#v, want request id", pending.Payload)
+	}
+	if answer != "I need one more decision before continuing." {
+		t.Fatalf("answer = %q, want visible pending message", answer)
 	}
 }
 

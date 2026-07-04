@@ -237,6 +237,12 @@ func (s *service) runToolGovernanceApprovedContinuation(ctx context.Context, pre
 			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction), onEvent)
 			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingClientAction}, nil
 		}
+		var pendingUserInput *skillloop.UserInputPendingError
+		if errors.As(err, &pendingUserInput) {
+			metadata := s.persistUserInputRequestPending(context.WithoutCancel(ctx), prepared, pendingUserInput.Payload, usage)
+			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
+			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion}, nil
+		}
 		s.finalizePreparedError(context.WithoutCancel(ctx), prepared, err, onEvent)
 		return nil, newFinalizedStreamError(err)
 	}
@@ -327,7 +333,6 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		} else {
 			invocation.Trace = enrichSkillTraceResultFromMessages(invocation.Trace, invocation.Messages)
 			timeline.RecordInvocationEnd(invocation.Trace)
-			s.persistFrozenContinuationToolTraceBestEffort(persistCtx, prepared, invocation.Trace)
 			for _, artifact := range skillArtifactsFromToolMessages(prepared, invocation.Trace, invocation.Messages) {
 				s.persistGeneratedArtifactBestEffort(persistCtx, prepared, artifact)
 				timeline.Emit(streamEventSkillArtifactCreated, artifact)
@@ -373,6 +378,12 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 				metadata := s.persistClientActionPending(persistCtx, prepared, pendingClientAction.Payload, usage)
 				s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction), onEvent)
 				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingClientAction}, true, nil
+			}
+			var pendingUserInput *skillloop.UserInputPendingError
+			if errors.As(err, &pendingUserInput) {
+				metadata := s.persistUserInputRequestPending(persistCtx, prepared, pendingUserInput.Payload, usage)
+				s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
+				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion}, true, nil
 			}
 			return nil, true, err
 		}
@@ -456,6 +467,10 @@ func latestMatchingToolCallRuntimeID(metadata map[string]interface{}, skillID st
 }
 
 func toolGovernanceFrozenFastPathAnswer(prepared *PreparedChat, trace skills.SkillTrace) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(trace.Status)) {
+	case "error", "failed", "failure":
+		return "", false
+	}
 	if toolGovernanceFrozenPlanHasPendingFollowup(prepared, trace) {
 		return "", false
 	}
@@ -668,10 +683,17 @@ func toolGovernanceFrozenContinuationNeedsSkillLoop(prepared *PreparedChat) bool
 	if prepared == nil || prepared.parts == nil || prepared.Message == nil {
 		return false
 	}
-	if plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"]); toolGovernanceFrozenPlanHasPendingExecutableFollowup(plan) {
+	if plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"]); toolGovernanceFrozenPlanNeedsContinuation(plan) {
 		return true
 	}
 	return len(managedFileCreateMissingSaveTargets(prepared.parts, prepared.Message.Metadata, nil)) > 0
+}
+
+func toolGovernanceFrozenPlanNeedsContinuation(plan map[string]interface{}) bool {
+	if toolGovernanceFrozenPlanHasPendingExecutableFollowup(plan) {
+		return true
+	}
+	return toolGovernanceFrozenPlanNeedsFailureVerifier(plan)
 }
 
 func toolGovernanceFrozenPlanHasPendingExecutableFollowup(plan map[string]interface{}) bool {
@@ -679,6 +701,25 @@ func toolGovernanceFrozenPlanHasPendingExecutableFollowup(plan map[string]interf
 		return false
 	}
 	return len(operationPlanPendingExecutableSteps(plan, 8)) > 0
+}
+
+func toolGovernanceFrozenPlanNeedsFailureVerifier(plan map[string]interface{}) bool {
+	if len(plan) == 0 {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(stringFromAny(plan["status"]))) {
+	case operationPlanStatusFailed, "error", "failure", "blocked":
+		return true
+	}
+	stepStatus := mapFromOperationContext(plan["step_status"])
+	for _, step := range mapSliceFromAny(plan["steps"]) {
+		id := strings.TrimSpace(stringFromAny(step["id"]))
+		status := operationPlanNormalizeStepStatus(firstNonEmptyString(step["status"], stepStatus[id]))
+		if status == operationPlanStepStatusFailed {
+			return true
+		}
+	}
+	return false
 }
 
 func remapLegacyFileDeleteFrozenInvocation(frozen toolgovernance.FrozenInvocation) toolgovernance.FrozenInvocation {

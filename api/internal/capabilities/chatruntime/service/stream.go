@@ -91,6 +91,12 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction))
 				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingClientAction, MessageEndEventID: eventID}, nil
 			}
+			var pendingUserInput *skillloop.UserInputPendingError
+			if errors.As(err, &pendingUserInput) {
+				metadata := s.persistUserInputRequestPending(persistCtx, prepared, pendingUserInput.Payload, usage)
+				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion))
+				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion, MessageEndEventID: eventID}, nil
+			}
 			if errors.Is(err, ErrMessageStopped) {
 				_ = s.clearPreparedRuntime(persistCtx, prepared)
 				return nil, err

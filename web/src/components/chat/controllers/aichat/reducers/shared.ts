@@ -294,6 +294,7 @@ type AssetOperationSemanticIdentityInput = {
   assets?: unknown;
   actionId?: unknown;
   correlationId?: unknown;
+  toolName?: unknown;
 };
 
 function normalizeAssetOperationActionId(value: unknown): string {
@@ -309,17 +310,27 @@ function assetOperationSemanticIdentity(input: AssetOperationSemanticIdentityInp
   const args = input.args ?? {};
   const audit = invocationRecord(input.audit ?? result.asset_operation_audit);
   const operationGroup = invocationRecord(result.operation_group);
+  const operationType =
+    invocationString(result.operation_type) ||
+    invocationString(args.operation_type) ||
+    invocationString(operationGroup.operation);
   const assetType = (
     invocationString(input.assetType) ||
     invocationString(audit.asset_type) ||
     invocationString(result.asset_type) ||
-    invocationString(args.asset_type)
+    invocationString(args.asset_type) ||
+    invocationString(operationGroup.asset_type) ||
+    assetTypeFromOperationType(operationType) ||
+    assetTypeFromToolInvocation(result, args)
   ).toLowerCase();
   const effect = (
     invocationString(input.effect) ||
     invocationString(audit.effect) ||
     invocationString(result.effect) ||
-    invocationString(args.effect)
+    invocationString(args.effect) ||
+    invocationString(operationGroup.effect) ||
+    effectFromOperationType(operationType) ||
+    effectFromToolName(invocationString(input.toolName))
   ).toLowerCase();
   if (!assetType || !effect) return '';
 
@@ -346,10 +357,122 @@ function assetOperationSemanticIdentity(input: AssetOperationSemanticIdentityInp
         result.assets ??
         args.assets ??
         result.item_results ??
+        operationGroup.targets ??
         operationGroup.item_results ??
+        agentOperationTarget(result, args) ??
         {}
     ),
   ].join(':');
+}
+
+function assetTypeFromOperationType(operationType: string): string {
+  if (!operationType.includes('.')) return '';
+  const [assetType] = operationType.split('.');
+  return assetType?.trim() ?? '';
+}
+
+function assetTypeFromToolInvocation(
+  result: Record<string, unknown>,
+  args: Record<string, unknown>
+): string {
+  if (
+    invocationString(result.agent_id) ||
+    invocationString(args.agent_id) ||
+    Object.keys(invocationRecord(result.agent)).length > 0 ||
+    Object.keys(invocationRecord(args.agent)).length > 0
+  ) {
+    return 'agent';
+  }
+  return '';
+}
+
+function effectFromOperationType(operationType: string): string {
+  const tokens = operationType.toLowerCase().split('.').reverse();
+  for (const token of tokens) {
+    const effect = normalizeOperationEffect(token);
+    if (effect) return effect;
+  }
+  return '';
+}
+
+function effectFromToolName(toolName: string): string {
+  const tokens = toolName.toLowerCase().split(/[_\-./]+/);
+  for (const token of tokens) {
+    const effect = normalizeOperationEffect(token);
+    if (effect) return effect;
+  }
+  return '';
+}
+
+function normalizeOperationEffect(token: string): string {
+  switch (token.trim()) {
+    case 'create':
+    case 'created':
+    case 'add':
+    case 'added':
+    case 'new':
+      return 'created';
+    case 'update':
+    case 'updated':
+    case 'modify':
+    case 'modified':
+    case 'edit':
+    case 'edited':
+    case 'set':
+    case 'replace':
+    case 'replaced':
+    case 'bind':
+    case 'bound':
+    case 'unbind':
+    case 'unbound':
+    case 'remove':
+    case 'removed':
+      return 'updated';
+    case 'delete':
+    case 'deleted':
+    case 'destroy':
+    case 'destroyed':
+      return 'deleted';
+    case 'save':
+    case 'saved':
+    case 'upload':
+    case 'uploaded':
+      return 'saved';
+    default:
+      return '';
+  }
+}
+
+function agentOperationTarget(
+  result: Record<string, unknown>,
+  args: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  const target: Record<string, unknown> = {};
+  for (const key of [
+    'agent_id',
+    'agent_name',
+    'name',
+    'updated_fields',
+    'requested_fields',
+    'target_count',
+    'deleted_count',
+    'created_count',
+    'updated_count',
+  ]) {
+    const value = result[key] ?? args[key];
+    if (hasStableIdentityValue(value)) {
+      target[key] = value;
+    }
+  }
+  return Object.keys(target).length > 0 ? target : undefined;
+}
+
+function hasStableIdentityValue(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value as Record<string, unknown>).length > 0;
+  return true;
 }
 
 function skillInvocationGovernanceCorrelationId(invocation: AIChatSkillInvocation): string {
@@ -399,6 +522,7 @@ export function skillInvocationSemanticIdentity(invocation: AIChatSkillInvocatio
         args: invocationRecord(invocation.arguments),
         actionId: record.action_id,
         correlationId: record.correlation_id,
+        toolName: record.tool_name,
       });
       if (assetOperationIdentity) return assetOperationIdentity;
       return [
@@ -438,6 +562,7 @@ export function skillInvocationSemanticIdentity(invocation: AIChatSkillInvocatio
       args: invocationRecord(invocation.arguments),
       actionId: record.action_id,
       correlationId: record.correlation_id,
+      toolName: record.tool_name,
     });
     if (assetOperationIdentity) return assetOperationIdentity;
   }

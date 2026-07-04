@@ -312,7 +312,8 @@ func (r *Runner) handleRequestUserInputCall(
 	if visibleMessage != "" {
 		trace.Message = visibleMessage
 	}
-	r.emitEvent(EventUserInputRequested, userInputRequestPayload(prepared, callID, questions))
+	pendingPayload := userInputRequestPayload(prepared, callID, questions)
+	r.emitEvent(EventUserInputRequested, pendingPayload)
 	logger.DebugContext(ctx, "aichat user input requested",
 		"conversation_id", prepared.Conversation.ID.String(),
 		"message_id", prepared.Message.ID.String(),
@@ -323,6 +324,7 @@ func (r *Runner) handleRequestUserInputCall(
 		"instruction": "The question is visible to the user. Stop this turn and wait for the next user message.",
 	}), false, false)
 	result.answer = visibleMessage
+	result.pendingUserInput = pendingPayload
 	return result
 }
 

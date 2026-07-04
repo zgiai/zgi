@@ -175,6 +175,12 @@ func (s *service) RunClientActionContinuationStream(
 			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction), onEvent)
 			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingClientAction}, nil
 		}
+		var pendingUserInput *skillloop.UserInputPendingError
+		if errors.As(err, &pendingUserInput) {
+			metadata := s.persistUserInputRequestPending(context.WithoutCancel(ctx), prepared, pendingUserInput.Payload, usage)
+			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
+			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion}, nil
+		}
 		if errors.Is(err, ErrMessageStopped) {
 			_ = s.clearPreparedRuntime(context.WithoutCancel(ctx), prepared)
 			return nil, err

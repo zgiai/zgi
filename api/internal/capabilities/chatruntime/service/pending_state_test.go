@@ -86,6 +86,48 @@ func TestPersistToolGovernancePendingUpdatesMessageAndConversationInOneTransacti
 	}
 }
 
+func TestPersistUserInputRequestPendingUpdatesMessageAndConversationInOneTransaction(t *testing.T) {
+	db, mock := newPendingStateRepositoryMockDB(t)
+	svc := &service{repos: repository.NewRepositories(db)}
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: conversationID},
+		Message: &runtimemodel.Message{
+			ID:       messageID,
+			Query:    "继续处理这个任务",
+			Metadata: map[string]interface{}{},
+		},
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)UPDATE "chat_runtime_messages" SET .* WHERE id = .* AND deleted_at IS NULL AND status IN .*`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)UPDATE "chat_runtime_conversations" SET .*"current_leaf_message_id".*"dialogue_count"=dialogue_count \+ 1.* WHERE id = .* AND active_message_id = .* AND deleted_at IS NULL`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	metadata := svc.persistUserInputRequestPending(context.Background(), prepared, map[string]interface{}{
+		"request_id":      "call_ask",
+		"created_at":      123,
+		"questions":       []map[string]interface{}{{"id": "target", "question": "选择哪个目标？"}},
+		"message_id":      messageID.String(),
+		"conversation_id": conversationID.String(),
+	}, nil)
+
+	request := mapFromOperationContext(metadata["user_input_request"])
+	if got := stringFromAny(request["request_id"]); got != "call_ask" {
+		t.Fatalf("user_input_request request_id = %q, want call_ask", got)
+	}
+	continuation := mapFromOperationContext(metadata["user_input_continuation"])
+	if got := stringFromAny(continuation["status"]); got != "waiting_question" {
+		t.Fatalf("user_input_continuation status = %q, want waiting_question", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
 func TestPersistPendingStateRollsBackWhenConversationFinishFails(t *testing.T) {
 	db, mock := newPendingStateRepositoryMockDB(t)
 	svc := &service{repos: repository.NewRepositories(db)}

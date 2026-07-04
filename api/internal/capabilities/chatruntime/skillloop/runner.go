@@ -42,6 +42,7 @@ type skillStepResult struct {
 	pendingQuestion     map[string]interface{}
 	pendingGovernance   map[string]interface{}
 	pendingClientAction map[string]interface{}
+	pendingUserInput    map[string]interface{}
 	fatalErr            error
 }
 
@@ -565,6 +566,15 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			if result.answer != "" {
 				appendAnswerText(&answerBuilder, result.answer)
 				r.emitAnswerChunk(ctx, prepared, result.answer, nil)
+			}
+			if result.pendingUserInput != nil {
+				logger.DebugContext(ctx, "aichat skill planning requested user input",
+					"conversation_id", prepared.Conversation.ID.String(),
+					"message_id", prepared.Message.ID.String(),
+					"skill_step_count", stepCount,
+					"tool_call_count", toolCallCount,
+				)
+				return answerBuilder.String(), usage, &UserInputPendingError{Payload: result.pendingUserInput}
 			}
 			if result.terminal {
 				logger.DebugContext(ctx, "aichat skill planning requested user input",

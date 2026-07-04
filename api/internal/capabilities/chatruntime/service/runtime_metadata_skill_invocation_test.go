@@ -254,6 +254,105 @@ func TestMergeSkillInvocationMetadataOmitsInternalPlannerGuardrail(t *testing.T)
 	}
 }
 
+func TestMergeSkillInvocationMetadataDedupesAgentBatchOperationBySemanticIdentity(t *testing.T) {
+	result := map[string]interface{}{
+		"status":         "completed",
+		"effect":         "deleted",
+		"operation_type": "agent.delete.batch",
+		"target_count":   2,
+		"deleted_count":  2,
+		"item_results": []interface{}{
+			map[string]interface{}{"agent_id": "agent-1", "agent_name": "Novel Writer", "status": "succeeded"},
+			map[string]interface{}{"agent_id": "agent-2", "agent_name": "Browser Agent", "status": "succeeded"},
+		},
+		"operation_group": map[string]interface{}{
+			"operation":     "agent.delete",
+			"asset_type":    "agent",
+			"target_count":  2,
+			"success_count": 2,
+			"item_results": []interface{}{
+				map[string]interface{}{"agent_id": "agent-1", "agent_name": "Novel Writer", "status": "succeeded"},
+				map[string]interface{}{"agent_id": "agent-2", "agent_name": "Browser Agent", "status": "succeeded"},
+			},
+		},
+	}
+
+	metadata := mergeSkillInvocationMetadata(nil, []map[string]interface{}{
+		{
+			"kind":       "tool_call",
+			"skill_id":   skills.SkillAgentManagement,
+			"tool_name":  "delete_agent",
+			"status":     "success",
+			"runtime_id": "tool_call:agent-management:delete_agent::#1",
+			"result":     result,
+		},
+	})
+	metadata = mergeSkillInvocationMetadata(metadata, []map[string]interface{}{
+		{
+			"kind":        "tool_call",
+			"skill_id":    skills.SkillAgentManagement,
+			"tool_name":   "delete_agent",
+			"status":      "success",
+			"runtime_id":  "trace:000000:tool_call:agent-management:delete_agent::",
+			"duration_ms": int64(17),
+			"result":      result,
+		},
+	})
+
+	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	if len(invocations) != 1 {
+		t.Fatalf("skill_invocations = %#v, want one deduped batch delete invocation", invocations)
+	}
+	if got := stringFromAny(invocations[0]["runtime_id"]); got != "trace:000000:tool_call:agent-management:delete_agent::" {
+		t.Fatalf("runtime_id = %q, want merged incoming runtime id", got)
+	}
+}
+
+func TestMergeSkillInvocationMetadataDedupesAgentConfigOperationBySemanticIdentity(t *testing.T) {
+	first := map[string]interface{}{
+		"status":            "completed",
+		"effect":            "updated",
+		"agent_id":          "agent-1",
+		"agent_name":        "Novel Writer",
+		"updated_fields":    []interface{}{"enabled_skill_ids", "model", "file_upload_enabled"},
+		"enabled_skill_ids": []interface{}{"file-generator"},
+		"model_provider":    "deepseek",
+		"model":             "deepseek-v4-flash",
+	}
+	second := copyStringAnyMap(first)
+	second["file_upload_enabled"] = true
+
+	metadata := mergeSkillInvocationMetadata(nil, []map[string]interface{}{
+		{
+			"kind":       "tool_call",
+			"skill_id":   skills.SkillAgentManagement,
+			"tool_name":  "update_agent_config",
+			"status":     "success",
+			"runtime_id": "tool_call:agent-management:update_agent_config::#1",
+			"result":     first,
+		},
+	})
+	metadata = mergeSkillInvocationMetadata(metadata, []map[string]interface{}{
+		{
+			"kind":       "tool_call",
+			"skill_id":   skills.SkillAgentManagement,
+			"tool_name":  "update_agent_config",
+			"status":     "success",
+			"runtime_id": "trace:000000:tool_call:agent-management:update_agent_config::",
+			"result":     second,
+		},
+	})
+
+	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	if len(invocations) != 1 {
+		t.Fatalf("skill_invocations = %#v, want one deduped update invocation", invocations)
+	}
+	result := mapFromOperationContext(invocations[0]["result"])
+	if result["file_upload_enabled"] != true {
+		t.Fatalf("result = %#v, want merged config result", result)
+	}
+}
+
 func TestMergeSkillTraceMetadataOmitsInternalPlannerGuardrail(t *testing.T) {
 	metadata := mergeSkillTraceMetadata(nil, []skills.SkillTrace{{
 		Kind:     "guardrail",

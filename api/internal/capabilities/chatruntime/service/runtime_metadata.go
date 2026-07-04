@@ -1037,6 +1037,18 @@ func upsertSkillInvocation(current []map[string]interface{}, incoming map[string
 			}
 		}
 	}
+	if semanticID := skillInvocationSemanticIdentity(incoming); semanticID != "" {
+		for index, invocation := range current {
+			if skillInvocationSemanticIdentity(invocation) != semanticID {
+				continue
+			}
+			if shouldKeepExistingInvocation(invocation, incoming) {
+				return current
+			}
+			current[index] = mergeInvocation(invocation, incoming)
+			return current
+		}
+	}
 	for index, invocation := range current {
 		if sameInvocationIdentity(invocation, incoming) && isOpenInvocation(invocation) {
 			if shouldKeepExistingInvocation(invocation, incoming) {
@@ -1061,6 +1073,210 @@ func upsertSkillInvocation(current []map[string]interface{}, incoming map[string
 		}
 	}
 	return append(current, incoming)
+}
+
+func skillInvocationSemanticIdentity(invocation map[string]interface{}) string {
+	if len(invocation) == 0 {
+		return ""
+	}
+	kind := strings.TrimSpace(stringFromAny(invocation["kind"]))
+	switch kind {
+	case "intermediate_answer":
+		if answerID := strings.TrimSpace(stringFromAny(invocation["answer_id"])); answerID != "" {
+			return "intermediate_answer:" + answerID
+		}
+	case "tool_governance":
+		if correlationID := toolGovernanceCorrelationID(invocation); correlationID != "" {
+			return strings.Join([]string{
+				"tool_governance",
+				strings.TrimSpace(stringFromAny(invocation["skill_id"])),
+				strings.TrimSpace(stringFromAny(invocation["tool_name"])),
+				correlationID,
+			}, ":")
+		}
+	case "tool_call":
+		if correlationID := toolGovernanceCorrelationID(invocation); correlationID != "" {
+			return strings.Join([]string{
+				"tool_call_governed",
+				strings.TrimSpace(stringFromAny(invocation["skill_id"])),
+				strings.TrimSpace(stringFromAny(invocation["tool_name"])),
+				correlationID,
+			}, ":")
+		}
+		return assetOperationSemanticIdentity(invocation)
+	}
+	return ""
+}
+
+func assetOperationSemanticIdentity(invocation map[string]interface{}) string {
+	if len(invocation) == 0 {
+		return ""
+	}
+	result := mapFromOperationContext(invocation["result"])
+	args := mapFromOperationContext(invocation["arguments"])
+	audit := governanceMapFromAny(firstNonNil(invocation["asset_operation_audit"], result["asset_operation_audit"], args["asset_operation_audit"]))
+	operationGroup := mapFromOperationContext(result["operation_group"])
+	operationType := firstNonEmptyString(result["operation_type"], args["operation_type"], operationGroup["operation"])
+	assetType := strings.ToLower(firstNonEmptyString(
+		invocation["asset_type"],
+		audit["asset_type"],
+		result["asset_type"],
+		args["asset_type"],
+		operationGroup["asset_type"],
+		assetTypeFromOperationType(operationType),
+		assetTypeFromToolResult(invocation, result, args),
+	))
+	effect := strings.ToLower(firstNonEmptyString(
+		invocation["effect"],
+		audit["effect"],
+		result["effect"],
+		args["effect"],
+		operationGroup["effect"],
+		effectFromOperationType(operationType),
+		effectFromToolName(stringFromAny(invocation["tool_name"])),
+	))
+	if assetType == "" || effect == "" {
+		return ""
+	}
+	if correlationID := firstNonEmptyString(invocation["correlation_id"], audit["correlation_id"], result["correlation_id"], operationGroup["correlation_id"]); correlationID != "" {
+		return "asset_operation:" + correlationID
+	}
+	if actionID := normalizeAssetOperationActionID(firstNonEmptyString(invocation["action_id"], result["action_id"], args["action_id"])); actionID != "" {
+		return "asset_operation:" + actionID
+	}
+	return strings.Join([]string{
+		"asset_operation",
+		assetType,
+		effect,
+		stableInvocationIdentityValue(assetOperationIdentityTarget(invocation, result, args, audit, operationGroup)),
+	}, ":")
+}
+
+func assetTypeFromOperationType(operationType string) string {
+	operationType = strings.TrimSpace(operationType)
+	if operationType == "" || !strings.Contains(operationType, ".") {
+		return ""
+	}
+	return strings.TrimSpace(strings.Split(operationType, ".")[0])
+}
+
+func assetTypeFromToolResult(invocation map[string]interface{}, result map[string]interface{}, args map[string]interface{}) string {
+	if firstNonEmptyString(result["agent_id"], args["agent_id"], result["agent"], args["agent"]) != "" ||
+		strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["skill_id"])), skills.SkillAgentManagement) {
+		return "agent"
+	}
+	return ""
+}
+
+func effectFromOperationType(operationType string) string {
+	parts := strings.Split(strings.ToLower(strings.TrimSpace(operationType)), ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	for idx := len(parts) - 1; idx >= 0; idx-- {
+		if effect := normalizedOperationEffect(parts[idx]); effect != "" {
+			return effect
+		}
+	}
+	return ""
+}
+
+func effectFromToolName(toolName string) string {
+	for _, token := range strings.FieldsFunc(strings.ToLower(strings.TrimSpace(toolName)), func(r rune) bool {
+		return r == '_' || r == '-' || r == '.' || r == '/'
+	}) {
+		if effect := normalizedOperationEffect(token); effect != "" {
+			return effect
+		}
+	}
+	return ""
+}
+
+func normalizedOperationEffect(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "create", "created", "add", "added", "new":
+		return "created"
+	case "update", "updated", "modify", "modified", "edit", "edited", "set", "replace", "replaced", "bind", "bound", "unbind", "unbound", "remove", "removed":
+		return "updated"
+	case "delete", "deleted", "destroy", "destroyed":
+		return "deleted"
+	case "save", "saved", "upload", "uploaded":
+		return "saved"
+	default:
+		return ""
+	}
+}
+
+func normalizeAssetOperationActionID(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "asset_observation:") {
+		return strings.TrimPrefix(value, "asset_observation:")
+	}
+	return value
+}
+
+func assetOperationIdentityTarget(invocation map[string]interface{}, result map[string]interface{}, args map[string]interface{}, audit map[string]interface{}, operationGroup map[string]interface{}) interface{} {
+	for _, value := range []interface{}{
+		invocation["assets"],
+		audit["assets"],
+		result["assets"],
+		args["assets"],
+		operationGroup["targets"],
+		result["item_results"],
+		operationGroup["item_results"],
+	} {
+		if hasStableIdentityValue(value) {
+			return value
+		}
+	}
+	target := map[string]interface{}{}
+	for _, key := range []string{
+		"agent_id",
+		"agent_name",
+		"name",
+		"updated_fields",
+		"requested_fields",
+		"target_count",
+		"deleted_count",
+		"created_count",
+		"updated_count",
+	} {
+		if value := firstNonNil(result[key], args[key], invocation[key]); hasStableIdentityValue(value) {
+			target[key] = value
+		}
+	}
+	if len(target) > 0 {
+		return target
+	}
+	return map[string]interface{}{
+		"skill_id":  strings.TrimSpace(stringFromAny(invocation["skill_id"])),
+		"tool_name": strings.TrimSpace(stringFromAny(invocation["tool_name"])),
+	}
+}
+
+func hasStableIdentityValue(value interface{}) bool {
+	switch typed := value.(type) {
+	case nil:
+		return false
+	case string:
+		return strings.TrimSpace(typed) != ""
+	case []interface{}:
+		return len(typed) > 0
+	case []map[string]interface{}:
+		return len(typed) > 0
+	case map[string]interface{}:
+		return len(typed) > 0
+	default:
+		return true
+	}
+}
+
+func stableInvocationIdentityValue(value interface{}) string {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return strings.TrimSpace(fmt.Sprintf("%v", value))
+	}
+	return string(data)
 }
 
 func shouldKeepExistingInvocation(existing map[string]interface{}, incoming map[string]interface{}) bool {

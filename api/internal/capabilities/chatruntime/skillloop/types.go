@@ -97,6 +97,21 @@ func (e *ClientActionPendingError) Error() string {
 	return fmt.Sprintf("client action is pending for %s", actionID)
 }
 
+type UserInputPendingError struct {
+	Payload map[string]interface{}
+}
+
+func (e *UserInputPendingError) Error() string {
+	if e == nil {
+		return "user input is pending"
+	}
+	requestID := stringFromInterface(e.Payload["request_id"])
+	if requestID == "" {
+		return "user input is pending"
+	}
+	return fmt.Sprintf("user input is pending for %s", requestID)
+}
+
 type Event struct {
 	Type    string
 	Payload map[string]interface{}
