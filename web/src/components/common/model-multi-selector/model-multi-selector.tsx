@@ -106,8 +106,9 @@ function ModelMultiSelectorBase({
 
   // Fetch all models at once without pagination
   const { data, isLoading } = useQuery<ApiResponseData<ModelList>>({
-    queryKey: ['models', 'multi-selector', { is_enabled: isEnabled }],
-    queryFn: () => modelService.getModels({ is_enabled: isEnabled, page_size: 1000 }),
+    queryKey: ['models', 'multi-selector', { is_enabled: isEnabled, status: 'active' }],
+    queryFn: () =>
+      modelService.getModels({ is_enabled: isEnabled, page_size: 1000, status: 'active' }),
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -630,7 +631,13 @@ function ModelMultiSelectorBase({
                                         }}
                                         labels={{
                                           context: t('models.selector.tooltip.context'),
+                                          deprecatedUnavailable: t(
+                                            'models.selector.tooltip.deprecatedUnavailable'
+                                          ),
                                           features: t('models.selector.tooltip.features'),
+                                          replacementSuggestion: t(
+                                            'models.selector.tooltip.replacementSuggestion'
+                                          ),
                                           useCases: t('models.selector.tooltip.useCases'),
                                         }}
                                       />

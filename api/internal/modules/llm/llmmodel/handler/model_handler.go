@@ -178,6 +178,11 @@ func (h *ModelHandler) ListTenantModels(c *gin.Context) {
 	// Parse query parameters
 	useCase := c.Query("use_case")
 	provider := c.Query("provider")
+	status := c.DefaultQuery("status", "active")
+	if status != "active" && status != "deprecated" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "invalid status")
+		return
+	}
 	isEnabledStr := c.Query("is_enabled")
 
 	// Parse pagination parameters
@@ -194,7 +199,7 @@ func (h *ModelHandler) ListTenantModels(c *gin.Context) {
 		}
 	}
 
-	models, err := h.service.ListTenantModels(c.Request.Context(), organizationID, useCase, provider)
+	models, err := h.service.ListTenantModels(c.Request.Context(), organizationID, useCase, provider, status)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return

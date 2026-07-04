@@ -656,7 +656,7 @@ func (s *channelService) loadActiveModelNameIndexes(ctx context.Context, organiz
 
 	if s != nil && s.modelRepo != nil {
 		activeOnly := true
-		models, _, err := s.modelRepo.List(ctx, nil, "", "", &activeOnly, 0, 10000)
+		models, _, err := s.modelRepo.List(ctx, nil, "", "", "active", &activeOnly, 0, 10000)
 		if err != nil {
 			return nil, nil, err
 		}

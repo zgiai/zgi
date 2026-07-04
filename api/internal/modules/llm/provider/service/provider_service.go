@@ -732,7 +732,7 @@ func (s *providerService) GetProviderDetail(ctx context.Context, organizationID 
 // ToggleModel enables or disables a model for an organization under a provider
 func (s *providerService) ToggleModel(ctx context.Context, organizationID uuid.UUID, provider string, modelName string, isEnabled bool) error {
 	// Find the model by provider name and model name
-	models, _, err := s.modelRepo.List(ctx, nil, "", "", nil, 0, 10000)
+	models, _, err := s.modelRepo.List(ctx, nil, "", "", "", nil, 0, 10000)
 	if err != nil {
 		return fmt.Errorf("failed to list models: %w", err)
 	}

@@ -24,6 +24,7 @@ type fakeModelService struct {
 	parametersErr error
 	err           error
 	seenProvider  string
+	seenStatus    string
 }
 
 func (f *fakeModelService) CreateGlobal(ctx context.Context, req *dto.CreateModelRequest) (*model.LLMModel, error) {
@@ -78,8 +79,9 @@ func (f *fakeModelService) DeleteCustom(ctx context.Context, organizationID, id 
 	return errors.New("not implemented")
 }
 
-func (f *fakeModelService) ListTenantModels(ctx context.Context, organizationID uuid.UUID, useCase string, provider string) ([]*model.ModelView, error) {
+func (f *fakeModelService) ListTenantModels(ctx context.Context, organizationID uuid.UUID, useCase string, provider string, status string) ([]*model.ModelView, error) {
 	f.seenProvider = provider
+	f.seenStatus = status
 	if provider == "" {
 		return f.models, f.err
 	}
@@ -139,6 +141,7 @@ func TestListTenantModels_FilterByProvider_Hit(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "test-provider", svc.seenProvider)
+	assert.Equal(t, "active", svc.seenStatus)
 
 	data := decodeTenantModelListData(t, w.Body.Bytes())
 	items := data["items"].([]interface{})
@@ -171,6 +174,7 @@ func TestListTenantModels_NoProviderFilter_ReturnAll(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Empty(t, svc.seenProvider)
+	assert.Equal(t, "active", svc.seenStatus)
 
 	data := decodeTenantModelListData(t, w.Body.Bytes())
 	items := data["items"].([]interface{})
@@ -198,6 +202,7 @@ func TestListTenantModels_FilterByProvider_Miss(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "other-provider", svc.seenProvider)
+	assert.Equal(t, "active", svc.seenStatus)
 
 	data := decodeTenantModelListData(t, w.Body.Bytes())
 	items := data["items"].([]interface{})

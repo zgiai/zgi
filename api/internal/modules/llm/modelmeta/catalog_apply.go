@@ -73,6 +73,9 @@ type PublishedModel struct {
 	Features               *llmmodel.ModelFeatures
 	Tools                  *llmmodel.ModelTools
 	Parameters             *llmmodel.ModelParameters
+	ReplacementProvider    string
+	ReplacementModel       string
+	DeprecationReason      string
 }
 
 func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCatalog) error {
@@ -80,26 +83,31 @@ func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCa
 		txService := *s
 		txService.db = tx
 
-		providerKeys := make([]string, 0, len(catalog.Providers))
+		skippedProviders := make(map[string]bool)
 		for _, provider := range catalog.Providers {
-			if err := txService.upsertPublishedProvider(ctx, provider); err != nil {
+			skipped, err := txService.upsertPublishedProvider(ctx, provider)
+			if err != nil {
 				return err
 			}
-			providerKeys = append(providerKeys, provider.Provider)
+			if skipped {
+				skippedProviders[provider.Provider] = true
+			}
 		}
 
 		modelKeys := make([]catalogModelKey, 0, len(catalog.Models))
 		for _, model := range catalog.Models {
-			if err := txService.upsertPublishedModel(ctx, model); err != nil {
+			if skippedProviders[model.Provider] {
+				continue
+			}
+			applied, err := txService.upsertPublishedModel(ctx, model)
+			if err != nil {
 				return err
 			}
-			modelKeys = append(modelKeys, catalogModelKey{Provider: model.Provider, Model: model.Model})
+			if applied {
+				modelKeys = append(modelKeys, catalogModelKey{Provider: model.Provider, Model: model.Model})
+			}
 		}
-
-		if err := txService.softDeleteMissingProviders(ctx, providerKeys); err != nil {
-			return err
-		}
-		if err := txService.softDeleteMissingModels(ctx, modelKeys); err != nil {
+		if err := txService.markMissingModelsDeprecated(ctx, modelKeys); err != nil {
 			return err
 		}
 
@@ -111,40 +119,36 @@ func (s *Service) RecordPublishedCatalogSyncError(ctx context.Context, message s
 	return s.upsertCatalogSyncState(ctx, 0, time.Time{}, message)
 }
 
-func (s *Service) upsertPublishedProvider(ctx context.Context, provider PublishedProvider) error {
+func (s *Service) upsertPublishedProvider(ctx context.Context, provider PublishedProvider) (bool, error) {
 	existing, err := s.findExistingProvider(ctx, provider.Provider)
 	if err == gorm.ErrRecordNotFound {
-		return s.createPublishedProvider(ctx, provider)
+		return false, s.createPublishedProvider(ctx, provider)
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if existing.DeletedAt.Valid {
-		if err := s.restoreProviderByID(ctx, existing.ID); err != nil {
-			return err
-		}
+		return true, nil
 	}
 
-	return s.updatePublishedProvider(ctx, existing.ID, provider)
+	return false, s.updatePublishedProvider(ctx, existing.ID, provider)
 }
 
-func (s *Service) upsertPublishedModel(ctx context.Context, model PublishedModel) error {
+func (s *Service) upsertPublishedModel(ctx context.Context, model PublishedModel) (bool, error) {
 	existing, err := s.findExistingPublishedModel(ctx, model.Provider, model.Model)
 	if err == gorm.ErrRecordNotFound {
-		return s.createPublishedModel(ctx, model)
+		return true, s.createPublishedModel(ctx, model)
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if existing.DeletedAt.Valid {
-		if err := s.restorePublishedModelByID(ctx, existing.ID); err != nil {
-			return err
-		}
+		return false, nil
 	}
 
-	return s.updatePublishedModel(ctx, existing.ID, model)
+	return true, s.updatePublishedModel(ctx, existing.ID, model)
 }
 
 type existingProviderForSync struct {
@@ -230,17 +234,6 @@ func (s *Service) restoreProviderByID(ctx context.Context, id string) error {
 		Update("deleted_at", nil).Error
 }
 
-func (s *Service) softDeleteMissingProviders(ctx context.Context, activeProviders []string) error {
-	query := s.db.WithContext(ctx).Table("llm_providers").Where("deleted_at IS NULL")
-	if len(activeProviders) > 0 {
-		query = query.Where("provider NOT IN ?", activeProviders)
-	}
-	return query.Updates(map[string]interface{}{
-		"deleted_at": time.Now().UTC(),
-		"updated_at": time.Now().UTC(),
-	}).Error
-}
-
 type catalogModelKey struct {
 	Provider string
 	Model    string
@@ -287,18 +280,49 @@ func (s *Service) restorePublishedModelByID(ctx context.Context, id string) erro
 		Update("deleted_at", nil).Error
 }
 
-func (s *Service) softDeleteMissingModels(ctx context.Context, activeModels []catalogModelKey) error {
-	query := s.db.WithContext(ctx).Where("deleted_at IS NULL")
-	if len(activeModels) > 0 {
-		clauses := make([]string, 0, len(activeModels))
-		args := make([]interface{}, 0, len(activeModels)*2)
-		for _, key := range activeModels {
-			clauses = append(clauses, "(provider = ? AND name = ?)")
-			args = append(args, key.Provider, key.Model)
-		}
-		query = query.Not("("+joinWithOr(clauses)+")", args...)
+func (s *Service) markMissingModelsDeprecated(ctx context.Context, appliedModels []catalogModelKey) error {
+	if len(appliedModels) == 0 {
+		return nil
 	}
-	return query.Delete(&llmmodel.LLMModel{}).Error
+
+	providerSet := make(map[string]struct{}, len(appliedModels))
+	providers := make([]string, 0, len(appliedModels))
+	for _, key := range appliedModels {
+		if _, ok := providerSet[key.Provider]; ok {
+			continue
+		}
+		providerSet[key.Provider] = struct{}{}
+		providers = append(providers, key.Provider)
+	}
+
+	query := s.db.WithContext(ctx).
+		Table("llm_models").
+		Where("deleted_at IS NULL").
+		Where("provider IN ?", providers).
+		Where("status <> ?", "deprecated")
+
+	clauses := make([]string, 0, len(appliedModels))
+	args := make([]interface{}, 0, len(appliedModels)*2)
+	for _, key := range appliedModels {
+		clauses = append(clauses, "(provider = ? AND name = ?)")
+		args = append(args, key.Provider, key.Model)
+	}
+	query = query.Not("("+joinWithOr(clauses)+")", args...)
+
+	updates := map[string]interface{}{
+		"status":     "deprecated",
+		"updated_at": time.Now().UTC(),
+	}
+	if hasColumn(s.db, "llm_models", "replacement_provider") {
+		updates["replacement_provider"] = ""
+	}
+	if hasColumn(s.db, "llm_models", "replacement_model") {
+		updates["replacement_model"] = ""
+	}
+	if hasColumn(s.db, "llm_models", "deprecation_reason") {
+		updates["deprecation_reason"] = ""
+	}
+	return query.Updates(updates).Error
 }
 
 func (s *Service) upsertCatalogSyncState(ctx context.Context, version int64, appliedAt time.Time, lastError string) error {
@@ -435,6 +459,7 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 	if len(model.ConfigParameters) > 0 && hasColumn(db, "llm_models", "config_parameters") {
 		values["config_parameters"] = serializeConfigParameters(model.ConfigParameters)
 	}
+	applyPublishedLifecycleColumns(db, values, model)
 
 	endpointColumns := endpointColumnsForPublishedModel(useCases, model.Endpoints, model.EndpointsAuthoritative)
 	for key, value := range endpointColumns {
@@ -454,6 +479,26 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 	}
 
 	return values
+}
+
+func applyPublishedLifecycleColumns(db *gorm.DB, values map[string]interface{}, model PublishedModel) {
+	replacementProvider := ""
+	replacementModel := ""
+	deprecationReason := ""
+	if model.Status == "deprecated" {
+		replacementProvider = model.ReplacementProvider
+		replacementModel = model.ReplacementModel
+		deprecationReason = model.DeprecationReason
+	}
+	if hasColumn(db, "llm_models", "replacement_provider") {
+		values["replacement_provider"] = replacementProvider
+	}
+	if hasColumn(db, "llm_models", "replacement_model") {
+		values["replacement_model"] = replacementModel
+	}
+	if hasColumn(db, "llm_models", "deprecation_reason") {
+		values["deprecation_reason"] = deprecationReason
+	}
 }
 
 func endpointColumnsForPublishedModel(useCases []string, endpoints *llmmodel.ModelEndpoints, authoritative bool) map[string]bool {
