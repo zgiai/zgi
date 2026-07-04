@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="docs/assets/zgi-agent-runtime-hero.png" alt="ZGI Agent Runtime" width="100%" />
-</p>
-
 # ZGI
 
 <p align="center">
