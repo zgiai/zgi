@@ -282,9 +282,6 @@ export function AIChatShell({
   const [submittedToolGovernanceDecisionKeys, setSubmittedToolGovernanceDecisionKeys] = useState<
     Set<string>
   >(() => new Set());
-  const [approvedToolGovernanceDecisionKeys, setApprovedToolGovernanceDecisionKeys] = useState<
-    Set<string>
-  >(() => new Set());
   const [inputAreaHeight, setInputAreaHeight] = useState(160);
   const [toolGovernancePermissionTier, setToolGovernancePermissionTier] =
     useState<AIChatToolGovernancePermissionTier>('basic');
@@ -887,13 +884,6 @@ export function AIChatShell({
         next.add(decisionKey);
         return next;
       });
-      if (payload.action === 'approve') {
-        setApprovedToolGovernanceDecisionKeys(current => {
-          const next = new Set(current);
-          next.add(decisionKey);
-          return next;
-        });
-      }
       return controller
         .continueToolGovernanceDecision(
           payload.conversationId,
@@ -914,11 +904,6 @@ export function AIChatShell({
             next.delete(decisionKey);
             return next;
           });
-          setApprovedToolGovernanceDecisionKeys(current => {
-            const next = new Set(current);
-            next.delete(decisionKey);
-            return next;
-          });
           throw error;
         });
     },
@@ -926,7 +911,6 @@ export function AIChatShell({
   );
   useEffect(() => {
     setSubmittedToolGovernanceDecisionKeys(new Set());
-    setApprovedToolGovernanceDecisionKeys(new Set());
   }, [activeConversation?.id]);
 
   const activeToolGovernanceApprovalFallback = useMemo<ToolGovernancePendingApproval | null>(() => {
@@ -1212,7 +1196,6 @@ export function AIChatShell({
             layout={isEmbedded ? 'embedded' : 'full'}
             showMemoryKey={surface !== 'agent-webapp'}
             showSkillEventDetails={surface !== 'agent-webapp'}
-            approvedToolGovernanceDecisionKeys={approvedToolGovernanceDecisionKeys}
           />
 
           <AIChatHomeView

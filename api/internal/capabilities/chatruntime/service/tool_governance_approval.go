@@ -878,18 +878,63 @@ func toolGovernanceCorrelationID(event map[string]interface{}) string {
 	if id := strings.TrimSpace(stringFromAny(event["correlation_id"])); id != "" {
 		return id
 	}
+	if id := strings.TrimSpace(stringFromAny(event["approved_by_correlation_id"])); id != "" {
+		return id
+	}
 	if governance := governanceMapFromAny(event["governance"]); len(governance) > 0 {
 		if id := strings.TrimSpace(stringFromAny(governance["correlation_id"])); id != "" {
+			return id
+		}
+		if id := strings.TrimSpace(stringFromAny(governance["approved_by_correlation_id"])); id != "" {
 			return id
 		}
 		if approvalEvent := governanceMapFromAny(governance["approval_event"]); len(approvalEvent) > 0 {
 			if id := strings.TrimSpace(stringFromAny(approvalEvent["correlation_id"])); id != "" {
 				return id
 			}
+			if id := strings.TrimSpace(stringFromAny(approvalEvent["approved_by_correlation_id"])); id != "" {
+				return id
+			}
+		}
+		if audit := governanceMapFromAny(governance["asset_operation_audit"]); len(audit) > 0 {
+			if id := strings.TrimSpace(stringFromAny(audit["correlation_id"])); id != "" {
+				return id
+			}
+			if id := strings.TrimSpace(stringFromAny(audit["approved_by_correlation_id"])); id != "" {
+				return id
+			}
+			if grant := governanceMapFromAny(audit["matched_grant"]); len(grant) > 0 {
+				if id := strings.TrimSpace(stringFromAny(grant["approval_correlation_id"])); id != "" {
+					return id
+				}
+			}
+		}
+		if grant := governanceMapFromAny(governance["matched_grant"]); len(grant) > 0 {
+			if id := strings.TrimSpace(stringFromAny(grant["approval_correlation_id"])); id != "" {
+				return id
+			}
 		}
 	}
 	if approvalEvent := governanceMapFromAny(event["approval_event"]); len(approvalEvent) > 0 {
-		return strings.TrimSpace(stringFromAny(approvalEvent["correlation_id"]))
+		if id := strings.TrimSpace(stringFromAny(approvalEvent["correlation_id"])); id != "" {
+			return id
+		}
+		if id := strings.TrimSpace(stringFromAny(approvalEvent["approved_by_correlation_id"])); id != "" {
+			return id
+		}
+	}
+	if audit := governanceMapFromAny(event["asset_operation_audit"]); len(audit) > 0 {
+		if id := strings.TrimSpace(stringFromAny(audit["correlation_id"])); id != "" {
+			return id
+		}
+		if id := strings.TrimSpace(stringFromAny(audit["approved_by_correlation_id"])); id != "" {
+			return id
+		}
+		if grant := governanceMapFromAny(audit["matched_grant"]); len(grant) > 0 {
+			if id := strings.TrimSpace(stringFromAny(grant["approval_correlation_id"])); id != "" {
+				return id
+			}
+		}
 	}
 	return ""
 }

@@ -112,7 +112,6 @@ func (s *service) RunClientActionContinuationStream(
 	continuation.Conversation = conversation
 	continuation.Message = message
 
-	s.resetStreamEventsBestEffort(ctx, message.ID)
 	prepared, err := s.prepareClientActionContinuationChat(ctx, scope, continuation, req)
 	if err != nil {
 		s.failClientActionContinuation(context.WithoutCancel(ctx), continuation, err, onEvent)

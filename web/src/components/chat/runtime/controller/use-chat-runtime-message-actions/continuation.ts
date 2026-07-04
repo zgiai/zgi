@@ -145,6 +145,7 @@ export function useWorkflowContinuationActions({
       if (alreadyContinuingMessage) return;
       const sourceConversation: AIChatConversation = conversation;
       let streamStarted = false;
+      let streamEnded = false;
       let startError: Error | null = null;
       const shouldSyncContinuationOnClose =
         Boolean(toolGovernanceDecision) || Boolean(clientActionResult);
@@ -375,6 +376,7 @@ export function useWorkflowContinuationActions({
           onMessageEnd: (payload, eventId) => {
             if (abortController.signal.aborted) return;
             streamStarted = true;
+            streamEnded = true;
             applyMessageEnd(payload, eventId);
           },
           onErrorEvent: (payload, eventId) => {
@@ -428,7 +430,9 @@ export function useWorkflowContinuationActions({
                 ...current,
                 isSending: getNextActiveSendingState(current, conversationId, false),
               }));
-              syncContinuationState();
+              if (!streamEnded) {
+                syncContinuationState();
+              }
             }
           },
         };

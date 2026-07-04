@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 type processTimelineRecorder struct {
@@ -41,6 +42,9 @@ func (r *processTimelineRecorder) RecordEvent(eventType string, payload map[stri
 	if r == nil || r.service == nil {
 		return
 	}
+	if r.shouldSkipDuplicateSkillLoadEvent(eventType, payload) {
+		return
+	}
 	if isWorkflowTimelineEvent(eventType) {
 		r.service.persistWorkflowRunEventBestEffort(r.persistCtx, r.prepared, eventType, payload)
 	}
@@ -53,6 +57,31 @@ func (r *processTimelineRecorder) RecordEvent(eventType string, payload map[stri
 		copyInvocationRuntimeFields(payload, invocation)
 	}
 	r.Emit(eventType, payload)
+}
+
+func (r *processTimelineRecorder) shouldSkipDuplicateSkillLoadEvent(eventType string, payload map[string]interface{}) bool {
+	switch strings.TrimSpace(eventType) {
+	case streamEventSkillLoadStart, streamEventSkillLoadEnd:
+	default:
+		return false
+	}
+	if r == nil || r.prepared == nil || r.prepared.Message == nil {
+		return false
+	}
+	skillID := payloadString(payload, "skill_id")
+	if skillID == "" {
+		return false
+	}
+	for _, invocation := range skillInvocationsFromMetadata(r.prepared.Message.Metadata["skill_invocations"]) {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "skill_load") ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["skill_id"])), skillID) {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["status"])), "success") {
+			return true
+		}
+	}
+	return false
 }
 
 func isWorkflowTimelineEvent(eventType string) bool {
@@ -305,6 +334,10 @@ func (r *processTimelineRecorder) existingInvocation(runtimeID string) map[strin
 
 func (r *processTimelineRecorder) runtimeIDForStart(invocation map[string]interface{}) string {
 	base := invocationRuntimeIdentity(invocation)
+	if runtimeID := r.reusableGovernedToolCallRuntimeID(invocation); runtimeID != "" {
+		r.openRuntimeIDs[base] = runtimeID
+		return runtimeID
+	}
 	runtimeID := r.nextRuntimeID(base)
 	r.openRuntimeIDs[base] = runtimeID
 	return runtimeID
@@ -349,6 +382,60 @@ func (r *processTimelineRecorder) runtimeIDExists(runtimeID string) bool {
 	return false
 }
 
+func (r *processTimelineRecorder) reusableGovernedToolCallRuntimeID(invocation map[string]interface{}) string {
+	if r == nil || r.prepared == nil || r.prepared.Message == nil {
+		return ""
+	}
+	if strings.TrimSpace(stringFromAny(invocation["kind"])) != "tool_call" {
+		return ""
+	}
+	base := invocationRuntimeIdentity(invocation)
+	continuationCorrelationID := toolGovernanceCorrelationID(
+		governanceMapFromAny(r.prepared.Message.Metadata["tool_governance_continuation"]),
+	)
+	invocations := skillInvocationsFromMetadata(r.prepared.Message.Metadata["skill_invocations"])
+	for idx := len(invocations) - 1; idx >= 0; idx-- {
+		existing := invocations[idx]
+		if invocationRuntimeIdentity(existing) != base {
+			continue
+		}
+		if continuationCorrelationID != "" && toolGovernanceCorrelationID(existing) != continuationCorrelationID {
+			continue
+		}
+		if !isReusableGovernedToolCall(existing) {
+			continue
+		}
+		if runtimeID := strings.TrimSpace(stringFromAny(existing["runtime_id"])); runtimeID != "" {
+			return runtimeID
+		}
+	}
+	return ""
+}
+
+func isReusableGovernedToolCall(invocation map[string]interface{}) bool {
+	if strings.TrimSpace(stringFromAny(invocation["kind"])) != "tool_call" {
+		return false
+	}
+	switch strings.TrimSpace(stringFromAny(invocation["status"])) {
+	case "waiting_approval", "approved", "allowed", "needs_resolution":
+	default:
+		return false
+	}
+	if strings.TrimSpace(stringFromAny(invocation["error"])) != "" ||
+		strings.TrimSpace(stringFromAny(invocation["message"])) != "" {
+		return false
+	}
+	if result := mapFromOperationContext(invocation["result"]); len(result) > 0 {
+		return false
+	}
+	if strings.TrimSpace(stringFromAny(invocation["correlation_id"])) != "" ||
+		strings.TrimSpace(stringFromAny(invocation["governance_runtime_id"])) != "" {
+		return true
+	}
+	return len(governanceMapFromAny(invocation["governance"])) > 0 ||
+		len(governanceMapFromAny(invocation["asset_operation_audit"])) > 0
+}
+
 func (r *processTimelineRecorder) persistInvocation(invocation map[string]interface{}) {
 	if r == nil || r.service == nil || r.prepared == nil || r.prepared.Message == nil || len(invocation) == 0 {
 		return
@@ -360,6 +447,22 @@ func (r *processTimelineRecorder) persistInvocation(invocation map[string]interf
 		}
 	}
 	r.prepared.Message.Metadata = metadata
+	if aichatTimelineDebugEnabled() {
+		invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+		logger.DebugContext(r.ctx, "aichat timeline metadata persisted",
+			"message_id", r.prepared.Message.ID.String(),
+			"conversation_id", r.prepared.Conversation.ID.String(),
+			"invocation_count", len(invocations),
+			"kind", timelineDebugString(invocation["kind"]),
+			"runtime_id", timelineDebugString(invocation["runtime_id"]),
+			"event_id", timelineDebugString(invocation["event_id"]),
+			"created_at", timelineDebugString(invocation["created_at"]),
+			"created_at_ms", timelineDebugString(invocation["created_at_ms"]),
+			"skill_id", timelineDebugString(invocation["skill_id"]),
+			"tool_name", timelineDebugString(invocation["tool_name"]),
+			"status", timelineDebugString(invocation["status"]),
+		)
+	}
 	if r.service.repos == nil || r.service.repos.Message == nil {
 		return
 	}

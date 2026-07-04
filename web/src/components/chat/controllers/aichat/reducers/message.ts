@@ -652,14 +652,9 @@ export function applyMessageEndState(
   if (
     previousStreaming &&
     nextTimeline.length &&
-    // Keep the final runtime timeline until the next turn so live rendering and
-    // hydrated history reconcile through the same timeline merge path.
     (terminalStatus === 'waiting_approval' ||
       terminalStatus === 'waiting_client_action' ||
-      terminalStatus === 'waiting_question' ||
-      terminalStatus === 'completed' ||
-      terminalStatus === 'error' ||
-      terminalStatus === 'stopped')
+      terminalStatus === 'waiting_question')
   ) {
     nextStreamingByMessageId[payload.message_id] = {
       ...previousStreaming,

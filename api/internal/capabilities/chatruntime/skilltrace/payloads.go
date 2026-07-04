@@ -668,10 +668,17 @@ func compactAgentConfigOperationResult(payload map[string]interface{}) map[strin
 	for _, field := range []string{
 		"model_provider",
 		"model",
+		"system_prompt",
 		"home_title",
 		"input_placeholder",
 		"theme_color",
 	} {
+		if field == "system_prompt" {
+			if value := compactStringValue(config[field], 2000); value != "" {
+				result[field] = value
+			}
+			continue
+		}
 		copyCompactField(result, config, field)
 	}
 	for _, field := range []string{
@@ -701,6 +708,12 @@ func compactAgentConfigOperationResult(payload map[string]interface{}) map[strin
 	}
 	if questions := compactStringList(config["suggested_questions"], 6, 120); len(questions) > 0 {
 		result["suggested_questions"] = questions
+	}
+	if skillIDs := compactStringList(config["enabled_skill_ids"], 24, 160); len(skillIDs) > 0 {
+		result["enabled_skill_ids"] = skillIDs
+	}
+	if datasetIDs := compactStringList(config["knowledge_dataset_ids"], 24, 160); len(datasetIDs) > 0 {
+		result["knowledge_dataset_ids"] = datasetIDs
 	}
 	return result
 }
@@ -1024,6 +1037,20 @@ func compactStringList(value interface{}, limit int, maxRunes int) []string {
 		}
 	}
 	return out
+}
+
+func compactStringValue(value interface{}, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	text := strings.TrimSpace(stringFromAny(value))
+	if text == "" {
+		return ""
+	}
+	if runes := []rune(text); len(runes) > maxRunes {
+		return string(runes[:maxRunes]) + "..."
+	}
+	return text
 }
 
 func collectionLen(value interface{}) int {

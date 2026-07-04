@@ -380,6 +380,10 @@ export function mergeSelectedMessagesWithStreamingState(
   if (conversation.runtime_status !== 'streaming' || !messageId) {
     return incomingMessages;
   }
+  const serverMessage = incomingMessages.find(message => message.id === messageId);
+  if (serverMessage && isTerminalReplaceableMessageStatus(serverMessage.status)) {
+    return incomingMessages;
+  }
 
   const streamingState = current.streamingByMessageId[messageId];
   const localMessages = current.messagesByConversation[conversation.id] ?? [];
@@ -387,8 +391,6 @@ export function mergeSelectedMessagesWithStreamingState(
   if (!localMessage) {
     return incomingMessages;
   }
-
-  const serverMessage = incomingMessages.find(message => message.id === messageId);
   const shouldPreferServer =
     !streamingState?.last_event_id &&
     localMessage.status !== 'streaming' &&
@@ -646,11 +648,44 @@ function governanceCorrelationId(value: unknown): string {
     !Array.isArray(record.asset_operation_audit)
       ? (record.asset_operation_audit as Record<string, unknown>)
       : undefined;
+  const governanceAudit =
+    governance?.asset_operation_audit &&
+    typeof governance.asset_operation_audit === 'object' &&
+    !Array.isArray(governance.asset_operation_audit)
+      ? (governance.asset_operation_audit as Record<string, unknown>)
+      : undefined;
+  const matchedGrant =
+    governance?.matched_grant &&
+    typeof governance.matched_grant === 'object' &&
+    !Array.isArray(governance.matched_grant)
+      ? (governance.matched_grant as Record<string, unknown>)
+      : undefined;
+  const auditMatchedGrant =
+    audit?.matched_grant &&
+    typeof audit.matched_grant === 'object' &&
+    !Array.isArray(audit.matched_grant)
+      ? (audit.matched_grant as Record<string, unknown>)
+      : undefined;
+  const governanceAuditMatchedGrant =
+    governanceAudit?.matched_grant &&
+    typeof governanceAudit.matched_grant === 'object' &&
+    !Array.isArray(governanceAudit.matched_grant)
+      ? (governanceAudit.matched_grant as Record<string, unknown>)
+      : undefined;
   return (
     timelineString(record.correlation_id) ||
+    timelineString(record.approved_by_correlation_id) ||
     timelineString(governance?.correlation_id) ||
+    timelineString(governance?.approved_by_correlation_id) ||
     timelineString(approvalEvent?.correlation_id) ||
-    timelineString(audit?.correlation_id)
+    timelineString(approvalEvent?.approved_by_correlation_id) ||
+    timelineString(audit?.correlation_id) ||
+    timelineString(audit?.approved_by_correlation_id) ||
+    timelineString(governanceAudit?.correlation_id) ||
+    timelineString(governanceAudit?.approved_by_correlation_id) ||
+    timelineString(matchedGrant?.approval_correlation_id) ||
+    timelineString(auditMatchedGrant?.approval_correlation_id) ||
+    timelineString(governanceAuditMatchedGrant?.approval_correlation_id)
   );
 }
 
@@ -691,12 +726,30 @@ function timelineSkillInvocationIdentity(invocation: AIChatSkillInvocation): str
     if (href) return `skill:navigation:route:${href.toLowerCase()}`;
   }
   if (invocation.kind === 'tool_call') {
+    const correlationId = governanceCorrelationId(invocation);
+    if (correlationId) {
+      return [
+        'skill',
+        'tool_call_governed',
+        invocation.skill_id ?? '',
+        invocation.tool_name ?? '',
+        correlationId,
+      ].join(':');
+    }
     const assetOperationIdentity = skillInvocationAssetOperationIdentity(invocation);
     if (assetOperationIdentity) return assetOperationIdentity;
   }
   if (invocation.kind === 'tool_governance') {
     const correlationId = governanceCorrelationId(invocation);
-    if (correlationId) return `skill:tool_governance:${correlationId}`;
+    if (correlationId) {
+      return [
+        'skill',
+        'tool_call_governed',
+        invocation.skill_id ?? '',
+        invocation.tool_name ?? '',
+        correlationId,
+      ].join(':');
+    }
   }
 
   const argumentsKey = stableTimelineValue(invocation.arguments ?? {});
@@ -924,6 +977,11 @@ export function seedStreamingTimelineFromMessages(
   const message = messages.find(item => item.id === messageId);
   if (!message) {
     return streamingByMessageId;
+  }
+  if (isTerminalReplaceableMessageStatus(message.status)) {
+    const next = { ...streamingByMessageId };
+    delete next[messageId];
+    return next;
   }
   const timeline = timelineFromAIChatMessage(message);
   if (timeline.length === 0) {

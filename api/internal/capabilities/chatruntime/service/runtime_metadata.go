@@ -1029,6 +1029,9 @@ func upsertSkillInvocation(current []map[string]interface{}, incoming map[string
 	if runtimeID := strings.TrimSpace(stringFromAny(incoming["runtime_id"])); runtimeID != "" {
 		for index, invocation := range current {
 			if strings.TrimSpace(stringFromAny(invocation["runtime_id"])) == runtimeID {
+				if shouldKeepExistingInvocation(invocation, incoming) {
+					return current
+				}
 				current[index] = mergeInvocation(invocation, incoming)
 				return current
 			}
@@ -1036,12 +1039,18 @@ func upsertSkillInvocation(current []map[string]interface{}, incoming map[string
 	}
 	for index, invocation := range current {
 		if sameInvocationIdentity(invocation, incoming) && isOpenInvocation(invocation) {
+			if shouldKeepExistingInvocation(invocation, incoming) {
+				return current
+			}
 			current[index] = mergeInvocation(invocation, incoming)
 			return current
 		}
 	}
 	for index, invocation := range current {
 		if sameInvocationIdentity(invocation, incoming) && shouldMergeClosedInvocation(invocation, incoming) {
+			if shouldKeepExistingInvocation(invocation, incoming) {
+				return current
+			}
 			current[index] = mergeInvocation(invocation, incoming)
 			return current
 		}
@@ -1054,7 +1063,20 @@ func upsertSkillInvocation(current []map[string]interface{}, incoming map[string
 	return append(current, incoming)
 }
 
+func shouldKeepExistingInvocation(existing map[string]interface{}, incoming map[string]interface{}) bool {
+	if strings.EqualFold(strings.TrimSpace(stringFromAny(existing["kind"])), "skill_load") &&
+		strings.EqualFold(strings.TrimSpace(stringFromAny(incoming["kind"])), "skill_load") &&
+		strings.EqualFold(strings.TrimSpace(stringFromAny(existing["status"])), "success") {
+		return true
+	}
+	return false
+}
+
 func shouldMergeClosedInvocation(existing map[string]interface{}, incoming map[string]interface{}) bool {
+	if strings.EqualFold(strings.TrimSpace(stringFromAny(existing["kind"])), "skill_load") &&
+		strings.EqualFold(strings.TrimSpace(stringFromAny(incoming["kind"])), "skill_load") {
+		return true
+	}
 	if strings.TrimSpace(stringFromAny(existing["kind"])) != "guardrail" ||
 		strings.TrimSpace(stringFromAny(incoming["kind"])) != "guardrail" {
 		return false

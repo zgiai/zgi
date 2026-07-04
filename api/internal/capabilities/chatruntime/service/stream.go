@@ -565,6 +565,25 @@ func (s *service) appendStreamEventBestEffort(ctx context.Context, messageID uui
 		logger.WarnContext(ctx, "failed to append aichat stream event", "message_id", messageID.String(), "event_type", eventType, err)
 		return nil
 	}
+	if aichatTimelineDebugEnabled() {
+		logger.DebugContext(ctx, "aichat timeline stream appended",
+			"message_id", messageID.String(),
+			"conversation_id", conversationID.String(),
+			"event_id", event.ID,
+			"event_type", eventType,
+			"sequence", event.Sequence,
+			"created_at", event.CreatedAt,
+			"created_at_ms", event.CreatedAtMS,
+			"kind", timelineDebugString(event.Payload["kind"]),
+			"runtime_id", timelineDebugString(event.Payload["runtime_id"]),
+			"skill_id", timelineDebugString(event.Payload["skill_id"]),
+			"tool_name", timelineDebugString(event.Payload["tool_name"]),
+			"status", timelineDebugString(event.Payload["status"]),
+			"phase", timelineDebugString(event.Payload["phase"]),
+			"answer_len", timelineDebugTextLen(event.Payload["answer"]),
+			"content_len", timelineDebugTextLen(event.Payload["content"]),
+		)
+	}
 	return event
 }
 
@@ -596,6 +615,25 @@ func (s *service) emitPreparedEvent(ctx context.Context, prepared *PreparedChat,
 			CreatedAtMS: now.UnixMilli(),
 		}
 		event.hydratePayloadEnvelope()
+	}
+	if aichatTimelineDebugEnabled() {
+		logger.DebugContext(ctx, "aichat timeline stream delivered",
+			"message_id", prepared.Message.ID.String(),
+			"conversation_id", prepared.Conversation.ID.String(),
+			"event_id", event.ID,
+			"event_type", event.EventType,
+			"sequence", event.Sequence,
+			"created_at", event.CreatedAt,
+			"created_at_ms", event.CreatedAtMS,
+			"kind", timelineDebugString(event.Payload["kind"]),
+			"runtime_id", timelineDebugString(event.Payload["runtime_id"]),
+			"skill_id", timelineDebugString(event.Payload["skill_id"]),
+			"tool_name", timelineDebugString(event.Payload["tool_name"]),
+			"status", timelineDebugString(event.Payload["status"]),
+			"phase", timelineDebugString(event.Payload["phase"]),
+			"answer_len", timelineDebugTextLen(event.Payload["answer"]),
+			"content_len", timelineDebugTextLen(event.Payload["content"]),
+		)
 	}
 	if err := onEvent(StreamEvent{
 		ID:          event.ID,

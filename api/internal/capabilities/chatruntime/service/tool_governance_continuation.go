@@ -62,7 +62,6 @@ func (s *service) RunToolGovernanceDecisionStream(
 	continuation.Message = message
 	continuation.Event = decision.Event
 
-	s.resetStreamEventsBestEffort(ctx, message.ID)
 	prepared, err := s.prepareToolGovernanceContinuationChat(ctx, scope, continuation)
 	if err != nil {
 		s.failToolGovernanceContinuation(context.WithoutCancel(ctx), continuation, err, onEvent)
@@ -318,7 +317,6 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		timeline.RecordInvocationError(invocation.Trace)
 	} else {
 		if invocation.Trace.Governance != nil {
-			timeline.RecordEvent(streamEventToolGovernanceDecision, toolGovernanceDecisionPayload(prepared, invocation.Trace))
 			if invocation.Trace.Governance.Status != toolgovernance.DecisionStatusAllowed {
 				return nil, true, fmt.Errorf("%w: frozen invocation was not allowed after approval", ErrInvalidInput)
 			}
@@ -463,6 +461,9 @@ func toolGovernanceFrozenFastPathAnswer(prepared *PreparedChat, trace skills.Ski
 	}
 	if prepared != nil && prepared.Message != nil {
 		evidence := skillLoopCompletionEvidence(prepared)()
+		if answer, ok := skillloop.FastPathFinalAnswerForCompletionEvidence(evidence); ok {
+			return answer, true
+		}
 		if answer, ok := skillloop.FastPathFinalAnswerForAgentMutationEvidence(evidence, trace); ok {
 			return answer, true
 		}
@@ -871,7 +872,8 @@ func toolGovernanceFrozenExecutionContinuationMessage(
 		outcome = "The user approved the pending governed tool call, and the runtime attempted to execute the frozen invocation exactly once, but it failed."
 		systemPrompt = strings.Join([]string{
 			"You are continuing the same AIChat turn after a governed tool call was approved and attempted by runtime.",
-			"Do not repeat the same side-effecting operation unless the failure feedback says it is safely retryable.",
+			"Do not repeat the same approved tool call, the same side-effecting operation, or the same asset target in this turn.",
+			"Continue only independent remaining steps that do not require retrying the failed frozen operation; otherwise report the blocker.",
 			"Treat the model-visible runtime result and failure feedback as authoritative.",
 			"All user-visible progress updates and final answers must use the user's language.",
 			"Explain the failure plainly and decide the next safe step.",
@@ -885,10 +887,135 @@ func toolGovernanceFrozenExecutionContinuationMessage(
 		"Approved operation summary JSON:\n" + compactJSON(operationSummary),
 		"Model-visible runtime result JSON:\n" + compactJSON(toolResult),
 	}
+	if planState := toolGovernanceContinuationPlanStateSummary(message); len(planState) > 0 {
+		contentParts = append(contentParts, "Current operation plan continuation state JSON:\n"+compactJSON(planState))
+	}
 	if executionErr != nil {
 		contentParts = append(contentParts, "Runtime failure feedback:\n"+toolGovernanceSafeErrorText(event, invocation, executionErr))
 	}
 	return adapter.Message{Role: "system", Content: systemPrompt + "\n\n" + strings.Join(contentParts, "\n\n")}
+}
+
+func toolGovernanceContinuationPlanStateSummary(message *runtimemodel.Message) map[string]interface{} {
+	if message == nil || len(message.Metadata) == 0 {
+		return nil
+	}
+	plan := mapFromOperationContext(message.Metadata["operation_plan"])
+	if len(plan) == 0 {
+		return nil
+	}
+	stepStatus := mapFromOperationContext(plan["step_status"])
+	completed := make([]map[string]interface{}, 0, 6)
+	pending := make([]map[string]interface{}, 0, 6)
+	failed := make([]map[string]interface{}, 0, 3)
+	for _, step := range mapSliceFromAny(plan["steps"]) {
+		status := operationPlanStepResolvedStatus(step, stepStatus)
+		item := toolGovernanceContinuationPlanStepSummary(step, status)
+		if len(item) == 0 {
+			continue
+		}
+		switch status {
+		case operationPlanStepStatusCompleted:
+			if len(completed) < 6 {
+				completed = append(completed, item)
+			}
+		case operationPlanStepStatusFailed:
+			if len(failed) < 3 {
+				failed = append(failed, item)
+			}
+		default:
+			if len(pending) < 6 {
+				pending = append(pending, item)
+			}
+		}
+	}
+	summary := map[string]interface{}{
+		"status": strings.TrimSpace(firstNonEmptyString(plan["status"], "in_progress")),
+		"instructions": []string{
+			"Continue this same turn from the pending steps only.",
+			"Do not repeat completed steps or restate them as uncertain.",
+			"If pending_steps is empty, do not call more tools; produce a concise final answer grounded in completed_steps and tool results.",
+		},
+	}
+	if len(completed) > 0 {
+		summary["completed_steps"] = completed
+	}
+	if len(pending) > 0 {
+		summary["pending_steps"] = pending
+	} else {
+		summary["pending_steps"] = []interface{}{}
+		summary["all_required_steps_completed"] = true
+	}
+	if len(failed) > 0 {
+		summary["failed_steps"] = failed
+	}
+	if next := strings.TrimSpace(stringFromAny(plan["pending_next_action"])); next != "" {
+		summary["pending_next_action"] = next
+	}
+	if verification := mapFromOperationContext(plan["completion_verification"]); len(verification) > 0 &&
+		(len(pending) > 0 || strings.EqualFold(strings.TrimSpace(stringFromAny(verification["status"])), "pass")) {
+		summary["last_completion_verification"] = verification
+	}
+	return summary
+}
+
+func toolGovernanceContinuationPlanStepSummary(step map[string]interface{}, status string) map[string]interface{} {
+	if len(step) == 0 {
+		return nil
+	}
+	skillID := strings.TrimSpace(stringFromAny(step["skill_id"]))
+	toolName := strings.TrimSpace(stringFromAny(step["tool_name"]))
+	id := strings.TrimSpace(stringFromAny(step["id"]))
+	title := strings.TrimSpace(firstNonEmptyString(step["title"], step["label"], step["description"]))
+	if title == "" && (skillID != "" || toolName != "") {
+		title = operationPlanToolStepTitle(skillID, toolName)
+	}
+	if id == "" && title == "" && skillID == "" && toolName == "" {
+		return nil
+	}
+	item := map[string]interface{}{
+		"status": operationPlanNormalizeStepStatus(status),
+	}
+	if id != "" {
+		item["id"] = id
+	}
+	if title != "" {
+		item["title"] = title
+	}
+	if skillID != "" {
+		item["skill_id"] = skillID
+	}
+	if toolName != "" {
+		item["tool_name"] = toolName
+	}
+	if target := operationPlanContinuationStepTargetSummary(step); target != "" {
+		item["target"] = target
+	}
+	if reason := strings.TrimSpace(stringFromAny(step["skipped_reason"])); reason != "" {
+		item["skipped_reason"] = reason
+	}
+	return item
+}
+
+func operationPlanContinuationStepTargetSummary(step map[string]interface{}) string {
+	for _, key := range []string{"target_name", "asset_name", "agent_name", "filename", "name"} {
+		if value := strings.TrimSpace(stringFromAny(step[key])); value != "" {
+			return value
+		}
+	}
+	target := mapFromOperationContext(step["asset_target"])
+	for _, key := range []string{"name", "filename", "agent_name", "page", "href"} {
+		if value := strings.TrimSpace(stringFromAny(target[key])); value != "" {
+			return value
+		}
+	}
+	args := mapFromOperationContext(step["arguments"])
+	for _, key := range []string{"name", "agent_name", "filename", "href"} {
+		if value := strings.TrimSpace(stringFromAny(args[key])); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func toolGovernanceModelVisibleOperationSummary(event map[string]interface{}, invocation *skills.ToolInvocationResult) map[string]interface{} {

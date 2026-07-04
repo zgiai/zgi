@@ -1,7 +1,7 @@
 'use client';
 
 import { ModelIcon } from 'modelicons';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   Bot,
@@ -53,6 +53,10 @@ import {
   mergeRuntimeTimelineWithMessageTimeline,
   timelineFromAIChatMessage,
 } from '@/components/chat/controllers/aichat/selectors';
+import {
+  debugAIChatTimeline,
+  summarizeAIChatTimeline,
+} from '@/components/chat/controllers/aichat/debug';
 import { MAX_AICHAT_BRANCHES } from '@/components/chat/variants/aichat/types';
 
 interface AIChatMessageBubbleProps {
@@ -79,11 +83,11 @@ interface AIChatMessageBubbleProps {
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
   enableToolGovernanceApprovals?: boolean;
-  hasApprovedToolGovernanceDecision?: boolean;
 }
 
 const EMPTY_MESSAGE_FILES: AIChatMessageFile[] = [];
 const EMPTY_GENERATED_FILES: AIChatGeneratedFile[] = [];
+const EMPTY_TIMELINE: AIChatAgenticTimelineItem[] = [];
 
 function formatAIChatTime(timestamp: number): string {
   if (!timestamp) return '';
@@ -1168,7 +1172,6 @@ export function AIChatMessageBubble({
   showMemoryKey = true,
   showSkillEventDetails = true,
   enableToolGovernanceApprovals = false,
-  hasApprovedToolGovernanceDecision = false,
 }: AIChatMessageBubbleProps) {
   const t = useT('webapp');
   const tGlobal = useT();
@@ -1226,26 +1229,45 @@ export function AIChatMessageBubble({
     () => timelineFromAIChatMessage(message),
     [message]
   );
+  const runtimeTimeline = timeline;
   const displayTimeline = useMemo(
-    () => dedupeTimelineItems(mergeRuntimeTimelineWithMessageTimeline(historicalTimeline, timeline)),
-    [historicalTimeline, timeline]
+    () =>
+      dedupeTimelineItems(
+        mergeRuntimeTimelineWithMessageTimeline(historicalTimeline, runtimeTimeline)
+      ),
+    [historicalTimeline, runtimeTimeline]
   );
+  useEffect(() => {
+    debugAIChatTimeline('render:message_bubble', {
+      message_id: message.id,
+      conversation_id: message.conversation_id,
+      status: message.status,
+      answer_len: displayAnswer.length,
+      historical_count: historicalTimeline.length,
+      runtime_count: runtimeTimeline.length,
+      display_count: displayTimeline.length,
+      historical: summarizeAIChatTimeline(historicalTimeline),
+      runtime: summarizeAIChatTimeline(runtimeTimeline),
+      display: summarizeAIChatTimeline(displayTimeline),
+    });
+  }, [
+    displayAnswer.length,
+    displayTimeline,
+    historicalTimeline,
+    message.conversation_id,
+    message.id,
+    message.status,
+    runtimeTimeline,
+  ]);
   const hasTimeline = displayTimeline.length > 0;
   const streamingStatus = useMemo(
     () => {
       if (isStreaming || isWaitingForClientAction) {
         return streamingOperationStatus(displayTimeline, isStreaming);
       }
-      if (message.status === 'waiting_approval' && hasApprovedToolGovernanceDecision) {
-        return (
-          streamingOperationStatus(displayTimeline, true) ?? {
-            key: 'approvalContinuing' as const,
-          }
-        );
-      }
       return null;
     },
-    [displayTimeline, hasApprovedToolGovernanceDecision, isStreaming, isWaitingForClientAction, message.status]
+    [displayTimeline, isStreaming, isWaitingForClientAction]
   );
   const streamingStatusLabel = useMemo(
     () =>

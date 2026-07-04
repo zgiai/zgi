@@ -29,6 +29,75 @@ import (
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
+func TestToolGovernanceContinuationPlanStateSummaryTracksPendingAndCompletedSteps(t *testing.T) {
+	message := &runtimemodel.Message{Metadata: map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "in_progress",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/delete_agent",
+					"status":    operationPlanStepStatusCompleted,
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "delete_agent",
+					"arguments": map[string]interface{}{"agent_name": "\u65e7\u667a\u80fd\u4f53"},
+				},
+				map[string]interface{}{
+					"id":        "tool:agent-management/create_agent",
+					"status":    operationPlanStepStatusPending,
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "create_agent",
+					"arguments": map[string]interface{}{"agent_name": "\u5c0f\u8bf4\u521b\u4f5c\u5927\u5e08"},
+				},
+			},
+			"completion_verification": map[string]interface{}{
+				"status": "needs_action",
+				"reason": "create_agent has not completed yet",
+			},
+		},
+	}}
+
+	summary := toolGovernanceContinuationPlanStateSummary(message)
+	completed := mapSliceFromAny(summary["completed_steps"])
+	if len(completed) != 1 || strings.TrimSpace(stringFromAny(completed[0]["tool_name"])) != "delete_agent" {
+		t.Fatalf("completed_steps = %#v, want delete_agent completed; summary=%#v", completed, summary)
+	}
+	pending := mapSliceFromAny(summary["pending_steps"])
+	if len(pending) != 1 || strings.TrimSpace(stringFromAny(pending[0]["tool_name"])) != "create_agent" {
+		t.Fatalf("pending_steps = %#v, want create_agent pending", pending)
+	}
+	if _, ok := summary["last_completion_verification"]; !ok {
+		t.Fatalf("last_completion_verification missing for pending plan; summary=%#v", summary)
+	}
+}
+
+func TestToolGovernanceContinuationPlanStateSummaryHidesStaleNeedsActionWhenComplete(t *testing.T) {
+	message := &runtimemodel.Message{Metadata: map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "completed",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"status":    operationPlanStepStatusCompleted,
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+				},
+			},
+			"completion_verification": map[string]interface{}{
+				"status":        "needs_action",
+				"missing_steps": []interface{}{"agent-management/get_agent_config"},
+			},
+		},
+	}}
+
+	summary := toolGovernanceContinuationPlanStateSummary(message)
+	if completed, ok := summary["all_required_steps_completed"].(bool); !ok || !completed {
+		t.Fatalf("all_required_steps_completed = %#v, want true; summary=%#v", summary["all_required_steps_completed"], summary)
+	}
+	if _, ok := summary["last_completion_verification"]; ok {
+		t.Fatalf("last_completion_verification = %#v, want stale needs_action omitted", summary["last_completion_verification"])
+	}
+}
+
 func TestRunToolGovernanceDecisionStreamRejectsWithoutTools(t *testing.T) {
 	ctx := context.Background()
 	organizationID := uuid.New()
@@ -1801,7 +1870,6 @@ func assertToolGovernanceApprovedStreamEvents(t *testing.T, events []StreamEvent
 	t.Helper()
 	seen := map[string]bool{}
 	var approvedDecision bool
-	var runtimeAllowedDecision bool
 	var finalMessage bool
 	for _, event := range events {
 		seen[event.EventType] = true
@@ -1809,11 +1877,7 @@ func assertToolGovernanceApprovedStreamEvents(t *testing.T, events []StreamEvent
 			approvedDecision = true
 		}
 		if event.EventType == streamEventToolGovernanceDecision && event.Payload["decision"] == toolgovernance.DecisionStatusAllowed {
-			governance := governanceMapFromAny(event.Payload["governance"])
-			if governance["approved_by_correlation_id"] != "corr-approve" {
-				t.Fatalf("allowed governance = %#v, want approval correlation corr-approve", governance)
-			}
-			runtimeAllowedDecision = true
+			t.Fatalf("events = %#v, want approved decision only; execution result belongs to skill_call_end", events)
 		}
 		if event.EventType == streamEventSkillCallEnd && event.Payload["tool_name"] == "delete_file" {
 			if event.Payload["status"] != "success" {
@@ -1842,9 +1906,6 @@ func assertToolGovernanceApprovedStreamEvents(t *testing.T, events []StreamEvent
 	if !approvedDecision {
 		t.Fatalf("events = %#v, want approved tool governance decision", events)
 	}
-	if !runtimeAllowedDecision {
-		t.Fatalf("events = %#v, want runtime allowed tool governance decision", events)
-	}
 	if !finalMessage {
 		t.Fatalf("events = %#v, want fast-path final message", events)
 	}
@@ -1854,7 +1915,6 @@ func assertToolGovernanceApprovedFailureStreamEvents(t *testing.T, events []Stre
 	t.Helper()
 	seen := map[string]bool{}
 	var approvedDecision bool
-	var runtimeAllowedDecision bool
 	var toolError bool
 	for _, event := range events {
 		seen[event.EventType] = true
@@ -1865,7 +1925,7 @@ func assertToolGovernanceApprovedFailureStreamEvents(t *testing.T, events []Stre
 			approvedDecision = true
 		}
 		if event.EventType == streamEventToolGovernanceDecision && event.Payload["decision"] == toolgovernance.DecisionStatusAllowed {
-			runtimeAllowedDecision = true
+			t.Fatalf("events = %#v, want approved decision only; execution error belongs to skill_call_error", events)
 		}
 		if event.EventType == streamEventSkillCallError && event.Payload["tool_name"] == "delete_file" {
 			toolError = true
@@ -1893,9 +1953,6 @@ func assertToolGovernanceApprovedFailureStreamEvents(t *testing.T, events []Stre
 	}
 	if !approvedDecision {
 		t.Fatalf("events = %#v, want approved tool governance decision", events)
-	}
-	if !runtimeAllowedDecision {
-		t.Fatalf("events = %#v, want runtime allowed tool governance decision", events)
 	}
 	if !toolError {
 		t.Fatalf("events = %#v, want delete_file skill_call_error", events)

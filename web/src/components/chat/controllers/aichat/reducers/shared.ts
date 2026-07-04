@@ -357,11 +357,24 @@ function skillInvocationGovernanceCorrelationId(invocation: AIChatSkillInvocatio
   const governance = invocationRecord(record.governance);
   const approvalEvent = invocationRecord(record.approval_event);
   const audit = invocationRecord(record.asset_operation_audit);
+  const governanceAudit = invocationRecord(governance.asset_operation_audit);
+  const matchedGrant = invocationRecord(governance.matched_grant);
+  const auditMatchedGrant = invocationRecord(audit.matched_grant);
+  const governanceAuditMatchedGrant = invocationRecord(governanceAudit.matched_grant);
   return (
     invocationString(record.correlation_id) ||
+    invocationString(record.approved_by_correlation_id) ||
     invocationString(governance.correlation_id) ||
+    invocationString(governance.approved_by_correlation_id) ||
     invocationString(approvalEvent.correlation_id) ||
-    invocationString(audit.correlation_id)
+    invocationString(approvalEvent.approved_by_correlation_id) ||
+    invocationString(audit.correlation_id) ||
+    invocationString(audit.approved_by_correlation_id) ||
+    invocationString(governanceAudit.correlation_id) ||
+    invocationString(governanceAudit.approved_by_correlation_id) ||
+    invocationString(matchedGrant.approval_correlation_id) ||
+    invocationString(auditMatchedGrant.approval_correlation_id) ||
+    invocationString(governanceAuditMatchedGrant.approval_correlation_id)
   );
 }
 
@@ -410,6 +423,15 @@ export function skillInvocationSemanticIdentity(invocation: AIChatSkillInvocatio
   }
   if (invocation.kind === 'tool_call') {
     const record = invocation as unknown as Record<string, unknown>;
+    const governanceCorrelationId = skillInvocationGovernanceCorrelationId(invocation);
+    if (governanceCorrelationId) {
+      return [
+        'tool_call_governed',
+        invocation.skill_id ?? '',
+        invocation.tool_name ?? '',
+        governanceCorrelationId,
+      ].join(':');
+    }
     const assetOperationIdentity = assetOperationSemanticIdentity({
       audit: record.asset_operation_audit,
       result: invocationRecord(invocation.result),
@@ -421,7 +443,14 @@ export function skillInvocationSemanticIdentity(invocation: AIChatSkillInvocatio
   }
   if (invocation.kind === 'tool_governance') {
     const correlationId = skillInvocationGovernanceCorrelationId(invocation);
-    if (correlationId) return `tool_governance:${correlationId}`;
+    if (correlationId) {
+      return [
+        'tool_governance',
+        invocation.skill_id ?? '',
+        invocation.tool_name ?? '',
+        correlationId,
+      ].join(':');
+    }
   }
   return '';
 }
