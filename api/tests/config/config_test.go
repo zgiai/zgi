@@ -718,7 +718,7 @@ func TestLoadCloudBootstrapConfig(t *testing.T) {
 		"SECRET_KEY":                         "test-secret",
 		"EMAIL_MAIL_DEFAULT_SEND_FROM":       "noreply@example.com",
 		"EMAIL_RESEND_API_KEY":               "test-api-key",
-		"ZGI_EDITION":                        "CLOUD",
+		"ZGI_RUN_MODE":                       "cloud",
 		"ZGI_CLOUD_BOOTSTRAP_ADMIN_EMAIL":    "bootstrap@example.com",
 		"ZGI_CLOUD_BOOTSTRAP_ADMIN_NAME":     "Bootstrap Admin",
 		"ZGI_CLOUD_BOOTSTRAP_ADMIN_PASSWORD": "secret1234",
@@ -741,12 +741,31 @@ func TestLoadCloudBootstrapConfig(t *testing.T) {
 	}
 }
 
+func TestLoadNormalizesZGIRunMode(t *testing.T) {
+	cfg, err := config.LoadFromFile(writeEnvFile(t, map[string]string{
+		"SERVER_MODE":  "release",
+		"ENV":          "production",
+		"SECRET_KEY":   "test-secret",
+		"ZGI_RUN_MODE": "self-hosted",
+	}))
+	if err != nil {
+		t.Fatalf("config.LoadFromFile() error = %v, want nil", err)
+	}
+
+	if cfg.Platform.Edition != "SELF_HOSTED" {
+		t.Fatalf("cfg.Platform.Edition = %q, want %q", cfg.Platform.Edition, "SELF_HOSTED")
+	}
+	if cfg.JWT.Issuer != "SELF_HOSTED" {
+		t.Fatalf("cfg.JWT.Issuer = %q, want %q", cfg.JWT.Issuer, "SELF_HOSTED")
+	}
+}
+
 func TestLoadAllowsMissingResendAPIKeyOutsideCloudMode(t *testing.T) {
 	cfg, err := config.LoadFromFile(writeEnvFile(t, map[string]string{
-		"SERVER_MODE": "release",
-		"ENV":         "production",
-		"SECRET_KEY":  "test-secret",
-		"ZGI_EDITION": "SELF_HOSTED",
+		"SERVER_MODE":  "release",
+		"ENV":          "production",
+		"SECRET_KEY":   "test-secret",
+		"ZGI_RUN_MODE": "self-hosted",
 	}))
 	if err != nil {
 		t.Fatalf("config.LoadFromFile() error = %v, want nil", err)
@@ -758,10 +777,10 @@ func TestLoadAllowsMissingResendAPIKeyOutsideCloudMode(t *testing.T) {
 
 func TestLoadRequiresResendAPIKeyInCloudMode(t *testing.T) {
 	_, err := config.LoadFromFile(writeEnvFile(t, map[string]string{
-		"SERVER_MODE": "release",
-		"ENV":         "production",
-		"SECRET_KEY":  "test-secret",
-		"ZGI_EDITION": "CLOUD",
+		"SERVER_MODE":  "release",
+		"ENV":          "production",
+		"SECRET_KEY":   "test-secret",
+		"ZGI_RUN_MODE": "cloud",
 	}))
 	if err == nil {
 		t.Fatal("config.LoadFromFile() error = nil, want non-nil")
@@ -776,7 +795,7 @@ func TestLoadRequiresResendAPIKeyWhenEmailCodeLoginEnabled(t *testing.T) {
 		"SERVER_MODE":             "release",
 		"ENV":                     "production",
 		"SECRET_KEY":              "test-secret",
-		"ZGI_EDITION":             "SELF_HOSTED",
+		"ZGI_RUN_MODE":            "self-hosted",
 		"ENABLE_EMAIL_CODE_LOGIN": "true",
 	}))
 	if err == nil {

@@ -85,9 +85,8 @@ const (
 	// envSecretKey sets the shared secret used for JWT signing and related security flows. Default: empty.
 	envSecretKey = "SECRET_KEY"
 
-	// Platform edition compatibility.
-	// envZGIEdition selects cloud or self-hosted platform behavior. Default: SELF_HOSTED.
-	envZGIEdition = "ZGI_EDITION"
+	// Platform run mode selects cloud or self-hosted platform behavior. Default: SELF_HOSTED.
+	envZGIRunMode = "ZGI_RUN_MODE"
 	// envZGIOrgInviteDefaultPassword sets the fallback password for self-hosted organization member invites. Default: empty.
 	envZGIOrgInviteDefaultPassword = "ZGI_ORG_INVITE_DEFAULT_PASSWORD"
 )

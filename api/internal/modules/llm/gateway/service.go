@@ -182,7 +182,7 @@ func NewLLMGatewayServiceWithCrypto(
 	}
 
 	// Get Console provider from platform container
-	// This will be Remote (Cloud) or Standalone (Self-Hosted) based on ZGI_EDITION
+	// This will be Remote (Cloud) or Standalone (Self-Hosted) based on ZGI_RUN_MODE
 	cfg := appconfig.Current()
 	cloudMode := cfg.Platform.Edition == "CLOUD"
 	platformContainer, err := platform.NewContainer(db)
