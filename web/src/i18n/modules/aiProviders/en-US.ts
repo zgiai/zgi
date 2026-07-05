@@ -498,7 +498,8 @@ const messages = {
     noUpdatesInfo: 'Models are up to date',
     syncSuccess: 'Models synced successfully',
     syncError: 'Failed to sync models',
-    syncSuccessDetailed: '{provider} synced: {new} new, {updated} updated ({duration}s)',
+    syncSuccessDetailed:
+      '{provider} synced: {new} new, {updated} updated, {deprecated} deprecated ({duration}s)',
     syncPartialDetailed:
       '{provider} partially synced: {success} succeeded, {failed} failed ({duration}s)',
     syncFailedDetailed: '{provider} sync failed: {failed} failed ({duration}s)',
@@ -510,7 +511,7 @@ const messages = {
     triggerShort: 'Sync',
     title: 'Catalog Sync',
     description:
-      'Review upstream ModelMeta status, sync provider metadata, and jump into provider pages for model-level updates.',
+      'Review upstream ModelMeta status and sync provider metadata. Model sync treats the remote catalog as source of truth and marks missing local active models as deprecated.',
     stateUpToDate: 'Up to date',
     stateUpdates: 'Updates available',
     stateDegraded: 'Partial status',
@@ -535,6 +536,7 @@ const messages = {
     syncingProvider: 'Syncing...',
     syncModels: 'Sync Models',
     syncingModels: 'Syncing...',
+    pendingDeprecated: 'Pending deprecation',
     updatedAction: 'Updated',
     openProvider: 'Open Provider',
     readonlyTitle: 'Catalog is read-only',
@@ -549,10 +551,12 @@ const messages = {
       'This provider exists only in the local catalog and will not be deleted automatically.',
     modelChangesTitle: 'Model Changes',
     modelChangesDescription:
-      'These providers have model-level updates even though their provider metadata is unchanged.',
+      'These providers have model-level differences. Sync Models will create, update, and deprecate local active models missing upstream.',
     noModelChanges: 'No model-level provider updates detected.',
     remoteModels: 'Remote',
     localModels: 'Local',
+    unchanged: 'Unchanged',
+    modelDiffSummary: 'Diff: {new} new · {updated} updated · {localOnly} pending deprecation',
     status: {
       new: 'New',
       updated: 'Updated',
@@ -561,6 +565,7 @@ const messages = {
     },
   },
   syncResult: {
+    successTitle: 'Sync complete: {new} new, {updated} updated, {deprecated} deprecated',
     partialTitle: 'Partial sync: {success} succeeded, {failed} failed',
     failedTitle: 'Sync failed: {failed} failed',
     errorsTitle: 'Error details',
@@ -570,12 +575,13 @@ const messages = {
     description: 'Select models to synchronize from ModelMeta',
     new: 'New',
     updated: 'Updated',
-    deleted: 'Removed',
+    deleted: 'Pending deprecation',
     selected: 'selected',
     selectAll: 'Select All',
     deselectAll: 'Deselect All',
     syncSelected: 'Sync Selected',
-    deletedNote: 'These models will be marked as deprecated',
+    deletedNote: 'These models no longer exist upstream and will be marked deprecated by a full sync.',
+    fullSyncForDeleted: 'Use “Sync Provider & Models” to process pending deprecations.',
     viewDetails: 'View Details',
   },
   diffDetails: {

@@ -356,15 +356,6 @@ function ChannelPageContent(): JSX.Element {
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
                                   onClick={() => {
-                                    setConnectChannel(ch as ChannelDetail);
-                                    setConnectOpen(true);
-                                  }}
-                                >
-                                  <Activity className="h-4 w-4" />
-                                  {t('actions.testConnectivity')}
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onClick={() => {
                                     setWalletAdjustChannel(ch);
                                     setWalletAdjustOpen(true);
                                   }}

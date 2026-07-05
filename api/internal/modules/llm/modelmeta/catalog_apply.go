@@ -109,7 +109,7 @@ func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCa
 				modelKeys = append(modelKeys, catalogModelKey{Provider: model.Provider, Model: model.Model})
 			}
 		}
-		if err := txService.markMissingModelsDeprecated(ctx, modelKeys); err != nil {
+		if _, err := txService.markMissingModelsDeprecated(ctx, modelKeys); err != nil {
 			return err
 		}
 
@@ -289,9 +289,9 @@ func (s *Service) restorePublishedModelByID(ctx context.Context, id string) erro
 		Update("deleted_at", nil).Error
 }
 
-func (s *Service) markMissingModelsDeprecated(ctx context.Context, appliedModels []catalogModelKey) error {
+func (s *Service) markMissingModelsDeprecated(ctx context.Context, appliedModels []catalogModelKey) (int64, error) {
 	if len(appliedModels) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	providerSet := make(map[string]struct{}, len(appliedModels))
@@ -308,7 +308,7 @@ func (s *Service) markMissingModelsDeprecated(ctx context.Context, appliedModels
 		Table("llm_models").
 		Where("deleted_at IS NULL").
 		Where("provider IN ?", providers).
-		Where("status <> ?", "deprecated")
+		Where("status <> ?", llmmodel.ModelStatusDeprecated)
 
 	clauses := make([]string, 0, len(appliedModels))
 	args := make([]interface{}, 0, len(appliedModels)*2)
@@ -319,7 +319,7 @@ func (s *Service) markMissingModelsDeprecated(ctx context.Context, appliedModels
 	query = query.Not("("+joinWithOr(clauses)+")", args...)
 
 	updates := map[string]interface{}{
-		"status":     "deprecated",
+		"status":     llmmodel.ModelStatusDeprecated,
 		"updated_at": time.Now().UTC(),
 	}
 	if hasColumn(s.db, "llm_models", "replacement_provider") {
@@ -331,7 +331,11 @@ func (s *Service) markMissingModelsDeprecated(ctx context.Context, appliedModels
 	if hasColumn(s.db, "llm_models", "deprecation_reason") {
 		updates["deprecation_reason"] = ""
 	}
-	return query.Updates(updates).Error
+	tx := query.Updates(updates)
+	if tx.Error != nil {
+		return 0, tx.Error
+	}
+	return tx.RowsAffected, nil
 }
 
 func (s *Service) upsertCatalogSyncState(ctx context.Context, version int64, appliedAt time.Time, lastError string) error {
@@ -500,7 +504,7 @@ func applyPublishedLifecycleColumns(db *gorm.DB, values map[string]interface{}, 
 	replacementProvider := ""
 	replacementModel := ""
 	deprecationReason := ""
-	if model.Status == "deprecated" {
+	if model.Status == llmmodel.ModelStatusDeprecated {
 		replacementProvider = model.ReplacementProvider
 		replacementModel = model.ReplacementModel
 		deprecationReason = model.DeprecationReason

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	"gorm.io/driver/sqlite"
@@ -305,12 +306,16 @@ func newCatalogApplyTestDB(t *testing.T) *gorm.DB {
 			display_name TEXT,
 			family TEXT,
 			family_name TEXT,
+			family_default BOOLEAN DEFAULT false,
 			status TEXT,
 			replacement_provider TEXT,
 			replacement_model TEXT,
 			deprecation_reason TEXT,
 			tagline TEXT,
+			description TEXT,
 			use_cases TEXT,
+			input_modalities TEXT,
+			output_modalities TEXT,
 			is_flagship BOOLEAN DEFAULT false,
 			is_recommended BOOLEAN DEFAULT false,
 			is_featured BOOLEAN DEFAULT false,
@@ -368,7 +373,7 @@ func insertCatalogApplyModel(t *testing.T, db *gorm.DB, provider, name, status s
 		deletedAt = time.Now().UTC()
 	}
 	require.NoError(t, db.Table("llm_models").Create(map[string]interface{}{
-		"id":                provider + "-" + name + "-id",
+		"id":                uuid.NewString(),
 		"provider":          provider,
 		"name":              name,
 		"display_name":      name,

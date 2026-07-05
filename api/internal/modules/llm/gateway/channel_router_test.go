@@ -325,6 +325,71 @@ func TestConfigCacheGetModelByNameRejectsCachedDeprecatedModel(t *testing.T) {
 	}
 }
 
+func TestSelectChannelsForProviderRejectsKnownInactiveGlobalModel(t *testing.T) {
+	db, mock := openGatewayModelLookupDB(t)
+	modelName := "qwen-coder"
+	providerHint := "qwen"
+	mock.ExpectQuery(`(?s)FROM "llm_models" JOIN llm_providers .*llm_models\.provider.*llm_models\.name`).
+		WithArgs(providerHint, modelName, true, llmmodel.ModelStatusActive, true, 1).
+		WillReturnError(gorm.ErrRecordNotFound)
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "llm_models".*provider.*name`).
+		WithArgs(providerHint, modelName).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	router := &ChannelRouter{db: db}
+
+	selections, err := router.SelectChannelsForProvider(context.Background(), uuid.New(), providerHint, modelName, 1)
+	if err == nil {
+		t.Fatal("SelectChannelsForProvider returned nil error, want model not found")
+	}
+	if selections != nil {
+		t.Fatalf("selections = %+v, want nil", selections)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestSelectChannelsForProviderKeepsPassthroughForUnknownModel(t *testing.T) {
+	db, mock := openGatewayModelLookupDB(t)
+	orgID := uuid.New()
+	modelName := "tenant-custom-model"
+	mock.ExpectQuery(`(?s)FROM "llm_models" JOIN llm_providers .*llm_models\.status`).
+		WithArgs(modelName, true, llmmodel.ModelStatusActive, true, 1).
+		WillReturnError(gorm.ErrRecordNotFound)
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "llm_models".*name`).
+		WithArgs(modelName).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	router := &ChannelRouter{
+		db: db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{
+			routes: []*channelmodel.LLMRoute{
+				{
+					ID:              uuid.New(),
+					OrganizationID:  orgID,
+					Type:            shared.RouteTypePrivate,
+					ChannelProvider: "openai-compatible",
+					Models:          []string{modelName},
+				},
+			},
+		},
+		strategyFactory: NewStrategyFactory(),
+	}
+
+	selections, err := router.SelectChannelsForProvider(context.Background(), orgID, "", modelName, 1)
+	if err != nil {
+		t.Fatalf("SelectChannelsForProvider returned error: %v", err)
+	}
+	if len(selections) != 1 {
+		t.Fatalf("len(selections) = %d, want 1", len(selections))
+	}
+	if selections[0].ModelSource != channelModelSourcePassthrough {
+		t.Fatalf("ModelSource = %q, want %q", selections[0].ModelSource, channelModelSourcePassthrough)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
 func TestCandidateRoutesForModel_FiltersNativeProtocolLikeRealSelection(t *testing.T) {
 	orgID := uuid.New()
 	modelName := "custom-responses-model"
@@ -372,6 +437,29 @@ func TestCandidateRoutesForModel_FiltersNativeProtocolLikeRealSelection(t *testi
 	}
 	if routes[0].ChannelProvider != "openai-compatible" {
 		t.Fatalf("route provider = %q, want openai-compatible", routes[0].ChannelProvider)
+	}
+}
+
+func TestCandidateRoutesForModelRejectsKnownInactiveGlobalModel(t *testing.T) {
+	db, mock := openGatewayModelLookupDB(t)
+	modelName := "qwen-coder"
+	mock.ExpectQuery(`(?s)FROM "llm_models" JOIN llm_providers .*llm_models\.status`).
+		WithArgs(modelName, true, llmmodel.ModelStatusActive, true, 1).
+		WillReturnError(gorm.ErrRecordNotFound)
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "llm_models".*name`).
+		WithArgs(modelName).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	router := &ChannelRouter{db: db}
+
+	routes, err := router.CandidateRoutesForModel(context.Background(), uuid.New(), modelName, 1)
+	if err == nil {
+		t.Fatal("CandidateRoutesForModel returned nil error, want model not found")
+	}
+	if routes != nil {
+		t.Fatalf("routes = %+v, want nil", routes)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
 	}
 }
 

@@ -49,7 +49,7 @@ const messages = {
     edit: 'Edit',
     delete: 'Delete',
     batch: 'Batch Actions',
-    testConnectivity: 'Connectivity Test',
+    testConnectivity: 'Model Test',
     testConnectivityShort: 'Test',
     confirmDeleteTitle: 'Delete Channel',
     confirmDeleteDesc:
@@ -73,11 +73,15 @@ const messages = {
     user: 'Add custom channels to expand model coverage, or use self-hosted channels to reduce model call costs.',
   },
   connectivityTest: {
-    title: 'Connectivity Test',
-    description: 'Batch test connectivity and response across selected channel models',
+    title: 'Model Test',
+    description:
+      'Test real calls for configured channel models. Image generation models are skipped here and should be verified in the image workspace.',
+    stream: 'Streaming test',
     testing: 'Testing...',
     completed: 'Test Completed',
-    summary: '{total} total, {success} success, {failure} failed',
+    summary: '{total} total, {success} success, {failure} failed, {skipped} skipped',
+    imageSkippedHint:
+      'Image generation models require a real image generation test. Use the image workspace to verify them.',
     columns: {
       model: 'Model',
       status: 'Status',
@@ -89,16 +93,21 @@ const messages = {
       connectionFailed: 'Connection Failed',
       connectionTimeout: 'Connection Timeout',
       notTested: 'Not Tested',
+      skipped: 'Not Tested',
     },
     buttons: {
       testAll: 'Test All',
       testSelected: 'Test Selected',
       abort: 'Abort',
+      remove: 'Remove',
+      removeFailed: 'Remove failed models ({count})',
+      testImage: 'Test in Image',
     },
     toast: {
-      start: 'Connectivity test started',
-      error: 'Connectivity test failed',
+      start: 'Model test started',
+      error: 'Model test failed',
       abort: 'Test aborted',
+      removeAllBlocked: 'A channel must keep at least one model. Edit or delete the channel instead.',
     },
   },
   dialog: {
@@ -136,24 +145,24 @@ const messages = {
       kinds: {
         direct: {
           label: 'Direct',
-          strategy: 'Use the provider scope and check provider-available models when available',
+          strategy: 'Use provider-scoped models from the local model catalog',
           headline: 'Connect by official provider',
           guidance:
             'The protocol and default URL are locked to the selected provider, and the model picker stays scoped to that provider.',
         },
         aggregator: {
           label: 'Aggregator',
-          strategy: 'Check the platform catalog first, then enable selected models',
+          strategy: 'Use aggregator-scoped models from the local model catalog',
           headline: 'Connect by aggregator platform',
           guidance:
-            'Aggregator catalogs are large and change often. Check the provider-returned model list before choosing which models to expose.',
+            'Aggregator catalogs are large and change often. Selectable models come from the local model catalog, and creation saves a valid channel configuration.',
         },
         compatible: {
           label: 'Compatible',
-          strategy: 'Check or manually select OpenAI-compatible models',
+          strategy: 'Use local catalog models or administrator-confirmed models',
           headline: 'Connect by compatible API',
           guidance:
-            'Use this for proxies, custom gateways, or third-party APIs that truly support OpenAI-compatible model listing and calls.',
+            'Use this for proxies, custom gateways, or third-party APIs that truly support OpenAI-compatible calls for locally registered models.',
         },
         local: {
           label: 'Local',
@@ -282,16 +291,14 @@ const messages = {
     testConnection: {
       title: 'Test Connection',
       description:
-        'Checking the model list only requests provider /models. Testing the connection verifies one representative model; image models use a lightweight check and do not generate images.',
+        'Model selection uses the local model catalog. Testing verifies one representative model. Image generation models must be verified by generating an image in the image workspace.',
       descriptionWithModel:
-        'Testing verifies {model}. Text, embedding, and rerank models make one small request; image models use a lightweight check and do not generate images.',
+        'Testing verifies {model}. Text, embedding, and rerank models make one small request. Image generation models must be verified by generating an image in the image workspace.',
       descriptionWithModelCount:
-        'Selected {count} models. Testing verifies the first representative model; creation records model-list checks for the selected models when available.',
+        'Selected {count} models. Testing verifies the first representative model; other models are saved from local model metadata.',
       button: 'Test',
       apiBaseUrlHint: 'Enter the API base URL before testing.',
       apiKeyHint: 'Enter the API key before testing.',
-      checkModelListHint:
-        'Check the model list first. The list uses the local model catalog; only models also returned by this provider can be selected.',
       selectModelHint: 'Select at least one representative model on the right before testing.',
       latency: 'Latency: {ms} ms',
       messages: {
@@ -300,12 +307,8 @@ const messages = {
         successFallback: 'The model responded successfully.',
         failedFallback: 'Check that the provider, API base URL, API key, and model match.',
         requestFailed: 'Connection test request failed',
-        imageModelFound:
-          'The provider account includes this model. No image was generated during this test.',
         imageModelMetadataOnly:
-          'Local model configuration was verified. No image was generated because this provider does not support model-list checks.',
-        imageModelMissing:
-          'The provider-returned model list does not include this model. No image was generated.',
+          'Image generation models are not included in this test. Generate an image in the image workspace to verify them.',
         apiKeyInvalid: 'The API key is invalid or expired. Update it and try again.',
         modelNotFound: 'The model was not found, or this provider endpoint does not support it.',
         rateLimited: 'The provider returned a rate limit. Retry later.',
@@ -326,10 +329,8 @@ const messages = {
       },
       readiness: {
         verified: 'Connection verified. You can create the channel.',
-        failed:
-          'Connection failed. You can still save the channel for non-key issues; confirmed API key errors must be fixed first.',
-        untested:
-          'Creation records model-list check results when available. Test the connection only when you need to confirm real call capability.',
+        failed: 'Connection failed. Fix the key, base URL, protocol, or model before creating.',
+        untested: 'Test one representative model first. You can create the channel after it passes.',
         missingModel: 'Select at least one representative model before testing.',
       },
     },
@@ -338,7 +339,7 @@ const messages = {
       messages: {
         success: 'Provider model list returned {count} models',
         supportedOnly:
-          'The list uses the local model catalog. Only models also returned by this provider can be selected; other local models cannot be selected.',
+          'The provider model list is informational. Selectable models come from the local model catalog.',
         unsupported:
           'This service does not support model listing. Select registered models from the local model catalog.',
         requestFailed: 'Failed to check the model list. Non-key issues do not block saving the channel.',
@@ -383,7 +384,7 @@ const messages = {
   },
   empty: {
     title: 'No Channels',
-    description: 'Add your model call channels to manage routing and run connectivity tests.',
+    description: 'Add your model call channels to manage routing and run model tests.',
   },
   messages: {
     updateSuccess: 'Channel updated',

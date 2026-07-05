@@ -482,7 +482,8 @@ const messages: AiProvidersMessages = {
     noUpdatesInfo: '模型已是最新',
     syncSuccess: '模型同步成功',
     syncError: '模型同步失败',
-    syncSuccessDetailed: '{provider} 同步成功：新增 {new} 个，更新 {updated} 个 ({duration}s)',
+    syncSuccessDetailed:
+      '{provider} 同步成功：新增 {new} 个，更新 {updated} 个，废弃 {deprecated} 个 ({duration}s)',
     syncPartialDetailed:
       '{provider} 部分同步成功：成功 {success} 个，失败 {failed} 个 ({duration}s)',
     syncFailedDetailed: '{provider} 同步失败：失败 {failed} 个 ({duration}s)',
@@ -492,7 +493,8 @@ const messages: AiProvidersMessages = {
     trigger: '同步目录',
     triggerShort: '同步',
     title: '模型目录同步',
-    description: '查看 ModelMeta 上游状态，同步提供商元数据，并跳转到提供商页面处理模型级更新。',
+    description:
+      '查看 ModelMeta 上游状态，同步提供商元数据；模型同步会以远端目录为准，远端缺失的本地 active 模型会标记为已废弃。',
     stateUpToDate: '已是最新',
     stateUpdates: '发现更新',
     stateDegraded: '状态不完整',
@@ -515,6 +517,7 @@ const messages: AiProvidersMessages = {
     syncingProvider: '同步中...',
     syncModels: '同步模型',
     syncingModels: '同步中...',
+    pendingDeprecated: '待废弃',
     updatedAction: '已更新',
     openProvider: '打开提供商',
     readonlyTitle: '目录为只读',
@@ -525,10 +528,13 @@ const messages: AiProvidersMessages = {
     modelErrorsDescription: '下方列表可能不完整，等待这些提供商的差异检查成功后会恢复正常。',
     localOnlyDescription: '该提供商仅存在于本地目录，不会被自动删除。',
     modelChangesTitle: '模型变更',
-    modelChangesDescription: '这些提供商虽然元数据未变化，但存在模型级更新，可以直接在这里同步。',
+    modelChangesDescription:
+      '这些提供商虽然元数据未变化，但存在模型级差异；同步模型会新增、更新，并废弃远端缺失的本地 active 模型。',
     noModelChanges: '未检测到模型级提供商更新。',
     remoteModels: '远端',
     localModels: '本地',
+    unchanged: '未变更',
+    modelDiffSummary: '差异：新增 {new} · 更新 {updated} · 待废弃 {localOnly}',
     status: {
       new: '新增',
       updated: '更新',
@@ -537,6 +543,7 @@ const messages: AiProvidersMessages = {
     },
   },
   syncResult: {
+    successTitle: '同步完成：新增 {new} 个，更新 {updated} 个，废弃 {deprecated} 个',
     partialTitle: '部分同步成功：成功 {success} 个，失败 {failed} 个',
     failedTitle: '同步失败：失败 {failed} 个',
     errorsTitle: '错误详情',
@@ -546,12 +553,13 @@ const messages: AiProvidersMessages = {
     description: '从 ModelMeta 选择要同步的模型',
     new: '新增',
     updated: '更新',
-    deleted: '移除',
+    deleted: '待废弃',
     selected: '已选',
     selectAll: '全选',
     deselectAll: '取消全选',
     syncSelected: '同步所选',
-    deletedNote: '这些模型将被标记为已弃用',
+    deletedNote: '这些模型已不在远端目录中，完整同步时会标记为已废弃。',
+    fullSyncForDeleted: '请使用“同步提供商和模型”处理待废弃模型。',
     viewDetails: '查看详情',
   },
   diffDetails: {

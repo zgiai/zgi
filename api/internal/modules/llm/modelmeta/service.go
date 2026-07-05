@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -156,16 +157,17 @@ type ModelMetaData struct {
 
 // SyncResult represents the result of a sync operation
 type SyncResult struct {
-	Provider      string   `json:"provider"`
-	Status        string   `json:"status"`
-	TotalModels   int      `json:"total_models"`
-	SuccessModels int      `json:"success_models"`
-	FailedModels  int      `json:"failed_models"`
-	NewModels     int      `json:"new_models"`
-	UpdatedModels int      `json:"updated_models"`
-	SkippedModels int      `json:"skipped_models"`
-	Errors        []string `json:"errors,omitempty"`
-	DurationMs    int64    `json:"duration_ms"`
+	Provider         string   `json:"provider"`
+	Status           string   `json:"status"`
+	TotalModels      int      `json:"total_models"`
+	SuccessModels    int      `json:"success_models"`
+	FailedModels     int      `json:"failed_models"`
+	NewModels        int      `json:"new_models"`
+	UpdatedModels    int      `json:"updated_models"`
+	DeprecatedModels int      `json:"deprecated_models"`
+	SkippedModels    int      `json:"skipped_models"`
+	Errors           []string `json:"errors,omitempty"`
+	DurationMs       int64    `json:"duration_ms"`
 }
 
 // DiffResult represents the comparison result between local and remote models
@@ -178,16 +180,18 @@ type DiffResult struct {
 }
 
 type DiffSummary struct {
-	TotalRemote     int `json:"total_remote"`
-	TotalLocal      int `json:"total_local"`
-	NewModels       int `json:"new_models"`
-	UpdatedModels   int `json:"updated_models"`
-	UnchangedModels int `json:"unchanged_models"`
+	TotalRemote      int `json:"total_remote"`
+	TotalLocal       int `json:"total_local"`
+	NewModels        int `json:"new_models"`
+	UpdatedModels    int `json:"updated_models"`
+	DeprecatedModels int `json:"deprecated_models"`
+	UnchangedModels  int `json:"unchanged_models"`
 }
 
 type DiffChanges struct {
-	New     []ModelChange `json:"new"`
-	Updated []ModelChange `json:"updated"`
+	New        []ModelChange `json:"new"`
+	Updated    []ModelChange `json:"updated"`
+	Deprecated []ModelChange `json:"deprecated"`
 }
 
 // DeprecatedResult represents local models not found in upstream (potentially deprecated)
@@ -201,7 +205,7 @@ type DeprecatedResult struct {
 type ModelChange struct {
 	Model             string         `json:"model"`
 	ModelName         string         `json:"model_name"`
-	ChangeType        string         `json:"change_type"` // new, updated, deleted
+	ChangeType        string         `json:"change_type"` // new, updated, deprecated
 	RemoteData        *ModelMetaData `json:"remote_data,omitempty"`
 	LocalData         interface{}    `json:"local_data,omitempty"`
 	DiffFields        []DiffField    `json:"diff_fields,omitempty"`
@@ -224,6 +228,7 @@ func (s *Service) SyncProviderModels(ctx context.Context, provider string, model
 		Status:   SyncResultStatusSuccess,
 		Errors:   []string{},
 	}
+	fullSync := len(modelNames) == 0
 
 	allModels, err := s.fetchProviderModels(provider)
 	if err != nil {
@@ -275,9 +280,28 @@ func (s *Service) SyncProviderModels(ctx context.Context, provider string, model
 		result.SuccessModels++
 	}
 
+	if fullSync && len(allModels) > 0 && result.FailedModels == 0 {
+		deprecatedCount, err := s.markMissingModelsDeprecated(ctx, catalogModelKeysFromMeta(allModels))
+		if err != nil {
+			return nil, fmt.Errorf("failed to mark missing models deprecated: %w", err)
+		}
+		result.DeprecatedModels = int(deprecatedCount)
+	}
+
 	result.Status = resolveSyncResultStatus(result.SuccessModels, result.FailedModels)
 	result.DurationMs = time.Since(startTime).Milliseconds()
+	if invalidator := currentModelCacheInvalidator(); invalidator != nil {
+		invalidator.InvalidateModelCache(ctx)
+	}
 	return result, nil
+}
+
+func catalogModelKeysFromMeta(models []ModelMetaData) []catalogModelKey {
+	keys := make([]catalogModelKey, 0, len(models))
+	for _, model := range models {
+		keys = append(keys, catalogModelKey{Provider: model.Provider, Model: model.Model})
+	}
+	return keys
 }
 
 func resolveSyncResultStatus(successModels, failedModels int) string {
@@ -328,8 +352,9 @@ func (s *Service) ComputeDiff(ctx context.Context, provider string) (*DiffResult
 		Provider:  provider,
 		CheckedAt: time.Now(),
 		Changes: DiffChanges{
-			New:     []ModelChange{},
-			Updated: []ModelChange{},
+			New:        []ModelChange{},
+			Updated:    []ModelChange{},
+			Deprecated: []ModelChange{},
 		},
 	}
 
@@ -376,7 +401,13 @@ func (s *Service) ComputeDiff(ctx context.Context, provider string) (*DiffResult
 		return nil, fmt.Errorf("failed to fetch local models: %w", err)
 	}
 
-	result.Summary.TotalLocal = len(localModels)
+	activeLocalModels := 0
+	for i := range localModels {
+		if localModels[i].Status != llmmodel.ModelStatusDeprecated {
+			activeLocalModels++
+		}
+	}
+	result.Summary.TotalLocal = activeLocalModels
 
 	// Create maps for comparison
 	remoteMap := make(map[string]*ModelMetaData)
@@ -419,6 +450,24 @@ func (s *Service) ComputeDiff(ctx context.Context, provider string) (*DiffResult
 		}
 	}
 
+	for i := range localModels {
+		localModel := &localModels[i]
+		if localModel.Status == llmmodel.ModelStatusDeprecated {
+			continue
+		}
+		if _, exists := remoteMap[localModel.Model]; exists {
+			continue
+		}
+		result.Changes.Deprecated = append(result.Changes.Deprecated, ModelChange{
+			Model:             localModel.Model,
+			ModelName:         localModel.ModelName,
+			ChangeType:        "deprecated",
+			LocalData:         localModel,
+			RecommendedAction: "sync",
+		})
+		result.Summary.DeprecatedModels++
+	}
+
 	return result, nil
 }
 
@@ -445,7 +494,7 @@ func (s *Service) ComputeDeprecated(ctx context.Context, provider string) (*Depr
 	// Fetch local models
 	var localModels []llmmodel.LLMModel
 	if err := s.db.WithContext(ctx).
-		Where("provider = ? AND deleted_at IS NULL", provider).
+		Where("provider = ? AND status = ? AND deleted_at IS NULL", provider, llmmodel.ModelStatusActive).
 		Find(&localModels).Error; err != nil {
 		return nil, fmt.Errorf("failed to fetch local models: %w", err)
 	}
@@ -495,9 +544,15 @@ func (s *Service) fetchProviderModels(provider string) ([]ModelMetaData, error) 
 	const pageSize = 100
 
 	for {
-		url := fmt.Sprintf("%s/providers/%s/models?page=%d&page_size=%d", s.apiBaseURL, provider, page, pageSize)
+		requestURL := fmt.Sprintf(
+			"%s/models?provider=%s&page=%d&page_size=%d",
+			s.apiBaseURL,
+			url.QueryEscape(provider),
+			page,
+			pageSize,
+		)
 
-		req, err := http.NewRequest("GET", url, nil)
+		req, err := http.NewRequest("GET", requestURL, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
@@ -1198,34 +1253,57 @@ func (s *Service) fetchProviders() ([]ModelMetaProvider, error) {
 		return nil, errModelMetaAPIURLNotConfigured
 	}
 
-	url := fmt.Sprintf("%s/providers?limit=500", s.apiBaseURL)
+	var allProviders []ModelMetaProvider
+	page := 1
+	const pageSize = 100
 
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
+	for {
+		requestURL := fmt.Sprintf("%s/providers?page=%d&page_size=%d", s.apiBaseURL, page, pageSize)
+
+		req, err := http.NewRequest("GET", requestURL, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		resp, err := s.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+
+		var response ModelMetaProviderResponse
+		if err := json.Unmarshal(body, &response); err != nil {
+			return nil, err
+		}
+
+		allProviders = append(allProviders, response.Data...)
+		if response.TotalPages <= 0 || page >= response.TotalPages || len(response.Data) == 0 {
+			break
+		}
+		page++
 	}
 
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, err
+	seen := make(map[string]int, len(allProviders))
+	deduped := make([]ModelMetaProvider, 0, len(allProviders))
+	for _, provider := range allProviders {
+		if idx, ok := seen[provider.Provider]; ok {
+			deduped[idx] = provider
+			continue
+		}
+		seen[provider.Provider] = len(deduped)
+		deduped = append(deduped, provider)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var response ModelMetaProviderResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, err
-	}
-
-	return response.Data, nil
+	return deduped, nil
 }
 
 // syncProvider syncs a single provider to the database

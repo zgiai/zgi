@@ -73,6 +73,7 @@ function showSyncResultToast(
         provider: result.provider,
         new: result.new_models,
         updated: result.updated_models,
+        deprecated: result.deprecated_models,
         duration: (result.duration_ms / 1000).toFixed(1),
       }),
       { description }
@@ -121,7 +122,7 @@ export function useCheckModelUpdates(provider: string) {
       if (!data) return;
 
       const { summary } = data.data;
-      if (summary.new_models > 0 || summary.updated_models > 0) {
+      if (summary.new_models > 0 || summary.updated_models > 0 || summary.deprecated_models > 0) {
         setDiffData(data.data);
         setShowDiffDialog(true);
       } else {
@@ -192,7 +193,8 @@ export function useModelMetaModelUpdateProviders(options?: { enabled?: boolean }
         providers.map(async provider => {
           const diffResponse = await modelMetaService.getModelDiff(provider.provider);
           const summary = diffResponse.data.summary;
-          const changedCount = summary.new_models + summary.updated_models;
+          const changedCount =
+            summary.new_models + summary.updated_models + summary.deprecated_models;
 
           if (changedCount === 0) {
             return null;
@@ -203,6 +205,7 @@ export function useModelMetaModelUpdateProviders(options?: { enabled?: boolean }
             name: provider.provider_name || provider.provider,
             new_models: summary.new_models,
             updated_models: summary.updated_models,
+            deprecated_models: summary.deprecated_models,
             total_remote: summary.total_remote,
             total_local: summary.total_local,
           };
@@ -221,12 +224,11 @@ export function useModelMetaModelUpdateProviders(options?: { enabled?: boolean }
           });
           return [];
         })
-        .sort(
-          (left, right) =>
-            right.new_models +
-            right.updated_models -
-            (left.new_models + left.updated_models)
-        );
+        .sort((left, right) => {
+          const rightTotal = right.new_models + right.updated_models + right.deprecated_models;
+          const leftTotal = left.new_models + left.updated_models + left.deprecated_models;
+          return rightTotal - leftTotal;
+        });
 
       return {
         checked_at: checkedAt,

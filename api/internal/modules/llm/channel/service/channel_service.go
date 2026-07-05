@@ -78,8 +78,8 @@ type ChannelService interface {
 	DiscoverDraftChannelModels(ctx context.Context, req *dto.DiscoverDraftChannelModelsRequest) (*dto.DiscoverDraftChannelModelsResponse, error)
 	DiscoverOllamaModels(ctx context.Context, req *dto.DiscoverOllamaModelsRequest) (*dto.DiscoverOllamaModelsResponse, error)
 	TestDraftChannelModel(ctx context.Context, organizationID uuid.UUID, req *dto.DraftTestChannelModelRequest) (*dto.ChannelModelTestResult, error)
-	TestChannelModel(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, model string, testMethod string) (*dto.ChannelModelTestResult, error)
-	BatchTestChannelModels(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, models []string, testMethod string, resultChan chan<- *dto.BatchTestChannelModelsStreamResponse)
+	TestChannelModel(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, model string, testMethod string, stream bool) (*dto.ChannelModelTestResult, error)
+	BatchTestChannelModels(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, models []string, testMethod string, stream bool, resultChan chan<- *dto.BatchTestChannelModelsStreamResponse)
 
 	// Batch operations
 	BatchToggleRoutes(ctx context.Context, organizationID uuid.UUID, req *dto.BatchToggleRoutesRequest) (*dto.BatchOperationResult, error)
@@ -92,7 +92,7 @@ type ChannelService interface {
 type ChannelValidator interface {
 	ValidateModelsForCreation(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL string, models []string) (*channelprovider.ValidationResult, error)
 	ValidateModels(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL string, models []string) (*channelprovider.ValidationResult, error)
-	TestModel(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL, modelName, testMethod string) (*channelprovider.TestResult, error)
+	TestModel(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL, modelName, testMethod string, stream bool) (*channelprovider.TestResult, error)
 }
 
 type channelService struct {
@@ -993,7 +993,7 @@ func (s *channelService) TestRoute(ctx context.Context, organizationID, id uuid.
 				Message: fmt.Sprintf("failed to load credential api key: %v", err),
 			}, nil
 		}
-		result, err := s.validator.TestModel(ctx, organizationID, route.ChannelProvider, apiKey, route.APIBaseURL, testModel, "")
+		result, err := s.validator.TestModel(ctx, organizationID, route.ChannelProvider, apiKey, route.APIBaseURL, testModel, "", false)
 		if err != nil {
 			return &dto.TestChannelResult{
 				Success: false,
@@ -1202,6 +1202,7 @@ func (s *channelService) TestDraftChannelModel(ctx context.Context, organization
 	if err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: err.Error(),
 			Model:   strings.TrimSpace(req.Model),
 		}, nil
@@ -1209,6 +1210,7 @@ func (s *channelService) TestDraftChannelModel(ctx context.Context, organization
 	if err := channelprovider.ValidateAPIKey(spec, req.APIKey); err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: err.Error(),
 			Model:   strings.TrimSpace(req.Model),
 		}, nil
@@ -1216,15 +1218,17 @@ func (s *channelService) TestDraftChannelModel(ctx context.Context, organization
 	if err := s.ensureOllamaCustomModels(ctx, organizationID, spec.Name, req.APIBaseURL, req.APIKey, []string{req.Model}); err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: err.Error(),
 			Model:   strings.TrimSpace(req.Model),
 		}, nil
 	}
 
-	result, err := s.validator.TestModel(ctx, organizationID, spec.Name, req.APIKey, req.APIBaseURL, req.Model, req.TestMethod)
+	result, err := s.validator.TestModel(ctx, organizationID, spec.Name, req.APIKey, req.APIBaseURL, req.Model, req.TestMethod, req.Stream)
 	if err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: err.Error(),
 			Model:   strings.TrimSpace(req.Model),
 		}, nil
@@ -1306,12 +1310,13 @@ func (s *channelService) DiscoverDraftChannelModels(ctx context.Context, req *dt
 	}, nil
 }
 
-func (s *channelService) TestChannelModel(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, modelName string, testMethod string) (*dto.ChannelModelTestResult, error) {
+func (s *channelService) TestChannelModel(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, modelName string, testMethod string, stream bool) (*dto.ChannelModelTestResult, error) {
 	// Get the route
 	route, err := s.tenantRouteRepo.GetByID(ctx, organizationID, channelID)
 	if err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: fmt.Sprintf("route not found: %v", err),
 			Model:   strings.TrimSpace(modelName),
 		}, nil
@@ -1321,6 +1326,7 @@ func (s *channelService) TestChannelModel(ctx context.Context, channelID uuid.UU
 	if route.CredentialID == nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: "route has no associated credential",
 			Model:   strings.TrimSpace(modelName),
 		}, nil
@@ -1330,14 +1336,16 @@ func (s *channelService) TestChannelModel(ctx context.Context, channelID uuid.UU
 	if err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: fmt.Sprintf("failed to load credential api key: %v", err),
 			Model:   strings.TrimSpace(modelName),
 		}, nil
 	}
-	result, err := s.validator.TestModel(ctx, organizationID, route.ChannelProvider, apiKey, route.APIBaseURL, modelName, testMethod)
+	result, err := s.validator.TestModel(ctx, organizationID, route.ChannelProvider, apiKey, route.APIBaseURL, modelName, testMethod, stream)
 	if err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: fmt.Sprintf("failed to test credential: %v", err),
 			Model:   strings.TrimSpace(modelName),
 		}, nil
@@ -1347,11 +1355,14 @@ func (s *channelService) TestChannelModel(ctx context.Context, channelID uuid.UU
 }
 
 // BatchTestChannelModels tests multiple models on a channel and streams results
-func (s *channelService) BatchTestChannelModels(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, models []string, testMethod string, resultChan chan<- *dto.BatchTestChannelModelsStreamResponse) {
+func (s *channelService) BatchTestChannelModels(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, models []string, testMethod string, stream bool, resultChan chan<- *dto.BatchTestChannelModelsStreamResponse) {
 	defer close(resultChan)
 
+	successCount := 0
+	failureCount := 0
+	skippedCount := 0
 	for _, modelName := range models {
-		result, err := s.TestChannelModel(ctx, channelID, organizationID, modelName, testMethod)
+		result, err := s.TestChannelModel(ctx, channelID, organizationID, modelName, testMethod, stream)
 
 		response := &dto.BatchTestChannelModelsStreamResponse{
 			Model:     modelName,
@@ -1360,11 +1371,21 @@ func (s *channelService) BatchTestChannelModels(ctx context.Context, channelID u
 
 		if err != nil {
 			response.Success = false
+			response.Status = channelprovider.TestStatusFailed
 			response.Message = err.Error()
 		} else {
 			response.Success = result.Success
+			response.Status = normalizeChannelModelTestStatus(result.Status, result.Success)
 			response.Message = result.Message
 			response.ResponseTime = result.ResponseTimeMs
+		}
+		switch response.Status {
+		case channelprovider.TestStatusSuccess:
+			successCount++
+		case channelprovider.TestStatusSkipped:
+			skippedCount++
+		default:
+			failureCount++
 		}
 
 		resultChan <- response
@@ -1372,7 +1393,10 @@ func (s *channelService) BatchTestChannelModels(ctx context.Context, channelID u
 
 	// Send completion message
 	resultChan <- &dto.BatchTestChannelModelsStreamResponse{
-		Completed: true,
+		Completed:    true,
+		SuccessCount: successCount,
+		FailureCount: failureCount,
+		SkippedCount: skippedCount,
 	}
 }
 
@@ -1380,6 +1404,7 @@ func buildChannelModelTestResult(result *channelprovider.TestResult) *dto.Channe
 	if result == nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: "empty validation result",
 		}
 	}
@@ -1391,11 +1416,24 @@ func buildChannelModelTestResult(result *channelprovider.TestResult) *dto.Channe
 
 	return &dto.ChannelModelTestResult{
 		Success:        result.Success,
+		Status:         normalizeChannelModelTestStatus(result.Status, result.Success),
 		Message:        result.Message,
 		Model:          result.Model,
 		UseCase:        result.UseCase,
 		TestMethod:     testMethod,
 		ResponseTimeMs: result.ResponseTimeMs,
+	}
+}
+
+func normalizeChannelModelTestStatus(status string, success bool) string {
+	switch strings.TrimSpace(status) {
+	case channelprovider.TestStatusSuccess, channelprovider.TestStatusFailed, channelprovider.TestStatusSkipped:
+		return strings.TrimSpace(status)
+	default:
+		if success {
+			return channelprovider.TestStatusSuccess
+		}
+		return channelprovider.TestStatusFailed
 	}
 }
 

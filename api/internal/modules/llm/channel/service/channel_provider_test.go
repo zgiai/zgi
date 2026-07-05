@@ -221,11 +221,13 @@ type fakeChannelValidator struct {
 	lastTestBaseURL    string
 	lastTestModel      string
 	lastTestMethod     string
+	lastTestStream     bool
 	createCalls        int
 	validateCalls      int
 	report             map[string]interface{}
 	err                error
 	testResult         *channelprovider.TestResult
+	testResults        map[string]*channelprovider.TestResult
 	testErr            error
 }
 
@@ -287,21 +289,28 @@ func (f *fakeChannelValidator) ValidateModelsForCreation(_ context.Context, orga
 	}, nil
 }
 
-func (f *fakeChannelValidator) TestModel(_ context.Context, organizationID uuid.UUID, channelProvider, apiKey string, apiBaseURL, modelName, testMethod string) (*channelprovider.TestResult, error) {
+func (f *fakeChannelValidator) TestModel(_ context.Context, organizationID uuid.UUID, channelProvider, apiKey string, apiBaseURL, modelName, testMethod string, stream bool) (*channelprovider.TestResult, error) {
 	f.lastOrganizationID = organizationID
 	f.lastTestProvider = channelProvider
 	f.lastTestAPIKey = apiKey
 	f.lastTestBaseURL = apiBaseURL
 	f.lastTestModel = modelName
 	f.lastTestMethod = testMethod
+	f.lastTestStream = stream
 	if f.testErr != nil {
 		return nil, f.testErr
+	}
+	if f.testResults != nil {
+		if result, ok := f.testResults[modelName]; ok {
+			return result, nil
+		}
 	}
 	if f.testResult != nil {
 		return f.testResult, nil
 	}
 	return &channelprovider.TestResult{
 		Success:        true,
+		Status:         channelprovider.TestStatusSuccess,
 		Message:        "ok",
 		ResponseTimeMs: 12,
 		Model:          modelName,
@@ -1226,6 +1235,7 @@ func TestDraftTestChannelModel_UsesValidatorAndReturnsNormalizedResult(t *testin
 	validator := &fakeChannelValidator{
 		testResult: &channelprovider.TestResult{
 			Success:        true,
+			Status:         channelprovider.TestStatusSuccess,
 			Message:        "ok",
 			ResponseTimeMs: 34,
 			Model:          "gpt-4o",
@@ -1251,6 +1261,7 @@ func TestDraftTestChannelModel_UsesValidatorAndReturnsNormalizedResult(t *testin
 	require.Equal(t, "https://proxy.example.com/v1", validator.lastTestBaseURL)
 	require.Equal(t, "gpt-4o", validator.lastTestModel)
 	require.Equal(t, true, result.Success)
+	require.Equal(t, channelprovider.TestStatusSuccess, result.Status)
 	require.Equal(t, "chat", result.UseCase)
 	require.Equal(t, "chat", result.TestMethod)
 	require.Equal(t, int64(34), result.ResponseTimeMs)
@@ -1399,6 +1410,7 @@ func TestTestChannelModel_ReusesValidatorResultShape(t *testing.T) {
 	validator := &fakeChannelValidator{
 		testResult: &channelprovider.TestResult{
 			Success:        true,
+			Status:         channelprovider.TestStatusSuccess,
 			Message:        "ok",
 			ResponseTimeMs: 56,
 			Model:          "gpt-4o",
@@ -1412,13 +1424,83 @@ func TestTestChannelModel_ReusesValidatorResultShape(t *testing.T) {
 		modelRepo:         &fakeModelRepo{},
 	}
 
-	result, err := svc.TestChannelModel(context.Background(), routeID, repo.routeByID.OrganizationID, "gpt-4o", "")
+	result, err := svc.TestChannelModel(context.Background(), routeID, repo.routeByID.OrganizationID, "gpt-4o", "", true)
 
 	require.NoError(t, err)
 	require.Equal(t, true, result.Success)
+	require.Equal(t, channelprovider.TestStatusSuccess, result.Status)
 	require.Equal(t, "gpt-4o", result.Model)
 	require.Equal(t, "chat", result.UseCase)
 	require.Equal(t, "chat", result.TestMethod)
 	require.Equal(t, int64(56), result.ResponseTimeMs)
 	require.Equal(t, "openai-compatible", validator.lastTestProvider)
+	require.True(t, validator.lastTestStream)
+}
+
+func TestBatchTestChannelModels_CountsSkippedImageModelsSeparately(t *testing.T) {
+	routeID := uuid.New()
+	credentialID := uuid.New()
+	orgID := uuid.New()
+	repo := &fakeTenantRouteRepo{
+		routeByID: &channelmodel.LLMRoute{
+			ID:              routeID,
+			OrganizationID:  orgID,
+			ChannelProvider: "openai-compatible",
+			APIBaseURL:      "https://proxy.example.com/v1",
+			CredentialID:    &credentialID,
+		},
+	}
+	credSvc := &fakeTenantCredentialService{
+		cred: &credentialmodel.TenantCredential{ID: credentialID},
+	}
+	validator := &fakeChannelValidator{
+		testResults: map[string]*channelprovider.TestResult{
+			"qwen-plus": {
+				Success:        true,
+				Status:         channelprovider.TestStatusSuccess,
+				Message:        "ok",
+				ResponseTimeMs: 21,
+				Model:          "qwen-plus",
+				UseCase:        "chat",
+			},
+			"qwen-bad": {
+				Success:        false,
+				Status:         channelprovider.TestStatusFailed,
+				Message:        "model not found",
+				ResponseTimeMs: 22,
+				Model:          "qwen-bad",
+				UseCase:        "chat",
+			},
+			"qwen-image": {
+				Success:        false,
+				Status:         channelprovider.TestStatusSkipped,
+				Message:        "image generation models require a real image generation test in the image workspace",
+				ResponseTimeMs: 0,
+				Model:          "qwen-image",
+				UseCase:        "image-gen",
+			},
+		},
+	}
+	svc := &channelService{
+		tenantRouteRepo:   repo,
+		tenantCredService: credSvc,
+		validator:         validator,
+		modelRepo:         &fakeModelRepo{},
+	}
+	resultChan := make(chan *channeldto.BatchTestChannelModelsStreamResponse, 4)
+
+	svc.BatchTestChannelModels(context.Background(), routeID, orgID, []string{"qwen-plus", "qwen-bad", "qwen-image"}, "", false, resultChan)
+
+	results := make([]*channeldto.BatchTestChannelModelsStreamResponse, 0, 4)
+	for result := range resultChan {
+		results = append(results, result)
+	}
+	require.Len(t, results, 4)
+	require.Equal(t, channelprovider.TestStatusSuccess, results[0].Status)
+	require.Equal(t, channelprovider.TestStatusFailed, results[1].Status)
+	require.Equal(t, channelprovider.TestStatusSkipped, results[2].Status)
+	require.True(t, results[3].Completed)
+	require.Equal(t, 1, results[3].SuccessCount)
+	require.Equal(t, 1, results[3].FailureCount)
+	require.Equal(t, 1, results[3].SkippedCount)
 }

@@ -58,6 +58,24 @@ export function saveModelLatency(
   updateUiLocal({ channelsLatency: next } as Partial<UiLocal>);
 }
 
+export function removeModelLatencies(channelId: string, models: string[]): void {
+  if (!channelId || models.length === 0) return;
+  const ui = getUiLocal();
+  const current: ChannelLatencyMap = ui.channelsLatency ?? { byChannelId: {} };
+  const channelRecords = { ...(current.byChannelId[channelId] ?? {}) };
+  models.forEach(model => {
+    delete channelRecords[model];
+  });
+  updateUiLocal({
+    channelsLatency: {
+      byChannelId: {
+        ...current.byChannelId,
+        [channelId]: channelRecords,
+      },
+    },
+  } as Partial<UiLocal>);
+}
+
 export function classifyFailure(errorMessage: string | undefined): ConnectivityStatus {
   const msg = (errorMessage || '').toLowerCase();
   if (msg.includes('timeout')) return 'connectionTimeout';

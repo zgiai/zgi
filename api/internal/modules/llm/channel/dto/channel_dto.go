@@ -183,6 +183,7 @@ type DraftTestChannelModelRequest struct {
 	APIBaseURL      string `json:"api_base_url"`
 	Model           string `json:"model" binding:"required"`
 	TestMethod      string `json:"test_method"`
+	Stream          bool   `json:"stream"`
 }
 
 type DiscoverDraftChannelModelsRequest struct {
@@ -227,6 +228,7 @@ type DiscoverOllamaModelsResponse struct {
 
 type ChannelModelTestResult struct {
 	Success        bool   `json:"success"`
+	Status         string `json:"status,omitempty"`
 	Message        string `json:"message"`
 	Model          string `json:"model"`
 	UseCase        string `json:"use_case,omitempty"`
@@ -262,19 +264,25 @@ type AdjustChannelWalletResponse struct {
 type TestChannelModelRequest struct {
 	Model      string `json:"model" binding:"required"`
 	TestMethod string `json:"test_method"` // chat, embedding, image-gen, rerank
+	Stream     bool   `json:"stream"`
 }
 
 type BatchTestChannelModelsRequest struct {
 	Models     []string `json:"models" binding:"required"`
 	TestMethod string   `json:"test_method"`
+	Stream     bool     `json:"stream"`
 }
 
 type BatchTestChannelModelsStreamResponse struct {
 	Model        string `json:"model"`
 	Success      bool   `json:"success"`
+	Status       string `json:"status,omitempty"`
 	Message      string `json:"message"`
 	ResponseTime int64  `json:"response_time_ms"`
 	Completed    bool   `json:"completed"` // True if this is the final message closing the stream
+	SuccessCount int    `json:"success_count,omitempty"`
+	FailureCount int    `json:"failure_count,omitempty"`
+	SkippedCount int    `json:"skipped_count,omitempty"`
 }
 
 // UpdateOfficialChannelSettingsRequest represents the request to update official channel group settings
