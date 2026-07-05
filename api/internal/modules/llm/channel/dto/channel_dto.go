@@ -227,13 +227,15 @@ type DiscoverOllamaModelsResponse struct {
 }
 
 type ChannelModelTestResult struct {
-	Success        bool   `json:"success"`
-	Status         string `json:"status,omitempty"`
-	Message        string `json:"message"`
-	Model          string `json:"model"`
-	UseCase        string `json:"use_case,omitempty"`
-	TestMethod     string `json:"test_method,omitempty"`
-	ResponseTimeMs int64  `json:"response_time_ms"`
+	Success        bool                   `json:"success"`
+	Status         string                 `json:"status,omitempty"`
+	Message        string                 `json:"message"`
+	Model          string                 `json:"model"`
+	UseCase        string                 `json:"use_case,omitempty"`
+	TestMethod     string                 `json:"test_method,omitempty"`
+	ResponseTimeMs int64                  `json:"response_time_ms"`
+	Code           string                 `json:"code,omitempty"`
+	Params         map[string]interface{} `json:"params,omitempty"`
 }
 
 type UpdateChannelBalanceResponse struct {
@@ -274,15 +276,17 @@ type BatchTestChannelModelsRequest struct {
 }
 
 type BatchTestChannelModelsStreamResponse struct {
-	Model        string `json:"model"`
-	Success      bool   `json:"success"`
-	Status       string `json:"status,omitempty"`
-	Message      string `json:"message"`
-	ResponseTime int64  `json:"response_time_ms"`
-	Completed    bool   `json:"completed"` // True if this is the final message closing the stream
-	SuccessCount int    `json:"success_count,omitempty"`
-	FailureCount int    `json:"failure_count,omitempty"`
-	SkippedCount int    `json:"skipped_count,omitempty"`
+	Model        string                 `json:"model"`
+	Success      bool                   `json:"success"`
+	Status       string                 `json:"status,omitempty"`
+	Message      string                 `json:"message"`
+	ResponseTime int64                  `json:"response_time_ms"`
+	Completed    bool                   `json:"completed"` // True if this is the final message closing the stream
+	SuccessCount int                    `json:"success_count,omitempty"`
+	FailureCount int                    `json:"failure_count,omitempty"`
+	SkippedCount int                    `json:"skipped_count,omitempty"`
+	Code         string                 `json:"code,omitempty"`
+	Params       map[string]interface{} `json:"params,omitempty"`
 }
 
 // UpdateOfficialChannelSettingsRequest represents the request to update official channel group settings

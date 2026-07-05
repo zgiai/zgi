@@ -18,7 +18,10 @@ import (
 
 const pricingCreditsPerUSD = int64(1_000_000)
 
-var pricingPerMillionDivisor = decimal.NewFromInt(1000000)
+var (
+	ErrPricingNotConfigured  = errors.New("model pricing is not configured")
+	pricingPerMillionDivisor = decimal.NewFromInt(1000000)
+)
 
 type PricingModelSource string
 
@@ -29,8 +32,8 @@ const (
 )
 
 type PricingModelRef struct {
-	OrganizationID uuid.UUID
 	ModelID        uuid.UUID
+	OrganizationID uuid.UUID
 	Source         PricingModelSource
 	Operation      PricingOperation
 	Provider       string
@@ -68,14 +71,16 @@ type pricingEngine struct {
 }
 
 type pricingModelRecord struct {
-	ID                    uuid.UUID       `gorm:"column:id"`
-	Provider              string          `gorm:"column:provider"`
-	Name                  string          `gorm:"column:name"`
-	InputPrice            decimal.Decimal `gorm:"column:input_price"`
-	OutputPrice           decimal.Decimal `gorm:"column:output_price"`
-	InputPriceConfigured  bool            `gorm:"column:input_price_configured"`
-	OutputPriceConfigured bool            `gorm:"column:output_price_configured"`
-	ImagePrices           datatypes.JSON  `gorm:"column:image_prices"`
+	ID                              uuid.UUID       `gorm:"column:id"`
+	Provider                        string          `gorm:"column:provider"`
+	Name                            string          `gorm:"column:name"`
+	InputPrice                      decimal.Decimal `gorm:"column:input_price"`
+	OutputPrice                     decimal.Decimal `gorm:"column:output_price"`
+	InputPriceConfigured            bool            `gorm:"column:input_price_configured"`
+	OutputPriceConfigured           bool            `gorm:"column:output_price_configured"`
+	ImagePrices                     datatypes.JSON  `gorm:"column:image_prices"`
+	InputPriceOrganizationOverride  bool            `gorm:"-"`
+	OutputPriceOrganizationOverride bool            `gorm:"-"`
 }
 
 func NewPricingEngine(db *gorm.DB) PricingEngine {
@@ -157,8 +162,8 @@ func (e *pricingEngine) QuoteImage(ctx context.Context, ref PricingModelRef, req
 		return PricingQuote{}, fmt.Errorf("image pricing request is nil")
 	}
 	ref = normalizePricingModelRef(PricingModelRef{
-		OrganizationID: ref.OrganizationID,
 		ModelID:        ref.ModelID,
+		OrganizationID: ref.OrganizationID,
 		Source:         ref.Source,
 		Operation:      PricingOperationImage,
 		Provider:       ref.Provider,
@@ -184,6 +189,9 @@ func (e *pricingEngine) QuoteImage(ctx context.Context, ref PricingModelRef, req
 	}
 
 	if found && model != nil {
+		if quote, ok := quoteConfiguredOrganizationImageUnitPrice(model, &r, count); ok {
+			return quote, nil
+		}
 		prices, configured, err := configuredImagePricingRules(model)
 		if err != nil {
 			return PricingQuote{}, err
@@ -194,8 +202,10 @@ func (e *pricingEngine) QuoteImage(ctx context.Context, ref PricingModelRef, req
 				return quoteConfiguredImageRule(model, &r, matched, count)
 			}
 		}
-		if !configured && legacyImagePriceConfigured(model) {
-			return quoteLegacyImagePrice(model, &r, count)
+		if !configured {
+			if quote, ok := quoteConfiguredImageUnitPrice(model, &r, count); ok {
+				return quote, nil
+			}
 		}
 	}
 
@@ -230,7 +240,7 @@ func (e *pricingEngine) quoteTokensWithFallback(
 		return PricingQuote{}, err
 	}
 	if !config.Enabled {
-		return PricingQuote{}, fmt.Errorf("missing token pricing and fallback pricing is disabled")
+		return PricingQuote{}, fmt.Errorf("%w: missing token pricing and fallback pricing is disabled", ErrPricingNotConfigured)
 	}
 
 	provider, modelName := pricingModelIdentity(ref, model, found)
@@ -326,7 +336,7 @@ func (e *pricingEngine) quoteImageWithFallback(
 		return PricingQuote{}, err
 	}
 	if !config.Enabled {
-		return PricingQuote{}, fmt.Errorf("missing image pricing and fallback pricing is disabled")
+		return PricingQuote{}, fmt.Errorf("%w: missing image pricing and fallback pricing is disabled", ErrPricingNotConfigured)
 	}
 
 	provider, modelName := pricingModelIdentity(ref, model, found)
@@ -372,7 +382,7 @@ func quoteConfiguredImageRule(model *pricingModelRecord, req *adapter.ImageReque
 	}
 
 	if matched.Price.Credits <= 0 {
-		return PricingQuote{}, fmt.Errorf("image pricing rule %q has no price", matched.ID)
+		return PricingQuote{}, fmt.Errorf("%w: image pricing rule %q has no price", ErrPricingNotConfigured, matched.ID)
 	}
 
 	totalCredits := matched.Price.Credits * count
@@ -387,20 +397,70 @@ func quoteConfiguredImageRule(model *pricingModelRecord, req *adapter.ImageReque
 	}, nil
 }
 
-func legacyImagePriceConfigured(model *pricingModelRecord) bool {
-	if model == nil {
-		return false
+func quoteConfiguredImageUnitPrice(model *pricingModelRecord, req *adapter.ImageRequest, count int64) (PricingQuote, bool) {
+	price, column, ok := configuredImageUnitPrice(model)
+	if !ok {
+		return PricingQuote{}, false
 	}
-	return model.InputPriceConfigured ||
-		model.OutputPriceConfigured ||
-		model.InputPrice.IsPositive() ||
-		model.OutputPrice.IsPositive()
+	totalUSD := price.Mul(decimal.NewFromInt(count))
+	snapshot := configuredImageUnitPriceSnapshot(model, req, count, price, column)
+	return newOutputOnlyUSDQuote(totalUSD, PricingSourceUpstreamModelPrice, "", UsageSourceRequestParameters, snapshot), true
 }
 
-func quoteLegacyImagePrice(model *pricingModelRecord, req *adapter.ImageRequest, count int64) (PricingQuote, error) {
-	totalUSD := model.InputPrice.Add(model.OutputPrice).Mul(decimal.NewFromInt(count))
-	snapshot := legacyImagePricingSnapshot(model, req, count)
-	return newOutputOnlyUSDQuote(totalUSD, PricingSourceUpstreamModelPrice, "", UsageSourceRequestParameters, snapshot), nil
+func quoteConfiguredOrganizationImageUnitPrice(model *pricingModelRecord, req *adapter.ImageRequest, count int64) (PricingQuote, bool) {
+	price, column, ok := configuredOrganizationImageUnitPrice(model)
+	if !ok {
+		return PricingQuote{}, false
+	}
+	totalUSD := price.Mul(decimal.NewFromInt(count))
+	snapshot := configuredImageUnitPriceSnapshot(model, req, count, price, column)
+	return newOutputOnlyUSDQuote(totalUSD, PricingSourceUpstreamModelPrice, "", UsageSourceRequestParameters, snapshot), true
+}
+
+func configuredOrganizationImageUnitPrice(model *pricingModelRecord) (decimal.Decimal, string, bool) {
+	if model == nil {
+		return decimal.Zero, "", false
+	}
+	if model.OutputPriceOrganizationOverride {
+		return model.OutputPrice, "output_price_override", true
+	}
+	if model.InputPriceOrganizationOverride {
+		return model.InputPrice, "input_price_override", true
+	}
+	return decimal.Zero, "", false
+}
+
+func configuredImageUnitPrice(model *pricingModelRecord) (decimal.Decimal, string, bool) {
+	if model == nil {
+		return decimal.Zero, "", false
+	}
+	if model.OutputPriceConfigured || model.OutputPrice.IsPositive() {
+		return model.OutputPrice, "output_price", true
+	}
+	if model.InputPriceConfigured || model.InputPrice.IsPositive() {
+		return model.InputPrice, "input_price", true
+	}
+	return decimal.Zero, "", false
+}
+
+func configuredImageUnitPriceSnapshot(model *pricingModelRecord, req *adapter.ImageRequest, count int64, usdPerImage decimal.Decimal, column string) datatypes.JSON {
+	provider, modelName := pricingModelIdentity(PricingModelRef{}, model, model != nil)
+	return buildPricingSnapshot(map[string]interface{}{
+		"pricing_source":       PricingSourceUpstreamModelPrice,
+		"usage_source":         UsageSourceRequestParameters,
+		"operation":            PricingOperationImage,
+		"model_id":             pricingModelID(model),
+		"provider":             provider,
+		"model":                modelName,
+		"request_model":        strings.TrimSpace(req.Model),
+		"size":                 strings.TrimSpace(req.Size),
+		"quality":              strings.TrimSpace(req.Quality),
+		"style":                strings.TrimSpace(req.Style),
+		"image_count":          count,
+		"usd_per_image":        usdPerImage.String(),
+		"price_column":         column,
+		"scalar_image_pricing": true,
+	})
 }
 
 func configuredImagePricingSnapshot(model *pricingModelRecord, req *adapter.ImageRequest, rule llmmodel.PricingRule, count int64, usdPerImage float64, creditsPerImage int64) datatypes.JSON {
@@ -423,26 +483,6 @@ func configuredImagePricingSnapshot(model *pricingModelRecord, req *adapter.Imag
 	})
 }
 
-func legacyImagePricingSnapshot(model *pricingModelRecord, req *adapter.ImageRequest, count int64) datatypes.JSON {
-	provider, modelName := pricingModelIdentity(PricingModelRef{}, model, model != nil)
-	return buildPricingSnapshot(map[string]interface{}{
-		"pricing_source":       PricingSourceUpstreamModelPrice,
-		"usage_source":         UsageSourceRequestParameters,
-		"operation":            PricingOperationImage,
-		"model_id":             pricingModelID(model),
-		"provider":             provider,
-		"model":                modelName,
-		"request_model":        strings.TrimSpace(req.Model),
-		"size":                 strings.TrimSpace(req.Size),
-		"quality":              strings.TrimSpace(req.Quality),
-		"style":                strings.TrimSpace(req.Style),
-		"image_count":          count,
-		"input_usd_per_image":  model.InputPrice.String(),
-		"output_usd_per_image": model.OutputPrice.String(),
-		"legacy_image_price":   true,
-	})
-}
-
 func (e *pricingEngine) loadModel(ctx context.Context, ref PricingModelRef) (*pricingModelRecord, bool, error) {
 	ref = normalizePricingModelRef(ref)
 	if ref.ModelID == uuid.Nil || ref.Source == PricingModelSourcePassthrough {
@@ -451,12 +491,54 @@ func (e *pricingEngine) loadModel(ctx context.Context, ref PricingModelRef) (*pr
 
 	switch ref.Source {
 	case PricingModelSourceGlobal:
-		return e.loadModelFromTable(ctx, "llm_models", ref.ModelID)
+		record, found, err := e.loadModelFromTable(ctx, "llm_models", ref.ModelID)
+		if err != nil || !found || ref.OrganizationID == uuid.Nil {
+			return record, found, err
+		}
+		if err := e.applyOrganizationPriceOverride(ctx, record, ref.OrganizationID); err != nil {
+			return nil, false, err
+		}
+		return record, found, nil
 	case PricingModelSourceCustom:
 		return e.loadModelFromTable(ctx, "llm_custom_models", ref.ModelID)
 	default:
 		return nil, false, fmt.Errorf("unknown pricing model source %q", ref.Source)
 	}
+}
+
+type pricingModelConfigOverride struct {
+	InputPriceOverride  *decimal.Decimal `gorm:"column:input_price_override"`
+	OutputPriceOverride *decimal.Decimal `gorm:"column:output_price_override"`
+}
+
+func (e *pricingEngine) applyOrganizationPriceOverride(ctx context.Context, record *pricingModelRecord, organizationID uuid.UUID) error {
+	if record == nil || organizationID == uuid.Nil {
+		return nil
+	}
+
+	var cfg pricingModelConfigOverride
+	err := e.db.WithContext(ctx).
+		Table("llm_model_configs").
+		Select("input_price_override", "output_price_override").
+		Where("organization_id = ? AND model_id = ? AND deleted_at IS NULL", organizationID, record.ID).
+		First(&cfg).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) || isMissingPricingTableError(err, "llm_model_configs") {
+			return nil
+		}
+		return err
+	}
+	if cfg.InputPriceOverride != nil {
+		record.InputPrice = *cfg.InputPriceOverride
+		record.InputPriceConfigured = true
+		record.InputPriceOrganizationOverride = true
+	}
+	if cfg.OutputPriceOverride != nil {
+		record.OutputPrice = *cfg.OutputPriceOverride
+		record.OutputPriceConfigured = true
+		record.OutputPriceOrganizationOverride = true
+	}
+	return nil
 }
 
 func normalizePricingModelRef(ref PricingModelRef) PricingModelRef {
@@ -669,7 +751,7 @@ func findTokenFallbackRule(rules []PricingFallbackRule, operation PricingOperati
 	if found {
 		return best, nil
 	}
-	return PricingFallbackRule{}, fmt.Errorf("missing token fallback pricing rule for operation %q meter %q", operation, meter)
+	return PricingFallbackRule{}, fmt.Errorf("%w: missing token fallback pricing rule for operation %q meter %q", ErrPricingNotConfigured, operation, meter)
 }
 
 func scoreTokenFallbackRule(rule PricingFallbackRule, provider, modelName string) (pricingFallbackRuleScore, bool) {
@@ -712,7 +794,7 @@ func findImageFallbackRule(rules []PricingFallbackRule, provider, modelName stri
 	if found {
 		return best, nil
 	}
-	return PricingFallbackRule{}, fmt.Errorf("missing image fallback pricing rule for provider %q model %q", provider, modelName)
+	return PricingFallbackRule{}, fmt.Errorf("%w: missing image fallback pricing rule for provider %q model %q", ErrPricingNotConfigured, provider, modelName)
 }
 
 type pricingFallbackRuleScore struct {

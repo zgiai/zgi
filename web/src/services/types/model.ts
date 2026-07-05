@@ -151,6 +151,8 @@ export interface ModelItem {
   currency: string;
   input_price: number;
   output_price: number;
+  input_price_configured?: boolean;
+  output_price_configured?: boolean;
   cached_input_price?: number;
   context_window: number;
   max_output_tokens: number;
@@ -206,6 +208,18 @@ export interface ToggleModelResponse {
   model_name: string;
 }
 
+export interface ConfigureModelRequest {
+  model_id: string;
+  is_enabled?: boolean;
+  custom_display_name?: string;
+  input_price_override?: string;
+  output_price_override?: string;
+  access_scope?: string;
+  visible_groups?: string[];
+  visible_users?: string[];
+  sort_order?: number;
+}
+
 export interface GetModelParametersParams {
   model: string;
   provider: string;
@@ -244,7 +258,9 @@ export interface CreateCustomModelRequest {
   is_active?: boolean;
 }
 
-export type UpdateCustomModelRequest = Partial<Omit<CreateCustomModelRequest, 'provider' | 'model'>>;
+export type UpdateCustomModelRequest = Partial<
+  Omit<CreateCustomModelRequest, 'provider' | 'model'>
+>;
 
 export interface GetCustomModelsParams {
   page?: number;

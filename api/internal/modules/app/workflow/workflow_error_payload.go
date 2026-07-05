@@ -17,7 +17,7 @@ func buildWorkflowStreamErrorPayload(err error) map[string]any {
 	return map[string]any{
 		"message": message,
 		"code":    code,
-		"params":  map[string]any{},
+		"params":  workflowBillingErrorParams(err),
 	}
 }
 
@@ -51,7 +51,21 @@ func workflowBillingErrorCodeAndMessage(err error) (int, string, bool) {
 		return response.ErrWorkflowWorkspaceQuotaInsufficient.Code, response.ErrWorkflowWorkspaceQuotaInsufficient.Message, true
 	case gateway.BillingUserErrorKindPrivateChannelBalanceInsufficient:
 		return response.ErrWorkflowPrivateChannelBalanceInsufficient.Code, response.ErrWorkflowPrivateChannelBalanceInsufficient.Message, true
+	case gateway.BillingUserErrorKindModelPricingNotConfigured:
+		return response.ErrWorkflowModelPricingNotConfigured.Code, response.ErrWorkflowModelPricingNotConfigured.Message, true
 	default:
 		return 0, "", false
 	}
+}
+
+func workflowBillingErrorParams(err error) map[string]any {
+	var userErr *gateway.BillingUserError
+	if !errors.As(err, &userErr) || userErr == nil || len(userErr.Params) == 0 {
+		return map[string]any{}
+	}
+	params := make(map[string]any, len(userErr.Params))
+	for key, value := range userErr.Params {
+		params[key] = value
+	}
+	return params
 }

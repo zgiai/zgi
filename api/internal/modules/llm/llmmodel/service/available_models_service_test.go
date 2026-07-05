@@ -3,10 +3,12 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	llmmodeldto "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/dto"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
@@ -63,6 +65,7 @@ func (f *availableModelRepoFake) ListByProvider(context.Context, string) ([]*llm
 
 type availableConfigRepoFake struct {
 	configs map[uuid.UUID]*llmmodel.ModelConfig
+	upserts []*llmmodel.ModelConfig
 	err     error
 }
 
@@ -92,8 +95,17 @@ func (f *availableConfigRepoFake) Update(context.Context, *llmmodel.ModelConfig)
 func (f *availableConfigRepoFake) Delete(context.Context, uuid.UUID, uuid.UUID) error {
 	return errors.New("not implemented")
 }
-func (f *availableConfigRepoFake) Upsert(context.Context, *llmmodel.ModelConfig) error {
-	return errors.New("not implemented")
+func (f *availableConfigRepoFake) Upsert(_ context.Context, config *llmmodel.ModelConfig) error {
+	if f.err != nil {
+		return f.err
+	}
+	if f.configs == nil {
+		f.configs = make(map[uuid.UUID]*llmmodel.ModelConfig)
+	}
+	cloned := *config
+	f.configs[config.ModelID] = &cloned
+	f.upserts = append(f.upserts, &cloned)
+	return nil
 }
 func (f *availableConfigRepoFake) BatchCreate(context.Context, []*llmmodel.ModelConfig) error {
 	return errors.New("not implemented")
@@ -342,6 +354,75 @@ func TestDeleteCustomInvalidatesAvailableModelsCache(t *testing.T) {
 	}
 	if len(availableSvc.invalidated) != 1 || availableSvc.invalidated[0] != organizationID {
 		t.Fatalf("invalidated tenants = %v, want [%s]", availableSvc.invalidated, organizationID)
+	}
+}
+
+func TestBatchToggleModelsPreservesPriceOverrides(t *testing.T) {
+	organizationID := uuid.New()
+	modelID := uuid.New()
+	inputPrice := decimal.RequireFromString("1.23")
+	outputPrice := decimal.RequireFromString("4.56")
+	configRepo := &availableConfigRepoFake{
+		configs: map[uuid.UUID]*llmmodel.ModelConfig{
+			modelID: {
+				OrganizationID:      organizationID,
+				ModelID:             modelID,
+				IsEnabled:           true,
+				AccessScope:         llmmodel.AccessScopeAll,
+				InputPriceOverride:  &inputPrice,
+				OutputPriceOverride: &outputPrice,
+			},
+		},
+	}
+	availableSvc := &modelServiceAvailableModelsFake{}
+	svc := &modelService{
+		configRepo:      configRepo,
+		availableModels: availableSvc,
+	}
+
+	if err := svc.BatchToggleModels(context.Background(), organizationID, []uuid.UUID{modelID}, false); err != nil {
+		t.Fatalf("BatchToggleModels returned error: %v", err)
+	}
+	if len(configRepo.upserts) != 1 {
+		t.Fatalf("upsert count = %d, want 1", len(configRepo.upserts))
+	}
+	got := configRepo.upserts[0]
+	if got.IsEnabled {
+		t.Fatalf("is_enabled = true, want false")
+	}
+	if got.InputPriceOverride == nil || !got.InputPriceOverride.Equal(inputPrice) {
+		t.Fatalf("input override = %v, want %s", got.InputPriceOverride, inputPrice)
+	}
+	if got.OutputPriceOverride == nil || !got.OutputPriceOverride.Equal(outputPrice) {
+		t.Fatalf("output override = %v, want %s", got.OutputPriceOverride, outputPrice)
+	}
+	if len(availableSvc.invalidated) != 1 || availableSvc.invalidated[0] != organizationID {
+		t.Fatalf("invalidated tenants = %v, want [%s]", availableSvc.invalidated, organizationID)
+	}
+}
+
+func TestConfigureModelRejectsInvalidOverridePrice(t *testing.T) {
+	organizationID := uuid.New()
+	modelID := uuid.New()
+	badPrice := "abc"
+	svc := &modelService{
+		globalRepo: &availableModelRepoFake{models: []*llmmodel.LLMModel{{
+			ID:       modelID,
+			Provider: "openai",
+			Model:    "gpt-test",
+		}}},
+		configRepo: &availableConfigRepoFake{},
+	}
+
+	_, err := svc.ConfigureModel(context.Background(), organizationID, &llmmodeldto.ConfigureModelRequest{
+		ModelID:            modelID,
+		InputPriceOverride: &badPrice,
+	})
+	if err == nil {
+		t.Fatalf("ConfigureModel error = nil, want invalid price error")
+	}
+	if !strings.Contains(err.Error(), "input_price_override") {
+		t.Fatalf("ConfigureModel error = %v, want input_price_override error", err)
 	}
 }
 

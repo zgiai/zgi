@@ -584,7 +584,7 @@ func (b *BillingService) deductTenantCredits(ctx context.Context, tx *gorm.DB, b
 	creditsToDeduct := bc.ActualCredits
 	if billingContextNeedsTokenReprice(bc) {
 		quote, quoteErr := NewPricingEngine(b.db).QuoteTokens(ctx, pricingModelRefFromBillingContext(bc), bc.PromptTokens, bc.CompletionTokens)
-		err = quoteErr
+		err = wrapPricingNotConfiguredError(quoteErr)
 		if err != nil {
 			return fmt.Errorf("failed to calculate credits: %w", err)
 		}
@@ -689,7 +689,7 @@ func (b *BillingService) CalculateCreditsFromTokens(
 		Source:  PricingModelSourceGlobal,
 	}, promptTokens, completionTokens)
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, wrapPricingNotConfiguredError(err)
 	}
 	return quote.InputCredits, quote.OutputCredits, quote.TotalCredits, nil
 }
@@ -701,7 +701,7 @@ func (b *BillingService) CalculateImageCredits(req *adapter.ImageRequest, modelI
 		Source:  PricingModelSourceGlobal,
 	}, req)
 	if err != nil {
-		return 0, err
+		return 0, wrapPricingNotConfiguredError(err)
 	}
 	return quote.TotalCredits, nil
 }

@@ -8,6 +8,7 @@ import type {
   ModelDetail,
   ToggleModelRequest,
   ToggleModelResponse,
+  ConfigureModelRequest,
   GetModelParametersParams,
   ParameterRuleItem,
   BatchToggleModelsRequest,
@@ -74,6 +75,11 @@ export class ModelService extends BaseService {
   ): Promise<ApiResponseData<ToggleModelResponse>> {
     const encoded = encodeURIComponent(provider);
     return this.request('post', `/providers/${encoded}/models/toggle`, data);
+  }
+
+  // POST /console/api/llm/models/config
+  configureModel(data: ConfigureModelRequest): Promise<ApiResponseData<unknown>> {
+    return this.request('post', '/models/config', data);
   }
 
   // GET /console/api/llm/models/parameters

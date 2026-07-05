@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,6 +34,16 @@ func openPricingEngineTestDB(t *testing.T) *gorm.DB {
 		image_prices json
 	)`).Error; err != nil {
 		t.Fatalf("create llm_models: %v", err)
+	}
+	if err := db.Exec(`CREATE TABLE llm_model_configs (
+		id text PRIMARY KEY,
+		organization_id text,
+		model_id text,
+		input_price_override decimal,
+		output_price_override decimal,
+		deleted_at datetime
+	)`).Error; err != nil {
+		t.Fatalf("create llm_model_configs: %v", err)
 	}
 	if err := db.Exec(`CREATE TABLE llm_pricing_fallback_overrides (
 		organization_id text PRIMARY KEY,
@@ -76,6 +87,24 @@ func enableDefaultPricingFallbackForOrg(t *testing.T, db *gorm.DB, organizationI
 	savePricingFallbackForOrg(t, db, organizationID, UpdatePricingFallbackRequest{Enabled: true})
 }
 
+func insertPricingModelConfigOverride(t *testing.T, db *gorm.DB, organizationID, modelID uuid.UUID, inputPriceOverride, outputPriceOverride *string) {
+	t.Helper()
+	var inputValue interface{}
+	if inputPriceOverride != nil {
+		inputValue = *inputPriceOverride
+	}
+	var outputValue interface{}
+	if outputPriceOverride != nil {
+		outputValue = *outputPriceOverride
+	}
+	if err := db.Exec(
+		`INSERT INTO llm_model_configs (id, organization_id, model_id, input_price_override, output_price_override) VALUES (?, ?, ?, ?, ?)`,
+		uuid.NewString(), organizationID.String(), modelID.String(), inputValue, outputValue,
+	).Error; err != nil {
+		t.Fatalf("insert model config override: %v", err)
+	}
+}
+
 func TestPricingEngineQuoteTokensUsesStoredModelPricesWhenConfigured(t *testing.T) {
 	db := openPricingEngineTestDB(t)
 	modelID := uuid.New()
@@ -93,6 +122,68 @@ func TestPricingEngineQuoteTokensUsesStoredModelPricesWhenConfigured(t *testing.
 	}
 	if quote.PricingSource != PricingSourceUpstreamModelPrice {
 		t.Fatalf("pricing source = %q, want upstream", quote.PricingSource)
+	}
+}
+
+func TestPricingEngineQuoteTokensPrefersOrganizationOverridePrices(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	modelID := uuid.New()
+	organizationID := uuid.New()
+	inputOverride := "5"
+	outputOverride := "7"
+	insertPricingModel(t, db, modelID, "openai", "1", "2", true, true, "[]")
+	insertPricingModelConfigOverride(t, db, organizationID, modelID, &inputOverride, &outputOverride)
+
+	quote, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
+		ModelID:        modelID,
+		OrganizationID: organizationID,
+		Source:         PricingModelSourceGlobal,
+	}, 1000, 1000)
+	if err != nil {
+		t.Fatalf("QuoteTokens returned error: %v", err)
+	}
+	if quote.TotalCredits != 12000 {
+		t.Fatalf("total credits = %d, want organization override credits 12000", quote.TotalCredits)
+	}
+}
+
+func TestPricingEngineQuoteTokensUsesOverrideWhenBasePriceMissing(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	modelID := uuid.New()
+	organizationID := uuid.New()
+	inputOverride := "3"
+	outputOverride := "4"
+	insertPricingModel(t, db, modelID, "openai", "0", "0", false, false, "[]")
+	insertPricingModelConfigOverride(t, db, organizationID, modelID, &inputOverride, &outputOverride)
+
+	quote, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
+		ModelID:        modelID,
+		OrganizationID: organizationID,
+		Source:         PricingModelSourceGlobal,
+	}, 1000, 1000)
+	if err != nil {
+		t.Fatalf("QuoteTokens returned error: %v", err)
+	}
+	if quote.TotalCredits != 7000 {
+		t.Fatalf("total credits = %d, want override credits 7000", quote.TotalCredits)
+	}
+}
+
+func TestPricingEngineQuoteTokensMissingBaseAndOverrideFails(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	modelID := uuid.New()
+	insertPricingModel(t, db, modelID, "openai", "0", "0", false, false, "[]")
+
+	_, err := NewPricingEngine(db).QuoteTokens(context.Background(), PricingModelRef{
+		ModelID:        modelID,
+		OrganizationID: uuid.New(),
+		Source:         PricingModelSourceGlobal,
+	}, 1000, 1000)
+	if err == nil {
+		t.Fatalf("QuoteTokens error = nil, want missing price error")
+	}
+	if !errors.Is(err, ErrPricingNotConfigured) {
+		t.Fatalf("error = %v, want ErrPricingNotConfigured", err)
 	}
 }
 
@@ -127,6 +218,9 @@ func TestPricingEngineQuoteTokensUnconfiguredZeroFailsWithoutOrganizationFallbac
 	}, 1000, 1000)
 	if err == nil {
 		t.Fatalf("QuoteTokens error = nil, want missing organization fallback error")
+	}
+	if !errors.Is(err, ErrPricingNotConfigured) {
+		t.Fatalf("error = %v, want ErrPricingNotConfigured", err)
 	}
 }
 
@@ -386,6 +480,131 @@ func TestPricingEngineQuoteImageFailsWithoutOrganizationFallback(t *testing.T) {
 	if err == nil {
 		t.Fatalf("QuoteImage error = nil, want missing organization fallback error")
 	}
+	if !errors.Is(err, ErrPricingNotConfigured) {
+		t.Fatalf("error = %v, want ErrPricingNotConfigured", err)
+	}
+}
+
+func TestPricingEngineQuoteImagePrefersOrganizationOutputOverrideOverConfiguredImagePrices(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	modelID := uuid.New()
+	organizationID := uuid.New()
+	outputOverride := "0.20"
+	imagePrices := `[{
+		"id":"configured",
+		"priority":100,
+		"conditions":{"size":"1024x1024","quality":"standard"},
+		"price":{"credits":321}
+	}]`
+	insertPricingModel(t, db, modelID, "qwen", "0", "0", false, false, imagePrices)
+	insertPricingModelConfigOverride(t, db, organizationID, modelID, nil, &outputOverride)
+	n := 2
+
+	quote, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{
+		ModelID:        modelID,
+		OrganizationID: organizationID,
+		Source:         PricingModelSourceGlobal,
+	}, &adapter.ImageRequest{Model: "qwen-image-2.0", N: &n})
+	if err != nil {
+		t.Fatalf("QuoteImage returned error: %v", err)
+	}
+	if quote.TotalCredits != 400000 {
+		t.Fatalf("total credits = %d, want organization override credits 400000", quote.TotalCredits)
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal(quote.PricingSnapshot, &snapshot); err != nil {
+		t.Fatalf("unmarshal pricing snapshot: %v", err)
+	}
+	if snapshot["price_column"] != "output_price_override" {
+		t.Fatalf("snapshot price_column = %v, want output_price_override", snapshot["price_column"])
+	}
+}
+
+func TestPricingEngineQuoteImageUsesConfiguredScalarImagePrice(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	modelID := uuid.New()
+	insertPricingModelNamed(t, db, modelID, "qwen", "qwen-image-2.0", "0.0287", "0", true, false, "[]")
+	n := 2
+
+	quote, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{
+		ModelID: modelID,
+		Source:  PricingModelSourceGlobal,
+	}, &adapter.ImageRequest{Model: "qwen-image-2.0", N: &n})
+	if err != nil {
+		t.Fatalf("QuoteImage returned error: %v", err)
+	}
+	if quote.TotalCredits != 57400 {
+		t.Fatalf("total credits = %d, want 57400", quote.TotalCredits)
+	}
+	if quote.PricingSource != PricingSourceUpstreamModelPrice {
+		t.Fatalf("pricing source = %q, want upstream", quote.PricingSource)
+	}
+}
+
+func TestPricingEngineQuoteImagePrefersOutputPriceForScalarImagePrice(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	modelID := uuid.New()
+	insertPricingModelNamed(t, db, modelID, "qwen", "qwen-image-2.0", "0.10", "0.20", true, true, "[]")
+	n := 1
+
+	quote, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{
+		ModelID: modelID,
+		Source:  PricingModelSourceGlobal,
+	}, &adapter.ImageRequest{Model: "qwen-image-2.0", N: &n})
+	if err != nil {
+		t.Fatalf("QuoteImage returned error: %v", err)
+	}
+	if quote.TotalCredits != 200000 {
+		t.Fatalf("total credits = %d, want output-price credits 200000", quote.TotalCredits)
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal(quote.PricingSnapshot, &snapshot); err != nil {
+		t.Fatalf("unmarshal pricing snapshot: %v", err)
+	}
+	if snapshot["price_column"] != "output_price" {
+		t.Fatalf("snapshot price_column = %v, want output_price", snapshot["price_column"])
+	}
+}
+
+func TestPricingEngineQuoteImageUsesOrganizationInputOverrideWhenOutputMissing(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+	modelID := uuid.New()
+	organizationID := uuid.New()
+	inputOverride := "0.10"
+	insertPricingModelNamed(t, db, modelID, "qwen", "qwen-image-2.0", "0", "0", false, false, "[]")
+	insertPricingModelConfigOverride(t, db, organizationID, modelID, &inputOverride, nil)
+	n := 1
+
+	quote, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{
+		ModelID:        modelID,
+		OrganizationID: organizationID,
+		Source:         PricingModelSourceGlobal,
+	}, &adapter.ImageRequest{Model: "qwen-image-2.0", N: &n})
+	if err != nil {
+		t.Fatalf("QuoteImage returned error: %v", err)
+	}
+	if quote.TotalCredits != 100000 {
+		t.Fatalf("total credits = %d, want input-override credits 100000", quote.TotalCredits)
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal(quote.PricingSnapshot, &snapshot); err != nil {
+		t.Fatalf("unmarshal pricing snapshot: %v", err)
+	}
+	if snapshot["price_column"] != "input_price_override" {
+		t.Fatalf("snapshot price_column = %v, want input_price_override", snapshot["price_column"])
+	}
+}
+
+func TestPricingEngineQuoteImageFailsWithPricingNotConfigured(t *testing.T) {
+	db := openPricingEngineTestDB(t)
+
+	_, err := NewPricingEngine(db).QuoteImage(context.Background(), PricingModelRef{}, &adapter.ImageRequest{Model: "qwen-image"})
+	if err == nil {
+		t.Fatalf("QuoteImage error = nil, want missing price error")
+	}
+	if !errors.Is(err, ErrPricingNotConfigured) {
+		t.Fatalf("error = %v, want ErrPricingNotConfigured", err)
+	}
 }
 
 func TestPricingEngineQuoteImageUsesCodeFallbackAndMultipliesCount(t *testing.T) {
@@ -412,7 +631,7 @@ func TestPricingEngineQuoteImageUsesCodeFallbackAndMultipliesCount(t *testing.T)
 	}
 }
 
-func TestPricingEngineQuoteImagePreservesLegacyModelPrices(t *testing.T) {
+func TestPricingEngineQuoteImageUsesLegacyOutputPriceAsScalarPrice(t *testing.T) {
 	db := openPricingEngineTestDB(t)
 	modelID := uuid.New()
 	insertPricingModel(t, db, modelID, "openai", "1", "2", false, false, "[]")
@@ -425,8 +644,8 @@ func TestPricingEngineQuoteImagePreservesLegacyModelPrices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QuoteImage returned error: %v", err)
 	}
-	if quote.TotalCredits != 6000000 {
-		t.Fatalf("total credits = %d, want legacy USD price 6000000", quote.TotalCredits)
+	if quote.TotalCredits != 4000000 {
+		t.Fatalf("total credits = %d, want legacy output USD price 4000000", quote.TotalCredits)
 	}
 	if quote.PricingSource != PricingSourceUpstreamModelPrice {
 		t.Fatalf("pricing source = %q, want upstream", quote.PricingSource)
@@ -629,6 +848,9 @@ func TestPricingEngineQuoteTokensZeroEstimateFailsWhenFallbackDisabled(t *testin
 	}, 0, 0)
 	if err == nil {
 		t.Fatalf("QuoteTokens error = nil, want missing price error before provider")
+	}
+	if !errors.Is(err, ErrPricingNotConfigured) {
+		t.Fatalf("error = %v, want ErrPricingNotConfigured", err)
 	}
 }
 

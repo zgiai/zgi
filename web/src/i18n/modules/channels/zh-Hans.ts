@@ -74,12 +74,14 @@ const messages: ChannelsMessages = {
   },
   connectivityTest: {
     title: '模型测试',
-    description: '测试当前渠道已配置模型的真实调用结果；生图模型不参与本次批量测试，请到绘图工作区真实验证。',
+    description:
+      '测试当前渠道已配置模型的真实调用结果；生图模型不参与本次批量测试，请到绘图工作区真实验证。',
     stream: '流式测试',
     testing: '测试进行中...',
     completed: '测试完成',
     summary: '共 {total} 项，成功 {success}，失败 {failure}，跳过 {skipped}',
     imageSkippedHint: '生图模型需要真实生成图片验证，请前往绘图工作区测试。',
+    pricingNotConfiguredHint: '模型未配置价格，请先在模型管理或计费策略中配置价格。',
     columns: {
       model: '模型',
       status: '状态',
@@ -92,6 +94,7 @@ const messages: ChannelsMessages = {
       connectionTimeout: '连接超时',
       notTested: '未测试',
       skipped: '未测试',
+      pricingNotConfigured: '缺价不可测',
     },
     buttons: {
       testAll: '全部测试',
@@ -100,6 +103,7 @@ const messages: ChannelsMessages = {
       remove: '移除',
       removeFailed: '移除失败模型（{count}）',
       testImage: '去绘图测试',
+      setPrice: '设置价格',
     },
     toast: {
       start: '已启动模型测试',
