@@ -470,6 +470,17 @@ func (r *Runtime) CallSkillTool(
 		governanceArgumentRewrite = rewriteSummary
 	}
 	executionArguments = r.enrichToolGovernanceArguments(ctx, toolDef, executionArguments, execCtx)
+	if err := validateSkillToolArgumentsAgainstContract(doc.Metadata.ID, toolDef.Name, executionArguments); err != nil {
+		trace := SkillTrace{
+			Kind:      "tool_call",
+			SkillID:   doc.Metadata.ID,
+			ToolName:  toolDef.Name,
+			Status:    "error",
+			Arguments: summarizeArguments(executionArguments),
+			Error:     err.Error(),
+		}
+		return &ToolInvocationResult{Trace: trace}, err
+	}
 
 	governanceDecision, governed, preflight, err := r.preflightToolGovernance(ctx, *doc, toolDef, executionArguments, execCtx, callID)
 	if preflight != nil {
@@ -1638,24 +1649,38 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 			),
 			Example: map[string]interface{}{"query": "Summarize the configured product FAQ."},
 		},
-		SkillInternalDatabase + "/list_accessible_databases": databaseListContract(SkillInternalDatabase),
-		SkillInternalDatabase + "/list_database_tables":      databaseTablesContract(SkillInternalDatabase),
-		SkillInternalDatabase + "/describe_database_table":   databaseDescribeTableContract(SkillInternalDatabase),
-		SkillInternalDatabase + "/query_table_records":       databaseQueryRecordsContract(SkillInternalDatabase),
-		SkillInternalDatabase + "/insert_table_records":      databaseMutateRecordsContract(SkillInternalDatabase, "insert_table_records", "Insert records into a database table."),
-		SkillInternalDatabase + "/update_table_records":      databaseMutateRecordsContract(SkillInternalDatabase, "update_table_records", "Update records in a database table. Each record must include id."),
-		SkillInternalDatabase + "/delete_table_records":      databaseMutateRecordsContract(SkillInternalDatabase, "delete_table_records", "Delete records from a database table. Each record must include id."),
-		SkillAgentDatabase + "/list_accessible_databases":    databaseListContract(SkillAgentDatabase),
-		SkillAgentDatabase + "/list_database_tables":         databaseTablesContract(SkillAgentDatabase),
-		SkillAgentDatabase + "/describe_database_table":      databaseDescribeTableContract(SkillAgentDatabase),
-		SkillAgentDatabase + "/query_table_records":          databaseQueryRecordsContract(SkillAgentDatabase),
-		SkillAgentDatabase + "/insert_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "insert_table_records", "Insert records into an Agent-bound database table."),
-		SkillAgentDatabase + "/update_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "update_table_records", "Update records in an Agent-bound database table. Each record must include id."),
-		SkillAgentDatabase + "/delete_table_records":         databaseMutateRecordsContract(SkillAgentDatabase, "delete_table_records", "Delete records from an Agent-bound database table. Each record must include id."),
-		SkillAgentWorkflow + "/list_agent_workflows":         workflowListContract(),
-		SkillAgentWorkflow + "/run_agent_workflow":           workflowRunContract(),
-		SkillAgentWorkflow + "/get_workflow_run_status":      workflowRunStatusContract(),
-		SkillAgentManagement + "/list_available_models":      agentManagementListAvailableModelsContract(),
+		SkillInternalDatabase + "/list_accessible_databases":             databaseListContract(SkillInternalDatabase),
+		SkillInternalDatabase + "/list_database_tables":                  databaseTablesContract(SkillInternalDatabase),
+		SkillInternalDatabase + "/describe_database_table":               databaseDescribeTableContract(SkillInternalDatabase),
+		SkillInternalDatabase + "/query_table_records":                   databaseQueryRecordsContract(SkillInternalDatabase),
+		SkillInternalDatabase + "/insert_table_records":                  databaseMutateRecordsContract(SkillInternalDatabase, "insert_table_records", "Insert records into a database table."),
+		SkillInternalDatabase + "/update_table_records":                  databaseMutateRecordsContract(SkillInternalDatabase, "update_table_records", "Update records in a database table. Each record must include id."),
+		SkillInternalDatabase + "/delete_table_records":                  databaseMutateRecordsContract(SkillInternalDatabase, "delete_table_records", "Delete records from a database table. Each record must include id."),
+		SkillAgentDatabase + "/list_accessible_databases":                databaseListContract(SkillAgentDatabase),
+		SkillAgentDatabase + "/list_database_tables":                     databaseTablesContract(SkillAgentDatabase),
+		SkillAgentDatabase + "/describe_database_table":                  databaseDescribeTableContract(SkillAgentDatabase),
+		SkillAgentDatabase + "/query_table_records":                      databaseQueryRecordsContract(SkillAgentDatabase),
+		SkillAgentDatabase + "/insert_table_records":                     databaseMutateRecordsContract(SkillAgentDatabase, "insert_table_records", "Insert records into an Agent-bound database table."),
+		SkillAgentDatabase + "/update_table_records":                     databaseMutateRecordsContract(SkillAgentDatabase, "update_table_records", "Update records in an Agent-bound database table. Each record must include id."),
+		SkillAgentDatabase + "/delete_table_records":                     databaseMutateRecordsContract(SkillAgentDatabase, "delete_table_records", "Delete records from an Agent-bound database table. Each record must include id."),
+		SkillAgentWorkflow + "/list_agent_workflows":                     workflowListContract(),
+		SkillAgentWorkflow + "/run_agent_workflow":                       workflowRunContract(),
+		SkillAgentWorkflow + "/get_workflow_run_status":                  workflowRunStatusContract(),
+		SkillAgentManagement + "/list_agents":                            agentManagementListAgentsContract(),
+		SkillAgentManagement + "/get_agent":                              agentManagementAgentIDContract("get_agent", "Read basic details for one resolved Agent asset visible to the current AIChat user."),
+		SkillAgentManagement + "/create_agent":                           agentManagementCreateAgentContract(),
+		SkillAgentManagement + "/update_agent_identity":                  agentManagementUpdateIdentityContract(),
+		SkillAgentManagement + "/delete_agent":                           agentManagementAgentIDContract("delete_agent", "Delete one resolved Agent after explicit governance approval."),
+		SkillAgentManagement + "/delete_agents":                          agentManagementDeleteAgentsContract(),
+		SkillAgentManagement + "/get_agent_config":                       agentManagementAgentIDContract("get_agent_config", "Read the current draft runtime configuration for one resolved AGENT asset."),
+		SkillAgentManagement + "/update_agent_config":                    agentManagementUpdateConfigContract(),
+		SkillAgentManagement + "/replace_agent_memory_slots":             agentManagementReplaceMemorySlotsContract(),
+		SkillAgentManagement + "/list_agent_skill_candidates":            agentManagementBindingCandidateContract("list_agent_skill_candidates", "List user-selectable, Agent-bindable skills for one resolved AGENT asset."),
+		SkillAgentManagement + "/list_agent_knowledge_candidates":        agentManagementBindingCandidateContract("list_agent_knowledge_candidates", "List knowledge bases that can be bound to the resolved Agent."),
+		SkillAgentManagement + "/list_agent_database_candidates":         agentManagementBindingCandidateContract("list_agent_database_candidates", "List databases that can be bound to the resolved Agent."),
+		SkillAgentManagement + "/list_agent_database_tables":             agentManagementBindingCandidateContract("list_agent_database_tables", "List database tables that can be bound to the resolved Agent."),
+		SkillAgentManagement + "/list_agent_workflow_binding_candidates": agentManagementBindingCandidateContract("list_agent_workflow_binding_candidates", "List workflows that can be bound to the resolved Agent."),
+		SkillAgentManagement + "/list_available_models":                  agentManagementListAvailableModelsContract(),
 		SkillTime + "/current_time": {
 			SkillID:     SkillTime,
 			ToolName:    "current_time",
@@ -1689,6 +1714,188 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 	}
 }
 
+func agentManagementListAgentsContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentManagement,
+		ToolName:    "list_agents",
+		Description: "List Agents visible to the current AIChat user in the current workspace.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"workspace_id": stringValueSchema("Optional workspace ID. Usually omit so current AIChat workspace context is used."),
+				"keyword":      stringValueSchema("Optional search keyword for Agent name or description."),
+				"limit":        numberSchema("Optional maximum result count."),
+			},
+			nil,
+		),
+		Example: map[string]interface{}{"limit": 20},
+	}
+}
+
+func agentManagementAgentIDContract(toolName string, description string) SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentManagement,
+		ToolName:    toolName,
+		Description: description,
+		Schema: objectSchema(
+			map[string]interface{}{
+				"agent_id": stringValueSchema("Required Agent ID from page context, list_agents, create_agent, get_agent_config, or governed asset resolution. Do not invent IDs."),
+			},
+			[]string{"agent_id"},
+		),
+		Example: map[string]interface{}{"agent_id": "agent-id"},
+	}
+}
+
+func agentManagementCreateAgentContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentManagement,
+		ToolName:    "create_agent",
+		Description: "Create one draft AGENT asset in the current workspace. This does not publish the Agent or configure model, prompt, upload, memory, skills, knowledge, databases, or workflows.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"name":            stringValueSchema("Required Agent name shown in the Agent list."),
+				"description":     stringValueSchema("Optional Agent description."),
+				"icon_type":       enumStringSchema("Optional icon type.", []string{"text", "image"}),
+				"icon":            stringValueSchema("Optional icon value. For text icons pass visible text such as AI, BOT, or an emoji."),
+				"icon_background": stringValueSchema("Optional text icon background color such as #0f766e."),
+				"workspace_id":    stringValueSchema("Optional target workspace ID. Usually omit so current AIChat workspace context is used."),
+			},
+			[]string{"name"},
+		),
+		Example: map[string]interface{}{"name": "小说创作大师", "description": "帮助用户创作小说的草稿智能体"},
+	}
+}
+
+func agentManagementUpdateIdentityContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentManagement,
+		ToolName:    "update_agent_identity",
+		Description: "Update one resolved Agent's name, description, or icon. This does not publish the Agent.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"agent_id":        stringValueSchema("Required Agent ID from page context, list_agents, create_agent, get_agent_config, or governed asset resolution. Do not invent IDs."),
+				"name":            stringValueSchema("Optional new Agent name."),
+				"description":     stringValueSchema("Optional new Agent description."),
+				"icon_type":       enumStringSchema("Optional icon type.", []string{"text", "image"}),
+				"icon":            stringValueSchema("Optional new icon value. For text icons pass visible text such as AI, BOT, or an emoji."),
+				"icon_background": stringValueSchema("Optional text icon background color such as #0f766e."),
+			},
+			[]string{"agent_id"},
+		),
+		Example: map[string]interface{}{"agent_id": "agent-id", "name": "客服智能体"},
+	}
+}
+
+func agentManagementDeleteAgentsContract() SkillToolArgumentContract {
+	agentItem := objectSchema(
+		map[string]interface{}{
+			"agent_id":     stringValueSchema("Resolved Agent ID."),
+			"id":           stringValueSchema("Optional resolved Agent ID alias."),
+			"name":         stringValueSchema("Visible Agent name."),
+			"agent_name":   stringValueSchema("Optional visible Agent name alias."),
+			"workspace_id": stringValueSchema("Optional workspace ID."),
+		},
+		[]string{"agent_id"},
+	)
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentManagement,
+		ToolName:    "delete_agents",
+		Description: "Delete multiple resolved Agent assets as one governed frozen batch.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"agents":    arraySchema("Required frozen target Agents. Each item should include agent_id and visible name.", agentItem),
+				"agent_ids": stringArrayOrCSVSchema("Optional fallback ID list when agents is unavailable. Prefer agents so approval cards show names."),
+			},
+			[]string{"agents"},
+		),
+		Example: map[string]interface{}{
+			"agents": []map[string]interface{}{
+				{"agent_id": "agent-1", "name": "Agent A"},
+				{"agent_id": "agent-2", "name": "Agent B"},
+			},
+		},
+	}
+}
+
+func agentManagementUpdateConfigContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentManagement,
+		ToolName:    "update_agent_config",
+		Description: "Patch selected draft runtime configuration fields for one resolved AGENT asset. Omitted fields are preserved. One call may update model, prompt, file upload, suggested questions, and add/remove bindings.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"agent_id":                     stringValueSchema("Required Agent ID from page context, create_agent result, get_agent_config, or governed asset resolution. Do not invent IDs."),
+				"system_prompt":                stringValueSchema("Optional replacement system prompt."),
+				"model_provider":               stringValueSchema("Required whenever model is provided. Use the provider returned by list_available_models."),
+				"model":                        stringValueSchema("Optional replacement model ID. Provide model_provider from the same list_available_models item."),
+				"model_parameters":             objectSchema(map[string]interface{}{}, nil),
+				"enabled_skill_ids":            stringArrayOrCSVSchema("Optional full list of enabled user-selectable skill IDs. Use [] to clear all user-selectable skills."),
+				"add_enabled_skill_ids":        stringArrayOrCSVSchema("Optional skill IDs to add while preserving current enabled skills."),
+				"remove_enabled_skill_ids":     stringArrayOrCSVSchema("Optional skill IDs to remove while preserving other enabled skills."),
+				"agent_memory_enabled":         booleanSchema("Optional Agent memory switch."),
+				"file_upload_enabled":          booleanSchema("Optional file upload switch."),
+				"home_title":                   stringValueSchema("Optional Agent home title."),
+				"input_placeholder":            stringValueSchema("Optional chat input placeholder."),
+				"theme_color":                  enumStringSchema("Optional theme color.", []string{"default", "blue", "emerald", "violet", "rose", "amber", "slate"}),
+				"suggested_questions":          stringArrayOrCSVSchema("Optional full list of suggested questions."),
+				"knowledge_dataset_ids":        stringArrayOrCSVSchema("Optional full replacement list of knowledge dataset IDs. Use [] to clear knowledge bindings."),
+				"add_knowledge_dataset_ids":    stringArrayOrCSVSchema("Optional knowledge dataset IDs to add while preserving existing knowledge bindings."),
+				"remove_knowledge_dataset_ids": stringArrayOrCSVSchema("Optional knowledge dataset IDs to unbind while preserving other knowledge bindings."),
+				"knowledge_retrieval_config":   objectSchema(map[string]interface{}{}, nil),
+				"database_bindings":            stringValueSchema("Optional JSON array replacing database bindings. Use [] to clear."),
+				"add_database_bindings":        stringValueSchema("Optional JSON array of database table bindings to add."),
+				"remove_database_bindings":     stringValueSchema("Optional JSON array of database table bindings to remove."),
+				"workflow_bindings":            stringValueSchema("Optional JSON array replacing workflow bindings. Use [] to clear."),
+				"add_workflow_bindings":        stringValueSchema("Optional JSON array of workflow bindings to add."),
+				"remove_workflow_bindings":     stringValueSchema("Optional JSON array of workflow bindings to remove."),
+				"display_names":                objectSchema(map[string]interface{}{}, nil),
+			},
+			[]string{"agent_id"},
+		),
+		Example: map[string]interface{}{
+			"agent_id":              "agent-id",
+			"model_provider":        "deepseek",
+			"model":                 "deepseek-v4-flash",
+			"file_upload_enabled":   true,
+			"add_enabled_skill_ids": []string{"file-generator"},
+		},
+	}
+}
+
+func agentManagementReplaceMemorySlotsContract() SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentManagement,
+		ToolName:    "replace_agent_memory_slots",
+		Description: "Replace the complete draft Agent memory slot list for one resolved AGENT asset.",
+		Schema: objectSchema(
+			map[string]interface{}{
+				"agent_id":           stringValueSchema("Required Agent ID from page context, create_agent result, get_agent_config, or governed asset resolution. Do not invent IDs."),
+				"agent_memory_slots": stringValueSchema("Required JSON array replacing all memory slots. Use [] to clear slots."),
+			},
+			[]string{"agent_id", "agent_memory_slots"},
+		),
+		Example: map[string]interface{}{"agent_id": "agent-id", "agent_memory_slots": "[]"},
+	}
+}
+
+func agentManagementBindingCandidateContract(toolName string, description string) SkillToolArgumentContract {
+	return SkillToolArgumentContract{
+		SkillID:     SkillAgentManagement,
+		ToolName:    toolName,
+		Description: description,
+		Schema: objectSchema(
+			map[string]interface{}{
+				"agent_id":         stringValueSchema("Required Agent ID from page context, create_agent result, get_agent_config, or governed asset resolution. Do not invent IDs."),
+				"query":            stringValueSchema("Optional search query for narrowing candidates."),
+				"limit":            numberSchema("Optional maximum result count."),
+				"include_selected": booleanSchema("Optional. Defaults to true. Set false to exclude already selected resources."),
+			},
+			[]string{"agent_id"},
+		),
+		Example: map[string]interface{}{"agent_id": "agent-id", "query": "file generation"},
+	}
+}
+
 func agentManagementListAvailableModelsContract() SkillToolArgumentContract {
 	return SkillToolArgumentContract{
 		SkillID:     SkillAgentManagement,
@@ -1717,6 +1924,77 @@ func ExpectedSkillToolArguments(skillID string, toolName string) map[string]inte
 		"description": contract.Description,
 		"schema":      contract.Schema,
 		"example":     contract.Example,
+	}
+}
+
+func validateSkillToolArgumentsAgainstContract(skillID string, toolName string, arguments map[string]interface{}) error {
+	contract, ok := SkillToolArgumentContractFor(skillID, toolName)
+	if !ok {
+		return nil
+	}
+	required := schemaRequiredFields(contract.Schema)
+	if len(required) == 0 {
+		return nil
+	}
+	missing := make([]string, 0, len(required))
+	for _, field := range required {
+		if !argumentValuePresent(arguments[field]) {
+			missing = append(missing, field)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("skill tool %s/%s missing required argument(s): %s", normalizeSkillID(skillID), strings.TrimSpace(toolName), strings.Join(missing, ", "))
+}
+
+func schemaRequiredFields(schema map[string]interface{}) []string {
+	if len(schema) == 0 {
+		return nil
+	}
+	values, ok := schema["required"]
+	if !ok || values == nil {
+		return nil
+	}
+	switch typed := values.(type) {
+	case []string:
+		out := make([]string, 0, len(typed))
+		for _, value := range typed {
+			if text := strings.TrimSpace(value); text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	case []interface{}:
+		out := make([]string, 0, len(typed))
+		for _, value := range typed {
+			if text := strings.TrimSpace(fmt.Sprint(value)); text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func argumentValuePresent(value interface{}) bool {
+	if value == nil {
+		return false
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed) != ""
+	case []interface{}:
+		return len(typed) > 0
+	case []string:
+		return len(typed) > 0
+	case []map[string]interface{}:
+		return len(typed) > 0
+	case map[string]interface{}:
+		return len(typed) > 0
+	default:
+		return true
 	}
 }
 

@@ -68,6 +68,47 @@ func TestCallSkillToolGovernanceNeedsApprovalDoesNotInvokeEngine(t *testing.T) {
 	}
 }
 
+func TestCallSkillToolValidatesRequiredArgumentsBeforeGovernance(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog").WithToolGovernanceGateway(NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy()))
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillAgentManagement})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	invocation, err := runtime.CallSkillTool(
+		context.Background(),
+		resolved,
+		SkillAgentManagement,
+		"create_agent",
+		map[string]interface{}{},
+		ExecutionContext{
+			OrganizationID: "organization-1",
+			UserID:         "user-1",
+			ConversationID: "conversation-1",
+			RuntimeParameters: map[string]interface{}{
+				"tool_governance": map[string]interface{}{
+					"permission_tier": "basic",
+				},
+			},
+		},
+		"call_create",
+	)
+	if err == nil {
+		t.Fatalf("CallSkillTool() error = nil, want missing required argument")
+	}
+	if invocation == nil {
+		t.Fatalf("CallSkillTool() invocation = nil")
+	}
+	if invocation.Trace.Kind != "tool_call" || invocation.Trace.Status != "error" {
+		t.Fatalf("trace = %#v, want tool_call error", invocation.Trace)
+	}
+	if invocation.Trace.Governance != nil {
+		t.Fatalf("governance = %#v, want nil before approval preflight", invocation.Trace.Governance)
+	}
+	if !strings.Contains(err.Error(), "name") {
+		t.Fatalf("error = %q, want missing name", err.Error())
+	}
+}
+
 func TestCallSkillToolGovernanceNeedsResolutionBeforeEngine(t *testing.T) {
 	runtime, resolved := governedRuntimeForTest(t)
 	invocation, err := runtime.CallSkillTool(

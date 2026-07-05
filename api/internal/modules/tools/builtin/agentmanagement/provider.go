@@ -184,7 +184,7 @@ func newCreateAgentTool(agentsService interfaces.AgentsService, workspacePerms W
 	return &createAgentTool{agentToolBase: newAgentToolBase(agentToolEntity(
 		ToolCreateAgent,
 		"Create Agent",
-		"Create one AGENT asset in the current workspace after governance and permission checks. This only creates a draft Agent and does not publish it.",
+		"Create one AGENT asset in the current workspace after governance and permission checks. This only creates a draft Agent and does not publish it. The result's agent_id/detail_href is the authoritative target for later config edits in the same turn; do not rediscover the new Agent by name. Creating an Agent does not by itself set model, prompt, file upload, memory, skills, knowledge, databases, or workflows.",
 		"bot-message-square",
 		[]tools.ToolParameter{
 			stringParameter("name", "Name", "Required Agent name shown in the Agent list.", true),
@@ -243,7 +243,7 @@ func newGetAgentConfigTool(agentsService interfaces.AgentsService) tools.Tool {
 	return &getAgentConfigTool{agentToolBase: newAgentToolBase(agentToolEntity(
 		ToolGetAgentConfig,
 		"Get Agent Config",
-		"Read the current draft runtime configuration for one resolved AGENT asset.",
+		"Read the current draft runtime configuration for one resolved AGENT asset. Use this as authoritative verification evidence after config or binding updates, and as evidence for answering read-only capability questions. Do not call candidate-list tools just to inspect already bound counts.",
 		"settings",
 		[]tools.ToolParameter{
 			stringParameter("agent_id", "Agent ID", "Required Agent ID from page context, list_agents, or governed asset resolution. Do not invent IDs.", true),
@@ -259,7 +259,7 @@ func newUpdateAgentConfigTool(agentsService interfaces.AgentsService, availableM
 	return &updateAgentConfigTool{agentToolBase: newAgentToolBase(agentToolEntity(
 		ToolUpdateAgentConfig,
 		"Update Agent Config",
-		"Patch selected draft runtime configuration fields for one resolved AGENT asset. Omitted fields are preserved. Prefer add/remove binding parameters for specific bind/unbind requests, and use full replacement lists only when the user asks to replace or clear an entire section.",
+		"Patch selected draft runtime configuration fields for one resolved AGENT asset. One call may update multiple requested config sections such as model, prompt, file_upload_enabled, suggested questions, and add/remove bindings. Omitted fields are preserved. Prefer add/remove binding parameters for specific bind/unbind requests, and use full replacement lists only when the user asks to replace or clear an entire section. The result's updated_fields/config_changes/binding_changes are authoritative; do not claim omitted fields changed.",
 		"sliders-horizontal",
 		[]tools.ToolParameter{
 			stringParameter("agent_id", "Agent ID", "Required Agent ID from page context, list_agents, or governed asset resolution. Do not invent IDs.", true),
@@ -308,7 +308,7 @@ func newListAgentSkillCandidatesTool(agentsService interfaces.AgentsService) too
 	return &listAgentSkillCandidatesTool{agentToolBase: newAgentToolBase(agentToolEntity(
 		ToolListAgentSkillCandidates,
 		"List Agent Skill Candidates",
-		"List user-selectable skills that can be enabled for one resolved AGENT asset. The backend filters hidden system skills and skills that do not support the Agent caller.",
+		"List user-selectable, Agent-bindable skills for one resolved AGENT asset. The backend filters hidden runtime/router/page-management skills and skills that do not support the Agent caller. Query by the user's capability phrase such as file generation, chart generation, or image generation; bind only returned candidate skill_ids.",
 		"sparkles",
 		[]tools.ToolParameter{
 			stringParameter("agent_id", "Agent ID", "Required Agent ID from page context, list_agents, or governed asset resolution. Do not invent IDs.", true),
@@ -445,7 +445,7 @@ func newListAvailableModelsTool(availableModels AvailableModelsService) tools.To
 	return &listAvailableModelsTool{agentToolBase: newAgentToolBase(agentToolEntity(
 		ToolListAvailableModels,
 		"List Available Models",
-		"List models available to the current user organization for Agent configuration. Use this before changing an Agent model, and pass a use_case such as text-chat, reasoning, vision, or function-calling when relevant.",
+		"List models available to the current user organization for Agent configuration. Use this before changing an Agent model. Choose one returned item and pass that item's provider and model together to update_agent_config; do not infer or mix provider/model pairs. Pass a use_case such as text-chat, reasoning, vision, or function-calling when relevant.",
 		"brain-circuit",
 		[]tools.ToolParameter{
 			stringParameter("use_case", "Use case", "Optional use_case filter. Defaults to text-chat for Agent runtime model replacement. Valid values include text-chat, vision, image-gen, embedding, rerank, speech-to-text, text-to-speech, realtime-audio, video-gen, moderation, reasoning, and function-calling.", false),

@@ -1309,6 +1309,8 @@ func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 		{SkillInternalDatabase, "query_table_records", []string{"data_source_id", "table_id"}},
 		{SkillAgentDatabase, "insert_table_records", []string{"data_source_id", "table_id", "records"}},
 		{SkillConsoleNavigator, "navigate", []string{"href"}},
+		{SkillAgentManagement, "create_agent", []string{"name"}},
+		{SkillAgentManagement, "update_agent_config", []string{"agent_id"}},
 		{SkillTime, "date_calculate", []string{"operation"}},
 	}
 	for _, tt := range tests {
