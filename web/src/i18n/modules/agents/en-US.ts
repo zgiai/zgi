@@ -650,6 +650,16 @@ const messages = {
     autoSaveTips: 'Auto saved every {interval} seconds',
     panelAlreadyOpen: '{name} is already open',
     fixErrorsBeforePublishing: 'Please fix all errors before publishing',
+    promptPublishRisk: {
+      title: 'Confirm prompt risk before publishing',
+      description: '{count} node(s) still follow the prompt library Latest version.',
+      impact:
+        'After publishing, those nodes will automatically move when new prompt versions are created. Production flows should follow Online version so new versions are validated before rollout.',
+      unknownNode: 'Unnamed node',
+      more: '{count} more node(s) not shown.',
+      viewIssues: 'View issues',
+      confirm: 'Publish anyway',
+    },
     viewingRunHistory: 'Viewing Run History. Canvas is read-only.',
     viewingRunHistoryWithId: 'Viewing Run History (Run #{id}). Canvas is read-only.',
     returnToEdit: 'Back to Edit',

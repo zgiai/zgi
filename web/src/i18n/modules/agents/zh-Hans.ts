@@ -595,6 +595,16 @@ const messages: AgentsMessages = {
       cancel: '取消',
     },
     fixErrorsBeforePublishing: '请先修正智能体流程错误再发布',
+    promptPublishRisk: {
+      title: '发布前确认提示词风险',
+      description: '当前有 {count} 个节点仍跟随提示词库“最新版本”。',
+      impact:
+        '发布后，这些节点会在后续提示词新版本创建时自动切换到新内容。生产流程建议跟随“线上稳定版”，把新版本先验证后再上线。',
+      unknownNode: '未命名节点',
+      more: '还有 {count} 个节点未展开。',
+      viewIssues: '查看问题',
+      confirm: '仍然发布',
+    },
     workflowSavedSuccessfully: '智能体已成功保存',
     workflowDraftSaveFailed: '保存智能体草稿失败',
     leaveGuard: {

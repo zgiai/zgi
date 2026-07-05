@@ -26,7 +26,15 @@ export function getPromptRuntimeErrorMessage(
   if (
     normalized.includes('overdue-payment') ||
     normalized.includes('arrearage') ||
-    normalized.includes('good standing')
+    normalized.includes('good standing') ||
+    normalized.includes('private_channel_balance_insufficient') ||
+    normalized.includes('channel_balance_insufficient') ||
+    normalized.includes('private channel balance') ||
+    normalized.includes('channel balance') ||
+    normalized.includes('insufficient balance') ||
+    normalized.includes('missing token pricing') ||
+    normalized.includes('fallback pricing') ||
+    normalized.includes('pricing fallback')
   ) {
     return {
       kind: 'billing' as const,

@@ -125,6 +125,8 @@ export const checkValid = (nodeData: LLMNodeData): ValidationResult => {
   if (nodeData.prompt_source === 'managed') {
     if (!nodeData.prompt_reference?.prompt_id) {
       errors.push({ code: 'llm.validation.promptRequired' });
+    } else if (nodeData.prompt_reference.label?.toLowerCase() === 'latest') {
+      warnings.push({ code: 'llm.validation.latestPromptReference' });
     }
   } else if (nodeData.prompt_template.length === 0 || !nodeData.prompt_template[0].text) {
     // Treat missing prompt as an error to prevent publish

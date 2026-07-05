@@ -12,17 +12,14 @@ import {
   useAdoptPromptOptimizationRun,
   usePromptOptimizationRuns,
 } from '@/hooks/prompt/use-prompts';
-import type {
-  PromptOptimizationRun,
-  PromptSource,
-  PromptVersion,
-} from '@/services/types/prompt';
+import type { PromptOptimizationRun, PromptSource, PromptVersion } from '@/services/types/prompt';
 
 interface PromptOptimizationHistoryProps {
   promptId: string;
   promptSource: PromptSource;
   promptVersions: PromptVersion[];
   canManage: boolean;
+  hideWhenEmpty?: boolean;
   onRetryRun?: (run: PromptOptimizationRun) => void;
 }
 
@@ -31,6 +28,7 @@ export function PromptOptimizationHistory({
   promptSource,
   promptVersions,
   canManage,
+  hideWhenEmpty = false,
   onRetryRun,
 }: PromptOptimizationHistoryProps) {
   const t = useT('prompts');
@@ -42,6 +40,10 @@ export function PromptOptimizationHistory({
   }, [promptVersions]);
 
   const canAdopt = canManage && promptSource !== 'official';
+
+  if (hideWhenEmpty && (isLoading || error || runs.length === 0)) {
+    return null;
+  }
 
   const getGoalLabel = (goal: string) => {
     switch (goal) {
@@ -72,20 +74,21 @@ export function PromptOptimizationHistory({
   return (
     <Card>
       <CardHeader className="pb-3">
-        <div className="flex items-center gap-2">
-          <History className="h-5 w-5 text-muted-foreground" />
-          <CardTitle className="text-lg">{t('history.title')}</CardTitle>
+        <div className="flex items-start gap-3">
+          <History className="mt-0.5 h-5 w-5 text-muted-foreground" />
+          <div className="space-y-1">
+            <CardTitle className="text-lg">{t('history.title')}</CardTitle>
+            <div className="text-sm text-muted-foreground">{t('history.description')}</div>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="text-sm text-muted-foreground">{t('history.description')}</div>
-
         {isLoading ? (
           <div className="text-sm text-muted-foreground">{t('states.loading')}</div>
         ) : error ? (
           <div className="text-sm text-destructive">{error}</div>
         ) : runs.length === 0 ? (
-          <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+          <div className="rounded-lg border border-dashed px-4 py-3 text-sm text-muted-foreground">
             {t('history.empty')}
           </div>
         ) : (

@@ -868,13 +868,17 @@ const messages = {
       insertExtraContext: 'Insert extra context',
       changePromptOrder: 'Arrange context',
       applyPromptTemplate: 'Apply and keep editing',
+      applyPromptAsset: 'Apply and keep editing',
       collapseBlock: 'Collapse block',
-      changePromptReference: 'Choose another',
+      openPromptAsset: 'Open prompt asset',
+      changePromptReference: 'Select prompt template',
       expandBlock: 'Expand',
       more: 'More',
       modelParameters: 'Model Parameters',
       expandEditor: 'Expand editor',
       selectPromptTemplate: 'Select prompt template',
+      selectQuickPromptTemplate: 'Quick templates',
+      selectFromPromptLibrary: 'Choose from prompt library',
       saveAsPrompt: 'Save as prompt',
       showExplanation: 'Show help',
       hideExplanation: 'Hide help',
@@ -894,6 +898,8 @@ const messages = {
       modelRequired: 'Model is required',
       promptRequired: 'System prompt template is required',
       visionVariableRequired: 'Vision variable is required when vision is enabled',
+      latestPromptReference:
+        'This node follows the prompt library Latest version. Before publishing, switch production flows to Online version so draft prompt changes do not enter production automatically.',
     },
     tips: {
       cannotRemoveFirstSystem: 'The first system prompt cannot be removed',
@@ -1038,75 +1044,98 @@ const messages = {
     promptSource: {
       managed: 'From prompt library',
       inline: 'Node copy',
-      currentUsing: 'Currently using: {name}',
+      currentUsing: 'Loaded from prompt library: {name}',
+      loadedFromAsset: 'Loaded from prompt library: {name}',
       managedDescription:
-        'This node is using a shared prompt from the prompt library. The content below is preview only. If you only want to change this node, make this node editable first.',
-      managedPreview: 'Read-only preview',
+        'This content was loaded from the prompt library, but it is now an editable copy inside this node. Editing it will not change the original prompt.',
+      managedPreview: 'Current node content',
       emptyContent: 'No content yet',
       inlineDescription:
         'This node is using its own prompt copy. You can edit it directly, then save it back into the prompt library if needed.',
       inlineShortDescription: 'This node prompt can be edited directly.',
-      followingRelease: 'Following {target}. Future releases will update this node automatically.',
-      fixedVersion: 'Pinned to {version}. It will not change automatically.',
+      loadedAssetEditableDescription:
+        'This is an editable copy in the current node. Choosing another template replaces this content and does not modify the prompt library.',
+      legacyManagedDescription:
+        'This is a legacy managed reference. To avoid later prompt library changes affecting production runs, convert it to a node copy before publishing.',
+      followingRelease: 'Source version: {target}',
+      fixedVersion: 'Source version: {version}',
+      referenceAppliedToast:
+        'Applied to the current node. Save the workflow at the top before refreshing or publishing.',
+      copyAppliedToast:
+        'Copied into this node. Save the workflow at the top before refreshing or publishing.',
+      migratedToInlineToast:
+        'Converted to a node copy. Save the workflow at the top before refreshing or publishing.',
+      unsavedWorkflowHint:
+        'This workflow has unsaved changes. Save at the top to persist the current reference setting.',
       releaseLabels: {
-        production: 'Production',
+        production: 'Online version',
+        latest: 'Latest version',
         staging: 'Staging',
         grayA: 'Gray A',
         grayB: 'Gray B',
       },
     },
     promptTemplates: {
-      title: 'Prompt Templates',
-      footerTip: 'Click a template to apply it to the system prompt',
+      title: 'Quick Templates',
+      footerTip: 'Choose a template to preview it, then confirm to replace the current system prompt.',
       preview: {
-        title: 'Apply Prompt Template',
+        title: 'Apply Quick Template',
         description:
-          'This will replace the current system prompt. Please review the template below:',
+          'This will replace the current system prompt. Review the template below first:',
         previewLabel: 'Prompt Preview',
         warning: 'Applying will overwrite your existing system prompt',
         apply: 'Apply Template',
-        cancel: 'Cancel',
-      },
-      confirm: {
-        title: 'Apply Prompt Template',
-        description:
-          'Are you sure you want to apply this prompt template? This will overwrite the current system prompt.',
-        confirm: 'Apply Template',
         cancel: 'Cancel',
       },
       items: {
         customerService: {
           title: 'Customer Service Assistant',
           description: 'Professional customer service assistant template',
+          text:
+            "You are a professional customer service assistant. The user's request is: {{#sys.query#}}. First, restate the request in one sentence to confirm understanding. If key information is missing, ask one concise clarifying question. Then provide a step-by-step solution, followed by a brief final answer. Keep the tone friendly and concise.",
         },
         contentCreator: {
           title: 'Content Creation Assistant',
           description: 'Professional content creation and writing assistant',
+          text:
+            'You are a seasoned content creator. Topic: {{#sys.query#}}. Produce content with a clear structure (Introduction / Body / Conclusion). Use bullet points or subheadings when helpful. Keep the tone natural and easy to read; avoid verbosity.',
         },
         dataAnalyst: {
           title: 'Data Analyst',
           description: 'Professional data analysis and interpretation assistant',
+          text:
+            'You are a data analyst. Analysis question: {{#sys.query#}}. Provide data-driven insights, explain possible causes and impacts, and offer actionable recommendations. Explicitly mark uncertainties and suggest methods for further validation.',
         },
         productConsultant: {
           title: 'Product Consultant',
           description: 'Professional product consulting and recommendation assistant',
+          text:
+            'You are a product consultant. User requirements: {{#sys.query#}}. Recommend suitable products and explain the rationale, pros/cons, and applicable scenarios. If information is incomplete, first ask for the essential requirements.',
         },
         // Workflow-oriented templates
         translation: {
           title: 'Content Translation',
           description: 'Translate text between languages with style preservation',
+          text:
+            'You are a professional localization specialist. Perform faithful, fluent translation that preserves domain terminology, tone, intent, and formatting (Markdown, lists, tables). Keep inline code, placeholders, and variables unchanged. Ensure numbers, units, and punctuation follow target-language conventions. Do not add explanations or notes; output the translated text only. Maintain sentence-level coherence and paragraph breaks. If the source contains code or commands, keep them unchanged unless localization is explicitly required. Align with brand style when inferable.',
         },
         copywriting: {
           title: 'Copywriting Generation',
           description: 'Generate marketing copies, headlines, and slogans',
+          text:
+            'You are a senior copywriter. Produce high-converting copy aligned with modern marketing best practices. Deliver 3 distinct variants with different tones: informative, persuasive, playful. Each variant must include a concise headline (<= 12 words), a 1-2 sentence body, and a clear CTA. Keep benefits concrete, avoid cliches, reflect brand voice and target audience when inferable, and do not invent facts. Use concise language and strong verbs. Separate variants with a blank line.',
         },
         story: {
           title: 'Story Creation',
           description: 'Create short stories from a topic or outline',
+          text:
+            'You are a professional storyteller. Write an original short story (~400-600 words) with a clear arc (setup, development, climax, resolution). Use vivid imagery, consistent point of view, and natural dialogue. Avoid cliches and moralizing; show, not tell. Maintain thematic coherence and believable character motivation. Output the title on the first line, then the story body. Output story only.',
         },
         codeGeneration: {
           title: 'Code Generation',
           description: 'Generate code snippets or functions from requirements',
+          text:
+            'You are a senior software engineer. Produce clean, production-ready code that solves the specified task. Use TypeScript by default unless another language is explicitly required. Requirements: strong typing (no any), clear function signature, small pure functions, basic input validation and error handling, minimal but helpful inline comments, and a brief header comment indicating time/space complexity. Provide a minimal usage example or unit-test-style snippet after the main function. Output code only.',
         },
       },
     },
