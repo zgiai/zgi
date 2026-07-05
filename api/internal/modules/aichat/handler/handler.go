@@ -885,6 +885,18 @@ func skillResponse(metadata skills.SkillDiscoveryMetadata) runtimedto.SkillRespo
 		ValidationError:  metadata.ValidationError,
 		SupportedCallers: metadata.SupportedCallers,
 		RequiredConfig:   metadata.RequiredConfig,
+		Exposure:         skillExposureResponse(skills.SkillExposureForMetadata(metadata)),
+	}
+}
+
+func skillExposureResponse(profile skills.SkillExposureProfile) runtimedto.SkillExposureResponse {
+	return runtimedto.SkillExposureResponse{
+		Category:            profile.Category,
+		UserSelectable:      profile.UserSelectable,
+		RuntimeManaged:      profile.RuntimeManaged,
+		SystemAsset:         profile.SystemAsset,
+		PageContextRequired: profile.PageContextRequired,
+		GovernanceRisk:      profile.GovernanceRisk,
 	}
 }
 

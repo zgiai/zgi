@@ -266,7 +266,7 @@ func effectiveSkillIDsForCaller(input []string, catalog []skills.SkillDiscoveryM
 
 func skillUserSelectableForCaller(item skills.SkillDiscoveryMetadata, callerType string, runConfig *RunConfig) bool {
 	id := strings.ToLower(strings.TrimSpace(item.ID))
-	if id == "" || skills.IsHiddenSystemSkill(id) || !skills.IsUserSelectableSystemSkill(id) {
+	if id == "" || skills.IsHiddenSystemSkill(id) || !skills.SkillUserSelectable(item) {
 		return false
 	}
 	if !skillSupportsCaller(item, callerType) {
@@ -804,7 +804,7 @@ func defaultEnabledSkillIDs(catalog []skills.SkillDiscoveryMetadata) []string {
 func visibleSkillMetadata(metadata []skills.SkillDiscoveryMetadata) []skills.SkillDiscoveryMetadata {
 	out := make([]skills.SkillDiscoveryMetadata, 0, len(metadata))
 	for _, item := range metadata {
-		if !skills.IsUserSelectableSystemSkill(item.ID) {
+		if !skills.SkillUserSelectable(item) {
 			continue
 		}
 		out = append(out, item)
@@ -914,6 +914,7 @@ func invalidCustomSkillMetadata(item *runtimemodel.CustomSkill, loadErr error) s
 		TimeoutSeconds:   0,
 		Status:           skills.SkillStatusInvalid,
 		ValidationError:  validationError,
+		Exposure:         skills.SystemSkillExposureProfile(item.SkillID),
 	}
 }
 

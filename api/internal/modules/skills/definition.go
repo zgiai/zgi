@@ -78,12 +78,12 @@ const (
 )
 
 type SkillExposureProfile struct {
-	Category            string
-	UserSelectable      bool
-	RuntimeManaged      bool
-	SystemAsset         bool
-	PageContextRequired bool
-	GovernanceRisk      string
+	Category            string `json:"category"`
+	UserSelectable      bool   `json:"user_selectable"`
+	RuntimeManaged      bool   `json:"runtime_managed"`
+	SystemAsset         bool   `json:"system_asset"`
+	PageContextRequired bool   `json:"page_context_required"`
+	GovernanceRisk      string `json:"governance_risk"`
 }
 
 func IsHiddenSystemSkill(skillID string) bool {
@@ -185,6 +185,25 @@ func IsUserSelectableSystemSkill(skillID string) bool {
 	return SystemSkillExposureProfile(skillID).UserSelectable
 }
 
+func SkillExposureForMetadata(metadata SkillDiscoveryMetadata) SkillExposureProfile {
+	if strings.TrimSpace(metadata.Exposure.Category) != "" {
+		return metadata.Exposure
+	}
+	return SystemSkillExposureProfile(metadata.ID)
+}
+
+func SkillUserSelectable(metadata SkillDiscoveryMetadata) bool {
+	return SkillExposureForMetadata(metadata).UserSelectable
+}
+
+func SkillBindableToAgent(metadata SkillDiscoveryMetadata) bool {
+	profile := SkillExposureForMetadata(metadata)
+	return profile.UserSelectable &&
+		!profile.RuntimeManaged &&
+		!profile.SystemAsset &&
+		SkillSupportsCaller(metadata.SupportedCallers, SkillCallerAgent)
+}
+
 func IsSystemAssetSkill(skillID string) bool {
 	return SystemSkillExposureProfile(skillID).SystemAsset
 }
@@ -258,18 +277,20 @@ type SkillMetadata struct {
 }
 
 type SkillPromptMetadata struct {
-	ID               string `json:"skill_id"`
-	Source           string `json:"source"`
-	Name             string `json:"name"`
-	Description      string `json:"description"`
-	WhenToUse        string `json:"when_to_use"`
-	HasTools         bool   `json:"has_tools"`
-	RuntimeType      string `json:"runtime_type"`
-	HasReferences    bool   `json:"has_references"`
-	HasScripts       bool   `json:"has_scripts"`
-	ScriptsSupported bool   `json:"scripts_supported"`
-	MaxCallsPerTurn  int    `json:"max_calls_per_turn"`
-	TimeoutSeconds   int    `json:"timeout_seconds"`
+	ID               string               `json:"skill_id"`
+	Source           string               `json:"source"`
+	Name             string               `json:"name"`
+	Description      string               `json:"description"`
+	WhenToUse        string               `json:"when_to_use"`
+	HasTools         bool                 `json:"has_tools"`
+	RuntimeType      string               `json:"runtime_type"`
+	HasReferences    bool                 `json:"has_references"`
+	HasScripts       bool                 `json:"has_scripts"`
+	ScriptsSupported bool                 `json:"scripts_supported"`
+	MaxCallsPerTurn  int                  `json:"max_calls_per_turn"`
+	TimeoutSeconds   int                  `json:"timeout_seconds"`
+	SupportedCallers []string             `json:"supported_callers,omitempty"`
+	Exposure         SkillExposureProfile `json:"exposure"`
 }
 
 type SkillMetadataPromptStats struct {
@@ -298,6 +319,7 @@ type SkillDiscoveryMetadata struct {
 	ValidationError  string               `json:"validation_error,omitempty"`
 	SupportedCallers []string             `json:"supported_callers,omitempty"`
 	RequiredConfig   []string             `json:"required_config,omitempty"`
+	Exposure         SkillExposureProfile `json:"exposure"`
 }
 
 type SkillDocument struct {
@@ -422,6 +444,8 @@ func skillPromptMetadata(skill SkillDocument) SkillPromptMetadata {
 		ScriptsSupported: metadata.ScriptsSupported,
 		MaxCallsPerTurn:  metadata.MaxCallsPerTurn,
 		TimeoutSeconds:   metadata.TimeoutSeconds,
+		SupportedCallers: copyStringSlice(metadata.SupportedCallers),
+		Exposure:         SystemSkillExposureProfile(metadata.ID),
 	}
 }
 
@@ -462,5 +486,6 @@ func skillDiscoveryMetadata(skill SkillDocument) SkillDiscoveryMetadata {
 		Status:           SkillStatusActive,
 		SupportedCallers: copyStringSlice(metadata.SupportedCallers),
 		RequiredConfig:   copyStringSlice(metadata.RequiredConfig),
+		Exposure:         SystemSkillExposureProfile(metadata.ID),
 	}
 }

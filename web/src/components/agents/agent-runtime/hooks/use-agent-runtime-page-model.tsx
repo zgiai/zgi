@@ -7,7 +7,7 @@ import { createAgentDraftTransport, useAIChatController } from '@/components/cha
 import { findAIChatModelProps } from '@/components/chat/variants/aichat/model-props';
 import {
   getAIChatSkillDisplayInfo,
-  isHiddenSystemSkill,
+  isSkillSelectableForCaller,
 } from '@/components/chat/variants/aichat/skill-display';
 import type {
   ModelSelectorModelProps,
@@ -328,9 +328,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   const selectableSkills = useMemo(
     () =>
       allSkills.filter(skill => {
-        if (isHiddenSystemSkill(skill.skill_id)) return false;
-        const callers = skill.supported_callers ?? [];
-        return callers.length === 0 || callers.includes('agent');
+        return isSkillSelectableForCaller(skill, 'agent');
       }),
     [allSkills]
   );

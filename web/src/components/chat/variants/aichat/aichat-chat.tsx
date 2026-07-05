@@ -81,7 +81,7 @@ import {
 } from '@/components/chat/variants/aichat/agentic-timeline';
 import {
   buildAIChatSkillDisplayMap,
-  isHiddenSystemSkill,
+  isSkillSelectableForCaller,
 } from '@/components/chat/variants/aichat/skill-display';
 import { AIChatSkillPreferenceDialog } from '@/components/chat/variants/aichat/skill-preference-dialog';
 import {
@@ -322,9 +322,7 @@ export function AIChatShell({
     () =>
       availableSkills.filter(skill => {
         if (!skill.enabled || skill.status === 'invalid') return false;
-        if (isHiddenSystemSkill(skill.skill_id)) return false;
-        const callers = skill.supported_callers ?? [];
-        return callers.length === 0 || callers.includes('aichat');
+        return isSkillSelectableForCaller(skill, 'aichat');
       }),
     [availableSkills]
   );

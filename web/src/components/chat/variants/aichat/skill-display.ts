@@ -45,6 +45,22 @@ export function isHiddenSystemSkill(skillId: string): boolean {
   );
 }
 
+export function isSkillUserSelectable(skill: AIChatSkillMetadata): boolean {
+  if (typeof skill.exposure?.user_selectable === 'boolean') {
+    return skill.exposure.user_selectable;
+  }
+  return !isHiddenSystemSkill(skill.skill_id);
+}
+
+export function isSkillSelectableForCaller(
+  skill: AIChatSkillMetadata,
+  caller: 'aichat' | 'agent'
+): boolean {
+  if (!isSkillUserSelectable(skill)) return false;
+  const callers = skill.supported_callers ?? [];
+  return callers.length === 0 || callers.includes(caller);
+}
+
 type LocalizedText = Record<string, string>;
 type LocalizedTags = Record<string, string[]>;
 

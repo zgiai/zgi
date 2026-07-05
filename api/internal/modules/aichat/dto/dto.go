@@ -40,22 +40,32 @@ type StopConversationResponse struct {
 }
 
 type SkillResponse struct {
-	SkillID          string               `json:"skill_id"`
-	Source           string               `json:"source"`
-	Name             string               `json:"name"`
-	Description      string               `json:"description"`
-	WhenToUse        string               `json:"when_to_use"`
-	Display          SkillDisplayResponse `json:"display"`
-	RuntimeType      string               `json:"runtime_type"`
-	Enabled          bool                 `json:"enabled"`
-	HasTools         bool                 `json:"has_tools"`
-	HasReferences    bool                 `json:"has_references"`
-	HasScripts       bool                 `json:"has_scripts"`
-	ScriptsSupported bool                 `json:"scripts_supported"`
-	MaxCallsPerTurn  int                  `json:"max_calls_per_turn"`
-	TimeoutSeconds   int                  `json:"timeout_seconds"`
-	Status           string               `json:"status"`
-	ValidationError  string               `json:"validation_error,omitempty"`
+	SkillID          string                `json:"skill_id"`
+	Source           string                `json:"source"`
+	Name             string                `json:"name"`
+	Description      string                `json:"description"`
+	WhenToUse        string                `json:"when_to_use"`
+	Display          SkillDisplayResponse  `json:"display"`
+	RuntimeType      string                `json:"runtime_type"`
+	Enabled          bool                  `json:"enabled"`
+	HasTools         bool                  `json:"has_tools"`
+	HasReferences    bool                  `json:"has_references"`
+	HasScripts       bool                  `json:"has_scripts"`
+	ScriptsSupported bool                  `json:"scripts_supported"`
+	MaxCallsPerTurn  int                   `json:"max_calls_per_turn"`
+	TimeoutSeconds   int                   `json:"timeout_seconds"`
+	Status           string                `json:"status"`
+	ValidationError  string                `json:"validation_error,omitempty"`
+	Exposure         SkillExposureResponse `json:"exposure"`
+}
+
+type SkillExposureResponse struct {
+	Category            string `json:"category"`
+	UserSelectable      bool   `json:"user_selectable"`
+	RuntimeManaged      bool   `json:"runtime_managed"`
+	SystemAsset         bool   `json:"system_asset"`
+	PageContextRequired bool   `json:"page_context_required"`
+	GovernanceRisk      string `json:"governance_risk"`
 }
 
 type SkillConfigResponse struct {

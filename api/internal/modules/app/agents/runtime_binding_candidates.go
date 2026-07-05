@@ -7,7 +7,6 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
-	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
@@ -133,10 +132,7 @@ func (s *agentsService) listAgentSkillCandidatesForWorkspace(ctx context.Context
 		if !item.Enabled || item.Status == skills.SkillStatusInvalid {
 			continue
 		}
-		if !skills.IsUserSelectableSystemSkill(skillID) {
-			continue
-		}
-		if !skills.SkillSupportsCaller(item.SupportedCallers, runtimemodel.ConversationCallerAgent) {
+		if !skills.SkillBindableToAgent(item) {
 			continue
 		}
 		out = append(out, dto.AgentSkillCandidate{
