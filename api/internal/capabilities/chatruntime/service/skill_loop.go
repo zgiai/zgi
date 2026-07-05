@@ -1204,7 +1204,7 @@ func skillLoopPlanToolCallGuardWithResolved(prepared *PreparedChat, resolved *sk
 			return skillloop.FinalAnswerGuardResult{}, false
 		}
 		if skillLoopModelDecidesToolChoice(prepared) {
-			return skillLoopModelDecidesSafetyToolCallGuard(prepared, resolved, req, operationPlanCompletedOnEntry)
+			return skillLoopModelDecidesSafetyToolCallGuard(prepared, resolved, req)
 		}
 		if contextualGuard != nil && skillLoopShouldApplyContextualPlanGuard(prepared) {
 			if guardResult, blocked := contextualGuard(req); blocked {
@@ -1369,7 +1369,7 @@ func skillLoopPlanToolCallGuardWithResolved(prepared *PreparedChat, resolved *sk
 	}
 }
 
-func skillLoopModelDecidesSafetyToolCallGuard(prepared *PreparedChat, resolved *skills.ResolvedSkills, req skillloop.ToolCallGuardRequest, operationPlanCompletedOnEntry bool) (skillloop.FinalAnswerGuardResult, bool) {
+func skillLoopModelDecidesSafetyToolCallGuard(prepared *PreparedChat, resolved *skills.ResolvedSkills, req skillloop.ToolCallGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
 	skillID := strings.TrimSpace(req.SkillID)
 	toolName := strings.TrimSpace(req.ToolName)
 	if skillID == "" {
@@ -1384,26 +1384,6 @@ func skillLoopModelDecidesSafetyToolCallGuard(prepared *PreparedChat, resolved *
 	}
 	if result, blocked := skillLoopMissingCreatedAgentBindingGuard(prepared, req); blocked {
 		recordOperationPlanToolGuardDeviationForPrepared(prepared, skillID, toolName, "created_agent_binding_unresolved", result)
-		return result, true
-	}
-	if issue, blocked := skillLoopShouldBlockInvalidAgentSkillBindingUpdate(req); blocked {
-		result := skillLoopInvalidAgentSkillBindingUpdateGuardResult(issue)
-		recordOperationPlanToolGuardDeviationForPrepared(prepared, skillID, toolName, "model_used_unresolved_agent_skill_binding_target", result)
-		return result, true
-	}
-	if !operationPlanCompletedOnEntry && skillLoopShouldBlockEmptyAgentIdentityUpdate(req) {
-		result := skillLoopEmptyAgentIdentityUpdateGuardResult(req.Arguments)
-		recordOperationPlanToolGuardDeviationForPrepared(prepared, skillID, toolName, "model_requested_empty_agent_identity_update", result)
-		return result, true
-	}
-	if !operationPlanCompletedOnEntry && skillLoopShouldBlockEmptyAgentConfigUpdate(req) {
-		result := skillLoopEmptyAgentConfigUpdateGuardResult(req.Arguments)
-		recordOperationPlanToolGuardDeviationForPrepared(prepared, skillID, toolName, "model_requested_empty_agent_config_update", result)
-		return result, true
-	}
-	if !operationPlanCompletedOnEntry && skillLoopShouldBlockPartialAgentModelConfigUpdate(req) {
-		result := skillLoopPartialAgentModelConfigUpdateGuardResult(req.Arguments)
-		recordOperationPlanToolGuardDeviationForPrepared(prepared, skillID, toolName, "model_requested_partial_agent_model_pair", result)
 		return result, true
 	}
 	return skillloop.FinalAnswerGuardResult{}, false

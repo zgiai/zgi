@@ -4076,6 +4076,72 @@ func TestSkillLoopUserInputGuardBlocksAgentConfigMutationConfirmation(t *testing
 	}
 }
 
+func TestSkillLoopModelDecidesSafetyGuardLetsToolValidateSemanticErrors(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			SkillIDs: []string{skills.SkillAgentManagement},
+		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{}},
+	}
+	requests := []skillloop.ToolCallGuardRequest{
+		{
+			SkillID:   skills.SkillAgentManagement,
+			ToolName:  "update_agent_config",
+			Arguments: map[string]interface{}{"agent_id": "agent-1", operationPlanConfigGoalKey: "bind file generator"},
+		},
+		{
+			SkillID:   skills.SkillAgentManagement,
+			ToolName:  "update_agent_config",
+			Arguments: map[string]interface{}{"agent_id": "agent-1", "model": "deepseek-v4-flash"},
+		},
+		{
+			SkillID:   skills.SkillAgentManagement,
+			ToolName:  "update_agent_config",
+			Arguments: map[string]interface{}{"agent_id": "agent-1", "add_enabled_skill_ids": []interface{}{"File Generator"}},
+		},
+		{
+			SkillID:   skills.SkillAgentManagement,
+			ToolName:  "update_agent_identity",
+			Arguments: map[string]interface{}{"agent_id": "agent-1"},
+		},
+	}
+
+	for _, req := range requests {
+		if result, blocked := skillLoopModelDecidesSafetyToolCallGuard(prepared, nil, req); blocked {
+			t.Fatalf("model-decides safety guard blocked %#v with result %#v; want tool/runtime validation to handle semantic errors", req, result)
+		}
+	}
+}
+
+func TestSkillLoopModelDecidesSafetyGuardStillBlocksDuplicateMutation(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			SkillIDs: []string{skills.SkillAgentManagement},
+		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{}},
+	}
+	req := skillloop.ToolCallGuardRequest{
+		SkillID:   skills.SkillAgentManagement,
+		ToolName:  "delete_agent",
+		Arguments: map[string]interface{}{"agent_id": "agent-1"},
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{
+				SkillID:   skills.SkillAgentManagement,
+				ToolName:  "delete_agent",
+				Arguments: map[string]interface{}{"agent_id": "agent-1"},
+			},
+		},
+	}
+
+	result, blocked := skillLoopModelDecidesSafetyToolCallGuard(prepared, nil, req)
+	if !blocked {
+		t.Fatal("model-decides safety guard allowed duplicate asset mutation")
+	}
+	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "delete_agent" {
+		t.Fatalf("guard result = %#v, want agent-management/delete_agent duplicate guard", result)
+	}
+}
+
 func TestSkillLoopUserInputGuardBlocksSidebarAgentDeleteConfirmationWithoutInitialSkillID(t *testing.T) {
 	parts := consoleAgentsVisibleTargetsTestParts("\u8bf7\u6279\u91cf\u5220\u9664\u5f53\u524d\u9875\u9762\u524d\u4e24\u4e2a\u540d\u5b57\u4ee5 AICHAT-GOAL-BIND-SMOKE \u5f00\u5934\u7684\u6d4b\u8bd5\u667a\u80fd\u4f53\u3002\u53ea\u5220\u9664\u8fd9\u4e24\u4e2a\u6d4b\u8bd5\u667a\u80fd\u4f53\u3002")
 	parts.SkillIDs = []string{skills.SkillConsoleNavigator}
