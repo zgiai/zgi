@@ -3008,6 +3008,17 @@ function invocationActionType(invocation: AIChatSkillInvocation): string {
   ).toLowerCase();
 }
 
+function invocationIsAssetObservationClientAction(invocation: AIChatSkillInvocation): boolean {
+  if (invocation.kind !== 'client_action') return false;
+  const record = invocation as unknown as Record<string, unknown>;
+  const actionType = invocationActionType(invocation);
+  if (actionType === 'asset_observation') return true;
+  const actionId = invocationString(record.action_id);
+  if (actionId.toLowerCase().startsWith('asset_observation:')) return true;
+  const runtimeId = invocationString(record.runtime_id);
+  return runtimeId.toLowerCase().startsWith('client_action:asset_observation:');
+}
+
 function invocationIsRouteNavigation(invocation: AIChatSkillInvocation): boolean {
   if (invocation.skill_id === 'console-navigator' && invocation.tool_name === 'navigate') {
     return true;
@@ -3135,6 +3146,27 @@ function toolCallClientActionKey(invocation: AIChatSkillInvocation): string | nu
   ]
     .map(value => value.trim().toLowerCase())
     .join('::');
+}
+
+function isAssetObservationClientActionTimelineItem(
+  item: AIChatAgenticTimelineItem
+): boolean {
+  if (item.type === 'skill_event') {
+    return invocationIsAssetObservationClientAction(item.invocation);
+  }
+  if (item.type !== 'progress_text') {
+    return false;
+  }
+  const result = invocationRecord(item.result);
+  const actionType = (
+    invocationString(item.action_type) ||
+    invocationString(result.action_type)
+  ).toLowerCase();
+  if (actionType === 'asset_observation') return true;
+  const actionId = invocationString(item.action_id);
+  if (actionId.toLowerCase().startsWith('asset_observation:')) return true;
+  const resultActionId = invocationString(result.action_id);
+  return resultActionId.toLowerCase().startsWith('asset_observation:');
 }
 
 function isSupersededByClientActionSkillEvent(
@@ -3404,7 +3436,6 @@ function filterTimelineForRendering(
       return key ? [key] : [];
     })
   );
-
   return compactDuplicateRouteNavigationEvents(
     compactTerminalProgressText(
       compactTerminalIntermediateAnswers(timeline, messageStatus),
@@ -3414,6 +3445,7 @@ function filterTimelineForRendering(
         !isGovernedSkillEvent(item, governanceCorrelationIds) &&
         !isSupersededToolGovernanceSkillEvent(item, terminalGovernedToolCorrelationIds) &&
         !isSupersededByClientActionSkillEvent(item, completedClientActionKeys) &&
+        !isAssetObservationClientActionTimelineItem(item) &&
         !isInternalReferenceReadSkillEvent(item) &&
         !isCompletedSuccessfulSkillLoad(item, messageStatus) &&
         !(

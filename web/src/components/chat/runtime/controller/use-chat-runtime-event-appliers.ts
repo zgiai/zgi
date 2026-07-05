@@ -307,13 +307,17 @@ export function useChatRuntimeEventAppliers({
     (payload: AIChatSkillCallStartEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id || !payload.skill_id) return;
       const payloadRecord = runtimeDebugRecord(payload);
+      const dynamicPayload = payload as unknown as Record<string, unknown>;
       debugAIChatTimeline('event:skill_call_start', {
         eventId,
         conversation_id: payload.conversation_id,
         message_id: payload.message_id,
         runtime_id: payload.runtime_id,
+        kind: payload.kind,
         skill_id: payload.skill_id,
         tool_name: payload.tool_name,
+        action_type: dynamicPayload.action_type,
+        action_id: dynamicPayload.action_id,
         created_at: payload.created_at,
         created_at_ms: payloadRecord.created_at_ms,
       });
@@ -379,6 +383,8 @@ export function useChatRuntimeEventAppliers({
         kind: payload.kind,
         skill_id: payload.skill_id,
         tool_name: payload.tool_name,
+        action_type: payload.action_type,
+        action_id: payload.action_id,
         status: payload.status,
         created_at: payload.created_at,
         created_at_ms: payloadRecord.created_at_ms,
@@ -477,6 +483,16 @@ export function useChatRuntimeEventAppliers({
 
   const applyClientActionRequired = useCallback(
     (payload: AIChatClientActionRequiredEventData, eventId?: string | null) => {
+      debugAIChatTimeline('event:client_action_required', {
+        eventId,
+        conversation_id: payload.conversation_id,
+        message_id: payload.message_id,
+        action_id: payload.action_id,
+        action_type: payload.action_type,
+        skill_id: payload.skill_id,
+        tool_name: payload.tool_name,
+        status: payload.status,
+      });
       const progressPayload = clientActionProgressPayload(payload, 'client_action');
       if (!progressPayload) return;
       setControllerState(current => applyAgentProgressState(current, progressPayload, eventId));
@@ -486,6 +502,16 @@ export function useChatRuntimeEventAppliers({
 
   const applyClientActionResult = useCallback(
     (payload: AIChatClientActionResultEventData, eventId?: string | null) => {
+      debugAIChatTimeline('event:client_action_result', {
+        eventId,
+        conversation_id: payload.conversation_id,
+        message_id: payload.message_id,
+        action_id: payload.action_id,
+        action_type: payload.action_type,
+        skill_id: payload.skill_id,
+        tool_name: payload.tool_name,
+        status: payload.status,
+      });
       const progressPayload = clientActionProgressPayload(payload, 'client_action_result');
       if (!progressPayload) return;
       setControllerState(current => applyAgentProgressState(current, progressPayload, eventId));

@@ -172,6 +172,7 @@ function visibleSkillInvocations(
 ): AIChatSkillInvocation[] {
   return (invocations ?? []).filter(invocation => {
     const status = String(invocation.status ?? '').toLowerCase();
+    const record = invocation as unknown as Record<string, unknown>;
     const result =
       invocation.result && typeof invocation.result === 'object' && !Array.isArray(invocation.result)
         ? (invocation.result as Record<string, unknown>)
@@ -194,10 +195,21 @@ function visibleSkillInvocations(
     }
     if (
       invocation.kind === 'client_action' &&
-      (actionType === 'asset_observation' || actionType === 'route_navigation') &&
-      (status === 'success' || status === 'succeeded')
+      (actionType === 'route_navigation') &&
+      (status === 'success' || status === 'succeeded' || status === 'completed')
     ) {
       return false;
+    }
+    if (invocation.kind === 'client_action') {
+      const actionId = String(record.action_id ?? result.action_id ?? '').toLowerCase();
+      const runtimeId = String(record.runtime_id ?? '').toLowerCase();
+      if (
+        actionType === 'asset_observation' ||
+        actionId.startsWith('asset_observation:') ||
+        runtimeId.startsWith('client_action:asset_observation:')
+      ) {
+        return false;
+      }
     }
     return (
       invocation.kind !== 'guardrail' &&
@@ -334,6 +346,34 @@ function assetOperationSemanticIdentity(input: AssetOperationSemanticIdentityInp
   ).toLowerCase();
   if (!assetType || !effect) return '';
 
+  const operationTarget =
+    input.assets ??
+    observedAssetOperationTarget(result) ??
+    audit.assets ??
+    result.assets ??
+    args.assets ??
+    result.item_results ??
+    operationGroup.targets ??
+    operationGroup.item_results ??
+    agentOperationTarget(result, args) ??
+    {};
+  const approvedByCorrelationId =
+    invocationString(audit.approved_by_correlation_id) ||
+    invocationString(result.approved_by_correlation_id) ||
+    invocationString(args.approved_by_correlation_id) ||
+    invocationString(operationGroup.approved_by_correlation_id) ||
+    invocationString(invocationRecord(audit.matched_grant).approval_correlation_id) ||
+    invocationString(invocationRecord(result.matched_grant).approval_correlation_id);
+  if (approvedByCorrelationId) {
+    return [
+      'asset_operation',
+      'approved_by',
+      approvedByCorrelationId,
+      assetType,
+      effect,
+    ].join(':');
+  }
+
   const correlationId =
     invocationString(input.correlationId) ||
     invocationString(audit.correlation_id) ||
@@ -351,18 +391,7 @@ function assetOperationSemanticIdentity(input: AssetOperationSemanticIdentityInp
     'asset_operation',
     assetType,
     effect,
-    stableMetadataValue(
-      input.assets ??
-        observedAssetOperationTarget(result) ??
-        audit.assets ??
-        result.assets ??
-        args.assets ??
-        result.item_results ??
-        operationGroup.targets ??
-        operationGroup.item_results ??
-        agentOperationTarget(result, args) ??
-        {}
-    ),
+    stableMetadataValue(operationTarget),
   ].join(':');
 }
 
@@ -549,8 +578,8 @@ export function skillInvocationSemanticIdentity(invocation: AIChatSkillInvocatio
         audit: record.asset_operation_audit,
         result,
         args: invocationRecord(invocation.arguments),
-        actionId: undefined,
-        correlationId: undefined,
+        actionId: record.action_id,
+        correlationId: record.correlation_id,
         toolName: record.tool_name,
       });
       if (assetOperationIdentity) return assetOperationIdentity;

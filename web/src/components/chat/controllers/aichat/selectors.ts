@@ -45,6 +45,7 @@ function normalizeSkillInvocation(invocation: AIChatSkillInvocation): AIChatSkil
 
 function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
   const status = String(invocation.status ?? '').toLowerCase();
+  const record = invocation as unknown as Record<string, unknown>;
   const result =
     invocation.result && typeof invocation.result === 'object' && !Array.isArray(invocation.result)
       ? (invocation.result as Record<string, unknown>)
@@ -70,10 +71,21 @@ function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
   }
   if (
     invocation.kind === 'client_action' &&
-    (actionType === 'asset_observation' || actionType === 'route_navigation') &&
-    (status === 'success' || status === 'succeeded')
+    (actionType === 'route_navigation') &&
+    (status === 'success' || status === 'succeeded' || status === 'completed')
   ) {
     return false;
+  }
+  if (invocation.kind === 'client_action') {
+    const actionId = String(record.action_id ?? result.action_id ?? '').toLowerCase();
+    const runtimeId = String(record.runtime_id ?? '').toLowerCase();
+    if (
+      actionType === 'asset_observation' ||
+      actionId.startsWith('asset_observation:') ||
+      runtimeId.startsWith('client_action:asset_observation:')
+    ) {
+      return false;
+    }
   }
   return (
     invocation.kind !== 'metadata_exposed' &&
@@ -596,6 +608,34 @@ function assetOperationTimelineIdentity(input: AssetOperationTimelineIdentityInp
   ).toLowerCase();
   if (!assetType || !effect) return '';
 
+  const operationTarget =
+    input.assets ??
+    observedAssetOperationTarget(result) ??
+    audit.assets ??
+    result.assets ??
+    args.assets ??
+    result.item_results ??
+    operationGroup.item_results ??
+    agentOperationTarget(result, args) ??
+    {};
+  const approvedByCorrelationId =
+    timelineString(audit.approved_by_correlation_id) ||
+    timelineString(result.approved_by_correlation_id) ||
+    timelineString(args.approved_by_correlation_id) ||
+    timelineString(operationGroup.approved_by_correlation_id) ||
+    timelineString(timelineRecord(audit.matched_grant).approval_correlation_id) ||
+    timelineString(timelineRecord(result.matched_grant).approval_correlation_id);
+  if (approvedByCorrelationId) {
+    return [
+      'skill',
+      'asset_operation',
+      'approved_by',
+      approvedByCorrelationId,
+      assetType,
+      effect,
+    ].join(':');
+  }
+
   const correlationId =
     timelineString(input.correlationId) ||
     timelineString(audit.correlation_id) ||
@@ -614,17 +654,7 @@ function assetOperationTimelineIdentity(input: AssetOperationTimelineIdentityInp
     'asset_operation',
     assetType,
     effect,
-    stableTimelineValue(
-      input.assets ??
-        observedAssetOperationTarget(result) ??
-        audit.assets ??
-        result.assets ??
-        args.assets ??
-        result.item_results ??
-        operationGroup.item_results ??
-        agentOperationTarget(result, args) ??
-        {}
-    ),
+    stableTimelineValue(operationTarget),
   ].join(':');
 }
 
@@ -876,13 +906,13 @@ function timelineItemIdentity(item: AIChatAgenticTimelineItem): string {
             audit: item.asset_operation_audit,
             result,
             args: {
-              action_id: undefined,
+              action_id: item.action_id,
               asset_type: item.asset_type,
               effect: item.effect,
               assets: item.assets,
             },
-            actionId: undefined,
-            correlationId: undefined,
+            actionId: item.action_id,
+            correlationId: item.correlation_id,
             assetType: item.asset_type,
             effect: item.effect,
             assets: item.assets,

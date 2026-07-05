@@ -50,6 +50,7 @@ func SkillCallEndPayload(ids PayloadIDs, trace skills.SkillTrace, includeKind bo
 	if trace.Governance != nil {
 		payload["governance"] = trace.Governance
 	}
+	enrichSkillCallPayloadSemantics(payload, trace)
 	return payload
 }
 
@@ -102,7 +103,47 @@ func SkillCallErrorPayload(ids PayloadIDs, trace skills.SkillTrace, status strin
 	if trace.Governance != nil {
 		payload["governance"] = trace.Governance
 	}
+	enrichSkillCallPayloadSemantics(payload, trace)
 	return payload
+}
+
+func enrichSkillCallPayloadSemantics(payload map[string]interface{}, trace skills.SkillTrace) {
+	if payload == nil {
+		return
+	}
+	result := trace.Result
+	copyPayloadField := func(key string, value interface{}) {
+		if _, exists := payload[key]; exists {
+			return
+		}
+		if text, ok := value.(string); ok {
+			if strings.TrimSpace(text) == "" {
+				return
+			}
+			payload[key] = text
+			return
+		}
+		if value != nil {
+			payload[key] = value
+		}
+	}
+
+	for _, key := range []string{"action_id", "action_type", "href", "effect", "asset_type", "correlation_id"} {
+		copyPayloadField(key, result[key])
+	}
+	copyPayloadField("assets", result["assets"])
+	if audit, ok := result["asset_operation_audit"].(map[string]interface{}); ok && len(audit) > 0 {
+		copyPayloadField("asset_operation_audit", audit)
+	}
+	if trace.Governance == nil {
+		return
+	}
+	copyPayloadField("correlation_id", trace.Governance.CorrelationID)
+	copyPayloadField("effect", string(trace.Governance.Manifest.Effect))
+	copyPayloadField("asset_type", trace.Governance.Manifest.AssetType)
+	if len(trace.Governance.AssetOperationAudit) > 0 {
+		copyPayloadField("asset_operation_audit", trace.Governance.AssetOperationAudit)
+	}
 }
 
 // SkillLoadPayload builds the public skill_load_start event payload.

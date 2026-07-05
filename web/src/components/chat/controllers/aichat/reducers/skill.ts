@@ -168,6 +168,7 @@ function getSkillInvocationBaseIdentity(invocation: AIChatSkillInvocation): stri
 
 function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
   const status = String(invocation.status ?? '').toLowerCase();
+  const record = invocation as unknown as Record<string, unknown>;
   const result =
     invocation.result && typeof invocation.result === 'object' && !Array.isArray(invocation.result)
       ? (invocation.result as Record<string, unknown>)
@@ -193,10 +194,21 @@ function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
   }
   if (
     invocation.kind === 'client_action' &&
-    (actionType === 'asset_observation' || actionType === 'route_navigation') &&
-    (status === 'success' || status === 'succeeded')
+    (actionType === 'route_navigation') &&
+    (status === 'success' || status === 'succeeded' || status === 'completed')
   ) {
     return false;
+  }
+  if (invocation.kind === 'client_action') {
+    const actionId = String(record.action_id ?? result.action_id ?? '').toLowerCase();
+    const runtimeId = String(record.runtime_id ?? '').toLowerCase();
+    if (
+      actionType === 'asset_observation' ||
+      actionId.startsWith('asset_observation:') ||
+      runtimeId.startsWith('client_action:asset_observation:')
+    ) {
+      return false;
+    }
   }
   return invocation.kind !== 'metadata_exposed' && invocation.kind !== 'memory_planner';
 }
@@ -940,6 +952,13 @@ export function applySkillCallEndState(
     {
       kind: payload.kind ?? 'tool_call',
       runtime_id: payload.runtime_id,
+      action_id: payload.action_id,
+      action_type: payload.action_type,
+      href: payload.href,
+      effect: payload.effect,
+      asset_type: payload.asset_type,
+      assets: payload.assets,
+      correlation_id: payload.correlation_id,
       skill_id: payload.skill_id,
       tool_name: payload.tool_name,
       status: payload.status ?? 'success',
@@ -947,6 +966,7 @@ export function applySkillCallEndState(
       message: payload.message,
       result: payload.result,
       governance: payload.governance,
+      asset_operation_audit: payload.asset_operation_audit,
       created_at: payload.created_at,
     }
   );
@@ -973,6 +993,13 @@ export function applySkillCallErrorState(
     {
       kind: payload.kind ?? (payload.tool_name ? 'tool_call' : 'skill_load'),
       runtime_id: payload.runtime_id,
+      action_id: payload.action_id,
+      action_type: payload.action_type,
+      href: payload.href,
+      effect: payload.effect,
+      asset_type: payload.asset_type,
+      assets: payload.assets,
+      correlation_id: payload.correlation_id,
       skill_id: payload.skill_id,
       tool_name: payload.tool_name ?? '',
       status: payload.status ?? 'error',
@@ -980,6 +1007,7 @@ export function applySkillCallErrorState(
       message: payload.message,
       error: payload.status === 'blocked' ? undefined : payload.message,
       governance: payload.governance,
+      asset_operation_audit: payload.asset_operation_audit,
       created_at: payload.created_at,
     }
   );

@@ -64,6 +64,15 @@ export interface AIChatSkillDisplayMetadata {
   tags?: Record<string, string[]>;
 }
 
+export interface AIChatSkillExposureProfile {
+  category?: string;
+  user_selectable?: boolean;
+  runtime_managed?: boolean;
+  system_asset?: boolean;
+  page_context_required?: boolean;
+  governance_risk?: 'none' | 'low' | 'medium' | 'high' | 'mixed' | string;
+}
+
 export interface AIChatSkillMetadata {
   skill_id: string;
   source?: AIChatSkillSource;
@@ -83,6 +92,7 @@ export interface AIChatSkillMetadata {
   validation_error?: string;
   supported_callers?: Array<'aichat' | 'agent'>;
   required_config?: string[];
+  exposure?: AIChatSkillExposureProfile;
 }
 
 export type AIChatSkillListResponse = ApiResponseData<AIChatSkillMetadata[]>;
@@ -155,6 +165,10 @@ export interface AIChatSkillInvocation {
   action_id?: string;
   action_type?: string;
   href?: string;
+  effect?: string;
+  asset_type?: string;
+  assets?: AIChatToolGovernanceAssetRef[];
+  correlation_id?: string;
   skill_id: string;
   tool_name?: string;
   title?: string;
@@ -530,6 +544,13 @@ export interface AIChatSkillCallEndEventData {
   message_id: string;
   kind?: AIChatSkillInvocationKind;
   runtime_id?: string;
+  action_id?: string;
+  action_type?: string;
+  href?: string;
+  effect?: string;
+  asset_type?: string;
+  assets?: AIChatToolGovernanceAssetRef[];
+  correlation_id?: string;
   skill_id: string;
   tool_name: string;
   duration_ms?: number;
@@ -546,6 +567,13 @@ export interface AIChatSkillCallErrorEventData {
   message_id: string;
   kind?: AIChatSkillInvocationKind;
   runtime_id?: string;
+  action_id?: string;
+  action_type?: string;
+  href?: string;
+  effect?: string;
+  asset_type?: string;
+  assets?: AIChatToolGovernanceAssetRef[];
+  correlation_id?: string;
   skill_id: string;
   tool_name?: string;
   duration_ms?: number;
