@@ -846,6 +846,9 @@ func TestContextualAIChatTurnStrategyIsTypedAndRecordedInMetadata(t *testing.T) 
 	if strategy.Intent != "save_generated_file_to_file_management" {
 		t.Fatalf("Intent = %q, want save_generated_file_to_file_management", strategy.Intent)
 	}
+	if strategy.ToolChoiceMode != aiChatTurnToolChoiceModelDecides {
+		t.Fatalf("ToolChoiceMode = %q, want %q; strategy=%#v", strategy.ToolChoiceMode, aiChatTurnToolChoiceModelDecides, strategy)
+	}
 	if strategy.TargetPage != "/console/files" || !strategy.RouteRequired {
 		t.Fatalf("target/route = %q/%v, want /console/files/true; strategy=%#v", strategy.TargetPage, strategy.RouteRequired, strategy)
 	}

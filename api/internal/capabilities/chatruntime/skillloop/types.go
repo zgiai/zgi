@@ -225,6 +225,7 @@ type PreparedChat struct {
 	Message      *Message
 	Query        string
 	CurrentRoute string
+	Surface      string
 	parts        *chatParts
 	LLMRequest   *adapter.ChatRequest
 }

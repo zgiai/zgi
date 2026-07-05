@@ -102,6 +102,7 @@ func (s *service) runPreparedSkillStreamWithCompletionVerifier(
 	)
 	loopPrepared.Query = strings.TrimSpace(prepared.parts.Query)
 	loopPrepared.CurrentRoute = contextualTurnCurrentPage(prepared.parts)
+	loopPrepared.Surface = normalizeAIChatSurface(prepared.parts.Surface)
 	return runner.Run(ctx, skillloop.RunRequest{
 		Prepared:                 loopPrepared,
 		Resolved:                 resolved,
@@ -590,12 +591,14 @@ func skillLoopCompletionPlanSummary(plan map[string]interface{}) map[string]inte
 		"original_user_goal",
 		"risk_level",
 		"approval",
+		"planning_mode",
 		"operation_group_status",
 	} {
 		if value := strings.TrimSpace(stringFromAny(plan[key])); value != "" {
 			summary[key] = compactForPrompt(value, 500)
 		}
 	}
+	modelDecides := operationPlanModelDecidesTools(plan)
 	if value, ok := plan["approval_required"].(bool); ok {
 		summary["approval_required"] = value
 	}
@@ -611,9 +614,6 @@ func skillLoopCompletionPlanSummary(plan map[string]interface{}) map[string]inte
 	if target := mapFromOperationContext(plan["asset_target"]); len(target) > 0 {
 		summary["asset_target"] = target
 	}
-	if stepStatus := mapFromOperationContext(plan["step_status"]); len(stepStatus) > 0 {
-		summary["step_status"] = stepStatus
-	}
 	if toolResult := mapFromOperationContext(plan["tool_result"]); len(toolResult) > 0 {
 		summary["tool_result"] = toolResult
 	}
@@ -623,16 +623,26 @@ func skillLoopCompletionPlanSummary(plan map[string]interface{}) map[string]inte
 	if pageEvidence := operationPlanCompactPageEvidence(mapFromOperationContext(plan["page_evidence"])); len(pageEvidence) > 0 {
 		summary["page_evidence"] = pageEvidence
 	}
+	if phases := operationPlanCompactPhasesForPrompt(plan["phases"], 8); len(phases) > 0 {
+		summary["phases"] = phases
+	}
 	if state := mapFromOperationContext(plan["strategy_state"]); len(state) > 0 {
-		summary["strategy_state"] = state
+		summary["strategy_state"] = operationPlanCompactStrategyStateForPrompt(state, modelDecides)
 	}
-	if structuredPlan := operationPlanCompactStructuredPlanForPrompt(plan["structured_plan"], 12); len(structuredPlan) > 0 {
-		summary["structured_plan"] = structuredPlan
+	if !modelDecides {
+		if stepStatus := mapFromOperationContext(plan["step_status"]); len(stepStatus) > 0 {
+			summary["step_status"] = stepStatus
+		}
 	}
-	if completedSteps := operationPlanCompactProgressStepRecords(plan["completed_steps"], 8); len(completedSteps) > 0 {
+	if !modelDecides {
+		if structuredPlan := operationPlanCompactStructuredPlanForPrompt(plan["structured_plan"], 12); len(structuredPlan) > 0 {
+			summary["structured_plan"] = structuredPlan
+		}
+	}
+	if completedSteps := operationPlanCompactProgressStepRecords(plan["completed_steps"], 8); len(completedSteps) > 0 && !modelDecides {
 		summary["completed_steps"] = completedSteps
 	}
-	if failedSteps := operationPlanCompactProgressStepRecords(plan["failed_steps"], 8); len(failedSteps) > 0 {
+	if failedSteps := operationPlanCompactProgressStepRecords(plan["failed_steps"], 8); len(failedSteps) > 0 && !modelDecides {
 		summary["failed_steps"] = failedSteps
 	}
 	if group := mapFromOperationContext(plan["operation_group"]); len(group) > 0 {
@@ -650,13 +660,63 @@ func skillLoopCompletionPlanSummary(plan map[string]interface{}) map[string]inte
 	if blockedDeviations := skillLoopCompletionPlanDeviations(plan["blocked_deviations"], 8); len(blockedDeviations) > 0 {
 		summary["blocked_deviations"] = blockedDeviations
 	}
-	if steps := operationPlanCompactStepsForPrompt(plan["steps"], 8); len(steps) > 0 {
+	if steps := operationPlanCompactStepsForPrompt(plan["steps"], 8); len(steps) > 0 && !modelDecides {
 		summary["steps"] = steps
 	}
 	if len(summary) == 0 {
 		return nil
 	}
 	return summary
+}
+
+func operationPlanCompactStrategyStateForPrompt(state map[string]interface{}, modelDecides bool) map[string]interface{} {
+	if len(state) == 0 {
+		return nil
+	}
+	out := copyStringAnyMap(state)
+	if modelDecides {
+		delete(out, "plan_steps")
+		delete(out, "structured_plan")
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func operationPlanCompactPhasesForPrompt(value interface{}, limit int) []interface{} {
+	phases := mapSliceFromAny(value)
+	if len(phases) == 0 || limit <= 0 {
+		return nil
+	}
+	out := make([]interface{}, 0, minInt(len(phases), limit))
+	for _, phase := range phases {
+		if len(out) >= limit {
+			break
+		}
+		item := map[string]interface{}{}
+		for _, key := range []string{"id", "title", "status"} {
+			if text := strings.TrimSpace(stringFromAny(phase[key])); text != "" {
+				item[key] = compactForPrompt(text, 240)
+			}
+		}
+		if evidence := stringSliceFromAny(phase["evidence"]); len(evidence) > 0 {
+			item["evidence"] = compactStringSliceForPrompt(evidence, 6, 180)
+		}
+		if points := stringSliceFromAny(phase["observation_points"]); len(points) > 0 {
+			item["observation_points"] = compactStringSliceForPrompt(points, 6, 180)
+		}
+		if criteria := stringSliceFromAny(phase["success_criteria"]); len(criteria) > 0 {
+			item["success_criteria"] = compactStringSliceForPrompt(criteria, 6, 180)
+		}
+		if len(item) > 0 {
+			out = append(out, item)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func operationPlanCompactStructuredPlanForPrompt(value interface{}, limit int) map[string]interface{} {
@@ -923,11 +983,17 @@ func restrictResolvedSkillsForTurnStrategy(parts *chatRequestParts, resolved *sk
 	if strategy == nil {
 		return resolved
 	}
+	if aiChatTurnStrategyModelDecidesTools(strategy) {
+		return resolved
+	}
 	return filterResolvedSkillsByAllowedIDs(resolved, turnStrategyAllowedSkillIDs(strategy), false)
 }
 
 func restrictResolvedSkillsForPreparedTurn(prepared *PreparedChat, resolved *skills.ResolvedSkills) *skills.ResolvedSkills {
 	if prepared == nil || resolved == nil || len(resolved.Skills) == 0 {
+		return resolved
+	}
+	if skillLoopModelDecidesToolChoice(prepared) {
 		return resolved
 	}
 	if exposedTools := skillLoopExposedPlannedTools(prepared); len(exposedTools) > 0 {
@@ -948,6 +1014,9 @@ func operationPlanAllowedSkillIDs(prepared *PreparedChat) map[string]struct{} {
 	}
 	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
 	if len(plan) == 0 {
+		return nil
+	}
+	if operationPlanModelDecidesTools(plan) {
 		return nil
 	}
 	allowed := map[string]struct{}{}
@@ -1106,10 +1175,32 @@ func recordOperationPlanToolGuardDeviation(metadata map[string]interface{}, skil
 	recordOperationPlanToolBlockedDeviation(metadata, skillID, toolName, reason)
 }
 
+func recordOperationPlanToolGuardDeviationForPrepared(prepared *PreparedChat, skillID string, toolName string, reason string, result skillloop.FinalAnswerGuardResult) {
+	if prepared == nil || prepared.Message == nil {
+		return
+	}
+	recordOperationPlanToolGuardDeviation(prepared.Message.Metadata, skillID, toolName, reason, result)
+}
+
+func recordOperationPlanToolBlockedDeviationForPrepared(prepared *PreparedChat, skillID string, toolName string, reason string) {
+	if prepared == nil || prepared.Message == nil {
+		return
+	}
+	recordOperationPlanToolBlockedDeviation(prepared.Message.Metadata, skillID, toolName, reason)
+}
+
 func skillLoopPlanToolCallGuardWithResolved(prepared *PreparedChat, resolved *skills.ResolvedSkills) skillloop.ToolCallGuard {
 	contextualGuard := skillLoopToolCallGuard(prepared)
 	operationPlanCompletedOnEntry := skillLoopOperationPlanStatusCompleted(prepared)
 	return func(req skillloop.ToolCallGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
+		skillID := strings.TrimSpace(req.SkillID)
+		toolName := strings.TrimSpace(req.ToolName)
+		if skillID == "" {
+			return skillloop.FinalAnswerGuardResult{}, false
+		}
+		if skillLoopModelDecidesToolChoice(prepared) {
+			return skillLoopModelDecidesSafetyToolCallGuard(prepared, resolved, req, operationPlanCompletedOnEntry)
+		}
 		if contextualGuard != nil && skillLoopShouldApplyContextualPlanGuard(prepared) {
 			if guardResult, blocked := contextualGuard(req); blocked {
 				if prepared != nil && prepared.Message != nil {
@@ -1117,11 +1208,6 @@ func skillLoopPlanToolCallGuardWithResolved(prepared *PreparedChat, resolved *sk
 				}
 				return guardResult, true
 			}
-		}
-		skillID := strings.TrimSpace(req.SkillID)
-		toolName := strings.TrimSpace(req.ToolName)
-		if skillID == "" {
-			return skillloop.FinalAnswerGuardResult{}, false
 		}
 		if skillLoopShouldBlockAgentCapabilityExplanationTool(prepared, skillID) {
 			result := skillLoopAgentCapabilityExplanationToolGuardResult(skillID, toolName)
@@ -1276,6 +1362,46 @@ func skillLoopPlanToolCallGuardWithResolved(prepared *PreparedChat, resolved *sk
 		recordOperationPlanToolBlockedDeviation(prepared.Message.Metadata, skillID, toolName, "model_requested_unplanned_tool_without_safe_current_goal_match")
 		return skillLoopUnplannedToolGuardResult(skillID, toolName), true
 	}
+}
+
+func skillLoopModelDecidesSafetyToolCallGuard(prepared *PreparedChat, resolved *skills.ResolvedSkills, req skillloop.ToolCallGuardRequest, operationPlanCompletedOnEntry bool) (skillloop.FinalAnswerGuardResult, bool) {
+	skillID := strings.TrimSpace(req.SkillID)
+	toolName := strings.TrimSpace(req.ToolName)
+	if skillID == "" {
+		return skillloop.FinalAnswerGuardResult{}, false
+	}
+	if skillLoopShouldBlockDuplicateMutationToolCall(prepared, resolved, req) {
+		return skillLoopDuplicateMutationGuardResult(skillID, toolName), true
+	}
+	if result, blocked := skillLoopCreatedAgentTargetMismatchGuard(prepared, req); blocked {
+		recordOperationPlanToolGuardDeviationForPrepared(prepared, skillID, toolName, "model_targeted_different_agent_after_create_and_edit", result)
+		return result, true
+	}
+	if result, blocked := skillLoopMissingCreatedAgentBindingGuard(prepared, req); blocked {
+		recordOperationPlanToolGuardDeviationForPrepared(prepared, skillID, toolName, "created_agent_binding_unresolved", result)
+		return result, true
+	}
+	if issue, blocked := skillLoopShouldBlockInvalidAgentSkillBindingUpdate(req); blocked {
+		result := skillLoopInvalidAgentSkillBindingUpdateGuardResult(issue)
+		recordOperationPlanToolGuardDeviationForPrepared(prepared, skillID, toolName, "model_used_unresolved_agent_skill_binding_target", result)
+		return result, true
+	}
+	if !operationPlanCompletedOnEntry && skillLoopShouldBlockEmptyAgentIdentityUpdate(req) {
+		result := skillLoopEmptyAgentIdentityUpdateGuardResult(req.Arguments)
+		recordOperationPlanToolGuardDeviationForPrepared(prepared, skillID, toolName, "model_requested_empty_agent_identity_update", result)
+		return result, true
+	}
+	if !operationPlanCompletedOnEntry && skillLoopShouldBlockEmptyAgentConfigUpdate(req) {
+		result := skillLoopEmptyAgentConfigUpdateGuardResult(req.Arguments)
+		recordOperationPlanToolGuardDeviationForPrepared(prepared, skillID, toolName, "model_requested_empty_agent_config_update", result)
+		return result, true
+	}
+	if !operationPlanCompletedOnEntry && skillLoopShouldBlockPartialAgentModelConfigUpdate(req) {
+		result := skillLoopPartialAgentModelConfigUpdateGuardResult(req.Arguments)
+		recordOperationPlanToolGuardDeviationForPrepared(prepared, skillID, toolName, "model_requested_partial_agent_model_pair", result)
+		return result, true
+	}
+	return skillloop.FinalAnswerGuardResult{}, false
 }
 
 func skillLoopCreatedAgentTargetMismatchGuard(prepared *PreparedChat, req skillloop.ToolCallGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
@@ -4100,6 +4226,9 @@ func skillLoopShouldRestrictToOperationPlan(prepared *PreparedChat) bool {
 	if len(plan) == 0 {
 		return false
 	}
+	if operationPlanModelDecidesTools(plan) {
+		return false
+	}
 	for _, step := range mapSliceFromAny(plan["steps"]) {
 		skillID := strings.TrimSpace(stringFromAny(step["skill_id"]))
 		toolName := strings.TrimSpace(stringFromAny(step["tool_name"]))
@@ -4123,6 +4252,9 @@ func skillLoopAllowedPlannedTools(prepared *PreparedChat) map[string]struct{} {
 	}
 	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
 	if len(plan) == 0 {
+		return nil
+	}
+	if operationPlanModelDecidesTools(plan) {
 		return nil
 	}
 	allowed := map[string]struct{}{}
@@ -4154,6 +4286,9 @@ func skillLoopExposedPlannedTools(prepared *PreparedChat) map[string]struct{} {
 	}
 	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
 	if len(plan) == 0 {
+		return nil
+	}
+	if operationPlanModelDecidesTools(plan) {
 		return nil
 	}
 	exposed := map[string]struct{}{}
@@ -4592,7 +4727,9 @@ func aiChatTurnStrategyPromptView(strategy *AIChatTurnStrategy) map[string]inter
 	}
 	delete(view, "required_next_tool")
 	delete(view, "planned_tools")
-	if structured := mapFromOperationContext(view["structured_plan"]); len(structured) > 0 {
+	if aiChatTurnStrategyModelDecidesTools(strategy) {
+		delete(view, "structured_plan")
+	} else if structured := mapFromOperationContext(view["structured_plan"]); len(structured) > 0 {
 		delete(structured, "required_tool_sequence")
 		if operations := mapSliceFromAny(structured["operations"]); len(operations) > 0 {
 			for _, operation := range operations {
@@ -4613,6 +4750,35 @@ func aiChatTurnStrategyPromptView(strategy *AIChatTurnStrategy) map[string]inter
 	return view
 }
 
+const aiChatTurnToolChoiceModelDecides = "model_decides"
+
+func aiChatTurnStrategyModelDecidesTools(strategy *AIChatTurnStrategy) bool {
+	if strategy == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(strategy.ToolChoiceMode), aiChatTurnToolChoiceModelDecides)
+}
+
+func operationPlanModelDecidesTools(plan map[string]interface{}) bool {
+	if len(plan) == 0 {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(stringFromAny(plan["tool_choice_mode"])), aiChatTurnToolChoiceModelDecides)
+}
+
+func skillLoopModelDecidesToolChoice(prepared *PreparedChat) bool {
+	if prepared == nil {
+		return false
+	}
+	if prepared.Message != nil {
+		plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+		if len(plan) > 0 {
+			return operationPlanModelDecidesTools(plan)
+		}
+	}
+	return aiChatTurnStrategyModelDecidesTools(contextualAIChatTurnStrategy(prepared))
+}
+
 // AIChatTurnStrategy is the typed, internal plan hint for one contextual sidebar turn.
 // It is guidance for the skill loop, not an executable action plan.
 type AIChatTurnStrategy struct {
@@ -4629,6 +4795,7 @@ type AIChatTurnStrategy struct {
 	SuccessCriteria   []string                    `json:"success_criteria"`
 	ObservationPoints []string                    `json:"observation_points"`
 	ArtifactSource    string                      `json:"artifact_source,omitempty"`
+	ToolChoiceMode    string                      `json:"tool_choice_mode,omitempty"`
 	ExecutionScope    string                      `json:"execution_scope,omitempty"`
 	WaitForContinue   bool                        `json:"wait_for_continue,omitempty"`
 	Avoid             []string                    `json:"avoid,omitempty"`
@@ -4685,6 +4852,7 @@ func contextualAIChatTurnStrategyFromParts(parts *chatRequestParts) *AIChatTurnS
 		Approval:          "none",
 		SuccessCriteria:   []string{"answer from the current ZGI page context and enabled skills"},
 		ObservationPoints: []string{"current_page_context"},
+		ToolChoiceMode:    aiChatTurnToolChoiceModelDecides,
 	}
 	if stagedCurrent {
 		strategy.ExecutionScope = "current_turn_before_continue"
@@ -4834,6 +5002,16 @@ func appendAgentManagementPlannedTools(parts *chatRequestParts, strategy *AIChat
 		return strategy
 	}
 	strategy = pruneAgentManagementPlannedToolsForQuery(parts, strategy, query)
+	agentPreconditionWaitForStepID := ""
+	if agentManagementNeedsFileReadPrecondition(parts, query) {
+		strategy, agentPreconditionWaitForStepID = appendAgentManagementFileReadPrecondition(parts, strategy, query)
+	}
+	applyAgentPreconditionWait := func(toolName string) {
+		if agentPreconditionWaitForStepID == "" {
+			return
+		}
+		strategy = setPlannedToolWaitForStep(strategy, skills.SkillAgentManagement, toolName, agentPreconditionWaitForStepID)
+	}
 	secondaryQuery := agentManagementSecondaryIntentQuery(query)
 	deleteRequested := agentManagementDeleteRequested(query)
 	createReferenceOnly := deleteRequested && agentManagementCreateMentionIsDeleteTargetReference(query)
@@ -4844,6 +5022,7 @@ func appendAgentManagementPlannedTools(parts *chatRequestParts, strategy *AIChat
 	createBeforeDelete := createRequested && deleteRequested && agentManagementCreateRequestedBeforeDelete(query)
 	if createRequested && (!deleteRequested || createBeforeDelete) {
 		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "create_agent", nil)
+		applyAgentPreconditionWait("create_agent")
 	}
 	postDeleteFollowupArgs := map[string]string(nil)
 	postDeleteFollowupWaitForStepID := ""
@@ -4853,6 +5032,7 @@ func appendAgentManagementPlannedTools(parts *chatRequestParts, strategy *AIChat
 			deleteToolName = "delete_agents"
 		}
 		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, deleteToolName, nil)
+		applyAgentPreconditionWait(deleteToolName)
 		if agentManagementCurrentDetailDeleteNeedsListNavigation(parts, query) &&
 			skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
 			deleteStepID := operationPlanToolStepID(skills.SkillAgentManagement, deleteToolName)
@@ -4877,7 +5057,7 @@ func appendAgentManagementPlannedTools(parts *chatRequestParts, strategy *AIChat
 			)
 		}
 		if !agentManagementDeleteHasExplicitFollowupMutation(query) {
-			return attachAgentManagementStructuredPlan(parts, strategy, query)
+			return finalizeAgentManagementStructuredPlan(parts, strategy, query, agentPreconditionWaitForStepID)
 		}
 		if target, ok := agentManagementPostDeleteFollowupDetailTarget(parts, query); ok {
 			deleteStepID := operationPlanToolStepID(skills.SkillAgentManagement, deleteToolName)
@@ -4906,6 +5086,7 @@ func appendAgentManagementPlannedTools(parts *chatRequestParts, strategy *AIChat
 	}
 	if createRequested && deleteRequested && !createBeforeDelete {
 		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "create_agent", nil)
+		applyAgentPreconditionWait("create_agent")
 	}
 	configUpdateRequested := agentManagementConfigUpdateRequested(secondaryQuery)
 	identityUpdateRequested := agentManagementIdentityUpdateRequested(secondaryQuery)
@@ -4931,6 +5112,7 @@ func appendAgentManagementPlannedTools(parts *chatRequestParts, strategy *AIChat
 	}
 	appendAgentPlannedTool := func(toolName string, args map[string]string) {
 		strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, toolName, args)
+		applyAgentPreconditionWait(toolName)
 		if postDeleteFollowupWaitForStepID != "" {
 			strategy = setPlannedToolWaitForStep(strategy, skills.SkillAgentManagement, toolName, postDeleteFollowupWaitForStepID)
 		}
@@ -5002,7 +5184,157 @@ func appendAgentManagementPlannedTools(parts *chatRequestParts, strategy *AIChat
 			strategy = appendPlannedTool(strategy, skills.SkillAgentManagement, "list_agents", nil)
 		}
 	}
-	return attachAgentManagementStructuredPlan(parts, strategy, query)
+	return finalizeAgentManagementStructuredPlan(parts, strategy, query, agentPreconditionWaitForStepID)
+}
+
+func agentManagementNeedsFileReadPrecondition(parts *chatRequestParts, query string) bool {
+	if parts == nil || !skillIDEnabled(parts.SkillIDs, skills.SkillFileReader) {
+		return false
+	}
+	query = strings.TrimSpace(query)
+	if query == "" || !isFileReadIntent(query) {
+		return false
+	}
+	if consoleFilesRouteAlreadyAvailable(parts) {
+		return true
+	}
+	if agentManagementQueryMentionsFileReadSource(query) {
+		return true
+	}
+	for _, target := range consoleNavigationResolvedTargets(query) {
+		if consoleNavigationLoadedHrefMatchesTarget(target.Href, consoleFilesRouteHint().Href) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentManagementQueryMentionsFileReadSource(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(stripQuotedIntentPayloads(query)))
+	if text == "" {
+		return false
+	}
+	return containsAnySubstring(text, []string{
+		"/console/files",
+		"file management",
+		"files page",
+		"file page",
+		"visible file",
+		"first file",
+		"file content",
+		"\u6587\u4ef6\u7ba1\u7406",
+		"\u6587\u4ef6\u9875",
+		"\u6587\u4ef6\u9875\u9762",
+		"\u6587\u4ef6\u5217\u8868",
+		"\u53ef\u89c1\u6587\u4ef6",
+		"\u7b2c\u4e00\u4e2a\u6587\u4ef6",
+		"\u7b2c\u4e00\u4efd\u6587\u4ef6",
+		"\u6587\u4ef6\u5185\u5bb9",
+	})
+}
+
+func appendAgentManagementFileReadPrecondition(parts *chatRequestParts, strategy *AIChatTurnStrategy, query string) (*AIChatTurnStrategy, string) {
+	if parts == nil || strategy == nil || !agentManagementNeedsFileReadPrecondition(parts, query) {
+		return strategy, ""
+	}
+	strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
+		"when the Agent task depends on file content, read the requested file content before deleting, creating, or editing Agents",
+		"do not ask the user to provide file content when file-reader tools and the Files page are available",
+		"use the read_file result as the source value for downstream Agent naming, prompt, or configuration decisions",
+	)
+	strategy.ObservationPoints = appendUniqueStrings(strategy.ObservationPoints, "files_page_visible_list", "read_file_result")
+	strategy.Avoid = appendUniqueStrings(strategy.Avoid,
+		"do not ask the user for file content before trying the planned file-reader/list_visible_files and file-reader/read_file steps",
+	)
+	strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillFileReader)
+
+	waitForStepID := ""
+	routeToFilesAdded := false
+	if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) &&
+		!consoleFilesRouteAlreadyAvailable(parts) &&
+		!clientActionContinuationLoadedRoute(parts, consoleFilesRouteHint().Href) {
+		routeStepID := operationPlanRouteStepID(consoleFilesRouteHint().Href, 1)
+		strategy = appendPlannedToolWithStep(
+			strategy,
+			skills.SkillConsoleNavigator,
+			"navigate",
+			map[string]string{
+				"href":   consoleFilesRouteHint().Href,
+				"reason": "read the file content required by the Agent task",
+			},
+			routeStepID,
+			"",
+		)
+		strategy.PrimarySkills = appendUniqueStrings(strategy.PrimarySkills, skills.SkillConsoleNavigator)
+		waitForStepID = routeStepID
+		routeToFilesAdded = true
+	}
+
+	listStepID := operationPlanToolStepID(skills.SkillFileReader, "list_visible_files")
+	strategy = appendPlannedToolWithStep(strategy, skills.SkillFileReader, "list_visible_files", nil, listStepID, waitForStepID)
+	waitForStepID = listStepID
+
+	readStepID := operationPlanToolStepID(skills.SkillFileReader, "read_file")
+	strategy = appendPlannedToolWithStep(strategy, skills.SkillFileReader, "read_file", nil, readStepID, waitForStepID)
+	waitForStepID = readStepID
+
+	agentPage := strings.TrimSpace(firstNonEmptyString(strategy.TargetPage, "/console/agents"))
+	if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) &&
+		agentPage != "" &&
+		(routeToFilesAdded || !consoleNavigationRouteAlreadyAvailable(parts, agentPage)) &&
+		!clientActionContinuationLoadedRoute(parts, agentPage) {
+		routeBackStepID := operationPlanRouteStepID(agentPage, 1)
+		strategy = appendPlannedToolWithStep(
+			strategy,
+			skills.SkillConsoleNavigator,
+			"navigate",
+			map[string]string{
+				"href":   agentPage,
+				"reason": "return to the Agent page after reading the required file content",
+			},
+			routeBackStepID,
+			waitForStepID,
+		)
+		waitForStepID = routeBackStepID
+		strategy.PrimarySkills = appendUniqueStrings(strategy.PrimarySkills, skills.SkillConsoleNavigator)
+	}
+
+	return strategy, waitForStepID
+}
+
+func finalizeAgentManagementStructuredPlan(parts *chatRequestParts, strategy *AIChatTurnStrategy, query string, preconditionWaitForStepID string) *AIChatTurnStrategy {
+	strategy = applyAgentManagementPreconditionWait(strategy, preconditionWaitForStepID)
+	strategy = attachAgentManagementStructuredPlan(parts, strategy, query)
+	return applyAgentManagementPreconditionWait(strategy, preconditionWaitForStepID)
+}
+
+func applyAgentManagementPreconditionWait(strategy *AIChatTurnStrategy, waitForStepID string) *AIChatTurnStrategy {
+	if strategy == nil {
+		return strategy
+	}
+	waitForStepID = strings.TrimSpace(waitForStepID)
+	if waitForStepID == "" {
+		return strategy
+	}
+	for idx := range strategy.PlannedTools {
+		if !strings.EqualFold(strings.TrimSpace(strategy.PlannedTools[idx].SkillID), skills.SkillAgentManagement) {
+			continue
+		}
+		if strings.TrimSpace(strategy.PlannedTools[idx].WaitForStepID) == "" {
+			strategy.PlannedTools[idx].WaitForStepID = waitForStepID
+		}
+	}
+	if strategy.StructuredPlan != nil {
+		for idx := range strategy.StructuredPlan.RequiredToolSequence {
+			if !strings.EqualFold(strings.TrimSpace(strategy.StructuredPlan.RequiredToolSequence[idx].SkillID), skills.SkillAgentManagement) {
+				continue
+			}
+			if strings.TrimSpace(strategy.StructuredPlan.RequiredToolSequence[idx].WaitForStepID) == "" {
+				strategy.StructuredPlan.RequiredToolSequence[idx].WaitForStepID = waitForStepID
+			}
+		}
+	}
+	return strategy
 }
 
 func appendAgentManagementInspectPlannedTools(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
@@ -9477,6 +9809,9 @@ func skillLoopFinalAnswerGuard(prepared *PreparedChat) skillloop.FinalAnswerGuar
 	if prepared == nil || prepared.parts == nil {
 		return nil
 	}
+	if prepared.Message != nil && operationPlanModelDecidesTools(mapFromOperationContext(prepared.Message.Metadata["operation_plan"])) {
+		return nil
+	}
 	metadata := map[string]interface{}(nil)
 	if prepared.Message != nil {
 		metadata = prepared.Message.Metadata
@@ -9502,6 +9837,9 @@ func skillLoopFinalAnswerGuard(prepared *PreparedChat) skillloop.FinalAnswerGuar
 
 func skillLoopToolCallGuard(prepared *PreparedChat) skillloop.ToolCallGuard {
 	if prepared == nil || prepared.parts == nil {
+		return nil
+	}
+	if prepared.Message != nil && operationPlanModelDecidesTools(mapFromOperationContext(prepared.Message.Metadata["operation_plan"])) {
 		return nil
 	}
 	parts := prepared.parts
@@ -11172,6 +11510,15 @@ func wantsCreatedAgentDetailNavigation(query string) bool {
 		return false
 	}
 	hasCreate := false
+	for _, marker := range []string{
+		"\u521b\u5efa", "\u65b0\u5efa", "\u65b0\u589e",
+		"create", "new agent",
+	} {
+		if strings.Contains(normalized, marker) {
+			hasCreate = true
+			break
+		}
+	}
 	for _, marker := range []string{"创建", "新建", "create", "new agent"} {
 		if strings.Contains(normalized, marker) {
 			hasCreate = true
@@ -11180,6 +11527,15 @@ func wantsCreatedAgentDetailNavigation(query string) bool {
 	}
 	if !hasCreate {
 		return false
+	}
+	for _, marker := range []string{
+		"\u6253\u5f00", "\u8fdb\u5165", "\u8fdb\u5230",
+		"\u8be6\u60c5", "\u8be6\u7ec6", "\u7f16\u8f91\u9875", "\u914d\u7f6e\u9875",
+		"open", "enter", "detail", "details", "view", "config page", "settings page", "edit page",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
 	}
 	for _, marker := range []string{"打开", "进入", "详情", "open", "enter", "detail", "view"} {
 		if strings.Contains(normalized, marker) {

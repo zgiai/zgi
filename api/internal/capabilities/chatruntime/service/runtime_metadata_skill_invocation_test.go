@@ -8,6 +8,39 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
+func TestMergeSkillTraceMetadataStoresTurnStateOutsideVisibleInvocations(t *testing.T) {
+	metadata := mergeSkillTraceMetadata(nil, []skills.SkillTrace{{
+		Kind:   "turn_state",
+		Status: "success",
+		Result: map[string]interface{}{
+			"items": []interface{}{
+				map[string]interface{}{
+					"kind":       "working_fact",
+					"visibility": "model_only",
+					"key":        "agent_theme",
+					"value":      "water fee confirmation",
+					"source":     "file-reader/read_file",
+				},
+			},
+		},
+	}})
+
+	if invocations := skillInvocationsFromMetadata(metadata["skill_invocations"]); len(invocations) != 0 {
+		t.Fatalf("skill_invocations = %#v, want turn_state hidden from visible timeline", invocations)
+	}
+	state := mapFromOperationContext(metadata["turn_state"])
+	items := mapSliceFromAny(state["items"])
+	if len(items) != 1 {
+		t.Fatalf("turn_state.items = %#v, want one item", state["items"])
+	}
+	if got := stringFromAny(items[0]["key"]); got != "agent_theme" {
+		t.Fatalf("turn_state key = %q, want agent_theme", got)
+	}
+	if got := stringFromAny(items[0]["value"]); got != "water fee confirmation" {
+		t.Fatalf("turn_state value = %q, want water fee confirmation", got)
+	}
+}
+
 func TestMergeSkillTraceMetadataRedactsFileReaderResultContent(t *testing.T) {
 	const rawContent = "SKILL_TRACE_SECRET_SHOULD_NOT_PERSIST"
 
@@ -62,6 +95,47 @@ func TestMergeSkillTraceMetadataRedactsFileReaderResultContent(t *testing.T) {
 	}
 	if _, ok := file["created_by"]; ok {
 		t.Fatalf("created_by should not be persisted in skill invocation file summary: %#v", file)
+	}
+}
+
+func TestMergeSkillTraceMetadataKeepsShortPlainTextReadValuePreview(t *testing.T) {
+	const rawContent = "\u6d4b\u8bd5\u4ee3\u7801111"
+
+	metadata := mergeSkillTraceMetadata(nil, []skills.SkillTrace{{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillFileReader,
+		ToolName: "read_file",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":            "completed",
+			"content":           rawContent,
+			"content_chars":     len([]rune(rawContent)),
+			"content_status":    "extracted",
+			"content_truncated": false,
+			"file_id":           "file-1",
+			"file_name":         "name-source.txt",
+			"file_extension":    "txt",
+			"file_mime_type":    "text/plain",
+		},
+	}})
+
+	invocations, ok := metadata["skill_invocations"].([]interface{})
+	if !ok || len(invocations) != 1 {
+		t.Fatalf("skill_invocations = %#v, want one invocation", metadata["skill_invocations"])
+	}
+	invocation, _ := invocations[0].(map[string]interface{})
+	result, ok := invocation["result"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("result = %#v, want map", invocation["result"])
+	}
+	if _, ok := result["content"]; ok {
+		t.Fatalf("content should not be persisted in skill invocation result: %#v", result)
+	}
+	if got := result["content_value_preview"]; got != rawContent {
+		t.Fatalf("content_value_preview = %#v, want %q; result=%#v", got, rawContent, result)
+	}
+	if got := result["content_value_source"]; got != "read_file.content" {
+		t.Fatalf("content_value_source = %#v, want read_file.content; result=%#v", got, result)
 	}
 }
 

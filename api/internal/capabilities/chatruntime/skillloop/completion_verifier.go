@@ -16,6 +16,7 @@ import (
 const (
 	defaultMaxCompletionVerificationRetries = 2
 	completionVerifierMaxTokens             = 1600
+	operationPlanToolChoiceModelDecides     = "model_decides"
 
 	completionVerificationStatusPass        = "pass"
 	completionVerificationStatusNeedsAction = "needs_action"
@@ -162,6 +163,94 @@ func completionVerificationShouldRun(evidence map[string]interface{}, attempted 
 	return false
 }
 
+func completionEvidenceOperationPlanModelDecides(evidence map[string]interface{}) bool {
+	if len(evidence) == 0 {
+		return false
+	}
+	return operationPlanModelDecidesTools(evidenceMapFromAny(evidence["operation_plan"]))
+}
+
+func operationPlanModelDecidesTools(plan map[string]interface{}) bool {
+	if len(plan) == 0 {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(plan["tool_choice_mode"])), operationPlanToolChoiceModelDecides)
+}
+
+func completionVerificationEvidenceForPrompt(evidence map[string]interface{}) map[string]interface{} {
+	if len(evidence) == 0 {
+		return nil
+	}
+	copied := promptEvidenceCopy(evidence)
+	out := evidenceMapFromAny(copied)
+	if len(out) == 0 {
+		return nil
+	}
+	if plan := evidenceMapFromAny(out["operation_plan"]); len(plan) > 0 {
+		out["operation_plan"] = completionVerificationOperationPlanForPrompt(plan)
+	}
+	if summary := evidenceMapFromAny(out["execution_summary"]); len(summary) > 0 {
+		if plan := evidenceMapFromAny(summary["operation_plan"]); len(plan) > 0 {
+			summary["operation_plan"] = completionVerificationOperationPlanForPrompt(plan)
+		}
+	}
+	if ledger := evidenceMapFromAny(out["execution_ledger"]); len(ledger) > 0 {
+		if summary := evidenceMapFromAny(ledger["summary"]); len(summary) > 0 {
+			if plan := evidenceMapFromAny(summary["operation_plan"]); len(plan) > 0 {
+				summary["operation_plan"] = completionVerificationOperationPlanForPrompt(plan)
+			}
+		}
+	}
+	return out
+}
+
+func completionVerificationOperationPlanForPrompt(plan map[string]interface{}) map[string]interface{} {
+	if len(plan) == 0 || !operationPlanModelDecidesTools(plan) {
+		return plan
+	}
+	out := copyStringAnyMap(plan)
+	delete(out, "steps")
+	delete(out, "step_status")
+	delete(out, "structured_plan")
+	delete(out, "completed_steps")
+	delete(out, "failed_steps")
+	if state := evidenceMapFromAny(out["strategy_state"]); len(state) > 0 {
+		state = copyStringAnyMap(state)
+		delete(state, "plan_steps")
+		delete(state, "structured_plan")
+		out["strategy_state"] = state
+	}
+	if strings.TrimSpace(evidenceStringFromAny(out["planning_mode"])) == "" {
+		out["planning_mode"] = "phase_only_model_decides"
+	}
+	return out
+}
+
+func promptEvidenceCopy(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(typed))
+		for key, item := range typed {
+			out[key] = promptEvidenceCopy(item)
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, len(typed))
+		for i, item := range typed {
+			out[i] = promptEvidenceCopy(item)
+		}
+		return out
+	case []map[string]interface{}:
+		out := make([]interface{}, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, promptEvidenceCopy(item))
+		}
+		return out
+	default:
+		return value
+	}
+}
+
 func completionVerificationPlanNeedsRuntimeEvidence(plan map[string]interface{}) bool {
 	if len(plan) == 0 {
 		return false
@@ -169,6 +258,9 @@ func completionVerificationPlanNeedsRuntimeEvidence(plan map[string]interface{})
 	status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(plan["status"])))
 	if status == "failed" || status == "error" {
 		return true
+	}
+	if operationPlanModelDecidesTools(plan) {
+		return false
 	}
 	pending := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(plan["pending_next_action"])))
 	switch pending {
@@ -263,9 +355,10 @@ func (r *Runner) runCompletionVerifier(
 		decision = completionVerificationAlignLanguage(evidence, decision)
 		return decision, nil, nil
 	}
+	promptEvidence := completionVerificationEvidenceForPrompt(evidence)
 	payload := map[string]interface{}{
 		"candidate_answer":       strings.TrimSpace(candidateAnswer),
-		"evidence":               evidence,
+		"evidence":               promptEvidence,
 		"attempted_tool_calls":   skillToolCallRefsForVerifier(attempted),
 		"successful_tool_calls":  skillToolCallRefsForVerifier(successful),
 		"tool_call_count":        toolCallCount,
@@ -532,6 +625,9 @@ func completionVerificationApplyPlanOverride(evidence map[string]interface{}, de
 func completionVerificationPendingAgentConfigUpdateFields(evidence map[string]interface{}) []string {
 	plan := evidenceMapFromAny(evidence["operation_plan"])
 	if len(plan) == 0 {
+		return nil
+	}
+	if operationPlanModelDecidesTools(plan) {
 		return nil
 	}
 	stepStatus := evidenceMapFromAny(plan["step_status"])
@@ -2416,6 +2512,9 @@ func completionVerificationPendingExecutablePlanStep(evidence map[string]interfa
 	}
 	plan := evidenceMapFromAny(evidence["operation_plan"])
 	if len(plan) == 0 {
+		return nil, false
+	}
+	if operationPlanModelDecidesTools(plan) {
 		return nil, false
 	}
 	status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(plan["status"])))

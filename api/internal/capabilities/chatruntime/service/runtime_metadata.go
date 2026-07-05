@@ -17,7 +17,10 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
-const maxModelInvocationMetadataRecords = 100
+const (
+	maxModelInvocationMetadataRecords = 100
+	maxTurnStateMetadataItems         = 32
+)
 
 func (s *service) persistSkillTracesBestEffort(ctx context.Context, prepared *PreparedChat, traces []skills.SkillTrace) {
 	if prepared == nil || prepared.Message == nil {
@@ -95,6 +98,7 @@ func mergeSkillTraceMetadata(source map[string]interface{}, traces []skills.Skil
 	}
 	invocations := sanitizeSkillInvocationsForMetadata(skillInvocationsFromMetadata(metadata["skill_invocations"]))
 	for index, trace := range traces {
+		applyTurnStateTraceMetadata(metadata, trace)
 		if !visibleSkillInvocationKind(trace.Kind) {
 			continue
 		}
@@ -108,6 +112,206 @@ func mergeSkillTraceMetadata(source map[string]interface{}, traces []skills.Skil
 	applyOperationPlanInvocationState(metadata, invocations)
 	applyOperationPlanPlannerFeedbackState(metadata, traces)
 	return metadata
+}
+
+func applyTurnStateTraceMetadata(metadata map[string]interface{}, trace skills.SkillTrace) {
+	if metadata == nil {
+		return
+	}
+	items := turnStateItemsFromTrace(trace)
+	if len(items) == 0 {
+		return
+	}
+	current := mapFromOperationContext(metadata["turn_state"])
+	stored := mapSliceFromAny(current["items"])
+	for _, item := range items {
+		item = sanitizeTurnStateItemForMetadata(item)
+		if len(item) == 0 {
+			continue
+		}
+		stored = upsertTurnStateItem(stored, item)
+	}
+	if len(stored) > maxTurnStateMetadataItems {
+		stored = stored[len(stored)-maxTurnStateMetadataItems:]
+	}
+	metadata["turn_state"] = map[string]interface{}{
+		"items":      mapsToInterfaceSlice(stored),
+		"updated_at": time.Now().Unix(),
+	}
+	metadata["turn_state_count"] = len(stored)
+	metadata["has_trace"] = true
+}
+
+func turnStateItemsFromTrace(trace skills.SkillTrace) []map[string]interface{} {
+	switch strings.TrimSpace(trace.Kind) {
+	case "turn_state":
+		result := mapFromOperationContext(trace.Result)
+		return mapSliceFromAny(result["items"])
+	case "intermediate_answer":
+		content := strings.TrimSpace(trace.Message)
+		if content == "" {
+			return nil
+		}
+		item := map[string]interface{}{
+			"kind":       "user_deliverable",
+			"visibility": "user_visible",
+			"content":    content,
+		}
+		if title := strings.TrimSpace(trace.Title); title != "" {
+			item["title"] = title
+		}
+		return []map[string]interface{}{item}
+	default:
+		return nil
+	}
+}
+
+func sanitizeTurnStateItemForMetadata(item map[string]interface{}) map[string]interface{} {
+	kind := normalizeTurnStateMetadataKind(stringFromAny(item["kind"]))
+	if kind == "" {
+		return nil
+	}
+	visibility := normalizeTurnStateMetadataVisibility(stringFromAny(item["visibility"]), kind)
+	value := strings.TrimSpace(stringFromAny(item["value"]))
+	content := strings.TrimSpace(stringFromAny(item["content"]))
+	if kind == "user_deliverable" && content == "" {
+		content = value
+	}
+	if kind != "user_deliverable" && value == "" {
+		value = content
+	}
+	if value == "" && content == "" {
+		return nil
+	}
+	out := map[string]interface{}{
+		"kind":       kind,
+		"visibility": visibility,
+	}
+	if key := normalizeTurnStateMetadataKey(stringFromAny(item["key"])); key != "" {
+		out["key"] = key
+	}
+	if value != "" {
+		out["value"] = truncateRunes(value, 4000)
+	}
+	if content != "" {
+		out["content"] = truncateRunes(content, 16000)
+	}
+	if title := strings.TrimSpace(stringFromAny(item["title"])); title != "" {
+		out["title"] = truncateRunes(title, 120)
+	}
+	if source := strings.TrimSpace(stringFromAny(item["source"])); source != "" {
+		out["source"] = truncateRunes(source, 200)
+	}
+	if usedFor := sanitizeTurnStateMetadataStringSlice(item["used_for"], 8, 120); len(usedFor) > 0 {
+		out["used_for"] = usedFor
+	}
+	if confidence, ok := floatValue(item["confidence"]); ok {
+		if confidence < 0 {
+			confidence = 0
+		}
+		if confidence > 1 {
+			confidence = 1
+		}
+		out["confidence"] = confidence
+	}
+	if createdAt := strings.TrimSpace(stringFromAny(item["created_at"])); createdAt != "" {
+		out["created_at"] = createdAt
+	}
+	return out
+}
+
+func upsertTurnStateItem(current []map[string]interface{}, incoming map[string]interface{}) []map[string]interface{} {
+	if len(incoming) == 0 {
+		return current
+	}
+	identity := turnStateItemIdentity(incoming)
+	if identity != "" {
+		for index, item := range current {
+			if turnStateItemIdentity(item) == identity {
+				current[index] = incoming
+				return current
+			}
+		}
+	}
+	return append(current, incoming)
+}
+
+func turnStateItemIdentity(item map[string]interface{}) string {
+	kind := strings.TrimSpace(stringFromAny(item["kind"]))
+	key := strings.TrimSpace(stringFromAny(item["key"]))
+	if kind != "" && key != "" {
+		return kind + ":" + key
+	}
+	return ""
+}
+
+func normalizeTurnStateMetadataKind(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "working_fact", "fact", "working-fact":
+		return "working_fact"
+	case "user_deliverable", "deliverable", "answer", "intermediate_answer":
+		return "user_deliverable"
+	case "decision":
+		return "decision"
+	case "assumption":
+		return "assumption"
+	case "verification", "verify", "verification_result":
+		return "verification"
+	default:
+		return ""
+	}
+}
+
+func normalizeTurnStateMetadataVisibility(value string, kind string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "user_visible", "visible", "user":
+		return "user_visible"
+	case "audit":
+		return "audit"
+	case "model_only", "internal", "":
+		if kind == "user_deliverable" {
+			return "user_visible"
+		}
+		return "model_only"
+	default:
+		if kind == "user_deliverable" {
+			return "user_visible"
+		}
+		return "model_only"
+	}
+}
+
+func normalizeTurnStateMetadataKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, " ", "_")
+	return truncateRunes(value, 120)
+}
+
+func sanitizeTurnStateMetadataStringSlice(value interface{}, maxItems int, maxRunes int) []interface{} {
+	var raw []interface{}
+	switch typed := value.(type) {
+	case []interface{}:
+		raw = typed
+	case []string:
+		raw = make([]interface{}, 0, len(typed))
+		for _, item := range typed {
+			raw = append(raw, item)
+		}
+	default:
+		return nil
+	}
+	out := make([]interface{}, 0, len(raw))
+	for _, item := range raw {
+		text := strings.TrimSpace(stringFromAny(item))
+		if text == "" {
+			continue
+		}
+		out = append(out, truncateRunes(text, maxRunes))
+		if len(out) >= maxItems {
+			break
+		}
+	}
+	return out
 }
 
 func mergeSkillInvocationMetadata(source map[string]interface{}, invocations []map[string]interface{}) map[string]interface{} {
@@ -883,6 +1087,11 @@ func sanitizeSkillInvocationForMetadata(invocation map[string]interface{}) map[s
 func sanitizeFileReaderResultForMetadata(result map[string]interface{}) (map[string]interface{}, bool) {
 	out := copyStringAnyMap(result)
 	changed := false
+	if preview := safeFileReaderContentValuePreview(out, stringFromAny(out["content"])); preview != "" {
+		out["content_value_preview"] = preview
+		out["content_value_source"] = "read_file.content"
+		changed = true
+	}
 	if redactTextFieldForMetadata(out, "content", "content") {
 		changed = true
 	}
@@ -907,6 +1116,57 @@ func sanitizeFileReaderResultForMetadata(result map[string]interface{}) (map[str
 		changed = changed || redacted
 	}
 	return out, changed
+}
+
+const fileReaderContentValuePreviewMaxRunes = 120
+
+func safeFileReaderContentValuePreview(payload map[string]interface{}, content string) string {
+	if payload == nil {
+		return ""
+	}
+	text := strings.TrimSpace(content)
+	if text == "" || len([]rune(text)) > fileReaderContentValuePreviewMaxRunes {
+		return ""
+	}
+	if !strings.EqualFold(strings.TrimSpace(stringFromAny(payload["content_status"])), "extracted") {
+		return ""
+	}
+	if operationPlanBoolValue(payload["content_truncated"]) {
+		return ""
+	}
+	mimeType := strings.ToLower(strings.TrimSpace(stringFromAny(payload["file_mime_type"])))
+	extension := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(stringFromAny(payload["file_extension"])), "."))
+	if mimeType != "" && safeFileReaderContentMimeType(mimeType) {
+		return text
+	}
+	if safeFileReaderContentExtension(extension) {
+		return text
+	}
+	return ""
+}
+
+func safeFileReaderContentMimeType(mimeType string) bool {
+	if strings.HasPrefix(mimeType, "text/") {
+		return true
+	}
+	return mimeType == "application/json" ||
+		mimeType == "application/xml" ||
+		mimeType == "application/yaml" ||
+		mimeType == "application/x-yaml" ||
+		mimeType == "text/yaml" ||
+		mimeType == "text/csv" ||
+		strings.HasSuffix(mimeType, "+json") ||
+		strings.HasSuffix(mimeType, "+xml") ||
+		strings.HasSuffix(mimeType, "+yaml")
+}
+
+func safeFileReaderContentExtension(extension string) bool {
+	switch extension {
+	case "txt", "md", "markdown", "csv", "json", "jsonl", "xml", "yaml", "yml", "svg", "html", "htm", "log":
+		return true
+	default:
+		return false
+	}
 }
 
 func redactTextFieldForMetadata(payload map[string]interface{}, key string, prefix string) bool {

@@ -38,6 +38,9 @@ func TestStreamingMessageMetadataIncludesOperationPlan(t *testing.T) {
 	if plan["intent"] != "navigate_console_page" {
 		t.Fatalf("intent = %#v, want navigate_console_page", plan["intent"])
 	}
+	if got := stringFromAny(plan["tool_choice_mode"]); got != aiChatTurnToolChoiceModelDecides {
+		t.Fatalf("tool_choice_mode = %q, want %q; plan=%#v", got, aiChatTurnToolChoiceModelDecides, plan)
+	}
 	if _, ok := plan["steps"].([]interface{}); !ok {
 		t.Fatalf("steps = %#v, want array", plan["steps"])
 	}
@@ -433,9 +436,9 @@ func TestRestrictResolvedSkillsForTurnStrategyKeepsOnlyPlannedSkillsVisible(t *t
 
 	filtered := restrictResolvedSkillsForTurnStrategy(parts, resolved)
 	got := filtered.SkillIDs()
-	want := []string{skills.SkillFileManager}
+	want := []string{skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileManager}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("filtered skill ids = %#v, want planned skill ids %#v", got, want)
+		t.Fatalf("filtered skill ids = %#v, want all enabled skills for model-decides tool choice %#v", got, want)
 	}
 }
 
@@ -649,9 +652,9 @@ func TestRestrictResolvedSkillsForAgentConfigCandidateStaysOnAgentManagement(t *
 	}}
 	filtered := restrictResolvedSkillsForTurnStrategy(parts, resolved)
 	got := filtered.SkillIDs()
-	want := []string{skills.SkillAgentManagement}
+	want := []string{skills.SkillAgentManagement, skills.SkillChartGenerator, skills.SkillConsoleNavigator, skills.SkillFileGenerator}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("filtered skill ids = %#v, want only Agent management for current Agent config edit %#v", got, want)
+		t.Fatalf("filtered skill ids = %#v, want all enabled skills for model-decides tool choice %#v", got, want)
 	}
 
 	metadata := streamingMessageMetadataWithTaskID(parts, "task-agent-config")
@@ -1112,17 +1115,8 @@ func TestSkillLoopPlanToolGuardBlocksRepeatedCompletedReadBeforePendingAgentBind
 		SkillID:  skills.SkillAgentManagement,
 		ToolName: "list_agent_database_tables",
 	})
-	if !blocked {
-		t.Fatal("repeated list_agent_database_tables was allowed while get_agent_config/update_agent_config remained pending")
-	}
-	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "get_agent_config" {
-		t.Fatalf("guard result = %#v, want next pending get_agent_config", result)
-	}
-	if !result.Advisory {
-		t.Fatalf("guard result Advisory = false, want true for repeated completed read/list step guidance")
-	}
-	if !strings.Contains(result.SystemMessage, "Do not repeat the completed read") {
-		t.Fatalf("SystemMessage = %q, want repeated-read guidance", result.SystemMessage)
+	if blocked {
+		t.Fatalf("repeated read/list tool was blocked by hard plan order guard under model-decides mode: %#v", result)
 	}
 }
 
@@ -1278,11 +1272,8 @@ func TestAgentReadOnlyConfigAndBindableResourceSweepDoesNotPlanOrAllowMutation(t
 			SkillID:  skills.SkillAgentManagement,
 			ToolName: toolName,
 		})
-		if !blocked {
-			t.Fatalf("%s was allowed for read-only Agent sweep, want blocked", toolName)
-		}
-		if !strings.Contains(result.SystemMessage, "read-only Agent request") {
-			t.Fatalf("%s guard SystemMessage = %q, want read-only guidance", toolName, result.SystemMessage)
+		if blocked {
+			t.Fatalf("%s was blocked by hard read-only intent guard under model-decides mode: %#v", toolName, result)
 		}
 	}
 }
@@ -1352,6 +1343,7 @@ func TestAgentReadOnlyBindableCandidatesWithSkillDoesNotPlanConfigMutation(t *te
 		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
 			"operation_plan": map[string]interface{}{
 				"status":             operationPlanStatusRunning,
+				"tool_choice_mode":   aiChatTurnToolChoiceModelDecides,
 				"original_user_goal": query,
 				"steps": []interface{}{
 					map[string]interface{}{
@@ -1391,11 +1383,8 @@ func TestAgentReadOnlyBindableCandidatesWithSkillDoesNotPlanConfigMutation(t *te
 		ToolName:  "update_agent_config",
 		Arguments: map[string]interface{}{"agent_id": "agent-1", "add_enabled_skill_ids": []interface{}{"chart-generator"}},
 	})
-	if !blocked {
-		t.Fatal("update_agent_config was allowed for explicit read-only bindable candidate query")
-	}
-	if result.ToolName != "update_agent_config" || !strings.Contains(result.SystemMessage, "latest user request explicitly asks to read") {
-		t.Fatalf("guard result = %#v, want latest read-only mutation block", result)
+	if blocked {
+		t.Fatalf("update_agent_config was blocked by hard read-only intent guard under model-decides mode: %#v", result)
 	}
 }
 
@@ -2850,6 +2839,209 @@ func TestAgentCapabilityUpdateRouteContextBeatsTemporaryFileGeneration(t *testin
 	}
 }
 
+func TestAgentManagementPlanIncludesFileReadPrecondition(t *testing.T) {
+	query := "\u5230\u6587\u4ef6\u7ba1\u7406\uff0c\u8bfb\u53d6\u7b2c\u4e00\u4e2a\u6587\u4ef6\u7684\u5185\u5bb9\uff0c\u7136\u540e\u5230\u667a\u80fd\u4f53\u9875\u9762\uff0c\u5220\u6389\u9875\u9762\u4e2d\u7684\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\uff0c\u7136\u540e\u521b\u5efa\u4e00\u4e2a\u65b0\u7684\u667a\u80fd\u4f53\uff0c\u53d6\u540d\u4e3a\u6587\u4ef6\u5185\u5bb9\uff0c\u7136\u540e\u8fdb\u5230\u8be6\u7ec6\uff0c\u628a\u6a21\u578b\u914d\u7f6e\u4e3adeepseek flash\uff0c\u5199\u597d\u63d0\u793a\u8bcd\u9700\u8981\u8ba9agent\u80fd\u751f\u6210\u6587\u4ef6\u548c\u4e0a\u4f20\u6587\u4ef6\u3002"
+	parts := &chatRequestParts{
+		Query:          query,
+		Surface:        aiChatSurfaceContextualSidebar,
+		RuntimeContext: "route=/console/agents capabilities=agent.list_visible",
+		SkillMode:      skillModeAuto,
+		SkillIDs: []string{
+			skills.SkillConsoleNavigator,
+			skills.SkillFileReader,
+			skills.SkillAgentManagement,
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	if strategy.Intent != "manage_agent_asset" {
+		t.Fatalf("strategy.Intent = %q, want manage_agent_asset; strategy=%#v", strategy.Intent, strategy)
+	}
+	for _, stepID := range []string{
+		operationPlanRouteStepID("/console/files", 1),
+		operationPlanToolStepID(skills.SkillFileReader, "list_visible_files"),
+		operationPlanToolStepID(skills.SkillFileReader, "read_file"),
+		operationPlanRouteStepID("/console/agents", 1),
+	} {
+		if !aiChatTurnStrategyHasPlannedToolStepIDForTest(strategy, stepID) {
+			t.Fatalf("PlannedTools = %#v, missing precondition step %s", strategy.PlannedTools, stepID)
+		}
+	}
+	for _, want := range []string{"delete_agent", "create_agent", "list_available_models", "list_agent_skill_candidates", "update_agent_config"} {
+		if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, want) {
+			t.Fatalf("PlannedTools = %#v, missing agent-management/%s", strategy.PlannedTools, want)
+		}
+	}
+
+	plan := operationPlanFromTurnStrategy("task-agent-file-read-precondition", parts, strategy)
+	filesRouteStepID := operationPlanRouteStepID("/console/files", 1)
+	listStepID := operationPlanToolStepID(skills.SkillFileReader, "list_visible_files")
+	readStepID := operationPlanToolStepID(skills.SkillFileReader, "read_file")
+	agentsRouteStepID := operationPlanRouteStepID("/console/agents", 1)
+	deleteStepID := operationPlanToolStepID(skills.SkillAgentManagement, "delete_agent")
+	createStepID := operationPlanToolStepID(skills.SkillAgentManagement, "create_agent")
+	modelsStepID := operationPlanToolStepID(skills.SkillAgentManagement, "list_available_models")
+
+	for _, stepID := range []string{filesRouteStepID, listStepID, readStepID, agentsRouteStepID, deleteStepID, createStepID, modelsStepID} {
+		if got := operationPlanStepStatusForTest(plan, stepID); got != operationPlanStepStatusPending {
+			t.Fatalf("step %s status = %q, want pending; plan=%#v", stepID, got, plan)
+		}
+	}
+	if got := operationPlanStepFieldForTest(plan, listStepID, "wait_for"); got != filesRouteStepID {
+		t.Fatalf("list_visible_files wait_for = %q, want %q; plan=%#v", got, filesRouteStepID, plan)
+	}
+	if got := operationPlanStepFieldForTest(plan, readStepID, "wait_for"); got != listStepID {
+		t.Fatalf("read_file wait_for = %q, want %q; plan=%#v", got, listStepID, plan)
+	}
+	if got := operationPlanStepFieldForTest(plan, agentsRouteStepID, "wait_for"); got != readStepID {
+		t.Fatalf("agent route wait_for = %q, want %q; plan=%#v", got, readStepID, plan)
+	}
+	for _, stepID := range []string{deleteStepID, createStepID, modelsStepID} {
+		if got := operationPlanStepFieldForTest(plan, stepID, "wait_for"); got != agentsRouteStepID {
+			t.Fatalf("%s wait_for = %q, want %q; plan=%#v", stepID, got, agentsRouteStepID, plan)
+		}
+	}
+	if got := operationPlanStepAssetTargetForTest(plan, readStepID, "effect"); got != "read" {
+		t.Fatalf("read_file asset effect = %q, want read; plan=%#v", got, plan)
+	}
+	allowed := operationPlanAllowedSkillIDs(&PreparedChat{
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{"operation_plan": plan}},
+		parts:   parts,
+	})
+	if len(allowed) != 0 {
+		t.Fatalf("allowed skills = %#v, want no hard operation-plan skill whitelist under model-decides mode", allowed)
+	}
+
+	metadata := map[string]interface{}{"operation_plan": plan}
+	applyOperationPlanInvocationState(metadata, []map[string]interface{}{
+		{
+			"kind":      "client_action",
+			"skill_id":  skills.SkillConsoleNavigator,
+			"tool_name": "navigate",
+			"status":    "succeeded",
+			"href":      "/console/files",
+			"result": map[string]interface{}{
+				"href":          "/console/files",
+				"observed_path": "/console/files",
+				"loaded_href":   "/console/files",
+			},
+		},
+		{
+			"kind":      "tool_call",
+			"skill_id":  skills.SkillFileReader,
+			"tool_name": "read_file",
+			"status":    "success",
+			"result": map[string]interface{}{
+				"status":                "completed",
+				"file_id":               "file-1",
+				"file_name":             "first.txt",
+				"content_value_preview": "test-code-111",
+				"content":               "测试代码111",
+				"content_chars":         7,
+				"content_status":        "extracted",
+			},
+		},
+	})
+	updatedPlan := mapFromOperationContext(metadata["operation_plan"])
+	if got := operationPlanStepStatusForTest(updatedPlan, listStepID); got != operationPlanStepStatusCompleted {
+		t.Fatalf("list_visible_files status after direct read_file = %q, want completed; plan=%#v", got, updatedPlan)
+	}
+	if got := operationPlanStepStatusForTest(updatedPlan, readStepID); got != operationPlanStepStatusCompleted {
+		t.Fatalf("read_file status after direct read_file = %q, want completed; plan=%#v", got, updatedPlan)
+	}
+	if got := operationPlanStepFieldForTest(updatedPlan, listStepID, "completed_by"); got != "evidence:file:list" {
+		t.Fatalf("list_visible_files completed_by = %q, want evidence:file:list; plan=%#v", got, updatedPlan)
+	}
+	evidenceState := mapFromOperationContext(updatedPlan[operationPlanEvidenceStateKey])
+	for _, key := range []string{"file:read", "file:list"} {
+		if got := stringFromAny(evidenceState[key]); got != operationPlanStepStatusCompleted {
+			t.Fatalf("evidence_state[%s] = %q, want completed; plan=%#v", key, got, updatedPlan)
+		}
+	}
+	ledger := mapSliceFromAny(updatedPlan[operationPlanEvidenceLedgerKey])
+	var sawReadValue bool
+	for _, entry := range ledger {
+		if stringFromAny(entry["skill_id"]) != skills.SkillFileReader || stringFromAny(entry["tool_name"]) != "read_file" {
+			continue
+		}
+		facts := mapFromOperationContext(entry["result_facts"])
+		if stringFromAny(facts["content_value_preview"]) == "test-code-111" {
+			sawReadValue = true
+		}
+	}
+	if !sawReadValue {
+		t.Fatalf("evidence_ledger = %#v, want read_file content_value_preview fact", ledger)
+	}
+	allowed = operationPlanAllowedSkillIDs(&PreparedChat{
+		Message: &runtimemodel.Message{Metadata: metadata},
+		parts:   parts,
+	})
+	if len(allowed) != 0 {
+		t.Fatalf("allowed skills after direct read_file = %#v, want no hard operation-plan skill whitelist under model-decides mode", allowed)
+	}
+}
+
+func TestOperationPlanGovernanceApprovalDoesNotCompleteToolStep(t *testing.T) {
+	createStepID := operationPlanToolStepID(skills.SkillAgentManagement, "create_agent")
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": operationPlanStatusRunning,
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        createStepID,
+					"status":    operationPlanStepStatusPending,
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "create_agent",
+					"asset_target": map[string]interface{}{
+						"effect":     "create",
+						"asset_type": "agent",
+					},
+				},
+			},
+			"step_status": map[string]interface{}{
+				createStepID: operationPlanStepStatusPending,
+			},
+			"original_user_goal": "create one agent named Novel Master",
+		},
+	}
+
+	applyOperationPlanInvocationState(metadata, []map[string]interface{}{
+		{
+			"kind":       "tool_governance",
+			"skill_id":   skills.SkillAgentManagement,
+			"tool_name":  "create_agent",
+			"status":     "approved",
+			"runtime_id": "tool_governance:create-agent",
+		},
+	})
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if got := operationPlanStepStatusForTest(plan, createStepID); got != operationPlanStepStatusPending {
+		t.Fatalf("create_agent status after governance approval = %q, want pending; plan=%#v", got, plan)
+	}
+
+	applyOperationPlanInvocationState(metadata, []map[string]interface{}{
+		{
+			"kind":       "tool_call",
+			"skill_id":   skills.SkillAgentManagement,
+			"tool_name":  "create_agent",
+			"status":     "success",
+			"runtime_id": "tool_call:agent-management:create_agent::#1",
+			"result": map[string]interface{}{
+				"agent_id":   "agent-novel",
+				"agent_name": "Novel Master",
+				"href":       "/console/agents/agent-novel/agent",
+			},
+		},
+	})
+	plan = mapFromOperationContext(metadata["operation_plan"])
+	if got := operationPlanStepStatusForTest(plan, createStepID); got != operationPlanStepStatusCompleted {
+		t.Fatalf("create_agent status after tool_call result = %q, want completed; plan=%#v", got, plan)
+	}
+}
+
 func TestAgentDetailRouteStillAllowsPlainTemporaryFileGeneration(t *testing.T) {
 	query := "\u751f\u6210\u4e00\u4e2a SVG \u6587\u4ef6\uff0c\u5185\u5bb9\u968f\u610f"
 	parts := &chatRequestParts{
@@ -3648,6 +3840,23 @@ func TestAgentConfigUpdatePlanRequiresPostUpdateConfigReadWhenRequested(t *testi
 	if got := stringFromAny(plan["status"]); got != operationPlanStatusCompleted {
 		t.Fatalf("operation_plan status = %q, want completed; plan=%#v", got, plan)
 	}
+	ledger := mapSliceFromAny(plan[operationPlanEvidenceLedgerKey])
+	var sawInitialConfigRead, sawPostUpdateConfigRead bool
+	for _, entry := range ledger {
+		if stringFromAny(entry["skill_id"]) != skills.SkillAgentManagement ||
+			stringFromAny(entry["tool_name"]) != "get_agent_config" {
+			continue
+		}
+		switch stringFromAny(entry["invocation_id"]) {
+		case "runtime_id:tool_call:agent-management:get_agent_config::#1":
+			sawInitialConfigRead = true
+		case "runtime_id:tool_call:agent-management:get_agent_config::#2":
+			sawPostUpdateConfigRead = true
+		}
+	}
+	if !sawInitialConfigRead || !sawPostUpdateConfigRead {
+		t.Fatalf("evidence_ledger = %#v, want both initial and post-update get_agent_config evidence", ledger)
+	}
 }
 
 func TestAgentResourceBindingUpdateConfigPostReadClosesPlan(t *testing.T) {
@@ -4146,18 +4355,12 @@ func TestSkillLoopPlanToolGuardBlocksAgentManagementForCapabilityExplanation(t *
 	}
 	guard := skillLoopPlanToolCallGuardWithResolved(prepared, nil)
 	result, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement})
-	if !blocked {
-		t.Fatal("load agent-management was allowed, want blocked with direct-answer guidance")
-	}
-	if !strings.Contains(result.SystemMessage, "Answer directly from the injected current page context") {
-		t.Fatalf("guard system message = %q, want direct page-context answer guidance", result.SystemMessage)
+	if blocked {
+		t.Fatalf("load agent-management was blocked by hard explanation-intent guard under model-decides mode: %#v", result)
 	}
 	result, blocked = guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "list_agents"})
-	if !blocked {
-		t.Fatal("list_agents was allowed, want blocked for capability explanation")
-	}
-	if !strings.Contains(result.Message, "not needed") {
-		t.Fatalf("guard message = %q, want not-needed feedback", result.Message)
+	if blocked {
+		t.Fatalf("list_agents was blocked by hard explanation-intent guard under model-decides mode: %#v", result)
 	}
 }
 
@@ -4317,9 +4520,9 @@ func TestAgentIdentityPostUpdateReadDoesNotAddConsoleNavigatorAutomatically(t *t
 
 	filtered := restrictResolvedSkillsForTurnStrategy(parts, resolved)
 	got := filtered.SkillIDs()
-	want := []string{skills.SkillAgentManagement}
+	want := []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("filtered skill ids = %#v, want only planned Agent management tools without implicit navigator %#v", got, want)
+		t.Fatalf("filtered skill ids = %#v, want all enabled skills for model-decides tool choice %#v", got, want)
 	}
 }
 
@@ -7443,6 +7646,137 @@ func TestSkillLoopPlanToolGuardAllowsUnplannedReadOnlyEvidenceDeviation(t *testi
 	deviations = mapSliceFromAny(plan["deviations"])
 	if len(deviations) != 2 {
 		t.Fatalf("deviations = %#v, want read-only and navigation deviations", deviations)
+	}
+}
+
+func TestModelDecidesOperationPlanDoesNotRestrictResolvedSkillsOrUnplannedTools(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "summarize a file, then use that theme to create an agent",
+			Surface:   aiChatSurfaceContextualSidebar,
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{skills.SkillAgentManagement, skills.SkillFileReader},
+		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status":           operationPlanStatusRunning,
+				"tool_choice_mode": aiChatTurnToolChoiceModelDecides,
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        operationPlanToolStepID(skills.SkillAgentManagement, "create_agent"),
+						"status":    operationPlanStepStatusPending,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "create_agent",
+					},
+				},
+				"step_status": map[string]interface{}{
+					operationPlanToolStepID(skills.SkillAgentManagement, "create_agent"): operationPlanStepStatusPending,
+				},
+				"original_user_goal": "summarize a file, then use that theme to create an agent",
+			},
+		}},
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
+		{Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement}},
+		{Metadata: skills.SkillMetadata{ID: skills.SkillFileReader}},
+	}}
+
+	filtered := restrictResolvedSkillsForPreparedTurn(prepared, resolved)
+	if got, want := filtered.SkillIDs(), []string{skills.SkillAgentManagement, skills.SkillFileReader}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("filtered skill ids = %#v, want all enabled skills %#v", got, want)
+	}
+
+	guard := skillLoopPlanToolCallGuardWithResolved(prepared, resolved)
+	if _, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:  skills.SkillFileReader,
+		ToolName: "read_file",
+		Arguments: map[string]interface{}{
+			"file_id": "file-1",
+		},
+	}); blocked {
+		t.Fatal("model-decides plan guard blocked an unplanned enabled read tool")
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if got := len(mapSliceFromAny(plan["deviations"])); got != 0 {
+		t.Fatalf("deviations len = %d, want 0 for model-decides unplanned tool allowance; plan=%#v", got, plan)
+	}
+}
+
+func TestModelDecidesOperationPlanPendingExecutableStepsDoNotBecomeHardPlan(t *testing.T) {
+	parts := &chatRequestParts{
+		Query:     "delete the current agent",
+		Surface:   aiChatSurfaceContextualSidebar,
+		SkillMode: skillModeAuto,
+		SkillIDs:  []string{skills.SkillAgentManagement},
+	}
+	strategy := &AIChatTurnStrategy{
+		Surface:         aiChatSurfaceContextualSidebar,
+		Intent:          "manage_agent_asset",
+		PrimarySkills:   []string{skills.SkillAgentManagement},
+		AssetEffect:     "delete",
+		AssetRisk:       "high",
+		Approval:        "required",
+		ToolChoiceMode:  aiChatTurnToolChoiceModelDecides,
+		SuccessCriteria: []string{"delete the requested Agent only after governance approval"},
+		PlannedTools: []AIChatTurnStrategyTool{{
+			SkillID:  skills.SkillAgentManagement,
+			ToolName: "delete_agent",
+		}},
+	}
+
+	plan := operationPlanFromTurnStrategy("task-model-decides-advisory-risk", parts, strategy)
+	if len(plan) == 0 {
+		t.Fatal("operationPlanFromTurnStrategy() = nil, want advisory plan")
+	}
+	steps := mapSliceFromAny(plan["steps"])
+	if len(steps) == 0 {
+		t.Fatalf("steps = %#v, want retained plan hint steps", plan["steps"])
+	}
+	if pending := operationPlanPendingExecutableSteps(plan, 8); len(pending) != 0 {
+		t.Fatalf("pending executable steps = %#v, want none for model-decides plan hints", pending)
+	}
+	if got := stringFromAny(plan["pending_next_action"]); got == "none" {
+		t.Fatalf("pending_next_action = %q, want retained strategy hint for observability; plan=%#v", got, plan)
+	}
+	if required, ok := plan["approval_required"].(bool); !ok || !required {
+		t.Fatalf("approval_required = %#v, want true for high-risk mutation hint; plan=%#v", plan["approval_required"], plan)
+	}
+}
+
+func TestModelDecidesOperationPlanPreservesDuplicateMutationGuard(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "create one agent named Draft",
+			Surface:   aiChatSurfaceContextualSidebar,
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{skills.SkillAgentManagement},
+		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status":             operationPlanStatusRunning,
+				"tool_choice_mode":   aiChatTurnToolChoiceModelDecides,
+				"original_user_goal": "create one agent named Draft",
+			},
+		}},
+	}
+	args := map[string]interface{}{"name": "Draft"}
+
+	guard := skillLoopPlanToolCallGuardWithResolved(prepared, nil)
+	result, blocked := guard(skillloop.ToolCallGuardRequest{
+		SkillID:   skills.SkillAgentManagement,
+		ToolName:  "create_agent",
+		Arguments: args,
+		AttemptedToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:   skills.SkillAgentManagement,
+			ToolName:  "create_agent",
+			Arguments: map[string]interface{}{"name": "Draft"},
+		}},
+	})
+	if !blocked {
+		t.Fatal("model-decides plan guard allowed duplicate asset-changing tool call")
+	}
+	if result.ToolName != "create_agent" || !strings.Contains(result.SystemMessage, "already attempted") {
+		t.Fatalf("duplicate guard result = %#v, want create_agent duplicate warning", result)
 	}
 }
 
@@ -10634,11 +10968,8 @@ func TestAgentManagementCurrentDetailDeletePlansSingleDeleteThenListNavigation(t
 		Message: &runtimemodel.Message{Metadata: metadata},
 	}
 	allowedSkills := operationPlanAllowedSkillIDs(prepared)
-	if _, ok := allowedSkills[skills.SkillAgentManagement]; !ok {
-		t.Fatalf("allowed skills = %#v, missing %s for ready delete step", allowedSkills, skills.SkillAgentManagement)
-	}
-	if _, ok := allowedSkills[skills.SkillConsoleNavigator]; ok {
-		t.Fatalf("allowed skills = %#v, want no console navigator exposure before delete_agent completes", allowedSkills)
+	if len(allowedSkills) != 0 {
+		t.Fatalf("allowed skills = %#v, want no hard operation-plan skill whitelist under model-decides mode", allowedSkills)
 	}
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
 		{
@@ -10667,18 +10998,15 @@ func TestAgentManagementCurrentDetailDeletePlansSingleDeleteThenListNavigation(t
 		}
 		return nil
 	}
-	if got := filteredToolNames(skills.SkillAgentManagement); !reflect.DeepEqual(got, []string{"delete_agent"}) {
-		t.Fatalf("filtered agent-management tools = %#v, want only delete_agent before route is ready", got)
+	if got := filteredToolNames(skills.SkillAgentManagement); !reflect.DeepEqual(got, []string{"delete_agent", "update_agent_config"}) {
+		t.Fatalf("filtered agent-management tools = %#v, want all enabled agent-management tools under model-decides mode", got)
 	}
 	if got := filteredToolNames(skills.SkillConsoleNavigator); !reflect.DeepEqual(got, []string{"navigate"}) {
-		t.Fatalf("filtered console-navigator tools = %#v, want navigate exposed for same-loop continuation", got)
+		t.Fatalf("filtered console-navigator tools = %#v, want navigate exposed under model-decides mode", got)
 	}
 	allowedTools := skillLoopAllowedPlannedTools(prepared)
-	if !skillLoopToolAllowed(allowedTools, skills.SkillAgentManagement, "delete_agent") {
-		t.Fatalf("allowed tools = %#v, want delete_agent ready before deletion", allowedTools)
-	}
-	if skillLoopToolAllowed(allowedTools, skills.SkillConsoleNavigator, "navigate") {
-		t.Fatalf("allowed tools = %#v, want navigate blocked until delete_agent completes", allowedTools)
+	if len(allowedTools) != 0 {
+		t.Fatalf("allowed tools = %#v, want no hard operation-plan tool whitelist under model-decides mode", allowedTools)
 	}
 	guard := skillLoopPlanToolCallGuard(prepared)
 	if guard == nil {
@@ -10688,8 +11016,8 @@ func TestAgentManagementCurrentDetailDeletePlansSingleDeleteThenListNavigation(t
 		SkillID:   skills.SkillConsoleNavigator,
 		ToolName:  "navigate",
 		Arguments: map[string]interface{}{"href": "/console/agents"},
-	}); !blocked {
-		t.Fatal("console-navigator/navigate was allowed before delete_agent completed, want wait_for route guard")
+	}); blocked {
+		t.Fatal("console-navigator/navigate was blocked by hard wait_for route guard under model-decides mode")
 	}
 
 	applyOperationPlanInvocationState(metadata, []map[string]interface{}{{
@@ -10705,16 +11033,16 @@ func TestAgentManagementCurrentDetailDeletePlansSingleDeleteThenListNavigation(t
 		},
 	}})
 	allowedSkills = operationPlanAllowedSkillIDs(prepared)
-	if _, ok := allowedSkills[skills.SkillConsoleNavigator]; !ok {
-		t.Fatalf("allowed skills = %#v, missing console navigator after delete_agent completes", allowedSkills)
+	if len(allowedSkills) != 0 {
+		t.Fatalf("allowed skills = %#v, want no hard operation-plan skill whitelist after delete_agent completes", allowedSkills)
 	}
 	filtered = restrictResolvedSkillsForPreparedTurn(prepared, resolved)
 	if got := filteredToolNames(skills.SkillConsoleNavigator); !reflect.DeepEqual(got, []string{"navigate"}) {
 		t.Fatalf("filtered console-navigator tools = %#v, want navigate after delete_agent completes", got)
 	}
 	allowedTools = skillLoopAllowedPlannedTools(prepared)
-	if !skillLoopToolAllowed(allowedTools, skills.SkillConsoleNavigator, "navigate") {
-		t.Fatalf("allowed tools = %#v, want navigate ready after delete_agent completes", allowedTools)
+	if len(allowedTools) != 0 {
+		t.Fatalf("allowed tools = %#v, want no hard operation-plan tool whitelist after delete_agent completes", allowedTools)
 	}
 	if _, blocked := guard(skillloop.ToolCallGuardRequest{
 		SkillID:   skills.SkillConsoleNavigator,
@@ -10729,6 +11057,13 @@ func TestWantsCreatedAgentDetailNavigationHonorsChineseNegation(t *testing.T) {
 	query := "\u521b\u5efa 2 \u4e2a\u667a\u80fd\u4f53\uff0c\u4e0d\u8981\u5bfc\u822a\u5230\u8be6\u60c5\u9875"
 	if wantsCreatedAgentDetailNavigation(query) {
 		t.Fatalf("wantsCreatedAgentDetailNavigation(%q) = true, want false", query)
+	}
+}
+
+func TestWantsCreatedAgentDetailNavigationSupportsChineseDetailRequest(t *testing.T) {
+	query := "\u5220\u6389\u9875\u9762\u4e2d\u7684\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\uff0c\u7136\u540e\u521b\u5efa\u4e00\u4e2a\u65b0\u7684\u667a\u80fd\u4f53\uff0c\u53d6\u540d\u53eb\u5c0f\u8bf4\u521b\u4f5c\u5927\u5e08\uff0c\u6a21\u578b\u914d\u7f6e\u4e3adeepseek flash\uff0c\u7136\u540e\u8fdb\u5230\u8be6\u7ec6\u9875"
+	if !wantsCreatedAgentDetailNavigation(query) {
+		t.Fatalf("wantsCreatedAgentDetailNavigation(%q) = false, want true", query)
 	}
 }
 
@@ -11095,13 +11430,8 @@ func TestAgentManagementCurrentAgentCompositeCapabilityPlanWaitsForCandidateLook
 		parts:   parts,
 	}
 	allowed := skillLoopAllowedPlannedTools(prepared)
-	if skillLoopToolAllowed(allowed, skills.SkillAgentManagement, "update_agent_config") {
-		t.Fatalf("allowed planned tools = %#v, want update_agent_config hidden until candidate lookups complete", allowed)
-	}
-	for _, want := range []string{"get_agent_config", "list_available_models", "list_agent_skill_candidates"} {
-		if !skillLoopToolAllowed(allowed, skills.SkillAgentManagement, want) {
-			t.Fatalf("allowed planned tools = %#v, want %s ready before update", allowed, want)
-		}
+	if len(allowed) != 0 {
+		t.Fatalf("allowed planned tools = %#v, want no hard operation-plan tool whitelist under model-decides mode", allowed)
 	}
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
 		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
@@ -11149,8 +11479,8 @@ func TestAgentManagementCurrentAgentCompositeCapabilityPlanWaitsForCandidateLook
 		},
 	})
 	allowed = skillLoopAllowedPlannedTools(prepared)
-	if !skillLoopToolAllowed(allowed, skills.SkillAgentManagement, "update_agent_config") {
-		t.Fatalf("allowed planned tools = %#v, want update_agent_config ready after candidate lookups complete", allowed)
+	if len(allowed) != 0 {
+		t.Fatalf("allowed planned tools = %#v, want no hard operation-plan tool whitelist after candidate lookups complete", allowed)
 	}
 }
 
@@ -11209,9 +11539,11 @@ func TestAgentManagementDeleteThenPostDeleteDetailEditPlansRemainingAgent(t *tes
 	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")); got != operationPlanStepStatusPending {
 		t.Fatalf("update_agent_config step status = %q, want pending; plan=%#v", got, plan)
 	}
-	if pending := operationPlanPendingExecutableSteps(plan, 4); len(pending) == 0 ||
-		stringFromAny(pending[0]["tool_name"]) != "delete_agents" {
-		t.Fatalf("operationPlanPendingExecutableSteps() = %#v, want delete_agents first; plan=%#v", pending, plan)
+	if got := stringFromAny(plan["pending_next_action"]); !strings.Contains(got, "delete_agents") {
+		t.Fatalf("pending_next_action = %q, want delete_agents retained as strategy hint; plan=%#v", got, plan)
+	}
+	if pending := operationPlanPendingExecutableSteps(plan, 4); len(pending) != 0 {
+		t.Fatalf("operationPlanPendingExecutableSteps() = %#v, want no hard pending executable steps under model-decides", pending)
 	}
 }
 
@@ -13213,7 +13545,7 @@ func TestAgentActionConfirmationDoesNotReviveFailedDeletePlan(t *testing.T) {
 	}
 }
 
-func TestAgentContinuationGuardBlocksTerminalCompletedDeleteRevival(t *testing.T) {
+func TestAgentContinuationGuardAllowsModelDecidesTerminalCompletedDeleteContinuation(t *testing.T) {
 	deleteStepID := operationPlanToolStepID(skills.SkillAgentManagement, "delete_agents")
 	previousPlan := map[string]interface{}{
 		"version":             operationPlanVersion,
@@ -13242,21 +13574,15 @@ func TestAgentContinuationGuardBlocksTerminalCompletedDeleteRevival(t *testing.T
 	}
 
 	guard := skillLoopPlanToolCallGuard(prepared)
-	result, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "delete_agents"})
-	if !blocked {
-		t.Fatal("delete_agents was allowed for weak continuation after terminal completed delete")
-	}
-	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "delete_agents" ||
-		!strings.Contains(result.SystemMessage, "weak continuation") ||
-		!strings.Contains(result.SystemMessage, "terminal history") {
-		t.Fatalf("guard result = %#v, want terminal-history weak-continuation block", result)
+	if _, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "delete_agents"}); blocked {
+		t.Fatal("delete_agents was blocked by terminal-history semantic guard; model-decides should rely on evidence and governance")
 	}
 	if _, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "list_agents"}); blocked {
 		t.Fatal("list_agents was blocked, want read-only Agent evidence allowed after terminal mutation")
 	}
 }
 
-func TestAgentContinuationGuardBlocksTerminalRejectedDeleteRevival(t *testing.T) {
+func TestAgentContinuationGuardAllowsModelDecidesTerminalRejectedDeleteContinuation(t *testing.T) {
 	deleteStepID := operationPlanToolStepID(skills.SkillAgentManagement, "delete_agents")
 	previousPlan := map[string]interface{}{
 		"version":             operationPlanVersion,
@@ -13285,21 +13611,15 @@ func TestAgentContinuationGuardBlocksTerminalRejectedDeleteRevival(t *testing.T)
 	}
 
 	guard := skillLoopPlanToolCallGuard(prepared)
-	result, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "delete_agents"})
-	if !blocked {
-		t.Fatal("delete_agents was allowed for weak continuation after terminal rejected delete")
-	}
-	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "delete_agents" ||
-		!strings.Contains(result.SystemMessage, "rejected") ||
-		!strings.Contains(result.SystemMessage, "terminal history") {
-		t.Fatalf("guard result = %#v, want rejected terminal-history weak-continuation block", result)
+	if _, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "delete_agents"}); blocked {
+		t.Fatal("delete_agents was blocked by rejected terminal-history semantic guard; model-decides should rely on evidence and governance")
 	}
 	if _, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "list_agents"}); blocked {
 		t.Fatal("list_agents was blocked, want read-only Agent evidence allowed after rejected mutation")
 	}
 }
 
-func TestAgentContinuationGuardBlocksTerminalCompletedCreateRevival(t *testing.T) {
+func TestAgentContinuationGuardAllowsModelDecidesTerminalCompletedCreateContinuation(t *testing.T) {
 	createStepID := operationPlanToolStepID(skills.SkillAgentManagement, "create_agent")
 	previousPlan := map[string]interface{}{
 		"version":             operationPlanVersion,
@@ -13328,20 +13648,14 @@ func TestAgentContinuationGuardBlocksTerminalCompletedCreateRevival(t *testing.T
 	}
 
 	guard := skillLoopPlanToolCallGuard(prepared)
-	result, blocked := guard(skillloop.ToolCallGuardRequest{
+	if _, blocked := guard(skillloop.ToolCallGuardRequest{
 		SkillID:  skills.SkillAgentManagement,
 		ToolName: "create_agent",
 		Arguments: map[string]interface{}{
 			"name": "Novel Agent",
 		},
-	})
-	if !blocked {
-		t.Fatal("create_agent was allowed for weak continuation after terminal completed create")
-	}
-	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "create_agent" ||
-		!strings.Contains(result.SystemMessage, "weak continuation") ||
-		!strings.Contains(result.SystemMessage, "terminal history") {
-		t.Fatalf("guard result = %#v, want terminal-history weak-continuation block for create_agent", result)
+	}); blocked {
+		t.Fatal("create_agent was blocked by terminal-history semantic guard; model-decides should rely on evidence and governance")
 	}
 	if _, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "list_agents"}); blocked {
 		t.Fatal("list_agents was blocked, want read-only Agent evidence allowed after completed create")

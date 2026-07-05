@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -27,7 +28,10 @@ const (
 	streamedIntermediateAnswerArg                 = "_aichat_streamed_answer"
 )
 
-var agentProgressUUIDPattern = regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
+var (
+	agentProgressUUIDPattern           = regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
+	incompleteAgentProgressListPattern = regexp.MustCompile(`(?i)([:：]\s*)?(\d+[\.\)、)]?|[-*•])\s*$`)
+)
 
 type skillStepResult struct {
 	trace               skills.SkillTrace
@@ -705,6 +709,9 @@ func completionEvidenceContinuationAgentCreateSystemMessage(evidence map[string]
 }
 
 func completionEvidenceContinuationPendingPlanStepSystemMessage(evidence map[string]interface{}, retryCount int, resolved *skills.ResolvedSkills) (adapter.Message, bool) {
+	if completionEvidenceOperationPlanModelDecides(evidence) {
+		return adapter.Message{}, false
+	}
 	step, ok := completionVerificationPendingExecutablePlanStep(evidence)
 	if !ok {
 		return adapter.Message{}, false
@@ -741,6 +748,9 @@ func completionEvidenceContinuationPendingPlanStepSystemMessage(evidence map[str
 }
 
 func completionEvidenceContinuationToolChoice(evidence map[string]interface{}, loadedSkills map[string]struct{}, resolved *skills.ResolvedSkills) interface{} {
+	if completionEvidenceOperationPlanModelDecides(evidence) {
+		return nil
+	}
 	step, ok := completionVerificationPendingExecutablePlanStep(evidence)
 	if !ok {
 		return nil
@@ -810,7 +820,8 @@ func initialLoadedSkillsForRun(req RunRequest, resolved *skills.ResolvedSkills) 
 	}
 	appendLoadedFromInvocations := func(invocations []map[string]interface{}) {
 		for _, invocation := range invocations {
-			if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["kind"])), "skill_load") {
+			kind := strings.TrimSpace(evidenceStringFromAny(invocation["kind"]))
+			if !strings.EqualFold(kind, "skill_load") && !strings.EqualFold(kind, "tool_call") {
 				continue
 			}
 			if !completionVerificationInvocationSucceeded(invocation) {
@@ -2372,7 +2383,45 @@ func visibleAgentProgressText(text string) string {
 	if content == "" || looksLikeInternalAgentProgress(content) {
 		return ""
 	}
+	if looksLikeIncompleteAgentProgress(content) {
+		content = repairedIncompleteAgentProgressText(content)
+		if content == "" {
+			return ""
+		}
+	}
 	return truncateRunes(content, agentProgressMaxRunes)
+}
+
+func repairedIncompleteAgentProgressText(text string) string {
+	content := strings.TrimSpace(text)
+	if content == "" || looksLikeInternalAgentProgress(content) || !looksLikeIncompleteAgentProgress(content) {
+		return ""
+	}
+	if containsCJK(content) {
+		return "\u6211\u6b63\u5728\u6839\u636e\u5df2\u5b8c\u6210\u7684\u7ed3\u679c\u7ee7\u7eed\u5904\u7406\u3002"
+	}
+	return "I am continuing from the completed results."
+}
+
+func looksLikeIncompleteAgentProgress(text string) bool {
+	content := strings.TrimSpace(text)
+	if content == "" {
+		return false
+	}
+	if strings.HasSuffix(content, "\uff1a") || strings.HasSuffix(content, ":") {
+		return true
+	}
+	if !incompleteAgentProgressListPattern.MatchString(content) {
+		return false
+	}
+	lower := strings.ToLower(content)
+	return strings.Contains(lower, "step") ||
+		strings.Contains(lower, "progress") ||
+		strings.Contains(content, "\u6b65\u9aa4") ||
+		strings.Contains(content, "\u8fdb\u5ea6") ||
+		strings.Contains(content, "\u5b8c\u6210") ||
+		strings.Contains(content, "\u5df2\u5b8c\u6210") ||
+		strings.Contains(content, "\u4ee5\u4e0b")
 }
 
 func looksLikeInternalAgentProgress(text string) bool {
@@ -2397,6 +2446,7 @@ func looksLikeInternalAgentProgress(text string) bool {
 		"load_skill",
 		"read_skill_reference",
 		"call_skill_tool",
+		"submit_turn_state",
 		"submit_intermediate_answer",
 		"request_user_input",
 		"operation_plan",
@@ -2445,6 +2495,9 @@ func firstAgentProgressSentence(text string) string {
 		case '\n', '\u3002', '\uff1b', '\uff01', '\uff1f', '!', '?':
 			return strings.TrimSpace(text[:index+len(string(char))])
 		case '.':
+			if periodLooksLikeNumberedListMarker(text, index) {
+				continue
+			}
 			rest := text[index+1:]
 			if rest == "" {
 				return strings.TrimSpace(text[:index+1])
@@ -2458,6 +2511,56 @@ func firstAgentProgressSentence(text string) string {
 		}
 	}
 	return text
+}
+
+func periodLooksLikeNumberedListMarker(text string, index int) bool {
+	if index <= 0 || index >= len(text) || text[index] != '.' {
+		return false
+	}
+	prev, ok := lastNonSpaceRune(text[:index])
+	if !ok || !unicode.IsDigit(prev) {
+		return false
+	}
+	start := index
+	for start > 0 {
+		char, size := utf8.DecodeLastRuneInString(text[:start])
+		if char == utf8.RuneError && size == 0 {
+			break
+		}
+		if !unicode.IsDigit(char) {
+			break
+		}
+		start -= size
+	}
+	prefix := strings.TrimSpace(text[:start])
+	if prefix != "" {
+		last, ok := lastNonSpaceRune(prefix)
+		if !ok || (last != ':' && last != '\uff1a') {
+			return false
+		}
+	}
+	rest := text[index+1:]
+	if rest == "" {
+		return true
+	}
+	for _, next := range rest {
+		return unicode.IsSpace(next)
+	}
+	return false
+}
+
+func lastNonSpaceRune(text string) (rune, bool) {
+	for i := len(text); i > 0; {
+		char, size := utf8.DecodeLastRuneInString(text[:i])
+		if char == utf8.RuneError && size == 0 {
+			return 0, false
+		}
+		i -= size
+		if !unicode.IsSpace(char) {
+			return char, true
+		}
+	}
+	return 0, false
 }
 
 func truncateRunes(text string, maxRunes int) string {
@@ -2477,6 +2580,7 @@ func agenticSkillLoopSystemMessage() adapter.Message {
 		"All user-facing progress, reasoning, request_user_input text, submit_intermediate_answer text, and final answers must use the same language as the user's latest request. If the user writes in Chinese, progress text must be Chinese.",
 		"Do not narrate every tool call, internal plan step, tool name, tool arguments, IDs, protocol details, or bookkeeping status.",
 		"If you share progress or reasoning, frame it around the user's goal, current page evidence, and the next useful action; do not expose a rigid hidden checklist.",
+		"Progress text must be one complete sentence. Do not end progress with a colon, list marker, or half-written numbered/bulleted list.",
 		"Do not start every task by listing resources or navigating. If current page context, recent tool results, or visible resolved targets are enough, act from that evidence directly.",
 		"Do not announce that you need to navigate, open, enter, or switch pages unless a visible console navigation tool is available and you are about to call it. If no navigation tool is available, say you will continue from current page evidence.",
 		"When an additional system message contains preferred_route_action or suggested_next_tool, treat it as an advisory next phase, not as a reason to ignore fresh evidence. Load and call it when the current page context and prior tool/client-action evidence show it is still needed; do not repeat the same navigation or business tool after matching evidence already satisfies the step.",
@@ -2488,7 +2592,13 @@ func agenticSkillLoopSystemMessage() adapter.Message {
 		"Do not claim that a governance approval card has been submitted or is waiting unless a governed skill/tool call actually returned a pending governance event.",
 		"If a save, update, delete, create, bind, unbind, publish, or navigation tool succeeded in this turn, describe the outcome as executed and verified from the tool/page evidence; do not say it was unnecessary or skipped just because the refreshed page already shows the requested state.",
 		"Progress text sent together with tool calls is transient status text. Keep it short and do not place substantial user deliverables there.",
+		"Long tasks may cross approvals, page navigation, page refresh, user confirmation, or continuation boundaries. Those boundaries can make implicit working memory unreliable even within the same user request.",
+		"Before crossing a boundary or making later steps depend on a tool/page result, decide whether any exact value, summary, theme, selected target, model choice, prompt requirement, or verification fact must be reused. If yes, call submit_turn_state with kind=working_fact/decision/verification and visibility=model_only.",
+		"Use submit_turn_state for internal working facts, decisions, assumptions, and verification state. Do not expose protocol names or JSON to the user; the recorded state is for continuing the same turn reliably.",
+		"Do not record every detail. Record only facts that affect later tool arguments, naming, configuration, verification, or the final answer. For long documents, record a concise summary/theme and re-read if exact full text is needed.",
+		"If you later need a value but did not record it and cannot see it in current tool/page evidence, re-read or re-observe it instead of guessing or using placeholders such as file content, read content, or 文件内容.",
 		"submit_intermediate_answer is for substantial user-facing deliverables only; do not use it for progress, plans, tool status, internal reasoning, or protocol narration.",
+		"Prefer submit_turn_state with kind=user_deliverable for new structured workflows; submit_intermediate_answer is a compatibility shortcut for a user-visible deliverable.",
 		"If the current turn newly creates or substantially rewrites a user-facing deliverable before later tool/skill calls, call submit_intermediate_answer for that new deliverable before continuing.",
 		"Examples of new deliverables that should use submit_intermediate_answer when followed by more tool/skill calls: novel outlines, long-form drafts, plans, tables, code sketches, analysis sections, or generated content the user asked for.",
 		"Do not call submit_intermediate_answer merely to repeat content that was already visible in an earlier assistant answer. For requests like exporting, saving, converting, or generating a file from existing content, pass the existing content directly to the file/tool call.",

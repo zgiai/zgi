@@ -141,6 +141,8 @@ func (r *Runner) handleProgressiveSkillCall(
 		return r.handleCallSkillTool(ctx, prepared, resolved, call.ID, args, execCtx, onEvent)
 	case skills.MetaToolRequestUserInput:
 		return r.handleRequestUserInputCall(ctx, prepared, call.ID, args, userInputGuard, onEvent)
+	case skills.MetaToolTurnState:
+		return r.handleTurnStateCall(ctx, prepared, call.ID, args, onEvent)
 	case skills.MetaToolIntermediateAnswer:
 		return r.handleIntermediateAnswerCall(ctx, prepared, call.ID, args, onEvent)
 	default:
@@ -149,7 +151,7 @@ func (r *Runner) handleProgressiveSkillCall(
 		}
 		err := fmt.Errorf("%w: unsupported skill meta tool %s", ErrInvalidInput, call.Function.Name)
 		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
-		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "use one of load_skill, request_user_input, read_skill_reference, call_skill_tool, or submit_intermediate_answer")), false, false)
+		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "use one of load_skill, request_user_input, read_skill_reference, call_skill_tool, submit_turn_state, or submit_intermediate_answer")), false, false)
 	}
 }
 
@@ -186,6 +188,7 @@ func isSkillMetaToolName(name string) bool {
 	case skills.MetaToolLoadSkill,
 		skills.MetaToolReadSkillReference,
 		skills.MetaToolCallSkillTool,
+		skills.MetaToolTurnState,
 		skills.MetaToolIntermediateAnswer,
 		skills.MetaToolRequestUserInput:
 		return true
@@ -561,6 +564,7 @@ func (r *Runner) handleCallSkillTool(
 	if summary := summarizeSkillToolResult(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages); len(summary) > 0 {
 		invocation.Trace.Result = summary
 	}
+	applyStateHandoffAdvisoryToToolMessage(invocation)
 	guardToolResult := skillToolResultForGuard(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages, invocation.Trace.Result)
 	logger.DebugContext(ctx, "aichat skill tool completed",
 		"conversation_id", prepared.Conversation.ID.String(),

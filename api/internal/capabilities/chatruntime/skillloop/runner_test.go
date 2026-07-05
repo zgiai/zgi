@@ -107,6 +107,45 @@ func TestInitialLoadedSkillsForRunRestoresMetadataState(t *testing.T) {
 	}
 }
 
+func TestInitialLoadedSkillsForRunTreatsSuccessfulToolCallAsLoaded(t *testing.T) {
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
+	}}}
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "in_progress",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+					"status":    "pending",
+				},
+			},
+		},
+	}
+	loaded := initialLoadedSkillsForRun(RunRequest{
+		CurrentMetadata: func() map[string]interface{} {
+			return map[string]interface{}{
+				"skill_invocations": []interface{}{
+					map[string]interface{}{
+						"kind":      "tool_call",
+						"status":    "success",
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "create_agent",
+					},
+				},
+			}
+		},
+	}, resolved)
+	if _, ok := loaded[skills.SkillAgentManagement]; !ok {
+		t.Fatalf("loaded[%q] missing after successful tool_call; got %#v", skills.SkillAgentManagement, loaded)
+	}
+	if got := functionToolChoiceName(completionEvidenceContinuationToolChoice(evidence, loaded, resolved)); got != skills.MetaToolCallSkillTool {
+		t.Fatalf("completionEvidenceContinuationToolChoice() = %q, want %s after successful tool_call", got, skills.MetaToolCallSkillTool)
+	}
+}
+
 func TestHandleLoadSkillCallDoesNotEmitEventForAlreadyLoadedSkill(t *testing.T) {
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
 		Metadata: skills.SkillMetadata{
@@ -2810,6 +2849,153 @@ func TestRunnerSkipsEmptyIntermediateAnswerWithoutUserVisibleError(t *testing.T)
 		if event.Type == EventSkillCallError || event.Type == EventIntermediateAnswer {
 			t.Fatalf("event = %#v, want no user-visible error/intermediate event for empty intermediate answer", event)
 		}
+	}
+}
+
+func TestRunnerRecordsTurnStateWithoutUserVisibleEvent(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "turn-state-1",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolTurnState,
+								Arguments: `{"items":[{"kind":"working_fact","visibility":"model_only","key":"agent_theme","value":"water fee confirmation","source":"file-reader/read_file","used_for":["agent.name"]}]}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "State recorded."},
+				}},
+			},
+		},
+	}
+	runtime := skills.NewRuntimeWithCatalog(nil, nil, "")
+	var traces []skills.SkillTrace
+	var events []Event
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
+			traces = append(traces, trace)
+		},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "read a file, then use its theme to configure an agent"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "State recorded." {
+		t.Fatalf("answer = %q, want final answer", answer)
+	}
+	var found *skills.SkillTrace
+	for index := range traces {
+		if traces[index].Kind == "turn_state" {
+			found = &traces[index]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("traces = %#v, want turn_state trace", traces)
+	}
+	items := mapSliceFromAny(found.Result["items"])
+	if len(items) != 1 || stringFromInterface(items[0]["key"]) != "agent_theme" || stringFromInterface(items[0]["value"]) != "water fee confirmation" {
+		t.Fatalf("turn_state items = %#v, want agent_theme fact", items)
+	}
+	for _, event := range events {
+		if event.Type == EventIntermediateAnswer {
+			t.Fatalf("event = %#v, want no user-visible intermediate answer for model_only turn state", event)
+		}
+	}
+}
+
+func TestRunnerShowsContextualSidebarCheckpointForFileTurnState(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "turn-state-sidebar",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolTurnState,
+								Arguments: `{"items":[{"kind":"working_fact","visibility":"model_only","key":"agent_theme","value":"雪是主角的妹妹，外向但带有怪谈般的不确定性。","source":"file-reader/read_file","used_for":["agent.prompt"]},{"kind":"decision","visibility":"model_only","key":"selected_model","value":"deepseek-v4-flash","source":"agent-management/list_models"}]}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "State recorded."},
+				}},
+			},
+		},
+	}
+	runtime := skills.NewRuntimeWithCatalog(nil, nil, "")
+	var events []Event
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "读取文件后用主题创建智能体"}},
+	})
+	prepared.Query = "读取文件后用主题创建智能体"
+	prepared.Surface = "contextual_sidebar"
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "State recorded." {
+		t.Fatalf("answer = %q, want final answer", answer)
+	}
+	var checkpoints []Event
+	for _, event := range events {
+		if event.Type == EventIntermediateAnswer {
+			checkpoints = append(checkpoints, event)
+		}
+	}
+	if len(checkpoints) != 1 {
+		t.Fatalf("intermediate events = %#v, want exactly one file-derived checkpoint", checkpoints)
+	}
+	content := stringFromInterface(checkpoints[0].Payload["content"])
+	if !strings.Contains(content, "已记录文件小结") || !strings.Contains(content, "雪是主角的妹妹") {
+		t.Fatalf("checkpoint content = %q, want localized file summary", content)
+	}
+	if strings.Contains(content, "deepseek-v4-flash") {
+		t.Fatalf("checkpoint content = %q, want selected model state hidden", content)
 	}
 }
 

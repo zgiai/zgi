@@ -400,6 +400,7 @@ type recentExecutionContextStats struct {
 	IntermediateAnswerTurns    int
 	IncludedToolEvents         int
 	IncludedOperationSummaries int
+	IncludedTurnStateFacts     int
 	IncludedIntermediate       int
 	IncludedGeneratedFiles     int
 	ToolHistoryTruncated       bool
@@ -440,6 +441,15 @@ func buildRecentExecutionContextMessage(branch []*runtimemodel.Message) (*adapte
 	}
 
 	remaining = recentExecutionContextBudgetChars - builder.Len()
+	turnStateSection, turnStateStats := recentTurnStateSection(branch, remaining)
+	stats.IncludedTurnStateFacts = turnStateStats.IncludedTurnStateFacts
+	stats.ExecutionContextTruncated = stats.ExecutionContextTruncated || turnStateStats.ExecutionContextTruncated
+	if turnStateSection != "" {
+		builder.WriteString("\nMost recent turn state facts:\n")
+		builder.WriteString(turnStateSection)
+	}
+
+	remaining = recentExecutionContextBudgetChars - builder.Len()
 	toolSection, toolStats := recentToolHistorySection(branch, remaining)
 	stats.ToolHistoryTurns = toolStats.ToolHistoryTurns
 	stats.IncludedToolEvents = toolStats.IncludedToolEvents
@@ -462,7 +472,7 @@ func buildRecentExecutionContextMessage(branch []*runtimemodel.Message) (*adapte
 	}
 
 	content := strings.TrimSpace(builder.String())
-	if stats.IncludedToolEvents == 0 && stats.IncludedOperationSummaries == 0 && stats.IncludedIntermediate == 0 && stats.IncludedGeneratedFiles == 0 {
+	if stats.IncludedToolEvents == 0 && stats.IncludedOperationSummaries == 0 && stats.IncludedTurnStateFacts == 0 && stats.IncludedIntermediate == 0 && stats.IncludedGeneratedFiles == 0 {
 		return nil, stats
 	}
 	return &adapter.Message{Role: "system", Content: content}, stats
@@ -699,7 +709,8 @@ func compactOperationPlanForPrompt(plan map[string]interface{}) map[string]inter
 		return nil
 	}
 	out := map[string]interface{}{}
-	for _, key := range []string{"version", "task_id", "intent", "status", "pending_next_action", "original_user_goal", "risk_level", "approval"} {
+	modelDecides := operationPlanModelDecidesTools(plan)
+	for _, key := range []string{"version", "task_id", "intent", "status", "pending_next_action", "original_user_goal", "risk_level", "approval", "planning_mode"} {
 		if value := strings.TrimSpace(stringFromAny(plan[key])); value != "" {
 			out[key] = compactForPrompt(value, 500)
 		}
@@ -722,7 +733,7 @@ func compactOperationPlanForPrompt(plan map[string]interface{}) map[string]inter
 	if target := mapFromOperationContext(plan["asset_target"]); len(target) > 0 {
 		out["asset_target"] = target
 	}
-	if stepStatus := mapFromOperationContext(plan["step_status"]); len(stepStatus) > 0 {
+	if stepStatus := mapFromOperationContext(plan["step_status"]); len(stepStatus) > 0 && !modelDecides {
 		out["step_status"] = stepStatus
 	}
 	if result := mapFromOperationContext(plan["tool_result"]); len(result) > 0 {
@@ -734,10 +745,13 @@ func compactOperationPlanForPrompt(plan map[string]interface{}) map[string]inter
 	if pageEvidence := operationPlanCompactPageEvidence(mapFromOperationContext(plan["page_evidence"])); len(pageEvidence) > 0 {
 		out["page_evidence"] = pageEvidence
 	}
-	if completedSteps := operationPlanCompactProgressStepRecords(plan["completed_steps"], 8); len(completedSteps) > 0 {
+	if phases := operationPlanCompactPhasesForPrompt(plan["phases"], 8); len(phases) > 0 {
+		out["phases"] = phases
+	}
+	if completedSteps := operationPlanCompactProgressStepRecords(plan["completed_steps"], 8); len(completedSteps) > 0 && !modelDecides {
 		out["completed_steps"] = completedSteps
 	}
-	if failedSteps := operationPlanCompactProgressStepRecords(plan["failed_steps"], 8); len(failedSteps) > 0 {
+	if failedSteps := operationPlanCompactProgressStepRecords(plan["failed_steps"], 8); len(failedSteps) > 0 && !modelDecides {
 		out["failed_steps"] = failedSteps
 	}
 	if deviations := skillLoopCompletionPlanDeviations(plan["deviations"], 6); len(deviations) > 0 {
@@ -746,7 +760,7 @@ func compactOperationPlanForPrompt(plan map[string]interface{}) map[string]inter
 	if blockedDeviations := skillLoopCompletionPlanDeviations(plan["blocked_deviations"], 6); len(blockedDeviations) > 0 {
 		out["blocked_deviations"] = blockedDeviations
 	}
-	if steps := operationPlanCompactStepsForPrompt(plan["steps"], 8); len(steps) > 0 {
+	if steps := operationPlanCompactStepsForPrompt(plan["steps"], 8); len(steps) > 0 && !modelDecides {
 		out["steps"] = steps
 	}
 	return out
@@ -1134,6 +1148,82 @@ func recentIntermediateAnswerSection(branch []*runtimemodel.Message, budget int)
 	return builder.String(), stats
 }
 
+func recentTurnStateSection(branch []*runtimemodel.Message, budget int) (string, recentExecutionContextStats) {
+	stats := recentExecutionContextStats{}
+	if budget <= 0 {
+		stats.ExecutionContextTruncated = true
+		return "", stats
+	}
+	var builder strings.Builder
+	for i := len(branch) - 1; i >= 0; i-- {
+		message := branch[i]
+		if message == nil || !isUsableAssistantHistoryStatus(message.Status) {
+			continue
+		}
+		items := turnStatePromptItems(message.Metadata)
+		if len(items) == 0 {
+			continue
+		}
+		if !appendBudgetedLine(&builder, budget, fmt.Sprintf("- Turn query: %s\n", compactForPrompt(message.Query, 240))) {
+			stats.ExecutionContextTruncated = true
+			break
+		}
+		for _, item := range items {
+			line := formatTurnStatePromptItem(item)
+			if line == "" {
+				continue
+			}
+			if !appendBudgetedLine(&builder, budget, line) {
+				stats.ExecutionContextTruncated = true
+				return builder.String(), stats
+			}
+			stats.IncludedTurnStateFacts++
+			if stats.IncludedTurnStateFacts >= 12 {
+				return builder.String(), stats
+			}
+		}
+	}
+	return builder.String(), stats
+}
+
+func turnStatePromptItems(metadata map[string]interface{}) []map[string]interface{} {
+	state := mapFromOperationContext(metadata["turn_state"])
+	items := mapSliceFromAny(state["items"])
+	out := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		kind := strings.TrimSpace(stringFromAny(item["kind"]))
+		visibility := strings.TrimSpace(stringFromAny(item["visibility"]))
+		if kind == "" || (kind == "user_deliverable" && visibility == "user_visible") {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func formatTurnStatePromptItem(item map[string]interface{}) string {
+	kind := strings.TrimSpace(stringFromAny(item["kind"]))
+	key := strings.TrimSpace(stringFromAny(item["key"]))
+	value := strings.TrimSpace(stringFromAny(item["value"]))
+	if value == "" {
+		value = strings.TrimSpace(stringFromAny(item["content"]))
+	}
+	if kind == "" || value == "" {
+		return ""
+	}
+	parts := []string{
+		"  - kind=" + compactForPrompt(kind, 80),
+	}
+	if key != "" {
+		parts = append(parts, "key="+compactForPrompt(key, 120))
+	}
+	parts = append(parts, "value="+compactForPrompt(value, 500))
+	if source := strings.TrimSpace(stringFromAny(item["source"])); source != "" {
+		parts = append(parts, "source="+compactForPrompt(source, 160))
+	}
+	return strings.Join(parts, " ") + "\n"
+}
+
 func toolHistoryInvocations(metadata map[string]interface{}) []map[string]interface{} {
 	invocations := skillInvocationMaps(metadata)
 	out := make([]map[string]interface{}, 0, len(invocations))
@@ -1497,13 +1587,14 @@ func mergeRecentExecutionContextMetadata(target map[string]interface{}, stats re
 	if target == nil {
 		return
 	}
-	if stats.IncludedToolEvents == 0 && stats.IncludedIntermediate == 0 && stats.IncludedGeneratedFiles == 0 {
+	if stats.IncludedToolEvents == 0 && stats.IncludedTurnStateFacts == 0 && stats.IncludedIntermediate == 0 && stats.IncludedGeneratedFiles == 0 {
 		return
 	}
 	target["recent_execution_context"] = map[string]interface{}{
 		"tool_history_turns":            stats.ToolHistoryTurns,
 		"intermediate_answer_turns":     stats.IntermediateAnswerTurns,
 		"included_tool_events":          stats.IncludedToolEvents,
+		"included_turn_state_facts":     stats.IncludedTurnStateFacts,
 		"included_intermediate_answers": stats.IncludedIntermediate,
 		"included_generated_files":      stats.IncludedGeneratedFiles,
 		"tool_history_truncated":        stats.ToolHistoryTruncated,
