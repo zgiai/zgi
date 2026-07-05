@@ -486,45 +486,18 @@ func skillLoopCompletionOperationResultSummary(summary map[string]interface{}) m
 		return nil
 	}
 	out := map[string]interface{}{}
+	latestToolSettlesOperation := false
 	if plan := mapFromOperationContext(summary["operation_plan"]); len(plan) > 0 {
+		planStatus := strings.TrimSpace(stringFromAny(plan["status"]))
 		if status := strings.TrimSpace(stringFromAny(plan["status"])); status != "" {
 			out["plan_status"] = status
 		}
 		copyOperationResultSummaryFields(out, plan, "pending_next_action", "current_page")
-		if group := mapFromOperationContext(plan["operation_group"]); len(group) > 0 {
-			out["operation_group"] = operationPlanCompactOperationGroup(group)
-			copyOperationResultSummaryFields(out, group, "status", "operation", "asset_type", "target_count", "success_count", "failed_count")
-		}
 		if result := mapFromOperationContext(plan["tool_result"]); len(result) > 0 {
-			out["latest_tool_result"] = result
-			copyOperationResultSummaryFields(out, result, "skill_id", "tool_name")
-			if status := strings.TrimSpace(stringFromAny(result["status"])); status != "" {
-				out["latest_tool_status"] = status
-				if _, ok := out["status"]; !ok {
-					out["status"] = status
-				}
-			}
-			if resultSummary := mapFromOperationContext(result["result_summary"]); len(resultSummary) > 0 {
-				copyOperationResultSummaryFields(out, resultSummary,
-					"effect",
-					"agent_id",
-					"agent_name",
-					"filename",
-					"file_name",
-					"managed_filename",
-					"target_count",
-					"deleted_count",
-					"failed_count",
-					"requires_refresh",
-					"refresh_target",
-					"error",
-				)
-			}
+			latestToolSettlesOperation = applyOperationResultSummaryToolResult(out, result, planStatus)
 		}
-	}
-	if groups := mapSliceFromAny(summary["operation_groups"]); len(groups) > 0 {
-		if _, ok := out["operation_group"]; !ok {
-			if group := mapFromOperationContext(groups[0]); len(group) > 0 {
+		if _, ok := out["operation_group"]; !ok && !latestToolSettlesOperation {
+			if group := mapFromOperationContext(plan["operation_group"]); len(group) > 0 {
 				out["operation_group"] = operationPlanCompactOperationGroup(group)
 				copyOperationResultSummaryFields(out, group, "status", "operation", "asset_type", "target_count", "success_count", "failed_count")
 			}
@@ -533,17 +506,18 @@ func skillLoopCompletionOperationResultSummary(summary map[string]interface{}) m
 	if toolResults := mapSliceFromAny(summary["tool_results"]); len(toolResults) > 0 {
 		if _, ok := out["latest_tool_result"]; !ok {
 			if result := mapFromOperationContext(toolResults[0]); len(result) > 0 {
-				out["latest_tool_result"] = result
-				copyOperationResultSummaryFields(out, result, "skill_id", "tool_name")
-				if status := strings.TrimSpace(stringFromAny(result["status"])); status != "" {
-					out["latest_tool_status"] = status
-					if _, ok := out["status"]; !ok {
-						out["status"] = status
-					}
-				}
+				latestToolSettlesOperation = applyOperationResultSummaryToolResult(out, result, "")
 			}
 		}
 		out["tool_result_count"] = len(toolResults)
+	}
+	if groups := mapSliceFromAny(summary["operation_groups"]); len(groups) > 0 {
+		if _, ok := out["operation_group"]; !ok && !latestToolSettlesOperation {
+			if group := mapFromOperationContext(groups[0]); len(group) > 0 {
+				out["operation_group"] = operationPlanCompactOperationGroup(group)
+				copyOperationResultSummaryFields(out, group, "status", "operation", "asset_type", "target_count", "success_count", "failed_count")
+			}
+		}
 	}
 	if clientActions := mapSliceFromAny(summary["client_actions"]); len(clientActions) > 0 {
 		out["client_action_count"] = len(clientActions)
@@ -560,6 +534,66 @@ func skillLoopCompletionOperationResultSummary(summary map[string]interface{}) m
 	}
 	out["source"] = "execution_summary"
 	return out
+}
+
+func applyOperationResultSummaryToolResult(out map[string]interface{}, result map[string]interface{}, planStatus string) bool {
+	if out == nil || len(result) == 0 {
+		return false
+	}
+	out["latest_tool_result"] = result
+	copyOperationResultSummaryFields(out, result, "skill_id", "tool_name")
+	resultSummary := mapFromOperationContext(result["result_summary"])
+	if group := mapFromOperationContext(resultSummary["operation_group"]); len(group) > 0 {
+		out["operation_group"] = operationPlanCompactOperationGroup(group)
+		copyOperationResultSummaryFields(out, group, "status", "operation", "asset_type", "target_count", "success_count", "failed_count")
+	}
+	if status := strings.TrimSpace(stringFromAny(resultSummary["status"])); status != "" {
+		out["status"] = status
+	}
+	if status := strings.TrimSpace(stringFromAny(result["status"])); status != "" {
+		out["latest_tool_status"] = status
+		if _, ok := out["status"]; !ok {
+			out["status"] = status
+		}
+	}
+	if len(resultSummary) > 0 {
+		copyOperationResultSummaryFields(out, resultSummary,
+			"effect",
+			"agent_id",
+			"agent_name",
+			"filename",
+			"file_name",
+			"managed_filename",
+			"target_count",
+			"deleted_count",
+			"failed_count",
+			"requires_refresh",
+			"refresh_target",
+			"error",
+		)
+	}
+	return operationResultSummaryLatestToolSettlesOperation(planStatus, result)
+}
+
+func operationResultSummaryLatestToolSettlesOperation(planStatus string, result map[string]interface{}) bool {
+	if len(result) == 0 {
+		return false
+	}
+	resultSummary := mapFromOperationContext(result["result_summary"])
+	if group := mapFromOperationContext(resultSummary["operation_group"]); len(group) > 0 {
+		return false
+	}
+	status := operationPlanNormalizeStepStatus(firstNonEmptyString(resultSummary["status"], result["status"]))
+	if status != operationPlanStepStatusCompleted {
+		return false
+	}
+	if strings.TrimSpace(stringFromAny(resultSummary["error"])) != "" {
+		return false
+	}
+	if operationPlanInvocationIsAssetMutation(result) {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(planStatus), operationPlanStatusCompleted)
 }
 
 func copyOperationResultSummaryFields(dst map[string]interface{}, src map[string]interface{}, keys ...string) {

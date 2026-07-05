@@ -12150,6 +12150,137 @@ func TestOperationPlanBatchDeleteCompletesSingleDeleteStep(t *testing.T) {
 	}
 }
 
+func TestOperationPlanClearsStaleFailedBatchGroupAfterSuccessfulMutation(t *testing.T) {
+	parts := &chatRequestParts{
+		Query:     "delete the first visible agent, then create and configure a new agent",
+		Surface:   aiChatSurfaceContextualSidebar,
+		SkillMode: skillModeAuto,
+		SkillIDs:  []string{skills.SkillAgentManagement},
+	}
+	strategy := &AIChatTurnStrategy{
+		Intent: "manage_agent_asset",
+		PlannedTools: []AIChatTurnStrategyTool{
+			{SkillID: skills.SkillAgentManagement, ToolName: "delete_agent"},
+			{SkillID: skills.SkillAgentManagement, ToolName: "create_agent"},
+			{SkillID: skills.SkillAgentManagement, ToolName: "update_agent_config"},
+		},
+	}
+	invocations := []map[string]interface{}{
+		{
+			"kind":      "tool_call",
+			"status":    "success",
+			"skill_id":  skills.SkillAgentManagement,
+			"tool_name": "delete_agents",
+			"result": map[string]interface{}{
+				"status":       "failed",
+				"target_count": 1,
+				"failed_count": 1,
+				"error":        "agent not found",
+				"operation_group": map[string]interface{}{
+					"id":           "agent.delete.batch:stale",
+					"type":         "batch",
+					"operation":    "agent.delete",
+					"asset_type":   "agent",
+					"status":       "failed",
+					"target_count": 1,
+					"failed_count": 1,
+					"item_results": []interface{}{
+						map[string]interface{}{"agent_id": "agent-stale", "agent_name": "小说创作大师", "status": "failed", "error": "agent not found"},
+					},
+				},
+			},
+		},
+		{
+			"kind":      "tool_call",
+			"status":    "success",
+			"skill_id":  skills.SkillAgentManagement,
+			"tool_name": "delete_agent",
+			"result": map[string]interface{}{
+				"status":     "completed",
+				"effect":     "deleted",
+				"agent_id":   "agent-existing",
+				"agent_name": "小说创作大师",
+				"href":       "/console/agents",
+			},
+		},
+		{
+			"kind":      "tool_call",
+			"status":    "success",
+			"skill_id":  skills.SkillAgentManagement,
+			"tool_name": "create_agent",
+			"result": map[string]interface{}{
+				"status":     "completed",
+				"effect":     "created",
+				"agent_id":   "agent-new",
+				"agent_name": "小说创作大师",
+				"href":       "/console/agents/agent-new/agent",
+			},
+		},
+		{
+			"kind":      "tool_call",
+			"status":    "success",
+			"skill_id":  skills.SkillAgentManagement,
+			"tool_name": "update_agent_config",
+			"result": map[string]interface{}{
+				"status":         "completed",
+				"effect":         "updated",
+				"agent_id":       "agent-new",
+				"agent_name":     "小说创作大师",
+				"model_provider": "deepseek",
+				"model":          "deepseek-v4-flash",
+				"updated_fields": []interface{}{"model_provider", "model", "system_prompt", "enabled_skill_ids", "file_upload_enabled"},
+			},
+		},
+	}
+	metadata := map[string]interface{}{
+		"operation_plan":    operationPlanFromTurnStrategy("task-stale-delete-group", parts, strategy),
+		"skill_invocations": invocations,
+	}
+
+	applyOperationPlanInvocationState(metadata, invocations)
+
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if group := mapFromOperationContext(plan["operation_group"]); len(group) > 0 {
+		t.Fatalf("operation_plan.operation_group = %#v, want stale failed batch group cleared by later successful mutation", group)
+	}
+	deleteStepID := operationPlanToolStepID(skills.SkillAgentManagement, "delete_agent")
+	deleteStep := operationPlanStepForTest(plan, deleteStepID)
+	if got := stringFromAny(deleteStep["status"]); got != operationPlanStepStatusCompleted {
+		t.Fatalf("delete_agent step status = %q, want completed after single delete; step=%#v", got, deleteStep)
+	}
+	if group := mapFromOperationContext(deleteStep["operation_group"]); len(group) > 0 {
+		t.Fatalf("delete_agent step operation_group = %#v, want stale failed group cleared", group)
+	}
+	if _, ok := deleteStep["error"]; ok {
+		t.Fatalf("delete_agent step error = %#v, want stale error cleared", deleteStep["error"])
+	}
+
+	prepared := &PreparedChat{
+		parts: parts,
+		Message: &runtimemodel.Message{
+			ID:       uuid.New(),
+			Metadata: metadata,
+		},
+	}
+	evidence := skillLoopCompletionEvidence(prepared)()
+	operationSummary := mapFromOperationContext(evidence["operation_result_summary"])
+	if len(operationSummary) == 0 {
+		t.Fatalf("operation_result_summary = %#v, want latest successful operation facts", evidence["operation_result_summary"])
+	}
+	if got := stringFromAny(operationSummary["status"]); got == operationPlanStatusFailed || got == "failed" {
+		t.Fatalf("operation_result_summary.status = %q, want not failed; summary=%#v", got, operationSummary)
+	}
+	if got := stringFromAny(operationSummary["tool_name"]); got != "update_agent_config" {
+		t.Fatalf("operation_result_summary.tool_name = %q, want update_agent_config; summary=%#v", got, operationSummary)
+	}
+	if group := mapFromOperationContext(operationSummary["operation_group"]); len(group) > 0 {
+		t.Fatalf("operation_result_summary.operation_group = %#v, want stale failed batch group omitted", group)
+	}
+	if got := stringFromAny(operationSummary["agent_id"]); got != "agent-new" {
+		t.Fatalf("operation_result_summary.agent_id = %q, want agent-new; summary=%#v", got, operationSummary)
+	}
+}
+
 func TestOperationPlanBatchDeleteRequiresEvidenceForEveryTarget(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:     "delete the first two visible agents",

@@ -3647,7 +3647,7 @@ func applyOperationPlanInvocationState(metadata map[string]interface{}, invocati
 
 	if last != nil {
 		plan["tool_result"] = operationPlanToolResult(last)
-		operationPlanAttachOperationGroupResult(plan, last)
+		operationPlanSyncLatestOperationGroupResult(plan, last, operationPlanStatusFromInvocation(last))
 	}
 	if len(steps) > 0 {
 		if operationPlanApplyMissingAgentSkillCandidateNoop(plan, steps, stepStatus, invocations) {
@@ -3707,7 +3707,7 @@ func ensureOperationPlanInvocationStep(metadata map[string]interface{}, invocati
 			operationPlanSetStepStatus(steps, stepStatus, "observe", operationPlanStepStatusCompleted)
 		}
 		plan["tool_result"] = operationPlanToolResult(invocation)
-		operationPlanAttachOperationGroupResult(plan, invocation)
+		operationPlanSyncLatestOperationGroupResult(plan, invocation, status)
 		applyOperationPlanProgress(plan, steps, stepStatus, "", "")
 		metadata["operation_plan"] = plan
 		return
@@ -3738,7 +3738,7 @@ func ensureOperationPlanInvocationStep(metadata map[string]interface{}, invocati
 		operationPlanSetStepStatus(steps, stepStatus, "observe", operationPlanStepStatusCompleted)
 	}
 	plan["tool_result"] = operationPlanToolResult(invocation)
-	operationPlanAttachOperationGroupResult(plan, invocation)
+	operationPlanSyncLatestOperationGroupResult(plan, invocation, status)
 	applyOperationPlanProgress(plan, steps, stepStatus, "", "")
 	metadata["operation_plan"] = plan
 }
@@ -4205,6 +4205,8 @@ func operationPlanSetStepFromInvocation(step map[string]interface{}, stepStatus 
 	operationPlanUpdateStepInvocationMarker(step, stepStatus, id, status, invocation)
 	if errText := operationPlanInvocationError(invocation); errText != "" {
 		step["error"] = errText
+	} else if status == operationPlanStepStatusCompleted {
+		delete(step, "error")
 	}
 	if group := operationPlanOperationGroupFromInvocation(invocation); len(group) > 0 {
 		step["operation_group"] = group
@@ -4214,6 +4216,8 @@ func operationPlanSetStepFromInvocation(step map[string]interface{}, stepStatus 
 		if itemSteps := operationPlanItemStepsFromOperationGroup(group); len(itemSteps) > 0 {
 			step["item_steps"] = itemSteps
 		}
+	} else if status == operationPlanStepStatusCompleted && operationPlanInvocationIsAssetMutation(invocation) {
+		operationPlanClearOperationGroupState(step)
 	}
 	return true
 }
@@ -4782,6 +4786,44 @@ func operationPlanAttachOperationGroupResult(plan map[string]interface{}, invoca
 	if status := strings.TrimSpace(stringFromAny(group["status"])); status != "" {
 		plan["operation_group_status"] = status
 	}
+}
+
+func operationPlanSyncLatestOperationGroupResult(plan map[string]interface{}, invocation map[string]interface{}, status string) {
+	if len(plan) == 0 {
+		return
+	}
+	if group := operationPlanOperationGroupFromInvocation(invocation); len(group) > 0 {
+		operationPlanAttachOperationGroupResult(plan, invocation)
+		return
+	}
+	if status != operationPlanStepStatusCompleted || !operationPlanInvocationIsAssetMutation(invocation) {
+		return
+	}
+	operationPlanClearOperationGroupState(plan)
+}
+
+func operationPlanClearOperationGroupState(target map[string]interface{}) {
+	if len(target) == 0 {
+		return
+	}
+	delete(target, "operation_group")
+	delete(target, "target_set")
+	delete(target, "item_steps")
+	delete(target, "operation_group_status")
+}
+
+func operationPlanInvocationIsAssetMutation(invocation map[string]interface{}) bool {
+	if len(invocation) == 0 {
+		return false
+	}
+	skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
+	toolName := strings.TrimSpace(stringFromAny(invocation["tool_name"]))
+	target := operationPlanToolStepAssetTarget(skillID, toolName)
+	effect := strings.ToLower(strings.TrimSpace(stringFromAny(target["effect"])))
+	if effect != "" {
+		return effect != "read"
+	}
+	return skillLoopToolNameLooksAssetMutation(toolName)
 }
 
 func operationPlanOperationGroupFromInvocation(invocation map[string]interface{}) map[string]interface{} {
