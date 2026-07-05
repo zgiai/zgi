@@ -170,6 +170,47 @@ func TestPolicyToolGovernanceRejectsToolArgumentOutsideResolvedAssets(t *testing
 	}
 }
 
+func TestPolicyToolGovernanceIgnoresRuntimeAssetsWithDifferentType(t *testing.T) {
+	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
+	decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{
+		Manifest: toolgovernance.Manifest{
+			ToolID:                  "agent.delete",
+			Domain:                  "agents",
+			Effect:                  toolgovernance.EffectDelete,
+			AssetType:               "agent",
+			RiskLevel:               toolgovernance.RiskLevelHigh,
+			RequiresAssetResolution: true,
+			DefaultApprovalPolicy:   toolgovernance.ApprovalPolicyAlwaysAsk,
+		},
+		SkillID:   "agent-management",
+		ToolName:  "delete_agent",
+		Arguments: map[string]interface{}{"agent_id": "agent-1", "agent_name": "Novel Agent"},
+		ExecutionContext: ExecutionContext{
+			ConversationID: "conversation-1",
+			RuntimeParameters: map[string]interface{}{
+				"tool_governance": map[string]interface{}{
+					"permission_tier": "basic",
+					"assets": []map[string]interface{}{
+						{"id": "file-1", "type": "file", "name": "first.txt", "workspace_id": "workspace-1"},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DecideSkillTool() error = %v", err)
+	}
+	if decision.Status != toolgovernance.DecisionStatusNeedsApproval {
+		t.Fatalf("decision status = %s, want needs_approval: %#v", decision.Status, decision)
+	}
+	if len(decision.ExpectedAssets) != 0 {
+		t.Fatalf("expected assets = %#v, want runtime file assets ignored for agent tool", decision.ExpectedAssets)
+	}
+	if len(decision.Assets) != 1 || decision.Assets[0].ID != "agent-1" || decision.Assets[0].Name != "Novel Agent" {
+		t.Fatalf("assets = %#v, want agent-1/Novel Agent from tool arguments", decision.Assets)
+	}
+}
+
 func TestPolicyToolGovernanceFileGeneratorTemporaryArtifactsDoNotNeedApproval(t *testing.T) {
 	gateway := NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy())
 	decision, err := gateway.DecideSkillTool(context.Background(), ToolGovernanceRequest{

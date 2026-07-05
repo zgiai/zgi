@@ -146,7 +146,28 @@ func governanceExpectedAssets(params map[string]interface{}, governance map[stri
 	if !manifest.RequiresAssetResolution || strings.TrimSpace(manifest.AssetType) == "" {
 		return nil
 	}
-	return assetRefsFromAny(firstRuntimeValue(params, governance, governanceAssetsKey, "assets"))
+	return filterGovernanceAssetsByType(
+		assetRefsFromAny(firstRuntimeValue(params, governance, governanceAssetsKey, "assets")),
+		manifest.AssetType,
+	)
+}
+
+func filterGovernanceAssetsByType(assets []toolgovernance.AssetRef, assetType string) []toolgovernance.AssetRef {
+	assetType = strings.TrimSpace(assetType)
+	if len(assets) == 0 || assetType == "" {
+		return assets
+	}
+	filtered := make([]toolgovernance.AssetRef, 0, len(assets))
+	for _, asset := range assets {
+		if typ := strings.TrimSpace(asset.Type); typ != "" && !strings.EqualFold(typ, assetType) {
+			continue
+		}
+		filtered = append(filtered, asset)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
 }
 
 func enrichArgumentAssetRefs(argumentAssets []toolgovernance.AssetRef, runtimeAssets []toolgovernance.AssetRef) []toolgovernance.AssetRef {

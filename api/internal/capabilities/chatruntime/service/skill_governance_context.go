@@ -14,7 +14,6 @@ type toolGovernanceRuntimeProfile struct {
 	PermissionTier string
 	CallerType     string
 	RuntimeSurface string
-	Assets         []map[string]interface{}
 	SessionGrants  []map[string]interface{}
 }
 
@@ -41,13 +40,6 @@ func applySkillToolGovernanceRuntimeParameters(params map[string]interface{}, pr
 	if profile.RuntimeSurface != "" {
 		governance["runtime_surface"] = profile.RuntimeSurface
 	}
-	if _, exists := governance["assets"]; !exists {
-		if _, flatAssetsExist := params["tool_governance_assets"]; !flatAssetsExist {
-			if len(profile.Assets) > 0 {
-				governance["assets"] = profile.Assets
-			}
-		}
-	}
 	if _, exists := governance["session_grants"]; !exists {
 		if _, flatGrantsExist := params["tool_governance_session_grants"]; !flatGrantsExist {
 			if len(profile.SessionGrants) > 0 {
@@ -62,7 +54,6 @@ func applySkillToolGovernanceRuntimeParameters(params map[string]interface{}, pr
 func buildToolGovernanceRuntimeProfile(params map[string]interface{}, prepared *PreparedChat) toolGovernanceRuntimeProfile {
 	profile := toolGovernanceRuntimeProfile{
 		PermissionTier: skillToolGovernancePermissionTierFromPrepared(params, prepared),
-		Assets:         skillToolGovernanceAssetsFromPrepared(prepared),
 		SessionGrants:  skillToolGovernanceSessionGrantsFromPrepared(prepared),
 	}
 	if profile.PermissionTier == "" {
@@ -128,26 +119,6 @@ func normalizeSkillToolGovernancePermissionTier(value interface{}) string {
 	return string(tier)
 }
 
-func skillToolGovernanceAssetsFromPrepared(prepared *PreparedChat) []map[string]interface{} {
-	if prepared == nil || prepared.parts == nil {
-		return nil
-	}
-	refGroups := make([][]PlannerResourceRef, 0, 2)
-	if refs := plannerResourceRefsFromConsoleFilesQuery(prepared.parts); len(refs) > 0 {
-		refGroups = append(refGroups, refs)
-	}
-	refGroups = append(refGroups, []PlannerResourceRef{{Type: resourceTypeFile}})
-
-	for _, refs := range refGroups {
-		result := resolveChatResourceRefs(prepared.parts, refs)
-		if !allResourceRefsResolved(result.Results) || len(result.Resources) == 0 {
-			continue
-		}
-		return toolGovernanceAssetMapsFromResources(result.Resources)
-	}
-	return nil
-}
-
 func skillToolGovernanceSessionGrantsFromPrepared(prepared *PreparedChat) []map[string]interface{} {
 	if prepared == nil || prepared.Conversation == nil {
 		return nil
@@ -196,49 +167,4 @@ func isLegacyFileReaderDeleteGrant(grant map[string]interface{}) bool {
 	}
 	effect := strings.TrimSpace(stringFromAny(grant["effect"]))
 	return effect == "" || effect == string(toolgovernance.EffectDelete)
-}
-
-func toolGovernanceAssetMapsFromResources(resources []ResourceRef) []map[string]interface{} {
-	if len(resources) == 0 {
-		return nil
-	}
-	seen := map[string]struct{}{}
-	assets := make([]map[string]interface{}, 0, len(resources))
-	for _, resource := range resources {
-		id := strings.TrimSpace(resource.ID)
-		name := strings.TrimSpace(resource.Name)
-		if id == "" && name == "" {
-			continue
-		}
-		resourceType := strings.TrimSpace(resource.Type)
-		if resourceType == "" {
-			resourceType = resourceTypeFile
-		}
-		key := resourceType + ":" + id + ":" + name
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-
-		asset := map[string]interface{}{
-			"type": resourceType,
-		}
-		if id != "" {
-			asset["id"] = id
-		}
-		if name != "" {
-			asset["name"] = name
-		}
-		if source := strings.TrimSpace(resource.Source); source != "" {
-			asset["source"] = source
-		}
-		if metadata := copyStringAnyMap(resource.Metadata); len(metadata) > 0 {
-			if workspaceID := strings.TrimSpace(stringMetadataValue(firstMapValue(metadata, "workspace_id", "workspaceId"))); workspaceID != "" {
-				asset["workspace_id"] = workspaceID
-			}
-			asset["metadata"] = metadata
-		}
-		assets = append(assets, asset)
-	}
-	return assets
 }

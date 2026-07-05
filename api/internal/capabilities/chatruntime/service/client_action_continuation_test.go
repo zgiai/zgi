@@ -137,6 +137,161 @@ func TestClientActionContinuationMessageFramesToolResultAsCurrentTurnEvidence(t 
 	}
 }
 
+func TestClientActionContinuationMessageIncludesOperationEvidenceLedger(t *testing.T) {
+	readStepID := operationPlanToolStepID(skills.SkillFileReader, "read_file")
+	createStepID := operationPlanToolStepID(skills.SkillAgentManagement, "create_agent")
+	message := &runtimemodel.Message{
+		Query: "\u5230\u6587\u4ef6\u7ba1\u7406\u8bfb\u53d6\u7b2c\u4e00\u4e2a\u6587\u4ef6\uff0c\u518d\u5230\u667a\u80fd\u4f53\u9875\u521b\u5efa\u540c\u540d\u667a\u80fd\u4f53",
+		Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status": operationPlanStatusRunning,
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        readStepID,
+						"status":    operationPlanStepStatusCompleted,
+						"skill_id":  skills.SkillFileReader,
+						"tool_name": "read_file",
+					},
+					map[string]interface{}{
+						"id":        createStepID,
+						"status":    operationPlanStepStatusPending,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "create_agent",
+					},
+				},
+				"step_status": map[string]interface{}{
+					readStepID:   operationPlanStepStatusCompleted,
+					createStepID: operationPlanStepStatusPending,
+				},
+				operationPlanEvidenceLedgerKey: []interface{}{
+					map[string]interface{}{
+						"keys":      []interface{}{"file:read"},
+						"skill_id":  skills.SkillFileReader,
+						"tool_name": "read_file",
+						"kind":      "tool_call",
+						"status":    operationPlanStepStatusCompleted,
+						"result_facts": map[string]interface{}{
+							"file_name":             "\u65b0\u5efa \u6587\u672c\u6587\u6863.txt",
+							"content_status":        "extracted",
+							"content_value_preview": "\u6d4b\u8bd5\u4ee3\u7801111",
+							"content_value_source":  "read_file.content",
+						},
+					},
+				},
+			},
+		},
+	}
+	event := map[string]interface{}{
+		"action_id":   "route_navigation:agents",
+		"action_type": "route_navigation",
+		"status":      clientActionStatusWaiting,
+		"skill_id":    skills.SkillConsoleNavigator,
+		"tool_name":   "navigate",
+	}
+
+	msg := clientActionContinuationMessage(message, event, runtimedto.ClientActionResultRequest{
+		Status: clientActionStatusSucceeded,
+		Result: map[string]interface{}{
+			"event_type":  "route_loaded",
+			"loaded_href": "/console/agents",
+		},
+	})
+	content := strings.TrimSpace(fmt.Sprint(msg.Content))
+	for _, want := range []string{
+		"Current operation plan continuation state JSON",
+		"evidence_ledger",
+		"content_value_preview",
+		"\u6d4b\u8bd5\u4ee3\u7801111",
+		"placeholder words such as file content",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("continuation message missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestClientActionContinuationMessageIncludesTurnState(t *testing.T) {
+	message := &runtimemodel.Message{
+		Query: "create an agent from the file theme",
+		Metadata: map[string]interface{}{
+			"turn_state": map[string]interface{}{
+				"items": []interface{}{
+					map[string]interface{}{
+						"kind":       "working_fact",
+						"visibility": "model_only",
+						"key":        "agent_theme",
+						"value":      "water fee confirmation",
+						"source":     "file-reader/read_file",
+					},
+				},
+			},
+		},
+	}
+	msg := clientActionContinuationMessage(message, map[string]interface{}{
+		"action_id":   "route_navigation:agents",
+		"action_type": "route_navigation",
+		"status":      clientActionStatusWaiting,
+	}, runtimedto.ClientActionResultRequest{
+		Status: clientActionStatusSucceeded,
+		Result: map[string]interface{}{"event_type": "route_loaded", "loaded_href": "/console/agents"},
+	})
+	content := strings.TrimSpace(fmt.Sprint(msg.Content))
+	for _, want := range []string{
+		"Current turn structured state JSON",
+		"agent_theme",
+		"water fee confirmation",
+		"authoritative same-turn memory",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("continuation message missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestClientActionContinuationFastPathSkipsRouteNavigationContinuation(t *testing.T) {
+	routeAction := map[string]interface{}{
+		"kind":        "client_action",
+		"action_id":   "route_navigation:agents",
+		"action_type": "route_navigation",
+		"status":      clientActionStatusSucceeded,
+		"skill_id":    skills.SkillConsoleNavigator,
+		"tool_name":   "navigate",
+		"href":        "/console/agents",
+		"label":       "智能体",
+		"result": map[string]interface{}{
+			"event_type":  "route_loaded",
+			"loaded_href": "/console/agents",
+			"label":       "智能体",
+		},
+	}
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Query: "到智能体页面，删除第一个智能体，然后创建一个新的智能体",
+			Metadata: map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"status": "running",
+					"steps": []interface{}{
+						map[string]interface{}{
+							"id":     "route:agents",
+							"status": operationPlanStepStatusCompleted,
+							"action": "navigate",
+						},
+					},
+				},
+				"client_action_continuation": routeAction,
+				"client_actions":             []interface{}{routeAction},
+			},
+		},
+		parts: &chatRequestParts{
+			Query: "到智能体页面，删除第一个智能体，然后创建一个新的智能体",
+		},
+	}
+
+	if answer, ok := clientActionContinuationFastPathAnswer(prepared); ok {
+		t.Fatalf("clientActionContinuationFastPathAnswer() = %q, true; want false so route continuation resumes the skill loop", answer)
+	}
+}
+
 func TestClientActionContinuationFastPathWaitsForAllRequestedAgentCreates(t *testing.T) {
 	prepared := &PreparedChat{
 		Message: &runtimemodel.Message{

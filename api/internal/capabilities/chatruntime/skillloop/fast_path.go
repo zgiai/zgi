@@ -580,6 +580,9 @@ func fastPathPlanHasPendingAgentMutationStep(evidence map[string]interface{}) bo
 	if len(plan) == 0 {
 		return false
 	}
+	if operationPlanModelDecidesTools(plan) {
+		return false
+	}
 	steps, _ := fastPathPendingExecutablePlanSteps(plan, 20)
 	for _, step := range steps {
 		if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skills.SkillAgentManagement) {
@@ -600,6 +603,9 @@ func fastPathPlanHasPendingAgentReadStep(evidence map[string]interface{}, toolNa
 	}
 	plan := evidenceMapFromAny(evidence["operation_plan"])
 	if len(plan) == 0 {
+		return false
+	}
+	if operationPlanModelDecidesTools(plan) {
 		return false
 	}
 	steps, _ := fastPathPendingExecutablePlanSteps(plan, 20)
@@ -2138,6 +2144,9 @@ func fastPathPlanHasPendingPostUpdateAgentRead(plan map[string]interface{}) bool
 	if len(plan) == 0 {
 		return false
 	}
+	if operationPlanModelDecidesTools(plan) {
+		return false
+	}
 	stepStatus := evidenceMapFromAny(plan["step_status"])
 	for _, raw := range evidenceSliceFromAny(plan["steps"]) {
 		step := evidenceMapFromAny(raw)
@@ -2418,6 +2427,9 @@ func fastPathPendingExecutablePlanActions(plan map[string]interface{}, limit int
 }
 
 func fastPathPendingExecutablePlanSteps(plan map[string]interface{}, limit int) ([]map[string]interface{}, bool) {
+	if operationPlanModelDecidesTools(plan) {
+		return nil, true
+	}
 	steps := mapSliceFromAny(plan["steps"])
 	structuredSteps, hasStructuredSteps := fastPathPendingStructuredPlanSteps(plan, limit)
 	hasPlanSteps := len(steps) > 0 || hasStructuredSteps

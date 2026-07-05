@@ -85,8 +85,27 @@ func TestReadFileToolReturnsAccessibleContent(t *testing.T) {
 		t.Fatalf("content_status = %#v, want extracted", got)
 	}
 	if instruction := stringValue(payload, "instruction"); !strings.Contains(instruction, "Use the returned content field") ||
-		!strings.Contains(instruction, "truncated") {
+		!strings.Contains(instruction, "truncated") ||
+		!strings.Contains(instruction, "submit_turn_state") {
 		t.Fatalf("instruction = %q, want extracted truncated guidance", instruction)
+	}
+	if got := payload["content_lifetime"]; got != "current_tool_result_only" {
+		t.Fatalf("content_lifetime = %#v, want current_tool_result_only", got)
+	}
+	if got := payload["content_redacted_in_history"]; got != true {
+		t.Fatalf("content_redacted_in_history = %#v, want true", got)
+	}
+	if got := payload["handoff_recommended"]; got != true {
+		t.Fatalf("handoff_recommended = %#v, want true", got)
+	}
+	if got := payload["recommended_next_tool"]; got != "submit_turn_state" {
+		t.Fatalf("recommended_next_tool = %#v, want submit_turn_state", got)
+	}
+	if handoffInstruction := stringValue(payload, "handoff_instruction"); !strings.Contains(handoffInstruction, "source=file-reader/read_file") {
+		t.Fatalf("handoff_instruction = %q, want file-reader/read_file guidance", handoffInstruction)
+	}
+	if when, ok := payload["handoff_required_when"].([]string); !ok || len(when) == 0 {
+		t.Fatalf("handoff_required_when = %#v, want non-empty string slice", payload["handoff_required_when"])
 	}
 	file, ok := payload["file"].(map[string]interface{})
 	if !ok {

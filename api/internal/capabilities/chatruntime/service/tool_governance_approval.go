@@ -398,7 +398,10 @@ func resolvedToolGovernanceDecisionEvent(event map[string]interface{}, resolutio
 	}
 	if approvalStatus != "" {
 		governance["approval_status"] = approvalStatus
+		governance["status"] = approvalStatus
 		governance["requires_approval"] = false
+		updated["status"] = approvalStatus
+		updated["decision"] = approvalStatus
 		updated["requires_approval"] = false
 	}
 	approvalResult := toolGovernanceApprovalResultPayload(updated, governance, resolution)
@@ -526,6 +529,7 @@ func mergeToolGovernanceDecisionMetadata(source map[string]interface{}, event ma
 	if metadata == nil {
 		metadata = map[string]interface{}{}
 	}
+	event = normalizedResolvedToolGovernanceDecisionEvent(event)
 	correlationID := toolGovernanceCorrelationID(event)
 	if correlationID == "" {
 		return metadata
@@ -577,6 +581,35 @@ func mergeToolGovernanceDecisionMetadata(source map[string]interface{}, event ma
 	applySkillInvocationSummary(metadata, invocations)
 	applyOperationPlanInvocationState(metadata, invocations)
 	return metadata
+}
+
+func normalizedResolvedToolGovernanceDecisionEvent(event map[string]interface{}) map[string]interface{} {
+	approvalStatus := strings.TrimSpace(stringFromAny(event["approval_status"]))
+	if approvalStatus == "" {
+		if governance := governanceMapFromAny(event["governance"]); len(governance) > 0 {
+			approvalStatus = strings.TrimSpace(stringFromAny(governance["approval_status"]))
+		}
+	}
+	if approvalStatus == "" {
+		return event
+	}
+	updated := copyStringAnyMap(event)
+	if updated == nil {
+		updated = map[string]interface{}{}
+	}
+	updated["approval_status"] = approvalStatus
+	updated["status"] = approvalStatus
+	updated["decision"] = approvalStatus
+	updated["requires_approval"] = false
+	governance := governanceMapFromAny(updated["governance"])
+	if governance == nil {
+		governance = map[string]interface{}{}
+	}
+	governance["approval_status"] = approvalStatus
+	governance["status"] = approvalStatus
+	governance["requires_approval"] = false
+	updated["governance"] = governance
+	return updated
 }
 
 func governedToolCallMatchesDecision(invocation map[string]interface{}, event map[string]interface{}, correlationID string) bool {
@@ -642,6 +675,35 @@ func resolveToolGovernanceContinuationMetadata(metadata map[string]interface{}, 
 	}
 	metadata["tool_governance_continuation"] = compactSkillInvocation(continuation)
 	return metadata
+}
+
+func completeToolGovernanceContinuationMetadata(metadata map[string]interface{}) map[string]interface{} {
+	if len(metadata) == 0 {
+		return metadata
+	}
+	continuation := governanceMapFromAny(metadata["tool_governance_continuation"])
+	if len(continuation) == 0 {
+		return metadata
+	}
+	status := strings.TrimSpace(stringFromAny(continuation["status"]))
+	approvalStatus := strings.TrimSpace(stringFromAny(continuation["approval_status"]))
+	if status == "" || status == "waiting_approval" || status == "streaming" || status == "completed" {
+		return metadata
+	}
+	if approvalStatus == "" && (status == toolGovernanceApprovalStatusApproved || status == toolGovernanceApprovalStatusRejected) {
+		approvalStatus = status
+	}
+	updated := copyStringAnyMap(metadata)
+	continuation = copyStringAnyMap(continuation)
+	continuation["status"] = "completed"
+	if approvalStatus != "" {
+		continuation["approval_status"] = approvalStatus
+	}
+	if strings.TrimSpace(stringFromAny(continuation["completed_at"])) == "" {
+		continuation["completed_at"] = time.Now().UTC().Format(time.RFC3339)
+	}
+	updated["tool_governance_continuation"] = compactSkillInvocation(continuation)
+	return updated
 }
 
 func toolGovernanceSessionGrantFromEvent(event map[string]interface{}, conversationID string, scope Scope, now time.Time) map[string]interface{} {

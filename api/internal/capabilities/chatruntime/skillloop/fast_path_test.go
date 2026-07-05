@@ -1093,6 +1093,61 @@ func TestFastPathFinalAnswerWithEvidenceBlocksAgentConfigUpdateWhenConfigReadSte
 	}
 }
 
+func TestFastPathFinalAnswerWithEvidenceDoesNotTreatModelDecidesPlanStepAsHardBlock(t *testing.T) {
+	answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":     "completed",
+			"agent_name": "Support Agent",
+			"updated_fields": []interface{}{
+				"enabled_skill_ids",
+			},
+			"binding_changes": []interface{}{
+				map[string]interface{}{
+					"field":          "enabled_skill_ids",
+					"binding_kind":   "agent_skill",
+					"change_action":  "bind",
+					"resource_count": 1,
+					"resource_names": []interface{}{"File Generator"},
+				},
+			},
+		},
+	}, map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":           "running",
+			"tool_choice_mode": operationPlanToolChoiceModelDecides,
+			"planning_mode":    "phase_only_model_decides",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/get_agent_config",
+					"status":    "pending",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "get_agent_config",
+				},
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/get_agent_config":    "pending",
+				"tool:agent-management/update_agent_config": "completed",
+			},
+		},
+	})
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = false, want model-decides plan hints not to hard-block an evidence-grounded answer")
+	}
+	if !strings.Contains(answer, "Support Agent") {
+		t.Fatalf("answer = %q, want Agent name", answer)
+	}
+}
+
 func TestFastPathFinalAnswerWithEvidenceBlocksAgentIdentityUpdateWhenConfigReadStepPending(t *testing.T) {
 	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
 		Kind:     "tool_call",

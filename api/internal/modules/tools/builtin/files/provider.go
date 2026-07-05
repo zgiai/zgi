@@ -203,7 +203,7 @@ func newReadFileTool(fileService FileService, contentExtractor ContentExtraction
 			Human: tools.I18nText{
 				"en_US": "Read extracted text from a file the current user can access.",
 			},
-			LLM: "Read extracted text content from one uploaded file the current user can access. Pass a resolved file_id and inspect content_status, content_truncated, and content_error before answering.",
+			LLM: "Read extracted text content from one uploaded file the current user can access. Pass a resolved file_id and inspect content_status, content_truncated, and content_error before answering. The returned content field is not durable across history, approvals, navigation, refresh, or later tool phases; if later steps depend on the file body or a derived summary, first record a concise reusable fact with submit_turn_state.",
 		},
 		Parameters: []tools.ToolParameter{
 			{
@@ -1191,6 +1191,7 @@ func applyContent(payload map[string]interface{}, content readFileContent, maxCh
 		payload["from_cache"] = false
 		payload["content_error"] = content.Error.Error()
 		payload["instruction"] = "The file content could not be read. Explain this error to the user and do not claim to have inspected the file body."
+		applyReadFileHandoffMetadata(payload, "error")
 		return
 	}
 	text := strings.TrimSpace(content.Text)
@@ -1205,20 +1206,36 @@ func applyContent(payload map[string]interface{}, content readFileContent, maxCh
 	payload["content_truncated"] = truncated
 	payload["from_cache"] = content.FromCache
 	payload["instruction"] = readFileInstruction(status, truncated)
+	applyReadFileHandoffMetadata(payload, status)
 }
 
 func readFileInstruction(status string, truncated bool) string {
 	switch status {
 	case "extracted":
 		if truncated {
-			return "Use the returned content field as the file body preview to answer the user's request. Mention that the content was truncated if the omitted tail could affect the answer, and ask for a narrower question or retry with a higher max_chars when needed."
+			return "Use the returned content field as the file body preview to answer the user's request. Mention that the content was truncated if the omitted tail could affect the answer, and ask for a narrower question or retry with a higher max_chars when needed. If later steps depend on this content or a derived summary after navigation, approval, refresh, or another tool phase, call submit_turn_state first with a concise summary or exact reusable fact."
 		}
-		return "Use the returned content field as the file body to answer the user's request. Do not ask the user to select the file again or say the file cannot be read."
+		return "Use the returned content field as the file body to answer the user's request. Do not ask the user to select the file again or say the file cannot be read. If later steps depend on this content or a derived summary after navigation, approval, refresh, or another tool phase, call submit_turn_state first with a concise summary or exact reusable fact."
 	case "empty":
 		return "The file was accessible but no extractable text content was found. Tell the user the file has no extractable text content."
 	default:
 		return "Inspect content_status, content, and content_error before answering."
 	}
+}
+
+func applyReadFileHandoffMetadata(payload map[string]interface{}, status string) {
+	payload["content_lifetime"] = "current_tool_result_only"
+	payload["content_redacted_in_history"] = true
+	payload["handoff_recommended"] = status == "extracted"
+	if status != "extracted" {
+		return
+	}
+	payload["recommended_next_tool"] = "submit_turn_state"
+	payload["handoff_required_when"] = []string{
+		"later steps need the file content, summary, theme, topic, quote, title, prompt, config, generated asset, or final answer",
+		"the task will cross navigation, approval, refresh, user confirmation, or another tool/skill phase before using the content",
+	}
+	payload["handoff_instruction"] = "Before leaving this file-reading phase, record the concise reusable summary or exact short fact with submit_turn_state using source=file-reader/read_file, kind=working_fact, and visibility=model_only. Do not rely on the raw content being available after continuation boundaries."
 }
 
 func uploadFileWorkspaceID(file *dto.UploadFile) string {

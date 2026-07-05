@@ -119,6 +119,63 @@ func TestProcessTimelineRecorderSkipsDuplicateSuccessfulSkillLoadEvents(t *testi
 	}
 }
 
+func TestProcessTimelineRecorderPersistsTurnStateTraceWithoutVisibleInvocation(t *testing.T) {
+	message := &runtimemodel.Message{
+		ID:       uuid.New(),
+		Metadata: map[string]interface{}{},
+	}
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      message,
+	}
+	recorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, nil)
+
+	recorder.RecordTrace([]skills.SkillTrace{{
+		Kind:   "turn_state",
+		Status: "success",
+		Result: map[string]interface{}{
+			"items": []interface{}{
+				map[string]interface{}{
+					"kind":       "working_fact",
+					"visibility": "model_only",
+					"key":        "source_file_theme",
+					"value":      "snow character",
+					"source":     "file-reader/read_file",
+				},
+			},
+		},
+	}}, skills.SkillTrace{
+		Kind:   "turn_state",
+		Status: "success",
+		Result: map[string]interface{}{
+			"items": []interface{}{
+				map[string]interface{}{
+					"kind":       "working_fact",
+					"visibility": "model_only",
+					"key":        "source_file_theme",
+					"value":      "snow character",
+					"source":     "file-reader/read_file",
+				},
+			},
+		},
+	})
+
+	state := mapFromOperationContext(message.Metadata["turn_state"])
+	items := mapSliceFromAny(state["items"])
+	if len(items) != 1 {
+		t.Fatalf("turn_state items = %#v, want one item", items)
+	}
+	if got := stringFromAny(items[0]["key"]); got != "source_file_theme" {
+		t.Fatalf("turn_state key = %q, want source_file_theme; items=%#v", got, items)
+	}
+	if got := stringFromAny(items[0]["value"]); got != "snow character" {
+		t.Fatalf("turn_state value = %q, want snow character; items=%#v", got, items)
+	}
+	if invocations := skillInvocationsFromMetadata(message.Metadata["skill_invocations"]); len(invocations) != 0 {
+		t.Fatalf("skill_invocations = %#v, want turn_state hidden from visible timeline", invocations)
+	}
+}
+
 func TestUpsertSkillInvocationKeepsFirstSuccessfulSkillLoad(t *testing.T) {
 	first := map[string]interface{}{
 		"kind":          "skill_load",

@@ -12,7 +12,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
-func TestSkillExecutionContextAddsSelectedFileGovernanceAsset(t *testing.T) {
+func TestSkillExecutionContextDoesNotInferSelectedFileGovernanceAsset(t *testing.T) {
 	prepared := preparedGovernanceTestChat("read the selected file", []governanceTestFile{
 		{ID: "file-1", Name: "one.pdf", Extension: "pdf"},
 		{ID: "file-2", Name: "selected.xlsx", Extension: "xlsx", Selected: true},
@@ -23,13 +23,10 @@ func TestSkillExecutionContextAddsSelectedFileGovernanceAsset(t *testing.T) {
 	if governance["permission_tier"] != "basic" {
 		t.Fatalf("permission_tier = %#v, want basic", governance["permission_tier"])
 	}
-	assets := governanceAssetsFromTest(t, governance)
-	if len(assets) != 1 || assets[0]["id"] != "file-2" || assets[0]["name"] != "selected.xlsx" {
-		t.Fatalf("governance assets = %#v, want selected file-2", assets)
-	}
+	assertNoGovernanceAssets(t, governance)
 }
 
-func TestSkillExecutionContextAddsOrdinalFileGovernanceAsset(t *testing.T) {
+func TestSkillExecutionContextDoesNotInferOrdinalFileGovernanceAsset(t *testing.T) {
 	prepared := preparedGovernanceTestChat("translate the fourth file", []governanceTestFile{
 		{ID: "file-1", Name: "one.xlsx", Extension: "xlsx"},
 		{ID: "file-2", Name: "two.xlsx", Extension: "xlsx"},
@@ -38,10 +35,7 @@ func TestSkillExecutionContextAddsOrdinalFileGovernanceAsset(t *testing.T) {
 	})
 
 	governance := governanceRuntimeParamsFromTest(t, (&service{}).skillExecutionContext(prepared).RuntimeParameters)
-	assets := governanceAssetsFromTest(t, governance)
-	if len(assets) != 1 || assets[0]["id"] != "file-4" || assets[0]["name"] != "four.pdf" {
-		t.Fatalf("governance assets = %#v, want fourth file", assets)
-	}
+	assertNoGovernanceAssets(t, governance)
 }
 
 func TestSkillExecutionContextDoesNotAddAmbiguousFileGovernanceAssets(t *testing.T) {
@@ -187,11 +181,9 @@ func governanceRuntimeParamsFromTest(t *testing.T, params map[string]interface{}
 	return governance
 }
 
-func governanceAssetsFromTest(t *testing.T, governance map[string]interface{}) []map[string]interface{} {
+func assertNoGovernanceAssets(t *testing.T, governance map[string]interface{}) {
 	t.Helper()
-	assets, ok := governance["assets"].([]map[string]interface{})
-	if !ok {
-		t.Fatalf("assets = %#v, want []map[string]interface{}", governance["assets"])
+	if _, exists := governance["assets"]; exists {
+		t.Fatalf("governance assets = %#v, want omitted", governance["assets"])
 	}
-	return assets
 }

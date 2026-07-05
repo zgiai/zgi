@@ -494,6 +494,8 @@ func (s *service) deliverStreamEvent(ctx context.Context, messageID uuid.UUID, e
 }
 
 func (s *service) completePreparedChat(ctx context.Context, prepared *PreparedChat, answer string, metadata map[string]interface{}) error {
+	metadata = completeToolGovernanceContinuationMetadata(metadata)
+	prepared.Message.Metadata = metadata
 	if err := s.repos.Message.UpdateCompleted(ctx, prepared.Message.ID, answer, metadata); err != nil {
 		return err
 	}

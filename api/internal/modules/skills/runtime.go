@@ -29,6 +29,7 @@ const (
 	MetaToolReadSkillReference = "read_skill_reference"
 	MetaToolCallSkillTool      = "call_skill_tool"
 	MetaToolIntermediateAnswer = "submit_intermediate_answer"
+	MetaToolTurnState          = "submit_turn_state"
 	MetaToolRequestUserInput   = "request_user_input"
 )
 
@@ -737,6 +738,7 @@ func MetaToolsForSkillState(resolved *ResolvedSkills, loadedSkillIDs map[string]
 	tools := []llmadapter.Tool{
 		loadSkillMetaTool(resolvedSkillIDs(resolved)),
 		requestUserInputMetaTool(),
+		turnStateMetaTool(),
 		intermediateAnswerMetaTool(),
 	}
 	if referenceSkillIDs, referencePaths := loadedReferenceOptions(resolved, loaded); len(referenceSkillIDs) > 0 && len(referencePaths) > 0 {
@@ -753,6 +755,7 @@ func metaTools(includeToolCaller bool) []llmadapter.Tool {
 		loadSkillMetaTool(nil),
 		readReferenceMetaTool(nil, nil),
 		requestUserInputMetaTool(),
+		turnStateMetaTool(),
 		intermediateAnswerMetaTool(),
 	}
 	if includeToolCaller {
@@ -854,6 +857,84 @@ func requestUserInputMetaTool() llmadapter.Tool {
 					},
 				},
 				"required": []string{"message", "questions"},
+			},
+		},
+	}
+}
+
+func turnStateMetaTool() llmadapter.Tool {
+	return llmadapter.Tool{
+		Type: "function",
+		Function: llmadapter.Function{
+			Name:        MetaToolTurnState,
+			Description: "Record structured state for this same AIChat turn. Use this as a state handoff before approvals, page navigation, refresh, or another phase when implicit working memory may become unreliable. Use working_fact for model-only derived facts that later steps must reuse exactly, such as a file theme, target agent name, chosen model, selected asset, decision, assumption, or verification result. Use user_deliverable only when content should also be visible to the user; submit_intermediate_answer remains a compatibility shortcut for that case.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"items": map[string]interface{}{
+						"type":        "array",
+						"description": "One to eight structured turn-state items.",
+						"minItems":    1,
+						"maxItems":    8,
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"kind": map[string]interface{}{
+									"type":        "string",
+									"description": "The item kind.",
+									"enum":        []string{"working_fact", "user_deliverable", "decision", "assumption", "verification"},
+								},
+								"visibility": map[string]interface{}{
+									"type":        "string",
+									"description": "Use model_only for internal state; use user_visible only for user-facing deliverables.",
+									"enum":        []string{"model_only", "user_visible", "audit"},
+								},
+								"key": map[string]interface{}{
+									"type":        "string",
+									"description": "Stable short key for later reuse, for example agent_theme or selected_file_content.",
+									"maxLength":   120,
+								},
+								"value": map[string]interface{}{
+									"type":        "string",
+									"description": "The concise fact, decision, assumption, or verification result. Keep exact user-derived values exact.",
+									"maxLength":   4000,
+								},
+								"title": map[string]interface{}{
+									"type":        "string",
+									"description": "Short user-facing title when kind is user_deliverable.",
+									"maxLength":   120,
+								},
+								"content": map[string]interface{}{
+									"type":        "string",
+									"description": "Markdown content when kind is user_deliverable.",
+									"maxLength":   16000,
+								},
+								"source": map[string]interface{}{
+									"type":        "string",
+									"description": "Optional source, such as file-reader/read_file or page_context.",
+									"maxLength":   200,
+								},
+								"used_for": map[string]interface{}{
+									"type":        "array",
+									"description": "Optional later use labels, such as agent.name or agent.prompt.",
+									"maxItems":    8,
+									"items": map[string]interface{}{
+										"type":      "string",
+										"maxLength": 120,
+									},
+								},
+								"confidence": map[string]interface{}{
+									"type":        "number",
+									"description": "Optional confidence from 0 to 1.",
+									"minimum":     0,
+									"maximum":     1,
+								},
+							},
+							"required": []string{"kind"},
+						},
+					},
+				},
+				"required": []string{"items"},
 			},
 		},
 	}

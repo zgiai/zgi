@@ -246,8 +246,8 @@ func TestRunToolGovernanceDecisionStreamRejectsWithoutTools(t *testing.T) {
 		t.Fatalf("session grants = %#v, want none for rejection", grants)
 	}
 	continuation := governanceMapFromAny(message.Metadata["tool_governance_continuation"])
-	if continuation["status"] != "rejected" || continuation["approval_status"] != "rejected" {
-		t.Fatalf("tool_governance_continuation = %#v, want rejected", continuation)
+	if continuation["status"] != "completed" || continuation["approval_status"] != "rejected" {
+		t.Fatalf("tool_governance_continuation = %#v, want completed rejected", continuation)
 	}
 	if continuation["action"] != "reject" || continuation["reason"] != "keep it for audit" {
 		t.Fatalf("tool_governance_continuation = %#v, want rejected action and reason", continuation)
@@ -444,8 +444,8 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 		t.Fatalf("client_action_continuation = %#v, want no asset observation when delete fast path completes", clientAction)
 	}
 	continuation := governanceMapFromAny(message.Metadata["tool_governance_continuation"])
-	if continuation["status"] != "approved" || continuation["approval_status"] != "approved" {
-		t.Fatalf("tool_governance_continuation = %#v, want approved", continuation)
+	if continuation["status"] != "completed" || continuation["approval_status"] != "approved" {
+		t.Fatalf("tool_governance_continuation = %#v, want completed approved", continuation)
 	}
 	assertToolGovernanceApprovedStreamEvents(t, events)
 }

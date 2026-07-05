@@ -964,7 +964,7 @@ func TestSkillRuntimeParametersForPreparedUsesConversationWorkspaceWhenScopeMiss
 	}
 }
 
-func TestSkillRuntimeParametersForPreparedAddsSelectedFileGovernanceAsset(t *testing.T) {
+func TestSkillRuntimeParametersForPreparedDoesNotInferSelectedFileGovernanceAsset(t *testing.T) {
 	prepared := &PreparedChat{
 		Scope:     Scope{OrganizationID: uuid.New()},
 		RunConfig: RunConfig{},
@@ -979,10 +979,7 @@ func TestSkillRuntimeParametersForPreparedAddsSelectedFileGovernanceAsset(t *tes
 	if governance["permission_tier"] != "basic" {
 		t.Fatalf("permission_tier = %#v, want basic", governance["permission_tier"])
 	}
-	assets := governanceAssetsFromTest(t, governance)
-	if len(assets) != 1 || assets[0]["id"] != "file-2" || assets[0]["name"] != "selected.xlsx" {
-		t.Fatalf("governance assets = %#v, want selected file-2", assets)
-	}
+	assertNoGovernanceAssets(t, governance)
 }
 
 func TestSkillRuntimeParametersForPreparedAddsConsoleFilesVisibleFiles(t *testing.T) {
@@ -1112,7 +1109,7 @@ func TestSkillRuntimeParametersForPreparedAddsRecentAgentMutationFromOperationPl
 	}
 }
 
-func TestSkillRuntimeParametersForPreparedAddsOrdinalFileGovernanceAsset(t *testing.T) {
+func TestSkillRuntimeParametersForPreparedDoesNotInferOrdinalFileGovernanceAsset(t *testing.T) {
 	prepared := &PreparedChat{
 		Scope:     Scope{OrganizationID: uuid.New()},
 		RunConfig: RunConfig{},
@@ -1125,13 +1122,10 @@ func TestSkillRuntimeParametersForPreparedAddsOrdinalFileGovernanceAsset(t *test
 	}
 
 	governance := governanceRuntimeParamsFromTest(t, skillRuntimeParametersForPrepared(prepared))
-	assets := governanceAssetsFromTest(t, governance)
-	if len(assets) != 1 || assets[0]["id"] != "file-4" || assets[0]["name"] != "four.pdf" {
-		t.Fatalf("governance assets = %#v, want fourth file", assets)
-	}
+	assertNoGovernanceAssets(t, governance)
 }
 
-func TestSkillRuntimeParametersForPreparedAddsChineseSpreadsheetGovernanceAsset(t *testing.T) {
+func TestSkillRuntimeParametersForPreparedDoesNotInferChineseSpreadsheetGovernanceAsset(t *testing.T) {
 	prepared := &PreparedChat{
 		Scope:     Scope{OrganizationID: uuid.New()},
 		RunConfig: RunConfig{},
@@ -1144,13 +1138,10 @@ func TestSkillRuntimeParametersForPreparedAddsChineseSpreadsheetGovernanceAsset(
 	}
 
 	governance := governanceRuntimeParamsFromTest(t, skillRuntimeParametersForPrepared(prepared))
-	assets := governanceAssetsFromTest(t, governance)
-	if len(assets) != 1 || assets[0]["id"] != "file-4" || assets[0]["name"] != "budget-q2.xlsx" {
-		t.Fatalf("governance assets = %#v, want second spreadsheet file-4", assets)
-	}
+	assertNoGovernanceAssets(t, governance)
 }
 
-func TestSkillRuntimeParametersForPreparedAddsNamedFileGovernanceAsset(t *testing.T) {
+func TestSkillRuntimeParametersForPreparedDoesNotInferNamedFileGovernanceAsset(t *testing.T) {
 	prepared := &PreparedChat{
 		Scope:     Scope{OrganizationID: uuid.New()},
 		RunConfig: RunConfig{},
@@ -1161,10 +1152,7 @@ func TestSkillRuntimeParametersForPreparedAddsNamedFileGovernanceAsset(t *testin
 	}
 
 	governance := governanceRuntimeParamsFromTest(t, skillRuntimeParametersForPrepared(prepared))
-	assets := governanceAssetsFromTest(t, governance)
-	if len(assets) != 1 || assets[0]["id"] != "file-1" || assets[0]["name"] != "codex-smoke-delete-visible-20260615-1538.txt" {
-		t.Fatalf("governance assets = %#v, want named smoke file", assets)
-	}
+	assertNoGovernanceAssets(t, governance)
 }
 
 func TestSkillRuntimeParametersForPreparedDoesNotAddAmbiguousFileGovernanceAssets(t *testing.T) {
@@ -1317,13 +1305,11 @@ func governanceRuntimeParamsFromTest(t *testing.T, params map[string]interface{}
 	return governance
 }
 
-func governanceAssetsFromTest(t *testing.T, governance map[string]interface{}) []map[string]interface{} {
+func assertNoGovernanceAssets(t *testing.T, governance map[string]interface{}) {
 	t.Helper()
-	assets, ok := governance["assets"].([]map[string]interface{})
-	if !ok {
-		t.Fatalf("assets = %#v, want []map[string]interface{}", governance["assets"])
+	if _, exists := governance["assets"]; exists {
+		t.Fatalf("governance assets = %#v, want omitted", governance["assets"])
 	}
-	return assets
 }
 
 func TestAgentWorkflowAvailableBindingsMessageInjectsSafeContext(t *testing.T) {

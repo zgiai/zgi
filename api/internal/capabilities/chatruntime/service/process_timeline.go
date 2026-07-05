@@ -99,6 +99,9 @@ func (r *processTimelineRecorder) RecordTrace(traces []skills.SkillTrace, trace 
 	if r == nil || r.service == nil {
 		return
 	}
+	if nonVisibleTraceCarriesMetadata(trace) {
+		r.service.persistSkillTracesBestEffort(r.persistCtx, r.prepared, []skills.SkillTrace{trace})
+	}
 	if streamBackedTrace(trace) {
 		r.service.logSkillTrace(r.ctx, r.prepared, trace)
 		return
@@ -113,6 +116,15 @@ func (r *processTimelineRecorder) RecordTrace(traces []skills.SkillTrace, trace 
 	}
 	r.persistInvocation(skillInvocationFromTrace(trace, index))
 	r.service.logSkillTrace(r.ctx, r.prepared, trace)
+}
+
+func nonVisibleTraceCarriesMetadata(trace skills.SkillTrace) bool {
+	switch strings.TrimSpace(trace.Kind) {
+	case "turn_state":
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *processTimelineRecorder) RecordInvocationStart(skillID string, toolName string, arguments map[string]interface{}) {

@@ -1,6 +1,7 @@
 package skilltrace
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
@@ -908,13 +909,22 @@ func TestSummarizeToolResultCompactsFileReadPayload(t *testing.T) {
 	result := SummarizeToolResult(skills.SkillFileReader, "read_file", []tools.ToolInvokeMessage{{
 		Type: tools.ToolInvokeMessageTypeJSON,
 		Data: map[string]interface{}{
-			"status":            "completed",
-			"max_chars":         4000,
-			"content_status":    "extracted",
-			"content":           rawContent,
-			"content_chars":     123,
-			"content_truncated": false,
-			"from_cache":        true,
+			"status":                      "completed",
+			"max_chars":                   4000,
+			"content_status":              "extracted",
+			"content":                     rawContent,
+			"content_chars":               123,
+			"content_truncated":           false,
+			"from_cache":                  true,
+			"content_lifetime":            "current_tool_result_only",
+			"content_redacted_in_history": true,
+			"handoff_recommended":         true,
+			"recommended_next_tool":       "submit_turn_state",
+			"handoff_required_when": []string{
+				"later steps need the file content",
+				"the task will cross navigation",
+			},
+			"handoff_instruction": "Before leaving this file-reading phase, record the concise reusable summary with submit_turn_state.",
 			"file": map[string]interface{}{
 				"id":           "file-1",
 				"name":         "invoice.xlsx",
@@ -927,28 +937,93 @@ func TestSummarizeToolResultCompactsFileReadPayload(t *testing.T) {
 		},
 	}})
 	for key, want := range map[string]interface{}{
-		"status":                 "completed",
-		"max_chars":              4000,
-		"content_status":         "extracted",
-		"content_chars":          123,
-		"content_truncated":      false,
-		"from_cache":             true,
-		"content_returned_chars": len([]rune(rawContent)),
-		"content_redacted":       true,
-		"file_id":                "file-1",
-		"file_name":              "invoice.xlsx",
-		"file_workspace_id":      "workspace-1",
-		"file_extension":         "xlsx",
-		"file_size":              42,
+		"status":                      "completed",
+		"max_chars":                   4000,
+		"content_status":              "extracted",
+		"content_chars":               123,
+		"content_truncated":           false,
+		"from_cache":                  true,
+		"content_lifetime":            "current_tool_result_only",
+		"content_redacted_in_history": true,
+		"handoff_recommended":         true,
+		"recommended_next_tool":       "submit_turn_state",
+		"handoff_instruction":         "Before leaving this file-reading phase, record the concise reusable summary with submit_turn_state.",
+		"content_returned_chars":      len([]rune(rawContent)),
+		"content_redacted":            true,
+		"file_id":                     "file-1",
+		"file_name":                   "invoice.xlsx",
+		"file_workspace_id":           "workspace-1",
+		"file_extension":              "xlsx",
+		"file_size":                   42,
 	} {
 		if result[key] != want {
 			t.Fatalf("%s = %#v, want %#v in %#v", key, result[key], want, result)
 		}
 	}
+	if got, want := result["handoff_required_when"], []string{
+		"later steps need the file content",
+		"the task will cross navigation",
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("handoff_required_when = %#v, want %#v in %#v", got, want, result)
+	}
 	for _, key := range []string{"content", "created_by", "file_created_by"} {
 		if _, ok := result[key]; ok {
 			t.Fatalf("%s should not be included in compact trace result: %#v", key, result)
 		}
+	}
+}
+
+func TestSummarizeToolResultKeepsShortPlainTextFileReadValuePreview(t *testing.T) {
+	const rawContent = "\u6d4b\u8bd5\u4ee3\u7801111"
+	result := SummarizeToolResult(skills.SkillFileReader, "read_file", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":            "completed",
+			"content_status":    "extracted",
+			"content":           rawContent,
+			"content_chars":     len([]rune(rawContent)),
+			"content_truncated": false,
+			"file": map[string]interface{}{
+				"id":         "file-1",
+				"name":       "name-source.txt",
+				"extension":  "txt",
+				"mime_type":  "text/plain",
+				"size":       15,
+				"created_by": "account-1",
+			},
+		},
+	}})
+	if result["content_value_preview"] != rawContent {
+		t.Fatalf("content_value_preview = %#v, want %q; result=%#v", result["content_value_preview"], rawContent, result)
+	}
+	if result["content_value_source"] != "read_file.content" {
+		t.Fatalf("content_value_source = %#v, want read_file.content; result=%#v", result["content_value_source"], result)
+	}
+	if _, ok := result["content"]; ok {
+		t.Fatalf("content should not be included in compact trace result: %#v", result)
+	}
+}
+
+func TestSummarizeToolResultDoesNotKeepShortBinaryFileReadValuePreview(t *testing.T) {
+	const rawContent = "cell value"
+	result := SummarizeToolResult(skills.SkillFileReader, "read_file", []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":            "completed",
+			"content_status":    "extracted",
+			"content":           rawContent,
+			"content_chars":     len([]rune(rawContent)),
+			"content_truncated": false,
+			"file": map[string]interface{}{
+				"id":        "file-1",
+				"name":      "sheet.xlsx",
+				"extension": "xlsx",
+				"mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+			},
+		},
+	}})
+	if _, ok := result["content_value_preview"]; ok {
+		t.Fatalf("content_value_preview should not be included for xlsx summary: %#v", result)
 	}
 }
 

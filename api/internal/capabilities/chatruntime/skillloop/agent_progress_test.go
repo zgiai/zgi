@@ -43,6 +43,26 @@ func TestVisibleAgentProgressText(t *testing.T) {
 			want:  "I will check the editable configuration first.",
 		},
 		{
+			name:  "repairs incomplete numbered Chinese progress",
+			input: "\u597d\u7684\uff0c\u5df2\u5b8c\u6210\u4ee5\u4e0b\u6b65\u9aa4\uff1a 1.",
+			want:  "\u6211\u6b63\u5728\u6839\u636e\u5df2\u5b8c\u6210\u7684\u7ed3\u679c\u7ee7\u7eed\u5904\u7406\u3002",
+		},
+		{
+			name:  "repairs incomplete previous progress",
+			input: "\u597d\u7684\uff0c\u4e4b\u524d\u5df2\u5b8c\u6210\uff1a 1.",
+			want:  "\u6211\u6b63\u5728\u6839\u636e\u5df2\u5b8c\u6210\u7684\u7ed3\u679c\u7ee7\u7eed\u5904\u7406\u3002",
+		},
+		{
+			name:  "keeps complete numbered Chinese progress item",
+			input: "\u597d\u7684\uff0c\u4e4b\u524d\u5df2\u5b8c\u6210\uff1a 1. \u6587\u4ef6\u5185\u5bb9\u5df2\u7ecf\u8bfb\u53d6\u8fc7\u4e86\u3002\u73b0\u5728\u7ee7\u7eed\u5904\u7406\u3002",
+			want:  "\u597d\u7684\uff0c\u4e4b\u524d\u5df2\u5b8c\u6210\uff1a 1. \u6587\u4ef6\u5185\u5bb9\u5df2\u7ecf\u8bfb\u53d6\u8fc7\u4e86\u3002",
+		},
+		{
+			name:  "repairs incomplete numbered English progress",
+			input: "Completed the following steps: 1.",
+			want:  "I am continuing from the completed results.",
+		},
+		{
 			name:  "drops internal ids",
 			input: "I found the target ID: 123e4567-e89b-12d3-a456-426614174000.",
 			want:  "",
@@ -108,6 +128,7 @@ func TestAgenticSkillLoopSystemMessageProgressGuidance(t *testing.T) {
 		"If the user writes in Chinese, progress text must be Chinese",
 		"Do not narrate every tool call",
 		"current page evidence",
+		"Progress text must be one complete sentence",
 		"Do not start every task by listing resources or navigating",
 		"Do not announce that you need to navigate",
 		"describe the outcome as executed and verified",

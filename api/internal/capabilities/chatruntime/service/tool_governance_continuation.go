@@ -348,6 +348,7 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 
 	if invocation != nil {
 		ensureOperationPlanInvocationStep(prepared.Message.Metadata, skillInvocationFromTrace(invocation.Trace, 0))
+		prepared.Message.Metadata = preparedOperationEvidenceMetadata(prepared.Message.Metadata)
 		if answer, ok := toolGovernanceFrozenFastPathAnswer(prepared, invocation.Trace); ok {
 			s.emitPreparedEvent(persistCtx, prepared, streamEventMessage, map[string]interface{}{
 				"conversation_id": prepared.Conversation.ID.String(),
@@ -443,6 +444,18 @@ func mergeFrozenContinuationToolTraceMetadata(source map[string]interface{}, tra
 		invocation["runtime_id"] = runtimeID
 	}
 	return mergeSkillInvocationMetadata(metadata, []map[string]interface{}{invocation})
+}
+
+func preparedOperationEvidenceMetadata(source map[string]interface{}) map[string]interface{} {
+	metadata := copyStringAnyMap(source)
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	finalizeOperationPlanForResult(metadata)
+	if summary := operationResultSummaryForPrompt(metadata); len(summary) > 0 {
+		metadata["operation_result_summary"] = summary
+	}
+	return metadata
 }
 
 func latestMatchingToolCallRuntimeID(metadata map[string]interface{}, skillID string, toolName string) string {
@@ -910,6 +923,8 @@ func toolGovernanceFrozenExecutionContinuationMessage(
 		"You are continuing the same AIChat turn after a governed tool call was approved and executed by runtime.",
 		"Do not repeat the same approved tool call with the same arguments.",
 		"Treat the model-visible runtime result as authoritative completed state.",
+		"Use Current turn structured state as authoritative same-turn memory for derived facts and decisions recorded before approval.",
+		"When Current turn structured state or the operation plan already contains the file-derived summary, selected target, model choice, or configuration fact needed for the next step, reuse that recorded evidence directly instead of navigating back or rerunning the earlier read/list tool.",
 		"Continue any remaining user-requested steps using the available skills and current page context.",
 		"All user-visible progress updates and final answers must use the user's language.",
 		"If all requested work is complete, answer in the user's language.",
@@ -923,6 +938,8 @@ func toolGovernanceFrozenExecutionContinuationMessage(
 			"Do not repeat the same approved tool call, the same side-effecting operation, or the same asset target in this turn.",
 			"Continue only independent remaining steps that do not require retrying the failed frozen operation; otherwise report the blocker.",
 			"Treat the model-visible runtime result and failure feedback as authoritative.",
+			"Use Current turn structured state as authoritative same-turn memory for derived facts and decisions recorded before approval.",
+			"When Current turn structured state or the operation plan already contains the file-derived summary, selected target, model choice, or configuration fact needed for the next step, reuse that recorded evidence directly instead of navigating back or rerunning the earlier read/list tool.",
 			"All user-visible progress updates and final answers must use the user's language.",
 			"Explain the failure plainly and decide the next safe step.",
 			"Do not claim the operation succeeded.",
@@ -937,6 +954,14 @@ func toolGovernanceFrozenExecutionContinuationMessage(
 	}
 	if planState := toolGovernanceContinuationPlanStateSummary(message); len(planState) > 0 {
 		contentParts = append(contentParts, "Current operation plan continuation state JSON:\n"+compactJSON(planState))
+	}
+	if turnState := turnStateContinuationSummary(message); len(turnState) > 0 {
+		contentParts = append(contentParts, "Current turn structured state JSON:\n"+compactJSON(turnState))
+	}
+	if message != nil {
+		if summary := mapFromOperationContext(message.Metadata["operation_result_summary"]); len(summary) > 0 {
+			contentParts = append(contentParts, "Authoritative operation result facts JSON:\n"+compactJSON(summary))
+		}
 	}
 	if executionErr != nil {
 		contentParts = append(contentParts, "Runtime failure feedback:\n"+toolGovernanceSafeErrorText(event, invocation, executionErr))
@@ -982,6 +1007,7 @@ func toolGovernanceContinuationPlanStateSummary(message *runtimemodel.Message) m
 		"instructions": []string{
 			"Continue this same turn from the pending steps only.",
 			"Do not repeat completed steps or restate them as uncertain.",
+			"Use evidence_ledger result_facts as authoritative completed tool facts when pending steps depend on earlier tool output.",
 			"If pending_steps is empty, do not call more tools; produce a concise final answer grounded in completed_steps and tool results.",
 		},
 	}
@@ -1004,7 +1030,25 @@ func toolGovernanceContinuationPlanStateSummary(message *runtimemodel.Message) m
 		(len(pending) > 0 || strings.EqualFold(strings.TrimSpace(stringFromAny(verification["status"])), "pass")) {
 		summary["last_completion_verification"] = verification
 	}
+	if ledger := toolGovernanceContinuationEvidenceLedgerSummary(plan); len(ledger) > 0 {
+		summary["evidence_ledger"] = mapsToInterfaceSlice(ledger)
+	}
 	return summary
+}
+
+func toolGovernanceContinuationEvidenceLedgerSummary(plan map[string]interface{}) []map[string]interface{} {
+	if len(plan) == 0 {
+		return nil
+	}
+	if state := mapFromOperationContext(plan["strategy_state"]); len(state) > 0 {
+		if ledger := mapSliceFromAny(state["evidence_ledger"]); len(ledger) > 0 {
+			if len(ledger) > 8 {
+				ledger = ledger[len(ledger)-8:]
+			}
+			return ledger
+		}
+	}
+	return operationPlanCompactEvidenceLedger(plan[operationPlanEvidenceLedgerKey], 8)
 }
 
 func toolGovernanceContinuationPlanStepSummary(step map[string]interface{}, status string) map[string]interface{} {

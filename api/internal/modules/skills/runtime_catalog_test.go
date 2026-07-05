@@ -1170,6 +1170,36 @@ func TestRequestUserInputMetaToolIsAlwaysExposed(t *testing.T) {
 	}
 }
 
+func TestTurnStateMetaToolIsAlwaysExposed(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillCalculator})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	metaTools := MetaToolsForSkillState(resolved, map[string]struct{}{})
+	tool := findMetaTool(metaTools, MetaToolTurnState)
+	if tool == nil {
+		t.Fatalf("submit_turn_state meta tool not found")
+	}
+	params, ok := tool.Function.Parameters.(map[string]interface{})
+	if !ok {
+		t.Fatalf("parameters type = %T, want map[string]interface{}", tool.Function.Parameters)
+	}
+	properties, _ := params["properties"].(map[string]interface{})
+	items, ok := properties["items"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("items property missing from %#v", properties)
+	}
+	itemSchema, _ := items["items"].(map[string]interface{})
+	itemProperties, _ := itemSchema["properties"].(map[string]interface{})
+	if _, ok := itemProperties["kind"]; !ok {
+		t.Fatalf("kind property missing from %#v", itemProperties)
+	}
+	if _, ok := itemProperties["value"]; !ok {
+		t.Fatalf("value property missing from %#v", itemProperties)
+	}
+}
+
 func TestExpectedSkillToolArgumentsForCalculator(t *testing.T) {
 	expected := ExpectedSkillToolArguments(SkillCalculator, "evaluate_expression")
 	if expected == nil {

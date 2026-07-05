@@ -532,6 +532,17 @@ func clientActionContinuationMessage(message *runtimemodel.Message, event map[st
 	if preceding := clientActionPrecedingSuccessfulToolInvocation(message, event); len(preceding) > 0 {
 		contentParts = append(contentParts, "Current-turn tool result immediately before this frontend action JSON:\n"+compactJSON(preceding))
 	}
+	if planState := toolGovernanceContinuationPlanStateSummary(message); len(planState) > 0 {
+		contentParts = append(contentParts, "Current operation plan continuation state JSON:\n"+compactJSON(planState))
+	}
+	if turnState := turnStateContinuationSummary(message); len(turnState) > 0 {
+		contentParts = append(contentParts, "Current turn structured state JSON:\n"+compactJSON(turnState))
+	}
+	if message != nil {
+		if summary := mapFromOperationContext(message.Metadata["operation_result_summary"]); len(summary) > 0 {
+			contentParts = append(contentParts, "Authoritative operation result facts JSON:\n"+compactJSON(summary))
+		}
+	}
 	if completedActions := completedClientActionsForContinuation(message); len(completedActions) > 0 {
 		contentParts = append(contentParts, "Completed client actions in this same AIChat turn JSON:\n"+compactJSON(completedActions))
 	}
@@ -542,8 +553,11 @@ func clientActionContinuationMessage(message *runtimemodel.Message, event map[st
 	system := strings.Join([]string{
 		"You are continuing the same AIChat turn after a frontend client action.",
 		"Use the updated transient ZGI page context already included in this request.",
+		"Use Current turn structured state as authoritative same-turn memory for derived facts and decisions, especially after route changes or approvals. Do not replace recorded exact values with placeholders.",
+		"When Current turn structured state or the operation plan already contains the file-derived summary, selected target, model choice, or configuration fact needed for the next step, reuse that recorded evidence directly instead of navigating back or rerunning the earlier read/list tool.",
 		"If the client action status is succeeded and it loaded a route, do not call console-navigator/navigate again for the same route.",
 		"Treat completed client actions listed below as authoritative completed steps. Continue from the next unfinished step instead of restarting the original plan or returning to an earlier completed route.",
+		"Use operation plan evidence_ledger result_facts as authoritative completed tool facts when later steps depend on earlier tool output. If a file read fact contains content_value_preview, use that exact value for derived names or configuration values instead of placeholder words such as file content, 文件内容, or 读取到的内容.",
 		"For event_type=route_loaded, phrase route success from the user's point of view, for example that the target page has been opened or switched to.",
 		"For event_type=route_already_loaded, say the requested page is already current only when useful, then continue the user's real task from the current page context.",
 		"If the client action status is succeeded and observed a resource mutation, use the observation result and updated page context to confirm whether the changed resource is visible; do not repeat the same side-effecting tool only to verify it.",

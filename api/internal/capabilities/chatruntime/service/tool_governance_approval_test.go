@@ -147,6 +147,9 @@ func TestProcessTimelineRecorderPersistsToolGovernanceDecisionEvent(t *testing.T
 	if records[0]["approval_status"] != "approved" {
 		t.Fatalf("decision approval_status = %#v, want approved", records[0]["approval_status"])
 	}
+	if records[0]["status"] != "approved" || records[0]["decision"] != "approved" {
+		t.Fatalf("decision status/decision = %#v/%#v, want approved/approved", records[0]["status"], records[0]["decision"])
+	}
 	audit = governanceMapFromAny(records[0]["asset_operation_audit"])
 	if audit["approval_status"] != "approved" || audit["tool_id"] != "file.delete" {
 		t.Fatalf("updated asset_operation_audit = %#v, want approved file.delete audit", audit)
@@ -324,6 +327,9 @@ func TestToolGovernanceDecisionMetadataRecordsApprovalAndSessionGrant(t *testing
 	governance := governanceMapFromAny(invocations[0]["governance"])
 	if governance["approval_status"] != "approved" || governance["requires_approval"] != false {
 		t.Fatalf("governance = %#v, want approved and not pending", governance)
+	}
+	if governance["status"] != "approved" {
+		t.Fatalf("governance status = %#v, want approved", governance["status"])
 	}
 
 	conversationMetadata := appendToolGovernanceSessionGrant(nil, grant)
@@ -876,6 +882,26 @@ func TestSubmitToolGovernanceDecisionRememberForSessionPreservesExistingConversa
 	}
 	if !seen["corr-existing"] || !seen["corr-1"] {
 		t.Fatalf("conversation session grants = %#v, want both corr-existing and corr-1", grants)
+	}
+}
+
+func TestCompleteToolGovernanceContinuationMetadataMarksApprovedContinuationCompleted(t *testing.T) {
+	metadata := map[string]interface{}{
+		"tool_governance_continuation": map[string]interface{}{
+			"status":          "approved",
+			"approval_status": "approved",
+			"correlation_id":  "corr-1",
+			"skill_id":        skills.SkillAgentManagement,
+			"tool_name":       "create_agent",
+		},
+	}
+	updated := completeToolGovernanceContinuationMetadata(metadata)
+	continuation := governanceMapFromAny(updated["tool_governance_continuation"])
+	if continuation["status"] != "completed" || continuation["approval_status"] != "approved" {
+		t.Fatalf("continuation = %#v, want completed approved continuation", continuation)
+	}
+	if strings.TrimSpace(stringFromAny(continuation["completed_at"])) == "" {
+		t.Fatalf("continuation = %#v, want completed_at", continuation)
 	}
 }
 

@@ -743,7 +743,20 @@ func summarizeFileReaderResult(toolName string, payload map[string]interface{}) 
 		}
 		return result
 	case "read_file":
-		result := compactFields(payload, "status", "max_chars", "content_status", "content_chars", "content_truncated", "from_cache")
+		result := compactFields(payload,
+			"status",
+			"max_chars",
+			"content_status",
+			"content_chars",
+			"content_truncated",
+			"from_cache",
+			"content_lifetime",
+			"content_redacted_in_history",
+			"handoff_recommended",
+			"recommended_next_tool",
+			"handoff_required_when",
+			"handoff_instruction",
+		)
 		if file := recordFromAny(payload["file"]); len(file) > 0 {
 			for _, field := range []string{"id", "name", "workspace_id", "extension", "mime_type", "size"} {
 				if value, ok := file[field]; ok {
@@ -753,6 +766,10 @@ func summarizeFileReaderResult(toolName string, payload map[string]interface{}) 
 		}
 		if content := strings.TrimSpace(stringFromAny(payload["content"])); content != "" {
 			result["content_returned_chars"] = len([]rune(content))
+			if preview := safeFileReadContentValuePreview(payload, content); preview != "" {
+				result["content_value_preview"] = preview
+				result["content_value_source"] = "read_file.content"
+			}
 			result["content_redacted"] = true
 		} else if _, exists := payload["content"]; exists {
 			result["content_redacted"] = true
@@ -787,6 +804,76 @@ func summarizeFileReaderResult(toolName string, payload map[string]interface{}) 
 		return result
 	default:
 		return nil
+	}
+}
+
+const fileReadContentValuePreviewMaxRunes = 120
+
+func safeFileReadContentValuePreview(payload map[string]interface{}, content string) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	text := strings.TrimSpace(content)
+	if text == "" || len([]rune(text)) > fileReadContentValuePreviewMaxRunes {
+		return ""
+	}
+	if !strings.EqualFold(strings.TrimSpace(stringFromAny(payload["content_status"])), "extracted") {
+		return ""
+	}
+	if boolFromAny(payload["content_truncated"]) {
+		return ""
+	}
+	mimeType := strings.ToLower(strings.TrimSpace(firstNonEmptyString(payload["file_mime_type"], payload["mime_type"])))
+	extension := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(firstNonEmptyString(payload["file_extension"], payload["extension"])), "."))
+	if file := recordFromAny(payload["file"]); len(file) > 0 {
+		if mimeType == "" {
+			mimeType = strings.ToLower(strings.TrimSpace(firstNonEmptyString(file["mime_type"], file["file_mime_type"])))
+		}
+		if extension == "" {
+			extension = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(firstNonEmptyString(file["extension"], file["file_extension"])), "."))
+		}
+	}
+	if mimeType != "" && safeFileReadContentMimeType(mimeType) {
+		return text
+	}
+	if safeFileReadContentExtension(extension) {
+		return text
+	}
+	return ""
+}
+
+func safeFileReadContentMimeType(mimeType string) bool {
+	if strings.HasPrefix(mimeType, "text/") {
+		return true
+	}
+	return mimeType == "application/json" ||
+		mimeType == "application/xml" ||
+		mimeType == "application/yaml" ||
+		mimeType == "application/x-yaml" ||
+		mimeType == "text/yaml" ||
+		mimeType == "text/csv" ||
+		strings.HasSuffix(mimeType, "+json") ||
+		strings.HasSuffix(mimeType, "+xml") ||
+		strings.HasSuffix(mimeType, "+yaml")
+}
+
+func safeFileReadContentExtension(extension string) bool {
+	switch extension {
+	case "txt", "md", "markdown", "csv", "json", "jsonl", "xml", "yaml", "yml", "svg", "html", "htm", "log":
+		return true
+	default:
+		return false
+	}
+}
+
+func boolFromAny(value interface{}) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.EqualFold(strings.TrimSpace(typed), "true")
+	default:
+		return false
 	}
 }
 

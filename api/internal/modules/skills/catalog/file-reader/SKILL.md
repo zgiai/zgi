@@ -82,9 +82,10 @@ Use this skill to list visible file context or read content from a file that has
    - If `content_status` is `extracted`, answer from `content`.
    - If `content_status` is `empty`, say the file has no extractable text content.
    - If `content_status` is `error`, explain that the file could not be read and include the short error reason when useful.
-6. If `content_truncated` is true and the missing tail matters, ask for a narrower question or retry with a higher `max_chars` up to the tool limit.
-7. If the user asks to delete, rename, move, or otherwise manage a File Management asset, use `file-manager` when it is available in the current files-page context. If `file-manager` is not available, explain that the current chat can read files but cannot perform that file-management operation from this surface.
-8. Mention the file name when listing, summarizing, or quoting. Do not expose internal file IDs unless the user explicitly asks for them.
+6. The raw `content` returned by `read_file` is not durable across history reloads, approvals, navigation, refresh, or later tool phases. If later steps will use the file body, a summary, theme, topic, quote, title, prompt, config value, generated asset, or final answer derived from this file, call `submit_turn_state` before leaving the file-reading phase. Record a concise reusable fact with `kind=working_fact`, `visibility=model_only`, `source=file-reader/read_file`, and a meaningful key such as `source_file_summary`, `source_file_theme`, or `exact_short_text`.
+7. If `content_truncated` is true and the missing tail matters, ask for a narrower question or retry with a higher `max_chars` up to the tool limit.
+8. If the user asks to delete, rename, move, or otherwise manage a File Management asset, use `file-manager` when it is available in the current files-page context. If `file-manager` is not available, explain that the current chat can read files but cannot perform that file-management operation from this surface.
+9. Mention the file name when listing, summarizing, or quoting. Do not expose internal file IDs unless the user explicitly asks for them.
 
 ## Tool Usage
 
@@ -93,6 +94,7 @@ Use this skill to list visible file context or read content from a file that has
 - `file_id`: required file ID from resolved context.
 - `max_chars`: optional maximum returned content characters. Defaults to 4000 and is capped at 12000.
 - Success evidence: the tool result must identify the resolved file and include `content_status`. Use `content` only when `content_status=extracted`. If `content_status=empty`, report that no extractable text was found. If `content_status=error`, report the actual read failure instead of summarizing from filename or page metadata.
+- Handoff evidence: when `content_lifetime=current_tool_result_only` and `content_redacted_in_history=true`, do not assume the raw `content` will be available after continuation boundaries. If `handoff_recommended=true` and later steps depend on this content or a derived summary, call `submit_turn_state` before continuing to those steps.
 
 `list_visible_files` accepts no parameters and returns:
 

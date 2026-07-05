@@ -410,6 +410,8 @@ Use this skill for governed Agent asset operations in the contextual AIChat side
 
 Use capability semantics to decide what configuration or binding actually proves that an Agent has the capability the user requested. Do not equate a natural-language prompt change with tool/data access unless the matching configuration evidence also exists.
 
+- **Autonomous operation loop**: Treat any external turn strategy as phase guidance, not as a fixed tool script. In each step, choose the next tool from the enabled schemas, the latest tool result, current page evidence, and the remaining user-visible goal. After governance approval resumes, continue from the latest successful or failed tool result instead of restarting discovery.
+- **Concrete capability mapping**: Convert user-facing capability requests into the minimum config or binding that actually grants that capability. If one request has multiple independent capability parts, update all requested parts before the final answer.
 - **Model capability**: powered by the pair `model_provider` + `model`. Resolve candidates with `list_available_models`, update both fields together with `update_agent_config`, then verify the same pair with `get_agent_config`.
 - **Persona or behavior**: powered by `system_prompt`. This changes how the Agent should behave, but it does not add tools, file generation, databases, knowledge, workflow access, or memory by itself.
 - **File upload capability**: powered by `file_upload_enabled`. This lets users upload files into the Agent chat surface; it does not let the Agent generate files or manage File Management assets.
@@ -419,6 +421,15 @@ Use capability semantics to decide what configuration or binding actually proves
 - **Database table access**: powered by `database_bindings`. Resolve database and table candidates with the candidate tools, copy returned binding objects into `add_database_bindings` / `remove_database_bindings`, then verify `get_agent_config`.
 - **Workflow access**: powered by `workflow_bindings`. Resolve workflow binding candidates, use `add_workflow_bindings` / `remove_workflow_bindings`, then verify `get_agent_config`.
 - **Suggested questions**: powered by `suggested_questions`. This only changes starter prompts shown to users.
+
+Common examples:
+
+- "Make this Agent generate files" means resolve and bind a file-generation Skill. It does not mean only enabling `file_upload_enabled`.
+- "Let users upload files to this Agent" means set `file_upload_enabled: true`. It does not mean binding file generation.
+- "Make this Agent generate files and accept uploads" means do both: bind a file-generation Skill and set `file_upload_enabled: true`.
+- "Use deepseek flash" means call `list_available_models` with the phrase, then update both `model_provider` and `model` from one returned candidate.
+- "Write a prompt so it can do X" changes `system_prompt`; if X requires tools/data/workflows, also add the matching skill or resource bindings.
+- If a config value is derived from a previous read tool, use the actual tool result text or stored turn-state fact. Never substitute placeholder words such as `file content`, `read content`, or `content value`.
 
 For read-only questions such as “can this Agent generate files?” or “does this Agent have memory?”, inspect the relevant config and candidate evidence, then answer from that evidence without mutating. If the capability is missing and the user later says “进行处理/继续/那就做,” continue from the inspected capability goal instead of starting an unrelated old action.
 
@@ -442,6 +453,7 @@ For read-only questions such as “can this Agent generate files?” or “does 
 - `icon`: optional icon value. For text icons pass the visible text, for example `AI` or `BOT`; the runtime will normalize it to the Agent UI icon JSON shape. If omitted, the runtime derives a visible text icon from the Agent name.
 - `icon_background`: optional text icon background color, for example `#0f766e`. When the user asks for an icon background color, pass this field explicitly instead of embedding it in `icon`.
 - `workspace_id`: optional target workspace ID.
+- If the requested Agent name, description, prompt, or config value is derived from a previous tool result, use the actual returned value from that tool. For example, if the user says to name the Agent after the content you read from a file, use the `file-reader/read_file` content value, not the literal placeholder text such as `file content`, `文件内容`, or `读取到的内容`.
 
 `update_agent_identity` accepts:
 
