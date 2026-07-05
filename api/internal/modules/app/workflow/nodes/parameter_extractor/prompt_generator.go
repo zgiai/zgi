@@ -98,7 +98,7 @@ func (pg *PromptGenerator) generateParameterSchema() string {
 			paramSchema["type"] = "string"
 		case ParameterTypeNumber:
 			paramSchema["type"] = "number"
-		case ParameterTypeBool:
+		case ParameterTypeBool, ParameterTypeBoolean:
 			paramSchema["type"] = "boolean"
 		case ParameterTypeSelect:
 			paramSchema["type"] = "string"
@@ -111,6 +111,9 @@ func (pg *PromptGenerator) generateParameterSchema() string {
 		case ParameterTypeArrayNumber:
 			paramSchema["type"] = "array"
 			paramSchema["items"] = map[string]any{"type": "number"}
+		case ParameterTypeArrayBool:
+			paramSchema["type"] = "array"
+			paramSchema["items"] = map[string]any{"type": "boolean"}
 		case ParameterTypeArrayObject:
 			paramSchema["type"] = "array"
 			paramSchema["items"] = map[string]any{"type": "object"}
