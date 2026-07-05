@@ -595,8 +595,7 @@ func fastPathPlanHasPendingAgentMutationStep(evidence map[string]interface{}) bo
 			return true
 		}
 	}
-	pending := strings.ToLower(strings.TrimSpace(firstNonEmptyString(plan["pending_next_action"])))
-	return fastPathPendingActionMentionsAgentMutation(pending)
+	return false
 }
 
 func fastPathModelDecidesPlanHasPendingAgentWork(evidence map[string]interface{}) bool {
@@ -643,8 +642,7 @@ func fastPathModelDecidesPlanHasPendingAgentMutationStep(plan map[string]interfa
 			return true
 		}
 	}
-	pending := strings.ToLower(strings.TrimSpace(firstNonEmptyString(plan["pending_next_action"])))
-	return fastPathPendingActionMentionsAgentMutation(pending)
+	return false
 }
 
 func fastPathPlanStepSupportsPendingAgentMutation(step map[string]interface{}) bool {
@@ -735,22 +733,6 @@ func fastPathAgentManagementToolIsMutation(toolName string) bool {
 	default:
 		return false
 	}
-}
-
-func fastPathPendingActionMentionsAgentMutation(pending string) bool {
-	if pending == "" {
-		return false
-	}
-	for _, toolName := range []string{
-		"create_agent", "delete_agent", "delete_agents", "update_agent_identity", "update_agent_config",
-		"replace_agent_skill_bindings", "replace_agent_knowledge_bindings", "replace_agent_database_bindings",
-		"replace_agent_workflow_bindings", "replace_agent_memory_slots",
-	} {
-		if strings.Contains(pending, toolName) {
-			return true
-		}
-	}
-	return false
 }
 
 func fastPathLatestSuccessfulAgentReadResult(evidence map[string]interface{}, toolName string) (map[string]interface{}, bool) {
@@ -1026,10 +1008,7 @@ func fastPathPlanHasAgentIdentityPostRead(plan map[string]interface{}) bool {
 	if !seenIdentityUpdate {
 		return false
 	}
-	pending := strings.ToLower(strings.TrimSpace(stringFromAny(plan["pending_next_action"])))
-	return strings.Contains(pending, "agent-management/get_agent") ||
-		strings.Contains(pending, "get_agent_config") ||
-		strings.Contains(pending, "get_agent")
+	return false
 }
 
 func fastPathGoalHasConfigPostReadShape(goal string) bool {
@@ -2433,19 +2412,6 @@ func fastPathBlockedByPendingPlanAction(trace skills.SkillTrace, evidence map[st
 		}
 		return false
 	}
-
-	pendingActions := []string{}
-	if !hasPlanSteps {
-		pending := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(plan["pending_next_action"])))
-		if pending != "" {
-			pendingActions = append(pendingActions, pending)
-		}
-	}
-	for _, pending := range pendingActions {
-		if fastPathPendingActionBlocksTrace(trace, pending) {
-			return true
-		}
-	}
 	return false
 }
 
@@ -2469,15 +2435,7 @@ func fastPathBlockedByPendingPlanActionAfterPostUpdateRead(trace skills.SkillTra
 		}
 		return false
 	}
-
-	pending := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(plan["pending_next_action"])))
-	if pending == "" {
-		return false
-	}
-	if fastPathPendingActionIsAgentConfigRead(pending) && fastPathHasSuccessfulAgentConfigReadAfterUpdate(evidence) {
-		return false
-	}
-	return fastPathPendingActionBlocksTrace(trace, pending)
+	return false
 }
 
 func fastPathPendingActionBlocksTrace(trace skills.SkillTrace, pending string) bool {

@@ -1926,6 +1926,8 @@ func TestFastPathFinalAnswerForGeneratedArtifactBlocksPendingRoute(t *testing.T)
 }
 
 func TestFastPathFinalAnswerWithEvidenceBlocksDifferentPendingPlanAction(t *testing.T) {
+	createStepID := "tool:agent-management/create_agent"
+	deleteStepID := "tool:agent-management/delete_agents"
 	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
 		Kind:     "tool_call",
 		SkillID:  skills.SkillAgentManagement,
@@ -1939,8 +1941,25 @@ func TestFastPathFinalAnswerWithEvidenceBlocksDifferentPendingPlanAction(t *test
 		},
 	}, map[string]interface{}{
 		"operation_plan": map[string]interface{}{
-			"status":              "running",
-			"pending_next_action": "create_agent",
+			"status": "running",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        createStepID,
+					"status":    "pending",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "create_agent",
+				},
+				map[string]interface{}{
+					"id":        deleteStepID,
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "delete_agents",
+				},
+			},
+			"step_status": map[string]interface{}{
+				createStepID: "pending",
+				deleteStepID: "completed",
+			},
 		},
 	})
 	if ok {

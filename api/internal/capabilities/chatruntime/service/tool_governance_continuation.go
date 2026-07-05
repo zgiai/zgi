@@ -740,42 +740,6 @@ func toolGovernanceFrozenModelDecidesPlanHasPendingAgentWork(plan map[string]int
 			return true
 		}
 	}
-	return toolGovernanceFrozenPendingActionMentionsAgentWork(plan["pending_next_action"])
-}
-
-func toolGovernanceFrozenPendingActionMentionsAgentWork(value interface{}) bool {
-	text := strings.ToLower(strings.TrimSpace(stringFromAny(value)))
-	if text == "" {
-		return false
-	}
-	for _, token := range []string{
-		"agent-management/create_agent",
-		"agent-management/delete_agent",
-		"agent-management/delete_agents",
-		"agent-management/update_agent_identity",
-		"agent-management/update_agent_config",
-		"agent-management/replace_agent_skill_bindings",
-		"agent-management/replace_agent_knowledge_bindings",
-		"agent-management/replace_agent_database_bindings",
-		"agent-management/replace_agent_workflow_bindings",
-		"agent-management/get_agent_config",
-		"agent-management/get_agent",
-		"create_agent",
-		"delete_agent",
-		"delete_agents",
-		"update_agent_identity",
-		"update_agent_config",
-		"replace_agent_skill_bindings",
-		"replace_agent_knowledge_bindings",
-		"replace_agent_database_bindings",
-		"replace_agent_workflow_bindings",
-		"get_agent_config",
-		"get_agent",
-	} {
-		if strings.Contains(text, token) {
-			return true
-		}
-	}
 	return false
 }
 

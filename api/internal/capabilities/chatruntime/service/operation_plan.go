@@ -1216,9 +1216,7 @@ func applyRecentOperationPlanToContinuationStrategy(parts *chatRequestParts, str
 			strategy.AssetRisk = risk
 		}
 	}
-	if pending := strings.TrimSpace(stringFromAny(plan["pending_next_action"])); pending != "" {
-		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria, "complete pending plan step: "+pending)
-	}
+	strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria, operationPlanPendingContinuationCriteria(plan, 6)...)
 	if goals := agentCapabilityGoalsFromOperationPlan(plan); len(goals) > 0 {
 		strategy.CapabilityGoals = appendAgentCapabilityGoals(strategy.CapabilityGoals, goals...)
 		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria, agentCapabilityGoalSuccessCriteria(goals)...)
@@ -1246,6 +1244,45 @@ func applyRecentOperationPlanToContinuationStrategy(parts *chatRequestParts, str
 		}
 	}
 	return strategy
+}
+
+func operationPlanPendingContinuationCriteria(plan map[string]interface{}, limit int) []string {
+	if len(plan) == 0 || limit <= 0 {
+		return nil
+	}
+	steps := operationPlanPendingExecutableSteps(plan, limit)
+	if len(steps) == 0 && operationPlanModelDecidesTools(plan) {
+		stepStatus := mapFromOperationContext(plan["step_status"])
+		for _, step := range mapSliceFromAny(plan["steps"]) {
+			if len(steps) >= limit {
+				break
+			}
+			if !operationPlanStepBlocksCompletion(step) {
+				continue
+			}
+			status := operationPlanStepResolvedStatus(step, stepStatus)
+			if status == operationPlanStepStatusCompleted || status == operationPlanStepStatusFailed {
+				continue
+			}
+			steps = append(steps, step)
+		}
+	}
+	criteria := make([]string, 0, len(steps))
+	for _, step := range steps {
+		label := strings.TrimSpace(firstNonEmptyString(step["title"], step["id"]))
+		if label == "" {
+			skillID := strings.TrimSpace(stringFromAny(step["skill_id"]))
+			toolName := strings.TrimSpace(stringFromAny(step["tool_name"]))
+			if skillID != "" && toolName != "" {
+				label = operationPlanToolStepTitle(skillID, toolName)
+			}
+		}
+		if label == "" {
+			continue
+		}
+		criteria = append(criteria, "complete pending plan step: "+label)
+	}
+	return criteria
 }
 
 func appendPlannedToolFromOperationPlanStep(strategy *AIChatTurnStrategy, plan map[string]interface{}, step map[string]interface{}, args map[string]string) *AIChatTurnStrategy {
