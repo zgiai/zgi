@@ -1593,6 +1593,97 @@ func TestTestChannelModel_AllowsModelWithOrganizationPriceOverride(t *testing.T)
 	require.Equal(t, "qwen-image-2.0", validator.lastTestModel)
 }
 
+func TestTestChannelModel_DirectProviderDoesNotUseCrossProviderPricingPrecheck(t *testing.T) {
+	routeID := uuid.New()
+	credentialID := uuid.New()
+	orgID := uuid.New()
+	modelID := uuid.New()
+	db := openChannelPricingTestDB(t)
+	require.NoError(t, db.Exec(
+		`INSERT INTO llm_models (id, provider, name, input_price, output_price, input_price_configured, output_price_configured, image_prices) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		modelID.String(), "openai", "gpt-4o", "0", "0", false, false, "[]",
+	).Error)
+	repo := &fakeTenantRouteRepo{
+		routeByID: &channelmodel.LLMRoute{
+			ID:              routeID,
+			OrganizationID:  orgID,
+			ChannelProvider: "qwen",
+			APIBaseURL:      "https://dashscope.aliyuncs.com/compatible-mode/v1",
+			CredentialID:    &credentialID,
+		},
+	}
+	credSvc := &fakeTenantCredentialService{
+		cred: &credentialmodel.TenantCredential{ID: credentialID},
+	}
+	validator := &fakeChannelValidator{}
+	svc := &channelService{
+		tenantRouteRepo:   repo,
+		tenantCredService: credSvc,
+		validator:         validator,
+		modelRepo: &fakeModelRepo{models: []*llmmodelmodel.LLMModel{{
+			ID:              modelID,
+			Provider:        "openai",
+			Model:           "gpt-4o",
+			ChatCompletions: true,
+		}}},
+		db: db,
+	}
+
+	result, err := svc.TestChannelModel(context.Background(), routeID, orgID, "gpt-4o", "", false)
+
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	require.Equal(t, 1, validator.testCalls)
+	require.Equal(t, "qwen", validator.lastTestProvider)
+	require.Equal(t, "gpt-4o", validator.lastTestModel)
+}
+
+func TestTestChannelModel_OpenAICompatibleAllowsCrossProviderPricingPrecheck(t *testing.T) {
+	routeID := uuid.New()
+	credentialID := uuid.New()
+	orgID := uuid.New()
+	modelID := uuid.New()
+	db := openChannelPricingTestDB(t)
+	require.NoError(t, db.Exec(
+		`INSERT INTO llm_models (id, provider, name, input_price, output_price, input_price_configured, output_price_configured, image_prices) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		modelID.String(), "qwen", "qwen-plus", "0", "0", false, false, "[]",
+	).Error)
+	repo := &fakeTenantRouteRepo{
+		routeByID: &channelmodel.LLMRoute{
+			ID:              routeID,
+			OrganizationID:  orgID,
+			ChannelProvider: "openai-compatible",
+			APIBaseURL:      "https://proxy.example.com/v1",
+			CredentialID:    &credentialID,
+		},
+	}
+	credSvc := &fakeTenantCredentialService{
+		cred: &credentialmodel.TenantCredential{ID: credentialID},
+	}
+	validator := &fakeChannelValidator{}
+	svc := &channelService{
+		tenantRouteRepo:   repo,
+		tenantCredService: credSvc,
+		validator:         validator,
+		modelRepo: &fakeModelRepo{models: []*llmmodelmodel.LLMModel{{
+			ID:              modelID,
+			Provider:        "qwen",
+			Model:           "qwen-plus",
+			ChatCompletions: true,
+		}}},
+		db: db,
+	}
+
+	result, err := svc.TestChannelModel(context.Background(), routeID, orgID, "qwen-plus", "", false)
+
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	require.Equal(t, channelprovider.TestStatusSkipped, result.Status)
+	require.Equal(t, channelModelPricingNotConfiguredCode, result.Code)
+	require.Equal(t, "qwen-plus", result.Params["model"])
+	require.Equal(t, 0, validator.testCalls)
+}
+
 func TestBatchTestChannelModels_CountsSkippedImageModelsSeparately(t *testing.T) {
 	routeID := uuid.New()
 	credentialID := uuid.New()

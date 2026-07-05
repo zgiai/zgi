@@ -396,6 +396,7 @@ const messages = {
       cnyPerImage: 'CNY/image',
       cnyPerMillion: 'CNY/1M',
       invalidPrice: 'Price must be a number greater than or equal to 0',
+      adminRequired: 'Contact an organization admin to configure model pricing.',
       cancel: 'Cancel',
       save: 'Save',
       saving: 'Saving...',

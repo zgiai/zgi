@@ -1330,7 +1330,8 @@ func (s *channelService) resolveChannelModelPricingTarget(ctx context.Context, o
 		}
 	}
 
-	globalModel, err := s.resolveGlobalChannelPricingModel(ctx, spec.LookupProvider, modelName)
+	allowCrossProvider := strings.TrimSpace(spec.Name) == openAICompatibleProviderName
+	globalModel, err := s.resolveGlobalChannelPricingModel(ctx, spec.LookupProvider, modelName, allowCrossProvider)
 	if err != nil {
 		return channelModelPricingTarget{}, false, err
 	}
@@ -1348,7 +1349,7 @@ func (s *channelService) resolvePrivateChannelPricingModel(ctx context.Context, 
 	return s.privateModels.ResolveActiveModelForProvider(ctx, organizationID, provider, modelName)
 }
 
-func (s *channelService) resolveGlobalChannelPricingModel(ctx context.Context, provider, modelName string) (*llmmodelmodel.LLMModel, error) {
+func (s *channelService) resolveGlobalChannelPricingModel(ctx context.Context, provider, modelName string, allowCrossProvider bool) (*llmmodelmodel.LLMModel, error) {
 	if s.modelRepo == nil {
 		return nil, nil
 	}
@@ -1360,6 +1361,9 @@ func (s *channelService) resolveGlobalChannelPricingModel(ctx context.Context, p
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
 		}
+	}
+	if !allowCrossProvider {
+		return nil, nil
 	}
 
 	modelRecord, err := s.modelRepo.GetByName(ctx, modelName)

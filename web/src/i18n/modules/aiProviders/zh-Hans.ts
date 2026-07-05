@@ -383,6 +383,7 @@ const messages: AiProvidersMessages = {
       cnyPerImage: '人民币/张',
       cnyPerMillion: '人民币/1M',
       invalidPrice: '价格必须是大于等于 0 的数字',
+      adminRequired: '请联系组织管理员配置模型价格。',
       cancel: '取消',
       save: '保存',
       saving: '保存中...',
