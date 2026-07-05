@@ -4969,6 +4969,11 @@ func enrichAIChatTurnStrategyPlannedTools(parts *chatRequestParts, strategy *AIC
 		return strategy
 	}
 	if strategy.Intent == "manage_agent_asset" {
+		if aiChatTurnStrategyModelDecidesTools(strategy) {
+			strategy = appendAgentManagementPlannedTools(parts, strategy)
+			strategy = appendAgentManagementModelDecidesGuidance(parts, strategy)
+			return attachContextualSidebarStructuredPlan(parts, strategy, parts.Query)
+		}
 		return attachContextualSidebarStructuredPlan(parts, appendAgentManagementPlannedTools(parts, strategy), parts.Query)
 	}
 	if strategy.Intent == "inspect_agent_config" {
@@ -4991,6 +4996,166 @@ func enrichAIChatTurnStrategyPlannedTools(parts *chatRequestParts, strategy *AIC
 		strategy = appendPlannedTool(strategy, skills.SkillFileManager, "delete_file", nil)
 	}
 	return attachContextualSidebarStructuredPlan(parts, strategy, parts.Query)
+}
+
+func appendAgentManagementModelDecidesGuidance(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
+	if parts == nil || strategy == nil || !skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) {
+		return strategy
+	}
+	query := strings.ToLower(strings.TrimSpace(parts.Query))
+	if query == "" {
+		return strategy
+	}
+	secondaryQuery := agentManagementSecondaryIntentQuery(query)
+	capabilityGoals := agentManagementCapabilityGoalsForQuery(secondaryQuery)
+	if len(capabilityGoals) > 0 {
+		strategy.CapabilityGoals = appendAgentCapabilityGoals(strategy.CapabilityGoals, capabilityGoals...)
+		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria, agentCapabilityGoalSuccessCriteria(capabilityGoals)...)
+		if agentManagementCapabilityGoalsNeedSkillCandidateLookup(strategy.CapabilityGoals) {
+			strategy.Avoid = appendUniqueStrings(strategy.Avoid,
+				"do not treat system_prompt or file_upload_enabled alone as proof of a skill-backed Agent capability; resolve and bind a matching Skill, then verify enabled_skill_ids",
+			)
+		}
+	}
+	if agentManagementNeedsFileReadPrecondition(parts, query) {
+		strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillFileReader)
+		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
+			"when the Agent task depends on file content, read the requested file before deriving Agent name, prompt, or configuration",
+			"use the file-reader/read_file result as the source evidence for downstream Agent edits instead of page metadata or guessed content",
+		)
+		strategy.ObservationPoints = appendUniqueStrings(strategy.ObservationPoints, "files_page_visible_list", "read_file_result")
+	}
+	deletePlanned := aiChatTurnStrategyHasAnyPlannedTool(strategy, skills.SkillAgentManagement, "delete_agent", "delete_agents")
+	createPlanned := aiChatTurnStrategyHasPlannedTool(strategy, skills.SkillAgentManagement, "create_agent")
+	if deletePlanned {
+		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
+			"delete only the Agent targets requested by the user after governance approval, and continue later requested work from the deletion result",
+		)
+	}
+	if createPlanned {
+		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
+			"when creating an Agent, use create_agent first and use the created Agent result as the target for later edits",
+		)
+	}
+	if deletePlanned && aiChatTurnStrategyHasPlannedConsoleNavigation(strategy, "/console/agents") {
+		strategy.TargetPage = "/console/agents"
+		strategy.ObservationPoints = appendUniqueStrings(strategy.ObservationPoints, "route_loaded:/console/agents")
+		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
+			"after deleting the current Agent detail page, return to the Agent list page if the user requested it before the final answer",
+		)
+	}
+	if deletePlanned && strings.HasPrefix(normalizeConsoleNavigationGuardHref(strategy.TargetPage), "/console/agents/") {
+		strategy.ObservationPoints = appendUniqueStrings(strategy.ObservationPoints, "route_loaded:"+strategy.TargetPage)
+		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
+			"after deleting the requested Agents, open the requested remaining Agent detail page before follow-up edits",
+		)
+	}
+	if agentManagementStrategyNeedsAvailableModelResolution(strategy) {
+		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
+			"before changing an Agent model, resolve an available provider/model pair with the appropriate use case and use that exact pair in the config update",
+		)
+	}
+	if agentManagementStrategyNeedsSkillCandidateResolution(strategy) {
+		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
+			"for skill-backed Agent abilities, resolve a matching bindable Skill before updating enabled_skill_ids",
+		)
+	}
+	if agentManagementStrategyNeedsPostMutationConfigVerification(strategy) {
+		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
+			"read current Agent config when needed, preserve unmentioned existing settings, and verify updated config after mutation",
+		)
+		strategy.Avoid = appendUniqueStrings(strategy.Avoid,
+			"do not stop after the first Agent mutation when the user asked for later create, edit, model, skill, upload, memory, knowledge, database, or workflow changes",
+		)
+	}
+	return strategy
+}
+
+func agentManagementStrategyNeedsAvailableModelResolution(strategy *AIChatTurnStrategy) bool {
+	if strategy == nil {
+		return false
+	}
+	if aiChatTurnStrategyHasPlannedTool(strategy, skills.SkillAgentManagement, "list_available_models") {
+		return true
+	}
+	for _, field := range agentCapabilityGoalsExpectedConfigFields(strategy.CapabilityGoals) {
+		switch operationPlanAgentConfigCanonicalField(field) {
+		case "model", "model_provider":
+			return true
+		}
+	}
+	return false
+}
+
+func agentManagementStrategyNeedsSkillCandidateResolution(strategy *AIChatTurnStrategy) bool {
+	if strategy == nil {
+		return false
+	}
+	return aiChatTurnStrategyHasPlannedTool(strategy, skills.SkillAgentManagement, "list_agent_skill_candidates") ||
+		agentManagementCapabilityGoalsNeedSkillCandidateLookup(strategy.CapabilityGoals)
+}
+
+func agentManagementStrategyNeedsPostMutationConfigVerification(strategy *AIChatTurnStrategy) bool {
+	if strategy == nil {
+		return false
+	}
+	if agentManagementCapabilityGoalsNeedPostUpdateRead(strategy.CapabilityGoals) {
+		return true
+	}
+	for _, tool := range strategy.PlannedTools {
+		if !strings.EqualFold(strings.TrimSpace(tool.SkillID), skills.SkillAgentManagement) {
+			continue
+		}
+		switch strings.TrimSpace(tool.ToolName) {
+		case "update_agent_config", "update_agent_identity",
+			"replace_agent_knowledge_bindings", "replace_agent_database_bindings", "replace_agent_workflow_bindings":
+			return true
+		}
+	}
+	return false
+}
+
+func aiChatTurnStrategyHasPlannedTool(strategy *AIChatTurnStrategy, skillID string, toolName string) bool {
+	if strategy == nil {
+		return false
+	}
+	for _, tool := range strategy.PlannedTools {
+		if !strings.EqualFold(strings.TrimSpace(tool.SkillID), strings.TrimSpace(skillID)) {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(tool.ToolName), strings.TrimSpace(toolName)) {
+			return true
+		}
+	}
+	return false
+}
+
+func aiChatTurnStrategyHasAnyPlannedTool(strategy *AIChatTurnStrategy, skillID string, toolNames ...string) bool {
+	for _, toolName := range toolNames {
+		if aiChatTurnStrategyHasPlannedTool(strategy, skillID, toolName) {
+			return true
+		}
+	}
+	return false
+}
+
+func aiChatTurnStrategyHasPlannedConsoleNavigation(strategy *AIChatTurnStrategy, href string) bool {
+	if strategy == nil {
+		return false
+	}
+	target := normalizeConsoleNavigationGuardHref(href)
+	if target == "" {
+		return false
+	}
+	for _, tool := range strategy.PlannedTools {
+		if !isConsoleNavigatorNavigateTool(tool.SkillID, tool.ToolName) {
+			continue
+		}
+		if normalizeConsoleNavigationGuardHref(tool.Arguments["href"]) == target {
+			return true
+		}
+	}
+	return false
 }
 
 func appendAgentManagementPlannedTools(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {

@@ -3547,9 +3547,6 @@ func applyOperationPlanInvocationState(metadata map[string]interface{}, invocati
 		return
 	}
 	steps := mapSliceFromAny(plan["steps"])
-	if len(steps) == 0 {
-		return
-	}
 	stepStatus := mapFromOperationContext(plan["step_status"])
 	if stepStatus == nil {
 		stepStatus = map[string]interface{}{}
@@ -3615,11 +3612,13 @@ func applyOperationPlanInvocationState(metadata map[string]interface{}, invocati
 		plan["tool_result"] = operationPlanToolResult(last)
 		operationPlanAttachOperationGroupResult(plan, last)
 	}
-	if operationPlanApplyMissingAgentSkillCandidateNoop(plan, steps, stepStatus, invocations) {
-		metadata["operation_plan"] = plan
-		return
+	if len(steps) > 0 {
+		if operationPlanApplyMissingAgentSkillCandidateNoop(plan, steps, stepStatus, invocations) {
+			metadata["operation_plan"] = plan
+			return
+		}
+		applyOperationPlanProgress(plan, steps, stepStatus, "", "")
 	}
-	applyOperationPlanProgress(plan, steps, stepStatus, "", "")
 	metadata["operation_plan"] = plan
 }
 
