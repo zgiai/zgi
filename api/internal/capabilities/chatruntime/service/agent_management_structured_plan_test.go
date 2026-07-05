@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -519,6 +520,49 @@ func TestAgentManagementStructuredPlanIncludedInOperationPlanState(t *testing.T)
 	}
 }
 
+func TestAgentManagementModelDecidesPromptHidesExactToolScript(t *testing.T) {
+	query := "\u5220\u6389\u9875\u9762\u4e2d\u7684\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\uff0c\u7136\u540e\u521b\u5efa\u4e00\u4e2a\u65b0\u7684\u667a\u80fd\u4f53\uff0c\u53d6\u540d\u53eb\u5c0f\u8bf4\u521b\u4f5c\u5927\u5e08\uff0c\u6a21\u578b\u914d\u7f6e\u4e3adeepseek flash\uff0c\u5199\u597d\u63d0\u793a\u8bcd\u9700\u8981\u8ba9agent\u80fd\u751f\u6210\u6587\u4ef6\u548c\u4e0a\u4f20\u6587\u4ef6\u3002"
+	parts := &chatRequestParts{
+		Query:     query,
+		Surface:   aiChatSurfaceContextualSidebar,
+		SkillMode: skillModeAuto,
+		SkillIDs:  []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator, skills.SkillFileReader},
+	}
+	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{
+		Intent:         "manage_agent_asset",
+		TargetPage:     "/console/agents",
+		AssetEffect:    "update",
+		AssetRisk:      "medium",
+		Approval:       "required",
+		ToolChoiceMode: aiChatTurnToolChoiceModelDecides,
+	})
+
+	if len(strategy.PlannedTools) == 0 {
+		t.Fatalf("strategy.PlannedTools empty, want internal legacy plan for state compatibility")
+	}
+	plan := strategy.StructuredPlan
+	if plan == nil {
+		t.Fatal("strategy.StructuredPlan = nil, want Agent-management plan")
+	}
+	if !agentCapabilityGoalListHasCapability(plan.CapabilityGoals, agentCapabilitySkillBacked) {
+		t.Fatalf("structured plan capability goals = %#v, missing file generation skill-backed goal", plan.CapabilityGoals)
+	}
+	if !agentCapabilityGoalListHasCapability(plan.CapabilityGoals, agentCapabilityAcceptUploaded) {
+		t.Fatalf("structured plan capability goals = %#v, missing file upload goal", plan.CapabilityGoals)
+	}
+
+	view := aiChatTurnStrategyPromptView(strategy)
+	structured := mapFromOperationContext(view["structured_plan"])
+	if len(structured) == 0 {
+		t.Fatalf("prompt view structured_plan missing: %#v", view)
+	}
+	for _, unexpected := range []string{"planned_tools", "required_next_tool", "required_tool_sequence", "candidate_tool", `"tool_name"`, `"skill_id"`} {
+		if strings.Contains(string(mustMarshalJSONForTest(t, view)), unexpected) {
+			t.Fatalf("prompt view contains %q, want semantic plan without exact tool script: %#v", unexpected, view)
+		}
+	}
+}
+
 func TestAgentManagementStructuredPlanStatusFollowsToolResult(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:     "\u5220\u9664\u5f53\u524d\u9875\u9762\u7684\u524d\u4e24\u4e2a\u667a\u80fd\u4f53",
@@ -636,6 +680,24 @@ func structuredPlanHasOperation(plan *AIChatStructuredPlan, action string, resou
 		}
 	}
 	return false
+}
+
+func agentCapabilityGoalListHasCapability(goals []AIChatAgentCapabilityGoal, capabilityID string) bool {
+	for _, goal := range goals {
+		if strings.EqualFold(strings.TrimSpace(goal.CapabilityID), strings.TrimSpace(capabilityID)) {
+			return true
+		}
+	}
+	return false
+}
+
+func mustMarshalJSONForTest(t testing.TB, value interface{}) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("json.Marshal(%T) failed: %v", value, err)
+	}
+	return encoded
 }
 
 func structuredPlanToolForTest(plan *AIChatStructuredPlan, toolName string) AIChatTurnStrategyTool {

@@ -4727,18 +4727,11 @@ func aiChatTurnStrategyPromptView(strategy *AIChatTurnStrategy) map[string]inter
 	}
 	delete(view, "required_next_tool")
 	delete(view, "planned_tools")
-	if aiChatTurnStrategyModelDecidesTools(strategy) {
-		delete(view, "structured_plan")
-	} else if structured := mapFromOperationContext(view["structured_plan"]); len(structured) > 0 {
-		delete(structured, "required_tool_sequence")
-		if operations := mapSliceFromAny(structured["operations"]); len(operations) > 0 {
-			for _, operation := range operations {
-				delete(operation, "skill_id")
-				delete(operation, "tool_name")
-			}
-			structured["operations"] = mapsToInterfaceSlice(operations)
-		}
-		view["structured_plan"] = structured
+	if goals := mapSliceFromAny(view["capability_goals"]); len(goals) > 0 {
+		view["capability_goals"] = aiChatTurnStrategyPromptCapabilityGoals(goals)
+	}
+	if structured := mapFromOperationContext(view["structured_plan"]); len(structured) > 0 {
+		view["structured_plan"] = aiChatTurnStrategyPromptStructuredPlan(structured)
 	}
 	view["planning_contract"] = map[string]interface{}{
 		"planner_role":     "phase_and_success_criteria_only",
@@ -4748,6 +4741,31 @@ func aiChatTurnStrategyPromptView(strategy *AIChatTurnStrategy) map[string]inter
 		"completion_basis": "final answers must be grounded in successful tool results or page/client observations",
 	}
 	return view
+}
+
+func aiChatTurnStrategyPromptStructuredPlan(structured map[string]interface{}) map[string]interface{} {
+	if len(structured) == 0 {
+		return structured
+	}
+	delete(structured, "required_tool_sequence")
+	if operations := mapSliceFromAny(structured["operations"]); len(operations) > 0 {
+		for _, operation := range operations {
+			delete(operation, "skill_id")
+			delete(operation, "tool_name")
+		}
+		structured["operations"] = mapsToInterfaceSlice(operations)
+	}
+	if goals := mapSliceFromAny(structured["capability_goals"]); len(goals) > 0 {
+		structured["capability_goals"] = aiChatTurnStrategyPromptCapabilityGoals(goals)
+	}
+	return structured
+}
+
+func aiChatTurnStrategyPromptCapabilityGoals(goals []map[string]interface{}) []interface{} {
+	for _, goal := range goals {
+		delete(goal, "candidate_tool")
+	}
+	return mapsToInterfaceSlice(goals)
 }
 
 const aiChatTurnToolChoiceModelDecides = "model_decides"
