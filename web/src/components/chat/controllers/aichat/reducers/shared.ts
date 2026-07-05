@@ -353,6 +353,7 @@ function assetOperationSemanticIdentity(input: AssetOperationSemanticIdentityInp
     effect,
     stableMetadataValue(
       input.assets ??
+        observedAssetOperationTarget(result) ??
         audit.assets ??
         result.assets ??
         args.assets ??
@@ -363,6 +364,34 @@ function assetOperationSemanticIdentity(input: AssetOperationSemanticIdentityInp
         {}
     ),
   ].join(':');
+}
+
+function observedAssetOperationTarget(
+  result: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  const observedAssets = Array.isArray(result.observed_assets) ? result.observed_assets : [];
+  if (observedAssets.length === 0) return undefined;
+  const first = invocationRecord(observedAssets[0]);
+  const type = (invocationString(first.type) || invocationString(result.asset_type)).toLowerCase();
+  const matchedContextId = invocationString(first.matched_context_item_id);
+  const rawID = invocationString(first.id) || matchedContextId;
+  const id = rawID.includes(':') ? rawID.split(':').pop()?.trim() ?? '' : rawID;
+  const name = invocationString(first.name) || invocationString(first.matched_context_title);
+  if (!id && !name) return undefined;
+  if (type === 'agent') {
+    const target: Record<string, unknown> = {};
+    if (id) target.agent_id = id;
+    if (name) {
+      target.agent_name = name;
+      target.name = name;
+    }
+    return target;
+  }
+  const target: Record<string, unknown> = {};
+  if (type) target.type = type;
+  if (id) target.id = id;
+  if (name) target.name = name;
+  return Object.keys(target).length > 0 ? target : undefined;
 }
 
 function assetTypeFromOperationType(operationType: string): string {
@@ -520,8 +549,8 @@ export function skillInvocationSemanticIdentity(invocation: AIChatSkillInvocatio
         audit: record.asset_operation_audit,
         result,
         args: invocationRecord(invocation.arguments),
-        actionId: record.action_id,
-        correlationId: record.correlation_id,
+        actionId: undefined,
+        correlationId: undefined,
         toolName: record.tool_name,
       });
       if (assetOperationIdentity) return assetOperationIdentity;
@@ -547,15 +576,6 @@ export function skillInvocationSemanticIdentity(invocation: AIChatSkillInvocatio
   }
   if (invocation.kind === 'tool_call') {
     const record = invocation as unknown as Record<string, unknown>;
-    const governanceCorrelationId = skillInvocationGovernanceCorrelationId(invocation);
-    if (governanceCorrelationId) {
-      return [
-        'tool_call_governed',
-        invocation.skill_id ?? '',
-        invocation.tool_name ?? '',
-        governanceCorrelationId,
-      ].join(':');
-    }
     const assetOperationIdentity = assetOperationSemanticIdentity({
       audit: record.asset_operation_audit,
       result: invocationRecord(invocation.result),
@@ -565,6 +585,15 @@ export function skillInvocationSemanticIdentity(invocation: AIChatSkillInvocatio
       toolName: record.tool_name,
     });
     if (assetOperationIdentity) return assetOperationIdentity;
+    const governanceCorrelationId = skillInvocationGovernanceCorrelationId(invocation);
+    if (governanceCorrelationId) {
+      return [
+        'tool_call_governed',
+        invocation.skill_id ?? '',
+        invocation.tool_name ?? '',
+        governanceCorrelationId,
+      ].join(':');
+    }
   }
   if (invocation.kind === 'tool_governance') {
     const correlationId = skillInvocationGovernanceCorrelationId(invocation);
@@ -581,9 +610,9 @@ export function skillInvocationSemanticIdentity(invocation: AIChatSkillInvocatio
 }
 
 function skillInvocationIdentity(invocation: AIChatSkillInvocation, index: number): string {
+  if (invocation.runtime_id) return invocation.runtime_id;
   const semanticIdentity = skillInvocationSemanticIdentity(invocation);
   if (semanticIdentity) return semanticIdentity;
-  if (invocation.runtime_id) return invocation.runtime_id;
   return [
     invocation.kind ?? 'tool_call',
     invocation.skill_id ?? '',

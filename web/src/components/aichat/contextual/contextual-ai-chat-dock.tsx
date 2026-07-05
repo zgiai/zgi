@@ -68,6 +68,7 @@ const ASSET_OPERATION_REFRESH_DEDUPE_MS = 1800;
 const CLIENT_ACTION_ROUTE_TIMEOUT_MS = 10_000;
 const CLIENT_ACTION_ROUTE_CONTEXT_SETTLE_MS = 140;
 const CLIENT_ACTION_ROUTE_FALLBACK_SETTLE_MS = 460;
+const CLIENT_ACTION_ROUTE_CONTEXT_MAX_WAIT_MS = 2_500;
 const CLIENT_ACTION_ROUTE_CONTEXT_POLL_MS = 120;
 const CLIENT_ACTION_OBSERVATION_SETTLE_MS = 900;
 const CLIENT_ACTION_DEDUPE_TTL_MS = 60_000;
@@ -110,7 +111,7 @@ function clientActionRequestKey(request: ContextualAIChatClientActionRequest) {
 }
 
 function routeClientActionRequestKey(request: ContextualAIChatClientActionRequest, href: string) {
-  return `${request.conversationId}:${request.messageId}:route_navigation:${href}`;
+  return `${clientActionRequestKey(request)}:route_navigation:${href}`;
 }
 
 function pruneClientActionDedupe(cache: Map<string, number>, now: number) {
@@ -582,6 +583,14 @@ function routeContextObservation(items: AIChatContextItem[], href: string) {
     context_item_count: items.length,
     context_items: items.slice(0, 6).map(routeObservationContextItem),
   };
+}
+
+function routeLoadedEventType(
+  baseEventType: 'route_already_loaded' | 'route_loaded',
+  observation: ReturnType<typeof routeContextObservation>
+) {
+  if (observation.page_context_ready) return baseEventType;
+  return `${baseEventType}_context_pending`;
 }
 
 function routeRequiresPageContextReady(href: string) {
@@ -1311,20 +1320,23 @@ export function ContextualAIChatDock() {
         } else if (typeof window !== 'undefined') {
           pending.settleTimeoutId = window.setTimeout(() => {
             const latestObservation = routeContextObservation(itemsRef.current, href);
+            const latestObservedPath =
+              normalizeZGIConsoleNavigationHref(window.location.pathname) || currentHref;
             completePendingClientAction(pending, {
               status: 'succeeded',
               result: {
-                event_type: 'route_already_loaded_context_pending',
+                event_type: routeLoadedEventType('route_already_loaded', latestObservation),
                 action_type: pending.actionType,
                 href,
                 label: pending.label,
                 reason: pending.reason,
-                observed_path: currentHref,
+                observed_path: latestObservedPath,
                 elapsed_ms: Date.now() - pending.requestedAt,
+                context_wait_exhausted: !latestObservation.page_context_ready,
                 ...latestObservation,
               },
             });
-          }, CLIENT_ACTION_ROUTE_FALLBACK_SETTLE_MS);
+          }, CLIENT_ACTION_ROUTE_CONTEXT_MAX_WAIT_MS);
         }
         return;
       }
@@ -1446,7 +1458,28 @@ export function ContextualAIChatDock() {
 
       const observation = routeContextObservation(itemsRef.current, href);
       if (routeShouldWaitForPageContext(itemsRef.current, href) && !observation.page_context_ready) {
-        needsPoll = true;
+        const elapsedMs = Date.now() - pending.requestedAt;
+        const remainingWaitMs = CLIENT_ACTION_ROUTE_CONTEXT_MAX_WAIT_MS - elapsedMs;
+        if (remainingWaitMs > 0) {
+          needsPoll = true;
+          return;
+        }
+
+        const latestObservation = routeContextObservation(itemsRef.current, href);
+        completePendingClientAction(pending, {
+          status: 'succeeded',
+          result: {
+            event_type: routeLoadedEventType('route_loaded', latestObservation),
+            action_type: pending.actionType,
+            href,
+            label: pending.label,
+            reason: pending.reason,
+            observed_path: currentHref,
+            elapsed_ms: Date.now() - pending.requestedAt,
+            context_wait_exhausted: !latestObservation.page_context_ready,
+            ...latestObservation,
+          },
+        });
         return;
       }
 

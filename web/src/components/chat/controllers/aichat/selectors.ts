@@ -102,11 +102,19 @@ function isTerminalGovernedToolExecutionInvocation(invocation: AIChatSkillInvoca
 function isSuccessfulToolGovernanceAuditInvocation(invocation: AIChatSkillInvocation): boolean {
   if (invocation.kind !== 'tool_governance') return false;
   const status = String(invocation.status ?? '').toLowerCase();
+  const approvalStatus = String(
+    invocation.approval_status ??
+      invocation.governance?.approval_status ??
+      invocation.governance?.approval_result?.approval_status ??
+      ''
+  ).toLowerCase();
   return (
     status === 'success' ||
     status === 'succeeded' ||
     status === 'completed' ||
-    status === 'allowed'
+    status === 'allowed' ||
+    approvalStatus === 'approved' ||
+    approvalStatus === 'allowed'
   );
 }
 
@@ -117,7 +125,10 @@ function toolGovernanceEventFromInvocation(
   const governance = invocation.governance ?? undefined;
   const approvalEvent = governance?.approval_event;
   const approvalResult = governance?.approval_result;
-  const status = governance?.status ?? invocation.status;
+  const approvalStatus =
+    governance?.approval_status ??
+    (approvalResult?.approval_status as AIChatToolGovernanceDecisionEventData['approval_status']);
+  const status = approvalStatus ?? governance?.status ?? invocation.status;
   return {
     conversation_id: message.conversation_id,
     message_id: message.id,
@@ -146,9 +157,7 @@ function toolGovernanceEventFromInvocation(
       (governance?.model_feedback?.asset_operation_audit as
         | AIChatToolGovernanceDecisionEventData['asset_operation_audit']
         | undefined),
-    approval_status:
-      governance?.approval_status ??
-      (approvalResult?.approval_status as AIChatToolGovernanceDecisionEventData['approval_status']),
+    approval_status: approvalStatus,
     approval_event: approvalEvent,
     matched_grant: governance?.matched_grant,
     approval_result: approvalResult,
@@ -606,26 +615,93 @@ function assetOperationTimelineIdentity(input: AssetOperationTimelineIdentityInp
     effect,
     stableTimelineValue(
       input.assets ??
+        observedAssetOperationTarget(result) ??
         audit.assets ??
         result.assets ??
         args.assets ??
         result.item_results ??
         operationGroup.item_results ??
+        agentOperationTarget(result, args) ??
         {}
     ),
   ].join(':');
+}
+
+function observedAssetOperationTarget(
+  result: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  const observedAssets = Array.isArray(result.observed_assets) ? result.observed_assets : [];
+  if (observedAssets.length === 0) return undefined;
+  const first = timelineRecord(observedAssets[0]);
+  const type = (timelineString(first.type) || timelineString(result.asset_type)).toLowerCase();
+  const matchedContextId = timelineString(first.matched_context_item_id);
+  const rawID = timelineString(first.id) || matchedContextId;
+  const id = rawID.includes(':') ? rawID.split(':').pop()?.trim() ?? '' : rawID;
+  const name = timelineString(first.name) || timelineString(first.matched_context_title);
+  if (!id && !name) return undefined;
+  if (type === 'agent') {
+    const target: Record<string, unknown> = {};
+    if (id) target.agent_id = id;
+    if (name) {
+      target.agent_name = name;
+      target.name = name;
+    }
+    return target;
+  }
+  const target: Record<string, unknown> = {};
+  if (type) target.type = type;
+  if (id) target.id = id;
+  if (name) target.name = name;
+  return Object.keys(target).length > 0 ? target : undefined;
+}
+
+function agentOperationTarget(
+  result: Record<string, unknown>,
+  args: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  const target: Record<string, unknown> = {};
+  for (const key of [
+    'agent_id',
+    'agent_name',
+    'name',
+    'updated_fields',
+    'requested_fields',
+    'target_count',
+    'deleted_count',
+    'created_count',
+    'updated_count',
+  ]) {
+    const value = result[key] ?? args[key];
+    if (hasStableTimelineIdentityValue(value)) {
+      target[key] = value;
+    }
+  }
+  return Object.keys(target).length > 0 ? target : undefined;
+}
+
+function hasStableTimelineIdentityValue(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value as Record<string, unknown>).length > 0;
+  return true;
 }
 
 function skillInvocationAssetOperationIdentity(invocation: AIChatSkillInvocation): string {
   const result = timelineRecord(invocation.result);
   const args = timelineRecord(invocation.arguments);
   const record = invocation as unknown as Record<string, unknown>;
+  const actionType = (
+    timelineString(invocation.action_type) || timelineString(result.action_type)
+  ).toLowerCase();
+  const isAssetObservation =
+    invocation.kind === 'client_action' && actionType === 'asset_observation';
   return assetOperationTimelineIdentity({
     audit: record.asset_operation_audit,
     result,
     args,
-    actionId: record.action_id,
-    correlationId: record.correlation_id,
+    actionId: isAssetObservation ? undefined : record.action_id,
+    correlationId: isAssetObservation ? undefined : record.correlation_id,
   });
 }
 
@@ -726,6 +802,8 @@ function timelineSkillInvocationIdentity(invocation: AIChatSkillInvocation): str
     if (href) return `skill:navigation:route:${href.toLowerCase()}`;
   }
   if (invocation.kind === 'tool_call') {
+    const assetOperationIdentity = skillInvocationAssetOperationIdentity(invocation);
+    if (assetOperationIdentity) return assetOperationIdentity;
     const correlationId = governanceCorrelationId(invocation);
     if (correlationId) {
       return [
@@ -736,8 +814,6 @@ function timelineSkillInvocationIdentity(invocation: AIChatSkillInvocation): str
         correlationId,
       ].join(':');
     }
-    const assetOperationIdentity = skillInvocationAssetOperationIdentity(invocation);
-    if (assetOperationIdentity) return assetOperationIdentity;
   }
   if (invocation.kind === 'tool_governance') {
     const correlationId = governanceCorrelationId(invocation);
@@ -799,13 +875,13 @@ function timelineItemIdentity(item: AIChatAgenticTimelineItem): string {
             audit: item.asset_operation_audit,
             result,
             args: {
-              action_id: item.action_id,
+              action_id: undefined,
               asset_type: item.asset_type,
               effect: item.effect,
               assets: item.assets,
             },
-            actionId: item.action_id,
-            correlationId: item.correlation_id,
+            actionId: undefined,
+            correlationId: undefined,
             assetType: item.asset_type,
             effect: item.effect,
             assets: item.assets,
@@ -843,6 +919,42 @@ function timelineItemIdentity(item: AIChatAgenticTimelineItem): string {
   }
 }
 
+function timelineItemAliasIdentities(item: AIChatAgenticTimelineItem): string[] {
+  const aliases = new Set<string>();
+  const primaryIdentity = timelineItemIdentity(item);
+  if (primaryIdentity) {
+    aliases.add(primaryIdentity);
+  }
+  if (item.type === 'skill_event' && item.invocation.runtime_id) {
+    aliases.add(`runtime:${item.invocation.runtime_id}`);
+  }
+  if (item.type === 'tool_governance_decision' && item.event.correlation_id) {
+    aliases.add(`governance:${item.event.correlation_id}`);
+  }
+  return Array.from(aliases);
+}
+
+function timelineAliasIndex(
+  indexByIdentity: ReadonlyMap<string, number>,
+  item: AIChatAgenticTimelineItem
+): number | undefined {
+  for (const identity of timelineItemAliasIdentities(item)) {
+    const index = indexByIdentity.get(identity);
+    if (index !== undefined) return index;
+  }
+  return undefined;
+}
+
+function setTimelineAliasIndexes(
+  indexByIdentity: Map<string, number>,
+  item: AIChatAgenticTimelineItem,
+  index: number
+) {
+  for (const identity of timelineItemAliasIdentities(item)) {
+    indexByIdentity.set(identity, index);
+  }
+}
+
 function timelineItemRank(item: AIChatAgenticTimelineItem): number {
   if (item.type === 'skill_event') {
     const status = String(item.invocation.status ?? '').toLowerCase();
@@ -861,6 +973,23 @@ function timelineItemRank(item: AIChatAgenticTimelineItem): number {
   }
   if (item.type === 'intermediate_answer' && item.status === 'success') return 30;
   return item.event_id ? 5 : 0;
+}
+
+function isResolvedSuccessfulGovernanceTimelineItem(item: AIChatAgenticTimelineItem): boolean {
+  if (item.type === 'tool_governance_decision') {
+    const status = String(
+      item.event.approval_status ?? item.event.status ?? item.event.decision ?? ''
+    ).toLowerCase();
+    return (
+      status === 'approved' ||
+      status === 'allowed' ||
+      status === 'success' ||
+      status === 'succeeded' ||
+      status === 'completed'
+    );
+  }
+  if (item.type !== 'skill_event' || item.invocation.kind !== 'tool_governance') return false;
+  return isSuccessfulToolGovernanceAuditInvocation(item.invocation);
 }
 
 function preferTimelineItem(
@@ -885,9 +1014,29 @@ function pendingSkillTimelineBaseIdentity(item: AIChatAgenticTimelineItem): stri
 export function dedupeTimelineItems(
   timeline: AIChatAgenticTimelineItem[] | undefined
 ): AIChatAgenticTimelineItem[] {
-  const items = (timeline ?? []).filter(item => {
+  const rawItems = (timeline ?? []).filter(item => {
     if (item.type !== 'skill_event') return true;
     return item.invocation.kind !== 'guardrail';
+  });
+  const terminalGovernedToolCorrelationIds = new Set(
+    rawItems
+      .filter(
+        (item): item is Extract<AIChatAgenticTimelineItem, { type: 'skill_event' }> =>
+          item.type === 'skill_event' &&
+          isTerminalGovernedToolExecutionInvocation(item.invocation)
+      )
+      .map(item => governanceCorrelationId(item.invocation))
+      .filter((correlationId): correlationId is string => Boolean(correlationId))
+  );
+  const items = rawItems.filter(item => {
+    if (!isResolvedSuccessfulGovernanceTimelineItem(item)) return true;
+    const correlationId =
+      item.type === 'tool_governance_decision'
+        ? governanceCorrelationId(item.event)
+        : item.type === 'skill_event'
+          ? governanceCorrelationId(item.invocation)
+          : '';
+    return !correlationId || !terminalGovernedToolCorrelationIds.has(correlationId);
   });
   if (items.length <= 1) return items;
 
@@ -895,11 +1044,11 @@ export function dedupeTimelineItems(
   const pendingIndexByBaseIdentity = new Map<string, number>();
   const out: AIChatAgenticTimelineItem[] = [];
   for (const item of items) {
-    const identity = timelineItemIdentity(item);
-    const existingIndex = indexByIdentity.get(identity);
+    const existingIndex = timelineAliasIndex(indexByIdentity, item);
     if (existingIndex !== undefined) {
       const previousPendingBaseIdentity = pendingSkillTimelineBaseIdentity(out[existingIndex]);
       out[existingIndex] = preferTimelineItem(out[existingIndex], item);
+      setTimelineAliasIndexes(indexByIdentity, out[existingIndex], existingIndex);
       if (
         previousPendingBaseIdentity &&
         !pendingSkillTimelineBaseIdentity(out[existingIndex])
@@ -914,14 +1063,14 @@ export function dedupeTimelineItems(
     const pendingIndex = baseIdentity ? pendingIndexByBaseIdentity.get(baseIdentity) : undefined;
     if (pendingIndex !== undefined) {
       out[pendingIndex] = preferTimelineItem(out[pendingIndex], item);
-      indexByIdentity.set(timelineItemIdentity(out[pendingIndex]), pendingIndex);
+      setTimelineAliasIndexes(indexByIdentity, out[pendingIndex], pendingIndex);
       if (!pendingSkillTimelineBaseIdentity(out[pendingIndex])) {
         pendingIndexByBaseIdentity.delete(baseIdentity);
       }
       continue;
     }
 
-    indexByIdentity.set(identity, out.length);
+    setTimelineAliasIndexes(indexByIdentity, item, out.length);
     const pendingBaseIdentity = pendingSkillTimelineBaseIdentity(item);
     if (pendingBaseIdentity) {
       pendingIndexByBaseIdentity.set(pendingBaseIdentity, out.length);
@@ -942,22 +1091,29 @@ export function mergeRuntimeTimelineWithMessageTimeline(
     return sortTimelineItems(dedupeTimelineItems(runtimeTimeline));
   }
 
-  const messageByIdentity = new Map(
-    messageTimeline.map(item => [timelineItemIdentity(item), item] as const)
-  );
+  const messageByIdentity = new Map<string, AIChatAgenticTimelineItem>();
+  messageTimeline.forEach(item => {
+    timelineItemAliasIdentities(item).forEach(identity => {
+      if (!messageByIdentity.has(identity)) {
+        messageByIdentity.set(identity, item);
+      }
+    });
+  });
   const seen = new Set<string>();
   const merged = runtimeTimeline.map(item => {
-    const identity = timelineItemIdentity(item);
-    seen.add(identity);
-    const messageItem = messageByIdentity.get(identity);
+    const identities = timelineItemAliasIdentities(item);
+    identities.forEach(identity => seen.add(identity));
+    const messageItem = identities
+      .map(identity => messageByIdentity.get(identity))
+      .find((candidate): candidate is AIChatAgenticTimelineItem => Boolean(candidate));
     return item.type === 'progress_text' || !messageItem
       ? item
       : preferTimelineItem(messageItem, item);
   });
 
   messageTimeline.forEach(item => {
-    const identity = timelineItemIdentity(item);
-    if (!seen.has(identity)) {
+    const identities = timelineItemAliasIdentities(item);
+    if (!identities.some(identity => seen.has(identity))) {
       merged.push(item);
     }
   });

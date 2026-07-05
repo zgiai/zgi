@@ -1230,13 +1230,16 @@ export function AIChatMessageBubble({
     [message]
   );
   const runtimeTimeline = timeline;
-  const displayTimeline = useMemo(
-    () =>
-      dedupeTimelineItems(
-        mergeRuntimeTimelineWithMessageTimeline(historicalTimeline, runtimeTimeline)
-      ),
-    [historicalTimeline, runtimeTimeline]
-  );
+  const shouldPreferPersistedTimeline =
+    !isActiveMessage && historicalTimeline.length > 0 && runtimeTimeline.length > 0;
+  const displayTimeline = useMemo(() => {
+    if (shouldPreferPersistedTimeline) {
+      return dedupeTimelineItems(historicalTimeline);
+    }
+    return dedupeTimelineItems(
+      mergeRuntimeTimelineWithMessageTimeline(historicalTimeline, runtimeTimeline)
+    );
+  }, [historicalTimeline, runtimeTimeline, shouldPreferPersistedTimeline]);
   useEffect(() => {
     debugAIChatTimeline('render:message_bubble', {
       message_id: message.id,

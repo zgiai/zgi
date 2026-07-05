@@ -128,6 +128,37 @@ function getSkillInvocationIdentity(invocation: AIChatSkillInvocation): string {
   ].join(':');
 }
 
+function skillInvocationRuntimeIdentity(invocation: AIChatSkillInvocation): string {
+  return invocation.runtime_id ? `runtime:${invocation.runtime_id}` : '';
+}
+
+function skillInvocationsMatch(
+  existing: AIChatSkillInvocation,
+  incoming: AIChatSkillInvocation
+): boolean {
+  const existingRuntimeIdentity = skillInvocationRuntimeIdentity(existing);
+  const incomingRuntimeIdentity = skillInvocationRuntimeIdentity(incoming);
+  if (
+    existingRuntimeIdentity &&
+    incomingRuntimeIdentity &&
+    existingRuntimeIdentity === incomingRuntimeIdentity
+  ) {
+    return true;
+  }
+
+  const existingSemanticIdentity = skillInvocationSemanticIdentity(existing);
+  const incomingSemanticIdentity = skillInvocationSemanticIdentity(incoming);
+  if (
+    existingSemanticIdentity &&
+    incomingSemanticIdentity &&
+    existingSemanticIdentity === incomingSemanticIdentity
+  ) {
+    return true;
+  }
+
+  return getSkillInvocationIdentity(existing) === getSkillInvocationIdentity(incoming);
+}
+
 function getSkillInvocationBaseIdentity(invocation: AIChatSkillInvocation): string {
   return [
     invocation.kind ?? 'tool_call',
@@ -246,21 +277,25 @@ function normalizeToolGovernanceDecisionPayload(
     ...payload,
     model_feedback: modelFeedback,
   });
+  const approvalStatus =
+    payload.approval_status ??
+    governance?.approval_status ??
+    (approvalResult?.approval_status as AIChatToolGovernanceDecisionEventData['approval_status']);
+  const decision = approvalStatus ?? payload.decision ?? governance?.status ?? payload.status;
+  const status = approvalStatus ?? payload.status ?? governance?.status ?? payload.decision;
   return {
     ...payload,
     correlation_id:
       payload.correlation_id ?? governance?.correlation_id ?? assetOperationAudit?.correlation_id,
-    decision: payload.decision ?? governance?.status ?? payload.status,
+    status,
+    decision,
     requires_approval: payload.requires_approval ?? governance?.requires_approval,
     reason: payload.reason ?? governance?.reason,
     risk_level: payload.risk_level ?? governance?.manifest?.risk_level ?? approvalEvent?.risk_level,
     effect: payload.effect ?? governance?.manifest?.effect ?? approvalEvent?.effect,
     asset_type: payload.asset_type ?? governance?.manifest?.asset_type ?? approvalEvent?.asset_type,
     asset_operation_audit: assetOperationAudit,
-    approval_status:
-      payload.approval_status ??
-      governance?.approval_status ??
-      (approvalResult?.approval_status as AIChatToolGovernanceDecisionEventData['approval_status']),
+    approval_status: approvalStatus,
     approval_event: approvalEvent,
     matched_grant: payload.matched_grant ?? governance?.matched_grant,
     approval_result: approvalResult,
@@ -450,6 +485,21 @@ function upsertSkillTimelineItem(
   const next = baseTimeline.slice();
   const incomingIdentity = getSkillInvocationIdentity(incoming);
   const incomingBaseIdentity = getSkillInvocationBaseIdentity(incoming);
+  const existingStableIndex = next.findIndex(
+    item => item.type === 'skill_event' && skillInvocationsMatch(item.invocation, incoming)
+  );
+  if (existingStableIndex >= 0) {
+    const existing = next[existingStableIndex];
+    if (existing.type !== 'skill_event') return next;
+    next[existingStableIndex] = {
+      ...existing,
+      invocation: mergeSkillInvocationByStatus(existing.invocation, incoming),
+      created_at: incoming.created_at ?? existing.created_at,
+      event_id: eventId ?? existing.event_id,
+    };
+    return next;
+  }
+
   const reverseIndex = [...next].reverse().findIndex(item => {
     if (item.type !== 'skill_event') return false;
     const invocation = item.invocation;
@@ -461,7 +511,7 @@ function upsertSkillTimelineItem(
       status === 'waiting_client_action';
     if (!isPending) return false;
     return (
-      getSkillInvocationIdentity(invocation) === incomingIdentity ||
+      skillInvocationsMatch(invocation, incoming) ||
       getSkillInvocationBaseIdentity(invocation) === incomingBaseIdentity
     );
   });
