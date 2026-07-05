@@ -132,6 +132,21 @@ interface AgentConfigFieldDescriptor {
   labelKey: Parameters<WebappTranslator>[0];
 }
 
+const AGENT_CONFIG_BINDING_FIELD_KEYS = new Set([
+  'enabled_skill_ids',
+  'add_enabled_skill_ids',
+  'remove_enabled_skill_ids',
+  'knowledge_dataset_ids',
+  'add_knowledge_dataset_ids',
+  'remove_knowledge_dataset_ids',
+  'database_bindings',
+  'add_database_bindings',
+  'remove_database_bindings',
+  'workflow_bindings',
+  'add_workflow_bindings',
+  'remove_workflow_bindings',
+]);
+
 interface AIChatAgenticTimelineProps {
   timeline: AIChatAgenticTimelineItem[];
   skillDisplayById: AIChatSkillDisplayMap;
@@ -339,7 +354,7 @@ function stringListFromUnknown(value: unknown): string[] {
   return single && !looksLikeOpaqueAssetID(single) ? [single] : [];
 }
 
-function recordListFromUnknown(value: unknown): Record<string, unknown>[] {
+function recordListFromUnknown(value: unknown): Array<Record<string, unknown>> {
   if (typeof value === 'string') {
     const trimmed = value.trim();
     if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
@@ -840,15 +855,24 @@ function buildSkillTitle(
 
   if (tone === 'success' && normalizeGovernanceToolName(invocation.skill_id) === 'agent-management') {
     const result = invocationRecord(invocation.result);
+    const fallbackAgentName =
+      agentOwnerNameFromSkillInvocation(invocation) ??
+      t('consoleChat.governance.approvalPanel.currentAgent');
+    if (AGENT_CONFIG_TOOL_NAMES.has(normalizeGovernanceToolName(invocation.tool_name))) {
+      const configTitle = agentConfigResultActionSentence(
+        result,
+        fallbackAgentName,
+        t,
+        locale
+      );
+      if (configTitle) return configTitle;
+    }
     const summary = agentBindingDisplaySummaryFromRecord(
       result,
       invocation.tool_name,
       skillDisplayById,
       locale
     );
-    const fallbackAgentName =
-      agentOwnerNameFromSkillInvocation(invocation) ??
-      t('consoleChat.governance.approvalPanel.currentAgent');
     const title = summary
       ? agentBindingDisplayText(
           summary,
@@ -1734,6 +1758,10 @@ function compactConfigFieldDescriptors(
   return out;
 }
 
+function agentConfigHasNonBindingFields(descriptors: AgentConfigFieldDescriptor[]): boolean {
+  return descriptors.some(descriptor => !AGENT_CONFIG_BINDING_FIELD_KEYS.has(descriptor.key));
+}
+
 function agentConfigDescriptorMatchesChangedFields(
   descriptor: AgentConfigFieldDescriptor,
   changedFields: Set<string>
@@ -1783,7 +1811,7 @@ function agentConfigFieldDescriptorsFromArguments(
   if (hasArgumentKey(args, 'agent_memory_enabled')) {
     add('agent_memory_enabled', 'consoleChat.governance.approvalPanel.agentConfigFieldMemory');
   }
-  if (hasArgumentKey(args, 'file_upload_enabled')) {
+  if (hasArgumentKey(args, 'file_upload') || hasArgumentKey(args, 'file_upload_enabled')) {
     add('file_upload_enabled', 'consoleChat.governance.approvalPanel.agentConfigFieldFileUpload');
   }
   if (hasArgumentKey(args, 'home_title')) {
@@ -1881,6 +1909,34 @@ function agentConfigFieldDescriptorsFromArguments(
   return compacted;
 }
 
+function agentConfigFieldDescriptorsFromFieldNames(fields: string[]): AgentConfigFieldDescriptor[] {
+  const args: Record<string, unknown> = {};
+  for (const field of fields) {
+    const key = field.trim();
+    if (key) args[key] = true;
+  }
+  return agentConfigFieldDescriptorsFromArguments(args);
+}
+
+function agentConfigChangedFieldNamesFromRecords(value: unknown): string[] {
+  return recordListFromUnknown(value)
+    .map(record =>
+      governanceRecordString(record, ['field', 'field_name', 'config_field', 'key', 'name'])
+    )
+    .filter((field): field is string => Boolean(field));
+}
+
+function agentConfigFieldDescriptorsFromResult(
+  result: Record<string, unknown>
+): AgentConfigFieldDescriptor[] {
+  const fieldNames = [
+    ...stringListFromUnknown(result.updated_fields),
+    ...agentConfigChangedFieldNamesFromRecords(result.config_changes),
+    ...agentConfigChangedFieldNamesFromRecords(result.binding_changes),
+  ];
+  return agentConfigFieldDescriptorsFromFieldNames(fieldNames);
+}
+
 function agentIdentityFieldDescriptorsFromArguments(
   args: Record<string, unknown>
 ): AgentConfigFieldDescriptor[] {
@@ -1941,14 +1997,35 @@ function agentConfigFrozenActionSentence(
     skillDisplayById,
     locale
   );
-  if (bindingSummary) {
+  const descriptors = agentConfigFieldDescriptorsFromArguments(args);
+  if (bindingSummary && !agentConfigHasNonBindingFields(descriptors)) {
     const bindingText = agentBindingDisplayText(bindingSummary, fallbackAgentName, locale, t);
     if (bindingText) return bindingText;
   }
-  const descriptors = agentConfigFieldDescriptorsFromArguments(args);
   if (descriptors.length === 0) return null;
   return t('consoleChat.governance.approvalPanel.agentUpdateConfigFields', {
     agent: fallbackAgentName,
+    fields: formatAgentConfigFieldList(descriptors, locale, t),
+  });
+}
+
+function agentConfigResultActionSentence(
+  result: Record<string, unknown>,
+  fallbackAgentName: string,
+  t: WebappTranslator,
+  locale: string
+): string | null {
+  const descriptors = agentConfigFieldDescriptorsFromResult(result);
+  if (descriptors.length === 0 || !agentConfigHasNonBindingFields(descriptors)) {
+    return null;
+  }
+  const agent = governanceRecord(result.agent);
+  const agentName =
+    governanceRecordString(result, ['agent_name', 'name']) ??
+    governanceRecordString(agent, ['name', 'agent_name']) ??
+    fallbackAgentName;
+  return t('consoleChat.governance.approvalPanel.agentUpdateConfigFields', {
+    agent: agentName,
     fields: formatAgentConfigFieldList(descriptors, locale, t),
   });
 }
@@ -2468,6 +2545,15 @@ function governanceActionSentence(
       governanceEventString(item, ['agent_name']) ??
       assetGroups.owners.map(asset => governanceAssetSpecificDisplayName(asset)).find(Boolean) ??
       t('consoleChat.governance.approvalPanel.currentAgent');
+    if (executionResult && AGENT_CONFIG_TOOL_NAMES.has(toolName)) {
+      const configSentence = agentConfigResultActionSentence(
+        executionResult,
+        ownerName,
+        t,
+        locale
+      );
+      if (configSentence) return configSentence;
+    }
     if (resultSummary) {
       const actionText = agentBindingDisplayText(resultSummary, ownerName, locale, t);
       if (actionText) return actionText;
