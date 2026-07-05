@@ -611,7 +611,7 @@ func completionVerificationApplyPlanOverride(evidence map[string]interface{}, de
 		decision.MissingSteps = append(cleanStringSlice(decision.MissingSteps), "agent-management/get_agent_config post-update verification")
 		decision.NextActionHint = "agent-management/get_agent_config"
 		decision.FinalAnswer = ""
-		decision.FinalAnswerGuidance = completionVerificationAgentConfigPostReadGuidance()
+		decision.FinalAnswerGuidance = completionVerificationAgentConfigPostReadGuidance(completionEvidenceOperationPlanModelDecides(evidence))
 		return decision
 	}
 	if mismatches := completionVerificationAgentConfigMismatches(evidence); len(mismatches) > 0 {
@@ -630,7 +630,7 @@ func completionVerificationApplyPlanOverride(evidence map[string]interface{}, de
 			decision.NextActionHint = "agent-management/update_agent_config"
 		}
 		decision.FinalAnswer = ""
-		decision.FinalAnswerGuidance = completionVerificationAgentConfigMismatchGuidance(mismatches)
+		decision.FinalAnswerGuidance = completionVerificationAgentConfigMismatchGuidance(mismatches, completionEvidenceOperationPlanModelDecides(evidence))
 		return decision
 	}
 	if failedStepLabel, ok := completionVerificationFailedOperationPlanStepLabel(evidence); ok && completionVerificationHasFailedEvidenceForPlanStep(evidence, failedStepLabel) {
@@ -773,7 +773,10 @@ func completionVerificationApplyPlanOnlySoftening(evidence map[string]interface{
 	return decision
 }
 
-func completionVerificationAgentConfigPostReadGuidance() string {
+func completionVerificationAgentConfigPostReadGuidance(modelDecidesTools bool) string {
+	if modelDecidesTools {
+		return "Use the available Agent management capabilities to verify the refreshed Agent configuration before the final answer. Do not claim the requested post-update verification is complete until fresh configuration evidence succeeds."
+	}
 	return "Call agent-management/get_agent_config again after the successful Agent config update, then base the final answer on that fresh configuration result. Do not claim the requested post-update verification is complete until that read succeeds."
 }
 
@@ -1256,9 +1259,15 @@ func completionVerificationAgentConfigNeedsPostRead(mismatches []string) bool {
 	return false
 }
 
-func completionVerificationAgentConfigMismatchGuidance(mismatches []string) string {
+func completionVerificationAgentConfigMismatchGuidance(mismatches []string, modelDecidesTools bool) string {
 	if len(mismatches) == 0 {
+		if modelDecidesTools {
+			return "Verify the requested Agent config state with the available Agent management capabilities before the final answer."
+		}
 		return "Verify the requested Agent config state with get_agent_config before the final answer."
+	}
+	if modelDecidesTools {
+		return "The refreshed Agent configuration evidence did not confirm the requested state: " + strings.Join(completionVerificationModelDecidesPublicTexts(mismatches), "; ") + ". If the change is still needed, choose the appropriate available Agent management capability to apply the concrete target values, then verify the refreshed configuration before the final answer."
 	}
 	return "The post-update Agent config read did not confirm the requested state: " + strings.Join(mismatches, "; ") + ". If the change is still needed, call agent-management/update_agent_config with the concrete target values, then call get_agent_config again and base the final answer on that result."
 }
@@ -2763,30 +2772,38 @@ func trimJSONCodeFence(raw string) string {
 	return strings.TrimSpace(text)
 }
 
-func completionVerificationSystemMessage(decision completionVerificationDecision, candidateAnswer string, retry int) adapter.Message {
+func completionVerificationSystemMessage(decision completionVerificationDecision, candidateAnswer string, retry int, modelDecidesArgs ...bool) adapter.Message {
+	modelDecidesTools := false
+	if len(modelDecidesArgs) > 0 {
+		modelDecidesTools = modelDecidesArgs[0]
+	}
+	displayDecision := decision
+	if modelDecidesTools {
+		displayDecision = completionVerificationDecisionForModelDecidesFeedback(decision)
+	}
 	lines := []string{
 		"Runtime completion verification feedback:",
 		"The previous candidate final answer did not pass post-verification.",
 	}
-	if reason := strings.TrimSpace(decision.Reason); reason != "" {
+	if reason := strings.TrimSpace(displayDecision.Reason); reason != "" {
 		lines = append(lines, "Reason: "+reason)
 	}
-	if strings.EqualFold(strings.TrimSpace(decision.LanguageHint), "zh-Hans") {
+	if strings.EqualFold(strings.TrimSpace(displayDecision.LanguageHint), "zh-Hans") {
 		lines = append(lines, "Language: The user's original request is Chinese. Continue in Chinese and do not answer in English unless the user explicitly asks.")
 	}
-	if missing := strings.Join(cleanStringSlice(decision.MissingSteps), ", "); missing != "" {
+	if missing := strings.Join(cleanStringSlice(displayDecision.MissingSteps), ", "); missing != "" {
 		lines = append(lines, "Missing steps: "+missing)
 	}
-	if claims := strings.Join(cleanStringSlice(decision.UnsupportedClaims), ", "); claims != "" {
+	if claims := strings.Join(cleanStringSlice(displayDecision.UnsupportedClaims), ", "); claims != "" {
 		lines = append(lines, "Unsupported claims: "+claims)
 	}
-	if hint := strings.TrimSpace(decision.NextActionHint); hint != "" {
+	if hint := strings.TrimSpace(displayDecision.NextActionHint); hint != "" {
 		lines = append(lines, "Next action hint: "+hint)
 	}
-	if guidance := strings.TrimSpace(decision.FinalAnswerGuidance); guidance != "" {
+	if guidance := strings.TrimSpace(displayDecision.FinalAnswerGuidance); guidance != "" {
 		lines = append(lines, "Final answer guidance: "+guidance)
 	}
-	lines = append(lines, completionVerificationExecutableActionFeedback(decision)...)
+	lines = append(lines, completionVerificationExecutableActionFeedback(decision, modelDecidesTools)...)
 	lines = append(lines,
 		fmt.Sprintf("Post-verification retry %d of %d.", retry, defaultMaxCompletionVerificationRetries),
 		"Continue only if the next action is safe and supported by the available tools. If the same tool with the same arguments already failed, do not repeat it; answer truthfully from the failure.",
@@ -2797,7 +2814,55 @@ func completionVerificationSystemMessage(decision completionVerificationDecision
 	return adapter.Message{Role: "system", Content: strings.Join(lines, "\n")}
 }
 
-func completionVerificationExecutableActionFeedback(decision completionVerificationDecision) []string {
+func completionVerificationDecisionForModelDecidesFeedback(decision completionVerificationDecision) completionVerificationDecision {
+	decision.Reason = completionVerificationModelDecidesPublicText(decision.Reason)
+	decision.MissingSteps = completionVerificationModelDecidesPublicTexts(decision.MissingSteps)
+	decision.UnsupportedClaims = completionVerificationModelDecidesPublicTexts(decision.UnsupportedClaims)
+	decision.NextActionHint = completionVerificationModelDecidesPublicText(decision.NextActionHint)
+	decision.FinalAnswerGuidance = completionVerificationModelDecidesPublicText(decision.FinalAnswerGuidance)
+	return decision
+}
+
+func completionVerificationModelDecidesPublicTexts(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = completionVerificationModelDecidesPublicText(value); value != "" {
+			out = append(out, value)
+		}
+	}
+	return dedupeStrings(out)
+}
+
+func completionVerificationModelDecidesPublicText(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	replacements := []struct {
+		old string
+		new string
+	}{
+		{"agent-management/update_agent_config", "Agent configuration update evidence"},
+		{"agent-management/get_agent_config", "fresh Agent configuration read evidence"},
+		{"file-manager/save_file_to_management", "file management save evidence"},
+		{"file-manager/delete_file", "file deletion evidence"},
+		{"update_agent_config", "Agent configuration update evidence"},
+		{"get_agent_config", "fresh Agent configuration read evidence"},
+		{"save_file_to_management", "file management save evidence"},
+		{"delete_file", "file deletion evidence"},
+		{"Delete resolved file", "file deletion evidence"},
+		{"delete resolved file", "file deletion evidence"},
+	}
+	for _, replacement := range replacements {
+		value = strings.ReplaceAll(value, replacement.old, replacement.new)
+	}
+	return strings.TrimSpace(value)
+}
+
+func completionVerificationExecutableActionFeedback(decision completionVerificationDecision, modelDecidesTools bool) []string {
+	if modelDecidesTools {
+		return completionVerificationModelDecidesExecutableActionFeedback(decision)
+	}
 	text := strings.ToLower(strings.Join(append(append([]string{}, decision.MissingSteps...), decision.NextActionHint, decision.FinalAnswerGuidance, decision.Reason), "\n"))
 	if skillID, toolName, ok := completionVerificationRequiredSkillTool(decision); ok {
 		switch {
@@ -2836,6 +2901,38 @@ func completionVerificationExecutableActionFeedback(decision completionVerificat
 	default:
 		return nil
 	}
+}
+
+func completionVerificationModelDecidesExecutableActionFeedback(decision completionVerificationDecision) []string {
+	if skillID, toolName, ok := completionVerificationRequiredSkillTool(decision); ok {
+		switch {
+		case strings.EqualFold(skillID, skills.SkillAgentManagement) && strings.EqualFold(toolName, "update_agent_config"):
+			return []string{
+				"The remaining user-requested Agent configuration changes still need successful tool evidence.",
+				"Choose the appropriate available Agent management capability from the current tool schemas, apply only the missing concrete target values from the user's request and latest evidence, then verify the refreshed configuration before the final answer.",
+				"Do not produce another final answer until the requested Agent configuration update succeeds, fails, or is rejected by governance.",
+			}
+		case strings.EqualFold(skillID, skills.SkillAgentManagement) && strings.EqualFold(toolName, "get_agent_config"):
+			return []string{
+				"Fresh Agent configuration verification evidence is still missing.",
+				"Choose the appropriate available read or observation capability to verify the current Agent configuration, then use that fresh result as the source of truth for the final answer.",
+				"Do not produce another final answer until the verification succeeds or fails.",
+			}
+		case strings.EqualFold(skillID, skills.SkillFileManager) && strings.EqualFold(toolName, "delete_file"):
+			return []string{
+				"The requested file deletion still needs matching successful tool evidence.",
+				"Use the available file-management capability only after resolving the exact target from current page context, prior tool results, or turn state. Governance owns any required approval card; do not ask for a separate natural-language confirmation.",
+				"Do not produce another final answer until the file deletion succeeds, fails, or is rejected by governance.",
+			}
+		case strings.EqualFold(skillID, skills.SkillFileManager) && strings.EqualFold(toolName, "save_file_to_management"):
+			return []string{
+				"The requested save into file management still needs matching successful tool evidence.",
+				"Use the already generated artifact or supplied URL when available; do not regenerate an existing artifact unless the prior generation failed or the user requested different content.",
+				"Do not produce another final answer until the save succeeds, fails, or is rejected by governance.",
+			}
+		}
+	}
+	return nil
 }
 
 func completionVerificationRequiredSkillTool(decision completionVerificationDecision) (string, string, bool) {

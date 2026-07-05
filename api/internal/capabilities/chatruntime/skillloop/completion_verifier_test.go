@@ -72,7 +72,7 @@ func TestCompletionVerificationSystemMessageMapsAgentConfigNeedsActionToTools(t 
 		Status:       completionVerificationStatusNeedsAction,
 		Reason:       "final answer lacks tool evidence",
 		MissingSteps: []string{"Run tool:agent-management/update_agent_config", "Run tool:agent-management/get_agent_config (post-update verification)"},
-	}, "\u5df2\u5b8c\u6210\u3002", 1)
+	}, "\u5df2\u5b8c\u6210\u3002", 1, false)
 	content := messageContent(message.Content)
 
 	for _, fragment := range []string{
@@ -83,6 +83,36 @@ func TestCompletionVerificationSystemMessageMapsAgentConfigNeedsActionToTools(t 
 	} {
 		if !strings.Contains(content, fragment) {
 			t.Fatalf("system message = %q, want fragment %q", content, fragment)
+		}
+	}
+}
+
+func TestCompletionVerificationSystemMessageUsesSemanticFeedbackForModelDecides(t *testing.T) {
+	message := completionVerificationSystemMessage(completionVerificationDecision{
+		Status:         completionVerificationStatusNeedsAction,
+		Reason:         "final answer lacks tool evidence",
+		MissingSteps:   []string{"Run tool:agent-management/update_agent_config", "Run tool:agent-management/get_agent_config (post-update verification)"},
+		NextActionHint: "agent-management/update_agent_config",
+	}, "\u5df2\u5b8c\u6210\u3002", 1, true)
+	content := messageContent(message.Content)
+
+	for _, leaked := range []string{
+		"Required next tool",
+		"agent-management/update_agent_config",
+		"agent-management/get_agent_config",
+		"next business tool call must be",
+	} {
+		if strings.Contains(content, leaked) {
+			t.Fatalf("system message leaked model-decides tool directive %q: %q", leaked, content)
+		}
+	}
+	for _, fragment := range []string{
+		"Agent configuration",
+		"Choose the appropriate available Agent management capability",
+		"verify the refreshed configuration",
+	} {
+		if !strings.Contains(content, fragment) {
+			t.Fatalf("system message = %q, want semantic fragment %q", content, fragment)
 		}
 	}
 }
@@ -117,14 +147,18 @@ func TestCompletionVerificationFeedbackToolChoiceForAgentConfigNeedsAction(t *te
 		{Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement}},
 	}}
 
-	unloadedChoice := completionVerificationFeedbackToolChoice(decision, nil, resolved)
+	unloadedChoice := completionVerificationFeedbackToolChoice(decision, nil, resolved, false)
 	if got := functionToolChoiceName(unloadedChoice); got != skills.MetaToolLoadSkill {
 		t.Fatalf("unloaded tool choice = %q, want %s", got, skills.MetaToolLoadSkill)
 	}
 
-	loadedChoice := completionVerificationFeedbackToolChoice(decision, map[string]struct{}{skills.SkillAgentManagement: {}}, resolved)
+	loadedChoice := completionVerificationFeedbackToolChoice(decision, map[string]struct{}{skills.SkillAgentManagement: {}}, resolved, false)
 	if got := functionToolChoiceName(loadedChoice); got != skills.MetaToolCallSkillTool {
 		t.Fatalf("loaded tool choice = %q, want %s", got, skills.MetaToolCallSkillTool)
+	}
+
+	if forced := completionVerificationFeedbackToolChoice(decision, map[string]struct{}{skills.SkillAgentManagement: {}}, resolved, true); forced != nil {
+		t.Fatalf("model-decides forced tool choice = %#v, want nil", forced)
 	}
 }
 
@@ -231,7 +265,7 @@ func TestCompletionVerificationSystemMessageKeepsChineseRetryLanguage(t *testing
 		Status:       completionVerificationStatusNeedsAction,
 		Reason:       "\u9700\u8981\u7ee7\u7eed\u786e\u8ba4\u5de5\u5177\u7ed3\u679c",
 		LanguageHint: "zh-Hans",
-	}, "\u6211\u5df2\u5b8c\u6210\u64cd\u4f5c\u3002", 1)
+	}, "\u6211\u5df2\u5b8c\u6210\u64cd\u4f5c\u3002", 1, false)
 	content := messageContent(message.Content)
 
 	if !strings.Contains(content, "Continue in Chinese") {

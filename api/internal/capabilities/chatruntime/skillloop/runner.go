@@ -280,8 +280,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 						}
 						notifyCompletionVerificationResult(req, decision, text)
 					} else {
-						messages = append(messages, completionVerificationSystemMessage(decision, text, completionVerificationRetryCount))
-						if forced := completionVerificationFeedbackToolChoice(decision, loadedSkills, resolved); forced != nil {
+						modelDecidesTools := completionEvidenceOperationPlanModelDecides(evidence)
+						messages = append(messages, completionVerificationSystemMessage(decision, text, completionVerificationRetryCount, modelDecidesTools))
+						if forced := completionVerificationFeedbackToolChoice(decision, loadedSkills, resolved, modelDecidesTools); forced != nil {
 							forcedToolChoiceForNextRound = forced
 						}
 						continue
@@ -305,8 +306,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 							}
 							notifyCompletionVerificationResult(req, decision, text)
 						} else {
-							messages = append(messages, completionVerificationSystemMessage(decision, text, completionVerificationRetryCount))
-							if forced := completionVerificationFeedbackToolChoice(decision, loadedSkills, resolved); forced != nil {
+							modelDecidesTools := completionEvidenceOperationPlanModelDecides(evidence)
+							messages = append(messages, completionVerificationSystemMessage(decision, text, completionVerificationRetryCount, modelDecidesTools))
+							if forced := completionVerificationFeedbackToolChoice(decision, loadedSkills, resolved, modelDecidesTools); forced != nil {
 								forcedToolChoiceForNextRound = forced
 							}
 							continue
@@ -326,8 +328,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 						}
 						notifyCompletionVerificationResult(req, decision, text)
 					} else {
-						messages = append(messages, completionVerificationSystemMessage(decision, text, completionVerificationRetryCount))
-						if forced := completionVerificationFeedbackToolChoice(decision, loadedSkills, resolved); forced != nil {
+						modelDecidesTools := completionEvidenceOperationPlanModelDecides(evidence)
+						messages = append(messages, completionVerificationSystemMessage(decision, text, completionVerificationRetryCount, modelDecidesTools))
+						if forced := completionVerificationFeedbackToolChoice(decision, loadedSkills, resolved, modelDecidesTools); forced != nil {
 							forcedToolChoiceForNextRound = forced
 						}
 						continue
@@ -718,7 +721,8 @@ func completionEvidenceContinuationAgentCreateSystemMessage(evidence map[string]
 
 func completionEvidenceContinuationPendingPlanStepSystemMessage(evidence map[string]interface{}, retryCount int, resolved *skills.ResolvedSkills) (adapter.Message, bool) {
 	plan := evidenceMapFromAny(evidence["operation_plan"])
-	if completionEvidenceOperationPlanModelDecides(evidence) {
+	modelDecidesTools := completionEvidenceOperationPlanModelDecides(evidence)
+	if modelDecidesTools {
 		if _, ok := fastPathModelDecidesPendingAgentWorkStep(plan); !ok {
 			return adapter.Message{}, false
 		}
@@ -736,6 +740,9 @@ func completionEvidenceContinuationPendingPlanStepSystemMessage(evidence map[str
 	}
 	if !completionEvidencePlanStepSkillResolved(step, resolved) {
 		return adapter.Message{}, false
+	}
+	if modelDecidesTools {
+		return completionEvidenceContinuationModelDecidesSystemMessage(evidence, step, retryCount), true
 	}
 	payloadJSON, err := json.Marshal(map[string]interface{}{
 		"suggested_next_tool": action,
@@ -758,12 +765,85 @@ func completionEvidenceContinuationPendingPlanStepSystemMessage(evidence map[str
 	return adapter.Message{Role: "system", Content: content}, true
 }
 
+func completionEvidenceContinuationModelDecidesSystemMessage(evidence map[string]interface{}, step map[string]interface{}, retryCount int) adapter.Message {
+	payload := map[string]interface{}{
+		"pending_phase": completionEvidenceContinuationModelDecidesPhasePayload(step),
+	}
+	if goals := completionVerificationCapabilityGoalsForPrompt(evidenceMapFromAny(evidence["operation_plan"])["capability_goals"]); len(goals) > 0 {
+		payload["capability_goals"] = goals
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		payloadJSON = []byte(fmt.Sprint(payload))
+	}
+	content := strings.Join([]string{
+		fmt.Sprintf("Runtime execution evidence requires continued work before a final answer. Evidence-continuation retry %d of %d.", retryCount+1, defaultMaxCompletionVerificationRetries),
+		"The operation strategy is phase-only: it describes the user-visible phase that is not yet proven complete, but the model must choose the concrete tool from the currently available tool schemas and latest context.",
+		"Use current page context, prior tool results, turn_state, and visible asset evidence to decide the next action. Do not repeat an action when matching evidence already proves it succeeded.",
+		"For Agent configuration work, apply the remaining user-requested changes with the available Agent management capability, then verify the refreshed configuration before the final answer.",
+		"Do not tell the user an approval card has been submitted unless a governed tool call actually returned a pending governance event. Governance approval cards are created by tool calls, not by natural-language progress text.",
+		"If the action is impossible because context, permissions, or tool capability is missing, use available read/list/observe capabilities when they can resolve the blocker; otherwise stop and explain the exact blocker truthfully.",
+		"Do not answer as complete until successful tool evidence and any required page observation evidence exist for this pending phase.",
+		"Pending phase evidence JSON:\n" + string(payloadJSON),
+	}, "\n")
+	return adapter.Message{Role: "system", Content: content}
+}
+
+func completionEvidenceContinuationModelDecidesPhasePayload(step map[string]interface{}) map[string]interface{} {
+	payload := map[string]interface{}{}
+	for _, key := range []string{
+		"title",
+		"phase",
+		"status",
+		"config_goal",
+		"expected_updated_fields",
+		"expected_binding_actions",
+		"required_post_update_verification",
+		"missing_updated_fields",
+		"target",
+		"targets",
+		"resource",
+		"resources",
+		"goal",
+	} {
+		if value, ok := step[key]; ok && completionEvidenceContinuationPayloadValuePresent(value) {
+			payload[key] = promptEvidenceCopy(value)
+		}
+	}
+	if _, ok := payload["phase"]; !ok {
+		payload["phase"] = "pending_user_visible_operation"
+	}
+	return payload
+}
+
+func completionEvidenceContinuationPayloadValuePresent(value interface{}) bool {
+	if value == nil {
+		return false
+	}
+	if strings.TrimSpace(evidenceStringFromAny(value)) != "" {
+		return true
+	}
+	if len(evidenceMapFromAny(value)) > 0 {
+		return true
+	}
+	if len(evidenceSliceFromAny(value)) > 0 {
+		return true
+	}
+	switch value.(type) {
+	case bool, int, int64, float64, float32, json.Number:
+		return true
+	default:
+		return false
+	}
+}
+
 func completionEvidenceContinuationToolChoice(evidence map[string]interface{}, loadedSkills map[string]struct{}, resolved *skills.ResolvedSkills) interface{} {
 	plan := evidenceMapFromAny(evidence["operation_plan"])
 	if completionEvidenceOperationPlanModelDecides(evidence) {
 		if _, ok := fastPathModelDecidesPendingAgentWorkStep(plan); !ok {
 			return nil
 		}
+		return nil
 	}
 	step, ok := completionVerificationPendingExecutablePlanStep(evidence)
 	if !ok {
@@ -791,7 +871,10 @@ func completionEvidenceContinuationToolChoice(evidence map[string]interface{}, l
 	return forcedFunctionToolChoice(skills.MetaToolCallSkillTool)
 }
 
-func completionVerificationFeedbackToolChoice(decision completionVerificationDecision, loadedSkills map[string]struct{}, resolved *skills.ResolvedSkills) interface{} {
+func completionVerificationFeedbackToolChoice(decision completionVerificationDecision, loadedSkills map[string]struct{}, resolved *skills.ResolvedSkills, modelDecidesTools bool) interface{} {
+	if modelDecidesTools {
+		return nil
+	}
 	skillID, toolName, ok := completionVerificationRequiredSkillTool(decision)
 	if !ok || strings.TrimSpace(skillID) == "" || strings.TrimSpace(toolName) == "" {
 		return nil

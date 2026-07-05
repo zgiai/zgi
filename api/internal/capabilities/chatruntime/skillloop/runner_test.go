@@ -501,12 +501,18 @@ func TestCompletionEvidenceContinuationAllowsModelDecidesRequiredPostUpdateAgent
 		t.Fatal("completionEvidenceContinuationSystemMessage() ok = false, want true for model-decides post-update config read")
 	}
 	content := fmt.Sprint(feedback.Content)
-	if !strings.Contains(content, "agent-management/get_agent_config") ||
-		!strings.Contains(content, "required_post_update_verification") {
-		t.Fatalf("feedback = %v, want post-update get_agent_config guidance", feedback.Content)
+	for _, leaked := range []string{"agent-management/get_agent_config", "suggested_next_tool", "pending_tool_step"} {
+		if strings.Contains(content, leaked) {
+			t.Fatalf("feedback leaked model-decides tool directive %q: %v", leaked, feedback.Content)
+		}
 	}
-	if got := functionToolChoiceName(completionEvidenceContinuationToolChoice(evidence, loaded, resolved)); got != skills.MetaToolCallSkillTool {
-		t.Fatalf("completionEvidenceContinuationToolChoice() = %q, want %s for loaded post-update read", got, skills.MetaToolCallSkillTool)
+	for _, fragment := range []string{"phase-only", "required_post_update_verification", "choose the concrete tool"} {
+		if !strings.Contains(content, fragment) {
+			t.Fatalf("feedback = %v, want semantic fragment %q", feedback.Content, fragment)
+		}
+	}
+	if forced := completionEvidenceContinuationToolChoice(evidence, loaded, resolved); forced != nil {
+		t.Fatalf("completionEvidenceContinuationToolChoice() = %#v, want nil for model-decides continuation", forced)
 	}
 }
 
@@ -553,11 +559,19 @@ func TestCompletionEvidenceContinuationAllowsModelDecidesPendingAgentMutation(t 
 	if !ok {
 		t.Fatal("completionEvidenceContinuationSystemMessage() ok = false, want true for model-decides pending create_agent")
 	}
-	if !strings.Contains(fmt.Sprint(feedback.Content), "agent-management/create_agent") {
-		t.Fatalf("feedback = %v, want create_agent guidance", feedback.Content)
+	content := fmt.Sprint(feedback.Content)
+	for _, leaked := range []string{"agent-management/create_agent", "suggested_next_tool", "pending_tool_step"} {
+		if strings.Contains(content, leaked) {
+			t.Fatalf("feedback leaked model-decides tool directive %q: %v", leaked, feedback.Content)
+		}
 	}
-	if got := functionToolChoiceName(completionEvidenceContinuationToolChoice(evidence, loaded, resolved)); got != skills.MetaToolCallSkillTool {
-		t.Fatalf("completionEvidenceContinuationToolChoice() = %q, want %s for loaded pending create_agent", got, skills.MetaToolCallSkillTool)
+	for _, fragment := range []string{"phase-only", "pending_user_visible_operation", "choose the concrete tool"} {
+		if !strings.Contains(content, fragment) {
+			t.Fatalf("feedback = %v, want semantic fragment %q", feedback.Content, fragment)
+		}
+	}
+	if forced := completionEvidenceContinuationToolChoice(evidence, loaded, resolved); forced != nil {
+		t.Fatalf("completionEvidenceContinuationToolChoice() = %#v, want nil for model-decides continuation", forced)
 	}
 }
 
