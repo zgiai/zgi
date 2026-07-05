@@ -41,6 +41,21 @@ func modelPriceConfigured(value string) bool {
 	return strings.TrimSpace(value) != ""
 }
 
+func parseOptionalModelPriceOverride(value string, field string) (*decimal.Decimal, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, nil
+	}
+	price, err := decimal.NewFromString(trimmed)
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s: %w", field, err)
+	}
+	if price.IsNegative() {
+		return nil, fmt.Errorf("invalid %s: must be greater than or equal to zero", field)
+	}
+	return &price, nil
+}
+
 type modelService struct {
 	globalRepo         repository.ModelRepository
 	configRepo         repository.ModelConfigRepository
@@ -257,26 +272,39 @@ func (s *modelService) ConfigureModel(ctx context.Context, organizationID uuid.U
 		return nil, ErrModelNotFound
 	}
 
-	config := &model.ModelConfig{
-		OrganizationID:    organizationID,
-		ModelID:           req.ModelID,
-		IsEnabled:         true,
-		CustomDisplayName: req.CustomDisplayName,
-		AccessScope:       model.AccessScope(req.AccessScope),
-		VisibleGroups:     req.VisibleGroups,
-		VisibleUsers:      req.VisibleUsers,
+	config, err := s.modelConfigForUpdate(ctx, organizationID, req.ModelID)
+	if err != nil {
+		return nil, err
 	}
 
 	if req.IsEnabled != nil {
 		config.IsEnabled = *req.IsEnabled
 	}
+	if req.CustomDisplayName != "" {
+		config.CustomDisplayName = req.CustomDisplayName
+	}
+	if req.AccessScope != "" {
+		config.AccessScope = model.AccessScope(req.AccessScope)
+	}
+	if req.VisibleGroups != nil {
+		config.VisibleGroups = req.VisibleGroups
+	}
+	if req.VisibleUsers != nil {
+		config.VisibleUsers = req.VisibleUsers
+	}
 	if req.InputPriceOverride != nil {
-		cost, _ := decimal.NewFromString(*req.InputPriceOverride)
-		config.InputPriceOverride = &cost
+		cost, err := parseOptionalModelPriceOverride(*req.InputPriceOverride, "input_price_override")
+		if err != nil {
+			return nil, err
+		}
+		config.InputPriceOverride = cost
 	}
 	if req.OutputPriceOverride != nil {
-		cost, _ := decimal.NewFromString(*req.OutputPriceOverride)
-		config.OutputPriceOverride = &cost
+		cost, err := parseOptionalModelPriceOverride(*req.OutputPriceOverride, "output_price_override")
+		if err != nil {
+			return nil, err
+		}
+		config.OutputPriceOverride = cost
 	}
 	if req.SortOrder != nil {
 		config.SortOrder = *req.SortOrder
@@ -295,6 +323,22 @@ func (s *modelService) ConfigureModel(ctx context.Context, organizationID uuid.U
 	}
 
 	return config, nil
+}
+
+func (s *modelService) modelConfigForUpdate(ctx context.Context, organizationID, modelID uuid.UUID) (*model.ModelConfig, error) {
+	config, err := s.configRepo.GetByModelID(ctx, organizationID, modelID)
+	if err == nil {
+		return config, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	return &model.ModelConfig{
+		OrganizationID: organizationID,
+		ModelID:        modelID,
+		IsEnabled:      true,
+		AccessScope:    model.AccessScopeAll,
+	}, nil
 }
 
 func (s *modelService) GetModelConfig(ctx context.Context, organizationID, modelID uuid.UUID) (*model.ModelConfig, error) {
@@ -730,10 +774,12 @@ func (s *modelService) ListTenantModels(ctx context.Context, organizationID uuid
 			if cfg.InputPriceOverride != nil {
 				overrideInputPrice, _ := cfg.InputPriceOverride.Float64()
 				view.InputPrice = overrideInputPrice
+				view.InputPriceConfigured = true
 			}
 			if cfg.OutputPriceOverride != nil {
 				overrideOutputPrice, _ := cfg.OutputPriceOverride.Float64()
 				view.OutputPrice = overrideOutputPrice
+				view.OutputPriceConfigured = true
 			}
 		}
 		view.Callable = view.IsAvailable && view.IsEnabled
@@ -913,14 +959,7 @@ func (s *modelService) ToggleProviderModels(ctx context.Context, organizationID 
 	}
 
 	for _, m := range targetModels {
-		// Update config
-		config := &model.ModelConfig{
-			OrganizationID: organizationID,
-			ModelID:        m.ID,
-			IsEnabled:      isEnabled,
-			AccessScope:    model.AccessScopeAll,
-		}
-		if err := s.configRepo.Upsert(ctx, config); err != nil {
+		if err := s.setModelConfigEnabled(ctx, organizationID, m.ID, isEnabled); err != nil {
 			return err
 		}
 	}
@@ -935,13 +974,7 @@ func (s *modelService) ToggleProviderModels(ctx context.Context, organizationID 
 // BatchToggleModels enables or disables specific models by IDs
 func (s *modelService) BatchToggleModels(ctx context.Context, organizationID uuid.UUID, modelIDs []uuid.UUID, isEnabled bool) error {
 	for _, modelID := range modelIDs {
-		config := &model.ModelConfig{
-			OrganizationID: organizationID,
-			ModelID:        modelID,
-			IsEnabled:      isEnabled,
-			AccessScope:    model.AccessScopeAll,
-		}
-		if err := s.configRepo.Upsert(ctx, config); err != nil {
+		if err := s.setModelConfigEnabled(ctx, organizationID, modelID, isEnabled); err != nil {
 			return err
 		}
 	}
@@ -951,6 +984,18 @@ func (s *modelService) BatchToggleModels(ctx context.Context, organizationID uui
 	}
 
 	return nil
+}
+
+func (s *modelService) setModelConfigEnabled(ctx context.Context, organizationID, modelID uuid.UUID, isEnabled bool) error {
+	config, err := s.modelConfigForUpdate(ctx, organizationID, modelID)
+	if err != nil {
+		return err
+	}
+	config.IsEnabled = isEnabled
+	if config.AccessScope == "" {
+		config.AccessScope = model.AccessScopeAll
+	}
+	return s.configRepo.Upsert(ctx, config)
 }
 
 // ============================================================================

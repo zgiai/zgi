@@ -31,6 +31,21 @@ const messages = {
     advancedDesc: 'A future home for low-frequency system APIs, audit, and security policies.',
     advancedPlaceholder: 'No frequently adjusted system-level configuration yet.',
   },
+  billingDisplay: {
+    title: 'Price Display Settings',
+    description:
+      'Real billing prices are still stored in USD. This only controls display currency and price input conversion for this organization.',
+    currency: 'Display currency',
+    usd: 'USD',
+    cny: 'CNY',
+    rate: 'USD to CNY rate',
+    rateHint:
+      'Default is 1 USD = 7 CNY. When CNY is selected, model price inputs are converted back to USD before saving.',
+    rateInvalid: 'Exchange rate must be greater than 0.',
+    save: 'Save settings',
+    saving: 'Saving...',
+    saved: 'Saved',
+  },
   pricingFallback: {
     title: 'Missing-price billing policy',
     description:

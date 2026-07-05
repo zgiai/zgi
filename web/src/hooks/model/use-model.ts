@@ -13,6 +13,7 @@ import type {
   ModelItem,
   ToggleModelRequest,
   ToggleModelResponse,
+  ConfigureModelRequest,
   BatchToggleModelsRequest,
   BatchToggleModelsResponse,
   ToggleProviderModelsRequest,
@@ -485,6 +486,37 @@ export function useToggleModel(): {
   );
 
   return { toggleModel, isToggling: isPending };
+}
+
+export function useConfigureModel(): {
+  configureModel: (data: ConfigureModelRequest) => Promise<void>;
+  isConfiguring: boolean;
+} {
+  const t = useT('models');
+  const queryClient = useQueryClient();
+  const { mutateAsync, isPending } = useMutation<
+    ApiResponseData<unknown>,
+    unknown,
+    ConfigureModelRequest
+  >({
+    mutationFn: async data => modelService.configureModel(data),
+    onSuccess: () => {
+      toast.success(t('messages.updateSuccess'));
+      queryClient.invalidateQueries({ queryKey: MODEL_KEYS.allRoot });
+    },
+    onError: error => {
+      showErrorToast(t('messages.updateFailed'), error);
+    },
+  });
+
+  const configureModel = useCallback(
+    async (data: ConfigureModelRequest) => {
+      await mutateAsync(data);
+    },
+    [mutateAsync]
+  );
+
+  return { configureModel, isConfiguring: isPending };
 }
 
 export function useProviderModelsInfinite(

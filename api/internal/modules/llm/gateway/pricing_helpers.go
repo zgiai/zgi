@@ -31,7 +31,11 @@ func (s *llmGatewayServiceImpl) quoteTokenPricing(
 	if engine == nil {
 		return PricingQuote{}, fmt.Errorf("pricing engine is not configured")
 	}
-	return engine.QuoteTokens(ctx, model, promptTokens, completionTokens)
+	quote, err := engine.QuoteTokens(ctx, model, promptTokens, completionTokens)
+	if err != nil {
+		return PricingQuote{}, wrapPricingNotConfiguredError(err, pricingErrorParamsFromModelRef(model))
+	}
+	return quote, nil
 }
 
 func (s *llmGatewayServiceImpl) quoteTokenPricingForSettlement(
@@ -56,7 +60,44 @@ func (s *llmGatewayServiceImpl) quoteImagePricing(
 	if engine == nil {
 		return PricingQuote{}, fmt.Errorf("pricing engine is not configured")
 	}
-	return engine.QuoteImage(ctx, model, req)
+	quote, err := engine.QuoteImage(ctx, model, req)
+	if err != nil {
+		return PricingQuote{}, wrapPricingNotConfiguredError(err, pricingErrorParamsFromModelRef(PricingModelRef{
+			ModelID:        model.ModelID,
+			OrganizationID: model.OrganizationID,
+			Source:         model.Source,
+			Operation:      PricingOperationImage,
+			Provider:       model.Provider,
+			Model:          model.Model,
+		}))
+	}
+	return quote, nil
+}
+
+func pricingErrorParamsFromModelRef(model PricingModelRef) map[string]interface{} {
+	model = normalizePricingModelRef(model)
+	params := map[string]interface{}{
+		"model_source": string(model.Source),
+		"operation":    string(model.Operation),
+	}
+	if model.ModelID != uuid.Nil {
+		params["model_id"] = model.ModelID.String()
+	}
+	if model.OrganizationID != uuid.Nil {
+		params["organization_id"] = model.OrganizationID.String()
+	}
+	if model.Provider != "" {
+		params["provider"] = model.Provider
+	}
+	if model.Model != "" {
+		params["model"] = model.Model
+	}
+	return params
+}
+
+// PricingErrorParamsFromModelRef builds user-facing pricing error parameters.
+func PricingErrorParamsFromModelRef(model PricingModelRef) map[string]interface{} {
+	return pricingErrorParamsFromModelRef(model)
 }
 
 func pricingModelRefFromSelection(selection *ProviderSelection) PricingModelRef {
@@ -75,8 +116,8 @@ func pricingModelRefFromSelection(selection *ProviderSelection) PricingModelRef 
 		model = strings.TrimSpace(selection.Model.ModelName)
 	}
 	return normalizePricingModelRef(PricingModelRef{
-		OrganizationID: selection.OrganizationID,
 		ModelID:        selection.Model.ID,
+		OrganizationID: selection.OrganizationID,
 		Source:         selection.ModelSource,
 		Provider:       provider,
 		Model:          model,
@@ -87,18 +128,18 @@ func pricingModelRefFromBillingContext(bc *BillingContext) PricingModelRef {
 	if bc == nil {
 		return PricingModelRef{Source: PricingModelSourceGlobal}
 	}
-	var organizationID uuid.UUID
-	if parsed, err := uuid.Parse(strings.TrimSpace(bc.OrganizationID)); err == nil {
-		organizationID = parsed
-	}
-	return normalizePricingModelRef(PricingModelRef{
-		OrganizationID: organizationID,
+	ref := PricingModelRef{
 		ModelID:        bc.ModelID,
+		OrganizationID: uuid.Nil,
 		Source:         bc.ModelSource,
 		Operation:      bc.PricingOperation,
 		Provider:       bc.ProviderName,
 		Model:          bc.ModelName,
-	})
+	}
+	if organizationID, err := uuid.Parse(strings.TrimSpace(bc.OrganizationID)); err == nil {
+		ref.OrganizationID = organizationID
+	}
+	return normalizePricingModelRef(ref)
 }
 
 func applyPricingQuoteToBillingContext(bc *BillingContext, quote PricingQuote) {

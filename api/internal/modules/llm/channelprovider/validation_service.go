@@ -739,6 +739,11 @@ func inferValidationUseCase(modelRecord *llmmodelmodel.LLMModel) (string, error)
 	}
 }
 
+// InferValidationUseCase returns the channel test use case for a global model.
+func InferValidationUseCase(modelRecord *llmmodelmodel.LLMModel) (string, error) {
+	return inferValidationUseCase(modelRecord)
+}
+
 func inferValidationUseCaseFromCustomModel(modelRecord *llmmodelmodel.CustomModel) (string, error) {
 	switch {
 	case modelRecord.Embeddings || containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseEmbedding)):
@@ -752,6 +757,11 @@ func inferValidationUseCaseFromCustomModel(modelRecord *llmmodelmodel.CustomMode
 	default:
 		return "", fmt.Errorf("model %q use case is unsupported for channel validation", modelRecord.Name)
 	}
+}
+
+// InferValidationUseCaseFromCustomModel returns the channel test use case for a custom model.
+func InferValidationUseCaseFromCustomModel(modelRecord *llmmodelmodel.CustomModel) (string, error) {
+	return inferValidationUseCaseFromCustomModel(modelRecord)
 }
 
 func containsUseCase(useCases []string, target string) bool {
@@ -776,6 +786,11 @@ func normalizeTestMethod(testMethod string) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported test method %q", testMethod)
 	}
+}
+
+// NormalizeTestMethod normalizes a user supplied channel test method.
+func NormalizeTestMethod(testMethod string) (string, error) {
+	return normalizeTestMethod(testMethod)
 }
 
 func pickRepresentativeModels(capabilities []modelCapability) []modelCapability {

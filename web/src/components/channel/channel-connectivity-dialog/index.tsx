@@ -23,6 +23,7 @@ import type {
   BatchTestModelResult,
   ChannelDetail,
   ChannelModelTestStatus,
+  ChannelModelTestParams,
 } from '@/services/types/channel';
 import {
   getChannelLatencies,
@@ -63,6 +64,17 @@ function getResultStatus(result: BatchTestModelResult | undefined): ChannelModel
   return result.success ? 'success' : 'failed';
 }
 
+const modelPricingNotConfiguredCode = 'model_pricing_not_configured';
+
+function isPricingNotConfiguredResult(result: BatchTestModelResult | undefined): boolean {
+  return result?.code === modelPricingNotConfiguredCode;
+}
+
+function stringParam(params: ChannelModelTestParams | undefined, key: string): string {
+  const value = params?.[key];
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 export default function ChannelConnectivityDialog(
   props: ChannelConnectivityDialogProps
 ): JSX.Element | null {
@@ -74,6 +86,23 @@ export default function ChannelConnectivityDialog(
   const { channel: detail, isLoading } = useChannel(channelId);
   const { updateChannel, isUpdating } = useUpdateChannel();
   const isOfficial = Boolean(detail?.is_official ?? channel?.is_official);
+
+  const buildPricingURL = useCallback(
+    (result: BatchTestModelResult | undefined, fallbackModel: string) => {
+      const providerSlug =
+        stringParam(result?.params, 'provider') ||
+        detail?.provider ||
+        detail?.channel_provider ||
+        channel?.provider ||
+        channel?.channel_provider;
+      const model = stringParam(result?.params, 'model') || fallbackModel;
+      if (!providerSlug || !model) {
+        return '/dashboard/settings/pricing';
+      }
+      return `/dashboard/provider/${encodeURIComponent(providerSlug)}?pricing=1&model=${encodeURIComponent(model)}`;
+    },
+    [channel?.channel_provider, channel?.provider, detail?.channel_provider, detail?.provider]
+  );
 
   const models = useMemo(() => {
     const source = detail?.models ?? channel?.models ?? [];
@@ -295,6 +324,8 @@ export default function ChannelConnectivityDialog(
                         getModelLatency(channelId || '', model) ?? latencyMap[model] ?? null;
                       const failedInCurrentRun = currentStatus === 'failed';
                       const skippedInCurrentRun = currentStatus === 'skipped';
+                      const pricingSkippedInCurrentRun =
+                        skippedInCurrentRun && isPricingNotConfiguredResult(currentResult);
                       const display = skippedInCurrentRun
                         ? { kind: 'skipped' as const }
                         : toDisplay(record);
@@ -312,14 +343,18 @@ export default function ChannelConnectivityDialog(
                         display.kind === 'success'
                           ? `${display.ms} ms`
                           : display.kind === 'skipped'
-                            ? t('connectivityTest.status.skipped')
+                            ? pricingSkippedInCurrentRun
+                              ? t('connectivityTest.status.pricingNotConfigured')
+                              : t('connectivityTest.status.skipped')
                             : display.kind === 'connectionTimeout'
                               ? t('connectivityTest.status.connectionTimeout')
                               : display.kind === 'connectionFailed'
                                 ? t('connectivityTest.status.connectionFailed')
                                 : t('connectivityTest.status.notTested');
                       const errText = skippedInCurrentRun
-                        ? t('connectivityTest.imageSkippedHint')
+                        ? pricingSkippedInCurrentRun
+                          ? t('connectivityTest.pricingNotConfiguredHint')
+                          : t('connectivityTest.imageSkippedHint')
                         : currentResult?.message || record?.error || record?.message || '';
                       return (
                         <div
@@ -371,7 +406,22 @@ export default function ChannelConnectivityDialog(
                                 {t('connectivityTest.buttons.remove')}
                               </Button>
                             ) : null}
-                            {skippedInCurrentRun ? (
+                            {pricingSkippedInCurrentRun ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                disabled={isRunning}
+                                onClick={() => {
+                                  onOpenChange(false);
+                                  router.push(buildPricingURL(currentResult, model));
+                                }}
+                                className="h-7 px-2 text-xs text-blue-600 hover:bg-blue-50 hover:text-blue-700"
+                              >
+                                <ExternalLink className="h-3.5 w-3.5" />
+                                {t('connectivityTest.buttons.setPrice')}
+                              </Button>
+                            ) : skippedInCurrentRun ? (
                               <Button
                                 type="button"
                                 variant="ghost"

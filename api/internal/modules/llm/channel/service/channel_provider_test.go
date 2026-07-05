@@ -15,6 +15,7 @@ import (
 	credentialdto "github.com/zgiai/zgi/api/internal/modules/llm/credential/dto"
 	credentialmodel "github.com/zgiai/zgi/api/internal/modules/llm/credential/model"
 	credentialsvc "github.com/zgiai/zgi/api/internal/modules/llm/credential/service"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
 	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
@@ -22,6 +23,7 @@ import (
 	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
 	providerrepo "github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -49,6 +51,39 @@ func setLLMAllowPrivateBaseURL(t *testing.T, allow bool) {
 	t.Cleanup(func() {
 		appconfig.GlobalConfig = previous
 	})
+}
+
+func openChannelPricingTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE llm_models (
+		id text PRIMARY KEY,
+		provider text,
+		name text,
+		input_price decimal,
+		output_price decimal,
+		input_price_configured boolean,
+		output_price_configured boolean,
+		image_prices json
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE llm_model_configs (
+		id text PRIMARY KEY,
+		organization_id text,
+		model_id text,
+		input_price_override decimal,
+		output_price_override decimal,
+		deleted_at datetime
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE llm_pricing_fallback_overrides (
+		organization_id text PRIMARY KEY,
+		enabled boolean,
+		rules json,
+		updated_by text,
+		created_at datetime,
+		updated_at datetime
+	)`).Error)
+	return db
 }
 
 type fakeTenantRouteRepo struct {
@@ -226,6 +261,7 @@ type fakeChannelValidator struct {
 	validateCalls      int
 	report             map[string]interface{}
 	err                error
+	testCalls          int
 	testResult         *channelprovider.TestResult
 	testResults        map[string]*channelprovider.TestResult
 	testErr            error
@@ -290,6 +326,7 @@ func (f *fakeChannelValidator) ValidateModelsForCreation(_ context.Context, orga
 }
 
 func (f *fakeChannelValidator) TestModel(_ context.Context, organizationID uuid.UUID, channelProvider, apiKey string, apiBaseURL, modelName, testMethod string, stream bool) (*channelprovider.TestResult, error) {
+	f.testCalls++
 	f.lastOrganizationID = organizationID
 	f.lastTestProvider = channelProvider
 	f.lastTestAPIKey = apiKey
@@ -354,8 +391,13 @@ func (f *fakeModelRepo) ListAvailableByNames(_ context.Context, names []string, 
 func (f *fakeModelRepo) ListAvailableFiltered(_ context.Context, provider string, useCase string) ([]*llmmodelmodel.LLMModel, error) {
 	return nil, errors.New("not implemented")
 }
-func (f *fakeModelRepo) GetByProviderAndName(context.Context, string, string) (*llmmodelmodel.LLMModel, error) {
-	return nil, errors.New("not implemented")
+func (f *fakeModelRepo) GetByProviderAndName(_ context.Context, provider string, name string) (*llmmodelmodel.LLMModel, error) {
+	for _, model := range f.models {
+		if model != nil && model.Provider == provider && model.Model == name {
+			return model, nil
+		}
+	}
+	return nil, gorm.ErrRecordNotFound
 }
 func (f *fakeModelRepo) List(context.Context, *uuid.UUID, string, string, string, *bool, int, int) ([]*llmmodelmodel.LLMModel, int64, error) {
 	return append([]*llmmodelmodel.LLMModel(nil), f.models...), int64(len(f.models)), nil
@@ -1435,6 +1477,120 @@ func TestTestChannelModel_ReusesValidatorResultShape(t *testing.T) {
 	require.Equal(t, int64(56), result.ResponseTimeMs)
 	require.Equal(t, "openai-compatible", validator.lastTestProvider)
 	require.True(t, validator.lastTestStream)
+}
+
+func TestTestChannelModel_SkipsUnpricedModelBeforeValidator(t *testing.T) {
+	routeID := uuid.New()
+	credentialID := uuid.New()
+	orgID := uuid.New()
+	modelID := uuid.New()
+	db := openChannelPricingTestDB(t)
+	require.NoError(t, db.Exec(
+		`INSERT INTO llm_models (id, provider, name, input_price, output_price, input_price_configured, output_price_configured, image_prices) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		modelID.String(), "qwen", "qwen-image-2.0", "0", "0", false, false, "[]",
+	).Error)
+	repo := &fakeTenantRouteRepo{
+		routeByID: &channelmodel.LLMRoute{
+			ID:              routeID,
+			OrganizationID:  orgID,
+			ChannelProvider: "qwen",
+			APIBaseURL:      "https://dashscope.aliyuncs.com/compatible-mode/v1",
+			CredentialID:    &credentialID,
+		},
+	}
+	credSvc := &fakeTenantCredentialService{
+		cred: &credentialmodel.TenantCredential{ID: credentialID},
+	}
+	validator := &fakeChannelValidator{}
+	svc := &channelService{
+		tenantRouteRepo:   repo,
+		tenantCredService: credSvc,
+		validator:         validator,
+		modelRepo: &fakeModelRepo{models: []*llmmodelmodel.LLMModel{{
+			ID:              modelID,
+			Provider:        "qwen",
+			Model:           "qwen-image-2.0",
+			ImageGeneration: true,
+		}}},
+		db: db,
+	}
+
+	result, err := svc.TestChannelModel(context.Background(), routeID, orgID, "qwen-image-2.0", "", false)
+
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	require.Equal(t, channelprovider.TestStatusSkipped, result.Status)
+	require.Equal(t, channelModelPricingNotConfiguredMessage, result.Message)
+	require.Equal(t, channelModelPricingNotConfiguredCode, result.Code)
+	require.Equal(t, "qwen", result.Params["provider"])
+	require.Equal(t, "qwen-image-2.0", result.Params["model"])
+	require.Equal(t, modelID.String(), result.Params["model_id"])
+	require.Equal(t, string(gateway.PricingModelSourceGlobal), result.Params["model_source"])
+	require.Equal(t, string(gateway.PricingOperationImage), result.Params["operation"])
+	require.Equal(t, 0, validator.testCalls)
+
+	resultChan := make(chan *channeldto.BatchTestChannelModelsStreamResponse, 2)
+	svc.BatchTestChannelModels(context.Background(), routeID, orgID, []string{"qwen-image-2.0"}, "", false, resultChan)
+	results := make([]*channeldto.BatchTestChannelModelsStreamResponse, 0, 2)
+	for item := range resultChan {
+		results = append(results, item)
+	}
+	require.Len(t, results, 2)
+	require.Equal(t, channelprovider.TestStatusSkipped, results[0].Status)
+	require.Equal(t, channelModelPricingNotConfiguredCode, results[0].Code)
+	require.Equal(t, "qwen-image-2.0", results[0].Params["model"])
+	require.True(t, results[1].Completed)
+	require.Equal(t, 1, results[1].SkippedCount)
+	require.Equal(t, 0, validator.testCalls)
+}
+
+func TestTestChannelModel_AllowsModelWithOrganizationPriceOverride(t *testing.T) {
+	routeID := uuid.New()
+	credentialID := uuid.New()
+	orgID := uuid.New()
+	modelID := uuid.New()
+	db := openChannelPricingTestDB(t)
+	require.NoError(t, db.Exec(
+		`INSERT INTO llm_models (id, provider, name, input_price, output_price, input_price_configured, output_price_configured, image_prices) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		modelID.String(), "qwen", "qwen-image-2.0", "0", "0", false, false, "[]",
+	).Error)
+	require.NoError(t, db.Exec(
+		`INSERT INTO llm_model_configs (id, organization_id, model_id, output_price_override) VALUES (?, ?, ?, ?)`,
+		uuid.NewString(), orgID.String(), modelID.String(), "0.20",
+	).Error)
+	repo := &fakeTenantRouteRepo{
+		routeByID: &channelmodel.LLMRoute{
+			ID:              routeID,
+			OrganizationID:  orgID,
+			ChannelProvider: "qwen",
+			APIBaseURL:      "https://dashscope.aliyuncs.com/compatible-mode/v1",
+			CredentialID:    &credentialID,
+		},
+	}
+	credSvc := &fakeTenantCredentialService{
+		cred: &credentialmodel.TenantCredential{ID: credentialID},
+	}
+	validator := &fakeChannelValidator{}
+	svc := &channelService{
+		tenantRouteRepo:   repo,
+		tenantCredService: credSvc,
+		validator:         validator,
+		modelRepo: &fakeModelRepo{models: []*llmmodelmodel.LLMModel{{
+			ID:              modelID,
+			Provider:        "qwen",
+			Model:           "qwen-image-2.0",
+			ImageGeneration: true,
+		}}},
+		db: db,
+	}
+
+	result, err := svc.TestChannelModel(context.Background(), routeID, orgID, "qwen-image-2.0", "", false)
+
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	require.Equal(t, channelprovider.TestStatusSuccess, result.Status)
+	require.Equal(t, 1, validator.testCalls)
+	require.Equal(t, "qwen-image-2.0", validator.lastTestModel)
 }
 
 func TestBatchTestChannelModels_CountsSkippedImageModelsSeparately(t *testing.T) {

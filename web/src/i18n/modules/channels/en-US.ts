@@ -82,6 +82,8 @@ const messages = {
     summary: '{total} total, {success} success, {failure} failed, {skipped} skipped',
     imageSkippedHint:
       'Image generation models require a real image generation test. Use the image workspace to verify them.',
+    pricingNotConfiguredHint:
+      'Model price is not configured. Configure model pricing or a pricing policy first.',
     columns: {
       model: 'Model',
       status: 'Status',
@@ -94,6 +96,7 @@ const messages = {
       connectionTimeout: 'Connection Timeout',
       notTested: 'Not Tested',
       skipped: 'Not Tested',
+      pricingNotConfigured: 'Missing Price',
     },
     buttons: {
       testAll: 'Test All',
@@ -102,12 +105,14 @@ const messages = {
       remove: 'Remove',
       removeFailed: 'Remove failed models ({count})',
       testImage: 'Test in Image',
+      setPrice: 'Set Price',
     },
     toast: {
       start: 'Model test started',
       error: 'Model test failed',
       abort: 'Test aborted',
-      removeAllBlocked: 'A channel must keep at least one model. Edit or delete the channel instead.',
+      removeAllBlocked:
+        'A channel must keep at least one model. Edit or delete the channel instead.',
     },
   },
   dialog: {
@@ -318,19 +323,22 @@ const messages = {
         success: 'This configuration is ready to create a channel.',
         failures: {
           auth: 'Confirm the API key belongs to this provider and can call the selected model.',
-          baseUrl: 'Confirm the API base URL is reachable and includes the correct version prefix, such as /v1.',
+          baseUrl:
+            'Confirm the API base URL is reachable and includes the correct version prefix, such as /v1.',
           model:
             'Confirm the selected model is available on this provider account, or check provider-available models and choose again.',
           rateLimit: 'The provider returned a rate limit. Retry later or check account limits.',
           quota: 'Confirm the provider account balance, plan, or billing status is active.',
           protocol: 'Confirm the selected adapter protocol is compatible with the provider API.',
-          unknown: 'Use the error above to check the key, base URL, protocol, and model configuration.',
+          unknown:
+            'Use the error above to check the key, base URL, protocol, and model configuration.',
         },
       },
       readiness: {
         verified: 'Connection verified. You can create the channel.',
         failed: 'Connection failed. Fix the key, base URL, protocol, or model before creating.',
-        untested: 'Test one representative model first. You can create the channel after it passes.',
+        untested:
+          'Test one representative model first. You can create the channel after it passes.',
         missingModel: 'Select at least one representative model before testing.',
       },
     },
@@ -342,7 +350,8 @@ const messages = {
           'The provider model list is informational. Selectable models come from the local model catalog.',
         unsupported:
           'This service does not support model listing. Select registered models from the local model catalog.',
-        requestFailed: 'Failed to check the model list. Non-key issues do not block saving the channel.',
+        requestFailed:
+          'Failed to check the model list. Non-key issues do not block saving the channel.',
       },
     },
     protocolOptions: {

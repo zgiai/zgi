@@ -1,11 +1,12 @@
 'use client';
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import {
   useBatchToggleModels,
+  useConfigureModel,
   useCreateCustomModel,
   useDeleteCustomModel,
   useProviderModelsAll,
@@ -32,6 +33,7 @@ import ModelsGroupTable from '@/components/providers/models-group-table';
 import ProviderPageHeader from '@/components/providers/provider-page-header';
 import { CustomProviderDialog } from '@/components/providers/custom-provider-dialog';
 import { CustomModelDialog } from '@/components/providers/custom-model-dialog';
+import { ModelPriceDialog } from '@/components/providers/model-price-dialog';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useT } from '@/i18n';
 import { useProviderDisplay } from '@/hooks/provider/use-provider-display';
@@ -44,6 +46,7 @@ import { useProviderI18n } from '@/hooks/provider/use-provider-i18n';
 export default function ModelPage() {
   const params = useParams<{ providerId: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const providerId = Array.isArray(params?.providerId) ? params?.providerId[0] : params?.providerId;
   const provider = decodeURIComponent(providerId || '');
   const t = useT();
@@ -65,6 +68,7 @@ export default function ModelPage() {
 
   // Custom Model State
   const { createCustomModel, isCreating: isCreatingModel } = useCreateCustomModel();
+  const { configureModel, isConfiguring } = useConfigureModel();
   const { updateCustomModel: updateModelAction, isUpdating: isUpdatingModel } =
     useUpdateCustomModel();
   const { deleteCustomModel: deleteModelAction, isDeleting: isDeletingModel } =
@@ -74,6 +78,9 @@ export default function ModelPage() {
   const [editingModel, setEditingModel] = useState<ModelItem | null>(null);
   const [isModelDeleteConfirmOpen, setIsModelDeleteConfirmOpen] = useState(false);
   const [deletingModel, setDeletingModel] = useState<ModelItem | null>(null);
+  const [isPriceDialogOpen, setIsPriceDialogOpen] = useState(false);
+  const [pricingModel, setPricingModel] = useState<ModelItem | null>(null);
+  const openedPricingQueryRef = React.useRef<string | null>(null);
 
   // Frontend filtering by search query (name, display_name)
   const models = React.useMemo(() => {
@@ -273,6 +280,50 @@ export default function ModelPage() {
     setEditingModel(null);
   };
 
+  const openPriceDialog = useCallback((model: ModelItem) => {
+    setPricingModel(model);
+    setIsPriceDialogOpen(true);
+  }, []);
+
+  useEffect(() => {
+    const shouldOpen =
+      searchParams.get('pricing') === '1' || searchParams.get('open') === 'pricing';
+    const targetModel = searchParams.get('model');
+    if (!shouldOpen || !targetModel || allModels.length === 0) return;
+
+    const match = allModels.find(model => model.id === targetModel || model.model === targetModel);
+    if (!match) return;
+
+    const openKey = `${match.id}:${targetModel}`;
+    if (openedPricingQueryRef.current === openKey) return;
+    openedPricingQueryRef.current = openKey;
+    openPriceDialog(match);
+  }, [allModels, openPriceDialog, searchParams]);
+
+  const handlePriceSubmit = useCallback(
+    async (values: { inputPrice: string; outputPrice: string }) => {
+      if (!pricingModel) return;
+
+      if (isCustom) {
+        await updateModelAction(pricingModel.id, {
+          input_price: values.inputPrice,
+          output_price: values.outputPrice,
+        });
+      } else {
+        await configureModel({
+          model_id: pricingModel.id,
+          is_enabled: pricingModel.is_enabled,
+          input_price_override: values.inputPrice,
+          output_price_override: values.outputPrice,
+        });
+      }
+
+      setIsPriceDialogOpen(false);
+      setPricingModel(null);
+    },
+    [configureModel, isCustom, pricingModel, updateModelAction]
+  );
+
   const handleDeleteModel = async () => {
     if (deletingModel) {
       await deleteModelAction(deletingModel.id);
@@ -385,6 +436,7 @@ export default function ModelPage() {
         isBatchToggling={isBatchToggling}
         togglingModel={togglingModel}
         onToggleModel={onToggleModel}
+        onEditPrice={openPriceDialog}
         searchQuery={query}
         hasTypeFilter={selectedUseCase !== null}
         onClearFilters={() => {
@@ -439,6 +491,7 @@ export default function ModelPage() {
         isBatchToggling={isBatchToggling}
         togglingModel={togglingModel}
         onToggleModel={onToggleModel}
+        onEditPrice={openPriceDialog}
         searchQuery={query}
         hasTypeFilter={selectedUseCase !== null}
         readOnly
@@ -543,6 +596,17 @@ export default function ModelPage() {
         initialData={editingModel || undefined}
         onSubmit={handleModelSubmit}
         isSubmitting={isCreatingModel || isUpdatingModel}
+      />
+
+      <ModelPriceDialog
+        open={isPriceDialogOpen}
+        onOpenChange={open => {
+          setIsPriceDialogOpen(open);
+          if (!open) setPricingModel(null);
+        }}
+        model={pricingModel}
+        onSubmit={handlePriceSubmit}
+        isSubmitting={isConfiguring || isUpdatingModel}
       />
 
       <ConfirmDialog
