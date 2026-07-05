@@ -64,6 +64,9 @@ func FastPathFinalAnswerForToolTrace(trace skills.SkillTrace) (string, bool) {
 // a longer user turn when the operation plan still names a different pending
 // action.
 func FastPathFinalAnswerForToolTraceWithEvidence(trace skills.SkillTrace, evidence map[string]interface{}) (string, bool) {
+	if fastPathEvidenceSuppressesAutoFinalAnswer(evidence) {
+		return "", false
+	}
 	if answer, ok := agentCreateFastPathAnswerWithEvidence(trace, evidence); ok {
 		return answer, true
 	}
@@ -1088,6 +1091,9 @@ func fastPathInvocationSucceeded(invocation map[string]interface{}) bool {
 // used after client-side observations, where there may be no new tool trace for
 // Runner to fast-path on.
 func FastPathFinalAnswerForCompletionEvidence(evidence map[string]interface{}) (string, bool) {
+	if fastPathEvidenceSuppressesAutoFinalAnswer(evidence) {
+		return "", false
+	}
 	if fastPathCompletionEvidenceNeedsAgentConfigPostRead(evidence) {
 		return "", false
 	}
@@ -1119,6 +1125,24 @@ func FastPathFinalAnswerForCompletionEvidence(evidence map[string]interface{}) (
 		return answer, true
 	}
 	return "", false
+}
+
+func fastPathEvidenceSuppressesAutoFinalAnswer(evidence map[string]interface{}) bool {
+	if len(evidence) == 0 {
+		return false
+	}
+	if boolFromAny(evidence["suppress_auto_final_answer_fast_path"]) {
+		return true
+	}
+	executionSummary := evidenceMapFromAny(evidence["execution_summary"])
+	if boolFromAny(executionSummary["suppress_auto_final_answer_fast_path"]) {
+		return true
+	}
+	executionLedger := evidenceMapFromAny(evidence["execution_ledger"])
+	if boolFromAny(executionLedger["suppress_auto_final_answer_fast_path"]) {
+		return true
+	}
+	return boolFromAny(evidenceMapFromAny(executionLedger["summary"])["suppress_auto_final_answer_fast_path"])
 }
 
 // FastPathFinalAnswerForAgentMutationEvidence summarizes the completed Agent

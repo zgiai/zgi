@@ -91,6 +91,55 @@ func TestFastPathCompletionEvidenceWaitsForPostDeleteNavigationAndEdit(t *testin
 	}
 }
 
+func TestFastPathCompletionEvidenceSuppressesAutoFinalAnswerDuringClientActionContinuation(t *testing.T) {
+	evidence := map[string]interface{}{
+		"suppress_auto_final_answer_fast_path": true,
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"pending_next_action": "asset_observation",
+		},
+		"operation_result_summary": map[string]interface{}{
+			"latest_client_action": map[string]interface{}{
+				"status":      "succeeded",
+				"action_type": "route_navigation",
+				"skill_id":    skills.SkillConsoleNavigator,
+				"tool_name":   "navigate",
+				"label":       "Agent detail",
+				"result": map[string]interface{}{
+					"loaded_href": "/console/agents/agent-1/agent",
+				},
+			},
+		},
+	}
+
+	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
+		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = (%q, true), want model continuation", answer)
+	}
+}
+
+func TestFastPathToolTraceWithEvidenceSuppressesAutoFinalAnswerDuringClientActionContinuation(t *testing.T) {
+	trace := skills.SkillTrace{
+		Kind:     "tool_call",
+		Status:   "success",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agent",
+		Result: map[string]interface{}{
+			"status":     "completed",
+			"agent_name": "Old Agent",
+			"deleted":    true,
+		},
+	}
+	if _, ok := FastPathFinalAnswerForToolTrace(trace); !ok {
+		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, test setup needs a fast-pathable trace")
+	}
+
+	if answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(trace, map[string]interface{}{
+		"suppress_auto_final_answer_fast_path": true,
+	}); ok {
+		t.Fatalf("FastPathFinalAnswerForToolTraceWithEvidence() = (%q, true), want model continuation", answer)
+	}
+}
+
 func TestFastPathCompletionEvidenceWaitsForPendingStructuredPlanOperation(t *testing.T) {
 	evidence := map[string]interface{}{
 		"operation_plan": map[string]interface{}{

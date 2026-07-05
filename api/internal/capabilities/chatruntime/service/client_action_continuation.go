@@ -207,7 +207,22 @@ func clientActionContinuationFastPathAnswer(prepared *PreparedChat) (string, boo
 	if prepared == nil || prepared.Message == nil || prepared.parts == nil {
 		return "", false
 	}
+	if clientActionContinuationIsRouteNavigation(prepared.Message.Metadata) {
+		return "", false
+	}
 	return skillloop.FastPathFinalAnswerForCompletionEvidence(skillLoopCompletionEvidence(prepared)())
+}
+
+func clientActionContinuationIsRouteNavigation(metadata map[string]interface{}) bool {
+	if len(metadata) == 0 {
+		return false
+	}
+	continuation := governanceMapFromAny(metadataValue(metadata, "client_action_continuation"))
+	if len(continuation) == 0 {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(stringFromAny(continuation["action_type"])), "route_navigation") ||
+		isConsoleNavigatorNavigateTool(stringFromAny(continuation["skill_id"]), stringFromAny(continuation["tool_name"]))
 }
 
 func (s *service) beginClientActionContinuation(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, actionID string) (*ClientActionContinuation, error) {

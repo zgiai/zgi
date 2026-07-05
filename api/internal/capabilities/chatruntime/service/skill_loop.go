@@ -250,6 +250,10 @@ func skillLoopCompletionEvidence(prepared *PreparedChat) skillloop.CompletionEvi
 		evidence["user_request"] = strings.TrimSpace(prepared.parts.Query)
 		evidence["surface"] = normalizeAIChatSurface(prepared.parts.Surface)
 		evidence["skill_mode"] = prepared.parts.SkillMode
+		if skillLoopShouldSuppressAutoFinalAnswerFastPath(prepared.parts) {
+			evidence["suppress_auto_final_answer_fast_path"] = true
+			evidence["suppress_auto_final_answer_reason"] = "client_action_continuation"
+		}
 		if len(prepared.parts.SkillIDs) > 0 {
 			evidence["configured_skill_ids"] = append([]string{}, prepared.parts.SkillIDs...)
 		}
@@ -304,6 +308,23 @@ func skillLoopCompletionEvidence(prepared *PreparedChat) skillloop.CompletionEvi
 		}
 		return evidence
 	}
+}
+
+func skillLoopShouldSuppressAutoFinalAnswerFastPath(parts *chatRequestParts) bool {
+	if parts == nil {
+		return false
+	}
+	for _, source := range []map[string]interface{}{parts.RawOperationContext, parts.OperationContext} {
+		continuation := mapFromOperationContext(source["client_action_continuation"])
+		if len(continuation) == 0 {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(stringFromAny(continuation["action_type"])), "route_navigation") ||
+			isConsoleNavigatorNavigateTool(stringFromAny(continuation["skill_id"]), stringFromAny(continuation["tool_name"])) {
+			return true
+		}
+	}
+	return false
 }
 
 func skillLoopCompletionPageContextEvidence(parts *chatRequestParts) map[string]interface{} {
