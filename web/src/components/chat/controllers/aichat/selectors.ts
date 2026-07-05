@@ -26,6 +26,7 @@ import {
   governanceCorrelationIdFromInvocation,
   isPendingToolGovernanceInvocation,
 } from './governance';
+import { preferCompleteIntermediateAnswerContent } from './reducers/shared';
 
 const EMPTY_AICHAT_MESSAGES: AIChatMessage[] = [];
 
@@ -998,10 +999,31 @@ function preferTimelineItem(
 ): AIChatAgenticTimelineItem {
   const existingRank = timelineItemRank(existing);
   const incomingRank = timelineItemRank(incoming);
-  if (incomingRank > existingRank) return incoming;
-  if (incomingRank < existingRank) return existing;
-  if ((incoming.created_at ?? 0) >= (existing.created_at ?? 0)) return incoming;
-  return existing;
+  if (existing.type === 'intermediate_answer' && incoming.type === 'intermediate_answer') {
+    const preferredIntermediate =
+      incomingRank > existingRank
+        ? incoming
+        : incomingRank < existingRank
+          ? existing
+          : (incoming.created_at ?? 0) >= (existing.created_at ?? 0)
+            ? incoming
+            : existing;
+    return {
+      ...preferredIntermediate,
+      content: preferCompleteIntermediateAnswerContent(existing.content, incoming.content),
+    };
+  }
+
+  const preferred =
+    incomingRank > existingRank
+      ? incoming
+      : incomingRank < existingRank
+        ? existing
+        : (incoming.created_at ?? 0) >= (existing.created_at ?? 0)
+          ? incoming
+          : existing;
+
+  return preferred;
 }
 
 function pendingSkillTimelineBaseIdentity(item: AIChatAgenticTimelineItem): string {

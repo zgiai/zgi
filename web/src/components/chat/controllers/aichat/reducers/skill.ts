@@ -18,6 +18,7 @@ import {
 import {
   isStaleAIChatStreamEvent,
   mergeSkillInvocationByStatus,
+  preferCompleteIntermediateAnswerContent,
   removeTransientProgressItems,
   skillInvocationSemanticIdentity,
 } from './shared';
@@ -59,10 +60,7 @@ function upsertSkillInvocation(
     }
 
     const next = invocations.slice();
-    next[index] = {
-      ...next[index],
-      ...incoming,
-    };
+    next[index] = mergeSkillInvocationByStatus(next[index], incoming);
     return next;
   }
 
@@ -456,7 +454,7 @@ function upsertSkillTimelineItem(
       next[existingIndex] = {
         ...existing,
         title: incoming.title ?? existing.title,
-        content: incoming.message ?? existing.content,
+        content: preferCompleteIntermediateAnswerContent(existing.content, incoming.message),
         status: incoming.status === 'success' ? 'success' : 'streaming',
         created_at: existing.created_at ?? incoming.created_at,
         event_id: eventId ?? existing.event_id,

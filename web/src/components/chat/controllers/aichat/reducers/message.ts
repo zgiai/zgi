@@ -36,6 +36,7 @@ import {
   mergeMessageMetadata,
   clearRuntimeMessageMetadata,
   isStaleAIChatStreamEvent,
+  preferCompleteIntermediateAnswerContent,
   removeTransientProgressItems
 } from './shared';
 import { updateSkillInvocationMetadata } from './skill';
@@ -142,7 +143,9 @@ export function applyIntermediateAnswerState(
       ? (previousItem?.content ?? '')
       : payload.delta
         ? `${previousItem?.content ?? ''}${content}`
-        : content;
+        : payload.done === true
+          ? preferCompleteIntermediateAnswerContent(previousItem?.content, content)
+          : content;
   if (!nextContent && payload.done === true) {
     return current;
   }

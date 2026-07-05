@@ -628,10 +628,34 @@ export function mergeSkillInvocationByStatus(
   existing: AIChatSkillInvocation,
   incoming: AIChatSkillInvocation
 ): AIChatSkillInvocation {
+  const mergeIntermediateAnswerMessage = (merged: AIChatSkillInvocation): AIChatSkillInvocation => {
+    if (existing.kind !== 'intermediate_answer' || incoming.kind !== 'intermediate_answer') {
+      return merged;
+    }
+    return {
+      ...merged,
+      message: preferCompleteIntermediateAnswerContent(existing.message, incoming.message),
+    };
+  };
+
   if (skillInvocationStatusRank(incoming.status) < skillInvocationStatusRank(existing.status)) {
-    return { ...incoming, ...existing };
+    return mergeIntermediateAnswerMessage({ ...incoming, ...existing });
   }
-  return { ...existing, ...incoming };
+  return mergeIntermediateAnswerMessage({ ...existing, ...incoming });
+}
+
+export function preferCompleteIntermediateAnswerContent(
+  existingContent?: string | null,
+  incomingContent?: string | null
+): string {
+  const existing = existingContent ?? '';
+  const incoming = incomingContent ?? '';
+  if (!existing) return incoming;
+  if (!incoming) return existing;
+  if (existing === incoming) return incoming;
+  if (incoming.includes(existing)) return incoming;
+  if (existing.includes(incoming)) return existing;
+  return incoming.length >= existing.length ? incoming : existing;
 }
 
 function skillInvocationStatusRank(status: string | undefined): number {
