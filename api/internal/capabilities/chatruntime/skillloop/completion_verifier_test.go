@@ -1,12 +1,46 @@
 package skillloop
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
+
+func TestCompletionVerificationOperationPlanForPromptHidesModelDecidesCandidateTools(t *testing.T) {
+	plan := map[string]interface{}{
+		"tool_choice_mode": "model_decides",
+		"capability_goals": []interface{}{
+			map[string]interface{}{
+				"capability_id":   "agent.skill_backed_capability",
+				"candidate_tool":  "list_agent_skill_candidates",
+				"candidate_query": "file generation",
+			},
+		},
+		"strategy_state": map[string]interface{}{
+			"capability_goals": []interface{}{
+				map[string]interface{}{
+					"capability_id":  "agent.model_selection",
+					"candidate_tool": "list_available_models",
+				},
+			},
+		},
+	}
+
+	promptPlan := completionVerificationOperationPlanForPrompt(plan)
+	encoded, err := json.Marshal(promptPlan)
+	if err != nil {
+		t.Fatalf("json.Marshal(promptPlan) failed: %v", err)
+	}
+	if strings.Contains(string(encoded), "candidate_tool") {
+		t.Fatalf("prompt plan leaked candidate_tool: %s", encoded)
+	}
+	if !strings.Contains(string(encoded), "candidate_query") {
+		t.Fatalf("prompt plan lost semantic candidate query: %s", encoded)
+	}
+}
 
 func TestCompletionVerificationFallbackAnswerUsesReadableChinese(t *testing.T) {
 	answer := completionVerificationFallbackAnswer(completionVerificationDecision{

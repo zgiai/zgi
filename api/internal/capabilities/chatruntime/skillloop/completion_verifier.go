@@ -214,14 +214,41 @@ func completionVerificationOperationPlanForPrompt(plan map[string]interface{}) m
 	delete(out, "structured_plan")
 	delete(out, "completed_steps")
 	delete(out, "failed_steps")
+	if goals := completionVerificationCapabilityGoalsForPrompt(out["capability_goals"]); len(goals) > 0 {
+		out["capability_goals"] = goals
+	} else {
+		delete(out, "capability_goals")
+	}
 	if state := evidenceMapFromAny(out["strategy_state"]); len(state) > 0 {
 		state = copyStringAnyMap(state)
 		delete(state, "plan_steps")
 		delete(state, "structured_plan")
+		if goals := completionVerificationCapabilityGoalsForPrompt(state["capability_goals"]); len(goals) > 0 {
+			state["capability_goals"] = goals
+		} else {
+			delete(state, "capability_goals")
+		}
 		out["strategy_state"] = state
 	}
 	if strings.TrimSpace(evidenceStringFromAny(out["planning_mode"])) == "" {
 		out["planning_mode"] = "phase_only_model_decides"
+	}
+	return out
+}
+
+func completionVerificationCapabilityGoalsForPrompt(value interface{}) []interface{} {
+	goals := evidenceMapsFromAny(value)
+	if len(goals) == 0 {
+		return nil
+	}
+	out := make([]interface{}, 0, len(goals))
+	for _, goal := range goals {
+		if len(goal) == 0 {
+			continue
+		}
+		item := copyStringAnyMap(goal)
+		delete(item, "candidate_tool")
+		out = append(out, item)
 	}
 	return out
 }

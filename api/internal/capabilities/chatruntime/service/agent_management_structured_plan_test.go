@@ -561,6 +561,12 @@ func TestAgentManagementModelDecidesPromptHidesExactToolScript(t *testing.T) {
 			t.Fatalf("prompt view contains %q, want semantic plan without exact tool script: %#v", unexpected, view)
 		}
 	}
+
+	operationPlan := operationPlanFromTurnStrategy("task-model-decides-prompt", parts, strategy)
+	summary := skillLoopCompletionPlanSummary(operationPlan)
+	if strings.Contains(string(mustMarshalJSONForTest(t, summary)), "candidate_tool") {
+		t.Fatalf("completion summary leaked candidate_tool, want model-facing summary without exact candidate tool: %#v", summary)
+	}
 }
 
 func TestAgentManagementStructuredPlanStatusFollowsToolResult(t *testing.T) {

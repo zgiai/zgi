@@ -674,6 +674,11 @@ func operationPlanCompactStrategyStateForPrompt(state map[string]interface{}, mo
 		return nil
 	}
 	out := copyStringAnyMap(state)
+	if goals := operationPlanCompactCapabilityGoals(out["capability_goals"], 6); len(goals) > 0 {
+		out["capability_goals"] = goals
+	} else {
+		delete(out, "capability_goals")
+	}
 	if modelDecides {
 		delete(out, "plan_steps")
 		delete(out, "structured_plan")

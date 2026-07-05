@@ -1359,7 +1359,7 @@ func operationPlanCompactCapabilityGoals(value interface{}, limit int) []interfa
 	out := make([]interface{}, 0, minInt(limit, len(goals)))
 	for _, goal := range goals {
 		compact := map[string]interface{}{}
-		for _, key := range []string{"capability_id", "goal_action", "display_name", "meaning", "user_intent", "candidate_tool", "candidate_query", "candidate_use_case"} {
+		for _, key := range []string{"capability_id", "goal_action", "display_name", "meaning", "user_intent", "candidate_query", "candidate_use_case"} {
 			if value := strings.TrimSpace(stringFromAny(goal[key])); value != "" {
 				compact[key] = compactForPrompt(value, 240)
 			}
