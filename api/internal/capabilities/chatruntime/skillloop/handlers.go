@@ -76,6 +76,12 @@ func (r *Runner) handleProgressiveSkillCall(
 		if strings.EqualFold(toolName, skills.MetaToolRequestUserInput) {
 			return r.handleRequestUserInputCall(ctx, prepared, call.ID, toolArgs, userInputGuard, onEvent)
 		}
+		if strings.EqualFold(toolName, skills.MetaToolTurnState) {
+			return r.handleTurnStateCall(ctx, prepared, call.ID, toolArgs, onEvent)
+		}
+		if strings.EqualFold(toolName, skills.MetaToolIntermediateAnswer) {
+			return r.handleIntermediateAnswerCall(ctx, prepared, call.ID, toolArgs, onEvent)
+		}
 		if _, ok := loadedSkills[skillID]; !ok {
 			trace := blockedSkillGuardrailTrace(stringArg(args, "skill_id"), toolName, "skill must be loaded before calling its tools")
 			return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), false, false)

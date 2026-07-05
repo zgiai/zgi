@@ -664,6 +664,99 @@ func TestCompletionVerificationAgentConfigBindingUsesCandidateAliases(t *testing
 	}
 }
 
+func TestCompletionVerificationUsesUpdateConfigResultAsPostUpdateEvidence(t *testing.T) {
+	update := map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "update_agent_config",
+		"arguments": map[string]interface{}{
+			"expected_updated_fields": []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+			"expected_binding_actions": map[string]interface{}{
+				"enabled_skill_ids": "bind",
+			},
+			"model_provider":        "deepseek",
+			"model":                 "deepseek-v4-flash",
+			"system_prompt":         "Write fiction and generate files when needed.",
+			"file_upload_enabled":   true,
+			"add_enabled_skill_ids": []interface{}{"File Generator"},
+		},
+		"result": map[string]interface{}{
+			"status":              "completed",
+			"agent_id":            "agent-1",
+			"agent_name":          "Novel Writer",
+			"model_provider":      "deepseek",
+			"model":               "deepseek-v4-flash",
+			"system_prompt":       "Write fiction and generate files when needed.",
+			"file_upload_enabled": true,
+			"enabled_skill_ids":   []interface{}{"file-generator"},
+			"updated_fields":      []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+			"satisfied_fields":    []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+		},
+	}
+	candidateLookup := map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "list_agent_skill_candidates",
+		"result": map[string]interface{}{
+			"status": "completed",
+			"candidate_samples": []interface{}{
+				map[string]interface{}{
+					"id":       "file-generator",
+					"name":     "File Generator",
+					"selected": true,
+				},
+			},
+		},
+	}
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":             "running",
+			"original_user_goal": "Create a Novel Writer agent, configure deepseek flash, enable file generation and file upload, then verify the result.",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":                       "tool:agent-management/update_agent_config",
+					"status":                   "completed",
+					"skill_id":                 skills.SkillAgentManagement,
+					"tool_name":                "update_agent_config",
+					"expected_updated_fields":  []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+					"expected_binding_actions": map[string]interface{}{"enabled_skill_ids": "bind"},
+					"arguments": map[string]interface{}{
+						"model_provider":        "deepseek",
+						"model":                 "deepseek-v4-flash",
+						"system_prompt":         "Write fiction and generate files when needed.",
+						"file_upload_enabled":   true,
+						"add_enabled_skill_ids": []interface{}{"File Generator"},
+					},
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config#post_update",
+					"status":                            "pending",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"required_post_update_verification": true,
+				},
+			},
+		},
+		"skill_invocations": []interface{}{candidateLookup, update},
+	}
+
+	if fastPathCompletionEvidenceNeedsAgentConfigPostRead(evidence) {
+		t.Fatal("fastPathCompletionEvidenceNeedsAgentConfigPostRead() = true, want false when update_agent_config returned verified config evidence")
+	}
+	if mismatches := completionVerificationAgentConfigMismatches(evidence); len(mismatches) > 0 {
+		t.Fatalf("completionVerificationAgentConfigMismatches() = %#v, want none", mismatches)
+	}
+	decision := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
+		Status: completionVerificationStatusPass,
+		Reason: "candidate answer claims the requested Agent config is complete",
+	})
+	if got := decision.normalizedStatus(); got != completionVerificationStatusPass {
+		t.Fatalf("decision status = %q, want pass; decision=%#v", got, decision)
+	}
+}
+
 func TestCompletionVerificationAgentConfigBindingUsesStringifiedMutationEvidence(t *testing.T) {
 	update := map[string]interface{}{
 		"kind":      "tool_call",

@@ -67,6 +67,9 @@ func FastPathFinalAnswerForToolTraceWithEvidence(trace skills.SkillTrace, eviden
 	if fastPathEvidenceSuppressesAutoFinalAnswer(evidence) {
 		return "", false
 	}
+	if fastPathModelDecidesPlanHasPendingAgentWork(evidence) {
+		return "", false
+	}
 	if answer, ok := agentCreateFastPathAnswerWithEvidence(trace, evidence); ok {
 		return answer, true
 	}
@@ -581,7 +584,7 @@ func fastPathPlanHasPendingAgentMutationStep(evidence map[string]interface{}) bo
 		return false
 	}
 	if operationPlanModelDecidesTools(plan) {
-		return false
+		return fastPathModelDecidesPlanHasPendingAgentMutationStep(plan)
 	}
 	steps, _ := fastPathPendingExecutablePlanSteps(plan, 20)
 	for _, step := range steps {
@@ -594,6 +597,109 @@ func fastPathPlanHasPendingAgentMutationStep(evidence map[string]interface{}) bo
 	}
 	pending := strings.ToLower(strings.TrimSpace(firstNonEmptyString(plan["pending_next_action"])))
 	return fastPathPendingActionMentionsAgentMutation(pending)
+}
+
+func fastPathModelDecidesPlanHasPendingAgentWork(evidence map[string]interface{}) bool {
+	plan := evidenceMapFromAny(evidence["operation_plan"])
+	if len(plan) == 0 || !operationPlanModelDecidesTools(plan) {
+		return false
+	}
+	_, ok := fastPathModelDecidesPendingAgentWorkStep(plan)
+	return ok
+}
+
+func fastPathModelDecidesPendingAgentWorkStep(plan map[string]interface{}) (map[string]interface{}, bool) {
+	if len(plan) == 0 || !operationPlanModelDecidesTools(plan) {
+		return nil, false
+	}
+	hasPendingAgentMutation := fastPathModelDecidesPlanHasPendingAgentMutationStep(plan)
+	hasPendingPostUpdateRead := fastPathPlanHasPendingPostUpdateAgentRead(plan)
+	if !hasPendingAgentMutation && !hasPendingPostUpdateRead {
+		return nil, false
+	}
+	for _, step := range fastPathPendingPlanStepsIgnoringModelDecides(plan, 20) {
+		if completionEvidencePlanStepIsRequiredPostUpdateAgentRead(step) {
+			return step, true
+		}
+		if !hasPendingAgentMutation {
+			continue
+		}
+		if fastPathPlanStepSupportsPendingAgentMutation(step) {
+			return step, true
+		}
+	}
+	return nil, false
+}
+
+func fastPathModelDecidesPlanHasPendingAgentMutationStep(plan map[string]interface{}) bool {
+	if len(plan) == 0 {
+		return false
+	}
+	for _, step := range fastPathPendingPlanStepsIgnoringModelDecides(plan, 20) {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skills.SkillAgentManagement) {
+			continue
+		}
+		if fastPathAgentManagementToolIsMutation(stringFromAny(step["tool_name"])) {
+			return true
+		}
+	}
+	pending := strings.ToLower(strings.TrimSpace(firstNonEmptyString(plan["pending_next_action"])))
+	return fastPathPendingActionMentionsAgentMutation(pending)
+}
+
+func fastPathPlanStepSupportsPendingAgentMutation(step map[string]interface{}) bool {
+	if len(step) == 0 {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skills.SkillAgentManagement) {
+		return false
+	}
+	return strings.TrimSpace(stringFromAny(step["tool_name"])) != ""
+}
+
+func fastPathPendingPlanStepsIgnoringModelDecides(plan map[string]interface{}, limit int) []map[string]interface{} {
+	if len(plan) == 0 || limit <= 0 {
+		return nil
+	}
+	steps := mapSliceFromAny(plan["steps"])
+	structuredSteps, _ := fastPathPendingStructuredPlanSteps(plan, limit)
+	pendingSteps := make([]map[string]interface{}, 0, limit)
+	seen := map[string]struct{}{}
+	appendStep := func(step map[string]interface{}) {
+		if len(step) == 0 || len(pendingSteps) >= limit {
+			return
+		}
+		key := fastPathPlanStepAction(step)
+		if key == "" {
+			key = strings.ToLower(strings.TrimSpace(firstNonEmptyString(step["id"], step["title"])))
+		}
+		if key != "" {
+			if _, ok := seen[key]; ok {
+				return
+			}
+			seen[key] = struct{}{}
+		}
+		pendingSteps = append(pendingSteps, step)
+	}
+	stepStatus := evidenceMapFromAny(plan["step_status"])
+	for _, step := range steps {
+		if !fastPathPlanStepBlocksCompletion(step) {
+			continue
+		}
+		id := strings.TrimSpace(stringFromAny(step["id"]))
+		status := fastPathNormalizePlanStepStatus(firstNonEmptyString(step["status"], stepStatus[id]))
+		if status == "completed" || status == "failed" {
+			continue
+		}
+		if fastPathPlanStepAction(step) == "" {
+			continue
+		}
+		appendStep(step)
+	}
+	for _, step := range structuredSteps {
+		appendStep(step)
+	}
+	return pendingSteps
 }
 
 func fastPathPlanHasPendingAgentReadStep(evidence map[string]interface{}, toolName string) bool {
@@ -1098,6 +1204,9 @@ func fastPathInvocationSucceeded(invocation map[string]interface{}) bool {
 // Runner to fast-path on.
 func FastPathFinalAnswerForCompletionEvidence(evidence map[string]interface{}) (string, bool) {
 	if fastPathEvidenceSuppressesAutoFinalAnswer(evidence) {
+		return "", false
+	}
+	if fastPathModelDecidesPlanHasPendingAgentWork(evidence) {
 		return "", false
 	}
 	if fastPathCompletionEvidenceNeedsAgentConfigPostRead(evidence) {
@@ -2120,6 +2229,9 @@ func fastPathTraceFromInvocation(invocation map[string]interface{}) (skills.Skil
 }
 
 func fastPathCompletionEvidenceNeedsAgentConfigPostRead(evidence map[string]interface{}) bool {
+	if completionVerificationHasAgentConfigUpdateResultEvidence(evidence) {
+		return false
+	}
 	if fastPathPlanHasPendingPostUpdateAgentRead(evidenceMapFromAny(evidence["operation_plan"])) &&
 		!fastPathHasSuccessfulAgentConfigReadAfterUpdate(evidence) {
 		return true
@@ -2142,9 +2254,6 @@ func fastPathEvidenceRequestsAgentPostUpdateRead(evidence map[string]interface{}
 
 func fastPathPlanHasPendingPostUpdateAgentRead(plan map[string]interface{}) bool {
 	if len(plan) == 0 {
-		return false
-	}
-	if operationPlanModelDecidesTools(plan) {
 		return false
 	}
 	stepStatus := evidenceMapFromAny(plan["step_status"])

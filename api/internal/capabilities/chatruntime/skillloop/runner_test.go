@@ -463,6 +463,104 @@ func TestCompletionEvidenceContinuationAllowsRequiredPostUpdateAgentConfigRead(t
 	}
 }
 
+func TestCompletionEvidenceContinuationAllowsModelDecidesRequiredPostUpdateAgentConfigRead(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":           "in_progress",
+			"tool_choice_mode": operationPlanToolChoiceModelDecides,
+			"planning_mode":    "phase_only_model_decides",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+					"status":    "completed",
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config#post_update",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"status":                            "pending",
+					"phase":                             "post_update_verification",
+					"required_post_update_verification": true,
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/update_agent_config":          "completed",
+				"tool:agent-management/get_agent_config#post_update": "pending",
+			},
+		},
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
+	}}}
+	loaded := map[string]struct{}{skills.SkillAgentManagement: {}}
+
+	feedback, ok := completionEvidenceContinuationSystemMessage(evidence, 0, resolved)
+	if !ok {
+		t.Fatal("completionEvidenceContinuationSystemMessage() ok = false, want true for model-decides post-update config read")
+	}
+	content := fmt.Sprint(feedback.Content)
+	if !strings.Contains(content, "agent-management/get_agent_config") ||
+		!strings.Contains(content, "required_post_update_verification") {
+		t.Fatalf("feedback = %v, want post-update get_agent_config guidance", feedback.Content)
+	}
+	if got := functionToolChoiceName(completionEvidenceContinuationToolChoice(evidence, loaded, resolved)); got != skills.MetaToolCallSkillTool {
+		t.Fatalf("completionEvidenceContinuationToolChoice() = %q, want %s for loaded post-update read", got, skills.MetaToolCallSkillTool)
+	}
+}
+
+func TestCompletionEvidenceContinuationAllowsModelDecidesPendingAgentMutation(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "in_progress",
+			"tool_choice_mode":    operationPlanToolChoiceModelDecides,
+			"planning_mode":       "phase_only_model_decides",
+			"pending_next_action": "Run tool:agent-management/create_agent",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/delete_agent",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "delete_agent",
+					"status":    "completed",
+				},
+				map[string]interface{}{
+					"id":        "tool:agent-management/create_agent",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "create_agent",
+					"status":    "pending",
+				},
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+					"status":    "pending",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/delete_agent":        "completed",
+				"tool:agent-management/create_agent":        "pending",
+				"tool:agent-management/update_agent_config": "pending",
+			},
+		},
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
+	}}}
+	loaded := map[string]struct{}{skills.SkillAgentManagement: {}}
+
+	feedback, ok := completionEvidenceContinuationSystemMessage(evidence, 0, resolved)
+	if !ok {
+		t.Fatal("completionEvidenceContinuationSystemMessage() ok = false, want true for model-decides pending create_agent")
+	}
+	if !strings.Contains(fmt.Sprint(feedback.Content), "agent-management/create_agent") {
+		t.Fatalf("feedback = %v, want create_agent guidance", feedback.Content)
+	}
+	if got := functionToolChoiceName(completionEvidenceContinuationToolChoice(evidence, loaded, resolved)); got != skills.MetaToolCallSkillTool {
+		t.Fatalf("completionEvidenceContinuationToolChoice() = %q, want %s for loaded pending create_agent", got, skills.MetaToolCallSkillTool)
+	}
+}
+
 func TestRepeatedSuccessfulReadOnlyToolCallFeedbackStepUsesPreviousResult(t *testing.T) {
 	args := map[string]interface{}{"agent_id": "agent-1"}
 	result := repeatedSuccessfulReadOnlyToolCallFeedbackStep("call-2", skills.SkillAgentManagement, "list_agent_workflow_binding_candidates", args, map[string]SkillToolCallRef{
@@ -2924,6 +3022,82 @@ func TestRunnerRecordsTurnStateWithoutUserVisibleEvent(t *testing.T) {
 	for _, event := range events {
 		if event.Type == EventIntermediateAnswer {
 			t.Fatalf("event = %#v, want no user-visible intermediate answer for model_only turn state", event)
+		}
+	}
+}
+
+func TestRunnerRecordsTurnStateWhenModelWrapsMetaToolInSkillToolCall(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "wrapped-turn-state",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolCallSkillTool,
+								Arguments: `{"skill_id":"agent-management","tool_name":"submit_turn_state","arguments":{"items":[{"kind":"verification","visibility":"model_only","key":"agent_config_verified","value":"created agent uses deepseek-v4-flash and file-generator","source":"agent-management/get_agent_config"}]}}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{Role: "assistant", Content: "Verified."},
+				}},
+			},
+		},
+	}
+	runtime := skills.NewRuntimeWithCatalog(nil, nil, "")
+	var traces []skills.SkillTrace
+	var events []Event
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: runtime,
+		AppContext:   &llmclient.AppContext{},
+		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
+			traces = append(traces, trace)
+		},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "verify the agent config"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared: prepared,
+		Resolved: runnerTestResolvedSkills(),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "Verified." {
+		t.Fatalf("answer = %q, want final answer", answer)
+	}
+	var found *skills.SkillTrace
+	for index := range traces {
+		if traces[index].Kind == "turn_state" {
+			found = &traces[index]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("traces = %#v, want turn_state trace", traces)
+	}
+	items := mapSliceFromAny(found.Result["items"])
+	if len(items) != 1 || stringFromInterface(items[0]["key"]) != "agent_config_verified" {
+		t.Fatalf("turn_state items = %#v, want agent_config_verified fact", items)
+	}
+	for _, event := range events {
+		if event.Type == EventSkillCallError {
+			t.Fatalf("event = %#v, want no visible skill call error", event)
 		}
 	}
 }

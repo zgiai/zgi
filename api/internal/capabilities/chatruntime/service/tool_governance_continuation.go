@@ -513,6 +513,9 @@ func toolGovernanceFrozenPlanHasPendingFollowup(prepared *PreparedChat, trace sk
 	if len(plan) == 0 {
 		return false
 	}
+	if toolGovernanceFrozenModelDecidesPlanHasPendingAgentWork(plan) {
+		return true
+	}
 	for _, step := range operationPlanPendingExecutableSteps(plan, 8) {
 		skillID := strings.TrimSpace(stringFromAny(step["skill_id"]))
 		toolName := strings.TrimSpace(stringFromAny(step["tool_name"]))
@@ -713,7 +716,67 @@ func toolGovernanceFrozenPlanHasPendingExecutableFollowup(plan map[string]interf
 	if len(plan) == 0 {
 		return false
 	}
-	return len(operationPlanPendingExecutableSteps(plan, 8)) > 0
+	if len(operationPlanPendingExecutableSteps(plan, 8)) > 0 {
+		return true
+	}
+	return toolGovernanceFrozenModelDecidesPlanHasPendingAgentWork(plan)
+}
+
+func toolGovernanceFrozenModelDecidesPlanHasPendingAgentWork(plan map[string]interface{}) bool {
+	if len(plan) == 0 || !operationPlanModelDecidesTools(plan) {
+		return false
+	}
+	stepStatus := mapFromOperationContext(plan["step_status"])
+	for _, step := range mapSliceFromAny(plan["steps"]) {
+		if !operationPlanStepBlocksCompletion(step) {
+			continue
+		}
+		id := strings.TrimSpace(stringFromAny(step["id"]))
+		status := operationPlanNormalizeStepStatus(firstNonEmptyString(step["status"], stepStatus[id]))
+		if status == operationPlanStepStatusCompleted || status == operationPlanStepStatusFailed {
+			continue
+		}
+		if operationPlanStepIsPendingAgentMutation(step, stepStatus) || operationPlanStepIsPostUpdateAgentRead(step) {
+			return true
+		}
+	}
+	return toolGovernanceFrozenPendingActionMentionsAgentWork(plan["pending_next_action"])
+}
+
+func toolGovernanceFrozenPendingActionMentionsAgentWork(value interface{}) bool {
+	text := strings.ToLower(strings.TrimSpace(stringFromAny(value)))
+	if text == "" {
+		return false
+	}
+	for _, token := range []string{
+		"agent-management/create_agent",
+		"agent-management/delete_agent",
+		"agent-management/delete_agents",
+		"agent-management/update_agent_identity",
+		"agent-management/update_agent_config",
+		"agent-management/replace_agent_skill_bindings",
+		"agent-management/replace_agent_knowledge_bindings",
+		"agent-management/replace_agent_database_bindings",
+		"agent-management/replace_agent_workflow_bindings",
+		"agent-management/get_agent_config",
+		"agent-management/get_agent",
+		"create_agent",
+		"delete_agent",
+		"delete_agents",
+		"update_agent_identity",
+		"update_agent_config",
+		"replace_agent_skill_bindings",
+		"replace_agent_knowledge_bindings",
+		"replace_agent_database_bindings",
+		"replace_agent_workflow_bindings",
+		"get_agent_config",
+		"get_agent",
+	} {
+		if strings.Contains(text, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func toolGovernanceFrozenPlanNeedsFailureVerifier(plan map[string]interface{}) bool {

@@ -1148,6 +1148,122 @@ func TestFastPathFinalAnswerWithEvidenceDoesNotTreatModelDecidesPlanStepAsHardBl
 	}
 }
 
+func TestFastPathFinalAnswerWithEvidenceWaitsForModelDecidesPostUpdateRead(t *testing.T) {
+	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":     "completed",
+			"agent_name": "Support Agent",
+			"updated_fields": []interface{}{
+				"enabled_skill_ids",
+			},
+			"binding_changes": []interface{}{
+				map[string]interface{}{
+					"field":          "enabled_skill_ids",
+					"binding_kind":   "agent_skill",
+					"change_action":  "bind",
+					"resource_count": 1,
+					"resource_names": []interface{}{"File Generator"},
+				},
+			},
+		},
+	}, map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":           "running",
+			"tool_choice_mode": operationPlanToolChoiceModelDecides,
+			"planning_mode":    "phase_only_model_decides",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config#post_update",
+					"status":                            "pending",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"phase":                             "post_update_verification",
+					"required_post_update_verification": true,
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/update_agent_config":          "completed",
+				"tool:agent-management/get_agent_config#post_update": "pending",
+			},
+		},
+	})
+	if ok {
+		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = true, want false while model-decides post-update get_agent_config is pending")
+	}
+}
+
+func TestFastPathFinalAnswerWithEvidenceWaitsForModelDecidesPendingAgentMutation(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"tool_choice_mode":    operationPlanToolChoiceModelDecides,
+			"planning_mode":       "phase_only_model_decides",
+			"pending_next_action": "Run tool:agent-management/create_agent",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/delete_agent",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "delete_agent",
+				},
+				map[string]interface{}{
+					"id":        "tool:agent-management/create_agent",
+					"status":    "pending",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "create_agent",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/delete_agent": "completed",
+				"tool:agent-management/create_agent": "pending",
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "delete_agent",
+				"result": map[string]interface{}{
+					"status":     "completed",
+					"effect":     "deleted",
+					"agent_id":   "agent-1",
+					"agent_name": "Old Agent",
+				},
+			},
+		},
+	}
+	trace := skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agent",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":     "completed",
+			"effect":     "deleted",
+			"agent_id":   "agent-1",
+			"agent_name": "Old Agent",
+		},
+	}
+
+	if answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(trace, evidence); ok {
+		t.Fatalf("FastPathFinalAnswerForToolTraceWithEvidence() = (%q, true), want false while model-decides create_agent is pending", answer)
+	}
+	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
+		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = (%q, true), want false while model-decides create_agent is pending", answer)
+	}
+}
+
 func TestFastPathFinalAnswerWithEvidenceBlocksAgentIdentityUpdateWhenConfigReadStepPending(t *testing.T) {
 	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
 		Kind:     "tool_call",

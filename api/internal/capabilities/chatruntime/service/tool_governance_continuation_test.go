@@ -104,6 +104,112 @@ func TestToolGovernanceFrozenContinuationNeedsSkillLoopForPendingPostUpdateRead(
 	}
 }
 
+func TestToolGovernanceFrozenContinuationNeedsSkillLoopForModelDecidesPendingAgentMutation(t *testing.T) {
+	deleteStepID := operationPlanToolStepID(skills.SkillAgentManagement, "delete_agent")
+	createStepID := operationPlanToolStepID(skills.SkillAgentManagement, "create_agent")
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status":           operationPlanStatusRunning,
+				"tool_choice_mode": aiChatTurnToolChoiceModelDecides,
+				"planning_mode":    "phase_only_model_decides",
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        deleteStepID,
+						"status":    operationPlanStepStatusCompleted,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "delete_agent",
+					},
+					map[string]interface{}{
+						"id":        createStepID,
+						"status":    operationPlanStepStatusPending,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "create_agent",
+					},
+				},
+				"step_status": map[string]interface{}{
+					deleteStepID: operationPlanStepStatusCompleted,
+					createStepID: operationPlanStepStatusPending,
+				},
+				"pending_next_action": "Run tool:agent-management/create_agent",
+			},
+		}},
+	}
+
+	if !toolGovernanceFrozenContinuationNeedsSkillLoop(prepared) {
+		t.Fatal("toolGovernanceFrozenContinuationNeedsSkillLoop() = false, want model-decides pending Agent mutation to continue the skill loop")
+	}
+
+	answer, ok := toolGovernanceFrozenFastPathAnswer(prepared, skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agent",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":     "completed",
+			"agent_name": "Old Agent",
+		},
+	})
+	if ok {
+		t.Fatalf("toolGovernanceFrozenFastPathAnswer() = (%q, true), want pending model-decides Agent mutation to block fast-path completion", answer)
+	}
+}
+
+func TestToolGovernanceFrozenFastPathWaitsForModelDecidesPostUpdateRead(t *testing.T) {
+	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
+	readStepID := operationPlanPostUpdateAgentConfigReadStepID()
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{Query: "update the agent config and verify it"},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status":           operationPlanStatusRunning,
+				"tool_choice_mode": aiChatTurnToolChoiceModelDecides,
+				"planning_mode":    "phase_only_model_decides",
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        updateStepID,
+						"status":    operationPlanStepStatusCompleted,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "update_agent_config",
+					},
+					map[string]interface{}{
+						"id":                                readStepID,
+						"status":                            operationPlanStepStatusPending,
+						"skill_id":                          skills.SkillAgentManagement,
+						"tool_name":                         "get_agent_config",
+						"phase":                             "post_update_verification",
+						"required_post_update_verification": true,
+					},
+				},
+				"step_status": map[string]interface{}{
+					updateStepID: operationPlanStepStatusCompleted,
+					readStepID:   operationPlanStepStatusPending,
+				},
+				"pending_next_action": "Run tool:agent-management/get_agent_config",
+			},
+		}},
+	}
+	trace := skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_config",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":         "completed",
+			"agent_name":     "Novel Master",
+			"updated_fields": []interface{}{"model", "system_prompt", "file_upload_enabled"},
+		},
+	}
+
+	if !toolGovernanceFrozenContinuationNeedsSkillLoop(prepared) {
+		t.Fatal("toolGovernanceFrozenContinuationNeedsSkillLoop() = false, want model-decides pending post-update read to continue the skill loop")
+	}
+	if answer, ok := toolGovernanceFrozenFastPathAnswer(prepared, trace); ok {
+		t.Fatalf("toolGovernanceFrozenFastPathAnswer() = (%q, true), want post-update read to block fast-path completion", answer)
+	}
+}
+
 func TestToolGovernanceContinuationPlanStateSummaryIncludesReadFileEvidenceFacts(t *testing.T) {
 	readStepID := operationPlanToolStepID(skills.SkillFileReader, "read_file")
 	createStepID := operationPlanToolStepID(skills.SkillAgentManagement, "create_agent")

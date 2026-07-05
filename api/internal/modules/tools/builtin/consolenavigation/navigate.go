@@ -68,7 +68,7 @@ func NewNavigateTool(tenantID string) *NavigateTool {
 				"en_US":   "Request navigation to a whitelisted internal ZGI console page.",
 				"zh_Hans": "Request navigation to a whitelisted internal ZGI console page.",
 			},
-			LLM: "Request navigation to a whitelisted internal ZGI console page. Use only for internal /console routes from the ZGI site map; never for external URLs or asset mutation.",
+			LLM: "Request navigation to a whitelisted internal ZGI console page. Use only for internal /console routes from the ZGI site map; never for external URLs or asset mutation. A successful tool result only means the route request was accepted; wait for client action/page-context evidence before using the destination page. If the current page already matches the destination, do not call navigate.",
 		},
 		Parameters: []tools.ToolParameter{
 			{

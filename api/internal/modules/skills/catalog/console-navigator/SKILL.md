@@ -55,7 +55,9 @@ Use this skill only to request safe internal ZGI console navigation. It does not
 4. Do not navigate to external URLs or non-console paths.
 5. If the current page context already matches the requested route, do not call `navigate` just to create proof. Continue from the current page context and visible resources.
 6. After navigation, pause for the frontend client action result. The sidebar will switch routes, wait for supported target page context, and continue this same AIChat turn with the updated page context when available.
-7. Never claim that navigation performed an asset operation. If the user asks to delete, publish, run, schedule, create, or modify assets, explain that those actions need a supported governed tool and user approval when available.
+7. Navigation is usually a substep, not the user's final goal. After the loaded-route/page-context evidence arrives, continue the remaining requested operation from the new page context instead of ending the turn just because navigation succeeded.
+8. If a previous tool result or page fact will be needed after navigation, record it with `submit_turn_state` before calling `navigate`. Use the stored fact after the continuation instead of re-reading or guessing.
+9. Never claim that navigation performed an asset operation. If the user asks to delete, publish, run, schedule, create, or modify assets, explain that those actions need a supported governed tool and user approval when available.
 
 ## Tool Usage
 

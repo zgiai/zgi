@@ -405,6 +405,9 @@ Use this skill for governed Agent asset operations in the contextual AIChat side
 22. Navigation is not a default completion step for ordinary Agent edits, binding changes, unbinding, or list-page batch deletion. Prefer refreshed page context or asset observation after the mutation.
 23. After `create_agent` succeeds, route to `/console/agents/{agentId}/agent` only when the user asked to open the new Agent or the operation needs the detail page for follow-up edits. If the frontend client action already loaded that route, do not navigate again.
 24. If `delete_agent` succeeds while the current page is that Agent's detail page, or `delete_agents` succeeds and includes the current detail Agent, use `console-navigator` to route to `/console/agents` before the final answer. When deleting multiple Agents from the list page, do not navigate after the first item; rely on page refresh/observation and the batch `item_results`.
+25. A successful mutation result is the next step's primary evidence. After `create_agent`, use the returned `agent_id`/`detail_href` for follow-up `update_agent_config`, navigation, and verification in the same turn. Do not search for the newly created Agent by name unless the tool result is missing the ID or verification requires a fresh list.
+26. Within one AIChat turn, once this skill has been loaded, do not reload it just because tool governance approval, navigation, refresh, or client-action continuation resumed the loop. Continue from the latest tool result, client-action evidence, page context, and `turn_state`.
+27. When a later Agent field must reuse a value derived from another tool, such as a file summary/theme, selected model, selected Skill, or chosen target Agent, first preserve the reusable fact with `submit_turn_state` before crossing approval, navigation, refresh, or another tool phase. Use the stored exact fact later instead of placeholders such as `file content`, `读取到的内容`, or `previous result`.
 
 ## Agent Capability Semantics
 
@@ -430,6 +433,13 @@ Common examples:
 - "Use deepseek flash" means call `list_available_models` with the phrase, then update both `model_provider` and `model` from one returned candidate.
 - "Write a prompt so it can do X" changes `system_prompt`; if X requires tools/data/workflows, also add the matching skill or resource bindings.
 - If a config value is derived from a previous read tool, use the actual tool result text or stored turn-state fact. Never substitute placeholder words such as `file content`, `read content`, or `content value`.
+
+Result chaining examples:
+
+- Create then configure: after `create_agent` returns `agent_id`, use that same `agent_id` for `update_agent_config`; do not call `list_agents` only to find the Agent you just created.
+- Delete then create: after `delete_agent` or `delete_agents` succeeds, continue with the next requested create/config step instead of re-checking the deleted target unless the result reports a failure.
+- Read file then create Agent from theme: after `file-reader/read_file`, summarize the reusable theme with `submit_turn_state`, then use that exact summary in `create_agent`/`update_agent_config`.
+- Configure then verify: after `update_agent_config`, call `get_agent_config` only when the user needs verification or the next step depends on confirmed config; final claims must follow `updated_fields`, `config_changes`, and the returned draft config.
 
 For read-only questions such as “can this Agent generate files?” or “does this Agent have memory?”, inspect the relevant config and candidate evidence, then answer from that evidence without mutating. If the capability is missing and the user later says “进行处理/继续/那就做,” continue from the inspected capability goal instead of starting an unrelated old action.
 

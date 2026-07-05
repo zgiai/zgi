@@ -259,6 +259,12 @@ func completionVerificationPlanNeedsRuntimeEvidence(plan map[string]interface{})
 	if status == "failed" || status == "error" {
 		return true
 	}
+	if fastPathPlanHasPendingPostUpdateAgentRead(plan) {
+		return true
+	}
+	if _, ok := fastPathModelDecidesPendingAgentWorkStep(plan); ok {
+		return true
+	}
 	if operationPlanModelDecidesTools(plan) {
 		return false
 	}
@@ -1456,7 +1462,142 @@ func completionVerificationLatestAgentConfigReadResult(evidence map[string]inter
 		}
 		return result, true
 	}
+	if result, ok := completionVerificationLatestAgentConfigUpdateResultWithConfigEvidence(evidence); ok {
+		return result, true
+	}
 	return nil, false
+}
+
+func completionVerificationLatestAgentConfigUpdateResultWithConfigEvidence(evidence map[string]interface{}) (map[string]interface{}, bool) {
+	var latest map[string]interface{}
+	for _, invocation := range completionVerificationEvidenceInvocations(evidence) {
+		if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["skill_id"])), skills.SkillAgentManagement) ||
+			!strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(invocation["tool_name"])), "update_agent_config") {
+			continue
+		}
+		if !completionVerificationInvocationSucceeded(invocation) {
+			continue
+		}
+		result := completionVerificationInvocationResult(invocation)
+		if completionVerificationAgentConfigUpdateResultHasConfigEvidence(result) {
+			latest = result
+		} else {
+			latest = nil
+		}
+	}
+	if len(latest) == 0 {
+		return nil, false
+	}
+	return latest, true
+}
+
+func completionVerificationHasAgentConfigUpdateResultEvidence(evidence map[string]interface{}) bool {
+	_, ok := completionVerificationLatestAgentConfigUpdateResultWithConfigEvidence(evidence)
+	return ok
+}
+
+func completionVerificationInvocationResult(invocation map[string]interface{}) map[string]interface{} {
+	for _, key := range []string{"result", "result_summary", "tool_result"} {
+		if result := evidenceMapFromAny(invocation[key]); len(result) > 0 {
+			return result
+		}
+	}
+	return nil
+}
+
+func completionVerificationAgentConfigUpdateResultHasConfigEvidence(result map[string]interface{}) bool {
+	if len(result) == 0 {
+		return false
+	}
+	fields := cleanStringSlice(append(
+		completionVerificationCanonicalAgentConfigFields(result["updated_fields"]),
+		completionVerificationCanonicalAgentConfigFields(result["satisfied_fields"])...,
+	))
+	if len(fields) == 0 {
+		for _, field := range []string{
+			"model", "system_prompt", "agent_memory_enabled", "file_upload_enabled",
+			"home_title", "input_placeholder", "theme_color", "suggested_questions",
+			"enabled_skill_ids", "knowledge_dataset_ids", "database_bindings", "workflow_bindings",
+		} {
+			if completionVerificationAgentConfigResultHasFieldEvidence(result, field) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, field := range fields {
+		if completionVerificationAgentConfigResultHasFieldEvidence(result, field) {
+			return true
+		}
+	}
+	return false
+}
+
+func completionVerificationAgentConfigResultHasFieldEvidence(result map[string]interface{}, field string) bool {
+	if len(result) == 0 {
+		return false
+	}
+	config := completionVerificationAgentConfigMap(result)
+	hasInResultOrConfig := func(key string) bool {
+		return completionVerificationMapHasKey(result, key) || completionVerificationMapHasKey(config, key)
+	}
+	switch completionVerificationCanonicalAgentConfigField(field) {
+	case "model":
+		return hasInResultOrConfig("model") || hasInResultOrConfig("model_name") ||
+			hasInResultOrConfig("model_provider") || hasInResultOrConfig("provider")
+	case "system_prompt", "agent_memory_enabled", "file_upload_enabled", "home_title", "input_placeholder", "theme_color", "suggested_questions":
+		return hasInResultOrConfig(field)
+	case "enabled_skill_ids", "knowledge_dataset_ids", "database_bindings", "workflow_bindings":
+		return completionVerificationAgentConfigResultHasCollectionFieldEvidence(result, field)
+	default:
+		return false
+	}
+}
+
+func completionVerificationAgentConfigResultHasCollectionFieldEvidence(result map[string]interface{}, field string) bool {
+	if len(result) == 0 {
+		return false
+	}
+	sources := []map[string]interface{}{result}
+	if config := evidenceMapFromAny(result["config"]); len(config) > 0 {
+		sources = append(sources, config)
+	}
+	if agent := evidenceMapFromAny(result["agent"]); len(agent) > 0 {
+		sources = append(sources, agent)
+		if config := evidenceMapFromAny(agent["config"]); len(config) > 0 {
+			sources = append(sources, config)
+		}
+	}
+	keys := []string{field}
+	switch completionVerificationCanonicalAgentConfigField(field) {
+	case "enabled_skill_ids":
+		keys = append(keys, "skill_ids", "agent_skill_ids", "enabled_skill_refs", "enabled_skills", "skills", "agent_skills")
+	case "knowledge_dataset_ids":
+		keys = append(keys, "dataset_ids", "knowledge_base_ids", "knowledge_bases")
+	case "database_bindings":
+		keys = append(keys, "database_table_ids", "table_ids")
+	case "workflow_bindings":
+		keys = append(keys, "workflow_ids")
+	}
+	for _, source := range sources {
+		for _, key := range keys {
+			if completionVerificationMapHasKey(source, key) {
+				return true
+			}
+		}
+	}
+	for _, key := range []string{"binding_changes", "binding_final_states"} {
+		for _, raw := range evidenceSliceFromAny(result[key]) {
+			item := evidenceMapFromAny(raw)
+			if len(item) == 0 {
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(item["field"])), field) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func completionVerificationLatestAgentConfigReadResultAfterUpdate(evidence map[string]interface{}) (map[string]interface{}, bool) {
@@ -2514,9 +2655,8 @@ func completionVerificationPendingExecutablePlanStep(evidence map[string]interfa
 	if len(plan) == 0 {
 		return nil, false
 	}
-	if operationPlanModelDecidesTools(plan) {
-		return nil, false
-	}
+	modelDecidesTools := operationPlanModelDecidesTools(plan)
+	modelDecidesStep, hasModelDecidesStep := fastPathModelDecidesPendingAgentWorkStep(plan)
 	status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(plan["status"])))
 	switch status {
 	case "completed", "complete", "success", "succeeded", "failed", "error", "skipped", "not_applicable":
@@ -2541,6 +2681,14 @@ func completionVerificationPendingExecutablePlanStep(evidence map[string]interfa
 		switch stepState {
 		case "completed", "complete", "success", "succeeded", "failed", "error", "skipped", "not_applicable":
 			continue
+		}
+		if modelDecidesTools {
+			if !hasModelDecidesStep {
+				continue
+			}
+			if fastPathPlanStepAction(step) != fastPathPlanStepAction(modelDecidesStep) {
+				continue
+			}
 		}
 		return step, true
 	}

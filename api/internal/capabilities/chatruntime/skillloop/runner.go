@@ -134,6 +134,14 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	}
 	var answerBuilder strings.Builder
 	var usage *adapter.Usage
+	if postVerificationConfigured {
+		evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, nil)
+		if feedback, shouldContinue := completionEvidenceContinuationSystemMessage(evidence, evidenceContinuationRetryCount, resolved); shouldContinue {
+			evidenceContinuationRetryCount++
+			messages = append(messages, feedback)
+			forcedToolChoiceForNextRound = completionEvidenceContinuationToolChoice(evidence, loadedSkills, resolved)
+		}
+	}
 
 	for round := 0; round < defaultMaxSkillPlanningRounds; round++ {
 		planningReq := cloneChatRequest(prepared.LLMRequest)
@@ -709,8 +717,11 @@ func completionEvidenceContinuationAgentCreateSystemMessage(evidence map[string]
 }
 
 func completionEvidenceContinuationPendingPlanStepSystemMessage(evidence map[string]interface{}, retryCount int, resolved *skills.ResolvedSkills) (adapter.Message, bool) {
+	plan := evidenceMapFromAny(evidence["operation_plan"])
 	if completionEvidenceOperationPlanModelDecides(evidence) {
-		return adapter.Message{}, false
+		if _, ok := fastPathModelDecidesPendingAgentWorkStep(plan); !ok {
+			return adapter.Message{}, false
+		}
 	}
 	step, ok := completionVerificationPendingExecutablePlanStep(evidence)
 	if !ok {
@@ -748,8 +759,11 @@ func completionEvidenceContinuationPendingPlanStepSystemMessage(evidence map[str
 }
 
 func completionEvidenceContinuationToolChoice(evidence map[string]interface{}, loadedSkills map[string]struct{}, resolved *skills.ResolvedSkills) interface{} {
+	plan := evidenceMapFromAny(evidence["operation_plan"])
 	if completionEvidenceOperationPlanModelDecides(evidence) {
-		return nil
+		if _, ok := fastPathModelDecidesPendingAgentWorkStep(plan); !ok {
+			return nil
+		}
 	}
 	step, ok := completionVerificationPendingExecutablePlanStep(evidence)
 	if !ok {
@@ -2584,6 +2598,7 @@ func agenticSkillLoopSystemMessage() adapter.Message {
 		"Do not start every task by listing resources or navigating. If current page context, recent tool results, or visible resolved targets are enough, act from that evidence directly.",
 		"Do not announce that you need to navigate, open, enter, or switch pages unless a visible console navigation tool is available and you are about to call it. If no navigation tool is available, say you will continue from current page evidence.",
 		"When an additional system message contains preferred_route_action or suggested_next_tool, treat it as an advisory next phase, not as a reason to ignore fresh evidence. Load and call it when the current page context and prior tool/client-action evidence show it is still needed; do not repeat the same navigation or business tool after matching evidence already satisfies the step.",
+		"Within one user request, do not reload a skill just because approval, navigation, refresh, or continuation resumed the loop. If the skill was already loaded and no newer instructions are needed, continue from the latest tool results, client-action evidence, and turn_state.",
 		"After each skill/tool result, continue with the next necessary action or final answer. Summarize only user-relevant outcomes, not internal bookkeeping.",
 		"If a tool call fails, explain the likely user-relevant cause, fix the arguments, and retry when possible.",
 		"If a tool call fails, do not repeat the same tool with the same arguments. Re-plan from the error before retrying.",
@@ -2593,7 +2608,7 @@ func agenticSkillLoopSystemMessage() adapter.Message {
 		"If a save, update, delete, create, bind, unbind, publish, or navigation tool succeeded in this turn, describe the outcome as executed and verified from the tool/page evidence; do not say it was unnecessary or skipped just because the refreshed page already shows the requested state.",
 		"Progress text sent together with tool calls is transient status text. Keep it short and do not place substantial user deliverables there.",
 		"Long tasks may cross approvals, page navigation, page refresh, user confirmation, or continuation boundaries. Those boundaries can make implicit working memory unreliable even within the same user request.",
-		"Before crossing a boundary or making later steps depend on a tool/page result, decide whether any exact value, summary, theme, selected target, model choice, prompt requirement, or verification fact must be reused. If yes, call submit_turn_state with kind=working_fact/decision/verification and visibility=model_only.",
+		"Before crossing a boundary or making later steps depend on a tool/page result, decide whether any exact value, summary, theme, selected target, model choice, prompt requirement, or verification fact must be reused. If yes, call submit_turn_state; use kind=working_fact/decision/verification with visibility=model_only for internal state, or kind=user_deliverable with visibility=user_visible when the reusable summary should also be shown to the user.",
 		"Use submit_turn_state for internal working facts, decisions, assumptions, and verification state. Do not expose protocol names or JSON to the user; the recorded state is for continuing the same turn reliably.",
 		"Do not record every detail. Record only facts that affect later tool arguments, naming, configuration, verification, or the final answer. For long documents, record a concise summary/theme and re-read if exact full text is needed.",
 		"If you later need a value but did not record it and cannot see it in current tool/page evidence, re-read or re-observe it instead of guessing or using placeholders such as file content, read content, or 文件内容.",
