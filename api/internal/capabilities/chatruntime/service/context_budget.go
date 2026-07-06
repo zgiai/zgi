@@ -1273,8 +1273,7 @@ func turnStatePromptItems(metadata map[string]interface{}) []map[string]interfac
 	out := make([]map[string]interface{}, 0, len(items))
 	for _, item := range items {
 		kind := strings.TrimSpace(stringFromAny(item["kind"]))
-		visibility := strings.TrimSpace(stringFromAny(item["visibility"]))
-		if kind == "" || (kind == "user_deliverable" && visibility == "user_visible") {
+		if kind == "" {
 			continue
 		}
 		out = append(out, item)

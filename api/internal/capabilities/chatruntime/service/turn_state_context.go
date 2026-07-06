@@ -19,9 +19,6 @@ func turnStateContinuationSummary(message *runtimemodel.Message) map[string]inte
 	for _, item := range items {
 		kind := strings.TrimSpace(stringFromAny(item["kind"]))
 		visibility := strings.TrimSpace(stringFromAny(item["visibility"]))
-		if visibility == "user_visible" && kind == "user_deliverable" {
-			continue
-		}
 		if kind == "" {
 			continue
 		}
@@ -29,7 +26,7 @@ func turnStateContinuationSummary(message *runtimemodel.Message) map[string]inte
 			"kind":       kind,
 			"visibility": firstNonEmptyString(visibility, "model_only"),
 		}
-		for _, key := range []string{"key", "value", "title", "source"} {
+		for _, key := range []string{"key", "value", "content", "title", "source"} {
 			if value := strings.TrimSpace(stringFromAny(item[key])); value != "" {
 				limit := 500
 				if key == "key" {
@@ -55,8 +52,9 @@ func turnStateContinuationSummary(message *runtimemodel.Message) map[string]inte
 	return map[string]interface{}{
 		"items": mapsToInterfaceSlice(outItems),
 		"instructions": []string{
-			"Treat these turn_state items as authoritative state recorded earlier in this same AIChat turn.",
+			"Treat these turn_state items, including user-visible deliverables, as authoritative state recorded earlier in this same AIChat turn.",
 			"Reuse exact working_fact values for later tool arguments and final answers instead of re-deriving placeholders.",
+			"Reuse user_deliverable content when it is the only recorded summary for a later dependency; do not create a different private summary for the same source unless new evidence contradicts it.",
 			"If a turn_state item came from an earlier tool result and satisfies a later dependency, do not rerun the same earlier tool or navigate back to the same earlier page merely to rederive that fact.",
 			"If later tool/page evidence contradicts a turn_state item, update the state with submit_turn_state before proceeding.",
 		},

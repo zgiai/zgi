@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
@@ -38,6 +39,122 @@ func TestMergeSkillTraceMetadataStoresTurnStateOutsideVisibleInvocations(t *test
 	}
 	if got := stringFromAny(items[0]["value"]); got != "water fee confirmation" {
 		t.Fatalf("turn_state value = %q, want water fee confirmation", got)
+	}
+}
+
+func TestMergeSkillTraceMetadataAllowsWorkingFactToUpdateUserVisibleSummary(t *testing.T) {
+	metadata := mergeSkillTraceMetadata(nil, []skills.SkillTrace{{
+		Kind:   "turn_state",
+		Status: "success",
+		Result: map[string]interface{}{
+			"items": []interface{}{
+				map[string]interface{}{
+					"kind":       "user_deliverable",
+					"visibility": "user_visible",
+					"key":        "worldview_summary",
+					"title":      "灵澜学院世界观总结",
+					"content":    "灵澜学院是一所湖畔寄宿制高中，现实与非现实边界模糊。",
+					"source":     "file-reader/read_file",
+				},
+			},
+		},
+	}})
+	metadata = mergeSkillTraceMetadata(metadata, []skills.SkillTrace{{
+		Kind:   "turn_state",
+		Status: "success",
+		Result: map[string]interface{}{
+			"items": []interface{}{
+				map[string]interface{}{
+					"kind":       "working_fact",
+					"visibility": "model_only",
+					"key":        "worldview_summary",
+					"value":      "星渊纪元是一个太空歌剧世界观。",
+					"source":     "file-reader/read_file",
+					"used_for":   []interface{}{"agent.system_prompt"},
+				},
+			},
+		},
+	}})
+
+	state := mapFromOperationContext(metadata["turn_state"])
+	items := mapSliceFromAny(state["items"])
+	if len(items) != 2 {
+		t.Fatalf("turn_state.items = %#v, want visible summary plus later working fact", items)
+	}
+	var visibleSummary map[string]interface{}
+	var workingFact map[string]interface{}
+	for _, item := range items {
+		switch stringFromAny(item["kind"]) {
+		case "user_deliverable":
+			visibleSummary = item
+		case "working_fact":
+			workingFact = item
+		}
+	}
+	if visibleSummary == nil || !strings.Contains(stringFromAny(visibleSummary["content"]), "灵澜学院") {
+		t.Fatalf("visible summary = %#v, want original user-visible summary retained", visibleSummary)
+	}
+	if workingFact == nil || !strings.Contains(stringFromAny(workingFact["value"]), "星渊纪元") {
+		t.Fatalf("working fact = %#v, want later model-updated fact retained", workingFact)
+	}
+	usedFor := mapSliceOrStringListForPrompt(workingFact["used_for"], 8, 120)
+	if len(usedFor) != 1 || stringFromAny(usedFor[0]) != "agent.system_prompt" {
+		t.Fatalf("used_for = %#v, want working fact usage preserved", workingFact["used_for"])
+	}
+}
+
+func TestTurnStateContinuationSummaryIncludesUserVisibleDeliverable(t *testing.T) {
+	message := &runtimemodel.Message{
+		Metadata: map[string]interface{}{
+			"turn_state": map[string]interface{}{
+				"items": []interface{}{
+					map[string]interface{}{
+						"kind":       "user_deliverable",
+						"visibility": "user_visible",
+						"key":        "worldview_summary",
+						"content":    "灵澜学院是一所湖畔寄宿制高中。",
+						"source":     "file-reader/read_file",
+					},
+				},
+			},
+		},
+	}
+
+	summary := turnStateContinuationSummary(message)
+	items := mapSliceFromAny(summary["items"])
+	if len(items) != 1 {
+		t.Fatalf("continuation turn_state items = %#v, want user-visible deliverable included", summary["items"])
+	}
+	if got := stringFromAny(items[0]["content"]); !strings.Contains(got, "灵澜学院") {
+		t.Fatalf("continuation content = %q, want recorded user-visible summary", got)
+	}
+}
+
+func TestRecentTurnStateSectionIncludesUserVisibleDeliverable(t *testing.T) {
+	branch := []*runtimemodel.Message{{
+		Status: runtimemodel.MessageStatusCompleted,
+		Query:  "读取文件并基于总结创建智能体",
+		Metadata: map[string]interface{}{
+			"turn_state": map[string]interface{}{
+				"items": []interface{}{
+					map[string]interface{}{
+						"kind":       "user_deliverable",
+						"visibility": "user_visible",
+						"key":        "worldview_summary",
+						"content":    "灵澜学院是一所湖畔寄宿制高中。",
+						"source":     "file-reader/read_file",
+					},
+				},
+			},
+		},
+	}}
+
+	section, stats := recentTurnStateSection(branch, 2000)
+	if stats.IncludedTurnStateFacts != 1 {
+		t.Fatalf("included turn_state facts = %d, want 1; section=%s", stats.IncludedTurnStateFacts, section)
+	}
+	if !strings.Contains(section, "灵澜学院") {
+		t.Fatalf("turn_state section = %q, want user-visible summary content", section)
 	}
 }
 
