@@ -7,6 +7,7 @@ import (
 	channelhandler "github.com/zgiai/zgi/api/internal/modules/llm/channel/handler"
 	credentialhandler "github.com/zgiai/zgi/api/internal/modules/llm/credential/handler"
 	defaultmodelhandler "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/handler"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	llmmodelhandler "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/handler"
 	providerhandler "github.com/zgiai/zgi/api/internal/modules/llm/provider/handler"
 	statisticshandler "github.com/zgiai/zgi/api/internal/modules/llm/statistics/handler"
@@ -58,6 +59,11 @@ func RegisterConsoleRoutes(r *gin.RouterGroup, m *LLMModule) {
 			workspaceQuotaAdmin := llmWithOrg.Group("")
 			workspaceQuotaAdmin.Use(middleware.EnterpriseAdminOrOwnerRequired())
 			workspacequotahandler.RegisterWorkspaceQuotaRoutes(workspaceQuotaAdmin, m.WorkspaceQuotaHandler)
+		}
+		if m.PricingFallbackHandler != nil {
+			pricingFallbackAdmin := llmWithOrg.Group("")
+			pricingFallbackAdmin.Use(middleware.EnterpriseAdminOrOwnerRequired())
+			gateway.RegisterPricingFallbackRoutes(pricingFallbackAdmin, m.PricingFallbackHandler)
 		}
 
 	}
@@ -137,19 +143,21 @@ func RegisterCommonRoutes(r *gin.RouterGroup, m *LLMModule) {
 		// Available models API (optimized for business use with caching)
 		tenantModels.GET("/available", m.LLMModelModule.AvailableModelsHandler.ListAvailable)
 		tenantModels.POST("/available/refresh", m.LLMModelModule.AvailableModelsHandler.RefreshCache)
+		tenantModelAdmin := tenantModels.Group("")
+		tenantModelAdmin.Use(middleware.EnterpriseAdminOrOwnerRequired())
 
 		tenantModels.GET("", m.ModelHandler.ListTenantModels)
 		tenantModels.GET("/parameters", m.ModelHandler.GetModelParameters)
-		tenantModels.POST("/provider/toggle", m.ModelHandler.ToggleProviderModels)
-		tenantModels.POST("/batch/toggle", m.ModelHandler.BatchToggleModels)
-		tenantModels.POST("/config", m.ModelHandler.ConfigureModel)
+		tenantModelAdmin.POST("/provider/toggle", m.ModelHandler.ToggleProviderModels)
+		tenantModelAdmin.POST("/batch/toggle", m.ModelHandler.BatchToggleModels)
+		tenantModelAdmin.POST("/config", m.ModelHandler.ConfigureModel)
 		tenantModels.GET("/config/:model_id", m.ModelHandler.GetModelConfig)
 		tenantModels.GET("/configs", m.ModelHandler.ListModelConfigs)
 		tenantModels.GET("/custom", m.ModelHandler.ListCustomModels)
-		tenantModels.POST("/custom", m.ModelHandler.CreateCustom)
+		tenantModelAdmin.POST("/custom", m.ModelHandler.CreateCustom)
 		tenantModels.GET("/custom/:id", m.ModelHandler.GetCustom)
-		tenantModels.PUT("/custom/:id", m.ModelHandler.UpdateCustom)
-		tenantModels.DELETE("/custom/:id", m.ModelHandler.DeleteCustom)
+		tenantModelAdmin.PUT("/custom/:id", m.ModelHandler.UpdateCustom)
+		tenantModelAdmin.DELETE("/custom/:id", m.ModelHandler.DeleteCustom)
 		tenantModels.GET("/:id/availability", m.ModelHandler.CheckAvailability)
 		tenantModels.POST("/availability/batch", m.ModelHandler.BatchCheckAvailability)
 	}
@@ -178,7 +186,7 @@ func RegisterCommonRoutes(r *gin.RouterGroup, m *LLMModule) {
 		tenantChannels.POST("/:id/test/model", m.ChannelHandler.TestChannelModel)
 		tenantChannels.POST("/:id/test/batch", m.ChannelHandler.BatchTestChannelModels)
 
-		// Cloud-only: platform channel management (ZGI_EDITION=CLOUD)
+		// Cloud-only: platform channel management (ZGI_RUN_MODE=cloud)
 		if m.IsCloudMode {
 			tenantChannels.GET("/platform", m.ChannelHandler.GetPlatformChannel)
 			tenantChannels.PUT("/platform", m.ChannelHandler.UpdatePlatformChannelSettings)
@@ -203,5 +211,10 @@ func RegisterCommonRoutes(r *gin.RouterGroup, m *LLMModule) {
 		workspaceQuotaAdmin := r.Group("")
 		workspaceQuotaAdmin.Use(middleware.EnterpriseAdminOrOwnerRequired())
 		workspacequotahandler.RegisterWorkspaceQuotaRoutes(workspaceQuotaAdmin, m.WorkspaceQuotaHandler)
+	}
+	if m.PricingFallbackHandler != nil {
+		pricingFallbackAdmin := r.Group("")
+		pricingFallbackAdmin.Use(middleware.EnterpriseAdminOrOwnerRequired())
+		gateway.RegisterPricingFallbackRoutes(pricingFallbackAdmin, m.PricingFallbackHandler)
 	}
 }

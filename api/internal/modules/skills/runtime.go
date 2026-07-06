@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -49,9 +48,10 @@ type SkillScriptRunner interface {
 }
 
 type skillLocation struct {
-	ID     string
-	Root   string
-	Source string
+	ID       string
+	Root     string
+	Source   string
+	Embedded bool
 }
 
 type ExecutionContext struct {
@@ -172,30 +172,18 @@ func (r *Runtime) ListSystemSkillsBestEffort(ctx context.Context) ([]SkillDiscov
 	if r == nil {
 		return nil, fmt.Errorf("skill runtime is not configured")
 	}
-	entries, err := os.ReadDir(r.catalogDir)
+	locations, errs, err := r.systemSkillLocationsBestEffort()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read skill catalog: %w", err)
+		return nil, err
 	}
-	metadata := make([]SkillDiscoveryMetadata, 0, len(entries))
-	errs := make([]error, 0)
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		name := strings.TrimSpace(entry.Name())
-		if name == "" {
-			continue
-		}
-		if !isValidSkillName(name) {
-			errs = append(errs, fmt.Errorf("invalid skill directory %s: use lowercase letters, numbers, and hyphens only", entry.Name()))
-			continue
-		}
-		id := normalizeSkillID(name)
-		doc, err := r.loadSkillDocumentFromLocation(skillLocation{
-			ID:     id,
-			Root:   filepath.Join(r.catalogDir, name),
-			Source: SkillSourceSystem,
-		})
+	ids := make([]string, 0, len(locations))
+	for id := range locations {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	metadata := make([]SkillDiscoveryMetadata, 0, len(ids))
+	for _, id := range ids {
+		doc, err := r.loadSkillDocumentFromLocation(locations[id])
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -264,8 +252,12 @@ func (r *Runtime) SystemSkillExists(skillID string) bool {
 	if id == "" || !isValidSkillName(id) {
 		return false
 	}
-	info, err := os.Stat(filepath.Join(r.catalogDir, id))
-	return err == nil && info.IsDir()
+	locations, err := r.systemSkillLocations()
+	if err != nil {
+		return false
+	}
+	_, ok := locations[id]
+	return ok
 }
 
 func (r *Runtime) GetSkillMetadata(ctx context.Context, skillID string) (*SkillDiscoveryMetadata, error) {
@@ -298,27 +290,17 @@ func (r *Runtime) ValidateCatalog(ctx context.Context) error {
 	if r == nil {
 		return fmt.Errorf("skill runtime is not configured")
 	}
-	entries, err := os.ReadDir(r.catalogDir)
+	locations, err := r.systemSkillLocations()
 	if err != nil {
-		return fmt.Errorf("failed to read skill catalog: %w", err)
+		return err
 	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		name := strings.TrimSpace(entry.Name())
-		if name == "" {
-			continue
-		}
-		if !isValidSkillName(name) {
-			return fmt.Errorf("invalid skill directory %s: use lowercase letters, numbers, and hyphens only", name)
-		}
-		id := normalizeSkillID(name)
-		doc, err := r.loadSkillDocumentFromLocation(skillLocation{
-			ID:     id,
-			Root:   filepath.Join(r.catalogDir, id),
-			Source: SkillSourceSystem,
-		})
+	ids := make([]string, 0, len(locations))
+	for id := range locations {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		doc, err := r.loadSkillDocumentFromLocation(locations[id])
 		if err != nil {
 			return err
 		}
@@ -342,7 +324,7 @@ func LoadCustomSkillDocument(root string) (SkillDocument, error) {
 		return SkillDocument{}, fmt.Errorf("failed to parse custom skill: %w", err)
 	}
 	id := normalizeSkillID(frontmatter.Name)
-	doc, err := buildSkillDocument(id, root, SkillSourceCustom, frontmatter, body)
+	doc, err := buildSkillDocument(id, root, SkillSourceCustom, frontmatter, body, listReferences(root, SkillSourceCustom), hasScripts(root))
 	if err != nil {
 		return SkillDocument{}, err
 	}
@@ -402,14 +384,14 @@ func (r *Runtime) ReadReference(ctx context.Context, resolved *ResolvedSkills, s
 		trace.DurationMS = time.Since(start).Milliseconds()
 		return "", trace, err
 	}
-	path, err := referenceFullPath(*doc, referencePath)
+	ref, err := skillReference(*doc, referencePath)
 	if err != nil {
 		trace.Status = "error"
 		trace.Error = err.Error()
 		trace.DurationMS = time.Since(start).Milliseconds()
 		return "", trace, err
 	}
-	content, err := os.ReadFile(path)
+	content, err := readSkillReference(ref)
 	if err != nil {
 		trace.Status = "error"
 		trace.Error = err.Error()
@@ -2590,11 +2572,7 @@ func defaultSkillCatalogDir() string {
 	if _, err := os.Stat(defaultCatalogDir); err == nil {
 		return defaultCatalogDir
 	}
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		return defaultCatalogDir
-	}
-	return filepath.Join(filepath.Dir(file), "catalog")
+	return defaultCatalogDir
 }
 
 func (r *Runtime) loadSkillDocument(skillID string) (SkillDocument, error) {
@@ -2608,11 +2586,15 @@ func (r *Runtime) loadSkillDocument(skillID string) (SkillDocument, error) {
 	if !isValidSkillName(id) {
 		return SkillDocument{}, fmt.Errorf("invalid skill id %s: use lowercase letters, numbers, and hyphens only", id)
 	}
-	return r.loadSkillDocumentFromLocation(skillLocation{
-		ID:     id,
-		Root:   filepath.Join(r.catalogDir, id),
-		Source: SkillSourceSystem,
-	})
+	locations, err := r.systemSkillLocations()
+	if err != nil {
+		return SkillDocument{}, err
+	}
+	location, ok := locations[id]
+	if !ok {
+		return SkillDocument{}, fmt.Errorf("skill %s not found: %w", id, ErrSkillNotFound)
+	}
+	return r.loadSkillDocumentFromLocation(location)
 }
 
 func (r *Runtime) loadSkillDocumentFromLocation(location skillLocation) (SkillDocument, error) {
@@ -2628,8 +2610,7 @@ func (r *Runtime) loadSkillDocumentFromLocation(location skillLocation) (SkillDo
 		return SkillDocument{}, fmt.Errorf("skill %s storage path is required", id)
 	}
 	source := normalizeSkillSource(location.Source)
-	path := filepath.Join(root, "SKILL.md")
-	raw, err := os.ReadFile(path)
+	raw, err := readSkillLocationFile(location, "SKILL.md")
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return SkillDocument{}, fmt.Errorf("skill %s not found: %w", id, ErrSkillNotFound)
@@ -2640,7 +2621,7 @@ func (r *Runtime) loadSkillDocumentFromLocation(location skillLocation) (SkillDo
 	if err != nil {
 		return SkillDocument{}, fmt.Errorf("failed to parse skill %s: %w", id, err)
 	}
-	doc, err := buildSkillDocument(id, root, source, frontmatter, body)
+	doc, err := buildSkillDocument(id, root, source, frontmatter, body, listLocationReferences(location), hasLocationScripts(location))
 	if err != nil {
 		return SkillDocument{}, err
 	}
@@ -2657,12 +2638,11 @@ func (r *Runtime) loadSkillDocumentFromLocation(location skillLocation) (SkillDo
 	return doc, nil
 }
 
-func buildSkillDocument(id string, root string, source string, frontmatter SkillFrontmatter, body string) (SkillDocument, error) {
+func buildSkillDocument(id string, root string, source string, frontmatter SkillFrontmatter, body string, references []SkillReference, scriptPresent bool) (SkillDocument, error) {
 	whenToUse := strings.TrimSpace(frontmatter.WhenToUse)
 	if normalizeSkillSource(source) == SkillSourceCustom && whenToUse == "" {
 		whenToUse = strings.TrimSpace(frontmatter.Description)
 	}
-	scriptPresent := hasScripts(root)
 	tools, err := buildSkillToolDefinitions(id, frontmatter)
 	if err != nil {
 		return SkillDocument{}, err
@@ -2679,7 +2659,7 @@ func buildSkillDocument(id string, root string, source string, frontmatter Skill
 			RuntimeType:      normalizeSkillRuntimeType(frontmatter.RuntimeType, frontmatter.Tools),
 			MaxCallsPerTurn:  normalizePositive(frontmatter.MaxCallsPerTurn, defaultMaxCallsPerTurn),
 			TimeoutSeconds:   normalizeSkillTimeout(frontmatter.TimeoutSeconds, scriptPresent),
-			References:       listReferences(root, source),
+			References:       references,
 			HasScripts:       scriptPresent,
 			ScriptsSupported: false,
 			RootPath:         root,
@@ -2904,11 +2884,21 @@ func skillToolGovernanceManifest(skillID string, toolName string, manifests map[
 }
 
 func (r *Runtime) listReferences(skillID string) []SkillReference {
-	return listReferences(filepath.Join(r.catalogDir, skillID), SkillSourceSystem)
+	id := normalizeSkillID(skillID)
+	locations, err := r.systemSkillLocations()
+	if err != nil {
+		return nil
+	}
+	return listLocationReferences(locations[id])
 }
 
 func (r *Runtime) hasScripts(skillID string) bool {
-	return hasScripts(filepath.Join(r.catalogDir, skillID))
+	id := normalizeSkillID(skillID)
+	locations, err := r.systemSkillLocations()
+	if err != nil {
+		return false
+	}
+	return hasLocationScripts(locations[id])
 }
 
 func (r *Runtime) safeReferencePath(skillID string, referencePath string) (string, error) {

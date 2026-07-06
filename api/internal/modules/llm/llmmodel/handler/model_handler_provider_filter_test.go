@@ -19,11 +19,18 @@ import (
 )
 
 type fakeModelService struct {
-	models        []*model.ModelView
-	parameters    model.ConfigParameters
-	parametersErr error
-	err           error
-	seenProvider  string
+	models              []*model.ModelView
+	parameters          model.ConfigParameters
+	parametersErr       error
+	err                 error
+	seenProvider        string
+	seenStatus          string
+	configureCalls      int
+	createCustomCalls   int
+	updateCustomCalls   int
+	deleteCustomCalls   int
+	toggleProviderCalls int
+	batchToggleCalls    int
 }
 
 func (f *fakeModelService) CreateGlobal(ctx context.Context, req *dto.CreateModelRequest) (*model.LLMModel, error) {
@@ -35,7 +42,8 @@ func (f *fakeModelService) GetGlobal(ctx context.Context, id uuid.UUID) (*model.
 }
 
 func (f *fakeModelService) ListGlobal(ctx context.Context, req *dto.ListModelRequest) ([]*model.LLMModel, int64, error) {
-	return nil, 0, errors.New("not implemented")
+	models := []*model.LLMModel{{ID: uuid.New(), Provider: req.Provider, Model: "qwen-plus"}}
+	return models, int64(len(models)), nil
 }
 
 func (f *fakeModelService) UpdateGlobal(ctx context.Context, id uuid.UUID, req *dto.UpdateModelRequest) (*model.LLMModel, error) {
@@ -47,7 +55,8 @@ func (f *fakeModelService) DeleteGlobal(ctx context.Context, id uuid.UUID) error
 }
 
 func (f *fakeModelService) ConfigureModel(ctx context.Context, organizationID uuid.UUID, req *dto.ConfigureModelRequest) (*model.ModelConfig, error) {
-	return nil, errors.New("not implemented")
+	f.configureCalls++
+	return &model.ModelConfig{ID: uuid.New(), OrganizationID: organizationID, ModelID: req.ModelID}, nil
 }
 
 func (f *fakeModelService) GetModelConfig(ctx context.Context, organizationID, modelID uuid.UUID) (*model.ModelConfig, error) {
@@ -59,7 +68,14 @@ func (f *fakeModelService) ListModelConfigs(ctx context.Context, organizationID 
 }
 
 func (f *fakeModelService) CreateCustom(ctx context.Context, organizationID uuid.UUID, req *dto.CreateCustomModelRequest) (*model.CustomModel, error) {
-	return nil, errors.New("not implemented")
+	f.createCustomCalls++
+	return &model.CustomModel{
+		ID:             uuid.New(),
+		OrganizationID: organizationID,
+		Provider:       req.Provider,
+		Name:           req.Name,
+		DisplayName:    req.DisplayName,
+	}, nil
 }
 
 func (f *fakeModelService) GetCustom(ctx context.Context, organizationID, id uuid.UUID) (*model.CustomModel, error) {
@@ -71,15 +87,22 @@ func (f *fakeModelService) ListCustom(ctx context.Context, organizationID uuid.U
 }
 
 func (f *fakeModelService) UpdateCustom(ctx context.Context, organizationID, id uuid.UUID, req *dto.UpdateCustomModelRequest) (*model.CustomModel, error) {
-	return nil, errors.New("not implemented")
+	f.updateCustomCalls++
+	displayName := "updated"
+	if req.DisplayName != nil {
+		displayName = *req.DisplayName
+	}
+	return &model.CustomModel{ID: id, OrganizationID: organizationID, DisplayName: displayName}, nil
 }
 
 func (f *fakeModelService) DeleteCustom(ctx context.Context, organizationID, id uuid.UUID) error {
-	return errors.New("not implemented")
+	f.deleteCustomCalls++
+	return nil
 }
 
-func (f *fakeModelService) ListTenantModels(ctx context.Context, organizationID uuid.UUID, useCase string, provider string) ([]*model.ModelView, error) {
+func (f *fakeModelService) ListTenantModels(ctx context.Context, organizationID uuid.UUID, useCase string, provider string, status string) ([]*model.ModelView, error) {
 	f.seenProvider = provider
+	f.seenStatus = status
 	if provider == "" {
 		return f.models, f.err
 	}
@@ -97,11 +120,13 @@ func (f *fakeModelService) GetModelParameters(ctx context.Context, organizationI
 }
 
 func (f *fakeModelService) ToggleProviderModels(ctx context.Context, organizationID uuid.UUID, provider string, isEnabled bool) error {
-	return errors.New("not implemented")
+	f.toggleProviderCalls++
+	return nil
 }
 
 func (f *fakeModelService) BatchToggleModels(ctx context.Context, organizationID uuid.UUID, modelIDs []uuid.UUID, isEnabled bool) error {
-	return errors.New("not implemented")
+	f.batchToggleCalls++
+	return nil
 }
 
 func (f *fakeModelService) ListOfficialModels(ctx context.Context) ([]*model.LLMModel, error) {
@@ -139,6 +164,7 @@ func TestListTenantModels_FilterByProvider_Hit(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "test-provider", svc.seenProvider)
+	assert.Equal(t, "active", svc.seenStatus)
 
 	data := decodeTenantModelListData(t, w.Body.Bytes())
 	items := data["items"].([]interface{})
@@ -171,6 +197,7 @@ func TestListTenantModels_NoProviderFilter_ReturnAll(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Empty(t, svc.seenProvider)
+	assert.Equal(t, "active", svc.seenStatus)
 
 	data := decodeTenantModelListData(t, w.Body.Bytes())
 	items := data["items"].([]interface{})
@@ -198,6 +225,7 @@ func TestListTenantModels_FilterByProvider_Miss(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "other-provider", svc.seenProvider)
+	assert.Equal(t, "active", svc.seenStatus)
 
 	data := decodeTenantModelListData(t, w.Body.Bytes())
 	items := data["items"].([]interface{})

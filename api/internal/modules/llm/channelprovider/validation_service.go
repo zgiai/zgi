@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -24,7 +23,6 @@ const (
 	sampledValidationMinPass   = 4
 	validationModeFull         = "full"
 	validationModeSampled      = "sampled"
-	validationModeListing      = "listing"
 	validationModeMetadataOnly = "metadata_only"
 	testMethodChat             = "chat"
 	testMethodEmbedding        = "embedding"
@@ -36,7 +34,7 @@ const (
 )
 
 type modelLookupRepository interface {
-	ListByNames(ctx context.Context, names []string) ([]*llmmodelmodel.LLMModel, error)
+	ListAvailableByNames(ctx context.Context, names []string, provider string, useCase string) ([]*llmmodelmodel.LLMModel, error)
 }
 
 type cachedModelCapability struct {
@@ -140,8 +138,8 @@ func (v *Validator) ValidateModels(ctx context.Context, organizationID uuid.UUID
 	return v.validateWithoutModelListing(ctx, spec.Name, apiBaseURL, adapterInstance, normalizedModels, capabilities, report)
 }
 
-// ValidateModelsForCreation performs lightweight model listing validation for channel creation.
-// It does not run real model probes; explicit draft test endpoints own provider calls.
+// ValidateModelsForCreation validates local model metadata for channel creation.
+// It does not call upstream providers; explicit test endpoints own provider probes.
 func (v *Validator) ValidateModelsForCreation(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL string, models []string) (*ValidationResult, error) {
 	spec, err := Resolve(channelProvider)
 	if err != nil {
@@ -166,7 +164,7 @@ func (v *Validator) ValidateModelsForCreation(ctx context.Context, organizationI
 		report[keyWarningMessages] = []string{}
 		report[keyProbedModels] = []string{}
 		report[keyModelListingVerified] = false
-		return result, nil
+		return result, fmt.Errorf("at least one model is required")
 	}
 
 	capabilities, err := v.resolveModelCapabilities(ctx, organizationID, spec, normalizedModels)
@@ -174,103 +172,42 @@ func (v *Validator) ValidateModelsForCreation(ctx context.Context, organizationI
 		return result, err
 	}
 
-	adapterInstance, err := v.newAdapterForProvider(spec.AdapterKey, apiBaseURL, apiKey)
-	if err != nil {
-		return result, fmt.Errorf("failed to create adapter: %w", err)
-	}
-
-	upstreamModels, err := adapterInstance.ListModels(ctx, apiKey)
-	if err == nil {
-		return validateCreationWithModelListing(normalizedModels, capabilities, upstreamModels, report)
-	}
-	if !isCreationModelListingUnsupported(err) {
-		normalizedErr := normalizeValidationError(err)
-		if normalizedErr == providerAPIKeyInvalidMessage {
-			return result, newProviderAPIKeyInvalidError(fmt.Errorf("failed to list upstream models: %w", err))
-		}
-		warnings := buildCreationModelListingFailedWarnings(normalizedModels, normalizedErr)
-		return creationMetadataOnlyResult(normalizedModels, capabilities, report, warnings), nil
-	}
-
-	warnings := buildCreationModelListingUnsupportedWarnings(normalizedModels)
-	return creationMetadataOnlyResult(normalizedModels, capabilities, report, warnings), nil
+	return creationMetadataOnlyResult(normalizedModels, capabilities, report), nil
 }
 
 func creationMetadataOnlyResult(
 	normalizedModels []string,
 	capabilities []modelCapability,
 	report map[string]any,
-	warnings []string,
 ) *ValidationResult {
-	report[keyItems] = metadataOnlyItems(capabilities)
+	items := make([]map[string]any, 0, len(capabilities))
+	for _, capability := range capabilities {
+		items = append(items, map[string]any{
+			keyModel:          capability.Model,
+			keyUseCase:        capability.UseCase,
+			keySuccess:        true,
+			keyMessage:        "validated local model metadata",
+			keyResponseTimeMs: int64(0),
+		})
+	}
+
+	report[keyItems] = items
 	report[keyValidationMode] = validationModeMetadataOnly
 	report[keySampled] = false
 	report[keySampleSize] = 0
 	report[keyValidatedCount] = len(normalizedModels)
 	report[keyPassedCount] = len(normalizedModels)
 	report[keyFailedModels] = []map[string]any{}
-	report[keyUnvalidatedCount] = len(normalizedModels)
-	report[keyWarningMessages] = warnings
+	report[keyUnvalidatedCount] = 0
+	report[keyWarningMessages] = []string{}
 	report[keyProbedModels] = []string{}
 	report[keyModelListingVerified] = false
 
-	result := &ValidationResult{
+	return &ValidationResult{
 		Report:           report,
-		Warnings:         warnings,
+		Warnings:         []string{},
 		NormalizedModels: normalizedModels,
 	}
-	return result
-}
-
-func validateCreationWithModelListing(
-	normalizedModels []string,
-	capabilities []modelCapability,
-	upstreamModels []adapter.Model,
-	report map[string]any,
-) (*ValidationResult, error) {
-	upstreamSet := upstreamModelNameSet(upstreamModels)
-	items := make([]map[string]any, 0, len(capabilities))
-	failures := make([]validationFailure, 0)
-
-	for _, capability := range capabilities {
-		success := modelExistsInUpstreamSet(upstreamSet, capability.Model)
-		message := "ok"
-		if !success {
-			message = "model is not returned by upstream model list"
-			failures = append(failures, validationFailure{
-				Model:   capability.Model,
-				UseCase: capability.UseCase,
-				Message: message,
-			})
-		}
-		items = append(items, map[string]any{
-			keyModel:          capability.Model,
-			keyUseCase:        capability.UseCase,
-			keySuccess:        success,
-			keyMessage:        message,
-			keyResponseTimeMs: int64(0),
-		})
-	}
-
-	report[keyItems] = items
-	report[keyValidationMode] = validationModeListing
-	report[keySampled] = false
-	report[keySampleSize] = 0
-	report[keyValidatedCount] = len(normalizedModels)
-	report[keyPassedCount] = len(normalizedModels) - len(failures)
-	report[keyFailedModels] = failuresToReport(failures)
-	report[keyUnvalidatedCount] = 0
-	warnings := buildCreationModelListingMissingWarnings(failures)
-	report[keyWarningMessages] = warnings
-	report[keyProbedModels] = []string{}
-	report[keyModelListingVerified] = true
-
-	result := &ValidationResult{
-		Report:           report,
-		Warnings:         warnings,
-		NormalizedModels: normalizedModels,
-	}
-	return result, nil
 }
 
 func upstreamModelNameSet(upstreamModels []adapter.Model) map[string]struct{} {
@@ -291,33 +228,8 @@ func modelExistsInUpstreamSet(upstreamSet map[string]struct{}, modelName string)
 	return ok
 }
 
-func metadataOnlyItems(capabilities []modelCapability) []map[string]any {
-	items := make([]map[string]any, 0, len(capabilities))
-	for _, capability := range capabilities {
-		items = append(items, map[string]any{
-			keyModel:          capability.Model,
-			keyUseCase:        capability.UseCase,
-			keySuccess:        true,
-			keyMessage:        "validated local model metadata; upstream model listing is unsupported",
-			keyResponseTimeMs: int64(0),
-		})
-	}
-	return items
-}
-
-func isCreationModelListingUnsupported(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, adapter.ErrCapabilityUnsupported) {
-		return true
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "not implemented")
-}
-
 // TestModel validates a single model using the model library as the source of truth.
-func (v *Validator) TestModel(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL, modelName, testMethod string) (*TestResult, error) {
+func (v *Validator) TestModel(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL, modelName, testMethod string, stream bool) (*TestResult, error) {
 	spec, err := Resolve(channelProvider)
 	if err != nil {
 		return nil, err
@@ -345,27 +257,24 @@ func (v *Validator) TestModel(ctx context.Context, organizationID uuid.UUID, cha
 		}
 	}
 
+	if useCase == testMethodImageGeneration && !explicitTestMethod {
+		return v.skipImageModelTest(capabilities[0]), nil
+	}
+
 	adapterInstance, err := v.newAdapterForProvider(spec.AdapterKey, apiBaseURL, apiKey)
 	if err != nil {
-		resultTestMethod := useCase
-		if useCase == testMethodImageGeneration && !explicitTestMethod {
-			resultTestMethod = testMethodMetadata
-		}
 		return &TestResult{
 			Success:        false,
+			Status:         TestStatusFailed,
 			Message:        fmt.Sprintf("failed to create adapter: %v", err),
 			ResponseTimeMs: 0,
 			Model:          normalizedModel,
 			UseCase:        useCase,
-			TestMethod:     resultTestMethod,
+			TestMethod:     useCase,
 		}, nil
 	}
 
-	if useCase == testMethodImageGeneration && !explicitTestMethod {
-		return v.probeImageModelMetadata(ctx, adapterInstance, apiKey, capabilities[0]), nil
-	}
-
-	return v.probeModel(ctx, adapterInstance, capabilities[0]), nil
+	return v.probeModel(ctx, adapterInstance, capabilities[0], stream), nil
 }
 
 func (v *Validator) validateWithModelListing(
@@ -477,7 +386,7 @@ func (v *Validator) probeModels(ctx context.Context, adapterInstance adapter.LLM
 	failures := make([]validationFailure, 0)
 
 	for _, capability := range capabilities {
-		result := v.probeModel(ctx, adapterInstance, capability)
+		result := v.probeModel(ctx, adapterInstance, capability, false)
 		items = append(items, map[string]any{
 			keyModel:          capability.Model,
 			keyUseCase:        capability.UseCase,
@@ -497,7 +406,7 @@ func (v *Validator) probeModels(ctx context.Context, adapterInstance adapter.LLM
 	return items, failures
 }
 
-func (v *Validator) probeModel(ctx context.Context, adapterInstance adapter.LLMProviderAdapter, capability modelCapability) *TestResult {
+func (v *Validator) probeModel(ctx context.Context, adapterInstance adapter.LLMProviderAdapter, capability modelCapability, stream bool) *TestResult {
 	startTime := v.now()
 	result := &TestResult{
 		Model:      capability.Model,
@@ -518,52 +427,34 @@ func (v *Validator) probeModel(ctx context.Context, adapterInstance adapter.LLMP
 	case testMethodRerank:
 		err = runRerankProbe(ctx, adapterInstance, capability.Model)
 	default:
-		responseContent, err = runChatProbe(ctx, adapterInstance, capability.Model)
+		responseContent, err = runChatProbe(ctx, adapterInstance, capability.Model, stream)
 	}
 
 	result.ResponseTimeMs = v.now().Sub(startTime).Milliseconds()
 	if err != nil {
 		result.Success = false
+		result.Status = TestStatusFailed
 		result.Message = normalizeValidationError(err)
 		return result
 	}
 
 	result.Success = true
+	result.Status = TestStatusSuccess
 	result.Message = "ok"
 	result.Response = responseContent
 	return result
 }
 
-func (v *Validator) probeImageModelMetadata(ctx context.Context, adapterInstance adapter.LLMProviderAdapter, apiKey string, capability modelCapability) *TestResult {
-	startTime := v.now()
-	result := &TestResult{
-		Model:      capability.Model,
-		UseCase:    capability.UseCase,
-		TestMethod: testMethodMetadata,
+func (v *Validator) skipImageModelTest(capability modelCapability) *TestResult {
+	return &TestResult{
+		Success:        false,
+		Status:         TestStatusSkipped,
+		Message:        "image generation models require a real image generation test in the image workspace",
+		ResponseTimeMs: 0,
+		Model:          capability.Model,
+		UseCase:        capability.UseCase,
+		TestMethod:     testMethodImageGeneration,
 	}
-
-	upstreamModels, err := adapterInstance.ListModels(ctx, apiKey)
-	result.ResponseTimeMs = v.now().Sub(startTime).Milliseconds()
-	if err != nil {
-		if isCreationModelListingUnsupported(err) {
-			result.Success = true
-			result.Message = "validated local model metadata; upstream model listing is unsupported; real image generation was not run"
-			return result
-		}
-		result.Success = false
-		result.Message = normalizeValidationError(err)
-		return result
-	}
-
-	if !modelExistsInUpstreamSet(upstreamModelNameSet(upstreamModels), capability.Model) {
-		result.Success = false
-		result.Message = "model is not returned by upstream model list; real image generation was not run"
-		return result
-	}
-
-	result.Success = true
-	result.Message = "model is returned by upstream model list; real image generation was not run"
-	return result
 }
 
 func (v *Validator) resolveModelCapabilities(ctx context.Context, organizationID uuid.UUID, spec Spec, models []string) ([]modelCapability, error) {
@@ -617,7 +508,11 @@ func (v *Validator) resolveModelCapabilities(ctx context.Context, organizationID
 				return nil, newUnregisteredModelError(remaining[0])
 			}
 
-			records, err := v.modelRepo.ListByNames(ctx, remaining)
+			lookupProvider := ""
+			if isProviderScopedPrivateModelValidation(spec) {
+				lookupProvider = spec.LookupProvider
+			}
+			records, err := v.modelRepo.ListAvailableByNames(ctx, remaining, lookupProvider, "")
 			if err != nil {
 				return nil, fmt.Errorf("failed to load model metadata: %w", err)
 			}
@@ -844,6 +739,11 @@ func inferValidationUseCase(modelRecord *llmmodelmodel.LLMModel) (string, error)
 	}
 }
 
+// InferValidationUseCase returns the channel test use case for a global model.
+func InferValidationUseCase(modelRecord *llmmodelmodel.LLMModel) (string, error) {
+	return inferValidationUseCase(modelRecord)
+}
+
 func inferValidationUseCaseFromCustomModel(modelRecord *llmmodelmodel.CustomModel) (string, error) {
 	switch {
 	case modelRecord.Embeddings || containsUseCase(modelRecord.UseCases, string(llmmodelmodel.UseCaseEmbedding)):
@@ -857,6 +757,11 @@ func inferValidationUseCaseFromCustomModel(modelRecord *llmmodelmodel.CustomMode
 	default:
 		return "", fmt.Errorf("model %q use case is unsupported for channel validation", modelRecord.Name)
 	}
+}
+
+// InferValidationUseCaseFromCustomModel returns the channel test use case for a custom model.
+func InferValidationUseCaseFromCustomModel(modelRecord *llmmodelmodel.CustomModel) (string, error) {
+	return inferValidationUseCaseFromCustomModel(modelRecord)
 }
 
 func containsUseCase(useCases []string, target string) bool {
@@ -881,6 +786,11 @@ func normalizeTestMethod(testMethod string) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported test method %q", testMethod)
 	}
+}
+
+// NormalizeTestMethod normalizes a user supplied channel test method.
+func NormalizeTestMethod(testMethod string) (string, error) {
+	return normalizeTestMethod(testMethod)
 }
 
 func pickRepresentativeModels(capabilities []modelCapability) []modelCapability {
@@ -1011,35 +921,7 @@ func buildWarnings(validationMode string, normalizedModels []string, probeTarget
 	return warnings
 }
 
-func buildCreationModelListingUnsupportedWarnings(normalizedModels []string) []string {
-	return []string{
-		fmt.Sprintf(
-			"provider does not support upstream model listing; validated local metadata for %d selected models during channel creation",
-			len(normalizedModels),
-		),
-	}
-}
-
-func buildCreationModelListingFailedWarnings(normalizedModels []string, normalizedErr string) []string {
-	return []string{
-		fmt.Sprintf(
-			"failed to list upstream models during channel creation; validated local metadata for %d selected models: %s",
-			len(normalizedModels),
-			normalizedErr,
-		),
-	}
-}
-
-func buildCreationModelListingMissingWarnings(failures []validationFailure) []string {
-	if len(failures) == 0 {
-		return []string{}
-	}
-	return []string{
-		fmt.Sprintf("upstream model list did not include selected models: %s", formatFailures(failures)),
-	}
-}
-
-func runChatProbe(ctx context.Context, chatAdapter adapter.ChatCapable, modelName string) (string, error) {
+func runChatProbe(ctx context.Context, chatAdapter adapter.ChatCapable, modelName string, stream bool) (string, error) {
 	maxTokens := defaultMaxTokens
 	request := &adapter.ChatRequest{
 		Model: modelName,
@@ -1050,7 +932,11 @@ func runChatProbe(ctx context.Context, chatAdapter adapter.ChatCapable, modelNam
 			},
 		},
 		MaxTokens: &maxTokens,
-		Stream:    false,
+		Stream:    stream,
+	}
+
+	if stream {
+		return runChatStreamProbe(ctx, chatAdapter, request)
 	}
 
 	response, err := chatAdapter.ChatCompletion(ctx, request)
@@ -1065,6 +951,29 @@ func runChatProbe(ctx context.Context, chatAdapter adapter.ChatCapable, modelNam
 		return content, nil
 	}
 	return "", nil
+}
+
+func runChatStreamProbe(ctx context.Context, chatAdapter adapter.ChatCapable, request *adapter.ChatRequest) (string, error) {
+	stream, err := chatAdapter.ChatCompletionStream(ctx, request)
+	if err != nil {
+		return "", err
+	}
+
+	var firstContent string
+	for chunk := range stream {
+		if chunk.Error != nil {
+			return "", chunk.Error
+		}
+		for _, choice := range chunk.Choices {
+			if content, ok := choice.Delta.Content.(string); ok && content != "" && firstContent == "" {
+				firstContent = content
+			}
+			if choice.Delta.ReasoningContent != "" && firstContent == "" {
+				firstContent = choice.Delta.ReasoningContent
+			}
+		}
+	}
+	return firstContent, nil
 }
 
 func runEmbeddingProbe(ctx context.Context, embeddingAdapter adapter.EmbeddingCapable, modelName string) error {

@@ -5102,6 +5102,22 @@ Use delete_file to delete a managed file.
 	}
 }
 
+func TestShouldStreamSkillPlanningIncludesQwenProvider(t *testing.T) {
+	prepared := NewPreparedChat("conversation-1", "message-1", " qWeN ", "auto", &adapter.ChatRequest{Model: "qwq-plus"})
+
+	if !shouldStreamSkillPlanning(prepared) {
+		t.Fatal("shouldStreamSkillPlanning(qwen) = false, want true")
+	}
+}
+
+func TestShouldStreamSkillPlanningIncludesQwQModelWithoutProvider(t *testing.T) {
+	prepared := NewPreparedChat("conversation-1", "message-1", "", "auto", &adapter.ChatRequest{Model: " qwen/qwq-plus "})
+
+	if !shouldStreamSkillPlanning(prepared) {
+		t.Fatal("shouldStreamSkillPlanning(qwq-plus) = false, want true")
+	}
+}
+
 func TestRunnerAllowsBatchRecoverableSkillToolFailures(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()

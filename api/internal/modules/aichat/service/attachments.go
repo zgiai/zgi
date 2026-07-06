@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strings"
 
@@ -15,6 +16,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 const (
@@ -32,12 +34,16 @@ const (
 	attachmentKindImage    = "image"
 
 	attachmentFilteredReasonModelWithoutVision = "model_without_vision"
+
+	bytesPerMegabyte              = 1024 * 1024
+	defaultVisionImageSizeLimitMB = 10
 )
 
 type FileLookupService interface {
 	GetUploadConfig() *interfaces.FileUploadConfigResponse
 	GetFileByID(ctx context.Context, fileID string) (*dto.UploadFile, error)
 	GetFileURL(ctx context.Context, fileID string) (string, error)
+	DownloadFile(ctx context.Context, fileID string) ([]byte, error)
 }
 
 type ContentExtractionService interface {
@@ -118,7 +124,7 @@ func (s *service) extractPreparedAttachments(ctx context.Context, prepared *Prep
 				s.emitPreparedEvent(ctx, prepared, streamEventFileParseEnd, fileParseEndPayload(prepared, *file, index, total), onEvent)
 				continue
 			}
-			imageURL, err := s.fileService.GetFileURL(ctx, file.ID)
+			imageURL, err := s.prepareVisionImageURL(ctx, file)
 			if err != nil {
 				s.emitPreparedEvent(ctx, prepared, streamEventFileParseError, fileParseErrorPayload(prepared, *file, index, total, err.Error()), onEvent)
 				return fmt.Errorf("%w: failed to prepare image input: %w", ErrInvalidInput, err)
@@ -359,6 +365,48 @@ func (b *attachmentBundle) imageParts() []adapter.MessageContentPart {
 	return parts
 }
 
+func (s *service) prepareVisionImageURL(ctx context.Context, file *attachmentFile) (string, error) {
+	if file == nil {
+		return "", fmt.Errorf("image file is required")
+	}
+	imageURL, err := s.fileService.GetFileURL(ctx, file.ID)
+	if err != nil {
+		return "", err
+	}
+	if strings.HasPrefix(strings.TrimSpace(imageURL), "data:image/") {
+		return imageURL, nil
+	}
+	limitBytes := s.visionImageSizeLimitBytes()
+	if file.Size > 0 && file.Size > limitBytes {
+		return "", fmt.Errorf("image file exceeds size limit")
+	}
+	content, err := s.fileService.DownloadFile(ctx, file.ID)
+	if err != nil {
+		return "", err
+	}
+	if int64(len(content)) > limitBytes {
+		return "", fmt.Errorf("image file exceeds size limit")
+	}
+	mimeType := strings.TrimSpace(file.MimeType)
+	if mimeType == "" {
+		mimeType = "image/" + strings.TrimPrefix(strings.ToLower(strings.TrimSpace(file.Extension)), ".")
+	}
+	if !strings.HasPrefix(mimeType, "image/") || mimeType == "image/" {
+		mimeType = "image/png"
+	}
+	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(content), nil
+}
+
+func (s *service) visionImageSizeLimitBytes() int64 {
+	limitMB := int64(defaultVisionImageSizeLimitMB)
+	if s != nil && s.fileService != nil {
+		if cfg := s.fileService.GetUploadConfig(); cfg != nil && cfg.ImageFileSizeLimit > 0 {
+			limitMB = cfg.ImageFileSizeLimit
+		}
+	}
+	return limitMB * bytesPerMegabyte
+}
+
 func attachmentBundleFromMessageMetadata(metadata map[string]interface{}) *attachmentBundle {
 	files := metadataFiles(metadata)
 	if len(files) == 0 {
@@ -394,37 +442,41 @@ func attachmentBundleFromMessageMetadata(metadata map[string]interface{}) *attac
 	return bundle
 }
 
-func (s *service) historicalUserMessage(ctx context.Context, message *aichatmodel.Message, includeImages bool) *adapter.Message {
+func (s *service) historicalUserMessage(ctx context.Context, message *aichatmodel.Message, includeImages bool) (*adapter.Message, error) {
 	if message == nil {
-		return nil
+		return nil, nil
 	}
 	bundle := attachmentBundleFromMessageMetadata(message.Metadata)
 	sections := bundle.previewContentSections()
 	text := userContentWithAttachments(message.Query, sections)
-	imageParts := s.historicalImageParts(ctx, bundle, includeImages)
+	imageParts, err := s.historicalImageParts(ctx, bundle, includeImages)
+	if err != nil {
+		return nil, err
+	}
 	content := multimodal.BuildUserContent(text, imageParts)
 	if isEmptyAdapterContent(content) {
-		return nil
+		return nil, nil
 	}
-	return &adapter.Message{Role: "user", Content: content}
+	return &adapter.Message{Role: "user", Content: content}, nil
 }
 
-func (s *service) historicalImageParts(ctx context.Context, bundle *attachmentBundle, includeImages bool) []adapter.MessageContentPart {
+func (s *service) historicalImageParts(ctx context.Context, bundle *attachmentBundle, includeImages bool) ([]adapter.MessageContentPart, error) {
 	if !includeImages || bundle == nil || s.fileService == nil {
-		return nil
+		return nil, nil
 	}
 	parts := make([]adapter.MessageContentPart, 0, len(bundle.Files))
 	for _, file := range bundle.Files {
 		if !file.isImage() || file.ContentStatus == attachmentContentStatusFiltered {
 			continue
 		}
-		imageURL, err := s.fileService.GetFileURL(ctx, file.ID)
+		imageURL, err := s.prepareVisionImageURL(ctx, &file)
 		if err != nil {
+			logger.WarnContext(ctx, "skipping unavailable historical image input", "file_id", file.ID, "file_name", file.Name, err)
 			continue
 		}
 		parts = append(parts, multimodal.BuildImageURLPart(imageURL, file.VisionDetail))
 	}
-	return parts
+	return parts, nil
 }
 
 func (s *service) currentUserContent(parts *chatRequestParts, text string) interface{} {

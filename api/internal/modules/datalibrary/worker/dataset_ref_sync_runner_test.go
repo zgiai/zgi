@@ -107,6 +107,109 @@ func TestDatasetRefSyncRunnerCopiesReadyAssetToDataset(t *testing.T) {
 	}
 }
 
+func TestDatasetRefSyncRunnerUsesDatasetEmbeddingModel(t *testing.T) {
+	refID := uuid.New()
+	assetID := uuid.New()
+	chunkID := uuid.New()
+	syncRunID := uuid.New()
+	assetProvider := "qwen"
+	assetEmbeddingModel := "text-embedding-v4"
+	datasetProvider := "qwen"
+	datasetEmbeddingModel := "qwen3-vl-embedding"
+	refStore := &fakeDatasetRefSyncRefStore{
+		ref: &datalibModel.KnowledgeBaseAssetRef{
+			ID:             refID,
+			OrganizationID: "org-1",
+			DatasetID:      "dataset-1",
+			AssetID:        assetID,
+			SyncRunID:      &syncRunID,
+			SyncStatus:     datalibModel.KnowledgeBaseAssetRefSyncStatusPending,
+			CreatedBy:      "user-1",
+		},
+	}
+	documentStore := &fakeDatasetRefSyncDocumentStore{}
+	vectorStore := &fakeDatasetRefSyncVectorStore{}
+	runner := NewDatasetRefSyncRunner(DatasetRefSyncRunnerDeps{
+		Refs: refStore,
+		Assets: &fakeDatasetRefSyncAssetStore{asset: &datalibModel.DocumentAsset{
+			ID:                assetID,
+			OrganizationID:    "org-1",
+			Title:             "Asset A",
+			SourceFileID:      "file-1",
+			ProductStatus:     datalibModel.DocumentAssetProductStatusReady,
+			VectorStatus:      datalibModel.DocumentAssetVectorStatusReady,
+			GenerationNo:      5,
+			CreatedBy:         "user-1",
+			EmbeddingProvider: &assetProvider,
+			EmbeddingModel:    &assetEmbeddingModel,
+		}},
+		Datasets: &fakeDatasetRefSyncDatasetStore{dataset: &datasetModel.Dataset{
+			ID:                     "dataset-1",
+			OrganizationID:         "org-1",
+			EmbeddingModelProvider: &datasetProvider,
+			EmbeddingModel:         &datasetEmbeddingModel,
+		}},
+		Documents: documentStore,
+		Chunks: &fakeDatasetRefSyncChunkStore{chunks: []*datalibModel.DocumentChunk{{
+			ID:             chunkID,
+			OrganizationID: "org-1",
+			AssetID:        assetID,
+			GenerationNo:   5,
+			Position:       1,
+			ChunkType:      datalibModel.DocumentChunkTypeAuto,
+			Content:        "hello dataset",
+			Enabled:        true,
+			Status:         datalibModel.DocumentChunkStatusReady,
+		}}},
+		Embeddings: &fakeDatasetRefSyncEmbeddingStore{embeddings: []*datalibModel.DocumentChunkEmbedding{
+			{
+				ID:                uuid.New(),
+				OrganizationID:    "org-1",
+				AssetID:           assetID,
+				ChunkID:           chunkID,
+				GenerationNo:      5,
+				EmbeddingProvider: assetProvider,
+				EmbeddingModel:    assetEmbeddingModel,
+				EmbeddingVector:   datalibModel.Float32Array{0.1, 0.2, 0.3},
+				Status:            datalibModel.DocumentChunkEmbeddingStatusReady,
+			},
+			{
+				ID:                uuid.New(),
+				OrganizationID:    "org-1",
+				AssetID:           assetID,
+				ChunkID:           chunkID,
+				GenerationNo:      5,
+				EmbeddingProvider: datasetProvider,
+				EmbeddingModel:    datasetEmbeddingModel,
+				EmbeddingVector:   datalibModel.Float32Array{0.4, 0.5, 0.6},
+				Status:            datalibModel.DocumentChunkEmbeddingStatusReady,
+			},
+		}},
+		VectorDB: vectorStore,
+	})
+
+	err := runner.Run(context.Background(), DatasetRefSyncPayload{
+		RefID:        refID.String(),
+		AssetID:      assetID.String(),
+		DatasetID:    "dataset-1",
+		GenerationNo: 5,
+		SyncRunID:    syncRunID.String(),
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if refStore.failedCode != "" || len(vectorStore.storedProperties) != 1 {
+		t.Fatalf("failed=%s stored_properties=%#v", refStore.failedCode, vectorStore.storedProperties)
+	}
+	properties := vectorStore.storedProperties[0]
+	if properties["embedding_model"] != datasetEmbeddingModel {
+		t.Fatalf("embedding_model = %#v, want %q", properties["embedding_model"], datasetEmbeddingModel)
+	}
+	if got := vectorStore.storedVectors[0][0]; got < 0.399 || got > 0.401 {
+		t.Fatalf("stored vector first value = %v, want about 0.4", got)
+	}
+}
+
 func TestDatasetRefSyncRunnerSkipsStaleSyncRun(t *testing.T) {
 	refID := uuid.New()
 	assetID := uuid.New()
@@ -386,7 +489,29 @@ type fakeDatasetRefSyncEmbeddingStore struct {
 }
 
 func (f *fakeDatasetRefSyncEmbeddingStore) List(ctx context.Context, filter datalibRepo.DocumentChunkEmbeddingListFilter) ([]*datalibModel.DocumentChunkEmbedding, int64, error) {
-	return f.embeddings, int64(len(f.embeddings)), nil
+	out := make([]*datalibModel.DocumentChunkEmbedding, 0, len(f.embeddings))
+	for _, embedding := range f.embeddings {
+		if filter.OrganizationID != "" && embedding.OrganizationID != filter.OrganizationID {
+			continue
+		}
+		if filter.AssetID != uuid.Nil && embedding.AssetID != filter.AssetID {
+			continue
+		}
+		if filter.GenerationNo != nil && embedding.GenerationNo != *filter.GenerationNo {
+			continue
+		}
+		if filter.EmbeddingProvider != "" && embedding.EmbeddingProvider != filter.EmbeddingProvider {
+			continue
+		}
+		if filter.EmbeddingModel != "" && embedding.EmbeddingModel != filter.EmbeddingModel {
+			continue
+		}
+		if filter.Status != "" && embedding.Status != filter.Status {
+			continue
+		}
+		out = append(out, embedding)
+	}
+	return out, int64(len(out)), nil
 }
 
 type fakeDatasetRefSyncVectorStore struct {

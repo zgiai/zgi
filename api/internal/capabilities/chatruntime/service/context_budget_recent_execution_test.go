@@ -367,7 +367,10 @@ func TestHistoryIsolationForIndependentContextualOperationRequest(t *testing.T) 
 	if !shouldIsolateHistoryForCurrentTurn(parts) {
 		t.Fatal("shouldIsolateHistoryForCurrentTurn = false, want true for independent contextual create request")
 	}
-	groups := (&service{}).historyMessageGroupsForCurrentRequest(context.Background(), branch, parts)
+	groups, err := (&service{}).historyMessageGroupsForCurrentRequest(context.Background(), branch, parts)
+	if err != nil {
+		t.Fatalf("historyMessageGroupsForCurrentRequest() error = %v", err)
+	}
 	if len(groups) != 0 {
 		t.Fatalf("history groups = %#v, want old operation turns isolated", groups)
 	}
@@ -391,7 +394,10 @@ func TestHistoryIsolationKeepsHistoryForExplicitContinuation(t *testing.T) {
 	if shouldIsolateHistoryForCurrentTurn(parts) {
 		t.Fatal("shouldIsolateHistoryForCurrentTurn = true, want false for explicit continuation")
 	}
-	groups := (&service{}).historyMessageGroupsForCurrentRequest(context.Background(), branch, parts)
+	groups, err := (&service{}).historyMessageGroupsForCurrentRequest(context.Background(), branch, parts)
+	if err != nil {
+		t.Fatalf("historyMessageGroupsForCurrentRequest() error = %v", err)
+	}
 	if len(groups) == 0 {
 		t.Fatal("history groups empty, want prior turn for explicit continuation")
 	}

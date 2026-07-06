@@ -767,8 +767,12 @@ func (s *RemoteBilling) markAttemptSettleFailed(ctx context.Context, bc *Billing
 		if err := s.localService.upsertAttemptInit(ctx, tx, bc); err != nil {
 			return err
 		}
+		if bc.RequestCreatedAt.IsZero() {
+			bc.RequestCreatedAt = time.Now().UTC()
+		}
+		bc.SettledAt = time.Now().UTC()
 		invocation := invocationResultFromBillingStatus(bc.Status)
-		return s.localService.updateAttemptStatus(
+		if err := s.localService.updateAttemptStatus(
 			ctx,
 			tx,
 			bc,
@@ -776,7 +780,10 @@ func (s *RemoteBilling) markAttemptSettleFailed(ctx context.Context, bc *Billing
 			&invocation,
 			&code,
 			&msg,
-		)
+		); err != nil {
+			return err
+		}
+		return s.localService.upsertUsageBill(ctx, tx, bc, usageBillStatusPartial, &code, &msg)
 	})
 }
 

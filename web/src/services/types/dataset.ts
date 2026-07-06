@@ -215,7 +215,7 @@ export interface DocumentListParams {
 }
 
 // Retrieval search method type
-export type SearchMethod = 'graph_search' | 'semantic_search';
+export type SearchMethod = 'graph_search' | 'semantic_search' | 'full_text_search' | 'hybrid_search';
 
 export enum ProcessStatus {
   WAITING = 'waiting',
@@ -800,7 +800,17 @@ export interface HitTestingResult {
   retrieval_source?: {
     method: string;
     reason: string;
+    retrieval_sources?: string[];
+    matched_terms?: string[];
     matched_entities?: string[];
+    vector_score?: number;
+    bm25_score?: number;
+    vector_rank?: number;
+    bm25_rank?: number;
+    best_rank?: number;
+    fusion_score?: number;
+    rerank_score?: number;
+    final_score?: number;
   };
 }
 

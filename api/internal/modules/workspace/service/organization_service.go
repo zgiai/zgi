@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 
 	"github.com/zgiai/zgi/api/config"
@@ -24,6 +25,7 @@ import (
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
@@ -41,6 +43,7 @@ var ErrOrganizationNotFound = errors.New("organization not found")
 var ErrOrganizationNameExists = errors.New("organization name already exists")
 var ErrOrganizationPermissionDenied = errors.New("organization permission denied")
 var ErrInvalidOrganizationName = errors.New("invalid organization name")
+var ErrInvalidOrganizationBillingDisplayConfig = errors.New("invalid organization billing display config")
 var ErrOrganizationNotEditable = errors.New("organization is not editable")
 var ErrInvalidOrganizationMemberRole = errors.New("invalid organization member role")
 var ErrOrganizationOwnerRoleImmutable = errors.New("organization owner role is immutable")
@@ -1565,6 +1568,12 @@ func (s *organizationService) UpdateOrganization(ctx context.Context, id, accoun
 	if name == "" || len(name) > 255 {
 		return nil, ErrInvalidOrganizationName
 	}
+	if req.BillingDisplayCurrency != nil && !isValidBillingDisplayCurrency(*req.BillingDisplayCurrency) {
+		return nil, ErrInvalidOrganizationBillingDisplayConfig
+	}
+	if req.USDToCNYRate != nil && (*req.USDToCNYRate <= 0 || math.IsNaN(*req.USDToCNYRate) || math.IsInf(*req.USDToCNYRate, 0)) {
+		return nil, ErrInvalidOrganizationBillingDisplayConfig
+	}
 
 	organization, err := s.organizationRepo.GetByID(ctx, id)
 	if err != nil {
@@ -1603,12 +1612,66 @@ func (s *organizationService) UpdateOrganization(ctx context.Context, id, accoun
 		}
 		organization.ShortName = &shortName
 	}
+	if req.BillingDisplayCurrency != nil {
+		organization.BillingDisplayCurrency = *req.BillingDisplayCurrency
+	}
+	if req.USDToCNYRate != nil {
+		organization.USDToCNYRate = decimal.NewFromFloat(*req.USDToCNYRate)
+	}
 
 	if err := s.organizationRepo.Update(ctx, organization); err != nil {
 		return nil, fmt.Errorf("failed to update organization: %w", err)
 	}
 
 	return organization, nil
+}
+
+func isValidBillingDisplayCurrency(currency model.BillingDisplayCurrency) bool {
+	return currency == model.BillingDisplayCurrencyUSD || currency == model.BillingDisplayCurrencyCNY
+}
+
+func organizationBillingDisplayCurrency(organization *model.Organization) model.BillingDisplayCurrency {
+	if organization == nil || !isValidBillingDisplayCurrency(organization.BillingDisplayCurrency) {
+		return model.BillingDisplayCurrencyUSD
+	}
+	return organization.BillingDisplayCurrency
+}
+
+func organizationUSDToCNYRate(organization *model.Organization) float64 {
+	if organization == nil || !organization.USDToCNYRate.GreaterThan(decimal.Zero) {
+		return model.DefaultUSDToCNYRate
+	}
+	rate, _ := organization.USDToCNYRate.Float64()
+	if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
+		return model.DefaultUSDToCNYRate
+	}
+	return rate
+}
+
+func organizationWithRoleResponse(organization *model.Organization, role model.OrganizationRole) *shared_dto.OrganizationWithRoleResponse {
+	return &shared_dto.OrganizationWithRoleResponse{
+		ID:                     organization.ID,
+		Name:                   organization.Name,
+		ShortName:              organization.ShortName,
+		Status:                 organization.Status,
+		BillingDisplayCurrency: organizationBillingDisplayCurrency(organization),
+		USDToCNYRate:           organizationUSDToCNYRate(organization),
+		CreatedAt:              organization.CreatedAt.Unix(),
+		OrganizationRole:       role,
+	}
+}
+
+func currentOrganizationResponse(organization *model.Organization, role model.OrganizationRole) *shared_dto.CurrentOrganizationResponse {
+	return &shared_dto.CurrentOrganizationResponse{
+		ID:                     organization.ID,
+		Name:                   organization.Name,
+		ShortName:              organization.ShortName,
+		Status:                 organization.Status,
+		BillingDisplayCurrency: organizationBillingDisplayCurrency(organization),
+		USDToCNYRate:           organizationUSDToCNYRate(organization),
+		CreatedAt:              organization.CreatedAt.Unix(),
+		OrganizationRole:       role,
+	}
 }
 
 // DeleteOrganization performs a soft delete of an organization (archives it)
@@ -2794,14 +2857,7 @@ func (s *organizationService) ListUserOrganizations(ctx context.Context, page, l
 			role = model.OrganizationRoleNormal
 		}
 
-		organizationWithRole := &shared_dto.OrganizationWithRoleResponse{
-			ID:               organization.ID,
-			Name:             organization.Name,
-			ShortName:        organization.ShortName,
-			Status:           organization.Status,
-			CreatedAt:        organization.CreatedAt.Unix(),
-			OrganizationRole: role,
-		}
+		organizationWithRole := organizationWithRoleResponse(organization, role)
 		organizationsWithRole = append(organizationsWithRole, organizationWithRole)
 	}
 
@@ -2931,14 +2987,7 @@ func (s *organizationService) GetUserOrganizationsByAccount(ctx context.Context,
 			role = model.OrganizationRoleNormal
 		}
 
-		organizationWithRole := &shared_dto.OrganizationWithRoleResponse{
-			ID:               organization.ID,
-			Name:             organization.Name,
-			ShortName:        organization.ShortName,
-			Status:           organization.Status,
-			CreatedAt:        organization.CreatedAt.Unix(),
-			OrganizationRole: role,
-		}
+		organizationWithRole := organizationWithRoleResponse(organization, role)
 		organizationsWithRole = append(organizationsWithRole, organizationWithRole)
 	}
 
@@ -3282,14 +3331,7 @@ func (s *organizationService) GetCurrentOrganization(ctx context.Context, accoun
 		}
 
 		// Return the newly created organization
-		return &shared_dto.CurrentOrganizationResponse{
-			ID:               organization.ID,
-			Name:             organization.Name,
-			ShortName:        organization.ShortName,
-			Status:           organization.Status,
-			CreatedAt:        organization.CreatedAt.Unix(),
-			OrganizationRole: model.OrganizationRoleOwner,
-		}, nil
+		return currentOrganizationResponse(organization, model.OrganizationRoleOwner), nil
 	}
 
 	// Organization found, fetch details
@@ -3306,14 +3348,7 @@ func (s *organizationService) GetCurrentOrganization(ctx context.Context, accoun
 		groupRole = model.OrganizationRoleNormal
 	}
 
-	response := &shared_dto.CurrentOrganizationResponse{
-		ID:               organization.ID,
-		Name:             organization.Name,
-		ShortName:        organization.ShortName,
-		Status:           organization.Status,
-		CreatedAt:        organization.CreatedAt.Unix(),
-		OrganizationRole: groupRole,
-	}
+	response := currentOrganizationResponse(organization, groupRole)
 
 	return response, nil
 }
@@ -3342,14 +3377,7 @@ func (s *organizationService) GetCurrentOrganizationDetail(ctx context.Context, 
 		groupRole = model.OrganizationRoleNormal
 	}
 
-	organizationResponse := &shared_dto.CurrentOrganizationResponse{
-		ID:               organization.ID,
-		Name:             organization.Name,
-		ShortName:        organization.ShortName,
-		Status:           organization.Status,
-		CreatedAt:        organization.CreatedAt.Unix(),
-		OrganizationRole: groupRole,
-	}
+	organizationResponse := currentOrganizationResponse(organization, groupRole)
 
 	response := &shared_dto.CurrentOrganizationDetailResponse{
 		EnterpriseGroup: organizationResponse,

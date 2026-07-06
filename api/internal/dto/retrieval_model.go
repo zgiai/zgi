@@ -19,11 +19,11 @@ type RerankingModel struct {
 // DefaultRetrievalConfig returns the default retrieval configuration
 func DefaultRetrievalConfig() *RetrievalConfig {
 	return &RetrievalConfig{
-		SearchMethod:          "semantic_search",
-		TopK:                  4,
-		ScoreThresholdEnabled: false,
-		ScoreThreshold:        0.5,
-		RerankingEnable:       false,
+		SearchMethod:          "hybrid_search",
+		TopK:                  10,
+		ScoreThresholdEnabled: true,
+		ScoreThreshold:        0.35,
+		RerankingEnable:       true,
 		RerankingModel: &RerankingModel{
 			RerankingProviderName: "",
 			RerankingModelName:    "",
@@ -52,7 +52,7 @@ func (rc *RetrievalConfig) GetEffectiveScoreThreshold() float64 {
 // GetEffectiveTopK returns the effective top k value
 func (rc *RetrievalConfig) GetEffectiveTopK() int {
 	if rc.TopK <= 0 {
-		return 4 // default value
+		return 10 // default value
 	}
 	return rc.TopK
 }

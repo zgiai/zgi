@@ -57,6 +57,30 @@ func TestHTTPClientStreamRejectsDomainResolvingToPrivateIP(t *testing.T) {
 	}
 }
 
+func TestParseSSEAcceptsDataLineWithoutSpace(t *testing.T) {
+	dataChan := make(chan string, 2)
+	errChan := make(chan error, 1)
+
+	ParseSSE(strings.NewReader("event:message\ndata:{\"ok\":true}\n\ndata:[DONE]\n\n"), dataChan, errChan)
+
+	select {
+	case err := <-errChan:
+		t.Fatalf("ParseSSE error = %v", err)
+	default:
+	}
+
+	data, ok := <-dataChan
+	if !ok {
+		t.Fatal("data channel closed before first event")
+	}
+	if data != `{"ok":true}` {
+		t.Fatalf("data = %q, want JSON payload", data)
+	}
+	if _, ok := <-dataChan; ok {
+		t.Fatal("data channel still open after [DONE]")
+	}
+}
+
 func TestHTTPClientAllowsFakeIPDNSWhenDNSGuardDisabled(t *testing.T) {
 	client := NewHTTPClientWithOptions(0, 1, HTTPClientOptions{
 		GuardOutboundURL: true,
@@ -122,5 +146,28 @@ func TestHTTPClientRejectsRedirectToMetadataIP(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "blocked unsafe target") {
 		t.Fatalf("CheckRedirect error = %q, want unsafe target rejection", err.Error())
+	}
+}
+
+func TestParseSSEAcceptsDataLineWithSpace(t *testing.T) {
+	dataChan := make(chan string, 2)
+	errChan := make(chan error, 1)
+
+	ParseSSE(strings.NewReader("data: {\"output\":{\"text\":\"ok\"}}\n\n"), dataChan, errChan)
+
+	select {
+	case err := <-errChan:
+		if err != nil {
+			t.Fatalf("ParseSSE() error = %v", err)
+		}
+	default:
+	}
+
+	got, ok := <-dataChan
+	if !ok {
+		t.Fatal("data channel closed without parsed event")
+	}
+	if got != "{\"output\":{\"text\":\"ok\"}}" {
+		t.Fatalf("data = %q, want output text JSON", got)
 	}
 }

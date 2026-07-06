@@ -191,6 +191,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 	if err != nil {
 		return nil, err
 	}
+	lockTokenPricingQuote(billingCtx, quote)
 	ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.chat")
 	ctx = withPlatformProxyMetadata(ctx, billingCtx)
 
@@ -231,6 +232,14 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 		}
 		s.traceChatCompletion(ctx, traceReq, response, startTime, time.Now(), billingCtx, callErr)
 		return nil, callErr
+	}
+
+	if !providerSelection.UseSystemProvider {
+		usage, estimated := s.completeChatUsageFromText(normalizedReq, response.Usage, chatResponseText(response), 0)
+		response.Usage = usage
+		if estimated {
+			markEstimatedUsageSource(billingCtx, response.Usage)
+		}
 	}
 
 	// Success - settle billing
@@ -405,6 +414,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 	if err != nil {
 		return nil, err
 	}
+	lockTokenPricingQuote(billingCtx, quote)
 	billingCtx.PromptTokens = promptTokens
 	billingCtx.CompletionTokens = completionTokens
 	ctx = withLLMLangfuseTraceContext(ctx, billingCtx, "llm.chat.stream")

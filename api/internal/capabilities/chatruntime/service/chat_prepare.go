@@ -452,7 +452,10 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 				if item == nil {
 					continue
 				}
-				userMessage := s.historicalUserMessage(ctx, item, parts.ModelSupportsVision)
+				userMessage, err := s.historicalUserMessage(ctx, item, parts.ModelSupportsVision)
+				if err != nil {
+					return nil, err
+				}
 				if userMessage != nil {
 					messages = append(messages, *userMessage)
 				}

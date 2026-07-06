@@ -85,9 +85,8 @@ const (
 	// envSecretKey sets the shared secret used for JWT signing and related security flows. Default: empty.
 	envSecretKey = "SECRET_KEY"
 
-	// Platform edition compatibility.
-	// envZGIEdition selects cloud or self-hosted platform behavior. Default: SELF_HOSTED.
-	envZGIEdition = "ZGI_EDITION"
+	// Platform run mode selects cloud or self-hosted platform behavior. Default: SELF_HOSTED.
+	envZGIRunMode = "ZGI_RUN_MODE"
 	// envZGIOrgInviteDefaultPassword sets the fallback password for self-hosted organization member invites. Default: empty.
 	envZGIOrgInviteDefaultPassword = "ZGI_ORG_INVITE_DEFAULT_PASSWORD"
 )
@@ -447,9 +446,9 @@ const (
 	envSentryEnvironment = "SENTRY_ENVIRONMENT"
 
 	// Dependency services.
-	// envModelMetaAPIURL sets the ModelMeta API base URL. Default: empty, which disables remote sync.
+	// envModelMetaAPIURL sets the ModelMeta-compatible API base URL. Default: https://models.zgi.ai.
 	envModelMetaAPIURL = "MODELMETA_API_URL"
-	// envNeo4jURI sets the Neo4j connection URI. Default: bolt://localhost:7687.
+	// envNeo4jURI sets the Neo4j connection URI. Default: empty, which disables GraphFlow Neo4j integration.
 	envNeo4jURI = "NEO4J_URI"
 	// envNeo4jUsername sets the Neo4j username. Default: neo4j.
 	envNeo4jUsername = "NEO4J_USERNAME"

@@ -150,6 +150,9 @@ export interface ChatControllerActions {
   // Select a conversation by id
   select(id: string): void;
 
+  // Optional: load a conversation by backend id and select it, even if it is not in the current list
+  loadAndSelect?(conversationId: string): Promise<void>;
+
   // Create a new draft conversation
   createDraft(title?: string): ConversationSummary;
 

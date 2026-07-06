@@ -493,10 +493,12 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 	}
 
 	if decision.UseSystemProvider {
-		if usage != nil {
+		if hasBillableTokenUsage(usage) {
 			billingCtx.PromptTokens = usage.PromptTokens
 			billingCtx.CompletionTokens = usage.CompletionTokens
 			billingCtx.TotalTokens = usage.TotalTokens
+		} else {
+			clearBillingContextTokenUsage(billingCtx)
 		}
 		billingCtx.Status = "success"
 		billingCtx.ResponseTime = responseTime
@@ -525,7 +527,7 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 	actualPromptTokens := usage.PromptTokens
 	actualCompletionTokens := usage.CompletionTokens
 
-	quote, err := s.quoteTokenPricing(ctx, pricingModelRefFromSelection(providerSelection), actualPromptTokens, actualCompletionTokens)
+	quote, err := s.quoteTokenPricingForSettlement(ctx, billingCtx, pricingModelRefFromSelection(providerSelection), actualPromptTokens, actualCompletionTokens)
 	if err != nil {
 		return fmt.Errorf("failed to calculate credits: %w", err)
 	}
@@ -576,6 +578,15 @@ func (s *llmGatewayServiceImpl) settleChatSuccess(
 	return nil
 }
 
+func clearBillingContextTokenUsage(billingCtx *BillingContext) {
+	if billingCtx == nil {
+		return
+	}
+	billingCtx.PromptTokens = 0
+	billingCtx.CompletionTokens = 0
+	billingCtx.TotalTokens = 0
+}
+
 // settleEmbeddingsSuccess settles billing for a successful embeddings/rerank completion
 func (s *llmGatewayServiceImpl) settleEmbeddingsSuccess(
 	ctx context.Context,
@@ -619,7 +630,21 @@ func (s *llmGatewayServiceImpl) settleEmbeddingsSuccess(
 		return nil
 	}
 
-	quote, err := s.quoteTokenPricing(ctx, pricingModelRefFromSelection(providerSelection), actualTokens, 0)
+	if actualTokens <= 0 {
+		providerName := ""
+		modelName := ""
+		if providerSelection != nil {
+			providerName = providerSelection.Provider.Provider
+			modelName = providerSelection.Model.Model
+		}
+		err := missingTokenUsageError(providerName, modelName)
+		if settleErr := s.handleProviderError(ctx, billingCtx, providerSelection, channelID, responseTime, 0, err); settleErr != nil {
+			return settleErr
+		}
+		return err
+	}
+
+	quote, err := s.quoteTokenPricingForSettlement(ctx, billingCtx, pricingModelRefFromBillingContext(billingCtx), actualTokens, 0)
 	if err != nil {
 		return fmt.Errorf("failed to calculate credits: %w", err)
 	}

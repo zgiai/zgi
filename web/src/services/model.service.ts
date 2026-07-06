@@ -8,6 +8,7 @@ import type {
   ModelDetail,
   ToggleModelRequest,
   ToggleModelResponse,
+  ConfigureModelRequest,
   GetModelParametersParams,
   ParameterRuleItem,
   BatchToggleModelsRequest,
@@ -21,6 +22,8 @@ import type {
   DefaultModelRecord,
   ResolvedDefaultModelList,
   UpsertDefaultModelRequest,
+  PricingFallbackConfig,
+  UpdatePricingFallbackConfigRequest,
 } from './types/model';
 
 // model management temporary service
@@ -74,6 +77,11 @@ export class ModelService extends BaseService {
     return this.request('post', `/providers/${encoded}/models/toggle`, data);
   }
 
+  // POST /console/api/llm/models/config
+  configureModel(data: ConfigureModelRequest): Promise<ApiResponseData<unknown>> {
+    return this.request('post', '/models/config', data);
+  }
+
   // GET /console/api/llm/models/parameters
   getModelParameters(
     params: GetModelParametersParams
@@ -120,6 +128,18 @@ export class ModelService extends BaseService {
     params?: GetCustomModelsParams
   ): Promise<ApiResponseData<CustomModelListResponse>> {
     return this.request('get', '/models/custom', undefined, { params });
+  }
+
+  // GET /console/api/llm/pricing/fallback
+  getPricingFallback(): Promise<ApiResponseData<PricingFallbackConfig>> {
+    return this.request('get', '/pricing/fallback');
+  }
+
+  // PUT /console/api/llm/pricing/fallback
+  updatePricingFallback(
+    data: UpdatePricingFallbackConfigRequest
+  ): Promise<ApiResponseData<PricingFallbackConfig>> {
+    return this.request('put', '/pricing/fallback', data);
   }
 }
 

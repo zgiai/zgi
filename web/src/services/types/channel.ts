@@ -139,15 +139,31 @@ export interface DraftTestChannelModelRequest {
   api_base_url?: string;
   model: string;
   test_method?: ChannelTestMethod;
+  stream?: boolean;
+}
+
+export type ChannelModelTestStatus = 'success' | 'failed' | 'skipped';
+export type ChannelModelTestCode = 'model_pricing_not_configured';
+
+export interface ChannelModelTestParams {
+  provider?: string;
+  model?: string;
+  model_id?: string;
+  model_source?: string;
+  operation?: string;
+  [key: string]: unknown;
 }
 
 export interface ChannelModelTestResult {
   success: boolean;
+  status?: ChannelModelTestStatus;
   message: string;
   model: string;
   use_case?: string;
   test_method?: string;
   response_time_ms: number;
+  code?: ChannelModelTestCode;
+  params?: ChannelModelTestParams;
 }
 
 export interface DiscoverDraftChannelModelsRequest {
@@ -178,15 +194,19 @@ export interface BatchTestChannelModelsRequest {
   models: string[];
   test_message?: string;
   test_method?: ChannelTestMethod;
+  stream?: boolean;
 }
 
 // SSE event for individual model test result (Aligned with documentation 3.6)
 export interface BatchTestModelResult {
   model: string;
   success: boolean;
+  status?: ChannelModelTestStatus;
   message: string;
   response_time_ms: number;
   completed: false;
+  code?: ChannelModelTestCode;
+  params?: ChannelModelTestParams;
   // Metadata for UI
   index?: number;
   test_method?: string;
@@ -203,6 +223,7 @@ export interface BatchTestCompletedResult {
   total_tests?: number;
   success_count?: number;
   failure_count?: number;
+  skipped_count?: number;
 }
 
 // Union type for batch test SSE events

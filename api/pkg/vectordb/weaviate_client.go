@@ -547,7 +547,7 @@ func (c *WeaviateClient) SearchByFullText(ctx context.Context, className, query 
 				) {
 					_additional {
 						id
-						vector
+						score
 					}
 					doc_id
 					dataset_id

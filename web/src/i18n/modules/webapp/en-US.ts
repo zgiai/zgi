@@ -7,6 +7,14 @@ const messages = {
     renameConversation: 'Rename conversation',
     conversations: 'Conversations',
     recentConversations: 'Recent conversations',
+    searchResultGroups: {
+      today: 'Today',
+      yesterday: 'Yesterday',
+      previous7Days: 'Previous 7 days',
+      previous30Days: 'Previous 30 days',
+      older: 'Older',
+      undated: 'No date',
+    },
     openConversations: 'Open conversations',
     alreadyInDraft: 'You are already in a new conversation',
     noHistory: 'No history yet',
@@ -174,6 +182,11 @@ const messages = {
         title: 'Channel balance is insufficient',
         description: 'Recharge the channel balance or switch channel, then try again.',
         action: 'Go to Channel',
+      },
+      '207014': {
+        title: 'Model pricing is not configured',
+        description: 'Configure model pricing in Model Management or Billing Strategy, then try again.',
+        action: 'Configure pricing',
       },
       contactAdmin:
         'The current balance or quota is insufficient. Please contact an organization administrator to recharge or adjust quota.',

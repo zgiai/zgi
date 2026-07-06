@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -17,6 +18,14 @@ const (
 	OrganizationStatusDeleted  OrganizationStatus = "deleted"
 )
 
+type BillingDisplayCurrency string
+
+const (
+	BillingDisplayCurrencyUSD BillingDisplayCurrency = "USD"
+	BillingDisplayCurrencyCNY BillingDisplayCurrency = "CNY"
+	DefaultUSDToCNYRate                              = 7
+)
+
 // OrganizationRole represents a role in an organization
 type OrganizationRole string
 
@@ -28,12 +37,14 @@ const (
 
 // Organization enterprise group model
 type Organization struct {
-	ID        string             `gorm:"type:varchar(255);primaryKey" json:"id"`
-	Name      string             `gorm:"type:varchar(255);not null" json:"name"`
-	ShortName *string            `gorm:"type:varchar(255)" json:"short_name"`
-	Status    OrganizationStatus `gorm:"type:varchar(16);not null;default:'active'" json:"status"`
-	CreatedAt time.Time          `json:"created_at"`
-	UpdatedAt time.Time          `json:"updated_at"`
+	ID                     string                 `gorm:"type:varchar(255);primaryKey" json:"id"`
+	Name                   string                 `gorm:"type:varchar(255);not null" json:"name"`
+	ShortName              *string                `gorm:"type:varchar(255)" json:"short_name"`
+	Status                 OrganizationStatus     `gorm:"type:varchar(16);not null;default:'active'" json:"status"`
+	BillingDisplayCurrency BillingDisplayCurrency `gorm:"type:varchar(3);not null;default:'USD'" json:"billing_display_currency"`
+	USDToCNYRate           decimal.Decimal        `gorm:"type:numeric(18,6);not null;default:7" json:"usd_to_cny_rate"`
+	CreatedAt              time.Time              `json:"created_at"`
+	UpdatedAt              time.Time              `json:"updated_at"`
 
 	// Relationships - commented out for modular architecture
 	// TenantJoins  []EnterpriseGroupTenantJoin  `gorm:"foreignKey:GroupID" json:"-"`
@@ -55,6 +66,12 @@ func (org *Organization) BeforeCreate(tx *gorm.DB) error {
 	// Generate UUID if ID is empty
 	if org.ID == "" {
 		org.ID = uuid.New().String()
+	}
+	if org.BillingDisplayCurrency == "" {
+		org.BillingDisplayCurrency = BillingDisplayCurrencyUSD
+	}
+	if !org.USDToCNYRate.GreaterThan(decimal.Zero) {
+		org.USDToCNYRate = decimal.NewFromInt(DefaultUSDToCNYRate)
 	}
 
 	// Set timestamps

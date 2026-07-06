@@ -282,7 +282,7 @@ func (s *defaultRetrievalService) SingleRetrieve(ctx context.Context, params Sin
 		retrievalModelConfig := dataset.RetrievalConfig
 		if len(retrievalModelConfig) == 0 {
 			retrievalModelConfig = map[string]any{
-				"search_method":    "semantic_search",
+				"search_method":    "hybrid_search",
 				"reranking_enable": false,
 				"reranking_model": map[string]string{
 					"reranking_provider_name": "",
@@ -295,7 +295,6 @@ func (s *defaultRetrievalService) SingleRetrieve(ctx context.Context, params Sin
 
 		topK := retrievalModelConfig["top_k"]
 		retrievalMethod := retrievalModelConfig["search_method"]
-		// Always use semantic_search (high quality mode only)
 
 		rerankingEnabled := retrievalModelConfig["reranking_enable"].(bool)
 		rerankingModel := retrievalModelConfig["reranking_model"]
@@ -489,7 +488,7 @@ func (s *defaultRetrievalService) MultipleRetrieve(ctx context.Context, params M
 		retrievalModelConfig := dataset.RetrievalConfig
 		if len(retrievalModelConfig) == 0 {
 			retrievalModelConfig = map[string]any{
-				"search_method":    "semantic_search",
+				"search_method":    "hybrid_search",
 				"reranking_enable": false,
 				"reranking_model": map[string]string{
 					"reranking_provider_name": "",
@@ -503,7 +502,6 @@ func (s *defaultRetrievalService) MultipleRetrieve(ctx context.Context, params M
 
 		// Configure retrieval method
 		retrievalMethod := retrievalModelConfig["search_method"]
-		// Always use semantic_search (high quality mode only)
 
 		// Configure weights
 		weights := params.Weights

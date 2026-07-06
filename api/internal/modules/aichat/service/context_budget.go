@@ -73,7 +73,10 @@ func (s *service) buildTokenBudgetMessages(
 	}
 	currentContent, attachmentMetadata, estimatedPromptTokens := s.buildBudgetedCurrentUserContent(parts, systemPrompt, budget, recentExecutionTokens)
 
-	groups := s.historyMessageGroups(ctx, parentMessages, parts.ModelSupportsVision)
+	groups, err := s.historyMessageGroups(ctx, parentMessages, parts.ModelSupportsVision)
+	if err != nil {
+		return nil, err
+	}
 	historyBefore := countAdapterMessages(groups)
 	selected := make([][]adapter.Message, 0, len(groups))
 	for i := len(groups) - 1; i >= 0; i-- {
@@ -358,14 +361,17 @@ func (s *service) computeContextBudget(spec ModelSpec, parts *chatRequestParts, 
 	}, nil
 }
 
-func (s *service) historyMessageGroups(ctx context.Context, branch []*aichatmodel.Message, includeImages bool) [][]adapter.Message {
+func (s *service) historyMessageGroups(ctx context.Context, branch []*aichatmodel.Message, includeImages bool) ([][]adapter.Message, error) {
 	groups := make([][]adapter.Message, 0, len(branch))
 	for _, item := range branch {
 		if item == nil {
 			continue
 		}
 		group := make([]adapter.Message, 0, 2)
-		userMessage := s.historicalUserMessage(ctx, item, includeImages)
+		userMessage, err := s.historicalUserMessage(ctx, item, includeImages)
+		if err != nil {
+			return nil, err
+		}
 		if userMessage != nil {
 			group = append(group, *userMessage)
 		}
@@ -376,7 +382,7 @@ func (s *service) historyMessageGroups(ctx context.Context, branch []*aichatmode
 			groups = append(groups, group)
 		}
 	}
-	return groups
+	return groups, nil
 }
 
 type recentExecutionContextStats struct {

@@ -211,16 +211,26 @@ func shouldStreamSkillPlanning(prepared *PreparedChat) bool {
 	if prepared == nil || prepared.parts == nil {
 		return false
 	}
+	if prepared.LLMRequest != nil && isQwQModel(prepared.LLMRequest.Model) {
+		return true
+	}
 	provider := strings.ToLower(strings.TrimSpace(prepared.parts.Provider))
 	switch provider {
 	case "openai", "openai-compatible", "deepseek", "openrouter", "zgi-cloud", "zgi_cloud", "dashscope",
-		"aliyun", "claude", "anthropic", "moonshotai", "moonshotai-cn", "siliconflow", "agicto", "glm":
+		"aliyun", "qwen", "claude", "anthropic", "moonshotai", "moonshotai-cn", "siliconflow", "agicto", "glm":
 		return true
 	default:
 		return false
 	}
 }
 
+func isQwQModel(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if idx := strings.LastIndex(model, "/"); idx >= 0 {
+		model = strings.TrimSpace(model[idx+1:])
+	}
+	return strings.HasPrefix(model, "qwq")
+}
 func streamChoiceText(choice adapter.StreamChoice) string {
 	switch typed := choice.Delta.Content.(type) {
 	case string:

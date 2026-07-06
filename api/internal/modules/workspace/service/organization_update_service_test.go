@@ -49,6 +49,73 @@ func TestUpdateOrganizationTrimsNameAndUpdatesEditableFields(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestUpdateOrganizationUpdatesBillingDisplaySettings(t *testing.T) {
+	t.Parallel()
+
+	db, mock := newOrganizationUpdateMockDB(t)
+	expectOrganizationRoleLookup(mock, "org-1", "acc-1", string(model.OrganizationRoleAdmin))
+	currency := model.BillingDisplayCurrencyCNY
+	rate := 7.2
+	repo := &stubOrganizationUpdateRepo{
+		db: db,
+		organization: &model.Organization{
+			ID:     "org-1",
+			Name:   "Old Name",
+			Status: model.OrganizationStatusActive,
+		},
+	}
+	svc := &organizationService{organizationRepo: repo}
+
+	updated, err := svc.UpdateOrganization(context.Background(), "org-1", "acc-1", &shared_dto.UpdateOrganizationRequest{
+		Name:                   "Old Name",
+		BillingDisplayCurrency: &currency,
+		USDToCNYRate:           &rate,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, model.BillingDisplayCurrencyCNY, updated.BillingDisplayCurrency)
+	updatedRate, _ := updated.USDToCNYRate.Float64()
+	require.InDelta(t, 7.2, updatedRate, 0.000001)
+	require.True(t, repo.updated)
+	require.False(t, repo.checkedName)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUpdateOrganizationRejectsInvalidBillingDisplaySettings(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubOrganizationUpdateRepo{}
+	svc := &organizationService{organizationRepo: repo}
+
+	invalidCurrency := model.BillingDisplayCurrency("EUR")
+	_, err := svc.UpdateOrganization(context.Background(), "org-1", "acc-1", &shared_dto.UpdateOrganizationRequest{
+		Name:                   "Org",
+		BillingDisplayCurrency: &invalidCurrency,
+	})
+	require.ErrorIs(t, err, ErrInvalidOrganizationBillingDisplayConfig)
+
+	invalidRate := 0.0
+	_, err = svc.UpdateOrganization(context.Background(), "org-1", "acc-1", &shared_dto.UpdateOrganizationRequest{
+		Name:         "Org",
+		USDToCNYRate: &invalidRate,
+	})
+	require.ErrorIs(t, err, ErrInvalidOrganizationBillingDisplayConfig)
+	require.False(t, repo.updated)
+}
+
+func TestCurrentOrganizationResponseUsesBillingDisplayDefaults(t *testing.T) {
+	t.Parallel()
+
+	response := currentOrganizationResponse(&model.Organization{
+		ID:     "org-1",
+		Name:   "Org",
+		Status: model.OrganizationStatusActive,
+	}, model.OrganizationRoleAdmin)
+
+	require.Equal(t, model.BillingDisplayCurrencyUSD, response.BillingDisplayCurrency)
+	require.Equal(t, float64(model.DefaultUSDToCNYRate), response.USDToCNYRate)
+}
+
 func TestUpdateOrganizationRejectsDuplicateName(t *testing.T) {
 	t.Parallel()
 

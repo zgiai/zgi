@@ -265,7 +265,7 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 		resp, err = c.client.Do(req)
 		if err != nil {
 			lastErr = err
-			continue // Network error → retry
+			continue // Network error, retry
 		}
 
 		// Read body inside the loop so read failures can be retried
@@ -276,14 +276,14 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 			lastErr = fmt.Errorf("failed to read response body: %w", readErr)
 			lastStatusCode = resp.StatusCode
 			lastHeader = resp.Header.Clone()
-			continue // Body read failure → retry
+			continue // Body read failure, retry
 		}
 
 		lastStatusCode = resp.StatusCode
 		lastBody = respBody
 		lastHeader = resp.Header.Clone()
 
-		// 5xx server errors → retry
+		// 5xx server errors, retry
 		if resp.StatusCode >= 500 {
 			bodySnippet := string(respBody)
 			if len(bodySnippet) > 500 {
@@ -370,6 +370,7 @@ func (c *HTTPClient) DoStreamRequest(ctx context.Context, method, url string, he
 // It also handles non-SSE JSON error responses from upstream providers
 func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
 	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(nil, bufio.MaxScanTokenSize<<9)
 	var dataBuffer strings.Builder
 
 	lineCount := 0
@@ -395,10 +396,8 @@ func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
 			continue
 		}
 
-		// Parse SSE format
-		if strings.HasPrefix(line, "data: ") {
-			data := strings.TrimPrefix(line, "data: ")
-
+		// Parse SSE data lines. Both "data: value" and "data:value" are valid.
+		if data, ok := parseSSEDataLine(line); ok {
 			// [DONE] indicates stream end
 			if data == "[DONE]" {
 				close(dataChan)
@@ -425,6 +424,17 @@ func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
 	}
 
 	close(dataChan)
+}
+
+func parseSSEDataLine(line string) (string, bool) {
+	name, value, ok := strings.Cut(line, ":")
+	if !ok || name != "data" {
+		return "", false
+	}
+	if strings.HasPrefix(value, " ") {
+		value = strings.TrimPrefix(value, " ")
+	}
+	return value, true
 }
 
 // ParseSSEEvents parses Server-Sent Events while preserving event names and raw data.

@@ -101,7 +101,7 @@ func (v *Validator) validateParameterType(param ParameterConfig, value any) erro
 		return v.validateStringValue(param, value)
 	case ParameterTypeNumber:
 		return v.validateNumberValue(param, value)
-	case ParameterTypeBool:
+	case ParameterTypeBool, ParameterTypeBoolean:
 		return v.validateBoolValue(param, value)
 	case ParameterTypeSelect:
 		return v.validateSelectValue(param, value)
@@ -109,6 +109,8 @@ func (v *Validator) validateParameterType(param ParameterConfig, value any) erro
 		return v.validateArrayValue(param, value, "string")
 	case ParameterTypeArrayNumber:
 		return v.validateArrayValue(param, value, "number")
+	case ParameterTypeArrayBool:
+		return v.validateArrayValue(param, value, "bool")
 	case ParameterTypeArrayObject:
 		return v.validateArrayValue(param, value, "object")
 	default:
@@ -228,6 +230,10 @@ func (v *Validator) validateArrayValue(param ParameterConfig, value any, element
 			if err := v.validateArrayElementNumber(param.Name, element, i); err != nil {
 				return err
 			}
+		case "bool":
+			if err := v.validateArrayElementBool(param.Name, element, i); err != nil {
+				return err
+			}
 		case "object":
 			if err := v.validateArrayElementObject(param.Name, element, i); err != nil {
 				return err
@@ -237,6 +243,13 @@ func (v *Validator) validateArrayValue(param ParameterConfig, value any, element
 		}
 	}
 
+	return nil
+}
+
+func (v *Validator) validateArrayElementBool(paramName string, element any, index int) error {
+	if err := v.validateBoolValue(ParameterConfig{Name: paramName, Type: ParameterTypeBool}, element); err != nil {
+		return NewInvalidArrayValueError(paramName, element, "bool", fmt.Sprintf("element at index %d is not a boolean", index))
+	}
 	return nil
 }
 
@@ -329,7 +342,7 @@ func (rt *ResultTransformer) Transform(result map[string]any) (map[string]any, e
 			transformedValue, err = rt.transformString(value)
 		case ParameterTypeNumber:
 			transformedValue, err = rt.transformNumber(value)
-		case ParameterTypeBool:
+		case ParameterTypeBool, ParameterTypeBoolean:
 			transformedValue, err = rt.transformBool(value)
 		case ParameterTypeSelect:
 			// Select is already validated, just convert to string
@@ -338,6 +351,8 @@ func (rt *ResultTransformer) Transform(result map[string]any) (map[string]any, e
 			transformedValue, err = rt.transformArray(value, "string")
 		case ParameterTypeArrayNumber:
 			transformedValue, err = rt.transformArray(value, "number")
+		case ParameterTypeArrayBool:
+			transformedValue, err = rt.transformArray(value, "bool")
 		case ParameterTypeArrayObject:
 			transformedValue, err = rt.transformArray(value, "object")
 		default:
@@ -499,6 +514,8 @@ func (rt *ResultTransformer) transformArray(value any, elementType string) ([]an
 			transformedElement, err = rt.transformString(element)
 		case "number":
 			transformedElement, err = rt.transformNumber(element)
+		case "bool":
+			transformedElement, err = rt.transformBool(element)
 		case "object":
 			// Objects are kept as-is (maps or structs)
 			transformedElement = element
@@ -523,11 +540,11 @@ func (rt *ResultTransformer) generateDefaultValue(paramType ParameterType) any {
 		return ""
 	case ParameterTypeNumber:
 		return 0
-	case ParameterTypeBool:
+	case ParameterTypeBool, ParameterTypeBoolean:
 		return false
 	case ParameterTypeSelect:
 		return ""
-	case ParameterTypeArrayString, ParameterTypeArrayNumber, ParameterTypeArrayObject:
+	case ParameterTypeArrayString, ParameterTypeArrayNumber, ParameterTypeArrayBool, ParameterTypeArrayObject:
 		return []any{}
 	default:
 		return nil
