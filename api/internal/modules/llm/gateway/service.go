@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -414,7 +415,21 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 		routeID = routeIDString(channelID)
 	}
 
+	chunkIndex := 0
 	for response := range inputChan {
+		chunkIndex++
+		if qwenStreamDebugEnabled() {
+			logger.InfoContext(ctx, "llm gateway stream chunk",
+				zap.String("provider", billingCtx.ProviderName),
+				zap.String("model", billingCtx.ModelName),
+				zap.Int("chunk_index", chunkIndex),
+				zap.Int("choices", len(response.Choices)),
+				zap.Int("text_len", streamResponseTextLen(response)),
+				zap.Bool("done", response.Done),
+				zap.Bool("has_usage", response.Usage != nil),
+				zap.Bool("has_error", response.Error != nil),
+			)
+		}
 		// Extract token usage from response (usually in the last chunk with Done=true)
 		if response.Usage != nil {
 			if hasBillableTokenUsage(response.Usage) {
@@ -498,7 +513,7 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 			if llmModel != nil {
 				modelName = llmModel.Model
 			}
-			missingUsageErr := missingTokenUsageError("", modelName)
+			missingUsageErr := missingTokenUsageError(billingCtx.ProviderName, modelName)
 			billingCtx.Status = billingContextStatusError
 			if !useSystemProvider {
 				billingCtx.Status = billingContextStatusPartial
@@ -619,6 +634,18 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 	if lastError == nil && doneResponse != nil {
 		outputChan <- *doneResponse
 	}
+}
+
+func qwenStreamDebugEnabled() bool {
+	return strings.TrimSpace(os.Getenv("ZGI_DEBUG_ALIYUN_STREAM")) == "1"
+}
+
+func streamResponseTextLen(resp adapter.StreamResponse) int {
+	if len(resp.Choices) == 0 {
+		return 0
+	}
+	text, _ := resp.Choices[0].Delta.Content.(string)
+	return len(text)
 }
 
 // ListAvailableModels lists available models for the API key

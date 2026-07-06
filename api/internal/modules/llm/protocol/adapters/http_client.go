@@ -370,6 +370,7 @@ func (c *HTTPClient) DoStreamRequest(ctx context.Context, method, url string, he
 // It also handles non-SSE JSON error responses from upstream providers
 func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
 	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(nil, bufio.MaxScanTokenSize<<9)
 	var dataBuffer strings.Builder
 
 	lineCount := 0

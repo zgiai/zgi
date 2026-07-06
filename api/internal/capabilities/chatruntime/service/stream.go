@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -122,7 +124,8 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 		return nil, newFinalizedStreamError(err)
 	}
-	answer, callUsage, err := s.collectStreamAnswer(runCtx, prepared, stream, onChunk)
+	modelChunkCallback := modelStreamChunkCallback(eventCallback, onChunk)
+	answer, callUsage, err := s.collectStreamAnswerWithEvents(runCtx, prepared, stream, eventCallback, modelChunkCallback)
 	usage := mergeUsage(preflightUsage, callUsage)
 	if err != nil {
 		s.persistModelInvocationBestEffort(persistCtx, prepared, skillloop.ModelInvocationTrace{
@@ -393,6 +396,7 @@ func (s *service) collectStreamAnswer(ctx context.Context, prepared *PreparedCha
 func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *PreparedChat, stream <-chan adapter.StreamResponse, onEvent func(StreamEvent) error, onChunk func(string) error) (string, *adapter.Usage, error) {
 	var builder strings.Builder
 	var usage *adapter.Usage
+	serviceChunkIndex := 0
 	eventBuffer := newStreamMessageEventBuffer(s.events, prepared.Conversation.ID, prepared.Message.ID)
 	for {
 		select {
@@ -406,6 +410,19 @@ func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *P
 			_ = s.repos.Message.UpdateError(context.WithoutCancel(ctx), prepared.Message.ID, ctx.Err().Error())
 			return "", nil, ctx.Err()
 		case chunk, ok := <-stream:
+			serviceChunkIndex++
+			if qwenRuntimeStreamDebugEnabled() {
+				logger.InfoContext(ctx, "aichat runtime stream chunk",
+					zap.String("model", prepared.Message.ModelName),
+					zap.String("message_id", prepared.Message.ID.String()),
+					zap.Int("chunk_index", serviceChunkIndex),
+					zap.Int("choices", len(chunk.Choices)),
+					zap.Int("text_len", runtimeStreamResponseTextLen(chunk)),
+					zap.Bool("done", chunk.Done),
+					zap.Bool("has_usage", chunk.Usage != nil),
+					zap.Bool("has_error", chunk.Error != nil),
+				)
+			}
 			if !ok {
 				answer := builder.String()
 				s.flushStreamMessageEventBuffer(context.WithoutCancel(ctx), prepared.Message.ID, eventBuffer, onEvent)
@@ -431,6 +448,16 @@ func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *P
 			if chunk.Done {
 				s.flushStreamMessageEventBuffer(context.WithoutCancel(ctx), prepared.Message.ID, eventBuffer, onEvent)
 				return builder.String(), usage, nil
+			}
+			reasoning := streamChunkReasoningContent(chunk)
+			if reasoning != "" {
+				appendPreparedReasoningContent(prepared, reasoning)
+				s.flushStreamMessageEventBuffer(ctx, prepared.Message.ID, eventBuffer, onEvent)
+				event, err := s.appendStreamReasoningEvent(ctx, prepared, reasoning)
+				if err != nil {
+					logger.WarnContext(ctx, "failed to append aichat stream reasoning event", "message_id", prepared.Message.ID.String(), err)
+				}
+				s.deliverStreamEvent(ctx, prepared.Message.ID, event, onEvent)
 			}
 			text := streamChunkText(chunk)
 			if text == "" {
@@ -737,6 +764,34 @@ func preparedResultMetadata(source map[string]interface{}, usage *adapter.Usage)
 	return metadata
 }
 
+func appendPreparedReasoningContent(prepared *PreparedChat, reasoning string) {
+	if prepared == nil || prepared.Message == nil || reasoning == "" {
+		return
+	}
+	metadata := copyStringAnyMap(prepared.Message.Metadata)
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	metadata["reasoning_content"] = stringFromAny(metadata["reasoning_content"]) + reasoning
+	prepared.Message.Metadata = metadata
+}
+
+func (s *service) appendStreamReasoningEvent(ctx context.Context, prepared *PreparedChat, reasoning string) (*StreamEvent, error) {
+	if s == nil || prepared == nil || prepared.Message == nil || prepared.Conversation == nil || reasoning == "" {
+		return nil, nil
+	}
+	payload := map[string]interface{}{
+		"conversation_id":   prepared.Conversation.ID.String(),
+		"message_id":        prepared.Message.ID.String(),
+		"answer":            "",
+		"reasoning_content": reasoning,
+	}
+	if !s.events.available() {
+		return &StreamEvent{EventType: streamEventMessage, Payload: payload, CreatedAt: time.Now().Unix()}, nil
+	}
+	return s.events.append(ctx, prepared.Message.ID, prepared.Conversation.ID, streamEventMessage, payload)
+}
+
 func streamChunkText(resp adapter.StreamResponse) string {
 	if len(resp.Choices) == 0 {
 		return ""
@@ -748,4 +803,26 @@ func streamChunkText(resp adapter.StreamResponse) string {
 	default:
 		return ""
 	}
+}
+
+func modelStreamChunkCallback(eventCallback func(StreamEvent) error, onChunk func(string) error) func(string) error {
+	if eventCallback != nil {
+		return nil
+	}
+	return onChunk
+}
+
+func streamChunkReasoningContent(resp adapter.StreamResponse) string {
+	if len(resp.Choices) == 0 {
+		return ""
+	}
+	return resp.Choices[0].Delta.ReasoningContent
+}
+
+func qwenRuntimeStreamDebugEnabled() bool {
+	return strings.TrimSpace(os.Getenv("ZGI_DEBUG_ALIYUN_STREAM")) == "1"
+}
+
+func runtimeStreamResponseTextLen(resp adapter.StreamResponse) int {
+	return len(streamChunkText(resp))
 }
