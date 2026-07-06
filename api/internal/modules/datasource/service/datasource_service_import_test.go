@@ -2,12 +2,17 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/xuri/excelize/v2"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 func TestParseExcelFileSkipUnmatchedColumns(t *testing.T) {
@@ -190,6 +195,88 @@ func TestParseExcelFileRejectsHeadersMatchingSameField(t *testing.T) {
 		t.Fatalf("parseExcelFile() error = %q, want duplicate field match error", err.Error())
 	}
 }
+
+func TestExcelImportColumnMetadataIgnoresNewerNonSchemaJob(t *testing.T) {
+	ctx := context.Background()
+	const (
+		organizationID = "org-1"
+		dataSourceID   = "ds-1"
+		tableID        = "table-1"
+		accountID      = "account-1"
+	)
+	now := time.Now()
+	phoneSource := "手机号"
+	schemaSnapshot := []dto.InferredExcelColumn{
+		{
+			SourceColumn: phoneSource,
+			Name:         "phone_number",
+			DisplayName:  phoneSource,
+			Type:         "text",
+		},
+	}
+	db, mock := newExcelImportMockDB(t)
+	mock.ExpectQuery(`SELECT \* FROM "data_source_import_jobs" WHERE organization_id = \$1 AND data_source_id = \$2 AND table_id = \$3 AND source_type = \$4 AND status = \$5 ORDER BY created_at DESC,"data_source_import_jobs"\."id" LIMIT \$6`).
+		WithArgs(organizationID, dataSourceID, tableID, "schema", "completed", 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"organization_id",
+			"data_source_id",
+			"table_id",
+			"source_type",
+			"source_file_name",
+			"status",
+			"schema_snapshot",
+			"created_by",
+			"updated_by",
+			"created_at",
+			"updated_at",
+		}).AddRow(
+			"schema-job",
+			organizationID,
+			dataSourceID,
+			tableID,
+			"schema",
+			"users",
+			string(dto.ExcelImportStatusCompleted),
+			[]byte(mustJSON(schemaSnapshot)),
+			accountID,
+			accountID,
+			now.Add(-time.Minute),
+			now.Add(-time.Minute),
+		))
+
+	svc := &dataSourceService{db: db}
+	metadata, err := svc.getExcelImportColumnMetadata(ctx, organizationID, dataSourceID, tableID)
+	if err != nil {
+		t.Fatalf("getExcelImportColumnMetadata() error = %v", err)
+	}
+	phoneMetadata, ok := metadata["phone_number"]
+	if !ok {
+		t.Fatalf("metadata[phone_number] missing from %#v", metadata)
+	}
+	if got := phoneMetadata.SourceColumnName; got != phoneSource {
+		t.Fatalf("metadata[phone_number].SourceColumnName = %q, want %q", got, phoneSource)
+	}
+
+	file := buildImportWorkbook(t, []string{phoneSource}, []string{"13800000000"})
+	columns := []dto.TableColumn{
+		{Name: "phone_number", SourceColumnName: &phoneMetadata.SourceColumnName, Type: "text"},
+	}
+	records, err := svc.parseExcelFile(bytes.NewReader(file), "users.xlsx", columns, false)
+	if err != nil {
+		t.Fatalf("parseExcelFile() error = %v", err)
+	}
+	if got := records[0]["phone_number"]; got != "13800000000" {
+		t.Fatalf("records[0][phone_number] = %v, want 13800000000", got)
+	}
+	if _, exists := records[0][phoneSource]; exists {
+		t.Fatalf("records[0] contains source header key %q: %#v", phoneSource, records[0])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations were not met: %v", err)
+	}
+}
+
 func TestWithSourceColumnNamesMatchesHeadersByDisplayName(t *testing.T) {
 	userIDDisplay := "用户ID"
 	phoneDisplay := "手机号"
@@ -340,4 +427,23 @@ func buildImportWorkbook(t *testing.T, headers []string, values []string) []byte
 		t.Fatalf("WriteToBuffer() error = %v", err)
 	}
 	return buffer.Bytes()
+}
+
+func newExcelImportMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
+	t.Helper()
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	db, err := gorm.Open(postgres.New(postgres.Config{
+		Conn:                 sqlDB,
+		PreferSimpleProtocol: true,
+	}), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("gorm.Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = sqlDB.Close()
+	})
+	return db, mock
 }

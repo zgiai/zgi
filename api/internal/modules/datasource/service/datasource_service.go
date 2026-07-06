@@ -1835,14 +1835,11 @@ type excelImportColumnMetadata struct {
 
 func (s *dataSourceService) getExcelImportColumnMetadata(ctx context.Context, organizationID, dataSourceID, tableID string) (map[string]excelImportColumnMetadata, error) {
 	jobRepo := excelimportrepo.NewJobRepository(s.db)
-	job, err := jobRepo.FindLatestByTableID(ctx, tableID)
+	job, err := jobRepo.FindLatestSchemaByTable(ctx, organizationID, dataSourceID, tableID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find import job by table: %w", err)
+		return nil, fmt.Errorf("failed to find schema import job by table: %w", err)
 	}
-	if job == nil ||
-		job.OrganizationID != organizationID ||
-		job.DataSourceID != dataSourceID ||
-		job.Status == string(dto.ExcelImportStatusFailed) {
+	if job == nil {
 		return map[string]excelImportColumnMetadata{}, nil
 	}
 

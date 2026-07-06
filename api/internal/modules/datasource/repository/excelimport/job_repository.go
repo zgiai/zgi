@@ -13,6 +13,7 @@ type JobRepository interface {
 	Create(ctx context.Context, job *model.ImportJob) error
 	FindByID(ctx context.Context, id string) (*model.ImportJob, error)
 	FindLatestByTableID(ctx context.Context, tableID string) (*model.ImportJob, error)
+	FindLatestSchemaByTable(ctx context.Context, organizationID, dataSourceID, tableID string) (*model.ImportJob, error)
 	MarkImporting(ctx context.Context, id, organizationID, dataSourceID, updatedBy string) (bool, error)
 	Update(ctx context.Context, job *model.ImportJob) error
 }
@@ -53,6 +54,21 @@ func (r *jobRepository) FindLatestByTableID(ctx context.Context, tableID string)
 	var job model.ImportJob
 	err := r.db.WithContext(ctx).
 		Where("table_id = ?", tableID).
+		Order("created_at DESC").
+		First(&job).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &job, nil
+}
+
+func (r *jobRepository) FindLatestSchemaByTable(ctx context.Context, organizationID, dataSourceID, tableID string) (*model.ImportJob, error) {
+	var job model.ImportJob
+	err := r.db.WithContext(ctx).
+		Where("organization_id = ? AND data_source_id = ? AND table_id = ? AND source_type = ? AND status = ?", organizationID, dataSourceID, tableID, "schema", "completed").
 		Order("created_at DESC").
 		First(&job).Error
 	if err != nil {
