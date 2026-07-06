@@ -124,7 +124,10 @@ func (s *Service) GetSyncStatus(ctx context.Context) (*SyncStatusResponse, error
 		modelSummary.LocalOnly += ms.LocalOnly
 	}
 
-	hasUpdates := providerSummary.New > 0 || modelSummary.New > 0 || modelSummary.Updated > 0
+	hasUpdates := providerSummary.New > 0 ||
+		modelSummary.New > 0 ||
+		modelSummary.Updated > 0 ||
+		modelSummary.LocalOnly > 0
 
 	return &SyncStatusResponse{
 		HasUpdates:     hasUpdates,
@@ -217,7 +220,7 @@ func (s *Service) computeModelSummary(ctx context.Context, provider string) (Sta
 
 	var localModels []llmmodel.LLMModel
 	if err := s.db.WithContext(ctx).
-		Where("provider = ? AND deleted_at IS NULL", provider).
+		Where("provider = ? AND status = ? AND deleted_at IS NULL", provider, llmmodel.ModelStatusActive).
 		Find(&localModels).Error; err != nil {
 		return StatusSummary{}, err
 	}

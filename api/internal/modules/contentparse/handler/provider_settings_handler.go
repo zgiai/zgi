@@ -20,6 +20,7 @@ func NewProviderSettingsHandler(service service.ProviderSettingsService) *Provid
 func (h *ProviderSettingsHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/provider-settings", h.List)
 	rg.PUT("/provider-settings/:provider_key", h.Upsert)
+	rg.POST("/provider-settings/:provider_key/check", h.Check)
 }
 
 func (h *ProviderSettingsHandler) List(c *gin.Context) {
@@ -50,7 +51,26 @@ func (h *ProviderSettingsHandler) Upsert(c *gin.Context) {
 	item, err := h.service.Upsert(c.Request.Context(), organizationID, parserSettingsActorID(c), c.Param("provider_key"), req)
 	if err != nil {
 		switch {
-		case errors.Is(err, service.ErrUnsupportedParserProvider), errors.Is(err, service.ErrParserConfigInvalid):
+		case errors.Is(err, service.ErrUnsupportedParserProvider), errors.Is(err, service.ErrParserConfigInvalid), errors.Is(err, service.ErrParserValidationFailed):
+			response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		default:
+			response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		}
+		return
+	}
+	response.Success(c, item)
+}
+
+func (h *ProviderSettingsHandler) Check(c *gin.Context) {
+	organizationID, ok := parserSettingsOrganizationID(c)
+	if !ok {
+		response.FailWithMessage(c, response.ErrUnauthorized, "organization context missing")
+		return
+	}
+	item, err := h.service.Check(c.Request.Context(), organizationID, parserSettingsActorID(c), c.Param("provider_key"))
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrUnsupportedParserProvider), errors.Is(err, service.ErrParserConfigInvalid), errors.Is(err, service.ErrParserValidationFailed):
 			response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 		default:
 			response.FailWithMessage(c, response.ErrSystemError, err.Error())

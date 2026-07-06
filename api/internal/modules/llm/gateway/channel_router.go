@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"sort"
@@ -48,6 +49,7 @@ const (
 // ProviderSelection represents the selected provider configuration for API calls
 // This is used by the billing and service layers
 type ProviderSelection struct {
+	OrganizationID    uuid.UUID
 	Provider          providermodel.LLMProvider
 	Model             llmmodel.LLMModel
 	ModelSource       PricingModelSource
@@ -167,6 +169,19 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 	isPassthroughMode := false
 	modelProvider := ""
 	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			logger.ErrorContext(logCtx, "failed to resolve LLM model", err)
+			return nil, fmt.Errorf("failed to resolve LLM model %q: %w", modelName, err)
+		}
+		knownGlobalModel, knownErr := r.globalModelExists(ctx, providerHint, modelName)
+		if knownErr != nil {
+			logger.ErrorContext(logCtx, "failed to check LLM model lifecycle", knownErr)
+			return nil, fmt.Errorf("failed to check LLM model %q: %w", modelName, knownErr)
+		}
+		if knownGlobalModel {
+			logger.DebugContext(logCtx, "LLM model exists in global registry but is not active")
+			return nil, llmerrors.NewModelNotFoundErrorWithName(modelName)
+		}
 		// Model not in local registries - enable passthrough mode
 		logger.DebugContext(logCtx, "LLM model not found in local registries, using passthrough mode")
 		isPassthroughMode = true
@@ -315,6 +330,12 @@ func (r *ChannelRouter) resolveSelectionModel(ctx context.Context, organizationI
 		} else if privateModel != nil {
 			return llmModelFromPrivateModel(privateModel), privateModel, nil
 		}
+
+		llmModel, err := r.getModelForProvider(ctx, providerHint, modelName)
+		if err != nil {
+			return nil, nil, err
+		}
+		return llmModel, nil, nil
 	}
 
 	if privateModel, err := r.getPrivateModel(ctx, organizationID, modelName); err != nil {
@@ -380,17 +401,45 @@ func (r *ChannelRouter) getModel(ctx context.Context, modelName string) (*llmmod
 		return r.configCache.GetModelByName(ctx, modelName)
 	}
 
+	return r.queryActiveModel(ctx, "", modelName)
+}
+
+func (r *ChannelRouter) getModelForProvider(ctx context.Context, provider, modelName string) (*llmmodel.LLMModel, error) {
+	return r.queryActiveModel(ctx, provider, modelName)
+}
+
+func (r *ChannelRouter) queryActiveModel(ctx context.Context, provider, modelName string) (*llmmodel.LLMModel, error) {
 	var m llmmodel.LLMModel
-	err := r.db.WithContext(ctx).
+	query := r.db.WithContext(ctx).
 		Model(&llmmodel.LLMModel{}).
-		Joins("JOIN llm_providers ON llm_models.provider = llm_providers.provider").
-		Where("llm_models.name = ? AND llm_models.is_active = ? AND llm_models.deleted_at IS NULL", modelName, true).
+		Joins("JOIN llm_providers ON llm_models.provider = llm_providers.provider")
+	if provider != "" {
+		query = query.Where("llm_models.provider = ?", provider)
+	}
+	err := query.
+		Where("llm_models.name = ? AND llm_models.is_active = ? AND llm_models.status = ? AND llm_models.deleted_at IS NULL", modelName, true, llmmodel.ModelStatusActive).
 		Where("llm_providers.is_active = ? AND llm_providers.deleted_at IS NULL", true).
 		First(&m).Error
 	if err != nil {
 		return nil, err
 	}
 	return &m, nil
+}
+
+func (r *ChannelRouter) globalModelExists(ctx context.Context, provider, modelName string) (bool, error) {
+	if r == nil || r.db == nil {
+		return false, nil
+	}
+
+	var count int64
+	query := r.db.WithContext(ctx).Unscoped().Model(&llmmodel.LLMModel{})
+	if provider != "" {
+		query = query.Where("provider = ?", provider)
+	}
+	if err := query.Where("name = ?", modelName).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // filterRoutesForModel filters routes that support the given model
@@ -726,6 +775,7 @@ func (cs *ChannelSelection) ConvertToProviderSelectionWithCache(ctx context.Cont
 			return nil, err
 		}
 		return &ProviderSelection{
+			OrganizationID:    cs.OrganizationID,
 			Provider:          *customProvider,
 			Model:             modelForSelection(cs),
 			ModelSource:       pricingModelSourceFromChannelModelSource(cs.ModelSource),
@@ -785,6 +835,7 @@ func (cs *ChannelSelection) ConvertToProviderSelectionWithCache(ctx context.Cont
 	}
 
 	return &ProviderSelection{
+		OrganizationID:    cs.OrganizationID,
 		Provider:          *provider,
 		Model:             modelForSelection(cs),
 		ModelSource:       pricingModelSourceFromChannelModelSource(cs.ModelSource),

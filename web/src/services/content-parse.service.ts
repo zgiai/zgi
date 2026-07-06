@@ -40,6 +40,12 @@ class ContentParseService extends BaseService {
     return this.request('put', `/console/api/content-parse/provider-settings/${provider}`, payload);
   }
 
+  async checkParserSettings(
+    provider: ParserSettingsProviderKey
+  ): Promise<ApiResponseData<ParserSettingsListResponse['items'][number]>> {
+    return this.request('post', `/console/api/content-parse/provider-settings/${provider}/check`);
+  }
+
   async parsePlayground(
     payload: ContentParsePlaygroundParseRequest
   ): Promise<ApiResponseData<ContentParsePlaygroundParseResponse>> {

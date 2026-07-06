@@ -14,18 +14,27 @@ import {
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import { ModelIcon } from 'modelicons';
-import { Info } from 'lucide-react';
+import { ExternalLink, Info, Trash2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { useBatchTestChannelModels, useChannel } from '@/hooks';
-import type { BatchTestModelResult, ChannelDetail } from '@/services/types/channel';
+import { useBatchTestChannelModels, useChannel, useUpdateChannel } from '@/hooks';
+import type {
+  BatchTestModelResult,
+  ChannelDetail,
+  ChannelModelTestStatus,
+  ChannelModelTestParams,
+} from '@/services/types/channel';
 import {
   getChannelLatencies,
   getModelLatency,
+  removeModelLatencies,
   saveModelLatency,
   classifyFailure,
   type ModelLatencyRecord,
 } from '@/utils/channel-latency';
+import { toast } from 'sonner';
+import { useRouter } from 'next/navigation';
 
 interface ChannelConnectivityDialogProps {
   open: boolean;
@@ -37,6 +46,7 @@ type DisplayStatus =
   | { kind: 'success'; ms: number }
   | { kind: 'connectionFailed' }
   | { kind: 'connectionTimeout' }
+  | { kind: 'skipped' }
   | { kind: 'notTested' };
 
 function toDisplay(record: ModelLatencyRecord | null): DisplayStatus {
@@ -46,14 +56,53 @@ function toDisplay(record: ModelLatencyRecord | null): DisplayStatus {
   return { kind: 'connectionFailed' };
 }
 
+function getResultStatus(result: BatchTestModelResult | undefined): ChannelModelTestStatus | null {
+  if (!result) return null;
+  if (result.status === 'success' || result.status === 'failed' || result.status === 'skipped') {
+    return result.status;
+  }
+  return result.success ? 'success' : 'failed';
+}
+
+const modelPricingNotConfiguredCode = 'model_pricing_not_configured';
+
+function isPricingNotConfiguredResult(result: BatchTestModelResult | undefined): boolean {
+  return result?.code === modelPricingNotConfiguredCode;
+}
+
+function stringParam(params: ChannelModelTestParams | undefined, key: string): string {
+  const value = params?.[key];
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 export default function ChannelConnectivityDialog(
   props: ChannelConnectivityDialogProps
 ): JSX.Element | null {
   const { open, onOpenChange, channel } = props;
   const t = useT('channels');
+  const router = useRouter();
 
   const channelId = channel?.id;
   const { channel: detail, isLoading } = useChannel(channelId);
+  const { updateChannel, isUpdating } = useUpdateChannel();
+  const isOfficial = Boolean(detail?.is_official ?? channel?.is_official);
+
+  const buildPricingURL = useCallback(
+    (result: BatchTestModelResult | undefined, fallbackModel: string) => {
+      const providerSlug =
+        stringParam(result?.params, 'provider') ||
+        detail?.provider ||
+        detail?.channel_provider ||
+        channel?.provider ||
+        channel?.channel_provider;
+      const model = stringParam(result?.params, 'model') || fallbackModel;
+      if (!providerSlug || !model) {
+        return '/dashboard/settings/pricing';
+      }
+      return `/dashboard/provider/${encodeURIComponent(providerSlug)}?pricing=1&model=${encodeURIComponent(model)}`;
+    },
+    [channel?.channel_provider, channel?.provider, detail?.channel_provider, detail?.provider]
+  );
 
   const models = useMemo(() => {
     const source = detail?.models ?? channel?.models ?? [];
@@ -61,6 +110,7 @@ export default function ChannelConnectivityDialog(
   }, [detail?.models, channel?.models]);
 
   const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [stream, setStream] = useState(false);
 
   useEffect(() => {
     // Initialize selection to all when list changes
@@ -80,7 +130,17 @@ export default function ChannelConnectivityDialog(
   const handleTestResult = useCallback(
     (result: BatchTestModelResult) => {
       if (!channelId) return;
-      const status = result.success ? 'success' : classifyFailure(result.message);
+      const resultStatus = getResultStatus(result);
+      if (resultStatus === 'skipped') {
+        removeModelLatencies(channelId, [result.model]);
+        setLatencyMap(prev => {
+          const next = { ...prev };
+          delete next[result.model];
+          return next;
+        });
+        return;
+      }
+      const status = resultStatus === 'success' ? 'success' : classifyFailure(result.message);
       const payload: ModelLatencyRecord = {
         lastMs: result.response_time_ms,
         at: Date.now(),
@@ -100,8 +160,25 @@ export default function ChannelConnectivityDialog(
     [handleTestResult]
   );
 
-  const { batchTest, abort, isRunning, results, completedResult } =
+  const { batchTest, abort, reset, isRunning, results, completedResult } =
     useBatchTestChannelModels(batchTestOptions);
+
+  useEffect(() => {
+    if (open) reset();
+  }, [channelId, open, reset]);
+
+  const currentResultsByModel = useMemo(() => {
+    const map: Record<string, BatchTestModelResult> = {};
+    results.forEach(result => {
+      map[result.model] = result;
+    });
+    return map;
+  }, [results]);
+
+  const failedModels = useMemo(
+    () => models.filter(model => getResultStatus(currentResultsByModel[model]) === 'failed'),
+    [currentResultsByModel, models]
+  );
 
   const allChecked = useMemo(() => {
     if (!models.length) return false;
@@ -128,9 +205,38 @@ export default function ChannelConnectivityDialog(
       if (!channelId) return;
       const targets = scope === 'all' ? models : models.filter(m => selected[m]);
       if (!targets.length) return;
-      batchTest(channelId, { models: targets });
+      batchTest(channelId, { models: targets, stream });
     },
-    [batchTest, channelId, models, selected]
+    [batchTest, channelId, models, selected, stream]
+  );
+
+  const removeModels = useCallback(
+    async (targets: string[]) => {
+      if (!channelId || isOfficial || targets.length === 0) return;
+      const targetSet = new Set(targets);
+      const nextModels = models.filter(model => !targetSet.has(model));
+      if (nextModels.length === 0) {
+        toast.error(t('connectivityTest.toast.removeAllBlocked'));
+        return;
+      }
+      await updateChannel(channelId, { models: nextModels });
+      removeModelLatencies(channelId, targets);
+      setLatencyMap(prev => {
+        const next = { ...prev };
+        targets.forEach(model => {
+          delete next[model];
+        });
+        return next;
+      });
+      setSelected(prev => {
+        const next = { ...prev };
+        targets.forEach(model => {
+          delete next[model];
+        });
+        return next;
+      });
+    },
+    [channelId, isOfficial, models, t, updateChannel]
   );
 
   if (!open) return null;
@@ -157,6 +263,10 @@ export default function ChannelConnectivityDialog(
                   : ''}
             </div>
             <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2 text-sm font-medium text-neutral-600">
+                <Switch checked={stream} disabled={isRunning} onCheckedChange={setStream} />
+                <span>{t('connectivityTest.stream')}</span>
+              </label>
               <Button
                 variant="outline"
                 onClick={() => runTest('selected')}
@@ -208,26 +318,44 @@ export default function ChannelConnectivityDialog(
                       </div>
                     ))
                   : models.map(model => {
+                      const currentResult = currentResultsByModel[model];
+                      const currentStatus = getResultStatus(currentResult);
                       const record =
                         getModelLatency(channelId || '', model) ?? latencyMap[model] ?? null;
-                      const display = toDisplay(record);
+                      const failedInCurrentRun = currentStatus === 'failed';
+                      const skippedInCurrentRun = currentStatus === 'skipped';
+                      const pricingSkippedInCurrentRun =
+                        skippedInCurrentRun && isPricingNotConfiguredResult(currentResult);
+                      const display = skippedInCurrentRun
+                        ? { kind: 'skipped' as const }
+                        : toDisplay(record);
                       const color =
                         display.kind === 'success'
                           ? 'text-emerald-600'
-                          : display.kind === 'connectionTimeout'
-                            ? 'text-amber-600'
-                            : display.kind === 'connectionFailed'
-                              ? 'text-red-600'
-                              : 'text-neutral-400';
+                          : display.kind === 'skipped'
+                            ? 'text-neutral-500'
+                            : display.kind === 'connectionTimeout'
+                              ? 'text-amber-600'
+                              : display.kind === 'connectionFailed'
+                                ? 'text-red-600'
+                                : 'text-neutral-400';
                       const text =
                         display.kind === 'success'
                           ? `${display.ms} ms`
-                          : display.kind === 'connectionTimeout'
-                            ? t('connectivityTest.status.connectionTimeout')
-                            : display.kind === 'connectionFailed'
-                              ? t('connectivityTest.status.connectionFailed')
-                              : t('connectivityTest.status.notTested');
-                      const errText = record?.error || record?.message || '';
+                          : display.kind === 'skipped'
+                            ? pricingSkippedInCurrentRun
+                              ? t('connectivityTest.status.pricingNotConfigured')
+                              : t('connectivityTest.status.skipped')
+                            : display.kind === 'connectionTimeout'
+                              ? t('connectivityTest.status.connectionTimeout')
+                              : display.kind === 'connectionFailed'
+                                ? t('connectivityTest.status.connectionFailed')
+                                : t('connectivityTest.status.notTested');
+                      const errText = skippedInCurrentRun
+                        ? pricingSkippedInCurrentRun
+                          ? t('connectivityTest.pricingNotConfiguredHint')
+                          : t('connectivityTest.imageSkippedHint')
+                        : currentResult?.message || record?.error || record?.message || '';
                       return (
                         <div
                           key={model}
@@ -265,6 +393,50 @@ export default function ChannelConnectivityDialog(
                                 </TooltipContent>
                               </Tooltip>
                             ) : null}
+                            {!isOfficial && failedInCurrentRun ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                disabled={isRunning || isUpdating}
+                                onClick={() => void removeModels([model])}
+                                className="h-7 px-2 text-xs text-red-600 hover:bg-red-50 hover:text-red-700"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                {t('connectivityTest.buttons.remove')}
+                              </Button>
+                            ) : null}
+                            {pricingSkippedInCurrentRun ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                disabled={isRunning}
+                                onClick={() => {
+                                  onOpenChange(false);
+                                  router.push(buildPricingURL(currentResult, model));
+                                }}
+                                className="h-7 px-2 text-xs text-blue-600 hover:bg-blue-50 hover:text-blue-700"
+                              >
+                                <ExternalLink className="h-3.5 w-3.5" />
+                                {t('connectivityTest.buttons.setPrice')}
+                              </Button>
+                            ) : skippedInCurrentRun ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                disabled={isRunning}
+                                onClick={() => {
+                                  onOpenChange(false);
+                                  router.push('/console/work/image');
+                                }}
+                                className="h-7 px-2 text-xs text-blue-600 hover:bg-blue-50 hover:text-blue-700"
+                              >
+                                <ExternalLink className="h-3.5 w-3.5" />
+                                {t('connectivityTest.buttons.testImage')}
+                              </Button>
+                            ) : null}
                           </div>
                         </div>
                       );
@@ -274,23 +446,42 @@ export default function ChannelConnectivityDialog(
           </div>
 
           {completedResult && (
-            <div className="bg-blue-50/50 rounded-xl p-4 border border-blue-100/50 flex items-center gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
-              <div className="p-2 bg-blue-100 rounded-lg">
-                <Info className="h-4 w-4 text-blue-600" />
+            <div className="bg-blue-50/50 rounded-xl p-4 border border-blue-100/50 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-100 rounded-lg">
+                  <Info className="h-4 w-4 text-blue-600" />
+                </div>
+                <div className="text-xs font-medium text-blue-800 leading-relaxed">
+                  {t('connectivityTest.summary', {
+                    total: results.length || (completedResult.total_tests ?? 0),
+                    success:
+                      results.length > 0
+                        ? results.filter(r => getResultStatus(r) === 'success').length
+                        : (completedResult.success_count ?? 0),
+                    failure:
+                      results.length > 0
+                        ? results.filter(r => getResultStatus(r) === 'failed').length
+                        : (completedResult.failure_count ?? 0),
+                    skipped:
+                      results.length > 0
+                        ? results.filter(r => getResultStatus(r) === 'skipped').length
+                        : (completedResult.skipped_count ?? 0),
+                  })}
+                </div>
               </div>
-              <div className="text-xs font-medium text-blue-800 leading-relaxed">
-                {t('connectivityTest.summary', {
-                  total: results.length || (completedResult.total_tests ?? 0),
-                  success:
-                    results.length > 0
-                      ? results.filter(r => r.success).length
-                      : (completedResult.success_count ?? 0),
-                  failure:
-                    results.length > 0
-                      ? results.filter(r => !r.success).length
-                      : (completedResult.failure_count ?? 0),
-                })}
-              </div>
+              {!isOfficial && failedModels.length > 0 ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={isRunning || isUpdating}
+                  onClick={() => void removeModels(failedModels)}
+                  className="h-8 shrink-0 border-red-200 text-xs text-red-600 hover:bg-red-50 hover:text-red-700"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {t('connectivityTest.buttons.removeFailed', { count: failedModels.length })}
+                </Button>
+              ) : null}
             </div>
           )}
         </DialogBody>

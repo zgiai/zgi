@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useT } from '@/i18n';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -621,6 +621,7 @@ export interface UseBatchTestChannelModelsOptions {
 export interface UseBatchTestChannelModelsReturn {
   batchTest: (id: string, request: BatchTestChannelModelsRequest) => void;
   abort: () => void;
+  reset: () => void;
   isRunning: boolean;
   results: BatchTestModelResult[];
   completedResult: BatchTestCompletedResult | null;
@@ -633,18 +634,31 @@ export function useBatchTestChannelModels(
   const [isRunning, setIsRunning] = useState(false);
   const [results, setResults] = useState<BatchTestModelResult[]>([]);
   const [completedResult, setCompletedResult] = useState<BatchTestCompletedResult | null>(null);
-  const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const runIdRef = useRef(0);
 
   const abort = useCallback(() => {
-    abortController?.abort();
-    setAbortController(null);
+    runIdRef.current += 1;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
     setIsRunning(false);
-  }, [abortController]);
+  }, []);
+
+  const reset = useCallback(() => {
+    runIdRef.current += 1;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    setIsRunning(false);
+    setResults([]);
+    setCompletedResult(null);
+  }, []);
 
   const batchTest = useCallback(
     (id: string, request: BatchTestChannelModelsRequest) => {
       // Abort any existing test
-      abortController?.abort();
+      abortControllerRef.current?.abort();
+      const runId = runIdRef.current + 1;
+      runIdRef.current = runId;
 
       // Reset state
       setResults([]);
@@ -652,10 +666,11 @@ export function useBatchTestChannelModels(
       setIsRunning(true);
 
       const controller = new AbortController();
-      setAbortController(controller);
+      abortControllerRef.current = controller;
 
       channelService.batchTestChannelModels(id, request, {
         onMessage: (event: BatchTestChannelModelsEvent) => {
+          if (runId !== runIdRef.current) return;
           if ('completed' in event && event.completed) {
             setCompletedResult(event);
             setIsRunning(false);
@@ -667,6 +682,7 @@ export function useBatchTestChannelModels(
           }
         },
         onError: (error: Error) => {
+          if (runId !== runIdRef.current) return;
           setIsRunning(false);
           const title = t('connectivityTest.toast.error');
           toast.error(title, {
@@ -677,12 +693,13 @@ export function useBatchTestChannelModels(
         abortSignal: controller.signal,
       });
     },
-    [abortController, options, t]
+    [options, t]
   );
 
   return {
     batchTest,
     abort,
+    reset,
     isRunning,
     results,
     completedResult,

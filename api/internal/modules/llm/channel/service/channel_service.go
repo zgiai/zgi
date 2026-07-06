@@ -20,6 +20,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/llm/channelprovider"
 	credentialdto "github.com/zgiai/zgi/api/internal/modules/llm/credential/dto"
 	credentialsvc "github.com/zgiai/zgi/api/internal/modules/llm/credential/service"
+	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
 	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
@@ -37,6 +38,12 @@ var (
 	ErrCredentialNotFound         = errors.New("credential not found")
 	ErrInvalidRouteType           = errors.New("invalid route type")
 	ErrNoAvailableOfficialChannel = errors.New("no available official channels for this organization")
+)
+
+const (
+	channelModelPricingNotConfiguredMessage = "模型未配置价格，请先在模型管理或计费策略中配置价格。"
+	channelModelPricingNotConfiguredCode    = string(gateway.BillingUserErrorKindModelPricingNotConfigured)
+	openAICompatibleProviderName            = "openai-compatible"
 )
 
 // ============================================================================
@@ -78,8 +85,8 @@ type ChannelService interface {
 	DiscoverDraftChannelModels(ctx context.Context, req *dto.DiscoverDraftChannelModelsRequest) (*dto.DiscoverDraftChannelModelsResponse, error)
 	DiscoverOllamaModels(ctx context.Context, req *dto.DiscoverOllamaModelsRequest) (*dto.DiscoverOllamaModelsResponse, error)
 	TestDraftChannelModel(ctx context.Context, organizationID uuid.UUID, req *dto.DraftTestChannelModelRequest) (*dto.ChannelModelTestResult, error)
-	TestChannelModel(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, model string, testMethod string) (*dto.ChannelModelTestResult, error)
-	BatchTestChannelModels(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, models []string, testMethod string, resultChan chan<- *dto.BatchTestChannelModelsStreamResponse)
+	TestChannelModel(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, model string, testMethod string, stream bool) (*dto.ChannelModelTestResult, error)
+	BatchTestChannelModels(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, models []string, testMethod string, stream bool, resultChan chan<- *dto.BatchTestChannelModelsStreamResponse)
 
 	// Batch operations
 	BatchToggleRoutes(ctx context.Context, organizationID uuid.UUID, req *dto.BatchToggleRoutesRequest) (*dto.BatchOperationResult, error)
@@ -92,7 +99,7 @@ type ChannelService interface {
 type ChannelValidator interface {
 	ValidateModelsForCreation(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL string, models []string) (*channelprovider.ValidationResult, error)
 	ValidateModels(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL string, models []string) (*channelprovider.ValidationResult, error)
-	TestModel(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL, modelName, testMethod string) (*channelprovider.TestResult, error)
+	TestModel(ctx context.Context, organizationID uuid.UUID, channelProvider, apiKey, apiBaseURL, modelName, testMethod string, stream bool) (*channelprovider.TestResult, error)
 }
 
 type channelService struct {
@@ -180,6 +187,9 @@ func (s *channelService) CreateRoute(ctx context.Context, organizationID uuid.UU
 		return nil, err
 	}
 
+	if err := validateRouteNativeProtocols(channelProvider, req.NativeProtocols); err != nil {
+		return nil, err
+	}
 	if err := s.ensureOllamaCustomModels(ctx, organizationID, channelProvider, req.APIBaseURL, req.APIKey, req.Models); err != nil {
 		return nil, err
 	}
@@ -525,6 +535,14 @@ func (s *channelService) UpdateRoute(ctx context.Context, organizationID, id uui
 		}
 	}
 
+	newNativeProtocols := route.NativeProtocols
+	if req.NativeProtocols != nil {
+		newNativeProtocols = *req.NativeProtocols
+	}
+	if err := validateRouteNativeProtocols(newChannelProvider, newNativeProtocols); err != nil {
+		return nil, err
+	}
+
 	coreChanged := req.ChannelProvider != nil || req.Models != nil || req.APIBaseURL != nil || req.APIKey != nil
 	if coreChanged && !route.IsOfficial {
 		apiKey := ""
@@ -650,13 +668,29 @@ func (s *channelService) validateRouteModelNames(ctx context.Context, organizati
 	return nil
 }
 
+func validateRouteNativeProtocols(channelProvider string, protocols model.NativeProtocolConfig) error {
+	if protocols.OpenAIResponses.Enabled {
+		capability := channelprovider.OpenAIResponsesCapability(channelProvider)
+		if !capability.Supported {
+			return fmt.Errorf("native_protocols.openai_responses is not supported by channel_provider %q", channelProvider)
+		}
+	}
+	if protocols.AnthropicMessages.Enabled {
+		capability := channelprovider.AnthropicMessagesCapability(channelProvider)
+		if !capability.Supported {
+			return fmt.Errorf("native_protocols.anthropic_messages is not supported by channel_provider %q", channelProvider)
+		}
+	}
+	return nil
+}
+
 func (s *channelService) loadActiveModelNameIndexes(ctx context.Context, organizationID uuid.UUID) ([]string, map[string]string, error) {
 	exactNames := make([]string, 0)
 	legacyShortNames := make(map[string]string)
 
 	if s != nil && s.modelRepo != nil {
 		activeOnly := true
-		models, _, err := s.modelRepo.List(ctx, nil, "", "", &activeOnly, 0, 10000)
+		models, _, err := s.modelRepo.List(ctx, nil, "", "", "active", &activeOnly, 0, 10000)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -966,7 +1000,7 @@ func (s *channelService) TestRoute(ctx context.Context, organizationID, id uuid.
 				Message: fmt.Sprintf("failed to load credential api key: %v", err),
 			}, nil
 		}
-		result, err := s.validator.TestModel(ctx, organizationID, route.ChannelProvider, apiKey, route.APIBaseURL, testModel, "")
+		result, err := s.validator.TestModel(ctx, organizationID, route.ChannelProvider, apiKey, route.APIBaseURL, testModel, "", false)
 		if err != nil {
 			return &dto.TestChannelResult{
 				Success: false,
@@ -1175,6 +1209,7 @@ func (s *channelService) TestDraftChannelModel(ctx context.Context, organization
 	if err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: err.Error(),
 			Model:   strings.TrimSpace(req.Model),
 		}, nil
@@ -1182,6 +1217,7 @@ func (s *channelService) TestDraftChannelModel(ctx context.Context, organization
 	if err := channelprovider.ValidateAPIKey(spec, req.APIKey); err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: err.Error(),
 			Model:   strings.TrimSpace(req.Model),
 		}, nil
@@ -1189,21 +1225,252 @@ func (s *channelService) TestDraftChannelModel(ctx context.Context, organization
 	if err := s.ensureOllamaCustomModels(ctx, organizationID, spec.Name, req.APIBaseURL, req.APIKey, []string{req.Model}); err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: err.Error(),
 			Model:   strings.TrimSpace(req.Model),
 		}, nil
 	}
+	if pricingResult, err := s.precheckChannelModelPricing(ctx, organizationID, spec.Name, req.Model, req.TestMethod); pricingResult != nil || err != nil {
+		return pricingResult, err
+	}
 
-	result, err := s.validator.TestModel(ctx, organizationID, spec.Name, req.APIKey, req.APIBaseURL, req.Model, req.TestMethod)
+	result, err := s.validator.TestModel(ctx, organizationID, spec.Name, req.APIKey, req.APIBaseURL, req.Model, req.TestMethod, req.Stream)
 	if err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: err.Error(),
 			Model:   strings.TrimSpace(req.Model),
 		}, nil
 	}
 
 	return buildChannelModelTestResult(result), nil
+}
+
+type channelModelPricingTarget struct {
+	ref       gateway.PricingModelRef
+	operation gateway.PricingOperation
+	image     bool
+}
+
+func (s *channelService) precheckChannelModelPricing(ctx context.Context, organizationID uuid.UUID, channelProvider, modelName, testMethod string) (*dto.ChannelModelTestResult, error) {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" || s == nil || s.db == nil {
+		return nil, nil
+	}
+
+	target, ok, err := s.resolveChannelModelPricingTarget(ctx, organizationID, channelProvider, modelName, testMethod)
+	if err != nil {
+		return &dto.ChannelModelTestResult{
+			Success: false,
+			Status:  channelprovider.TestStatusFailed,
+			Message: fmt.Sprintf("failed to verify model pricing: %v", err),
+			Model:   modelName,
+		}, nil
+	}
+	if !ok {
+		return nil, nil
+	}
+
+	engine := gateway.NewPricingEngine(s.db)
+	target.ref.Operation = target.operation
+	target.ref.OrganizationID = organizationID
+	if target.image {
+		n := 1
+		_, err = engine.QuoteImage(ctx, target.ref, &adapter.ImageRequest{
+			Model:  modelName,
+			Prompt: "test",
+			N:      &n,
+			Size:   "1024x1024",
+		})
+	} else {
+		completionTokens := 1
+		if target.operation == gateway.PricingOperationEmbedding || target.operation == gateway.PricingOperationRerank {
+			completionTokens = 0
+		}
+		_, err = engine.QuoteTokens(ctx, target.ref, 1, completionTokens)
+	}
+	if err == nil {
+		return nil, nil
+	}
+	if errors.Is(err, gateway.ErrPricingNotConfigured) {
+		return &dto.ChannelModelTestResult{
+			Success:    false,
+			Status:     channelprovider.TestStatusSkipped,
+			Message:    channelModelPricingNotConfiguredMessage,
+			Model:      modelName,
+			UseCase:    string(target.operation),
+			TestMethod: channelTestMethodFromPricingTarget(target),
+			Code:       channelModelPricingNotConfiguredCode,
+			Params:     channelModelPricingParams(target, channelProvider, modelName),
+		}, nil
+	}
+	return &dto.ChannelModelTestResult{
+		Success: false,
+		Status:  channelprovider.TestStatusFailed,
+		Message: fmt.Sprintf("failed to verify model pricing: %v", err),
+		Model:   modelName,
+	}, nil
+}
+
+func (s *channelService) resolveChannelModelPricingTarget(ctx context.Context, organizationID uuid.UUID, channelProvider, modelName, testMethod string) (channelModelPricingTarget, bool, error) {
+	spec, err := channelprovider.Resolve(channelProvider)
+	if err != nil {
+		return channelModelPricingTarget{}, false, nil
+	}
+
+	if s.privateModels != nil && organizationID != uuid.Nil {
+		privateModel, err := s.resolvePrivateChannelPricingModel(ctx, organizationID, spec.Name, modelName)
+		if err != nil {
+			return channelModelPricingTarget{}, false, err
+		}
+		if privateModel != nil {
+			target, ok := channelModelPricingTargetForCustomModel(privateModel, testMethod)
+			return target, ok, nil
+		}
+	}
+
+	allowCrossProvider := strings.TrimSpace(spec.Name) == openAICompatibleProviderName
+	globalModel, err := s.resolveGlobalChannelPricingModel(ctx, spec.LookupProvider, modelName, allowCrossProvider)
+	if err != nil {
+		return channelModelPricingTarget{}, false, err
+	}
+	if globalModel == nil {
+		return channelModelPricingTarget{}, false, nil
+	}
+	target, ok := channelModelPricingTargetForGlobalModel(globalModel, testMethod)
+	return target, ok, nil
+}
+
+func (s *channelService) resolvePrivateChannelPricingModel(ctx context.Context, organizationID uuid.UUID, provider, modelName string) (*llmmodelmodel.CustomModel, error) {
+	if strings.TrimSpace(provider) == openAICompatibleProviderName {
+		return s.privateModels.ResolveActiveModel(ctx, organizationID, modelName)
+	}
+	return s.privateModels.ResolveActiveModelForProvider(ctx, organizationID, provider, modelName)
+}
+
+func (s *channelService) resolveGlobalChannelPricingModel(ctx context.Context, provider, modelName string, allowCrossProvider bool) (*llmmodelmodel.LLMModel, error) {
+	if s.modelRepo == nil {
+		return nil, nil
+	}
+	if strings.TrimSpace(provider) != "" {
+		modelRecord, err := s.modelRepo.GetByProviderAndName(ctx, provider, modelName)
+		if err == nil && modelRecord != nil {
+			return modelRecord, nil
+		}
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+	}
+	if !allowCrossProvider {
+		return nil, nil
+	}
+
+	modelRecord, err := s.modelRepo.GetByName(ctx, modelName)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return modelRecord, nil
+}
+
+func channelModelPricingTargetForGlobalModel(record *llmmodelmodel.LLMModel, testMethod string) (channelModelPricingTarget, bool) {
+	if record == nil {
+		return channelModelPricingTarget{}, false
+	}
+	useCase, err := channelprovider.InferValidationUseCase(record)
+	if err != nil {
+		return channelModelPricingTarget{}, false
+	}
+	operation, image, ok := channelTestPricingOperationForUseCase(useCase, testMethod)
+	if !ok {
+		return channelModelPricingTarget{}, false
+	}
+	return channelModelPricingTarget{
+		ref: gateway.PricingModelRef{
+			ModelID:  record.ID,
+			Source:   gateway.PricingModelSourceGlobal,
+			Provider: record.Provider,
+			Model:    record.Model,
+		},
+		operation: operation,
+		image:     image,
+	}, true
+}
+
+func channelModelPricingTargetForCustomModel(record *llmmodelmodel.CustomModel, testMethod string) (channelModelPricingTarget, bool) {
+	if record == nil {
+		return channelModelPricingTarget{}, false
+	}
+	useCase, err := channelprovider.InferValidationUseCaseFromCustomModel(record)
+	if err != nil {
+		return channelModelPricingTarget{}, false
+	}
+	operation, image, ok := channelTestPricingOperationForUseCase(useCase, testMethod)
+	if !ok {
+		return channelModelPricingTarget{}, false
+	}
+	return channelModelPricingTarget{
+		ref: gateway.PricingModelRef{
+			ModelID:  record.ID,
+			Source:   gateway.PricingModelSourceCustom,
+			Provider: record.Provider,
+			Model:    record.Name,
+		},
+		operation: operation,
+		image:     image,
+	}, true
+}
+
+func channelTestPricingOperationForUseCase(useCase, testMethod string) (gateway.PricingOperation, bool, bool) {
+	normalizedUseCase := strings.TrimSpace(useCase)
+	normalizedMethod := strings.TrimSpace(testMethod)
+	if normalizedMethod != "" {
+		method, err := channelprovider.NormalizeTestMethod(normalizedMethod)
+		if err != nil || method != normalizedUseCase {
+			return "", false, false
+		}
+	}
+	switch normalizedUseCase {
+	case "embedding":
+		return gateway.PricingOperationEmbedding, false, true
+	case "rerank":
+		return gateway.PricingOperationRerank, false, true
+	case "image-gen":
+		return gateway.PricingOperationImage, true, true
+	case "chat":
+		return gateway.PricingOperationChat, false, true
+	default:
+		return "", false, false
+	}
+}
+
+func channelModelPricingParams(target channelModelPricingTarget, channelProvider, modelName string) map[string]interface{} {
+	ref := gateway.PricingModelRef{
+		ModelID:        target.ref.ModelID,
+		OrganizationID: target.ref.OrganizationID,
+		Source:         target.ref.Source,
+		Operation:      target.operation,
+		Provider:       target.ref.Provider,
+		Model:          target.ref.Model,
+	}
+	params := gateway.PricingErrorParamsFromModelRef(ref)
+	if params["provider"] == nil && strings.TrimSpace(channelProvider) != "" {
+		params["provider"] = strings.TrimSpace(channelProvider)
+	}
+	if params["model"] == nil && strings.TrimSpace(modelName) != "" {
+		params["model"] = strings.TrimSpace(modelName)
+	}
+	return params
+}
+
+func channelTestMethodFromPricingTarget(target channelModelPricingTarget) string {
+	if target.image {
+		return "image-gen"
+	}
+	return string(target.operation)
 }
 
 func (s *channelService) DiscoverDraftChannelModels(ctx context.Context, req *dto.DiscoverDraftChannelModelsRequest) (*dto.DiscoverDraftChannelModelsResponse, error) {
@@ -1279,12 +1546,13 @@ func (s *channelService) DiscoverDraftChannelModels(ctx context.Context, req *dt
 	}, nil
 }
 
-func (s *channelService) TestChannelModel(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, modelName string, testMethod string) (*dto.ChannelModelTestResult, error) {
+func (s *channelService) TestChannelModel(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, modelName string, testMethod string, stream bool) (*dto.ChannelModelTestResult, error) {
 	// Get the route
 	route, err := s.tenantRouteRepo.GetByID(ctx, organizationID, channelID)
 	if err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: fmt.Sprintf("route not found: %v", err),
 			Model:   strings.TrimSpace(modelName),
 		}, nil
@@ -1294,6 +1562,7 @@ func (s *channelService) TestChannelModel(ctx context.Context, channelID uuid.UU
 	if route.CredentialID == nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: "route has no associated credential",
 			Model:   strings.TrimSpace(modelName),
 		}, nil
@@ -1303,14 +1572,19 @@ func (s *channelService) TestChannelModel(ctx context.Context, channelID uuid.UU
 	if err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: fmt.Sprintf("failed to load credential api key: %v", err),
 			Model:   strings.TrimSpace(modelName),
 		}, nil
 	}
-	result, err := s.validator.TestModel(ctx, organizationID, route.ChannelProvider, apiKey, route.APIBaseURL, modelName, testMethod)
+	if pricingResult, err := s.precheckChannelModelPricing(ctx, organizationID, route.ChannelProvider, modelName, testMethod); pricingResult != nil || err != nil {
+		return pricingResult, err
+	}
+	result, err := s.validator.TestModel(ctx, organizationID, route.ChannelProvider, apiKey, route.APIBaseURL, modelName, testMethod, stream)
 	if err != nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: fmt.Sprintf("failed to test credential: %v", err),
 			Model:   strings.TrimSpace(modelName),
 		}, nil
@@ -1320,11 +1594,14 @@ func (s *channelService) TestChannelModel(ctx context.Context, channelID uuid.UU
 }
 
 // BatchTestChannelModels tests multiple models on a channel and streams results
-func (s *channelService) BatchTestChannelModels(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, models []string, testMethod string, resultChan chan<- *dto.BatchTestChannelModelsStreamResponse) {
+func (s *channelService) BatchTestChannelModels(ctx context.Context, channelID uuid.UUID, organizationID uuid.UUID, models []string, testMethod string, stream bool, resultChan chan<- *dto.BatchTestChannelModelsStreamResponse) {
 	defer close(resultChan)
 
+	successCount := 0
+	failureCount := 0
+	skippedCount := 0
 	for _, modelName := range models {
-		result, err := s.TestChannelModel(ctx, channelID, organizationID, modelName, testMethod)
+		result, err := s.TestChannelModel(ctx, channelID, organizationID, modelName, testMethod, stream)
 
 		response := &dto.BatchTestChannelModelsStreamResponse{
 			Model:     modelName,
@@ -1333,11 +1610,23 @@ func (s *channelService) BatchTestChannelModels(ctx context.Context, channelID u
 
 		if err != nil {
 			response.Success = false
+			response.Status = channelprovider.TestStatusFailed
 			response.Message = err.Error()
 		} else {
 			response.Success = result.Success
+			response.Status = normalizeChannelModelTestStatus(result.Status, result.Success)
 			response.Message = result.Message
 			response.ResponseTime = result.ResponseTimeMs
+			response.Code = result.Code
+			response.Params = result.Params
+		}
+		switch response.Status {
+		case channelprovider.TestStatusSuccess:
+			successCount++
+		case channelprovider.TestStatusSkipped:
+			skippedCount++
+		default:
+			failureCount++
 		}
 
 		resultChan <- response
@@ -1345,7 +1634,10 @@ func (s *channelService) BatchTestChannelModels(ctx context.Context, channelID u
 
 	// Send completion message
 	resultChan <- &dto.BatchTestChannelModelsStreamResponse{
-		Completed: true,
+		Completed:    true,
+		SuccessCount: successCount,
+		FailureCount: failureCount,
+		SkippedCount: skippedCount,
 	}
 }
 
@@ -1353,6 +1645,7 @@ func buildChannelModelTestResult(result *channelprovider.TestResult) *dto.Channe
 	if result == nil {
 		return &dto.ChannelModelTestResult{
 			Success: false,
+			Status:  channelprovider.TestStatusFailed,
 			Message: "empty validation result",
 		}
 	}
@@ -1364,11 +1657,24 @@ func buildChannelModelTestResult(result *channelprovider.TestResult) *dto.Channe
 
 	return &dto.ChannelModelTestResult{
 		Success:        result.Success,
+		Status:         normalizeChannelModelTestStatus(result.Status, result.Success),
 		Message:        result.Message,
 		Model:          result.Model,
 		UseCase:        result.UseCase,
 		TestMethod:     testMethod,
 		ResponseTimeMs: result.ResponseTimeMs,
+	}
+}
+
+func normalizeChannelModelTestStatus(status string, success bool) string {
+	switch strings.TrimSpace(status) {
+	case channelprovider.TestStatusSuccess, channelprovider.TestStatusFailed, channelprovider.TestStatusSkipped:
+		return strings.TrimSpace(status)
+	default:
+		if success {
+			return channelprovider.TestStatusSuccess
+		}
+		return channelprovider.TestStatusFailed
 	}
 }
 

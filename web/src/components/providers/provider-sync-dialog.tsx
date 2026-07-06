@@ -268,7 +268,7 @@ export function ProviderSyncDialog({
         const response = await syncProviderModels({ provider });
         if (response.data.status === 'success') {
           markProviderUpdated(provider);
-          setProviderSyncResult(provider, null);
+          setProviderSyncResult(provider, response.data);
         } else {
           setProviderSyncResult(provider, response.data);
           if (response.data.status === 'partial' && response.data.success_models > 0) {
@@ -667,6 +667,9 @@ function ModelOnlyProviderCard({
               {t('diff.updated')}: {item.updated_models}
             </Badge>
             <Badge variant="outline">
+              {t('syncStatus.pendingDeprecated')}: {item.deprecated_models}
+            </Badge>
+            <Badge variant="outline">
               {t('syncStatus.remoteModels')}: {item.total_remote}
             </Badge>
             <Badge variant="outline">
@@ -709,7 +712,17 @@ function ProviderSyncFeedback({ result }: { result: ModelMetaSyncResult }) {
   const t = useT('aiProviders');
 
   if (result.status === 'success') {
-    return null;
+    return (
+      <div className="rounded-lg border border-success/30 bg-success/5 px-3 py-2 text-xs text-success">
+        <div className="font-medium">
+          {t('syncResult.successTitle', {
+            new: result.new_models,
+            updated: result.updated_models,
+            deprecated: result.deprecated_models,
+          })}
+        </div>
+      </div>
+    );
   }
 
   return (

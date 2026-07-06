@@ -258,6 +258,9 @@ export interface ParserProviderSettings {
   official_model_version?: string;
   official_poll_interval_seconds?: number;
   runtime_config_source: string;
+  validation_status?: 'success' | 'failed' | 'unknown' | string;
+  validated_at?: string;
+  validation_message?: string;
 }
 
 export interface ParserSettingsListResponse {

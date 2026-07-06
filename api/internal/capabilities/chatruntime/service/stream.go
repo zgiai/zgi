@@ -692,7 +692,7 @@ func BuildStreamErrorPayload(prepared *PreparedChat, err error) map[string]inter
 	if code, billingMessage, ok := aichatBillingErrorCodeAndMessage(err); ok {
 		payload["message"] = billingMessage
 		payload["code"] = code
-		payload["params"] = map[string]interface{}{}
+		payload["params"] = aichatBillingErrorParams(err)
 	}
 	return payload
 }
@@ -717,9 +717,23 @@ func aichatBillingErrorCodeAndMessage(err error) (int, string, bool) {
 		return response.ErrWorkflowWorkspaceQuotaInsufficient.Code, response.ErrWorkflowWorkspaceQuotaInsufficient.Message, true
 	case gateway.BillingUserErrorKindPrivateChannelBalanceInsufficient:
 		return response.ErrWorkflowPrivateChannelBalanceInsufficient.Code, response.ErrWorkflowPrivateChannelBalanceInsufficient.Message, true
+	case gateway.BillingUserErrorKindModelPricingNotConfigured:
+		return response.ErrWorkflowModelPricingNotConfigured.Code, response.ErrWorkflowModelPricingNotConfigured.Message, true
 	default:
 		return 0, "", false
 	}
+}
+
+func aichatBillingErrorParams(err error) map[string]interface{} {
+	var userErr *gateway.BillingUserError
+	if !errors.As(err, &userErr) || userErr == nil || len(userErr.Params) == 0 {
+		return map[string]interface{}{}
+	}
+	params := make(map[string]interface{}, len(userErr.Params))
+	for key, value := range userErr.Params {
+		params[key] = value
+	}
+	return params
 }
 
 func completedStatusFromMetadata(metadata map[string]interface{}) string {

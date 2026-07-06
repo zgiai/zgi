@@ -17,11 +17,12 @@ type Module struct {
 // NewModule creates a new availability module
 func NewModule(
 	modelRepo llmrepo.ModelRepository,
+	configRepo llmrepo.ModelConfigRepository,
 	routeRepo channelrepo.TenantRouteRepository,
 	globalProviderRepo providerrepo.ProviderRepository,
 	providerConfigRepo providerrepo.ProviderConfigRepository,
 ) *Module {
-	svc := service.NewAvailabilityServiceWithProviderRepos(modelRepo, routeRepo, globalProviderRepo, providerConfigRepo)
+	svc := service.NewAvailabilityServiceWithProviderRepos(modelRepo, configRepo, routeRepo, globalProviderRepo, providerConfigRepo)
 	hdl := handler.NewAvailabilityHandler(svc)
 
 	return &Module{

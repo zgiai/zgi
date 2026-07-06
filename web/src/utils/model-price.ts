@@ -1,22 +1,28 @@
-import type { Locale } from '@/i18n';
 import type { ModelUseCase } from '@/services/types/model';
+import {
+  type BillingDisplaySettings,
+  DEFAULT_BILLING_DISPLAY,
+  formatBillingDisplayAmountFromUSD,
+} from '@/utils/billing-display';
 
-const CNY_PER_USD = 7;
-
-export type ModelPriceLabel = 'input' | 'output';
+export type ModelPriceLabel = 'input' | 'output' | 'image';
 export type ModelPriceUnit = 'perMillionTokens' | 'perImage';
 
 export interface ModelPriceDisplayItem {
   label: ModelPriceLabel;
   formattedValue: string;
   unit: ModelPriceUnit;
+  isConfigured: boolean;
+  isFree: boolean;
 }
 
 interface GetModelPriceDisplayParams {
   inputPrice?: number | null;
   outputPrice?: number | null;
+  inputPriceConfigured?: boolean | null;
+  outputPriceConfigured?: boolean | null;
   useCases?: ModelUseCase[] | null;
-  locale: Locale | string;
+  billingDisplay?: BillingDisplaySettings;
 }
 
 /**
@@ -26,47 +32,86 @@ export function isImageGenerationModel(useCases?: ModelUseCase[] | null): boolea
   return Boolean(useCases?.includes('image-gen'));
 }
 
+export function isInputOnlyPriceModel(useCases?: ModelUseCase[] | null): boolean {
+  const cases = useCases ?? [];
+  return (
+    cases.some(useCase => useCase === 'embedding' || useCase === 'rerank') &&
+    !cases.some(useCase =>
+      ['text-chat', 'vision', 'reasoning', 'function-calling', 'image-gen'].includes(useCase)
+    )
+  );
+}
+
 /**
- * @util Build localized price display lines for model management tables.
+ * @util Build USD price display lines for model management tables.
  */
 export function getModelPriceDisplay({
   inputPrice,
   outputPrice,
+  inputPriceConfigured,
+  outputPriceConfigured,
   useCases,
-  locale,
+  billingDisplay = DEFAULT_BILLING_DISPLAY,
 }: GetModelPriceDisplayParams): ModelPriceDisplayItem[] {
   if (isImageGenerationModel(useCases)) {
+    if (outputPriceConfigured) {
+      return [buildModelPriceDisplayItem('image', outputPrice, true, 'perImage', billingDisplay)];
+    }
     return [
-      {
-        label: 'output',
-        formattedValue: formatModelPriceValue(inputPrice || outputPrice, locale),
-        unit: 'perImage',
-      },
+      buildModelPriceDisplayItem(
+        'image',
+        inputPrice,
+        Boolean(inputPriceConfigured),
+        'perImage',
+        billingDisplay
+      ),
+    ];
+  }
+
+  if (isInputOnlyPriceModel(useCases)) {
+    return [
+      buildModelPriceDisplayItem(
+        'input',
+        inputPrice,
+        Boolean(inputPriceConfigured),
+        'perMillionTokens',
+        billingDisplay
+      ),
     ];
   }
 
   return [
-    {
-      label: 'input',
-      formattedValue: formatModelPriceValue(inputPrice, locale),
-      unit: 'perMillionTokens',
-    },
-    {
-      label: 'output',
-      formattedValue: formatModelPriceValue(outputPrice, locale),
-      unit: 'perMillionTokens',
-    },
+    buildModelPriceDisplayItem(
+      'input',
+      inputPrice,
+      Boolean(inputPriceConfigured),
+      'perMillionTokens',
+      billingDisplay
+    ),
+    buildModelPriceDisplayItem(
+      'output',
+      outputPrice,
+      Boolean(outputPriceConfigured),
+      'perMillionTokens',
+      billingDisplay
+    ),
   ];
 }
 
-function formatModelPriceValue(price?: number | null, locale?: Locale | string): string {
-  if (price === undefined || price === null || Number.isNaN(price)) {
-    return '-';
-  }
-
-  const isChinese = locale === 'zh-Hans';
-  const symbol = isChinese ? '￥' : '$';
-  const localizedPrice = isChinese ? price * CNY_PER_USD : price;
-
-  return `${symbol}${localizedPrice.toFixed(2)}`;
+function buildModelPriceDisplayItem(
+  label: ModelPriceLabel,
+  price: number | null | undefined,
+  isConfigured: boolean,
+  unit: ModelPriceUnit,
+  billingDisplay: BillingDisplaySettings
+): ModelPriceDisplayItem {
+  return {
+    label,
+    formattedValue: isConfigured
+      ? formatBillingDisplayAmountFromUSD(price ?? 0, billingDisplay)
+      : '-',
+    unit,
+    isConfigured,
+    isFree: isConfigured && (price ?? 0) === 0,
+  };
 }

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/datatypes"
 )
 
 func TestBuildUsageBill_NormalizesTimes(t *testing.T) {
@@ -65,6 +66,109 @@ func TestBuildUsageBill_NormalizesTimes(t *testing.T) {
 		}
 		if bill.SettledAt.Before(bill.RequestCreatedAt) {
 			t.Fatalf("SettledAt=%s before RequestCreatedAt=%s", bill.SettledAt, bill.RequestCreatedAt)
+		}
+	})
+
+	t.Run("writes usage source column", func(t *testing.T) {
+		found := false
+		for _, column := range usageBillUpsertColumns {
+			if column == "usage_source" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("usageBillUpsertColumns does not contain %q", "usage_source")
+		}
+	})
+}
+
+func TestBuildUsageBill_PartialKeepsRecordedUsageAndPoints(t *testing.T) {
+	service := &BillingService{}
+	bc := testUsageBillContext(time.Time{}, time.Time{})
+	bc.Status = billingContextStatusPartial
+	bc.PromptTokens = 10
+	bc.CompletionTokens = 5
+	bc.TotalTokens = 0
+	bc.ActualCredits = 7
+
+	bill, err := service.buildUsageBill(bc, usageBillStatusPartial, nil, nil)
+	if err != nil {
+		t.Fatalf("buildUsageBill returned error: %v", err)
+	}
+	if bill.PromptTokens != 10 || bill.CompletionTokens != 5 || bill.TotalTokens != 15 {
+		t.Fatalf("tokens = %d/%d/%d, want 10/5/15", bill.PromptTokens, bill.CompletionTokens, bill.TotalTokens)
+	}
+	if bill.PrivatePoints != 7 || bill.TotalPoints != 7 {
+		t.Fatalf("points = private %d total %d, want 7/7", bill.PrivatePoints, bill.TotalPoints)
+	}
+}
+
+func TestBuildUsageBill_FailedZeroesUsageAndPoints(t *testing.T) {
+	service := &BillingService{}
+	bc := testUsageBillContext(time.Time{}, time.Time{})
+	bc.Status = "error"
+	bc.PromptTokens = 10
+	bc.CompletionTokens = 5
+	bc.TotalTokens = 15
+	bc.ActualCredits = 7
+
+	bill, err := service.buildUsageBill(bc, usageBillStatusFailed, nil, nil)
+	if err != nil {
+		t.Fatalf("buildUsageBill returned error: %v", err)
+	}
+	if bill.PromptTokens != 0 || bill.CompletionTokens != 0 || bill.TotalTokens != 0 {
+		t.Fatalf("tokens = %d/%d/%d, want 0/0/0", bill.PromptTokens, bill.CompletionTokens, bill.TotalTokens)
+	}
+	if bill.TotalPoints != 0 {
+		t.Fatalf("total points = %d, want 0", bill.TotalPoints)
+	}
+}
+
+func TestBuildUsageBill_KeepsPricingAuditFields(t *testing.T) {
+	service := &BillingService{}
+	bc := testUsageBillContext(time.Time{}, time.Time{})
+	bc.PricingSource = PricingSourceCodeDefaultFallback
+	bc.UsageSource = UsageSourceProviderUsage
+	bc.PricingSnapshot = datatypes.JSON([]byte(`{"rule_id":"token.chat.input.default"}`))
+
+	bill, err := service.buildUsageBill(bc, usageBillStatusSuccess, nil, nil)
+	if err != nil {
+		t.Fatalf("buildUsageBill returned error: %v", err)
+	}
+	if bill.PricingSource != PricingSourceCodeDefaultFallback {
+		t.Fatalf("pricing source = %q, want code default", bill.PricingSource)
+	}
+	if bill.UsageSource != UsageSourceProviderUsage {
+		t.Fatalf("usage source = %q, want provider usage", bill.UsageSource)
+	}
+	if string(bill.PricingSnapshot) != `{"rule_id":"token.chat.input.default"}` {
+		t.Fatalf("pricing snapshot = %s", string(bill.PricingSnapshot))
+	}
+}
+
+func TestBillingContextNeedsTokenReprice(t *testing.T) {
+	t.Run("does not reprice explicit zero pricing", func(t *testing.T) {
+		bc := testUsageBillContext(time.Time{}, time.Time{})
+		bc.ActualCredits = 0
+		bc.PromptTokens = 100
+		bc.CompletionTokens = 50
+		bc.PricingSource = PricingSourceCodeDefaultFallback
+
+		if billingContextNeedsTokenReprice(bc) {
+			t.Fatal("billingContextNeedsTokenReprice = true, want false for already-priced zero credits")
+		}
+	})
+
+	t.Run("reprices legacy context without pricing source", func(t *testing.T) {
+		bc := testUsageBillContext(time.Time{}, time.Time{})
+		bc.ActualCredits = 0
+		bc.PromptTokens = 100
+		bc.CompletionTokens = 50
+		bc.PricingSource = ""
+
+		if !billingContextNeedsTokenReprice(bc) {
+			t.Fatal("billingContextNeedsTokenReprice = false, want true for unpriced token usage")
 		}
 	})
 }

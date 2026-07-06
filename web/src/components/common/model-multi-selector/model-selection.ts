@@ -44,6 +44,10 @@ export function isModelSelectable(
   selectableModelKeys: ReadonlySet<string> | null,
   selectableModelNames: ReadonlySet<string> | null
 ): boolean {
+  if (model.status === 'deprecated' || model.unselectable_reason_code === 'deprecated') {
+    return false;
+  }
+
   const modelKey = getModelSelectionKey(model);
   const modelName = model.model.trim();
 

@@ -396,7 +396,7 @@ func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
 			continue
 		}
 
-		// Parse SSE format. The space after the colon is optional by spec.
+		// Parse SSE data lines. Both "data: value" and "data:value" are valid.
 		if data, ok := parseSSEDataLine(line); ok {
 			// [DONE] indicates stream end
 			if data == "[DONE]" {

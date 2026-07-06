@@ -142,6 +142,12 @@ function buildDashboardGroups(t: ReturnType<typeof useT<'dashboard'>>) {
           icon: RadioTower,
         },
         {
+          key: 'pricing-policy',
+          title: t('items.pricingPolicy'),
+          href: '/dashboard/settings/pricing',
+          icon: ReceiptText,
+        },
+        {
           key: 'api-keys',
           title: t('items.apiKeys'),
           href: '/dashboard/api-keys',
