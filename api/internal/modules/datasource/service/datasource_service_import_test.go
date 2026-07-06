@@ -246,7 +246,104 @@ func TestExcelImportColumnMetadataIgnoresNewerNonSchemaJob(t *testing.T) {
 		))
 
 	svc := &dataSourceService{db: db}
-	metadata, err := svc.getExcelImportColumnMetadata(ctx, organizationID, dataSourceID, tableID)
+	metadata, err := svc.getExcelImportColumnMetadata(ctx, organizationID, dataSourceID, tableID, now)
+	if err != nil {
+		t.Fatalf("getExcelImportColumnMetadata() error = %v", err)
+	}
+	phoneMetadata, ok := metadata["phone_number"]
+	if !ok {
+		t.Fatalf("metadata[phone_number] missing from %#v", metadata)
+	}
+	if got := phoneMetadata.SourceColumnName; got != phoneSource {
+		t.Fatalf("metadata[phone_number].SourceColumnName = %q, want %q", got, phoneSource)
+	}
+
+	file := buildImportWorkbook(t, []string{phoneSource}, []string{"13800000000"})
+	columns := []dto.TableColumn{
+		{Name: "phone_number", SourceColumnName: &phoneMetadata.SourceColumnName, Type: "text"},
+	}
+	records, err := svc.parseExcelFile(bytes.NewReader(file), "users.xlsx", columns, false)
+	if err != nil {
+		t.Fatalf("parseExcelFile() error = %v", err)
+	}
+	if got := records[0]["phone_number"]; got != "13800000000" {
+		t.Fatalf("records[0][phone_number] = %v, want 13800000000", got)
+	}
+	if _, exists := records[0][phoneSource]; exists {
+		t.Fatalf("records[0] contains source header key %q: %#v", phoneSource, records[0])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations were not met: %v", err)
+	}
+}
+
+func TestExcelImportColumnMetadataFallsBackToLegacyImportJob(t *testing.T) {
+	ctx := context.Background()
+	const (
+		organizationID = "org-1"
+		dataSourceID   = "ds-1"
+		tableID        = "table-1"
+		accountID      = "account-1"
+	)
+	tableCreatedAt := time.Now()
+	phoneSource := "手机号"
+	schemaSnapshot := []dto.InferredExcelColumn{
+		{
+			SourceColumn: phoneSource,
+			Name:         "phone_number",
+			DisplayName:  phoneSource,
+			Type:         "text",
+		},
+	}
+	db, mock := newExcelImportMockDB(t)
+	mock.ExpectQuery(`SELECT \* FROM "data_source_import_jobs" WHERE organization_id = \$1 AND data_source_id = \$2 AND table_id = \$3 AND source_type = \$4 AND status = \$5 ORDER BY created_at DESC,"data_source_import_jobs"\."id" LIMIT \$6`).
+		WithArgs(organizationID, dataSourceID, tableID, "schema", "completed", 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"organization_id",
+			"data_source_id",
+			"table_id",
+			"source_type",
+			"source_file_name",
+			"status",
+			"schema_snapshot",
+			"created_by",
+			"updated_by",
+			"created_at",
+			"updated_at",
+		}))
+	mock.ExpectQuery(`SELECT \* FROM "data_source_import_jobs" WHERE organization_id = \$1 AND data_source_id = \$2 AND table_id = \$3 AND source_type IN \(\$4,\$5\) AND status IN \(\$6,\$7\) AND created_at <= \$8 ORDER BY created_at DESC,"data_source_import_jobs"\."id" LIMIT \$9`).
+		WithArgs(organizationID, dataSourceID, tableID, "excel", "csv", "completed", "partial_failed", tableCreatedAt, 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"organization_id",
+			"data_source_id",
+			"table_id",
+			"source_type",
+			"source_file_name",
+			"status",
+			"schema_snapshot",
+			"created_by",
+			"updated_by",
+			"created_at",
+			"updated_at",
+		}).AddRow(
+			"legacy-import-job",
+			organizationID,
+			dataSourceID,
+			tableID,
+			"excel",
+			"users.xlsx",
+			string(dto.ExcelImportStatusCompleted),
+			[]byte(mustJSON(schemaSnapshot)),
+			accountID,
+			accountID,
+			tableCreatedAt.Add(-time.Minute),
+			tableCreatedAt,
+		))
+
+	svc := &dataSourceService{db: db}
+	metadata, err := svc.getExcelImportColumnMetadata(ctx, organizationID, dataSourceID, tableID, tableCreatedAt)
 	if err != nil {
 		t.Fatalf("getExcelImportColumnMetadata() error = %v", err)
 	}

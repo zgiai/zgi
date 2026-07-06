@@ -1794,7 +1794,7 @@ func (s *dataSourceService) GetTableColumns(ctx context.Context, organizationID,
 		return dto.GetTableColumnsResponse{}, fmt.Errorf("failed to get table: %w", err)
 	}
 
-	importColumnMetadata, err := s.getExcelImportColumnMetadata(ctx, organizationID, dataSourceID, tableID)
+	importColumnMetadata, err := s.getExcelImportColumnMetadata(ctx, organizationID, dataSourceID, tableID, tableMetadata.CreatedAt)
 	if err != nil {
 		return dto.GetTableColumnsResponse{}, err
 	}
@@ -1833,11 +1833,17 @@ type excelImportColumnMetadata struct {
 	SourceColumnName string
 }
 
-func (s *dataSourceService) getExcelImportColumnMetadata(ctx context.Context, organizationID, dataSourceID, tableID string) (map[string]excelImportColumnMetadata, error) {
+func (s *dataSourceService) getExcelImportColumnMetadata(ctx context.Context, organizationID, dataSourceID, tableID string, tableCreatedAt time.Time) (map[string]excelImportColumnMetadata, error) {
 	jobRepo := excelimportrepo.NewJobRepository(s.db)
 	job, err := jobRepo.FindLatestSchemaByTable(ctx, organizationID, dataSourceID, tableID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find schema import job by table: %w", err)
+	}
+	if job == nil && !tableCreatedAt.IsZero() {
+		job, err = jobRepo.FindLatestLegacySourceByTable(ctx, organizationID, dataSourceID, tableID, tableCreatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find legacy import job by table: %w", err)
+		}
 	}
 	if job == nil {
 		return map[string]excelImportColumnMetadata{}, nil

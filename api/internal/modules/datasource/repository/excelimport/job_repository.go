@@ -14,6 +14,7 @@ type JobRepository interface {
 	FindByID(ctx context.Context, id string) (*model.ImportJob, error)
 	FindLatestByTableID(ctx context.Context, tableID string) (*model.ImportJob, error)
 	FindLatestSchemaByTable(ctx context.Context, organizationID, dataSourceID, tableID string) (*model.ImportJob, error)
+	FindLatestLegacySourceByTable(ctx context.Context, organizationID, dataSourceID, tableID string, tableCreatedAt time.Time) (*model.ImportJob, error)
 	MarkImporting(ctx context.Context, id, organizationID, dataSourceID, updatedBy string) (bool, error)
 	Update(ctx context.Context, job *model.ImportJob) error
 }
@@ -69,6 +70,28 @@ func (r *jobRepository) FindLatestSchemaByTable(ctx context.Context, organizatio
 	var job model.ImportJob
 	err := r.db.WithContext(ctx).
 		Where("organization_id = ? AND data_source_id = ? AND table_id = ? AND source_type = ? AND status = ?", organizationID, dataSourceID, tableID, "schema", "completed").
+		Order("created_at DESC").
+		First(&job).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &job, nil
+}
+
+func (r *jobRepository) FindLatestLegacySourceByTable(ctx context.Context, organizationID, dataSourceID, tableID string, tableCreatedAt time.Time) (*model.ImportJob, error) {
+	var job model.ImportJob
+	err := r.db.WithContext(ctx).
+		Where("organization_id = ? AND data_source_id = ? AND table_id = ? AND source_type IN ? AND status IN ? AND created_at <= ?",
+			organizationID,
+			dataSourceID,
+			tableID,
+			[]string{"excel", "csv"},
+			[]string{"completed", "partial_failed"},
+			tableCreatedAt,
+		).
 		Order("created_at DESC").
 		First(&job).Error
 	if err != nil {
