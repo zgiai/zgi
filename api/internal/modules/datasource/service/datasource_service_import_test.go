@@ -233,10 +233,7 @@ func TestTableColumnSourceSchemaUsesSourceColumnName(t *testing.T) {
 		{Name: "notes", Type: "text"},
 	}
 
-	schema, ok := tableColumnSourceSchema(columns)
-	if !ok {
-		t.Fatal("tableColumnSourceSchema() ok = false, want true")
-	}
+	schema := tableColumnSourceSchema(columns)
 	if len(schema) != 1 {
 		t.Fatalf("len(schema) = %d, want 1", len(schema))
 	}
@@ -244,6 +241,19 @@ func TestTableColumnSourceSchemaUsesSourceColumnName(t *testing.T) {
 		t.Fatalf("schema[0] = %#v, want source 用户ID and name user_id", schema[0])
 	}
 }
+func TestTableColumnSourceSchemaReturnsEmptySnapshotWhenSourcesAreCleared(t *testing.T) {
+	columns := []dto.TableColumn{
+		{Name: "user_id", Type: "integer"},
+		{Name: "phone_number", Type: "text"},
+	}
+
+	schema := tableColumnSourceSchema(columns)
+
+	if len(schema) != 0 {
+		t.Fatalf("len(schema) = %d, want 0", len(schema))
+	}
+}
+
 func TestIsSQLMetaTableMissingRecognizesInternalAndExternalMissingTable(t *testing.T) {
 	tests := []struct {
 		name string
@@ -253,6 +263,7 @@ func TestIsSQLMetaTableMissingRecognizesInternalAndExternalMissingTable(t *testi
 		{name: "nil", err: nil, want: false},
 		{name: "internal", err: errors.New("sqlmeta: table not found"), want: true},
 		{name: "external delete", err: errors.New("failed to delete table: 404 Not Found"), want: true},
+		{name: "external get", err: errors.New("failed to get table: 404 Not Found"), want: true},
 		{name: "other", err: errors.New("failed to delete table: 500 Internal Server Error"), want: false},
 	}
 

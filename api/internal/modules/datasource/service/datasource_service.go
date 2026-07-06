@@ -1424,7 +1424,8 @@ func isSQLMetaTableMissing(err error) bool {
 	}
 	message := err.Error()
 	return strings.Contains(message, "sqlmeta: table not found") ||
-		strings.Contains(message, "failed to delete table: 404 Not Found")
+		strings.Contains(message, "failed to delete table: 404 Not Found") ||
+		strings.Contains(message, "failed to get table: 404 Not Found")
 }
 
 // UpdateTableColumns updates the columns of a specific table
@@ -1707,10 +1708,7 @@ func (s *dataSourceService) UpdateTableColumns(ctx context.Context, organization
 }
 
 func (s *dataSourceService) saveTableColumnSourceMetadata(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, tableMetadata *model.Table, columns []dto.TableColumn) error {
-	schemaSnapshot, ok := tableColumnSourceSchema(columns)
-	if !ok {
-		return nil
-	}
+	schemaSnapshot := tableColumnSourceSchema(columns)
 	sourceFileName := "table-structure"
 	if tableMetadata != nil && tableMetadata.Name != "" {
 		sourceFileName = tableMetadata.Name
@@ -1733,7 +1731,7 @@ func (s *dataSourceService) saveTableColumnSourceMetadata(ctx context.Context, o
 	return nil
 }
 
-func tableColumnSourceSchema(columns []dto.TableColumn) ([]dto.InferredExcelColumn, bool) {
+func tableColumnSourceSchema(columns []dto.TableColumn) []dto.InferredExcelColumn {
 	schema := make([]dto.InferredExcelColumn, 0, len(columns))
 	for index, col := range columns {
 		if col.SourceColumnName == nil {
@@ -1761,7 +1759,7 @@ func tableColumnSourceSchema(columns []dto.TableColumn) ([]dto.InferredExcelColu
 			Description:       description,
 		})
 	}
-	return schema, len(schema) > 0
+	return schema
 }
 
 // GetTableColumns retrieves the columns of a specific table
