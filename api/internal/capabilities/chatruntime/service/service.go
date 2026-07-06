@@ -309,6 +309,9 @@ type PreparedChat struct {
 	RunConfig    RunConfig
 	ParentID     *uuid.UUID
 	parts        *chatRequestParts
+
+	UserMemoryPreflightDone  bool
+	UserMemoryPreflightUsage *adapter.Usage
 }
 
 type ChatResult struct {

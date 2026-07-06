@@ -1,13 +1,17 @@
 package service
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/memory"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
@@ -764,6 +768,9 @@ func TestContextualAIChatTurnStrategyUsesModelIntentBeforeRuleFallback(t *testin
 	if strategy.Intent != "manage_agent_asset" {
 		t.Fatalf("Intent = %q, want manage_agent_asset", strategy.Intent)
 	}
+	if strategy.Source != aiChatTurnStrategySourceModelIntent {
+		t.Fatalf("Source = %q, want %q", strategy.Source, aiChatTurnStrategySourceModelIntent)
+	}
 	if !slices.Contains(strategy.PrimarySkills, skills.SkillConsoleNavigator) {
 		t.Fatalf("PrimarySkills = %#v, want console navigator for route", strategy.PrimarySkills)
 	}
@@ -794,6 +801,220 @@ func TestContextualAIChatTurnStrategyFallsBackWhenModelIntentUnsupported(t *test
 	if strategy.Intent != "manage_agent_asset" {
 		t.Fatalf("Intent = %q, want fallback manage_agent_asset", strategy.Intent)
 	}
+	if strategy.Source != aiChatTurnStrategySourceRuleFallback {
+		t.Fatalf("Source = %q, want %q", strategy.Source, aiChatTurnStrategySourceRuleFallback)
+	}
+	if strategy.SourceReason == "" {
+		t.Fatal("SourceReason is empty, want fallback reason")
+	}
+}
+
+func TestContextualAIChatTurnStrategyKeepsPassiveAnswerWhenClassifierFailsOnAgentPage(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:                "what can you do here?",
+			Surface:              aiChatSurfaceContextualSidebar,
+			RuntimeContext:       "route=/console/agents/agent-1/agent",
+			SkillIDs:             []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement},
+			SkillMode:            skillModeAuto,
+			ModelTurnIntentError: "empty classifier content",
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if strategy.Intent != "answer_or_explain_zgi_context" {
+		t.Fatalf("Intent = %q, want answer_or_explain_zgi_context; strategy=%#v", strategy.Intent, strategy)
+	}
+	if strategy.Source != aiChatTurnStrategySourceRuleFallback {
+		t.Fatalf("Source = %q, want %q", strategy.Source, aiChatTurnStrategySourceRuleFallback)
+	}
+	if slices.Contains(strategy.PrimarySkills, skills.SkillAgentManagement) {
+		t.Fatalf("PrimarySkills = %#v, want no agent-management primary skill for passive answer", strategy.PrimarySkills)
+	}
+	if !skillLoopShouldUsePlainStreamForPassiveAnswer(prepared) {
+		t.Fatal("skillLoopShouldUsePlainStreamForPassiveAnswer() = false, want true")
+	}
+}
+
+func TestParseModelTurnIntentContentAcceptsLooseClassifierJSON(t *testing.T) {
+	intent, err := parseModelTurnIntentContent("```json\n{\"intent\":\"answer\",\"confidence\":\"0.91\",\"approval\":false,\"route_required\":\"true\"}\n```")
+	if err != nil {
+		t.Fatalf("parseModelTurnIntentContent() error = %v", err)
+	}
+	if got := normalizeModelTurnIntent(intent.Intent); got != "answer_or_explain_zgi_context" {
+		t.Fatalf("Intent = %q, want answer_or_explain_zgi_context", got)
+	}
+	if intent.Confidence != 0.91 {
+		t.Fatalf("Confidence = %v, want 0.91", intent.Confidence)
+	}
+	if intent.Approval != "none" {
+		t.Fatalf("Approval = %q, want none", intent.Approval)
+	}
+	if intent.RouteRequired == nil || !*intent.RouteRequired {
+		t.Fatalf("RouteRequired = %#v, want true", intent.RouteRequired)
+	}
+}
+
+func TestParseModelTurnIntentMessageUsesReasoningJSONWhenContentEmpty(t *testing.T) {
+	intent, source, err := parseModelTurnIntentMessage(adapter.Message{
+		ReasoningContent: `We need classify this request.
+{"intent":"answer_or_explain_zgi_context","task_type":"agent_prompt_review","confidence":0.91,"approval":"none"}`,
+	})
+	if err != nil {
+		t.Fatalf("parseModelTurnIntentMessage() error = %v", err)
+	}
+	if got := normalizeModelTurnIntent(intent.Intent); got != "answer_or_explain_zgi_context" {
+		t.Fatalf("Intent = %q, want answer_or_explain_zgi_context", got)
+	}
+	if intent.TaskType != "agent_prompt_review" {
+		t.Fatalf("TaskType = %q, want agent_prompt_review", intent.TaskType)
+	}
+	if !strings.Contains(source, `"intent"`) {
+		t.Fatalf("source = %q, want reasoning JSON preview", source)
+	}
+}
+
+func TestParseModelTurnIntentMessageRejectsReasoningOnlyProse(t *testing.T) {
+	_, source, err := parseModelTurnIntentMessage(adapter.Message{
+		ReasoningContent: "We need to classify this as an agent request, but I will not emit JSON.",
+	})
+	if err == nil {
+		t.Fatal("parseModelTurnIntentMessage() error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "reasoning content did not contain json") {
+		t.Fatalf("error = %q, want reasoning json error", err.Error())
+	}
+	if !strings.Contains(source, "We need to classify") {
+		t.Fatalf("source = %q, want reasoning preview", source)
+	}
+}
+
+func TestParseModelTurnIntentContentRejectsPlainReasoningText(t *testing.T) {
+	_, err := parseModelTurnIntentContent("We need to classify this request before returning JSON.")
+	if err == nil {
+		t.Fatal("parseModelTurnIntentContent() error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "empty classifier content") {
+		t.Fatalf("error = %q, want empty classifier content", err.Error())
+	}
+}
+
+func TestContextualAIChatTurnStrategyUsesModelTurnPlanForExactAgentRuntime(t *testing.T) {
+	intent, err := parseModelTurnIntentContent(`{
+		"intent": "answer_or_explain_zgi_context",
+		"task_type": "agent_config_analysis",
+		"phases": ["confirm exact Agent runtime configuration", "analyze the actual prompt"],
+		"evidence_required": ["actual system prompt", "runtime model", "enabled skills"],
+		"recommended_capabilities": ["exact_agent_runtime"],
+		"completion_criteria": ["answer is grounded in actual Agent runtime evidence"],
+		"needs_exact_agent_runtime": true,
+		"current_context_may_be_summary": true,
+		"confidence": 0.93,
+		"approval": "none"
+	}`)
+	if err != nil {
+		t.Fatalf("parseModelTurnIntentContent() error = %v", err)
+	}
+	intent.Intent = normalizeModelTurnIntent(intent.Intent)
+	intent.Phases = normalizeModelTurnPlanStrings(intent.Phases, 8, 160)
+	intent.EvidenceRequired = normalizeModelTurnPlanStrings(intent.EvidenceRequired, 10, 160)
+	intent.RecommendedCapabilities = normalizeModelTurnPlanStrings(intent.RecommendedCapabilities, 10, 120)
+	intent.CompletionCriteria = normalizeModelTurnPlanStrings(intent.CompletionCriteria, 8, 180)
+
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:           "based on the actual prompt, suggest improvements for this agent",
+			Surface:         aiChatSurfaceContextualSidebar,
+			RuntimeContext:  "route=/console/agents/agent-1/agent",
+			SkillIDs:        []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement},
+			SkillMode:       skillModeAuto,
+			ModelTurnIntent: intent,
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if !strategy.NeedsExactAgentRuntime {
+		t.Fatalf("NeedsExactAgentRuntime = false, want true; strategy=%#v", strategy)
+	}
+	if strategy.TaskType != "agent_config_analysis" {
+		t.Fatalf("TaskType = %q, want agent_config_analysis", strategy.TaskType)
+	}
+	if !slices.Contains(strategy.SupportingSkills, skills.SkillAgentManagement) {
+		t.Fatalf("SupportingSkills = %#v, want agent-management for exact runtime evidence", strategy.SupportingSkills)
+	}
+	if skillLoopShouldUsePlainStreamForPassiveAnswer(prepared) {
+		t.Fatal("skillLoopShouldUsePlainStreamForPassiveAnswer() = true, want false when exact Agent runtime is needed")
+	}
+
+	plan := operationPlanFromTurnStrategy("task-1", prepared.parts, strategy)
+	if got := stringFromAny(plan["task_type"]); got != "agent_config_analysis" {
+		t.Fatalf("operation_plan.task_type = %q, want agent_config_analysis; plan=%#v", got, plan)
+	}
+	if got := stringSliceFromAny(plan["evidence_required"]); !slices.Contains(got, "actual system prompt") {
+		t.Fatalf("operation_plan.evidence_required = %#v, want actual system prompt", got)
+	}
+	if got := operationPlanCompactPhasesForPrompt(plan["phases"], 8); len(got) < 2 {
+		t.Fatalf("operation_plan phases = %#v, want semantic phases", got)
+	}
+}
+
+func TestContextualAIChatTurnStrategyUsesPassiveModelIntentFastPath(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "what can you do here?",
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/agents/agent-1/agent",
+			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement},
+			SkillMode:      skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:      "answer_or_explain_zgi_context",
+				Confidence:  1,
+				Approval:    "none",
+				AssetEffect: "none",
+			},
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if len(strategy.PrimarySkills) != 0 {
+		t.Fatalf("PrimarySkills = %#v, want no primary skill for passive model intent", strategy.PrimarySkills)
+	}
+	if !skillLoopShouldUsePlainStreamForPassiveAnswer(prepared) {
+		t.Fatal("skillLoopShouldUsePlainStreamForPassiveAnswer() = false, want true")
+	}
+}
+
+func TestUserMemoryPreflightRunsDuringPrepareForContextualSidebar(t *testing.T) {
+	svc := &service{
+		llmClient:     &fakeAgentMemoryPlannerLLM{},
+		memoryService: fakeUserMemoryService{},
+	}
+	parts := &chatRequestParts{
+		Query:          "what can you do here?",
+		Surface:        aiChatSurfaceContextualSidebar,
+		RuntimeContext: "route=/console/agents/agent-1/agent",
+		UseMemory:      true,
+		SkillIDs:       []string{skills.SkillConsoleNavigator},
+		SkillMode:      skillModeAuto,
+	}
+
+	if !svc.shouldRunUserMemoryPreflightDuringPrepare(parts, &adapter.ChatRequest{}) {
+		t.Fatal("shouldRunUserMemoryPreflightDuringPrepare() = false, want true for contextual sidebar")
+	}
+
+	parts.Surface = aiChatSurfaceWorkChat
+	if svc.shouldRunUserMemoryPreflightDuringPrepare(parts, &adapter.ChatRequest{}) {
+		t.Fatal("shouldRunUserMemoryPreflightDuringPrepare() = true, want false for work chat")
+	}
 }
 
 func TestStreamingMetadataRecordsModelTurnIntent(t *testing.T) {
@@ -817,6 +1038,36 @@ func TestStreamingMetadataRecordsModelTurnIntent(t *testing.T) {
 	if _, ok := metadata["turn_strategy"].(*AIChatTurnStrategy); !ok {
 		t.Fatalf("turn_strategy = %#v, want typed strategy", metadata["turn_strategy"])
 	}
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if got := stringFromAny(plan["strategy_source"]); got != aiChatTurnStrategySourceModelIntent {
+		t.Fatalf("operation_plan.strategy_source = %q, want %q; plan=%#v", got, aiChatTurnStrategySourceModelIntent, plan)
+	}
+}
+
+type fakeUserMemoryService struct{}
+
+func (fakeUserMemoryService) IsEnabled(context.Context, uuid.UUID) (bool, error) {
+	return true, nil
+}
+
+func (fakeUserMemoryService) RenderContext(context.Context, uuid.UUID, int) (string, error) {
+	return "", nil
+}
+
+func (fakeUserMemoryService) GetModelState(context.Context, uuid.UUID) (*memory.MemoryMeResponse, error) {
+	return &memory.MemoryMeResponse{}, nil
+}
+
+func (fakeUserMemoryService) CreateEntryWithMetadata(context.Context, uuid.UUID, memory.CreateEntryRequest, memory.MutationMetadata) (*memory.MemoryEntryResponse, error) {
+	return &memory.MemoryEntryResponse{}, nil
+}
+
+func (fakeUserMemoryService) UpdateEntryWithMetadata(context.Context, uuid.UUID, uuid.UUID, memory.UpdateEntryRequest, memory.MutationMetadata) (*memory.MemoryEntryResponse, error) {
+	return &memory.MemoryEntryResponse{}, nil
+}
+
+func (fakeUserMemoryService) DeleteEntryWithMetadata(context.Context, uuid.UUID, uuid.UUID, memory.MutationMetadata) error {
+	return nil
 }
 
 func TestContextualAIChatTurnStrategyPrefersMultiRouteNavigationOverAgentManagement(t *testing.T) {

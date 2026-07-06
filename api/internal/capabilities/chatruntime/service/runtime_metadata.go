@@ -81,6 +81,7 @@ func mergeGeneratedArtifactMetadata(source map[string]interface{}, artifact map[
 			metadata["generated_files"] = files
 			metadata["generated_file_count"] = len(files)
 			applyOperationPlanArtifactState(metadata, files)
+			applyStructuredTurnStateMetadata(metadata, sanitizeSkillInvocationsForMetadata(skillInvocationsFromMetadata(metadata["skill_invocations"])))
 			return metadata
 		}
 	}
@@ -88,6 +89,7 @@ func mergeGeneratedArtifactMetadata(source map[string]interface{}, artifact map[
 	metadata["generated_files"] = files
 	metadata["generated_file_count"] = len(files)
 	applyOperationPlanArtifactState(metadata, files)
+	applyStructuredTurnStateMetadata(metadata, sanitizeSkillInvocationsForMetadata(skillInvocationsFromMetadata(metadata["skill_invocations"])))
 	return metadata
 }
 
@@ -114,6 +116,7 @@ func mergeSkillTraceMetadata(source map[string]interface{}, traces []skills.Skil
 	applySkillInvocationSummary(metadata, invocations)
 	applyOperationPlanInvocationState(metadata, invocations)
 	applyOperationPlanPlannerFeedbackState(metadata, traces)
+	applyStructuredTurnStateMetadata(metadata, invocations)
 	return metadata
 }
 
@@ -143,6 +146,334 @@ func applyTurnStateTraceMetadata(metadata map[string]interface{}, trace skills.S
 	}
 	metadata["turn_state_count"] = len(stored)
 	metadata["has_trace"] = true
+}
+
+func applyStructuredTurnStateMetadata(metadata map[string]interface{}, invocations []map[string]interface{}) {
+	if metadata == nil {
+		return
+	}
+	current := mapFromOperationContext(metadata["turn_state"])
+	state := copyStringAnyMap(current)
+	if state == nil {
+		state = map[string]interface{}{}
+	}
+	items := mapSliceFromAny(current["items"])
+	if len(items) > 0 {
+		state["items"] = mapsToInterfaceSlice(items)
+	}
+	steps := structuredTurnStateStepsFromInvocations(invocations, 16)
+	toolResults := structuredTurnStateToolResultsFromInvocations(invocations, 12)
+	assets := structuredTurnStateAssetsFromInvocations(invocations, 12)
+	navigations := structuredTurnStateNavigationsFromMetadata(metadata, 8)
+	artifacts := structuredTurnStateArtifactsFromMetadata(metadata, 8)
+	openItems := structuredTurnStateOpenItemsFromInvocations(invocations, 6)
+
+	setStructuredTurnStateSlice(state, "steps", steps)
+	setStructuredTurnStateSlice(state, "tool_results", toolResults)
+	setStructuredTurnStateSlice(state, "assets", assets)
+	setStructuredTurnStateSlice(state, "navigations", navigations)
+	setStructuredTurnStateSlice(state, "generated_artifacts", artifacts)
+	setStructuredTurnStateSlice(state, "open_items", openItems)
+	if len(items) == 0 && len(steps) == 0 && len(toolResults) == 0 && len(assets) == 0 &&
+		len(navigations) == 0 && len(artifacts) == 0 && len(openItems) == 0 {
+		return
+	}
+	state["updated_at"] = time.Now().Unix()
+	metadata["turn_state"] = state
+	metadata["turn_state_count"] = len(items)
+	metadata["turn_state_step_count"] = len(steps)
+	metadata["turn_state_tool_result_count"] = len(toolResults)
+	metadata["has_trace"] = true
+}
+
+func setStructuredTurnStateSlice(state map[string]interface{}, key string, items []map[string]interface{}) {
+	if state == nil || strings.TrimSpace(key) == "" {
+		return
+	}
+	if len(items) == 0 {
+		delete(state, key)
+		return
+	}
+	state[key] = mapsToInterfaceSlice(items)
+}
+
+func structuredTurnStateStepsFromInvocations(invocations []map[string]interface{}, limit int) []map[string]interface{} {
+	if limit <= 0 || len(invocations) == 0 {
+		return nil
+	}
+	start := 0
+	if len(invocations) > limit {
+		start = len(invocations) - limit
+	}
+	out := make([]map[string]interface{}, 0, min(len(invocations)-start, limit))
+	for _, invocation := range invocations[start:] {
+		item := structuredTurnStateStepFromInvocation(invocation)
+		if len(item) == 0 {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func structuredTurnStateStepFromInvocation(invocation map[string]interface{}) map[string]interface{} {
+	if len(invocation) == 0 {
+		return nil
+	}
+	kind := strings.TrimSpace(stringFromAny(invocation["kind"]))
+	if kind == "" {
+		return nil
+	}
+	switch strings.ToLower(kind) {
+	case "tool_call", "client_action", "skill_load", "load_skill":
+	default:
+		return nil
+	}
+	item := map[string]interface{}{
+		"kind":   kind,
+		"status": strings.TrimSpace(firstNonEmptyString(invocation["status"], invocation["result_status"])),
+	}
+	for _, key := range []string{"skill_id", "tool_name", "action_type", "title", "runtime_id"} {
+		if value := strings.TrimSpace(stringFromAny(invocation[key])); value != "" {
+			item[key] = truncateRunes(value, 180)
+		}
+	}
+	if target := structuredTurnStateTargetFromInvocation(invocation); len(target) > 0 {
+		item["target"] = target
+	}
+	if createdAt := numericOrStringValue(invocation["created_at"]); createdAt != nil {
+		item["created_at"] = createdAt
+	}
+	if createdAtMS := numericOrStringValue(invocation["created_at_ms"]); createdAtMS != nil {
+		item["created_at_ms"] = createdAtMS
+	}
+	if errText := structuredTurnStateInvocationError(invocation); errText != "" {
+		item["error"] = errText
+	}
+	if strings.TrimSpace(stringFromAny(item["status"])) == "" {
+		item["status"] = "recorded"
+	}
+	return item
+}
+
+func structuredTurnStateToolResultsFromInvocations(invocations []map[string]interface{}, limit int) []map[string]interface{} {
+	if limit <= 0 || len(invocations) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, limit)
+	for idx := len(invocations) - 1; idx >= 0 && len(out) < limit; idx-- {
+		invocation := invocations[idx]
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "tool_call") {
+			continue
+		}
+		item := structuredTurnStateToolResultFromInvocation(invocation)
+		if len(item) == 0 {
+			continue
+		}
+		out = append([]map[string]interface{}{item}, out...)
+	}
+	return out
+}
+
+func structuredTurnStateToolResultFromInvocation(invocation map[string]interface{}) map[string]interface{} {
+	skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
+	toolName := strings.TrimSpace(stringFromAny(invocation["tool_name"]))
+	if skillID == "" && toolName == "" {
+		return nil
+	}
+	item := map[string]interface{}{
+		"skill_id":  skillID,
+		"tool_name": toolName,
+		"status":    strings.TrimSpace(firstNonEmptyString(invocation["status"], invocation["result_status"])),
+	}
+	if target := structuredTurnStateTargetFromInvocation(invocation); len(target) > 0 {
+		item["target"] = target
+	}
+	if result := structuredTurnStateResultFacts(invocation); len(result) > 0 {
+		item["result_facts"] = result
+	}
+	if errText := structuredTurnStateInvocationError(invocation); errText != "" {
+		item["error"] = errText
+	}
+	if runtimeID := strings.TrimSpace(stringFromAny(invocation["runtime_id"])); runtimeID != "" {
+		item["runtime_id"] = runtimeID
+	}
+	return item
+}
+
+func structuredTurnStateAssetsFromInvocations(invocations []map[string]interface{}, limit int) []map[string]interface{} {
+	if limit <= 0 || len(invocations) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, limit)
+	seen := map[string]struct{}{}
+	for idx := len(invocations) - 1; idx >= 0 && len(out) < limit; idx-- {
+		invocation := invocations[idx]
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "tool_call") ||
+			!toolGovernanceContinuationInvocationSucceeded(invocation) {
+			continue
+		}
+		skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
+		toolName := strings.TrimSpace(stringFromAny(invocation["tool_name"]))
+		target := structuredTurnStateTargetFromInvocation(invocation)
+		if len(target) == 0 {
+			continue
+		}
+		item := map[string]interface{}{
+			"skill_id":  skillID,
+			"tool_name": toolName,
+			"status":    "completed",
+			"target":    target,
+		}
+		key := compactJSON(item)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append([]map[string]interface{}{item}, out...)
+	}
+	return out
+}
+
+func structuredTurnStateOpenItemsFromInvocations(invocations []map[string]interface{}, limit int) []map[string]interface{} {
+	failed := currentTurnFailedOperations(invocations, limit)
+	if len(failed) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, len(failed))
+	for _, item := range failed {
+		compact := copyStringAnyMap(item)
+		compact["reason"] = "failed_tool_call_needs_model_decision"
+		out = append(out, compact)
+	}
+	return out
+}
+
+func structuredTurnStateNavigationsFromMetadata(metadata map[string]interface{}, limit int) []map[string]interface{} {
+	if limit <= 0 {
+		return nil
+	}
+	actions := completedClientActionRecordsFromMetadata(metadata)
+	if len(actions) == 0 {
+		return nil
+	}
+	if len(actions) > limit {
+		actions = actions[len(actions)-limit:]
+	}
+	out := make([]map[string]interface{}, 0, len(actions))
+	for _, action := range actions {
+		if strings.TrimSpace(stringFromAny(action["action_type"])) == "" {
+			continue
+		}
+		out = append(out, action)
+	}
+	return out
+}
+
+func structuredTurnStateArtifactsFromMetadata(metadata map[string]interface{}, limit int) []map[string]interface{} {
+	if limit <= 0 {
+		return nil
+	}
+	artifacts := conversationArtifactsFromMetadata(metadataValue(metadata, "conversation_artifacts"))
+	if len(artifacts) == 0 {
+		artifacts = generatedFilesFromMetadata(metadataValue(metadata, "generated_files"))
+	}
+	if len(artifacts) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, min(len(artifacts), limit))
+	seen := map[string]struct{}{}
+	for idx := len(artifacts) - 1; idx >= 0 && len(out) < limit; idx-- {
+		compact := compactGeneratedArtifactForPrompt(artifacts[idx])
+		if len(compact) == 0 {
+			continue
+		}
+		key := strings.TrimSpace(firstNonEmptyString(compact["artifact_id"], compact["tool_file_id"], compact["file_id"], compact["filename"]))
+		if key != "" {
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+		}
+		out = append([]map[string]interface{}{compact}, out...)
+	}
+	return out
+}
+
+func structuredTurnStateTargetFromInvocation(invocation map[string]interface{}) map[string]interface{} {
+	if target := currentTurnAgentTargetFromInvocation(invocation); len(target) > 0 {
+		target["asset_type"] = "agent"
+		return target
+	}
+	result := mapFromOperationContext(invocation["result"])
+	resultSummary := mapFromOperationContext(invocation["result_summary"])
+	args := mapFromOperationContext(invocation["arguments"])
+	target := map[string]interface{}{}
+	if id := strings.TrimSpace(firstNonEmptyString(result["file_id"], result["id"], resultSummary["file_id"], resultSummary["id"], args["file_id"], args["id"])); id != "" {
+		target["file_id"] = id
+	}
+	if name := strings.TrimSpace(firstNonEmptyString(result["file_name"], result["filename"], result["name"], resultSummary["file_name"], resultSummary["filename"], resultSummary["name"], args["file_name"], args["filename"], args["name"])); name != "" {
+		target["name"] = truncateRunes(name, 180)
+	}
+	if assetType := strings.TrimSpace(firstNonEmptyString(result["asset_type"], resultSummary["asset_type"], args["asset_type"])); assetType != "" {
+		target["asset_type"] = truncateRunes(assetType, 80)
+	}
+	if len(target) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(stringFromAny(target["asset_type"])) == "" {
+		target["asset_type"] = structuredTurnStateAssetTypeFromInvocation(invocation)
+	}
+	return target
+}
+
+func structuredTurnStateAssetTypeFromInvocation(invocation map[string]interface{}) string {
+	skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
+	switch skillID {
+	case skills.SkillAgentManagement:
+		return "agent"
+	case skills.SkillFileReader, skills.SkillFileGenerator, skills.SkillFileManager:
+		return "file"
+	default:
+		return "asset"
+	}
+}
+
+func structuredTurnStateResultFacts(invocation map[string]interface{}) map[string]interface{} {
+	resultSummary := mapFromOperationContext(invocation["result_summary"])
+	result := mapFromOperationContext(invocation["result"])
+	out := map[string]interface{}{}
+	for _, key := range []string{"status", "operation", "success_count", "failure_count", "count", "content_status", "content_value_preview", "content_chars", "content_truncated", "filename", "file_name", "name", "model", "provider"} {
+		if safe, ok := modelInvocationSafeSummaryValue(resultSummary[key]); ok {
+			out[key] = safe
+			continue
+		}
+		if safe, ok := modelInvocationSafeSummaryValue(result[key]); ok {
+			out[key] = safe
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func structuredTurnStateInvocationError(invocation map[string]interface{}) string {
+	return truncateRunes(strings.TrimSpace(firstNonEmptyString(
+		invocation["error"],
+		mapFromOperationContext(invocation["result"])["error"],
+		mapFromOperationContext(invocation["result_summary"])["error"],
+	)), 240)
+}
+
+func numericOrStringValue(value interface{}) interface{} {
+	if value == nil {
+		return nil
+	}
+	if safe, ok := modelInvocationSafeSummaryValue(value); ok {
+		return safe
+	}
+	return nil
 }
 
 func turnStateItemsFromTrace(trace skills.SkillTrace) []map[string]interface{} {
@@ -338,6 +669,7 @@ func mergeSkillInvocationMetadata(source map[string]interface{}, invocations []m
 	}
 	applySkillInvocationSummary(metadata, stored)
 	applyOperationPlanInvocationState(metadata, stored)
+	applyStructuredTurnStateMetadata(metadata, stored)
 	return metadata
 }
 

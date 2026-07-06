@@ -797,13 +797,28 @@ func compactOperationPlanForPrompt(plan map[string]interface{}) map[string]inter
 	}
 	out := map[string]interface{}{}
 	modelDecides := operationPlanModelDecidesTools(plan)
-	for _, key := range []string{"version", "task_id", "intent", "status", "pending_next_action", "original_user_goal", "risk_level", "approval", "planning_mode"} {
+	for _, key := range []string{"version", "task_id", "intent", "task_type", "status", "pending_next_action", "original_user_goal", "risk_level", "approval", "planning_mode"} {
 		if value := strings.TrimSpace(stringFromAny(plan[key])); value != "" {
 			out[key] = compactForPrompt(value, 500)
 		}
 	}
+	if value, ok := plan["needs_exact_agent_runtime"].(bool); ok {
+		out["needs_exact_agent_runtime"] = value
+	}
+	if value, ok := plan["current_context_may_be_summary"].(bool); ok {
+		out["current_context_may_be_summary"] = value
+	}
 	if value, ok := plan["approval_required"].(bool); ok {
 		out["approval_required"] = value
+	}
+	if phases := stringSliceFromAny(plan["phase_goals"]); len(phases) > 0 {
+		out["phase_goals"] = compactStringSliceForPrompt(phases, 8, 180)
+	}
+	if evidence := stringSliceFromAny(plan["evidence_required"]); len(evidence) > 0 {
+		out["evidence_required"] = compactStringSliceForPrompt(evidence, 10, 180)
+	}
+	if capabilities := stringSliceFromAny(plan["recommended_capabilities"]); len(capabilities) > 0 {
+		out["recommended_capabilities"] = compactStringSliceForPrompt(capabilities, 10, 160)
 	}
 	if actions := stringSliceFromAny(plan["approval_actions"]); len(actions) > 0 {
 		out["approval_actions"] = compactStringSliceForPrompt(actions, 8, 180)

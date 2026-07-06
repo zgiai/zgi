@@ -202,6 +202,7 @@ const messages: WebappMessages = {
     waitingQuestionMessage: 'AIChat 正在等待你补充信息，提交后会继续执行。',
     waitingClientActionMessage: 'AIChat 正在等待页面完成操作，完成后会自动继续。',
     operationStatus: {
+      planning: '正在进行任务规划…',
       toolCompleted: '操作已完成，正在整理结果…',
       toolCompletedDetailed: '已完成 {count} 项{asset}操作，正在整理结果…',
       assetCreated: '已完成创建，正在确认页面状态…',

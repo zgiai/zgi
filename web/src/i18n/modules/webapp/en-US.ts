@@ -213,6 +213,7 @@ const messages = {
     waitingClientActionMessage:
       'AIChat is waiting for the page action to finish and will continue automatically.',
     operationStatus: {
+      planning: 'Planning the task…',
       toolCompleted: 'The operation is complete. Preparing the result…',
       toolCompletedDetailed: '{count} {asset} operation(s) completed. Preparing the result…',
       assetCreated: 'Created successfully. Confirming the page state…',

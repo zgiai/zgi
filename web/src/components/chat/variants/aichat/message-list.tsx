@@ -1,12 +1,14 @@
 'use client';
 
-import { Loader2 } from 'lucide-react';
+import { ModelIcon } from 'modelicons';
+import { Bot, Loader2 } from 'lucide-react';
 import type { Ref, UIEvent } from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
-import type { AIChatConversation, AIChatMessage } from '@/services/types/aichat';
+import type { AIChatConversation, AIChatMessage, AIChatMessageFile } from '@/services/types/aichat';
 import type { AIChatStreamingMessageState } from '@/components/chat/controllers/aichat';
 import { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
 import type { AIChatSkillDisplayMap } from '@/components/chat/variants/aichat/skill-display';
@@ -42,6 +44,29 @@ interface AIChatMessageListProps {
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
   enableToolGovernanceApprovals?: boolean;
+  showPlanningPlaceholder?: boolean;
+  pendingUserMessage?: AIChatPendingUserMessage | null;
+}
+
+export interface AIChatPendingUserMessage {
+  id: string;
+  query: string;
+  files?: AIChatMessageFile[];
+  assistantModelName?: string;
+  assistantCreatedAt?: number;
+  showAssistantPlanning?: boolean;
+}
+
+function formatAIChatPendingTime(timestamp: number): string {
+  if (!timestamp) return '';
+
+  const date = new Date(timestamp * 1000);
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
 }
 
 function isReplaceableRootStatus(status: AIChatMessage['status']): boolean {
@@ -102,7 +127,11 @@ export function AIChatMessageList({
   showMemoryKey = true,
   showSkillEventDetails = true,
   enableToolGovernanceApprovals = false,
+  showPlanningPlaceholder = false,
+  pendingUserMessage = null,
 }: AIChatMessageListProps) {
+  const t = useT('webapp');
+
   return (
     <ScrollArea
       className="min-h-0 flex-1"
@@ -163,10 +192,98 @@ export function AIChatMessageList({
                 enableToolGovernanceApprovals={enableToolGovernanceApprovals}
               />
             ))}
+            {pendingUserMessage ? (
+              <PendingUserMessageBubble message={pendingUserMessage} />
+            ) : null}
+            {showPlanningPlaceholder ? (
+              <PendingAssistantPlanningStatus
+                label={t('consoleChat.operationStatus.planning')}
+                modelName={pendingUserMessage?.assistantModelName}
+                createdAt={pendingUserMessage?.assistantCreatedAt}
+                showAssistantModelMeta={showAssistantModelMeta}
+                streamingLabel={t('consoleChat.streaming')}
+              />
+            ) : null}
             <div ref={bottomRef} className="shrink-0" style={{ height: bottomSpacerHeight }} />
           </div>
         )}
       </div>
     </ScrollArea>
+  );
+}
+
+function PendingAssistantPlanningStatus({
+  label,
+  modelName,
+  createdAt,
+  showAssistantModelMeta,
+  streamingLabel,
+}: {
+  label: string;
+  modelName?: string;
+  createdAt?: number;
+  showAssistantModelMeta: boolean;
+  streamingLabel: string;
+}) {
+  return (
+    <div className="flex min-w-0 justify-start gap-3">
+      <div
+        className={cn(
+          'mt-1 flex size-7 shrink-0 items-center justify-center rounded-full',
+          showAssistantModelMeta ? 'border bg-background' : 'bg-primary text-primary-foreground'
+        )}
+      >
+        {showAssistantModelMeta ? (
+          <ModelIcon model={modelName || 'unknown'} size={28} />
+        ) : (
+          <Bot className="size-4" />
+        )}
+      </div>
+      <div className="min-w-0 max-w-full flex-1 overflow-hidden">
+        <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          {showAssistantModelMeta && modelName ? <span>{modelName}</span> : null}
+          {createdAt ? <span>{formatAIChatPendingTime(createdAt)}</span> : null}
+          <span className="inline-flex items-center gap-1">
+            <Loader2 className="size-3 animate-spin" />
+            {streamingLabel}
+          </span>
+        </div>
+        <div className="border-l-2 border-muted-foreground/20 pl-3 text-sm leading-7 text-muted-foreground">
+          <span className="inline-flex min-w-0 items-center gap-2">
+            <Loader2 className="size-3.5 shrink-0 animate-spin" />
+            <span className="min-w-0">{label}</span>
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PendingUserMessageBubble({ message }: { message: AIChatPendingUserMessage }) {
+  const files = message.files ?? [];
+  const documentFiles = files.filter(file => file.kind !== 'image');
+  const imageFiles = files.filter(file => file.kind === 'image');
+
+  return (
+    <div className="flex justify-end">
+      <div className="max-w-[82%]">
+        <div className="rounded-2xl bg-muted px-3 py-2 text-sm text-foreground opacity-90 shadow-sm">
+          <div className="whitespace-pre-wrap break-words">{message.query}</div>
+          {files.length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {[...imageFiles, ...documentFiles].map(file => (
+                <span
+                  key={file.id}
+                  className="inline-flex max-w-44 items-center gap-1 rounded-md border border-border bg-background/70 px-2 py-1 text-xs text-muted-foreground"
+                  title={file.name}
+                >
+                  <span className="truncate">{file.name}</span>
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }

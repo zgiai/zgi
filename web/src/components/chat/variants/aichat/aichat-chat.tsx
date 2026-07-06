@@ -74,7 +74,10 @@ import {
   AIChatInputArea,
   type AIChatUploadScope,
 } from '@/components/chat/variants/aichat/input-area';
-import { AIChatMessageList } from '@/components/chat/variants/aichat/message-list';
+import {
+  AIChatMessageList,
+  type AIChatPendingUserMessage,
+} from '@/components/chat/variants/aichat/message-list';
 import {
   resolvePendingToolGovernanceApprovalFromTimeline,
   type AIChatToolGovernanceDecisionSubmitPayload,
@@ -282,6 +285,9 @@ export function AIChatShell({
   const [submittedToolGovernanceDecisionKeys, setSubmittedToolGovernanceDecisionKeys] = useState<
     Set<string>
   >(() => new Set());
+  const [pendingUserMessage, setPendingUserMessage] = useState<AIChatPendingUserMessage | null>(
+    null
+  );
   const [inputAreaHeight, setInputAreaHeight] = useState(160);
   const [toolGovernancePermissionTier, setToolGovernancePermissionTier] =
     useState<AIChatToolGovernancePermissionTier>('basic');
@@ -496,6 +502,11 @@ export function AIChatShell({
   );
   const messageActionsLocked = Boolean(activeWorkflowApprovalRequest);
   const showResumeScrollButton = isAutoFollowPaused && (isSending || hasActiveStreamingMessage);
+  const visiblePendingUserMessage =
+    pendingUserMessage && isSending && !hasActiveStreamingMessage ? pendingUserMessage : null;
+  const showPlanningPlaceholder = Boolean(
+    visiblePendingUserMessage?.showAssistantPlanning && isSending && !hasActiveStreamingMessage
+  );
   const showAssetAuditControl =
     showToolGovernancePermissionControl && surface === 'aichat' && Boolean(activeConversationId);
   const assetAuditButton = useMemo(
@@ -551,6 +562,13 @@ export function AIChatShell({
           : undefined,
     });
   }, [activeMessages, currentWorkspace?.id, error, isBillingAdmin, router, tGlobal]);
+
+  useEffect(() => {
+    if (!pendingUserMessage) return;
+    if (hasActiveStreamingMessage || !isSending) {
+      setPendingUserMessage(null);
+    }
+  }, [hasActiveStreamingMessage, isSending, pendingUserMessage]);
 
   const conversationSummaries = useMemo<ConversationSummary[]>(
     () =>
@@ -653,7 +671,18 @@ export function AIChatShell({
         if (!canSend) return false;
       }
 
+      const pendingMessageId = Date.now();
+      const pendingMessageCreatedAt = Math.floor(pendingMessageId / 1000);
+      const showAssistantPlanning = Boolean(activeConversationId || messages.length > 0);
       setInput('');
+      setPendingUserMessage({
+        id: `pending-user-${pendingMessageId}`,
+        query,
+        files,
+        assistantModelName: modelSelectorValue.model,
+        assistantCreatedAt: pendingMessageCreatedAt,
+        showAssistantPlanning,
+      });
       void controller.send({
         query,
         files,
@@ -670,11 +699,13 @@ export function AIChatShell({
     },
     [
       activeWorkflowApprovalRequest,
+      activeConversationId,
       beforeSend,
       controller,
       forcedUseMemory,
       input,
       isSending,
+      messages.length,
       modelSelectorValue,
       requireModel,
       effectiveRuntimeSurface,
@@ -704,6 +735,15 @@ export function AIChatShell({
         return;
       }
 
+      const pendingMessageId = Date.now();
+      const pendingMessageCreatedAt = Math.floor(pendingMessageId / 1000);
+      setPendingUserMessage({
+        id: `pending-user-${pendingMessageId}`,
+        query: trimmedQuery,
+        assistantModelName: modelSelectorValue.model,
+        assistantCreatedAt: pendingMessageCreatedAt,
+        showAssistantPlanning: true,
+      });
       void controller.send({
         query: trimmedQuery,
         parentId: activeUserInputMessage.id,
@@ -1194,6 +1234,8 @@ export function AIChatShell({
             layout={isEmbedded ? 'embedded' : 'full'}
             showMemoryKey={surface !== 'agent-webapp'}
             showSkillEventDetails={surface !== 'agent-webapp'}
+            showPlanningPlaceholder={showPlanningPlaceholder}
+            pendingUserMessage={visiblePendingUserMessage}
           />
 
           <AIChatHomeView

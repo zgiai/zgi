@@ -17,7 +17,6 @@ import {
 import MarkdownViewer from '@/components/common/markdown-viewer';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { useFileOriginalPreviewUrl } from '@/hooks/file/use-file-original-preview-url';
 import { useT } from '@/i18n/translations';
@@ -1518,10 +1517,11 @@ export function AIChatMessageBubble({
             !streamingStatusLabel &&
             !userInputRequest &&
             !hasGeneratedImagePreviews ? (
-            <div className="space-y-2 pt-1">
-              <Skeleton className="h-4 w-2/3" />
-              <Skeleton className="h-4 w-1/2" />
-              <Skeleton className="h-4 w-3/4" />
+            <div className="border-l-2 border-muted-foreground/20 pl-3 text-sm leading-7 text-muted-foreground">
+              <span className="inline-flex min-w-0 items-center gap-2">
+                <Loader2 className="size-3.5 shrink-0 animate-spin" />
+                <span className="min-w-0">{t('consoleChat.operationStatus.planning')}</span>
+              </span>
             </div>
           ) : isStopped && !hasGeneratedImagePreviews ? (
             <div className="text-sm text-muted-foreground">{t('consoleChat.stopped')}</div>

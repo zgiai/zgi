@@ -160,9 +160,6 @@ func turnStateContinuationSummary(message *runtimemodel.Message) map[string]inte
 	}
 	state := mapFromOperationContext(metadataValue(message.Metadata, "turn_state"))
 	items := mapSliceFromAny(state["items"])
-	if len(items) == 0 {
-		return nil
-	}
 	outItems := make([]map[string]interface{}, 0, 12)
 	for _, item := range items {
 		kind := strings.TrimSpace(stringFromAny(item["kind"]))
@@ -194,19 +191,96 @@ func turnStateContinuationSummary(message *runtimemodel.Message) map[string]inte
 			break
 		}
 	}
-	if len(outItems) == 0 {
+	out := map[string]interface{}{}
+	if len(outItems) > 0 {
+		out["items"] = mapsToInterfaceSlice(outItems)
+	}
+	for _, key := range []string{"steps", "tool_results", "assets", "navigations", "generated_artifacts", "open_items"} {
+		if values := compactTurnStateStructuredListForPrompt(state[key], 12); len(values) > 0 {
+			out[key] = mapsToInterfaceSlice(values)
+		}
+	}
+	if len(out) == 0 {
 		return nil
 	}
-	return map[string]interface{}{
-		"items": mapsToInterfaceSlice(outItems),
-		"instructions": []string{
-			"Treat these turn_state items, including user-visible deliverables, as authoritative state recorded earlier in this same AIChat turn.",
-			"Reuse exact working_fact values for later tool arguments and final answers instead of re-deriving placeholders.",
-			"Reuse user_deliverable content when it is the only recorded summary for a later dependency; do not create a different private summary for the same source unless new evidence contradicts it.",
-			"If a turn_state item came from an earlier tool result and satisfies a later dependency, do not rerun the same earlier tool or navigate back to the same earlier page merely to rederive that fact.",
-			"If later tool/page evidence contradicts a turn_state item, update the state with submit_turn_state before proceeding.",
-		},
+	out["instructions"] = []string{
+		"Treat these turn_state items, including user-visible deliverables, as authoritative state recorded earlier in this same AIChat turn.",
+		"Treat steps, tool_results, assets, navigations, and generated_artifacts as the current execution ledger for this same turn.",
+		"Reuse exact working_fact values, tool result facts, and generated artifact filenames for later tool arguments and final answers instead of re-deriving placeholders.",
+		"Reuse user_deliverable content when it is the only recorded summary for a later dependency; do not create a different private summary for the same source unless new evidence contradicts it.",
+		"If a turn_state item or tool_result satisfies a later dependency, do not rerun the same earlier tool or navigate back to the same earlier page merely to rederive that fact.",
+		"If later tool/page evidence contradicts a turn_state item, update the state with submit_turn_state before proceeding.",
 	}
+	return out
+}
+
+func compactTurnStateStructuredListForPrompt(value interface{}, limit int) []map[string]interface{} {
+	if limit <= 0 {
+		return nil
+	}
+	items := mapSliceFromAny(value)
+	if len(items) == 0 {
+		return nil
+	}
+	if len(items) > limit {
+		items = items[len(items)-limit:]
+	}
+	out := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		compact := compactTurnStateStructuredMapForPrompt(item, 0)
+		if len(compact) == 0 {
+			continue
+		}
+		out = append(out, compact)
+	}
+	return out
+}
+
+func compactTurnStateStructuredMapForPrompt(item map[string]interface{}, depth int) map[string]interface{} {
+	if len(item) == 0 || depth > 2 {
+		return nil
+	}
+	out := map[string]interface{}{}
+	for _, key := range sortedStringKeys(item) {
+		value := item[key]
+		switch typed := value.(type) {
+		case map[string]interface{}:
+			if nested := compactTurnStateStructuredMapForPrompt(typed, depth+1); len(nested) > 0 {
+				out[key] = nested
+			}
+		case []interface{}:
+			if depth >= 2 {
+				continue
+			}
+			nestedOut := make([]interface{}, 0, min(len(typed), 6))
+			for _, nestedItem := range typed {
+				switch nested := nestedItem.(type) {
+				case map[string]interface{}:
+					if compact := compactTurnStateStructuredMapForPrompt(nested, depth+1); len(compact) > 0 {
+						nestedOut = append(nestedOut, compact)
+					}
+				default:
+					if text := strings.TrimSpace(stringFromAny(nestedItem)); text != "" {
+						nestedOut = append(nestedOut, truncateRunes(text, 180))
+					}
+				}
+				if len(nestedOut) >= 6 {
+					break
+				}
+			}
+			if len(nestedOut) > 0 {
+				out[key] = nestedOut
+			}
+		default:
+			if safe, ok := modelInvocationSafeSummaryValue(value); ok {
+				if text, isText := safe.(string); isText {
+					safe = truncateRunes(text, 500)
+				}
+				out[key] = safe
+			}
+		}
+	}
+	return out
 }
 
 func mapSliceOrStringListForPrompt(value interface{}, maxItems int, maxRunes int) []interface{} {

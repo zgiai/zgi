@@ -45,14 +45,18 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 		return nil, newFinalizedStreamError(err)
 	}
-	userMemoryUsage, err := s.runUserMemoryPreflight(runCtx, persistCtx, prepared, eventCallback)
-	if err != nil {
-		if s.isStoppedContext(runCtx, prepared.Message.ID) {
-			_ = s.persistStoppedAnswer(persistCtx, prepared, "", userMemoryUsage)
-			return nil, ErrMessageStopped
+	userMemoryUsage := prepared.UserMemoryPreflightUsage
+	if !prepared.UserMemoryPreflightDone {
+		var err error
+		userMemoryUsage, err = s.runUserMemoryPreflight(runCtx, persistCtx, prepared, eventCallback)
+		if err != nil {
+			if s.isStoppedContext(runCtx, prepared.Message.ID) {
+				_ = s.persistStoppedAnswer(persistCtx, prepared, "", userMemoryUsage)
+				return nil, ErrMessageStopped
+			}
+			s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
+			return nil, newFinalizedStreamError(err)
 		}
-		s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
-		return nil, newFinalizedStreamError(err)
 	}
 	agentMemoryUsage, err := s.runNativeAgentMemoryPreflight(runCtx, persistCtx, prepared, eventCallback)
 	preflightUsage := mergeUsage(userMemoryUsage, agentMemoryUsage)
@@ -358,13 +362,20 @@ func (s *service) prepareLLMRequestForRun(ctx context.Context, prepared *Prepare
 		return err
 	}
 	prepared.parts.ContextControl = contextResult.Metadata
-	s.applyContextualAIChatModelTurnIntent(ctx, prepared.Scope, prepared.Conversation, prepared.RunConfig, prepared.parts)
+	prepared.LLMRequest = newLLMChatRequest(prepared.parts, contextResult.Messages)
+	preflight, err := s.runContextualPreparePreflights(ctx, prepared.Scope, prepared.Conversation, prepared.RunConfig, prepared.parts, prepared.LLMRequest)
+	if err != nil {
+		return err
+	}
+	if preflight != nil {
+		prepared.UserMemoryPreflightDone = preflight.UserMemoryDone
+		prepared.UserMemoryPreflightUsage = preflight.UserMemoryUsage
+	}
 	metadata = streamingMessageMetadataWithTaskID(prepared.parts, prepared.Message.ID.String())
 	prepared.Message.Metadata = metadata
 	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
 		return err
 	}
-	prepared.LLMRequest = newLLMChatRequest(prepared.parts, contextResult.Messages)
 	return nil
 }
 
@@ -377,7 +388,7 @@ func firstStreamEventCallback(callbacks []func(StreamEvent) error) func(StreamEv
 
 func newBillingAppContext(prepared *PreparedChat) *llmclient.AppContext {
 	source := ""
-	if prepared.Message.BillingReasonSource != nil {
+	if prepared.Message != nil && prepared.Message.BillingReasonSource != nil {
 		source = strings.TrimSpace(*prepared.Message.BillingReasonSource)
 	}
 	if source == "" {

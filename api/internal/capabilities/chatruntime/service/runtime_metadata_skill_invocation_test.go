@@ -130,6 +130,86 @@ func TestTurnStateContinuationSummaryIncludesUserVisibleDeliverable(t *testing.T
 	}
 }
 
+func TestMergeSkillInvocationMetadataBuildsStructuredTurnState(t *testing.T) {
+	metadata := mergeSkillInvocationMetadata(nil, []map[string]interface{}{{
+		"kind":       "tool_call",
+		"skill_id":   skills.SkillAgentManagement,
+		"tool_name":  "create_agent",
+		"status":     "success",
+		"runtime_id": "tool-call:agent-management:create_agent:test",
+		"arguments": map[string]interface{}{
+			"name": "Story Agent",
+		},
+		"result": map[string]interface{}{
+			"agent_id":   "agent-1",
+			"agent_name": "Story Agent",
+			"status":     "completed",
+		},
+	}})
+
+	state := mapFromOperationContext(metadata["turn_state"])
+	if len(state) == 0 {
+		t.Fatal("turn_state is empty, want structured state")
+	}
+	if steps := mapSliceFromAny(state["steps"]); len(steps) != 1 {
+		t.Fatalf("turn_state.steps = %#v, want one step", state["steps"])
+	}
+	results := mapSliceFromAny(state["tool_results"])
+	if len(results) != 1 {
+		t.Fatalf("turn_state.tool_results = %#v, want one tool result", state["tool_results"])
+	}
+	target := mapFromOperationContext(results[0]["target"])
+	if got := stringFromAny(target["name"]); got != "Story Agent" {
+		t.Fatalf("tool result target name = %q, want Story Agent; result=%#v", got, results[0])
+	}
+	if assets := mapSliceFromAny(state["assets"]); len(assets) != 1 {
+		t.Fatalf("turn_state.assets = %#v, want created asset", state["assets"])
+	}
+}
+
+func TestTurnStateContinuationSummaryIncludesStructuredExecutionLedger(t *testing.T) {
+	message := &runtimemodel.Message{
+		Metadata: map[string]interface{}{
+			"turn_state": map[string]interface{}{
+				"steps": []interface{}{
+					map[string]interface{}{
+						"kind":      "tool_call",
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "create_agent",
+						"status":    "success",
+						"target": map[string]interface{}{
+							"asset_type": "agent",
+							"name":       "Story Agent",
+						},
+					},
+				},
+				"tool_results": []interface{}{
+					map[string]interface{}{
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "create_agent",
+						"status":    "success",
+						"target": map[string]interface{}{
+							"asset_type": "agent",
+							"name":       "Story Agent",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	summary := turnStateContinuationSummary(message)
+	if len(summary) == 0 {
+		t.Fatal("turnStateContinuationSummary() = nil, want structured summary")
+	}
+	if got := len(mapSliceFromAny(summary["steps"])); got != 1 {
+		t.Fatalf("summary.steps len = %d, want 1; summary=%#v", got, summary)
+	}
+	if got := len(mapSliceFromAny(summary["tool_results"])); got != 1 {
+		t.Fatalf("summary.tool_results len = %d, want 1; summary=%#v", got, summary)
+	}
+}
+
 func TestCurrentTurnAuthoritativeStateMessageRequiresRuntimeState(t *testing.T) {
 	message := &runtimemodel.Message{Query: "create an agent"}
 

@@ -62,14 +62,23 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 		return nil, err
 	}
 	var llmRequest *adapter.ChatRequest
+	var userMemoryPreflightDone bool
+	var userMemoryPreflightUsage *adapter.Usage
 	if parts.Attachments == nil || len(parts.Attachments.Files) == 0 {
 		contextResult, err := s.buildUpstreamMessages(ctx, scope, parentID, parts)
 		if err != nil {
 			return nil, err
 		}
 		parts.ContextControl = contextResult.Metadata
-		s.applyContextualAIChatModelTurnIntent(ctx, scope, conversation, config, parts)
 		llmRequest = newLLMChatRequest(parts, contextResult.Messages)
+		preflight, err := s.runContextualPreparePreflights(ctx, scope, conversation, config, parts, llmRequest)
+		if err != nil {
+			return nil, err
+		}
+		if preflight != nil {
+			userMemoryPreflightDone = preflight.UserMemoryDone
+			userMemoryPreflightUsage = preflight.UserMemoryUsage
+		}
 	}
 
 	message := newStreamingMessage(conversation.ID, parentID, parts)
@@ -101,6 +110,9 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 		RunConfig:    config,
 		ParentID:     parentID,
 		parts:        parts,
+
+		UserMemoryPreflightDone:  userMemoryPreflightDone,
+		UserMemoryPreflightUsage: userMemoryPreflightUsage,
 	}, nil
 }
 
@@ -154,7 +166,11 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 		return nil, err
 	}
 	parts.ContextControl = contextResult.Metadata
-	s.applyContextualAIChatModelTurnIntent(ctx, scope, conversation, config, parts)
+	llmRequest := newLLMChatRequest(parts, contextResult.Messages)
+	preflight, err := s.runContextualPreparePreflights(ctx, scope, conversation, config, parts, llmRequest)
+	if err != nil {
+		return nil, err
+	}
 	replacement := replacementRootMessage(message, parts)
 	if err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepos := repository.NewRepositories(tx)
@@ -188,13 +204,23 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 	return &PreparedChat{
 		Conversation: conversation,
 		Message:      replacement,
-		LLMRequest:   newLLMChatRequest(parts, contextResult.Messages),
+		LLMRequest:   llmRequest,
 		ReplaceRoot:  true,
 		Scope:        scope,
 		Caller:       caller,
 		RunConfig:    config,
 		parts:        parts,
+
+		UserMemoryPreflightDone:  preflight != nil && preflight.UserMemoryDone,
+		UserMemoryPreflightUsage: contextualPreflightUserMemoryUsage(preflight),
 	}, nil
+}
+
+func contextualPreflightUserMemoryUsage(preflight *contextualPreparePreflightResult) *adapter.Usage {
+	if preflight == nil {
+		return nil
+	}
+	return preflight.UserMemoryUsage
 }
 
 func (s *service) ensureMember(ctx context.Context, scope Scope) error {

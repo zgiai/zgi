@@ -684,6 +684,7 @@ func skillLoopCompletionPlanSummary(plan map[string]interface{}) map[string]inte
 	for _, key := range []string{
 		"status",
 		"intent",
+		"task_type",
 		"pending_next_action",
 		"current_page",
 		"original_user_goal",
@@ -699,6 +700,21 @@ func skillLoopCompletionPlanSummary(plan map[string]interface{}) map[string]inte
 	modelDecides := operationPlanModelDecidesTools(plan)
 	if value, ok := plan["approval_required"].(bool); ok {
 		summary["approval_required"] = value
+	}
+	if value, ok := plan["needs_exact_agent_runtime"].(bool); ok {
+		summary["needs_exact_agent_runtime"] = value
+	}
+	if value, ok := plan["current_context_may_be_summary"].(bool); ok {
+		summary["current_context_may_be_summary"] = value
+	}
+	if phases := stringSliceFromAny(plan["phase_goals"]); len(phases) > 0 {
+		summary["phase_goals"] = compactStringSliceForPrompt(phases, 8, 180)
+	}
+	if evidence := stringSliceFromAny(plan["evidence_required"]); len(evidence) > 0 {
+		summary["evidence_required"] = compactStringSliceForPrompt(evidence, 10, 180)
+	}
+	if capabilities := stringSliceFromAny(plan["recommended_capabilities"]); len(capabilities) > 0 {
+		summary["recommended_capabilities"] = compactStringSliceForPrompt(capabilities, 10, 160)
 	}
 	if actions := stringSliceFromAny(plan["approval_actions"]); len(actions) > 0 {
 		summary["approval_actions"] = compactStringSliceForPrompt(actions, 8, 180)
@@ -4346,6 +4362,9 @@ func skillLoopShouldUsePlainStreamForPassiveAnswer(prepared *PreparedChat) bool 
 	if !strings.EqualFold(strings.TrimSpace(strategy.Approval), "none") {
 		return false
 	}
+	if strategy.NeedsExactAgentRuntime {
+		return false
+	}
 	effect := strings.ToLower(strings.TrimSpace(strategy.AssetEffect))
 	if effect != "" && effect != "none" {
 		return false
@@ -4359,30 +4378,43 @@ func skillLoopShouldUsePlainStreamForPassiveAnswer(prepared *PreparedChat) bool 
 // AIChatTurnStrategy is the typed, internal plan hint for one contextual sidebar turn.
 // It is guidance for the skill loop, not an executable action plan.
 type AIChatTurnStrategy struct {
-	Surface           string                      `json:"surface"`
-	CurrentPage       string                      `json:"current_page,omitempty"`
-	Intent            string                      `json:"intent"`
-	TargetPage        string                      `json:"target_page,omitempty"`
-	RouteRequired     bool                        `json:"route_required"`
-	PrimarySkills     []string                    `json:"primary_skills"`
-	SupportingSkills  []string                    `json:"supporting_skills"`
-	AssetEffect       string                      `json:"asset_effect"`
-	AssetRisk         string                      `json:"asset_risk"`
-	Approval          string                      `json:"approval"`
-	SuccessCriteria   []string                    `json:"success_criteria"`
-	ObservationPoints []string                    `json:"observation_points"`
-	ArtifactSource    string                      `json:"artifact_source,omitempty"`
-	ToolChoiceMode    string                      `json:"tool_choice_mode,omitempty"`
-	ExecutionScope    string                      `json:"execution_scope,omitempty"`
-	WaitForContinue   bool                        `json:"wait_for_continue,omitempty"`
-	Avoid             []string                    `json:"avoid,omitempty"`
-	CapabilityGoals   []AIChatAgentCapabilityGoal `json:"capability_goals,omitempty"`
+	Surface                  string                      `json:"surface"`
+	CurrentPage              string                      `json:"current_page,omitempty"`
+	Source                   string                      `json:"source,omitempty"`
+	SourceReason             string                      `json:"source_reason,omitempty"`
+	Intent                   string                      `json:"intent"`
+	TaskType                 string                      `json:"task_type,omitempty"`
+	TargetPage               string                      `json:"target_page,omitempty"`
+	RouteRequired            bool                        `json:"route_required"`
+	PrimarySkills            []string                    `json:"primary_skills"`
+	SupportingSkills         []string                    `json:"supporting_skills"`
+	PhaseGoals               []string                    `json:"phase_goals,omitempty"`
+	EvidenceRequired         []string                    `json:"evidence_required,omitempty"`
+	RecommendedCapabilities  []string                    `json:"recommended_capabilities,omitempty"`
+	NeedsExactAgentRuntime   bool                        `json:"needs_exact_agent_runtime,omitempty"`
+	CurrentContextMaySummary bool                        `json:"current_context_may_be_summary,omitempty"`
+	AssetEffect              string                      `json:"asset_effect"`
+	AssetRisk                string                      `json:"asset_risk"`
+	Approval                 string                      `json:"approval"`
+	SuccessCriteria          []string                    `json:"success_criteria"`
+	ObservationPoints        []string                    `json:"observation_points"`
+	ArtifactSource           string                      `json:"artifact_source,omitempty"`
+	ToolChoiceMode           string                      `json:"tool_choice_mode,omitempty"`
+	ExecutionScope           string                      `json:"execution_scope,omitempty"`
+	WaitForContinue          bool                        `json:"wait_for_continue,omitempty"`
+	Avoid                    []string                    `json:"avoid,omitempty"`
+	CapabilityGoals          []AIChatAgentCapabilityGoal `json:"capability_goals,omitempty"`
 
 	RequiredNextTool       *AIChatTurnStrategyTool       `json:"required_next_tool,omitempty"`
 	RemainingRouteSequence []AIChatTurnStrategyRouteStep `json:"remaining_route_sequence,omitempty"`
 	PlannedTools           []AIChatTurnStrategyTool      `json:"planned_tools,omitempty"`
 	StructuredPlan         *AIChatStructuredPlan         `json:"structured_plan,omitempty"`
 }
+
+const (
+	aiChatTurnStrategySourceModelIntent  = "model_intent"
+	aiChatTurnStrategySourceRuleFallback = "rule_fallback"
+)
 
 type AIChatTurnStrategyTool struct {
 	SkillID       string            `json:"skill_id"`
@@ -4419,6 +4451,8 @@ func contextualAIChatTurnStrategyFromParts(parts *chatRequestParts) *AIChatTurnS
 	strategy := &AIChatTurnStrategy{
 		Surface:           normalizeAIChatSurface(parts.Surface),
 		CurrentPage:       currentPage,
+		Source:            aiChatTurnStrategySourceRuleFallback,
+		SourceReason:      "base_contextual_sidebar_strategy",
 		Intent:            "answer_or_explain_zgi_context",
 		TargetPage:        currentPage,
 		RouteRequired:     false,
@@ -4468,31 +4502,54 @@ func contextualAIChatTurnStrategyFromParts(parts *chatRequestParts) *AIChatTurnS
 
 	switch {
 	case shouldUseAgentManagementModelDecidesStrategy(parts):
+		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceRuleFallback, "agent_management_context_or_query_rule")
 		strategy = contextualAgentManagementStrategy(parts, strategy)
 	case isConsoleNavigationIntent(parts.Query) && consoleNavigationResolvedTargetCount(parts.Query) > 1:
+		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceRuleFallback, "multi_target_console_navigation_rule")
 		strategy = contextualNavigationStrategy(parts, strategy)
 	case isContinuationIntent(parts.Query):
+		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceRuleFallback, "continuation_query_rule")
 		strategy = contextualContinuationStrategy(parts, strategy)
 	case isManagedFileCreateIntent(parts.Query):
+		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceRuleFallback, "managed_file_create_query_rule")
 		strategy = contextualManagedFileCreateStrategy(parts, strategy)
 	case isTemporaryFileGenerateIntent(parts.Query):
+		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceRuleFallback, "temporary_file_generate_query_rule")
 		strategy = contextualTemporaryFileGenerateStrategy(parts, strategy)
 	case strategy.RouteRequired && isConsoleNavigationIntent(parts.Query):
+		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceRuleFallback, "route_required_navigation_query_rule")
 		strategy = contextualNavigationStrategy(parts, strategy)
 	case isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
 		isFileDeleteIntent(parts.Query):
+		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceRuleFallback, "file_page_delete_query_rule")
 		strategy = contextualFileDeleteStrategy(parts, strategy)
 	case isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
 		isFileReadIntent(parts.Query):
+		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceRuleFallback, "file_page_read_query_rule")
 		strategy = contextualFileReadStrategy(parts, strategy)
 	case shouldUseAvailableRouteNavigationStrategy(parts, strategy):
+		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceRuleFallback, "available_route_navigation_rule")
 		strategy = contextualNavigationStrategy(parts, strategy)
 	default:
+		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceRuleFallback, "default_contextual_page_answer_rule")
 		if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
 			strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillConsoleNavigator)
 		}
 	}
 	return finalizeAIChatTurnStrategy(parts, strategy)
+}
+
+func markAIChatTurnStrategySource(strategy *AIChatTurnStrategy, source string, reason string) *AIChatTurnStrategy {
+	if strategy == nil {
+		return nil
+	}
+	if source = strings.TrimSpace(source); source != "" {
+		strategy.Source = source
+	}
+	if reason = strings.TrimSpace(reason); reason != "" {
+		strategy.SourceReason = reason
+	}
+	return strategy
 }
 
 func shouldUseAgentManagementModelDecidesStrategy(parts *chatRequestParts) bool {
@@ -4507,6 +4564,9 @@ func shouldUseAgentManagementModelDecidesStrategy(parts *chatRequestParts) bool 
 		return false
 	}
 	if isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		if strings.TrimSpace(parts.ModelTurnIntentError) != "" && !agentIntent {
+			return false
+		}
 		return true
 	}
 	if agentIntent {

@@ -80,6 +80,30 @@ func operationPlanFromTurnStrategy(taskID string, parts *chatRequestParts, strat
 		},
 		"completion_criteria": operationPlanCompletionCriteria(steps),
 	}
+	if taskType := strings.TrimSpace(strategy.TaskType); taskType != "" {
+		plan["task_type"] = taskType
+	}
+	if len(strategy.PhaseGoals) > 0 {
+		plan["phase_goals"] = compactStringSliceForPrompt(strategy.PhaseGoals, 8, 180)
+	}
+	if len(strategy.EvidenceRequired) > 0 {
+		plan["evidence_required"] = compactStringSliceForPrompt(strategy.EvidenceRequired, 10, 180)
+	}
+	if len(strategy.RecommendedCapabilities) > 0 {
+		plan["recommended_capabilities"] = compactStringSliceForPrompt(strategy.RecommendedCapabilities, 10, 160)
+	}
+	if strategy.NeedsExactAgentRuntime {
+		plan["needs_exact_agent_runtime"] = true
+	}
+	if strategy.CurrentContextMaySummary {
+		plan["current_context_may_be_summary"] = true
+	}
+	if source := strings.TrimSpace(strategy.Source); source != "" {
+		plan["strategy_source"] = source
+	}
+	if reason := strings.TrimSpace(strategy.SourceReason); reason != "" {
+		plan["strategy_source_reason"] = reason
+	}
 	if len(phases) > 0 {
 		plan["phases"] = mapsToInterfaceSlice(phases)
 	}
@@ -145,6 +169,35 @@ func operationPlanPhasesFromTurnStrategy(strategy *AIChatTurnStrategy) []map[str
 		return nil
 	}
 	statusPending := operationPlanStepStatusPending
+	if len(strategy.PhaseGoals) > 0 {
+		phases := make([]map[string]interface{}, 0, len(strategy.PhaseGoals)+1)
+		if strategy.RouteRequired || strings.TrimSpace(strategy.TargetPage) != "" {
+			phases = append(phases, map[string]interface{}{
+				"id":       "route_if_needed",
+				"title":    "Navigate only when the current page does not provide the needed context",
+				"status":   statusPending,
+				"evidence": []interface{}{"current route", "target route", "client navigation result"},
+			})
+		}
+		for idx, goal := range compactStringSliceForPrompt(strategy.PhaseGoals, 8, 180) {
+			phase := map[string]interface{}{
+				"id":     fmt.Sprintf("semantic_phase_%d", idx+1),
+				"title":  goal,
+				"status": statusPending,
+			}
+			if len(strategy.EvidenceRequired) > 0 {
+				phase["evidence"] = stringSliceToInterfaceSlice(compactStringSliceForPrompt(strategy.EvidenceRequired, 6, 180))
+			}
+			phases = append(phases, phase)
+		}
+		if successCriteria := operationPlanSuccessCriteriaFromTurnStrategy(strategy); len(successCriteria) > 0 && len(phases) > 0 {
+			phases[len(phases)-1]["success_criteria"] = compactStringSliceForPrompt(successCriteria, 8, 240)
+		}
+		if len(strategy.ObservationPoints) > 0 && len(phases) > 0 {
+			phases[len(phases)-1]["observation_points"] = compactStringSliceForPrompt(strategy.ObservationPoints, 8, 240)
+		}
+		return phases
+	}
 	phases := []map[string]interface{}{
 		{
 			"id":       "understand_context",
@@ -2078,6 +2131,7 @@ func operationPlanSyncStrategyState(plan map[string]interface{}) {
 	operationPlanStrategyStateSetString(state, "user_goal", stringFromAny(plan["original_user_goal"]))
 	operationPlanStrategyStateSetString(state, "status", stringFromAny(plan["status"]))
 	operationPlanStrategyStateSetString(state, "intent", stringFromAny(plan["intent"]))
+	operationPlanStrategyStateSetString(state, "task_type", stringFromAny(plan["task_type"]))
 	operationPlanStrategyStateSetString(state, "current_page", stringFromAny(plan["current_page"]))
 	operationPlanStrategyStateSetString(state, "pending_next_action", stringFromAny(plan["pending_next_action"]))
 	operationPlanStrategyStateSetString(state, "risk_level", stringFromAny(plan["risk_level"]))
@@ -2090,6 +2144,19 @@ func operationPlanSyncStrategyState(plan map[string]interface{}) {
 	operationPlanStrategyStateSetStringSlice(state, "approval_actions", stringSliceFromAny(plan["approval_actions"]))
 	operationPlanStrategyStateSetStringSlice(state, "success_criteria", stringSliceFromAny(plan["success_criteria"]))
 	operationPlanStrategyStateSetStringSlice(state, "completion_criteria", stringSliceFromAny(plan["completion_criteria"]))
+	operationPlanStrategyStateSetStringSlice(state, "phase_goals", stringSliceFromAny(plan["phase_goals"]))
+	operationPlanStrategyStateSetStringSlice(state, "evidence_required", stringSliceFromAny(plan["evidence_required"]))
+	operationPlanStrategyStateSetStringSlice(state, "recommended_capabilities", stringSliceFromAny(plan["recommended_capabilities"]))
+	if value, ok := plan["needs_exact_agent_runtime"].(bool); ok {
+		state["needs_exact_agent_runtime"] = value
+	} else {
+		delete(state, "needs_exact_agent_runtime")
+	}
+	if value, ok := plan["current_context_may_be_summary"].(bool); ok {
+		state["current_context_may_be_summary"] = value
+	} else {
+		delete(state, "current_context_may_be_summary")
+	}
 	if target := mapFromOperationContext(plan["target_resource"]); len(target) > 0 {
 		state["target_resource"] = target
 	} else if target := mapFromOperationContext(plan["asset_target"]); len(target) > 0 {
@@ -6432,6 +6499,14 @@ func operationPlanStepBlocksCompletion(step map[string]interface{}) bool {
 }
 
 func interfaceSliceFromMapSlice(input []map[string]interface{}) []interface{} {
+	out := make([]interface{}, 0, len(input))
+	for _, item := range input {
+		out = append(out, item)
+	}
+	return out
+}
+
+func stringSliceToInterfaceSlice(input []string) []interface{} {
 	out := make([]interface{}, 0, len(input))
 	for _, item := range input {
 		out = append(out, item)

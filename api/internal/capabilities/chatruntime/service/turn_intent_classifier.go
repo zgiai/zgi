@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
@@ -13,38 +14,84 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
-const modelTurnIntentMinimumConfidence = 0.5
+const (
+	modelTurnIntentMinimumConfidence = 0.5
+	modelTurnIntentMaxTokens         = 820
+	modelTurnIntentPreviewRunes      = 500
+)
+
+type modelTurnIntentClassifierError struct {
+	message string
+	preview string
+	err     error
+}
+
+func (e *modelTurnIntentClassifierError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.message
+}
+
+func (e *modelTurnIntentClassifierError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
 
 type AIChatModelTurnIntent struct {
-	Intent           string   `json:"intent"`
-	TargetPage       string   `json:"target_page,omitempty"`
-	RouteRequired    *bool    `json:"route_required,omitempty"`
-	AssetEffect      string   `json:"asset_effect,omitempty"`
-	AssetRisk        string   `json:"asset_risk,omitempty"`
-	Approval         string   `json:"approval,omitempty"`
-	PrimarySkills    []string `json:"primary_skills,omitempty"`
-	SupportingSkills []string `json:"supporting_skills,omitempty"`
-	Confidence       float64  `json:"confidence,omitempty"`
-	Reason           string   `json:"reason,omitempty"`
+	Intent                   string   `json:"intent"`
+	TaskType                 string   `json:"task_type,omitempty"`
+	Phases                   []string `json:"phases,omitempty"`
+	EvidenceRequired         []string `json:"evidence_required,omitempty"`
+	RecommendedCapabilities  []string `json:"recommended_capabilities,omitempty"`
+	CompletionCriteria       []string `json:"completion_criteria,omitempty"`
+	NeedsExactAgentRuntime   bool     `json:"needs_exact_agent_runtime,omitempty"`
+	CurrentContextMaySummary bool     `json:"current_context_may_be_summary,omitempty"`
+	TargetPage               string   `json:"target_page,omitempty"`
+	RouteRequired            *bool    `json:"route_required,omitempty"`
+	AssetEffect              string   `json:"asset_effect,omitempty"`
+	AssetRisk                string   `json:"asset_risk,omitempty"`
+	Approval                 string   `json:"approval,omitempty"`
+	Confidence               float64  `json:"confidence,omitempty"`
+	Reason                   string   `json:"reason,omitempty"`
 }
 
 func (s *service) applyContextualAIChatModelTurnIntent(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, config RunConfig, parts *chatRequestParts) {
-	if s == nil || s.llmClient == nil || conversation == nil || parts == nil {
-		return
-	}
-	if parts.ModelTurnIntent != nil || strings.TrimSpace(parts.ModelTurnIntentError) != "" {
-		return
-	}
-	if !isContextualAIChatSurface(parts.Surface) || !chatPartsSkillsEnabled(parts) {
+	if !s.shouldClassifyContextualAIChatTurnIntent(conversation, parts) {
 		return
 	}
 	intent, err := s.classifyContextualAIChatTurnIntent(ctx, scope, conversation, config, parts)
+	s.applyContextualAIChatModelTurnIntentResult(ctx, conversation, parts, intent, err)
+}
+
+func (s *service) shouldClassifyContextualAIChatTurnIntent(conversation *runtimemodel.Conversation, parts *chatRequestParts) bool {
+	if s == nil || s.llmClient == nil || conversation == nil || parts == nil {
+		return false
+	}
+	if parts.ModelTurnIntent != nil || strings.TrimSpace(parts.ModelTurnIntentError) != "" {
+		return false
+	}
+	return isContextualAIChatSurface(parts.Surface) && chatPartsSkillsEnabled(parts)
+}
+
+func (s *service) applyContextualAIChatModelTurnIntentResult(ctx context.Context, conversation *runtimemodel.Conversation, parts *chatRequestParts, intent *AIChatModelTurnIntent, err error) {
+	if parts == nil {
+		return
+	}
 	if err != nil {
 		parts.ModelTurnIntentError = err.Error()
-		logger.DebugContext(ctx, "aichat model turn intent classification skipped",
-			"conversation_id", conversation.ID.String(),
+		fields := []interface{}{
 			"error", err.Error(),
-		)
+		}
+		if conversation != nil {
+			fields = append([]interface{}{"conversation_id", conversation.ID.String()}, fields...)
+		}
+		if classifierErr, ok := err.(*modelTurnIntentClassifierError); ok && strings.TrimSpace(classifierErr.preview) != "" {
+			fields = append(fields, "classifier_content_preview", classifierErr.preview)
+		}
+		logger.DebugContext(ctx, "aichat model turn intent classification skipped", fields...)
 		return
 	}
 	parts.ModelTurnIntent = intent
@@ -59,7 +106,7 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 	if err != nil {
 		return nil, err
 	}
-	maxTokens := 260
+	maxTokens := modelTurnIntentMaxTokens
 	temperature := 0.0
 	resp, err := s.llmClient.AppChat(ctx, newIntentClassifierAppContext(scope, conversation, config), &adapter.ChatRequest{
 		Provider:       parts.Provider,
@@ -71,9 +118,9 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 			{
 				Role: "system",
 				Content: strings.Join([]string{
-					"You classify one ZGI sidebar assistant turn. Return JSON only.",
-					"Do not choose concrete tool arguments. Do not create an execution plan.",
-					"Pick exactly one intent from:",
+					"You create a lightweight semantic Turn Plan for one ZGI sidebar assistant turn. Return JSON only.",
+					"This is not a tool script. Do not choose concrete tool names, tool arguments, or ordered tool calls.",
+					"Pick exactly one broad intent label from:",
 					"- answer_or_explain_zgi_context: answer questions about ZGI, the current page, or assistant capabilities without asset mutation.",
 					"- navigate_console_page: the user mainly asks to open or switch to a ZGI console page.",
 					"- manage_agent_asset: create, edit, delete, inspect, bind, unbind, configure, or verify Agents.",
@@ -82,7 +129,11 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 					"- save_generated_file_to_file_management: save a generated/external artifact into File Management.",
 					"- generate_temporary_file_artifact: generate an artifact only for the chat response, not File Management.",
 					"- continue_previous_task: continue, retry, resume, or finish a previously paused operation.",
-					"Respond with keys: intent, confidence, reason, target_page, route_required, asset_effect, asset_risk, approval, primary_skills, supporting_skills.",
+					"Also describe the user goal as phases and needed evidence. Phases are semantic checkpoints, not mandatory tool order.",
+					"Use recommended_capabilities for capabilities the executor may need, such as exact_agent_runtime, visible_file_content, page_navigation, generated_artifact, or asset_mutation.",
+					"If the user asks for exact Agent prompt/config/runtime analysis and page context may be summary-level, set needs_exact_agent_runtime=true.",
+					"Respond with keys: intent, task_type, phases, evidence_required, recommended_capabilities, completion_criteria, needs_exact_agent_runtime, current_context_may_be_summary, confidence, reason, target_page, route_required, asset_effect, asset_risk, approval.",
+					"Do not output skill IDs or tool names. Tool selection is handled later by the model from enabled tool schemas and latest evidence.",
 					"Use confidence from 0 to 1. If unsure, choose the closest intent with confidence below 0.5.",
 				}, "\n"),
 			},
@@ -95,37 +146,267 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 	if resp == nil || len(resp.Choices) == 0 {
 		return nil, fmt.Errorf("empty classifier response")
 	}
-	content := strings.TrimSpace(messageContentText(resp.Choices[0].Message.Content))
-	if content == "" {
-		return nil, fmt.Errorf("empty classifier content")
-	}
-	var intent AIChatModelTurnIntent
-	if err := json.Unmarshal([]byte(content), &intent); err != nil {
-		return nil, fmt.Errorf("parse classifier json: %w", err)
+	intent, content, err := parseModelTurnIntentMessage(resp.Choices[0].Message)
+	if err != nil {
+		return nil, &modelTurnIntentClassifierError{
+			message: err.Error(),
+			preview: classifierContentPreview(content),
+			err:     err,
+		}
 	}
 	intent.Intent = normalizeModelTurnIntent(intent.Intent)
 	if intent.Intent == "" {
 		return nil, fmt.Errorf("unsupported classifier intent")
 	}
 	intent.TargetPage = strings.TrimSpace(intent.TargetPage)
+	intent.TaskType = strings.TrimSpace(intent.TaskType)
+	intent.Phases = normalizeModelTurnPlanStrings(intent.Phases, 8, 160)
+	intent.EvidenceRequired = normalizeModelTurnPlanStrings(intent.EvidenceRequired, 10, 160)
+	intent.RecommendedCapabilities = normalizeModelTurnPlanStrings(intent.RecommendedCapabilities, 10, 120)
+	intent.CompletionCriteria = normalizeModelTurnPlanStrings(intent.CompletionCriteria, 8, 180)
 	intent.AssetEffect = strings.TrimSpace(intent.AssetEffect)
 	intent.AssetRisk = strings.TrimSpace(intent.AssetRisk)
 	intent.Approval = strings.TrimSpace(intent.Approval)
-	intent.PrimarySkills = normalizedSkillIDs(intent.PrimarySkills)
-	intent.SupportingSkills = normalizedSkillIDs(intent.SupportingSkills)
 	intent.Reason = trimRunes(strings.TrimSpace(intent.Reason), 240)
 	if intent.Confidence < modelTurnIntentMinimumConfidence {
 		return nil, fmt.Errorf("classifier confidence %.2f below %.2f for %s", intent.Confidence, modelTurnIntentMinimumConfidence, intent.Intent)
 	}
-	return &intent, nil
+	return intent, nil
+}
+
+func parseModelTurnIntentMessage(message adapter.Message) (*AIChatModelTurnIntent, string, error) {
+	type candidate struct {
+		content string
+		source  string
+	}
+	finalContent := strings.TrimSpace(messageContentText(message.Content))
+	reasoningContent := strings.TrimSpace(message.ReasoningContent)
+	candidates := make([]candidate, 0, 2)
+	if finalContent != "" {
+		candidates = append(candidates, candidate{content: finalContent, source: "content"})
+	}
+	if reasoningContent != "" && classifierJSONText(reasoningContent) != "" {
+		candidates = append(candidates, candidate{content: reasoningContent, source: "reasoning_content"})
+	}
+	if len(candidates) == 0 {
+		if reasoningContent != "" {
+			return nil, reasoningContent, fmt.Errorf("empty classifier content: reasoning content did not contain json")
+		}
+		return nil, "", fmt.Errorf("empty classifier content")
+	}
+
+	var firstErr error
+	var firstContent string
+	for _, item := range candidates {
+		intent, err := parseModelTurnIntentContent(item.content)
+		if err == nil {
+			return intent, item.content, nil
+		}
+		if firstErr == nil {
+			firstErr = fmt.Errorf("%s: %w", item.source, err)
+			firstContent = item.content
+		}
+	}
+	return nil, firstContent, firstErr
+}
+
+func parseModelTurnIntentContent(content string) (*AIChatModelTurnIntent, error) {
+	jsonText := classifierJSONText(content)
+	if strings.TrimSpace(jsonText) == "" {
+		return nil, fmt.Errorf("empty classifier content")
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(jsonText), &raw); err != nil {
+		return nil, fmt.Errorf("parse classifier json: %w", err)
+	}
+	intent := &AIChatModelTurnIntent{
+		Intent:                   jsonRawString(raw["intent"]),
+		TaskType:                 firstNonEmptyString(jsonRawString(raw["task_type"]), jsonRawString(raw["goal_type"])),
+		Phases:                   jsonRawStringSlice(raw["phases"]),
+		EvidenceRequired:         firstNonEmptyStringSlice(jsonRawStringSlice(raw["evidence_required"]), jsonRawStringSlice(raw["needed_evidence"])),
+		RecommendedCapabilities:  firstNonEmptyStringSlice(jsonRawStringSlice(raw["recommended_capabilities"]), jsonRawStringSlice(raw["needed_capabilities"])),
+		CompletionCriteria:       firstNonEmptyStringSlice(jsonRawStringSlice(raw["completion_criteria"]), jsonRawStringSlice(raw["success_criteria"])),
+		NeedsExactAgentRuntime:   jsonRawBool(raw["needs_exact_agent_runtime"]),
+		CurrentContextMaySummary: jsonRawBool(raw["current_context_may_be_summary"]),
+		TargetPage:               jsonRawString(raw["target_page"]),
+		RouteRequired:            jsonRawBoolPtr(raw["route_required"]),
+		AssetEffect:              jsonRawString(raw["asset_effect"]),
+		AssetRisk:                jsonRawString(raw["asset_risk"]),
+		Approval:                 jsonRawApproval(raw["approval"]),
+		Confidence:               jsonRawFloat64(raw["confidence"]),
+		Reason:                   jsonRawString(raw["reason"]),
+	}
+	return intent, nil
+}
+
+func classifierJSONText(content string) string {
+	value := strings.TrimSpace(content)
+	if value == "" {
+		return ""
+	}
+	if strings.HasPrefix(value, "```") {
+		lines := strings.Split(value, "\n")
+		if len(lines) > 1 {
+			lines = lines[1:]
+			if len(lines) > 0 && strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), "```") {
+				lines = lines[:len(lines)-1]
+			}
+			value = strings.TrimSpace(strings.Join(lines, "\n"))
+		}
+	}
+	if strings.HasPrefix(value, "{") {
+		return value
+	}
+	start := strings.Index(value, "{")
+	end := strings.LastIndex(value, "}")
+	if start >= 0 && end > start {
+		return strings.TrimSpace(value[start : end+1])
+	}
+	return ""
+}
+
+func classifierContentPreview(content string) string {
+	value := strings.Join(strings.Fields(strings.TrimSpace(content)), " ")
+	return trimRunes(value, modelTurnIntentPreviewRunes)
+}
+
+func jsonRawString(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err == nil {
+		return strings.TrimSpace(value)
+	}
+	var boolValue bool
+	if err := json.Unmarshal(raw, &boolValue); err == nil {
+		if boolValue {
+			return "true"
+		}
+		return "false"
+	}
+	var numberValue float64
+	if err := json.Unmarshal(raw, &numberValue); err == nil {
+		return strconv.FormatFloat(numberValue, 'f', -1, 64)
+	}
+	return ""
+}
+
+func jsonRawApproval(raw json.RawMessage) string {
+	value := strings.ToLower(strings.TrimSpace(jsonRawString(raw)))
+	switch value {
+	case "", "none", "false", "no", "not_required", "not required":
+		return "none"
+	case "true", "yes", "required", "ask", "approval_required", "requires_approval":
+		return "required"
+	default:
+		return value
+	}
+}
+
+func jsonRawBoolPtr(raw json.RawMessage) *bool {
+	if len(raw) == 0 {
+		return nil
+	}
+	var value bool
+	if err := json.Unmarshal(raw, &value); err == nil {
+		return &value
+	}
+	text := strings.ToLower(strings.TrimSpace(jsonRawString(raw)))
+	switch text {
+	case "true", "yes", "required":
+		value = true
+		return &value
+	case "false", "no", "none", "not_required":
+		value = false
+		return &value
+	default:
+		return nil
+	}
+}
+
+func jsonRawBool(raw json.RawMessage) bool {
+	if ptr := jsonRawBoolPtr(raw); ptr != nil {
+		return *ptr
+	}
+	return false
+}
+
+func jsonRawStringSlice(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var values []string
+	if err := json.Unmarshal(raw, &values); err == nil {
+		return values
+	}
+	var interfaces []interface{}
+	if err := json.Unmarshal(raw, &interfaces); err == nil {
+		out := make([]string, 0, len(interfaces))
+		for _, item := range interfaces {
+			if text := strings.TrimSpace(fmt.Sprint(item)); text != "" && text != "<nil>" {
+				out = append(out, text)
+			}
+		}
+		return out
+	}
+	if text := jsonRawString(raw); text != "" {
+		return []string{text}
+	}
+	return nil
+}
+
+func normalizeModelTurnPlanStrings(values []string, limit int, maxRunes int) []string {
+	if len(values) == 0 || limit <= 0 || maxRunes <= 0 {
+		return nil
+	}
+	out := make([]string, 0, minInt(len(values), limit))
+	for _, value := range values {
+		value = trimRunes(strings.TrimSpace(value), maxRunes)
+		if value == "" {
+			continue
+		}
+		out = appendUniqueStrings(out, value)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func firstNonEmptyStringSlice(values ...[]string) []string {
+	for _, value := range values {
+		if len(value) > 0 {
+			return value
+		}
+	}
+	return nil
+}
+
+func jsonRawFloat64(raw json.RawMessage) float64 {
+	if len(raw) == 0 {
+		return 0
+	}
+	var value float64
+	if err := json.Unmarshal(raw, &value); err == nil {
+		return value
+	}
+	text := strings.TrimSpace(jsonRawString(raw))
+	if text == "" {
+		return 0
+	}
+	parsed, err := strconv.ParseFloat(text, 64)
+	if err != nil {
+		return 0
+	}
+	return parsed
 }
 
 func contextualTurnIntentClassifierPayload(parts *chatRequestParts) map[string]interface{} {
 	payload := map[string]interface{}{
-		"user_request":   strings.TrimSpace(parts.Query),
-		"surface":        normalizeAIChatSurface(parts.Surface),
-		"current_page":   contextualTurnCurrentPage(parts),
-		"enabled_skills": append([]string(nil), parts.SkillIDs...),
+		"user_request": strings.TrimSpace(parts.Query),
+		"surface":      normalizeAIChatSurface(parts.Surface),
+		"current_page": contextualTurnCurrentPage(parts),
 	}
 	if parts.ContextControl != nil {
 		payload["context_control"] = copyStringAnyMap(parts.ContextControl)
@@ -210,7 +491,8 @@ func contextualAIChatTurnStrategyFromModelIntent(parts *chatRequestParts, strate
 	if parts == nil || strategy == nil || intent == nil || strings.TrimSpace(intent.Intent) == "" {
 		return strategy, false
 	}
-	applyModelTurnIntentHints(strategy, intent)
+	markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceModelIntent, modelTurnIntentSourceReason(intent))
+	applyModelTurnIntentHints(parts, strategy, intent)
 	switch intent.Intent {
 	case "manage_agent_asset":
 		if !skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) {
@@ -239,7 +521,53 @@ func contextualAIChatTurnStrategyFromModelIntent(parts *chatRequestParts, strate
 	}
 }
 
-func applyModelTurnIntentHints(strategy *AIChatTurnStrategy, intent *AIChatModelTurnIntent) {
+func modelTurnIntentSourceReason(intent *AIChatModelTurnIntent) string {
+	if intent == nil {
+		return ""
+	}
+	if reason := strings.TrimSpace(intent.Reason); reason != "" {
+		return truncateRunes(reason, 240)
+	}
+	if intentValue := strings.TrimSpace(intent.Intent); intentValue != "" {
+		return "classified_as_" + intentValue
+	}
+	return ""
+}
+
+func applyModelTurnIntentHints(parts *chatRequestParts, strategy *AIChatTurnStrategy, intent *AIChatModelTurnIntent) {
+	if strings.TrimSpace(intent.TaskType) != "" {
+		strategy.TaskType = strings.TrimSpace(intent.TaskType)
+	}
+	if len(intent.Phases) > 0 {
+		strategy.PhaseGoals = appendUniqueStrings(strategy.PhaseGoals, intent.Phases...)
+	}
+	if len(intent.EvidenceRequired) > 0 {
+		strategy.EvidenceRequired = appendUniqueStrings(strategy.EvidenceRequired, intent.EvidenceRequired...)
+		strategy.ObservationPoints = appendUniqueStrings(strategy.ObservationPoints, intent.EvidenceRequired...)
+	}
+	if len(intent.RecommendedCapabilities) > 0 {
+		strategy.RecommendedCapabilities = appendUniqueStrings(strategy.RecommendedCapabilities, intent.RecommendedCapabilities...)
+	}
+	if len(intent.CompletionCriteria) > 0 {
+		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria, intent.CompletionCriteria...)
+	}
+	if intent.NeedsExactAgentRuntime {
+		strategy.NeedsExactAgentRuntime = true
+		strategy.RecommendedCapabilities = appendUniqueStrings(strategy.RecommendedCapabilities, "exact_agent_runtime")
+		strategy.ObservationPoints = appendUniqueStrings(strategy.ObservationPoints, "exact_agent_runtime_config")
+		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
+			"when the user asks for actual Agent prompt or runtime configuration, use exact Agent runtime evidence if current page context may be summary-level",
+		)
+		if parts != nil && skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) {
+			strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillAgentManagement)
+		}
+	}
+	if intent.CurrentContextMaySummary {
+		strategy.CurrentContextMaySummary = true
+		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
+			"do not treat summary page context as complete evidence when the user asks for exact configuration",
+		)
+	}
 	if strings.TrimSpace(intent.TargetPage) != "" {
 		strategy.TargetPage = strings.TrimSpace(intent.TargetPage)
 	}
@@ -254,12 +582,6 @@ func applyModelTurnIntentHints(strategy *AIChatTurnStrategy, intent *AIChatModel
 	}
 	if strings.TrimSpace(intent.Approval) != "" {
 		strategy.Approval = strings.TrimSpace(intent.Approval)
-	}
-	if len(intent.PrimarySkills) > 0 {
-		strategy.PrimarySkills = appendUniqueStrings(strategy.PrimarySkills, intent.PrimarySkills...)
-	}
-	if len(intent.SupportingSkills) > 0 {
-		strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, intent.SupportingSkills...)
 	}
 }
 
