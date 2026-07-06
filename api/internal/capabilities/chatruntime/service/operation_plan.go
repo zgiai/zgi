@@ -279,11 +279,6 @@ func applyRecentOperationPlansFromBranch(parts *chatRequestParts, branch []*runt
 		return
 	}
 	plans := recentContinuationOperationPlans(branch, recentContinuationTurnLimit)
-	if !recentOperationPlansContainIncompleteWork(plans) {
-		if plan := recentAgentCapabilityContinuationPlan(parts, branch); len(plan) > 0 {
-			plans = append([]map[string]interface{}{plan}, plans...)
-		}
-	}
 	parts.RecentOperationPlans = plans
 }
 
@@ -3730,12 +3725,14 @@ func applyOperationPlanInvocationState(metadata map[string]interface{}, invocati
 	}
 
 	var last map[string]interface{}
+	var lastActionable map[string]interface{}
 	occurrences := map[string]int{}
 	for _, invocation := range invocations {
 		if !operationPlanInvocationIsActionable(invocation) {
 			continue
 		}
 		status := operationPlanStatusFromInvocation(invocation)
+		lastActionable = invocation
 		occurrence := operationPlanInvocationOccurrenceFromReplay(occurrences, invocation, status)
 		applied := false
 		matchedPlanStep := false
@@ -3788,6 +3785,9 @@ func applyOperationPlanInvocationState(metadata map[string]interface{}, invocati
 	if last != nil {
 		plan["tool_result"] = operationPlanToolResult(last)
 		operationPlanSyncLatestOperationGroupResult(plan, last, operationPlanStatusFromInvocation(last))
+	} else if lastActionable != nil && operationPlanModelDecidesTools(plan) {
+		plan["tool_result"] = operationPlanToolResult(lastActionable)
+		operationPlanSyncLatestOperationGroupResult(plan, lastActionable, operationPlanStatusFromInvocation(lastActionable))
 	}
 	if len(steps) > 0 {
 		if operationPlanApplyMissingAgentSkillCandidateNoop(plan, steps, stepStatus, invocations) {
@@ -3795,8 +3795,44 @@ func applyOperationPlanInvocationState(metadata map[string]interface{}, invocati
 			return
 		}
 		applyOperationPlanProgress(plan, steps, stepStatus, "", "")
+	} else if operationPlanModelDecidesLatestInvocationFailed(plan, lastActionable) {
+		operationPlanSetModelDecidesInvocationStatus(plan, stepStatus, lastActionable, operationPlanStepStatusFailed)
+		plan["status"] = operationPlanStatusFailed
+		plan["pending_next_action"] = "none"
+		operationPlanSyncStrategyState(plan)
+	} else if operationPlanModelDecidesCompletionVerified(plan) {
+		if last != nil {
+			operationPlanSetModelDecidesInvocationStatus(plan, stepStatus, last, operationPlanStepStatusCompleted)
+		}
+		plan["status"] = operationPlanStatusCompleted
+		plan["pending_next_action"] = "none"
+		operationPlanSyncStrategyState(plan)
 	}
 	metadata["operation_plan"] = plan
+}
+
+func operationPlanModelDecidesLatestInvocationFailed(plan map[string]interface{}, invocation map[string]interface{}) bool {
+	if !operationPlanModelDecidesTools(plan) || operationPlanIsTerminalFailure(plan) || len(invocation) == 0 {
+		return false
+	}
+	return operationPlanStatusFromInvocation(invocation) == operationPlanStepStatusFailed
+}
+
+func operationPlanSetModelDecidesInvocationStatus(plan map[string]interface{}, stepStatus map[string]interface{}, invocation map[string]interface{}, status string) {
+	if len(plan) == 0 || len(invocation) == 0 || stepStatus == nil {
+		return
+	}
+	skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
+	toolName := strings.TrimSpace(stringFromAny(invocation["tool_name"]))
+	if skillID == "" || toolName == "" {
+		return
+	}
+	stepStatus[operationPlanToolStepID(skillID, toolName)] = status
+	if strings.TrimSpace(stringFromAny(invocation["kind"])) == "tool_call" && status == operationPlanStepStatusCompleted {
+		stepStatus["skill:"+skillID] = operationPlanStepStatusCompleted
+		stepStatus["observe"] = operationPlanStepStatusCompleted
+	}
+	plan["step_status"] = stepStatus
 }
 
 func ensureOperationPlanInvocationStep(metadata map[string]interface{}, invocation map[string]interface{}) {

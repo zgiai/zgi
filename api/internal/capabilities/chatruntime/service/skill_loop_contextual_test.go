@@ -3853,6 +3853,61 @@ func TestSkillLoopModelDecidesSafetyGuardStillBlocksDuplicateMutation(t *testing
 	}
 }
 
+func TestSkillLoopModelDecidesSafetyGuardAllowsDistinctAgentConfigUpdates(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			SkillIDs: []string{skills.SkillAgentManagement},
+		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{}},
+	}
+	req := skillloop.ToolCallGuardRequest{
+		SkillID:   skills.SkillAgentManagement,
+		ToolName:  "update_agent_config",
+		Arguments: map[string]interface{}{"agent_id": "agent-1", "model": "deepseek-v4-flash"},
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{
+				SkillID:   skills.SkillAgentManagement,
+				ToolName:  "update_agent_config",
+				Arguments: map[string]interface{}{"agent_id": "agent-1", "add_enabled_skill_ids": []interface{}{"file-generator"}},
+			},
+		},
+	}
+
+	if result, blocked := skillLoopModelDecidesSafetyToolCallGuard(prepared, nil, req); blocked {
+		t.Fatalf("model-decides safety guard blocked distinct config update with result %#v; want model/tool loop to continue", result)
+	}
+}
+
+func TestSkillLoopModelDecidesSafetyGuardBlocksExactAgentConfigUpdateDuplicate(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			SkillIDs: []string{skills.SkillAgentManagement},
+		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{}},
+	}
+	args := map[string]interface{}{"agent_id": "agent-1", "model": "deepseek-v4-flash"}
+	req := skillloop.ToolCallGuardRequest{
+		SkillID:   skills.SkillAgentManagement,
+		ToolName:  "update_agent_config",
+		Arguments: args,
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
+			{
+				SkillID:   skills.SkillAgentManagement,
+				ToolName:  "update_agent_config",
+				Arguments: args,
+			},
+		},
+	}
+
+	result, blocked := skillLoopModelDecidesSafetyToolCallGuard(prepared, nil, req)
+	if !blocked {
+		t.Fatal("model-decides safety guard allowed exact duplicate config update")
+	}
+	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "update_agent_config" {
+		t.Fatalf("guard result = %#v, want agent-management/update_agent_config duplicate guard", result)
+	}
+}
+
 func TestSkillLoopUserInputGuardDoesNotRewriteSidebarAgentDeleteConfirmationWithoutInitialSkillID(t *testing.T) {
 	parts := consoleAgentsVisibleTargetsTestParts("\u8bf7\u6279\u91cf\u5220\u9664\u5f53\u524d\u9875\u9762\u524d\u4e24\u4e2a\u540d\u5b57\u4ee5 AICHAT-GOAL-BIND-SMOKE \u5f00\u5934\u7684\u6d4b\u8bd5\u667a\u80fd\u4f53\u3002\u53ea\u5220\u9664\u8fd9\u4e24\u4e2a\u6d4b\u8bd5\u667a\u80fd\u4f53\u3002")
 	parts.SkillIDs = []string{skills.SkillConsoleNavigator}

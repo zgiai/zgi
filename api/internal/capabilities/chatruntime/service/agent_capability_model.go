@@ -529,9 +529,13 @@ func agentManagementCapabilityGoalsForQuery(query string) []AIChatAgentCapabilit
 		goal.RequiredConfigFields = canonicalAgentCapabilityConfigFields(goal.RequiredConfigFields)
 		goal.RequiredBindingActions = canonicalAgentCapabilityBindingActions(goal.RequiredBindingActions)
 		goal = agentCapabilityGoalWithDefaults(goal)
-		for _, existing := range goals {
+		for idx, existing := range goals {
 			if existing.CapabilityID == goal.CapabilityID &&
 				strings.EqualFold(existing.CandidateQuery, goal.CandidateQuery) {
+				if canonicalAgentCapabilityAction(existing.GoalAction) == agentCapabilityActionInspect &&
+					canonicalAgentCapabilityAction(goal.GoalAction) != agentCapabilityActionInspect {
+					goals[idx] = goal
+				}
 				return
 			}
 		}
