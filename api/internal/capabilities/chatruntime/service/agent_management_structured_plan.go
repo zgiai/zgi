@@ -474,9 +474,6 @@ func agentManagementStructuredConfigOperations(query string, tool AIChatTurnStra
 	if len(fields) == 0 {
 		fields = agentCapabilityGoalsExpectedConfigFields(goals)
 	}
-	if len(fields) == 0 {
-		fields = agentManagementExpectedConfigUpdateFields(query)
-	}
 	configGoal := strings.TrimSpace(firstNonEmptyString(tool.Arguments[operationPlanConfigGoalKey], agentManagementConfigGoal(query)))
 	if len(actions) == 0 {
 		return []AIChatStructuredOperation{{
@@ -631,9 +628,6 @@ func agentManagementStructuredBindingActions(query string, tool AIChatTurnStrate
 	actions := operationPlanAgentConfigBindingActionsFromAny(tool.Arguments[operationPlanExpectedBindingActionsKey])
 	if len(actions) == 0 {
 		actions = agentCapabilityGoalsExpectedBindingActions(goals)
-	}
-	if len(actions) == 0 {
-		actions = agentManagementExpectedConfigBindingActions(query)
 	} else {
 		copied := map[string]string{}
 		for field, action := range actions {

@@ -5013,18 +5013,6 @@ func agentManagementCurrentAgentIDFromParts(parts *chatRequestParts) string {
 	return ""
 }
 
-func agentManagementBindingMutationNeedsCandidateLookup(toolName string, expectedActions map[string]string) bool {
-	field := agentBindingRequirementField(toolName)
-	if field == "" {
-		return true
-	}
-	action := operationPlanCanonicalAgentConfigBindingAction(expectedActions[field])
-	if action == "" {
-		return true
-	}
-	return action != "unbind"
-}
-
 func agentManagementSkillBindingCandidateLookupNeeded(query string) bool {
 	if !agentManagementSkillBindingRequested(query) {
 		return false
@@ -5060,38 +5048,6 @@ func agentManagementResourceUnbindUsesCurrentBindingSet(query string, resourceMa
 		"\u5168\u90e8", "\u6240\u6709", "\u90fd",
 		"\u5f53\u524d\u7ed1\u5b9a", "\u5f53\u524d\u5df2\u7ed1\u5b9a", "\u73b0\u6709\u7ed1\u5b9a", "\u5df2\u6709\u7ed1\u5b9a",
 	})
-}
-
-func agentManagementBindingCandidateLookupNeededForTool(query string, toolName string) bool {
-	expectedActions := agentManagementExpectedConfigBindingActions(query)
-	for _, requiredTool := range requiredAgentBindingMutationTools(query) {
-		if !strings.EqualFold(strings.TrimSpace(requiredTool), strings.TrimSpace(toolName)) {
-			continue
-		}
-		if field := agentBindingRequirementField(requiredTool); field != "" {
-			if markers := agentManagementBindingResourceMarkersForField(field); len(markers) > 0 &&
-				agentManagementResourceUnbindUsesCurrentBindingSet(query, markers) {
-				return false
-			}
-		}
-		return agentManagementBindingMutationNeedsCandidateLookup(requiredTool, expectedActions)
-	}
-	return false
-}
-
-func agentManagementBindingResourceMarkersForField(field string) []string {
-	switch operationPlanAgentConfigCanonicalField(field) {
-	case "enabled_skill_ids":
-		return []string{"skill", "\u6280\u80fd"}
-	case "knowledge_dataset_ids":
-		return []string{"knowledge", "\u77e5\u8bc6\u5e93"}
-	case "database_bindings":
-		return []string{"database", "table", "\u6570\u636e\u5e93", "\u6570\u636e\u8868"}
-	case "workflow_bindings":
-		return []string{"workflow", "\u5de5\u4f5c\u6d41"}
-	default:
-		return nil
-	}
 }
 
 func agentIDFromConsoleAgentPageRoute(route string) string {
@@ -5891,11 +5847,6 @@ func agentManagementBatchDeleteRequested(query string) bool {
 			"\u6240\u6709",
 			"\u9009\u4e2d",
 		})
-}
-
-func agentManagementReadRequested(query string) bool {
-	return strings.Contains(query, "get_agent") ||
-		containsAnySubstring(query, []string{"inspect agent", "view agent", "\u67e5\u770b\u667a\u80fd\u4f53", "\u68c0\u67e5\u667a\u80fd\u4f53"})
 }
 
 func agentManagementConfigReadRequested(query string) bool {
