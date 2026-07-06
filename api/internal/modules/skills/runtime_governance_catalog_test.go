@@ -47,6 +47,9 @@ func TestSystemAssetToolsDeclareGovernance(t *testing.T) {
 		{SkillAgentWorkflow, "list_agent_workflows", toolgovernance.EffectRead, "workflow", toolgovernance.RiskLevelLow, false},
 		{SkillAgentWorkflow, "run_agent_workflow", toolgovernance.EffectInvoke, "workflow", toolgovernance.RiskLevelHigh, true},
 		{SkillAgentWorkflow, "get_workflow_run_status", toolgovernance.EffectRead, "workflow_run", toolgovernance.RiskLevelLow, true},
+		{SkillAgentManagement, "list_agents", toolgovernance.EffectRead, "agent", toolgovernance.RiskLevelLow, false},
+		{SkillAgentManagement, "get_agent", toolgovernance.EffectRead, "agent", toolgovernance.RiskLevelLow, false},
+		{SkillAgentManagement, "get_agent_config", toolgovernance.EffectRead, "agent", toolgovernance.RiskLevelLow, false},
 		{SkillAgentManagement, "list_agent_skill_candidates", toolgovernance.EffectRead, "agent_skill", toolgovernance.RiskLevelLow, false},
 		{SkillAgentManagement, "list_agent_knowledge_candidates", toolgovernance.EffectRead, "knowledge_base", toolgovernance.RiskLevelLow, false},
 		{SkillAgentManagement, "list_agent_database_candidates", toolgovernance.EffectRead, "database_table", toolgovernance.RiskLevelLow, false},
@@ -98,6 +101,32 @@ func TestSystemAssetToolsDeclareGovernance(t *testing.T) {
 				t.Fatalf("allowed_permission_tiers = %#v, want basic/advanced/full", manifest.AllowedPermissionTiers)
 			}
 		})
+	}
+}
+
+func TestSystemSkillToolGovernanceManifestReadsCatalog(t *testing.T) {
+	manifest, ok := SystemSkillToolGovernanceManifest(SkillAgentManagement, "list_available_models")
+	if !ok {
+		t.Fatal("SystemSkillToolGovernanceManifest(agent-management/list_available_models) = false, want true")
+	}
+	if manifest.Effect != toolgovernance.EffectRead || manifest.AssetType != "llm_model" {
+		t.Fatalf("manifest = %#v, want read llm_model", manifest)
+	}
+
+	manifest, ok = SystemSkillToolGovernanceManifest(SkillAgentManagement, "get_agent_config")
+	if !ok {
+		t.Fatal("SystemSkillToolGovernanceManifest(agent-management/get_agent_config) = false, want true")
+	}
+	if manifest.Effect != toolgovernance.EffectRead || manifest.AssetType != "agent" {
+		t.Fatalf("manifest = %#v, want read agent", manifest)
+	}
+
+	manifest, ok = SystemSkillToolGovernanceManifest(SkillAgentManagement, "delete_agents")
+	if !ok {
+		t.Fatal("SystemSkillToolGovernanceManifest(agent-management/delete_agents) = false, want true")
+	}
+	if manifest.Effect != toolgovernance.EffectDelete || manifest.AssetType != "agent" || !manifest.RequiresAssetResolution {
+		t.Fatalf("manifest = %#v, want delete agent with asset resolution", manifest)
 	}
 }
 

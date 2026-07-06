@@ -33,8 +33,10 @@ func operationPlanFromTurnStrategy(taskID string, parts *chatRequestParts, strat
 	if parts == nil || strategy == nil {
 		return nil
 	}
+	modelDecides := aiChatTurnStrategyModelDecidesTools(strategy)
 	steps := operationPlanStepsFromTurnStrategy(strategy)
-	if len(steps) == 0 {
+	phases := operationPlanPhasesFromTurnStrategy(strategy)
+	if len(steps) == 0 && !modelDecides && len(phases) == 0 {
 		return nil
 	}
 	stepStatus := make(map[string]interface{}, len(steps))
@@ -51,7 +53,7 @@ func operationPlanFromTurnStrategy(taskID string, parts *chatRequestParts, strat
 		}
 	}
 	targetResource := operationPlanAssetTarget(strategy)
-	phases := operationPlanPhasesFromTurnStrategy(strategy)
+	successCriteria := operationPlanSuccessCriteriaFromTurnStrategy(strategy)
 	plan := map[string]interface{}{
 		"version":             operationPlanVersion,
 		"task_id":             strings.TrimSpace(taskID),
@@ -69,7 +71,7 @@ func operationPlanFromTurnStrategy(taskID string, parts *chatRequestParts, strat
 		"approval_actions":    operationPlanApprovalActions(steps),
 		"tool_choice_mode":    strings.TrimSpace(strategy.ToolChoiceMode),
 		"planning_mode":       operationPlanPlanningMode(strategy),
-		"success_criteria":    append([]string(nil), strategy.SuccessCriteria...),
+		"success_criteria":    successCriteria,
 		"pending_next_action": operationPlanPendingNextAction(steps),
 		"derived_from":        "turn_strategy",
 		"retry_policy": map[string]interface{}{
@@ -103,6 +105,32 @@ func operationPlanPlanningMode(strategy *AIChatTurnStrategy) string {
 		return "phase_only_model_decides"
 	}
 	return "tool_step_guided"
+}
+
+func operationPlanSuccessCriteriaFromTurnStrategy(strategy *AIChatTurnStrategy) []string {
+	if strategy == nil {
+		return nil
+	}
+	criteria := append([]string(nil), strategy.SuccessCriteria...)
+	if !aiChatTurnStrategyModelDecidesTools(strategy) {
+		return criteria
+	}
+	out := make([]string, 0, len(criteria)+3)
+	for _, value := range criteria {
+		value = strings.TrimSpace(value)
+		if value == "" || strings.HasPrefix(strings.ToLower(value), "complete pending plan step:") {
+			continue
+		}
+		out = appendUniqueStrings(out, value)
+	}
+	if len(out) == 0 {
+		out = append(out,
+			"continue the user goal from current tool, page, and client-action evidence",
+			"choose enabled tools from latest evidence instead of replaying a fixed tool script",
+			"verify the final answer against actual tool results or refreshed page context",
+		)
+	}
+	return out
 }
 
 func operationPlanRiskLevel(strategy *AIChatTurnStrategy) string {
@@ -153,8 +181,8 @@ func operationPlanPhasesFromTurnStrategy(strategy *AIChatTurnStrategy) []map[str
 			},
 		}, phases...)
 	}
-	if len(strategy.SuccessCriteria) > 0 {
-		phases[len(phases)-1]["success_criteria"] = compactStringSliceForPrompt(strategy.SuccessCriteria, 8, 240)
+	if successCriteria := operationPlanSuccessCriteriaFromTurnStrategy(strategy); len(successCriteria) > 0 {
+		phases[len(phases)-1]["success_criteria"] = compactStringSliceForPrompt(successCriteria, 8, 240)
 	}
 	if len(strategy.ObservationPoints) > 0 {
 		for i := range phases {
@@ -169,6 +197,9 @@ func operationPlanPhasesFromTurnStrategy(strategy *AIChatTurnStrategy) []map[str
 
 func operationPlanStructuredPlanFromTurnStrategy(strategy *AIChatTurnStrategy) map[string]interface{} {
 	if strategy == nil || strategy.StructuredPlan == nil {
+		return nil
+	}
+	if aiChatTurnStrategyModelDecidesTools(strategy) {
 		return nil
 	}
 	encoded, err := json.Marshal(strategy.StructuredPlan)
@@ -234,12 +265,13 @@ func operationPlanStepRequiresApproval(step map[string]interface{}) bool {
 	if toolName == "" {
 		return false
 	}
+	skillID := strings.TrimSpace(stringFromAny(step["skill_id"]))
 	target := mapFromOperationContext(step["asset_target"])
 	effect := strings.ToLower(strings.TrimSpace(stringFromAny(target["effect"])))
 	if effect != "" {
 		return effect != "read"
 	}
-	return skillLoopToolNameLooksAssetMutation(toolName)
+	return skillLoopToolLooksAssetMutation(skillID, toolName)
 }
 
 func applyRecentOperationPlansFromBranch(parts *chatRequestParts, branch []*runtimemodel.Message) {
@@ -342,7 +374,7 @@ func buildAgentConfigCapabilityContinuationPlan(parts *chatRequestParts, message
 		"arguments":                           args,
 		operationPlanExpectedUpdatedFieldsKey: fields,
 		operationPlanConfigGoalKey:            configGoal,
-		"asset_target":                        operationPlanAgentManagementAssetTarget("update_agent_config"),
+		"asset_target":                        operationPlanToolStepAssetTarget(skills.SkillAgentManagement, "update_agent_config"),
 	}
 	readStep := map[string]interface{}{
 		"id":                                  readStepID,
@@ -355,7 +387,7 @@ func buildAgentConfigCapabilityContinuationPlan(parts *chatRequestParts, message
 		"required_post_update_verification":   true,
 		"phase":                               "post_update_verification",
 		operationPlanExpectedUpdatedFieldsKey: fields,
-		"asset_target":                        map[string]interface{}{"effect": "read", "asset_type": "agent"},
+		"asset_target":                        operationPlanToolStepAssetTarget(skills.SkillAgentManagement, "get_agent_config"),
 	}
 	if agentID != "" {
 		readStep["arguments"] = map[string]interface{}{"agent_id": agentID}
@@ -598,7 +630,7 @@ func buildAgentResourceBindingContinuationPlanForFields(parts *chatRequestParts,
 		"arguments":                            updateArgs,
 		operationPlanExpectedBindingActionsKey: expectedActions,
 		operationPlanConfigGoalKey:             configGoal,
-		"asset_target":                         operationPlanAgentManagementAssetTarget("update_agent_config"),
+		"asset_target":                         operationPlanToolStepAssetTarget(skills.SkillAgentManagement, "update_agent_config"),
 	}
 	if len(steps) > 0 {
 		if lastID := strings.TrimSpace(stringFromAny(steps[len(steps)-1]["id"])); lastID != "" {
@@ -616,7 +648,7 @@ func buildAgentResourceBindingContinuationPlanForFields(parts *chatRequestParts,
 		"required_post_update_verification":    true,
 		"phase":                                "post_update_verification",
 		operationPlanExpectedBindingActionsKey: expectedActions,
-		"asset_target":                         map[string]interface{}{"effect": "read", "asset_type": "agent"},
+		"asset_target":                         operationPlanToolStepAssetTarget(skills.SkillAgentManagement, "get_agent_config"),
 	}
 	if agentID != "" {
 		readStep["arguments"] = map[string]interface{}{"agent_id": agentID}
@@ -839,7 +871,7 @@ func operationPlanResourceBindingCandidateSteps(fields []string, agentID string)
 			"skill_id":          skills.SkillAgentManagement,
 			"tool_name":         toolName,
 			"required_evidence": operationPlanToolStepEvidence(skills.SkillAgentManagement, toolName),
-			"asset_target":      operationPlanAgentManagementAssetTarget(toolName),
+			"asset_target":      operationPlanToolStepAssetTarget(skills.SkillAgentManagement, toolName),
 		}
 		if agentID != "" {
 			step["arguments"] = map[string]interface{}{"agent_id": agentID}
@@ -1058,7 +1090,7 @@ func buildAgentCapabilityBindingContinuationPlan(parts *chatRequestParts, messag
 		operationPlanExpectedUpdatedFieldsKey:  []interface{}{"enabled_skill_ids"},
 		operationPlanExpectedBindingActionsKey: map[string]interface{}{"enabled_skill_ids": "bind"},
 		operationPlanConfigGoalKey:             configGoal,
-		"asset_target":                         operationPlanAgentManagementAssetTarget("update_agent_config"),
+		"asset_target":                         operationPlanToolStepAssetTarget(skills.SkillAgentManagement, "update_agent_config"),
 	}
 	readStep := map[string]interface{}{
 		"id":                                   readStepID,
@@ -1072,7 +1104,7 @@ func buildAgentCapabilityBindingContinuationPlan(parts *chatRequestParts, messag
 		"phase":                                "post_update_verification",
 		operationPlanExpectedUpdatedFieldsKey:  []interface{}{"enabled_skill_ids"},
 		operationPlanExpectedBindingActionsKey: map[string]interface{}{"enabled_skill_ids": "bind"},
-		"asset_target":                         map[string]interface{}{"effect": "read", "asset_type": "agent"},
+		"asset_target":                         operationPlanToolStepAssetTarget(skills.SkillAgentManagement, "get_agent_config"),
 	}
 	if agentID != "" {
 		readStep["arguments"] = map[string]interface{}{"agent_id": agentID}
@@ -1216,10 +1248,30 @@ func applyRecentOperationPlanToContinuationStrategy(parts *chatRequestParts, str
 			strategy.AssetRisk = risk
 		}
 	}
-	strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria, operationPlanPendingContinuationCriteria(plan, 6)...)
+	if aiChatTurnStrategyModelDecidesTools(strategy) {
+		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria, operationPlanModelDecidesContinuationCriteria(plan, 6)...)
+	} else {
+		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria, operationPlanPendingContinuationCriteria(plan, 6)...)
+	}
 	if goals := agentCapabilityGoalsFromOperationPlan(plan); len(goals) > 0 {
 		strategy.CapabilityGoals = appendAgentCapabilityGoals(strategy.CapabilityGoals, goals...)
 		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria, agentCapabilityGoalSuccessCriteria(goals)...)
+	}
+	if aiChatTurnStrategyModelDecidesTools(strategy) {
+		for _, step := range operationPlanPendingExecutableSteps(plan, 6) {
+			skillID := strings.TrimSpace(stringFromAny(step["skill_id"]))
+			if skillID != "" && skillIDEnabled(parts.SkillIDs, skillID) {
+				strategy.PrimarySkills = appendUniqueStrings(strategy.PrimarySkills, skillID)
+			}
+			if operationPlanStepIsRoute(step) {
+				if href := operationPlanStepTargetPage(step); href != "" {
+					strategy.TargetPage = href
+					strategy.RouteRequired = true
+				}
+				break
+			}
+		}
+		return strategy
 	}
 	for _, step := range operationPlanPendingExecutableSteps(plan, 6) {
 		skillID := strings.TrimSpace(stringFromAny(step["skill_id"]))
@@ -1249,6 +1301,12 @@ func applyRecentOperationPlanToContinuationStrategy(parts *chatRequestParts, str
 func operationPlanPendingContinuationCriteria(plan map[string]interface{}, limit int) []string {
 	if len(plan) == 0 || limit <= 0 {
 		return nil
+	}
+	if operationPlanModelDecidesTools(plan) {
+		criteria := operationPlanModelDecidesContinuationCriteria(plan, limit)
+		if len(criteria) > 0 {
+			return criteria
+		}
 	}
 	steps := operationPlanPendingExecutableSteps(plan, limit)
 	if len(steps) == 0 && operationPlanModelDecidesTools(plan) {
@@ -1283,6 +1341,46 @@ func operationPlanPendingContinuationCriteria(plan map[string]interface{}, limit
 		criteria = append(criteria, "complete pending plan step: "+label)
 	}
 	return criteria
+}
+
+func operationPlanModelDecidesContinuationCriteria(plan map[string]interface{}, limit int) []string {
+	if len(plan) == 0 || limit <= 0 {
+		return nil
+	}
+	out := []string{}
+	for _, value := range stringSliceFromAny(plan["success_criteria"]) {
+		value = strings.TrimSpace(value)
+		if value == "" || strings.HasPrefix(strings.ToLower(value), "complete pending plan step:") {
+			continue
+		}
+		out = appendUniqueStrings(out, value)
+		if len(out) >= limit {
+			return out
+		}
+	}
+	for _, goal := range agentCapabilityGoalsFromOperationPlan(plan) {
+		for _, value := range goal.VerifyBy {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			out = appendUniqueStrings(out, "verify Agent capability goal: "+value)
+			if len(out) >= limit {
+				return out
+			}
+		}
+	}
+	if len(out) == 0 {
+		out = append(out,
+			"continue the unfinished user goal from the latest tool, page, and client-action evidence",
+			"choose the next enabled tool from current evidence instead of replaying a fixed tool script",
+			"verify the final answer against actual tool results or refreshed page context",
+		)
+	}
+	if len(out) > limit {
+		return out[:limit]
+	}
+	return out
 }
 
 func appendPlannedToolFromOperationPlanStep(strategy *AIChatTurnStrategy, plan map[string]interface{}, step map[string]interface{}, args map[string]string) *AIChatTurnStrategy {
@@ -1555,6 +1653,10 @@ func operationPlanStepsFromTurnStrategy(strategy *AIChatTurnStrategy) []map[stri
 				"page": href,
 			},
 		})
+	}
+
+	if aiChatTurnStrategyModelDecidesTools(strategy) {
+		return steps
 	}
 
 	for _, tool := range strategy.PlannedTools {
@@ -2394,7 +2496,7 @@ func operationPlanStepIsPendingAgentMutation(step map[string]interface{}, stepSt
 	}
 	target := mapFromOperationContext(step["asset_target"])
 	if len(target) == 0 {
-		target = operationPlanAgentManagementAssetTarget(toolName)
+		target = operationPlanToolStepAssetTarget(skills.SkillAgentManagement, toolName)
 	}
 	if strings.EqualFold(strings.TrimSpace(stringFromAny(target["effect"])), "read") {
 		return false
@@ -2779,7 +2881,7 @@ func operationPlanCompletedAgentMutationCanCoverStep(plan map[string]interface{}
 	}
 	target := mapFromOperationContext(step["asset_target"])
 	return strings.EqualFold(strings.TrimSpace(stringFromAny(target["effect"])), "read") ||
-		skillLoopToolNameLooksReadOnly(toolName)
+		skillLoopToolLooksReadOnly(skills.SkillAgentManagement, toolName)
 }
 
 func operationPlanCompletedAgentMutationCanCoverRouteStep(plan map[string]interface{}, step map[string]interface{}, evidence map[string]interface{}) bool {
@@ -3315,8 +3417,9 @@ func operationPlanStepCanCompleteFromEquivalentEvidence(step map[string]interfac
 	if strings.EqualFold(strings.TrimSpace(stringFromAny(target["effect"])), "read") {
 		return true
 	}
+	skillID := strings.TrimSpace(stringFromAny(step["skill_id"]))
 	toolName := strings.TrimSpace(stringFromAny(step["tool_name"]))
-	return toolName != "" && skillLoopToolNameLooksReadOnly(toolName)
+	return toolName != "" && skillLoopToolLooksReadOnly(skillID, toolName)
 }
 
 func operationPlanStepEvidenceKeys(step map[string]interface{}) []string {
@@ -3514,51 +3617,49 @@ func operationPlanStepRequiresStrictCompletionEvidence(step map[string]interface
 	if effect != "" {
 		return effect != "read"
 	}
-	return skillLoopToolNameLooksAssetMutation(toolName)
+	return skillLoopToolLooksAssetMutation(stringFromAny(step["skill_id"]), toolName)
 }
 
 func operationPlanToolStepAssetTarget(skillID, toolName string) map[string]interface{} {
 	switch {
 	case isKnownArtifactGeneratorToolCall(skillID, toolName):
 		return map[string]interface{}{"effect": "create_temporary_artifact"}
-	case isFileManagerSaveToolCall(skillID, toolName):
-		return map[string]interface{}{"effect": "create", "asset_type": "file", "target": "file_management"}
-	case isFileManagerDeleteToolCall(skillID, toolName):
-		return map[string]interface{}{"effect": "delete", "asset_type": "file"}
-	case strings.EqualFold(strings.TrimSpace(skillID), skills.SkillFileReader):
-		return map[string]interface{}{"effect": "read", "asset_type": "file"}
-	case strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentManagement):
-		return operationPlanAgentManagementAssetTarget(toolName)
-	default:
-		return nil
 	}
+	if target := operationPlanToolStepAssetTargetFromGovernance(skillID, toolName); len(target) > 0 {
+		operationPlanEnrichToolStepAssetTarget(target, skillID, toolName)
+		return target
+	}
+	return nil
 }
 
-func operationPlanAgentManagementAssetTarget(toolName string) map[string]interface{} {
-	switch strings.TrimSpace(toolName) {
-	case "create_agent":
-		return map[string]interface{}{"effect": "create", "asset_type": "agent"}
-	case "update_agent_identity", "update_agent_config", "replace_agent_memory_slots":
-		return map[string]interface{}{"effect": "update", "asset_type": "agent"}
-	case "replace_agent_skill_bindings":
-		return map[string]interface{}{"effect": "update", "asset_type": "agent_skill", "owner_asset_type": "agent"}
-	case "replace_agent_knowledge_bindings":
-		return map[string]interface{}{"effect": "update", "asset_type": "knowledge_base", "owner_asset_type": "agent"}
-	case "replace_agent_database_bindings":
-		return map[string]interface{}{"effect": "update", "asset_type": "database_table", "owner_asset_type": "agent"}
-	case "replace_agent_workflow_bindings":
-		return map[string]interface{}{"effect": "update", "asset_type": "workflow", "owner_asset_type": "agent"}
-	case "delete_agent":
-		return map[string]interface{}{"effect": "delete", "asset_type": "agent"}
-	case "delete_agents":
-		return map[string]interface{}{"effect": "delete", "asset_type": "agent", "operation_mode": "batch"}
-	case "list_agents", "get_agent", "get_agent_config", "list_available_models",
-		"list_agent_skill_candidates", "list_agent_knowledge_candidates",
-		"list_agent_database_candidates", "list_agent_database_tables",
-		"list_agent_workflow_binding_candidates":
-		return map[string]interface{}{"effect": "read", "asset_type": "agent"}
-	default:
+func operationPlanToolStepAssetTargetFromGovernance(skillID, toolName string) map[string]interface{} {
+	manifest, ok := skills.SystemSkillToolGovernanceManifest(skillID, toolName)
+	if !ok {
 		return nil
+	}
+	target := map[string]interface{}{}
+	if strings.TrimSpace(string(manifest.Effect)) != "" {
+		target["effect"] = strings.TrimSpace(string(manifest.Effect))
+	}
+	if strings.TrimSpace(manifest.AssetType) != "" {
+		target["asset_type"] = strings.TrimSpace(manifest.AssetType)
+	}
+	if len(target) == 0 {
+		return nil
+	}
+	return target
+}
+
+func operationPlanEnrichToolStepAssetTarget(target map[string]interface{}, skillID, toolName string) {
+	if target == nil {
+		return
+	}
+	switch {
+	case isFileManagerSaveToolCall(skillID, toolName):
+		target["target"] = "file_management"
+	case strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentManagement) &&
+		strings.EqualFold(strings.TrimSpace(toolName), "delete_agents"):
+		target["operation_mode"] = "batch"
 	}
 }
 
@@ -4002,7 +4103,7 @@ func operationPlanInvocationIsExploratoryDeviation(invocation map[string]interfa
 	if effect == "read" {
 		return true
 	}
-	return skillLoopToolNameLooksReadOnly(toolName)
+	return skillLoopToolLooksReadOnly(skillID, toolName)
 }
 
 func operationPlanInvocationDeviationReason(invocation map[string]interface{}) string {
@@ -4823,7 +4924,7 @@ func operationPlanInvocationIsAssetMutation(invocation map[string]interface{}) b
 	if effect != "" {
 		return effect != "read"
 	}
-	return skillLoopToolNameLooksAssetMutation(toolName)
+	return skillLoopToolLooksAssetMutation(skillID, toolName)
 }
 
 func operationPlanOperationGroupFromInvocation(invocation map[string]interface{}) map[string]interface{} {

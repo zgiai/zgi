@@ -781,6 +781,7 @@ func completionEvidenceContinuationModelDecidesSystemMessage(evidence map[string
 		"The operation strategy is phase-only: it describes the user-visible phase that is not yet proven complete, but the model must choose the concrete tool from the currently available tool schemas and latest context.",
 		"Use current page context, prior tool results, turn_state, and visible asset evidence to decide the next action. Do not repeat an action when matching evidence already proves it succeeded.",
 		"For Agent configuration work, apply the remaining user-requested changes with the available Agent management capability, then verify the refreshed configuration before the final answer.",
+		"If the original user request already asks for those remaining Agent changes, do not ask the user whether to continue after a read-only check shows missing configuration; choose the next appropriate available tool and let governed tool calls request approval when needed.",
 		"Do not tell the user an approval card has been submitted unless a governed tool call actually returned a pending governance event. Governance approval cards are created by tool calls, not by natural-language progress text.",
 		"If the action is impossible because context, permissions, or tool capability is missing, use available read/list/observe capabilities when they can resolve the blocker; otherwise stop and explain the exact blocker truthfully.",
 		"Do not answer as complete until successful tool evidence and any required page observation evidence exist for this pending phase.",

@@ -55,14 +55,18 @@ func (s *service) buildTokenBudgetMessages(
 	applyRecentAssetCandidatesFromBranch(parts, parentMessages)
 	applyRecentGeneratedArtifactsFromBranch(parts, parentMessages)
 	applyRecentOperationPlansFromBranch(parts, parentMessages)
-	recentExecutionContext, recentExecutionMetadata := buildRecentExecutionContextMessage(parentMessages)
+	recentExecutionContext, recentExecutionMetadata := buildRecentExecutionContextMessageForRequest(parts, parentMessages)
 	continuationContext := buildContinuationTaskStateMessage(parts, parentMessages)
-	extraContextMessages := make([]adapter.Message, 0, 2)
+	turnBoundaryContext := currentTurnBoundaryMessage(parts)
+	extraContextMessages := make([]adapter.Message, 0, 3)
 	if recentExecutionContext != nil {
 		extraContextMessages = append(extraContextMessages, *recentExecutionContext)
 	}
 	if continuationContext != nil {
 		extraContextMessages = append(extraContextMessages, *continuationContext)
+	}
+	if turnBoundaryContext != nil {
+		extraContextMessages = append(extraContextMessages, *turnBoundaryContext)
 	}
 
 	baseMessages := []adapter.Message{
@@ -85,7 +89,7 @@ func (s *service) buildTokenBudgetMessages(
 	}
 	currentContent, attachmentMetadata, estimatedPromptTokens := s.buildBudgetedCurrentUserContent(parts, systemPrompt, budget, extraContextTokens)
 
-	groups := s.historyMessageGroups(ctx, parentMessages, parts.ModelSupportsVision)
+	groups := s.historyMessageGroupsForCurrentRequest(ctx, parentMessages, parts)
 	historyBefore := countAdapterMessages(groups)
 	selected := make([][]adapter.Message, 0, len(groups))
 	for i := len(groups) - 1; i >= 0; i-- {
@@ -105,13 +109,7 @@ func (s *service) buildTokenBudgetMessages(
 	messages = append(messages, extraContextMessages...)
 	messages = append(messages, adapter.Message{Role: "user", Content: currentContent})
 
-	historyAfter := len(messages) - 2
-	if recentExecutionContext != nil {
-		historyAfter--
-	}
-	if continuationContext != nil {
-		historyAfter--
-	}
+	historyAfter := len(messages) - 2 - len(extraContextMessages)
 	metadata := contextControlMetadata(spec, budget, estimatedPromptTokens, historyBefore, historyAfter)
 	mergeAttachmentContextMetadata(metadata, attachmentMetadata)
 	mergeRecentExecutionContextMetadata(metadata, recentExecutionMetadata)
@@ -395,6 +393,38 @@ func (s *service) historyMessageGroups(ctx context.Context, branch []*runtimemod
 	return groups
 }
 
+func (s *service) historyMessageGroupsForCurrentRequest(ctx context.Context, branch []*runtimemodel.Message, parts *chatRequestParts) [][]adapter.Message {
+	if shouldIsolateHistoryForCurrentTurn(parts) {
+		return nil
+	}
+	includeImages := false
+	if parts != nil {
+		includeImages = parts.ModelSupportsVision
+	}
+	return s.historyMessageGroups(ctx, branch, includeImages)
+}
+
+func shouldIsolateHistoryForCurrentTurn(parts *chatRequestParts) bool {
+	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
+		return false
+	}
+	if isContinuationIntent(parts.Query) || queryReferencesRecentExecutionContext(parts.Query) {
+		return false
+	}
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		return false
+	}
+	if strategy.RouteRequired || strategy.RequiredNextTool != nil || len(strategy.PlannedTools) > 0 {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(strategy.AssetEffect)) {
+	case "create", "update", "delete", "write", "mutation", "mutate":
+		return true
+	}
+	return false
+}
+
 type recentExecutionContextStats struct {
 	ToolHistoryTurns           int
 	IntermediateAnswerTurns    int
@@ -406,6 +436,57 @@ type recentExecutionContextStats struct {
 	ToolHistoryTruncated       bool
 	IntermediateTruncated      bool
 	ExecutionContextTruncated  bool
+}
+
+func buildRecentExecutionContextMessageForRequest(parts *chatRequestParts, branch []*runtimemodel.Message) (*adapter.Message, recentExecutionContextStats) {
+	if !recentExecutionContextAppliesToCurrentRequest(parts) {
+		return nil, recentExecutionContextStats{}
+	}
+	return buildRecentExecutionContextMessage(branch)
+}
+
+func recentExecutionContextAppliesToCurrentRequest(parts *chatRequestParts) bool {
+	if parts == nil {
+		return true
+	}
+	query := strings.TrimSpace(parts.Query)
+	if query == "" {
+		return false
+	}
+	if isContinuationIntent(query) {
+		return true
+	}
+	return queryReferencesRecentExecutionContext(query)
+}
+
+func queryReferencesRecentExecutionContext(query string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(query))
+	if normalized == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"刚才", "刚刚", "上次", "上一", "前面", "之前", "先前", "继续", "接着", "后续", "用这个", "把这个", "该文件", "这个文件", "这个图", "上述", "以上", "已生成", "生成的文件", "保存它", "下载它", "预览它",
+		"previous", "last", "earlier", "continue", "reuse", "use it", "that file", "this file", "generated file", "save it", "download it", "preview it",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func currentTurnBoundaryMessage(parts *chatRequestParts) *adapter.Message {
+	if parts == nil || isContinuationIntent(parts.Query) {
+		return nil
+	}
+	content := strings.Join([]string{
+		"Current AIChat turn boundary:",
+		"The latest user request below is the task to execute now.",
+		"Use older conversation messages only as background facts.",
+		"Do not continue, repeat, or complete earlier tasks unless the latest request explicitly asks to continue or reuse previous outputs.",
+		"If older history or recent execution facts conflict with the latest user request, follow the latest user request.",
+	}, "\n")
+	return &adapter.Message{Role: "system", Content: content}
 }
 
 func buildRecentExecutionContextMessage(branch []*runtimemodel.Message) (*adapter.Message, recentExecutionContextStats) {

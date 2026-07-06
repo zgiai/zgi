@@ -603,8 +603,71 @@ func fastPathModelDecidesPlanHasPendingAgentWork(evidence map[string]interface{}
 	if len(plan) == 0 || !operationPlanModelDecidesTools(plan) {
 		return false
 	}
+	if fastPathModelDecidesPlanHasPendingAgentCapabilityWork(evidence, plan) {
+		return true
+	}
 	_, ok := fastPathModelDecidesPendingAgentWorkStep(plan)
 	return ok
+}
+
+func fastPathModelDecidesPlanHasPendingAgentCapabilityWork(evidence map[string]interface{}, plan map[string]interface{}) bool {
+	goals := fastPathAgentCapabilityGoals(plan)
+	if len(goals) == 0 {
+		return false
+	}
+	if !fastPathModelDecidesCapabilityGoalsNeedMutation(goals) {
+		_, hasConfigRead := fastPathLatestSuccessfulAgentReadResult(evidence, "get_agent_config")
+		return !hasConfigRead
+	}
+	if !fastPathEvidenceHasSuccessfulAgentConfigUpdate(evidence) {
+		return true
+	}
+	if fastPathModelDecidesCapabilityGoalsNeedCandidateLookup(goals) {
+		for _, goal := range goals {
+			candidateTool := strings.TrimSpace(stringFromAny(goal["candidate_tool"]))
+			if candidateTool == "" && strings.EqualFold(strings.TrimSpace(stringFromAny(goal["capability_id"])), "agent.skill_backed_capability") {
+				candidateTool = "list_agent_skill_candidates"
+			}
+			if !fastPathAgentCandidateLookupTool(candidateTool) {
+				continue
+			}
+			if _, ok := fastPathSuccessfulAgentCandidateLookupResults(evidence)[strings.ToLower(candidateTool)]; !ok {
+				return true
+			}
+		}
+	}
+	return !fastPathHasSuccessfulAgentConfigReadAfterUpdate(evidence)
+}
+
+func fastPathModelDecidesCapabilityGoalsNeedMutation(goals []map[string]interface{}) bool {
+	for _, goal := range goals {
+		action := strings.ToLower(strings.TrimSpace(stringFromAny(goal["goal_action"])))
+		switch action {
+		case "", "inspect", "read", "query", "status":
+			if len(evidenceStringSliceFromAny(goal["required_config_fields"])) > 0 ||
+				len(evidenceMapFromAny(goal["required_binding_actions"])) > 0 {
+				return true
+			}
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+func fastPathModelDecidesCapabilityGoalsNeedCandidateLookup(goals []map[string]interface{}) bool {
+	for _, goal := range goals {
+		if strings.TrimSpace(stringFromAny(goal["candidate_query"])) != "" {
+			return true
+		}
+		if fastPathAgentCandidateLookupTool(stringFromAny(goal["candidate_tool"])) {
+			return true
+		}
+		if strings.EqualFold(strings.TrimSpace(stringFromAny(goal["capability_id"])), "agent.skill_backed_capability") {
+			return true
+		}
+	}
+	return false
 }
 
 func fastPathModelDecidesPendingAgentWorkStep(plan map[string]interface{}) (map[string]interface{}, bool) {
@@ -1077,7 +1140,13 @@ func fastPathInvocationIsSuccessfulAgentConfigUpdate(invocation map[string]inter
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(stringFromAny(invocation["tool_name"]))) {
-	case "update_agent_config", "update_agent_identity":
+	case "update_agent_config",
+		"update_agent_identity",
+		"replace_agent_skill_bindings",
+		"replace_agent_knowledge_bindings",
+		"replace_agent_database_bindings",
+		"replace_agent_workflow_bindings",
+		"replace_agent_memory_slots":
 		return true
 	default:
 		return false
@@ -2692,6 +2761,12 @@ func fastPathTraceIsSuccessfulAgentConfigUpdate(trace skills.SkillTrace) bool {
 	case "update_agent_identity":
 		return fastPathAgentUpdateEffectIsSuccessful(trace.Result) &&
 			len(agentIdentityUpdatedFieldLabels(sanitizedStringListArgumentValue(trace.Result["updated_fields"]))) > 0
+	case "replace_agent_skill_bindings",
+		"replace_agent_knowledge_bindings",
+		"replace_agent_database_bindings",
+		"replace_agent_workflow_bindings",
+		"replace_agent_memory_slots":
+		return true
 	default:
 		return false
 	}

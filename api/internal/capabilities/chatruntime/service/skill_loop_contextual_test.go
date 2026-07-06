@@ -3444,8 +3444,9 @@ func TestSkillLoopFinalAnswerGuardBlocksIncompleteAgentBindingMutations(t *testi
 	}
 	if result.SkillID != skills.SkillAgentManagement ||
 		result.ToolName != "update_agent_config" ||
-		!strings.Contains(result.SystemMessage, "replace_agent_database_bindings, replace_agent_workflow_bindings") ||
-		!strings.Contains(result.SystemMessage, "replace_agent_workflow_bindings") {
+		!strings.Contains(result.SystemMessage, "update_agent_config.database_bindings") ||
+		!strings.Contains(result.SystemMessage, "update_agent_config.workflow_bindings") ||
+		!strings.Contains(result.SystemMessage, "accepted agent-management binding mutation tool for this turn is update_agent_config") {
 		t.Fatalf("guard result = %#v, want unified config update instruction with missing workflow evidence", result)
 	}
 

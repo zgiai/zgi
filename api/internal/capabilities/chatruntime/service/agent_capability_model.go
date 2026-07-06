@@ -676,8 +676,7 @@ func agentManagementCapabilityGoalsForQuery(query string) []AIChatAgentCapabilit
 		add(goal)
 	}
 	for _, toolName := range requiredAgentBindingMutationTools(text) {
-		field, _ := agentBindingRequirementFieldAndKind(toolName)
-		field = operationPlanAgentConfigCanonicalField(field)
+		field := agentBindingRequirementField(toolName)
 		if field == "" {
 			continue
 		}

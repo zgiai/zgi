@@ -447,20 +447,22 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 		if err != nil {
 			return nil, err
 		}
-		for _, item := range branch {
-			if item == nil {
-				continue
-			}
-			userMessage := s.historicalUserMessage(ctx, item, parts.ModelSupportsVision)
-			if userMessage != nil {
-				messages = append(messages, *userMessage)
-			}
-			if isUsableAssistantHistoryStatus(item.Status) && strings.TrimSpace(item.Answer) != "" {
-				messages = append(messages, adapter.Message{Role: "assistant", Content: item.Answer})
+		if !shouldIsolateHistoryForCurrentTurn(parts) {
+			for _, item := range branch {
+				if item == nil {
+					continue
+				}
+				userMessage := s.historicalUserMessage(ctx, item, parts.ModelSupportsVision)
+				if userMessage != nil {
+					messages = append(messages, *userMessage)
+				}
+				if isUsableAssistantHistoryStatus(item.Status) && strings.TrimSpace(item.Answer) != "" {
+					messages = append(messages, adapter.Message{Role: "assistant", Content: item.Answer})
+				}
 			}
 		}
 		applyRecentOperationPlansFromBranch(parts, branch)
-		if recentExecutionContext, recentExecutionMetadata := buildRecentExecutionContextMessage(branch); recentExecutionContext != nil {
+		if recentExecutionContext, recentExecutionMetadata := buildRecentExecutionContextMessageForRequest(parts, branch); recentExecutionContext != nil {
 			messages = append(messages, *recentExecutionContext)
 			if contextMetadata == nil {
 				contextMetadata = map[string]interface{}{}
@@ -473,6 +475,9 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 				contextMetadata = map[string]interface{}{}
 			}
 			contextMetadata["continuation_task_state_included"] = true
+		}
+		if turnBoundaryContext := currentTurnBoundaryMessage(parts); turnBoundaryContext != nil {
+			messages = append(messages, *turnBoundaryContext)
 		}
 		applyRecentAssetCandidatesFromBranch(parts, branch)
 		applyRecentGeneratedArtifactsFromBranch(parts, branch)

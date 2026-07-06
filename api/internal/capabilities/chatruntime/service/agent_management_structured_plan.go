@@ -13,8 +13,8 @@ const (
 )
 
 // AIChatStructuredPlan is a compact, model-visible description of the current
-// turn strategy. It is advisory; execution still goes through planned tools and
-// tool governance.
+// turn strategy. It is advisory: execution choices remain with the model and
+// every side-effecting tool still goes through normal tool governance.
 type AIChatStructuredPlan struct {
 	SchemaVersion        string                      `json:"schema_version"`
 	Domain               string                      `json:"domain"`
@@ -58,9 +58,6 @@ func attachAgentManagementStructuredPlan(parts *chatRequestParts, strategy *AICh
 		return strategy
 	}
 	strategy.StructuredPlan = plan
-	if len(plan.RequiredToolSequence) > 0 {
-		strategy.PlannedTools = syncAgentManagementStructuredPlanTools(strategy.PlannedTools, plan.RequiredToolSequence)
-	}
 	strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria, plan.CompletionCriteria...)
 	if plan.ReadBeforeWrite {
 		strategy.Avoid = appendUniqueStrings(strategy.Avoid,
@@ -73,32 +70,6 @@ func attachAgentManagementStructuredPlan(parts *chatRequestParts, strategy *AICh
 		)
 	}
 	return strategy
-}
-
-func syncAgentManagementStructuredPlanTools(planned []AIChatTurnStrategyTool, required []AIChatTurnStrategyTool) []AIChatTurnStrategyTool {
-	if len(required) == 0 {
-		return planned
-	}
-	if len(planned) == 0 {
-		return append([]AIChatTurnStrategyTool(nil), required...)
-	}
-	out := make([]AIChatTurnStrategyTool, 0, len(planned)+len(required))
-	requiredIndex := 0
-	for _, tool := range planned {
-		if strings.EqualFold(strings.TrimSpace(tool.SkillID), skills.SkillAgentManagement) {
-			if requiredIndex < len(required) {
-				out = append(out, required[requiredIndex])
-				requiredIndex++
-			}
-			continue
-		}
-		out = append(out, tool)
-	}
-	for requiredIndex < len(required) {
-		out = append(out, required[requiredIndex])
-		requiredIndex++
-	}
-	return out
 }
 
 func attachContextualSidebarStructuredPlan(parts *chatRequestParts, strategy *AIChatTurnStrategy, query string) *AIChatTurnStrategy {

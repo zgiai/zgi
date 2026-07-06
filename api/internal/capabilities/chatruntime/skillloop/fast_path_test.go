@@ -1264,6 +1264,51 @@ func TestFastPathFinalAnswerWithEvidenceWaitsForModelDecidesPendingAgentMutation
 	}
 }
 
+func TestFastPathFinalAnswerWithEvidenceWaitsForModelDecidesCapabilityGoalsAfterClientCreate(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":           "running",
+			"tool_choice_mode": operationPlanToolChoiceModelDecides,
+			"planning_mode":    "phase_only_model_decides",
+			"capability_goals": []interface{}{
+				map[string]interface{}{
+					"capability_id":          "agent.model_selection",
+					"goal_action":            "update",
+					"required_config_fields": []interface{}{"model_provider", "model"},
+					"verify_by":              []interface{}{"read get_agent_config after updates"},
+				},
+				map[string]interface{}{
+					"capability_id":   "agent.skill_backed_capability",
+					"goal_action":     "enable",
+					"candidate_tool":  "list_agent_skill_candidates",
+					"candidate_query": "file generation",
+					"required_binding_actions": map[string]interface{}{
+						"enabled_skill_ids": "bind",
+					},
+					"verify_by": []interface{}{"read get_agent_config after updates"},
+				},
+			},
+		},
+		"client_actions": []interface{}{
+			map[string]interface{}{
+				"kind":      "client_action",
+				"status":    "succeeded",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "create_agent",
+				"result": map[string]interface{}{
+					"agent_id":   "agent-new",
+					"agent_name": "AICHAT-PHASE-SMOKE",
+					"status":     "completed",
+				},
+			},
+		},
+	}
+
+	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
+		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = (%q, true), want false while model-decides capability goals still need configuration and verification", answer)
+	}
+}
+
 func TestFastPathFinalAnswerWithEvidenceBlocksAgentIdentityUpdateWhenConfigReadStepPending(t *testing.T) {
 	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
 		Kind:     "tool_call",

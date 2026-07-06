@@ -24,6 +24,66 @@ tools:
 max_calls_per_turn: 14
 timeout_seconds: 90
 tool_governance:
+  list_agents:
+    tool_id: agent.list
+    skill_id: agent-management
+    domain: agents
+    effect: read
+    asset_type: agent
+    risk_level: low
+    requires_asset_resolution: false
+    reversible: false
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - agent:manage
+    default_approval_policy: never_ask
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
+  get_agent:
+    tool_id: agent.get
+    skill_id: agent-management
+    domain: agents
+    effect: read
+    asset_type: agent
+    risk_level: low
+    requires_asset_resolution: false
+    reversible: false
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - agent:manage
+    default_approval_policy: never_ask
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
+  get_agent_config:
+    tool_id: agent.get_config
+    skill_id: agent-management
+    domain: agents
+    effect: read
+    asset_type: agent
+    risk_level: low
+    requires_asset_resolution: false
+    reversible: false
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - agent:manage
+    default_approval_policy: never_ask
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
   create_agent:
     tool_id: agent.create
     skill_id: agent-management
@@ -222,89 +282,6 @@ tool_governance:
     permission_scopes:
       - agent:manage
     default_approval_policy: never_ask
-    allowed_permission_tiers:
-      - basic
-      - advanced
-      - full
-    audit_required: true
-    idempotency_required: false
-  replace_agent_knowledge_bindings:
-    tool_id: agent.replace_knowledge_bindings
-    skill_id: agent-management
-    domain: agents
-    effect: update
-    asset_type: knowledge_base
-    risk_level: medium
-    requires_asset_resolution: true
-    reversible: true
-    bulk_sensitive: false
-    external_side_effect: false
-    permission_scopes:
-      - agent:manage
-      - knowledge:read
-    default_approval_policy: auto_by_permission_tier
-    allowed_permission_tiers:
-      - basic
-      - advanced
-      - full
-    audit_required: true
-    idempotency_required: false
-  replace_agent_skill_bindings:
-    tool_id: agent.replace_skill_bindings
-    skill_id: agent-management
-    domain: agents
-    effect: update
-    asset_type: agent_skill
-    risk_level: medium
-    requires_asset_resolution: true
-    reversible: true
-    bulk_sensitive: false
-    external_side_effect: false
-    permission_scopes:
-      - agent:manage
-    default_approval_policy: auto_by_permission_tier
-    allowed_permission_tiers:
-      - basic
-      - advanced
-      - full
-    audit_required: true
-    idempotency_required: false
-  replace_agent_database_bindings:
-    tool_id: agent.replace_database_bindings
-    skill_id: agent-management
-    domain: agents
-    effect: update
-    asset_type: database_table
-    risk_level: high
-    requires_asset_resolution: true
-    reversible: true
-    bulk_sensitive: true
-    external_side_effect: false
-    permission_scopes:
-      - agent:manage
-      - database:read
-    default_approval_policy: auto_by_permission_tier
-    allowed_permission_tiers:
-      - basic
-      - advanced
-      - full
-    audit_required: true
-    idempotency_required: false
-  replace_agent_workflow_bindings:
-    tool_id: agent.replace_workflow_bindings
-    skill_id: agent-management
-    domain: agents
-    effect: update
-    asset_type: workflow
-    risk_level: high
-    requires_asset_resolution: true
-    reversible: true
-    bulk_sensitive: false
-    external_side_effect: true
-    permission_scopes:
-      - agent:manage
-      - workflow:read
-    default_approval_policy: auto_by_permission_tier
     allowed_permission_tiers:
       - basic
       - advanced

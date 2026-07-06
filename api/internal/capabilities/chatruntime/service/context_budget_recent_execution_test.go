@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -255,6 +256,144 @@ func TestRecentExecutionContextIncludesOperationResultSummary(t *testing.T) {
 	}
 	if stats.IncludedOperationSummaries != 1 {
 		t.Fatalf("IncludedOperationSummaries = %d, want 1", stats.IncludedOperationSummaries)
+	}
+}
+
+func TestRecentExecutionContextForNewRequestOmitsPriorOperationHistory(t *testing.T) {
+	branch := []*runtimemodel.Message{
+		{
+			Query:  "删除页面中的第一个智能体",
+			Status: runtimemodel.MessageStatusCompleted,
+			Answer: "第一个智能体已删除。",
+			Metadata: map[string]interface{}{
+				"skill_invocations": []interface{}{
+					map[string]interface{}{
+						"kind":      "tool_call",
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "delete_agent",
+						"status":    "success",
+					},
+				},
+				"operation_plan": map[string]interface{}{
+					"status": operationPlanStatusCompleted,
+					"operation_group": map[string]interface{}{
+						"operation":     "agent.delete",
+						"asset_type":    "agent",
+						"target_count":  1,
+						"success_count": 1,
+						"failed_count":  0,
+					},
+				},
+			},
+		},
+	}
+	parts := &chatRequestParts{Query: "创建一个临时智能体，取名叫 AICHAT-MANIFEST-SMOKE，模型配置为 deepseek flash。"}
+
+	recent, stats := buildRecentExecutionContextMessageForRequest(parts, branch)
+
+	if recent != nil {
+		t.Fatalf("recent execution context = %#v, want nil for independent new request", recent)
+	}
+	if stats.IncludedToolEvents != 0 || stats.IncludedOperationSummaries != 0 {
+		t.Fatalf("recent stats = %#v, want no prior operation context for independent new request", stats)
+	}
+	boundary := currentTurnBoundaryMessage(parts)
+	if boundary == nil {
+		t.Fatal("current turn boundary = nil, want boundary for independent new request")
+	}
+	content, ok := boundary.Content.(string)
+	if !ok {
+		t.Fatalf("boundary content type = %T, want string", boundary.Content)
+	}
+	if !strings.Contains(content, "latest user request") || !strings.Contains(content, "Do not continue") {
+		t.Fatalf("boundary content missing latest-request guidance: %s", content)
+	}
+}
+
+func TestRecentExecutionContextForContinuationKeepsPriorOperationHistory(t *testing.T) {
+	branch := []*runtimemodel.Message{
+		{
+			Query:  "删除页面中的第一个智能体",
+			Status: runtimemodel.MessageStatusCompleted,
+			Metadata: map[string]interface{}{
+				"skill_invocations": []interface{}{
+					map[string]interface{}{
+						"kind":      "tool_call",
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "delete_agent",
+						"status":    "success",
+					},
+				},
+			},
+		},
+	}
+	parts := &chatRequestParts{Query: "继续刚才的操作"}
+
+	recent, stats := buildRecentExecutionContextMessageForRequest(parts, branch)
+
+	if recent == nil {
+		t.Fatal("recent execution context = nil, want prior tool history for continuation")
+	}
+	content, ok := recent.Content.(string)
+	if !ok {
+		t.Fatalf("recent content type = %T, want string", recent.Content)
+	}
+	if !strings.Contains(content, "delete_agent") {
+		t.Fatalf("recent execution context missing prior tool history: %s", content)
+	}
+	if stats.IncludedToolEvents != 1 {
+		t.Fatalf("IncludedToolEvents = %d, want 1", stats.IncludedToolEvents)
+	}
+	if currentTurnBoundaryMessage(parts) != nil {
+		t.Fatal("current turn boundary should be omitted for explicit continuation")
+	}
+}
+
+func TestHistoryIsolationForIndependentContextualOperationRequest(t *testing.T) {
+	branch := []*runtimemodel.Message{
+		{
+			Query:  "删掉页面中的第一个智能体，然后创建一个新的智能体，取名叫小说创作大师",
+			Answer: "已完成智能体「小说创作大师」的多项配置更新。",
+			Status: runtimemodel.MessageStatusCompleted,
+		},
+	}
+	parts := &chatRequestParts{
+		Query:     "创建一个临时智能体，取名叫 AICHAT-MANIFEST-SMOKE，模型配置为 deepseek flash。",
+		Surface:   aiChatSurfaceContextualSidebar,
+		SkillMode: skillModeAuto,
+		SkillIDs:  []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator},
+	}
+
+	if !shouldIsolateHistoryForCurrentTurn(parts) {
+		t.Fatal("shouldIsolateHistoryForCurrentTurn = false, want true for independent contextual create request")
+	}
+	groups := (&service{}).historyMessageGroupsForCurrentRequest(context.Background(), branch, parts)
+	if len(groups) != 0 {
+		t.Fatalf("history groups = %#v, want old operation turns isolated", groups)
+	}
+}
+
+func TestHistoryIsolationKeepsHistoryForExplicitContinuation(t *testing.T) {
+	branch := []*runtimemodel.Message{
+		{
+			Query:  "删掉页面中的第一个智能体，然后创建一个新的智能体，取名叫小说创作大师",
+			Answer: "已完成第一步。",
+			Status: runtimemodel.MessageStatusCompleted,
+		},
+	}
+	parts := &chatRequestParts{
+		Query:     "继续刚才的操作",
+		Surface:   aiChatSurfaceContextualSidebar,
+		SkillMode: skillModeAuto,
+		SkillIDs:  []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator},
+	}
+
+	if shouldIsolateHistoryForCurrentTurn(parts) {
+		t.Fatal("shouldIsolateHistoryForCurrentTurn = true, want false for explicit continuation")
+	}
+	groups := (&service{}).historyMessageGroupsForCurrentRequest(context.Background(), branch, parts)
+	if len(groups) == 0 {
+		t.Fatal("history groups empty, want prior turn for explicit continuation")
 	}
 }
 
