@@ -672,6 +672,10 @@ const messages = {
     processingHintTitle: 'Document files become searchable after parsing',
     processingHintDescription:
       'Images, icons, temporary files, and unsupported formats are stored without document processing.',
+    parserFallbackWarningTitle: 'No available third-party parser',
+    parserFallbackWarningDescription:
+      'No available third-party parser is configured. Upload-and-parse will use local parsing, which may perform worse on complex layouts, tables, and scanned files.',
+    configureParserService: 'Configure parser service',
     uploadFiles: 'Upload Files',
     selectedFilesTitle: '{count} file(s) selected',
     selectedFilesPendingSummary: '{count} file(s) selected, waiting to upload.',

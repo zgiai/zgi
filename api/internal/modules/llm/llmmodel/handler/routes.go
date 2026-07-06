@@ -25,18 +25,19 @@ func RegisterTenantModelRoutes(r *gin.RouterGroup, handler *ModelHandler, availa
 
 	g.GET("/configs", handler.ListModelConfigs)
 	g.GET("/custom", handler.ListCustomModels)
-	admin.POST("/custom", handler.CreateCustom)
-	admin.POST("/config", handler.ConfigureModel)
-	admin.POST("/provider/toggle", handler.ToggleProviderModels)
-	admin.POST("/batch/toggle", handler.BatchToggleModels)
 	g.GET("/parameters", handler.GetModelParameters)
 
 	// Parameterized paths come after
 	g.GET("", handler.ListTenantModels)
 	g.GET("/config/:model_id", handler.GetModelConfig)
 	g.GET("/custom/:id", handler.GetCustom)
-	admin.PUT("/custom/:id", handler.UpdateCustom)
 	g.GET("/:id/availability", handler.CheckAvailability)
 	g.POST("/availability/batch", handler.BatchCheckAvailability)
+
+	admin.POST("/custom", handler.CreateCustom)
+	admin.POST("/config", handler.ConfigureModel)
+	admin.POST("/provider/toggle", handler.ToggleProviderModels)
+	admin.POST("/batch/toggle", handler.BatchToggleModels)
+	admin.PUT("/custom/:id", handler.UpdateCustom)
 	admin.DELETE("/custom/:id", handler.DeleteCustom)
 }

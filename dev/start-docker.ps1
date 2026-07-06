@@ -48,7 +48,6 @@ function Enable-KnowledgeProfile {
   Add-ComposeProfile 'knowledge'
   if (-not $env:VECTOR_STORE) { $env:VECTOR_STORE = 'weaviate' }
   if (-not $env:WEAVIATE_ENDPOINT) { $env:WEAVIATE_ENDPOINT = 'http://weaviate:8080' }
-  if (-not $env:NEO4J_URI) { $env:NEO4J_URI = 'bolt://neo4j:7687' }
   Write-Host "[start-docker] enable knowledge profile"
 }
 
@@ -56,7 +55,6 @@ function Enable-CoreStack {
   $env:COMPOSE_PROFILES = ''
   $env:VECTOR_STORE = 'mock'
   $env:WEAVIATE_ENDPOINT = ''
-  $env:NEO4J_URI = ''
   $env:CODE_EXECUTION_ENDPOINT = ''
   $env:PLUGIN_RUNNER_ENABLED = 'false'
   Write-Host "[start-docker] enable core stack"

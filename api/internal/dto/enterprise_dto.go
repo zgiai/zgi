@@ -23,12 +23,14 @@ type OrganizationMemberResponse struct {
 
 // OrganizationWithRoleResponse represents an enterprise group with user role
 type OrganizationWithRoleResponse struct {
-	ID               string                   `json:"id"`
-	Name             string                   `json:"name"`
-	ShortName        *string                  `json:"short_name"`
-	Status           model.OrganizationStatus `json:"status"`
-	CreatedAt        int64                    `json:"created_at"`
-	OrganizationRole model.OrganizationRole   `json:"organization_role"`
+	ID                     string                       `json:"id"`
+	Name                   string                       `json:"name"`
+	ShortName              *string                      `json:"short_name"`
+	Status                 model.OrganizationStatus     `json:"status"`
+	BillingDisplayCurrency model.BillingDisplayCurrency `json:"billing_display_currency"`
+	USDToCNYRate           float64                      `json:"usd_to_cny_rate"`
+	CreatedAt              int64                        `json:"created_at"`
+	OrganizationRole       model.OrganizationRole       `json:"organization_role"`
 }
 
 // OrganizationPaginationResponse represents a paginated list of enterprise groups
@@ -211,12 +213,14 @@ type WorkspaceRoleResponse struct {
 
 // CurrentOrganizationResponse represents current enterprise information
 type CurrentOrganizationResponse struct {
-	ID               string                   `json:"id"`
-	Name             string                   `json:"name"`
-	ShortName        *string                  `json:"short_name"`
-	Status           model.OrganizationStatus `json:"status"`
-	CreatedAt        int64                    `json:"created_at"`
-	OrganizationRole model.OrganizationRole   `json:"organization_role"`
+	ID                     string                       `json:"id"`
+	Name                   string                       `json:"name"`
+	ShortName              *string                      `json:"short_name"`
+	Status                 model.OrganizationStatus     `json:"status"`
+	BillingDisplayCurrency model.BillingDisplayCurrency `json:"billing_display_currency"`
+	USDToCNYRate           float64                      `json:"usd_to_cny_rate"`
+	CreatedAt              int64                        `json:"created_at"`
+	OrganizationRole       model.OrganizationRole       `json:"organization_role"`
 }
 
 // CurrentOrganizationDetailResponse represents detailed current enterprise information
@@ -280,8 +284,10 @@ type CreateOrganizationWithWorkspaceRequest struct {
 
 // UpdateOrganizationRequest represents the request to update an enterprise group
 type UpdateOrganizationRequest struct {
-	Name      string  `json:"name" binding:"required"`
-	ShortName *string `json:"short_name,omitempty"`
+	Name                   string                        `json:"name" binding:"required"`
+	ShortName              *string                       `json:"short_name,omitempty"`
+	BillingDisplayCurrency *model.BillingDisplayCurrency `json:"billing_display_currency,omitempty"`
+	USDToCNYRate           *float64                      `json:"usd_to_cny_rate,omitempty"`
 }
 
 // AddWorkspaceToOrganizationRequest represents the request to add a tenant to enterprise

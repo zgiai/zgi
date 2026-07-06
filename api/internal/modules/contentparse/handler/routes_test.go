@@ -125,6 +125,7 @@ var (
 type fakeProviderSettingsService struct {
 	listCalled   bool
 	upsertCalled bool
+	checkCalled  bool
 }
 
 func (f *fakeProviderSettingsService) List(context.Context, uuid.UUID) (*contentsvc.ParserSettingsList, error) {
@@ -134,6 +135,11 @@ func (f *fakeProviderSettingsService) List(context.Context, uuid.UUID) (*content
 
 func (f *fakeProviderSettingsService) Upsert(context.Context, uuid.UUID, *uuid.UUID, string, contentsvc.ParserSettingsInput) (*contentsvc.ParserProviderSettings, error) {
 	f.upsertCalled = true
+	return &contentsvc.ParserProviderSettings{}, nil
+}
+
+func (f *fakeProviderSettingsService) Check(context.Context, uuid.UUID, *uuid.UUID, string) (*contentsvc.ParserProviderSettings, error) {
+	f.checkCalled = true
 	return &contentsvc.ParserProviderSettings{}, nil
 }
 
@@ -198,7 +204,7 @@ func TestRegisterInternalRoutes_RegisterExpectedPaths(t *testing.T) {
 	}
 }
 
-func TestProviderSettingsRoutesRequireOrganizationAdminOrOwner(t *testing.T) {
+func TestProviderSettingsRoutesAllowReadWithoutOrganizationAdminOrOwner(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	organizationID := uuid.NewString()
 	accountSvc := &providerSettingsAccountService{allowed: false}
@@ -210,8 +216,32 @@ func TestProviderSettingsRoutesRequireOrganizationAdminOrOwner(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for provider settings read request, got %d, body=%s", w.Code, w.Body.String())
+	}
+	if accountSvc.authorizationCalled {
+		t.Fatal("read request should not require organization admin authorization")
+	}
+	if !settingsSvc.listCalled {
+		t.Fatal("provider settings service should be called for read request")
+	}
+}
+
+func TestProviderSettingsRoutesRequireOrganizationAdminOrOwnerForWrites(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	organizationID := uuid.NewString()
+	accountSvc := &providerSettingsAccountService{allowed: false}
+	settingsSvc := &fakeProviderSettingsService{}
+
+	router := newProviderSettingsRouteTestRouter(organizationID, accountSvc, settingsSvc)
+
+	req := httptest.NewRequest(http.MethodPut, "/content-parse/provider-settings/reducto", strings.NewReader(`{"enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
 	if w.Code != http.StatusForbidden {
-		t.Fatalf("expected status 403 for non-admin provider settings request, got %d, body=%s", w.Code, w.Body.String())
+		t.Fatalf("expected status 403 for non-admin provider settings write request, got %d, body=%s", w.Code, w.Body.String())
 	}
 	if !strings.Contains(w.Body.String(), `"code":"403001"`) {
 		t.Fatalf("expected permission denied error code 403001, got body=%s", w.Body.String())
@@ -222,8 +252,8 @@ func TestProviderSettingsRoutesRequireOrganizationAdminOrOwner(t *testing.T) {
 	if accountSvc.lastOrganizationID != organizationID || accountSvc.lastAccountID != "acc-1" {
 		t.Fatalf("authorization scope = (%q, %q), want (%q, acc-1)", accountSvc.lastOrganizationID, accountSvc.lastAccountID, organizationID)
 	}
-	if settingsSvc.listCalled {
-		t.Fatal("provider settings service should not be called for non-admin request")
+	if settingsSvc.upsertCalled {
+		t.Fatal("provider settings service should not be called for non-admin write request")
 	}
 }
 

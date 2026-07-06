@@ -36,7 +36,7 @@ import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import { useUpdateCurrentWorkspace } from '@/hooks/workspace/use-update-current-workspace';
 import { useT } from '@/i18n';
 import { APP_NAME, ICON_BG } from '@/lib/config';
-import { dashboardService } from '@/services';
+import { contentParseService, dashboardService } from '@/services';
 import type { DashboardRecentWorkType } from '@/services/types/dashboard';
 import { useCurrentWorkspace, useWorkspaces, type Workspace } from '@/store/workspace-store';
 import { getRecentWorkHref } from '@/utils/console-recent-work';
@@ -200,6 +200,13 @@ export default function ConsolePage() {
     staleTime: 60 * 1000,
     retry: false,
   });
+  const { data: parserSettingsData, isSuccess: isParserSettingsSuccess } = useQuery({
+    queryKey: ['content-parse', 'parser-settings'],
+    queryFn: () => contentParseService.listParserSettings(),
+    enabled: canUseOrganizationScope,
+    staleTime: 60 * 1000,
+    retry: false,
+  });
 
   const canOpenModelConfig = canAccessOrganizationDashboard && canManageModelConfig;
   const productSurfaces = capabilities?.organization.product_surfaces;
@@ -248,6 +255,15 @@ export default function ConsolePage() {
       capability.priority === 'required' && getModelCount(statsData, capability.type) === 0
   );
   const isReady = requiredMissing.length === 0;
+  const hasAvailableThirdPartyParser = (parserSettingsData?.data.items ?? []).some(
+    item =>
+      (item.provider_key === 'reducto' || item.provider_key === 'mineru') &&
+      item.enabled &&
+      item.configured &&
+      item.status === 'available'
+  );
+  const showParserAttention =
+    canUseOrganizationScope && isParserSettingsSuccess && !hasAvailableThirdPartyParser;
 
   const productEntries: ProductEntry[] = [
     {
@@ -826,7 +842,7 @@ export default function ConsolePage() {
                       {t('dashboard.stats.consoleHome.capabilitiesConfigured')}
                     </div>
                   </div>
-                  {isReady ? (
+                  {isReady && !showParserAttention ? (
                     <p className="text-sm leading-6 text-muted-foreground">
                       {t('dashboard.stats.consoleHome.noCriticalIssues')}
                     </p>
@@ -845,6 +861,21 @@ export default function ConsolePage() {
                           </span>
                         </div>
                       ))}
+                      {showParserAttention ? (
+                        <div className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-3">
+                          <div className="flex items-start gap-2 text-sm text-foreground">
+                            <AlertCircle className="mt-0.5 size-4 shrink-0 text-warning" />
+                            <span>{t('dashboard.stats.consoleHome.parserServiceMissing')}</span>
+                          </div>
+                          {canAccessOrganizationDashboard ? (
+                            <Button asChild size="sm" variant="outline" className="mt-3 w-full">
+                              <Link href="/dashboard/settings/parsers">
+                                {t('dashboard.stats.consoleHome.actions.configureParserService')}
+                              </Link>
+                            </Button>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                   )}
                 </div>

@@ -28,8 +28,10 @@ import (
 )
 
 // Centralized defaults for retrieval model behavior.
-// TODO: Verify product defaults and adjust defaultRetrievalTopK accordingly if needed.
-const defaultRetrievalTopK = 2
+const (
+	defaultRetrievalTopK           = 10
+	defaultRetrievalScoreThreshold = 0.35
+)
 
 // normalizeProviderAndModel applies provider/model alias normalization so that
 // incoming values like "agicto" can be mapped to the actual configured provider key
@@ -64,11 +66,12 @@ func normalizeProviderAndModel(provider, model string) (string, string, bool) {
 
 func buildDefaultRetrievalModel() map[string]interface{} {
 	return map[string]interface{}{
-		"search_method":           "semantic_search",
-		"reranking_enable":        false,
+		"search_method":           "hybrid_search",
+		"reranking_enable":        true,
 		"reranking_model":         map[string]interface{}{"reranking_provider_name": "", "reranking_model_name": ""},
 		"top_k":                   defaultRetrievalTopK,
-		"score_threshold_enabled": false,
+		"score_threshold_enabled": true,
+		"score_threshold":         defaultRetrievalScoreThreshold,
 	}
 }
 

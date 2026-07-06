@@ -3199,9 +3199,11 @@ func (h *OrganizationHandler) GetOrganizations(c *gin.Context) {
 
 func (h *OrganizationHandler) UpdateOrganization(c *gin.Context) {
 	var req struct {
-		ID        string  `json:"id" binding:"required"`
-		Name      string  `json:"name" binding:"required"`
-		ShortName *string `json:"short_name"`
+		ID                     string                        `json:"id" binding:"required"`
+		Name                   string                        `json:"name" binding:"required"`
+		ShortName              *string                       `json:"short_name"`
+		BillingDisplayCurrency *model.BillingDisplayCurrency `json:"billing_display_currency"`
+		USDToCNYRate           *float64                      `json:"usd_to_cny_rate"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -3216,8 +3218,10 @@ func (h *OrganizationHandler) UpdateOrganization(c *gin.Context) {
 	}
 
 	organization, err := h.organizationService.UpdateOrganization(c.Request.Context(), req.ID, accountID, &shared_dto.UpdateOrganizationRequest{
-		Name:      req.Name,
-		ShortName: req.ShortName,
+		Name:                   req.Name,
+		ShortName:              req.ShortName,
+		BillingDisplayCurrency: req.BillingDisplayCurrency,
+		USDToCNYRate:           req.USDToCNYRate,
 	})
 	if err != nil {
 		h.handleUpdateOrganizationError(c, err)
@@ -3235,8 +3239,10 @@ func (h *OrganizationHandler) PatchOrganization(c *gin.Context) {
 	}
 
 	var req struct {
-		Name      string  `json:"name" binding:"required"`
-		ShortName *string `json:"short_name"`
+		Name                   string                        `json:"name" binding:"required"`
+		ShortName              *string                       `json:"short_name"`
+		BillingDisplayCurrency *model.BillingDisplayCurrency `json:"billing_display_currency"`
+		USDToCNYRate           *float64                      `json:"usd_to_cny_rate"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -3254,8 +3260,10 @@ func (h *OrganizationHandler) PatchOrganization(c *gin.Context) {
 	}
 
 	organization, err := h.organizationService.UpdateOrganization(c.Request.Context(), organizationID, accountID, &shared_dto.UpdateOrganizationRequest{
-		Name:      req.Name,
-		ShortName: req.ShortName,
+		Name:                   req.Name,
+		ShortName:              req.ShortName,
+		BillingDisplayCurrency: req.BillingDisplayCurrency,
+		USDToCNYRate:           req.USDToCNYRate,
 	})
 	if err != nil {
 		h.handleUpdateOrganizationError(c, err)
@@ -3267,7 +3275,7 @@ func (h *OrganizationHandler) PatchOrganization(c *gin.Context) {
 
 func (h *OrganizationHandler) handleUpdateOrganizationError(c *gin.Context, err error) {
 	switch {
-	case errors.Is(err, workspace_service.ErrInvalidOrganizationName):
+	case errors.Is(err, workspace_service.ErrInvalidOrganizationName), errors.Is(err, workspace_service.ErrInvalidOrganizationBillingDisplayConfig):
 		response.Fail(c, response.ErrInvalidParam)
 	case errors.Is(err, workspace_service.ErrOrganizationNotFound):
 		response.Fail(c, response.ErrOrganizationNotFound)

@@ -15,11 +15,11 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { IconInput } from '@/components/common/icon-input';
 import { createTextIconValue, type IconValue } from '@/components/common/icon-input/types';
+import { ModelSelector } from '@/components/common/model-selector';
 import {
   useDefaultModelByUseCase,
   useInitializeDefaultModelByUseCase,
@@ -33,7 +33,6 @@ import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
 import {
   EmbeddingSettings,
-  GraphModelSettings,
   RetrievalSettings as RetrievalConfigCard,
   type RetrievalConfig,
 } from '@/components/datasets/indexing-config';
@@ -46,11 +45,11 @@ interface CreateDatasetDialogProps {
 }
 
 const DEFAULT_CREATE_RETRIEVAL_CONFIG: RetrievalConfig = {
-  search_method: 'semantic_search',
-  top_k: 4,
+  search_method: 'hybrid_search',
+  top_k: 10,
   score_threshold_enabled: true,
-  score_threshold: 0.5,
-  reranking_enable: false,
+  score_threshold: 0.35,
+  reranking_enable: true,
   reranking_model: { reranking_provider_name: '', reranking_model_name: '' },
 };
 
@@ -117,19 +116,15 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     DEFAULT_CREATE_RETRIEVAL_CONFIG
   );
 
-  const [hasManuallySetSearchMethod, setHasManuallySetSearchMethod] = useState(false);
   // Track if form has been submitted to show validation errors only after submit
   const [hasSubmitted, setHasSubmitted] = useState(false);
-  const graphFlowEnabled = isEditMode
-    ? Boolean(dataset?.enable_graph_flow)
-    : formData.enable_graph_flow;
+  const graphFlowEnabled = false;
 
   // Reset icon and form when dataset changes or dialog opens
   useEffect(() => {
     if (!open) return;
     // Reset submitted state when dialog opens
     setHasSubmitted(false);
-    setHasManuallySetSearchMethod(false);
     if (isEditMode && dataset) {
       setFormData({
         name: dataset.name || '',
@@ -182,19 +177,22 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     },
   });
 
-  // Default graph model when graph flow is enabled
+  // Default rerank model for create mode. Reranking is mandatory; only the model is configurable.
   useInitializeDefaultModelByUseCase({
-    useCase: 'text-chat',
+    useCase: 'rerank',
     currentModel: {
-      provider: formData.entity_model_provider,
-      model: formData.entity_model,
+      provider: retrievalConfig.reranking_model?.reranking_provider_name,
+      model: retrievalConfig.reranking_model?.reranking_model_name,
     },
-    enabled: open && graphFlowEnabled,
+    enabled: open && !isEditMode,
     onInitialize: v => {
-      setFormData(prev => ({
+      setRetrievalConfig(prev => ({
         ...prev,
-        entity_model_provider: v.provider,
-        entity_model: v.model,
+        reranking_enable: true,
+        reranking_model: {
+          reranking_provider_name: v.provider,
+          reranking_model_name: v.model,
+        },
       }));
     },
   });
@@ -206,31 +204,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
   ) {
     setFormData(prev => ({ ...prev, [field]: value }));
   }
-
-  const handleGraphFlowChange = useCallback(
-    (checked: boolean) => {
-      setFormData(prev => ({
-        ...prev,
-        enable_graph_flow: checked,
-      }));
-
-      if (!checked) {
-        setRetrievalConfig(prev => ({
-          ...prev,
-          search_method: 'semantic_search',
-        }));
-        return;
-      }
-
-      if (!isEditMode && !hasManuallySetSearchMethod) {
-        setRetrievalConfig(prev => ({
-          ...prev,
-          search_method: 'graph_search',
-        }));
-      }
-    },
-    [hasManuallySetSearchMethod, isEditMode]
-  );
 
   // Validate name: 2-32 Unicode chars; letters, numbers, underscore, hyphen, optional spaces
   const isNameValid = useMemo(
@@ -245,14 +218,10 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     () => isEditMode || Boolean(formData.embedding_model_provider && formData.embedding_model),
     [isEditMode, formData.embedding_model_provider, formData.embedding_model]
   );
-  const isGraphModelValid = useMemo(
-    () => !graphFlowEnabled || Boolean(formData.entity_model_provider && formData.entity_model),
-    [graphFlowEnabled, formData.entity_model_provider, formData.entity_model]
-  );
-
   // Validate form and show toast for errors
   const validateForm = useCallback((): boolean => {
-    const workspaceId = currentWorkspace?.id || dataset?.workspace_id || dataset?.workspace?.id || '';
+    const workspaceId =
+      currentWorkspace?.id || dataset?.workspace_id || dataset?.workspace?.id || '';
 
     // Check name validation
     if (!isNameValid) {
@@ -267,11 +236,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
       return false;
     }
 
-    if (!isGraphModelValid) {
-      toast.error(t('datasets.validation.graphModel.required'));
-      return false;
-    }
-
     // Check workspace
     if (!workspaceId) {
       toast.error(t('datasets.validation.workspace.required'));
@@ -283,7 +247,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     isNameValid,
     nameErrors,
     isEmbeddingModelValid,
-    isGraphModelValid,
     currentWorkspace?.id,
     dataset?.workspace_id,
     dataset?.workspace?.id,
@@ -301,7 +264,8 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
       return;
     }
 
-    const workspaceId = currentWorkspace?.id || dataset?.workspace_id || dataset?.workspace?.id || '';
+    const workspaceId =
+      currentWorkspace?.id || dataset?.workspace_id || dataset?.workspace?.id || '';
 
     const iconPayload = iconValueToDatasetPayload(iconValue, {
       existing: isEditMode ? dataset : undefined,
@@ -352,7 +316,7 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
             top_k: retrievalConfig.top_k,
             score_threshold: retrievalConfig.score_threshold,
             score_threshold_enabled: retrievalConfig.score_threshold_enabled,
-            reranking_enable: retrievalConfig.reranking_enable,
+            reranking_enable: true,
             reranking_model: retrievalConfig.reranking_model,
           },
         });
@@ -438,27 +402,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                 />
               </div>
 
-              {!isEditMode ? (
-                <div className="flex items-center justify-between rounded-xl border border-border/50 bg-muted/20 p-4 transition-colors hover:bg-muted/30">
-                  <div className="space-y-0.5">
-                    <Label
-                      className="cursor-pointer text-sm font-semibold"
-                      htmlFor="enable-graph-flow"
-                    >
-                      {t('datasets.createModal.enableGraphFlowLabel')}
-                    </Label>
-                    <p className="max-w-[320px] text-xs text-muted-foreground">
-                      {t('datasets.createModal.enableGraphFlowDescription')}
-                    </p>
-                  </div>
-                  <Switch
-                    id="enable-graph-flow"
-                    checked={formData.enable_graph_flow}
-                    onCheckedChange={handleGraphFlowChange}
-                  />
-                </div>
-              ) : null}
-
               {isEditMode && graphFlowEnabled ? (
                 <div className="rounded-xl border border-border/50 bg-muted/20 p-4">
                   <div className="flex items-center gap-2">
@@ -473,32 +416,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                     {t('datasets.settings.graphFlowEnabledDescription')}
                   </p>
                 </div>
-              ) : null}
-
-              {graphFlowEnabled ? (
-                <GraphModelSettings
-                  graphModel={{
-                    provider: formData.entity_model_provider || '',
-                    model: formData.entity_model || '',
-                  }}
-                  onChange={graphModel => {
-                    setFormData(prev => ({
-                      ...prev,
-                      entity_model_provider: graphModel.provider,
-                      entity_model: graphModel.model,
-                    }));
-                  }}
-                  required
-                  title={t('datasets.createModal.graphModelLabel')}
-                  description={t('datasets.createModal.graphModelDescription')}
-                  placeholder={t('datasets.createModal.graphModelPlaceholder')}
-                  hasError={hasSubmitted && !isGraphModelValid}
-                  errorMessage={
-                    hasSubmitted && !isGraphModelValid
-                      ? t('datasets.validation.graphModel.required')
-                      : undefined
-                  }
-                />
               ) : null}
 
               {/* Embedding Model Selector */}
@@ -525,6 +442,32 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                       : undefined
                   }
                 />
+              )}
+
+              {/* Rerank model selector - create mode only */}
+              {!isEditMode && (
+                <div className="space-y-2.5">
+                  <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    {t('datasets.createWizard.processConfig.rerankModel')}
+                  </Label>
+                  <ModelSelector
+                    modelType="rerank"
+                    value={{
+                      provider: retrievalConfig.reranking_model?.reranking_provider_name || '',
+                      model: retrievalConfig.reranking_model?.reranking_model_name || '',
+                    }}
+                    onChange={({ provider, model }) =>
+                      setRetrievalConfig(prev => ({
+                        ...prev,
+                        reranking_enable: true,
+                        reranking_model: {
+                          reranking_provider_name: provider,
+                          reranking_model_name: model,
+                        },
+                      }))
+                    }
+                  />
+                </div>
               )}
 
               {/* Advanced Settings */}
@@ -573,10 +516,8 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                         <RetrievalConfigCard
                           retrieval={retrievalConfig}
                           isGraphEnabled={graphFlowEnabled}
+                          showRerankingModel={false}
                           onChange={(config: RetrievalConfig) => {
-                            if (config.search_method !== retrievalConfig.search_method) {
-                              setHasManuallySetSearchMethod(true);
-                            }
                             setRetrievalConfig(config);
                           }}
                         />

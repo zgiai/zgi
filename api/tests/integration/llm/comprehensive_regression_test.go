@@ -82,6 +82,10 @@ func init() {
 		initErr = fmt.Errorf("failed to init DB: %w", err)
 		return
 	}
+	if err := requireLLMIntegrationSchema(db); err != nil {
+		initErr = err
+		return
+	}
 
 	// Initialize services
 	apiKeyRepo = apikeyrepo.NewAPIKeyRepository(db)
@@ -105,6 +109,36 @@ func requireIntegrationHarness(t *testing.T) {
 
 func initTestDB() (*gorm.DB, error) {
 	return database.InitDB(config.Current().Database)
+}
+
+func requireLLMIntegrationSchema(db *gorm.DB) error {
+	requiredTables := []string{
+		"llm_pricing_fallback_overrides",
+	}
+	for _, table := range requiredTables {
+		if !db.Migrator().HasTable(table) {
+			return fmt.Errorf("integration test database schema is missing table %s; run: cd api && go run ./cmd/migrate/main.go up", table)
+		}
+	}
+
+	requiredColumns := []struct {
+		table  string
+		column string
+	}{
+		{table: "llm_models", column: "input_price_configured"},
+		{table: "llm_models", column: "output_price_configured"},
+		{table: "llm_custom_models", column: "input_price_configured"},
+		{table: "llm_custom_models", column: "output_price_configured"},
+		{table: "llm_usage_bills", column: "pricing_source"},
+		{table: "llm_usage_bills", column: "usage_source"},
+		{table: "llm_usage_bills", column: "pricing_snapshot"},
+	}
+	for _, required := range requiredColumns {
+		if !db.Migrator().HasColumn(required.table, required.column) {
+			return fmt.Errorf("integration test database schema is missing %s.%s; run: cd api && go run ./cmd/migrate/main.go up", required.table, required.column)
+		}
+	}
+	return nil
 }
 
 // =============================================================================

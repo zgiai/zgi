@@ -203,6 +203,11 @@ const messages = {
         description: 'Recharge the channel balance or switch channel, then try again.',
         action: 'Go to Channel',
       },
+      '207014': {
+        title: 'Model pricing is not configured',
+        description: 'Configure model pricing in Model Management or Billing Strategy, then try again.',
+        action: 'Configure pricing',
+      },
       contactAdmin:
         'The current balance or quota is insufficient. Please contact an organization administrator to recharge or adjust quota.',
     },

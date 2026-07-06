@@ -7,5 +7,11 @@ tmp/
 docker/docker-compose.yaml
 .qa-state.json
 qa-artifacts/
+outputs/
 .local/
 .gstack/
+specs/
+scripts/rag_evaluation/.env
+scripts/rag_evaluation/__pycache__/
+scripts/rag_evaluation/input/
+scripts/rag_evaluation/middle/

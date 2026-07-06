@@ -9,15 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import {
-  KeyRound,
-  Languages,
-  Palette,
-  Plug,
-  RefreshCw,
-  Shield,
-  SlidersHorizontal,
-} from 'lucide-react';
+import { Languages, Palette, Plug, Shield, SlidersHorizontal } from 'lucide-react';
 import type { Theme, ThemeConfig } from '@/lib/theme';
 import { useT, type SettingsKey } from '@/i18n';
 
@@ -216,22 +208,6 @@ export default function SettingsPage() {
                   </p>
                 </div>
                 <LanguageSwitcher className="h-9 min-w-[120px] justify-center border-primary bg-primary px-4 text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-border">
-            <CardHeader className="pb-4">
-              <CardTitle className="flex items-center gap-2 text-xl">
-                <KeyRound className="h-5 w-5 text-muted-foreground" />
-                {t('settings.system.advanced')}
-              </CardTitle>
-              <CardDescription>{t('settings.system.advancedDesc')}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
-                <span>{t('settings.system.advancedPlaceholder')}</span>
-                <RefreshCw className="h-4 w-4" />
               </div>
             </CardContent>
           </Card>

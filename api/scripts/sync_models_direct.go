@@ -254,7 +254,7 @@ func main() {
 func modelMetaEndpoint(apiURL, path string) string {
 	baseURL := strings.TrimRight(strings.TrimSpace(apiURL), "/")
 	if baseURL == "" {
-		baseURL = "https://api.modelmeta.dev"
+		baseURL = "https://models.zgi.ai"
 	}
 	if !strings.HasSuffix(baseURL, "/v1") {
 		baseURL += "/v1"

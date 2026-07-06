@@ -71,7 +71,15 @@ export type WorkflowPrecheckStatus = 'ok' | 'warning' | 'unknown' | string;
 
 export type WorkflowPrecheckWarningCode = '207008' | '207009' | '207010' | 207008 | 207009 | 207010;
 
-export type WorkflowRunBillingErrorCode = '207011' | '207012' | '207013' | 207011 | 207012 | 207013;
+export type WorkflowRunBillingErrorCode =
+  | '207011'
+  | '207012'
+  | '207013'
+  | '207014'
+  | 207011
+  | 207012
+  | 207013
+  | 207014;
 
 export interface WorkflowRunBillingError {
   code?: string | number;

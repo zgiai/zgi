@@ -230,6 +230,9 @@ func buildChatRequest(req *LLMInvokeRequest) (*llmAdapter.ChatRequest, bool) {
 	if v, ok := toFloatPointer(params["frequency_penalty"]); ok {
 		llmReq.FrequencyPenalty = v
 	}
+	if v, ok := toIntPointer(params["seed"]); ok {
+		llmReq.Seed = v
+	}
 
 	collectStructured := req.StructuredOutput != nil
 	if rf, ok := params["response_format"].(string); ok && rf != "" {

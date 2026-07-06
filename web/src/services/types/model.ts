@@ -78,6 +78,8 @@ export interface GetModelsParams {
   capabilities?: string;
   // Filter by model use case
   use_case?: ModelUseCase;
+  // Filter by model lifecycle status
+  status?: 'active' | 'deprecated';
 }
 
 // Available models fetch params (enabled models only)
@@ -149,6 +151,8 @@ export interface ModelItem {
   currency: string;
   input_price: number;
   output_price: number;
+  input_price_configured?: boolean;
+  output_price_configured?: boolean;
   cached_input_price?: number;
   context_window: number;
   max_output_tokens: number;
@@ -175,7 +179,10 @@ export interface ModelItem {
   performance?: ModelPerformance;
   usage_guidelines?: ModelUsageGuidelines;
   deprecation_date?: string | null;
+  deprecation_reason?: string | null;
+  replacement_provider?: string | null;
   replacement_model?: string | null;
+  unselectable_reason_code?: 'deprecated';
 }
 
 export interface ModelList {
@@ -199,6 +206,18 @@ export interface ToggleModelResponse {
   is_enabled: boolean; // Renamed from is_active
   message: string;
   model_name: string;
+}
+
+export interface ConfigureModelRequest {
+  model_id: string;
+  is_enabled?: boolean;
+  custom_display_name?: string;
+  input_price_override?: string;
+  output_price_override?: string;
+  access_scope?: string;
+  visible_groups?: string[];
+  visible_users?: string[];
+  sort_order?: number;
 }
 
 export interface GetModelParametersParams {
@@ -239,7 +258,9 @@ export interface CreateCustomModelRequest {
   is_active?: boolean;
 }
 
-export type UpdateCustomModelRequest = Partial<Omit<CreateCustomModelRequest, 'provider' | 'model'>>;
+export type UpdateCustomModelRequest = Partial<
+  Omit<CreateCustomModelRequest, 'provider' | 'model'>
+>;
 
 export interface GetCustomModelsParams {
   page?: number;
@@ -286,4 +307,39 @@ export interface ToggleProviderModelsRequest {
 // Response for batch/provider toggle operations
 export interface BatchToggleModelsResponse {
   [key: string]: unknown;
+}
+
+export type PricingFallbackOperation = 'chat' | 'embedding' | 'rerank' | 'image_generation';
+export type PricingFallbackMeter = 'input_token' | 'output_token' | 'image';
+export type PricingFallbackSource =
+  | 'upstream_model_price'
+  | 'admin_fallback'
+  | 'code_default_fallback';
+
+export interface PricingFallbackRule {
+  id: string;
+  enabled?: boolean;
+  operation: PricingFallbackOperation;
+  meter: PricingFallbackMeter;
+  provider?: string;
+  model?: string;
+  size?: string;
+  quality?: string;
+  style?: string;
+  unit?: string;
+  price_usd_per_1m_tokens?: string;
+  credits?: number;
+  pricing_source?: PricingFallbackSource;
+}
+
+export interface PricingFallbackConfig {
+  enabled: boolean;
+  default_rules: PricingFallbackRule[];
+  override_rules: PricingFallbackRule[];
+  effective_rules: PricingFallbackRule[];
+}
+
+export interface UpdatePricingFallbackConfigRequest {
+  enabled: boolean;
+  override_rules: PricingFallbackRule[];
 }

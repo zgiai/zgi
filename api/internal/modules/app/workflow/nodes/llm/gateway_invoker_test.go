@@ -298,3 +298,18 @@ func TestGatewayLLMInvokerInvokeStream_PreservesVisionContentParts(t *testing.T)
 		}
 	})
 }
+
+func TestBuildChatRequestMapsSeed(t *testing.T) {
+	seed := 123
+	chatReq, _ := buildChatRequest(&LLMInvokeRequest{
+		ProviderSlug: "aliyun",
+		ModelSlug:    "qwen-plus",
+		Messages:     []PromptMessage{{Role: PromptMessageRoleUser, Content: "hi"}},
+		Parameters: map[string]any{
+			"seed": seed,
+		},
+	})
+	if chatReq.Seed == nil || *chatReq.Seed != seed {
+		t.Fatalf("seed = %v, want %d", chatReq.Seed, seed)
+	}
+}

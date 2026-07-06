@@ -136,8 +136,10 @@ const messages = {
     tooltip: {
       modelId: 'Model ID:',
       context: 'Context',
+      deprecatedUnavailable: 'This model is deprecated and cannot be selected for new configurations.',
       useCases: 'Use Cases',
       features: 'Features',
+      replacementSuggestion: 'Suggested replacement:',
       description: 'Description:',
       unknown: 'unknown',
       // Note: Feature labels now use aiProviders.models.features translations

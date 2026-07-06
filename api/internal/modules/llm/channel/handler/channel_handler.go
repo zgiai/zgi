@@ -578,7 +578,7 @@ func (h *ChannelHandler) TestChannelModel(c *gin.Context) {
 	if !h.BindJSON(c, &req) {
 		return
 	}
-	result, err := h.service.TestChannelModel(c.Request.Context(), channelID, organizationID, req.Model, req.TestMethod)
+	result, err := h.service.TestChannelModel(c.Request.Context(), channelID, organizationID, req.Model, req.TestMethod, req.Stream)
 	if err != nil {
 		h.Error(c, err)
 		return
@@ -680,7 +680,7 @@ func (h *ChannelHandler) BatchTestChannelModels(c *gin.Context) {
 
 	resultChan := make(chan *dto.BatchTestChannelModelsStreamResponse, len(req.Models)+1)
 
-	go h.service.BatchTestChannelModels(c.Request.Context(), channelID, organizationID, req.Models, req.TestMethod, resultChan)
+	go h.service.BatchTestChannelModels(c.Request.Context(), channelID, organizationID, req.Models, req.TestMethod, req.Stream, resultChan)
 
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")

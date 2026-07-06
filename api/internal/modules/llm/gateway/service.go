@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -182,7 +183,7 @@ func NewLLMGatewayServiceWithCrypto(
 	}
 
 	// Get Console provider from platform container
-	// This will be Remote (Cloud) or Standalone (Self-Hosted) based on ZGI_EDITION
+	// This will be Remote (Cloud) or Standalone (Self-Hosted) based on ZGI_RUN_MODE
 	cfg := appconfig.Current()
 	cloudMode := cfg.Platform.Edition == "CLOUD"
 	platformContainer, err := platform.NewContainer(db)
@@ -414,7 +415,21 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 		routeID = routeIDString(channelID)
 	}
 
+	chunkIndex := 0
 	for response := range inputChan {
+		chunkIndex++
+		if qwenStreamDebugEnabled() {
+			logger.InfoContext(ctx, "llm gateway stream chunk",
+				zap.String("provider", billingCtx.ProviderName),
+				zap.String("model", billingCtx.ModelName),
+				zap.Int("chunk_index", chunkIndex),
+				zap.Int("choices", len(response.Choices)),
+				zap.Int("text_len", streamResponseTextLen(response)),
+				zap.Bool("done", response.Done),
+				zap.Bool("has_usage", response.Usage != nil),
+				zap.Bool("has_error", response.Error != nil),
+			)
+		}
 		// Extract token usage from response (usually in the last chunk with Done=true)
 		if response.Usage != nil {
 			if hasBillableTokenUsage(response.Usage) {
@@ -428,9 +443,9 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 		}
 
 		// Collect text chunks for tracing (non-blocking, best effort)
-		if response.Choices != nil && len(response.Choices) > 0 {
-			if content, ok := response.Choices[0].Delta.Content.(string); ok && content != "" {
-				collectedChunks.WriteString(content)
+		for _, choice := range response.Choices {
+			if text := messageCompletionText(choice.Delta); strings.TrimSpace(text) != "" {
+				collectedChunks.WriteString(text)
 			}
 		}
 
@@ -470,12 +485,35 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 			s.healthTracker.RecordFailure(ctx, *channelID, autoBan)
 		}
 	} else {
+		if settlement == nil && !useSystemProvider {
+			var currentUsage *adapter.Usage
+			if sawUsage {
+				currentUsage = &adapter.Usage{
+					PromptTokens:     totalPromptTokens,
+					CompletionTokens: totalCompletionTokens,
+					TotalTokens:      totalPromptTokens + totalCompletionTokens,
+				}
+			} else if doneResponse != nil {
+				currentUsage = doneResponse.Usage
+			}
+			if estimated, estimatedUsage := s.completeChatUsageFromText(req, currentUsage, collectedChunks.String(), totalPromptTokens); estimated != nil && (!sawUsage || estimatedUsage) {
+				sawUsage = true
+				totalPromptTokens = estimated.PromptTokens
+				totalCompletionTokens = estimated.CompletionTokens
+				if estimatedUsage {
+					markEstimatedUsageSource(billingCtx, estimated)
+				}
+				if doneResponse != nil {
+					doneResponse.Usage = estimated
+				}
+			}
+		}
 		if !sawUsage && settlement == nil {
 			modelName := ""
 			if llmModel != nil {
 				modelName = llmModel.Model
 			}
-			missingUsageErr := missingTokenUsageError("", modelName)
+			missingUsageErr := missingTokenUsageError(billingCtx.ProviderName, modelName)
 			billingCtx.Status = billingContextStatusError
 			if !useSystemProvider {
 				billingCtx.Status = billingContextStatusPartial
@@ -528,15 +566,18 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 			return
 		}
 
-		// Use estimated tokens (already set from billingCtx)
-		billingCtx.PromptTokens = totalPromptTokens
-		billingCtx.CompletionTokens = totalCompletionTokens
-		billingCtx.TotalTokens = totalPromptTokens + totalCompletionTokens
+		if useSystemProvider && !sawUsage {
+			clearBillingContextTokenUsage(billingCtx)
+		} else {
+			billingCtx.PromptTokens = totalPromptTokens
+			billingCtx.CompletionTokens = totalCompletionTokens
+			billingCtx.TotalTokens = totalPromptTokens + totalCompletionTokens
+		}
 
 		billingCtx.Status = billingContextStatusSuccess
 
 		if !useSystemProvider {
-			quote, err := s.quoteTokenPricing(ctx, pricingModelRefFromBillingContext(billingCtx), billingCtx.PromptTokens, billingCtx.CompletionTokens)
+			quote, err := s.quoteTokenPricingForSettlement(ctx, billingCtx, pricingModelRefFromBillingContext(billingCtx), billingCtx.PromptTokens, billingCtx.CompletionTokens)
 			if err != nil {
 				outputChan <- adapter.StreamResponse{Error: fmt.Errorf("failed to calculate credits: %w", err)}
 				return
@@ -593,6 +634,18 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 	if lastError == nil && doneResponse != nil {
 		outputChan <- *doneResponse
 	}
+}
+
+func qwenStreamDebugEnabled() bool {
+	return strings.TrimSpace(os.Getenv("ZGI_DEBUG_ALIYUN_STREAM")) == "1"
+}
+
+func streamResponseTextLen(resp adapter.StreamResponse) int {
+	if len(resp.Choices) == 0 {
+		return 0
+	}
+	text, _ := resp.Choices[0].Delta.Content.(string)
+	return len(text)
 }
 
 // ListAvailableModels lists available models for the API key

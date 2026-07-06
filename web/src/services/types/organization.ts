@@ -3,6 +3,8 @@ export interface Organization {
   name: string;
   short_name: string | null;
   status: 'active' | 'inactive';
+  billing_display_currency?: 'USD' | 'CNY';
+  usd_to_cny_rate?: number | string | null;
   created_at: number;
   organization_role?: 'owner' | 'admin' | 'normal';
 }
@@ -15,6 +17,9 @@ export interface OrganizationCreateRequest {
 export interface OrganizationUpdateRequest {
   name: string;
   short_name?: string;
+  status?: 'active' | 'inactive';
+  billing_display_currency?: 'USD' | 'CNY';
+  usd_to_cny_rate?: number;
 }
 
 export type OrganizationMemberRole = 'owner' | 'admin' | 'normal';

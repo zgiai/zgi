@@ -95,12 +95,24 @@ export default function HitTestingPage() {
   const supportsGraphFlow = !!dataset?.enable_graph_flow && !isExternalDataSource;
   // Initialize retrieval config (defaults, then hydrate from dataset.retrieval_model_dict once)
   const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfig>({
-    search_method: 'semantic_search',
-    reranking_enable: false,
-    top_k: 4,
+    search_method: 'hybrid_search',
+    reranking_enable: true,
+    top_k: 10,
     score_threshold_enabled: false,
-    score_threshold: 0.5,
+    score_threshold: 0.35,
   });
+  const vectorPanelTitle = (() => {
+    switch (retrievalConfig.search_method) {
+      case 'hybrid_search':
+        return t('hitTesting.hybridResults');
+      case 'full_text_search':
+        return t('hitTesting.bm25Results');
+      case 'semantic_search':
+        return t('hitTesting.vectorResults');
+      default:
+        return t('hitTesting.results');
+    }
+  })();
   // Comparison mode: show both vector and graph results side by side
   // Persist to localStorage
   const COMPARISON_MODE_KEY = 'hit-testing-comparison-mode';
@@ -124,7 +136,7 @@ export default function HitTestingPage() {
     );
     const hydrated: RetrievalConfig = {
       search_method: normalizedSearchMethod,
-      reranking_enable: !!server.reranking_enable,
+      reranking_enable: true,
       reranking_model: server.reranking_model
         ? {
             reranking_provider_name: server.reranking_model.reranking_provider_name,
@@ -159,7 +171,7 @@ export default function HitTestingPage() {
 
     const retrievalModel = {
       search_method: retrievalConfig.search_method,
-      reranking_enable: retrievalConfig.reranking_enable,
+      reranking_enable: true,
       reranking_model: retrievalConfig.reranking_model,
       top_k: retrievalConfig.top_k,
       score_threshold_enabled: retrievalConfig.score_threshold_enabled,
@@ -178,7 +190,7 @@ export default function HitTestingPage() {
             top_k: retrievalConfig.top_k,
             score_threshold_enabled: retrievalConfig.score_threshold_enabled,
             score_threshold: retrievalConfig.score_threshold,
-            reranking_enable: retrievalConfig.reranking_enable,
+            reranking_enable: true,
           },
           record_history: recordHistory,
         });
@@ -284,7 +296,7 @@ export default function HitTestingPage() {
         top_k: config.top_k,
         score_threshold_enabled: config.score_threshold_enabled,
         score_threshold: config.score_threshold,
-        reranking_enable: config.reranking_enable,
+        reranking_enable: true,
         reranking_model: config.reranking_model,
       },
     };
@@ -394,7 +406,7 @@ export default function HitTestingPage() {
                 {/* Vector Results Panel */}
                 <div className="flex-1 min-w-0 border-r overflow-hidden">
                   <ResultsPanel
-                    title={t('hitTesting.vectorResults')}
+                    title={vectorPanelTitle}
                     results={
                       vectorResults
                         ? vectorResults.records.filter(
@@ -481,7 +493,7 @@ export default function HitTestingPage() {
             ) : (
               // Semantic search mode (default): show vector results only
               <ResultsPanel
-                title={t('hitTesting.vectorResults')}
+                title={vectorPanelTitle}
                 results={vectorResults?.records ?? undefined}
                 isSearching={isVectorSearching}
                 type="vector"

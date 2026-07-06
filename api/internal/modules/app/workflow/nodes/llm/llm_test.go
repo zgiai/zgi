@@ -669,6 +669,46 @@ func TestTokenBufferMemory_DoesNotImplicitlyLoadConversationHistory(t *testing.T
 	}
 }
 
+func openWorkflowConversationHistoryMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock, func()) {
+	t.Helper()
+
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatalf("create sqlmock: %v", err)
+	}
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB, PreferSimpleProtocol: true}), &gorm.Config{})
+	if err != nil {
+		sqlDB.Close()
+		t.Fatalf("open gorm sqlmock: %v", err)
+	}
+	return db, mock, func() { sqlDB.Close() }
+}
+
+func TestLoadConversationHistoryPromptMessagesRequiresAgentOwnership(t *testing.T) {
+	db, mock, cleanup := openWorkflowConversationHistoryMockDB(t)
+	defer cleanup()
+
+	currentAgentID := uuid.New()
+	conversationID := uuid.New()
+
+	expectAgentConversationLookup(mock, conversationID, currentAgentID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "agent_id"}))
+
+	n := &Node{NodeStruct: base.NodeStruct{APPID: currentAgentID.String()}, db: db}
+	_, err := n.loadConversationHistoryPromptMessages(context.Background(), conversationID.String(), 10)
+	if err == nil || !strings.Contains(err.Error(), "agent conversation not found") {
+		t.Fatalf("loadConversationHistoryPromptMessages() error = %v, want ownership error", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func expectAgentConversationLookup(mock sqlmock.Sqlmock, conversationID, agentID uuid.UUID) *sqlmock.ExpectedQuery {
+	return mock.ExpectQuery(`SELECT \* FROM "agents_conversations"`).
+		WithArgs(conversationID, agentID, 1)
+}
+
 func TestPromptMessagesFromAgentMessagesExpandsRounds(t *testing.T) {
 	records := []*conversation.AgentMessage{
 		{Query: "q1", Answer: "a1"},
@@ -1179,10 +1219,12 @@ func TestProcessVisionFiles_UsesRemoteURLFromMapInput(t *testing.T) {
 	}
 }
 
-func TestProcessVisionFiles_UsesSignedPreviewURLForLocalImage(t *testing.T) {
+func TestProcessVisionFiles_InlinesLocalImage(t *testing.T) {
 	setTestFileURLConfig(t, "https://api.zgi.im", "release")
 
-	n := &Node{}
+	n := &Node{fileLoader: &stubFileDownloader{downloadFn: func(ctx context.Context, fileID string) ([]byte, error) {
+		return []byte("image-bytes"), nil
+	}}}
 
 	workflowFile := file.NewFile(
 		"tenant-1",
@@ -1190,7 +1232,7 @@ func TestProcessVisionFiles_UsesSignedPreviewURLForLocalImage(t *testing.T) {
 		file.FileTransferMethodLocalFile,
 		file.WithID("file-1"),
 		file.WithRelatedID("file-1"),
-		file.WithMimeType("image/jpeg"),
+		file.WithExtension(".jpg"),
 	)
 
 	processed, autoInjected, err := n.processVisionFiles(
@@ -1210,18 +1252,23 @@ func TestProcessVisionFiles_UsesSignedPreviewURLForLocalImage(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected synthesized user content to be multimodal, got %T", processed[1].Content)
 	}
-	if contentList[0].Base64 != "" {
-		t.Fatalf("expected local image to use signed preview URL instead of inline base64")
+	if contentList[0].Base64 == "" {
+		t.Fatalf("expected local image to use inline base64")
 	}
-	if !strings.HasPrefix(contentList[0].URL, "https://api.zgi.im/console/api/files/file-1/file-preview?") {
-		t.Fatalf("expected signed preview URL, got %q", contentList[0].URL)
+	if contentList[0].URL != "" {
+		t.Fatalf("expected local image URL to be cleared, got %q", contentList[0].URL)
+	}
+	if contentList[0].MimeType != "image/jpeg" {
+		t.Fatalf("expected local image mime type to be inferred as image/jpeg, got %q", contentList[0].MimeType)
 	}
 }
 
-func TestProcessVisionFiles_UsesSignedPreviewURLForLocalImageFromWorkflowFileMap(t *testing.T) {
+func TestProcessVisionFiles_InlinesLocalImageFromWorkflowFileMap(t *testing.T) {
 	setTestFileURLConfig(t, "https://api.zgi.im", "release")
 
-	n := &Node{}
+	n := &Node{fileLoader: &stubFileDownloader{downloadFn: func(ctx context.Context, fileID string) ([]byte, error) {
+		return []byte("image-bytes"), nil
+	}}}
 
 	workflowFile := file.NewFile(
 		"tenant-1",
@@ -1249,18 +1296,20 @@ func TestProcessVisionFiles_UsesSignedPreviewURLForLocalImageFromWorkflowFileMap
 	if !ok {
 		t.Fatalf("expected synthesized user content to be multimodal, got %T", processed[1].Content)
 	}
-	if contentList[0].Base64 != "" {
-		t.Fatalf("expected workflow file map to use signed preview URL instead of inline base64")
+	if contentList[0].Base64 == "" {
+		t.Fatalf("expected workflow file map to use inline base64")
 	}
-	if !strings.HasPrefix(contentList[0].URL, "https://api.zgi.im/console/api/files/file-1/file-preview?") {
-		t.Fatalf("expected signed preview URL from workflow file map, got %q", contentList[0].URL)
+	if contentList[0].URL != "" {
+		t.Fatalf("expected workflow file map URL to be cleared, got %q", contentList[0].URL)
 	}
 }
 
-func TestProcessVisionFiles_RejectsNonPublicSignedPreviewURLForLocalImage(t *testing.T) {
+func TestProcessVisionFiles_InlinesLocalImageWithNonPublicFilesURL(t *testing.T) {
 	setTestFileURLConfig(t, "http://localhost:2679", "release")
 
-	n := &Node{}
+	n := &Node{fileLoader: &stubFileDownloader{downloadFn: func(ctx context.Context, fileID string) ([]byte, error) {
+		return []byte("image-bytes"), nil
+	}}}
 
 	workflowFile := file.NewFile(
 		"tenant-1",
@@ -1271,17 +1320,41 @@ func TestProcessVisionFiles_RejectsNonPublicSignedPreviewURLForLocalImage(t *tes
 		file.WithMimeType("image/jpeg"),
 	)
 
-	_, _, err := n.processVisionFiles(
-		[]PromptMessage{{Role: PromptMessageRoleSystem, Content: "你是诊断助手。"}},
+	processed, _, err := n.processVisionFiles(
+		[]PromptMessage{{Role: PromptMessageRoleSystem, Content: "diagnose"}},
 		[]any{workflowFile},
 		true,
 		ImageDetailHigh,
 	)
-	if err == nil {
-		t.Fatalf("expected processVisionFiles to fail when FILES_URL is not public")
+	if err != nil {
+		t.Fatalf("processVisionFiles returned error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "FILES_URL") {
-		t.Fatalf("expected FILES_URL configuration error, got %v", err)
+	contentList := processed[1].Content.([]PromptMessageContent)
+	if contentList[0].Base64 == "" || contentList[0].URL != "" {
+		t.Fatalf("local image prompt = %#v, want inline base64 without URL", contentList[0])
+	}
+}
+
+func TestShouldKeepWorkflowMediaURLHonorsPublicStorageMode(t *testing.T) {
+	setTestWorkflowImageInputConfig(t, appconfig.Config{
+		Workflow: appconfig.WorkflowConfig{
+			ImageInputURLMode: appconfig.WorkflowImageInputURLModePublicStorageURL,
+		},
+		App: appconfig.AppConfig{
+			FilesURL:  "https://api.zgi.im",
+			SecretKey: "test-secret",
+		},
+	})
+
+	if !shouldKeepWorkflowMediaURL("https://cdn.example.com/upload_files/image.png") {
+		t.Fatalf("expected public storage URL to be preserved")
+	}
+	signedURL, err := file.GetSignedFileURL("file-1")
+	if err != nil {
+		t.Fatalf("GetSignedFileURL() error = %v", err)
+	}
+	if shouldKeepWorkflowMediaURL(signedURL) {
+		t.Fatalf("expected signed preview URL to be eligible for inline media")
 	}
 }
 
@@ -1447,7 +1520,10 @@ func TestProcessVisionFiles_UsesPublicStorageURLForLocalImage(t *testing.T) {
 	db := openWorkflowImageInputTestDB(t)
 	insertWorkflowImageInputFile(t, db, "file-1", "upload_files/org-1/image.png", "image/png", "png", string(storage.StorageTypeQiniu))
 
-	n := &Node{db: db}
+	n := &Node{db: db, fileLoader: &stubFileDownloader{downloadFn: func(ctx context.Context, fileID string) ([]byte, error) {
+		t.Fatalf("public storage URL should not be downloaded for inline media")
+		return nil, nil
+	}}}
 	workflowFile := file.NewFile(
 		"tenant-1",
 		file.FileTypeImage,
@@ -1475,8 +1551,11 @@ func TestProcessVisionFiles_UsesPublicStorageURLForLocalImage(t *testing.T) {
 		t.Fatalf("expected synthesized user content to be multimodal, got %T", processed[1].Content)
 	}
 
+	if contentList[0].Base64 != "" {
+		t.Fatalf("expected public-storage local image to keep URL, got base64 length %d", len(contentList[0].Base64))
+	}
 	want := "https://cdn-qiniu.example.com/workflow/upload_files/org-1/image.png"
 	if contentList[0].URL != want {
-		t.Fatalf("expected image_url %q, got %q", want, contentList[0].URL)
+		t.Fatalf("expected public-storage local image URL %q, got %q", want, contentList[0].URL)
 	}
 }

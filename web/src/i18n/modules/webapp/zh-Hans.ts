@@ -193,6 +193,11 @@ const messages: WebappMessages = {
         description: '请先为渠道充值或切换渠道，再重试。',
         action: '前往渠道管理',
       },
+      '207014': {
+        title: '模型未配置价格',
+        description: '模型未配置价格，请先在模型管理或计费策略中配置价格。',
+        action: '去配置价格',
+      },
       contactAdmin: '当前余额或额度不足，请联系组织管理员充值或调整额度后再试。',
     },
   },

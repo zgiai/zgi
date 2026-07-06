@@ -119,6 +119,15 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		AuthorizationService:       serviceContainer.GetAuthorizationService(),
 	})
 
+	// ---------- RAG Evaluation ----------
+	RegisterRAGEvaluationRoutes(v1, RAGEvaluationRouteDeps{
+		AccountService:            accountService,
+		OrganizationService:       serviceContainer.GetOrganizationService(),
+		KnowledgeRetrievalService: serviceContainer.GetKnowledgeRetrievalService(),
+		LLMClient:                 serviceContainer.GetLLMClient(),
+		DefaultModelService:       serviceContainer.GetDefaultModelService(),
+	})
+
 	// ---------- Content Parse ----------
 	RegisterContentParseRoutes(v1, ContentParseRouteDeps{
 		DB:                  db,

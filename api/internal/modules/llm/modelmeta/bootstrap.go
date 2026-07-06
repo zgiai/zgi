@@ -22,7 +22,7 @@ func EnsureLocalBootstrapStarted(ctx context.Context, db *gorm.DB, edition strin
 		go func() {
 			svc := NewService(db)
 			if !svc.HasConfiguredAPIBaseURL() {
-				logger.Info("Skipping local ModelMeta bootstrap sync: MODELMETA_API_URL is not configured")
+				logger.Info("Skipping local model metadata bootstrap sync: MODELMETA_API_URL is not configured")
 				return
 			}
 
