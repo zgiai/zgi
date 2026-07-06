@@ -1708,6 +1708,9 @@ func (s *dataSourceService) UpdateTableColumns(ctx context.Context, organization
 }
 
 func (s *dataSourceService) saveTableColumnSourceMetadata(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, tableMetadata *model.Table, columns []dto.TableColumn) error {
+	if !hasExplicitSourceColumnMetadata(columns) {
+		return nil
+	}
 	schemaSnapshot := tableColumnSourceSchema(columns)
 	sourceFileName := "table-structure"
 	if tableMetadata != nil && tableMetadata.Name != "" {
@@ -1729,6 +1732,15 @@ func (s *dataSourceService) saveTableColumnSourceMetadata(ctx context.Context, o
 		return fmt.Errorf("failed to save table column source metadata: %w", err)
 	}
 	return nil
+}
+
+func hasExplicitSourceColumnMetadata(columns []dto.TableColumn) bool {
+	for _, col := range columns {
+		if col.SourceColumnName != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func tableColumnSourceSchema(columns []dto.TableColumn) []dto.InferredExcelColumn {
@@ -2533,7 +2545,10 @@ func (s *dataSourceService) AnalyzeFileForTable(ctx context.Context, dataSourceI
 	if err != nil {
 		return dto.AnalyzeFileForTableResponse{}, fmt.Errorf("failed to infer table structure: %w", err)
 	}
-	columns = withSourceColumnNames(columns, sourceHeaders)
+	columns, err = withSourceColumnNames(columns, sourceHeaders)
+	if err != nil {
+		return dto.AnalyzeFileForTableResponse{}, err
+	}
 
 	return dto.AnalyzeFileForTableResponse{
 		Columns: columns,
@@ -2565,9 +2580,9 @@ func excelSourceHeaders(fileName string, content []byte) ([]string, error) {
 	return headers, nil
 }
 
-func withSourceColumnNames(columns []dto.TableColumn, sourceHeaders []string) []dto.TableColumn {
+func withSourceColumnNames(columns []dto.TableColumn, sourceHeaders []string) ([]dto.TableColumn, error) {
 	if len(sourceHeaders) == 0 {
-		return columns
+		return columns, nil
 	}
 	sourceHeaderCounts := make(map[string]int, len(sourceHeaders))
 	for _, header := range sourceHeaders {
@@ -2579,17 +2594,22 @@ func withSourceColumnNames(columns []dto.TableColumn, sourceHeaders []string) []
 	}
 	out := make([]dto.TableColumn, len(columns))
 	copy(out, columns)
+	usedHeaders := make(map[string]string, len(out))
 	for i := range out {
 		sourceHeader, ok := matchingSourceHeader(out[i], sourceHeaderCounts)
 		if !ok {
-			continue
+			return nil, fmt.Errorf("生成字段「%s」无法唯一匹配 Excel 原始表头，请重新识别或手动调整", strings.TrimSpace(out[i].Name))
 		}
+		if existingName, exists := usedHeaders[sourceHeader]; exists {
+			return nil, fmt.Errorf("Excel 表头「%s」同时匹配字段「%s」和「%s」，请调整表结构后重试", sourceHeader, existingName, strings.TrimSpace(out[i].Name))
+		}
+		usedHeaders[sourceHeader] = strings.TrimSpace(out[i].Name)
 		out[i].SourceColumnName = &sourceHeader
 		if out[i].DisplayName == nil || strings.TrimSpace(*out[i].DisplayName) == "" {
 			out[i].DisplayName = &sourceHeader
 		}
 	}
-	return out
+	return out, nil
 }
 
 func matchingSourceHeader(column dto.TableColumn, sourceHeaderCounts map[string]int) (string, bool) {

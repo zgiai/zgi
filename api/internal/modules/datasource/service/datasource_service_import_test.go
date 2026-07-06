@@ -198,7 +198,10 @@ func TestWithSourceColumnNamesMatchesHeadersByDisplayName(t *testing.T) {
 		{Name: "user_id", DisplayName: &userIDDisplay, Type: "integer", IsRequired: true},
 	}
 
-	got := withSourceColumnNames(columns, []string{"用户ID", "手机号"})
+	got, err := withSourceColumnNames(columns, []string{"用户ID", "手机号"})
+	if err != nil {
+		t.Fatalf("withSourceColumnNames() error = %v", err)
+	}
 
 	if got[0].SourceColumnName == nil || *got[0].SourceColumnName != "手机号" {
 		t.Fatalf("got[0].SourceColumnName = %v, want 手机号", got[0].SourceColumnName)
@@ -211,21 +214,43 @@ func TestWithSourceColumnNamesMatchesHeadersByDisplayName(t *testing.T) {
 	}
 }
 
-func TestWithSourceColumnNamesSkipsUnclearHeaderMatch(t *testing.T) {
+func TestWithSourceColumnNamesRejectsUnclearHeaderMatch(t *testing.T) {
 	columns := []dto.TableColumn{
 		{Name: "user_id", Type: "integer"},
 		{Name: "mobile_phone", Type: "text"},
 	}
 
-	got := withSourceColumnNames(columns, []string{"用户ID", "手机号"})
+	_, err := withSourceColumnNames(columns, []string{"用户ID", "手机号"})
 
-	for index, column := range got {
-		if column.SourceColumnName != nil {
-			t.Fatalf("got[%d].SourceColumnName = %v, want nil", index, column.SourceColumnName)
-		}
+	if err == nil {
+		t.Fatal("withSourceColumnNames() error = nil, want unclear header match error")
+	}
+	if !strings.Contains(err.Error(), "无法唯一匹配 Excel 原始表头") {
+		t.Fatalf("withSourceColumnNames() error = %q, want unclear header match error", err.Error())
 	}
 }
 
+func TestHasExplicitSourceColumnMetadata(t *testing.T) {
+	emptySource := ""
+	phoneSource := "手机号"
+	tests := []struct {
+		name    string
+		columns []dto.TableColumn
+		want    bool
+	}{
+		{name: "old client omitted source metadata", columns: []dto.TableColumn{{Name: "phone_number", Type: "text"}}, want: false},
+		{name: "explicit clear", columns: []dto.TableColumn{{Name: "phone_number", SourceColumnName: &emptySource, Type: "text"}}, want: true},
+		{name: "explicit source", columns: []dto.TableColumn{{Name: "phone_number", SourceColumnName: &phoneSource, Type: "text"}}, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasExplicitSourceColumnMetadata(tt.columns); got != tt.want {
+				t.Fatalf("hasExplicitSourceColumnMetadata() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
 func TestTableColumnSourceSchemaUsesSourceColumnName(t *testing.T) {
 	desc := "用户唯一标识"
 	columns := []dto.TableColumn{
