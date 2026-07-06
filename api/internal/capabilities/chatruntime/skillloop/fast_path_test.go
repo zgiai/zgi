@@ -140,6 +140,48 @@ func TestFastPathToolTraceWithEvidenceSuppressesAutoFinalAnswerDuringClientActio
 	}
 }
 
+func TestFastPathCompletionEvidenceBlocksFailedPlanDespiteLatestSuccessfulTool(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "failed",
+			"pending_next_action": "none",
+		},
+		"operation_result_summary": map[string]interface{}{
+			"plan_status": "failed",
+			"status":      "succeeded",
+			"latest_tool_result": map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "create_agent",
+				"result_summary": map[string]interface{}{
+					"status":     "completed",
+					"effect":     "create",
+					"agent_name": "Smoke Agent",
+				},
+			},
+		},
+	}
+
+	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
+		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = (%q, true), want failed plan to require model continuation", answer)
+	}
+
+	trace := skills.SkillTrace{
+		Kind:     "tool_call",
+		Status:   "success",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "create_agent",
+		Result: map[string]interface{}{
+			"status":     "completed",
+			"agent_name": "Smoke Agent",
+		},
+	}
+	if answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(trace, evidence); ok {
+		t.Fatalf("FastPathFinalAnswerForToolTraceWithEvidence() = (%q, true), want failed plan to block tool fast path", answer)
+	}
+}
+
 func TestFastPathCompletionEvidenceWaitsForPendingStructuredPlanOperation(t *testing.T) {
 	evidence := map[string]interface{}{
 		"operation_plan": map[string]interface{}{

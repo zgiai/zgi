@@ -724,6 +724,9 @@ func completionEvidenceContinuationPendingPlanStepSystemMessage(evidence map[str
 	modelDecidesTools := completionEvidenceOperationPlanModelDecides(evidence)
 	if modelDecidesTools {
 		if _, ok := fastPathModelDecidesPendingAgentWorkStep(plan); !ok {
+			if completionVerificationModelDecidesPlanHasOpenPhase(plan) {
+				return completionEvidenceContinuationOpenModelDecidesPhaseSystemMessage(evidence, retryCount), true
+			}
 			return adapter.Message{}, false
 		}
 	}
@@ -763,6 +766,51 @@ func completionEvidenceContinuationPendingPlanStepSystemMessage(evidence map[str
 		"Pending plan step JSON:\n" + string(payloadJSON),
 	}, "\n")
 	return adapter.Message{Role: "system", Content: content}, true
+}
+
+func completionEvidenceContinuationOpenModelDecidesPhaseSystemMessage(evidence map[string]interface{}, retryCount int) adapter.Message {
+	plan := evidenceMapFromAny(evidence["operation_plan"])
+	payload := completionEvidenceContinuationOpenModelDecidesPhasePayload(plan)
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		payloadJSON = []byte(fmt.Sprint(payload))
+	}
+	content := strings.Join([]string{
+		fmt.Sprintf("Runtime execution evidence requires continued work before a final answer. Evidence-continuation retry %d of %d.", retryCount+1, defaultMaxCompletionVerificationRetries),
+		"The operation strategy is phase-only: the current phase still lacks completion verification, but the model must choose the concrete next action from the currently available tool schemas and latest context.",
+		"Use the original user goal, phase success criteria, current page context, prior tool results, turn_state, and visible asset evidence to decide the next action.",
+		"Do not repeat an action when matching evidence already proves it succeeded.",
+		"If the remaining work is impossible because context, permissions, or tool capability is missing, use available read/list/observe capabilities when they can resolve the blocker; otherwise stop and explain the exact blocker truthfully.",
+		"Do not answer as complete until successful evidence supports the phase success criteria or a real blocker is proven.",
+		"Open phase evidence JSON:\n" + string(payloadJSON),
+	}, "\n")
+	return adapter.Message{Role: "system", Content: content}
+}
+
+func completionEvidenceContinuationOpenModelDecidesPhasePayload(plan map[string]interface{}) map[string]interface{} {
+	payload := map[string]interface{}{}
+	for _, key := range []string{
+		"original_user_goal",
+		"intent",
+		"planning_mode",
+		"tool_choice_mode",
+		"status",
+		"pending_next_action",
+		"phases",
+		"success_criteria",
+		"capability_goals",
+	} {
+		if value, ok := plan[key]; ok && completionEvidenceContinuationPayloadValuePresent(value) {
+			payload[key] = promptEvidenceCopy(value)
+		}
+	}
+	if goals := completionVerificationCapabilityGoalsForPrompt(plan["capability_goals"]); len(goals) > 0 {
+		payload["capability_goals"] = goals
+	}
+	if len(payload) == 0 {
+		payload["phase"] = "pending_user_visible_operation"
+	}
+	return payload
 }
 
 func completionEvidenceContinuationModelDecidesSystemMessage(evidence map[string]interface{}, step map[string]interface{}, retryCount int) adapter.Message {
@@ -2687,6 +2735,7 @@ func agenticSkillLoopSystemMessage() adapter.Message {
 		"If a tool call fails, explain the likely user-relevant cause, fix the arguments, and retry when possible.",
 		"If a tool call fails, do not repeat the same tool with the same arguments. Re-plan from the error before retrying.",
 		"For deterministic batch work, prefer one suitable business tool call that handles the batch coherently over many small repeated tool calls.",
+		"Read-only tools may be grouped when useful, but call at most one side-effecting or governed mutation tool in a single assistant turn. Wait for its tool result or governance outcome, then continue with the next mutation in the following loop round.",
 		"Do not claim that you saved, remembered, updated, deleted, sent, created, changed, or completed any external action unless the corresponding skill/tool call succeeded in this turn.",
 		"Do not claim that a governance approval card has been submitted or is waiting unless a governed skill/tool call actually returned a pending governance event.",
 		"If a save, update, delete, create, bind, unbind, publish, or navigation tool succeeded in this turn, describe the outcome as executed and verified from the tool/page evidence; do not say it was unnecessary or skipped just because the refreshed page already shows the requested state.",

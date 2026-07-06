@@ -18,55 +18,31 @@ func TestAgentManagementStructuredPlanCapturesBindingUpdate(t *testing.T) {
 	}
 
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{Intent: "manage_agent_asset"})
-	plan := strategy.StructuredPlan
-	if plan == nil {
-		t.Fatal("strategy.StructuredPlan = nil, want Agent-management structured plan")
+	if strategy == nil {
+		t.Fatal("strategy = nil, want Agent-management strategy")
 	}
-	if got := plan.SchemaVersion; got != aiChatStructuredPlanVersion {
-		t.Fatalf("structured plan schema = %q, want %q", got, aiChatStructuredPlanVersion)
+	if got := strategy.ToolChoiceMode; got != aiChatTurnToolChoiceModelDecides {
+		t.Fatalf("ToolChoiceMode = %q, want %q; strategy=%#v", got, aiChatTurnToolChoiceModelDecides, strategy)
 	}
-	if got := plan.Intent; got != "agent.update_config" {
-		t.Fatalf("structured plan intent = %q, want agent.update_config; plan=%#v", got, plan)
+	if strategy.StructuredPlan != nil || len(strategy.PlannedTools) != 0 {
+		t.Fatalf("strategy has scripted tools: structured=%#v planned=%#v, want semantic model-decides strategy", strategy.StructuredPlan, strategy.PlannedTools)
 	}
-	for _, want := range []string{
-		"get_agent_config",
-		"list_agent_skill_candidates",
-		"list_agent_knowledge_candidates",
-		"list_agent_database_candidates",
-		"list_agent_database_tables",
-		"list_agent_workflow_binding_candidates",
-		"update_agent_config",
-	} {
-		if !structuredPlanHasTool(plan, want) {
-			t.Fatalf("structured plan required tools = %#v, missing %s", plan.RequiredToolSequence, want)
+	for _, want := range []string{agentCapabilityKnowledgeBinding, agentCapabilityDatabaseBinding, agentCapabilityWorkflowBinding} {
+		if !agentCapabilityGoalsContain(strategy.CapabilityGoals, want) {
+			t.Fatalf("capability goals = %#v, missing %s", strategy.CapabilityGoals, want)
 		}
 	}
-	for _, want := range []struct {
-		action       string
-		resourceType string
-	}{
-		{action: "read", resourceType: "agent_config"},
-		{action: "read_candidates", resourceType: "knowledge_base"},
-		{action: "read_candidates", resourceType: "database_table"},
-		{action: "read_candidates", resourceType: "workflow"},
-		{action: "update", resourceType: "agent_config"},
-	} {
-		if !structuredPlanHasOperation(plan, want.action, want.resourceType) {
-			t.Fatalf("structured plan operations = %#v, missing %s/%s", plan.Operations, want.action, want.resourceType)
+	operationPlan := operationPlanFromTurnStrategy("task-agent-binding-update", parts, strategy)
+	if got := stringFromAny(operationPlan["planning_mode"]); got != "phase_only_model_decides" {
+		t.Fatalf("planning_mode = %q, want phase_only_model_decides; plan=%#v", got, operationPlan)
+	}
+	if steps := mapSliceFromAny(operationPlan["steps"]); len(steps) != 0 {
+		t.Fatalf("operation plan steps = %#v, want no scripted required tool sequence", steps)
+	}
+	for _, want := range []string{agentCapabilityKnowledgeBinding, agentCapabilityDatabaseBinding, agentCapabilityWorkflowBinding} {
+		if !operationPlanCapabilityGoalsContainForTest(mapSliceFromAny(operationPlan["capability_goals"]), want) {
+			t.Fatalf("operation plan capability_goals = %#v, missing %s", operationPlan["capability_goals"], want)
 		}
-	}
-	var updateGoal string
-	for _, operation := range plan.Operations {
-		if operation.Action == "update" && operation.ResourceType == "agent_config" {
-			updateGoal = operation.Goal
-			break
-		}
-	}
-	if !strings.Contains(updateGoal, "\u7ed1\u5b9a") {
-		t.Fatalf("structured update operation goal = %q, want semantic binding goal preserved; plan=%#v", updateGoal, plan)
-	}
-	if len(plan.ValidationWarnings) != 0 {
-		t.Fatalf("structured plan warnings = %#v, want none", plan.ValidationWarnings)
 	}
 }
 
@@ -387,21 +363,27 @@ func TestAgentManagementStructuredPlanDoesNotCreateForExistingReference(t *testi
 			{SkillID: skills.SkillAgentManagement, ToolName: "create_agent"},
 		},
 	})
-	plan := strategy.StructuredPlan
-	if plan == nil {
-		t.Fatal("strategy.StructuredPlan = nil, want Agent-management structured plan")
+	if strategy == nil {
+		t.Fatal("strategy = nil, want Agent-management strategy")
 	}
-	if structuredPlanHasTool(plan, "create_agent") {
-		t.Fatalf("structured plan tools = %#v, want no stale create_agent", plan.RequiredToolSequence)
+	if got := strategy.ToolChoiceMode; got != aiChatTurnToolChoiceModelDecides {
+		t.Fatalf("ToolChoiceMode = %q, want %q; strategy=%#v", got, aiChatTurnToolChoiceModelDecides, strategy)
 	}
-	if structuredPlanHasOperation(plan, "create", "agent") {
-		t.Fatalf("structured plan operations = %#v, want no Agent create operation", plan.Operations)
+	if strategy.StructuredPlan != nil || len(strategy.PlannedTools) != 0 {
+		t.Fatalf("strategy has scripted tools: structured=%#v planned=%#v, want stale create_agent removed and model decides next tools", strategy.StructuredPlan, strategy.PlannedTools)
 	}
-	if !structuredPlanHasOperation(plan, "read_candidates", "knowledge_base") {
-		t.Fatalf("structured plan operations = %#v, missing knowledge_base candidate read operation", plan.Operations)
+	if !agentCapabilityGoalsContainBindingActionForTest(strategy.CapabilityGoals, "knowledge_dataset_ids", "bind") {
+		t.Fatalf("capability goals = %#v, want knowledge bind goal for existing Agent reference", strategy.CapabilityGoals)
 	}
-	if !structuredPlanHasOperation(plan, "bind", "knowledge_base") {
-		t.Fatalf("structured plan operations = %#v, missing knowledge_base bind operation", plan.Operations)
+	operationPlan := operationPlanFromTurnStrategy("task-existing-agent-binding", parts, strategy)
+	if got := stringFromAny(operationPlan["planning_mode"]); got != "phase_only_model_decides" {
+		t.Fatalf("planning_mode = %q, want phase_only_model_decides; plan=%#v", got, operationPlan)
+	}
+	if steps := mapSliceFromAny(operationPlan["steps"]); len(steps) != 0 {
+		t.Fatalf("operation plan steps = %#v, want no stale create step", steps)
+	}
+	if !operationPlanCapabilityGoalsContainBindingActionForTest(mapSliceFromAny(operationPlan["capability_goals"]), "knowledge_dataset_ids", "bind") {
+		t.Fatalf("operation plan capability_goals = %#v, want knowledge bind goal", operationPlan["capability_goals"])
 	}
 }
 
@@ -416,34 +398,34 @@ func TestAgentManagementStructuredPlanIncludedInOperationPlanState(t *testing.T)
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{Intent: "manage_agent_asset"})
 
 	plan := operationPlanFromTurnStrategy("task-agent-structured-plan", parts, strategy)
-	structured := mapFromOperationContext(plan["structured_plan"])
-	if got := stringFromAny(structured["intent"]); got != "agent.batch_delete" {
-		t.Fatalf("operation_plan.structured_plan.intent = %q, want agent.batch_delete; plan=%#v", got, plan)
+	if got := stringFromAny(plan["planning_mode"]); got != "phase_only_model_decides" {
+		t.Fatalf("planning_mode = %q, want phase_only_model_decides; plan=%#v", got, plan)
+	}
+	if structured := mapFromOperationContext(plan["structured_plan"]); len(structured) != 0 {
+		t.Fatalf("operation_plan.structured_plan = %#v, want omitted for Agent-management model-decides flow", structured)
+	}
+	if steps := mapSliceFromAny(plan["steps"]); len(steps) != 0 {
+		t.Fatalf("operation_plan.steps = %#v, want no scripted tool steps", steps)
+	}
+	if phases := mapSliceFromAny(plan["phases"]); len(phases) == 0 {
+		t.Fatalf("operation_plan.phases = %#v, want phase checklist", plan["phases"])
 	}
 	state := mapFromOperationContext(plan["strategy_state"])
-	stateStructured := mapFromOperationContext(state["structured_plan"])
-	if got := stringFromAny(stateStructured["intent"]); got != "agent.batch_delete" {
-		t.Fatalf("strategy_state.structured_plan.intent = %q, want agent.batch_delete; state=%#v", got, state)
-	}
-	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "delete_agents")); got != operationPlanStepStatusPending {
-		t.Fatalf("delete_agents status = %q, want pending; plan=%#v", got, plan)
-	}
-	if operation := structuredOperationForTest(structured, "delete", "agent"); stringFromAny(operation["status"]) != operationPlanStepStatusPending {
-		t.Fatalf("structured delete operation = %#v, want pending status", operation)
+	if stateStructured := mapFromOperationContext(state["structured_plan"]); len(stateStructured) != 0 {
+		t.Fatalf("strategy_state.structured_plan = %#v, want omitted for model-decides flow; state=%#v", stateStructured, state)
 	}
 	message, ok := contextualAIChatTurnStrategyMessage(&PreparedChat{parts: parts})
 	if !ok {
-		t.Fatal("contextualAIChatTurnStrategyMessage() missing, want structured plan guidance")
+		t.Fatal("contextualAIChatTurnStrategyMessage() missing, want phase plan guidance")
 	}
 	content, ok := message.Content.(string)
 	if !ok {
 		t.Fatalf("strategy message content type = %T, want string", message.Content)
 	}
 	for _, want := range []string{
-		"structured_plan.operations",
 		"planning_contract",
 		"phase/status checklist",
-		"Do not claim a structured operation is complete",
+		"final answers must be grounded in successful tool results",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("strategy message missing %q in:\n%s", want, content)
@@ -555,28 +537,16 @@ func TestAgentManagementStructuredPlanStatusFollowsToolResult(t *testing.T) {
 	}})
 
 	plan := mapFromOperationContext(metadata["operation_plan"])
-	structured := mapFromOperationContext(plan["structured_plan"])
-	if got := stringFromAny(structured["status"]); got != operationPlanStatusCompleted {
-		t.Fatalf("structured_plan.status = %q, want completed; structured=%#v", got, structured)
+	if structured := mapFromOperationContext(plan["structured_plan"]); len(structured) != 0 {
+		t.Fatalf("structured_plan = %#v, want omitted for Agent-management model-decides flow", structured)
 	}
-	counts := mapFromOperationContext(structured["operation_counts"])
-	if got := intValueFromAny(counts["completed"]); got != 1 {
-		t.Fatalf("structured_plan.operation_counts = %#v, want completed=1", counts)
-	}
-	operation := structuredOperationForTest(structured, "delete", "agent")
-	if got := stringFromAny(operation["status"]); got != operationPlanStepStatusCompleted {
-		t.Fatalf("structured delete operation status = %q, want completed; operation=%#v", got, operation)
-	}
-	if got := stringFromAny(operation["last_invocation_id"]); got != "runtime_id:tool#1" {
-		t.Fatalf("structured delete operation last_invocation_id = %q, want runtime_id:tool#1; operation=%#v", got, operation)
-	}
-	if items := mapSliceFromAny(operation["item_steps"]); len(items) != 2 {
-		t.Fatalf("structured delete operation item_steps = %#v, want two item facts", operation["item_steps"])
+	ledger := mapSliceFromAny(plan[operationPlanEvidenceLedgerKey])
+	if !operationPlanEvidenceLedgerHasToolForTest(ledger, skills.SkillAgentManagement, "delete_agents", "runtime_id:tool#1") {
+		t.Fatalf("evidence_ledger = %#v, want completed delete_agents tool evidence", ledger)
 	}
 	summary := skillLoopCompletionPlanSummary(plan)
-	summaryStructured := mapFromOperationContext(summary["structured_plan"])
-	if got := stringFromAny(summaryStructured["status"]); got != operationPlanStatusCompleted {
-		t.Fatalf("summary.structured_plan.status = %q, want completed; summary=%#v", got, summaryStructured)
+	if summaryStructured := mapFromOperationContext(summary["structured_plan"]); len(summaryStructured) != 0 {
+		t.Fatalf("summary.structured_plan = %#v, want omitted for model-decides summary", summaryStructured)
 	}
 }
 
@@ -601,16 +571,11 @@ func TestAgentManagementStructuredPlanStatusFollowsToolFailure(t *testing.T) {
 	}})
 
 	plan := mapFromOperationContext(metadata["operation_plan"])
-	structured := mapFromOperationContext(plan["structured_plan"])
-	if got := stringFromAny(structured["status"]); got != operationPlanStatusFailed {
-		t.Fatalf("structured_plan.status = %q, want failed; structured=%#v", got, structured)
+	if structured := mapFromOperationContext(plan["structured_plan"]); len(structured) != 0 {
+		t.Fatalf("structured_plan = %#v, want omitted for Agent-management model-decides flow", structured)
 	}
-	operation := structuredOperationForTest(structured, "delete", "agent")
-	if got := stringFromAny(operation["status"]); got != operationPlanStepStatusFailed {
-		t.Fatalf("structured delete operation status = %q, want failed; operation=%#v", got, operation)
-	}
-	if got := stringFromAny(operation["error"]); got != "delete denied by governance" {
-		t.Fatalf("structured delete operation error = %q, want governance error; operation=%#v", got, operation)
+	if ledger := mapSliceFromAny(plan[operationPlanEvidenceLedgerKey]); operationPlanEvidenceLedgerHasToolForTest(ledger, skills.SkillAgentManagement, "delete_agents", "") {
+		t.Fatalf("evidence_ledger = %#v, want no completed evidence for failed delete_agents call", ledger)
 	}
 }
 
@@ -686,6 +651,22 @@ func structuredPlanOperationForActionAndResource(plan *AIChatStructuredPlan, act
 		}
 	}
 	return AIChatStructuredOperation{}
+}
+
+func operationPlanEvidenceLedgerHasToolForTest(ledger []map[string]interface{}, skillID string, toolName string, invocationID string) bool {
+	for _, entry := range ledger {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(entry["skill_id"])), strings.TrimSpace(skillID)) {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(entry["tool_name"])), strings.TrimSpace(toolName)) {
+			continue
+		}
+		if invocationID != "" && strings.TrimSpace(stringFromAny(entry["invocation_id"])) != invocationID {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func structuredOperationForTest(plan map[string]interface{}, action string, resourceType string) map[string]interface{} {

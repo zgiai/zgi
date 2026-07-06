@@ -382,7 +382,7 @@ func TestAddContextualAIChatSkillIDsAddsAgentManagementForConsoleAgents(t *testi
 	}
 }
 
-func TestAddContextualAIChatSkillIDsAddsAgentManagementForCrossPageAgentCreate(t *testing.T) {
+func TestAddContextualAIChatSkillIDsDefersAgentManagementUntilAgentContext(t *testing.T) {
 	catalog := contextualAIChatFileSkillCatalogForTest()
 	parts := contextualConsoleFilesAllCapabilityPartsForTest()
 	parts.Query = "请导航到智能体页面，并在当前工作空间创建两个临时测试 Agent 草稿"
@@ -394,7 +394,7 @@ func TestAddContextualAIChatSkillIDsAddsAgentManagementForCrossPageAgentCreate(t
 		parts,
 		contextualAIChatSkillCapabilities{Navigation: true, AgentRead: true, AgentManage: true},
 	)
-	want := []string{skills.SkillAgentManagement, skills.SkillCalculator, skills.SkillConsoleNavigator}
+	want := []string{skills.SkillCalculator, skills.SkillConsoleNavigator}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("cross-page agent create skills = %#v, want %#v", got, want)
 	}
@@ -584,7 +584,7 @@ func TestTrustedContextualAIChatSkillCapabilitiesUseAgentManagePermission(t *tes
 	}
 }
 
-func TestAddContextualAIChatSkillIDsRequiresAgentManageForCrossPageMutation(t *testing.T) {
+func TestAddContextualAIChatSkillIDsDoesNotUseTextToInjectCrossPageAgentManagement(t *testing.T) {
 	workspaceID := uuid.New()
 	catalog := contextualAIChatFileSkillCatalogForTest()
 	organizationEnabled := []string{skills.SkillCalculator, skills.SkillConsoleNavigator}
@@ -633,7 +633,7 @@ func TestAddContextualAIChatSkillIDsRequiresAgentManageForCrossPageMutation(t *t
 		parts,
 		manageCapabilities,
 	)
-	wantAllowed := []string{skills.SkillAgentManagement, skills.SkillCalculator, skills.SkillConsoleNavigator}
+	wantAllowed := []string{skills.SkillCalculator, skills.SkillConsoleNavigator}
 	if !reflect.DeepEqual(allowed, wantAllowed) {
 		t.Fatalf("managed cross-page mutation skills = %#v, want %#v", allowed, wantAllowed)
 	}

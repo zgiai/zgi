@@ -235,7 +235,7 @@ func contextualSidebarStructuredOperationShape(skillID string, toolName string) 
 	case strings.EqualFold(strings.TrimSpace(skillID), skills.SkillFileReader):
 		return "read", "file", "read"
 	default:
-		if skillLoopToolNameLooksAssetMutation(toolName) {
+		if skillLoopToolLooksAssetMutation(skillID, toolName) {
 			return "execute", "asset", "update"
 		}
 		return "read", "context", "read"
@@ -260,19 +260,19 @@ func contextualSidebarStructuredToolRequiresApproval(skillID string, toolName st
 	case isFileManagerSaveToolCall(skillID, toolName), isFileManagerDeleteToolCall(skillID, toolName):
 		return true
 	default:
-		return skillLoopToolNameLooksAssetMutation(toolName)
+		return skillLoopToolLooksAssetMutation(skillID, toolName)
 	}
 }
 
 func contextualSidebarStructuredPlanReadBeforeWrite(tools []AIChatTurnStrategyTool) bool {
 	seenRead := false
 	for _, tool := range tools {
-		if skillLoopToolNameLooksReadOnly(tool.ToolName) ||
+		if skillLoopToolLooksReadOnly(tool.SkillID, tool.ToolName) ||
 			isConsoleNavigatorNavigateTool(tool.SkillID, tool.ToolName) {
 			seenRead = true
 			continue
 		}
-		if seenRead && skillLoopToolNameLooksAssetMutation(tool.ToolName) {
+		if seenRead && skillLoopToolLooksAssetMutation(tool.SkillID, tool.ToolName) {
 			return true
 		}
 	}
@@ -390,8 +390,6 @@ func agentManagementStructuredIntent(query string, tools []AIChatTurnStrategyToo
 		return "agent.update_identity"
 	case agentManagementStructuredHasAnyCandidateLookup(tools):
 		return "agent.inspect_candidates"
-	case agentManagementReadRequested(query):
-		return "agent.read"
 	default:
 		return "agent.inspect"
 	}
@@ -547,7 +545,7 @@ func agentManagementStructuredResourceTypeForConfigField(field string) string {
 
 func agentManagementStructuredPlanRequiresApproval(tools []AIChatTurnStrategyTool) bool {
 	for _, tool := range tools {
-		if skillLoopToolNameLooksAssetMutation(tool.ToolName) {
+		if skillLoopToolLooksAssetMutation(tool.SkillID, tool.ToolName) {
 			return true
 		}
 	}
@@ -561,7 +559,7 @@ func agentManagementStructuredPlanReadBeforeWrite(tools []AIChatTurnStrategyTool
 			seenRead = true
 			continue
 		}
-		if seenRead && skillLoopToolNameLooksAssetMutation(tool.ToolName) {
+		if seenRead && skillLoopToolLooksAssetMutation(tool.SkillID, tool.ToolName) {
 			return true
 		}
 	}

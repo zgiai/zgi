@@ -67,6 +67,12 @@ func FastPathFinalAnswerForToolTraceWithEvidence(trace skills.SkillTrace, eviden
 	if fastPathEvidenceSuppressesAutoFinalAnswer(evidence) {
 		return "", false
 	}
+	if fastPathEvidenceHasUnresolvedPlanFailure(evidence) {
+		return "", false
+	}
+	if completionVerificationEvidenceHasOpenModelDecidesPhase(evidence) {
+		return "", false
+	}
 	if fastPathModelDecidesPlanHasPendingAgentWork(evidence) {
 		return "", false
 	}
@@ -1254,6 +1260,12 @@ func FastPathFinalAnswerForCompletionEvidence(evidence map[string]interface{}) (
 	if fastPathEvidenceSuppressesAutoFinalAnswer(evidence) {
 		return "", false
 	}
+	if fastPathEvidenceHasUnresolvedPlanFailure(evidence) {
+		return "", false
+	}
+	if completionVerificationEvidenceHasOpenModelDecidesPhase(evidence) {
+		return "", false
+	}
 	if fastPathModelDecidesPlanHasPendingAgentWork(evidence) {
 		return "", false
 	}
@@ -1306,6 +1318,39 @@ func fastPathEvidenceSuppressesAutoFinalAnswer(evidence map[string]interface{}) 
 		return true
 	}
 	return boolFromAny(evidenceMapFromAny(executionLedger["summary"])["suppress_auto_final_answer_fast_path"])
+}
+
+func fastPathEvidenceHasUnresolvedPlanFailure(evidence map[string]interface{}) bool {
+	if len(evidence) == 0 {
+		return false
+	}
+	for _, source := range []map[string]interface{}{
+		evidenceMapFromAny(evidence["operation_plan"]),
+		evidenceMapFromAny(evidence["operation_result_summary"]),
+		evidenceMapFromAny(evidenceMapFromAny(evidence["execution_summary"])["operation_plan"]),
+		evidenceMapFromAny(evidenceMapFromAny(evidence["execution_summary"])["operation_result_summary"]),
+		evidenceMapFromAny(evidenceMapFromAny(evidence["execution_ledger"])["operation_result_summary"]),
+		evidenceMapFromAny(evidenceMapFromAny(evidenceMapFromAny(evidence["execution_ledger"])["summary"])["operation_result_summary"]),
+	} {
+		if fastPathStatusBlocksAutoFinalAnswer(source["status"]) ||
+			fastPathStatusBlocksAutoFinalAnswer(source["plan_status"]) {
+			return true
+		}
+		verification := evidenceMapFromAny(source["completion_verification"])
+		if fastPathStatusBlocksAutoFinalAnswer(verification["status"]) {
+			return true
+		}
+	}
+	return false
+}
+
+func fastPathStatusBlocksAutoFinalAnswer(value interface{}) bool {
+	switch strings.ToLower(strings.TrimSpace(evidenceStringFromAny(value))) {
+	case "failed", "failure", "error", "errored", "blocked", "rejected", "partial_failed", "partially_failed", "needs_action", "need_action":
+		return true
+	default:
+		return false
+	}
 }
 
 // FastPathFinalAnswerForAgentMutationEvidence summarizes the completed Agent
@@ -2120,6 +2165,9 @@ func fastPathNormalizeCandidateName(text string) string {
 // loop completed but should not let the model reinterpret the mutation as a
 // no-op.
 func FastPathPreferredFinalAnswerForCompletionEvidence(evidence map[string]interface{}, candidate string) (string, bool) {
+	if completionVerificationEvidenceHasOpenModelDecidesPhase(evidence) {
+		return "", false
+	}
 	if fastPathHasAgentConfigTargetMismatch(evidence) {
 		return "", false
 	}

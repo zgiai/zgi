@@ -43,7 +43,7 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesToolGuidance(t *testin
 	}
 }
 
-func TestSkillLoopFinalAnswerGuardBlocksContinuationDeleteConfirmation(t *testing.T) {
+func TestSkillLoopFinalAnswerGuardDoesNotInferContinuationDeleteFromAnswerText(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: consoleFilesSemanticTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE", []consoleFilesTestFile{
 			{ID: "file-saved-svg", Name: "smoke-continue.svg", Extension: "svg", MimeType: "image/svg+xml"},
@@ -54,9 +54,9 @@ func TestSkillLoopFinalAnswerGuardBlocksContinuationDeleteConfirmation(t *testin
 	prepared.parts.SkillIDs = []string{skills.SkillFileManager, skills.SkillFileGenerator}
 	prepared.parts.SkillMode = skillModeAuto
 
-	guard := skillLoopFinalAnswerGuard(prepared)
+	guard := consoleFilesContinuationPendingDeleteFinalAnswerGuard(prepared.parts, nil)
 	if guard == nil {
-		t.Fatal("skillLoopFinalAnswerGuard() = nil, want continuation delete guard")
+		t.Fatal("consoleFilesContinuationPendingDeleteFinalAnswerGuard() = nil")
 	}
 	answer := strings.Join([]string{
 		"txt \u5df2\u4fdd\u5b58\uff1asmoke-continue.txt",
@@ -64,28 +64,9 @@ func TestSkillLoopFinalAnswerGuardBlocksContinuationDeleteConfirmation(t *testin
 		"\u7b2c3\u4e2a\u6587\u4ef6\uff1aold-third-file.txt \u9700\u8981\u89c2\u5bdf\u51bb\u7ed3\u5e76\u5220\u9664\u3002",
 		"\u662f\u5426\u9700\u8981\u6211\u7ee7\u7eed\u6267\u884c\u5220\u9664\u64cd\u4f5c\uff1f",
 	}, "\n")
-	result, blocked := guard(skillloop.FinalAnswerGuardRequest{Answer: answer})
-	if !blocked {
-		t.Fatal("guard allowed a natural-language delete confirmation in a continuation task")
-	}
-	for _, want := range []string{"file-manager/delete_file", `"file_id":"file-delete"`, "old-third-file.txt"} {
-		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
-			t.Fatalf("delete guard result missing %q: %#v", want, result)
-		}
-	}
-
-	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "old-third-file.txt \u5df2\u6210\u529f\u5220\u9664\u3002",
-		SuccessfulToolCalls: []skillloop.SkillToolCallRef{{
-			SkillID:  skills.SkillFileManager,
-			ToolName: "delete_file",
-			Arguments: map[string]interface{}{
-				"file_id": "file-delete",
-			},
-		}},
-	})
+	_, blocked := guard(skillloop.FinalAnswerGuardRequest{Answer: answer})
 	if blocked {
-		t.Fatal("guard blocked after delete_file succeeded for the frozen target")
+		t.Fatal("guard inferred a delete_file action from final answer text; want model/tool evidence to drive continuation")
 	}
 }
 
@@ -164,197 +145,6 @@ func TestSkillLoopFinalAnswerGuardAllowsGenericDeleteSuccessFromMetadata(t *test
 	})
 	if blocked {
 		t.Fatal("guard blocked a generic final answer after metadata recorded the successful frozen delete")
-	}
-}
-
-func TestSkillLoopFinalAnswerGuardBlocksDeleteSuccessWithRefreshedThirdFileName(t *testing.T) {
-	prepared := &PreparedChat{
-		Message: &runtimemodel.Message{
-			Metadata: map[string]interface{}{
-				"skill_invocations": []interface{}{
-					map[string]interface{}{
-						"kind":      "tool_call",
-						"status":    "success",
-						"skill_id":  skills.SkillFileManager,
-						"tool_name": "delete_file",
-						"arguments": map[string]interface{}{
-							"file_id": "file-deleted",
-						},
-						"result": map[string]interface{}{
-							"file_name": "deleted-third.svg",
-						},
-					},
-				},
-			},
-		},
-		parts: consoleFilesSemanticTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE", []consoleFilesTestFile{
-			{ID: "file-new-third", Name: "new-third-after-delete.txt", Extension: "txt", MimeType: "text/plain"},
-		}),
-	}
-	prepared.parts.SkillIDs = []string{skills.SkillFileManager, skills.SkillFileReader}
-	prepared.parts.SkillMode = skillModeAuto
-
-	guard := skillLoopFinalAnswerGuard(prepared)
-	if guard == nil {
-		t.Fatal("skillLoopFinalAnswerGuard() = nil, want continuation delete guard")
-	}
-	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "\u5df2\u51bb\u7ed3\u5f53\u524d\u7b2c 3 \u4e2a\u6587\u4ef6\u4e3a\u5220\u9664\u5019\u9009\uff1anew-third-after-delete.txt\u3002\u5f53\u524d\u7ed3\u679c\uff1anew-third-after-delete.txt \u5df2\u5220\u9664\u3002",
-	})
-	if !blocked {
-		t.Fatal("guard allowed final answer to report the refreshed third file instead of the actual deleted file")
-	}
-	for _, want := range []string{"deleted-third.svg", "Do not re-resolve", "final user-visible answer"} {
-		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
-			t.Fatalf("delete mismatch guard result missing %q: %#v", want, result)
-		}
-	}
-}
-
-func TestSkillLoopFinalAnswerGuardBlocksContinuationDeleteConfirmationFromAnswerFileID(t *testing.T) {
-	prepared := &PreparedChat{
-		parts: consoleFilesSemanticTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE", nil),
-	}
-	prepared.parts.SkillIDs = []string{skills.SkillFileManager}
-	prepared.parts.SkillMode = skillModeAuto
-
-	guard := skillLoopFinalAnswerGuard(prepared)
-	if guard == nil {
-		t.Fatal("skillLoopFinalAnswerGuard() = nil, want continuation delete guard")
-	}
-	answer := "\u5f53\u524d\u7b2c3\u4e2a\u6587\u4ef6\u662f\uff1aold-third-file.txt\uff08file_id: dbd22092-b5ff-4f38-95ef-811a496e9066\uff09\u3002\u662f\u5426\u786e\u8ba4\u5220\u9664\uff1f"
-	result, blocked := guard(skillloop.FinalAnswerGuardRequest{Answer: answer})
-	if !blocked {
-		t.Fatal("guard allowed a delete confirmation when the answer already exposed a file_id")
-	}
-	for _, want := range []string{"file-manager/delete_file", `"file_id":"dbd22092-b5ff-4f38-95ef-811a496e9066"`, "old-third-file.txt"} {
-		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
-			t.Fatalf("delete guard result missing %q: %#v", want, result)
-		}
-	}
-}
-
-func TestSkillLoopFinalAnswerGuardRequiresVisibleFilesRefreshForContinuationDeleteWithoutID(t *testing.T) {
-	prepared := &PreparedChat{
-		parts: consoleFilesSemanticTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE", nil),
-	}
-	prepared.parts.SkillIDs = []string{skills.SkillFileManager, skills.SkillFileReader}
-	prepared.parts.SkillMode = skillModeAuto
-
-	guard := skillLoopFinalAnswerGuard(prepared)
-	if guard == nil {
-		t.Fatal("skillLoopFinalAnswerGuard() = nil, want continuation delete guard")
-	}
-	answer := "\u5f53\u524d\u7b2c3\u4e2a\u6587\u4ef6\u662f old-third-file.txt\uff0c\u662f\u5426\u786e\u8ba4\u5220\u9664\uff1f"
-	result, blocked := guard(skillloop.FinalAnswerGuardRequest{Answer: answer})
-	if !blocked {
-		t.Fatal("guard allowed delete confirmation without a resolved file_id")
-	}
-	if result.SkillID != skills.SkillFileReader || result.ToolName != "list_visible_files" {
-		t.Fatalf("guard result = %#v, want file-reader/list_visible_files", result)
-	}
-
-	result, blocked = guard(skillloop.FinalAnswerGuardRequest{
-		Answer: answer,
-		SuccessfulToolCalls: []skillloop.SkillToolCallRef{{
-			SkillID:  skills.SkillFileReader,
-			ToolName: "list_visible_files",
-			Result: map[string]interface{}{
-				"files": []interface{}{
-					map[string]interface{}{"file_id": "file-1", "name": "first.txt", "visible_index": 1},
-					map[string]interface{}{"file_id": "file-2", "name": "second.txt", "visible_index": 2},
-					map[string]interface{}{"file_id": "file-delete", "name": "old-third-file.txt", "visible_index": 3},
-				},
-			},
-		}},
-	})
-	if !blocked {
-		t.Fatal("guard allowed delete confirmation after list_visible_files resolved the target")
-	}
-	for _, want := range []string{skills.SkillFileManager, "delete_file", `"file_id":"file-delete"`, "old-third-file.txt"} {
-		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
-			t.Fatalf("delete guard result missing %q: %#v", want, result)
-		}
-	}
-}
-
-func TestSkillLoopFinalAnswerGuardBlocksContinuationDeleteConfirmationFromNonFilesStart(t *testing.T) {
-	prepared := &PreparedChat{
-		parts: &chatRequestParts{
-			Query:          "\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE",
-			RuntimeContext: "route=/console/agents capabilities=agent.list_visible",
-			SkillIDs:       []string{skills.SkillFileManager, skills.SkillFileReader, skills.SkillFileGenerator},
-			SkillMode:      skillModeAuto,
-		},
-	}
-
-	guard := skillLoopFinalAnswerGuard(prepared)
-	if guard == nil {
-		t.Fatal("skillLoopFinalAnswerGuard() = nil, want cross-page continuation delete guard")
-	}
-	answer := "\u5df2\u4fdd\u5b58 txt \u548c svg\u3002\u63a5\u4e0b\u6765\u6267\u884c\u6700\u540e\u4e00\u6b65\uff1a\u5f53\u524d\u7b2c3\u4e2a\u6587\u4ef6\u662f old-third-file.txt\u3002\u662f\u5426\u786e\u8ba4\u5220\u9664\uff1f"
-	result, blocked := guard(skillloop.FinalAnswerGuardRequest{Answer: answer})
-	if !blocked {
-		t.Fatal("guard allowed a cross-page continuation delete confirmation")
-	}
-	if result.SkillID != skills.SkillFileReader || result.ToolName != "list_visible_files" {
-		t.Fatalf("guard result = %#v, want file-reader/list_visible_files before deleting from cross-page continuation", result)
-	}
-}
-
-func TestSkillLoopFinalAnswerGuardBlocksObservedContinuationDeleteConfirmation(t *testing.T) {
-	prepared := &PreparedChat{
-		parts: &chatRequestParts{
-			Query:          "\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE-FIX6",
-			RuntimeContext: "route=/console/agents capabilities=agent.list_visible",
-			SkillIDs:       []string{skills.SkillFileManager, skills.SkillFileReader, skills.SkillFileGenerator, skills.SkillConsoleNavigator},
-			SkillMode:      skillModeAuto,
-		},
-	}
-
-	guard := skillLoopFinalAnswerGuard(prepared)
-	if guard == nil {
-		t.Fatal("skillLoopFinalAnswerGuard() = nil, want observed continuation delete guard")
-	}
-	answer := strings.Join([]string{
-		"\u6839\u636e\u4efb\u52a1 SMOKE-CONTINUE-FIX6 \u7684\u8ba1\u5212\uff0c\u7b2c\u4e00\u6b65\u5df2\u5b8c\u6210\uff08\u5df2\u8bfb\u53d6\u667a\u80fd\u4f53\u9875\u9762\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\u540d\u79f0\uff09\u3002",
-		"\u73b0\u5728\u57fa\u4e8e\u5f53\u524d\u6587\u4ef6\u9875\u9762\uff0c\u5f53\u524d**\u7b2c\u4e09\u4e2a\u6587\u4ef6**\uff08visible_index=3\uff09\u662f **SMOKE-CONTINUE-FIX5-1782317298269.svg**\u3002",
-		"\u9700\u8981\u5b8c\u6210\u6700\u540e\u4e00\u6b65\uff1a\u89c2\u5bdf\u8be5\u6587\u4ef6\uff0c\u7136\u540e\u5220\u9664\u5b83\u3002",
-		"\u5728\u5220\u9664\u524d\u9700\u8981\u60a8\u7684\u786e\u8ba4\uff08\u9ad8\u98ce\u9669\u64cd\u4f5c\uff09\u3002\u662f\u5426\u786e\u8ba4\u5220\u9664\u7b2c\u4e09\u4e2a\u6587\u4ef6 **SMOKE-CONTINUE-FIX5-1782317298269.svg**\uff1f",
-	}, "\n\n")
-	result, blocked := guard(skillloop.FinalAnswerGuardRequest{Answer: answer})
-	if !blocked {
-		t.Fatal("guard allowed the observed natural-language delete confirmation")
-	}
-	if result.SkillID != skills.SkillFileReader || result.ToolName != "list_visible_files" {
-		t.Fatalf("guard result = %#v, want file-reader/list_visible_files for observed confirmation without file_id", result)
-	}
-}
-
-func TestSkillLoopFinalAnswerGuardResolvesArabicOrdinalContinuationDelete(t *testing.T) {
-	prepared := &PreparedChat{
-		parts: consoleFilesSemanticTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE", []consoleFilesTestFile{
-			{ID: "file-first", Name: "first.txt", Extension: "txt", MimeType: "text/plain"},
-			{ID: "file-second", Name: "second.txt", Extension: "txt", MimeType: "text/plain"},
-			{ID: "file-delete", Name: "old-third-file.txt", Extension: "txt", MimeType: "text/plain"},
-		}),
-	}
-	prepared.parts.SkillIDs = []string{skills.SkillFileManager, skills.SkillFileReader}
-	prepared.parts.SkillMode = skillModeAuto
-
-	guard := skillLoopFinalAnswerGuard(prepared)
-	if guard == nil {
-		t.Fatal("skillLoopFinalAnswerGuard() = nil, want ordinal delete guard")
-	}
-	answer := "\u5df2\u5b8c\u6210\u6587\u4ef6\u4fdd\u5b58\u3002\u63a5\u4e0b\u6765\u9700\u8981\u5220\u9664\u5f53\u524d\u7b2c3\u4e2a\u6587\u4ef6\uff0c\u662f\u5426\u786e\u8ba4\u5220\u9664\uff1f"
-	result, blocked := guard(skillloop.FinalAnswerGuardRequest{Answer: answer})
-	if !blocked {
-		t.Fatal("guard allowed a continuation delete confirmation with an Arabic ordinal target")
-	}
-	for _, want := range []string{skills.SkillFileManager, "delete_file", `"file_id":"file-delete"`} {
-		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
-			t.Fatalf("delete guard result missing %q: %#v", want, result)
-		}
 	}
 }
 
@@ -1557,7 +1347,7 @@ func TestSkillLoopFinalAnswerGuardBlocksManagedFileCreateWithoutToolCall(t *test
 		t.Fatal("guard blocked = true after file-manager save tool call, want false")
 	}
 
-	result, blocked = guard(skillloop.FinalAnswerGuardRequest{
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
 		Answer: "The file has been saved to File Management.",
 		AttemptedToolCalls: []skillloop.SkillToolCallRef{{
 			SkillID:  skills.SkillFileManager,
@@ -1569,13 +1359,8 @@ func TestSkillLoopFinalAnswerGuardBlocksManagedFileCreateWithoutToolCall(t *test
 			},
 		}},
 	})
-	if !blocked {
-		t.Fatal("guard allowed a success claim after save_file_to_management was only attempted")
-	}
-	for _, want := range []string{"did not succeed", "Do not say the file was created", "actual tool result"} {
-		if !strings.Contains(result.Message, want) {
-			t.Fatalf("attempted-save guard message missing %q in:\n%s", want, result.Message)
-		}
+	if blocked {
+		t.Fatal("guard blocked a report after save_file_to_management was attempted; model should use the actual tool result")
 	}
 
 	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
@@ -2850,63 +2635,6 @@ func TestSkillLoopToolCallGuardBlocksContinuationDeleteFromMetadataAfterApproval
 	}
 }
 
-func TestAnswerDeleteSuccessMentionsDifferentPriorSegmentFileName(t *testing.T) {
-	actualDeleted := "SMOKE-MANAGED-CLOSE-1782390783296.svg"
-	wrongObserved := "SMOKE-MANAGED-SVG-1782389757265.svg"
-
-	badAnswer := strings.Join([]string{
-		"\u5df2\u521b\u5efa\u5e76\u4fdd\u5b58 SMOKE-COMPLEX-CLOSE-1782390870915.txt \u548c SMOKE-COMPLEX-CLOSE-1782390870915.svg",
-		"\u5237\u65b0\u540e\u770b\u5230\u5f53\u524d\u7b2c 3 \u4e2a\u6587\u4ef6\u662f\uff1a" + wrongObserved,
-		"\u8be5\u6587\u4ef6\u540d\u4ee5 SMOKE \u5f00\u5934\uff0c\u56e0\u6b64\u5df2\u5220\u9664",
-		"\u5220\u9664\u540e\u5df2\u89c2\u5bdf\u5230\u5b83\u4e0d\u518d\u53ef\u89c1",
-	}, "\n")
-	if !answerDeleteSuccessMentionsDifferentFileName(badAnswer, actualDeleted) {
-		t.Fatal("answerDeleteSuccessMentionsDifferentFileName() = false, want true for prior-segment wrong name")
-	}
-
-	goodAnswer := strings.Join([]string{
-		"\u5df2\u521b\u5efa\u5e76\u4fdd\u5b58 SMOKE-COMPLEX-CLOSE-1782390870915.txt \u548c SMOKE-COMPLEX-CLOSE-1782390870915.svg",
-		"\u5237\u65b0\u540e\u770b\u5230\u5f53\u524d\u7b2c 3 \u4e2a\u6587\u4ef6\u662f\uff1a" + actualDeleted,
-		"\u8be5\u6587\u4ef6\u540d\u4ee5 SMOKE \u5f00\u5934\uff0c\u56e0\u6b64\u5df2\u5220\u9664",
-	}, "\n")
-	if answerDeleteSuccessMentionsDifferentFileName(goodAnswer, actualDeleted) {
-		t.Fatal("answerDeleteSuccessMentionsDifferentFileName() = true, want false for the actual deleted name")
-	}
-}
-
-func TestConsoleFilesContinuationDeleteFinalAnswerGuardBlocksPronounWrongDeletedFile(t *testing.T) {
-	actualDeleted := "SMOKE-MANAGED-CLOSE-1782390783296.svg"
-	wrongObserved := "SMOKE-MANAGED-SVG-1782389757265.svg"
-	parts := consoleFilesCreateCapabilityTestParts("\u7ee7\u7eed")
-	parts.SkillIDs = []string{skills.SkillFileManager}
-	parts.SkillMode = skillModeAuto
-
-	guard := consoleFilesContinuationPendingDeleteFinalAnswerGuard(parts, nil)
-	if guard == nil {
-		t.Fatal("consoleFilesContinuationPendingDeleteFinalAnswerGuard() = nil")
-	}
-	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
-		Answer: strings.Join([]string{
-			"\u5df2\u521b\u5efa\u5e76\u4fdd\u5b58 SMOKE-COMPLEX-CLOSE-1782390870915.txt \u548c SMOKE-COMPLEX-CLOSE-1782390870915.svg",
-			"\u5237\u65b0\u540e\u770b\u5230\u5f53\u524d\u7b2c 3 \u4e2a\u6587\u4ef6\u662f\uff1a" + wrongObserved,
-			"\u8be5\u6587\u4ef6\u540d\u4ee5 SMOKE \u5f00\u5934\uff0c\u56e0\u6b64\u5df2\u5220\u9664",
-		}, "\n"),
-		SuccessfulToolCalls: []skillloop.SkillToolCallRef{{
-			SkillID:  skills.SkillFileManager,
-			ToolName: "delete_file",
-			Result: map[string]interface{}{
-				"file_name": actualDeleted,
-			},
-		}},
-	})
-	if !blocked {
-		t.Fatal("guard allowed final answer to claim a different prior-segment file was deleted")
-	}
-	if !strings.Contains(result.SystemMessage, actualDeleted) {
-		t.Fatalf("guard result did not mention actual deleted file %q: %#v", actualDeleted, result)
-	}
-}
-
 func TestSkillLoopFinalAnswerGuardDoesNotForceIntermediateNavigationForManagedFileCreate(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: consoleFilesCreateCapabilityTestParts("先切到智能体页读取第一个智能体，然后到文件管理创建并保存 aichat-one.txt"),
@@ -3427,6 +3155,26 @@ func TestSkillLoopFinalAnswerGuardBlocksIncompleteAgentBindingMutations(t *testi
 				},
 			},
 		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"capability_goals": []interface{}{
+					map[string]interface{}{
+						"capability_id": agentCapabilityDatabaseBinding,
+						"goal_action":   agentCapabilityActionBind,
+						"required_binding_actions": map[string]interface{}{
+							"database_bindings": "bind",
+						},
+					},
+					map[string]interface{}{
+						"capability_id": agentCapabilityWorkflowBinding,
+						"goal_action":   agentCapabilityActionBind,
+						"required_binding_actions": map[string]interface{}{
+							"workflow_bindings": "bind",
+						},
+					},
+				},
+			},
+		}},
 	}
 
 	guard := skillLoopFinalAnswerGuard(prepared)
@@ -3654,10 +3402,6 @@ func TestSkillLoopPlanToolGuardBlocksUnrequestedAgentConfigMutationForReadOnlyNa
 		}},
 	}}}
 
-	if !skillLoopShouldBlockCurrentRequestForbiddenAgentMutation(prepared, skills.SkillAgentManagement, "update_agent_config") {
-		t.Fatal("current request forbidden mutation guard did not recognize latest read-only request")
-	}
-
 	guard := skillLoopPlanToolCallGuardWithResolved(prepared, resolved)
 	result, blocked := guard(skillloop.ToolCallGuardRequest{
 		SkillID:  skills.SkillAgentManagement,
@@ -3670,12 +3414,8 @@ func TestSkillLoopPlanToolGuardBlocksUnrequestedAgentConfigMutationForReadOnlyNa
 		},
 	})
 
-	if !blocked {
-		t.Fatal("plan tool guard allowed update_agent_config for a read-only navigation request")
-	}
-	if result.ToolName != "update_agent_config" ||
-		!strings.Contains(result.SystemMessage, "latest user request explicitly asks to read") {
-		t.Fatalf("guard result = %#v, want unplanned mutation block for update_agent_config", result)
+	if blocked {
+		t.Fatalf("plan tool guard blocked update_agent_config through removed read-only text matcher: %#v", result)
 	}
 }
 
@@ -3731,10 +3471,6 @@ func TestSkillLoopPlanToolGuardBlocksStalePlannedAgentConfigMutationForLatestRea
 		}},
 	}}}
 
-	if !skillLoopShouldBlockCurrentRequestForbiddenAgentMutation(prepared, skills.SkillAgentManagement, "update_agent_config") {
-		t.Fatal("current request forbidden mutation guard did not recognize latest read-only request")
-	}
-
 	guard := skillLoopPlanToolCallGuardWithResolved(prepared, resolved)
 	result, blocked := guard(skillloop.ToolCallGuardRequest{
 		SkillID:  skills.SkillAgentManagement,
@@ -3745,12 +3481,8 @@ func TestSkillLoopPlanToolGuardBlocksStalePlannedAgentConfigMutationForLatestRea
 		},
 	})
 
-	if !blocked {
-		t.Fatal("plan tool guard allowed stale update_agent_config despite latest read-only request")
-	}
-	if result.ToolName != "update_agent_config" ||
-		!strings.Contains(result.SystemMessage, "latest user request explicitly asks to read") {
-		t.Fatalf("guard result = %#v, want latest-read-only mutation block", result)
+	if blocked {
+		t.Fatalf("plan tool guard blocked update_agent_config through removed latest-read-only text matcher: %#v", result)
 	}
 }
 
@@ -3768,9 +3500,6 @@ func TestSkillLoopPlanToolGuardAllowsAgentConfigUpdateWithExcludedFields(t *test
 	}
 	if agentManagementExplicitReadOnlyConfigCheck(query) {
 		t.Fatal("agentManagementExplicitReadOnlyConfigCheck() = true, want false for update request with excluded fields")
-	}
-	if agentManagementGoalForbidsUnrequestedMutation(query, "update_agent_config") {
-		t.Fatal("agentManagementGoalForbidsUnrequestedMutation() = true, want update_agent_config allowed")
 	}
 	fields := agentManagementExpectedConfigUpdateFields(query)
 	for _, want := range []string{"system_prompt"} {
@@ -3845,7 +3574,7 @@ func TestSkillLoopPlanToolGuardAllowsAgentConfigUpdateWithExcludedFields(t *test
 	}
 }
 
-func TestAgentManagementExplicitlyNegatedCreateDeleteBlocksOnlyThoseTools(t *testing.T) {
+func TestAgentManagementExplicitlyNegatedCreateDeleteDoesNotTriggerCreateDeleteIntent(t *testing.T) {
 	query := strings.Join([]string{
 		"Update the current Agent description to AIChat edit loop regression.",
 		"Set icon to puzzle and set home title to Edit loop regression.",
@@ -3858,19 +3587,9 @@ func TestAgentManagementExplicitlyNegatedCreateDeleteBlocksOnlyThoseTools(t *tes
 	if agentManagementDeleteRequested(query) {
 		t.Fatalf("agentManagementDeleteRequested(%q) = true, want false for negated delete", query)
 	}
-	for _, toolName := range []string{"create_agent", "delete_agent", "delete_agents"} {
-		if !agentManagementGoalForbidsUnrequestedMutation(query, toolName) {
-			t.Fatalf("agentManagementGoalForbidsUnrequestedMutation(%q, %q) = false, want forbidden", query, toolName)
-		}
-	}
-	for _, toolName := range []string{"update_agent_identity", "update_agent_config"} {
-		if agentManagementGoalForbidsUnrequestedMutation(query, toolName) {
-			t.Fatalf("agentManagementGoalForbidsUnrequestedMutation(%q, %q) = true, want allowed", query, toolName)
-		}
-	}
 }
 
-func TestSkillLoopPlanToolGuardUsesOriginalGoalForApprovalContinuationForbiddenAgentDelete(t *testing.T) {
+func TestSkillLoopPlanToolGuardDoesNotUseOriginalGoalTextToForbidAgentDelete(t *testing.T) {
 	originalGoal := strings.Join([]string{
 		"Update the current Agent description to AIChat edit loop regression.",
 		"Set icon to puzzle and set home title to Edit loop regression.",
@@ -3917,12 +3636,8 @@ func TestSkillLoopPlanToolGuardUsesOriginalGoalForApprovalContinuationForbiddenA
 			"agent_ids": []interface{}{"agent-1"},
 		},
 	})
-	if !blocked {
-		t.Fatal("plan tool guard allowed delete_agents even though the original approved goal explicitly forbids delete")
-	}
-	if result.ToolName != "delete_agents" ||
-		!strings.Contains(result.SystemMessage, "Do not request governance approval") {
-		t.Fatalf("guard result = %#v, want forbidden delete guidance", result)
+	if blocked {
+		t.Fatalf("plan tool guard blocked delete_agents through removed original-goal text matcher: %#v", result)
 	}
 }
 
@@ -3980,16 +3695,16 @@ func TestSkillLoopUserInputGuardBlocksConsoleNavigationClarification(t *testing.
 	}
 }
 
-func TestSkillLoopUserInputGuardBlocksResolvedAgentBatchDeleteConfirmation(t *testing.T) {
+func TestSkillLoopUserInputGuardDoesNotRewriteResolvedAgentBatchDeleteConfirmation(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: consoleAgentsVisibleTargetsTestParts("delete the first two visible agents on this page"),
 	}
 
 	guard := skillLoopUserInputGuard(prepared)
 	if guard == nil {
-		t.Fatal("skillLoopUserInputGuard() = nil, want guard for resolved visible Agent delete")
+		return
 	}
-	result, blocked := guard(skillloop.UserInputGuardRequest{
+	_, blocked := guard(skillloop.UserInputGuardRequest{
 		Message: "I found two target Agents. Please confirm deletion.",
 		Questions: []map[string]interface{}{
 			{
@@ -4001,27 +3716,12 @@ func TestSkillLoopUserInputGuardBlocksResolvedAgentBatchDeleteConfirmation(t *te
 			},
 		},
 	})
-	if !blocked {
-		t.Fatal("guard did not block redundant Agent delete confirmation")
-	}
-	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "delete_agents" {
-		t.Fatalf("guard result = %#v, want agent-management/delete_agents", result)
-	}
-	for _, want := range []string{
-		"Tool governance owns the approval card",
-		"Visible Agent One",
-		"Visible Agent Two",
-		"delete_agents",
-		"agent-1",
-		"agent-2",
-	} {
-		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
-			t.Fatalf("guard message missing %q in message:\n%s\nsystem:\n%s", want, result.Message, result.SystemMessage)
-		}
+	if blocked {
+		t.Fatal("guard rewrote Agent delete confirmation; model-decides flow should rely on tool governance instead")
 	}
 }
 
-func TestSkillLoopUserInputGuardBlocksAgentConfigMutationConfirmation(t *testing.T) {
+func TestSkillLoopUserInputGuardDoesNotRewriteAgentConfigMutationConfirmation(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
 			Query:     "\u8bf7\u628a Skill\u300c\u56fe\u8868\u751f\u6210\u5668\u300d\u7ed1\u5b9a\u5230\u8fd9\u4e2a\u667a\u80fd\u4f53\uff1b\u9700\u8981\u5ba1\u6279\u65f6\u6211\u4f1a\u540c\u610f\u3002",
@@ -4043,9 +3743,9 @@ func TestSkillLoopUserInputGuardBlocksAgentConfigMutationConfirmation(t *testing
 
 	guard := skillLoopUserInputGuard(prepared)
 	if guard == nil {
-		t.Fatal("skillLoopUserInputGuard() = nil, want guard for concrete Agent config mutation")
+		return
 	}
-	result, blocked := guard(skillloop.UserInputGuardRequest{
+	_, blocked := guard(skillloop.UserInputGuardRequest{
 		Message: "\u5df2\u786e\u8ba4\u56fe\u8868\u751f\u6210\u5668\u5f53\u524d\u672a\u7ed1\u5b9a\uff0c\u8bf7\u786e\u8ba4\u662f\u5426\u6267\u884c\u7ed1\u5b9a\u64cd\u4f5c\u3002",
 		Questions: []map[string]interface{}{
 			{
@@ -4060,20 +3760,30 @@ func TestSkillLoopUserInputGuardBlocksAgentConfigMutationConfirmation(t *testing
 			{SkillID: skills.SkillAgentManagement, ToolName: "get_agent_config"},
 		},
 	})
-	if !blocked {
-		t.Fatal("guard did not block redundant Agent config mutation confirmation")
+	if blocked {
+		t.Fatal("guard rewrote Agent config confirmation; model-decides flow should rely on tool governance instead")
 	}
-	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "update_agent_config" {
-		t.Fatalf("guard result = %#v, want agent-management/update_agent_config", result)
+}
+
+func TestSkillLoopUserInputGuardSkipsAgentConfirmationRewriteForModelDecidesPlan(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "\u8bf7\u628a Skill\u300c\u56fe\u8868\u751f\u6210\u5668\u300d\u7ed1\u5b9a\u5230\u8fd9\u4e2a\u667a\u80fd\u4f53\uff1b\u9700\u8981\u5ba1\u6279\u65f6\u6211\u4f1a\u540c\u610f\u3002",
+			SkillIDs:  []string{skills.SkillAgentManagement},
+			SkillMode: skillModeAuto,
+		},
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"planning_mode":    "phase_only_model_decides",
+					"tool_choice_mode": aiChatTurnToolChoiceModelDecides,
+				},
+			},
+		},
 	}
-	for _, want := range []string{
-		"concrete Agent configuration change request",
-		"Tool governance owns the approval card",
-		"agent-management/update_agent_config",
-	} {
-		if !strings.Contains(result.Message, want) {
-			t.Fatalf("user input guard message missing %q in:\n%s", want, result.Message)
-		}
+
+	if guard := skillLoopUserInputGuard(prepared); guard != nil {
+		t.Fatalf("skillLoopUserInputGuard() = %#v, want nil for model-decides operation plan", guard)
 	}
 }
 
@@ -4143,16 +3853,16 @@ func TestSkillLoopModelDecidesSafetyGuardStillBlocksDuplicateMutation(t *testing
 	}
 }
 
-func TestSkillLoopUserInputGuardBlocksSidebarAgentDeleteConfirmationWithoutInitialSkillID(t *testing.T) {
+func TestSkillLoopUserInputGuardDoesNotRewriteSidebarAgentDeleteConfirmationWithoutInitialSkillID(t *testing.T) {
 	parts := consoleAgentsVisibleTargetsTestParts("\u8bf7\u6279\u91cf\u5220\u9664\u5f53\u524d\u9875\u9762\u524d\u4e24\u4e2a\u540d\u5b57\u4ee5 AICHAT-GOAL-BIND-SMOKE \u5f00\u5934\u7684\u6d4b\u8bd5\u667a\u80fd\u4f53\u3002\u53ea\u5220\u9664\u8fd9\u4e24\u4e2a\u6d4b\u8bd5\u667a\u80fd\u4f53\u3002")
 	parts.SkillIDs = []string{skills.SkillConsoleNavigator}
 	prepared := &PreparedChat{parts: parts}
 
 	guard := skillLoopUserInputGuard(prepared)
 	if guard == nil {
-		t.Fatal("skillLoopUserInputGuard() = nil, want guard from contextual visible Agent evidence")
+		return
 	}
-	result, blocked := guard(skillloop.UserInputGuardRequest{
+	_, blocked := guard(skillloop.UserInputGuardRequest{
 		Message: "\u5373\u5c06\u6279\u91cf\u5220\u9664\u5f53\u524d\u9875\u9762\u524d\u4e24\u4e2a AICHAT-GOAL-BIND-SMOKE \u5f00\u5934\u7684\u6d4b\u8bd5\u667a\u80fd\u4f53\u3002\u9700\u8981\u4f60\u786e\u8ba4\u624d\u80fd\u6267\u884c\u3002",
 		Questions: []map[string]interface{}{
 			{
@@ -4165,36 +3875,21 @@ func TestSkillLoopUserInputGuardBlocksSidebarAgentDeleteConfirmationWithoutIniti
 			},
 		},
 	})
-	if !blocked {
-		t.Fatal("guard did not block redundant sidebar Agent delete confirmation")
-	}
-	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "delete_agents" {
-		t.Fatalf("guard result = %#v, want agent-management/delete_agents", result)
-	}
-	for _, want := range []string{
-		"Tool governance owns the approval card",
-		"Visible Agent One",
-		"Visible Agent Two",
-		"delete_agents",
-		"agent-1",
-		"agent-2",
-	} {
-		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
-			t.Fatalf("guard message missing %q in message:\n%s\nsystem:\n%s", want, result.Message, result.SystemMessage)
-		}
+	if blocked {
+		t.Fatal("guard rewrote sidebar Agent delete confirmation; model should choose governed tools itself")
 	}
 }
 
-func TestSkillLoopUserInputGuardBlocksNamedAgentDeleteConfirmation(t *testing.T) {
+func TestSkillLoopUserInputGuardDoesNotRewriteNamedAgentDeleteConfirmation(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: consoleAgentsVisibleTargetsTestParts("delete Visible Agent One and Visible Agent Two"),
 	}
 
 	guard := skillLoopUserInputGuard(prepared)
 	if guard == nil {
-		t.Fatal("skillLoopUserInputGuard() = nil, want guard for named Agent delete")
+		return
 	}
-	result, blocked := guard(skillloop.UserInputGuardRequest{
+	_, blocked := guard(skillloop.UserInputGuardRequest{
 		Message: "These two Agents are resolved. Please confirm before I continue.",
 		Questions: []map[string]interface{}{
 			{
@@ -4206,16 +3901,8 @@ func TestSkillLoopUserInputGuardBlocksNamedAgentDeleteConfirmation(t *testing.T)
 			},
 		},
 	})
-	if !blocked {
-		t.Fatal("guard did not block redundant named Agent delete confirmation")
-	}
-	if result.ToolName != "delete_agents" {
-		t.Fatalf("tool = %s, want delete_agents", result.ToolName)
-	}
-	for _, want := range []string{"Visible Agent One", "Visible Agent Two", "agent-1", "agent-2"} {
-		if !strings.Contains(result.SystemMessage, want) {
-			t.Fatalf("system message missing %q in:\n%s", want, result.SystemMessage)
-		}
+	if blocked {
+		t.Fatal("guard rewrote named Agent delete confirmation; model should choose governed tools itself")
 	}
 }
 
@@ -4226,7 +3913,7 @@ func TestSkillLoopUserInputGuardAllowsAmbiguousAgentDeleteClarification(t *testi
 
 	guard := skillLoopUserInputGuard(prepared)
 	if guard == nil {
-		t.Fatal("skillLoopUserInputGuard() = nil, want guard shell for Agent delete")
+		return
 	}
 	_, blocked := guard(skillloop.UserInputGuardRequest{
 		Message: "Which Agent should I delete?",

@@ -535,6 +535,9 @@ func clientActionContinuationMessage(message *runtimemodel.Message, event map[st
 	if planState := toolGovernanceContinuationPlanStateSummary(message); len(planState) > 0 {
 		contentParts = append(contentParts, "Current operation plan continuation state JSON:\n"+compactJSON(planState))
 	}
+	if executionState := currentTurnExecutionStateSummary(message); len(executionState) > 0 {
+		contentParts = append(contentParts, "Current-turn execution state JSON:\n"+compactJSON(executionState))
+	}
 	if turnState := turnStateContinuationSummary(message); len(turnState) > 0 {
 		contentParts = append(contentParts, "Current turn structured state JSON:\n"+compactJSON(turnState))
 	}
@@ -559,6 +562,7 @@ func clientActionContinuationMessage(message *runtimemodel.Message, event map[st
 		"If the original user request already asks you to create, configure, update, bind, enable, or verify an asset, do not ask whether to continue after a successful client action or read-only verification that shows missing configuration. Continue by choosing the next appropriate available tool; governed tool calls will ask the user for approval when needed.",
 		"For Agent configuration work, if the newly created or selected Agent is visible but its model, prompt, upload setting, or Skill bindings do not match the original request, continue with the Agent management capability and verify the refreshed configuration before the final answer.",
 		"Treat completed client actions listed below as authoritative completed steps. Continue from the next unfinished step instead of restarting the original plan or returning to an earlier completed route.",
+		"Treat Current-turn execution state as authoritative: continue with active_target when present, and do not create a replacement asset unless the original user request explicitly asks for another distinct target.",
 		"Use operation plan evidence_ledger result_facts as authoritative completed tool facts when later steps depend on earlier tool output. If a file read fact contains content_value_preview, use that exact value for derived names or configuration values instead of placeholder words such as file content, 文件内容, or 读取到的内容.",
 		"For event_type=route_loaded, phrase route success from the user's point of view, for example that the target page has been opened or switched to.",
 		"For event_type=route_already_loaded, say the requested page is already current only when useful, then continue the user's real task from the current page context.",

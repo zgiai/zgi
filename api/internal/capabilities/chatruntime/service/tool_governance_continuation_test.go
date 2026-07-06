@@ -156,6 +156,93 @@ func TestToolGovernanceFrozenContinuationNeedsSkillLoopForModelDecidesPendingAge
 	}
 }
 
+func TestToolGovernanceFrozenContinuationNeedsSkillLoopForModelDecidesOpenPhase(t *testing.T) {
+	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_identity")
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status":           operationPlanStatusRunning,
+				"tool_choice_mode": aiChatTurnToolChoiceModelDecides,
+				"planning_mode":    "phase_only_model_decides",
+				"phases": []interface{}{
+					map[string]interface{}{"id": "understand_context", "status": operationPlanStepStatusCompleted},
+					map[string]interface{}{"id": "act_with_tools", "status": operationPlanStepStatusPending},
+					map[string]interface{}{"id": "verify_result", "status": operationPlanStepStatusPending},
+				},
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        updateStepID,
+						"status":    operationPlanStepStatusCompleted,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "update_agent_identity",
+					},
+				},
+				"step_status": map[string]interface{}{
+					updateStepID: operationPlanStepStatusCompleted,
+				},
+				"pending_next_action": "continue_from_phase_success_criteria",
+			},
+		}},
+	}
+	trace := skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "update_agent_identity",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":         "completed",
+			"agent_id":       "agent-1",
+			"agent_name":     "Smoke Agent Edited",
+			"updated_fields": []interface{}{"description"},
+		},
+	}
+
+	if !toolGovernanceFrozenContinuationNeedsSkillLoop(prepared) {
+		t.Fatal("toolGovernanceFrozenContinuationNeedsSkillLoop() = false, want model-decides open phase to continue the skill loop")
+	}
+	if answer, ok := toolGovernanceFrozenFastPathAnswer(prepared, trace); ok {
+		t.Fatalf("toolGovernanceFrozenFastPathAnswer() = (%q, true), want open model-decides phase to block fast-path completion", answer)
+	}
+}
+
+func TestToolGovernanceFrozenContinuationSkipsVerifiedModelDecidesPhase(t *testing.T) {
+	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_identity")
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"status":           operationPlanStatusCompleted,
+				"tool_choice_mode": aiChatTurnToolChoiceModelDecides,
+				"planning_mode":    "phase_only_model_decides",
+				"completion_verification": map[string]interface{}{
+					"status": "pass",
+				},
+				"phases": []interface{}{
+					map[string]interface{}{"id": "act_with_tools", "status": operationPlanStepStatusPending},
+					map[string]interface{}{"id": "verify_result", "status": operationPlanStepStatusPending},
+				},
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        updateStepID,
+						"status":    operationPlanStepStatusCompleted,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "update_agent_identity",
+					},
+				},
+				"step_status": map[string]interface{}{
+					updateStepID: operationPlanStepStatusCompleted,
+				},
+				"pending_next_action": "none",
+			},
+		}},
+	}
+
+	if toolGovernanceFrozenContinuationNeedsSkillLoop(prepared) {
+		t.Fatal("toolGovernanceFrozenContinuationNeedsSkillLoop() = true, want verified model-decides phase to finish")
+	}
+}
+
 func TestToolGovernanceFrozenFastPathWaitsForModelDecidesPostUpdateRead(t *testing.T) {
 	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
 	readStepID := operationPlanPostUpdateAgentConfigReadStepID()
@@ -287,6 +374,56 @@ func TestToolGovernanceFrozenContinuationMessageIncludesTurnState(t *testing.T) 
 		"agent_theme",
 		"water fee confirmation",
 		"authoritative same-turn memory",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("continuation message missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestToolGovernanceFrozenContinuationMessageIncludesExecutionState(t *testing.T) {
+	message := &runtimemodel.Message{
+		Query: "create a test agent, then edit and verify it",
+		Metadata: map[string]interface{}{
+			"skill_invocations": []map[string]interface{}{
+				{
+					"kind":     "skill_load",
+					"status":   "success",
+					"skill_id": skills.SkillAgentManagement,
+				},
+				{
+					"kind":      "tool_call",
+					"status":    "success",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "create_agent",
+					"arguments": map[string]interface{}{"name": "Smoke Agent"},
+					"result": map[string]interface{}{
+						"status":     "completed",
+						"agent_id":   "agent-1",
+						"agent_name": "Smoke Agent",
+					},
+				},
+				{
+					"kind":      "tool_call",
+					"status":    "error",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_identity",
+					"arguments": map[string]interface{}{"agent_id": "agent-1", "name": "Duplicate Agent"},
+					"error":     "agent with the same name already exists",
+				},
+			},
+		},
+	}
+
+	msg := toolGovernanceFrozenExecutionContinuationMessage(message, map[string]interface{}{}, nil, nil)
+	content := strings.TrimSpace(stringFromAny(msg.Content))
+	for _, want := range []string{
+		"Current-turn execution state JSON",
+		"active_target",
+		"Smoke Agent",
+		"failed_operations",
+		"agent with the same name already exists",
+		"do not create a replacement asset",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("continuation message missing %q in:\n%s", want, content)

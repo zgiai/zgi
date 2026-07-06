@@ -23,6 +23,31 @@ func SystemSkillToolGovernanceManifest(skillID, toolName string) (toolgovernance
 	return manifest, ok
 }
 
+func SystemSkillToolGovernanceManifestByToolName(toolName string) (toolgovernance.Manifest, bool) {
+	systemToolGovernanceOnce.Do(loadSystemToolGovernanceCatalog)
+	if systemToolGovernanceErr != nil {
+		return toolgovernance.Manifest{}, false
+	}
+	toolName = strings.ToLower(strings.TrimSpace(toolName))
+	if toolName == "" {
+		return toolgovernance.Manifest{}, false
+	}
+	suffix := "/" + toolName
+	var found toolgovernance.Manifest
+	matched := false
+	for key, manifest := range systemToolGovernance {
+		if !strings.HasSuffix(key, suffix) {
+			continue
+		}
+		if matched {
+			return toolgovernance.Manifest{}, false
+		}
+		found = manifest
+		matched = true
+	}
+	return found, matched
+}
+
 func loadSystemToolGovernanceCatalog() {
 	runtime := NewRuntime(nil, nil)
 	entries, err := os.ReadDir(runtime.catalogDir)

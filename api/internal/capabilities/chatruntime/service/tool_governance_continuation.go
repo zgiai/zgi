@@ -513,7 +513,7 @@ func toolGovernanceFrozenPlanHasPendingFollowup(prepared *PreparedChat, trace sk
 	if len(plan) == 0 {
 		return false
 	}
-	if toolGovernanceFrozenModelDecidesPlanHasPendingAgentWork(plan) {
+	if toolGovernanceFrozenModelDecidesPlanNeedsContinuation(plan) {
 		return true
 	}
 	for _, step := range operationPlanPendingExecutableSteps(plan, 8) {
@@ -719,7 +719,14 @@ func toolGovernanceFrozenPlanHasPendingExecutableFollowup(plan map[string]interf
 	if len(operationPlanPendingExecutableSteps(plan, 8)) > 0 {
 		return true
 	}
-	return toolGovernanceFrozenModelDecidesPlanHasPendingAgentWork(plan)
+	return toolGovernanceFrozenModelDecidesPlanNeedsContinuation(plan)
+}
+
+func toolGovernanceFrozenModelDecidesPlanNeedsContinuation(plan map[string]interface{}) bool {
+	if toolGovernanceFrozenModelDecidesPlanHasPendingAgentWork(plan) {
+		return true
+	}
+	return toolGovernanceFrozenModelDecidesPlanHasOpenPhase(plan)
 }
 
 func toolGovernanceFrozenModelDecidesPlanHasPendingAgentWork(plan map[string]interface{}) bool {
@@ -741,6 +748,41 @@ func toolGovernanceFrozenModelDecidesPlanHasPendingAgentWork(plan map[string]int
 		}
 	}
 	return false
+}
+
+func toolGovernanceFrozenModelDecidesPlanHasOpenPhase(plan map[string]interface{}) bool {
+	if len(plan) == 0 || !operationPlanModelDecidesTools(plan) {
+		return false
+	}
+	if operationPlanModelDecidesCompletionVerified(plan) {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(stringFromAny(plan["status"]))) {
+	case operationPlanStatusFailed, "error", "failure", "blocked", "rejected":
+		return false
+	}
+	if toolGovernanceFrozenPendingActionRequiresContinuation(plan["pending_next_action"]) {
+		return true
+	}
+	phaseStatus := mapFromOperationContext(plan["phase_status"])
+	for _, phase := range mapSliceFromAny(plan["phases"]) {
+		id := strings.TrimSpace(stringFromAny(phase["id"]))
+		status := operationPlanNormalizeStepStatus(firstNonEmptyString(phase["status"], phaseStatus[id]))
+		if status == operationPlanStepStatusCompleted || status == operationPlanStepStatusFailed {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func toolGovernanceFrozenPendingActionRequiresContinuation(value interface{}) bool {
+	switch strings.ToLower(strings.TrimSpace(stringFromAny(value))) {
+	case "", "none", "no_action", "noop", "answer", "final_answer", "respond", "respond_to_user":
+		return false
+	default:
+		return true
+	}
 }
 
 func toolGovernanceFrozenPlanNeedsFailureVerifier(plan map[string]interface{}) bool {
@@ -951,6 +993,7 @@ func toolGovernanceFrozenExecutionContinuationMessage(
 		"Do not repeat the same approved tool call with the same arguments.",
 		"Treat the model-visible runtime result as authoritative completed state.",
 		"Use Current turn structured state as authoritative same-turn memory for derived facts and decisions recorded before approval.",
+		"Treat Current-turn execution state as authoritative: continue with active_target when present, and do not create a replacement asset unless the original user request explicitly asks for another distinct target.",
 		"When Current turn structured state or the operation plan already contains the file-derived summary, selected target, model choice, or configuration fact needed for the next step, reuse that recorded evidence directly instead of navigating back or rerunning the earlier read/list tool.",
 		"Continue any remaining user-requested steps using the available skills and current page context.",
 		"All user-visible progress updates and final answers must use the user's language.",
@@ -966,6 +1009,7 @@ func toolGovernanceFrozenExecutionContinuationMessage(
 			"Continue only independent remaining steps that do not require retrying the failed frozen operation; otherwise report the blocker.",
 			"Treat the model-visible runtime result and failure feedback as authoritative.",
 			"Use Current turn structured state as authoritative same-turn memory for derived facts and decisions recorded before approval.",
+			"Treat Current-turn execution state as authoritative: continue with active_target when present, and do not create a replacement asset unless the original user request explicitly asks for another distinct target.",
 			"When Current turn structured state or the operation plan already contains the file-derived summary, selected target, model choice, or configuration fact needed for the next step, reuse that recorded evidence directly instead of navigating back or rerunning the earlier read/list tool.",
 			"All user-visible progress updates and final answers must use the user's language.",
 			"Explain the failure plainly and decide the next safe step.",
@@ -981,6 +1025,9 @@ func toolGovernanceFrozenExecutionContinuationMessage(
 	}
 	if planState := toolGovernanceContinuationPlanStateSummary(message); len(planState) > 0 {
 		contentParts = append(contentParts, "Current operation plan continuation state JSON:\n"+compactJSON(planState))
+	}
+	if executionState := currentTurnExecutionStateSummary(message); len(executionState) > 0 {
+		contentParts = append(contentParts, "Current-turn execution state JSON:\n"+compactJSON(executionState))
 	}
 	if turnState := turnStateContinuationSummary(message); len(turnState) > 0 {
 		contentParts = append(contentParts, "Current turn structured state JSON:\n"+compactJSON(turnState))
@@ -1114,6 +1161,203 @@ func toolGovernanceContinuationPlanStepSummary(step map[string]interface{}, stat
 		item["skipped_reason"] = reason
 	}
 	return item
+}
+
+func currentTurnExecutionStateSummary(message *runtimemodel.Message) map[string]interface{} {
+	if message == nil || len(message.Metadata) == 0 {
+		return nil
+	}
+	invocations := skillInvocationsFromMetadata(message.Metadata["skill_invocations"])
+	if len(invocations) == 0 {
+		return nil
+	}
+	out := map[string]interface{}{
+		"instructions": []string{
+			"Continue the same user turn from these recorded execution facts.",
+			"Do not repeat completed side-effecting operations with the same target and arguments.",
+			"Use active_target ids/names as the current asset target for remaining configuration or verification steps.",
+			"If a failed operation is present, repair or continue from that exact failure context instead of restarting the whole task.",
+		},
+	}
+	if target := currentTurnActiveAgentTarget(invocations); len(target) > 0 {
+		out["active_target"] = target
+	}
+	if completed := currentTurnCompletedOperations(invocations, 8); len(completed) > 0 {
+		out["completed_operations"] = mapsToInterfaceSlice(completed)
+	}
+	if failed := currentTurnFailedOperations(invocations, 4); len(failed) > 0 {
+		out["failed_operations"] = mapsToInterfaceSlice(failed)
+		out["has_failed_operation"] = true
+	}
+	if loaded := currentTurnLoadedSkills(invocations, 8); len(loaded) > 0 {
+		out["loaded_skills"] = loaded
+	}
+	if len(out) == 1 {
+		return nil
+	}
+	return out
+}
+
+func currentTurnActiveAgentTarget(invocations []map[string]interface{}) map[string]interface{} {
+	for index := len(invocations) - 1; index >= 0; index-- {
+		invocation := invocations[index]
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "tool_call") ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["skill_id"])), skills.SkillAgentManagement) ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["tool_name"])), "create_agent") ||
+			!toolGovernanceContinuationInvocationSucceeded(invocation) {
+			continue
+		}
+		if target := currentTurnAgentTargetFromInvocation(invocation); len(target) > 0 {
+			target["asset_type"] = "agent"
+			target["source_tool"] = "agent-management/create_agent"
+			return target
+		}
+	}
+	return nil
+}
+
+func currentTurnCompletedOperations(invocations []map[string]interface{}, limit int) []map[string]interface{} {
+	if limit <= 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, limit)
+	for _, invocation := range invocations {
+		if len(out) >= limit {
+			break
+		}
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "tool_call") ||
+			!toolGovernanceContinuationInvocationSucceeded(invocation) {
+			continue
+		}
+		skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
+		toolName := strings.TrimSpace(stringFromAny(invocation["tool_name"]))
+		if skillID == "" || toolName == "" || !skillLoopToolLooksAssetMutation(skillID, toolName) {
+			continue
+		}
+		if item := currentTurnOperationSummary(invocation); len(item) > 0 {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func currentTurnFailedOperations(invocations []map[string]interface{}, limit int) []map[string]interface{} {
+	if limit <= 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, limit)
+	for _, invocation := range invocations {
+		if len(out) >= limit {
+			break
+		}
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "tool_call") ||
+			!toolGovernanceContinuationInvocationFailed(invocation) {
+			continue
+		}
+		if item := currentTurnOperationSummary(invocation); len(item) > 0 {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func currentTurnLoadedSkills(invocations []map[string]interface{}, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	out := make([]string, 0, limit)
+	seen := map[string]struct{}{}
+	for _, invocation := range invocations {
+		if len(out) >= limit {
+			break
+		}
+		kind := strings.ToLower(strings.TrimSpace(stringFromAny(invocation["kind"])))
+		if kind != "skill_load" && kind != "load_skill" {
+			continue
+		}
+		if !toolGovernanceContinuationInvocationSucceeded(invocation) {
+			continue
+		}
+		skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
+		if skillID == "" {
+			skillID = strings.TrimSpace(stringFromAny(invocation["tool_name"]))
+		}
+		if skillID == "" {
+			continue
+		}
+		key := strings.ToLower(skillID)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, skillID)
+	}
+	return out
+}
+
+func currentTurnOperationSummary(invocation map[string]interface{}) map[string]interface{} {
+	skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
+	toolName := strings.TrimSpace(stringFromAny(invocation["tool_name"]))
+	if skillID == "" && toolName == "" {
+		return nil
+	}
+	item := map[string]interface{}{}
+	if skillID != "" {
+		item["skill_id"] = skillID
+	}
+	if toolName != "" {
+		item["tool_name"] = toolName
+	}
+	if status := strings.TrimSpace(firstNonEmptyString(invocation["status"], invocation["result_status"])); status != "" {
+		item["status"] = status
+	}
+	if target := currentTurnAgentTargetFromInvocation(invocation); len(target) > 0 {
+		item["target"] = target
+	}
+	if errText := strings.TrimSpace(firstNonEmptyString(invocation["error"], mapFromOperationContext(invocation["result"])["error"], mapFromOperationContext(invocation["result_summary"])["error"])); errText != "" {
+		item["error"] = truncateRunes(errText, 240)
+	}
+	return item
+}
+
+func currentTurnAgentTargetFromInvocation(invocation map[string]interface{}) map[string]interface{} {
+	result := mapFromOperationContext(invocation["result"])
+	resultSummary := mapFromOperationContext(invocation["result_summary"])
+	agent := mapFromOperationContext(result["agent"])
+	args := mapFromOperationContext(invocation["arguments"])
+	target := map[string]interface{}{}
+	if id := strings.TrimSpace(firstNonEmptyString(result["agent_id"], result["id"], resultSummary["agent_id"], resultSummary["id"], agent["agent_id"], agent["id"], args["agent_id"], args["id"])); id != "" {
+		target["agent_id"] = id
+	}
+	if name := strings.TrimSpace(firstNonEmptyString(result["agent_name"], result["name"], resultSummary["agent_name"], resultSummary["name"], agent["agent_name"], agent["name"], args["agent_name"], args["name"])); name != "" {
+		target["name"] = name
+	}
+	if len(target) == 0 {
+		return nil
+	}
+	return target
+}
+
+func toolGovernanceContinuationInvocationSucceeded(invocation map[string]interface{}) bool {
+	status := strings.ToLower(strings.TrimSpace(firstNonEmptyString(invocation["status"], invocation["result_status"])))
+	switch status {
+	case "success", "succeeded", "completed", "approved":
+		return true
+	default:
+		return false
+	}
+}
+
+func toolGovernanceContinuationInvocationFailed(invocation map[string]interface{}) bool {
+	status := strings.ToLower(strings.TrimSpace(firstNonEmptyString(invocation["status"], invocation["result_status"])))
+	switch status {
+	case "error", "failed", "failure", "partial_failed", "partially_failed":
+		return true
+	}
+	if errText := strings.TrimSpace(firstNonEmptyString(invocation["error"], mapFromOperationContext(invocation["result"])["error"], mapFromOperationContext(invocation["result_summary"])["error"])); errText != "" {
+		return true
+	}
+	return false
 }
 
 func operationPlanContinuationStepTargetSummary(step map[string]interface{}) string {

@@ -46,7 +46,7 @@ type completionVerificationDecision struct {
 // requested config state, so real tool failures and unrelated verifier findings
 // are still preserved.
 func ReconcileCompletionVerificationResultWithEvidence(evidence map[string]interface{}, result CompletionVerificationResult) CompletionVerificationResult {
-	if _, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
+	if _, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok && !completionVerificationEvidenceHasOpenModelDecidesPhase(evidence) {
 		result.Status = completionVerificationStatusPass
 		result.Reason = strings.TrimSpace(firstNonEmptyString(
 			result.Reason,
@@ -168,6 +168,107 @@ func completionEvidenceOperationPlanModelDecides(evidence map[string]interface{}
 		return false
 	}
 	return operationPlanModelDecidesTools(evidenceMapFromAny(evidence["operation_plan"]))
+}
+
+func completionVerificationEvidenceHasOpenModelDecidesPhase(evidence map[string]interface{}) bool {
+	if len(evidence) == 0 {
+		return false
+	}
+	for _, plan := range completionVerificationEvidenceOperationPlans(evidence) {
+		if completionVerificationModelDecidesPlanHasOpenPhase(plan) {
+			return true
+		}
+	}
+	return false
+}
+
+func completionVerificationEvidenceOperationPlans(evidence map[string]interface{}) []map[string]interface{} {
+	if len(evidence) == 0 {
+		return nil
+	}
+	plans := make([]map[string]interface{}, 0, 3)
+	if plan := evidenceMapFromAny(evidence["operation_plan"]); len(plan) > 0 {
+		plans = append(plans, plan)
+	}
+	if summary := evidenceMapFromAny(evidence["execution_summary"]); len(summary) > 0 {
+		if plan := evidenceMapFromAny(summary["operation_plan"]); len(plan) > 0 {
+			plans = append(plans, plan)
+		}
+	}
+	if ledger := evidenceMapFromAny(evidence["execution_ledger"]); len(ledger) > 0 {
+		if summary := evidenceMapFromAny(ledger["summary"]); len(summary) > 0 {
+			if plan := evidenceMapFromAny(summary["operation_plan"]); len(plan) > 0 {
+				plans = append(plans, plan)
+			}
+		}
+	}
+	return plans
+}
+
+func completionVerificationModelDecidesPlanHasOpenPhase(plan map[string]interface{}) bool {
+	if len(plan) == 0 || !operationPlanModelDecidesTools(plan) {
+		return false
+	}
+	if completionVerificationPlanHasPassVerification(plan) {
+		return false
+	}
+	status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(plan["status"])))
+	switch status {
+	case "completed", "complete", "success", "succeeded", "skipped", "not_applicable":
+		return false
+	case "failed", "error", "rejected":
+		return false
+	}
+	if completionVerificationPendingActionRequiresContinuation(plan["pending_next_action"]) {
+		return true
+	}
+	switch status {
+	case "running", "in_progress", "pending", "needs_action":
+		return completionVerificationPlanHasSemanticPhaseContract(plan)
+	default:
+		return false
+	}
+}
+
+func completionVerificationPlanHasPassVerification(plan map[string]interface{}) bool {
+	if len(plan) == 0 {
+		return false
+	}
+	if boolFromAny(plan["completion_verified"]) {
+		return true
+	}
+	verification := evidenceMapFromAny(plan["completion_verification"])
+	status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(verification["status"])))
+	switch status {
+	case "pass", "passed", "completed", "complete", "success", "succeeded", "verified":
+		return true
+	default:
+		return false
+	}
+}
+
+func completionVerificationPendingActionRequiresContinuation(value interface{}) bool {
+	pending := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(value)))
+	switch pending {
+	case "", "none", "no_action", "noop", "answer", "final_answer", "respond", "respond_to_user":
+		return false
+	default:
+		return true
+	}
+}
+
+func completionVerificationPlanHasSemanticPhaseContract(plan map[string]interface{}) bool {
+	if len(evidenceSliceFromAny(plan["phases"])) > 0 ||
+		len(evidenceSliceFromAny(plan["success_criteria"])) > 0 ||
+		len(evidenceSliceFromAny(plan["capability_goals"])) > 0 {
+		return true
+	}
+	if state := evidenceMapFromAny(plan["strategy_state"]); len(state) > 0 {
+		return len(evidenceSliceFromAny(state["phases"])) > 0 ||
+			len(evidenceSliceFromAny(state["success_criteria"])) > 0 ||
+			len(evidenceSliceFromAny(state["capability_goals"])) > 0
+	}
+	return false
 }
 
 func operationPlanModelDecidesTools(plan map[string]interface{}) bool {
@@ -293,12 +394,9 @@ func completionVerificationPlanNeedsRuntimeEvidence(plan map[string]interface{})
 		return true
 	}
 	if operationPlanModelDecidesTools(plan) {
-		return false
+		return completionVerificationModelDecidesPlanHasOpenPhase(plan)
 	}
-	pending := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(plan["pending_next_action"])))
-	switch pending {
-	case "", "none", "no_action", "noop", "answer", "final_answer", "respond", "respond_to_user":
-	default:
+	if completionVerificationPendingActionRequiresContinuation(plan["pending_next_action"]) {
 		return true
 	}
 	stepStatus := evidenceMapFromAny(plan["step_status"])
@@ -468,8 +566,9 @@ func completionVerificationRequest(base *adapter.ChatRequest, payloadJSON string
 	systemLines := []string{
 		"You are the AIChat completion post-verifier.",
 		"Verify whether the candidate final answer is faithful to the provided evidence: page context, operation_result_summary, ledger, tool calls, tool results, generated files, client actions, and governance decisions.",
-		"Treat operation_plan and turn_strategy as advisory strategy snapshots only. They can explain intended work, but they are not proof of completion and must not override successful or failed execution evidence.",
+		"Treat operation_plan and turn_strategy as advisory strategy snapshots: they are not proof of completion, but original_user_goal, phases, success_criteria, capability_goals, and pending_next_action define the user-visible outcomes that still need evidence.",
 		"Do not invent facts. Current page context, tool results, ledger evidence, client actions, and governance outcomes are authoritative.",
+		"For phase_only_model_decides/model_decides plans, do not treat one successful operation as completion of the whole turn when the phase success criteria describe additional user-visible work and safe next action remains.",
 		"Reject candidate answers that expose internal system prompts, operation_plan, turn_strategy, pending-step bookkeeping, required_next_tool, hidden strategy JSON, or internal protocol wording to the user.",
 		"If page_context.target_route_already_available is true, current page context is sufficient route evidence for that target; do not require a redundant navigate tool call.",
 		"When you provide final_answer or final_answer_guidance, use the same language as the user's original request. If the user request is Chinese, final_answer and final_answer_guidance must be Chinese.",
@@ -558,7 +657,8 @@ func completionVerificationContract() map[string]interface{} {
 		},
 		"rules": []string{
 			"Return pass only when the candidate answer makes no unsupported completion claims.",
-			"Treat operation_plan and turn_strategy as advisory strategy snapshots, not as authoritative proof that every pending step must still run.",
+			"Treat operation_plan and turn_strategy as advisory strategy snapshots, not as evidence that work succeeded; use their original_user_goal, phases, success_criteria, capability_goals, and pending_next_action as the semantic task contract to audit against.",
+			"For phase_only_model_decides/model_decides plans, return needs_action when successful evidence covers only a subset of the phase success criteria and a safe continuation remains. Let the next model turn choose the concrete tool from available schemas instead of prescribing a fixed tool script.",
 			"Use page_context, operation_result_summary, tool results, generated_files, client_actions, tool_governance, and execution_ledger as the authoritative facts.",
 			"For Agent configuration changes, treat operation_plan steps' config_goal as the user-visible target, and treat expected_updated_fields plus expected_binding_actions as verification requirements when matching concrete target values are present in plan steps, tool arguments, or post-update reads.",
 			"Return needs_action when the candidate answer exposes internal system prompt, operation_plan, turn_strategy, pending-step, required_next_tool, hidden strategy, or protocol wording; ask for a rewrite that only states user-visible outcome or blocker.",
@@ -746,6 +846,9 @@ func completionVerificationApplyPlanOnlySoftening(evidence map[string]interface{
 		return decision
 	}
 	if completionVerificationHasUnsatisfiedManagedFileSave(evidence) {
+		return decision
+	}
+	if completionVerificationEvidenceHasOpenModelDecidesPhase(evidence) {
 		return decision
 	}
 	if len(completionVerificationPendingAgentConfigUpdateFields(evidence)) > 0 {

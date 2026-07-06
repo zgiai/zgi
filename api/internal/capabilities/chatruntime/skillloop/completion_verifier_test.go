@@ -42,6 +42,85 @@ func TestCompletionVerificationOperationPlanForPromptHidesModelDecidesCandidateT
 	}
 }
 
+func TestCompletionVerificationModelDecidesOpenPhaseBlocksFastPath(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"planning_mode":       "phase_only_model_decides",
+			"tool_choice_mode":    "model_decides",
+			"pending_next_action": "continue_from_phase_success_criteria",
+			"original_user_goal":  "Create an Agent, configure it, bind useful resources, and verify the result.",
+			"phases": []interface{}{
+				map[string]interface{}{
+					"id":               "agent-management",
+					"success_criteria": []interface{}{"Agent is created, configured, bound, and verified."},
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "create_agent",
+				"result": map[string]interface{}{
+					"status":     "completed",
+					"agent_name": "Smoke Agent",
+				},
+			},
+		},
+	}
+
+	if !completionVerificationPlanNeedsRuntimeEvidence(evidenceMapFromAny(evidence["operation_plan"])) {
+		t.Fatal("completionVerificationPlanNeedsRuntimeEvidence() = false, want open model-decides phase to need verification")
+	}
+	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
+		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = %q, true; want open phase to block fast path", answer)
+	}
+	decision := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
+		Status: completionVerificationStatusPass,
+		Reason: "create_agent succeeded",
+	})
+	if got := decision.normalizedStatus(); got != completionVerificationStatusPass {
+		t.Fatalf("decision status = %q, want pass after model verifier pass; decision=%#v", got, decision)
+	}
+	if decision.NextActionHint != "" {
+		t.Fatalf("NextActionHint = %q, want empty after model verifier pass", decision.NextActionHint)
+	}
+}
+
+func TestCompletionVerificationModelDecidesVerifiedPhaseAllowsFastPath(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":           "completed",
+			"planning_mode":    "phase_only_model_decides",
+			"tool_choice_mode": "model_decides",
+			"completion_verification": map[string]interface{}{
+				"status": "pass",
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "create_agent",
+				"result": map[string]interface{}{
+					"status":     "completed",
+					"agent_name": "Smoke Agent",
+				},
+			},
+		},
+	}
+
+	if completionVerificationPlanNeedsRuntimeEvidence(evidenceMapFromAny(evidence["operation_plan"])) {
+		t.Fatal("completionVerificationPlanNeedsRuntimeEvidence() = true, want verified completed model-decides phase closed")
+	}
+	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); !ok || !strings.Contains(answer, "Smoke Agent") {
+		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = %q, %v; want verified evidence fast path", answer, ok)
+	}
+}
+
 func TestCompletionVerificationFallbackAnswerUsesReadableChinese(t *testing.T) {
 	answer := completionVerificationFallbackAnswer(completionVerificationDecision{
 		Status:            completionVerificationStatusFailed,
@@ -345,8 +424,9 @@ func TestCompletionVerificationPromptTreatsEvidenceAsAuthoritative(t *testing.T)
 	system := messageContent(request.Messages[0].Content)
 	for _, fragment := range []string{
 		"faithful to the provided evidence",
-		"operation_plan and turn_strategy as advisory strategy snapshots only",
-		"must not override successful or failed execution evidence",
+		"operation_plan and turn_strategy as advisory strategy snapshots",
+		"define the user-visible outcomes that still need evidence",
+		"do not treat one successful operation as completion of the whole turn",
 		"Current page context, tool results, ledger evidence, client actions, and governance outcomes are authoritative",
 		"target_route_already_available",
 	} {

@@ -1844,18 +1844,57 @@ func applyOperationPlanProgress(plan map[string]interface{}, steps []map[string]
 	if pendingOverride != "" {
 		plan["pending_next_action"] = pendingOverride
 	} else {
-		plan["pending_next_action"] = operationPlanPendingNextAction(steps)
+		plan["pending_next_action"] = operationPlanPendingNextActionForPlan(plan, steps)
 	}
 	if statusOverride != "" {
 		plan["status"] = statusOverride
 	} else {
-		plan["status"] = operationPlanStatusFromSteps(steps)
+		plan["status"] = operationPlanStatusFromProgress(plan, steps)
 	}
 	completed, failed := operationPlanProgressStepRecords(steps, stepStatus)
 	plan["completed_steps"] = mapsToInterfaceSlice(completed)
 	plan["failed_steps"] = mapsToInterfaceSlice(failed)
 	operationPlanApplyStructuredPlanProgress(plan, steps, stepStatus)
 	operationPlanSyncStrategyState(plan)
+}
+
+func operationPlanPendingNextActionForPlan(plan map[string]interface{}, steps []map[string]interface{}) string {
+	pending := operationPlanPendingNextAction(steps)
+	if pending != "none" || !operationPlanModelDecidesTools(plan) {
+		return pending
+	}
+	if len(mapSliceFromAny(plan["phases"])) > 0 && !operationPlanModelDecidesCompletionVerified(plan) {
+		return "continue_from_phase_success_criteria"
+	}
+	return pending
+}
+
+func operationPlanStatusFromProgress(plan map[string]interface{}, steps []map[string]interface{}) string {
+	status := operationPlanStatusFromSteps(steps)
+	if status != operationPlanStatusCompleted || !operationPlanModelDecidesTools(plan) {
+		return status
+	}
+	if operationPlanModelDecidesCompletionVerified(plan) {
+		return status
+	}
+	return operationPlanStatusRunning
+}
+
+func operationPlanModelDecidesCompletionVerified(plan map[string]interface{}) bool {
+	verification := mapFromOperationContext(plan["completion_verification"])
+	if len(verification) == 0 {
+		return false
+	}
+	return operationPlanCompletionVerificationPassStatus(stringFromAny(verification["status"]))
+}
+
+func operationPlanCompletionVerificationPassStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "pass", "passed", "completed", "complete", "success", "succeeded", "ok":
+		return true
+	default:
+		return false
+	}
 }
 
 func operationPlanApplyStructuredPlanProgress(plan map[string]interface{}, steps []map[string]interface{}, stepStatus map[string]interface{}) {
@@ -5289,6 +5328,26 @@ func applyOperationPlanCompletionVerificationResult(metadata map[string]interfac
 
 	steps := mapSliceFromAny(plan["steps"])
 	if len(steps) == 0 {
+		if operationPlanModelDecidesTools(plan) {
+			switch {
+			case operationPlanCompletionVerificationPassStatus(status):
+				plan["status"] = operationPlanStatusCompleted
+				plan["pending_next_action"] = "none"
+			case operationPlanCompletionVerificationTerminalFailure(status):
+				plan["status"] = operationPlanStatusFailed
+				plan["pending_next_action"] = "none"
+			default:
+				plan["status"] = operationPlanStatusRunning
+				if nextActionHint != "" {
+					plan["pending_next_action"] = truncateRunes(nextActionHint, 240)
+				} else {
+					plan["pending_next_action"] = operationPlanPendingNextActionForPlan(plan, nil)
+				}
+			}
+			operationPlanSyncStrategyState(plan)
+			metadata["operation_plan"] = plan
+			return
+		}
 		if !strings.EqualFold(strings.TrimSpace(stringFromAny(plan["status"])), operationPlanStatusCompleted) {
 			plan["status"] = operationPlanStatusFailed
 			plan["pending_next_action"] = "none"
