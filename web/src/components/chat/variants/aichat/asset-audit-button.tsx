@@ -23,12 +23,17 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { useAIChatAssetOperationAudits } from '@/hooks/aichat/use-aichat-asset-operation-audits';
+import { useLocale } from '@/hooks/use-locale';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import type {
   AIChatAssetOperationAuditRecord,
   AIChatToolGovernanceAssetRef,
 } from '@/services/types/aichat';
+import {
+  getAIChatSkillToolDisplayName,
+  getFallbackAIChatSkillDisplayInfo,
+} from '@/components/chat/variants/aichat/skill-display';
 
 interface AIChatAssetAuditButtonProps {
   conversationId?: string | null;
@@ -103,7 +108,7 @@ export function AIChatAssetAuditButton({
           <span className="absolute right-1 top-1 size-1.5 rounded-full bg-primary" />
         ) : null}
       </Button>
-      <SheetContent side="right" className="flex w-full flex-col p-0 sm:max-w-md">
+      <SheetContent side="right" className="flex w-full flex-col p-0 sm:max-w-xl">
         <SheetHeader className="border-b px-4 py-4 pr-11 text-left">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
@@ -169,17 +174,20 @@ export function AIChatAssetAuditButton({
 
 function AuditRecordCard({ record }: { record: AIChatAssetOperationAuditRecord }) {
   const t = useT('webapp');
+  const { locale } = useLocale();
   const status = record.approval_status || record.governance_status || record.status || '';
   const time = formatAuditTime(record.resolved_at ?? record.created_at ?? record.message_created_at);
   const rawAssets = record.assets ?? [];
   const assets = auditDisplayAssets(record, rawAssets);
   const assetCount = auditAssetCount(record, rawAssets);
-  const toolLabel = formatToolLabel(record, t);
+  const toolLabel = formatToolLabel(record, t, locale);
   const effect = record.effect ? formatEffect(record.effect, t) : null;
   const risk = record.risk_level ? formatRisk(record.risk_level, t) : null;
   const action = record.action ? formatAuditAction(record.action, t) : null;
-  const resolvedBy = stringValue(record.resolved_by);
+  const resolvedBy = readableAuditActor(record.resolved_by);
   const grantScope = formatGrantScope(record.session_grant ?? record.approved_grant, t);
+  const source = formatAuditSource(record.source, t);
+  const reason = record.reason ? formatAuditReason(record.reason, t) : null;
   const resolutionItems = [
     action ? t('consoleChat.governance.audit.resolutionAction', { action }) : null,
     resolvedBy ? t('consoleChat.governance.audit.resolvedBy', { account: resolvedBy }) : null,
@@ -188,16 +196,18 @@ function AuditRecordCard({ record }: { record: AIChatAssetOperationAuditRecord }
   ].filter((item): item is string => Boolean(item));
 
   return (
-    <article className="rounded-lg border bg-background p-3 shadow-sm">
+    <article className="overflow-hidden rounded-lg border bg-background p-3 shadow-sm">
       <div className="flex items-start gap-3">
         <div className={cn('mt-0.5 rounded-full p-1.5', statusToneClass(status))}>
           {statusIcon(status)}
         </div>
-        <div className="min-w-0 flex-1 space-y-2">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <h3 className="min-w-0 truncate text-sm font-medium text-foreground">{toolLabel}</h3>
-            <Badge variant={statusBadgeVariant(status)}>{formatStatus(status, t)}</Badge>
-            {risk ? <Badge variant={riskBadgeVariant(record.risk_level)}>{risk}</Badge> : null}
+        <div className="min-w-0 flex-1 space-y-2 overflow-hidden">
+          <div className="flex min-w-0 flex-col gap-1.5 sm:flex-row sm:items-start sm:justify-between">
+            <h3 className="min-w-0 break-words text-sm font-medium text-foreground">{toolLabel}</h3>
+            <div className="flex shrink-0 flex-wrap gap-1.5">
+              <Badge variant={statusBadgeVariant(status)}>{formatStatus(status, t)}</Badge>
+              {risk ? <Badge variant={riskBadgeVariant(record.risk_level)}>{risk}</Badge> : null}
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             {effect ? <span>{effect}</span> : null}
@@ -207,6 +217,9 @@ function AuditRecordCard({ record }: { record: AIChatAssetOperationAuditRecord }
             ) : null}
           </div>
           {assets.length > 0 ? <AuditAssets assets={assets} /> : null}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+            <span>{t('consoleChat.governance.audit.source', { source })}</span>
+          </div>
           {resolutionItems.length > 0 ? (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
               {resolutionItems.map(item => (
@@ -214,16 +227,12 @@ function AuditRecordCard({ record }: { record: AIChatAssetOperationAuditRecord }
               ))}
             </div>
           ) : null}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-            <span>{t('consoleChat.governance.audit.source', { source: record.source })}</span>
-            <span className="font-mono">{record.correlation_id}</span>
-          </div>
-          {record.reason ? (
+          {reason ? (
             <p className="text-xs text-muted-foreground">
               <span className="font-medium text-foreground">
                 {t('consoleChat.governance.fields.reason')}
               </span>
-              <span className="ml-1">{record.reason}</span>
+              <span className="ml-1">{reason}</span>
             </p>
           ) : null}
         </div>
@@ -288,14 +297,17 @@ function AuditAssets({ assets }: { assets: AIChatToolGovernanceAssetRef[] }) {
 
   return (
     <div className="space-y-1 rounded-md bg-muted/40 p-2">
-      {visibleAssets.map((asset, index) => (
-        <div key={`${asset.id ?? asset.name ?? asset.filename ?? index}`} className="min-w-0">
-          <p className="truncate text-xs font-medium text-foreground">
-            {assetDisplayName(asset, t)}
-          </p>
-          <p className="truncate text-[11px] text-muted-foreground">{assetMeta(asset, t)}</p>
-        </div>
-      ))}
+      {visibleAssets.map((asset, index) => {
+        const meta = assetMeta(asset, t);
+        return (
+          <div key={`${asset.id ?? asset.name ?? asset.filename ?? index}`} className="min-w-0">
+            <p className="break-words text-xs font-medium text-foreground">
+              {assetDisplayName(asset, t)}
+            </p>
+            {meta ? <p className="break-words text-[11px] text-muted-foreground">{meta}</p> : null}
+          </div>
+        );
+      })}
       {hiddenCount > 0 ? (
         <p className="text-[11px] text-muted-foreground">
           {t('consoleChat.governance.audit.moreAssets', { count: hiddenCount })}
@@ -340,34 +352,52 @@ function AuditEmptyState({
 
 function formatToolLabel(
   record: AIChatAssetOperationAuditRecord,
+  t: ReturnType<typeof useT<'webapp'>>,
+  locale: string
+): string {
+  const skillId = record.skill_id?.trim() ?? '';
+  const toolName = (record.tool_name || record.tool_id || '').trim();
+  const skill = formatSkillLabel(skillId, locale, t);
+  const tool =
+    localizedToolName(skillId, toolName, locale) ||
+    formatAuditTokenLabel(toolName) ||
+    t('consoleChat.governance.audit.unknownTool');
+  return t('consoleChat.governance.audit.toolSummary', { skill, tool });
+}
+
+function formatSkillLabel(
+  skillId: string,
+  locale: string,
   t: ReturnType<typeof useT<'webapp'>>
 ): string {
-  const skill = record.skill_id || t('consoleChat.skills.trace.unknownSkill');
-  const tool = record.tool_name || record.tool_id || t('consoleChat.governance.audit.unknownTool');
-  return t('consoleChat.governance.toolLabel', { skill, tool });
+  if (!skillId || looksLikeOpaqueAuditAssetID(skillId)) {
+    return t('consoleChat.skills.trace.unknownSkill');
+  }
+  const display = getFallbackAIChatSkillDisplayInfo(skillId, locale).label;
+  return display && display !== skillId ? display : formatAuditTokenLabel(skillId);
 }
 
 function formatStatus(status: string, t: ReturnType<typeof useT<'webapp'>>): string {
   switch (status) {
     case 'approved':
-      return t('consoleChat.governance.approved');
+      return t('consoleChat.governance.audit.statuses.approved');
     case 'rejected':
-      return t('consoleChat.governance.rejected');
+      return t('consoleChat.governance.audit.statuses.rejected');
     case 'pending':
-      return t('consoleChat.governance.audit.pending');
+      return t('consoleChat.governance.audit.statuses.pending');
     case 'needs_approval':
-      return t('consoleChat.governance.needsApproval');
+      return t('consoleChat.governance.audit.statuses.needsApproval');
     case 'denied':
-      return t('consoleChat.governance.denied');
+      return t('consoleChat.governance.audit.statuses.denied');
     case 'blocked':
-      return t('consoleChat.governance.blocked');
+      return t('consoleChat.governance.audit.statuses.blocked');
     case 'needs_resolution':
-      return t('consoleChat.governance.needsResolution');
+      return t('consoleChat.governance.audit.statuses.needsResolution');
     case 'allowed':
     case 'success':
-      return t('consoleChat.governance.allowed');
+      return t('consoleChat.governance.audit.statuses.allowed');
     case 'error':
-      return t('consoleChat.skills.trace.error');
+      return t('consoleChat.governance.audit.statuses.error');
     default:
       return status || t('consoleChat.governance.values.unknown');
   }
@@ -431,12 +461,10 @@ function formatGrantScope(
   t: ReturnType<typeof useT<'webapp'>>
 ): string | null {
   if (!grant) return null;
-  const toolID = stringValue(grant.tool_id);
   const effect = stringValue(grant.effect);
   const assetType = stringValue(grant.asset_type);
   const riskLevel = stringValue(grant.risk_level);
   const parts = [
-    toolID,
     effect ? formatEffect(effect, t) : null,
     assetType ? formatAssetType(assetType, t) : null,
     riskLevel ? formatRisk(riskLevel, t) : null,
@@ -534,8 +562,12 @@ function formatAssetType(assetType: string, t: ReturnType<typeof useT<'webapp'>>
       return t('consoleChat.governance.assetTypes.prompt');
     case 'workspace':
       return t('consoleChat.governance.assetTypes.workspace');
+    case 'model':
+    case 'llm_model':
+    case 'llm-model':
+      return t('consoleChat.governance.assetTypes.model');
     default:
-      return assetType;
+      return formatAuditTokenLabel(assetType);
   }
 }
 
@@ -555,12 +587,73 @@ function assetMeta(asset: AIChatToolGovernanceAssetRef, t: ReturnType<typeof use
   const assetType = stringValue(asset.type);
   const parts = [
     assetType ? formatAssetType(assetType, t) : null,
-    asset.workspace_id
-      ? `${t('consoleChat.governance.fields.workspace')} ${asset.workspace_id}`
-      : null,
-    asset.source ? `${t('consoleChat.governance.fields.assetSource')} ${asset.source}` : null,
+    asset.source ? formatAuditSource(asset.source, t) : null,
   ].filter(Boolean);
   return parts.join(' / ');
+}
+
+function localizedToolName(skillId: string, toolName: string, locale: string): string {
+  if (!toolName) return '';
+  const direct = getAIChatSkillToolDisplayName(skillId, toolName, locale);
+  if (direct && direct !== toolName) return direct;
+  const normalizedToolName = toolName.startsWith('agent.')
+    ? toolName.slice('agent.'.length)
+    : toolName;
+  const normalized = getAIChatSkillToolDisplayName(skillId, normalizedToolName, locale);
+  return normalized && normalized !== normalizedToolName ? normalized : '';
+}
+
+function formatAuditSource(source: unknown, t: ReturnType<typeof useT<'webapp'>>): string {
+  switch (normalizeAuditToken(source)) {
+    case 'tool_governance_decision':
+      return t('consoleChat.governance.audit.sources.toolGovernanceDecision');
+    case 'skill_invocation':
+      return t('consoleChat.governance.audit.sources.skillInvocation');
+    case 'tool_arguments':
+      return t('consoleChat.governance.audit.sources.toolArguments');
+    case 'runtime_asset':
+    case 'page_context':
+    case 'context':
+      return t('consoleChat.governance.audit.sources.pageContext');
+    default: {
+      const value = stringValue(source);
+      return value ? formatAuditTokenLabel(value) : t('consoleChat.governance.values.unknown');
+    }
+  }
+}
+
+function formatAuditReason(reason: string, t: ReturnType<typeof useT<'webapp'>>): string {
+  const normalized = reason.trim().toLowerCase().replace(/\s+/g, ' ');
+  switch (normalized) {
+    case 'allowed by basic permission tier':
+      return t('consoleChat.governance.audit.reasons.allowedBasicTier');
+    case 'allowed by manifest approval policy':
+      return t('consoleChat.governance.audit.reasons.allowedManifestPolicy');
+    case 'tool manifest requires approval':
+      return t('consoleChat.governance.audit.reasons.manifestRequiresApproval');
+    case 'permission tier requires user approval for this tool':
+      return t('consoleChat.governance.audit.reasons.permissionTierRequiresApproval');
+    case 'matched approved session grant':
+    case 'allowed by session grant':
+      return t('consoleChat.governance.audit.reasons.matchedSessionGrant');
+    default:
+      return reason;
+  }
+}
+
+function readableAuditActor(value: unknown): string | null {
+  const actor = stringValue(value);
+  if (!actor || looksLikeOpaqueAuditAssetID(actor)) return null;
+  return actor;
+}
+
+function formatAuditTokenLabel(value: string): string {
+  return value
+    .trim()
+    .replace(/^[a-z]+\./i, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function stringValue(value: unknown): string | null {

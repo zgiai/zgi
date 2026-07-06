@@ -60,9 +60,9 @@ import type {
 const LOCAL_STORAGE_KEY = 'consoleChat';
 const DESKTOP_PANEL_MEDIA_QUERY = '(min-width: 1280px)';
 const DESKTOP_PANEL_WIDTH_STORAGE_KEY = 'consoleChat.aiChatDockWidth';
-const DEFAULT_DESKTOP_PANEL_WIDTH_RATIO = 0.3;
-const MIN_DESKTOP_PANEL_WIDTH = 640;
-const MAX_DESKTOP_PANEL_WIDTH_RATIO = 0.72;
+const DEFAULT_DESKTOP_PANEL_WIDTH_RATIO = 0.28;
+const MIN_DESKTOP_PANEL_WIDTH = 520;
+const MAX_DESKTOP_PANEL_WIDTH_RATIO = 0.5;
 const MIN_DESKTOP_CONTENT_WIDTH = 360;
 const ASSET_OPERATION_REFRESH_DEDUPE_MS = 1800;
 const CLIENT_ACTION_ROUTE_TIMEOUT_MS = 10_000;
@@ -325,6 +325,92 @@ function getContextTypeLabel(type: AIChatContextItem['type'], t: ContextualDockT
   }
 }
 
+function getContextItemDisplayTitle(item: AIChatContextItem, t: ContextualDockTranslator) {
+  switch (item.title.trim()) {
+    case 'Runtime prompt and model':
+      return t('consoleChat.contextual.runtimeItems.promptModel');
+    case 'Runtime skills':
+      return t('consoleChat.contextual.runtimeItems.skills');
+    case 'Runtime knowledge':
+      return t('consoleChat.contextual.runtimeItems.knowledge');
+    case 'Runtime memory and files':
+      return t('consoleChat.contextual.runtimeItems.memoryFiles');
+    case 'Runtime resources':
+      return t('consoleChat.contextual.runtimeItems.resources');
+    case 'Runtime permissions':
+      return t('consoleChat.contextual.runtimeItems.permissions');
+    default:
+      return item.title;
+  }
+}
+
+function getLocalizedEnabledState(value: string, t: ContextualDockTranslator) {
+  return value.toLowerCase() === 'enabled'
+    ? t('consoleChat.contextual.contextStates.enabled')
+    : t('consoleChat.contextual.contextStates.disabled');
+}
+
+function getContextItemDisplaySubtitle(item: AIChatContextItem, t: ContextualDockTranslator) {
+  const subtitle = item.subtitle?.trim();
+  if (!subtitle) return undefined;
+
+  if (subtitle === 'Console page') {
+    return t('consoleChat.contextual.contextSubtitles.consolePage');
+  }
+
+  if (subtitle === 'No model selected') {
+    return t('consoleChat.contextual.contextSubtitles.noModelSelected');
+  }
+
+  if (subtitle === 'Can manage agent') {
+    return t('consoleChat.contextual.contextSubtitles.canManageAgent');
+  }
+
+  if (subtitle === 'View-only agent access') {
+    return t('consoleChat.contextual.contextSubtitles.viewOnlyAgentAccess');
+  }
+
+  const workspaceName = metadataText(item, 'workspace_name');
+  if (workspaceName && new RegExp(`\\bin\\s+${workspaceName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i').test(subtitle)) {
+    return t('consoleChat.contextual.contextSubtitles.resourceInWorkspace', {
+      type: getContextTypeLabel(item.type, t),
+      workspace: workspaceName,
+    });
+  }
+
+  const selectedMatch = subtitle.match(/^(\d+)\s+selected$/i);
+  if (selectedMatch) {
+    return t('consoleChat.contextual.contextSubtitles.selectedCount', {
+      count: Number(selectedMatch[1]),
+    });
+  }
+
+  const datasetMatch = subtitle.match(/^(\d+)\s+datasets?$/i);
+  if (datasetMatch) {
+    return t('consoleChat.contextual.contextSubtitles.datasetCount', {
+      count: Number(datasetMatch[1]),
+    });
+  }
+
+  const databaseWorkflowMatch = subtitle.match(/^(\d+)\s+databases?,\s*(\d+)\s+workflows?$/i);
+  if (databaseWorkflowMatch) {
+    return t('consoleChat.contextual.contextSubtitles.databaseWorkflowCount', {
+      databaseCount: Number(databaseWorkflowMatch[1]),
+      workflowCount: Number(databaseWorkflowMatch[2]),
+    });
+  }
+
+  const memoryFilesMatch = subtitle.match(/^memory\s+(enabled|disabled),\s*files\s+(enabled|disabled)$/i);
+  if (memoryFilesMatch) {
+    return t('consoleChat.contextual.contextSubtitles.memoryFiles', {
+      memory: getLocalizedEnabledState(memoryFilesMatch[1], t),
+      files: getLocalizedEnabledState(memoryFilesMatch[2], t),
+    });
+  }
+
+  return subtitle;
+}
+
 function hasPageAdapterSignal(item: AIChatContextItem) {
   if (item.type !== 'page') return false;
   const metadataPage = metadataText(item, 'page');
@@ -370,7 +456,7 @@ function buildContextSummary(items: AIChatContextItem[], t: ContextualDockTransl
   if (!primaryItem) return t('consoleChat.contextual.contextSummaryEmpty');
   return t('consoleChat.contextual.contextSummaryItem', {
     type: getContextTypeLabel(primaryItem.type, t),
-    title: primaryItem.title,
+    title: getContextItemDisplayTitle(primaryItem, t),
   });
 }
 
@@ -854,25 +940,30 @@ function ContextSummaryMenu({ items, t }: ContextSummaryMenuProps) {
         <DropdownMenuSeparator />
         {hasContext ? (
           <div className="max-h-72 space-y-1 overflow-y-auto">
-            {items.map(item => (
-              <div key={`${item.type}:${item.id}`} className="min-w-0 rounded-md px-2 py-2 text-sm">
-                <div className="flex min-w-0 items-start gap-2">
-                  <span className="mt-0.5 shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium leading-none text-muted-foreground">
-                    {getContextTypeLabel(item.type, t)}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-medium text-foreground" title={item.title}>
-                      {item.title}
-                    </div>
-                    {item.subtitle ? (
-                      <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                        {item.subtitle}
+            {items.map(item => {
+              const displayTitle = getContextItemDisplayTitle(item, t);
+              const displaySubtitle = getContextItemDisplaySubtitle(item, t);
+
+              return (
+                <div key={`${item.type}:${item.id}`} className="min-w-0 rounded-md px-2 py-2 text-sm">
+                  <div className="flex min-w-0 items-start gap-2">
+                    <span className="mt-0.5 shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium leading-none text-muted-foreground">
+                      {getContextTypeLabel(item.type, t)}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-medium text-foreground" title={displayTitle}>
+                        {displayTitle}
                       </div>
-                    ) : null}
+                      {displaySubtitle ? (
+                        <div className="mt-0.5 truncate text-xs text-muted-foreground" title={displaySubtitle}>
+                          {displaySubtitle}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <div className="px-2 py-3 text-sm text-muted-foreground">
@@ -1703,7 +1794,7 @@ export function ContextualAIChatDock() {
     return isOpen ? (
       <aside
         aria-label={t('consoleChat.contextual.assistantLabel')}
-        className="relative hidden h-full min-h-0 min-w-[640px] shrink-0 overflow-hidden border-l border-border/70 bg-background shadow-sm lg:flex"
+        className="relative hidden h-full min-h-0 min-w-[520px] shrink-0 overflow-hidden border-l border-border/70 bg-background shadow-sm lg:flex"
         style={desktopPanelStyle}
       >
         <div
@@ -1728,7 +1819,7 @@ export function ContextualAIChatDock() {
       role="dialog"
       aria-modal="false"
       aria-label={t('consoleChat.contextual.assistantLabel')}
-      className="fixed inset-y-0 right-0 z-50 flex h-full min-h-0 w-[min(720px,100vw)] max-w-full flex-col overflow-hidden border-l border-border/70 bg-background shadow-lg"
+      className="fixed inset-y-0 right-0 z-50 flex h-full min-h-0 w-[min(640px,100vw)] max-w-full flex-col overflow-hidden border-l border-border/70 bg-background shadow-lg"
     >
       {panel}
     </aside>

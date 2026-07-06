@@ -335,8 +335,8 @@ export function AIChatShell({
     surface === 'aichat' && Boolean(controller.continueToolGovernanceDecision);
   const showToolGovernancePermissionControl =
     surface === 'aichat' &&
-    (effectiveRuntimeSurface === 'work_chat' ||
-      (effectiveRuntimeSurface === 'contextual_sidebar' && enableToolGovernance));
+    effectiveRuntimeSurface === 'contextual_sidebar' &&
+    enableToolGovernance;
   useEffect(() => {
     if (!showToolGovernancePermissionControl) {
       setToolGovernancePermissionTierLoaded(false);

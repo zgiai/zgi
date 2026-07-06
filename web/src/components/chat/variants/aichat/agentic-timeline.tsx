@@ -2103,13 +2103,17 @@ function governanceAssetSpecificDisplayName(asset: AIChatToolGovernanceAssetRef)
   return null;
 }
 
-function governanceAssetDisplayName(asset: AIChatToolGovernanceAssetRef): string {
+function governanceAssetDisplayName(
+  asset: AIChatToolGovernanceAssetRef,
+  t?: WebappTranslator
+): string {
   const assetType = governanceStringValue(asset.type)?.toLowerCase();
   const displayName = governanceAssetSpecificDisplayName(asset);
   if (displayName) return displayName;
-  if (assetType === 'file') return 'file';
+  if (assetType === 'file') return t ? t('consoleChat.governance.assetTypes.file') : 'file';
+  if (assetType && t) return governanceAssetTypeLabel(assetType, t);
   if (assetType && !looksLikeOpaqueAssetID(assetType)) return assetType;
-  return 'asset';
+  return t ? t('consoleChat.governance.values.asset') : 'asset';
 }
 
 function looksLikeOpaqueAssetID(value: string): boolean {
@@ -2151,7 +2155,10 @@ function uniqueGovernanceAssetMetaParts(parts: Array<string | null>): string[] {
   return out;
 }
 
-function governanceAssetMeta(asset: AIChatToolGovernanceAssetRef): string {
+function governanceAssetMeta(
+  asset: AIChatToolGovernanceAssetRef,
+  t: WebappTranslator
+): string {
   const fileType =
     governanceRecordString(asset, ['file_type', 'file_type_normalized']) ??
     governanceRecordString(asset.metadata, ['file_type', 'file_type_normalized']);
@@ -2168,7 +2175,7 @@ function governanceAssetMeta(asset: AIChatToolGovernanceAssetRef): string {
   const normalizedType = governanceStringValue(asset.type);
   const normalizedExtension = extension ? extension.replace(/^\./, '') : null;
   const parts = uniqueGovernanceAssetMetaParts([
-    normalizedType,
+    normalizedType ? governanceAssetTypeLabel(normalizedType, t) : null,
     fileType && fileType !== normalizedType ? fileType : null,
     normalizedExtension ? `.${normalizedExtension}` : null,
     size,
@@ -2367,6 +2374,10 @@ function governanceAssetTypeLabel(assetType: string, t: WebappTranslator): strin
       return t('consoleChat.governance.assetTypes.prompt');
     case 'workspace':
       return t('consoleChat.governance.assetTypes.workspace');
+    case 'model':
+    case 'llm_model':
+    case 'llm-model':
+      return t('consoleChat.governance.assetTypes.model');
     default:
       return assetType;
   }
@@ -2749,11 +2760,11 @@ function buildToolGovernanceDecisionViewModel(
     }
   );
   const assets: ToolGovernanceDisplayAsset[] = displayAssets.map((asset, index) => {
-    const key = `${governanceStringValue(asset.id) ?? governanceAssetDisplayName(asset)}-${index}`;
+    const key = `${governanceStringValue(asset.id) ?? governanceAssetDisplayName(asset, t)}-${index}`;
     return {
       key,
-      name: governanceAssetDisplayName(asset),
-      meta: governanceAssetMeta(asset) || undefined,
+      name: governanceAssetDisplayName(asset, t),
+      meta: governanceAssetMeta(asset, t) || undefined,
     };
   });
   const effect = governanceEventString(item, ['effect'])?.toLowerCase();
