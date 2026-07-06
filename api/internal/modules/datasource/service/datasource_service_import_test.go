@@ -485,15 +485,49 @@ func TestIsSQLMetaTableMissingRecognizesInternalAndExternalMissingTable(t *testi
 	}
 }
 
-func TestExcelSourceHeadersReadsOriginalHeaders(t *testing.T) {
+func TestTableSourceHeadersReadsExcelOriginalHeaders(t *testing.T) {
 	file := buildImportWorkbook(t, []string{"用户ID", "手机号"}, []string{"1001", "13800138000"})
 
-	headers, err := excelSourceHeaders("users.xlsx", file)
+	headers, err := tableSourceHeaders("users.xlsx", file)
 	if err != nil {
-		t.Fatalf("excelSourceHeaders() error = %v", err)
+		t.Fatalf("tableSourceHeaders() error = %v", err)
 	}
 	if len(headers) != 2 || headers[0] != "用户ID" || headers[1] != "手机号" {
-		t.Fatalf("excelSourceHeaders() = %#v, want [用户ID 手机号]", headers)
+		t.Fatalf("tableSourceHeaders() = %#v, want [用户ID 手机号]", headers)
+	}
+}
+
+func TestTableSourceHeadersReadsCSVOriginalHeaders(t *testing.T) {
+	content := []byte("用户ID,手机号\n1001,13800138000\n")
+
+	headers, err := tableSourceHeaders("users.csv", content)
+	if err != nil {
+		t.Fatalf("tableSourceHeaders() error = %v", err)
+	}
+	if len(headers) != 2 || headers[0] != "用户ID" || headers[1] != "手机号" {
+		t.Fatalf("tableSourceHeaders() = %#v, want [用户ID 手机号]", headers)
+	}
+
+	userIDDisplay := "用户ID"
+	phoneDisplay := "手机号"
+	columns := []dto.TableColumn{
+		{Name: "user_id", DisplayName: &userIDDisplay, Type: "text"},
+		{Name: "phone_number", DisplayName: &phoneDisplay, Type: "text"},
+	}
+	got, err := withSourceColumnNames(columns, headers)
+	if err != nil {
+		t.Fatalf("withSourceColumnNames() error = %v", err)
+	}
+	if got[1].SourceColumnName == nil || *got[1].SourceColumnName != "手机号" {
+		t.Fatalf("got[1].SourceColumnName = %v, want 手机号", got[1].SourceColumnName)
+	}
+
+	schema := tableColumnSourceSchema(got)
+	if len(schema) != 2 {
+		t.Fatalf("len(schema) = %d, want 2", len(schema))
+	}
+	if schema[1].Name != "phone_number" || schema[1].SourceColumn != "手机号" {
+		t.Fatalf("schema[1] = %#v, want phone_number from 手机号", schema[1])
 	}
 }
 func buildImportWorkbook(t *testing.T, headers []string, values []string) []byte {

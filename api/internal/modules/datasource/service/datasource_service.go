@@ -2524,14 +2524,14 @@ func (s *dataSourceService) AnalyzeFileForTable(ctx context.Context, dataSourceI
 		if err != nil {
 			return dto.AnalyzeFileForTableResponse{}, fmt.Errorf("failed to get file: %w", err)
 		}
-		if isExcelFileName(fileInfo.Name) {
+		if isTableLikeFileName(fileInfo.Name) {
 			fileContent, err := s.fileService.DownloadFile(ctx, fileID)
 			if err != nil {
 				return dto.AnalyzeFileForTableResponse{}, fmt.Errorf("failed to download file: %w", err)
 			}
-			sourceHeaders, err = excelSourceHeaders(fileInfo.Name, fileContent)
+			sourceHeaders, err = tableSourceHeaders(fileInfo.Name, fileContent)
 			if err != nil {
-				return dto.AnalyzeFileForTableResponse{}, fmt.Errorf("failed to read Excel headers: %w", err)
+				return dto.AnalyzeFileForTableResponse{}, fmt.Errorf("failed to read table headers: %w", err)
 			}
 		}
 
@@ -2559,12 +2559,14 @@ func (s *dataSourceService) AnalyzeFileForTable(ctx context.Context, dataSourceI
 	}, nil
 }
 
-func isExcelFileName(fileName string) bool {
+func isTableLikeFileName(fileName string) bool {
 	lowerName := strings.ToLower(strings.TrimSpace(fileName))
-	return strings.HasSuffix(lowerName, ".xlsx") || strings.HasSuffix(lowerName, ".xls")
+	return strings.HasSuffix(lowerName, ".xlsx") ||
+		strings.HasSuffix(lowerName, ".xls") ||
+		strings.HasSuffix(lowerName, ".csv")
 }
 
-func excelSourceHeaders(fileName string, content []byte) ([]string, error) {
+func tableSourceHeaders(fileName string, content []byte) ([]string, error) {
 	workbook, err := excelimportsvc.ParseWorkbook(fileName, content)
 	if err != nil {
 		return nil, err
@@ -2574,7 +2576,7 @@ func excelSourceHeaders(fileName string, content []byte) ([]string, error) {
 		return nil, err
 	}
 	if len(sheet.Rows) == 0 {
-		return nil, fmt.Errorf("Excel file must contain a header row")
+		return nil, fmt.Errorf("table file must contain a header row")
 	}
 	headers := make([]string, 0, len(sheet.Rows[0]))
 	for _, header := range sheet.Rows[0] {
