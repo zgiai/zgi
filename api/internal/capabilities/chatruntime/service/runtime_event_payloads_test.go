@@ -665,6 +665,44 @@ func TestClientActionRequiredPayloadSkipsTemporaryFileGeneration(t *testing.T) {
 	}
 }
 
+func TestClientActionRequiredPayloadSkipsGenericTemporaryArtifactGeneration(t *testing.T) {
+	prepared := &PreparedChat{
+		Conversation: &model.Conversation{ID: uuid.New()},
+		Message:      &model.Message{ID: uuid.New()},
+	}
+	trace := skills.SkillTrace{
+		SkillID:  skills.SkillChartGenerator,
+		ToolName: "generate_chart",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"artifact_type":   "file",
+			"target":          "temporary_artifact",
+			"transfer_method": "tool_file",
+			"tool_file_id":    "tool-file-1",
+			"filename":        "agents-distribution-pie.svg",
+		},
+		Governance: &toolgovernance.Decision{
+			Manifest: toolgovernance.Manifest{
+				ToolID:    "chart.generate",
+				Effect:    toolgovernance.EffectCreate,
+				AssetType: "file",
+			},
+			AssetOperationAudit: map[string]interface{}{
+				"tool_id":    "chart.generate",
+				"effect":     "create",
+				"asset_type": "file",
+				"assets": []interface{}{
+					map[string]interface{}{"id": "tool-file-1", "type": "file", "name": "agents-distribution-pie.svg"},
+				},
+			},
+		},
+	}
+
+	if payload := clientActionRequiredPayload(prepared, trace, "call-chart"); payload != nil {
+		t.Fatalf("clientActionRequiredPayload() = %#v, want nil for generic temporary artifact generation", payload)
+	}
+}
+
 func eventSummaryContainsString(value interface{}, needle string) bool {
 	switch typed := value.(type) {
 	case string:

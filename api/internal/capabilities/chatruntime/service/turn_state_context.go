@@ -4,7 +4,155 @@ import (
 	"strings"
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
+
+func currentTurnAuthoritativeStateMessage(message *runtimemodel.Message) *adapter.Message {
+	state := currentTurnAuthoritativeStatePayload(message)
+	if len(state) == 0 {
+		return nil
+	}
+	sections := []string{
+		"You are continuing the same AIChat turn. The JSON below is authoritative same-turn state assembled from persisted runtime metadata.",
+		"Continue only unfinished work from this state. Do not restart the whole task, repeat completed side-effecting operations, or navigate back only to re-derive a fact that is already recorded here.",
+		"Use turn_state exact values for later tool arguments, summaries, names, prompts, and final answers. If later tool/page evidence contradicts a value, update turn_state before continuing.",
+		"Treat current_turn_execution_state completed_operations, completed_client_actions, and operation_result_summary as completed in this same user request, not as previous conversation history.",
+		"Current AIChat turn authoritative state JSON:\n" + compactJSONForPrompt(state, 7000),
+	}
+	result := adapter.Message{Role: "system", Content: strings.Join(sections, "\n")}
+	return &result
+}
+
+func currentTurnAuthoritativeStatePayload(message *runtimemodel.Message) map[string]interface{} {
+	if message == nil {
+		return nil
+	}
+	payload := map[string]interface{}{}
+	if query := strings.TrimSpace(message.Query); query != "" {
+		payload["original_user_request"] = compactForPrompt(query, 800)
+	}
+	if plan := compactOperationPlanForPrompt(mapFromOperationContext(metadataValue(message.Metadata, "operation_plan"))); len(plan) > 0 {
+		payload["operation_plan"] = plan
+	}
+	if result := mapFromOperationContext(metadataValue(message.Metadata, "operation_result_summary")); len(result) > 0 {
+		payload["operation_result_summary"] = result
+	}
+	if executionState := currentTurnExecutionStateSummary(message); len(executionState) > 0 {
+		payload["current_turn_execution_state"] = executionState
+	}
+	if turnState := turnStateContinuationSummary(message); len(turnState) > 0 {
+		payload["turn_state"] = turnState
+	}
+	if artifacts := currentTurnGeneratedArtifactsSummary(message); len(artifacts) > 0 {
+		payload["generated_artifacts"] = mapsToInterfaceSlice(artifacts)
+		payload["generated_artifact_count"] = len(artifacts)
+	}
+	if completedActions := completedClientActionsForContinuation(message); len(completedActions) > 0 {
+		payload["completed_client_actions"] = mapsToInterfaceSlice(completedActions)
+	}
+	if len(payload) <= 1 {
+		if _, hasQuery := payload["original_user_request"]; hasQuery {
+			return nil
+		}
+	}
+	return payload
+}
+
+func currentTurnGeneratedArtifactsSummary(message *runtimemodel.Message) []map[string]interface{} {
+	if message == nil || len(message.Metadata) == 0 {
+		return nil
+	}
+	items := conversationArtifactsFromMetadata(metadataValue(message.Metadata, "conversation_artifacts"))
+	if len(items) == 0 {
+		items = generatedFilesFromMetadata(metadataValue(message.Metadata, "generated_files"))
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, min(len(items), 8))
+	seen := map[string]struct{}{}
+	for idx := len(items) - 1; idx >= 0 && len(out) < 8; idx-- {
+		item := items[idx]
+		if len(item) == 0 {
+			continue
+		}
+		compact := compactGeneratedArtifactForPrompt(item)
+		if len(compact) == 0 {
+			continue
+		}
+		key := strings.TrimSpace(firstNonEmptyString(compact["artifact_id"], compact["tool_file_id"], compact["file_id"], compact["filename"]))
+		if key != "" {
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+		}
+		out = append(out, compact)
+	}
+	return out
+}
+
+func compactGeneratedArtifactForPrompt(item map[string]interface{}) map[string]interface{} {
+	if len(item) == 0 {
+		return nil
+	}
+	compact := map[string]interface{}{}
+	for _, key := range []string{
+		"artifact_id",
+		"artifact_type",
+		"status",
+		"lifecycle",
+		"target",
+		"filename",
+		"name",
+		"extension",
+		"mime_type",
+		"file_type",
+		"transfer_method",
+		"skill_id",
+		"tool_name",
+	} {
+		if value := strings.TrimSpace(stringFromAny(item[key])); value != "" {
+			compact[key] = truncateRunes(value, 160)
+		}
+	}
+	for _, key := range []string{"tool_file_id", "file_id", "source_tool_file_id", "upload_file_id"} {
+		if value := strings.TrimSpace(stringFromAny(item[key])); value != "" {
+			compact[key] = value
+		}
+	}
+	for _, key := range []string{"size", "created_at"} {
+		if value, ok := item[key]; ok && value != nil {
+			compact[key] = value
+		}
+	}
+	if strings.TrimSpace(stringFromAny(compact["filename"])) == "" {
+		if filename := strings.TrimSpace(firstNonEmptyString(item["file_name"], item["title"])); filename != "" {
+			compact["filename"] = truncateRunes(filename, 160)
+		}
+	}
+	if strings.TrimSpace(stringFromAny(compact["lifecycle"])) == "" {
+		if isManagedFileArtifact(item) {
+			compact["lifecycle"] = conversationArtifactLifecycleManaged
+		} else {
+			compact["lifecycle"] = conversationArtifactLifecycleTemp
+		}
+	}
+	if strings.TrimSpace(stringFromAny(compact["status"])) == "" {
+		if isManagedFileArtifact(item) {
+			compact["status"] = conversationArtifactStatusSaved
+		} else {
+			compact["status"] = conversationArtifactStatusAvailable
+		}
+	}
+	if strings.TrimSpace(stringFromAny(compact["target"])) == "" && !isManagedFileArtifact(item) {
+		compact["target"] = "chat_artifact"
+	}
+	if strings.TrimSpace(stringFromAny(compact["artifact_type"])) == "" {
+		compact["artifact_type"] = conversationArtifactTypeFile
+	}
+	return compact
+}
 
 func turnStateContinuationSummary(message *runtimemodel.Message) map[string]interface{} {
 	if message == nil || len(message.Metadata) == 0 {

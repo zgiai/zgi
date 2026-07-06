@@ -337,6 +337,11 @@ func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) 
 	if parts.OperationLedger != nil {
 		metadata["operation_ledger"] = copyStringAnyMap(parts.OperationLedger)
 	}
+	if parts.ModelTurnIntent != nil {
+		metadata["model_turn_intent"] = parts.ModelTurnIntent
+	} else if strings.TrimSpace(parts.ModelTurnIntentError) != "" {
+		metadata["model_turn_intent_error"] = strings.TrimSpace(parts.ModelTurnIntentError)
+	}
 	if strategy := contextualAIChatTurnStrategyFromParts(parts); strategy != nil {
 		metadata["turn_strategy"] = strategy
 		if plan := operationPlanFromTurnStrategy(taskID, parts, strategy); len(plan) > 0 {

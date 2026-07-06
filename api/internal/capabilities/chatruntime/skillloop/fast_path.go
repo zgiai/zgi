@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skilltrace"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
@@ -70,7 +71,11 @@ func FastPathFinalAnswerForToolTraceWithEvidence(trace skills.SkillTrace, eviden
 	if fastPathEvidenceHasUnresolvedPlanFailure(evidence) {
 		return "", false
 	}
-	if completionVerificationEvidenceHasOpenModelDecidesPhase(evidence) {
+	if completionVerificationEvidenceHasOpenModelDecidesPhase(evidence) &&
+		!skilltrace.TraceLooksLikeTemporaryFileArtifact(trace) {
+		return "", false
+	}
+	if skilltrace.TraceLooksLikeTemporaryFileArtifact(trace) && fastPathGeneratedArtifactSaveStillPending(evidence) {
 		return "", false
 	}
 	if fastPathModelDecidesPlanHasPendingAgentWork(evidence) {
@@ -1262,6 +1267,9 @@ func FastPathFinalAnswerForCompletionEvidence(evidence map[string]interface{}) (
 	}
 	if fastPathEvidenceHasUnresolvedPlanFailure(evidence) {
 		return "", false
+	}
+	if answer, ok := generatedArtifactCompletionEvidenceFastPathAnswer(evidence); ok {
+		return answer, true
 	}
 	if completionVerificationEvidenceHasOpenModelDecidesPhase(evidence) {
 		return "", false
@@ -3111,20 +3119,7 @@ func fastPathTraceIsConsoleNavigation(trace skills.SkillTrace) bool {
 }
 
 func fastPathTraceIsTemporaryArtifactGeneration(trace skills.SkillTrace) bool {
-	skillID := strings.TrimSpace(trace.SkillID)
-	toolName := strings.ToLower(strings.TrimSpace(trace.ToolName))
-	if strings.EqualFold(skillID, skills.SkillChartGenerator) {
-		return toolName == "generate_chart"
-	}
-	if !strings.EqualFold(skillID, skills.SkillFileGenerator) {
-		return false
-	}
-	switch toolName {
-	case "generate_file", "generate_docx", "generate_pdf", "generate_pptx":
-		return true
-	default:
-		return false
-	}
+	return skilltrace.TraceLooksLikeTemporaryFileArtifact(trace)
 }
 
 func agentCreateFastPathAnswerWithEvidence(trace skills.SkillTrace, evidence map[string]interface{}) (string, bool) {
@@ -3508,6 +3503,33 @@ func latestToolResultFastPathAnswerFromEvidence(evidence map[string]interface{})
 		}
 	}
 	return "", false
+}
+
+func generatedArtifactCompletionEvidenceFastPathAnswer(evidence map[string]interface{}) (string, bool) {
+	if fastPathGeneratedArtifactSaveStillPending(evidence) {
+		return "", false
+	}
+	return generatedArtifactFastPathAnswerFromEvidence(evidence)
+}
+
+func fastPathGeneratedArtifactSaveStillPending(evidence map[string]interface{}) bool {
+	if completionVerificationHasUnsatisfiedManagedFileSave(evidence) {
+		return true
+	}
+	for _, plan := range completionVerificationEvidenceOperationPlans(evidence) {
+		intent := strings.ToLower(strings.TrimSpace(firstNonEmptyString(plan["intent"])))
+		if intent == "save_generated_file_to_file_management" {
+			return true
+		}
+		if completionVerificationTextMentionsManagedFileSave(firstNonEmptyString(
+			plan["pending_next_action"],
+			plan["required_next_action"],
+			plan["next_action"],
+		)) {
+			return true
+		}
+	}
+	return false
 }
 
 func generatedArtifactFastPathAnswerFromEvidence(evidence map[string]interface{}) (string, bool) {

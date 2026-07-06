@@ -373,15 +373,7 @@ func assetOperationAuditFromTrace(trace skills.SkillTrace) map[string]interface{
 }
 
 func isTemporaryFileGenerationTrace(trace skills.SkillTrace) bool {
-	if !strings.EqualFold(strings.TrimSpace(trace.SkillID), skills.SkillFileGenerator) {
-		return false
-	}
-	switch strings.TrimSpace(trace.ToolName) {
-	case "generate_file", "generate_docx", "generate_pdf", "generate_pptx":
-		return true
-	default:
-		return false
-	}
+	return skilltrace.TraceLooksLikeTemporaryFileArtifact(trace)
 }
 
 func requiresAssetObservation(effect string) bool {

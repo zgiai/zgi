@@ -2308,6 +2308,51 @@ func TestCompletionVerificationShouldRunForLedgerOnlyEvidence(t *testing.T) {
 		want     bool
 	}{
 		{
+			name: "passive assistant self description does not require verifier",
+			evidence: map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"intent":              "answer_or_explain_zgi_context",
+					"status":              "running",
+					"tool_choice_mode":    "model_decides",
+					"pending_next_action": "continue_from_phase_success_criteria",
+					"asset_target": map[string]interface{}{
+						"effect": "none",
+						"risk":   "low",
+					},
+					"target_resource": map[string]interface{}{
+						"effect": "none",
+						"risk":   "low",
+					},
+					"approval": "none",
+					"phases": []interface{}{
+						map[string]interface{}{
+							"id":     "respond_truthfully",
+							"status": "pending",
+						},
+					},
+				},
+				"operation_ledger": map[string]interface{}{
+					"version": "operation_ledger.v1",
+					"status":  "observed",
+					"resources": []interface{}{
+						map[string]interface{}{
+							"resource_id":   "zgi.system_assistant",
+							"resource_type": "custom",
+						},
+						map[string]interface{}{
+							"resource_id":   "/console/work/chat",
+							"resource_type": "page",
+						},
+					},
+					"capabilities": []interface{}{
+						map[string]interface{}{"id": "assistant.self_describe"},
+						map[string]interface{}{"id": "page.navigate"},
+					},
+				},
+			},
+			want: false,
+		},
+		{
 			name: "top-level operation ledger",
 			evidence: map[string]interface{}{
 				"operation_ledger": map[string]interface{}{

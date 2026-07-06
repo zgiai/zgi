@@ -200,6 +200,9 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 	}
 	parts.ContextControl = contextResult.Metadata
 	llmRequest := newLLMChatRequest(parts, contextResult.Messages)
+	if stateMessage := currentTurnAuthoritativeStateMessage(message); stateMessage != nil {
+		llmRequest.Messages = append(llmRequest.Messages, *stateMessage)
+	}
 	return &PreparedChat{
 		Conversation: continuation.Conversation,
 		Message:      message,

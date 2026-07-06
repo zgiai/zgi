@@ -170,6 +170,47 @@ func TestSkillArtifactsFromToolMessagesIncludesManagedFileJSON(t *testing.T) {
 	}
 }
 
+func TestTraceLooksLikeTemporaryFileArtifactUsesArtifactShape(t *testing.T) {
+	if !TraceLooksLikeTemporaryFileArtifact(skills.SkillTrace{
+		SkillID:  "custom-generator",
+		ToolName: "make_svg",
+		Result: map[string]interface{}{
+			"artifact_type":    "file",
+			"target":           "temporary_artifact",
+			"transfer_method":  "tool_file",
+			"tool_file_id":     "tool-file-1",
+			"filename":         "chart.svg",
+			"conversation_id":  "conversation-1",
+			"generated_by":     "custom-generator",
+			"generation_scope": "chat",
+		},
+	}) {
+		t.Fatal("TraceLooksLikeTemporaryFileArtifact() = false, want true for generic temporary artifact shape")
+	}
+
+	if TraceLooksLikeTemporaryFileArtifact(skills.SkillTrace{
+		SkillID:  skills.SkillFileManager,
+		ToolName: "save_file_to_management",
+		Result: map[string]interface{}{
+			"artifact_type":   "file",
+			"target":          "managed_file",
+			"upload_file_id":  "managed-file-1",
+			"tool_file_id":    "tool-file-1",
+			"filename":        "chart.svg",
+			"transfer_method": "local_file",
+		},
+	}) {
+		t.Fatal("TraceLooksLikeTemporaryFileArtifact() = true, want false for managed file save")
+	}
+
+	if !TraceLooksLikeTemporaryFileArtifact(skills.SkillTrace{
+		SkillID:  skills.SkillChartGenerator,
+		ToolName: "generate_chart",
+	}) {
+		t.Fatal("TraceLooksLikeTemporaryFileArtifact() = false, want backward-compatible chart-generator match")
+	}
+}
+
 func TestSummarizeToolResultCompactsAgentKnowledgePayload(t *testing.T) {
 	result := SummarizeToolResult(skills.SkillAgentKnowledge, "retrieve_agent_knowledge", []tools.ToolInvokeMessage{{
 		Type: tools.ToolInvokeMessageTypeJSON,

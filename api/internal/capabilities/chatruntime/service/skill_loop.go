@@ -4326,6 +4326,36 @@ func skillLoopModelDecidesToolChoice(prepared *PreparedChat) bool {
 	return aiChatTurnStrategyModelDecidesTools(contextualAIChatTurnStrategy(prepared))
 }
 
+func skillLoopShouldUsePlainStreamForPassiveAnswer(prepared *PreparedChat) bool {
+	if prepared == nil || prepared.parts == nil || !prepared.skillsEnabled() {
+		return false
+	}
+	if prepared.parts.Attachments != nil && len(prepared.parts.Attachments.Files) > 0 {
+		return false
+	}
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(strategy.Intent), "answer_or_explain_zgi_context") {
+		return false
+	}
+	if strategy.RouteRequired || strategy.RequiredNextTool != nil || len(strategy.PlannedTools) > 0 || len(strategy.RemainingRouteSequence) > 0 {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(strategy.Approval), "none") {
+		return false
+	}
+	effect := strings.ToLower(strings.TrimSpace(strategy.AssetEffect))
+	if effect != "" && effect != "none" {
+		return false
+	}
+	if len(strategy.PrimarySkills) > 0 {
+		return false
+	}
+	return true
+}
+
 // AIChatTurnStrategy is the typed, internal plan hint for one contextual sidebar turn.
 // It is guidance for the skill loop, not an executable action plan.
 type AIChatTurnStrategy struct {
@@ -4427,6 +4457,12 @@ func contextualAIChatTurnStrategyFromParts(parts *chatRequestParts) *AIChatTurnS
 		strategy.RouteRequired = routeRequired
 		if routeRequired && skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
 			strategy.PrimarySkills = appendUniqueStrings(strategy.PrimarySkills, skills.SkillConsoleNavigator)
+		}
+	}
+
+	if modelIntent := parts.ModelTurnIntent; modelIntent != nil {
+		if modeled, ok := contextualAIChatTurnStrategyFromModelIntent(parts, strategy, modelIntent); ok {
+			return finalizeAIChatTurnStrategy(parts, modeled)
 		}
 	}
 

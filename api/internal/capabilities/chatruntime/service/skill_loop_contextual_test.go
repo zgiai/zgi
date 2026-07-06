@@ -710,6 +710,115 @@ func TestContextualAIChatTurnStrategyDoesNotNavigateForCurrentFilesPageQuestion(
 	}
 }
 
+func TestSkillLoopUsesPlainStreamForPassiveContextAnswer(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "你能做什么？",
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/work/chat",
+			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillFileReader},
+			SkillMode:      skillModeAuto,
+		},
+	}
+
+	if !skillLoopShouldUsePlainStreamForPassiveAnswer(prepared) {
+		t.Fatalf("skillLoopShouldUsePlainStreamForPassiveAnswer() = false, want true")
+	}
+}
+
+func TestSkillLoopKeepsAgentActionsInSkillLoop(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "创建一个新的智能体，名称叫测试助手",
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/agents",
+			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement},
+			SkillMode:      skillModeAuto,
+		},
+	}
+
+	if skillLoopShouldUsePlainStreamForPassiveAnswer(prepared) {
+		t.Fatalf("skillLoopShouldUsePlainStreamForPassiveAnswer() = true, want false for agent action")
+	}
+}
+
+func TestContextualAIChatTurnStrategyUsesModelIntentBeforeRuleFallback(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "please handle this page task",
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/files",
+			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement, skills.SkillFileReader},
+			SkillMode:      skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "manage_agent_asset",
+				Confidence: 0.92,
+			},
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if strategy.Intent != "manage_agent_asset" {
+		t.Fatalf("Intent = %q, want manage_agent_asset", strategy.Intent)
+	}
+	if !slices.Contains(strategy.PrimarySkills, skills.SkillConsoleNavigator) {
+		t.Fatalf("PrimarySkills = %#v, want console navigator for route", strategy.PrimarySkills)
+	}
+	if !slices.Contains(strategy.SupportingSkills, skills.SkillAgentManagement) {
+		t.Fatalf("SupportingSkills = %#v, want agent management while off the Agent page", strategy.SupportingSkills)
+	}
+}
+
+func TestContextualAIChatTurnStrategyFallsBackWhenModelIntentUnsupported(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "create a new agent named smoke assistant",
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/agents",
+			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement},
+			SkillMode:      skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "unsupported_intent",
+				Confidence: 0.99,
+			},
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if strategy.Intent != "manage_agent_asset" {
+		t.Fatalf("Intent = %q, want fallback manage_agent_asset", strategy.Intent)
+	}
+}
+
+func TestStreamingMetadataRecordsModelTurnIntent(t *testing.T) {
+	parts := &chatRequestParts{
+		Query:     "what can you do",
+		Surface:   aiChatSurfaceContextualSidebar,
+		SkillIDs:  []string{skills.SkillConsoleNavigator},
+		SkillMode: skillModeAuto,
+		ModelTurnIntent: &AIChatModelTurnIntent{
+			Intent:     "answer_or_explain_zgi_context",
+			Confidence: 0.88,
+			Reason:     "passive context question",
+		},
+	}
+
+	metadata := streamingMessageMetadataWithTaskID(parts, "task-1")
+	raw, ok := metadata["model_turn_intent"].(*AIChatModelTurnIntent)
+	if !ok || raw.Intent != "answer_or_explain_zgi_context" {
+		t.Fatalf("model_turn_intent = %#v, want recorded model intent", metadata["model_turn_intent"])
+	}
+	if _, ok := metadata["turn_strategy"].(*AIChatTurnStrategy); !ok {
+		t.Fatalf("turn_strategy = %#v, want typed strategy", metadata["turn_strategy"])
+	}
+}
+
 func TestContextualAIChatTurnStrategyPrefersMultiRouteNavigationOverAgentManagement(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{

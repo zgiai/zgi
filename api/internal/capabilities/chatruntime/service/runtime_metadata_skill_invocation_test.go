@@ -130,6 +130,104 @@ func TestTurnStateContinuationSummaryIncludesUserVisibleDeliverable(t *testing.T
 	}
 }
 
+func TestCurrentTurnAuthoritativeStateMessageRequiresRuntimeState(t *testing.T) {
+	message := &runtimemodel.Message{Query: "create an agent"}
+
+	if got := currentTurnAuthoritativeStateMessage(message); got != nil {
+		t.Fatalf("currentTurnAuthoritativeStateMessage() = %#v, want nil without runtime state", got)
+	}
+}
+
+func TestCurrentTurnAuthoritativeStateMessageIncludesSameTurnFacts(t *testing.T) {
+	message := &runtimemodel.Message{
+		Query: "读取文件并用总结创建智能体",
+		Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"intent":              "manage_agent_asset",
+				"status":              "running",
+				"pending_next_action": "configure created agent",
+				"success_criteria": []interface{}{
+					"read the file summary",
+					"create and configure the agent",
+				},
+			},
+			"operation_result_summary": map[string]interface{}{
+				"operation":     "agent.create",
+				"success_count": 1,
+				"target":        "雪",
+			},
+			"turn_state": map[string]interface{}{
+				"items": []interface{}{
+					map[string]interface{}{
+						"kind":       "user_deliverable",
+						"visibility": "user_visible",
+						"key":        "worldview_summary",
+						"content":    "雪是灵潮学院世界观中的核心角色。",
+						"source":     "file-reader/read_file",
+						"used_for":   []interface{}{"agent.system_prompt"},
+					},
+				},
+			},
+		},
+	}
+
+	stateMessage := currentTurnAuthoritativeStateMessage(message)
+	if stateMessage == nil {
+		t.Fatal("currentTurnAuthoritativeStateMessage() = nil, want message")
+	}
+	content := messageContentText(stateMessage.Content)
+	for _, want := range []string{
+		"Current AIChat turn authoritative state JSON",
+		"Continue only unfinished work",
+		"manage_agent_asset",
+		"configure created agent",
+		"agent.create",
+		"worldview_summary",
+		"雪是灵潮学院世界观中的核心角色",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("current turn state message missing %q in:\n%s", want, content)
+		}
+	}
+}
+
+func TestCurrentTurnAuthoritativeStateMessageIncludesGeneratedArtifacts(t *testing.T) {
+	message := &runtimemodel.Message{
+		Query: "draw a pie chart",
+		Metadata: map[string]interface{}{
+			"generated_files": []interface{}{
+				map[string]interface{}{
+					"artifact_id":     "artifact-1",
+					"artifact_type":   "file",
+					"target":          "temporary_artifact",
+					"transfer_method": "tool_file",
+					"tool_file_id":    "tool-file-1",
+					"filename":        "agents-distribution-pie.svg",
+					"skill_id":        "chart-generator",
+					"tool_name":       "generate_chart",
+				},
+			},
+		},
+	}
+
+	stateMessage := currentTurnAuthoritativeStateMessage(message)
+	if stateMessage == nil {
+		t.Fatal("currentTurnAuthoritativeStateMessage() = nil, want generated artifact state")
+	}
+	content := messageContentText(stateMessage.Content)
+	for _, want := range []string{
+		"generated_artifacts",
+		"generated_artifact_count",
+		"agents-distribution-pie.svg",
+		"temporary_artifact",
+		"tool-file-1",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("current turn state message missing %q in:\n%s", want, content)
+		}
+	}
+}
+
 func TestRecentTurnStateSectionIncludesUserVisibleDeliverable(t *testing.T) {
 	branch := []*runtimemodel.Message{{
 		Status: runtimemodel.MessageStatusCompleted,

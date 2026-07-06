@@ -65,7 +65,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		return nil, newFinalizedStreamError(err)
 	}
 
-	if prepared.skillsEnabled() {
+	if prepared.skillsEnabled() && !skillLoopShouldUsePlainStreamForPassiveAnswer(prepared) {
 		answer, usage, err := s.runPreparedSkillStream(runCtx, persistCtx, prepared, onChunk, eventCallback)
 		usage = mergeUsage(preflightUsage, usage)
 		if err != nil {
@@ -358,6 +358,7 @@ func (s *service) prepareLLMRequestForRun(ctx context.Context, prepared *Prepare
 		return err
 	}
 	prepared.parts.ContextControl = contextResult.Metadata
+	s.applyContextualAIChatModelTurnIntent(ctx, prepared.Scope, prepared.Conversation, prepared.RunConfig, prepared.parts)
 	metadata = streamingMessageMetadataWithTaskID(prepared.parts, prepared.Message.ID.String())
 	prepared.Message.Metadata = metadata
 	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {

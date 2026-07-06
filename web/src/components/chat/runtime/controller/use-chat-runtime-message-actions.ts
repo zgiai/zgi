@@ -476,7 +476,12 @@ export function useChatRuntimeMessageActions({
             },
             onErrorEvent: (payload, eventId) => {
               if (abortController.signal.aborted) return;
-              applyStreamError(payload, eventId, streamConversationId);
+              const errorConversationId =
+                payload.conversation_id || forceAdvanceLeafConversationId || streamConversationId;
+              const errorMessageId = payload.message_id || forceAdvanceLeafMessageId;
+              applyStreamError(payload, eventId, errorConversationId);
+              persistForcedLeaf(errorConversationId || undefined, errorMessageId || undefined);
+              void recoverDetachedDraftConversation(errorConversationId);
             },
             onRequestError: error => {
               if (isAbortError(error)) return;
@@ -976,6 +981,7 @@ export function useChatRuntimeMessageActions({
         model,
         parentId: source.parent_id,
         useMemory: Boolean(source.metadata?.use_memory),
+        forceAdvanceLeaf: source.status === 'error' || source.status === 'stopped',
         runtimeSurface: options?.runtimeSurface,
         operationContext: options?.operationContext,
       });

@@ -1305,6 +1305,71 @@ func skillArtifactKey(artifact map[string]interface{}) string {
 	return target + ":" + id
 }
 
+// TraceLooksLikeTemporaryFileArtifact reports whether a completed tool trace
+// produced a chat-local file artifact. Prefer the standardized artifact shape
+// over skill-specific tool names so new generators work without runtime edits.
+func TraceLooksLikeTemporaryFileArtifact(trace skills.SkillTrace) bool {
+	if ResultLooksLikeTemporaryFileArtifact(trace.Result) {
+		return true
+	}
+	skillID := strings.TrimSpace(trace.SkillID)
+	toolName := strings.ToLower(strings.TrimSpace(trace.ToolName))
+	if strings.EqualFold(skillID, skills.SkillChartGenerator) {
+		return toolName == "generate_chart"
+	}
+	if !strings.EqualFold(skillID, skills.SkillFileGenerator) {
+		return false
+	}
+	switch toolName {
+	case "generate_file", "generate_docx", "generate_pdf", "generate_pptx":
+		return true
+	default:
+		return false
+	}
+}
+
+func ResultLooksLikeTemporaryFileArtifact(result map[string]interface{}) bool {
+	if len(result) == 0 {
+		return false
+	}
+	target := strings.ToLower(strings.TrimSpace(firstNonEmptyString(result["target"])))
+	lifecycle := strings.ToLower(strings.TrimSpace(firstNonEmptyString(result["lifecycle"])))
+	if target == "managed_file" || target == "file_management" ||
+		lifecycle == "managed" || lifecycle == "saved_to_file_management" ||
+		strings.TrimSpace(firstNonEmptyString(result["upload_file_id"], result["managed_file_id"])) != "" {
+		return false
+	}
+	fileRef := strings.TrimSpace(firstNonEmptyString(
+		result["tool_file_id"],
+		result["source_tool_file_id"],
+		result["source_file_id"],
+		result["file_id"],
+		result["id"],
+		result["download_url"],
+		result["url"],
+	))
+	if fileRef == "" {
+		return false
+	}
+	filename := strings.TrimSpace(firstNonEmptyString(
+		result["filename"],
+		result["name"],
+		result["file_name"],
+		result["title"],
+	))
+	if filename == "" {
+		return false
+	}
+	artifactType := strings.ToLower(strings.TrimSpace(firstNonEmptyString(result["artifact_type"])))
+	transferMethod := strings.ToLower(strings.TrimSpace(firstNonEmptyString(result["transfer_method"])))
+	return artifactType == "file" ||
+		transferMethod == "tool_file" ||
+		target == "temporary_artifact" ||
+		target == "chat_artifact" ||
+		target == "temporary" ||
+		lifecycle == "temporary"
+}
+
 func firstNonEmptyValue(values ...interface{}) interface{} {
 	for _, value := range values {
 		if value == nil {

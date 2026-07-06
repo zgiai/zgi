@@ -404,4 +404,6 @@ type chatRequestParts struct {
 	AgentMemoryAgentID           string
 	AgentMemoryRuntimeState      *AgentMemoryRuntimeState
 	BillingSource                string
+	ModelTurnIntent              *AIChatModelTurnIntent
+	ModelTurnIntentError         string
 }

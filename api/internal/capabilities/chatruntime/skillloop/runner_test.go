@@ -2648,6 +2648,42 @@ func TestFastPathFinalAnswerForCompletionEvidenceSummarizesGeneratedArtifact(t *
 	}
 }
 
+func TestFastPathFinalAnswerForCompletionEvidenceSummarizesGeneratedArtifactDespiteUnrelatedOpenPlan(t *testing.T) {
+	evidence := map[string]interface{}{
+		"generated_files": []interface{}{
+			map[string]interface{}{
+				"artifact_type":   "file",
+				"target":          "temporary_artifact",
+				"transfer_method": "tool_file",
+				"tool_file_id":    "tool-file-1",
+				"filename":        "agents-distribution-pie.svg",
+				"skill_id":        skills.SkillChartGenerator,
+				"tool_name":       "generate_chart",
+			},
+		},
+		"operation_plan": map[string]interface{}{
+			"intent":              "manage_agent_asset",
+			"planning_mode":       "phase_only_model_decides",
+			"status":              "running",
+			"pending_next_action": "continue_from_phase_success_criteria",
+			"phases": []interface{}{
+				map[string]interface{}{
+					"id":     "phase:agent_page",
+					"status": "running",
+				},
+			},
+		},
+	}
+
+	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want generated artifact answer")
+	}
+	if !strings.Contains(answer, "agents-distribution-pie.svg") {
+		t.Fatalf("answer = %q, want generated artifact filename", answer)
+	}
+}
+
 func TestFastPathFinalAnswerForCompletionEvidenceSummarizesRouteClientAction(t *testing.T) {
 	evidence := map[string]interface{}{
 		"operation_plan": map[string]interface{}{

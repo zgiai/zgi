@@ -141,6 +141,9 @@ func completionVerificationShouldRun(evidence map[string]interface{}, attempted 
 	if len(evidence) == 0 {
 		return false
 	}
+	if completionVerificationIsPassiveAssistantAnswer(evidence) {
+		return false
+	}
 	if plan := evidenceMapFromAny(evidence["operation_plan"]); len(plan) > 0 {
 		if completionVerificationPlanNeedsRuntimeEvidence(plan) {
 			return true
@@ -161,6 +164,111 @@ func completionVerificationShouldRun(evidence map[string]interface{}, attempted 
 		return true
 	}
 	return false
+}
+
+func completionVerificationIsPassiveAssistantAnswer(evidence map[string]interface{}) bool {
+	if len(evidence) == 0 {
+		return false
+	}
+	plan := evidenceMapFromAny(evidence["operation_plan"])
+	if !completionVerificationPlanIsPassiveAssistantAnswer(plan) {
+		return false
+	}
+	for _, key := range []string{"skill_invocations", "generated_files", "client_actions", "tool_governance"} {
+		if completionVerificationEvidenceValuePresent(evidence[key]) {
+			return false
+		}
+	}
+	if summary := evidenceMapFromAny(evidence["operation_result_summary"]); len(summary) > 0 {
+		status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(summary["status"])))
+		if status != "" && status != "running" && status != "observed" {
+			return false
+		}
+	}
+	if ledger := evidenceMapFromAny(evidence["execution_ledger"]); completionVerificationLedgerHasActiveFacts(ledger) {
+		return false
+	}
+	ledger := evidenceMapFromAny(evidence["operation_ledger"])
+	if len(ledger) == 0 {
+		if executionLedger := evidenceMapFromAny(evidence["execution_ledger"]); len(executionLedger) > 0 {
+			ledger = evidenceMapFromAny(executionLedger["operation_ledger"])
+		}
+	}
+	return completionVerificationOperationLedgerIsPassiveAssistantAnswer(ledger)
+}
+
+func completionVerificationPlanIsPassiveAssistantAnswer(plan map[string]interface{}) bool {
+	if len(plan) == 0 {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(plan["intent"])), "answer_or_explain_zgi_context") {
+		return false
+	}
+	if !completionVerificationPlanAssetTargetIsPassive(evidenceMapFromAny(plan["asset_target"])) {
+		return false
+	}
+	if !completionVerificationPlanAssetTargetIsPassive(evidenceMapFromAny(plan["target_resource"])) {
+		return false
+	}
+	approval := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(plan["approval"])))
+	return approval == "" || approval == "none"
+}
+
+func completionVerificationPlanAssetTargetIsPassive(target map[string]interface{}) bool {
+	if len(target) == 0 {
+		return true
+	}
+	effect := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(target["effect"])))
+	risk := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(target["risk"])))
+	return (effect == "" || effect == "none" || effect == "read") &&
+		(risk == "" || risk == "low")
+}
+
+func completionVerificationLedgerHasActiveFacts(ledger map[string]interface{}) bool {
+	if len(ledger) == 0 {
+		return false
+	}
+	for _, key := range []string{"skill_invocations", "generated_files", "client_actions", "tool_governance", "summary"} {
+		if completionVerificationEvidenceValuePresent(ledger[key]) {
+			return true
+		}
+	}
+	return false
+}
+
+func completionVerificationOperationLedgerIsPassiveAssistantAnswer(ledger map[string]interface{}) bool {
+	if len(ledger) == 0 {
+		return false
+	}
+	for _, raw := range evidenceSliceFromAny(ledger["resources"]) {
+		resource := evidenceMapFromAny(raw)
+		resourceType := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(firstNonEmptyEvidence(
+			resource["resource_type"],
+			resource["type"],
+		))))
+		resourceID := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(firstNonEmptyEvidence(
+			resource["resource_id"],
+			resource["id"],
+		))))
+		if resourceType == "page" || resourceID == "zgi.system_assistant" {
+			continue
+		}
+		return false
+	}
+	for _, raw := range evidenceSliceFromAny(ledger["capabilities"]) {
+		capability := evidenceMapFromAny(raw)
+		id := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(firstNonEmptyEvidence(
+			capability["id"],
+			capability["name"],
+		))))
+		switch id {
+		case "", "assistant.self_describe", "page.navigate":
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func completionEvidenceOperationPlanModelDecides(evidence map[string]interface{}) bool {

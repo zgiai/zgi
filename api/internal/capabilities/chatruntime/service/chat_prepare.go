@@ -68,6 +68,7 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 			return nil, err
 		}
 		parts.ContextControl = contextResult.Metadata
+		s.applyContextualAIChatModelTurnIntent(ctx, scope, conversation, config, parts)
 		llmRequest = newLLMChatRequest(parts, contextResult.Messages)
 	}
 
@@ -153,6 +154,7 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 		return nil, err
 	}
 	parts.ContextControl = contextResult.Metadata
+	s.applyContextualAIChatModelTurnIntent(ctx, scope, conversation, config, parts)
 	replacement := replacementRootMessage(message, parts)
 	if err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepos := repository.NewRepositories(tx)
