@@ -427,14 +427,14 @@ func ParseSSE(reader io.Reader, dataChan chan<- string, errChan chan<- error) {
 }
 
 func parseSSEDataLine(line string) (string, bool) {
-	if !strings.HasPrefix(line, "data:") {
+	name, value, ok := strings.Cut(line, ":")
+	if !ok || name != "data" {
 		return "", false
 	}
-	data := strings.TrimPrefix(line, "data:")
-	if strings.HasPrefix(data, " ") {
-		data = strings.TrimPrefix(data, " ")
+	if strings.HasPrefix(value, " ") {
+		value = strings.TrimPrefix(value, " ")
 	}
-	return data, true
+	return value, true
 }
 
 // ParseSSEEvents parses Server-Sent Events while preserving event names and raw data.
