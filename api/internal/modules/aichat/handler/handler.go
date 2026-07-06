@@ -573,7 +573,7 @@ func writeChatEnd(c *gin.Context, prepared *runtimeservice.PreparedChat, result 
 	status := runtimemodel.MessageStatusCompleted
 	eventID := ""
 	if result != nil && result.Metadata != nil {
-		metadata = result.Metadata
+		metadata = messageMetadataResponse(result.Metadata)
 	}
 	if result != nil && strings.TrimSpace(result.Status) != "" {
 		status = strings.TrimSpace(result.Status)
@@ -986,7 +986,7 @@ func messageResponse(message *runtimemodel.Message) runtimedto.MessageResponse {
 		ModelName:           message.ModelName,
 		BillingReasonSource: message.BillingReasonSource,
 		ModelParameters:     message.ModelParameters,
-		Metadata:            message.Metadata,
+		Metadata:            messageMetadataResponse(message.Metadata),
 		CreatedAt:           message.CreatedAt.Unix(),
 		UpdatedAt:           message.UpdatedAt.Unix(),
 	}
@@ -997,6 +997,44 @@ func messageResponse(message *runtimemodel.Message) runtimedto.MessageResponse {
 		resp.SourceMessageID = stringPtr(message.SourceMessageID.String())
 	}
 	return resp
+}
+
+func messageMetadataResponse(metadata map[string]interface{}) map[string]interface{} {
+	if len(metadata) == 0 {
+		return metadata
+	}
+	out := make(map[string]interface{}, len(metadata))
+	redactedModelInvocations := false
+	modelInvocationCount := 0
+	for key, value := range metadata {
+		if key == "model_invocations" {
+			redactedModelInvocations = true
+			modelInvocationCount = modelInvocationMetadataCount(value)
+			continue
+		}
+		if key == "model_invocations_redacted" {
+			continue
+		}
+		out[key] = value
+	}
+	if redactedModelInvocations {
+		out["model_invocations_redacted"] = true
+		if modelInvocationCount > 0 {
+			out["model_invocation_count"] = modelInvocationCount
+		}
+	}
+	return out
+}
+
+func modelInvocationMetadataCount(value interface{}) int {
+	switch typed := value.(type) {
+	case []interface{}:
+		return len(typed)
+	case []map[string]interface{}:
+		return len(typed)
+	default:
+		return 0
+	}
 }
 
 func searchResultResponse(result *runtimeservice.SearchResult) runtimedto.SearchResultResponse {

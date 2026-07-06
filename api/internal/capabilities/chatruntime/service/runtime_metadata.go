@@ -20,6 +20,9 @@ import (
 const (
 	maxModelInvocationMetadataRecords = 100
 	maxTurnStateMetadataItems         = 32
+
+	modelInvocationInlineImageDataRedactionReason = "inline_image_data_omitted_from_model_invocation_metadata"
+	modelInvocationRedactedDataURLToken           = "<redacted>"
 )
 
 func (s *service) persistSkillTracesBestEffort(ctx context.Context, prepared *PreparedChat, traces []skills.SkillTrace) {
@@ -445,24 +448,22 @@ func modelInvocationRequestPayload(req *adapter.ChatRequest, redactToolContent b
 		return map[string]interface{}{}
 	}
 	payload := jsonObjectPayload(req)
-	if redactToolContent {
-		payload = sanitizeModelInvocationRequestPayload(payload)
-	}
 	if strings.TrimSpace(req.Provider) != "" {
 		payload["provider"] = req.Provider
 	}
 	if len(req.AdditionalParameters) > 0 {
 		payload["additional_parameters"] = copyStringAnyMap(req.AdditionalParameters)
 	}
-	return payload
+	return sanitizeModelInvocationRequestPayload(payload, redactToolContent)
 }
 
-func sanitizeModelInvocationRequestPayload(payload map[string]interface{}) map[string]interface{} {
+func sanitizeModelInvocationRequestPayload(payload map[string]interface{}, redactToolContent bool) map[string]interface{} {
 	if len(payload) == 0 {
 		return payload
 	}
 	messages, ok := payload["messages"].([]interface{})
 	if !ok {
+		sanitizeModelInvocationInlineImageDataURLs(payload)
 		return payload
 	}
 	for _, raw := range messages {
@@ -473,6 +474,9 @@ func sanitizeModelInvocationRequestPayload(payload map[string]interface{}) map[s
 		role := strings.ToLower(strings.TrimSpace(stringFromAny(message["role"])))
 		switch role {
 		case "tool", "function":
+			if !redactToolContent {
+				continue
+			}
 			content, exists := message["content"]
 			if !exists {
 				continue
@@ -480,6 +484,9 @@ func sanitizeModelInvocationRequestPayload(payload map[string]interface{}) map[s
 			message["content"] = modelInvocationToolContentSummary(content)
 			message["content_redacted"] = true
 		case "user":
+			if !redactToolContent {
+				continue
+			}
 			content, exists := message["content"]
 			if !exists {
 				continue
@@ -490,7 +497,184 @@ func sanitizeModelInvocationRequestPayload(payload map[string]interface{}) map[s
 			}
 		}
 	}
+	sanitizeModelInvocationInlineImageDataURLs(payload)
 	return payload
+}
+
+func sanitizeModelInvocationInlineImageDataURLs(value interface{}) bool {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		return sanitizeModelInvocationInlineImageDataURLMap(typed)
+	case []interface{}:
+		changed := false
+		for index, item := range typed {
+			switch itemValue := item.(type) {
+			case string:
+				if redacted, _, ok := redactEmbeddedModelInvocationImageDataURLs(itemValue); ok {
+					typed[index] = redacted
+					changed = true
+				}
+			default:
+				if sanitizeModelInvocationInlineImageDataURLs(itemValue) {
+					changed = true
+				}
+			}
+		}
+		return changed
+	default:
+		return false
+	}
+}
+
+func sanitizeModelInvocationInlineImageDataURLMap(object map[string]interface{}) bool {
+	if len(object) == 0 {
+		return false
+	}
+	changed := false
+	for key, value := range object {
+		switch typed := value.(type) {
+		case string:
+			redacted, summaries, ok := redactEmbeddedModelInvocationImageDataURLs(typed)
+			if !ok {
+				continue
+			}
+			object[key] = redacted
+			applyInlineImageDataURLFieldSummary(object, key, typed, summaries)
+			changed = true
+		default:
+			if sanitizeModelInvocationInlineImageDataURLs(typed) {
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
+func applyInlineImageDataURLFieldSummary(object map[string]interface{}, key string, original string, summaries []map[string]interface{}) {
+	if len(object) == 0 || strings.TrimSpace(key) == "" || len(summaries) == 0 {
+		return
+	}
+	prefix := strings.TrimSpace(key)
+	object[prefix+"_redacted"] = true
+	object[prefix+"_redaction_reason"] = modelInvocationInlineImageDataRedactionReason
+	object[prefix+"_chars"] = len([]rune(original))
+	object[prefix+"_inline_image_data_count"] = len(summaries)
+	if len(summaries) != 1 {
+		object[prefix+"_inline_image_data"] = summaries
+		return
+	}
+	for _, summaryKey := range []string{"mime_type", "data_url_chars", "base64_chars", "estimated_bytes"} {
+		if value, ok := summaries[0][summaryKey]; ok {
+			object[prefix+"_"+summaryKey] = value
+		}
+	}
+}
+
+func redactEmbeddedModelInvocationImageDataURLs(text string) (string, []map[string]interface{}, bool) {
+	lower := strings.ToLower(text)
+	if !strings.Contains(lower, "data:image/") {
+		return text, nil, false
+	}
+	var builder strings.Builder
+	summaries := make([]map[string]interface{}, 0, 1)
+	cursor := 0
+	searchFrom := 0
+	for {
+		relativeStart := strings.Index(lower[searchFrom:], "data:image/")
+		if relativeStart < 0 {
+			break
+		}
+		start := searchFrom + relativeStart
+		markerRelative := strings.Index(lower[start:], ";base64,")
+		if markerRelative < 0 {
+			searchFrom = start + len("data:image/")
+			continue
+		}
+		base64Start := start + markerRelative + len(";base64,")
+		end := base64Start
+		for end < len(text) && isModelInvocationBase64DataURLByte(text[end]) {
+			end++
+		}
+		if end == base64Start {
+			searchFrom = base64Start
+			continue
+		}
+		raw := text[start:end]
+		summary, ok := modelInvocationInlineImageDataURLSummary(raw)
+		if !ok {
+			searchFrom = end
+			continue
+		}
+		builder.WriteString(text[cursor:start])
+		builder.WriteString(stringFromAny(summary["redacted_url"]))
+		summaries = append(summaries, summary)
+		cursor = end
+		searchFrom = end
+	}
+	if len(summaries) == 0 {
+		return text, nil, false
+	}
+	builder.WriteString(text[cursor:])
+	return builder.String(), summaries, true
+}
+
+func modelInvocationInlineImageDataURLSummary(raw string) (map[string]interface{}, bool) {
+	raw = strings.TrimSpace(raw)
+	lower := strings.ToLower(raw)
+	if !strings.HasPrefix(lower, "data:image/") {
+		return nil, false
+	}
+	markerIndex := strings.Index(lower, ";base64,")
+	if markerIndex <= len("data:") {
+		return nil, false
+	}
+	base64Start := markerIndex + len(";base64,")
+	if base64Start >= len(raw) {
+		return nil, false
+	}
+	mimeType := strings.ToLower(strings.TrimSpace(raw[len("data:"):markerIndex]))
+	base64Data := strings.TrimSpace(raw[base64Start:])
+	if base64Data == "" {
+		return nil, false
+	}
+	return map[string]interface{}{
+		"redacted":        true,
+		"reason":          modelInvocationInlineImageDataRedactionReason,
+		"mime_type":       mimeType,
+		"data_url_chars":  len([]rune(raw)),
+		"base64_chars":    len(base64Data),
+		"estimated_bytes": estimatedBase64DecodedBytes(base64Data),
+		"redacted_url":    raw[:base64Start] + modelInvocationRedactedDataURLToken,
+	}, true
+}
+
+func estimatedBase64DecodedBytes(encoded string) int {
+	encoded = strings.TrimSpace(encoded)
+	if encoded == "" {
+		return 0
+	}
+	padding := 0
+	if strings.HasSuffix(encoded, "==") {
+		padding = 2
+	} else if strings.HasSuffix(encoded, "=") {
+		padding = 1
+	}
+	decoded := len(encoded)*3/4 - padding
+	if decoded < 0 {
+		return 0
+	}
+	return decoded
+}
+
+func isModelInvocationBase64DataURLByte(value byte) bool {
+	return (value >= 'A' && value <= 'Z') ||
+		(value >= 'a' && value <= 'z') ||
+		(value >= '0' && value <= '9') ||
+		value == '+' ||
+		value == '/' ||
+		value == '=' ||
+		value == '-' ||
+		value == '_'
 }
 
 func modelInvocationUserContentSummary(content interface{}) (map[string]interface{}, bool) {
@@ -776,6 +960,7 @@ func modelInvocationResponsePayload(message *adapter.Message, usage *adapter.Usa
 	if usageMap := usageMetadata(usage); len(usageMap) > 0 {
 		payload["usage"] = usageMap
 	}
+	sanitizeModelInvocationInlineImageDataURLs(payload)
 	return payload
 }
 
