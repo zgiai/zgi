@@ -86,11 +86,19 @@ func (s *promptService) List(ctx context.Context, organizationID, accountID stri
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		workspace_model.WorkspacePermissionAgentView,
-		workspace_model.WorkspacePermissionAgentManage,
+		promptVisiblePermissionCodes()...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("resolve prompt visibility scope: %w", err)
+	}
+	if len(scope.WorkspaceIDs) == 0 {
+		return &promptdto.PromptListResponse{
+			Data:    []promptdto.PromptSummaryResponse{},
+			HasMore: false,
+			Limit:   limit,
+			Page:    page,
+			Total:   0,
+		}, nil
 	}
 
 	query := applyAccessibleQuery(s.repo.DB().Model(&promptmodel.Prompt{}), scope, accountID)
@@ -141,7 +149,7 @@ func (s *promptService) List(ctx context.Context, organizationID, accountID stri
 }
 
 func (s *promptService) GetDetail(ctx context.Context, organizationID, accountID, id string) (*promptdto.PromptDetailResponse, error) {
-	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, workspace_model.WorkspacePermissionAgentView, workspace_model.WorkspacePermissionAgentManage)
+	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, promptVisiblePermissionCodes()...)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +168,7 @@ func (s *promptService) Create(ctx context.Context, organizationID, accountID st
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		workspace_model.WorkspacePermissionAgentManage,
+		promptCreatePermissionCodes()...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("resolve workspace scope: %w", err)
@@ -216,7 +224,7 @@ func (s *promptService) Create(ctx context.Context, organizationID, accountID st
 }
 
 func (s *promptService) Update(ctx context.Context, organizationID, accountID, id string, req promptdto.UpdatePromptRequest) (*promptdto.PromptDetailResponse, error) {
-	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, workspace_model.WorkspacePermissionAgentManage)
+	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, promptUpdatePermissionCodes()...)
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +263,7 @@ func (s *promptService) Update(ctx context.Context, organizationID, accountID, i
 }
 
 func (s *promptService) CreateVersion(ctx context.Context, organizationID, accountID, id string, req promptdto.PromptVersionInput) (*promptdto.PromptDetailResponse, error) {
-	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, workspace_model.WorkspacePermissionAgentManage)
+	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, promptVersionManagePermissionCodes()...)
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +307,7 @@ func (s *promptService) CreateVersion(ctx context.Context, organizationID, accou
 }
 
 func (s *promptService) SetLabels(ctx context.Context, organizationID, accountID, id string, req promptdto.SetPromptLabelsRequest) (*promptdto.PromptDetailResponse, error) {
-	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, workspace_model.WorkspacePermissionAgentManage)
+	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, promptLabelManagePermissionCodes()...)
 	if err != nil {
 		return nil, err
 	}
@@ -371,6 +379,47 @@ func (s *promptService) ResolveRuntimeReference(ctx context.Context, organizatio
 	}, nil
 }
 
+func (s *promptService) requirePromptWorkspaceAccess(ctx context.Context, organizationID, accountID, workspaceID string, permissionCodes ...workspace_model.WorkspacePermissionCode) error {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return fmt.Errorf("workspace is required")
+	}
+
+	scope, err := shared_visibility.ResolveVisibleWorkspaceScope(
+		ctx,
+		s.organizationService,
+		organizationID,
+		accountID,
+		workspaceID,
+		permissionCodes...,
+	)
+	if err != nil {
+		return fmt.Errorf("resolve prompt workspace access: %w", err)
+	}
+	if !slices.Contains(scope.WorkspaceIDs, workspaceID) {
+		return fmt.Errorf("workspace not accessible")
+	}
+	return nil
+}
+
+func (s *promptService) requireAnyPromptWorkspaceAccess(ctx context.Context, organizationID, accountID string, permissionCodes ...workspace_model.WorkspacePermissionCode) error {
+	scope, err := shared_visibility.ResolveVisibleWorkspaceScope(
+		ctx,
+		s.organizationService,
+		organizationID,
+		accountID,
+		"",
+		permissionCodes...,
+	)
+	if err != nil {
+		return fmt.Errorf("resolve prompt access: %w", err)
+	}
+	if len(scope.WorkspaceIDs) == 0 {
+		return fmt.Errorf("prompt not found")
+	}
+	return nil
+}
+
 func (s *promptService) getAccessiblePrompt(ctx context.Context, organizationID, accountID, id string, permissionCodes ...workspace_model.WorkspacePermissionCode) (*promptmodel.Prompt, error) {
 	prompt, err := s.repo.FindByID(ctx, id)
 	if err != nil {
@@ -380,6 +429,9 @@ func (s *promptService) getAccessiblePrompt(ctx context.Context, organizationID,
 		return nil, fmt.Errorf("load prompt: %w", err)
 	}
 	if prompt.Source == promptmodel.PromptSourceOfficial {
+		if err := s.requireAnyPromptWorkspaceAccess(ctx, organizationID, accountID, permissionCodes...); err != nil {
+			return nil, err
+		}
 		return prompt, nil
 	}
 	scope, err := shared_visibility.ResolveVisibleWorkspaceScope(

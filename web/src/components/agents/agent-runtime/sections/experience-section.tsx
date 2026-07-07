@@ -66,6 +66,7 @@ interface AgentQuestionRowProps {
   dragLabel: string;
   removeLabel: string;
   dragDisabled: boolean;
+  readOnly: boolean;
   onChange: (index: number, value: string) => void;
   onRemove: (index: number) => void;
 }
@@ -78,6 +79,7 @@ function AgentQuestionRow({
   dragLabel,
   removeLabel,
   dragDisabled,
+  readOnly,
   onChange,
   onRemove,
 }: AgentQuestionRowProps) {
@@ -119,12 +121,14 @@ function AgentQuestionRow({
         containerClassName="min-w-0 flex-1"
         className="h-7 min-w-0 border-0 bg-transparent px-1.5 text-xs shadow-none focus-visible:ring-0"
         placeholder={placeholder}
+        disabled={readOnly}
         onChange={event => onChange(index, event.target.value)}
       />
       <Button
         type="button"
         variant="ghost"
         size="xs"
+        disabled={readOnly}
         className="h-7 w-7 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
         aria-label={removeLabel}
         onClick={() => onRemove(index)}
@@ -138,6 +142,7 @@ function AgentQuestionRow({
 interface AgentSuggestedQuestionsEditorProps {
   questions: string[];
   isGeneratingSuggestions: boolean;
+  readOnly?: boolean;
   onGenerateSuggestedQuestions: () => void;
   onChangeSuggestedQuestions: (value: string[]) => void;
 }
@@ -145,6 +150,7 @@ interface AgentSuggestedQuestionsEditorProps {
 function AgentSuggestedQuestionsEditor({
   questions,
   isGeneratingSuggestions,
+  readOnly = false,
   onGenerateSuggestedQuestions,
   onChangeSuggestedQuestions,
 }: AgentSuggestedQuestionsEditorProps) {
@@ -225,7 +231,8 @@ function AgentSuggestedQuestionsEditor({
   const visibleQuestionIds = normalizedQuestions.map(
     (_, index) => questionIds[index] ?? `${QUESTION_ID_PREFIX}pending-${index}`
   );
-  const canAddQuestion = normalizedQuestions.length < SUGGESTED_QUESTIONS_LIMIT;
+  const canGenerateSuggestions = !readOnly && !isGeneratingSuggestions;
+  const canAddQuestion = !readOnly && normalizedQuestions.length < SUGGESTED_QUESTIONS_LIMIT;
 
   return (
     <div className="rounded-lg border border-border/70 bg-background p-2.5">
@@ -242,7 +249,7 @@ function AgentSuggestedQuestionsEditor({
             variant="outline"
             size="xs"
             className="h-7 gap-1.5 bg-background px-2 text-xs"
-            disabled={isGeneratingSuggestions}
+            disabled={!canGenerateSuggestions}
             onClick={onGenerateSuggestedQuestions}
           >
             {isGeneratingSuggestions ? (
@@ -288,7 +295,8 @@ function AgentSuggestedQuestionsEditor({
                   placeholder={t('suggestions.placeholder')}
                   dragLabel={t('suggestions.drag')}
                   removeLabel={t('suggestions.delete')}
-                  dragDisabled={normalizedQuestions.length <= 1}
+                  dragDisabled={readOnly || normalizedQuestions.length <= 1}
+                  readOnly={readOnly}
                   onChange={updateQuestion}
                   onRemove={removeQuestion}
                 />
@@ -309,6 +317,7 @@ interface AgentRuntimeExperienceSectionProps {
   isGeneratingSuggestions: boolean;
   defaultHomeTitle: string;
   defaultInputPlaceholder: string;
+  readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeHomeTitle: (value: string) => void;
   onChangeInputPlaceholder: (value: string) => void;
@@ -324,6 +333,7 @@ export function AgentRuntimeExperienceSection({
   isGeneratingSuggestions,
   defaultHomeTitle,
   defaultInputPlaceholder,
+  readOnly = false,
   onToggleSection,
   onChangeHomeTitle,
   onChangeInputPlaceholder,
@@ -353,6 +363,7 @@ export function AgentRuntimeExperienceSection({
             maxLength={AGENT_HOME_TITLE_MAX_LENGTH}
             showCharacterCount
             placeholder={defaultHomeTitle}
+            disabled={readOnly}
             onChange={event =>
               onChangeHomeTitle(
                 Array.from(event.target.value).slice(0, AGENT_HOME_TITLE_MAX_LENGTH).join('')
@@ -375,6 +386,7 @@ export function AgentRuntimeExperienceSection({
             maxLength={AGENT_INPUT_PLACEHOLDER_MAX_LENGTH}
             showCharacterCount
             placeholder={defaultInputPlaceholder}
+            disabled={readOnly}
             onChange={event =>
               onChangeInputPlaceholder(
                 Array.from(event.target.value).slice(0, AGENT_INPUT_PLACEHOLDER_MAX_LENGTH).join('')
@@ -395,6 +407,7 @@ export function AgentRuntimeExperienceSection({
           <AgentSuggestedQuestionsEditor
             questions={normalizedSuggestedQuestions}
             isGeneratingSuggestions={isGeneratingSuggestions}
+            readOnly={readOnly}
             onGenerateSuggestedQuestions={onGenerateSuggestedQuestions}
             onChangeSuggestedQuestions={onChangeSuggestedQuestions}
           />

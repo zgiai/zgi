@@ -22,12 +22,24 @@ import { useRoleActions } from '@/hooks/organization/use-role-actions';
 import { EditRoleInfoDialog } from '@/components/dashboard/organization/edit-role-info-dialog';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import type { Role } from '@/services/types/organization';
+import {
+  isSelectableWorkspacePermissionTemplate,
+  isWorkspaceAdminRole,
+  isWorkspaceGovernanceRole,
+  isWorkspaceOwnerRole,
+} from '@/utils/workspace-role-templates';
+
+const getGovernanceRoleOrder = (role: Role) => {
+  if (isWorkspaceOwnerRole(role)) return 0;
+  if (isWorkspaceAdminRole(role)) return 1;
+  return 2;
+};
 
 export default function PermissionsPage() {
   const t = useT('dashboard.organization.permissions');
   const tCommon = useT('common');
   const router = useRouter();
-  const { roles, isLoading } = useOrganizationRoles();
+  const { roles, isLoading } = useOrganizationRoles({ includeOwner: true });
   const { locale } = useLocale();
   const { deleteRole, isDeleting, updateRoleInfo, isUpdatingInfo } = useRoleActions();
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -77,11 +89,26 @@ export default function PermissionsPage() {
         roleId: roleToEdit.id,
         data: {
           name,
-          description: description || undefined,
+          description,
         },
       });
     }
   };
+
+  const getRoleDisplayName = (role: Role) =>
+    role.name_i18n ? pickLocale(role.name_i18n, locale, role.name) : role.name;
+
+  const getRoleDescription = (role: Role) =>
+    role.description_i18n
+      ? pickLocale(role.description_i18n, locale, role.description || '')
+      : role.description || '';
+
+  const governanceRoles = roles.filter(isWorkspaceGovernanceRole).sort((a, b) => {
+    return getGovernanceRoleOrder(a) - getGovernanceRoleOrder(b);
+  });
+  const permissionTemplateRoles = roles.filter(isSelectableWorkspacePermissionTemplate);
+  const canApplySelectedRoleTemplate =
+    !!selectedRole && isSelectableWorkspacePermissionTemplate(selectedRole);
 
   return (
     <div className="h-full space-y-5 overflow-y-auto bg-bg-canvas/50 p-4 lg:p-6">
@@ -100,7 +127,67 @@ export default function PermissionsPage() {
         </Button>
       </div>
 
+      {!isLoading && governanceRoles.length > 0 ? (
+        <section className="space-y-3">
+          <div>
+            <h2 className="text-sm font-semibold text-text-primary">
+              {t('sections.governanceTitle')}
+            </h2>
+            <p className="mt-1 text-xs text-text-secondary">{t('sections.governanceSubtitle')}</p>
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {governanceRoles.map(role => (
+              <Card key={role.id} className="rounded-xl border-border/80 bg-background shadow-sm">
+                <CardContent className="px-5 py-5">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border bg-primary/10 text-primary">
+                      <Shield className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-base font-semibold text-text-primary">
+                          {getRoleDisplayName(role)}
+                        </h3>
+                        <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-placeholder">
+                          System
+                        </span>
+                      </div>
+                      <p className="mt-2 line-clamp-2 text-xs leading-5 text-text-secondary">
+                        {getRoleDescription(role)}
+                      </p>
+                      <div className="mt-4 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 text-xs font-semibold text-text-secondary">
+                          <Users className="h-3 w-3 text-primary/60" />
+                          {(role.member_count ?? 0) > 0
+                            ? t('memberCount.people', { count: role.member_count ?? 0 })
+                            : t('memberCount.noMembers')}
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleViewMembers(role.id)}
+                          className="h-8 rounded-md text-xs font-semibold"
+                        >
+                          {t('actions.viewMembers')}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {/* Role Cards Grid */}
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold text-text-primary">
+            {t('sections.templateTitle')}
+          </h2>
+          <p className="mt-1 text-xs text-text-secondary">{t('sections.templateSubtitle')}</p>
+        </div>
       <div className="mx-auto grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
         {/* Loading Skeleton */}
         {isLoading
@@ -125,7 +212,7 @@ export default function PermissionsPage() {
               </Card>
             ))
           : /* Existing Role Cards */
-            roles.map(role => (
+            permissionTemplateRoles.map(role => (
               <Card
                 key={role.id}
                 className={cn(
@@ -159,12 +246,14 @@ export default function PermissionsPage() {
                           >
                             {tCommon('edit')}
                           </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => handleDeleteClick(role)}
-                            className="text-xs text-destructive focus:text-destructive cursor-pointer hover:bg-destructive/5 px-2.5 py-1.5"
-                          >
-                            {tCommon('delete')}
-                          </DropdownMenuItem>
+                          {role.deletable !== false ? (
+                            <DropdownMenuItem
+                              onClick={() => handleDeleteClick(role)}
+                              className="text-xs text-destructive focus:text-destructive cursor-pointer hover:bg-destructive/5 px-2.5 py-1.5"
+                            >
+                              {tCommon('delete')}
+                            </DropdownMenuItem>
+                          ) : null}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
@@ -184,7 +273,7 @@ export default function PermissionsPage() {
                     </div>
                     <div className="flex w-0 grow items-center gap-2">
                       <h3 className="text-lg font-bold text-text-primary tracking-tight w-0 grow line-clamp-2 break-words text-ellipsis">
-                        {role.name}
+                        {getRoleDisplayName(role)}
                       </h3>
                       {role.builtin && (
                         <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-muted text-text-placeholder font-bold uppercase tracking-wider shrink-0">
@@ -196,18 +285,16 @@ export default function PermissionsPage() {
 
                   {/* Role Description */}
                   <p className="text-sm text-text-secondary mb-5 min-h-[3.5rem] leading-relaxed line-clamp-3 break-words">
-                    {role.builtin && role.description_i18n
-                      ? pickLocale(role.description_i18n, locale, role.description || '')
-                      : role.description || ''}
+                    {getRoleDescription(role)}
                   </p>
 
                   {/* Member Count */}
                   <div className="flex items-center gap-2 text-xs font-bold text-text-secondary mb-5 px-2.5 py-1.5 rounded-lg border border-border/20 w-fit">
                     <Users className="h-3 w-3 text-primary/60" />
                     <span>
-                      {role.member_count > 0
+                      {(role.member_count ?? 0) > 0
                         ? t('memberCount.people', {
-                            count: role.member_count,
+                            count: role.member_count ?? 0,
                           })
                         : t('memberCount.noMembers')}
                     </span>
@@ -236,7 +323,7 @@ export default function PermissionsPage() {
               </Card>
             ))}
 
-        {/* New Role Scheme Card */}
+        {/* New Permission Template Card */}
         {!isLoading && (
           <Card
             className={cn(
@@ -259,13 +346,15 @@ export default function PermissionsPage() {
           </Card>
         )}
       </div>
+      </section>
 
       {/* Modals remain functional */}
       <RoleMembersDrawer
         open={drawerOpen}
         onOpenChange={setDrawerOpen}
         roleId={selectedRole?.id ?? null}
-        roleName={selectedRole?.name ?? ''}
+        roleName={selectedRole ? getRoleDisplayName(selectedRole) : ''}
+        canApplyTemplate={canApplySelectedRoleTemplate}
       />
 
       <ConfirmDialog

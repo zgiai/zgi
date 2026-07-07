@@ -8,13 +8,14 @@ import {
   type AIChatPageContextItem,
 } from '@/components/aichat/page-context';
 import { AGENT_KEYS } from '@/hooks/query-keys';
-import { AgentType, type Agent } from '@/services/types/agent';
+import { AgentType, type Agent, type AgentAssetKind } from '@/services/types/agent';
 import { getAgentDetailEditHref } from '@/utils/agent-detail-routes';
 
 const AGENTS_CONTEXT_VISIBLE_LIMIT = 20;
 const CONTEXT_FIELD_MAX_LENGTH = 900;
 
 interface AgentsAIChatContextRegistrationProps {
+  assetKind?: AgentAssetKind;
   agents: Agent[];
   pageSize: number;
   searchKeyword: string;
@@ -62,12 +63,19 @@ function publishedStatus(agent: Agent) {
   return 'draft';
 }
 
-function buildAgentListDescription(agents: Agent[], isLoading: boolean, hasNextPage: boolean) {
+function buildAgentListDescription(
+  agents: Agent[],
+  isLoading: boolean,
+  hasNextPage: boolean,
+  assetKind: AgentAssetKind = 'agent'
+) {
+  const isWorkflowList = assetKind === 'workflow';
+  const resourceLabel = isWorkflowList ? 'Workflows' : 'Agents';
   if (isLoading) {
-    return 'The Agents page is loading. Wait for the visible Agent list before answering list-specific questions.';
+    return `The ${resourceLabel} page is loading. Wait for the visible ${resourceLabel} list before answering list-specific questions.`;
   }
   if (agents.length === 0) {
-    return 'No Agents are visible with the current filters.';
+    return `No ${resourceLabel} are visible with the current filters.`;
   }
 
   const visibleSummary = agents
@@ -82,8 +90,13 @@ function buildAgentListDescription(agents: Agent[], isLoading: boolean, hasNextP
     )
     .join(' | ');
   const pagination = hasNextPage
-    ? 'More Agents may exist beyond the currently loaded list.'
+    ? `More ${resourceLabel} may exist beyond the currently loaded list.`
     : 'The currently loaded list has no next page.';
+  if (isWorkflowList) {
+    return compactContextField(
+      `${pagination} Visible Workflow resource index: ${visibleSummary}`
+    );
+  }
   const firstRuntimeAgentIndex = agents.findIndex(isAgentRuntimeItem);
   const firstRuntimeAgent = firstRuntimeAgentIndex >= 0 ? agents[firstRuntimeAgentIndex] : null;
   const runtimeAgentHint = firstRuntimeAgent
@@ -105,8 +118,31 @@ function buildAgentListDescription(agents: Agent[], isLoading: boolean, hasNextP
 
 function buildAgentListCapabilities(
   canView: boolean,
-  canManage: boolean
+  canManage: boolean,
+  assetKind: AgentAssetKind = 'agent'
 ): AIChatCapabilityDescriptor[] {
+  if (assetKind === 'workflow') {
+    return [
+      {
+        id: 'workflow.list_visible',
+        title: 'List visible Workflows',
+        description: 'Answer questions about Workflows currently visible on the Workflows page.',
+        risk: 'low',
+        status: canView ? 'available' : 'unavailable',
+        permissions: ['workflow.view'],
+      },
+      {
+        id: 'workflow.open_visible',
+        title: 'Open visible Workflow',
+        description:
+          'Navigate to a visible Workflow detail page when the user asks to inspect it.',
+        risk: 'low',
+        status: canView ? 'available' : 'unavailable',
+        permissions: ['workflow.view'],
+      },
+    ];
+  }
+
   return [
     {
       id: 'agent.list_visible',
@@ -170,11 +206,16 @@ function buildAgentListCapabilities(
   ];
 }
 
-function buildVisibleAgentMetadata(agent: Agent, visibleIndex: number) {
+function buildVisibleAgentMetadata(
+  agent: Agent,
+  visibleIndex: number,
+  assetKind: AgentAssetKind = 'agent'
+) {
   const href = getAgentDetailEditHref(agent.id, agent.agent_type);
+  const isWorkflowList = assetKind === 'workflow';
   return {
-    page: 'console.agents',
-    resource_kind: 'agent',
+    page: isWorkflowList ? 'console.workflows' : 'console.agents',
+    resource_kind: isWorkflowList ? 'workflow' : 'agent',
     agent_id: agent.id,
     href,
     visible_index: visibleIndex,
@@ -193,6 +234,7 @@ function buildVisibleAgentMetadata(agent: Agent, visibleIndex: number) {
 }
 
 function buildAgentsAIChatContextItems({
+  assetKind = 'agent',
   agents,
   pageSize,
   searchKeyword,
@@ -206,8 +248,13 @@ function buildAgentsAIChatContextItems({
   permissionsSettled = true,
   hasNextPage,
 }: AgentsAIChatContextRegistrationProps): AIChatPageContextItem[] {
+  const isWorkflowList = assetKind === 'workflow';
+  const pageId = isWorkflowList ? 'console.workflows' : 'console.agents';
+  const route = isWorkflowList ? '/console/workflows' : '/console/agents';
+  const resourceLabel = isWorkflowList ? 'Workflow' : 'Agent';
+  const resourceLabelPlural = isWorkflowList ? 'Workflows' : 'Agents';
   const visibleAgents = agents.slice(0, AGENTS_CONTEXT_VISIBLE_LIMIT);
-  const capabilities = buildAgentListCapabilities(canView, canManage);
+  const capabilities = buildAgentListCapabilities(canView, canManage, assetKind);
   const contextReady = permissionsSettled && canView && !isLoading && !isFetching;
   const queryStatus = !permissionsSettled
     ? 'loading'
@@ -223,7 +270,8 @@ function buildAgentsAIChatContextItems({
   const firstRuntimeAgentIndex = visibleAgents.findIndex(isAgentRuntimeItem);
   const firstRuntimeAgent =
     firstRuntimeAgentIndex >= 0 ? visibleAgents[firstRuntimeAgentIndex] : undefined;
-  const resolvedPageTitle = pageTitle?.trim() || 'Agent Management';
+  const resolvedPageTitle =
+    pageTitle?.trim() || (isWorkflowList ? 'Workflow Management' : 'Agent Management');
   const agentTypeCounts = visibleAgents.reduce<Record<string, number>>((counts, agent) => {
     const key = agentTypeLabel(agent.agent_type);
     counts[key] = (counts[key] ?? 0) + 1;
@@ -232,27 +280,27 @@ function buildAgentsAIChatContextItems({
 
   return [
     {
-      id: 'console.agents',
+      id: pageId,
       type: 'page',
       title: resolvedPageTitle,
       subtitle: workspaceName
         ? `${workspaceName} ${resolvedPageTitle}`
         : `Current workspace ${resolvedPageTitle}`,
-      description: buildAgentListDescription(visibleAgents, isLoading, hasNextPage),
-      href: '/console/agents',
+      description: buildAgentListDescription(visibleAgents, isLoading, hasNextPage, assetKind),
+      href: route,
       source: resolvedPageTitle,
       status: canView ? 'available' : 'readonly',
       capabilities,
       hints: {
-        handledAssetTypes: ['agent'],
+        handledAssetTypes: isWorkflowList ? ['workflow'] : ['agent'],
         refreshHints: [
-          { assetType: 'agent', queryKey: AGENT_KEYS.all },
-          { assetType: 'agent', queryKey: AGENT_KEYS.lists() },
+          { assetType: isWorkflowList ? 'workflow' : 'agent', queryKey: AGENT_KEYS.all },
+          { assetType: isWorkflowList ? 'workflow' : 'agent', queryKey: AGENT_KEYS.lists() },
         ],
       },
       metadata: {
-        page: 'console.agents',
-        route: '/console/agents',
+        page: pageId,
+        route,
         resource_kind: 'page',
         context_ready: contextReady,
         agents_query_status: queryStatus,
@@ -277,8 +325,9 @@ function buildAgentsAIChatContextItems({
         search: searchKeyword.trim(),
         workspace_id: workspaceId,
         workspace_name: workspaceName,
-        can_view_agents: canView,
-        can_manage_agents: canManage,
+        can_view_assets: canView,
+        can_manage_assets: canManage,
+        asset_kind: assetKind,
         agent_type_counts: Object.entries(agentTypeCounts)
           .map(([type, count]) => `${type}=${count}`)
           .join(','),
@@ -293,27 +342,27 @@ function buildAgentsAIChatContextItems({
         title: agent.name,
         subtitle: `${agentTypeLabel(agent.agent_type)} - ${publishedStatus(agent)}`,
         description: compactContextField(
-          agent.description || 'No description is set for this Agent.'
+          agent.description || `No description is set for this ${resourceLabel}.`
         ),
         href,
-        source: 'Agents page',
+        source: `${resourceLabelPlural} page`,
         risk: 'low' as const,
         status: agent.is_published ? ('published' as const) : ('draft' as const),
         capabilities: [
           {
-            id: 'agent.open',
-            title: isAgentRuntimeItem(agent) ? 'Open Agent' : 'Open workflow',
+            id: isWorkflowList ? 'workflow.open' : 'agent.open',
+            title: isAgentRuntimeItem(agent) ? 'Open Agent' : 'Open Workflow',
             description: isAgentRuntimeItem(agent)
               ? 'Navigate to this Agent Runtime detail page.'
-              : 'Navigate to this workflow detail page.',
+              : 'Navigate to this Workflow detail page.',
             risk: 'low' as const,
             status: 'available' as const,
-            permissions: ['agent.view'],
+            permissions: [isWorkflowList ? 'workflow.view' : 'agent.view'],
           },
           {
-            id: 'agent.inspect_summary',
-            title: 'Inspect Agent summary',
-            description: 'Answer from the visible Agent card metadata.',
+            id: isWorkflowList ? 'workflow.inspect_summary' : 'agent.inspect_summary',
+            title: `Inspect ${resourceLabel} summary`,
+            description: `Answer from the visible ${resourceLabel} card metadata.`,
             risk: 'low' as const,
             status: 'available' as const,
           },
@@ -352,8 +401,12 @@ function buildAgentsAIChatContextItems({
               ]
             : []),
         ],
-        permissions: agent.can_edit ? ['agent.view', 'agent.manage'] : ['agent.view'],
-        metadata: buildVisibleAgentMetadata(agent, index + 1),
+        permissions: isWorkflowList
+          ? ['workflow.view']
+          : agent.can_edit
+            ? ['agent.view', 'agent.manage']
+            : ['agent.view'],
+        metadata: buildVisibleAgentMetadata(agent, index + 1, assetKind),
       };
     }),
   ];
@@ -361,6 +414,7 @@ function buildAgentsAIChatContextItems({
 
 export function AgentsAIChatContextRegistration(props: AgentsAIChatContextRegistrationProps) {
   const {
+    assetKind = 'agent',
     agents,
     pageSize,
     searchKeyword,
@@ -377,6 +431,7 @@ export function AgentsAIChatContextRegistration(props: AgentsAIChatContextRegist
   const items = useMemo(
     () =>
       buildAgentsAIChatContextItems({
+        assetKind,
         agents,
         pageSize,
         searchKeyword,
@@ -392,6 +447,7 @@ export function AgentsAIChatContextRegistration(props: AgentsAIChatContextRegist
       }),
     [
       agents,
+      assetKind,
       canManage,
       canView,
       hasNextPage,
@@ -406,6 +462,8 @@ export function AgentsAIChatContextRegistration(props: AgentsAIChatContextRegist
     ]
   );
 
-  usePageContextRegistration(items, { scopeId: 'console-agents' });
+  usePageContextRegistration(items, {
+    scopeId: assetKind === 'workflow' ? 'console-workflows' : 'console-agents',
+  });
   return null;
 }

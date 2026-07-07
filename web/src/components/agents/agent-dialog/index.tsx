@@ -1,5 +1,6 @@
 'use client';
 
+import type { AgentType } from '@/services/types/agent';
 import { CreateAgentDialog } from './create-dialog';
 import { EditAgentDialog } from './edit-dialog';
 
@@ -8,6 +9,9 @@ interface AgentDialogProps {
   mode: 'create' | 'edit';
   onOpenChange: (open: boolean) => void;
   agentId?: string;
+  allowedAgentTypes?: AgentType[];
+  defaultAgentType?: AgentType;
+  hideTypeSelector?: boolean;
 }
 
 /**
@@ -19,9 +23,25 @@ interface AgentDialogProps {
  * @example
  * <AgentDialog open={open} mode="create" onOpenChange={setOpen} />
  */
-export function AgentDialog({ open, mode, onOpenChange, agentId }: AgentDialogProps) {
+export function AgentDialog({
+  open,
+  mode,
+  onOpenChange,
+  agentId,
+  allowedAgentTypes,
+  defaultAgentType,
+  hideTypeSelector,
+}: AgentDialogProps) {
   if (mode === 'create') {
-    return <CreateAgentDialog open={open} onOpenChange={onOpenChange} />;
+    return (
+      <CreateAgentDialog
+        open={open}
+        onOpenChange={onOpenChange}
+        allowedAgentTypes={allowedAgentTypes}
+        defaultAgentType={defaultAgentType}
+        hideTypeSelector={hideTypeSelector}
+      />
+    );
   }
   if (!agentId) {
     return null;

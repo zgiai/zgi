@@ -16,15 +16,20 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ShieldAlert } from 'lucide-react';
 import type { Db } from '@/services/types/db';
+import {
+  DATABASE_PERMISSION_ACTIONS,
+  DATABASE_VISIBLE_PERMISSION_CODES,
+} from '@/constants/permissions';
 
 export default function DbPage() {
   const t = useT();
   const currentWorkspace = useCurrentWorkspace();
 
   // Permissions
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canView = hasPermission('database.view');
-  const canManage = hasPermission('database.manage');
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canView = hasAnyPermission(DATABASE_VISIBLE_PERMISSION_CODES);
+  const canCreateDatabase = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.create);
+  const canUpdateDatabase = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.update);
 
   const [searchKeyword, setSearchKeyword] = useState('');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -59,13 +64,13 @@ export default function DbPage() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const openCreate = () => {
-    if (!canManage) return;
+    if (!canCreateDatabase) return;
     setSelectedDb(undefined);
     setCreateDialogOpen(true);
   };
 
   const openEdit = (db: Db) => {
-    if (!canManage) return;
+    if (!canUpdateDatabase) return;
     setSelectedDb(db);
     setEditDialogOpen(true);
   };
@@ -115,7 +120,7 @@ export default function DbPage() {
               className="pl-9"
             />
           </div>
-          {canManage && (
+          {canCreateDatabase && (
             <Button onClick={openCreate}>
               <Plus size={16} />
               <span className="text-sm font-normal">{t('dbs.create')}</span>
@@ -139,7 +144,7 @@ export default function DbPage() {
               <DbEmptyElement
                 type="generic"
                 actions={
-                  canManage
+                  canCreateDatabase
                     ? [
                         {
                           label: t('dbs.create'),

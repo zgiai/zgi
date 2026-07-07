@@ -674,6 +674,9 @@ func newApprovalTestDB(t *testing.T) *gorm.DB {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
+		if strings.Contains(err.Error(), "requires cgo") {
+			t.Skipf("sqlite driver unavailable without cgo: %v", err)
+		}
 		t.Fatalf("open sqlite: %v", err)
 	}
 	if err := db.AutoMigrate(&Form{}, &Delivery{}, &Recipient{}, &shortlinkcap.ShortLink{}); err != nil {

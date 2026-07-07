@@ -76,8 +76,8 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	})
 
 	// ---------- API Key ----------
-	if tenantServiceImplConcrete, ok := tenantServiceImpl.(*workspace_service.WorkspaceManagementServiceImpl); ok {
-		RegisterAPIKeyRoutes(v1, db, accountService, tenantServiceImplConcrete)
+	if _, ok := tenantServiceImpl.(*workspace_service.WorkspaceManagementServiceImpl); ok {
+		RegisterAPIKeyRoutes(v1, db, accountService, serviceContainer.GetOrganizationService())
 	}
 
 	// ---------- File (common) ----------
@@ -117,6 +117,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		GraphFlowService:           serviceContainer.GetGraphFlowService(),
 		TaskHandlerRegistry:        serviceContainer.GetTaskHandlerRegistry(),
 		ResourcePermissionService:  serviceContainer.GetResourcePermissionService(),
+		AuthorizationService:       serviceContainer.GetAuthorizationService(),
 	})
 
 	// ---------- RAG Evaluation ----------
@@ -132,6 +133,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 	RegisterContentParseRoutes(v1, ContentParseRouteDeps{
 		DB:                  db,
 		AccountService:      accountService,
+		OrganizationService: serviceContainer.GetOrganizationService(),
 		LLMClient:           serviceContainer.GetLLMClient(),
 		DefaultModelService: serviceContainer.GetDefaultModelService(),
 	})

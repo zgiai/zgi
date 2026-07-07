@@ -1,13 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import {
   Dialog,
   DialogContent,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogBody,
@@ -38,24 +37,72 @@ import {
 } from '@/services/types/agent';
 import type { ApiResponseData } from '@/services/types/common';
 import { useCreateAgent } from '@/hooks/agent/use-agents';
-import { Bot, MessageSquareQuote, Workflow } from 'lucide-react';
+import { Bot, ChevronLeft, MessageSquareQuote, Workflow } from 'lucide-react';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import { AGENT_PERMISSION_ACTIONS, WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
+import { getAgentDetailBaseHref } from '@/utils/agent-detail-routes';
 
 interface CreateAgentDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  allowedAgentTypes?: AgentType[];
+  defaultAgentType?: AgentType;
+  hideTypeSelector?: boolean;
 }
 
-export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps) {
+export function CreateAgentDialog({
+  open,
+  onOpenChange,
+  allowedAgentTypes,
+  defaultAgentType,
+  hideTypeSelector = false,
+}: CreateAgentDialogProps) {
   const t = useT('agents');
+  const tRoot = useT();
   const router = useRouter();
   const portalHostRef = useRef<HTMLDivElement | null>(null);
 
   const createMutation = useCreateAgent();
   const currentWorkspaceFromStore = useCurrentWorkspace();
+  const { hasAnyPermission } = useAccountPermissions();
+  const canCreateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.create);
+  const canCreateWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.create);
+  const selectableAgentTypes = useMemo(
+    () =>
+      allowedAgentTypes?.length
+        ? allowedAgentTypes
+        : [AgentType.AGENT, AgentType.CONVERSATIONAL_AGENT, AgentType.WORKFLOW],
+    [allowedAgentTypes]
+  );
+  const selectableAgentTypeSet = useMemo(
+    () => new Set<AgentType>(selectableAgentTypes),
+    [selectableAgentTypes]
+  );
+  const isAgentTypeAllowed = useCallback(
+    (agentType: AgentType) => {
+      if (!selectableAgentTypeSet.has(agentType)) {
+        return false;
+      }
+      if (agentType === AgentType.AGENT) {
+        return canCreateAgent;
+      }
+      return canCreateWorkflow;
+    },
+    [canCreateAgent, canCreateWorkflow, selectableAgentTypeSet]
+  );
+  const resolvedDefaultAgentType = useMemo(
+    () =>
+      defaultAgentType && isAgentTypeAllowed(defaultAgentType)
+        ? defaultAgentType
+        : selectableAgentTypes.find(type => isAgentTypeAllowed(type)) ?? AgentType.AGENT,
+    [defaultAgentType, isAgentTypeAllowed, selectableAgentTypes]
+  );
+  const canCreateAnyType = selectableAgentTypes.some(type => isAgentTypeAllowed(type));
 
   const [iconValue, setIconValue] = useState<IconValue>(createTextIconValue('', ICON_BG));
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const baseSchema = useMemo(
     () =>
@@ -103,7 +150,7 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
       description: '',
       icon: '',
       icon_type: 'text',
-      agent_type: AgentType.AGENT,
+      agent_type: resolvedDefaultAgentType,
     },
   });
 
@@ -117,11 +164,26 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
   }, [watchedName, iconValue.type]);
 
   const resetFormState = () => {
-    form.reset();
+    form.reset({
+      name: '',
+      description: '',
+      icon: '',
+      icon_type: 'text',
+      agent_type: resolvedDefaultAgentType,
+    });
     setIconValue(createTextIconValue('', ICON_BG));
+    setShowAdvanced(false);
   };
 
   const onSubmit = (data: CreateFormDataLocal) => {
+    if (!isAgentTypeAllowed(data.agent_type)) {
+      form.setError('agent_type', {
+        type: 'manual',
+        message: tRoot('common.unauthorizedDescription'),
+      });
+      return;
+    }
+
     const workspaceId = currentWorkspaceFromStore?.id;
 
     if (!workspaceId) {
@@ -151,21 +213,12 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
       onSuccess: (res: ApiResponseData<AgentCreateResponse>) => {
         const newId = res.data?.id;
         if (newId) {
-          router.push(
-            data.agent_type === AgentType.AGENT
-              ? `/console/agents/${newId}/agent`
-              : `/console/agents/${newId}/workflow`
-          );
+          router.push(getAgentDetailBaseHref(newId, data.agent_type));
         }
         resetFormState();
         onOpenChange(false);
       },
     });
-  };
-
-  const handleClose = () => {
-    resetFormState();
-    onOpenChange(false);
   };
 
   const handleDialogOpenChange = (nextOpen: boolean) => {
@@ -175,10 +228,19 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
     onOpenChange(nextOpen);
   };
 
+  useEffect(() => {
+    if (!open) return;
+    const currentAgentType = form.getValues('agent_type');
+    if (!isAgentTypeAllowed(currentAgentType)) {
+      form.setValue('agent_type', resolvedDefaultAgentType, { shouldValidate: true });
+    }
+  }, [form, isAgentTypeAllowed, open, resolvedDefaultAgentType]);
+
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent
-        className="max-w-2xl"
+        className="max-w-lg"
+        aria-describedby={undefined}
         onInteractOutside={e => {
           const target = e.target as Element | null;
           if (
@@ -192,145 +254,194 @@ export function CreateAgentDialog({ open, onOpenChange }: CreateAgentDialogProps
       >
         <div ref={portalHostRef} data-portal-host className="contents" />
         <DialogHeader>
-          <DialogTitle>{t('create')}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2 text-xl font-semibold">
+            <Bot className="h-5 w-5" />
+            {t('create')}
+          </DialogTitle>
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)}>
-            <DialogBody className="space-y-4">
-              <div className="flex gap-10">
-                <div className="space-y-2 w-full max-w-48">
+            <DialogBody className="space-y-6">
+              <div className="space-y-6">
+                {!hideTypeSelector && (
                   <FormField
                     control={form.control}
                     name="agent_type"
                     render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>{t('form.mode')}</FormLabel>
+                      <FormItem className="space-y-2.5">
+                        <FormLabel className="text-sm font-semibold">
+                          {t('form.mode')} <span className="text-destructive">*</span>
+                        </FormLabel>
                         <FormControl>
                           <RadioCardGroup
                             value={field.value}
                             onValueChange={field.onChange}
                             className="gap-2"
                           >
-                            <RadioCard
-                              value={AgentType.AGENT}
-                              title={t('modes.agent')}
-                              description={t('modes.agentDesc')}
-                              checked={field.value === AgentType.AGENT}
-                              hiddenRadio
-                              icon={<Bot className="w-6 h-6" />}
-                            />
-                            <RadioCard
-                              value={AgentType.CONVERSATIONAL_AGENT}
-                              title={t('modes.chatWorkflow')}
-                              description={t('modes.chatWorkflowDesc')}
-                              checked={field.value === AgentType.CONVERSATIONAL_AGENT}
-                              hiddenRadio
-                              icon={<MessageSquareQuote className="w-6 h-6" />}
-                            />
-                            <RadioCard
-                              value={AgentType.WORKFLOW}
-                              title={t('modes.taskWorkflow')}
-                              description={t('modes.taskWorkflowDesc')}
-                              checked={field.value === AgentType.WORKFLOW}
-                              hiddenRadio
-                              icon={<Workflow className="w-6 h-6" />}
-                            />
+                            {isAgentTypeAllowed(AgentType.AGENT) && (
+                              <RadioCard
+                                value={AgentType.AGENT}
+                                title={t('modes.agent')}
+                                description={t('modes.agentDesc')}
+                                checked={field.value === AgentType.AGENT}
+                                hiddenRadio
+                                icon={<Bot className="h-5 w-5" />}
+                                className="p-3"
+                              />
+                            )}
+                            {isAgentTypeAllowed(AgentType.CONVERSATIONAL_AGENT) && (
+                              <RadioCard
+                                value={AgentType.CONVERSATIONAL_AGENT}
+                                title={t('modes.chatWorkflow')}
+                                description={t('modes.chatWorkflowDesc')}
+                                checked={field.value === AgentType.CONVERSATIONAL_AGENT}
+                                hiddenRadio
+                                icon={<MessageSquareQuote className="h-5 w-5" />}
+                                className="p-3"
+                              />
+                            )}
+                            {isAgentTypeAllowed(AgentType.WORKFLOW) && (
+                              <RadioCard
+                                value={AgentType.WORKFLOW}
+                                title={t('modes.taskWorkflow')}
+                                description={t('modes.taskWorkflowDesc')}
+                                checked={field.value === AgentType.WORKFLOW}
+                                hiddenRadio
+                                icon={<Workflow className="h-5 w-5" />}
+                                className="p-3"
+                              />
+                            )}
                           </RadioCardGroup>
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
-                </div>
-                <div className="space-y-4 flex-1">
-                  <FormField
-                    control={form.control}
-                    name="name"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>{t('form.name')}</FormLabel>
-                        <FormControl>
-                          <Input
-                            placeholder={t('form.namePlaceholder')}
-                            aria-invalid={!!form.formState.errors.name}
-                            className={cn(
-                              form.formState.errors.name ? 'focus-visible:ring-destructive' : ''
-                            )}
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                )}
 
-                  <FormField
-                    control={form.control}
-                    name="description"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>{t('form.description')}</FormLabel>
-                        <FormControl>
-                          <Textarea
-                            placeholder={t('form.descriptionPlaceholder')}
-                            className="resize-none"
-                            rows={3}
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
+                <FormField
+                  control={form.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormItem className="space-y-2.5">
+                      <FormLabel className="text-sm font-semibold">
+                        {t('form.name')} <span className="text-destructive">*</span>
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder={t('form.namePlaceholder')}
+                          required
+                          aria-invalid={!!form.formState.errors.name}
+                          className={cn(
+                            'h-11',
+                            form.formState.errors.name ? 'focus-visible:ring-destructive' : ''
+                          )}
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="description"
+                  render={({ field }) => (
+                    <FormItem className="space-y-2">
+                      <FormLabel className="flex items-center gap-1">
+                        {t('form.description')}
+                      </FormLabel>
+                      <FormControl>
+                        <Textarea
+                          placeholder={t('form.descriptionPlaceholder')}
+                          className="resize-none"
+                          rows={4}
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-base font-medium"
+                      onClick={() => setShowAdvanced(prev => !prev)}
+                    >
+                      {tRoot('dbs.createModal.advancedSettingsLabel')}
+                      <ChevronLeft
+                        className={cn(
+                          'h-4 w-4 transition-transform duration-300',
+                          showAdvanced ? '-rotate-90' : ''
+                        )}
+                      />
+                    </button>
+                  </div>
+
+                  <div
+                    className={cn(
+                      'space-y-4 w-full overflow-hidden transition-all duration-300',
+                      showAdvanced ? 'h-auto opacity-100 py-4' : 'h-0 opacity-0'
                     )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="icon"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>{t('form.icon')}</FormLabel>
-                        <FormControl>
-                          <IconInput
-                            value={
-                              iconValue ||
-                              createTextIconValue(
+                  >
+                    <FormField
+                      control={form.control}
+                      name="icon"
+                      render={({ field }) => (
+                        <FormItem className="space-y-2">
+                          <FormLabel>{t('form.icon')}</FormLabel>
+                          <FormControl>
+                            <IconInput
+                              value={
+                                iconValue ||
+                                createTextIconValue(
+                                  (form.watch('name') as string)?.slice(0, 2).toUpperCase() ||
+                                    ICON_TEXT,
+                                  ICON_BG
+                                )
+                              }
+                              defaultValue={createTextIconValue(
                                 (form.watch('name') as string)?.slice(0, 2).toUpperCase() ||
                                   ICON_TEXT,
                                 ICON_BG
-                              )
-                            }
-                            defaultValue={createTextIconValue(
-                              (form.watch('name') as string)?.slice(0, 2).toUpperCase() ||
-                                ICON_TEXT,
-                              ICON_BG
-                            )}
-                            onChange={newIconValue => {
-                              setIconValue(newIconValue);
-                              if (newIconValue.type === 'text') {
-                                field.onChange(newIconValue.icon);
-                                form.setValue('icon_type', 'text');
-                                form.setValue('icon_background', newIconValue.iconBackground);
-                              } else {
-                                field.onChange(newIconValue.imageId || newIconValue.iconUrl || '');
-                                form.setValue('icon_type', 'image');
-                              }
-                            }}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                              )}
+                              onChange={newIconValue => {
+                                setIconValue(newIconValue);
+                                if (newIconValue.type === 'text') {
+                                  field.onChange(newIconValue.icon);
+                                  form.setValue('icon_type', 'text');
+                                  form.setValue('icon_background', newIconValue.iconBackground);
+                                } else {
+                                  field.onChange(
+                                    newIconValue.imageId || newIconValue.iconUrl || ''
+                                  );
+                                  form.setValue('icon_type', 'image');
+                                }
+                              }}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
                 </div>
               </div>
+
+              <div className="flex justify-center pb-2">
+                <Button
+                  type="submit"
+                  className="px-8"
+                  disabled={createMutation.isPending || !canCreateAnyType}
+                >
+                  {createMutation.isPending ? t('form.creating') : t('form.create')}
+                </Button>
+              </div>
             </DialogBody>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={handleClose}>
-                {t('form.cancel')}
-              </Button>
-              <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending ? t('form.creating') : t('form.create')}
-              </Button>
-            </DialogFooter>
           </form>
         </Form>
       </DialogContent>

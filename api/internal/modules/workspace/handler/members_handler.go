@@ -17,7 +17,6 @@ import (
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
-	helper "github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
@@ -79,6 +78,34 @@ func (h *MembersHandler) requireWorkspacePermission(
 	return true
 }
 
+func (h *MembersHandler) requireAccountInWorkspaceOrganization(c *gin.Context, workspaceID, accountID string) bool {
+	if h.enterpriseService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+
+	organization, err := h.enterpriseService.GetOrganizationByWorkspaceID(c.Request.Context(), workspaceID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+	if organization == nil {
+		return true
+	}
+
+	isMember, err := h.enterpriseService.IsOrganizationMember(c.Request.Context(), organization.ID, accountID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+	if !isMember {
+		response.Fail(c, response.ErrPermissionDenied)
+		return false
+	}
+
+	return true
+}
+
 func (h *MembersHandler) GetCurrentOrganizationMemberDetail(c *gin.Context) {
 	memberID := c.Param("member_id")
 	if memberID == "" {
@@ -99,6 +126,10 @@ func (h *MembersHandler) GetCurrentOrganizationMemberDetail(c *gin.Context) {
 	}
 	if currentWorkspaceJoin == nil {
 		response.Fail(c, response.ErrWorkspaceNotFound)
+		return
+	}
+
+	if !h.requireWorkspacePermission(c, currentWorkspaceJoin.WorkspaceID, model.WorkspacePermissionWorkspaceMemberView) {
 		return
 	}
 
@@ -139,24 +170,8 @@ func (h *MembersHandler) GetCurrentOrganizationMembers(c *gin.Context) {
 		return
 	}
 
-	organizationID := helper.GetOrganizationID(c)
-
-	if h.enterpriseService != nil {
-		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-			c.Request.Context(),
-			organizationID,
-			currentWorkspaceJoin.WorkspaceID,
-			accountID,
-			model.WorkspacePermissionWorkspaceView,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	if !h.requireWorkspacePermission(c, currentWorkspaceJoin.WorkspaceID, model.WorkspacePermissionWorkspaceMemberView) {
+		return
 	}
 
 	keyword := c.Query("keyword")
@@ -180,12 +195,17 @@ func (h *MembersHandler) GetCurrentOrganizationMembers(c *gin.Context) {
 
 func (h *MembersHandler) InviteMemberByEmail(c *gin.Context) {
 	var req struct {
-		Emails   []string `json:"emails" binding:"required"`
-		Role     string   `json:"role" binding:"required"`
-		Language string   `json:"language,omitempty"`
+		Emails      []string `json:"emails" binding:"required"`
+		Role        string   `json:"role" binding:"required"`
+		Language    string   `json:"language,omitempty"`
+		Permissions []string `json:"permissions,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if req.Permissions != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
@@ -205,6 +225,10 @@ func (h *MembersHandler) InviteMemberByEmail(c *gin.Context) {
 	currentWorkspaceJoin, err := h.workspaceManagementService.GetCurrentWorkspace(c.Request.Context(), accountID)
 	if err != nil || currentWorkspaceJoin == nil {
 		response.Fail(c, response.ErrWorkspaceNotFound)
+		return
+	}
+
+	if !h.requireWorkspacePermission(c, currentWorkspaceJoin.WorkspaceID, model.WorkspacePermissionWorkspaceMemberManage) {
 		return
 	}
 
@@ -265,6 +289,16 @@ func (h *MembersHandler) CancelMemberInvite(c *gin.Context) {
 		return
 	}
 
+	currentWorkspaceJoin, err := h.workspaceManagementService.GetCurrentWorkspace(c.Request.Context(), accountID)
+	if err != nil || currentWorkspaceJoin == nil {
+		response.Fail(c, response.ErrWorkspaceNotFound)
+		return
+	}
+
+	if !h.requireWorkspacePermission(c, currentWorkspaceJoin.WorkspaceID, model.WorkspacePermissionWorkspaceMemberManage) {
+		return
+	}
+
 	member, err := h.accountService.GetAccountByID(c.Request.Context(), memberID)
 	if err != nil || member == nil {
 		response.Fail(c, response.ErrAccountNotFound)
@@ -274,12 +308,6 @@ func (h *MembersHandler) CancelMemberInvite(c *gin.Context) {
 	operator, err := h.accountService.GetAccountByID(c.Request.Context(), accountID)
 	if err != nil || operator == nil {
 		response.Fail(c, response.ErrUnauthorized)
-		return
-	}
-
-	currentWorkspaceJoin, err := h.workspaceManagementService.GetCurrentWorkspace(c.Request.Context(), accountID)
-	if err != nil || currentWorkspaceJoin == nil {
-		response.Fail(c, response.ErrWorkspaceNotFound)
 		return
 	}
 
@@ -338,16 +366,18 @@ func (h *MembersHandler) UpdateMemberRole(c *gin.Context) {
 		return
 	}
 
-	workspaces, err := h.workspaceManagementService.GetAccountWorkspaces(c.Request.Context(), accountID)
-	if err != nil || len(workspaces) == 0 {
+	currentWorkspaceJoin, err := h.workspaceManagementService.GetCurrentWorkspace(c.Request.Context(), accountID)
+	if err != nil || currentWorkspaceJoin == nil {
 		response.Fail(c, response.ErrWorkspaceNotFound)
 		return
 	}
 
-	currentWorkspace := workspaces[0]
+	if !h.requireWorkspacePermission(c, currentWorkspaceJoin.WorkspaceID, model.WorkspacePermissionWorkspacePermissionManage) {
+		return
+	}
 
 	updateReq := &interfaces.UpdateMemberRoleRequest{
-		WorkspaceID: currentWorkspace.ID,
+		WorkspaceID: currentWorkspaceJoin.WorkspaceID,
 		AccountID:   memberID,
 		Role:        role,
 	}
@@ -370,6 +400,10 @@ func (h *MembersHandler) GetDatasetOperatorMembers(c *gin.Context) {
 	currentWorkspaceJoin, err := h.workspaceManagementService.GetCurrentWorkspace(c.Request.Context(), accountID)
 	if err != nil || currentWorkspaceJoin == nil {
 		response.Fail(c, response.ErrWorkspaceNotFound)
+		return
+	}
+
+	if !h.requireWorkspacePermission(c, currentWorkspaceJoin.WorkspaceID, model.WorkspacePermissionWorkspaceView) {
 		return
 	}
 
@@ -404,26 +438,14 @@ func (h *MembersHandler) GetWorkspaceMembers(c *gin.Context) {
 		return
 	}
 
-	var targetWorkspace *model.Workspace
-
-	isGroupAdmin, err := h.accountService.CheckOrganizationpAdminByWorkspace(c.Request.Context(), accountID, workspaceID)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
+	if !h.requireWorkspacePermission(c, workspaceID, model.WorkspacePermissionWorkspaceMemberView) {
 		return
 	}
 
-	if isGroupAdmin {
-		targetWorkspace, err = h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-	} else {
-		targetWorkspace, err = h.accountService.GetCurrentWorkspace(c.Request.Context(), accountID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
+	targetWorkspace, err := h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
 	}
 
 	if targetWorkspace == nil {
@@ -451,22 +473,25 @@ func (h *MembersHandler) GetWorkspaceMembers(c *gin.Context) {
 }
 
 type MemberExtensionFlat struct {
-	ID               string      `json:"id"`
-	Name             string      `json:"name"`
-	Avatar           *string     `json:"avatar"`
-	AvatarURL        *string     `json:"avatar_url"`
-	Email            string      `json:"email"`
-	Mobile           string      `json:"mobile"`
-	LastLoginAt      *int64      `json:"last_login_at"`
-	LastActiveAt     *int64      `json:"last_active_at"`
-	CreatedAt        int64       `json:"created_at"`
-	Role             string      `json:"role"`
-	Status           string      `json:"status"`
-	OrganizationRole string      `json:"organization_role"`
-	AccountRole      interface{} `json:"account_role"`
-	Extension        interface{} `json:"extension"`
-	Position         *string     `json:"position"`
-	Permissions      []string    `json:"permissions"`
+	ID                       string                                `json:"id"`
+	Name                     string                                `json:"name"`
+	Avatar                   *string                               `json:"avatar"`
+	AvatarURL                *string                               `json:"avatar_url"`
+	Email                    string                                `json:"email"`
+	Mobile                   string                                `json:"mobile"`
+	LastLoginAt              *int64                                `json:"last_login_at"`
+	LastActiveAt             *int64                                `json:"last_active_at"`
+	CreatedAt                int64                                 `json:"created_at"`
+	Role                     string                                `json:"role"`
+	RoleID                   *string                               `json:"role_id,omitempty"`
+	Status                   string                                `json:"status"`
+	OrganizationRole         string                                `json:"organization_role"`
+	AccountRole              interface{}                           `json:"account_role"`
+	Extension                interface{}                           `json:"extension"`
+	Position                 *string                               `json:"position"`
+	Permissions              []string                              `json:"permissions"`
+	PermissionSource         model.WorkspaceMemberPermissionSource `json:"permission_source"`
+	PermissionTemplateRoleID *string                               `json:"permission_template_role_id,omitempty"`
 }
 
 func flattenMemberExtension(m *interfaces.WorkspaceMemberWithExtensionResponse) *MemberExtensionFlat {
@@ -504,21 +529,24 @@ func flattenMemberExtension(m *interfaces.WorkspaceMemberWithExtensionResponse) 
 		permissions = []string{}
 	}
 	return &MemberExtensionFlat{
-		ID:               acc.ID,
-		Name:             acc.Name,
-		Avatar:           avatar,
-		AvatarURL:        avatarURL,
-		Email:            acc.Email,
-		LastLoginAt:      lastLoginAt,
-		LastActiveAt:     lastActiveAt,
-		CreatedAt:        acc.CreatedAt.Unix(),
-		Role:             string(m.Role),
-		Status:           string(acc.Status),
-		OrganizationRole: m.OrganizationRole,
-		AccountRole:      accountRole,
-		Extension:        extension,
-		Position:         position,
-		Permissions:      permissions,
+		ID:                       acc.ID,
+		Name:                     acc.Name,
+		Avatar:                   avatar,
+		AvatarURL:                avatarURL,
+		Email:                    acc.Email,
+		LastLoginAt:              lastLoginAt,
+		LastActiveAt:             lastActiveAt,
+		CreatedAt:                acc.CreatedAt.Unix(),
+		Role:                     string(m.Role),
+		RoleID:                   m.RoleID,
+		Status:                   string(acc.Status),
+		OrganizationRole:         m.OrganizationRole,
+		AccountRole:              accountRole,
+		Extension:                extension,
+		Position:                 position,
+		Permissions:              permissions,
+		PermissionSource:         m.PermissionSource,
+		PermissionTemplateRoleID: m.PermissionTemplateRoleID,
 	}
 }
 
@@ -529,30 +557,8 @@ func (h *MembersHandler) GetWorkspaceMembersExtension(c *gin.Context) {
 		return
 	}
 
-	accountID := c.GetString("account_id")
-	if accountID == "" {
-		response.Fail(c, response.ErrUnauthorized)
+	if !h.requireWorkspacePermission(c, workspaceID, model.WorkspacePermissionWorkspaceMemberView) {
 		return
-	}
-
-	organizationID := helper.GetOrganizationID(c)
-
-	if h.enterpriseService != nil {
-		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-			c.Request.Context(),
-			organizationID,
-			workspaceID,
-			accountID,
-			model.WorkspacePermissionWorkspaceView,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
 	}
 
 	members, err := h.workspaceManagementService.GetWorkspaceMembersWithExtensions(c.Request.Context(), workspaceID)
@@ -611,26 +617,14 @@ func (h *MembersHandler) GetWorkspaceMemberExtensionDetail(c *gin.Context) {
 		return
 	}
 
-	var targetWorkspace *model.Workspace
-
-	isGroupAdmin, err := h.accountService.CheckOrganizationpAdminByWorkspace(c.Request.Context(), accountID, workspaceID)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
+	if !h.requireWorkspacePermission(c, workspaceID, model.WorkspacePermissionWorkspaceMemberView) {
 		return
 	}
 
-	if isGroupAdmin {
-		targetWorkspace, err = h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-	} else {
-		targetWorkspace, err = h.accountService.GetCurrentWorkspace(c.Request.Context(), accountID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
+	targetWorkspace, err := h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
 	}
 
 	if targetWorkspace == nil {
@@ -698,22 +692,18 @@ func (h *MembersHandler) UpdateWorkspaceMemberExtensionDetail(c *gin.Context) {
 		return
 	}
 
-	var targetWorkspace *model.Workspace
-	isGroupAdmin, _ := h.accountService.CheckOrganizationpAdminByWorkspace(c.Request.Context(), accountUser.ID, workspaceID)
+	requiredPermission := model.WorkspacePermissionWorkspaceMemberManage
+	if req.Role != nil || req.Permissions != nil {
+		requiredPermission = model.WorkspacePermissionWorkspacePermissionManage
+	}
+	if !h.requireWorkspacePermission(c, workspaceID, requiredPermission) {
+		return
+	}
 
-	if isGroupAdmin {
-		targetWorkspace, err = h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
-		if err != nil {
-			response.Fail(c, response.ErrWorkspaceNotFound)
-			return
-		}
-	} else {
-		accountUser.CurrentTenantID = workspaceID
-		targetWorkspace, err = h.accountService.GetCurrentWorkspace(c.Request.Context(), accountUser.ID)
-		if err != nil || targetWorkspace == nil {
-			response.Fail(c, response.ErrWorkspaceNotFound)
-			return
-		}
+	targetWorkspace, err := h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
+	if err != nil || targetWorkspace == nil {
+		response.Fail(c, response.ErrWorkspaceNotFound)
+		return
 	}
 
 	member, err := h.workspaceManagementService.GetWorkspaceMemberWithExtensionsById(c.Request.Context(), targetWorkspace.ID, memberID)
@@ -855,12 +845,17 @@ func (h *MembersHandler) InviteWorkspaceMemberByEmail(c *gin.Context) {
 	}
 
 	var req struct {
-		Emails   []string `json:"emails" binding:"required"`
-		Role     string   `json:"role" binding:"required"`
-		Language string   `json:"language,omitempty"`
+		Emails      []string `json:"emails" binding:"required"`
+		Role        string   `json:"role" binding:"required"`
+		Language    string   `json:"language,omitempty"`
+		Permissions []string `json:"permissions,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if req.Permissions != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
@@ -884,26 +879,14 @@ func (h *MembersHandler) InviteWorkspaceMemberByEmail(c *gin.Context) {
 		return
 	}
 
-	var targetWorkspace *model.Workspace
-
-	isGroupAdmin, err := h.accountService.CheckOrganizationpAdminByWorkspace(c.Request.Context(), accountID, workspaceID)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
+	if !h.requireWorkspacePermission(c, workspaceID, model.WorkspacePermissionWorkspaceMemberManage) {
 		return
 	}
 
-	if isGroupAdmin {
-		targetWorkspace, err = h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-	} else {
-		targetWorkspace, err = h.accountService.GetCurrentWorkspace(c.Request.Context(), accountID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
+	targetWorkspace, err := h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return
 	}
 
 	if targetWorkspace == nil {
@@ -980,6 +963,10 @@ func (h *MembersHandler) InviteWorkspaceMemberByEmailEx(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+	if req.Permissions != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
 
 	accountID := c.GetString("account_id")
 	if accountID == "" {
@@ -987,24 +974,18 @@ func (h *MembersHandler) InviteWorkspaceMemberByEmailEx(c *gin.Context) {
 		return
 	}
 
-	permissions := req.Permissions
-	if permissions == nil {
-		permissions = []string{}
-	}
-
 	if req.Role == "" {
 		req.Role = "admin"
+	}
+	role := model.WorkspaceMemberRole(req.Role)
+	if !role.IsNonOwnerRole() {
+		response.Fail(c, response.ErrInvalidRole)
+		return
 	}
 
 	var sendEmail = true
 	if req.SendEmail != nil {
 		sendEmail = *req.SendEmail
-	}
-
-	isOrganizationAdmin, err := h.accountService.CheckOrganizationpAdminByWorkspace(c.Request.Context(), accountID, workspaceID)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
-		return
 	}
 
 	if req.Gender != "" {
@@ -1020,34 +1001,15 @@ func (h *MembersHandler) InviteWorkspaceMemberByEmailEx(c *gin.Context) {
 		return
 	}
 
-	var targetWorkspace *model.Workspace
-	if isOrganizationAdmin {
-		targetWorkspace, err = h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
-		if err != nil {
-			response.Fail(c, response.ErrWorkspaceNotFound)
-			return
-		}
-	} else {
-		// Check if user has admin or owner role in workspace
-		isAdminOrOwner, err := middleware.CheckAdminOrOwnerRole(c.Request.Context(), h.workspaceManagementService, accountID, workspaceID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		isEnterpriseAdminOrOwner := middleware.IsOrganizationAdminOrOwner(c)
-
-		if !isAdminOrOwner && !isEnterpriseAdminOrOwner {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
-
-		targetWorkspace, err = h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
-		if err != nil {
-			response.Fail(c, response.ErrWorkspaceNotFound)
-			return
-		}
+	if !h.requireWorkspacePermission(c, workspaceID, model.WorkspacePermissionWorkspaceMemberManage) {
+		return
 	}
 
+	targetWorkspace, err := h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
+	if err != nil {
+		response.Fail(c, response.ErrWorkspaceNotFound)
+		return
+	}
 	if targetWorkspace == nil {
 		response.Fail(c, response.ErrWorkspaceNotFound)
 		return
@@ -1065,7 +1027,7 @@ func (h *MembersHandler) InviteWorkspaceMemberByEmailEx(c *gin.Context) {
 		workspaceID,
 		accountID,
 		req.Email,
-		model.WorkspaceMemberRole(req.Role),
+		role,
 		language,
 		req.Name,
 		req.Mobile,
@@ -1132,6 +1094,10 @@ func (h *MembersHandler) InviteWorkspaceMemberByAccountId(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+	if req.Permissions != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
 
 	if req.Role == "" {
 		req.Role = "admin"
@@ -1157,40 +1123,20 @@ func (h *MembersHandler) InviteWorkspaceMemberByAccountId(c *gin.Context) {
 		return
 	}
 
-	var targetWorkspace *model.Workspace
-	isGroupAdmin, err := h.accountService.CheckOrganizationpAdminByWorkspace(c.Request.Context(), inviterID, workspaceID)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
+	if !h.requireWorkspacePermission(c, workspaceID, model.WorkspacePermissionWorkspaceMemberManage) {
 		return
 	}
-	if isGroupAdmin {
-		targetWorkspace, err = h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
-		if err != nil {
-			response.Fail(c, response.ErrWorkspaceNotFound)
-			return
-		}
-	} else {
-		// Check if user has admin or owner role in workspace
-		isAdminOrOwner, err := middleware.CheckAdminOrOwnerRole(c.Request.Context(), h.workspaceManagementService, inviterID, workspaceID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
 
-		if !isAdminOrOwner {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
-
-		targetWorkspace, err = h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
-		if err != nil {
-			response.Fail(c, response.ErrWorkspaceNotFound)
-			return
-		}
+	targetWorkspace, err := h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
+	if err != nil {
+		response.Fail(c, response.ErrWorkspaceNotFound)
+		return
 	}
-
 	if targetWorkspace == nil {
 		response.Fail(c, response.ErrWorkspaceNotFound)
+		return
+	}
+	if !h.requireAccountInWorkspaceOrganization(c, workspaceID, req.AccountID) {
 		return
 	}
 
@@ -1253,6 +1199,10 @@ func (h *MembersHandler) BatchInviteWorkspaceMembers(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+	if req.Permissions != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
 
 	if req.Role == "" {
 		req.Role = string(model.WorkspaceRoleNormal)
@@ -1278,40 +1228,23 @@ func (h *MembersHandler) BatchInviteWorkspaceMembers(c *gin.Context) {
 		return
 	}
 
-	var targetWorkspace *model.Workspace
-	isGroupAdmin, err := h.accountService.CheckOrganizationpAdminByWorkspace(c.Request.Context(), inviterID, workspaceID)
-	if err != nil {
-		response.Fail(c, response.ErrSystemError)
+	if !h.requireWorkspacePermission(c, workspaceID, model.WorkspacePermissionWorkspaceMemberManage) {
 		return
 	}
-	if isGroupAdmin {
-		targetWorkspace, err = h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
-		if err != nil {
-			response.Fail(c, response.ErrWorkspaceNotFound)
-			return
-		}
-	} else {
-		// Check if user has admin or owner role in workspace
-		isAdminOrOwner, err := middleware.CheckAdminOrOwnerRole(c.Request.Context(), h.workspaceManagementService, inviterID, workspaceID)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
 
-		if !isAdminOrOwner {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
-
-		targetWorkspace, err = h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
-		if err != nil {
-			response.Fail(c, response.ErrWorkspaceNotFound)
-			return
-		}
+	targetWorkspace, err := h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
+	if err != nil {
+		response.Fail(c, response.ErrWorkspaceNotFound)
+		return
 	}
-
 	if targetWorkspace == nil {
 		response.Fail(c, response.ErrWorkspaceNotFound)
+		return
+	}
+
+	targetOrganization, err := h.enterpriseService.GetOrganizationByWorkspaceID(c.Request.Context(), workspaceID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
 		return
 	}
 
@@ -1320,11 +1253,27 @@ func (h *MembersHandler) BatchInviteWorkspaceMembers(c *gin.Context) {
 	for _, accountID := range req.AccountIDs {
 		result := make(map[string]interface{})
 		result["account_id"] = accountID
-		if isGroupAdmin && inviterID == accountID {
+		if inviterID == accountID {
 			result["status"] = "failed"
-			result["message"] = "\"organization admin\" cannot invite themselves to the workspace"
+			result["message"] = "cannot invite yourself to the workspace"
 			results = append(results, result)
 			continue
+		}
+
+		if targetOrganization != nil {
+			isOrganizationMember, err := h.enterpriseService.IsOrganizationMember(c.Request.Context(), targetOrganization.ID, accountID)
+			if err != nil {
+				result["status"] = "failed"
+				result["message"] = "Failed to check organization membership"
+				results = append(results, result)
+				continue
+			}
+			if !isOrganizationMember {
+				result["status"] = "failed"
+				result["message"] = "Account is not a member of the workspace organization"
+				results = append(results, result)
+				continue
+			}
 		}
 
 		targetAccount, err := h.accountService.GetAccountByID(c.Request.Context(), accountID)
@@ -1392,36 +1341,20 @@ func (h *MembersHandler) CancelWorkspaceMemberInvite(c *gin.Context) {
 		return
 	}
 
-	member, err := h.accountService.GetAccountByID(c.Request.Context(), memberID)
-	if err != nil || member == nil {
-		response.Fail(c, response.ErrMemberNotFound)
-		return
-	}
-
 	accountID := c.GetString("account_id")
 	if accountID == "" {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
 
-	organizationID := helper.GetOrganizationID(c)
+	if !h.requireWorkspacePermission(c, workspaceID, model.WorkspacePermissionWorkspaceMemberManage) {
+		return
+	}
 
-	if h.enterpriseService != nil {
-		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-			c.Request.Context(),
-			organizationID,
-			workspaceID,
-			accountID,
-			model.WorkspacePermissionWorkspaceManage,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
+	member, err := h.accountService.GetAccountByID(c.Request.Context(), memberID)
+	if err != nil || member == nil {
+		response.Fail(c, response.ErrMemberNotFound)
+		return
 	}
 
 	currentUser, err := h.accountService.GetAccountByID(c.Request.Context(), accountID)
@@ -1430,28 +1363,14 @@ func (h *MembersHandler) CancelWorkspaceMemberInvite(c *gin.Context) {
 		return
 	}
 
-	var targetWorkspace *model.Workspace
+	if !h.requireWorkspacePermission(c, workspaceID, model.WorkspacePermissionWorkspaceMemberManage) {
+		return
+	}
 
-	isGroupAdmin := h.isGroupAdminByWorkspace(currentUser, workspaceID)
-
-	if isGroupAdmin {
-		targetWorkspace, err = h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
-		if err != nil || targetWorkspace == nil {
-			response.Fail(c, response.ErrWorkspaceNotFound)
-			return
-		}
-	} else {
-		currentWorkspaceJoin, err := h.workspaceManagementService.GetCurrentWorkspace(c.Request.Context(), accountID)
-		if err != nil || currentWorkspaceJoin == nil || currentWorkspaceJoin.WorkspaceID != workspaceID {
-			response.Fail(c, response.ErrWorkspaceNotFound)
-			return
-		}
-
-		targetWorkspace, err = h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
-		if err != nil || targetWorkspace == nil {
-			response.Fail(c, response.ErrWorkspaceNotFound)
-			return
-		}
+	targetWorkspace, err := h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
+	if err != nil || targetWorkspace == nil {
+		response.Fail(c, response.ErrWorkspaceNotFound)
+		return
 	}
 
 	err = h.workspaceManagementService.RemoveMemberFromWorkspace(c.Request.Context(), targetWorkspace, member, currentUser)
@@ -1477,26 +1396,25 @@ func (h *MembersHandler) CancelWorkspaceMemberInvite(c *gin.Context) {
 	})
 }
 
-func (h *MembersHandler) isGroupAdminByWorkspace(user *auth_model.Account, workspaceID string) bool {
-	accountID := user.ID
-	isGroupAdmin, err := h.accountService.CheckOrganizationpAdminByWorkspace(context.Background(), accountID, workspaceID)
-	if err != nil {
-		return false
-	}
-	return isGroupAdmin
-}
-
 func isCannotOperateSelfError(err error) bool {
 	_, ok := err.(*usererrors.CannotOperateSelfError)
 	return ok
 }
 
 func isNoPermissionError(err error) bool {
-	return errors.Is(err, usererrors.ErrNoPermission)
+	if errors.Is(err, usererrors.ErrNoPermission) {
+		return true
+	}
+	_, ok := err.(*usererrors.NoPermissionError)
+	return ok
 }
 
 func isMemberNotInWorkspaceError(err error) bool {
-	return errors.Is(err, usererrors.ErrMemberNotInWorkspace)
+	if errors.Is(err, usererrors.ErrMemberNotInWorkspace) {
+		return true
+	}
+	_, ok := err.(*usererrors.MemberNotInWorkspaceError)
+	return ok
 }
 
 func (h *MembersHandler) UpdateWorkspaceMemberRole(c *gin.Context) {
@@ -1542,28 +1460,14 @@ func (h *MembersHandler) UpdateWorkspaceMemberRole(c *gin.Context) {
 		return
 	}
 
-	var targetWorkspace *model.Workspace
+	if !h.requireWorkspacePermission(c, workspaceID, model.WorkspacePermissionWorkspacePermissionManage) {
+		return
+	}
 
-	isGroupAdmin := h.isGroupAdminByWorkspace(currentUser, workspaceID)
-
-	if isGroupAdmin {
-		targetWorkspace, err = h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
-		if err != nil || targetWorkspace == nil {
-			response.Fail(c, response.ErrWorkspaceNotFound)
-			return
-		}
-	} else {
-		currentWorkspaceJoin, err := h.workspaceManagementService.GetCurrentWorkspace(c.Request.Context(), accountID)
-		if err != nil || currentWorkspaceJoin == nil || currentWorkspaceJoin.WorkspaceID != workspaceID {
-			response.Fail(c, response.ErrWorkspaceNotFound)
-			return
-		}
-
-		targetWorkspace, err = h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
-		if err != nil || targetWorkspace == nil {
-			response.Fail(c, response.ErrWorkspaceNotFound)
-			return
-		}
+	targetWorkspace, err := h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
+	if err != nil || targetWorkspace == nil {
+		response.Fail(c, response.ErrWorkspaceNotFound)
+		return
 	}
 
 	err = h.workspaceManagementService.UpdateMemberRoleWithPermissionCheck(c.Request.Context(), targetWorkspace, member, newRole, currentUser)
@@ -1619,8 +1523,6 @@ func (h *MembersHandler) UpdateWorkspaceMemberExtension(c *gin.Context) {
 	var newPermissions []string
 	if req.Permissions != nil {
 		newPermissions = req.Permissions
-	} else {
-		newPermissions = []string{}
 	}
 
 	member, err := h.accountService.GetAccountByID(c.Request.Context(), memberID)
@@ -1641,28 +1543,18 @@ func (h *MembersHandler) UpdateWorkspaceMemberExtension(c *gin.Context) {
 		return
 	}
 
-	var targetWorkspace *model.Workspace
+	requiredPermission := model.WorkspacePermissionWorkspaceMemberManage
+	if req.Role != nil || req.Permissions != nil {
+		requiredPermission = model.WorkspacePermissionWorkspacePermissionManage
+	}
+	if !h.requireWorkspacePermission(c, workspaceID, requiredPermission) {
+		return
+	}
 
-	isGroupAdmin := h.isGroupAdminByWorkspace(currentUser, workspaceID)
-
-	if isGroupAdmin {
-		targetWorkspace, err = h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
-		if err != nil || targetWorkspace == nil {
-			response.Fail(c, response.ErrWorkspaceNotFound)
-			return
-		}
-	} else {
-		currentWorkspaceJoin, err := h.workspaceManagementService.GetCurrentWorkspace(c.Request.Context(), accountID)
-		if err != nil || currentWorkspaceJoin == nil || currentWorkspaceJoin.WorkspaceID != workspaceID {
-			response.Fail(c, response.ErrWorkspaceNotFound)
-			return
-		}
-
-		targetWorkspace, err = h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
-		if err != nil || targetWorkspace == nil {
-			response.Fail(c, response.ErrWorkspaceNotFound)
-			return
-		}
+	targetWorkspace, err := h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
+	if err != nil || targetWorkspace == nil {
+		response.Fail(c, response.ErrWorkspaceNotFound)
+		return
 	}
 
 	err = h.workspaceManagementService.UpdateMemberRoleExtensions(
@@ -1736,7 +1628,7 @@ func (h *MembersHandler) GetWorkspaceNonMembers(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	if !h.requireWorkspacePermission(c, workspaceID, model.WorkspacePermissionWorkspaceManage) {
+	if !h.requireWorkspacePermission(c, workspaceID, model.WorkspacePermissionWorkspaceMemberManage) {
 		return
 	}
 
@@ -2004,6 +1896,10 @@ func (h *MembersHandler) InviteDefaultMemberByEmailEx(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+	if req.Permissions != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
 
 	accountID := c.GetString("account_id")
 	if accountID == "" {
@@ -2029,6 +1925,10 @@ func (h *MembersHandler) InviteDefaultMemberByEmailEx(c *gin.Context) {
 	}
 
 	workspaceID := currentWorkspaceJoin.WorkspaceID
+	if !h.requireWorkspacePermission(c, workspaceID, model.WorkspacePermissionWorkspaceMemberManage) {
+		return
+	}
+
 	workspace, err := h.workspaceManagementService.GetWorkspaceByID(c.Request.Context(), workspaceID)
 	if err != nil || workspace == nil {
 		response.Fail(c, response.ErrWorkspaceNotFound)

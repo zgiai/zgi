@@ -23,7 +23,7 @@ const messages: AutomationMessages = {
     description: '定时任务总是在某个工作空间内运行。请选择一个工作空间后继续。',
     switchWorkspace: '切换工作空间',
     noWorkspaces: '你还没有加入任何工作空间。',
-    personalSpace: '组织视图',
+    personalSpace: '个人工作台',
   },
   aiDraft: {
     title: '用一句话生成草稿',

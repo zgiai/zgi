@@ -8,7 +8,7 @@ import { useT } from '@/i18n';
 import { UserMenu } from './user-menu';
 import { Logo } from '../logo';
 import { Button } from '@/components/ui/button';
-import { useCurrentWorkspace } from '@/store/workspace-store';
+import { useCurrentWorkspace, useWorkspaceContextStatus } from '@/store/workspace-store';
 import { useOrganizationStore } from '@/store/organization-store';
 import { cn } from '@/lib/utils';
 import { ContextualAIChatLauncher } from '@/components/aichat/contextual';
@@ -31,6 +31,7 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
   const tNav = useT('navigation');
   const tDash = useT('dashboard');
   const currentWorkspace = useCurrentWorkspace();
+  const contextStatus = useWorkspaceContextStatus();
   const currentOrganization = useOrganizationStore.use.currentOrganization();
   const datasetReturnTo = getDatasetReturnTo(searchParams.get('returnTo'));
   const effectivePathname = datasetReturnTo ? '/console/dataset' : pathname;
@@ -38,7 +39,8 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
 
   const pageTitle = useMemo(() => {
     const routeTitles: Array<{ match: (path: string) => boolean; title: string }> = [
-      { match: path => path === '/console', title: tNav('home') },
+      { match: path => path === '/console', title: tNav('personalSpace') },
+      { match: path => path.startsWith('/console/workflows'), title: tNav('workflows') },
       { match: path => path.startsWith('/console/agents'), title: tNav('agents') },
       { match: path => path.startsWith('/console/dataset'), title: tNav('datasets') },
       { match: path => path.startsWith('/console/files'), title: tNav('files') },
@@ -114,12 +116,18 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
     );
   }, [effectivePathname, isDashboardRoute, tDash, tNav]);
 
-  const workspaceLabel = currentWorkspace?.name || tNav('switchWorkspace');
   const sectionLabel = isDashboardRoute ? tNav('dashboard') : tNav('console');
-  const contextLabel = isDashboardRoute ? currentOrganization?.name || null : workspaceLabel;
+  const workspaceContextLabel =
+    currentWorkspace?.name ||
+    (contextStatus === 'workspace_required' ? tNav('personalSpace') : null);
+  const contextLabel = isDashboardRoute
+    ? currentOrganization?.name || null
+    : workspaceContextLabel;
   const contextPrefix = isDashboardRoute
     ? tNav('organizations')
-    : `${tNav('current')} ${tNav('workspace')}`;
+    : currentWorkspace
+      ? `${tNav('current')} ${tNav('workspace')}`
+      : tNav('current');
 
   if (hidden) {
     return null;

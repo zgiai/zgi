@@ -15,7 +15,12 @@ func RegisterTenantModelRoutes(r *gin.RouterGroup, handler *ModelHandler, availa
 	// Available models API (must come before /:id to avoid route conflict)
 	if availableHandler != nil {
 		g.GET("/available", availableHandler.ListAvailable)
-		g.POST("/available/refresh", availableHandler.RefreshCache)
+	}
+
+	admin := g.Group("")
+	admin.Use(middleware.EnterpriseAdminOrOwnerRequired())
+	if availableHandler != nil {
+		admin.POST("/available/refresh", availableHandler.RefreshCache)
 	}
 
 	g.GET("/configs", handler.ListModelConfigs)
@@ -29,8 +34,6 @@ func RegisterTenantModelRoutes(r *gin.RouterGroup, handler *ModelHandler, availa
 	g.GET("/:id/availability", handler.CheckAvailability)
 	g.POST("/availability/batch", handler.BatchCheckAvailability)
 
-	admin := g.Group("")
-	admin.Use(middleware.EnterpriseAdminOrOwnerRequired())
 	admin.POST("/custom", handler.CreateCustom)
 	admin.POST("/config", handler.ConfigureModel)
 	admin.POST("/provider/toggle", handler.ToggleProviderModels)

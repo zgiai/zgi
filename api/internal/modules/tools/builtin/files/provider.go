@@ -1100,7 +1100,7 @@ func fileScopeFromRuntime(runtime *tools.ToolRuntime, tenantID string, userID st
 }
 
 func (t *readFileTool) ensureFileReadable(ctx context.Context, scope fileScope, file *dto.UploadFile) error {
-	return ensureScopedFilePermission(ctx, scope, file, t.workspacePerms, workspacemodel.WorkspacePermissionFileDownload)
+	return ensureScopedFilePermission(ctx, scope, file, t.workspacePerms, workspacemodel.WorkspacePermissionFilePreview)
 }
 
 func ensureScopedFilePermission(ctx context.Context, scope fileScope, file *dto.UploadFile, workspacePerms WorkspacePermissionService, permission workspacemodel.WorkspacePermissionCode) error {

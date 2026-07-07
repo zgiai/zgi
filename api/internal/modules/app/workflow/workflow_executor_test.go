@@ -8,8 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	appconfig "github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/shared"
 	llmClient "github.com/zgiai/zgi/api/internal/modules/llm/client"
@@ -216,6 +218,181 @@ func TestCreateVariablePoolWithVars_PreservesOrganizationID(t *testing.T) {
 	if variablePool.SystemVariables.OrganizationID != "org-1" {
 		t.Fatalf("organizationID = %q, want %q", variablePool.SystemVariables.OrganizationID, "org-1")
 	}
+}
+
+func TestCreateVariablePoolWithVarsForRunRejectsUnauthorizedConversationBeforeVariableLoad(t *testing.T) {
+	conversationID := uuid.New()
+	agentID := uuid.New()
+	accountID := uuid.New()
+	otherAccountID := uuid.New()
+	accessService := &workflowExecutorConversationAccessService{
+		conversation: &conversation.AgentConversation{
+			ID:            conversationID,
+			AgentID:       agentID,
+			FromAccountID: &otherAccountID,
+		},
+	}
+	variableService := &workflowExecutorConversationVariableService{
+		variables: map[string]interface{}{"profile": "should-not-load"},
+	}
+	executor := &WorkflowExecutor{
+		conversationAccessService: accessService,
+		variableService:           variableService,
+	}
+
+	pool, err := executor.createVariablePoolWithVarsForRun(context.Background(),
+		map[string]any{
+			"sys.agent_id":        agentID.String(),
+			"sys.user_id":         accountID.String(),
+			"sys.conversation_id": conversationID.String(),
+		},
+		nil,
+		workflowExecutorConversationVariablesTestConfig(),
+	)
+
+	if !errors.Is(err, errWebAppConversationAccessDenied) {
+		t.Fatalf("createVariablePoolWithVarsForRun() error = %v, want %v", err, errWebAppConversationAccessDenied)
+	}
+	if pool != nil {
+		t.Fatalf("createVariablePoolWithVarsForRun() pool = %#v, want nil", pool)
+	}
+	if !accessService.called {
+		t.Fatalf("conversation access check was not called")
+	}
+	if variableService.loadCalled {
+		t.Fatalf("conversation variables were loaded before caller scope was accepted")
+	}
+}
+
+func TestCreateVariablePoolWithVarsForRunLoadsConversationVariablesAfterAccessCheck(t *testing.T) {
+	conversationID := uuid.New()
+	agentID := uuid.New()
+	accountID := uuid.New()
+	accessService := &workflowExecutorConversationAccessService{
+		conversation: &conversation.AgentConversation{
+			ID:            conversationID,
+			AgentID:       agentID,
+			FromAccountID: &accountID,
+		},
+	}
+	variableService := &workflowExecutorConversationVariableService{
+		variables: map[string]interface{}{"profile": "persisted-profile"},
+	}
+	executor := &WorkflowExecutor{
+		conversationAccessService: accessService,
+		variableService:           variableService,
+	}
+
+	pool, err := executor.createVariablePoolWithVarsForRun(context.Background(),
+		map[string]any{
+			"sys.agent_id":        agentID.String(),
+			"sys.user_id":         accountID.String(),
+			"sys.conversation_id": conversationID.String(),
+		},
+		nil,
+		workflowExecutorConversationVariablesTestConfig(),
+	)
+
+	if err != nil {
+		t.Fatalf("createVariablePoolWithVarsForRun() error = %v", err)
+	}
+	if !accessService.called {
+		t.Fatalf("conversation access check was not called")
+	}
+	if !variableService.loadCalled {
+		t.Fatalf("conversation variables were not loaded after caller scope was accepted")
+	}
+	variable := pool.Get([]string{entities.ConversationVariableNodeId, "profile"})
+	if variable == nil {
+		t.Fatalf("conversation profile variable missing")
+	}
+	if got := variable.ToObject(); got != "persisted-profile" {
+		t.Fatalf("conversation profile variable = %#v, want %#v", got, "persisted-profile")
+	}
+}
+
+func TestCreateVariablePoolWithVarsForRunFallsBackToDefaultWhenVariableLoadFails(t *testing.T) {
+	conversationID := uuid.New()
+	agentID := uuid.New()
+	accountID := uuid.New()
+	accessService := &workflowExecutorConversationAccessService{
+		conversation: &conversation.AgentConversation{
+			ID:            conversationID,
+			AgentID:       agentID,
+			FromAccountID: &accountID,
+		},
+	}
+	variableService := &workflowExecutorConversationVariableService{loadErr: errors.New("database unavailable")}
+	executor := &WorkflowExecutor{
+		conversationAccessService: accessService,
+		variableService:           variableService,
+	}
+
+	pool, err := executor.createVariablePoolWithVarsForRun(context.Background(),
+		map[string]any{
+			"sys.agent_id":        agentID.String(),
+			"sys.user_id":         accountID.String(),
+			"sys.conversation_id": conversationID.String(),
+		},
+		nil,
+		workflowExecutorConversationVariablesTestConfig(),
+	)
+
+	if err != nil {
+		t.Fatalf("createVariablePoolWithVarsForRun() error = %v", err)
+	}
+	if !accessService.called {
+		t.Fatalf("conversation access check was not called")
+	}
+	if !variableService.loadCalled {
+		t.Fatalf("conversation variables were not loaded after caller scope was accepted")
+	}
+	variable := pool.Get([]string{entities.ConversationVariableNodeId, "profile"})
+	if variable == nil {
+		t.Fatalf("conversation profile variable missing")
+	}
+	if got := variable.ToObject(); got != "default-profile" {
+		t.Fatalf("conversation profile variable = %#v, want %#v", got, "default-profile")
+	}
+}
+
+func workflowExecutorConversationVariablesTestConfig() []map[string]any {
+	return []map[string]any{
+		{
+			"name":  "profile",
+			"type":  "string",
+			"value": "default-profile",
+		},
+	}
+}
+
+type workflowExecutorConversationAccessService struct {
+	conversation *conversation.AgentConversation
+	called       bool
+}
+
+func (s *workflowExecutorConversationAccessService) GetConversationByIDAndAgent(_ context.Context, conversationID, agentID uuid.UUID) (*conversation.AgentConversation, error) {
+	s.called = true
+	if s.conversation == nil || s.conversation.ID != conversationID || s.conversation.AgentID != agentID {
+		return nil, errors.New("conversation not found")
+	}
+	return s.conversation, nil
+}
+
+type workflowExecutorConversationVariableService struct {
+	conversation.WorkflowConversationVariableService
+
+	variables  map[string]interface{}
+	loadErr    error
+	loadCalled bool
+}
+
+func (s *workflowExecutorConversationVariableService) LoadConversationVariables(_ context.Context, _ uuid.UUID) (map[string]interface{}, error) {
+	s.loadCalled = true
+	if s.loadErr != nil {
+		return nil, s.loadErr
+	}
+	return s.variables, nil
 }
 
 func TestExecuteWorkflowNodeWithCallbacks_VisionOnlyImageInputReachesGateway(t *testing.T) {

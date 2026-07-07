@@ -8,6 +8,7 @@ import WorkflowRunsDropdown from '../../workflow-runs-dropdown';
 interface PanelHeaderProps {
   agentId: string;
   query: { triggered_from: 'debugging' };
+  canViewRuntimeLogs: boolean;
   onSelectDebugRun: (runId: string) => void;
   onReset: () => void;
   onClose: () => void;
@@ -16,6 +17,7 @@ interface PanelHeaderProps {
 export function PanelHeader({
   agentId,
   query,
+  canViewRuntimeLogs,
   onSelectDebugRun,
   onReset,
   onClose,
@@ -26,19 +28,21 @@ export function PanelHeader({
     <div className="flex items-center justify-between border-b border-border/50 px-3 py-2">
       <div className="font-medium">{t('agents.workflow.debugTitle')}</div>
       <div className="flex items-center gap-2">
-        <WorkflowRunsDropdown
-          agentId={agentId}
-          query={query}
-          icon={<History size={14} />}
-          tooltipLabel={t('agents.workflow.debugRuns')}
-          dropdownLabel={t('agents.workflow.debugRuns')}
-          triggerText={t('agents.workflow.debugRuns')}
-          triggerVariant="outline"
-          triggerSize="xs"
-          triggerClassName="h-7"
-          refreshOnOpen
-          onSelect={onSelectDebugRun}
-        />
+        {canViewRuntimeLogs ? (
+          <WorkflowRunsDropdown
+            agentId={agentId}
+            query={query}
+            icon={<History size={14} />}
+            tooltipLabel={t('agents.workflow.debugRuns')}
+            dropdownLabel={t('agents.workflow.debugRuns')}
+            triggerText={t('agents.workflow.debugRuns')}
+            triggerVariant="outline"
+            triggerSize="xs"
+            triggerClassName="h-7"
+            refreshOnOpen
+            onSelect={onSelectDebugRun}
+          />
+        ) : null}
         <Button variant="ghost" isIcon onClick={onReset} aria-label={t('common.reset')}>
           <RotateCcw size={16} className="text-primary" />
         </Button>

@@ -447,7 +447,7 @@ func (s *service) trustedContextualAIChatSkillCapabilities(ctx context.Context, 
 		return capabilities
 	}
 	if hasConsoleFilesReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
-		capabilities.FileRead = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionFileDownload)
+		capabilities.FileRead = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionFilePreview)
 	}
 	if hasConsoleFilesCapability(parts.RuntimeContext, consoleFilesDeleteCapabilityPattern, parts.RawOperationContext, parts.OperationContext) {
 		capabilities.FileDelete = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionFileManage)

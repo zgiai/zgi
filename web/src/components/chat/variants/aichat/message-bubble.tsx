@@ -22,6 +22,7 @@ import { useFileOriginalPreviewUrl } from '@/hooks/file/use-file-original-previe
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { useWorkspaceStore } from '@/store/workspace-store';
+import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import type {
   AIChatGeneratedFile,
   AIChatMessage,
@@ -1176,8 +1177,7 @@ export function AIChatMessageBubble({
   const tGlobal = useT();
   const tCommon = useT('common');
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
-  const organizationRole = useWorkspaceStore.use.permissionState().organizationRole;
-  const isBillingAdmin = organizationRole === 'owner' || organizationRole === 'admin';
+  const { canManageModelConfig: isBillingAdmin } = useAccountCapabilities();
   const isStreaming = message.status === 'pending' || message.status === 'streaming';
   const isWaitingForUser =
     message.status === 'waiting_approval' || message.status === 'waiting_question';

@@ -183,9 +183,6 @@ func questionAnswerStateConversationID(state workflowpause.State) string {
 		if value, ok := state.Request.Inputs["sys.conversation_id"].(string); ok {
 			return value
 		}
-		if value, ok := state.Request.Inputs["conversation_id"].(string); ok {
-			return value
-		}
 	}
 	return ""
 }

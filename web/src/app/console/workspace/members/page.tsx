@@ -4,19 +4,12 @@ import { useT, type WorkspaceKey } from '@/i18n';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { TableCell } from '@/components/ui/table';
-import { Loader2, AlertCircle, Users } from 'lucide-react';
+import { AlertCircle, Users, ShieldCheck, Loader2 } from 'lucide-react';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useAuthStore } from '@/store/auth-store';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { useWorkspaceMemberActions } from '@/hooks/workspace/use-workspace-member-actions';
 import { useEffect, useState } from 'react';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { useOrganizationRoles } from '@/hooks/organization/use-organization-roles';
 import { Button } from '@/components/ui/button';
 import { Plus, Trash2 } from 'lucide-react';
@@ -31,35 +24,65 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Pagination } from '@/components/ui/pagination';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StickyDataTable } from '@/components/common/sticky-data-table';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { WorkspaceMemberPermissionsDialog } from '@/components/member/workspace-member-permissions-dialog';
+import type { WorkspaceMemberAccount } from '@/services/types/workspace';
+import { useLocale } from '@/hooks/use-locale';
+import { pickLocale } from '@/utils/tool-helpers';
+import type { Role } from '@/services/types/organization';
+import { PermissionDeniedState } from '@/components/common/permission-gate-state';
+import { workspaceMemberRoleForAssignableRole } from '@/utils/workspace-role-templates';
+import { normalizeWorkspaceMemberRole } from '@/utils/role-labels';
 
 export default function WorkspaceMembersPage() {
   const t = useT();
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 20;
+  const {
+    isWorkspaceManager,
+    isLoading: isLoadingPermissions,
+  } = useAccountPermissions();
+  const canManageWorkspaceMembers = isWorkspaceManager();
   const { members, total, isLoading, error } = useWorkspaceMembers(undefined, undefined, {
     page: currentPage,
     limit: pageSize,
+    enabled: canManageWorkspaceMembers,
   });
-  const { hasPermission } = useAccountPermissions();
   const currentUser = useAuthStore.use.user();
   const currentWorkspace = useCurrentWorkspace();
   const {
     updateWorkspaceMemberRole: updateRole,
+    updateWorkspaceMemberPermissions,
     removeWorkspaceMember: removeMember,
     isRemovingMember,
+    isUpdatingPermissions,
     batchAddWorkspaceMembers,
     isBatchAddingWorkspaceMembers: isAddingMembers,
   } = useWorkspaceMemberActions();
-  const { roles, isLoading: isLoadingRoles } = useOrganizationRoles();
+  const { roles } = useOrganizationRoles({ enabled: canManageWorkspaceMembers });
+  const { locale } = useLocale();
 
   // State for tracking which member's role is currently being updated (optimistic/UI state)
   const [updatingMemberId, setUpdatingMemberId] = useState<string | null>(null);
   const [addMemberDialogOpen, setAddMemberDialogOpen] = useState(false);
+  const [permissionsDialogOpen, setPermissionsDialogOpen] = useState(false);
+  const [memberToEditPermissions, setMemberToEditPermissions] =
+    useState<WorkspaceMemberAccount | null>(null);
 
   // Get organization
   const { currentOrganization } = useOrganizations();
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const canManageMembers = canManageWorkspaceMembers;
+  const canManagePermissions = canManageWorkspaceMembers;
+  const showActionsColumn = canManageMembers || canManagePermissions;
+  const queryClient = useQueryClient();
+  const isFixedGovernanceRole = (role?: string) => {
+    const normalizedRole = normalizeWorkspaceMemberRole(role);
+    return normalizedRole === 'owner' || normalizedRole === 'admin';
+  };
+  const getRoleDisplayName = (role: Role) =>
+    role.name_i18n ? pickLocale(role.name_i18n, locale, role.name) : role.name;
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -83,8 +106,33 @@ export default function WorkspaceMembersPage() {
 
   // Get role display text
   const getRoleText = (role?: string) => {
-    if (!role) return t('workspace.members.roles.normal');
-    return t(`workspace.members.roles.${role}` as WorkspaceKey);
+    const normalizedRole = normalizeWorkspaceMemberRole(role) ?? 'normal';
+    return t(`workspace.members.roles.${normalizedRole}` as WorkspaceKey);
+  };
+
+  const getMemberPermissionDisplayName = (member: WorkspaceMemberAccount) => {
+    if (isFixedGovernanceRole(member.role)) {
+      return getRoleText(member.role) || member.role_name;
+    }
+
+    if (member.permission_source === 'direct') {
+      return t('dashboard.organization.workspaceManagement.detail.memberPermissions.source.direct');
+    }
+
+    const templateId = member.permission_template_role_id || member.role_id;
+    const matchedTemplate = roles.find(role => role.id === templateId);
+    if (matchedTemplate) {
+      return getRoleDisplayName(matchedTemplate);
+    }
+
+    if (member.permission_source === 'legacy_role') {
+      return (
+        member.role_name ||
+        t('dashboard.organization.workspaceManagement.detail.memberPermissions.source.legacy')
+      );
+    }
+
+    return member.role_name || getRoleText(member.role);
   };
 
   // Get status display text
@@ -103,25 +151,62 @@ export default function WorkspaceMembersPage() {
       .slice(0, 2);
   };
 
-  const handleUpdateRole = (memberId: string, newRole: string) => {
-    if (!currentWorkspace) return;
-
-    setUpdatingMemberId(memberId);
-    updateRole(
-      {
-        workspaceId: currentWorkspace.id,
-        memberId,
-        role_id: newRole,
-      },
-      {
-        onSettled: () => {
-          setUpdatingMemberId(null);
-        },
-      }
-    );
+  const handleSaveMemberPermissions = async (memberId: string, permissions: string[]) => {
+    if (!currentWorkspace?.id) return;
+    await updateWorkspaceMemberPermissions({
+      workspaceId: currentWorkspace.id,
+      memberId,
+      permissions,
+    });
+    await queryClient.invalidateQueries({
+      queryKey: getWorkspaceMembersQueryKey(currentOrganization?.id ?? null, currentWorkspace.id),
+    });
+    setPermissionsDialogOpen(false);
+    setMemberToEditPermissions(null);
   };
 
-  const queryClient = useQueryClient();
+  const handleApplyMemberTemplate = async (memberId: string, roleId: string) => {
+    if (!currentWorkspace?.id || !roleId) return;
+    setUpdatingMemberId(memberId);
+    try {
+      await updateRole({
+        workspaceId: currentWorkspace.id,
+        memberId,
+        role_id: roleId,
+      });
+      await queryClient.invalidateQueries({
+        queryKey: getWorkspaceMembersQueryKey(currentOrganization?.id ?? null, currentWorkspace.id),
+      });
+      const appliedRole = roles.find(role => role.id === roleId);
+      setMemberToEditPermissions(prev =>
+        prev && prev.id === memberId
+          ? {
+              ...prev,
+              role: appliedRole ? workspaceMemberRoleForAssignableRole(appliedRole) : prev.role,
+              role_id: roleId,
+              role_name: appliedRole ? getRoleDisplayName(appliedRole) : prev.role_name,
+              permissions: appliedRole?.permissions ?? prev.permissions,
+              permission_source: 'role_template',
+              permission_template_role_id: roleId,
+            }
+          : prev
+      );
+    } finally {
+      setUpdatingMemberId(null);
+    }
+  };
+
+  if (isLoadingPermissions) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (!canManageWorkspaceMembers) {
+    return <PermissionDeniedState />;
+  }
 
   return (
     <div className="mx-auto flex h-full max-w-7xl flex-col px-6 py-6">
@@ -134,7 +219,7 @@ export default function WorkspaceMembersPage() {
           <p className="mt-1 text-sm text-muted-foreground">{t('workspace.members.description')}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {hasPermission('workspace.manage') && (
+          {canManageMembers && (
             <Button size="sm" className="h-9 gap-2" onClick={() => setAddMemberDialogOpen(true)}>
               <Plus className="h-4 w-4" />
               {t('workspace.members.addMember')}
@@ -165,14 +250,14 @@ export default function WorkspaceMembersPage() {
               header: t('workspace.members.department'),
               className: 'w-[100px]',
             },
-            { key: 'role', header: t('workspace.members.role'), className: 'w-[130px]' },
+            { key: 'role', header: t('workspace.members.role'), className: 'w-[180px]' },
             { key: 'status', header: t('workspace.members.status'), className: 'w-[100px]' },
-            ...(hasPermission('workspace.manage')
+            ...(showActionsColumn
               ? [
                   {
                     key: 'actions',
                     header: t('workspace.members.actions.header'),
-                    className: 'w-[80px] pr-4',
+                    className: 'w-[112px] pr-4',
                   },
                 ]
               : []),
@@ -183,7 +268,7 @@ export default function WorkspaceMembersPage() {
           loadingRows={pageSize}
           renderSkeletonRow={index => (
             <tr key={`workspace-member-skeleton-${index}`} className="border-b border-border/10">
-              <td colSpan={hasPermission('workspace.manage') ? 6 : 5} className="px-4 py-4">
+              <td colSpan={showActionsColumn ? 6 : 5} className="px-4 py-4">
                 <Skeleton className="h-10 w-full rounded-xl opacity-60" />
               </td>
             </tr>
@@ -225,90 +310,96 @@ export default function WorkspaceMembersPage() {
                 {member.department_name || '-'}
               </TableCell>
               <TableCell className="py-3.5">
-                {hasPermission('workspace.manage') &&
-                member.id !== currentUser?.id &&
-                member.role !== 'owner' ? (
-                  <div className="flex items-center gap-2">
-                    <Select
-                      value={
-                        member.role_id ||
-                        roles.find(
-                          r =>
-                            r.id === member.role ||
-                            r.name.toLowerCase() === member.role?.toLowerCase()
-                        )?.id ||
-                        'normal'
-                      }
-                      onValueChange={value => handleUpdateRole(member.id, value)}
-                      disabled={updatingMemberId === member.id || isLoadingRoles}
-                    >
-                      <SelectTrigger className="h-8 w-[110px] text-sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {roles
-                          .filter(
-                            role =>
-                              role.status === 'active' &&
-                              role.id !== 'owner' &&
-                              role.name.toLowerCase() !== 'owner'
-                          )
-                          .map(role => (
-                            <SelectItem key={role.id} value={role.id} className="text-sm">
-                              {role.name}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
-                    {updatingMemberId === member.id && (
-                      <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-                    )}
-                  </div>
-                ) : (
-                  <Badge variant="outline">{member.role_name || getRoleText(member.role)}</Badge>
-                )}
+                <div className="flex flex-col items-start gap-1">
+                  <Badge
+                    variant={
+                      member.role === 'owner'
+                        ? 'default'
+                        : member.role === 'admin'
+                          ? 'secondary'
+                          : 'outline'
+                    }
+                    className="max-w-[170px] truncate rounded-md"
+                  >
+                    {getMemberPermissionDisplayName(member)}
+                  </Badge>
+                </div>
               </TableCell>
               <TableCell className="py-3.5">
                 <Badge variant={getStatusVariant(member.status)}>
                   {getStatusText(member.status)}
                 </Badge>
               </TableCell>
-              {hasPermission('workspace.manage') && (
+              {showActionsColumn && (
                 <TableCell className="py-3.5">
-                  {member.id !== currentUser?.id && member.role !== 'owner' ? (
-                    <ConfirmDialog
-                      variant="danger"
-                      title={t('workspace.members.removeMember.title')}
-                      description={t('workspace.members.removeMember.description', {
-                        name: member.name,
-                      })}
-                      confirmText={t('workspace.members.removeMember.confirm')}
-                      cancelText={t('workspace.members.removeMember.cancel')}
-                      loading={isRemovingMember && updatingMemberId === member.id}
-                      onConfirm={() => {
-                        if (!currentWorkspace?.id) return;
-                        setUpdatingMemberId(member.id);
-                        removeMember(
-                          {
-                            workspaceId: currentWorkspace.id,
-                            memberId: member.id,
-                          },
-                          {
-                            onSettled: () => setUpdatingMemberId(null),
-                          }
-                        );
-                      }}
-                      trigger={
-                        <Button
-                          variant="ghost"
-                          isIcon
-                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      }
-                    />
-                  ) : null}
+                  <div className="flex items-center justify-end gap-1">
+                    {canManagePermissions &&
+                    member.id !== currentUser?.id &&
+                    member.role !== 'owner' ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            isIcon
+                            aria-label={t(
+                              'dashboard.organization.workspaceManagement.detail.memberPermissions.edit'
+                            )}
+                            title={t(
+                              'dashboard.organization.workspaceManagement.detail.memberPermissions.edit'
+                            )}
+                            className="h-8 w-8 text-muted-foreground hover:text-primary"
+                            onClick={() => {
+                              setMemberToEditPermissions(member);
+                              setPermissionsDialogOpen(true);
+                            }}
+                          >
+                            <ShieldCheck className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent className="text-xs">
+                          {t(
+                            'dashboard.organization.workspaceManagement.detail.memberPermissions.edit'
+                          )}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : null}
+                    {canManageMembers &&
+                    member.id !== currentUser?.id &&
+                    member.role !== 'owner' ? (
+                      <ConfirmDialog
+                        variant="danger"
+                        title={t('workspace.members.removeMember.title')}
+                        description={t('workspace.members.removeMember.description', {
+                          name: member.name,
+                        })}
+                        confirmText={t('workspace.members.removeMember.confirm')}
+                        cancelText={t('workspace.members.removeMember.cancel')}
+                        loading={isRemovingMember && updatingMemberId === member.id}
+                        onConfirm={() => {
+                          if (!currentWorkspace?.id) return;
+                          setUpdatingMemberId(member.id);
+                          removeMember(
+                            {
+                              workspaceId: currentWorkspace.id,
+                              memberId: member.id,
+                            },
+                            {
+                              onSettled: () => setUpdatingMemberId(null),
+                            }
+                          );
+                        }}
+                        trigger={
+                          <Button
+                            variant="ghost"
+                            isIcon
+                            className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        }
+                      />
+                    ) : null}
+                  </div>
                 </TableCell>
               )}
             </>
@@ -346,6 +437,22 @@ export default function WorkspaceMembersPage() {
           }
         }}
         isLoading={isAddingMembers}
+      />
+
+      <WorkspaceMemberPermissionsDialog
+        open={permissionsDialogOpen}
+        onOpenChange={open => {
+          setPermissionsDialogOpen(open);
+          if (!open) setMemberToEditPermissions(null);
+        }}
+        member={memberToEditPermissions}
+        onSave={handleSaveMemberPermissions}
+        roleTemplates={roles}
+        onApplyTemplate={handleApplyMemberTemplate}
+        isSaving={isUpdatingPermissions}
+        isApplyingTemplate={
+          !!memberToEditPermissions && updatingMemberId === memberToEditPermissions.id
+        }
       />
     </div>
   );

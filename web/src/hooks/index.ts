@@ -33,6 +33,7 @@ export { useIsMobile } from './use-mobile';
 export { useMediaQuery } from './use-media-query';
 
 // Organization & Workspace hooks
+export { useCurrentOrganizationMember } from './organization/use-current-organization-member';
 export { useManagedWorkspaces } from './workspace/use-managed-workspaces';
 export { useWorkspaces } from './workspace/use-workspaces';
 export { useWorkspaceMembers } from './workspace/use-workspace-members';
@@ -59,6 +60,10 @@ export {
   useBatchTestChannelModels,
   useAdjustChannelWallet,
 } from './channel/use-channel';
+export {
+  useAgentRuntimeSurfaces,
+  useUpdateAgentRuntimeSurfaces,
+} from './agent/use-agent-runtime-surfaces';
 export { useSupportedFileTypes } from './use-upload';
 export { useDefaultModels } from './model/use-default-models';
 export {
@@ -96,9 +101,14 @@ export {
 } from './workflow/use-approval-form';
 export { useAnnouncement } from './workflow/use-announcement';
 export { useBuiltInWorkflows } from './workflow/use-built-in-workflows';
+export {
+  useBuiltInWorkflowRuntimeSurfaces,
+  useUpdateBuiltInWorkflowRuntimeSurfaces,
+} from './workflow/use-built-in-workflow-runtime-surfaces';
 export { useExportWorkflow, useImportWorkflow } from './workflow/use-workflow-import-export';
 export { useConvertCurl } from './use-convert-curl';
 export { useProfile, useUpdateProfile } from './use-profile';
+export { useAccountCapabilities } from './use-account-capabilities';
 // Auth hooks
 export { useLogin } from './auth/use-login';
 export { useLogout } from './auth/use-logout';

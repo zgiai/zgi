@@ -736,7 +736,7 @@ func visibleAgentResources(context map[string]interface{}) []visibleConsoleAgent
 		href := firstNonEmptyString(
 			stringMetadataValue(resource["href"]),
 			stringMetadataValue(metadata["href"]),
-			"/console/agents/"+id+"/agent",
+			consoleAgentDetailHref(id),
 		)
 		selected := boolMetadataValue(firstMapValue(resource, "selected", "is_selected")) ||
 			boolMetadataValue(firstMapValue(metadata, "selected", "is_selected"))

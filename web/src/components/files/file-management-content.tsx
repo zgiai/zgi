@@ -82,6 +82,7 @@ import { fileManageService } from '@/services/file-manage.service';
 import { toast } from 'sonner';
 import type { Organization } from '@/services/types/organization';
 import type { Workspace } from '@/store/workspace-store';
+import { FILE_PERMISSION_ACTIONS } from '@/constants/permissions';
 import {
   buildFilesAIChatContextItems,
   FilesAIChatContextRegistration,
@@ -727,10 +728,13 @@ const FileManagementContent = ({
     ? ''
     : (folders.find(folder => folder.id === activeCategory)?.name ?? '');
 
-  const { hasPermission } = useAccountPermissions();
-  const canManage = hasPermission('file.manage');
-  const canCreateFolder = hasPermission('file.move_create');
-  const canUpload = hasPermission('file.upload_create');
+  const { hasAnyPermission } = useAccountPermissions();
+  const canManageFolder = hasAnyPermission(FILE_PERMISSION_ACTIONS.folderManage);
+  const canCreateFolder = canManageFolder;
+  const canManage = hasAnyPermission(FILE_PERMISSION_ACTIONS.delete);
+  const canUpload = hasAnyPermission(FILE_PERMISSION_ACTIONS.upload);
+  const canCreateTextFile = hasAnyPermission(FILE_PERMISSION_ACTIONS.textCreate);
+  const canAddFile = canUpload || canCreateTextFile;
   const canCreateInActiveFolder =
     canCreateFolder && activeFolderDepth >= 0 && activeFolderDepth < MAX_FILE_FOLDER_LEVEL;
   const { organizations } = useOrganizations(isAuthenticated);
@@ -743,9 +747,11 @@ const FileManagementContent = ({
         ? t('files.mobileSelector.switchSpace')
         : canUpload
           ? t('files.mobileSelector.browseAndUpload')
-          : allowWorkspaceSwitch
-            ? t('files.mobileSelector.switchSpace')
-            : t('files.mobileSelector.browse');
+          : canCreateTextFile
+            ? t('files.mobileSelector.browseAndCreateText')
+            : allowWorkspaceSwitch
+              ? t('files.mobileSelector.switchSpace')
+              : t('files.mobileSelector.browse');
   const mobileEmptyDescription =
     !selectionMode || !isMobileSelectionMode
       ? undefined
@@ -753,7 +759,9 @@ const FileManagementContent = ({
         ? t('files.selectorEmptyState.description')
         : canUpload
           ? t('files.mobileSelector.emptyDescriptionWithUpload')
-          : t('files.mobileSelector.emptyDescriptionWithoutUpload');
+          : canCreateTextFile
+            ? t('files.mobileSelector.emptyDescriptionWithTextCreate')
+            : t('files.mobileSelector.emptyDescriptionWithoutUpload');
 
   const debouncedSearchValue = useDebouncedValue(searchValue, 500);
 
@@ -1083,6 +1091,12 @@ const FileManagementContent = ({
     setCreateLocalFileDialogOpen(true);
   };
 
+  const handleCreateTextFile = () => {
+    setSelectedFolderId(initialUploadFolderId);
+    setSelectedUploadWorkspaceId(workspaceId || '');
+    setCreateTextFileDialogOpen(true);
+  };
+
   const [createTextFileDialogOpen, setCreateTextFileDialogOpen] = useState(false);
   const [selectedFolderId, setSelectedFolderId] = useState<string>('');
   const [selectedUploadWorkspaceId, setSelectedUploadWorkspaceId] = useState<string>('');
@@ -1190,11 +1204,12 @@ const FileManagementContent = ({
       activeItemId={activeCategory}
       onItemClick={handleCategoryChange}
       onNewFolder={canCreateInActiveFolder ? handleNewFolder : undefined}
+      onCreateTextFile={canCreateTextFile ? handleCreateTextFile : undefined}
       onUpload={canUpload ? handleUpload : undefined}
       onFolderCreateChild={canCreateFolder ? handleCreateChildFolder : undefined}
-      onFolderRename={canManage ? handleFolderRename : undefined}
-      onFolderMove={canManage ? handleFolderMove : undefined}
-      onFolderDelete={canManage ? handleFolderDelete : undefined}
+      onFolderRename={canManageFolder ? handleFolderRename : undefined}
+      onFolderMove={canManageFolder ? handleFolderMove : undefined}
+      onFolderDelete={canManageFolder ? handleFolderDelete : undefined}
       workspaceId={workspaceId}
       flushTop
     />
@@ -1368,7 +1383,7 @@ const FileManagementContent = ({
             return;
           }
 
-          if (!canUpload && allowWorkspaceSwitch) {
+          if (!canAddFile && allowWorkspaceSwitch) {
             setSpaceSwitcherOpen(true);
             return;
           }
@@ -1416,6 +1431,8 @@ const FileManagementContent = ({
                 <span>
                   {canUpload
                     ? t('files.mobileSelector.browseAndUpload')
+                    : canCreateTextFile
+                      ? t('files.mobileSelector.browseAndCreateText')
                     : t('files.mobileSelector.browse')}
                 </span>
               </Button>

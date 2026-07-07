@@ -9,6 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	workflowpause "github.com/zgiai/zgi/api/internal/modules/app/workflow/pause"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
@@ -37,9 +39,7 @@ func (h *WorkflowHandler) GetWorkflowRunEvents(c *gin.Context) {
 		response.Fail(c, response.ErrNotFound)
 		return
 	}
-	accountID := c.GetString("account_id")
-	if accountID != "" && run.CreatedBy != "" && run.CreatedBy != accountID {
-		response.Fail(c, response.ErrPermissionDenied)
+	if !h.requireWorkflowRunEventAccess(c, workflowService, run) {
 		return
 	}
 
@@ -101,6 +101,55 @@ func (h *WorkflowHandler) GetWorkflowRunEvents(c *gin.Context) {
 			}
 		}
 	}
+}
+
+func (h *WorkflowHandler) requireWorkflowRunEventAccess(c *gin.Context, workflowService *WorkflowService, run *WorkflowRunLog) bool {
+	if run == nil || strings.TrimSpace(run.ID) == "" || strings.TrimSpace(run.AgentID) == "" {
+		response.Fail(c, response.ErrNotFound)
+		return false
+	}
+	accountID := strings.TrimSpace(c.GetString("account_id"))
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return false
+	}
+
+	if isSystemWorkflowTenantID(run.TenantID) {
+		if strings.TrimSpace(run.CreatedBy) == "" || run.CreatedBy != accountID {
+			response.Fail(c, response.ErrPermissionDenied)
+			return false
+		}
+		if err := workflowService.ValidateWorkflowRunAccess(c.Request.Context(), run.TenantID, run.AgentID, run.ID, accountID); err != nil {
+			h.failWorkflowRunAccess(c, err)
+			return false
+		}
+		return true
+	}
+
+	permissionChecker := h.getWorkspacePermissionChecker()
+	if permissionChecker != nil {
+		hasPermission, err := permissionChecker.CheckWorkspacePermission(
+			c.Request.Context(),
+			util.GetOrganizationID(c),
+			run.TenantID,
+			accountID,
+			workspace_model.WorkspacePermissionWorkflowRunDraft,
+		)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return false
+		}
+		if !hasPermission {
+			response.Fail(c, response.ErrPermissionDenied)
+			return false
+		}
+	}
+
+	if err := workflowService.ValidateWorkflowRunAccess(c.Request.Context(), run.TenantID, run.AgentID, run.ID, accountID); err != nil {
+		h.failWorkflowRunAccess(c, err)
+		return false
+	}
+	return true
 }
 
 func prepareWorkflowEventsSSE(c *gin.Context) {

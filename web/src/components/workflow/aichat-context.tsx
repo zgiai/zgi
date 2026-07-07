@@ -10,6 +10,7 @@ import {
 } from '@/components/aichat/page-context';
 import type { AgentDetail } from '@/services';
 import { WORKFLOW_KEYS } from '@/hooks/query-keys';
+import { getAgentDetailEditHref } from '@/utils/agent-detail-routes';
 import type {
   StoreValidationError,
   StoreValidationResults,
@@ -261,7 +262,7 @@ function buildWorkflowAIChatItems(params: {
   });
   const nodeSummaries = summarizeNodes(nodes, edges, selectedNodeId, runStatusByNodeId);
   const status = isReadOnly ? 'readonly' : isDirty ? 'dirty' : 'draft';
-  const workflowHref = `/console/agents/${agentDetail.id}/workflow`;
+  const workflowHref = getAgentDetailEditHref(agentDetail.id, agentDetail.agent_type);
   const includeDraftConfiguration = !isHistoryMode;
   const featureConfig = workflowData.features;
   const envVariables = workflowData.environment_variables ?? [];
@@ -322,17 +323,17 @@ function buildWorkflowAIChatItems(params: {
     },
     {
       id: agentDetail.id,
-      type: 'agent',
+      type: 'workflow',
       title: agentDetail.name,
       subtitle: `${agentDetail.agent_type} in ${agentDetail.workspace?.name ?? 'workspace'}`,
-      description: compactText(agentDetail.description || 'Workflow owner Agent.'),
-      href: `/console/agents/${agentDetail.id}/agent`,
+      description: compactText(agentDetail.description || 'Workflow asset.'),
+      href: getAgentDetailEditHref(agentDetail.id, agentDetail.agent_type),
       source: 'Workflow Editor',
       risk: 'low',
       status: agentDetail.is_published ? 'published' : 'draft',
       relations: [
         {
-          type: 'owns_workflow',
+          type: 'shows_workflow',
           resourceType: 'workflow',
           resourceId: workflowResourceId,
           title: agentDetail.name,
@@ -340,9 +341,9 @@ function buildWorkflowAIChatItems(params: {
       ],
       capabilities: [
         {
-          id: 'workflow.inspect_owner_agent',
-          title: 'Inspect owner agent',
-          description: 'Read the Agent identity that owns the current workflow draft.',
+          id: 'workflow.inspect_identity',
+          title: 'Inspect Workflow identity',
+          description: 'Read the Workflow identity for the current workflow draft.',
           risk: 'low',
           status: 'available',
         },

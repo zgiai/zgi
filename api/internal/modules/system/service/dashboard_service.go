@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,8 +18,8 @@ import (
 
 // DashboardService provides dashboard statistics functionality
 type DashboardService interface {
-	GetDashboardStats(ctx context.Context, organizationID string) (*model.DashboardStatsResponse, error)
-	GetRecentWork(ctx context.Context, organizationID string, accountID string, limit int) (*model.RecentWorkResponse, error)
+	GetDashboardStats(ctx context.Context, organizationID string, accountID string, scopes model.DashboardWorkspaceScopes) (*model.DashboardStatsResponse, error)
+	GetRecentWork(ctx context.Context, req model.RecentWorkRequest) (*model.RecentWorkResponse, error)
 }
 
 // AvailableModelsLister lists organization-scoped models that are callable by business features.
@@ -29,8 +30,13 @@ type AvailableModelsLister interface {
 type dashboardService struct {
 	db              *gorm.DB
 	availableModels AvailableModelsLister
+	tableCacheMu    sync.RWMutex
 	tableCache      map[string]bool
 }
+
+const dashboardAgentTypeAgent = "AGENT"
+
+var dashboardWorkflowAgentTypes = []string{"WORKFLOW", "CONVERSATIONAL_WORKFLOW"}
 
 // NewDashboardService creates a new DashboardService instance
 func NewDashboardService(db *gorm.DB) DashboardService {
@@ -48,9 +54,19 @@ func NewDashboardServiceWithAvailableModels(db *gorm.DB, availableModels Availab
 
 // tableExists checks if a table exists in the database (cached per service lifetime).
 func (s *dashboardService) tableExists(ctx context.Context, tableName string) bool {
+	s.tableCacheMu.RLock()
+	if cached, ok := s.tableCache[tableName]; ok {
+		s.tableCacheMu.RUnlock()
+		return cached
+	}
+	s.tableCacheMu.RUnlock()
+
+	s.tableCacheMu.Lock()
+	defer s.tableCacheMu.Unlock()
 	if cached, ok := s.tableCache[tableName]; ok {
 		return cached
 	}
+
 	var exists bool
 	err := s.db.Raw(
 		"SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = ?)",
@@ -87,33 +103,42 @@ func (s *dashboardService) safeCount(ctx context.Context, table string, where st
 	return count
 }
 
-// GetDashboardStats retrieves dashboard statistics for a given organization
-func (s *dashboardService) GetDashboardStats(ctx context.Context, organizationID string) (*model.DashboardStatsResponse, error) {
+// GetDashboardStats retrieves dashboard statistics for the current account's visible organization scope.
+func (s *dashboardService) GetDashboardStats(ctx context.Context, organizationID string, accountID string, scopes model.DashboardWorkspaceScopes) (*model.DashboardStatsResponse, error) {
 	stats := model.DashboardStatsResponse{
 		Models: model.ModelsStats{ByUseCase: make(map[string]int64)},
 	}
 
 	stats.Models = s.getModelStats(ctx, organizationID)
-	stats.Resources = s.getResourceStats(ctx, organizationID)
+	stats.Resources = s.getResourceStats(ctx, organizationID, accountID, scopes)
 
 	return &stats, nil
 }
 
-// GetRecentWork retrieves recently updated console work items for an organization.
-func (s *dashboardService) GetRecentWork(ctx context.Context, organizationID string, accountID string, limit int) (*model.RecentWorkResponse, error) {
+// GetRecentWork retrieves recently updated console work items for the visible workspace sets.
+func (s *dashboardService) GetRecentWork(ctx context.Context, req model.RecentWorkRequest) (*model.RecentWorkResponse, error) {
+	limit := req.Limit
 	if limit <= 0 || limit > 20 {
 		limit = 10
 	}
+	if len(req.AgentWorkspaceIDs) == 0 &&
+		len(req.WorkflowWorkspaceIDs) == 0 &&
+		len(req.AgentConversationWorkspaceIDs) == 0 &&
+		len(req.WorkflowConversationWorkspaceIDs) == 0 &&
+		len(req.DatasetWorkspaceIDs) == 0 &&
+		len(req.DataSourceWorkspaceIDs) == 0 &&
+		len(req.FileWorkspaceIDs) == 0 {
+		return &model.RecentWorkResponse{Items: []model.RecentWorkItem{}}, nil
+	}
 
-	wsIDs := s.getWorkspaceIDs(ctx, organizationID)
 	items := make([]model.RecentWorkItem, 0, limit)
 
-	if len(wsIDs) > 0 {
-		items = append(items, s.getRecentAgents(ctx, wsIDs, limit)...)
-		items = append(items, s.getRecentDatasets(ctx, wsIDs, limit)...)
-		items = append(items, s.getRecentAgentConversations(ctx, wsIDs, accountID, limit)...)
-	}
-	items = append(items, s.getRecentDataSources(ctx, organizationID, limit)...)
+	items = append(items, s.getRecentAgents(ctx, req.AgentWorkspaceIDs, []string{dashboardAgentTypeAgent}, "agent", limit)...)
+	items = append(items, s.getRecentAgents(ctx, req.WorkflowWorkspaceIDs, dashboardWorkflowAgentTypes, "workflow", limit)...)
+	items = append(items, s.getRecentDatasets(ctx, req.DatasetWorkspaceIDs, req.AccountID, limit)...)
+	items = append(items, s.getRecentAgentConversations(ctx, req.AgentConversationWorkspaceIDs, []string{dashboardAgentTypeAgent}, req.AccountID, limit)...)
+	items = append(items, s.getRecentAgentConversations(ctx, req.WorkflowConversationWorkspaceIDs, dashboardWorkflowAgentTypes, req.AccountID, limit)...)
+	items = append(items, s.getRecentDataSources(ctx, req.OrganizationID, req.DataSourceWorkspaceIDs, limit)...)
 
 	sort.SliceStable(items, func(i, j int) bool {
 		return items[i].UpdatedAt > items[j].UpdatedAt
@@ -208,21 +233,27 @@ func (s *dashboardService) getGlobalModelStats(ctx context.Context) model.Models
 	return stats
 }
 
-// getResourceStats retrieves resource statistics for the organization
-func (s *dashboardService) getResourceStats(ctx context.Context, organizationID string) model.ResourceStats {
+// getResourceStats retrieves resource statistics for the account-visible workspace scopes.
+func (s *dashboardService) getResourceStats(ctx context.Context, organizationID string, accountID string, scopes model.DashboardWorkspaceScopes) model.ResourceStats {
 	var stats model.ResourceStats
 
-	wsIDs := s.getWorkspaceIDs(ctx, organizationID)
+	stats.Workspaces = int64(len(scopes.WorkspaceIDs))
 
-	if len(wsIDs) > 0 {
-		stats.Agents = s.safeCount(ctx, "agents",
-			"tenant_id IN ? AND deleted_at IS NULL AND is_universal = ? AND (internal = ? OR internal IS NULL)",
-			wsIDs, false, false)
-
-		stats.Datasets = s.safeCount(ctx, "datasets", "workspace_id IN ?", wsIDs)
+	if len(scopes.AgentWorkspaceIDs) > 0 || len(scopes.WorkflowWorkspaceIDs) > 0 {
+		stats.Agents = s.countAgentAssets(ctx, scopes.AgentWorkspaceIDs, scopes.WorkflowWorkspaceIDs)
 	}
 
-	stats.DataSources = s.safeCount(ctx, "data_sources", "organization_id = ?", organizationID)
+	if len(scopes.DatasetWorkspaceIDs) > 0 {
+		stats.Datasets = s.safeCount(ctx, "datasets", "workspace_id IN ?", scopes.DatasetWorkspaceIDs)
+	}
+
+	if len(scopes.DataSourceWorkspaceIDs) > 0 {
+		stats.DataSources = s.safeCount(ctx, "data_sources", "organization_id = ? AND workspace_id IN ?", organizationID, scopes.DataSourceWorkspaceIDs)
+	}
+
+	if len(scopes.FileWorkspaceIDs) > 0 {
+		stats.Files = s.safeCount(ctx, "upload_files", "tenant_id IN ?", scopes.FileWorkspaceIDs)
+	}
 
 	return stats
 }
@@ -247,46 +278,71 @@ func (s *dashboardService) getWorkspaceIDs(ctx context.Context, organizationID s
 }
 
 type recentWorkRow struct {
-	ID         string
-	Title      string
-	ResourceID string
-	ParentID   string
-	UpdatedAt  time.Time
-	CreatedAt  time.Time
+	ID            string
+	Title         string
+	ResourceID    string
+	ParentID      string
+	WorkspaceID   string
+	WorkspaceName string
+	UpdatedAt     time.Time
+	CreatedAt     time.Time
 }
 
-func (s *dashboardService) getRecentAgents(ctx context.Context, workspaceIDs []string, limit int) []model.RecentWorkItem {
+func (s *dashboardService) countAgentAssets(ctx context.Context, agentWorkspaceIDs []string, workflowWorkspaceIDs []string) int64 {
 	if !s.tableExists(ctx, "agents") {
+		return 0
+	}
+
+	query := s.db.WithContext(ctx).
+		Table("agents").
+		Where("deleted_at IS NULL AND is_universal = ? AND (internal = ? OR internal IS NULL)", false, false)
+	query = applyAgentTypeWorkspaceScope(query, agentWorkspaceIDs, workflowWorkspaceIDs)
+
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		logger.WarnContext(ctx, "Dashboard agent asset count query failed", zap.Error(err))
+		return 0
+	}
+	return count
+}
+
+func (s *dashboardService) getRecentAgents(ctx context.Context, workspaceIDs []string, agentTypes []string, itemType string, limit int) []model.RecentWorkItem {
+	if len(workspaceIDs) == 0 || !s.tableExists(ctx, "agents") || !s.tableExists(ctx, "workspaces") {
 		return nil
 	}
 
 	var rows []recentWorkRow
 	err := s.db.WithContext(ctx).
-		Table("agents").
-		Select("id, name AS title, id AS resource_id, updated_at, created_at").
-		Where("tenant_id IN ? AND deleted_at IS NULL AND is_universal = ? AND (internal = ? OR internal IS NULL)", workspaceIDs, false, false).
-		Order("updated_at DESC").
+		Table("agents AS a").
+		Select("a.id, a.name AS title, a.id AS resource_id, a.tenant_id AS workspace_id, w.name AS workspace_name, a.updated_at, a.created_at").
+		Joins("INNER JOIN workspaces AS w ON w.id = a.tenant_id").
+		Where("a.tenant_id IN ? AND a.agent_type IN ? AND a.deleted_at IS NULL AND a.is_universal = ? AND (a.internal = ? OR a.internal IS NULL)", workspaceIDs, agentTypes, false, false).
+		Order("a.updated_at DESC").
 		Limit(limit).
 		Scan(&rows).Error
 	if err != nil {
-		logger.WarnContext(ctx, "Dashboard recent agents query failed", zap.Error(err))
+		logger.WarnContext(ctx, "Dashboard recent agent assets query failed",
+			zap.String("item_type", itemType),
+			zap.Error(err),
+		)
 		return nil
 	}
 
-	return makeRecentWorkItems("agent", rows)
+	return makeRecentWorkItems(itemType, rows)
 }
 
-func (s *dashboardService) getRecentDatasets(ctx context.Context, workspaceIDs []string, limit int) []model.RecentWorkItem {
-	if !s.tableExists(ctx, "datasets") {
+func (s *dashboardService) getRecentDatasets(ctx context.Context, workspaceIDs []string, accountID string, limit int) []model.RecentWorkItem {
+	if len(workspaceIDs) == 0 || !s.tableExists(ctx, "datasets") || !s.tableExists(ctx, "workspaces") {
 		return nil
 	}
 
 	var rows []recentWorkRow
 	err := s.db.WithContext(ctx).
-		Table("datasets").
-		Select("id, name AS title, id AS resource_id, updated_at, created_at").
-		Where("workspace_id IN ?", workspaceIDs).
-		Order("updated_at DESC").
+		Table("datasets AS d").
+		Select("d.id, d.name AS title, d.id AS resource_id, d.workspace_id, w.name AS workspace_name, d.updated_at, d.created_at").
+		Joins("INNER JOIN workspaces AS w ON w.id = d.workspace_id").
+		Where("d.workspace_id IN ?", workspaceIDs).
+		Order("d.updated_at DESC").
 		Limit(limit).
 		Scan(&rows).Error
 	if err != nil {
@@ -297,17 +353,18 @@ func (s *dashboardService) getRecentDatasets(ctx context.Context, workspaceIDs [
 	return makeRecentWorkItems("dataset", rows)
 }
 
-func (s *dashboardService) getRecentDataSources(ctx context.Context, organizationID string, limit int) []model.RecentWorkItem {
-	if !s.tableExists(ctx, "data_sources") {
+func (s *dashboardService) getRecentDataSources(ctx context.Context, organizationID string, workspaceIDs []string, limit int) []model.RecentWorkItem {
+	if len(workspaceIDs) == 0 || !s.tableExists(ctx, "data_sources") || !s.tableExists(ctx, "workspaces") {
 		return nil
 	}
 
 	var rows []recentWorkRow
 	err := s.db.WithContext(ctx).
-		Table("data_sources").
-		Select("id, name AS title, id AS resource_id, updated_at, created_at").
-		Where("organization_id = ?", organizationID).
-		Order("updated_at DESC").
+		Table("data_sources AS ds").
+		Select("ds.id, ds.name AS title, ds.id AS resource_id, ds.workspace_id, w.name AS workspace_name, ds.updated_at, ds.created_at").
+		Joins("INNER JOIN workspaces AS w ON w.id = ds.workspace_id").
+		Where("ds.organization_id = ? AND ds.workspace_id IN ?", organizationID, workspaceIDs).
+		Order("ds.updated_at DESC").
 		Limit(limit).
 		Scan(&rows).Error
 	if err != nil {
@@ -318,17 +375,18 @@ func (s *dashboardService) getRecentDataSources(ctx context.Context, organizatio
 	return makeRecentWorkItems("database", rows)
 }
 
-func (s *dashboardService) getRecentAgentConversations(ctx context.Context, workspaceIDs []string, accountID string, limit int) []model.RecentWorkItem {
-	if accountID == "" || !s.tableExists(ctx, "agents_conversations") || !s.tableExists(ctx, "agents") {
+func (s *dashboardService) getRecentAgentConversations(ctx context.Context, workspaceIDs []string, agentTypes []string, accountID string, limit int) []model.RecentWorkItem {
+	if len(workspaceIDs) == 0 || accountID == "" || !s.tableExists(ctx, "agents_conversations") || !s.tableExists(ctx, "agents") || !s.tableExists(ctx, "workspaces") {
 		return nil
 	}
 
 	var rows []recentWorkRow
 	err := s.db.WithContext(ctx).
 		Table("agents_conversations AS c").
-		Select("c.id, c.name AS title, c.id AS resource_id, c.agent_id AS parent_id, c.updated_at, c.created_at").
+		Select("c.id, c.name AS title, c.id AS resource_id, c.agent_id AS parent_id, a.tenant_id AS workspace_id, w.name AS workspace_name, c.updated_at, c.created_at").
 		Joins("INNER JOIN agents AS a ON a.id = c.agent_id").
-		Where("a.tenant_id IN ? AND a.deleted_at IS NULL AND c.deleted_at IS NULL AND c.from_account_id = ?", workspaceIDs, accountID).
+		Joins("INNER JOIN workspaces AS w ON w.id = a.tenant_id").
+		Where("a.tenant_id IN ? AND a.agent_type IN ? AND a.deleted_at IS NULL AND c.deleted_at IS NULL AND c.from_account_id = ?", workspaceIDs, agentTypes, accountID).
 		Order("c.updated_at DESC").
 		Limit(limit).
 		Scan(&rows).Error
@@ -338,6 +396,22 @@ func (s *dashboardService) getRecentAgentConversations(ctx context.Context, work
 	}
 
 	return makeRecentWorkItems("conversation", rows)
+}
+
+func applyAgentTypeWorkspaceScope(query *gorm.DB, agentWorkspaceIDs []string, workflowWorkspaceIDs []string) *gorm.DB {
+	if len(agentWorkspaceIDs) > 0 && len(workflowWorkspaceIDs) > 0 {
+		return query.Where(
+			"(tenant_id IN ? AND agent_type = ?) OR (tenant_id IN ? AND agent_type IN ?)",
+			agentWorkspaceIDs,
+			dashboardAgentTypeAgent,
+			workflowWorkspaceIDs,
+			dashboardWorkflowAgentTypes,
+		)
+	}
+	if len(agentWorkspaceIDs) > 0 {
+		return query.Where("tenant_id IN ? AND agent_type = ?", agentWorkspaceIDs, dashboardAgentTypeAgent)
+	}
+	return query.Where("tenant_id IN ? AND agent_type IN ?", workflowWorkspaceIDs, dashboardWorkflowAgentTypes)
 }
 
 func makeRecentWorkItems(itemType string, rows []recentWorkRow) []model.RecentWorkItem {
@@ -356,12 +430,14 @@ func makeRecentWorkItems(itemType string, rows []recentWorkRow) []model.RecentWo
 			resourceID = row.ID
 		}
 		items = append(items, model.RecentWorkItem{
-			ID:         fmt.Sprintf("%s:%s", itemType, row.ID),
-			Type:       itemType,
-			Title:      row.Title,
-			ResourceID: resourceID,
-			ParentID:   row.ParentID,
-			UpdatedAt:  updatedAt.Unix(),
+			ID:            fmt.Sprintf("%s:%s", itemType, row.ID),
+			Type:          itemType,
+			Title:         row.Title,
+			ResourceID:    resourceID,
+			ParentID:      row.ParentID,
+			WorkspaceID:   row.WorkspaceID,
+			WorkspaceName: row.WorkspaceName,
+			UpdatedAt:     updatedAt.Unix(),
 		})
 	}
 	return items

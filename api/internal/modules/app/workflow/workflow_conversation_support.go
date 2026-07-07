@@ -12,18 +12,19 @@ import (
 	"go.uber.org/zap"
 )
 
-func (h *WorkflowHandler) getDialogueCount(conversationID string) int {
+func (h *WorkflowHandler) getDialogueCountForCaller(ctx context.Context, conversationID, agentID, accountID string) int {
 	if conversationID == "" {
 		return 1
 	}
-
-	conversationUUID, err := uuid.Parse(conversationID)
-	if err != nil {
+	if h == nil || h.advancedChatHandler == nil {
 		return 1
 	}
 
-	conv, err := h.advancedChatHandler.GetConversation(conversationUUID)
+	_, conv, err := loadWebAppConversationForCaller(ctx, h.advancedChatHandler, conversationID, agentID, accountID)
 	if err != nil {
+		return 1
+	}
+	if conv == nil {
 		return 1
 	}
 
@@ -150,8 +151,19 @@ func (h *WorkflowHandler) loadConversationHistory(conversationID string, maxRoun
 	return history, nil
 }
 
-func (h *WorkflowHandler) getLatestMessageID(conversationID string) (string, error) {
-	messages, err := h.advancedChatHandler.GetConversationMessages(uuid.MustParse(conversationID))
+func (h *WorkflowHandler) getLatestMessageIDForCaller(ctx context.Context, conversationID, agentID, accountID string) (string, error) {
+	if h == nil || h.advancedChatHandler == nil {
+		return "", errWebAppConversationServiceMissing
+	}
+	conversationUUID, _, err := loadWebAppConversationForCaller(ctx, h.advancedChatHandler, conversationID, agentID, accountID)
+	if err != nil {
+		return "", err
+	}
+	if h == nil || h.advancedChatHandler == nil || h.advancedChatHandler.messageService == nil {
+		return "", errWebAppConversationServiceMissing
+	}
+
+	messages, err := h.advancedChatHandler.messageService.GetConversationMessages(ctx, conversationUUID)
 	if err != nil {
 		return "", err
 	}

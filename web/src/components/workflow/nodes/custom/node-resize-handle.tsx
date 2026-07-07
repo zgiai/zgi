@@ -18,6 +18,8 @@ export default function ManualResizeHandle({
 }) {
   const nodeId = useNodeId();
   const mode = useWorkflowStore.use.mode();
+  const canEdit = useWorkflowStore.use.canEdit();
+  const isReadOnly = mode === 'history' || !canEdit;
   const viewport = useWorkflowStore.use.viewport();
   const updateNode = useWorkflowStore.use.updateNode();
   const updateNodeInternals = useUpdateNodeInternals();
@@ -27,7 +29,7 @@ export default function ManualResizeHandle({
   const onMouseDown = React.useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       if (!nodeId) return;
-      if (mode === 'history') return; // disabled in read-only mode
+      if (isReadOnly) return;
 
       e.preventDefault();
       e.stopPropagation();
@@ -92,7 +94,7 @@ export default function ManualResizeHandle({
       window.addEventListener('mousemove', onMouseMove);
       window.addEventListener('mouseup', onMouseUp);
     },
-    [nodeId, mode, viewport?.zoom, updateNode, updateNodeInternals, minWidth, minHeight]
+    [nodeId, isReadOnly, viewport?.zoom, updateNode, updateNodeInternals, minWidth, minHeight]
   );
 
   return (
@@ -105,7 +107,7 @@ export default function ManualResizeHandle({
         bottom: 0,
         width: 18,
         height: 18,
-        cursor: mode === 'history' ? 'not-allowed' : 'se-resize',
+        cursor: isReadOnly ? 'not-allowed' : 'se-resize',
         boxSizing: 'border-box',
       }}
       aria-label="Resize"

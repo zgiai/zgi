@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import Link from 'next/link';
 import { useT } from '@/i18n';
 import { Switch } from '@/components/ui/switch';
 import { Search, Plus, Users, Pencil, Trash2, KeyRound, UserPlus } from 'lucide-react';
@@ -14,6 +13,7 @@ import { EditMemberDialog } from '@/components/dashboard/organization/edit-membe
 import { ResetMemberPasswordDialog } from '@/components/dashboard/organization/reset-member-password-dialog';
 import { CreateDepartmentDialog } from '@/components/dashboard/organization/create-department-dialog';
 import { EditDepartmentDialog } from '@/components/dashboard/organization/edit-department-dialog';
+import { AssignWorkspaceDialog } from '@/components/dashboard/organization/assign-workspace-dialog';
 import { IS_CLOUD } from '@/lib/config';
 import { StickyDataTable } from '@/components/common/sticky-data-table';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
@@ -29,10 +29,16 @@ import { Pagination } from '@/components/ui/pagination';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
+import { useAuthStore } from '@/store/auth-store';
+import {
+  isPrivilegedOrganizationRole,
+  normalizeOrganizationRole,
+} from '@/utils/role-labels';
 
 export default function ContactsPage() {
   const t = useT('dashboard.organization.contacts');
   const tRoot = useT();
+  const currentUser = useAuthStore.use.user();
   const [searchKeyword, setSearchKeyword] = useState('');
   const [memberSearchKeyword, setMemberSearchKeyword] = useState('');
   const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null);
@@ -56,6 +62,9 @@ export default function ContactsPage() {
   const [memberToToggle, setMemberToToggle] = useState<DepartmentMember | null>(null);
   const [resetPasswordDialogOpen, setResetPasswordDialogOpen] = useState(false);
   const [memberToResetPassword, setMemberToResetPassword] = useState<DepartmentMember | null>(null);
+  const [assignWorkspaceDialogOpen, setAssignWorkspaceDialogOpen] = useState(false);
+  const [memberToAssignWorkspace, setMemberToAssignWorkspace] =
+    useState<DepartmentMember | null>(null);
 
   // Member actions hook
   const {
@@ -127,6 +136,8 @@ export default function ContactsPage() {
 
   // Get current organization
   const { currentOrganization } = useOrganizations();
+  const currentOrganizationRole =
+    currentOrganization?.organization_role ?? currentUser?.organization_role ?? null;
 
   // Fetch departments
   const { departments, isLoading: loadingDepartments } = useDepartments();
@@ -273,8 +284,33 @@ export default function ContactsPage() {
       : t('scopeDepartmentHint')
     : null;
   const hasMemberSearch = debouncedMemberSearchKeyword.trim().length > 0;
-  const getAssignWorkspaceHref = (member: DepartmentMember) =>
-    `/dashboard/organization/workspaces?assignMember=${encodeURIComponent(member.account_email)}`;
+
+  const getOrganizationRoleLabel = (role?: DepartmentMember['organization_role']) => {
+    const normalizedRole = normalizeOrganizationRole(role);
+    if (!normalizedRole) return '-';
+    return t(
+      `organizationRoles.${normalizedRole}` as
+        | 'organizationRoles.owner'
+        | 'organizationRoles.admin'
+        | 'organizationRoles.normal'
+    );
+  };
+
+  const canResetMemberPassword = (member: DepartmentMember) => {
+    if (IS_CLOUD || !currentUser?.id || !member.organization_role) {
+      return false;
+    }
+    if (member.account_id === currentUser.id) {
+      return false;
+    }
+    if (currentOrganizationRole === 'owner') {
+      return member.organization_role !== 'owner';
+    }
+    if (currentOrganizationRole === 'admin') {
+      return member.organization_role === 'normal';
+    }
+    return false;
+  };
 
   // Handle toggle member status
   const handleToggleStatus = (member: DepartmentMember) => {
@@ -328,6 +364,11 @@ export default function ContactsPage() {
   const handleResetPasswordClick = (member: DepartmentMember) => {
     setMemberToResetPassword(member);
     setResetPasswordDialogOpen(true);
+  };
+
+  const handleAssignWorkspaceClick = (member: DepartmentMember) => {
+    setMemberToAssignWorkspace(member);
+    setAssignWorkspaceDialogOpen(true);
   };
 
   const handleResetPassword = async (email: string, password?: string) => {
@@ -553,6 +594,7 @@ export default function ContactsPage() {
             columns={[
               { key: 'name', header: t('name'), className: 'pl-6' },
               { key: 'email', header: t('email') },
+              { key: 'organizationRole', header: t('organizationRole') },
               { key: 'department', header: t('editDialog.department') },
               { key: 'workspaces', header: t('workspaces') },
               { key: 'status', header: t('status') },
@@ -565,7 +607,7 @@ export default function ContactsPage() {
             loadingRows={6}
             renderSkeletonRow={index => (
               <tr key={`member-skeleton-${index}`} className="border-b border-border/10">
-                <td colSpan={7} className="px-6 py-4">
+                <td colSpan={8} className="px-6 py-4">
                   <div className="flex items-center gap-4">
                     <Skeleton className="h-12 w-12 rounded-lg opacity-40" />
                     <div className="flex-1 space-y-2">
@@ -623,10 +665,32 @@ export default function ContactsPage() {
                     <span className="font-semibold text-text-primary text-[13px] group-hover:text-primary transition-colors truncate max-w-[150px]">
                       {member.member_name || member.account_name}
                     </span>
+                    {isPrivilegedOrganizationRole(member.organization_role) ? (
+                      <Badge
+                        variant={member.organization_role === 'owner' ? 'warning' : 'info'}
+                        className="rounded-md px-1.5 py-px text-[10px] font-semibold"
+                      >
+                        {getOrganizationRoleLabel(member.organization_role)}
+                      </Badge>
+                    ) : null}
                   </div>
                 </td>
                 <td className="py-4 text-[13px] text-text-secondary font-medium">
                   {member.account_email}
+                </td>
+                <td className="py-4">
+                  <Badge
+                    variant={
+                      member.organization_role === 'owner'
+                        ? 'warning'
+                        : member.organization_role === 'admin'
+                          ? 'info'
+                          : 'subtle'
+                    }
+                    className="rounded-md px-2 py-px text-[10px] font-medium"
+                  >
+                    {getOrganizationRoleLabel(member.organization_role)}
+                  </Badge>
                 </td>
                 <td className="py-4">
                   <div className="flex">
@@ -701,15 +765,13 @@ export default function ContactsPage() {
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button
-                              asChild
                               variant="ghost"
                               size="xs"
                               isIcon
+                              onClick={() => handleAssignWorkspaceClick(member)}
                               className="h-6 w-6 rounded-md text-primary"
                             >
-                              <Link href={getAssignWorkspaceHref(member)}>
-                                <UserPlus className="h-3.5 w-3.5" />
-                              </Link>
+                              <UserPlus className="h-3.5 w-3.5" />
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent className="text-xs">
@@ -767,7 +829,7 @@ export default function ContactsPage() {
                       </Tooltip>
                     )}
 
-                    {!IS_CLOUD && (
+                    {canResetMemberPassword(member) && (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button
@@ -874,6 +936,22 @@ export default function ContactsPage() {
           isResetting={isResettingPassword}
         />
       )}
+
+      {memberToAssignWorkspace ? (
+        <AssignWorkspaceDialog
+          open={assignWorkspaceDialogOpen}
+          member={memberToAssignWorkspace}
+          onOpenChange={open => {
+            setAssignWorkspaceDialogOpen(open);
+            if (!open) {
+              setMemberToAssignWorkspace(null);
+            }
+          }}
+          onAssigned={() => {
+            refetchMembers();
+          }}
+        />
+      ) : null}
 
       {/* Create Department Dialog */}
       <CreateDepartmentDialog

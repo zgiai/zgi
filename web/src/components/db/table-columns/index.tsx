@@ -24,6 +24,7 @@ import { BannerKey, hideBanner, isBannerHidden } from '@/utils/ui-local';
 import TableColumnsEditor from '@/components/db/table-columns/table-colums-editor';
 import { SchemaHealthNotice } from '@/components/db/schema-health';
 import { generateClientId } from '@/utils/client-id';
+import { DATABASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 interface TableColumnsProps {
   dbId: string;
@@ -41,8 +42,14 @@ export default function TableColumns({ dbId, tableId }: TableColumnsProps) {
   const t = useT('dbs');
 
   // Permissions
-  const { hasPermission } = useAccountPermissions();
-  const canManage = hasPermission('database.manage');
+  const { hasAnyPermission } = useAccountPermissions();
+  const canManageSchema = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.schemaManage);
+  const canViewRecords = hasAnyPermission([
+    ...DATABASE_PERMISSION_ACTIONS.recordView,
+    ...DATABASE_PERMISSION_ACTIONS.recordCreate,
+    ...DATABASE_PERMISSION_ACTIONS.recordUpdate,
+    ...DATABASE_PERMISSION_ACTIONS.recordDelete,
+  ]);
 
   const { columns, isLoading, isFetching } = useDbTableColumns(dbId, tableId, {
     includeSystemFields: true,
@@ -72,6 +79,7 @@ export default function TableColumns({ dbId, tableId }: TableColumnsProps) {
   }, [columns, localColumns.length]);
 
   const addEmptyColumn = () => {
+    if (!canManageSchema) return;
     const newCol: DbTableColumn = {
       id: generateTempId(),
       name: '',
@@ -83,6 +91,7 @@ export default function TableColumns({ dbId, tableId }: TableColumnsProps) {
   };
 
   const onSave = async () => {
+    if (!canManageSchema) return;
     if (validation.hasDuplicateNames || validation.hasInvalidNames) return;
     const next = await updateColumns(localColumns);
     setLocalColumns(next);
@@ -136,12 +145,14 @@ export default function TableColumns({ dbId, tableId }: TableColumnsProps) {
           </Button>
         ) : (
           <div className="flex items-center gap-2">
-            <Button asChild variant="outline">
-              <Link href={`/console/db/${dbId}/table/${tableId}`} title={t('actions.viewData')}>
-                {t('actions.viewData')}
-              </Link>
-            </Button>
-            {canManage && (
+            {canViewRecords && (
+              <Button asChild variant="outline">
+                <Link href={`/console/db/${dbId}/table/${tableId}`} title={t('actions.viewData')}>
+                  {t('actions.viewData')}
+                </Link>
+              </Button>
+            )}
+            {canManageSchema && (
               <Button asChild className="bg-highlight text-white hover:bg-highlight/90">
                 <Link
                   href={`/console/db/${dbId}/table/${tableId}/create`}
@@ -152,7 +163,9 @@ export default function TableColumns({ dbId, tableId }: TableColumnsProps) {
                 </Link>
               </Button>
             )}
-            {canManage && <Button onClick={() => setIsEditing(true)}>{t('actions.edit')}</Button>}
+            {canManageSchema && (
+              <Button onClick={() => setIsEditing(true)}>{t('actions.edit')}</Button>
+            )}
           </div>
         )}
       </div>
@@ -216,7 +229,12 @@ export default function TableColumns({ dbId, tableId }: TableColumnsProps) {
           </Button>
           <Button
             onClick={onSave}
-            disabled={isPending || validation.hasDuplicateNames || validation.hasInvalidNames}
+            disabled={
+              !canManageSchema ||
+              isPending ||
+              validation.hasDuplicateNames ||
+              validation.hasInvalidNames
+            }
           >
             {isPending ? <Loader className="w-4 h-4 animate-spin" /> : t('columns.save')}
           </Button>

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -22,23 +22,26 @@ import type { KnowledgeRetrievalNodeData } from '../../../../store/type';
 
 interface RecallSettingsDialogProps {
   id: string;
+  readOnly?: boolean;
 }
 
 const DEFAULT_SCORE_THRESHOLD = 0.8;
 
-const RecallSettingsDialog: React.FC<RecallSettingsDialogProps> = ({ id }) => {
+const RecallSettingsDialog: React.FC<RecallSettingsDialogProps> = ({ id, readOnly = false }) => {
   const [open, setOpen] = useState(false);
   const t = useT();
   const nodeData = useNodeData<KnowledgeRetrievalNodeData>(id);
   const updateNodeData = useNodeDataUpdate<KnowledgeRetrievalNodeData>(id);
 
-  if (!nodeData) return null;
-
-  const config = nodeData.multiple_retrieval_config || {
-    top_k: 2,
-    reranking_enable: false,
-    score_threshold: DEFAULT_SCORE_THRESHOLD,
-  };
+  const config = useMemo(
+    () =>
+      nodeData?.multiple_retrieval_config || {
+        top_k: 2,
+        reranking_enable: false,
+        score_threshold: DEFAULT_SCORE_THRESHOLD,
+      },
+    [nodeData?.multiple_retrieval_config]
+  );
 
   const topKSafe = Math.max(1, Number(config.top_k ?? 1));
   const thresholdEnabled = typeof config.score_threshold === 'number';
@@ -54,6 +57,7 @@ const RecallSettingsDialog: React.FC<RecallSettingsDialogProps> = ({ id }) => {
 
   const update = useCallback(
     (patch: Partial<KnowledgeRetrievalNodeData['multiple_retrieval_config']>) => {
+      if (readOnly || !nodeData) return;
       updateNodeData({
         multiple_retrieval_config: {
           ...config,
@@ -61,8 +65,10 @@ const RecallSettingsDialog: React.FC<RecallSettingsDialogProps> = ({ id }) => {
         } as KnowledgeRetrievalNodeData['multiple_retrieval_config'],
       });
     },
-    [config, updateNodeData]
+    [config, nodeData, readOnly, updateNodeData]
   );
+
+  if (!nodeData) return null;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -91,6 +97,7 @@ const RecallSettingsDialog: React.FC<RecallSettingsDialogProps> = ({ id }) => {
                   step={1}
                   value={[topKSafe]}
                   onValueChange={([value]) => update({ top_k: Math.max(1, Number(value)) })}
+                  disabled={readOnly}
                   className="flex-1"
                 />
                 <Input
@@ -101,6 +108,7 @@ const RecallSettingsDialog: React.FC<RecallSettingsDialogProps> = ({ id }) => {
                   step={1}
                   className="h-9 w-20 text-center"
                   value={topKSafe}
+                  disabled={readOnly}
                   onChange={event =>
                     update({ top_k: Math.max(1, Number(event.target.value || 1)) })
                   }
@@ -115,6 +123,7 @@ const RecallSettingsDialog: React.FC<RecallSettingsDialogProps> = ({ id }) => {
                 </Label>
                 <Switch
                   checked={thresholdEnabled}
+                  disabled={readOnly}
                   onCheckedChange={checked =>
                     update({
                       score_threshold: checked
@@ -131,7 +140,7 @@ const RecallSettingsDialog: React.FC<RecallSettingsDialogProps> = ({ id }) => {
                   step={0.05}
                   value={[thresholdSafe]}
                   onValueChange={([value]) => update({ score_threshold: Number(value) })}
-                  disabled={!thresholdEnabled}
+                  disabled={readOnly || !thresholdEnabled}
                   className="flex-1"
                 />
                 <Input
@@ -142,7 +151,7 @@ const RecallSettingsDialog: React.FC<RecallSettingsDialogProps> = ({ id }) => {
                   step={0.05}
                   className="h-9 w-20 text-center font-mono"
                   value={thresholdSafe}
-                  disabled={!thresholdEnabled}
+                  disabled={readOnly || !thresholdEnabled}
                   onChange={event => {
                     const nextValue = Math.max(
                       0,
@@ -161,6 +170,7 @@ const RecallSettingsDialog: React.FC<RecallSettingsDialogProps> = ({ id }) => {
                 </Label>
                 <Switch
                   checked={rerankingEnabled}
+                  disabled={readOnly}
                   onCheckedChange={checked =>
                     update({
                       reranking_enable: checked,
@@ -183,6 +193,7 @@ const RecallSettingsDialog: React.FC<RecallSettingsDialogProps> = ({ id }) => {
                     })
                   }
                   className="max-w-md"
+                  disabled={readOnly}
                 />
               ) : null}
             </div>

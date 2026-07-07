@@ -2,7 +2,6 @@ package agents
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,7 +10,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
-	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -86,13 +84,12 @@ func (s *agentsService) CreateAgent(ctx context.Context, tenantID string, req in
 		return nil, fmt.Errorf("name and agentType are required")
 	}
 
-	// Permission: editor can create
-	isEditor, err := s.accountService.IsEditor(ctx, accountID)
-	if err != nil {
-		return nil, err
+	createPermissions := agentCreatePermissionCodes(agentType)
+	if len(createPermissions) == 0 {
+		return nil, fmt.Errorf("permission denied")
 	}
-	if !isEditor {
-		return nil, errors.New("permission denied")
+	if err := s.ensureWorkspaceAnyPermission(ctx, tenantID, accountID, createPermissions...); err != nil {
+		return nil, err
 	}
 
 	// Duplicate name in tenant
@@ -364,12 +361,12 @@ func (s *agentsService) GetAgent(ctx context.Context, agentID string) (interface
 	}
 
 	if accountID != "" && callerOrganizationID != "" && s.enterpriseService != nil {
-		canView, err := s.enterpriseService.CheckWorkspacePermission(
+		canView, err := s.enterpriseService.CheckWorkspaceOrganizationAnyPermission(
 			ctx,
 			callerOrganizationID,
 			ag.TenantID.String(),
 			accountID,
-			model.WorkspacePermissionAgentView,
+			agentAssetVisiblePermissionCodes()...,
 		)
 		if err != nil {
 			logger.Error(fmt.Sprintf("GetAgent: failed to check workspace permission for agent %s, account %s", agentID, accountID), err)
@@ -389,10 +386,12 @@ func (s *agentsService) GetAgent(ctx context.Context, agentID string) (interface
 		}
 
 		canEditResult, err := s.resourcePermissionService.CheckSingleResourceEditPermission(ctx, interfaces.SingleResourcePermissionParams{
-			AccountID: accountID,
-			TenantID:  ag.TenantID.String(),
-			CreatedBy: createdBy,
-			GroupID:   nil, // Agents don't have group_id
+			AccountID:       accountID,
+			TenantID:        ag.TenantID.String(),
+			OrganizationID:  callerOrganizationID,
+			CreatedBy:       createdBy,
+			GroupID:         nil, // Agents don't have group_id
+			PermissionCodes: agentUpdatePermissionCodes(ag.AgentsType),
 		})
 		if err != nil {
 			logger.Error(fmt.Sprintf("GetAgent: Failed to check edit permission for agent %s, account %s: %v", agentID, accountID, err), err)
@@ -539,12 +538,12 @@ func (s *agentsService) UpdateAgent(ctx context.Context, agentID string, req int
 	}
 
 	if callerOrganizationID != "" && s.enterpriseService != nil {
-		canUpdate, err = s.enterpriseService.CheckWorkspacePermission(
+		canUpdate, err = s.enterpriseService.CheckWorkspaceOrganizationAnyPermission(
 			ctx,
 			callerOrganizationID,
 			ag.TenantID.String(),
 			accountID,
-			model.WorkspacePermissionAgentManage,
+			agentUpdatePermissionCodes(ag.AgentsType)...,
 		)
 		if err != nil {
 			logger.Error(fmt.Sprintf("UpdateAgent: failed to check workspace permission for agent %s, account %s", agentID, accountID), err)
@@ -552,10 +551,12 @@ func (s *agentsService) UpdateAgent(ctx context.Context, agentID string, req int
 		}
 	} else if s.resourcePermissionService != nil {
 		canUpdate, err = s.resourcePermissionService.CheckSingleResourceEditPermission(ctx, interfaces.SingleResourcePermissionParams{
-			AccountID: accountID,
-			TenantID:  ag.TenantID.String(),
-			CreatedBy: creatorID,
-			GroupID:   nil,
+			AccountID:       accountID,
+			TenantID:        ag.TenantID.String(),
+			OrganizationID:  callerOrganizationID,
+			CreatedBy:       creatorID,
+			GroupID:         nil,
+			PermissionCodes: agentUpdatePermissionCodes(ag.AgentsType),
 		})
 		if err != nil {
 			logger.Error(fmt.Sprintf("UpdateAgent: failed to check edit permission for agent %s, account %s", agentID, accountID), err)
@@ -566,14 +567,6 @@ func (s *agentsService) UpdateAgent(ctx context.Context, agentID string, req int
 	}
 
 	if !canUpdate {
-		return nil, fmt.Errorf("permission denied")
-	}
-
-	isEditor, err := s.accountService.IsEditor(ctx, accountID)
-	if err != nil {
-		return nil, err
-	}
-	if !isEditor {
 		return nil, fmt.Errorf("permission denied")
 	}
 
@@ -653,6 +646,23 @@ func (s *agentsService) UpdateAgent(ctx context.Context, agentID string, req int
 		}
 	default:
 		// Allow empty update
+	}
+
+	targetWorkspaceID := ""
+	if workspaceIDPtr != nil {
+		targetWorkspaceID = strings.TrimSpace(*workspaceIDPtr)
+	}
+	if targetWorkspaceID != "" && !strings.EqualFold(targetWorkspaceID, ag.TenantID.String()) {
+		movePermissions := agentMovePermissionCodes(ag.AgentsType)
+		if len(movePermissions) == 0 {
+			return nil, fmt.Errorf("permission denied")
+		}
+		if err := s.ensureWorkspaceAnyPermission(ctx, ag.TenantID.String(), accountID, movePermissions...); err != nil {
+			return nil, err
+		}
+		if err := s.ensureWorkspaceAnyPermission(ctx, targetWorkspaceID, accountID, movePermissions...); err != nil {
+			return nil, err
+		}
 	}
 
 	// Apply name change with duplicate check (within target tenant)
@@ -819,12 +829,12 @@ func (s *agentsService) DeleteAgent(ctx context.Context, agentID string) error {
 	}
 
 	if callerOrganizationID != "" && s.enterpriseService != nil {
-		canDelete, err = s.enterpriseService.CheckWorkspacePermission(
+		canDelete, err = s.enterpriseService.CheckWorkspaceOrganizationAnyPermission(
 			ctx,
 			callerOrganizationID,
 			workspaceID,
 			accountID,
-			model.WorkspacePermissionAgentManage,
+			agentDeletePermissionCodes(agent.AgentsType)...,
 		)
 		if err != nil {
 			logger.Error(fmt.Sprintf("DeleteAgent: failed to check workspace permission for agent %s, account %s", agentID, accountID), err)
@@ -832,10 +842,12 @@ func (s *agentsService) DeleteAgent(ctx context.Context, agentID string) error {
 		}
 	} else if s.resourcePermissionService != nil {
 		canDelete, err = s.resourcePermissionService.CheckSingleResourceEditPermission(ctx, interfaces.SingleResourcePermissionParams{
-			AccountID: accountID,
-			TenantID:  workspaceID,
-			CreatedBy: creatorID,
-			GroupID:   uuidPtrToString(groupID),
+			AccountID:       accountID,
+			TenantID:        workspaceID,
+			OrganizationID:  callerOrganizationID,
+			CreatedBy:       creatorID,
+			GroupID:         uuidPtrToString(groupID),
+			PermissionCodes: agentDeletePermissionCodes(agent.AgentsType),
 		})
 		if err != nil {
 			logger.Error(fmt.Sprintf("DeleteAgent: failed to check edit permission for agent %s, account %s", agentID, accountID), err)
@@ -849,16 +861,6 @@ func (s *agentsService) DeleteAgent(ctx context.Context, agentID string) error {
 			"creator_id":   creatorID,
 			"workspace_id": workspaceID,
 		})
-		return fmt.Errorf("permission denied")
-	}
-
-	// Check if user has editor permission
-	isEditor, err := s.accountService.IsEditor(ctx, accountID)
-	if err != nil {
-		logger.Error("Failed to check editor permission: %v", err)
-		return fmt.Errorf("failed to verify permissions")
-	}
-	if !isEditor {
 		return fmt.Errorf("permission denied")
 	}
 

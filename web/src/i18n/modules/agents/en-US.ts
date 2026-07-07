@@ -1,7 +1,9 @@
 const messages = {
   agent: 'Agent',
   title: 'Agent Management',
+  workflowListTitle: 'Workflow Management',
   create: 'Create Agent',
+  createWorkflow: 'Create Workflow',
   createFolder: 'Create Folder',
   agentCreated: 'Agent created successfully',
   empty: 'No agents',
@@ -37,6 +39,7 @@ const messages = {
   // Navigation
   backToList: 'Back to Agents',
   backToAgentList: 'Agent list',
+  backToWorkflowList: 'Workflow list',
   permission: 'Permission',
 
   // Tab management
@@ -55,6 +58,7 @@ const messages = {
 
   // Search and filters
   searchPlaceholder: 'Search agents...',
+  workflowSearchPlaceholder: 'Search workflows...',
   filterAll: 'All',
   filterActive: 'Active',
   filterInactive: 'Inactive',
@@ -67,8 +71,14 @@ const messages = {
   noAgentsYet: 'No agents yet',
   noAgentsDescription:
     'Get started by creating your first agent to automate tasks and conversations.',
+  noWorkflowsYet: 'No workflows yet',
+  noWorkflowsDescription:
+    'Get started by creating your first workflow to orchestrate repeatable processes.',
+  workflowNoResultsDescription: 'No workflows match your search for "{keyword}".',
   createFirstAgent: 'Create Agent',
+  createFirstWorkflow: 'Create Workflow',
   importAgent: 'Import Agent',
+  importWorkflow: 'Import Workflow',
   importingAgent: 'Importing...',
   importSelectFile: 'Please select a YAML file',
   invalidImportFileType: 'Unsupported file format, expected .yml or .yaml',
@@ -885,6 +895,141 @@ const messages = {
       deleteFailed: 'Failed to delete API Key',
     },
   },
+  runtimeAccess: {
+    navTitle: 'Publication Access',
+    title: 'Publication Access',
+    description:
+      'Control which published runtime surfaces are enabled for this agent. Internal invocation remains available for agent and scheduled-task calls.',
+    policyNote:
+      'WebApp can be public or scoped. App Center visibility is scoped to internal audiences. API service is controlled only by its enablement switch.',
+    dialogTitle: 'Publication settings',
+    dialogDescription:
+      'Configure which published runtime surfaces are enabled and who can use WebApp and App Center entries.',
+    loadError: 'Failed to load publication access',
+    saveSuccess: 'Publication access updated',
+    saveError: 'Failed to update publication access',
+    surfaces: {
+      webapp: 'WebApp',
+      webappDescription: 'Public web application entry for this agent.',
+      appCenter: 'App Center',
+      appCenterDescription: 'Organization app-center entry with scoped audience access.',
+      api: 'API service',
+      apiDescription: 'External calls through agent API keys.',
+      builtinApp: 'Built-in app',
+      builtinAppDescription: 'Organization app-center exposure with scoped audience grants.',
+      internal: 'Internal invocation',
+      internalDescription: 'Agent tools and scheduled tasks keep this surface available.',
+    },
+    status: {
+      enabled: 'Enabled',
+      disabled: 'Disabled',
+    },
+    sources: {
+      legacy_agent_fields: 'Legacy',
+      grant: 'Grant',
+      system_default: 'Default',
+    },
+    grants: {
+      webappTitle: 'WebApp audience',
+      webappDescription:
+        'Choose whether the published WebApp is public or limited to internal audiences. Members of the owning workspace can always access it.',
+      webappPublic: 'Public access',
+      webappPublicDescription: 'Anyone with the WebApp link can open it.',
+      webappScoped: 'Specific audiences',
+      webappScopedDescription:
+        'Only selected organization members, workspaces, or departments can use it.',
+      appCenterTitle: 'App Center audience',
+      appCenterDescription:
+        'Choose who can see this app in the organization app center. Members of the owning workspace can always access it.',
+      title: 'Built-in app audience',
+      description:
+        'Grant app-center access to the organization, a workspace, a department, or an account.',
+      subjectIdPlaceholder: 'Account or department ID',
+      organizationWide: 'Whole organization',
+      departmentPlaceholder: 'Select department',
+      workspacePlaceholder: 'Select workspace',
+      accountPlaceholder: 'Select account',
+      searchMembersPlaceholder: 'Search members',
+      noMembers: 'No members found',
+      loadingMembers: 'Loading members...',
+      resolvingAccount: 'Resolving account...',
+      selectionRequired: 'Select an account or department before saving',
+      accountLookupFailed: 'Could not verify account',
+      departmentLookupFailed: 'Could not verify department',
+      workspaceLookupFailed: 'Could not verify workspace',
+      unresolvedAccount: 'Unavailable account',
+      unresolvedDepartment: 'Unavailable department',
+      unresolvedWorkspace: 'Unavailable workspace',
+      wholeOrganizationSelectedTitle: 'Open to the whole organization',
+      wholeOrganizationSelectedDescription:
+        'Every member in the organization can see and use this entry. Switch to edit range to limit the audience.',
+      owningWorkspaceDefaultTitle: 'Owning workspace only',
+      owningWorkspaceDefaultDescription:
+        'No extra workspaces, departments, or members are selected. Members of the owning workspace can see and use this entry by default.',
+    },
+    picker: {
+      webappDialogTitle: 'Select WebApp audience',
+      appCenterDialogTitle: 'Select App Center audience',
+      builtinDialogTitle: 'Select built-in app audience',
+      rangeDialogDescription:
+        'Select workspaces, departments, and members. The owning workspace is included by default and is not shown again.',
+      departmentsTab: 'Departments',
+      workspacesTab: 'Workspaces',
+      membersTab: 'Members',
+      loadingDepartments: 'Loading departments...',
+      noDepartments: 'No departments found',
+      loadingWorkspaces: 'Loading workspaces...',
+      noWorkspaces: 'No workspaces found',
+      searchMembersPlaceholder: 'Search members',
+      loadingMembers: 'Loading members...',
+      noMembers: 'No members found',
+      selectedTitle: 'Selected audience',
+      selectedCount: '{departments} departments, {workspaces} workspaces, {accounts} members',
+      emptySelected: 'No workspaces, departments, or members selected',
+    },
+    grantSubjects: {
+      organization: 'Organization',
+      department: 'Department',
+      workspace: 'Workspace',
+      account: 'Account',
+    },
+    actions: {
+      addGrant: 'Add',
+      removeGrant: 'Remove',
+      save: 'Save',
+      saving: 'Saving...',
+      cancel: 'Cancel',
+      confirm: 'Confirm',
+      clear: 'Clear',
+      useWholeOrganization: 'Whole organization',
+      editRange: 'Edit range',
+    },
+    wholeOrganizationConfirm: {
+      title: 'Open to the whole organization?',
+      description:
+        'Switching to the whole organization clears the currently selected workspaces, departments, and members.',
+      confirm: 'Confirm switch',
+      cancel: 'Cancel',
+    },
+    closeGuard: {
+      title: 'Unsaved changes',
+      description:
+        'Publication settings have unsaved changes. Save and close, close without saving, or keep editing.',
+      saveAndClose: 'Save and close',
+      discard: 'Close without saving',
+      cancel: 'Cancel',
+    },
+    validation: {
+      subjectIdRequired: 'Account, department, and workspace grants need an ID',
+      duplicateGrant: 'Duplicate audience grant',
+      webappGrantRequired: 'Add at least one WebApp audience grant',
+      appCenterGrantRequired: 'Add at least one App Center audience grant',
+      grantRequired: 'Add at least one built-in app audience grant',
+      wholeOrganizationRequiresAdmin:
+        'Only organization owners and admins can open access to the whole organization',
+      manageRequired: 'Agent manage permission is required',
+    },
+  },
   workflowTest: {
     navTitle: 'Batch Testing',
     subnav: {
@@ -1441,6 +1586,7 @@ const messages = {
       update: 'Update',
       updating: 'Updating',
       more: 'More',
+      publishSettings: 'Publication settings',
       openWebApp: 'Open WebApp',
       copyWebAppLink: 'Copy WebApp link',
       webAppStatus: 'WebApp status',
@@ -1636,6 +1782,8 @@ const messages = {
       loadFailedName: 'Unavailable knowledge',
       loadFailedDescription:
         'Failed to load this knowledge base. The link is kept, but please verify permissions or availability.',
+      bindingPermissionRequired:
+        'Knowledge base read or maintenance permission is required to bind knowledge bases to this Agent.',
     },
     database: {
       emptySelected: 'No database table has been bound to this Agent yet.',
@@ -1675,6 +1823,8 @@ const messages = {
       allowWriteAll: 'All writable',
       allowWriteAllForDatabase: 'Allow write for all selected tables in {name}',
       allowWriteForTable: 'Allow write for {name}',
+      bindingPermissionRequired:
+        'Database AI query read and record view permissions are both required to bind database tables to this Agent.',
       writePermissionRequired:
         'Write authorization can only be edited by users with database AI query and data edit permissions.',
       writeEnabled: 'Writable',

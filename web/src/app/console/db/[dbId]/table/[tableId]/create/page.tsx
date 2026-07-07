@@ -13,6 +13,12 @@ import { useT } from '@/i18n';
 import { StepOne, StepTwo } from '@/components/db/table-create';
 import type { DbTableColumn } from '@/services/types/db';
 import Link from 'next/link';
+import {
+  PermissionDeniedState,
+  PermissionLoadingState,
+} from '@/components/common/permission-gate-state';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import { DATABASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 interface PageProps {
   params: Promise<{ dbId: string; tableId: string }>;
@@ -23,6 +29,8 @@ type Step = 1 | 2;
 export default function DbTableCreatePage({ params }: PageProps) {
   const { dbId, tableId } = use(params);
   const t = useT('dbs');
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canManageSchema = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.schemaManage);
 
   // Step control
   const [step, setStep] = useState<Step>(1);
@@ -36,6 +44,14 @@ export default function DbTableCreatePage({ params }: PageProps) {
   const onPrevStep = () => {
     setStep(1);
   };
+
+  if (isPermissionsLoading) {
+    return <PermissionLoadingState />;
+  }
+
+  if (!canManageSchema) {
+    return <PermissionDeniedState />;
+  }
 
   return (
     <div className="p-6 h-full flex flex-col w-full overflow-hidden">

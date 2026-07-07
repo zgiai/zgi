@@ -534,7 +534,7 @@ func TestTrustedContextualAIChatSkillCapabilitiesUseWorkspacePermissions(t *test
 	workspaceID := uuid.New()
 	permissionService := &skillConfigWorkspacePermissionService{
 		allowed: map[workspacemodel.WorkspacePermissionCode]bool{
-			workspacemodel.WorkspacePermissionFileDownload:     true,
+			workspacemodel.WorkspacePermissionFilePreview:      true,
 			workspacemodel.WorkspacePermissionFileManage:       false,
 			workspacemodel.WorkspacePermissionFileUploadCreate: true,
 		},
@@ -550,7 +550,7 @@ func TestTrustedContextualAIChatSkillCapabilitiesUseWorkspacePermissions(t *test
 	}
 
 	wantCodes := []workspacemodel.WorkspacePermissionCode{
-		workspacemodel.WorkspacePermissionFileDownload,
+		workspacemodel.WorkspacePermissionFilePreview,
 		workspacemodel.WorkspacePermissionFileManage,
 		workspacemodel.WorkspacePermissionFileUploadCreate,
 	}
@@ -649,7 +649,7 @@ func TestTrustedContextualAIChatSkillCapabilitiesUsesOperationContextWorkspace(t
 
 	permissionService := &skillConfigWorkspacePermissionService{
 		allowed: map[workspacemodel.WorkspacePermissionCode]bool{
-			workspacemodel.WorkspacePermissionFileDownload:     true,
+			workspacemodel.WorkspacePermissionFilePreview:      true,
 			workspacemodel.WorkspacePermissionFileManage:       true,
 			workspacemodel.WorkspacePermissionFileUploadCreate: true,
 		},

@@ -1,7 +1,6 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useMemo } from 'react';
 import { useT } from '@/i18n';
 
 import Link from 'next/link';
@@ -29,6 +28,7 @@ import { markAuthRedirectInProgress } from '@/lib/auth/logout-state';
 import { setPendingLogoutRedirect } from '@/utils/logout-redirect';
 import { useLocale } from '@/hooks/use-locale';
 import { useUpdateInterfaceLanguage } from '@/hooks/use-update-interface-language';
+import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import { LANGUAGES } from '@/lib/constants';
 import type { Locale } from '@/lib/i18n';
 import { Building2 } from 'lucide-react';
@@ -46,10 +46,7 @@ export function UserMenu() {
   const isLoggingOut = useAuthStore.use.isLoggingOut();
   const logoutMutation = useLogout();
   const isLogoutDisabled = isLoggingOut || logoutMutation.isPending;
-  const isOrgAdmin = useMemo(
-    () => ['owner', 'admin'].includes(user?.organization_role ?? ''),
-    [user]
-  );
+  const { canAccessOrganizationDashboard } = useAccountCapabilities();
 
   // Organizations hook (with data fetching & permission handling)
   const { organizations, currentOrganization, switchOrganization } = useOrganizations(true);
@@ -136,7 +133,7 @@ export function UserMenu() {
             </DropdownMenuSubContent>
           </DropdownMenuSub>
         )}
-        {isOrgAdmin && (
+        {canAccessOrganizationDashboard && (
           <DropdownMenuItem asChild>
             <Link href="/dashboard" className="!cursor-pointer">
               <Icons.LayoutDashboard className="h-4 w-4" />

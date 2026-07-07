@@ -104,6 +104,154 @@ func (h *DepartmentHandler) getOrganizationID(c *gin.Context) string {
 	return organizationID
 }
 
+func (h *DepartmentHandler) requireOrganizationAdminOrOwner(c *gin.Context, organizationID string) (string, bool) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return "", false
+	}
+	if h.enterpriseService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return "", false
+	}
+
+	allowed, err := h.enterpriseService.IsOrganizationAdminOrOwner(c.Request.Context(), organizationID, accountID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return "", false
+	}
+	if !allowed {
+		response.Fail(c, response.ErrPermissionDenied)
+		return "", false
+	}
+
+	return accountID, true
+}
+
+func (h *DepartmentHandler) requireOrganizationReadAccess(c *gin.Context, organizationID string) (string, bool, bool) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return "", false, false
+	}
+	if h.enterpriseService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return "", false, false
+	}
+
+	isAdmin, err := h.enterpriseService.IsOrganizationAdminOrOwner(c.Request.Context(), organizationID, accountID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return "", false, false
+	}
+	if isAdmin {
+		return accountID, true, true
+	}
+
+	isMember, err := h.enterpriseService.IsOrganizationMember(c.Request.Context(), organizationID, accountID)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return "", false, false
+	}
+	hasManagedWorkspace := false
+	if !isMember {
+		hasManagedWorkspace, err = h.enterpriseService.CheckAnyManagedWorkspacePermission(c.Request.Context(), organizationID, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return "", false, false
+		}
+	}
+	if !isMember && !hasManagedWorkspace {
+		response.Fail(c, response.ErrPermissionDenied)
+		return "", false, false
+	}
+
+	return accountID, false, true
+}
+
+func (h *DepartmentHandler) requireDepartmentInOrganization(c *gin.Context, organizationID, deptID string) (*model.Department, bool) {
+	if deptID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return nil, false
+	}
+
+	dept, err := h.departmentService.GetDepartment(c.Request.Context(), deptID)
+	if err != nil {
+		if errors.Is(err, service.ErrDepartmentNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"code": "DepartmentNotFound", "message": err.Error()})
+			return nil, false
+		}
+		response.Fail(c, response.ErrSystemError)
+		return nil, false
+	}
+	if dept.OrganizationID != organizationID {
+		response.Fail(c, response.ErrPermissionDenied)
+		return nil, false
+	}
+
+	return dept, true
+}
+
+func (h *DepartmentHandler) visibleDepartmentIDs(c *gin.Context, organizationID, accountID string) (map[string]struct{}, error) {
+	dept, err := h.departmentService.GetMemberDepartment(c.Request.Context(), organizationID, accountID)
+	if err != nil {
+		if errors.Is(err, service.ErrMemberNotInDept) {
+			return map[string]struct{}{}, nil
+		}
+		return nil, err
+	}
+
+	tree, err := h.departmentService.GetDepartmentTree(c.Request.Context(), organizationID)
+	if err != nil {
+		return nil, err
+	}
+
+	visible := make(map[string]struct{})
+	var collect func(nodes []*service.DepartmentTreeNode) bool
+	collect = func(nodes []*service.DepartmentTreeNode) bool {
+		for _, node := range nodes {
+			if node.ID == dept.ID {
+				var collectSubtree func(*service.DepartmentTreeNode)
+				collectSubtree = func(current *service.DepartmentTreeNode) {
+					visible[current.ID] = struct{}{}
+					for _, child := range current.Children {
+						collectSubtree(child)
+					}
+				}
+				collectSubtree(node)
+				return true
+			}
+			if collect(node.Children) {
+				return true
+			}
+		}
+		return false
+	}
+	collect(tree)
+
+	return visible, nil
+}
+
+func filterDepartmentTreeByIDs(nodes []*service.DepartmentTreeNode, visible map[string]struct{}) []*service.DepartmentTreeNode {
+	filtered := make([]*service.DepartmentTreeNode, 0)
+	for _, node := range nodes {
+		children := filterDepartmentTreeByIDs(node.Children, visible)
+		if _, ok := visible[node.ID]; ok {
+			nodeCopy := *node
+			nodeCopy.Children = children
+			filtered = append(filtered, &nodeCopy)
+			continue
+		}
+		filtered = append(filtered, children...)
+	}
+	return filtered
+}
+
+func hasVisibleDepartment(visible map[string]struct{}, departmentID string) bool {
+	_, ok := visible[departmentID]
+	return ok
+}
+
 // CreateDepartment handles POST /organizations/:organization_id/departments
 func (h *DepartmentHandler) CreateDepartment(c *gin.Context) {
 	organizationID := h.getOrganizationID(c)
@@ -111,11 +259,9 @@ func (h *DepartmentHandler) CreateDepartment(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	accountID := middleware.GetAccountID(c)
 
-	// Check permission (admin or owner)
-	if !middleware.IsOrganizationAdminOrOwner(c) {
-		response.Fail(c, response.ErrPermissionDenied)
+	accountID, ok := h.requireOrganizationAdminOrOwner(c, organizationID)
+	if !ok {
 		return
 	}
 
@@ -144,16 +290,33 @@ func (h *DepartmentHandler) CreateDepartment(c *gin.Context) {
 
 // GetDepartment handles GET /organizations/:organization_id/departments/:dept_id
 func (h *DepartmentHandler) GetDepartment(c *gin.Context) {
+	organizationID := h.getOrganizationID(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
 	deptID := c.Param("dept_id")
 
-	dept, err := h.departmentService.GetDepartment(c.Request.Context(), deptID)
-	if err != nil {
-		if errors.Is(err, service.ErrDepartmentNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"code": "DepartmentNotFound", "message": err.Error()})
+	accountID, isAdmin, ok := h.requireOrganizationReadAccess(c, organizationID)
+	if !ok {
+		return
+	}
+
+	dept, ok := h.requireDepartmentInOrganization(c, organizationID, deptID)
+	if !ok {
+		return
+	}
+
+	if !isAdmin {
+		visible, err := h.visibleDepartmentIDs(c, organizationID, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
 			return
 		}
-		response.Fail(c, response.ErrSystemError)
-		return
+		if !hasVisibleDepartment(visible, dept.ID) {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
 	}
 
 	response.Success(c, toDepartmentResponse(dept))
@@ -161,11 +324,17 @@ func (h *DepartmentHandler) GetDepartment(c *gin.Context) {
 
 // UpdateDepartment handles PUT /organizations/:organization_id/departments/:dept_id
 func (h *DepartmentHandler) UpdateDepartment(c *gin.Context) {
+	organizationID := h.getOrganizationID(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
 	deptID := c.Param("dept_id")
 
-	// Check permission
-	if !middleware.IsOrganizationAdminOrOwner(c) {
-		response.Fail(c, response.ErrPermissionDenied)
+	if _, ok := h.requireOrganizationAdminOrOwner(c, organizationID); !ok {
+		return
+	}
+	if _, ok := h.requireDepartmentInOrganization(c, organizationID, deptID); !ok {
 		return
 	}
 
@@ -198,11 +367,17 @@ func (h *DepartmentHandler) UpdateDepartment(c *gin.Context) {
 
 // DeleteDepartment handles DELETE /organizations/:organization_id/departments/:dept_id
 func (h *DepartmentHandler) DeleteDepartment(c *gin.Context) {
+	organizationID := h.getOrganizationID(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
 	deptID := c.Param("dept_id")
 
-	// Check permission
-	if !middleware.IsOrganizationAdminOrOwner(c) {
-		response.Fail(c, response.ErrPermissionDenied)
+	if _, ok := h.requireOrganizationAdminOrOwner(c, organizationID); !ok {
+		return
+	}
+	if _, ok := h.requireDepartmentInOrganization(c, organizationID, deptID); !ok {
 		return
 	}
 
@@ -231,10 +406,23 @@ func (h *DepartmentHandler) GetDepartmentTree(c *gin.Context) {
 		return
 	}
 
+	accountID, isAdmin, ok := h.requireOrganizationReadAccess(c, organizationID)
+	if !ok {
+		return
+	}
+
 	tree, err := h.departmentService.GetDepartmentTree(c.Request.Context(), organizationID)
 	if err != nil {
 		response.Fail(c, response.ErrSystemError)
 		return
+	}
+	if !isAdmin {
+		visible, err := h.visibleDepartmentIDs(c, organizationID, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		tree = filterDepartmentTreeByIDs(tree, visible)
 	}
 
 	response.Success(c, gin.H{"departments": toTreeResponse(tree)})
@@ -249,9 +437,10 @@ func (h *DepartmentHandler) AddMemberToDepartment(c *gin.Context) {
 	}
 	deptID := c.Param("dept_id")
 
-	// Check permission
-	if !middleware.IsOrganizationAdminOrOwner(c) {
-		response.Fail(c, response.ErrPermissionDenied)
+	if _, ok := h.requireOrganizationAdminOrOwner(c, organizationID); !ok {
+		return
+	}
+	if _, ok := h.requireDepartmentInOrganization(c, organizationID, deptID); !ok {
 		return
 	}
 
@@ -280,12 +469,18 @@ func (h *DepartmentHandler) AddMemberToDepartment(c *gin.Context) {
 
 // RemoveMemberFromDepartment handles DELETE /organizations/:organization_id/departments/:dept_id/members/:account_id
 func (h *DepartmentHandler) RemoveMemberFromDepartment(c *gin.Context) {
+	organizationID := h.getOrganizationID(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
 	deptID := c.Param("dept_id")
 	accountID := c.Param("account_id")
 
-	// Check permission
-	if !middleware.IsOrganizationAdminOrOwner(c) {
-		response.Fail(c, response.ErrPermissionDenied)
+	if _, ok := h.requireOrganizationAdminOrOwner(c, organizationID); !ok {
+		return
+	}
+	if _, ok := h.requireDepartmentInOrganization(c, organizationID, deptID); !ok {
 		return
 	}
 
@@ -306,6 +501,25 @@ func (h *DepartmentHandler) GetDepartmentMembers(c *gin.Context) {
 		return
 	}
 	deptID := c.Param("dept_id")
+
+	accountID, isAdmin, ok := h.requireOrganizationReadAccess(c, organizationID)
+	if !ok {
+		return
+	}
+	if _, ok := h.requireDepartmentInOrganization(c, organizationID, deptID); !ok {
+		return
+	}
+	if !isAdmin {
+		visible, err := h.visibleDepartmentIDs(c, organizationID, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasVisibleDepartment(visible, deptID) {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
 
 	// Parse query parameters (reuse ListMembers semantics)
 	keyword := c.Query("keyword")
@@ -359,6 +573,27 @@ func (h *DepartmentHandler) GetMemberDepartment(c *gin.Context) {
 	}
 	accountID := c.Param("account_id")
 
+	currentAccountID, isAdmin, ok := h.requireOrganizationReadAccess(c, organizationID)
+	if !ok {
+		return
+	}
+	if !isAdmin && accountID != currentAccountID {
+		detail, err := h.departmentService.GetMemberDetailByAccountID(c.Request.Context(), organizationID, accountID)
+		if err != nil || detail == nil {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+		visible, err := h.visibleDepartmentIDs(c, organizationID, currentAccountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasVisibleDepartment(visible, detail.DepartmentID) {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
 	dept, err := h.departmentService.GetMemberDepartment(c.Request.Context(), organizationID, accountID)
 	if err != nil {
 		if errors.Is(err, service.ErrMemberNotInDept) {
@@ -381,9 +616,7 @@ func (h *DepartmentHandler) ChangeMemberDepartment(c *gin.Context) {
 	}
 	accountID := c.Param("account_id")
 
-	// Check permission
-	if !middleware.IsOrganizationAdminOrOwner(c) {
-		response.Fail(c, response.ErrPermissionDenied)
+	if _, ok := h.requireOrganizationAdminOrOwner(c, organizationID); !ok {
 		return
 	}
 
@@ -424,6 +657,11 @@ func (h *DepartmentHandler) ListMembers(c *gin.Context) {
 		return
 	}
 
+	accountID, isAdmin, ok := h.requireOrganizationReadAccess(c, organizationID)
+	if !ok {
+		return
+	}
+
 	// Parse query parameters
 	keyword := c.Query("keyword")
 
@@ -445,6 +683,38 @@ func (h *DepartmentHandler) ListMembers(c *gin.Context) {
 	if limitStr := c.Query("limit"); limitStr != "" {
 		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
 			limit = l
+		}
+	}
+
+	if !isAdmin {
+		visible, err := h.visibleDepartmentIDs(c, organizationID, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if departmentID != nil {
+			if !hasVisibleDepartment(visible, *departmentID) {
+				response.Fail(c, response.ErrPermissionDenied)
+				return
+			}
+		} else {
+			dept, err := h.departmentService.GetMemberDepartment(c.Request.Context(), organizationID, accountID)
+			if err != nil {
+				if !errors.Is(err, service.ErrMemberNotInDept) {
+					response.Fail(c, response.ErrSystemError)
+					return
+				}
+				response.Success(c, &service.MemberListResponse{
+					Data:    []*service.DepartmentMemberDetail{},
+					Total:   0,
+					Page:    page,
+					Limit:   limit,
+					HasMore: false,
+				})
+				return
+			}
+			departmentID = &dept.ID
+			includeSubDept = true
 		}
 	}
 
@@ -479,6 +749,11 @@ func (h *DepartmentHandler) GetMemberDetailByAccountID(c *gin.Context) {
 		return
 	}
 
+	accountID, isAdmin, ok := h.requireOrganizationReadAccess(c, organizationID)
+	if !ok {
+		return
+	}
+
 	result, err := h.departmentService.GetMemberDetailByAccountID(c.Request.Context(), organizationID, memberID)
 	if err != nil {
 		response.FailWithMessage(c, response.ErrSystemError, err.Error())
@@ -490,6 +765,18 @@ func (h *DepartmentHandler) GetMemberDetailByAccountID(c *gin.Context) {
 		return
 	}
 
+	if !isAdmin && memberID != accountID {
+		visible, err := h.visibleDepartmentIDs(c, organizationID, accountID)
+		if err != nil {
+			response.Fail(c, response.ErrSystemError)
+			return
+		}
+		if !hasVisibleDepartment(visible, result.DepartmentID) {
+			response.Fail(c, response.ErrPermissionDenied)
+			return
+		}
+	}
+
 	response.Success(c, result)
 }
 
@@ -499,6 +786,10 @@ func (h *DepartmentHandler) ListMembersWithoutDepartment(c *gin.Context) {
 	organizationID := h.getOrganizationID(c)
 	if organizationID == "" {
 		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+
+	if _, ok := h.requireOrganizationAdminOrOwner(c, organizationID); !ok {
 		return
 	}
 

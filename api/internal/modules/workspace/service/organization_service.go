@@ -38,6 +38,7 @@ import (
 
 var ErrCannotUpdateBuiltinRole = errors.New("cannot update built-in role")
 var ErrRoleNameExists = errors.New("role name already exists")
+var ErrWorkspaceRoleInUse = errors.New("workspace role is assigned to members")
 var ErrMemberNameExists = errors.New("member name already exists")
 var ErrOrganizationNotFound = errors.New("organization not found")
 var ErrOrganizationNameExists = errors.New("organization name already exists")
@@ -49,6 +50,14 @@ var ErrInvalidOrganizationMemberRole = errors.New("invalid organization member r
 var ErrOrganizationOwnerRoleImmutable = errors.New("organization owner role is immutable")
 var ErrOrganizationMemberNotActive = errors.New("organization member is not active")
 var ErrOrganizationMemberRoleUpdateUnsupported = errors.New("organization member role update is unsupported")
+var ErrInvalidWorkspaceRoleTemplate = errors.New("invalid workspace role template")
+var ErrCannotApplyOwnerRoleTemplate = errors.New("cannot batch apply owner role template")
+
+const (
+	workspaceRoleKindGovernance         = "governance"
+	workspaceRoleKindPermissionTemplate = "permission_template"
+	workspaceRoleKindLegacyBuiltin      = "legacy_builtin"
+)
 
 // GetDepartmentInviteLink gets invite link for a department or organization-level when departmentID is empty.
 func (s *organizationService) GetDepartmentInviteLink(ctx context.Context, organizationID, departmentID, accountID string) (*model.OrganizationInviteLink, error) {
@@ -537,15 +546,15 @@ func getBuiltinOrganizationRoleDescription(roleID string) (*string, *shared_dto.
 	switch roleID {
 	case model.WorkspaceBuiltinRoleOwnerID:
 		descI18n := &shared_dto.LocalizedString{
-			EnUS:   "Has the highest permissions in the team and full control over all resources.",
-			ZhHans: "拥有团队内最高权限，全面管理团队和所有资源。",
+			EnUS:   "Has the highest permissions in the workspace and manages resource allocation and members.",
+			ZhHans: "拥有工作空间内最高权限，负责资源分配及成员管理。",
 		}
 		desc := descI18n.EnUS
 		return &desc, descI18n
 	case model.WorkspaceBuiltinRoleAdminID:
 		descI18n := &shared_dto.LocalizedString{
-			EnUS:   "Helps the owner manage daily operations without permission to delete the team.",
-			ZhHans: "协助拥有者进行日常运营，无权删除团队，适用于 Scrum Master。",
+			EnUS:   "Helps the workspace lead manage workspace members, with all basic permissions and team management permissions.",
+			ZhHans: "协助空间负责人管理空间成员，具备所有基础权限与团队管理权限。",
 		}
 		desc := descI18n.EnUS
 		return &desc, descI18n
@@ -568,6 +577,98 @@ func getBuiltinOrganizationRoleDescription(roleID string) (*string, *shared_dto.
 	}
 }
 
+func getBuiltinOrganizationRoleName(roleID string) (string, *shared_dto.LocalizedString) {
+	switch roleID {
+	case model.WorkspaceBuiltinRoleOwnerID:
+		return "Workspace Lead", &shared_dto.LocalizedString{ZhHans: "空间负责人", EnUS: "Workspace Lead"}
+	case model.WorkspaceBuiltinRoleAdminID:
+		return "Workspace Admin", &shared_dto.LocalizedString{ZhHans: "空间管理员", EnUS: "Workspace Admin"}
+	case model.WorkspaceBuiltinRoleMemberID:
+		return "Member", &shared_dto.LocalizedString{ZhHans: "成员", EnUS: "Member"}
+	case model.WorkspaceBuiltinRoleViewerID:
+		return "Viewer", &shared_dto.LocalizedString{ZhHans: "查看者", EnUS: "Viewer"}
+	default:
+		return "", nil
+	}
+}
+
+func localizedStringFromMap(values map[string]string) *shared_dto.LocalizedString {
+	if len(values) == 0 {
+		return nil
+	}
+	localized := &shared_dto.LocalizedString{
+		ZhHans: firstWorkspaceRoleLocalizedValue(values["zh_Hans"], values["zh-Hans"], values["zh_CN"], values["zh-CN"], values["zh"]),
+		EnUS:   firstWorkspaceRoleLocalizedValue(values["en_US"], values["en-US"], values["en"]),
+	}
+	if localized.ZhHans == "" && localized.EnUS == "" {
+		return nil
+	}
+	return localized
+}
+
+func firstWorkspaceRoleLocalizedValue(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func workspaceRoleSummaryFromCustomRole(role model.WorkspaceCustomRole) shared_dto.WorkspaceRoleSummary {
+	return shared_dto.WorkspaceRoleSummary{
+		ID:              role.ID,
+		Name:            role.Name,
+		NameI18n:        localizedStringFromMap(role.NameI18n),
+		Description:     role.Description,
+		DescriptionI18n: localizedStringFromMap(role.DescriptionI18n),
+		Builtin:         false,
+		Editable:        true,
+		Deletable:       true,
+		Applicable:      true,
+		FixedGovernance: false,
+		RoleKind:        workspaceRoleKindPermissionTemplate,
+		SystemKey:       role.SystemKey,
+		TemplateOrigin:  string(role.TemplateOrigin),
+		Status:          role.Status,
+		Permissions:     model.CanonicalAssignableWorkspacePermissionSnapshotStrings(role.Permissions),
+		MemberCount:     0,
+	}
+}
+
+func builtinWorkspaceRoleSummary(roleID string) shared_dto.WorkspaceRoleSummary {
+	desc, descI18n := getBuiltinOrganizationRoleDescription(roleID)
+	name, nameI18n := getBuiltinOrganizationRoleName(roleID)
+	roleKind := workspaceRoleKindGovernance
+	fixedGovernance := true
+	if roleID == model.WorkspaceBuiltinRoleMemberID || roleID == model.WorkspaceBuiltinRoleViewerID {
+		roleKind = workspaceRoleKindLegacyBuiltin
+		fixedGovernance = false
+	}
+	return shared_dto.WorkspaceRoleSummary{
+		ID:              roleID,
+		Name:            name,
+		NameI18n:        nameI18n,
+		Description:     desc,
+		DescriptionI18n: descI18n,
+		Builtin:         true,
+		Editable:        false,
+		Deletable:       false,
+		Applicable:      false,
+		FixedGovernance: fixedGovernance,
+		RoleKind:        roleKind,
+		Status:          model.WorkspaceCustomRoleStatusActive,
+		Permissions:     builtinWorkspaceRoleSummaryPermissions(roleID),
+		MemberCount:     0,
+	}
+}
+
+func builtinWorkspaceRoleSummaryPermissions(roleID string) []string {
+	permissions := model.WorkspacePermissionStringsFromCodes(model.GetBuiltinGroupRolePermissionsByID(roleID))
+	return model.CanonicalWorkspacePermissionSnapshotStrings(permissions)
+}
+
 // ListWorkspaceRoles lists built-in and custom roles for an organization.
 func (s *organizationService) ListWorkspaceRoles(ctx context.Context, organizationID, accountID string, includeOwner bool) (*shared_dto.WorkspaceRoleListResponse, error) {
 	db := s.organizationRepo.GetDB()
@@ -581,87 +682,15 @@ func (s *organizationService) ListWorkspaceRoles(ctx context.Context, organizati
 
 	roleSummaries := make([]shared_dto.WorkspaceRoleSummary, 0)
 
-	convertPermissions := func(codes []model.WorkspacePermissionCode) []string {
-		if len(codes) == 0 {
-			return []string{}
-		}
-		result := make([]string, len(codes))
-		for i, c := range codes {
-			result[i] = string(c)
-		}
-		return result
-	}
-
-	ownerDesc, ownerDescI18n := getBuiltinOrganizationRoleDescription(model.WorkspaceBuiltinRoleOwnerID)
-	adminDesc, adminDescI18n := getBuiltinOrganizationRoleDescription(model.WorkspaceBuiltinRoleAdminID)
-	memberDesc, memberDescI18n := getBuiltinOrganizationRoleDescription(model.WorkspaceBuiltinRoleMemberID)
-	viewerDesc, viewerDescI18n := getBuiltinOrganizationRoleDescription(model.WorkspaceBuiltinRoleViewerID)
-
 	if includeOwner {
-		roleSummaries = append(roleSummaries,
-			shared_dto.WorkspaceRoleSummary{
-				ID:              model.WorkspaceBuiltinRoleOwnerID,
-				Name:            "Owner",
-				Description:     ownerDesc,
-				DescriptionI18n: ownerDescI18n,
-				Builtin:         true,
-				Editable:        false,
-				Status:          model.WorkspaceCustomRoleStatusActive,
-				Permissions:     convertPermissions(model.GetBuiltinGroupRolePermissionsByID(model.WorkspaceBuiltinRoleOwnerID)),
-				MemberCount:     0,
-			},
-		)
+		roleSummaries = append(roleSummaries, builtinWorkspaceRoleSummary(model.WorkspaceBuiltinRoleOwnerID))
 	}
 
-	roleSummaries = append(roleSummaries,
-		shared_dto.WorkspaceRoleSummary{
-			ID:              model.WorkspaceBuiltinRoleAdminID,
-			Name:            "Admin",
-			Description:     adminDesc,
-			DescriptionI18n: adminDescI18n,
-			Builtin:         true,
-			Editable:        false,
-			Status:          model.WorkspaceCustomRoleStatusActive,
-			Permissions:     convertPermissions(model.GetBuiltinGroupRolePermissionsByID(model.WorkspaceBuiltinRoleAdminID)),
-			MemberCount:     0,
-		},
-		shared_dto.WorkspaceRoleSummary{
-			ID:              model.WorkspaceBuiltinRoleMemberID,
-			Name:            "Member",
-			Description:     memberDesc,
-			DescriptionI18n: memberDescI18n,
-			Builtin:         true,
-			Editable:        false,
-			Status:          model.WorkspaceCustomRoleStatusActive,
-			Permissions:     convertPermissions(model.GetBuiltinGroupRolePermissionsByID(model.WorkspaceBuiltinRoleMemberID)),
-			MemberCount:     0,
-		},
-		shared_dto.WorkspaceRoleSummary{
-			ID:              model.WorkspaceBuiltinRoleViewerID,
-			Name:            "Viewer",
-			Description:     viewerDesc,
-			DescriptionI18n: viewerDescI18n,
-			Builtin:         true,
-			Editable:        false,
-			Status:          model.WorkspaceCustomRoleStatusActive,
-			Permissions:     convertPermissions(model.GetBuiltinGroupRolePermissionsByID(model.WorkspaceBuiltinRoleViewerID)),
-			MemberCount:     0,
-		},
-	)
+	roleSummaries = append(roleSummaries, builtinWorkspaceRoleSummary(model.WorkspaceBuiltinRoleAdminID))
 
 	if len(customRoles) > 0 {
 		for _, r := range customRoles {
-			role := shared_dto.WorkspaceRoleSummary{
-				ID:          r.ID,
-				Name:        r.Name,
-				Description: r.Description,
-				Builtin:     false,
-				Editable:    true,
-				Status:      r.Status,
-				Permissions: r.Permissions,
-				MemberCount: 0,
-			}
-			roleSummaries = append(roleSummaries, role)
+			roleSummaries = append(roleSummaries, workspaceRoleSummaryFromCustomRole(r))
 		}
 	}
 
@@ -686,7 +715,7 @@ func (s *organizationService) ListWorkspaceRoles(ctx context.Context, organizati
 
 		if builtinRole != "" {
 			countQuery = countQuery.Where(
-				"(workspace_members.role_id = ? OR workspace_members.role = ?)",
+				"(workspace_members.role_id IS NULL OR workspace_members.role_id = ?) AND workspace_members.role = ?",
 				role.ID,
 				builtinRole,
 			)
@@ -715,35 +744,24 @@ func (s *organizationService) GetWorkspaceRoleDetail(ctx context.Context, organi
 		model.WorkspaceBuiltinRoleAdminID,
 		model.WorkspaceBuiltinRoleMemberID,
 		model.WorkspaceBuiltinRoleViewerID:
-		desc, descI18n := getBuiltinOrganizationRoleDescription(roleID)
-		perms := model.GetBuiltinGroupRolePermissionsByID(roleID)
-		permCodes := make([]string, 0, len(perms))
-		for _, p := range perms {
-			permCodes = append(permCodes, string(p))
-		}
-
-		name := ""
-		switch roleID {
-		case model.WorkspaceBuiltinRoleOwnerID:
-			name = "Owner"
-		case model.WorkspaceBuiltinRoleAdminID:
-			name = "Admin"
-		case model.WorkspaceBuiltinRoleMemberID:
-			name = "Member"
-		case model.WorkspaceBuiltinRoleViewerID:
-			name = "Viewer"
-		}
-
+		summary := builtinWorkspaceRoleSummary(roleID)
 		return &shared_dto.OrganizationRoleDetailResponse{
-			ID:              roleID,
+			ID:              summary.ID,
 			OrganizationID:  organizationID,
-			Name:            name,
-			Description:     desc,
-			DescriptionI18n: descI18n,
-			Builtin:         true,
-			Editable:        false,
-			Status:          model.WorkspaceCustomRoleStatusActive,
-			Permissions:     permCodes,
+			Name:            summary.Name,
+			NameI18n:        summary.NameI18n,
+			Description:     summary.Description,
+			DescriptionI18n: summary.DescriptionI18n,
+			Builtin:         summary.Builtin,
+			Editable:        summary.Editable,
+			Deletable:       summary.Deletable,
+			Applicable:      summary.Applicable,
+			FixedGovernance: summary.FixedGovernance,
+			RoleKind:        summary.RoleKind,
+			SystemKey:       summary.SystemKey,
+			TemplateOrigin:  summary.TemplateOrigin,
+			Status:          summary.Status,
+			Permissions:     summary.Permissions,
 		}, nil
 	default:
 		var role model.WorkspaceCustomRole
@@ -760,15 +778,24 @@ func (s *organizationService) GetWorkspaceRoleDetail(ctx context.Context, organi
 			return nil, fmt.Errorf("role is deleted")
 		}
 
+		summary := workspaceRoleSummaryFromCustomRole(role)
 		return &shared_dto.OrganizationRoleDetailResponse{
-			ID:             role.ID,
-			OrganizationID: role.OrganizationID,
-			Name:           role.Name,
-			Description:    role.Description,
-			Builtin:        false,
-			Editable:       true,
-			Status:         role.Status,
-			Permissions:    role.Permissions,
+			ID:              summary.ID,
+			OrganizationID:  role.OrganizationID,
+			Name:            summary.Name,
+			NameI18n:        summary.NameI18n,
+			Description:     summary.Description,
+			DescriptionI18n: summary.DescriptionI18n,
+			Builtin:         summary.Builtin,
+			Editable:        summary.Editable,
+			Deletable:       summary.Deletable,
+			Applicable:      summary.Applicable,
+			FixedGovernance: summary.FixedGovernance,
+			RoleKind:        summary.RoleKind,
+			SystemKey:       summary.SystemKey,
+			TemplateOrigin:  summary.TemplateOrigin,
+			Status:          summary.Status,
+			Permissions:     summary.Permissions,
 		}, nil
 	}
 }
@@ -1008,22 +1035,32 @@ func (s *organizationService) CreateCustomWorkspaceRole(ctx context.Context, req
 		Description:    req.Description,
 		Status:         model.WorkspaceCustomRoleStatusActive,
 		CreatedBy:      req.CreatedBy,
-		Permissions:    req.Permissions,
+		Permissions:    model.CanonicalAssignableWorkspacePermissionSnapshotStrings(req.Permissions),
+		TemplateOrigin: model.WorkspaceRoleTemplateOriginCustom,
 	}
 
 	if err := db.WithContext(ctx).Create(role).Error; err != nil {
 		return nil, fmt.Errorf("failed to create role: %w", err)
 	}
 
+	summary := workspaceRoleSummaryFromCustomRole(*role)
 	return &shared_dto.OrganizationRoleDetailResponse{
-		ID:             role.ID,
-		OrganizationID: role.OrganizationID,
-		Name:           role.Name,
-		Description:    role.Description,
-		Builtin:        false,
-		Editable:       true,
-		Status:         role.Status,
-		Permissions:    req.Permissions,
+		ID:              summary.ID,
+		OrganizationID:  role.OrganizationID,
+		Name:            summary.Name,
+		NameI18n:        summary.NameI18n,
+		Description:     summary.Description,
+		DescriptionI18n: summary.DescriptionI18n,
+		Builtin:         summary.Builtin,
+		Editable:        summary.Editable,
+		Deletable:       summary.Deletable,
+		Applicable:      summary.Applicable,
+		FixedGovernance: summary.FixedGovernance,
+		RoleKind:        summary.RoleKind,
+		SystemKey:       summary.SystemKey,
+		TemplateOrigin:  summary.TemplateOrigin,
+		Status:          summary.Status,
+		Permissions:     summary.Permissions,
 	}, nil
 }
 
@@ -1053,15 +1090,24 @@ func (s *organizationService) UpdateCustomWorkspaceRole(ctx context.Context, req
 		return nil, fmt.Errorf("failed to update role: %w", err)
 	}
 
+	summary := workspaceRoleSummaryFromCustomRole(role)
 	return &shared_dto.OrganizationRoleDetailResponse{
-		ID:             role.ID,
-		OrganizationID: role.OrganizationID,
-		Name:           role.Name,
-		Description:    role.Description,
-		Builtin:        false,
-		Editable:       true,
-		Status:         role.Status,
-		Permissions:    role.Permissions,
+		ID:              summary.ID,
+		OrganizationID:  role.OrganizationID,
+		Name:            summary.Name,
+		NameI18n:        summary.NameI18n,
+		Description:     summary.Description,
+		DescriptionI18n: summary.DescriptionI18n,
+		Builtin:         summary.Builtin,
+		Editable:        summary.Editable,
+		Deletable:       summary.Deletable,
+		Applicable:      summary.Applicable,
+		FixedGovernance: summary.FixedGovernance,
+		RoleKind:        summary.RoleKind,
+		SystemKey:       summary.SystemKey,
+		TemplateOrigin:  summary.TemplateOrigin,
+		Status:          summary.Status,
+		Permissions:     summary.Permissions,
 	}, nil
 }
 
@@ -1084,12 +1130,153 @@ func (s *organizationService) UpdateWorkspaceRolePermissions(ctx context.Context
 		return fmt.Errorf("role is deleted")
 	}
 
-	role.Permissions = req.Permissions
+	role.Permissions = model.CanonicalAssignableWorkspacePermissionSnapshotStrings(req.Permissions)
 	if err := db.WithContext(ctx).Save(&role).Error; err != nil {
 		return fmt.Errorf("failed to update role permissions: %w", err)
 	}
 
 	return nil
+}
+
+func workspaceRoleForBuiltinTemplate(roleID string) (string, bool) {
+	switch roleID {
+	case model.WorkspaceBuiltinRoleAdminID:
+		return string(model.WorkspaceRoleAdmin), true
+	case model.WorkspaceBuiltinRoleMemberID:
+		return string(model.WorkspaceRoleNormal), true
+	case model.WorkspaceBuiltinRoleViewerID:
+		return string(model.WorkspaceRoleViewer), true
+	default:
+		return "", false
+	}
+}
+
+func (s *organizationService) ApplyWorkspaceRoleTemplate(ctx context.Context, req *shared_dto.ApplyWorkspaceRoleTemplateRequest) (*shared_dto.ApplyWorkspaceRoleTemplateResponse, error) {
+	if req == nil {
+		return nil, ErrInvalidWorkspaceRoleTemplate
+	}
+
+	organizationID := strings.TrimSpace(req.OrganizationID)
+	roleID := strings.TrimSpace(req.RoleID)
+	operatorID := strings.TrimSpace(req.OperatorID)
+	if organizationID == "" || roleID == "" || operatorID == "" || len(req.Members) == 0 {
+		return nil, ErrInvalidWorkspaceRoleTemplate
+	}
+	if model.IsBuiltinRole(roleID) {
+		return nil, ErrCannotApplyOwnerRoleTemplate
+	}
+
+	builtinWorkspaceRole, isBuiltin := workspaceRoleForBuiltinTemplate(roleID)
+	if !isBuiltin {
+		validRole, err := s.IsValidCustomWorkspaceRole(ctx, organizationID, roleID, operatorID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to validate workspace role template: %w", err)
+		}
+		if !validRole {
+			return nil, ErrInvalidWorkspaceRoleTemplate
+		}
+	}
+
+	if s.accountService == nil || s.workspaceManagementService == nil {
+		return nil, fmt.Errorf("workspace role template dependencies are not initialized")
+	}
+
+	operator, err := s.accountService.GetAccountByID(ctx, operatorID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get operator account: %w", err)
+	}
+	if operator == nil {
+		return nil, fmt.Errorf("operator account not found")
+	}
+
+	response := &shared_dto.ApplyWorkspaceRoleTemplateResponse{
+		Results: make([]shared_dto.ApplyWorkspaceRoleTemplateResult, 0, len(req.Members)),
+	}
+	accountCache := map[string]*auth_model.Account{}
+	seenTargets := map[string]struct{}{}
+
+	for _, target := range req.Members {
+		workspaceID := strings.TrimSpace(target.WorkspaceID)
+		accountID := strings.TrimSpace(target.AccountID)
+		result := shared_dto.ApplyWorkspaceRoleTemplateResult{
+			WorkspaceID: workspaceID,
+			AccountID:   accountID,
+		}
+
+		if workspaceID == "" || accountID == "" {
+			result.Status = "failed"
+			result.Message = "workspace_id and account_id are required"
+			response.FailedCount++
+			response.Results = append(response.Results, result)
+			continue
+		}
+
+		targetKey := workspaceID + ":" + accountID
+		if _, ok := seenTargets[targetKey]; ok {
+			result.Status = "failed"
+			result.Message = "duplicate target"
+			response.FailedCount++
+			response.Results = append(response.Results, result)
+			continue
+		}
+		seenTargets[targetKey] = struct{}{}
+
+		workspace, err := s.workspaceManagementService.GetWorkspaceByID(ctx, workspaceID)
+		if err != nil {
+			result.Status = "failed"
+			result.Message = "workspace not found"
+			response.FailedCount++
+			response.Results = append(response.Results, result)
+			continue
+		}
+		if workspace == nil || workspace.OrganizationID == nil || *workspace.OrganizationID != organizationID {
+			result.Status = "failed"
+			result.Message = "workspace is not in organization"
+			response.FailedCount++
+			response.Results = append(response.Results, result)
+			continue
+		}
+
+		member, ok := accountCache[accountID]
+		if !ok {
+			member, err = s.accountService.GetAccountByID(ctx, accountID)
+			if err != nil {
+				result.Status = "failed"
+				result.Message = "member account not found"
+				response.FailedCount++
+				response.Results = append(response.Results, result)
+				continue
+			}
+			accountCache[accountID] = member
+		}
+		if member == nil {
+			result.Status = "failed"
+			result.Message = "member account not found"
+			response.FailedCount++
+			response.Results = append(response.Results, result)
+			continue
+		}
+
+		roleIDCopy := roleID
+		if isBuiltin {
+			err = s.workspaceManagementService.UpdateMemberRoleAndRoleIDWithPermissionCheck(ctx, workspace, member, builtinWorkspaceRole, &roleIDCopy, operator)
+		} else {
+			err = s.workspaceManagementService.UpdateMemberCustomRoleWithPermissionCheck(ctx, workspace, member, roleIDCopy, operator)
+		}
+		if err != nil {
+			result.Status = "failed"
+			result.Message = err.Error()
+			response.FailedCount++
+			response.Results = append(response.Results, result)
+			continue
+		}
+
+		result.Status = "applied"
+		response.AppliedCount++
+		response.Results = append(response.Results, result)
+	}
+
+	return response, nil
 }
 
 func (s *organizationService) UpdateMemberInfo(ctx context.Context, req *shared_dto.UpdateOrganizationMemberRequest) error {
@@ -1150,6 +1337,20 @@ func (s *organizationService) DeleteCustomWorkspaceRole(ctx context.Context, org
 		return nil
 	}
 
+	tenantSubquery := db.WithContext(ctx).Table("workspaces").
+		Select("id").
+		Where("organization_id = ?", organizationID)
+
+	var assignedCount int64
+	if err := db.WithContext(ctx).Table("workspace_members").
+		Where("workspace_id IN (?) AND role_id = ?", tenantSubquery, roleID).
+		Count(&assignedCount).Error; err != nil {
+		return fmt.Errorf("failed to count role assignments: %w", err)
+	}
+	if assignedCount > 0 {
+		return fmt.Errorf("%w: %d member assignments still reference this role", ErrWorkspaceRoleInUse, assignedCount)
+	}
+
 	role.Status = model.WorkspaceCustomRoleStatusDeleted
 	if err := db.WithContext(ctx).Save(&role).Error; err != nil {
 		return fmt.Errorf("failed to delete role: %w", err)
@@ -1159,9 +1360,12 @@ func (s *organizationService) DeleteCustomWorkspaceRole(ctx context.Context, org
 }
 
 type workspaceRoleDetail struct {
-	WorkspaceID string
-	Role        model.WorkspaceMemberRole
-	RoleID      *string
+	WorkspaceID              string
+	Role                     model.WorkspaceMemberRole
+	RoleID                   *string
+	Permissions              []string
+	PermissionSource         model.WorkspaceMemberPermissionSource
+	PermissionTemplateRoleID *string
 }
 
 func (s *organizationService) getUserWorkspaceRoleDetailsInOrganization(ctx context.Context, organizationID, accountID string) ([]workspaceRoleDetail, error) {
@@ -1181,9 +1385,12 @@ func (s *organizationService) getUserWorkspaceRoleDetailsInOrganization(ctx cont
 		}
 		if join != nil {
 			details = append(details, workspaceRoleDetail{
-				WorkspaceID: workspace.ID,
-				Role:        join.Role,
-				RoleID:      join.RoleID,
+				WorkspaceID:              workspace.ID,
+				Role:                     join.Role,
+				RoleID:                   join.RoleID,
+				Permissions:              join.Permissions,
+				PermissionSource:         join.PermissionSource,
+				PermissionTemplateRoleID: join.PermissionTemplateRoleID,
 			})
 		}
 	}
@@ -1260,9 +1467,12 @@ func (s *organizationService) GetMemberEffectivePermissions(ctx context.Context,
 	roleIDSet := make(map[string]struct{})
 	for _, d := range details {
 		workspaceIDs = append(workspaceIDs, d.WorkspaceID)
-		if d.RoleID != nil && *d.RoleID != "" {
-			if _, ok := roleIDSet[*d.RoleID]; !ok {
-				roleIDSet[*d.RoleID] = struct{}{}
+		for _, roleID := range []*string{d.RoleID, d.PermissionTemplateRoleID} {
+			if roleID == nil || *roleID == "" || model.IsBuiltinRole(*roleID) {
+				continue
+			}
+			if _, ok := roleIDSet[*roleID]; !ok {
+				roleIDSet[*roleID] = struct{}{}
 			}
 		}
 	}
@@ -1296,7 +1506,6 @@ func (s *organizationService) GetMemberEffectivePermissions(ctx context.Context,
 		}
 	}
 
-	rolePermissionsCache := make(map[string][]string)
 	workspacePermissions := make([]shared_dto.MemberWorkspacePermission, 0, len(details))
 	for _, d := range details {
 		name := workspaceNameByID[d.WorkspaceID]
@@ -1313,46 +1522,22 @@ func (s *organizationService) GetMemberEffectivePermissions(ctx context.Context,
 			roleName = string(d.Role)
 		}
 
-		var perms []string
-
-		var roleID string
-		if d.RoleID != nil && *d.RoleID != "" {
-			roleID = *d.RoleID
-		} else {
-			switch d.Role {
-			case model.WorkspaceRoleOwner:
-				roleID = model.WorkspaceBuiltinRoleOwnerID
-			case model.WorkspaceRoleAdmin:
-				roleID = model.WorkspaceBuiltinRoleAdminID
-			case model.WorkspaceRoleViewer:
-				roleID = model.WorkspaceBuiltinRoleViewerID
-			default:
-				roleID = model.WorkspaceBuiltinRoleMemberID
-			}
-		}
-
-		if cachedPerms, ok := rolePermissionsCache[roleID]; ok {
-			perms = cachedPerms
-		} else {
-			roleDetail, err := s.GetWorkspaceRoleDetail(ctx, organizationID, roleID, accountID)
-			if err != nil {
-				if !strings.Contains(err.Error(), "role not found") {
-					return nil, fmt.Errorf("failed to get organization role detail: %w", err)
-				}
-				perms = []string{}
-			} else {
-				perms = roleDetail.Permissions
-			}
-			rolePermissionsCache[roleID] = perms
-		}
+		perms := workspaceMemberEffectivePermissionStrings(
+			d.Role,
+			d.RoleID,
+			d.Permissions,
+			d.PermissionSource,
+		)
 
 		item := shared_dto.MemberWorkspacePermission{
-			WorkspaceID:   d.WorkspaceID,
-			WorkspaceName: name,
-			Role:          string(d.Role),
-			RoleID:        d.RoleID,
-			RoleName:      roleName,
-			Permissions:   perms,
+			WorkspaceID:              d.WorkspaceID,
+			WorkspaceName:            name,
+			Role:                     string(d.Role),
+			RoleID:                   d.RoleID,
+			RoleName:                 roleName,
+			Permissions:              perms,
+			PermissionSource:         d.PermissionSource,
+			PermissionTemplateRoleID: d.PermissionTemplateRoleID,
 		}
 		workspacePermissions = append(workspacePermissions, item)
 	}
@@ -1396,49 +1581,6 @@ func (s *organizationService) GetWorkspaceMemberPermissions(ctx context.Context,
 		organizationRole = model.OrganizationRoleNormal
 	}
 
-	isOrgAdmin := organizationRole == model.OrganizationRoleOwner || organizationRole == model.OrganizationRoleAdmin
-
-	var workspaceRoleID *string
-
-	join, err := s.workspaceManagementService.GetByWorkspaceAndMember(ctx, workspaceID, targetAccountID)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			if !isOrgAdmin {
-				return nil, fmt.Errorf("workspace member not found")
-			}
-		} else {
-			return nil, fmt.Errorf("failed to get workspace account join: %w", err)
-		}
-	} else if join == nil {
-		if !isOrgAdmin {
-			return nil, fmt.Errorf("workspace member not found")
-		}
-	}
-
-	if join != nil {
-		workspaceRoleID = join.RoleID
-		if workspaceRoleID == nil || *workspaceRoleID == "" {
-			if join.Role != "" {
-				// Map built-in roles when RoleID is not available
-				var roleID string
-				switch join.Role {
-				case model.WorkspaceRoleOwner:
-					roleID = model.WorkspaceBuiltinRoleOwnerID
-				case model.WorkspaceRoleAdmin:
-					roleID = model.WorkspaceBuiltinRoleAdminID
-				case model.WorkspaceRoleViewer:
-					roleID = model.WorkspaceBuiltinRoleViewerID
-				case model.WorkspaceRoleNormal: // Map 'normal' to 'member' role
-					roleID = model.WorkspaceBuiltinRoleMemberID
-				default:
-					// Fallback or handle other legacy roles if needed
-					roleID = model.WorkspaceBuiltinRoleMemberID
-				}
-				workspaceRoleID = &roleID
-			}
-		}
-	}
-
 	workspace, err := s.workspaceRepo.GetByID(ctx, workspaceID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -1450,46 +1592,70 @@ func (s *organizationService) GetWorkspaceMemberPermissions(ctx context.Context,
 		return nil, fmt.Errorf("workspace not found")
 	}
 
+	var workspaceRoleID *string
+
+	join, err := s.workspaceManagementService.GetByWorkspaceAndMember(ctx, workspaceID, targetAccountID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			if organizationRoleHasWorkspaceAuthority(organizationRole) {
+				return organizationAdminWorkspacePermissionsResponse(organizationID, workspace, targetAccountID, organizationRole, nil), nil
+			}
+			return nil, fmt.Errorf("workspace member not found")
+		} else {
+			return nil, fmt.Errorf("failed to get workspace account join: %w", err)
+		}
+	} else if join == nil {
+		if organizationRoleHasWorkspaceAuthority(organizationRole) {
+			return organizationAdminWorkspacePermissionsResponse(organizationID, workspace, targetAccountID, organizationRole, nil), nil
+		}
+		return nil, fmt.Errorf("workspace member not found")
+	}
+
+	if organizationRoleHasWorkspaceAuthority(organizationRole) {
+		return organizationAdminWorkspacePermissionsResponse(organizationID, workspace, targetAccountID, organizationRole, join), nil
+	}
+
+	workspaceRoleID = join.RoleID
+	if workspaceRoleID == nil || *workspaceRoleID == "" {
+		if roleID := model.DefaultWorkspaceRoleID(join.Role); roleID != "" {
+			workspaceRoleID = &roleID
+		}
+	}
+
 	roleName := ""
 	if workspaceRoleID != nil && *workspaceRoleID != "" {
-		roleMap, err := s.getOrganizationRolesMap(ctx, organizationID, accountID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get organization roles: %w", err)
-		}
-		if r, ok := roleMap[*workspaceRoleID]; ok {
-			roleName = r.Name
+		if model.IsBuiltinRole(*workspaceRoleID) {
+			roleName = builtinWorkspaceRoleSummary(*workspaceRoleID).Name
+		} else {
+			roleMap, err := s.getOrganizationRolesMap(ctx, organizationID, accountID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get organization roles: %w", err)
+			}
+			if r, ok := roleMap[*workspaceRoleID]; ok {
+				roleName = r.Name
+			}
 		}
 	}
 
-	var rolePermissions []string
-
-	var roleID string
-	if isOrgAdmin {
-		roleID = model.WorkspaceBuiltinRoleOwnerID
-	} else if workspaceRoleID != nil && *workspaceRoleID != "" {
-		roleID = *workspaceRoleID
-	}
-
-	roleDetail, err := s.GetWorkspaceRoleDetail(ctx, organizationID, roleID, accountID)
-	if err != nil {
-		if !strings.Contains(err.Error(), "role not found") {
-			return nil, fmt.Errorf("failed to get workspace role detail: %w", err)
-		}
-		rolePermissions = []string{}
-	} else {
-		rolePermissions = roleDetail.Permissions
-	}
+	rolePermissions := workspaceMemberDisplayPermissionStrings(
+		join.Role,
+		join.RoleID,
+		join.Permissions,
+		join.PermissionSource,
+	)
 
 	return &shared_dto.WorkspaceMemberPermissionsResponse{
-		OrganizationID:    organizationID,
-		WorkspaceID:       workspaceID,
-		WorkspaceName:     workspace.Name,
-		AccountID:         targetAccountID,
-		OrganizationRole:  string(organizationRole),
-		WorkspaceRole:     roleName,
-		WorkspaceRoleID:   workspaceRoleID,
-		WorkspaceRoleName: roleName,
-		Permissions:       rolePermissions,
+		OrganizationID:           organizationID,
+		WorkspaceID:              workspaceID,
+		WorkspaceName:            workspace.Name,
+		AccountID:                targetAccountID,
+		OrganizationRole:         string(organizationRole),
+		WorkspaceRole:            string(join.Role),
+		WorkspaceRoleID:          workspaceRoleID,
+		WorkspaceRoleName:        roleName,
+		Permissions:              rolePermissions,
+		PermissionSource:         join.PermissionSource,
+		PermissionTemplateRoleID: join.PermissionTemplateRoleID,
 	}, nil
 }
 
@@ -1715,36 +1881,11 @@ func (s *organizationService) AddWorkspace(ctx context.Context, req *shared_dto.
 		return errors.New("workspace already belongs to an organization")
 	}
 
-	db := s.organizationRepo.GetDB()
-
 	// Update tenant organization info
 	workspace.OrganizationID = &req.OrganizationID
 
-	if req.DepartmentID != nil && *req.DepartmentID != "" {
-		var dept struct {
-			ID             string
-			OrganizationID string `gorm:"column:group_id"`
-		}
-
-		if err := db.WithContext(ctx).
-			Table("departments").
-			Select("id, group_id").
-			Where("id = ?", *req.DepartmentID).
-			First(&dept).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("department not found in organization")
-			}
-			return fmt.Errorf("failed to get department: %w", err)
-		}
-
-		if dept.OrganizationID != req.OrganizationID {
-			return fmt.Errorf("department does not belong to the specified organization")
-		}
-
-		workspace.DepartmentID = req.DepartmentID
-	}
-
 	if req.APIKeyID != nil && *req.APIKeyID != "" {
+		db := s.organizationRepo.GetDB()
 		workspaceIDs := []string{req.OrganizationID}
 
 		var existingTenantIDs []string
@@ -1778,8 +1919,8 @@ func (s *organizationService) AddWorkspace(ctx context.Context, req *shared_dto.
 	return nil
 }
 
-func (s *organizationService) UpdateWorkspaceJoinMeta(ctx context.Context, organizationID, workspaceID string, departmentID *string, apiKeyID *string) error {
-	if departmentID == nil && apiKeyID == nil {
+func (s *organizationService) UpdateWorkspaceJoinMeta(ctx context.Context, organizationID, workspaceID string, apiKeyID *string) error {
+	if apiKeyID == nil {
 		return nil
 	}
 
@@ -1794,63 +1935,33 @@ func (s *organizationService) UpdateWorkspaceJoinMeta(ctx context.Context, organ
 		return fmt.Errorf("workspace does not exist in organization")
 	}
 
-	if departmentID != nil {
-		if *departmentID == "" {
-			workspace.DepartmentID = nil
-		} else {
-			var dept struct {
-				ID             string
-				OrganizationID string `gorm:"column:group_id"`
-			}
+	if *apiKeyID == "" {
+		workspace.ApiKeyID = nil
+	} else {
+		workspaceIDs := []string{organizationID}
 
-			if err := db.WithContext(ctx).
-				Table("departments").
-				Select("id, group_id").
-				Where("id = ?", *departmentID).
-				First(&dept).Error; err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					return fmt.Errorf("department not found in organization")
-				}
-				return fmt.Errorf("failed to get department: %w", err)
-			}
-
-			if dept.OrganizationID != organizationID {
-				return fmt.Errorf("department does not belong to the specified organization")
-			}
-
-			workspace.DepartmentID = departmentID
+		var existingTenantIDs []string
+		if err := db.Model(&model.Workspace{}).Where("organization_id = ?", organizationID).Pluck("id", &existingTenantIDs).Error; err != nil {
+			return fmt.Errorf("failed to get workspaces for organization: %w", err)
 		}
-	}
+		workspaceIDs = append(workspaceIDs, existingTenantIDs...)
 
-	if apiKeyID != nil {
-		if *apiKeyID == "" {
-			workspace.ApiKeyID = nil
-		} else {
-			workspaceIDs := []string{organizationID}
+		var apiKey apikeymodel.TenantAPIKey
 
-			var existingTenantIDs []string
-			if err := db.Model(&model.Workspace{}).Where("organization_id = ?", organizationID).Pluck("id", &existingTenantIDs).Error; err != nil {
-				return fmt.Errorf("failed to get workspaces for organization: %w", err)
+		if err := db.WithContext(ctx).
+			Where("id = ? AND tenant_id IN ? AND is_internal = ?", *apiKeyID, workspaceIDs, false).
+			First(&apiKey).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("api key not found in organization")
 			}
-			workspaceIDs = append(workspaceIDs, existingTenantIDs...)
-
-			var apiKey apikeymodel.TenantAPIKey
-
-			if err := db.WithContext(ctx).
-				Where("id = ? AND tenant_id IN ? AND is_internal = ?", *apiKeyID, workspaceIDs, false).
-				First(&apiKey).Error; err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					return fmt.Errorf("api key not found in organization")
-				}
-				return fmt.Errorf("failed to get api key: %w", err)
-			}
-
-			if !apiKey.IsActive() {
-				return fmt.Errorf("api key is not active")
-			}
-
-			workspace.ApiKeyID = apiKeyID
+			return fmt.Errorf("failed to get api key: %w", err)
 		}
+
+		if !apiKey.IsActive() {
+			return fmt.Errorf("api key is not active")
+		}
+
+		workspace.ApiKeyID = apiKeyID
 	}
 
 	if err := s.workspaceRepo.Update(ctx, workspace); err != nil {
@@ -2137,7 +2248,8 @@ func (s *organizationService) UpdateMemberStatus(ctx context.Context, req *share
 	}
 
 	// Cannot disable the admin/owner
-	if join.Role == model.OrganizationRoleAdmin && req.Status == model.OrganizationMemberStatusInactive {
+	if (join.Role == model.OrganizationRoleAdmin || join.Role == model.OrganizationRoleOwner) &&
+		req.Status == model.OrganizationMemberStatusInactive {
 		return errors.New("cannot disable the admin/owner of the organization")
 	}
 
@@ -2461,29 +2573,24 @@ func (s *organizationService) buildOrganizationWorkspaceResponses(ctx context.Co
 	db := s.organizationRepo.GetDB()
 
 	type workspaceJoinInfo struct {
-		WorkspaceID  string  `gorm:"column:id"`
-		DepartmentID *string `gorm:"column:department_id"`
-		APIKeyID     *string `gorm:"column:api_key_id"`
+		WorkspaceID string  `gorm:"column:id"`
+		APIKeyID    *string `gorm:"column:api_key_id"`
 	}
 
 	var joins []workspaceJoinInfo
 	if err := db.WithContext(ctx).
 		Table("workspaces").
-		Select("id, department_id, api_key_id").
+		Select("id, api_key_id").
 		Where("organization_id = ? AND id IN ?", organizationID, workspaceIDs).
 		Scan(&joins).Error; err != nil {
 		return nil, fmt.Errorf("failed to load workspace joins: %w", err)
 	}
 
 	joinByWorkspace := make(map[string]workspaceJoinInfo, len(joins))
-	departmentIDs := make(map[string]struct{})
 	apiKeyIDs := make(map[string]struct{})
 
 	for _, j := range joins {
 		joinByWorkspace[j.WorkspaceID] = j
-		if j.DepartmentID != nil && *j.DepartmentID != "" {
-			departmentIDs[*j.DepartmentID] = struct{}{}
-		}
 		if j.APIKeyID != nil && *j.APIKeyID != "" {
 			apiKeyIDs[*j.APIKeyID] = struct{}{}
 		}
@@ -2552,26 +2659,6 @@ func (s *organizationService) buildOrganizationWorkspaceResponses(ctx context.Co
 		}
 	}
 
-	departmentNameByID := make(map[string]string)
-	if len(departmentIDs) > 0 {
-		var departments []model.Department
-		ids := make([]string, 0, len(departmentIDs))
-		for id := range departmentIDs {
-			ids = append(ids, id)
-		}
-
-		if err := db.WithContext(ctx).
-			Model(&model.Department{}).
-			Where("id IN ?", ids).
-			Find(&departments).Error; err != nil {
-			return nil, fmt.Errorf("failed to load departments: %w", err)
-		}
-
-		for _, d := range departments {
-			departmentNameByID[d.ID] = d.Name
-		}
-	}
-
 	apiKeyNameByID := make(map[string]string)
 	if len(apiKeyIDs) > 0 {
 		var apiKeys []apikeymodel.TenantAPIKey
@@ -2592,25 +2679,37 @@ func (s *organizationService) buildOrganizationWorkspaceResponses(ctx context.Co
 		}
 	}
 
+	type workspaceQuotaInfo struct {
+		WorkspaceID string `gorm:"column:workspace_id"`
+		UsedQuota   int64  `gorm:"column:used_quota"`
+		RemainQuota int64  `gorm:"column:remain_quota"`
+		QuotaLimit  *int64 `gorm:"column:quota_limit"`
+	}
+
+	var quotas []workspaceQuotaInfo
+	if db.Migrator().HasTable("llm_workspace_quotas") {
+		if err := db.WithContext(ctx).
+			Table("llm_workspace_quotas").
+			Select("workspace_id, used_quota, remain_quota, quota_limit").
+			Where("organization_id = ? AND workspace_id IN ?", organizationID, workspaceIDs).
+			Scan(&quotas).Error; err != nil {
+			return nil, fmt.Errorf("failed to load workspace quotas: %w", err)
+		}
+	}
+
+	quotaByWorkspace := make(map[string]workspaceQuotaInfo, len(quotas))
+	for _, quota := range quotas {
+		quotaByWorkspace[quota.WorkspaceID] = quota
+	}
+
 	items := make([]*shared_dto.OrganizationWorkspaceResponse, 0, len(workspaces))
 	for _, workspace := range workspaces {
 		join, ok := joinByWorkspace[workspace.ID]
 
-		var departmentIDPtr *string
-		var departmentNamePtr *string
 		var apiKeyIDPtr *string
 		var apiKeyNamePtr *string
 
 		if ok {
-			if join.DepartmentID != nil && *join.DepartmentID != "" {
-				deptID := *join.DepartmentID
-				departmentIDPtr = &deptID
-				if name, exists := departmentNameByID[deptID]; exists {
-					n := name
-					departmentNamePtr = &n
-				}
-			}
-
 			if join.APIKeyID != nil && *join.APIKeyID != "" {
 				keyID := *join.APIKeyID
 				apiKeyIDPtr = &keyID
@@ -2632,18 +2731,21 @@ func (s *organizationService) buildOrganizationWorkspaceResponses(ctx context.Co
 			}
 		}
 
+		quota, quotaConfigured := quotaByWorkspace[workspace.ID]
 		item := &shared_dto.OrganizationWorkspaceResponse{
-			ID:             workspace.ID,
-			Name:           workspace.Name,
-			Status:         string(workspace.Status),
-			CreatedAt:      workspace.CreatedAt.Unix(),
-			LeaderID:       leaderIDPtr,
-			LeaderName:     leaderNamePtr,
-			DepartmentID:   departmentIDPtr,
-			DepartmentName: departmentNamePtr,
-			APIKeyID:       apiKeyIDPtr,
-			APIKeyName:     apiKeyNamePtr,
-			MemberCount:    memberCountByWorkspace[workspace.ID],
+			ID:              workspace.ID,
+			Name:            workspace.Name,
+			Status:          string(workspace.Status),
+			CreatedAt:       workspace.CreatedAt.Unix(),
+			LeaderID:        leaderIDPtr,
+			LeaderName:      leaderNamePtr,
+			APIKeyID:        apiKeyIDPtr,
+			APIKeyName:      apiKeyNamePtr,
+			MemberCount:     memberCountByWorkspace[workspace.ID],
+			QuotaConfigured: quotaConfigured,
+			UsedQuota:       quota.UsedQuota,
+			RemainQuota:     quota.RemainQuota,
+			QuotaLimit:      quota.QuotaLimit,
 		}
 
 		items = append(items, item)
@@ -2687,6 +2789,53 @@ func (s *organizationService) checkOrganizationAdmin(ctx context.Context, accoun
 		return false
 	}
 	return join.Role == model.OrganizationRoleOwner || join.Role == model.OrganizationRoleAdmin
+}
+
+func organizationRoleHasWorkspaceAuthority(role model.OrganizationRole) bool {
+	return role == model.OrganizationRoleOwner || role == model.OrganizationRoleAdmin
+}
+
+func organizationAdminWorkspacePermissionsResponse(
+	organizationID string,
+	workspace *model.Workspace,
+	accountID string,
+	organizationRole model.OrganizationRole,
+	join *model.WorkspaceMember,
+) *shared_dto.WorkspaceMemberPermissionsResponse {
+	workspaceRole := model.WorkspaceRoleAdmin
+	workspaceRoleID := model.WorkspaceBuiltinRoleAdminID
+	permissionSource := model.WorkspaceMemberPermissionSourceRoleTemplate
+	if organizationRole == model.OrganizationRoleOwner || (join != nil && join.Role == model.WorkspaceRoleOwner) {
+		workspaceRole = model.WorkspaceRoleOwner
+		workspaceRoleID = model.WorkspaceBuiltinRoleOwnerID
+		permissionSource = model.WorkspaceMemberPermissionSourceOwner
+	}
+
+	workspaceID := ""
+	workspaceName := ""
+	if workspace != nil {
+		workspaceID = workspace.ID
+		workspaceName = workspace.Name
+	}
+
+	return &shared_dto.WorkspaceMemberPermissionsResponse{
+		OrganizationID:    organizationID,
+		WorkspaceID:       workspaceID,
+		WorkspaceName:     workspaceName,
+		AccountID:         accountID,
+		OrganizationRole:  string(organizationRole),
+		WorkspaceRole:     string(workspaceRole),
+		WorkspaceRoleID:   &workspaceRoleID,
+		WorkspaceRoleName: builtinWorkspaceRoleSummary(workspaceRoleID).Name,
+		Permissions: workspaceMemberDisplayPermissionStrings(
+			workspaceRole,
+			&workspaceRoleID,
+			nil,
+			permissionSource,
+		),
+		PermissionSource:         permissionSource,
+		PermissionTemplateRoleID: &workspaceRoleID,
+	}
 }
 
 func (s *organizationService) ensureWorkspaceInOrganization(ctx context.Context, organizationID, workspaceID string) error {
@@ -2906,7 +3055,7 @@ func (s *organizationService) GetUnjoinedWorkspacesForUser(ctx context.Context, 
 		Where("account_id = ?", userID)
 
 	organizationWorkspacesSubquery := db.WithContext(ctx).Table("workspaces").
-		Select("id").
+		Select("workspaces.id").
 		Joins("JOIN organizations ON organizations.id = workspaces.organization_id").
 		Where("workspaces.organization_id = ? AND organizations.status = ?", organizationID, model.OrganizationStatusActive)
 
@@ -3008,7 +3157,7 @@ func (s *organizationService) GetUserWorkspacesInOrganization(ctx context.Contex
 	db := s.organizationRepo.GetDB()
 
 	organizationWorkspacesSubquery := db.WithContext(ctx).Table("workspaces").
-		Select("id").
+		Select("workspaces.id").
 		Joins("JOIN organizations ON organizations.id = workspaces.organization_id").
 		Where("workspaces.organization_id = ? AND organizations.status = ?", organizationID, model.OrganizationStatusActive)
 
@@ -3055,7 +3204,7 @@ func (s *organizationService) GetUserWorkspacesRolesInOrganization(ctx context.C
 	db := s.organizationRepo.GetDB()
 
 	organizationWorkspacesSubquery := db.WithContext(ctx).Table("workspaces").
-		Select("id").
+		Select("workspaces.id").
 		Joins("JOIN organizations ON organizations.id = workspaces.organization_id").
 		Where("workspaces.organization_id = ? AND organizations.status = ?", organizationID, model.OrganizationStatusActive)
 
@@ -3071,7 +3220,7 @@ func (s *organizationService) GetUserWorkspacesRolesInOrganization(ctx context.C
 	err := db.WithContext(ctx).Table("workspaces").
 		Select("workspaces.id as tenant_id, workspaces.name as tenant_name, workspace_members.role as role, "+
 			"COALESCE(workspace_members.extensions->>'position', '') as position, "+
-			"COALESCE(workspace_members.extensions->>'permissions', '') as permissions").
+			"COALESCE(workspace_members.permissions::text, '') as permissions").
 		Joins("JOIN workspace_members ON workspaces.id = workspace_members.workspace_id").
 		Where("workspaces.id IN (?) AND workspace_members.account_id = ? AND workspaces.status = ?",
 			organizationWorkspacesSubquery,
@@ -3143,11 +3292,6 @@ func (s *organizationService) CheckAnyManagedWorkspacePermission(ctx context.Con
 		return false, fmt.Errorf("organization not found")
 	}
 
-	organizationRole, err := s.GetUserOrganizationRole(ctx, organizationID, accountID)
-	if err == nil && (organizationRole == model.OrganizationRoleOwner || organizationRole == model.OrganizationRoleAdmin) {
-		return true, nil
-	}
-
 	managedWorkspaceCount, err := s.getManagedWorkspaceCountInOrganization(ctx, organizationID, accountID)
 	if err != nil {
 		return false, fmt.Errorf("failed to check managed workspaces: %w", err)
@@ -3157,36 +3301,11 @@ func (s *organizationService) CheckAnyManagedWorkspacePermission(ctx context.Con
 }
 
 func (s *organizationService) getManagedWorkspaceCountInOrganization(ctx context.Context, organizationID, accountID string) (int64, error) {
-	db := s.organizationRepo.GetDB()
-
-	var workspaceIDs []string
-	err := db.WithContext(ctx).Table("workspaces").
-		Where("organization_id = ?", organizationID).
-		Pluck("id", &workspaceIDs).Error
+	workspaces, err := s.getWorkspacesByAnyPermissionInOrganization(ctx, organizationID, accountID, workspaceManagePermissionCodes()...)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get organization workspace IDs: %w", err)
+		return 0, err
 	}
-
-	if len(workspaceIDs) == 0 {
-		return 0, nil
-	}
-
-	isOrganizationAdmin := s.checkOrganizationAdmin(ctx, accountID, organizationID)
-	if isOrganizationAdmin {
-		return int64(len(workspaceIDs)), nil
-	}
-
-	var count int64
-	err = db.WithContext(ctx).Table("workspace_members").
-		Where("workspace_members.workspace_id IN (?) AND workspace_members.account_id = ?", workspaceIDs, accountID).
-		Where("workspace_members.role IN (?)",
-			[]string{string(model.WorkspaceRoleOwner), string(model.WorkspaceRoleAdmin)}).
-		Count(&count).Error
-	if err != nil {
-		return 0, fmt.Errorf("failed to count managed workspaces: %w", err)
-	}
-
-	return count, nil
+	return int64(len(workspaces)), nil
 }
 
 func (s *organizationService) GetShadowWorkspaceByID(ctx context.Context, organizationID string) (*model.Workspace, error) {
@@ -3427,29 +3546,18 @@ func (s *organizationService) GetManagedWorkspacesInOrganization(ctx context.Con
 			return nil, fmt.Errorf("failed to get admin tenants: %w", err)
 		}
 	} else {
-		// Non-admin users can only see tenants where they have owner/admin role
-		err = db.WithContext(ctx).Table("workspaces").
-			Joins("JOIN workspace_members ON workspaces.id = workspace_members.workspace_id").
-			Where("workspaces.organization_id = ? AND workspace_members.account_id = ? AND workspace_members.role IN (?)",
-				organizationID, accountID, []string{string(model.WorkspaceRoleOwner), string(model.WorkspaceRoleAdmin)}).
-			Group("workspaces.id").
-			Count(&total).Error
-		if err != nil {
-			return nil, fmt.Errorf("failed to count user managed tenants: %w", err)
-		}
-
-		err = db.WithContext(ctx).Table("workspaces").
-			Select("DISTINCT workspaces.*").
-			Joins("JOIN workspace_members ON workspaces.id = workspace_members.workspace_id").
-			Where("workspaces.organization_id = ? AND workspace_members.account_id = ? AND workspace_members.role IN (?)",
-				organizationID, accountID, []string{string(model.WorkspaceRoleOwner), string(model.WorkspaceRoleAdmin)}).
-			Order("workspaces.created_at DESC").
-			Offset(offset).
-			Limit(limit).
-			Find(&tenants).Error
+		permittedWorkspaces, err := s.getWorkspacesByAnyPermissionInOrganization(ctx, organizationID, accountID, workspaceManagePermissionCodes()...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get user managed tenants: %w", err)
 		}
+		tenants, total, hasMore := paginateWorkspaceResults(permittedWorkspaces, page, limit)
+		return &shared_dto.WorkspacePaginationResponse{
+			Data:    tenants,
+			Page:    page,
+			Limit:   limit,
+			Total:   total,
+			HasMore: hasMore,
+		}, nil
 	}
 
 	hasMore := int64(page*limit) < total
@@ -3464,8 +3572,6 @@ func (s *organizationService) GetManagedWorkspacesInOrganization(ctx context.Con
 }
 
 func (s *organizationService) GetManagedAppWorkspacesInOrganization(ctx context.Context, organizationID, accountID string, page, limit int) (*shared_dto.WorkspacePaginationResponse, error) {
-	offset := (page - 1) * limit
-
 	organization, err := s.organizationRepo.GetByID(ctx, organizationID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -3477,89 +3583,11 @@ func (s *organizationService) GetManagedAppWorkspacesInOrganization(ctx context.
 		return nil, fmt.Errorf("organization not found")
 	}
 
-	db := s.organizationRepo.GetDB()
-
-	isOrganizationAdmin := s.checkOrganizationAdmin(ctx, accountID, organizationID)
-
-	var tenants []*model.Workspace
-	var total int64
-
-	if isOrganizationAdmin {
-		err = db.WithContext(ctx).Table("workspaces").
-			Joins("JOIN organizations ON organizations.id = workspaces.organization_id").
-			Where("workspaces.organization_id = ? AND organizations.status = ?",
-				organizationID, model.OrganizationStatusActive).
-			Count(&total).Error
-		if err != nil {
-			return nil, fmt.Errorf("failed to count admin tenants: %w", err)
-		}
-
-		err = db.WithContext(ctx).Table("workspaces").
-			Joins("JOIN organizations ON organizations.id = workspaces.organization_id").
-			Where("workspaces.organization_id = ? AND organizations.status = ?",
-				organizationID, model.OrganizationStatusActive).
-			Order("workspaces.created_at DESC").
-			Offset(offset).
-			Limit(limit).
-			Find(&tenants).Error
-		if err != nil {
-			return nil, fmt.Errorf("failed to get admin tenants: %w", err)
-		}
-	} else {
-
-		ownerAdminQuery := `
-			SELECT DISTINCT workspaces.* FROM workspaces
-			JOIN workspace_members ON workspaces.id = workspace_members.workspace_id
-			WHERE workspaces.organization_id = ?
-			  AND workspace_members.account_id = ?
-			  AND workspace_members.role IN (?, ?)
-		`
-
-		normalWithPermissionQuery := `
-			SELECT DISTINCT workspaces.* FROM workspaces
-			JOIN workspace_members ON workspaces.id = workspace_members.workspace_id
-			LEFT JOIN tenant_account_extensions ON workspace_members.id = tenant_account_extensions.tenant_account_join_id
-			WHERE workspaces.organization_id = ?
-			  AND workspace_members.account_id = ?
-			  AND workspace_members.role = ?
-			  AND (tenant_account_extensions.permissions IS NOT NULL
-			       AND JSON_CONTAINS(tenant_account_extensions.permissions, ?))
-		`
-
-		combinedQuery := fmt.Sprintf(`
-			SELECT * FROM (
-				(%s) UNION (%s)
-			) AS combined_tenants
-			ORDER BY created_at DESC
-		`, ownerAdminQuery, normalWithPermissionQuery)
-
-		countQuery := fmt.Sprintf(`
-			SELECT COUNT(*) FROM (
-				(%s) UNION (%s)
-			) AS combined_tenants
-		`, ownerAdminQuery, normalWithPermissionQuery)
-
-		err = db.WithContext(ctx).Raw(countQuery,
-			organizationID, accountID, string(model.WorkspaceRoleOwner), string(model.WorkspaceRoleAdmin),
-			organizationID, accountID, string(model.WorkspaceRoleNormal)).
-			Count(&total).Error
-		if err != nil {
-			return nil, fmt.Errorf("failed to count user app tenants: %w", err)
-		}
-
-		paginatedQuery := combinedQuery + " LIMIT ? OFFSET ?"
-		err = db.WithContext(ctx).Raw(paginatedQuery,
-			organizationID, accountID, string(model.WorkspaceRoleOwner), string(model.WorkspaceRoleAdmin),
-			organizationID, accountID, string(model.WorkspaceRoleNormal),
-			limit, offset).
-			Scan(&tenants).Error
-		if err != nil {
-			return nil, fmt.Errorf("failed to get user app tenants: %w", err)
-		}
+	permittedWorkspaces, err := s.getWorkspacesByAnyPermissionInOrganization(ctx, organizationID, accountID, appCreatePermissionCodes()...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user app tenants: %w", err)
 	}
-
-	hasMore := int64(page*limit) < total
-
+	tenants, total, hasMore := paginateWorkspaceResults(permittedWorkspaces, page, limit)
 	return &shared_dto.WorkspacePaginationResponse{
 		Data:    tenants,
 		Page:    page,
@@ -3570,8 +3598,6 @@ func (s *organizationService) GetManagedAppWorkspacesInOrganization(ctx context.
 }
 
 func (s *organizationService) GetManagedDatasetWorkspacesInOrganization(ctx context.Context, organizationID, accountID string, page, limit int) (*shared_dto.WorkspacePaginationResponse, error) {
-	offset := (page - 1) * limit
-
 	organization, err := s.organizationRepo.GetByID(ctx, organizationID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -3583,89 +3609,11 @@ func (s *organizationService) GetManagedDatasetWorkspacesInOrganization(ctx cont
 		return nil, fmt.Errorf("organization not found")
 	}
 
-	db := s.organizationRepo.GetDB()
-
-	isOrganizationAdmin := s.checkOrganizationAdmin(ctx, accountID, organizationID)
-
-	var tenants []*model.Workspace
-	var total int64
-
-	if isOrganizationAdmin {
-		err = db.WithContext(ctx).Table("workspaces").
-			Joins("JOIN organizations ON organizations.id = workspaces.organization_id").
-			Where("workspaces.organization_id = ? AND organizations.status = ?",
-				organizationID, model.OrganizationStatusActive).
-			Count(&total).Error
-		if err != nil {
-			return nil, fmt.Errorf("failed to count admin tenants: %w", err)
-		}
-
-		err = db.WithContext(ctx).Table("workspaces").
-			Joins("JOIN organizations ON organizations.id = workspaces.organization_id").
-			Where("workspaces.organization_id = ? AND organizations.status = ?",
-				organizationID, model.OrganizationStatusActive).
-			Order("workspaces.created_at DESC").
-			Offset(offset).
-			Limit(limit).
-			Find(&tenants).Error
-		if err != nil {
-			return nil, fmt.Errorf("failed to get admin tenants: %w", err)
-		}
-	} else {
-
-		ownerAdminQuery := `
-			SELECT DISTINCT workspaces.* FROM workspaces
-			JOIN workspace_members ON workspaces.id = workspace_members.workspace_id
-			WHERE workspaces.organization_id = ?
-			  AND workspace_members.account_id = ?
-			  AND workspace_members.role IN (?, ?)
-		`
-
-		normalWithPermissionQuery := `
-			SELECT DISTINCT workspaces.* FROM workspaces
-			JOIN workspace_members ON workspaces.id = workspace_members.workspace_id
-			LEFT JOIN tenant_account_extensions ON workspace_members.id = tenant_account_extensions.tenant_account_join_id
-			WHERE workspaces.organization_id = ?
-			  AND workspace_members.account_id = ?
-			  AND workspace_members.role = ?
-			  AND (tenant_account_extensions.permissions IS NOT NULL
-			       AND JSON_CONTAINS(tenant_account_extensions.permissions, ?))
-		`
-
-		combinedQuery := fmt.Sprintf(`
-			SELECT * FROM (
-				(%s) UNION (%s)
-			) AS combined_tenants
-			ORDER BY created_at DESC
-		`, ownerAdminQuery, normalWithPermissionQuery)
-
-		countQuery := fmt.Sprintf(`
-			SELECT COUNT(*) FROM (
-				(%s) UNION (%s)
-			) AS combined_tenants
-		`, ownerAdminQuery, normalWithPermissionQuery)
-
-		err = db.WithContext(ctx).Raw(countQuery,
-			organizationID, accountID, string(model.WorkspaceRoleOwner), string(model.WorkspaceRoleAdmin),
-			organizationID, accountID, string(model.WorkspaceRoleNormal)).
-			Count(&total).Error
-		if err != nil {
-			return nil, fmt.Errorf("failed to count user dataset tenants: %w", err)
-		}
-
-		paginatedQuery := combinedQuery + " LIMIT ? OFFSET ?"
-		err = db.WithContext(ctx).Raw(paginatedQuery,
-			organizationID, accountID, string(model.WorkspaceRoleOwner), string(model.WorkspaceRoleAdmin),
-			organizationID, accountID, string(model.WorkspaceRoleNormal),
-			limit, offset).
-			Scan(&tenants).Error
-		if err != nil {
-			return nil, fmt.Errorf("failed to get user dataset tenants: %w", err)
-		}
+	permittedWorkspaces, err := s.getWorkspacesByAnyPermissionInOrganization(ctx, organizationID, accountID, datasetCreatePermissionCodes()...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user dataset tenants: %w", err)
 	}
-
-	hasMore := int64(page*limit) < total
-
+	tenants, total, hasMore := paginateWorkspaceResults(permittedWorkspaces, page, limit)
 	return &shared_dto.WorkspacePaginationResponse{
 		Data:    tenants,
 		Page:    page,
@@ -3676,36 +3624,79 @@ func (s *organizationService) GetManagedDatasetWorkspacesInOrganization(ctx cont
 }
 
 func (s *organizationService) GetOrganizationMembersPaginated(ctx context.Context, organizationID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error) {
+	return s.getOrganizationMembersPaginated(ctx, organizationID, nil, page, limit, keyword)
+}
+
+func (s *organizationService) GetVisibleOrganizationMembersPaginated(ctx context.Context, organizationID, accountID string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error) {
+	if s.checkOrganizationAdmin(ctx, accountID, organizationID) {
+		return s.GetOrganizationMembersPaginated(ctx, organizationID, page, limit, keyword)
+	}
+
+	visibleAccountIDs, err := s.getVisibleOrganizationMemberAccountIDs(ctx, organizationID, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if len(visibleAccountIDs) == 0 {
+		return &shared_dto.OrganizationMemberPaginationResponse{
+			Data:    []*shared_dto.OrganizationMemberWithExtensionResponse{},
+			Page:    page,
+			Limit:   limit,
+			Total:   0,
+			HasMore: false,
+		}, nil
+	}
+
+	return s.getOrganizationMembersPaginated(ctx, organizationID, visibleAccountIDs, page, limit, keyword)
+}
+
+func (s *organizationService) getOrganizationMembersPaginated(ctx context.Context, organizationID string, accountIDs []string, page, limit int, keyword string) (*shared_dto.OrganizationMemberPaginationResponse, error) {
 	offset := (page - 1) * limit
 
 	db := s.organizationRepo.GetDB()
 
 	var accounts []struct {
-		Account          auth_model.Account     `gorm:"embedded"`
-		OrganizationRole model.OrganizationRole `gorm:"column:organization_role"`
-		MemberName       *string                `gorm:"column:member_name"`
+		Account          auth_model.Account             `gorm:"embedded"`
+		OrganizationRole model.OrganizationRole         `gorm:"column:organization_role"`
+		MemberStatus     model.OrganizationMemberStatus `gorm:"column:member_status"`
+		MemberName       *string                        `gorm:"column:member_name"`
+		DepartmentID     *string                        `gorm:"column:department_id"`
+		DepartmentName   *string                        `gorm:"column:department_name"`
 	}
 	var total int64
 
 	baseQuery := db.WithContext(ctx).Unscoped().Table("members").
-		Select("accounts.*, members.role as organization_role, members.name as member_name").
+		Select("accounts.*, members.role as organization_role, members.status as member_status, members.name as member_name, d.id as department_id, d.name as department_name").
 		Joins("JOIN accounts ON members.account_id = accounts.id").
+		Joins(`
+			LEFT JOIN department_members dm
+				ON dm.account_id = members.account_id
+				AND EXISTS (
+					SELECT 1 FROM departments d_scope
+					WHERE d_scope.id = dm.department_id
+						AND d_scope.group_id = members.organization_id
+				)
+		`).
+		Joins("LEFT JOIN departments d ON d.id = dm.department_id AND d.status = ?", model.DepartmentStatusActive).
 		Where("members.organization_id = ?", organizationID)
 
+	if accountIDs != nil {
+		baseQuery = baseQuery.Where("members.account_id IN ?", accountIDs)
+	}
+
 	if keyword != "" {
-		searchPattern := "%" + keyword + "%"
+		searchPattern := "%" + strings.ToLower(keyword) + "%"
 		baseQuery = baseQuery.Where(
-			"accounts.name ILIKE ? OR accounts.email ILIKE ? OR members.name ILIKE ?",
+			"LOWER(accounts.name) LIKE ? OR LOWER(accounts.email) LIKE ? OR LOWER(members.name) LIKE ?",
 			searchPattern, searchPattern, searchPattern,
 		)
 	}
 
-	err := baseQuery.Count(&total).Error
+	err := baseQuery.Session(&gorm.Session{}).Distinct("members.account_id").Count(&total).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to count organization members: %w", err)
 	}
 
-	err = baseQuery.Order("members.created_at DESC").
+	err = baseQuery.Order("CASE members.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END ASC, members.created_at DESC, accounts.id ASC").
 		Offset(offset).
 		Limit(limit).
 		Find(&accounts).Error
@@ -3757,10 +3748,12 @@ func (s *organizationService) GetOrganizationMembersPaginated(ctx context.Contex
 			LastLoginAt:      lastLoginAt,
 			LastActiveAt:     lastActiveAt,
 			CreatedAt:        account.CreatedAt.Unix(),
-			Status:           string(account.Status),
+			Status:           string(accountData.MemberStatus),
 			OrganizationRole: accountData.OrganizationRole,
 			AccountRole:      accountRole,
 			Extension:        extension,
+			DepartmentID:     accountData.DepartmentID,
+			DepartmentName:   accountData.DepartmentName,
 		}
 		responses = append(responses, response)
 	}
@@ -3776,17 +3769,127 @@ func (s *organizationService) GetOrganizationMembersPaginated(ctx context.Contex
 	}, nil
 }
 
+func (s *organizationService) getVisibleOrganizationMemberAccountIDs(ctx context.Context, organizationID, accountID string) ([]string, error) {
+	db := s.organizationRepo.GetDB()
+	visible := map[string]struct{}{
+		accountID: {},
+	}
+
+	departmentIDs, err := s.getVisibleDepartmentIDsForAccount(ctx, organizationID, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if len(departmentIDs) > 0 {
+		var departmentAccountIDs []string
+		if err := db.WithContext(ctx).
+			Table("department_members").
+			Select("DISTINCT account_id").
+			Where("department_id IN ?", departmentIDs).
+			Pluck("account_id", &departmentAccountIDs).Error; err != nil {
+			return nil, fmt.Errorf("failed to get visible department members: %w", err)
+		}
+		for _, departmentAccountID := range departmentAccountIDs {
+			visible[departmentAccountID] = struct{}{}
+		}
+	}
+
+	workspaces, err := s.GetUserAllWorkspacesInOrganization(ctx, organizationID, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get visible workspaces: %w", err)
+	}
+	if len(workspaces) > 0 {
+		workspaceIDs := make([]string, 0, len(workspaces))
+		for _, workspace := range workspaces {
+			workspaceIDs = append(workspaceIDs, workspace.ID)
+		}
+
+		var workspaceAccountIDs []string
+		if err := db.WithContext(ctx).
+			Table("workspace_members").
+			Select("DISTINCT account_id").
+			Where("workspace_id IN ?", workspaceIDs).
+			Pluck("account_id", &workspaceAccountIDs).Error; err != nil {
+			return nil, fmt.Errorf("failed to get visible workspace members: %w", err)
+		}
+		for _, workspaceAccountID := range workspaceAccountIDs {
+			visible[workspaceAccountID] = struct{}{}
+		}
+	}
+
+	accountIDs := make([]string, 0, len(visible))
+	for visibleAccountID := range visible {
+		accountIDs = append(accountIDs, visibleAccountID)
+	}
+	slices.Sort(accountIDs)
+	return accountIDs, nil
+}
+
+func (s *organizationService) getVisibleDepartmentIDsForAccount(ctx context.Context, organizationID, accountID string) ([]string, error) {
+	db := s.organizationRepo.GetDB()
+
+	var ownDepartments []string
+	if err := db.WithContext(ctx).
+		Table("department_members dm").
+		Select("dm.department_id").
+		Joins("JOIN departments d ON d.id = dm.department_id").
+		Where("d.group_id = ? AND d.status = ? AND dm.account_id = ?", organizationID, model.DepartmentStatusActive, accountID).
+		Pluck("dm.department_id", &ownDepartments).Error; err != nil {
+		return nil, fmt.Errorf("failed to get account departments: %w", err)
+	}
+	if len(ownDepartments) == 0 {
+		return nil, nil
+	}
+
+	var departments []model.Department
+	if err := db.WithContext(ctx).
+		Where("group_id = ? AND status = ?", organizationID, model.DepartmentStatusActive).
+		Find(&departments).Error; err != nil {
+		return nil, fmt.Errorf("failed to get organization departments: %w", err)
+	}
+
+	childrenByParent := make(map[string][]string, len(departments))
+	for _, department := range departments {
+		if department.ParentID == nil || *department.ParentID == "" {
+			continue
+		}
+		childrenByParent[*department.ParentID] = append(childrenByParent[*department.ParentID], department.ID)
+	}
+
+	visible := make(map[string]struct{}, len(departments))
+	var visit func(string)
+	visit = func(departmentID string) {
+		if _, ok := visible[departmentID]; ok {
+			return
+		}
+		visible[departmentID] = struct{}{}
+		for _, childID := range childrenByParent[departmentID] {
+			visit(childID)
+		}
+	}
+	for _, departmentID := range ownDepartments {
+		visit(departmentID)
+	}
+
+	departmentIDs := make([]string, 0, len(visible))
+	for departmentID := range visible {
+		departmentIDs = append(departmentIDs, departmentID)
+	}
+	slices.Sort(departmentIDs)
+	return departmentIDs, nil
+}
+
 func (s *organizationService) GetOrganizationMemberByAccountID(ctx context.Context, organizationID, accountID string) (*shared_dto.OrganizationMemberWithExtensionResponse, error) {
 	db := s.organizationRepo.GetDB()
 
 	var accountData struct {
-		Account          auth_model.Account     `gorm:"embedded"`
-		OrganizationRole model.OrganizationRole `gorm:"column:organization_role"`
-		MemberName       *string                `gorm:"column:member_name"`
+		Account          auth_model.Account             `gorm:"embedded"`
+		OrganizationRole model.OrganizationRole         `gorm:"column:organization_role"`
+		MemberStatus     model.OrganizationMemberStatus `gorm:"column:member_status"`
+		MemberName       *string                        `gorm:"column:member_name"`
 	}
 
 	err := db.WithContext(ctx).Unscoped().Table("members").
-		Select("accounts.*, members.role as organization_role, members.name as member_name").
+		Select("accounts.*, members.role as organization_role, members.status as member_status, members.name as member_name").
 		Joins("JOIN accounts ON members.account_id = accounts.id").
 		Where("members.organization_id = ?", organizationID).
 		Where("members.account_id = ?", accountID).
@@ -3842,7 +3945,7 @@ func (s *organizationService) GetOrganizationMemberByAccountID(ctx context.Conte
 		LastLoginAt:      lastLoginAt,
 		LastActiveAt:     lastActiveAt,
 		CreatedAt:        account.CreatedAt.Unix(),
-		Status:           string(account.Status),
+		Status:           string(accountData.MemberStatus),
 		OrganizationRole: accountData.OrganizationRole,
 		AccountRole:      accountRole,
 		Extension:        extension,
@@ -3863,17 +3966,7 @@ func (s *organizationService) CheckAnyWorkspaceCreateAppPermission(ctx context.C
 		return false, fmt.Errorf("organization not found")
 	}
 
-	organizationRole, err := s.GetUserOrganizationRole(ctx, organizationID, accountID)
-	if err == nil && (organizationRole == model.OrganizationRoleOwner || organizationRole == model.OrganizationRoleAdmin) {
-		return true, nil
-	}
-
-	managedWorkspaceCount, err := s.getManagedWorkspaceCountInOrganization(ctx, organizationID, accountID)
-	if err != nil {
-		return false, fmt.Errorf("failed to check managed workspaces: %w", err)
-	}
-
-	return managedWorkspaceCount > 0, nil
+	return s.hasAnyWorkspacePermissionInOrganization(ctx, organizationID, accountID, appCreatePermissionCodes()...)
 }
 
 func (s *organizationService) CheckAnyWorkspaceCreateDatasetPermission(ctx context.Context, organizationID, accountID string) (bool, error) {
@@ -3889,84 +3982,18 @@ func (s *organizationService) CheckAnyWorkspaceCreateDatasetPermission(ctx conte
 		return false, fmt.Errorf("organization not found")
 	}
 
-	organizationWorkspaces, err := s.GetUserAllWorkspacesInOrganization(ctx, organizationID, accountID)
-	if err != nil {
-		return false, fmt.Errorf("failed to get user workspaces in organization: %w", err)
-	}
-
-	if len(organizationWorkspaces) == 0 {
-		return false, nil
-	}
-
-	workspaceIDs := make([]string, len(organizationWorkspaces))
-	for i, workspace := range organizationWorkspaces {
-		workspaceIDs[i] = workspace.ID
-	}
-
-	db := s.organizationRepo.GetDB()
-
-	type WorkspacePermissionResult struct {
-		WorkspaceID string `json:"workspace_id"`
-		Role        string `json:"role"`
-		// Permissions *string `json:"permissions"` // Permissions are now handled via Role
-		RoleID *string `json:"role_id"`
-	}
-
-	var results []WorkspacePermissionResult
-	err = db.WithContext(ctx).
-		Table("workspace_members").
-		Select("workspace_members.workspace_id, workspace_members.role, workspace_members.role_id").
-		Where("workspace_members.account_id = ? AND workspace_members.workspace_id IN (?)", accountID, workspaceIDs).
-		Find(&results).Error
-
-	if err != nil {
-		return false, fmt.Errorf("failed to query workspace permissions: %w", err)
-	}
-
-	for _, result := range results {
-		if result.Role == string(model.WorkspaceRoleOwner) || result.Role == string(model.WorkspaceRoleAdmin) {
-			return true, nil
-		}
-
-		// Check permission via Role + Permission logic
-		var roleID string
-		if result.RoleID != nil && *result.RoleID != "" {
-			roleID = *result.RoleID
-		} else {
-			// Map built-in role to role ID
-			switch model.WorkspaceMemberRole(result.Role) {
-			case model.WorkspaceRoleViewer:
-				roleID = model.WorkspaceBuiltinRoleViewerID
-			case model.WorkspaceRoleNormal:
-				roleID = model.WorkspaceBuiltinRoleMemberID
-			default:
-				roleID = model.WorkspaceBuiltinRoleMemberID
-			}
-		}
-
-		// Get role details to check permissions
-		roleDetail, err := s.GetWorkspaceRoleDetail(ctx, organizationID, roleID, accountID)
-		if err == nil {
-			for _, codeStr := range roleDetail.Permissions {
-				if codeStr == string(model.WorkspacePermissionKnowledgeBaseManage) {
-					return true, nil
-				}
-			}
-		}
-	}
-
-	return false, nil
+	return s.hasAnyWorkspacePermissionInOrganization(ctx, organizationID, accountID, datasetCreatePermissionCodes()...)
 }
 
 func (s *organizationService) CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode model.WorkspacePermissionCode) (bool, error) {
-	if organizationID == "" {
-		return true, nil
+	if strings.TrimSpace(organizationID) == "" {
+		return false, nil
 	}
 
 	organization, err := s.organizationRepo.GetByID(ctx, organizationID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return true, nil
+			return false, nil
 		}
 		return false, fmt.Errorf("failed to get organization: %w", err)
 	}
@@ -3979,53 +4006,25 @@ func (s *organizationService) CheckWorkspacePermission(ctx context.Context, orga
 		return false, nil
 	}
 
-	organizationRole, err := s.GetUserOrganizationRole(ctx, organization.ID, accountID)
-	if err == nil && (organizationRole == model.OrganizationRoleOwner || organizationRole == model.OrganizationRoleAdmin) {
+	if s.checkOrganizationAdmin(ctx, accountID, organization.ID) {
 		return true, nil
 	}
-
-	permSet := make(map[model.WorkspacePermissionCode]struct{})
 
 	workspaceJoin, err := s.workspaceManagementService.GetByWorkspaceAndMember(ctx, workspaceID, accountID)
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, fmt.Errorf("failed to get workspace account join: %w", err)
 	}
-
-	if workspaceJoin != nil {
-		var roleID string
-		// Use RoleID if available (custom role), otherwise map built-in roles
-		if workspaceJoin.RoleID != nil && *workspaceJoin.RoleID != "" {
-			roleID = *workspaceJoin.RoleID
-		} else {
-			switch workspaceJoin.Role {
-			case model.WorkspaceRoleOwner:
-				roleID = model.WorkspaceBuiltinRoleOwnerID
-			case model.WorkspaceRoleAdmin:
-				roleID = model.WorkspaceBuiltinRoleAdminID
-			case model.WorkspaceRoleViewer:
-				roleID = model.WorkspaceBuiltinRoleViewerID
-			case model.WorkspaceRoleNormal: // Map 'normal' to 'member' role
-				roleID = model.WorkspaceBuiltinRoleMemberID
-			default:
-				// Fallback or handle other legacy roles if needed
-				roleID = model.WorkspaceBuiltinRoleMemberID
-			}
-		}
-
-		roleDetail, err := s.GetWorkspaceRoleDetail(ctx, organization.ID, roleID, accountID)
-		if err != nil {
-			if !strings.Contains(err.Error(), "role not found") {
-				return false, fmt.Errorf("failed to get organization role detail: %w", err)
-			}
-		} else {
-			for _, codeStr := range roleDetail.Permissions {
-				permSet[model.WorkspacePermissionCode(codeStr)] = struct{}{}
-			}
-		}
+	if workspaceJoin == nil {
+		return false, nil
 	}
 
-	_, ok := permSet[permissionCode]
-	return ok, nil
+	return workspaceMemberAllowsPermission(
+		workspaceJoin.Role,
+		workspaceJoin.RoleID,
+		workspaceJoin.Permissions,
+		workspaceJoin.PermissionSource,
+		permissionCode,
+	), nil
 }
 
 func (s *organizationService) CheckWorkspaceOrganizationAnyPermission(
@@ -4037,14 +4036,14 @@ func (s *organizationService) CheckWorkspaceOrganizationAnyPermission(
 		return false, nil
 	}
 
-	if organizationID == "" {
-		return true, nil
+	if strings.TrimSpace(organizationID) == "" {
+		return false, nil
 	}
 
 	organization, err := s.organizationRepo.GetByID(ctx, organizationID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return true, nil
+			return false, nil
 		}
 		return false, fmt.Errorf("failed to get organization: %w", err)
 	}
@@ -4057,58 +4056,198 @@ func (s *organizationService) CheckWorkspaceOrganizationAnyPermission(
 		return false, nil
 	}
 
-	organizationRole, err := s.GetUserOrganizationRole(ctx, organization.ID, accountID)
-	if err == nil && (organizationRole == model.OrganizationRoleOwner || organizationRole == model.OrganizationRoleAdmin) {
+	if s.checkOrganizationAdmin(ctx, accountID, organization.ID) {
 		return true, nil
 	}
-
-	permSet := make(map[model.WorkspacePermissionCode]struct{})
 
 	workspaceJoin, err := s.workspaceManagementService.GetByWorkspaceAndMember(ctx, workspaceID, accountID)
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, fmt.Errorf("failed to get workspace account join: %w", err)
 	}
-
-	if workspaceJoin != nil {
-		var roleID string
-		// Use RoleID if available (custom role), otherwise map built-in roles
-		if workspaceJoin.RoleID != nil && *workspaceJoin.RoleID != "" {
-			roleID = *workspaceJoin.RoleID
-		} else {
-			switch workspaceJoin.Role {
-			case model.WorkspaceRoleOwner:
-				roleID = model.WorkspaceBuiltinRoleOwnerID
-			case model.WorkspaceRoleAdmin:
-				roleID = model.WorkspaceBuiltinRoleAdminID
-			case model.WorkspaceRoleViewer:
-				roleID = model.WorkspaceBuiltinRoleViewerID
-			case model.WorkspaceRoleNormal: // Map 'normal' to 'member' role
-				roleID = model.WorkspaceBuiltinRoleMemberID
-			default:
-				// Fallback or handle other legacy roles if needed
-				roleID = model.WorkspaceBuiltinRoleMemberID
-			}
-		}
-
-		roleDetail, err := s.GetWorkspaceRoleDetail(ctx, organization.ID, roleID, accountID)
-		if err != nil {
-			if !strings.Contains(err.Error(), "role not found") {
-				return false, fmt.Errorf("failed to get organization role detail: %w", err)
-			}
-		} else {
-			for _, codeStr := range roleDetail.Permissions {
-				permSet[model.WorkspacePermissionCode(codeStr)] = struct{}{}
-			}
-		}
+	if workspaceJoin == nil {
+		return false, nil
 	}
 
 	for _, code := range permissionCodes {
-		if _, ok := permSet[code]; ok {
+		if workspaceMemberAllowsPermission(
+			workspaceJoin.Role,
+			workspaceJoin.RoleID,
+			workspaceJoin.Permissions,
+			workspaceJoin.PermissionSource,
+			code,
+		) {
 			return true, nil
 		}
 	}
 
 	return false, nil
+}
+
+func workspaceManagePermissionCodes() []model.WorkspacePermissionCode {
+	return []model.WorkspacePermissionCode{
+		model.WorkspacePermissionWorkspaceManage,
+		model.WorkspacePermissionWorkspaceSettingsManage,
+		model.WorkspacePermissionWorkspaceMemberManage,
+		model.WorkspacePermissionWorkspacePermissionManage,
+		model.WorkspacePermissionWorkspaceTransfer,
+		model.WorkspacePermissionWorkspaceArchive,
+	}
+}
+
+func appCreatePermissionCodes() []model.WorkspacePermissionCode {
+	return []model.WorkspacePermissionCode{
+		model.WorkspacePermissionAgentCreate,
+		model.WorkspacePermissionWorkflowCreate,
+	}
+}
+
+func datasetCreatePermissionCodes() []model.WorkspacePermissionCode {
+	return []model.WorkspacePermissionCode{
+		model.WorkspacePermissionKnowledgeBaseCreate,
+	}
+}
+
+func datasetViewPermissionCodes() []model.WorkspacePermissionCode {
+	return []model.WorkspacePermissionCode{
+		model.WorkspacePermissionKnowledgeBaseView,
+		model.WorkspacePermissionKnowledgeBaseFolderManage,
+		model.WorkspacePermissionKnowledgeBaseUpdate,
+		model.WorkspacePermissionKnowledgeBaseDelete,
+		model.WorkspacePermissionKnowledgeBaseMove,
+		model.WorkspacePermissionKnowledgeBaseDocumentView,
+		model.WorkspacePermissionKnowledgeBaseDocumentUpdate,
+		model.WorkspacePermissionKnowledgeBaseDocumentDelete,
+		model.WorkspacePermissionKnowledgeBaseSegmentUpdate,
+		model.WorkspacePermissionKnowledgeBaseSegmentDelete,
+		model.WorkspacePermissionKnowledgeBaseIndexManage,
+		model.WorkspacePermissionKnowledgeBaseGraphView,
+		model.WorkspacePermissionKnowledgeBaseGraphManage,
+	}
+}
+
+func (s *organizationService) hasAnyWorkspacePermissionInOrganization(
+	ctx context.Context,
+	organizationID, accountID string,
+	permissionCodes ...model.WorkspacePermissionCode,
+) (bool, error) {
+	workspaces, err := s.getWorkspacesByAnyPermissionInOrganization(ctx, organizationID, accountID, permissionCodes...)
+	if err != nil {
+		return false, err
+	}
+	return len(workspaces) > 0, nil
+}
+
+func (s *organizationService) getWorkspacesByAnyPermissionInOrganization(
+	ctx context.Context,
+	organizationID, accountID string,
+	permissionCodes ...model.WorkspacePermissionCode,
+) ([]*model.Workspace, error) {
+	if len(permissionCodes) == 0 {
+		return []*model.Workspace{}, nil
+	}
+
+	db := s.organizationRepo.GetDB()
+
+	if s.checkOrganizationAdmin(ctx, accountID, organizationID) {
+		var workspaces []*model.Workspace
+		if err := db.WithContext(ctx).
+			Where("organization_id = ?", organizationID).
+			Where("status = ?", model.WorkspaceStatusNormal).
+			Order("created_at DESC").
+			Find(&workspaces).Error; err != nil {
+			return nil, fmt.Errorf("failed to get organization workspaces by admin permission: %w", err)
+		}
+		return workspaces, nil
+	}
+
+	var workspaces []*model.Workspace
+	if err := db.WithContext(ctx).
+		Table("workspaces").
+		Select("DISTINCT workspaces.*").
+		Joins("JOIN workspace_members ON workspaces.id = workspace_members.workspace_id").
+		Where("workspaces.organization_id = ? AND workspace_members.account_id = ?", organizationID, accountID).
+		Where("workspaces.status = ?", model.WorkspaceStatusNormal).
+		Order("workspaces.created_at DESC").
+		Find(&workspaces).Error; err != nil {
+		return nil, fmt.Errorf("failed to get organization workspaces by permission: %w", err)
+	}
+	if len(workspaces) == 0 {
+		return []*model.Workspace{}, nil
+	}
+
+	workspaceIDs := make([]string, 0, len(workspaces))
+	for _, workspace := range workspaces {
+		workspaceIDs = append(workspaceIDs, workspace.ID)
+	}
+
+	var joins []model.WorkspaceMember
+	if err := db.WithContext(ctx).
+		Where("workspace_id IN ? AND account_id = ?", workspaceIDs, accountID).
+		Find(&joins).Error; err != nil {
+		return nil, fmt.Errorf("failed to get workspace member permissions: %w", err)
+	}
+
+	joinByWorkspaceID := make(map[string]*model.WorkspaceMember, len(joins))
+	for i := range joins {
+		join := &joins[i]
+		joinByWorkspaceID[join.WorkspaceID] = join
+	}
+
+	permittedWorkspaces := make([]*model.Workspace, 0, len(workspaces))
+	for _, workspace := range workspaces {
+		join := joinByWorkspaceID[workspace.ID]
+		if join == nil {
+			continue
+		}
+		if !workspaceMemberAllowsAnyPermission(join, permissionCodes...) {
+			continue
+		}
+		permittedWorkspaces = append(permittedWorkspaces, workspace)
+	}
+
+	return permittedWorkspaces, nil
+}
+
+func workspaceMemberAllowsAnyPermission(
+	join *model.WorkspaceMember,
+	permissionCodes ...model.WorkspacePermissionCode,
+) bool {
+	if join == nil {
+		return false
+	}
+	for _, code := range permissionCodes {
+		if workspaceMemberAllowsPermission(
+			join.Role,
+			join.RoleID,
+			join.Permissions,
+			join.PermissionSource,
+			code,
+		) {
+			return true
+		}
+	}
+	return false
+}
+
+func paginateWorkspaceResults(workspaces []*model.Workspace, page, limit int) ([]*model.Workspace, int64, bool) {
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	total := len(workspaces)
+	start := (page - 1) * limit
+	if start >= total {
+		return []*model.Workspace{}, int64(total), false
+	}
+
+	end := start + limit
+	if end > total {
+		end = total
+	}
+	return workspaces[start:end], int64(total), end < total
 }
 
 func (s *organizationService) workspaceBelongsToOrganization(ctx context.Context, organizationID, workspaceID string) (bool, error) {
@@ -4128,28 +4267,14 @@ func (s *organizationService) workspaceBelongsToOrganization(ctx context.Context
 }
 
 func (s *organizationService) GetUserAllWorkspacesInOrganization(ctx context.Context, organizationID, accountID string) ([]*model.Workspace, error) {
-	db := s.organizationRepo.GetDB()
-
-	isOrganizationAdmin := s.checkOrganizationAdmin(ctx, accountID, organizationID)
-	if isOrganizationAdmin {
-		var tenants []*model.Workspace
-		err := db.WithContext(ctx).Table("workspaces").
-			Where("organization_id = ? AND status = 'normal'", organizationID).
-			Find(&tenants).Error
-		if err != nil {
-			return nil, fmt.Errorf("failed to get organization workspaces: %w", err)
-		}
-		return tenants, nil
-	}
-
-	var tenants []*model.Workspace
-	err := db.WithContext(ctx).Table("workspaces").
-		Joins("JOIN workspace_members ON workspaces.id = workspace_members.workspace_id").
-		Where("workspaces.organization_id = ? AND workspace_members.account_id = ? AND workspace_members.role IN (?)",
-			organizationID, accountID, []string{string(model.WorkspaceRoleOwner), string(model.WorkspaceRoleAdmin)}).
-		Find(&tenants).Error
+	tenants, err := s.getWorkspacesByAnyPermissionInOrganization(
+		ctx,
+		organizationID,
+		accountID,
+		model.WorkspacePermissionWorkspaceView,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get user managed workspaces: %w", err)
+		return nil, fmt.Errorf("failed to get user visible workspaces: %w", err)
 	}
 
 	return tenants, nil
@@ -4197,37 +4322,14 @@ func (s *organizationService) GetOrganizationDatasetsPaginated(ctx context.Conte
 		return nil, fmt.Errorf("user account not found")
 	}
 
-	var workspaceIDs []string
-	var datasetAdmin bool
-
-	isSystemAdmin := false
-	isOrganizationOwner, err := s.CheckOrganizationOwner(ctx, req.OrganizationID, req.UserID)
+	workspaces, err := s.getWorkspacesByAnyPermissionInOrganization(ctx, req.OrganizationID, req.UserID, datasetViewPermissionCodes()...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check organization owner: %w", err)
+		return nil, fmt.Errorf("failed to get user dataset workspaces: %w", err)
 	}
 
-	if isSystemAdmin || isOrganizationOwner {
-		workspaces, err := s.GetUserAllWorkspacesInOrganization(ctx, req.OrganizationID, req.UserID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get all workspaces: %w", err)
-		}
-
-		for _, workspace := range workspaces {
-			workspaceIDs = append(workspaceIDs, workspace.ID)
-		}
-
-		workspaceIDs = append(workspaceIDs, req.OrganizationID)
-		datasetAdmin = true
-	} else {
-		workspaces, err := s.GetUserAllWorkspacesInOrganization(ctx, req.OrganizationID, req.UserID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get user workspaces: %w", err)
-		}
-
-		for _, workspace := range workspaces {
-			workspaceIDs = append(workspaceIDs, workspace.ID)
-		}
-		datasetAdmin = false
+	workspaceIDs := make([]string, 0, len(workspaces))
+	for _, workspace := range workspaces {
+		workspaceIDs = append(workspaceIDs, workspace.ID)
 	}
 
 	if len(workspaceIDs) == 0 {
@@ -4245,7 +4347,7 @@ func (s *organizationService) GetOrganizationDatasetsPaginated(ctx context.Conte
 		Page:         req.Page,
 		Limit:        req.PerPage,
 		Search:       req.Search,
-		DatasetAdmin: datasetAdmin,
+		DatasetAdmin: false,
 		AccountID:    req.UserID,
 	}
 
@@ -4336,24 +4438,31 @@ func (s *organizationService) ListWorkspaceIDsByPermission(
 		return nil, fmt.Errorf("failed to get organization: %w", err)
 	}
 
-	groupRole, err := s.GetUserOrganizationRole(ctx, organizationID, accountID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get organization role: %w", err)
-	}
-	if groupRole == model.OrganizationRoleOwner || groupRole == model.OrganizationRoleAdmin {
-		return s.listNormalWorkspaceIDsByOrganization(ctx, organizationID)
+	if s.checkOrganizationAdmin(ctx, accountID, organizationID) {
+		var workspaceIDs []string
+		if err := s.organizationRepo.GetDB().WithContext(ctx).
+			Model(&model.Workspace{}).
+			Where("organization_id = ?", organizationID).
+			Where("status = ?", model.WorkspaceStatusNormal).
+			Pluck("id", &workspaceIDs).Error; err != nil {
+			return nil, fmt.Errorf("failed to query organization workspace ids by admin permission: %w", err)
+		}
+		slices.Sort(workspaceIDs)
+		return workspaceIDs, nil
 	}
 
 	type workspacePermissionRow struct {
-		WorkspaceID string
-		Role        model.WorkspaceMemberRole
-		RoleID      *string
+		WorkspaceID      string
+		Role             model.WorkspaceMemberRole
+		RoleID           *string
+		Permissions      string
+		PermissionSource model.WorkspaceMemberPermissionSource
 	}
 
 	var rows []workspacePermissionRow
 	if err := s.organizationRepo.GetDB().WithContext(ctx).
 		Table("workspace_members").
-		Select("workspace_members.workspace_id, workspace_members.role, workspace_members.role_id").
+		Select("workspace_members.workspace_id, workspace_members.role, workspace_members.role_id, workspace_members.permissions::text AS permissions, workspace_members.permission_source").
 		Joins("JOIN workspaces ON workspaces.id = workspace_members.workspace_id").
 		Where("workspace_members.account_id = ?", accountID).
 		Where("workspaces.organization_id = ?", organizationID).
@@ -4362,23 +4471,11 @@ func (s *organizationService) ListWorkspaceIDsByPermission(
 		return nil, fmt.Errorf("failed to query workspace memberships: %w", err)
 	}
 
-	customRoleIDs := make([]string, 0, len(rows))
-	for _, row := range rows {
-		if row.RoleID == nil || *row.RoleID == "" || model.IsBuiltinRole(*row.RoleID) {
-			continue
-		}
-		customRoleIDs = append(customRoleIDs, *row.RoleID)
-	}
-
-	rolePermissions, err := s.listActiveRolePermissionsByID(ctx, organizationID, customRoleIDs)
-	if err != nil {
-		return nil, err
-	}
-
 	workspaceIDs := make([]string, 0, len(rows))
 	seen := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
-		if !workspaceRoleAllowsPermission(row.Role, row.RoleID, rolePermissions, permissionCode) {
+		memberPermissions := parseWorkspacePermissionJSONString(row.Permissions)
+		if !workspaceMemberAllowsPermission(row.Role, row.RoleID, memberPermissions, row.PermissionSource, permissionCode) {
 			continue
 		}
 		if _, exists := seen[row.WorkspaceID]; exists {
@@ -4392,71 +4489,36 @@ func (s *organizationService) ListWorkspaceIDsByPermission(
 	return workspaceIDs, nil
 }
 
-func (s *organizationService) listNormalWorkspaceIDsByOrganization(ctx context.Context, organizationID string) ([]string, error) {
-	var workspaceIDs []string
-	if err := s.organizationRepo.GetDB().WithContext(ctx).
-		Table("workspaces").
-		Where("organization_id = ? AND status = ?", organizationID, model.WorkspaceStatusNormal).
-		Order("id ASC").
-		Pluck("id", &workspaceIDs).Error; err != nil {
-		return nil, fmt.Errorf("failed to list organization workspaces: %w", err)
+func parseWorkspacePermissionJSONString(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "null" {
+		return []string{}
 	}
-	return workspaceIDs, nil
+
+	var permissions []string
+	if err := json.Unmarshal([]byte(raw), &permissions); err != nil {
+		return []string{}
+	}
+	return permissions
 }
 
-func (s *organizationService) listActiveRolePermissionsByID(
-	ctx context.Context,
-	organizationID string,
-	roleIDs []string,
-) (map[string][]string, error) {
-	permissionsByRoleID := make(map[string][]string)
-	if len(roleIDs) == 0 {
-		return permissionsByRoleID, nil
-	}
-
-	var roles []model.WorkspaceCustomRole
-	if err := s.organizationRepo.GetDB().WithContext(ctx).
-		Where("group_id = ? AND status = ? AND id IN ?", organizationID, model.WorkspaceCustomRoleStatusActive, roleIDs).
-		Find(&roles).Error; err != nil {
-		return nil, fmt.Errorf("failed to list workspace roles: %w", err)
-	}
-
-	for _, role := range roles {
-		permissionsByRoleID[role.ID] = role.Permissions
-	}
-
-	return permissionsByRoleID, nil
-}
-
-func workspaceRoleAllowsPermission(
+func workspaceMemberEffectivePermissionStrings(
 	role model.WorkspaceMemberRole,
 	roleID *string,
-	rolePermissions map[string][]string,
-	permissionCode model.WorkspacePermissionCode,
-) bool {
-	effectiveRoleID := workspaceRoleIDFromJoin(role, roleID)
-	if model.IsBuiltinRole(effectiveRoleID) {
-		return slices.Contains(model.GetBuiltinGroupRolePermissionsByID(effectiveRoleID), permissionCode)
-	}
-
-	return slices.Contains(rolePermissions[effectiveRoleID], string(permissionCode))
+	permissions []string,
+	permissionSource model.WorkspaceMemberPermissionSource,
+) []string {
+	return model.EffectiveWorkspaceMemberPermissionStrings(role, roleID, permissions, permissionSource)
 }
 
-func workspaceRoleIDFromJoin(role model.WorkspaceMemberRole, roleID *string) string {
-	if roleID != nil && *roleID != "" {
-		return *roleID
-	}
-
-	switch role {
-	case model.WorkspaceRoleOwner:
-		return model.WorkspaceBuiltinRoleOwnerID
-	case model.WorkspaceRoleAdmin:
-		return model.WorkspaceBuiltinRoleAdminID
-	case model.WorkspaceRoleViewer:
-		return model.WorkspaceBuiltinRoleViewerID
-	default:
-		return model.WorkspaceBuiltinRoleMemberID
-	}
+func workspaceMemberAllowsPermission(
+	role model.WorkspaceMemberRole,
+	roleID *string,
+	permissions []string,
+	permissionSource model.WorkspaceMemberPermissionSource,
+	permissionCode model.WorkspacePermissionCode,
+) bool {
+	return model.WorkspaceMemberAllowsPermission(role, roleID, permissions, permissionSource, permissionCode)
 }
 
 func getStringValue(s *string) string {

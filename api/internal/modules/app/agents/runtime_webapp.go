@@ -3,9 +3,17 @@ package agents
 import (
 	"context"
 	"fmt"
+	"strings"
+
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
-	"strings"
+	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+)
+
+const (
+	agentWebAppCapabilityReasonLoginRequired = "login_required"
+	agentWebAppCapabilityReasonNoAccess      = "no_access"
 )
 
 func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAppID string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
@@ -13,7 +21,14 @@ func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAp
 	if err != nil {
 		return nil, err
 	}
-	if NormalizeAgentWebAppStatus(ag.WebAppStatus) != AgentWebAppStatusActive {
+	if !ag.IsWebAppActive() {
+		return nil, errAgentWebAppOffline
+	}
+	_, auth, err := s.publishedRuntimeAuthorizationForAgent(ctx, ag)
+	if err != nil {
+		return nil, err
+	}
+	if !webAppRuntimeSurfaceEnabled(auth) {
 		return nil, errAgentWebAppOffline
 	}
 	if ag.AgentsType != "AGENT" {
@@ -63,6 +78,181 @@ func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAp
 		VersionUUID:    version.VersionUUID.String(),
 		Config:         *cfg,
 	}, nil
+}
+
+func webAppRuntimeSurfaceEnabled(auth *runtimeauth.ResourceAuthorization) bool {
+	surface, ok := auth.Surface(runtimeauth.PublishedRuntimeSurfaceWebApp)
+	return ok && surface.Enabled
+}
+
+func (s *agentsService) GetWebAppRuntimeCapability(ctx context.Context, webAppID, accountID string, authenticated bool) (*dto.AgentWebAppRuntimeCapabilityResponse, error) {
+	ag, err := s.agentsRepo.GetByWebAppID(ctx, webAppID)
+	if err != nil {
+		return nil, err
+	}
+	if ag.AgentsType != "AGENT" {
+		return nil, fmt.Errorf("web app is not an AGENT runtime")
+	}
+	if !ag.IsWebAppActive() {
+		return s.disabledWebAppRuntimeCapability(ctx, ag), nil
+	}
+	fallback, auth, err := s.publishedRuntimeAuthorizationForAgent(ctx, ag)
+	if err != nil {
+		return nil, err
+	}
+	version, err := s.agentsRepo.GetLatestAgentPublishedVersion(ctx, ag.ID.String())
+	if err != nil {
+		return nil, err
+	}
+	if version == nil {
+		return nil, errAgentWebAppNotPublished
+	}
+
+	workspaceID := ag.TenantID.String()
+	organizationID := s.webAppRuntimeOrganizationID(ctx, ag, auth)
+	organizationUUID, _ := uuid.Parse(strings.TrimSpace(organizationID))
+
+	surface, ok := auth.Surface(runtimeauth.PublishedRuntimeSurfaceWebApp)
+	decision := runtimeauth.RuntimeAccessDecision{Reason: runtimeauth.RuntimeAccessDeniedMissingSurface}
+	if ok {
+		decision = surface.Evaluate(runtimeauth.RuntimeAudience{})
+	}
+	privateAudienceEnabled := webAppSurfaceHasPrivateAudience(surface)
+	if ok && !decision.Allowed && privateAudienceEnabled {
+		if !authenticated {
+			decision.Reason = runtimeauth.RuntimeAccessDecisionReason(agentWebAppCapabilityReasonLoginRequired)
+		} else {
+			audience, err := s.webAppRuntimeAudienceForAccount(ctx, organizationUUID, accountID)
+			if err != nil {
+				return nil, err
+			}
+			decision = surface.Evaluate(audience)
+			if !decision.Allowed && decision.Reason == runtimeauth.RuntimeAccessDeniedNoMatchingGrant {
+				decision.Reason = runtimeauth.RuntimeAccessDecisionReason(agentWebAppCapabilityReasonNoAccess)
+			}
+		}
+	}
+
+	return &dto.AgentWebAppRuntimeCapabilityResponse{
+		AgentID:                ag.ID.String(),
+		WebAppID:               ag.WebAppID.String(),
+		WorkspaceID:            workspaceID,
+		OrganizationID:         organizationID,
+		Surface:                string(runtimeauth.PublishedRuntimeSurfaceWebApp),
+		Allowed:                decision.Allowed,
+		Reason:                 string(webAppCapabilityReason(decision, fallback, surface)),
+		PublicOnly:             !privateAudienceEnabled,
+		PrivateAudienceEnabled: privateAudienceEnabled,
+		SupportedSubjectTypes:  webAppRuntimeSupportedSubjectTypes(),
+		VersionUUID:            version.VersionUUID.String(),
+	}, nil
+}
+
+func (s *agentsService) disabledWebAppRuntimeCapability(ctx context.Context, ag *Agent) *dto.AgentWebAppRuntimeCapabilityResponse {
+	workspaceID := ""
+	organizationID := ""
+	webAppID := ""
+	agentID := ""
+	if ag != nil {
+		workspaceID = ag.TenantID.String()
+		organizationID = s.webAppRuntimeOrganizationID(ctx, ag, nil)
+		webAppID = ag.WebAppID.String()
+		agentID = ag.ID.String()
+	}
+
+	return &dto.AgentWebAppRuntimeCapabilityResponse{
+		AgentID:                agentID,
+		WebAppID:               webAppID,
+		WorkspaceID:            workspaceID,
+		OrganizationID:         organizationID,
+		Surface:                string(runtimeauth.PublishedRuntimeSurfaceWebApp),
+		Allowed:                false,
+		Reason:                 string(runtimeauth.RuntimeAccessDeniedDisabledSurface),
+		PublicOnly:             true,
+		PrivateAudienceEnabled: false,
+		SupportedSubjectTypes:  webAppRuntimeSupportedSubjectTypes(),
+	}
+}
+
+func webAppRuntimeSupportedSubjectTypes() []string {
+	return []string{
+		string(runtimeauth.PublishedRuntimeSubjectPublic),
+		string(runtimeauth.PublishedRuntimeSubjectOrganization),
+		string(runtimeauth.PublishedRuntimeSubjectDepartment),
+		string(runtimeauth.PublishedRuntimeSubjectWorkspace),
+		string(runtimeauth.PublishedRuntimeSubjectAccount),
+	}
+}
+
+func webAppCapabilityReason(decision runtimeauth.RuntimeAccessDecision, fallback runtimeauth.PublishedRuntimePolicy, surface runtimeauth.SurfaceAuthorization) runtimeauth.RuntimeAccessDecisionReason {
+	if decision.Allowed && len(surface.Grants) == 0 && fallback.Allows(runtimeauth.PublishedRuntimeSurfaceWebApp) {
+		return runtimeauth.RuntimeAccessDecisionReason(agentWebAppCapabilityReasonPublicCompatible)
+	}
+	return decision.Reason
+}
+
+func webAppSurfaceHasPrivateAudience(surface runtimeauth.SurfaceAuthorization) bool {
+	for _, grant := range surface.Grants {
+		if !grant.Enabled {
+			continue
+		}
+		switch grant.SubjectType {
+		case runtimeauth.PublishedRuntimeSubjectOrganization,
+			runtimeauth.PublishedRuntimeSubjectAccount,
+			runtimeauth.PublishedRuntimeSubjectDepartment,
+			runtimeauth.PublishedRuntimeSubjectWorkspace:
+			return true
+		}
+	}
+	return false
+}
+
+func (s *agentsService) webAppRuntimeAudienceForAccount(ctx context.Context, organizationID uuid.UUID, accountID string) (runtimeauth.RuntimeAudience, error) {
+	accountUUID, err := uuid.Parse(strings.TrimSpace(accountID))
+	if err != nil || organizationID == uuid.Nil {
+		return runtimeauth.RuntimeAudience{}, nil
+	}
+	audience := runtimeauth.RuntimeAudience{AccountID: accountUUID}
+	if s.db == nil {
+		audience.OrganizationID = organizationID
+		return audience, nil
+	}
+
+	var memberCount int64
+	if err := s.db.WithContext(ctx).
+		Model(&workspacemodel.OrganizationMember{}).
+		Where("organization_id = ? AND account_id = ? AND status = ?", organizationID.String(), accountUUID.String(), workspacemodel.OrganizationMemberStatusActive).
+		Count(&memberCount).Error; err != nil {
+		return runtimeauth.RuntimeAudience{}, fmt.Errorf("failed to validate webapp runtime organization member: %w", err)
+	}
+	if memberCount == 0 {
+		return runtimeauth.RuntimeAudience{}, nil
+	}
+	audience.OrganizationID = organizationID
+
+	departmentIDs, err := s.runnableWebAppDepartmentIDsForAudience(ctx, audience)
+	if err != nil {
+		return runtimeauth.RuntimeAudience{}, err
+	}
+	audience.DepartmentIDs = departmentIDs
+
+	workspaceIDs, err := s.runnableWebAppWorkspaceIDsForAudience(ctx, audience)
+	if err != nil {
+		return runtimeauth.RuntimeAudience{}, err
+	}
+	audience.WorkspaceIDs = workspaceIDs
+	return audience, nil
+}
+
+func (s *agentsService) webAppRuntimeOrganizationID(ctx context.Context, ag *Agent, auth *runtimeauth.ResourceAuthorization) string {
+	if auth != nil && auth.OrganizationID != uuid.Nil {
+		return auth.OrganizationID.String()
+	}
+	workspaceID := ""
+	if ag != nil {
+		workspaceID = ag.TenantID.String()
+	}
+	return s.organizationIDForAgentWorkspace(ctx, workspaceID)
 }
 
 func (s *agentsService) organizationIDForAgentWorkspace(ctx context.Context, workspaceID string) string {

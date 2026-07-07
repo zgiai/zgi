@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
-	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
@@ -35,29 +34,11 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 	}
 	logger.Info("Got account ID", "account_id", accountID)
 
-	workspaceID, ok := h.resolveAgentWorkspaceID(c, agentID)
+	workspaceID, ok := h.requireAgentWorkspacePermission(c, agentID, workspace_model.WorkspacePermissionWorkflowPublish)
 	if !ok {
 		return
 	}
 	logger.Info("Got agent workspace ID", "workspace_id", workspaceID)
-
-	if h.enterpriseService != nil {
-		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-			c.Request.Context(),
-			util.GetOrganizationID(c),
-			workspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionAgentManage,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
-	}
 
 	// Parse request body (optional parameters for publishing)
 	logger.Info("Parsing request body")
@@ -100,7 +81,7 @@ func (h *WorkflowHandler) PublishWorkflow(c *gin.Context) {
 // @Router /agents/{agent_id}/workflows/latest-version [get]
 func (h *WorkflowHandler) GetLatestWorkflowVersion(c *gin.Context) {
 	agentID := c.Param("agent_id")
-	workspaceID, ok := h.requireAgentWorkspacePermission(c, agentID, workspace_model.WorkspacePermissionAgentView)
+	workspaceID, ok := h.requireAgentWorkspacePermission(c, agentID, workspace_model.WorkspacePermissionWorkflowView)
 	if !ok {
 		return
 	}

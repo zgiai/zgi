@@ -1,20 +1,46 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { useLocale } from 'next-intl';
+import { useMemo, useState, type ComponentType, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useT } from '@/i18n';
-import { useDashboardStats } from '@/hooks/dashboard/use-dashboard';
-import { APP_NAME } from '@/lib/config';
-import { Skeleton } from '@/components/ui/skeleton';
+import {
+  AlertCircle,
+  AppWindow,
+  ArrowRight,
+  BookOpen,
+  Bot,
+  CheckCircle2,
+  Circle,
+  Database,
+  FileText,
+  Image as ImageIcon,
+  Loader2,
+  MessageSquare,
+  RefreshCw,
+  Settings,
+  Users,
+} from 'lucide-react';
+import { toast } from 'sonner';
+import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { useAuthStore } from '@/store/auth-store';
-import { useCurrentWorkspace } from '@/store/workspace-store';
+import { Skeleton } from '@/components/ui/skeleton';
+import { useRunnableWebApps } from '@/hooks/agent/use-runnable-webapps';
+import type { RunnableWebAppResolvedItem } from '@/hooks/agent/use-runnable-webapps';
+import { DASHBOARD_KEYS } from '@/hooks/query-keys';
+import { useDashboardStats } from '@/hooks/dashboard/use-dashboard';
+import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
+import { useUpdateCurrentWorkspace } from '@/hooks/workspace/use-update-current-workspace';
+import { useT } from '@/i18n';
+import { APP_NAME, ICON_BG } from '@/lib/config';
 import { contentParseService, dashboardService } from '@/services';
-import { AlertCircle, ArrowRight, CheckCircle2, Circle, RefreshCw } from 'lucide-react';
+import type { DashboardRecentWorkType } from '@/services/types/dashboard';
+import { useCurrentWorkspace, useWorkspaces, type Workspace } from '@/store/workspace-store';
+import { getRecentWorkHref } from '@/utils/console-recent-work';
+import { getErrorMessage } from '@/utils/error-notifications';
 
 type ModelType = 'text-chat' | 'embedding' | 'rerank' | 'vision' | 'image-gen';
 
@@ -25,53 +51,49 @@ interface ModelCapability {
   priority: 'required' | 'recommended';
 }
 
-interface ResourceRow {
+interface ProductEntry {
+  key: string;
+  title: string;
+  description: string;
+  href: string;
+  icon: ComponentType<{ className?: string }>;
+  enabled: boolean;
+}
+
+interface WorkspaceAssetEntry {
   key: string;
   label: string;
   value: number | undefined;
-  href: string;
-  action: string;
+  icon: ComponentType<{ className?: string }>;
 }
-
-type RecentWorkType = 'conversation' | 'agent' | 'dataset' | 'database';
 
 interface RecentWorkItem {
   id: string;
-  type: RecentWorkType;
+  type: DashboardRecentWorkType;
   title: string;
   href: string;
   timestamp: number;
+  workspaceId?: string;
+  workspaceName?: string;
 }
 
-const systemRows = [
-  { label: 'API', value: 'Online' },
-  { label: 'Database', value: 'Connected' },
-];
-const RECENT_WORK_LIMIT = 4;
-const SHOW_RECENT_WORK_CARD = false;
+const RECENT_WORK_LIMIT = 5;
 
-async function getRecentWorkItems(): Promise<RecentWorkItem[]> {
-  const response = await dashboardService.getRecentWork();
+async function getRecentWorkItems(limit = RECENT_WORK_LIMIT): Promise<RecentWorkItem[]> {
+  const response = await dashboardService.getRecentWork({
+    scope: 'overview',
+    limit,
+  });
+
   return (response.data?.items ?? []).map(item => ({
     id: item.id,
     type: item.type,
     title: item.title,
     href: getRecentWorkHref(item.type, item.resource_id, item.parent_id),
     timestamp: item.updated_at * 1000,
+    workspaceId: item.workspace_id,
+    workspaceName: item.workspace_name,
   }));
-}
-
-function getRecentWorkHref(type: RecentWorkType, resourceId: string, parentId?: string) {
-  if (type === 'conversation') {
-    return parentId ? `/console/agents/${parentId}/logs` : '/console/agents';
-  }
-  if (type === 'agent') {
-    return `/console/agents/${resourceId}/workflow`;
-  }
-  if (type === 'dataset') {
-    return `/console/dataset/${resourceId}`;
-  }
-  return `/console/db/${resourceId}`;
 }
 
 function getModelCount(stats: ReturnType<typeof useDashboardStats>['data'], type: ModelType) {
@@ -104,7 +126,7 @@ function StatusDot({
   );
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function SectionLabel({ children }: { children: ReactNode }) {
   return (
     <div className="mb-3 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
       {children}
@@ -112,48 +134,85 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
+function toRunnableAppPreview(item: RunnableWebAppResolvedItem) {
+  let iconType: 'image' | 'text' = item.icon_type === 'image' ? 'image' : 'text';
+  let src = '';
+  let textIcon = (item.meta_data.title || 'A').slice(0, 2).toUpperCase();
+  let iconBackground = ICON_BG;
+  const icon = item.meta_data.icon || '';
+
+  if (item.icon_type === 'image') {
+    src = item.meta_data.icon_url || icon;
+  } else {
+    try {
+      const parsed = JSON.parse(icon || '{}') as { icon?: string; icon_background?: string };
+      textIcon = parsed.icon || textIcon;
+      iconBackground = parsed.icon_background || iconBackground;
+    } catch {
+      iconType = 'text';
+    }
+  }
+
+  return {
+    iconType,
+    src,
+    textIcon,
+    iconBackground,
+  };
+}
+
 export default function ConsolePage() {
   const t = useT();
   const locale = useLocale();
-  const { user } = useAuthStore();
+  const router = useRouter();
   const currentWorkspace = useCurrentWorkspace();
-  const { data: statsData, isLoading, refetch, isRefetching } = useDashboardStats();
+  const workspaces = useWorkspaces();
+  const updateCurrentWorkspace = useUpdateCurrentWorkspace();
+  const [openingRecentWorkId, setOpeningRecentWorkId] = useState<string | null>(null);
+  const {
+    capabilities,
+    canUseOrganizationScope,
+    canAccessOrganizationDashboard,
+    canManageModelConfig,
+  } = useAccountCapabilities();
+  const {
+    data: statsData,
+    isLoading: isModelStatsLoading,
+    refetch: refetchModelStats,
+    isRefetching: isModelStatsRefetching,
+  } = useDashboardStats();
+  const {
+    items: runnableApps,
+    isLoading: isRunnableAppsLoading,
+    isFetching: isRunnableAppsFetching,
+    refetch: refetchRunnableApps,
+    canUseResourceList: canUseRunnableApps,
+  } = useRunnableWebApps({ workspaceId: null });
   const {
     data: recentWorkItems = [],
     isLoading: isRecentWorkLoading,
     isFetching: isRecentWorkFetching,
     refetch: refetchRecentWork,
   } = useQuery({
-    queryKey: ['console', 'recent-work'],
-    queryFn: getRecentWorkItems,
+    queryKey: DASHBOARD_KEYS.recentWork('overview'),
+    queryFn: () => getRecentWorkItems(RECENT_WORK_LIMIT),
+    enabled: canUseOrganizationScope,
     staleTime: 60 * 1000,
     retry: false,
   });
   const { data: parserSettingsData, isSuccess: isParserSettingsSuccess } = useQuery({
     queryKey: ['content-parse', 'parser-settings'],
     queryFn: () => contentParseService.listParserSettings(),
+    enabled: canUseOrganizationScope,
     staleTime: 60 * 1000,
     retry: false,
   });
-  const stats = statsData?.data;
-  const isAdminOrOwner = ['owner', 'admin'].includes(user?.organization_role || '');
-  const workspaceLabel = currentWorkspace?.name || t('navigation.switchWorkspace');
-  const visibleRecentWorkItems = recentWorkItems.slice(0, RECENT_WORK_LIMIT);
-  const dateFormatter = useMemo(
-    () =>
-      new Intl.DateTimeFormat(locale, {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      }),
-    [locale]
-  );
 
-  const handleRefresh = () => {
-    void refetch();
-    void refetchRecentWork();
-  };
+  const canOpenModelConfig = canAccessOrganizationDashboard && canManageModelConfig;
+  const productSurfaces = capabilities?.organization.product_surfaces;
+  const resources = statsData?.data?.resources;
+  const visibleWorkspaceCount = resources?.workspaces ?? 0;
+  const hasVisibleWorkspaceAssets = visibleWorkspaceCount > 0;
 
   const modelCapabilities: ModelCapability[] = [
     {
@@ -203,73 +262,132 @@ export default function ConsolePage() {
       item.configured &&
       item.status === 'available'
   );
-  const showParserAttention = isParserSettingsSuccess && !hasAvailableThirdPartyParser;
+  const showParserAttention =
+    canUseOrganizationScope && isParserSettingsSuccess && !hasAvailableThirdPartyParser;
 
-  const resourceRows: ResourceRow[] = [
+  const productEntries: ProductEntry[] = [
     {
-      key: 'agents',
-      label: t('dashboard.stats.resources.agents'),
-      value: stats?.resources.agents,
-      href: '/console/agents',
-      action: stats?.resources.agents
-        ? t('dashboard.stats.consoleHome.actions.open')
-        : t('dashboard.stats.consoleHome.actions.create'),
+      key: 'chat',
+      title: t('navigation.chat'),
+      description: t('dashboard.stats.consoleHome.productEntries.chatDescription'),
+      href: '/console/work/chat',
+      icon: MessageSquare,
+      enabled: canUseOrganizationScope && productSurfaces?.chat !== false,
     },
     {
-      key: 'datasets',
-      label: t('dashboard.stats.resources.datasets'),
-      value: stats?.resources.datasets,
-      href: '/console/dataset',
-      action: stats?.resources.datasets
-        ? t('dashboard.stats.consoleHome.actions.open')
-        : t('dashboard.stats.consoleHome.actions.add'),
+      key: 'image',
+      title: t('navigation.image'),
+      description: t('dashboard.stats.consoleHome.productEntries.imageDescription'),
+      href: '/console/work/image',
+      icon: ImageIcon,
+      enabled: canUseOrganizationScope && productSurfaces?.image !== false,
     },
     {
-      key: 'databases',
-      label: t('dashboard.stats.resources.datasources'),
-      value: stats?.resources.data_sources,
-      href: '/console/db',
-      action: stats?.resources.data_sources
-        ? t('dashboard.stats.consoleHome.actions.open')
-        : t('dashboard.stats.consoleHome.actions.create'),
+      key: 'app-center',
+      title: t('dashboard.stats.consoleHome.productEntries.appCenterTitle'),
+      description: t('dashboard.stats.consoleHome.productEntries.appCenterDescription'),
+      href: '/console/work/app',
+      icon: AppWindow,
+      enabled: canUseOrganizationScope && productSurfaces?.app !== false && canUseRunnableApps,
     },
   ];
 
-  const nextAction = !isReady
-    ? {
-        eyebrow: t('dashboard.stats.consoleHome.requiredSetup'),
-        title: t('dashboard.stats.consoleHome.nextActions.configureRoutingTitle'),
-        description: t('dashboard.stats.consoleHome.nextActions.configureRoutingDescription'),
-        href: isAdminOrOwner ? '/dashboard/provider' : '/console/settings',
-        label: isAdminOrOwner
-          ? t('dashboard.stats.consoleHome.actions.configureModels')
-          : t('dashboard.stats.consoleHome.actions.contactAdmin'),
-      }
-    : (stats?.resources.datasets ?? 0) === 0
-      ? {
-          eyebrow: t('dashboard.stats.consoleHome.nextAction'),
-          title: t('dashboard.stats.consoleHome.nextActions.createKnowledgeTitle'),
-          description: t('dashboard.stats.consoleHome.nextActions.createKnowledgeDescription'),
-          href: '/console/dataset',
-          label: t('dashboard.stats.consoleHome.actions.createKnowledge'),
-        }
-      : (stats?.resources.agents ?? 0) === 0
-        ? {
-            eyebrow: t('dashboard.stats.consoleHome.nextAction'),
-            title: t('dashboard.stats.consoleHome.nextActions.createAgentTitle'),
-            description: t('dashboard.stats.consoleHome.nextActions.createAgentDescription'),
-            href: '/console/agents',
-            label: t('dashboard.stats.consoleHome.actions.createAgent'),
-          }
-        : {
-            eyebrow: t('dashboard.stats.consoleHome.continue'),
-            title: t('dashboard.stats.consoleHome.nextActions.startChatTitle'),
-            description: t('dashboard.stats.consoleHome.nextActions.startChatDescription'),
-            href: '/console/work/chat',
-            label: t('dashboard.stats.consoleHome.actions.openChat'),
-          };
+  const visibleRunnableApps = useMemo(() => runnableApps.slice(0, 4), [runnableApps]);
+  const visibleRecentWorkItems = useMemo(
+    () => recentWorkItems.slice(0, RECENT_WORK_LIMIT),
+    [recentWorkItems]
+  );
+  const dateFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(locale, {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+    [locale]
+  );
 
-  const secondaryActions = resourceRows.filter(row => row.href !== nextAction.href).slice(0, 2);
+  const workspaceAssetEntries: WorkspaceAssetEntry[] = [
+    {
+      key: 'workspaces',
+      label: t('dashboard.stats.consoleHome.workspaceOverview.stats.workspaces'),
+      value: resources?.workspaces,
+      icon: Users,
+    },
+    {
+      key: 'agents',
+      label: t('dashboard.stats.consoleHome.workspaceOverview.stats.agents'),
+      value: resources?.agents,
+      icon: Bot,
+    },
+    {
+      key: 'datasets',
+      label: t('dashboard.stats.consoleHome.workspaceOverview.stats.datasets'),
+      value: resources?.datasets,
+      icon: BookOpen,
+    },
+    {
+      key: 'dataSources',
+      label: t('dashboard.stats.consoleHome.workspaceOverview.stats.dataSources'),
+      value: resources?.data_sources,
+      icon: Database,
+    },
+    {
+      key: 'files',
+      label: t('dashboard.stats.consoleHome.workspaceOverview.stats.files'),
+      value: resources?.files,
+      icon: FileText,
+    },
+  ];
+
+  const handleRefresh = () => {
+    void refetchModelStats();
+    if (canUseRunnableApps) {
+      void refetchRunnableApps();
+    }
+    if (canUseOrganizationScope) {
+      void refetchRecentWork();
+    }
+  };
+
+  const handleOpenRecentWork = async (item: RecentWorkItem) => {
+    if (openingRecentWorkId) {
+      return;
+    }
+
+    setOpeningRecentWorkId(item.id);
+    try {
+      if (item.workspaceId && item.workspaceId !== currentWorkspace?.id) {
+        const targetWorkspace: Workspace = workspaces.find(workspace => workspace.id === item.workspaceId) ?? {
+          id: item.workspaceId,
+          name:
+            item.workspaceName ||
+            t('dashboard.stats.consoleHome.workspaceOverview.unknownWorkspace'),
+        };
+
+        await updateCurrentWorkspace.mutateAsync(targetWorkspace);
+      }
+
+      router.push(item.href);
+    } catch (error) {
+      toast.error(
+        getErrorMessage(error) || t('dashboard.stats.consoleHome.workspaceOverview.openRecentFailed')
+      );
+    } finally {
+      setOpeningRecentWorkId(null);
+    }
+  };
+
+  const isRefreshDisabled =
+    isModelStatsLoading ||
+    isModelStatsRefetching ||
+    isRunnableAppsLoading ||
+    isRunnableAppsFetching ||
+    isRecentWorkFetching;
+
+  const isRefreshSpinning =
+    isModelStatsRefetching || isRunnableAppsFetching || isRecentWorkFetching;
 
   return (
     <div className="min-h-full bg-bg-canvas px-6 py-6 text-foreground md:px-8 lg:px-10">
@@ -277,7 +395,7 @@ export default function ConsolePage() {
         <header className="mb-6 flex flex-col gap-4 border-b border-border/70 pb-5 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
             <div className="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-              {APP_NAME} / {workspaceLabel}
+              {APP_NAME} / {t('dashboard.stats.consoleHome.title')}
             </div>
             <h1 className="text-3xl font-semibold tracking-tight text-foreground">
               {t('dashboard.stats.consoleHome.title')}
@@ -286,14 +404,18 @@ export default function ConsolePage() {
               {t('dashboard.stats.consoleHome.intro')}
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-medium">
-              <Badge variant={isLoading ? 'subtle' : isReady ? 'success' : 'warning'}>
+              <Badge variant={isModelStatsLoading ? 'subtle' : isReady ? 'success' : 'warning'}>
                 <span
                   className={`size-1.5 rounded-full ${
-                    isLoading ? 'bg-muted-foreground' : isReady ? 'bg-success' : 'bg-warning'
+                    isModelStatsLoading
+                      ? 'bg-muted-foreground'
+                      : isReady
+                        ? 'bg-success'
+                        : 'bg-warning'
                   }`}
                   aria-hidden="true"
                 />
-                {isLoading
+                {isModelStatsLoading
                   ? t('dashboard.stats.consoleHome.checking')
                   : isReady
                     ? t('dashboard.stats.consoleHome.ready')
@@ -302,19 +424,14 @@ export default function ConsolePage() {
                       })}
               </Badge>
               <div className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-muted/30 px-3 py-1 text-muted-foreground">
-                <span className="size-2 rounded-full bg-success" aria-hidden="true" />
-                <span>{t('dashboard.stats.consoleHome.connected')}</span>
-              </div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-muted/30 px-3 py-1 text-muted-foreground">
-                <span>
-                  {t('navigation.current')} {t('navigation.workspace')}:
-                </span>
-                <span className="text-foreground">{workspaceLabel}</span>
-              </div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-muted/30 px-3 py-1 text-muted-foreground">
-                <span>{t('dashboard.stats.consoleHome.recentWork')}</span>
-                <span className="text-foreground">
-                  {isRecentWorkLoading ? '-' : visibleRecentWorkItems.length}
+                <Users className="size-3.5" />
+                <span>{t('dashboard.stats.consoleHome.permissionScope')}</span>
+                <span className="max-w-[180px] truncate text-foreground">
+                  {isModelStatsLoading
+                    ? t('dashboard.stats.consoleHome.checking')
+                    : t('dashboard.stats.consoleHome.visibleWorkspaceCount', {
+                        count: visibleWorkspaceCount,
+                      })}
                 </span>
               </div>
             </div>
@@ -324,96 +441,294 @@ export default function ConsolePage() {
             variant="outline"
             size="default"
             onClick={handleRefresh}
-            disabled={isLoading || isRefetching || isRecentWorkFetching}
+            disabled={isRefreshDisabled}
             className="self-start"
           >
-            <RefreshCw
-              className={`size-4 ${isRefetching || isRecentWorkFetching ? 'animate-spin' : ''}`}
-            />
+            <RefreshCw className={`size-4 ${isRefreshSpinning ? 'animate-spin' : ''}`} />
             {t('dashboard.stats.consoleHome.refresh')}
           </Button>
         </header>
 
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
           <main className="min-w-0 space-y-5">
-            <section className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(280px,0.75fr)]">
+            <section className="grid gap-4 md:grid-cols-3">
+              {productEntries.map(entry => {
+                const Icon = entry.icon;
+                const content = (
+                  <Card className="group h-full border-border/80 shadow-sm transition-colors hover:border-primary/40">
+                    <CardHeader className="p-4">
+                      <div className="mb-4 flex size-10 items-center justify-center rounded-lg border border-border/70 bg-muted/30">
+                        <Icon className="size-5 text-muted-foreground" />
+                      </div>
+                      <CardTitle className="text-base">{entry.title}</CardTitle>
+                      <CardDescription className="line-clamp-2 min-h-10 text-sm leading-5">
+                        {entry.description}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex items-center justify-between px-4 pb-4 pt-0">
+                      <Badge variant={entry.enabled ? 'subtle' : 'outline'} className="text-xs">
+                        {entry.enabled
+                          ? t('dashboard.stats.consoleHome.available')
+                          : t('dashboard.stats.consoleHome.unavailable')}
+                      </Badge>
+                      <span className="inline-flex items-center gap-1 text-xs font-medium text-primary">
+                        {t('dashboard.stats.consoleHome.actions.open')}
+                        <ArrowRight className="size-3.5" />
+                      </span>
+                    </CardContent>
+                  </Card>
+                );
+
+                return entry.enabled ? (
+                  <Link key={entry.key} href={entry.href}>
+                    {content}
+                  </Link>
+                ) : (
+                  <div key={entry.key} className="opacity-75">
+                    {content}
+                  </div>
+                );
+              })}
+            </section>
+
+            {isModelStatsLoading || hasVisibleWorkspaceAssets ? (
               <Card className="border-border/80 shadow-sm">
                 <CardHeader className="pb-4">
-                  <SectionLabel>{nextAction.eyebrow}</SectionLabel>
-                  <CardTitle className="text-2xl leading-8">{nextAction.title}</CardTitle>
-                  <CardDescription className="max-w-2xl leading-6">
-                    {nextAction.description}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="rounded-lg border border-border/70 bg-muted/20 p-4">
-                      <div className="text-2xl font-semibold tracking-tight">
-                        {isLoading ? '-' : configuredCount}
-                        <span className="text-base font-medium text-muted-foreground">/5</span>
-                      </div>
-                      <div className="mt-1 text-sm text-muted-foreground">
-                        {t('dashboard.stats.consoleHome.capabilitiesConfigured')}
-                      </div>
-                    </div>
-                    <div className="rounded-lg border border-border/70 bg-muted/20 p-4">
-                      <div className="text-2xl font-semibold tracking-tight">
-                        {isRecentWorkLoading ? '-' : visibleRecentWorkItems.length}
-                      </div>
-                      <div className="mt-1 text-sm text-muted-foreground">
-                        {t('dashboard.stats.consoleHome.recentWork')}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-3">
-                    <Button asChild size="default">
-                      <Link href={nextAction.href}>
-                        {nextAction.label}
-                        <ArrowRight className="size-4" />
-                      </Link>
-                    </Button>
-                    {secondaryActions.map(action => (
-                      <Button key={action.key} asChild variant="outline" size="default">
-                        <Link href={action.href}>
-                          {action.action} {action.label}
-                        </Link>
-                      </Button>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="border-border/80 shadow-sm">
-                <CardHeader>
-                  <SectionLabel>{t('dashboard.stats.consoleHome.resources')}</SectionLabel>
-                  <CardTitle className="text-lg">
-                    {t('dashboard.stats.consoleHome.resources')}
+                  <SectionLabel>{t('dashboard.stats.consoleHome.workspaceOverview.eyebrow')}</SectionLabel>
+                  <CardTitle className="text-xl">
+                    {t('dashboard.stats.consoleHome.workspaceOverview.title')}
                   </CardTitle>
-                  <CardDescription>
-                    {t('dashboard.stats.consoleHome.noCriticalIssues')}
+                  <CardDescription className="mt-2 max-w-2xl leading-6">
+                    {t('dashboard.stats.consoleHome.workspaceOverview.description')}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="divide-y divide-border/70 rounded-lg border border-border/70">
-                    {resourceRows.map(row => (
-                      <Link
-                        key={row.key}
-                        href={row.href}
-                        className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/40"
-                      >
-                        <span className="truncate text-sm font-medium text-foreground">
-                          {row.label}
-                        </span>
-                        <span className="text-lg font-semibold leading-none text-foreground">
-                          {isLoading || row.value === undefined ? '-' : row.value}
-                        </span>
-                        <span className="text-xs font-medium text-primary">{row.action}</span>
-                      </Link>
-                    ))}
-                  </div>
+                  {isModelStatsLoading ? (
+                    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                      {Array.from({ length: 5 }).map((_, index) => (
+                        <div
+                          key={`workspace-asset-skeleton-${index}`}
+                          className="rounded-lg border border-border/70 p-4"
+                        >
+                          <Skeleton className="mb-4 size-9 rounded-lg" />
+                          <Skeleton className="h-6 w-12" />
+                          <Skeleton className="mt-2 h-4 w-20" />
+                        </div>
+                      ))}
+                    </section>
+                  ) : (
+                    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                      {workspaceAssetEntries.map(entry => {
+                        const Icon = entry.icon;
+
+                        return (
+                          <div
+                            key={entry.key}
+                            className="rounded-lg border border-border/70 bg-background p-4"
+                          >
+                            <div className="mb-4 flex size-9 items-center justify-center rounded-lg border border-border/70 bg-muted/30">
+                              <Icon className="size-4 text-muted-foreground" />
+                            </div>
+                            <div className="text-2xl font-semibold tracking-tight">
+                              {entry.value ?? 0}
+                            </div>
+                            <div className="mt-1 text-sm text-muted-foreground">
+                              {entry.label}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </section>
+                  )}
                 </CardContent>
               </Card>
-            </section>
+            ) : null}
+
+            {isModelStatsLoading || hasVisibleWorkspaceAssets ? (
+              <Card className="border-border/80 shadow-sm">
+                <CardHeader className="pb-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <SectionLabel>
+                        {t('dashboard.stats.consoleHome.workspaceOverview.recentEyebrow')}
+                      </SectionLabel>
+                      <CardTitle className="text-xl">
+                        {t('dashboard.stats.consoleHome.workspaceOverview.recentTitle')}
+                      </CardTitle>
+                      <CardDescription className="mt-2 max-w-2xl leading-6">
+                        {t('dashboard.stats.consoleHome.workspaceOverview.recentDescription')}
+                      </CardDescription>
+                    </div>
+                    <Badge variant="subtle" className="w-fit">
+                      {t('dashboard.stats.consoleHome.workspaceOverview.recentCount', {
+                        count: visibleRecentWorkItems.length,
+                      })}
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {isRecentWorkLoading ? (
+                    <div className="space-y-3">
+                      {Array.from({ length: 4 }).map((_, index) => (
+                        <Skeleton
+                          key={`console-recent-work-skeleton-${index}`}
+                          className="h-11 w-full"
+                        />
+                      ))}
+                    </div>
+                  ) : visibleRecentWorkItems.length > 0 ? (
+                    <div className="divide-y divide-border/70 rounded-lg border border-border/70">
+                      {visibleRecentWorkItems.map(item => {
+                        const isOpening = openingRecentWorkId === item.id;
+
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => void handleOpenRecentWork(item)}
+                            disabled={Boolean(openingRecentWorkId)}
+                            className="grid w-full gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40 disabled:cursor-wait disabled:opacity-70 md:grid-cols-[96px_minmax(0,1fr)_150px_auto_auto]"
+                          >
+                            <span className="text-xs font-medium text-muted-foreground">
+                              {t(`dashboard.stats.consoleHome.recentTypes.${item.type}`)}
+                            </span>
+                            <span className="min-w-0 truncate text-sm font-medium text-foreground">
+                              {item.title ||
+                                t(`dashboard.stats.consoleHome.recentFallback.${item.type}`)}
+                            </span>
+                            <span className="min-w-0 truncate text-xs text-muted-foreground">
+                              {item.workspaceName ||
+                                t('dashboard.stats.consoleHome.workspaceOverview.unknownWorkspace')}
+                            </span>
+                            <span className="text-sm text-muted-foreground">
+                              {t('dashboard.stats.consoleHome.updatedAt', {
+                                time: dateFormatter.format(item.timestamp),
+                              })}
+                            </span>
+                            <span className="inline-flex items-center justify-end gap-1 text-xs font-medium text-primary">
+                              {isOpening ? (
+                                <Loader2 className="size-3.5 animate-spin" />
+                              ) : (
+                                <ArrowRight className="size-3.5" />
+                              )}
+                              {t('dashboard.stats.consoleHome.actions.open')}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-border/70 px-5 py-6">
+                      <h3 className="text-base font-semibold text-foreground">
+                        {t('dashboard.stats.consoleHome.workspaceOverview.emptyRecentTitle')}
+                      </h3>
+                      <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+                        {t(
+                          'dashboard.stats.consoleHome.workspaceOverview.emptyRecentDescription'
+                        )}
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ) : null}
+
+            <Card className="border-border/80 shadow-sm">
+              <CardHeader className="pb-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <SectionLabel>{t('dashboard.stats.consoleHome.runnableApps')}</SectionLabel>
+                    <CardTitle className="text-xl">
+                      {t('dashboard.stats.consoleHome.runnableAppsTitle')}
+                    </CardTitle>
+                    <CardDescription className="mt-2 max-w-2xl leading-6">
+                      {t('dashboard.stats.consoleHome.runnableAppsDescription')}
+                    </CardDescription>
+                  </div>
+                  {canUseRunnableApps ? (
+                    <Button asChild variant="outline" size="sm">
+                      <Link href="/console/work/app">
+                        {t('dashboard.stats.consoleHome.actions.openAppCenter')}
+                        <ArrowRight className="size-3.5" />
+                      </Link>
+                    </Button>
+                  ) : null}
+                </div>
+              </CardHeader>
+              <CardContent>
+                {isRunnableAppsLoading ? (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {Array.from({ length: 4 }).map((_, index) => (
+                      <div
+                        key={`runnable-app-skeleton-${index}`}
+                        className="rounded-lg border border-border/70 p-3"
+                      >
+                        <div className="flex items-center gap-3">
+                          <Skeleton className="size-9 rounded-md" />
+                          <div className="min-w-0 flex-1 space-y-2">
+                            <Skeleton className="h-4 w-40" />
+                            <Skeleton className="h-3 w-28" />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : !canUseRunnableApps ? (
+                  <div className="rounded-lg border border-dashed border-border/70 px-5 py-6">
+                    <h3 className="text-base font-semibold text-foreground">
+                      {t('dashboard.stats.consoleHome.runnableAppsUnavailableTitle')}
+                    </h3>
+                    <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+                      {t('dashboard.stats.consoleHome.runnableAppsUnavailableDescription')}
+                    </p>
+                  </div>
+                ) : visibleRunnableApps.length > 0 ? (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {visibleRunnableApps.map(item => {
+                      const preview = toRunnableAppPreview(item);
+
+                      return (
+                        <Link
+                          key={item.web_app_id}
+                          href={`/console/work/app/${item.web_app_id}`}
+                          className="rounded-lg border border-border/70 p-3 transition-colors hover:bg-muted/40"
+                        >
+                          <div className="flex items-start gap-3">
+                            <IconPreview
+                              iconType={preview.iconType}
+                              src={preview.src}
+                              icon={preview.textIcon}
+                              iconBackground={preview.iconBackground}
+                              editable={false}
+                              size="sm"
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-sm font-medium text-foreground">
+                                {item.meta_data.title}
+                              </div>
+                              <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                                {item.meta_data.desc ||
+                                  t('dashboard.stats.consoleHome.runnableAppFallbackDescription')}
+                              </div>
+                            </div>
+                            <ArrowRight className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
+                          </div>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-border/70 px-5 py-6">
+                    <h3 className="text-base font-semibold text-foreground">
+                      {t('dashboard.stats.consoleHome.noRunnableAppsTitle')}
+                    </h3>
+                    <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+                      {t('dashboard.stats.consoleHome.noRunnableAppsDescription')}
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
             <Card className="border-border/80 shadow-sm">
               <CardHeader className="pb-4">
@@ -421,7 +736,7 @@ export default function ConsolePage() {
                   <div>
                     <SectionLabel>{t('dashboard.stats.consoleHome.systemReadiness')}</SectionLabel>
                     <CardTitle className="text-xl">
-                      {isLoading ? (
+                      {isModelStatsLoading ? (
                         <Skeleton className="h-6 w-48" />
                       ) : isReady ? (
                         t('dashboard.stats.consoleHome.readyTitle')
@@ -435,66 +750,19 @@ export default function ConsolePage() {
                         : t('dashboard.stats.consoleHome.incompleteDescription')}
                     </CardDescription>
                   </div>
-                  <Badge variant={isLoading ? 'subtle' : isReady ? 'success' : 'warning'}>
-                    <span
-                      className={`size-1.5 rounded-full ${
-                        isLoading ? 'bg-muted-foreground' : isReady ? 'bg-success' : 'bg-warning'
-                      }`}
-                      aria-hidden="true"
-                    />
-                    {isLoading
-                      ? t('dashboard.stats.consoleHome.checking')
-                      : isReady
-                        ? t('dashboard.stats.consoleHome.ready')
-                        : t('dashboard.stats.consoleHome.missingCount', {
-                            count: requiredMissing.length,
-                          })}
-                  </Badge>
+                  {canOpenModelConfig ? (
+                    <Button asChild size="sm">
+                      <Link href="/dashboard/provider">
+                        <Settings className="size-3.5" />
+                        {t('dashboard.stats.consoleHome.actions.configureModels')}
+                      </Link>
+                    </Button>
+                  ) : (
+                    <p className="max-w-44 text-right text-xs leading-5 text-muted-foreground">
+                      {t('dashboard.stats.consoleHome.modelConfigManagedByAdmin')}
+                    </p>
+                  )}
                 </div>
-              </CardHeader>
-              <CardContent>
-                <div className="grid gap-3 md:grid-cols-3">
-                  {systemRows.map(row => (
-                    <div
-                      key={row.label}
-                      className="rounded-lg border border-border/70 bg-muted/20 p-4"
-                    >
-                      <div className="text-sm font-medium text-foreground">
-                        {row.label === 'API'
-                          ? t('dashboard.stats.consoleHome.api')
-                          : t('dashboard.stats.consoleHome.database')}
-                      </div>
-                      <div className="mt-1 text-sm text-muted-foreground">
-                        {row.value === 'Online'
-                          ? t('dashboard.stats.consoleHome.online')
-                          : t('dashboard.stats.consoleHome.connected')}
-                      </div>
-                    </div>
-                  ))}
-                  <div className="rounded-lg border border-border/70 bg-muted/20 p-4">
-                    <div className="text-sm font-medium text-foreground">
-                      {t('dashboard.stats.consoleHome.requiredModels')}
-                    </div>
-                    <div className="mt-1 text-sm text-muted-foreground">
-                      {isLoading
-                        ? '-'
-                        : isReady
-                          ? t('dashboard.stats.consoleHome.ready')
-                          : t('dashboard.stats.consoleHome.missingCount', {
-                              count: requiredMissing.length,
-                            })}
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-border/80 shadow-sm">
-              <CardHeader>
-                <SectionLabel>{t('dashboard.stats.consoleHome.setupChecklist')}</SectionLabel>
-                <CardTitle className="text-lg">
-                  {t('dashboard.stats.consoleHome.requiredModels')}
-                </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="grid gap-4 md:grid-cols-2">
@@ -511,17 +779,12 @@ export default function ConsolePage() {
                           .map(capability => {
                             const modelCount = getModelCount(statsData, capability.type);
                             const configured = modelCount > 0;
-
-                            return (
-                              <Link
-                                key={capability.type}
-                                href={isAdminOrOwner ? '/dashboard/provider' : '/console/settings'}
-                                className="grid gap-3 px-4 py-3 transition-colors hover:bg-muted/40 sm:grid-cols-[auto_1fr_auto]"
-                              >
+                            const row = (
+                              <div className="grid gap-3 px-4 py-3 sm:grid-cols-[auto_1fr_auto]">
                                 <StatusDot
                                   configured={configured}
                                   priority={capability.priority}
-                                  isLoading={isLoading}
+                                  isLoading={isModelStatsLoading}
                                 />
                                 <div className="min-w-0">
                                   <div className="truncate text-sm font-medium text-foreground">
@@ -532,13 +795,25 @@ export default function ConsolePage() {
                                   </div>
                                 </div>
                                 <span className="self-start text-xs font-medium text-muted-foreground">
-                                  {isLoading
+                                  {isModelStatsLoading
                                     ? t('dashboard.stats.consoleHome.checking')
                                     : configured
                                       ? t('dashboard.stats.consoleHome.ready')
                                       : t('dashboard.stats.consoleHome.missing')}
                                 </span>
+                              </div>
+                            );
+
+                            return canOpenModelConfig ? (
+                              <Link
+                                key={capability.type}
+                                href="/dashboard/provider"
+                                className="block transition-colors hover:bg-muted/40"
+                              >
+                                {row}
                               </Link>
+                            ) : (
+                              <div key={capability.type}>{row}</div>
                             );
                           })}
                       </div>
@@ -547,111 +822,63 @@ export default function ConsolePage() {
                 </div>
               </CardContent>
             </Card>
-
-            {SHOW_RECENT_WORK_CARD ? (
-              <Card className="border-border/80 shadow-sm">
-                <CardHeader>
-                  <SectionLabel>{t('dashboard.stats.consoleHome.continue')}</SectionLabel>
-                  <CardTitle className="text-lg">
-                    {t('dashboard.stats.consoleHome.recentWork')}
-                  </CardTitle>
-                  <CardDescription>
-                    {visibleRecentWorkItems.length > 0
-                      ? t('dashboard.stats.consoleHome.nextActions.startChatDescription')
-                      : t('dashboard.stats.consoleHome.noRecentDescription')}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {isRecentWorkLoading ? (
-                    <div className="space-y-3">
-                      <Skeleton className="h-10 w-full" />
-                      <Skeleton className="h-10 w-full" />
-                      <Skeleton className="h-10 w-full" />
-                    </div>
-                  ) : visibleRecentWorkItems.length > 0 ? (
-                    <div className="divide-y divide-border/70 rounded-lg border border-border/70">
-                      {visibleRecentWorkItems.map(item => (
-                        <Link
-                          key={item.id}
-                          href={item.href}
-                          className="grid gap-3 px-4 py-3 transition-colors hover:bg-muted/40 md:grid-cols-[96px_minmax(0,1fr)_auto_auto]"
-                        >
-                          <span className="text-xs font-medium text-muted-foreground">
-                            {t(`dashboard.stats.consoleHome.recentTypes.${item.type}`)}
-                          </span>
-                          <span className="min-w-0 truncate text-sm font-medium text-foreground">
-                            {item.title ||
-                              t(`dashboard.stats.consoleHome.recentFallback.${item.type}`)}
-                          </span>
-                          <span className="text-sm text-muted-foreground">
-                            {t('dashboard.stats.consoleHome.updatedAt', {
-                              time: dateFormatter.format(item.timestamp),
-                            })}
-                          </span>
-                          <span className="text-xs font-medium text-primary">
-                            {t('dashboard.stats.consoleHome.actions.open')}
-                          </span>
-                        </Link>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="rounded-lg border border-dashed border-border/70 px-5 py-6">
-                      <h3 className="text-base font-semibold text-foreground">
-                        {t('dashboard.stats.consoleHome.noRecentTitle')}
-                      </h3>
-                      <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                        {t('dashboard.stats.consoleHome.noRecentDescription')}
-                      </p>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            ) : null}
           </main>
 
           <aside className="space-y-5">
             <Card className="border-border/80 shadow-sm">
               <CardHeader>
                 <CardTitle className="text-lg">
-                  {t('dashboard.stats.consoleHome.needsAttention')}
+                  {t('dashboard.stats.consoleHome.modelAvailability')}
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {isReady && !showParserAttention ? (
-                  <p className="text-sm leading-6 text-muted-foreground">
-                    {t('dashboard.stats.consoleHome.noCriticalIssues')}
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {requiredMissing.map(capability => (
-                      <Link
-                        key={capability.type}
-                        href={isAdminOrOwner ? '/dashboard/provider' : '/console/settings'}
-                        className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-foreground hover:bg-destructive/10"
-                      >
-                        <AlertCircle className="mt-0.5 size-4 shrink-0 text-destructive" />
-                        <span>
-                          {t('dashboard.stats.consoleHome.missingItem', {
-                            label: capability.label,
-                          })}
-                        </span>
-                      </Link>
-                    ))}
-                    {showParserAttention ? (
-                      <div className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-3">
-                        <div className="flex items-start gap-2 text-sm text-foreground">
-                          <AlertCircle className="mt-0.5 size-4 shrink-0 text-warning" />
-                          <span>{t('dashboard.stats.consoleHome.parserServiceMissing')}</span>
-                        </div>
-                        <Button asChild size="sm" variant="outline" className="mt-3 w-full">
-                          <Link href="/dashboard/settings/parsers">
-                            {t('dashboard.stats.consoleHome.actions.configureParserService')}
-                          </Link>
-                        </Button>
-                      </div>
-                    ) : null}
+                <div className="space-y-3">
+                  <div className="rounded-lg border border-border/70 bg-muted/20 p-4">
+                    <div className="text-2xl font-semibold tracking-tight">
+                      {isModelStatsLoading ? '-' : configuredCount}
+                      <span className="text-base font-medium text-muted-foreground">/5</span>
+                    </div>
+                    <div className="mt-1 text-sm text-muted-foreground">
+                      {t('dashboard.stats.consoleHome.capabilitiesConfigured')}
+                    </div>
                   </div>
-                )}
+                  {isReady && !showParserAttention ? (
+                    <p className="text-sm leading-6 text-muted-foreground">
+                      {t('dashboard.stats.consoleHome.noCriticalIssues')}
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {requiredMissing.map(capability => (
+                        <div
+                          key={capability.type}
+                          className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-foreground"
+                        >
+                          <AlertCircle className="mt-0.5 size-4 shrink-0 text-destructive" />
+                          <span>
+                            {t('dashboard.stats.consoleHome.missingItem', {
+                              label: capability.label,
+                            })}
+                          </span>
+                        </div>
+                      ))}
+                      {showParserAttention ? (
+                        <div className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-3">
+                          <div className="flex items-start gap-2 text-sm text-foreground">
+                            <AlertCircle className="mt-0.5 size-4 shrink-0 text-warning" />
+                            <span>{t('dashboard.stats.consoleHome.parserServiceMissing')}</span>
+                          </div>
+                          {canAccessOrganizationDashboard ? (
+                            <Button asChild size="sm" variant="outline" className="mt-3 w-full">
+                              <Link href="/dashboard/settings/parsers">
+                                {t('dashboard.stats.consoleHome.actions.configureParserService')}
+                              </Link>
+                            </Button>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
           </aside>

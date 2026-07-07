@@ -88,7 +88,7 @@ func (p skillInputFileProvider) GetSkillScriptInputFile(ctx context.Context, fil
 		if accountID == "" {
 			return skills.SkillScriptInputFile{}, fmt.Errorf("user id is required to access workspace file")
 		}
-		allowed, err := p.organizationService.CheckWorkspacePermission(ctx, organizationID, nonZeroUUIDString(*file.WorkspaceID), accountID, workspacemodel.WorkspacePermissionFileDownload)
+		allowed, err := p.organizationService.CheckWorkspacePermission(ctx, organizationID, nonZeroUUIDString(*file.WorkspaceID), accountID, workspacemodel.WorkspacePermissionFilePreview)
 		if err != nil {
 			return skills.SkillScriptInputFile{}, fmt.Errorf("failed to check workspace file permission: %w", err)
 		}

@@ -28,6 +28,7 @@ import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { WorkflowTestCase } from '@/services/types/workflow-test';
 import { formatQuestionTypeLabel } from './question-type';
+import { getAgentDetailBatchTestHref } from '@/utils/agent-detail-routes';
 
 interface CreateBatchPageProps {
   agentId: string;
@@ -61,6 +62,9 @@ export function CreateBatchPage({ agentId, agentName, agentDescription }: Create
   const typeT = useT('agents.workflowTest.questionTypes');
   const batchStatusT = useT('agents.workflowTest.batchStatus');
   const router = useRouter();
+  const batchesHref = getAgentDetailBatchTestHref(agentId, 'workflow', 'batches');
+  const getBatchResultHref = (batchId: string) =>
+    `${getAgentDetailBatchTestHref(agentId, 'workflow')}/${batchId}`;
   const { data: casesData, isLoading: casesLoading } = useWorkflowTestCases(agentId);
   const { data: scenariosData } = useWorkflowTestScenarios(agentId);
   const { data: batchesData } = useWorkflowTestBatches(agentId);
@@ -148,10 +152,10 @@ export function CreateBatchPage({ agentId, agentName, agentDescription }: Create
           const batchId = response.data.id;
           executeBatch.mutate(batchId, {
             onSuccess: () => {
-              router.push(`/console/agents/${agentId}/batch-test/${batchId}`);
+              router.push(getBatchResultHref(batchId));
             },
             onError: () => {
-              router.push(`/console/agents/${agentId}/batch-test/${batchId}`);
+              router.push(getBatchResultHref(batchId));
             },
           });
         },
@@ -168,7 +172,7 @@ export function CreateBatchPage({ agentId, agentName, agentDescription }: Create
 
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <Button variant="ghost" className="-ml-3 mb-4" asChild>
-            <Link href={`/console/agents/${agentId}/batch-test/batches`}>
+            <Link href={batchesHref}>
               <ArrowLeft className="mr-2 size-4" />
               {t('back')}
             </Link>
@@ -387,7 +391,7 @@ export function CreateBatchPage({ agentId, agentName, agentDescription }: Create
 
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" asChild>
-                <Link href={`/console/agents/${agentId}/batch-test/batches`}>{commonT('cancel')}</Link>
+                <Link href={batchesHref}>{commonT('cancel')}</Link>
               </Button>
               <Button
                 className="bg-slate-950 text-white hover:bg-slate-800"

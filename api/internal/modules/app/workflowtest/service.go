@@ -766,6 +766,10 @@ func (s *Service) RecoverStaleRunningGenerationTasks(ctx context.Context, staleB
 	return s.repo.RecoverStaleRunningGenerationTasks(ctx, staleBefore, generationTaskFailureReason(fmt.Errorf("worker stopped before marking task terminal")), time.Now())
 }
 
+func (s *Service) RecoverStaleRunningGenerationTasksForAgent(ctx context.Context, agentID string, staleBefore time.Time) (int64, error) {
+	return s.repo.RecoverStaleRunningGenerationTasksForAgent(ctx, agentID, staleBefore, generationTaskFailureReason(fmt.Errorf("worker stopped before marking task terminal")), time.Now())
+}
+
 type generateCaseProgressHooks struct {
 	BeforeScenario func(context.Context) error
 	AfterCreate    func(context.Context, Case) error
@@ -1252,6 +1256,10 @@ func (s *Service) RunScenarioRecognitionTask(ctx context.Context, taskID string,
 
 func (s *Service) RecoverStaleRunningScenarioRecognitionTasks(ctx context.Context, staleBefore time.Time) (int64, error) {
 	return s.repo.RecoverStaleRunningScenarioRecognitionTasks(ctx, staleBefore, scenarioRecognitionTaskFailureReason(fmt.Errorf("worker stopped before marking task terminal")), time.Now())
+}
+
+func (s *Service) RecoverStaleRunningScenarioRecognitionTasksForAgent(ctx context.Context, agentID string, staleBefore time.Time) (int64, error) {
+	return s.repo.RecoverStaleRunningScenarioRecognitionTasksForAgent(ctx, agentID, staleBefore, scenarioRecognitionTaskFailureReason(fmt.Errorf("worker stopped before marking task terminal")), time.Now())
 }
 
 func (s *Service) finishScenarioRecognitionTask(ctx context.Context, taskID, status, reason string, recognizedCount, assignedCaseCount int) error {

@@ -23,12 +23,7 @@ import {
 } from '@/components/ui/select';
 import { User } from 'lucide-react';
 import { cn } from '@/lib/utils';
-// import { User, Info, ChevronsUpDown } from 'lucide-react';
-
-// import { DepartmentTreeItemDropdown } from '@/components/dashboard/organization/department-tree-item-dropdown';
-// import { cn } from '@/lib/utils';
-// import { useDepartments } from '@/hooks/enterprise/use-departments';
-import { useDepartmentMembers } from '@/hooks/organization/use-department-members';
+import { useCurrentOrganizationMembers } from '@/hooks/organization/use-current-organization-members';
 // import { useApiKeys } from '@/hooks/apikey/use-apikey';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { useWorkspaceDetail } from '@/hooks/workspace/use-workspace-detail';
@@ -56,26 +51,21 @@ export function WorkspaceDialog({
   const { currentOrganization } = useOrganizations();
 
   const isEditMode = !!initialData;
-  const workspaceId = open && isEditMode ? initialData?.id ?? '' : '';
+  const workspaceId = open && isEditMode ? (initialData?.id ?? '') : '';
   const { workspaceDetail } = useWorkspaceDetail(workspaceId);
   const resolvedInitialData = workspaceDetail ?? initialData;
 
   // Form state
   const [workspaceName, setWorkspaceName] = useState(resolvedInitialData?.name || '');
   const [nameError, setNameError] = useState('');
-  const [departmentId, setDepartmentId] = useState<string>(resolvedInitialData?.department_id || '');
   const [leaderId, setLeaderId] = useState<string>(resolvedInitialData?.leader_id || '');
   const [leaderError, setLeaderError] = useState('');
   const [apiKeyId, setApiKeyId] = useState<string>(resolvedInitialData?.api_key_id || '');
-  // const [departmentSelectOpen, setDepartmentSelectOpen] = useState(false);
-  // const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-
   // Initialize form when initialData changes or dialog opens
   useEffect(() => {
     if (open) {
       if (resolvedInitialData) {
         setWorkspaceName(resolvedInitialData.name || '');
-        setDepartmentId(resolvedInitialData.department_id || '');
         setApiKeyId(resolvedInitialData.api_key_id || '');
         setLeaderId(resolvedInitialData.leader_id || '');
         // Clear errors
@@ -84,7 +74,6 @@ export function WorkspaceDialog({
       } else {
         // Reset form when opening in create mode
         setWorkspaceName('');
-        setDepartmentId('');
         setLeaderId('');
         setApiKeyId('');
         // Clear errors
@@ -94,97 +83,65 @@ export function WorkspaceDialog({
     }
   }, [open, resolvedInitialData]);
 
-  // Fetch data
-  // const { departments, isLoading: isLoadingDepartments } = useDepartments();
-  const { members: departmentMembers, isLoading: isLoadingMembers } = useDepartmentMembers({
-    deptId: departmentId || null,
-    includeSubDepts: true,
-    limit: 100,
-    page: 1,
-    enabled: open,
-  });
+  // Fetch organization members for workspace owner selection.
+  const { members: organizationMembers, isLoading: isLoadingMembers } =
+    useCurrentOrganizationMembers({
+      limit: 100,
+      page: 1,
+      enabled: open,
+    });
   // const { items: apiKeys, isLoading: isLoadingApiKeys } = useApiKeys(undefined);
 
   // Filter members to only include active ones
-  const activeDepartmentMembers = useMemo(() => {
-    if (!departmentMembers) return [];
-    return departmentMembers.filter(member => member.group_status === 'active');
-  }, [departmentMembers]);
+  const activeOrganizationMembers = useMemo(() => {
+    if (!organizationMembers) return [];
+    return organizationMembers.filter(member => member.status === 'active');
+  }, [organizationMembers]);
 
   // Search state for leader dropdown
   const [leaderSearch, setLeaderSearch] = useState('');
 
   // Filter members by search keyword
   const filteredMembers = useMemo(() => {
-    if (!leaderSearch.trim()) return activeDepartmentMembers;
+    if (!leaderSearch.trim()) return activeOrganizationMembers;
     const keyword = leaderSearch.toLowerCase();
-    return activeDepartmentMembers.filter(
+    return activeOrganizationMembers.filter(
       member =>
-        member.account_name?.toLowerCase().includes(keyword) ||
-        member.account_email?.toLowerCase().includes(keyword)
+        member.name?.toLowerCase().includes(keyword) ||
+        member.member_name?.toLowerCase().includes(keyword) ||
+        member.email?.toLowerCase().includes(keyword)
     );
-  }, [activeDepartmentMembers, leaderSearch]);
+  }, [activeOrganizationMembers, leaderSearch]);
 
   // Find leader_id from leader_name when in edit mode
   useEffect(() => {
-    if (!isEditMode || leaderId || !resolvedInitialData?.leader_name || !activeDepartmentMembers) {
+    if (
+      !isEditMode ||
+      leaderId ||
+      !resolvedInitialData?.leader_name ||
+      !activeOrganizationMembers
+    ) {
       return;
     }
 
     const leader =
-      activeDepartmentMembers.find(member => member.account_id === resolvedInitialData.leader_id) ||
-      activeDepartmentMembers.find(member => member.account_name === resolvedInitialData.leader_name);
+      activeOrganizationMembers.find(member => member.id === resolvedInitialData.leader_id) ||
+      activeOrganizationMembers.find(
+        member =>
+          member.name === resolvedInitialData.leader_name ||
+          member.member_name === resolvedInitialData.leader_name
+      );
 
     if (leader) {
-      setLeaderId(leader.account_id);
+      setLeaderId(leader.id);
     }
   }, [
     isEditMode,
     leaderId,
     resolvedInitialData?.leader_id,
     resolvedInitialData?.leader_name,
-    activeDepartmentMembers,
+    activeOrganizationMembers,
   ]);
-
-  // // Get selected department name for display
-  // const getDepartmentName = (id: string): string | null => {
-  //   const findDept = (depts: Department[], targetId: string): string | null => {
-  //     for (const dept of depts) {
-  //       if (dept.id === targetId) return dept.name;
-  //       if (dept.children) {
-  //         const found = findDept(dept.children, targetId);
-  //         if (found) return found;
-  //       }
-  //     }
-  //     return null;
-  //   };
-  //   return findDept(departments, id);
-  // };
-
-  // // Expand first level by default when select opens
-  // const handleDepartmentSelectOpen = (open: boolean) => {
-  //   setDepartmentSelectOpen(open);
-  //   if (open && expandedIds.size === 0) {
-  //     setExpandedIds(new Set(departments.map(dept => dept.id)));
-  //   }
-  // };
-
-  // const handleToggleExpand = (id: string) => {
-  //   setExpandedIds(prev => {
-  //     const next = new Set(prev);
-  //     if (next.has(id)) {
-  //       next.delete(id);
-  //     } else {
-  //       next.add(id);
-  //     }
-  //     return next;
-  //   });
-  // };
-
-  // const handleDepartmentSelect = (id: string) => {
-  //   setDepartmentId(id);
-  //   setDepartmentSelectOpen(false);
-  // };
 
   // Reset form when dialog closes
   const handleOpenChange = useCallback(
@@ -192,12 +149,9 @@ export function WorkspaceDialog({
       if (!newOpen) {
         if (!initialData) {
           setWorkspaceName('');
-          setDepartmentId('');
           setLeaderId('');
           setApiKeyId('');
         }
-        // setDepartmentSelectOpen(false);
-        // setExpandedIds(new Set());
       }
       onOpenChange(newOpen);
     },
@@ -233,36 +187,38 @@ export function WorkspaceDialog({
           // Find original leader_id from leader_name
           const originalLeaderId =
             resolvedInitialData?.leader_id ||
-            activeDepartmentMembers.find(m => m.account_name === resolvedInitialData?.leader_name)
-              ?.account_id ||
+            activeOrganizationMembers.find(
+              m =>
+                m.name === resolvedInitialData?.leader_name ||
+                m.member_name === resolvedInitialData?.leader_name
+            )?.id ||
             '';
 
           // Check if any values have changed
           const hasNameChanged = name !== (resolvedInitialData?.name || '');
-          const hasDepartmentChanged = departmentId !== (resolvedInitialData?.department_id || '');
           const hasLeaderChanged = leaderId !== originalLeaderId;
           const hasApiKeyChanged = apiKeyId !== (resolvedInitialData?.api_key_id || '');
 
-          const hasAnyChange =
-            hasNameChanged || hasDepartmentChanged || hasLeaderChanged || hasApiKeyChanged;
+          const payload: UpdateWorkspaceRequest = {};
+          if (hasNameChanged) {
+            payload.name = name;
+          }
+          if (hasLeaderChanged && leaderId) {
+            payload.leader_id = leaderId;
+          }
+          if (hasApiKeyChanged && apiKeyId) {
+            payload.api_key_id = apiKeyId;
+          }
 
-          // Skip API call if nothing changed
-          if (!hasAnyChange) {
+          // Skip API call if nothing changed or hidden optional fields only became empty locally
+          if (Object.keys(payload).length === 0) {
             onOpenChange(false);
             return;
           }
-
-          const payload: UpdateWorkspaceRequest = {
-            name,
-            department_id: departmentId || '',
-            leader_id: leaderId || '',
-            api_key_id: apiKeyId || '',
-          };
           await onUpdate(payload);
         } else {
           const payload: CreateWorkspaceRequest = {
             name,
-            ...(departmentId ? { department_id: departmentId } : {}),
             ...(leaderId ? { leader_id: leaderId } : {}),
             ...(apiKeyId ? { api_key_id: apiKeyId } : {}),
           };
@@ -275,13 +231,12 @@ export function WorkspaceDialog({
     },
     [
       workspaceName,
-      departmentId,
       leaderId,
       apiKeyId,
       currentOrganization?.id,
       isEditMode,
       resolvedInitialData,
-      activeDepartmentMembers,
+      activeOrganizationMembers,
       onCreate,
       onUpdate,
       onOpenChange,
@@ -369,21 +324,17 @@ export function WorkspaceDialog({
                   <div className="max-h-[200px] overflow-y-auto p-1">
                     {filteredMembers && filteredMembers.length > 0 ? (
                       filteredMembers.map(member => (
-                        <SelectItem
-                          key={member.account_id}
-                          value={member.account_id}
-                          className="rounded-md"
-                        >
+                        <SelectItem key={member.id} value={member.id} className="rounded-md">
                           <div className="flex items-center gap-3 py-1">
                             <div className="size-8 rounded-full bg-muted flex items-center justify-center shrink-0">
                               <User className="h-4 w-4 text-muted-foreground" />
                             </div>
                             <div className="flex flex-col text-start">
                               <span className="font-semibold text-sm leading-none mb-1">
-                                {member.account_name}
+                                {member.member_name || member.name}
                               </span>
                               <span className="text-[10px] text-muted-foreground tracking-tight">
-                                {member.account_email}
+                                {member.email}
                               </span>
                             </div>
                           </div>
@@ -399,6 +350,11 @@ export function WorkspaceDialog({
               </Select>
               {leaderError && (
                 <p className="text-xs text-destructive font-medium ml-1">{leaderError}</p>
+              )}
+              {isEditMode && !leaderError && (
+                <p className="text-xs text-muted-foreground font-medium ml-1">
+                  {t('organization.workspaceManagement.createWorkspace.leaderTransferHint')}
+                </p>
               )}
             </div>
           </form>

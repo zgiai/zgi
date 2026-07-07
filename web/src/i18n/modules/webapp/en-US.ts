@@ -82,7 +82,7 @@ const messages = {
     workflowRunFailed: 'Workflow run failed',
     workflowRunFailedWithReason: 'Workflow run failed: {reason}',
     workspaceRequiredForConversation:
-      'Your account has not joined any workspace. Please join at least one workspace before starting a conversation.',
+      'The app runtime workspace could not be resolved. Ask an administrator to check the app workspace or organization runtime workspace configuration.',
     imageHomeTitle: 'AI Image Generation',
     imageHomeSubtitle: 'Describe your imagination and let AI create it for you.',
     imageInput: {
@@ -131,6 +131,26 @@ const messages = {
   notPublished: {
     title: 'This web app has not been published',
     description: 'Publish this agent before opening its web app.',
+  },
+  access: {
+    loading: {
+      title: 'Checking access',
+      description: 'Confirming whether your account can use this web app.',
+    },
+    login_required: {
+      title: 'Sign in to use this web app',
+      description: 'This web app is only open to selected organization members or departments.',
+    },
+    no_access: {
+      title: 'You do not have access',
+      description:
+        'Your account is not included in the audience for this web app. Contact the app owner if you need access.',
+    },
+    offline: {
+      title: 'This web app is offline',
+      description:
+        'The app is currently unavailable. Please contact the app owner or try again after it is brought online.',
+    },
   },
   header: {
     guestMode: 'Guest mode: sign in to save conversations and unlock more capabilities.',
@@ -811,7 +831,7 @@ const messages = {
   },
   appCenter: {
     title: 'App Center',
-    subtitle: 'Apps available in the current workspace. Choose one to chat or run.',
+    subtitle: 'Apps published to you appear here. Choose one to chat or run.',
     sidebarSubtitle: 'Quick app switcher',
     allApps: 'All Apps',
     appList: 'App List',
@@ -836,9 +856,10 @@ const messages = {
     recentFallbackDescription: 'Open this app to continue where you last left off.',
     quickStartFallbackDescription: 'Start here if you want to jump into the first available app.',
     noAppsTitle: 'No runnable app available',
-    noAppsDescription: 'No app can be run in the current context.',
+    noAppsDescription: 'No runnable app has been published to you in this organization yet.',
     appUnavailableTitle: 'App is unavailable',
-    appUnavailableDescription: 'This app is not runnable in your current workspace.',
+    appUnavailableDescription:
+      'This app has not been published to you, or its App Center entry has been disabled.',
     loadAppFailed: 'Failed to load app configuration',
   },
   appLogs: {

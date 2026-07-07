@@ -3008,7 +3008,7 @@ func operationPlanCompletedAgentMutationCanCoverRouteStep(plan map[string]interf
 		}
 	}
 	agentID := strings.TrimSpace(stringFromAny(evidence["agent_id"]))
-	if agentID != "" && strings.Contains(target, "/console/agents/"+agentID+"/") {
+	if agentID != "" && consoleNavigationLoadedHrefMatchesTarget(consoleAgentDetailHref(agentID), target) {
 		return true
 	}
 	if href := normalizeConsoleNavigationGuardHref(stringFromAny(evidence["agent_href"])); href != "" &&

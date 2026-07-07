@@ -38,7 +38,9 @@ Use this skill only to request safe internal ZGI console navigation. It does not
 - Apps: `/console/work/app`
 - Scheduled tasks: `/console/work/task`
 - Agents: `/console/agents`
-- Agent detail pages from current context when an exact href is known: `/console/agents/{agentId}/agent`, `/console/agents/{agentId}/workflow`, `/console/agents/{agentId}/logs`, `/console/agents/{agentId}/api`, `/console/agents/{agentId}/batch-test`
+- Agent detail pages from current context when an exact href is known: `/console/agents/{agentId}`, `/console/agents/{agentId}/logs`, `/console/agents/{agentId}/api`, `/console/agents/{agentId}/batch-test`
+- Workflows: `/console/workflows`
+- Workflow detail pages from current context when an exact href is known: `/console/workflows/{workflowId}`, `/console/workflows/{workflowId}/logs`, `/console/workflows/{workflowId}/api`, `/console/workflows/{workflowId}/batch-test`
 - Knowledge bases: `/console/dataset`
 - Databases: `/console/db`
 - Files: `/console/files`
@@ -58,6 +60,7 @@ Use this skill only to request safe internal ZGI console navigation. It does not
 7. Navigation is usually a substep, not the user's final goal. After the loaded-route/page-context evidence arrives, continue the remaining requested operation from the new page context instead of ending the turn just because navigation succeeded.
 8. If a previous tool result or page fact will be needed after navigation, record it with `submit_turn_state` before calling `navigate`. Use the stored fact after the continuation instead of re-reading or guessing.
 9. Never claim that navigation performed an asset operation. If the user asks to delete, publish, run, schedule, create, or modify assets, explain that those actions need a supported governed tool and user approval when available.
+10. Agent and Workflow assets are separate console surfaces. Use `/console/agents` for Agent management and `/console/workflows` for Workflow management or inspection. Do not route Workflow requests to the Agents list unless the user explicitly asks for Agents.
 
 ## Tool Usage
 

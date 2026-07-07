@@ -186,7 +186,7 @@ func deletedAgentIsCurrentDetailPage(prepared *PreparedChat, trace skills.SkillT
 			skillToolCallArgumentString(trace.Arguments, "agent_id"),
 			skillToolCallArgumentString(trace.Arguments, "id"),
 		)); agentID != "" {
-			deletedHref = "/console/agents/" + agentID + "/agent"
+			deletedHref = consoleAgentDetailHref(agentID)
 		}
 	}
 	return deletedHref != "" && consoleNavigationLoadedHrefMatchesTarget(currentHref, deletedHref)
@@ -221,7 +221,7 @@ func agentDetailHrefFromTrace(trace skills.SkillTrace) string {
 				return href
 			}
 			if agentID := strings.TrimSpace(asset.ID); agentID != "" {
-				return "/console/agents/" + agentID + "/agent"
+				return consoleAgentDetailHref(agentID)
 			}
 		}
 	}
@@ -229,7 +229,7 @@ func agentDetailHrefFromTrace(trace skills.SkillTrace) string {
 		stringFromAny(trace.Arguments["agent_id"]),
 		stringFromAny(trace.Arguments["agentId"]),
 	)); agentID != "" {
-		return "/console/agents/" + agentID + "/agent"
+		return consoleAgentDetailHref(agentID)
 	}
 	return ""
 }
@@ -254,14 +254,14 @@ func agentDetailHrefFromTraceResult(result map[string]interface{}) string {
 			stringFromAny(agent["agent_id"]),
 			stringFromAny(agent["id"]),
 		)); agentID != "" {
-			return "/console/agents/" + agentID + "/agent"
+			return consoleAgentDetailHref(agentID)
 		}
 	}
 	if agentID := strings.TrimSpace(firstNonEmptyString(
 		stringFromAny(result["agent_id"]),
 		stringFromAny(result["id"]),
 	)); agentID != "" {
-		return "/console/agents/" + agentID + "/agent"
+		return consoleAgentDetailHref(agentID)
 	}
 	return ""
 }

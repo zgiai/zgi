@@ -10,12 +10,14 @@ import (
 )
 
 type fakeWorkflowConversationTitleGen struct {
+	called   bool
 	title    string
 	source   string
 	messages []titlegen.Message
 }
 
 func (f *fakeWorkflowConversationTitleGen) Generate(ctx context.Context, req titlegen.GenerateRequest) (*titlegen.GenerateResult, error) {
+	f.called = true
 	f.messages = append([]titlegen.Message(nil), req.Messages...)
 	return &titlegen.GenerateResult{Title: f.title, Source: f.source}, nil
 }
@@ -96,6 +98,8 @@ func TestGenerateWebAppConversationTitleUpdatesOnlyDefaultName(t *testing.T) {
 	organizationID := uuid.New()
 	workspaceID := uuid.New()
 	webAppID := uuid.New().String()
+	conv.AgentID = agentID
+	conv.FromAccountID = &accountID
 
 	if err := service.generateWebAppConversationTitle(ctx, workflowConversationTitleParams{
 		WorkspaceID:    workspaceID.String(),
@@ -132,6 +136,8 @@ func TestGenerateWebAppConversationTitleUpdatesOnlyDefaultName(t *testing.T) {
 		Name: "已有标题",
 	}
 	conversationSvc.conversation = semanticConversation
+	semanticConversation.AgentID = agentID
+	semanticConversation.FromAccountID = &accountID
 	if err := service.generateWebAppConversationTitle(ctx, workflowConversationTitleParams{
 		WorkspaceID:    workspaceID.String(),
 		OrganizationID: organizationID.String(),
@@ -168,6 +174,8 @@ func TestGenerateWebAppConversationTitleDoesNotStoreFallback(t *testing.T) {
 	organizationID := uuid.New()
 	workspaceID := uuid.New()
 	webAppID := uuid.New().String()
+	conv.AgentID = agentID
+	conv.FromAccountID = &accountID
 
 	err := service.generateWebAppConversationTitle(ctx, workflowConversationTitleParams{
 		WorkspaceID:    workspaceID.String(),
@@ -185,11 +193,64 @@ func TestGenerateWebAppConversationTitleDoesNotStoreFallback(t *testing.T) {
 	}
 }
 
+func TestGenerateWebAppConversationTitleRejectsForeignAccountBeforeMessages(t *testing.T) {
+	ctx := context.Background()
+	agentID := uuid.New()
+	ownerID := uuid.New()
+	callerID := uuid.New()
+	conv := &conversation.AgentConversation{
+		ID:            uuid.New(),
+		AgentID:       agentID,
+		Name:          "Conversation 2026-05-09 13:04:05",
+		FromAccountID: &ownerID,
+	}
+	conversationSvc := &fakeWorkflowTitleConversationService{conversation: conv}
+	messageSvc := &fakeWorkflowTitleMessageService{
+		messages: []*conversation.AgentMessage{
+			{Query: "secret", Answer: "hidden"},
+		},
+	}
+	gen := &fakeWorkflowConversationTitleGen{
+		title:  "should not be used",
+		source: titlegen.SourceModel,
+	}
+	service := newWorkflowConversationTitleTestService(conversationSvc, messageSvc, gen)
+
+	err := service.generateWebAppConversationTitle(ctx, workflowConversationTitleParams{
+		WorkspaceID:    uuid.NewString(),
+		OrganizationID: uuid.NewString(),
+		AgentID:        agentID.String(),
+		AccountID:      callerID,
+		ConversationID: conv.ID,
+		WebAppID:       uuid.NewString(),
+	})
+
+	if err == nil {
+		t.Fatalf("generate title error = nil, want foreign-account denial")
+	}
+	if !conversationSvc.scopedCalled {
+		t.Fatalf("scoped conversation lookup was not called")
+	}
+	if messageSvc.called {
+		t.Fatalf("message lookup was called for a foreign-account conversation")
+	}
+	if gen.called {
+		t.Fatalf("title generator was called for a foreign-account conversation")
+	}
+	if conv.Name != "Conversation 2026-05-09 13:04:05" {
+		t.Fatalf("conversation name = %q, want unchanged", conv.Name)
+	}
+}
+
 func TestGenerateWebAppConversationTitleStoresSemanticFallback(t *testing.T) {
 	ctx := context.Background()
+	agentID := uuid.New()
+	accountID := uuid.New()
 	conv := &conversation.AgentConversation{
-		ID:   uuid.New(),
-		Name: "Conversation 2026-05-09 13:04:05",
+		ID:            uuid.New(),
+		AgentID:       agentID,
+		Name:          "Conversation 2026-05-09 13:04:05",
+		FromAccountID: &accountID,
 	}
 	gen := &fakeWorkflowConversationTitleGen{
 		title:  "生产一个胖胖的猫咪",
@@ -201,8 +262,6 @@ func TestGenerateWebAppConversationTitleStoresSemanticFallback(t *testing.T) {
 		},
 	}, gen)
 
-	agentID := uuid.New()
-	accountID := uuid.New()
 	organizationID := uuid.New()
 	workspaceID := uuid.New()
 	webAppID := uuid.New().String()
@@ -237,10 +296,21 @@ func newWorkflowConversationTitleTestService(conversationSvc conversation.AgentC
 type fakeWorkflowTitleConversationService struct {
 	conversation.AgentConversationService
 
-	conversation *conversation.AgentConversation
+	conversation  *conversation.AgentConversation
+	scopedCalled  bool
+	scopedAgentID uuid.UUID
 }
 
 func (s *fakeWorkflowTitleConversationService) GetConversation(ctx context.Context, id uuid.UUID) (*conversation.AgentConversation, error) {
+	return s.conversation, nil
+}
+
+func (s *fakeWorkflowTitleConversationService) GetConversationByIDAndAgent(ctx context.Context, id, agentID uuid.UUID) (*conversation.AgentConversation, error) {
+	s.scopedCalled = true
+	s.scopedAgentID = agentID
+	if s.conversation == nil || s.conversation.ID != id || s.conversation.AgentID != agentID {
+		return nil, errWebAppConversationNotFound
+	}
 	return s.conversation, nil
 }
 
@@ -256,8 +326,10 @@ type fakeWorkflowTitleMessageService struct {
 	conversation.AgentMessageService
 
 	messages []*conversation.AgentMessage
+	called   bool
 }
 
 func (s *fakeWorkflowTitleMessageService) GetConversationMessages(ctx context.Context, conversationID uuid.UUID) ([]*conversation.AgentMessage, error) {
+	s.called = true
 	return s.messages, nil
 }

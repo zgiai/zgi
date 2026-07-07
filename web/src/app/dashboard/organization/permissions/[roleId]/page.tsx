@@ -13,7 +13,13 @@ import { toast } from 'sonner';
 import { Skeleton } from '@/components/ui/skeleton';
 import { pickLocale } from '@/utils/tool-helpers';
 import { useLocale } from '@/hooks/use-locale';
-import { PERMISSION_MODULES } from '@/constants/permissions';
+import {
+  PERMISSION_MODULES,
+  formatPermissionFallbackDescription,
+  formatPermissionFallbackLabel,
+  getMissingPermissionDependencies,
+  normalizeSelectablePermissionCodes,
+} from '@/constants/permissions';
 import { useT } from '@/i18n';
 import { Badge } from '@/components/ui/badge';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -24,6 +30,15 @@ export default function RoleConfigPage() {
   const t = useT();
   const router = useRouter();
   const params = useParams();
+  const tWithHas = t as typeof t & { has?: (key: string) => boolean };
+
+  const translateOrFallback = (key: string, fallback: string) => {
+    const fullKey = `dashboard.organization.permissions.config.${key}`;
+    if (typeof tWithHas.has === 'function' && !tWithHas.has(fullKey)) {
+      return fallback;
+    }
+    return t(fullKey as Parameters<typeof t>[0]);
+  };
 
   const roleId = params.roleId as string;
   const isNewRole = roleId === 'new';
@@ -36,6 +51,12 @@ export default function RoleConfigPage() {
   const [savedDescription, setSavedDescription] = useState('');
   const [savedPermissions, setSavedPermissions] = useState<Set<string>>(new Set());
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+  const [pendingDependencyChange, setPendingDependencyChange] = useState<{
+    label: string;
+    permissionCodes: string[];
+    dependencies: string[];
+  } | null>(null);
+  const [newRoleInfoPrompted, setNewRoleInfoPrompted] = useState(false);
 
   const { role, isLoading: loading } = useRoleDetail(isNewRole ? null : roleId, !isNewRole);
 
@@ -51,16 +72,24 @@ export default function RoleConfigPage() {
 
       setName(role.name);
       setDescription(nextDescription);
-      setSelectedPermissions(new Set(role.permissions));
+      const selectablePermissions = normalizeSelectablePermissionCodes(role.permissions);
+      setSelectedPermissions(new Set(selectablePermissions));
       setSavedName(role.name);
       setSavedDescription(nextDescription);
-      setSavedPermissions(new Set(role.permissions));
+      setSavedPermissions(new Set(selectablePermissions));
     } else if (isNewRole) {
       setSavedName('');
       setSavedDescription('');
       setSavedPermissions(new Set());
     }
   }, [role, locale, isNewRole]);
+
+  useEffect(() => {
+    if (isNewRole && !newRoleInfoPrompted) {
+      setEditDialogOpen(true);
+      setNewRoleInfoPrompted(true);
+    }
+  }, [isNewRole, newRoleInfoPrompted]);
 
   const hasPermissionChanges = useMemo(() => {
     if (selectedPermissions.size !== savedPermissions.size) return true;
@@ -86,17 +115,65 @@ export default function RoleConfigPage() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [hasUnsavedChanges, isSaving]);
 
-  // Handle permission toggle
-  const handlePermissionToggle = (code: string) => {
+  const getPermissionLabel = (code: string) =>
+    translateOrFallback(`permissions.${code}.name`, formatPermissionFallbackLabel(code, locale));
+
+  const getModuleLabel = (module: (typeof PERMISSION_MODULES)[0]) =>
+    translateOrFallback(module.title, formatPermissionFallbackLabel(module.key, locale));
+
+  const dependencySeparator = locale?.toLowerCase().startsWith('zh') ? '、' : ', ';
+  const dependencyConfirmDescription = pendingDependencyChange
+    ? t('dashboard.organization.permissions.config.dependencyConfirm.description', {
+        permission: pendingDependencyChange.label,
+        dependencies: pendingDependencyChange.dependencies
+          .map(getPermissionLabel)
+          .join(dependencySeparator),
+      })
+    : '';
+
+  const addPermissionsWithDependencies = (
+    permissionCodes: readonly string[],
+    dependencies: readonly string[] = []
+  ) => {
     setSelectedPermissions(prev => {
       const next = new Set(prev);
-      if (next.has(code)) {
-        next.delete(code);
-      } else {
-        next.add(code);
-      }
+      permissionCodes.forEach(permissionCode => next.add(permissionCode));
+      dependencies.forEach(dependency => next.add(dependency));
       return next;
     });
+  };
+
+  // Handle permission toggle
+  const handlePermissionToggle = (code: string) => {
+    if (selectedPermissions.has(code)) {
+      setSelectedPermissions(prev => {
+        const next = new Set(prev);
+        next.delete(code);
+        return next;
+      });
+      return;
+    }
+
+    const dependencies = getMissingPermissionDependencies(selectedPermissions, [code]);
+    if (dependencies.length > 0) {
+      setPendingDependencyChange({
+        label: getPermissionLabel(code),
+        permissionCodes: [code],
+        dependencies,
+      });
+      return;
+    }
+
+    addPermissionsWithDependencies([code]);
+  };
+
+  const confirmDependencyChange = () => {
+    if (!pendingDependencyChange) return;
+    addPermissionsWithDependencies(
+      pendingDependencyChange.permissionCodes,
+      pendingDependencyChange.dependencies
+    );
+    setPendingDependencyChange(null);
   };
 
   // Get all permission codes
@@ -123,19 +200,33 @@ export default function RoleConfigPage() {
 
   // Handle toggle all permissions for a module
   const handleToggleModule = (module: (typeof PERMISSION_MODULES)[0], checked: boolean) => {
-    setSelectedPermissions(prev => {
-      const next = new Set(prev);
-      if (checked) {
-        module.permissions.forEach(permission => {
-          next.add(permission.code);
-        });
-      } else {
+    if (!checked) {
+      setSelectedPermissions(prev => {
+        const next = new Set(prev);
         module.permissions.forEach(permission => {
           next.delete(permission.code);
         });
-      }
-      return next;
-    });
+        return next;
+      });
+      return;
+    }
+
+    const permissionCodes = module.permissions
+      .map(permission => permission.code)
+      .filter(permissionCode => !selectedPermissions.has(permissionCode));
+    if (permissionCodes.length === 0) return;
+
+    const dependencies = getMissingPermissionDependencies(selectedPermissions, permissionCodes);
+    if (dependencies.length > 0) {
+      setPendingDependencyChange({
+        label: getModuleLabel(module),
+        permissionCodes,
+        dependencies,
+      });
+      return;
+    }
+
+    addPermissionsWithDependencies(permissionCodes);
   };
 
   // Handle save role info
@@ -165,18 +256,20 @@ export default function RoleConfigPage() {
 
     if (isNewRole) {
       // Create new role
+      const permissions = normalizeSelectablePermissionCodes(Array.from(selectedPermissions));
       await createRole({
         name: name.trim(),
         description: description.trim() || undefined,
-        permissions: Array.from(selectedPermissions),
+        permissions,
       });
     } else {
       // Update role permissions
+      const permissions = normalizeSelectablePermissionCodes(Array.from(selectedPermissions));
       await updateRolePermissions({
         roleId,
-        data: { permissions: Array.from(selectedPermissions) },
+        data: { permissions },
       });
-      setSavedPermissions(new Set(selectedPermissions));
+      setSavedPermissions(new Set(permissions));
     }
   };
 
@@ -190,7 +283,7 @@ export default function RoleConfigPage() {
   };
 
   // Check if role is editable
-  const canEdit = isNewRole || (role && !role.builtin);
+  const canEdit = isNewRole || !!(role && role.editable);
 
   if (loading) {
     return (
@@ -254,7 +347,7 @@ export default function RoleConfigPage() {
           </Button>
           <Button
             onClick={handleSave}
-            disabled={isSaving || (!isNewRole && !hasUnsavedChanges)}
+            disabled={!canEdit || isSaving || (!isNewRole && !hasUnsavedChanges)}
             className="h-9 rounded-md bg-primary px-6 text-xs font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary-hover hover:text-primary-foreground"
           >
             {isSaving ? (
@@ -281,10 +374,14 @@ export default function RoleConfigPage() {
                   ? t('dashboard.organization.permissions.config.allPermissionsEnabled')
                   : t('dashboard.organization.permissions.config.allPermissionsDisabled')}
               </p>
+              <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                {t('dashboard.organization.permissions.config.templateSnapshotNotice')}
+              </p>
             </div>
             <Switch
               checked={isAllEnabled}
               onCheckedChange={handleToggleAll}
+              disabled={!canEdit}
               className="data-[state=checked]:bg-primary"
             />
           </div>
@@ -298,10 +395,9 @@ export default function RoleConfigPage() {
               >
                 <div className="flex items-center justify-between border-b border-border/60 bg-background px-6 py-4">
                   <h3 className="text-sm font-bold text-text-primary uppercase tracking-wider">
-                    {t(
-                      `dashboard.organization.permissions.config.${module.title}` as Parameters<
-                        typeof t
-                      >[0]
+                    {translateOrFallback(
+                      module.title,
+                      formatPermissionFallbackLabel(module.key, locale)
                     )}
                   </h3>
                   <div className="flex items-center gap-3">
@@ -311,6 +407,7 @@ export default function RoleConfigPage() {
                     <Switch
                       checked={isModuleAllEnabled(module)}
                       onCheckedChange={checked => handleToggleModule(module, checked)}
+                      disabled={!canEdit}
                       className="data-[state=checked]:bg-primary"
                     />
                   </div>
@@ -322,6 +419,7 @@ export default function RoleConfigPage() {
                       htmlFor={permission.code + 'switch'}
                       className={cn(
                         'group flex cursor-pointer items-start justify-between rounded-lg border p-4 transition-colors',
+                        !canEdit && 'cursor-not-allowed opacity-70',
                         selectedPermissions.has(permission.code)
                           ? 'border-primary/25 bg-primary/5'
                           : 'border-border bg-background hover:border-border/80 hover:bg-bg-canvas/60'
@@ -336,17 +434,15 @@ export default function RoleConfigPage() {
                               : 'text-text-primary'
                           )}
                         >
-                          {t(
-                            `dashboard.organization.permissions.config.${permission.name}` as Parameters<
-                              typeof t
-                            >[0]
+                          {translateOrFallback(
+                            permission.name,
+                            formatPermissionFallbackLabel(permission.code, locale)
                           )}
                         </div>
                         <div className="text-[11px] text-text-placeholder leading-relaxed line-clamp-3">
-                          {t(
-                            `dashboard.organization.permissions.config.${permission.description}` as Parameters<
-                              typeof t
-                            >[0]
+                          {translateOrFallback(
+                            permission.description,
+                            formatPermissionFallbackDescription(permission.code, locale)
                           )}
                         </div>
                       </div>
@@ -355,6 +451,7 @@ export default function RoleConfigPage() {
                           id={permission.code + 'switch'}
                           checked={selectedPermissions.has(permission.code)}
                           onCheckedChange={() => handlePermissionToggle(permission.code)}
+                          disabled={!canEdit}
                           className="data-[state=checked]:bg-primary"
                         />
                       </div>
@@ -390,6 +487,18 @@ export default function RoleConfigPage() {
         cancelText={t('dashboard.organization.permissions.config.leaveConfirm.cancel')}
         onConfirm={() => router.push('/dashboard/organization/permissions')}
         variant="warning"
+      />
+
+      <ConfirmDialog
+        open={Boolean(pendingDependencyChange)}
+        onOpenChange={nextOpen => {
+          if (!nextOpen) setPendingDependencyChange(null);
+        }}
+        title={t('dashboard.organization.permissions.config.dependencyConfirm.title')}
+        description={dependencyConfirmDescription}
+        confirmText={t('dashboard.organization.permissions.config.dependencyConfirm.confirm')}
+        cancelText={t('dashboard.organization.permissions.config.dependencyConfirm.cancel')}
+        onConfirm={confirmDependencyChange}
       />
     </div>
   );

@@ -10,8 +10,9 @@ export function isWorkflowDebugPanelActive(panel: WorkflowActivePanel) {
 export function useWorkflowDebugFocusMode() {
   const pathname = usePathname();
   const activePanel = useActivePanel(state => state.active);
-  const isAgentWorkflowPage =
-    pathname.includes('/console/agents/') && pathname.endsWith('/workflow');
+  const isWorkflowPage =
+    /^\/console\/workflows\/[^/]+$/.test(pathname) ||
+    (pathname.includes('/console/agents/') && pathname.endsWith('/workflow'));
 
-  return isAgentWorkflowPage && isWorkflowDebugPanelActive(activePanel);
+  return isWorkflowPage && isWorkflowDebugPanelActive(activePanel);
 }

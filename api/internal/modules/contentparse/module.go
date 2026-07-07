@@ -13,6 +13,7 @@ import (
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	llmcrypto "github.com/zgiai/zgi/api/internal/modules/llm/shared/crypto"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"gorm.io/gorm"
 )
 
@@ -57,6 +58,8 @@ type moduleOptions struct {
 	defaultModelSvc    llmdefaultservice.DefaultModelService
 	enableSystemVLM    bool
 	systemVLMAvailable bool
+	organization       interfaces.OrganizationService
+	account            interfaces.AccountService
 }
 
 func WithSystemVisionModel(llmClient llmclient.LLMClient, defaultModelSvc llmdefaultservice.DefaultModelService) ModuleOption {
@@ -65,6 +68,18 @@ func WithSystemVisionModel(llmClient llmclient.LLMClient, defaultModelSvc llmdef
 		opts.defaultModelSvc = defaultModelSvc
 		opts.enableSystemVLM = true
 		opts.systemVLMAvailable = llmClient != nil && defaultModelSvc != nil
+	}
+}
+
+func WithOrganizationService(service interfaces.OrganizationService) ModuleOption {
+	return func(opts *moduleOptions) {
+		opts.organization = service
+	}
+}
+
+func WithAccountService(service interfaces.AccountService) ModuleOption {
+	return func(opts *moduleOptions) {
+		opts.account = service
 	}
 }
 
@@ -109,6 +124,8 @@ func NewModule(db *gorm.DB, options ...ModuleOption) *Module {
 	playgroundHandler := handler.NewPlaygroundHandler(capabilityModule, playgroundRunService)
 	if playgroundHandler != nil {
 		playgroundHandler.SetProviderCatalogResolver(providerCatalogs)
+		playgroundHandler.SetOrganizationService(opts.organization)
+		playgroundHandler.SetAccountService(opts.account)
 	}
 
 	return &Module{

@@ -15,6 +15,9 @@ type AgentsService interface {
 	UpdateAgent(ctx context.Context, agentID string, req interface{}) (interface{}, error)
 	GetAgentConfig(ctx context.Context, agentID, accountID string) (*dto.AgentConfigResponse, error)
 	GetAgentDraftRuntimeConfig(ctx context.Context, agentID, accountID string) (*dto.AgentDraftRuntimeConfigResponse, error)
+	RequireAgentManageAccess(ctx context.Context, agentID, accountID string) error
+	GetAgentRuntimeSurfaces(ctx context.Context, agentID, accountID string) (*dto.AgentRuntimeSurfaceAuthorizationResponse, error)
+	UpdateAgentRuntimeSurfaces(ctx context.Context, agentID, accountID string, req dto.UpdateAgentRuntimeSurfacesRequest) (*dto.AgentRuntimeSurfaceAuthorizationResponse, error)
 	UpdateAgentConfig(ctx context.Context, agentID, accountID string, req dto.AgentConfigRequest) (*dto.AgentConfigResponse, error)
 	ListAgentSkillCandidates(ctx context.Context, agentID, accountID string, req dto.AgentSkillCandidatesRequest) (*dto.AgentSkillCandidatesResponse, error)
 	ListAgentKnowledgeCandidates(ctx context.Context, agentID, accountID string, req dto.AgentKnowledgeCandidatesRequest) (*dto.AgentKnowledgeCandidatesResponse, error)
@@ -31,6 +34,7 @@ type AgentsService interface {
 	ListAgentPublishedVersions(ctx context.Context, agentID, accountID string, page, limit int) (*dto.AgentPublishedVersionsResponse, error)
 	RollbackAgentPublishedVersion(ctx context.Context, agentID, accountID string, req dto.RollbackAgentPublishedVersionRequest) (*dto.AgentConfigResponse, error)
 	GetPublishedAgentWebAppConfig(ctx context.Context, webAppID string) (*dto.AgentWebAppRuntimeConfigResponse, error)
+	GetWebAppRuntimeCapability(ctx context.Context, webAppID, accountID string, authenticated bool) (*dto.AgentWebAppRuntimeCapabilityResponse, error)
 	UpdateWebAppStatus(ctx context.Context, agentID string, req dto.UpdateWebAppStatusRequest) (*dto.WebAppStatusResponse, error)
 	DeleteAgent(ctx context.Context, agentID string) error
 }

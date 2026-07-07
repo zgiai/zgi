@@ -18,38 +18,9 @@ func (h *WorkflowHandler) PrecheckDraftWorkflow(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	callerOrganizationID := util.GetOrganizationID(c)
 
-	if accountID == "" {
-		response.Fail(c, response.ErrUnauthorized)
+	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowRunDraft)
+	if !ok {
 		return
-	}
-
-	appWorkspaceID, err := h.workflowService.GetAgentWorkspaceID(c.Request.Context(), appID)
-	if err != nil {
-		logger.Error("Failed to get agent workspace id", err)
-		if err.Error() == "agent not found" {
-			response.Fail(c, response.ErrAppNotFound)
-		} else {
-			response.Fail(c, response.ErrSystemError)
-		}
-		return
-	}
-
-	if h.enterpriseService != nil {
-		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-			c.Request.Context(),
-			callerOrganizationID,
-			appWorkspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionAgentManage,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
 	}
 
 	workflow, err := h.workflowService.GetDraftWorkflow(c.Request.Context(), appID, true)
@@ -73,7 +44,7 @@ func (h *WorkflowHandler) PrecheckAdvancedChatDraftWorkflow(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	callerOrganizationID := util.GetOrganizationID(c)
 
-	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionAgentManage)
+	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowRunDraft)
 	if !ok {
 		return
 	}
@@ -99,6 +70,11 @@ func (h *WorkflowHandler) PrecheckAdvancedChatWorkflow(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	callerOrganizationID := util.GetOrganizationID(c)
 
+	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowView)
+	if !ok {
+		return
+	}
+
 	invokeFrom := c.GetString("invoke_from")
 	if invokeFrom == "" {
 		invokeFrom = string(InvokeFromWebApp)
@@ -120,13 +96,6 @@ func (h *WorkflowHandler) PrecheckAdvancedChatWorkflow(c *gin.Context) {
 	if err != nil {
 		logger.Error("Failed to get published workflow for precheck", err)
 		response.Fail(c, response.ErrAppNotFound)
-		return
-	}
-
-	appWorkspaceID, err := h.workflowService.GetAgentWorkspaceID(c.Request.Context(), appID)
-	if err != nil {
-		logger.Error("Failed to get agent workspace id", err)
-		response.Fail(c, response.ErrSystemError)
 		return
 	}
 
@@ -144,6 +113,11 @@ func (h *WorkflowHandler) PrecheckPublishedWorkflow(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	callerOrganizationID := util.GetOrganizationID(c)
 
+	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowView)
+	if !ok {
+		return
+	}
+
 	invokeFrom := c.GetString("invoke_from")
 	if invokeFrom == "" {
 		invokeFrom = string(InvokeFromWebApp)
@@ -165,13 +139,6 @@ func (h *WorkflowHandler) PrecheckPublishedWorkflow(c *gin.Context) {
 	if err != nil {
 		logger.Error("Failed to get published workflow for precheck", err)
 		response.Fail(c, response.ErrAppNotFound)
-		return
-	}
-
-	appWorkspaceID, err := h.workflowService.GetAgentWorkspaceID(c.Request.Context(), appID)
-	if err != nil {
-		logger.Error("Failed to get agent workspace id", err)
-		response.Fail(c, response.ErrSystemError)
 		return
 	}
 
@@ -319,7 +286,7 @@ func (h *WorkflowHandler) resolveWebAppPrecheckAgent(c *gin.Context) (*agents.Ag
 		response.Fail(c, response.ErrAppNotFound)
 		return nil, "", err
 	}
-	if rejectInactiveWebApp(c, agent, webAppID) {
+	if rejectUnauthorizedWebAppRuntime(c, agent, webAppID) {
 		return nil, "", context.Canceled
 	}
 

@@ -116,7 +116,7 @@ const messages: ModelsMessages = {
       noModelsTitle: '需要先配置模型',
       noResults: '没有符合搜索条件的模型',
       noModels: '暂无可用的{type}',
-      contactAdmin: '请联系管理员为当前工作空间启用模型。',
+      contactAdmin: '请联系管理员启用当前组织模型能力。',
       configureDescription: '请先配置至少一个可用的{type}，然后再继续使用当前工作流或智能体。',
       configure: '去配置',
       clearSearch: '清空搜索',

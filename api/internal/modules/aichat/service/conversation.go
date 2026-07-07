@@ -232,6 +232,9 @@ func (s *service) DeleteMessage(ctx context.Context, scope Scope, id uuid.UUID) 
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return err
 	}
+	if _, err := s.repos.Message.GetScoped(ctx, id, scope.OrganizationID, scope.AccountID); err != nil {
+		return mapRepoError(err)
+	}
 	err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepos := repository.NewRepositories(tx)
 		result, err := txRepos.Message.DeleteSubtreeScoped(ctx, id, scope.OrganizationID, scope.AccountID)

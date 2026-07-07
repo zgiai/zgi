@@ -2,10 +2,17 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/repository"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -34,6 +41,9 @@ CREATE TABLE workspace_members (
 	account_id text not null,
 	role text not null,
 	role_id text,
+	permissions text not null default '[]',
+	permission_source text not null default 'role_template',
+	permission_template_role_id text,
 	created_at datetime not null
 )`).Error)
 
@@ -91,4 +101,815 @@ CREATE TABLE workspace_members (
 
 	require.True(t, hasMobileByID["acc-with-mobile"])
 	require.False(t, hasMobileByID["acc-without-mobile"])
+}
+
+func TestGetWorkspaceMembersPaginatedOrdersGovernanceRolesFirst(t *testing.T) {
+	t.Parallel()
+
+	db, mock := newWorkspaceManagementMockDB(t)
+	now := time.Now().UTC()
+
+	mock.ExpectQuery(`SELECT count\(\*\) FROM workspace_members wm JOIN accounts a ON wm.account_id = a.id WHERE wm.workspace_id = \$1`).
+		WithArgs("ws-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
+	mock.ExpectQuery(`SELECT .* FROM workspace_members wm JOIN accounts a ON wm.account_id = a.id WHERE wm.workspace_id = \$1 ORDER BY CASE wm\.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END ASC,wm\.created_at DESC LIMIT \$2`).
+		WithArgs("ws-1", 20).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "account_name", "email", "avatar", "status", "last_login_at", "last_active_at",
+			"account_created_at", "mobile_e164", "role", "role_id", "permissions", "permission_source",
+			"permission_template_role_id",
+		}).
+			AddRow("owner-1", "Owner User", "owner-1@example.com", nil, "active", nil, nil, now, nil, string(model.WorkspaceRoleOwner), nil, "[]", model.WorkspaceMemberPermissionSourceRoleTemplate, nil).
+			AddRow("admin-1", "Admin User", "admin-1@example.com", nil, "active", nil, nil, now.Add(time.Second), nil, string(model.WorkspaceRoleAdmin), nil, "[]", model.WorkspaceMemberPermissionSourceRoleTemplate, nil).
+			AddRow("normal-1", "Normal User", "normal-1@example.com", nil, "active", nil, nil, now.Add(2*time.Second), nil, string(model.WorkspaceRoleNormal), nil, "[]", model.WorkspaceMemberPermissionSourceRoleTemplate, nil))
+
+	svc := &WorkspaceManagementServiceImpl{db: db}
+
+	members, total, err := svc.GetWorkspaceMembersPaginated(
+		context.Background(),
+		"ws-1",
+		1,
+		20,
+		"",
+		"",
+	)
+
+	require.NoError(t, err)
+	require.EqualValues(t, 3, total)
+	require.Len(t, members, 3)
+	require.Equal(t, "owner-1", members[0].ID)
+	require.Equal(t, "admin-1", members[1].ID)
+	require.Equal(t, "normal-1", members[2].ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetWorkspaceMembersPaginatedReturnsOrganizationDepartment(t *testing.T) {
+	t.Parallel()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+
+	require.NoError(t, db.Exec(`
+CREATE TABLE accounts (
+	id text primary key,
+	name text not null,
+	email text not null,
+	avatar text,
+	status text not null,
+	last_login_at datetime,
+	last_active_at datetime,
+	created_at datetime not null,
+	mobile_e164 text
+)`).Error)
+	require.NoError(t, db.Exec(`
+CREATE TABLE members (
+	organization_id text not null,
+	account_id text not null,
+	name text,
+	role text not null,
+	status text not null
+)`).Error)
+	require.NoError(t, db.Exec(`
+CREATE TABLE departments (
+	id text primary key,
+	group_id text not null,
+	name text not null,
+	status text not null,
+	sort_order integer not null default 0,
+	created_at datetime not null
+)`).Error)
+	require.NoError(t, db.Exec(`
+CREATE TABLE department_members (
+	department_id text not null,
+	account_id text not null
+)`).Error)
+	require.NoError(t, db.Exec(`
+CREATE TABLE workspace_members (
+	workspace_id text not null,
+	account_id text not null,
+	role text not null,
+	role_id text,
+	permissions text not null default '[]',
+	permission_source text not null default 'role_template',
+	permission_template_role_id text,
+	created_at datetime not null
+)`).Error)
+
+	now := time.Now().UTC()
+	require.NoError(t, db.Exec(
+		`INSERT INTO accounts (id, name, email, status, created_at) VALUES (?, ?, ?, ?, ?)`,
+		"acc-1",
+		"Account Name",
+		"member@example.com",
+		"active",
+		now,
+	).Error)
+	require.NoError(t, db.Exec(
+		`INSERT INTO members (organization_id, account_id, name, role, status) VALUES (?, ?, ?, ?, ?)`,
+		"org-1",
+		"acc-1",
+		"Member Name",
+		"admin",
+		"active",
+	).Error)
+	require.NoError(t, db.Exec(
+		`INSERT INTO departments (id, group_id, name, status, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		"dept-1",
+		"org-1",
+		"Platform",
+		"active",
+		1,
+		now,
+	).Error)
+	require.NoError(t, db.Exec(
+		`INSERT INTO department_members (department_id, account_id) VALUES (?, ?)`,
+		"dept-1",
+		"acc-1",
+	).Error)
+	require.NoError(t, db.Exec(
+		`INSERT INTO workspace_members (workspace_id, account_id, role, created_at) VALUES (?, ?, ?, ?)`,
+		"ws-1",
+		"acc-1",
+		"member",
+		now,
+	).Error)
+
+	svc := &WorkspaceManagementServiceImpl{
+		db: db,
+		organizationService: workspaceManagementTestOrganizationService{
+			organization: &model.Organization{ID: "org-1"},
+		},
+	}
+
+	members, total, err := svc.GetWorkspaceMembersPaginated(
+		context.Background(),
+		"ws-1",
+		1,
+		20,
+		"",
+		"",
+	)
+
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, members, 1)
+	require.Equal(t, "Member Name", members[0].Name)
+	require.NotNil(t, members[0].DepartmentID)
+	require.NotNil(t, members[0].DepartmentName)
+	require.Equal(t, "dept-1", *members[0].DepartmentID)
+	require.Equal(t, "Platform", *members[0].DepartmentName)
+	require.Equal(t, "admin", members[0].OrganizationRole)
+}
+
+func TestWorkspaceMemberResponsePermissionsExcludeRetiredAndCompatibilityCodes(t *testing.T) {
+	t.Parallel()
+
+	join := &model.WorkspaceMember{
+		WorkspaceID:      "ws-1",
+		AccountID:        "member-1",
+		Role:             model.WorkspaceRoleNormal,
+		PermissionSource: model.WorkspaceMemberPermissionSourceRoleTemplate,
+		Permissions: []string{
+			"workspace.view",
+			"workspace.member.view",
+			"dashboard.view",
+			"dashboard.stats.view",
+			string(model.WorkspacePermissionDatabaseDataEdit),
+			string(model.WorkspacePermissionDatabaseAIQuery),
+			string(model.WorkspacePermissionFileUploadCreate),
+			string(model.WorkspacePermissionFileMoveCreate),
+			string(model.WorkspacePermissionAgentManage),
+		},
+	}
+
+	permissions := workspaceMemberResponsePermissions(join)
+
+	require.Contains(t, permissions, string(model.WorkspacePermissionDatabaseRecordCreate))
+	require.Contains(t, permissions, string(model.WorkspacePermissionDatabaseAIQueryRead))
+	require.Contains(t, permissions, string(model.WorkspacePermissionFileUpload))
+	require.Contains(t, permissions, string(model.WorkspacePermissionFileMove))
+	require.Contains(t, permissions, string(model.WorkspacePermissionAgentCreate))
+	require.NotContains(t, permissions, "workspace.view")
+	require.NotContains(t, permissions, "workspace.member.view")
+	require.NotContains(t, permissions, "dashboard.view")
+	require.NotContains(t, permissions, string(model.WorkspacePermissionDatabaseDataEdit))
+	require.NotContains(t, permissions, string(model.WorkspacePermissionDatabaseAIQuery))
+	require.NotContains(t, permissions, string(model.WorkspacePermissionFileUploadCreate))
+	require.NotContains(t, permissions, string(model.WorkspacePermissionFileMoveCreate))
+	require.NotContains(t, permissions, string(model.WorkspacePermissionAgentManage))
+}
+
+func TestExpandWorkspaceMemberStoredPermissionsReturnsDisplayablePermissions(t *testing.T) {
+	t.Parallel()
+
+	permissions := expandWorkspaceMemberStoredPermissions(
+		string(model.WorkspaceRoleNormal),
+		nil,
+		`["workspace.view","dashboard.view","agent.manage","database.ai_query","file.upload_create"]`,
+		model.WorkspaceMemberPermissionSourceRoleTemplate,
+	)
+
+	require.Contains(t, permissions, string(model.WorkspacePermissionAgentCreate))
+	require.Contains(t, permissions, string(model.WorkspacePermissionWorkflowPublish))
+	require.Contains(t, permissions, string(model.WorkspacePermissionDatabaseAIQueryRead))
+	require.Contains(t, permissions, string(model.WorkspacePermissionFileUpload))
+	require.NotContains(t, permissions, "workspace.view")
+	require.NotContains(t, permissions, "dashboard.view")
+	require.NotContains(t, permissions, string(model.WorkspacePermissionAgentManage))
+	require.NotContains(t, permissions, string(model.WorkspacePermissionDatabaseAIQuery))
+	require.NotContains(t, permissions, string(model.WorkspacePermissionFileUploadCreate))
+}
+
+func TestUpdateMemberDirectPermissionsStoresExpandedDirectPermissions(t *testing.T) {
+	t.Parallel()
+
+	join := &model.WorkspaceMember{
+		WorkspaceID:      "ws-1",
+		AccountID:        "member-1",
+		Role:             model.WorkspaceRoleNormal,
+		PermissionSource: model.WorkspaceMemberPermissionSourceRoleTemplate,
+		Permissions:      []string{"workspace.view"},
+	}
+	repo := &workspaceMemberDirectPermissionRepo{join: join}
+	svc := &WorkspaceManagementServiceImpl{workspaceMemberRepo: repo}
+
+	err := svc.UpdateMemberDirectPermissions(context.Background(), "ws-1", "member-1", []string{"agent.manage"})
+
+	require.NoError(t, err)
+	require.NotNil(t, repo.updated)
+	require.Equal(t, model.WorkspaceMemberPermissionSourceDirect, repo.updated.PermissionSource)
+	require.Contains(t, repo.updated.Permissions, "agent.create")
+	require.NotContains(t, repo.updated.Permissions, "agent.manage")
+	require.NotContains(t, repo.updated.Permissions, "workspace.manage")
+}
+
+func TestApplyWorkspaceMemberDirectPermissionSnapshotExpandsPermissions(t *testing.T) {
+	t.Parallel()
+
+	join := &model.WorkspaceMember{
+		WorkspaceID:              "ws-1",
+		AccountID:                "member-1",
+		Role:                     model.WorkspaceRoleNormal,
+		RoleID:                   stringPtr(model.WorkspaceBuiltinRoleViewerID),
+		PermissionSource:         model.WorkspaceMemberPermissionSourceRoleTemplate,
+		PermissionTemplateRoleID: stringPtr(model.WorkspaceBuiltinRoleViewerID),
+		Permissions:              []string{"file.view"},
+	}
+
+	applyWorkspaceMemberDirectPermissionSnapshot(join, []string{"agent.manage", "agent.manage"})
+
+	require.Equal(t, model.WorkspaceMemberPermissionSourceDirect, join.PermissionSource)
+	require.Equal(t, stringPtr(model.WorkspaceBuiltinRoleViewerID), join.RoleID)
+	require.Equal(t, stringPtr(model.WorkspaceBuiltinRoleViewerID), join.PermissionTemplateRoleID)
+	require.Contains(t, join.Permissions, "agent.create")
+	require.NotContains(t, join.Permissions, "agent.manage")
+	require.NotContains(t, join.Permissions, "file.view")
+	require.NotContains(t, join.Permissions, "workspace.manage")
+}
+
+func TestUpdateMemberDirectPermissionsRejectsOwner(t *testing.T) {
+	t.Parallel()
+
+	join := &model.WorkspaceMember{
+		WorkspaceID: "ws-1",
+		AccountID:   "owner-1",
+		Role:        model.WorkspaceRoleOwner,
+	}
+	repo := &workspaceMemberDirectPermissionRepo{join: join}
+	svc := &WorkspaceManagementServiceImpl{workspaceMemberRepo: repo}
+
+	err := svc.UpdateMemberDirectPermissions(context.Background(), "ws-1", "owner-1", []string{"agent.view"})
+
+	require.Error(t, err)
+	require.Nil(t, repo.updated)
+}
+
+func TestCheckMemberPermissionRejectsGovernancePermissionsFromDirectSnapshot(t *testing.T) {
+	t.Parallel()
+
+	workspace := &model.Workspace{ID: "ws-1"}
+	operator := &auth_model.Account{ID: "operator-1"}
+	member := &auth_model.Account{ID: "member-1"}
+	repo := &workspaceMemberDirectPermissionRepo{
+		joins: map[string]*model.WorkspaceMember{
+			"ws-1/operator-1": {
+				WorkspaceID:      "ws-1",
+				AccountID:        "operator-1",
+				Role:             model.WorkspaceRoleNormal,
+				PermissionSource: model.WorkspaceMemberPermissionSourceDirect,
+				Permissions:      []string{string(model.WorkspacePermissionWorkspaceMemberManage)},
+			},
+			"ws-1/member-1": {
+				WorkspaceID: "ws-1",
+				AccountID:   "member-1",
+				Role:        model.WorkspaceRoleNormal,
+			},
+		},
+	}
+	svc := &WorkspaceManagementServiceImpl{workspaceMemberRepo: repo}
+
+	err := svc.CheckMemberPermission(context.Background(), workspace, operator, member, "remove")
+	require.Error(t, err)
+}
+
+func TestCheckMemberPermissionAllowsAdminGovernanceEvenWithEmptySnapshot(t *testing.T) {
+	t.Parallel()
+
+	workspace := &model.Workspace{ID: "ws-1"}
+	operator := &auth_model.Account{ID: "operator-1"}
+	member := &auth_model.Account{ID: "member-1"}
+	repo := &workspaceMemberDirectPermissionRepo{
+		joins: map[string]*model.WorkspaceMember{
+			"ws-1/operator-1": {
+				WorkspaceID:      "ws-1",
+				AccountID:        "operator-1",
+				Role:             model.WorkspaceRoleAdmin,
+				PermissionSource: model.WorkspaceMemberPermissionSourceRoleTemplate,
+				Permissions:      []string{},
+			},
+			"ws-1/member-1": {
+				WorkspaceID: "ws-1",
+				AccountID:   "member-1",
+				Role:        model.WorkspaceRoleNormal,
+			},
+		},
+	}
+	svc := &WorkspaceManagementServiceImpl{workspaceMemberRepo: repo}
+
+	require.NoError(t, svc.CheckMemberPermission(context.Background(), workspace, operator, member, "remove"))
+}
+
+func TestUpdateMemberCustomRoleDemotesWorkspaceAdminToTemplateMember(t *testing.T) {
+	t.Parallel()
+
+	db, mock := newWorkspaceManagementMockDB(t)
+
+	orgID := "org-1"
+	workspaceID := "ws-1"
+	roleID := "role-basic"
+	ownerID := "owner-1"
+	adminID := "admin-1"
+	now := time.Now()
+	mock.ExpectQuery(`SELECT \* FROM "roles" WHERE id = \$1 AND group_id = \$2 AND status = \$3 ORDER BY "roles"\."id" LIMIT \$4`).
+		WithArgs(roleID, orgID, model.WorkspaceCustomRoleStatusActive, 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "group_id", "name", "description", "status", "permissions", "created_by", "created_at", "updated_at",
+		}).AddRow(
+			roleID,
+			orgID,
+			"Basic",
+			nil,
+			model.WorkspaceCustomRoleStatusActive,
+			[]byte(`["agent.create"]`),
+			ownerID,
+			now,
+			now,
+		))
+
+	svc := &WorkspaceManagementServiceImpl{
+		db:            db,
+		workspaceRepo: &workspaceManagementWorkspaceRepo{organizationID: orgID},
+		workspaceMemberRepo: &workspaceMemberDirectPermissionRepo{
+			joins: map[string]*model.WorkspaceMember{
+				"ws-1/owner-1": {
+					ID:          "join-owner",
+					WorkspaceID: workspaceID,
+					AccountID:   ownerID,
+					Role:        model.WorkspaceRoleOwner,
+				},
+				"ws-1/admin-1": {
+					ID:          "join-admin",
+					WorkspaceID: workspaceID,
+					AccountID:   adminID,
+					Role:        model.WorkspaceRoleAdmin,
+				},
+			},
+		},
+	}
+	memberRepo := svc.workspaceMemberRepo.(*workspaceMemberDirectPermissionRepo)
+
+	err := svc.UpdateMemberCustomRoleWithPermissionCheck(
+		context.Background(),
+		&model.Workspace{ID: workspaceID},
+		&auth_model.Account{ID: adminID},
+		roleID,
+		&auth_model.Account{ID: ownerID},
+	)
+
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+	require.NotNil(t, memberRepo.updated)
+	join := memberRepo.updated
+	require.Equal(t, model.WorkspaceRoleNormal, join.Role)
+	require.Equal(t, stringPtr(roleID), join.RoleID)
+	require.Equal(t, model.WorkspaceMemberPermissionSourceRoleTemplate, join.PermissionSource)
+	require.Equal(t, stringPtr(roleID), join.PermissionTemplateRoleID)
+	require.Equal(t, []string{string(model.WorkspacePermissionAgentCreate)}, join.Permissions)
+}
+
+func TestCheckMemberPermissionRejectsPermissionManageFromDirectSnapshot(t *testing.T) {
+	t.Parallel()
+
+	workspace := &model.Workspace{ID: "ws-1"}
+	operator := &auth_model.Account{ID: "operator-1"}
+	member := &auth_model.Account{ID: "member-1"}
+	repo := &workspaceMemberDirectPermissionRepo{
+		joins: map[string]*model.WorkspaceMember{
+			"ws-1/operator-1": {
+				WorkspaceID:      "ws-1",
+				AccountID:        "operator-1",
+				Role:             model.WorkspaceRoleNormal,
+				PermissionSource: model.WorkspaceMemberPermissionSourceDirect,
+				Permissions:      []string{string(model.WorkspacePermissionWorkspacePermissionManage)},
+			},
+			"ws-1/member-1": {
+				WorkspaceID: "ws-1",
+				AccountID:   "member-1",
+				Role:        model.WorkspaceRoleNormal,
+			},
+		},
+	}
+	svc := &WorkspaceManagementServiceImpl{workspaceMemberRepo: repo}
+
+	err := svc.CheckMemberPermission(context.Background(), workspace, operator, member, "permission")
+	require.Error(t, err)
+}
+
+func TestCheckPermissionAllowsOrganizationAdminWithoutWorkspaceMembership(t *testing.T) {
+	t.Parallel()
+
+	orgID := "org-1"
+	workspaceID := "ws-1"
+	adminID := "org-admin-1"
+
+	svc := &WorkspaceManagementServiceImpl{
+		workspaceRepo: &workspaceManagementWorkspaceRepo{workspace: &model.Workspace{
+			ID:             workspaceID,
+			Name:           "Workspace",
+			Status:         model.WorkspaceStatusNormal,
+			Plan:           "basic",
+			OrganizationID: &orgID,
+		}},
+		workspaceMemberRepo: &workspaceMemberDirectPermissionRepo{},
+		organizationService: workspaceManagementTestOrganizationService{
+			adminAccounts: map[string]bool{adminID: true},
+		},
+	}
+
+	require.True(t, svc.CheckPermission(context.Background(), workspaceID, adminID))
+}
+
+func TestUpdateMemberRoleReappliesSameBuiltinTemplateSnapshot(t *testing.T) {
+	t.Parallel()
+
+	workspace := &model.Workspace{ID: "ws-1"}
+	operator := &auth_model.Account{ID: "operator-1"}
+	member := &auth_model.Account{ID: "member-1"}
+	memberRoleID := model.WorkspaceBuiltinRoleMemberID
+	repo := &workspaceMemberDirectPermissionRepo{
+		joins: map[string]*model.WorkspaceMember{
+			"ws-1/operator-1": {
+				WorkspaceID:      "ws-1",
+				AccountID:        "operator-1",
+				Role:             model.WorkspaceRoleAdmin,
+				PermissionSource: model.WorkspaceMemberPermissionSourceDirect,
+				Permissions:      []string{string(model.WorkspacePermissionWorkspacePermissionManage)},
+			},
+			"ws-1/member-1": {
+				WorkspaceID:              "ws-1",
+				AccountID:                "member-1",
+				Role:                     model.WorkspaceRoleNormal,
+				RoleID:                   &memberRoleID,
+				PermissionSource:         model.WorkspaceMemberPermissionSourceDirect,
+				PermissionTemplateRoleID: &memberRoleID,
+				Permissions:              []string{"agent.manage"},
+			},
+		},
+	}
+	svc := &WorkspaceManagementServiceImpl{workspaceMemberRepo: repo}
+
+	err := svc.UpdateMemberRoleAndRoleIDWithPermissionCheck(
+		context.Background(),
+		workspace,
+		member,
+		string(model.WorkspaceRoleNormal),
+		&memberRoleID,
+		operator,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, repo.updated)
+	require.Equal(t, model.WorkspaceMemberPermissionSourceRoleTemplate, repo.updated.PermissionSource)
+	require.Equal(t, &memberRoleID, repo.updated.RoleID)
+	require.Equal(t, &memberRoleID, repo.updated.PermissionTemplateRoleID)
+	require.Contains(t, repo.updated.Permissions, string(model.WorkspacePermissionFileUpload))
+	require.NotContains(t, repo.updated.Permissions, string(model.WorkspacePermissionWorkspaceView))
+	require.NotContains(t, repo.updated.Permissions, "agent.manage")
+}
+
+func TestGetAccessibleWorkspaceIDsReturnsDirectMembershipsOnly(t *testing.T) {
+	t.Parallel()
+
+	repo := &workspaceMemberDirectPermissionRepo{
+		joins: map[string]*model.WorkspaceMember{
+			"ws-direct-1/account-1": {
+				WorkspaceID: "ws-direct-1",
+				AccountID:   "account-1",
+				Role:        model.WorkspaceRoleNormal,
+			},
+			"ws-direct-2/account-1": {
+				WorkspaceID: "ws-direct-2",
+				AccountID:   "account-1",
+				Role:        model.WorkspaceRoleAdmin,
+			},
+			"ws-other/account-2": {
+				WorkspaceID: "ws-other",
+				AccountID:   "account-2",
+				Role:        model.WorkspaceRoleOwner,
+			},
+		},
+	}
+	svc := &WorkspaceManagementServiceImpl{workspaceMemberRepo: repo}
+
+	workspaceIDs, err := svc.GetAccessibleWorkspaceIDs(context.Background(), "account-1")
+
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"ws-direct-1", "ws-direct-2"}, workspaceIDs)
+}
+
+func TestTransferOwnerByOrganizationAdminDemotesActualOwner(t *testing.T) {
+	t.Parallel()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Workspace{}, &model.WorkspaceMember{}))
+
+	orgID := "org-1"
+	workspaceID := "ws-1"
+	oldOwnerID := "owner-1"
+	newOwnerID := "member-1"
+	operatorID := "org-admin-1"
+	require.NoError(t, db.Create(&model.Workspace{
+		ID:             workspaceID,
+		Name:           "Workspace",
+		Status:         model.WorkspaceStatusNormal,
+		Plan:           "basic",
+		OrganizationID: &orgID,
+	}).Error)
+	require.NoError(t, db.Create(&model.WorkspaceMember{
+		ID:          "join-owner",
+		WorkspaceID: workspaceID,
+		AccountID:   oldOwnerID,
+		Role:        model.WorkspaceRoleOwner,
+	}).Error)
+	require.NoError(t, db.Create(&model.WorkspaceMember{
+		ID:          "join-member",
+		WorkspaceID: workspaceID,
+		AccountID:   newOwnerID,
+		Role:        model.WorkspaceRoleNormal,
+	}).Error)
+
+	svc := &WorkspaceManagementServiceImpl{
+		db:                  db,
+		workspaceRepo:       repository.NewWorkspaceRepository(db),
+		workspaceMemberRepo: repository.NewWorkspaceMemberRepository(db),
+		organizationService: workspaceManagementTestOrganizationService{
+			adminAccounts: map[string]bool{operatorID: true},
+		},
+	}
+
+	err = svc.TransferOwner(context.Background(), workspaceID, operatorID, newOwnerID)
+
+	require.NoError(t, err)
+	var oldOwnerJoin model.WorkspaceMember
+	require.NoError(t, db.Where("workspace_id = ? AND account_id = ?", workspaceID, oldOwnerID).First(&oldOwnerJoin).Error)
+	require.Equal(t, model.WorkspaceRoleAdmin, oldOwnerJoin.Role)
+	require.Equal(t, model.WorkspaceMemberPermissionSourceRoleTemplate, oldOwnerJoin.PermissionSource)
+	require.NotNil(t, oldOwnerJoin.RoleID)
+	require.Equal(t, model.WorkspaceBuiltinRoleAdminID, *oldOwnerJoin.RoleID)
+
+	var newOwnerJoin model.WorkspaceMember
+	require.NoError(t, db.Where("workspace_id = ? AND account_id = ?", workspaceID, newOwnerID).First(&newOwnerJoin).Error)
+	require.Equal(t, model.WorkspaceRoleOwner, newOwnerJoin.Role)
+	require.Equal(t, model.WorkspaceMemberPermissionSourceOwner, newOwnerJoin.PermissionSource)
+
+	var operatorJoinCount int64
+	require.NoError(t, db.Model(&model.WorkspaceMember{}).
+		Where("workspace_id = ? AND account_id = ?", workspaceID, operatorID).
+		Count(&operatorJoinCount).Error)
+	require.Zero(t, operatorJoinCount)
+}
+
+func TestTransferOwnerNormalizesHistoricalOwnersWhenTargetAlreadyOwner(t *testing.T) {
+	t.Parallel()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.Workspace{}, &model.WorkspaceMember{}))
+
+	orgID := "org-1"
+	workspaceID := "ws-1"
+	oldOwnerID := "owner-1"
+	targetOwnerID := "owner-2"
+	normalMemberID := "member-1"
+	operatorID := "org-admin-1"
+	require.NoError(t, db.Create(&model.Workspace{
+		ID:             workspaceID,
+		Name:           "Workspace",
+		Status:         model.WorkspaceStatusNormal,
+		Plan:           "basic",
+		OrganizationID: &orgID,
+	}).Error)
+	require.NoError(t, db.Create(&model.WorkspaceMember{
+		ID:          "join-owner-1",
+		WorkspaceID: workspaceID,
+		AccountID:   oldOwnerID,
+		Role:        model.WorkspaceRoleOwner,
+	}).Error)
+	require.NoError(t, db.Create(&model.WorkspaceMember{
+		ID:          "join-owner-2",
+		WorkspaceID: workspaceID,
+		AccountID:   targetOwnerID,
+		Role:        model.WorkspaceRoleOwner,
+	}).Error)
+	require.NoError(t, db.Create(&model.WorkspaceMember{
+		ID:          "join-member",
+		WorkspaceID: workspaceID,
+		AccountID:   normalMemberID,
+		Role:        model.WorkspaceRoleNormal,
+	}).Error)
+
+	svc := &WorkspaceManagementServiceImpl{
+		db:                  db,
+		workspaceRepo:       repository.NewWorkspaceRepository(db),
+		workspaceMemberRepo: repository.NewWorkspaceMemberRepository(db),
+		organizationService: workspaceManagementTestOrganizationService{
+			adminAccounts: map[string]bool{operatorID: true},
+		},
+	}
+
+	err = svc.TransferOwner(context.Background(), workspaceID, operatorID, targetOwnerID)
+
+	require.NoError(t, err)
+	var ownerCount int64
+	require.NoError(t, db.Model(&model.WorkspaceMember{}).
+		Where("workspace_id = ? AND role = ?", workspaceID, model.WorkspaceRoleOwner).
+		Count(&ownerCount).Error)
+	require.EqualValues(t, 1, ownerCount)
+
+	var oldOwnerJoin model.WorkspaceMember
+	require.NoError(t, db.Where("workspace_id = ? AND account_id = ?", workspaceID, oldOwnerID).First(&oldOwnerJoin).Error)
+	require.Equal(t, model.WorkspaceRoleAdmin, oldOwnerJoin.Role)
+	require.Equal(t, model.WorkspaceMemberPermissionSourceRoleTemplate, oldOwnerJoin.PermissionSource)
+
+	var targetOwnerJoin model.WorkspaceMember
+	require.NoError(t, db.Where("workspace_id = ? AND account_id = ?", workspaceID, targetOwnerID).First(&targetOwnerJoin).Error)
+	require.Equal(t, model.WorkspaceRoleOwner, targetOwnerJoin.Role)
+	require.Equal(t, model.WorkspaceMemberPermissionSourceOwner, targetOwnerJoin.PermissionSource)
+
+	var normalMemberJoin model.WorkspaceMember
+	require.NoError(t, db.Where("workspace_id = ? AND account_id = ?", workspaceID, normalMemberID).First(&normalMemberJoin).Error)
+	require.Equal(t, model.WorkspaceRoleNormal, normalMemberJoin.Role)
+}
+
+func TestTransferOwnerByWorkspaceOwnerDemotesSelfToAdmin(t *testing.T) {
+	t.Parallel()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.WorkspaceMember{}))
+
+	workspaceID := "ws-1"
+	oldOwnerID := "owner-1"
+	newOwnerID := "member-1"
+	require.NoError(t, db.Create(&model.WorkspaceMember{
+		ID:          "join-owner",
+		WorkspaceID: workspaceID,
+		AccountID:   oldOwnerID,
+		Role:        model.WorkspaceRoleOwner,
+	}).Error)
+	require.NoError(t, db.Create(&model.WorkspaceMember{
+		ID:          "join-member",
+		WorkspaceID: workspaceID,
+		AccountID:   newOwnerID,
+		Role:        model.WorkspaceRoleNormal,
+	}).Error)
+
+	svc := &WorkspaceManagementServiceImpl{
+		db:                  db,
+		workspaceMemberRepo: repository.NewWorkspaceMemberRepository(db),
+	}
+
+	err = svc.TransferOwner(context.Background(), workspaceID, oldOwnerID, newOwnerID)
+
+	require.NoError(t, err)
+	var oldOwnerJoin model.WorkspaceMember
+	require.NoError(t, db.Where("workspace_id = ? AND account_id = ?", workspaceID, oldOwnerID).First(&oldOwnerJoin).Error)
+	require.Equal(t, model.WorkspaceRoleAdmin, oldOwnerJoin.Role)
+
+	var newOwnerJoin model.WorkspaceMember
+	require.NoError(t, db.Where("workspace_id = ? AND account_id = ?", workspaceID, newOwnerID).First(&newOwnerJoin).Error)
+	require.Equal(t, model.WorkspaceRoleOwner, newOwnerJoin.Role)
+}
+
+type workspaceMemberDirectPermissionRepo struct {
+	repository.WorkspaceMemberRepository
+	join    *model.WorkspaceMember
+	joins   map[string]*model.WorkspaceMember
+	updated *model.WorkspaceMember
+}
+
+func (r *workspaceMemberDirectPermissionRepo) GetByWorkspaceAndMember(ctx context.Context, workspaceID, memberID string) (*model.WorkspaceMember, error) {
+	if r.joins != nil {
+		if join := r.joins[workspaceID+"/"+memberID]; join != nil {
+			return join, nil
+		}
+		return nil, nil
+	}
+	if r.join == nil || r.join.WorkspaceID != workspaceID || r.join.AccountID != memberID {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return r.join, nil
+}
+
+func (r *workspaceMemberDirectPermissionRepo) GetJoinsByMemberID(ctx context.Context, memberID string) ([]*model.WorkspaceMember, error) {
+	joins := make([]*model.WorkspaceMember, 0)
+	for _, join := range r.joins {
+		if join != nil && join.AccountID == memberID {
+			joins = append(joins, join)
+		}
+	}
+	if r.join != nil && r.join.AccountID == memberID {
+		joins = append(joins, r.join)
+	}
+	return joins, nil
+}
+
+func (r *workspaceMemberDirectPermissionRepo) Update(ctx context.Context, join *model.WorkspaceMember) error {
+	if join == nil {
+		return errors.New("join is nil")
+	}
+	clone := *join
+	clone.Permissions = append([]string(nil), join.Permissions...)
+	r.updated = &clone
+	return nil
+}
+
+type workspaceManagementWorkspaceRepo struct {
+	repository.WorkspaceRepository
+	workspace      *model.Workspace
+	organizationID string
+}
+
+func (r *workspaceManagementWorkspaceRepo) GetByID(context.Context, string) (*model.Workspace, error) {
+	if r.workspace == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return r.workspace, nil
+}
+
+func (r *workspaceManagementWorkspaceRepo) GetWorkspaceOrganizationID(context.Context, string) (string, error) {
+	if r.organizationID != "" {
+		return r.organizationID, nil
+	}
+	if r.workspace == nil || r.workspace.OrganizationID == nil {
+		return "", nil
+	}
+	return *r.workspace.OrganizationID, nil
+}
+
+func stringPtr(value string) *string {
+	return &value
+}
+
+func newWorkspaceManagementMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
+	t.Helper()
+
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+
+	db, err := gorm.Open(postgres.New(postgres.Config{
+		Conn:                 sqlDB,
+		PreferSimpleProtocol: true,
+	}), &gorm.Config{})
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_ = sqlDB.Close()
+	})
+	return db, mock
+}
+
+type workspaceManagementTestOrganizationService struct {
+	interfaces.OrganizationService
+	organization  *model.Organization
+	adminAccounts map[string]bool
+}
+
+func (s workspaceManagementTestOrganizationService) GetOrganizationByWorkspaceID(context.Context, string) (*model.Organization, error) {
+	return s.organization, nil
+}
+
+func (s workspaceManagementTestOrganizationService) IsOrganizationAdminOrOwner(_ context.Context, _ string, accountID string) (bool, error) {
+	return s.adminAccounts[accountID], nil
 }

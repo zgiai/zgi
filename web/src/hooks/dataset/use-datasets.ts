@@ -207,9 +207,9 @@ export function useCreateDataset(targetFolderId?: string) {
         queryKey: [DATASET_FOLDERS_QUERY_KEY, 'folder-datasets-infinite', targetFolderId || 'root'],
       });
 
-      // Redirect to the new dataset's documents page
+      // Let the detail root choose the first child page this account can open.
       if (response?.data?.id) {
-        router.push(`/console/dataset/${response.data.id}/documents`);
+        router.push(`/console/dataset/${response.data.id}`);
       }
     },
     onError: (error: unknown) => {

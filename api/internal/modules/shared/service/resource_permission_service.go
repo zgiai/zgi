@@ -2,21 +2,23 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
-	"github.com/zgiai/zgi/api/internal/modules/shared/repository"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
 // resourcePermissionServiceImpl implements ResourcePermissionService
 type resourcePermissionServiceImpl struct {
-	permissionRepo repository.PermissionRepository
+	authorizationService interfaces.AuthorizationService
 }
 
 // NewResourcePermissionService creates a new resource permission service instance
-func NewResourcePermissionService(permissionRepo repository.PermissionRepository) interfaces.ResourcePermissionService {
+func NewResourcePermissionService(authorizationService interfaces.AuthorizationService) interfaces.ResourcePermissionService {
 	return &resourcePermissionServiceImpl{
-		permissionRepo: permissionRepo,
+		authorizationService: authorizationService,
 	}
 }
 
@@ -27,30 +29,7 @@ func (s *resourcePermissionServiceImpl) CheckSingleResourceEditPermission(ctx co
 		return true, nil
 	}
 
-	// Step 2: Check organization-level permission (if organization compatibility scope exists)
-	if params.GroupID != nil && *params.GroupID != "" {
-		orgRole, err := s.permissionRepo.GetUserOrganizationRole(ctx, params.AccountID, *params.GroupID)
-		if err != nil {
-			return false, fmt.Errorf("failed to check organization role: %w", err)
-		}
-
-		if isAdminRole(orgRole) {
-			return true, nil
-		}
-	}
-
-	// Step 3: Check workspace-level permission using the compatibility alias
-	workspaceRoles, err := s.permissionRepo.GetUserRolesForTenants(ctx, params.AccountID, []string{params.TenantID})
-	if err != nil {
-		return false, fmt.Errorf("failed to check workspace role: %w", err)
-	}
-
-	workspaceRole, exists := workspaceRoles[params.TenantID]
-	if exists && isAdminRole(workspaceRole) {
-		return true, nil
-	}
-
-	return false, nil
+	return s.checkWorkspacePermissions(ctx, params.AccountID, params.OrganizationID, params.TenantID, params.GroupID, params.PermissionCodes)
 }
 
 // CheckBatchResourceEditPermission checks edit permissions for multiple resources
@@ -72,71 +51,70 @@ func (s *resourcePermissionServiceImpl) CheckBatchResourceEditPermission(ctx con
 		return result, nil
 	}
 
-	// Collect unique workspace IDs and organization IDs
-	uniqueWorkspaceIDs := make(map[string]bool)
-	uniqueOrganizationIDs := make(map[string]bool)
 	for _, resource := range remainingResources {
-		workspaceID := resource.WorkspaceID
-		uniqueWorkspaceIDs[workspaceID] = true
-		if resource.GroupID != nil && *resource.GroupID != "" {
-			uniqueOrganizationIDs[*resource.GroupID] = true
-		}
-	}
-
-	// Convert maps to slices
-	workspaceIDList := make([]string, 0, len(uniqueWorkspaceIDs))
-	for workspaceID := range uniqueWorkspaceIDs {
-		workspaceIDList = append(workspaceIDList, workspaceID)
-	}
-
-	organizationIDList := make([]string, 0, len(uniqueOrganizationIDs))
-	for organizationID := range uniqueOrganizationIDs {
-		organizationIDList = append(organizationIDList, organizationID)
-	}
-
-	// Batch query: Fetch user roles for all unique workspace IDs
-	workspaceRoles, err := s.permissionRepo.GetUserRolesForTenants(ctx, params.AccountID, workspaceIDList)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch workspace roles: %w", err)
-	}
-
-	// Batch query: Fetch user roles for all unique organization IDs
-	var orgRoles map[string]string
-	if len(organizationIDList) > 0 {
-		orgRoles, err = s.permissionRepo.GetUserOrganizationRoles(ctx, params.AccountID, organizationIDList)
+		canEdit, err := s.checkWorkspacePermissions(
+			ctx,
+			params.AccountID,
+			resource.OrganizationID,
+			resource.WorkspaceID,
+			resource.GroupID,
+			resource.PermissionCodes,
+		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch organization roles: %w", err)
+			return nil, err
 		}
-	} else {
-		orgRoles = make(map[string]string)
-	}
-
-	// Check permissions for remaining resources using cached roles
-	for _, resource := range remainingResources {
-		canEdit := false
-
-		// Check organization-level permission first
-		if resource.GroupID != nil && *resource.GroupID != "" {
-			if orgRole, exists := orgRoles[*resource.GroupID]; exists && isAdminRole(orgRole) {
-				canEdit = true
-			}
-		}
-
-		// If not org admin, check workspace-level permission
-		if !canEdit {
-			workspaceID := resource.WorkspaceID
-			if workspaceRole, exists := workspaceRoles[workspaceID]; exists && isAdminRole(workspaceRole) {
-				canEdit = true
-			}
-		}
-
 		result[resource.ResourceID] = canEdit
 	}
 
 	return result, nil
 }
 
-// isAdminRole checks if a role is an admin role (owner or admin)
-func isAdminRole(role string) bool {
-	return role == "owner" || role == "admin"
+func (s *resourcePermissionServiceImpl) checkWorkspacePermissions(
+	ctx context.Context,
+	accountID string,
+	organizationID string,
+	workspaceID string,
+	groupID *string,
+	permissionCodes []workspace_model.WorkspacePermissionCode,
+) (bool, error) {
+	organizationID = resourceOrganizationID(ctx, organizationID, groupID)
+	workspaceID = strings.TrimSpace(workspaceID)
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" || organizationID == "" || workspaceID == "" || len(permissionCodes) == 0 {
+		return false, nil
+	}
+	if s.authorizationService == nil {
+		return false, fmt.Errorf("authorization service is not initialized")
+	}
+
+	_, err := s.authorizationService.RequireWorkspacePermission(ctx, interfaces.WorkspaceScopeRequest{
+		OrganizationID:  organizationID,
+		WorkspaceID:     workspaceID,
+		AccountID:       accountID,
+		PermissionCodes: permissionCodes,
+	})
+	if errors.Is(err, ErrAuthorizationDenied) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to check workspace permission: %w", err)
+	}
+	return true, nil
+}
+
+func resourceOrganizationID(ctx context.Context, organizationID string, groupID *string) string {
+	if id := strings.TrimSpace(organizationID); id != "" {
+		return id
+	}
+	if groupID != nil {
+		if id := strings.TrimSpace(*groupID); id != "" {
+			return id
+		}
+	}
+	if v := ctx.Value("tenant_id"); v != nil {
+		if id, ok := v.(string); ok {
+			return strings.TrimSpace(id)
+		}
+	}
+	return ""
 }

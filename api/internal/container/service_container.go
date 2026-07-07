@@ -49,8 +49,7 @@ import (
 	workspace_repo "github.com/zgiai/zgi/api/internal/modules/workspace/repository"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
 
-	// Shared repositories and services
-	shared_repo "github.com/zgiai/zgi/api/internal/modules/shared/repository"
+	// Shared services
 	shared_service "github.com/zgiai/zgi/api/internal/modules/shared/service"
 
 	// Quota management
@@ -182,7 +181,7 @@ type ServiceContainer struct {
 	departmentService workspace_service.DepartmentService
 
 	// Permission services
-	permissionRepo            shared_repo.PermissionRepository
+	authorizationService      interfaces.AuthorizationService
 	resourcePermissionService interfaces.ResourcePermissionService
 
 	// Task management
@@ -649,6 +648,7 @@ func (c *ServiceContainer) GetDataSourceService() service.DataSourceService {
 			c.GetAccountService(),
 			c.GetFileService(),
 			c.GetOrganizationService(),
+			c.GetAuthorizationService(),
 			c.GetResourcePermissionService(),
 			c.GetQuotaService(),
 			c.GetLLMClient(),
@@ -753,18 +753,16 @@ func (c *ServiceContainer) GetLLMAPIKeyRepository() apikeyrepo.APIKeyRepository 
 	return c.llmAPIKeyRepo
 }
 
-// Permission Repository and Service Getters
-
-func (c *ServiceContainer) GetPermissionRepository() shared_repo.PermissionRepository {
-	if c.permissionRepo == nil {
-		c.permissionRepo = shared_repo.NewPermissionRepository(c.db)
+func (c *ServiceContainer) GetAuthorizationService() interfaces.AuthorizationService {
+	if c.authorizationService == nil {
+		c.authorizationService = shared_service.NewAuthorizationService(c.GetOrganizationService())
 	}
-	return c.permissionRepo
+	return c.authorizationService
 }
 
 func (c *ServiceContainer) GetResourcePermissionService() interfaces.ResourcePermissionService {
 	if c.resourcePermissionService == nil {
-		c.resourcePermissionService = shared_service.NewResourcePermissionService(c.GetPermissionRepository())
+		c.resourcePermissionService = shared_service.NewResourcePermissionService(c.GetAuthorizationService())
 	}
 	return c.resourcePermissionService
 }

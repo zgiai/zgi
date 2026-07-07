@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, AppWindow, SearchX } from 'lucide-react';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
+import { PermissionDeniedState } from '@/components/common/permission-gate-state';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,33 +13,24 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useRunnableWebApps } from '@/hooks/agent/use-runnable-webapps';
 import { useT } from '@/i18n/translations';
 import { ICON_BG } from '@/lib/config';
-import { useCurrentWorkspace } from '@/store/workspace-store';
 
 const RECENT_WEBAPP_STORAGE_KEY = 'zgi:webapp:recent';
 
 export default function ConsoleWorkAppHomePage() {
   const t = useT('webapp');
-  const currentWorkspace = useCurrentWorkspace();
-  const workspaceId = currentWorkspace?.id ?? null;
-  const recentStorageKey = workspaceId
-    ? `${RECENT_WEBAPP_STORAGE_KEY}:${workspaceId}`
-    : RECENT_WEBAPP_STORAGE_KEY;
-  const { items, isLoading } = useRunnableWebApps({
-    workspaceId,
-    enabled: !!workspaceId,
-  });
+  const { items, isLoading, canUseResourceList } = useRunnableWebApps({ workspaceId: null });
   const [search, setSearch] = useState('');
   const [recentIds, setRecentIds] = useState<string[]>([]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      const raw = window.localStorage.getItem(recentStorageKey);
+      const raw = window.localStorage.getItem(RECENT_WEBAPP_STORAGE_KEY);
       setRecentIds(raw ? (JSON.parse(raw) as string[]) : []);
     } catch {
       setRecentIds([]);
     }
-  }, [recentStorageKey]);
+  }, []);
 
   const cards = useMemo(
     () =>
@@ -95,6 +87,10 @@ export default function ConsoleWorkAppHomePage() {
       ? 'recent'
       : 'quick-start'
     : null;
+
+  if (!isLoading && !canUseResourceList) {
+    return <PermissionDeniedState />;
+  }
 
   return (
     <div className="h-full w-full overflow-auto bg-background">

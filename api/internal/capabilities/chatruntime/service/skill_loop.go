@@ -4149,7 +4149,7 @@ func consoleAgentPayloadFromInvocationResult(result map[string]interface{}) map[
 		payload["agent_id"] = id
 		payload["id"] = id
 		if _, ok := payload["href"]; !ok {
-			payload["href"] = "/console/agents/" + id + "/agent"
+			payload["href"] = consoleAgentDetailHref(id)
 		}
 	}
 	if name := strings.TrimSpace(firstNonEmptyString(payload["name"], payload["agent_name"], result["agent_name"])); name != "" {
@@ -7569,7 +7569,7 @@ func agentManagementExplicitDetailNavigationTarget(parts *chatRequestParts) (con
 	if len(matches) == 1 {
 		href := normalizeAgentDetailHref(matches[0].Href)
 		if href == "" && strings.TrimSpace(matches[0].ID) != "" {
-			href = "/console/agents/" + strings.TrimSpace(matches[0].ID) + "/agent"
+			href = consoleAgentDetailHref(matches[0].ID)
 		}
 		if href != "" {
 			return consoleNavigationRouteHint{Href: href, Label: firstNonEmptyString(matches[0].Title, "Agent detail")}, true
@@ -7614,8 +7614,7 @@ func visibleAgentsForAgentManagementTargetResolution(parts *chatRequestParts) []
 }
 
 func isConsoleAgentDetailRoute(value string) bool {
-	route := normalizeConsoleNavigationGuardHref(value)
-	return strings.HasPrefix(route, "/console/agents/") && strings.HasSuffix(route, "/agent")
+	return normalizeAgentDetailHref(value) != ""
 }
 
 func contextualContinuationStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
@@ -7953,6 +7952,7 @@ func contextualConsoleNavigationSkillMessageForResolved(prepared *PreparedChat, 
 	routes := make([]map[string]string, 0, len(consoleNavigationRouteHints))
 	seen := map[string]struct{}{}
 	for _, route := range consoleNavigationRouteHints {
+		route = normalizeConsoleNavigationRouteHint(route)
 		key := route.Href + "\x00" + route.Label
 		if _, ok := seen[key]; ok {
 			continue
@@ -10259,23 +10259,46 @@ func createdAgentDetailHrefFromCalls(calls []skillloop.SkillToolCallRef) string 
 				stringFromAny(agent["agent_id"]),
 				stringFromAny(agent["id"]),
 			)); agentID != "" {
-				return "/console/agents/" + agentID + "/agent"
+				return consoleAgentDetailHref(agentID)
 			}
 		}
 		if agentID := strings.TrimSpace(firstNonEmptyString(
 			stringFromAny(call.Result["agent_id"]),
 			stringFromAny(call.Result["id"]),
 		)); agentID != "" {
-			return "/console/agents/" + agentID + "/agent"
+			return consoleAgentDetailHref(agentID)
 		}
 	}
 	return ""
 }
 
-func normalizeAgentDetailHref(href string) string {
+func consoleAgentDetailHref(agentID string) string {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return ""
+	}
+	return "/console/agents/" + agentID
+}
+
+func consoleAgentIDFromDetailHref(href string) string {
 	href = normalizeConsoleNavigationGuardHref(href)
-	if strings.HasPrefix(href, "/console/agents/") && strings.HasSuffix(href, "/agent") {
-		return href
+	if !strings.HasPrefix(href, "/console/agents/") {
+		return ""
+	}
+	rest := strings.TrimPrefix(href, "/console/agents/")
+	rest = strings.Trim(rest, "/")
+	if rest == "" {
+		return ""
+	}
+	if idx := strings.Index(rest, "/"); idx >= 0 {
+		rest = rest[:idx]
+	}
+	return strings.TrimSpace(rest)
+}
+
+func normalizeAgentDetailHref(href string) string {
+	if agentID := consoleAgentIDFromDetailHref(href); agentID != "" {
+		return consoleAgentDetailHref(agentID)
 	}
 	return ""
 }
@@ -10421,6 +10444,10 @@ func consoleNavigationRouteAlreadyAvailable(parts *chatRequestParts, href string
 		if isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
 			return true
 		}
+	case "/console/workflows":
+		if runtimeHref := consoleRouteFromRuntimeContext(parts.RuntimeContext); consoleNavigationLoadedHrefMatchesTarget(runtimeHref, href) {
+			return true
+		}
 	}
 	for _, source := range []map[string]interface{}{parts.RawOperationContext, parts.OperationContext} {
 		if consoleNavigationContextContainsRoute(source, href) {
@@ -10523,6 +10550,22 @@ func resolveConsoleNavigationTargetForParts(parts *chatRequestParts) (consoleNav
 		}
 	}
 	return targets[len(targets)-1], true
+}
+
+func normalizeConsoleNavigationRouteHint(route consoleNavigationRouteHint) consoleNavigationRouteHint {
+	if route.Href != "/console/agents" {
+		return route
+	}
+	for _, keyword := range route.Keywords {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(keyword)), "workflow") {
+			route.Href = "/console/workflows"
+			if strings.TrimSpace(route.Label) == "" {
+				route.Label = "Workflows"
+			}
+			return route
+		}
+	}
+	return route
 }
 
 func remainingConsoleNavigationRouteSequence(parts *chatRequestParts, nextTarget consoleNavigationRouteHint) []AIChatTurnStrategyRouteStep {
@@ -11898,6 +11941,11 @@ func consoleNavigationLoadedHrefMatchesTarget(loadedHref string, targetHref stri
 	if loadedHref == "" || targetHref == "" {
 		return false
 	}
+	if loadedAgentHref := normalizeAgentDetailHref(loadedHref); loadedAgentHref != "" {
+		if targetAgentHref := normalizeAgentDetailHref(targetHref); targetAgentHref != "" {
+			return loadedAgentHref == targetAgentHref
+		}
+	}
 	if loadedHref == targetHref {
 		return true
 	}
@@ -11905,7 +11953,7 @@ func consoleNavigationLoadedHrefMatchesTarget(loadedHref string, targetHref stri
 		return false
 	}
 	switch targetHref {
-	case "/console/agents":
+	case "/console/agents", "/console/workflows":
 		return strings.HasPrefix(loadedHref, targetHref+"/")
 	default:
 		return false
@@ -11958,6 +12006,7 @@ func consoleNavigationResolvedTargets(query string) []consoleNavigationRouteHint
 	resolved := make([]resolvedConsoleNavigationTarget, 0, 4)
 	seen := map[string]struct{}{}
 	for _, route := range consoleNavigationRouteHints {
+		route = normalizeConsoleNavigationRouteHint(route)
 		href := strings.ToLower(route.Href)
 		for _, position := range consoleRouteHrefIndexes(normalized, href) {
 			key := route.Href + "\x00" + strconv.Itoa(position)

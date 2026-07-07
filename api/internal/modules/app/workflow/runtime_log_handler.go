@@ -1,24 +1,54 @@
 package workflow
 
 import (
+	"context"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/zgiai/zgi/api/internal/modules/app/agents"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
+
+type runtimeLogAgentResolver interface {
+	GetByID(ctx context.Context, id string) (*agents.Agent, error)
+}
+
+type runtimeLogWorkspacePermissionChecker interface {
+	CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspace_model.WorkspacePermissionCode) (bool, error)
+}
+
+type RuntimeLogHandlerOption func(*RuntimeLogHandler)
 
 // RuntimeLogHandler handles runtime log query operations
 type RuntimeLogHandler struct {
 	workflowRunLogRepo         WorkflowRunLogRepository
 	workflowNodeRuntimeLogRepo WorkflowNodeRuntimeLogRepository
+	agentsRepo                 runtimeLogAgentResolver
+	enterpriseService          runtimeLogWorkspacePermissionChecker
 }
 
 // NewRuntimeLogHandler creates a new RuntimeLogHandler
-func NewRuntimeLogHandler(workflowRunLogRepo WorkflowRunLogRepository, workflowNodeRuntimeLogRepo WorkflowNodeRuntimeLogRepository) *RuntimeLogHandler {
-	return &RuntimeLogHandler{
+func NewRuntimeLogHandler(workflowRunLogRepo WorkflowRunLogRepository, workflowNodeRuntimeLogRepo WorkflowNodeRuntimeLogRepository, opts ...RuntimeLogHandlerOption) *RuntimeLogHandler {
+	handler := &RuntimeLogHandler{
 		workflowRunLogRepo:         workflowRunLogRepo,
 		workflowNodeRuntimeLogRepo: workflowNodeRuntimeLogRepo,
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(handler)
+		}
+	}
+	return handler
+}
+
+func WithRuntimeLogAuthorization(agentsRepo runtimeLogAgentResolver, enterpriseService runtimeLogWorkspacePermissionChecker) RuntimeLogHandlerOption {
+	return func(handler *RuntimeLogHandler) {
+		handler.agentsRepo = agentsRepo
+		handler.enterpriseService = enterpriseService
 	}
 }
 
@@ -43,8 +73,13 @@ type RuntimeLogsRequest struct {
 // @Failure 500 {object} response.ErrorResponse
 // @Router /agents/{agent_id}/runtime-logs [post]
 func (h *RuntimeLogHandler) GetRuntimeLogs(c *gin.Context) {
-	agentID := c.Param("agent_id")
-	accountID := c.GetString("account_id")
+	agentID := strings.TrimSpace(c.Param("agent_id"))
+	accountID := strings.TrimSpace(c.GetString("account_id"))
+
+	filter, ok := h.runtimeLogListAccessFilter(c, agentID, accountID)
+	if !ok {
+		return
+	}
 
 	// Parse request body
 	var req RuntimeLogsRequest
@@ -106,14 +141,10 @@ func (h *RuntimeLogHandler) GetRuntimeLogs(c *gin.Context) {
 		}
 	}
 
-	// Build filter
-	filter := WorkflowRunLogFilter{
-		AgentID:       agentID,
-		TriggeredFrom: triggeredFrom,
-		StartDate:     startDate,
-		EndDate:       endDate,
-		ExcludeDebug:  true, // Exclude debugging logs
-	}
+	filter.TriggeredFrom = triggeredFrom
+	filter.StartDate = startDate
+	filter.EndDate = endDate
+	filter.ExcludeDebug = true // Exclude debugging logs
 
 	// Get runtime logs
 	logs, total, err := h.workflowRunLogRepo.GetRuntimeLogs(c.Request.Context(), filter, page, limit)
@@ -170,6 +201,52 @@ func (h *RuntimeLogHandler) GetRuntimeLogs(c *gin.Context) {
 	})
 }
 
+func (h *RuntimeLogHandler) runtimeLogListAccessFilter(c *gin.Context, agentID, accountID string) (WorkflowRunLogFilter, bool) {
+	filter := WorkflowRunLogFilter{AgentID: agentID}
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return filter, false
+	}
+	if agentID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return filter, false
+	}
+
+	if h.agentsRepo == nil || h.enterpriseService == nil {
+		return filter, true
+	}
+
+	agent, err := h.agentsRepo.GetByID(c.Request.Context(), agentID)
+	if err != nil || agent == nil {
+		response.Fail(c, response.ErrAppNotFound)
+		return filter, false
+	}
+
+	workspaceID := agent.TenantID.String()
+	if isSystemWorkflowTenantID(workspaceID) {
+		filter.CreatedBy = accountID
+		return filter, true
+	}
+
+	hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
+		c.Request.Context(),
+		util.GetOrganizationID(c),
+		workspaceID,
+		accountID,
+		workspace_model.WorkspacePermissionWorkflowLogsView,
+	)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return filter, false
+	}
+	if !hasPermission {
+		response.Fail(c, response.ErrPermissionDenied)
+		return filter, false
+	}
+
+	return filter, true
+}
+
 // GetWorkflowRunNodeLogs handles POST /agents/:agent_id/workflow-runs/:run_id/nodes
 // @Summary Get workflow run node logs
 // @Description Get node execution logs for a specific workflow run
@@ -189,6 +266,10 @@ func (h *RuntimeLogHandler) GetWorkflowRunNodeLogs(c *gin.Context) {
 	accountID := c.GetString("account_id")
 
 	logger.Info("Getting workflow run node logs", "agentID", agentID, "runID", runID, "accountID", accountID)
+
+	if !h.requireWorkflowRunAccess(c, agentID, runID) {
+		return
+	}
 
 	// Get node logs for this workflow run
 	nodeLogs, err := h.workflowNodeRuntimeLogRepo.GetByWorkflowRunID(c.Request.Context(), runID)
@@ -249,4 +330,78 @@ func (h *RuntimeLogHandler) GetWorkflowRunNodeLogs(c *gin.Context) {
 		"data":  items,
 		"total": len(items),
 	})
+}
+
+func (h *RuntimeLogHandler) requireWorkflowRunAccess(c *gin.Context, agentID, runID string) bool {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return false
+	}
+	if agentID == "" || runID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return false
+	}
+
+	if h.agentsRepo == nil || h.enterpriseService == nil {
+		if h.workflowRunLogRepo != nil {
+			run, err := h.workflowRunLogRepo.GetByID(c.Request.Context(), runID)
+			if err != nil || run == nil || run.AgentID != agentID {
+				response.Fail(c, response.ErrNotFound)
+				return false
+			}
+		}
+		return true
+	}
+
+	agent, err := h.agentsRepo.GetByID(c.Request.Context(), agentID)
+	if err != nil || agent == nil {
+		response.Fail(c, response.ErrAppNotFound)
+		return false
+	}
+
+	workspaceID := agent.TenantID.String()
+	if isSystemWorkflowTenantID(workspaceID) {
+		return h.requireOwnSystemWorkflowRun(c, agentID, runID, accountID)
+	}
+
+	hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
+		c.Request.Context(),
+		util.GetOrganizationID(c),
+		workspaceID,
+		accountID,
+		workspace_model.WorkspacePermissionWorkflowLogsView,
+	)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+	if !hasPermission {
+		response.Fail(c, response.ErrPermissionDenied)
+		return false
+	}
+	if h.workflowRunLogRepo != nil {
+		run, err := h.workflowRunLogRepo.GetByID(c.Request.Context(), runID)
+		if err != nil || run == nil || run.AgentID != agentID {
+			response.Fail(c, response.ErrNotFound)
+			return false
+		}
+	}
+	return true
+}
+
+func (h *RuntimeLogHandler) requireOwnSystemWorkflowRun(c *gin.Context, agentID, runID, accountID string) bool {
+	if h.workflowRunLogRepo == nil {
+		return true
+	}
+	run, err := h.workflowRunLogRepo.GetByID(c.Request.Context(), runID)
+	if err != nil || run == nil || run.AgentID != agentID {
+		response.Fail(c, response.ErrNotFound)
+		return false
+	}
+	if run.CreatedBy != accountID {
+		response.Fail(c, response.ErrPermissionDenied)
+		return false
+	}
+	return true
 }

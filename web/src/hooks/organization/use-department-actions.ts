@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
-import { ORGANIZATION_KEYS } from '@/hooks/query-keys';
+import { invalidateOrganizationMemberGraph } from '@/hooks/organization/invalidate-organization-member-graph';
 import type {
   CreateDepartmentRequest,
   UpdateDepartmentRequest,
@@ -30,10 +30,7 @@ export function useCreateDepartment() {
     },
     onSuccess: () => {
       toast.success(t('organization.contacts.createDepartment.createSuccess'));
-      // Invalidate departments list to trigger refetch
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.departments(currentOrganization?.id ?? ''),
-      });
+      invalidateOrganizationMemberGraph(queryClient, currentOrganization?.id);
     },
     onError: error => {
       toast.error(
@@ -66,10 +63,7 @@ export function useUpdateDepartment() {
     },
     onSuccess: () => {
       toast.success(t('organization.contacts.editDepartment.updateSuccess'));
-      // Invalidate departments list to trigger refetch
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.departments(currentOrganization?.id ?? ''),
-      });
+      invalidateOrganizationMemberGraph(queryClient, currentOrganization?.id);
     },
     onError: error => {
       toast.error(getErrorMessage(error) || t('organization.contacts.editDepartment.updateError'));
@@ -100,10 +94,7 @@ export function useDeleteDepartment() {
     },
     onSuccess: () => {
       toast.success(t('organization.contacts.deleteDepartment.deleteSuccess'));
-      // Invalidate departments list to trigger refetch
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.departments(currentOrganization?.id ?? ''),
-      });
+      invalidateOrganizationMemberGraph(queryClient, currentOrganization?.id);
     },
     onError: error => {
       toast.error(

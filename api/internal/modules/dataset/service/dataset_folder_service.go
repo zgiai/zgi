@@ -3,11 +3,13 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/model"
 	"github.com/zgiai/zgi/api/internal/modules/dataset/repository"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
 
 // DatasetFolderService defines the interface for dataset folder operations
@@ -80,20 +82,23 @@ type DatasetFolderService interface {
 }
 
 type DatasetFolderServiceImpl struct {
-	folderRepo     repository.DatasetFolderRepository
-	accountService interfaces.AccountService
-	tenantService  interfaces.WorkspaceManagementService
+	folderRepo          repository.DatasetFolderRepository
+	accountService      interfaces.AccountService
+	tenantService       interfaces.WorkspaceManagementService
+	organizationService interfaces.OrganizationService
 }
 
 func NewDatasetFolderService(
 	folderRepo repository.DatasetFolderRepository,
 	accountService interfaces.AccountService,
 	tenantService interfaces.WorkspaceManagementService,
+	organizationService interfaces.OrganizationService,
 ) DatasetFolderService {
 	return &DatasetFolderServiceImpl{
-		folderRepo:     folderRepo,
-		accountService: accountService,
-		tenantService:  tenantService,
+		folderRepo:          folderRepo,
+		accountService:      accountService,
+		tenantService:       tenantService,
+		organizationService: organizationService,
 	}
 }
 
@@ -211,20 +216,43 @@ func (s *DatasetFolderServiceImpl) DeleteFolder(ctx context.Context, folderID st
 
 // CheckFolderPermission
 func (s *DatasetFolderServiceImpl) CheckFolderPermission(ctx context.Context, folderID, accountID, tenantID string) (bool, error) {
-	hasPermission, err := s.folderRepo.CheckFolderPermission(ctx, folderID, accountID, tenantID)
+	folder, err := s.folderRepo.GetFolderByID(ctx, folderID)
 	if err != nil {
 		return false, fmt.Errorf("failed to check folder permission: %w", err)
 	}
-	return hasPermission, nil
+	return s.checkFolderWorkspacePermission(
+		ctx,
+		folder,
+		accountID,
+		knowledgeBaseFolderReadPermissionCodes()...,
+	)
 }
 
 // CheckFolderEditorPermission
 func (s *DatasetFolderServiceImpl) CheckFolderEditorPermission(ctx context.Context, folderID, accountID, tenantID string) (bool, error) {
-	hasPermission, err := s.folderRepo.CheckFolderEditorPermission(ctx, folderID, accountID, tenantID)
+	folder, err := s.folderRepo.GetFolderByID(ctx, folderID)
 	if err != nil {
 		return false, fmt.Errorf("failed to check folder editor permission: %w", err)
 	}
-	return hasPermission, nil
+	return s.checkFolderWorkspacePermission(
+		ctx,
+		folder,
+		accountID,
+		workspace_model.WorkspacePermissionKnowledgeBaseFolderManage,
+	)
+}
+
+func (s *DatasetFolderServiceImpl) checkFolderWorkspacePermission(ctx context.Context, folder *model.DatasetFolder, accountID string, permissions ...workspace_model.WorkspacePermissionCode) (bool, error) {
+	if folder == nil || strings.TrimSpace(folder.WorkspaceID) == "" || strings.TrimSpace(accountID) == "" || s.organizationService == nil {
+		return false, nil
+	}
+	return s.organizationService.CheckWorkspaceOrganizationAnyPermission(
+		ctx,
+		strings.TrimSpace(folder.OrganizationID),
+		strings.TrimSpace(folder.WorkspaceID),
+		strings.TrimSpace(accountID),
+		permissions...,
+	)
 }
 
 // AddDatasetToFolder

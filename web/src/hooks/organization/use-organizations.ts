@@ -10,7 +10,7 @@ import { useOrganizationStore } from '@/store/organization-store';
 import { useAuthStore } from '@/store/auth-store';
 import { useWorkspaceStore } from '@/store/workspace-store';
 import { useT } from '@/i18n';
-import { ORGANIZATION_KEYS, WORKSPACE_KEYS } from '../query-keys';
+import { ORGANIZATION_KEYS, PROFILE_KEYS, WORKSPACE_KEYS } from '../query-keys';
 import { sessionManager } from '@/lib/auth/session-manager';
 import { clearProfileClientCache } from '@/utils/client-cache';
 
@@ -153,7 +153,11 @@ export function useOrganizations(autoLoad: boolean = true): UseOrganizationsResu
         resetWorkspaceForOrganizationSwitch();
         setCurrentOrganization(null);
         queryClient.removeQueries({ queryKey: WORKSPACE_KEYS.all });
-        await accountService.updateContext({ current_organization_id: organization.id });
+        queryClient.removeQueries({ queryKey: PROFILE_KEYS.capabilities() });
+        await accountService.updateContext({
+          mode: 'organization',
+          current_organization_id: organization.id,
+        });
       } catch {
         setCurrentOrganization(previousOrganization);
         restorePreviousWorkspaceContext();

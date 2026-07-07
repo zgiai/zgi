@@ -41,6 +41,7 @@ export interface FileChunkLocateTarget {
 interface FileChunksPanelProps {
   fileId: string;
   enabled: boolean;
+  canUpdateFile: boolean;
   queryVersion?: number | string | null;
   className?: string;
   originalPreviewHidden?: boolean;
@@ -85,6 +86,7 @@ function ChunkSkeleton() {
 export function FileChunksPanel({
   fileId,
   enabled,
+  canUpdateFile,
   queryVersion,
   className,
   originalPreviewHidden = false,
@@ -141,10 +143,19 @@ export function FileChunksPanel({
   const selectedCount = selectedVisibleIds.length;
   const allVisibleSelected = visibleChunks.length > 0 && selectedCount === visibleChunks.length;
   const someVisibleSelected = selectedCount > 0 && !allVisibleSelected;
+  const batchSelectionEnabled = ENABLE_CHUNK_BATCH_SELECTION && canUpdateFile;
 
   useEffect(() => {
     setSelectedChunkIds(current => current.filter(id => visibleChunkIds.includes(id)));
   }, [visibleChunkIds]);
+
+  useEffect(() => {
+    if (!canUpdateFile) {
+      setSelectedChunkIds([]);
+      setEditingPrimaryChunkId(null);
+      setPrimaryDraft('');
+    }
+  }, [canUpdateFile]);
 
   useEffect(() => {
     if (!SHOW_CHUNK_QUALITY_ISSUES && filter === 'issues') {
@@ -188,6 +199,7 @@ export function FileChunksPanel({
   };
 
   const startEditPrimary = (chunk: FileDocumentChunk) => {
+    if (!canUpdateFile) return;
     setEditingPrimaryChunkId(chunk.id);
     setPrimaryDraft(chunk.content);
   };
@@ -198,6 +210,7 @@ export function FileChunksPanel({
   };
 
   const savePrimaryChunkContent = async (chunk: FileDocumentChunk) => {
+    if (!canUpdateFile) return;
     await updateChunk.mutateAsync({
       chunkId: chunk.id,
       data: { content: primaryDraft },
@@ -207,11 +220,13 @@ export function FileChunksPanel({
   };
 
   const toggleChunkEnabled = async (chunk: FileDocumentChunk, checked: boolean) => {
+    if (!canUpdateFile) return;
     await updateChunk.mutateAsync({ chunkId: chunk.id, data: { enabled: checked } });
     onChunksChanged?.();
   };
 
   const toggleChunkSelected = (chunkId: string, checked: boolean) => {
+    if (!canUpdateFile) return;
     setSelectedChunkIds(current => {
       if (checked) {
         return current.includes(chunkId) ? current : [...current, chunkId];
@@ -221,10 +236,12 @@ export function FileChunksPanel({
   };
 
   const toggleAllVisibleSelected = (checked: boolean) => {
+    if (!canUpdateFile) return;
     setSelectedChunkIds(checked ? visibleChunkIds : []);
   };
 
   const batchSetSelectedEnabled = async (checked: boolean) => {
+    if (!canUpdateFile) return;
     const chunksToUpdate = selectedChunks.filter(chunk => chunk.enabled !== checked);
     if (chunksToUpdate.length === 0) return;
 
@@ -316,7 +333,7 @@ export function FileChunksPanel({
           </select>
         </div>
 
-        {ENABLE_CHUNK_BATCH_SELECTION ? (
+        {batchSelectionEnabled ? (
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground">
             <label className="flex items-center gap-2">
               <Checkbox
@@ -386,11 +403,12 @@ export function FileChunksPanel({
                   fileId={fileId}
                   queryVersion={queryVersion}
                   expanded={expandedIds[chunk.id] ?? false}
-                  selected={ENABLE_CHUNK_BATCH_SELECTION && selectedVisibleIds.includes(chunk.id)}
+                  selected={batchSelectionEnabled && selectedVisibleIds.includes(chunk.id)}
                   highlighted={highlightedChunkId === chunk.id}
                   editing={editingPrimaryChunkId === chunk.id}
                   draft={editingPrimaryChunkId === chunk.id ? primaryDraft : chunk.content}
-                  disabled={updateChunk.isPending || batchUpdateChunks.isPending}
+                  disabled={!canUpdateFile || updateChunk.isPending || batchUpdateChunks.isPending}
+                  canUpdateFile={canUpdateFile}
                   onEditPrimary={startEditPrimary}
                   onCancelEdit={cancelEditPrimary}
                   onDraftChange={setPrimaryDraft}
@@ -419,6 +437,7 @@ function PrimaryChunkCard({
   editing,
   draft,
   disabled,
+  canUpdateFile,
   onEditPrimary,
   onCancelEdit,
   onDraftChange,
@@ -437,6 +456,7 @@ function PrimaryChunkCard({
   editing: boolean;
   draft: string;
   disabled: boolean;
+  canUpdateFile: boolean;
   onEditPrimary: (chunk: FileDocumentChunk) => void;
   onCancelEdit: () => void;
   onDraftChange: (value: string) => void;
@@ -460,7 +480,7 @@ function PrimaryChunkCard({
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-3">
-            {ENABLE_CHUNK_BATCH_SELECTION ? (
+            {canUpdateFile && ENABLE_CHUNK_BATCH_SELECTION ? (
               <Checkbox
                 checked={selected}
                 onCheckedChange={checked => onSelect(chunk.id, checked === true)}
@@ -484,22 +504,26 @@ function PrimaryChunkCard({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">{t('detail.chunks.enabled')}</span>
-          <Switch
-            checked={chunk.enabled}
-            onCheckedChange={checked => void onToggleEnabled(chunk, checked)}
-            disabled={disabled}
-          />
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-9 w-9 p-0"
-            onClick={() => onEditPrimary(chunk)}
-            disabled={disabled || editing}
-            aria-label={t('detail.chunks.edit')}
-          >
-            <Edit3 className="h-4 w-4" />
-          </Button>
+          {canUpdateFile ? (
+            <>
+              <span className="text-sm text-muted-foreground">{t('detail.chunks.enabled')}</span>
+              <Switch
+                checked={chunk.enabled}
+                onCheckedChange={checked => void onToggleEnabled(chunk, checked)}
+                disabled={disabled}
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9 w-9 p-0"
+                onClick={() => onEditPrimary(chunk)}
+                disabled={disabled || editing}
+                aria-label={t('detail.chunks.edit')}
+              >
+                <Edit3 className="h-4 w-4" />
+              </Button>
+            </>
+          ) : null}
           {/* Re-enable after file chunk deletion API is implemented. */}
           {/*
           <Button variant="ghost" size="sm" className="h-9 w-9 p-0">

@@ -74,6 +74,7 @@ interface AgentRuntimePromptPanelProps {
   databaseBindings: AgentDatabaseBinding[];
   workflowBindings: AgentWorkflowBinding[];
   workflowCandidatesByBindingID: Map<string, AgentWorkflowBindingCandidate>;
+  readOnly?: boolean;
   onChangeSystemPrompt: (value: string) => void;
   onOpenOptimizer: () => void;
 }
@@ -111,6 +112,7 @@ export function AgentRuntimePromptPanel({
   databaseBindings,
   workflowBindings,
   workflowCandidatesByBindingID,
+  readOnly = false,
   onChangeSystemPrompt,
   onOpenOptimizer,
 }: AgentRuntimePromptPanelProps) {
@@ -387,10 +389,12 @@ export function AgentRuntimePromptPanel({
     promptTemplates.find(template => template.key === selectedTemplateKey) ?? promptTemplates[0];
 
   const insertToken = (sourceId: string, key: string, label: string) => {
+    if (readOnly) return;
     editorRef.current?.insertToken(sourceId, key, label);
   };
 
   const openTemplateDialog = (key?: PromptTemplateKey) => {
+    if (readOnly) return;
     if (key) {
       setSelectedTemplateKey(key);
     }
@@ -398,6 +402,7 @@ export function AgentRuntimePromptPanel({
   };
 
   const applyPromptTemplate = (template: string) => {
+    if (readOnly) return;
     if (editorRef.current) {
       editorRef.current.replaceValue(template);
     } else {
@@ -418,7 +423,12 @@ export function AgentRuntimePromptPanel({
         <div className="flex shrink-0 items-center gap-1">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-8 gap-1.5 px-2 text-xs">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-1.5 px-2 text-xs"
+                disabled={readOnly}
+              >
                 <Database className="size-3.5" />
                 {t('prompt.insertCapability')}
               </Button>
@@ -543,6 +553,7 @@ export function AgentRuntimePromptPanel({
             size="sm"
             className="h-8 gap-1.5 px-2 text-xs"
             onClick={() => openTemplateDialog()}
+            disabled={readOnly}
           >
             <WandSparkles className="size-3.5" />
             {t('prompt.usePromptTemplate')}
@@ -553,7 +564,7 @@ export function AgentRuntimePromptPanel({
             size="sm"
             className="h-8 gap-1.5 px-2 text-xs"
             onClick={onOpenOptimizer}
-            disabled={!systemPrompt.trim()}
+            disabled={readOnly || !systemPrompt.trim()}
           >
             <Sparkles className="size-3.5" />
             {t('prompt.optimize')}
@@ -566,6 +577,7 @@ export function AgentRuntimePromptPanel({
             ref={editorRef}
             value={systemPrompt}
             onChange={onChangeSystemPrompt}
+            readOnly={readOnly}
             placeholder={t('prompt.placeholder')}
             emptyBlockPlaceholder={t('prompt.emptyBlockPlaceholder')}
             extraSuggestGroups={capabilityGroups}
@@ -671,7 +683,7 @@ export function AgentRuntimePromptPanel({
             </Button>
             <Button
               onClick={() => selectedTemplate && applyPromptTemplate(selectedTemplate.prompt)}
-              disabled={!selectedTemplate}
+              disabled={readOnly || !selectedTemplate}
             >
               {t('prompt.templateDialog.apply')}
             </Button>

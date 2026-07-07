@@ -21,6 +21,7 @@ interface AgentRuntimeResourceSectionProps {
   onToggleSection: (section: AgentConfigSection) => void;
   onAdd: () => void;
   addTooltip?: string;
+  readOnly?: boolean;
   children: ReactNode;
 }
 
@@ -45,12 +46,13 @@ export function AgentRuntimeResourceSection({
   onToggleSection,
   onAdd,
   addTooltip,
+  readOnly = false,
   children,
 }: AgentRuntimeResourceSectionProps) {
   const action = (
     <div className="flex items-center gap-2">
       <Badge variant="subtle">{count}</Badge>
-      <ResourceAddButton label={addLabel} tooltip={addTooltip} onAdd={onAdd} />
+      <ResourceAddButton label={addLabel} tooltip={addTooltip} onAdd={onAdd} disabled={readOnly} />
     </div>
   );
 
@@ -117,10 +119,12 @@ function ResourceAddButton({
   label,
   tooltip,
   onAdd,
+  disabled = false,
 }: {
   label: string;
   tooltip?: string;
   onAdd: () => void;
+  disabled?: boolean;
 }) {
   const button = (
     <Button
@@ -130,8 +134,10 @@ function ResourceAddButton({
       isIcon
       className="size-8"
       aria-label={label}
+      disabled={disabled}
       onClick={event => {
         event.stopPropagation();
+        if (disabled) return;
         onAdd();
       }}
     >

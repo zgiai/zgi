@@ -51,7 +51,7 @@ func (s *WorkspaceServiceImpl) CreateWorkspace(ctx context.Context, name string,
 }
 
 // UpdateWorkspace updates workspace information
-func (s *WorkspaceServiceImpl) UpdateWorkspace(ctx context.Context, workspaceID, name string, status *model.WorkspaceStatus, userID string, hasAdminPermission bool) (*model.WorkspaceUpdateResponse, error) {
+func (s *WorkspaceServiceImpl) UpdateWorkspace(ctx context.Context, workspaceID, name string, status *model.WorkspaceStatus, userID string, hasWorkspacePermission bool) (*model.WorkspaceUpdateResponse, error) {
 	workspace, err := s.workspaceRepo.GetWorkspaceByID(ctx, workspaceID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -67,12 +67,12 @@ func (s *WorkspaceServiceImpl) UpdateWorkspace(ctx context.Context, workspaceID,
 	}
 
 	// Check permissions
-	if !hasAdminPermission {
+	if !hasWorkspacePermission {
 		join, err := s.workspaceRepo.GetWorkspaceMember(ctx, workspaceID, userID)
 		if err != nil {
 			return nil, errors.New("no permission to update workspace name")
 		}
-		if join.Role != model.WorkspaceRoleOwner && join.Role != model.WorkspaceRoleAdmin {
+		if !workspaceMemberJoinAllowsPermission(join, model.WorkspacePermissionWorkspaceManage) {
 			return nil, errors.New("no permission to update workspace name")
 		}
 	}

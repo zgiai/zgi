@@ -1210,7 +1210,7 @@ func skillToolArgumentContracts() map[string]SkillToolArgumentContract {
 			Description: "Request navigation to a whitelisted internal ZGI console page. This only changes the visible page and does not mutate assets.",
 			Schema: objectSchema(
 				map[string]interface{}{
-					"href":   stringValueSchema("Required whitelisted internal /console route, such as /console/files, /console/agents, /console/dataset, /console/db, /console/work/task, /console/prompts, /console/work/chat, /console/work/image, /console/work/app, /console/workspace, or /console/settings. Do not use external URLs."),
+					"href":   stringValueSchema("Required whitelisted internal /console route, such as /console/files, /console/agents, /console/workflows, /console/dataset, /console/db, /console/work/task, /console/prompts, /console/work/chat, /console/work/image, /console/work/app, /console/workspace, or /console/settings. Do not use external URLs."),
 					"reason": stringValueSchema("Optional short user-facing reason for why the route is relevant."),
 				},
 				[]string{"href"},

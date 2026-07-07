@@ -7,6 +7,7 @@ import { useT } from '@/i18n';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { ORGANIZATION_KEYS, WORKSPACE_KEYS } from '@/hooks/query-keys';
+import { invalidateOrganizationMemberGraph } from '@/hooks/organization/invalidate-organization-member-graph';
 import type {
   AdminRegisterMemberRequest,
   DirectAddMemberRequest,
@@ -42,10 +43,7 @@ export function useMemberActions() {
           ? t('organization.contacts.enableSuccess')
           : t('organization.contacts.disableSuccess')
       );
-      // Invalidate department members list to trigger refetch
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.departmentMembers(currentOrganization?.id || ''),
-      });
+      invalidateOrganizationMemberGraph(queryClient, currentOrganization?.id);
     },
     onError: error => {
       toast.error(getErrorMessage(error) || t('organization.contacts.updateStatusError'));
@@ -66,12 +64,7 @@ export function useMemberActions() {
     },
     onSuccess: () => {
       toast.success(t('organization.contacts.removeSuccess'));
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.departmentMembers(currentOrganization?.id || ''),
-      });
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.departments(currentOrganization?.id || ''),
-      });
+      invalidateOrganizationMemberGraph(queryClient, currentOrganization?.id);
     },
     onError: error => {
       toast.error(getErrorMessage(error) || t('organization.contacts.removeError'));
@@ -85,12 +78,7 @@ export function useMemberActions() {
     },
     onSuccess: () => {
       toast.success(t('organization.contacts.removeSuccess'));
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.departmentMembers(''),
-      });
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.departments(currentOrganization?.id || ''),
-      });
+      invalidateOrganizationMemberGraph(queryClient, currentOrganization?.id);
     },
     onError: error => {
       toast.error(getErrorMessage(error) || t('organization.contacts.removeError'));
@@ -120,14 +108,7 @@ export function useMemberActions() {
     },
     onSuccess: () => {
       toast.success(t('organization.contacts.updateDepartmentSuccess'));
-      // Invalidate department members list to trigger refetch
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.departmentMembers(currentOrganization?.id || ''),
-      });
-      // Invalidate departments list to update member_count
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.departments(currentOrganization?.id || ''),
-      });
+      invalidateOrganizationMemberGraph(queryClient, currentOrganization?.id);
     },
     onError: error => {
       toast.error(getErrorMessage(error) || t('organization.contacts.updateDepartmentError'));
@@ -144,17 +125,7 @@ export function useMemberActions() {
     },
     onSuccess: () => {
       toast.success(t('organization.contacts.addMember.addSuccess'));
-      // Invalidate department members list to trigger refetch
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.departmentMembers(currentOrganization?.id || ''),
-      });
-      // Invalidate departments list to update member_count
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.departments(currentOrganization?.id || ''),
-      });
-      queryClient.invalidateQueries({
-        queryKey: WORKSPACE_KEYS.all,
-      });
+      invalidateOrganizationMemberGraph(queryClient, currentOrganization?.id);
     },
     onError: error => {
       toast.error(getErrorMessage(error) || t('organization.contacts.addMember.addError'));
@@ -177,12 +148,7 @@ export function useMemberActions() {
       } else {
         toast.success(t('organization.contacts.addMember.existingAccountSuccess'));
       }
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.departmentMembers(currentOrganization?.id || ''),
-      });
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.departments(currentOrganization?.id || ''),
-      });
+      invalidateOrganizationMemberGraph(queryClient, currentOrganization?.id);
       if (data.workspace?.id) {
         queryClient.invalidateQueries({
           queryKey: WORKSPACE_KEYS.members(currentOrganization?.id || null, data.workspace.id),
@@ -227,14 +193,7 @@ export function useMemberActions() {
       queryClient.invalidateQueries({
         queryKey: ORGANIZATION_KEYS.joinRequests(currentOrganization?.id || ''),
       });
-      // Also invalidate department members list
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.departmentMembers(currentOrganization?.id || ''),
-      });
-      // Invalidate departments list to update member_count
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.departments(currentOrganization?.id || ''),
-      });
+      invalidateOrganizationMemberGraph(queryClient, currentOrganization?.id);
     },
     onError: error => {
       toast.error(getErrorMessage(error) || t('organization.contacts.addMember.approveError'));
@@ -273,9 +232,7 @@ export function useMemberActions() {
     },
     onSuccess: () => {
       toast.success(tCommon('success'));
-      queryClient.invalidateQueries({
-        queryKey: ORGANIZATION_KEYS.departmentMembers(currentOrganization?.id || ''),
-      });
+      invalidateOrganizationMemberGraph(queryClient, currentOrganization?.id);
     },
     onError: error => {
       toast.error(getErrorMessage(error) || tCommon('error'));

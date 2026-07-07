@@ -47,7 +47,8 @@ function useMeasuredWidth() {
 export function AgentRuntimeWorkbench({ model }: AgentRuntimeWorkbenchProps) {
   const { ref: bodyRef, width: bodyWidth } = useMeasuredWidth();
   const canUseTwoColumns = bodyWidth >= TWO_COLUMN_MIN_WIDTH;
-  const showInlinePreview = bodyWidth >= INLINE_PREVIEW_MIN_WIDTH;
+  const showDraftPreview = model.preview.canUseDraftPreview;
+  const showInlinePreview = showDraftPreview && bodyWidth >= INLINE_PREVIEW_MIN_WIDTH;
   const { previewSheetOpen, setPreviewSheetOpen } = model;
 
   useEffect(() => {
@@ -68,7 +69,7 @@ export function AgentRuntimeWorkbench({ model }: AgentRuntimeWorkbenchProps) {
     <>
       <AgentRuntimeHeader
         {...model.header}
-        showPreviewAction={!showInlinePreview}
+        showPreviewAction={showDraftPreview && !showInlinePreview}
         isPreviewOpen={previewSheetOpen}
         versionControl={<AgentRuntimeVersionPopover {...model.version} />}
       />
@@ -111,7 +112,7 @@ export function AgentRuntimeWorkbench({ model }: AgentRuntimeWorkbenchProps) {
         </div>
       </div>
 
-      {!showInlinePreview ? (
+      {showDraftPreview && !showInlinePreview ? (
         <Sheet open={previewSheetOpen} onOpenChange={setPreviewSheetOpen}>
           <SheetContent
             side="right"

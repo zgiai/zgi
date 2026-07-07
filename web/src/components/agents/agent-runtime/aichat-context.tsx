@@ -19,6 +19,7 @@ import type {
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
 import type { Dataset } from '@/services/types/dataset';
 import { AGENT_KEYS, DATASET_KEYS, DB_KEYS, WORKFLOW_KEYS } from '@/hooks/query-keys';
+import { getAgentDetailEditHref } from '@/utils/agent-detail-routes';
 import type { AgentRuntimeSaveState } from './types';
 
 const PROMPT_SUMMARY_MAX_LENGTH = 1200;
@@ -598,7 +599,7 @@ function buildAgentRuntimeAIChatContextItems(
       title: context.agent.name,
       subtitle: `${context.agent.type} in ${workspaceLabel}`,
       description: compactContextField(context.agent.description),
-      href: `/console/agents/${context.agent.id}/agent`,
+      href: getAgentDetailEditHref(context.agent.id, context.agent.type),
       source: 'Agent Runtime',
       risk: 'low',
       status: context.publish.isPublished ? 'published' : 'draft',

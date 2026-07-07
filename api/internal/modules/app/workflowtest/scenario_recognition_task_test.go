@@ -61,6 +61,26 @@ func TestRepositoryRecoverStaleRunningScenarioRecognitionTasksMarksOldActiveTask
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestRepositoryRecoverStaleRunningScenarioRecognitionTasksForAgentOnlyMarksRouteAgentTasks(t *testing.T) {
+	db, mock, cleanup := newWorkflowTestMockDB(t)
+	defer cleanup()
+	repo := NewRepository(db)
+	ctx := context.Background()
+	staleBefore := time.Date(2026, 5, 25, 18, 0, 0, 0, time.UTC)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE "workflow_test_scenario_recognition_tasks" SET "completed_at"=$1,"error"=$2,"status"=$3,"updated_at"=$4 WHERE (status IN ($5,$6,$7) AND updated_at < $8) AND agent_id = $9`)).
+		WithArgs(sqlmock.AnyArg(), "stale failure", GenerationTaskStatusFailed, sqlmock.AnyArg(), GenerationTaskStatusQueued, GenerationTaskStatusRunning, GenerationTaskStatusCanceling, staleBefore, "agent-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	recovered, err := repo.RecoverStaleRunningScenarioRecognitionTasksForAgent(ctx, "agent-1", staleBefore, "stale failure", time.Now())
+
+	require.NoError(t, err)
+	require.Equal(t, int64(1), recovered)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestRepositoryCancelScenarioRecognitionTaskCompletesQueuedTaskImmediately(t *testing.T) {
 	db, mock, cleanup := newWorkflowTestMockDB(t)
 	defer cleanup()

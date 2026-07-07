@@ -35,6 +35,11 @@ import type { DbTable } from '@/services/types/db';
 import { ResourceSidebar, ResourceSidebarHeader } from '@/components/common/resource-sidebar';
 import { EditDbDialog } from '@/components/db/dialog';
 import { ErrorBoundary } from '@/components/error-boundary';
+import {
+  DATABASE_PERMISSION_ACTIONS,
+  DATABASE_TABLE_METADATA_PERMISSION_CODES,
+  DATABASE_VISIBLE_PERMISSION_CODES,
+} from '@/constants/permissions';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -47,10 +52,26 @@ export default function DbLayout({ children, params }: LayoutProps) {
   const { dbId } = React.use(params);
 
   // Permissions
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canView = hasPermission('database.view');
-  const canManage = hasPermission('database.manage');
-  const canAiQuery = hasPermission('database.ai_query');
+  const {
+    hasAnyPermission,
+    isLoading: isPermissionsLoading,
+  } = useAccountPermissions();
+  const canView = hasAnyPermission(DATABASE_VISIBLE_PERMISSION_CODES);
+  const canUpdateDatabase = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.update);
+  const canManageSchema = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.schemaManage);
+  const canOpenRecords = hasAnyPermission([
+    ...DATABASE_PERMISSION_ACTIONS.recordView,
+    ...DATABASE_PERMISSION_ACTIONS.recordCreate,
+    ...DATABASE_PERMISSION_ACTIONS.recordUpdate,
+    ...DATABASE_PERMISSION_ACTIONS.recordDelete,
+  ]);
+  const canOpenSchema = hasAnyPermission([
+    ...DATABASE_PERMISSION_ACTIONS.schemaView,
+    ...DATABASE_PERMISSION_ACTIONS.schemaManage,
+  ]);
+  const canAiQuery = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.aiQueryRead);
+  const canViewOperationLogs = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.operationLogsView);
+  const canViewTableMetadata = hasAnyPermission(DATABASE_TABLE_METADATA_PERMISSION_CODES);
 
   const { data: dbDetail, isLoading: isDbLoading } = useDb(dbId, {
     enabled: canView,
@@ -74,7 +95,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
   const [deleteTarget, setDeleteTarget] = React.useState<{ id: string; name: string } | null>(null);
 
   const { tables, isLoading } = useDbTables(dbId, {
-    enabled: canView && !isMismatch,
+    enabled: canViewTableMetadata && !isMismatch,
   });
   const deleteMutation = useDeleteDbTable(dbId);
 
@@ -85,12 +106,12 @@ export default function DbLayout({ children, params }: LayoutProps) {
   const toggleCollapse = () => setIsCollapsed(prev => !prev);
 
   const onOpenCreate = () => {
-    if (!canManage) return;
+    if (!canManageSchema) return;
     setTableDialog({ mode: 'create' });
   };
 
   const onOpenEdit = (table: DbTable) => {
-    if (!canManage) return;
+    if (!canManageSchema) return;
     setTableDialog({ mode: 'edit', table });
   };
 
@@ -151,53 +172,56 @@ export default function DbLayout({ children, params }: LayoutProps) {
                 name={db?.name || t('dbs.noName')}
                 description={db?.description || ''}
                 iconActionLabel={t('dbs.edit')}
-                onIconClick={canManage && !isMismatch && db ? () => setEditDbOpen(true) : undefined}
+                onIconClick={
+                  canUpdateDatabase && !isMismatch && db ? () => setEditDbOpen(true) : undefined
+                }
               />
             }
           >
             <nav className="flex flex-1 flex-col gap-0.5 px-1 py-1.5">
-              {/* Tables toggle */}
-              <button
-                type="button"
-                onClick={() => {
-                  if (isCollapsed) {
-                    setIsCollapsed(false);
-                    setDbMenuOpen(true);
-                  } else {
-                    setDbMenuOpen(prev => !prev);
-                  }
-                }}
-                className={cn(
-                  'flex items-center rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
-                  pathname.startsWith(`/console/db/${dbId}/table`)
-                    ? 'bg-primary/10 text-primary'
-                    : 'hover:bg-primary/5 hover:text-primary',
-                  isCollapsed && 'justify-center px-0'
-                )}
-              >
-                <Table className="h-4 w-4 shrink-0" />
-                <span
+              {canViewTableMetadata && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isCollapsed) {
+                      setIsCollapsed(false);
+                      setDbMenuOpen(true);
+                    } else {
+                      setDbMenuOpen(prev => !prev);
+                    }
+                  }}
                   className={cn(
-                    'truncate ml-1.5 grow text-left transition-all duration-300',
-                    isCollapsed && 'ml-0 w-0 grow-0 overflow-hidden opacity-0'
+                    'flex items-center rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
+                    pathname.startsWith(`/console/db/${dbId}/table`)
+                      ? 'bg-primary/10 text-primary'
+                      : 'hover:bg-primary/5 hover:text-primary',
+                    isCollapsed && 'justify-center px-0'
                   )}
                 >
-                  {t('dbs.tables')}
-                </span>
-                {!isCollapsed && (
-                  <ChevronDown
+                  <Table className="h-4 w-4 shrink-0" />
+                  <span
                     className={cn(
-                      'h-4 w-4 transition-transform shrink-0',
-                      dbMenuOpen ? 'rotate-0' : 'rotate-90'
+                      'truncate ml-1.5 grow text-left transition-all duration-300',
+                      isCollapsed && 'ml-0 w-0 grow-0 overflow-hidden opacity-0'
                     )}
-                  />
-                )}
-              </button>
+                  >
+                    {t('dbs.tables')}
+                  </span>
+                  {!isCollapsed && (
+                    <ChevronDown
+                      className={cn(
+                        'h-4 w-4 transition-transform shrink-0',
+                        dbMenuOpen ? 'rotate-0' : 'rotate-90'
+                      )}
+                    />
+                  )}
+                </button>
+              )}
               {/* Table list */}
-              {dbMenuOpen && !isCollapsed && (
+              {canViewTableMetadata && dbMenuOpen && !isCollapsed && (
                 <div className="pl-3 space-y-0.5">
                   {/* Create table */}
-                  {canManage && (
+                  {canManageSchema && (
                     <button
                       type="button"
                       onClick={e => {
@@ -227,27 +251,46 @@ export default function DbLayout({ children, params }: LayoutProps) {
                       const tableId = String(table.id || '');
                       const tableKey =
                         tableId || `${table.table_name || label || 'table'}-${index}`;
-                      const href = tableId ? `/console/db/${dbId}/table/${tableId}` : '#';
-                      const active = itemActive(href) || pathname.startsWith(href + '/');
+                      const tableRootHref = tableId ? `/console/db/${dbId}/table/${tableId}` : '';
+                      const href = canOpenRecords
+                        ? tableRootHref
+                        : canOpenSchema && tableRootHref
+                          ? `${tableRootHref}/structure`
+                          : '';
+                      const active =
+                        Boolean(tableRootHref) &&
+                        (itemActive(tableRootHref) || pathname.startsWith(tableRootHref + '/'));
                       return (
                         <div
                           key={tableKey}
                           className="w-full flex items-center justify-center gap-1 group relative"
                         >
-                          <Link
-                            href={href}
-                            className={cn(
-                              'block h-7 grow cursor-pointer truncate rounded-md pl-2 pr-6 text-ellipsis text-xs leading-7 text-secondary-foreground overflow-hidden',
-                              active
-                                ? 'bg-primary/10 text-primary'
-                                : 'hover:bg-primary/5 hover:text-primary'
-                            )}
-                            title={label}
-                          >
-                            {label}
-                          </Link>
+                          {href ? (
+                            <Link
+                              href={href}
+                              className={cn(
+                                'block h-7 grow cursor-pointer truncate rounded-md pl-2 pr-6 text-ellipsis text-xs leading-7 text-secondary-foreground overflow-hidden',
+                                active
+                                  ? 'bg-primary/10 text-primary'
+                                  : 'hover:bg-primary/5 hover:text-primary'
+                              )}
+                              title={label}
+                            >
+                              {label}
+                            </Link>
+                          ) : (
+                            <span
+                              className={cn(
+                                'block h-7 grow cursor-default truncate rounded-md pl-2 pr-6 text-ellipsis text-xs leading-7 text-muted-foreground overflow-hidden',
+                                active && 'bg-primary/10 text-primary'
+                              )}
+                              title={label}
+                            >
+                              {label}
+                            </span>
+                          )}
                           {/* Actions dropdown replacing edit button */}
-                          {canManage && (
+                          {canManageSchema && (
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <button
@@ -316,27 +359,29 @@ export default function DbLayout({ children, params }: LayoutProps) {
                   </span>
                 </Link>
               )}
-              <Link
-                href={`/console/db/${dbId}/record`}
-                className={cn(
-                  'flex items-center rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
-                  pathname === `/console/db/${dbId}/record` ||
-                    pathname.startsWith(`/console/db/${dbId}/record/`)
-                    ? 'bg-primary/10 text-primary'
-                    : 'hover:bg-primary/5 hover:text-primary',
-                  isCollapsed && 'justify-center px-0'
-                )}
-              >
-                <ScrollText className="h-4 w-4 shrink-0" />
-                <span
+              {canViewOperationLogs && (
+                <Link
+                  href={`/console/db/${dbId}/record`}
                   className={cn(
-                    'truncate ml-1.5 transition-all duration-300',
-                    isCollapsed && 'ml-0 w-0 overflow-hidden opacity-0'
+                    'flex items-center rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
+                    pathname === `/console/db/${dbId}/record` ||
+                      pathname.startsWith(`/console/db/${dbId}/record/`)
+                      ? 'bg-primary/10 text-primary'
+                      : 'hover:bg-primary/5 hover:text-primary',
+                    isCollapsed && 'justify-center px-0'
                   )}
                 >
-                  {t('dbs.features.logs')}
-                </span>
-              </Link>
+                  <ScrollText className="h-4 w-4 shrink-0" />
+                  <span
+                    className={cn(
+                      'truncate ml-1.5 transition-all duration-300',
+                      isCollapsed && 'ml-0 w-0 overflow-hidden opacity-0'
+                    )}
+                  >
+                    {t('dbs.features.logs')}
+                  </span>
+                </Link>
+              )}
             </nav>
           </ResourceSidebar>
 
@@ -371,6 +416,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
           cancelText={t('common.cancel')}
           loading={deleteMutation.isPending}
           onConfirm={() => {
+            if (!canManageSchema) return;
             if (!deleteTarget) return;
             deleteMutation.mutate(deleteTarget.id, {
               onSuccess: () => {

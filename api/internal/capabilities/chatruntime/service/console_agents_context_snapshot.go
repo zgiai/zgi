@@ -226,7 +226,10 @@ func consoleAgentsOperationContextFromSnapshot(snapshot map[string]interface{}) 
 		if agentID == "" || name == "" {
 			continue
 		}
-		href := strings.TrimSpace(firstNonEmptyString(agent["href"], "/console/agents/"+agentID+"/agent"))
+		href := normalizeAgentDetailHref(firstNonEmptyString(agent["href"]))
+		if href == "" {
+			href = consoleAgentDetailHref(agentID)
+		}
 		metadata := map[string]interface{}{
 			"resource_kind": "agent",
 			"agent_id":      agentID,
@@ -308,7 +311,7 @@ func consoleAgentsContextSnapshotFromApprovalEvent(event map[string]interface{})
 			"agent_id":      agentID,
 			"id":            agentID,
 			"name":          name,
-			"href":          "/console/agents/" + agentID + "/agent",
+			"href":          consoleAgentDetailHref(agentID),
 		}
 		if workspaceID := strings.TrimSpace(stringFromAny(asset["workspace_id"])); workspaceID != "" {
 			agent["workspace_id"] = workspaceID

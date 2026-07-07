@@ -16,6 +16,7 @@ import (
 
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/model"
+	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -232,7 +233,7 @@ func mustURLPath(value string) string {
 }
 
 func buildDocumentImageAssetURL(key string) string {
-	return documentImageEndpoint + "?key=" + url.QueryEscape(key)
+	return util.GetSignedParserImageKeyURL(key)
 }
 
 func sanitizeDocumentImagePathPart(value string) string {

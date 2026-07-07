@@ -38,10 +38,13 @@ const WorkflowBottomToolbar: React.FC = () => {
   const historyPast = useWorkflowStore.use.historyPast();
   const historyFuture = useWorkflowStore.use.historyFuture();
   const addNode = useWorkflowStore.use.addNode();
+  const mode = useWorkflowStore.use.mode();
+  const canEdit = useWorkflowStore.use.canEdit();
+  const isReadOnly = mode === 'history' || !canEdit;
 
   const isHand = interactionMode === 'hand';
-  const canUndo = historyPast.length > 0;
-  const canRedo = historyFuture.length > 0;
+  const canUndo = !isReadOnly && historyPast.length > 0;
+  const canRedo = !isReadOnly && historyFuture.length > 0;
   const { openModal } = useCreateNodeModal();
 
   const handleFitView = () => rf.fitView({ padding: 0.2, duration: 200 });
@@ -49,10 +52,12 @@ const WorkflowBottomToolbar: React.FC = () => {
   const handleZoomOut = () => rf.zoomOut({ duration: 150 });
 
   const handleOpenAddNode: React.MouseEventHandler<HTMLButtonElement> = event => {
+    if (isReadOnly) return;
     openModal(undefined, null, { x: event.clientX, y: event.clientY });
   };
 
   const handleAddNote = () => {
+    if (isReadOnly) return;
     const center = rf.screenToFlowPosition({
       x: window.innerWidth / 2,
       y: window.innerHeight / 2,
@@ -199,6 +204,7 @@ const WorkflowBottomToolbar: React.FC = () => {
               variant="ghost"
               isIcon
               onClick={handleAddNote}
+              disabled={isReadOnly}
               aria-label={t('workflow.toolbar.addNoteNode')}
             >
               <StickyNote className="h-4 w-4" />
@@ -213,6 +219,7 @@ const WorkflowBottomToolbar: React.FC = () => {
             variant="default"
             isIcon
             onClick={handleOpenAddNode}
+            disabled={isReadOnly}
             aria-label={t('workflow.toolbar.addNode')}
           >
             <PlusIcon size={20} />

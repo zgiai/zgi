@@ -44,6 +44,7 @@ import { AgentRuntimeLogDetailDrawer } from './_components/agent-runtime-log-det
 import { AgentLogsAIChatContextRegistration } from './_components/agent-logs-aichat-context';
 import { LogDetailDrawer, type HistoryTab } from './_components/log-detail-drawer';
 import { LogStatusBadge } from './_components/log-status-badge';
+import { AGENT_PERMISSION_ACTIONS, WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 interface AgentLogsPageProps {
   params: Promise<{ agentId: string }>;
@@ -140,6 +141,7 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   const searchParams = useSearchParams();
   const focusRunId = searchParams.get('runId');
   const focusTab = searchParams.get('tab');
+  const focusConversationId = searchParams.get('conversation_id');
 
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
   const [selectedMessageRunId, setSelectedMessageRunId] = useState<string | null>(null);
@@ -151,17 +153,24 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   const [searchFilterInput, setSearchFilterInput] = useState('');
   const [searchFilter, setSearchFilter] = useState('');
 
-  const { agent, isLoading: isAgentLoading, error: agentError } = useAgent(agentId);
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canManage = hasPermission('agent.manage');
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canViewAgentRuntimeLogs = hasAnyPermission(AGENT_PERMISSION_ACTIONS.logsView);
+  const canViewWorkflowRuntimeLogs = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
+  const canOpenRuntimeLogs = canViewAgentRuntimeLogs || canViewWorkflowRuntimeLogs;
+  const {
+    agent,
+    isLoading: isAgentLoading,
+    error: agentError,
+  } = useAgent(agentId, canOpenRuntimeLogs);
   const agentDetail = agent?.data ?? null;
   const isPublished = agentDetail?.is_published === true;
   const supportsRuntimeLogs = supportsAgentRuntimeLogs(agentDetail?.agent_type);
+  const isAgentRuntime = agentDetail?.agent_type === AgentType.AGENT;
+  const canViewRuntimeLogs = isAgentRuntime ? canViewAgentRuntimeLogs : canViewWorkflowRuntimeLogs;
   const canAccessRuntimeLogs = canShowAgentRuntimeLogs(agentDetail?.agent_type, {
     canView: true,
-    canManage,
+    canViewRuntimeLogs,
   });
-  const isAgentRuntime = agentDetail?.agent_type === AgentType.AGENT;
   const canQueryWorkflowLogs = canAccessRuntimeLogs && isPublished && !isAgentRuntime;
   const canQueryAgentRuntimeLogs = canAccessRuntimeLogs && isPublished && isAgentRuntime;
   const isConversationWorkflow = agentDetail?.agent_type === AgentType.CONVERSATIONAL_AGENT;
@@ -180,6 +189,15 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   const { data: latest } = useLatestWorkflowVersion(
     canAccessRuntimeLogs && isPublished ? agentId : null
   );
+
+  useEffect(() => {
+    const nextConversationFilter = focusConversationId?.trim() ?? '';
+    if (!nextConversationFilter || !UUID_PATTERN.test(nextConversationFilter)) {
+      return;
+    }
+    setConversationFilterInput(nextConversationFilter);
+    setConversationFilter(nextConversationFilter);
+  }, [focusConversationId]);
 
   const {
     pages,
@@ -538,12 +556,28 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
     setActiveTab('execution');
   };
 
-  if (isAgentLoading || isPermissionsLoading) {
+  if (isPermissionsLoading || (canOpenRuntimeLogs && isAgentLoading)) {
     return (
       <div className="h-full w-full p-6">
         <div className="space-y-4">
           <Skeleton className="h-8 w-48" />
           <LogTableSkeleton />
+        </div>
+      </div>
+    );
+  }
+
+  if (!canOpenRuntimeLogs) {
+    return (
+      <div className="flex h-full w-full items-center justify-center p-6">
+        <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
+          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
+            <AlertCircle className="size-5 text-muted-foreground" />
+          </div>
+          <div className="text-lg font-semibold">{tRoot('common.accessDenied')}</div>
+          <div className="mt-2 text-sm text-muted-foreground">
+            {tRoot('common.unauthorizedDescription')}
+          </div>
         </div>
       </div>
     );
@@ -565,32 +599,20 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
     );
   }
 
-  if (!supportsRuntimeLogs) {
+  if (!supportsRuntimeLogs || !canAccessRuntimeLogs) {
     return (
       <div className="flex h-full w-full items-center justify-center p-6">
         <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
           <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
             <AlertCircle className="size-5 text-muted-foreground" />
           </div>
-          <div className="text-lg font-semibold">{t('appCenter.appUnavailableTitle')}</div>
-          <div className="mt-2 text-sm text-muted-foreground">
-            {t('appCenter.appUnavailableDescription')}
+          <div className="text-lg font-semibold">
+            {supportsRuntimeLogs ? tRoot('common.accessDenied') : t('appCenter.appUnavailableTitle')}
           </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!canManage) {
-    return (
-      <div className="flex h-full w-full items-center justify-center p-6">
-        <div className="max-w-xl rounded-2xl border border-dashed bg-background p-8 text-center">
-          <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-muted">
-            <AlertCircle className="size-5 text-muted-foreground" />
-          </div>
-          <div className="text-lg font-semibold">{tRoot('common.accessDenied')}</div>
           <div className="mt-2 text-sm text-muted-foreground">
-            {tRoot('common.unauthorizedDescription')}
+            {supportsRuntimeLogs
+              ? tRoot('common.unauthorizedDescription')
+              : t('appCenter.appUnavailableDescription')}
           </div>
         </div>
       </div>

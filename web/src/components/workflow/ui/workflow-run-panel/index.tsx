@@ -113,6 +113,10 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
   const edges = useWorkflowStore.use.edges();
   const viewport = useWorkflowStore.use.viewport();
   const mode = useWorkflowStore.use.mode();
+  const canRunDraft = useWorkflowStore.use.canRunDraft();
+  const canStopRun = useWorkflowStore.use.canStopRun();
+  const canViewRuntimeLogs = useWorkflowStore.use.canViewRuntimeLogs();
+  const canViewRuntimeEvents = useWorkflowStore.use.canViewRuntimeEvents();
   const selectedRunId = useWorkflowStore.use.selectedRunId();
   const enterHistoryMode = useWorkflowStore.use.enterHistoryMode();
   const setHistorySnapshot = useWorkflowStore.use.setHistorySnapshot();
@@ -130,8 +134,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
   const setNodeRunStatus = useWorkflowStore.use.setNodeRunStatus();
   const setActiveOutputHandle = useWorkflowStore.use.setActiveOutputHandle();
   const resetActiveOutputHandles = useWorkflowStore.use.resetActiveOutputHandles();
-  const beginRuntimeLogPopoverAutoOpen =
-    useWorkflowStore.use.beginRuntimeLogPopoverAutoOpen();
+  const beginRuntimeLogPopoverAutoOpen = useWorkflowStore.use.beginRuntimeLogPopoverAutoOpen();
   const finalizeRuntimeLogPopoversAfterRun =
     useWorkflowStore.use.finalizeRuntimeLogPopoversAfterRun();
   const setAutoFollow = useWorkflowStore.use.setAutoFollow();
@@ -754,6 +757,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
 
   const startApprovalResumeEventStream = useCallback(
     (payload?: unknown) => {
+      if (!canViewRuntimeEvents) return;
       const runId = workflowRunId || (payload ? getWorkflowRunIdFromPayload(payload) : '');
       if (!runId) return;
       setWorkflowRunId(runId);
@@ -827,6 +831,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
       );
     },
     [
+      canViewRuntimeEvents,
       dispatchWorkflowRunEvent,
       getWorkflowRunIdFromPayload,
       startWorkflowRunEvents,
@@ -980,6 +985,10 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
       toast.info(t('nodes.approval.runtime.stopDisabled'));
       return;
     }
+    if (!canStopRun) {
+      toast.error(t('common.unauthorizedDescription'));
+      return;
+    }
     const activeRunId = workflowRunId || runSummary?.id;
     if (!activeRunId) return;
     stopWorkflowMutation.mutate(
@@ -1006,6 +1015,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
   }, [
     agentId,
     cancelWorkflowRunEvents,
+    canStopRun,
     hasBlockingApprovalStop,
     handleWorkflowFinished,
     markRunningItemsStopped,
@@ -1031,7 +1041,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
     isStarting: isHookStarting,
     isRunning,
   } = useRunWorkflowDraftStream(agentId, {
-    enabled: !isHistory,
+    enabled: !isHistory && canRunDraft,
     onStarted: handleWorkflowStarted,
     onPaused: handleWorkflowPaused,
     onApprovalRequested: handleApprovalRequested,
@@ -1062,6 +1072,10 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
     async (values: FormInputs) => {
       try {
         if (isHistory) return;
+        if (!canRunDraft) {
+          toast.error(t('common.unauthorizedDescription'));
+          return;
+        }
 
         const isQuestionAnswerResume = Boolean(questionAnswerPrompt);
         if (!isQuestionAnswerResume) {
@@ -1107,6 +1121,7 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
     },
     [
       cancelWorkflowRunEvents,
+      canRunDraft,
       isHistory,
       persistDraftBeforeRun,
       resetApprovalRuntime,
@@ -1156,6 +1171,10 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
 
   const onSubmit = useCallback(
     async (values: FormInputs) => {
+      if (!canRunDraft) {
+        toast.error(t('common.unauthorizedDescription'));
+        return;
+      }
       if (errors.length > 0 && !isBannerHidden(BannerKey.WorkflowRunErrorsWarning)) {
         pendingInputsRef.current = values;
         setRunWarnOpen(true);
@@ -1163,17 +1182,21 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
       }
       await runDraftWithPrecheck(values);
     },
-    [errors.length, runDraftWithPrecheck]
+    [canRunDraft, errors.length, runDraftWithPrecheck, t]
   );
 
   const handleRunNoInputs = useCallback(async () => {
+    if (!canRunDraft) {
+      toast.error(t('common.unauthorizedDescription'));
+      return;
+    }
     if (errors.length > 0 && !isBannerHidden(BannerKey.WorkflowRunErrorsWarning)) {
       pendingInputsRef.current = {};
       setRunWarnOpen(true);
       return;
     }
     await runDraftWithPrecheck({});
-  }, [errors.length, runDraftWithPrecheck]);
+  }, [canRunDraft, errors.length, runDraftWithPrecheck, t]);
 
   const handleQuestionAnswerSelect = useCallback(
     (choice: QuestionAnswerChoice) => {
@@ -1240,19 +1263,21 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
           closeLabel={t('common.close')}
           onClose={onClose}
           actions={
-            <WorkflowRunsDropdown
-              agentId={agentId}
-              query={debugRunsQuery}
-              icon={<History size={14} />}
-              tooltipLabel={t('agents.workflow.debugRuns')}
-              dropdownLabel={t('agents.workflow.debugRuns')}
-              triggerText={t('agents.workflow.debugRuns')}
-              triggerVariant="outline"
-              triggerSize="xs"
-              triggerClassName="h-7"
-              refreshOnOpen
-              onSelect={handleSelectDebugRun}
-            />
+            canViewRuntimeLogs ? (
+              <WorkflowRunsDropdown
+                agentId={agentId}
+                query={debugRunsQuery}
+                icon={<History size={14} />}
+                tooltipLabel={t('agents.workflow.debugRuns')}
+                dropdownLabel={t('agents.workflow.debugRuns')}
+                triggerText={t('agents.workflow.debugRuns')}
+                triggerVariant="outline"
+                triggerSize="xs"
+                triggerClassName="h-7"
+                refreshOnOpen
+                onSelect={handleSelectDebugRun}
+              />
+            ) : null
           }
         />
 
@@ -1302,8 +1327,14 @@ const WorkflowRunPanel: React.FC<WorkflowRunPanelProps> = ({
               isStarting={isStarting}
               isRunning={isRunning}
               isStopping={stopWorkflowMutation.isPending}
-              stopDisabled={isApprovalStopBlocked}
-              stopDisabledMessage={t('nodes.approval.runtime.stopDisabled')}
+              runDisabled={!canRunDraft}
+              runDisabledMessage={t('common.unauthorizedDescription')}
+              stopDisabled={isApprovalStopBlocked || !canStopRun}
+              stopDisabledMessage={
+                !canStopRun
+                  ? t('common.unauthorizedDescription')
+                  : t('nodes.approval.runtime.stopDisabled')
+              }
               onSubmit={onSubmit}
               onRunNoInputs={handleRunNoInputs}
               onInputChange={setLastInputs}

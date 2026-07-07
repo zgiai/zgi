@@ -10,7 +10,6 @@ import (
 	promptdto "github.com/zgiai/zgi/api/internal/modules/prompts/dto"
 	promptmodel "github.com/zgiai/zgi/api/internal/modules/prompts/model"
 	shared_visibility "github.com/zgiai/zgi/api/internal/modules/shared/visibility"
-	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/gorm"
 )
 
@@ -69,8 +68,7 @@ func (s *promptService) GetUsageSummary(ctx context.Context, organizationID, acc
 		organizationID,
 		accountID,
 		id,
-		workspace_model.WorkspacePermissionAgentView,
-		workspace_model.WorkspacePermissionAgentManage,
+		promptUsageViewPermissionCodes()...,
 	)
 	if err != nil {
 		return nil, err
@@ -82,8 +80,7 @@ func (s *promptService) GetUsageSummary(ctx context.Context, organizationID, acc
 		organizationID,
 		accountID,
 		derefString(prompt.WorkspaceID),
-		workspace_model.WorkspacePermissionAgentView,
-		workspace_model.WorkspacePermissionAgentManage,
+		promptUsageViewPermissionCodes()...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("resolve prompt usage scope: %w", err)

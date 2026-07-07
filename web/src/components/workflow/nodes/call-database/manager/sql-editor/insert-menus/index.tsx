@@ -23,6 +23,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDbTables } from '@/hooks/db/use-db-tables';
 import { buildTableRef } from '../../../utils';
+import { useDatabaseNodePermissions } from '@/components/workflow/hooks';
 
 interface SqlEditorInsertMenusProps {
   dbId?: string;
@@ -42,6 +43,7 @@ interface ColumnGroupProps {
   onToggle: () => void;
   onInsert: (value: string) => void;
   onColumnsResolved?: (columns: string[]) => void;
+  canBrowseDatabaseMetadata: boolean;
 }
 
 interface ColumnInfo {
@@ -59,9 +61,12 @@ const ColumnGroup: React.FC<ColumnGroupProps> = ({
   onToggle,
   onInsert,
   onColumnsResolved,
+  canBrowseDatabaseMetadata,
 }) => {
   const t = useT('nodes');
-  const shouldFetch = Boolean(dbId && table.id && (forcedOpen || expanded));
+  const shouldFetch = Boolean(
+    canBrowseDatabaseMetadata && dbId && table.id && (forcedOpen || expanded)
+  );
 
   const { columns, isLoading } = useDbTableColumns(dbId ?? '', table.id ?? '', {
     enabled: shouldFetch,
@@ -191,10 +196,12 @@ const SqlEditorInsertMenus: React.FC<SqlEditorInsertMenusProps> = ({
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [columnsSearch, setColumnsSearch] = useState('');
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
+  const { canReadDatabaseBinding } = useDatabaseNodePermissions();
+  const canBrowseDatabaseMetadata = !disabled && canReadDatabaseBinding;
 
   // Fetch latest tables from API and filter by selected refs from props
   const { tables: apiTables } = useDbTables(dbId ?? '', {
-    enabled: Boolean(dbId),
+    enabled: Boolean(dbId) && canBrowseDatabaseMetadata,
     refetchOnWindowFocus: false,
     staleTime: 3 * 60 * 1000,
   });
@@ -240,7 +247,7 @@ const SqlEditorInsertMenus: React.FC<SqlEditorInsertMenusProps> = ({
     });
   }, [menuTables]);
 
-  const disableMenus = disabled;
+  const disableMenus = !canBrowseDatabaseMetadata;
 
   const handleToggleExpanded = useCallback((key: string) => {
     setExpandedKeys(prev => {
@@ -364,6 +371,7 @@ const SqlEditorInsertMenus: React.FC<SqlEditorInsertMenusProps> = ({
                       onToggle={() => handleToggleExpanded(key)}
                       onInsert={handleColumnInsert}
                       onColumnsResolved={columns => handleColumnsResolved(table, columns)}
+                      canBrowseDatabaseMetadata={canBrowseDatabaseMetadata}
                     />
                   );
                 })}

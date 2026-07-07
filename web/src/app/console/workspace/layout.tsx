@@ -1,18 +1,18 @@
 'use client';
 
-import { useEffect } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { useT } from '@/i18n';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
-import { Users, Settings } from 'lucide-react';
+import { LayoutDashboard, Loader2, Settings, ShieldAlert, Users } from 'lucide-react';
 import {
   useCurrentWorkspace,
   useWorkspaceContextStatus,
   useHasHydrated,
 } from '@/store/workspace-store';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
-import { Loader2 } from 'lucide-react';
+import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
+import { WorkspaceRequiredState } from '@/components/common/workspace-required-state';
 
 interface WorkspaceNavItem {
   id: string;
@@ -20,24 +20,71 @@ interface WorkspaceNavItem {
   desc: string;
   icon: React.ComponentType<{ className?: string }>;
   href: string;
+  visible?: boolean;
+}
+
+function WorkspaceAccessDeniedState() {
+  const t = useT();
+
+  return (
+    <div className="flex h-full w-full flex-col items-center justify-center p-4 text-center">
+      <ShieldAlert className="mb-4 h-12 w-12 text-muted-foreground" />
+      <h2 className="mb-2 text-xl font-semibold">{t('common.accessDenied')}</h2>
+      <p className="max-w-md text-muted-foreground">{t('common.unauthorizedDescription')}</p>
+    </div>
+  );
+}
+
+function isWorkspaceNavItemActive(pathname: string, href: string) {
+  if (href === '/console/workspace') {
+    return pathname === href;
+  }
+  return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 export default function WorkspaceLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const router = useRouter();
   const t = useT();
+  const tWorkspace = useT('workspace');
   const currentWorkspace = useCurrentWorkspace();
   const contextStatus = useWorkspaceContextStatus();
   const hasHydrated = useHasHydrated();
-  const { hasPermission, isLoading: isLoadingPermissions } = useAccountPermissions();
+  const {
+    hasWorkspaceAccess,
+    isWorkspaceManager,
+    isLoading: isLoadingPermissions,
+    isFetching: isFetchingPermissions,
+  } = useAccountPermissions();
+  const {
+    isLoading: isCapabilitiesLoading,
+    isFetching: isCapabilitiesFetching,
+    canUseWorkspaceScope,
+    isWorkspaceRequired,
+  } = useAccountCapabilities();
+  const isAccessLoading =
+    isLoadingPermissions ||
+    isFetchingPermissions ||
+    isCapabilitiesLoading ||
+    isCapabilitiesFetching;
+  const hasWorkspaceContext = contextStatus === 'ready' && !!currentWorkspace;
+  const canViewWorkspace = hasWorkspaceAccess();
+  const canManageWorkspace = isWorkspaceManager();
 
   const workspaceNavItems: WorkspaceNavItem[] = [
+    {
+      id: 'overview',
+      label: t('workspace.navigation.overview'),
+      desc: t('workspace.navigation.overviewDesc'),
+      icon: LayoutDashboard,
+      href: '/console/workspace',
+    },
     {
       id: 'members',
       label: t('navigation.member'),
       desc: t('navigation.memberDesc'),
       icon: Users,
       href: '/console/workspace/members',
+      visible: canManageWorkspace,
     },
     {
       id: 'settings',
@@ -48,25 +95,8 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
     },
   ];
 
-  // Access guard: redirect if not in workspace context or missing group.view permission
-  // Only execute AFTER hydration and permission loading are complete
-  useEffect(() => {
-    if (!hasHydrated || isLoadingPermissions) return;
-
-    if (contextStatus !== 'ready' || !currentWorkspace || !hasPermission('workspace.view')) {
-      router.replace('/console');
-    }
-  }, [
-    hasHydrated,
-    isLoadingPermissions,
-    contextStatus,
-    currentWorkspace,
-    hasPermission,
-    router,
-  ]);
-
   // Loading state
-  if (!hasHydrated || isLoadingPermissions) {
+  if (!hasHydrated || isAccessLoading) {
     return (
       <div className="flex h-full items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -74,9 +104,12 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
     );
   }
 
-  // Don't render if not in workspace context or missing permission (safety check)
-  if (contextStatus !== 'ready' || !currentWorkspace || !hasPermission('workspace.view')) {
-    return null;
+  if (isWorkspaceRequired || !hasWorkspaceContext) {
+    return <WorkspaceRequiredState />;
+  }
+
+  if (!canUseWorkspaceScope || !canViewWorkspace) {
+    return <WorkspaceAccessDeniedState />;
   }
 
   return (
@@ -87,7 +120,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
           {/* Header */}
           <div className="border-b border-border/60 px-4 py-4">
             <div className="min-w-0">
-              <h1 className="text-sm font-semibold text-foreground">{t.workspace('pageTitle')}</h1>
+              <h1 className="text-sm font-semibold text-foreground">{tWorkspace('pageTitle')}</h1>
               <p className="mt-1 truncate text-xs text-muted-foreground">{currentWorkspace.name}</p>
             </div>
           </div>
@@ -95,56 +128,58 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
           {/* Workspace Navigation */}
           <div className="flex-1 overflow-y-auto px-3 py-3">
             <div className="space-y-0.5">
-              {workspaceNavItems.map(item => {
-                const Icon = item.icon;
-                const isActive = pathname.includes(item.href);
+              {workspaceNavItems
+                .filter(item => item.visible !== false)
+                .map(item => {
+                  const Icon = item.icon;
+                  const isActive = isWorkspaceNavItemActive(pathname, item.href);
 
-                return (
-                  <Link
-                    key={item.id}
-                    href={item.href}
-                    className={cn(
-                      'group relative flex items-start gap-2 rounded-md px-2.5 py-2 text-sm transition-colors',
-                      isActive
-                        ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
-                        : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
-                    )}
-                  >
-                    {/* Active indicator */}
-                    {isActive && (
-                      <div className="absolute bottom-2 left-0 top-2 w-0.5 rounded-r-full bg-foreground/70" />
-                    )}
-
-                    <Icon
+                  return (
+                    <Link
+                      key={item.id}
+                      href={item.href}
                       className={cn(
-                        'mt-0.5 h-4 w-4 flex-shrink-0 transition-colors',
-                        isActive ? 'text-foreground' : 'text-muted-foreground'
+                        'group relative flex items-start gap-2 rounded-md px-2.5 py-2 text-sm transition-colors',
+                        isActive
+                          ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
+                          : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
                       )}
-                    />
+                    >
+                      {/* Active indicator */}
+                      {isActive && (
+                        <div className="absolute bottom-2 left-0 top-2 w-0.5 rounded-r-full bg-foreground/70" />
+                      )}
 
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span
+                      <Icon
+                        className={cn(
+                          'mt-0.5 h-4 w-4 flex-shrink-0 transition-colors',
+                          isActive ? 'text-foreground' : 'text-muted-foreground'
+                        )}
+                      />
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={cn(
+                              'truncate font-medium',
+                              isActive ? 'text-foreground' : 'text-muted-foreground'
+                            )}
+                          >
+                            {item.label}
+                          </span>
+                        </div>
+                        <p
                           className={cn(
-                            'truncate font-medium',
-                            isActive ? 'text-foreground' : 'text-muted-foreground'
+                            'mt-0.5 line-clamp-1 text-[11px] leading-4',
+                            isActive ? 'text-muted-foreground' : 'text-muted-foreground/80'
                           )}
                         >
-                          {item.label}
-                        </span>
+                          {item.desc}
+                        </p>
                       </div>
-                      <p
-                        className={cn(
-                          'mt-0.5 line-clamp-1 text-[11px] leading-4',
-                          isActive ? 'text-muted-foreground' : 'text-muted-foreground/80'
-                        )}
-                      >
-                        {item.desc}
-                      </p>
-                    </div>
-                  </Link>
-                );
-              })}
+                    </Link>
+                  );
+                })}
             </div>
           </div>
         </div>

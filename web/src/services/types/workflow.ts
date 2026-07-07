@@ -742,6 +742,59 @@ export interface BuiltInWorkflow {
 // Built-in workflows list
 export type BuiltInWorkflowList = BuiltInWorkflow[];
 
+export type PublishedRuntimeSurface =
+  | 'webapp'
+  | 'api'
+  | 'app_center'
+  | 'builtin_app'
+  | 'internal'
+  | string;
+
+export type PublishedRuntimeGrantSubject =
+  | 'public'
+  | 'organization'
+  | 'department'
+  | 'workspace'
+  | 'account'
+  | 'internal'
+  | string;
+
+export interface PublishedRuntimeSurfaceGrant {
+  subject_type: PublishedRuntimeGrantSubject;
+  subject_id: string | null;
+  enabled: boolean;
+}
+
+export interface PublishedRuntimeSurfaceAuthorization {
+  surface: PublishedRuntimeSurface;
+  enabled: boolean;
+  compatibility_source: string;
+  grants: PublishedRuntimeSurfaceGrant[];
+}
+
+export interface UpdatePublishedRuntimeSurfaceGrant {
+  subject_type: PublishedRuntimeGrantSubject;
+  subject_id?: string | null;
+  enabled?: boolean;
+}
+
+export interface UpdatePublishedRuntimeSurfaceAuthorization {
+  surface: PublishedRuntimeSurface;
+  enabled: boolean;
+  grants?: UpdatePublishedRuntimeSurfaceGrant[];
+}
+
+export interface UpdatePublishedRuntimeSurfacesRequest {
+  surfaces: UpdatePublishedRuntimeSurfaceAuthorization[];
+}
+
+export interface BuiltInWorkflowRuntimeSurfaceAuthorizationResponse {
+  scenario: BuiltInWorkflowScenario;
+  agent_id: string;
+  organization_id: string;
+  surfaces: PublishedRuntimeSurfaceAuthorization[];
+}
+
 // Stop workflow task response
 // POST /console/api/agents/{agent_id}/workflow-runs/tasks/{workflow_run_id}/stop
 export interface StopWorkflowTaskResponse {

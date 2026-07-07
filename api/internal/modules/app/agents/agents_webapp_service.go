@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -50,12 +51,18 @@ func (s *agentsService) UpdateWebAppStatus(ctx context.Context, agentID string, 
 		return nil, fmt.Errorf("agent not found")
 	}
 
-	if err := s.ensureCanManageAgent(ctx, ag, accountID); err != nil {
+	if err := s.ensureCanManageAgent(ctx, ag, accountID, agentRuntimeAccessManagePermissionCodes(ag.AgentsType)...); err != nil {
 		return nil, err
 	}
 
-	if err := s.agentsRepo.UpdateWebAppStatus(ctx, agentID, status, reason, accountID); err != nil {
-		return nil, err
+	if s.db != nil {
+		if err := s.updateAgentWebAppStatusAndRuntimeSurface(ctx, ag, status, reason, accountID); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := s.agentsRepo.UpdateWebAppStatus(ctx, agentID, status, reason, accountID); err != nil {
+			return nil, err
+		}
 	}
 
 	updatedAgent, err := s.agentsRepo.GetByID(ctx, agentID)
@@ -73,6 +80,31 @@ func (s *agentsService) UpdateWebAppStatus(ctx context.Context, agentID string, 
 
 func isSystemManagedAgent(ag *Agent) bool {
 	return ag == nil || ag.TenantID == uuid.Nil
+}
+
+func (s *agentsService) RequireAgentManageAccess(ctx context.Context, agentID, accountID string) error {
+	agentID = strings.TrimSpace(agentID)
+	accountID = strings.TrimSpace(accountID)
+	if agentID == "" {
+		return fmt.Errorf("%w: agent id is required", runtimeservice.ErrInvalidInput)
+	}
+	if accountID == "" {
+		return runtimeservice.ErrUnauthorized
+	}
+	if _, err := uuid.Parse(agentID); err != nil {
+		return fmt.Errorf("%w: invalid agent id", runtimeservice.ErrInvalidInput)
+	}
+	ag, err := s.agentsRepo.GetByID(ctx, agentID)
+	if err != nil || isSystemManagedAgent(ag) {
+		return fmt.Errorf("%w: agent not found", runtimeservice.ErrNotFound)
+	}
+	if err := s.ensureCanManageAgent(ctx, ag, accountID, agentManageGatePermissionCodes(ag.AgentsType)...); err != nil {
+		if strings.EqualFold(err.Error(), "permission denied") {
+			return runtimeservice.ErrPermissionDenied
+		}
+		return err
+	}
+	return nil
 }
 
 func accountIDFromContext(ctx context.Context) string {
@@ -93,7 +125,54 @@ func callerOrganizationIDFromContext(ctx context.Context) string {
 	return ""
 }
 
-func (s *agentsService) ensureCanManageAgent(ctx context.Context, ag *Agent, accountID string) error {
+func (s *agentsService) checkWorkspacePermission(ctx context.Context, workspaceID, accountID string, permission model.WorkspacePermissionCode) (bool, bool, error) {
+	return s.checkWorkspaceAnyPermission(ctx, workspaceID, accountID, permission)
+}
+
+func (s *agentsService) checkWorkspaceAnyPermission(ctx context.Context, workspaceID, accountID string, permissions ...model.WorkspacePermissionCode) (bool, bool, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	accountID = strings.TrimSpace(accountID)
+	if workspaceID == "" || accountID == "" {
+		return true, true, nil
+	}
+	if len(permissions) == 0 {
+		return true, false, nil
+	}
+	if s.enterpriseService == nil {
+		return false, false, nil
+	}
+	organizationID := callerOrganizationIDFromContext(ctx)
+	if organizationID == "" {
+		organizationID = s.organizationIDForAgentWorkspace(ctx, workspaceID)
+	}
+	if organizationID == "" {
+		organizationID = workspaceID
+	}
+	allowed, err := s.enterpriseService.CheckWorkspaceOrganizationAnyPermission(ctx, organizationID, workspaceID, accountID, permissions...)
+	return true, allowed, err
+}
+
+func (s *agentsService) ensureWorkspacePermission(ctx context.Context, workspaceID, accountID string, permission model.WorkspacePermissionCode) error {
+	return s.ensureWorkspaceAnyPermission(ctx, workspaceID, accountID, permission)
+}
+
+func (s *agentsService) ensureWorkspaceAnyPermission(ctx context.Context, workspaceID, accountID string, permissions ...model.WorkspacePermissionCode) error {
+	checked, allowed, err := s.checkWorkspaceAnyPermission(ctx, workspaceID, accountID, permissions...)
+	if err != nil {
+		return fmt.Errorf("failed to verify permissions")
+	}
+	if checked && !allowed {
+		return fmt.Errorf("permission denied")
+	}
+	return nil
+}
+
+func (s *agentsService) ensureCanManageAgent(ctx context.Context, ag *Agent, accountID string, permissionCodes ...model.WorkspacePermissionCode) error {
+	if len(permissionCodes) == 0 {
+		permissionCodes = agentUpdatePermissionCodes(ag.AgentsType)
+	}
+	permissionCodes = append([]model.WorkspacePermissionCode(nil), permissionCodes...)
+
 	creatorID := ""
 	if ag.CreatedBy != nil {
 		creatorID = ag.CreatedBy.String()
@@ -101,25 +180,21 @@ func (s *agentsService) ensureCanManageAgent(ctx context.Context, ag *Agent, acc
 
 	canManage := false
 	var err error
-	callerOrganizationID := callerOrganizationIDFromContext(ctx)
-	if callerOrganizationID != "" && s.enterpriseService != nil {
-		canManage, err = s.enterpriseService.CheckWorkspacePermission(
-			ctx,
-			callerOrganizationID,
-			ag.TenantID.String(),
-			accountID,
-			model.WorkspacePermissionAgentManage,
-		)
+	checked, allowed, err := s.checkWorkspaceAnyPermission(ctx, ag.TenantID.String(), accountID, permissionCodes...)
+	if checked {
 		if err != nil {
 			logger.Error(fmt.Sprintf("ensureCanManageAgent: failed to check workspace permission for agent %s, account %s", ag.ID.String(), accountID), err)
 			return fmt.Errorf("failed to verify permissions")
 		}
+		canManage = allowed
 	} else if s.resourcePermissionService != nil {
 		canManage, err = s.resourcePermissionService.CheckSingleResourceEditPermission(ctx, interfaces.SingleResourcePermissionParams{
-			AccountID: accountID,
-			TenantID:  ag.TenantID.String(),
-			CreatedBy: creatorID,
-			GroupID:   nil,
+			AccountID:       accountID,
+			TenantID:        ag.TenantID.String(),
+			OrganizationID:  callerOrganizationIDFromContext(ctx),
+			CreatedBy:       creatorID,
+			GroupID:         nil,
+			PermissionCodes: permissionCodes,
 		})
 		if err != nil {
 			logger.Error(fmt.Sprintf("ensureCanManageAgent: failed to check edit permission for agent %s, account %s", ag.ID.String(), accountID), err)
@@ -132,16 +207,9 @@ func (s *agentsService) ensureCanManageAgent(ctx context.Context, ag *Agent, acc
 		return fmt.Errorf("permission denied")
 	}
 
-	if s.accountService == nil {
-		return nil
-	}
-	isEditor, err := s.accountService.IsEditor(ctx, accountID)
-	if err != nil {
-		return err
-	}
-	if !isEditor {
-		return fmt.Errorf("permission denied")
-	}
-
 	return nil
+}
+
+func (s *agentsService) ensureCanManageAgentRuntimeSurfaces(ctx context.Context, ag *Agent, accountID string) error {
+	return s.ensureCanManageAgent(ctx, ag, accountID, agentRuntimeAccessManagePermissionCodes(ag.AgentsType)...)
 }

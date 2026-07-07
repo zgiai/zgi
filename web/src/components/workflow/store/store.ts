@@ -86,6 +86,16 @@ export interface WorkflowStore
   // Permission-based read-only flag (user lacks edit permission)
   canEdit: boolean;
   setCanEdit: (canEdit: boolean) => void;
+  canRunDraft: boolean;
+  setCanRunDraft: (canRunDraft: boolean) => void;
+  canStopRun: boolean;
+  setCanStopRun: (canStopRun: boolean) => void;
+  canDebug: boolean;
+  setCanDebug: (canDebug: boolean) => void;
+  canViewRuntimeLogs: boolean;
+  setCanViewRuntimeLogs: (canViewRuntimeLogs: boolean) => void;
+  canViewRuntimeEvents: boolean;
+  setCanViewRuntimeEvents: (canViewRuntimeEvents: boolean) => void;
 
   setNodes: (nodes: WorkflowNode[]) => void;
   setEdges: (edges: WorkflowEdge[]) => void;
@@ -279,6 +289,19 @@ export const useWorkflowStoreBase = create<WorkflowStore>()(
       // Permission-based read-only: default to true (editable)
       canEdit: true,
       setCanEdit: (canEdit: boolean) => set({ canEdit }, false, 'workflow:setCanEdit'),
+      canRunDraft: false,
+      setCanRunDraft: (canRunDraft: boolean) =>
+        set({ canRunDraft }, false, 'workflow:setCanRunDraft'),
+      canStopRun: false,
+      setCanStopRun: (canStopRun: boolean) => set({ canStopRun }, false, 'workflow:setCanStopRun'),
+      canDebug: false,
+      setCanDebug: (canDebug: boolean) => set({ canDebug }, false, 'workflow:setCanDebug'),
+      canViewRuntimeLogs: false,
+      setCanViewRuntimeLogs: (canViewRuntimeLogs: boolean) =>
+        set({ canViewRuntimeLogs }, false, 'workflow:setCanViewRuntimeLogs'),
+      canViewRuntimeEvents: false,
+      setCanViewRuntimeEvents: (canViewRuntimeEvents: boolean) =>
+        set({ canViewRuntimeEvents }, false, 'workflow:setCanViewRuntimeEvents'),
 
       // Initial validation results (empty)
       validationResults: {

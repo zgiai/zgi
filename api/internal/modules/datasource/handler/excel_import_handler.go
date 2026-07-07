@@ -2,6 +2,7 @@ package handler
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/internal/dto"
@@ -26,12 +27,12 @@ func (h *DataSourceHandler) AnalyzeExcelImport(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseImportAnalyze) {
+		return
+	}
 	var req dto.AnalyzeExcelImportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
-		return
-	}
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseManage) {
 		return
 	}
 
@@ -60,12 +61,12 @@ func (h *DataSourceHandler) ConfirmExcelImport(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseImportExecute) {
+		return
+	}
 	var req dto.ConfirmExcelImportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
-		return
-	}
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseManage) {
 		return
 	}
 
@@ -94,12 +95,12 @@ func (h *DataSourceHandler) RecognizeExcelImportFields(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseImportAnalyze) {
+		return
+	}
 	var req dto.RecognizeExcelImportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.FailWithMessage(c, response.ErrInvalidParam, "invalid request body: "+err.Error())
-		return
-	}
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseManage) {
 		return
 	}
 
@@ -128,7 +129,7 @@ func (h *DataSourceHandler) GetExcelImportJob(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseView) {
+	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseImportAnalyze) {
 		return
 	}
 	result, err := h.service.GetExcelImportJob(c.Request.Context(), organizationID, dataSourceID, jobID)
@@ -160,7 +161,14 @@ func (h *DataSourceHandler) ListExcelImportErrors(c *gin.Context) {
 		response.Fail(c, response.ErrUnauthorized)
 		return
 	}
-	if !h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, model.WorkspacePermissionDatabaseManage) {
+	if !h.ensureDatabasePermission(
+		c,
+		organizationID,
+		dataSourceID,
+		accountID,
+		model.WorkspacePermissionDatabaseImportAnalyze,
+		model.WorkspacePermissionDatabaseImportExecute,
+	) {
 		return
 	}
 	limit := clampQueryInt(c.DefaultQuery("limit", "20"), 20, 1, 100)
@@ -186,10 +194,11 @@ func (h *DataSourceHandler) ensureDatabasePermission(c *gin.Context, organizatio
 		response.FailWithMessage(c, response.ErrSystemError, "data source not found")
 		return false
 	}
-	dataSourceWorkspaceID := organizationID
-	if dataSource.WorkspaceID != nil && *dataSource.WorkspaceID != "" {
-		dataSourceWorkspaceID = *dataSource.WorkspaceID
+	if dataSource.WorkspaceID == nil || strings.TrimSpace(*dataSource.WorkspaceID) == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "data source has no workspace scope")
+		return false
 	}
+	dataSourceWorkspaceID := strings.TrimSpace(*dataSource.WorkspaceID)
 	hasPermission, err := h.organizationService.CheckWorkspaceOrganizationAnyPermission(
 		c.Request.Context(),
 		organizationID,
@@ -206,6 +215,47 @@ func (h *DataSourceHandler) ensureDatabasePermission(c *gin.Context, organizatio
 		return false
 	}
 	return true
+}
+
+func (h *DataSourceHandler) ensureDatabaseWorkspacePermission(c *gin.Context, organizationID, workspaceID, accountID string, permissions ...model.WorkspacePermissionCode) bool {
+	if h.organizationService == nil {
+		return true
+	}
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "workspace_id is required")
+		return false
+	}
+	hasPermission, err := h.organizationService.CheckWorkspaceOrganizationAnyPermission(
+		c.Request.Context(),
+		organizationID,
+		workspaceID,
+		accountID,
+		permissions...,
+	)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+	if !hasPermission {
+		response.Fail(c, response.ErrPermissionDenied)
+		return false
+	}
+	return true
+}
+
+func (h *DataSourceHandler) ensureDatabaseTablePermission(c *gin.Context, organizationID, tableID, accountID string, permissions ...model.WorkspacePermissionCode) bool {
+	tableID = strings.TrimSpace(tableID)
+	if tableID == "" {
+		response.FailWithMessage(c, response.ErrInvalidParam, "table id is required")
+		return false
+	}
+	dataSourceID, err := h.service.ResolveTableDataSourceID(c.Request.Context(), organizationID, tableID)
+	if err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return false
+	}
+	return h.ensureDatabasePermission(c, organizationID, dataSourceID, accountID, permissions...)
 }
 
 func clampQueryInt(raw string, fallback, minValue, maxValue int) int {

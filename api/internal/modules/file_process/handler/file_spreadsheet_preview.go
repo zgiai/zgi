@@ -47,7 +47,7 @@ func (h *FileHandler) GetFileSpreadsheetPreview(c *gin.Context) {
 		return
 	}
 
-	uploadFile, ok := h.getAuthorizedFileForDownload(c, fileID)
+	uploadFile, ok := h.getAuthorizedFileForPreview(c, fileID)
 	if !ok {
 		return
 	}
