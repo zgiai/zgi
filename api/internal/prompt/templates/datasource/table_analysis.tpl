@@ -14,7 +14,7 @@ Prefer recall over brevity, but only include fields that are explicit or strongl
 Requirements:
 1. Table fields must come from explicit or strongly supported information in the text. Do not invent speculative, hypothetical, or weakly implied fields.
 2. The generated content must include a Name field. The field name must be in English, use snake_case, and follow database field naming conventions.
-2a. The generated content must include a DisplayName field. For Excel, CSV, Markdown table, or other table-like source content, DisplayName must keep the original source header text after trimming surrounding spaces.
+2a. The generated content must include a SourceColumnName field. For Excel, CSV, Markdown table, or other table-like source content, SourceColumnName must keep the original source header text after trimming surrounding spaces. For non-table sources, SourceColumnName can be an empty string.
 3. The generated content must include a Type field. The value must be exactly one of: boolean, text, timestamp, numeric, integer.
 4. The generated content must include an IsRequired field with value true or false.
 5. The generated content must include a Description field. The description must be a Chinese string explaining the field meaning.
@@ -29,7 +29,7 @@ Requirements:
 14. Internally check whether the result covers the major explicit information categories present in the text, such as titles or identifiers, entities or parties, dates or periods, amounts or rates, locations or addresses, contact information, payment information, and terms or conditions. Do not output the checking process.
 
 Output format example:
-[{"Name":"user_name","DisplayName":"用户姓名","Type":"text","IsRequired":true,"Description":"User name"}]
+[{"Name":"user_name","SourceColumnName":"用户姓名","Type":"text","IsRequired":true,"Description":"User name"}]
 
 {{if .Prompt}}
 User prompt:

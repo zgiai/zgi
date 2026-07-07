@@ -94,7 +94,6 @@ export enum Type {
 export interface DbTableColumn {
   id: string;
   name: string;
-  display_name?: string;
   source_column_name?: string;
   description: string;
   type: Type;
@@ -119,7 +118,6 @@ export interface UpdateDbTableColumnsResponse {
 export interface DbTableColumnUpdateInput {
   id?: string;
   name: string;
-  display_name?: string;
   source_column_name?: string;
   description: string;
   type: Type;

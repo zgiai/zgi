@@ -1753,10 +1753,6 @@ func tableColumnSourceSchema(columns []dto.TableColumn) []dto.InferredExcelColum
 		if sourceColumn == "" || strings.TrimSpace(col.Name) == "" {
 			continue
 		}
-		displayName := sourceColumn
-		if col.DisplayName != nil && strings.TrimSpace(*col.DisplayName) != "" {
-			displayName = strings.TrimSpace(*col.DisplayName)
-		}
 		description := ""
 		if col.Description != nil {
 			description = strings.TrimSpace(*col.Description)
@@ -1765,7 +1761,6 @@ func tableColumnSourceSchema(columns []dto.TableColumn) []dto.InferredExcelColum
 			SourceColumn:      sourceColumn,
 			SourceColumnIndex: index,
 			Name:              strings.TrimSpace(col.Name),
-			DisplayName:       displayName,
 			Type:              strings.TrimSpace(col.Type),
 			IsRequired:        col.IsRequired,
 			Description:       description,
@@ -1817,7 +1812,6 @@ func (s *dataSourceService) GetTableColumns(ctx context.Context, organizationID,
 			IsSystemField: isSystemField, // Mark system fields
 		}
 		if metadata, ok := importColumnMetadata[col.Name]; ok {
-			resultColumn.DisplayName = &metadata.DisplayName
 			resultColumn.SourceColumnName = &metadata.SourceColumnName
 		}
 		resultColumns = append(resultColumns, resultColumn)
@@ -1829,7 +1823,6 @@ func (s *dataSourceService) GetTableColumns(ctx context.Context, organizationID,
 }
 
 type excelImportColumnMetadata struct {
-	DisplayName      string
 	SourceColumnName string
 }
 
@@ -1859,12 +1852,7 @@ func (s *dataSourceService) getExcelImportColumnMetadata(ctx context.Context, or
 		if col.Name == "" || col.SourceColumn == "" {
 			continue
 		}
-		displayName := col.DisplayName
-		if displayName == "" {
-			displayName = col.SourceColumn
-		}
 		metadata[col.Name] = excelImportColumnMetadata{
-			DisplayName:      displayName,
 			SourceColumnName: col.SourceColumn,
 		}
 	}
@@ -2610,18 +2598,16 @@ func withSourceColumnNames(columns []dto.TableColumn, sourceHeaders []string) ([
 		}
 		usedHeaders[sourceHeader] = strings.TrimSpace(out[i].Name)
 		out[i].SourceColumnName = &sourceHeader
-		if out[i].DisplayName == nil || strings.TrimSpace(*out[i].DisplayName) == "" {
-			out[i].DisplayName = &sourceHeader
-		}
 	}
 	return out, nil
 }
 
 func matchingSourceHeader(column dto.TableColumn, sourceHeaderCounts map[string]int) (string, bool) {
-	candidates := []string{column.Name}
-	if column.DisplayName != nil {
-		candidates = append(candidates, *column.DisplayName)
+	candidates := make([]string, 0, 2)
+	if column.SourceColumnName != nil {
+		candidates = append(candidates, *column.SourceColumnName)
 	}
+	candidates = append(candidates, column.Name)
 	for _, candidate := range candidates {
 		candidate = strings.TrimSpace(candidate)
 		if candidate == "" || sourceHeaderCounts[candidate] != 1 {
@@ -2701,11 +2687,11 @@ func (s *dataSourceService) inferTableStructureFromFile(ctx context.Context, ten
 	}
 
 	type llmTableColumn struct {
-		Name        string `json:"Name"`
-		DisplayName string `json:"DisplayName"`
-		Type        string `json:"Type"`
-		IsRequired  bool   `json:"IsRequired"`
-		Description string `json:"Description"`
+		Name             string `json:"Name"`
+		SourceColumnName string `json:"SourceColumnName"`
+		Type             string `json:"Type"`
+		IsRequired       bool   `json:"IsRequired"`
+		Description      string `json:"Description"`
 	}
 
 	var llmColumns []llmTableColumn
@@ -2721,8 +2707,8 @@ func (s *dataSourceService) inferTableStructureFromFile(ctx context.Context, ten
 			IsRequired:  llmCol.IsRequired,
 			Description: &description,
 		}
-		if displayName := strings.TrimSpace(llmCol.DisplayName); displayName != "" {
-			column.DisplayName = &displayName
+		if sourceColumnName := strings.TrimSpace(llmCol.SourceColumnName); sourceColumnName != "" {
+			column.SourceColumnName = &sourceColumnName
 		}
 		columns = append(columns, column)
 	}
@@ -4214,16 +4200,12 @@ func excelImportTableColumns(columns []dto.InferredExcelColumn) []dto.TableColum
 			continue
 		}
 		desc := strings.TrimSpace(col.Description)
-		displayName := strings.TrimSpace(col.DisplayName)
 		sourceColumn := strings.TrimSpace(col.SourceColumn)
 		tableColumn := dto.TableColumn{
 			Name:        strings.TrimSpace(col.Name),
 			Description: &desc,
 			Type:        strings.TrimSpace(col.Type),
 			IsRequired:  col.IsRequired,
-		}
-		if displayName != "" {
-			tableColumn.DisplayName = &displayName
 		}
 		if sourceColumn != "" {
 			tableColumn.SourceColumnName = &sourceColumn

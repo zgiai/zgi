@@ -196,6 +196,23 @@ func TestParseExcelFileRejectsHeadersMatchingSameField(t *testing.T) {
 	}
 }
 
+func TestParseExcelFileMatchesExplicitSourceColumnName(t *testing.T) {
+	file := buildImportWorkbook(t, []string{"手机号"}, []string{"13800000000"})
+	sourceColumnName := "手机号"
+	columns := []dto.TableColumn{
+		{Name: "phone_number", SourceColumnName: &sourceColumnName, Type: "text"},
+	}
+
+	svc := &dataSourceService{}
+	records, err := svc.parseExcelFile(bytes.NewReader(file), "records.xlsx", columns, false)
+	if err != nil {
+		t.Fatalf("parseExcelFile() error = %v", err)
+	}
+	if got := records[0]["phone_number"]; got != "13800000000" {
+		t.Fatalf("records[0][phone_number] = %v, want 13800000000", got)
+	}
+}
+
 func TestExcelImportColumnMetadataIgnoresNewerNonSchemaJob(t *testing.T) {
 	ctx := context.Background()
 	const (
@@ -210,7 +227,6 @@ func TestExcelImportColumnMetadataIgnoresNewerNonSchemaJob(t *testing.T) {
 		{
 			SourceColumn: phoneSource,
 			Name:         "phone_number",
-			DisplayName:  phoneSource,
 			Type:         "text",
 		},
 	}
@@ -277,6 +293,71 @@ func TestExcelImportColumnMetadataIgnoresNewerNonSchemaJob(t *testing.T) {
 	}
 }
 
+func TestExcelImportColumnMetadataKeepsSourceColumnName(t *testing.T) {
+	ctx := context.Background()
+	const (
+		organizationID = "org-1"
+		dataSourceID   = "ds-1"
+		tableID        = "table-1"
+		accountID      = "account-1"
+	)
+	now := time.Now()
+	phoneSource := "手机号"
+	schemaSnapshot := []dto.InferredExcelColumn{
+		{
+			SourceColumn: phoneSource,
+			Name:         "phone_number",
+			Type:         "text",
+		},
+	}
+	db, mock := newExcelImportMockDB(t)
+	mock.ExpectQuery(`SELECT \* FROM "data_source_import_jobs" WHERE organization_id = \$1 AND data_source_id = \$2 AND table_id = \$3 AND source_type = \$4 AND status = \$5 ORDER BY created_at DESC,"data_source_import_jobs"\."id" LIMIT \$6`).
+		WithArgs(organizationID, dataSourceID, tableID, "schema", "completed", 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id",
+			"organization_id",
+			"data_source_id",
+			"table_id",
+			"source_type",
+			"source_file_name",
+			"status",
+			"schema_snapshot",
+			"created_by",
+			"updated_by",
+			"created_at",
+			"updated_at",
+		}).AddRow(
+			"source-schema-job",
+			organizationID,
+			dataSourceID,
+			tableID,
+			"schema",
+			"users",
+			string(dto.ExcelImportStatusCompleted),
+			[]byte(mustJSON(schemaSnapshot)),
+			accountID,
+			accountID,
+			now.Add(-time.Minute),
+			now.Add(-time.Minute),
+		))
+
+	svc := &dataSourceService{db: db}
+	metadata, err := svc.getExcelImportColumnMetadata(ctx, organizationID, dataSourceID, tableID, now)
+	if err != nil {
+		t.Fatalf("getExcelImportColumnMetadata() error = %v", err)
+	}
+	phoneMetadata, ok := metadata["phone_number"]
+	if !ok {
+		t.Fatalf("metadata[phone_number] missing from %#v", metadata)
+	}
+	if got := phoneMetadata.SourceColumnName; got != phoneSource {
+		t.Fatalf("metadata[phone_number].SourceColumnName = %q, want %q", got, phoneSource)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations were not met: %v", err)
+	}
+}
+
 func TestExcelImportColumnMetadataFallsBackToLegacyImportJob(t *testing.T) {
 	ctx := context.Background()
 	const (
@@ -291,7 +372,6 @@ func TestExcelImportColumnMetadataFallsBackToLegacyImportJob(t *testing.T) {
 		{
 			SourceColumn: phoneSource,
 			Name:         "phone_number",
-			DisplayName:  phoneSource,
 			Type:         "text",
 		},
 	}
@@ -374,12 +454,12 @@ func TestExcelImportColumnMetadataFallsBackToLegacyImportJob(t *testing.T) {
 	}
 }
 
-func TestWithSourceColumnNamesMatchesHeadersByDisplayName(t *testing.T) {
-	userIDDisplay := "用户ID"
-	phoneDisplay := "手机号"
+func TestWithSourceColumnNamesMatchesHeadersBySourceColumnName(t *testing.T) {
+	userIDSource := "用户ID"
+	phoneSource := "手机号"
 	columns := []dto.TableColumn{
-		{Name: "phone_number", DisplayName: &phoneDisplay, Type: "text", IsRequired: true},
-		{Name: "user_id", DisplayName: &userIDDisplay, Type: "integer", IsRequired: true},
+		{Name: "phone_number", SourceColumnName: &phoneSource, Type: "text", IsRequired: true},
+		{Name: "user_id", SourceColumnName: &userIDSource, Type: "integer", IsRequired: true},
 	}
 
 	got, err := withSourceColumnNames(columns, []string{"用户ID", "手机号"})
@@ -389,9 +469,6 @@ func TestWithSourceColumnNamesMatchesHeadersByDisplayName(t *testing.T) {
 
 	if got[0].SourceColumnName == nil || *got[0].SourceColumnName != "手机号" {
 		t.Fatalf("got[0].SourceColumnName = %v, want 手机号", got[0].SourceColumnName)
-	}
-	if got[0].DisplayName == nil || *got[0].DisplayName != "手机号" {
-		t.Fatalf("got[0].DisplayName = %v, want 手机号", got[0].DisplayName)
 	}
 	if got[1].SourceColumnName == nil || *got[1].SourceColumnName != "用户ID" {
 		t.Fatalf("got[1].SourceColumnName = %v, want 用户ID", got[1].SourceColumnName)
@@ -508,11 +585,11 @@ func TestTableSourceHeadersReadsCSVOriginalHeaders(t *testing.T) {
 		t.Fatalf("tableSourceHeaders() = %#v, want [用户ID 手机号]", headers)
 	}
 
-	userIDDisplay := "用户ID"
-	phoneDisplay := "手机号"
+	userIDSource := "用户ID"
+	phoneSource := "手机号"
 	columns := []dto.TableColumn{
-		{Name: "user_id", DisplayName: &userIDDisplay, Type: "text"},
-		{Name: "phone_number", DisplayName: &phoneDisplay, Type: "text"},
+		{Name: "user_id", SourceColumnName: &userIDSource, Type: "text"},
+		{Name: "phone_number", SourceColumnName: &phoneSource, Type: "text"},
 	}
 	got, err := withSourceColumnNames(columns, headers)
 	if err != nil {

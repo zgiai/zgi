@@ -213,7 +213,6 @@ export function useUpdateDbTableColumns(
           // Only include id if it's from server (exists in previous cache)
           id: previousIds.has(c.id) ? c.id : undefined,
           name: c.name,
-          display_name: c.display_name,
           source_column_name: c.source_column_name,
           description: c.description,
           type: c.type,
