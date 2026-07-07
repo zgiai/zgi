@@ -16,7 +16,7 @@ import (
 
 const (
 	modelTurnIntentMinimumConfidence = 0.5
-	modelTurnIntentMaxTokens         = 820
+	modelTurnIntentMaxTokens         = 5000
 	modelTurnIntentPreviewRunes      = 500
 )
 

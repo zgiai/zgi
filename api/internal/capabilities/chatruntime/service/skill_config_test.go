@@ -366,6 +366,24 @@ func TestAddContextualAIChatSkillIDsAddsConsoleNavigatorForSidebar(t *testing.T)
 	}
 }
 
+func TestAddContextualAIChatSkillIDsAddsConsoleNavigatorWhenOrganizationDisabled(t *testing.T) {
+	catalog := []skills.SkillDiscoveryMetadata{
+		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+		{ID: skills.SkillConsoleNavigator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+	}
+
+	got := addContextualAIChatSkillIDs(
+		[]string{skills.SkillCalculator},
+		[]string{skills.SkillCalculator},
+		catalog,
+		&chatRequestParts{Surface: aiChatSurfaceContextualSidebar, RuntimeContext: "route=/console/files"},
+	)
+	want := []string{skills.SkillCalculator, skills.SkillConsoleNavigator}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("contextual skills = %#v, want %#v", got, want)
+	}
+}
+
 func TestAddContextualAIChatSkillIDsAddsAgentManagementForConsoleAgents(t *testing.T) {
 	catalog := contextualAIChatFileSkillCatalogForTest()
 	parts := contextualConsoleAgentsManageCapabilityPartsForTest()
@@ -739,10 +757,11 @@ func TestNormalizeRuntimeSurfaceForCallerForcesAgentExternalPageChat(t *testing.
 	}
 }
 
-func TestAddUnconfiguredDefaultSkillIDsAddsMissingDefaultSystemSkill(t *testing.T) {
+func TestAddUnconfiguredDefaultSkillIDsAddsMissingDefaultUserSelectableSkill(t *testing.T) {
 	catalog := []skills.SkillDiscoveryMetadata{
 		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
 		{ID: skills.SkillConsoleNavigator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+		{ID: skills.SkillFileManager, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
 		{ID: skills.SkillFileReader, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
 	}
 
@@ -751,9 +770,33 @@ func TestAddUnconfiguredDefaultSkillIDsAddsMissingDefaultSystemSkill(t *testing.
 		map[string]struct{}{skills.SkillCalculator: {}},
 		catalog,
 	)
-	want := []string{skills.SkillCalculator, skills.SkillConsoleNavigator, skills.SkillFileReader}
+	want := []string{skills.SkillCalculator, skills.SkillFileReader}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("default skills = %#v, want %#v", got, want)
+	}
+}
+
+func TestOrganizationSkillConfigRowsSkipRuntimeManagedSystemSkills(t *testing.T) {
+	orgID := uuid.New()
+	catalog := []skills.SkillDiscoveryMetadata{
+		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+		{ID: skills.SkillConsoleNavigator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+		{ID: skills.SkillFileManager, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+		{ID: skills.SkillFileReader, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAIChat}},
+	}
+
+	got := organizationSkillConfigRows(orgID, catalog, []string{
+		skills.SkillCalculator,
+		skills.SkillConsoleNavigator,
+		skills.SkillFileManager,
+	})
+	gotIDs := make([]string, 0, len(got))
+	for _, row := range got {
+		gotIDs = append(gotIDs, row.SkillID)
+	}
+	want := []string{skills.SkillCalculator, skills.SkillFileReader}
+	if !reflect.DeepEqual(gotIDs, want) {
+		t.Fatalf("organization skill config rows = %#v, want %#v", gotIDs, want)
 	}
 }
 

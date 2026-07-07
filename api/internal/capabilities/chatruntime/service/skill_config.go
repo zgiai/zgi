@@ -92,7 +92,7 @@ func (s *service) effectiveOrganizationSkillIDs(ctx context.Context, organizatio
 	if len(configs) == 0 {
 		return defaultEnabledSkillIDs(catalog), nil
 	}
-	catalogIDs := catalogSkillIDSet(catalog)
+	catalogByID := catalogSkillByID(catalog)
 	enabled := make([]string, 0, len(configs))
 	configured := map[string]struct{}{}
 	for _, config := range configs {
@@ -100,13 +100,12 @@ func (s *service) effectiveOrganizationSkillIDs(ctx context.Context, organizatio
 			continue
 		}
 		id := strings.ToLower(strings.TrimSpace(config.SkillID))
-		if _, ok := catalogIDs[id]; ok {
-			configured[id] = struct{}{}
-		}
-		if !config.Enabled {
+		metadata, ok := catalogByID[id]
+		if !ok || !organizationSkillConfigManagesMetadata(metadata) {
 			continue
 		}
-		if _, ok := catalogIDs[id]; ok {
+		configured[id] = struct{}{}
+		if config.Enabled {
 			enabled = append(enabled, id)
 		}
 	}
@@ -366,7 +365,7 @@ func addContextualAIChatSkillIDsWithCapabilities(enabled []string, organizationE
 		return enabled
 	}
 	if capabilities.Navigation {
-		enabled = addSkillIDIfAvailable(enabled, organizationEnabled, catalog, skills.SkillConsoleNavigator, runtimemodel.ConversationCallerAIChat)
+		enabled = addRuntimeManagedSkillIDIfAvailable(enabled, catalog, skills.SkillConsoleNavigator, runtimemodel.ConversationCallerAIChat)
 	}
 	if shouldAddAIChatAgentManagementSkill(parts, capabilities) {
 		enabled = addRuntimeManagedSkillIDIfAvailable(enabled, catalog, skills.SkillAgentManagement, runtimemodel.ConversationCallerAIChat)
@@ -572,7 +571,7 @@ func addRuntimeManagedSkillIDIfAvailable(enabled []string, catalog []skills.Skil
 }
 
 func addUnconfiguredDefaultSkillIDs(enabled []string, configured map[string]struct{}, catalog []skills.SkillDiscoveryMetadata) []string {
-	catalogIDs := catalogSkillIDSet(catalog)
+	catalogByID := catalogSkillByID(catalog)
 	enabledSet := stringSet(enabled)
 	out := append([]string(nil), enabled...)
 	for _, raw := range defaultSystemSkillIDs {
@@ -583,7 +582,8 @@ func addUnconfiguredDefaultSkillIDs(enabled []string, configured map[string]stru
 		if _, exists := configured[id]; exists {
 			continue
 		}
-		if _, ok := catalogIDs[id]; !ok {
+		metadata, ok := catalogByID[id]
+		if !ok || !organizationSkillConfigManagesMetadata(metadata) {
 			continue
 		}
 		if _, exists := enabledSet[id]; exists {
@@ -687,6 +687,9 @@ func organizationSkillConfigRows(organizationID uuid.UUID, catalog []skills.Skil
 		if id == "" {
 			continue
 		}
+		if !organizationSkillConfigManagesMetadata(item) {
+			continue
+		}
 		_, isEnabled := enabledSet[id]
 		rows = append(rows, &runtimemodel.OrganizationSkillConfig{
 			OrganizationID: organizationID,
@@ -749,11 +752,12 @@ func filterSkillsForModel(enabled []string, catalog []skills.SkillDiscoveryMetad
 }
 
 func defaultEnabledSkillIDs(catalog []skills.SkillDiscoveryMetadata) []string {
-	catalogIDs := catalogSkillIDSet(catalog)
+	catalogByID := catalogSkillByID(catalog)
 	enabled := make([]string, 0, len(defaultSystemSkillIDs))
 	for _, id := range defaultSystemSkillIDs {
 		normalized := strings.ToLower(strings.TrimSpace(id))
-		if _, ok := catalogIDs[normalized]; ok {
+		metadata, ok := catalogByID[normalized]
+		if ok && organizationSkillConfigManagesMetadata(metadata) {
 			enabled = append(enabled, normalized)
 		}
 	}
@@ -846,6 +850,14 @@ func catalogSkillIDSet(catalog []skills.SkillDiscoveryMetadata) map[string]struc
 		}
 	}
 	return out
+}
+
+func organizationSkillConfigManagesMetadata(metadata skills.SkillDiscoveryMetadata) bool {
+	id := strings.ToLower(strings.TrimSpace(metadata.ID))
+	if id == "" || metadata.Status == skills.SkillStatusInvalid {
+		return false
+	}
+	return skills.SkillUserSelectable(metadata)
 }
 
 func invalidCustomSkillMetadata(item *runtimemodel.CustomSkill, loadErr error) skills.SkillDiscoveryMetadata {
