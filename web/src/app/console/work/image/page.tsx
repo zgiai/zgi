@@ -84,10 +84,13 @@ function ImagePageContent() {
   const user = useCurrentUser();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { models: availableImageModels, isLoading: isLoadingAvailableImageModels } =
-    useAvailableModels({
-      use_case: 'image-gen',
-    });
+  const {
+    models: availableImageModels,
+    isLoading: isLoadingAvailableImageModels,
+    error: availableImageModelsError,
+  } = useAvailableModels({
+    use_case: 'image-gen',
+  });
 
   // Model config state - initialize from saved preference
   const [modelSelectorValue, setModelSelectorValue] = React.useState<ModelSelectorParameterValue>(
@@ -133,7 +136,9 @@ function ImagePageContent() {
   );
 
   React.useEffect(() => {
-    if (isLoadingAvailableImageModels || !modelSelectorValue.model) return;
+    if (isLoadingAvailableImageModels || availableImageModelsError || !modelSelectorValue.model) {
+      return;
+    }
 
     const currentModelStillAvailable = availableImageModels.some(
       item => item.provider === modelSelectorValue.provider && item.model === modelSelectorValue.model
@@ -141,13 +146,15 @@ function ImagePageContent() {
     if (currentModelStillAvailable) return;
 
     const fallback = availableImageModels[0];
+    if (!fallback) return;
+
     setModelSelectorValue(prev => ({
       ...prev,
-      provider: fallback?.provider ?? '',
-      model: fallback?.model ?? '',
+      provider: fallback.provider,
+      model: fallback.model,
     }));
 
-    if (user?.id && fallback) {
+    if (user?.id) {
       saveLastSelectedAiModel(user.id, 'imageGenChat', {
         provider: fallback.provider,
         model: fallback.model,
@@ -155,6 +162,7 @@ function ImagePageContent() {
     }
   }, [
     availableImageModels,
+    availableImageModelsError,
     isLoadingAvailableImageModels,
     modelSelectorValue.model,
     modelSelectorValue.provider,
