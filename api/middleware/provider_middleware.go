@@ -52,22 +52,9 @@ func JWTWithProvider() gin.HandlerFunc {
 			return
 		}
 
-		if globalServiceProvider != nil {
-			accountService := globalServiceProvider.GetAccountService()
-			account, err := accountService.LoadUser(context.Background(), userID)
-			if err != nil || account == nil {
-				switch {
-				case err != nil && strings.Contains(err.Error(), "account is banned"):
-					failAccountAuthorization(c, userID, errAuthenticatedAccountBanned)
-				case err != nil && strings.Contains(err.Error(), "account is frozen"):
-					failAccountAuthorization(c, userID, errAuthenticatedAccountFrozen)
-				case err != nil && strings.Contains(err.Error(), "account is closed"):
-					failAccountAuthorization(c, userID, errAuthenticatedAccountClosed)
-				default:
-					failAccountAuthorization(c, userID, err)
-				}
-				return
-			}
+		if err := ensureAuthenticatedAccount(c.Request.Context(), userID); err != nil {
+			failAccountAuthorization(c, userID, err)
+			return
 		}
 
 		c.Set("account_id", userID)
