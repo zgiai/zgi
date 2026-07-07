@@ -43,6 +43,12 @@ func (r *Runner) handleProgressiveSkillCall(
 		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
 		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "fix the JSON arguments and retry the same tool call")), false, false)
 	}
+	if boolArg(args, "_invalid_tool_arguments") {
+		err := fmt.Errorf("%w: tool arguments were not valid JSON", ErrInvalidInput)
+		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
+		trace.Arguments = copyStringAnyMap(args)
+		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, stringArg(args, "next_action"))), false, false)
+	}
 	if normalizedCall, normalizedArgs, ok := normalizeDirectLoadedSkillToolCall(resolved, loadedSkills, call, args); ok {
 		call = normalizedCall
 		args = normalizedArgs
@@ -588,7 +594,9 @@ func (r *Runner) handleCallSkillTool(
 		r.emitEvent(EventClientActionRequired, payload)
 		result := successfulSkillStep(invocation.Trace, invocation.ToolMessage, true, true)
 		result.toolResult = guardToolResult
-		result.pendingClientAction = payload
+		if clientActionRequiresModelContinuation(payload) {
+			result.pendingClientAction = payload
+		}
 		return result
 	}
 	if isAgentWorkflowRunTool(invocation.Trace.SkillID, invocation.Trace.ToolName) {

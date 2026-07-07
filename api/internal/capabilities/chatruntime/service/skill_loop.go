@@ -4412,8 +4412,10 @@ type AIChatTurnStrategy struct {
 }
 
 const (
-	aiChatTurnStrategySourceModelIntent  = "model_intent"
-	aiChatTurnStrategySourceRuleFallback = "rule_fallback"
+	aiChatTurnStrategySourceDefault                = "default_contextual"
+	aiChatTurnStrategySourceModelIntent            = "model_intent"
+	aiChatTurnStrategySourceRuleFallback           = "rule_fallback"
+	aiChatTurnStrategySourceLegacySemanticFallback = "legacy_semantic_fallback"
 )
 
 type AIChatTurnStrategyTool struct {
@@ -4451,7 +4453,7 @@ func contextualAIChatTurnStrategyFromParts(parts *chatRequestParts) *AIChatTurnS
 	strategy := &AIChatTurnStrategy{
 		Surface:           normalizeAIChatSurface(parts.Surface),
 		CurrentPage:       currentPage,
-		Source:            aiChatTurnStrategySourceRuleFallback,
+		Source:            aiChatTurnStrategySourceDefault,
 		SourceReason:      "base_contextual_sidebar_strategy",
 		Intent:            "answer_or_explain_zgi_context",
 		TargetPage:        currentPage,
@@ -4498,40 +4500,48 @@ func contextualAIChatTurnStrategyFromParts(parts *chatRequestParts) *AIChatTurnS
 		if modeled, ok := contextualAIChatTurnStrategyFromModelIntent(parts, strategy, modelIntent); ok {
 			return finalizeAIChatTurnStrategy(parts, modeled)
 		}
+		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceModelIntent, "model_intent_not_accepted_"+strings.TrimSpace(modelIntent.Intent))
+		strategy.ToolChoiceMode = aiChatTurnToolChoiceModelDecides
+		if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
+			strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillConsoleNavigator)
+		}
+		return finalizeAIChatTurnStrategy(parts, strategy)
 	}
 
+	legacySource := aiChatTurnStrategySourceLegacySemanticFallback
 	switch {
 	case shouldUseAgentManagementModelDecidesStrategy(parts):
-		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceRuleFallback, "agent_management_context_or_query_rule")
+		strategy = markAIChatTurnStrategySource(strategy, legacySource, "agent_management_context_or_query_rule")
 		strategy = contextualAgentManagementStrategy(parts, strategy)
 	case isConsoleNavigationIntent(parts.Query) && consoleNavigationResolvedTargetCount(parts.Query) > 1:
-		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceRuleFallback, "multi_target_console_navigation_rule")
+		strategy = markAIChatTurnStrategySource(strategy, legacySource, "multi_target_console_navigation_rule")
 		strategy = contextualNavigationStrategy(parts, strategy)
 	case isContinuationIntent(parts.Query):
-		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceRuleFallback, "continuation_query_rule")
+		strategy = markAIChatTurnStrategySource(strategy, legacySource, "continuation_query_rule")
 		strategy = contextualContinuationStrategy(parts, strategy)
 	case isManagedFileCreateIntent(parts.Query):
-		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceRuleFallback, "managed_file_create_query_rule")
+		strategy = markAIChatTurnStrategySource(strategy, legacySource, "managed_file_create_query_rule")
 		strategy = contextualManagedFileCreateStrategy(parts, strategy)
 	case isTemporaryFileGenerateIntent(parts.Query):
-		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceRuleFallback, "temporary_file_generate_query_rule")
+		strategy = markAIChatTurnStrategySource(strategy, legacySource, "temporary_file_generate_query_rule")
 		strategy = contextualTemporaryFileGenerateStrategy(parts, strategy)
 	case strategy.RouteRequired && isConsoleNavigationIntent(parts.Query):
-		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceRuleFallback, "route_required_navigation_query_rule")
+		strategy = markAIChatTurnStrategySource(strategy, legacySource, "route_required_navigation_query_rule")
 		strategy = contextualNavigationStrategy(parts, strategy)
 	case isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
 		isFileDeleteIntent(parts.Query):
-		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceRuleFallback, "file_page_delete_query_rule")
+		strategy = markAIChatTurnStrategySource(strategy, legacySource, "file_page_delete_query_rule")
 		strategy = contextualFileDeleteStrategy(parts, strategy)
 	case isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
 		isFileReadIntent(parts.Query):
-		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceRuleFallback, "file_page_read_query_rule")
+		strategy = markAIChatTurnStrategySource(strategy, legacySource, "file_page_read_query_rule")
 		strategy = contextualFileReadStrategy(parts, strategy)
 	case shouldUseAvailableRouteNavigationStrategy(parts, strategy):
-		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceRuleFallback, "available_route_navigation_rule")
+		strategy = markAIChatTurnStrategySource(strategy, legacySource, "available_route_navigation_rule")
 		strategy = contextualNavigationStrategy(parts, strategy)
 	default:
-		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceRuleFallback, "default_contextual_page_answer_rule")
+		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceDefault, "default_contextual_page_answer")
+		strategy.ToolChoiceMode = aiChatTurnToolChoiceModelDecides
 		if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
 			strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillConsoleNavigator)
 		}
@@ -7466,9 +7476,9 @@ func contextualAgentManagementStrategy(parts *chatRequestParts, strategy *AIChat
 		"agent-management uses a resolved Agent ID for edit, config, or delete operations",
 		"only supported MVP fields are changed; publishing, rollback, invocation, API keys, and WebApp online/offline state are not attempted",
 		"binding and unbinding edits use supported draft config binding lists when exact current bindings and candidates are known",
-		"asset observation or refreshed page context confirms the Agent state",
+		"agent-management tool results and get_agent_config reads are authoritative backend evidence for Agent state",
 	}
-	strategy.ObservationPoints = []string{"route_loaded:" + firstNonEmptyString(strategy.TargetPage, "/console/agents"), "agent_page_context", "asset_observation:agent"}
+	strategy.ObservationPoints = nil
 
 	primary := append([]string(nil), strategy.PrimarySkills...)
 	supporting := append([]string(nil), strategy.SupportingSkills...)
@@ -7483,7 +7493,6 @@ func contextualAgentManagementStrategy(parts *chatRequestParts, strategy *AIChat
 			strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
 				"console-navigator/navigate opens the explicitly requested Agent detail page before claiming it is open",
 			)
-			strategy.ObservationPoints = appendUniqueStrings(strategy.ObservationPoints, "route_loaded:"+detailTarget.Href)
 		} else {
 			strategy.RouteRequired = false
 		}
@@ -7494,10 +7503,10 @@ func contextualAgentManagementStrategy(parts *chatRequestParts, strategy *AIChat
 			strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
 				"visible Agent targets from current page context are used directly when the user refers to visible, selected, current-page, or first-N Agents",
 			)
-			strategy.ObservationPoints = appendUniqueStrings(strategy.ObservationPoints, "console_agents_visible_agents")
 			strategy.Avoid = appendUniqueStrings(strategy.Avoid,
 				"avoid redundant agent-management/list_agents before operating on visible, selected, current-page, or first-N Agents already present in page context",
 				"avoid navigation after an Agent list-page mutation unless the user explicitly asked to open a page or the current detail page was deleted",
+				"avoid waiting for asset_observation or refreshed page context after Agent mutations when agent-management tool results already confirm the state",
 			)
 		}
 	} else {
@@ -10277,7 +10286,7 @@ func consoleAgentDetailHref(agentID string) string {
 	if agentID == "" {
 		return ""
 	}
-	return "/console/agents/" + agentID
+	return "/console/agents/" + agentID + "/agent"
 }
 
 func consoleAgentIDFromDetailHref(href string) string {

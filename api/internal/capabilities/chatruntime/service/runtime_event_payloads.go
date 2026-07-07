@@ -81,16 +81,18 @@ func routeNavigationClientActionRequiredPayload(prepared *PreparedChat, trace sk
 	}
 	actionID = "route_navigation:" + actionID
 	payload := withRuntimePayloadTimestamp(map[string]interface{}{
-		"conversation_id": prepared.Conversation.ID.String(),
-		"message_id":      prepared.Message.ID.String(),
-		"action_id":       actionID,
-		"action_type":     "route_navigation",
-		"event_type":      "client_action_required",
-		"status":          "waiting_client_action",
-		"skill_id":        strings.TrimSpace(trace.SkillID),
-		"tool_name":       strings.TrimSpace(trace.ToolName),
-		"href":            href,
-		"result":          copyStringAnyMap(result),
+		"conversation_id":     prepared.Conversation.ID.String(),
+		"message_id":          prepared.Message.ID.String(),
+		"action_id":           actionID,
+		"action_type":         "route_navigation",
+		"event_type":          "client_action_required",
+		"status":              "waiting_client_action",
+		"continuation_policy": clientActionContinuationPolicyResumeModel,
+		"blocking":            true,
+		"skill_id":            strings.TrimSpace(trace.SkillID),
+		"tool_name":           strings.TrimSpace(trace.ToolName),
+		"href":                href,
+		"result":              copyStringAnyMap(result),
 	})
 	if label := strings.TrimSpace(stringFromAny(result["label"])); label != "" {
 		payload["label"] = label
@@ -110,6 +112,8 @@ func agentManagementRouteNavigationClientActionRequiredPayload(prepared *Prepare
 	}
 	href := ""
 	label := ""
+	labelKey := ""
+	routeKind := ""
 	reason := ""
 	switch strings.TrimSpace(trace.ToolName) {
 	case "create_agent":
@@ -118,6 +122,8 @@ func agentManagementRouteNavigationClientActionRequiredPayload(prepared *Prepare
 		}
 		href = agentDetailHrefFromTrace(trace)
 		label = "Agent detail"
+		labelKey = "agentDetail"
+		routeKind = "agent_detail"
 		reason = "open_created_agent_detail"
 	case "delete_agent":
 		if !deletedAgentIsCurrentDetailPage(prepared, trace) {
@@ -129,6 +135,8 @@ func agentManagementRouteNavigationClientActionRequiredPayload(prepared *Prepare
 			"/console/agents",
 		))
 		label = "Agent list"
+		labelKey = "agentList"
+		routeKind = "agent_list"
 		reason = "leave_deleted_agent_detail"
 	default:
 		return nil
@@ -145,21 +153,27 @@ func agentManagementRouteNavigationClientActionRequiredPayload(prepared *Prepare
 		"event_type": "page_navigation_requested",
 		"href":       href,
 		"label":      label,
+		"label_key":  labelKey,
+		"route_kind": routeKind,
 		"reason":     reason,
 	}
 	return withRuntimePayloadTimestamp(map[string]interface{}{
-		"conversation_id": prepared.Conversation.ID.String(),
-		"message_id":      prepared.Message.ID.String(),
-		"action_id":       actionID,
-		"action_type":     "route_navigation",
-		"event_type":      "client_action_required",
-		"status":          "waiting_client_action",
-		"skill_id":        skills.SkillConsoleNavigator,
-		"tool_name":       "navigate",
-		"href":            href,
-		"label":           label,
-		"reason":          reason,
-		"result":          result,
+		"conversation_id":     prepared.Conversation.ID.String(),
+		"message_id":          prepared.Message.ID.String(),
+		"action_id":           actionID,
+		"action_type":         "route_navigation",
+		"event_type":          "client_action_required",
+		"status":              "waiting_client_action",
+		"continuation_policy": clientActionContinuationPolicyResumeModel,
+		"blocking":            true,
+		"skill_id":            skills.SkillConsoleNavigator,
+		"tool_name":           "navigate",
+		"href":                href,
+		"label":               label,
+		"label_key":           labelKey,
+		"route_kind":          routeKind,
+		"reason":              reason,
+		"result":              result,
 	})
 }
 
@@ -299,14 +313,16 @@ func assetObservationClientActionRequiredPayload(prepared *PreparedChat, trace s
 		"action_id":             actionID,
 		"action_type":           "asset_observation",
 		"event_type":            "client_action_required",
-		"status":                "waiting_client_action",
+		"status":                clientActionStatusSucceeded,
+		"continuation_policy":   clientActionContinuationPolicyRecordOnly,
+		"blocking":              false,
 		"skill_id":              strings.TrimSpace(trace.SkillID),
 		"tool_name":             strings.TrimSpace(trace.ToolName),
 		"effect":                effect,
 		"asset_type":            assetType,
 		"asset_operation_audit": copyStringAnyMap(audit),
 		"observation_requested": true,
-		"refresh_before_resume": true,
+		"refresh_before_resume": false,
 	})
 	if correlationID := strings.TrimSpace(payloadValueText(audit["correlation_id"])); correlationID != "" {
 		payload["correlation_id"] = correlationID

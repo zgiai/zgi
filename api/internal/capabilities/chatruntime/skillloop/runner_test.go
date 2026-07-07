@@ -6278,18 +6278,17 @@ Use governed file tools.
 			},
 		},
 	})
-	var pendingObservation *ClientActionPendingError
-	if !errors.As(err, &pendingObservation) {
-		t.Fatalf("Run() error = %v, want ClientActionPendingError for asset observation", err)
+	if err != nil {
+		t.Fatalf("Run() error = %v, want final answer after record-only asset observation", err)
 	}
-	if answer != "" {
-		t.Fatalf("answer = %q, want no final answer before asset observation", answer)
+	if answer != "Deleted report.pdf." {
+		t.Fatalf("answer = %q, want final answer after asset observation event", answer)
 	}
 	if len(deleteTool.calls) != 1 || deleteTool.calls[0] != "file-1" {
 		t.Fatalf("delete calls = %#v, want one call for approved file-1", deleteTool.calls)
 	}
-	if fakeLLM.appChatCalls != 2 {
-		t.Fatalf("AppChat calls = %d, want load and delete before observation", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want load, delete, and final answer", fakeLLM.appChatCalls)
 	}
 	event := findRunnerTestEvent(events, EventToolGovernanceDecision)
 	if event == nil {
@@ -6311,8 +6310,9 @@ Use governed file tools.
 		clientActionEvent.Payload["asset_type"] != "file" {
 		t.Fatalf("client action payload = %#v, want file delete observation", clientActionEvent.Payload)
 	}
-	if pendingObservation.Payload["action_id"] != clientActionEvent.Payload["action_id"] {
-		t.Fatalf("pending action = %#v, event = %#v, want same action id", pendingObservation.Payload, clientActionEvent.Payload)
+	if clientActionEvent.Payload["continuation_policy"] != clientActionContinuationPolicyRecordOnly ||
+		clientActionEvent.Payload["status"] != "succeeded" {
+		t.Fatalf("client action payload = %#v, want record-only succeeded observation", clientActionEvent.Payload)
 	}
 }
 

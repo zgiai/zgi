@@ -297,6 +297,16 @@ func TestOperationContextDoesNotEnterModelContentAndRuntimeContextRemainsTransie
 	if _, ok := message.Metadata["operation_ledger"].(map[string]interface{}); !ok {
 		t.Fatalf("operation_ledger metadata = %#v, want map", message.Metadata["operation_ledger"])
 	}
+	initialSnapshot := mapFromOperationContext(message.Metadata[turnInitialContextSnapshotKey])
+	if len(initialSnapshot) == 0 {
+		t.Fatalf("message metadata missing turn initial context snapshot: %#v", message.Metadata)
+	}
+	if initialSnapshot["schema"] != turnInitialContextSnapshotSchema {
+		t.Fatalf("turn initial context schema = %#v, want %q", initialSnapshot["schema"], turnInitialContextSnapshotSchema)
+	}
+	if ledger := mapFromOperationContext(initialSnapshot["operation_ledger"]); len(ledger) == 0 {
+		t.Fatalf("turn initial context missing operation ledger: %#v", initialSnapshot)
+	}
 	metadataBytes, err := json.Marshal(message.Metadata)
 	if err != nil {
 		t.Fatalf("marshal metadata: %v", err)

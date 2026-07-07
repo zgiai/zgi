@@ -61,25 +61,6 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 	if err != nil {
 		return nil, err
 	}
-	var llmRequest *adapter.ChatRequest
-	var userMemoryPreflightDone bool
-	var userMemoryPreflightUsage *adapter.Usage
-	if parts.Attachments == nil || len(parts.Attachments.Files) == 0 {
-		contextResult, err := s.buildUpstreamMessages(ctx, scope, parentID, parts)
-		if err != nil {
-			return nil, err
-		}
-		parts.ContextControl = contextResult.Metadata
-		llmRequest = newLLMChatRequest(parts, contextResult.Messages)
-		preflight, err := s.runContextualPreparePreflights(ctx, scope, conversation, config, parts, llmRequest)
-		if err != nil {
-			return nil, err
-		}
-		if preflight != nil {
-			userMemoryPreflightDone = preflight.UserMemoryDone
-			userMemoryPreflightUsage = preflight.UserMemoryUsage
-		}
-	}
 
 	message := newStreamingMessage(conversation.ID, parentID, parts)
 	if err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -104,15 +85,11 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 	return &PreparedChat{
 		Conversation: conversation,
 		Message:      message,
-		LLMRequest:   llmRequest,
 		Scope:        scope,
 		Caller:       caller,
 		RunConfig:    config,
 		ParentID:     parentID,
 		parts:        parts,
-
-		UserMemoryPreflightDone:  userMemoryPreflightDone,
-		UserMemoryPreflightUsage: userMemoryPreflightUsage,
 	}, nil
 }
 

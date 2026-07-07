@@ -184,6 +184,7 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 	}
 	restoreConsoleFilesContextFromMetadata(parts, message.Metadata, continuation.Event)
 	restoreConsoleAgentsContextFromMetadata(parts, message.Metadata, continuation.Event)
+	restoreTurnInitialContextFromMetadata(parts, message.Metadata)
 	parts.Attachments = attachmentBundleFromMessageMetadata(message.Metadata)
 	if configured, ok := stringSliceValue(message.Metadata["configured_skill_ids"]); ok && len(configured) > 0 {
 		parts.ConfiguredSkillIDs = configured
@@ -342,9 +343,11 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 			}
 			if payload := clientActionRequiredPayload(prepared, invocation.Trace, callID); len(payload) > 0 {
 				timeline.RecordEvent(streamEventClientActionRequired, payload)
-				metadata := s.persistClientActionPending(persistCtx, prepared, payload, nil)
-				s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction), onEvent)
-				return &ChatResult{Answer: "", Metadata: metadata, Usage: nil, Status: runtimemodel.MessageStatusWaitingClientAction}, true, nil
+				if clientActionRequiresModelContinuation(payload) {
+					metadata := s.persistClientActionPending(persistCtx, prepared, payload, nil)
+					s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction), onEvent)
+					return &ChatResult{Answer: "", Metadata: metadata, Usage: nil, Status: runtimemodel.MessageStatusWaitingClientAction}, true, nil
+				}
 			}
 		}
 	}

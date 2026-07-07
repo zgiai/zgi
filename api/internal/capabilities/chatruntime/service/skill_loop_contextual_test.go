@@ -473,13 +473,8 @@ func TestContextualAIChatTurnStrategyGeneratesNewManagedFileDespiteRecentArtifac
 		}
 	}
 
-	metadata := streamingMessageMetadataWithTaskID(prepared.parts, "task-new-managed")
-	plan := metadata["operation_plan"].(map[string]interface{})
-	stepStatus := plan["step_status"].(map[string]interface{})
-	for _, want := range []string{"skill:" + skills.SkillFileGenerator, "skill:" + skills.SkillFileManager} {
-		if _, ok := stepStatus[want]; !ok {
-			t.Fatalf("operation plan step_status = %#v, want %s", stepStatus, want)
-		}
+	if strategy.ToolChoiceMode != aiChatTurnToolChoiceModelDecides {
+		t.Fatalf("ToolChoiceMode = %q, want %q", strategy.ToolChoiceMode, aiChatTurnToolChoiceModelDecides)
 	}
 }
 
@@ -746,6 +741,46 @@ func TestSkillLoopKeepsAgentActionsInSkillLoop(t *testing.T) {
 	}
 }
 
+func TestContextualAgentManagementStrategyUsesBackendEvidenceWithoutObservationStep(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "delete the first visible Agent, then create and configure a new Agent",
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/agents",
+			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement},
+			SkillMode:      skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "manage_agent_asset",
+				Confidence: 0.93,
+			},
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if got := strategy.Intent; got != "manage_agent_asset" {
+		t.Fatalf("Intent = %q, want manage_agent_asset", got)
+	}
+	criteria := strings.Join(strategy.SuccessCriteria, "\n")
+	if !strings.Contains(criteria, "agent-management tool results and get_agent_config reads are authoritative backend evidence") {
+		t.Fatalf("SuccessCriteria = %#v, want backend evidence criterion", strategy.SuccessCriteria)
+	}
+	for _, point := range strategy.ObservationPoints {
+		if strings.Contains(point, "asset_observation") || strings.Contains(point, "agent_page_context") {
+			t.Fatalf("ObservationPoints = %#v, want no Agent page observation dependency", strategy.ObservationPoints)
+		}
+	}
+
+	plan := operationPlanFromTurnStrategy("task-agent-backend-evidence", prepared.parts, strategy)
+	for _, step := range mapSliceFromAny(plan["steps"]) {
+		if got := stringFromAny(step["id"]); got == "observe" {
+			t.Fatalf("operation_plan steps = %#v, want no observe step for Agent backend-evidence flow", plan["steps"])
+		}
+	}
+}
+
 func TestContextualAIChatTurnStrategyUsesModelIntentBeforeRuleFallback(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
@@ -779,7 +814,58 @@ func TestContextualAIChatTurnStrategyUsesModelIntentBeforeRuleFallback(t *testin
 	}
 }
 
-func TestContextualAIChatTurnStrategyFallsBackWhenModelIntentUnsupported(t *testing.T) {
+func TestContextualAIChatTurnStrategyKeepsAgentModelIntentBeforeFileFallbackWhenSkillLoadsAfterRoute(t *testing.T) {
+	routeRequired := true
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "到文件管理读取第一个文件，然后到智能体页面创建一个故事讲述者智能体，让它能生成文件和上传文件",
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/files",
+			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillFileReader, skills.SkillFileGenerator},
+			SkillMode:      skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:        "manage_agent_asset",
+				TaskType:      "complex_multi_step_workflow",
+				TargetPage:    "/console/agents",
+				RouteRequired: &routeRequired,
+				Confidence:    0.91,
+				Phases: []string{
+					"read the requested file",
+					"navigate to the Agents page",
+					"create and configure the requested Agent",
+				},
+			},
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if strategy.Intent != "manage_agent_asset" {
+		t.Fatalf("Intent = %q, want manage_agent_asset; source=%s/%s", strategy.Intent, strategy.Source, strategy.SourceReason)
+	}
+	if strategy.Source != aiChatTurnStrategySourceModelIntent {
+		t.Fatalf("Source = %q, want %q", strategy.Source, aiChatTurnStrategySourceModelIntent)
+	}
+	if strategy.TargetPage != "/console/agents" {
+		t.Fatalf("TargetPage = %q, want /console/agents", strategy.TargetPage)
+	}
+	if !strategy.RouteRequired {
+		t.Fatal("RouteRequired = false, want true before Agent page loads")
+	}
+	if strategy.RequiredNextTool == nil ||
+		strategy.RequiredNextTool.SkillID != skills.SkillConsoleNavigator ||
+		strategy.RequiredNextTool.ToolName != "navigate" ||
+		strategy.RequiredNextTool.Arguments["href"] != "/console/agents" {
+		t.Fatalf("RequiredNextTool = %#v, want console-navigator navigate to /console/agents", strategy.RequiredNextTool)
+	}
+	if strategy.Intent == "save_generated_file_to_file_management" || strategy.TargetPage == "/console/files" {
+		t.Fatalf("strategy fell back to managed file create: %#v", strategy)
+	}
+}
+
+func TestContextualAIChatTurnStrategyDoesNotUseLegacyFallbackWhenModelIntentUnsupported(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
 			Query:          "create a new agent named smoke assistant",
@@ -798,14 +884,17 @@ func TestContextualAIChatTurnStrategyFallsBackWhenModelIntentUnsupported(t *test
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
 	}
-	if strategy.Intent != "manage_agent_asset" {
-		t.Fatalf("Intent = %q, want fallback manage_agent_asset", strategy.Intent)
+	if strategy.Intent != "answer_or_explain_zgi_context" {
+		t.Fatalf("Intent = %q, want safe model-intent default answer strategy; strategy=%#v", strategy.Intent, strategy)
 	}
-	if strategy.Source != aiChatTurnStrategySourceRuleFallback {
-		t.Fatalf("Source = %q, want %q", strategy.Source, aiChatTurnStrategySourceRuleFallback)
+	if strategy.Source != aiChatTurnStrategySourceModelIntent {
+		t.Fatalf("Source = %q, want %q", strategy.Source, aiChatTurnStrategySourceModelIntent)
 	}
-	if strategy.SourceReason == "" {
-		t.Fatal("SourceReason is empty, want fallback reason")
+	if !strings.Contains(strategy.SourceReason, "model_intent_not_accepted") {
+		t.Fatalf("SourceReason = %q, want model_intent_not_accepted reason", strategy.SourceReason)
+	}
+	if slices.Contains(strategy.PrimarySkills, skills.SkillAgentManagement) {
+		t.Fatalf("PrimarySkills = %#v, want no agent-management legacy fallback", strategy.PrimarySkills)
 	}
 }
 
@@ -828,8 +917,8 @@ func TestContextualAIChatTurnStrategyKeepsPassiveAnswerWhenClassifierFailsOnAgen
 	if strategy.Intent != "answer_or_explain_zgi_context" {
 		t.Fatalf("Intent = %q, want answer_or_explain_zgi_context; strategy=%#v", strategy.Intent, strategy)
 	}
-	if strategy.Source != aiChatTurnStrategySourceRuleFallback {
-		t.Fatalf("Source = %q, want %q", strategy.Source, aiChatTurnStrategySourceRuleFallback)
+	if strategy.Source != aiChatTurnStrategySourceDefault {
+		t.Fatalf("Source = %q, want %q", strategy.Source, aiChatTurnStrategySourceDefault)
 	}
 	if slices.Contains(strategy.PrimarySkills, skills.SkillAgentManagement) {
 		t.Fatalf("PrimarySkills = %#v, want no agent-management primary skill for passive answer", strategy.PrimarySkills)
@@ -1251,14 +1340,13 @@ func TestContextualAIChatTurnStrategyResumesStagedContinuationFromDeferredGoal(t
 	if strategy.RequiredNextTool == nil || strategy.RequiredNextTool.Arguments["href"] != "/console/files" {
 		t.Fatalf("RequiredNextTool = %#v, want navigate to /console/files", strategy.RequiredNextTool)
 	}
-	foundSave := false
-	for _, tool := range strategy.PlannedTools {
-		if tool.SkillID == skills.SkillFileManager && tool.ToolName == "save_file_to_management" {
-			foundSave = true
+	for _, want := range []string{skills.SkillFileGenerator, skills.SkillFileManager} {
+		if !slices.Contains(strategy.SupportingSkills, want) && !slices.Contains(strategy.PrimarySkills, want) {
+			t.Fatalf("skills primary=%#v supporting=%#v, want %s available for deferred goal", strategy.PrimarySkills, strategy.SupportingSkills, want)
 		}
 	}
-	if !foundSave {
-		t.Fatalf("PlannedTools = %#v, want file-manager save from deferred goal", strategy.PlannedTools)
+	if len(strategy.PlannedTools) != 0 {
+		t.Fatalf("PlannedTools = %#v, want no scripted tools for model-decides deferred goal", strategy.PlannedTools)
 	}
 }
 
@@ -1306,17 +1394,13 @@ func TestContextualAIChatTurnStrategyResumesStagedFileGoalWithoutAgentNameRoute(
 			t.Fatalf("RemainingRouteSequence = %#v, want no /console/agents from resource attribute mention", strategy.RemainingRouteSequence)
 		}
 	}
-	for _, want := range []struct {
-		skillID  string
-		toolName string
-	}{
-		{skills.SkillFileGenerator, "generate_file"},
-		{skills.SkillFileManager, "save_file_to_management"},
-		{skills.SkillFileManager, "delete_file"},
-	} {
-		if !aiChatTurnStrategyHasPlannedToolForTest(strategy, want.skillID, want.toolName) {
-			t.Fatalf("PlannedTools = %#v, missing %s/%s", strategy.PlannedTools, want.skillID, want.toolName)
+	for _, want := range []string{skills.SkillFileGenerator, skills.SkillFileManager} {
+		if !slices.Contains(strategy.SupportingSkills, want) && !slices.Contains(strategy.PrimarySkills, want) {
+			t.Fatalf("skills primary=%#v supporting=%#v, want %s available for deferred file goal", strategy.PrimarySkills, strategy.SupportingSkills, want)
 		}
+	}
+	if len(strategy.PlannedTools) != 0 {
+		t.Fatalf("PlannedTools = %#v, want no scripted tools for model-decides file goal", strategy.PlannedTools)
 	}
 }
 
@@ -1516,7 +1600,6 @@ func TestContextualAIChatTurnStrategyContinuationManagedCreateKeepsFilePlan(t *t
 	for _, want := range []string{
 		"tool:console-navigator/navigate",
 		"route:/console/files",
-		"skill:" + skills.SkillConsoleNavigator,
 	} {
 		if _, ok := stepStatus[want]; !ok {
 			t.Fatalf("step_status = %#v, missing %s", stepStatus, want)

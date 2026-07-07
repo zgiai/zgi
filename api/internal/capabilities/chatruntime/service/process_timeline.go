@@ -268,6 +268,8 @@ func (r *processTimelineRecorder) invocationFromEvent(eventType string, payload 
 			"href":                  payloadString(payload, "href"),
 			"label":                 payloadString(payload, "label"),
 			"reason":                payloadString(payload, "reason"),
+			"continuation_policy":   payloadString(payload, "continuation_policy"),
+			"blocking":              payload["blocking"],
 			"effect":                payloadString(payload, "effect"),
 			"asset_type":            payloadString(payload, "asset_type"),
 			"assets":                payload["assets"],

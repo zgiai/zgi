@@ -24,6 +24,9 @@ const (
 	clientActionStatusRunning   = "running"
 	clientActionStatusSucceeded = "succeeded"
 	clientActionStatusFailed    = "failed"
+
+	clientActionContinuationPolicyResumeModel = "resume_model"
+	clientActionContinuationPolicyRecordOnly  = "record_only"
 )
 
 type ClientActionContinuation struct {
@@ -47,15 +50,20 @@ func (s *service) persistClientActionPending(ctx context.Context, prepared *Prep
 	metadata := mergeClientActionMetadata(prepared.Message.Metadata, pendingPayload)
 	metadata = preparedResultMetadata(metadata, usage)
 	metadata["client_action_continuation"] = compactSkillInvocation(map[string]interface{}{
-		"status":         clientActionStatusWaiting,
-		"action_id":      clientActionID(pendingPayload),
-		"action_type":    pendingPayload["action_type"],
-		"skill_id":       pendingPayload["skill_id"],
-		"tool_name":      pendingPayload["tool_name"],
-		"href":           pendingPayload["href"],
-		"label":          pendingPayload["label"],
-		"original_query": prepared.Message.Query,
-		"resume_policy":  "same_message",
+		"status":              clientActionStatusWaiting,
+		"action_id":           clientActionID(pendingPayload),
+		"action_type":         pendingPayload["action_type"],
+		"skill_id":            pendingPayload["skill_id"],
+		"tool_name":           pendingPayload["tool_name"],
+		"href":                pendingPayload["href"],
+		"label":               pendingPayload["label"],
+		"label_key":           pendingPayload["label_key"],
+		"route_kind":          pendingPayload["route_kind"],
+		"reason":              pendingPayload["reason"],
+		"continuation_policy": pendingPayload["continuation_policy"],
+		"blocking":            pendingPayload["blocking"],
+		"original_query":      prepared.Message.Query,
+		"resume_policy":       "same_message",
 	})
 	prepared.Message.Metadata = metadata
 
@@ -225,6 +233,14 @@ func clientActionContinuationIsRouteNavigation(metadata map[string]interface{}) 
 		isConsoleNavigatorNavigateTool(stringFromAny(continuation["skill_id"]), stringFromAny(continuation["tool_name"]))
 }
 
+func clientActionRequiresModelContinuation(payload map[string]interface{}) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	policy := strings.TrimSpace(stringFromAny(payload["continuation_policy"]))
+	return !strings.EqualFold(policy, clientActionContinuationPolicyRecordOnly)
+}
+
 func (s *service) beginClientActionContinuation(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, actionID string) (*ClientActionContinuation, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
@@ -327,6 +343,7 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	if err != nil {
 		return nil, err
 	}
+	restoreTurnInitialContextFromMetadata(parts, message.Metadata)
 	if actionID := clientActionID(continuation.Event); actionID != "" {
 		message.Metadata = resolveClientActionContinuationMetadata(message.Metadata, actionID, req)
 	}
@@ -410,7 +427,8 @@ func appendClientActionContinuationResources(context map[string]interface{}, rec
 	for _, item := range mapSliceFromAny(result["context_items"]) {
 		appendResource(clientActionContextItemResource(item))
 	}
-	if strings.TrimSpace(stringFromAny(record["action_type"])) == "route_navigation" {
+	if strings.TrimSpace(stringFromAny(record["action_type"])) == "route_navigation" &&
+		strings.EqualFold(strings.TrimSpace(stringFromAny(record["status"])), clientActionStatusSucceeded) {
 		appendResource(clientActionRouteResource(record))
 	}
 	if len(resources) > 0 {
@@ -529,6 +547,9 @@ func clientActionContinuationMessage(message *runtimemodel.Message, event map[st
 		"The frontend completed a client-side action for this same AIChat message.",
 		"Client action result JSON:\n" + compactJSON(result),
 	}
+	if feedback := clientActionFailureModelFeedback(event, req); len(feedback) > 0 {
+		contentParts = append(contentParts, "Client action failure feedback JSON:\n"+compactJSON(feedback))
+	}
 	if preceding := clientActionPrecedingSuccessfulToolInvocation(message, event); len(preceding) > 0 {
 		contentParts = append(contentParts, "Current-turn tool result immediately before this frontend action JSON:\n"+compactJSON(preceding))
 	}
@@ -566,6 +587,7 @@ func clientActionContinuationMessage(message *runtimemodel.Message, event map[st
 		"Use operation plan evidence_ledger result_facts as authoritative completed tool facts when later steps depend on earlier tool output. If a file read fact contains content_value_preview, use that exact value for derived names or configuration values instead of placeholder words such as file content, 文件内容, or 读取到的内容.",
 		"For event_type=route_loaded, phrase route success from the user's point of view, for example that the target page has been opened or switched to.",
 		"For event_type=route_already_loaded, say the requested page is already current only when useful, then continue the user's real task from the current page context.",
+		"Client action failure feedback is authoritative. If a route_navigation client action failed, the target page is not open. Do not claim that navigation succeeded; retry with a corrected supported route, choose another available tool, or clearly explain the limitation only after recovery is not possible.",
 		"If the client action status is succeeded and observed a resource mutation, use the observation result and updated page context to confirm whether the changed resource is visible; do not repeat the same side-effecting tool only to verify it.",
 		"If a current-turn tool result is provided, treat it as authoritative evidence for the current user request. If it completed the requested mutation, summarize that result as completed in this request and do not describe it as a previous round, previous conversation, last turn, earlier request, 上一轮, 上次, 之前, or 先前 unless the user explicitly asks about history.",
 		"If Current-turn agent creation progress is present and missing_targets is non-empty, do not give a final completion answer yet. Continue by calling agent-management/create_agent for each exact missing target name. Do not treat a similar visible Agent with a different exact name as satisfying the missing target.",
@@ -1044,8 +1066,62 @@ func clientActionObservationRecord(event map[string]interface{}, req runtimedto.
 	if errText := strings.TrimSpace(req.Error); errText != "" {
 		record["error"] = errText
 	}
+	if feedback := clientActionFailureModelFeedback(event, req); len(feedback) > 0 {
+		record["model_feedback"] = feedback
+	}
 	record["resolved_at"] = time.Now().UTC().Format(time.RFC3339)
 	return compactSkillInvocation(record)
+}
+
+func clientActionFailureModelFeedback(event map[string]interface{}, req runtimedto.ClientActionResultRequest) map[string]interface{} {
+	if !strings.EqualFold(strings.TrimSpace(req.Status), clientActionStatusFailed) {
+		return nil
+	}
+	result := copyStringAnyMap(req.Result)
+	if result == nil {
+		result = map[string]interface{}{}
+	}
+	actionType := strings.TrimSpace(firstNonEmptyString(
+		event["action_type"],
+		result["action_type"],
+	))
+	errorText := strings.TrimSpace(firstNonEmptyString(req.Error, result["error"], event["error"]))
+	feedback := map[string]interface{}{
+		"status":           clientActionStatusFailed,
+		"action_type":      actionType,
+		"target_completed": false,
+		"recoverable":      true,
+	}
+	if errorText != "" {
+		feedback["error"] = errorText
+	}
+	if eventType := strings.TrimSpace(stringFromAny(result["event_type"])); eventType != "" {
+		feedback["event_type"] = eventType
+	}
+	if observedPath := normalizeConsoleNavigationGuardHref(firstNonEmptyString(result["observed_path"], result["current_href"])); observedPath != "" {
+		feedback["observed_path"] = observedPath
+	}
+	if requestedHref := firstNonEmptyString(result["requested_href"], event["href"], result["href"], result["target_href"]); strings.TrimSpace(requestedHref) != "" {
+		feedback["requested_href"] = strings.TrimSpace(requestedHref)
+	}
+	if label := strings.TrimSpace(firstNonEmptyString(event["label"], result["label"])); label != "" {
+		feedback["label"] = label
+	}
+	if reason := strings.TrimSpace(firstNonEmptyString(event["reason"], result["reason"])); reason != "" {
+		feedback["reason"] = reason
+	}
+	if strings.EqualFold(actionType, "route_navigation") || isConsoleNavigatorNavigateTool(stringFromAny(event["skill_id"]), stringFromAny(event["tool_name"])) {
+		feedback["failure_kind"] = "route_navigation_failed"
+		feedback["next_step_hint"] = "The requested route was not loaded. Correct the href to a supported console route and retry navigation if the user task still needs that page; otherwise continue with a backend tool or explain why recovery is not possible."
+		feedback["supported_route_examples"] = []string{
+			"/console/files",
+			"/console/agents",
+			"/console/agents/{agent_id}/agent",
+			"/console/workflows",
+			"/console/db",
+		}
+	}
+	return feedback
 }
 
 func normalizeClientActionResultStatus(status string) (string, error) {

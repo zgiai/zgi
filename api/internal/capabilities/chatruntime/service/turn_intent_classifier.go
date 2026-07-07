@@ -495,7 +495,7 @@ func contextualAIChatTurnStrategyFromModelIntent(parts *chatRequestParts, strate
 	applyModelTurnIntentHints(parts, strategy, intent)
 	switch intent.Intent {
 	case "manage_agent_asset":
-		if !skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) {
+		if !canAcceptAgentModelTurnIntent(parts, intent) {
 			return strategy, false
 		}
 		return contextualAgentManagementStrategy(parts, strategy), true
@@ -512,6 +512,7 @@ func contextualAIChatTurnStrategyFromModelIntent(parts *chatRequestParts, strate
 	case "read_visible_file_content":
 		return contextualFileReadStrategy(parts, strategy), true
 	case "answer_or_explain_zgi_context":
+		strategy.ToolChoiceMode = aiChatTurnToolChoiceModelDecides
 		if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
 			strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillConsoleNavigator)
 		}
@@ -519,6 +520,26 @@ func contextualAIChatTurnStrategyFromModelIntent(parts *chatRequestParts, strate
 	default:
 		return strategy, false
 	}
+}
+
+func canAcceptAgentModelTurnIntent(parts *chatRequestParts, intent *AIChatModelTurnIntent) bool {
+	if parts == nil || intent == nil {
+		return false
+	}
+	if skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) {
+		return true
+	}
+	if !skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
+		return false
+	}
+	if isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		return false
+	}
+	targetPage := normalizeConsoleNavigationGuardHref(intent.TargetPage)
+	if targetPage != "" {
+		return strings.HasPrefix(targetPage, "/console/agents")
+	}
+	return true
 }
 
 func modelTurnIntentSourceReason(intent *AIChatModelTurnIntent) string {

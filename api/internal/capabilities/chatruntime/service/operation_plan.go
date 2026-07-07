@@ -1704,6 +1704,16 @@ func operationPlanStepsFromTurnStrategy(strategy *AIChatTurnStrategy) []map[stri
 	}
 
 	if aiChatTurnStrategyModelDecidesTools(strategy) {
+		if strategy.WaitForContinue {
+			add(map[string]interface{}{
+				"id":              "wait:continue",
+				"title":           "Wait for user continue",
+				"status":          operationPlanStepStatusPending,
+				"wait_for":        "continue",
+				"deferred":        true,
+				"execution_scope": strategy.ExecutionScope,
+			})
+		}
 		return steps
 	}
 

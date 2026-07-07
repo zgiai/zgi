@@ -82,6 +82,71 @@ func TestInjectClientActionContinuationContextPromotesLoadedRouteContext(t *test
 	}
 }
 
+func TestClientActionContinuationRouteFailureFeedbackIsRecoverable(t *testing.T) {
+	parts := &chatRequestParts{
+		Query:   "创建智能体后进入详情继续配置",
+		Surface: aiChatSurfaceContextualSidebar,
+	}
+	event := map[string]interface{}{
+		"action_id":   "route_navigation:agent-detail",
+		"action_type": "route_navigation",
+		"status":      clientActionStatusWaiting,
+		"skill_id":    skills.SkillConsoleNavigator,
+		"tool_name":   "navigate",
+		"href":        "/console/agents/agent-1",
+		"label":       "Agent detail",
+		"label_key":   "agentDetail",
+		"route_kind":  "agent_detail",
+	}
+	req := runtimedto.ClientActionResultRequest{
+		Status: clientActionStatusFailed,
+		Error:  "Route navigation target is unsupported.",
+		Result: map[string]interface{}{
+			"event_type":     "route_navigation_invalid",
+			"action_type":    "route_navigation",
+			"requested_href": "/console/agents/agent-1",
+			"observed_path":  "/console/agents",
+		},
+	}
+
+	injectClientActionContinuationContext(parts, event, req, nil)
+	if clientActionContinuationLoadedRoute(parts, "/console/agents/agent-1/agent") {
+		t.Fatal("clientActionContinuationLoadedRoute() = true for failed route, want false")
+	}
+	resources := operationItemsFromValue(parts.OperationContext["resources"])
+	for _, item := range resources {
+		resource := mapFromOperationContext(item)
+		if stringFromAny(resource["href"]) == "/console/agents/agent-1/agent" {
+			t.Fatalf("failed route was promoted as loaded page resource: %#v", resource)
+		}
+	}
+
+	record := clientActionObservationRecord(event, req)
+	feedback := mapFromOperationContext(record["model_feedback"])
+	if feedback["failure_kind"] != "route_navigation_failed" ||
+		feedback["target_completed"] != false ||
+		feedback["recoverable"] != true {
+		t.Fatalf("model_feedback = %#v, want recoverable route failure", feedback)
+	}
+
+	msg := clientActionContinuationMessage(&runtimemodel.Message{
+		Query:    "创建智能体后进入详情继续配置",
+		Metadata: map[string]interface{}{},
+	}, event, req)
+	content := strings.TrimSpace(fmt.Sprint(msg.Content))
+	for _, want := range []string{
+		"Client action failure feedback JSON",
+		"route_navigation_failed",
+		"the target page is not open",
+		"/console/agents/{agent_id}/agent",
+		"retry with a corrected supported route",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("continuation message missing %q in:\n%s", want, content)
+		}
+	}
+}
+
 func TestClientActionContinuationMessageFramesToolResultAsCurrentTurnEvidence(t *testing.T) {
 	message := &runtimemodel.Message{
 		Query: "请删除刚刚创建的文件 aichat-plan-smoke.md",

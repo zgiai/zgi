@@ -48,8 +48,11 @@ func TestClientActionRequiredPayloadEmitsManagedFileSaveObservation(t *testing.T
 		payload["tool_id"] != "file.save_to_management" {
 		t.Fatalf("payload = %#v, want file create observation", payload)
 	}
-	if payload["refresh_before_resume"] != true || payload["observation_requested"] != true {
-		t.Fatalf("payload = %#v, want refresh before resume", payload)
+	if payload["continuation_policy"] != clientActionContinuationPolicyRecordOnly ||
+		payload["status"] != clientActionStatusSucceeded ||
+		payload["refresh_before_resume"] != false ||
+		payload["observation_requested"] != true {
+		t.Fatalf("payload = %#v, want record-only observation", payload)
 	}
 }
 
@@ -115,8 +118,14 @@ func TestAgentManagementCreateResultFromMessagesEmitsDetailNavigationWhenRequest
 		payload["skill_id"] != skills.SkillConsoleNavigator ||
 		payload["tool_name"] != "navigate" ||
 		payload["href"] != "/console/agents/agent-1/agent" ||
+		payload["label_key"] != "agentDetail" ||
+		payload["route_kind"] != "agent_detail" ||
 		payload["reason"] != "open_created_agent_detail" {
 		t.Fatalf("payload = %#v, want created Agent detail navigation", payload)
+	}
+	result, _ := payload["result"].(map[string]interface{})
+	if result["label_key"] != "agentDetail" || result["route_kind"] != "agent_detail" {
+		t.Fatalf("payload result = %#v, want created Agent detail label metadata", result)
 	}
 }
 

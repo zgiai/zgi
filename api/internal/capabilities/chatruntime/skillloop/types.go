@@ -35,6 +35,11 @@ const (
 	EventWorkflowFailed         = "workflow_failed"
 )
 
+const (
+	clientActionContinuationPolicyResumeModel = "resume_model"
+	clientActionContinuationPolicyRecordOnly  = "record_only"
+)
+
 var ErrInvalidInput = errors.New("invalid input")
 
 type WorkflowApprovalPendingError struct {

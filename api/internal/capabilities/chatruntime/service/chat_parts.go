@@ -337,6 +337,9 @@ func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) 
 	if parts.OperationLedger != nil {
 		metadata["operation_ledger"] = copyStringAnyMap(parts.OperationLedger)
 	}
+	if snapshot := turnInitialContextSnapshot(parts); snapshot != nil {
+		metadata[turnInitialContextSnapshotKey] = snapshot
+	}
 	if parts.ModelTurnIntent != nil {
 		metadata["model_turn_intent"] = parts.ModelTurnIntent
 	} else if strings.TrimSpace(parts.ModelTurnIntentError) != "" {
