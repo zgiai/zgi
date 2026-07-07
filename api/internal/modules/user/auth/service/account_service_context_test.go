@@ -3,11 +3,13 @@ package service
 import (
 	"context"
 	"regexp"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
+	"github.com/zgiai/zgi/api/internal/dto"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	auth_repo "github.com/zgiai/zgi/api/internal/modules/user/auth/repository"
@@ -494,14 +496,164 @@ func TestEnsureAccountContextForWorkspaceSwitchesInvalidCurrentWorkspaceToTarget
 	require.Equal(t, targetWorkspaceID, *repo.updated.CurrentWorkspaceID)
 }
 
+func TestGetAccountProfileCachesRepeatedReads(t *testing.T) {
+	organizationID := "org-1"
+	repo := &fakeAccountContextRepository{
+		account: &auth_model.Account{
+			ID:     "acc-1",
+			Name:   "Alice",
+			Email:  "alice@example.com",
+			Status: auth_model.AccountStatusActive,
+		},
+		ctxModel: &auth_model.AccountContext{
+			AccountID:             "acc-1",
+			CurrentOrganizationID: &organizationID,
+		},
+	}
+	orgService := &fakeOrganizationContextService{
+		members: map[string]bool{
+			organizationID: true,
+		},
+		roles: map[string]workspace_model.OrganizationRole{
+			organizationID: workspace_model.OrganizationRoleAdmin,
+		},
+	}
+	svc := &AccountService{
+		accountRepo:         repo,
+		organizationService: orgService,
+		profileCache:        make(map[string]*accountProfileCacheEntry),
+	}
+
+	first, err := svc.GetAccountProfile(context.Background(), "acc-1")
+	require.NoError(t, err)
+	require.Equal(t, "Alice", first.Name)
+	require.Equal(t, "admin", first.OrganizationRole)
+
+	first.Name = "mutated"
+	second, err := svc.GetAccountProfile(context.Background(), "acc-1")
+	require.NoError(t, err)
+	require.Equal(t, "Alice", second.Name)
+	require.Equal(t, 1, repo.getAccountCalls)
+	require.Equal(t, 1, repo.getContextCalls)
+	require.Equal(t, 1, orgService.roleCalls)
+}
+
+func TestGetAccountProfileInvalidatesAfterContextUpdate(t *testing.T) {
+	oldOrganizationID := "org-old"
+	newOrganizationID := "org-new"
+	newWorkspaceID := "ws-new"
+	repo := &fakeAccountContextRepository{
+		account: &auth_model.Account{
+			ID:     "acc-1",
+			Name:   "Alice",
+			Email:  "alice@example.com",
+			Status: auth_model.AccountStatusActive,
+		},
+		ctxModel: &auth_model.AccountContext{
+			AccountID:             "acc-1",
+			CurrentOrganizationID: &oldOrganizationID,
+		},
+	}
+	workspaceService := &fakeWorkspaceContextService{
+		workspaces: map[string]*workspace_model.Workspace{
+			newWorkspaceID: {
+				ID:             newWorkspaceID,
+				Name:           "New workspace",
+				Status:         workspace_model.WorkspaceStatusNormal,
+				OrganizationID: &newOrganizationID,
+			},
+		},
+		joins: map[string]bool{
+			newWorkspaceID + ":acc-1": true,
+		},
+	}
+	orgService := &fakeOrganizationContextService{
+		members: map[string]bool{
+			oldOrganizationID: true,
+			newOrganizationID: true,
+		},
+		roles: map[string]workspace_model.OrganizationRole{
+			oldOrganizationID: workspace_model.OrganizationRoleNormal,
+			newOrganizationID: workspace_model.OrganizationRoleOwner,
+		},
+	}
+	svc := &AccountService{
+		accountRepo:                repo,
+		workspaceManagementService: workspaceService,
+		organizationService:        orgService,
+		profileCache:               make(map[string]*accountProfileCacheEntry),
+	}
+
+	first, err := svc.GetAccountProfile(context.Background(), "acc-1")
+	require.NoError(t, err)
+	require.Equal(t, oldOrganizationID, *first.CurrentOrganizationID)
+	require.Equal(t, "normal", first.OrganizationRole)
+
+	_, err = svc.UpdateAccountContext(context.Background(), "acc-1", &newOrganizationID, &newWorkspaceID)
+	require.NoError(t, err)
+
+	second, err := svc.GetAccountProfile(context.Background(), "acc-1")
+	require.NoError(t, err)
+	require.Equal(t, newOrganizationID, *second.CurrentOrganizationID)
+	require.Equal(t, newWorkspaceID, *second.CurrentWorkspaceID)
+	require.Equal(t, "owner", second.OrganizationRole)
+	require.Equal(t, 2, repo.getAccountCalls)
+}
+
+func TestSetCachedAccountProfileBoundsCacheSize(t *testing.T) {
+	now := time.Now()
+	svc := &AccountService{
+		profileCache:           make(map[string]*accountProfileCacheEntry),
+		profileCacheGeneration: make(map[string]uint64),
+	}
+	for i := 0; i < accountProfileCacheMaxEntries; i++ {
+		accountID := "acc-" + strconv.Itoa(i)
+		updatedAt := now
+		if i == 0 {
+			updatedAt = now.Add(-accountProfileCacheTTL)
+		}
+		svc.profileCache[accountID] = &accountProfileCacheEntry{
+			profile: &dto.AccountProfileResponse{
+				ID: accountID,
+			},
+			updatedAt: updatedAt,
+		}
+	}
+
+	svc.setCachedAccountProfileIfCurrent("acc-new", &dto.AccountProfileResponse{ID: "acc-new"}, 0)
+
+	require.Len(t, svc.profileCache, accountProfileCacheMaxEntries)
+	require.NotContains(t, svc.profileCache, "acc-0")
+	require.Contains(t, svc.profileCache, "acc-new")
+}
+
 type fakeAccountContextRepository struct {
 	auth_repo.AccountRepository
-	ctxModel *auth_model.AccountContext
-	created  *auth_model.AccountContext
-	updated  *auth_model.AccountContext
+	account         *auth_model.Account
+	ctxModel        *auth_model.AccountContext
+	created         *auth_model.AccountContext
+	updated         *auth_model.AccountContext
+	getAccountCalls int
+	getContextCalls int
+}
+
+func (f *fakeAccountContextRepository) GetAccount(ctx context.Context, accountID string) (*auth_model.Account, error) {
+	f.getAccountCalls++
+	if f.account == nil || f.account.ID != accountID {
+		return nil, gorm.ErrRecordNotFound
+	}
+	copyAccount := *f.account
+	if f.account.Extensions != nil {
+		copyAccount.Extensions = make(auth_model.JSONMap, len(f.account.Extensions))
+		for key, value := range f.account.Extensions {
+			copyAccount.Extensions[key] = value
+		}
+	}
+	return &copyAccount, nil
 }
 
 func (f *fakeAccountContextRepository) GetAccountContextByAccountID(ctx context.Context, accountID string) (*auth_model.AccountContext, error) {
+	f.getContextCalls++
 	return f.ctxModel, nil
 }
 
@@ -521,6 +673,8 @@ type fakeOrganizationContextService struct {
 	interfaces.OrganizationService
 	members     map[string]bool
 	admins      map[string]bool
+	roles       map[string]workspace_model.OrganizationRole
+	roleCalls   int
 	firstOwned  *workspace_model.Organization
 	firstJoined *workspace_model.Organization
 }
@@ -531,6 +685,14 @@ func (f *fakeOrganizationContextService) IsOrganizationMember(ctx context.Contex
 
 func (f *fakeOrganizationContextService) IsOrganizationAdminOrOwner(ctx context.Context, organizationID, accountID string) (bool, error) {
 	return f.admins[organizationID], nil
+}
+
+func (f *fakeOrganizationContextService) GetUserOrganizationRole(ctx context.Context, organizationID, accountID string) (workspace_model.OrganizationRole, error) {
+	f.roleCalls++
+	if role, ok := f.roles[organizationID]; ok {
+		return role, nil
+	}
+	return workspace_model.OrganizationRoleNormal, nil
 }
 
 func (f *fakeOrganizationContextService) GetFirstOwnedOrganization(ctx context.Context, accountID string) (*workspace_model.Organization, error) {

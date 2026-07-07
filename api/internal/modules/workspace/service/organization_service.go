@@ -1954,7 +1954,7 @@ func (s *organizationService) RemoveMember(ctx context.Context, organizationID, 
 	db := s.organizationRepo.GetDB()
 
 	// Use transaction to ensure atomicity
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. Get all tenant IDs where the member belongs under this organization
 		var workspaceIDs []string
 		groupTenantsSubquery := tx.Table("workspaces").
@@ -2005,7 +2005,12 @@ func (s *organizationService) RemoveMember(ctx context.Context, organizationID, 
 		}
 
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	s.accountService.InvalidateAccountProfileCache(accountID)
+	return nil
 }
 
 // UpdateMemberRole updates the role of a member in an organization
@@ -2041,6 +2046,7 @@ func (s *organizationService) UpdateMemberRole(ctx context.Context, req *shared_
 		return fmt.Errorf("failed to update member role: %w", err)
 	}
 
+	s.accountService.InvalidateAccountProfileCache(req.AccountID)
 	return nil
 }
 
@@ -2110,6 +2116,7 @@ func (s *organizationService) UpdateCurrentOrganizationMemberRole(ctx context.Co
 		return fmt.Errorf("failed to update organization member role: %w", err)
 	}
 
+	s.accountService.InvalidateAccountProfileCache(memberID)
 	return nil
 }
 
@@ -2147,12 +2154,13 @@ func (s *organizationService) UpdateMemberStatus(ctx context.Context, req *share
 		return fmt.Errorf("failed to update member status: %w", err)
 	}
 
+	s.accountService.InvalidateAccountProfileCache(req.AccountID)
 	return nil
 }
 
 // TransferOwnership transfers the ownership of the organization.
 func (s *organizationService) TransferOwnership(ctx context.Context, organizationID, currentOwnerID, newOwnerID string) error {
-	return s.organizationRepo.GetDB().Transaction(func(tx *gorm.DB) error {
+	if err := s.organizationRepo.GetDB().Transaction(func(tx *gorm.DB) error {
 		repoTx := s.organizationRepo.WithTx(tx)
 
 		// 1. Verify organization exists.
@@ -2206,7 +2214,13 @@ func (s *organizationService) TransferOwnership(ctx context.Context, organizatio
 		}
 
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	s.accountService.InvalidateAccountProfileCache(currentOwnerID)
+	s.accountService.InvalidateAccountProfileCache(newOwnerID)
+	return nil
 }
 
 // GetOrganizationMembers retrieves all members of an organization
