@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -360,6 +361,153 @@ func TestAvailableModels_ListAvailableCachesResponseAndInvalidatesTenant(t *test
 	}
 	if configRepo.listAvailableConfigs != 2 {
 		t.Fatalf("ListAvailableConfigs after invalidation = %d, want 2", configRepo.listAvailableConfigs)
+	}
+}
+
+func TestAvailableModels_ListAvailableJSONCachesEncodedResponse(t *testing.T) {
+	organizationID := uuid.New()
+	modelID := uuid.New()
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
+		ID:                modelID,
+		Provider:          "openai",
+		Model:             "gpt-test",
+		ModelName:         "GPT Test",
+		IsActive:          true,
+		UseCases:          types.StringArray{"text-chat"},
+		ChatCompletions:   true,
+		SupportsStreaming: true,
+	}}}
+	configRepo := &availableConfigRepoFake{}
+	customRepo := &availableCustomRepoFake{}
+	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
+		Models: []string{"gpt-test"},
+	}}}
+	svc := NewAvailableModelsService(modelRepo, configRepo, customRepo, routeRepo)
+	jsonSvc, ok := svc.(interface {
+		ListAvailableJSON(context.Context, uuid.UUID, string, string) ([]byte, error)
+	})
+	if !ok {
+		t.Fatal("available models service does not implement ListAvailableJSON")
+	}
+
+	first, err := jsonSvc.ListAvailableJSON(context.Background(), organizationID, " openai ", " text-chat ")
+	if err != nil {
+		t.Fatalf("first ListAvailableJSON returned error: %v", err)
+	}
+	var decoded struct {
+		Code string `json:"code"`
+		Data struct {
+			Items []*AvailableModel `json:"items"`
+			Total int               `json:"total"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(first, &decoded); err != nil {
+		t.Fatalf("failed to decode JSON response: %v", err)
+	}
+	if decoded.Code != "0" || decoded.Data.Total != 1 || len(decoded.Data.Items) != 1 {
+		t.Fatalf("decoded response = code %q total %d items %d, want code 0 total 1 items 1", decoded.Code, decoded.Data.Total, len(decoded.Data.Items))
+	}
+
+	second, err := jsonSvc.ListAvailableJSON(context.Background(), organizationID, "openai", "text-chat")
+	if err != nil {
+		t.Fatalf("second ListAvailableJSON returned error: %v", err)
+	}
+	if string(first) != string(second) {
+		t.Fatal("cached JSON response changed between identical requests")
+	}
+	if routeRepo.enabledCalls != 1 {
+		t.Fatalf("enabled route calls = %d, want 1", routeRepo.enabledCalls)
+	}
+	if modelRepo.listAvailableByNames != 1 {
+		t.Fatalf("ListAvailableByNames calls = %d, want 1", modelRepo.listAvailableByNames)
+	}
+	if configRepo.listAvailableConfigs != 1 {
+		t.Fatalf("ListAvailableConfigs calls = %d, want 1", configRepo.listAvailableConfigs)
+	}
+	if customRepo.listCalls != 1 {
+		t.Fatalf("custom List calls = %d, want 1", customRepo.listCalls)
+	}
+
+	svc.InvalidateTenantCache(organizationID)
+	if _, err := jsonSvc.ListAvailableJSON(context.Background(), organizationID, "openai", "text-chat"); err != nil {
+		t.Fatalf("ListAvailableJSON after invalidation returned error: %v", err)
+	}
+	if routeRepo.enabledCalls != 2 {
+		t.Fatalf("enabled route calls after invalidation = %d, want 2", routeRepo.enabledCalls)
+	}
+	if configRepo.listAvailableConfigs != 2 {
+		t.Fatalf("ListAvailableConfigs after invalidation = %d, want 2", configRepo.listAvailableConfigs)
+	}
+}
+
+func TestAvailableModels_ListAvailableJSONDoesNotExtendStructCacheTTL(t *testing.T) {
+	organizationID := uuid.New()
+	modelID := uuid.New()
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
+		ID:              modelID,
+		Provider:        "openai",
+		Model:           "gpt-test",
+		ModelName:       "GPT Test",
+		IsActive:        true,
+		UseCases:        types.StringArray{"text-chat"},
+		ChatCompletions: true,
+	}}}
+	configRepo := &availableConfigRepoFake{}
+	customRepo := &availableCustomRepoFake{}
+	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
+		Models: []string{"gpt-test"},
+	}}}
+	svc := NewAvailableModelsService(modelRepo, configRepo, customRepo, routeRepo)
+	concrete, ok := svc.(*availableModelsService)
+	if !ok {
+		t.Fatal("available models service has unexpected implementation")
+	}
+	concrete.availableCacheTTL = time.Hour
+
+	if _, err := svc.ListAvailable(context.Background(), organizationID, "openai", "text-chat"); err != nil {
+		t.Fatalf("ListAvailable returned error: %v", err)
+	}
+	if routeRepo.enabledCalls != 1 {
+		t.Fatalf("enabled route calls after ListAvailable = %d, want 1", routeRepo.enabledCalls)
+	}
+
+	cacheKey := availableModelsCacheKey{
+		organizationID: organizationID,
+		provider:       "openai",
+		useCase:        "text-chat",
+	}
+	sourceUpdatedAt := time.Now().Add(-30 * time.Minute)
+	concrete.availableCacheMu.Lock()
+	concrete.availableCache[cacheKey].updatedAt = sourceUpdatedAt
+	concrete.availableCacheMu.Unlock()
+
+	if _, err := concrete.ListAvailableJSON(context.Background(), organizationID, "openai", "text-chat"); err != nil {
+		t.Fatalf("ListAvailableJSON returned error: %v", err)
+	}
+	if routeRepo.enabledCalls != 1 {
+		t.Fatalf("enabled route calls after JSON cache fill = %d, want 1", routeRepo.enabledCalls)
+	}
+
+	concrete.availableResponseCacheMu.RLock()
+	responseUpdatedAt := concrete.availableResponseCache[cacheKey].updatedAt
+	concrete.availableResponseCacheMu.RUnlock()
+	if !responseUpdatedAt.Equal(sourceUpdatedAt) {
+		t.Fatalf("response cache updatedAt = %s, want source updatedAt %s", responseUpdatedAt, sourceUpdatedAt)
+	}
+
+	expiredUpdatedAt := time.Now().Add(-2 * time.Hour)
+	concrete.availableCacheMu.Lock()
+	concrete.availableCache[cacheKey].updatedAt = expiredUpdatedAt
+	concrete.availableCacheMu.Unlock()
+	concrete.availableResponseCacheMu.Lock()
+	concrete.availableResponseCache[cacheKey].updatedAt = expiredUpdatedAt
+	concrete.availableResponseCacheMu.Unlock()
+
+	if _, err := concrete.ListAvailableJSON(context.Background(), organizationID, "openai", "text-chat"); err != nil {
+		t.Fatalf("ListAvailableJSON after source TTL returned error: %v", err)
+	}
+	if routeRepo.enabledCalls != 2 {
+		t.Fatalf("enabled route calls after source TTL = %d, want 2", routeRepo.enabledCalls)
 	}
 }
 

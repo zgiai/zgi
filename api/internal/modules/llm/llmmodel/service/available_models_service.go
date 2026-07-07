@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"strings"
 	"sync"
@@ -88,6 +89,9 @@ type availableModelsService struct {
 	availableCache   map[availableModelsCacheKey]*availableModelsCacheEntry
 	availableCacheMu sync.RWMutex
 
+	availableResponseCache   map[availableModelsCacheKey]*availableModelsResponseCacheEntry
+	availableResponseCacheMu sync.RWMutex
+
 	// Cache configuration
 	tenantCacheTTL    time.Duration
 	availableCacheTTL time.Duration
@@ -108,6 +112,22 @@ type availableModelsCacheKey struct {
 type availableModelsCacheEntry struct {
 	models    []*AvailableModel
 	updatedAt time.Time
+}
+
+type availableModelsResponseCacheEntry struct {
+	response  []byte
+	updatedAt time.Time
+}
+
+type availableModelsSuccessResponse struct {
+	Code    string                      `json:"code"`
+	Message string                      `json:"message"`
+	Data    availableModelsListResponse `json:"data"`
+}
+
+type availableModelsListResponse struct {
+	Items []*AvailableModel `json:"items"`
+	Total int               `json:"total"`
 }
 
 // NewAvailableModelsService creates a new available models service with caching
@@ -138,20 +158,57 @@ func NewAvailableModelsServiceWithProviderRepos(
 	customProviderRepo providerrepo.CustomProviderRepository,
 ) AvailableModelsService {
 	svc := &availableModelsService{
-		globalRepo:         globalRepo,
-		configRepo:         configRepo,
-		customRepo:         customRepo,
-		routeRepo:          routeRepo,
-		globalProviderRepo: globalProviderRepo,
-		providerConfigRepo: providerConfigRepo,
-		customProviderRepo: customProviderRepo,
-		tenantCache:        make(map[uuid.UUID]*tenantCacheEntry),
-		availableCache:     make(map[availableModelsCacheKey]*availableModelsCacheEntry),
-		tenantCacheTTL:     2 * time.Minute,  // Tenant configs may change more often
-		availableCacheTTL:  30 * time.Second, // Full response cache absorbs hot polling with short staleness.
+		globalRepo:             globalRepo,
+		configRepo:             configRepo,
+		customRepo:             customRepo,
+		routeRepo:              routeRepo,
+		globalProviderRepo:     globalProviderRepo,
+		providerConfigRepo:     providerConfigRepo,
+		customProviderRepo:     customProviderRepo,
+		tenantCache:            make(map[uuid.UUID]*tenantCacheEntry),
+		availableCache:         make(map[availableModelsCacheKey]*availableModelsCacheEntry),
+		availableResponseCache: make(map[availableModelsCacheKey]*availableModelsResponseCacheEntry),
+		tenantCacheTTL:         2 * time.Minute,  // Tenant configs may change more often
+		availableCacheTTL:      30 * time.Second, // Full response cache absorbs hot polling with short staleness.
 	}
 
 	return svc
+}
+
+// ListAvailableJSON returns the final API response body for the available-models endpoint.
+// It shares the same cache key and invalidation lifecycle as ListAvailable, avoiding
+// repeated clone and JSON encoding work on hot selector requests.
+func (s *availableModelsService) ListAvailableJSON(ctx context.Context, organizationID uuid.UUID, provider string, useCase string) ([]byte, error) {
+	provider = strings.TrimSpace(provider)
+	useCase = strings.TrimSpace(useCase)
+	cacheKey := availableModelsCacheKey{
+		organizationID: organizationID,
+		provider:       provider,
+		useCase:        useCase,
+	}
+	if cached, ok := s.getAvailableResponseCache(cacheKey); ok {
+		return cached, nil
+	}
+
+	models, sourceUpdatedAt, err := s.getAvailableModelsForCache(ctx, cacheKey, organizationID, provider, useCase)
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := json.Marshal(availableModelsSuccessResponse{
+		Code:    "0",
+		Message: "success",
+		Data: availableModelsListResponse{
+			Items: models,
+			Total: len(models),
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	s.setAvailableResponseCache(cacheKey, body, sourceUpdatedAt)
+	return cloneBytes(body), nil
 }
 
 // ListAvailable returns available models and optionally filters by provider and use case.
@@ -163,16 +220,24 @@ func (s *availableModelsService) ListAvailable(ctx context.Context, organization
 		provider:       provider,
 		useCase:        useCase,
 	}
-	if cached, ok := s.getAvailableCache(cacheKey); ok {
-		return cached, nil
+	models, _, err := s.getAvailableModelsForCache(ctx, cacheKey, organizationID, provider, useCase)
+	if err != nil {
+		return nil, err
+	}
+	return models, nil
+}
+
+func (s *availableModelsService) getAvailableModelsForCache(ctx context.Context, cacheKey availableModelsCacheKey, organizationID uuid.UUID, provider string, useCase string) ([]*AvailableModel, time.Time, error) {
+	if cached, updatedAt, ok := s.getAvailableCache(cacheKey); ok {
+		return cached, updatedAt, nil
 	}
 
 	result, err := s.listAvailableUncached(ctx, organizationID, provider, useCase)
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
-	s.setAvailableCache(cacheKey, result)
-	return cloneAvailableModels(result), nil
+	updatedAt := s.setAvailableCache(cacheKey, result)
+	return cloneAvailableModels(result), updatedAt, nil
 }
 
 func (s *availableModelsService) listAvailableUncached(ctx context.Context, organizationID uuid.UUID, provider string, useCase string) ([]*AvailableModel, error) {
@@ -427,25 +492,56 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 	return result, nil
 }
 
-func (s *availableModelsService) getAvailableCache(key availableModelsCacheKey) ([]*AvailableModel, bool) {
+func (s *availableModelsService) getAvailableCache(key availableModelsCacheKey) ([]*AvailableModel, time.Time, bool) {
 	s.availableCacheMu.RLock()
 	entry, ok := s.availableCache[key]
 	if ok && time.Since(entry.updatedAt) < s.availableCacheTTL {
 		models := cloneAvailableModels(entry.models)
+		updatedAt := entry.updatedAt
 		s.availableCacheMu.RUnlock()
-		return models, true
+		return models, updatedAt, true
 	}
 	s.availableCacheMu.RUnlock()
-	return nil, false
+	return nil, time.Time{}, false
 }
 
-func (s *availableModelsService) setAvailableCache(key availableModelsCacheKey, models []*AvailableModel) {
+func (s *availableModelsService) setAvailableCache(key availableModelsCacheKey, models []*AvailableModel) time.Time {
+	updatedAt := time.Now()
 	s.availableCacheMu.Lock()
 	s.availableCache[key] = &availableModelsCacheEntry{
 		models:    cloneAvailableModels(models),
-		updatedAt: time.Now(),
+		updatedAt: updatedAt,
 	}
 	s.availableCacheMu.Unlock()
+	return updatedAt
+}
+
+func (s *availableModelsService) getAvailableResponseCache(key availableModelsCacheKey) ([]byte, bool) {
+	s.availableResponseCacheMu.RLock()
+	entry, ok := s.availableResponseCache[key]
+	if ok && time.Since(entry.updatedAt) < s.availableCacheTTL {
+		response := cloneBytes(entry.response)
+		s.availableResponseCacheMu.RUnlock()
+		return response, true
+	}
+	s.availableResponseCacheMu.RUnlock()
+	return nil, false
+}
+
+func (s *availableModelsService) setAvailableResponseCache(key availableModelsCacheKey, response []byte, updatedAt time.Time) {
+	s.availableResponseCacheMu.Lock()
+	s.availableResponseCache[key] = &availableModelsResponseCacheEntry{
+		response:  cloneBytes(response),
+		updatedAt: updatedAt,
+	}
+	s.availableResponseCacheMu.Unlock()
+}
+
+func cloneBytes(src []byte) []byte {
+	if len(src) == 0 {
+		return []byte{}
+	}
+	return append([]byte(nil), src...)
 }
 
 func cloneAvailableModels(models []*AvailableModel) []*AvailableModel {
@@ -487,6 +583,9 @@ func (s *availableModelsService) InvalidateGlobalCache() {
 	s.availableCacheMu.Lock()
 	s.availableCache = make(map[availableModelsCacheKey]*availableModelsCacheEntry)
 	s.availableCacheMu.Unlock()
+	s.availableResponseCacheMu.Lock()
+	s.availableResponseCache = make(map[availableModelsCacheKey]*availableModelsResponseCacheEntry)
+	s.availableResponseCacheMu.Unlock()
 }
 
 func (s *availableModelsService) invalidateAvailableCacheForTenant(organizationID uuid.UUID) {
@@ -497,6 +596,13 @@ func (s *availableModelsService) invalidateAvailableCacheForTenant(organizationI
 		}
 	}
 	s.availableCacheMu.Unlock()
+	s.availableResponseCacheMu.Lock()
+	for key := range s.availableResponseCache {
+		if key.organizationID == organizationID {
+			delete(s.availableResponseCache, key)
+		}
+	}
+	s.availableResponseCacheMu.Unlock()
 }
 
 func (s *availableModelsService) loadEnabledRoutes(ctx context.Context, organizationID uuid.UUID) ([]*channelmodel.LLMRoute, error) {
