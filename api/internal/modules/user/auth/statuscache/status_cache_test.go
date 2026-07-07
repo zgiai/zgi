@@ -70,6 +70,33 @@ func TestAccountStatusCacheKeyUsesSharedNamespace(t *testing.T) {
 	if got := accountStatusCacheKey(accountID); got != want {
 		t.Fatalf("accountStatusCacheKey() = %q, want %q", got, want)
 	}
+
+	wantGeneration := "zgi_cache:auth:account_status:generation:" + accountID
+	if got := accountStatusGenerationKey(accountID); got != wantGeneration {
+		t.Fatalf("accountStatusGenerationKey() = %q, want %q", got, wantGeneration)
+	}
+}
+
+func TestSetAccountStatusSkipsStaleGenerationAfterInvalidation(t *testing.T) {
+	redisServer := miniredis.RunT(t)
+	redisClient := goredis.NewClient(&goredis.Options{Addr: redisServer.Addr()})
+	defer redisClient.Close()
+	previousRedis := redisutil.GetClient()
+	redisutil.SetClient(redisClient)
+	defer redisutil.SetClient(previousRedis)
+
+	accountID := "3a01dd4e-cc8e-42c4-a8c0-92a0f8249381"
+	generation, ok := getAccountStatusGeneration(context.Background(), accountID)
+	if !ok {
+		t.Fatal("getAccountStatusGeneration ok = false, want true")
+	}
+
+	InvalidateAccountStatus(context.Background(), accountID)
+	setAccountStatusToRedisIfGeneration(context.Background(), accountID, auth_model.AccountStatusActive, generation)
+
+	if redisServer.Exists(accountStatusCacheKey(accountID)) {
+		t.Fatal("stale status was cached after invalidation")
+	}
 }
 
 func openStatusCacheMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock, func()) {

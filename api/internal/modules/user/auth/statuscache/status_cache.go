@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/zgiai/zgi/api/internal/cache/keys"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	"github.com/zgiai/zgi/api/pkg/database"
@@ -14,15 +16,22 @@ import (
 )
 
 const (
-	accountStatusCacheModule = "auth.account_status"
-	accountStatusCacheTTL    = 30 * time.Second
-	accountStatusDBLoadLimit = 32
-	redisOperationTimeout    = 50 * time.Millisecond
+	accountStatusCacheModule     = "auth.account_status"
+	accountStatusGenerationPart  = "generation"
+	accountStatusCacheTTL        = 30 * time.Second
+	accountStatusGenerationTTL   = 24 * time.Hour
+	accountStatusDBLoadLimit     = 32
+	accountStatusDBLoadTimeout   = 2 * time.Second
+	lastActiveTouchInterval      = 10 * time.Minute
+	lastActiveTouchRetryInterval = time.Minute
+	lastActiveTouchTimeout       = time.Second
+	redisOperationTimeout        = 50 * time.Millisecond
 )
 
 var (
 	accountStatusGroup        singleflight.Group
 	accountStatusDBLoadTokens = make(chan struct{}, accountStatusDBLoadLimit)
+	lastActiveTouchedAt       sync.Map
 )
 
 // GetAccountStatus returns the authenticated account status using Redis as a shared
@@ -41,11 +50,17 @@ func GetAccountStatus(ctx context.Context, accountID string) (auth_model.Account
 			return status, nil
 		}
 
-		status, err := loadAccountStatusFromDB(ctx, accountID)
+		fillCtx, cancel := context.WithTimeout(context.Background(), accountStatusDBLoadTimeout)
+		defer cancel()
+
+		generation, canCache := getAccountStatusGeneration(fillCtx, accountID)
+		status, err := loadAccountStatusFromDB(fillCtx, accountID)
 		if err != nil {
 			return auth_model.AccountStatus(""), err
 		}
-		setAccountStatusToRedis(ctx, accountID, status)
+		if canCache {
+			setAccountStatusToRedisIfGeneration(fillCtx, accountID, status, generation)
+		}
 		return status, nil
 	})
 	if err != nil {
@@ -72,7 +87,30 @@ func InvalidateAccountStatus(ctx context.Context, accountID string) {
 
 	redisCtx, cancel := context.WithTimeout(ctx, redisOperationTimeout)
 	defer cancel()
-	_ = client.Del(redisCtx, accountStatusCacheKey(accountID)).Err()
+	_, _ = client.Pipelined(redisCtx, func(pipe goredis.Pipeliner) error {
+		generationKey := accountStatusGenerationKey(accountID)
+		pipe.Incr(redisCtx, generationKey)
+		pipe.Expire(redisCtx, generationKey, accountStatusGenerationTTL)
+		pipe.Del(redisCtx, accountStatusCacheKey(accountID))
+		return nil
+	})
+}
+
+// TouchAccountLastActive refreshes last_active_at at most once per process interval.
+// The actual database update runs asynchronously and is guarded by a DB-side time
+// predicate so multiple API processes do not keep writing the same account.
+func TouchAccountLastActive(accountID string) {
+	if accountID == "" {
+		return
+	}
+
+	now := time.Now()
+	if lastTouch, ok := lastActiveTouchedAt.Load(accountID); ok && now.Sub(lastTouch.(time.Time)) < lastActiveTouchInterval {
+		return
+	}
+	lastActiveTouchedAt.Store(accountID, now)
+
+	go touchAccountLastActive(accountID, now)
 }
 
 func getAccountStatusFromRedis(ctx context.Context, accountID string) (auth_model.AccountStatus, bool) {
@@ -95,7 +133,29 @@ func getAccountStatusFromRedis(ctx context.Context, accountID string) (auth_mode
 	return auth_model.AccountStatus(value), true
 }
 
-func setAccountStatusToRedis(ctx context.Context, accountID string, status auth_model.AccountStatus) {
+func getAccountStatusGeneration(ctx context.Context, accountID string) (string, bool) {
+	client := redisutil.GetClient()
+	if client == nil {
+		return "", false
+	}
+
+	redisCtx, cancel := context.WithTimeout(ctx, redisOperationTimeout)
+	defer cancel()
+
+	value, err := client.Get(redisCtx, accountStatusGenerationKey(accountID)).Result()
+	if errors.Is(err, goredis.Nil) {
+		return "0", true
+	}
+	if err != nil {
+		return "", false
+	}
+	if value == "" {
+		return "0", true
+	}
+	return value, true
+}
+
+func setAccountStatusToRedisIfGeneration(ctx context.Context, accountID string, status auth_model.AccountStatus, generation string) {
 	client := redisutil.GetClient()
 	if client == nil {
 		return
@@ -103,7 +163,23 @@ func setAccountStatusToRedis(ctx context.Context, accountID string, status auth_
 
 	redisCtx, cancel := context.WithTimeout(ctx, redisOperationTimeout)
 	defer cancel()
-	_ = client.SetEx(redisCtx, accountStatusCacheKey(accountID), string(status), accountStatusCacheTTL).Err()
+	_ = client.Watch(redisCtx, func(tx *goredis.Tx) error {
+		currentGeneration, err := tx.Get(redisCtx, accountStatusGenerationKey(accountID)).Result()
+		if errors.Is(err, goredis.Nil) {
+			currentGeneration = "0"
+		} else if err != nil {
+			return err
+		}
+		if currentGeneration != generation {
+			return nil
+		}
+
+		_, err = tx.TxPipelined(redisCtx, func(pipe goredis.Pipeliner) error {
+			pipe.SetEx(redisCtx, accountStatusCacheKey(accountID), string(status), accountStatusCacheTTL)
+			return nil
+		})
+		return err
+	}, accountStatusGenerationKey(accountID))
 }
 
 func loadAccountStatusFromDB(ctx context.Context, accountID string) (auth_model.AccountStatus, error) {
@@ -128,6 +204,10 @@ func accountStatusCacheKey(accountID string) string {
 	return keys.DefaultBuilder().Build(accountStatusCacheModule, accountID)
 }
 
+func accountStatusGenerationKey(accountID string) string {
+	return keys.DefaultBuilder().Build(accountStatusCacheModule, accountStatusGenerationPart, accountID)
+}
+
 func acquireAccountStatusDBLoadSlot(ctx context.Context) error {
 	select {
 	case accountStatusDBLoadTokens <- struct{}{}:
@@ -139,4 +219,24 @@ func acquireAccountStatusDBLoadSlot(ctx context.Context) error {
 
 func releaseAccountStatusDBLoadSlot() {
 	<-accountStatusDBLoadTokens
+}
+
+func touchAccountLastActive(accountID string, now time.Time) {
+	ctx, cancel := context.WithTimeout(context.Background(), lastActiveTouchTimeout)
+	defer cancel()
+
+	cutoff := now.Add(-lastActiveTouchInterval)
+	result := database.GetDB().
+		WithContext(ctx).
+		Model(&auth_model.Account{}).
+		Where("id = ?", accountID).
+		Where("last_active_at IS NULL OR last_active_at < ?", cutoff).
+		Update("last_active_at", now)
+	if result.Error == nil {
+		return
+	}
+
+	if lastTouch, ok := lastActiveTouchedAt.Load(accountID); ok && lastTouch.(time.Time).Equal(now) {
+		lastActiveTouchedAt.Store(accountID, now.Add(-lastActiveTouchInterval+lastActiveTouchRetryInterval))
+	}
 }

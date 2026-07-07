@@ -37,7 +37,11 @@ func ensureAuthenticatedAccount(ctx context.Context, accountID string) error {
 		return err
 	}
 
-	return authenticatedAccountStatusError(status)
+	if err := authenticatedAccountStatusError(status); err != nil {
+		return err
+	}
+	statuscache.TouchAccountLastActive(accountID)
+	return nil
 }
 
 func authenticatedAccountStatusError(status auth_model.AccountStatus) error {
