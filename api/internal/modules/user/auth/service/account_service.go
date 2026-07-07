@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/zgiai/zgi/api/pkg/jwt"
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/zgiai/zgi/api/internal/dto"
@@ -101,6 +103,20 @@ type AccountService struct {
 	systemConfigService           system_service.SystemConfigService
 	eventBus                      interfaces.EventBus
 	officialSignupRegistration    *officialSignupRegistrationService
+	profileCacheMu                sync.RWMutex
+	profileCache                  map[string]*accountProfileCacheEntry
+	profileCacheGeneration        map[string]uint64
+	profileCacheGroup             singleflight.Group
+}
+
+const (
+	accountProfileCacheTTL        = 2 * time.Minute
+	accountProfileCacheMaxEntries = 10000
+)
+
+type accountProfileCacheEntry struct {
+	profile   *dto.AccountProfileResponse
+	updatedAt time.Time
 }
 
 type currentWorkspaceLookup interface {
@@ -134,6 +150,8 @@ func NewAccountService(
 		systemConfigService:           systemConfigService,
 		eventBus:                      eventBus,
 		officialSignupRegistration:    newOfficialSignupRegistrationService(enterpriseService, consoleProvider),
+		profileCache:                  make(map[string]*accountProfileCacheEntry),
+		profileCacheGeneration:        make(map[string]uint64),
 	}
 }
 
@@ -360,6 +378,34 @@ func (s *AccountService) RefreshToken(ctx context.Context, refreshToken string) 
 }
 
 func (s *AccountService) GetAccountProfile(ctx context.Context, accountID string) (*dto.AccountProfileResponse, error) {
+	if profile, ok := s.getCachedAccountProfile(accountID); ok {
+		return profile, nil
+	}
+
+	result, err, _ := s.profileCacheGroup.Do(accountID, func() (interface{}, error) {
+		if profile, ok := s.getCachedAccountProfile(accountID); ok {
+			return profile, nil
+		}
+
+		generation := s.accountProfileCacheGeneration(accountID)
+		profile, err := s.getAccountProfileUncached(ctx, accountID)
+		if err != nil {
+			return nil, err
+		}
+		s.setCachedAccountProfileIfCurrent(accountID, profile, generation)
+		return profile, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	profile, ok := result.(*dto.AccountProfileResponse)
+	if !ok {
+		return nil, fmt.Errorf("unexpected account profile cache result type %T", result)
+	}
+	return cloneAccountProfileResponse(profile), nil
+}
+
+func (s *AccountService) getAccountProfileUncached(ctx context.Context, accountID string) (*dto.AccountProfileResponse, error) {
 	account, err := s.accountRepo.GetAccount(ctx, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("account not found: %w", err)
@@ -402,6 +448,111 @@ func (s *AccountService) GetAccountProfile(ctx context.Context, accountID string
 	}, nil
 }
 
+func (s *AccountService) getCachedAccountProfile(accountID string) (*dto.AccountProfileResponse, bool) {
+	s.profileCacheMu.RLock()
+	entry, ok := s.profileCache[accountID]
+	if ok && time.Since(entry.updatedAt) < accountProfileCacheTTL {
+		profile := cloneAccountProfileResponse(entry.profile)
+		s.profileCacheMu.RUnlock()
+		return profile, true
+	}
+	s.profileCacheMu.RUnlock()
+	return nil, false
+}
+
+func (s *AccountService) setCachedAccountProfileIfCurrent(accountID string, profile *dto.AccountProfileResponse, generation uint64) {
+	s.profileCacheMu.Lock()
+	if s.profileCache == nil {
+		s.profileCache = make(map[string]*accountProfileCacheEntry)
+	}
+	if s.profileCacheGeneration == nil {
+		s.profileCacheGeneration = make(map[string]uint64)
+	}
+	if s.profileCacheGeneration[accountID] != generation {
+		s.profileCacheMu.Unlock()
+		return
+	}
+	now := time.Now()
+	if _, exists := s.profileCache[accountID]; !exists && len(s.profileCache) >= accountProfileCacheMaxEntries {
+		s.pruneAccountProfileCacheLocked(now)
+	}
+	s.profileCache[accountID] = &accountProfileCacheEntry{
+		profile:   cloneAccountProfileResponse(profile),
+		updatedAt: now,
+	}
+	s.profileCacheMu.Unlock()
+}
+
+func (s *AccountService) pruneAccountProfileCacheLocked(now time.Time) {
+	for accountID, entry := range s.profileCache {
+		if now.Sub(entry.updatedAt) >= accountProfileCacheTTL {
+			delete(s.profileCache, accountID)
+		}
+	}
+	if len(s.profileCache) < accountProfileCacheMaxEntries {
+		return
+	}
+
+	var oldestAccountID string
+	var oldestUpdatedAt time.Time
+	for accountID, entry := range s.profileCache {
+		if oldestAccountID == "" || entry.updatedAt.Before(oldestUpdatedAt) {
+			oldestAccountID = accountID
+			oldestUpdatedAt = entry.updatedAt
+		}
+	}
+	if oldestAccountID != "" {
+		delete(s.profileCache, oldestAccountID)
+	}
+}
+
+func (s *AccountService) accountProfileCacheGeneration(accountID string) uint64 {
+	s.profileCacheMu.RLock()
+	generation := s.profileCacheGeneration[accountID]
+	s.profileCacheMu.RUnlock()
+	return generation
+}
+
+func (s *AccountService) InvalidateAccountProfileCache(accountID string) {
+	s.profileCacheMu.Lock()
+	if s.profileCacheGeneration == nil {
+		s.profileCacheGeneration = make(map[string]uint64)
+	}
+	s.profileCacheGeneration[accountID]++
+	delete(s.profileCache, accountID)
+	s.profileCacheMu.Unlock()
+}
+
+func (s *AccountService) invalidateAccountProfileCache(accountID string) {
+	s.InvalidateAccountProfileCache(accountID)
+}
+
+func cloneAccountProfileResponse(src *dto.AccountProfileResponse) *dto.AccountProfileResponse {
+	if src == nil {
+		return nil
+	}
+	clone := *src
+	if src.IsSuperAdmin != nil {
+		value := *src.IsSuperAdmin
+		clone.IsSuperAdmin = &value
+	}
+	if src.CurrentOrganizationID != nil {
+		value := *src.CurrentOrganizationID
+		clone.CurrentOrganizationID = &value
+	}
+	if src.CurrentWorkspaceID != nil {
+		value := *src.CurrentWorkspaceID
+		clone.CurrentWorkspaceID = &value
+	}
+	if src.Extension != nil {
+		clone.Extension = make(auth_model.JSONMap, len(src.Extension))
+		for key, value := range src.Extension {
+			clone.Extension[key] = value
+		}
+	}
+	return &clone
+}
+
 func (s *AccountService) UpdateAccountProfile(ctx context.Context, accountID string, req *dto.UpdateProfileRequest) error {
 	account, err := s.accountRepo.GetAccount(ctx, accountID)
 	if err != nil {
@@ -437,6 +588,7 @@ func (s *AccountService) UpdateAccountProfile(ctx context.Context, accountID str
 		return fmt.Errorf("failed to update account: %w", err)
 	}
 
+	s.invalidateAccountProfileCache(accountID)
 	return nil
 }
 
@@ -1109,7 +1261,11 @@ func (s *AccountService) UpdateAccount(ctx context.Context, id string, req *dto.
 	if req.Status != "" {
 		account.Status = req.Status
 	}
-	return s.accountRepo.UpdateAccount(ctx, account)
+	if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
+		return err
+	}
+	s.invalidateAccountProfileCache(id)
+	return nil
 }
 
 func (s *AccountService) DeleteAccount(ctx context.Context, id string) error {
@@ -1733,11 +1889,15 @@ func (s *AccountService) CheckTenantAdmin(ctx context.Context, accountID string,
 // CloseAccount implements the CloseAccount method
 func (s *AccountService) CloseAccount(ctx context.Context, account *auth_model.Account) error {
 	account.Status = auth_model.AccountStatusClosed
-	return s.accountRepo.UpdateAccount(ctx, account)
+	if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
+		return err
+	}
+	s.invalidateAccountProfileCache(account.ID)
+	return nil
 }
 
 func (s *AccountService) softDeleteAccount(ctx context.Context, account *auth_model.Account) error {
-	return s.accountRepo.ExecuteInTransaction(ctx, func(tx *gorm.DB) error {
+	if err := s.accountRepo.ExecuteInTransaction(ctx, func(tx *gorm.DB) error {
 		txRepo := s.accountRepo.WithTx(tx)
 
 		account.Status = auth_model.AccountStatusClosed
@@ -1750,7 +1910,11 @@ func (s *AccountService) softDeleteAccount(ctx context.Context, account *auth_mo
 		}
 
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	s.invalidateAccountProfileCache(account.ID)
+	return nil
 }
 
 func (s *AccountService) revokeAccountSessionsBestEffort(_ context.Context, accountID string) {
@@ -1865,6 +2029,8 @@ func (s *AccountService) GetAccountContext(ctx context.Context, accountID string
 	} else if changed {
 		if err := s.accountRepo.UpdateAccountContext(ctx, ctxModel); err != nil {
 			logger.Warn("Failed to update account context with resolved workspace: %v", err)
+		} else {
+			s.invalidateAccountProfileCache(accountID)
 		}
 	}
 
@@ -2207,6 +2373,7 @@ func (s *AccountService) UpdateAccountContext(ctx context.Context, accountID str
 		}
 	}
 
+	s.invalidateAccountProfileCache(accountID)
 	return ctxModel, nil
 }
 
@@ -2736,14 +2903,22 @@ func (s *AccountService) UpdateAccountBasicInfo(ctx context.Context, account *au
 	if status != nil {
 		account.Status = auth_model.AccountStatus(*status)
 	}
-	return s.accountRepo.UpdateAccount(ctx, account)
+	if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
+		return err
+	}
+	s.invalidateAccountProfileCache(account.ID)
+	return nil
 }
 
 // UpdateAccountExtension implements the UpdateAccountExtension method
 func (s *AccountService) UpdateAccountExtension(ctx context.Context, account *auth_model.Account, mobile, gender *string) error {
 	setAccountMobile(account, mobile)
 	updateAccountExtensions(account, mobile, nil, nil, gender)
-	return s.accountRepo.UpdateAccount(ctx, account)
+	if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
+		return err
+	}
+	s.invalidateAccountProfileCache(account.ID)
+	return nil
 }
 
 // UpdateAccountEx implements the UpdateAccountEx method
@@ -2767,7 +2942,11 @@ func (s *AccountService) UpdateAccountEx(ctx context.Context, account *auth_mode
 
 	setAccountMobile(account, mobile)
 	updateAccountExtensions(account, mobile, wechat, address, genderStr)
-	return s.accountRepo.UpdateAccount(ctx, account)
+	if err := s.accountRepo.UpdateAccount(ctx, account); err != nil {
+		return err
+	}
+	s.invalidateAccountProfileCache(account.ID)
+	return nil
 }
 
 func setAccountMobile(account *auth_model.Account, mobile *string) {

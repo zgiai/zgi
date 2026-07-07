@@ -138,6 +138,10 @@ func (a *AccountServiceAdapter) GetAccountProfile(ctx context.Context, accountID
 	return a.accountService.GetAccountProfile(ctx, accountID)
 }
 
+func (a *AccountServiceAdapter) InvalidateAccountProfileCache(accountID string) {
+	a.accountService.InvalidateAccountProfileCache(accountID)
+}
+
 func (a *AccountServiceAdapter) UpdateAccountProfile(ctx context.Context, accountID string, req *dto.UpdateProfileRequest) error {
 	return a.accountService.UpdateAccountProfile(ctx, accountID, req)
 }

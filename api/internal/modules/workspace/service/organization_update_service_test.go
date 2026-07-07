@@ -192,9 +192,10 @@ func TestUpdateCurrentOrganizationMemberRolePromotesNormalMember(t *testing.T) {
 			"member-1": {OrganizationID: "org-1", AccountID: "member-1", Role: model.OrganizationRoleNormal, Status: model.OrganizationMemberStatusActive},
 		},
 	}
+	accountService := &stubCurrentOrganizationAccountService{organizationID: "org-1"}
 	svc := &organizationService{
 		organizationRepo: repo,
-		accountService:   stubCurrentOrganizationAccountService{organizationID: "org-1"},
+		accountService:   accountService,
 	}
 
 	err := svc.UpdateCurrentOrganizationMemberRole(context.Background(), "owner-1", "member-1", model.OrganizationRoleAdmin)
@@ -202,6 +203,7 @@ func TestUpdateCurrentOrganizationMemberRolePromotesNormalMember(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, model.OrganizationRoleAdmin, repo.joins["member-1"].Role)
 	require.Equal(t, "member-1", repo.updatedJoinAccountID)
+	require.Equal(t, "member-1", accountService.invalidatedAccountID)
 }
 
 func TestUpdateCurrentOrganizationMemberRoleDemotesAdminMember(t *testing.T) {
@@ -216,7 +218,7 @@ func TestUpdateCurrentOrganizationMemberRoleDemotesAdminMember(t *testing.T) {
 	}
 	svc := &organizationService{
 		organizationRepo: repo,
-		accountService:   stubCurrentOrganizationAccountService{organizationID: "org-1"},
+		accountService:   &stubCurrentOrganizationAccountService{organizationID: "org-1"},
 	}
 
 	err := svc.UpdateCurrentOrganizationMemberRole(context.Background(), "owner-1", "admin-1", model.OrganizationRoleNormal)
@@ -238,7 +240,7 @@ func TestUpdateCurrentOrganizationMemberRoleIsIdempotent(t *testing.T) {
 	}
 	svc := &organizationService{
 		organizationRepo: repo,
-		accountService:   stubCurrentOrganizationAccountService{organizationID: "org-1"},
+		accountService:   &stubCurrentOrganizationAccountService{organizationID: "org-1"},
 	}
 
 	err := svc.UpdateCurrentOrganizationMemberRole(context.Background(), "owner-1", "admin-1", model.OrganizationRoleAdmin)
@@ -336,7 +338,7 @@ func TestUpdateCurrentOrganizationMemberRoleRejectsInvalidOperatorsAndTargets(t 
 			}
 			svc := &organizationService{
 				organizationRepo: repo,
-				accountService:   stubCurrentOrganizationAccountService{organizationID: "org-1"},
+				accountService:   &stubCurrentOrganizationAccountService{organizationID: "org-1"},
 			}
 
 			err := svc.UpdateCurrentOrganizationMemberRole(context.Background(), tt.operatorID, tt.memberID, tt.role)
@@ -419,15 +421,20 @@ func (r *stubOrganizationUpdateRepo) GetDB() *gorm.DB {
 
 type stubCurrentOrganizationAccountService struct {
 	interfaces.AccountService
-	organizationID string
-	err            error
+	organizationID       string
+	err                  error
+	invalidatedAccountID string
 }
 
-func (s stubCurrentOrganizationAccountService) EnsureCurrentOrganizationID(ctx context.Context, accountID string) (string, error) {
+func (s *stubCurrentOrganizationAccountService) EnsureCurrentOrganizationID(ctx context.Context, accountID string) (string, error) {
 	if s.err != nil {
 		return "", s.err
 	}
 	return s.organizationID, nil
+}
+
+func (s *stubCurrentOrganizationAccountService) InvalidateAccountProfileCache(accountID string) {
+	s.invalidatedAccountID = accountID
 }
 
 func newOrganizationUpdateMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {

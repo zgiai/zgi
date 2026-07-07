@@ -40,7 +40,11 @@ func ensureAuthenticatedAccount(ctx context.Context, accountID string) error {
 		return err
 	}
 
-	switch account.Status {
+	return authenticatedAccountStatusError(account.Status)
+}
+
+func authenticatedAccountStatusError(status auth_model.AccountStatus) error {
+	switch status {
 	case auth_model.AccountStatusBanned:
 		return errAuthenticatedAccountBanned
 	case auth_model.AccountStatusFrozen:
