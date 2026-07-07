@@ -1,15 +1,12 @@
 'use client';
 
-import React, { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Chat, { useAIChatController } from '@/components/chat';
-import type { AIChatModelValue } from '@/components/chat';
-import type { ModelSelectorValue } from '@/components/common/model-selector';
-import { useInitializeDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
+import { usePersistedAIChatModelSelection } from '@/hooks/model/use-persisted-ai-chat-model-selection';
 import { useT } from '@/i18n/translations';
 import { useCurrentUser } from '@/store/auth-store';
 import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
-import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
 
 function ChatPageContent() {
   const t = useT('webapp');
@@ -23,85 +20,12 @@ function ChatPageContent() {
   const startNewRef = useRef(startNew);
   const lastInitializedConversationIdRef = useRef<string | null | undefined>(undefined);
   const routeSelectionTargetRef = useRef<string | null | undefined>(undefined);
-
-  const [modelSelectorValue, setModelSelectorValue] = useState<AIChatModelValue>(() => {
-    if (!user?.id) return { provider: '', model: '', params: {} };
-    const saved = getLastSelectedAiModel(user.id, 'consoleChat');
-    return saved
-      ? { provider: saved.provider, model: saved.model, params: {} }
-      : { provider: '', model: '', params: {} };
-  });
-  const [isInitialModelResolved, setIsInitialModelResolved] = useState(() => {
-    if (!user?.id) return false;
-    return Boolean(getLastSelectedAiModel(user.id, 'consoleChat'));
-  });
-
-  const shouldInitializeDefaultModel = Boolean(
-    user?.id && !getLastSelectedAiModel(user.id, 'consoleChat')
-  );
-  const defaultModelInitialization = useInitializeDefaultModelByUseCase({
-    useCase: 'text-chat',
-    currentModel: modelSelectorValue,
-    enabled: shouldInitializeDefaultModel,
-    onInitialize: value => {
-      setModelSelectorValue({
-        provider: value.provider,
-        model: value.model,
-        params: value.params,
-      });
-      setIsInitialModelResolved(true);
-    },
-  });
-  const isModelInitializing = !modelSelectorValue.model && !isInitialModelResolved;
-
-  useLayoutEffect(() => {
-    if (!user?.id) {
-      setIsInitialModelResolved(false);
-      return;
-    }
-    if (modelSelectorValue.model) {
-      setIsInitialModelResolved(true);
-      return;
-    }
-    const saved = getLastSelectedAiModel(user.id, 'consoleChat');
-    if (!saved) {
-      if (defaultModelInitialization.isResolved && !defaultModelInitialization.value) {
-        setIsInitialModelResolved(true);
-      }
-      return;
-    }
-
-    setModelSelectorValue(previous => ({
-      ...previous,
-      provider: saved.provider,
-      model: saved.model,
-    }));
-    setIsInitialModelResolved(true);
-  }, [
-    defaultModelInitialization.isResolved,
-    defaultModelInitialization.value,
-    modelSelectorValue.model,
-    user?.id,
-  ]);
-
-  const handleModelChange = useCallback(
-    (value: ModelSelectorValue) => {
-      setModelSelectorValue(previous => ({
-        ...previous,
-        provider: value.provider,
-        model: value.model,
-      }));
-
-      if (user?.id) {
-        saveLastSelectedAiModel(user.id, 'consoleChat', {
-          provider: value.provider,
-          model: value.model,
-        });
-      }
-      setIsInitialModelResolved(true);
-    },
-    [user?.id]
-  );
+  const { modelSelectorValue, isModelInitializing, handleModelChange } =
+    usePersistedAIChatModelSelection({
+      accountId: user?.id,
+      scope: 'consoleChat',
+      useCase: 'text-chat',
+    });
 
   const replaceConversationRoute = useCallback(
     (conversationId: string | null) => {

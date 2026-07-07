@@ -113,7 +113,11 @@ export interface ContextualAIChatClientActionRequest {
   messageId: string;
   href?: string;
   label?: string;
+  labelKey?: string;
+  routeKind?: string;
   reason?: string;
+  continuationPolicy?: string;
+  blocking?: boolean;
   payload: AIChatClientActionRequiredEventData;
 }
 
@@ -590,6 +594,15 @@ function mergeAIChatOperationContext(
   };
 }
 
+function snapshotOperationContext<T>(value: T): T {
+  if (value === undefined || value === null) return value;
+  try {
+    return JSON.parse(JSON.stringify(value)) as T;
+  } catch {
+    return value;
+  }
+}
+
 function isSuccessfulSkillCall(payload: AIChatSkillCallEndEventData): boolean {
   return !payload.status || payload.status === 'success';
 }
@@ -620,7 +633,11 @@ export function normalizeZGIConsoleNavigationHref(rawHref: string | undefined): 
 
   const [rawPath] = text.split(/[?#]/, 1);
   const path = `/${rawPath.replace(/^\/+/, '')}`.replace(/\/+$/, '') || '/';
-  const normalizedPath = path === '' ? '/' : path;
+  let normalizedPath = path === '' ? '/' : path;
+  const agentDetailWithoutTabMatch = normalizedPath.match(/^\/console\/agents\/([A-Za-z0-9_-]+)$/);
+  if (agentDetailWithoutTabMatch) {
+    normalizedPath = `${normalizedPath}/agent`;
+  }
 
   if (ZGI_CONSOLE_EXACT_ROUTES.has(normalizedPath)) {
     return normalizedPath;
@@ -1013,7 +1030,11 @@ function clientActionRequestFromPayload(
     messageId,
     href: href || undefined,
     label: textValue(payload.label),
+    labelKey: textValue(payload.label_key),
+    routeKind: textValue(payload.route_kind),
     reason: textValue(payload.reason),
+    continuationPolicy: textValue(payload.continuation_policy),
+    blocking: typeof payload.blocking === 'boolean' ? payload.blocking : undefined,
     payload,
   };
 }
@@ -1099,7 +1120,7 @@ export function createContextualAIChatTransport(
           ...payload,
           surface: 'contextual_sidebar',
           runtime_context: envelope || undefined,
-          operation_context: mergedOperationContext,
+          operation_context: snapshotOperationContext(mergedOperationContext),
         },
         wrappedCallbacks,
         abortSignal
@@ -1124,7 +1145,7 @@ export function createContextualAIChatTransport(
           ...payload,
           surface: 'contextual_sidebar',
           runtime_context: envelope || payload.runtime_context,
-          operation_context: mergedOperationContext,
+          operation_context: snapshotOperationContext(mergedOperationContext),
         },
         wrapContextualCallbacks(callbacks, getContextItems, options),
         abortSignal
@@ -1184,7 +1205,7 @@ export function createContextualAIChatTransport(
           ...payload,
           surface: 'contextual_sidebar',
           runtime_context: envelope || payload.runtime_context,
-          operation_context: mergedOperationContext,
+          operation_context: snapshotOperationContext(mergedOperationContext),
         },
         wrapContextualCallbacks(callbacks, getContextItems, options),
         abortSignal

@@ -468,6 +468,7 @@ export function AIChatShell({
     if (
       !activeConversation ||
       activeConversation.runtime_status !== 'idle' ||
+      isRecoveringMessages ||
       isSending ||
       hasActiveStreamingMessage
     ) {
@@ -476,24 +477,38 @@ export function AIChatShell({
     const leafMessageId = activeConversation.current_leaf_message_id;
     if (!leafMessageId) return null;
     const leafMessage = activeMessages.find(message => message.id === leafMessageId) ?? null;
+    if (!leafMessage || leafMessage.status !== 'waiting_question') return null;
     const request = leafMessage?.metadata?.user_input_request;
     if (!request?.questions?.some(question => question.question?.trim())) {
       return null;
     }
     return leafMessage;
-  }, [activeConversation, activeMessages, hasActiveStreamingMessage, isSending]);
+  }, [
+    activeConversation,
+    activeMessages,
+    hasActiveStreamingMessage,
+    isRecoveringMessages,
+    isSending,
+  ]);
   const activeUserInputRequest = activeUserInputMessage?.metadata?.user_input_request ?? null;
   const activeWorkflowApprovalRequest = useMemo(
     () =>
-      surface === 'agent-draft' || surface === 'agent-webapp'
+      !isRecoveringMessages && (surface === 'agent-draft' || surface === 'agent-webapp')
         ? resolveActiveWorkflowApprovalRequest(
             activeConversation,
             activeMessages,
             isSending,
             hasActiveStreamingMessage
-          )
+        )
         : null,
-    [activeConversation, activeMessages, hasActiveStreamingMessage, isSending, surface]
+    [
+      activeConversation,
+      activeMessages,
+      hasActiveStreamingMessage,
+      isRecoveringMessages,
+      isSending,
+      surface,
+    ]
   );
   const canStopPendingWorkflowInteraction = Boolean(
     activeWorkflowApprovalRequest ||
@@ -657,7 +672,6 @@ export function AIChatShell({
   const handleSend = useCallback(
     async (files: AIChatMessageFile[] = [], useMemory = false): Promise<boolean> => {
       if (activeWorkflowApprovalRequest) {
-        toast.info(t('consoleChat.workflow.approvalInputLocked'));
         return false;
       }
       const query = input.trim();
@@ -956,6 +970,7 @@ export function AIChatShell({
       !enableToolGovernanceApprovals ||
       !activeConversation ||
       activeConversation.runtime_status !== 'idle' ||
+      isRecoveringMessages ||
       isSending ||
       hasActiveStreamingMessage
     ) {
@@ -992,6 +1007,7 @@ export function AIChatShell({
     enableToolGovernanceApprovals,
     handleToolGovernanceDecision,
     hasActiveStreamingMessage,
+    isRecoveringMessages,
     isSending,
     locale,
     skillDisplayById,
@@ -1222,9 +1238,12 @@ export function AIChatShell({
             onScroll={handleMessagesScroll}
             onRegenerate={handleRegenerate}
             onToolGovernanceDecision={
-              enableToolGovernanceApprovals ? handleToolGovernanceDecision : undefined
+              enableToolGovernanceApprovals && !isRecoveringMessages
+                ? handleToolGovernanceDecision
+                : undefined
             }
             enableToolGovernanceApprovals={enableToolGovernanceApprovals}
+            suppressPendingToolGovernanceApprovals={isRecoveringMessages}
             onSwitchBranch={handleSwitchBranch}
             onEditStart={handleEditStart}
             onEditChange={setEditingQuery}
@@ -1295,7 +1314,9 @@ export function AIChatShell({
             showToolGovernancePermissionControl={showToolGovernancePermissionControl}
             toolGovernancePermissionTier={toolGovernancePermissionTier}
             onToolGovernancePermissionTierChange={setToolGovernancePermissionTier}
-            enableToolGovernanceApprovals={enableToolGovernanceApprovals}
+            enableToolGovernanceApprovals={
+              enableToolGovernanceApprovals && !isRecoveringMessages
+            }
             activeConversationId={activeConversation?.id ?? null}
             activeToolGovernanceMessageId={
               activeConversation?.active_message_id ??

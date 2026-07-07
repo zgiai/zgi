@@ -83,6 +83,7 @@ interface AIChatMessageBubbleProps {
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
   enableToolGovernanceApprovals?: boolean;
+  suppressPendingToolGovernanceApprovals?: boolean;
 }
 
 const EMPTY_MESSAGE_FILES: AIChatMessageFile[] = [];
@@ -1172,6 +1173,7 @@ export function AIChatMessageBubble({
   showMemoryKey = true,
   showSkillEventDetails = true,
   enableToolGovernanceApprovals = false,
+  suppressPendingToolGovernanceApprovals = false,
 }: AIChatMessageBubbleProps) {
   const t = useT('webapp');
   const tGlobal = useT();
@@ -1488,6 +1490,7 @@ export function AIChatMessageBubble({
               showMemoryKey={showMemoryKey}
               showSkillEventDetails={showSkillEventDetails}
               enableToolGovernanceApprovals={enableToolGovernanceApprovals}
+              suppressPendingToolGovernanceApprovals={suppressPendingToolGovernanceApprovals}
               messageStatus={message.status}
               onToolGovernanceDecision={onToolGovernanceDecision}
             />

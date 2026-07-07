@@ -33,10 +33,9 @@ import {
   WORKFLOW_KEYS,
   WORKSPACE_KEYS,
 } from '@/hooks/query-keys';
-import { useInitializeDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
+import { usePersistedAIChatModelSelection } from '@/hooks/model/use-persisted-ai-chat-model-selection';
 import { useT } from '@/i18n/translations';
 import { useCurrentUser } from '@/store/auth-store';
-import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
 import { embeddedControlButtonClassName } from '@/components/chat/variants/aichat/embedded-conversation-controls';
 import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
 import {
@@ -91,6 +90,7 @@ interface PendingClientActionContinuation {
   completed: boolean;
   timeoutId?: number;
   settleTimeoutId?: number;
+  recoveryTimeoutId?: number;
   resuming?: boolean;
 }
 
@@ -706,6 +706,15 @@ function waitingClientActionStatus(value: unknown) {
   return status === 'waiting_client_action' || status === 'waiting';
 }
 
+function clientActionContinuationPolicy(value: unknown) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function clientActionIsBlocking(record: Record<string, unknown>) {
+  if (record.blocking === false) return false;
+  return clientActionContinuationPolicy(record.continuation_policy) !== 'record_only';
+}
+
 function pendingClientActionRecordFromMessage(
   message: AIChatMessage | null | undefined
 ): Record<string, unknown> | null {
@@ -722,7 +731,7 @@ function pendingClientActionRecordFromMessage(
   const matchActionId = (record: Record<string, unknown>) =>
     continuationActionId && textFromRecord(record, ['action_id']) === continuationActionId;
   const waitingRecord = (record: Record<string, unknown>) =>
-    waitingClientActionStatus(record.status);
+    waitingClientActionStatus(record.status) && clientActionIsBlocking(record);
 
   const matchedEvent = records.find(record => matchActionId(record) && waitingRecord(record));
   const matchedInvocation = invocations.find(
@@ -1084,6 +1093,7 @@ export function ContextualAIChatDock() {
   const assetOperationRefreshRef = useRef<Map<string, number>>(new Map());
   const pendingClientActionsRef = useRef<Map<string, PendingClientActionContinuation>>(new Map());
   const processedClientActionsRef = useRef<Map<string, number>>(new Map());
+  const isRecoveringMessagesRef = useRef(false);
   const clientActionContinuationRef = useRef<
     ReturnType<typeof useAIChatController>['continueClientAction'] | null
   >(null);
@@ -1103,6 +1113,10 @@ export function ContextualAIChatDock() {
       window.clearTimeout(pending.settleTimeoutId);
       pending.settleTimeoutId = undefined;
     }
+    if (pending.recoveryTimeoutId !== undefined) {
+      window.clearTimeout(pending.recoveryTimeoutId);
+      pending.recoveryTimeoutId = undefined;
+    }
   }, []);
 
   const clearAllClientActionTimeouts = useCallback(() => {
@@ -1116,6 +1130,16 @@ export function ContextualAIChatDock() {
     ) => {
       const currentPending = pendingClientActionsRef.current.get(pending.key);
       if (currentPending !== pending || pending.completed) {
+        return;
+      }
+
+      if (isRecoveringMessagesRef.current && typeof window !== 'undefined') {
+        if (pending.recoveryTimeoutId === undefined) {
+          pending.recoveryTimeoutId = window.setTimeout(() => {
+            pending.recoveryTimeoutId = undefined;
+            completePendingClientAction(pending, payload);
+          }, CLIENT_ACTION_ROUTE_CONTEXT_POLL_MS);
+        }
         return;
       }
 
@@ -1279,6 +1303,7 @@ export function ContextualAIChatDock() {
 
   const handleClientActionRequired = useCallback(
     (request: ContextualAIChatClientActionRequest) => {
+      if (isRecoveringMessagesRef.current) return;
       const now = Date.now();
       const key = clientActionRequestKey(request);
       pruneClientActionDedupe(processedClientActionsRef.current, now);
@@ -1289,6 +1314,11 @@ export function ContextualAIChatDock() {
         const operation = assetOperationFromClientAction(request);
         if (operation) {
           handleAssetOperationSuccess(operation);
+        }
+
+        if (clientActionContinuationPolicy(request.continuationPolicy) === 'record_only') {
+          markClientActionDedupe(processedClientActionsRef.current, key);
+          return;
         }
 
         const pending: PendingClientActionContinuation = {
@@ -1342,10 +1372,24 @@ export function ContextualAIChatDock() {
           error: 'Route navigation target is unsupported.',
           result: {
             event_type: 'route_navigation_invalid',
+            action_type: request.actionType,
             requested_href: request.href ?? null,
             label: request.label,
+            label_key: request.labelKey,
+            route_kind: request.routeKind,
             reason: request.reason,
             observed_path: normalizeZGIConsoleNavigationHref(pathname ?? undefined),
+            recoverable: true,
+            target_completed: false,
+            next_step_hint:
+              'Choose a supported ZGI console route and retry navigation if the task still needs a page change.',
+            supported_route_patterns: [
+              '/console/files',
+              '/console/agents',
+              '/console/agents/{agent_id}/agent',
+              '/console/workflows',
+              '/console/db',
+            ],
           },
         });
         return;
@@ -1468,6 +1512,10 @@ export function ContextualAIChatDock() {
   const { init: initController } = controller;
 
   useEffect(() => {
+    isRecoveringMessagesRef.current = controller.isRecoveringMessages;
+  }, [controller.isRecoveringMessages]);
+
+  useEffect(() => {
     initController(readStoredActiveConversationId(user?.id) ?? undefined);
   }, [initController, user?.id]);
 
@@ -1499,6 +1547,7 @@ export function ContextualAIChatDock() {
   );
 
   const waitingClientActionRequest = useMemo(() => {
+    if (controller.isRecoveringMessages || controller.isLoadingMessages) return null;
     const activeConversation = controller.activeConversation;
     if (!activeConversation) return null;
 
@@ -1508,7 +1557,12 @@ export function ContextualAIChatDock() {
 
     const leafMessage = controller.messages.find(message => message.id === leafMessageId);
     return clientActionRequestFromWaitingMessage(leafMessage);
-  }, [controller.activeConversation, controller.messages]);
+  }, [
+    controller.activeConversation,
+    controller.isLoadingMessages,
+    controller.isRecoveringMessages,
+    controller.messages,
+  ]);
 
   useEffect(() => {
     if (!waitingClientActionRequest) return;
@@ -1612,84 +1666,12 @@ export function ContextualAIChatDock() {
     pendingClientActionVersion,
   ]);
 
-  const [modelSelectorValue, setModelSelectorValue] = useState<AIChatModelValue>(() => {
-    if (!user?.id) return { provider: '', model: '', params: {} };
-    const saved = getLastSelectedAiModel(user.id, LOCAL_STORAGE_KEY);
-    return saved
-      ? { provider: saved.provider, model: saved.model, params: {} }
-      : { provider: '', model: '', params: {} };
-  });
-  const [isInitialModelResolved, setIsInitialModelResolved] = useState(() => {
-    if (!user?.id) return false;
-    return Boolean(getLastSelectedAiModel(user.id, LOCAL_STORAGE_KEY));
-  });
-
-  const shouldInitializeDefaultModel = Boolean(
-    user?.id && !getLastSelectedAiModel(user.id, LOCAL_STORAGE_KEY)
-  );
-  const defaultModelInitialization = useInitializeDefaultModelByUseCase({
-    useCase: 'text-chat',
-    currentModel: modelSelectorValue,
-    enabled: shouldInitializeDefaultModel,
-    onInitialize: value => {
-      setModelSelectorValue({
-        provider: value.provider,
-        model: value.model,
-        params: value.params,
-      });
-      setIsInitialModelResolved(true);
-    },
-  });
-  const isModelInitializing = !modelSelectorValue.model && !isInitialModelResolved;
-
-  useLayoutEffect(() => {
-    if (!user?.id) {
-      setIsInitialModelResolved(false);
-      return;
-    }
-    if (modelSelectorValue.model) {
-      setIsInitialModelResolved(true);
-      return;
-    }
-    const saved = getLastSelectedAiModel(user.id, LOCAL_STORAGE_KEY);
-    if (!saved) {
-      if (defaultModelInitialization.isResolved && !defaultModelInitialization.value) {
-        setIsInitialModelResolved(true);
-      }
-      return;
-    }
-
-    setModelSelectorValue(previous => ({
-      ...previous,
-      provider: saved.provider,
-      model: saved.model,
-    }));
-    setIsInitialModelResolved(true);
-  }, [
-    defaultModelInitialization.isResolved,
-    defaultModelInitialization.value,
-    modelSelectorValue.model,
-    user?.id,
-  ]);
-
-  const handleModelChange = useCallback(
-    (value: ModelSelectorValue) => {
-      setModelSelectorValue(previous => ({
-        ...previous,
-        provider: value.provider,
-        model: value.model,
-      }));
-
-      if (user?.id) {
-        saveLastSelectedAiModel(user.id, LOCAL_STORAGE_KEY, {
-          provider: value.provider,
-          model: value.model,
-        });
-      }
-      setIsInitialModelResolved(true);
-    },
-    [user?.id]
-  );
+  const { modelSelectorValue, isModelInitializing, handleModelChange } =
+    usePersistedAIChatModelSelection({
+      accountId: user?.id,
+      scope: LOCAL_STORAGE_KEY,
+      useCase: 'text-chat',
+    });
 
   const enableToolGovernance = true;
   const suggestions = useMemo(() => buildSuggestions(items, t), [items, t]);

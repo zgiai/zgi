@@ -164,6 +164,8 @@ export interface AIChatSkillInvocation {
   answer_id?: string;
   action_id?: string;
   action_type?: string;
+  continuation_policy?: string;
+  blocking?: boolean;
   href?: string;
   effect?: string;
   asset_type?: string;
@@ -621,10 +623,14 @@ export interface AIChatClientActionRequiredEventData extends Record<string, unkn
   action_id: string;
   action_type: 'route_navigation' | 'asset_observation' | (string & {});
   status?: 'waiting_client_action' | string;
+  continuation_policy?: 'resume_model' | 'record_only' | (string & {});
+  blocking?: boolean;
   skill_id?: string;
   tool_name?: string;
   href?: string;
   label?: string;
+  label_key?: string;
+  route_kind?: string;
   reason?: string;
   effect?: string;
   asset_type?: string;
@@ -868,6 +874,8 @@ export interface AIChatAgentProgressEventData {
   tool_name?: string;
   action_id?: string;
   action_type?: string;
+  continuation_policy?: string;
+  blocking?: boolean;
   status?: string;
   effect?: string;
   asset_type?: string;

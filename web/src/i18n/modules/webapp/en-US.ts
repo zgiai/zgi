@@ -269,6 +269,13 @@ const messages = {
         asset: 'asset(s)',
       },
     },
+    routeLabels: {
+      home: 'Home',
+      files: 'File Management',
+      agentList: 'Agents',
+      agentDetail: 'Agent detail',
+      databases: 'Databases',
+    },
     stopped: 'Stopped',
     streamError: 'The response failed.',
     send: 'Send',

@@ -44,6 +44,7 @@ interface AIChatMessageListProps {
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
   enableToolGovernanceApprovals?: boolean;
+  suppressPendingToolGovernanceApprovals?: boolean;
   showPlanningPlaceholder?: boolean;
   pendingUserMessage?: AIChatPendingUserMessage | null;
 }
@@ -127,6 +128,7 @@ export function AIChatMessageList({
   showMemoryKey = true,
   showSkillEventDetails = true,
   enableToolGovernanceApprovals = false,
+  suppressPendingToolGovernanceApprovals = false,
   showPlanningPlaceholder = false,
   pendingUserMessage = null,
 }: AIChatMessageListProps) {
@@ -190,6 +192,7 @@ export function AIChatMessageList({
                 showMemoryKey={showMemoryKey}
                 showSkillEventDetails={showSkillEventDetails}
                 enableToolGovernanceApprovals={enableToolGovernanceApprovals}
+                suppressPendingToolGovernanceApprovals={suppressPendingToolGovernanceApprovals}
               />
             ))}
             {pendingUserMessage ? (

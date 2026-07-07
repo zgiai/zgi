@@ -460,9 +460,10 @@ export function useChatRuntimeConversationActions({
       markConversationStopped(activeConversationId, response.message_id);
       refreshConversationSilently(activeConversationId);
     } catch (error) {
+      console.warn('Failed to stop AIChat conversation', error);
       setControllerState(current => ({
         ...current,
-        error: getErrorMessage(error),
+        error: null,
         stoppingByConversation: {
           ...current.stoppingByConversation,
           [activeConversationId]: false,

@@ -154,6 +154,7 @@ interface AIChatAgenticTimelineProps {
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
   enableToolGovernanceApprovals?: boolean;
+  suppressPendingToolGovernanceApprovals?: boolean;
   messageStatus?: AIChatMessage['status'];
   onToolGovernanceDecision?: (
     payload: AIChatToolGovernanceDecisionSubmitPayload
@@ -814,7 +815,7 @@ function buildSkillTitle(
   t: WebappTranslator,
   skillDisplayById?: AIChatSkillDisplayMap
 ): string {
-  const routeTarget = routeNavigationDisplayTarget(invocation, locale);
+  const routeTarget = routeNavigationDisplayTarget(invocation, t);
   if (routeTarget) {
     const alreadyLoaded = routeNavigationAlreadyLoaded(invocation);
     if (alreadyLoaded && tone !== 'running' && tone !== 'error') {
@@ -3137,36 +3138,51 @@ function invocationNavigationTarget(invocation: AIChatSkillInvocation): string {
     invocationString(result.current_href) ||
     invocationString(result.target_href) ||
     invocationString(args.href);
-  return href.replace(/\/+$/, '') || href;
+  return normalizeRouteNavigationDisplayHref(href);
+}
+
+function normalizeRouteNavigationDisplayHref(href: string): string {
+  const normalized = href.replace(/\/+$/, '') || href;
+  if (/^\/console\/agents\/[A-Za-z0-9_-]+$/.test(normalized)) {
+    return `${normalized}/agent`;
+  }
+  return normalized;
 }
 
 function routeNavigationDisplayTarget(
   invocation: AIChatSkillInvocation,
-  locale: string
+  t: WebappTranslator
 ): string | null {
   if (!invocationIsRouteNavigation(invocation)) {
     return null;
   }
   const href = invocationNavigationTarget(invocation);
   const result = invocationRecord(invocation.result);
+  const record = invocation as unknown as Record<string, unknown>;
   const rawLabel = invocationString(result.label);
+  const labelKey =
+    invocationString(record.label_key) ||
+    invocationString(result.label_key);
+  const routeKind =
+    invocationString(record.route_kind) ||
+    invocationString(result.route_kind);
   const normalizedHref = href.toLowerCase();
-  const englishLabels: Record<string, string> = {
-    '/console': 'Home',
-    '/console/files': 'File Management',
-    '/console/agents': 'Agents',
-    '/console/db': 'Databases',
-  };
-  const chineseLabels: Record<string, string> = {
-    '/console': '首页',
-    '/console/files': '文件管理',
-    '/console/agents': '智能体',
-    '/console/db': '数据库',
-  };
-  if (locale === 'en-US') {
-    return englishLabels[normalizedHref] || rawLabel || href;
+  if (labelKey === 'agentDetail' || routeKind === 'agent_detail') {
+    return t('consoleChat.routeLabels.agentDetail');
   }
-  return chineseLabels[normalizedHref] || rawLabel || href;
+  if (labelKey === 'agentList' || routeKind === 'agent_list') {
+    return t('consoleChat.routeLabels.agentList');
+  }
+  if (/^\/console\/agents\/[A-Za-z0-9_-]+\/agent$/.test(normalizedHref)) {
+    return t('consoleChat.routeLabels.agentDetail');
+  }
+  const routeLabels: Record<string, string> = {
+    '/console': t('consoleChat.routeLabels.home'),
+    '/console/files': t('consoleChat.routeLabels.files'),
+    '/console/agents': t('consoleChat.routeLabels.agentList'),
+    '/console/db': t('consoleChat.routeLabels.databases'),
+  };
+  return routeLabels[normalizedHref] || rawLabel || href;
 }
 
 function routeNavigationAlreadyLoaded(invocation: AIChatSkillInvocation): boolean {
@@ -3728,6 +3744,7 @@ export function AIChatAgenticTimeline({
   showMemoryKey = true,
   showSkillEventDetails = true,
   enableToolGovernanceApprovals = false,
+  suppressPendingToolGovernanceApprovals = false,
   messageStatus,
   onToolGovernanceDecision,
 }: AIChatAgenticTimelineProps) {
@@ -3738,6 +3755,7 @@ export function AIChatAgenticTimeline({
 
   const pendingGovernanceApprovals = useMemo(() => {
     if (!enableToolGovernanceApprovals) return [];
+    if (suppressPendingToolGovernanceApprovals) return [];
     if (!canPublishPendingGovernanceApproval(messageStatus)) return [];
     const terminalCorrelationIds = new Set(
       timeline
@@ -3773,6 +3791,7 @@ export function AIChatAgenticTimeline({
     messageStatus,
     onToolGovernanceDecision,
     skillDisplayById,
+    suppressPendingToolGovernanceApprovals,
     t,
     timeline,
   ]);

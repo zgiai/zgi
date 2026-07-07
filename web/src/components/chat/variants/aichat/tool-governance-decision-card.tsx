@@ -8,7 +8,6 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react';
-import { toast } from 'sonner';
 import { CheckCircle2, ChevronDown, Loader2, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -253,11 +252,6 @@ export function ToolGovernanceDecisionCard({
     try {
       await onSubmitDecision(action, action === 'approve' ? rememberForSession : false);
       setResolvedAction(action);
-      toast.success(
-        action === 'approve'
-          ? t('consoleChat.governance.approveSucceeded')
-          : t('consoleChat.governance.rejectSucceeded')
-      );
     } catch (error) {
       if (isAIChatContinuationLikelyStarted(error)) {
         setResolvedAction(action);
@@ -268,7 +262,6 @@ export function ToolGovernanceDecisionCard({
           ? error.message
           : t('consoleChat.governance.submitFailed');
       setSubmitError(message);
-      toast.error(message);
       setResolvedAction(null);
     } finally {
       setSubmittingAction(null);
@@ -534,11 +527,6 @@ export function ToolGovernanceApprovalPanel({
         approval,
         pendingApprovalScopeId
       );
-      toast.success(
-        action === 'approve'
-          ? t('consoleChat.governance.approveSucceeded')
-          : t('consoleChat.governance.rejectSucceeded')
-      );
       await approval.onSubmitDecision(action, action === 'approve' ? rememberForSession : false);
     } catch (error) {
       if (isAIChatContinuationLikelyStarted(error)) {
@@ -550,7 +538,6 @@ export function ToolGovernanceApprovalPanel({
           ? error.message
           : t('consoleChat.governance.submitFailed');
       setSubmitError(message);
-      toast.error(message);
       setResolvedAction(null);
     } finally {
       setSubmittingAction(null);

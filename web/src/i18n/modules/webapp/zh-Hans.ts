@@ -254,6 +254,13 @@ const messages: WebappMessages = {
         asset: '资源',
       },
     },
+    routeLabels: {
+      home: '首页',
+      files: '文件管理',
+      agentList: '智能体',
+      agentDetail: '智能体详情',
+      databases: '数据库',
+    },
     stopped: '已停止',
     streamError: '回复生成失败。',
     send: '发送',
