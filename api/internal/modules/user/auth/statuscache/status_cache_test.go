@@ -64,6 +64,14 @@ func TestGetAccountStatusCachesInRedisAndInvalidates(t *testing.T) {
 	}
 }
 
+func TestAccountStatusCacheKeyUsesSharedNamespace(t *testing.T) {
+	accountID := "3a01dd4e-cc8e-42c4-a8c0-92a0f8249381"
+	want := "zgi_cache:auth:account_status:" + accountID
+	if got := accountStatusCacheKey(accountID); got != want {
+		t.Fatalf("accountStatusCacheKey() = %q, want %q", got, want)
+	}
+}
+
 func openStatusCacheMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock, func()) {
 	t.Helper()
 

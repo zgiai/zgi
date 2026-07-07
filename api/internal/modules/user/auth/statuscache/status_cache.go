@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/cache/keys"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	"github.com/zgiai/zgi/api/pkg/database"
 	redisutil "github.com/zgiai/zgi/api/pkg/redis"
@@ -13,7 +14,7 @@ import (
 )
 
 const (
-	accountStatusCachePrefix = "auth:account_status:"
+	accountStatusCacheModule = "auth.account_status"
 	accountStatusCacheTTL    = 30 * time.Second
 	accountStatusDBLoadLimit = 32
 	redisOperationTimeout    = 50 * time.Millisecond
@@ -124,7 +125,7 @@ func loadAccountStatusFromDB(ctx context.Context, accountID string) (auth_model.
 }
 
 func accountStatusCacheKey(accountID string) string {
-	return accountStatusCachePrefix + accountID
+	return keys.DefaultBuilder().Build(accountStatusCacheModule, accountID)
 }
 
 func acquireAccountStatusDBLoadSlot(ctx context.Context) error {
