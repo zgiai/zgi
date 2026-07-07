@@ -26,7 +26,10 @@ import { useCreateNodeModal } from './hooks/use-create-node-modal';
 import { useCanvasInteractionGuard } from './hooks/use-canvas-interaction-guard';
 import { useConnectDropCreate } from './hooks/use-connect-drop-create';
 import { useDragCreateNode } from './hooks/use-drag-create-node';
+import { useNodeAlignmentGuides } from './hooks/use-node-alignment-guides';
 import WorkflowCanvasPanels from './ui/workflow-canvas-panels';
+import WorkflowAlignmentGuides from './ui/workflow-alignment-guides';
+import type { WorkflowNode } from './store/type';
 
 interface CanvasWithDndProps {
   viewNodes: Node[];
@@ -97,6 +100,12 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
     isReadOnly,
     viewViewport,
   });
+  const { alignmentGuides, clearAlignmentGuides, onNodesChangeWithAlignment } =
+    useNodeAlignmentGuides({
+      nodes: viewNodes as WorkflowNode[],
+      disabled: isReadOnly,
+      onNodesChange,
+    });
   const hideRightPanels = isCanvasInteracting || Boolean(draggingNodeType) || createNodePickerOpen;
 
   const onConnectWrapper = React.useMemo(
@@ -124,13 +133,14 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
         edges={viewEdges}
         nodeTypes={nodeTypes}
         edgeTypes={EDGE_TYPES}
-        onNodesChange={isReadOnly ? undefined : onNodesChange}
+        onNodesChange={isReadOnly ? undefined : onNodesChangeWithAlignment}
         onEdgesChange={isReadOnly ? undefined : onEdgesChange}
         onConnect={onConnectWrapper}
         onEdgeDoubleClick={handleEdgeDoubleClick}
         onConnectStart={handleConnectStart}
         onConnectEnd={handleConnectEnd}
         onNodeDragStart={(_e, node) => {
+          clearAlignmentGuides();
           useWorkflowStore.setState({ suppressNextLayoutDirty: false });
           beginInteraction('node-drag');
           const st = useWorkflowStore.getState() as unknown as {
@@ -141,6 +151,7 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
           st.setSelectionSource?.('drag');
         }}
         onNodeDragStop={(_e, node) => {
+          clearAlignmentGuides();
           finishInteraction('node-drag');
           const st = useWorkflowStore.getState() as unknown as {
             selectNode?: (id: string | null) => void;
@@ -164,6 +175,7 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
         onDragOver={handleDragOver}
         onDrop={handleDrop}
         onMoveStart={() => {
+          clearAlignmentGuides();
           // Cancel auto-follow only for user-initiated moves (not programmatic pan)
           try {
             const st = useWorkflowStore.getState() as unknown as {
@@ -183,9 +195,11 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
           finishInteraction('move');
         }}
         onSelectionDragStart={() => {
+          clearAlignmentGuides();
           beginInteraction('selection-drag');
         }}
         onSelectionDragStop={() => {
+          clearAlignmentGuides();
           finishInteraction('selection-drag');
         }}
         viewport={viewViewport}
@@ -219,6 +233,7 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
         />
 
         <GlobalContainerOverlay />
+        <WorkflowAlignmentGuides guides={alignmentGuides} />
 
         <WorkflowCanvasPanels
           agentType={agentType}
