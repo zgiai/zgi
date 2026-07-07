@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -84,13 +85,28 @@ type availableModelsService struct {
 	tenantCache   map[uuid.UUID]*tenantCacheEntry
 	tenantCacheMu sync.RWMutex
 
+	availableCache   map[availableModelsCacheKey]*availableModelsCacheEntry
+	availableCacheMu sync.RWMutex
+
 	// Cache configuration
-	tenantCacheTTL time.Duration
+	tenantCacheTTL    time.Duration
+	availableCacheTTL time.Duration
 }
 
 type tenantCacheEntry struct {
 	configs   map[uuid.UUID]*model.ModelConfig
 	customs   []*model.CustomModel
+	updatedAt time.Time
+}
+
+type availableModelsCacheKey struct {
+	organizationID uuid.UUID
+	provider       string
+	useCase        string
+}
+
+type availableModelsCacheEntry struct {
+	models    []*AvailableModel
 	updatedAt time.Time
 }
 
@@ -130,7 +146,9 @@ func NewAvailableModelsServiceWithProviderRepos(
 		providerConfigRepo: providerConfigRepo,
 		customProviderRepo: customProviderRepo,
 		tenantCache:        make(map[uuid.UUID]*tenantCacheEntry),
-		tenantCacheTTL:     2 * time.Minute, // Tenant configs may change more often
+		availableCache:     make(map[availableModelsCacheKey]*availableModelsCacheEntry),
+		tenantCacheTTL:     2 * time.Minute,  // Tenant configs may change more often
+		availableCacheTTL:  30 * time.Second, // Full response cache absorbs hot polling with short staleness.
 	}
 
 	return svc
@@ -138,6 +156,26 @@ func NewAvailableModelsServiceWithProviderRepos(
 
 // ListAvailable returns available models and optionally filters by provider and use case.
 func (s *availableModelsService) ListAvailable(ctx context.Context, organizationID uuid.UUID, provider string, useCase string) ([]*AvailableModel, error) {
+	provider = strings.TrimSpace(provider)
+	useCase = strings.TrimSpace(useCase)
+	cacheKey := availableModelsCacheKey{
+		organizationID: organizationID,
+		provider:       provider,
+		useCase:        useCase,
+	}
+	if cached, ok := s.getAvailableCache(cacheKey); ok {
+		return cached, nil
+	}
+
+	result, err := s.listAvailableUncached(ctx, organizationID, provider, useCase)
+	if err != nil {
+		return nil, err
+	}
+	s.setAvailableCache(cacheKey, result)
+	return cloneAvailableModels(result), nil
+}
+
+func (s *availableModelsService) listAvailableUncached(ctx context.Context, organizationID uuid.UUID, provider string, useCase string) ([]*AvailableModel, error) {
 	visibility, err := loadProviderVisibility(
 		ctx,
 		organizationID,
@@ -389,12 +427,51 @@ func (s *availableModelsService) ListAvailable(ctx context.Context, organization
 	return result, nil
 }
 
+func (s *availableModelsService) getAvailableCache(key availableModelsCacheKey) ([]*AvailableModel, bool) {
+	s.availableCacheMu.RLock()
+	entry, ok := s.availableCache[key]
+	if ok && time.Since(entry.updatedAt) < s.availableCacheTTL {
+		models := cloneAvailableModels(entry.models)
+		s.availableCacheMu.RUnlock()
+		return models, true
+	}
+	s.availableCacheMu.RUnlock()
+	return nil, false
+}
+
+func (s *availableModelsService) setAvailableCache(key availableModelsCacheKey, models []*AvailableModel) {
+	s.availableCacheMu.Lock()
+	s.availableCache[key] = &availableModelsCacheEntry{
+		models:    cloneAvailableModels(models),
+		updatedAt: time.Now(),
+	}
+	s.availableCacheMu.Unlock()
+}
+
+func cloneAvailableModels(models []*AvailableModel) []*AvailableModel {
+	if len(models) == 0 {
+		return []*AvailableModel{}
+	}
+	cloned := make([]*AvailableModel, 0, len(models))
+	for _, item := range models {
+		if item == nil {
+			cloned = append(cloned, nil)
+			continue
+		}
+		modelCopy := *item
+		modelCopy.UseCases = append([]string(nil), item.UseCases...)
+		cloned = append(cloned, &modelCopy)
+	}
+	return cloned
+}
+
 func (s *availableModelsService) SetOfficialRouteBootstrapper(_ interfaces.OfficialRouteBootstrapper) {
 }
 
 // RefreshCache forces a cache refresh for a tenant
 func (s *availableModelsService) RefreshCache(ctx context.Context, organizationID uuid.UUID) error {
-	return s.refreshTenantCache(ctx, organizationID)
+	s.invalidateAvailableCacheForTenant(organizationID)
+	return s.refreshTenantCache(ctx, organizationID, true)
 }
 
 // InvalidateTenantCache invalidates cache for a specific tenant
@@ -402,10 +479,24 @@ func (s *availableModelsService) InvalidateTenantCache(organizationID uuid.UUID)
 	s.tenantCacheMu.Lock()
 	delete(s.tenantCache, organizationID)
 	s.tenantCacheMu.Unlock()
+	s.invalidateAvailableCacheForTenant(organizationID)
 }
 
-// InvalidateGlobalCache is kept for compatibility. Available models do not use a global model cache.
+// InvalidateGlobalCache clears the response cache because global model/provider changes can affect every tenant.
 func (s *availableModelsService) InvalidateGlobalCache() {
+	s.availableCacheMu.Lock()
+	s.availableCache = make(map[availableModelsCacheKey]*availableModelsCacheEntry)
+	s.availableCacheMu.Unlock()
+}
+
+func (s *availableModelsService) invalidateAvailableCacheForTenant(organizationID uuid.UUID) {
+	s.availableCacheMu.Lock()
+	for key := range s.availableCache {
+		if key.organizationID == organizationID {
+			delete(s.availableCache, key)
+		}
+	}
+	s.availableCacheMu.Unlock()
 }
 
 func (s *availableModelsService) loadEnabledRoutes(ctx context.Context, organizationID uuid.UUID) ([]*channelmodel.LLMRoute, error) {
@@ -450,17 +541,19 @@ func (s *availableModelsService) getTenantCache(ctx context.Context, organizatio
 	s.tenantCacheMu.RUnlock()
 
 	// Cache miss or expired, refresh
-	return s.refreshTenantCacheAndReturn(ctx, organizationID)
+	return s.refreshTenantCacheAndReturn(ctx, organizationID, false)
 }
 
 // refreshTenantCacheAndReturn refreshes tenant cache and returns the result
-func (s *availableModelsService) refreshTenantCacheAndReturn(ctx context.Context, organizationID uuid.UUID) (*tenantCacheEntry, error) {
+func (s *availableModelsService) refreshTenantCacheAndReturn(ctx context.Context, organizationID uuid.UUID, force bool) (*tenantCacheEntry, error) {
 	s.tenantCacheMu.Lock()
 	defer s.tenantCacheMu.Unlock()
 
 	// Double-check after acquiring write lock
-	if entry, ok := s.tenantCache[organizationID]; ok && time.Since(entry.updatedAt) < s.tenantCacheTTL {
-		return entry, nil
+	if !force {
+		if entry, ok := s.tenantCache[organizationID]; ok && time.Since(entry.updatedAt) < s.tenantCacheTTL {
+			return entry, nil
+		}
 	}
 
 	configs, err := s.configRepo.ListAvailableConfigs(ctx, organizationID)
@@ -491,8 +584,8 @@ func (s *availableModelsService) refreshTenantCacheAndReturn(ctx context.Context
 }
 
 // refreshTenantCache refreshes tenant cache
-func (s *availableModelsService) refreshTenantCache(ctx context.Context, organizationID uuid.UUID) error {
-	_, err := s.refreshTenantCacheAndReturn(ctx, organizationID)
+func (s *availableModelsService) refreshTenantCache(ctx context.Context, organizationID uuid.UUID, force bool) error {
+	_, err := s.refreshTenantCacheAndReturn(ctx, organizationID, force)
 	return err
 }
 

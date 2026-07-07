@@ -10,22 +10,22 @@ import (
 	"gorm.io/gorm"
 )
 
-func (s *channelService) autoEnableModelsForRoute(ctx context.Context, organizationID uuid.UUID, modelNames []string) error {
+func (s *channelService) autoEnableModelsForRoute(ctx context.Context, organizationID uuid.UUID, modelNames []string) (bool, error) {
 	if s == nil || s.modelRepo == nil || s.modelConfigRepo == nil || len(modelNames) == 0 {
-		return nil
+		return false, nil
 	}
 
 	names := normalizeAutoEnableModelNames(modelNames)
 	if len(names) == 0 {
-		return nil
+		return false, nil
 	}
 
 	models, err := s.modelRepo.ListByNames(ctx, names)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if len(models) == 0 {
-		return nil
+		return false, nil
 	}
 
 	for _, item := range models {
@@ -38,7 +38,7 @@ func (s *channelService) autoEnableModelsForRoute(ctx context.Context, organizat
 			continue
 		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
+			return false, err
 		}
 
 		config := &llmmodelmodel.ModelConfig{
@@ -48,15 +48,16 @@ func (s *channelService) autoEnableModelsForRoute(ctx context.Context, organizat
 			AccessScope:    llmmodelmodel.AccessScopeAll,
 		}
 		if err := s.modelConfigRepo.Upsert(ctx, config); err != nil {
-			return err
+			return false, err
 		}
 	}
 
 	if s.availableModels != nil {
 		s.availableModels.InvalidateTenantCache(organizationID)
+		return true, nil
 	}
 
-	return nil
+	return false, nil
 }
 
 func normalizeAutoEnableModelNames(modelNames []string) []string {

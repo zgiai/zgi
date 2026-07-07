@@ -40,7 +40,8 @@ func (stubCryptoService) Decrypt(ciphertext string) (string, error) {
 }
 
 type fakeCandidateRouteRepo struct {
-	routes []*channelmodel.LLMRoute
+	routes       []*channelmodel.LLMRoute
+	enabledCalls int
 }
 
 func (f *fakeCandidateRouteRepo) Create(context.Context, *channelmodel.LLMRoute) error {
@@ -62,6 +63,7 @@ func (f *fakeCandidateRouteRepo) Delete(context.Context, uuid.UUID, uuid.UUID) e
 	return errors.New("not implemented")
 }
 func (f *fakeCandidateRouteRepo) GetEnabledRoutes(context.Context, uuid.UUID) ([]*channelmodel.LLMRoute, error) {
+	f.enabledCalls++
 	return f.routes, nil
 }
 func (f *fakeCandidateRouteRepo) FindByModel(context.Context, uuid.UUID, string) ([]*channelmodel.LLMRoute, error) {
@@ -437,6 +439,48 @@ func TestCandidateRoutesForModel_FiltersNativeProtocolLikeRealSelection(t *testi
 	}
 	if routes[0].ChannelProvider != "openai-compatible" {
 		t.Fatalf("route provider = %q, want openai-compatible", routes[0].ChannelProvider)
+	}
+}
+
+func TestCandidateRoutesForModelsLoadsEnabledRoutesOnce(t *testing.T) {
+	orgID := uuid.New()
+	routeRepo := &fakeCandidateRouteRepo{
+		routes: []*channelmodel.LLMRoute{
+			{
+				ID:              uuid.New(),
+				OrganizationID:  orgID,
+				Type:            shared.RouteTypePrivate,
+				ChannelProvider: "openai-compatible",
+				Models:          []string{"model-a", "model-b"},
+			},
+		},
+	}
+	router := &ChannelRouter{
+		organizationIDRouteRepo: routeRepo,
+		strategyFactory:         NewStrategyFactory(),
+		privateModels: &fakePrivateModelLookup{
+			model: &llmmodel.CustomModel{
+				ID:       uuid.New(),
+				Provider: "openai",
+				Name:     "tenant-model",
+				IsActive: true,
+				UseCases: []string{"text-chat"},
+			},
+		},
+	}
+
+	routesByModel, err := router.CandidateRoutesForModels(context.Background(), orgID, []string{"model-a", "model-b"}, 1)
+	if err != nil {
+		t.Fatalf("CandidateRoutesForModels returned error: %v", err)
+	}
+	if routeRepo.enabledCalls != 1 {
+		t.Fatalf("GetEnabledRoutes calls = %d, want 1", routeRepo.enabledCalls)
+	}
+	if len(routesByModel["model-a"]) != 1 {
+		t.Fatalf("model-a routes = %d, want 1", len(routesByModel["model-a"]))
+	}
+	if len(routesByModel["model-b"]) != 1 {
+		t.Fatalf("model-b routes = %d, want 1", len(routesByModel["model-b"]))
 	}
 }
 

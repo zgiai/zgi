@@ -164,6 +164,9 @@ func (s *modelService) CreateGlobal(ctx context.Context, req *dto.CreateModelReq
 	if err := s.globalRepo.Create(ctx, m); err != nil {
 		return nil, fmt.Errorf("failed to create model: %w", err)
 	}
+	if s.availableModels != nil {
+		s.availableModels.InvalidateGlobalCache()
+	}
 
 	return m, nil
 }
@@ -253,12 +256,21 @@ func (s *modelService) UpdateGlobal(ctx context.Context, id uuid.UUID, req *dto.
 	if err := s.globalRepo.Update(ctx, m); err != nil {
 		return nil, fmt.Errorf("failed to update model: %w", err)
 	}
+	if s.availableModels != nil {
+		s.availableModels.InvalidateGlobalCache()
+	}
 
 	return m, nil
 }
 
 func (s *modelService) DeleteGlobal(ctx context.Context, id uuid.UUID) error {
-	return s.globalRepo.Delete(ctx, id)
+	if err := s.globalRepo.Delete(ctx, id); err != nil {
+		return err
+	}
+	if s.availableModels != nil {
+		s.availableModels.InvalidateGlobalCache()
+	}
+	return nil
 }
 
 // ============================================================================
