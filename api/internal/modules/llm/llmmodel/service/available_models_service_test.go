@@ -18,7 +18,9 @@ import (
 )
 
 type availableModelRepoFake struct {
-	models []*llmmodel.LLMModel
+	models                []*llmmodel.LLMModel
+	listAvailableByNames  int
+	listAvailableFiltered int
 }
 
 func (f *availableModelRepoFake) Create(context.Context, *llmmodel.LLMModel) error {
@@ -42,9 +44,11 @@ func (f *availableModelRepoFake) ListByNames(context.Context, []string) ([]*llmm
 	return nil, errors.New("not implemented")
 }
 func (f *availableModelRepoFake) ListAvailableByNames(context.Context, []string, string, string) ([]*llmmodel.LLMModel, error) {
+	f.listAvailableByNames++
 	return f.models, nil
 }
 func (f *availableModelRepoFake) ListAvailableFiltered(context.Context, string, string) ([]*llmmodel.LLMModel, error) {
+	f.listAvailableFiltered++
 	return f.models, nil
 }
 func (f *availableModelRepoFake) GetByProviderAndName(context.Context, string, string) (*llmmodel.LLMModel, error) {
@@ -64,9 +68,10 @@ func (f *availableModelRepoFake) ListByProvider(context.Context, string) ([]*llm
 }
 
 type availableConfigRepoFake struct {
-	configs map[uuid.UUID]*llmmodel.ModelConfig
-	upserts []*llmmodel.ModelConfig
-	err     error
+	configs              map[uuid.UUID]*llmmodel.ModelConfig
+	upserts              []*llmmodel.ModelConfig
+	err                  error
+	listAvailableConfigs int
 }
 
 func (f *availableConfigRepoFake) Create(context.Context, *llmmodel.ModelConfig) error {
@@ -87,6 +92,7 @@ func (f *availableConfigRepoFake) List(context.Context, uuid.UUID, *bool, int, i
 	return nil, 0, errors.New("not implemented")
 }
 func (f *availableConfigRepoFake) ListAvailableConfigs(context.Context, uuid.UUID) ([]*llmmodel.ModelConfig, error) {
+	f.listAvailableConfigs++
 	return nil, f.err
 }
 func (f *availableConfigRepoFake) Update(context.Context, *llmmodel.ModelConfig) error {
@@ -112,9 +118,10 @@ func (f *availableConfigRepoFake) BatchCreate(context.Context, []*llmmodel.Model
 }
 
 type availableCustomRepoFake struct {
-	model   *llmmodel.CustomModel
-	err     error
-	deleted bool
+	model     *llmmodel.CustomModel
+	err       error
+	deleted   bool
+	listCalls int
 }
 
 func (f *availableCustomRepoFake) Create(context.Context, *llmmodel.CustomModel) error {
@@ -136,6 +143,7 @@ func (f *availableCustomRepoFake) ListByNames(context.Context, uuid.UUID, []stri
 	return nil, errors.New("not implemented")
 }
 func (f *availableCustomRepoFake) List(context.Context, uuid.UUID, *uuid.UUID, string, string, *bool, int, int) ([]*llmmodel.CustomModel, int64, error) {
+	f.listCalls++
 	return nil, 0, f.err
 }
 func (f *availableCustomRepoFake) Update(context.Context, *llmmodel.CustomModel) error {
@@ -150,8 +158,9 @@ func (f *availableCustomRepoFake) ListByProvider(context.Context, uuid.UUID, uui
 }
 
 type availableRouteRepoFake struct {
-	routes []*channelmodel.LLMRoute
-	err    error
+	routes       []*channelmodel.LLMRoute
+	err          error
+	enabledCalls int
 }
 
 func (f *availableRouteRepoFake) Create(context.Context, *channelmodel.LLMRoute) error {
@@ -173,6 +182,7 @@ func (f *availableRouteRepoFake) Delete(context.Context, uuid.UUID, uuid.UUID) e
 	return errors.New("not implemented")
 }
 func (f *availableRouteRepoFake) GetEnabledRoutes(context.Context, uuid.UUID) ([]*channelmodel.LLMRoute, error) {
+	f.enabledCalls++
 	return f.routes, f.err
 }
 func (f *availableRouteRepoFake) FindByModel(context.Context, uuid.UUID, string) ([]*channelmodel.LLMRoute, error) {
@@ -277,12 +287,79 @@ func TestAvailableModels_ReturnsConfigRefreshErrorInsteadOfStaleCache(t *testing
 				updatedAt: time.Now().Add(-time.Hour),
 			},
 		},
-		tenantCacheTTL: time.Minute,
+		tenantCacheTTL:    time.Minute,
+		availableCache:    make(map[availableModelsCacheKey]*availableModelsCacheEntry),
+		availableCacheTTL: time.Minute,
 	}
 
 	_, err := svc.ListAvailable(context.Background(), organizationID, "", "")
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("ListAvailable error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestAvailableModels_ListAvailableCachesResponseAndInvalidatesTenant(t *testing.T) {
+	organizationID := uuid.New()
+	modelID := uuid.New()
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
+		ID:                modelID,
+		Provider:          "openai",
+		Model:             "gpt-test",
+		ModelName:         "GPT Test",
+		IsActive:          true,
+		UseCases:          types.StringArray{"text-chat"},
+		ChatCompletions:   true,
+		SupportsStreaming: true,
+	}}}
+	configRepo := &availableConfigRepoFake{}
+	customRepo := &availableCustomRepoFake{}
+	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
+		Models: []string{"gpt-test"},
+	}}}
+	svc := NewAvailableModelsService(modelRepo, configRepo, customRepo, routeRepo)
+
+	first, err := svc.ListAvailable(context.Background(), organizationID, " openai ", " text-chat ")
+	if err != nil {
+		t.Fatalf("first ListAvailable returned error: %v", err)
+	}
+	if len(first) != 1 {
+		t.Fatalf("first ListAvailable length = %d, want 1", len(first))
+	}
+
+	first[0].DisplayName = "mutated caller copy"
+	second, err := svc.ListAvailable(context.Background(), organizationID, "openai", "text-chat")
+	if err != nil {
+		t.Fatalf("second ListAvailable returned error: %v", err)
+	}
+	if len(second) != 1 {
+		t.Fatalf("second ListAvailable length = %d, want 1", len(second))
+	}
+	if second[0].DisplayName != "GPT Test" {
+		t.Fatalf("cached model display name = %q, want cloned cache value", second[0].DisplayName)
+	}
+	if routeRepo.enabledCalls != 1 {
+		t.Fatalf("enabled route calls = %d, want 1", routeRepo.enabledCalls)
+	}
+	if modelRepo.listAvailableByNames != 1 {
+		t.Fatalf("ListAvailableByNames calls = %d, want 1", modelRepo.listAvailableByNames)
+	}
+	if configRepo.listAvailableConfigs != 1 {
+		t.Fatalf("ListAvailableConfigs calls = %d, want 1", configRepo.listAvailableConfigs)
+	}
+	if customRepo.listCalls != 1 {
+		t.Fatalf("custom List calls = %d, want 1", customRepo.listCalls)
+	}
+
+	svc.InvalidateTenantCache(organizationID)
+	_, err = svc.ListAvailable(context.Background(), organizationID, "openai", "text-chat")
+	if err != nil {
+		t.Fatalf("ListAvailable after invalidation returned error: %v", err)
+	}
+	if routeRepo.enabledCalls != 2 {
+		t.Fatalf("enabled route calls after invalidation = %d, want 2", routeRepo.enabledCalls)
+	}
+	if configRepo.listAvailableConfigs != 2 {
+		t.Fatalf("ListAvailableConfigs after invalidation = %d, want 2", configRepo.listAvailableConfigs)
 	}
 }
 
