@@ -1564,8 +1564,14 @@ func skillLoopCreateAndEditPlanActive(prepared *PreparedChat) bool {
 		return true
 	}
 	goal := operationPlanAmendmentGoal(prepared)
+	capabilityGoals := preparedAgentCapabilityGoals(prepared)
+	queryConfigMutationRequested := false
+	if len(capabilityGoals) == 0 {
+		queryConfigMutationRequested = agentManagementConfigUpdateRequested(goal)
+	}
 	return agentManagementCreateRequested(goal) &&
-		(agentManagementConfigUpdateRequested(goal) ||
+		(agentCapabilityGoalsRequireConfigMutation(capabilityGoals) ||
+			queryConfigMutationRequested ||
 			agentManagementIdentityUpdateRequested(goal) ||
 			agentManagementModelSelectionRequested(goal) ||
 			wantsCreatedAgentDetailNavigation(goal))
@@ -2090,10 +2096,19 @@ func skillLoopShouldAllowReadOnlyAgentCandidateLookup(prepared *PreparedChat, sk
 	if !explicitReadOnly && skillLoopPlanHasAgentManagementMutationStep(prepared) {
 		return false
 	}
-	mutationRequested := agentManagementConfigUpdateRequested(goal) ||
-		agentManagementSkillBindingRequested(goal) ||
-		agentManagementCapabilityRequiresConfigMutation(goal) ||
-		len(requiredAgentBindingMutationTools(goal)) > 0
+	capabilityGoals := preparedAgentCapabilityGoals(prepared)
+	capabilityMutationRequested := agentCapabilityGoalsRequireConfigMutation(capabilityGoals)
+	if capabilityMutationRequested {
+		return false
+	}
+	queryMutationRequested := false
+	if len(capabilityGoals) == 0 {
+		queryMutationRequested = agentManagementConfigUpdateRequested(goal) ||
+			agentManagementSkillBindingRequested(goal) ||
+			agentManagementCapabilityRequiresConfigMutation(goal) ||
+			len(requiredAgentBindingMutationTools(goal)) > 0
+	}
+	mutationRequested := capabilityMutationRequested || queryMutationRequested
 	if mutationRequested && !explicitReadOnly {
 		return false
 	}
@@ -3009,6 +3024,9 @@ func skillLoopShouldAllowUnplannedArtifactGeneration(prepared *PreparedChat, req
 		return false
 	}
 	if isChartGeneratorToolCall(skillID, toolName) {
+		if prepared.parts.ModelTurnIntent != nil {
+			return shouldPreferChartArtifactProducer(prepared.parts)
+		}
 		return isChartVisualizationIntent(goal)
 	}
 	return isTemporaryFileGenerateIntent(goal) || isManagedFileCreateIntent(goal) || isContinuationIntent(goal)
@@ -3668,6 +3686,22 @@ func operationPlanAmendmentGoal(prepared *PreparedChat) string {
 		values = append(values, stringFromAny(plan["original_user_goal"]))
 	}
 	return strings.TrimSpace(strings.Join(values, "\n"))
+}
+
+func preparedAgentCapabilityGoals(prepared *PreparedChat) []AIChatAgentCapabilityGoal {
+	if prepared == nil {
+		return nil
+	}
+	if prepared.Message != nil {
+		plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+		if goals := agentCapabilityGoalsFromOperationPlan(plan); len(goals) > 0 {
+			return goals
+		}
+	}
+	if prepared.parts != nil {
+		return agentManagementCapabilityGoalsFromModelIntent(prepared.parts.ModelTurnIntent)
+	}
+	return nil
 }
 
 func operationPlanHasToolStepWithStatus(plan map[string]interface{}, skillID string, toolName string, status string) bool {
@@ -4414,7 +4448,6 @@ type AIChatTurnStrategy struct {
 const (
 	aiChatTurnStrategySourceDefault                = "default_contextual"
 	aiChatTurnStrategySourceModelIntent            = "model_intent"
-	aiChatTurnStrategySourceRuleFallback           = "rule_fallback"
 	aiChatTurnStrategySourceLegacySemanticFallback = "legacy_semantic_fallback"
 )
 
@@ -4508,37 +4541,15 @@ func contextualAIChatTurnStrategyFromParts(parts *chatRequestParts) *AIChatTurnS
 		return finalizeAIChatTurnStrategy(parts, strategy)
 	}
 
-	legacySource := aiChatTurnStrategySourceLegacySemanticFallback
+	// When model intent is unavailable, keep execution model-led instead of
+	// reclassifying the user's business intent through substring rules. The
+	// only retained fallback here is the explicit continue/resume control
+	// command, which is part of the turn protocol rather than an asset-domain
+	// decision.
 	switch {
-	case shouldUseAgentManagementModelDecidesStrategy(parts):
-		strategy = markAIChatTurnStrategySource(strategy, legacySource, "agent_management_context_or_query_rule")
-		strategy = contextualAgentManagementStrategy(parts, strategy)
-	case isConsoleNavigationIntent(parts.Query) && consoleNavigationResolvedTargetCount(parts.Query) > 1:
-		strategy = markAIChatTurnStrategySource(strategy, legacySource, "multi_target_console_navigation_rule")
-		strategy = contextualNavigationStrategy(parts, strategy)
 	case isContinuationIntent(parts.Query):
-		strategy = markAIChatTurnStrategySource(strategy, legacySource, "continuation_query_rule")
+		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceLegacySemanticFallback, "continuation_query_rule")
 		strategy = contextualContinuationStrategy(parts, strategy)
-	case isManagedFileCreateIntent(parts.Query):
-		strategy = markAIChatTurnStrategySource(strategy, legacySource, "managed_file_create_query_rule")
-		strategy = contextualManagedFileCreateStrategy(parts, strategy)
-	case isTemporaryFileGenerateIntent(parts.Query):
-		strategy = markAIChatTurnStrategySource(strategy, legacySource, "temporary_file_generate_query_rule")
-		strategy = contextualTemporaryFileGenerateStrategy(parts, strategy)
-	case strategy.RouteRequired && isConsoleNavigationIntent(parts.Query):
-		strategy = markAIChatTurnStrategySource(strategy, legacySource, "route_required_navigation_query_rule")
-		strategy = contextualNavigationStrategy(parts, strategy)
-	case isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
-		isFileDeleteIntent(parts.Query):
-		strategy = markAIChatTurnStrategySource(strategy, legacySource, "file_page_delete_query_rule")
-		strategy = contextualFileDeleteStrategy(parts, strategy)
-	case isConsoleFilesContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
-		isFileReadIntent(parts.Query):
-		strategy = markAIChatTurnStrategySource(strategy, legacySource, "file_page_read_query_rule")
-		strategy = contextualFileReadStrategy(parts, strategy)
-	case shouldUseAvailableRouteNavigationStrategy(parts, strategy):
-		strategy = markAIChatTurnStrategySource(strategy, legacySource, "available_route_navigation_rule")
-		strategy = contextualNavigationStrategy(parts, strategy)
 	default:
 		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceDefault, "default_contextual_page_answer")
 		strategy.ToolChoiceMode = aiChatTurnToolChoiceModelDecides
@@ -4560,44 +4571,6 @@ func markAIChatTurnStrategySource(strategy *AIChatTurnStrategy, source string, r
 		strategy.SourceReason = reason
 	}
 	return strategy
-}
-
-func shouldUseAgentManagementModelDecidesStrategy(parts *chatRequestParts) bool {
-	if parts == nil || !skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) {
-		return false
-	}
-	agentIntent := isAgentManagementIntent(parts.Query)
-	if target, ok := resolveConsoleNavigationTargetForParts(parts); ok &&
-		strings.TrimSpace(target.Href) != "" &&
-		!strings.HasPrefix(normalizeConsoleNavigationGuardHref(target.Href), "/console/agents") &&
-		!agentIntent {
-		return false
-	}
-	if isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
-		if strings.TrimSpace(parts.ModelTurnIntentError) != "" && !agentIntent {
-			return false
-		}
-		return true
-	}
-	if agentIntent {
-		return true
-	}
-	return false
-}
-
-func shouldUseAvailableRouteNavigationStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) bool {
-	if parts == nil || strategy == nil || !isConsoleNavigationIntent(parts.Query) {
-		return false
-	}
-	if strategy.RouteRequired || consoleNavigationResolvedTargetCount(parts.Query) > 1 {
-		return true
-	}
-	target, ok := resolveConsoleNavigationTargetForParts(parts)
-	if !ok || strings.TrimSpace(target.Href) == "" {
-		return false
-	}
-	return !consoleNavigationRouteAlreadyAvailable(parts, target.Href) &&
-		!clientActionContinuationLoadedRoute(parts, target.Href)
 }
 
 func finalizeAIChatTurnStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
@@ -4642,7 +4615,8 @@ func enrichAIChatTurnStrategyPlannedTools(parts *chatRequestParts, strategy *AIC
 	if strategy.Intent == "navigate_console_page" {
 		return attachContextualSidebarStructuredPlan(parts, strategy, parts.Query)
 	}
-	if isManagedFileCreateIntent(parts.Query) || isTemporaryFileGenerateIntent(parts.Query) || isFileDeleteIntent(parts.Query) {
+	switch strings.TrimSpace(strategy.Intent) {
+	case "save_generated_file_to_file_management", "generate_temporary_file_artifact", "delete_visible_file":
 		strategy.PlannedTools = nil
 	}
 	return attachContextualSidebarStructuredPlan(parts, strategy, parts.Query)
@@ -4653,11 +4627,11 @@ func appendAgentManagementModelDecidesGuidance(parts *chatRequestParts, strategy
 		return strategy
 	}
 	query := strings.ToLower(strings.TrimSpace(parts.Query))
-	if query == "" {
-		return strategy
-	}
 	secondaryQuery := agentManagementSecondaryIntentQuery(query)
-	capabilityGoals := agentManagementCapabilityGoalsForQuery(secondaryQuery)
+	capabilityGoals := agentManagementCapabilityGoalsFromModelIntent(parts.ModelTurnIntent)
+	if len(capabilityGoals) == 0 && secondaryQuery != "" {
+		capabilityGoals = agentManagementCapabilityGoalsForQuery(secondaryQuery)
+	}
 	if len(capabilityGoals) > 0 {
 		strategy.CapabilityGoals = appendAgentCapabilityGoals(strategy.CapabilityGoals, capabilityGoals...)
 		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria, agentCapabilityGoalSuccessCriteria(capabilityGoals)...)
@@ -4667,7 +4641,7 @@ func appendAgentManagementModelDecidesGuidance(parts *chatRequestParts, strategy
 			)
 		}
 	}
-	if agentManagementNeedsFileReadPrecondition(parts, query) {
+	if query != "" && agentManagementNeedsFileReadPrecondition(parts, query) {
 		strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillFileReader)
 		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
 			"when the Agent task depends on file content, read the requested file before deriving Agent name, prompt, or configuration",
@@ -7814,7 +7788,7 @@ func appendArtifactProducerSkills(values []string, parts *chatRequestParts) []st
 	if parts == nil {
 		return values
 	}
-	if skillIDEnabled(parts.SkillIDs, skills.SkillChartGenerator) && isChartVisualizationIntent(parts.Query) {
+	if skillIDEnabled(parts.SkillIDs, skills.SkillChartGenerator) && shouldPreferChartArtifactProducer(parts) {
 		return appendUniqueStrings(values, skills.SkillChartGenerator)
 	}
 	if skillIDEnabled(parts.SkillIDs, skills.SkillFileGenerator) {
@@ -8612,7 +8586,7 @@ func skillLoopToolCallGuard(prepared *PreparedChat) skillloop.ToolCallGuard {
 					}, " "),
 				}, true
 			}
-			if isChartGeneratorToolCall(req.SkillID, req.ToolName) && !isChartVisualizationIntent(executionParts.Query) {
+			if isChartGeneratorToolCall(req.SkillID, req.ToolName) && !shouldPreferChartArtifactProducer(executionParts) {
 				message := strings.Join([]string{
 					"The user asked to create a regular SVG or file in File Management, not a chart or data visualization.",
 					"Use file-generator/generate_file for generic SVG/vector file creation, then save the generated artifact with file-manager/save_file_to_management.",
@@ -8960,7 +8934,7 @@ func temporaryFileGenerateRequiredTool(parts *chatRequestParts) (string, string)
 	if parts == nil {
 		return "", ""
 	}
-	if isChartVisualizationIntent(parts.Query) && skillIDEnabled(parts.SkillIDs, skills.SkillChartGenerator) {
+	if shouldPreferChartArtifactProducer(parts) && skillIDEnabled(parts.SkillIDs, skills.SkillChartGenerator) {
 		return skills.SkillChartGenerator, "generate_chart"
 	}
 	if skillIDEnabled(parts.SkillIDs, skills.SkillFileGenerator) {
@@ -8970,6 +8944,49 @@ func temporaryFileGenerateRequiredTool(parts *chatRequestParts) (string, string)
 		return skills.SkillChartGenerator, "generate_chart"
 	}
 	return "", ""
+}
+
+func shouldPreferChartArtifactProducer(parts *chatRequestParts) bool {
+	if parts == nil {
+		return false
+	}
+	if parts.ModelTurnIntent != nil {
+		switch {
+		case modelTurnIntentHasRecommendedCapability(parts.ModelTurnIntent, "chart_artifact", "data_visualization_artifact", "visualization_artifact"):
+			return true
+		case modelTurnIntentHasRecommendedCapability(parts.ModelTurnIntent, "file_artifact", "document_artifact", "svg_artifact", "text_artifact", "pdf_artifact", "spreadsheet_artifact"):
+			return false
+		}
+	}
+	return isChartVisualizationIntent(parts.Query)
+}
+
+func modelTurnIntentHasRecommendedCapability(intent *AIChatModelTurnIntent, values ...string) bool {
+	if intent == nil || len(values) == 0 {
+		return false
+	}
+	want := map[string]struct{}{}
+	for _, value := range values {
+		if canonical := canonicalModelTurnCapabilityHint(value); canonical != "" {
+			want[canonical] = struct{}{}
+		}
+	}
+	if len(want) == 0 {
+		return false
+	}
+	for _, capability := range intent.RecommendedCapabilities {
+		canonical := canonicalModelTurnCapabilityHint(capability)
+		if _, ok := want[canonical]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func canonicalModelTurnCapabilityHint(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.NewReplacer("-", "_", " ", "_").Replace(value)
+	return value
 }
 
 func finalAnswerGuardHasSuccessfulArtifactProducerTool(req skillloop.FinalAnswerGuardRequest) bool {

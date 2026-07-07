@@ -373,6 +373,10 @@ func TestContextualAIChatTurnStrategyPlansRouteBeforeManagedFileCreate(t *testin
 				skills.SkillChartGenerator,
 			},
 			SkillMode: skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "save_generated_file_to_file_management",
+				Confidence: 0.91,
+			},
 		},
 	}
 
@@ -459,6 +463,10 @@ func TestContextualAIChatTurnStrategyGeneratesNewManagedFileDespiteRecentArtifac
 		"tool_file_id": "tool-recent-1",
 		"filename":     "previous.svg",
 	}}
+	prepared.parts.ModelTurnIntent = &AIChatModelTurnIntent{
+		Intent:     "save_generated_file_to_file_management",
+		Confidence: 0.91,
+	}
 
 	strategy := contextualAIChatTurnStrategyFromParts(prepared.parts)
 	if strategy == nil {
@@ -490,6 +498,10 @@ func TestContextualAIChatTurnStrategyClassifiesTemporaryFileGeneration(t *testin
 				skills.SkillFileManager,
 			},
 			SkillMode: skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "generate_temporary_file_artifact",
+				Confidence: 0.91,
+			},
 		},
 	}
 
@@ -510,6 +522,61 @@ func TestContextualAIChatTurnStrategyClassifiesTemporaryFileGeneration(t *testin
 	}
 }
 
+func TestContextualAIChatTurnStrategyDoesNotPromoteAgentIntentWithoutModelIntent(t *testing.T) {
+	parts := &chatRequestParts{
+		Query:          "\u521b\u5efa\u4e00\u4e2a\u65b0\u667a\u80fd\u4f53\uff0c\u53d6\u540d smoke agent\uff0c\u7136\u540e\u914d\u7f6e\u6a21\u578b\u548c skill",
+		Surface:        aiChatSurfaceContextualSidebar,
+		RuntimeContext: "route=/console/agents",
+		SkillMode:      skillModeAuto,
+		SkillIDs: []string{
+			skills.SkillConsoleNavigator,
+			skills.SkillAgentManagement,
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want default contextual strategy")
+	}
+	if strategy.Intent == "manage_agent_asset" {
+		t.Fatalf("strategy.Intent = %q, want no legacy Agent-management promotion without model intent; strategy=%#v", strategy.Intent, strategy)
+	}
+	if strategy.Source == aiChatTurnStrategySourceLegacySemanticFallback {
+		t.Fatalf("strategy.Source = %q, want model-led default path without legacy semantic fallback", strategy.Source)
+	}
+	if containsString(strategy.PrimarySkills, skills.SkillAgentManagement) {
+		t.Fatalf("PrimarySkills = %#v, want no rule-selected Agent-management primary skill without model intent", strategy.PrimarySkills)
+	}
+}
+
+func TestContextualAIChatTurnStrategyDoesNotPromoteFileIntentWithoutModelIntent(t *testing.T) {
+	parts := &chatRequestParts{
+		Query:          "\u8bfb\u53d6\u5f53\u524d\u6587\u4ef6\u9875\u7684\u7b2c\u4e00\u4e2a\u6587\u4ef6\u5e76\u603b\u7ed3",
+		Surface:        aiChatSurfaceContextualSidebar,
+		RuntimeContext: "route=/console/files",
+		SkillMode:      skillModeAuto,
+		SkillIDs: []string{
+			skills.SkillConsoleNavigator,
+			skills.SkillFileReader,
+			skills.SkillFileManager,
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want default contextual strategy")
+	}
+	if strategy.Intent == "read_file" || strategy.Intent == "delete_file" || strategy.Intent == "create_managed_file" || strategy.Intent == "generate_temporary_file" {
+		t.Fatalf("strategy.Intent = %q, want no legacy file-operation promotion without model intent; strategy=%#v", strategy.Intent, strategy)
+	}
+	if strategy.Source == aiChatTurnStrategySourceLegacySemanticFallback {
+		t.Fatalf("strategy.Source = %q, want model-led default path without legacy semantic fallback", strategy.Source)
+	}
+	if containsString(strategy.PrimarySkills, skills.SkillFileReader) || containsString(strategy.PrimarySkills, skills.SkillFileManager) {
+		t.Fatalf("PrimarySkills = %#v, want no rule-selected file primary skill without model intent", strategy.PrimarySkills)
+	}
+}
+
 func TestContextualAIChatTurnStrategyUsesFileGeneratorForGenericSVGWhenChartGeneratorEnabled(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
@@ -520,6 +587,10 @@ func TestContextualAIChatTurnStrategyUsesFileGeneratorForGenericSVGWhenChartGene
 				skills.SkillChartGenerator,
 			},
 			SkillMode: skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "generate_temporary_file_artifact",
+				Confidence: 0.91,
+			},
 		},
 	}
 
@@ -733,6 +804,10 @@ func TestSkillLoopKeepsAgentActionsInSkillLoop(t *testing.T) {
 			RuntimeContext: "route=/console/agents",
 			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement},
 			SkillMode:      skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "manage_agent_asset",
+				Confidence: 0.92,
+			},
 		},
 	}
 
@@ -1050,6 +1125,59 @@ func TestContextualAIChatTurnStrategyUsesModelTurnPlanForExactAgentRuntime(t *te
 	}
 	if got := operationPlanCompactPhasesForPrompt(plan["phases"], 8); len(got) < 2 {
 		t.Fatalf("operation_plan phases = %#v, want semantic phases", got)
+	}
+}
+
+func TestContextualAIChatTurnStrategyUsesModelCapabilitiesForAgentGoals(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "please complete the requested setup for this agent",
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/agents/agent-1/agent",
+			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement},
+			SkillMode:      skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent: "manage_agent_asset",
+				RecommendedCapabilities: []string{
+					"agent.model_selection",
+					"agent.system_prompt",
+					"agent.skill_backed_capability:file generation",
+					"agent.accept_uploaded_files",
+				},
+				Phases:     []string{"configure the Agent runtime and capabilities", "verify the saved Agent config"},
+				Confidence: 0.94,
+				Reason:     "The user wants the Agent runtime and abilities configured.",
+			},
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if strategy.Intent != "manage_agent_asset" {
+		t.Fatalf("Intent = %q, want manage_agent_asset; strategy=%#v", strategy.Intent, strategy)
+	}
+	plan := operationPlanFromTurnStrategy("task-model-agent-capabilities", prepared.parts, strategy)
+	capabilityGoals := mapSliceFromAny(plan["capability_goals"])
+	for _, want := range []string{
+		agentCapabilityModelSelection,
+		agentCapabilitySystemPrompt,
+		agentCapabilitySkillBacked,
+		agentCapabilityAcceptUploaded,
+	} {
+		if !operationPlanCapabilityGoalsContainForTest(capabilityGoals, want) {
+			t.Fatalf("capability_goals = %#v, missing model-provided capability %s; plan=%#v", capabilityGoals, want, plan)
+		}
+	}
+	if !operationPlanCapabilityGoalsContainBindingActionForTest(capabilityGoals, "enabled_skill_ids", "bind") {
+		t.Fatalf("capability_goals = %#v, want enabled_skill_ids bind for model-provided skill capability", capabilityGoals)
+	}
+	if !operationPlanCapabilityGoalsContainRequiredFieldForTest(capabilityGoals, "file_upload_enabled") {
+		t.Fatalf("capability_goals = %#v, want file_upload_enabled field from model-provided capability", capabilityGoals)
+	}
+	if candidate := agentManagementSkillCandidateQueryForCapabilityGoals(strategy.CapabilityGoals); candidate != "file generation" {
+		t.Fatalf("skill candidate query = %q, want file generation; goals=%#v", candidate, strategy.CapabilityGoals)
 	}
 }
 
@@ -3926,6 +4054,71 @@ func TestSkillLoopPlanToolGuardBlocksStalePlannedAgentConfigMutationForLatestRea
 
 	if blocked {
 		t.Fatalf("plan tool guard blocked update_agent_config through removed latest-read-only text matcher: %#v", result)
+	}
+}
+
+func TestSkillLoopReadOnlyCandidateLookupUsesCapabilityGoalsOverQuery(t *testing.T) {
+	query := strings.Join([]string{
+		"Only read the current Agent config and answer the current home title.",
+		"Do not modify any configuration.",
+	}, " ")
+	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"status":             operationPlanStatusRunning,
+					"planning_mode":      "phase_only_model_decides",
+					"original_user_goal": query,
+					"capability_goals": mapsToInterfaceSlice(agentCapabilityGoalsToMaps([]AIChatAgentCapabilityGoal{
+						agentCapabilityGoalWithDefaults(AIChatAgentCapabilityGoal{
+							CapabilityID:         agentCapabilitySystemPrompt,
+							GoalAction:           agentCapabilityActionUpdate,
+							RequiredConfigFields: []string{"system_prompt"},
+						}),
+					})),
+				},
+			},
+		},
+		parts: &chatRequestParts{
+			Query:          query,
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/agents/agent-1/agent",
+			SkillIDs:       []string{skills.SkillAgentManagement},
+			SkillMode:      skillModeAuto,
+		},
+	}
+
+	if goals := preparedAgentCapabilityGoals(prepared); !agentCapabilityGoalsRequireConfigMutation(goals) {
+		t.Fatalf("preparedAgentCapabilityGoals() = %#v, want mutation capability goal", goals)
+	}
+	if skillLoopShouldAllowReadOnlyAgentCandidateLookup(prepared, skills.SkillAgentManagement, "list_available_models") {
+		t.Fatal("skillLoopShouldAllowReadOnlyAgentCandidateLookup() = true, want false when operation_plan capability_goals require mutation")
+	}
+}
+
+func TestTemporaryArtifactProducerPrefersModelCapabilityHint(t *testing.T) {
+	chartParts := &chatRequestParts{
+		Query:    "generate an SVG report",
+		SkillIDs: []string{skills.SkillFileGenerator, skills.SkillChartGenerator},
+		ModelTurnIntent: &AIChatModelTurnIntent{
+			Intent:                  "generate_temporary_file_artifact",
+			RecommendedCapabilities: []string{"chart_artifact"},
+		},
+	}
+	if skillID, toolName := temporaryFileGenerateRequiredTool(chartParts); skillID != skills.SkillChartGenerator || toolName != "generate_chart" {
+		t.Fatalf("temporaryFileGenerateRequiredTool(chart hint) = %s/%s, want chart-generator/generate_chart", skillID, toolName)
+	}
+
+	fileParts := &chatRequestParts{
+		Query:    "generate a pie chart SVG",
+		SkillIDs: []string{skills.SkillFileGenerator, skills.SkillChartGenerator},
+		ModelTurnIntent: &AIChatModelTurnIntent{
+			Intent:                  "generate_temporary_file_artifact",
+			RecommendedCapabilities: []string{"file_artifact"},
+		},
+	}
+	if skillID, toolName := temporaryFileGenerateRequiredTool(fileParts); skillID != skills.SkillFileGenerator || toolName != "generate_file" {
+		t.Fatalf("temporaryFileGenerateRequiredTool(file hint) = %s/%s, want file-generator/generate_file", skillID, toolName)
 	}
 }
 

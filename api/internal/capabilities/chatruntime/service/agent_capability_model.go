@@ -710,6 +710,147 @@ func agentManagementCapabilityGoalsForQuery(query string) []AIChatAgentCapabilit
 	return goals
 }
 
+func agentManagementCapabilityGoalsFromModelIntent(intent *AIChatModelTurnIntent) []AIChatAgentCapabilityGoal {
+	if intent == nil || len(intent.RecommendedCapabilities) == 0 {
+		return nil
+	}
+	goals := []AIChatAgentCapabilityGoal{}
+	for _, hint := range intent.RecommendedCapabilities {
+		goal, ok := agentCapabilityGoalFromModelCapabilityHint(hint, intent)
+		if !ok {
+			continue
+		}
+		goals = appendAgentCapabilityGoals(goals, goal)
+	}
+	return goals
+}
+
+func agentCapabilityGoalFromModelCapabilityHint(hint string, intent *AIChatModelTurnIntent) (AIChatAgentCapabilityGoal, bool) {
+	raw := strings.TrimSpace(hint)
+	if raw == "" {
+		return AIChatAgentCapabilityGoal{}, false
+	}
+	parts := strings.Split(raw, ":")
+	for idx := range parts {
+		parts[idx] = strings.TrimSpace(parts[idx])
+	}
+	capabilityID := canonicalAgentCapabilityIDHint(parts[0])
+	if capabilityID == "" {
+		return AIChatAgentCapabilityGoal{}, false
+	}
+	action := ""
+	target := ""
+	for _, part := range parts[1:] {
+		if part == "" {
+			continue
+		}
+		if canonical := canonicalAgentCapabilityAction(part); canonical != "" && action == "" {
+			action = canonical
+			continue
+		}
+		if target == "" {
+			target = part
+		}
+	}
+	userIntent := modelIntentCapabilityUserIntent(intent)
+	goal := AIChatAgentCapabilityGoal{
+		CapabilityID: capabilityID,
+		GoalAction:   action,
+		UserIntent:   userIntent,
+	}
+	switch capabilityID {
+	case agentCapabilityModelSelection:
+		goal.GoalAction = firstNonEmptyString(goal.GoalAction, agentCapabilityActionUpdate)
+		goal.DisplayName = "model selection"
+		goal.RequiredConfigFields = []string{"model_provider", "model"}
+		goal.CandidateTool = "list_available_models"
+		goal.CandidateUseCase = firstNonEmptyString(target, "agent_chat")
+	case agentCapabilitySystemPrompt:
+		goal.GoalAction = firstNonEmptyString(goal.GoalAction, agentCapabilityActionUpdate)
+		goal.DisplayName = "system prompt"
+		goal.RequiredConfigFields = []string{"system_prompt"}
+	case agentCapabilitySuggestedQuestion:
+		goal.GoalAction = firstNonEmptyString(goal.GoalAction, agentCapabilityActionUpdate)
+		goal.DisplayName = "suggested_questions"
+		goal.RequiredConfigFields = []string{"suggested_questions"}
+	case agentCapabilityAcceptUploaded:
+		goal.GoalAction = firstNonEmptyString(goal.GoalAction, agentCapabilityActionEnable)
+		goal.DisplayName = "file upload"
+		goal.RequiredConfigFields = []string{"file_upload_enabled"}
+	case agentCapabilityMemory:
+		goal.GoalAction = firstNonEmptyString(goal.GoalAction, agentCapabilityActionUpdate)
+		goal.DisplayName = "agent memory"
+		goal.RequiredConfigFields = []string{"agent_memory_enabled"}
+	case agentCapabilitySkillBacked:
+		goal.GoalAction = firstNonEmptyString(goal.GoalAction, agentCapabilityActionEnable)
+		goal.DisplayName = agentSkillBackedCapabilityDisplayName(target)
+		goal.RequiredConfigFields = []string{"enabled_skill_ids"}
+		if target != "" {
+			goal.CandidateTool = "list_agent_skill_candidates"
+			goal.CandidateQuery = target
+		}
+		if canonicalAgentCapabilityAction(goal.GoalAction) != agentCapabilityActionInspect {
+			goal.RequiredBindingActions = map[string]string{"enabled_skill_ids": "bind"}
+		}
+	case agentCapabilityKnowledgeBinding, agentCapabilityDatabaseBinding, agentCapabilityWorkflowBinding:
+		field := operationPlanAgentResourceBindingFieldForCapability(capabilityID)
+		if field == "" {
+			return AIChatAgentCapabilityGoal{}, false
+		}
+		goal.GoalAction = firstNonEmptyString(goal.GoalAction, agentCapabilityActionBind)
+		goal.DisplayName = field
+		goal.RequiredConfigFields = []string{field}
+		if canonicalAgentCapabilityAction(goal.GoalAction) != agentCapabilityActionInspect {
+			goal.RequiredBindingActions = map[string]string{field: operationPlanCanonicalAgentConfigBindingAction(goal.GoalAction)}
+		}
+	}
+	goal.GoalAction = canonicalAgentCapabilityAction(goal.GoalAction)
+	if goal.GoalAction == "" {
+		goal.GoalAction = agentCapabilityActionUpdate
+	}
+	return agentCapabilityGoalWithDefaults(goal), true
+}
+
+func canonicalAgentCapabilityIDHint(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.NewReplacer("-", "_", " ", "_").Replace(value)
+	switch value {
+	case agentCapabilityModelSelection, "agent.model", "agent.model_provider", "model", "model_selection", "llm_model":
+		return agentCapabilityModelSelection
+	case agentCapabilitySystemPrompt, "agent.prompt", "system_prompt", "prompt":
+		return agentCapabilitySystemPrompt
+	case agentCapabilitySkillBacked, "agent.skill", "agent.skills", "agent.tool", "agent.tools", "skill", "skills", "tool", "tools", "skill_backed_capability", "tool_backed_capability":
+		return agentCapabilitySkillBacked
+	case agentCapabilityAcceptUploaded, "agent.file_upload", "agent.uploaded_files", "file_upload", "accept_uploaded_files", "uploaded_files":
+		return agentCapabilityAcceptUploaded
+	case agentCapabilityMemory, "agent.agent_memory", "memory", "agent_memory":
+		return agentCapabilityMemory
+	case agentCapabilityKnowledgeBinding, "agent.knowledge", "knowledge", "knowledge_binding", "knowledge_base", "knowledge_dataset":
+		return agentCapabilityKnowledgeBinding
+	case agentCapabilityDatabaseBinding, "agent.database", "database", "database_binding", "database_table":
+		return agentCapabilityDatabaseBinding
+	case agentCapabilityWorkflowBinding, "agent.workflow", "workflow", "workflow_binding":
+		return agentCapabilityWorkflowBinding
+	case agentCapabilitySuggestedQuestion, "agent.suggested_question", "agent.opening_questions", "suggested_questions", "opening_questions", "starter_questions":
+		return agentCapabilitySuggestedQuestion
+	default:
+		return ""
+	}
+}
+
+func modelIntentCapabilityUserIntent(intent *AIChatModelTurnIntent) string {
+	if intent == nil {
+		return ""
+	}
+	if reason := strings.TrimSpace(intent.Reason); reason != "" {
+		return truncateRunes(reason, 240)
+	}
+	if len(intent.Phases) > 0 {
+		return truncateRunes(strings.Join(intent.Phases, "; "), 240)
+	}
+	return truncateRunes(strings.TrimSpace(intent.TaskType), 240)
+}
+
 type agentBindingCapabilityDescriptor struct {
 	capabilityID   string
 	field          string
@@ -1183,6 +1324,18 @@ func agentManagementSkillCandidateQueryForCapabilityGoals(goals []AIChatAgentCap
 
 func agentManagementCapabilityGoalsNeedPostUpdateRead(goals []AIChatAgentCapabilityGoal) bool {
 	for _, goal := range goals {
+		if len(goal.RequiredConfigFields) > 0 || len(goal.RequiredBindingActions) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func agentCapabilityGoalsRequireConfigMutation(goals []AIChatAgentCapabilityGoal) bool {
+	for _, goal := range goals {
+		if canonicalAgentCapabilityAction(goal.GoalAction) == agentCapabilityActionInspect {
+			continue
+		}
 		if len(goal.RequiredConfigFields) > 0 || len(goal.RequiredBindingActions) > 0 {
 			return true
 		}

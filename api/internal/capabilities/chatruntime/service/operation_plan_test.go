@@ -2813,6 +2813,11 @@ func TestAgentManagementGuidanceSurfacesExpectedUnbindPlanFields(t *testing.T) {
 func TestAgentManagementGuidanceSurfacesActiveCapabilityGoals(t *testing.T) {
 	query := "\u8ba9\u8fd9\u4e2aagent\u80fd\u751f\u6210\u6587\u4ef6"
 	parts := consoleAgentDetailTestParts(query)
+	parts.ModelTurnIntent = &AIChatModelTurnIntent{
+		Intent:                  "manage_agent_asset",
+		RecommendedCapabilities: []string{"agent.skill_backed_capability:file generation"},
+		Confidence:              0.93,
+	}
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -10798,6 +10803,11 @@ func TestAgentManagementDeleteThenFollowupMutationStillPlansAfterDelete(t *testi
 		t.Fatalf("agentManagementDeleteHasExplicitFollowupMutation(%q) = false, want true", query)
 	}
 	parts := consoleAgentsVisibleTargetsTestParts(query)
+	parts.ModelTurnIntent = &AIChatModelTurnIntent{
+		Intent:                  "manage_agent_asset",
+		RecommendedCapabilities: []string{"agent.model_selection", "agent.system_prompt", "agent.skill_backed_capability:file generation", "agent.accept_uploaded_files"},
+		Confidence:              0.94,
+	}
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -10811,6 +10821,11 @@ func TestAgentManagementDeleteThenCreateAndConfigurePlansNewAgentUpdate(t *testi
 		t.Fatalf("agentManagementDeleteHasExplicitFollowupMutation(%q) = false, want true", query)
 	}
 	parts := consoleAgentsVisibleTargetsTestParts(query)
+	parts.ModelTurnIntent = &AIChatModelTurnIntent{
+		Intent:                  "manage_agent_asset",
+		RecommendedCapabilities: []string{"agent.model_selection", "agent.system_prompt", "agent.skill_backed_capability:file generation", "agent.accept_uploaded_files"},
+		Confidence:              0.94,
+	}
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -10930,6 +10945,11 @@ func TestAgentManagementFileUploadCapabilityDoesNotPlanSkillBinding(t *testing.T
 				SkillIDs: []string{
 					skills.SkillAgentManagement,
 					skills.SkillFileManager,
+				},
+				ModelTurnIntent: &AIChatModelTurnIntent{
+					Intent:                  "manage_agent_asset",
+					RecommendedCapabilities: []string{"agent.accept_uploaded_files"},
+					Confidence:              0.93,
 				},
 			}
 			strategy := contextualAIChatTurnStrategyFromParts(parts)

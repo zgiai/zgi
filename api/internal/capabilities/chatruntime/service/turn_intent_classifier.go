@@ -131,6 +131,8 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 					"- continue_previous_task: continue, retry, resume, or finish a previously paused operation.",
 					"Also describe the user goal as phases and needed evidence. Phases are semantic checkpoints, not mandatory tool order.",
 					"Use recommended_capabilities for capabilities the executor may need, such as exact_agent_runtime, visible_file_content, page_navigation, generated_artifact, or asset_mutation.",
+					"For generated artifact turns, include chart_artifact for charts/graphs/data visualizations and file_artifact for ordinary documents, SVG/vector files, PDFs, spreadsheets, or text files.",
+					"For Agent management turns, include canonical Agent capability IDs in recommended_capabilities when relevant: agent.model_selection, agent.system_prompt, agent.skill_backed_capability:<capability query>, agent.accept_uploaded_files, agent.memory, agent.knowledge_binding, agent.database_binding, agent.workflow_binding, agent.suggested_questions. Use :bind, :unbind, or :replace after binding capability IDs only when the user asks for that action.",
 					"If the user asks for exact Agent prompt/config/runtime analysis and page context may be summary-level, set needs_exact_agent_runtime=true.",
 					"Respond with keys: intent, task_type, phases, evidence_required, recommended_capabilities, completion_criteria, needs_exact_agent_runtime, current_context_may_be_summary, confidence, reason, target_page, route_required, asset_effect, asset_risk, approval.",
 					"Do not output skill IDs or tool names. Tool selection is handled later by the model from enabled tool schemas and latest evidence.",
