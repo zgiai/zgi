@@ -30,6 +30,7 @@ import (
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	auth_repo "github.com/zgiai/zgi/api/internal/modules/user/auth/repository"
+	"github.com/zgiai/zgi/api/internal/modules/user/auth/statuscache"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	helper "github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/email"
@@ -110,9 +111,12 @@ type AccountService struct {
 }
 
 const (
-	accountProfileCacheTTL        = 2 * time.Minute
-	accountProfileCacheMaxEntries = 10000
+	accountProfileCacheTTL         = 2 * time.Minute
+	accountProfileCacheMaxEntries  = 10000
+	accountProfileColdDBBuildLimit = 16
 )
+
+var accountProfileColdDBBuildTokens = make(chan struct{}, accountProfileColdDBBuildLimit)
 
 type accountProfileCacheEntry struct {
 	profile   *dto.AccountProfileResponse
@@ -406,6 +410,11 @@ func (s *AccountService) GetAccountProfile(ctx context.Context, accountID string
 }
 
 func (s *AccountService) getAccountProfileUncached(ctx context.Context, accountID string) (*dto.AccountProfileResponse, error) {
+	if err := acquireAccountProfileColdDBBuildSlot(ctx); err != nil {
+		return nil, err
+	}
+	defer releaseAccountProfileColdDBBuildSlot()
+
 	account, err := s.accountRepo.GetAccount(ctx, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("account not found: %w", err)
@@ -521,10 +530,24 @@ func (s *AccountService) InvalidateAccountProfileCache(accountID string) {
 	s.profileCacheGeneration[accountID]++
 	delete(s.profileCache, accountID)
 	s.profileCacheMu.Unlock()
+	statuscache.InvalidateAccountStatus(context.Background(), accountID)
 }
 
 func (s *AccountService) invalidateAccountProfileCache(accountID string) {
 	s.InvalidateAccountProfileCache(accountID)
+}
+
+func acquireAccountProfileColdDBBuildSlot(ctx context.Context) error {
+	select {
+	case accountProfileColdDBBuildTokens <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func releaseAccountProfileColdDBBuildSlot() {
+	<-accountProfileColdDBBuildTokens
 }
 
 func cloneAccountProfileResponse(src *dto.AccountProfileResponse) *dto.AccountProfileResponse {

@@ -10,6 +10,7 @@ import (
 
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	"github.com/zgiai/zgi/api/internal/modules/user/auth/statuscache"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/database"
 	jwtpkg "github.com/zgiai/zgi/api/pkg/jwt"
@@ -31,16 +32,16 @@ var (
 )
 
 func ensureAuthenticatedAccount(ctx context.Context, accountID string) error {
-	var account auth_model.Account
-	if err := database.GetDB().
-		WithContext(ctx).
-		Select("id", "status").
-		Where("id = ?", accountID).
-		Take(&account).Error; err != nil {
+	status, err := statuscache.GetAccountStatus(ctx, accountID)
+	if err != nil {
 		return err
 	}
 
-	return authenticatedAccountStatusError(account.Status)
+	if err := authenticatedAccountStatusError(status); err != nil {
+		return err
+	}
+	statuscache.TouchAccountLastActive(accountID)
+	return nil
 }
 
 func authenticatedAccountStatusError(status auth_model.AccountStatus) error {
@@ -389,18 +390,8 @@ func JWTWithOrganizationAndService(accountService interfaces.AccountService) gin
 			return
 		}
 
-		account, err := accountService.LoadUser(c.Request.Context(), user_id)
-		if err != nil || account == nil {
-			switch {
-			case err != nil && strings.Contains(err.Error(), "account is banned"):
-				failAccountAuthorization(c, user_id, errAuthenticatedAccountBanned)
-			case err != nil && strings.Contains(err.Error(), "account is frozen"):
-				failAccountAuthorization(c, user_id, errAuthenticatedAccountFrozen)
-			case err != nil && strings.Contains(err.Error(), "account is closed"):
-				failAccountAuthorization(c, user_id, errAuthenticatedAccountClosed)
-			default:
-				failAccountAuthorization(c, user_id, err)
-			}
+		if err := ensureAuthenticatedAccount(c.Request.Context(), user_id); err != nil {
+			failAccountAuthorization(c, user_id, err)
 			return
 		}
 
