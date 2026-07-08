@@ -721,6 +721,280 @@ func canonicalAgentManagementModelUseCase(value string) string {
 	}
 }
 
+func isAgentManagementIntent(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return false
+	}
+	if consoleAgentsManagePattern.MatchString(text) || containsAgentManagementToolMention(text) {
+		return true
+	}
+	agentTerms := []string{"agent", "\u667a\u80fd\u4f53"}
+	if !containsAnySubstring(text, agentTerms) {
+		return false
+	}
+	if agentManagementConfigUpdateRequested(text) || agentManagementSkillBindingRequested(text) {
+		return true
+	}
+	operationTerms := []string{
+		"create", "new", "add", "edit", "update", "rename", "delete", "remove", "config", "configure", "prompt", "model", "icon", "description",
+		"bind", "unbind", "enable", "disable", "detach", "clear",
+		"\u521b\u5efa", "\u65b0\u5efa", "\u6dfb\u52a0", "\u7f16\u8f91", "\u4fee\u6539", "\u66f4\u65b0", "\u6539\u540d", "\u5220\u9664", "\u5220\u6389",
+		"\u914d\u7f6e", "\u63d0\u793a\u8bcd", "\u6a21\u578b", "\u56fe\u6807", "\u63cf\u8ff0",
+		"\u7ed1\u5b9a", "\u89e3\u7ed1", "\u542f\u7528", "\u7981\u7528", "\u505c\u7528", "\u79fb\u9664", "\u6e05\u7a7a",
+	}
+	return agentManagementOperationNearAgent(text, agentTerms, operationTerms)
+}
+
+func containsAgentManagementToolMention(text string) bool {
+	for _, marker := range []string{
+		"list_agents",
+		"get_agent",
+		"create_agent",
+		"update_agent_identity",
+		"delete_agent",
+		"delete_agents",
+		"get_agent_config",
+		"update_agent_config",
+		"replace_agent_memory_slots",
+		"list_agent_skill_candidates",
+		"list_agent_knowledge_candidates",
+		"list_agent_database_candidates",
+		"list_agent_database_tables",
+		"list_agent_workflow_binding_candidates",
+		"replace_agent_skill_bindings",
+		"replace_agent_knowledge_bindings",
+		"replace_agent_database_bindings",
+		"replace_agent_workflow_bindings",
+		"list_available_models",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentManagementOperationNearAgent(text string, agentTerms []string, operationTerms []string) bool {
+	const maxAgentOperationDistance = 48
+	for _, agentTerm := range agentTerms {
+		for _, agentPos := range allStringIndexes(text, agentTerm) {
+			agentEnd := agentPos + len(agentTerm)
+			for _, operationTerm := range operationTerms {
+				for _, operationPos := range allStringIndexes(text, operationTerm) {
+					distance := agentPos - operationPos
+					if distance < 0 {
+						distance = -distance
+					}
+					if distance <= maxAgentOperationDistance {
+						if operationPos > agentPos && agentReferenceAttributeCrossesClauseBoundary(text, agentEnd, operationPos) {
+							continue
+						}
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func agentReferenceAttributeCrossesClauseBoundary(text string, agentEnd int, operationPos int) bool {
+	if text == "" || agentEnd < 0 || operationPos <= agentEnd || agentEnd > len(text) || operationPos > len(text) {
+		return false
+	}
+	suffix := text[agentEnd:]
+	if !agentReferenceHasAttributeSuffix(suffix) {
+		return false
+	}
+	between := text[agentEnd:operationPos]
+	return containsAnySubstring(between, []string{";", ",", ".", "\uff1b", "\uff0c", "\u3002", "\u3001"})
+}
+
+func agentReferenceHasAttributeSuffix(suffix string) bool {
+	for _, marker := range []string{
+		"\u540d\u79f0",
+		"\u540d\u5b57",
+		"id",
+		"\u7f16\u53f7",
+		"\u914d\u7f6e",
+		"\u5185\u5bb9",
+		"\u63cf\u8ff0",
+		"\u7ed3\u679c",
+		"\u8f93\u51fa",
+		"\u7ed1\u5b9a",
+		"\u6570\u91cf",
+		"\u72b6\u6001",
+	} {
+		if strings.HasPrefix(suffix, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentManagementExplicitMutationOverridesReadOnlyConfigCheck(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(query)))
+	if query == "" {
+		return false
+	}
+	if strings.Contains(query, "update_agent_config") ||
+		strings.Contains(query, "update_agent_identity") ||
+		strings.Contains(query, "create_agent") ||
+		strings.Contains(query, "delete_agent") ||
+		agentManagementCreateRequested(query) ||
+		agentManagementDeleteRequested(query) ||
+		agentManagementExplicitConfigAssignmentRequested(query) ||
+		agentManagementExplicitIdentityAssignmentRequested(query) ||
+		agentManagementFileUploadConfigCapabilityRequested(query) ||
+		agentManagementSkillBindingRequested(query) ||
+		len(requiredAgentBindingMutationTools(query)) > 0 {
+		return true
+	}
+	return false
+}
+
+func agentManagementFileUploadConfigCapabilityRequested(query string) bool {
+	return agentManagementConfigOnlyCapabilityRequested(query, "file_upload_enabled")
+}
+
+func agentManagementConfigUpdateRequested(query string) bool {
+	query = agentManagementSecondaryIntentQuery(query)
+	return strings.Contains(query, "update_agent_config") ||
+		agentManagementExplicitConfigAssignmentRequested(query) ||
+		agentManagementBroadEditableConfigRequested(query) ||
+		agentManagementPersonaUpdateRequested(query) ||
+		agentManagementFileUploadConfigCapabilityRequested(query) ||
+		agentManagementSkillBindingRequested(query) ||
+		len(requiredAgentBindingMutationTools(query)) > 0 ||
+		(agentManagementMutationVerbRequested(query) && agentManagementConfigCapabilityMarkerRequested(query))
+}
+
+func agentManagementSkillBindingRequested(query string) bool {
+	query = agentManagementSecondaryIntentQuery(query)
+	return strings.Contains(query, "list_agent_skill_candidates") ||
+		agentManagementSkillBindingRequestedByIntent(query)
+}
+
+func agentManagementSkillBindingRequestedByIntent(query string) bool {
+	if agentManagementSkillBindingNoop(query) {
+		return false
+	}
+	if agentManagementSkillCapabilityRequested(query) {
+		return true
+	}
+	if !agentBindingStateReadOnlyQuestionRequested(query) &&
+		agentBindingSoftMutationRequested(query) &&
+		containsAnySubstring(query, []string{"skill", "\u6280\u80fd"}) {
+		return true
+	}
+	return (agentBindingMutationRequested(query) && containsAnySubstring(query, []string{"skill", "\u6280\u80fd"})) ||
+		containsAnySubstring(query, []string{
+			"agent skill", "skill binding", "enable skill", "disable skill", "add skill", "remove skill", "delete skill", "bind skill",
+			"\u6dfb\u52a0 skill", "\u6dfb\u52a0\u8fd9\u4e2a skill", "\u65b0\u589e skill", "\u542f\u7528 skill", "\u7981\u7528 skill", "\u505c\u7528 skill", "\u7ed1\u5b9a skill", "\u79fb\u9664 skill", "\u5220\u9664 skill",
+			"\u6dfb\u52a0\u6280\u80fd", "\u65b0\u589e\u6280\u80fd", "\u542f\u7528\u6280\u80fd", "\u7981\u7528\u6280\u80fd", "\u505c\u7528\u6280\u80fd", "\u7ed1\u5b9a\u6280\u80fd", "\u79fb\u9664\u6280\u80fd", "\u5220\u9664\u6280\u80fd",
+		})
+}
+
+func requiredAgentBindingMutationTools(query string) []string {
+	normalized := strings.ToLower(strings.TrimSpace(agentManagementSecondaryIntentQuery(query)))
+	if normalized == "" || !agentBindingMutationRequested(normalized) {
+		return nil
+	}
+	required := make([]string, 0, 3)
+	addIfMentioned := func(toolName string, resourceMarkers []string) {
+		if strings.Contains(normalized, strings.ToLower(toolName)) {
+			required = appendUniqueStrings(required, toolName)
+			return
+		}
+		for _, marker := range resourceMarkers {
+			if marker != "" && strings.Contains(normalized, marker) {
+				required = appendUniqueStrings(required, toolName)
+				return
+			}
+		}
+	}
+	for _, descriptor := range agentManagementBindingCapabilityDescriptors() {
+		if descriptor.mutationTool == "" || agentBindingResourceNoop(normalized, descriptor.noopKey) {
+			continue
+		}
+		addIfMentioned(agentBindingUpdateConfigRequirement(descriptor.field), descriptor.markers)
+	}
+	return required
+}
+
+func agentBindingMutationRequested(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return false
+	}
+	if agentBindingExplicitCandidateSelectionMutationRequested(query) {
+		return true
+	}
+	for _, marker := range []string{
+		"\u89e3\u7ed1",
+		"\u7981\u7528",
+		"\u505c\u7528",
+		"\u53d6\u6d88\u5173\u8054",
+		"\u66ff\u6362",
+		"\u6dfb\u52a0",
+		"\u65b0\u589e",
+		"\u5220\u9664",
+		"\u79fb\u9664",
+		"\u6e05\u7a7a",
+		"unbind",
+		"disable",
+		"detach",
+		"delete",
+		"replace",
+		"add",
+		"remove",
+		"clear",
+	} {
+		if containsUnnegatedAgentManagementMutationMarker(query, marker) {
+			return true
+		}
+	}
+	if agentBindingReadOnlyRequested(query) {
+		return false
+	}
+	return agentBindingSoftMutationRequested(query)
+}
+
+func agentManagementReadOnlyBindingCapabilityGoals(query string) []AIChatAgentCapabilityGoal {
+	text := strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(agentManagementSecondaryIntentQuery(query))))
+	if text == "" ||
+		!agentBindingStateReadOnlyQuestionRequested(text) ||
+		agentBindingMutationRequested(text) {
+		return nil
+	}
+	descriptors := agentManagementBindingCapabilityDescriptors()
+	selected := make([]agentBindingCapabilityDescriptor, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		if containsPositiveAgentManagementResourceMarker(text, descriptor.markers) {
+			selected = append(selected, descriptor)
+		}
+	}
+	if len(selected) == 0 && agentManagementGenericBindingResourceStatusRequested(text) {
+		selected = descriptors
+	}
+	if len(selected) == 0 {
+		return nil
+	}
+	out := make([]AIChatAgentCapabilityGoal, 0, len(selected))
+	for _, descriptor := range selected {
+		out = append(out, AIChatAgentCapabilityGoal{
+			CapabilityID:         descriptor.capabilityID,
+			GoalAction:           agentCapabilityActionInspect,
+			DisplayName:          descriptor.displayName,
+			UserIntent:           truncateRunes(text, 240),
+			RequiredConfigFields: []string{descriptor.field},
+			VerifyBy:             []string{"get_agent_config reports the current " + descriptor.field + " binding state"},
+		})
+	}
+	return out
+}
+
 func agentManagementExplicitReadOnlyConfigCheck(query string) bool {
 	query = strings.ToLower(strings.TrimSpace(agentManagementSecondaryIntentQuery(query)))
 	if query == "" {

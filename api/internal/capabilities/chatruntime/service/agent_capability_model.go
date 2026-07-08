@@ -716,40 +716,6 @@ func agentBindingToolDescriptorForField(field string) (agentBindingToolDescripto
 	return agentBindingToolDescriptor{}, false
 }
 
-func agentManagementReadOnlyBindingCapabilityGoals(query string) []AIChatAgentCapabilityGoal {
-	text := strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(agentManagementSecondaryIntentQuery(query))))
-	if text == "" ||
-		!agentBindingStateReadOnlyQuestionRequested(text) ||
-		agentBindingMutationRequested(text) {
-		return nil
-	}
-	descriptors := agentManagementBindingCapabilityDescriptors()
-	selected := make([]agentBindingCapabilityDescriptor, 0, len(descriptors))
-	for _, descriptor := range descriptors {
-		if containsPositiveAgentManagementResourceMarker(text, descriptor.markers) {
-			selected = append(selected, descriptor)
-		}
-	}
-	if len(selected) == 0 && agentManagementGenericBindingResourceStatusRequested(text) {
-		selected = descriptors
-	}
-	if len(selected) == 0 {
-		return nil
-	}
-	out := make([]AIChatAgentCapabilityGoal, 0, len(selected))
-	for _, descriptor := range selected {
-		out = append(out, AIChatAgentCapabilityGoal{
-			CapabilityID:         descriptor.capabilityID,
-			GoalAction:           agentCapabilityActionInspect,
-			DisplayName:          descriptor.displayName,
-			UserIntent:           truncateRunes(text, 240),
-			RequiredConfigFields: []string{descriptor.field},
-			VerifyBy:             []string{"get_agent_config reports the current " + descriptor.field + " binding state"},
-		})
-	}
-	return out
-}
-
 func agentManagementBindingCapabilityDescriptors() []agentBindingCapabilityDescriptor {
 	return []agentBindingCapabilityDescriptor{
 		{

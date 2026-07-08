@@ -474,7 +474,7 @@ func agentManagementStructuredConfigOperations(query string, tool AIChatTurnStra
 	if len(fields) == 0 {
 		fields = agentCapabilityGoalsExpectedConfigFields(goals)
 	}
-	configGoal := strings.TrimSpace(firstNonEmptyString(tool.Arguments[operationPlanConfigGoalKey], agentManagementConfigGoal(query)))
+	configGoal := agentManagementStructuredConfigGoal(query, tool, goals)
 	if len(actions) == 0 {
 		return []AIChatStructuredOperation{{
 			Action:       "update",
@@ -523,6 +523,22 @@ func agentManagementStructuredConfigOperations(query string, tool AIChatTurnStra
 		out = append(out, AIChatStructuredOperation{Action: "update", ResourceType: "agent_config", SkillID: firstNonEmptyString(tool.SkillID, skills.SkillAgentManagement), ToolName: tool.ToolName, Effect: "update", Goal: configGoal, Arguments: agentManagementStructuredOperationArguments(tool), ArgsBinding: mergeTurnStrategyToolArguments(nil, tool.ArgsBinding)})
 	}
 	return out
+}
+
+func agentManagementStructuredConfigGoal(query string, tool AIChatTurnStrategyTool, goals []AIChatAgentCapabilityGoal) string {
+	if value := strings.TrimSpace(tool.Arguments[operationPlanConfigGoalKey]); value != "" {
+		return truncateRunes(value, 500)
+	}
+	userIntents := make([]string, 0, len(goals))
+	for _, goal := range goals {
+		if value := strings.TrimSpace(goal.UserIntent); value != "" {
+			userIntents = appendUniqueStrings(userIntents, value)
+		}
+	}
+	if len(userIntents) > 0 {
+		return truncateRunes(strings.Join(userIntents, "; "), 500)
+	}
+	return truncateRunes(strings.TrimSpace(query), 500)
 }
 
 func agentManagementStructuredResourceTypeForConfigField(field string) string {

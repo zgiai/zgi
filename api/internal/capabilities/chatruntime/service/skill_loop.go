@@ -2233,27 +2233,6 @@ func skillLoopPlanHasAgentManagementMutationStep(prepared *PreparedChat) bool {
 	return false
 }
 
-func agentManagementExplicitMutationOverridesReadOnlyConfigCheck(query string) bool {
-	query = strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(query)))
-	if query == "" {
-		return false
-	}
-	if strings.Contains(query, "update_agent_config") ||
-		strings.Contains(query, "update_agent_identity") ||
-		strings.Contains(query, "create_agent") ||
-		strings.Contains(query, "delete_agent") ||
-		agentManagementCreateRequested(query) ||
-		agentManagementDeleteRequested(query) ||
-		agentManagementExplicitConfigAssignmentRequested(query) ||
-		agentManagementExplicitIdentityAssignmentRequested(query) ||
-		agentManagementFileUploadConfigCapabilityRequested(query) ||
-		agentManagementSkillBindingRequested(query) ||
-		len(requiredAgentBindingMutationTools(query)) > 0 {
-		return true
-	}
-	return false
-}
-
 func agentManagementExplicitConfigAssignmentRequested(query string) bool {
 	query = strings.ToLower(strings.TrimSpace(query))
 	if query == "" || !agentManagementMutationVerbRequested(query) || !agentManagementConfigCapabilityMarkerRequested(query) {
@@ -2305,7 +2284,7 @@ func agentManagementExplicitIdentityAssignmentRequested(query string) bool {
 }
 
 func agentManagementCandidateLookupExplicitlyNegated(query string) bool {
-	query = strings.ToLower(strings.TrimSpace(agentManagementSecondaryIntentQuery(query)))
+	query = strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(query)))
 	if query == "" {
 		return false
 	}
@@ -2656,7 +2635,16 @@ func agentManagementContinuationHasExplicitMutationIntent(parts *chatRequestPart
 		}
 		return false
 	}
-	return agentManagementContinuationQueryHasExplicitMutation(parts.Query)
+	return false
+}
+
+func modelTurnIntentAssetEffectIsDelete(effect string) bool {
+	switch strings.ToLower(strings.TrimSpace(effect)) {
+	case "delete", "remove", "destroy":
+		return true
+	default:
+		return false
+	}
 }
 
 func modelTurnIntentAssetEffectIsMutation(effect string) bool {
@@ -2667,21 +2655,6 @@ func modelTurnIntentAssetEffectIsMutation(effect string) bool {
 	default:
 		return false
 	}
-}
-
-func agentManagementContinuationQueryHasExplicitMutation(query string) bool {
-	text := strings.ToLower(strings.TrimSpace(query))
-	if text == "" {
-		return false
-	}
-	if agentManagementMutationVerbRequested(text) ||
-		agentManagementDeleteRequested(text) {
-		return true
-	}
-	return containsAnySubstring(text, []string{
-		"delete", "remove", "create", "update", "edit", "modify", "change", "bind", "unbind",
-		"\u5220\u9664", "\u5220\u6389", "\u79fb\u9664", "\u521b\u5efa", "\u65b0\u5efa", "\u4fee\u6539", "\u7f16\u8f91", "\u66f4\u65b0", "\u7ed1\u5b9a", "\u89e3\u7ed1",
-	})
 }
 
 func recentOperationPlansContainTerminalAgentMutation(plans []map[string]interface{}) bool {
@@ -4975,14 +4948,6 @@ func agentIDFromConsoleAgentPageRoute(route string) string {
 	return agentID
 }
 
-func agentManagementConfigGoal(query string) string {
-	text := strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(agentManagementSecondaryIntentQuery(query)))
-	if text == "" {
-		return ""
-	}
-	return truncateRunes(text, 500)
-}
-
 func agentManagementExplicitConfigFieldsFromText(text string) []string {
 	text = strings.ToLower(strings.TrimSpace(text))
 	if text == "" {
@@ -5017,10 +4982,6 @@ func agentManagementPersonaUpdateRequested(query string) bool {
 		"\u4eba\u8bbe", "\u89d2\u8272", "\u5199\u4f5c", "\u521b\u4f5c", "\u5c0f\u8bf4", "\u4f5c\u5bb6", "\u4f5c\u8005",
 		"\u521b\u4f5c\u667a\u80fd\u4f53", "\u5199\u4f5c\u667a\u80fd\u4f53",
 	})
-}
-
-func agentManagementFileUploadConfigCapabilityRequested(query string) bool {
-	return agentManagementConfigOnlyCapabilityRequested(query, "file_upload_enabled")
 }
 
 func agentManagementConfigOnlyCapabilityRequested(query string, field string) bool {
@@ -5651,18 +5612,6 @@ func stripAgentManagementFinalAnswerInstruction(query string) string {
 		return text
 	}
 	return strings.TrimSpace(text[:cut])
-}
-
-func agentManagementConfigUpdateRequested(query string) bool {
-	query = agentManagementSecondaryIntentQuery(query)
-	return strings.Contains(query, "update_agent_config") ||
-		agentManagementExplicitConfigAssignmentRequested(query) ||
-		agentManagementBroadEditableConfigRequested(query) ||
-		agentManagementPersonaUpdateRequested(query) ||
-		agentManagementFileUploadConfigCapabilityRequested(query) ||
-		agentManagementSkillBindingRequested(query) ||
-		len(requiredAgentBindingMutationTools(query)) > 0 ||
-		(agentManagementMutationVerbRequested(query) && agentManagementConfigCapabilityMarkerRequested(query))
 }
 
 func agentManagementConfigCapabilityMarkerRequested(query string) bool {
@@ -6484,32 +6433,6 @@ func containsAnySuffix(text string, suffixes []string) bool {
 	return false
 }
 
-func agentManagementSkillBindingRequested(query string) bool {
-	query = agentManagementSecondaryIntentQuery(query)
-	return strings.Contains(query, "list_agent_skill_candidates") ||
-		agentManagementSkillBindingRequestedByIntent(query)
-}
-
-func agentManagementSkillBindingRequestedByIntent(query string) bool {
-	if agentManagementSkillBindingNoop(query) {
-		return false
-	}
-	if agentManagementSkillCapabilityRequested(query) {
-		return true
-	}
-	if !agentBindingStateReadOnlyQuestionRequested(query) &&
-		agentBindingSoftMutationRequested(query) &&
-		containsAnySubstring(query, []string{"skill", "\u6280\u80fd"}) {
-		return true
-	}
-	return (agentBindingMutationRequested(query) && containsAnySubstring(query, []string{"skill", "\u6280\u80fd"})) ||
-		containsAnySubstring(query, []string{
-			"agent skill", "skill binding", "enable skill", "disable skill", "add skill", "remove skill", "delete skill", "bind skill",
-			"\u6dfb\u52a0 skill", "\u6dfb\u52a0\u8fd9\u4e2a skill", "\u65b0\u589e skill", "\u542f\u7528 skill", "\u7981\u7528 skill", "\u505c\u7528 skill", "\u7ed1\u5b9a skill", "\u79fb\u9664 skill", "\u5220\u9664 skill",
-			"\u6dfb\u52a0\u6280\u80fd", "\u65b0\u589e\u6280\u80fd", "\u542f\u7528\u6280\u80fd", "\u7981\u7528\u6280\u80fd", "\u505c\u7528\u6280\u80fd", "\u7ed1\u5b9a\u6280\u80fd", "\u79fb\u9664\u6280\u80fd", "\u5220\u9664\u6280\u80fd",
-		})
-}
-
 func agentManagementSkillCapabilityRequested(query string) bool {
 	return agentManagementSkillCapabilityCandidateQuery(query) != ""
 }
@@ -7064,7 +6987,7 @@ func agentManagementExplicitDetailNavigationTarget(parts *chatRequestParts) (con
 	}) {
 		return consoleNavigationRouteHint{}, false
 	}
-	if agentManagementDeleteRequested(normalized) {
+	if parts.ModelTurnIntent != nil && modelTurnIntentAssetEffectIsDelete(parts.ModelTurnIntent.AssetEffect) {
 		return consoleNavigationRouteHint{}, false
 	}
 	agents := visibleAgentsForAgentManagementTargetResolution(parts)
@@ -9127,71 +9050,6 @@ func stringSliceContainsFold(values []string, target string) bool {
 		}
 	}
 	return false
-}
-
-func requiredAgentBindingMutationTools(query string) []string {
-	normalized := strings.ToLower(strings.TrimSpace(agentManagementSecondaryIntentQuery(query)))
-	if normalized == "" || !agentBindingMutationRequested(normalized) {
-		return nil
-	}
-	required := make([]string, 0, 3)
-	addIfMentioned := func(toolName string, resourceMarkers []string) {
-		if strings.Contains(normalized, strings.ToLower(toolName)) {
-			required = appendUniqueStrings(required, toolName)
-			return
-		}
-		for _, marker := range resourceMarkers {
-			if marker != "" && strings.Contains(normalized, marker) {
-				required = appendUniqueStrings(required, toolName)
-				return
-			}
-		}
-	}
-	for _, descriptor := range agentManagementBindingCapabilityDescriptors() {
-		if descriptor.mutationTool == "" || agentBindingResourceNoop(normalized, descriptor.noopKey) {
-			continue
-		}
-		addIfMentioned(agentBindingUpdateConfigRequirement(descriptor.field), descriptor.markers)
-	}
-	return required
-}
-
-func agentBindingMutationRequested(query string) bool {
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" {
-		return false
-	}
-	if agentBindingExplicitCandidateSelectionMutationRequested(query) {
-		return true
-	}
-	for _, marker := range []string{
-		"\u89e3\u7ed1",
-		"\u7981\u7528",
-		"\u505c\u7528",
-		"\u53d6\u6d88\u5173\u8054",
-		"\u66ff\u6362",
-		"\u6dfb\u52a0",
-		"\u65b0\u589e",
-		"\u5220\u9664",
-		"\u79fb\u9664",
-		"\u6e05\u7a7a",
-		"unbind",
-		"disable",
-		"detach",
-		"delete",
-		"replace",
-		"add",
-		"remove",
-		"clear",
-	} {
-		if containsUnnegatedAgentManagementMutationMarker(query, marker) {
-			return true
-		}
-	}
-	if agentBindingReadOnlyRequested(query) {
-		return false
-	}
-	return agentBindingSoftMutationRequested(query)
 }
 
 func agentBindingExplicitCandidateSelectionMutationRequested(query string) bool {
