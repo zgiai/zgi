@@ -4149,6 +4149,14 @@ func TestTemporaryArtifactProducerPrefersModelCapabilityHint(t *testing.T) {
 	if skillID, toolName := temporaryFileGenerateRequiredTool(fileParts); skillID != skills.SkillFileGenerator || toolName != "generate_file" {
 		t.Fatalf("temporaryFileGenerateRequiredTool(file hint) = %s/%s, want file-generator/generate_file", skillID, toolName)
 	}
+
+	unclassifiedParts := &chatRequestParts{
+		Query:    "generate a pie chart SVG",
+		SkillIDs: []string{skills.SkillFileGenerator, skills.SkillChartGenerator},
+	}
+	if skillID, toolName := temporaryFileGenerateRequiredTool(unclassifiedParts); skillID != skills.SkillFileGenerator || toolName != "generate_file" {
+		t.Fatalf("temporaryFileGenerateRequiredTool(no model hint) = %s/%s, want file-generator/generate_file", skillID, toolName)
+	}
 }
 
 func TestSkillLoopPlanToolGuardAllowsAgentConfigUpdateWithExcludedFields(t *testing.T) {

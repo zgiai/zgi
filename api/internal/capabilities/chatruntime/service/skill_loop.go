@@ -2954,7 +2954,7 @@ func skillLoopShouldAllowUnplannedArtifactGeneration(prepared *PreparedChat, req
 		if prepared.parts.ModelTurnIntent != nil {
 			return shouldPreferChartArtifactProducer(prepared.parts)
 		}
-		return isChartVisualizationIntent(goal)
+		return false
 	}
 	return isTemporaryFileGenerateIntent(goal) || isManagedFileCreateIntent(goal) || isContinuationIntent(goal)
 }
@@ -6834,7 +6834,7 @@ func shouldPreferChartArtifactProducer(parts *chatRequestParts) bool {
 			return false
 		}
 	}
-	return isChartVisualizationIntent(parts.Query)
+	return false
 }
 
 func modelTurnIntentHasRecommendedCapability(intent *AIChatModelTurnIntent, values ...string) bool {
@@ -9956,23 +9956,6 @@ func hasContinuationPrefix(normalized string) bool {
 		"next step",
 	} {
 		if strings.HasPrefix(normalized, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-func isChartVisualizationIntent(query string) bool {
-	normalized := normalizeConsoleNavigationQuery(query)
-	if normalized == "" {
-		return false
-	}
-	for _, marker := range []string{
-		"chart", "graph", "visualization", "visualisation", "data visual", "radar", "spider",
-		"bar chart", "line chart", "pie chart", "doughnut", "donut", "scatter", "score distribution",
-		"图表", "图形", "可视化", "数据可视化", "雷达图", "柱状图", "条形图", "折线图", "饼图", "环形图", "散点图", "分布图",
-	} {
-		if strings.Contains(normalized, marker) {
 			return true
 		}
 	}
