@@ -581,9 +581,6 @@ func agentManagementStructuredPlanReadBeforeWrite(tools []AIChatTurnStrategyTool
 
 func agentManagementStructuredPlanValidationWarnings(query string, tools []AIChatTurnStrategyTool, goals []AIChatAgentCapabilityGoal) []string {
 	warnings := []string{}
-	if agentManagementCreateMentionIsExistingReferenceOnly(query) && agentManagementStructuredHasTool(tools, "create_agent") {
-		warnings = appendUniqueStrings(warnings, "existing_agent_reference_should_not_plan_create_agent")
-	}
 	if agentManagementStructuredHasTool(tools, "update_agent_config") &&
 		!agentManagementStructuredHasTool(tools, "get_agent_config") {
 		warnings = appendUniqueStrings(warnings, "update_agent_config_without_prior_config_read")
