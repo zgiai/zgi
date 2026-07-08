@@ -64,6 +64,50 @@ func TestListAllFilesWithFiltersAndTenantFiltersByCurrentAssetProductStatus(t *t
 	}
 }
 
+func TestCountAllFilesByCurrentAssetProductStatusUsesLatestAsset(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	createFileFolderRepositoryTables(t, db)
+
+	insertUploadFile(t, db, "file-failed", "Failed", "2026-06-18 10:00:00")
+	insertUploadFile(t, db, "file-ready", "Ready", "2026-06-18 09:00:00")
+	insertUploadFile(t, db, "file-old-failed-now-ready", "Old failed now ready", "2026-06-18 08:00:00")
+	insertUploadFile(t, db, "file-no-asset", "No asset", "2026-06-18 07:00:00")
+
+	insertDocumentAsset(t, db, "asset-failed", "file-failed", "parse_failed", "2026-06-18 10:10:00")
+	insertDocumentAsset(t, db, "asset-ready", "file-ready", "ready", "2026-06-18 09:10:00")
+	insertDocumentAsset(t, db, "asset-old-failed", "file-old-failed-now-ready", "parse_failed", "2026-06-18 08:10:00")
+	insertDocumentAsset(t, db, "asset-new-ready", "file-old-failed-now-ready", "ready", "2026-06-18 08:20:00")
+
+	repo := NewFileFolderRepository(db)
+	counts, err := repo.CountAllFilesByCurrentAssetProductStatus(
+		context.Background(),
+		"",
+		"",
+		nil,
+		nil,
+		"org-1",
+		"account-1",
+		true,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("count files by status: %v", err)
+	}
+
+	if got, want := counts["parse_failed"], int64(1); got != want {
+		t.Fatalf("parse_failed count = %d, want %d", got, want)
+	}
+	if got, want := counts["ready"], int64(2); got != want {
+		t.Fatalf("ready count = %d, want %d", got, want)
+	}
+	if got := counts["stored_only"]; got != 0 {
+		t.Fatalf("stored_only count = %d, want 0", got)
+	}
+}
+
 func TestListFilesInFolderWithFiltersAndTenantFiltersByCurrentAssetProductStatus(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

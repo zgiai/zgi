@@ -89,6 +89,7 @@ export interface AllFilesResponse {
   limit: number;
   total: number;
   has_more: boolean;
+  processing_status_counts?: Partial<Record<FileAssetProductStatus | string, number>>;
 }
 
 export interface FileMetadataResponse {

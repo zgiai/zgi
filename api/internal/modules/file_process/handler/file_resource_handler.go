@@ -567,6 +567,26 @@ func (h *FileResourceHandler) GetFilesInFolder(c *gin.Context) {
 		return
 	}
 
+	processingStatusCounts, err := h.fileFolderService.CountAllFilesByCurrentAssetProductStatus(
+		c.Request.Context(),
+		req.Keyword,
+		req.Extension,
+		&req.StartTime,
+		&req.EndTime,
+		organizationID,
+		accountID,
+		visibleWorkspaceIDs,
+	)
+	if err != nil {
+		logger.ErrorContext(c.Request.Context(), "failed to count files by processing status",
+			err,
+			zap.String("account_id", accountID),
+			zap.String("tenant_id", organizationID),
+		)
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
 	// Convert to response format
 	// Collect file IDs for batch query
 	fileIDs := make([]string, len(files))
@@ -650,11 +670,12 @@ func (h *FileResourceHandler) GetFilesInFolder(c *gin.Context) {
 	hasMore := int64(req.Page*req.Limit) < total
 
 	response.Success(c, &dto.FileListResponse{
-		Data:    fileResponses,
-		HasMore: hasMore,
-		Limit:   req.Limit,
-		Total:   total,
-		Page:    req.Page,
+		Data:                   fileResponses,
+		HasMore:                hasMore,
+		Limit:                  req.Limit,
+		Total:                  total,
+		Page:                   req.Page,
+		ProcessingStatusCounts: processingStatusCounts,
 	})
 }
 
