@@ -1207,3 +1207,58 @@ func agentBindingExpectedActionFromText(text string) string {
 	}
 	return ""
 }
+
+func agentBindingExplicitCandidateSelectionMutationRequested(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return false
+	}
+	resourceMarkers := []string{
+		"skill", "\u6280\u80fd",
+		"knowledge", "\u77e5\u8bc6\u5e93",
+		"database", "table", "\u6570\u636e\u5e93", "\u6570\u636e\u8868",
+		"workflow", "\u5de5\u4f5c\u6d41",
+		"resource", "\u8d44\u6e90",
+	}
+	if agentBindingNoBindScopeCoversResource(query, resourceMarkers, append(agentBindingNoopScopeMarkers(), agentBindingPreserveScopeMarkers()...)) {
+		return false
+	}
+	if !containsAnySubstring(query, []string{
+		"\u7ed1\u5b9a",
+		"\u542f\u7528",
+		"\u5173\u8054",
+		"bind",
+		"enable",
+		"associate",
+	}) {
+		return false
+	}
+	return containsAnySubstring(query, []string{
+		"\u5404\u9009\u62e9",
+		"\u5404\u9009",
+		"\u5404\u7ed1\u5b9a",
+		"\u5404\u542f\u7528",
+		"\u5404\u5173\u8054",
+		"\u6bcf\u7c7b",
+		"\u9009\u62e9 1",
+		"\u9009\u62e91",
+		"\u9009 1",
+		"\u90091",
+		"\u9009\u62e9\u4e00",
+		"\u9009\u4e00",
+		"\u9009\u62e9\u4e00\u4e2a",
+		"\u9009\u4e00\u4e2a",
+		"\u5b58\u5728\u5019\u9009",
+		"\u6709\u5019\u9009",
+		"\u6709\u53ef\u7528\u5019\u9009",
+		"\u53ef\u7528\u5019\u9009",
+		"select one",
+		"choose one",
+		"pick one",
+		"select 1",
+		"choose 1",
+		"pick 1",
+		"candidate exists",
+		"candidates exist",
+	})
+}
