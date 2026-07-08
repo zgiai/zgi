@@ -5,6 +5,89 @@ import (
 	"strings"
 )
 
+func agentManagementConfigFieldSemanticMarkers(field string) []string {
+	descriptor, ok := agentManagementConfigFieldDescriptorForAlias(field)
+	if !ok {
+		return nil
+	}
+	return appendUniqueStrings(append([]string(nil), descriptor.explicitMarkers...), descriptor.semanticMarkers...)
+}
+
+func agentManagementConfigFieldSemanticMarkerRequested(text string, field string) bool {
+	text = strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(agentManagementSecondaryIntentQuery(text))))
+	if text == "" {
+		return false
+	}
+	return containsPositiveAgentManagementResourceMarker(text, agentManagementConfigFieldSemanticMarkers(field))
+}
+
+func agentManagementConfigCapabilityMarkers() []string {
+	markers := []string{}
+	for _, descriptor := range agentManagementConfigFieldDescriptors() {
+		markers = appendUniqueStrings(markers, descriptor.explicitMarkers...)
+		markers = appendUniqueStrings(markers, descriptor.semanticMarkers...)
+	}
+	markers = appendUniqueStrings(markers, agentManagementConfigOnlyCapabilityMarkers()...)
+	return markers
+}
+
+func agentSkillBackedCapabilityCandidateQueryForText(text string) string {
+	text = strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(agentManagementSecondaryIntentQuery(text))))
+	if text == "" {
+		return ""
+	}
+	for _, descriptor := range agentSkillBackedCapabilityDescriptors() {
+		if containsAnySubstring(text, descriptor.Markers) {
+			return descriptor.CandidateQuery
+		}
+	}
+	return ""
+}
+
+func agentManagementGenericBindingResourceStatusRequested(query string) bool {
+	text := strings.ToLower(strings.TrimSpace(query))
+	if text == "" {
+		return false
+	}
+	return containsPositiveAgentManagementResourceMarker(text, []string{
+		"binding resource",
+		"binding resources",
+		"bound resource",
+		"bound resources",
+		"associated resource",
+		"associated resources",
+		"resources",
+		"resource",
+		"\u7ed1\u5b9a\u8d44\u6e90",
+		"\u5173\u8054\u8d44\u6e90",
+		"\u5df2\u7ed1\u5b9a\u8d44\u6e90",
+		"\u8d44\u6e90",
+	})
+}
+
+func agentManagementConfigCapabilityStatusRequested(query string, field string) bool {
+	text := strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(agentManagementSecondaryIntentQuery(query))))
+	if text == "" || !agentManagementCapabilityStatusQuestionRequested(text) {
+		return false
+	}
+	descriptor, ok := agentManagementConfigOnlyCapabilityDescriptorForField(field)
+	if !ok {
+		return false
+	}
+	return containsPositiveAgentManagementResourceMarker(text, descriptor.Markers)
+}
+
+func agentManagementConfigCapabilityMarkerRequested(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(agentManagementSecondaryIntentQuery(query))))
+	if query == "" {
+		return false
+	}
+	if len(agentManagementExplicitConfigFieldsFromText(query)) > 0 {
+		return true
+	}
+	return containsPositiveAgentManagementResourceMarker(query, agentManagementConfigCapabilityMarkers())
+}
+
 func agentManagementExplicitConfigAssignmentRequested(query string) bool {
 	query = strings.ToLower(strings.TrimSpace(query))
 	if query == "" || !agentManagementMutationVerbRequested(query) || !agentManagementConfigCapabilityMarkerRequested(query) {

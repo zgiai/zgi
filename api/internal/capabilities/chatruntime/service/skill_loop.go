@@ -5373,17 +5373,6 @@ func stripAgentManagementFinalAnswerInstruction(query string) string {
 	return strings.TrimSpace(text[:cut])
 }
 
-func agentManagementConfigCapabilityMarkerRequested(query string) bool {
-	query = strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(agentManagementSecondaryIntentQuery(query))))
-	if query == "" {
-		return false
-	}
-	if len(agentManagementExplicitConfigFieldsFromText(query)) > 0 {
-		return true
-	}
-	return containsPositiveAgentManagementResourceMarker(query, agentManagementConfigCapabilityMarkers())
-}
-
 func containsPositiveAgentManagementResourceMarker(query string, markers []string) bool {
 	text := strings.ToLower(strings.TrimSpace(query))
 	if text == "" {
