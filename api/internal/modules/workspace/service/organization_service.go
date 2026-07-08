@@ -1371,6 +1371,11 @@ func (s *organizationService) GetWorkspaceMemberPermissions(ctx context.Context,
 		return nil, fmt.Errorf("invalid parameters")
 	}
 
+	cacheToken := workspacecache.NewWorkspaceMemberPermissionsToken(ctx, organizationID, workspaceID, accountID, targetAccountID)
+	if cached, ok := workspacecache.GetWorkspaceMemberPermissions(ctx, cacheToken); ok {
+		return cached, nil
+	}
+
 	_, err := s.organizationRepo.GetByID(ctx, organizationID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -1481,7 +1486,7 @@ func (s *organizationService) GetWorkspaceMemberPermissions(ctx context.Context,
 		rolePermissions = roleDetail.Permissions
 	}
 
-	return &shared_dto.WorkspaceMemberPermissionsResponse{
+	result := &shared_dto.WorkspaceMemberPermissionsResponse{
 		OrganizationID:    organizationID,
 		WorkspaceID:       workspaceID,
 		WorkspaceName:     workspace.Name,
@@ -1491,7 +1496,9 @@ func (s *organizationService) GetWorkspaceMemberPermissions(ctx context.Context,
 		WorkspaceRoleID:   workspaceRoleID,
 		WorkspaceRoleName: roleName,
 		Permissions:       rolePermissions,
-	}, nil
+	}
+	workspacecache.SetWorkspaceMemberPermissions(ctx, cacheToken, result)
+	return result, nil
 }
 
 // CreateOrganization creates a new organization and adds the creator as admin
