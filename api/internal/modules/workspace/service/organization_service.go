@@ -1053,6 +1053,7 @@ func (s *organizationService) UpdateCustomWorkspaceRole(ctx context.Context, req
 	if err := db.WithContext(ctx).Save(&role).Error; err != nil {
 		return nil, fmt.Errorf("failed to update role: %w", err)
 	}
+	s.invalidateOrganizationContext(ctx, req.OrganizationID)
 
 	return &shared_dto.OrganizationRoleDetailResponse{
 		ID:             role.ID,
@@ -1089,6 +1090,7 @@ func (s *organizationService) UpdateWorkspaceRolePermissions(ctx context.Context
 	if err := db.WithContext(ctx).Save(&role).Error; err != nil {
 		return fmt.Errorf("failed to update role permissions: %w", err)
 	}
+	s.invalidateOrganizationContext(ctx, req.OrganizationID)
 
 	return nil
 }
@@ -1155,6 +1157,7 @@ func (s *organizationService) DeleteCustomWorkspaceRole(ctx context.Context, org
 	if err := db.WithContext(ctx).Save(&role).Error; err != nil {
 		return fmt.Errorf("failed to delete role: %w", err)
 	}
+	s.invalidateOrganizationContext(ctx, organizationID)
 
 	return nil
 }
@@ -1371,6 +1374,11 @@ func (s *organizationService) GetWorkspaceMemberPermissions(ctx context.Context,
 		return nil, fmt.Errorf("invalid parameters")
 	}
 
+	cacheToken := workspacecache.NewWorkspaceMemberPermissionsToken(ctx, organizationID, workspaceID, accountID, targetAccountID)
+	if cached, ok := workspacecache.GetWorkspaceMemberPermissions(ctx, cacheToken); ok {
+		return cached, nil
+	}
+
 	_, err := s.organizationRepo.GetByID(ctx, organizationID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -1481,7 +1489,7 @@ func (s *organizationService) GetWorkspaceMemberPermissions(ctx context.Context,
 		rolePermissions = roleDetail.Permissions
 	}
 
-	return &shared_dto.WorkspaceMemberPermissionsResponse{
+	result := &shared_dto.WorkspaceMemberPermissionsResponse{
 		OrganizationID:    organizationID,
 		WorkspaceID:       workspaceID,
 		WorkspaceName:     workspace.Name,
@@ -1491,7 +1499,9 @@ func (s *organizationService) GetWorkspaceMemberPermissions(ctx context.Context,
 		WorkspaceRoleID:   workspaceRoleID,
 		WorkspaceRoleName: roleName,
 		Permissions:       rolePermissions,
-	}, nil
+	}
+	workspacecache.SetWorkspaceMemberPermissions(ctx, cacheToken, result)
+	return result, nil
 }
 
 // CreateOrganization creates a new organization and adds the creator as admin
@@ -1678,7 +1688,11 @@ func currentOrganizationResponse(organization *model.Organization, role model.Or
 }
 
 func (s *organizationService) invalidateOrganizationContext(ctx context.Context, organizationID string, accountIDs ...string) {
-	workspacecache.InvalidateOrganizationWithWorkspaceMembers(ctx, s.organizationRepo.GetDB(), organizationID, accountIDs...)
+	db := s.db
+	if s.organizationRepo != nil {
+		db = s.organizationRepo.GetDB()
+	}
+	workspacecache.InvalidateOrganizationWithWorkspaceMembers(ctx, db, organizationID, accountIDs...)
 }
 
 // DeleteOrganization performs a soft delete of an organization (archives it)

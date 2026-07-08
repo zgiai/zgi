@@ -10,6 +10,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/zgiai/zgi/api/internal/cache/keys"
 	shared_dto "github.com/zgiai/zgi/api/internal/dto"
+	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	redisutil "github.com/zgiai/zgi/api/pkg/redis"
 	"gorm.io/gorm"
 )
@@ -18,9 +19,11 @@ const (
 	modulePrefix          = "workspace.context"
 	accountGenerationPart = "account_generation"
 	orgGenerationPart     = "organization_generation"
+	accountContextPart    = "account_context"
 	currentOrgPart        = "current_organization"
 	organizationsPart     = "organizations"
 	workspacesPart        = "workspaces"
+	permissionsPart       = "permissions"
 
 	entryTTL       = 45 * time.Second
 	generationTTL  = 24 * time.Hour
@@ -32,11 +35,22 @@ type AccountScopedToken struct {
 	generation string
 }
 
+func (token AccountScopedToken) SingleflightKey() string {
+	return keys.DefaultBuilder().Build(modulePrefix, accountContextPart, token.accountID, token.generation)
+}
+
 type OrganizationWorkspaceToken struct {
 	organizationID         string
 	accountID              string
 	accountGeneration      string
 	organizationGeneration string
+}
+
+type WorkspaceMemberPermissionsToken struct {
+	organizationWorkspaceToken OrganizationWorkspaceToken
+	workspaceID                string
+	targetAccountID            string
+	targetAccountGeneration    string
 }
 
 func NewAccountScopedToken(ctx context.Context, accountID string) AccountScopedToken {
@@ -56,6 +70,15 @@ func NewOrganizationWorkspaceToken(ctx context.Context, organizationID, accountI
 	}
 }
 
+func NewWorkspaceMemberPermissionsToken(ctx context.Context, organizationID, workspaceID, accountID, targetAccountID string) WorkspaceMemberPermissionsToken {
+	return WorkspaceMemberPermissionsToken{
+		organizationWorkspaceToken: NewOrganizationWorkspaceToken(ctx, organizationID, accountID),
+		workspaceID:                workspaceID,
+		targetAccountID:            targetAccountID,
+		targetAccountGeneration:    accountGeneration(ctx, targetAccountID),
+	}
+}
+
 func GetCurrentOrganization(ctx context.Context, token AccountScopedToken) (*shared_dto.CurrentOrganizationResponse, bool) {
 	var value shared_dto.CurrentOrganizationResponse
 	if !getJSON(ctx, currentOrganizationKey(token), &value) {
@@ -69,6 +92,21 @@ func SetCurrentOrganization(ctx context.Context, token AccountScopedToken, value
 		return
 	}
 	setJSON(ctx, currentOrganizationKey(token), value)
+}
+
+func GetAccountContext(ctx context.Context, token AccountScopedToken) (*auth_model.AccountContext, bool) {
+	var value auth_model.AccountContext
+	if !getJSON(ctx, accountContextKey(token), &value) {
+		return nil, false
+	}
+	return &value, true
+}
+
+func SetAccountContext(ctx context.Context, token AccountScopedToken, value *auth_model.AccountContext) {
+	if token.generation != accountGeneration(ctx, token.accountID) {
+		return
+	}
+	setJSON(ctx, accountContextKey(token), value)
 }
 
 func GetOrganizationList(ctx context.Context, token AccountScopedToken, page, limit int, status string) (*shared_dto.OrganizationPaginationResponse, bool) {
@@ -102,6 +140,28 @@ func SetOrganizationWorkspaces(ctx context.Context, token OrganizationWorkspaceT
 		return
 	}
 	setJSON(ctx, organizationWorkspacesKey(token, page, limit, status, keyword), value)
+}
+
+func GetWorkspaceMemberPermissions(ctx context.Context, token WorkspaceMemberPermissionsToken) (*shared_dto.WorkspaceMemberPermissionsResponse, bool) {
+	var value shared_dto.WorkspaceMemberPermissionsResponse
+	if !getJSON(ctx, workspaceMemberPermissionsKey(token), &value) {
+		return nil, false
+	}
+	return &value, true
+}
+
+func SetWorkspaceMemberPermissions(ctx context.Context, token WorkspaceMemberPermissionsToken, value *shared_dto.WorkspaceMemberPermissionsResponse) {
+	baseToken := token.organizationWorkspaceToken
+	if baseToken.accountGeneration != accountGeneration(ctx, baseToken.accountID) {
+		return
+	}
+	if baseToken.organizationGeneration != organizationGeneration(ctx, baseToken.organizationID) {
+		return
+	}
+	if token.targetAccountGeneration != accountGeneration(ctx, token.targetAccountID) {
+		return
+	}
+	setJSON(ctx, workspaceMemberPermissionsKey(token), value)
 }
 
 func InvalidateAccount(ctx context.Context, accountID string) {
@@ -182,12 +242,21 @@ func currentOrganizationKey(token AccountScopedToken) string {
 	return keys.DefaultBuilder().Build(modulePrefix, currentOrgPart, token.accountID, token.generation)
 }
 
+func accountContextKey(token AccountScopedToken) string {
+	return keys.DefaultBuilder().Build(modulePrefix, accountContextPart, token.accountID, token.generation)
+}
+
 func organizationListKey(token AccountScopedToken, page, limit int, status string) string {
 	return keys.DefaultBuilder().Build(modulePrefix, organizationsPart, token.accountID, status, strconv.Itoa(page), strconv.Itoa(limit), token.generation)
 }
 
 func organizationWorkspacesKey(token OrganizationWorkspaceToken, page, limit int, status, keyword string) string {
 	return keys.DefaultBuilder().Build(modulePrefix, workspacesPart, token.organizationID, token.accountID, status, keyword, strconv.Itoa(page), strconv.Itoa(limit), token.accountGeneration, token.organizationGeneration)
+}
+
+func workspaceMemberPermissionsKey(token WorkspaceMemberPermissionsToken) string {
+	baseToken := token.organizationWorkspaceToken
+	return keys.DefaultBuilder().Build(modulePrefix, permissionsPart, baseToken.organizationID, token.workspaceID, baseToken.accountID, token.targetAccountID, baseToken.accountGeneration, baseToken.organizationGeneration, token.targetAccountGeneration)
 }
 
 func accountGeneration(ctx context.Context, accountID string) string {

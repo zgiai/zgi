@@ -109,6 +109,7 @@ type AccountService struct {
 	profileCache                  map[string]*accountProfileCacheEntry
 	profileCacheGeneration        map[string]uint64
 	profileCacheGroup             singleflight.Group
+	accountContextGroup           singleflight.Group
 }
 
 const (
@@ -2022,6 +2023,30 @@ func (s *AccountService) EnsureCurrentOrganizationID(ctx context.Context, accoun
 }
 
 func (s *AccountService) GetAccountContext(ctx context.Context, accountID string) (*auth_model.AccountContext, error) {
+	cacheToken := workspacecache.NewAccountScopedToken(ctx, accountID)
+	if cached, ok := workspacecache.GetAccountContext(ctx, cacheToken); ok {
+		return cached, nil
+	}
+
+	result, err, _ := s.accountContextGroup.Do(cacheToken.SingleflightKey(), func() (interface{}, error) {
+		cacheToken := workspacecache.NewAccountScopedToken(ctx, accountID)
+		if cached, ok := workspacecache.GetAccountContext(ctx, cacheToken); ok {
+			return cached, nil
+		}
+		return s.loadAccountContextUncached(ctx, accountID, cacheToken)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	ctxModel, ok := result.(*auth_model.AccountContext)
+	if !ok {
+		return nil, fmt.Errorf("unexpected account context cache value %T", result)
+	}
+	return ctxModel, nil
+}
+
+func (s *AccountService) loadAccountContextUncached(ctx context.Context, accountID string, cacheToken workspacecache.AccountScopedToken) (*auth_model.AccountContext, error) {
 	ctxModel, err := s.accountRepo.GetAccountContextByAccountID(ctx, accountID)
 	if err != nil {
 		return nil, err
@@ -2050,12 +2075,17 @@ func (s *AccountService) GetAccountContext(ctx context.Context, accountID string
 		if err := s.accountRepo.CreateAccountContext(ctx, ctxModel); err != nil {
 			return nil, err
 		}
+		workspacecache.SetAccountContext(ctx, cacheToken, ctxModel)
 	} else if changed {
 		if err := s.accountRepo.UpdateAccountContext(ctx, ctxModel); err != nil {
 			logger.Warn("Failed to update account context with resolved workspace: %v", err)
 		} else {
 			s.invalidateAccountProfileCache(accountID)
+			workspacecache.InvalidateAccount(ctx, accountID)
+			workspacecache.SetAccountContext(ctx, workspacecache.NewAccountScopedToken(ctx, accountID), ctxModel)
 		}
+	} else {
+		workspacecache.SetAccountContext(ctx, cacheToken, ctxModel)
 	}
 
 	return ctxModel, nil
@@ -2399,6 +2429,7 @@ func (s *AccountService) UpdateAccountContext(ctx context.Context, accountID str
 
 	s.invalidateAccountProfileCache(accountID)
 	workspacecache.InvalidateAccount(ctx, accountID)
+	workspacecache.SetAccountContext(ctx, workspacecache.NewAccountScopedToken(ctx, accountID), ctxModel)
 	return ctxModel, nil
 }
 
