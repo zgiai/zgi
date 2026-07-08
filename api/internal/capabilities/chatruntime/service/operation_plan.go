@@ -5422,6 +5422,62 @@ func finalizeOperationPlanForResult(metadata map[string]interface{}) {
 	metadata["operation_plan"] = plan
 }
 
+func finalizeOperationPlanForCompletedResult(metadata map[string]interface{}) {
+	finalizeOperationPlanForResult(metadata)
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if !operationPlanReadyForCompletedResult(plan) {
+		return
+	}
+	steps := mapSliceFromAny(plan["steps"])
+	stepStatus := mapFromOperationContext(plan["step_status"])
+	if stepStatus == nil {
+		stepStatus = map[string]interface{}{}
+	}
+	if verification := mapFromOperationContext(plan["completion_verification"]); len(verification) == 0 {
+		plan["completion_verification"] = map[string]interface{}{
+			"status": "completed",
+			"source": "final_result_metadata",
+			"reason": "all blocking operation plan steps were completed before final result",
+		}
+	}
+	applyOperationPlanProgress(plan, steps, stepStatus, "none", operationPlanStatusCompleted)
+	metadata["operation_plan"] = plan
+}
+
+func operationPlanReadyForCompletedResult(plan map[string]interface{}) bool {
+	if len(plan) == 0 || operationPlanIsTerminalFailure(plan) {
+		return false
+	}
+	if operationPlanModelDecidesTools(plan) && !operationPlanModelDecidesCompletionVerified(plan) {
+		return false
+	}
+	if verification := mapFromOperationContext(plan["completion_verification"]); len(verification) > 0 &&
+		!operationPlanCompletionVerificationPassStatus(stringFromAny(verification["status"])) {
+		return false
+	}
+	steps := mapSliceFromAny(plan["steps"])
+	if len(steps) == 0 {
+		return false
+	}
+	stepStatus := mapFromOperationContext(plan["step_status"])
+	hasBlockingStep := false
+	for _, step := range steps {
+		if !operationPlanStepBlocksCompletion(step) {
+			continue
+		}
+		hasBlockingStep = true
+		switch operationPlanStepResolvedStatus(step, stepStatus) {
+		case operationPlanStepStatusCompleted:
+			continue
+		case operationPlanStepStatusFailed:
+			return false
+		default:
+			return false
+		}
+	}
+	return hasBlockingStep
+}
+
 func applyOperationPlanCompletionVerificationResult(metadata map[string]interface{}, status string, reason string, missingSteps []string, unsupportedClaims []string, nextActionHint string) {
 	if len(metadata) == 0 {
 		return

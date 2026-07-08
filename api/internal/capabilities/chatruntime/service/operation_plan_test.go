@@ -12585,6 +12585,145 @@ func TestPreparedResultMetadataCompletesObserveAfterToolResult(t *testing.T) {
 	}
 }
 
+func TestPreparedResultMetadataKeepsModelDecidesPlanRunningWithoutVerification(t *testing.T) {
+	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"tool_choice_mode":    aiChatTurnToolChoiceModelDecides,
+			"status":              operationPlanStatusRunning,
+			"pending_next_action": "continue_from_phase_success_criteria",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        updateStepID,
+					"title":     "Update Agent config",
+					"status":    operationPlanStepStatusCompleted,
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+				},
+				map[string]interface{}{
+					"id":     "observe",
+					"title":  "Observe result",
+					"status": operationPlanStepStatusCompleted,
+				},
+			},
+			"step_status": map[string]interface{}{
+				updateStepID: operationPlanStepStatusCompleted,
+				"observe":    operationPlanStepStatusCompleted,
+			},
+			"tool_result": map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"result_summary": map[string]interface{}{
+					"status":         "completed",
+					"effect":         "updated",
+					"agent_id":       "agent-1",
+					"agent_name":     "Story Agent",
+					"model_provider": "deepseek",
+					"model":          "deepseek-v4-flash",
+					"updated_fields": []interface{}{"model_provider", "model", "system_prompt", "enabled_skill_ids", "file_upload_enabled"},
+				},
+			},
+		},
+	}
+
+	metadata = preparedResultMetadata(metadata, nil)
+
+	plan := metadata["operation_plan"].(map[string]interface{})
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusRunning {
+		t.Fatalf("plan status = %q, want running; plan=%#v", got, plan)
+	}
+	if got := stringFromAny(plan["pending_next_action"]); got != "none" {
+		t.Fatalf("pending_next_action = %q, want none when no phase state exists; plan=%#v", got, plan)
+	}
+	if !operationPlanHasIncompleteWork(plan) {
+		t.Fatalf("operationPlanHasIncompleteWork(%#v) = false, want true", plan)
+	}
+	if verification := mapFromOperationContext(plan["completion_verification"]); len(verification) > 0 {
+		t.Fatalf("completion_verification = %#v, want empty", verification)
+	}
+	summary := mapFromOperationContext(metadata["operation_result_summary"])
+	if got := stringFromAny(summary["plan_status"]); got != operationPlanStatusRunning {
+		t.Fatalf("operation_result_summary.plan_status = %q, want running; summary=%#v", got, summary)
+	}
+	if got := stringFromAny(summary["pending_next_action"]); got != "none" {
+		t.Fatalf("operation_result_summary.pending_next_action = %q, want none when no phase state exists; summary=%#v", got, summary)
+	}
+}
+
+func TestPreparedResultMetadataCompletesModelDecidesPlanWithVerification(t *testing.T) {
+	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"tool_choice_mode":    aiChatTurnToolChoiceModelDecides,
+			"status":              operationPlanStatusRunning,
+			"pending_next_action": "continue_from_phase_success_criteria",
+			"completion_verification": map[string]interface{}{
+				"status": "completed",
+				"source": "model_verifier",
+			},
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        updateStepID,
+					"title":     "Update Agent config",
+					"status":    operationPlanStepStatusCompleted,
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+				},
+				map[string]interface{}{
+					"id":     "observe",
+					"title":  "Observe result",
+					"status": operationPlanStepStatusCompleted,
+				},
+			},
+			"step_status": map[string]interface{}{
+				updateStepID: operationPlanStepStatusCompleted,
+				"observe":    operationPlanStepStatusCompleted,
+			},
+			"tool_result": map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"result_summary": map[string]interface{}{
+					"status":         "completed",
+					"effect":         "updated",
+					"agent_id":       "agent-1",
+					"agent_name":     "Story Agent",
+					"model_provider": "deepseek",
+					"model":          "deepseek-v4-flash",
+					"updated_fields": []interface{}{"model_provider", "model", "system_prompt", "enabled_skill_ids", "file_upload_enabled"},
+				},
+			},
+		},
+	}
+
+	metadata = preparedResultMetadata(metadata, nil)
+
+	plan := metadata["operation_plan"].(map[string]interface{})
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusCompleted {
+		t.Fatalf("plan status = %q, want completed; plan=%#v", got, plan)
+	}
+	if got := stringFromAny(plan["pending_next_action"]); got != "none" {
+		t.Fatalf("pending_next_action = %q, want none; plan=%#v", got, plan)
+	}
+	if operationPlanHasIncompleteWork(plan) {
+		t.Fatalf("operationPlanHasIncompleteWork(%#v) = true, want false", plan)
+	}
+	verification := mapFromOperationContext(plan["completion_verification"])
+	if got := stringFromAny(verification["status"]); got != operationPlanStatusCompleted {
+		t.Fatalf("completion_verification.status = %q, want completed; verification=%#v", got, verification)
+	}
+	summary := mapFromOperationContext(metadata["operation_result_summary"])
+	if got := stringFromAny(summary["plan_status"]); got != operationPlanStatusCompleted {
+		t.Fatalf("operation_result_summary.plan_status = %q, want completed; summary=%#v", got, summary)
+	}
+	if got := stringFromAny(summary["pending_next_action"]); got != "none" {
+		t.Fatalf("operation_result_summary.pending_next_action = %q, want none; summary=%#v", got, summary)
+	}
+}
+
 func TestPreparedResultMetadataKeepsPendingToolOperationPlanRunning(t *testing.T) {
 	metadata := map[string]interface{}{
 		"operation_plan": map[string]interface{}{

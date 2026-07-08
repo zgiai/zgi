@@ -708,7 +708,31 @@ func toolGovernanceFrozenContinuationNeedsSkillLoop(prepared *PreparedChat) bool
 	if plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"]); toolGovernanceFrozenPlanNeedsContinuation(plan) {
 		return true
 	}
+	if toolGovernanceFrozenModelIntentNeedsContinuation(prepared.Message.Metadata) {
+		return true
+	}
 	return len(managedFileCreateMissingSaveTargets(prepared.parts, prepared.Message.Metadata, nil)) > 0
+}
+
+func toolGovernanceFrozenModelIntentNeedsContinuation(metadata map[string]interface{}) bool {
+	if len(metadata) == 0 {
+		return false
+	}
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if !operationPlanModelDecidesTools(plan) || operationPlanModelDecidesCompletionVerified(plan) {
+		return false
+	}
+	intent := mapFromOperationContext(metadata["model_turn_intent"])
+	if len(intent) == 0 {
+		return false
+	}
+	if len(stringSliceFromAny(intent["phases"])) > len(mapSliceFromAny(plan["steps"])) {
+		return true
+	}
+	if len(stringSliceFromAny(intent["evidence_required"])) > 0 || len(stringSliceFromAny(intent["completion_criteria"])) > 0 {
+		return true
+	}
+	return false
 }
 
 func toolGovernanceFrozenPlanNeedsContinuation(plan map[string]interface{}) bool {

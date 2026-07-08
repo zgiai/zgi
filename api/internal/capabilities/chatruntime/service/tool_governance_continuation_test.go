@@ -156,6 +156,72 @@ func TestToolGovernanceFrozenContinuationNeedsSkillLoopForModelDecidesPendingAge
 	}
 }
 
+func TestToolGovernanceFrozenContinuationNeedsSkillLoopForModelIntentPhases(t *testing.T) {
+	deleteStepID := operationPlanToolStepID(skills.SkillAgentManagement, "delete_agents")
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"model_turn_intent": map[string]interface{}{
+				"phases": []interface{}{
+					"read file content",
+					"delete first agent",
+					"create replacement agent",
+					"configure replacement agent",
+					"verify final configuration",
+				},
+				"evidence_required": []interface{}{
+					"file summary",
+					"agent deletion",
+					"agent creation",
+					"agent configuration",
+				},
+			},
+			"operation_plan": map[string]interface{}{
+				"status":           operationPlanStatusRunning,
+				"tool_choice_mode": aiChatTurnToolChoiceModelDecides,
+				"planning_mode":    "phase_only_model_decides",
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        operationPlanToolStepID(skills.SkillConsoleNavigator, "navigate"),
+						"status":    operationPlanStepStatusCompleted,
+						"skill_id":  skills.SkillConsoleNavigator,
+						"tool_name": "navigate",
+					},
+					map[string]interface{}{
+						"id":        deleteStepID,
+						"status":    operationPlanStepStatusCompleted,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "delete_agents",
+					},
+				},
+				"step_status": map[string]interface{}{
+					operationPlanToolStepID(skills.SkillConsoleNavigator, "navigate"): operationPlanStepStatusCompleted,
+					deleteStepID: operationPlanStepStatusCompleted,
+				},
+			},
+		}},
+	}
+
+	if !toolGovernanceFrozenContinuationNeedsSkillLoop(prepared) {
+		t.Fatal("toolGovernanceFrozenContinuationNeedsSkillLoop() = false, want model intent phases to continue the skill loop")
+	}
+
+	answer, ok := toolGovernanceFrozenFastPathAnswer(prepared, skills.SkillTrace{
+		Kind:     "tool_call",
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "delete_agents",
+		Status:   "success",
+		Result: map[string]interface{}{
+			"status":        "completed",
+			"success_count": 1,
+			"agent_name":    "Old Agent",
+		},
+	})
+	if ok {
+		t.Fatalf("toolGovernanceFrozenFastPathAnswer() = (%q, true), want model intent phases to block fast-path completion", answer)
+	}
+}
+
 func TestToolGovernanceFrozenContinuationNeedsSkillLoopForModelDecidesOpenPhase(t *testing.T) {
 	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_identity")
 	prepared := &PreparedChat{

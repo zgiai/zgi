@@ -907,7 +907,7 @@ func preparedResultMetadata(source map[string]interface{}, usage *adapter.Usage)
 	}
 	metadata["usage"] = usageMetadata(usage)
 	metadata["system_prompt_version"] = systemPromptVersion
-	finalizeOperationPlanForResult(metadata)
+	finalizeOperationPlanForCompletedResult(metadata)
 	if summary := operationResultSummaryForPrompt(metadata); len(summary) > 0 {
 		metadata["operation_result_summary"] = summary
 	}
