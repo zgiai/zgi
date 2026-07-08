@@ -9,8 +9,6 @@ import {
   StepEdge,
   SmoothStepEdge,
   SimpleBezierEdge,
-  type Node,
-  type Edge,
   type Viewport,
   type OnNodesChange,
   type OnEdgesChange,
@@ -29,11 +27,11 @@ import { useDragCreateNode } from './hooks/use-drag-create-node';
 import { useNodeAlignmentGuides } from './hooks/use-node-alignment-guides';
 import WorkflowCanvasPanels from './ui/workflow-canvas-panels';
 import WorkflowAlignmentGuides from './ui/workflow-alignment-guides';
-import type { WorkflowNode } from './store/type';
+import type { WorkflowEdge, WorkflowNode } from './store/type';
 
 interface CanvasWithDndProps {
-  viewNodes: Node[];
-  viewEdges: Edge[];
+  viewNodes: WorkflowNode[];
+  viewEdges: WorkflowEdge[];
   viewViewport: Viewport;
   isReadOnly: boolean;
   agentType: string;
@@ -42,8 +40,8 @@ interface CanvasWithDndProps {
   agentIconType?: string;
   agentIcon?: string;
   agentIconUrl?: string;
-  onNodesChange?: OnNodesChange;
-  onEdgesChange?: OnEdgesChange;
+  onNodesChange?: OnNodesChange<WorkflowNode>;
+  onEdgesChange?: OnEdgesChange<WorkflowEdge>;
   onConnect: OnConnect;
   onNodeClick: (event: React.MouseEvent, node: { id: string }) => void;
   onNodeContextMenu: (event: React.MouseEvent, node: { id: string }) => void;
@@ -102,7 +100,7 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
   });
   const { alignmentGuides, clearAlignmentGuides, onNodesChangeWithAlignment } =
     useNodeAlignmentGuides({
-      nodes: viewNodes as WorkflowNode[],
+      nodes: viewNodes,
       disabled: isReadOnly,
       onNodesChange,
     });
@@ -117,7 +115,7 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
   const setEdgeDescPosition = useWorkflowStore.use.setEdgeDescPosition();
 
   const handleEdgeDoubleClick = React.useCallback(
-    (event: React.MouseEvent, edge: Edge) => {
+    (event: React.MouseEvent, edge: WorkflowEdge) => {
       if (isReadOnly) return;
       // Record mouse client position for the floating editor
       setEdgeDescId(edge.id);

@@ -6,6 +6,8 @@ import {
   type AlignmentGuideState,
 } from '../store/helpers/alignment-guides';
 
+type WorkflowOnNodesChange = OnNodesChange<WorkflowNode>;
+
 export function useNodeAlignmentGuides({
   nodes,
   disabled,
@@ -13,7 +15,7 @@ export function useNodeAlignmentGuides({
 }: {
   nodes: WorkflowNode[];
   disabled: boolean;
-  onNodesChange?: OnNodesChange;
+  onNodesChange?: WorkflowOnNodesChange;
 }) {
   const [guides, setGuides] = React.useState<AlignmentGuideState | null>(null);
   const nodesRef = React.useRef(nodes);
@@ -26,7 +28,7 @@ export function useNodeAlignmentGuides({
     setGuides(null);
   }, []);
 
-  const onNodesChangeWithAlignment = React.useCallback<OnNodesChange>(
+  const onNodesChangeWithAlignment = React.useCallback<WorkflowOnNodesChange>(
     changes => {
       if (disabled || !onNodesChange) {
         clearAlignmentGuides();

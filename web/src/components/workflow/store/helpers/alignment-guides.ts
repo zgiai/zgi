@@ -6,12 +6,13 @@ const DEFAULT_NODE_WIDTH = 280;
 const DEFAULT_NODE_HEIGHT = 120;
 const DEFAULT_THRESHOLD = 6;
 
-export type AlignmentAxis = 'x' | 'y';
 export type AlignmentAnchorX = 'left' | 'center' | 'right';
 export type AlignmentAnchorY = 'top' | 'middle' | 'bottom';
 
+const X_ANCHORS: readonly AlignmentAnchorX[] = ['left', 'center', 'right'];
+const Y_ANCHORS: readonly AlignmentAnchorY[] = ['top', 'middle', 'bottom'];
+
 export interface AlignmentGuide {
-  axis: AlignmentAxis;
   value: number;
   from: number;
   to: number;
@@ -23,7 +24,6 @@ export interface AlignmentGuideState {
 }
 
 interface NodeRect {
-  id: string;
   parentId?: string;
   local: Rect;
   absolute: Rect;
@@ -95,7 +95,6 @@ function getNodeRect(node: WorkflowNode, nodeById: Map<string, WorkflowNode>): N
   const absolutePosition = getAbsolutePosition(node, nodeById);
 
   return {
-    id: node.id,
     parentId: getNodeParentId(node),
     local: {
       x: position.x,
@@ -161,7 +160,6 @@ function getVerticalGuide(
   value: number
 ): AlignmentGuide {
   return {
-    axis: 'x',
     value,
     from: Math.min(active.absolute.y, target.absolute.y),
     to: Math.max(
@@ -177,7 +175,6 @@ function getHorizontalGuide(
   value: number
 ): AlignmentGuide {
   return {
-    axis: 'y',
     value,
     from: Math.min(active.absolute.x, target.absolute.x),
     to: Math.max(
@@ -201,12 +198,11 @@ function getVerticalCandidate(
   target: NodeRect,
   threshold: number
 ): AlignmentCandidate | null {
-  const anchors: AlignmentAnchorX[] = ['left', 'center', 'right'];
   let best: AlignmentCandidate | null = null;
 
-  for (const activeAnchor of anchors) {
+  for (const activeAnchor of X_ANCHORS) {
     const activeValue = getXValue(active.local, activeAnchor);
-    for (const targetAnchor of anchors) {
+    for (const targetAnchor of X_ANCHORS) {
       const targetValue = getXValue(target.local, targetAnchor);
       const delta = targetValue - activeValue;
       const distance = Math.abs(delta);
@@ -232,12 +228,11 @@ function getHorizontalCandidate(
   target: NodeRect,
   threshold: number
 ): AlignmentCandidate | null {
-  const anchors: AlignmentAnchorY[] = ['top', 'middle', 'bottom'];
   let best: AlignmentCandidate | null = null;
 
-  for (const activeAnchor of anchors) {
+  for (const activeAnchor of Y_ANCHORS) {
     const activeValue = getYValue(active.local, activeAnchor);
-    for (const targetAnchor of anchors) {
+    for (const targetAnchor of Y_ANCHORS) {
       const targetValue = getYValue(target.local, targetAnchor);
       const delta = targetValue - activeValue;
       const distance = Math.abs(delta);
@@ -272,7 +267,7 @@ export function applySingleNodeAlignment(
   const threshold = options.threshold ?? DEFAULT_THRESHOLD;
   const draggingPositionChanges = changes.filter(
     (change): change is WorkflowNodePositionChange =>
-      isPositionChange(change) && Boolean(change.dragging && change.position)
+      isPositionChange(change) && change.dragging === true && Boolean(change.position)
   );
 
   if (draggingPositionChanges.length !== 1) {
