@@ -636,6 +636,57 @@ func (h *OrganizationHandler) ApplyWorkspaceRoleTemplate(c *gin.Context) {
 	response.Success(c, result)
 }
 
+func (h *OrganizationHandler) ReplaceAndDeleteWorkspaceRole(c *gin.Context) {
+	organizationID := h.getOrganizationID(c)
+	if organizationID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+
+	roleID := c.Param("role_id")
+	if roleID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if !h.requireOrganizationAdminOrOwner(c, organizationID, accountID) {
+		return
+	}
+
+	var body struct {
+		ReplacementRoleID string `json:"replacement_role_id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || body.ReplacementRoleID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+
+	result, err := h.organizationService.ReplaceAndDeleteCustomWorkspaceRole(c.Request.Context(), &dto.ReplaceWorkspaceRoleTemplateRequest{
+		OrganizationID:    organizationID,
+		RoleID:            roleID,
+		ReplacementRoleID: body.ReplacementRoleID,
+		OperatorID:        accountID,
+	})
+	if err != nil {
+		if errors.Is(err, workspace_service.ErrInvalidWorkspaceRoleTemplate) ||
+			errors.Is(err, workspace_service.ErrCannotApplyOwnerRoleTemplate) ||
+			errors.Is(err, workspace_service.ErrWorkspaceRoleInUse) ||
+			errors.Is(err, workspace_service.ErrCannotDeleteLastWorkspaceRoleTemplate) {
+			response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+			return
+		}
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+
+	response.Success(c, result)
+}
+
 // DeleteWorkspaceRole deletes a custom role (soft delete)
 func (h *OrganizationHandler) DeleteWorkspaceRole(c *gin.Context) {
 	organizationID := h.getOrganizationID(c)
@@ -660,7 +711,8 @@ func (h *OrganizationHandler) DeleteWorkspaceRole(c *gin.Context) {
 	}
 
 	if err := h.organizationService.DeleteCustomWorkspaceRole(c.Request.Context(), organizationID, roleID, accountID); err != nil {
-		if errors.Is(err, workspace_service.ErrWorkspaceRoleInUse) {
+		if errors.Is(err, workspace_service.ErrWorkspaceRoleInUse) ||
+			errors.Is(err, workspace_service.ErrCannotDeleteLastWorkspaceRoleTemplate) {
 			response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 			return
 		}
@@ -2049,8 +2101,7 @@ func resolveOrganizationInvitePassword(c *gin.Context, provided string) (string,
 
 	password = strings.TrimSpace(cfg.Platform.OrgInviteDefaultPassword)
 	if password == "" {
-		response.FailWithMessage(c, response.ErrConfigError, "organization invite default password is not configured")
-		return "", false
+		password = config.DefaultOrgInviteDefaultPassword
 	}
 
 	return password, true
@@ -4675,6 +4726,7 @@ func (h *OrganizationHandler) RegisterRoutes(router *gin.RouterGroup) {
 		organization.PATCH("/:organization_id/roles/:role_id", h.UpdateWorkspaceRole)
 		organization.PUT("/:organization_id/roles/:role_id/permissions", h.UpdateWorkspaceRolePermissions)
 		organization.POST("/:organization_id/roles/:role_id/apply-template", h.ApplyWorkspaceRoleTemplate)
+		organization.POST("/:organization_id/roles/:role_id/replace-and-delete", h.ReplaceAndDeleteWorkspaceRole)
 		organization.DELETE("/:organization_id/roles/:role_id", h.DeleteWorkspaceRole)
 		organization.GET("/:organization_id/accounts/:account_id/permissions", h.GetMemberPermissions)
 	}

@@ -87,7 +87,7 @@ const (
 
 	// Platform run mode selects cloud or self-hosted platform behavior. Default: SELF_HOSTED.
 	envZGIRunMode = "ZGI_RUN_MODE"
-	// envZGIOrgInviteDefaultPassword sets the fallback password for self-hosted organization member invites. Default: empty.
+	// envZGIOrgInviteDefaultPassword sets the fallback password for self-hosted organization member invites. Default: ZGI@Welcome1.
 	envZGIOrgInviteDefaultPassword = "ZGI_ORG_INVITE_DEFAULT_PASSWORD"
 )
 

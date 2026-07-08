@@ -39,6 +39,7 @@ import (
 var ErrCannotUpdateBuiltinRole = errors.New("cannot update built-in role")
 var ErrRoleNameExists = errors.New("role name already exists")
 var ErrWorkspaceRoleInUse = errors.New("workspace role is assigned to members")
+var ErrCannotDeleteLastWorkspaceRoleTemplate = errors.New("cannot delete the last workspace role template")
 var ErrMemberNameExists = errors.New("member name already exists")
 var ErrOrganizationNotFound = errors.New("organization not found")
 var ErrOrganizationNameExists = errors.New("organization name already exists")
@@ -1279,6 +1280,69 @@ func (s *organizationService) ApplyWorkspaceRoleTemplate(ctx context.Context, re
 	return response, nil
 }
 
+func (s *organizationService) ReplaceAndDeleteCustomWorkspaceRole(ctx context.Context, req *shared_dto.ReplaceWorkspaceRoleTemplateRequest) (*shared_dto.ReplaceWorkspaceRoleTemplateResponse, error) {
+	if req == nil {
+		return nil, ErrInvalidWorkspaceRoleTemplate
+	}
+
+	organizationID := strings.TrimSpace(req.OrganizationID)
+	roleID := strings.TrimSpace(req.RoleID)
+	replacementRoleID := strings.TrimSpace(req.ReplacementRoleID)
+	operatorID := strings.TrimSpace(req.OperatorID)
+	if organizationID == "" || roleID == "" || replacementRoleID == "" || operatorID == "" {
+		return nil, ErrInvalidWorkspaceRoleTemplate
+	}
+	if roleID == replacementRoleID {
+		return nil, ErrInvalidWorkspaceRoleTemplate
+	}
+	if model.IsBuiltinRole(roleID) || model.IsBuiltinRole(replacementRoleID) {
+		return nil, ErrCannotApplyOwnerRoleTemplate
+	}
+
+	db := s.organizationRepo.GetDB()
+	tenantSubquery := db.WithContext(ctx).Table("workspaces").
+		Select("id").
+		Where("organization_id = ?", organizationID)
+
+	var targets []shared_dto.ApplyWorkspaceRoleTemplateTarget
+	if err := db.WithContext(ctx).Table("workspace_members").
+		Select("workspace_id, account_id").
+		Where("workspace_id IN (?) AND role_id = ?", tenantSubquery, roleID).
+		Find(&targets).Error; err != nil {
+		return nil, fmt.Errorf("failed to list workspace role template assignments: %w", err)
+	}
+
+	response := &shared_dto.ReplaceWorkspaceRoleTemplateResponse{
+		Results: []shared_dto.ApplyWorkspaceRoleTemplateResult{},
+	}
+
+	if len(targets) > 0 {
+		applyResponse, err := s.ApplyWorkspaceRoleTemplate(ctx, &shared_dto.ApplyWorkspaceRoleTemplateRequest{
+			OrganizationID: organizationID,
+			RoleID:         replacementRoleID,
+			OperatorID:     operatorID,
+			Members:        targets,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		response.ReplacedCount = applyResponse.AppliedCount
+		response.FailedCount = applyResponse.FailedCount
+		response.Results = applyResponse.Results
+		if applyResponse.FailedCount > 0 {
+			return response, nil
+		}
+	}
+
+	if err := s.DeleteCustomWorkspaceRole(ctx, organizationID, roleID, operatorID); err != nil {
+		return nil, err
+	}
+	response.Deleted = true
+
+	return response, nil
+}
+
 func (s *organizationService) UpdateMemberInfo(ctx context.Context, req *shared_dto.UpdateOrganizationMemberRequest) error {
 	if req.Role != nil {
 		return ErrOrganizationMemberRoleUpdateUnsupported
@@ -1349,6 +1413,16 @@ func (s *organizationService) DeleteCustomWorkspaceRole(ctx context.Context, org
 	}
 	if assignedCount > 0 {
 		return fmt.Errorf("%w: %d member assignments still reference this role", ErrWorkspaceRoleInUse, assignedCount)
+	}
+
+	var activeRoleCount int64
+	if err := db.WithContext(ctx).Model(&model.WorkspaceCustomRole{}).
+		Where("group_id = ? AND status = ?", organizationID, model.WorkspaceCustomRoleStatusActive).
+		Count(&activeRoleCount).Error; err != nil {
+		return fmt.Errorf("failed to count active workspace role templates: %w", err)
+	}
+	if activeRoleCount <= 1 {
+		return ErrCannotDeleteLastWorkspaceRoleTemplate
 	}
 
 	role.Status = model.WorkspaceCustomRoleStatusDeleted
@@ -3410,7 +3484,10 @@ func (s *organizationService) GetCurrentOrganization(ctx context.Context, accoun
 			return nil, fmt.Errorf("failed to get account: %w", err)
 		}
 
-		organizationName := fmt.Sprintf("%s's organization %s", account.Name, uuid.New().String()[:8])
+		organizationName, err := s.uniqueOwnedOrganizationName(ctx, account.Name, account.InterfaceLanguage)
+		if err != nil {
+			return nil, fmt.Errorf("failed to prepare organization name: %w", err)
+		}
 		organization, err := s.CreateOrganizationWithWorkspace(ctx, &shared_dto.CreateOrganizationWithWorkspaceRequest{
 			Name:      organizationName,
 			CreatedBy: accountID,
@@ -3470,6 +3547,39 @@ func (s *organizationService) GetCurrentOrganization(ctx context.Context, accoun
 	response := currentOrganizationResponse(organization, groupRole)
 
 	return response, nil
+}
+
+const maxOwnedOrganizationNameAttempts = 100
+
+func ownedOrganizationName(accountName string, language *string) string {
+	name := strings.TrimSpace(accountName)
+	if name == "" {
+		name = "User"
+	}
+	if language != nil && strings.HasPrefix(strings.ToLower(strings.TrimSpace(*language)), "zh") {
+		return fmt.Sprintf("%s 的组织", name)
+	}
+	return fmt.Sprintf("%s's Organization", name)
+}
+
+func (s *organizationService) uniqueOwnedOrganizationName(ctx context.Context, accountName string, language *string) (string, error) {
+	baseName := ownedOrganizationName(accountName, language)
+	for attempt := 0; attempt < maxOwnedOrganizationNameAttempts; attempt++ {
+		candidate := baseName
+		if attempt > 0 {
+			candidate = fmt.Sprintf("%s-%s", baseName, uuid.New().String()[:5])
+		}
+
+		exists, err := s.organizationRepo.ExistsByName(ctx, candidate)
+		if err != nil {
+			return "", fmt.Errorf("check organization name exists: %w", err)
+		}
+		if !exists {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("failed to generate unique organization name")
 }
 
 func (s *organizationService) GetCurrentOrganizationDetail(ctx context.Context, accountID string) (*shared_dto.CurrentOrganizationDetailResponse, error) {

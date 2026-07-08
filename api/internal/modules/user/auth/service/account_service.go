@@ -887,7 +887,10 @@ func (s *AccountService) RegisterEx(
 			return fmt.Errorf("failed to create account: %w", err)
 		}
 
-		groupName := fmt.Sprintf("%s's group %s", account.Name, uuid.New().String()[:8])
+		groupName, err := uniqueOwnedOrganizationName(ctx, groupService, account.Name, account.InterfaceLanguage)
+		if err != nil {
+			return fmt.Errorf("failed to prepare group name: %w", err)
+		}
 		group, err := groupService.CreateOrganization(ctx, groupName)
 		if err != nil {
 			return fmt.Errorf("failed to create group: %w", err)
@@ -959,7 +962,10 @@ func (s *AccountService) createWorkspaceForExistingAccount(ctx context.Context, 
 		tenantService := s.workspaceManagementService.WithTx(tx)
 
 		// 1. Create an enterprise group
-		groupName := fmt.Sprintf("%s's group %s", account.Name, uuid.New().String()[:8])
+		groupName, err := uniqueOwnedOrganizationName(ctx, groupService, account.Name, account.InterfaceLanguage)
+		if err != nil {
+			return fmt.Errorf("failed to prepare group name: %w", err)
+		}
 		group, err := groupService.CreateOrganization(ctx, groupName)
 		if err != nil {
 			return fmt.Errorf("failed to create group: %w", err)

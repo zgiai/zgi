@@ -179,7 +179,10 @@ func (s *RegisterServiceImpl) initializeUserOwnGroup(ctx context.Context, accoun
 		tenantService := s.tenantService.WithTx(tx)
 
 		// Create user's own group
-		groupName := fmt.Sprintf("%s's group %s", account.Name, uuid.New().String()[:8])
+		groupName, err := uniqueOwnedOrganizationName(ctx, groupService, account.Name, account.InterfaceLanguage)
+		if err != nil {
+			return fmt.Errorf("failed to prepare group name: %w", err)
+		}
 		group, err := groupService.CreateOrganization(ctx, groupName)
 		if err != nil {
 			return fmt.Errorf("failed to create group: %w", err)
