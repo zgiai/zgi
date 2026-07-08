@@ -7496,60 +7496,6 @@ func TestSkillLoopPlanToolGuardAllowsPlannedReadEvidenceReplay(t *testing.T) {
 	}
 }
 
-func TestSkillLoopPlanToolGuardRespectsExplicitCandidateLookupNegation(t *testing.T) {
-	prepared := &PreparedChat{
-		parts: &chatRequestParts{
-			Query:     "read-only check the current agent configuration: name, description, model/provider, and current bound resource counts; do not list candidates or modify config",
-			Surface:   aiChatSurfaceContextualSidebar,
-			SkillMode: skillModeAuto,
-			SkillIDs:  []string{skills.SkillAgentManagement},
-		},
-		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
-			"operation_plan": map[string]interface{}{
-				"status": operationPlanStatusRunning,
-				"steps": []interface{}{
-					map[string]interface{}{
-						"id":        operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config"),
-						"status":    operationPlanStepStatusPending,
-						"skill_id":  skills.SkillAgentManagement,
-						"tool_name": "get_agent_config",
-					},
-				},
-				"step_status": map[string]interface{}{
-					operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config"): operationPlanStepStatusPending,
-				},
-				"original_user_goal": "read-only check the current agent configuration: name, description, model/provider, and current bound resource counts; do not list candidates or modify config",
-			},
-		}},
-	}
-
-	goal := operationPlanAmendmentGoal(prepared)
-	if !agentManagementExplicitReadOnlyConfigCheck(goal) {
-		t.Fatalf("agentManagementExplicitReadOnlyConfigCheck(%q) = false, want true", goal)
-	}
-	if !agentManagementCandidateLookupExplicitlyNegated(goal) {
-		t.Fatalf("agentManagementCandidateLookupExplicitlyNegated(%q) = false, want true", goal)
-	}
-	if skillLoopShouldAllowReadOnlyAgentCandidateLookup(prepared, skills.SkillAgentManagement, "list_agent_database_tables") {
-		t.Fatalf("skillLoopShouldAllowReadOnlyAgentCandidateLookup(%q) = true, want false when candidate lookup is explicitly negated", goal)
-	}
-
-	guard := skillLoopPlanToolCallGuard(prepared)
-	if _, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "get_agent_config"}); blocked {
-		t.Fatal("get_agent_config was blocked, want the config read allowed")
-	}
-	result, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "list_agent_database_tables"})
-	if !blocked {
-		t.Fatal("list_agent_database_tables was allowed, want explicit candidate lookup negation to block it")
-	}
-	if !result.Advisory {
-		t.Fatalf("guard result Advisory = false, want advisory unplanned-tool guidance")
-	}
-	if _, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillAgentManagement, ToolName: "list_available_models"}); !blocked {
-		t.Fatal("list_available_models was allowed, want explicit candidate lookup negation to block it")
-	}
-}
-
 func TestSkillLoopPlanToolGuardAllowsReadOnlyAgentCandidateLookupAsEvidence(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{

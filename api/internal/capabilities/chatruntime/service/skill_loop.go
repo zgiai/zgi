@@ -1295,11 +1295,6 @@ func skillLoopPlanToolCallGuardWithResolved(prepared *PreparedChat, resolved *sk
 			recordOperationPlanToolBlockedDeviation(prepared.Message.Metadata, skillID, toolName, "ambiguous_continuation_cannot_repeat_terminal_agent_mutation")
 			return skillLoopTerminalRecentAgentMutationContinuationGuardResult(skillID, toolName), true
 		}
-		if skillLoopShouldBlockExplicitlyNegatedAgentCandidateLookup(prepared, skillID, toolName) {
-			result := skillLoopExplicitlyNegatedAgentCandidateLookupGuardResult(skillID, toolName)
-			recordOperationPlanToolGuardDeviation(prepared.Message.Metadata, skillID, toolName, "latest_user_request_forbids_agent_candidate_lookup", result)
-			return result, true
-		}
 		if skillLoopShouldBlockDuplicateArtifactToolCall(req) {
 			return skillLoopDuplicateArtifactGuardResult(req), true
 		}
@@ -2155,10 +2150,6 @@ func skillLoopShouldAllowReadOnlyAgentCandidateLookup(prepared *PreparedChat, sk
 	if skillLoopPlanHasAgentManagementMutationStep(prepared) {
 		return false
 	}
-	goal := operationPlanAmendmentGoal(prepared)
-	if agentManagementCandidateLookupExplicitlyNegated(goal) {
-		return false
-	}
 	return true
 }
 
@@ -2231,76 +2222,6 @@ func skillLoopPlanHasAgentManagementMutationStep(prepared *PreparedChat) bool {
 		}
 	}
 	return false
-}
-
-func agentManagementCandidateLookupExplicitlyNegated(query string) bool {
-	query = strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(query)))
-	if query == "" {
-		return false
-	}
-	return containsAnySubstring(query, []string{
-		"do not query available models",
-		"do not list available models",
-		"do not query candidate resources",
-		"do not list candidate resources",
-		"do not list candidate",
-		"do not list candidates",
-		"do not query candidates",
-		"don't list candidate",
-		"don't list candidates",
-		"don't query candidates",
-		"without listing candidates",
-		"no candidate list",
-		"no candidates",
-		"\u4e0d\u8981\u67e5\u8be2\u53ef\u7528\u6a21\u578b\u6216\u5019\u9009\u8d44\u6e90",
-		"\u4e0d\u8981\u67e5\u8be2\u53ef\u7528\u6a21\u578b",
-		"\u4e0d\u8981\u67e5\u8be2\u5019\u9009\u8d44\u6e90",
-		"\u4e0d\u8981\u67e5\u8be2\u5019\u9009",
-		"\u4e0d\u8981\u67e5\u770b\u53ef\u7528\u6a21\u578b",
-		"\u4e0d\u8981\u67e5\u770b\u5019\u9009\u8d44\u6e90",
-		"\u4e0d\u8981\u5217\u5019\u9009",
-		"\u4e0d\u8981\u5217\u51fa\u5019\u9009",
-		"\u4e0d\u8981\u5217\u51fa\u53ef\u7528\u6a21\u578b",
-		"\u4e0d\u8981\u5217\u51fa\u5019\u9009\u8d44\u6e90",
-		"\u4e0d\u8981\u67e5\u770b\u5019\u9009",
-		"\u4e0d\u8981\u62c9\u5019\u9009",
-		"\u4e0d\u8981\u5019\u9009",
-		"\u4e0d\u67e5\u53ef\u7528\u6a21\u578b",
-		"\u4e0d\u67e5\u5019\u9009\u8d44\u6e90",
-		"\u4e0d\u67e5\u5019\u9009",
-		"\u4e0d\u7528\u5217\u5019\u9009",
-		"\u65e0\u9700\u5217\u5019\u9009",
-		"\u65e0\u9700\u67e5\u8be2\u53ef\u7528\u6a21\u578b",
-		"\u65e0\u9700\u67e5\u8be2\u5019\u9009\u8d44\u6e90",
-		"\u4e0d\u8981\u5217\u53ef\u7ed1\u5b9a",
-		"\u4e0d\u8981\u67e5\u770b\u53ef\u7ed1\u5b9a",
-		"\u4e0d\u8981\u5217\u53ef\u9009",
-		"\u4e0d\u8981\u67e5\u770b\u53ef\u9009",
-	})
-}
-
-func skillLoopShouldBlockExplicitlyNegatedAgentCandidateLookup(prepared *PreparedChat, skillID string, toolName string) bool {
-	if prepared == nil || prepared.parts == nil ||
-		!strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentManagement) ||
-		!agentManagementToolIsReadOnlyCandidateLookup(toolName) {
-		return false
-	}
-	goal := operationPlanAmendmentGoal(prepared)
-	return strings.TrimSpace(goal) != "" && agentManagementCandidateLookupExplicitlyNegated(goal)
-}
-
-func skillLoopExplicitlyNegatedAgentCandidateLookupGuardResult(skillID string, toolName string) skillloop.FinalAnswerGuardResult {
-	return skillloop.FinalAnswerGuardResult{
-		SkillID:  strings.TrimSpace(skillID),
-		ToolName: strings.TrimSpace(toolName),
-		Message:  "latest user request forbids Agent candidate lookup",
-		Advisory: true,
-		SystemMessage: strings.Join([]string{
-			"The latest user request explicitly says not to list or inspect candidates.",
-			"Do not call candidate-list tools, list_agent_database_tables, list_available_models, or list_agents in this turn.",
-			"Use current page evidence and already successful read results. If required evidence is missing, explain the missing evidence instead of calling a forbidden candidate lookup.",
-		}, " "),
-	}
 }
 
 type agentCandidateSelectionUpdateIssue struct {

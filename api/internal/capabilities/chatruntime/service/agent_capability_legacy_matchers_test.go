@@ -967,3 +967,49 @@ func removeAgentManagementCreateAssignmentPayload(text string, marker string) st
 		text = strings.TrimSpace(text[:idx] + " " + text[end:])
 	}
 }
+
+func agentManagementCandidateLookupExplicitlyNegated(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(query)))
+	if query == "" {
+		return false
+	}
+	return containsAnySubstring(query, []string{
+		"do not query available models",
+		"do not list available models",
+		"do not query candidate resources",
+		"do not list candidate resources",
+		"do not list candidate",
+		"do not list candidates",
+		"do not query candidates",
+		"don't list candidate",
+		"don't list candidates",
+		"don't query candidates",
+		"without listing candidates",
+		"no candidate list",
+		"no candidates",
+		"\u4e0d\u8981\u67e5\u8be2\u53ef\u7528\u6a21\u578b\u6216\u5019\u9009\u8d44\u6e90",
+		"\u4e0d\u8981\u67e5\u8be2\u53ef\u7528\u6a21\u578b",
+		"\u4e0d\u8981\u67e5\u8be2\u5019\u9009\u8d44\u6e90",
+		"\u4e0d\u8981\u67e5\u8be2\u5019\u9009",
+		"\u4e0d\u8981\u67e5\u770b\u53ef\u7528\u6a21\u578b",
+		"\u4e0d\u8981\u67e5\u770b\u5019\u9009\u8d44\u6e90",
+		"\u4e0d\u8981\u5217\u5019\u9009",
+		"\u4e0d\u8981\u5217\u51fa\u5019\u9009",
+		"\u4e0d\u8981\u5217\u51fa\u53ef\u7528\u6a21\u578b",
+		"\u4e0d\u8981\u5217\u51fa\u5019\u9009\u8d44\u6e90",
+		"\u4e0d\u8981\u67e5\u770b\u5019\u9009",
+		"\u4e0d\u8981\u62c9\u5019\u9009",
+		"\u4e0d\u8981\u5019\u9009",
+		"\u4e0d\u67e5\u53ef\u7528\u6a21\u578b",
+		"\u4e0d\u67e5\u5019\u9009\u8d44\u6e90",
+		"\u4e0d\u67e5\u5019\u9009",
+		"\u4e0d\u7528\u5217\u5019\u9009",
+		"\u65e0\u9700\u5217\u5019\u9009",
+		"\u65e0\u9700\u67e5\u8be2\u53ef\u7528\u6a21\u578b",
+		"\u65e0\u9700\u67e5\u8be2\u5019\u9009\u8d44\u6e90",
+		"\u4e0d\u8981\u5217\u53ef\u7ed1\u5b9a",
+		"\u4e0d\u8981\u67e5\u770b\u53ef\u7ed1\u5b9a",
+		"\u4e0d\u8981\u5217\u53ef\u9009",
+		"\u4e0d\u8981\u67e5\u770b\u53ef\u9009",
+	})
+}
