@@ -425,6 +425,7 @@ const messages: AiProvidersMessages = {
       tagline: '标语',
       inputPrice: '输入价格',
       outputPrice: '输出价格',
+      priceConfiguredHint: '留空表示未配置，填 0 表示免费。',
       cachedPrice: '缓存输入价格',
       contextWindow: '最大上下文窗口',
       maxTokens: '最大输出 Tokens',
