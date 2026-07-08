@@ -13,6 +13,7 @@ import (
 	quota_model "github.com/zgiai/zgi/api/internal/modules/quota/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	workspacecache "github.com/zgiai/zgi/api/internal/modules/workspace/cache"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/repository"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -26,6 +27,7 @@ type WorkspaceManagementServiceImpl struct {
 	accountService      interfaces.AccountService
 	quotaService        interfaces.QuotaService
 	organizationService interfaces.OrganizationService
+	deferInvalidation   bool
 }
 
 func NewWorkspaceManagementService(
@@ -59,15 +61,15 @@ func (s *WorkspaceManagementServiceImpl) SetOrganizationService(organizationServ
 }
 
 func (s *WorkspaceManagementServiceImpl) WithTx(tx *gorm.DB) interfaces.WorkspaceManagementService {
-	return NewWorkspaceManagementService(
-		tx,
-		s.workspaceRepo.WithTx(tx),
-		s.workspaceMemberRepo.WithTx(tx),
-		// Fix: Use accountService instead of accountRepo
-		s.accountService, // AccountService doesn't need WithTx as it's an interface
-		s.quotaService,
-		s.organizationService,
-	)
+	return &WorkspaceManagementServiceImpl{
+		db:                  tx,
+		workspaceRepo:       s.workspaceRepo.WithTx(tx),
+		workspaceMemberRepo: s.workspaceMemberRepo.WithTx(tx),
+		accountService:      s.accountService,
+		quotaService:        s.quotaService,
+		organizationService: s.organizationService,
+		deferInvalidation:   true,
+	}
 }
 
 // CreateWorkspace Create workspace
@@ -106,6 +108,13 @@ func (s *WorkspaceManagementServiceImpl) getWorkspaceOrganizationUUID(ctx contex
 	return &organizationUUID
 }
 
+func (s *WorkspaceManagementServiceImpl) invalidateWorkspaceContext(ctx context.Context, workspaceID string, accountIDs ...string) {
+	if s.deferInvalidation {
+		return
+	}
+	workspacecache.InvalidateWorkspace(ctx, s.db, workspaceID, accountIDs...)
+}
+
 func (s *WorkspaceManagementServiceImpl) ensureSeatQuotaAvailable(ctx context.Context, organizationUUID *uuid.UUID) error {
 	if organizationUUID == nil || s.quotaService == nil {
 		return nil
@@ -138,7 +147,7 @@ func (s *WorkspaceManagementServiceImpl) CreateWorkspaceMember(ctx context.Conte
 	}
 
 	// Step 5: Create member in transaction
-	return s.db.Transaction(func(tx *gorm.DB) error {
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		// Create workspace member
 		join := &model.WorkspaceMember{
 			WorkspaceID: workspaceID,
@@ -197,7 +206,11 @@ func (s *WorkspaceManagementServiceImpl) CreateWorkspaceMember(ctx context.Conte
 		}
 
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	s.invalidateWorkspaceContext(ctx, workspaceID, accountID)
+	return nil
 }
 
 // GetWorkspaceByID Get workspace by ID
@@ -220,12 +233,23 @@ func (s *WorkspaceManagementServiceImpl) UpdateWorkspace(ctx context.Context, id
 		workspace.Plan = req.Plan
 	}
 
-	return s.workspaceRepo.Update(ctx, workspace)
+	if err := s.workspaceRepo.Update(ctx, workspace); err != nil {
+		return err
+	}
+	s.invalidateWorkspaceContext(ctx, id)
+	return nil
 }
 
 // DeleteWorkspace Delete workspace
 func (s *WorkspaceManagementServiceImpl) DeleteWorkspace(ctx context.Context, id string) error {
-	return s.workspaceRepo.Delete(ctx, id)
+	workspace, _ := s.workspaceRepo.GetByID(ctx, id)
+	if err := s.workspaceRepo.Delete(ctx, id); err != nil {
+		return err
+	}
+	if workspace != nil && workspace.OrganizationID != nil {
+		workspacecache.InvalidateOrganizationWithWorkspaceMembers(ctx, s.db, *workspace.OrganizationID)
+	}
+	return nil
 }
 
 // AddMember Add member
@@ -255,7 +279,7 @@ func (s *WorkspaceManagementServiceImpl) AddMember(ctx context.Context, req *int
 	}
 
 	// Create association in transaction
-	return s.db.Transaction(func(tx *gorm.DB) error {
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		// Create association
 		join := &model.WorkspaceMember{
 			WorkspaceID: req.WorkspaceID,
@@ -318,7 +342,11 @@ func (s *WorkspaceManagementServiceImpl) AddMember(ctx context.Context, req *int
 		}
 
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	s.invalidateWorkspaceContext(ctx, req.WorkspaceID, req.AccountID)
+	return nil
 }
 
 // RemoveMember Remove member
@@ -340,7 +368,7 @@ func (s *WorkspaceManagementServiceImpl) LeaveWorkspace(ctx context.Context, wor
 
 	// Allow the member to leave regardless of their role (including owner)
 	// This is a special case where users can leave their own workspace
-	return s.db.Transaction(func(tx *gorm.DB) error {
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		// Delete workspace member
 		if err := s.workspaceMemberRepo.WithTx(tx).Delete(ctx, join.ID); err != nil {
 			return fmt.Errorf("failed to remove member from workspace: %w", err)
@@ -401,7 +429,11 @@ func (s *WorkspaceManagementServiceImpl) LeaveWorkspace(ctx context.Context, wor
 		}
 
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	s.invalidateWorkspaceContext(ctx, workspaceID, accountID)
+	return nil
 }
 
 func (s *WorkspaceManagementServiceImpl) removeMemberInternal(ctx context.Context, workspaceID, accountID string, force bool) error {
@@ -429,7 +461,7 @@ func (s *WorkspaceManagementServiceImpl) removeMemberInternal(ctx context.Contex
 	}
 
 	// Delete member in transaction
-	return s.db.Transaction(func(tx *gorm.DB) error {
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		// Delete workspace member
 		if err := s.workspaceMemberRepo.WithTx(tx).Delete(ctx, join.ID); err != nil {
 			return fmt.Errorf("failed to delete workspace member: %w", err)
@@ -482,19 +514,30 @@ func (s *WorkspaceManagementServiceImpl) removeMemberInternal(ctx context.Contex
 		}
 
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	s.invalidateWorkspaceContext(ctx, workspaceID, accountID)
+	return nil
 }
 
 // DeleteWorkspaceWithMembers Delete workspace and all its members (including owner)
 func (s *WorkspaceManagementServiceImpl) DeleteWorkspaceWithMembers(ctx context.Context, id string) error {
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		txSvc := s.WithTx(tx).(*WorkspaceManagementServiceImpl)
+	workspace, _ := s.workspaceRepo.GetByID(ctx, id)
+	joins, err := s.workspaceMemberRepo.GetJoinsByWorkspaceID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("failed to get workspace members: %w", err)
+	}
 
-		// Get all members
-		joins, err := txSvc.workspaceMemberRepo.GetJoinsByWorkspaceID(ctx, id)
-		if err != nil {
-			return fmt.Errorf("failed to get workspace members: %w", err)
+	accountIDs := make([]string, 0, len(joins))
+	for _, join := range joins {
+		if join != nil {
+			accountIDs = append(accountIDs, join.AccountID)
 		}
+	}
+
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		txSvc := s.WithTx(tx).(*WorkspaceManagementServiceImpl)
 
 		// Remove all members (force=true to allow removing owner)
 		for _, join := range joins {
@@ -505,7 +548,15 @@ func (s *WorkspaceManagementServiceImpl) DeleteWorkspaceWithMembers(ctx context.
 
 		// Delete workspace
 		return txSvc.DeleteWorkspace(ctx, id)
-	})
+	}); err != nil {
+		return err
+	}
+	if workspace != nil && workspace.OrganizationID != nil {
+		workspacecache.InvalidateOrganizationWithWorkspaceMembers(ctx, s.db, *workspace.OrganizationID, accountIDs...)
+	} else {
+		s.invalidateWorkspaceContext(ctx, id, accountIDs...)
+	}
+	return nil
 }
 
 // UpdateMemberRole Update member role
@@ -526,7 +577,11 @@ func (s *WorkspaceManagementServiceImpl) UpdateMemberRole(ctx context.Context, r
 	}
 
 	join.Role = req.Role
-	return s.workspaceMemberRepo.Update(ctx, join)
+	if err := s.workspaceMemberRepo.Update(ctx, join); err != nil {
+		return err
+	}
+	s.invalidateWorkspaceContext(ctx, req.WorkspaceID, req.AccountID)
+	return nil
 }
 
 // GetWorkspaceMembers Get workspace members list
@@ -953,7 +1008,7 @@ func (s *WorkspaceManagementServiceImpl) GetCurrentOrganization(ctx context.Cont
 
 // TransferOwner transfers workspace ownership from current owner to another member
 func (s *WorkspaceManagementServiceImpl) TransferOwner(ctx context.Context, workspaceID, currentOwnerID, newOwnerID string) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		repo := s.workspaceMemberRepo.WithTx(tx)
 
 		// 1. Verify current owner
@@ -999,7 +1054,11 @@ func (s *WorkspaceManagementServiceImpl) TransferOwner(ctx context.Context, work
 		}
 
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	s.invalidateWorkspaceContext(ctx, workspaceID, currentOwnerID, newOwnerID)
+	return nil
 }
 
 // CheckMemberPermission Check member permission
@@ -1077,7 +1136,7 @@ func (s *WorkspaceManagementServiceImpl) RemoveMemberFromWorkspace(ctx context.C
 	organizationUUID := s.getWorkspaceOrganizationUUID(ctx, workspace.ID)
 
 	// Delete member in transaction
-	return s.db.Transaction(func(tx *gorm.DB) error {
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		// Delete workspace member association record
 		if err := s.workspaceMemberRepo.WithTx(tx).Delete(ctx, memberJoin.ID); err != nil {
 			return fmt.Errorf("failed to remove member from workspace: %w", err)
@@ -1130,7 +1189,11 @@ func (s *WorkspaceManagementServiceImpl) RemoveMemberFromWorkspace(ctx context.C
 		}
 
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	s.invalidateWorkspaceContext(ctx, workspace.ID, member.ID)
+	return nil
 }
 
 func (s *WorkspaceManagementServiceImpl) GetWorkspaceMemberWithExtensionsById(ctx context.Context, workspaceID, memberID string) (*interfaces.WorkspaceMemberWithExtensionResponse, error) {
@@ -1285,6 +1348,7 @@ func (s *WorkspaceManagementServiceImpl) UpdateMemberRoleExtensions(ctx context.
 
 	// Permissions are no longer handled here (newPermissions ignored)
 
+	s.invalidateWorkspaceContext(ctx, workspace.ID, member.ID)
 	return nil
 }
 
@@ -1351,6 +1415,7 @@ func (s *WorkspaceManagementServiceImpl) UpdateMemberRoleWithPermissionCheck(ctx
 		return fmt.Errorf("failed to update workspace account join: %w", err)
 	}
 
+	s.invalidateWorkspaceContext(ctx, workspace.ID, member.ID)
 	return nil
 }
 
@@ -1396,6 +1461,7 @@ func (s *WorkspaceManagementServiceImpl) UpdateMemberRoleAndRoleIDWithPermission
 		return fmt.Errorf("failed to update workspace account join: %w", err)
 	}
 
+	s.invalidateWorkspaceContext(ctx, workspace.ID, member.ID)
 	return nil
 }
 
@@ -1425,6 +1491,7 @@ func (s *WorkspaceManagementServiceImpl) UpdateMemberCustomRoleWithPermissionChe
 		return fmt.Errorf("failed to update workspace account join: %w", err)
 	}
 
+	s.invalidateWorkspaceContext(ctx, workspace.ID, member.ID)
 	return nil
 }
 

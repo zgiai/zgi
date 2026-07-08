@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	workspacecache "github.com/zgiai/zgi/api/internal/modules/workspace/cache"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/repository"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -121,6 +122,9 @@ func (s *WorkspaceServiceImpl) UpdateWorkspace(ctx context.Context, workspaceID,
 			return nil, err
 		}
 		workspace.Status = *status
+	}
+	if workspace.OrganizationID != nil && *workspace.OrganizationID != "" {
+		workspacecache.InvalidateOrganizationWithWorkspaceMembers(ctx, s.workspaceRepo.GetDB(), *workspace.OrganizationID)
 	}
 
 	return &model.WorkspaceUpdateResponse{

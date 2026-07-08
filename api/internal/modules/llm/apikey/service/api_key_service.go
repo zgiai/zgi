@@ -13,6 +13,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	workspacecache "github.com/zgiai/zgi/api/internal/modules/workspace/cache"
 	"github.com/zgiai/zgi/api/internal/util"
 	"gorm.io/gorm"
 )
@@ -381,6 +382,7 @@ func (s *apiKeyServiceImpl) UpdateAPIKey(ctx context.Context, id string, organiz
 		return nil, fmt.Errorf("failed to update API key: %w", err)
 	}
 
+	workspacecache.InvalidateOrganizationWithWorkspaceMembers(ctx, s.db, apiKey.OrganizationID)
 	return s.modelToResponse(ctx, apiKey, false), nil
 }
 
@@ -398,6 +400,7 @@ func (s *apiKeyServiceImpl) DeleteAPIKey(ctx context.Context, id string, organiz
 		return nil, fmt.Errorf("failed to delete API key: %w", err)
 	}
 
+	workspacecache.InvalidateOrganizationWithWorkspaceMembers(ctx, s.db, apiKey.OrganizationID)
 	return &dto.DeleteAPIKeyResponse{
 		ID:      id,
 		Message: "API key deleted successfully",

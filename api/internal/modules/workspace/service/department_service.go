@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	workspacecache "github.com/zgiai/zgi/api/internal/modules/workspace/cache"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/repository"
 	"gorm.io/gorm"
@@ -193,6 +194,7 @@ func (s *departmentService) UpdateDepartment(ctx context.Context, id, name strin
 		return nil, fmt.Errorf("failed to update department: %w", err)
 	}
 
+	workspacecache.InvalidateOrganizationWithWorkspaceMembers(ctx, s.deptRepo.GetDB(), dept.OrganizationID)
 	return dept, nil
 }
 
@@ -267,6 +269,7 @@ func (s *departmentService) DeleteDepartment(ctx context.Context, id string) err
 		return fmt.Errorf("failed to delete department: %w", err)
 	}
 
+	workspacecache.InvalidateOrganizationWithWorkspaceMembers(ctx, s.deptRepo.GetDB(), dept.OrganizationID)
 	return nil
 }
 
