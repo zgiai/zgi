@@ -193,6 +193,202 @@ func agentManagementCapabilityStatusTargetMentioned(query string) bool {
 	return containsAnySubstring(text, agentManagementCapabilityStatusTargetMarkers())
 }
 
+func agentManagementResourceMarkerEmbeddedInAnotherPhrase(text string, markerStart int, marker string) bool {
+	if markerStart <= 0 {
+		return false
+	}
+	marker = strings.ToLower(strings.TrimSpace(marker))
+	switch marker {
+	case "\u6539\u540d":
+		return strings.HasSuffix(text[:markerStart], "\u4fee")
+	default:
+		return false
+	}
+}
+
+func containsUnnegatedAgentManagementMutationMarker(text string, marker string) bool {
+	marker = strings.TrimSpace(strings.ToLower(marker))
+	if text == "" || marker == "" {
+		return false
+	}
+	searchFrom := 0
+	for {
+		idx := strings.Index(text[searchFrom:], marker)
+		if idx < 0 {
+			return false
+		}
+		absoluteIdx := searchFrom + idx
+		if !agentManagementMutationMarkerIsEmbeddedIdentifier(text, absoluteIdx, marker) &&
+			!agentManagementMutationMarkerIsNavigationNoun(text, absoluteIdx, marker) &&
+			!agentManagementMutationMarkerIsReadOnlyCandidateQualifier(text, absoluteIdx, marker) &&
+			!agentManagementMutationMarkerIsBindingStateDescription(text, absoluteIdx, marker) &&
+			!agentManagementMutationMarkerNegated(text, absoluteIdx) {
+			return true
+		}
+		searchFrom = absoluteIdx + len(marker)
+		if searchFrom >= len(text) {
+			return false
+		}
+	}
+}
+
+func agentManagementMutationMarkerIsEmbeddedIdentifier(text string, markerStart int, marker string) bool {
+	marker = strings.TrimSpace(strings.ToLower(marker))
+	if text == "" || marker == "" || markerStart < 0 || markerStart+len(marker) > len(text) {
+		return false
+	}
+	if !agentManagementASCIIIdentifierMarker(marker) {
+		return false
+	}
+	before := byte(0)
+	if markerStart > 0 {
+		before = text[markerStart-1]
+	}
+	after := byte(0)
+	if end := markerStart + len(marker); end < len(text) {
+		after = text[end]
+	}
+	return agentManagementIdentifierByte(before) || agentManagementIdentifierByte(after)
+}
+
+func agentManagementASCIIIdentifierMarker(marker string) bool {
+	for i := 0; i < len(marker); i++ {
+		b := marker[i]
+		if b < 'a' || b > 'z' {
+			return false
+		}
+	}
+	return marker != ""
+}
+
+func agentManagementIdentifierByte(b byte) bool {
+	return (b >= 'a' && b <= 'z') ||
+		(b >= 'A' && b <= 'Z') ||
+		(b >= '0' && b <= '9') ||
+		b == '_' ||
+		b == '-'
+}
+
+func agentManagementMutationMarkerIsBindingStateDescription(text string, markerStart int, marker string) bool {
+	marker = strings.TrimSpace(strings.ToLower(marker))
+	if marker == "" || markerStart < 0 || markerStart+len(marker) > len(text) {
+		return false
+	}
+	switch marker {
+	case "\u7ed1\u5b9a", "\u5173\u8054", "\u542f\u7528":
+	default:
+		return false
+	}
+	prefixStart := markerStart - 36
+	if prefixStart < 0 {
+		prefixStart = 0
+	}
+	prefix := text[prefixStart:markerStart]
+	for _, statePrefix := range []string{
+		"\u5f53\u524d",
+		"\u76ee\u524d",
+		"\u73b0\u5728",
+		"\u5df2",
+		"\u5df2\u7ecf",
+		"\u5df2\u88ab",
+		"\u5f53\u524d\u5df2",
+		"\u76ee\u524d\u5df2",
+		"\u73b0\u5728\u5df2",
+		"\u672a",
+		"\u5c1a\u672a",
+	} {
+		if strings.HasSuffix(prefix, statePrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentManagementMutationMarkerIsReadOnlyCandidateQualifier(text string, markerStart int, marker string) bool {
+	marker = strings.TrimSpace(strings.ToLower(marker))
+	if marker == "" || markerStart < 0 || markerStart+len(marker) > len(text) {
+		return false
+	}
+	switch marker {
+	case "\u7ed1\u5b9a":
+		prefixStart := markerStart - 48
+		if prefixStart < 0 {
+			prefixStart = 0
+		}
+		prefix := text[prefixStart:markerStart]
+		if strings.HasSuffix(prefix, "\u53ef") {
+			return true
+		}
+		suffixEnd := markerStart + len(marker) + 48
+		if suffixEnd > len(text) {
+			suffixEnd = len(text)
+		}
+		suffix := text[markerStart+len(marker) : suffixEnd]
+		if !containsAnySubstring(prefix, []string{
+			"\u53ea\u8bfb",
+			"\u53ea\u8bfb\u53d6",
+			"\u8bfb\u53d6",
+			"\u67e5\u770b",
+			"\u5217\u51fa",
+			"\u68c0\u67e5",
+		}) {
+			return false
+		}
+		return containsAnySubstring(suffix, []string{
+			"\u5019\u9009",
+			"\u5217\u8868",
+			"\u54ea\u4e9b",
+			"\u6570\u91cf",
+			"skill",
+			"\u6280\u80fd",
+			"\u77e5\u8bc6\u5e93",
+			"\u6570\u636e\u5e93",
+			"\u6570\u636e\u5e93\u8868",
+			"\u6570\u636e\u8868",
+			"\u5de5\u4f5c\u6d41",
+		})
+	case "bind":
+		suffix := text[markerStart+len(marker):]
+		if strings.HasPrefix(suffix, "able") || strings.HasPrefix(suffix, "-able") || strings.HasPrefix(suffix, "ing candidate") || strings.HasPrefix(suffix, "ing candidates") {
+			return true
+		}
+		prefixStart := markerStart - 64
+		if prefixStart < 0 {
+			prefixStart = 0
+		}
+		prefix := text[prefixStart:markerStart]
+		return containsAnySubstring(suffix, []string{"candidate", "candidates", "list", "count"}) &&
+			containsAnySubstring(prefix, []string{"read", "read-only", "readonly", "show", "view", "list", "check", "inspect"})
+	default:
+		return false
+	}
+}
+
+func agentManagementMutationMarkerIsNavigationNoun(text string, markerStart int, marker string) bool {
+	marker = strings.TrimSpace(strings.ToLower(marker))
+	if marker == "" || markerStart < 0 || markerStart+len(marker) > len(text) {
+		return false
+	}
+	suffix := strings.TrimLeft(text[markerStart+len(marker):], " \t\r\n/\\-_\uff0f")
+	switch marker {
+	case "edit":
+		return strings.HasPrefix(suffix, "page") ||
+			strings.HasPrefix(suffix, "view") ||
+			strings.HasPrefix(suffix, "detail page") ||
+			strings.HasPrefix(suffix, "details page") ||
+			strings.HasPrefix(suffix, "detail view") ||
+			strings.HasPrefix(suffix, "details view")
+	case "\u7f16\u8f91":
+		return strings.HasPrefix(suffix, "\u9875") ||
+			strings.HasPrefix(suffix, "\u9875\u9762") ||
+			strings.HasPrefix(suffix, "\u8be6\u60c5") ||
+			strings.HasPrefix(suffix, "\u8be6\u60c5\u9875") ||
+			strings.HasPrefix(suffix, "\u8be6\u60c5\u9875\u9762")
+	default:
+		return false
+	}
+}
+
 func agentManagementConfigFieldSemanticMarkers(field string) []string {
 	descriptor, ok := agentManagementConfigFieldDescriptorForAlias(field)
 	if !ok {
