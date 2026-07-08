@@ -20,9 +20,17 @@ import (
 	"gorm.io/gorm"
 )
 
-const latestLabel = "latest"
+const (
+	latestLabel     = "latest"
+	productionLabel = "production"
+)
 
 var slugSanitizer = regexp.MustCompile(`[^a-z0-9/_-]+`)
+
+type promptChatMessageInput struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
 
 type PromptService interface {
 	List(ctx context.Context, organizationID, accountID string, req promptdto.PromptListRequest) (*promptdto.PromptListResponse, error)
@@ -86,11 +94,19 @@ func (s *promptService) List(ctx context.Context, organizationID, accountID stri
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		workspace_model.WorkspacePermissionAgentView,
-		workspace_model.WorkspacePermissionAgentManage,
+		promptVisiblePermissionCodes()...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("resolve prompt visibility scope: %w", err)
+	}
+	if len(scope.WorkspaceIDs) == 0 && !scope.AllowOrganizationScoped {
+		return &promptdto.PromptListResponse{
+			Data:    []promptdto.PromptSummaryResponse{},
+			HasMore: false,
+			Limit:   limit,
+			Page:    page,
+			Total:   0,
+		}, nil
 	}
 
 	query := applyAccessibleQuery(s.repo.DB().Model(&promptmodel.Prompt{}), scope, accountID)
@@ -125,10 +141,15 @@ func (s *promptService) List(ctx context.Context, organizationID, accountID stri
 	if err != nil {
 		return nil, fmt.Errorf("load latest prompt versions: %w", err)
 	}
+	allVersions, err := s.repo.FindVersionsByPromptIDs(ctx, promptIDs)
+	if err != nil {
+		return nil, fmt.Errorf("load prompt release versions: %w", err)
+	}
+	productionVersions := versionsByLabel(allVersions, productionLabel)
 
 	items := make([]promptdto.PromptSummaryResponse, 0, len(prompts))
 	for _, prompt := range prompts {
-		items = append(items, promptdto.BuildPromptSummary(prompt, latestVersions[prompt.ID], accountID))
+		items = append(items, promptdto.BuildPromptSummary(prompt, latestVersions[prompt.ID], productionVersions[prompt.ID], accountID))
 	}
 
 	return &promptdto.PromptListResponse{
@@ -141,7 +162,7 @@ func (s *promptService) List(ctx context.Context, organizationID, accountID stri
 }
 
 func (s *promptService) GetDetail(ctx context.Context, organizationID, accountID, id string) (*promptdto.PromptDetailResponse, error) {
-	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, workspace_model.WorkspacePermissionAgentView, workspace_model.WorkspacePermissionAgentManage)
+	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, promptVisiblePermissionCodes()...)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +181,7 @@ func (s *promptService) Create(ctx context.Context, organizationID, accountID st
 		organizationID,
 		accountID,
 		req.WorkspaceID,
-		workspace_model.WorkspacePermissionAgentManage,
+		promptCreatePermissionCodes()...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("resolve workspace scope: %w", err)
@@ -216,7 +237,7 @@ func (s *promptService) Create(ctx context.Context, organizationID, accountID st
 }
 
 func (s *promptService) Update(ctx context.Context, organizationID, accountID, id string, req promptdto.UpdatePromptRequest) (*promptdto.PromptDetailResponse, error) {
-	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, workspace_model.WorkspacePermissionAgentManage)
+	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, promptUpdatePermissionCodes()...)
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +276,7 @@ func (s *promptService) Update(ctx context.Context, organizationID, accountID, i
 }
 
 func (s *promptService) CreateVersion(ctx context.Context, organizationID, accountID, id string, req promptdto.PromptVersionInput) (*promptdto.PromptDetailResponse, error) {
-	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, workspace_model.WorkspacePermissionAgentManage)
+	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, promptVersionManagePermissionCodes()...)
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +320,7 @@ func (s *promptService) CreateVersion(ctx context.Context, organizationID, accou
 }
 
 func (s *promptService) SetLabels(ctx context.Context, organizationID, accountID, id string, req promptdto.SetPromptLabelsRequest) (*promptdto.PromptDetailResponse, error) {
-	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, workspace_model.WorkspacePermissionAgentManage)
+	prompt, err := s.getAccessiblePrompt(ctx, organizationID, accountID, id, promptLabelManagePermissionCodes()...)
 	if err != nil {
 		return nil, err
 	}
@@ -380,6 +401,20 @@ func (s *promptService) getAccessiblePrompt(ctx context.Context, organizationID,
 		return nil, fmt.Errorf("load prompt: %w", err)
 	}
 	if prompt.Source == promptmodel.PromptSourceOfficial {
+		scope, err := shared_visibility.ResolveVisibleWorkspaceScope(
+			ctx,
+			s.organizationService,
+			organizationID,
+			accountID,
+			"",
+			permissionCodes...,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("resolve prompt access: %w", err)
+		}
+		if len(scope.WorkspaceIDs) == 0 && !scope.AllowOrganizationScoped {
+			return nil, fmt.Errorf("prompt not found")
+		}
 		return prompt, nil
 	}
 	scope, err := shared_visibility.ResolveVisibleWorkspaceScope(
@@ -402,6 +437,27 @@ func (s *promptService) getAccessiblePrompt(ctx context.Context, organizationID,
 	return prompt, nil
 }
 
+func (s *promptService) ensureWorkspaceAccess(ctx context.Context, organizationID, accountID, workspaceID string, permissionCodes ...workspace_model.WorkspacePermissionCode) error {
+	if strings.TrimSpace(workspaceID) == "" {
+		return fmt.Errorf("workspace is required")
+	}
+	scope, err := shared_visibility.ResolveVisibleWorkspaceScope(
+		ctx,
+		s.organizationService,
+		organizationID,
+		accountID,
+		workspaceID,
+		permissionCodes...,
+	)
+	if err != nil {
+		return fmt.Errorf("resolve workspace access: %w", err)
+	}
+	if !slices.Contains(scope.WorkspaceIDs, workspaceID) {
+		return fmt.Errorf("workspace not accessible")
+	}
+	return nil
+}
+
 func (s *promptService) buildDetail(ctx context.Context, prompt *promptmodel.Prompt, accountID string) (*promptdto.PromptDetailResponse, error) {
 	versions, err := s.repo.FindVersions(ctx, prompt.ID)
 	if err != nil {
@@ -420,7 +476,7 @@ func (s *promptService) buildDetail(ctx context.Context, prompt *promptmodel.Pro
 		}
 	}
 	resp := &promptdto.PromptDetailResponse{
-		PromptSummaryResponse: promptdto.BuildPromptSummary(prompt, latest, accountID),
+		PromptSummaryResponse: promptdto.BuildPromptSummary(prompt, latest, firstVersionWithLabel(versions, productionLabel), accountID),
 		Versions:              make([]promptdto.PromptVersionResponse, 0, len(versions)),
 	}
 	for _, version := range versions {
@@ -473,12 +529,21 @@ func normalizeVersionInput(input promptdto.PromptVersionInput, ensureLatest bool
 			return nil, nil, "", nil, fmt.Errorf("text prompt content cannot be empty")
 		}
 	} else {
-		var messages []map[string]any
+		var messages []promptChatMessageInput
 		if err := json.Unmarshal(content, &messages); err != nil {
 			return nil, nil, "", nil, fmt.Errorf("chat prompt content must be a JSON array of messages")
 		}
 		if len(messages) == 0 {
 			return nil, nil, "", nil, fmt.Errorf("chat prompt content cannot be empty")
+		}
+		for i, message := range messages {
+			role := strings.TrimSpace(message.Role)
+			if role != "system" && role != "user" && role != "assistant" {
+				return nil, nil, "", nil, fmt.Errorf("chat prompt message %d must use role system, user, or assistant", i+1)
+			}
+			if strings.TrimSpace(message.Content) == "" {
+				return nil, nil, "", nil, fmt.Errorf("chat prompt message %d content cannot be empty", i+1)
+			}
 		}
 	}
 
@@ -517,6 +582,28 @@ func runtimeReferenceLabel(ref RuntimePromptReference) string {
 	return latestLabel
 }
 
+func versionsByLabel(versions []*promptmodel.PromptVersion, label string) map[string]*promptmodel.PromptVersion {
+	result := map[string]*promptmodel.PromptVersion{}
+	for _, version := range versions {
+		if !slices.Contains(version.Labels, label) {
+			continue
+		}
+		if existing := result[version.PromptID]; existing == nil || version.Version > existing.Version {
+			result[version.PromptID] = version
+		}
+	}
+	return result
+}
+
+func firstVersionWithLabel(versions []*promptmodel.PromptVersion, label string) *promptmodel.PromptVersion {
+	for _, version := range versions {
+		if slices.Contains(version.Labels, label) {
+			return version
+		}
+	}
+	return nil
+}
+
 func reassignLabels(tx *gorm.DB, versions []*promptmodel.PromptVersion, targetVersion int, targetLabels []string, requireTarget bool) error {
 	targetSet := map[string]struct{}{}
 	for _, label := range targetLabels {
@@ -533,16 +620,7 @@ func reassignLabels(tx *gorm.DB, versions []*promptmodel.PromptVersion, targetVe
 		return fmt.Errorf("prompt version not found")
 	}
 	for _, version := range versions {
-		nextLabels := make([]string, 0, len(version.Labels))
-		for _, label := range version.Labels {
-			if label == latestLabel || hasLabel(targetSet, label) {
-				continue
-			}
-			nextLabels = append(nextLabels, label)
-		}
-		if version.Version == targetVersion {
-			nextLabels = uniqueLabels(targetLabels, slices.Contains(targetLabels, latestLabel))
-		}
+		nextLabels := reassignedVersionLabels(version, targetVersion, targetLabels, targetSet)
 		labelsJSON, err := json.Marshal(nextLabels)
 		if err != nil {
 			return err
@@ -552,6 +630,20 @@ func reassignLabels(tx *gorm.DB, versions []*promptmodel.PromptVersion, targetVe
 		}
 	}
 	return nil
+}
+
+func reassignedVersionLabels(version *promptmodel.PromptVersion, targetVersion int, targetLabels []string, targetSet map[string]struct{}) []string {
+	if version.Version == targetVersion {
+		return uniqueLabels(targetLabels, slices.Contains(targetLabels, latestLabel))
+	}
+	nextLabels := make([]string, 0, len(version.Labels))
+	for _, label := range version.Labels {
+		if hasLabel(targetSet, label) {
+			continue
+		}
+		nextLabels = append(nextLabels, label)
+	}
+	return nextLabels
 }
 
 func hasLabel(labels map[string]struct{}, label string) bool {

@@ -188,6 +188,24 @@ function validateParameterExtractorNodes(locale, fileName, nodes) {
   }
 }
 
+function validatePromptAssetReferences(locale, fileName, nodes) {
+  for (const node of nodes) {
+    if (node?.data?.type !== 'llm') continue;
+
+    if (node.data.prompt_reference !== undefined) {
+      fail(
+        `${locale}/${fileName} LLM node ${node.id} must not include prompt_reference. Agent templates should materialize editable inline prompts.`
+      );
+    }
+
+    if (node.data.prompt_source !== undefined && node.data.prompt_source !== 'inline') {
+      fail(
+        `${locale}/${fileName} LLM node ${node.id} must use prompt_source inline when prompt_source is present.`
+      );
+    }
+  }
+}
+
 function validateRunGuide(locale, fileName, doc, nodes) {
   const notes = nodes.filter(node => node?.data?.type === 'note');
   const noteText = notes
@@ -336,6 +354,7 @@ function validateGraph(locale, fileName, doc) {
   validateStartDefaults(locale, fileName, nodes);
   validateNodeModels(locale, fileName, nodes);
   validateParameterExtractorNodes(locale, fileName, nodes);
+  validatePromptAssetReferences(locale, fileName, nodes);
   validateLocaleText(locale, fileName, doc);
 
   return nodeTypes;

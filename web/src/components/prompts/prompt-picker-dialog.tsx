@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,13 +23,13 @@ import {
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { usePrompt, usePrompts } from '@/hooks/prompt/use-prompts';
 import { useCurrentWorkspace } from '@/store/workspace-store';
+import { promptLocaleLabelKey } from '@/components/prompts/prompt-display-labels';
 import type { PromptPickerSelection } from '@/services/types/prompt';
 
 interface PromptPickerDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onApply: (selection: PromptPickerSelection) => void;
-  applyMode?: 'reference' | 'copy';
   applyLabel?: string;
   warnOnReplace?: boolean;
 }
@@ -38,7 +38,6 @@ export function PromptPickerDialog({
   open,
   onOpenChange,
   onApply,
-  applyMode = 'reference',
   applyLabel,
   warnOnReplace = false,
 }: PromptPickerDialogProps) {
@@ -47,8 +46,6 @@ export function PromptPickerDialog({
   const [keyword, setKeyword] = useState('');
   const [selectedPromptId, setSelectedPromptId] = useState<string | null>(null);
   const [selectedVersionNumber, setSelectedVersionNumber] = useState<string>('');
-  const [referenceMode, setReferenceMode] = useState<'label' | 'version'>('label');
-  const [referenceLabel, setReferenceLabel] = useState<string>('production');
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const { prompts, isLoading } = usePrompts(
@@ -64,21 +61,39 @@ export function PromptPickerDialog({
     if (!prompt?.versions?.length) return undefined;
     if (!selectedVersionNumber) return prompt.versions[0];
     return (
-      prompt.versions.find(version => String(version.version) === selectedVersionNumber) ?? prompt.versions[0]
+      prompt.versions.find(version => String(version.version) === selectedVersionNumber) ??
+      prompt.versions[0]
     );
   }, [prompt, selectedVersionNumber]);
-  const availableLabels = useMemo(() => {
-    const labels = new Set<string>();
-    for (const version of prompt?.versions ?? []) {
-      for (const label of version.labels) labels.add(label);
-    }
-    return Array.from(labels);
-  }, [prompt?.versions]);
-  const isCopyMode = applyMode === 'copy';
+  const displayReferenceLabel = useCallback(
+    (label: string) => {
+      const normalized = label.toLowerCase();
+      if (normalized === 'production') return t('picker.releaseLabels.production');
+      if (normalized === 'latest') return t('picker.releaseLabels.latest');
+      if (normalized === 'staging') return t('picker.releaseLabels.staging');
+      if (normalized === 'gray-a') return t('picker.releaseLabels.grayA');
+      if (normalized === 'gray-b') return t('picker.releaseLabels.grayB');
+      return label;
+    },
+    [t]
+  );
+  const primaryActionLabel = applyLabel || t('picker.applyEditableCopy');
+
+  const clearSelection = useCallback(() => {
+    setSelectedPromptId(null);
+    setSelectedVersionNumber('');
+  }, []);
 
   const handleSelectPrompt = (promptId: string) => {
     setSelectedPromptId(promptId);
     setSelectedVersionNumber('');
+  };
+
+  const handleKeywordChange = (value: string) => {
+    setKeyword(value);
+    if (selectedPromptId) {
+      clearSelection();
+    }
   };
 
   const buildSelection = (): PromptPickerSelection | null => {
@@ -86,10 +101,6 @@ export function PromptPickerDialog({
     return {
       prompt,
       version: selectedVersion,
-      reference:
-        referenceMode === 'label' && referenceLabel
-          ? { mode: 'label', label: referenceLabel }
-          : { mode: 'version', version: selectedVersion.version },
     };
   };
 
@@ -112,22 +123,18 @@ export function PromptPickerDialog({
   };
 
   useEffect(() => {
-    if (!prompt) return;
-    const labels = Array.from(
-      new Set((prompt.versions || []).flatMap(version => version.labels))
-    );
-    if (labels.includes('production')) {
-      setReferenceMode('label');
-      setReferenceLabel('production');
-      return;
+    if (!open) return;
+    setKeyword('');
+    clearSelection();
+    setConfirmOpen(false);
+  }, [clearSelection, open]);
+
+  useEffect(() => {
+    if (!open || isLoading || !selectedPromptId) return;
+    if (!prompts.some(item => item.id === selectedPromptId)) {
+      clearSelection();
     }
-    if (labels.length > 0) {
-      setReferenceMode('label');
-      setReferenceLabel(labels[0] || '');
-      return;
-    }
-    setReferenceMode('version');
-  }, [prompt]);
+  }, [clearSelection, isLoading, open, prompts, selectedPromptId]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -139,7 +146,7 @@ export function PromptPickerDialog({
           <div className="space-y-3 border rounded-lg p-3 overflow-hidden">
             <Input
               value={keyword}
-              onChange={e => setKeyword(e.target.value)}
+              onChange={e => handleKeywordChange(e.target.value)}
               placeholder={t('picker.searchPlaceholder')}
             />
             <div className="space-y-2 overflow-y-auto max-h-[360px]">
@@ -148,27 +155,55 @@ export function PromptPickerDialog({
               ) : prompts.length === 0 ? (
                 <div className="text-sm text-muted-foreground">{t('states.empty')}</div>
               ) : (
-                prompts.map(item => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => handleSelectPrompt(item.id)}
-                    className={`w-full text-left rounded-lg border p-3 transition-colors ${
-                      selectedPromptId === item.id ? 'border-primary bg-primary/5' : 'hover:bg-muted/40'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <div className="font-medium">{item.name}</div>
-                      <Badge variant="outline">{item.locale}</Badge>
-                      <Badge variant="secondary">{t(`sources.${item.source}`)}</Badge>
-                    </div>
-                    {item.description ? (
-                      <div className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                        {item.description}
+                prompts.map(item => {
+                  const hasSingleVersion = item.latest_version <= 1;
+
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => handleSelectPrompt(item.id)}
+                      className={`w-full text-left rounded-lg border p-3 transition-colors ${
+                        selectedPromptId === item.id
+                          ? 'border-primary bg-primary/5'
+                          : 'hover:bg-muted/40'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <div className="font-medium">{item.name}</div>
+                        <Badge variant="outline">{t(promptLocaleLabelKey(item.locale))}</Badge>
+                        <Badge variant="secondary">{t(`sources.${item.source}`)}</Badge>
                       </div>
-                    ) : null}
-                  </button>
-                ))
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {hasSingleVersion ? (
+                          <Badge variant="subtle">
+                            {t('library.currentVersion', { version: item.latest_version })}
+                          </Badge>
+                        ) : (
+                          <>
+                            <Badge variant="subtle">
+                              {t('picker.latestVersionShort', {
+                                version: `v${item.latest_version}`,
+                              })}
+                            </Badge>
+                            <Badge variant={item.production_version ? 'default' : 'warning'}>
+                              {item.production_version
+                                ? t('picker.onlineVersionShort', {
+                                    version: `v${item.production_version}`,
+                                  })
+                                : t('picker.onlineVersionUnsetShort')}
+                            </Badge>
+                          </>
+                        )}
+                      </div>
+                      {item.description ? (
+                        <div className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                          {item.description}
+                        </div>
+                      ) : null}
+                    </button>
+                  );
+                })
               )}
             </div>
           </div>
@@ -183,19 +218,17 @@ export function PromptPickerDialog({
                     <Badge variant="outline">v{selectedVersion.version}</Badge>
                     {selectedVersion.labels.map(label => (
                       <Badge key={label} variant={label === 'production' ? 'default' : 'secondary'}>
-                        {label}
+                        {displayReferenceLabel(label)}
                       </Badge>
                     ))}
                   </div>
                   <p className="text-sm text-muted-foreground">{prompt.description}</p>
                 </div>
-                <div
-                  className={`grid grid-cols-1 gap-4 rounded-md border bg-muted/10 p-3 ${
-                    isCopyMode ? '' : 'md:grid-cols-2'
-                  }`}
-                >
+                <div className="grid grid-cols-1 gap-4 rounded-md border bg-muted/10 p-3">
                   <div className="space-y-2">
-                    <div className="text-xs font-medium text-muted-foreground">{t('picker.version')}</div>
+                    <div className="text-xs font-medium text-muted-foreground">
+                      {t('picker.version')}
+                    </div>
                     <Select
                       value={String(selectedVersion.version)}
                       onValueChange={value => setSelectedVersionNumber(value)}
@@ -206,54 +239,18 @@ export function PromptPickerDialog({
                       <SelectContent>
                         {(prompt.versions || []).map(version => (
                           <SelectItem key={version.id} value={String(version.version)}>
-                            v{version.version}
+                            {[
+                              `v${version.version}`,
+                              ...version.labels.map(label => displayReferenceLabel(label)),
+                            ].join(' · ')}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
-                  {isCopyMode ? (
-                    <div className="rounded-md border bg-background/80 px-3 py-3 text-sm text-muted-foreground">
-                      {t('picker.copyModeDescription')}
-                    </div>
-                  ) : (
-                    <>
-                      <div className="space-y-2">
-                        <div className="text-xs font-medium text-muted-foreground">{t('picker.referenceMode')}</div>
-                        <Select
-                          value={referenceMode}
-                          onValueChange={value => setReferenceMode(value as 'label' | 'version')}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {availableLabels.length > 0 ? (
-                              <SelectItem value="label">{t('picker.followLabel')}</SelectItem>
-                            ) : null}
-                            <SelectItem value="version">{t('picker.pinVersion')}</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      {referenceMode === 'label' && availableLabels.length > 0 ? (
-                        <div className="space-y-2 md:col-span-2">
-                          <div className="text-xs font-medium text-muted-foreground">{t('picker.label')}</div>
-                          <Select value={referenceLabel} onValueChange={setReferenceLabel}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {availableLabels.map(label => (
-                                <SelectItem key={label} value={label}>
-                                  {label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      ) : null}
-                    </>
-                  )}
+                  <div className="rounded-md border bg-background/80 px-3 py-3 text-sm text-muted-foreground">
+                    {t('picker.copyModeDescription')}
+                  </div>
                 </div>
                 <div className="rounded-md border bg-muted/20 p-3">
                   <pre className="text-xs whitespace-pre-wrap break-words">
@@ -271,7 +268,7 @@ export function PromptPickerDialog({
             {t('actions.cancel')}
           </Button>
           <Button onClick={handleApply} disabled={!selectedVersion}>
-            {applyLabel || (isCopyMode ? t('picker.applyEditableCopy') : t('picker.apply'))}
+            {primaryActionLabel}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -280,14 +277,22 @@ export function PromptPickerDialog({
         onOpenChange={setConfirmOpen}
         title={t('picker.replaceWarningTitle')}
         description={
-          isCopyMode
-            ? t('picker.replaceWarningDescriptionCopy')
-            : t('picker.replaceWarningDescriptionReference')
+          <span className="block space-y-1.5">
+            <span className="block">{t('picker.replaceWarningDescriptionCopy')}</span>
+            <span className="block text-xs leading-5 text-muted-foreground">
+              {t('picker.replaceWarningSaveHintCopy')}
+            </span>
+          </span>
         }
         confirmText={t('picker.replaceWarningConfirm')}
         cancelText={t('actions.cancel')}
         onConfirm={handleConfirmApply}
-        variant="warning"
+        contentClassName="max-w-[380px] rounded-lg"
+        footerClassName="border-t-0 bg-transparent px-5 pb-5 pt-2"
+        titleClassName="text-base font-semibold leading-6"
+        descriptionClassName="text-sm leading-6 font-normal"
+        cancelClassName="!h-[34px] !rounded !px-4 !text-[13px]"
+        confirmClassName="!h-[34px] !rounded !px-4 !text-[13px]"
       />
     </Dialog>
   );

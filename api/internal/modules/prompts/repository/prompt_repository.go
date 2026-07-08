@@ -12,6 +12,7 @@ type PromptRepository interface {
 	List(ctx context.Context, query *gorm.DB, page, limit int) ([]*promptmodel.Prompt, int64, error)
 	FindByID(ctx context.Context, id string) (*promptmodel.Prompt, error)
 	FindLatestVersions(ctx context.Context, promptIDs []string) (map[string]*promptmodel.PromptVersion, error)
+	FindVersionsByPromptIDs(ctx context.Context, promptIDs []string) ([]*promptmodel.PromptVersion, error)
 	FindVersions(ctx context.Context, promptID string) ([]*promptmodel.PromptVersion, error)
 	ListOptimizationRuns(ctx context.Context, query *gorm.DB, page, limit int) ([]*promptmodel.PromptOptimizationRun, int64, error)
 	FindOptimizationRunByID(ctx context.Context, id string) (*promptmodel.PromptOptimizationRun, error)
@@ -77,6 +78,18 @@ func (r *promptRepository) FindLatestVersions(ctx context.Context, promptIDs []s
 		result[version.PromptID] = version
 	}
 	return result, nil
+}
+
+func (r *promptRepository) FindVersionsByPromptIDs(ctx context.Context, promptIDs []string) ([]*promptmodel.PromptVersion, error) {
+	if len(promptIDs) == 0 {
+		return []*promptmodel.PromptVersion{}, nil
+	}
+	var versions []*promptmodel.PromptVersion
+	err := r.db.WithContext(ctx).
+		Where("prompt_id IN ?", promptIDs).
+		Order("version DESC").
+		Find(&versions).Error
+	return versions, err
 }
 
 func (r *promptRepository) FindVersions(ctx context.Context, promptID string) ([]*promptmodel.PromptVersion, error) {

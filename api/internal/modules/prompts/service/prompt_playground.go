@@ -26,6 +26,9 @@ func (s *promptService) PlaygroundStream(
 	if rawPrompt == "" && !hasMessages {
 		return fmt.Errorf("prompt cannot be empty")
 	}
+	if err := s.ensureWorkspaceAccess(ctx, organizationID, accountID, workspaceID, promptPlaygroundPermissionCodes()...); err != nil {
+		return err
+	}
 	if s == nil || s.llmClient == nil || s.defaultModelSvc == nil {
 		return fmt.Errorf("prompt playground is unavailable")
 	}
@@ -270,6 +273,9 @@ func renderPromptPlaygroundPayload(
 
 func normalizePromptPlaygroundVariableKey(token string) string {
 	trimmed := strings.TrimSpace(token)
+	if strings.HasPrefix(trimmed, "${") && strings.HasSuffix(trimmed, "}") {
+		return strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "${"), "}"))
+	}
 	trimmed = strings.TrimPrefix(trimmed, "{{")
 	trimmed = strings.TrimSuffix(trimmed, "}}")
 	trimmed = strings.TrimPrefix(trimmed, "#")
