@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import { useT } from '@/i18n';
 
 import Link from 'next/link';
@@ -31,13 +32,18 @@ import { useUpdateInterfaceLanguage } from '@/hooks/use-update-interface-languag
 import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import { LANGUAGES } from '@/lib/constants';
 import type { Locale } from '@/lib/i18n';
-import { Building2 } from 'lucide-react';
+import { Building2, GitBranch } from 'lucide-react';
+import { organizationService } from '@/services/organization.service';
+import { ORGANIZATION_KEYS } from '@/hooks/query-keys';
+import { getOrganizationDisplayName } from '@/utils/organization-display';
+import { normalizeOrganizationRole } from '@/utils/role-labels';
 
 export function UserMenu() {
   const router = useRouter();
   const tNav = useT('navigation');
   const tAuth = useT('auth');
   const tUi = useT('ui');
+  const tContacts = useT('dashboard.organization.contacts');
   const { locale, isEnabled: isLanguageSwitchEnabled } = useLocale();
   const updateLanguageMutation = useUpdateInterfaceLanguage();
 
@@ -54,7 +60,37 @@ export function UserMenu() {
   const { data: profile } = useAutoProfile({ staleTime: 1_800_000 });
   const displayName = profile?.name || user?.name || tNav('profile');
   const displayEmail = profile?.email || user?.email || '';
-  const displayOrganization = currentOrganization?.short_name || currentOrganization?.name || null;
+  const displayOrganization = getOrganizationDisplayName(currentOrganization) || null;
+  const organizationRole = normalizeOrganizationRole(
+    currentOrganization?.organization_role || user?.organization_role
+  );
+  const displayOrganizationRole =
+    organizationRole === 'owner'
+      ? tContacts('organizationRoles.owner')
+      : organizationRole === 'admin'
+        ? tContacts('organizationRoles.admin')
+        : organizationRole === 'normal'
+          ? tContacts('organizationRoles.normal')
+          : null;
+
+  const { data: currentDepartment } = useQuery({
+    queryKey: [
+      ...ORGANIZATION_KEYS.currentMember(user?.id ?? null),
+      currentOrganization?.id,
+      'department',
+    ],
+    enabled: Boolean(currentOrganization?.id && user?.id),
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      if (!currentOrganization?.id || !user?.id) return null;
+      try {
+        return await organizationService.getMemberDepartment(currentOrganization.id, user.id);
+      } catch {
+        return null;
+      }
+    },
+  });
+
   // Logout handler
   const handleLogout = async () => {
     if (isLogoutDisabled) {
@@ -89,26 +125,43 @@ export function UserMenu() {
           <span className="sr-only">{tNav('profile')}</span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-64">
+      <DropdownMenuContent align="end" className="w-80 p-2">
         <DropdownMenuLabel className="p-0">
-          <div className="flex items-center gap-3 px-2 py-2.5">
+          <div className="flex items-start gap-3 px-2 py-2.5">
             <SafeAvatar
               src={profile?.avatar_url || user?.avatar_url || null}
               alt={displayName}
               fallback={displayName}
               size="md"
             />
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-foreground">{displayName}</div>
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="truncate text-sm font-semibold text-foreground">{displayName}</div>
+                {displayOrganizationRole ? (
+                  <span className="shrink-0 rounded-full border border-primary/15 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                    {displayOrganizationRole}
+                  </span>
+                ) : null}
+              </div>
               <div className="truncate text-xs text-muted-foreground">{displayEmail}</div>
             </div>
           </div>
           {displayOrganization ? (
-            <div className="flex items-center gap-2 border-t border-border/60 px-2 py-2 text-[11px] text-muted-foreground">
-              <Building2 className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">
-                {tNav('organizations')}: {displayOrganization}
-              </span>
+            <div className="mx-2 mb-2 rounded-lg border border-border/70 bg-muted/40 p-3">
+              <div className="mb-1 flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
+                <Building2 className="h-3.5 w-3.5 shrink-0" />
+                <span>{tNav('currentOrganization')}</span>
+              </div>
+              <div className="truncate text-sm font-semibold text-foreground">
+                {displayOrganization}
+              </div>
+              {currentDepartment?.name ? (
+                <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <GitBranch className="h-3.5 w-3.5 shrink-0" />
+                  <span className="shrink-0">{tNav('currentDepartment')}:</span>
+                  <span className="truncate">{currentDepartment.name}</span>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </DropdownMenuLabel>
@@ -116,7 +169,10 @@ export function UserMenu() {
         {/* Organizations section rendered as a sub-menu */}
         {organizations.length > 0 && (
           <DropdownMenuSub>
-            <DropdownMenuSubTrigger inset>{tNav('organizations')}</DropdownMenuSubTrigger>
+            <DropdownMenuSubTrigger className="gap-2">
+              <Building2 className="h-4 w-4" />
+              <span>{tNav('switchOrganizationMenu')}</span>
+            </DropdownMenuSubTrigger>
             <DropdownMenuSubContent sideOffset={6} className="w-60 max-h-64 overflow-y-auto">
               {organizations.map(org => (
                 <DropdownMenuItem
@@ -127,7 +183,7 @@ export function UserMenu() {
                   {org.id === currentOrganization?.id && (
                     <Icons.Check className="h-4 w-4 text-primary" />
                   )}
-                  <span className="truncate">{org.short_name || org.name}</span>
+                  <span className="truncate">{getOrganizationDisplayName(org)}</span>
                 </DropdownMenuItem>
               ))}
             </DropdownMenuSubContent>

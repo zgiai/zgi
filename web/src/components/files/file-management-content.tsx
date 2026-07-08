@@ -76,6 +76,7 @@ import { useWorkspaceStore } from '@/store/workspace-store';
 import type { FileAssetProductStatus, FileFolder, FileItem } from '@/services/types/file';
 import { cn } from '@/lib/utils';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
+import { getOrganizationDisplayName } from '@/utils/organization-display';
 import { useJoinedWorkspaces } from '@/hooks/workspace/use-joined-workspaces';
 import { useUpdateCurrentWorkspace } from '@/hooks/workspace/use-update-current-workspace';
 import { fileManageService } from '@/services/file-manage.service';
@@ -233,7 +234,7 @@ function FileSelectorOrganizationSwitcher({
   }
 
   const currentOrganizationLabel =
-    currentOrganization?.short_name || currentOrganization?.name || tNavigation('organizations');
+    getOrganizationDisplayName(currentOrganization) || tNavigation('organizations');
 
   return (
     <div
@@ -288,7 +289,7 @@ function FileSelectorOrganizationSwitcher({
                   <Building2 className="h-3.5 w-3.5" />
                 </div>
                 <span className="truncate text-xs">
-                  {organization.short_name || organization.name}
+                  {getOrganizationDisplayName(organization)}
                 </span>
               </div>
               {organization.id === currentOrganization?.id ? (

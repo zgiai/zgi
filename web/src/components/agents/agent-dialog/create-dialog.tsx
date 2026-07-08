@@ -80,6 +80,10 @@ export function CreateAgentDialog({
     () => new Set<AgentType>(selectableAgentTypes),
     [selectableAgentTypes]
   );
+  const isWorkflowCreationContext = useMemo(
+    () => selectableAgentTypes.length > 0 && selectableAgentTypes.every(type => type !== AgentType.AGENT),
+    [selectableAgentTypes]
+  );
   const isAgentTypeAllowed = useCallback(
     (agentType: AgentType) => {
       if (!selectableAgentTypeSet.has(agentType)) {
@@ -103,6 +107,18 @@ export function CreateAgentDialog({
 
   const [iconValue, setIconValue] = useState<IconValue>(createTextIconValue('', ICON_BG));
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const dialogTitle = isWorkflowCreationContext ? t('createWorkflow') : t('create');
+  const useHorizontalCreateLayout = isWorkflowCreationContext && !hideTypeSelector;
+  const nameLabel = isWorkflowCreationContext ? t('form.workflowName') : t('form.name');
+  const namePlaceholder = isWorkflowCreationContext
+    ? t('form.workflowNamePlaceholder')
+    : t('form.namePlaceholder');
+  const descriptionLabel = isWorkflowCreationContext
+    ? t('form.workflowDescription')
+    : t('form.description');
+  const descriptionPlaceholder = isWorkflowCreationContext
+    ? t('form.workflowDescriptionPlaceholder')
+    : t('form.descriptionPlaceholder');
 
   const baseSchema = useMemo(
     () =>
@@ -113,7 +129,9 @@ export function CreateAgentDialog({
             const code = errs[0];
             const msg =
               code === 'required'
-                ? t('validation.name.required')
+                ? isWorkflowCreationContext
+                  ? t('validation.workflowName.required')
+                  : t('validation.name.required')
                 : code === 'tooShort'
                   ? t('validation.name.tooShort')
                   : code === 'tooLong'
@@ -130,7 +148,7 @@ export function CreateAgentDialog({
         icon_background: z.string().optional(),
         workspace_id: z.string().optional(),
       }),
-    [t]
+    [isWorkflowCreationContext, t]
   );
 
   const createSchema = useMemo(
@@ -239,7 +257,7 @@ export function CreateAgentDialog({
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent
-        className="max-w-lg"
+        className={cn(useHorizontalCreateLayout ? 'max-w-3xl' : 'max-w-lg')}
         aria-describedby={undefined}
         onInteractOutside={e => {
           const target = e.target as Element | null;
@@ -256,116 +274,130 @@ export function CreateAgentDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-xl font-semibold">
             <Bot className="h-5 w-5" />
-            {t('create')}
+            {dialogTitle}
           </DialogTitle>
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)}>
             <DialogBody className="space-y-6">
-              <div className="space-y-6">
+              <div
+                className={cn(
+                  'space-y-6',
+                  useHorizontalCreateLayout &&
+                    'grid gap-5 space-y-0 md:grid-cols-[260px_minmax(0,1fr)] md:items-start'
+                )}
+              >
                 {!hideTypeSelector && (
+                  <div
+                    className={cn(
+                      useHorizontalCreateLayout && 'rounded-xl border bg-muted/20 p-4'
+                    )}
+                  >
+                    <FormField
+                      control={form.control}
+                      name="agent_type"
+                      render={({ field }) => (
+                        <FormItem className="space-y-2.5">
+                          <FormLabel className="text-sm font-semibold">
+                            {t('form.mode')} <span className="text-destructive">*</span>
+                          </FormLabel>
+                          <FormControl>
+                            <RadioCardGroup
+                              value={field.value}
+                              onValueChange={field.onChange}
+                              className="gap-2"
+                            >
+                              {isAgentTypeAllowed(AgentType.AGENT) && (
+                                <RadioCard
+                                  value={AgentType.AGENT}
+                                  title={t('modes.agent')}
+                                  description={t('modes.agentDesc')}
+                                  checked={field.value === AgentType.AGENT}
+                                  hiddenRadio
+                                  icon={<Bot className="h-5 w-5" />}
+                                  className="p-3"
+                                />
+                              )}
+                              {isAgentTypeAllowed(AgentType.CONVERSATIONAL_AGENT) && (
+                                <RadioCard
+                                  value={AgentType.CONVERSATIONAL_AGENT}
+                                  title={t('modes.chatWorkflow')}
+                                  description={t('modes.chatWorkflowDesc')}
+                                  checked={field.value === AgentType.CONVERSATIONAL_AGENT}
+                                  hiddenRadio
+                                  icon={<MessageSquareQuote className="h-5 w-5" />}
+                                  className="p-3"
+                                />
+                              )}
+                              {isAgentTypeAllowed(AgentType.WORKFLOW) && (
+                                <RadioCard
+                                  value={AgentType.WORKFLOW}
+                                  title={t('modes.taskWorkflow')}
+                                  description={t('modes.taskWorkflowDesc')}
+                                  checked={field.value === AgentType.WORKFLOW}
+                                  hiddenRadio
+                                  icon={<Workflow className="h-5 w-5" />}
+                                  className="p-3"
+                                />
+                              )}
+                            </RadioCardGroup>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                )}
+
+                <div className="min-w-0 space-y-6">
                   <FormField
                     control={form.control}
-                    name="agent_type"
+                    name="name"
                     render={({ field }) => (
                       <FormItem className="space-y-2.5">
                         <FormLabel className="text-sm font-semibold">
-                          {t('form.mode')} <span className="text-destructive">*</span>
+                          {nameLabel} <span className="text-destructive">*</span>
                         </FormLabel>
                         <FormControl>
-                          <RadioCardGroup
-                            value={field.value}
-                            onValueChange={field.onChange}
-                            className="gap-2"
-                          >
-                            {isAgentTypeAllowed(AgentType.AGENT) && (
-                              <RadioCard
-                                value={AgentType.AGENT}
-                                title={t('modes.agent')}
-                                description={t('modes.agentDesc')}
-                                checked={field.value === AgentType.AGENT}
-                                hiddenRadio
-                                icon={<Bot className="h-5 w-5" />}
-                                className="p-3"
-                              />
+                          <Input
+                            placeholder={namePlaceholder}
+                            required
+                            aria-invalid={!!form.formState.errors.name}
+                            className={cn(
+                              'h-11',
+                              form.formState.errors.name ? 'focus-visible:ring-destructive' : ''
                             )}
-                            {isAgentTypeAllowed(AgentType.CONVERSATIONAL_AGENT) && (
-                              <RadioCard
-                                value={AgentType.CONVERSATIONAL_AGENT}
-                                title={t('modes.chatWorkflow')}
-                                description={t('modes.chatWorkflowDesc')}
-                                checked={field.value === AgentType.CONVERSATIONAL_AGENT}
-                                hiddenRadio
-                                icon={<MessageSquareQuote className="h-5 w-5" />}
-                                className="p-3"
-                              />
-                            )}
-                            {isAgentTypeAllowed(AgentType.WORKFLOW) && (
-                              <RadioCard
-                                value={AgentType.WORKFLOW}
-                                title={t('modes.taskWorkflow')}
-                                description={t('modes.taskWorkflowDesc')}
-                                checked={field.value === AgentType.WORKFLOW}
-                                hiddenRadio
-                                icon={<Workflow className="h-5 w-5" />}
-                                className="p-3"
-                              />
-                            )}
-                          </RadioCardGroup>
+                            {...field}
+                          />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
-                )}
 
-                <FormField
-                  control={form.control}
-                  name="name"
-                  render={({ field }) => (
-                    <FormItem className="space-y-2.5">
-                      <FormLabel className="text-sm font-semibold">
-                        {t('form.name')} <span className="text-destructive">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder={t('form.namePlaceholder')}
-                          required
-                          aria-invalid={!!form.formState.errors.name}
-                          className={cn(
-                            'h-11',
-                            form.formState.errors.name ? 'focus-visible:ring-destructive' : ''
-                          )}
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                  <FormField
+                    control={form.control}
+                    name="description"
+                    render={({ field }) => (
+                      <FormItem className="space-y-2">
+                        <FormLabel className="flex items-center gap-1">
+                          {descriptionLabel}
+                        </FormLabel>
+                        <FormControl>
+                          <Textarea
+                            placeholder={descriptionPlaceholder}
+                            className="resize-none"
+                            rows={4}
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
 
-                <FormField
-                  control={form.control}
-                  name="description"
-                  render={({ field }) => (
-                    <FormItem className="space-y-2">
-                      <FormLabel className="flex items-center gap-1">
-                        {t('form.description')}
-                      </FormLabel>
-                      <FormControl>
-                        <Textarea
-                          placeholder={t('form.descriptionPlaceholder')}
-                          className="resize-none"
-                          rows={4}
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <div className="space-y-3">
+                <div className={cn('space-y-3', useHorizontalCreateLayout && 'md:col-span-2')}>
                   <div className="flex items-center justify-between">
                     <button
                       type="button"

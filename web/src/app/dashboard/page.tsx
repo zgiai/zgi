@@ -26,6 +26,7 @@ import { useJoinedWorkspaces } from '@/hooks/workspace/use-joined-workspaces';
 import { organizationService } from '@/services/organization.service';
 import { providerService } from '@/services/provider.service';
 import { channelService } from '@/services/channel.service';
+import { getOrganizationDisplayName } from '@/utils/organization-display';
 
 function SectionEyebrow({ children }: { children: React.ReactNode }) {
   return (
@@ -124,6 +125,7 @@ export default function DashboardPage() {
     isChannelsLoading;
 
   const topUsageModel = usageSummaryData?.by_model?.[0];
+  const currentOrganizationName = getOrganizationDisplayName(currentOrganization);
 
   const handleRefresh = () => {
     void refetchStats();
@@ -138,7 +140,7 @@ export default function DashboardPage() {
       key: 'organizations',
       label: t('items.organization'),
       value: organizations.length,
-      description: currentOrganization?.name || '-',
+      description: currentOrganizationName || '-',
       icon: Building2,
     },
     {
@@ -180,18 +182,18 @@ export default function DashboardPage() {
 
   const quickLinks = [
     {
-      key: 'workspaces',
-      title: t('items.workspaces'),
-      description: t('organization.workspaceManagement.description'),
-      href: '/dashboard/organization/workspaces',
-      icon: Building2,
-    },
-    {
       key: 'contacts',
       title: t('items.contacts'),
       description: t('organization.contacts.subtitle'),
       href: '/dashboard/organization/contacts',
       icon: Users,
+    },
+    {
+      key: 'workspaces',
+      title: t('items.workspaces'),
+      description: t('organization.workspaceManagement.description'),
+      href: '/dashboard/organization/workspaces',
+      icon: Building2,
     },
     {
       key: 'permissions',
@@ -242,7 +244,7 @@ export default function DashboardPage() {
               {currentOrganization ? (
                 <div className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-muted/30 px-3 py-1 text-muted-foreground">
                   <span>{t('items.organization')}:</span>
-                  <span className="text-foreground">{currentOrganization.name}</span>
+                  <span className="text-foreground">{currentOrganizationName}</span>
                 </div>
               ) : null}
             </div>

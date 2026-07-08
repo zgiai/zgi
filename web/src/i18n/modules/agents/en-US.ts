@@ -819,8 +819,12 @@ const messages = {
   form: {
     name: 'Name',
     namePlaceholder: 'Please enter agent name',
+    workflowName: 'Workflow name',
+    workflowNamePlaceholder: 'Please enter workflow name',
     description: 'Description',
     descriptionPlaceholder: 'Please enter agent description',
+    workflowDescription: 'Workflow description',
+    workflowDescriptionPlaceholder: 'Please enter workflow description',
     department: 'Department',
     departmentPlaceholder: 'Please select department',
     permissions: 'Permissions',
@@ -1517,6 +1521,9 @@ const messages = {
       tooLong: 'Name must be at most 32 characters',
       invalidChars: 'Only letters, numbers, underscores, hyphens and spaces are allowed',
       onlySpaces: 'Name must contain at least one non-space character',
+    },
+    workflowName: {
+      required: 'Workflow name is required',
     },
     workspace: {
       required: 'Please select an owning workspace',

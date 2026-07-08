@@ -790,8 +790,12 @@ const messages: AgentsMessages = {
   form: {
     name: '名称',
     namePlaceholder: '请输入智能体名称',
+    workflowName: '工作流名称',
+    workflowNamePlaceholder: '请输入工作流名称',
     description: '描述',
     descriptionPlaceholder: '请输入智能体描述',
+    workflowDescription: '工作流描述',
+    workflowDescriptionPlaceholder: '请输入工作流描述',
     department: '部门',
     departmentPlaceholder: '请选择部门',
     permissions: '权限',
@@ -1917,6 +1921,9 @@ const messages: AgentsMessages = {
       tooLong: '名称最多32个字符',
       invalidChars: '仅允许字母、数字、下划线、短横线和空格',
       onlySpaces: '名称必须包含至少一个非空字符',
+    },
+    workflowName: {
+      required: '工作流名称为必填项',
     },
     workspace: {
       required: '请选择所属工作空间',

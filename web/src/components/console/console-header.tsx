@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { useCurrentWorkspace, useWorkspaceContextStatus } from '@/store/workspace-store';
 import { useOrganizationStore } from '@/store/organization-store';
 import { cn } from '@/lib/utils';
+import { getOrganizationDisplayName } from '@/utils/organization-display';
 
 interface ConsoleHeaderProps {
   hidden?: boolean;
@@ -120,7 +121,7 @@ export function ConsoleHeader({ hidden, onToggleMobileSidebar }: ConsoleHeaderPr
     currentWorkspace?.name ||
     (contextStatus === 'workspace_required' ? tNav('personalSpace') : null);
   const contextLabel = isDashboardRoute
-    ? currentOrganization?.name || null
+    ? getOrganizationDisplayName(currentOrganization) || null
     : workspaceContextLabel;
   const contextPrefix = isDashboardRoute
     ? tNav('organizations')
