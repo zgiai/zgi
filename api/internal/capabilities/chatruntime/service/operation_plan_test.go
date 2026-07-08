@@ -1004,6 +1004,9 @@ func TestSkillLoopPlanToolGuardBlocksOverbroadAgentCandidateSelectionUpdate(t *t
 						"status":    operationPlanStepStatusPending,
 						"skill_id":  skills.SkillAgentManagement,
 						"tool_name": "update_agent_config",
+						"arguments": map[string]interface{}{
+							operationPlanCandidateSelectionPolicyKey: operationPlanCandidateSelectionAtMostOnePerField,
+						},
 					},
 				},
 				"step_status": map[string]interface{}{

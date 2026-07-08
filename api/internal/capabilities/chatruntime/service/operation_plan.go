@@ -27,6 +27,11 @@ const (
 	operationPlanConfigGoalKey             = "config_goal"
 	operationPlanEvidenceStateKey          = "evidence_state"
 	operationPlanEvidenceLedgerKey         = "evidence_ledger"
+
+	operationPlanCandidateSelectionPolicyKey           = "candidate_selection_policy"
+	operationPlanCandidateSelectionAtMostOnePerField   = "at_most_one_per_binding_field"
+	operationPlanCandidateSelectionPolicyDetailKey     = "candidate_selection_policy_detail"
+	operationPlanCandidateSelectionAtMostOneDetailText = "choose at most one current-workspace candidate for each requested binding field"
 )
 
 func operationPlanFromTurnStrategy(taskID string, parts *chatRequestParts, strategy *AIChatTurnStrategy) map[string]interface{} {
@@ -661,12 +666,14 @@ func buildAgentResourceBindingContinuationPlanForFields(parts *chatRequestParts,
 		steps = operationPlanResourceBindingCandidateSteps(fields, agentID)
 	}
 	updateArgs := map[string]interface{}{
-		operationPlanExpectedBindingActionsKey: expectedActions,
-		operationPlanConfigGoalKey:             configGoal,
-		"candidate_selection_policy":           strings.TrimSpace(candidateSelectionPolicy),
+		operationPlanExpectedBindingActionsKey:         expectedActions,
+		operationPlanConfigGoalKey:                     configGoal,
+		operationPlanCandidateSelectionPolicyKey:       operationPlanCandidateSelectionAtMostOnePerField,
+		operationPlanCandidateSelectionPolicyDetailKey: strings.TrimSpace(candidateSelectionPolicy),
 	}
-	if updateArgs["candidate_selection_policy"] == "" {
-		delete(updateArgs, "candidate_selection_policy")
+	if updateArgs[operationPlanCandidateSelectionPolicyDetailKey] == "" {
+		delete(updateArgs, operationPlanCandidateSelectionPolicyKey)
+		delete(updateArgs, operationPlanCandidateSelectionPolicyDetailKey)
 	}
 	if agentID != "" {
 		updateArgs["agent_id"] = agentID

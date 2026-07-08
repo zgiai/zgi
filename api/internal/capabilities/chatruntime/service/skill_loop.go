@@ -2247,8 +2247,7 @@ func skillLoopShouldBlockOverbroadAgentCandidateSelectionUpdate(prepared *Prepar
 		len(req.Arguments) == 0 {
 		return agentCandidateSelectionUpdateIssue{}, false
 	}
-	goal := operationPlanAmendmentGoal(prepared)
-	if !agentBindingExplicitCandidateSelectionMutationRequested(goal) {
+	if !skillLoopPlanRequiresSingleAgentBindingCandidate(prepared) {
 		return agentCandidateSelectionUpdateIssue{}, false
 	}
 
@@ -2274,6 +2273,61 @@ func skillLoopShouldBlockOverbroadAgentCandidateSelectionUpdate(prepared *Prepar
 	}
 
 	return issue, len(issue.OverLimitFields) > 0 || len(issue.InvalidSkillIDs) > 0
+}
+
+func skillLoopPlanRequiresSingleAgentBindingCandidate(prepared *PreparedChat) bool {
+	if prepared == nil || prepared.Message == nil {
+		return false
+	}
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if len(plan) == 0 {
+		return false
+	}
+	for _, step := range mapSliceFromAny(plan["steps"]) {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skills.SkillAgentManagement) ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(step["tool_name"])), "update_agent_config") {
+			continue
+		}
+		if skillLoopCandidateSelectionPolicyIsAtMostOne(step) {
+			return true
+		}
+		if skillLoopCandidateSelectionPolicyIsAtMostOne(mapFromOperationContext(step["arguments"])) {
+			return true
+		}
+	}
+	if structured := mapFromOperationContext(plan["structured_plan"]); len(structured) > 0 {
+		for _, operation := range mapSliceFromAny(structured["operations"]) {
+			if !strings.EqualFold(strings.TrimSpace(stringFromAny(operation["skill_id"])), skills.SkillAgentManagement) ||
+				!strings.EqualFold(strings.TrimSpace(stringFromAny(operation["tool_name"])), "update_agent_config") {
+				continue
+			}
+			if skillLoopCandidateSelectionPolicyIsAtMostOne(operation) {
+				return true
+			}
+			if skillLoopCandidateSelectionPolicyIsAtMostOne(mapFromOperationContext(operation["arguments"])) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func skillLoopCandidateSelectionPolicyIsAtMostOne(values map[string]interface{}) bool {
+	if len(values) == 0 {
+		return false
+	}
+	policy := strings.ToLower(strings.TrimSpace(stringFromAny(values[operationPlanCandidateSelectionPolicyKey])))
+	if policy == "" {
+		return false
+	}
+	switch policy {
+	case operationPlanCandidateSelectionAtMostOnePerField,
+		"at_most_one",
+		"one_per_binding_field":
+		return true
+	default:
+		return false
+	}
 }
 
 func skillLoopOverbroadAgentCandidateSelectionUpdateGuardResult(issue agentCandidateSelectionUpdateIssue) skillloop.FinalAnswerGuardResult {
