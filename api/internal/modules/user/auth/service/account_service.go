@@ -2028,7 +2028,7 @@ func (s *AccountService) GetAccountContext(ctx context.Context, accountID string
 		return cached, nil
 	}
 
-	result, err, _ := s.accountContextGroup.Do(accountID, func() (interface{}, error) {
+	result, err, _ := s.accountContextGroup.Do(cacheToken.SingleflightKey(), func() (interface{}, error) {
 		cacheToken := workspacecache.NewAccountScopedToken(ctx, accountID)
 		if cached, ok := workspacecache.GetAccountContext(ctx, cacheToken); ok {
 			return cached, nil

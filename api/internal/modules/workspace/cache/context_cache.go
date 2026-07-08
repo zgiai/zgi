@@ -35,6 +35,10 @@ type AccountScopedToken struct {
 	generation string
 }
 
+func (token AccountScopedToken) SingleflightKey() string {
+	return keys.DefaultBuilder().Build(modulePrefix, accountContextPart, token.accountID, token.generation)
+}
+
 type OrganizationWorkspaceToken struct {
 	organizationID         string
 	accountID              string

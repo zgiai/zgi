@@ -1053,6 +1053,7 @@ func (s *organizationService) UpdateCustomWorkspaceRole(ctx context.Context, req
 	if err := db.WithContext(ctx).Save(&role).Error; err != nil {
 		return nil, fmt.Errorf("failed to update role: %w", err)
 	}
+	s.invalidateOrganizationContext(ctx, req.OrganizationID)
 
 	return &shared_dto.OrganizationRoleDetailResponse{
 		ID:             role.ID,
@@ -1089,6 +1090,7 @@ func (s *organizationService) UpdateWorkspaceRolePermissions(ctx context.Context
 	if err := db.WithContext(ctx).Save(&role).Error; err != nil {
 		return fmt.Errorf("failed to update role permissions: %w", err)
 	}
+	s.invalidateOrganizationContext(ctx, req.OrganizationID)
 
 	return nil
 }
@@ -1155,6 +1157,7 @@ func (s *organizationService) DeleteCustomWorkspaceRole(ctx context.Context, org
 	if err := db.WithContext(ctx).Save(&role).Error; err != nil {
 		return fmt.Errorf("failed to delete role: %w", err)
 	}
+	s.invalidateOrganizationContext(ctx, organizationID)
 
 	return nil
 }
