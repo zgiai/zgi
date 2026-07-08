@@ -1328,9 +1328,6 @@ func skillLoopPlanToolCallGuardWithResolved(prepared *PreparedChat, resolved *sk
 			recordOperationPlanToolDeviation(prepared.Message.Metadata, skillID, toolName, "model_collected_readonly_agent_candidate_evidence")
 			return skillloop.FinalAnswerGuardResult{}, false
 		}
-		if skillLoopShouldRecordUnrequestedAgentIconBackgroundUpdate(prepared, req) {
-			recordOperationPlanToolDeviation(prepared.Message.Metadata, skillID, toolName, "model_included_unrequested_agent_icon_background")
-		}
 		if issue, blocked := skillLoopShouldBlockOverbroadAgentCandidateSelectionUpdate(prepared, req); blocked {
 			result := skillLoopOverbroadAgentCandidateSelectionUpdateGuardResult(issue)
 			recordOperationPlanToolGuardDeviation(prepared.Message.Metadata, skillID, toolName, "model_selected_too_many_agent_binding_candidates", result)
@@ -2098,35 +2095,6 @@ func skillLoopPartialAgentModelConfigUpdateGuardResult(arguments map[string]inte
 			"Call agent-management/list_available_models if a valid pair has not already been resolved, then retry update_agent_config with both model_provider and model.",
 		}, " "),
 	}
-}
-
-func skillLoopShouldRecordUnrequestedAgentIconBackgroundUpdate(prepared *PreparedChat, req skillloop.ToolCallGuardRequest) bool {
-	if prepared == nil || prepared.parts == nil ||
-		!strings.EqualFold(strings.TrimSpace(req.SkillID), skills.SkillAgentManagement) ||
-		!strings.EqualFold(strings.TrimSpace(req.ToolName), "update_agent_identity") {
-		return false
-	}
-	if _, ok := req.Arguments["icon_background"]; !ok {
-		return false
-	}
-	goal := operationPlanAmendmentGoal(prepared)
-	if strings.TrimSpace(goal) == "" {
-		goal = prepared.parts.Query
-	}
-	return !agentManagementIconBackgroundRequested(goal)
-}
-
-func agentManagementIconBackgroundRequested(query string) bool {
-	text := strings.ToLower(strings.TrimSpace(query))
-	if text == "" {
-		return false
-	}
-	return containsAnySubstring(text, []string{
-		"icon background", "icon bg", "background color", "background colour", "background",
-		"icon color", "icon colour",
-		"\u56fe\u6807\u80cc\u666f", "\u56fe\u6807\u80cc\u666f\u8272", "\u56fe\u6807\u5e95\u8272", "\u56fe\u6807\u989c\u8272",
-		"\u80cc\u666f\u8272", "\u5e95\u8272",
-	})
 }
 
 func skillLoopShouldAllowReadOnlyAgentCandidateLookup(prepared *PreparedChat, skillID string, toolName string) bool {

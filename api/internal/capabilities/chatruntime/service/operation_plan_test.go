@@ -7341,44 +7341,6 @@ func TestSkillLoopPlanToolGuardStrategyDenoiseResultsAreAdvisory(t *testing.T) {
 	}
 }
 
-func TestSkillLoopPlanToolGuardRecordsUnrequestedAgentIconBackgroundUpdate(t *testing.T) {
-	prepared := preparedAgentIdentityUpdateGuardTestChat("change the current Agent name to Smoke, description to edited, and icon to rocket")
-
-	guard := skillLoopPlanToolCallGuard(prepared)
-	if guard == nil {
-		t.Fatal("skillLoopPlanToolCallGuard() = nil, want guard")
-	}
-	result, blocked := guard(skillloop.ToolCallGuardRequest{
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "update_agent_identity",
-		Arguments: map[string]interface{}{
-			"agent_id":        "agent-1",
-			"name":            "Smoke",
-			"description":     "edited",
-			"icon_type":       "text",
-			"icon":            "棣冩畬",
-			"icon_background": "#0f766e",
-		},
-	})
-	if blocked {
-		t.Fatalf("update_agent_identity with unrequested icon_background was blocked, want planned mutation allowed with deviation recorded: %#v", result)
-	}
-	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
-	deviations := mapSliceFromAny(plan["deviations"])
-	found := false
-	for _, deviation := range deviations {
-		if stringFromAny(deviation["reason"]) == "model_included_unrequested_agent_icon_background" &&
-			stringFromAny(deviation["skill_id"]) == skills.SkillAgentManagement &&
-			stringFromAny(deviation["tool_name"]) == "update_agent_identity" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("tool_deviations = %#v, want unrequested icon_background deviation recorded", deviations)
-	}
-}
-
 func TestSkillLoopPlanToolGuardAllowsRequestedAgentIconBackgroundUpdate(t *testing.T) {
 	prepared := preparedAgentIdentityUpdateGuardTestChat("change the current Agent icon to rocket and icon background color to #0f766e")
 
