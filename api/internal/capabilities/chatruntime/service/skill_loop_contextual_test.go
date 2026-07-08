@@ -626,6 +626,10 @@ func TestTemporaryFileGenerateFinalAnswerGuardRequiresArtifactTool(t *testing.T)
 				skills.SkillFileManager,
 			},
 			SkillMode: skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:                  "generate_temporary_file_artifact",
+				RecommendedCapabilities: []string{"file_artifact"},
+			},
 		},
 		Message: &runtimemodel.Message{Metadata: map[string]interface{}{}},
 	}

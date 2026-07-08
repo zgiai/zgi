@@ -6747,7 +6747,7 @@ func skillLoopTemporaryFileGenerateFinalAnswerGuard(prepared *PreparedChat) skil
 	if executionParts, _, _ := stagedExecutionScopedParts(parts); executionParts != nil {
 		parts = executionParts
 	}
-	if !isTemporaryFileGenerateIntent(parts.Query) {
+	if !modelTurnIntentRequestsTemporaryFileArtifact(parts.ModelTurnIntent) {
 		return nil
 	}
 	skillID, toolName := temporaryFileGenerateRequiredTool(parts)
@@ -6781,6 +6781,28 @@ func skillLoopTemporaryFileGenerateFinalAnswerGuard(prepared *PreparedChat) skil
 			}, " "),
 		}, true
 	}
+}
+
+func modelTurnIntentRequestsTemporaryFileArtifact(intent *AIChatModelTurnIntent) bool {
+	if intent == nil {
+		return false
+	}
+	if normalizeModelTurnIntent(intent.Intent) == "generate_temporary_file_artifact" {
+		return true
+	}
+	return modelTurnIntentHasRecommendedCapability(
+		intent,
+		"generated_artifact",
+		"chart_artifact",
+		"data_visualization_artifact",
+		"visualization_artifact",
+		"file_artifact",
+		"document_artifact",
+		"svg_artifact",
+		"text_artifact",
+		"pdf_artifact",
+		"spreadsheet_artifact",
+	)
 }
 
 func temporaryFileGenerateRequiredTool(parts *chatRequestParts) (string, string) {
