@@ -752,8 +752,18 @@ const FileManagementContent = ({
   const uploadAcceptExt = acceptExt.length > 0 ? acceptExt : [...FILE_MANAGEMENT_UPLOAD_ACCEPT_EXT];
   const processingStatusParam = getProcessingStatusQueryParam(processingStatusFilter);
 
-  const { files, currentPage, totalPages, total, isLoading, isFetching, error, goToPage, reload } =
-    useFiles('20', {
+  const {
+    files,
+    currentPage,
+    totalPages,
+    total,
+    isLoading,
+    isFetching,
+    error,
+    processingStatusCounts,
+    goToPage,
+    reload,
+  } = useFiles('20', {
       category: activeCategory,
       keyword: debouncedSearchValue,
       sort: 'created_at',
@@ -766,7 +776,9 @@ const FileManagementContent = ({
     ready: getProcessingStatusQueryParam('ready'),
     stored_only: getProcessingStatusQueryParam('stored_only'),
   };
+  const useMainListStatusCounts = activeCategory === 'all' || activeCategory === 'needs_action';
   const allFilesCount = useFiles('1', {
+    enabled: !useMainListStatusCounts,
     category: activeCategory,
     keyword: debouncedSearchValue,
     sort: 'created_at',
@@ -774,6 +786,7 @@ const FileManagementContent = ({
     workspaceId: workspaceId,
   });
   const needsActionFilesCount = useFiles('1', {
+    enabled: !useMainListStatusCounts,
     category: activeCategory,
     keyword: debouncedSearchValue,
     sort: 'created_at',
@@ -782,6 +795,7 @@ const FileManagementContent = ({
     workspaceId: workspaceId,
   });
   const readyFilesCount = useFiles('1', {
+    enabled: !useMainListStatusCounts,
     category: activeCategory,
     keyword: debouncedSearchValue,
     sort: 'created_at',
@@ -790,6 +804,7 @@ const FileManagementContent = ({
     workspaceId: workspaceId,
   });
   const storedOnlyFilesCount = useFiles('1', {
+    enabled: !useMainListStatusCounts,
     category: activeCategory,
     keyword: debouncedSearchValue,
     sort: 'created_at',
@@ -805,11 +820,22 @@ const FileManagementContent = ({
     return status === 'parsing' || status === 'generating';
   });
   const processingStatusFilterCounts: Record<FileProcessingStatusFilter, number> = {
-    all: allFilesCount.total,
-    needs_action:
-      activeCategory === 'needs_action' ? allFilesCount.total : needsActionFilesCount.total,
-    ready: activeCategory === 'needs_action' ? 0 : readyFilesCount.total,
-    stored_only: activeCategory === 'needs_action' ? 0 : storedOnlyFilesCount.total,
+    all: useMainListStatusCounts ? processingStatusCounts.all || total : allFilesCount.total,
+    needs_action: useMainListStatusCounts
+      ? processingStatusCounts.parse_failed || 0
+      : activeCategory === 'needs_action'
+        ? allFilesCount.total
+        : needsActionFilesCount.total,
+    ready: useMainListStatusCounts
+      ? processingStatusCounts.ready || 0
+      : activeCategory === 'needs_action'
+        ? 0
+        : readyFilesCount.total,
+    stored_only: useMainListStatusCounts
+      ? processingStatusCounts.stored_only || 0
+      : activeCategory === 'needs_action'
+        ? 0
+        : storedOnlyFilesCount.total,
   };
 
   const prevPropRef = useRef<string[]>(selectedFileIds);
