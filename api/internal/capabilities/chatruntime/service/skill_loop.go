@@ -4746,40 +4746,17 @@ func agentIDFromConsoleAgentPageRoute(route string) string {
 	return agentID
 }
 
-func agentManagementVisibleContextResolvesUserTarget(parts *chatRequestParts, query string) bool {
+func agentManagementModelIntentResolvesVisibleTarget(parts *chatRequestParts) bool {
 	if parts == nil || !isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		return false
+	}
+	if parts.ModelTurnIntent == nil || parts.ModelTurnIntent.TargetVisibleIndex <= 0 {
 		return false
 	}
 	if len(consoleAgentsPromptVisibleAgents(parts)) == 0 {
 		return false
 	}
-	text := strings.ToLower(strings.TrimSpace(query))
-	if text == "" {
-		return false
-	}
-	return containsAnySubstring(text, []string{
-		"current page",
-		"this page",
-		"visible",
-		"shown",
-		"listed",
-		"selected",
-		"first ",
-		"top ",
-		"these agents",
-		"current agent",
-		"this agent",
-		"\u5f53\u524d\u9875",
-		"\u8fd9\u4e2a\u9875",
-		"\u672c\u9875",
-		"\u53ef\u89c1",
-		"\u5217\u8868",
-		"\u9009\u4e2d",
-		"\u524d",
-		"\u8fd9\u4e9b\u667a\u80fd\u4f53",
-		"\u8fd9\u4e2a\u667a\u80fd\u4f53",
-		"\u5f53\u524d\u667a\u80fd\u4f53",
-	})
+	return true
 }
 
 func agentManagementResourceMarkerNegatedInClause(text string, markerStart int) bool {
@@ -5339,12 +5316,12 @@ func contextualAgentManagementStrategy(parts *chatRequestParts, strategy *AIChat
 		if skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) {
 			primary = appendUniqueStrings(primary, skills.SkillAgentManagement)
 		}
-		if agentManagementVisibleContextResolvesUserTarget(parts, parts.Query) {
+		if agentManagementModelIntentResolvesVisibleTarget(parts) {
 			strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
-				"visible Agent targets from current page context are used directly when the user refers to visible, selected, current-page, or first-N Agents",
+				"visible Agent targets from current page context are used directly when model intent resolves a visible Agent ordinal target",
 			)
 			strategy.Avoid = appendUniqueStrings(strategy.Avoid,
-				"avoid redundant agent-management/list_agents before operating on visible, selected, current-page, or first-N Agents already present in page context",
+				"avoid redundant agent-management/list_agents before operating on visible ordinal Agent targets already present in page context",
 				"avoid navigation after an Agent list-page mutation unless the user explicitly asked to open a page or the current detail page was deleted",
 				"avoid waiting for asset_observation or refreshed page context after Agent mutations when agent-management tool results already confirm the state",
 			)

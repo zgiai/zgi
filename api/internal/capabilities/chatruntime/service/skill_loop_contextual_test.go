@@ -1191,6 +1191,44 @@ func TestContextualAIChatTurnStrategyUsesModelCapabilitiesForAgentGoals(t *testi
 	}
 }
 
+func TestContextualAgentManagementStrategyUsesModelVisibleIndexForPageTargetGuidance(t *testing.T) {
+	parts := &chatRequestParts{
+		Query:          "please inspect the target Agent",
+		Surface:        aiChatSurfaceContextualSidebar,
+		RuntimeContext: "/console/agents",
+		SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement},
+		SkillMode:      skillModeAuto,
+		ModelTurnIntent: &AIChatModelTurnIntent{
+			Intent:             "manage_agent_asset",
+			TargetVisibleIndex: 1,
+		},
+		RawOperationContext: map[string]interface{}{
+			"resources": []interface{}{
+				map[string]interface{}{
+					"resource_type": "page",
+					"resource_id":   "/console/agents",
+					"title":         "Agent list",
+				},
+				map[string]interface{}{
+					"resource_type": "agent",
+					"resource_id":   "agent-first",
+					"title":         "First Agent",
+					"href":          "/console/agents/agent-first/agent",
+					"can_edit":      true,
+				},
+			},
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	if !strings.Contains(strings.Join(strategy.Avoid, "\n"), "visible ordinal Agent targets") {
+		t.Fatalf("Avoid = %#v, want visible ordinal Agent target guidance from model intent", strategy.Avoid)
+	}
+}
+
 func TestContextualAIChatTurnStrategyUsesPassiveModelIntentFastPath(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
