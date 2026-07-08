@@ -1678,30 +1678,7 @@ func currentOrganizationResponse(organization *model.Organization, role model.Or
 }
 
 func (s *organizationService) invalidateOrganizationContext(ctx context.Context, organizationID string, accountIDs ...string) {
-	workspacecache.InvalidateOrganization(ctx, organizationID)
-
-	seen := make(map[string]struct{}, len(accountIDs))
-	for _, accountID := range accountIDs {
-		if accountID == "" {
-			continue
-		}
-		seen[accountID] = struct{}{}
-		workspacecache.InvalidateAccount(ctx, accountID)
-	}
-
-	joins, err := s.organizationRepo.GetAccountsByOrganizationID(ctx, organizationID)
-	if err != nil {
-		return
-	}
-	for _, join := range joins {
-		if join == nil || join.AccountID == "" {
-			continue
-		}
-		if _, ok := seen[join.AccountID]; ok {
-			continue
-		}
-		workspacecache.InvalidateAccount(ctx, join.AccountID)
-	}
+	workspacecache.InvalidateOrganizationWithWorkspaceMembers(ctx, s.organizationRepo.GetDB(), organizationID, accountIDs...)
 }
 
 // DeleteOrganization performs a soft delete of an organization (archives it)

@@ -27,6 +27,7 @@ type WorkspaceManagementServiceImpl struct {
 	accountService      interfaces.AccountService
 	quotaService        interfaces.QuotaService
 	organizationService interfaces.OrganizationService
+	deferInvalidation   bool
 }
 
 func NewWorkspaceManagementService(
@@ -60,15 +61,15 @@ func (s *WorkspaceManagementServiceImpl) SetOrganizationService(organizationServ
 }
 
 func (s *WorkspaceManagementServiceImpl) WithTx(tx *gorm.DB) interfaces.WorkspaceManagementService {
-	return NewWorkspaceManagementService(
-		tx,
-		s.workspaceRepo.WithTx(tx),
-		s.workspaceMemberRepo.WithTx(tx),
-		// Fix: Use accountService instead of accountRepo
-		s.accountService, // AccountService doesn't need WithTx as it's an interface
-		s.quotaService,
-		s.organizationService,
-	)
+	return &WorkspaceManagementServiceImpl{
+		db:                  tx,
+		workspaceRepo:       s.workspaceRepo.WithTx(tx),
+		workspaceMemberRepo: s.workspaceMemberRepo.WithTx(tx),
+		accountService:      s.accountService,
+		quotaService:        s.quotaService,
+		organizationService: s.organizationService,
+		deferInvalidation:   true,
+	}
 }
 
 // CreateWorkspace Create workspace
@@ -108,15 +109,10 @@ func (s *WorkspaceManagementServiceImpl) getWorkspaceOrganizationUUID(ctx contex
 }
 
 func (s *WorkspaceManagementServiceImpl) invalidateWorkspaceContext(ctx context.Context, workspaceID string, accountIDs ...string) {
-	if s.organizationService != nil {
-		organization, err := s.organizationService.GetOrganizationByWorkspaceID(ctx, workspaceID)
-		if err == nil && organization != nil {
-			workspacecache.InvalidateOrganization(ctx, organization.ID)
-		}
+	if s.deferInvalidation {
+		return
 	}
-	for _, accountID := range accountIDs {
-		workspacecache.InvalidateAccount(ctx, accountID)
-	}
+	workspacecache.InvalidateWorkspace(ctx, s.db, workspaceID, accountIDs...)
 }
 
 func (s *WorkspaceManagementServiceImpl) ensureSeatQuotaAvailable(ctx context.Context, organizationUUID *uuid.UUID) error {
@@ -151,7 +147,7 @@ func (s *WorkspaceManagementServiceImpl) CreateWorkspaceMember(ctx context.Conte
 	}
 
 	// Step 5: Create member in transaction
-	return s.db.Transaction(func(tx *gorm.DB) error {
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		// Create workspace member
 		join := &model.WorkspaceMember{
 			WorkspaceID: workspaceID,
@@ -210,7 +206,11 @@ func (s *WorkspaceManagementServiceImpl) CreateWorkspaceMember(ctx context.Conte
 		}
 
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	s.invalidateWorkspaceContext(ctx, workspaceID, accountID)
+	return nil
 }
 
 // GetWorkspaceByID Get workspace by ID
@@ -247,7 +247,7 @@ func (s *WorkspaceManagementServiceImpl) DeleteWorkspace(ctx context.Context, id
 		return err
 	}
 	if workspace != nil && workspace.OrganizationID != nil {
-		workspacecache.InvalidateOrganization(ctx, *workspace.OrganizationID)
+		workspacecache.InvalidateOrganizationWithWorkspaceMembers(ctx, s.db, *workspace.OrganizationID)
 	}
 	return nil
 }
@@ -523,14 +523,21 @@ func (s *WorkspaceManagementServiceImpl) removeMemberInternal(ctx context.Contex
 
 // DeleteWorkspaceWithMembers Delete workspace and all its members (including owner)
 func (s *WorkspaceManagementServiceImpl) DeleteWorkspaceWithMembers(ctx context.Context, id string) error {
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		txSvc := s.WithTx(tx).(*WorkspaceManagementServiceImpl)
+	workspace, _ := s.workspaceRepo.GetByID(ctx, id)
+	joins, err := s.workspaceMemberRepo.GetJoinsByWorkspaceID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("failed to get workspace members: %w", err)
+	}
 
-		// Get all members
-		joins, err := txSvc.workspaceMemberRepo.GetJoinsByWorkspaceID(ctx, id)
-		if err != nil {
-			return fmt.Errorf("failed to get workspace members: %w", err)
+	accountIDs := make([]string, 0, len(joins))
+	for _, join := range joins {
+		if join != nil {
+			accountIDs = append(accountIDs, join.AccountID)
 		}
+	}
+
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		txSvc := s.WithTx(tx).(*WorkspaceManagementServiceImpl)
 
 		// Remove all members (force=true to allow removing owner)
 		for _, join := range joins {
@@ -541,7 +548,15 @@ func (s *WorkspaceManagementServiceImpl) DeleteWorkspaceWithMembers(ctx context.
 
 		// Delete workspace
 		return txSvc.DeleteWorkspace(ctx, id)
-	})
+	}); err != nil {
+		return err
+	}
+	if workspace != nil && workspace.OrganizationID != nil {
+		workspacecache.InvalidateOrganizationWithWorkspaceMembers(ctx, s.db, *workspace.OrganizationID, accountIDs...)
+	} else {
+		s.invalidateWorkspaceContext(ctx, id, accountIDs...)
+	}
+	return nil
 }
 
 // UpdateMemberRole Update member role

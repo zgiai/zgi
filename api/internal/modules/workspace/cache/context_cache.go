@@ -11,6 +11,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/cache/keys"
 	shared_dto "github.com/zgiai/zgi/api/internal/dto"
 	redisutil "github.com/zgiai/zgi/api/pkg/redis"
+	"gorm.io/gorm"
 )
 
 const (
@@ -109,6 +110,72 @@ func InvalidateAccount(ctx context.Context, accountID string) {
 
 func InvalidateOrganization(ctx context.Context, organizationID string) {
 	incrementGeneration(ctx, organizationGenerationKey(organizationID))
+}
+
+func InvalidateOrganizationWithWorkspaceMembers(ctx context.Context, db *gorm.DB, organizationID string, accountIDs ...string) {
+	if redisutil.GetClient() == nil {
+		return
+	}
+	InvalidateOrganization(ctx, organizationID)
+	invalidateAccounts(ctx, accountIDs...)
+	if db == nil || organizationID == "" {
+		return
+	}
+
+	var joinedAccountIDs []string
+	if err := db.WithContext(ctx).
+		Table("members").
+		Select("account_id").
+		Where("organization_id = ?", organizationID).
+		Pluck("account_id", &joinedAccountIDs).Error; err != nil {
+		return
+	}
+
+	var workspaceAccountIDs []string
+	if err := db.WithContext(ctx).
+		Table("workspace_members").
+		Select("DISTINCT workspace_members.account_id").
+		Joins("JOIN workspaces ON workspaces.id = workspace_members.workspace_id").
+		Where("workspaces.organization_id = ?", organizationID).
+		Pluck("workspace_members.account_id", &workspaceAccountIDs).Error; err != nil {
+		return
+	}
+
+	invalidateAccounts(ctx, append(joinedAccountIDs, workspaceAccountIDs...)...)
+}
+
+func InvalidateWorkspace(ctx context.Context, db *gorm.DB, workspaceID string, accountIDs ...string) {
+	if redisutil.GetClient() == nil {
+		return
+	}
+	invalidateAccounts(ctx, accountIDs...)
+	if db == nil || workspaceID == "" {
+		return
+	}
+
+	var organizationID string
+	if err := db.WithContext(ctx).
+		Table("workspaces").
+		Select("organization_id").
+		Where("id = ? AND organization_id IS NOT NULL", workspaceID).
+		Scan(&organizationID).Error; err != nil || organizationID == "" {
+		return
+	}
+	InvalidateOrganizationWithWorkspaceMembers(ctx, db, organizationID, accountIDs...)
+}
+
+func invalidateAccounts(ctx context.Context, accountIDs ...string) {
+	seen := make(map[string]struct{}, len(accountIDs))
+	for _, accountID := range accountIDs {
+		if accountID == "" {
+			continue
+		}
+		if _, ok := seen[accountID]; ok {
+			continue
+		}
+		seen[accountID] = struct{}{}
+		InvalidateAccount(ctx, accountID)
+	}
 }
 
 func currentOrganizationKey(token AccountScopedToken) string {
