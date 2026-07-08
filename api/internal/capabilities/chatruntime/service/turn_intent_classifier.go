@@ -49,6 +49,7 @@ type AIChatModelTurnIntent struct {
 	CompletionCriteria       []string `json:"completion_criteria,omitempty"`
 	NeedsExactAgentRuntime   bool     `json:"needs_exact_agent_runtime,omitempty"`
 	CurrentContextMaySummary bool     `json:"current_context_may_be_summary,omitempty"`
+	OpenCreatedAgentDetail   bool     `json:"open_created_agent_detail,omitempty"`
 	TargetPage               string   `json:"target_page,omitempty"`
 	RouteRequired            *bool    `json:"route_required,omitempty"`
 	AssetEffect              string   `json:"asset_effect,omitempty"`
@@ -133,8 +134,9 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 					"Use recommended_capabilities for capabilities the executor may need, such as exact_agent_runtime, visible_file_content, page_navigation, generated_artifact, or asset_mutation.",
 					"For generated artifact turns, include chart_artifact for charts/graphs/data visualizations and file_artifact for ordinary documents, SVG/vector files, PDFs, spreadsheets, or text files.",
 					"For Agent management turns, include canonical Agent capability IDs in recommended_capabilities when relevant: agent.model_selection, agent.system_prompt, agent.skill_backed_capability:<capability query>, agent.accept_uploaded_files, agent.memory, agent.knowledge_binding, agent.database_binding, agent.workflow_binding, agent.suggested_questions. Use :bind, :unbind, or :replace after binding capability IDs only when the user asks for that action.",
+					"For Agent creation turns, set open_created_agent_detail=true only when the user explicitly asks to open, enter, edit, configure, or inspect the newly created Agent detail page after creation.",
 					"If the user asks for exact Agent prompt/config/runtime analysis and page context may be summary-level, set needs_exact_agent_runtime=true.",
-					"Respond with keys: intent, task_type, phases, evidence_required, recommended_capabilities, completion_criteria, needs_exact_agent_runtime, current_context_may_be_summary, confidence, reason, target_page, route_required, asset_effect, asset_risk, approval.",
+					"Respond with keys: intent, task_type, phases, evidence_required, recommended_capabilities, completion_criteria, needs_exact_agent_runtime, current_context_may_be_summary, open_created_agent_detail, confidence, reason, target_page, route_required, asset_effect, asset_risk, approval.",
 					"Do not output skill IDs or tool names. Tool selection is handled later by the model from enabled tool schemas and latest evidence.",
 					"Use confidence from 0 to 1. If unsure, choose the closest intent with confidence below 0.5.",
 				}, "\n"),
@@ -230,6 +232,7 @@ func parseModelTurnIntentContent(content string) (*AIChatModelTurnIntent, error)
 		CompletionCriteria:       firstNonEmptyStringSlice(jsonRawStringSlice(raw["completion_criteria"]), jsonRawStringSlice(raw["success_criteria"])),
 		NeedsExactAgentRuntime:   jsonRawBool(raw["needs_exact_agent_runtime"]),
 		CurrentContextMaySummary: jsonRawBool(raw["current_context_may_be_summary"]),
+		OpenCreatedAgentDetail:   jsonRawBool(raw["open_created_agent_detail"]),
 		TargetPage:               jsonRawString(raw["target_page"]),
 		RouteRequired:            jsonRawBoolPtr(raw["route_required"]),
 		AssetEffect:              jsonRawString(raw["asset_effect"]),
@@ -589,6 +592,12 @@ func applyModelTurnIntentHints(parts *chatRequestParts, strategy *AIChatTurnStra
 		strategy.CurrentContextMaySummary = true
 		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
 			"do not treat summary page context as complete evidence when the user asks for exact configuration",
+		)
+	}
+	if intent.OpenCreatedAgentDetail {
+		strategy.OpenCreatedAgentDetail = true
+		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
+			"after create_agent succeeds, open the newly created Agent detail page before claiming the page is open",
 		)
 	}
 	if strings.TrimSpace(intent.TargetPage) != "" {

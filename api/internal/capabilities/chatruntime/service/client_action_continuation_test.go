@@ -414,9 +414,6 @@ func TestClientActionContinuationFastPathSummarizesAgentCreatesAfterObservation(
 
 func TestClientActionAgentCreateProgressIdentifiesMissingTarget(t *testing.T) {
 	query := "冒烟准备：请创建两个草稿智能体，名称分别为 Agent One 和 Agent Two，描述都写“AIChat 快路径创建回归测试”。不要导航到详情页。完成后告诉我创建结果。"
-	if got := agentManagementCreateRequestedCount(query); got != 2 {
-		t.Fatalf("agentManagementCreateRequestedCount() = %d, want 2", got)
-	}
 	preparedMessage := &runtimemodel.Message{
 		Query: query,
 		Metadata: map[string]interface{}{
@@ -428,6 +425,7 @@ func TestClientActionAgentCreateProgressIdentifiesMissingTarget(t *testing.T) {
 			},
 		},
 	}
+	preparedMessage.Metadata["operation_plan"] = agentCreateProgressPlanForTest("AIChat 快路径创建回归测试")
 
 	progress := clientActionAgentCreateProgress(preparedMessage)
 	if progress["status"] != "partial" {
@@ -457,6 +455,7 @@ func TestClientActionContinuationMessageIncludesMissingAgentCreateTargets(t *tes
 			},
 		},
 	}
+	message.Metadata["operation_plan"] = agentCreateProgressPlanForTest("AIChat fast-path create regression")
 	event := map[string]interface{}{
 		"action_id":   "asset_observation:create-agent",
 		"action_type": "asset_observation",
@@ -501,6 +500,7 @@ func TestSkillLoopCompletionEvidenceIncludesAgentCreateProgress(t *testing.T) {
 		},
 	}
 
+	prepared.Message.Metadata["operation_plan"] = agentCreateProgressPlanForTest("AIChat fast-path create regression")
 	evidence := skillLoopCompletionEvidence(prepared)()
 	progress := mapFromOperationContext(evidence["agent_create_progress"])
 	if progress["status"] != "partial" {
@@ -513,6 +513,52 @@ func TestSkillLoopCompletionEvidenceIncludesAgentCreateProgress(t *testing.T) {
 	ledger := mapFromOperationContext(evidence["execution_ledger"])
 	if len(mapFromOperationContext(ledger["agent_create_progress"])) == 0 {
 		t.Fatalf("execution_ledger missing agent_create_progress: %#v", ledger)
+	}
+}
+
+func TestTerminalRecentAgentMutationContinuationUsesModelIntent(t *testing.T) {
+	recentPlans := []map[string]interface{}{
+		{
+			"status": operationPlanStatusCompleted,
+			"steps": []interface{}{
+				map[string]interface{}{
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "delete_agent",
+					"status":    operationPlanStepStatusCompleted,
+				},
+			},
+		},
+	}
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:                "继续",
+			RecentOperationPlans: recentPlans,
+		},
+	}
+	if !skillLoopShouldBlockTerminalRecentAgentMutationContinuation(prepared, skills.SkillAgentManagement, "delete_agent") {
+		t.Fatalf("weak continuation should block repeated terminal Agent mutation")
+	}
+	prepared.parts.ModelTurnIntent = &AIChatModelTurnIntent{
+		Intent:      "manage_agent_asset",
+		AssetEffect: "delete",
+	}
+	if skillLoopShouldBlockTerminalRecentAgentMutationContinuation(prepared, skills.SkillAgentManagement, "delete_agent") {
+		t.Fatalf("explicit model mutation intent should allow a new Agent mutation request")
+	}
+	prepared.parts.ModelTurnIntent = &AIChatModelTurnIntent{
+		Intent:                  "manage_agent_asset",
+		RecommendedCapabilities: []string{"agent.skill_backed_capability:file-generator:enable"},
+	}
+	if skillLoopShouldBlockTerminalRecentAgentMutationContinuation(prepared, skills.SkillAgentManagement, "update_agent_config") {
+		t.Fatalf("explicit model capability mutation should allow Agent config mutation continuation")
+	}
+}
+
+func agentCreateProgressPlanForTest(description string) map[string]interface{} {
+	return map[string]interface{}{
+		"agent_create_count":       2,
+		"agent_create_targets":     []interface{}{"Agent One", "Agent Two"},
+		"agent_create_description": description,
 	}
 }
 

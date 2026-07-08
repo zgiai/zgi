@@ -8,14 +8,31 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
+func withAgentManagementModelIntentForTest(parts *chatRequestParts, capabilities ...string) *chatRequestParts {
+	if parts == nil {
+		return nil
+	}
+	parts.ModelTurnIntent = &AIChatModelTurnIntent{
+		Intent:                  "manage_agent_asset",
+		RecommendedCapabilities: capabilities,
+		Confidence:              0.94,
+	}
+	return parts
+}
+
 func TestAgentManagementStructuredPlanCapturesBindingUpdate(t *testing.T) {
 	query := "\u8bf7\u5bf9\u521a\u521b\u5efa\u7684 GOAL-BIND-SMOKE-1783069834712 \u505a\u914d\u7f6e\u53d8\u66f4\uff1a\u5148\u67e5\u770b\u5f53\u524d\u914d\u7f6e\u548c\u53ef\u7ed1\u5b9a\u7684 Skill\u3001\u77e5\u8bc6\u5e93\u3001\u6570\u636e\u5e93\u8868\u3001\u5de5\u4f5c\u6d41\u5019\u9009\uff1b\u82e5\u6bcf\u7c7b\u6709\u53ef\u7528\u5019\u9009\uff0c\u8bf7\u5404\u7ed1\u5b9a 1 \u4e2a\u5230\u8fd9\u4e2a\u667a\u80fd\u4f53\u3002\u8bf7\u4f18\u5148\u7528 update_agent_config \u4e00\u6b21\u63d0\u4ea4\u8fd9\u4e9b\u7ed1\u5b9a\u3002"
-	parts := &chatRequestParts{
+	parts := withAgentManagementModelIntentForTest(&chatRequestParts{
 		Query:     query,
 		Surface:   aiChatSurfaceContextualSidebar,
 		SkillMode: skillModeAuto,
 		SkillIDs:  []string{skills.SkillAgentManagement},
-	}
+	},
+		"agent.skill:bind",
+		"agent.knowledge_binding:bind",
+		"agent.database_binding:bind",
+		"agent.workflow_binding:bind",
+	)
 
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{Intent: "manage_agent_asset"})
 	if strategy == nil {
@@ -104,13 +121,17 @@ func TestAgentManagementStructuredPlanBindsCreateThenEditTarget(t *testing.T) {
 }
 
 func TestAgentManagementStructuredPlanBindsCreateThenCapabilityConfigTarget(t *testing.T) {
-	parts := &chatRequestParts{
+	parts := withAgentManagementModelIntentForTest(&chatRequestParts{
 		Query:          "创建一个小说创作智能体，让它能生成文件、能上传文件，并使用适合复杂推理的模型。",
 		Surface:        aiChatSurfaceContextualSidebar,
 		RuntimeContext: "route=/console/agents",
 		SkillMode:      skillModeAuto,
 		SkillIDs:       []string{skills.SkillAgentManagement},
-	}
+	},
+		"agent.skill_backed_capability:file generation",
+		"agent.accept_uploaded_files",
+		"agent.model_selection:reasoning",
+	)
 
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
@@ -143,13 +164,17 @@ func TestAgentManagementStructuredPlanBindsCreateThenCapabilityConfigTarget(t *t
 }
 
 func TestAgentManagementStructuredPlanBindsCreateThenChineseCapabilityConfigTarget(t *testing.T) {
-	parts := &chatRequestParts{
+	parts := withAgentManagementModelIntentForTest(&chatRequestParts{
 		Query:          "\u521b\u5efa\u4e00\u4e2a\u5c0f\u8bf4\u521b\u4f5c\u667a\u80fd\u4f53\uff0c\u8ba9\u5b83\u80fd\u591f\u751f\u6210\u6587\u4ef6\u3001\u80fd\u591f\u4e0a\u4f20\u6587\u4ef6\uff0c\u5e76\u4f7f\u7528\u9002\u5408\u590d\u6742\u63a8\u7406\u7684\u6a21\u578b\u3002",
 		Surface:        aiChatSurfaceContextualSidebar,
 		RuntimeContext: "route=/console/agents",
 		SkillMode:      skillModeAuto,
 		SkillIDs:       []string{skills.SkillAgentManagement},
-	}
+	},
+		"agent.skill_backed_capability:file generation",
+		"agent.accept_uploaded_files",
+		"agent.model_selection:reasoning",
+	)
 
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
@@ -177,13 +202,16 @@ func TestAgentManagementStructuredPlanBindsCreateThenChineseCapabilityConfigTarg
 }
 
 func TestAgentManagementStructuredPlanPreservesLookupArguments(t *testing.T) {
-	parts := &chatRequestParts{
+	parts := withAgentManagementModelIntentForTest(&chatRequestParts{
 		Query:          "Switch the current Agent to a model suited for complex reasoning, use_case=reasoning, and enable capability file generation.",
 		Surface:        aiChatSurfaceContextualSidebar,
 		RuntimeContext: "route=/console/agents/agent-1/agent",
 		SkillMode:      skillModeAuto,
 		SkillIDs:       []string{skills.SkillAgentManagement},
-	}
+	},
+		"agent.model_selection:reasoning",
+		"agent.skill_backed_capability:file generation",
+	)
 
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
@@ -350,12 +378,12 @@ func TestContextualSidebarStructuredPlanCoversNavigationTool(t *testing.T) {
 
 func TestAgentManagementStructuredPlanDoesNotCreateForExistingReference(t *testing.T) {
 	query := "\u8bf7\u5bf9\u521a\u521b\u5efa\u7684 GOAL-BIND-SMOKE-1783069834712 \u505a\u914d\u7f6e\u53d8\u66f4\uff0c\u67e5\u770b\u5f53\u524d\u914d\u7f6e\u540e\u7ed1\u5b9a\u4e00\u4e2a\u77e5\u8bc6\u5e93\u3002"
-	parts := &chatRequestParts{
+	parts := withAgentManagementModelIntentForTest(&chatRequestParts{
 		Query:     query,
 		Surface:   aiChatSurfaceContextualSidebar,
 		SkillMode: skillModeAuto,
 		SkillIDs:  []string{skills.SkillAgentManagement},
-	}
+	}, "agent.knowledge_binding:bind")
 
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{
 		Intent: "manage_agent_asset",
@@ -444,12 +472,17 @@ func TestAgentManagementStructuredPlanIncludedInOperationPlanState(t *testing.T)
 
 func TestAgentManagementModelDecidesPromptHidesExactToolScript(t *testing.T) {
 	query := "\u5220\u6389\u9875\u9762\u4e2d\u7684\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\uff0c\u7136\u540e\u521b\u5efa\u4e00\u4e2a\u65b0\u7684\u667a\u80fd\u4f53\uff0c\u53d6\u540d\u53eb\u5c0f\u8bf4\u521b\u4f5c\u5927\u5e08\uff0c\u6a21\u578b\u914d\u7f6e\u4e3adeepseek flash\uff0c\u5199\u597d\u63d0\u793a\u8bcd\u9700\u8981\u8ba9agent\u80fd\u751f\u6210\u6587\u4ef6\u548c\u4e0a\u4f20\u6587\u4ef6\u3002"
-	parts := &chatRequestParts{
+	parts := withAgentManagementModelIntentForTest(&chatRequestParts{
 		Query:     query,
 		Surface:   aiChatSurfaceContextualSidebar,
 		SkillMode: skillModeAuto,
 		SkillIDs:  []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator, skills.SkillFileReader},
-	}
+	},
+		"agent.model_selection",
+		"agent.system_prompt",
+		"agent.skill_backed_capability:file generation",
+		"agent.accept_uploaded_files",
+	)
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{
 		Intent:         "manage_agent_asset",
 		TargetPage:     "/console/agents",

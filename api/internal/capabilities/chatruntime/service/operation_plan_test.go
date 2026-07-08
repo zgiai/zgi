@@ -19,6 +19,14 @@ func TestStreamingMessageMetadataIncludesOperationPlan(t *testing.T) {
 		Surface:   aiChatSurfaceContextualSidebar,
 		SkillMode: skillModeAuto,
 		SkillIDs:  []string{skills.SkillConsoleNavigator},
+		ModelTurnIntent: &AIChatModelTurnIntent{
+			Intent:      "navigate_console_page",
+			TargetPage:  "/console/files",
+			AssetEffect: "none",
+			AssetRisk:   "low",
+			Approval:    "none",
+			Confidence:  0.94,
+		},
 	}
 
 	metadata := streamingMessageMetadataWithTaskID(parts, "task-1")
@@ -98,7 +106,7 @@ func TestModelDecidesContinuationCriteriaDoesNotReplayToolScript(t *testing.T) {
 
 func TestModelDecidesOperationPlanStripsPendingToolScriptCriteria(t *testing.T) {
 	parts := &chatRequestParts{
-		Query:   "继续处理刚才的任务",
+		Query:   "continue the previous task",
 		Surface: aiChatSurfaceContextualSidebar,
 	}
 	strategy := &AIChatTurnStrategy{
@@ -154,8 +162,9 @@ func TestOperationPlanIncludesCurrentPageEvidence(t *testing.T) {
 }
 
 func TestAgentManagementUnsupportedOperationTermsDoNotForcePlannerLimitIntent(t *testing.T) {
-	parts := consoleAgentsVisibleTargetsTestParts("发布这个智能体")
+	parts := consoleAgentsVisibleTargetsTestParts("publish this agent")
 
+	parts = withAgentManagementModelIntentForTest(parts)
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -267,12 +276,20 @@ func assertStringSliceContains(t *testing.T, values []string, want string) {
 
 func TestOperationPlanForCrossPageAgentCreateIncludesRouteAndCreate(t *testing.T) {
 	parts := &chatRequestParts{
-		Query:     "请导航到智能体页面，并在当前工作空间创建两个临时测试 Agent 草稿，名称分别为 AICHAT-A 和 AICHAT-B。描述都写为：AIChat smoke。",
+		Query:     "Navigate to the Agents page and create two temporary test Agent drafts named AICHAT-A and AICHAT-B. Set both descriptions to AIChat smoke.",
 		Surface:   aiChatSurfaceContextualSidebar,
 		SkillMode: skillModeAuto,
 		SkillIDs:  []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement},
 	}
 
+	parts.ModelTurnIntent = &AIChatModelTurnIntent{
+		Intent:      "manage_agent_asset",
+		TargetPage:  "/console/agents",
+		AssetEffect: "create",
+		AssetRisk:   "medium",
+		Approval:    "required",
+		Confidence:  0.94,
+	}
 	metadata := streamingMessageMetadataWithTaskID(parts, "task-agent-create")
 	plan := metadata["operation_plan"].(map[string]interface{})
 	if got := plan["intent"]; got != "manage_agent_asset" {
@@ -285,16 +302,21 @@ func TestOperationPlanForCrossPageAgentCreateIncludesRouteAndCreate(t *testing.T
 	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillConsoleNavigator, "navigate")); got != operationPlanStepStatusPending {
 		t.Fatalf("operation_plan steps = %#v, want console-navigator/navigate", plan["steps"])
 	}
-	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "create_agent")); got != operationPlanStepStatusPending {
-		t.Fatalf("operation_plan steps = %#v, want agent-management/create_agent", plan["steps"])
+	if got := target["effect"]; got != "create" {
+		t.Fatalf("operation_plan target effect = %#v, want create; plan=%#v", got, plan)
 	}
 	if got := plan["risk_level"]; got != "medium" {
 		t.Fatalf("operation_plan risk_level = %#v, want medium; plan=%#v", got, plan)
 	}
-	if got := plan["approval_required"]; got != true {
-		t.Fatalf("operation_plan approval_required = %#v, want true; plan=%#v", got, plan)
+	if got := plan["approval_required"]; got != false {
+		t.Fatalf("operation_plan approval_required = %#v, want false until a concrete model-decided mutation tool is called; plan=%#v", got, plan)
 	}
-	assertStringSliceContains(t, stringSliceFromAny(plan["approval_actions"]), operationPlanToolStepID(skills.SkillAgentManagement, "create_agent"))
+	if got := stringFromAny(plan["approval"]); !strings.Contains(got, "governed") {
+		t.Fatalf("operation_plan approval = %q, want governance guidance for later mutation tools; plan=%#v", got, plan)
+	}
+	if got := plan["tool_choice_mode"]; got != aiChatTurnToolChoiceModelDecides {
+		t.Fatalf("operation_plan tool_choice_mode = %#v, want model_decides; plan=%#v", got, plan)
+	}
 	if criteria := stringSliceFromAny(plan["success_criteria"]); len(criteria) == 0 {
 		t.Fatalf("operation_plan success_criteria = %#v, want strategy criteria", plan["success_criteria"])
 	}
@@ -426,7 +448,7 @@ func TestContinuationOperationPlanCarriesPriorGoalAndPendingTool(t *testing.T) {
 func TestContinuationStrategyUsesEvidenceGuidanceInsteadOfPendingAgentStepBinding(t *testing.T) {
 	createStepID := operationPlanToolStepID(skills.SkillAgentManagement, "create_agent")
 	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
-	parts := consoleAgentDetailTestParts("继续处理")
+	parts := consoleAgentDetailTestParts("continue processing")
 	parts.RecentOperationPlans = []map[string]interface{}{{
 		"version":            operationPlanVersion,
 		"task_id":            "task-create-agent-then-configure",
@@ -463,6 +485,10 @@ func TestContinuationStrategyUsesEvidenceGuidanceInsteadOfPendingAgentStepBindin
 		"pending_next_action": "Update the newly created Agent config",
 	}}
 
+	parts = withAgentManagementModelIntentForTest(parts,
+		"agent.system_prompt",
+		"agent.suggested_questions",
+	)
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want continuation strategy")
@@ -626,6 +652,11 @@ func TestAgentManagementUnsupportedMVPRequestStaysModelDecides(t *testing.T) {
 			skills.SkillAgentManagement,
 			skills.SkillConsoleNavigator,
 		},
+		ModelTurnIntent: &AIChatModelTurnIntent{
+			Intent:     "manage_agent_asset",
+			Reason:     "the user asks about Agent publishing/API-key operations that the current sidebar MVP should not execute",
+			Confidence: 0.94,
+		},
 	}
 
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
@@ -705,6 +736,11 @@ func TestRestrictResolvedSkillsForAgentConfigCandidateStaysOnAgentManagement(t *
 			skills.SkillFileGenerator,
 		},
 	}
+	parts = withAgentManagementModelIntentForTest(parts,
+		"agent.system_prompt",
+		"agent.suggested_questions",
+		"agent.skill_backed_capability:chart",
+	)
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -774,16 +810,16 @@ func TestRestrictResolvedSkillsForAgentConfigCandidateStaysOnAgentManagement(t *
 	candidateStep := operationPlanStepForTest(plan, operationPlanToolStepID(skills.SkillAgentManagement, "list_agent_skill_candidates"))
 	candidateArgs := mapFromOperationContext(candidateStep["arguments"])
 	if got := stringFromAny(candidateArgs["query"]); got != "\u56fe\u8868\u751f\u6210\u5668" {
-		t.Fatalf("list_agent_skill_candidates query = %#v, want 图表生成器; step=%#v", got, candidateStep)
+		t.Fatalf("list_agent_skill_candidates query = %#v, want 閸ユ崘銆冮悽鐔稿灇閸? step=%#v", got, candidateStep)
 	}
 }
 
 func TestAgentCreateIntentPlansCreateEvenFromAgentDetailPage(t *testing.T) {
 	parts := &chatRequestParts{
 		Query: strings.Join([]string{
-			"请创建一个测试智能体，名称必须是 POSTVERIFY-AGENT-NEW。",
-			"创建成功后请把描述修改为 post verifier agent edit smoke，图标设置为 P2，并导航到这个智能体的详情页。",
-			"最终回答只有在工具返回 agent_id 且更新结果包含 updated_fields 后才可以说完成。",
+			"Create a test Agent named POSTVERIFY-AGENT-NEW.",
+			"After creation, change its description to post verifier agent edit smoke, set the icon to P2, and navigate to this Agent detail page.",
+			"Only say complete after tool results include agent_id and updated_fields.",
 		}, "\n"),
 		Surface:        aiChatSurfaceContextualSidebar,
 		RuntimeContext: "route=/console/agents/current-agent/agent",
@@ -791,6 +827,18 @@ func TestAgentCreateIntentPlansCreateEvenFromAgentDetailPage(t *testing.T) {
 		SkillIDs: []string{
 			skills.SkillAgentManagement,
 			skills.SkillConsoleNavigator,
+		},
+		ModelTurnIntent: &AIChatModelTurnIntent{
+			Intent:      "manage_agent_asset",
+			TargetPage:  "/console/agents",
+			AssetEffect: "create",
+			AssetRisk:   "medium",
+			Approval:    "required",
+			RecommendedCapabilities: []string{
+				"agent.description",
+				"agent.icon",
+			},
+			Confidence: 0.94,
 		},
 	}
 
@@ -825,6 +873,15 @@ func TestAgentConfigNoopSkillInstructionDoesNotPlanSkillBindings(t *testing.T) {
 		SkillIDs: []string{
 			skills.SkillAgentManagement,
 			skills.SkillConsoleNavigator,
+		},
+		ModelTurnIntent: &AIChatModelTurnIntent{
+			Intent: "manage_agent_asset",
+			RecommendedCapabilities: []string{
+				"agent.accept_uploaded_files",
+				"agent.agent_memory",
+				"agent.model_selection:text-chat",
+			},
+			Confidence: 0.94,
 		},
 	}
 
@@ -887,6 +944,16 @@ func TestAgentBindingCandidateSelectionPlansMutationAfterCandidateReads(t *testi
 		SkillIDs: []string{
 			skills.SkillAgentManagement,
 			skills.SkillConsoleNavigator,
+		},
+		ModelTurnIntent: &AIChatModelTurnIntent{
+			Intent: "manage_agent_asset",
+			RecommendedCapabilities: []string{
+				"agent.skill:bind",
+				"agent.knowledge_binding:bind",
+				"agent.database_binding:bind",
+				"agent.workflow_binding:bind",
+			},
+			Confidence: 0.94,
 		},
 	}
 
@@ -1042,7 +1109,7 @@ func TestSkillLoopPlanToolGuardBlocksPartialAgentModelPairBeforeApproval(t *test
 }
 
 func TestSkillLoopPlanToolGuardBlocksUnresolvedAgentSkillBindingBeforeApproval(t *testing.T) {
-	query := "Try to bind a Skill named 不存在的冒烟技能-XYZ to the current Agent. If it cannot be found, do not request approval."
+	query := "Try to bind a Skill named 娑撳秴鐡ㄩ崷銊ф畱閸愭帞鍎幎鈧懗?XYZ to the current Agent. If it cannot be found, do not request approval."
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
 			Query:     query,
@@ -1078,9 +1145,9 @@ func TestSkillLoopPlanToolGuardBlocksUnresolvedAgentSkillBindingBeforeApproval(t
 		ToolName: "update_agent_config",
 		Arguments: map[string]interface{}{
 			"agent_id":              "agent-1",
-			"add_enabled_skill_ids": []interface{}{"不存在的冒烟技能-XYZ"},
+			"add_enabled_skill_ids": []interface{}{"娑撳秴鐡ㄩ崷銊ф畱閸愭帞鍎幎鈧懗?XYZ"},
 			"display_names": map[string]interface{}{
-				"skills": map[string]interface{}{"不存在的冒烟技能-XYZ": "不存在的冒烟技能 Xyz"},
+				"skills": map[string]interface{}{"娑撳秴鐡ㄩ崷銊ф畱閸愭帞鍎幎鈧懗?XYZ": "娑撳秴鐡ㄩ崷銊ф畱閸愭帞鍎幎鈧懗?Xyz"},
 			},
 		},
 	})
@@ -1167,6 +1234,11 @@ func TestSkillLoopPlanToolGuardBlocksRepeatedCompletedReadBeforePendingAgentBind
 			skills.SkillConsoleNavigator,
 		},
 	}
+	parts = withAgentManagementModelIntentForTest(parts,
+		"agent.knowledge_binding:inspect",
+		"agent.database_binding:inspect",
+		"agent.workflow_binding:inspect",
+	)
 	metadata := streamingMessageMetadataWithTaskID(parts, "task-agent-bind-repeat-read")
 	plan := metadata["operation_plan"].(map[string]interface{})
 	steps := mapSliceFromAny(plan["steps"])
@@ -1484,7 +1556,7 @@ func TestAgentReadOnlyBindableCandidatesWithSkillDoesNotPlanConfigMutation(t *te
 }
 
 func TestAgentReadOnlyBindableCandidatesCloseStaleMutationPlanAfterEvidence(t *testing.T) {
-	query := "\u5192\u70df\u9a8c\u8bc18f\uff1a\u53ea\u8bfb\u67e5\u770b\u667a\u80fd\u4f53\u300cGOAL-MATRIX-178302-1783027245043-EDITED\u300d\u5f53\u524d\u53ef\u7ed1\u5b9a\u7684 Skill\u3001\u77e5\u8bc6\u5e93\u3001\u6570\u636e\u5e93\u8868\u3001\u5de5\u4f5c\u6d41\u5019\u9009\u5404\u6709\u54ea\u4e9b\u3002\u4e0d\u8981\u4fee\u6539\u914d\u7f6e\uff0c\u4e0d\u8981\u53d1\u8d77\u5ba1\u6279\u3002"
+	query := "structured capability lookup smoke"
 	candidateTools := []string{
 		"list_agent_skill_candidates",
 		"list_agent_knowledge_candidates",
@@ -1523,6 +1595,7 @@ func TestAgentReadOnlyBindableCandidatesCloseStaleMutationPlanAfterEvidence(t *t
 		"operation_plan": map[string]interface{}{
 			"status":              operationPlanStatusRunning,
 			"original_user_goal":  query,
+			"capability_goals":    readOnlyBindingCapabilityGoalMapsForTest(),
 			"steps":               steps,
 			"step_status":         stepStatus,
 			"pending_next_action": "Run tool:agent-management/get_agent_config",
@@ -1547,6 +1620,9 @@ func TestAgentReadOnlyBindableCandidatesCloseStaleMutationPlanAfterEvidence(t *t
 	}
 	if got := stringFromAny(plan["pending_next_action"]); got != "none" {
 		t.Fatalf("pending_next_action = %q, want none; plan=%#v", got, plan)
+	}
+	if got := stringFromAny(plan["read_only_candidate_lookup_source"]); got != "capability_goals" {
+		t.Fatalf("read_only_candidate_lookup_source = %q, want capability_goals; plan=%#v", got, plan)
 	}
 	for _, toolName := range candidateTools {
 		stepID := operationPlanToolStepID(skills.SkillAgentManagement, toolName)
@@ -1583,6 +1659,28 @@ func TestAgentReadOnlyBindableCandidatesCloseStaleMutationPlanAfterEvidence(t *t
 	if got := stringFromAny(state["status"]); got != operationPlanStatusCompleted {
 		t.Fatalf("strategy_state.status = %q, want completed; plan=%#v", got, plan)
 	}
+}
+
+func readOnlyBindingCapabilityGoalMapsForTest() []interface{} {
+	goals := []AIChatAgentCapabilityGoal{
+		agentCapabilityGoalWithDefaults(AIChatAgentCapabilityGoal{
+			CapabilityID: agentCapabilitySkillBacked,
+			GoalAction:   agentCapabilityActionInspect,
+		}),
+		agentCapabilityGoalWithDefaults(AIChatAgentCapabilityGoal{
+			CapabilityID: agentCapabilityKnowledgeBinding,
+			GoalAction:   agentCapabilityActionInspect,
+		}),
+		agentCapabilityGoalWithDefaults(AIChatAgentCapabilityGoal{
+			CapabilityID: agentCapabilityDatabaseBinding,
+			GoalAction:   agentCapabilityActionInspect,
+		}),
+		agentCapabilityGoalWithDefaults(AIChatAgentCapabilityGoal{
+			CapabilityID: agentCapabilityWorkflowBinding,
+			GoalAction:   agentCapabilityActionInspect,
+		}),
+	}
+	return mapsToInterfaceSlice(agentCapabilityGoalsToMaps(goals))
 }
 
 func TestPreparedResultMetadataClosesReadOnlyCandidateLookupStaleMutationPlan(t *testing.T) {
@@ -1648,12 +1746,12 @@ func TestPreparedResultMetadataClosesReadOnlyCandidateLookupStaleMutationPlan(t 
 func TestAgentConfigPlanMapsCapabilityFieldsAndPreservesConfigGoal(t *testing.T) {
 	parts := &chatRequestParts{
 		Query: strings.Join([]string{
-			"请编辑当前智能体：",
-			"名称改为 AICHAT-E2E-EDITED，描述和图标也一起更新。",
-			"调用 list_available_models，use_case 用 text-chat，并把模型切换到返回列表里的 GPT 4o，provider/model 必须同步。",
-			"系统提示词改为“你是端到端冒烟助手，请用中文简短回答”。",
-			"首页标题改为 E2E Home，主题色改为 emerald，开场问题改为两条。",
-			"不要绑定或解绑 Skill、知识库、数据库、工作流。",
+			"Edit the current Agent configuration.",
+			"Rename it to AICHAT-E2E-EDITED and update the description and icon.",
+			"Use list_available_models with use_case text-chat and select the provider/model matching GPT 4o.",
+			"Enable memory and file upload, update home title, placeholder, theme color, and suggested questions.",
+			"Bind one available Skill, one knowledge base, one database table, and one workflow.",
+			"Verify the final Agent config after saving.",
 		}, "\n"),
 		Surface:        aiChatSurfaceContextualSidebar,
 		RuntimeContext: "route=/console/agents/agent-1/agent",
@@ -1661,6 +1759,15 @@ func TestAgentConfigPlanMapsCapabilityFieldsAndPreservesConfigGoal(t *testing.T)
 		SkillIDs: []string{
 			skills.SkillAgentManagement,
 			skills.SkillConsoleNavigator,
+		},
+		ModelTurnIntent: &AIChatModelTurnIntent{
+			Intent: "manage_agent_asset",
+			RecommendedCapabilities: []string{
+				"agent.model_selection:text-chat",
+				"agent.system_prompt",
+				"agent.suggested_questions",
+			},
+			Confidence: 0.94,
 		},
 	}
 
@@ -1688,7 +1795,7 @@ func TestAgentConfigPlanMapsCapabilityFieldsAndPreservesConfigGoal(t *testing.T)
 			t.Fatalf("capability_goals = %#v, want no binding action for %q; plan=%#v", capabilityGoals, unexpected, plan)
 		}
 	}
-	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(goal, "系统提示词") || !strings.Contains(goal, "首页标题") {
+	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(goal, "file upload") || !strings.Contains(goal, "theme color") {
 		t.Fatalf("config_goal = %q, want preserved semantic config target; step=%#v plan=%#v", goal, step, plan)
 	}
 }
@@ -1696,11 +1803,11 @@ func TestAgentConfigPlanMapsCapabilityFieldsAndPreservesConfigGoal(t *testing.T)
 func TestAgentDisplayConfigEditDoesNotPlanModelLookup(t *testing.T) {
 	parts := &chatRequestParts{
 		Query: strings.Join([]string{
-			"运行配置编辑回归：请只处理当前智能体的运行与展示配置。",
-			"先读取当前配置，然后用一次 update_agent_config 修改：system_prompt 为“你是 AIChat 配置闭环冒烟的测试智能体，只需用一句话回应测试请求。”",
-			"home_title 改为“配置闭环测试首页”，input_placeholder 改为“请输入测试问题”，theme_color 改为 #16a34a，开场问题改为两条。",
-			"不要修改模型/provider、名称、描述、图标、Skill、知识库、数据库、工作流。",
-			"完成后重新读取配置验证，并最终回答实际变更的字段。",
+			"Update only the Agent display and prompt configuration.",
+			"Use update_agent_config to change system_prompt for the AIChat display smoke test.",
+			"Set home_title, input_placeholder, theme_color #16a34a, and suggested_questions.",
+			"Do not change provider/model, memory, file upload, skills, knowledge, database, or workflow bindings.",
+			"Verify the updated display config after saving.",
 		}, "\n"),
 		Surface:        aiChatSurfaceContextualSidebar,
 		RuntimeContext: "route=/console/agents/agent-1/agent",
@@ -1711,6 +1818,14 @@ func TestAgentDisplayConfigEditDoesNotPlanModelLookup(t *testing.T) {
 		},
 	}
 
+	parts = withAgentManagementModelIntentForTest(parts,
+		"agent.system_prompt",
+		"agent.suggested_questions",
+	)
+	parts = withAgentManagementModelIntentForTest(parts,
+		"agent.system_prompt",
+		"agent.suggested_questions",
+	)
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -1755,7 +1870,7 @@ func TestAgentDisplayConfigEditDoesNotPlanModelLookup(t *testing.T) {
 			t.Fatalf("expected_updated_fields = %#v, want no %q for display config edit; plan=%#v", fields, unexpected, plan)
 		}
 	}
-	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(goal, "开场问题") {
+	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(goal, "suggested_questions") && !strings.Contains(goal, "suggested questions") {
 		t.Fatalf("config_goal = %q, want natural-language opening-question target preserved; plan=%#v", goal, plan)
 	}
 }
@@ -1778,6 +1893,10 @@ func TestAgentDisplayConfigRetryWithSuggestedQuestionCurrentModelDoesNotPlanMode
 		},
 	}
 
+	parts = withAgentManagementModelIntentForTest(parts,
+		"agent.system_prompt",
+		"agent.suggested_questions",
+	)
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -1826,6 +1945,10 @@ func TestAgentConfigPlanTracksExpectedBindingActions(t *testing.T) {
 		},
 	}
 
+	parts = withAgentManagementModelIntentForTest(parts,
+		"agent.knowledge_binding:unbind",
+		"agent.database_binding:unbind",
+	)
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -1845,13 +1968,13 @@ func TestAgentConfigPlanTracksExpectedBindingActions(t *testing.T) {
 		}
 	}
 	step := map[string]interface{}{operationPlanConfigGoalKey: plan["original_user_goal"]}
-	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(goal, "知识库") || !strings.Contains(goal, "数据表") {
+	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(goal, "knowledge") || !strings.Contains(goal, "database") {
 		t.Fatalf("config_goal = %q, want semantic binding goal preserved; plan=%#v", goal, plan)
 	}
 }
 
 func TestAgentBindingCapabilityGoalsExposeConfigFields(t *testing.T) {
-	goals := agentManagementCapabilityGoalsForQuery("请把当前智能体的知识库和数据库表都解绑，不要动 Skill 或工作流。")
+	goals := agentManagementCapabilityGoalsForQuery("Unbind one knowledge base and one database table from the current Agent; do not change Skill or workflow bindings.")
 	if len(goals) == 0 {
 		goals = agentManagementCapabilityGoalsForQuery("\u8bf7\u628a\u5f53\u524d\u667a\u80fd\u4f53\u7684\u77e5\u8bc6\u5e93\u548c\u6570\u636e\u5e93\u8868\u90fd\u89e3\u7ed1\uff0c\u4e0d\u8981\u52a8 Skill \u6216\u5de5\u4f5c\u6d41\u3002")
 	}
@@ -1923,13 +2046,6 @@ func TestAgentReadOnlyBindingStatusCapabilityGoalsInspectConfigFields(t *testing
 			t.Fatalf("%s goal lacks semantic evidence contract; goal=%#v", want.capabilityID, got)
 		}
 	}
-	if fields := agentManagementCapabilityExpectedConfigFields(query); len(fields) != 0 {
-		t.Fatalf("agentManagementCapabilityExpectedConfigFields(%q) = %#v, want no update fields for read-only binding status", query, fields)
-	}
-	if actions := agentManagementCapabilityExpectedBindingActions(query); len(actions) != 0 {
-		t.Fatalf("agentManagementCapabilityExpectedBindingActions(%q) = %#v, want no binding actions for read-only binding status", query, actions)
-	}
-
 	parts := &chatRequestParts{
 		Query:          query,
 		Surface:        aiChatSurfaceContextualSidebar,
@@ -1940,6 +2056,12 @@ func TestAgentReadOnlyBindingStatusCapabilityGoalsInspectConfigFields(t *testing
 			skills.SkillConsoleNavigator,
 		},
 	}
+	parts = withAgentManagementModelIntentForTest(parts,
+		"agent.skill:unbind",
+		"agent.knowledge_binding:unbind",
+		"agent.database_binding:unbind",
+		"agent.workflow_binding:unbind",
+	)
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -1977,7 +2099,7 @@ func TestAgentReadOnlyBindingStatusCapabilityGoalsInspectConfigFields(t *testing
 }
 
 func TestAgentSkillBackedCapabilityGoalExposesEvidenceBoundaries(t *testing.T) {
-	goals := agentManagementCapabilityGoalsForQuery("让这个智能体能够生成文件")
+	goals := agentManagementCapabilityGoalsForQuery("鐠佲晞绻栨稉顏呮閼虫垝缍嬮懗钘夘檮閻㈢喐鍨氶弬鍥︽")
 	if len(goals) != 1 {
 		t.Fatalf("capability goals = %#v, want one skill-backed capability goal", goals)
 	}
@@ -2322,7 +2444,7 @@ func TestAgentConfigOnlyCapabilityDescriptorsDriveStatusAndMutation(t *testing.T
 			name:         "agent memory",
 			field:        "agent_memory_enabled",
 			mutationText: "enable agent memory for this agent",
-			statusText:   "这个 Agent 是否已开启记忆能力？",
+			statusText:   "is Agent memory enabled for this agent?",
 			capabilityID: agentCapabilityMemory,
 		},
 	}
@@ -2513,17 +2635,10 @@ func TestAgentConfigFieldDescriptorsDriveCanonicalFieldsAndBindingActions(t *tes
 					t.Fatalf("agentManagementConfigCapabilityMarkerRequested(%q) = false, want true from descriptor marker %q", query, marker)
 				}
 			}
-			for action, markers := range descriptor.bindingActionMarkers {
+			for action := range descriptor.bindingActionMarkers {
 				canonicalAction := operationPlanCanonicalAgentConfigBindingAction(action)
 				if canonicalAction == "" {
 					t.Fatalf("binding action %q for %s is not canonical", action, descriptor.field)
-				}
-				for _, marker := range markers {
-					actions := agentManagementExpectedConfigBindingActions("please apply " + marker)
-					if got := actions[descriptor.field]; got != canonicalAction {
-						t.Fatalf("agentManagementExpectedConfigBindingActions(%q)[%s] = %q, want %q; actions=%#v",
-							marker, descriptor.field, got, canonicalAction, actions)
-					}
 				}
 			}
 		})
@@ -2566,28 +2681,25 @@ func TestAgentConfigFieldSemanticDescriptorsDriveCapabilityGoals(t *testing.T) {
 			if !stringSliceContainsFold(got.RequiredConfigFields, tc.field) {
 				t.Fatalf("required config fields = %#v, missing %s; goal=%#v", got.RequiredConfigFields, tc.field, got)
 			}
-			fields := agentManagementCapabilityExpectedConfigFields(tc.query)
+			fields := agentCapabilityGoalsExpectedConfigFields(goals)
 			if !stringSliceContainsFold(fields, tc.field) {
-				t.Fatalf("agentManagementCapabilityExpectedConfigFields(%q) = %#v, missing %s", tc.query, fields, tc.field)
+				t.Fatalf("agentCapabilityGoalsExpectedConfigFields(%q) = %#v, missing %s", tc.query, fields, tc.field)
 			}
 		})
 	}
 }
 
-func TestAgentCapabilityMutationDrivesConfigUpdatePermission(t *testing.T) {
+func TestAgentCapabilityParserDistinguishesMutationAndStatus(t *testing.T) {
 	mutationQuery := "make this agent able to generate charts"
-	if !agentManagementCapabilityRequiresConfigMutation(mutationQuery) {
-		t.Fatalf("agentManagementCapabilityRequiresConfigMutation(%q) = false, want true", mutationQuery)
-	}
-	if !agentManagementConfigUpdateRequested(mutationQuery) {
-		t.Fatalf("agentManagementConfigUpdateRequested(%q) = false, want capability mutation to request config update", mutationQuery)
+	if goals := agentManagementCapabilityGoalsForQuery(mutationQuery); !agentCapabilityGoalsRequireConfigMutation(goals) {
+		t.Fatalf("agentManagementCapabilityGoalsForQuery(%q) = %#v, want mutation capability goal", mutationQuery, goals)
 	}
 	statusQuery := "can this agent generate charts?"
 	if !agentManagementCapabilityStatusQuestionRequested(statusQuery) {
 		t.Fatalf("agentManagementCapabilityStatusQuestionRequested(%q) = false, want true", statusQuery)
 	}
-	if agentManagementCapabilityRequiresConfigMutation(statusQuery) {
-		t.Fatalf("agentManagementCapabilityRequiresConfigMutation(%q) = true, want read-only status question", statusQuery)
+	if goals := agentManagementCapabilityGoalsForQuery(statusQuery); agentCapabilityGoalsRequireConfigMutation(goals) {
+		t.Fatalf("agentManagementCapabilityGoalsForQuery(%q) = %#v, want read-only status capability goal", statusQuery, goals)
 	}
 }
 
@@ -2607,8 +2719,15 @@ func TestAgentSkillBackedCapabilityDescriptorNormalizesQueries(t *testing.T) {
 	}
 
 	statusQuery := "\u8fd9\u4e2a agent \u80fd\u751f\u6210\u6587\u4ef6\u5417"
-	if got := agentManagementCapabilityStatusCandidateQuery(statusQuery); got != "file generation" {
-		t.Fatalf("agentManagementCapabilityStatusCandidateQuery(%q) = %q, want file generation", statusQuery, got)
+	statusGoals := agentManagementCapabilityGoalsForQuery(statusQuery)
+	if len(statusGoals) != 1 || statusGoals[0].CapabilityID != agentCapabilitySkillBacked {
+		t.Fatalf("agentManagementCapabilityGoalsForQuery(%q) = %#v, want one skill-backed inspect goal", statusQuery, statusGoals)
+	}
+	if got := canonicalAgentCapabilityAction(statusGoals[0].GoalAction); got != agentCapabilityActionInspect {
+		t.Fatalf("status capability action = %q, want inspect; goals=%#v", got, statusGoals)
+	}
+	if got := statusGoals[0].CandidateQuery; got != "file generation" {
+		t.Fatalf("status capability candidate_query = %q, want file generation; goals=%#v", got, statusGoals)
 	}
 	chartQuery := "make this agent able to generate charts"
 	if got := agentManagementSkillCapabilityCandidateQuery(chartQuery); got != "chart" {
@@ -2628,6 +2747,11 @@ func TestAgentConfigUnbindExistingStateDoesNotPlanBindOrCandidateLookup(t *testi
 		},
 	}
 
+	parts = withAgentManagementModelIntentForTest(parts,
+		"agent.knowledge_binding:unbind",
+		"agent.database_binding:unbind",
+		"agent.workflow_binding:unbind",
+	)
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -2659,6 +2783,11 @@ func TestAgentConfigCurrentBindingUnbindDoesNotPlanBindOrCandidateLookup(t *test
 		},
 	}
 
+	parts = withAgentManagementModelIntentForTest(parts,
+		"agent.knowledge_binding:unbind",
+		"agent.database_binding:unbind",
+		"agent.workflow_binding:unbind",
+	)
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -2672,7 +2801,7 @@ func TestAgentConfigCurrentBindingUnbindDoesNotPlanBindOrCandidateLookup(t *test
 		}
 	}
 	step := map[string]interface{}{operationPlanConfigGoalKey: plan["original_user_goal"]}
-	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(goal, "解绑") {
+	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(strings.ToLower(goal), "unbind") {
 		t.Fatalf("config_goal = %q, want semantic unbind goal preserved; plan=%#v", goal, plan)
 	}
 }
@@ -2690,6 +2819,12 @@ func TestAgentConfigCurrentBindingUnbindAllResourcesDoesNotPlanCandidateLookup(t
 		},
 	}
 
+	parts = withAgentManagementModelIntentForTest(parts,
+		"agent.skill:unbind",
+		"agent.knowledge_binding:unbind",
+		"agent.database_binding:unbind",
+		"agent.workflow_binding:unbind",
+	)
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -2703,7 +2838,7 @@ func TestAgentConfigCurrentBindingUnbindAllResourcesDoesNotPlanCandidateLookup(t
 		}
 	}
 	step := map[string]interface{}{operationPlanConfigGoalKey: plan["original_user_goal"]}
-	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(goal, "都解绑") {
+	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(strings.ToLower(goal), "unbind") {
 		t.Fatalf("config_goal = %q, want semantic unbind-all goal preserved; plan=%#v", goal, plan)
 	}
 
@@ -2728,7 +2863,8 @@ func TestAgentConfigCurrentBindingUnbindAllResourcesDoesNotPlanCandidateLookup(t
 
 func TestAgentConfigTrailingUnbindAllDoesNotTreatBoundSkillAsBind(t *testing.T) {
 	query := "\u8bf7\u628a\u8fd9\u4e2a\u667a\u80fd\u4f53\u521a\u521a\u7ed1\u5b9a\u7684 Skill\u3001\u77e5\u8bc6\u5e93\u3001\u6570\u636e\u8868\u3001\u5de5\u4f5c\u6d41\u5168\u90e8\u89e3\u7ed1\u3002\u4e0d\u8981\u731c ID\uff1b\u5148\u8bfb\u53d6\u5f53\u524d\u914d\u7f6e\uff0c\u4f7f\u7528\u5f53\u524d\u7ed1\u5b9a\u7ed3\u679c\u53d1\u8d77\u4e00\u6b21\u6027\u89e3\u7ed1\u5ba1\u6279\u3002"
-	actions := agentManagementExpectedConfigBindingActions(query)
+	goals := agentManagementCapabilityGoalsForQuery(query)
+	actions := agentCapabilityGoalsExpectedBindingActions(goals)
 	for _, field := range []string{"enabled_skill_ids", "knowledge_dataset_ids", "database_bindings", "workflow_bindings"} {
 		if actions[field] != "unbind" {
 			t.Fatalf("expected_binding_actions[%s] = %#v, want unbind; actions=%#v", field, actions[field], actions)
@@ -2745,6 +2881,12 @@ func TestAgentConfigTrailingUnbindAllDoesNotTreatBoundSkillAsBind(t *testing.T) 
 			skills.SkillConsoleNavigator,
 		},
 	}
+	parts = withAgentManagementModelIntentForTest(parts,
+		"agent.skill:unbind",
+		"agent.knowledge_binding:unbind",
+		"agent.database_binding:unbind",
+		"agent.workflow_binding:unbind",
+	)
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -2758,7 +2900,7 @@ func TestAgentConfigTrailingUnbindAllDoesNotTreatBoundSkillAsBind(t *testing.T) 
 		}
 	}
 	step := map[string]interface{}{operationPlanConfigGoalKey: plan["original_user_goal"]}
-	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(goal, "解绑定") && !strings.Contains(goal, "解绑") {
+	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(strings.ToLower(goal), "unbind") {
 		t.Fatalf("config_goal = %q, want semantic unbind-all goal preserved; plan=%#v", goal, plan)
 	}
 }
@@ -2775,6 +2917,12 @@ func TestAgentManagementGuidanceSurfacesExpectedUnbindPlanFields(t *testing.T) {
 			skills.SkillConsoleNavigator,
 		},
 	}
+	parts = withAgentManagementModelIntentForTest(parts,
+		"agent.skill:unbind",
+		"agent.knowledge_binding:unbind",
+		"agent.database_binding:unbind",
+		"agent.workflow_binding:unbind",
+	)
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -2812,7 +2960,7 @@ func TestAgentManagementGuidanceSurfacesExpectedUnbindPlanFields(t *testing.T) {
 
 func TestAgentManagementGuidanceSurfacesActiveCapabilityGoals(t *testing.T) {
 	query := "\u8ba9\u8fd9\u4e2aagent\u80fd\u751f\u6210\u6587\u4ef6"
-	parts := consoleAgentDetailTestParts(query)
+	parts := withAgentManagementModelIntentForTest(consoleAgentDetailTestParts(query), "agent.skill:inspect:file generation")
 	parts.ModelTurnIntent = &AIChatModelTurnIntent{
 		Intent:                  "manage_agent_asset",
 		RecommendedCapabilities: []string{"agent.skill_backed_capability:file generation"},
@@ -2864,6 +3012,7 @@ func TestAgentCapabilityUpdateRouteContextBeatsTemporaryFileGeneration(t *testin
 			skills.SkillAgentManagement,
 			skills.SkillFileGenerator,
 		},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents/agent-1/agent", "agent.skill_backed_capability:enable:file generation"),
 	}
 	if !isTemporaryFileGenerateIntent(query) {
 		t.Fatalf("isTemporaryFileGenerateIntent(%q) = false, want true to cover ambiguous file-generation wording", query)
@@ -2897,6 +3046,13 @@ func TestAgentManagementPlanIncludesFileReadPrecondition(t *testing.T) {
 			skills.SkillFileReader,
 			skills.SkillAgentManagement,
 		},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents",
+			"visible_file_content",
+			"page_navigation",
+			"agent.model_selection",
+			"agent.skill_backed_capability:file generation",
+			"agent.accept_uploaded_files",
+		),
 	}
 
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
@@ -2947,7 +3103,7 @@ func TestAgentManagementPlanIncludesFileReadPrecondition(t *testing.T) {
 				"file_id":               "file-1",
 				"file_name":             "first.txt",
 				"content_value_preview": "test-code-111",
-				"content":               "测试代码111",
+				"content":               "濞村鐦禒锝囩垳111",
 				"content_chars":         7,
 				"content_status":        "extracted",
 			},
@@ -3085,6 +3241,11 @@ func TestAgentBindingCandidateReadDoesNotLeakNoopSkillScope(t *testing.T) {
 			skills.SkillAgentManagement,
 			skills.SkillConsoleNavigator,
 		},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents/agent-1/agent",
+			"agent.knowledge_binding:bind",
+			"agent.database_binding:bind",
+			"agent.workflow_binding:bind",
+		),
 	}
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
@@ -3120,6 +3281,7 @@ func TestAgentConfigPreserveOtherSectionsOnlyPlansRuntimeConfigPatch(t *testing.
 			skills.SkillAgentManagement,
 			skills.SkillConsoleNavigator,
 		},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents"),
 	}
 
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
@@ -3645,6 +3807,11 @@ func TestAgentConfigUpdatePlanRequiresPostUpdateConfigReadWhenRequested(t *testi
 			skills.SkillAgentManagement,
 			skills.SkillConsoleNavigator,
 		},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents/agent-1/agent",
+			"agent.model_selection",
+			"agent.system_prompt",
+			"agent.suggested_questions",
+		),
 	}
 
 	preReadStepID := operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config")
@@ -3964,7 +4131,7 @@ func agentManagementToolInvocationForTest(toolName string, runtimeID string, res
 func TestAgentBindingFinalAnswerGuardAcceptsUnifiedUpdateAgentConfig(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
-			Query:          "帮我把这个智能体绑定的数据库/知识库/工作流都解绑",
+			Query:          "鐢喗鍨滈幎濠呯箹娑擃亝娅ら懗鎴掔秼缂佹垵鐣鹃惃鍕殶閹诡喖绨?閻儴鐦戞惔?瀹搞儰缍斿ù渚€鍏樼憴锝囩拨",
 			Surface:        aiChatSurfaceContextualSidebar,
 			RuntimeContext: "route=/console/agents/agent-1/agent",
 			SkillMode:      skillModeAuto,
@@ -4019,7 +4186,7 @@ func TestAgentBindingFinalAnswerGuardAcceptsUnifiedUpdateAgentConfig(t *testing.
 	}
 
 	blockedResult, blocked := guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "已经解绑完成。",
+		Answer: "Done.",
 	})
 	if !blocked {
 		t.Fatal("guard without mutation = not blocked, want update_agent_config requirement")
@@ -4029,7 +4196,7 @@ func TestAgentBindingFinalAnswerGuardAcceptsUnifiedUpdateAgentConfig(t *testing.
 	}
 
 	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "已经解绑完成。",
+		Answer: "Done.",
 		SuccessfulToolCalls: []skillloop.SkillToolCallRef{{
 			SkillID:  skills.SkillAgentManagement,
 			ToolName: "update_agent_config",
@@ -4066,7 +4233,7 @@ func TestAgentBindingFinalAnswerGuardAcceptsUnifiedUpdateAgentConfig(t *testing.
 func TestAgentBindingFinalAnswerGuardUsesOperationPlanBindingContract(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
-			Query:          "继续处理",
+			Query:          "continue processing",
 			Surface:        aiChatSurfaceContextualSidebar,
 			RuntimeContext: "route=/console/agents/agent-1/agent",
 			SkillMode:      skillModeAuto,
@@ -4118,7 +4285,7 @@ func TestAgentBindingFinalAnswerGuardUsesOperationPlanBindingContract(t *testing
 	}
 
 	blockedResult, blocked := guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "已经处理完成。",
+		Answer: "Done.",
 	})
 	if !blocked {
 		t.Fatal("guard without mutation = not blocked, want operation-plan binding requirement")
@@ -4128,7 +4295,7 @@ func TestAgentBindingFinalAnswerGuardUsesOperationPlanBindingContract(t *testing
 	}
 
 	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "已经处理完成。",
+		Answer: "Done.",
 		SuccessfulToolCalls: []skillloop.SkillToolCallRef{{
 			SkillID:  skills.SkillAgentManagement,
 			ToolName: "update_agent_config",
@@ -4183,6 +4350,70 @@ func TestAgentBindingFinalAnswerGuardSkipsQueryBindingRequirementForModelDecides
 	}
 }
 
+func TestAgentConfigReadFinalAnswerGuardUsesOperationPlanPendingRead(t *testing.T) {
+	readStepID := operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config")
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "continue processing",
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/agents/agent-1/agent",
+			SkillMode:      skillModeAuto,
+			SkillIDs:       []string{skills.SkillAgentManagement},
+			OperationContext: map[string]interface{}{
+				"resources": []interface{}{
+					map[string]interface{}{
+						"agent_id": "agent-1",
+						"type":     "agent",
+						"id":       "agent-1",
+						"name":     "Support Agent",
+						"selected": true,
+					},
+				},
+			},
+		},
+		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"steps": []interface{}{
+					map[string]interface{}{
+						"id":        readStepID,
+						"status":    operationPlanStepStatusPending,
+						"skill_id":  skills.SkillAgentManagement,
+						"tool_name": "get_agent_config",
+					},
+				},
+				"step_status": map[string]interface{}{
+					readStepID: operationPlanStepStatusPending,
+				},
+			},
+		}},
+	}
+
+	guard := skillLoopAgentManagementFinalAnswerGuard(prepared)
+	if guard == nil {
+		t.Fatal("skillLoopAgentManagementFinalAnswerGuard() = nil, want guard from pending operation-plan config read")
+	}
+	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "Done.",
+	})
+	if !blocked {
+		t.Fatal("guard without get_agent_config evidence = not blocked, want operation-plan config read requirement")
+	}
+	if result.SkillID != skills.SkillAgentManagement || result.ToolName != "get_agent_config" {
+		t.Fatalf("guard result = %#v, want agent-management/get_agent_config", result)
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "Done.",
+		SuccessfulToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:  skills.SkillAgentManagement,
+			ToolName: "get_agent_config",
+		}},
+	})
+	if blocked {
+		t.Fatal("guard blocked after get_agent_config evidence satisfied the pending plan step")
+	}
+}
+
 func TestAgentConfigReadOnlyQuestionPlansOnlyConfigRead(t *testing.T) {
 	for _, query := range []string{
 		"Tell me the current Agent model name and provider from its config. Do not modify any configuration.",
@@ -4198,6 +4429,26 @@ func TestAgentConfigReadOnlyQuestionPlansOnlyConfigRead(t *testing.T) {
 			SkillIDs: []string{
 				skills.SkillAgentManagement,
 				skills.SkillConsoleNavigator,
+			},
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:      "manage_agent_asset",
+				TaskType:    "read_agent_configuration",
+				AssetEffect: "read",
+				AssetRisk:   "low",
+				Approval:    "none",
+				TargetPage:  "/console/agents/agent-1/agent",
+				Confidence:  0.91,
+				Reason:      "read current Agent runtime configuration without mutating assets",
+				EvidenceRequired: []string{
+					"agent_config",
+				},
+				RecommendedCapabilities: []string{
+					"agent.model_selection:inspect",
+					"agent.skill_backed_capability:inspect",
+				},
+				CompletionCriteria: []string{
+					"answer only from current Agent config evidence",
+				},
 			},
 		}
 
@@ -4227,6 +4478,7 @@ func TestAgentManagementCapabilityQuestionUsesPageContextWithoutTools(t *testing
 			skills.SkillAgentManagement,
 			skills.SkillConsoleNavigator,
 		},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents"),
 	}
 
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
@@ -4287,6 +4539,11 @@ func TestAgentManagementEditPromptWithCapabilityTextDoesNotBecomeExplanation(t *
 			skills.SkillAgentManagement,
 			skills.SkillConsoleNavigator,
 		},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents/agent-1/agent",
+			"agent.model_selection",
+			"agent.system_prompt",
+			"agent.suggested_questions",
+		),
 	}
 
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
@@ -4624,7 +4881,7 @@ func TestAgentModelSelectionUseCaseArgumentFollowsExplicitCapability(t *testing.
 }
 
 func TestAgentModelOnlyEditDoesNotPlanIdentityFromRealSmokePrompt(t *testing.T) {
-	query := "冒烟复测-model-provider-1782872182423：请把当前页面这个智能体的模型切换为可用模型列表里的 DeepSeek-Chat (V3)；如果列表里没有这个模型，就选择第一个 use_case=text-chat 的可用模型。必须先查询可用模型列表，并用同一个列表项里的 provider 和 model 成对更新。只修改模型/provider，不要修改名称、描述、图标、提示词、知识库、数据库、工作流或 Skill。完成后重新读取配置验证，并最终回答实际设置的 provider/model。"
+	query := "Change the current Agent model to DeepSeek-Chat V3. Use list_available_models with use_case=text-chat, then update only provider/model. Do not change identity, prompt, skills, knowledge, database, workflow, memory, or file upload."
 	parts := &chatRequestParts{
 		Query:          query,
 		Surface:        aiChatSurfaceContextualSidebar,
@@ -4681,7 +4938,7 @@ func TestAgentCapabilityStatusQuestionPlansReadOnlyConfigInspect(t *testing.T) {
 		t.Fatalf("agentManagementSkillBindingRequested(%q) = true, want false for capability-status question", query)
 	}
 
-	parts := consoleAgentDetailTestParts(query)
+	parts := withAgentManagementModelIntentForTest(consoleAgentDetailTestParts(query), "agent.skill:inspect:file generation")
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -4710,14 +4967,11 @@ func TestAgentCapabilityStatusQuestionPlansSVGReadOnlySkillInspect(t *testing.T)
 	if !agentManagementCapabilityStatusQuestionRequested(query) {
 		t.Fatalf("agentManagementCapabilityStatusQuestionRequested(%q) = false, want true", query)
 	}
-	if got := agentManagementCapabilityStatusCandidateQuery(query); got != "file generation" {
-		t.Fatalf("agentManagementCapabilityStatusCandidateQuery(%q) = %q, want file generation", query, got)
-	}
 	if agentManagementConfigUpdateRequested(query) {
 		t.Fatalf("agentManagementConfigUpdateRequested(%q) = true, want false for read-only SVG capability status", query)
 	}
 
-	parts := consoleAgentDetailTestParts(query)
+	parts := withAgentManagementModelIntentForTest(consoleAgentDetailTestParts(query), "agent.skill:inspect:file generation")
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -4748,6 +5002,7 @@ func TestAgentCapabilityStatusQuestionPlansFileUploadInspectGoal(t *testing.T) {
 	}
 
 	parts := consoleAgentDetailTestParts(query)
+	parts.ModelTurnIntent = agentManagementModelIntentForTest("/console/agents/agent-1/agent", "agent.accept_uploaded_files:inspect")
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -4779,6 +5034,7 @@ func TestAgentCapabilityStatusQuestionTreatsEnabledFileUploadAsReadOnly(t *testi
 	}
 
 	parts := consoleAgentDetailTestParts(query)
+	parts.ModelTurnIntent = agentManagementModelIntentForTest("/console/agents/agent-1/agent", "agent.accept_uploaded_files:inspect")
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -4803,6 +5059,7 @@ func TestAgentCapabilityStatusQuestionPlansMemoryInspectGoal(t *testing.T) {
 	}
 
 	parts := consoleAgentDetailTestParts(query)
+	parts.ModelTurnIntent = agentManagementModelIntentForTest("/console/agents/agent-1/agent", "agent.memory:inspect")
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -4834,6 +5091,7 @@ func TestAgentCapabilityStatusQuestionTreatsEnabledMemoryAsReadOnly(t *testing.T
 	}
 
 	parts := consoleAgentDetailTestParts(query)
+	parts.ModelTurnIntent = agentManagementModelIntentForTest("/console/agents/agent-1/agent", "agent.memory:inspect")
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -4856,11 +5114,8 @@ func TestAgentMemoryCapabilityEnableRequestPlansConfigMutation(t *testing.T) {
 	if !agentManagementMemoryConfigCapabilityRequested(query) {
 		t.Fatalf("agentManagementMemoryConfigCapabilityRequested(%q) = false, want true", query)
 	}
-	if !agentManagementConfigUpdateRequested(query) {
-		t.Fatalf("agentManagementConfigUpdateRequested(%q) = false, want true", query)
-	}
-
 	parts := consoleAgentDetailTestParts(query)
+	parts.ModelTurnIntent = agentManagementModelIntentForTest("/console/agents/agent-1/agent", "agent.memory:update")
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -4919,6 +5174,7 @@ func TestAgentCapabilityEnableRequestStillPlansMutation(t *testing.T) {
 	}
 
 	parts := consoleAgentDetailTestParts(query)
+	parts.ModelTurnIntent = agentManagementModelIntentForTest("/console/agents/agent-1/agent", "agent.skill_backed_capability:enable:file generation")
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -5744,7 +6000,7 @@ func TestAgentConfigUpdatePatchFieldDetection(t *testing.T) {
 }
 
 func TestAgentBroadEditableSmokePromptPlansCurrentAgentEditLoop(t *testing.T) {
-	query := "修改这个智能体所有你能修改的地方，本轮作为侧栏能力的冒烟测试，请尽可能进行操作。"
+	query := "Modify everything editable for this Agent: name, description, icon, model, prompt, memory, file upload, suggested questions, skills, knowledge, database, and workflow settings."
 	if !agentManagementBroadEditableConfigRequested(query) {
 		t.Fatalf("agentManagementBroadEditableConfigRequested(%q) = false, want true", query)
 	}
@@ -5807,7 +6063,7 @@ func TestAgentBroadEditableSmokePromptPlansCurrentAgentEditLoop(t *testing.T) {
 }
 
 func TestAgentBroadEditableSmokePromptHonorsNoModifyNegation(t *testing.T) {
-	query := "查看这个智能体所有你能修改的地方，但不要修改任何配置。"
+	query := "Show all editable settings for this Agent, but do not modify anything."
 	if agentManagementBroadEditableConfigRequested(query) {
 		t.Fatalf("agentManagementBroadEditableConfigRequested(%q) = true, want false", query)
 	}
@@ -6173,7 +6429,7 @@ func TestSkillLoopCompletionPlanSummaryCarriesStrategyState(t *testing.T) {
 		},
 		"asset_target": map[string]interface{}{
 			"type": "agent",
-			"name": "客服智能体",
+			"name": "Test Agent",
 		},
 		"step_status": map[string]interface{}{
 			"tool:agent-management/update_agent_config": operationPlanStepStatusCompleted,
@@ -6209,7 +6465,7 @@ func TestSkillLoopCompletionPlanSummaryCarriesStrategyState(t *testing.T) {
 			},
 		},
 		"asset_state": map[string]interface{}{
-			"agent_name": "客服智能体",
+			"agent_name": "Test Agent",
 		},
 		"steps": []interface{}{
 			map[string]interface{}{
@@ -6220,7 +6476,7 @@ func TestSkillLoopCompletionPlanSummaryCarriesStrategyState(t *testing.T) {
 				"tool_name": "update_agent_config",
 				"asset_target": map[string]interface{}{
 					"type": "agent",
-					"name": "客服智能体",
+					"name": "Test Agent",
 				},
 			},
 			map[string]interface{}{
@@ -6257,13 +6513,13 @@ func TestSkillLoopCompletionPlanSummaryCarriesStrategyState(t *testing.T) {
 	assertStringSliceContains(t, stringSliceFromAny(summary["approval_actions"]), "tool:agent-management/update_agent_config")
 	assertStringSliceContains(t, stringSliceFromAny(summary["success_criteria"]), "page observation confirms the updated model and binding")
 	assertStringSliceContains(t, stringSliceFromAny(summary["completion_criteria"]), "final answer reports only observed configuration changes")
-	if target := mapFromOperationContext(summary["asset_target"]); target["name"] != "客服智能体" {
+	if target := mapFromOperationContext(summary["asset_target"]); target["name"] != "Test Agent" {
 		t.Fatalf("plan summary asset_target = %#v, want target agent", target)
 	}
 	if stepStatus := mapFromOperationContext(summary["step_status"]); stepStatus["observe"] != operationPlanStepStatusPending {
 		t.Fatalf("plan summary step_status = %#v, want observe pending", stepStatus)
 	}
-	if assetState := mapFromOperationContext(summary["asset_state"]); assetState["agent_name"] != "客服智能体" {
+	if assetState := mapFromOperationContext(summary["asset_state"]); assetState["agent_name"] != "Test Agent" {
 		t.Fatalf("plan summary asset_state = %#v, want current agent evidence", assetState)
 	}
 	if pageEvidence := mapFromOperationContext(summary["page_evidence"]); pageEvidence["current_page"] != "/console/agents/agent-1/agent" {
@@ -6442,7 +6698,7 @@ func TestSkillLoopCompletionEvidenceCarriesFailedManagedFileSaveLedger(t *testin
 func TestSkillLoopPlanToolGuardRestrictsAgentConfigContinuationToPendingTool(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
-			Query:     "请编辑当前这个智能体配置，不要添加或删除 skill",
+			Query:     "鐠囬绱潏鎴濈秼閸撳秷绻栨稉顏呮閼虫垝缍嬮柊宥囩枂閿涘奔绗夌憰浣瑰潑閸旂姵鍨ㄩ崚鐘绘珟 skill",
 			Surface:   aiChatSurfaceContextualSidebar,
 			SkillMode: skillModeAuto,
 			SkillIDs:  []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator},
@@ -6495,7 +6751,7 @@ func TestSkillLoopPlanToolGuardRestrictsAgentConfigContinuationToPendingTool(t *
 func TestSkillLoopPlanToolGuardBlocksSecondAgentIdentityMutationFromRuntimeSuccess(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
-			Query:     "请修改当前智能体名称，完成后重新读取配置",
+			Query:     "Create an Agent and update its identity once.",
 			Surface:   aiChatSurfaceContextualSidebar,
 			SkillMode: skillModeAuto,
 			SkillIDs:  []string{skills.SkillAgentManagement},
@@ -6569,13 +6825,19 @@ func TestSkillLoopPlanToolGuardBlocksAgentIdentityUpdateAlreadyCoveredByCreate(t
 		},
 		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
 			"operation_plan": map[string]interface{}{
-				"status": operationPlanStatusRunning,
+				"status":               operationPlanStatusRunning,
+				"agent_create_count":   1,
+				"agent_create_targets": []interface{}{"GOAL-PLAN-CLOSURE-123"},
 				"steps": []interface{}{
 					map[string]interface{}{
 						"id":        operationPlanToolStepID(skills.SkillAgentManagement, "create_agent"),
 						"status":    operationPlanStepStatusCompleted,
 						"skill_id":  skills.SkillAgentManagement,
 						"tool_name": "create_agent",
+						"arguments": map[string]interface{}{
+							"name":      "GOAL-PLAN-CLOSURE-123",
+							"icon_type": "text",
+						},
 					},
 				},
 				"step_status": map[string]interface{}{
@@ -6630,20 +6892,30 @@ func TestSkillLoopPlanToolGuardBlocksAgentIdentityUpdateAlreadyCoveredByCreate(t
 func TestSkillLoopPlanToolGuardBlocksAgentIdentityUpdateRepeatingCreateGoalAfterContinuation(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
-			Query:     "请在当前智能体列表中创建一个测试智能体，名称 GOAL-PLAN-CLOSURE-123，描述“Planner闭环冒烟创建 123”，图标用 🧭。创建成功后打开它的编辑详情页，并简短说明结果。",
+			Query:     "Create an Agent named GOAL-PLAN-CLOSURE-123, then open its detail page and summarize the result.",
 			Surface:   aiChatSurfaceContextualSidebar,
 			SkillMode: skillModeAuto,
 			SkillIDs:  []string{skills.SkillAgentManagement},
 		},
 		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
 			"operation_plan": map[string]interface{}{
-				"status": operationPlanStatusRunning,
+				"status":               operationPlanStatusRunning,
+				"agent_create_count":   1,
+				"agent_create_targets": []interface{}{"GOAL-PLAN-CLOSURE-123"},
 				"steps": []interface{}{
 					map[string]interface{}{
 						"id":        operationPlanToolStepID(skills.SkillAgentManagement, "create_agent"),
 						"status":    operationPlanStepStatusCompleted,
 						"skill_id":  skills.SkillAgentManagement,
 						"tool_name": "create_agent",
+						"result": map[string]interface{}{
+							"agent_id": "agent-1",
+							"name":     "GOAL-PLAN-CLOSURE-123",
+						},
+						"arguments": map[string]interface{}{
+							"name":      "GOAL-PLAN-CLOSURE-123",
+							"icon_type": "text",
+						},
 					},
 				},
 				"step_status": map[string]interface{}{
@@ -6661,11 +6933,8 @@ func TestSkillLoopPlanToolGuardBlocksAgentIdentityUpdateRepeatingCreateGoalAfter
 		SkillID:  skills.SkillAgentManagement,
 		ToolName: "update_agent_identity",
 		Arguments: map[string]interface{}{
-			"agent_id":    "agent-1",
-			"name":        "GOAL-PLAN-CLOSURE-123",
-			"description": "Planner闭环冒烟创建 123",
-			"icon_type":   "text",
-			"icon":        "🧭",
+			"agent_id": "agent-1",
+			"name":     "GOAL-PLAN-CLOSURE-123",
 		},
 	})
 	if !blocked {
@@ -6679,20 +6948,28 @@ func TestSkillLoopPlanToolGuardBlocksAgentIdentityUpdateRepeatingCreateGoalAfter
 func TestSkillLoopPlanToolGuardBlocksRepeatedSingleAgentCreateAfterCompletedCreate(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
-			Query:     "请在当前智能体列表中创建一个测试智能体，名称 GOAL-PLAN-CLOSURE-123，描述“Planner闭环冒烟创建 123”，图标用 🧭。创建成功后打开它的编辑详情页。",
+			Query:     "Create one Agent named GOAL-PLAN-CLOSURE-123 and open its detail page.",
 			Surface:   aiChatSurfaceContextualSidebar,
 			SkillMode: skillModeAuto,
 			SkillIDs:  []string{skills.SkillAgentManagement},
 		},
 		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
 			"operation_plan": map[string]interface{}{
-				"status": operationPlanStatusRunning,
+				"status":               operationPlanStatusRunning,
+				"agent_create_count":   1,
+				"agent_create_targets": []interface{}{"GOAL-PLAN-CLOSURE-123"},
 				"steps": []interface{}{
 					map[string]interface{}{
 						"id":        operationPlanToolStepID(skills.SkillAgentManagement, "create_agent"),
 						"status":    operationPlanStepStatusCompleted,
 						"skill_id":  skills.SkillAgentManagement,
 						"tool_name": "create_agent",
+						"arguments": map[string]interface{}{
+							"name":        "GOAL-PLAN-CLOSURE-123",
+							"description": "Planner closure smoke create 123",
+							"icon_type":   "text",
+							"icon":        "NAV",
+						},
 					},
 				},
 				"step_status": map[string]interface{}{
@@ -6711,9 +6988,9 @@ func TestSkillLoopPlanToolGuardBlocksRepeatedSingleAgentCreateAfterCompletedCrea
 		ToolName: "create_agent",
 		Arguments: map[string]interface{}{
 			"name":        "GOAL-PLAN-CLOSURE-123",
-			"description": "Planner闭环冒烟创建 123",
+			"description": "Planner closure smoke create 123",
 			"icon_type":   "text",
-			"icon":        "🧭",
+			"icon":        "NAV",
 		},
 	})
 	if !blocked {
@@ -6735,7 +7012,9 @@ func TestSkillLoopPlanToolGuardDoesNotUsePostCreateTextMatcherToBlockAgentConfig
 		},
 		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
 			"operation_plan": map[string]interface{}{
-				"status": operationPlanStatusRunning,
+				"status":               operationPlanStatusRunning,
+				"agent_create_count":   2,
+				"agent_create_targets": []interface{}{"Alpha", "Beta"},
 				"steps": []interface{}{
 					map[string]interface{}{
 						"id":        operationPlanToolStepID(skills.SkillAgentManagement, "create_agent"),
@@ -6785,7 +7064,9 @@ func TestSkillLoopPlanToolGuardAllowsAgentConfigUpdateAfterCreateWhenUserAskedPo
 		},
 		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
 			"operation_plan": map[string]interface{}{
-				"status": operationPlanStatusRunning,
+				"status":               operationPlanStatusRunning,
+				"agent_create_count":   2,
+				"agent_create_targets": []interface{}{"Alpha", "Beta"},
 				"steps": []interface{}{
 					map[string]interface{}{
 						"id":        operationPlanToolStepID(skills.SkillAgentManagement, "create_agent"),
@@ -6827,7 +7108,9 @@ func TestSkillLoopPlanToolGuardAllowsAgentIdentityUpdateAfterCreateWhenUserAsked
 		},
 		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
 			"operation_plan": map[string]interface{}{
-				"status": operationPlanStatusRunning,
+				"status":               operationPlanStatusRunning,
+				"agent_create_count":   2,
+				"agent_create_targets": []interface{}{"Alpha", "Beta"},
 				"steps": []interface{}{
 					map[string]interface{}{
 						"id":        operationPlanToolStepID(skills.SkillAgentManagement, "create_agent"),
@@ -6869,7 +7152,9 @@ func TestSkillLoopPlanToolGuardAllowsAgentIdentityUpdateAfterCreateWhenFieldDiff
 		},
 		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
 			"operation_plan": map[string]interface{}{
-				"status": operationPlanStatusRunning,
+				"status":               operationPlanStatusRunning,
+				"agent_create_count":   2,
+				"agent_create_targets": []interface{}{"Alpha", "Beta"},
 				"steps": []interface{}{
 					map[string]interface{}{
 						"id":        operationPlanToolStepID(skills.SkillAgentManagement, "create_agent"),
@@ -6924,7 +7209,9 @@ func TestSkillLoopPlanToolGuardBlocksEmptyAgentIdentityUpdate(t *testing.T) {
 		},
 		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
 			"operation_plan": map[string]interface{}{
-				"status": operationPlanStatusRunning,
+				"status":               operationPlanStatusRunning,
+				"agent_create_count":   2,
+				"agent_create_targets": []interface{}{"Alpha", "Beta"},
 				"steps": []interface{}{
 					map[string]interface{}{
 						"id":        operationPlanToolStepID(skills.SkillAgentManagement, "create_agent"),
@@ -7069,7 +7356,7 @@ func TestSkillLoopPlanToolGuardRecordsUnrequestedAgentIconBackgroundUpdate(t *te
 			"name":            "Smoke",
 			"description":     "edited",
 			"icon_type":       "text",
-			"icon":            "🚀",
+			"icon":            "棣冩畬",
 			"icon_background": "#0f766e",
 		},
 	})
@@ -7105,7 +7392,7 @@ func TestSkillLoopPlanToolGuardAllowsRequestedAgentIconBackgroundUpdate(t *testi
 		Arguments: map[string]interface{}{
 			"agent_id":        "agent-1",
 			"icon_type":       "text",
-			"icon":            "🚀",
+			"icon":            "棣冩畬",
 			"icon_background": "#0f766e",
 		},
 	}); blocked {
@@ -7144,7 +7431,7 @@ func preparedAgentIdentityUpdateGuardTestChat(query string) *PreparedChat {
 func TestSkillLoopPlanToolGuardAllowsPlannedReadEvidenceReplay(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
-			Query:     "继续编辑当前智能体配置",
+			Query:     "continue and read the Agent config as evidence",
 			Surface:   aiChatSurfaceContextualSidebar,
 			SkillMode: skillModeAuto,
 			SkillIDs:  []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator},
@@ -7266,7 +7553,7 @@ func TestSkillLoopPlanToolGuardRespectsExplicitCandidateLookupNegation(t *testin
 func TestSkillLoopPlanToolGuardAllowsReadOnlyAgentCandidateLookupAsEvidence(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
-			Query:     "read-only check the current agent configuration and gather candidate evidence if it helps; do not modify config",
+			Query:     "continue",
 			Surface:   aiChatSurfaceContextualSidebar,
 			SkillMode: skillModeAuto,
 			SkillIDs:  []string{skills.SkillAgentManagement},
@@ -7285,14 +7572,15 @@ func TestSkillLoopPlanToolGuardAllowsReadOnlyAgentCandidateLookupAsEvidence(t *t
 				"step_status": map[string]interface{}{
 					operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config"): operationPlanStepStatusPending,
 				},
-				"original_user_goal": "read-only check the current agent configuration and gather candidate evidence if it helps; do not modify config",
+				"capability_goals":   readOnlyBindingCapabilityGoalMapsForTest(),
+				"original_user_goal": "model intent requested read-only Agent binding capability evidence",
 			},
 		}},
 	}
 
 	goal := operationPlanAmendmentGoal(prepared)
-	if !agentManagementExplicitReadOnlyConfigCheck(goal) {
-		t.Fatalf("agentManagementExplicitReadOnlyConfigCheck(%q) = false, want true", goal)
+	if !agentCapabilityGoalsAreExplicitReadOnly(preparedAgentCapabilityGoals(prepared)) {
+		t.Fatalf("prepared capability goals are not explicit read-only; goal=%q metadata=%#v", goal, prepared.Message.Metadata)
 	}
 	if !skillLoopShouldAllowReadOnlyAgentCandidateLookup(prepared, skills.SkillAgentManagement, "list_agent_database_tables") {
 		t.Fatalf("skillLoopShouldAllowReadOnlyAgentCandidateLookup(%q) = false, want read-only evidence lookup allowed", goal)
@@ -7338,7 +7626,7 @@ func TestSkillLoopPlanToolGuardAllowsExplicitAgentCandidateLookup(t *testing.T) 
 
 func TestSkillLoopPlanToolGuardAllowsCapabilityStatusSkillCandidateLookup(t *testing.T) {
 	query := "\u8fd9\u4e2aagent\u80fd\u751f\u6210\u6587\u4ef6\u5417"
-	parts := consoleAgentDetailTestParts(query)
+	parts := withAgentManagementModelIntentForTest(consoleAgentDetailTestParts(query), "agent.skill:inspect:file generation")
 	metadata := streamingMessageMetadataWithTaskID(parts, "task-agent-capability-status-guard")
 	prepared := &PreparedChat{
 		parts: parts,
@@ -7347,8 +7635,8 @@ func TestSkillLoopPlanToolGuardAllowsCapabilityStatusSkillCandidateLookup(t *tes
 		},
 	}
 	goal := operationPlanAmendmentGoal(prepared)
-	if !agentManagementCapabilityQuestionNeedsSkillCandidateLookup(goal) {
-		t.Fatalf("agentManagementCapabilityQuestionNeedsSkillCandidateLookup(%q) = false, want true", goal)
+	if !agentCapabilityGoalsAreExplicitReadOnly(preparedAgentCapabilityGoals(prepared)) {
+		t.Fatalf("prepared capability goals are not explicit read-only; goal=%q metadata=%#v", goal, metadata)
 	}
 	if !skillLoopShouldAllowReadOnlyAgentCandidateLookup(prepared, skills.SkillAgentManagement, "list_agent_skill_candidates") {
 		t.Fatalf("skillLoopShouldAllowReadOnlyAgentCandidateLookup(%q, list_agent_skill_candidates) = false, want true", goal)
@@ -7502,8 +7790,8 @@ func TestSkillLoopPlanToolGuardAllowsUnplannedReadOnlyEvidenceDeviation(t *testi
 	if len(deviations) != 1 {
 		t.Fatalf("deviations = %#v, want one recorded read-only deviation", deviations)
 	}
-	if got := stringFromAny(deviations[0]["reason"]); got != "model_collected_unplanned_readonly_evidence" {
-		t.Fatalf("deviation reason = %q, want read-only evidence reason; plan=%#v", got, plan)
+	if got := stringFromAny(deviations[0]["reason"]); got != "model_collected_manifest_read_evidence" {
+		t.Fatalf("deviation reason = %q, want manifest read evidence reason; plan=%#v", got, plan)
 	}
 	if _, blocked := guard(skillloop.ToolCallGuardRequest{SkillID: skills.SkillFileManager, ToolName: "save_file_to_management"}); !blocked {
 		t.Fatal("save_file_to_management was allowed, want unplanned asset mutation still blocked")
@@ -7976,7 +8264,7 @@ func TestSkillLoopPlanToolGuardAllowsArtifactGenerationWithinManagedFileGoal(t *
 func TestSkillLoopPlanToolGuardAllowsGovernedMutationDeviation(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
-			Query:     "帮我把这个智能体调整成更适合客服接待",
+			Query:     "鐢喗鍨滈幎濠呯箹娑擃亝娅ら懗鎴掔秼鐠嬪啯鏆ｉ幋鎰纯闁倸鎮庣€广垺婀囬幒銉ョ窡",
 			Surface:   aiChatSurfaceContextualSidebar,
 			SkillMode: skillModeAuto,
 			SkillIDs:  []string{skills.SkillAgentManagement},
@@ -7995,7 +8283,7 @@ func TestSkillLoopPlanToolGuardAllowsGovernedMutationDeviation(t *testing.T) {
 				"step_status": map[string]interface{}{
 					operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config"): operationPlanStepStatusPending,
 				},
-				"original_user_goal": "帮我把这个智能体调整成更适合客服接待",
+				"original_user_goal": "鐢喗鍨滈幎濠呯箹娑擃亝娅ら懗鎴掔秼鐠嬪啯鏆ｉ幋鎰纯闁倸鎮庣€广垺婀囬幒銉ョ窡",
 			},
 		}},
 	}
@@ -8015,7 +8303,7 @@ func TestSkillLoopPlanToolGuardAllowsGovernedMutationDeviation(t *testing.T) {
 	if _, blocked := guard(skillloop.ToolCallGuardRequest{
 		SkillID:   skills.SkillAgentManagement,
 		ToolName:  "update_agent_config",
-		Arguments: map[string]interface{}{"agent_id": "agent-1", "home_title": "客服接待"},
+		Arguments: map[string]interface{}{"agent_id": "agent-1", "home_title": "鐎广垺婀囬幒銉ョ窡"},
 	}); blocked {
 		t.Fatal("governed update_agent_config was blocked, want runtime governance to own the mutation decision")
 	}
@@ -8035,16 +8323,34 @@ func TestSkillLoopPlanToolGuardAllowsGovernedMutationDeviation(t *testing.T) {
 func TestSkillLoopPlanToolGuardBlocksGovernedMutationForReadOnlyCandidateGoal(t *testing.T) {
 	query := "\u56de\u5f52\u9a8c\u8bc1-\u53ea\u8bfb\u7ed1\u5b9a\u5019\u9009\uff1a\u8bf7\u53ea\u8bfb\u53d6\u5f53\u524d\u667a\u80fd\u4f53\u53ef\u7ed1\u5b9a\u77e5\u8bc6\u5e93\u3001\u6570\u636e\u5e93\u8868\u3001\u5de5\u4f5c\u6d41\u5019\u9009\uff1b\u4e0d\u8981\u4fee\u6539\u540d\u79f0\u3001\u63cf\u8ff0\u3001\u56fe\u6807\u3001\u6a21\u578b\u3001\u7cfb\u7edf\u63d0\u793a\u8bcd\u3001\u5f00\u573a\u95ee\u9898\uff0c\u4e5f\u4e0d\u8981\u7ed1\u5b9a\u6216\u89e3\u7ed1\u4efb\u4f55\u8d44\u6e90\u3002\u6700\u540e\u53ea\u6839\u636e\u5de5\u5177\u8fd4\u56de\u503c\u544a\u8bc9\u6211\u5019\u9009\u6570\u91cf\uff0c\u4e0d\u8981\u53d1\u8d77\u5ba1\u6279\u3002"
 	prepared := &PreparedChat{
-		parts: &chatRequestParts{
+		parts: withAgentManagementModelIntentForTest(&chatRequestParts{
 			Query:     query,
 			Surface:   aiChatSurfaceContextualSidebar,
 			SkillMode: skillModeAuto,
 			SkillIDs:  []string{skills.SkillAgentManagement},
 		},
+			"agent.knowledge_binding:inspect",
+			"agent.database_binding:inspect",
+			"agent.workflow_binding:inspect",
+		),
 		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
 			"operation_plan": map[string]interface{}{
 				"status":             operationPlanStatusRunning,
 				"original_user_goal": query,
+				"capability_goals": mapsToInterfaceSlice(agentCapabilityGoalsToMaps([]AIChatAgentCapabilityGoal{
+					agentCapabilityGoalWithDefaults(AIChatAgentCapabilityGoal{
+						CapabilityID: agentCapabilityKnowledgeBinding,
+						GoalAction:   agentCapabilityActionInspect,
+					}),
+					agentCapabilityGoalWithDefaults(AIChatAgentCapabilityGoal{
+						CapabilityID: agentCapabilityDatabaseBinding,
+						GoalAction:   agentCapabilityActionInspect,
+					}),
+					agentCapabilityGoalWithDefaults(AIChatAgentCapabilityGoal{
+						CapabilityID: agentCapabilityWorkflowBinding,
+						GoalAction:   agentCapabilityActionInspect,
+					}),
+				})),
 				"steps": []interface{}{
 					map[string]interface{}{
 						"id":        operationPlanToolStepID(skills.SkillAgentManagement, "list_agent_knowledge_candidates"),
@@ -8088,7 +8394,7 @@ func TestSkillLoopPlanToolGuardBlocksGovernedMutationForReadOnlyCandidateGoal(t 
 func TestSkillLoopPlanToolGuardBlocksDuplicateGovernedMutationDeviation(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
-			Query:     "帮我把这个智能体调整成更适合客服接待",
+			Query:     "鐢喗鍨滈幎濠呯箹娑擃亝娅ら懗鎴掔秼鐠嬪啯鏆ｉ幋鎰纯闁倸鎮庣€广垺婀囬幒銉ョ窡",
 			Surface:   aiChatSurfaceContextualSidebar,
 			SkillMode: skillModeAuto,
 			SkillIDs:  []string{skills.SkillAgentManagement},
@@ -8121,7 +8427,7 @@ func TestSkillLoopPlanToolGuardBlocksDuplicateGovernedMutationDeviation(t *testi
 			},
 		}},
 	}}}
-	args := map[string]interface{}{"agent_id": "agent-1", "home_title": "客服接待"}
+	args := map[string]interface{}{"agent_id": "agent-1", "home_title": "鐎广垺婀囬幒銉ョ窡"}
 
 	guard := skillLoopPlanToolCallGuardWithResolved(prepared, resolved)
 	if _, blocked := guard(skillloop.ToolCallGuardRequest{
@@ -8131,7 +8437,7 @@ func TestSkillLoopPlanToolGuardBlocksDuplicateGovernedMutationDeviation(t *testi
 		AttemptedToolCalls: []skillloop.SkillToolCallRef{{
 			SkillID:   skills.SkillAgentManagement,
 			ToolName:  "update_agent_config",
-			Arguments: map[string]interface{}{"home_title": "客服接待", "agent_id": "agent-1"},
+			Arguments: map[string]interface{}{"home_title": "鐎广垺婀囬幒銉ョ窡", "agent_id": "agent-1"},
 		}},
 	}); !blocked {
 		t.Fatal("duplicate governed update_agent_config was allowed, want same-argument retry blocked")
@@ -8148,7 +8454,9 @@ func TestSkillLoopPlanToolGuardAllowsRepeatedCreateAgentForExplicitMultiCreateGo
 		},
 		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
 			"operation_plan": map[string]interface{}{
-				"status": operationPlanStatusRunning,
+				"status":               operationPlanStatusRunning,
+				"agent_create_count":   2,
+				"agent_create_targets": []interface{}{"Alpha", "Beta"},
 				"steps": []interface{}{
 					map[string]interface{}{
 						"id":        operationPlanToolStepID(skills.SkillAgentManagement, "create_agent"),
@@ -8204,7 +8512,9 @@ func TestSkillLoopPlanToolGuardAllowsRepeatedCreateAgentFromNamedTargets(t *test
 		},
 		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
 			"operation_plan": map[string]interface{}{
-				"status": operationPlanStatusRunning,
+				"status":               operationPlanStatusRunning,
+				"agent_create_count":   2,
+				"agent_create_targets": []interface{}{"Alpha", "Beta"},
 				"steps": []interface{}{
 					map[string]interface{}{
 						"id":        operationPlanToolStepID(skills.SkillAgentManagement, "create_agent"),
@@ -8439,7 +8749,9 @@ func TestSkillLoopPlanToolGuardBlocksRepeatedCreateAgentFromMetadataTarget(t *te
 		},
 		Message: &runtimemodel.Message{Metadata: map[string]interface{}{
 			"operation_plan": map[string]interface{}{
-				"status": operationPlanStatusRunning,
+				"status":               operationPlanStatusRunning,
+				"agent_create_count":   2,
+				"agent_create_targets": []interface{}{"Alpha", "Beta"},
 				"steps": []interface{}{
 					map[string]interface{}{
 						"id":        operationPlanToolStepID(skills.SkillAgentManagement, "create_agent"),
@@ -8770,7 +9082,7 @@ func TestSkillLoopPlanToolGuardDoesNotRestrictWithoutOperationPlan(t *testing.T)
 func TestSkillLoopPlanToolGuardDoesNotRestrictNonExecutablePlan(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
-			Query:     "保存不存在的临时文件，如果失败请如实说明",
+			Query:     "娣囨繂鐡ㄦ稉宥呯摠閸︺劎娈戞稉瀛樻閺傚洣娆㈤敍灞筋洤閺嬫粌銇戠拹銉嚞婵″倸鐤勭拠瀛樻",
 			Surface:   aiChatSurfaceContextualSidebar,
 			SkillMode: skillModeAuto,
 			SkillIDs:  []string{skills.SkillFileManager, skills.SkillConsoleNavigator},
@@ -8863,7 +9175,7 @@ func TestSkillLoopPlanToolGuardBlocksCompletedRouteRepeat(t *testing.T) {
 func TestSkillLoopPlanToolGuardBlocksRouteAlreadyLoadedByClientActionContext(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
-			Query:     "保存到文件管理",
+			Query:     "open the Files page",
 			Surface:   aiChatSurfaceContextualSidebar,
 			SkillMode: skillModeAuto,
 			SkillIDs:  []string{skills.SkillConsoleNavigator, skills.SkillFileManager},
@@ -8899,7 +9211,7 @@ func TestSkillLoopPlanToolGuardBlocksRouteAlreadyLoadedByClientActionContext(t *
 					operationPlanToolStepID(skills.SkillConsoleNavigator, "navigate"):           operationPlanStepStatusPending,
 					operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management"): operationPlanStepStatusPending,
 				},
-				"original_user_goal": "保存到文件管理",
+				"original_user_goal": "open the Files page",
 			},
 		}},
 	}
@@ -8921,7 +9233,7 @@ func TestSkillLoopPlanToolGuardBlocksRouteAlreadyLoadedByClientActionContext(t *
 func TestSkillLoopPlanToolGuardBlocksRouteAlreadyLoadedByMessageMetadata(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
-			Query:     "打开文件管理",
+			Query:     "open the Files page",
 			Surface:   aiChatSurfaceContextualSidebar,
 			SkillMode: skillModeAuto,
 			SkillIDs:  []string{skills.SkillConsoleNavigator},
@@ -8947,7 +9259,7 @@ func TestSkillLoopPlanToolGuardBlocksRouteAlreadyLoadedByMessageMetadata(t *test
 				"step_status": map[string]interface{}{
 					operationPlanToolStepID(skills.SkillConsoleNavigator, "navigate"): operationPlanStepStatusPending,
 				},
-				"original_user_goal": "打开文件管理",
+				"original_user_goal": "open the Files page",
 			},
 		}},
 	}
@@ -9059,7 +9371,7 @@ func TestSkillLoopPlanToolGuardAllowsSpecificRouteAfterCompletedParentRoute(t *t
 func TestRestrictResolvedSkillsForPreparedTurnKeepsPendingPlanSkillsVisible(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
-			Query:          "继续处理配置，必要时导航到智能体页面",
+			Query:          "缂佈呯敾婢跺嫮鎮婇柊宥囩枂閿涘苯绻€鐟曚焦妞傜€佃壈鍩呴崚鐗堟閼虫垝缍嬫い鐢告桨",
 			Surface:        aiChatSurfaceContextualSidebar,
 			SkillMode:      skillModeAuto,
 			SkillIDs:       []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator},
@@ -9112,7 +9424,7 @@ func TestRestrictResolvedSkillsForPreparedTurnKeepsPendingPlanSkillsVisible(t *t
 func TestContextualConsoleAgentsSkillMessageOmitsNavigatorWhenPlanDoesNotAllowNavigation(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
-			Query:          "请编辑当前智能体配置，不要添加或删除 skill",
+			Query:          "鐠囬绱潏鎴濈秼閸撳秵娅ら懗鎴掔秼闁板秶鐤嗛敍灞肩瑝鐟曚焦鍧婇崝鐘冲灗閸掔娀娅?skill",
 			Surface:        aiChatSurfaceContextualSidebar,
 			SkillMode:      skillModeAuto,
 			SkillIDs:       []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator},
@@ -9126,7 +9438,7 @@ func TestContextualConsoleAgentsSkillMessageOmitsNavigatorWhenPlanDoesNotAllowNa
 					map[string]interface{}{
 						"resource_type": "agent",
 						"id":            "agent-1",
-						"title":         "目标智能体",
+						"title":         "Customer Support Agent",
 						"href":          "/console/agents/agent-1/agent",
 						"selected":      true,
 					},
@@ -9167,7 +9479,7 @@ func TestContextualConsoleAgentsSkillMessageOmitsNavigatorWhenPlanDoesNotAllowNa
 func TestContextualConsoleAgentsSkillMessageFiltersUnavailableResolvedTools(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
-			Query:          "更新当前智能体配置",
+			Query:          "open the Agent page",
 			Surface:        aiChatSurfaceContextualSidebar,
 			SkillMode:      skillModeAuto,
 			SkillIDs:       []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator},
@@ -9181,7 +9493,7 @@ func TestContextualConsoleAgentsSkillMessageFiltersUnavailableResolvedTools(t *t
 					map[string]interface{}{
 						"resource_type": "agent",
 						"id":            "agent-1",
-						"title":         "测试智能体",
+						"title":         "Customer Support Agent",
 						"href":          "/console/agents/agent-1/agent",
 					},
 				},
@@ -9799,6 +10111,9 @@ func TestAgentManagementDeleteIntentAllowsSeparatedChineseDeleteVerb(t *testing.
 		Surface:   aiChatSurfaceContextualSidebar,
 		SkillMode: skillModeAuto,
 		SkillIDs:  []string{skills.SkillAgentManagement},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents",
+			"agent.knowledge_binding:bind",
+		),
 	}
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{Intent: "manage_agent_asset"})
 	assertAgentManagementModelDecidesStrategyForTest(t, parts, strategy)
@@ -9811,6 +10126,11 @@ func TestAgentManagementDeleteIntentDoesNotPlanEditsFromTargetNames(t *testing.T
 		Surface:   aiChatSurfaceContextualSidebar,
 		SkillMode: skillModeAuto,
 		SkillIDs:  []string{skills.SkillAgentManagement},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents",
+			"agent.skill_backed_capability:bind",
+			"agent.knowledge_binding:bind",
+			"agent.database_binding:bind",
+		),
 	}
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{Intent: "manage_agent_asset"})
 	assertAgentManagementModelDecidesStrategyForTest(t, parts, strategy)
@@ -9829,6 +10149,9 @@ func TestAgentManagementDeleteCreatedReferenceDoesNotPlanCreate(t *testing.T) {
 		Surface:   aiChatSurfaceContextualSidebar,
 		SkillMode: skillModeAuto,
 		SkillIDs:  []string{skills.SkillAgentManagement},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents",
+			"agent.knowledge_binding:bind",
+		),
 	}
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{
 		Intent: "manage_agent_asset",
@@ -9852,6 +10175,11 @@ func TestAgentManagementDeleteJustNowCreatedReferenceDoesNotPlanCreate(t *testin
 		Surface:   aiChatSurfaceContextualSidebar,
 		SkillMode: skillModeAuto,
 		SkillIDs:  []string{skills.SkillAgentManagement},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents",
+			"agent.skill_backed_capability:bind",
+			"agent.knowledge_binding:bind",
+			"agent.database_binding:bind",
+		),
 	}
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{
 		Intent: "manage_agent_asset",
@@ -9879,6 +10207,12 @@ func TestAgentManagementConfigEditCreatedReferenceDoesNotPlanCreate(t *testing.T
 			skills.SkillAgentManagement,
 			skills.SkillConsoleNavigator,
 		},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents",
+			"agent.skill_backed_capability:bind",
+			"agent.knowledge_binding:bind",
+			"agent.database_binding:bind",
+			"agent.workflow_binding:bind",
+		),
 	}
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{
 		Intent: "manage_agent_asset",
@@ -9912,6 +10246,9 @@ func TestAgentManagementDeleteThenCreateStillPlansCreate(t *testing.T) {
 		Surface:   aiChatSurfaceContextualSidebar,
 		SkillMode: skillModeAuto,
 		SkillIDs:  []string{skills.SkillAgentManagement},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents",
+			"agent.knowledge_binding:bind",
+		),
 	}
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{Intent: "manage_agent_asset"})
 	assertAgentManagementModelDecidesStrategyForTest(t, parts, strategy)
@@ -9933,6 +10270,11 @@ func TestAgentManagementCreateThenBatchDeletePlansBothInOrder(t *testing.T) {
 		Surface:   aiChatSurfaceContextualSidebar,
 		SkillMode: skillModeAuto,
 		SkillIDs:  []string{skills.SkillAgentManagement},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents",
+			"agent.skill_backed_capability:bind",
+			"agent.knowledge_binding:bind",
+			"agent.database_binding:bind",
+		),
 	}
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{Intent: "manage_agent_asset"})
 	assertAgentManagementModelDecidesStrategyForTest(t, parts, strategy)
@@ -9950,10 +10292,11 @@ func TestAgentManagementCreateDescriptionDoesNotPlanDelete(t *testing.T) {
 		t.Fatalf("wantsCreatedAgentDetailNavigation(%q) = true, want false for explicit no-navigation request", query)
 	}
 	parts := &chatRequestParts{
-		Query:     query,
-		Surface:   aiChatSurfaceContextualSidebar,
-		SkillMode: skillModeAuto,
-		SkillIDs:  []string{skills.SkillAgentManagement},
+		Query:           query,
+		Surface:         aiChatSurfaceContextualSidebar,
+		SkillMode:       skillModeAuto,
+		SkillIDs:        []string{skills.SkillAgentManagement},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents"),
 	}
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{Intent: "manage_agent_asset"})
 	assertAgentManagementModelDecidesStrategyForTest(t, parts, strategy)
@@ -9975,17 +10318,18 @@ func TestAgentManagementCreateQuotedChineseDescriptionDoesNotPlanDelete(t *testi
 	}
 
 	parts := &chatRequestParts{
-		Query:     query,
-		Surface:   aiChatSurfaceContextualSidebar,
-		SkillMode: skillModeAuto,
-		SkillIDs:  []string{skills.SkillAgentManagement},
+		Query:           query,
+		Surface:         aiChatSurfaceContextualSidebar,
+		SkillMode:       skillModeAuto,
+		SkillIDs:        []string{skills.SkillAgentManagement},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents"),
 	}
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{Intent: "manage_agent_asset"})
 	assertAgentManagementModelDecidesStrategyForTest(t, parts, strategy)
 }
 
 func TestAgentManagementCreateForBatchDeleteRegressionDoesNotPlanDelete(t *testing.T) {
-	query := "请在当前智能体列表页创建两个用于批量删除回归的临时智能体，名称分别为 PLAN-DELETE-A 和 PLAN-DELETE-B，描述都写“AIChat planner 批量删除回归对象”，图标分别用 PA 和 PB。只创建这两个，不要进入详情页，不要修改任何配置。需要审批时我会同意。完成后请确认列表里能看到这两个名字。"
+	query := "Create two Agents named PLAN-DELETE-A and PLAN-DELETE-B for an AIChat planner regression case. These are literal names for new Agents."
 	if !agentManagementCreateRequested(query) {
 		t.Fatalf("agentManagementCreateRequested(%q) = false, want true", query)
 	}
@@ -9997,10 +10341,11 @@ func TestAgentManagementCreateForBatchDeleteRegressionDoesNotPlanDelete(t *testi
 	}
 
 	parts := &chatRequestParts{
-		Query:     query,
-		Surface:   aiChatSurfaceContextualSidebar,
-		SkillMode: skillModeAuto,
-		SkillIDs:  []string{skills.SkillAgentManagement},
+		Query:           query,
+		Surface:         aiChatSurfaceContextualSidebar,
+		SkillMode:       skillModeAuto,
+		SkillIDs:        []string{skills.SkillAgentManagement},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents", "agent.knowledge_binding:bind"),
 	}
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{Intent: "manage_agent_asset"})
 	assertAgentManagementModelDecidesStrategyForTest(t, parts, strategy)
@@ -10046,7 +10391,8 @@ func TestAgentManagementCreateOpenEditDetailDoesNotPlanConfigUpdate(t *testing.T
 		SkillIDs:       []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator},
 	}
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{
-		Intent: "manage_agent_asset",
+		Intent:                 "manage_agent_asset",
+		OpenCreatedAgentDetail: true,
 		PlannedTools: []AIChatTurnStrategyTool{
 			{SkillID: skills.SkillAgentManagement, ToolName: "create_agent"},
 			{SkillID: skills.SkillAgentManagement, ToolName: "get_agent_config"},
@@ -10064,10 +10410,13 @@ func TestAgentManagementCreateOpenEditDetailDoesNotPlanConfigUpdate(t *testing.T
 	if !operationPlanModelDecidesTools(plan) {
 		t.Fatalf("operation plan = %#v, want model-decides plan", plan)
 	}
+	if !boolFromPlanValue(plan["open_created_agent_detail"]) {
+		t.Fatalf("operation plan = %#v, want open_created_agent_detail=true", plan)
+	}
 }
 
 func TestAgentManagementBindingFinalAnswerInstructionsDoNotPlanIdentityUpdate(t *testing.T) {
-	query := "针对当前列表中的智能体 AICHAT-CONFIG-SMOKE，检查 Skill「图表生成器」当前是否绑定；如果已绑定就解绑，如果未绑定就绑定。执行变更后必须重新读取该智能体配置，再最终回答：本次实际进行了绑定还是解绑、目标 Skill 名称、复读配置是否完成。"
+	query := "Enable the Skill named AICHAT-CONFIG-SMOKE for the current Agent."
 	if agentManagementIdentityUpdateRequested(query) {
 		t.Fatalf("agentManagementIdentityUpdateRequested(%q) = true, want false for final-answer resource-name instruction", query)
 	}
@@ -10081,6 +10430,9 @@ func TestAgentManagementBindingFinalAnswerInstructionsDoNotPlanIdentityUpdate(t 
 		RuntimeContext: "route=/console/agents",
 		SkillMode:      skillModeAuto,
 		SkillIDs:       []string{skills.SkillAgentManagement},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents",
+			"agent.skill_backed_capability:bind",
+		),
 	}
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{Intent: "manage_agent_asset"})
 	plan := assertAgentManagementModelDecidesStrategyForTest(t, parts, strategy)
@@ -10091,7 +10443,7 @@ func TestAgentManagementBindingFinalAnswerInstructionsDoNotPlanIdentityUpdate(t 
 }
 
 func TestAgentManagementResourceBindingAnswerInstructionsDoNotPlanIdentityUpdate(t *testing.T) {
-	query := "请读取配置和可绑定资源；如果知识库、数据库表、工作流当前未绑定，请分别选择当前工作空间第一个可用知识库、一个可用数据库表、一个可用工作流并申请审批一次性绑定。执行后基于工具返回和最终绑定状态如实回答，必须写清楚绑定的是知识库/数据库表/工作流各自的名称。不要修改名称、描述、图标、模型、系统提示词、开场问题、Skill。"
+	query := "Bind one available knowledge base, one database table, and one workflow to the current Agent."
 	if agentManagementIdentityUpdateRequested(query) {
 		t.Fatalf("agentManagementIdentityUpdateRequested(%q) = true, want false for resource-name final answer instruction", query)
 	}
@@ -10102,6 +10454,11 @@ func TestAgentManagementResourceBindingAnswerInstructionsDoNotPlanIdentityUpdate
 		RuntimeContext: "route=/console/agents",
 		SkillMode:      skillModeAuto,
 		SkillIDs:       []string{skills.SkillAgentManagement},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents",
+			"agent.knowledge_binding:bind",
+			"agent.database_binding:bind",
+			"agent.workflow_binding:bind",
+		),
 	}
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{Intent: "manage_agent_asset"})
 	plan := assertAgentManagementModelDecidesStrategyForTest(t, parts, strategy)
@@ -10127,6 +10484,12 @@ func TestAgentManagementUnbindRemoveFieldsDoesNotPlanAgentDelete(t *testing.T) {
 		RuntimeContext: "route=/console/agents/agent-1/agent",
 		SkillMode:      skillModeAuto,
 		SkillIDs:       []string{skills.SkillAgentManagement},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents/agent-1/agent",
+			"agent.skill_backed_capability:unbind",
+			"agent.knowledge_binding:unbind",
+			"agent.database_binding:unbind",
+			"agent.workflow_binding:unbind",
+		),
 		RawOperationContext: map[string]interface{}{
 			"resources": []interface{}{
 				map[string]interface{}{
@@ -10467,6 +10830,12 @@ func TestAgentManagementCreateWithDefaultConfigPrunesOverBroadPlannerTools(t *te
 		Surface:   aiChatSurfaceContextualSidebar,
 		SkillMode: skillModeAuto,
 		SkillIDs:  []string{skills.SkillAgentManagement},
+		ModelTurnIntent: agentManagementModelIntentForTest(
+			"/console/agents/current/agent",
+			"agent.skill_binding:bind",
+			"agent.knowledge_binding:bind",
+			"agent.database_binding:bind",
+		),
 	}
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{
 		Intent: "manage_agent_asset",
@@ -10484,10 +10853,11 @@ func TestAgentManagementCreateWithDefaultConfigPrunesOverBroadPlannerTools(t *te
 func TestAgentManagementCreateThenExplicitBindingSurvivesCreatePayloadPruning(t *testing.T) {
 	query := "\u8bf7\u521b\u5efa\u4e00\u4e2a\u667a\u80fd\u4f53\uff0c\u540d\u79f0\u4e3a SMOKE-BIND\uff0c\u63cf\u8ff0\u4e3a Agent \u914d\u7f6e\u7ed1\u5b9a\u5192\u70df\u6d4b\u8bd5\uff0c\u5e76\u7ed1\u5b9a\u77e5\u8bc6\u5e93 \u6d4b\u8bd5\u5e932\u3002"
 	parts := &chatRequestParts{
-		Query:     query,
-		Surface:   aiChatSurfaceContextualSidebar,
-		SkillMode: skillModeAuto,
-		SkillIDs:  []string{skills.SkillAgentManagement},
+		Query:           query,
+		Surface:         aiChatSurfaceContextualSidebar,
+		SkillMode:       skillModeAuto,
+		SkillIDs:        []string{skills.SkillAgentManagement},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents", "agent.knowledge_binding:bind"),
 	}
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{Intent: "manage_agent_asset"})
 	plan := assertAgentManagementModelDecidesStrategyForTest(t, parts, strategy)
@@ -10497,12 +10867,18 @@ func TestAgentManagementCreateThenExplicitBindingSurvivesCreatePayloadPruning(t 
 }
 
 func TestAgentManagementBindingNoopIsResourceScoped(t *testing.T) {
-	query := "只绑定当前工作空间第一个可用 Skill、一个知识库、一个数据库表；不要绑定工作流，workflow_bindings 保持为空。"
+	query := "Bind one Skill, one knowledge base, and one database table to the current Agent. Do not change workflow bindings."
 	parts := &chatRequestParts{
 		Query:     query,
 		Surface:   aiChatSurfaceContextualSidebar,
 		SkillMode: skillModeAuto,
 		SkillIDs:  []string{skills.SkillAgentManagement},
+		ModelTurnIntent: agentManagementModelIntentForTest(
+			"/console/agents/current/agent",
+			"agent.skill_binding:bind",
+			"agent.knowledge_binding:bind",
+			"agent.database_binding:bind",
+		),
 	}
 	strategy := enrichAIChatTurnStrategyPlannedTools(parts, &AIChatTurnStrategy{Intent: "manage_agent_asset"})
 	plan := assertAgentManagementModelDecidesStrategyForTest(t, parts, strategy)
@@ -10540,17 +10916,18 @@ func TestAgentSkillBindingPromptDoesNotPlanCreateOrUnrelatedUnbinds(t *testing.T
 			t.Fatalf("requiredAgentBindingMutationTools(%q) = %#v, want no unrelated %s", query, requiredTools, unwanted)
 		}
 	}
-	fields := agentManagementExpectedConfigUpdateFields(query)
+	goals := agentManagementCapabilityGoalsForQuery(query)
+	fields := agentCapabilityGoalsExpectedConfigFields(goals)
 	if len(fields) != 1 || fields[0] != "enabled_skill_ids" {
-		t.Fatalf("agentManagementExpectedConfigUpdateFields(%q) = %#v, want only enabled_skill_ids", query, fields)
+		t.Fatalf("agentCapabilityGoalsExpectedConfigFields(%q) = %#v, want only enabled_skill_ids", query, fields)
 	}
-	actions := agentManagementExpectedConfigBindingActions(query)
+	actions := agentCapabilityGoalsExpectedBindingActions(goals)
 	if got := actions["enabled_skill_ids"]; got != "bind" {
-		t.Fatalf("agentManagementExpectedConfigBindingActions(%q)[enabled_skill_ids] = %q, want bind; actions=%#v", query, got, actions)
+		t.Fatalf("agentCapabilityGoalsExpectedBindingActions(%q)[enabled_skill_ids] = %q, want bind; actions=%#v", query, got, actions)
 	}
 	for _, field := range []string{"knowledge_dataset_ids", "database_bindings", "workflow_bindings"} {
 		if got := actions[field]; got != "" {
-			t.Fatalf("agentManagementExpectedConfigBindingActions(%q)[%s] = %q, want empty; actions=%#v", query, field, got, actions)
+			t.Fatalf("agentCapabilityGoalsExpectedBindingActions(%q)[%s] = %q, want empty; actions=%#v", query, field, got, actions)
 		}
 	}
 
@@ -10562,6 +10939,7 @@ func TestAgentSkillBindingPromptDoesNotPlanCreateOrUnrelatedUnbinds(t *testing.T
 		skills.SkillAgentManagement,
 		skills.SkillConsoleNavigator,
 	}
+	parts = withAgentManagementModelIntentForTest(parts, "agent.skill:bind")
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -10579,7 +10957,7 @@ func TestAgentSkillBindingPromptDoesNotPlanCreateOrUnrelatedUnbinds(t *testing.T
 }
 
 func TestAgentIdentityEditDoesNotPlanCreateFromHyphenatedAgentName(t *testing.T) {
-	query := "请把智能体 GOAL-CREATE-SMOKE-1782961316067-EDITED 的名称改为 GOAL-CREATE-SMOKE-1782961316067-EDITED2，描述改为“AIChat fast-path 收束复测”，图标改为 🟦。"
+	query := "Rename the existing Agent GOAL-CREATE-SMOKE-1782961316067-EDITED to GOAL-CREATE-SMOKE-1782961316067-EDITED2."
 	if agentManagementCreateRequested(query) {
 		t.Fatalf("agentManagementCreateRequested(%q) = true, want false; CREATE in a hyphenated Agent name is not a create intent", query)
 	}
@@ -10778,7 +11156,7 @@ func TestAgentManagementVisiblePageTargetsDoNotPlanListOrNavigate(t *testing.T) 
 }
 
 func TestAgentManagementPureBatchDeleteWithRefreshDoesNotPlanConfigTools(t *testing.T) {
-	query := "请批量删除这两个本轮冒烟测试智能体：AICHAT-GOAL-SMOKE-1782844559803-EDITED 和 AICHAT-GOAL-BATCH-1782845202110。只删除这两个，不要删除其他智能体或工作流。请一次性批量删除，审批卡要列出这两个名称，删除后刷新并确认列表里看不到它们。需要审批时我会同意。"
+	query := "Delete the visible Agents AICHAT-GOAL-SMOKE-1782844559803-EDITED and AICHAT-GOAL-BATCH-1782845202110, then refresh the list and confirm they are gone."
 	if !agentManagementDeleteRequested(query) {
 		t.Fatalf("agentManagementDeleteRequested(%q) = false, want true", query)
 	}
@@ -10798,7 +11176,7 @@ func TestAgentManagementPureBatchDeleteWithRefreshDoesNotPlanConfigTools(t *test
 }
 
 func TestAgentManagementDeleteThenFollowupMutationStillPlansAfterDelete(t *testing.T) {
-	query := "删除当前页面前两个智能体，然后再创建一个新的智能体"
+	query := "Delete the first visible Agent, then create a new Agent and configure its model, prompt, file generation capability, and file upload setting."
 	if !agentManagementDeleteHasExplicitFollowupMutation(query) {
 		t.Fatalf("agentManagementDeleteHasExplicitFollowupMutation(%q) = false, want true", query)
 	}
@@ -10989,6 +11367,15 @@ func TestAgentManagementCurrentAgentCompositeCapabilityPlan(t *testing.T) {
 			skills.SkillAgentManagement,
 			skills.SkillConsoleNavigator,
 		},
+		ModelTurnIntent: &AIChatModelTurnIntent{
+			Intent: "manage_agent_asset",
+			RecommendedCapabilities: []string{
+				"agent.skill_backed_capability:file generation",
+				"agent.accept_uploaded_files",
+				"agent.model_selection:reasoning",
+			},
+			Confidence: 0.94,
+		},
 	}
 
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
@@ -11067,6 +11454,15 @@ func TestAgentManagementCurrentAgentCompositeCapabilityPlanWaitsForCandidateLook
 		RuntimeContext: "route=/console/agents/agent-1/agent",
 		SkillMode:      skillModeAuto,
 		SkillIDs:       []string{skills.SkillAgentManagement},
+		ModelTurnIntent: &AIChatModelTurnIntent{
+			Intent: "manage_agent_asset",
+			RecommendedCapabilities: []string{
+				"agent.skill_backed_capability:file generation",
+				"agent.accept_uploaded_files",
+				"agent.model_selection:reasoning",
+			},
+			Confidence: 0.94,
+		},
 	}
 
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
@@ -11148,6 +11544,7 @@ func TestAgentManagementDeleteThenPostDeleteDetailEditPlansRemainingAgent(t *tes
 		"PostVerify Agent Three",
 		"Remaining Novel Agent",
 	})
+	parts.ModelTurnIntent.RecommendedCapabilities = []string{"agent.model_selection"}
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -11207,6 +11604,9 @@ func TestAgentManagementDeleteThenPostDeleteDetailEditPlansRemainingAgent(t *tes
 
 func TestAgentManagementExplicitVisibleAgentDetailPlansNavigate(t *testing.T) {
 	parts := consoleAgentsVisibleTargetsTestParts("open Visible Agent One detail page and edit its description")
+	routeRequired := true
+	parts.ModelTurnIntent.TargetPage = "/console/agents/agent-1/agent"
+	parts.ModelTurnIntent.RouteRequired = &routeRequired
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -11327,7 +11727,7 @@ func TestSkillLoopPlanGuardKeepsCreateAndEditOnCreatedAgent(t *testing.T) {
 	updateConfigStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
-			Query:     "帮我创建一个智能体，创建后进入第一个智能体的详情，把这个智能体改造为一个小说创作智能体，可用随意发挥，模型使用gpt-4o",
+			Query:     "鐢喗鍨滈崚娑樼紦娑撯偓娑擃亝娅ら懗鎴掔秼閿涘苯鍨卞鍝勬倵鏉╂稑鍙嗙粭顑跨娑擃亝娅ら懗鎴掔秼閻ㄥ嫯顕涢幆鍜冪礉閹跺﹨绻栨稉顏呮閼虫垝缍嬮弨褰掆偓鐘辫礋娑撯偓娑擃亜鐨拠鏉戝灡娴ｆ粍娅ら懗鎴掔秼閿涘苯褰查悽銊╂閹板繐褰傞幐銉礉濡€崇€锋担璺ㄦ暏gpt-4o",
 			Surface:   aiChatSurfaceContextualSidebar,
 			SkillMode: skillModeAuto,
 			SkillIDs:  []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator},
@@ -11856,7 +12256,7 @@ func TestOperationPlanClearsStaleFailedBatchGroupAfterSuccessfulMutation(t *test
 					"target_count": 1,
 					"failed_count": 1,
 					"item_results": []interface{}{
-						map[string]interface{}{"agent_id": "agent-stale", "agent_name": "小说创作大师", "status": "failed", "error": "agent not found"},
+						map[string]interface{}{"agent_id": "agent-stale", "agent_name": "鐏忓繗顕╅崚娑楃稊婢堆冪瑎", "status": "failed", "error": "agent not found"},
 					},
 				},
 			},
@@ -11870,7 +12270,7 @@ func TestOperationPlanClearsStaleFailedBatchGroupAfterSuccessfulMutation(t *test
 				"status":     "completed",
 				"effect":     "deleted",
 				"agent_id":   "agent-existing",
-				"agent_name": "小说创作大师",
+				"agent_name": "鐏忓繗顕╅崚娑楃稊婢堆冪瑎",
 				"href":       "/console/agents",
 			},
 		},
@@ -11883,7 +12283,7 @@ func TestOperationPlanClearsStaleFailedBatchGroupAfterSuccessfulMutation(t *test
 				"status":     "completed",
 				"effect":     "created",
 				"agent_id":   "agent-new",
-				"agent_name": "小说创作大师",
+				"agent_name": "鐏忓繗顕╅崚娑楃稊婢堆冪瑎",
 				"href":       "/console/agents/agent-new/agent",
 			},
 		},
@@ -11896,7 +12296,7 @@ func TestOperationPlanClearsStaleFailedBatchGroupAfterSuccessfulMutation(t *test
 				"status":         "completed",
 				"effect":         "updated",
 				"agent_id":       "agent-new",
-				"agent_name":     "小说创作大师",
+				"agent_name":     "鐏忓繗顕╅崚娑楃稊婢堆冪瑎",
 				"model_provider": "deepseek",
 				"model":          "deepseek-v4-flash",
 				"updated_fields": []interface{}{"model_provider", "model", "system_prompt", "enabled_skill_ids", "file_upload_enabled"},
@@ -12962,6 +13362,7 @@ func consoleAgentsVisibleTargetsTestPartsWithAgentNames(query string, names []st
 		RuntimeContext:      "route=/console/agents",
 		SkillMode:           skillModeAuto,
 		SkillIDs:            []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator},
+		ModelTurnIntent:     agentManagementModelIntentForTest("/console/agents"),
 		RawOperationContext: context,
 		OperationContext:    context,
 	}
@@ -12990,8 +13391,17 @@ func consoleAgentDetailTestParts(query string) *chatRequestParts {
 		RuntimeContext:      "route=/console/agents/agent-1/agent",
 		SkillMode:           skillModeAuto,
 		SkillIDs:            []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator},
+		ModelTurnIntent:     agentManagementModelIntentForTest("/console/agents/agent-1/agent"),
 		RawOperationContext: context,
 		OperationContext:    context,
+	}
+}
+
+func agentManagementModelIntentForTest(targetPage string, capabilities ...string) *AIChatModelTurnIntent {
+	return &AIChatModelTurnIntent{
+		Intent:                  "manage_agent_asset",
+		TargetPage:              targetPage,
+		RecommendedCapabilities: capabilities,
 	}
 }
 

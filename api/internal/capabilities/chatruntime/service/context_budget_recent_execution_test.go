@@ -362,6 +362,12 @@ func TestHistoryIsolationForIndependentContextualOperationRequest(t *testing.T) 
 		Surface:   aiChatSurfaceContextualSidebar,
 		SkillMode: skillModeAuto,
 		SkillIDs:  []string{skills.SkillAgentManagement, skills.SkillConsoleNavigator},
+		ModelTurnIntent: &AIChatModelTurnIntent{
+			Intent:      "manage_agent_asset",
+			AssetEffect: "create",
+			TargetPage:  "/console/agents",
+			Confidence:  0.92,
+		},
 	}
 
 	if !shouldIsolateHistoryForCurrentTurn(parts) {

@@ -508,208 +508,6 @@ func agentManagementCapabilityDefinitionsForPrompt() []map[string]interface{} {
 	return out
 }
 
-func agentManagementCapabilityGoalsForQuery(query string) []AIChatAgentCapabilityGoal {
-	text := strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(agentManagementSecondaryIntentQuery(query))))
-	if text == "" {
-		return nil
-	}
-	goals := []AIChatAgentCapabilityGoal{}
-	add := func(goal AIChatAgentCapabilityGoal) {
-		goal.CapabilityID = strings.TrimSpace(goal.CapabilityID)
-		if goal.CapabilityID == "" {
-			return
-		}
-		goal.GoalAction = canonicalAgentCapabilityAction(goal.GoalAction)
-		goal.DisplayName = strings.TrimSpace(goal.DisplayName)
-		goal.Meaning = strings.TrimSpace(goal.Meaning)
-		goal.UserIntent = strings.TrimSpace(goal.UserIntent)
-		goal.CandidateTool = strings.TrimSpace(goal.CandidateTool)
-		goal.CandidateQuery = strings.TrimSpace(goal.CandidateQuery)
-		goal.CandidateUseCase = strings.TrimSpace(goal.CandidateUseCase)
-		goal.RequiredConfigFields = canonicalAgentCapabilityConfigFields(goal.RequiredConfigFields)
-		goal.RequiredBindingActions = canonicalAgentCapabilityBindingActions(goal.RequiredBindingActions)
-		goal = agentCapabilityGoalWithDefaults(goal)
-		for idx, existing := range goals {
-			if existing.CapabilityID == goal.CapabilityID &&
-				strings.EqualFold(existing.CandidateQuery, goal.CandidateQuery) {
-				if canonicalAgentCapabilityAction(existing.GoalAction) == agentCapabilityActionInspect &&
-					canonicalAgentCapabilityAction(goal.GoalAction) != agentCapabilityActionInspect {
-					goals[idx] = goal
-				}
-				return
-			}
-		}
-		goals = append(goals, goal)
-	}
-
-	if agentManagementModelSelectionRequested(text) {
-		add(AIChatAgentCapabilityGoal{
-			CapabilityID:         agentCapabilityModelSelection,
-			GoalAction:           agentCapabilityActionUpdate,
-			DisplayName:          "model selection",
-			UserIntent:           truncateRunes(text, 240),
-			RequiredConfigFields: []string{"model_provider", "model"},
-			CandidateTool:        "list_available_models",
-			CandidateUseCase:     agentManagementModelUseCase(text),
-			VerifyBy:             []string{"get_agent_config shows the selected provider/model pair"},
-		})
-	}
-	if agentManagementPersonaUpdateRequested(text) ||
-		(agentManagementMutationVerbRequested(text) && agentManagementConfigFieldSemanticMarkerRequested(text, "system_prompt")) {
-		add(AIChatAgentCapabilityGoal{
-			CapabilityID:         agentCapabilitySystemPrompt,
-			GoalAction:           agentCapabilityActionUpdate,
-			DisplayName:          "system prompt",
-			UserIntent:           truncateRunes(text, 240),
-			RequiredConfigFields: []string{"system_prompt"},
-			VerifyBy:             []string{"get_agent_config returns a system_prompt consistent with the requested role or instruction"},
-		})
-	}
-	explicitConfigFields := agentManagementExplicitConfigFieldsFromText(text)
-	for _, descriptor := range agentManagementConfigOnlyCapabilityDescriptors() {
-		field := operationPlanAgentConfigCanonicalField(descriptor.Field)
-		if field == "" {
-			continue
-		}
-		statusRequested := agentManagementConfigCapabilityStatusRequested(text, field)
-		mutationRequested := agentManagementConfigOnlyCapabilityRequested(text, field)
-		if !mutationRequested && !statusRequested && stringSliceContainsFold(explicitConfigFields, field) {
-			mutationRequested = agentManagementMutationVerbRequested(text) ||
-				agentManagementCapabilityEnablePhraseRequested(text)
-		}
-		if !mutationRequested && !statusRequested {
-			continue
-		}
-		action := canonicalAgentCapabilityAction(descriptor.GoalAction)
-		if action == "" {
-			action = agentCapabilityActionEnable
-		}
-		verifyBy := append([]string(nil), descriptor.EnableVerify...)
-		if statusRequested {
-			action = agentCapabilityActionInspect
-			verifyBy = append([]string(nil), descriptor.InspectVerify...)
-		}
-		add(AIChatAgentCapabilityGoal{
-			CapabilityID:         descriptor.CapabilityID,
-			GoalAction:           action,
-			DisplayName:          descriptor.DisplayName,
-			UserIntent:           truncateRunes(text, 240),
-			RequiredConfigFields: []string{field},
-			VerifyBy:             verifyBy,
-		})
-	}
-	skillCapabilityQuery := agentManagementSkillCapabilityCandidateQuery(text)
-	statusCapabilityQuery := ""
-	if skillCapabilityQuery == "" {
-		statusCapabilityQuery = agentManagementCapabilityStatusCandidateQueryForText(text)
-	}
-	candidateQuery := firstNonEmptyString(skillCapabilityQuery, statusCapabilityQuery)
-	if candidateQuery != "" {
-		goal := AIChatAgentCapabilityGoal{
-			CapabilityID: agentCapabilitySkillBacked,
-			GoalAction:   agentCapabilityActionEnable,
-			DisplayName:  agentSkillBackedCapabilityDisplayName(candidateQuery),
-			UserIntent:   truncateRunes(text, 240),
-			RequiredConfigFields: []string{
-				"enabled_skill_ids",
-			},
-			CandidateTool:  "list_agent_skill_candidates",
-			CandidateQuery: candidateQuery,
-			NotSufficient: []string{
-				"system_prompt_only",
-				"file_upload_enabled_only",
-			},
-			VerifyBy: []string{"get_agent_config.enabled_skill_ids contains a selected candidate skill id"},
-		}
-		if statusCapabilityQuery != "" {
-			goal.GoalAction = agentCapabilityActionInspect
-			goal.VerifyBy = []string{"get_agent_config.enabled_skill_ids and candidate lookup report whether a matching Skill is enabled"}
-		} else {
-			goal.RequiredBindingActions = map[string]string{
-				"enabled_skill_ids": "bind",
-			}
-		}
-		add(goal)
-	}
-	if agentManagementSkillBindingRequested(text) {
-		action := operationPlanCanonicalAgentConfigBindingAction(
-			agentBindingExpectedActionForResource(text, []string{"skill", "\u6280\u80fd"}),
-		)
-		if action == "" {
-			action = operationPlanCanonicalAgentConfigBindingAction(agentBindingExpectedActionFromText(text))
-		}
-		if action == "" {
-			action = "bind"
-		}
-		goalAction := agentCapabilityActionBind
-		switch action {
-		case "unbind":
-			goalAction = agentCapabilityActionUnbind
-		case "replace":
-			goalAction = agentCapabilityActionReplace
-		}
-		goal := AIChatAgentCapabilityGoal{
-			CapabilityID:         agentCapabilitySkillBacked,
-			GoalAction:           goalAction,
-			DisplayName:          "skill binding",
-			UserIntent:           truncateRunes(text, 240),
-			RequiredConfigFields: []string{"enabled_skill_ids"},
-			RequiredBindingActions: map[string]string{
-				"enabled_skill_ids": action,
-			},
-			VerifyBy: []string{"get_agent_config.enabled_skill_ids reflects the requested Skill binding change"},
-		}
-		if agentManagementSkillBindingCandidateLookupNeeded(text) {
-			goal.CandidateTool = "list_agent_skill_candidates"
-			goal.CandidateQuery = agentManagementSkillCandidateQuery(text)
-		}
-		add(goal)
-	}
-	if stringSliceContainsFold(explicitConfigFields, "suggested_questions") ||
-		(agentManagementMutationVerbRequested(text) && agentManagementConfigFieldSemanticMarkerRequested(text, "suggested_questions")) {
-		add(AIChatAgentCapabilityGoal{
-			CapabilityID:         agentCapabilitySuggestedQuestion,
-			GoalAction:           agentCapabilityActionUpdate,
-			DisplayName:          "suggested_questions",
-			UserIntent:           truncateRunes(text, 240),
-			RequiredConfigFields: []string{"suggested_questions"},
-			VerifyBy:             []string{"get_agent_config returns the requested suggested_questions state"},
-		})
-	}
-	for _, goal := range agentManagementReadOnlyBindingCapabilityGoals(text) {
-		add(goal)
-	}
-	for _, toolName := range requiredAgentBindingMutationTools(text) {
-		field := agentBindingRequirementField(toolName)
-		if field == "" {
-			continue
-		}
-		action := operationPlanCanonicalAgentConfigBindingAction(agentBindingExpectedActionFromText(text))
-		if action == "" {
-			action = "bind"
-		}
-		capabilityID := operationPlanAgentResourceBindingCapabilityForField(field)
-		if capabilityID == "" {
-			continue
-		}
-		add(AIChatAgentCapabilityGoal{
-			CapabilityID:         capabilityID,
-			GoalAction:           canonicalAgentCapabilityAction(action),
-			DisplayName:          field,
-			UserIntent:           truncateRunes(text, 240),
-			RequiredConfigFields: []string{field},
-			RequiredBindingActions: map[string]string{
-				field: action,
-			},
-			VerifyBy: []string{"get_agent_config returns the requested " + field + " binding state"},
-		})
-	}
-	if len(goals) == 0 {
-		return nil
-	}
-	return goals
-}
-
 func agentManagementCapabilityGoalsFromModelIntent(intent *AIChatModelTurnIntent) []AIChatAgentCapabilityGoal {
 	if intent == nil || len(intent.RecommendedCapabilities) == 0 {
 		return nil
@@ -790,7 +588,9 @@ func agentCapabilityGoalFromModelCapabilityHint(hint string, intent *AIChatModel
 			goal.CandidateQuery = target
 		}
 		if canonicalAgentCapabilityAction(goal.GoalAction) != agentCapabilityActionInspect {
-			goal.RequiredBindingActions = map[string]string{"enabled_skill_ids": "bind"}
+			if action := operationPlanCanonicalAgentConfigBindingAction(goal.GoalAction); action != "" {
+				goal.RequiredBindingActions = map[string]string{"enabled_skill_ids": action}
+			}
 		}
 	case agentCapabilityKnowledgeBinding, agentCapabilityDatabaseBinding, agentCapabilityWorkflowBinding:
 		field := operationPlanAgentResourceBindingFieldForCapability(capabilityID)
@@ -819,7 +619,7 @@ func canonicalAgentCapabilityIDHint(value string) string {
 		return agentCapabilityModelSelection
 	case agentCapabilitySystemPrompt, "agent.prompt", "system_prompt", "prompt":
 		return agentCapabilitySystemPrompt
-	case agentCapabilitySkillBacked, "agent.skill", "agent.skills", "agent.tool", "agent.tools", "skill", "skills", "tool", "tools", "skill_backed_capability", "tool_backed_capability":
+	case agentCapabilitySkillBacked, "agent.skill", "agent.skills", "agent.skill_binding", "agent.skill_bindings", "agent.tool", "agent.tools", "skill", "skills", "skill_binding", "skill_bindings", "tool", "tools", "skill_backed_capability", "tool_backed_capability":
 		return agentCapabilitySkillBacked
 	case agentCapabilityAcceptUploaded, "agent.file_upload", "agent.uploaded_files", "file_upload", "accept_uploaded_files", "uploaded_files":
 		return agentCapabilityAcceptUploaded
@@ -1098,17 +898,6 @@ func canonicalAgentCapabilityBindingActions(actions map[string]string) map[strin
 	return out
 }
 
-func agentManagementCapabilityExpectedConfigFields(query string) []string {
-	fields := []string{}
-	for _, goal := range agentManagementCapabilityGoalsForQuery(query) {
-		if !agentCapabilityGoalContributesExpectedConfigFields(goal) {
-			continue
-		}
-		fields = appendUniqueStrings(fields, goal.RequiredConfigFields...)
-	}
-	return fields
-}
-
 func agentCapabilityGoalsExpectedConfigFields(goals []AIChatAgentCapabilityGoal) []string {
 	fields := []string{}
 	for _, goal := range goals {
@@ -1176,17 +965,29 @@ func agentCapabilityGoalWithDefaults(goal AIChatAgentCapabilityGoal) AIChatAgent
 		)
 	case agentCapabilitySkillBacked:
 		goal.Meaning = firstNonEmptyString(goal.Meaning, "Grants a tool-backed Agent capability only when a matching Skill is enabled in enabled_skill_ids.")
-		goal.EnableBy = appendUniqueStrings(goal.EnableBy,
-			"list_agent_skill_candidates for the requested capability",
-			"update_agent_config enabled_skill_ids with the selected Skill",
-			"verify get_agent_config.enabled_skill_ids contains the selected Skill",
-		)
+		switch canonicalAgentCapabilityAction(goal.GoalAction) {
+		case agentCapabilityActionUnbind:
+			goal.EnableBy = appendUniqueStrings(goal.EnableBy,
+				"read get_agent_config.enabled_skill_ids before changing bindings when exact current bindings are needed",
+				"update_agent_config enabled_skill_ids without the removed Skill",
+				"verify get_agent_config.enabled_skill_ids no longer contains the removed Skill",
+			)
+			goal.VerifyBy = appendUniqueStrings(goal.VerifyBy,
+				"get_agent_config.enabled_skill_ids no longer contains the removed Skill",
+			)
+		default:
+			goal.EnableBy = appendUniqueStrings(goal.EnableBy,
+				"list_agent_skill_candidates for the requested capability",
+				"update_agent_config enabled_skill_ids with the selected Skill",
+				"verify get_agent_config.enabled_skill_ids contains the selected Skill",
+			)
+			goal.VerifyBy = appendUniqueStrings(goal.VerifyBy,
+				"get_agent_config.enabled_skill_ids contains the selected candidate Skill",
+			)
+		}
 		goal.NotSufficient = appendUniqueStrings(goal.NotSufficient,
 			"candidate_lookup_only",
 			"natural_language_claim_only",
-		)
-		goal.VerifyBy = appendUniqueStrings(goal.VerifyBy,
-			"get_agent_config.enabled_skill_ids contains the selected candidate Skill",
 		)
 	case agentCapabilityMemory:
 		goal.Meaning = firstNonEmptyString(goal.Meaning, "Controls whether the Agent can use its memory feature; prompt text alone is not persistent memory.")
@@ -1243,17 +1044,6 @@ func agentCapabilityGoalWithBindingDefaults(goal AIChatAgentCapabilityGoal) AICh
 		"natural_language_claim_only",
 	)
 	return goal
-}
-
-func agentManagementCapabilityExpectedBindingActions(query string) map[string]string {
-	out := map[string]string{}
-	for _, goal := range agentManagementCapabilityGoalsForQuery(query) {
-		out = mergeAgentCapabilityGoalExpectedBindingActions(out, goal)
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 func agentCapabilityGoalsExpectedBindingActions(goals []AIChatAgentCapabilityGoal) map[string]string {
@@ -1343,23 +1133,24 @@ func agentCapabilityGoalsRequireConfigMutation(goals []AIChatAgentCapabilityGoal
 	return false
 }
 
-func agentManagementCapabilityRequiresConfigMutation(query string) bool {
-	text := strings.ToLower(strings.TrimSpace(stripAgentManagementFinalAnswerInstruction(agentManagementSecondaryIntentQuery(query))))
-	if text == "" {
+func agentCapabilityGoalsAreExplicitReadOnly(goals []AIChatAgentCapabilityGoal) bool {
+	if len(goals) == 0 {
 		return false
 	}
-	if agentManagementExplicitNoMutationRequested(text) && !agentManagementMutationVerbRequested(text) {
-		return false
-	}
-	for _, goal := range agentManagementCapabilityGoalsForQuery(text) {
-		if canonicalAgentCapabilityAction(goal.GoalAction) == agentCapabilityActionInspect {
-			continue
+	hasInspectGoal := false
+	for _, goal := range goals {
+		switch canonicalAgentCapabilityAction(goal.GoalAction) {
+		case agentCapabilityActionInspect:
+			hasInspectGoal = true
+		case "":
+			if len(goal.RequiredConfigFields) > 0 || len(goal.RequiredBindingActions) > 0 {
+				return false
+			}
+		default:
+			return false
 		}
-		if len(goal.RequiredConfigFields) > 0 || len(goal.RequiredBindingActions) > 0 {
-			return true
-		}
 	}
-	return false
+	return hasInspectGoal
 }
 
 func appendAgentCapabilityGoals(current []AIChatAgentCapabilityGoal, additions ...AIChatAgentCapabilityGoal) []AIChatAgentCapabilityGoal {

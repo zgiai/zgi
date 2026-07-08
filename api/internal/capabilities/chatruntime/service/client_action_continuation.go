@@ -602,16 +602,11 @@ func clientActionAgentCreateProgress(message *runtimemodel.Message) map[string]i
 	if message == nil {
 		return nil
 	}
-	goal := strings.TrimSpace(message.Query)
-	if goal == "" {
-		plan := mapFromOperationContext(metadataValue(message.Metadata, "operation_plan"))
-		goal = strings.TrimSpace(stringFromAny(plan["original_user_goal"]))
-	}
-	if goal == "" || !agentManagementCreateRequested(goal) {
+	plan := mapFromOperationContext(metadataValue(message.Metadata, "operation_plan"))
+	requestedTargets, requestedCount, ok := agentManagementCreateTargetsFromStructuredState(message.Metadata, plan)
+	if !ok {
 		return nil
 	}
-	requestedTargets := agentCreateTargetNamesFromText(goal)
-	requestedCount := agentManagementCreateRequestedCount(goal)
 	completedTargets := agentCreateCompletedTargetNames(message.Metadata)
 	if requestedCount <= 1 && len(requestedTargets) <= 1 {
 		return nil
@@ -636,7 +631,7 @@ func clientActionAgentCreateProgress(message *runtimemodel.Message) map[string]i
 	if len(requestedTargets) > 0 {
 		out["requested_targets"] = requestedTargets
 	}
-	if description := agentCreateSharedDescriptionFromText(goal); description != "" {
+	if description := agentCreateRequestedDescriptionFromStructuredState(message.Metadata, plan); description != "" {
 		out["requested_description"] = description
 	}
 	if len(missingTargets) == 0 && requestedCount > 0 && len(completedTargets) >= requestedCount {
@@ -700,6 +695,55 @@ func missingAgentCreateTargets(requested []string, completed []string) []string 
 		missing = append(missing, name)
 	}
 	return missing
+}
+
+func agentCreateRequestedDescriptionFromStructuredState(metadata map[string]interface{}, plan map[string]interface{}) string {
+	if progress := mapFromOperationContext(metadataValue(metadata, "agent_create_progress")); len(progress) > 0 {
+		if description := strings.TrimSpace(stringFromAny(progress["requested_description"])); description != "" {
+			return description
+		}
+	}
+	if len(plan) == 0 {
+		return ""
+	}
+	if description := strings.TrimSpace(stringFromAny(plan["agent_create_description"])); description != "" {
+		return description
+	}
+	structuredPlan := mapFromOperationContext(plan["structured_plan"])
+	for _, operation := range mapSliceFromAny(structuredPlan["operations"]) {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(operation["tool_name"])), "create_agent") &&
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(operation["action"])), "create") {
+			continue
+		}
+		if resourceType := strings.TrimSpace(stringFromAny(operation["resource_type"])); resourceType != "" &&
+			!strings.EqualFold(resourceType, "agent") {
+			continue
+		}
+		args := mapFromOperationContext(operation["arguments"])
+		if description := strings.TrimSpace(firstNonEmptyString(operation["description"], args["description"])); description != "" {
+			return description
+		}
+	}
+	for _, tool := range mapSliceFromAny(structuredPlan["required_tool_sequence"]) {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(tool["tool_name"])), "create_agent") {
+			continue
+		}
+		args := mapFromOperationContext(tool["arguments"])
+		if description := strings.TrimSpace(firstNonEmptyString(tool["description"], args["description"])); description != "" {
+			return description
+		}
+	}
+	for _, step := range mapSliceFromAny(plan["steps"]) {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skills.SkillAgentManagement) ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(step["tool_name"])), "create_agent") {
+			continue
+		}
+		args := mapFromOperationContext(step["arguments"])
+		if description := strings.TrimSpace(firstNonEmptyString(step["description"], args["description"])); description != "" {
+			return description
+		}
+	}
+	return ""
 }
 
 func agentCreateTargetNamesFromText(text string) []string {

@@ -98,6 +98,9 @@ func operationPlanFromTurnStrategy(taskID string, parts *chatRequestParts, strat
 	if strategy.CurrentContextMaySummary {
 		plan["current_context_may_be_summary"] = true
 	}
+	if strategy.OpenCreatedAgentDetail {
+		plan["open_created_agent_detail"] = true
+	}
 	if source := strings.TrimSpace(strategy.Source); source != "" {
 		plan["strategy_source"] = source
 	}
@@ -2779,9 +2782,12 @@ func operationPlanApplyReadOnlyAgentCandidateLookupClosure(plan map[string]inter
 	if len(plan) == 0 || len(steps) == 0 || stepStatus == nil {
 		return
 	}
-	goal := strings.TrimSpace(firstNonEmptyString(plan["original_user_goal"], plan["user_goal"], plan["goal"]))
-	if !operationPlanGoalExplicitlyReadOnlyAgentCandidateLookup(goal) {
+	ok, source := operationPlanExplicitReadOnlyAgentCandidateLookup(plan)
+	if !ok {
 		return
+	}
+	if source != "" {
+		plan["read_only_candidate_lookup_source"] = source
 	}
 	candidateTools := operationPlanAgentCandidateLookupToolsFromSteps(steps)
 	if len(candidateTools) == 0 {
@@ -2831,15 +2837,14 @@ func operationPlanApplyReadOnlyAgentCandidateLookupClosure(plan map[string]inter
 	}
 }
 
-func operationPlanGoalExplicitlyReadOnlyAgentCandidateLookup(goal string) bool {
-	query := strings.ToLower(strings.TrimSpace(agentManagementSecondaryIntentQuery(goal)))
-	if query == "" {
-		return false
+func operationPlanExplicitReadOnlyAgentCandidateLookup(plan map[string]interface{}) (bool, string) {
+	if len(plan) == 0 {
+		return false, ""
 	}
-	if agentBindingMutationRequested(query) {
-		return false
+	if goals := agentCapabilityGoalsFromOperationPlan(plan); len(goals) > 0 {
+		return agentCapabilityGoalsAreExplicitReadOnly(goals), "capability_goals"
 	}
-	return agentManagementExplicitNoMutationRequested(query) || agentBindingReadOnlyRequested(query)
+	return false, ""
 }
 
 func operationPlanAgentCandidateLookupToolsFromSteps(steps []map[string]interface{}) []string {

@@ -417,6 +417,12 @@ func shouldIsolateHistoryForCurrentTurn(parts *chatRequestParts) bool {
 	if isContinuationIntent(parts.Query) || queryReferencesRecentExecutionContext(parts.Query) {
 		return false
 	}
+	if intent := parts.ModelTurnIntent; intent != nil {
+		switch strings.ToLower(strings.TrimSpace(intent.AssetEffect)) {
+		case "create", "update", "delete", "write", "mutation", "mutate":
+			return true
+		}
+	}
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		return false

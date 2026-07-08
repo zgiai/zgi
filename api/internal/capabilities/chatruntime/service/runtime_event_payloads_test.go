@@ -91,7 +91,11 @@ func TestAgentManagementCreateResultFromMessagesEmitsDetailNavigationWhenRequest
 		Conversation: &model.Conversation{ID: uuid.New()},
 		Message:      &model.Message{ID: uuid.New()},
 		parts: &chatRequestParts{
-			Query: "\u521b\u5efa\u4e00\u4e2a\u667a\u80fd\u4f53\u5e76\u6253\u5f00\u8be6\u60c5\u9875",
+			Query: "create a draft Agent",
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:                 "manage_agent_asset",
+				OpenCreatedAgentDetail: true,
+			},
 		},
 	}
 	trace := skills.SkillTrace{
@@ -126,6 +130,40 @@ func TestAgentManagementCreateResultFromMessagesEmitsDetailNavigationWhenRequest
 	result, _ := payload["result"].(map[string]interface{})
 	if result["label_key"] != "agentDetail" || result["route_kind"] != "agent_detail" {
 		t.Fatalf("payload result = %#v, want created Agent detail label metadata", result)
+	}
+}
+
+func TestAgentManagementCreateResultFromMessagesDoesNotUseQueryDetailFallbackWhenModelIntentExists(t *testing.T) {
+	prepared := &PreparedChat{
+		Conversation: &model.Conversation{ID: uuid.New()},
+		Message:      &model.Message{ID: uuid.New()},
+		parts: &chatRequestParts{
+			Query: "\u521b\u5efa\u667a\u80fd\u4f53\u5e76\u8fdb\u5165\u8be6\u60c5\u9875",
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:                 "manage_agent_asset",
+				OpenCreatedAgentDetail: false,
+			},
+		},
+	}
+	trace := skills.SkillTrace{
+		SkillID:  skills.SkillAgentManagement,
+		ToolName: "create_agent",
+		Status:   "success",
+	}
+	trace = enrichSkillTraceResultFromMessages(trace, []tools.ToolInvokeMessage{{
+		Type: tools.ToolInvokeMessageTypeJSON,
+		Data: map[string]interface{}{
+			"status":     "completed",
+			"effect":     "created",
+			"agent_id":   "agent-1",
+			"agent_name": "Smoke Agent",
+			"href":       "/console/agents/agent-1/agent",
+		},
+	}})
+
+	payload := clientActionRequiredPayload(prepared, trace, "call-create")
+	if payload != nil {
+		t.Fatalf("clientActionRequiredPayload() = %#v, want nil because model intent did not request detail navigation", payload)
 	}
 }
 

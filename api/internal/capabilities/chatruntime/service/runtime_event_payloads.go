@@ -181,7 +181,7 @@ func createdAgentClientActionShouldOpenDetail(prepared *PreparedChat) bool {
 	if prepared == nil || prepared.parts == nil {
 		return false
 	}
-	return wantsCreatedAgentDetailNavigation(prepared.parts.Query)
+	return wantsCreatedAgentDetailNavigationForPrepared(prepared)
 }
 
 func deletedAgentIsCurrentDetailPage(prepared *PreparedChat, trace skills.SkillTrace) bool {

@@ -541,7 +541,7 @@ func TestContextualAIChatTurnStrategyDoesNotPromoteAgentIntentWithoutModelIntent
 	if strategy.Intent == "manage_agent_asset" {
 		t.Fatalf("strategy.Intent = %q, want no legacy Agent-management promotion without model intent; strategy=%#v", strategy.Intent, strategy)
 	}
-	if strategy.Source == aiChatTurnStrategySourceLegacySemanticFallback {
+	if strategy.Source == aiChatTurnStrategySourceTurnProtocol {
 		t.Fatalf("strategy.Source = %q, want model-led default path without legacy semantic fallback", strategy.Source)
 	}
 	if containsString(strategy.PrimarySkills, skills.SkillAgentManagement) {
@@ -569,7 +569,7 @@ func TestContextualAIChatTurnStrategyDoesNotPromoteFileIntentWithoutModelIntent(
 	if strategy.Intent == "read_file" || strategy.Intent == "delete_file" || strategy.Intent == "create_managed_file" || strategy.Intent == "generate_temporary_file" {
 		t.Fatalf("strategy.Intent = %q, want no legacy file-operation promotion without model intent; strategy=%#v", strategy.Intent, strategy)
 	}
-	if strategy.Source == aiChatTurnStrategySourceLegacySemanticFallback {
+	if strategy.Source == aiChatTurnStrategySourceTurnProtocol {
 		t.Fatalf("strategy.Source = %q, want model-led default path without legacy semantic fallback", strategy.Source)
 	}
 	if containsString(strategy.PrimarySkills, skills.SkillFileReader) || containsString(strategy.PrimarySkills, skills.SkillFileManager) {
@@ -4137,7 +4137,19 @@ func TestSkillLoopPlanToolGuardAllowsAgentConfigUpdateWithExcludedFields(t *test
 	if agentManagementExplicitReadOnlyConfigCheck(query) {
 		t.Fatal("agentManagementExplicitReadOnlyConfigCheck() = true, want false for update request with excluded fields")
 	}
-	fields := agentManagementExpectedConfigUpdateFields(query)
+	capabilityGoals := []AIChatAgentCapabilityGoal{
+		agentCapabilityGoalWithDefaults(AIChatAgentCapabilityGoal{
+			CapabilityID:         agentCapabilitySystemPrompt,
+			GoalAction:           agentCapabilityActionUpdate,
+			RequiredConfigFields: []string{"system_prompt"},
+		}),
+		agentCapabilityGoalWithDefaults(AIChatAgentCapabilityGoal{
+			CapabilityID:         agentCapabilitySuggestedQuestion,
+			GoalAction:           agentCapabilityActionUpdate,
+			RequiredConfigFields: []string{"suggested_questions"},
+		}),
+	}
+	fields := agentCapabilityGoalsExpectedConfigFields(capabilityGoals)
 	for _, want := range []string{"system_prompt"} {
 		if !stringSliceContainsFold(fields, want) {
 			t.Fatalf("expected config fields = %#v, missing requested field %s", fields, want)
@@ -4155,6 +4167,7 @@ func TestSkillLoopPlanToolGuardAllowsAgentConfigUpdateWithExcludedFields(t *test
 				"operation_plan": map[string]interface{}{
 					"status":             operationPlanStatusRunning,
 					"original_user_goal": query,
+					"capability_goals":   mapsToInterfaceSlice(agentCapabilityGoalsToMaps(capabilityGoals)),
 					"steps": []interface{}{
 						map[string]interface{}{
 							"id":        operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config"),
