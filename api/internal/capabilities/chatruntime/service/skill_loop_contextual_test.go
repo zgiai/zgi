@@ -15,6 +15,190 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
+func TestPartsFileIntentHelpersPreferModelIntentOverLegacyKeywords(t *testing.T) {
+	managedFileQuery := "save this generated file to file management"
+	if !isManagedFileCreateIntent(managedFileQuery) {
+		t.Fatalf("test fixture query should match legacy managed file create intent")
+	}
+	answerParts := &chatRequestParts{
+		Query:           managedFileQuery,
+		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "answer_or_explain_zgi_context"},
+	}
+	if partsRequestsManagedFileCreate(answerParts) {
+		t.Fatal("managed file create intent used legacy keywords despite explicit model answer intent")
+	}
+	if partsRequestsTemporaryFileGenerateWithFallback(answerParts, "") {
+		t.Fatal("temporary file generate intent used legacy keywords despite explicit model answer intent")
+	}
+
+	modelManagedParts := &chatRequestParts{
+		Query:           "do it",
+		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "save_generated_file_to_file_management"},
+	}
+	if !partsRequestsManagedFileCreate(modelManagedParts) {
+		t.Fatal("managed file create intent did not honor model intent")
+	}
+
+	continueParts := &chatRequestParts{
+		Query:           managedFileQuery,
+		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "continue_previous_task"},
+	}
+	if !partsRequestsManagedFileCreate(continueParts) {
+		t.Fatal("managed file create intent did not allow legacy fallback for continuation")
+	}
+
+	deleteQuery := "delete the first file"
+	if !isFileDeleteIntent(deleteQuery) {
+		t.Fatalf("test fixture query should match legacy file delete intent")
+	}
+	deleteAnswerParts := &chatRequestParts{
+		Query:           deleteQuery,
+		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "answer_or_explain_zgi_context"},
+	}
+	if partsRequestsFileDeleteWithFallback(deleteAnswerParts, "") {
+		t.Fatal("file delete intent used legacy keywords despite explicit model answer intent")
+	}
+
+	readParts := &chatRequestParts{
+		Query:           "what is visible here?",
+		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "read_visible_file_content"},
+	}
+	if !partsRequestsFileReadWithFallback(readParts, "") {
+		t.Fatal("file read intent did not honor model intent")
+	}
+
+	modelAgentContinuationParts := &chatRequestParts{
+		Query:           "continue processing",
+		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "manage_agent_asset"},
+	}
+	if !partsRequestsContinuationWithFallback(modelAgentContinuationParts, "") {
+		t.Fatal("explicit continuation command did not override stale model asset intent")
+	}
+
+	continueQuestionParts := &chatRequestParts{
+		Query:           "what does continue mean",
+		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "answer_or_explain_zgi_context"},
+	}
+	if partsRequestsContinuationWithFallback(continueQuestionParts, "") {
+		t.Fatal("continuation helper treated an explanatory question as a continue command")
+	}
+}
+
+func TestRequestedManagedFileTargetsFromPartsFallsBackOnlyWhenAllowed(t *testing.T) {
+	implicitTargetQuery := "save two files, one txt and one svg"
+	if got := requestedManagedFileTargetsFromQuery(implicitTargetQuery); len(got) != 2 {
+		t.Fatalf("legacy requestedManagedFileTargetsFromQuery() returned %d targets, want 2", len(got))
+	}
+
+	answerParts := &chatRequestParts{
+		Query:           implicitTargetQuery,
+		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "answer_or_explain_zgi_context"},
+	}
+	if got := requestedManagedFileTargetsFromParts(answerParts); len(got) != 0 {
+		t.Fatalf("requestedManagedFileTargetsFromParts() returned %d targets for answer intent, want 0", len(got))
+	}
+
+	continueParts := &chatRequestParts{
+		Query:           implicitTargetQuery,
+		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "continue_previous_task"},
+	}
+	if got := requestedManagedFileTargetsFromParts(continueParts); len(got) != 2 {
+		t.Fatalf("requestedManagedFileTargetsFromParts() returned %d targets for continuation, want 2", len(got))
+	}
+
+	explicitTargetParts := &chatRequestParts{
+		Query:           "save report.txt and chart.svg to file management",
+		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "save_generated_file_to_file_management"},
+	}
+	if got := requestedManagedFileTargetsFromParts(explicitTargetParts); len(got) != 2 {
+		t.Fatalf("requestedManagedFileTargetsFromParts() returned %d explicit targets, want 2", len(got))
+	}
+}
+
+func TestPartsConsoleNavigationHelpersPreferModelIntentOverLegacyKeywords(t *testing.T) {
+	navigationQuery := "open /console/files"
+	if !isConsoleNavigationIntent(navigationQuery) {
+		t.Fatalf("test fixture query should match legacy console navigation intent")
+	}
+	answerParts := &chatRequestParts{
+		Query:           navigationQuery,
+		Surface:         aiChatSurfaceContextualSidebar,
+		SkillIDs:        []string{skills.SkillConsoleNavigator},
+		SkillMode:       skillModeAuto,
+		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "answer_or_explain_zgi_context"},
+	}
+	if partsRequestsConsoleNavigationWithFallback(answerParts, "") {
+		t.Fatal("console navigation intent used legacy keywords despite explicit model answer intent")
+	}
+	if target, ok := resolveConsoleNavigationTargetForParts(answerParts); ok {
+		t.Fatalf("resolveConsoleNavigationTargetForParts() = %#v, want no target for explicit model answer intent", target)
+	}
+	strategy := contextualAIChatTurnStrategy(&PreparedChat{parts: answerParts})
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if strategy.Intent != "answer_or_explain_zgi_context" || strategy.RouteRequired {
+		t.Fatalf("strategy = %#v, want answer intent without route requirement", strategy)
+	}
+
+	legacyNavigationParts := &chatRequestParts{
+		Query:     navigationQuery,
+		Surface:   aiChatSurfaceContextualSidebar,
+		SkillIDs:  []string{skills.SkillConsoleNavigator},
+		SkillMode: skillModeAuto,
+	}
+	strategy = contextualAIChatTurnStrategy(&PreparedChat{parts: legacyNavigationParts})
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want legacy navigation fallback strategy")
+	}
+	if strategy.Source != aiChatTurnStrategySourceLegacy {
+		t.Fatalf("Source = %q, want %q for legacy fallback; strategy=%#v", strategy.Source, aiChatTurnStrategySourceLegacy, strategy)
+	}
+	if strategy.Intent != "navigate_console_page" || !strategy.RouteRequired {
+		t.Fatalf("strategy = %#v, want legacy navigation fallback", strategy)
+	}
+
+	modelNavigationParts := &chatRequestParts{
+		Query:           navigationQuery,
+		Surface:         aiChatSurfaceContextualSidebar,
+		SkillIDs:        []string{skills.SkillConsoleNavigator},
+		SkillMode:       skillModeAuto,
+		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "navigate_console_page", TargetPage: "/console/db"},
+	}
+	target, ok := resolveConsoleNavigationTargetForParts(modelNavigationParts)
+	if !ok {
+		t.Fatal("resolveConsoleNavigationTargetForParts() ok = false, want model target")
+	}
+	if target.Href != "/console/db" {
+		t.Fatalf("target = %#v, want /console/db from model intent instead of query", target)
+	}
+	strategy = contextualAIChatTurnStrategy(&PreparedChat{parts: modelNavigationParts})
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if strategy.Intent != "navigate_console_page" || strategy.TargetPage != "/console/db" || !strategy.RouteRequired {
+		t.Fatalf("strategy = %#v, want navigation to /console/db", strategy)
+	}
+}
+
+func TestAgentManagementExplicitDetailNavigationTargetPrefersModelTargetPage(t *testing.T) {
+	parts := &chatRequestParts{
+		Query: "open the old agent detail",
+		ModelTurnIntent: &AIChatModelTurnIntent{
+			Intent:     "manage_agent_asset",
+			TargetPage: "/console/agents/model-agent-id/agent",
+		},
+	}
+
+	target, ok := agentManagementExplicitDetailNavigationTarget(parts)
+	if !ok {
+		t.Fatal("agentManagementExplicitDetailNavigationTarget() ok = false, want model target page")
+	}
+	if target.Href != "/console/agents/model-agent-id/agent" {
+		t.Fatalf("target href = %q, want model target page", target.Href)
+	}
+}
+
 func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesToolGuidance(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: consoleFilesSnapshotTestParts("delete the first file", []consoleFilesTestFile{
@@ -386,7 +570,7 @@ func TestContextualAIChatTurnStrategyPlansRouteBeforeManagedFileCreate(t *testin
 	}
 	content := messageContentText(message.Content)
 	for _, want := range []string{
-		"ZGI AIChat turn strategy guidance",
+		"ZGI AIChat turn task contract",
 		`"intent":"save_generated_file_to_file_management"`,
 		`"target_page":"/console/files"`,
 		`"route_required":true`,
@@ -414,6 +598,14 @@ func TestContextualAIChatTurnStrategyUsesRecentArtifactWithoutRegeneration(t *te
 	prepared.parts.Surface = aiChatSurfaceContextualSidebar
 	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
 	prepared.parts.SkillMode = skillModeAuto
+	routeRequired := false
+	prepared.parts.ModelTurnIntent = &AIChatModelTurnIntent{
+		Intent:                  "save_generated_file_to_file_management",
+		TargetPage:              "/console/files",
+		RouteRequired:           &routeRequired,
+		RecommendedCapabilities: []string{"file_artifact"},
+		Confidence:              0.95,
+	}
 	prepared.parts.RecentGeneratedArtifacts = []map[string]interface{}{{
 		"tool_file_id": "tool-recent-1",
 		"filename":     "monthly-sales-bar.svg",
@@ -669,6 +861,12 @@ func TestContextualAIChatTurnStrategyClassifiesFilesPageRead(t *testing.T) {
 	prepared.parts.Surface = aiChatSurfaceContextualSidebar
 	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
 	prepared.parts.SkillMode = skillModeAuto
+	prepared.parts.ModelTurnIntent = &AIChatModelTurnIntent{
+		Intent:                  "read_visible_file_content",
+		TargetPage:              "/console/files",
+		RecommendedCapabilities: []string{"visible_file_content"},
+		Confidence:              0.96,
+	}
 
 	message, ok := contextualAIChatTurnStrategyMessage(prepared)
 	if !ok {
@@ -689,6 +887,7 @@ func TestContextualAIChatTurnStrategyClassifiesFilesPageRead(t *testing.T) {
 }
 
 func TestContextualAIChatTurnStrategyIsTypedAndRecordedInMetadata(t *testing.T) {
+	routeRequired := true
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
 			Query:          "please create an svg file in File Management",
@@ -700,6 +899,13 @@ func TestContextualAIChatTurnStrategyIsTypedAndRecordedInMetadata(t *testing.T) 
 				skills.SkillFileManager,
 			},
 			SkillMode: skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:                  "save_generated_file_to_file_management",
+				TargetPage:              "/console/files",
+				RouteRequired:           &routeRequired,
+				RecommendedCapabilities: []string{"file_artifact"},
+				Confidence:              0.95,
+			},
 		},
 	}
 
@@ -759,6 +965,13 @@ func TestContextualAIChatTurnStrategyDoesNotNavigateForCurrentFilesPageQuestion(
 	parts.Surface = aiChatSurfaceContextualSidebar
 	parts.SkillIDs = []string{skills.SkillConsoleNavigator, skills.SkillFileReader}
 	parts.SkillMode = skillModeAuto
+	routeRequired := false
+	parts.ModelTurnIntent = &AIChatModelTurnIntent{
+		Intent:        "answer_or_explain_zgi_context",
+		TargetPage:    "/console/files",
+		RouteRequired: &routeRequired,
+		Confidence:    0.96,
+	}
 	setConsoleFilesPageTestMetadata(parts, map[string]interface{}{
 		"total_file_count":   86,
 		"current_page":       1,
@@ -944,6 +1157,57 @@ func TestContextualAIChatTurnStrategyKeepsAgentModelIntentBeforeFileFallbackWhen
 	}
 }
 
+func TestContextualAIChatTurnStrategyKeepsAgentIntentWithFileFirstPhase(t *testing.T) {
+	routeRequired := true
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "read the first file, summarize it, then create and configure an Agent from that summary",
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console",
+			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillFileReader, skills.SkillAgentManagement},
+			SkillMode:      skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:        "manage_agent_asset",
+				TaskType:      "agent_lifecycle_and_configuration",
+				TargetPage:    "/console/files",
+				RouteRequired: &routeRequired,
+				Confidence:    0.9,
+				RecommendedCapabilities: []string{
+					"page_navigation",
+					"visible_file_content",
+					"agent.model_selection",
+					"agent.system_prompt",
+				},
+				Phases: []string{
+					"Navigate to File Management and read the first visible file",
+					"Navigate to Agents and create a new Agent",
+					"Configure the Agent model and prompt from the file summary",
+				},
+			},
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if strategy.Intent != "manage_agent_asset" {
+		t.Fatalf("Intent = %q, want manage_agent_asset; source=%s/%s", strategy.Intent, strategy.Source, strategy.SourceReason)
+	}
+	if strategy.TargetPage != "/console/files" {
+		t.Fatalf("TargetPage = %q, want /console/files for the file-read precondition", strategy.TargetPage)
+	}
+	if strategy.RequiredNextTool == nil ||
+		strategy.RequiredNextTool.SkillID != skills.SkillConsoleNavigator ||
+		strategy.RequiredNextTool.ToolName != "navigate" ||
+		strategy.RequiredNextTool.Arguments["href"] != "/console/files" {
+		t.Fatalf("RequiredNextTool = %#v, want console-navigator navigate to /console/files", strategy.RequiredNextTool)
+	}
+	if !slices.Contains(strategy.SupportingSkills, skills.SkillFileReader) {
+		t.Fatalf("SupportingSkills = %#v, want file-reader for file-first Agent setup", strategy.SupportingSkills)
+	}
+}
+
 func TestContextualAIChatTurnStrategyDoesNotUseLegacyFallbackWhenModelIntentUnsupported(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
@@ -1033,6 +1297,104 @@ func TestParseModelTurnIntentContentAcceptsVisibleIndex(t *testing.T) {
 	}
 	if intent.TargetVisibleIndex != 2 {
 		t.Fatalf("TargetVisibleIndex = %d, want 2", intent.TargetVisibleIndex)
+	}
+}
+
+func TestModelTurnTaskContractKeepsUnsupportedIntentAsLowConfidenceContract(t *testing.T) {
+	intent, err := parseModelTurnIntentContent(`{
+		"intent":"inspect_and_prepare_agent_story_writer",
+		"task_type":"agent_configuration",
+		"phases":["understand requested Agent outcome","configure Agent capabilities","verify Agent configuration"],
+		"evidence_required":["Agent config readback"],
+		"recommended_capabilities":["agent.model_selection","agent.skill_backed_capability:file generation"],
+		"completion_criteria":["Agent config matches the user's requested outcome"],
+		"confidence":0.86
+	}`)
+	if err != nil {
+		t.Fatalf("parseModelTurnIntentContent() error = %v", err)
+	}
+	finalizeModelTurnIntent(intent)
+	if intent.Intent != "answer_or_explain_zgi_context" {
+		t.Fatalf("Intent = %q, want compatibility fallback answer intent", intent.Intent)
+	}
+	if intent.RawIntent != "inspect_and_prepare_agent_story_writer" {
+		t.Fatalf("RawIntent = %q, want original unsupported label", intent.RawIntent)
+	}
+	if !intent.LowConfidence {
+		t.Fatal("LowConfidence = false, want true for unsupported compatibility label")
+	}
+	contract := modelTurnIntentTaskContract(intent)
+	if got := stringFromAny(contract["raw_intent_label"]); got != "inspect_and_prepare_agent_story_writer" {
+		t.Fatalf("raw_intent_label = %q, want original label; contract=%#v", got, contract)
+	}
+	if got := stringSliceFromAny(contract["phases"]); !slices.Contains(got, "configure Agent capabilities") {
+		t.Fatalf("phases = %#v, want preserved model phases", got)
+	}
+	if got := stringSliceFromAny(contract["recommended_capabilities"]); !slices.Contains(got, "agent.skill_backed_capability:file generation") {
+		t.Fatalf("recommended_capabilities = %#v, want preserved model capabilities", got)
+	}
+}
+
+func TestModelTurnTaskContractKeepsLowConfidencePlanOnMainPath(t *testing.T) {
+	intent, err := parseModelTurnIntentContent(`{
+		"intent":"manage_agent_asset",
+		"task_type":"agent_configuration",
+		"phases":["create or identify the target Agent","configure requested Agent capabilities","verify saved configuration"],
+		"evidence_required":["Agent config readback","successful tool results"],
+		"recommended_capabilities":["agent.model_selection","agent.skill_backed_capability:file generation"],
+		"completion_criteria":["final answer is grounded in Agent config evidence"],
+		"confidence":0.31,
+		"reason":"The user asks for Agent work but the page context may be incomplete."
+	}`)
+	if err != nil {
+		t.Fatalf("parseModelTurnIntentContent() error = %v", err)
+	}
+	finalizeModelTurnIntent(intent)
+	if !intent.LowConfidence {
+		t.Fatalf("LowConfidence = false, want true; intent=%#v", intent)
+	}
+	parts := &chatRequestParts{
+		Query:           "create an Agent and configure it",
+		Surface:         aiChatSurfaceContextualSidebar,
+		RuntimeContext:  "route=/console/agents",
+		SkillIDs:        []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement},
+		SkillMode:       skillModeAuto,
+		ModelTurnIntent: intent,
+	}
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want model turn strategy")
+	}
+	if strategy.Source != aiChatTurnStrategySourceModelIntent {
+		t.Fatalf("Source = %q, want model intent; strategy=%#v", strategy.Source, strategy)
+	}
+	if !strategy.LowConfidence {
+		t.Fatalf("strategy.LowConfidence = false, want true; strategy=%#v", strategy)
+	}
+	if strategy.Intent != "manage_agent_asset" {
+		t.Fatalf("Intent = %q, want manage_agent_asset", strategy.Intent)
+	}
+
+	metadata := streamingMessageMetadataWithTaskID(parts, "task-low-confidence-contract")
+	contract := mapFromOperationContext(metadata["turn_task_contract"])
+	if !operationPlanBoolValue(contract["low_confidence"]) {
+		t.Fatalf("metadata turn_task_contract = %#v, want low confidence marker", contract)
+	}
+	if got := stringFromAny(contract["intent_label"]); got != "manage_agent_asset" {
+		t.Fatalf("turn_task_contract.intent_label = %q, want manage_agent_asset", got)
+	}
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	planContract := mapFromOperationContext(plan["task_contract"])
+	if !operationPlanBoolValue(planContract["low_confidence"]) {
+		t.Fatalf("operation_plan.task_contract = %#v, want low confidence marker", planContract)
+	}
+
+	state := currentTurnAuthoritativeStatePayload(&runtimemodel.Message{
+		Query:    parts.Query,
+		Metadata: metadata,
+	})
+	if stateContract := mapFromOperationContext(state["turn_task_contract"]); stringFromAny(stateContract["intent_label"]) != "manage_agent_asset" {
+		t.Fatalf("authoritative state contract = %#v, want preserved task contract", stateContract)
 	}
 }
 
@@ -3847,7 +4209,25 @@ func TestSkillLoopFinalAnswerGuardBlocksIncompleteAgentBindingMutations(t *testi
 }
 
 func TestSkillLoopFinalAnswerGuardRequiresAgentConfigReadEvidence(t *testing.T) {
+	configReadStepID := operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config")
 	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"steps": []interface{}{
+						map[string]interface{}{
+							"id":        configReadStepID,
+							"status":    operationPlanStepStatusPending,
+							"skill_id":  skills.SkillAgentManagement,
+							"tool_name": "get_agent_config",
+						},
+					},
+					"step_status": map[string]interface{}{
+						configReadStepID: operationPlanStepStatusPending,
+					},
+				},
+			},
+		},
 		parts: &chatRequestParts{
 			Query:     "这个智能体启用了哪些 Skill？只告诉我当前状态，不要修改任何配置。",
 			SkillIDs:  []string{skills.SkillAgentManagement},
@@ -4994,6 +5374,9 @@ func TestSkillLoopFinalAnswerGuardSkipsCompletedNavigationObservationOnFilesPage
 					"intent":              "navigate_console_page",
 					"status":              operationPlanStatusCompleted,
 					"pending_next_action": "none",
+					"task_contract": map[string]interface{}{
+						"intent_label": "navigate_console_page",
+					},
 				},
 			},
 		},
@@ -5025,6 +5408,9 @@ func TestSkillLoopFinalAnswerGuardSkipsNavigationReadOfNonFileResourceOnFilesPag
 					"intent":              "navigate_console_page",
 					"status":              operationPlanStatusCompleted,
 					"pending_next_action": "none",
+					"task_contract": map[string]interface{}{
+						"intent_label": "navigate_console_page",
+					},
 				},
 			},
 		},

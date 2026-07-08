@@ -414,7 +414,7 @@ func shouldIsolateHistoryForCurrentTurn(parts *chatRequestParts) bool {
 	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
 		return false
 	}
-	if isContinuationIntent(parts.Query) || queryReferencesRecentExecutionContext(parts.Query) {
+	if partsRequestsContinuationWithFallback(parts, "") || queryReferencesRecentExecutionContext(parts.Query) {
 		return false
 	}
 	if intent := parts.ModelTurnIntent; intent != nil {
@@ -465,7 +465,7 @@ func recentExecutionContextAppliesToCurrentRequest(parts *chatRequestParts) bool
 	if query == "" {
 		return false
 	}
-	if isContinuationIntent(query) {
+	if partsRequestsContinuationWithFallback(parts, "") {
 		return true
 	}
 	return queryReferencesRecentExecutionContext(query)
@@ -488,7 +488,7 @@ func queryReferencesRecentExecutionContext(query string) bool {
 }
 
 func currentTurnBoundaryMessage(parts *chatRequestParts) *adapter.Message {
-	if parts == nil || isContinuationIntent(parts.Query) {
+	if parts == nil || partsRequestsContinuationWithFallback(parts, "") {
 		return nil
 	}
 	content := strings.Join([]string{
@@ -572,7 +572,7 @@ func buildRecentExecutionContextMessage(branch []*runtimemodel.Message) (*adapte
 }
 
 func buildContinuationTaskStateMessage(parts *chatRequestParts, branch []*runtimemodel.Message) *adapter.Message {
-	if parts == nil || !isContinuationIntent(parts.Query) || len(branch) == 0 {
+	if parts == nil || !partsRequestsContinuationWithFallback(parts, "") || len(branch) == 0 {
 		return nil
 	}
 	goal := recentNonContinuationUserGoal(branch)
@@ -838,6 +838,9 @@ func compactOperationPlanForPrompt(plan map[string]interface{}) map[string]inter
 	if goals := operationPlanCompactCapabilityGoals(plan["capability_goals"], 6); len(goals) > 0 {
 		out["capability_goals"] = goals
 	}
+	if contract := mapFromOperationContext(plan["task_contract"]); len(contract) > 0 {
+		out["task_contract"] = compactTaskContractForPrompt(contract)
+	}
 	if target := mapFromOperationContext(plan["asset_target"]); len(target) > 0 {
 		out["asset_target"] = target
 	}
@@ -870,6 +873,57 @@ func compactOperationPlanForPrompt(plan map[string]interface{}) map[string]inter
 	}
 	if steps := operationPlanCompactStepsForPrompt(plan["steps"], 8); len(steps) > 0 && !modelDecides {
 		out["steps"] = steps
+	}
+	return out
+}
+
+func compactTaskContractForPrompt(contract map[string]interface{}) map[string]interface{} {
+	if len(contract) == 0 {
+		return nil
+	}
+	out := map[string]interface{}{}
+	for _, key := range []string{
+		"source",
+		"intent_label",
+		"compatibility",
+		"tool_choice",
+		"source_reason",
+		"task_type",
+		"target_page",
+		"asset_effect",
+		"asset_risk",
+		"approval",
+		"reason",
+	} {
+		if value := strings.TrimSpace(stringFromAny(contract[key])); value != "" {
+			out[key] = compactForPrompt(value, 500)
+		}
+	}
+	for _, key := range []string{"route_required", "needs_exact_agent_runtime", "current_context_may_be_summary", "open_created_agent_detail", "low_confidence"} {
+		if value, ok := contract[key].(bool); ok {
+			out[key] = value
+		}
+	}
+	if confidence, ok := floatValue(contract["confidence"]); ok {
+		out["confidence"] = confidence
+	}
+	if idx := intValueFromAny(contract["target_visible_index"]); idx > 0 {
+		out["target_visible_index"] = idx
+	}
+	if phases := stringSliceFromAny(contract["phases"]); len(phases) > 0 {
+		out["phases"] = compactStringSliceForPrompt(phases, 8, 180)
+	}
+	if evidence := stringSliceFromAny(contract["evidence_required"]); len(evidence) > 0 {
+		out["evidence_required"] = compactStringSliceForPrompt(evidence, 10, 180)
+	}
+	if capabilities := stringSliceFromAny(contract["recommended_capabilities"]); len(capabilities) > 0 {
+		out["recommended_capabilities"] = compactStringSliceForPrompt(capabilities, 10, 160)
+	}
+	if criteria := stringSliceFromAny(contract["completion_criteria"]); len(criteria) > 0 {
+		out["completion_criteria"] = compactStringSliceForPrompt(criteria, 8, 240)
+	}
+	if goals := operationPlanCompactCapabilityGoals(contract["capability_goals"], 6); len(goals) > 0 {
+		out["capability_goals"] = goals
 	}
 	return out
 }

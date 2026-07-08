@@ -434,11 +434,13 @@ func (s *service) trustedContextualAIChatSkillCapabilities(ctx context.Context, 
 		return capabilities
 	}
 	if isAgentsContext {
-		if hasConsoleAgentsReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		if hasConsoleAgentsReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
+			modelTurnIntentRequestsAgentRead(parts.ModelTurnIntent) {
 			capabilities.AgentRead = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionAgentView) ||
 				s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionAgentManage)
 		}
-		if hasConsoleAgentsManageCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
+		if hasConsoleAgentsManageCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
+			modelTurnIntentRequestsAgentMutation(parts.ModelTurnIntent) {
 			capabilities.AgentManage = s.workspacePermissionAllowed(ctx, scope, workspaceID, workspacemodel.WorkspacePermissionAgentManage)
 		}
 	}
@@ -461,7 +463,20 @@ func contextualAIChatAgentManagementToolingRequested(parts *chatRequestParts) bo
 	if parts == nil || !isContextualAIChatSurface(parts.Surface) {
 		return false
 	}
-	return isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext)
+	return isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) ||
+		modelTurnIntentRequestsAgentRead(parts.ModelTurnIntent) ||
+		modelTurnIntentRequestsAgentMutation(parts.ModelTurnIntent)
+}
+
+func modelTurnIntentRequestsAgentRead(intent *AIChatModelTurnIntent) bool {
+	if intent == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(intent.Intent), "manage_agent_asset")
+}
+
+func modelTurnIntentRequestsAgentMutation(intent *AIChatModelTurnIntent) bool {
+	return modelTurnIntentRequestsAgentRead(intent)
 }
 
 func contextualAIChatWorkspaceIDFromContext(parts *chatRequestParts) string {

@@ -1,7 +1,6 @@
 package skills
 
 import (
-	"os"
 	"strings"
 	"sync"
 
@@ -50,18 +49,15 @@ func SystemSkillToolGovernanceManifestByToolName(toolName string) (toolgovernanc
 
 func loadSystemToolGovernanceCatalog() {
 	runtime := NewRuntime(nil, nil)
-	entries, err := os.ReadDir(runtime.catalogDir)
+	locations, errs, err := runtime.systemSkillLocationsBestEffort()
 	if err != nil {
 		systemToolGovernanceErr = err
 		return
 	}
 
 	manifests := map[string]toolgovernance.Manifest{}
-	for _, entry := range entries {
-		if entry == nil || !entry.IsDir() {
-			continue
-		}
-		doc, err := runtime.loadSkillDocument(entry.Name())
+	for _, location := range locations {
+		doc, err := runtime.loadSkillDocumentFromLocation(location)
 		if err != nil {
 			systemToolGovernanceErr = err
 			return
@@ -72,6 +68,10 @@ func loadSystemToolGovernanceCatalog() {
 			}
 			manifests[systemToolGovernanceKey(doc.Metadata.ID, tool.Name)] = *tool.Governance
 		}
+	}
+	if len(manifests) == 0 && len(errs) > 0 {
+		systemToolGovernanceErr = errs[0]
+		return
 	}
 	systemToolGovernance = manifests
 }

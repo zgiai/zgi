@@ -342,6 +342,9 @@ func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) 
 	}
 	if parts.ModelTurnIntent != nil {
 		metadata["model_turn_intent"] = parts.ModelTurnIntent
+		if contract := modelTurnIntentTaskContract(parts.ModelTurnIntent); len(contract) > 0 {
+			metadata["turn_task_contract"] = contract
+		}
 	} else if strings.TrimSpace(parts.ModelTurnIntentError) != "" {
 		metadata["model_turn_intent_error"] = strings.TrimSpace(parts.ModelTurnIntentError)
 	}

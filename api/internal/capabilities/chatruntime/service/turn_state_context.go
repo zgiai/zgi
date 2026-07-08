@@ -31,6 +31,9 @@ func currentTurnAuthoritativeStatePayload(message *runtimemodel.Message) map[str
 	if query := strings.TrimSpace(message.Query); query != "" {
 		payload["original_user_request"] = compactForPrompt(query, 800)
 	}
+	if contract := mapFromOperationContext(metadataValue(message.Metadata, "turn_task_contract")); len(contract) > 0 {
+		payload["turn_task_contract"] = contract
+	}
 	if plan := compactOperationPlanForPrompt(mapFromOperationContext(metadataValue(message.Metadata, "operation_plan"))); len(plan) > 0 {
 		payload["operation_plan"] = plan
 	}

@@ -52,7 +52,7 @@ func operationPlanFromTurnStrategy(taskID string, parts *chatRequestParts, strat
 		}
 	}
 	originalGoal := truncateRunes(strings.TrimSpace(parts.Query), 500)
-	if isContinuationIntent(parts.Query) {
+	if partsRequestsContinuationWithFallback(parts, "") {
 		if goal := recentOperationPlanOriginalGoal(parts); goal != "" {
 			originalGoal = truncateRunes(goal, 500)
 		}
@@ -84,6 +84,9 @@ func operationPlanFromTurnStrategy(taskID string, parts *chatRequestParts, strat
 			"on_repeated_failure":  "stop_and_report_actual_tool_result",
 		},
 		"completion_criteria": operationPlanCompletionCriteria(steps),
+	}
+	if contract := operationPlanTaskContractFromTurnStrategy(strategy); len(contract) > 0 {
+		plan["task_contract"] = contract
 	}
 	if taskType := strings.TrimSpace(strategy.TaskType); taskType != "" {
 		plan["task_type"] = taskType
@@ -137,6 +140,65 @@ func operationPlanPlanningMode(strategy *AIChatTurnStrategy) string {
 		return "phase_only_model_decides"
 	}
 	return "tool_step_guided"
+}
+
+func operationPlanTaskContractFromTurnStrategy(strategy *AIChatTurnStrategy) map[string]interface{} {
+	if strategy == nil {
+		return nil
+	}
+	contract := map[string]interface{}{
+		"source":        strings.TrimSpace(strategy.Source),
+		"intent_label":  strings.TrimSpace(strategy.Intent),
+		"compatibility": "intent_label_is_for_routing_compatibility_only",
+		"tool_choice":   "model_decides_from_enabled_tools_and_latest_evidence",
+	}
+	if reason := strings.TrimSpace(strategy.SourceReason); reason != "" {
+		contract["source_reason"] = reason
+	}
+	if taskType := strings.TrimSpace(strategy.TaskType); taskType != "" {
+		contract["task_type"] = taskType
+	}
+	if targetPage := strings.TrimSpace(strategy.TargetPage); targetPage != "" {
+		contract["target_page"] = targetPage
+	}
+	contract["route_required"] = strategy.RouteRequired
+	if strategy.LowConfidence {
+		contract["low_confidence"] = true
+	}
+	if len(strategy.PhaseGoals) > 0 {
+		contract["phases"] = compactStringSliceForPrompt(strategy.PhaseGoals, 8, 180)
+	}
+	if len(strategy.EvidenceRequired) > 0 {
+		contract["evidence_required"] = compactStringSliceForPrompt(strategy.EvidenceRequired, 10, 180)
+	}
+	if len(strategy.RecommendedCapabilities) > 0 {
+		contract["recommended_capabilities"] = compactStringSliceForPrompt(strategy.RecommendedCapabilities, 10, 160)
+	}
+	if len(strategy.SuccessCriteria) > 0 {
+		contract["completion_criteria"] = compactStringSliceForPrompt(strategy.SuccessCriteria, 8, 240)
+	}
+	if strategy.NeedsExactAgentRuntime {
+		contract["needs_exact_agent_runtime"] = true
+	}
+	if strategy.CurrentContextMaySummary {
+		contract["current_context_may_be_summary"] = true
+	}
+	if strategy.OpenCreatedAgentDetail {
+		contract["open_created_agent_detail"] = true
+	}
+	if effect := strings.TrimSpace(strategy.AssetEffect); effect != "" {
+		contract["asset_effect"] = effect
+	}
+	if risk := strings.TrimSpace(strategy.AssetRisk); risk != "" {
+		contract["asset_risk"] = risk
+	}
+	if approval := strings.TrimSpace(strategy.Approval); approval != "" {
+		contract["approval"] = approval
+	}
+	if len(strategy.CapabilityGoals) > 0 {
+		contract["capability_goals"] = agentCapabilityGoalsToMaps(strategy.CapabilityGoals)
+	}
+	return contract
 }
 
 func operationPlanSuccessCriteriaFromTurnStrategy(strategy *AIChatTurnStrategy) []string {
@@ -353,7 +415,7 @@ func recentOperationPlansContainIncompleteWork(plans []map[string]interface{}) b
 }
 
 func recentAgentCapabilityContinuationPlan(parts *chatRequestParts, branch []*runtimemodel.Message) map[string]interface{} {
-	if parts == nil || !isContinuationIntent(parts.Query) || !skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) {
+	if parts == nil || !partsRequestsContinuationWithFallback(parts, "") || !skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) {
 		return nil
 	}
 	for i := len(branch) - 1; i >= 0; i-- {
@@ -1285,7 +1347,7 @@ func recentOperationPlanHasPendingSkill(parts *chatRequestParts, skillID string)
 }
 
 func applyRecentOperationPlanToContinuationStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
-	if parts == nil || strategy == nil || !isContinuationIntent(parts.Query) {
+	if parts == nil || strategy == nil || !partsRequestsContinuationWithFallback(parts, "") {
 		return strategy
 	}
 	plan := firstIncompleteRecentOperationPlan(parts)
@@ -3884,16 +3946,25 @@ func applyOperationPlanInvocationState(metadata map[string]interface{}, invocati
 			return
 		}
 		applyOperationPlanProgress(plan, steps, stepStatus, "", "")
+	} else if lastActionable == nil && operationPlanModelDecidesTools(plan) && operationPlanModelDecidesCompletionVerified(plan) {
+		plan["status"] = operationPlanStatusCompleted
+		plan["pending_next_action"] = "none"
+		plan["step_status"] = stepStatus
+		operationPlanSyncStrategyState(plan)
+	} else if lastActionable != nil && operationPlanModelDecidesTools(plan) {
+		operationPlanSetModelDecidesInvocationStatus(plan, stepStatus, lastActionable, operationPlanStatusFromInvocation(lastActionable))
+		if operationPlanModelDecidesLatestInvocationFailed(plan, lastActionable) {
+			plan["status"] = operationPlanStatusFailed
+			plan["pending_next_action"] = "none"
+			operationPlanSyncStrategyState(plan)
+		} else if operationPlanModelDecidesCompletionVerified(plan) || operationPlanModelDecidesReadOnlyEvidenceComplete(plan, lastActionable) {
+			plan["status"] = operationPlanStatusCompleted
+			plan["pending_next_action"] = "none"
+			operationPlanSyncStrategyState(plan)
+		}
 	} else if operationPlanModelDecidesLatestInvocationFailed(plan, lastActionable) {
 		operationPlanSetModelDecidesInvocationStatus(plan, stepStatus, lastActionable, operationPlanStepStatusFailed)
 		plan["status"] = operationPlanStatusFailed
-		plan["pending_next_action"] = "none"
-		operationPlanSyncStrategyState(plan)
-	} else if operationPlanModelDecidesCompletionVerified(plan) {
-		if last != nil {
-			operationPlanSetModelDecidesInvocationStatus(plan, stepStatus, last, operationPlanStepStatusCompleted)
-		}
-		plan["status"] = operationPlanStatusCompleted
 		plan["pending_next_action"] = "none"
 		operationPlanSyncStrategyState(plan)
 	}
@@ -3905,6 +3976,26 @@ func operationPlanModelDecidesLatestInvocationFailed(plan map[string]interface{}
 		return false
 	}
 	return operationPlanStatusFromInvocation(invocation) == operationPlanStepStatusFailed
+}
+
+func operationPlanModelDecidesReadOnlyEvidenceComplete(plan map[string]interface{}, invocation map[string]interface{}) bool {
+	if !operationPlanModelDecidesTools(plan) || len(invocation) == 0 || operationPlanIsTerminalFailure(plan) {
+		return false
+	}
+	if operationPlanBoolValue(plan["approval_required"]) || operationPlanStatusFromInvocation(invocation) != operationPlanStepStatusCompleted {
+		return false
+	}
+	target := mapFromOperationContext(plan["asset_target"])
+	effect := strings.ToLower(strings.TrimSpace(stringFromAny(target["effect"])))
+	if effect != "" && effect != "none" && effect != "read" {
+		return false
+	}
+	skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
+	toolName := strings.TrimSpace(stringFromAny(invocation["tool_name"]))
+	if skillLoopToolLooksAssetMutation(skillID, toolName) {
+		return false
+	}
+	return operationPlanInvocationIsExploratoryDeviation(invocation)
 }
 
 func operationPlanSetModelDecidesInvocationStatus(plan map[string]interface{}, stepStatus map[string]interface{}, invocation map[string]interface{}, status string) {
@@ -5308,6 +5399,10 @@ func applyOperationPlanArtifactState(metadata map[string]interface{}, files []ma
 		skillID := strings.TrimSpace(stringFromAny(file["skill_id"]))
 		toolName := strings.TrimSpace(stringFromAny(file["tool_name"]))
 		if skillID != "" {
+			operationPlanSetEvidenceStepStatus(steps, stepStatus, "skill:"+skillID, operationPlanStepStatusCompleted)
+			if toolName != "" {
+				operationPlanSetEvidenceStepStatus(steps, stepStatus, operationPlanToolStepID(skillID, toolName), operationPlanStepStatusCompleted)
+			}
 			operationPlanSetMatchingStepStatus(steps, stepStatus, skillID, toolName, operationPlanStepStatusCompleted)
 		}
 	}
@@ -5335,20 +5430,29 @@ func applyOperationPlanArtifactState(metadata map[string]interface{}, files []ma
 		assetState["unsaved_generated_files"] = mapsToInterfaceSlice(unsavedFiles)
 	}
 	plan["asset_state"] = assetState
-	operationPlanSetStepStatus(steps, stepStatus, "observe", operationPlanStepStatusCompleted)
-	if operationPlanRequiresManagedFileSave(plan, steps) && len(unsavedFiles) > 0 {
-		operationPlanSetStepStatus(steps, stepStatus, "skill:"+skills.SkillFileManager, operationPlanStepStatusPending)
-		operationPlanSetStepStatus(steps, stepStatus, operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management"), operationPlanStepStatusPending)
+	operationPlanSetEvidenceStepStatus(steps, stepStatus, "observe", operationPlanStepStatusCompleted)
+	requiresManagedSave := operationPlanRequiresManagedFileSave(plan, steps)
+	if requiresManagedSave && len(unsavedFiles) > 0 {
+		operationPlanSetEvidenceStepStatus(steps, stepStatus, "skill:"+skills.SkillFileManager, operationPlanStepStatusPending)
+		operationPlanSetEvidenceStepStatus(steps, stepStatus, operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management"), operationPlanStepStatusPending)
 	}
-	if operationPlanRequiresManagedFileSave(plan, steps) && len(unsavedFiles) == 0 && managedCount > 0 {
-		operationPlanSetStepStatus(steps, stepStatus, "skill:"+skills.SkillFileGenerator, operationPlanStepStatusCompleted)
-		operationPlanSetStepStatus(steps, stepStatus, "skill:"+skills.SkillChartGenerator, operationPlanStepStatusCompleted)
+	if requiresManagedSave && len(unsavedFiles) == 0 && managedCount > 0 {
+		operationPlanSetEvidenceStepStatus(steps, stepStatus, "skill:"+skills.SkillFileGenerator, operationPlanStepStatusCompleted)
+		operationPlanSetEvidenceStepStatus(steps, stepStatus, "skill:"+skills.SkillChartGenerator, operationPlanStepStatusCompleted)
 	}
 	pendingOverride := ""
-	if operationPlanRequiresManagedFileSave(plan, steps) && len(unsavedFiles) > 0 {
+	statusOverride := ""
+	if requiresManagedSave && len(unsavedFiles) > 0 {
 		pendingOverride = "save_remaining_generated_files_to_file_management"
+		statusOverride = operationPlanStatusRunning
+	} else if requiresManagedSave && managedCount > 0 {
+		pendingOverride = "none"
+		statusOverride = operationPlanStatusCompleted
+	} else if temporaryCount > 0 || managedCount > 0 {
+		pendingOverride = "none"
+		statusOverride = operationPlanStatusCompleted
 	}
-	applyOperationPlanProgress(plan, steps, stepStatus, pendingOverride, "")
+	applyOperationPlanProgress(plan, steps, stepStatus, pendingOverride, statusOverride)
 	latest := files[len(files)-1]
 	plan["tool_result"] = map[string]interface{}{
 		"kind":      "artifact",
@@ -5815,6 +5919,21 @@ func operationPlanSetStepStatus(steps []map[string]interface{}, stepStatus map[s
 		}
 		step["status"] = status
 		stepStatus[id] = status
+		return
+	}
+}
+
+func operationPlanSetEvidenceStepStatus(steps []map[string]interface{}, stepStatus map[string]interface{}, id string, status string) {
+	id = strings.TrimSpace(id)
+	if id == "" || stepStatus == nil {
+		return
+	}
+	stepStatus[id] = status
+	for _, step := range steps {
+		if strings.TrimSpace(stringFromAny(step["id"])) != id {
+			continue
+		}
+		step["status"] = status
 		return
 	}
 }

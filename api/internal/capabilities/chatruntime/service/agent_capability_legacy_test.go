@@ -1,9 +1,12 @@
 package service
 
 import (
+	"regexp"
 	"strings"
 	"unicode"
 )
+
+var agentManagementModelIdentifierPattern = regexp.MustCompile(`(?i)\b(?:gpt-[a-z0-9._-]+|claude[a-z0-9._-]*|deepseek[a-z0-9._-]*|qwen[a-z0-9._-]*|gemini[a-z0-9._-]*|llama[a-z0-9._-]*|mistral[a-z0-9._-]*|kimi[a-z0-9._-]*|doubao[a-z0-9._-]*)\b`)
 
 // agentManagementCapabilityGoalsForQuery is kept test-only while runtime
 // planning migrates to model-provided capability goals.

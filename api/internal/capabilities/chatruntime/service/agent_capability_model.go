@@ -880,6 +880,8 @@ func agentCapabilityGoalWithDefaults(goal AIChatAgentCapabilityGoal) AIChatAgent
 			)
 		}
 		goal.NotSufficient = appendUniqueStrings(goal.NotSufficient,
+			"system_prompt_only",
+			"file_upload_enabled_only",
 			"candidate_lookup_only",
 			"natural_language_claim_only",
 		)

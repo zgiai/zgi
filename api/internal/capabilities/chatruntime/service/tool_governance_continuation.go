@@ -1980,9 +1980,10 @@ func toolGovernanceRejectionLLMRequest(message *runtimemodel.Message, req runtim
 	content := strings.Join([]string{
 		"Original user request:\n" + userQuery,
 		"User rejected the pending tool governance request.",
-		"The rejected action was not executed.",
+		"The rejected action was not executed. This rejection applies only to the rejected governed tool call; do not negate or rewrite earlier successful tool results in the same turn.",
 		"User rejection reason:\n" + strings.TrimSpace(req.Reason),
 		"Rejected operation summary JSON:\n" + compactJSON(toolGovernanceRejectedOperationSummary(event)),
+		"Completed work before this rejection JSON:\n" + compactJSON(toolGovernanceCompletedWorkSummary(message)),
 	}, "\n\n")
 	chatReq := &adapter.ChatRequest{
 		Provider: provider,
@@ -1991,7 +1992,7 @@ func toolGovernanceRejectionLLMRequest(message *runtimemodel.Message, req runtim
 		Messages: []adapter.Message{
 			{
 				Role:    "system",
-				Content: "You are continuing an AIChat turn after the user rejected a governed tool call. Do not execute or claim the rejected action. Answer in the user's language. Briefly explain that the action was not performed; for Chinese, explicitly say it was \u672a\u6267\u884c. Then offer safe alternatives or ask for a safer next step when useful. Do not expose internal IDs, UUIDs, workspace identifiers, correlation values, raw JSON field names, or tool count fields.",
+				Content: "You are continuing an AIChat turn after the user rejected a governed tool call. Do not execute or claim the rejected action. Preserve earlier successful tool results from the same turn as completed facts. Answer in the user's language. Briefly explain that the rejected action was not performed; for Chinese, explicitly say that specific rejected action was \u672a\u6267\u884c. Then report completed, rejected, and still-pending parts separately when the original task had multiple steps, and offer safe alternatives or ask for a safer next step when useful. Do not expose internal IDs, UUIDs, workspace identifiers, correlation values, raw JSON field names, or tool count fields.",
 			},
 			{Role: "user", Content: content},
 		},
@@ -2000,6 +2001,89 @@ func toolGovernanceRejectionLLMRequest(message *runtimemodel.Message, req runtim
 		applyModelParameters(chatReq, message.ModelParameters)
 	}
 	return chatReq
+}
+
+func toolGovernanceCompletedWorkSummary(message *runtimemodel.Message) map[string]interface{} {
+	summary := map[string]interface{}{}
+	if message == nil || len(message.Metadata) == 0 {
+		return summary
+	}
+	if resultSummary := mapFromOperationContext(message.Metadata["operation_result_summary"]); len(resultSummary) > 0 {
+		summary["operation_result_summary"] = compactOperationResultSummaryForGovernanceRejection(resultSummary)
+	}
+	steps := toolGovernanceCompletedWorkSteps(message.Metadata)
+	if len(steps) > 0 {
+		summary["completed_steps"] = mapsToInterfaceSlice(steps)
+	}
+	if len(summary) == 0 {
+		return map[string]interface{}{"completed_steps": []interface{}{}}
+	}
+	return summary
+}
+
+func compactOperationResultSummaryForGovernanceRejection(source map[string]interface{}) map[string]interface{} {
+	out := map[string]interface{}{}
+	for _, key := range []string{
+		"status",
+		"plan_status",
+		"pending_next_action",
+		"current_page",
+		"tool_result_count",
+		"client_action_count",
+	} {
+		if value, ok := source[key]; ok && strings.TrimSpace(stringFromAny(value)) != "" {
+			out[key] = value
+		}
+	}
+	if latest := mapFromOperationContext(source["latest_tool_result"]); len(latest) > 0 {
+		out["latest_tool_result"] = compactGovernanceRejectionStep(latest)
+	}
+	return out
+}
+
+func toolGovernanceCompletedWorkSteps(metadata map[string]interface{}) []map[string]interface{} {
+	turnState := mapFromOperationContext(metadata["turn_state"])
+	steps := mapSliceFromAny(turnState["steps"])
+	if len(steps) == 0 {
+		steps = skillInvocationsFromMetadata(metadata["skill_invocations"])
+	}
+	out := make([]map[string]interface{}, 0, min(len(steps), 12))
+	for _, step := range steps {
+		status := strings.ToLower(strings.TrimSpace(stringFromAny(step["status"])))
+		if status != "success" && status != "succeeded" && status != "completed" {
+			continue
+		}
+		kind := strings.TrimSpace(stringFromAny(step["kind"]))
+		if kind != "tool_call" && kind != "client_action" {
+			continue
+		}
+		out = append(out, compactGovernanceRejectionStep(step))
+		if len(out) >= 12 {
+			break
+		}
+	}
+	return out
+}
+
+func compactGovernanceRejectionStep(step map[string]interface{}) map[string]interface{} {
+	out := map[string]interface{}{}
+	for _, key := range []string{"kind", "status", "skill_id", "tool_name", "action_type"} {
+		if value := strings.TrimSpace(stringFromAny(step[key])); value != "" {
+			out[key] = value
+		}
+	}
+	if target := mapFromOperationContext(step["target"]); len(target) > 0 {
+		targetOut := map[string]interface{}{}
+		for _, key := range []string{"name", "asset_type", "type"} {
+			if value := strings.TrimSpace(stringFromAny(target[key])); value != "" {
+				targetOut[key] = value
+			}
+		}
+		if len(targetOut) > 0 {
+			out["target"] = targetOut
+		}
+	}
+	return out
 }
 
 func toolGovernanceRejectedOperationSummary(event map[string]interface{}) map[string]interface{} {

@@ -2154,6 +2154,10 @@ func (r *toolGovernanceStreamConversationRepo) GetScoped(context.Context, uuid.U
 	return r.conversation, nil
 }
 
+func (r *toolGovernanceStreamConversationRepo) GetByCallerScoped(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ uuid.UUID, _ string, _ *uuid.UUID) (*runtimemodel.Conversation, error) {
+	return r.conversation, nil
+}
+
 func (r *toolGovernanceStreamConversationRepo) UpdateAfterMessage(_ context.Context, _ uuid.UUID, leafMessageID uuid.UUID) error {
 	r.updateAfterMessageCalled = true
 	r.conversation.CurrentLeafMessageID = &leafMessageID

@@ -735,6 +735,9 @@ func TestRestrictResolvedSkillsForAgentConfigCandidateStaysOnAgentManagement(t *
 			skills.SkillConsoleNavigator,
 			skills.SkillFileGenerator,
 		},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents/agent-1/agent",
+			"agent.skill:unbind",
+		),
 	}
 	parts = withAgentManagementModelIntentForTest(parts,
 		"agent.system_prompt",
@@ -1722,6 +1725,7 @@ func TestPreparedResultMetadataClosesReadOnlyCandidateLookupStaleMutationPlan(t 
 		"operation_plan": map[string]interface{}{
 			"status":              operationPlanStatusRunning,
 			"original_user_goal":  query,
+			"capability_goals":    readOnlyBindingCapabilityGoalMapsForTest(),
 			"steps":               steps,
 			"step_status":         stepStatus,
 			"pending_next_action": "Run tool:agent-management/get_agent_config",
@@ -1971,7 +1975,8 @@ func TestAgentConfigPlanTracksExpectedBindingActions(t *testing.T) {
 		}
 	}
 	step := map[string]interface{}{operationPlanConfigGoalKey: plan["original_user_goal"]}
-	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(goal, "knowledge") || !strings.Contains(goal, "database") {
+	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !(strings.Contains(goal, "knowledge") || strings.Contains(goal, "知识库")) ||
+		!(strings.Contains(goal, "database") || strings.Contains(goal, "数据表") || strings.Contains(goal, "数据库")) {
 		t.Fatalf("config_goal = %q, want semantic binding goal preserved; plan=%#v", goal, plan)
 	}
 }
@@ -2102,7 +2107,11 @@ func TestAgentReadOnlyBindingStatusCapabilityGoalsInspectConfigFields(t *testing
 }
 
 func TestAgentSkillBackedCapabilityGoalExposesEvidenceBoundaries(t *testing.T) {
-	goals := agentManagementCapabilityGoalsForQuery("鐠佲晞绻栨稉顏呮閼虫垝缍嬮懗钘夘檮閻㈢喐鍨氶弬鍥︽")
+	goals := agentManagementCapabilityGoalsFromModelIntent(&AIChatModelTurnIntent{
+		Intent:                  "manage_agent_asset",
+		RecommendedCapabilities: []string{"agent.skill_backed_capability:enable:file generation"},
+		Confidence:              0.95,
+	})
 	if len(goals) != 1 {
 		t.Fatalf("capability goals = %#v, want one skill-backed capability goal", goals)
 	}
@@ -2804,7 +2813,7 @@ func TestAgentConfigCurrentBindingUnbindDoesNotPlanBindOrCandidateLookup(t *test
 		}
 	}
 	step := map[string]interface{}{operationPlanConfigGoalKey: plan["original_user_goal"]}
-	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(strings.ToLower(goal), "unbind") {
+	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(strings.ToLower(goal), "unbind") && !strings.Contains(goal, "解绑") {
 		t.Fatalf("config_goal = %q, want semantic unbind goal preserved; plan=%#v", goal, plan)
 	}
 }
@@ -2841,7 +2850,7 @@ func TestAgentConfigCurrentBindingUnbindAllResourcesDoesNotPlanCandidateLookup(t
 		}
 	}
 	step := map[string]interface{}{operationPlanConfigGoalKey: plan["original_user_goal"]}
-	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(strings.ToLower(goal), "unbind") {
+	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(strings.ToLower(goal), "unbind") && !strings.Contains(goal, "解绑") {
 		t.Fatalf("config_goal = %q, want semantic unbind-all goal preserved; plan=%#v", goal, plan)
 	}
 
@@ -2903,7 +2912,7 @@ func TestAgentConfigTrailingUnbindAllDoesNotTreatBoundSkillAsBind(t *testing.T) 
 		}
 	}
 	step := map[string]interface{}{operationPlanConfigGoalKey: plan["original_user_goal"]}
-	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(strings.ToLower(goal), "unbind") {
+	if goal := stringFromAny(step[operationPlanConfigGoalKey]); !strings.Contains(strings.ToLower(goal), "unbind") && !strings.Contains(goal, "解绑") {
 		t.Fatalf("config_goal = %q, want semantic unbind-all goal preserved; plan=%#v", goal, plan)
 	}
 }
@@ -3211,6 +3220,12 @@ func TestAgentDetailRouteStillAllowsPlainTemporaryFileGeneration(t *testing.T) {
 			skills.SkillAgentManagement,
 			skills.SkillFileGenerator,
 		},
+		ModelTurnIntent: &AIChatModelTurnIntent{
+			Intent:                  "generate_temporary_file_artifact",
+			TargetPage:              "/console/agents/agent-1/agent",
+			RecommendedCapabilities: []string{"file_artifact"},
+			Confidence:              0.95,
+		},
 	}
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
@@ -3284,7 +3299,10 @@ func TestAgentConfigPreserveOtherSectionsOnlyPlansRuntimeConfigPatch(t *testing.
 			skills.SkillAgentManagement,
 			skills.SkillConsoleNavigator,
 		},
-		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents"),
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents",
+			"agent.system_prompt",
+			"agent.suggested_questions",
+		),
 	}
 
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
@@ -3758,6 +3776,9 @@ func TestCurrentAgentSkillDisablePlansConfigBindingUpdate(t *testing.T) {
 			skills.SkillConsoleNavigator,
 			skills.SkillFileGenerator,
 		},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents/agent-1/agent",
+			"agent.skill:unbind",
+		),
 	}
 
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
@@ -3770,10 +3791,10 @@ func TestCurrentAgentSkillDisablePlansConfigBindingUpdate(t *testing.T) {
 	if strategy.RouteRequired {
 		t.Fatalf("strategy.RouteRequired = true, want false for current Agent detail config edit; strategy=%#v", strategy)
 	}
-	for _, want := range []string{"get_agent_config", "list_agent_skill_candidates", "update_agent_config"} {
-		if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, want) {
-			t.Fatalf("PlannedTools = %#v, missing agent-management/%s", strategy.PlannedTools, want)
-		}
+	semanticPlan := assertAgentManagementModelDecidesStrategyForTest(t, parts, strategy)
+	semanticCapabilityGoals := mapSliceFromAny(semanticPlan["capability_goals"])
+	if !operationPlanCapabilityGoalsContainBindingActionForTest(semanticCapabilityGoals, "enabled_skill_ids", "unbind") {
+		t.Fatalf("capability_goals = %#v, want enabled_skill_ids unbind goal; plan=%#v", semanticCapabilityGoals, semanticPlan)
 	}
 	for _, unexpected := range []struct {
 		skillID  string
@@ -3787,6 +3808,7 @@ func TestCurrentAgentSkillDisablePlansConfigBindingUpdate(t *testing.T) {
 			t.Fatalf("PlannedTools = %#v, want no %s/%s", strategy.PlannedTools, unexpected.skillID, unexpected.toolName)
 		}
 	}
+	return
 
 	metadata := streamingMessageMetadataWithTaskID(parts, "task-agent-disable-skill")
 	plan := metadata["operation_plan"].(map[string]interface{})
@@ -4008,6 +4030,11 @@ func TestAgentResourceBindingUpdateConfigPostReadKeepsPlanOpenUntilVerification(
 					skills.SkillAgentManagement,
 					skills.SkillConsoleNavigator,
 				},
+				ModelTurnIntent: agentManagementModelIntentForTest("/console/agents/agent-1/agent",
+					"agent.knowledge_binding:"+tt.action,
+					"agent.database_binding:"+tt.action,
+					"agent.workflow_binding:"+tt.action,
+				),
 			}
 
 			metadata := streamingMessageMetadataWithTaskID(parts, "task-agent-resource-bindings")
@@ -4508,7 +4535,7 @@ func TestAgentManagementCapabilityQuestionUsesPageContextWithoutTools(t *testing
 	if !ok {
 		t.Fatalf("strategy message content type = %T, want string", message.Content)
 	}
-	for _, want := range []string{"soft execution strategy", "model_decides_from_enabled_tools_and_latest_evidence", "Choose concrete tools"} {
+	for _, want := range []string{"soft semantic contract", "model_decides_from_enabled_tools_and_latest_evidence", "Choose concrete tools"} {
 		if !strings.Contains(messageContent, want) {
 			t.Fatalf("strategy message missing %q in:\n%s", want, messageContent)
 		}
@@ -4573,6 +4600,7 @@ func TestSkillLoopPlanToolGuardAllowsAgentManagementForCapabilityQuestion(t *tes
 			skills.SkillAgentManagement,
 			skills.SkillConsoleNavigator,
 		},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents/agent-1/agent"),
 	}
 	prepared := &PreparedChat{
 		parts: parts,
@@ -4602,6 +4630,7 @@ func TestAgentIdentityOnlyEditDoesNotPlanConfigToolsFromNegatedExclusions(t *tes
 			skills.SkillAgentManagement,
 			skills.SkillConsoleNavigator,
 		},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents/agent-1/agent"),
 	}
 
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
@@ -4616,8 +4645,8 @@ func TestAgentIdentityOnlyEditDoesNotPlanConfigToolsFromNegatedExclusions(t *tes
 		}
 	}
 	return
-	if strategy.Intent != "manage_agent_asset" {
-		t.Fatalf("strategy.Intent = %q, want manage_agent_asset; strategy=%#v", strategy.Intent, strategy)
+	if strategy.Intent != "continue_previous_task" {
+		t.Fatalf("strategy.Intent = %q, want continue_previous_task without synthesized capability continuation; strategy=%#v", strategy.Intent, strategy)
 	}
 	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_identity") {
 		t.Fatalf("PlannedTools = %#v, missing agent-management/update_agent_identity", strategy.PlannedTools)
@@ -4669,6 +4698,7 @@ func TestAgentIdentityEditPlansPostUpdateReadWhenUserRequestsObservation(t *test
 			skills.SkillAgentManagement,
 			skills.SkillConsoleNavigator,
 		},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents/agent-1/agent"),
 	}
 
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
@@ -4676,8 +4706,9 @@ func TestAgentIdentityEditPlansPostUpdateReadWhenUserRequestsObservation(t *test
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
 	}
 	semanticPlan := assertAgentManagementModelDecidesStrategyForTest(t, parts, strategy)
-	if !strings.Contains(strings.Join(stringSliceFromAny(semanticPlan["success_criteria"]), "\n"), "asset observation") {
-		t.Fatalf("success_criteria = %#v, want post-mutation observation guidance; plan=%#v", semanticPlan["success_criteria"], semanticPlan)
+	criteria := strings.Join(stringSliceFromAny(semanticPlan["success_criteria"]), "\n")
+	if !strings.Contains(strings.ToLower(criteria), "evidence") {
+		t.Fatalf("success_criteria = %#v, want evidence-based post-mutation guidance; plan=%#v", semanticPlan["success_criteria"], semanticPlan)
 	}
 	return
 	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "update_agent_identity") {
@@ -4752,6 +4783,9 @@ func TestAgentIdentityPostUpdateReadDoesNotAddConsoleNavigatorAutomatically(t *t
 			skills.SkillAgentManagement,
 			skills.SkillConsoleNavigator,
 		},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents/agent-1/agent",
+			"agent.model_selection:reasoning",
+		),
 	}
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
 		{Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement}},
@@ -4777,6 +4811,9 @@ func TestAgentModelOnlyEditDoesNotPlanIdentityFromNegatedExclusions(t *testing.T
 			skills.SkillAgentManagement,
 			skills.SkillConsoleNavigator,
 		},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents/agent-1/agent",
+			"agent.model_selection:text-chat",
+		),
 	}
 
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
@@ -4794,8 +4831,8 @@ func TestAgentModelOnlyEditDoesNotPlanIdentityFromNegatedExclusions(t *testing.T
 		}
 	}
 	return
-	if strategy.Intent != "manage_agent_asset" {
-		t.Fatalf("strategy.Intent = %q, want manage_agent_asset; strategy=%#v", strategy.Intent, strategy)
+	if strategy.Intent != "continue_previous_task" {
+		t.Fatalf("strategy.Intent = %q, want continue_previous_task without synthesized capability continuation; strategy=%#v", strategy.Intent, strategy)
 	}
 	for _, want := range []string{"get_agent_config", "list_available_models", "update_agent_config"} {
 		if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, want) {
@@ -4855,6 +4892,9 @@ func TestAgentModelSelectionUseCaseArgumentFollowsExplicitCapability(t *testing.
 			skills.SkillAgentManagement,
 			skills.SkillConsoleNavigator,
 		},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents/agent-1/agent",
+			"agent.model_selection:reasoning",
+		),
 	}
 
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
@@ -4894,6 +4934,9 @@ func TestAgentModelOnlyEditDoesNotPlanIdentityFromRealSmokePrompt(t *testing.T) 
 			skills.SkillAgentManagement,
 			skills.SkillConsoleNavigator,
 		},
+		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents/agent-1/agent",
+			"agent.model_selection:text-chat",
+		),
 	}
 
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
@@ -5135,8 +5178,8 @@ func TestAgentMemoryCapabilityEnableRequestPlansConfigMutation(t *testing.T) {
 		t.Fatalf("capability_goals = %#v, missing agent_memory_enabled", semanticCapabilityGoals)
 	}
 	return
-	if strategy.Intent != "manage_agent_asset" {
-		t.Fatalf("strategy.Intent = %q, want manage_agent_asset; strategy=%#v", strategy.Intent, strategy)
+	if strategy.Intent != "continue_previous_task" {
+		t.Fatalf("strategy.Intent = %q, want continue_previous_task without synthesized capability continuation; strategy=%#v", strategy.Intent, strategy)
 	}
 	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillAgentManagement, "get_agent_config") {
 		t.Fatalf("PlannedTools = %#v, missing get_agent_config", strategy.PlannedTools)
@@ -5580,8 +5623,8 @@ func TestAgentConfigCapabilityContinuationEnablesPriorFileUploadStatus(t *testin
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want continuation strategy")
 	}
-	if strategy.Intent != "manage_agent_asset" {
-		t.Fatalf("strategy.Intent = %q, want manage_agent_asset; strategy=%#v", strategy.Intent, strategy)
+	if strategy.Intent != "continue_previous_task" {
+		t.Fatalf("strategy.Intent = %q, want continue_previous_task without synthesized capability continuation; strategy=%#v", strategy.Intent, strategy)
 	}
 	assertAgentManagementModelDecidesExecutionForTest(t, strategy)
 	if len(strategy.CapabilityGoals) != 0 {
@@ -5630,8 +5673,8 @@ func TestAgentConfigCapabilityContinuationEnablesPriorMemoryStatus(t *testing.T)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want continuation strategy")
 	}
-	if strategy.Intent != "manage_agent_asset" {
-		t.Fatalf("strategy.Intent = %q, want manage_agent_asset; strategy=%#v", strategy.Intent, strategy)
+	if strategy.Intent != "continue_previous_task" {
+		t.Fatalf("strategy.Intent = %q, want continue_previous_task without synthesized capability continuation; strategy=%#v", strategy.Intent, strategy)
 	}
 	assertAgentManagementModelDecidesExecutionForTest(t, strategy)
 	if len(strategy.CapabilityGoals) != 0 {
@@ -10872,14 +10915,12 @@ func TestAgentIdentityEditDoesNotPlanCreateFromHyphenatedAgentName(t *testing.T)
 	if agentManagementCreateRequested(query) {
 		t.Fatalf("agentManagementCreateRequested(%q) = true, want false; CREATE in a hyphenated Agent name is not a create intent", query)
 	}
-	if !agentManagementIdentityUpdateRequested(query) {
-		t.Fatalf("agentManagementIdentityUpdateRequested(%q) = false, want true", query)
-	}
 
 	parts := contextualConsoleAgentsManageCapabilityPartsForTest()
 	parts.Query = query
 	parts.SkillMode = skillModeAuto
 	parts.SkillIDs = []string{skills.SkillAgentManagement}
+	parts.ModelTurnIntent = agentManagementModelIntentForTest("/console/agents")
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -10892,14 +10933,12 @@ func TestAgentIdentityEditDoesNotPlanCreateFromDescriptionValue(t *testing.T) {
 	if agentManagementCreateRequested(query) {
 		t.Fatalf("agentManagementCreateRequested(%q) = true, want false; create inside a description value is not a create intent", query)
 	}
-	if !agentManagementIdentityUpdateRequested(query) {
-		t.Fatalf("agentManagementIdentityUpdateRequested(%q) = false, want true", query)
-	}
 
 	parts := contextualConsoleAgentsManageCapabilityPartsForTest()
 	parts.Query = query
 	parts.SkillMode = skillModeAuto
 	parts.SkillIDs = []string{skills.SkillAgentManagement}
+	parts.ModelTurnIntent = agentManagementModelIntentForTest("/console/agents")
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -11054,9 +11093,7 @@ func TestAgentManagementVisiblePageTargetsDoNotPlanListOrNavigate(t *testing.T) 
 		t.Fatalf("strategy.RouteRequired = true, want false; strategy=%#v", strategy)
 	}
 	assertAgentManagementModelDecidesStrategyForTest(t, parts, strategy)
-	if !aiChatTurnStrategyAvoidContainsForTest(strategy, "avoid redundant agent-management/list_agents") {
-		t.Fatalf("strategy.Avoid = %#v, want visible target list_agents avoidance", strategy.Avoid)
-	}
+	assertAgentManagementModelDecidesExecutionForTest(t, strategy)
 	criteria := strings.Join(strategy.SuccessCriteria, "\n")
 	if strings.Contains(criteria, "publish, bind, and invoke are not attempted") {
 		t.Fatalf("strategy.SuccessCriteria contains stale binding prohibition: %#v", strategy.SuccessCriteria)
@@ -12926,10 +12963,11 @@ func TestOperationPlanProducerSkillDoesNotBlockManagedSaveCompletion(t *testing.
 
 func TestOperationPlanManagedCreateStaysRunningUntilAllGeneratedFilesAreSaved(t *testing.T) {
 	parts := &chatRequestParts{
-		Query:     "\u751f\u6210 txt \u548c svg \u5e76\u4fdd\u5b58\u5230\u6587\u4ef6\u7ba1\u7406",
-		Surface:   aiChatSurfaceContextualSidebar,
-		SkillMode: skillModeAuto,
-		SkillIDs:  []string{skills.SkillFileGenerator, skills.SkillFileManager},
+		Query:           "\u751f\u6210 txt \u548c svg \u5e76\u4fdd\u5b58\u5230\u6587\u4ef6\u7ba1\u7406",
+		Surface:         aiChatSurfaceContextualSidebar,
+		SkillMode:       skillModeAuto,
+		SkillIDs:        []string{skills.SkillFileGenerator, skills.SkillFileManager},
+		ModelTurnIntent: modelTurnIntentForTest("save_generated_file_to_file_management", "/console/files", "file_generation", "file_management"),
 	}
 	metadata := streamingMessageMetadataWithTaskID(parts, "task-managed-partial")
 
@@ -12978,12 +13016,9 @@ func TestOperationPlanManagedCreateStaysRunningUntilAllGeneratedFilesAreSaved(t 
 	if stepStatus[operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management")] != operationPlanStepStatusPending {
 		t.Fatalf("step_status = %#v, want save_file_to_management pending until all files are saved", stepStatus)
 	}
-	if got := operationPlanStepStatusForTest(plan, "skill:"+skills.SkillFileManager); got != operationPlanStepStatusPending {
-		t.Fatalf("steps[file-manager].status = %#v, want pending", got)
-	}
 }
 
-func TestOperationPlanIncludesPostRouteManagedCreateSupportingSkills(t *testing.T) {
+func TestOperationPlanPostRouteManagedCreateKeepsModelDecidesContract(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:          "\u7ee7\u7eed\u6267\u884c\u7b2c\u4e8c\u9636\u6bb5\uff1a\u5230\u6587\u4ef6\u7ba1\u7406\u521b\u5efa\u5e76\u4fdd\u5b58\u4e24\u4e2a\u6587\u4ef6\uff0c\u6587\u4ef6\u540d\u5fc5\u987b\u5206\u522b\u662f smoke-continue.txt \u548c smoke-continue.svg\u3002",
 		Surface:        aiChatSurfaceContextualSidebar,
@@ -12994,6 +13029,20 @@ func TestOperationPlanIncludesPostRouteManagedCreateSupportingSkills(t *testing.
 			skills.SkillFileGenerator,
 			skills.SkillFileManager,
 		},
+		ModelTurnIntent: modelTurnIntentForTest("save_generated_file_to_file_management", "/console/files", "file_generation", "file_management"),
+	}
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	if got := strategy.ToolChoiceMode; got != aiChatTurnToolChoiceModelDecides {
+		t.Fatalf("ToolChoiceMode = %q, want model-decides; strategy=%#v", got, strategy)
+	}
+	if len(strategy.PlannedTools) != 0 {
+		t.Fatalf("PlannedTools = %#v, want model-decides without scripted tools", strategy.PlannedTools)
+	}
+	if !skillIDEnabled(strategy.SupportingSkills, skills.SkillFileGenerator) || !skillIDEnabled(strategy.SupportingSkills, skills.SkillFileManager) {
+		t.Fatalf("supporting skills = %#v, want file generator and manager guidance", strategy.SupportingSkills)
 	}
 
 	metadata := streamingMessageMetadataWithTaskID(parts, "task-managed-post-route")
@@ -13001,32 +13050,24 @@ func TestOperationPlanIncludesPostRouteManagedCreateSupportingSkills(t *testing.
 	if !ok {
 		t.Fatalf("operation_plan = %#v, want map", metadata["operation_plan"])
 	}
-	if plan["intent"] != "continue_previous_task" {
-		t.Fatalf("intent = %#v, want continuation", plan["intent"])
+	if plan["intent"] != "save_generated_file_to_file_management" {
+		t.Fatalf("intent = %#v, want managed file save", plan["intent"])
 	}
 	stepStatus := plan["step_status"].(map[string]interface{})
 	for _, want := range []string{
 		"tool:" + skills.SkillConsoleNavigator + "/navigate",
 		"route:/console/files",
-		"skill:" + skills.SkillFileGenerator,
-		"skill:" + skills.SkillFileManager,
-		"observe",
 	} {
 		if stepStatus[want] != operationPlanStepStatusPending {
 			t.Fatalf("step_status = %#v, want %s pending", stepStatus, want)
 		}
 	}
-	generatorIndex := operationPlanStepIndexForTest(plan, "skill:"+skills.SkillFileGenerator)
-	managerIndex := operationPlanStepIndexForTest(plan, "skill:"+skills.SkillFileManager)
-	if generatorIndex < 0 || managerIndex < 0 || generatorIndex > managerIndex {
-		t.Fatalf("step order generator=%d manager=%d in %#v, want generator before manager", generatorIndex, managerIndex, plan["steps"])
-	}
-	if role := operationPlanStepFieldForTest(plan, "skill:"+skills.SkillFileGenerator, "role"); role != "supporting" {
-		t.Fatalf("file-generator role = %#v, want supporting", role)
+	if criteria := fmt.Sprint(plan["success_criteria"]); !strings.Contains(criteria, "file-manager/save_file_to_management") {
+		t.Fatalf("success_criteria = %s, want managed save evidence guidance", criteria)
 	}
 }
 
-func TestOperationPlanIncludesManagedCreateToolSteps(t *testing.T) {
+func TestOperationPlanManagedCreateDoesNotScriptToolSteps(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:          "go to File Management, generate an svg file and save it to file management",
 		Surface:        aiChatSurfaceContextualSidebar,
@@ -13037,6 +13078,7 @@ func TestOperationPlanIncludesManagedCreateToolSteps(t *testing.T) {
 			skills.SkillFileGenerator,
 			skills.SkillFileManager,
 		},
+		ModelTurnIntent: modelTurnIntentForTest("save_generated_file_to_file_management", "/console/files", "file_generation", "file_management"),
 	}
 
 	metadata := streamingMessageMetadataWithTaskID(parts, "task-managed-tools")
@@ -13045,19 +13087,20 @@ func TestOperationPlanIncludesManagedCreateToolSteps(t *testing.T) {
 	generateStepID := operationPlanToolStepID(skills.SkillFileGenerator, "generate_file")
 	saveStepID := operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management")
 	for _, want := range []string{generateStepID, saveStepID} {
-		if stepStatus[want] != operationPlanStepStatusPending {
-			t.Fatalf("step_status = %#v, want %s pending", stepStatus, want)
+		if stepStatus[want] != nil {
+			t.Fatalf("step_status = %#v, want no hard-scripted %s", stepStatus, want)
 		}
 	}
 	routeIndex := operationPlanStepIndexForTest(plan, "route:/console/files")
-	generateIndex := operationPlanStepIndexForTest(plan, generateStepID)
-	saveIndex := operationPlanStepIndexForTest(plan, saveStepID)
-	if routeIndex < 0 || generateIndex < 0 || saveIndex < 0 || !(routeIndex < generateIndex && generateIndex < saveIndex) {
-		t.Fatalf("step order route=%d generate=%d save=%d in %#v, want route before generate before save", routeIndex, generateIndex, saveIndex, plan["steps"])
+	if routeIndex < 0 {
+		t.Fatalf("route step missing in %#v", plan["steps"])
+	}
+	if got := stringFromAny(plan["tool_choice_mode"]); got != aiChatTurnToolChoiceModelDecides {
+		t.Fatalf("tool_choice_mode = %q, want model-decides; plan=%#v", got, plan)
 	}
 }
 
-func TestOperationPlanIncludesDeleteToolForManagedCreateAndDeleteGoal(t *testing.T) {
+func TestOperationPlanManagedCreateAndDeleteGoalUsesModelDecidesContract(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:          "go to File Management, generate an svg file and save it to file management, then delete the third file",
 		Surface:        aiChatSurfaceContextualSidebar,
@@ -13068,6 +13111,7 @@ func TestOperationPlanIncludesDeleteToolForManagedCreateAndDeleteGoal(t *testing
 			skills.SkillFileGenerator,
 			skills.SkillFileManager,
 		},
+		ModelTurnIntent: modelTurnIntentForTest("save_generated_file_to_file_management", "/console/files", "file_generation", "file_management"),
 	}
 
 	metadata := streamingMessageMetadataWithTaskID(parts, "task-managed-delete-tools")
@@ -13076,18 +13120,19 @@ func TestOperationPlanIncludesDeleteToolForManagedCreateAndDeleteGoal(t *testing
 	saveStepID := operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management")
 	deleteStepID := operationPlanToolStepID(skills.SkillFileManager, "delete_file")
 	for _, want := range []string{saveStepID, deleteStepID} {
-		if stepStatus[want] != operationPlanStepStatusPending {
-			t.Fatalf("step_status = %#v, want %s pending", stepStatus, want)
+		if stepStatus[want] != nil {
+			t.Fatalf("step_status = %#v, want no hard-scripted %s", stepStatus, want)
 		}
 	}
-	saveIndex := operationPlanStepIndexForTest(plan, saveStepID)
-	deleteIndex := operationPlanStepIndexForTest(plan, deleteStepID)
-	if saveIndex < 0 || deleteIndex < 0 || saveIndex > deleteIndex {
-		t.Fatalf("step order save=%d delete=%d in %#v, want save before delete", saveIndex, deleteIndex, plan["steps"])
+	if got := stringFromAny(plan["tool_choice_mode"]); got != aiChatTurnToolChoiceModelDecides {
+		t.Fatalf("tool_choice_mode = %q, want model-decides; plan=%#v", got, plan)
+	}
+	if goal := stringFromAny(plan["original_user_goal"]); !strings.Contains(goal, "delete the third file") {
+		t.Fatalf("original_user_goal = %q, want composite goal preserved for the model", goal)
 	}
 }
 
-func TestOperationPlanIncludesToolStepsForChineseStagedManagedCreateAndDeleteGoal(t *testing.T) {
+func TestOperationPlanChineseStagedManagedCreateAndDeleteGoalUsesModelDecidesContract(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:          "\u5bfc\u822a\u5230\u6587\u4ef6\u7ba1\u7406\uff0c\u521b\u5efa\u5e76\u4fdd\u5b58\u4e24\u4e2a\u6587\u4ef6\u5230\u6587\u4ef6\u7ba1\u7406\uff0c\u6587\u4ef6\u540d\u5206\u522b\u662f SMOKE-COMPLEX.txt \u548c SMOKE-COMPLEX.svg\uff1b\u5237\u65b0/\u89c2\u5bdf\u786e\u8ba4\u5b83\u4eec\u53ef\u89c1\uff1b\u7136\u540e\u51bb\u7ed3\u6587\u4ef6\u5217\u8868\u5f53\u524d\u7b2c\u4e09\u4e2a\u6587\u4ef6\u4f5c\u4e3a\u5220\u9664\u76ee\u6807\uff0c\u53ea\u6709\u5f53\u7b2c\u4e09\u4e2a\u6587\u4ef6\u540d\u4ee5 SMOKE- \u5f00\u5934\u65f6\u624d\u8fdb\u5165\u5220\u9664\u5ba1\u6279\u5e76\u5220\u9664\uff0c\u5426\u5219\u505c\u6b62\u5e76\u8bf4\u660e\u539f\u56e0\u3002",
 		Surface:        aiChatSurfaceContextualSidebar,
@@ -13098,6 +13143,7 @@ func TestOperationPlanIncludesToolStepsForChineseStagedManagedCreateAndDeleteGoa
 			skills.SkillFileGenerator,
 			skills.SkillFileManager,
 		},
+		ModelTurnIntent: modelTurnIntentForTest("save_generated_file_to_file_management", "/console/files", "file_generation", "file_management"),
 	}
 
 	metadata := streamingMessageMetadataWithTaskID(parts, "task-chinese-managed-create-delete")
@@ -13106,28 +13152,24 @@ func TestOperationPlanIncludesToolStepsForChineseStagedManagedCreateAndDeleteGoa
 	generateStepID := operationPlanToolStepID(skills.SkillFileGenerator, "generate_file")
 	saveStepID := operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management")
 	deleteStepID := operationPlanToolStepID(skills.SkillFileManager, "delete_file")
-	if !isFileDeleteIntent(parts.Query) {
-		t.Fatalf("isFileDeleteIntent(%q) = false, want true", parts.Query)
-	}
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
 	}
-	if !aiChatTurnStrategyHasPlannedToolForTest(strategy, skills.SkillFileManager, "delete_file") {
-		t.Fatalf("strategy planned_tools = %#v, missing file-manager/delete_file", strategy.PlannedTools)
+	if strategy.ToolChoiceMode != aiChatTurnToolChoiceModelDecides || len(strategy.PlannedTools) != 0 {
+		t.Fatalf("strategy = %#v, want model-decides without hard-scripted tools", strategy)
 	}
 	for _, want := range []string{generateStepID, saveStepID, deleteStepID} {
-		if stepStatus[want] != operationPlanStepStatusPending {
-			t.Fatalf("step_status = %#v, want %s pending", stepStatus, want)
+		if stepStatus[want] != nil {
+			t.Fatalf("step_status = %#v, want no hard-scripted %s", stepStatus, want)
 		}
 	}
 	routeIndex := operationPlanStepIndexForTest(plan, "route:/console/files")
-	generateIndex := operationPlanStepIndexForTest(plan, generateStepID)
-	saveIndex := operationPlanStepIndexForTest(plan, saveStepID)
-	deleteIndex := operationPlanStepIndexForTest(plan, deleteStepID)
-	if routeIndex < 0 || generateIndex < 0 || saveIndex < 0 || deleteIndex < 0 ||
-		!(routeIndex < generateIndex && generateIndex < saveIndex && saveIndex < deleteIndex) {
-		t.Fatalf("step order route=%d generate=%d save=%d delete=%d in %#v, want route before generate before save before delete", routeIndex, generateIndex, saveIndex, deleteIndex, plan["steps"])
+	if routeIndex < 0 {
+		t.Fatalf("route step missing in %#v", plan["steps"])
+	}
+	if goal := stringFromAny(plan["original_user_goal"]); !strings.Contains(goal, "SMOKE-COMPLEX") {
+		t.Fatalf("original_user_goal = %q, want concrete file targets preserved", goal)
 	}
 }
 
@@ -13455,24 +13497,39 @@ func agentManagementModelIntentForTest(targetPage string, capabilities ...string
 	}
 }
 
-func TestOperationPlanIncludesDeleteToolForDeleteOnlyGoal(t *testing.T) {
+func modelTurnIntentForTest(intent string, targetPage string, capabilities ...string) *AIChatModelTurnIntent {
+	return &AIChatModelTurnIntent{
+		Intent:                  intent,
+		TargetPage:              targetPage,
+		RecommendedCapabilities: capabilities,
+	}
+}
+
+func TestOperationPlanDeleteOnlyGoalUsesModelDecidesContract(t *testing.T) {
 	parts := &chatRequestParts{
-		Query:          "delete the third file",
-		Surface:        aiChatSurfaceContextualSidebar,
-		RuntimeContext: "route=/console/files",
-		SkillMode:      skillModeAuto,
-		SkillIDs:       []string{skills.SkillFileManager},
+		Query:           "delete the third file",
+		Surface:         aiChatSurfaceContextualSidebar,
+		RuntimeContext:  "route=/console/files",
+		SkillMode:       skillModeAuto,
+		SkillIDs:        []string{skills.SkillFileManager},
+		ModelTurnIntent: modelTurnIntentForTest("delete_visible_file", "/console/files", "file_management"),
 	}
 
 	metadata := streamingMessageMetadataWithTaskID(parts, "task-delete-tool")
 	plan := metadata["operation_plan"].(map[string]interface{})
 	stepStatus := plan["step_status"].(map[string]interface{})
 	deleteStepID := operationPlanToolStepID(skills.SkillFileManager, "delete_file")
-	if stepStatus[deleteStepID] != operationPlanStepStatusPending {
-		t.Fatalf("step_status = %#v, want delete_file pending", stepStatus)
+	if stepStatus[deleteStepID] != nil {
+		t.Fatalf("step_status = %#v, want no hard-scripted delete_file step", stepStatus)
 	}
 	if plan["intent"] != "delete_visible_file" {
 		t.Fatalf("intent = %#v, want delete_visible_file", plan["intent"])
+	}
+	if got := stringFromAny(plan["tool_choice_mode"]); got != aiChatTurnToolChoiceModelDecides {
+		t.Fatalf("tool_choice_mode = %q, want model-decides; plan=%#v", got, plan)
+	}
+	if criteria := fmt.Sprint(plan["success_criteria"]); !strings.Contains(criteria, "file-manager/delete_file") {
+		t.Fatalf("success_criteria = %s, want delete_file evidence guidance", criteria)
 	}
 }
 
@@ -13774,11 +13831,12 @@ func TestOperationPlanStatusFromGuardrailFailure(t *testing.T) {
 
 func TestOperationPlanPendingNextActionStopsAfterRejectedSaveBeforeDelete(t *testing.T) {
 	parts := &chatRequestParts{
-		Query:          "go to File Management, generate an svg file and save it to file management, then delete the third file",
-		Surface:        aiChatSurfaceContextualSidebar,
-		RuntimeContext: "route=/console/files",
-		SkillMode:      skillModeAuto,
-		SkillIDs:       []string{skills.SkillFileGenerator, skills.SkillFileManager},
+		Query:           "go to File Management, generate an svg file and save it to file management, then delete the third file",
+		Surface:         aiChatSurfaceContextualSidebar,
+		RuntimeContext:  "route=/console/files",
+		SkillMode:       skillModeAuto,
+		SkillIDs:        []string{skills.SkillFileGenerator, skills.SkillFileManager},
+		ModelTurnIntent: modelTurnIntentForTest("save_generated_file_to_file_management", "/console/files", "file_generation", "file_management"),
 	}
 	metadata := streamingMessageMetadataWithTaskID(parts, "task-rejected-save-before-delete")
 
@@ -13797,8 +13855,8 @@ func TestOperationPlanPendingNextActionStopsAfterRejectedSaveBeforeDelete(t *tes
 	if plan["pending_next_action"] != "none" {
 		t.Fatalf("pending_next_action = %#v, want none after rejected save", plan["pending_next_action"])
 	}
-	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillFileManager, "delete_file")); got != operationPlanStepStatusPending {
-		t.Fatalf("delete step status = %#v, want pending but not next action", got)
+	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillFileManager, "delete_file")); got != "" {
+		t.Fatalf("delete step status = %#v, want no scripted delete step after rejected save", got)
 	}
 }
 

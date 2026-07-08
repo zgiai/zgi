@@ -657,6 +657,51 @@ func TestAddContextualAIChatSkillIDsDoesNotUseTextToInjectCrossPageAgentManageme
 	}
 }
 
+func TestContextualAIChatSkillIDsUseModelIntentForCrossPageAgentManagement(t *testing.T) {
+	workspaceID := uuid.New()
+	catalog := contextualAIChatFileSkillCatalogForTest()
+	organizationEnabled := []string{skills.SkillCalculator, skills.SkillConsoleNavigator}
+	parts := contextualConsoleFilesAllCapabilityPartsForTest()
+	parts.ModelTurnIntent = &AIChatModelTurnIntent{
+		Intent:      "manage_agent_asset",
+		TaskType:    "agent_lifecycle_and_configuration",
+		TargetPage:  "/console/files",
+		AssetEffect: "delete existing agent, create and configure new agent",
+		RecommendedCapabilities: []string{
+			"visible_file_content",
+			"agent.model_selection",
+			"agent.system_prompt",
+		},
+	}
+
+	permissionService := &skillConfigWorkspacePermissionService{
+		allowed: map[workspacemodel.WorkspacePermissionCode]bool{
+			workspacemodel.WorkspacePermissionAgentView:   true,
+			workspacemodel.WorkspacePermissionAgentManage: true,
+		},
+	}
+	capabilities := (&service{workspacePerms: permissionService}).trustedContextualAIChatSkillCapabilities(context.Background(), Scope{
+		OrganizationID: uuid.New(),
+		AccountID:      uuid.New(),
+		WorkspaceID:    &workspaceID,
+	}, parts)
+	if !capabilities.AgentRead || !capabilities.AgentManage {
+		t.Fatalf("trusted contextual capabilities = %#v, want AgentRead and AgentManage from model intent", capabilities)
+	}
+
+	allowed := addContextualAIChatSkillIDsWithCapabilities(
+		[]string{skills.SkillCalculator},
+		organizationEnabled,
+		catalog,
+		parts,
+		capabilities,
+	)
+	wantAllowed := []string{skills.SkillAgentManagement, skills.SkillCalculator, skills.SkillConsoleNavigator}
+	if !reflect.DeepEqual(allowed, wantAllowed) {
+		t.Fatalf("model-intent cross-page agent skills = %#v, want %#v", allowed, wantAllowed)
+	}
+}
+
 func TestTrustedContextualAIChatSkillCapabilitiesUsesOperationContextWorkspace(t *testing.T) {
 	workspaceID := uuid.New()
 	parts := contextualConsoleFilesAllCapabilityPartsForTest()

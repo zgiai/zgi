@@ -42,6 +42,7 @@ func (e *modelTurnIntentClassifierError) Unwrap() error {
 
 type AIChatModelTurnIntent struct {
 	Intent                   string   `json:"intent"`
+	RawIntent                string   `json:"raw_intent,omitempty"`
 	TaskType                 string   `json:"task_type,omitempty"`
 	Phases                   []string `json:"phases,omitempty"`
 	EvidenceRequired         []string `json:"evidence_required,omitempty"`
@@ -57,6 +58,7 @@ type AIChatModelTurnIntent struct {
 	AssetRisk                string   `json:"asset_risk,omitempty"`
 	Approval                 string   `json:"approval,omitempty"`
 	Confidence               float64  `json:"confidence,omitempty"`
+	LowConfidence            bool     `json:"low_confidence,omitempty"`
 	Reason                   string   `json:"reason,omitempty"`
 }
 
@@ -120,9 +122,10 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 			{
 				Role: "system",
 				Content: strings.Join([]string{
-					"You create a lightweight semantic Turn Plan for one ZGI sidebar assistant turn. Return JSON only.",
+					"You create a lightweight semantic Turn Contract for one ZGI sidebar assistant turn. Return JSON only.",
 					"This is not a tool script. Do not choose concrete tool names, tool arguments, or ordered tool calls.",
-					"Pick exactly one broad intent label from:",
+					"The intent field is a broad compatibility label only; the phases, evidence_required, recommended_capabilities, and completion_criteria are the real task contract.",
+					"Pick exactly one broad compatibility intent label from:",
 					"- answer_or_explain_zgi_context: answer questions about ZGI, the current page, or assistant capabilities without asset mutation.",
 					"- navigate_console_page: the user mainly asks to open or switch to a ZGI console page.",
 					"- manage_agent_asset: create, edit, delete, inspect, bind, unbind, configure, or verify Agents.",
@@ -140,7 +143,7 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 					"If the user asks for exact Agent prompt/config/runtime analysis and page context may be summary-level, set needs_exact_agent_runtime=true.",
 					"Respond with keys: intent, task_type, phases, evidence_required, recommended_capabilities, completion_criteria, needs_exact_agent_runtime, current_context_may_be_summary, open_created_agent_detail, target_visible_index, confidence, reason, target_page, route_required, asset_effect, asset_risk, approval.",
 					"Do not output skill IDs or tool names. Tool selection is handled later by the model from enabled tool schemas and latest evidence.",
-					"Use confidence from 0 to 1. If unsure, choose the closest intent with confidence below 0.5.",
+					"Use confidence from 0 to 1. If unsure, still output the closest compatibility intent with confidence below 0.5 and make the task contract precise.",
 				}, "\n"),
 			},
 			{Role: "user", Content: string(payloadJSON)},
@@ -160,9 +163,26 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 			err:     err,
 		}
 	}
-	intent.Intent = normalizeModelTurnIntent(intent.Intent)
+	finalizeModelTurnIntent(intent)
 	if intent.Intent == "" {
 		return nil, fmt.Errorf("unsupported classifier intent")
+	}
+	return intent, nil
+}
+
+func finalizeModelTurnIntent(intent *AIChatModelTurnIntent) {
+	if intent == nil {
+		return
+	}
+	rawIntent := strings.TrimSpace(intent.Intent)
+	normalizedIntent := normalizeModelTurnIntent(rawIntent)
+	unsupportedIntent := rawIntent != "" && normalizedIntent == ""
+	if normalizedIntent == "" {
+		normalizedIntent = "answer_or_explain_zgi_context"
+	}
+	intent.Intent = normalizedIntent
+	if rawIntent != "" && !strings.EqualFold(rawIntent, normalizedIntent) {
+		intent.RawIntent = rawIntent
 	}
 	intent.TargetPage = strings.TrimSpace(intent.TargetPage)
 	if intent.TargetVisibleIndex < 0 {
@@ -176,11 +196,17 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 	intent.AssetEffect = strings.TrimSpace(intent.AssetEffect)
 	intent.AssetRisk = strings.TrimSpace(intent.AssetRisk)
 	intent.Approval = strings.TrimSpace(intent.Approval)
-	intent.Reason = trimRunes(strings.TrimSpace(intent.Reason), 240)
-	if intent.Confidence < modelTurnIntentMinimumConfidence {
-		return nil, fmt.Errorf("classifier confidence %.2f below %.2f for %s", intent.Confidence, modelTurnIntentMinimumConfidence, intent.Intent)
+	if intent.Confidence < 0 {
+		intent.Confidence = 0
 	}
-	return intent, nil
+	if intent.Confidence > 1 {
+		intent.Confidence = 1
+	}
+	intent.LowConfidence = unsupportedIntent || intent.Confidence < modelTurnIntentMinimumConfidence
+	intent.Reason = trimRunes(strings.TrimSpace(intent.Reason), 240)
+	if unsupportedIntent && intent.Reason == "" {
+		intent.Reason = "unsupported compatibility intent label; using task contract as the source of truth"
+	}
 }
 
 func parseModelTurnIntentMessage(message adapter.Message) (*AIChatModelTurnIntent, string, error) {
@@ -564,18 +590,14 @@ func canAcceptAgentModelTurnIntent(parts *chatRequestParts, intent *AIChatModelT
 	if parts == nil || intent == nil {
 		return false
 	}
+	if !strings.EqualFold(strings.TrimSpace(intent.Intent), "manage_agent_asset") {
+		return false
+	}
 	if skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) {
 		return true
 	}
 	if !skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
 		return false
-	}
-	if isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
-		return false
-	}
-	targetPage := normalizeConsoleNavigationGuardHref(intent.TargetPage)
-	if targetPage != "" {
-		return strings.HasPrefix(targetPage, "/console/agents")
 	}
 	return true
 }
@@ -585,12 +607,82 @@ func modelTurnIntentSourceReason(intent *AIChatModelTurnIntent) string {
 		return ""
 	}
 	if reason := strings.TrimSpace(intent.Reason); reason != "" {
+		if intent.LowConfidence {
+			return truncateRunes("low_confidence: "+reason, 240)
+		}
 		return truncateRunes(reason, 240)
 	}
 	if intentValue := strings.TrimSpace(intent.Intent); intentValue != "" {
+		if intent.LowConfidence {
+			return "low_confidence_classified_as_" + intentValue
+		}
 		return "classified_as_" + intentValue
 	}
 	return ""
+}
+
+func modelTurnIntentTaskContract(intent *AIChatModelTurnIntent) map[string]interface{} {
+	if intent == nil {
+		return nil
+	}
+	contract := map[string]interface{}{
+		"source":        "model_turn_contract",
+		"intent_label":  strings.TrimSpace(intent.Intent),
+		"confidence":    intent.Confidence,
+		"compatibility": "intent_label_is_for_routing_compatibility_only",
+	}
+	if value := strings.TrimSpace(intent.RawIntent); value != "" {
+		contract["raw_intent_label"] = value
+	}
+	if intent.LowConfidence {
+		contract["low_confidence"] = true
+	}
+	if value := strings.TrimSpace(intent.TaskType); value != "" {
+		contract["task_type"] = value
+	}
+	if len(intent.Phases) > 0 {
+		contract["phases"] = append([]string(nil), intent.Phases...)
+	}
+	if len(intent.EvidenceRequired) > 0 {
+		contract["evidence_required"] = append([]string(nil), intent.EvidenceRequired...)
+	}
+	if len(intent.RecommendedCapabilities) > 0 {
+		contract["recommended_capabilities"] = append([]string(nil), intent.RecommendedCapabilities...)
+	}
+	if len(intent.CompletionCriteria) > 0 {
+		contract["completion_criteria"] = append([]string(nil), intent.CompletionCriteria...)
+	}
+	if intent.NeedsExactAgentRuntime {
+		contract["needs_exact_agent_runtime"] = true
+	}
+	if intent.CurrentContextMaySummary {
+		contract["current_context_may_be_summary"] = true
+	}
+	if intent.OpenCreatedAgentDetail {
+		contract["open_created_agent_detail"] = true
+	}
+	if value := strings.TrimSpace(intent.TargetPage); value != "" {
+		contract["target_page"] = value
+	}
+	if intent.TargetVisibleIndex > 0 {
+		contract["target_visible_index"] = intent.TargetVisibleIndex
+	}
+	if intent.RouteRequired != nil {
+		contract["route_required"] = *intent.RouteRequired
+	}
+	if value := strings.TrimSpace(intent.AssetEffect); value != "" {
+		contract["asset_effect"] = value
+	}
+	if value := strings.TrimSpace(intent.AssetRisk); value != "" {
+		contract["asset_risk"] = value
+	}
+	if value := strings.TrimSpace(intent.Approval); value != "" {
+		contract["approval"] = value
+	}
+	if value := strings.TrimSpace(intent.Reason); value != "" {
+		contract["reason"] = value
+	}
+	return contract
 }
 
 func applyModelTurnIntentHints(parts *chatRequestParts, strategy *AIChatTurnStrategy, intent *AIChatModelTurnIntent) {
@@ -606,6 +698,9 @@ func applyModelTurnIntentHints(parts *chatRequestParts, strategy *AIChatTurnStra
 	}
 	if len(intent.RecommendedCapabilities) > 0 {
 		strategy.RecommendedCapabilities = appendUniqueStrings(strategy.RecommendedCapabilities, intent.RecommendedCapabilities...)
+	}
+	if intent.LowConfidence {
+		strategy.LowConfidence = true
 	}
 	if len(intent.CompletionCriteria) > 0 {
 		strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria, intent.CompletionCriteria...)
