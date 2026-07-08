@@ -1685,7 +1685,11 @@ func currentOrganizationResponse(organization *model.Organization, role model.Or
 }
 
 func (s *organizationService) invalidateOrganizationContext(ctx context.Context, organizationID string, accountIDs ...string) {
-	workspacecache.InvalidateOrganizationWithWorkspaceMembers(ctx, s.organizationRepo.GetDB(), organizationID, accountIDs...)
+	db := s.db
+	if s.organizationRepo != nil {
+		db = s.organizationRepo.GetDB()
+	}
+	workspacecache.InvalidateOrganizationWithWorkspaceMembers(ctx, db, organizationID, accountIDs...)
 }
 
 // DeleteOrganization performs a soft delete of an organization (archives it)
