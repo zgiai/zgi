@@ -31,6 +31,7 @@ import (
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	auth_repo "github.com/zgiai/zgi/api/internal/modules/user/auth/repository"
 	"github.com/zgiai/zgi/api/internal/modules/user/auth/statuscache"
+	workspacecache "github.com/zgiai/zgi/api/internal/modules/workspace/cache"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	helper "github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/email"
@@ -2397,6 +2398,7 @@ func (s *AccountService) UpdateAccountContext(ctx context.Context, accountID str
 	}
 
 	s.invalidateAccountProfileCache(accountID)
+	workspacecache.InvalidateAccount(ctx, accountID)
 	return ctxModel, nil
 }
 
