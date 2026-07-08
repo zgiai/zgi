@@ -8,6 +8,12 @@ import {
 
 type WorkflowOnNodesChange = OnNodesChange<WorkflowNode>;
 
+function hasActiveNodeDrag(changes: Array<NodeChange<WorkflowNode>>): boolean {
+  return changes.some(
+    change => change.type === 'position' && 'dragging' in change && change.dragging === true
+  );
+}
+
 export function useNodeAlignmentGuides({
   nodes,
   disabled,
@@ -36,11 +42,9 @@ export function useNodeAlignmentGuides({
         return;
       }
 
-      const result = applySingleNodeAlignment(
-        nodesRef.current,
-        changes as Array<NodeChange<WorkflowNode>>
-      );
-      setGuides(result.guides);
+      const workflowChanges = changes as Array<NodeChange<WorkflowNode>>;
+      const result = applySingleNodeAlignment(nodesRef.current, workflowChanges);
+      setGuides(hasActiveNodeDrag(workflowChanges) ? result.guides : null);
       onNodesChange(result.changes);
     },
     [clearAlignmentGuides, disabled, onNodesChange]

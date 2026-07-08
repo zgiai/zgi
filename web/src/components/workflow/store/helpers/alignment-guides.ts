@@ -265,16 +265,16 @@ export function applySingleNodeAlignment(
   options: { threshold?: number } = {}
 ): ApplyNodeAlignmentResult {
   const threshold = options.threshold ?? DEFAULT_THRESHOLD;
-  const draggingPositionChanges = changes.filter(
+  const alignablePositionChanges = changes.filter(
     (change): change is WorkflowNodePositionChange =>
-      isPositionChange(change) && change.dragging === true && Boolean(change.position)
+      isPositionChange(change) && typeof change.dragging === 'boolean' && Boolean(change.position)
   );
 
-  if (draggingPositionChanges.length !== 1) {
+  if (alignablePositionChanges.length !== 1) {
     return { changes, guides: null };
   }
 
-  const activeChange = draggingPositionChanges[0];
+  const activeChange = alignablePositionChanges[0];
   const nextPosition = activeChange.position;
   if (!nextPosition) return { changes, guides: null };
 
