@@ -1022,6 +1022,16 @@ func TestParseModelTurnIntentContentAcceptsLooseClassifierJSON(t *testing.T) {
 	}
 }
 
+func TestParseModelTurnIntentContentAcceptsVisibleIndex(t *testing.T) {
+	intent, err := parseModelTurnIntentContent(`{"intent":"manage_agent_asset","target_visible_index":"2","confidence":0.88}`)
+	if err != nil {
+		t.Fatalf("parseModelTurnIntentContent() error = %v", err)
+	}
+	if intent.TargetVisibleIndex != 2 {
+		t.Fatalf("TargetVisibleIndex = %d, want 2", intent.TargetVisibleIndex)
+	}
+}
+
 func TestParseModelTurnIntentMessageUsesReasoningJSONWhenContentEmpty(t *testing.T) {
 	intent, source, err := parseModelTurnIntentMessage(adapter.Message{
 		ReasoningContent: `We need classify this request.
@@ -3867,11 +3877,30 @@ func TestSkillLoopFinalAnswerGuardRequiresAgentConfigReadEvidence(t *testing.T) 
 func TestSkillLoopFinalAnswerGuardRequiresFirstVisibleAgentConfigReadEvidence(t *testing.T) {
 	query := "\u8bf7\u53ea\u8bfb\u68c0\u67e5\u5f53\u524d\u9875\u9762\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\u7684\u914d\u7f6e\uff1a\u8bfb\u53d6\u5b83\u7684\u57fa\u7840\u4fe1\u606f\u3001\u8fd0\u884c\u914d\u7f6e\u548c\u53ef\u7f16\u8f91\u9879\u76ee\uff0c\u4e0d\u8981\u4fee\u6539\u4efb\u4f55\u8d44\u4ea7\u3002"
 	prepared := &PreparedChat{
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"status": operationPlanStatusRunning,
+					"steps": []interface{}{
+						map[string]interface{}{
+							"id":        operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config"),
+							"skill_id":  skills.SkillAgentManagement,
+							"tool_name": "get_agent_config",
+							"status":    operationPlanStepStatusPending,
+						},
+					},
+				},
+			},
+		},
 		parts: &chatRequestParts{
 			Query:          query,
 			SkillIDs:       []string{skills.SkillAgentManagement},
 			SkillMode:      skillModeAuto,
 			RuntimeContext: "/console/agents",
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:             "manage_agent_asset",
+				TargetVisibleIndex: 1,
+			},
 			RawOperationContext: map[string]interface{}{
 				"resources": []interface{}{
 					map[string]interface{}{

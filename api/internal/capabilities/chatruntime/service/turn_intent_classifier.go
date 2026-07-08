@@ -51,6 +51,7 @@ type AIChatModelTurnIntent struct {
 	CurrentContextMaySummary bool     `json:"current_context_may_be_summary,omitempty"`
 	OpenCreatedAgentDetail   bool     `json:"open_created_agent_detail,omitempty"`
 	TargetPage               string   `json:"target_page,omitempty"`
+	TargetVisibleIndex       int      `json:"target_visible_index,omitempty"`
 	RouteRequired            *bool    `json:"route_required,omitempty"`
 	AssetEffect              string   `json:"asset_effect,omitempty"`
 	AssetRisk                string   `json:"asset_risk,omitempty"`
@@ -134,9 +135,10 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 					"Use recommended_capabilities for capabilities the executor may need, such as exact_agent_runtime, visible_file_content, page_navigation, generated_artifact, or asset_mutation.",
 					"For generated artifact turns, include chart_artifact for charts/graphs/data visualizations and file_artifact for ordinary documents, SVG/vector files, PDFs, spreadsheets, or text files.",
 					"For Agent management turns, include canonical Agent capability IDs in recommended_capabilities when relevant: agent.model_selection, agent.system_prompt, agent.skill_backed_capability:<capability query>, agent.accept_uploaded_files, agent.memory, agent.knowledge_binding, agent.database_binding, agent.workflow_binding, agent.suggested_questions. Use :bind, :unbind, or :replace after binding capability IDs only when the user asks for that action.",
+					"When the user refers to a visible current-page item by ordinal such as first, second, top, \u7b2c\u4e00\u4e2a, or \u7b2c\u4e8c\u4e2a, set target_visible_index to the 1-based visible index. Omit it when no visible ordinal is requested.",
 					"For Agent creation turns, set open_created_agent_detail=true only when the user explicitly asks to open, enter, edit, configure, or inspect the newly created Agent detail page after creation.",
 					"If the user asks for exact Agent prompt/config/runtime analysis and page context may be summary-level, set needs_exact_agent_runtime=true.",
-					"Respond with keys: intent, task_type, phases, evidence_required, recommended_capabilities, completion_criteria, needs_exact_agent_runtime, current_context_may_be_summary, open_created_agent_detail, confidence, reason, target_page, route_required, asset_effect, asset_risk, approval.",
+					"Respond with keys: intent, task_type, phases, evidence_required, recommended_capabilities, completion_criteria, needs_exact_agent_runtime, current_context_may_be_summary, open_created_agent_detail, target_visible_index, confidence, reason, target_page, route_required, asset_effect, asset_risk, approval.",
 					"Do not output skill IDs or tool names. Tool selection is handled later by the model from enabled tool schemas and latest evidence.",
 					"Use confidence from 0 to 1. If unsure, choose the closest intent with confidence below 0.5.",
 				}, "\n"),
@@ -163,6 +165,9 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 		return nil, fmt.Errorf("unsupported classifier intent")
 	}
 	intent.TargetPage = strings.TrimSpace(intent.TargetPage)
+	if intent.TargetVisibleIndex < 0 {
+		intent.TargetVisibleIndex = 0
+	}
 	intent.TaskType = strings.TrimSpace(intent.TaskType)
 	intent.Phases = normalizeModelTurnPlanStrings(intent.Phases, 8, 160)
 	intent.EvidenceRequired = normalizeModelTurnPlanStrings(intent.EvidenceRequired, 10, 160)
@@ -234,12 +239,17 @@ func parseModelTurnIntentContent(content string) (*AIChatModelTurnIntent, error)
 		CurrentContextMaySummary: jsonRawBool(raw["current_context_may_be_summary"]),
 		OpenCreatedAgentDetail:   jsonRawBool(raw["open_created_agent_detail"]),
 		TargetPage:               jsonRawString(raw["target_page"]),
-		RouteRequired:            jsonRawBoolPtr(raw["route_required"]),
-		AssetEffect:              jsonRawString(raw["asset_effect"]),
-		AssetRisk:                jsonRawString(raw["asset_risk"]),
-		Approval:                 jsonRawApproval(raw["approval"]),
-		Confidence:               jsonRawFloat64(raw["confidence"]),
-		Reason:                   jsonRawString(raw["reason"]),
+		TargetVisibleIndex: firstPositiveInt(
+			jsonRawInt(raw["target_visible_index"]),
+			jsonRawInt(raw["visible_index"]),
+			jsonRawInt(raw["target_index"]),
+		),
+		RouteRequired: jsonRawBoolPtr(raw["route_required"]),
+		AssetEffect:   jsonRawString(raw["asset_effect"]),
+		AssetRisk:     jsonRawString(raw["asset_risk"]),
+		Approval:      jsonRawApproval(raw["approval"]),
+		Confidence:    jsonRawFloat64(raw["confidence"]),
+		Reason:        jsonRawString(raw["reason"]),
 	}
 	return intent, nil
 }
@@ -386,6 +396,29 @@ func firstNonEmptyStringSlice(values ...[]string) []string {
 		}
 	}
 	return nil
+}
+
+func jsonRawInt(raw json.RawMessage) int {
+	if len(raw) == 0 {
+		return 0
+	}
+	var value int
+	if err := json.Unmarshal(raw, &value); err == nil {
+		return value
+	}
+	var numberValue float64
+	if err := json.Unmarshal(raw, &numberValue); err == nil {
+		return int(numberValue)
+	}
+	text := strings.TrimSpace(jsonRawString(raw))
+	if text == "" {
+		return 0
+	}
+	parsed, err := strconv.Atoi(text)
+	if err != nil {
+		return 0
+	}
+	return parsed
 }
 
 func jsonRawFloat64(raw json.RawMessage) float64 {

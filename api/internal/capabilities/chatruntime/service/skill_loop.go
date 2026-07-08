@@ -7161,6 +7161,9 @@ func agentManagementConfigReadTargetID(parts *chatRequestParts) string {
 	if len(visible) == 0 {
 		return ""
 	}
+	if targetID := agentManagementVisibleIndexTargetID(parts.ModelTurnIntent, visible); targetID != "" {
+		return targetID
+	}
 	query := strings.ToLower(strings.TrimSpace(parts.Query))
 	if query == "" {
 		return ""
@@ -7168,50 +7171,26 @@ func agentManagementConfigReadTargetID(parts *chatRequestParts) string {
 	if targets := agentDeleteTargetsMatchingQueryText(visible, query); len(targets) == 1 {
 		return strings.TrimSpace(firstNonEmptyString(targets[0]["agent_id"], targets[0]["id"]))
 	}
-	if agentManagementFirstVisibleAgentRequested(query) {
-		return strings.TrimSpace(firstNonEmptyString(visible[0]["agent_id"], visible[0]["id"], visible[0]["resource_id"]))
-	}
 	return ""
 }
 
-func agentManagementFirstVisibleAgentRequested(query string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(query))
-	if normalized == "" {
-		return false
+func agentManagementVisibleIndexTargetID(intent *AIChatModelTurnIntent, visible []map[string]interface{}) string {
+	if intent == nil || intent.TargetVisibleIndex <= 0 || len(visible) == 0 {
+		return ""
 	}
-	compact := strings.NewReplacer(
-		" ", "",
-		"\t", "",
-		"\n", "",
-		"\r", "",
-		",", "",
-		".", "",
-		";", "",
-		":", "",
-		"\uff0c", "",
-		"\u3002", "",
-		"\uff1b", "",
-		"\uff1a", "",
-		"\u3001", "",
-	).Replace(normalized)
-	return containsAnySubstring(normalized, []string{
-		"first visible agent",
-		"first agent",
-		"first one",
-		"top one",
-		"top agent",
-	}) || containsAnySubstring(compact, []string{
-		"\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53",
-		"\u7b2c1\u4e2a\u667a\u80fd\u4f53",
-		"\u7b2c\u4e00\u4e2aagent",
-		"\u7b2c1\u4e2aagent",
-		"\u9996\u4e2a\u667a\u80fd\u4f53",
-		"\u7b2c\u4e00\u4e2a",
-		"\u7b2c1\u4e2a",
-		"\u7b2c\u4e00\u6761",
-		"\u7b2c1\u6761",
-		"\u9996\u4e2a",
-	})
+	for index, agent := range visible {
+		visibleIndex := firstPositiveInt(
+			intValueFromAny(agent["visible_index"]),
+			intValueFromAny(agent["visible_ordinal"]),
+			intValueFromAny(agent["visible_rank"]),
+			index+1,
+		)
+		if visibleIndex != intent.TargetVisibleIndex {
+			continue
+		}
+		return strings.TrimSpace(firstNonEmptyString(agent["agent_id"], agent["id"], agent["resource_id"]))
+	}
+	return ""
 }
 
 func agentConfigReadRequiresToolGuardResult() skillloop.FinalAnswerGuardResult {
