@@ -766,6 +766,15 @@ func (r *fileFolderRepository) CountAllFilesByCurrentAssetProductStatus(ctx cont
 		Count         int64  `gorm:"column:count"`
 	}
 
+	baseQuery := r.db.WithContext(ctx).Model(&file_model.UploadFile{}).
+		Where("upload_files.organization_id = ? AND upload_files.is_archived = false", tenantID)
+	baseQuery = applyAllFilesBaseFilters(baseQuery, keyword, extension, startTime, endTime, accountID, allowAllFolders, workspaceIDs)
+
+	var allTotal int64
+	if err := baseQuery.Count(&allTotal).Error; err != nil {
+		return nil, err
+	}
+
 	query := r.db.WithContext(ctx).Model(&file_model.UploadFile{}).
 		Where("upload_files.organization_id = ? AND upload_files.is_archived = false", tenantID)
 	query = applyAllFilesBaseFilters(query, keyword, extension, startTime, endTime, accountID, allowAllFolders, workspaceIDs)
@@ -779,7 +788,8 @@ func (r *fileFolderRepository) CountAllFilesByCurrentAssetProductStatus(ctx cont
 		return nil, err
 	}
 
-	counts := make(map[string]int64, len(rows))
+	counts := make(map[string]int64, len(rows)+1)
+	counts["all"] = allTotal
 	for _, row := range rows {
 		if row.ProductStatus == "" {
 			continue

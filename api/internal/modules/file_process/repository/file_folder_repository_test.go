@@ -97,6 +97,9 @@ func TestCountAllFilesByCurrentAssetProductStatusUsesLatestAsset(t *testing.T) {
 		t.Fatalf("count files by status: %v", err)
 	}
 
+	if got, want := counts["all"], int64(4); got != want {
+		t.Fatalf("all count = %d, want %d", got, want)
+	}
 	if got, want := counts["parse_failed"], int64(1); got != want {
 		t.Fatalf("parse_failed count = %d, want %d", got, want)
 	}

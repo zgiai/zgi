@@ -820,7 +820,7 @@ const FileManagementContent = ({
     return status === 'parsing' || status === 'generating';
   });
   const processingStatusFilterCounts: Record<FileProcessingStatusFilter, number> = {
-    all: useMainListStatusCounts ? total : allFilesCount.total,
+    all: useMainListStatusCounts ? processingStatusCounts.all || total : allFilesCount.total,
     needs_action: useMainListStatusCounts
       ? processingStatusCounts.parse_failed || 0
       : activeCategory === 'needs_action'
