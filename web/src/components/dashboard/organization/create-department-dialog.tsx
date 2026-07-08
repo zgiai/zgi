@@ -180,6 +180,9 @@ export function CreateDepartmentDialog({
               errorText={nameError}
               className="h-12 rounded-xl border focus:border-brand-main focus:ring-brand-main/10 transition-all"
             />
+            <p className="text-right text-xs text-muted-foreground">
+              {departmentName.length}/50
+            </p>
           </div>
 
           <div className="space-y-2">

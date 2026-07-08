@@ -167,6 +167,17 @@ export interface ApplyRoleTemplateResponse {
   results: ApplyRoleTemplateResult[];
 }
 
+export interface ReplaceAndDeleteRoleRequest {
+  replacement_role_id: string;
+}
+
+export interface ReplaceAndDeleteRoleResponse {
+  replaced_count: number;
+  failed_count: number;
+  deleted: boolean;
+  results: ApplyRoleTemplateResult[];
+}
+
 // Direct add member request
 export interface DirectAddMemberRequest {
   name: string;

@@ -34,8 +34,10 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useAvailableWorkspaceMembers } from '@/hooks/workspace/use-available-workspace-members';
 import { useDepartments } from '@/hooks/organization/use-departments';
 import { useOrganizationRoles } from '@/hooks/organization/use-organization-roles';
+import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { useLocale } from '@/hooks/use-locale';
 import { pickLocale } from '@/utils/tool-helpers';
+import { getOrganizationDisplayName } from '@/utils/organization-display';
 import {
   isAssignableWorkspaceAdminRole,
   isSelectableWorkspacePermissionTemplate,
@@ -83,7 +85,9 @@ export function AddWorkspaceMemberModal({
 
   const { departments } = useDepartments({ enabled: open });
   const { roles, isLoading: isLoadingRoles } = useOrganizationRoles({ enabled: open });
+  const { currentOrganization } = useOrganizations(open);
   const { locale } = useLocale();
+  const currentOrganizationDisplayName = getOrganizationDisplayName(currentOrganization);
 
   const {
     members,
@@ -259,7 +263,9 @@ export function AddWorkspaceMemberModal({
   }, [isSubmitting, resetAndClose]);
 
   const disableSubmit =
-    selectedMemberIds.length === 0 || isBusy || (shouldSetAdmin && !workspaceAdminRole);
+    selectedMemberIds.length === 0 ||
+    isBusy ||
+    (shouldSetAdmin ? !workspaceAdminRole : !selectedRoleId);
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -361,7 +367,7 @@ export function AddWorkspaceMemberModal({
                           {member.account_email}
                         </span>
                         <span className="text-sm text-muted-foreground flex-1 min-w-0 truncate">
-                          {member.department_name || '-'}
+                          {member.department_name || currentOrganizationDisplayName}
                         </span>
                       </div>
                     </div>

@@ -28,6 +28,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { UnsavedChangesConfirmDialog } from '@/components/ui/unsaved-changes-confirm-dialog';
 import {
   PERMISSION_MODULES,
   formatPermissionFallbackDescription,
@@ -75,6 +76,7 @@ export function WorkspaceMemberPermissionsDialog({
   const [selectedPermissions, setSelectedPermissions] = useState<Set<string>>(new Set());
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [templateSearch, setTemplateSearch] = useState('');
+  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [pendingDependencyChange, setPendingDependencyChange] = useState<{
     label: string;
     permissionCodes: string[];
@@ -292,6 +294,26 @@ export function WorkspaceMemberPermissionsDialog({
     await onSave(member.id, normalizeSelectablePermissionCodes(Array.from(selectedPermissions)));
   };
 
+  const requestClose = () => {
+    if (isBusy) return;
+    if (canEditDirectPermissions && hasChanges) {
+      setCloseConfirmOpen(true);
+      return;
+    }
+    onOpenChange(false);
+  };
+
+  const discardAndClose = () => {
+    setCloseConfirmOpen(false);
+    onOpenChange(false);
+  };
+
+  const saveAndClose = async () => {
+    setCloseConfirmOpen(false);
+    await handleSave();
+    onOpenChange(false);
+  };
+
   const handleApplyRoleOrTemplate = async (role: Role) => {
     if (!member || !canChangeRole || !role.id || !onApplyTemplate) return;
     await onApplyTemplate(member.id, role.id);
@@ -311,7 +333,16 @@ export function WorkspaceMemberPermissionsDialog({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog
+        open={open}
+        onOpenChange={nextOpen => {
+          if (nextOpen) {
+            onOpenChange(true);
+            return;
+          }
+          requestClose();
+        }}
+      >
         <DialogContent size="xl" className="h-[92vh] max-w-[min(1280px,calc(100vw-3rem))]">
           <DialogHeader className="px-8 pb-3">
             <DialogTitle className="flex items-center gap-2">
@@ -638,7 +669,7 @@ export function WorkspaceMemberPermissionsDialog({
           </DialogBody>
 
           <DialogFooter className="border-t bg-background/95 px-8 py-4">
-            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isBusy}>
+            <Button variant="outline" onClick={requestClose} disabled={isBusy}>
               {t('cancel')}
             </Button>
             <Button
@@ -661,6 +692,18 @@ export function WorkspaceMemberPermissionsDialog({
         confirmText={t('dependencyConfirm.confirm')}
         cancelText={t('dependencyConfirm.cancel')}
         onConfirm={confirmDependencyChange}
+      />
+      <UnsavedChangesConfirmDialog
+        open={closeConfirmOpen}
+        onOpenChange={setCloseConfirmOpen}
+        title={t('closeGuard.title')}
+        description={t('closeGuard.description')}
+        discardText={t('closeGuard.discard')}
+        cancelText={t('closeGuard.cancel')}
+        confirmText={isSaving ? t('saving') : t('closeGuard.saveAndClose')}
+        disabled={isBusy}
+        onDiscard={discardAndClose}
+        onConfirm={() => void saveAndClose()}
       />
     </>
   );

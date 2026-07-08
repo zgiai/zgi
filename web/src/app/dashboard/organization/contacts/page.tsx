@@ -2,8 +2,17 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { useT } from '@/i18n';
-import { Switch } from '@/components/ui/switch';
-import { Search, Plus, Users, Pencil, Trash2, KeyRound, UserPlus } from 'lucide-react';
+import {
+  Search,
+  Plus,
+  Users,
+  Pencil,
+  Trash2,
+  KeyRound,
+  UserPlus,
+  MoreHorizontal,
+  Power,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDepartments } from '@/hooks/organization/use-departments';
 import { useDepartmentMembers } from '@/hooks/organization/use-department-members';
@@ -31,9 +40,13 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { useAuthStore } from '@/store/auth-store';
 import {
-  isPrivilegedOrganizationRole,
-  normalizeOrganizationRole,
-} from '@/utils/role-labels';
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { normalizeOrganizationRole } from '@/utils/role-labels';
+import { getOrganizationDisplayName } from '@/utils/organization-display';
 
 export default function ContactsPage() {
   const t = useT('dashboard.organization.contacts');
@@ -141,6 +154,10 @@ export default function ContactsPage() {
 
   // Fetch departments
   const { departments, isLoading: loadingDepartments } = useDepartments();
+  const currentOrganizationDisplayName = useMemo(
+    () => getOrganizationDisplayName(currentOrganization),
+    [currentOrganization]
+  );
 
   // Determine if organization root is selected
   const isOrgRootSelected = selectedDeptId === 'ORG_ROOT';
@@ -197,13 +214,13 @@ export default function ContactsPage() {
       id: 'ORG_ROOT',
       organization_id: currentOrganization.id,
       parent_id: null,
-      name: currentOrganization.name,
+      name: currentOrganizationDisplayName,
       sort_order: 0,
       status: 'active' as const,
       member_count: departments.reduce((sum, dept) => sum + dept.member_count, 0),
       children: departments,
     };
-  }, [currentOrganization, departments]);
+  }, [currentOrganization, currentOrganizationDisplayName, departments]);
 
   // Filter departments based on search
   const filteredDepartments = useMemo(() => {
@@ -251,7 +268,7 @@ export default function ContactsPage() {
 
     // Check if organization root is selected
     if (selectedDeptId === 'ORG_ROOT' && currentOrganization) {
-      return currentOrganization.name;
+      return currentOrganizationDisplayName;
     }
 
     const findDept = (depts: Department[]): string | null => {
@@ -266,7 +283,7 @@ export default function ContactsPage() {
     };
 
     return findDept(departments);
-  }, [selectedDeptId, departments, currentOrganization]);
+  }, [selectedDeptId, departments, currentOrganization, currentOrganizationDisplayName]);
 
   const selectedScopeDescription = selectedDeptId
     ? isOrgRootSelected
@@ -598,8 +615,7 @@ export default function ContactsPage() {
               { key: 'department', header: t('editDialog.department') },
               { key: 'workspaces', header: t('workspaces') },
               { key: 'status', header: t('status') },
-              { key: 'enabled', header: tRoot('common.enabled') },
-              { key: 'actions', header: t('actions'), className: 'w-[80px]' },
+              { key: 'actions', header: t('actions'), className: 'w-[120px]' },
             ]}
             data={members}
             getRowKey={member => member.account_id}
@@ -607,7 +623,7 @@ export default function ContactsPage() {
             loadingRows={6}
             renderSkeletonRow={index => (
               <tr key={`member-skeleton-${index}`} className="border-b border-border/10">
-                <td colSpan={8} className="px-6 py-4">
+                <td colSpan={7} className="px-6 py-4">
                   <div className="flex items-center gap-4">
                     <Skeleton className="h-12 w-12 rounded-lg opacity-40" />
                     <div className="flex-1 space-y-2">
@@ -665,14 +681,6 @@ export default function ContactsPage() {
                     <span className="font-semibold text-text-primary text-[13px] group-hover:text-primary transition-colors truncate max-w-[150px]">
                       {member.member_name || member.account_name}
                     </span>
-                    {isPrivilegedOrganizationRole(member.organization_role) ? (
-                      <Badge
-                        variant={member.organization_role === 'owner' ? 'warning' : 'info'}
-                        className="rounded-md px-1.5 py-px text-[10px] font-semibold"
-                      >
-                        {getOrganizationRoleLabel(member.organization_role)}
-                      </Badge>
-                    ) : null}
                   </div>
                 </td>
                 <td className="py-4 text-[13px] text-text-secondary font-medium">
@@ -694,18 +702,15 @@ export default function ContactsPage() {
                 </td>
                 <td className="py-4">
                   <div className="flex">
-                    {member.department_name ? (
-                      <Badge variant="info" className="font-medium text-[10px] py-px">
-                        {member.department_name}
-                      </Badge>
-                    ) : (
-                      <Badge
-                        variant="outline"
-                        className="text-[10px] py-px font-medium border-dashed"
-                      >
-                        {t('noDepartments')}
-                      </Badge>
-                    )}
+                    <Badge
+                      variant={member.department_name ? 'info' : 'outline'}
+                      className={cn(
+                        'text-[10px] py-px font-medium',
+                        !member.department_name && 'border-dashed'
+                      )}
+                    >
+                      {member.department_name || currentOrganizationDisplayName}
+                    </Badge>
                   </div>
                 </td>
                 <td className="py-4">
@@ -804,13 +809,6 @@ export default function ContactsPage() {
                   </div>
                 </td>
                 <td className="py-4">
-                  <Switch
-                    checked={member.group_status === 'active'}
-                    disabled={isUpdatingStatus}
-                    onCheckedChange={() => handleToggleStatus(member)}
-                  />
-                </td>
-                <td className="py-4">
                   <div className="flex items-center gap-2 transition-opacity">
                     {member.group_status === 'active' && (
                       <Tooltip>
@@ -829,43 +827,43 @@ export default function ContactsPage() {
                       </Tooltip>
                     )}
 
-                    {canResetMemberPassword(member) && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="xs"
-                            isIcon
-                            onClick={() => handleResetPasswordClick(member)}
-                            className="rounded-md"
-                          >
-                            <KeyRound className="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent className="text-xs">
-                          {t('resetPassword.action')}
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
-
-                    <Tooltip>
-                      <TooltipTrigger asChild>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
                         <Button
                           variant="ghost"
                           size="xs"
                           isIcon
-                          className="rounded-md text-text-placeholder shadow-none transition-colors hover:bg-destructive hover:text-destructive-foreground"
-                          onClick={() => handleRemoveClick(member)}
+                          className="rounded-md text-text-placeholder shadow-none"
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                          <span className="sr-only">{t('actions')}</span>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-44">
+                        <DropdownMenuItem
+                          disabled={isUpdatingStatus}
+                          onSelect={() => handleToggleStatus(member)}
+                        >
+                          <Power className="h-4 w-4" />
+                          {member.group_status === 'active' ? t('disable') : t('enable')}
+                        </DropdownMenuItem>
+                        {canResetMemberPassword(member) ? (
+                          <DropdownMenuItem onSelect={() => handleResetPasswordClick(member)}>
+                            <KeyRound className="h-4 w-4" />
+                            {t('resetPassword.action')}
+                          </DropdownMenuItem>
+                        ) : null}
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onSelect={() => handleRemoveClick(member)}
                         >
                           <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent className="text-xs">
-                        {isOrgRootSelected
-                          ? t('removeFromOrganization')
-                          : t('removeFromDepartment')}
-                      </TooltipContent>
-                    </Tooltip>
+                          {isOrgRootSelected
+                            ? t('removeFromOrganization')
+                            : t('removeFromDepartment')}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </td>
               </>
@@ -997,7 +995,7 @@ export default function ContactsPage() {
       <ConfirmDialog
         open={statusConfirmOpen}
         onOpenChange={setStatusConfirmOpen}
-        title={memberToToggle?.group_status === 'active' ? t('disable') : t('enable')}
+        title={t('toggleStatusConfirm.title')}
         description={
           memberToToggle?.group_status === 'active'
             ? t('toggleStatusConfirm.disableDescription', {
@@ -1007,7 +1005,11 @@ export default function ContactsPage() {
                 memberName: memberToToggle?.account_name || '',
               })
         }
-        confirmText={tRoot('common.confirm')}
+        confirmText={
+          memberToToggle?.group_status === 'active'
+            ? t('toggleStatusConfirm.disableConfirm')
+            : t('toggleStatusConfirm.enableConfirm')
+        }
         cancelText={tRoot('common.cancel')}
         loading={isUpdatingStatus}
         onConfirm={handleConfirmToggleStatus}

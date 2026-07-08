@@ -1,17 +1,27 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useT } from '@/i18n';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Shield, Plus, Ellipsis, Users } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Shield, Plus, Ellipsis, Users, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useOrganizationRoles } from '@/hooks/organization/use-organization-roles';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -21,31 +31,32 @@ import { RoleMembersDrawer } from '@/components/dashboard/organization/role-memb
 import { useRoleActions } from '@/hooks/organization/use-role-actions';
 import { EditRoleInfoDialog } from '@/components/dashboard/organization/edit-role-info-dialog';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { toast } from 'sonner';
 import type { Role } from '@/services/types/organization';
 import {
   isSelectableWorkspacePermissionTemplate,
-  isWorkspaceAdminRole,
-  isWorkspaceGovernanceRole,
-  isWorkspaceOwnerRole,
 } from '@/utils/workspace-role-templates';
-
-const getGovernanceRoleOrder = (role: Role) => {
-  if (isWorkspaceOwnerRole(role)) return 0;
-  if (isWorkspaceAdminRole(role)) return 1;
-  return 2;
-};
 
 export default function PermissionsPage() {
   const t = useT('dashboard.organization.permissions');
   const tCommon = useT('common');
   const router = useRouter();
-  const { roles, isLoading } = useOrganizationRoles({ includeOwner: true });
+  const { roles, isLoading } = useOrganizationRoles();
   const { locale } = useLocale();
-  const { deleteRole, isDeleting, updateRoleInfo, isUpdatingInfo } = useRoleActions();
+  const {
+    deleteRole,
+    isDeleting,
+    updateRoleInfo,
+    isUpdatingInfo,
+    replaceAndDeleteRole,
+    isReplacingAndDeleting,
+  } = useRoleActions();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [roleToDelete, setRoleToDelete] = useState<Role | null>(null);
+  const [replacementRoleId, setReplacementRoleId] = useState('');
+  const [isMigratingBeforeDelete, setIsMigratingBeforeDelete] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [roleToEdit, setRoleToEdit] = useState<Role | null>(null);
 
@@ -66,16 +77,57 @@ export default function PermissionsPage() {
   };
 
   const handleDeleteClick = (role: Role) => {
+    if (permissionTemplateRoles.length <= 1) {
+      toast.warning(t('deleteConfirm.keepOneToast'));
+      return;
+    }
     setRoleToDelete(role);
+    setReplacementRoleId(permissionTemplateRoles.find(item => item.id !== role.id)?.id ?? '');
     setDeleteConfirmOpen(true);
   };
 
+  const resetDeleteDialog = () => {
+    setDeleteConfirmOpen(false);
+    setRoleToDelete(null);
+    setReplacementRoleId('');
+    setIsMigratingBeforeDelete(false);
+  };
+
   const handleConfirmDelete = async () => {
-    if (roleToDelete) {
-      await deleteRole(roleToDelete.id);
-      setDeleteConfirmOpen(false);
-      setRoleToDelete(null);
+    if (!roleToDelete) {
+      return;
     }
+
+    const roleMemberCount = roleToDelete.member_count ?? 0;
+
+    if (roleMemberCount > 0) {
+      try {
+        if (!replacementRoleId) {
+          toast.warning(t('deleteConfirm.replacementRequired'));
+          return;
+        }
+        setIsMigratingBeforeDelete(true);
+        const result = await replaceAndDeleteRole({
+          roleId: roleToDelete.id,
+          data: {
+            replacement_role_id: replacementRoleId,
+          },
+        });
+
+        if (result.failed_count > 0 || !result.deleted) {
+          return;
+        }
+      } catch {
+        return;
+      } finally {
+        setIsMigratingBeforeDelete(false);
+      }
+      resetDeleteDialog();
+      return;
+    }
+
+    await deleteRole(roleToDelete.id);
+    resetDeleteDialog();
   };
 
   const handleEditClick = (role: Role) => {
@@ -103,10 +155,13 @@ export default function PermissionsPage() {
       ? pickLocale(role.description_i18n, locale, role.description || '')
       : role.description || '';
 
-  const governanceRoles = roles.filter(isWorkspaceGovernanceRole).sort((a, b) => {
-    return getGovernanceRoleOrder(a) - getGovernanceRoleOrder(b);
-  });
   const permissionTemplateRoles = roles.filter(isSelectableWorkspacePermissionTemplate);
+  const replacementRoleOptions = useMemo(
+    () => permissionTemplateRoles.filter(role => role.id !== roleToDelete?.id),
+    [permissionTemplateRoles, roleToDelete?.id]
+  );
+  const deleteRequiresMigration = (roleToDelete?.member_count ?? 0) > 0;
+  const deleteLoading = isDeleting || isMigratingBeforeDelete || isReplacingAndDeleting;
   const canApplySelectedRoleTemplate =
     !!selectedRole && isSelectableWorkspacePermissionTemplate(selectedRole);
 
@@ -126,59 +181,6 @@ export default function PermissionsPage() {
           {t('newRoleScheme.title')}
         </Button>
       </div>
-
-      {!isLoading && governanceRoles.length > 0 ? (
-        <section className="space-y-3">
-          <div>
-            <h2 className="text-sm font-semibold text-text-primary">
-              {t('sections.governanceTitle')}
-            </h2>
-            <p className="mt-1 text-xs text-text-secondary">{t('sections.governanceSubtitle')}</p>
-          </div>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {governanceRoles.map(role => (
-              <Card key={role.id} className="rounded-xl border-border/80 bg-background shadow-sm">
-                <CardContent className="px-5 py-5">
-                  <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border bg-primary/10 text-primary">
-                      <Shield className="h-5 w-5" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-base font-semibold text-text-primary">
-                          {getRoleDisplayName(role)}
-                        </h3>
-                        <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-placeholder">
-                          System
-                        </span>
-                      </div>
-                      <p className="mt-2 line-clamp-2 text-xs leading-5 text-text-secondary">
-                        {getRoleDescription(role)}
-                      </p>
-                      <div className="mt-4 flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2 text-xs font-semibold text-text-secondary">
-                          <Users className="h-3 w-3 text-primary/60" />
-                          {(role.member_count ?? 0) > 0
-                            ? t('memberCount.people', { count: role.member_count ?? 0 })
-                            : t('memberCount.noMembers')}
-                        </div>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleViewMembers(role.id)}
-                          className="h-8 rounded-md text-xs font-semibold"
-                        >
-                          {t('actions.viewMembers')}
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </section>
-      ) : null}
 
       {/* Role Cards Grid */}
       <section className="space-y-3">
@@ -322,29 +324,6 @@ export default function PermissionsPage() {
                 </CardContent>
               </Card>
             ))}
-
-        {/* New Permission Template Card */}
-        {!isLoading && (
-          <Card
-            className={cn(
-              'min-h-[280px] cursor-pointer rounded-xl border-2 border-dashed border-border/70 transition-colors hover:border-primary/40',
-              'group flex items-center justify-center bg-background shadow-none hover:bg-bg-canvas/50'
-            )}
-            onClick={handleCreateScheme}
-          >
-            <CardContent className="flex flex-col items-center justify-center p-6 text-center">
-              <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-lg border border-border/60 bg-bg-canvas/60">
-                <Plus className="h-8 w-8 text-primary/40" />
-              </div>
-              <h3 className="text-lg font-bold text-text-primary mb-1.5">
-                {t('newRoleScheme.title')}
-              </h3>
-              <p className="text-xs text-text-secondary max-w-[180px]">
-                {t('newRoleScheme.subtitle')}
-              </p>
-            </CardContent>
-          </Card>
-        )}
       </div>
       </section>
 
@@ -358,18 +337,84 @@ export default function PermissionsPage() {
       />
 
       <ConfirmDialog
-        open={deleteConfirmOpen}
-        onOpenChange={setDeleteConfirmOpen}
+        open={deleteConfirmOpen && !deleteRequiresMigration}
+        onOpenChange={open => {
+          if (!open) {
+            resetDeleteDialog();
+          } else {
+            setDeleteConfirmOpen(true);
+          }
+        }}
         title={t('deleteConfirm.title')}
         description={t('deleteConfirm.description', {
-          roleName: roleToDelete?.name || '',
+          roleName: roleToDelete ? getRoleDisplayName(roleToDelete) : '',
         })}
         confirmText={t('deleteConfirm.confirm')}
         cancelText={t('deleteConfirm.cancel')}
-        loading={isDeleting}
+        loading={deleteLoading}
         onConfirm={handleConfirmDelete}
         variant="danger"
       />
+
+      <Dialog
+        open={deleteConfirmOpen && deleteRequiresMigration}
+        onOpenChange={open => {
+          if (!open) {
+            resetDeleteDialog();
+          } else {
+            setDeleteConfirmOpen(true);
+          }
+        }}
+      >
+        <DialogContent size="md" className="p-0">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl font-bold tracking-tight">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              {t('deleteConfirm.migrationTitle')}
+            </DialogTitle>
+            <DialogDescription className="text-sm text-muted-foreground">
+              {t('deleteConfirm.migrationDescription', {
+                roleName: roleToDelete ? getRoleDisplayName(roleToDelete) : '',
+                count: roleToDelete?.member_count ?? 0,
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-4">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              {t('deleteConfirm.migrationWarning')}
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-text-primary">
+                {t('deleteConfirm.replacementLabel')}
+              </label>
+              <Select value={replacementRoleId} onValueChange={setReplacementRoleId}>
+                <SelectTrigger className="h-10 w-full bg-background">
+                  <SelectValue placeholder={t('deleteConfirm.replacementPlaceholder')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {replacementRoleOptions.map(role => (
+                    <SelectItem key={role.id} value={role.id} textValue={getRoleDisplayName(role)}>
+                      {getRoleDisplayName(role)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </DialogBody>
+          <DialogFooter className="border-t bg-muted/50 px-6 pb-6 pt-4">
+            <Button variant="ghost" onClick={resetDeleteDialog} disabled={deleteLoading}>
+              {t('deleteConfirm.cancel')}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmDelete}
+              disabled={!replacementRoleId || deleteLoading}
+            >
+              {deleteLoading ? t('deleteConfirm.migrating') : t('deleteConfirm.migrateAndDelete')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {roleToEdit && (
         <EditRoleInfoDialog
