@@ -8955,11 +8955,15 @@ func runnerTestRequestToolChoiceName(req *adapter.ChatRequest) string {
 	if req == nil || req.ToolChoice == nil {
 		return ""
 	}
-	choice, ok := req.ToolChoice.(map[string]interface{})
+	return functionToolChoiceName(req.ToolChoice)
+}
+
+func functionToolChoiceName(choice interface{}) string {
+	root, ok := choice.(map[string]interface{})
 	if !ok {
 		return ""
 	}
-	fn, ok := choice["function"].(map[string]interface{})
+	fn, ok := root["function"].(map[string]interface{})
 	if !ok {
 		return ""
 	}

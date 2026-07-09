@@ -309,9 +309,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					} else {
 						modelDecidesTools := completionEvidenceOperationPlanModelDecides(evidence)
 						messages = append(messages, completionVerificationSystemMessage(decision, text, completionVerificationRetryCount, modelDecidesTools))
-						if forced := completionVerificationFeedbackToolChoice(decision, loadedSkills, resolved, modelDecidesTools); forced != nil {
-							forcedToolChoiceForNextRound = forced
-						}
 						continue
 					}
 				case completionVerificationStatusFailed, completionVerificationStatusAskUser:
@@ -335,9 +332,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 						} else {
 							modelDecidesTools := completionEvidenceOperationPlanModelDecides(evidence)
 							messages = append(messages, completionVerificationSystemMessage(decision, text, completionVerificationRetryCount, modelDecidesTools))
-							if forced := completionVerificationFeedbackToolChoice(decision, loadedSkills, resolved, modelDecidesTools); forced != nil {
-								forcedToolChoiceForNextRound = forced
-							}
 							continue
 						}
 					}
@@ -357,9 +351,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					} else {
 						modelDecidesTools := completionEvidenceOperationPlanModelDecides(evidence)
 						messages = append(messages, completionVerificationSystemMessage(decision, text, completionVerificationRetryCount, modelDecidesTools))
-						if forced := completionVerificationFeedbackToolChoice(decision, loadedSkills, resolved, modelDecidesTools); forced != nil {
-							forcedToolChoiceForNextRound = forced
-						}
 						continue
 					}
 				}
@@ -944,36 +935,6 @@ func completionEvidenceContinuationToolChoice(evidence map[string]interface{}, l
 		return forcedFunctionToolChoice(skills.MetaToolLoadSkill)
 	}
 	return forcedFunctionToolChoice(skills.MetaToolCallSkillTool)
-}
-
-func completionVerificationFeedbackToolChoice(decision completionVerificationDecision, loadedSkills map[string]struct{}, resolved *skills.ResolvedSkills, modelDecidesTools bool) interface{} {
-	if modelDecidesTools {
-		return nil
-	}
-	skillID, toolName, ok := completionVerificationRequiredSkillTool(decision)
-	if !ok || strings.TrimSpace(skillID) == "" || strings.TrimSpace(toolName) == "" {
-		return nil
-	}
-	if !resolvedSkillContains(resolved, skillID) {
-		return nil
-	}
-	loaded := normalizedLoadedSkillSet(loadedSkills)
-	if _, ok := loaded[strings.ToLower(strings.TrimSpace(skillID))]; !ok {
-		return forcedFunctionToolChoice(skills.MetaToolLoadSkill)
-	}
-	return forcedFunctionToolChoice(skills.MetaToolCallSkillTool)
-}
-
-func resolvedSkillContains(resolved *skills.ResolvedSkills, skillID string) bool {
-	if resolved == nil {
-		return false
-	}
-	for _, resolvedSkillID := range resolved.SkillIDs() {
-		if strings.EqualFold(strings.TrimSpace(resolvedSkillID), strings.TrimSpace(skillID)) {
-			return true
-		}
-	}
-	return false
 }
 
 func initialLoadedSkillsForRun(req RunRequest, resolved *skills.ResolvedSkills) map[string]struct{} {

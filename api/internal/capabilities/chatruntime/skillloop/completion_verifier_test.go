@@ -146,7 +146,7 @@ func TestCompletionVerificationFallbackAnswerUsesReadableChinese(t *testing.T) {
 	}
 }
 
-func TestCompletionVerificationSystemMessageMapsAgentConfigNeedsActionToTools(t *testing.T) {
+func TestCompletionVerificationSystemMessageDescribesAgentConfigEvidenceGap(t *testing.T) {
 	message := completionVerificationSystemMessage(completionVerificationDecision{
 		Status:       completionVerificationStatusNeedsAction,
 		Reason:       "final answer lacks tool evidence",
@@ -154,10 +154,22 @@ func TestCompletionVerificationSystemMessageMapsAgentConfigNeedsActionToTools(t 
 	}, "\u5df2\u5b8c\u6210\u3002", 1, false)
 	content := messageContent(message.Content)
 
+	for _, leaked := range []string{
+		"Required next tool",
+		"agent-management/update_agent_config",
+		"agent-management/get_agent_config",
+		"next business tool call must be",
+		"Run tool:",
+	} {
+		if strings.Contains(content, leaked) {
+			t.Fatalf("system message leaked scripted tool directive %q: %q", leaked, content)
+		}
+	}
 	for _, fragment := range []string{
-		"Required next tool: call agent-management/update_agent_config",
-		"update only the missing fields",
-		"call agent-management/get_agent_config",
+		"Agent configuration update evidence",
+		"fresh Agent configuration read evidence",
+		"remaining user-requested Agent configuration changes still need successful tool evidence",
+		"verify the refreshed configuration",
 		"Do not produce another final answer until the requested Agent configuration update succeeds",
 	} {
 		if !strings.Contains(content, fragment) {
@@ -180,6 +192,7 @@ func TestCompletionVerificationSystemMessageUsesSemanticFeedbackForModelDecides(
 		"agent-management/update_agent_config",
 		"agent-management/get_agent_config",
 		"next business tool call must be",
+		"Run tool:",
 	} {
 		if strings.Contains(content, leaked) {
 			t.Fatalf("system message leaked model-decides tool directive %q: %q", leaked, content)
@@ -215,43 +228,6 @@ func TestCompletionVerificationFallbackAnswerMapsAgentConfigEvidenceLabels(t *te
 			t.Fatalf("answer = %q, want fragment %q", answer, fragment)
 		}
 	}
-}
-
-func TestCompletionVerificationFeedbackToolChoiceForAgentConfigNeedsAction(t *testing.T) {
-	decision := completionVerificationDecision{
-		Status:       completionVerificationStatusNeedsAction,
-		MissingSteps: []string{"Run tool:agent-management/update_agent_config"},
-	}
-	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
-		{Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement}},
-	}}
-
-	unloadedChoice := completionVerificationFeedbackToolChoice(decision, nil, resolved, false)
-	if got := functionToolChoiceName(unloadedChoice); got != skills.MetaToolLoadSkill {
-		t.Fatalf("unloaded tool choice = %q, want %s", got, skills.MetaToolLoadSkill)
-	}
-
-	loadedChoice := completionVerificationFeedbackToolChoice(decision, map[string]struct{}{skills.SkillAgentManagement: {}}, resolved, false)
-	if got := functionToolChoiceName(loadedChoice); got != skills.MetaToolCallSkillTool {
-		t.Fatalf("loaded tool choice = %q, want %s", got, skills.MetaToolCallSkillTool)
-	}
-
-	if forced := completionVerificationFeedbackToolChoice(decision, map[string]struct{}{skills.SkillAgentManagement: {}}, resolved, true); forced != nil {
-		t.Fatalf("model-decides forced tool choice = %#v, want nil", forced)
-	}
-}
-
-func functionToolChoiceName(choice interface{}) string {
-	root, ok := choice.(map[string]interface{})
-	if !ok {
-		return ""
-	}
-	fn, ok := root["function"].(map[string]interface{})
-	if !ok {
-		return ""
-	}
-	name, _ := fn["name"].(string)
-	return name
 }
 
 func TestCompletionVerificationFallbackAnswerHidesInternalReason(t *testing.T) {
@@ -355,7 +331,7 @@ func TestCompletionVerificationSystemMessageKeepsChineseRetryLanguage(t *testing
 	}
 }
 
-func TestCompletionVerificationSystemMessageMapsResolvedFileDeleteToToolAction(t *testing.T) {
+func TestCompletionVerificationSystemMessageDescribesResolvedFileDeleteEvidenceGap(t *testing.T) {
 	message := completionVerificationSystemMessage(completionVerificationDecision{
 		Status:       completionVerificationStatusNeedsAction,
 		Reason:       "missing delete evidence",
@@ -363,11 +339,20 @@ func TestCompletionVerificationSystemMessageMapsResolvedFileDeleteToToolAction(t
 	}, "已删除。", 1)
 	content := messageContent(message.Content)
 
+	for _, leaked := range []string{
+		"Required next tool",
+		"file-manager/delete_file",
+		"delete_file",
+	} {
+		if strings.Contains(content, leaked) {
+			t.Fatalf("system message leaked scripted delete directive %q: %q", leaked, content)
+		}
+	}
 	for _, fragment := range []string{
-		"Required next tool: call file-manager/delete_file",
-		"resolved file_id",
-		"Tool governance owns the approval card",
-		"Do not produce another final answer until file-manager/delete_file succeeds",
+		"file deletion evidence",
+		"requested file deletion still needs matching successful tool evidence",
+		"Governance owns any required approval card",
+		"Do not produce another final answer until the file deletion succeeds",
 	} {
 		if !strings.Contains(content, fragment) {
 			t.Fatalf("system message = %q, want fragment %q", content, fragment)

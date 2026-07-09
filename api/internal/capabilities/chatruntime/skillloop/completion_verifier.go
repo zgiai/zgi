@@ -3735,10 +3735,7 @@ func completionVerificationSystemMessage(decision completionVerificationDecision
 	if len(modelDecidesArgs) > 0 {
 		modelDecidesTools = modelDecidesArgs[0]
 	}
-	displayDecision := decision
-	if modelDecidesTools {
-		displayDecision = completionVerificationDecisionForModelDecidesFeedback(decision)
-	}
+	displayDecision := completionVerificationDecisionForModelDecidesFeedback(decision)
 	lines := []string{
 		"Runtime completion verification feedback:",
 		"The previous candidate final answer did not pass post-verification.",
@@ -3800,6 +3797,9 @@ func completionVerificationModelDecidesPublicText(value string) string {
 		old string
 		new string
 	}{
+		{"Run tool:", ""},
+		{"run tool:", ""},
+		{"tool:", ""},
 		{"agent-management/update_agent_config", "Agent configuration update evidence"},
 		{"agent-management/get_agent_config", "fresh Agent configuration read evidence"},
 		{"file-manager/save_file_to_management", "file management save evidence"},
@@ -3818,50 +3818,10 @@ func completionVerificationModelDecidesPublicText(value string) string {
 }
 
 func completionVerificationExecutableActionFeedback(decision completionVerificationDecision, modelDecidesTools bool) []string {
-	if modelDecidesTools {
-		return completionVerificationModelDecidesExecutableActionFeedback(decision)
-	}
-	text := strings.ToLower(strings.Join(append(append([]string{}, decision.MissingSteps...), decision.NextActionHint, decision.FinalAnswerGuidance, decision.Reason), "\n"))
-	if skillID, toolName, ok := completionVerificationRequiredSkillTool(decision); ok {
-		switch {
-		case strings.EqualFold(skillID, skills.SkillAgentManagement) && strings.EqualFold(toolName, "update_agent_config"):
-			return []string{
-				"Required next tool: call agent-management/update_agent_config for the remaining requested Agent configuration changes.",
-				"The next business tool call must be update_agent_config; do not call get_agent_config before this missing update_agent_config call succeeds.",
-				"If one part of the Agent update already succeeded, preserve that evidence and update only the missing fields from the user's original request.",
-				"After update_agent_config succeeds, call agent-management/get_agent_config to verify the refreshed Agent configuration before the final answer.",
-				"Do not produce another final answer until the requested Agent configuration update succeeds, fails, or is rejected by governance.",
-			}
-		case strings.EqualFold(skillID, skills.SkillAgentManagement) && strings.EqualFold(toolName, "get_agent_config"):
-			return []string{
-				"Required next tool: call agent-management/get_agent_config to verify the current Agent configuration after the update.",
-				"Use the fresh configuration result as the source of truth for the final answer.",
-				"Do not produce another final answer until get_agent_config succeeds or fails.",
-			}
-		}
-	}
-	switch {
-	case strings.Contains(text, "file-manager/delete_file") ||
-		strings.Contains(text, "delete_file") ||
-		strings.Contains(text, "delete resolved file"):
-		return []string{
-			"Required next tool: call file-manager/delete_file with the resolved file_id from current page context, resolved targets, or operation plan evidence.",
-			"Tool governance owns the approval card; do not ask for a separate natural-language confirmation before calling the governed delete tool.",
-			"Do not produce another final answer until file-manager/delete_file succeeds, fails, or is rejected by governance.",
-		}
-	case strings.Contains(text, "file-manager/save_file_to_management") ||
-		strings.Contains(text, "save_file_to_management"):
-		return []string{
-			"Required next tool: call file-manager/save_file_to_management with the already generated artifact or supplied URL.",
-			"Do not regenerate an existing artifact unless the prior generation failed or the user requested different content.",
-			"Do not produce another final answer until file-manager/save_file_to_management succeeds, fails, or is rejected by governance.",
-		}
-	default:
-		return nil
-	}
+	return completionVerificationEvidenceGapFeedback(decision)
 }
 
-func completionVerificationModelDecidesExecutableActionFeedback(decision completionVerificationDecision) []string {
+func completionVerificationEvidenceGapFeedback(decision completionVerificationDecision) []string {
 	if skillID, toolName, ok := completionVerificationRequiredSkillTool(decision); ok {
 		switch {
 		case strings.EqualFold(skillID, skills.SkillAgentManagement) && strings.EqualFold(toolName, "update_agent_config"):
