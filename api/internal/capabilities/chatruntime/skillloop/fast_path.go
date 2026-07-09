@@ -3620,6 +3620,17 @@ func fastPathGeneratedArtifactSaveStillPending(evidence map[string]interface{}) 
 		)) {
 			return true
 		}
+		for _, phase := range evidenceMapsFromAny(plan["phases"]) {
+			if completionVerificationTextMentionsManagedFileSave(firstNonEmptyString(phase["id"], phase["title"], phase["description"])) {
+				return true
+			}
+		}
+		contract := evidenceMapFromAny(plan["task_contract"])
+		for _, phase := range evidenceStringSliceFromAny(contract["phases"]) {
+			if completionVerificationTextMentionsManagedFileSave(phase) {
+				return true
+			}
+		}
 	}
 	return false
 }

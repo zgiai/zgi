@@ -7445,8 +7445,12 @@ func TestRunnerCompletionVerifierStopsAfterNeedsActionRetryBudget(t *testing.T) 
 	if !strings.Contains(answer, completionVerificationFallbackUnknown) {
 		t.Fatalf("answer = %q, want conservative fallback after retry budget", answer)
 	}
-	if !strings.Contains(answer, "file-manager/save_file_to_management") {
-		t.Fatalf("answer = %q, want missing save evidence", answer)
+	if !strings.Contains(answer, "\u4fdd\u5b58\u5230\u6587\u4ef6\u7ba1\u7406\u7684\u6587\u4ef6\u7ed3\u679c") {
+		t.Fatalf("answer = %q, want public missing save evidence label", answer)
+	}
+	if strings.Contains(answer, "file-manager/save_file_to_management") ||
+		strings.Contains(answer, "save_file_to_management") {
+		t.Fatalf("answer = %q, want public gap rather than internal tool names", answer)
 	}
 	if !strings.Contains(answer, "\u5019\u9009\u7b54\u590d\u4e2d\u6709\u672a\u88ab\u5de5\u5177\u7ed3\u679c\u652f\u6301\u7684\u8bf4\u6cd5\uff1aThe file is saved") {
 		t.Fatalf("answer = %q, want unsupported candidate claim to be called out", answer)

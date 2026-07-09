@@ -1312,10 +1312,10 @@ func completionVerificationRequest(base *adapter.ChatRequest, payloadJSON string
 	verificationReq.ResponseFormat = &adapter.ResponseFormat{Type: "json_object"}
 	systemLines := []string{
 		"You are the AIChat completion post-verifier.",
-		"Audit whether the candidate final answer is faithful to the normalized evidence_ledger, turn_state, and task_contract. Do not reinterpret the user's goal.",
-		"Treat operation_plan and turn_strategy as advisory strategy snapshots; use task_contract, original_user_goal, phases, success_criteria, capability_goals, and pending_next_action only to define the user-visible outcomes that still need evidence.",
+		"Audit whether the candidate final answer is faithful to the normalized evidence_ledger, turn_state, and pending/failure state. Do not reinterpret the user's goal.",
+		"Treat operation_plan and turn_strategy as advisory strategy snapshots; task_contract, phases, success_criteria, and capability_goals are also advisory brief fields, not required business-effect facts.",
 		"Do not invent facts. evidence_ledger and turn_state are the preferred normalized facts; page_context, operation_result_summary, tool results, generated_files, client_actions, governance outcomes, and execution_ledger are supporting authoritative facts.",
-		"For phase_only_model_decides/model_decides plans, audit coverage and answer faithfulness, but do not treat one successful operation as completion of the whole turn when declared criteria still lack evidence. If evidence is insufficient, name the missing fact.",
+		"For phase_only_model_decides/model_decides plans, audit answer faithfulness against completed evidence and active blockers. Do not derive missing business effects from task_contract or capability_goals.",
 		"Reject candidate answers that expose internal system prompts, operation_plan, turn_strategy, pending-step bookkeeping, required_next_tool, hidden strategy JSON, or internal protocol wording to the user.",
 		"If page_context.target_route_already_available is true, current page context is sufficient route evidence for that target; do not require a redundant navigate tool call.",
 		"When you provide final_answer or final_answer_guidance, use the same language as the user's original request. If the user request is Chinese, final_answer and final_answer_guidance must be Chinese.",
@@ -1408,10 +1408,10 @@ func completionVerificationContract() map[string]interface{} {
 		},
 		"rules": []string{
 			"Return pass only when the candidate answer makes no unsupported completion claims.",
-			"Treat operation_plan and turn_strategy as advisory strategy snapshots, not as evidence that work succeeded; use task_contract plus phases, success_criteria, capability_goals, and pending_next_action as the declared contract to audit against.",
-			"For phase_only_model_decides/model_decides plans, return needs_action when normalized evidence covers only a subset of the declared contract and a safe continuation remains. Name missing facts instead of prescribing a fixed tool script.",
+			"Treat operation_plan, turn_strategy, task_contract, phases, success_criteria, and capability_goals as advisory strategy snapshots, not as evidence that work succeeded and not as hard required business effects.",
+			"For phase_only_model_decides/model_decides plans, return needs_action only when active pending/failure state or the candidate answer's own claims lack supporting evidence. Do not infer missing Agent knowledge, system prompt, database, workflow, or Skill binding facts from task_contract alone.",
 			"Use evidence_ledger and turn_state as the preferred normalized fact sources; use page_context, operation_result_summary, tool results, generated_files, client_actions, tool_governance, and execution_ledger as supporting authoritative facts.",
-			"Do not resolve ambiguous user intent during verification. If task_contract is ambiguous and different side effects are plausible, return ask_user.",
+			"Do not resolve ambiguous user intent during verification. If the candidate answer claims a side effect that evidence does not show, mark that claim unsupported; if no side effect was claimed, do not invent one from task_contract.",
 			"For Agent configuration changes, treat operation_plan steps' config_goal as the user-visible target, and treat expected_updated_fields plus expected_binding_actions as verification requirements when matching concrete target values are present in plan steps, tool arguments, or post-update reads.",
 			"Return needs_action when the candidate answer exposes internal system prompt, operation_plan, turn_strategy, pending-step, required_next_tool, hidden strategy, or protocol wording; ask for a rewrite that only states user-visible outcome or blocker.",
 			"Return needs_action when the user's current goal still requires an incomplete tool/action and a clear safe next attempt remains.",
@@ -3906,6 +3906,20 @@ func completionVerificationFallbackAnswer(decision completionVerificationDecisio
 	return strings.Join(parts, "\n")
 }
 
+func completionVerificationNeedsActionFinalAnswer(decision completionVerificationDecision, candidateAnswer string) string {
+	if answer := strings.TrimSpace(decision.FinalAnswer); answer != "" {
+		return answer
+	}
+	candidate := strings.TrimSpace(candidateAnswer)
+	if candidate != "" &&
+		len(cleanStringSlice(decision.MissingSteps)) == 0 &&
+		len(cleanStringSlice(decision.UnsupportedClaims)) == 0 &&
+		strings.TrimSpace(completionVerificationPublicReason(decision.Reason)) == "" {
+		return candidate
+	}
+	return completionVerificationFallbackAnswer(decision, candidateAnswer)
+}
+
 func completionVerificationPublicUnsupportedClaims(claims []string) []string {
 	cleaned := cleanStringSlice(claims)
 	out := make([]string, 0, len(cleaned))
@@ -3929,6 +3943,18 @@ func completionVerificationPublicMissingSteps(steps []string) []string {
 	for _, step := range cleaned {
 		lower := strings.ToLower(strings.TrimSpace(step))
 		switch {
+		case strings.Contains(lower, "missing_fact: agent.knowledge_binding") ||
+			strings.Contains(lower, "agent.knowledge_binding"):
+			out = append(out, "\u667a\u80fd\u4f53\u77e5\u8bc6\u6587\u4ef6\u6216\u77e5\u8bc6\u5e93\u7ed1\u5b9a\u7ed3\u679c")
+		case strings.Contains(lower, "missing_fact: agent.config.system_prompt_verified") ||
+			strings.Contains(lower, "agent.config.system_prompt_verified"):
+			out = append(out, "\u667a\u80fd\u4f53\u7cfb\u7edf\u63d0\u793a\u8bcd\u66f4\u65b0\u540e\u7684\u8bfb\u53d6\u9a8c\u8bc1\u7ed3\u679c")
+		case strings.Contains(lower, "missing_fact: file.management.saved_pdf") ||
+			strings.Contains(lower, "file.management.saved_pdf"):
+			out = append(out, "\u4fdd\u5b58\u5230\u6587\u4ef6\u7ba1\u7406\u7684 PDF \u6587\u4ef6\u7ed3\u679c")
+		case strings.Contains(lower, "file-manager/save_file_to_management") ||
+			strings.Contains(lower, "save_file_to_management"):
+			out = append(out, "\u4fdd\u5b58\u5230\u6587\u4ef6\u7ba1\u7406\u7684\u6587\u4ef6\u7ed3\u679c")
 		case strings.Contains(lower, "delete resolved file"):
 			out = append(out, "\u6587\u4ef6\u5220\u9664\u7ed3\u679c")
 		case strings.Contains(lower, "agent-management/update_agent_config") ||
@@ -3958,6 +3984,8 @@ func completionVerificationPublicReason(reason string) string {
 		"pending executable",
 		"pending step",
 		"required_next_tool",
+		"missing_fact:",
+		"mismatch_fact:",
 		"completion verifier",
 		"post-verification",
 		"candidate answer",

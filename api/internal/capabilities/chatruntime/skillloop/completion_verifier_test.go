@@ -146,6 +146,45 @@ func TestCompletionVerificationFallbackAnswerUsesReadableChinese(t *testing.T) {
 	}
 }
 
+func TestCompletionVerificationNeedsActionFinalAnswerUsesFallbackForPublicGap(t *testing.T) {
+	candidate := "\u6240\u6709\u64cd\u4f5c\u5747\u5df2\u6210\u529f\u5b8c\u6210\uff01\n\n**\u2462 \u66f4\u65b0\u667a\u80fd\u4f53**\uff1a\u5df2\u5c06\u65b0\u7eed\u5199\u7684\u7ae0\u8282\u66f4\u65b0\u5230\u667a\u80fd\u4f53\u7cfb\u7edf\u63d0\u793a\u8bcd\u4e2d\u3002"
+	answer := completionVerificationNeedsActionFinalAnswer(completionVerificationDecision{
+		Status:       completionVerificationStatusNeedsAction,
+		Reason:       "missing_fact: agent.knowledge_binding",
+		MissingSteps: []string{"missing_fact: agent.knowledge_binding"},
+	}, candidate)
+
+	for _, fragment := range []string{
+		completionVerificationFallbackUnknown,
+		"\u667a\u80fd\u4f53\u77e5\u8bc6\u6587\u4ef6\u6216\u77e5\u8bc6\u5e93\u7ed1\u5b9a\u7ed3\u679c",
+	} {
+		if !strings.Contains(answer, fragment) {
+			t.Fatalf("answer = %q, want fragment %q", answer, fragment)
+		}
+	}
+	for _, leaked := range []string{"missing_fact", "agent.knowledge_binding", "\u8865\u5145\u8bf4\u660e", "\u6240\u6709\u64cd\u4f5c\u5747\u5df2\u6210\u529f\u5b8c\u6210"} {
+		if strings.Contains(answer, leaked) {
+			t.Fatalf("answer leaks internal evidence key %q: %q", leaked, answer)
+		}
+	}
+}
+
+func TestCompletionVerificationNeedsActionFinalAnswerFallsBackWhenCandidateEmpty(t *testing.T) {
+	answer := completionVerificationNeedsActionFinalAnswer(completionVerificationDecision{
+		Status:       completionVerificationStatusNeedsAction,
+		MissingSteps: []string{"missing_fact: agent.config.system_prompt_verified"},
+	}, "")
+
+	for _, fragment := range []string{
+		completionVerificationFallbackUnknown,
+		"\u667a\u80fd\u4f53\u7cfb\u7edf\u63d0\u793a\u8bcd\u66f4\u65b0\u540e\u7684\u8bfb\u53d6\u9a8c\u8bc1\u7ed3\u679c",
+	} {
+		if !strings.Contains(answer, fragment) {
+			t.Fatalf("answer = %q, want fragment %q", answer, fragment)
+		}
+	}
+}
+
 func TestCompletionVerificationSystemMessageDescribesAgentConfigEvidenceGap(t *testing.T) {
 	message := completionVerificationSystemMessage(completionVerificationDecision{
 		Status:       completionVerificationStatusNeedsAction,
@@ -410,8 +449,8 @@ func TestCompletionVerificationPromptTreatsEvidenceAsAuthoritative(t *testing.T)
 	for _, fragment := range []string{
 		"faithful to the normalized evidence_ledger",
 		"operation_plan and turn_strategy as advisory strategy snapshots",
-		"define the user-visible outcomes that still need evidence",
-		"do not treat one successful operation as completion of the whole turn",
+		"not required business-effect facts",
+		"Do not derive missing business effects from task_contract or capability_goals",
 		"evidence_ledger and turn_state are the preferred normalized facts",
 		"target_route_already_available",
 	} {

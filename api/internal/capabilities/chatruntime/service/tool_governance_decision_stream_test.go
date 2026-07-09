@@ -673,7 +673,7 @@ func TestBeginClientActionContinuationRejectsDuplicateAfterClaim(t *testing.T) {
 	}
 }
 
-func TestRunClientActionContinuationStreamAgentUpdatedRouteUsesVerifierWithoutRepeatingTools(t *testing.T) {
+func TestRunClientActionContinuationStreamAgentUpdatedRouteCompletesWithoutRepeatingTools(t *testing.T) {
 	ctx := context.Background()
 	organizationID := uuid.New()
 	accountID := uuid.New()
@@ -800,17 +800,14 @@ func TestRunClientActionContinuationStreamAgentUpdatedRouteUsesVerifierWithoutRe
 	if result.Answer != finalAnswer {
 		t.Fatalf("result answer = %q", result.Answer)
 	}
-	if len(llm.appChatRequests) != 2 {
-		t.Fatalf("AppChat requests = %d, want planning answer plus completion verifier", len(llm.appChatRequests))
+	if len(llm.appChatRequests) != 1 {
+		t.Fatalf("AppChat requests = %d, want planning answer without completion verifier", len(llm.appChatRequests))
 	}
 	if len(llm.streamRequests) != 0 {
 		t.Fatalf("AppChatStream requests = %d, want completion-verifier skill loop to suppress direct final streaming", len(llm.streamRequests))
 	}
 	if !toolGovernanceStreamRequestContains(llm.appChatRequests[0], "do not call console-navigator/navigate again for the same route") {
 		t.Fatalf("skill-loop continuation request missing route continuation instruction: %q", toolGovernanceStreamRequestText(llm.appChatRequests[0]))
-	}
-	if !toolGovernanceStreamRequestContains(llm.appChatRequests[1], "completion post-verifier") {
-		t.Fatalf("second AppChat request = %q, want completion verifier", toolGovernanceStreamRequestText(llm.appChatRequests[1]))
 	}
 	if !messageRepo.updateCompletedCalled {
 		t.Fatal("UpdateCompleted was not called")

@@ -22,15 +22,85 @@ func TestCompletionGateDeterministicPassForVerifiedAgentSystemPrompt(t *testing.
 	}
 }
 
-func TestCompletionGateBlocksKnowledgeBindingContractSystemPromptEvidenceDrift(t *testing.T) {
+func TestCompletionGateIgnoresKnowledgeBindingContractForSystemPromptEvidence(t *testing.T) {
 	evidence := completionGateVerifiedSystemPromptEvidence("agent.knowledge_binding")
 
 	decision := completionGateEvaluate(evidence, "已完成")
-	if decision.Path != completionGateNeedsAction {
-		t.Fatalf("completionGateEvaluate().Path = %q, want %q; decision=%#v", decision.Path, completionGateNeedsAction, decision)
+	if decision.Path != completionGateDeterministicPass {
+		t.Fatalf("completionGateEvaluate().Path = %q, want %q; decision=%#v", decision.Path, completionGateDeterministicPass, decision)
 	}
-	if !completionGateTestStringSliceContains(decision.MissingFacts, "missing_fact: agent.knowledge_binding") {
-		t.Fatalf("MissingFacts = %#v, want knowledge binding missing fact", decision.MissingFacts)
+	if completionGateTestStringSliceContains(decision.MissingFacts, "missing_fact: agent.knowledge_binding") {
+		t.Fatalf("MissingFacts = %#v, want no knowledge binding missing fact from advisory contract", decision.MissingFacts)
+	}
+}
+
+func TestCompletionGateAllowsSystemPromptForRuntimeConfigAlternativeContract(t *testing.T) {
+	evidence := map[string]interface{}{
+		"user_request": "\u5230\u6587\u4ef6\u7ba1\u7406\u7eed\u5199\u7b2c\u4e00\u4e2a md\uff0c\u751f\u6210 PDF \u5e76\u5728\u8fd9\u4e2a\u667a\u80fd\u4f53\u91cc\u66f4\u65b0\u65b0\u7eed\u5199\u7684\u7ae0\u8282",
+		"operation_plan": map[string]interface{}{
+			"tool_choice_mode":    operationPlanToolChoiceModelDecides,
+			"planning_mode":       "phase_only_model_decides",
+			"status":              "running",
+			"pending_next_action": "continue_from_phase_success_criteria",
+			"task_contract": map[string]interface{}{
+				"phases": []interface{}{
+					"generate a PDF file with the continued content and save to File Management",
+					"update the agent by binding the continued chapter content (e.g., as knowledge base document or runtime config)",
+				},
+				"completion_criteria": []interface{}{
+					"PDF file generated and saved to File Management",
+					"agent updated with continued chapter content",
+				},
+				"recommended_capabilities": []interface{}{
+					"agent.knowledge_binding:bind",
+					"agent.update_agent_runtime_config",
+				},
+			},
+		},
+		"evidence_ledger": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "completed",
+				"skill_id":  skills.SkillFileManager,
+				"tool_name": "save_file_to_management",
+				"result_facts": map[string]interface{}{
+					"status":         "completed",
+					"target":         "managed_file",
+					"file_extension": "pdf",
+					"file_id":        "managed-pdf",
+					"filename":       "chapter.pdf",
+				},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "completed",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"result_facts": map[string]interface{}{
+					"status":               "completed",
+					"effect":               "agent.system_prompt_update",
+					"agent_id":             "agent-1",
+					"agent_name":           "\u7075\u6f9c\u5b66\u9662\u8bf4\u4e66\u4eba",
+					"updated_fields":       []interface{}{"system_prompt"},
+					"satisfied_fields":     []interface{}{"system_prompt"},
+					"system_prompt_digest": "sha256:prompt",
+					"field_status": map[string]interface{}{
+						"system_prompt": "updated",
+					},
+				},
+			},
+		},
+	}
+
+	if gaps := completionGateContractCoverageGaps(evidence); len(gaps) > 0 {
+		t.Fatalf("completionGateContractCoverageGaps() = %#v, want no gaps for accepted runtime config alternative", gaps)
+	}
+	decision := completionGateEvaluate(evidence, "\u7cfb\u7edf\u63d0\u793a\u8bcd\u5df2\u66f4\u65b0\u3002")
+	if decision.Path != completionGateDeterministicPass {
+		t.Fatalf("completionGateEvaluate().Path = %q, want %q; decision=%#v", decision.Path, completionGateDeterministicPass, decision)
+	}
+	if completionGateTestStringSliceContains(decision.MissingFacts, "missing_fact: agent.knowledge_binding") {
+		t.Fatalf("MissingFacts = %#v, want no knowledge binding gap", decision.MissingFacts)
 	}
 }
 
@@ -43,17 +113,14 @@ func completionGateTestStringSliceContains(values []string, target string) bool 
 	return false
 }
 
-func TestCompletionGateAsksUserForLowConfidenceContractDrift(t *testing.T) {
+func TestCompletionGateDoesNotAskUserFromLowConfidenceContractDriftAlone(t *testing.T) {
 	evidence := completionGateVerifiedSystemPromptEvidence("agent.knowledge_binding")
 	contract := evidenceMapFromAny(evidenceMapFromAny(evidence["operation_plan"])["task_contract"])
 	contract["low_confidence"] = true
 
 	decision := completionGateEvaluate(evidence, "已完成")
-	if decision.Path != completionGateAskUser {
-		t.Fatalf("completionGateEvaluate().Path = %q, want %q; decision=%#v", decision.Path, completionGateAskUser, decision)
-	}
-	if strings.TrimSpace(decision.FinalAnswer) == "" {
-		t.Fatalf("FinalAnswer is empty for ask_user decision: %#v", decision)
+	if decision.Path != completionGateDeterministicPass {
+		t.Fatalf("completionGateEvaluate().Path = %q, want %q; decision=%#v", decision.Path, completionGateDeterministicPass, decision)
 	}
 }
 
@@ -114,16 +181,11 @@ func TestCompletionGateBlocksPartialFileWorkflowWhenAgentAndManagedPDFMissing(t 
 	}
 
 	decision := completionGateEvaluate(evidence, "The PDF file has been generated.")
-	if decision.Path != completionGateNeedsAction {
-		t.Fatalf("completionGateEvaluate().Path = %q, want %q; decision=%#v", decision.Path, completionGateNeedsAction, decision)
+	if decision.Path != completionGateModelVerifier {
+		t.Fatalf("completionGateEvaluate().Path = %q, want %q; decision=%#v", decision.Path, completionGateModelVerifier, decision)
 	}
-	for _, want := range []string{
-		"missing_fact: agent.config.system_prompt_verified",
-		"missing_fact: file.management.saved_pdf",
-	} {
-		if !completionGateTestStringSliceContains(decision.MissingFacts, want) {
-			t.Fatalf("MissingFacts = %#v, want %q", decision.MissingFacts, want)
-		}
+	if len(decision.MissingFacts) != 0 {
+		t.Fatalf("MissingFacts = %#v, want no contract-derived missing facts", decision.MissingFacts)
 	}
 }
 
@@ -153,11 +215,11 @@ func TestCompletionGateRequiresManagedPDFSaveNotTemporaryArtifact(t *testing.T) 
 	}
 
 	decision := completionGateEvaluate(evidence, "")
-	if decision.Path != completionGateNeedsAction {
-		t.Fatalf("completionGateEvaluate().Path = %q, want %q; decision=%#v", decision.Path, completionGateNeedsAction, decision)
+	if decision.Path != completionGateModelVerifier {
+		t.Fatalf("completionGateEvaluate().Path = %q, want %q; decision=%#v", decision.Path, completionGateModelVerifier, decision)
 	}
-	if !completionGateTestStringSliceContains(decision.MissingFacts, "missing_fact: file.management.saved_pdf") {
-		t.Fatalf("MissingFacts = %#v, want managed PDF missing fact", decision.MissingFacts)
+	if len(decision.MissingFacts) != 0 {
+		t.Fatalf("MissingFacts = %#v, want no contract-derived managed PDF gap", decision.MissingFacts)
 	}
 
 	managedPDFEvidence := map[string]interface{}{

@@ -220,7 +220,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					messages = append(messages, completionVerificationSystemMessage(gate.completionVerificationDecision(), text, completionVerificationRetryCount, modelDecidesTools))
 					continue
 				}
-				answer := completionVerificationFallbackAnswer(gate.completionVerificationDecision(), text)
+				answer := completionVerificationNeedsActionFinalAnswer(gate.completionVerificationDecision(), text)
 				completionGateNotify(req, gate, answer)
 				appendAnswerText(&answerBuilder, answer)
 				r.emitAnswerChunk(ctx, prepared, answer, nil)
@@ -296,7 +296,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 							decision.MissingSteps = nil
 							decision.NextActionHint = ""
 						} else {
-							text = completionVerificationFallbackAnswer(decision, text)
+							text = completionVerificationNeedsActionFinalAnswer(decision, text)
 						}
 						notifyCompletionVerificationResult(req, decision, text)
 					} else {

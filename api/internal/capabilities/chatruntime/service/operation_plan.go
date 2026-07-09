@@ -193,9 +193,6 @@ func operationPlanTaskContractFromTurnStrategy(strategy *AIChatTurnStrategy) map
 	if effect := strings.TrimSpace(strategy.AssetEffect); effect != "" {
 		contract["asset_effect"] = effect
 	}
-	if intendedEffect := operationPlanTaskContractIntendedEffect(strategy); intendedEffect != "" {
-		contract["intended_effect"] = intendedEffect
-	}
 	if risk := strings.TrimSpace(strategy.AssetRisk); risk != "" {
 		contract["asset_risk"] = risk
 	}
@@ -206,61 +203,6 @@ func operationPlanTaskContractFromTurnStrategy(strategy *AIChatTurnStrategy) map
 		contract["capability_goals"] = agentCapabilityGoalsToMaps(strategy.CapabilityGoals)
 	}
 	return contract
-}
-
-func operationPlanTaskContractIntendedEffect(strategy *AIChatTurnStrategy) string {
-	if strategy == nil {
-		return ""
-	}
-	values := []interface{}{
-		strategy.AssetEffect,
-		strategy.TaskType,
-		strategy.Intent,
-		strategy.CompatibilityIntent,
-		strategy.RecommendedCapabilities,
-	}
-	for _, goal := range strategy.CapabilityGoals {
-		values = append(values, goal.CapabilityID, goal.GoalAction)
-	}
-	for _, value := range values {
-		for _, text := range stringSliceFromAny(value) {
-			switch operationPlanCanonicalTaskContractEffect(text) {
-			case "agent.system_prompt_update":
-				return "agent.system_prompt_update"
-			case "agent.knowledge_binding":
-				return "agent.knowledge_binding"
-			}
-		}
-		if text := strings.TrimSpace(stringFromAny(value)); text != "" {
-			switch operationPlanCanonicalTaskContractEffect(text) {
-			case "agent.system_prompt_update":
-				return "agent.system_prompt_update"
-			case "agent.knowledge_binding":
-				return "agent.knowledge_binding"
-			}
-		}
-	}
-	return ""
-}
-
-func operationPlanCanonicalTaskContractEffect(value string) string {
-	text := strings.ToLower(strings.TrimSpace(value))
-	if text == "" {
-		return ""
-	}
-	switch {
-	case strings.Contains(text, "agent.system_prompt"),
-		strings.Contains(text, "system_prompt"),
-		strings.Contains(text, "system prompt"):
-		return "agent.system_prompt_update"
-	case strings.Contains(text, "agent.knowledge_binding"),
-		strings.Contains(text, "knowledge_binding"),
-		strings.Contains(text, "knowledge binding"),
-		strings.Contains(text, "knowledge_dataset"):
-		return "agent.knowledge_binding"
-	default:
-		return ""
-	}
 }
 
 func operationPlanSuccessCriteriaFromTurnStrategy(strategy *AIChatTurnStrategy) []string {

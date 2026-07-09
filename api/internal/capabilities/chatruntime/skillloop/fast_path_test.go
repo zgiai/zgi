@@ -182,7 +182,7 @@ func TestFastPathCompletionEvidenceBlocksFailedPlanDespiteLatestSuccessfulTool(t
 	}
 }
 
-func TestFastPathCompletionEvidenceBlocksContractCoverageGaps(t *testing.T) {
+func TestFastPathCompletionEvidenceBlocksPendingManagedFileSave(t *testing.T) {
 	trace := skills.SkillTrace{
 		Kind:     "tool_call",
 		Status:   "success",
@@ -250,14 +250,14 @@ func TestFastPathCompletionEvidenceBlocksContractCoverageGaps(t *testing.T) {
 		},
 	}
 
-	if gaps := completionGateContractCoverageGaps(evidence); len(gaps) == 0 {
-		t.Fatal("completionGateContractCoverageGaps() returned no gaps, want missing managed PDF and Agent update facts")
+	if gaps := completionGateContractCoverageGaps(evidence); len(gaps) != 0 {
+		t.Fatalf("completionGateContractCoverageGaps() = %#v, want no contract-derived gaps", gaps)
 	}
 	if answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(trace, evidence); ok {
-		t.Fatalf("FastPathFinalAnswerForToolTraceWithEvidence() = (%q, true), want blocked by completion gate gaps", answer)
+		t.Fatalf("FastPathFinalAnswerForToolTraceWithEvidence() = (%q, true), want blocked by pending managed file save", answer)
 	}
 	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
-		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = (%q, true), want blocked by completion gate gaps", answer)
+		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = (%q, true), want blocked by pending managed file save", answer)
 	}
 }
 

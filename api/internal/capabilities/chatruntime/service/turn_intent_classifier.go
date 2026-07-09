@@ -124,7 +124,7 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 				Content: strings.Join([]string{
 					"You create a lightweight semantic Turn Contract for one ZGI sidebar assistant turn. Return JSON only.",
 					"This is not a tool script. Do not choose concrete tool names, tool arguments, or ordered tool calls.",
-					"The intent field is a broad compatibility label only; the phases, evidence_required, recommended_capabilities, and completion_criteria are the real task contract.",
+					"The intent field is a broad compatibility label only. Phases, evidence_required, recommended_capabilities, and completion_criteria are advisory task brief fields for the executor, not a fixed tool script or completion verifier contract.",
 					"Pick exactly one broad compatibility intent label from:",
 					"- answer_or_explain_zgi_context: answer questions about ZGI, the current page, or assistant capabilities without asset mutation.",
 					"- navigate_console_page: the user mainly asks to open or switch to a ZGI console page.",
@@ -137,7 +137,7 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 					"Also describe the user goal as phases and needed evidence. Phases are semantic checkpoints, not mandatory tool order.",
 					"Use recommended_capabilities for capabilities the executor may need, such as exact_agent_runtime, visible_file_content, page_navigation, generated_artifact, or asset_mutation.",
 					"For generated artifact turns, include chart_artifact for charts/graphs/data visualizations and file_artifact for ordinary documents, SVG/vector files, PDFs, spreadsheets, or text files.",
-					"For Agent management turns, include canonical Agent capability IDs in recommended_capabilities when relevant: agent.model_selection, agent.system_prompt, agent.skill_backed_capability:<capability query>, agent.accept_uploaded_files, agent.memory, agent.knowledge_binding, agent.database_binding, agent.workflow_binding, agent.suggested_questions. Use :bind, :unbind, or :replace after binding capability IDs only when the user asks for that action.",
+					"For Agent management turns, include canonical Agent capability IDs in recommended_capabilities only when they may help the executor choose tools: agent.model_selection, agent.system_prompt, agent.skill_backed_capability:<capability query>, agent.accept_uploaded_files, agent.memory, agent.knowledge_binding, agent.database_binding, agent.workflow_binding, agent.suggested_questions. These are possible capabilities, not required completion facts. Do not treat a generic request to update an Agent as knowledge binding unless the user explicitly asks to bind or update knowledge files/datasets.",
 					"When the user refers to a visible current-page item by ordinal such as first, second, top, \u7b2c\u4e00\u4e2a, or \u7b2c\u4e8c\u4e2a, set target_visible_index to the 1-based visible index. Omit it when no visible ordinal is requested.",
 					"For Agent creation turns, set open_created_agent_detail=true only when the user explicitly asks to open, enter, edit, configure, or inspect the newly created Agent detail page after creation.",
 					"If the user asks for exact Agent prompt/config/runtime analysis and page context may be summary-level, set needs_exact_agent_runtime=true.",
