@@ -18,6 +18,7 @@ import MarkdownViewer from '@/components/common/markdown-viewer';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { useFileDetail } from '@/hooks/file/use-file-detail';
 import { useFileOriginalPreviewUrl } from '@/hooks/file/use-file-original-preview-url';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
@@ -790,26 +791,42 @@ function managedGeneratedFileDownloadUrl(file: AIChatGeneratedFile): string {
 }
 
 function generatedFilePreviewUrl(file: AIChatGeneratedFile): string {
-  if (file.url) {
-    return apiReachableUrl(file.url);
-  }
   if (isManagedGeneratedFile(file)) {
     return managedGeneratedFilePreviewUrl(file);
+  }
+  if (file.url) {
+    return apiReachableUrl(file.url);
   }
   return '';
 }
 
-function useGeneratedFilePreviewUrl(file: AIChatGeneratedFile): string {
-  const managedFileId = managedGeneratedFileId(file);
-  const shouldResolveManagedPreview = isManagedGeneratedFile(file) && Boolean(managedFileId);
-  const { previewUrl } = useFileOriginalPreviewUrl(managedFileId, {
-    enabled: shouldResolveManagedPreview,
-  });
+function generatedFileNotFoundError(error: unknown): boolean {
+  const candidate = error as
+    | {
+        message?: string;
+        response?: { status?: number; data?: { message?: string; errorMessage?: string } };
+        businessError?: { message?: string };
+      }
+    | null
+    | undefined;
+  if (!candidate) return false;
+  if (candidate.response?.status === 404) return true;
 
-  if (shouldResolveManagedPreview && previewUrl) {
-    return apiReachableUrl(previewUrl);
-  }
-  return generatedFilePreviewUrl(file);
+  const message = (
+    candidate.businessError?.message ||
+    candidate.response?.data?.message ||
+    candidate.response?.data?.errorMessage ||
+    candidate.message ||
+    ''
+  )
+    .trim()
+    .toLowerCase();
+  return (
+    message.includes('file not found') ||
+    message.includes('not found') ||
+    message.includes('文件不存在') ||
+    message.includes('未找到')
+  );
 }
 
 function generatedFileDownloadUrl(file: AIChatGeneratedFile): string {
@@ -971,27 +988,54 @@ function AIChatGeneratedFileCard({ file }: AIChatGeneratedFileCardProps) {
   const t = useT('webapp');
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const extension = formatGeneratedFileExtension(file);
+  const managedFileId = managedGeneratedFileId(file);
+  const isManagedFile = isManagedGeneratedFile(file);
+  const { data: managedFileDetail, error: managedFileError } = useFileDetail(managedFileId, {
+    enabled: isManagedFile && Boolean(managedFileId),
+    refetchOnWindowFocus: false,
+    skipErrorHandling: true,
+  });
+  const isArchivedManagedFile = Boolean(managedFileDetail?.data?.file?.is_archived);
+  const isDeletedManagedFile =
+    isManagedFile && (isArchivedManagedFile || generatedFileNotFoundError(managedFileError));
   const downloadUrl = generatedFileDownloadUrl(file);
-  const previewUrl = useGeneratedFilePreviewUrl(file) || downloadUrl;
-  const canPreview = Boolean(previewUrl);
-  const canDownload = Boolean(downloadUrl);
-  const lifecycleLabel = isManagedGeneratedFile(file)
-    ? t('consoleChat.attachments.managedGeneratedFile')
-    : t('consoleChat.attachments.temporaryGeneratedFile');
+  const previewUrl = generatedFilePreviewUrl(file) || downloadUrl;
+  const canPreview = Boolean(previewUrl) && !isDeletedManagedFile;
+  const canDownload = Boolean(downloadUrl) && !isDeletedManagedFile;
+  const lifecycleLabel = isDeletedManagedFile
+    ? t('consoleChat.attachments.deletedGeneratedFile')
+    : isManagedFile
+      ? t('consoleChat.attachments.managedGeneratedFile')
+      : t('consoleChat.attachments.temporaryGeneratedFile');
 
   return (
     <>
       <div
-        className="flex min-w-0 max-w-sm items-center gap-3 rounded-md border bg-background px-3 py-2 text-sm shadow-sm"
+        className={cn(
+          'flex min-w-0 max-w-sm items-center gap-3 rounded-md border bg-background px-3 py-2 text-sm shadow-sm',
+          isDeletedManagedFile && 'border-destructive/30 bg-destructive/5'
+        )}
         title={file.filename}
       >
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-          <FileText className="size-4" />
+        <div
+          className={cn(
+            'flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground',
+            isDeletedManagedFile && 'bg-destructive/10 text-destructive'
+          )}
+        >
+          {isDeletedManagedFile ? <AlertCircle className="size-4" /> : <FileText className="size-4" />}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate font-medium text-foreground">{file.filename}</div>
+          <div
+            className={cn(
+              'truncate font-medium text-foreground',
+              isDeletedManagedFile && 'text-muted-foreground'
+            )}
+          >
+            {file.filename}
+          </div>
           <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-            <span>{lifecycleLabel}</span>
+            <span className={cn(isDeletedManagedFile && 'text-destructive')}>{lifecycleLabel}</span>
             {extension ? <span>{extension}</span> : null}
             <span>{formatFileSize(file.size)}</span>
           </div>
@@ -1041,16 +1085,16 @@ function AIChatGeneratedFileCard({ file }: AIChatGeneratedFileCardProps) {
         )}
       </div>
       <UniversalFilePreviewDialog
-        open={isPreviewOpen}
+        open={isPreviewOpen && canPreview}
         onOpenChange={setIsPreviewOpen}
         file={{
-          id: file.file_id,
+          id: managedFileId || file.file_id,
           name: file.filename,
           extension: file.extension,
           mimeType: file.mime_type,
           size: file.size,
           previewUrl,
-          downloadUrl,
+          downloadUrl: canDownload ? downloadUrl : '',
         }}
       />
     </>
@@ -1062,7 +1106,7 @@ interface AIChatGeneratedImagePreviewsProps {
 }
 
 function AIChatGeneratedImagePreview({ file }: { file: AIChatGeneratedFile }) {
-  const previewUrl = useGeneratedFilePreviewUrl(file);
+  const previewUrl = generatedFilePreviewUrl(file);
   if (!previewUrl) {
     return null;
   }

@@ -4,6 +4,7 @@
  */
 
 import type { ApiResponseData } from './types/common';
+import type { ExtendedRequestConfig } from '@/lib/http';
 import type {
   AllFilesResponse,
   GetAllFilesRequest,
@@ -145,8 +146,11 @@ class FileManageService extends BaseService {
     });
   }
 
-  async getFileDetail(fileId: string): Promise<ApiResponseData<FileDetailResponse>> {
-    return this.request('get', `/console/api/files/${fileId}/detail`);
+  async getFileDetail(
+    fileId: string,
+    options: ExtendedRequestConfig = {}
+  ): Promise<ApiResponseData<FileDetailResponse>> {
+    return this.request('get', `/console/api/files/${fileId}/detail`, undefined, options);
   }
 
   async createProcessingRequest(

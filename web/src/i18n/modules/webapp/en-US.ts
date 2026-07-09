@@ -791,6 +791,7 @@ const messages = {
       generatedFile: 'Generated file',
       managedGeneratedFile: 'Saved file',
       temporaryGeneratedFile: 'Temporary file',
+      deletedGeneratedFile: 'File deleted',
       previewGeneratedFile: 'Preview generated file',
       downloadGeneratedFile: 'Download generated file',
       uploading: 'Uploading',

@@ -26,17 +26,19 @@ export function useFileDetail(
     enabled?: boolean;
     pollProcessingStatus?: boolean;
     refetchOnWindowFocus?: boolean;
+    skipErrorHandling?: boolean;
   } = {}
 ) {
   const {
     enabled = true,
     pollProcessingStatus = false,
     refetchOnWindowFocus = false,
+    skipErrorHandling = false,
   } = options;
 
   return useQuery<ApiResponseData<FileDetailResponse>>({
     queryKey: getFileDetailKey(fileId),
-    queryFn: () => fileManageService.getFileDetail(fileId),
+    queryFn: () => fileManageService.getFileDetail(fileId, { skipErrorHandling }),
     enabled: enabled && Boolean(fileId),
     refetchInterval: query => {
       if (!pollProcessingStatus) return false;

@@ -772,6 +772,7 @@ const messages: WebappMessages = {
       generatedFile: '生成文件',
       managedGeneratedFile: '已保存文件',
       temporaryGeneratedFile: '临时文件',
+      deletedGeneratedFile: '文件已删除',
       previewGeneratedFile: '预览生成文件',
       downloadGeneratedFile: '下载生成文件',
       uploading: '上传中',
