@@ -649,8 +649,8 @@ func TestMergeSkillInvocationMetadataDeduplicatesGuardrail(t *testing.T) {
 		"skill_id":  skills.SkillFileGenerator,
 		"tool_name": "generate_file",
 		"status":    "blocked",
-		"message":   "Use file-generator instead of chart-generator.",
-		"error":     "Use file-generator instead of chart-generator.",
+		"message":   "Artifact generation evidence is missing.",
+		"error":     "Artifact generation evidence is missing.",
 	}
 	metadata := mergeSkillInvocationMetadata(nil, []map[string]interface{}{guardrail})
 	metadata = mergeSkillInvocationMetadata(metadata, []map[string]interface{}{{
@@ -658,8 +658,8 @@ func TestMergeSkillInvocationMetadataDeduplicatesGuardrail(t *testing.T) {
 		"skill_id":  skills.SkillFileGenerator,
 		"tool_name": "generate_file",
 		"status":    "blocked",
-		"message":   "Use file-generator instead of chart-generator.",
-		"error":     "Use file-generator instead of chart-generator.",
+		"message":   "Artifact generation evidence is missing.",
+		"error":     "Artifact generation evidence is missing.",
 	}})
 
 	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])

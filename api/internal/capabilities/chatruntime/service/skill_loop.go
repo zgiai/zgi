@@ -2561,12 +2561,6 @@ func skillLoopShouldAllowUnplannedArtifactGeneration(prepared *PreparedChat, req
 	if strings.TrimSpace(goal) == "" {
 		return false
 	}
-	if isChartGeneratorToolCall(skillID, toolName) {
-		if prepared.parts.ModelTurnIntent != nil {
-			return shouldPreferChartArtifactProducer(prepared.parts)
-		}
-		return false
-	}
 	if operationPlanHasToolStepWithStatus(plan, skills.SkillFileManager, "save_file_to_management", operationPlanStepStatusPending) {
 		return true
 	}
@@ -5253,7 +5247,7 @@ func contextualConsoleFilesSkillMessage(prepared *PreparedChat) (adapter.Message
 		"Never claim a file was deleted, removed, updated, created, saved, or otherwise changed based only on previous conversation context.",
 		"If the target file cannot be determined from structured context, call request_user_input with a concise clarification instead of guessing.",
 		"For requests to create, generate, write, save, upload, import, or export a new file into File Management or the current Files page, use a two-step flow: first use the appropriate artifact-producing skill to create a temporary artifact, then use file-manager/save_file_to_management with source_type \"tool_file\", the generated tool_file_id/file_id, and the destination filename.",
-		"Use file-generator for regular files, documents, generic SVG/vector files, PDFs, DOCX, PPTX, XLSX, CSV, JSON, Markdown, HTML, or TXT. Use chart-generator only when the user explicitly asks for a chart, graph, data visualization, or a supported chart type.",
+		"Choose the artifact-producing skill that best matches the requested output. file-generator fits regular documents and files such as SVG, PDF, DOCX, PPTX, XLSX, CSV, JSON, Markdown, HTML, or TXT; chart-generator fits charts, graphs, and data visualizations.",
 		"When the user says this file, the previous file, the generated file, or the file just created and asks to save/upload/import it into File Management, resolve that reference from recent_generated_files before considering visible_files. Use the listed tool_file_id only as a tool argument.",
 		"Do not treat a visible File Management asset as the same file as a recent temporary generated artifact unless the filenames and requested action make that explicit.",
 		"For requests to save or import a public external URL into File Management, use file-manager/save_file_to_management with source_type \"url\" and the destination filename.",
@@ -5415,18 +5409,6 @@ func skillLoopToolCallGuard(prepared *PreparedChat) skillloop.ToolCallGuard {
 					}, " "),
 				}, true
 			}
-			if isChartGeneratorToolCall(req.SkillID, req.ToolName) && !shouldPreferChartArtifactProducer(executionParts) {
-				message := strings.Join([]string{
-					"The user asked to create a regular SVG or file in File Management, not a chart or data visualization.",
-					"Use file-generator/generate_file for generic SVG/vector file creation, then save the generated artifact with file-manager/save_file_to_management.",
-				}, " ")
-				return skillloop.FinalAnswerGuardResult{
-					SkillID:       skills.SkillFileGenerator,
-					ToolName:      "generate_file",
-					Message:       message,
-					SystemMessage: message,
-				}, true
-			}
 			if isFileManagerSaveToolCall(req.SkillID, req.ToolName) {
 				pendingSaveArgs := pendingGeneratedArtifactSaveArgumentCandidates(executionParts, metadata, req.SuccessfulToolCalls)
 				if len(pendingSaveArgs) > 0 && !fileManagerSaveArgumentsMatchAnyPendingArtifact(req.Arguments, pendingSaveArgs) {
@@ -5523,8 +5505,7 @@ func skillLoopTemporaryFileGenerateFinalAnswerGuard(prepared *PreparedChat) skil
 	if !modelTurnIntentRequestsTemporaryFileArtifact(parts.ModelTurnIntent) {
 		return nil
 	}
-	skillID, toolName := temporaryFileGenerateRequiredTool(parts)
-	if skillID == "" || toolName == "" {
+	if !skillIDEnabled(parts.SkillIDs, skills.SkillFileGenerator) && !skillIDEnabled(parts.SkillIDs, skills.SkillChartGenerator) {
 		return nil
 	}
 	metadata := map[string]interface{}(nil)
@@ -5538,18 +5519,17 @@ func skillLoopTemporaryFileGenerateFinalAnswerGuard(prepared *PreparedChat) skil
 		if finalAnswerGuardHasAttemptedArtifactProducerTool(req) {
 			return skillloop.FinalAnswerGuardResult{}, false
 		}
+		message := strings.Join([]string{
+			"The user's current request asks to generate a temporary file artifact.",
+			"The candidate final answer claims or implies generation, but this turn has no artifact-producing tool evidence yet.",
+			"Continue with an available artifact-producing tool, or report the blocker if no suitable tool is available.",
+		}, " ")
 		return skillloop.FinalAnswerGuardResult{
-			SkillID:  skillID,
-			ToolName: toolName,
-			Message: strings.Join([]string{
-				"The user's current request asks to generate a temporary file artifact.",
-				"Do not finish by saying the file was generated before an artifact-producing tool succeeds.",
-				"Call the requested artifact-producing tool and keep the result temporary unless the user explicitly asks to save it to File Management.",
-			}, " "),
+			Message: message,
 			SystemMessage: strings.Join([]string{
 				"The candidate final answer is premature for this temporary file generation request.",
-				"Load the selected skill if needed, then call call_skill_tool with skill_id \"" + skillID + "\" and tool_name \"" + toolName + "\" when generation is still needed.",
-				"Use the requested filename, format, and content. Keep lifecycle/target temporary and do not call file-manager/save_file_to_management.",
+				"Do not select a hard-coded generator from the guard result. Choose an enabled artifact-producing tool from the current tool schemas based on the requested output.",
+				"Use the requested filename, format, and content. Keep lifecycle/target temporary and do not call file-manager/save_file_to_management unless the user explicitly asked to save into File Management.",
 				"Only after the artifact-producing tool succeeds may you tell the user the temporary file was generated.",
 			}, " "),
 		}, true

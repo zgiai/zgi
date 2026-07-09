@@ -11,14 +11,20 @@ func appendArtifactProducerSkills(values []string, parts *chatRequestParts) []st
 	if parts == nil {
 		return values
 	}
-	if skillIDEnabled(parts.SkillIDs, skills.SkillChartGenerator) && shouldPreferChartArtifactProducer(parts) {
-		return appendUniqueStrings(values, skills.SkillChartGenerator)
+	fileEnabled := skillIDEnabled(parts.SkillIDs, skills.SkillFileGenerator)
+	chartEnabled := skillIDEnabled(parts.SkillIDs, skills.SkillChartGenerator)
+	if chartEnabled && shouldPreferChartArtifactProducer(parts) {
+		values = appendUniqueStrings(values, skills.SkillChartGenerator)
+		if fileEnabled {
+			values = appendUniqueStrings(values, skills.SkillFileGenerator)
+		}
+		return values
 	}
-	if skillIDEnabled(parts.SkillIDs, skills.SkillFileGenerator) {
-		return appendUniqueStrings(values, skills.SkillFileGenerator)
+	if fileEnabled {
+		values = appendUniqueStrings(values, skills.SkillFileGenerator)
 	}
-	if skillIDEnabled(parts.SkillIDs, skills.SkillChartGenerator) {
-		return appendUniqueStrings(values, skills.SkillChartGenerator)
+	if chartEnabled {
+		values = appendUniqueStrings(values, skills.SkillChartGenerator)
 	}
 	return values
 }
@@ -58,22 +64,6 @@ func modelTurnIntentRequestsTemporaryFileArtifact(intent *AIChatModelTurnIntent)
 		"pdf_artifact",
 		"spreadsheet_artifact",
 	)
-}
-
-func temporaryFileGenerateRequiredTool(parts *chatRequestParts) (string, string) {
-	if parts == nil {
-		return "", ""
-	}
-	if shouldPreferChartArtifactProducer(parts) && skillIDEnabled(parts.SkillIDs, skills.SkillChartGenerator) {
-		return skills.SkillChartGenerator, "generate_chart"
-	}
-	if skillIDEnabled(parts.SkillIDs, skills.SkillFileGenerator) {
-		return skills.SkillFileGenerator, "generate_file"
-	}
-	if skillIDEnabled(parts.SkillIDs, skills.SkillChartGenerator) {
-		return skills.SkillChartGenerator, "generate_chart"
-	}
-	return "", ""
 }
 
 func shouldPreferChartArtifactProducer(parts *chatRequestParts) bool {

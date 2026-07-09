@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -554,7 +555,7 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesCreateGuidance(t *test
 		"save_file_to_management",
 		`"capability_id":"file.create"`,
 		"temporary_artifact",
-		"generic SVG/vector",
+		"best matches the requested output",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("contextual create guidance missing %q in:\n%s", want, content)
@@ -787,7 +788,7 @@ func TestContextualAIChatTurnStrategyDoesNotPromoteFileIntentWithoutModelIntent(
 	}
 }
 
-func TestContextualAIChatTurnStrategyUsesFileGeneratorForGenericSVGWhenChartGeneratorEnabled(t *testing.T) {
+func TestContextualAIChatTurnStrategyExposesArtifactProducersWhenChartGeneratorEnabled(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
 			Query:   "\u751f\u6210\u4e00\u4e2a\u4e34\u65f6 SVG \u6587\u4ef6\uff0c\u5185\u5bb9\u753b\u4e00\u4e2a\u7eff\u8272\u5706\u70b9\uff0c\u4e0d\u8981\u4fdd\u5b58\u5230\u6587\u4ef6\u7ba1\u7406\u3002",
@@ -808,14 +809,17 @@ func TestContextualAIChatTurnStrategyUsesFileGeneratorForGenericSVGWhenChartGene
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
 	}
-	if got, want := strategy.PrimarySkills, []string{skills.SkillFileGenerator}; len(got) != len(want) || got[0] != want[0] {
+	if got, want := strategy.PrimarySkills, []string{skills.SkillFileGenerator, skills.SkillChartGenerator}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("PrimarySkills = %#v, want %#v", got, want)
 	}
 	metadata := streamingMessageMetadataWithTaskID(prepared.parts, "task-svg")
 	plan := metadata["operation_plan"].(map[string]interface{})
 	stepStatus := plan["step_status"].(map[string]interface{})
-	if _, ok := stepStatus["skill:"+skills.SkillChartGenerator]; ok {
-		t.Fatalf("operation plan step_status includes chart-generator for generic SVG: %#v", stepStatus)
+	if len(stepStatus) != 0 {
+		t.Fatalf("operation plan step_status = %#v, want no fixed artifact producer step", stepStatus)
+	}
+	if got := stringFromAny(plan["tool_choice_mode"]); got != aiChatTurnToolChoiceModelDecides {
+		t.Fatalf("operation_plan.tool_choice_mode = %q, want %q; plan=%#v", got, aiChatTurnToolChoiceModelDecides, plan)
 	}
 }
 
@@ -854,8 +858,13 @@ func TestTemporaryFileGenerateFinalAnswerGuardRequiresArtifactTool(t *testing.T)
 	if !blocked {
 		t.Fatal("guard allowed a temporary generation success claim before artifact tool success")
 	}
-	if result.SkillID != skills.SkillFileGenerator || result.ToolName != "generate_file" {
-		t.Fatalf("guard result = %#v, want file-generator/generate_file", result)
+	if result.SkillID != "" || result.ToolName != "" {
+		t.Fatalf("guard result = %#v, want no hard-coded required tool", result)
+	}
+	for _, want := range []string{"artifact-producing tool evidence", "Choose an enabled artifact-producing tool"} {
+		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
+			t.Fatalf("guard result missing %q: %#v", want, result)
+		}
 	}
 
 	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
@@ -867,6 +876,17 @@ func TestTemporaryFileGenerateFinalAnswerGuardRequiresArtifactTool(t *testing.T)
 	})
 	if blocked {
 		t.Fatal("guard blocked after file-generator/generate_file succeeded")
+	}
+
+	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
+		Answer: "\u5df2\u751f\u6210\u4e34\u65f6\u6587\u4ef6 temporary.svg",
+		AttemptedToolCalls: []skillloop.SkillToolCallRef{{
+			SkillID:  skills.SkillChartGenerator,
+			ToolName: "generate_chart",
+		}},
+	})
+	if blocked {
+		t.Fatal("guard blocked after an artifact-producing tool was attempted")
 	}
 }
 
@@ -2714,13 +2734,8 @@ func TestSkillLoopToolCallGuardAllowsManagedFileWorkBeforeOptionalFilesRoute(t *
 			"output_filename": "wrong",
 		},
 	})
-	if !blocked {
-		t.Fatal("tool guard allowed chart generation for a generic SVG request")
-	}
-	for _, want := range []string{skills.SkillFileGenerator, "generate_file", "generic SVG"} {
-		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
-			t.Fatalf("chart guard result missing %q: %#v", want, result)
-		}
+	if blocked {
+		t.Fatalf("tool guard blocked model-decided chart generation for a file creation request; result=%#v", result)
 	}
 }
 
@@ -3929,7 +3944,7 @@ func TestSkillLoopToolCallGuardBlocksDuplicateGenerationForReferencedRecentArtif
 	}
 }
 
-func TestSkillLoopToolCallGuardKeepsGenericSVGOnFileGenerator(t *testing.T) {
+func TestSkillLoopToolCallGuardAllowsModelChosenArtifactProducer(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: consoleFilesCreateCapabilityTestParts("please create an svg file in File Management"),
 	}
@@ -3948,13 +3963,8 @@ func TestSkillLoopToolCallGuardKeepsGenericSVGOnFileGenerator(t *testing.T) {
 			"output_filename": "wrong",
 		},
 	})
-	if !blocked {
-		t.Fatal("tool guard allowed chart-generator for generic SVG creation")
-	}
-	for _, want := range []string{skills.SkillFileGenerator, "generate_file", "generic SVG"} {
-		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
-			t.Fatalf("generic SVG guard result missing %q: %#v", want, result)
-		}
+	if blocked {
+		t.Fatalf("tool guard blocked model-chosen artifact producer for file creation; result=%#v", result)
 	}
 }
 
@@ -4709,7 +4719,7 @@ func TestSkillLoopReadOnlyCandidateLookupUsesCapabilityGoalsOverQuery(t *testing
 	}
 }
 
-func TestTemporaryArtifactProducerPrefersModelCapabilityHint(t *testing.T) {
+func TestArtifactProducerSkillsExposeEnabledProducersWithModelHintOrder(t *testing.T) {
 	chartParts := &chatRequestParts{
 		Query:    "generate an SVG report",
 		SkillIDs: []string{skills.SkillFileGenerator, skills.SkillChartGenerator},
@@ -4718,8 +4728,8 @@ func TestTemporaryArtifactProducerPrefersModelCapabilityHint(t *testing.T) {
 			RecommendedCapabilities: []string{"chart_artifact"},
 		},
 	}
-	if skillID, toolName := temporaryFileGenerateRequiredTool(chartParts); skillID != skills.SkillChartGenerator || toolName != "generate_chart" {
-		t.Fatalf("temporaryFileGenerateRequiredTool(chart hint) = %s/%s, want chart-generator/generate_chart", skillID, toolName)
+	if got, want := appendArtifactProducerSkills(nil, chartParts), []string{skills.SkillChartGenerator, skills.SkillFileGenerator}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("appendArtifactProducerSkills(chart hint) = %#v, want %#v", got, want)
 	}
 
 	fileParts := &chatRequestParts{
@@ -4730,16 +4740,16 @@ func TestTemporaryArtifactProducerPrefersModelCapabilityHint(t *testing.T) {
 			RecommendedCapabilities: []string{"file_artifact"},
 		},
 	}
-	if skillID, toolName := temporaryFileGenerateRequiredTool(fileParts); skillID != skills.SkillFileGenerator || toolName != "generate_file" {
-		t.Fatalf("temporaryFileGenerateRequiredTool(file hint) = %s/%s, want file-generator/generate_file", skillID, toolName)
+	if got, want := appendArtifactProducerSkills(nil, fileParts), []string{skills.SkillFileGenerator, skills.SkillChartGenerator}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("appendArtifactProducerSkills(file hint) = %#v, want %#v", got, want)
 	}
 
 	unclassifiedParts := &chatRequestParts{
 		Query:    "generate a pie chart SVG",
 		SkillIDs: []string{skills.SkillFileGenerator, skills.SkillChartGenerator},
 	}
-	if skillID, toolName := temporaryFileGenerateRequiredTool(unclassifiedParts); skillID != skills.SkillFileGenerator || toolName != "generate_file" {
-		t.Fatalf("temporaryFileGenerateRequiredTool(no model hint) = %s/%s, want file-generator/generate_file", skillID, toolName)
+	if got, want := appendArtifactProducerSkills(nil, unclassifiedParts), []string{skills.SkillFileGenerator, skills.SkillChartGenerator}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("appendArtifactProducerSkills(no model hint) = %#v, want %#v", got, want)
 	}
 }
 

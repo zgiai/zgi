@@ -54,7 +54,7 @@ func consoleFilesFileManagementCreateFinalAnswerGuard(parts *chatRequestParts, m
 			"The user's current files-page request explicitly asks to create or save a new file into File Management or the current Files page.",
 			"Do not finish by saying this is unsupported.",
 			"Load the appropriate artifact-producing skill and file-manager if needed. For each destination file, create one temporary artifact, then call file-manager/save_file_to_management with source_type \"tool_file\", the generated tool_file_id/file_id, and that destination filename.",
-			"Use file-generator for normal files and generic SVG/vector files. Use chart-generator only when the user explicitly asks for a chart, graph, data visualization, or a supported chart type.",
+			"Choose the artifact-producing skill that best matches the requested output; file-generator fits regular documents and files, while chart-generator fits charts, graphs, and data visualizations.",
 			"Keep generated files temporary only when the user did not explicitly ask for File Management, current Files page, save, create, upload, or import as the target.",
 			"Only after file-manager/save_file_to_management succeeds may you say the File Management file was created. If approval is required, wait for tool governance instead of asking for a separate natural-language confirmation.",
 		}
