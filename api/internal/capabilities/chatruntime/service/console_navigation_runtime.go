@@ -227,92 +227,6 @@ func requiresConsoleFilesRouteBeforeManagedFileCreate(parts *chatRequestParts) b
 	return skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator)
 }
 
-func resolveConsoleNavigationTargetForPrepared(prepared *PreparedChat) (consoleNavigationRouteHint, bool) {
-	if prepared == nil {
-		return consoleNavigationRouteHint{}, false
-	}
-	return resolveConsoleNavigationTargetForParts(prepared.parts)
-}
-
-func resolveConsoleNavigationTargetForParts(parts *chatRequestParts) (consoleNavigationRouteHint, bool) {
-	if parts == nil {
-		return consoleNavigationRouteHint{}, false
-	}
-	if requiresConsoleFilesRouteBeforeManagedFileCreate(parts) {
-		return consoleFilesRouteHint(), true
-	}
-	targets := consoleNavigationResolvedTargetsForParts(parts)
-	if len(targets) == 0 {
-		return consoleNavigationRouteHint{}, false
-	}
-	if len(targets) == 1 {
-		return targets[0], true
-	}
-	completedHrefs := completedConsoleNavigationHrefsFromParts(parts)
-	for _, target := range targets {
-		if consumeCompletedConsoleNavigationHref(&completedHrefs, target.Href) {
-			continue
-		}
-		if !clientActionContinuationLoadedRoute(parts, target.Href) {
-			return target, true
-		}
-	}
-	return targets[len(targets)-1], true
-}
-
-func normalizeConsoleNavigationRouteHint(route consoleNavigationRouteHint) consoleNavigationRouteHint {
-	if route.Href != "/console/agents" {
-		return route
-	}
-	for _, keyword := range route.Keywords {
-		if strings.Contains(strings.ToLower(strings.TrimSpace(keyword)), "workflow") {
-			route.Href = "/console/workflows"
-			if strings.TrimSpace(route.Label) == "" {
-				route.Label = "Workflows"
-			}
-			return route
-		}
-	}
-	return route
-}
-
-func remainingConsoleNavigationRouteSequence(parts *chatRequestParts, nextTarget consoleNavigationRouteHint) []AIChatTurnStrategyRouteStep {
-	if parts == nil {
-		return nil
-	}
-	targets := consoleNavigationResolvedTargetsForParts(parts)
-	if len(targets) == 0 && strings.TrimSpace(nextTarget.Href) != "" {
-		targets = []consoleNavigationRouteHint{nextTarget}
-	}
-	sequence := make([]AIChatTurnStrategyRouteStep, 0, len(targets))
-	completedHrefs := completedConsoleNavigationHrefsFromParts(parts)
-	for _, target := range targets {
-		if strings.TrimSpace(target.Href) == "" {
-			continue
-		}
-		if consumeCompletedConsoleNavigationHref(&completedHrefs, target.Href) {
-			continue
-		}
-		status := "pending"
-		if consoleNavigationLoadedHrefMatchesTarget(target.Href, nextTarget.Href) {
-			status = "next"
-		}
-		sequence = append(sequence, AIChatTurnStrategyRouteStep{
-			Href:   target.Href,
-			Label:  target.Label,
-			Status: status,
-		})
-	}
-	if len(sequence) == 0 && strings.TrimSpace(nextTarget.Href) != "" {
-		sequence = append(sequence, AIChatTurnStrategyRouteStep{
-			Href:   nextTarget.Href,
-			Label:  nextTarget.Label,
-			Status: "next",
-		})
-	}
-	return sequence
-}
-
 func consoleNavigationRouteHintForHref(href string) consoleNavigationRouteHint {
 	href = normalizeConsoleNavigationGuardHref(href)
 	if href == "" {
@@ -398,46 +312,6 @@ func consoleFilesRouteHint() consoleNavigationRouteHint {
 func isConsoleNavigatorNavigateTool(skillID string, toolName string) bool {
 	return strings.EqualFold(strings.TrimSpace(skillID), skills.SkillConsoleNavigator) &&
 		strings.EqualFold(strings.TrimSpace(toolName), "navigate")
-}
-
-func consoleNavigationRequiredToolFinalAnswerGuard(target consoleNavigationRouteHint) skillloop.FinalAnswerGuard {
-	return func(req skillloop.FinalAnswerGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
-		if finalAnswerGuardHasSuccessfulToolForConsoleHref(req, skills.SkillConsoleNavigator, "navigate", target.Href) ||
-			finalAnswerGuardHasAttemptedToolForConsoleHref(req, skills.SkillConsoleNavigator, "navigate", target.Href) {
-			return skillloop.FinalAnswerGuardResult{}, false
-		}
-		return consoleNavigationRequiredToolGuardResult(target), true
-	}
-}
-
-func consoleNavigationRequiredToolGuardResult(target consoleNavigationRouteHint) skillloop.FinalAnswerGuardResult {
-	message := strings.Join([]string{
-		fmt.Sprintf("The user's current request is to open the ZGI console page %s (%s).", target.Label, target.Href),
-		"Do not finish with a natural-language message saying the page has opened yet.",
-		fmt.Sprintf("Load the console-navigator skill if needed, then call call_skill_tool with skill_id %q, tool_name %q, and href %q.", skills.SkillConsoleNavigator, "navigate", target.Href),
-		"Only after navigate succeeds in this turn may you tell the user that the page was opened. If the tool fails, report the actual tool result.",
-	}, " ")
-	payload := map[string]interface{}{
-		"skill_id":  skills.SkillConsoleNavigator,
-		"tool_name": "navigate",
-		"arguments": map[string]interface{}{
-			"href": target.Href,
-		},
-	}
-	if target.Label != "" {
-		payload["label"] = target.Label
-	}
-	encoded, err := json.Marshal(payload)
-	systemMessage := message
-	if err == nil {
-		systemMessage = systemMessage + " Resolved route JSON for tool arguments: " + string(encoded)
-	}
-	return skillloop.FinalAnswerGuardResult{
-		SkillID:       skills.SkillConsoleNavigator,
-		ToolName:      "navigate",
-		Message:       message,
-		SystemMessage: systemMessage,
-	}
 }
 
 func createdAgentRequiresDetailNavigationGuardResult(target consoleNavigationRouteHint) skillloop.FinalAnswerGuardResult {

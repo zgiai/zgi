@@ -487,16 +487,6 @@ func TestAgentManagementBatchDeleteWithGovernanceFastPathsWithoutObservation(t *
 	}
 }
 
-func TestConsoleNavigationResolvedTargetsRecognizesChineseRouteAliases(t *testing.T) {
-	targets := consoleNavigationResolvedTargets("请先切到文件管理页，然后再切回智能体页")
-	if len(targets) != 2 {
-		t.Fatalf("targets = %#v, want two resolved routes", targets)
-	}
-	if targets[0].Href != "/console/files" || targets[1].Href != "/console/agents" {
-		t.Fatalf("targets = %#v, want files then agents", targets)
-	}
-}
-
 func TestAgentManagementIntentIgnoresNegatedFileMutationConstraint(t *testing.T) {
 	query := "\u8bf7\u5148\u5207\u5230\u667a\u80fd\u4f53\u9875\uff0c\u7136\u540e\u518d\u5207\u56de\u6587\u4ef6\u7ba1\u7406\u9875\uff1b\u4e0d\u8981\u521b\u5efa\u3001\u4fdd\u5b58\u3001\u5220\u9664\u6587\u4ef6\u3002"
 	if isAgentManagementIntent(query) {

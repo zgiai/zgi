@@ -427,7 +427,7 @@ func shouldIsolateHistoryForCurrentTurn(parts *chatRequestParts) bool {
 	if strategy == nil {
 		return false
 	}
-	if strategy.RouteRequired || strategy.RequiredNextTool != nil || len(strategy.PlannedTools) > 0 {
+	if strategy.RouteRequired || len(strategy.PlannedTools) > 0 {
 		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(strategy.AssetEffect)) {

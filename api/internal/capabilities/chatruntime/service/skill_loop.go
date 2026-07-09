@@ -373,19 +373,6 @@ func skillLoopCompletionPageContextEvidence(parts *chatRequestParts) map[string]
 	if runtimeRoute := consoleRouteFromRuntimeContext(parts.RuntimeContext); runtimeRoute != "" {
 		out["runtime_route"] = runtimeRoute
 	}
-	if target, ok := resolveConsoleNavigationTargetForParts(parts); ok && strings.TrimSpace(target.Href) != "" {
-		resolved := map[string]interface{}{
-			"href": target.Href,
-		}
-		if target.Label != "" {
-			resolved["label"] = target.Label
-		}
-		out["resolved_target_from_user_request"] = resolved
-		if consoleNavigationRouteAlreadyAvailable(parts, target.Href) {
-			out["target_route_already_available"] = true
-			out["route_evidence"] = "current_page_context_matches_target"
-		}
-	}
 	if resources := skillLoopCompactPageContextResources(parts, 12); len(resources) > 0 {
 		out["resources"] = resources
 	}
@@ -1244,9 +1231,6 @@ func turnStrategyAllowedSkillIDs(strategy *AIChatTurnStrategy) map[string]struct
 		if skills.RequiresPromptProfessionalizerPreflight(skillID, toolName) {
 			add(skills.SkillPromptProfessionalizer)
 		}
-	}
-	if strategy.RequiredNextTool != nil {
-		addTool(*strategy.RequiredNextTool)
 	}
 	for _, tool := range strategy.PlannedTools {
 		addTool(tool)
@@ -3307,6 +3291,9 @@ func skillLoopShouldAllowUnplannedEvidenceTool(prepared *PreparedChat, skillID s
 	if !operationPlanToolIsReplayableEvidence(skillID, toolName) {
 		return false
 	}
+	if operationPlanModelDecidesTools(plan) {
+		return true
+	}
 	goal := operationPlanAmendmentGoal(prepared)
 	if strings.TrimSpace(goal) == "" {
 		return false
@@ -3340,6 +3327,9 @@ func skillLoopCanAmendOperationPlanForTool(prepared *PreparedChat, skillID strin
 	if operationPlanHasToolStepWithStatus(plan, skillID, toolName, operationPlanStepStatusCompleted) &&
 		!operationPlanToolIsReplayableEvidence(skillID, toolName) {
 		return false
+	}
+	if operationPlanModelDecidesTools(plan) {
+		return true
 	}
 	goal := operationPlanAmendmentGoal(prepared)
 	if goal == "" {
@@ -3903,7 +3893,6 @@ func aiChatTurnStrategyPromptView(strategy *AIChatTurnStrategy) map[string]inter
 	if err := json.Unmarshal(encoded, &view); err != nil {
 		return nil
 	}
-	delete(view, "required_next_tool")
 	delete(view, "planned_tools")
 	if goals := mapSliceFromAny(view["capability_goals"]); len(goals) > 0 {
 		view["capability_goals"] = aiChatTurnStrategyPromptCapabilityGoals(goals)
@@ -3995,7 +3984,7 @@ func skillLoopShouldUsePlainStreamForPassiveAnswer(prepared *PreparedChat) bool 
 	if !strings.EqualFold(strings.TrimSpace(strategy.Intent), "answer_or_explain_zgi_context") {
 		return false
 	}
-	if strategy.RouteRequired || strategy.RequiredNextTool != nil || len(strategy.PlannedTools) > 0 || len(strategy.RemainingRouteSequence) > 0 {
+	if strategy.RouteRequired || len(strategy.PlannedTools) > 0 {
 		return false
 	}
 	if !strings.EqualFold(strings.TrimSpace(strategy.Approval), "none") {
@@ -4047,10 +4036,8 @@ type AIChatTurnStrategy struct {
 	Avoid                    []string                    `json:"avoid,omitempty"`
 	CapabilityGoals          []AIChatAgentCapabilityGoal `json:"capability_goals,omitempty"`
 
-	RequiredNextTool       *AIChatTurnStrategyTool       `json:"required_next_tool,omitempty"`
-	RemainingRouteSequence []AIChatTurnStrategyRouteStep `json:"remaining_route_sequence,omitempty"`
-	PlannedTools           []AIChatTurnStrategyTool      `json:"planned_tools,omitempty"`
-	StructuredPlan         *AIChatStructuredPlan         `json:"structured_plan,omitempty"`
+	PlannedTools   []AIChatTurnStrategyTool `json:"planned_tools,omitempty"`
+	StructuredPlan *AIChatStructuredPlan    `json:"structured_plan,omitempty"`
 }
 
 const (
@@ -4067,12 +4054,6 @@ type AIChatTurnStrategyTool struct {
 	WaitForStepID string            `json:"wait_for_step_id,omitempty"`
 	OutputAlias   string            `json:"output_alias,omitempty"`
 	ArgsBinding   map[string]string `json:"args_binding,omitempty"`
-}
-
-type AIChatTurnStrategyRouteStep struct {
-	Href   string `json:"href"`
-	Label  string `json:"label,omitempty"`
-	Status string `json:"status"`
 }
 
 func contextualAIChatTurnStrategy(prepared *PreparedChat) *AIChatTurnStrategy {
@@ -4148,7 +4129,7 @@ func contextualAIChatTurnStrategyFromParts(parts *chatRequestParts) *AIChatTurnS
 	}
 
 	if stagedCurrent {
-		if _, ok := resolveConsoleNavigationTargetForParts(parts); ok {
+		if len(consoleNavigationResolvedTargetsForParts(parts)) > 0 {
 			strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceTurnProtocol, "staged_current_navigation_scope")
 			return finalizeAIChatTurnStrategy(parts, contextualNavigationStrategy(parts, strategy))
 		}
@@ -4180,26 +4161,9 @@ func finalizeAIChatTurnStrategy(parts *chatRequestParts, strategy *AIChatTurnStr
 		!skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
 		return enrichAIChatTurnStrategyPlannedTools(parts, strategy)
 	}
-	target := consoleNavigationRouteHintForHref(strategy.TargetPage)
-	if target.Href == "" {
-		target = consoleNavigationRouteHint{Href: strategy.TargetPage, Label: "Console page"}
-	}
-	if strings.TrimSpace(target.Href) == "" {
-		return enrichAIChatTurnStrategyPlannedTools(parts, strategy)
-	}
-	strategy.RequiredNextTool = &AIChatTurnStrategyTool{
-		SkillID:  skills.SkillConsoleNavigator,
-		ToolName: "navigate",
-		Arguments: map[string]string{
-			"href": target.Href,
-		},
-	}
-	if target.Label != "" {
-		strategy.RequiredNextTool.Arguments["reason"] = "open " + target.Label + " for the current user request"
-	}
-	strategy.RemainingRouteSequence = remainingConsoleNavigationRouteSequence(parts, target)
+	strategy.PrimarySkills = appendUniqueStrings(strategy.PrimarySkills, skills.SkillConsoleNavigator)
 	strategy.Avoid = appendUniqueStrings(strategy.Avoid,
-		"treat the route target as a preferred next phase, but if current page evidence already satisfies the target or a low-risk observe/read/list step is needed, continue from evidence and record the deviation instead of forcing a redundant route",
+		"treat route_required and target_page as navigation context, not as a fixed tool script; choose console-navigator/navigate only when current page evidence does not already satisfy the user goal",
 	)
 	return enrichAIChatTurnStrategyPlannedTools(parts, strategy)
 }
@@ -4738,7 +4702,8 @@ func contextualNavigationStrategy(parts *chatRequestParts, strategy *AIChatTurnS
 	strategy.AssetEffect = "none"
 	strategy.AssetRisk = "low"
 	strategy.Approval = "none"
-	if target, ok := resolveConsoleNavigationTargetForParts(parts); ok {
+	if targets := consoleNavigationResolvedTargetsForParts(parts); len(targets) > 0 {
+		target := targets[0]
 		strategy.TargetPage = target.Href
 		routeRequired := !clientActionContinuationLoadedRoute(parts, target.Href)
 		if consoleNavigationRouteAlreadyAvailable(parts, target.Href) {
@@ -4820,31 +4785,25 @@ func appendUniqueStrings(values []string, additions ...string) []string {
 }
 
 type consoleNavigationRouteHint struct {
-	Href     string   `json:"href"`
-	Label    string   `json:"label"`
-	Keywords []string `json:"keywords,omitempty"`
-}
-
-type resolvedConsoleNavigationTarget struct {
-	Hint     consoleNavigationRouteHint
-	Position int
+	Href  string `json:"href"`
+	Label string `json:"label"`
 }
 
 var consoleNavigationRouteHints = []consoleNavigationRouteHint{
-	{Href: "/console", Label: "首页", Keywords: []string{"首页", "主页", "控制台首页", "home"}},
-	{Href: "/console/work/chat", Label: "对话", Keywords: []string{"对话页面", "聊天页面", "会话页面", "conversation", "chat page"}},
-	{Href: "/console/work/image", Label: "绘图", Keywords: []string{"绘图", "图像生成", "图片生成", "image page", "drawing"}},
-	{Href: "/console/work/app", Label: "应用", Keywords: []string{"应用页面", "应用管理", "app page", "apps page"}},
-	{Href: "/console/work/task", Label: "定时任务", Keywords: []string{"定时任务", "计划任务", "任务页面", "scheduled task", "tasks page"}},
-	{Href: "/console/agents", Label: "智能体", Keywords: []string{"智能体", "agent page", "agents page", "agent list"}},
-	{Href: "/console/agents", Label: "工作流", Keywords: []string{"工作流页面", "工作流列表", "workflow page", "workflows page"}},
-	{Href: "/console/dataset", Label: "知识库", Keywords: []string{"知识库", "数据集", "dataset", "knowledge base"}},
-	{Href: "/console/db", Label: "数据库", Keywords: []string{"数据库", "数据表", "database", "db page"}},
-	{Href: "/console/files", Label: "文件管理", Keywords: []string{"文件管理", "文件页", "文件页面", "文件模块", "files page", "file management"}},
-	{Href: "/console/prompts", Label: "提示词", Keywords: []string{"提示词", "prompt", "prompts page"}},
-	{Href: "/console/developer/content-parse", Label: "文件识别", Keywords: []string{"文件识别", "内容解析", "content parse", "file recognition"}},
-	{Href: "/console/workspace", Label: "工作空间", Keywords: []string{"工作空间", "workspace"}},
-	{Href: "/console/settings", Label: "系统设置", Keywords: []string{"系统设置", "设置页面", "settings"}},
+	{Href: "/console", Label: "首页"},
+	{Href: "/console/work/chat", Label: "对话"},
+	{Href: "/console/work/image", Label: "绘图"},
+	{Href: "/console/work/app", Label: "应用"},
+	{Href: "/console/work/task", Label: "定时任务"},
+	{Href: "/console/agents", Label: "智能体"},
+	{Href: "/console/workflows", Label: "工作流"},
+	{Href: "/console/dataset", Label: "知识库"},
+	{Href: "/console/db", Label: "数据库"},
+	{Href: "/console/files", Label: "文件管理"},
+	{Href: "/console/prompts", Label: "提示词"},
+	{Href: "/console/developer/content-parse", Label: "文件识别"},
+	{Href: "/console/workspace", Label: "工作空间"},
+	{Href: "/console/settings", Label: "系统设置"},
 }
 
 func contextualConsoleNavigationSkillMessageForResolved(prepared *PreparedChat, resolved *skills.ResolvedSkills) (adapter.Message, bool) {
@@ -4858,7 +4817,6 @@ func contextualConsoleNavigationSkillMessageForResolved(prepared *PreparedChat, 
 	routes := make([]map[string]string, 0, len(consoleNavigationRouteHints))
 	seen := map[string]struct{}{}
 	for _, route := range consoleNavigationRouteHints {
-		route = normalizeConsoleNavigationRouteHint(route)
 		key := route.Href + "\x00" + route.Label
 		if _, ok := seen[key]; ok {
 			continue
@@ -4874,29 +4832,6 @@ func contextualConsoleNavigationSkillMessageForResolved(prepared *PreparedChat, 
 		"tool_name": "navigate",
 		"routes":    routes,
 	}
-	target, hasResolvedTarget := resolveConsoleNavigationTargetForPrepared(prepared)
-	if hasResolvedTarget {
-		payload["resolved_target_from_user_request"] = map[string]string{
-			"href":  target.Href,
-			"label": target.Label,
-		}
-		if consoleNavigationRouteAlreadyAvailable(prepared.parts, target.Href) {
-			payload["target_route_already_available"] = true
-			payload["route_evidence"] = "current_page_context_matches_target"
-		}
-		if !clientActionContinuationLoadedRoute(prepared.parts, target.Href) &&
-			!consoleNavigationRouteAlreadyAvailable(prepared.parts, target.Href) {
-			payload["preferred_route_action"] = map[string]interface{}{
-				"skill_id":  skills.SkillConsoleNavigator,
-				"tool_name": "navigate",
-				"arguments": map[string]string{
-					"href":   target.Href,
-					"reason": "open " + target.Label + " for the current user request",
-				},
-			}
-			payload["remaining_route_sequence"] = remainingConsoleNavigationRouteSequence(prepared.parts, target)
-		}
-	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return adapter.Message{}, false
@@ -4906,11 +4841,8 @@ func contextualConsoleNavigationSkillMessageForResolved(prepared *PreparedChat, 
 		"ZGI console navigation guidance:",
 		"Use console-navigator/navigate when the user asks to open, go to, enter, switch to, or navigate to a known ZGI console module page.",
 		"When the user explicitly asks to save, upload, import, or write a file into File Management from another console page, navigate to /console/files only if the current page context is not already Files and the File Management page context is still needed for the save.",
-		"When preferred_route_action is present in Console navigation JSON, treat it as a suggested route phase, not an immutable script: load console-navigator if needed and call navigate only when the current page does not already match the target.",
 		"If current page evidence already satisfies the target, or a low-risk observe/read/list step is needed to complete the user's goal, continue from that evidence instead of forcing a redundant navigate call.",
-		"When remaining_route_sequence has more than one pending route, complete exactly one navigate call, wait for the frontend route_loaded continuation, then continue with the next pending route from the resumed context.",
-		"Do not use request_user_input when the destination is resolved from the site map.",
-		"If the resolved target already matches the current page context, treat the current page context as successful page evidence, do not call navigate only to create proof, and answer or continue from the visible page context.",
+		"Choose the destination from the route catalog and current page evidence; do not ask the user to repeat the page name when the request is already clear.",
 		"Do not say a different page has been opened unless console-navigator/navigate succeeded in this turn or the current page context already matches the requested target. If the navigate tool fails, report that failure plainly.",
 		"Navigation does not mutate user assets and must use only whitelisted internal /console routes.",
 		"Console navigation JSON: " + string(encoded),
@@ -5202,8 +5134,7 @@ func agentManagementNavigationGuidanceAllowed(prepared *PreparedChat) bool {
 		return false
 	}
 	strategy := contextualAIChatTurnStrategyFromParts(prepared.parts)
-	return strategy != nil && strategy.RouteRequired && strategy.RequiredNextTool != nil &&
-		isConsoleNavigatorNavigateTool(strategy.RequiredNextTool.SkillID, strategy.RequiredNextTool.ToolName)
+	return strategy != nil && strategy.RouteRequired && skillIDEnabled(prepared.parts.SkillIDs, skills.SkillConsoleNavigator)
 }
 
 func contextualConsoleFilesSkillMessage(prepared *PreparedChat) (adapter.Message, bool) {
@@ -5302,9 +5233,6 @@ func contextualConsoleFilesSkillMessage(prepared *PreparedChat) (adapter.Message
 		})
 	}
 	payload["tools"] = tools
-	if targets := consoleFilesPromptResolvedTargets(parts); len(targets) > 0 {
-		payload["resolved_targets_from_user_request"] = targets
-	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return adapter.Message{}, false
@@ -5317,15 +5245,13 @@ func contextualConsoleFilesSkillMessage(prepared *PreparedChat) (adapter.Message
 		"When reporting file operation outcomes to a normal user, mention only the file name and the user-visible action result. For successful deletion, say that the named file was deleted; do not report raw counters or internal identifiers.",
 		"When a file tool fails, explain the failure plainly in the user's language, do not claim success, and ask for the next safe step only when needed.",
 		"For requests that only ask what files are visible, available, selected, or present on the Files page, answer directly from visible_files in the Files-page context JSON when it is present and sufficient. Use file-reader/list_visible_files only when that context is missing, ambiguous, or needs an authoritative refresh.",
-		"For typed ordinal requests such as \"the second Excel file\", \"\u7b2c\u4e8c\u4e2a Excel\", or \"\u6700\u540e\u4e00\u4e2a PDF\", resolve among files of that type using file_type_rank or extension_rank. Do not treat \"second Excel\" as visible_index 2 unless that file is also the second Excel in visible_files.",
-		"For requests about reading, previewing, summarizing, analyzing, or translating visible file contents, use file-reader/read_file with the resolved file_id.",
-		"When resolved_targets_from_user_request is present, the target is already resolved from the current page. Use the listed file_id exactly for file-reader/read_file or file-manager/delete_file; it overrides any other ordinal or file-type interpretation.",
-		"Do not ask the user to select a file, repeat the file name, or choose another visible file with the same type when a resolved target is present.",
+		"For typed ordinal requests such as \"the second Excel file\", \"\u7b2c\u4e8c\u4e2a Excel\", or \"\u6700\u540e\u4e00\u4e2a PDF\", decide the target from visible_files using file_type_rank or extension_rank. Do not treat \"second Excel\" as visible_index 2 unless that file is also the second Excel in visible_files.",
+		"When visible file content is needed to answer, call file-reader/read_file with a file_id from the Files-page context JSON.",
 		"After read_file returns content_status \"extracted\", answer from the returned content field and continue requested post-processing such as summary or translation. Do not say the file cannot be read.",
-		"For requests about deleting or removing a resolved visible file, use file-manager/delete_file with exactly that file_id. Tool governance handles the approval card before deletion; do not ask for a separate natural-language confirmation first.",
+		"When deleting or removing a visible file is the next action you choose, call file-manager/delete_file with a file_id from the Files-page context JSON. Tool governance handles the approval card before deletion; do not ask for a separate natural-language confirmation first.",
 		"If a prior approval or session grant exists, it only skips the approval prompt. You must still call file-manager/delete_file in this turn and wait for the tool result before saying the file was deleted.",
 		"Never claim a file was deleted, removed, updated, created, saved, or otherwise changed based only on previous conversation context.",
-		"If the target file is missing or ambiguous, call request_user_input with a concise clarification instead of guessing.",
+		"If the target file cannot be determined from structured context, call request_user_input with a concise clarification instead of guessing.",
 		"For requests to create, generate, write, save, upload, import, or export a new file into File Management or the current Files page, use a two-step flow: first use the appropriate artifact-producing skill to create a temporary artifact, then use file-manager/save_file_to_management with source_type \"tool_file\", the generated tool_file_id/file_id, and the destination filename.",
 		"Use file-generator for regular files, documents, generic SVG/vector files, PDFs, DOCX, PPTX, XLSX, CSV, JSON, Markdown, HTML, or TXT. Use chart-generator only when the user explicitly asks for a chart, graph, data visualization, or a supported chart type.",
 		"When the user says this file, the previous file, the generated file, or the file just created and asks to save/upload/import it into File Management, resolve that reference from recent_generated_files before considering visible_files. Use the listed tool_file_id only as a tool argument.",
@@ -5336,9 +5262,6 @@ func contextualConsoleFilesSkillMessage(prepared *PreparedChat) (adapter.Message
 		"Do not call unrelated discovery or domain tools, such as database, knowledge, or calculator, before completing the requested files-page operation.",
 		"For existing-file read/delete operations, do not call file-generation tools before the requested read/delete is completed.",
 		"Files-page context JSON: " + string(encoded),
-	}
-	if hint := consoleFilesGuardTargetArgumentHint(consoleFilesPromptResolvedTargets(prepared.parts), ""); hint != "" {
-		lines = append(lines, hint)
 	}
 	content := strings.Join(lines, "\n")
 	return adapter.Message{Role: "system", Content: content}, true
@@ -5430,40 +5353,23 @@ func skillLoopToolCallGuard(prepared *PreparedChat) skillloop.ToolCallGuard {
 			}
 		}
 		if isConsoleNavigatorNavigateTool(req.SkillID, req.ToolName) {
-			if target, ok := resolveConsoleNavigationTargetForParts(executionParts); ok &&
-				clientActionContinuationLoadedRoute(executionParts, target.Href) &&
-				consoleNavigationLoadedHrefMatchesTarget(skillToolCallArgumentString(req.Arguments, "href"), target.Href) {
-				return skillloop.FinalAnswerGuardResult{
-					SkillID:  skills.SkillConsoleNavigator,
-					ToolName: "navigate",
-					Message: strings.Join([]string{
-						"The requested console page is already loaded by the previous client navigation action.",
-						"Do not navigate to the same page again; continue from the current page context.",
-					}, " "),
-					SystemMessage: strings.Join([]string{
-						"The route navigation client action has already completed successfully for this request.",
-						"Do not call console-navigator/navigate again for the same href.",
-						"Continue with any remaining page operation or provide the final answer from the loaded page context.",
-					}, " "),
-				}, true
-			}
-		}
-		if requiresConsoleFilesRouteBeforeManagedFileCreate(executionParts) {
-			target := consoleFilesRouteHint()
-			if isConsoleNavigatorNavigateTool(req.SkillID, req.ToolName) &&
-				consoleNavigationLoadedHrefMatchesTarget(skillToolCallArgumentString(req.Arguments, "href"), target.Href) {
-				return skillloop.FinalAnswerGuardResult{}, false
-			}
-			if isConsoleNavigatorNavigateTool(req.SkillID, req.ToolName) {
-				result := consoleNavigationRequiredToolGuardResult(target)
-				result.Message = strings.Join([]string{
-					"The user asked to create or save a file in File Management from another console page.",
-					"Route to the Files page only when page context is still needed; do not navigate to a different page for this save.",
-				}, " ")
-				if result.SystemMessage != "" {
-					result.SystemMessage = result.Message + " " + result.SystemMessage
+			for _, target := range consoleNavigationResolvedTargetsForParts(executionParts) {
+				if clientActionContinuationLoadedRoute(executionParts, target.Href) &&
+					consoleNavigationLoadedHrefMatchesTarget(skillToolCallArgumentString(req.Arguments, "href"), target.Href) {
+					return skillloop.FinalAnswerGuardResult{
+						SkillID:  skills.SkillConsoleNavigator,
+						ToolName: "navigate",
+						Message: strings.Join([]string{
+							"The requested console page is already loaded by the previous client navigation action.",
+							"Do not navigate to the same page again; continue from the current page context.",
+						}, " "),
+						SystemMessage: strings.Join([]string{
+							"The route navigation client action has already completed successfully for this request.",
+							"Do not call console-navigator/navigate again for the same href.",
+							"Continue with any remaining page operation or provide the final answer from the loaded page context.",
+						}, " "),
+					}, true
 				}
-				return result, true
 			}
 		}
 
@@ -5591,59 +5497,7 @@ func skillLoopConsoleFilesFinalAnswerGuard(prepared *PreparedChat) skillloop.Fin
 	if guard := consoleFilesContinuationPendingDeleteFinalAnswerGuard(parts, metadata); guard != nil {
 		return guard
 	}
-	if shouldSkipConsoleFilesFinalAnswerGuardForNavigationObservation(prepared, parts, metadata) {
-		return nil
-	}
-	targets := consoleFilesPromptResolvedTargets(parts)
-	if len(targets) == 0 {
-		return nil
-	}
-	if hasConsoleFilesCapability(parts.RuntimeContext, consoleFilesDeleteCapabilityPattern, parts.RawOperationContext, parts.OperationContext) &&
-		turnTaskContractRequestsFileDelete(parts, metadata, "") {
-		if !skillIDEnabled(parts.SkillIDs, skills.SkillFileManager) {
-			return nil
-		}
-		return consoleFilesRequiredToolFinalAnswerGuard(skills.SkillFileManager, targets, "delete_file", []string{
-			"The user's current files-page request is a concrete file deletion request for {target}.",
-			"Do not finish with a natural-language success message yet.",
-			"Load the file-manager skill if needed, then call call_skill_tool with skill_id \"file-manager\", tool_name \"delete_file\", and the resolved file_id for the target file.",
-			"A session approval grant may skip the approval card, but it does not replace the delete_file tool call.",
-			"Only after delete_file succeeds in this turn may you tell the user that the file was deleted. If the tool fails or the file is already missing, report the actual tool result.",
-		})
-	}
-	if hasConsoleFilesReadCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
-		turnTaskContractRequestsFileRead(parts, metadata, "") {
-		if !skillIDEnabled(parts.SkillIDs, skills.SkillFileReader) {
-			return nil
-		}
-		return consoleFilesRequiredToolFinalAnswerGuard(skills.SkillFileReader, targets, "read_file", []string{
-			"The user's current files-page request requires reading the actual content of {target}.",
-			"Do not finish from visible page metadata, file names, or prior conversation context.",
-			"Load the file-reader skill if needed, then call call_skill_tool with skill_id \"file-reader\", tool_name \"read_file\", and the resolved file_id for the target file.",
-			"Only after read_file succeeds in this turn may you summarize, translate, quote, or answer from the file content. If the tool fails or returns empty content, report the actual tool result.",
-		})
-	}
 	return nil
-}
-
-func shouldSkipConsoleFilesFinalAnswerGuardForNavigationObservation(prepared *PreparedChat, parts *chatRequestParts, metadata map[string]interface{}) bool {
-	if parts == nil || !turnTaskContractRequestsConsoleNavigation(parts, metadata, "") {
-		return false
-	}
-	if turnTaskContractRequestsManagedFileCreate(parts, metadata, "") ||
-		turnTaskContractRequestsFileDelete(parts, metadata, "") ||
-		turnTaskContractRequestsFileRead(parts, metadata, "") {
-		return false
-	}
-	if completedConsoleNavigationOperationPlan(metadata) {
-		return true
-	}
-	if prepared != nil {
-		if strategy := contextualAIChatTurnStrategy(prepared); strategy != nil && strings.EqualFold(strategy.Intent, "navigate_console_page") {
-			return true
-		}
-	}
-	return false
 }
 
 func completedConsoleNavigationOperationPlan(metadata map[string]interface{}) bool {
@@ -5724,21 +5578,7 @@ func skillLoopConsoleNavigationFinalAnswerGuard(prepared *PreparedChat) skillloo
 			return nil
 		}
 	}
-	target, ok := resolveConsoleNavigationTargetForPrepared(preparedForGuard)
-	if !ok {
-		return nil
-	}
-	if consoleNavigationLoadedHrefMatchesTarget("/console/files", target.Href) &&
-		consoleFilesRouteAlreadyAvailable(preparedForGuard.parts) {
-		return nil
-	}
-	if consoleNavigationRouteAlreadyAvailable(preparedForGuard.parts, target.Href) {
-		return nil
-	}
-	if clientActionContinuationLoadedRoute(preparedForGuard.parts, target.Href) {
-		return nil
-	}
-	return consoleNavigationRequiredToolFinalAnswerGuard(target)
+	return nil
 }
 
 func stringSliceContainsFold(values []string, target string) bool {
@@ -5854,29 +5694,13 @@ func skillLoopUserInputGuard(prepared *PreparedChat) skillloop.UserInputGuard {
 			}, " ")
 		} else {
 			result.Message = strings.Join([]string{
-				"The request_user_input call was blocked because the files-page target is already resolved in runtime context.",
-				"Do not ask the user to choose between visible files, repeat a known file name, or confirm information already represented by resolved_targets_from_user_request.",
+				"The request_user_input call was blocked because the files-page state already contains enough structured context for the current guarded step.",
+				"Do not ask the user to repeat information already represented by visible files, selected files, recent generated files, or successful tool evidence.",
 				result.Message,
 			}, " ")
 		}
 		return result, true
 	}
-}
-
-func agentDeleteTargetsMatchingQueryText(visible []map[string]interface{}, query string) []map[string]interface{} {
-	targets := make([]map[string]interface{}, 0, len(visible))
-	for _, agent := range visible {
-		id := strings.ToLower(strings.TrimSpace(firstNonEmptyString(agent["agent_id"], agent["id"])))
-		name := strings.ToLower(strings.TrimSpace(stringFromAny(agent["name"])))
-		if name != "" && strings.Contains(query, name) {
-			targets = append(targets, agentDeleteTargetFromVisibleAgent(agent))
-			continue
-		}
-		if id != "" && strings.Contains(query, id) {
-			targets = append(targets, agentDeleteTargetFromVisibleAgent(agent))
-		}
-	}
-	return targets
 }
 
 func agentDeleteTargetFromVisibleAgent(agent map[string]interface{}) map[string]interface{} {
@@ -6709,37 +6533,6 @@ func consoleFilesPromptRecentGeneratedFiles(parts *chatRequestParts) []map[strin
 			if value := strings.TrimSpace(stringFromAny(artifact[key])); value != "" {
 				item[key] = value
 			}
-		}
-		out = append(out, item)
-	}
-	return out
-}
-
-func consoleFilesPromptResolvedTargets(parts *chatRequestParts) []map[string]interface{} {
-	refs := plannerResourceRefsFromConsoleFilesQuery(parts)
-	if len(refs) == 0 {
-		return nil
-	}
-	result := resolveChatResourceRefs(parts, refs)
-	if !allResourceRefsResolved(result.Results) || len(result.FileIDs) == 0 {
-		return nil
-	}
-	namesByID := map[string]string{}
-	for _, file := range append(visibleFileResources(parts.RawOperationContext), visibleFileResources(parts.OperationContext)...) {
-		if file.ID != "" && file.Title != "" {
-			namesByID[file.ID] = file.Title
-		}
-	}
-	for _, resource := range result.Resources {
-		if strings.TrimSpace(resource.ID) != "" && strings.TrimSpace(resource.Name) != "" {
-			namesByID[strings.TrimSpace(resource.ID)] = strings.TrimSpace(resource.Name)
-		}
-	}
-	out := make([]map[string]interface{}, 0, len(result.FileIDs))
-	for _, id := range result.FileIDs {
-		item := map[string]interface{}{"file_id": id}
-		if name := namesByID[id]; name != "" {
-			item["name"] = name
 		}
 		out = append(out, item)
 	}

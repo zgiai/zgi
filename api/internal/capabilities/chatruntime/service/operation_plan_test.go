@@ -502,8 +502,8 @@ func TestOperationPlanForCrossPageAgentCreateIncludesRouteAndCreate(t *testing.T
 	if got := target["page"]; got != "/console/agents" {
 		t.Fatalf("operation_plan target_page = %#v, want /console/agents; plan=%#v", got, plan)
 	}
-	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillConsoleNavigator, "navigate")); got != operationPlanStepStatusPending {
-		t.Fatalf("operation_plan steps = %#v, want console-navigator/navigate", plan["steps"])
+	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillConsoleNavigator, "navigate")); got != "" {
+		t.Fatalf("operation_plan navigate step status = %q, want no scripted navigate step; steps=%#v", got, plan["steps"])
 	}
 	if got := target["effect"]; got != "create" {
 		t.Fatalf("operation_plan target effect = %#v, want create; plan=%#v", got, plan)
@@ -511,8 +511,8 @@ func TestOperationPlanForCrossPageAgentCreateIncludesRouteAndCreate(t *testing.T
 	if got := plan["risk_level"]; got != "medium" {
 		t.Fatalf("operation_plan risk_level = %#v, want medium; plan=%#v", got, plan)
 	}
-	if got := plan["approval_required"]; got != false {
-		t.Fatalf("operation_plan approval_required = %#v, want false until a concrete model-decided mutation tool is called; plan=%#v", got, plan)
+	if got := plan["approval_required"]; got != true {
+		t.Fatalf("operation_plan approval_required = %#v, want true for governed Agent mutation risk; plan=%#v", got, plan)
 	}
 	if got := stringFromAny(plan["approval"]); !strings.Contains(got, "governed") {
 		t.Fatalf("operation_plan approval = %q, want governance guidance for later mutation tools; plan=%#v", got, plan)
@@ -762,17 +762,10 @@ func TestRestrictResolvedSkillsForTurnStrategyKeepsOnlyPlannedSkillsVisible(t *t
 	}
 }
 
-func TestTurnStrategyAllowedSkillIDsKeepsPlannedToolsAfterRouteHint(t *testing.T) {
+func TestTurnStrategyAllowedSkillIDsKeepsPlannedToolsWithRouteHint(t *testing.T) {
 	strategy := &AIChatTurnStrategy{
 		Intent:        "manage_agent_asset",
 		RouteRequired: true,
-		RequiredNextTool: &AIChatTurnStrategyTool{
-			SkillID:  skills.SkillConsoleNavigator,
-			ToolName: "navigate",
-			Arguments: map[string]string{
-				"href": "/console/agents/agent-1/agent",
-			},
-		},
 		PlannedTools: []AIChatTurnStrategyTool{
 			{SkillID: skills.SkillAgentManagement, ToolName: "update_agent_config"},
 			{SkillID: skills.SkillAgentManagement, ToolName: "get_agent_config"},
@@ -780,7 +773,7 @@ func TestTurnStrategyAllowedSkillIDsKeepsPlannedToolsAfterRouteHint(t *testing.T
 	}
 
 	allowed := turnStrategyAllowedSkillIDs(strategy)
-	for _, want := range []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement} {
+	for _, want := range []string{skills.SkillAgentManagement} {
 		if _, ok := allowed[want]; !ok {
 			t.Fatalf("allowed skills = %#v, missing %s", allowed, want)
 		}
@@ -872,8 +865,8 @@ func TestAgentManagementUnsupportedMVPRequestStaysModelDecides(t *testing.T) {
 	if strategy.ToolChoiceMode != aiChatTurnToolChoiceModelDecides {
 		t.Fatalf("ToolChoiceMode = %q, want %q; strategy=%#v", strategy.ToolChoiceMode, aiChatTurnToolChoiceModelDecides, strategy)
 	}
-	if len(strategy.PlannedTools) > 0 || strategy.RequiredNextTool != nil {
-		t.Fatalf("strategy planned tools = %#v required=%#v, want model-decides without scripted unsupported tools", strategy.PlannedTools, strategy.RequiredNextTool)
+	if len(strategy.PlannedTools) > 0 {
+		t.Fatalf("strategy planned tools = %#v, want model-decides without scripted unsupported tools", strategy.PlannedTools)
 	}
 	if !skillIDEnabled(strategy.PrimarySkills, skills.SkillAgentManagement) {
 		t.Fatalf("PrimarySkills = %#v, want agent-management available so model can use skill docs/tool boundary", strategy.PrimarySkills)
@@ -4744,8 +4737,8 @@ func TestAgentManagementCapabilityQuestionUsesPageContextWithoutTools(t *testing
 	if strategy.ToolChoiceMode != aiChatTurnToolChoiceModelDecides {
 		t.Fatalf("ToolChoiceMode = %q, want %q; strategy=%#v", strategy.ToolChoiceMode, aiChatTurnToolChoiceModelDecides, strategy)
 	}
-	if len(strategy.PlannedTools) > 0 || strategy.RequiredNextTool != nil {
-		t.Fatalf("strategy planned tool use = tools %#v required %#v, want model-decides without scripted tools", strategy.PlannedTools, strategy.RequiredNextTool)
+	if len(strategy.PlannedTools) > 0 {
+		t.Fatalf("strategy planned tool use = tools %#v, want model-decides without scripted tools", strategy.PlannedTools)
 	}
 	if !stringSliceContains(strategy.PrimarySkills, skills.SkillAgentManagement) {
 		t.Fatalf("PrimarySkills = %#v, want agent-management available for model-decides capability answer", strategy.PrimarySkills)
@@ -6884,8 +6877,8 @@ func TestSkillLoopCompletionPageContextEvidenceHonorsNoNavigationRequest(t *test
 		OperationContext:    context,
 	}
 
-	if target, ok := resolveConsoleNavigationTargetForParts(parts); ok {
-		t.Fatalf("resolveConsoleNavigationTargetForParts() = %#v, want no target for explicit no-navigation request", target)
+	if targets := consoleNavigationResolvedTargetsForParts(parts); len(targets) > 0 {
+		t.Fatalf("consoleNavigationResolvedTargetsForParts() = %#v, want no target for explicit no-navigation request", targets)
 	}
 	evidence := skillLoopCompletionPageContextEvidence(parts)
 	if got := stringFromAny(evidence["current_page"]); got != "/console/agents/agent-1/agent" {
@@ -11761,11 +11754,6 @@ func TestAgentManagementExplicitVisibleAgentDetailPlansNavigate(t *testing.T) {
 	if strategy.TargetPage != "/console/agents/agent-1/agent" || !strategy.RouteRequired {
 		t.Fatalf("target/route = %q/%v, want visible Agent detail route; strategy=%#v", strategy.TargetPage, strategy.RouteRequired, strategy)
 	}
-	if strategy.RequiredNextTool == nil || strategy.RequiredNextTool.SkillID != skills.SkillConsoleNavigator ||
-		strategy.RequiredNextTool.ToolName != "navigate" ||
-		strategy.RequiredNextTool.Arguments["href"] != "/console/agents/agent-1/agent" {
-		t.Fatalf("RequiredNextTool = %#v, want navigate to visible Agent detail", strategy.RequiredNextTool)
-	}
 	if len(strategy.PlannedTools) != 0 {
 		t.Fatalf("PlannedTools = %#v, want no hard post-navigation edit script", strategy.PlannedTools)
 	}
@@ -13447,12 +13435,12 @@ func TestOperationPlanPostRouteManagedCreateKeepsModelDecidesContract(t *testing
 		t.Fatalf("intent = %#v, want managed file save", plan["intent"])
 	}
 	stepStatus := plan["step_status"].(map[string]interface{})
-	for _, want := range []string{
+	for _, notWant := range []string{
 		"tool:" + skills.SkillConsoleNavigator + "/navigate",
 		"route:/console/files",
 	} {
-		if stepStatus[want] != operationPlanStepStatusPending {
-			t.Fatalf("step_status = %#v, want %s pending", stepStatus, want)
+		if stepStatus[notWant] != nil {
+			t.Fatalf("step_status = %#v, want no scripted %s", stepStatus, notWant)
 		}
 	}
 	if criteria := fmt.Sprint(plan["success_criteria"]); !strings.Contains(criteria, "file-manager/save_file_to_management") {
@@ -13484,9 +13472,8 @@ func TestOperationPlanManagedCreateDoesNotScriptToolSteps(t *testing.T) {
 			t.Fatalf("step_status = %#v, want no hard-scripted %s", stepStatus, want)
 		}
 	}
-	routeIndex := operationPlanStepIndexForTest(plan, "route:/console/files")
-	if routeIndex < 0 {
-		t.Fatalf("route step missing in %#v", plan["steps"])
+	if routeIndex := operationPlanStepIndexForTest(plan, "route:/console/files"); routeIndex >= 0 {
+		t.Fatalf("route step index = %d in %#v, want no scripted route step", routeIndex, plan["steps"])
 	}
 	if got := stringFromAny(plan["tool_choice_mode"]); got != aiChatTurnToolChoiceModelDecides {
 		t.Fatalf("tool_choice_mode = %q, want model-decides; plan=%#v", got, plan)
@@ -13557,9 +13544,8 @@ func TestOperationPlanChineseStagedManagedCreateAndDeleteGoalUsesModelDecidesCon
 			t.Fatalf("step_status = %#v, want no hard-scripted %s", stepStatus, want)
 		}
 	}
-	routeIndex := operationPlanStepIndexForTest(plan, "route:/console/files")
-	if routeIndex < 0 {
-		t.Fatalf("route step missing in %#v", plan["steps"])
+	if routeIndex := operationPlanStepIndexForTest(plan, "route:/console/files"); routeIndex >= 0 {
+		t.Fatalf("route step index = %d in %#v, want no scripted route step", routeIndex, plan["steps"])
 	}
 	if goal := stringFromAny(plan["original_user_goal"]); !strings.Contains(goal, "SMOKE-COMPLEX") {
 		t.Fatalf("original_user_goal = %q, want concrete file targets preserved", goal)
@@ -13607,8 +13593,8 @@ func TestNavigationStrategyIgnoresNegatedAssetMutationConstraint(t *testing.T) {
 	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillFileManager, "delete_file")); got != "" {
 		t.Fatalf("delete step status = %q, want no delete_file step in %#v", got, plan["steps"])
 	}
-	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillConsoleNavigator, "navigate")); got != operationPlanStepStatusPending {
-		t.Fatalf("navigate step status = %q, want pending", got)
+	if got := operationPlanStepStatusForTest(plan, operationPlanToolStepID(skills.SkillConsoleNavigator, "navigate")); got != "" {
+		t.Fatalf("navigate step status = %q, want no scripted navigate step", got)
 	}
 }
 
@@ -13697,8 +13683,8 @@ func assertAgentManagementModelDecidesExecutionForTest(t *testing.T, strategy *A
 	if got := strings.TrimSpace(strategy.ToolChoiceMode); got != aiChatTurnToolChoiceModelDecides {
 		t.Fatalf("ToolChoiceMode = %q, want %q; strategy=%#v", got, aiChatTurnToolChoiceModelDecides, strategy)
 	}
-	if len(strategy.PlannedTools) != 0 || strategy.RequiredNextTool != nil {
-		t.Fatalf("planned tools = %#v required=%#v, want model-decides without hard scripted tools", strategy.PlannedTools, strategy.RequiredNextTool)
+	if len(strategy.PlannedTools) != 0 {
+		t.Fatalf("planned tools = %#v, want model-decides without hard scripted tools", strategy.PlannedTools)
 	}
 }
 
@@ -13927,83 +13913,6 @@ func TestOperationPlanTaskIDFollowsReplacementMessageID(t *testing.T) {
 	}
 }
 
-func TestOperationPlanKeepsRepeatedRouteSteps(t *testing.T) {
-	strategy := &AIChatTurnStrategy{
-		Intent: "navigate_console_page",
-		RemainingRouteSequence: []AIChatTurnStrategyRouteStep{
-			{Href: "/console", Label: "Home", Status: "next"},
-			{Href: "/console/files", Label: "Files", Status: "pending"},
-			{Href: "/console/agents", Label: "Agents", Status: "pending"},
-			{Href: "/console/db", Label: "Database", Status: "pending"},
-			{Href: "/console/files", Label: "Files", Status: "pending"},
-		},
-	}
-	plan := operationPlanFromTurnStrategy("task-routes", &chatRequestParts{
-		Query:   "\u5148\u5230\u9996\u9875\uff0c\u518d\u5230\u6587\u4ef6\u3001\u667a\u80fd\u4f53\u3001\u6570\u636e\u5e93\uff0c\u6700\u540e\u56de\u5230\u6587\u4ef6",
-		Surface: aiChatSurfaceContextualSidebar,
-	}, strategy)
-	if plan == nil {
-		t.Fatal("operationPlanFromTurnStrategy() = nil, want plan")
-	}
-	wantPages := []string{"/console", "/console/files", "/console/agents", "/console/db", "/console/files"}
-	if got := operationPlanRoutePagesForTest(plan); len(got) != len(wantPages) {
-		t.Fatalf("route pages = %#v, want %#v", got, wantPages)
-	} else {
-		for idx := range wantPages {
-			if got[idx] != wantPages[idx] {
-				t.Fatalf("route pages = %#v, want %#v", got, wantPages)
-			}
-		}
-	}
-	stepStatus := plan["step_status"].(map[string]interface{})
-	for _, id := range []string{"route:/console/files", "route:/console/files#2"} {
-		if stepStatus[id] != operationPlanStepStatusPending {
-			t.Fatalf("step_status[%s] = %#v, want pending in %#v", id, stepStatus[id], stepStatus)
-		}
-		if got := operationPlanStepStatusForTest(plan, id); got != operationPlanStepStatusPending {
-			t.Fatalf("steps[%s].status = %#v, want pending", id, got)
-		}
-	}
-	if plan["pending_next_action"] != "Home" {
-		t.Fatalf("pending_next_action = %#v, want first route title", plan["pending_next_action"])
-	}
-}
-
-func TestOperationPlanRouteToolCallWaitsForClientActionCompletion(t *testing.T) {
-	plan := operationPlanFromTurnStrategy("task-route-tool", &chatRequestParts{
-		Query:   "\u6253\u5f00\u6587\u4ef6\u7ba1\u7406",
-		Surface: aiChatSurfaceContextualSidebar,
-	}, &AIChatTurnStrategy{
-		Intent: "navigate_console_page",
-		RequiredNextTool: &AIChatTurnStrategyTool{
-			SkillID:  skills.SkillConsoleNavigator,
-			ToolName: "navigate",
-			Arguments: map[string]string{
-				"href": "/console/files",
-			},
-		},
-		RemainingRouteSequence: []AIChatTurnStrategyRouteStep{{Href: "/console/files", Label: "Files", Status: "next"}},
-	})
-	metadata := map[string]interface{}{"operation_plan": plan}
-
-	applyOperationPlanInvocationState(metadata, []map[string]interface{}{{
-		"kind":       "tool_call",
-		"runtime_id": "tool:route-files",
-		"status":     "success",
-		"skill_id":   skills.SkillConsoleNavigator,
-		"tool_name":  "navigate",
-		"arguments":  map[string]interface{}{"href": "/console/files"},
-	}})
-
-	updated := metadata["operation_plan"].(map[string]interface{})
-	if got := operationPlanStepStatusForTest(updated, "tool:console-navigator/navigate"); got != operationPlanStepStatusCompleted {
-		t.Fatalf("tool step status = %#v, want completed", got)
-	}
-	if got := operationPlanStepStatusForTest(updated, "route:/console/files"); got != operationPlanStepStatusPending {
-		t.Fatalf("route step status = %#v, want pending until client action", got)
-	}
-}
-
 func TestOperationPlanRecordsUnplannedReadOnlyInvocationDeviation(t *testing.T) {
 	metadata := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
@@ -14126,60 +14035,6 @@ func TestOperationPlanRecordsUnplannedNavigationDeviation(t *testing.T) {
 	}
 	if latest := mapFromOperationContext(state["last_plan_deviation"]); latest["tool_name"] != "navigate" {
 		t.Fatalf("strategy_state.last_plan_deviation = %#v, want navigate", latest)
-	}
-}
-
-func TestOperationPlanCompletesRepeatedRouteStepsSequentiallyFromClientActions(t *testing.T) {
-	plan := operationPlanFromTurnStrategy("task-repeated-routes", &chatRequestParts{
-		Query:   "\u8fde\u7eed\u5bfc\u822a\u5e76\u6700\u540e\u56de\u5230\u6587\u4ef6",
-		Surface: aiChatSurfaceContextualSidebar,
-	}, &AIChatTurnStrategy{
-		Intent: "navigate_console_page",
-		RemainingRouteSequence: []AIChatTurnStrategyRouteStep{
-			{Href: "/console/files", Label: "Files", Status: "next"},
-			{Href: "/console/agents", Label: "Agents", Status: "pending"},
-			{Href: "/console/files", Label: "Files", Status: "pending"},
-		},
-	})
-	metadata := map[string]interface{}{"operation_plan": plan}
-	firstLoaded := map[string]interface{}{
-		"kind":      "client_action",
-		"action_id": "route-files-first",
-		"status":    "succeeded",
-		"skill_id":  skills.SkillConsoleNavigator,
-		"tool_name": "navigate",
-		"href":      "/console/files",
-	}
-
-	applyOperationPlanInvocationState(metadata, []map[string]interface{}{firstLoaded})
-	updated := metadata["operation_plan"].(map[string]interface{})
-	if got := operationPlanStepStatusForTest(updated, "route:/console/files"); got != operationPlanStepStatusCompleted {
-		t.Fatalf("first files route status = %#v, want completed", got)
-	}
-	if got := operationPlanStepStatusForTest(updated, "route:/console/files#2"); got != operationPlanStepStatusPending {
-		t.Fatalf("second files route status = %#v, want pending after first route_loaded", got)
-	}
-
-	applyOperationPlanInvocationState(metadata, []map[string]interface{}{firstLoaded})
-	updated = metadata["operation_plan"].(map[string]interface{})
-	if got := operationPlanStepStatusForTest(updated, "route:/console/files#2"); got != operationPlanStepStatusPending {
-		t.Fatalf("second files route status = %#v, want pending after replaying same route_loaded", got)
-	}
-
-	applyOperationPlanInvocationState(metadata, []map[string]interface{}{
-		firstLoaded,
-		{
-			"kind":      "client_action",
-			"action_id": "route-files-final",
-			"status":    "succeeded",
-			"skill_id":  skills.SkillConsoleNavigator,
-			"tool_name": "navigate",
-			"href":      "/console/files",
-		},
-	})
-	updated = metadata["operation_plan"].(map[string]interface{})
-	if got := operationPlanStepStatusForTest(updated, "route:/console/files#2"); got != operationPlanStepStatusCompleted {
-		t.Fatalf("second files route status = %#v, want completed after distinct final route_loaded", got)
 	}
 }
 

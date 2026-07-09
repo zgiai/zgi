@@ -133,13 +133,6 @@ func agentManagementConfigReadTargetID(parts *chatRequestParts) string {
 	if targetID := agentManagementVisibleIndexTargetID(parts.ModelTurnIntent, visible); targetID != "" {
 		return targetID
 	}
-	query := strings.ToLower(strings.TrimSpace(parts.Query))
-	if query == "" {
-		return ""
-	}
-	if targets := agentDeleteTargetsMatchingQueryText(visible, query); len(targets) == 1 {
-		return strings.TrimSpace(firstNonEmptyString(targets[0]["agent_id"], targets[0]["id"]))
-	}
 	return ""
 }
 

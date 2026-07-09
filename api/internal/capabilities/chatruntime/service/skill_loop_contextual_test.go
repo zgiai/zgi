@@ -84,10 +84,10 @@ func TestPartsFileIntentHelpersPreferModelIntentOverLegacyKeywords(t *testing.T)
 	}
 }
 
-func TestRequestedManagedFileTargetsFromPartsFallsBackOnlyWhenAllowed(t *testing.T) {
+func TestRequestedManagedFileTargetsFromPartsUsesExplicitFilenamesOnly(t *testing.T) {
 	implicitTargetQuery := "save two files, one txt and one svg"
-	if got := requestedManagedFileTargetsFromQuery(implicitTargetQuery); len(got) != 2 {
-		t.Fatalf("legacy requestedManagedFileTargetsFromQuery() returned %d targets, want 2", len(got))
+	if got := requestedManagedFileTargetsFromQuery(implicitTargetQuery); len(got) != 0 {
+		t.Fatalf("requestedManagedFileTargetsFromQuery() returned %d implicit targets, want 0", len(got))
 	}
 
 	answerParts := &chatRequestParts{
@@ -117,9 +117,6 @@ func TestRequestedManagedFileTargetsFromPartsFallsBackOnlyWhenAllowed(t *testing
 
 func TestPartsConsoleNavigationHelpersPreferModelIntentOverLegacyKeywords(t *testing.T) {
 	navigationQuery := "open /console/files"
-	if !isConsoleNavigationIntent(navigationQuery) {
-		t.Fatalf("test fixture query should match legacy console navigation intent")
-	}
 	answerParts := &chatRequestParts{
 		Query:           navigationQuery,
 		Surface:         aiChatSurfaceContextualSidebar,
@@ -130,8 +127,8 @@ func TestPartsConsoleNavigationHelpersPreferModelIntentOverLegacyKeywords(t *tes
 	if partsRequestsConsoleNavigationWithFallback(answerParts, "") {
 		t.Fatal("console navigation intent used legacy keywords despite explicit model answer intent")
 	}
-	if target, ok := resolveConsoleNavigationTargetForParts(answerParts); ok {
-		t.Fatalf("resolveConsoleNavigationTargetForParts() = %#v, want no target for explicit model answer intent", target)
+	if targets := consoleNavigationResolvedTargetsForParts(answerParts); len(targets) != 0 {
+		t.Fatalf("consoleNavigationResolvedTargetsForParts() = %#v, want no target for explicit model answer intent", targets)
 	}
 	strategy := contextualAIChatTurnStrategy(&PreparedChat{parts: answerParts})
 	if strategy == nil {
@@ -165,10 +162,11 @@ func TestPartsConsoleNavigationHelpersPreferModelIntentOverLegacyKeywords(t *tes
 		SkillMode:       skillModeAuto,
 		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "navigate_console_page", TargetPage: "/console/db"},
 	}
-	target, ok := resolveConsoleNavigationTargetForParts(modelNavigationParts)
-	if !ok {
-		t.Fatal("resolveConsoleNavigationTargetForParts() ok = false, want model target")
+	targets := consoleNavigationResolvedTargetsForParts(modelNavigationParts)
+	if len(targets) != 1 {
+		t.Fatalf("consoleNavigationResolvedTargetsForParts() = %#v, want one model target", targets)
 	}
+	target := targets[0]
 	if target.Href != "/console/db" {
 		t.Fatalf("target = %#v, want /console/db from model intent instead of query", target)
 	}
@@ -368,7 +366,7 @@ func TestSkillLoopFinalAnswerGuardAllowsSecondConfirmationAfterFrozenContinuatio
 	}
 }
 
-func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesReadTarget(t *testing.T) {
+func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesContextWithoutPreResolvedTarget(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: consoleFilesSemanticTestParts("\u8bfb\u7b2c\u56db\u4e2a\u6587\u4ef6", []consoleFilesTestFile{
 			{ID: "file-1", Name: "one.txt", Extension: "txt", MimeType: "text/plain"},
@@ -390,19 +388,28 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleFilesReadTarget(t *testing.
 		"file-reader/read_file",
 		`"capability_id":"file.list_visible"`,
 		`"capability_id":"file.read"`,
-		"resolved_targets_from_user_request",
 		`"file_id":"file-4"`,
 		`"visible_index":4`,
-		"Resolved internal target JSON for tool arguments only",
-		"tool_argument_visibility_restriction",
+		"decide the target from visible_files",
+		`content_status "extracted"`,
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("contextual read guidance missing %q in:\n%s", want, content)
 		}
 	}
+	for _, unwanted := range []string{
+		"resolved_targets_from_user_request",
+		"Resolved internal target JSON for tool arguments only",
+		"tool_argument_visibility_restriction",
+		"target is already resolved",
+	} {
+		if strings.Contains(content, unwanted) {
+			t.Fatalf("contextual read guidance still contains pre-resolved target marker %q in:\n%s", unwanted, content)
+		}
+	}
 }
 
-func TestSkillLoopAdditionalSystemMessagesResolvesRecentFileTarget(t *testing.T) {
+func TestSkillLoopAdditionalSystemMessagesDoesNotPreResolveRecentFileTarget(t *testing.T) {
 	query := "\u8bf7\u57fa\u4e8e\u521a\u624d\u90a3\u4e2a\u6587\u4ef6\u63d0\u53d6\u7f34\u8d39\u8d26\u6237"
 	prepared := &PreparedChat{
 		parts: consoleFilesSnapshotTestParts(query, []consoleFilesTestFile{
@@ -430,18 +437,22 @@ func TestSkillLoopAdditionalSystemMessagesResolvesRecentFileTarget(t *testing.T)
 	}
 	content := messageContentText(messages[0].Content)
 	for _, want := range []string{
-		"resolved_targets_from_user_request",
 		`"file_id":"file-1"`,
 		"read_file",
-		"target is already resolved",
+		"visible_files",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("contextual recent guidance missing %q in:\n%s", want, content)
 		}
 	}
+	for _, unwanted := range []string{"resolved_targets_from_user_request", "target is already resolved"} {
+		if strings.Contains(content, unwanted) {
+			t.Fatalf("contextual recent guidance still pre-resolved target %q in:\n%s", unwanted, content)
+		}
+	}
 }
 
-func TestSkillLoopAdditionalSystemMessagesResolvesRecentManagedFileDeleteTarget(t *testing.T) {
+func TestSkillLoopAdditionalSystemMessagesDoesNotPreResolveRecentManagedFileDeleteTarget(t *testing.T) {
 	query := "\u8bf7\u5220\u9664\u521a\u521a\u521b\u5efa\u7684\u6587\u4ef6 aichat-plan-smoke.md\uff0c\u53ea\u5220\u9664\u8fd9\u4e2a\u6d4b\u8bd5\u6587\u4ef6\u3002"
 	prepared := &PreparedChat{
 		parts: consoleFilesSnapshotTestParts(query, nil),
@@ -472,9 +483,6 @@ func TestSkillLoopAdditionalSystemMessagesResolvesRecentManagedFileDeleteTarget(
 	}
 	content := messageContentText(messages[0].Content)
 	for _, want := range []string{
-		"resolved_targets_from_user_request",
-		`"file_id":"managed-file-1"`,
-		`"name":"aichat-plan-smoke.md"`,
 		"file-manager/delete_file",
 		"Tool governance handles the approval card",
 		"do not ask for a separate natural-language confirmation",
@@ -483,7 +491,13 @@ func TestSkillLoopAdditionalSystemMessagesResolvesRecentManagedFileDeleteTarget(
 			t.Fatalf("contextual recent delete guidance missing %q in:\n%s", want, content)
 		}
 	}
-	for _, unwanted := range []string{`"file_id":"managed-file-other"`, `"name":"other-recent.md"`} {
+	for _, unwanted := range []string{
+		"resolved_targets_from_user_request",
+		`"file_id":"managed-file-1"`,
+		`"file_id":"managed-file-other"`,
+		`"name":"aichat-plan-smoke.md"`,
+		`"name":"other-recent.md"`,
+	} {
 		if strings.Contains(content, unwanted) {
 			t.Fatalf("contextual recent delete guidance included unintended target %q in:\n%s", unwanted, content)
 		}
@@ -583,8 +597,8 @@ func TestContextualAIChatTurnStrategyPlansRouteBeforeManagedFileCreate(t *testin
 		skills.SkillFileManager,
 		"exactly one temporary artifact",
 		"asset_observation:file.create",
-		"preferred next phase",
-		"low-risk observe/read/list step",
+		"route_required and target_page as navigation context",
+		"not as a fixed tool script",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("turn strategy missing %q in:\n%s", want, content)
@@ -1001,9 +1015,6 @@ func TestContextualAIChatTurnStrategyDoesNotNavigateForCurrentFilesPageQuestion(
 	if strategy.RouteRequired {
 		t.Fatalf("RouteRequired = true, want false for already visible files page")
 	}
-	if strategy.RequiredNextTool != nil {
-		t.Fatalf("RequiredNextTool = %#v, want nil", strategy.RequiredNextTool)
-	}
 }
 
 func TestSkillLoopUsesPlainStreamForPassiveContextAnswer(t *testing.T) {
@@ -1155,12 +1166,6 @@ func TestContextualAIChatTurnStrategyKeepsAgentModelIntentBeforeFileFallbackWhen
 	if !strategy.RouteRequired {
 		t.Fatal("RouteRequired = false, want true before Agent page loads")
 	}
-	if strategy.RequiredNextTool == nil ||
-		strategy.RequiredNextTool.SkillID != skills.SkillConsoleNavigator ||
-		strategy.RequiredNextTool.ToolName != "navigate" ||
-		strategy.RequiredNextTool.Arguments["href"] != "/console/agents" {
-		t.Fatalf("RequiredNextTool = %#v, want console-navigator navigate to /console/agents", strategy.RequiredNextTool)
-	}
 	if strategy.Intent == "save_generated_file_to_file_management" || strategy.TargetPage == "/console/files" {
 		t.Fatalf("strategy fell back to managed file create: %#v", strategy)
 	}
@@ -1205,12 +1210,6 @@ func TestContextualAIChatTurnStrategyKeepsAgentIntentWithFileFirstPhase(t *testi
 	}
 	if strategy.TargetPage != "/console/files" {
 		t.Fatalf("TargetPage = %q, want /console/files for the file-read precondition", strategy.TargetPage)
-	}
-	if strategy.RequiredNextTool == nil ||
-		strategy.RequiredNextTool.SkillID != skills.SkillConsoleNavigator ||
-		strategy.RequiredNextTool.ToolName != "navigate" ||
-		strategy.RequiredNextTool.Arguments["href"] != "/console/files" {
-		t.Fatalf("RequiredNextTool = %#v, want console-navigator navigate to /console/files", strategy.RequiredNextTool)
 	}
 	if !slices.Contains(strategy.SupportingSkills, skills.SkillFileReader) {
 		t.Fatalf("SupportingSkills = %#v, want file-reader for file-first Agent setup", strategy.SupportingSkills)
@@ -1950,33 +1949,17 @@ func TestContextualAIChatTurnStrategyTreatsAutoContinueRouteSequenceAsNavigation
 	if strategy.TargetPage != "/console" || !strategy.RouteRequired {
 		t.Fatalf("target/route = %q/%v, want /console/true", strategy.TargetPage, strategy.RouteRequired)
 	}
-	if strategy.RequiredNextTool == nil || strategy.RequiredNextTool.Arguments["href"] != "/console" {
-		t.Fatalf("RequiredNextTool = %#v, want navigate to /console", strategy.RequiredNextTool)
-	}
-	want := []string{"/console"}
-	if len(strategy.RemainingRouteSequence) != 1 || strategy.RemainingRouteSequence[0].Href != "/console" {
-		t.Fatalf("remaining route sequence = %#v, want only /console from model target", strategy.RemainingRouteSequence)
-	}
-
 	metadata := streamingMessageMetadataWithTaskID(prepared.parts, "task-nav-sequence")
 	plan := metadata["operation_plan"].(map[string]interface{})
 	if plan["intent"] != "navigate_console_page" {
 		t.Fatalf("operation plan intent = %#v, want navigate_console_page", plan["intent"])
 	}
-	if got := operationPlanRoutePagesForTest(plan); len(got) != len(want) {
-		t.Fatalf("operation plan route pages = %#v, want %#v", got, want)
-	} else {
-		for idx := range want {
-			if got[idx] != want[idx] {
-				t.Fatalf("operation plan route pages = %#v, want %#v", got, want)
-			}
-		}
+	if got := operationPlanRoutePagesForTest(plan); len(got) != 0 {
+		t.Fatalf("operation plan route pages = %#v, want none", got)
 	}
 	stepStatus := plan["step_status"].(map[string]interface{})
-	for _, id := range []string{"route:/console"} {
-		if _, ok := stepStatus[id]; !ok {
-			t.Fatalf("operation plan step_status = %#v, missing %s", stepStatus, id)
-		}
+	if stepStatus["route:/console"] != nil {
+		t.Fatalf("operation plan step_status = %#v, want no route step", stepStatus)
 	}
 }
 
@@ -2010,12 +1993,6 @@ func TestContextualAIChatTurnStrategyScopesStagedContinuationToCurrentPhase(t *t
 	if strategy.TargetPage != "/console/agents" {
 		t.Fatalf("TargetPage = %q, want /console/agents", strategy.TargetPage)
 	}
-	if strategy.RequiredNextTool == nil || strategy.RequiredNextTool.Arguments["href"] != "/console/agents" {
-		t.Fatalf("RequiredNextTool = %#v, want navigate to /console/agents", strategy.RequiredNextTool)
-	}
-	if len(strategy.RemainingRouteSequence) != 1 || strategy.RemainingRouteSequence[0].Href != "/console/agents" {
-		t.Fatalf("RemainingRouteSequence = %#v, want only /console/agents", strategy.RemainingRouteSequence)
-	}
 	for _, tool := range strategy.PlannedTools {
 		if tool.SkillID == skills.SkillFileGenerator || tool.SkillID == skills.SkillFileManager {
 			t.Fatalf("PlannedTools = %#v, want no deferred file tools in current phase", strategy.PlannedTools)
@@ -2027,8 +2004,8 @@ func TestContextualAIChatTurnStrategyScopesStagedContinuationToCurrentPhase(t *t
 	if plan["status"] != operationPlanStatusRunning {
 		t.Fatalf("operation plan status = %#v, want running while waiting for continue", plan["status"])
 	}
-	if plan["pending_next_action"] != "Navigate to page" {
-		t.Fatalf("pending_next_action = %#v, want initial route before wait", plan["pending_next_action"])
+	if plan["pending_next_action"] != "Wait for user continue" {
+		t.Fatalf("pending_next_action = %#v, want wait before deferred work", plan["pending_next_action"])
 	}
 	stepStatus := plan["step_status"].(map[string]interface{})
 	if stepStatus["wait:continue"] != operationPlanStepStatusPending {
@@ -2091,9 +2068,6 @@ func TestContextualAIChatTurnStrategyResumesStagedContinuationFromDeferredGoal(t
 	}
 	if strategy.TargetPage != "/console/files" || !strategy.RouteRequired {
 		t.Fatalf("target/route = %q/%v, want /console/files/true", strategy.TargetPage, strategy.RouteRequired)
-	}
-	if strategy.RequiredNextTool == nil || strategy.RequiredNextTool.Arguments["href"] != "/console/files" {
-		t.Fatalf("RequiredNextTool = %#v, want navigate to /console/files", strategy.RequiredNextTool)
 	}
 	for _, want := range []string{skills.SkillFileGenerator, skills.SkillFileManager} {
 		if !slices.Contains(strategy.SupportingSkills, want) && !slices.Contains(strategy.PrimarySkills, want) {
@@ -2161,11 +2135,6 @@ func TestContextualAIChatTurnStrategyResumesStagedFileGoalWithoutAgentNameRoute(
 	}
 	if strategy.TargetPage != "/console/files" || !strategy.RouteRequired {
 		t.Fatalf("target/route = %q/%v, want /console/files/true; scoped query=%q agentIntent=%v managedIntent=%v strategy=%#v", strategy.TargetPage, strategy.RouteRequired, scopedParts.Query, isAgentManagementIntent(scopedParts.Query), isManagedFileCreateIntent(scopedParts.Query), strategy)
-	}
-	for _, route := range strategy.RemainingRouteSequence {
-		if route.Href == "/console/agents" {
-			t.Fatalf("RemainingRouteSequence = %#v, want no /console/agents from resource attribute mention", strategy.RemainingRouteSequence)
-		}
 	}
 	for _, want := range []string{skills.SkillFileGenerator, skills.SkillFileManager} {
 		if !slices.Contains(strategy.SupportingSkills, want) && !slices.Contains(strategy.PrimarySkills, want) {
@@ -2263,7 +2232,7 @@ func TestSkillLoopToolCallGuardBlocksDeferredStagedContinuationTools(t *testing.
 	}
 }
 
-func TestResolveConsoleNavigationTargetForPartsUsesNextUnfinishedRoute(t *testing.T) {
+func TestConsoleNavigationModelTargetsRemainAdvisoryAfterCompletedRoutes(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:     "\u8bf7\u5148\u5207\u5230\u667a\u80fd\u4f53\u9875\uff0c\u7136\u540e\u518d\u5207\u56de\u6587\u4ef6\u7ba1\u7406\u9875",
 		Surface:   aiChatSurfaceContextualSidebar,
@@ -2283,12 +2252,16 @@ func TestResolveConsoleNavigationTargetForPartsUsesNextUnfinishedRoute(t *testin
 		},
 	}
 
-	target, ok := resolveConsoleNavigationTargetForParts(parts)
-	if !ok {
-		t.Fatal("resolveConsoleNavigationTargetForParts() ok = false, want true")
+	targets := consoleNavigationResolvedTargetsForParts(parts)
+	if len(targets) != 1 {
+		t.Fatalf("consoleNavigationResolvedTargetsForParts() = %#v, want one model target", targets)
 	}
-	if target.Href != "/console/files" {
-		t.Fatalf("target = %#v, want /console/files as next unfinished route", target)
+	if targets[0].Href != "/console/files" {
+		t.Fatalf("target = %#v, want /console/files from model intent", targets[0])
+	}
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil")
 	}
 }
 
@@ -2385,12 +2358,12 @@ func TestContextualAIChatTurnStrategyContinuationManagedCreateKeepsFilePlan(t *t
 	}
 	plan := operationPlanFromTurnStrategy("task-continuation-save", prepared.parts, strategy)
 	stepStatus := plan["step_status"].(map[string]interface{})
-	for _, want := range []string{
+	for _, notWant := range []string{
 		"tool:console-navigator/navigate",
 		"route:/console/files",
 	} {
-		if _, ok := stepStatus[want]; !ok {
-			t.Fatalf("step_status = %#v, missing %s", stepStatus, want)
+		if stepStatus[notWant] != nil {
+			t.Fatalf("step_status = %#v, want no scripted %s", stepStatus, notWant)
 		}
 	}
 }
@@ -2724,18 +2697,13 @@ func TestSkillLoopToolCallGuardAllowsManagedFileWorkBeforeOptionalFilesRoute(t *
 		t.Fatal("tool guard blocked optional Files page navigation")
 	}
 
-	result, blocked = guard(skillloop.ToolCallGuardRequest{
+	_, blocked = guard(skillloop.ToolCallGuardRequest{
 		SkillID:   skills.SkillConsoleNavigator,
 		ToolName:  "navigate",
 		Arguments: map[string]interface{}{"href": "/console/agents"},
 	})
-	if !blocked {
-		t.Fatal("tool guard allowed navigation away from Files during managed file creation")
-	}
-	for _, want := range []string{skills.SkillConsoleNavigator, "navigate", "/console/files"} {
-		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
-			t.Fatalf("wrong-route guard result missing %q: %#v", want, result)
-		}
+	if blocked {
+		t.Fatal("tool guard blocked model-decided navigation away from Files during managed file creation")
 	}
 
 	result, blocked = guard(skillloop.ToolCallGuardRequest{
@@ -4056,13 +4024,8 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleNavigationGuidance(t *testi
 	for _, want := range []string{
 		"ZGI console navigation guidance",
 		"console-navigator/navigate",
-		"preferred_route_action",
-		"suggested route phase",
-		"not an immutable script",
 		"low-risk observe/read/list step",
-		"remaining_route_sequence",
-		"Do not use request_user_input",
-		"current page context as successful page evidence",
+		"Choose the destination from the route catalog",
 		"Do not say a different page has been opened unless",
 		`"href":"/console/work/task"`,
 		`"label":"定时任务"`,
@@ -4077,53 +4040,14 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleNavigationGuidance(t *testi
 	}
 	if strings.Contains(content, "the next skill-loop action is constrained") ||
 		strings.Contains(content, "before answering, asking the user, or using another business tool") ||
-		strings.Contains(content, "required_next_tool") {
+		strings.Contains(content, "required_next_tool") ||
+		strings.Contains(content, "preferred_route_action") ||
+		strings.Contains(content, "remaining_route_sequence") {
 		t.Fatalf("console navigation guidance still contains hard required_next_tool wording:\n%s", content)
 	}
 }
 
-func TestConsoleNavigationResolvedTargetsPreservesRepeatedRouteOrder(t *testing.T) {
-	targets := consoleNavigationResolvedTargets("\u8bf7\u4f9d\u6b21\u6253\u5f00\u6587\u4ef6\u7ba1\u7406\u3001\u667a\u80fd\u4f53\u3001\u6570\u636e\u5e93\u3001\u6587\u4ef6\u7ba1\u7406")
-	got := make([]string, 0, len(targets))
-	for _, target := range targets {
-		got = append(got, target.Href)
-	}
-	want := []string{"/console/files", "/console/agents", "/console/db", "/console/files"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("resolved targets = %#v, want %#v", got, want)
-	}
-}
-
-func TestConsoleNavigationResolvedTargetsDoesNotTreatNestedConsoleHrefAsHome(t *testing.T) {
-	targets := consoleNavigationResolvedTargets("open /console/files")
-	got := make([]string, 0, len(targets))
-	for _, target := range targets {
-		got = append(got, target.Href)
-	}
-	want := []string{"/console/files"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("resolved targets = %#v, want %#v", got, want)
-	}
-}
-
-func TestConsoleNavigationResolvedTargetsIgnoreResourceAttributeMentions(t *testing.T) {
-	targets := consoleNavigationResolvedTargets("\u518d\u8fdb\u5165\u6587\u4ef6\u7ba1\u7406\uff0c\u521b\u5efa\u5e76\u4fdd\u5b58\u4e24\u4e2a\u6587\u4ef6\uff1btxt \u5185\u5bb9\u5199\u5165\u8bfb\u53d6\u5230\u7684\u667a\u80fd\u4f53\u540d\u79f0")
-	got := make([]string, 0, len(targets))
-	for _, target := range targets {
-		got = append(got, target.Href)
-	}
-	want := []string{"/console/files"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("resolved targets = %#v, want %#v", got, want)
-	}
-
-	targets = consoleNavigationResolvedTargets("\u6253\u5f00\u667a\u80fd\u4f53")
-	if len(targets) != 1 || targets[0].Href != "/console/agents" {
-		t.Fatalf("standalone agent navigation targets = %#v, want /console/agents", targets)
-	}
-}
-
-func TestResolveConsoleNavigationTargetForPartsConsumesCompletedRouteSequence(t *testing.T) {
+func TestConsoleNavigationStrategyDoesNotScriptCompletedRouteSequence(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:     "\u8bf7\u4f9d\u6b21\u6253\u5f00\u6587\u4ef6\u7ba1\u7406\u3001\u667a\u80fd\u4f53\u3001\u6570\u636e\u5e93\u3001\u6587\u4ef6\u7ba1\u7406",
 		SkillIDs:  []string{skills.SkillConsoleNavigator},
@@ -4155,23 +4079,17 @@ func TestResolveConsoleNavigationTargetForPartsConsumesCompletedRouteSequence(t 
 		},
 	}
 
-	target, ok := resolveConsoleNavigationTargetForParts(parts)
-	if !ok {
-		t.Fatal("resolveConsoleNavigationTargetForParts() returned no target")
+	targets := consoleNavigationResolvedTargetsForParts(parts)
+	if len(targets) != 1 {
+		t.Fatalf("consoleNavigationResolvedTargetsForParts() = %#v, want one model target", targets)
 	}
-	if target.Href != "/console/files" {
-		t.Fatalf("target href = %s, want final repeated /console/files", target.Href)
+	if targets[0].Href != "/console/files" {
+		t.Fatalf("target href = %s, want model /console/files", targets[0].Href)
 	}
 
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
-	if strategy == nil || strategy.RequiredNextTool == nil {
-		t.Fatalf("strategy = %#v, want required next navigation tool", strategy)
-	}
-	if got := strategy.RequiredNextTool.Arguments["href"]; got != "/console/files" {
-		t.Fatalf("required href = %s, want /console/files", got)
-	}
-	if len(strategy.RemainingRouteSequence) != 1 || strategy.RemainingRouteSequence[0].Href != "/console/files" {
-		t.Fatalf("remaining route sequence = %#v, want only final /console/files", strategy.RemainingRouteSequence)
+	if strategy == nil {
+		t.Fatalf("strategy = nil")
 	}
 }
 
@@ -4207,13 +4125,9 @@ func TestStagedContinuationResumeQueryUsesDeferredPhaseOnly(t *testing.T) {
 	if strings.Contains(got, "\u667a\u80fd\u4f53\u9875") {
 		t.Fatalf("resume query = %q, still contains current-phase agent page instruction", got)
 	}
-	targets := consoleNavigationResolvedTargets(got)
-	if len(targets) != 1 || targets[0].Href != "/console/files" {
-		t.Fatalf("resume targets = %#v, want only /console/files; query=%q", targets, got)
-	}
 }
 
-func TestSkillLoopFinalAnswerGuardBlocksConsoleNavigationWithoutToolCall(t *testing.T) {
+func TestSkillLoopFinalAnswerGuardDoesNotForceConsoleNavigationToolCall(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
 			Query:     "\u5e26\u6211\u53bb\u5b9a\u65f6\u4efb\u52a1\u9875\u9762",
@@ -4229,56 +4143,13 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleNavigationWithoutToolCall(t *test
 
 	guard := skillLoopFinalAnswerGuard(prepared)
 	if guard == nil {
-		t.Fatal("skillLoopFinalAnswerGuard() = nil, want guard for known console route request")
+		return
 	}
-	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+	_, blocked := guard(skillloop.FinalAnswerGuardRequest{
 		Answer: "\u5df2\u6253\u5f00\u5b9a\u65f6\u4efb\u52a1\u7ba1\u7406\u9875\u9762\u3002",
 	})
-	if !blocked {
-		t.Fatal("guard did not block navigation success claim without navigate tool")
-	}
-	for _, want := range []string{
-		"console-navigator",
-		"navigate",
-		"/console/work/task",
-		"Only after navigate succeeds",
-	} {
-		if !strings.Contains(result.Message, want) {
-			t.Fatalf("guard message missing %q in:\n%s", want, result.Message)
-		}
-	}
-	if !strings.Contains(result.SystemMessage, `"href":"/console/work/task"`) {
-		t.Fatalf("guard system message missing resolved href: %s", result.SystemMessage)
-	}
-
-	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "\u5df2\u6253\u5f00\u5b9a\u65f6\u4efb\u52a1\u9875\u9762\u3002",
-		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillConsoleNavigator, ToolName: "navigate", Arguments: map[string]interface{}{"href": "/console/files"}},
-		},
-	})
-	if !blocked {
-		t.Fatal("guard allowed navigate call for the wrong route")
-	}
-
-	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "\u5df2\u6253\u5f00\u5b9a\u65f6\u4efb\u52a1\u9875\u9762\u3002",
-		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillConsoleNavigator, ToolName: "navigate", Arguments: map[string]interface{}{"href": "/console/work/task"}},
-		},
-	})
 	if blocked {
-		t.Fatal("guard blocked after navigate succeeded for the resolved route")
-	}
-
-	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "\u5df2\u5c1d\u8bd5\u6253\u5f00\uff0c\u4f46\u5bfc\u822a\u5de5\u5177\u5931\u8d25\u3002",
-		AttemptedToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillConsoleNavigator, ToolName: "navigate", Arguments: map[string]interface{}{"href": "/console/work/task?source=aichat"}},
-		},
-	})
-	if blocked {
-		t.Fatal("guard blocked after navigate was attempted for the resolved route")
+		t.Fatal("guard forced console navigation tool call for an advisory route target")
 	}
 }
 
@@ -4324,20 +4195,10 @@ func TestSkillLoopFinalAnswerGuardSkipsConsoleNavigationWhenTargetRouteAlreadyAv
 	if strategy.RouteRequired {
 		t.Fatal("strategy.RouteRequired = true, want false for current route")
 	}
-	if strategy.RequiredNextTool != nil {
-		t.Fatalf("strategy.RequiredNextTool = %#v, want nil for current route", strategy.RequiredNextTool)
-	}
-
 	evidence := skillLoopCompletionEvidence(prepared)()
 	pageContext := mapFromOperationContext(evidence["page_context"])
 	if len(pageContext) == 0 {
 		t.Fatalf("page_context evidence = %#v, want current page evidence", evidence["page_context"])
-	}
-	if pageContext["target_route_already_available"] != true {
-		t.Fatalf("target_route_already_available = %#v, want true; page_context=%#v", pageContext["target_route_already_available"], pageContext)
-	}
-	if got := stringFromAny(pageContext["route_evidence"]); got != "current_page_context_matches_target" {
-		t.Fatalf("route_evidence = %q, want current_page_context_matches_target; page_context=%#v", got, pageContext)
 	}
 	if resources := operationItemsFromValue(pageContext["resources"]); len(resources) == 0 {
 		t.Fatalf("page_context.resources = %#v, want compact resources", pageContext["resources"])
@@ -4345,7 +4206,7 @@ func TestSkillLoopFinalAnswerGuardSkipsConsoleNavigationWhenTargetRouteAlreadyAv
 
 	messages := skillLoopAdditionalSystemMessages(prepared)
 	if len(messages) == 0 {
-		t.Fatal("skillLoopAdditionalSystemMessages() = 0, want current-route navigation guidance")
+		t.Fatal("skillLoopAdditionalSystemMessages() = 0, want navigation guidance")
 	}
 	contents := make([]string, 0, len(messages))
 	for _, message := range messages {
@@ -4353,9 +4214,8 @@ func TestSkillLoopFinalAnswerGuardSkipsConsoleNavigationWhenTargetRouteAlreadyAv
 	}
 	content := strings.Join(contents, "\n")
 	for _, want := range []string{
-		"target_route_already_available",
-		"current_page_context_matches_target",
-		"do not call navigate only to create proof",
+		"ZGI console navigation guidance",
+		"Choose the destination from the route catalog",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("current-route navigation guidance missing %q in:\n%s", want, content)
@@ -4379,7 +4239,7 @@ func TestSkillLoopFinalAnswerGuardAllowsAgentDetailRouteForAgentsModule(t *testi
 
 	guard := skillLoopFinalAnswerGuard(prepared)
 	if guard == nil {
-		t.Fatal("skillLoopFinalAnswerGuard() = nil, want guard before navigation")
+		return
 	}
 	_, blocked := guard(skillloop.FinalAnswerGuardRequest{
 		Answer: "Opened the first agent.",
@@ -5087,7 +4947,7 @@ func TestSkillLoopUserInputGuardBlocksConsoleNavigationClarification(t *testing.
 
 	guard := skillLoopUserInputGuard(prepared)
 	if guard == nil {
-		t.Fatal("skillLoopUserInputGuard() = nil, want guard for known console route request")
+		return
 	}
 	result, blocked := guard(skillloop.UserInputGuardRequest{
 		Message: "\u8bf7\u95ee\u60a8\u8981\u6253\u5f00\u54ea\u4e2a\u5b9a\u65f6\u4efb\u52a1\u9875\u9762\uff1f",
@@ -5199,6 +5059,48 @@ func TestSkillLoopUserInputGuardSkipsAgentConfirmationRewriteForModelDecidesPlan
 
 	if guard := skillLoopUserInputGuard(prepared); guard != nil {
 		t.Fatalf("skillLoopUserInputGuard() = %#v, want nil for model-decides operation plan", guard)
+	}
+}
+
+func TestSkillLoopPlanAmendmentAllowsModelDecidesFileToolsWithoutContract(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "explain the visible files",
+			SkillIDs:  []string{skills.SkillFileReader, skills.SkillFileManager},
+			SkillMode: skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent: "answer_or_explain_zgi_context",
+			},
+		},
+		Message: &runtimemodel.Message{
+			Metadata: map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"status":           operationPlanStatusRunning,
+					"planning_mode":    "phase_only_model_decides",
+					"tool_choice_mode": aiChatTurnToolChoiceModelDecides,
+				},
+			},
+		},
+	}
+
+	for _, tc := range []struct {
+		name     string
+		skillID  string
+		toolName string
+	}{
+		{name: "read file", skillID: skills.SkillFileReader, toolName: "read_file"},
+		{name: "list files", skillID: skills.SkillFileReader, toolName: "list_visible_files"},
+		{name: "delete file", skillID: skills.SkillFileManager, toolName: "delete_file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if !skillLoopCanAmendOperationPlanForTool(prepared, tc.skillID, tc.toolName) {
+				t.Fatalf("skillLoopCanAmendOperationPlanForTool(%s, %s) = false, want true under model-decides plan", tc.skillID, tc.toolName)
+			}
+		})
+	}
+
+	if !skillLoopShouldAllowUnplannedEvidenceTool(prepared, skills.SkillFileReader, "read_file") {
+		t.Fatal("skillLoopShouldAllowUnplannedEvidenceTool(read_file) = false, want true under model-decides plan")
 	}
 }
 
@@ -5417,7 +5319,7 @@ func TestSkillLoopFinalAnswerGuardSkipsConsoleNavigationWhenIntentIsInformationa
 	}
 }
 
-func TestSkillLoopAdditionalSystemMessagesResolvesConsoleFilesReadTargets(t *testing.T) {
+func TestSkillLoopAdditionalSystemMessagesLeavesConsoleFilesTargetsForModelDecision(t *testing.T) {
 	files := []consoleFilesTestFile{
 		{ID: "file-1", Name: "notes.txt", Extension: "txt", MimeType: "text/plain"},
 		{ID: "file-2", Name: "budget-q1.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
@@ -5429,14 +5331,13 @@ func TestSkillLoopAdditionalSystemMessagesResolvesConsoleFilesReadTargets(t *tes
 	tests := []struct {
 		name  string
 		query string
-		want  string
 	}{
-		{name: "fourth file", query: "\u8bfb\u7b2c\u56db\u4e2a\u6587\u4ef6", want: "file-4"},
-		{name: "second excel", query: "\u6458\u8981\u7b2c\u4e8c\u4e2a Excel", want: "file-5"},
-		{name: "second spreadsheet", query: "\u6458\u8981\u7b2c\u4e8c\u4e2a\u8868\u683c", want: "file-5"},
-		{name: "last pdf", query: "\u603b\u7ed3\u6700\u540e\u4e00\u4e2a PDF", want: "file-6"},
-		{name: "selected file", query: "\u603b\u7ed3\u5f53\u524d\u9009\u4e2d\u7684\u6587\u4ef6", want: "file-4"},
-		{name: "exact file name", query: "summarize proposal.pdf", want: "file-3"},
+		{name: "fourth file", query: "\u8bfb\u7b2c\u56db\u4e2a\u6587\u4ef6"},
+		{name: "second excel", query: "\u6458\u8981\u7b2c\u4e8c\u4e2a Excel"},
+		{name: "second spreadsheet", query: "\u6458\u8981\u7b2c\u4e8c\u4e2a\u8868\u683c"},
+		{name: "last pdf", query: "\u603b\u7ed3\u6700\u540e\u4e00\u4e2a PDF"},
+		{name: "selected file", query: "\u603b\u7ed3\u5f53\u524d\u9009\u4e2d\u7684\u6587\u4ef6"},
+		{name: "exact file name", query: "summarize proposal.pdf"},
 	}
 
 	for _, tt := range tests {
@@ -5452,19 +5353,30 @@ func TestSkillLoopAdditionalSystemMessagesResolvesConsoleFilesReadTargets(t *tes
 			content := messageContentText(messages[0].Content)
 			for _, want := range []string{
 				"file-reader/read_file",
-				"resolved_targets_from_user_request",
-				"target is already resolved",
 				"typed ordinal requests",
 				"file_type_rank",
 				"extension_rank",
-				"Do not ask the user to select a file",
 				`content_status "extracted"`,
-				`"file_id":"` + tt.want + `"`,
-				`"extension":"xlsx"`,
+				`"file_id":"file-1"`,
+				`"file_id":"file-2"`,
+				`"file_id":"file-3"`,
+				`"file_id":"file-4"`,
+				`"file_id":"file-5"`,
+				`"file_id":"file-6"`,
 				`"selected":true`,
 			} {
 				if !strings.Contains(content, want) {
 					t.Fatalf("contextual read guidance missing %q in:\n%s", want, content)
+				}
+			}
+			for _, unwanted := range []string{
+				"resolved_targets_from_user_request",
+				"target is already resolved",
+				"Resolved internal target JSON for tool arguments only",
+				"tool_argument_visibility_restriction",
+			} {
+				if strings.Contains(content, unwanted) {
+					t.Fatalf("contextual read guidance still contains pre-resolved target marker %q in:\n%s", unwanted, content)
 				}
 			}
 			if tt.name == "second excel" {
@@ -5483,87 +5395,35 @@ func TestSkillLoopAdditionalSystemMessagesResolvesConsoleFilesReadTargets(t *tes
 	}
 }
 
-func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesReadWithoutToolCall(t *testing.T) {
+func TestSkillLoopFinalAnswerGuardDoesNotForceConsoleFilesReadToolCall(t *testing.T) {
 	prepared := preparedConsoleFilesGuardReadTest("\u5e2e\u6211\u6458\u8981\u7b2c\u4e8c\u4e2a Excel \u5e76\u7ffb\u8bd1")
 	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
 	prepared.parts.SkillMode = skillModeAuto
 
-	guard := skillLoopFinalAnswerGuard(prepared)
-	if guard == nil {
-		t.Fatal("skillLoopFinalAnswerGuard() = nil, want guard for concrete console file read")
-	}
-	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "budget-q2.xlsx is a quarterly budget spreadsheet.",
-	})
-	if !blocked {
-		t.Fatal("guard did not block direct file-content answer without read_file")
-	}
-	for _, want := range []string{
-		"budget-q2.xlsx",
-		"file-reader",
-		"read_file",
-		"actual content",
-	} {
-		if !strings.Contains(result.Message, want) {
-			t.Fatalf("guard message missing %q in:\n%s", want, result.Message)
+	if guard := skillLoopFinalAnswerGuard(prepared); guard != nil {
+		if result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+			Answer: "The model should decide whether file content evidence is needed.",
+		}); blocked {
+			t.Fatalf("skillLoopFinalAnswerGuard blocked read-file completion with pre-resolved tool requirement: %#v", result)
 		}
-	}
-
-	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "Here is the summary from the file content.",
-		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-4"}},
-		},
-	})
-	if blocked {
-		t.Fatal("guard blocked after read_file succeeded")
-	}
-
-	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "Here is a summary, but it came from a different file.",
-		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-2"}},
-		},
-	})
-	if !blocked {
-		t.Fatal("guard allowed read_file for the wrong resolved file_id")
-	}
-
-	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "I tried to read the file, but the tool returned file not found.",
-		AttemptedToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-4"}},
-		},
-	})
-	if blocked {
-		t.Fatal("guard blocked after read_file was attempted and failed")
 	}
 }
 
-func TestSkillLoopFinalAnswerGuardBlocksChineseReadOrdinalWithoutToolCall(t *testing.T) {
+func TestSkillLoopFinalAnswerGuardDoesNotPreResolveChineseReadOrdinal(t *testing.T) {
 	prepared := preparedConsoleFilesGuardReadTest("\u8bfb\u7b2c\u56db\u4e2a\u6587\u4ef6")
 	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
 	prepared.parts.SkillMode = skillModeAuto
 
-	guard := skillLoopFinalAnswerGuard(prepared)
-	if guard == nil {
-		t.Fatal("skillLoopFinalAnswerGuard() = nil, want guard for Chinese ordinal read request")
-	}
-	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "budget-q2.xlsx is visible on the page.",
-	})
-	if !blocked {
-		t.Fatal("guard did not block direct answer for Chinese ordinal read without read_file")
-	}
-	if !strings.Contains(result.Message, "budget-q2.xlsx") || !strings.Contains(result.Message, "read_file") {
-		t.Fatalf("guard message = %q, want target and read_file", result.Message)
-	}
-	if strings.Contains(result.Message, "file-4") {
-		t.Fatalf("guard message exposed internal file id in %q", result.Message)
+	if guard := skillLoopFinalAnswerGuard(prepared); guard != nil {
+		if result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+			Answer: "The model should resolve the ordinal from visible_files if it needs a tool.",
+		}); blocked {
+			t.Fatalf("skillLoopFinalAnswerGuard blocked Chinese ordinal read with pre-resolved tool requirement: %#v", result)
+		}
 	}
 }
 
-func TestSkillLoopFinalAnswerGuardBlocksRecentFileAnswerWithoutToolCall(t *testing.T) {
+func TestSkillLoopFinalAnswerGuardDoesNotPreResolveRecentFileRead(t *testing.T) {
 	query := "\u8bf7\u57fa\u4e8e\u521a\u624d\u90a3\u4e2a\u6587\u4ef6\u63d0\u53d6\u7f34\u8d39\u8d26\u6237"
 	prepared := &PreparedChat{
 		parts: consoleFilesSnapshotTestParts(query, []consoleFilesTestFile{
@@ -5585,79 +5445,38 @@ func TestSkillLoopFinalAnswerGuardBlocksRecentFileAnswerWithoutToolCall(t *testi
 		Recent:    true,
 	}}
 
-	guard := skillLoopFinalAnswerGuard(prepared)
-	if guard == nil {
-		t.Fatal("skillLoopFinalAnswerGuard() = nil, want guard for recent file read request")
-	}
-	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "The account is 123 from the prior answer.",
-	})
-	if !blocked {
-		t.Fatal("guard did not block direct recent-file answer without read_file")
-	}
-	if !strings.Contains(result.Message, "invoice.xlsx") || !strings.Contains(result.Message, "read_file") {
-		t.Fatalf("guard message = %q, want target and read_file", result.Message)
-	}
-
-	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "Here is the extracted account from the file content.",
-		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-1"}},
-		},
-	})
-	if blocked {
-		t.Fatal("guard blocked after read_file succeeded for recent file")
+	if guard := skillLoopFinalAnswerGuard(prepared); guard != nil {
+		if result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+			Answer: "The model should decide whether the recent file needs to be read again.",
+		}); blocked {
+			t.Fatalf("skillLoopFinalAnswerGuard blocked recent-file read with pre-resolved tool requirement: %#v", result)
+		}
 	}
 }
 
-func TestSkillLoopUserInputGuardBlocksConsoleFilesClarificationWhenTargetResolved(t *testing.T) {
+func TestSkillLoopUserInputGuardDoesNotBlockConsoleFilesClarificationFromPreResolvedTarget(t *testing.T) {
 	prepared := preparedConsoleFilesGuardReadTest("\u8bf7\u8bfb\u53d6\u7b2c\u4e8c\u4e2a Excel \u6587\u4ef6\uff0c\u5e76\u6458\u8981")
 	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
 	prepared.parts.SkillMode = skillModeAuto
 
-	guard := skillLoopUserInputGuard(prepared)
-	if guard == nil {
-		t.Fatal("skillLoopUserInputGuard() = nil, want guard for concrete console file read")
-	}
-	result, blocked := guard(skillloop.UserInputGuardRequest{
-		Message: "页面上有两个 Excel 文件，我需要确认您指的是哪一个。",
-		Questions: []map[string]interface{}{
-			{
+	if guard := skillLoopUserInputGuard(prepared); guard != nil {
+		result, blocked := guard(skillloop.UserInputGuardRequest{
+			Message: "The model may ask a clarification when the visible file target is genuinely ambiguous.",
+			Questions: []map[string]interface{}{{
 				"id":       "which_excel",
-				"question": "请选择要读取的 Excel 文件",
+				"question": "Which Excel file should be read?",
 				"options": []map[string]interface{}{
 					{"label": "budget-q1.xlsx"},
 					{"label": "budget-q2.xlsx"},
 				},
+			}},
+			AttemptedToolCalls: []skillloop.SkillToolCallRef{
+				{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-2"}},
 			},
-		},
-		AttemptedToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-2"}},
-		},
-	})
-	if !blocked {
-		t.Fatal("guard did not block clarification after runtime resolved the target file")
-	}
-	for _, want := range []string{
-		"request_user_input",
-		"already resolved",
-		"resolved_targets_from_user_request",
-		"budget-q2.xlsx",
-		"read_file",
-	} {
-		if !strings.Contains(result.Message, want) {
-			t.Fatalf("guard message missing %q in:\n%s", want, result.Message)
+		})
+		if blocked {
+			t.Fatalf("skillLoopUserInputGuard blocked clarification with pre-resolved file target requirement: %#v", result)
 		}
-	}
-
-	_, blocked = guard(skillloop.UserInputGuardRequest{
-		Message: "读取后还需要确认输出格式。",
-		AttemptedToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-4"}},
-		},
-	})
-	if blocked {
-		t.Fatal("guard blocked after the resolved read_file target had already been attempted")
 	}
 }
 
@@ -5744,7 +5563,7 @@ func TestSkillLoopFinalAnswerGuardSkipsNavigationReadOfNonFileResourceOnFilesPag
 	}
 }
 
-func TestSkillLoopFinalAnswerGuardKeepsReadGuardWhenNavigationRequestsFileContent(t *testing.T) {
+func TestSkillLoopFinalAnswerGuardDoesNotForceReadAfterNavigationObservation(t *testing.T) {
 	query := "\u5bfc\u822a\u5230\u6587\u4ef6\u7ba1\u7406\u540e\u8bfb\u53d6\u7b2c\u4e00\u4e2a\u6587\u4ef6\u5185\u5bb9"
 	prepared := &PreparedChat{
 		Message: &runtimemodel.Message{
@@ -5768,18 +5587,12 @@ func TestSkillLoopFinalAnswerGuardKeepsReadGuardWhenNavigationRequestsFileConten
 		Confidence: 0.91,
 	}
 
-	guard := skillLoopFinalAnswerGuard(prepared)
-	if guard == nil {
-		t.Fatal("skillLoopFinalAnswerGuard() = nil, want read guard for navigation plus file-content request")
-	}
-	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "invoice.txt contains a short invoice note.",
-	})
-	if !blocked {
-		t.Fatal("guard allowed final answer for file-content request without read_file")
-	}
-	if result.SkillID != skills.SkillFileReader || result.ToolName != "read_file" || !strings.Contains(result.Message, "invoice.txt") {
-		t.Fatalf("guard result = %#v, want file-reader/read_file for invoice.txt", result)
+	if guard := skillLoopFinalAnswerGuard(prepared); guard != nil {
+		if result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+			Answer: "The model should decide whether the visible file needs read_file after navigation.",
+		}); blocked {
+			t.Fatalf("skillLoopFinalAnswerGuard blocked navigation+read with pre-resolved tool requirement: %#v", result)
+		}
 	}
 }
 
@@ -5828,38 +5641,6 @@ func TestSkillLoopFinalAnswerGuardBlocksPartialMultiFileManagementSave(t *testin
 	}
 }
 
-func TestConsoleFilesRequiredToolFinalAnswerGuardRequiresAllTargetFileIDs(t *testing.T) {
-	guard := consoleFilesRequiredToolFinalAnswerGuard(skills.SkillFileReader, []map[string]interface{}{
-		{"file_id": "file-1", "name": "one.pdf"},
-		{"file_id": "file-2", "name": "two.pdf"},
-	}, "read_file", []string{"read {target}"})
-
-	if guard == nil {
-		t.Fatal("guard = nil, want guard")
-	}
-
-	_, blocked := guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "I read one file.",
-		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-1"}},
-		},
-	})
-	if !blocked {
-		t.Fatal("guard allowed completion after only one of two target files")
-	}
-
-	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "I read both files.",
-		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-1"}},
-			{SkillID: skills.SkillFileReader, ToolName: "read_file", Arguments: map[string]interface{}{"file_id": "file-2"}},
-		},
-	})
-	if blocked {
-		t.Fatal("guard blocked after both target files were read")
-	}
-}
-
 func preparedConsoleFilesGuardReadTest(query string) *PreparedChat {
 	parts := consoleFilesSemanticTestParts(query, []consoleFilesTestFile{
 		{ID: "file-1", Name: "notes.txt", Extension: "txt", MimeType: "text/plain"},
@@ -5876,7 +5657,7 @@ func preparedConsoleFilesGuardReadTest(query string) *PreparedChat {
 	}
 }
 
-func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesDeleteWithoutToolCall(t *testing.T) {
+func TestSkillLoopFinalAnswerGuardDoesNotForceConsoleFilesDeleteToolCall(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: consoleFilesSnapshotTestParts("delete the first file", []consoleFilesTestFile{
 			{ID: "file-1", Name: "invoice.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
@@ -5888,84 +5669,12 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesDeleteWithoutToolCall(t *tes
 		Confidence: 0.91,
 	}
 
-	guard := skillLoopFinalAnswerGuard(prepared)
-	if guard == nil {
-		t.Fatal("skillLoopFinalAnswerGuard() = nil, want guard for console file deletion")
-	}
-	result, blocked := guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "The file has been deleted.",
-	})
-	if !blocked {
-		t.Fatal("guard did not block direct deletion answer without delete_file")
-	}
-	for _, want := range []string{
-		"invoice.xlsx",
-		"file-manager",
-		"delete_file",
-		"session approval grant may skip the approval card",
-	} {
-		if !strings.Contains(result.Message, want) {
-			t.Fatalf("guard message missing %q in:\n%s", want, result.Message)
+	if guard := skillLoopFinalAnswerGuard(prepared); guard != nil {
+		if result, blocked := guard(skillloop.FinalAnswerGuardRequest{
+			Answer: "The model should decide whether delete_file must be called from the visible file context.",
+		}); blocked {
+			t.Fatalf("skillLoopFinalAnswerGuard blocked deletion with pre-resolved tool requirement: %#v", result)
 		}
-	}
-	if strings.Contains(result.Message, "file-1") {
-		t.Fatalf("guard message exposed internal file id in %q", result.Message)
-	}
-	if !strings.Contains(result.SystemMessage, "file-1") {
-		t.Fatalf("guard system message missing internal file id for tool arguments in %q", result.SystemMessage)
-	}
-	if !strings.Contains(result.SystemMessage, "tool arguments only") ||
-		!strings.Contains(result.SystemMessage, "do not reveal internal IDs") {
-		t.Fatalf("guard system message missing internal-only visibility instruction in %q", result.SystemMessage)
-	}
-
-	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "The file has been deleted.",
-		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileManager, ToolName: "delete_file", Arguments: map[string]interface{}{"file_id": "file-1"}},
-		},
-	})
-	if blocked {
-		t.Fatal("guard blocked after delete_file succeeded")
-	}
-
-	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "The file has been deleted.",
-		SuccessfulToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileManager, ToolName: "delete_file", Arguments: map[string]interface{}{"file_id": "file-2"}},
-		},
-	})
-	if !blocked {
-		t.Fatal("guard allowed delete_file for the wrong resolved file_id")
-	}
-
-	_, blocked = guard(skillloop.FinalAnswerGuardRequest{
-		Answer: "I tried to delete the file, but the tool reported it was not found.",
-		AttemptedToolCalls: []skillloop.SkillToolCallRef{
-			{SkillID: skills.SkillFileManager, ToolName: "delete_file", Arguments: map[string]interface{}{"file_id": "file-1"}},
-		},
-	})
-	if blocked {
-		t.Fatal("guard blocked after delete_file was attempted and failed")
-	}
-}
-
-func TestConsoleFilesGuardTargetSummaryUsesUserVisibleNames(t *testing.T) {
-	got := consoleFilesGuardTargetSummary([]map[string]interface{}{
-		{"file_id": "file-1", "name": "invoice.xlsx"},
-		{"file_id": "file-2", "name": "report.pdf"},
-	})
-	if got != "invoice.xlsx, report.pdf" {
-		t.Fatalf("consoleFilesGuardTargetSummary() = %q, want visible names only", got)
-	}
-	for _, hidden := range []string{"file-1", "file-2"} {
-		if strings.Contains(got, hidden) {
-			t.Fatalf("target summary exposed %q in %q", hidden, got)
-		}
-	}
-
-	if got := consoleFilesGuardTargetSummary([]map[string]interface{}{{"file_id": "file-1"}}); got != "the resolved visible file" {
-		t.Fatalf("consoleFilesGuardTargetSummary() = %q, want generic fallback without file id", got)
 	}
 }
 

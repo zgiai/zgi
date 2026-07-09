@@ -283,20 +283,6 @@ func collectConsoleFilesFileIDs(parts *chatRequestParts) []string {
 		return collector.values()
 	}
 
-	for _, id := range resolveConsoleFileIDsFromQuery(parts) {
-		collector.add(id)
-	}
-	if len(collector.values()) > 0 {
-		return collector.values()
-	}
-
-	for _, id := range collectNamedVisibleFileIDs(parts.Query, parts.RawOperationContext) {
-		collector.add(id)
-	}
-	if len(collector.values()) > 0 {
-		return collector.values()
-	}
-
 	visible := visibleFileResources(parts.RawOperationContext)
 	if len(visible) == 1 {
 		collector.add(visible[0].ID)
@@ -617,24 +603,6 @@ func containsAnySubstring(text string, needles []string) bool {
 		}
 	}
 	return false
-}
-
-func collectNamedVisibleFileIDs(query string, context map[string]interface{}) []string {
-	text := strings.ToLower(strings.TrimSpace(query))
-	if text == "" {
-		return nil
-	}
-	collector := newUniqueStringCollector()
-	for _, file := range visibleFileResources(context) {
-		name := strings.ToLower(strings.TrimSpace(file.Title))
-		if len([]rune(name)) < 3 {
-			continue
-		}
-		if strings.Contains(text, name) {
-			collector.add(file.ID)
-		}
-	}
-	return collector.values()
 }
 
 func isFileResourceMap(value map[string]interface{}) bool {

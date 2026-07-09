@@ -1733,52 +1733,6 @@ func operationPlanStepsFromTurnStrategy(strategy *AIChatTurnStrategy) []map[stri
 		steps = append(steps, step)
 	}
 
-	if strategy.RequiredNextTool != nil {
-		stepID := strings.TrimSpace(strategy.RequiredNextTool.StepID)
-		if stepID == "" {
-			stepID = operationPlanToolStepID(strategy.RequiredNextTool.SkillID, strategy.RequiredNextTool.ToolName)
-		}
-		step := map[string]interface{}{
-			"id":                stepID,
-			"title":             operationPlanToolStepTitle(strategy.RequiredNextTool.SkillID, strategy.RequiredNextTool.ToolName),
-			"status":            operationPlanStepStatusPending,
-			"skill_id":          strategy.RequiredNextTool.SkillID,
-			"tool_name":         strategy.RequiredNextTool.ToolName,
-			"required_evidence": operationPlanToolStepEvidence(strategy.RequiredNextTool.SkillID, strategy.RequiredNextTool.ToolName),
-		}
-		if waitFor := strings.TrimSpace(strategy.RequiredNextTool.WaitForStepID); waitFor != "" {
-			step["wait_for"] = waitFor
-		}
-		if href := strings.TrimSpace(strategy.RequiredNextTool.Arguments["href"]); href != "" {
-			step["asset_target"] = map[string]interface{}{"page": href}
-		}
-		add(step)
-	}
-
-	routeOccurrences := map[string]int{}
-	for _, route := range strategy.RemainingRouteSequence {
-		href := strings.TrimSpace(route.Href)
-		if href == "" {
-			continue
-		}
-		routeKey := normalizeConsoleNavigationGuardHref(href)
-		if routeKey == "" {
-			routeKey = href
-		}
-		routeOccurrences[routeKey]++
-		add(map[string]interface{}{
-			"id":                operationPlanRouteStepID(href, routeOccurrences[routeKey]),
-			"title":             firstNonEmptyString(route.Label, href),
-			"status":            route.Status,
-			"skill_id":          skillsConsoleNavigatorID(),
-			"tool_name":         "navigate",
-			"required_evidence": operationPlanToolStepEvidence(skillsConsoleNavigatorID(), "navigate"),
-			"asset_target": map[string]interface{}{
-				"page": href,
-			},
-		})
-	}
-
 	if aiChatTurnStrategyModelDecidesTools(strategy) {
 		if strategy.WaitForContinue {
 			add(map[string]interface{}{
@@ -3177,17 +3131,6 @@ func operationPlanCompactPageEvidence(pageEvidence map[string]interface{}) map[s
 	}
 	if value, ok := pageEvidence["target_route_already_available"].(bool); ok {
 		out["target_route_already_available"] = value
-	}
-	if target := mapFromOperationContext(pageEvidence["resolved_target_from_user_request"]); len(target) > 0 {
-		compactTarget := map[string]interface{}{}
-		for _, key := range []string{"href", "label"} {
-			if value := strings.TrimSpace(stringFromAny(target[key])); value != "" {
-				compactTarget[key] = compactForPrompt(value, 240)
-			}
-		}
-		if len(compactTarget) > 0 {
-			out["resolved_target_from_user_request"] = compactTarget
-		}
 	}
 	if resources := operationPlanCompactPageEvidenceResources(pageEvidence["resources"], 12); len(resources) > 0 {
 		out["resources"] = resources

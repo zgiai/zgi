@@ -106,11 +106,7 @@ func requestedManagedFileTargetsFromParts(parts *chatRequestParts) []requestedMa
 }
 
 func requestedManagedFileTargetsFromQuery(query string) []requestedManagedFileTarget {
-	targets := explicitRequestedManagedFileTargetsFromQuery(query)
-	if len(targets) > 0 {
-		return targets
-	}
-	return implicitRequestedManagedFileTargetsFromQuery(query)
+	return explicitRequestedManagedFileTargetsFromQuery(query)
 }
 
 func explicitRequestedManagedFileTargetsFromQuery(query string) []requestedManagedFileTarget {
@@ -134,25 +130,6 @@ func explicitRequestedManagedFileTargetsFromQuery(query string) []requestedManag
 			Filename:  filename,
 			Extension: managedFileTargetExtension(filename),
 		})
-	}
-	return targets
-}
-
-func implicitRequestedManagedFileTargetsFromQuery(query string) []requestedManagedFileTarget {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return nil
-	}
-	text := normalizeConsoleNavigationQuery(query)
-	if text == "" || !containsAnySubstring(text, []string{"two files", "2 files", "\u4e24\u4e2a\u6587\u4ef6", "2\u4e2a\u6587\u4ef6", "\u4e00\u4e2a\u6587\u672c", "\u4e00\u4e2asvg"}) {
-		return nil
-	}
-	targets := []requestedManagedFileTarget{}
-	if containsAnySubstring(text, []string{"txt", "text file", "\u6587\u672c\u6587\u4ef6"}) {
-		targets = append(targets, requestedManagedFileTarget{Extension: "txt"})
-	}
-	if containsAnySubstring(text, []string{"svg"}) {
-		targets = append(targets, requestedManagedFileTarget{Extension: "svg"})
 	}
 	return targets
 }

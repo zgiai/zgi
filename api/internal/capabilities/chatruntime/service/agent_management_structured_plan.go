@@ -144,9 +144,6 @@ func contextualSidebarStructuredPlanTools(strategy *AIChatTurnStrategy) []AIChat
 		copied.ArgsBinding = mergeTurnStrategyToolArguments(nil, tool.ArgsBinding)
 		out = append(out, copied)
 	}
-	if strategy.RequiredNextTool != nil {
-		add(*strategy.RequiredNextTool)
-	}
 	for _, tool := range strategy.PlannedTools {
 		add(tool)
 	}

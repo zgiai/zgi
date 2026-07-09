@@ -128,32 +128,6 @@ func continuationGeneratedFilesAlreadySatisfiedGuardResult() skillloop.FinalAnsw
 	}
 }
 
-func consoleFilesRequiredToolFinalAnswerGuard(skillID string, targets []map[string]interface{}, toolName string, messageTemplates []string) skillloop.FinalAnswerGuard {
-	targetSummary := consoleFilesGuardTargetSummary(targets)
-	targetFileIDs := consoleFilesGuardTargetFileIDs(targets)
-	targetArgumentHint := consoleFilesGuardTargetArgumentHint(targets, toolName)
-	return func(req skillloop.FinalAnswerGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
-		if finalAnswerGuardHasSuccessfulToolForTargets(req, skillID, toolName, targetFileIDs) ||
-			finalAnswerGuardHasAttemptedToolForTargets(req, skillID, toolName, targetFileIDs) {
-			return skillloop.FinalAnswerGuardResult{}, false
-		}
-		lines := make([]string, 0, len(messageTemplates))
-		for _, template := range messageTemplates {
-			lines = append(lines, strings.ReplaceAll(template, "{target}", targetSummary))
-		}
-		systemLines := append([]string{}, lines...)
-		if targetArgumentHint != "" {
-			systemLines = append(systemLines, targetArgumentHint)
-		}
-		return skillloop.FinalAnswerGuardResult{
-			SkillID:       skillID,
-			ToolName:      toolName,
-			Message:       strings.Join(lines, " "),
-			SystemMessage: strings.Join(systemLines, " "),
-		}, true
-	}
-}
-
 func consoleFilesContinuationPendingDeleteFinalAnswerGuard(parts *chatRequestParts, metadata map[string]interface{}) skillloop.FinalAnswerGuard {
 	if parts == nil || !partsRequestsContinuationWithFallback(parts, "") || !skillIDEnabled(parts.SkillIDs, skills.SkillFileManager) {
 		return nil
@@ -272,83 +246,4 @@ func finalAnswerGuardHasFileManagerSaveCall(calls []skillloop.SkillToolCallRef) 
 		}
 	}
 	return false
-}
-
-func consoleFilesGuardTargetFileIDs(targets []map[string]interface{}) []string {
-	seen := map[string]struct{}{}
-	out := []string{}
-	for _, target := range targets {
-		id := strings.TrimSpace(stringFromAny(target["file_id"]))
-		if id == "" {
-			continue
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		out = append(out, id)
-	}
-	return out
-}
-
-func consoleFilesGuardTargetArgumentHint(targets []map[string]interface{}, toolName string) string {
-	type targetRef struct {
-		Name   string `json:"name,omitempty"`
-		FileID string `json:"file_id"`
-	}
-	refs := []targetRef{}
-	seen := map[string]struct{}{}
-	for _, target := range targets {
-		id := strings.TrimSpace(stringFromAny(target["file_id"]))
-		if id == "" {
-			continue
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		refs = append(refs, targetRef{
-			Name:   strings.TrimSpace(stringFromAny(target["name"])),
-			FileID: id,
-		})
-	}
-	if len(refs) == 0 {
-		return ""
-	}
-	payload := map[string]interface{}{
-		"skill_id":                             skills.SkillFileReader,
-		"resolved_targets_for_tool_arguments":  refs,
-		"tool_argument_visibility_restriction": "internal_only_do_not_reveal_to_user",
-	}
-	if toolName = strings.TrimSpace(toolName); toolName != "" {
-		payload["tool_name"] = toolName
-	}
-	if len(refs) == 1 {
-		payload["arguments"] = map[string]interface{}{"file_id": refs[0].FileID}
-	} else {
-		payload["arguments"] = map[string]interface{}{"file_ids": consoleFilesGuardTargetFileIDs(targets)}
-		payload["call_instruction"] = "Call this tool once per resolved target if the tool schema accepts only a single file_id."
-	}
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return ""
-	}
-	return "Resolved internal target JSON for tool arguments only; do not reveal internal IDs to the user: " + string(encoded)
-}
-
-func consoleFilesGuardTargetSummary(targets []map[string]interface{}) string {
-	if len(targets) == 0 {
-		return "the resolved visible file"
-	}
-	parts := make([]string, 0, len(targets))
-	for _, target := range targets {
-		name := strings.TrimSpace(stringFromAny(target["name"]))
-		if name != "" {
-			parts = append(parts, name)
-		}
-	}
-	if len(parts) == 0 {
-		return "the resolved visible file"
-	}
-	return strings.Join(parts, ", ")
 }
