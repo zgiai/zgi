@@ -163,7 +163,7 @@ func (h *LLMHandler) CreateResponse(c *gin.Context) {
 	c.Data(http.StatusOK, "application/json", resp.Body)
 }
 
-// CreateAnthropicMessage handles POST /anthropic/v1/messages
+// CreateAnthropicMessage handles Anthropic Messages requests.
 func (h *LLMHandler) CreateAnthropicMessage(c *gin.Context) {
 	apiKey, ok := apiKeyFromContext(c)
 	if !ok {

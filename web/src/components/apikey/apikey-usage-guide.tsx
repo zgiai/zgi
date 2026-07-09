@@ -25,13 +25,11 @@ export interface ApiKeyUsageGuideProps {
  * @category Feature
  * @status Stable
  * @description Shows API key access basics and language-specific examples for the API keys page
- * @usage Use on the API key management page to provide OpenAI-compatible access guidance
+ * @usage Use on the API key management page to provide OpenAI- and Anthropic-compatible access guidance
  * @example
  * <ApiKeyUsageGuide />
  */
-export function ApiKeyUsageGuide({
-  apiBaseUrl = API_URL,
-}: ApiKeyUsageGuideProps): JSX.Element {
+export function ApiKeyUsageGuide({ apiBaseUrl = API_URL }: ApiKeyUsageGuideProps): JSX.Element {
   const t = useT('apikeys');
   const [dialogOpen, setDialogOpen] = React.useState<boolean>(false);
 
@@ -46,6 +44,8 @@ export function ApiKeyUsageGuide({
       `- ${t('usage.markdown.apiBaseLabel')}: \`${apiBaseUrl}\``,
       `- ${t('usage.markdown.openAiBaseLabel')}: \`${openAiBaseUrl}\``,
       `- ${t('usage.markdown.chatCompletionsLabel')}: \`${openAiBaseUrl}/chat/completions\``,
+      `- ${t('usage.markdown.anthropicBaseLabel')}: \`${openAiBaseUrl}\``,
+      `- ${t('usage.markdown.anthropicMessagesLabel')}: \`${openAiBaseUrl}/messages\``,
       '',
       `> ${t('usage.markdown.supportNote')}`,
     ].join('\n');
@@ -54,6 +54,8 @@ export function ApiKeyUsageGuide({
   const curlExampleMarkdown = React.useMemo(() => {
     return [
       `## ${t('usage.markdown.exampleTitle')}`,
+      '',
+      `### ${t('usage.markdown.openAiCurlTitle')}`,
       '',
       '```bash',
       `curl --request POST '${openAiBaseUrl}/chat/completions' \\`,
@@ -66,6 +68,25 @@ export function ApiKeyUsageGuide({
       '        "role": "system",',
       '        "content": "You are a helpful assistant."',
       '      },',
+      '      {',
+      '        "role": "user",',
+      '        "content": "Hello!"',
+      '      }',
+      '    ]',
+      "  }'",
+      '```',
+      '',
+      `### ${t('usage.markdown.anthropicCurlTitle')}`,
+      '',
+      '```bash',
+      `curl --request POST '${openAiBaseUrl}/messages' \\`,
+      "  --header 'Content-Type: application/json' \\",
+      "  --header 'x-api-key: YOUR_API_KEY' \\",
+      "  --header 'anthropic-version: 2023-06-01' \\",
+      "  --data '{",
+      '    "model": "your-model-name",',
+      '    "max_tokens": 1024,',
+      '    "messages": [',
       '      {',
       '        "role": "user",',
       '        "content": "Hello!"',
@@ -147,27 +168,19 @@ export function ApiKeyUsageGuide({
 
   return (
     <>
-      <div className="rounded-xl border bg-muted/30 p-4">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="space-y-3">
-            <div className="inline-flex items-center gap-2 rounded-full border bg-background px-3 py-1 text-xs font-medium text-foreground/80">
+      <div className="rounded-lg border bg-muted/20 px-3 py-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
+            <div className="inline-flex items-center gap-1.5 rounded-full border bg-background px-2.5 py-1 text-xs font-medium text-foreground/80">
               <Sparkles className="size-3.5 text-primary" />
               {t('usage.badge')}
             </div>
-            <div className="space-y-1">
-              <div className="text-sm font-medium">{t('usage.inlineTitle')}</div>
-              <div className="text-sm leading-6 text-muted-foreground">
-                {t('usage.inlineDescription')}
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-muted-foreground">{t('usage.apiBaseLabel')}</span>
-              <code className="rounded-md border bg-background px-2 py-1 font-mono text-xs">
-                {apiBaseUrl}
-              </code>
-            </div>
+            <span className="text-muted-foreground">{t('usage.apiBaseLabel')}</span>
+            <code className="inline-block max-w-full truncate rounded-md border bg-background px-2 py-1 font-mono text-xs">
+              {apiBaseUrl}
+            </code>
           </div>
-          <Button variant="outline" onClick={() => setDialogOpen(true)}>
+          <Button variant="outline" size="sm" onClick={() => setDialogOpen(true)}>
             <CircleHelp className="size-4" />
             {t('usage.openDialog')}
           </Button>

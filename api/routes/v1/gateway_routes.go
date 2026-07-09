@@ -73,6 +73,8 @@ func RegisterGatewayRoutes(router *gin.RouterGroup, deps GatewayRouteDeps) {
 		v1.POST("/responses", llmHandler.CreateResponse)
 		v1.POST("/images/generations", llmHandler.CreateImage)
 		v1.GET("/models", llmHandler.ListModels)
+		// Anthropic-compatible endpoint, matching New API and Anthropic Messages format.
+		v1.POST("/messages", llmHandler.CreateAnthropicMessage)
 	}
 	logger.Info("OpenAI-compatible gateway routes registered", "path", "/v1/*")
 
