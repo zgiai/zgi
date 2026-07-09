@@ -31,6 +31,7 @@ const (
 
 type completionVerificationDecision struct {
 	Status              string   `json:"status"`
+	Source              string   `json:"-"`
 	Reason              string   `json:"reason"`
 	MissingSteps        []string `json:"missing_steps"`
 	UnsupportedClaims   []string `json:"unsupported_claims"`
@@ -47,11 +48,11 @@ type completionVerificationDecision struct {
 // are still preserved.
 func ReconcileCompletionVerificationResultWithEvidence(evidence map[string]interface{}, result CompletionVerificationResult) CompletionVerificationResult {
 	if _, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok && !completionVerificationEvidenceHasOpenModelDecidesPhase(evidence) {
+		originalStatus := result.Status
 		result.Status = completionVerificationStatusPass
-		result.Reason = strings.TrimSpace(firstNonEmptyString(
-			result.Reason,
+		result.Reason = completionVerificationReconciledPassReason(originalStatus, result.Reason,
 			"latest tool evidence satisfies the requested operation",
-		))
+		)
 		result.MissingSteps = nil
 		result.UnsupportedClaims = nil
 		result.NextActionHint = ""
@@ -69,8 +70,9 @@ func ReconcileCompletionVerificationResultWithEvidence(evidence map[string]inter
 	if decision.normalizedStatus() != completionVerificationStatusPass || strings.EqualFold(strings.TrimSpace(result.Status), strings.TrimSpace(decision.Status)) {
 		return result
 	}
+	originalStatus := result.Status
 	result.Status = completionVerificationStatusPass
-	result.Reason = strings.TrimSpace(firstNonEmptyString(decision.Reason, result.Reason, "latest Agent config evidence satisfied requested state"))
+	result.Reason = completionVerificationReconciledPassReason(originalStatus, result.Reason, decision.Reason, "latest evidence satisfied requested state")
 	result.MissingSteps = nil
 	result.UnsupportedClaims = nil
 	result.NextActionHint = ""
@@ -80,6 +82,36 @@ func ReconcileCompletionVerificationResultWithEvidence(evidence map[string]inter
 
 func completionVerificationReconcileDecisionWithEvidence(evidence map[string]interface{}, decision completionVerificationDecision) completionVerificationDecision {
 	status := decision.normalizedStatus()
+	if (status == completionVerificationStatusFailed || status == completionVerificationStatusNeedsAction) &&
+		completionVerificationDecisionOnlyBlocksUnrequestedManagedFileSaves(evidence, decision) {
+		return completionVerificationDecision{
+			Status: completionVerificationStatusPass,
+			Reason: "generated file evidence satisfies the requested file targets; unrequested managed-file saves are not blockers",
+		}
+	}
+	if status == completionVerificationStatusFailed &&
+		completionVerificationDecisionHasNoActionableBlockers(decision) &&
+		completionVerificationEvidenceCanOverrideNonActionableFailure(evidence) {
+		if completionVerificationLedgerSatisfiesAgentConfigPostRead(evidence) {
+			return completionVerificationDecision{
+				Status: completionVerificationStatusPass,
+				Reason: "latest evidence ledger verifies requested Agent configuration",
+			}
+		}
+		optimistic := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
+			Status: completionVerificationStatusPass,
+			Reason: "latest evidence satisfies requested operation",
+		})
+		if optimistic.normalizedStatus() == completionVerificationStatusPass {
+			return completionVerificationDecision{
+				Status: completionVerificationStatusPass,
+				Reason: strings.TrimSpace(firstNonEmptyString(
+					optimistic.Reason,
+					"latest evidence satisfies requested operation",
+				)),
+			}
+		}
+	}
 	if status != completionVerificationStatusNeedsAction || !completionVerificationDecisionLooksLikeAgentConfigNeedsAction(decision) {
 		return decision
 	}
@@ -92,10 +124,620 @@ func completionVerificationReconcileDecisionWithEvidence(evidence map[string]int
 	}
 	return completionVerificationDecision{
 		Status: completionVerificationStatusPass,
-		Reason: strings.TrimSpace(firstNonEmptyString(
-			decision.Reason,
-			"latest Agent config evidence satisfied requested state",
-		)),
+		Reason: "latest Agent config evidence satisfied requested state",
+	}
+}
+
+func completionVerificationReconciledPassReason(originalStatus string, originalReason string, evidenceReasons ...string) string {
+	if completionVerificationNormalizeStatus(originalStatus) == completionVerificationStatusPass {
+		if reason := strings.TrimSpace(originalReason); reason != "" {
+			if !completionVerificationReasonLooksStaleFailure(reason) {
+				return reason
+			}
+		}
+	}
+	values := make([]interface{}, 0, len(evidenceReasons)+1)
+	for _, reason := range evidenceReasons {
+		values = append(values, reason)
+	}
+	values = append(values, "latest evidence satisfies requested operation")
+	return strings.TrimSpace(firstNonEmptyString(values...))
+}
+
+func completionVerificationReasonLooksStaleFailure(reason string) bool {
+	reason = strings.ToLower(strings.TrimSpace(reason))
+	if reason == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"缺少工具结果支持",
+		"不能可靠确认",
+		"不能确认",
+		"后校验发现",
+		"failed",
+		"failure",
+		"unsupported",
+		"missing tool",
+		"missing evidence",
+		"not verified",
+	} {
+		if strings.Contains(reason, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func completionVerificationNormalizeStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case completionVerificationStatusPass:
+		return completionVerificationStatusPass
+	case completionVerificationStatusNeedsAction, "action", "continue", "retry":
+		return completionVerificationStatusNeedsAction
+	case completionVerificationStatusAskUser, "ask", "question":
+		return completionVerificationStatusAskUser
+	case completionVerificationStatusFailed, "fail", "failure", "error":
+		return completionVerificationStatusFailed
+	default:
+		return completionVerificationStatusFailed
+	}
+}
+
+func completionVerificationDecisionHasNoActionableBlockers(decision completionVerificationDecision) bool {
+	return len(cleanStringSlice(decision.MissingSteps)) == 0 &&
+		len(cleanStringSlice(decision.UnsupportedClaims)) == 0 &&
+		strings.TrimSpace(decision.NextActionHint) == "" &&
+		strings.TrimSpace(decision.FinalAnswerGuidance) == "" &&
+		strings.TrimSpace(decision.FinalAnswer) == ""
+}
+
+func completionVerificationDecisionOnlyBlocksUnrequestedManagedFileSaves(evidence map[string]interface{}, decision completionVerificationDecision) bool {
+	if strings.TrimSpace(decision.FinalAnswer) != "" || strings.TrimSpace(decision.FinalAnswerGuidance) != "" {
+		return false
+	}
+	blockedExts := completionVerificationManagedFileSaveExtensionsFromDecision(decision)
+	if len(blockedExts) == 0 {
+		return false
+	}
+	requiredExts, requiresAll, explicitManagedSave := completionVerificationRequestedManagedFileSaveExtensions(evidence)
+	if requiresAll {
+		return false
+	}
+	if explicitManagedSave && len(requiredExts) == 0 {
+		return false
+	}
+	for ext := range blockedExts {
+		if _, required := requiredExts[ext]; required {
+			return false
+		}
+		if !completionVerificationHasGeneratedFileEvidenceForExtension(evidence, ext) {
+			return false
+		}
+	}
+	for ext := range requiredExts {
+		if !completionVerificationHasManagedFileSaveEvidenceForExtension(evidence, ext) {
+			return false
+		}
+	}
+	return completionVerificationDecisionActionableTextsOnlyMentionManagedFileSaves(decision, blockedExts)
+}
+
+func completionVerificationManagedFileSaveExtensionsFromDecision(decision completionVerificationDecision) map[string]struct{} {
+	exts := map[string]struct{}{}
+	collect := func(text string) {
+		if !completionVerificationTextMentionsHumanManagedFileSave(text) {
+			return
+		}
+		for _, ext := range completionVerificationTextFileExtensions(text) {
+			exts[ext] = struct{}{}
+		}
+	}
+	for _, step := range cleanStringSlice(decision.MissingSteps) {
+		collect(step)
+	}
+	for _, claim := range cleanStringSlice(decision.UnsupportedClaims) {
+		collect(claim)
+	}
+	collect(decision.NextActionHint)
+	return exts
+}
+
+func completionVerificationDecisionActionableTextsOnlyMentionManagedFileSaves(decision completionVerificationDecision, allowedExts map[string]struct{}) bool {
+	texts := cleanStringSlice(append(append([]string{}, decision.MissingSteps...), decision.UnsupportedClaims...))
+	if hint := strings.TrimSpace(decision.NextActionHint); hint != "" {
+		texts = append(texts, hint)
+	}
+	if len(texts) == 0 {
+		return false
+	}
+	for _, text := range texts {
+		if !completionVerificationTextMentionsHumanManagedFileSave(text) {
+			return false
+		}
+		exts := completionVerificationTextFileExtensions(text)
+		if len(exts) == 0 {
+			return false
+		}
+		for _, ext := range exts {
+			if _, ok := allowedExts[ext]; !ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func completionVerificationRequestedManagedFileSaveExtensions(evidence map[string]interface{}) (map[string]struct{}, bool, bool) {
+	goal := completionVerificationManagedFileGoalText(evidence)
+	if goal == "" {
+		return nil, false, false
+	}
+	windows := completionVerificationManagedFileSaveWindows(goal)
+	if len(windows) == 0 {
+		return nil, false, false
+	}
+	required := map[string]struct{}{}
+	for _, window := range windows {
+		if completionVerificationManagedSaveWindowRequestsAllGeneratedFiles(window) {
+			return nil, true, true
+		}
+		for _, ext := range completionVerificationTextFileExtensions(window) {
+			required[ext] = struct{}{}
+		}
+	}
+	return required, false, true
+}
+
+func completionVerificationManagedFileGoalText(evidence map[string]interface{}) string {
+	if len(evidence) == 0 {
+		return ""
+	}
+	plan := evidenceMapFromAny(evidence["operation_plan"])
+	return strings.ToLower(strings.TrimSpace(firstNonEmptyString(
+		evidence["latest_user_request"],
+		evidence["user_request"],
+		evidence["query"],
+		evidence["original_user_goal"],
+		evidence["user_goal"],
+		plan["original_user_goal"],
+		plan["user_goal"],
+	)))
+}
+
+func completionVerificationManagedFileSaveWindows(text string) []string {
+	text = strings.ToLower(strings.TrimSpace(text))
+	if text == "" {
+		return nil
+	}
+	if windows := completionVerificationWindowsAroundMarkers(text, []string{"save_file_to_management", "save to file management", "save into file management", "save in file management", "save", "\u4fdd\u5b58"}); len(windows) > 0 {
+		return windows
+	}
+	return completionVerificationWindowsAroundMarkers(text, []string{"managed file", "file management", "\u6587\u4ef6\u7ba1\u7406"})
+}
+
+func completionVerificationWindowsAroundMarkers(text string, markers []string) []string {
+	windows := make([]string, 0, 2)
+	seen := map[string]struct{}{}
+	for _, marker := range markers {
+		for start := 0; ; {
+			idx := strings.Index(text[start:], marker)
+			if idx < 0 {
+				break
+			}
+			absolute := start + idx
+			windowStart := absolute - 24
+			if windowStart < 0 {
+				windowStart = 0
+			}
+			windowEnd := absolute + len(marker) + 48
+			if windowEnd > len(text) {
+				windowEnd = len(text)
+			}
+			window := strings.TrimSpace(text[windowStart:windowEnd])
+			if window != "" {
+				if _, ok := seen[window]; !ok {
+					seen[window] = struct{}{}
+					windows = append(windows, window)
+				}
+			}
+			start = absolute + len(marker)
+		}
+	}
+	return windows
+}
+
+func completionVerificationManagedSaveWindowRequestsAllGeneratedFiles(window string) bool {
+	window = strings.ToLower(strings.TrimSpace(window))
+	if window == "" {
+		return false
+	}
+	if !(completionVerificationTextMentionsHumanManagedFileSave(window) ||
+		strings.Contains(window, "\u4fdd\u5b58") ||
+		strings.Contains(window, "save")) {
+		return false
+	}
+	return containsAnyCompletionVerificationSubstring(window, []string{
+		"all generated files",
+		"all files",
+		"both files",
+		"each file",
+		"every file",
+		"remaining generated files",
+		"\u6240\u6709\u751f\u6210\u7684\u6587\u4ef6",
+		"\u5168\u90e8\u751f\u6210\u7684\u6587\u4ef6",
+		"\u6240\u6709\u6587\u4ef6",
+		"\u5168\u90e8\u6587\u4ef6",
+		"\u4e24\u4e2a\u6587\u4ef6\u90fd",
+		"\u4e24\u4e2a\u90fd",
+		"\u6bcf\u4e2a\u6587\u4ef6",
+	})
+}
+
+func completionVerificationTextMentionsHumanManagedFileSave(text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if lower == "" {
+		return false
+	}
+	if completionVerificationTextMentionsManagedFileSave(lower) {
+		return true
+	}
+	return (strings.Contains(lower, "save") &&
+		(strings.Contains(lower, "file management") || strings.Contains(lower, "managed file") || strings.Contains(lower, "management"))) ||
+		(strings.Contains(lower, "\u4fdd\u5b58") && strings.Contains(lower, "\u6587\u4ef6\u7ba1\u7406"))
+}
+
+func completionVerificationTextFileExtensions(text string) []string {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if lower == "" {
+		return nil
+	}
+	out := []string{}
+	for _, ext := range completionVerificationKnownFileExtensions() {
+		if completionVerificationTextMentionsFileExtension(lower, ext) {
+			out = append(out, ext)
+		}
+	}
+	return cleanStringSlice(out)
+}
+
+func completionVerificationKnownFileExtensions() []string {
+	return []string{"md", "pdf", "docx", "pptx", "xlsx", "txt", "csv", "json", "html", "svg", "png", "jpg", "jpeg"}
+}
+
+func completionVerificationTextMentionsFileExtension(text string, ext string) bool {
+	ext = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(ext), "."))
+	if ext == "" {
+		return false
+	}
+	if strings.Contains(text, "."+ext) ||
+		strings.Contains(text, ext+" file") ||
+		strings.Contains(text, ext+" \u6587\u4ef6") ||
+		strings.Contains(text, ext+"\u6587\u4ef6") ||
+		strings.Contains(text, ext+" \u683c\u5f0f") ||
+		strings.Contains(text, ext+"\u683c\u5f0f") ||
+		strings.Contains(text, "format "+ext) {
+		return true
+	}
+	switch ext {
+	case "md":
+		return strings.Contains(text, "markdown")
+	case "pdf", "docx", "pptx", "xlsx", "svg", "png", "jpg", "jpeg":
+		return strings.Contains(text, ext)
+	default:
+		return false
+	}
+}
+
+func completionVerificationHasGeneratedFileEvidenceForExtension(evidence map[string]interface{}, ext string) bool {
+	ext = completionVerificationNormalizeFileExtension(ext)
+	if ext == "" {
+		return false
+	}
+	for _, file := range completionVerificationGeneratedFileEvidenceMaps(evidence) {
+		if completionVerificationEvidenceFileExtension(file) == ext {
+			return true
+		}
+	}
+	return false
+}
+
+func completionVerificationHasManagedFileSaveEvidenceForExtension(evidence map[string]interface{}, ext string) bool {
+	ext = completionVerificationNormalizeFileExtension(ext)
+	if ext == "" {
+		return false
+	}
+	for _, file := range completionVerificationGeneratedFileEvidenceMaps(evidence) {
+		if completionVerificationEvidenceFileExtension(file) == ext &&
+			completionVerificationGeneratedFileIsManaged(file) {
+			return true
+		}
+	}
+	for _, invocation := range completionVerificationEvidenceInvocations(evidence) {
+		if !completionVerificationInvocationSucceeded(invocation) {
+			continue
+		}
+		skillID := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(invocation["skill_id"])))
+		toolName := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(invocation["tool_name"])))
+		if skillID != skills.SkillFileManager || toolName != "save_file_to_management" {
+			continue
+		}
+		for _, file := range completionVerificationInvocationFileEvidenceMaps(invocation) {
+			if completionVerificationEvidenceFileExtension(file) == ext {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func completionVerificationGeneratedFileEvidenceMaps(evidence map[string]interface{}) []map[string]interface{} {
+	if len(evidence) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, 8)
+	appendFiles := func(source map[string]interface{}) {
+		out = append(out, evidenceMapsFromAny(source["generated_files"])...)
+	}
+	appendFiles(evidence)
+	appendFiles(evidenceMapFromAny(evidence["operation_result_summary"]))
+	executionSummary := evidenceMapFromAny(evidence["execution_summary"])
+	appendFiles(executionSummary)
+	appendFiles(evidenceMapFromAny(executionSummary["operation_result_summary"]))
+	executionLedger := evidenceMapFromAny(evidence["execution_ledger"])
+	appendFiles(executionLedger)
+	appendFiles(evidenceMapFromAny(executionLedger["operation_result_summary"]))
+	appendFiles(evidenceMapFromAny(executionLedger["summary"]))
+	for _, invocation := range completionVerificationEvidenceInvocations(evidence) {
+		if !completionVerificationInvocationSucceeded(invocation) {
+			continue
+		}
+		skillID := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(invocation["skill_id"])))
+		toolName := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(invocation["tool_name"])))
+		if skillID != skills.SkillFileGenerator &&
+			!(skillID == skills.SkillFileManager && toolName == "save_file_to_management") {
+			continue
+		}
+		out = append(out, completionVerificationInvocationFileEvidenceMaps(invocation)...)
+	}
+	return out
+}
+
+func completionVerificationInvocationFileEvidenceMaps(invocation map[string]interface{}) []map[string]interface{} {
+	if len(invocation) == 0 {
+		return nil
+	}
+	out := make([]map[string]interface{}, 0, 4)
+	for _, key := range []string{"result_facts", "result_summary", "result", "arguments", "target"} {
+		if item := evidenceMapFromAny(invocation[key]); len(item) > 0 {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func completionVerificationEvidenceFileExtension(file map[string]interface{}) string {
+	if len(file) == 0 {
+		return ""
+	}
+	for _, key := range []string{"file_extension", "extension", "format", "file_format"} {
+		if ext := completionVerificationNormalizeFileExtension(evidenceStringFromAny(file[key])); ext != "" {
+			return ext
+		}
+	}
+	for _, key := range []string{"filename", "file_name", "managed_filename", "name"} {
+		if ext := completionVerificationExtensionFromFilename(evidenceStringFromAny(file[key])); ext != "" {
+			return ext
+		}
+	}
+	return completionVerificationExtensionFromMimeType(evidenceStringFromAny(firstNonEmptyEvidence(file["mime_type"], file["file_mime_type"])))
+}
+
+func completionVerificationNormalizeFileExtension(value string) string {
+	value = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(value), "."))
+	switch value {
+	case "markdown":
+		return "md"
+	case "md", "pdf", "docx", "pptx", "xlsx", "txt", "csv", "json", "html", "svg", "png", "jpg", "jpeg":
+		return value
+	default:
+		return ""
+	}
+}
+
+func completionVerificationExtensionFromFilename(filename string) string {
+	filename = strings.TrimSpace(filename)
+	if filename == "" {
+		return ""
+	}
+	idx := strings.LastIndex(filename, ".")
+	if idx < 0 || idx == len(filename)-1 {
+		return ""
+	}
+	return completionVerificationNormalizeFileExtension(filename[idx+1:])
+}
+
+func completionVerificationExtensionFromMimeType(mimeType string) string {
+	switch strings.ToLower(strings.TrimSpace(mimeType)) {
+	case "text/markdown":
+		return "md"
+	case "application/pdf":
+		return "pdf"
+	case "text/plain":
+		return "txt"
+	case "text/html":
+		return "html"
+	case "application/json":
+		return "json"
+	case "text/csv":
+		return "csv"
+	default:
+		return ""
+	}
+}
+
+func containsAnyCompletionVerificationSubstring(text string, markers []string) bool {
+	for _, marker := range markers {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func completionVerificationEvidenceCanOverrideNonActionableFailure(evidence map[string]interface{}) bool {
+	if len(evidence) == 0 || !completionVerificationHasSuccessfulRuntimeEvidence(evidence) {
+		return false
+	}
+	if completionVerificationLedgerSatisfiesAgentConfigPostRead(evidence) {
+		return true
+	}
+	if fastPathModelDecidesPlanHasPendingAgentWork(evidence) {
+		return false
+	}
+	if _, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
+		return true
+	}
+	optimistic := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
+		Status: completionVerificationStatusPass,
+	})
+	return optimistic.normalizedStatus() == completionVerificationStatusPass
+}
+
+func completionVerificationLedgerSatisfiesAgentConfigPostRead(evidence map[string]interface{}) bool {
+	if len(evidence) == 0 {
+		return false
+	}
+	if failedStepLabel, ok := completionVerificationFailedOperationPlanStepLabel(evidence); ok &&
+		completionVerificationHasFailedEvidenceForPlanStep(evidence, failedStepLabel) {
+		return false
+	}
+	if len(completionVerificationPendingAgentConfigUpdateFields(evidence)) > 0 {
+		return false
+	}
+	if fastPathCompletionEvidenceNeedsAgentConfigPostRead(evidence) {
+		return false
+	}
+	if len(completionVerificationAgentConfigMismatches(evidence)) > 0 {
+		return false
+	}
+	if !fastPathEvidenceHasSuccessfulAgentConfigUpdate(evidence) ||
+		!fastPathHasSuccessfulAgentConfigReadAfterUpdate(evidence) {
+		return false
+	}
+	configRead, ok := completionVerificationLatestAgentConfigReadResult(evidence)
+	if !ok {
+		return false
+	}
+	if completionVerificationAgentConfigReadHasVerifiedFacts(configRead) {
+		return true
+	}
+	return completionVerificationAgentConfigReadCoversAgentConfigExpectations(evidence, configRead)
+}
+
+func completionVerificationAgentConfigReadHasVerifiedFacts(configRead map[string]interface{}) bool {
+	if len(configRead) == 0 {
+		return false
+	}
+	for _, field := range completionVerificationCanonicalAgentConfigFields(firstNonEmptyValue(configRead["verified_fields"], configRead["agent.config.verified_fields"])) {
+		if field != "" {
+			return true
+		}
+	}
+	for _, status := range evidenceMapFromAny(configRead["field_status"]) {
+		if strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(status)), "verified") {
+			return true
+		}
+	}
+	return false
+}
+
+func completionVerificationAgentConfigReadCoversAgentConfigExpectations(evidence map[string]interface{}, configRead map[string]interface{}) bool {
+	if len(configRead) == 0 {
+		return false
+	}
+	expectations := completionVerificationAgentConfigFieldExpectations(evidence)
+	bindingExpectations := completionVerificationAgentConfigBindingExpectations(evidence)
+	if len(expectations) == 0 && len(bindingExpectations) == 0 {
+		return false
+	}
+	for field := range expectations {
+		if status, ok := completionVerificationAgentConfigFieldStatus(configRead, field); ok && status == "verified" {
+			continue
+		}
+		if !completionVerificationAgentConfigResultHasFieldEvidence(configRead, field) {
+			return false
+		}
+	}
+	for _, expectation := range bindingExpectations {
+		if len(expectation.Targets) == 0 {
+			continue
+		}
+		if !completionVerificationAgentConfigResultHasCollectionFieldEvidence(configRead, expectation.Field) {
+			return false
+		}
+	}
+	return true
+}
+
+func completionVerificationHasSuccessfulRuntimeEvidence(evidence map[string]interface{}) bool {
+	if len(evidence) == 0 {
+		return false
+	}
+	for _, raw := range evidenceSliceFromAny(evidence["skill_invocations"]) {
+		if completionVerificationEvidenceItemSucceeded(evidenceMapFromAny(raw)) {
+			return true
+		}
+	}
+	if completionVerificationEvidenceValuePresent(evidence["generated_files"]) {
+		return true
+	}
+	for _, raw := range evidenceSliceFromAny(evidence["client_actions"]) {
+		if completionVerificationEvidenceItemSucceeded(evidenceMapFromAny(raw)) {
+			return true
+		}
+	}
+	if completionVerificationEvidenceValuePresent(evidence["evidence_ledger"]) {
+		return true
+	}
+	summary := evidenceMapFromAny(evidence["operation_result_summary"])
+	if completionVerificationEvidenceStatusSucceeded(summary["status"]) ||
+		completionVerificationEvidenceStatusSucceeded(summary["plan_status"]) {
+		return true
+	}
+	plan := evidenceMapFromAny(evidence["operation_plan"])
+	if completionVerificationEvidenceStatusSucceeded(plan["status"]) {
+		return true
+	}
+	if result := evidenceMapFromAny(plan["tool_result"]); completionVerificationEvidenceItemSucceeded(result) {
+		return true
+	}
+	if ledger := evidenceMapFromAny(evidence["execution_ledger"]); len(ledger) > 0 {
+		for _, key := range []string{"evidence_ledger", "skill_invocations", "generated_files", "client_actions"} {
+			if completionVerificationEvidenceValuePresent(ledger[key]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func completionVerificationEvidenceItemSucceeded(item map[string]interface{}) bool {
+	if len(item) == 0 {
+		return false
+	}
+	if completionVerificationEvidenceStatusSucceeded(item["status"]) {
+		return true
+	}
+	result := evidenceMapFromAny(item["result"])
+	return completionVerificationEvidenceStatusSucceeded(result["status"])
+}
+
+func completionVerificationEvidenceStatusSucceeded(value interface{}) bool {
+	switch strings.ToLower(strings.TrimSpace(evidenceStringFromAny(value))) {
+	case "success", "succeeded", "completed", "complete", "ok", "done":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -120,21 +762,13 @@ func completionVerificationDecisionLooksLikeAgentConfigNeedsAction(decision comp
 }
 
 func (d completionVerificationDecision) normalizedStatus() string {
-	switch strings.ToLower(strings.TrimSpace(d.Status)) {
-	case completionVerificationStatusPass:
-		return completionVerificationStatusPass
-	case completionVerificationStatusNeedsAction, "action", "continue", "retry":
-		return completionVerificationStatusNeedsAction
-	case completionVerificationStatusAskUser, "ask", "question":
-		return completionVerificationStatusAskUser
-	case completionVerificationStatusFailed, "fail", "failure", "error":
-		return completionVerificationStatusFailed
-	default:
-		return completionVerificationStatusFailed
-	}
+	return completionVerificationNormalizeStatus(d.Status)
 }
 
 func completionVerificationShouldRun(evidence map[string]interface{}, attempted []SkillToolCallRef, successful []SkillToolCallRef, toolCallCount int) bool {
+	if gate := completionGateEvaluate(evidence, ""); gate.Path == completionGateDeterministicPass {
+		return false
+	}
 	if toolCallCount > 0 || len(attempted) > 0 || len(successful) > 0 {
 		return true
 	}
@@ -554,7 +1188,7 @@ func completionVerificationLedgerHasFacts(ledger map[string]interface{}) bool {
 	if len(ledger) == 0 {
 		return false
 	}
-	for _, key := range []string{"operation_ledger", "skill_invocations", "generated_files", "client_actions", "tool_governance", "summary"} {
+	for _, key := range []string{"evidence_ledger", "turn_state", "operation_ledger", "skill_invocations", "generated_files", "client_actions", "tool_governance", "summary"} {
 		if completionVerificationEvidenceValuePresent(ledger[key]) {
 			return true
 		}
@@ -587,7 +1221,12 @@ func (r *Runner) runCompletionVerifier(
 		evidence = map[string]interface{}{}
 	}
 	if !completionVerificationShouldRun(evidence, attempted, successful, toolCallCount) {
-		return completionVerificationDecision{Status: completionVerificationStatusPass}, nil, nil
+		return completionVerificationDecision{Status: completionVerificationStatusPass, Source: "completion_gate", Reason: "completion verifier skipped because deterministic evidence is sufficient"}, nil, nil
+	}
+	if gate := completionGateEvaluate(evidence, candidateAnswer); gate.Path != completionGateModelVerifier {
+		decision := gate.completionVerificationDecision()
+		decision = completionVerificationAlignLanguage(evidence, decision)
+		return decision, nil, nil
 	}
 	if completionVerificationCandidateAnswerLeaksInternalPlan(candidateAnswer) {
 		decision := completionVerificationInternalPlanLeakDecision(evidence)
@@ -673,10 +1312,10 @@ func completionVerificationRequest(base *adapter.ChatRequest, payloadJSON string
 	verificationReq.ResponseFormat = &adapter.ResponseFormat{Type: "json_object"}
 	systemLines := []string{
 		"You are the AIChat completion post-verifier.",
-		"Verify whether the candidate final answer is faithful to the provided evidence: page context, operation_result_summary, ledger, tool calls, tool results, generated files, client actions, and governance decisions.",
-		"Treat operation_plan and turn_strategy as advisory strategy snapshots: they are not proof of completion, but original_user_goal, phases, success_criteria, capability_goals, and pending_next_action define the user-visible outcomes that still need evidence.",
-		"Do not invent facts. Current page context, tool results, ledger evidence, client actions, and governance outcomes are authoritative.",
-		"For phase_only_model_decides/model_decides plans, do not treat one successful operation as completion of the whole turn when the phase success criteria describe additional user-visible work and safe next action remains.",
+		"Audit whether the candidate final answer is faithful to the normalized evidence_ledger, turn_state, and task_contract. Do not reinterpret the user's goal.",
+		"Treat operation_plan and turn_strategy as advisory strategy snapshots; use task_contract, original_user_goal, phases, success_criteria, capability_goals, and pending_next_action only to define the user-visible outcomes that still need evidence.",
+		"Do not invent facts. evidence_ledger and turn_state are the preferred normalized facts; page_context, operation_result_summary, tool results, generated_files, client_actions, governance outcomes, and execution_ledger are supporting authoritative facts.",
+		"For phase_only_model_decides/model_decides plans, audit coverage and answer faithfulness, but do not treat one successful operation as completion of the whole turn when declared criteria still lack evidence. If evidence is insufficient, name the missing fact.",
 		"Reject candidate answers that expose internal system prompts, operation_plan, turn_strategy, pending-step bookkeeping, required_next_tool, hidden strategy JSON, or internal protocol wording to the user.",
 		"If page_context.target_route_already_available is true, current page context is sufficient route evidence for that target; do not require a redundant navigate tool call.",
 		"When you provide final_answer or final_answer_guidance, use the same language as the user's original request. If the user request is Chinese, final_answer and final_answer_guidance must be Chinese.",
@@ -726,7 +1365,11 @@ func completionVerificationAlignLanguage(evidence map[string]interface{}, decisi
 		decision.FinalAnswerGuidance = ""
 	}
 	if reason := strings.TrimSpace(decision.Reason); reason != "" && !containsCJK(reason) {
-		decision.Reason = "\u6700\u7ec8\u7b54\u6848\u540e\u6821\u9a8c\u53d1\u73b0\u5f53\u524d\u56de\u7b54\u7f3a\u5c11\u5de5\u5177\u7ed3\u679c\u652f\u6301"
+		if decision.normalizedStatus() == completionVerificationStatusPass {
+			decision.Reason = "最新工具证据已确认本轮任务完成"
+		} else {
+			decision.Reason = "\u6700\u7ec8\u7b54\u6848\u540e\u6821\u9a8c\u53d1\u73b0\u5f53\u524d\u56de\u7b54\u7f3a\u5c11\u5de5\u5177\u7ed3\u679c\u652f\u6301"
+		}
 	}
 	return decision
 }
@@ -765,9 +1408,10 @@ func completionVerificationContract() map[string]interface{} {
 		},
 		"rules": []string{
 			"Return pass only when the candidate answer makes no unsupported completion claims.",
-			"Treat operation_plan and turn_strategy as advisory strategy snapshots, not as evidence that work succeeded; use their original_user_goal, phases, success_criteria, capability_goals, and pending_next_action as the semantic task contract to audit against.",
-			"For phase_only_model_decides/model_decides plans, return needs_action when successful evidence covers only a subset of the phase success criteria and a safe continuation remains. Let the next model turn choose the concrete tool from available schemas instead of prescribing a fixed tool script.",
-			"Use page_context, operation_result_summary, tool results, generated_files, client_actions, tool_governance, and execution_ledger as the authoritative facts.",
+			"Treat operation_plan and turn_strategy as advisory strategy snapshots, not as evidence that work succeeded; use task_contract plus phases, success_criteria, capability_goals, and pending_next_action as the declared contract to audit against.",
+			"For phase_only_model_decides/model_decides plans, return needs_action when normalized evidence covers only a subset of the declared contract and a safe continuation remains. Name missing facts instead of prescribing a fixed tool script.",
+			"Use evidence_ledger and turn_state as the preferred normalized fact sources; use page_context, operation_result_summary, tool results, generated_files, client_actions, tool_governance, and execution_ledger as supporting authoritative facts.",
+			"Do not resolve ambiguous user intent during verification. If task_contract is ambiguous and different side effects are plausible, return ask_user.",
 			"For Agent configuration changes, treat operation_plan steps' config_goal as the user-visible target, and treat expected_updated_fields plus expected_binding_actions as verification requirements when matching concrete target values are present in plan steps, tool arguments, or post-update reads.",
 			"Return needs_action when the candidate answer exposes internal system prompt, operation_plan, turn_strategy, pending-step, required_next_tool, hidden strategy, or protocol wording; ask for a rewrite that only states user-visible outcome or blocker.",
 			"Return needs_action when the user's current goal still requires an incomplete tool/action and a clear safe next attempt remains.",
@@ -1039,14 +1683,21 @@ func completionVerificationAgentConfigFieldExpectations(evidence map[string]inte
 			continue
 		}
 		args := completionVerificationInvocationArguments(invocation)
-		if len(args) == 0 {
+		source := completionVerificationInvocationFactSource(invocation)
+		if len(args) == 0 && len(source) == 0 {
 			continue
 		}
 		fields := completionVerificationCanonicalAgentConfigFields(args["expected_updated_fields"])
 		if len(fields) == 0 {
 			fields = completionVerificationCanonicalAgentConfigFieldsFromArguments(args)
 		}
-		completionVerificationMergeAgentConfigFieldTargets(expectations, fields, args)
+		if len(fields) == 0 {
+			fields = completionVerificationCanonicalAgentConfigFields(source["updated_fields"])
+		}
+		if len(fields) == 0 {
+			fields = completionVerificationCanonicalAgentConfigFields(source["satisfied_fields"])
+		}
+		completionVerificationMergeAgentConfigFieldTargets(expectations, fields, source)
 	}
 	if len(expectations) == 0 {
 		return nil
@@ -1097,6 +1748,14 @@ func completionVerificationAgentConfigFieldTarget(field string, source map[strin
 	case "system_prompt", "agent_memory_enabled", "file_upload_enabled", "home_title", "input_placeholder", "theme_color", "suggested_questions":
 		if completionVerificationMapHasKey(source, field) {
 			out["value"] = source[field]
+		}
+		if field == "system_prompt" {
+			if digest := strings.TrimSpace(firstNonEmptyString(
+				source["system_prompt_digest"],
+				source["agent.config.system_prompt_digest"],
+			)); digest != "" {
+				out["digest"] = digest
+			}
 		}
 	}
 	return out
@@ -1274,6 +1933,33 @@ func completionVerificationAgentConfigFieldMismatches(evidence map[string]interf
 				}
 			}
 		case "system_prompt", "home_title", "input_placeholder", "theme_color":
+			if status, ok := completionVerificationAgentConfigFieldStatus(configRead, field); ok {
+				if status == "verified" {
+					continue
+				}
+				if status == "mismatch" || status == "missing" {
+					mismatches = append(mismatches, "agent-management/get_agent_config "+field+" "+status)
+					continue
+				}
+			}
+			if field == "system_prompt" {
+				wantDigest := strings.TrimSpace(evidenceStringFromAny(target["digest"]))
+				actualDigest := strings.TrimSpace(firstNonEmptyString(configRead["system_prompt_digest"], configRead["agent.config.system_prompt_digest"], config["system_prompt_digest"], config["agent.config.system_prompt_digest"]))
+				if wantDigest != "" {
+					if actualDigest != "" {
+						if !strings.EqualFold(actualDigest, wantDigest) {
+							mismatches = append(mismatches, "agent-management/get_agent_config system_prompt digest mismatch")
+						}
+						continue
+					}
+					want := strings.TrimSpace(evidenceStringFromAny(target["value"]))
+					actual := strings.TrimSpace(firstNonEmptyString(config[field], configRead[field]))
+					if want == "" || !completionVerificationAgentConfigTextMatches(want, actual) {
+						mismatches = append(mismatches, "agent-management/get_agent_config system_prompt digest mismatch")
+					}
+					continue
+				}
+			}
 			want := strings.TrimSpace(evidenceStringFromAny(target["value"]))
 			if want == "" {
 				continue
@@ -1680,6 +2366,24 @@ func completionVerificationInvocationArguments(invocation map[string]interface{}
 	return nil
 }
 
+func completionVerificationInvocationFactSource(invocation map[string]interface{}) map[string]interface{} {
+	if len(invocation) == 0 {
+		return nil
+	}
+	out := map[string]interface{}{}
+	for _, key := range []string{"result_summary", "result_facts", "result", "tool_result", "arguments"} {
+		for sourceKey, value := range evidenceMapFromAny(invocation[key]) {
+			if _, exists := out[sourceKey]; !exists {
+				out[sourceKey] = value
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func completionVerificationLatestAgentConfigReadResult(evidence map[string]interface{}) (map[string]interface{}, bool) {
 	if result, ok := completionVerificationLatestAgentConfigReadResultAfterUpdate(evidence); ok {
 		return result, true
@@ -1700,10 +2404,7 @@ func completionVerificationLatestAgentConfigReadResult(evidence map[string]inter
 		if !completionVerificationInvocationSucceeded(invocation) {
 			continue
 		}
-		result := evidenceMapFromAny(invocation["result"])
-		if len(result) == 0 {
-			result = evidenceMapFromAny(invocation["result_summary"])
-		}
+		result := completionVerificationInvocationResult(invocation)
 		if len(result) == 0 {
 			continue
 		}
@@ -1744,12 +2445,51 @@ func completionVerificationHasAgentConfigUpdateResultEvidence(evidence map[strin
 }
 
 func completionVerificationInvocationResult(invocation map[string]interface{}) map[string]interface{} {
+	var out map[string]interface{}
 	for _, key := range []string{"result", "result_summary", "tool_result"} {
 		if result := evidenceMapFromAny(invocation[key]); len(result) > 0 {
-			return result
+			out = copyEvidenceMap(result)
+			break
 		}
 	}
-	return nil
+	if facts := evidenceMapFromAny(invocation["result_facts"]); len(facts) > 0 {
+		if out == nil {
+			out = map[string]interface{}{}
+		}
+		for key, value := range facts {
+			if _, exists := out[key]; !exists {
+				out[key] = value
+			}
+		}
+	}
+	return out
+}
+
+func copyEvidenceMap(source map[string]interface{}) map[string]interface{} {
+	if len(source) == 0 {
+		return nil
+	}
+	out := make(map[string]interface{}, len(source))
+	for key, value := range source {
+		out[key] = value
+	}
+	return out
+}
+
+func completionVerificationAgentConfigFieldStatus(configRead map[string]interface{}, field string) (string, bool) {
+	statuses := evidenceMapFromAny(configRead["field_status"])
+	if len(statuses) == 0 {
+		return "", false
+	}
+	canonical := completionVerificationCanonicalAgentConfigField(field)
+	if canonical == "" {
+		canonical = strings.TrimSpace(field)
+	}
+	status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(statuses[canonical])))
+	if status == "" {
+		return "", false
+	}
+	return status, true
 }
 
 func completionVerificationAgentConfigUpdateResultHasConfigEvidence(result map[string]interface{}) bool {
@@ -1791,8 +2531,19 @@ func completionVerificationAgentConfigResultHasFieldEvidence(result map[string]i
 	switch completionVerificationCanonicalAgentConfigField(field) {
 	case "model":
 		return hasInResultOrConfig("model") || hasInResultOrConfig("model_name") ||
-			hasInResultOrConfig("model_provider") || hasInResultOrConfig("provider")
-	case "system_prompt", "agent_memory_enabled", "file_upload_enabled", "home_title", "input_placeholder", "theme_color", "suggested_questions":
+			hasInResultOrConfig("model_provider") || hasInResultOrConfig("provider") ||
+			hasInResultOrConfig("agent.config.model") || hasInResultOrConfig("agent.config.model_provider")
+	case "system_prompt":
+		return hasInResultOrConfig("system_prompt") ||
+			hasInResultOrConfig("system_prompt_digest") ||
+			hasInResultOrConfig("agent.config.system_prompt_digest") ||
+			hasInResultOrConfig("system_prompt_present") ||
+			hasInResultOrConfig("agent.config.system_prompt_present")
+	case "agent_memory_enabled":
+		return hasInResultOrConfig("agent_memory_enabled") || hasInResultOrConfig("agent.config.agent_memory_enabled")
+	case "file_upload_enabled":
+		return hasInResultOrConfig("file_upload_enabled") || hasInResultOrConfig("agent.config.file_upload_enabled")
+	case "home_title", "input_placeholder", "theme_color", "suggested_questions":
 		return hasInResultOrConfig(field)
 	case "enabled_skill_ids", "knowledge_dataset_ids", "database_bindings", "workflow_bindings":
 		return completionVerificationAgentConfigResultHasCollectionFieldEvidence(result, field)
@@ -1861,13 +2612,7 @@ func completionVerificationLatestAgentConfigReadResultAfterUpdate(evidence map[s
 				seenUpdate = true
 				latest = nil
 			case seenUpdate && strings.EqualFold(toolName, "get_agent_config") && completionVerificationInvocationSucceeded(invocation):
-				result := evidenceMapFromAny(invocation["result"])
-				if len(result) == 0 {
-					result = evidenceMapFromAny(invocation["result_summary"])
-				}
-				if len(result) == 0 {
-					result = evidenceMapFromAny(invocation["tool_result"])
-				}
+				result := completionVerificationInvocationResult(invocation)
 				if len(result) > 0 {
 					latest = result
 				}
@@ -2685,6 +3430,7 @@ func completionVerificationFailureDetailForStep(evidence map[string]interface{},
 
 func completionVerificationEvidenceInvocations(evidence map[string]interface{}) []map[string]interface{} {
 	out := make([]map[string]interface{}, 0)
+	out = append(out, evidenceMapsFromAny(evidence["evidence_ledger"])...)
 	out = append(out, evidenceMapsFromAny(evidence["skill_invocations"])...)
 	out = append(out, evidenceMapsFromAny(evidence["client_actions"])...)
 	out = append(out, evidenceMapsFromAny(evidence["tool_governance"])...)
@@ -2699,6 +3445,7 @@ func completionVerificationEvidenceInvocations(evidence map[string]interface{}) 
 		}
 	}
 	if ledger := evidenceMapFromAny(evidence["execution_ledger"]); len(ledger) > 0 {
+		out = append(out, evidenceMapsFromAny(ledger["evidence_ledger"])...)
 		out = append(out, evidenceMapsFromAny(ledger["skill_invocations"])...)
 		out = append(out, evidenceMapsFromAny(ledger["client_actions"])...)
 		out = append(out, evidenceMapsFromAny(ledger["tool_governance"])...)

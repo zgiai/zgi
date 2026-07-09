@@ -2941,8 +2941,8 @@ Use generate_file to create a temporary artifact.
 	if !strings.Contains(answer, "empty-final.svg") || !strings.Contains(answer, "\u5df2\u751f\u6210") {
 		t.Fatalf("answer = %q, want evidence-based generated file answer", answer)
 	}
-	if fakeLLM.appChatCalls != 2 {
-		t.Fatalf("AppChat calls = %d, want planning plus verifier", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("AppChat calls = %d, want planning only because completion gate skips verifier", fakeLLM.appChatCalls)
 	}
 }
 
@@ -7396,6 +7396,7 @@ func TestRunnerCompletionVerifierRetriesReasoningOnlyResponse(t *testing.T) {
 					"tool_name": "delete_agent",
 					"status":    "success",
 				}},
+				"model_verifier_required": true,
 			}
 		},
 	})

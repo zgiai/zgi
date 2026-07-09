@@ -557,6 +557,9 @@ func contextualAIChatTurnStrategyFromModelIntent(parts *chatRequestParts, strate
 	}
 	markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceModelIntent, modelTurnIntentSourceReason(intent))
 	applyModelTurnIntentHints(parts, strategy, intent)
+	if modelTurnIntentShouldUseGenericTaskContract(intent) {
+		return contextualModelTurnTaskContractStrategy(parts, strategy, intent), true
+	}
 	switch intent.Intent {
 	case "manage_agent_asset":
 		if !canAcceptAgentModelTurnIntent(parts, intent) {
@@ -584,6 +587,114 @@ func contextualAIChatTurnStrategyFromModelIntent(parts *chatRequestParts, strate
 	default:
 		return strategy, false
 	}
+}
+
+func modelTurnIntentShouldUseGenericTaskContract(intent *AIChatModelTurnIntent) bool {
+	if intent == nil || !modelTurnIntentHasActionableTaskContract(intent) {
+		return false
+	}
+	return intent.LowConfidence || strings.TrimSpace(intent.RawIntent) != ""
+}
+
+func modelTurnIntentHasActionableTaskContract(intent *AIChatModelTurnIntent) bool {
+	if intent == nil {
+		return false
+	}
+	if modelTurnIntentAssetEffectIsMutation(intent.AssetEffect) ||
+		modelTurnIntentAssetEffectIsDelete(intent.AssetEffect) ||
+		modelTurnIntentRequestsTemporaryFileArtifact(intent) ||
+		intent.NeedsExactAgentRuntime ||
+		intent.OpenCreatedAgentDetail {
+		return true
+	}
+	if intent.RouteRequired != nil && *intent.RouteRequired {
+		return true
+	}
+	for _, capability := range intent.RecommendedCapabilities {
+		if modelTurnCapabilityHintRequiresSkillLoop(capability) {
+			return true
+		}
+	}
+	return false
+}
+
+func modelTurnCapabilityHintRequiresSkillLoop(value string) bool {
+	value = canonicalModelTurnCapabilityHint(value)
+	if value == "" {
+		return false
+	}
+	if strings.HasPrefix(value, "agent.") ||
+		strings.HasPrefix(value, "agent_") {
+		return true
+	}
+	switch value {
+	case "exact_agent_runtime",
+		"visible_file_content",
+		"page_navigation",
+		"generated_artifact",
+		"chart_artifact",
+		"data_visualization_artifact",
+		"visualization_artifact",
+		"file_artifact",
+		"document_artifact",
+		"svg_artifact",
+		"text_artifact",
+		"pdf_artifact",
+		"spreadsheet_artifact",
+		"asset_mutation":
+		return true
+	default:
+		return false
+	}
+}
+
+func contextualModelTurnTaskContractStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy, intent *AIChatModelTurnIntent) *AIChatTurnStrategy {
+	if strategy == nil {
+		return strategy
+	}
+	strategy.Intent = "model_turn_contract"
+	strategy.ToolChoiceMode = aiChatTurnToolChoiceModelDecides
+	strategy.SuccessCriteria = appendUniqueStrings(strategy.SuccessCriteria,
+		"complete the model-provided task phases before final answer",
+		"use enabled tools from the latest evidence when a phase needs system data or asset mutation",
+		"verify the final answer against successful tool, page, or client-action evidence",
+	)
+	strategy.ObservationPoints = appendUniqueStrings(strategy.ObservationPoints, intent.EvidenceRequired...)
+	if intent.RouteRequired != nil && *intent.RouteRequired && skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
+		strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillConsoleNavigator)
+	}
+	if modelTurnIntentHasRecommendedCapability(intent, "page_navigation") && skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
+		strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillConsoleNavigator)
+	}
+	if modelTurnIntentNeedsAgentManagementSkill(intent) && skillIDEnabled(parts.SkillIDs, skills.SkillAgentManagement) {
+		strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillAgentManagement)
+		strategy = appendAgentManagementModelDecidesGuidance(parts, strategy)
+	}
+	if modelTurnIntentHasRecommendedCapability(intent, "visible_file_content") && skillIDEnabled(parts.SkillIDs, skills.SkillFileReader) {
+		strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillFileReader)
+	}
+	if modelTurnIntentRequestsTemporaryFileArtifact(intent) {
+		strategy.SupportingSkills = appendArtifactProducerSkills(strategy.SupportingSkills, parts)
+	}
+	return strategy
+}
+
+func modelTurnIntentNeedsAgentManagementSkill(intent *AIChatModelTurnIntent) bool {
+	if intent == nil {
+		return false
+	}
+	if intent.NeedsExactAgentRuntime || intent.OpenCreatedAgentDetail {
+		return true
+	}
+	for _, capability := range intent.RecommendedCapabilities {
+		canonical := canonicalModelTurnCapabilityHint(capability)
+		if strings.HasPrefix(canonical, "agent.") ||
+			strings.HasPrefix(canonical, "agent_") ||
+			canonical == "exact_agent_runtime" {
+			return true
+		}
+	}
+	return false
 }
 
 func canAcceptAgentModelTurnIntent(parts *chatRequestParts, intent *AIChatModelTurnIntent) bool {
@@ -686,6 +797,9 @@ func modelTurnIntentTaskContract(intent *AIChatModelTurnIntent) map[string]inter
 }
 
 func applyModelTurnIntentHints(parts *chatRequestParts, strategy *AIChatTurnStrategy, intent *AIChatModelTurnIntent) {
+	if compatibilityIntent := strings.TrimSpace(intent.Intent); compatibilityIntent != "" {
+		strategy.CompatibilityIntent = compatibilityIntent
+	}
 	if strings.TrimSpace(intent.TaskType) != "" {
 		strategy.TaskType = strings.TrimSpace(intent.TaskType)
 	}

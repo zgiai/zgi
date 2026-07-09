@@ -423,11 +423,11 @@ func TestCompletionVerificationPromptTreatsEvidenceAsAuthoritative(t *testing.T)
 	}
 	system := messageContent(request.Messages[0].Content)
 	for _, fragment := range []string{
-		"faithful to the provided evidence",
+		"faithful to the normalized evidence_ledger",
 		"operation_plan and turn_strategy as advisory strategy snapshots",
 		"define the user-visible outcomes that still need evidence",
 		"do not treat one successful operation as completion of the whole turn",
-		"Current page context, tool results, ledger evidence, client actions, and governance outcomes are authoritative",
+		"evidence_ledger and turn_state are the preferred normalized facts",
 		"target_route_already_available",
 	} {
 		if !strings.Contains(system, fragment) {
@@ -809,6 +809,144 @@ func TestCompletionVerificationAgentConfigBindingUsesCandidateAliases(t *testing
 	})
 	if got := reconciled.Status; got != completionVerificationStatusPass {
 		t.Fatalf("reconciled status = %q, want pass; result=%#v", got, reconciled)
+	}
+}
+
+func TestCompletionVerificationReconcilesNonActionableFailedStatusWithCompleteEvidence(t *testing.T) {
+	update := map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "update_agent_config",
+		"arguments": map[string]interface{}{
+			"expected_updated_fields": []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+			"model_provider":          "deepseek",
+			"model":                   "deepseek-v4-flash",
+			"system_prompt":           "Write fiction and generate files when needed.",
+			"file_upload_enabled":     true,
+			"add_enabled_skill_ids":   []interface{}{"file-generator"},
+		},
+		"result": map[string]interface{}{
+			"status":              "completed",
+			"agent_id":            "agent-1",
+			"agent_name":          "Fiction Master",
+			"updated_fields":      []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+			"satisfied_fields":    []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+			"model_provider":      "deepseek",
+			"model":               "deepseek-v4-flash",
+			"system_prompt":       "Write fiction and generate files when needed.",
+			"file_upload_enabled": true,
+			"enabled_skill_ids":   []interface{}{"file-generator"},
+		},
+	}
+	postRead := map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "get_agent_config",
+		"result": map[string]interface{}{
+			"status":              "completed",
+			"agent_id":            "agent-1",
+			"agent_name":          "Fiction Master",
+			"model_provider":      "deepseek",
+			"model":               "deepseek-v4-flash",
+			"system_prompt":       "Write fiction and generate files when needed.",
+			"file_upload_enabled": true,
+			"enabled_skill_ids":   []interface{}{"file-generator"},
+		},
+	}
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"tool_choice_mode":    operationPlanToolChoiceModelDecides,
+			"planning_mode":       "phase_only_model_decides",
+			"pending_next_action": "continue_from_phase_success_criteria",
+			"original_user_goal":  "Create a fiction agent, set DeepSeek Flash, write a prompt, enable file upload, and bind file generation.",
+			"capability_goals": []interface{}{
+				map[string]interface{}{
+					"capability_id":          "agent.configuration",
+					"goal_action":            "update",
+					"required_config_fields": []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+				},
+			},
+		},
+		"skill_invocations": []interface{}{update, postRead},
+	}
+
+	reconciled := ReconcileCompletionVerificationResultWithEvidence(evidence, CompletionVerificationResult{
+		Status: completionVerificationStatusFailed,
+		Reason: "Evidence confirms all requested changes, but verifier emitted failed status.",
+	})
+
+	if got := reconciled.Status; got != completionVerificationStatusPass {
+		t.Fatalf("reconciled status = %q, want pass; result=%#v", got, reconciled)
+	}
+	if strings.Contains(strings.ToLower(reconciled.Reason), "failed status") {
+		t.Fatalf("reconciled reason = %q, want evidence pass reason instead of stale failure reason", reconciled.Reason)
+	}
+	if len(reconciled.MissingSteps) != 0 || len(reconciled.UnsupportedClaims) != 0 || reconciled.NextActionHint != "" {
+		t.Fatalf("reconciled = %#v, want cleared blocker fields", reconciled)
+	}
+}
+
+func TestCompletionVerificationDoesNotReconcileNonActionableFailureWithPendingAgentWork(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"tool_choice_mode":    operationPlanToolChoiceModelDecides,
+			"planning_mode":       "phase_only_model_decides",
+			"pending_next_action": "continue_from_phase_success_criteria",
+			"original_user_goal":  "Create a fiction agent and enable file generation.",
+			"capability_goals": []interface{}{
+				map[string]interface{}{
+					"capability_id":          "agent.configuration",
+					"goal_action":            "update",
+					"required_config_fields": []interface{}{"enabled_skill_ids"},
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "create_agent",
+				"result": map[string]interface{}{
+					"status":     "completed",
+					"agent_id":   "agent-1",
+					"agent_name": "Fiction Master",
+				},
+			},
+		},
+	}
+
+	reconciled := ReconcileCompletionVerificationResultWithEvidence(evidence, CompletionVerificationResult{
+		Status: completionVerificationStatusFailed,
+		Reason: "failed without actionable fields",
+	})
+
+	if got := reconciled.Status; got != completionVerificationStatusFailed {
+		t.Fatalf("reconciled status = %q, want failed while Agent work is pending; result=%#v", got, reconciled)
+	}
+}
+
+func TestCompletionVerificationDoesNotReconcileFailureFromTurnStateAlone(t *testing.T) {
+	reconciled := ReconcileCompletionVerificationResultWithEvidence(map[string]interface{}{
+		"turn_state": map[string]interface{}{
+			"items": []interface{}{
+				map[string]interface{}{
+					"kind":  "working_fact",
+					"value": "the model believes the task is done",
+				},
+			},
+		},
+	}, CompletionVerificationResult{
+		Status: completionVerificationStatusFailed,
+		Reason: "failed without actionable fields",
+	})
+
+	if got := reconciled.Status; got != completionVerificationStatusFailed {
+		t.Fatalf("reconciled status = %q, want failed without execution evidence; result=%#v", got, reconciled)
 	}
 }
 
@@ -2154,6 +2292,101 @@ func TestCompletionVerificationApplyPlanOnlySofteningAllowsCompletedManagedFileS
 	}
 }
 
+func TestCompletionVerificationReconcilesUnrequestedPDFManagedSave(t *testing.T) {
+	evidence := map[string]interface{}{
+		"user_request": "生成一个md文件，一个pdf文件。再把md文件保存到文件管理里面。",
+		"operation_plan": map[string]interface{}{
+			"status":             "running",
+			"tool_choice_mode":   operationPlanToolChoiceModelDecides,
+			"planning_mode":      "phase_only_model_decides",
+			"original_user_goal": "生成一个md文件，一个pdf文件。再把md文件保存到文件管理里面。",
+		},
+		"generated_files": []interface{}{
+			map[string]interface{}{
+				"filename":        "story.md",
+				"extension":       ".md",
+				"target":          "temporary_artifact",
+				"managed_file_id": "managed-md-1",
+				"status":          "saved_to_file_management",
+			},
+			map[string]interface{}{
+				"filename":  "story.pdf",
+				"extension": ".pdf",
+				"target":    "temporary_artifact",
+				"status":    "available",
+			},
+		},
+		"evidence_ledger": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "completed",
+				"skill_id":  skills.SkillFileGenerator,
+				"tool_name": "generate_file",
+				"result_facts": map[string]interface{}{
+					"filename":       "story.pdf",
+					"file_extension": "pdf",
+					"target":         "temporary_artifact",
+				},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "completed",
+				"skill_id":  skills.SkillFileManager,
+				"tool_name": "save_file_to_management",
+				"result_facts": map[string]interface{}{
+					"filename":       "story.md",
+					"file_extension": "md",
+					"target":         "managed_file",
+					"file_id":        "managed-md-1",
+				},
+			},
+		},
+	}
+
+	decision := completionVerificationReconcileDecisionWithEvidence(evidence, completionVerificationDecision{
+		Status:            completionVerificationStatusFailed,
+		Reason:            "candidate answer lacks tool evidence",
+		MissingSteps:      []string{"Save PDF file to File Management"},
+		UnsupportedClaims: []string{"All operations completed (PDF not saved to management)"},
+		NextActionHint:    "Save the generated PDF file to File Management if user wants it persisted.",
+	})
+
+	if got := decision.normalizedStatus(); got != completionVerificationStatusPass {
+		t.Fatalf("decision status = %q, want pass for unrequested PDF managed save; decision=%#v", got, decision)
+	}
+}
+
+func TestCompletionVerificationKeepsRequestedPDFManagedSaveMissing(t *testing.T) {
+	evidence := map[string]interface{}{
+		"user_request": "生成一个md文件，一个pdf文件，并把两个文件都保存到文件管理里面。",
+		"generated_files": []interface{}{
+			map[string]interface{}{
+				"filename":        "story.md",
+				"extension":       ".md",
+				"target":          "temporary_artifact",
+				"managed_file_id": "managed-md-1",
+				"status":          "saved_to_file_management",
+			},
+			map[string]interface{}{
+				"filename":  "story.pdf",
+				"extension": ".pdf",
+				"target":    "temporary_artifact",
+				"status":    "available",
+			},
+		},
+	}
+
+	decision := completionVerificationReconcileDecisionWithEvidence(evidence, completionVerificationDecision{
+		Status:       completionVerificationStatusFailed,
+		Reason:       "candidate answer lacks tool evidence",
+		MissingSteps: []string{"Save PDF file to File Management"},
+	})
+
+	if got := decision.normalizedStatus(); got == completionVerificationStatusPass {
+		t.Fatalf("decision status = pass, want missing requested PDF save preserved; decision=%#v", decision)
+	}
+}
+
 func TestCompletionVerificationEvidenceInvocationsIncludesTopLevelClientActions(t *testing.T) {
 	invocations := completionVerificationEvidenceInvocations(map[string]interface{}{
 		"client_actions": []interface{}{
@@ -2298,6 +2531,208 @@ func TestCompletionVerificationFailedPlanAnswerUsesClientActionError(t *testing.
 	}
 	if !strings.Contains(decision.FinalAnswer, "route did not finish loading") {
 		t.Fatalf("final_answer = %q, want client action failure detail", decision.FinalAnswer)
+	}
+}
+
+func TestCompletionVerificationUsesLedgerFactsForPostUpdateAgentConfig(t *testing.T) {
+	digest := "sha256:prompt-digest"
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":           "running",
+			"tool_choice_mode": operationPlanToolChoiceModelDecides,
+			"planning_mode":    "phase_only_model_decides",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":                      "tool:agent-management/update_agent_config",
+					"skill_id":                skills.SkillAgentManagement,
+					"tool_name":               "update_agent_config",
+					"expected_updated_fields": []interface{}{"model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+				},
+			},
+		},
+		"evidence_ledger": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "completed",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"result_facts": map[string]interface{}{
+					"updated_fields":                    []interface{}{"model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+					"model_provider":                    "deepseek",
+					"model":                             "deepseek-v4-flash",
+					"agent.config.system_prompt_digest": digest,
+					"file_upload_enabled":               true,
+					"enabled_skill_refs":                []interface{}{"file-generator"},
+				},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "completed",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result_facts": map[string]interface{}{
+					"model_provider":                    "deepseek",
+					"model":                             "deepseek-v4-flash",
+					"agent.config.system_prompt_digest": digest,
+					"file_upload_enabled":               true,
+					"enabled_skill_refs":                []interface{}{"file-generator"},
+					"field_status": map[string]interface{}{
+						"system_prompt":       "verified",
+						"model":               "verified",
+						"file_upload_enabled": "verified",
+					},
+				},
+			},
+		},
+	}
+
+	if mismatches := completionVerificationAgentConfigMismatches(evidence); len(mismatches) > 0 {
+		t.Fatalf("completionVerificationAgentConfigMismatches() = %#v, want none", mismatches)
+	}
+	if !completionVerificationLedgerSatisfiesAgentConfigPostRead(evidence) {
+		t.Fatalf("completionVerificationLedgerSatisfiesAgentConfigPostRead() = false, want true")
+	}
+	result, ok := completionVerificationLatestAgentConfigReadResult(evidence)
+	if !ok {
+		t.Fatal("completionVerificationLatestAgentConfigReadResult() ok = false, want ledger read result")
+	}
+	if got := strings.TrimSpace(evidenceStringFromAny(result["agent.config.system_prompt_digest"])); got != digest {
+		t.Fatalf("system prompt digest = %q, want %q; result=%#v", got, digest, result)
+	}
+}
+
+func TestCompletionVerificationReconcilesLedgerVerifiedModelDecidesFailure(t *testing.T) {
+	digest := "sha256:prompt-digest"
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"tool_choice_mode":    operationPlanToolChoiceModelDecides,
+			"planning_mode":       "phase_only_model_decides",
+			"pending_next_action": "continue_from_phase_success_criteria",
+			"original_user_goal":  "Create a story Agent, configure the model, enable uploads, and bind file generation.",
+			"phases": []interface{}{
+				map[string]interface{}{
+					"id":               "phase-agent-management",
+					"success_criteria": []interface{}{"create, configure, bind, and verify the Agent"},
+				},
+			},
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config",
+					"status":                            "completed",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"required_post_update_verification": true,
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/update_agent_config": "completed",
+				"tool:agent-management/get_agent_config":    "completed",
+			},
+		},
+		"evidence_ledger": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "completed",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"result_facts": map[string]interface{}{
+					"updated_fields":                    []interface{}{"model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+					"model_provider":                    "deepseek",
+					"model":                             "deepseek-v4-flash",
+					"agent.config.system_prompt_digest": digest,
+					"file_upload_enabled":               true,
+					"enabled_skill_refs":                []interface{}{"file-generator"},
+				},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "completed",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result_facts": map[string]interface{}{
+					"model_provider":                    "deepseek",
+					"model":                             "deepseek-v4-flash",
+					"agent.config.system_prompt_digest": digest,
+					"file_upload_enabled":               true,
+					"enabled_skill_refs":                []interface{}{"file-generator"},
+					"field_status": map[string]interface{}{
+						"system_prompt":       "verified",
+						"model":               "verified",
+						"file_upload_enabled": "verified",
+					},
+					"verified_fields": []interface{}{"system_prompt", "model", "file_upload_enabled"},
+				},
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"arguments": map[string]interface{}{
+					"agent_id":            "agent-1",
+					"model_provider":      "deepseek",
+					"model":               "deepseek-v4-flash",
+					"system_prompt":       "Write fiction and generate files when needed.",
+					"file_upload_enabled": true,
+					"add_enabled_skill_ids": []interface{}{
+						"file-generator",
+					},
+				},
+				"result": map[string]interface{}{
+					"status":              "completed",
+					"model_provider":      "deepseek",
+					"model":               "deepseek-v4-flash",
+					"system_prompt":       "Write fiction and generate files when needed.",
+					"file_upload_enabled": true,
+					"enabled_skill_ids":   []interface{}{"file-generator"},
+					"updated_fields":      []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+					"satisfied_fields":    []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+				},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result": map[string]interface{}{
+					"status":              "completed",
+					"model_provider":      "deepseek",
+					"model":               "deepseek-v4-flash",
+					"system_prompt":       "Write fiction and generate files when needed.",
+					"file_upload_enabled": true,
+					"enabled_skill_ids":   []interface{}{"file-generator"},
+				},
+			},
+		},
+	}
+
+	if !completionVerificationLedgerSatisfiesAgentConfigPostRead(evidence) {
+		latestRead, hasRead := completionVerificationLatestAgentConfigReadResult(evidence)
+		t.Fatalf(
+			"completionVerificationLedgerSatisfiesAgentConfigPostRead() = false; mismatches=%#v needs_post_read=%v has_update=%v has_read_after_update=%v has_latest_read=%v latest_read=%#v",
+			completionVerificationAgentConfigMismatches(evidence),
+			fastPathCompletionEvidenceNeedsAgentConfigPostRead(evidence),
+			fastPathEvidenceHasSuccessfulAgentConfigUpdate(evidence),
+			fastPathHasSuccessfulAgentConfigReadAfterUpdate(evidence),
+			hasRead,
+			latestRead,
+		)
+	}
+	result := ReconcileCompletionVerificationResultWithEvidence(evidence, CompletionVerificationResult{
+		Status: "failed",
+		Reason: "Evidence confirms all requested changes, but the verifier emitted a failed status.",
+	})
+	if got := strings.TrimSpace(result.Status); got != completionVerificationStatusPass {
+		t.Fatalf("ReconcileCompletionVerificationResultWithEvidence().Status = %q, want pass; result=%#v", got, result)
 	}
 }
 

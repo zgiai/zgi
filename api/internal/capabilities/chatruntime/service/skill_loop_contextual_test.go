@@ -1241,6 +1241,62 @@ func TestContextualAIChatTurnStrategyDoesNotUseLegacyFallbackWhenModelIntentUnsu
 	}
 }
 
+func TestContextualAIChatTurnStrategyUsesGenericContractForUnsupportedActionableModelIntent(t *testing.T) {
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:          "create a story agent and let it generate files",
+			Surface:        aiChatSurfaceContextualSidebar,
+			RuntimeContext: "route=/console/agents",
+			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement, skills.SkillFileGenerator},
+			SkillMode:      skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:                  "answer_or_explain_zgi_context",
+				RawIntent:               "configure_story_agent",
+				LowConfidence:           true,
+				AssetEffect:             "update",
+				AssetRisk:               "medium",
+				RecommendedCapabilities: []string{"agent.skill_backed_capability:file generation:bind", "agent.accept_uploaded_files"},
+				Phases:                  []string{"create or select target agent", "configure writing behavior", "enable file generation"},
+				EvidenceRequired:        []string{"successful Agent config mutation", "post-update Agent config read"},
+				CompletionCriteria:      []string{"the Agent is configured with file generation capability"},
+			},
+		},
+	}
+
+	strategy := contextualAIChatTurnStrategy(prepared)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
+	}
+	if strategy.Intent != "model_turn_contract" {
+		t.Fatalf("Intent = %q, want model_turn_contract; strategy=%#v", strategy.Intent, strategy)
+	}
+	if strategy.Source != aiChatTurnStrategySourceModelIntent {
+		t.Fatalf("Source = %q, want %q", strategy.Source, aiChatTurnStrategySourceModelIntent)
+	}
+	if skillLoopShouldUsePlainStreamForPassiveAnswer(prepared) {
+		t.Fatal("skillLoopShouldUsePlainStreamForPassiveAnswer() = true, want skill loop for actionable model contract")
+	}
+	if !slices.Contains(strategy.SupportingSkills, skills.SkillAgentManagement) {
+		t.Fatalf("SupportingSkills = %#v, want agent-management", strategy.SupportingSkills)
+	}
+	if !agentCapabilityGoalListHasCapability(strategy.CapabilityGoals, agentCapabilitySkillBacked) {
+		t.Fatalf("CapabilityGoals = %#v, want skill-backed Agent capability goal", strategy.CapabilityGoals)
+	}
+	plan := operationPlanFromTurnStrategy("task-1", prepared.parts, strategy)
+	if plan == nil {
+		t.Fatal("operationPlanFromTurnStrategy() = nil, want phase-only model contract plan")
+	}
+	if got := stringFromAny(plan["tool_choice_mode"]); got != aiChatTurnToolChoiceModelDecides {
+		t.Fatalf("tool_choice_mode = %q, want model_decides", got)
+	}
+	if got := stringFromAny(plan["intent"]); got != "model_turn_contract" {
+		t.Fatalf("plan intent = %q, want model_turn_contract", got)
+	}
+	if !operationPlanCapabilityGoalsContainForTest(mapSliceFromAny(plan["capability_goals"]), agentCapabilitySkillBacked) {
+		t.Fatalf("plan capability goals = %#v, want skill-backed goal", plan["capability_goals"])
+	}
+}
+
 func TestContextualAIChatTurnStrategyKeepsPassiveAnswerWhenClassifierFailsOnAgentPage(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
@@ -1371,8 +1427,11 @@ func TestModelTurnTaskContractKeepsLowConfidencePlanOnMainPath(t *testing.T) {
 	if !strategy.LowConfidence {
 		t.Fatalf("strategy.LowConfidence = false, want true; strategy=%#v", strategy)
 	}
-	if strategy.Intent != "manage_agent_asset" {
-		t.Fatalf("Intent = %q, want manage_agent_asset", strategy.Intent)
+	if strategy.Intent != "model_turn_contract" {
+		t.Fatalf("Intent = %q, want model_turn_contract", strategy.Intent)
+	}
+	if strategy.CompatibilityIntent != "manage_agent_asset" {
+		t.Fatalf("CompatibilityIntent = %q, want manage_agent_asset", strategy.CompatibilityIntent)
 	}
 
 	metadata := streamingMessageMetadataWithTaskID(parts, "task-low-confidence-contract")
@@ -1384,9 +1443,18 @@ func TestModelTurnTaskContractKeepsLowConfidencePlanOnMainPath(t *testing.T) {
 		t.Fatalf("turn_task_contract.intent_label = %q, want manage_agent_asset", got)
 	}
 	plan := mapFromOperationContext(metadata["operation_plan"])
+	if got := stringFromAny(plan["intent"]); got != "model_turn_contract" {
+		t.Fatalf("operation_plan.intent = %q, want model_turn_contract", got)
+	}
 	planContract := mapFromOperationContext(plan["task_contract"])
 	if !operationPlanBoolValue(planContract["low_confidence"]) {
 		t.Fatalf("operation_plan.task_contract = %#v, want low confidence marker", planContract)
+	}
+	if got := stringFromAny(planContract["intent_label"]); got != "manage_agent_asset" {
+		t.Fatalf("operation_plan.task_contract.intent_label = %q, want manage_agent_asset", got)
+	}
+	if got := stringFromAny(planContract["execution_intent"]); got != "model_turn_contract" {
+		t.Fatalf("operation_plan.task_contract.execution_intent = %q, want model_turn_contract", got)
 	}
 
 	state := currentTurnAuthoritativeStatePayload(&runtimemodel.Message{
@@ -1395,6 +1463,60 @@ func TestModelTurnTaskContractKeepsLowConfidencePlanOnMainPath(t *testing.T) {
 	})
 	if stateContract := mapFromOperationContext(state["turn_task_contract"]); stringFromAny(stateContract["intent_label"]) != "manage_agent_asset" {
 		t.Fatalf("authoritative state contract = %#v, want preserved task contract", stateContract)
+	}
+}
+
+func TestModelTurnTaskContractUsesGenericPathForRawCompatibilityAlias(t *testing.T) {
+	intent, err := parseModelTurnIntentContent(`{
+		"intent":"create_agent",
+		"task_type":"agent_creation",
+		"phases":["create the requested Agent","verify created Agent evidence"],
+		"evidence_required":["create_agent tool result"],
+		"recommended_capabilities":["agent.model_selection"],
+		"completion_criteria":["final answer names the created Agent only after successful evidence"],
+		"confidence":0.91
+	}`)
+	if err != nil {
+		t.Fatalf("parseModelTurnIntentContent() error = %v", err)
+	}
+	finalizeModelTurnIntent(intent)
+	if intent.Intent != "manage_agent_asset" {
+		t.Fatalf("Intent = %q, want normalized manage_agent_asset", intent.Intent)
+	}
+	if intent.RawIntent != "create_agent" {
+		t.Fatalf("RawIntent = %q, want create_agent", intent.RawIntent)
+	}
+	if intent.LowConfidence {
+		t.Fatalf("LowConfidence = true, want false for confident compatibility alias")
+	}
+	parts := &chatRequestParts{
+		Query:           "create an Agent",
+		Surface:         aiChatSurfaceContextualSidebar,
+		RuntimeContext:  "route=/console/agents",
+		SkillIDs:        []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement},
+		SkillMode:       skillModeAuto,
+		ModelTurnIntent: intent,
+	}
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	if strategy.Intent != "model_turn_contract" {
+		t.Fatalf("Intent = %q, want model_turn_contract; strategy=%#v", strategy.Intent, strategy)
+	}
+	if strategy.CompatibilityIntent != "manage_agent_asset" {
+		t.Fatalf("CompatibilityIntent = %q, want manage_agent_asset", strategy.CompatibilityIntent)
+	}
+	plan := operationPlanFromTurnStrategy("task-create-agent-alias", parts, strategy)
+	if got := stringFromAny(plan["intent"]); got != "model_turn_contract" {
+		t.Fatalf("operation_plan.intent = %q, want model_turn_contract", got)
+	}
+	planContract := mapFromOperationContext(plan["task_contract"])
+	if got := stringFromAny(planContract["intent_label"]); got != "manage_agent_asset" {
+		t.Fatalf("operation_plan.task_contract.intent_label = %q, want manage_agent_asset", got)
+	}
+	if got := stringFromAny(planContract["execution_intent"]); got != "model_turn_contract" {
+		t.Fatalf("operation_plan.task_contract.execution_intent = %q, want model_turn_contract", got)
 	}
 }
 

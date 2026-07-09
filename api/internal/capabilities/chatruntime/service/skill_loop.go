@@ -225,16 +225,30 @@ func skillLoopCompletionVerificationResult(prepared *PreparedChat) func(skillloo
 		}
 		result = skillloop.ReconcileCompletionVerificationResultWithEvidence(skillLoopCompletionEvidence(prepared)(), result)
 		metadata := copyStringAnyMap(prepared.Message.Metadata)
-		applyOperationPlanCompletionVerificationResult(
+		applyOperationPlanCompletionVerificationResultWithSource(
 			metadata,
 			result.Status,
+			result.Source,
 			result.Reason,
 			result.MissingSteps,
 			result.UnsupportedClaims,
 			result.NextActionHint,
 		)
+		metadata = refreshOperationResultSummaryMetadata(metadata)
 		prepared.Message.Metadata = metadata
 	}
+}
+
+func refreshOperationResultSummaryMetadata(metadata map[string]interface{}) map[string]interface{} {
+	if metadata == nil {
+		return metadata
+	}
+	if summary := rebuiltOperationResultSummaryForPrompt(metadata); len(summary) > 0 {
+		metadata["operation_result_summary"] = summary
+		return metadata
+	}
+	delete(metadata, "operation_result_summary")
+	return metadata
 }
 
 func skillLoopCompletionEvidence(prepared *PreparedChat) skillloop.CompletionEvidenceFunc {
@@ -273,6 +287,7 @@ func skillLoopCompletionEvidence(prepared *PreparedChat) skillloop.CompletionEvi
 			"generated_files",
 			"client_actions",
 			"tool_governance",
+			"turn_state",
 			consoleFilesContextSnapshotKey,
 			consoleAgentsContextSnapshotKey,
 		} {
@@ -281,10 +296,15 @@ func skillLoopCompletionEvidence(prepared *PreparedChat) skillloop.CompletionEvi
 			}
 		}
 		executionLedger := map[string]interface{}{}
-		for _, key := range []string{"operation_ledger", "skill_invocations", "generated_files", "client_actions", "tool_governance"} {
+		for _, key := range []string{"operation_ledger", "skill_invocations", "generated_files", "client_actions", "tool_governance", "turn_state"} {
 			if value, ok := metadata[key]; ok && value != nil {
 				executionLedger[key] = value
 			}
+		}
+		if ledger := skillLoopCompletionEvidenceLedger(metadata); len(ledger) > 0 {
+			evidenceLedger := mapsToInterfaceSlice(ledger)
+			evidence["evidence_ledger"] = evidenceLedger
+			executionLedger["evidence_ledger"] = evidenceLedger
 		}
 		if progress := clientActionAgentCreateProgress(prepared.Message); len(progress) > 0 {
 			evidence["agent_create_progress"] = progress
@@ -304,6 +324,24 @@ func skillLoopCompletionEvidence(prepared *PreparedChat) skillloop.CompletionEvi
 		}
 		return evidence
 	}
+}
+
+func skillLoopCompletionEvidenceLedger(metadata map[string]interface{}) []map[string]interface{} {
+	if len(metadata) == 0 {
+		return nil
+	}
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if ledger := operationPlanCompactEvidenceLedger(plan[operationPlanEvidenceLedgerKey], 12); len(ledger) > 0 {
+		return ledger
+	}
+	state := mapFromOperationContext(plan["strategy_state"])
+	if ledger := mapSliceFromAny(state["evidence_ledger"]); len(ledger) > 0 {
+		if len(ledger) > 12 {
+			ledger = ledger[len(ledger)-12:]
+		}
+		return ledger
+	}
+	return nil
 }
 
 func skillLoopShouldSuppressAutoFinalAnswerFastPath(parts *chatRequestParts) bool {
@@ -3981,6 +4019,7 @@ type AIChatTurnStrategy struct {
 	Source                   string                      `json:"source,omitempty"`
 	SourceReason             string                      `json:"source_reason,omitempty"`
 	Intent                   string                      `json:"intent"`
+	CompatibilityIntent      string                      `json:"compatibility_intent,omitempty"`
 	TaskType                 string                      `json:"task_type,omitempty"`
 	TargetPage               string                      `json:"target_page,omitempty"`
 	RouteRequired            bool                        `json:"route_required"`

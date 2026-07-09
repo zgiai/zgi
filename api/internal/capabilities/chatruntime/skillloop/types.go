@@ -161,6 +161,7 @@ type CompletionEvidenceFunc func() map[string]interface{}
 
 type CompletionVerificationResult struct {
 	Status            string
+	Source            string
 	Reason            string
 	MissingSteps      []string
 	UnsupportedClaims []string

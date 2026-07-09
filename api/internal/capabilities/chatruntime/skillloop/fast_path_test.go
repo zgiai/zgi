@@ -182,6 +182,85 @@ func TestFastPathCompletionEvidenceBlocksFailedPlanDespiteLatestSuccessfulTool(t
 	}
 }
 
+func TestFastPathCompletionEvidenceBlocksContractCoverageGaps(t *testing.T) {
+	trace := skills.SkillTrace{
+		Kind:     "tool_call",
+		Status:   "success",
+		SkillID:  skills.SkillFileGenerator,
+		ToolName: "generate_pdf",
+		Result: map[string]interface{}{
+			"status":         "completed",
+			"target":         "temporary_artifact",
+			"file_id":        "tmp-pdf",
+			"filename":       "chapter-five.pdf",
+			"file_extension": "pdf",
+		},
+	}
+	if answer, ok := FastPathFinalAnswerForToolTrace(trace); !ok {
+		t.Fatalf("FastPathFinalAnswerForToolTrace() = (%q, false), test setup needs a fast-pathable generated PDF", answer)
+	}
+
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"tool_choice_mode": operationPlanToolChoiceModelDecides,
+			"planning_mode":    "phase_only_model_decides",
+			"status":           "running",
+			"task_contract": map[string]interface{}{
+				"intended_effect": "agent.knowledge_binding",
+			},
+			"phases": []interface{}{
+				map[string]interface{}{"id": "read_first_md_file", "title": "read first md file"},
+				map[string]interface{}{"id": "generate_pdf_file", "title": "generate pdf file"},
+				map[string]interface{}{"id": "save_pdf_to_file_management", "title": "save pdf to file management"},
+				map[string]interface{}{"id": "update_agent_knowledge_with_new_chapter", "title": "update agent knowledge with new chapter"},
+			},
+		},
+		"evidence_ledger": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "completed",
+				"skill_id":  skills.SkillFileReader,
+				"tool_name": "read_file",
+				"result_facts": map[string]interface{}{
+					"status":         "completed",
+					"file_id":        "source-md",
+					"file_extension": "md",
+				},
+			},
+			map[string]interface{}{
+				"kind":         "tool_call",
+				"status":       "completed",
+				"skill_id":     skills.SkillFileGenerator,
+				"tool_name":    "generate_pdf",
+				"result":       trace.Result,
+				"result_facts": trace.Result,
+			},
+		},
+		"operation_result_summary": map[string]interface{}{
+			"status":             "temporary_artifact",
+			"plan_status":        "running",
+			"latest_tool_status": "success",
+			"latest_tool_result": map[string]interface{}{
+				"kind":           "tool_call",
+				"status":         "success",
+				"skill_id":       skills.SkillFileGenerator,
+				"tool_name":      "generate_pdf",
+				"result_summary": trace.Result,
+			},
+		},
+	}
+
+	if gaps := completionGateContractCoverageGaps(evidence); len(gaps) == 0 {
+		t.Fatal("completionGateContractCoverageGaps() returned no gaps, want missing managed PDF and Agent update facts")
+	}
+	if answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(trace, evidence); ok {
+		t.Fatalf("FastPathFinalAnswerForToolTraceWithEvidence() = (%q, true), want blocked by completion gate gaps", answer)
+	}
+	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
+		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = (%q, true), want blocked by completion gate gaps", answer)
+	}
+}
+
 func TestFastPathCompletionEvidenceWaitsForPendingStructuredPlanOperation(t *testing.T) {
 	evidence := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
@@ -1244,6 +1323,61 @@ func TestFastPathFinalAnswerWithEvidenceWaitsForModelDecidesPostUpdateRead(t *te
 	}
 }
 
+func TestFastPathFinalAnswerUsesLedgerPostUpdateAgentConfigFacts(t *testing.T) {
+	evidence := map[string]interface{}{
+		"user_request": "update the agent config and verify it after update",
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"tool_choice_mode":    operationPlanToolChoiceModelDecides,
+			"planning_mode":       "phase_only_model_decides",
+			"original_user_goal":  "update the agent config and verify it after update",
+			"pending_next_action": "continue_from_phase_success_criteria",
+		},
+		"evidence_ledger": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "completed",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"result_summary": map[string]interface{}{
+					"status":              "completed",
+					"agent_id":            "agent-1",
+					"agent_name":          "Story Agent",
+					"model_provider":      "deepseek",
+					"model":               "deepseek-v4-flash",
+					"file_upload_enabled": true,
+					"updated_fields":      []interface{}{"model", "file_upload_enabled"},
+				},
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "completed",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result_summary": map[string]interface{}{
+					"status":              "completed",
+					"agent_id":            "agent-1",
+					"agent_name":          "Story Agent",
+					"model_provider":      "deepseek",
+					"model":               "deepseek-v4-flash",
+					"file_upload_enabled": true,
+				},
+				"result_facts": map[string]interface{}{
+					"field_status": map[string]interface{}{
+						"model":               "verified",
+						"file_upload_enabled": "verified",
+					},
+				},
+			},
+		},
+	}
+
+	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
+	if !ok || strings.TrimSpace(answer) == "" {
+		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = %q, %v; want ledger-backed answer", answer, ok)
+	}
+}
+
 func TestFastPathFinalAnswerWithEvidenceWaitsForModelDecidesPendingAgentMutation(t *testing.T) {
 	evidence := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
@@ -1498,6 +1632,96 @@ func TestFastPathFinalAnswerForCompletionEvidenceAllowsRequestedPostUpdateConfig
 		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want true after requested post-update get_agent_config succeeds")
 	}
 	for _, want := range []string{"Support Agent", "Chart Generator", "当前保留", "Architecture Diagram Generator"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer = %q, want %q", answer, want)
+		}
+	}
+}
+
+func TestFastPathFinalAnswerForCompletionEvidenceAllowsOpenModelDecidesPostUpdateRead(t *testing.T) {
+	resultSummary := map[string]interface{}{
+		"status":     "completed",
+		"agent_name": "Support Agent",
+		"updated_fields": []interface{}{
+			"model",
+			"enabled_skill_ids",
+		},
+		"binding_changes": []interface{}{
+			map[string]interface{}{
+				"field":                "enabled_skill_ids",
+				"binding_kind":         "agent_skill",
+				"change_action":        "bind",
+				"resource_names":       []interface{}{"File Generator"},
+				"final_resource_names": []interface{}{"File Generator"},
+			},
+		},
+	}
+	evidence := map[string]interface{}{
+		"user_request": "Update Support Agent to use deepseek flash, bind File Generator, then read the Agent config again to verify.",
+		"operation_plan": map[string]interface{}{
+			"status":              "running",
+			"tool_choice_mode":    operationPlanToolChoiceModelDecides,
+			"planning_mode":       "phase_only_model_decides",
+			"pending_next_action": "continue_from_phase_success_criteria",
+			"original_user_goal":  "Update Support Agent to use deepseek flash, bind File Generator, then read the Agent config again to verify.",
+			"phases": []interface{}{
+				map[string]interface{}{
+					"id":     "semantic_phase_1",
+					"title":  "Update the Agent and verify refreshed config.",
+					"status": "pending",
+				},
+			},
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+				},
+				map[string]interface{}{
+					"id":                                "tool:agent-management/get_agent_config#post_update",
+					"status":                            "completed",
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"required_post_update_verification": true,
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/update_agent_config":          "completed",
+				"tool:agent-management/get_agent_config#post_update": "completed",
+			},
+		},
+		"skill_invocations": []interface{}{
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "update_agent_config",
+				"result":    resultSummary,
+			},
+			map[string]interface{}{
+				"kind":      "tool_call",
+				"status":    "success",
+				"skill_id":  skills.SkillAgentManagement,
+				"tool_name": "get_agent_config",
+				"result": map[string]interface{}{
+					"status":            "completed",
+					"agent_name":        "Support Agent",
+					"model":             "deepseek-v4-flash",
+					"enabled_skill_ids": []interface{}{"file-generator"},
+				},
+			},
+		},
+	}
+
+	if !completionVerificationEvidenceHasOpenModelDecidesPhase(evidence) {
+		t.Fatal("completionVerificationEvidenceHasOpenModelDecidesPhase() = false, want open phase fixture")
+	}
+	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
+	if !ok {
+		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want verified post-update fast path")
+	}
+	for _, want := range []string{"Support Agent", "File Generator"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("answer = %q, want %q", answer, want)
 		}

@@ -68,6 +68,9 @@ func FastPathFinalAnswerForToolTraceWithEvidence(trace skills.SkillTrace, eviden
 	if fastPathEvidenceSuppressesAutoFinalAnswer(evidence) {
 		return "", false
 	}
+	if fastPathEvidenceHasCompletionGateCoverageGaps(evidence) {
+		return "", false
+	}
 	if fastPathEvidenceHasUnresolvedPlanFailure(evidence) {
 		return "", false
 	}
@@ -1185,6 +1188,20 @@ func fastPathInvocationSequence(evidence map[string]interface{}) []map[string]in
 	}
 	appendInvocations := func(source map[string]interface{}) {
 		sourceSeen := map[string]struct{}{}
+		for _, invocation := range mapSliceFromAny(source["evidence_ledger"]) {
+			signature := fastPathInvocationSignature(invocation)
+			allowSameSourceRepeat := false
+			if signature != "" {
+				if _, alreadySeen := seen[signature]; alreadySeen {
+					if _, seenInSource := sourceSeen[signature]; !seenInSource {
+						continue
+					}
+					allowSameSourceRepeat = true
+				}
+				sourceSeen[signature] = struct{}{}
+			}
+			appendInvocation(invocation, allowSameSourceRepeat)
+		}
 		for _, invocation := range mapSliceFromAny(source["skill_invocations"]) {
 			signature := fastPathInvocationSignature(invocation)
 			allowSameSourceRepeat := false
@@ -1232,7 +1249,7 @@ func fastPathInvocationSignature(invocation map[string]interface{}) string {
 		return "runtime:" + runtimeID
 	}
 	payload := map[string]interface{}{}
-	for _, key := range []string{"kind", "status", "skill_id", "tool_name", "arguments", "result", "tool_result"} {
+	for _, key := range []string{"kind", "status", "skill_id", "tool_name", "arguments", "result", "result_summary", "result_facts", "tool_result", "invocation_id"} {
 		if value, ok := invocation[key]; ok {
 			payload[key] = value
 		}
@@ -1265,10 +1282,16 @@ func FastPathFinalAnswerForCompletionEvidence(evidence map[string]interface{}) (
 	if fastPathEvidenceSuppressesAutoFinalAnswer(evidence) {
 		return "", false
 	}
+	if fastPathEvidenceHasCompletionGateCoverageGaps(evidence) {
+		return "", false
+	}
 	if fastPathEvidenceHasUnresolvedPlanFailure(evidence) {
 		return "", false
 	}
 	if answer, ok := generatedArtifactCompletionEvidenceFastPathAnswer(evidence); ok {
+		return answer, true
+	}
+	if answer, ok := modelDecidesPostUpdateVerifiedFastPathAnswer(evidence); ok {
 		return answer, true
 	}
 	if completionVerificationEvidenceHasOpenModelDecidesPhase(evidence) {
@@ -1310,6 +1333,30 @@ func FastPathFinalAnswerForCompletionEvidence(evidence map[string]interface{}) (
 	return "", false
 }
 
+func modelDecidesPostUpdateVerifiedFastPathAnswer(evidence map[string]interface{}) (string, bool) {
+	if len(evidence) == 0 {
+		return "", false
+	}
+	plan := evidenceMapFromAny(evidence["operation_plan"])
+	if len(plan) == 0 || !operationPlanModelDecidesTools(plan) {
+		return "", false
+	}
+	if !completionVerificationEvidenceHasOpenModelDecidesPhase(evidence) {
+		return "", false
+	}
+	if fastPathEvidenceHasUnresolvedPlanFailure(evidence) ||
+		fastPathModelDecidesPlanHasPendingAgentWork(evidence) ||
+		fastPathCompletionEvidenceNeedsAgentConfigPostRead(evidence) ||
+		fastPathHasAgentConfigTargetMismatch(evidence) {
+		return "", false
+	}
+	if !fastPathEvidenceHasSuccessfulAgentConfigUpdate(evidence) ||
+		!fastPathHasSuccessfulAgentConfigReadAfterUpdate(evidence) {
+		return "", false
+	}
+	return agentConfigPostUpdateVerifiedFastPathAnswerFromEvidence(evidence)
+}
+
 func fastPathEvidenceSuppressesAutoFinalAnswer(evidence map[string]interface{}) bool {
 	if len(evidence) == 0 {
 		return false
@@ -1326,6 +1373,10 @@ func fastPathEvidenceSuppressesAutoFinalAnswer(evidence map[string]interface{}) 
 		return true
 	}
 	return boolFromAny(evidenceMapFromAny(executionLedger["summary"])["suppress_auto_final_answer_fast_path"])
+}
+
+func fastPathEvidenceHasCompletionGateCoverageGaps(evidence map[string]interface{}) bool {
+	return len(completionGateContractCoverageGaps(evidence)) > 0
 }
 
 func fastPathEvidenceHasUnresolvedPlanFailure(evidence map[string]interface{}) bool {
@@ -2267,9 +2318,26 @@ func fastPathLatestSuccessfulAgentConfigReadResultAfterUpdate(evidence map[strin
 		result := copyFastPathResultMap(evidenceMapFromAny(invocation["result"]))
 		if len(result) == 0 {
 			result = copyFastPathResultMap(evidenceMapFromAny(invocation["result_summary"]))
+		} else if summary := evidenceMapFromAny(invocation["result_summary"]); len(summary) > 0 {
+			for key, value := range summary {
+				if _, exists := result[key]; !exists {
+					result[key] = value
+				}
+			}
 		}
 		if len(result) == 0 {
 			result = copyFastPathResultMap(evidenceMapFromAny(invocation["tool_result"]))
+		}
+		if facts := evidenceMapFromAny(invocation["result_facts"]); len(facts) > 0 {
+			if len(result) == 0 {
+				result = copyFastPathResultMap(facts)
+			} else {
+				for key, value := range facts {
+					if _, exists := result[key]; !exists {
+						result[key] = value
+					}
+				}
+			}
 		}
 		if len(result) == 0 {
 			continue
@@ -2315,6 +2383,28 @@ func fastPathTraceFromInvocation(invocation map[string]interface{}) (skills.Skil
 	payload := copyFastPathResultMap(evidenceMapFromAny(invocation["result"]))
 	if len(payload) == 0 {
 		payload = copyFastPathResultMap(evidenceMapFromAny(invocation["tool_result"]))
+	}
+	if summary := evidenceMapFromAny(invocation["result_summary"]); len(summary) > 0 {
+		if len(payload) == 0 {
+			payload = copyFastPathResultMap(summary)
+		} else {
+			for key, value := range summary {
+				if _, exists := payload[key]; !exists {
+					payload[key] = value
+				}
+			}
+		}
+	}
+	if facts := evidenceMapFromAny(invocation["result_facts"]); len(facts) > 0 {
+		if len(payload) == 0 {
+			payload = copyFastPathResultMap(facts)
+		} else {
+			for key, value := range facts {
+				if _, exists := payload[key]; !exists {
+					payload[key] = value
+				}
+			}
+		}
 	}
 	if len(payload) == 0 {
 		payload = copyFastPathResultMap(invocation)
@@ -2477,6 +2567,8 @@ func mergeCurrentMetadataIntoFastPathEvidence(evidence map[string]interface{}, m
 	for _, key := range []string{
 		"operation_plan",
 		"operation_result_summary",
+		"evidence_ledger",
+		"turn_state",
 		"execution_summary",
 		"execution_ledger",
 		"agent_create_progress",
@@ -3622,6 +3714,11 @@ func fastPathLatestToolResultCandidates(evidence map[string]interface{}) []map[s
 		}
 	}
 	appendToolResults := func(source map[string]interface{}) {
+		for _, result := range mapSliceFromAny(source["evidence_ledger"]) {
+			if len(result) > 0 {
+				candidates = append(candidates, result)
+			}
+		}
 		for _, result := range mapSliceFromAny(source["tool_results"]) {
 			if len(result) > 0 {
 				candidates = append(candidates, result)
@@ -3715,6 +3812,13 @@ func fastPathTraceFromToolResult(result map[string]interface{}) (skills.SkillTra
 		payload = copyFastPathResultMap(result)
 	} else {
 		mergeFastPathBatchEvidence(payload, result)
+	}
+	if facts := evidenceMapFromAny(result["result_facts"]); len(facts) > 0 {
+		for key, value := range facts {
+			if _, exists := payload[key]; !exists {
+				payload[key] = value
+			}
+		}
 	}
 	if _, ok := payload["status"]; !ok {
 		payload["status"] = status

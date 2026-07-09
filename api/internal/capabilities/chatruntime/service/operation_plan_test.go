@@ -72,6 +72,209 @@ func TestStreamingMessageMetadataIncludesOperationPlan(t *testing.T) {
 	}
 }
 
+func TestApplyOperationPlanCompletionVerificationMirrorsTopLevelMetadata(t *testing.T) {
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "running",
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:agent-management/update_agent_config",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:agent-management/update_agent_config": "completed",
+			},
+			operationPlanEvidenceLedgerKey: []interface{}{
+				map[string]interface{}{
+					"kind":      "tool_call",
+					"status":    "completed",
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+					"keys":      []interface{}{"tool:agent-management/update_agent_config"},
+				},
+			},
+		},
+	}
+
+	applyOperationPlanCompletionVerificationResult(metadata, "pass", "tool evidence is complete", nil, nil, "")
+
+	verification := mapFromOperationContext(metadata["completion_verification"])
+	if got := stringFromAny(verification["status"]); got != "pass" {
+		t.Fatalf("completion_verification.status = %q, want pass; metadata=%#v", got, metadata)
+	}
+	ledger := mapSliceFromAny(metadata["evidence_ledger"])
+	if len(ledger) != 1 {
+		t.Fatalf("evidence_ledger = %#v, want mirrored ledger entry", metadata["evidence_ledger"])
+	}
+	if got := stringFromAny(ledger[0]["tool_name"]); got != "update_agent_config" {
+		t.Fatalf("evidence_ledger[0].tool_name = %q, want update_agent_config", got)
+	}
+}
+
+func TestOperationPlanEvidenceLedgerStoresAgentFactsAndPostReadVerification(t *testing.T) {
+	plan := map[string]interface{}{
+		"status": operationPlanStatusRunning,
+	}
+	update := map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "update_agent_config",
+		"arguments": map[string]interface{}{
+			"agent_id":            "agent-1",
+			"model_provider":      "deepseek",
+			"model":               "deepseek-v4-flash",
+			"system_prompt":       "Write fiction and generate files when needed.",
+			"file_upload_enabled": true,
+			"enabled_skill_ids":   []interface{}{"file-generator"},
+			"expected_updated_fields": []interface{}{
+				"model",
+				"system_prompt",
+				"file_upload_enabled",
+				"enabled_skill_ids",
+			},
+		},
+		"result": map[string]interface{}{
+			"status":              "completed",
+			"effect":              "updated",
+			"agent_id":            "agent-1",
+			"agent_name":          "Story Agent",
+			"model_provider":      "deepseek",
+			"model":               "deepseek-v4-flash",
+			"file_upload_enabled": true,
+			"enabled_skill_ids":   []interface{}{"file-generator"},
+			"updated_fields":      []interface{}{"model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+		},
+	}
+	read := map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "get_agent_config",
+		"result": map[string]interface{}{
+			"status":              "completed",
+			"agent_id":            "agent-1",
+			"agent_name":          "Story Agent",
+			"model_provider":      "deepseek",
+			"model":               "deepseek-v4-flash",
+			"system_prompt":       "Write fiction and generate files when needed.",
+			"file_upload_enabled": true,
+			"enabled_skill_ids":   []interface{}{"file-generator"},
+		},
+	}
+
+	operationPlanAppendEvidenceLedgerEntry(plan, update, []string{"tool:agent-management/update_agent_config"})
+	operationPlanAppendEvidenceLedgerEntry(plan, read, []string{"tool:agent-management/get_agent_config", "agent:config"})
+
+	ledger := mapSliceFromAny(plan[operationPlanEvidenceLedgerKey])
+	if len(ledger) != 2 {
+		t.Fatalf("evidence_ledger len = %d, want 2; ledger=%#v", len(ledger), ledger)
+	}
+	updateFacts := mapFromOperationContext(ledger[0]["result_facts"])
+	if _, leaked := updateFacts["system_prompt"]; leaked {
+		t.Fatalf("update result_facts leaked system_prompt: %#v", updateFacts)
+	}
+	if got := stringFromAny(updateFacts["agent.config.system_prompt_digest"]); !strings.HasPrefix(got, operationPlanEvidenceDigestPrefix) {
+		t.Fatalf("system_prompt digest = %q, want sha256 digest; facts=%#v", got, updateFacts)
+	}
+	readFacts := mapFromOperationContext(ledger[1]["result_facts"])
+	fieldStatus := mapFromOperationContext(readFacts["field_status"])
+	if got := stringFromAny(fieldStatus["system_prompt"]); got != "verified" {
+		t.Fatalf("field_status.system_prompt = %q, want verified; read facts=%#v", got, readFacts)
+	}
+	if got := stringFromAny(fieldStatus["model"]); got != "verified" {
+		t.Fatalf("field_status.model = %q, want verified; read facts=%#v", got, readFacts)
+	}
+	if got := stringFromAny(readFacts["agent.config.model"]); got != "deepseek-v4-flash" {
+		t.Fatalf("agent.config.model = %q, want deepseek-v4-flash; read facts=%#v", got, readFacts)
+	}
+	compact := operationPlanCompactEvidenceLedger(plan[operationPlanEvidenceLedgerKey], 10)
+	if summary := mapFromOperationContext(compact[1]["result_summary"]); stringFromAny(summary["model"]) != "deepseek-v4-flash" {
+		t.Fatalf("compact result_summary = %#v, want model evidence", summary)
+	}
+}
+
+func TestOperationPlanEvidenceLedgerStoresGeneratedFileFactsAndDedupesManagedSave(t *testing.T) {
+	plan := map[string]interface{}{
+		"status": operationPlanStatusRunning,
+	}
+	generate := map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillFileGenerator,
+		"tool_name": "generate_file",
+		"arguments": map[string]interface{}{
+			"filename":       "story.pdf",
+			"format":         "pdf",
+			"lifecycle":      "temporary",
+			"content_length": 1520,
+		},
+		"asset_operation_audit": map[string]interface{}{
+			"assets": []interface{}{
+				map[string]interface{}{
+					"name": "story.pdf",
+					"type": "file",
+					"metadata": map[string]interface{}{
+						"format":    "pdf",
+						"lifecycle": "temporary",
+					},
+				},
+			},
+		},
+	}
+	save := map[string]interface{}{
+		"kind":          "tool_call",
+		"status":        "success",
+		"skill_id":      skills.SkillFileManager,
+		"tool_name":     "save_file_to_management",
+		"runtime_id":    "runtime-save-1",
+		"invocation_id": "runtime-save-1",
+		"result": map[string]interface{}{
+			"status":         "completed",
+			"target":         "managed_file",
+			"file_id":        "managed-1",
+			"upload_file_id": "managed-1",
+			"filename":       "story.md",
+			"source_type":    "tool_file",
+		},
+	}
+	duplicateSave := copyStringAnyMap(save)
+	duplicateSave["runtime_id"] = "trace-save-1"
+	duplicateSave["invocation_id"] = "trace-save-1"
+
+	operationPlanAppendEvidenceLedgerEntry(plan, generate, []string{"tool:file-generator/generate_file"})
+	operationPlanAppendEvidenceLedgerEntry(plan, save, []string{"tool:file-manager/save_file_to_management"})
+	operationPlanAppendEvidenceLedgerEntry(plan, duplicateSave, []string{"tool:file-manager/save_file_to_management"})
+
+	ledger := mapSliceFromAny(plan[operationPlanEvidenceLedgerKey])
+	if len(ledger) != 2 {
+		t.Fatalf("evidence_ledger len = %d, want generated file plus one managed save; ledger=%#v", len(ledger), ledger)
+	}
+	generateFacts := mapFromOperationContext(ledger[0]["result_facts"])
+	if got := stringFromAny(generateFacts["filename"]); got != "story.pdf" {
+		t.Fatalf("generated filename = %q, want story.pdf; facts=%#v", got, generateFacts)
+	}
+	if got := stringFromAny(generateFacts["file_extension"]); got != "pdf" {
+		t.Fatalf("generated file_extension = %q, want pdf; facts=%#v", got, generateFacts)
+	}
+	if got := stringFromAny(generateFacts["target"]); got != "temporary_artifact" {
+		t.Fatalf("generated target = %q, want temporary_artifact; facts=%#v", got, generateFacts)
+	}
+	if got := stringFromAny(generateFacts["mime_type"]); got != "application/pdf" {
+		t.Fatalf("generated mime_type = %q, want application/pdf; facts=%#v", got, generateFacts)
+	}
+	if got := intValueFromAny(generateFacts["content_length"]); got != 1520 {
+		t.Fatalf("generated content_length = %d, want 1520; facts=%#v", got, generateFacts)
+	}
+	saveFacts := mapFromOperationContext(ledger[1]["result_facts"])
+	if got := stringFromAny(saveFacts["file_extension"]); got != "md" {
+		t.Fatalf("managed save file_extension = %q, want md; facts=%#v", got, saveFacts)
+	}
+}
+
 func TestModelDecidesContinuationCriteriaDoesNotReplayToolScript(t *testing.T) {
 	plan := map[string]interface{}{
 		"tool_choice_mode": aiChatTurnToolChoiceModelDecides,
@@ -12761,6 +12964,200 @@ func TestPreparedResultMetadataCompletesModelDecidesPlanWithVerification(t *test
 	}
 }
 
+func TestSkillLoopCompletionVerificationResultReconcilesPassAndSyncsSummary(t *testing.T) {
+	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
+	postReadStepID := operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config")
+	updateInvocation := map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "update_agent_config",
+		"arguments": map[string]interface{}{
+			"agent_id":            "agent-1",
+			"model_provider":      "deepseek",
+			"model":               "deepseek-v4-flash",
+			"system_prompt":       "Write fiction and generate files when needed.",
+			"file_upload_enabled": true,
+			"add_enabled_skill_ids": []interface{}{
+				"file-generator",
+			},
+		},
+		"result": map[string]interface{}{
+			"status":              "completed",
+			"agent_id":            "agent-1",
+			"agent_name":          "Story Agent",
+			"model_provider":      "deepseek",
+			"model":               "deepseek-v4-flash",
+			"system_prompt":       "Write fiction and generate files when needed.",
+			"file_upload_enabled": true,
+			"enabled_skill_ids":   []interface{}{"file-generator"},
+			"updated_fields":      []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+			"satisfied_fields":    []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
+		},
+	}
+	postReadInvocation := map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "get_agent_config",
+		"result": map[string]interface{}{
+			"status":              "completed",
+			"agent_id":            "agent-1",
+			"agent_name":          "Story Agent",
+			"model_provider":      "deepseek",
+			"model":               "deepseek-v4-flash",
+			"system_prompt":       "Write fiction and generate files when needed.",
+			"file_upload_enabled": true,
+			"enabled_skill_ids":   []interface{}{"file-generator"},
+		},
+	}
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"tool_choice_mode":    aiChatTurnToolChoiceModelDecides,
+			"planning_mode":       "phase_only_model_decides",
+			"status":              operationPlanStatusRunning,
+			"pending_next_action": "continue_from_phase_success_criteria",
+			"original_user_goal":  "Create a story Agent, configure the model, enable uploads, and bind file generation.",
+			"phases": []interface{}{
+				map[string]interface{}{
+					"id":               "phase-agent-management",
+					"success_criteria": []interface{}{"create, configure, bind, and verify the Agent"},
+				},
+			},
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        updateStepID,
+					"title":     "Update Agent config",
+					"status":    operationPlanStepStatusCompleted,
+					"skill_id":  skills.SkillAgentManagement,
+					"tool_name": "update_agent_config",
+				},
+				map[string]interface{}{
+					"id":                                postReadStepID,
+					"title":                             "Verify Agent config",
+					"status":                            operationPlanStepStatusCompleted,
+					"skill_id":                          skills.SkillAgentManagement,
+					"tool_name":                         "get_agent_config",
+					"required_post_update_verification": true,
+				},
+				map[string]interface{}{
+					"id":     "observe",
+					"title":  "Observe result",
+					"status": operationPlanStepStatusCompleted,
+				},
+			},
+			"step_status": map[string]interface{}{
+				updateStepID:   operationPlanStepStatusCompleted,
+				postReadStepID: operationPlanStepStatusCompleted,
+				"observe":      operationPlanStepStatusCompleted,
+			},
+			"tool_result": operationPlanToolResult(postReadInvocation),
+		},
+		"operation_result_summary": map[string]interface{}{
+			"status":              operationPlanStatusRunning,
+			"plan_status":         operationPlanStatusRunning,
+			"pending_next_action": "continue_from_phase_success_criteria",
+		},
+		"skill_invocations": []interface{}{updateInvocation, postReadInvocation},
+	}
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "Create a story Agent, configure the model, enable uploads, and bind file generation.",
+			Surface:   aiChatSurfaceContextualSidebar,
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{skills.SkillAgentManagement},
+		},
+		Message: &runtimemodel.Message{
+			ID:       uuid.New(),
+			Metadata: metadata,
+		},
+	}
+
+	skillLoopCompletionVerificationResult(prepared)(skillloop.CompletionVerificationResult{
+		Status: "failed",
+		Reason: "Evidence confirms all requested changes, but the verifier emitted a failed status.",
+	})
+
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusCompleted {
+		t.Fatalf("operation_plan.status = %q, want completed; plan=%#v", got, plan)
+	}
+	if got := stringFromAny(plan["pending_next_action"]); got != "none" {
+		t.Fatalf("operation_plan.pending_next_action = %q, want none; plan=%#v", got, plan)
+	}
+	verification := mapFromOperationContext(plan["completion_verification"])
+	if got := stringFromAny(verification["status"]); got != "pass" {
+		t.Fatalf("completion_verification.status = %q, want pass; verification=%#v", got, verification)
+	}
+	summary := mapFromOperationContext(prepared.Message.Metadata["operation_result_summary"])
+	if got := stringFromAny(summary["plan_status"]); got != operationPlanStatusCompleted {
+		t.Fatalf("operation_result_summary.plan_status = %q, want completed; summary=%#v", got, summary)
+	}
+	if got := stringFromAny(summary["pending_next_action"]); got != "none" {
+		t.Fatalf("operation_result_summary.pending_next_action = %q, want none; summary=%#v", got, summary)
+	}
+}
+
+func TestSkillLoopCompletionEvidenceExposesNormalizedEvidenceLedgerAndTurnState(t *testing.T) {
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": operationPlanStatusCompleted,
+			operationPlanEvidenceLedgerKey: []interface{}{
+				map[string]interface{}{
+					"keys":      []interface{}{"tool:file-reader/read_file", "file_content"},
+					"skill_id":  skills.SkillFileReader,
+					"tool_name": "read_file",
+					"kind":      "tool_call",
+					"status":    operationPlanStepStatusCompleted,
+					"result_facts": map[string]interface{}{
+						"status":                "completed",
+						"file_name":             "brief.md",
+						"content_status":        "extracted",
+						"content_value_preview": "A short project brief.",
+					},
+				},
+			},
+		},
+		"turn_state": map[string]interface{}{
+			"items": []interface{}{
+				map[string]interface{}{
+					"kind":       "working_fact",
+					"visibility": "model_only",
+					"value":      "Reuse the brief summary for the next step.",
+				},
+			},
+		},
+	}
+	prepared := &PreparedChat{
+		parts: &chatRequestParts{
+			Query:     "read the first file and reuse the summary",
+			Surface:   aiChatSurfaceContextualSidebar,
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{skills.SkillFileReader},
+		},
+		Message: &runtimemodel.Message{
+			ID:       uuid.New(),
+			Metadata: metadata,
+		},
+	}
+
+	evidence := skillLoopCompletionEvidence(prepared)()
+
+	if ledger := mapSliceFromAny(evidence["evidence_ledger"]); len(ledger) != 1 {
+		t.Fatalf("evidence_ledger = %#v, want one normalized ledger entry", evidence["evidence_ledger"])
+	}
+	if turnState := mapFromOperationContext(evidence["turn_state"]); len(turnState) == 0 {
+		t.Fatalf("turn_state = %#v, want exposed turn state", evidence["turn_state"])
+	}
+	executionLedger := mapFromOperationContext(evidence["execution_ledger"])
+	if ledger := mapSliceFromAny(executionLedger["evidence_ledger"]); len(ledger) != 1 {
+		t.Fatalf("execution_ledger.evidence_ledger = %#v, want mirrored ledger entry", executionLedger["evidence_ledger"])
+	}
+	if turnState := mapFromOperationContext(executionLedger["turn_state"]); len(turnState) == 0 {
+		t.Fatalf("execution_ledger.turn_state = %#v, want mirrored turn state", executionLedger["turn_state"])
+	}
+}
+
 func TestPreparedResultMetadataKeepsPendingToolOperationPlanRunning(t *testing.T) {
 	metadata := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
@@ -14706,6 +15103,147 @@ func TestApplyOperationPlanCompletionVerificationResultCompletesModelDecidesPhas
 	verification := mapFromOperationContext(plan["completion_verification"])
 	if got := stringFromAny(verification["status"]); got != "pass" {
 		t.Fatalf("completion_verification.status = %q, want pass", got)
+	}
+}
+
+func TestApplyOperationPlanCompletionVerificationResultCompletesModelDecidesPendingStepsAndSummary(t *testing.T) {
+	saveStepID := operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management")
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"version":              operationPlanVersion,
+			"status":               operationPlanStatusRunning,
+			"tool_choice_mode":     aiChatTurnToolChoiceModelDecides,
+			"planning_mode":        "phase_only_model_decides",
+			"pending_next_action":  "Save generated file to File Management",
+			"original_user_goal":   "read a file, generate md/pdf, and save the md file",
+			"completion_criteria":  []interface{}{"generated markdown is saved to file management"},
+			"result_verifier_mode": "evidence_ledger",
+			"phases": []interface{}{
+				map[string]interface{}{
+					"id":               "phase-file-workflow",
+					"status":           operationPlanStepStatusPending,
+					"success_criteria": []interface{}{"read source file", "generate md and pdf", "save md to file management"},
+				},
+			},
+			"steps": []interface{}{
+				map[string]interface{}{
+					"id":        "tool:file-reader/read_file",
+					"status":    operationPlanStepStatusCompleted,
+					"skill_id":  skills.SkillFileReader,
+					"tool_name": "read_file",
+				},
+				map[string]interface{}{
+					"id":        "tool:file-generator/generate_file",
+					"status":    operationPlanStepStatusCompleted,
+					"skill_id":  skills.SkillFileGenerator,
+					"tool_name": "generate_file",
+				},
+				map[string]interface{}{
+					"id":        saveStepID,
+					"status":    operationPlanStepStatusPending,
+					"skill_id":  skills.SkillFileManager,
+					"tool_name": "save_file_to_management",
+					"error":     "stale pending step from planning",
+				},
+			},
+			"step_status": map[string]interface{}{
+				"tool:file-reader/read_file":        operationPlanStepStatusCompleted,
+				"tool:file-generator/generate_file": operationPlanStepStatusCompleted,
+				saveStepID:                          operationPlanStepStatusPending,
+			},
+		},
+		"operation_result_summary": map[string]interface{}{
+			"status":              operationPlanStatusRunning,
+			"plan_status":         operationPlanStatusRunning,
+			"pending_next_action": "Save generated file to File Management",
+		},
+	}
+
+	applyOperationPlanCompletionVerificationResult(
+		metadata,
+		"pass",
+		"evidence ledger confirms the requested file workflow is complete",
+		nil,
+		nil,
+		"",
+	)
+
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusCompleted {
+		t.Fatalf("operation_plan.status = %q, want completed; plan=%#v", got, plan)
+	}
+	if got := stringFromAny(plan["pending_next_action"]); got != "none" {
+		t.Fatalf("operation_plan.pending_next_action = %q, want none; plan=%#v", got, plan)
+	}
+	if got := operationPlanStepStatusForTest(plan, saveStepID); got != operationPlanStepStatusCompleted {
+		t.Fatalf("%s status = %q, want completed; plan=%#v", saveStepID, got, plan)
+	}
+	if got := operationPlanStepFieldForTest(plan, saveStepID, "error"); got != "" {
+		t.Fatalf("%s error = %q, want cleared", saveStepID, got)
+	}
+	phase := mapSliceFromAny(plan["phases"])[0]
+	if got := stringFromAny(phase["status"]); got != operationPlanStepStatusCompleted {
+		t.Fatalf("phase.status = %q, want completed; phase=%#v", got, phase)
+	}
+	verification := mapFromOperationContext(metadata["completion_verification"])
+	if got := stringFromAny(verification["status"]); got != "pass" {
+		t.Fatalf("metadata.completion_verification.status = %q, want pass", got)
+	}
+	summary := mapFromOperationContext(metadata["operation_result_summary"])
+	if got := stringFromAny(summary["status"]); got != operationPlanStatusCompleted {
+		t.Fatalf("operation_result_summary.status = %q, want completed; summary=%#v", got, summary)
+	}
+	if got := stringFromAny(summary["plan_status"]); got != operationPlanStatusCompleted {
+		t.Fatalf("operation_result_summary.plan_status = %q, want completed; summary=%#v", got, summary)
+	}
+	if got := stringFromAny(summary["pending_next_action"]); got != "none" {
+		t.Fatalf("operation_result_summary.pending_next_action = %q, want none; summary=%#v", got, summary)
+	}
+}
+
+func TestFinalizeOperationPlanForCompletedResultCompletesPassiveAnswerPlan(t *testing.T) {
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"version":             operationPlanVersion,
+			"intent":              "answer_or_explain_zgi_context",
+			"status":              operationPlanStatusRunning,
+			"pending_next_action": "continue_from_phase_success_criteria",
+			"tool_choice_mode":    aiChatTurnToolChoiceModelDecides,
+			"planning_mode":       "phase_only_model_decides",
+			"approval":            "none",
+			"approval_required":   false,
+			"asset_target": map[string]interface{}{
+				"effect": "none",
+				"risk":   "none",
+			},
+			"steps":       []interface{}{},
+			"step_status": map[string]interface{}{},
+			"phases": []interface{}{
+				map[string]interface{}{
+					"id":     "semantic_phase_1",
+					"title":  "Explain assistant capabilities",
+					"status": operationPlanStepStatusPending,
+				},
+			},
+		},
+	}
+
+	finalizeOperationPlanForCompletedResult(metadata)
+
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusCompleted {
+		t.Fatalf("operation_plan.status = %q, want completed; plan=%#v", got, plan)
+	}
+	if got := stringFromAny(plan["pending_next_action"]); got != "none" {
+		t.Fatalf("pending_next_action = %q, want none; plan=%#v", got, plan)
+	}
+	verification := mapFromOperationContext(metadata["completion_verification"])
+	if got := stringFromAny(verification["status"]); got != "pass" {
+		t.Fatalf("completion_verification.status = %q, want pass; metadata=%#v", got, metadata)
+	}
+	phases := mapSliceFromAny(plan["phases"])
+	if len(phases) != 1 || stringFromAny(phases[0]["status"]) != operationPlanStepStatusCompleted {
+		t.Fatalf("phases = %#v, want completed passive phase", phases)
 	}
 }
 

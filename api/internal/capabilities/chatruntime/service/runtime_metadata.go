@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
 	"sort"
 	"strconv"
@@ -727,10 +728,20 @@ func modelInvocationFromTrace(trace skillloop.ModelInvocationTrace, userSystemPr
 		"created_at":  startedAt.Unix(),
 		"duration_ms": trace.DurationMS,
 		"runtime_id":  fmt.Sprintf("model_call:%s:%d:%d", phase, trace.Round, startedAt.UnixNano()),
-		"request":     modelInvocationRequestPayload(trace.Request, redactRequest),
-		"response":    modelInvocationResponsePayload(trace.Response, trace.Usage),
 		"usage":       usageMetadata(trace.Usage),
 		"error":       strings.TrimSpace(trace.Error),
+	}
+	if modelInvocationDebugPayloadEnabled() {
+		invocation["request"] = modelInvocationRequestPayload(trace.Request, redactRequest)
+		invocation["response"] = modelInvocationResponsePayload(trace.Response, trace.Usage)
+	} else {
+		if summary := modelInvocationRequestSummaryPayload(trace.Request); len(summary) > 0 {
+			invocation["request"] = summary
+		}
+		if summary := modelInvocationResponseSummaryPayload(trace.Response, trace.Usage); len(summary) > 0 {
+			invocation["response"] = summary
+		}
+		invocation["payload_mode"] = "compact"
 	}
 	if trace.Request != nil {
 		invocation["model"] = trace.Request.Model
@@ -745,6 +756,15 @@ func modelInvocationFromTrace(trace skillloop.ModelInvocationTrace, userSystemPr
 		invocation["user_system_prompt"] = strings.TrimSpace(userSystemPrompt)
 	}
 	return compactSkillInvocation(invocation)
+}
+
+func modelInvocationDebugPayloadEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("ZGI_AICHAT_MODEL_INVOCATION_DEBUG"))) {
+	case "1", "true", "yes", "on", "full":
+		return true
+	default:
+		return false
+	}
 }
 
 func shouldRedactModelInvocationRequest(prepared *PreparedChat) bool {
@@ -787,6 +807,46 @@ func modelInvocationRequestPayload(req *adapter.ChatRequest, redactToolContent b
 		payload["additional_parameters"] = copyStringAnyMap(req.AdditionalParameters)
 	}
 	return sanitizeModelInvocationRequestPayload(payload, redactToolContent)
+}
+
+func modelInvocationRequestSummaryPayload(req *adapter.ChatRequest) map[string]interface{} {
+	if req == nil {
+		return nil
+	}
+	payload := map[string]interface{}{}
+	if strings.TrimSpace(req.Provider) != "" {
+		payload["provider"] = req.Provider
+	}
+	if strings.TrimSpace(req.Model) != "" {
+		payload["model"] = req.Model
+	}
+	payload["message_count"] = len(req.Messages)
+	payload["tool_count"] = len(req.Tools)
+	payload["stream"] = req.Stream
+	if req.ToolChoice != nil {
+		payload["tool_choice"] = fmt.Sprintf("%v", req.ToolChoice)
+	}
+	if req.ResponseFormat != nil {
+		payload["response_format"] = jsonObjectPayload(req.ResponseFormat)
+	}
+	if req.MaxTokens != nil {
+		payload["max_tokens"] = *req.MaxTokens
+	}
+	if req.Temperature != nil {
+		payload["temperature"] = *req.Temperature
+	}
+	roles := make([]string, 0, len(req.Messages))
+	for _, message := range req.Messages {
+		role := strings.TrimSpace(message.Role)
+		if role == "" {
+			role = "unknown"
+		}
+		roles = append(roles, role)
+	}
+	if len(roles) > 0 {
+		payload["message_roles"] = roles
+	}
+	return operationPlanEvidenceSafeMapForModelInvocation(payload)
 }
 
 func sanitizeModelInvocationRequestPayload(payload map[string]interface{}, redactToolContent bool) map[string]interface{} {
@@ -1294,6 +1354,63 @@ func modelInvocationResponsePayload(message *adapter.Message, usage *adapter.Usa
 	}
 	sanitizeModelInvocationInlineImageDataURLs(payload)
 	return payload
+}
+
+func modelInvocationResponseSummaryPayload(message *adapter.Message, usage *adapter.Usage) map[string]interface{} {
+	payload := map[string]interface{}{}
+	if message != nil {
+		if strings.TrimSpace(message.Role) != "" {
+			payload["role"] = message.Role
+		}
+		if content := strings.TrimSpace(messageContentText(message.Content)); content != "" {
+			payload["content_chars"] = len([]rune(content))
+			payload["content_preview"] = truncateRunes(content, 240)
+		}
+		if reasoning := strings.TrimSpace(message.ReasoningContent); reasoning != "" {
+			payload["reasoning_chars"] = len([]rune(reasoning))
+		}
+		if len(message.ToolCalls) > 0 {
+			payload["tool_call_count"] = len(message.ToolCalls)
+			names := make([]string, 0, len(message.ToolCalls))
+			for _, call := range message.ToolCalls {
+				if name := strings.TrimSpace(call.Function.Name); name != "" {
+					names = append(names, truncateRunes(name, 120))
+				}
+			}
+			if len(names) > 0 {
+				payload["tool_call_names"] = names
+			}
+		}
+	}
+	if usageMap := usageMetadata(usage); len(usageMap) > 0 {
+		payload["usage"] = usageMap
+	}
+	return operationPlanEvidenceSafeMapForModelInvocation(payload)
+}
+
+func operationPlanEvidenceSafeMapForModelInvocation(source map[string]interface{}) map[string]interface{} {
+	if len(source) == 0 {
+		return nil
+	}
+	out := make(map[string]interface{}, len(source))
+	for key, value := range source {
+		if value == nil {
+			continue
+		}
+		if text, ok := value.(string); ok {
+			text = strings.TrimSpace(text)
+			if text == "" {
+				continue
+			}
+			out[key] = truncateRunes(text, 500)
+			continue
+		}
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func jsonObjectPayload(value interface{}) map[string]interface{} {

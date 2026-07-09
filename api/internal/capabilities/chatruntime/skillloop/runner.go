@@ -193,16 +193,43 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		}
 		if len(toolCalls) == 0 && postVerificationConfigured {
 			evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
-			if answer, ok := immediateCompletionEvidenceFastPathAnswer(evidence); ok {
+			if gate := completionGateEvaluate(evidence, text); gate.Path == completionGateDeterministicPass {
 				if planningResult.answerStreamed && text != "" {
 					r.emitAnswerRetract(ctx, prepared, text, nil)
 				}
+				answer := strings.TrimSpace(firstNonEmptyString(gate.FinalAnswer, text))
 				appendAnswerText(&answerBuilder, answer)
 				r.emitAnswerChunk(ctx, prepared, answer, nil)
-				logger.DebugContext(ctx, "aichat skill loop completed from immediate completion evidence fast path",
+				completionGateNotify(req, gate, answer)
+				logger.DebugContext(ctx, "aichat skill loop completed from completion gate",
 					"conversation_id", prepared.Conversation.ID.String(),
 					"message_id", prepared.Message.ID.String(),
+					"completion_gate_path", string(gate.Path),
 				)
+				return answerBuilder.String(), usage, nil
+			} else if gate.Path == completionGateAskUser {
+				if planningResult.answerStreamed && text != "" {
+					r.emitAnswerRetract(ctx, prepared, text, nil)
+				}
+				answer := strings.TrimSpace(firstNonEmptyString(gate.FinalAnswer, completionVerificationFallbackAnswer(gate.completionVerificationDecision(), text)))
+				completionGateNotify(req, gate, answer)
+				appendAnswerText(&answerBuilder, answer)
+				r.emitAnswerChunk(ctx, prepared, answer, nil)
+				return answerBuilder.String(), usage, nil
+			} else if gate.Path == completionGateNeedsAction {
+				completionVerificationRetryCount++
+				if completionVerificationRetryCount <= defaultMaxCompletionVerificationRetries {
+					if planningResult.answerStreamed && text != "" {
+						r.emitAnswerRetract(ctx, prepared, text, nil)
+					}
+					modelDecidesTools := completionEvidenceOperationPlanModelDecides(evidence)
+					messages = append(messages, completionVerificationSystemMessage(gate.completionVerificationDecision(), text, completionVerificationRetryCount, modelDecidesTools))
+					continue
+				}
+				answer := completionVerificationFallbackAnswer(gate.completionVerificationDecision(), text)
+				completionGateNotify(req, gate, answer)
+				appendAnswerText(&answerBuilder, answer)
+				r.emitAnswerChunk(ctx, prepared, answer, nil)
 				return answerBuilder.String(), usage, nil
 			}
 			if feedback, shouldContinue := completionEvidenceContinuationSystemMessage(evidence, evidenceContinuationRetryCount, resolved); shouldContinue {
@@ -556,27 +583,26 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				return answerBuilder.String(), usage, &ClientActionPendingError{Payload: result.pendingClientAction}
 			}
 			fastPathEvidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
-			if answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(fastPathTraceWithToolResult(result.trace, result.toolResult), fastPathEvidence); ok {
-				appendAnswerText(&answerBuilder, answer)
-				r.emitAnswerChunk(ctx, prepared, answer, nil)
-				logger.DebugContext(ctx, "aichat skill loop completed through tool result fast path",
-					"conversation_id", prepared.Conversation.ID.String(),
-					"message_id", prepared.Message.ID.String(),
-					"skill_id", result.trace.SkillID,
-					"tool_name", result.trace.ToolName,
-				)
-				return answerBuilder.String(), usage, nil
-			}
-			if answer, ok := FastPathFinalAnswerForCompletionEvidence(fastPathEvidence); ok {
-				appendAnswerText(&answerBuilder, answer)
-				r.emitAnswerChunk(ctx, prepared, answer, nil)
-				logger.DebugContext(ctx, "aichat skill loop completed through accumulated evidence fast path",
-					"conversation_id", prepared.Conversation.ID.String(),
-					"message_id", prepared.Message.ID.String(),
-					"skill_id", result.trace.SkillID,
-					"tool_name", result.trace.ToolName,
-				)
-				return answerBuilder.String(), usage, nil
+			if gate := completionGateEvaluate(fastPathEvidence, ""); gate.Path == completionGateDeterministicPass {
+				answer := strings.TrimSpace(gate.FinalAnswer)
+				if answer == "" {
+					if fallback, ok := FastPathFinalAnswerForCompletionEvidence(fastPathEvidence); ok {
+						answer = fallback
+					}
+				}
+				if answer != "" {
+					appendAnswerText(&answerBuilder, answer)
+					r.emitAnswerChunk(ctx, prepared, answer, nil)
+					completionGateNotify(req, gate, answer)
+					logger.DebugContext(ctx, "aichat skill loop completed through completion gate",
+						"conversation_id", prepared.Conversation.ID.String(),
+						"message_id", prepared.Message.ID.String(),
+						"skill_id", result.trace.SkillID,
+						"tool_name", result.trace.ToolName,
+						"completion_gate_path", string(gate.Path),
+					)
+					return answerBuilder.String(), usage, nil
+				}
 			}
 			if result.answer != "" {
 				appendAnswerText(&answerBuilder, result.answer)
@@ -1152,12 +1178,26 @@ func notifyCompletionVerificationResult(req RunRequest, decision completionVerif
 	}
 	req.OnCompletionVerification(CompletionVerificationResult{
 		Status:            decision.normalizedStatus(),
+		Source:            strings.TrimSpace(decision.Source),
 		Reason:            strings.TrimSpace(decision.Reason),
 		MissingSteps:      append([]string(nil), decision.MissingSteps...),
 		UnsupportedClaims: append([]string(nil), decision.UnsupportedClaims...),
 		NextActionHint:    strings.TrimSpace(decision.NextActionHint),
 		FinalAnswer:       strings.TrimSpace(finalAnswer),
 	})
+}
+
+func notifyFastPathCompletionVerification(req RunRequest, finalAnswer string, reason string) {
+	if req.OnCompletionVerification == nil {
+		return
+	}
+	notifyCompletionVerificationResult(req, completionVerificationDecision{
+		Status: completionVerificationStatusPass,
+		Reason: strings.TrimSpace(firstNonEmptyString(
+			reason,
+			"completion evidence satisfied the requested operation",
+		)),
+	}, finalAnswer)
 }
 
 func evidenceStringSliceFromAny(value interface{}) []string {

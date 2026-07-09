@@ -1276,7 +1276,7 @@ func currentTurnFailedOperations(invocations []map[string]interface{}, limit int
 		return nil
 	}
 	out := make([]map[string]interface{}, 0, limit)
-	for _, invocation := range invocations {
+	for index, invocation := range invocations {
 		if len(out) >= limit {
 			break
 		}
@@ -1284,11 +1284,75 @@ func currentTurnFailedOperations(invocations []map[string]interface{}, limit int
 			!toolGovernanceContinuationInvocationFailed(invocation) {
 			continue
 		}
+		if currentTurnFailedOperationRecovered(invocations, index, invocation) {
+			continue
+		}
 		if item := currentTurnOperationSummary(invocation); len(item) > 0 {
 			out = append(out, item)
 		}
 	}
 	return out
+}
+
+func currentTurnFailedOperationRecovered(invocations []map[string]interface{}, failedIndex int, failed map[string]interface{}) bool {
+	if failedIndex < 0 || failedIndex >= len(invocations) || len(failed) == 0 {
+		return false
+	}
+	for _, candidate := range invocations[failedIndex+1:] {
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(candidate["kind"])), "tool_call") ||
+			!toolGovernanceContinuationInvocationSucceeded(candidate) {
+			continue
+		}
+		if currentTurnSameOperationRecovered(failed, candidate) ||
+			currentTurnFileReadRecoveryCoversFailedCall(failed, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func currentTurnSameOperationRecovered(failed map[string]interface{}, candidate map[string]interface{}) bool {
+	if !strings.EqualFold(strings.TrimSpace(stringFromAny(failed["skill_id"])), strings.TrimSpace(stringFromAny(candidate["skill_id"]))) ||
+		!strings.EqualFold(strings.TrimSpace(stringFromAny(failed["tool_name"])), strings.TrimSpace(stringFromAny(candidate["tool_name"]))) {
+		return false
+	}
+	failedTarget := currentTurnOperationComparableTarget(failed)
+	candidateTarget := currentTurnOperationComparableTarget(candidate)
+	if failedTarget == "" || candidateTarget == "" {
+		return false
+	}
+	return strings.EqualFold(failedTarget, candidateTarget)
+}
+
+func currentTurnFileReadRecoveryCoversFailedCall(failed map[string]interface{}, candidate map[string]interface{}) bool {
+	if !strings.EqualFold(strings.TrimSpace(stringFromAny(candidate["skill_id"])), skills.SkillFileReader) ||
+		!strings.EqualFold(strings.TrimSpace(stringFromAny(candidate["tool_name"])), "read_file") {
+		return false
+	}
+	failedArgs := mapFromOperationContext(failed["arguments"])
+	fileID := strings.TrimSpace(firstNonEmptyString(failedArgs["file_id"], failedArgs["id"], mapFromOperationContext(failed["result"])["file_id"], mapFromOperationContext(failed["result_summary"])["file_id"]))
+	if fileID == "" {
+		return false
+	}
+	candidateTarget := currentTurnOperationComparableTarget(candidate)
+	return strings.EqualFold(candidateTarget, "file:"+fileID)
+}
+
+func currentTurnOperationComparableTarget(invocation map[string]interface{}) string {
+	if len(invocation) == 0 {
+		return ""
+	}
+	target := currentTurnAgentTargetFromInvocation(invocation)
+	if id := strings.TrimSpace(stringFromAny(target["agent_id"])); id != "" {
+		return "agent:" + id
+	}
+	result := mapFromOperationContext(invocation["result"])
+	summary := mapFromOperationContext(invocation["result_summary"])
+	args := mapFromOperationContext(invocation["arguments"])
+	if id := strings.TrimSpace(firstNonEmptyString(result["file_id"], result["id"], summary["file_id"], summary["id"], args["file_id"], args["id"])); id != "" {
+		return "file:" + id
+	}
+	return ""
 }
 
 func currentTurnLoadedSkills(invocations []map[string]interface{}, limit int) []string {

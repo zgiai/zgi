@@ -146,11 +146,15 @@ func operationPlanTaskContractFromTurnStrategy(strategy *AIChatTurnStrategy) map
 	if strategy == nil {
 		return nil
 	}
+	intentLabel := strings.TrimSpace(firstNonEmptyString(strategy.CompatibilityIntent, strategy.Intent))
 	contract := map[string]interface{}{
 		"source":        strings.TrimSpace(strategy.Source),
-		"intent_label":  strings.TrimSpace(strategy.Intent),
+		"intent_label":  intentLabel,
 		"compatibility": "intent_label_is_for_routing_compatibility_only",
 		"tool_choice":   "model_decides_from_enabled_tools_and_latest_evidence",
+	}
+	if executionIntent := strings.TrimSpace(strategy.Intent); executionIntent != "" && !strings.EqualFold(executionIntent, intentLabel) {
+		contract["execution_intent"] = executionIntent
 	}
 	if reason := strings.TrimSpace(strategy.SourceReason); reason != "" {
 		contract["source_reason"] = reason
@@ -189,6 +193,9 @@ func operationPlanTaskContractFromTurnStrategy(strategy *AIChatTurnStrategy) map
 	if effect := strings.TrimSpace(strategy.AssetEffect); effect != "" {
 		contract["asset_effect"] = effect
 	}
+	if intendedEffect := operationPlanTaskContractIntendedEffect(strategy); intendedEffect != "" {
+		contract["intended_effect"] = intendedEffect
+	}
 	if risk := strings.TrimSpace(strategy.AssetRisk); risk != "" {
 		contract["asset_risk"] = risk
 	}
@@ -199,6 +206,61 @@ func operationPlanTaskContractFromTurnStrategy(strategy *AIChatTurnStrategy) map
 		contract["capability_goals"] = agentCapabilityGoalsToMaps(strategy.CapabilityGoals)
 	}
 	return contract
+}
+
+func operationPlanTaskContractIntendedEffect(strategy *AIChatTurnStrategy) string {
+	if strategy == nil {
+		return ""
+	}
+	values := []interface{}{
+		strategy.AssetEffect,
+		strategy.TaskType,
+		strategy.Intent,
+		strategy.CompatibilityIntent,
+		strategy.RecommendedCapabilities,
+	}
+	for _, goal := range strategy.CapabilityGoals {
+		values = append(values, goal.CapabilityID, goal.GoalAction)
+	}
+	for _, value := range values {
+		for _, text := range stringSliceFromAny(value) {
+			switch operationPlanCanonicalTaskContractEffect(text) {
+			case "agent.system_prompt_update":
+				return "agent.system_prompt_update"
+			case "agent.knowledge_binding":
+				return "agent.knowledge_binding"
+			}
+		}
+		if text := strings.TrimSpace(stringFromAny(value)); text != "" {
+			switch operationPlanCanonicalTaskContractEffect(text) {
+			case "agent.system_prompt_update":
+				return "agent.system_prompt_update"
+			case "agent.knowledge_binding":
+				return "agent.knowledge_binding"
+			}
+		}
+	}
+	return ""
+}
+
+func operationPlanCanonicalTaskContractEffect(value string) string {
+	text := strings.ToLower(strings.TrimSpace(value))
+	if text == "" {
+		return ""
+	}
+	switch {
+	case strings.Contains(text, "agent.system_prompt"),
+		strings.Contains(text, "system_prompt"),
+		strings.Contains(text, "system prompt"):
+		return "agent.system_prompt_update"
+	case strings.Contains(text, "agent.knowledge_binding"),
+		strings.Contains(text, "knowledge_binding"),
+		strings.Contains(text, "knowledge binding"),
+		strings.Contains(text, "knowledge_dataset"):
+		return "agent.knowledge_binding"
+	default:
+		return ""
+	}
 }
 
 func operationPlanSuccessCriteriaFromTurnStrategy(strategy *AIChatTurnStrategy) []string {
@@ -2166,28 +2228,14 @@ func operationPlanCompactEvidenceLedger(value interface{}, limit int) []map[stri
 		if sequence := intValueFromAny(entry["sequence"]); sequence > 0 {
 			compact["sequence"] = sequence
 		}
+		if target := operationPlanCompactEvidenceTarget(mapFromOperationContext(entry["target"])); len(target) > 0 {
+			compact["target"] = target
+		}
+		if summary := operationPlanCompactEvidenceResultSummary(mapFromOperationContext(entry["result_summary"])); len(summary) > 0 {
+			compact["result_summary"] = summary
+		}
 		if facts := mapFromOperationContext(entry["result_facts"]); len(facts) > 0 {
-			compactFacts := map[string]interface{}{}
-			for _, key := range []string{
-				"status",
-				"file_id",
-				"upload_file_id",
-				"file_name",
-				"name",
-				"file_extension",
-				"file_mime_type",
-				"content_status",
-				"content_chars",
-				"content_returned_chars",
-				"content_truncated",
-				"content_value_preview",
-				"content_value_source",
-			} {
-				if value, ok := facts[key]; ok {
-					compactFacts[key] = value
-				}
-			}
-			if len(compactFacts) > 0 {
+			if compactFacts := operationPlanCompactEvidenceResultFacts(facts); len(compactFacts) > 0 {
 				compact["result_facts"] = compactFacts
 			}
 		}
@@ -3434,6 +3482,12 @@ func operationPlanAppendEvidenceLedgerEntry(plan map[string]interface{}, invocat
 	if sequence := operationPlanInvocationSequence(invocation); sequence > 0 {
 		entry["sequence"] = sequence
 	}
+	if target := operationPlanEvidenceLedgerTarget(invocation); len(target) > 0 {
+		entry["target"] = target
+	}
+	if summary := operationPlanEvidenceLedgerResultSummary(invocation); len(summary) > 0 {
+		entry["result_summary"] = summary
+	}
 	if facts := operationPlanEvidenceLedgerResultFacts(invocation); len(facts) > 0 {
 		entry["result_facts"] = facts
 	}
@@ -3445,60 +3499,36 @@ func operationPlanAppendEvidenceLedgerEntry(plan map[string]interface{}, invocat
 	if len(ledger) > 50 {
 		ledger = ledger[len(ledger)-50:]
 	}
+	ledger = operationPlanAnnotateEvidenceLedger(ledger)
 	plan[operationPlanEvidenceLedgerKey] = mapsToInterfaceSlice(ledger)
-}
-
-func operationPlanEvidenceLedgerResultFacts(invocation map[string]interface{}) map[string]interface{} {
-	if len(invocation) == 0 {
-		return nil
-	}
-	skillID := strings.TrimSpace(stringFromAny(invocation["skill_id"]))
-	toolName := strings.TrimSpace(stringFromAny(invocation["tool_name"]))
-	if !strings.EqualFold(skillID, skills.SkillFileReader) || !strings.EqualFold(toolName, "read_file") {
-		return nil
-	}
-	result := mapFromOperationContext(invocation["result"])
-	if len(result) == 0 {
-		return nil
-	}
-	facts := operationPlanCopyFields(result,
-		"status",
-		"file_id",
-		"upload_file_id",
-		"file_name",
-		"name",
-		"file_extension",
-		"file_mime_type",
-		"content_status",
-		"content_chars",
-		"content_returned_chars",
-		"content_truncated",
-		"content_value_preview",
-		"content_value_source",
-	)
-	if len(facts) == 0 {
-		return nil
-	}
-	return facts
 }
 
 func operationPlanEvidenceLedgerHasEntry(ledger []map[string]interface{}, entry map[string]interface{}) bool {
 	invocationID := strings.TrimSpace(stringFromAny(entry["invocation_id"]))
-	if invocationID == "" {
-		return false
-	}
 	for _, existing := range ledger {
-		if strings.TrimSpace(stringFromAny(existing["invocation_id"])) != invocationID {
-			continue
-		}
-		if strings.TrimSpace(stringFromAny(existing["skill_id"])) != strings.TrimSpace(stringFromAny(entry["skill_id"])) ||
-			strings.TrimSpace(stringFromAny(existing["tool_name"])) != strings.TrimSpace(stringFromAny(entry["tool_name"])) ||
-			strings.TrimSpace(stringFromAny(existing["kind"])) != strings.TrimSpace(stringFromAny(entry["kind"])) {
-			continue
-		}
-		if sameStringSet(stringSliceFromAny(existing["keys"]), stringSliceFromAny(entry["keys"])) {
+		if invocationID != "" &&
+			strings.TrimSpace(stringFromAny(existing["invocation_id"])) == invocationID &&
+			strings.TrimSpace(stringFromAny(existing["skill_id"])) == strings.TrimSpace(stringFromAny(entry["skill_id"])) &&
+			strings.TrimSpace(stringFromAny(existing["tool_name"])) == strings.TrimSpace(stringFromAny(entry["tool_name"])) &&
+			strings.TrimSpace(stringFromAny(existing["kind"])) == strings.TrimSpace(stringFromAny(entry["kind"])) &&
+			sameStringSet(stringSliceFromAny(existing["keys"]), stringSliceFromAny(entry["keys"])) {
 			return true
 		}
+		if !strings.EqualFold(strings.TrimSpace(stringFromAny(existing["skill_id"])), strings.TrimSpace(stringFromAny(entry["skill_id"]))) ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(existing["tool_name"])), strings.TrimSpace(stringFromAny(entry["tool_name"]))) ||
+			!strings.EqualFold(strings.TrimSpace(stringFromAny(existing["kind"])), strings.TrimSpace(stringFromAny(entry["kind"]))) {
+			continue
+		}
+		if !reflect.DeepEqual(mapFromOperationContext(existing["target"]), mapFromOperationContext(entry["target"])) {
+			continue
+		}
+		if !reflect.DeepEqual(mapFromOperationContext(existing["result_facts"]), mapFromOperationContext(entry["result_facts"])) {
+			continue
+		}
+		if !reflect.DeepEqual(mapFromOperationContext(existing["result_summary"]), mapFromOperationContext(entry["result_summary"])) {
+			continue
+		}
+		return true
 	}
 	return false
 }
@@ -4097,6 +4127,7 @@ func ensureOperationPlanInvocationStep(metadata map[string]interface{}, invocati
 	operationPlanSyncLatestOperationGroupResult(plan, invocation, status)
 	applyOperationPlanProgress(plan, steps, stepStatus, "", "")
 	metadata["operation_plan"] = plan
+	syncOperationPlanCompletionMetadata(metadata)
 }
 
 func amendOperationPlanToolStep(metadata map[string]interface{}, skillID string, toolName string, reason string) {
@@ -5479,10 +5510,12 @@ func finalizeOperationPlanForResult(metadata map[string]interface{}) {
 	}
 	if applyOperationPlanMissingAgentTargetFromListEvidence(metadata, plan, steps, stepStatus) {
 		metadata["operation_plan"] = plan
+		syncOperationPlanCompletionMetadata(metadata)
 		return
 	}
 	if operationPlanApplyMissingAgentSkillCandidateNoop(plan, steps, stepStatus, mapSliceFromAny(metadata["skill_invocations"])) {
 		metadata["operation_plan"] = plan
+		syncOperationPlanCompletionMetadata(metadata)
 		return
 	}
 
@@ -5494,6 +5527,7 @@ func finalizeOperationPlanForResult(metadata map[string]interface{}) {
 		if status == operationPlanStepStatusFailed {
 			applyOperationPlanProgress(plan, steps, stepStatus, "none", operationPlanStatusFailed)
 			metadata["operation_plan"] = plan
+			syncOperationPlanCompletionMetadata(metadata)
 			return
 		}
 		if status == operationPlanStepStatusCompleted {
@@ -5502,6 +5536,7 @@ func finalizeOperationPlanForResult(metadata map[string]interface{}) {
 		if operationPlanStepRequiresRuntimeAction(step) {
 			applyOperationPlanProgress(plan, steps, stepStatus, "", "")
 			metadata["operation_plan"] = plan
+			syncOperationPlanCompletionMetadata(metadata)
 			return
 		}
 	}
@@ -5524,11 +5559,16 @@ func finalizeOperationPlanForResult(metadata map[string]interface{}) {
 
 	applyOperationPlanProgress(plan, steps, stepStatus, "", "")
 	metadata["operation_plan"] = plan
+	syncOperationPlanCompletionMetadata(metadata)
 }
 
 func finalizeOperationPlanForCompletedResult(metadata map[string]interface{}) {
 	finalizeOperationPlanForResult(metadata)
 	plan := mapFromOperationContext(metadata["operation_plan"])
+	if operationPlanReadyForPassiveCompletedResult(metadata, plan) {
+		finalizePassiveOperationPlanForCompletedResult(metadata, plan)
+		return
+	}
 	if !operationPlanReadyForCompletedResult(plan) {
 		return
 	}
@@ -5546,6 +5586,88 @@ func finalizeOperationPlanForCompletedResult(metadata map[string]interface{}) {
 	}
 	applyOperationPlanProgress(plan, steps, stepStatus, "none", operationPlanStatusCompleted)
 	metadata["operation_plan"] = plan
+	syncOperationPlanCompletionMetadata(metadata)
+}
+
+func operationPlanReadyForPassiveCompletedResult(metadata map[string]interface{}, plan map[string]interface{}) bool {
+	if len(plan) == 0 || operationPlanIsTerminalFailure(plan) {
+		return false
+	}
+	if len(mapSliceFromAny(plan["steps"])) > 0 {
+		return false
+	}
+	if !operationPlanIsPassiveAssistantAnswerPlan(plan) {
+		return false
+	}
+	for _, key := range []string{"skill_invocations", "generated_files", "client_actions", "tool_governance", operationPlanEvidenceLedgerKey} {
+		if len(mapSliceFromAny(metadata[key])) > 0 {
+			return false
+		}
+	}
+	if summary := mapFromOperationContext(metadata["operation_result_summary"]); len(summary) > 0 {
+		status := strings.ToLower(strings.TrimSpace(stringFromAny(summary["status"])))
+		if status != "" && status != "running" && status != "observed" && status != operationPlanStatusCompleted {
+			return false
+		}
+	}
+	return true
+}
+
+func operationPlanIsPassiveAssistantAnswerPlan(plan map[string]interface{}) bool {
+	if len(plan) == 0 {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(stringFromAny(plan["intent"])), "answer_or_explain_zgi_context") {
+		return false
+	}
+	if !operationPlanTargetIsPassive(mapFromOperationContext(plan["asset_target"])) ||
+		!operationPlanTargetIsPassive(mapFromOperationContext(plan["target_resource"])) {
+		return false
+	}
+	approval := strings.ToLower(strings.TrimSpace(stringFromAny(plan["approval"])))
+	if approval != "" && approval != "none" {
+		return false
+	}
+	if required, ok := plan["approval_required"].(bool); ok && required {
+		return false
+	}
+	return true
+}
+
+func operationPlanTargetIsPassive(target map[string]interface{}) bool {
+	if len(target) == 0 {
+		return true
+	}
+	effect := strings.ToLower(strings.TrimSpace(stringFromAny(target["effect"])))
+	risk := strings.ToLower(strings.TrimSpace(firstNonEmptyString(target["risk"], target["asset_risk"])))
+	return (effect == "" || effect == "none" || effect == "read") &&
+		(risk == "" || risk == "none" || risk == "low")
+}
+
+func finalizePassiveOperationPlanForCompletedResult(metadata map[string]interface{}, plan map[string]interface{}) {
+	if len(plan) == 0 {
+		return
+	}
+	plan["completion_verification"] = map[string]interface{}{
+		"status": "pass",
+		"source": "passive_answer_finalizer",
+		"reason": "passive assistant answer completed without runtime tool actions",
+	}
+	operationPlanMarkPhasesStatus(plan, operationPlanStepStatusCompleted)
+	applyOperationPlanProgress(plan, nil, map[string]interface{}{}, "none", operationPlanStatusCompleted)
+	metadata["operation_plan"] = plan
+	syncOperationPlanCompletionMetadata(metadata)
+}
+
+func operationPlanMarkPhasesStatus(plan map[string]interface{}, status string) {
+	phases := mapSliceFromAny(plan["phases"])
+	if len(phases) == 0 {
+		return
+	}
+	for _, phase := range phases {
+		phase["status"] = status
+	}
+	plan["phases"] = mapsToInterfaceSlice(phases)
 }
 
 func operationPlanReadyForCompletedResult(plan map[string]interface{}) bool {
@@ -5583,6 +5705,10 @@ func operationPlanReadyForCompletedResult(plan map[string]interface{}) bool {
 }
 
 func applyOperationPlanCompletionVerificationResult(metadata map[string]interface{}, status string, reason string, missingSteps []string, unsupportedClaims []string, nextActionHint string) {
+	applyOperationPlanCompletionVerificationResultWithSource(metadata, status, "", reason, missingSteps, unsupportedClaims, nextActionHint)
+}
+
+func applyOperationPlanCompletionVerificationResultWithSource(metadata map[string]interface{}, status string, source string, reason string, missingSteps []string, unsupportedClaims []string, nextActionHint string) {
 	if len(metadata) == 0 {
 		return
 	}
@@ -5597,6 +5723,12 @@ func applyOperationPlanCompletionVerificationResult(metadata map[string]interfac
 		status = operationPlanStatusFailed
 	}
 	verification["status"] = status
+	if source = strings.TrimSpace(source); source != "" {
+		verification["source"] = truncateRunes(source, 120)
+	}
+	if operationPlanCompletionVerificationPassStatus(status) && operationPlanCompletionVerificationReasonLooksStaleFailure(reason) {
+		reason = "latest evidence satisfies requested operation"
+	}
 	if reason = strings.TrimSpace(reason); reason != "" {
 		verification["reason"] = truncateRunes(reason, 500)
 	}
@@ -5631,6 +5763,7 @@ func applyOperationPlanCompletionVerificationResult(metadata map[string]interfac
 			}
 			operationPlanSyncStrategyState(plan)
 			metadata["operation_plan"] = plan
+			syncOperationPlanCompletionMetadata(metadata)
 			return
 		}
 		if !strings.EqualFold(strings.TrimSpace(stringFromAny(plan["status"])), operationPlanStatusCompleted) {
@@ -5638,11 +5771,35 @@ func applyOperationPlanCompletionVerificationResult(metadata map[string]interfac
 			plan["pending_next_action"] = "none"
 		}
 		metadata["operation_plan"] = plan
+		syncOperationPlanCompletionMetadata(metadata)
 		return
 	}
 	stepStatus := mapFromOperationContext(plan["step_status"])
 	if stepStatus == nil {
 		stepStatus = map[string]interface{}{}
+	}
+
+	if operationPlanCompletionVerificationPassStatus(status) && operationPlanModelDecidesTools(plan) {
+		for _, step := range steps {
+			if !operationPlanStepBlocksCompletion(step) {
+				continue
+			}
+			id := strings.TrimSpace(stringFromAny(step["id"]))
+			if id == "" {
+				continue
+			}
+			current := operationPlanNormalizeStepStatus(firstNonEmptyString(step["status"], stepStatus[id]))
+			if current == operationPlanStepStatusFailed {
+				continue
+			}
+			operationPlanSetStepStatus(steps, stepStatus, id, operationPlanStepStatusCompleted)
+			delete(step, "error")
+		}
+		operationPlanMarkPhasesStatus(plan, operationPlanStepStatusCompleted)
+		applyOperationPlanProgress(plan, steps, stepStatus, "none", operationPlanStatusCompleted)
+		metadata["operation_plan"] = plan
+		syncOperationPlanCompletionMetadata(metadata)
+		return
 	}
 
 	terminalFailure := operationPlanCompletionVerificationTerminalFailure(status)
@@ -5679,6 +5836,38 @@ func applyOperationPlanCompletionVerificationResult(metadata map[string]interfac
 		applyOperationPlanProgress(plan, steps, stepStatus, "", "")
 	}
 	metadata["operation_plan"] = plan
+	syncOperationPlanCompletionMetadata(metadata)
+}
+
+func syncOperationPlanCompletionMetadata(metadata map[string]interface{}) {
+	if len(metadata) == 0 {
+		return
+	}
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if len(plan) == 0 {
+		return
+	}
+	if ledger := operationPlanCompactEvidenceLedger(plan[operationPlanEvidenceLedgerKey], 50); len(ledger) > 0 {
+		metadata["evidence_ledger"] = mapsToInterfaceSlice(ledger)
+	}
+	verification := mapFromOperationContext(plan["completion_verification"])
+	if len(verification) > 0 {
+		metadata["completion_verification"] = verification
+	}
+	if !strings.EqualFold(strings.TrimSpace(stringFromAny(plan["status"])), operationPlanStatusCompleted) {
+		return
+	}
+	if len(verification) > 0 && !operationPlanCompletionVerificationPassStatus(stringFromAny(verification["status"])) {
+		return
+	}
+	summary := mapFromOperationContext(metadata["operation_result_summary"])
+	if len(summary) == 0 {
+		summary = map[string]interface{}{}
+	}
+	summary["status"] = operationPlanStatusCompleted
+	summary["plan_status"] = operationPlanStatusCompleted
+	summary["pending_next_action"] = "none"
+	metadata["operation_result_summary"] = summary
 }
 
 func operationPlanCompletionVerificationTerminalFailure(status string) bool {
@@ -5688,6 +5877,30 @@ func operationPlanCompletionVerificationTerminalFailure(status string) bool {
 	default:
 		return false
 	}
+}
+
+func operationPlanCompletionVerificationReasonLooksStaleFailure(reason string) bool {
+	reason = strings.ToLower(strings.TrimSpace(reason))
+	if reason == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"缺少工具结果支持",
+		"不能可靠确认",
+		"不能确认",
+		"后校验发现",
+		"failed",
+		"failure",
+		"unsupported",
+		"missing tool",
+		"missing evidence",
+		"not verified",
+	} {
+		if strings.Contains(reason, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func completionVerificationPlanStepError(status string, reason string) string {

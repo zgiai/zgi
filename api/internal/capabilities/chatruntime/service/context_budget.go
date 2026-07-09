@@ -704,16 +704,21 @@ func recentOperationResultSummarySection(branch []*runtimemodel.Message, budget 
 }
 
 func operationResultSummaryForPrompt(metadata map[string]interface{}) map[string]interface{} {
-	executionSummary := skillLoopCompletionExecutionSummary(metadata)
-	if len(executionSummary) > 0 {
-		if summary := sanitizeOperationResultSummaryForPrompt(skillLoopCompletionOperationResultSummary(executionSummary)); len(summary) > 0 {
-			return summary
-		}
+	if summary := rebuiltOperationResultSummaryForPrompt(metadata); len(summary) > 0 {
+		return summary
 	}
 	if summary := mapFromOperationContext(metadataValue(metadata, "operation_result_summary")); len(summary) > 0 {
 		return sanitizeOperationResultSummaryForPrompt(summary)
 	}
 	return nil
+}
+
+func rebuiltOperationResultSummaryForPrompt(metadata map[string]interface{}) map[string]interface{} {
+	executionSummary := skillLoopCompletionExecutionSummary(metadata)
+	if len(executionSummary) == 0 {
+		return nil
+	}
+	return sanitizeOperationResultSummaryForPrompt(skillLoopCompletionOperationResultSummary(executionSummary))
 }
 
 func sanitizeOperationResultSummaryForPrompt(summary map[string]interface{}) map[string]interface{} {
