@@ -32,7 +32,7 @@ func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAp
 		return nil, errAgentWebAppOffline
 	}
 	if ag.AgentsType != "AGENT" {
-		return nil, fmt.Errorf("web app is not an AGENT runtime")
+		return nil, errAgentWebAppNotAgentRuntime
 	}
 	version, err := s.agentsRepo.GetLatestAgentPublishedVersion(ctx, ag.ID.String())
 	if err != nil {
@@ -91,7 +91,7 @@ func (s *agentsService) GetWebAppRuntimeCapability(ctx context.Context, webAppID
 		return nil, err
 	}
 	if ag.AgentsType != "AGENT" {
-		return nil, fmt.Errorf("web app is not an AGENT runtime")
+		return nil, errAgentWebAppNotAgentRuntime
 	}
 	if !ag.IsWebAppActive() {
 		return s.disabledWebAppRuntimeCapability(ctx, ag), nil

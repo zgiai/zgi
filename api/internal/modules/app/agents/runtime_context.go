@@ -580,6 +580,9 @@ func (h *AgentsHandler) failWebAppRuntime(c *gin.Context, err error) {
 		response.Fail(c, response.ErrWebAppOffline)
 	case errors.Is(err, errAgentWebAppNotPublished):
 		response.Fail(c, response.ErrWebAppNotPublished)
+	case errors.Is(err, errAgentWebAppNotAgentRuntime):
+		logger.DebugContext(c.Request.Context(), "agent webapp runtime request skipped for non-agent runtime", err)
+		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 	default:
 		logger.ErrorContext(c.Request.Context(), "agent webapp runtime request failed", err)
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})

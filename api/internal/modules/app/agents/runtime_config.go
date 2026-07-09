@@ -18,9 +18,10 @@ import (
 )
 
 var (
-	errAgentWebAppOffline      = errors.New("web app is offline")
-	errAgentWebAppNotPublished = errors.New("agent web app has no published version")
-	errAgentPromptTooLong      = errors.New("agent system prompt is too long")
+	errAgentWebAppOffline         = errors.New("web app is offline")
+	errAgentWebAppNotPublished    = errors.New("agent web app has no published version")
+	errAgentWebAppNotAgentRuntime = errors.New("web app is not an AGENT runtime")
+	errAgentPromptTooLong         = errors.New("agent system prompt is too long")
 )
 
 func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID string) (*dto.AgentConfigResponse, error) {
