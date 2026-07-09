@@ -29,8 +29,7 @@ import {
   type UpdateApiKeyRequest,
 } from '@/services/types/apikey';
 import { useT } from '@/i18n';
-import { X, Plus, Copy } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import ModelMultiSelector from '@/components/common/model-multi-selector/model-multi-selector';
 import { DEFAULT_AI_CREDIT_EDIT_MAX, sanitizeAiCreditIntegerInput } from '@/utils/ai-credits';
@@ -47,11 +46,6 @@ const parseIntegerInput = (value: string): number | null => {
   const parsed = Number.parseInt(trimmed, 10);
   return Number.isSafeInteger(parsed) ? parsed : null;
 };
-
-const isValidIpv4Address = (value: string): boolean =>
-  /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$/.test(
-    value
-  );
 
 /**
  * Props for ApiKeyDialog component
@@ -80,8 +74,6 @@ export default function ApiKeyDialog({
   const [quotaAmount, setQuotaAmount] = React.useState<string>('');
   const [allowAllModels, setAllowAllModels] = React.useState<boolean>(true);
   const [modelNames, setModelNames] = React.useState<string[]>([]);
-  const [allowIps, setAllowIps] = React.useState<string[]>([]);
-  const [ipInput, setIpInput] = React.useState<string>('');
   const [expiresAt, setExpiresAt] = React.useState<string>('');
 
   const { createApiKey, isCreating } = useCreateApiKey();
@@ -115,8 +107,6 @@ export default function ApiKeyDialog({
       setQuotaAmount('');
       setAllowAllModels(true);
       setModelNames([]);
-      setAllowIps([]);
-      setIpInput('');
       setExpiresAt('');
       return;
     }
@@ -131,15 +121,6 @@ export default function ApiKeyDialog({
     const hasQuotaLimit = initial.quota_limit !== null && initial.quota_limit !== undefined;
     setQuotaType(hasQuotaLimit ? ApiKeyQuotaType.Custom : ApiKeyQuotaType.Unlimited);
     setQuotaAmount(hasQuotaLimit ? String(initial.quota_limit) : '');
-
-    const ips = initial.allow_ips
-      ? initial.allow_ips
-          .split(',')
-          .map(ip => ip.trim())
-          .filter(Boolean)
-      : [];
-    setAllowIps(ips);
-    setIpInput('');
     setExpiresAt(initial.expires_at ? formatDateTimeLocalInput(initial.expires_at) : '');
   }, [open, mode, initial]);
 
@@ -159,27 +140,6 @@ export default function ApiKeyDialog({
     void navigator.clipboard.writeText(value).then(() => {
       toast.success(tCommon('toasts.copySuccess'));
     });
-  };
-
-  const addIp = (): void => {
-    const ip = ipInput.trim();
-    if (!ip) return;
-
-    if (!isValidIpv4Address(ip)) {
-      toast.error(t('dialog.errors.invalidIp'));
-      return;
-    }
-    if (allowIps.includes(ip)) {
-      toast.error(t('dialog.errors.duplicateIp'));
-      return;
-    }
-
-    setAllowIps([...allowIps, ip]);
-    setIpInput('');
-  };
-
-  const removeIp = (ip: string): void => {
-    setAllowIps(allowIps.filter(i => i !== ip));
   };
 
   const applyExpirationPreset = (preset: ExpirationPreset): void => {
@@ -231,8 +191,6 @@ export default function ApiKeyDialog({
       }
     }
 
-    const allowIpsStr = allowIps.join(',');
-
     if (mode === 'create') {
       const payload: CreateApiKeyRequest = {
         name: name.trim(),
@@ -242,7 +200,6 @@ export default function ApiKeyDialog({
           quotaType === ApiKeyQuotaType.Custom ? (parsedQuotaAmount ?? undefined) : undefined,
         allow_all_models: allowAllModels,
         model_names: allowAllModels ? undefined : modelNames,
-        allow_ips: allowIpsStr || undefined,
         expires_at: datetimeLocalToISO(expiresAt),
       };
 
@@ -267,7 +224,6 @@ export default function ApiKeyDialog({
       name: name.trim() !== initial.name ? name.trim() : undefined,
       model_limits_enabled: !allowAllModels,
       model_limits: allowAllModels ? [] : modelNames,
-      allow_ips: allowIpsStr,
       quota_limit:
         quotaType === ApiKeyQuotaType.Custom && parsedQuotaAmount !== null
           ? parsedQuotaAmount
@@ -473,6 +429,9 @@ export default function ApiKeyDialog({
                 ) : (
                   <div className="space-y-2">
                     <Label>{t('dialog.labels.modelNames')}</Label>
+                    <p className="text-xs text-muted-foreground">
+                      {t('dialog.hints.modelLimitsSelected')}
+                    </p>
                     <div className="h-[320px] overflow-hidden rounded-lg border bg-background">
                       <ModelMultiSelector
                         value={modelNames}
@@ -484,52 +443,6 @@ export default function ApiKeyDialog({
                     </div>
                   </div>
                 )}
-
-                <div className="space-y-2">
-                  <Label htmlFor="allowIps">{t('dialog.labels.allowIps')}</Label>
-                  {allowIps.length > 0 && (
-                    <div className="flex max-h-20 flex-wrap gap-2 overflow-y-auto">
-                      {allowIps.map(ip => (
-                        <Badge key={ip} variant="secondary" className="gap-1 pr-1">
-                          {ip}
-                          <button
-                            type="button"
-                            className="ml-1 rounded-full p-0.5 hover:bg-muted"
-                            aria-label={`${tCommon('delete')} ${ip}`}
-                            onClick={() => removeIp(ip)}
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex gap-2">
-                    <Input
-                      id="allowIps"
-                      value={ipInput}
-                      onChange={e => setIpInput(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          addIp();
-                        }
-                      }}
-                      placeholder={t('dialog.placeholders.allowIps')}
-                      className="min-w-0 flex-1"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      isIcon
-                      aria-label={tCommon('add')}
-                      onClick={addIp}
-                      disabled={!ipInput.trim()}
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
 
                 <div className="space-y-2">
                   <Label htmlFor="expiresAt">{t('dialog.labels.expiresAt')}</Label>

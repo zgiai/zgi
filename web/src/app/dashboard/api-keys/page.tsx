@@ -39,7 +39,7 @@ import type { ApiKeyItem } from '@/services/types/apikey';
 import { Pagination } from '@/components/ui/pagination';
 import { formatDate } from '@/utils/format';
 
-const TABLE_COLUMN_COUNT = 11;
+const TABLE_COLUMN_COUNT = 10;
 
 type ApiKeyListStatus = ApiKeyStatus | 'expired' | 'exhausted';
 
@@ -63,17 +63,6 @@ function getStatusMeta(key: ApiKeyItem): {
   }
 
   return { label: key.status, variant: 'default' };
-}
-
-function splitAllowIps(allowIps?: string): string[] {
-  if (!allowIps?.trim()) {
-    return [];
-  }
-
-  return allowIps
-    .split(/[,\n]/)
-    .map(ip => ip.trim())
-    .filter(Boolean);
 }
 
 export default function ApiKeysPage(): JSX.Element {
@@ -225,7 +214,7 @@ export default function ApiKeysPage(): JSX.Element {
 
       <div className="border rounded-lg overflow-hidden">
         {isLoading && filtered.length === 0 ? (
-          <Table className="min-w-[1320px]">
+          <Table className="min-w-[1180px]">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-[180px]">{t('table.name')}</TableHead>
@@ -233,7 +222,6 @@ export default function ApiKeysPage(): JSX.Element {
                 <TableHead className="w-[220px]">{t('table.key')}</TableHead>
                 <TableHead className="w-[150px]">{t('table.quotaUsage')}</TableHead>
                 <TableHead className="w-[150px]">{t('table.modelLimits')}</TableHead>
-                <TableHead className="w-[140px]">{t('table.ipLimits')}</TableHead>
                 <TableHead className="w-[160px]">{t('table.createdAt')}</TableHead>
                 <TableHead className="w-[160px]">{t('table.accessedAt')}</TableHead>
                 <TableHead className="w-[160px]">{t('table.expiresAt')}</TableHead>
@@ -263,9 +251,6 @@ export default function ApiKeysPage(): JSX.Element {
                     <Skeleton className="h-5 w-28" />
                   </TableCell>
                   <TableCell>
-                    <Skeleton className="h-5 w-24" />
-                  </TableCell>
-                  <TableCell>
                     <Skeleton className="h-4 w-28" />
                   </TableCell>
                   <TableCell>
@@ -285,7 +270,7 @@ export default function ApiKeysPage(): JSX.Element {
             </TableBody>
           </Table>
         ) : (
-          <Table className="min-w-[1320px]">
+          <Table className="min-w-[1180px]">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-[180px]">{t('table.name')}</TableHead>
@@ -293,7 +278,6 @@ export default function ApiKeysPage(): JSX.Element {
                 <TableHead className="w-[220px]">{t('table.key')}</TableHead>
                 <TableHead className="w-[150px]">{t('table.quotaUsage')}</TableHead>
                 <TableHead className="w-[150px]">{t('table.modelLimits')}</TableHead>
-                <TableHead className="w-[140px]">{t('table.ipLimits')}</TableHead>
                 <TableHead className="w-[160px]">{t('table.createdAt')}</TableHead>
                 <TableHead className="w-[160px]">{t('table.accessedAt')}</TableHead>
                 <TableHead className="w-[160px]">{t('table.expiresAt')}</TableHead>
@@ -306,7 +290,6 @@ export default function ApiKeysPage(): JSX.Element {
                 const statusMeta = getStatusMeta(key);
                 const modelLimits =
                   key.model_limits_enabled && key.model_limits ? key.model_limits : [];
-                const allowIps = splitAllowIps(key.allow_ips);
 
                 return (
                   <TableRow key={key.id} data-loading={isLoading || isFetching}>
@@ -373,29 +356,6 @@ export default function ApiKeysPage(): JSX.Element {
                         </div>
                       ) : (
                         <span className="text-muted-foreground">{t('table.noLimit')}</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {allowIps.length > 0 ? (
-                        <div className="flex max-w-[130px] flex-wrap gap-1">
-                          {allowIps.slice(0, 1).map(ip => (
-                            <Badge
-                              key={ip}
-                              variant="outline"
-                              title={ip}
-                              className="max-w-[100px] truncate text-xs"
-                            >
-                              {ip}
-                            </Badge>
-                          ))}
-                          {allowIps.length > 1 ? (
-                            <Badge variant="outline" className="text-xs">
-                              +{allowIps.length - 1}
-                            </Badge>
-                          ) : null}
-                        </div>
-                      ) : (
-                        <span className="text-muted-foreground">{t('table.unconfigured')}</span>
                       )}
                     </TableCell>
                     <TableCell>{formatDate(key.created_at)}</TableCell>

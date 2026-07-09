@@ -28,7 +28,6 @@ const messages: ApikeysMessages = {
     remainQuota: '剩余额度',
     quotaUsage: '剩余/总额度',
     modelLimits: '模型限制',
-    ipLimits: 'IP 限制',
     createdAt: '创建时间',
     updatedAt: '更新时间',
     accessedAt: '最后使用时间',
@@ -107,7 +106,6 @@ const messages: ApikeysMessages = {
       quotaAmount: '额度数量',
       allowAllModels: '允许所有模型',
       modelNames: '允许的模型',
-      allowIps: 'IP 白名单',
       expiresAt: '过期时间',
       status: '状态',
       modelLimitsEnabled: '启用模型限制',
@@ -116,7 +114,6 @@ const messages: ApikeysMessages = {
       name: 'API 密钥名称',
       count: '1',
       quotaAmount: '1000',
-      allowIps: '192.168.1.1',
     },
     quotaTypes: {
       unlimited: '无限制',
@@ -139,8 +136,6 @@ const messages: ApikeysMessages = {
     createdCountTitle: '已创建 {count} 个 API Key',
     createdBatchNotice: '请立即复制并妥善保存这些密钥，它们将不会再次显示。',
     errors: {
-      invalidIp: 'IP 地址格式无效',
-      duplicateIp: 'IP 地址已存在',
       expiresInPast: '过期时间必须是未来时间',
       quotaAmountRequired: '额度数量为必填项，且必须为正整数',
       quotaAmountMax: '额度数量不能超过 {max}',
@@ -151,6 +146,7 @@ const messages: ApikeysMessages = {
     hints: {
       expiresAt: '留空表示永不过期',
       allowAllModelsEnabled: '此 API 密钥允许访问所有模型',
+      modelLimitsSelected: '仅所选模型可调用',
       quotaAmountMax: '最大限制：{max}',
       countMax: '最多一次创建 {max} 个',
     },

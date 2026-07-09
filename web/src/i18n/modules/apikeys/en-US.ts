@@ -26,7 +26,6 @@ const messages = {
     remainQuota: 'Remain Quota',
     quotaUsage: 'Remaining / Total',
     modelLimits: 'Model Limits',
-    ipLimits: 'IP Limits',
     createdAt: 'Created At',
     updatedAt: 'Updated At',
     accessedAt: 'Last Used At',
@@ -109,7 +108,6 @@ const messages = {
       quotaAmount: 'Quota Amount',
       allowAllModels: 'Allow All Models',
       modelNames: 'Allowed Models',
-      allowIps: 'IP Whitelist',
       expiresAt: 'Expires At',
       status: 'Status',
       modelLimitsEnabled: 'Enable Model Limits',
@@ -118,7 +116,6 @@ const messages = {
       name: 'API key name',
       count: '1',
       quotaAmount: '1000',
-      allowIps: '192.168.1.1',
     },
     quotaTypes: {
       unlimited: 'Unlimited',
@@ -141,8 +138,6 @@ const messages = {
     createdCountTitle: '{count} API Keys Created',
     createdBatchNotice: 'Please copy and save these secret keys now. They will not be shown again.',
     errors: {
-      invalidIp: 'Invalid IP address format',
-      duplicateIp: 'IP address already exists',
       expiresInPast: 'Expiration time must be in the future',
       quotaAmountRequired: 'Quota amount is required and must be a positive integer',
       quotaAmountMax: 'Quota amount cannot exceed {max}',
@@ -153,6 +148,7 @@ const messages = {
     hints: {
       expiresAt: 'Leave empty for no expiration',
       allowAllModelsEnabled: 'All models are allowed for this API key',
+      modelLimitsSelected: 'Only selected models can be used',
       quotaAmountMax: 'Maximum: {max}',
       countMax: 'Create up to {max} at once',
     },
