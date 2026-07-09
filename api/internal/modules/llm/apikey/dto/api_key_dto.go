@@ -81,6 +81,8 @@ type UpdateAPIKeyRequest struct {
 	ModelLimits        []string   `json:"model_limits,omitempty"`
 	AllowIPs           *string    `json:"allow_ips,omitempty"`
 	ExpiresAt          *time.Time `json:"expires_at,omitempty"`
+	ClearQuotaLimit    bool       `json:"-"`
+	ClearExpiresAt     bool       `json:"-"`
 }
 
 // DeleteAPIKeyResponse represents the response for deleting an API key

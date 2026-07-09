@@ -1,6 +1,10 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
+
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/internal/modules/llm/apikey/dto"
 	"github.com/zgiai/zgi/api/internal/modules/llm/apikey/service"
@@ -293,7 +297,7 @@ func (h *APIKeyHandler) UpdateAPIKey(c *gin.Context) {
 	}
 
 	var req dto.UpdateAPIKeyRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := decodeUpdateAPIKeyRequest(c.Request.Body, &req); err != nil {
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 		return
 	}
@@ -310,6 +314,25 @@ func (h *APIKeyHandler) UpdateAPIKey(c *gin.Context) {
 	}
 
 	response.Success(c, result)
+}
+
+func decodeUpdateAPIKeyRequest(body io.Reader, req *dto.UpdateAPIKeyRequest) error {
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(data, req); err != nil {
+		return err
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	req.ClearQuotaLimit = bytes.Equal(bytes.TrimSpace(raw["quota_limit"]), []byte("null"))
+	req.ClearExpiresAt = bytes.Equal(bytes.TrimSpace(raw["expires_at"]), []byte("null"))
+	return nil
 }
 
 // DeleteAPIKey deletes an API key

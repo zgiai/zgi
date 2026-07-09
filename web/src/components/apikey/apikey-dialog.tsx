@@ -8,6 +8,7 @@ import {
   DialogTitle,
   DialogDescription,
   DialogBody,
+  DialogFooter,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -28,13 +29,29 @@ import {
   type UpdateApiKeyRequest,
 } from '@/services/types/apikey';
 import { useT } from '@/i18n';
-import { ChevronDown, X, Plus, Copy } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { X, Plus, Copy } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import ModelMultiSelector from '@/components/common/model-multi-selector/model-multi-selector';
-import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { DEFAULT_AI_CREDIT_EDIT_MAX, sanitizeAiCreditIntegerInput } from '@/utils/ai-credits';
+import { datetimeLocalToISO, formatDateTimeLocalInput } from '@/utils/date-input';
+
+const BATCH_COUNT_MAX = 20;
+
+type CreatedApiKey = ApiKeyItem & { key: string };
+type ExpirationPreset = 'never' | 'hour' | 'day' | 'month';
+
+const parseIntegerInput = (value: string): number | null => {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const parsed = Number.parseInt(trimmed, 10);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+};
+
+const isValidIpv4Address = (value: string): boolean =>
+  /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$/.test(
+    value
+  );
 
 /**
  * Props for ApiKeyDialog component
@@ -56,12 +73,9 @@ export default function ApiKeyDialog({
   const tCommon = useT('common');
   const quotaAmountMaxLabel = DEFAULT_AI_CREDIT_EDIT_MAX.toLocaleString();
 
-  // Get managed workspaces for default value
-  const { currentOrganization } = useOrganizations();
-
-  // Form state
   const [name, setName] = React.useState<string>(initial?.name ?? '');
-  const [secretKey, setSecretKey] = React.useState<string | null>(null);
+  const [count, setCount] = React.useState<string>('1');
+  const [createdKeys, setCreatedKeys] = React.useState<CreatedApiKey[]>([]);
   const [quotaType, setQuotaType] = React.useState<ApiKeyQuotaType>(ApiKeyQuotaType.Unlimited);
   const [quotaAmount, setQuotaAmount] = React.useState<string>('');
   const [allowAllModels, setAllowAllModels] = React.useState<boolean>(true);
@@ -69,24 +83,34 @@ export default function ApiKeyDialog({
   const [allowIps, setAllowIps] = React.useState<string[]>([]);
   const [ipInput, setIpInput] = React.useState<string>('');
   const [expiresAt, setExpiresAt] = React.useState<string>('');
-  const [advancedOpen, setAdvancedOpen] = React.useState<boolean>(false);
 
-  // Get current datetime in local format for min validation
-  const getMinDateTime = React.useCallback((): string => {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    const hours = String(now.getHours()).padStart(2, '0');
-    const minutes = String(now.getMinutes()).padStart(2, '0');
-    return `${year}-${month}-${day}T${hours}:${minutes}`;
-  }, []);
+  const { createApiKey, isCreating } = useCreateApiKey();
+  const { updateApiKey, isUpdating } = useUpdateApiKey();
 
-  // Reset on open/initial change
+  const getMinDateTime = React.useCallback((): string => formatDateTimeLocalInput(new Date()), []);
+
+  const closeDialog = React.useCallback((): void => {
+    setCreatedKeys([]);
+    onOpenChange(false);
+  }, [onOpenChange]);
+
+  const handleOpenChange = React.useCallback(
+    (nextOpen: boolean): void => {
+      if (!nextOpen) {
+        setCreatedKeys([]);
+      }
+      onOpenChange(nextOpen);
+    },
+    [onOpenChange]
+  );
+
   React.useEffect(() => {
     if (!open) return;
+
+    setCreatedKeys([]);
     if (mode === 'create') {
       setName('');
+      setCount('1');
       setQuotaType(ApiKeyQuotaType.Unlimited);
       setQuotaAmount('');
       setAllowAllModels(true);
@@ -94,260 +118,346 @@ export default function ApiKeyDialog({
       setAllowIps([]);
       setIpInput('');
       setExpiresAt('');
-      setSecretKey(null);
-      setAdvancedOpen(false);
-    } else if (initial) {
-      setName(initial.name ?? '');
-      // Parse model_limits from initial if it exists
-      setModelNames(initial.model_limits ?? []);
-      setAllowAllModels(!initial.model_limits_enabled);
-      const hasQuotaLimit = initial.quota_limit !== null && initial.quota_limit !== undefined;
-      setQuotaType(hasQuotaLimit ? ApiKeyQuotaType.Custom : ApiKeyQuotaType.Unlimited);
-      setQuotaAmount(hasQuotaLimit ? String(initial.quota_limit) : '');
-      // Parse allow_ips from comma-separated string to array
-      const ips = initial.allow_ips
-        ? initial.allow_ips
-            .split(',')
-            .map(ip => ip.trim())
-            .filter(Boolean)
-        : [];
-      setAllowIps(ips);
-      setIpInput('');
-      setAdvancedOpen(false);
+      return;
     }
-  }, [open, mode, initial, currentOrganization]);
 
-  const { createApiKey, isCreating } = useCreateApiKey();
-  const { updateApiKey, isUpdating } = useUpdateApiKey();
+    if (!initial) return;
 
-  // Add IP to list
+    setName(initial.name ?? '');
+    setCount('1');
+    setModelNames(initial.model_limits ?? []);
+    setAllowAllModels(!initial.model_limits_enabled);
+
+    const hasQuotaLimit = initial.quota_limit !== null && initial.quota_limit !== undefined;
+    setQuotaType(hasQuotaLimit ? ApiKeyQuotaType.Custom : ApiKeyQuotaType.Unlimited);
+    setQuotaAmount(hasQuotaLimit ? String(initial.quota_limit) : '');
+
+    const ips = initial.allow_ips
+      ? initial.allow_ips
+          .split(',')
+          .map(ip => ip.trim())
+          .filter(Boolean)
+      : [];
+    setAllowIps(ips);
+    setIpInput('');
+    setExpiresAt(initial.expires_at ? formatDateTimeLocalInput(initial.expires_at) : '');
+  }, [open, mode, initial]);
+
+  const parsedCount = parseIntegerInput(count);
+  const parsedQuotaAmount = parseIntegerInput(quotaAmount);
+  const isCountValid =
+    mode === 'edit' || (parsedCount !== null && parsedCount >= 1 && parsedCount <= BATCH_COUNT_MAX);
+  const isQuotaValid =
+    quotaType !== ApiKeyQuotaType.Custom ||
+    (parsedQuotaAmount !== null &&
+      parsedQuotaAmount > 0 &&
+      parsedQuotaAmount <= DEFAULT_AI_CREDIT_EDIT_MAX);
+  const disabled = isCreating || isUpdating;
+  const canSubmit = !disabled && name.trim() !== '' && isCountValid && isQuotaValid;
+
+  const copyText = (value: string): void => {
+    void navigator.clipboard.writeText(value).then(() => {
+      toast.success(tCommon('toasts.copySuccess'));
+    });
+  };
+
   const addIp = (): void => {
     const ip = ipInput.trim();
-    if (ip && !allowIps.includes(ip)) {
-      setAllowIps([...allowIps, ip]);
+    if (!ip) return;
+
+    if (!isValidIpv4Address(ip)) {
+      toast.error(t('dialog.errors.invalidIp'));
+      return;
     }
+    if (allowIps.includes(ip)) {
+      toast.error(t('dialog.errors.duplicateIp'));
+      return;
+    }
+
+    setAllowIps([...allowIps, ip]);
     setIpInput('');
   };
 
-  // Remove IP from list
   const removeIp = (ip: string): void => {
     setAllowIps(allowIps.filter(i => i !== ip));
   };
 
-  // Check if quota amount is valid when custom quota type
-  const isQuotaValid =
-    quotaType !== ApiKeyQuotaType.Custom ||
-    (quotaAmount.trim() !== '' &&
-      !isNaN(parseInt(quotaAmount, 10)) &&
-      parseInt(quotaAmount, 10) >= 0 &&
-      parseInt(quotaAmount, 10) <= DEFAULT_AI_CREDIT_EDIT_MAX);
+  const applyExpirationPreset = (preset: ExpirationPreset): void => {
+    if (preset === 'never') {
+      setExpiresAt('');
+      return;
+    }
+
+    const next = new Date();
+    if (preset === 'hour') {
+      next.setHours(next.getHours() + 1);
+    } else if (preset === 'day') {
+      next.setDate(next.getDate() + 1);
+    } else {
+      next.setMonth(next.getMonth() + 1);
+    }
+    setExpiresAt(formatDateTimeLocalInput(next));
+  };
 
   const onSubmit = async (): Promise<void> => {
-    // Validate quota amount when custom quota type
+    if (mode === 'create') {
+      if (parsedCount === null || parsedCount < 1 || parsedCount > BATCH_COUNT_MAX) {
+        toast.error(t('dialog.errors.countInvalid', { max: BATCH_COUNT_MAX }));
+        return;
+      }
+    }
+
     if (quotaType === ApiKeyQuotaType.Custom) {
-      const amount = parseInt(quotaAmount, 10);
-      if (quotaAmount.trim() === '' || isNaN(amount) || amount < 0) {
+      if (parsedQuotaAmount === null || parsedQuotaAmount <= 0) {
         toast.error(t('dialog.errors.quotaAmountRequired'));
         return;
       }
-      if (amount > DEFAULT_AI_CREDIT_EDIT_MAX) {
+      if (parsedQuotaAmount > DEFAULT_AI_CREDIT_EDIT_MAX) {
         toast.error(t('dialog.errors.quotaAmountMax', { max: quotaAmountMaxLabel }));
         return;
       }
     }
 
-    // Validate expiration time is in the future
+    if (!allowAllModels && modelNames.length === 0) {
+      toast.error(t('dialog.errors.modelRequired'));
+      return;
+    }
+
     if (expiresAt) {
-      const expiresDate = new Date(expiresAt);
-      if (expiresDate <= new Date()) {
+      const expiresAtISO = datetimeLocalToISO(expiresAt);
+      if (!expiresAtISO || new Date(expiresAtISO) <= new Date()) {
         toast.error(t('dialog.errors.expiresInPast'));
         return;
       }
     }
 
-    // Convert allowIps array to comma-separated string
-    const allowIpsStr = allowIps.length > 0 ? allowIps.join(',') : undefined;
+    const allowIpsStr = allowIps.join(',');
 
     if (mode === 'create') {
       const payload: CreateApiKeyRequest = {
-        name,
-        count: 1,
+        name: name.trim(),
+        count: parsedCount ?? 1,
         quota_type: quotaType,
-        quota_amount: quotaType === ApiKeyQuotaType.Custom ? parseInt(quotaAmount, 10) : undefined,
+        quota_amount:
+          quotaType === ApiKeyQuotaType.Custom ? (parsedQuotaAmount ?? undefined) : undefined,
         allow_all_models: allowAllModels,
-        model_names: allowAllModels || modelNames.length === 0 ? undefined : modelNames,
-        allow_ips: allowIpsStr,
-        expires_at: expiresAt || undefined,
+        model_names: allowAllModels ? undefined : modelNames,
+        allow_ips: allowIpsStr || undefined,
+        expires_at: datetimeLocalToISO(expiresAt),
       };
+
       const res = await createApiKey(payload);
-      if (res && res.keys && res.keys.length > 0 && res.keys[0].key) {
-        setSecretKey(res.keys[0].key);
-      } else {
-        onOpenChange(false);
+      if (!res || res.keys.length === 0) {
+        closeDialog();
+        return;
       }
+
+      const visibleKeys = res.keys.filter((key): key is CreatedApiKey => Boolean(key.key));
+      if (visibleKeys.length !== res.keys.length) {
+        toast.error(t('dialog.errors.createdKeysMissing'));
+        return;
+      }
+      setCreatedKeys(visibleKeys);
       return;
     }
 
-    // Edit mode
     if (!initial) return;
+
     const update: UpdateApiKeyRequest = {
-      name: name !== initial.name ? name : undefined,
+      name: name.trim() !== initial.name ? name.trim() : undefined,
       model_limits_enabled: !allowAllModels,
+      model_limits: allowAllModels ? [] : modelNames,
       allow_ips: allowIpsStr,
-      model_limits: !allowAllModels && modelNames.length > 0 ? modelNames : undefined,
       quota_limit:
-        quotaType === ApiKeyQuotaType.Custom && quotaAmount.trim() !== ''
-          ? parseInt(quotaAmount, 10)
-          : undefined,
-      expires_at: expiresAt || undefined,
+        quotaType === ApiKeyQuotaType.Custom && parsedQuotaAmount !== null
+          ? parsedQuotaAmount
+          : null,
+      expires_at: expiresAt ? (datetimeLocalToISO(expiresAt) ?? null) : null,
     };
     await updateApiKey(initial.id, update);
-    onOpenChange(false);
+    closeDialog();
   };
 
-  const disabled = isCreating || isUpdating;
-
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
-        className={cn(
-          'p-0 transition-all duration-300',
-          secretKey
-            ? 'w-[400px] max-w-[400px] h-auto'
-            : allowAllModels
-              ? 'w-[400px] max-w-[400px] h-[50vh]'
-              : 'w-[80vw] max-w-[80vw] h-[80vh]'
-        )}
+        className={
+          createdKeys.length > 0
+            ? 'w-[calc(100vw-2rem)] max-w-[720px] p-0'
+            : 'w-[calc(100vw-2rem)] max-w-[760px] p-0'
+        }
       >
-        {secretKey ? (
-          <div className="flex flex-col h-full">
-            <DialogHeader className="pb-2">
-              <DialogTitle className="text-xl font-bold tracking-tight">
-                {t('dialog.createdTitle')}
+        {createdKeys.length > 0 ? (
+          <div className="flex min-h-0 flex-col">
+            <DialogHeader className="px-6 pb-3 pt-6">
+              <DialogTitle>
+                {createdKeys.length > 1
+                  ? t('dialog.createdCountTitle', { count: createdKeys.length })
+                  : t('dialog.createdTitle')}
               </DialogTitle>
-              <DialogDescription className="text-sm text-muted-foreground font-medium">
-                {t('dialog.createdNotice')}
+              <DialogDescription>
+                {createdKeys.length > 1
+                  ? t('dialog.createdBatchNotice')
+                  : t('dialog.createdNotice')}
               </DialogDescription>
             </DialogHeader>
-            <DialogBody className="py-6 space-y-6">
-              <div className="flex items-center gap-3 rounded-lg border bg-muted/40 p-4 shadow-sm">
-                <div className="font-mono break-all text-sm flex-1 leading-relaxed text-foreground">
-                  {secretKey}
-                </div>
-                <Button
-                  variant="ghost"
-                  isIcon
-                  onClick={() => {
-                    navigator.clipboard.writeText(secretKey);
-                    toast.success(tCommon('toasts.copySuccess'));
-                  }}
-                  className="h-9 w-9 text-muted-foreground hover:text-foreground"
+            <DialogBody className="max-h-[520px] space-y-3 px-6 py-2">
+              {createdKeys.map(createdKey => (
+                <div
+                  key={createdKey.id}
+                  className="flex items-start gap-3 rounded-lg border bg-muted/30 p-3"
                 >
-                  <Copy className="h-4 w-4" />
-                </Button>
-              </div>
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="truncate text-sm font-medium text-foreground">
+                      {createdKey.name}
+                    </div>
+                    <div className="break-all font-mono text-xs leading-5 text-foreground">
+                      {createdKey.key}
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    isIcon
+                    aria-label={tCommon('copy')}
+                    onClick={() => copyText(createdKey.key)}
+                  >
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
             </DialogBody>
-            <div className="bg-muted/50 pb-6 px-6 pt-4 border-t shrink-0 flex items-center justify-end gap-2">
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setSecretKey(null);
-                  onOpenChange(false);
-                }}
-                className="font-semibold"
-              >
+            <DialogFooter className="border-t bg-muted/30 px-6 py-4">
+              <Button variant="ghost" onClick={closeDialog}>
                 {tCommon('close')}
               </Button>
               <Button
-                onClick={() => {
-                  navigator.clipboard.writeText(secretKey);
-                  toast.success(tCommon('toasts.copySuccess'));
-                }}
-                className="font-bold"
+                onClick={() =>
+                  copyText(createdKeys.map(key => `${key.name}: ${key.key}`).join('\n'))
+                }
               >
-                <Copy className="h-4 w-4 mr-2" /> {tCommon('copy')}
+                <Copy className="h-4 w-4" />
+                {t('dialog.buttons.copyAll')}
               </Button>
-            </div>
+            </DialogFooter>
           </div>
         ) : (
-          <div className="h-full overflow-hidden flex flex-col gap-2">
-            <DialogHeader className="px-6 pt-6">
+          <div className="flex min-h-0 flex-col">
+            <DialogHeader className="px-6 pb-3 pt-6">
               <DialogTitle>
                 {mode === 'create' ? t('dialog.titleCreate') : t('dialog.titleEdit')}
               </DialogTitle>
               <DialogDescription>{t('description')}</DialogDescription>
             </DialogHeader>
 
-            <DialogBody className="flex gap-6 h-0 grow overflow-x-hidden">
-              {/* Left column: Basic settings */}
-              <div
-                className={cn(
-                  'space-y-4 w-[352px] shrink-0 transition-all duration-300',
-                  allowAllModels ? '' : 'pr-3 overflow-y-auto shrink-0'
-                )}
-              >
-                <div className="text-sm font-semibold text-foreground">{t('dialog.basic')}</div>
-
-                {/* Name field */}
-                <div className="space-y-2">
-                  <Label htmlFor="name">
-                    {t('dialog.labels.name')} <span className="text-red-500">*</span>
-                  </Label>
-                  <Input
-                    id="name"
-                    value={name}
-                    onChange={e => setName(e.target.value)}
-                    placeholder={t('dialog.placeholders.name')}
-                    maxLength={30}
-                  />
+            <DialogBody className="space-y-4 px-6 py-2">
+              <section className="space-y-4 rounded-lg border bg-muted/10 p-4">
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold text-foreground">
+                    {t('dialog.sections.basic')}
+                  </h3>
                 </div>
 
-                {/* Quota type */}
-                <div className="space-y-2">
-                  <Label htmlFor="quotaType">{t('dialog.labels.quotaType')}</Label>
-                  <Select value={quotaType} onValueChange={v => setQuotaType(v as ApiKeyQuotaType)}>
-                    <SelectTrigger id="quotaType">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ApiKeyQuotaType.Unlimited}>
-                        {t('dialog.quotaTypes.unlimited')}
-                      </SelectItem>
-                      <SelectItem value={ApiKeyQuotaType.Custom}>
-                        {t('dialog.quotaTypes.custom')}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {quotaType === ApiKeyQuotaType.Custom && (
+                <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="quotaAmount">
-                      {t('dialog.labels.quotaAmount')}
-                      <span className="text-destructive ml-0.5">*</span>
+                    <Label htmlFor="name">
+                      {t('dialog.labels.name')} <span className="text-destructive">*</span>
                     </Label>
                     <Input
-                      id="quotaAmount"
-                      type="number"
-                      min={0}
-                      max={DEFAULT_AI_CREDIT_EDIT_MAX}
-                      step={1}
-                      value={quotaAmount}
-                      onChange={e =>
-                        setQuotaAmount(
-                          sanitizeAiCreditIntegerInput(e.target.value, DEFAULT_AI_CREDIT_EDIT_MAX)
-                        )
-                      }
-                      placeholder={t('dialog.placeholders.quotaAmount')}
+                      id="name"
+                      value={name}
+                      onChange={e => setName(e.target.value)}
+                      placeholder={t('dialog.placeholders.name')}
+                      maxLength={30}
                     />
-                    <p className="text-xs text-muted-foreground">
-                      {t('dialog.hints.quotaAmountMax', { max: quotaAmountMaxLabel })}
-                    </p>
                   </div>
-                )}
 
-                {/* Allow all models toggle */}
-                <div className="flex items-center justify-between py-2">
+                  {mode === 'create' && (
+                    <div className="space-y-2">
+                      <Label htmlFor="count">{t('dialog.labels.count')}</Label>
+                      <Input
+                        id="count"
+                        type="number"
+                        min={1}
+                        max={BATCH_COUNT_MAX}
+                        step={1}
+                        value={count}
+                        onChange={e => setCount(e.target.value.replace(/\D/g, ''))}
+                        placeholder={t('dialog.placeholders.count')}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {t('dialog.hints.countMax', { max: BATCH_COUNT_MAX })}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <section className="space-y-4 rounded-lg border bg-muted/10 p-4">
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold text-foreground">
+                    {t('dialog.sections.quota')}
+                  </h3>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="quotaType">{t('dialog.labels.quotaType')}</Label>
+                    <Select
+                      value={quotaType}
+                      onValueChange={v => setQuotaType(v as ApiKeyQuotaType)}
+                    >
+                      <SelectTrigger id="quotaType">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={ApiKeyQuotaType.Unlimited}>
+                          {t('dialog.quotaTypes.unlimited')}
+                        </SelectItem>
+                        <SelectItem value={ApiKeyQuotaType.Custom}>
+                          {t('dialog.quotaTypes.custom')}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {quotaType === ApiKeyQuotaType.Custom && (
+                    <div className="space-y-2">
+                      <Label htmlFor="quotaAmount">
+                        {t('dialog.labels.quotaAmount')}
+                        <span className="ml-0.5 text-destructive">*</span>
+                      </Label>
+                      <Input
+                        id="quotaAmount"
+                        type="number"
+                        min={1}
+                        max={DEFAULT_AI_CREDIT_EDIT_MAX}
+                        step={1}
+                        value={quotaAmount}
+                        onChange={e =>
+                          setQuotaAmount(
+                            sanitizeAiCreditIntegerInput(e.target.value, DEFAULT_AI_CREDIT_EDIT_MAX)
+                          )
+                        }
+                        placeholder={t('dialog.placeholders.quotaAmount')}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {t('dialog.hints.quotaAmountMax', { max: quotaAmountMaxLabel })}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <section className="space-y-4 rounded-lg border bg-muted/10 p-4">
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold text-foreground">
+                    {t('dialog.sections.access')}
+                  </h3>
+                </div>
+
+                <div className="flex items-center justify-between gap-4">
                   <Label htmlFor="allowAllModels">{t('dialog.labels.allowAllModels')}</Label>
                   <Switch
                     id="allowAllModels"
@@ -356,128 +466,127 @@ export default function ApiKeyDialog({
                   />
                 </div>
 
-                {/* Advanced section */}
-                <div
-                  className="flex items-center justify-between cursor-pointer py-2"
-                  onClick={() => setAdvancedOpen(v => !v)}
-                >
-                  <div className="text-sm font-semibold text-foreground">
-                    {t('dialog.advanced')}
-                  </div>
-                  <ChevronDown
-                    className={`h-4 w-4 transition-transform ${advancedOpen ? '' : 'rotate-90'}`}
-                  />
-                </div>
-
-                <div
-                  className={cn(
-                    'space-y-4 transition-all duration-300 overflow-hidden',
-                    advancedOpen ? 'h-auto opacity-100 pb-3' : 'h-0 opacity-0'
-                  )}
-                >
+                {allowAllModels ? (
+                  <p className="text-xs text-muted-foreground">
+                    {t('dialog.hints.allowAllModelsEnabled')}
+                  </p>
+                ) : (
                   <div className="space-y-2">
-                    <Label>{t('dialog.labels.allowIps')}</Label>
-                    {allowIps.length > 0 && (
-                      <div className="flex flex-wrap gap-2 mb-2 max-h-20 overflow-y-auto">
-                        {allowIps.map(ip => (
-                          <Badge key={ip} variant="secondary" className="gap-1 pr-1">
-                            {ip}
-                            <button
-                              type="button"
-                              className="ml-1 hover:bg-muted rounded-full p-0.5"
-                              onClick={() => removeIp(ip)}
-                            >
-                              <X className="h-3 w-3" />
-                            </button>
-                          </Badge>
-                        ))}
-                      </div>
-                    )}
-                    <div className="flex gap-2">
-                      <Input
-                        id="allowIps"
-                        value={ipInput}
-                        onChange={e => setIpInput(e.target.value)}
-                        onKeyDown={e => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            const ip = ipInput.trim();
-                            if (!ip) return;
-                            const isValidIp =
-                              /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$/.test(
-                                ip
-                              );
-                            if (!isValidIp) {
-                              toast.error(t('dialog.errors.invalidIp'));
-                              return;
-                            }
-                            if (allowIps.includes(ip)) {
-                              toast.error(t('dialog.errors.duplicateIp'));
-                              return;
-                            }
-                            addIp();
-                          }
-                        }}
-                        placeholder={t('dialog.placeholders.allowIps')}
-                        className="flex-1"
+                    <Label>{t('dialog.labels.modelNames')}</Label>
+                    <div className="h-[320px] overflow-hidden rounded-lg border bg-background">
+                      <ModelMultiSelector
+                        value={modelNames}
+                        onChange={setModelNames}
+                        isEnabled
+                        columns={2}
+                        className="h-full overflow-hidden"
                       />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        isIcon
-                        onClick={addIp}
-                        disabled={!ipInput.trim()}
-                      >
-                        <Plus className="h-4 w-4" />
-                      </Button>
                     </div>
                   </div>
+                )}
 
-                  <div className="space-y-2">
-                    <Label htmlFor="expiresAt">{t('dialog.labels.expiresAt')}</Label>
+                <div className="space-y-2">
+                  <Label htmlFor="allowIps">{t('dialog.labels.allowIps')}</Label>
+                  {allowIps.length > 0 && (
+                    <div className="flex max-h-20 flex-wrap gap-2 overflow-y-auto">
+                      {allowIps.map(ip => (
+                        <Badge key={ip} variant="secondary" className="gap-1 pr-1">
+                          {ip}
+                          <button
+                            type="button"
+                            className="ml-1 rounded-full p-0.5 hover:bg-muted"
+                            aria-label={`${tCommon('delete')} ${ip}`}
+                            onClick={() => removeIp(ip)}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
                     <Input
-                      id="expiresAt"
-                      type="datetime-local"
-                      value={expiresAt}
-                      min={getMinDateTime()}
-                      onChange={e => setExpiresAt(e.target.value)}
+                      id="allowIps"
+                      value={ipInput}
+                      onChange={e => setIpInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          addIp();
+                        }
+                      }}
+                      placeholder={t('dialog.placeholders.allowIps')}
+                      className="min-w-0 flex-1"
                     />
-                    <p className="text-xs text-muted-foreground">{t('dialog.hints.expiresAt')}</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      isIcon
+                      aria-label={tCommon('add')}
+                      onClick={addIp}
+                      disabled={!ipInput.trim()}
+                    >
+                      <Plus className="h-4 w-4" />
+                    </Button>
                   </div>
                 </div>
-              </div>
 
-              {/* Right column: Model selector (expandable) */}
-              <div
-                className={cn(
-                  'overflow-hidden flex flex-col transition-all duration-300',
-                  allowAllModels ? 'w-0 opacity-0' : 'flex-1 opacity-100 pl-3'
-                )}
-              >
-                <div className="text-sm font-semibold text-foreground mb-2">
-                  {t('dialog.labels.modelNames')}
+                <div className="space-y-2">
+                  <Label htmlFor="expiresAt">{t('dialog.labels.expiresAt')}</Label>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant={expiresAt ? 'outline' : 'secondary'}
+                      size="sm"
+                      onClick={() => applyExpirationPreset('never')}
+                    >
+                      {t('dialog.expirationPresets.never')}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => applyExpirationPreset('hour')}
+                    >
+                      {t('dialog.expirationPresets.hour')}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => applyExpirationPreset('day')}
+                    >
+                      {t('dialog.expirationPresets.day')}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => applyExpirationPreset('month')}
+                    >
+                      {t('dialog.expirationPresets.month')}
+                    </Button>
+                  </div>
+                  <Input
+                    id="expiresAt"
+                    type="datetime-local"
+                    value={expiresAt}
+                    min={getMinDateTime()}
+                    onChange={e => setExpiresAt(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">{t('dialog.hints.expiresAt')}</p>
                 </div>
-                <ModelMultiSelector
-                  value={modelNames}
-                  onChange={setModelNames}
-                  isEnabled
-                  columns={2}
-                  className="h-0 grow overflow-hidden"
-                />
-              </div>
+              </section>
             </DialogBody>
 
-            <div className="pb-6 px-6 pt-4 border-t shrink-0 flex items-center justify-end gap-2">
-              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={disabled}>
+            <DialogFooter className="border-t bg-muted/30 px-6 py-4">
+              <Button variant="outline" onClick={closeDialog} disabled={disabled}>
                 {t('dialog.buttons.cancel')}
               </Button>
-              <Button
-                onClick={onSubmit}
-                disabled={disabled || !isQuotaValid || (mode === 'create' && !name.trim())}
-              >
+              <Button onClick={onSubmit} disabled={!canSubmit} loading={disabled}>
                 {mode === 'create' ? t('dialog.buttons.create') : t('dialog.buttons.save')}
               </Button>
-            </div>
+            </DialogFooter>
           </div>
         )}
       </DialogContent>

@@ -337,11 +337,16 @@ func (s *apiKeyServiceImpl) UpdateAPIKey(ctx context.Context, id string, organiz
 		apiKey.Status = *req.Status
 	}
 
-	if req.ExpiresAt != nil {
+	if req.ClearExpiresAt {
+		apiKey.ExpiresAt = nil
+	} else if req.ExpiresAt != nil {
 		apiKey.ExpiresAt = req.ExpiresAt
 	}
 
-	if req.QuotaLimit != nil {
+	if req.ClearQuotaLimit {
+		apiKey.QuotaLimit = nil
+		apiKey.RemainQuota = 0
+	} else if req.QuotaLimit != nil {
 		apiKey.QuotaLimit = req.QuotaLimit
 		remaining := *req.QuotaLimit - apiKey.UsedQuota
 		if remaining < 0 {
@@ -350,7 +355,7 @@ func (s *apiKeyServiceImpl) UpdateAPIKey(ctx context.Context, id string, organiz
 		apiKey.RemainQuota = remaining
 	}
 
-	if req.RemainQuota != nil {
+	if req.RemainQuota != nil && !req.ClearQuotaLimit {
 		apiKey.RemainQuota = *req.RemainQuota
 	}
 

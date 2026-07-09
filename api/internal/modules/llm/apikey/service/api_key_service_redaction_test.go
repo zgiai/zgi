@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/zgiai/zgi/api/config"
@@ -57,6 +58,35 @@ func TestAPIKeyResponsesOnlyExposeFullKeyOnCreate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, updatedName, updated.Name)
 	requireRedactedAPIKeyResponse(t, updated, fullKey)
+}
+
+func TestUpdateAPIKeyCanClearQuotaLimitAndExpiration(t *testing.T) {
+	svc, _ := newAPIKeyRedactionTestService(t)
+	ctx := context.Background()
+	organizationID := "11111111-1111-1111-1111-111111111111"
+	quotaAmount := int64(100)
+	expiresAt := time.Now().Add(time.Hour)
+
+	created, err := svc.CreateAPIKey(ctx, &dto.CreateAPIKeyRequest{
+		OrganizationID: &organizationID,
+		Name:           "limited",
+		Count:          1,
+		QuotaType:      dto.QuotaTypeCustom,
+		QuotaAmount:    &quotaAmount,
+		ExpiresAt:      &expiresAt,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, created.Keys[0].QuotaLimit)
+	require.NotNil(t, created.Keys[0].ExpiresAt)
+
+	updated, err := svc.UpdateAPIKey(ctx, created.Keys[0].ID, []string{organizationID}, &dto.UpdateAPIKeyRequest{
+		ClearQuotaLimit: true,
+		ClearExpiresAt:  true,
+	})
+	require.NoError(t, err)
+	require.Nil(t, updated.QuotaLimit)
+	require.Nil(t, updated.ExpiresAt)
+	require.Zero(t, updated.RemainQuota)
 }
 
 func requireRedactedAPIKeyResponse(t *testing.T, response *dto.APIKeyResponse, fullKey string) {
