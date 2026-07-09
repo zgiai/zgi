@@ -200,29 +200,6 @@ func agentManagementConfigFieldDescriptorForAlias(value string) (agentConfigFiel
 	return agentConfigFieldDescriptor{}, false
 }
 
-func agentManagementExplicitConfigMarkerPresent(text string, marker string) bool {
-	text = strings.ToLower(strings.TrimSpace(text))
-	marker = strings.ToLower(strings.TrimSpace(marker))
-	if text == "" || marker == "" {
-		return false
-	}
-	searchFrom := 0
-	for {
-		idx := strings.Index(text[searchFrom:], marker)
-		if idx < 0 {
-			return false
-		}
-		absoluteIdx := searchFrom + idx
-		if !agentManagementResourceMarkerNegatedInClause(text, absoluteIdx) {
-			return true
-		}
-		searchFrom = absoluteIdx + len(marker)
-		if searchFrom >= len(text) {
-			return false
-		}
-	}
-}
-
 func agentSkillBackedCapabilityDescriptors() []agentSkillBackedCapabilityDescriptor {
 	return []agentSkillBackedCapabilityDescriptor{
 		{
@@ -356,40 +333,6 @@ func agentSkillBackedCapabilityDisplayName(candidateQuery string) string {
 		}
 	}
 	return "skill-backed capability"
-}
-
-func agentManagementConfigOnlyCapabilityMarkers() []string {
-	out := []string{}
-	for _, descriptor := range agentManagementConfigOnlyCapabilityDescriptors() {
-		out = appendUniqueStrings(out, descriptor.Markers...)
-	}
-	return out
-}
-
-func agentManagementCapabilityStatusTargetMarkers() []string {
-	markers := []string{
-		"agent",
-		"skill",
-		"tool",
-		"model",
-		"provider",
-		"\u667a\u80fd\u4f53",
-		"\u6280\u80fd",
-		"\u5de5\u5177",
-		"\u6a21\u578b",
-		"\u4f9b\u5e94\u5546",
-		"\u80fd",
-		"\u53ef\u4ee5",
-		"\u652f\u6301",
-	}
-	markers = appendUniqueStrings(markers, agentManagementConfigOnlyCapabilityMarkers()...)
-	for _, descriptor := range agentSkillBackedCapabilityDescriptors() {
-		markers = appendUniqueStrings(markers, descriptor.Markers...)
-	}
-	for _, descriptor := range agentManagementBindingCapabilityDescriptors() {
-		markers = appendUniqueStrings(markers, descriptor.markers...)
-	}
-	return markers
 }
 
 func agentManagementCapabilityDefinitionsForPrompt() []map[string]interface{} {

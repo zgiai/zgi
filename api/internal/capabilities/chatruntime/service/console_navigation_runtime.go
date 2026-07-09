@@ -238,9 +238,6 @@ func resolveConsoleNavigationTargetForParts(parts *chatRequestParts) (consoleNav
 	if parts == nil {
 		return consoleNavigationRouteHint{}, false
 	}
-	if consoleNavigationRequestNegated(parts.Query) {
-		return consoleNavigationRouteHint{}, false
-	}
 	if requiresConsoleFilesRouteBeforeManagedFileCreate(parts) {
 		return consoleFilesRouteHint(), true
 	}

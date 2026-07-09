@@ -43,8 +43,8 @@ func TestPartsFileIntentHelpersPreferModelIntentOverLegacyKeywords(t *testing.T)
 		Query:           managedFileQuery,
 		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "continue_previous_task"},
 	}
-	if !partsRequestsManagedFileCreate(continueParts) {
-		t.Fatal("managed file create intent did not allow legacy fallback for continuation")
+	if partsRequestsManagedFileCreate(continueParts) {
+		t.Fatal("managed file create intent used legacy keywords during continuation")
 	}
 
 	deleteQuery := "delete the first file"
@@ -102,8 +102,8 @@ func TestRequestedManagedFileTargetsFromPartsFallsBackOnlyWhenAllowed(t *testing
 		Query:           implicitTargetQuery,
 		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "continue_previous_task"},
 	}
-	if got := requestedManagedFileTargetsFromParts(continueParts); len(got) != 2 {
-		t.Fatalf("requestedManagedFileTargetsFromParts() returned %d targets for continuation, want 2", len(got))
+	if got := requestedManagedFileTargetsFromParts(continueParts); len(got) != 0 {
+		t.Fatalf("requestedManagedFileTargetsFromParts() returned %d targets for continuation, want 0 without explicit save intent", len(got))
 	}
 
 	explicitTargetParts := &chatRequestParts{
@@ -604,11 +604,10 @@ func TestContextualAIChatTurnStrategyUsesRecentArtifactWithoutRegeneration(t *te
 	prepared.parts.SkillMode = skillModeAuto
 	routeRequired := false
 	prepared.parts.ModelTurnIntent = &AIChatModelTurnIntent{
-		Intent:                  "save_generated_file_to_file_management",
-		TargetPage:              "/console/files",
-		RouteRequired:           &routeRequired,
-		RecommendedCapabilities: []string{"file_artifact"},
-		Confidence:              0.95,
+		Intent:        "save_generated_file_to_file_management",
+		TargetPage:    "/console/files",
+		RouteRequired: &routeRequired,
+		Confidence:    0.95,
 	}
 	prepared.parts.RecentGeneratedArtifacts = []map[string]interface{}{{
 		"tool_file_id": "tool-recent-1",
@@ -660,8 +659,9 @@ func TestContextualAIChatTurnStrategyGeneratesNewManagedFileDespiteRecentArtifac
 		"filename":     "previous.svg",
 	}}
 	prepared.parts.ModelTurnIntent = &AIChatModelTurnIntent{
-		Intent:     "save_generated_file_to_file_management",
-		Confidence: 0.91,
+		Intent:                  "save_generated_file_to_file_management",
+		RecommendedCapabilities: []string{"file_artifact"},
+		Confidence:              0.91,
 	}
 
 	strategy := contextualAIChatTurnStrategyFromParts(prepared.parts)
@@ -949,6 +949,7 @@ func TestContextualAIChatTurnStrategyResolvesChineseFilesRoute(t *testing.T) {
 			SkillMode: skillModeAuto,
 			ModelTurnIntent: &AIChatModelTurnIntent{
 				Intent:     "navigate_console_page",
+				TargetPage: "/console/files",
 				Confidence: 0.91,
 			},
 		},
@@ -1894,6 +1895,7 @@ func TestContextualAIChatTurnStrategyPrefersMultiRouteNavigationOverAgentManagem
 			SkillMode: skillModeAuto,
 			ModelTurnIntent: &AIChatModelTurnIntent{
 				Intent:     "navigate_console_page",
+				TargetPage: "/console/agents",
 				Confidence: 0.91,
 			},
 		},
@@ -1932,6 +1934,7 @@ func TestContextualAIChatTurnStrategyTreatsAutoContinueRouteSequenceAsNavigation
 			SkillMode: skillModeAuto,
 			ModelTurnIntent: &AIChatModelTurnIntent{
 				Intent:     "navigate_console_page",
+				TargetPage: "/console",
 				Confidence: 0.91,
 			},
 		},
@@ -1950,14 +1953,9 @@ func TestContextualAIChatTurnStrategyTreatsAutoContinueRouteSequenceAsNavigation
 	if strategy.RequiredNextTool == nil || strategy.RequiredNextTool.Arguments["href"] != "/console" {
 		t.Fatalf("RequiredNextTool = %#v, want navigate to /console", strategy.RequiredNextTool)
 	}
-	if len(strategy.RemainingRouteSequence) != 5 {
-		t.Fatalf("remaining route sequence = %#v, want five route steps", strategy.RemainingRouteSequence)
-	}
-	want := []string{"/console", "/console/files", "/console/agents", "/console/db", "/console/files"}
-	for idx, route := range strategy.RemainingRouteSequence {
-		if route.Href != want[idx] {
-			t.Fatalf("route[%d] = %s, want %s in %#v", idx, route.Href, want[idx], strategy.RemainingRouteSequence)
-		}
+	want := []string{"/console"}
+	if len(strategy.RemainingRouteSequence) != 1 || strategy.RemainingRouteSequence[0].Href != "/console" {
+		t.Fatalf("remaining route sequence = %#v, want only /console from model target", strategy.RemainingRouteSequence)
 	}
 
 	metadata := streamingMessageMetadataWithTaskID(prepared.parts, "task-nav-sequence")
@@ -1975,7 +1973,7 @@ func TestContextualAIChatTurnStrategyTreatsAutoContinueRouteSequenceAsNavigation
 		}
 	}
 	stepStatus := plan["step_status"].(map[string]interface{})
-	for _, id := range []string{"route:/console/files", "route:/console/files#2"} {
+	for _, id := range []string{"route:/console"} {
 		if _, ok := stepStatus[id]; !ok {
 			t.Fatalf("operation plan step_status = %#v, missing %s", stepStatus, id)
 		}
@@ -1991,6 +1989,11 @@ func TestContextualAIChatTurnStrategyScopesStagedContinuationToCurrentPhase(t *t
 			RuntimeContext: "route=/console/files",
 			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileManager},
 			SkillMode:      skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "navigate_console_page",
+				TargetPage: "/console/agents",
+				Confidence: 0.91,
+			},
 		},
 	}
 
@@ -2045,6 +2048,11 @@ func TestContextualAIChatTurnStrategyResumesStagedContinuationFromDeferredGoal(t
 			RuntimeContext: "route=/console/agents",
 			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileManager},
 			SkillMode:      skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "navigate_console_page",
+				TargetPage: "/console/files",
+				Confidence: 0.91,
+			},
 			RecentOperationPlans: []map[string]interface{}{{
 				"original_user_goal":  originalGoal,
 				"status":              operationPlanStatusRunning,
@@ -2053,10 +2061,23 @@ func TestContextualAIChatTurnStrategyResumesStagedContinuationFromDeferredGoal(t
 					map[string]interface{}{
 						"id":     "wait:continue",
 						"title":  "Wait for user continue",
-						"status": operationPlanStepStatusPending,
+						"status": operationPlanStepStatusCompleted,
+					},
+					map[string]interface{}{
+						"id":          "route:/console/files",
+						"title":       "Navigate to File Management",
+						"status":      operationPlanStepStatusPending,
+						"skill_id":    skills.SkillConsoleNavigator,
+						"tool_name":   "navigate",
+						"href":        "/console/files",
+						"arguments":   map[string]interface{}{"href": "/console/files"},
+						"target_page": "/console/files",
 					},
 				},
-				"step_status": map[string]interface{}{"wait:continue": operationPlanStepStatusPending},
+				"step_status": map[string]interface{}{
+					"wait:continue":        operationPlanStepStatusCompleted,
+					"route:/console/files": operationPlanStepStatusPending,
+				},
 			}},
 		},
 	}
@@ -2093,6 +2114,11 @@ func TestContextualAIChatTurnStrategyResumesStagedFileGoalWithoutAgentNameRoute(
 			RuntimeContext: "route=/console/agents",
 			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileManager},
 			SkillMode:      skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "navigate_console_page",
+				TargetPage: "/console/files",
+				Confidence: 0.91,
+			},
 			RecentOperationPlans: []map[string]interface{}{{
 				"original_user_goal":  originalGoal,
 				"status":              operationPlanStatusRunning,
@@ -2101,10 +2127,23 @@ func TestContextualAIChatTurnStrategyResumesStagedFileGoalWithoutAgentNameRoute(
 					map[string]interface{}{
 						"id":     "wait:continue",
 						"title":  "Wait for user continue",
-						"status": operationPlanStepStatusPending,
+						"status": operationPlanStepStatusCompleted,
+					},
+					map[string]interface{}{
+						"id":          "route:/console/files",
+						"title":       "Navigate to File Management",
+						"status":      operationPlanStepStatusPending,
+						"skill_id":    skills.SkillConsoleNavigator,
+						"tool_name":   "navigate",
+						"href":        "/console/files",
+						"arguments":   map[string]interface{}{"href": "/console/files"},
+						"target_page": "/console/files",
 					},
 				},
-				"step_status": map[string]interface{}{"wait:continue": operationPlanStepStatusPending},
+				"step_status": map[string]interface{}{
+					"wait:continue":        operationPlanStepStatusCompleted,
+					"route:/console/files": operationPlanStepStatusPending,
+				},
 			}},
 		},
 	}
@@ -2188,6 +2227,11 @@ func TestSkillLoopToolCallGuardBlocksDeferredStagedContinuationTools(t *testing.
 			Surface:   aiChatSurfaceContextualSidebar,
 			SkillIDs:  []string{skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileManager},
 			SkillMode: skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "navigate_console_page",
+				TargetPage: "/console/agents",
+				Confidence: 0.91,
+			},
 		},
 	}
 
@@ -2225,6 +2269,11 @@ func TestResolveConsoleNavigationTargetForPartsUsesNextUnfinishedRoute(t *testin
 		Surface:   aiChatSurfaceContextualSidebar,
 		SkillIDs:  []string{skills.SkillConsoleNavigator},
 		SkillMode: skillModeAuto,
+		ModelTurnIntent: &AIChatModelTurnIntent{
+			Intent:     "navigate_console_page",
+			TargetPage: "/console/files",
+			Confidence: 0.91,
+		},
 		OperationContext: map[string]interface{}{
 			"client_action_continuation": map[string]interface{}{
 				"action_type": "route_navigation",
@@ -2252,6 +2301,7 @@ func TestContextualAIChatTurnStrategyResolvesShortChineseNavigation(t *testing.T
 			SkillMode: skillModeAuto,
 			ModelTurnIntent: &AIChatModelTurnIntent{
 				Intent:     "navigate_console_page",
+				TargetPage: "/console/db",
 				Confidence: 0.91,
 			},
 		},
@@ -3990,6 +4040,11 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleNavigationGuidance(t *testi
 			Query:     "\u5e26\u6211\u53bb\u5b9a\u65f6\u4efb\u52a1\u9875\u9762",
 			SkillIDs:  []string{skills.SkillConsoleNavigator},
 			SkillMode: skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "navigate_console_page",
+				TargetPage: "/console/work/task",
+				Confidence: 0.91,
+			},
 		},
 	}
 
@@ -4011,7 +4066,6 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleNavigationGuidance(t *testi
 		"Do not say a different page has been opened unless",
 		`"href":"/console/work/task"`,
 		`"label":"定时任务"`,
-		"resolved_target_from_user_request",
 		`"/console/files"`,
 		`"/console/agents"`,
 		`"/console/dataset"`,
@@ -4077,6 +4131,7 @@ func TestResolveConsoleNavigationTargetForPartsConsumesCompletedRouteSequence(t 
 		Surface:   aiChatSurfaceContextualSidebar,
 		ModelTurnIntent: &AIChatModelTurnIntent{
 			Intent:     "navigate_console_page",
+			TargetPage: "/console/files",
 			Confidence: 0.91,
 		},
 		OperationContext: map[string]interface{}{
@@ -4164,6 +4219,11 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleNavigationWithoutToolCall(t *test
 			Query:     "\u5e26\u6211\u53bb\u5b9a\u65f6\u4efb\u52a1\u9875\u9762",
 			SkillIDs:  []string{skills.SkillConsoleNavigator},
 			SkillMode: skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "navigate_console_page",
+				TargetPage: "/console/work/task",
+				Confidence: 0.91,
+			},
 		},
 	}
 
@@ -4229,6 +4289,11 @@ func TestSkillLoopFinalAnswerGuardSkipsConsoleNavigationWhenTargetRouteAlreadyAv
 		SkillIDs:       []string{skills.SkillConsoleNavigator},
 		SkillMode:      skillModeAuto,
 		Surface:        aiChatSurfaceContextualSidebar,
+		ModelTurnIntent: &AIChatModelTurnIntent{
+			Intent:     "navigate_console_page",
+			TargetPage: "/console/agents",
+			Confidence: 0.91,
+		},
 		RawOperationContext: map[string]interface{}{
 			"resources": []interface{}{
 				map[string]interface{}{
@@ -4304,6 +4369,11 @@ func TestSkillLoopFinalAnswerGuardAllowsAgentDetailRouteForAgentsModule(t *testi
 			Query:     "open the first agent page and inspect its config",
 			SkillIDs:  []string{skills.SkillConsoleNavigator},
 			SkillMode: skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "navigate_console_page",
+				TargetPage: "/console/agents",
+				Confidence: 0.91,
+			},
 		},
 	}
 
@@ -5007,6 +5077,11 @@ func TestSkillLoopUserInputGuardBlocksConsoleNavigationClarification(t *testing.
 			Query:     "\u5e26\u6211\u53bb\u5b9a\u65f6\u4efb\u52a1\u9875\u9762",
 			SkillIDs:  []string{skills.SkillConsoleNavigator},
 			SkillMode: skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "navigate_console_page",
+				TargetPage: "/console/work/task",
+				Confidence: 0.91,
+			},
 		},
 	}
 
@@ -5718,6 +5793,11 @@ func TestSkillLoopFinalAnswerGuardBlocksPartialMultiFileManagementSave(t *testin
 	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
 	prepared.parts.SkillMode = skillModeAuto
 	prepared.parts.Surface = aiChatSurfaceContextualSidebar
+	prepared.parts.ModelTurnIntent = &AIChatModelTurnIntent{
+		Intent:     "save_generated_file_to_file_management",
+		TargetPage: "/console/files",
+		Confidence: 0.91,
+	}
 
 	guard := skillLoopFinalAnswerGuard(prepared)
 	if guard == nil {

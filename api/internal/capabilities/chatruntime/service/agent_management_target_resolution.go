@@ -69,50 +69,6 @@ func agentManagementExplicitDetailNavigationTarget(parts *chatRequestParts) (con
 	if target, ok := agentManagementModelDetailNavigationTarget(parts); ok {
 		return target, true
 	}
-	normalized := normalizeConsoleNavigationQuery(parts.Query)
-	if normalized == "" || createdAgentDetailNavigationNegated(normalized) {
-		return consoleNavigationRouteHint{}, false
-	}
-	if !containsAnySubstring(normalized, []string{
-		"open", "enter", "detail", "details", "edit page", "configuration page", "config page", "settings page",
-		"\u6253\u5f00", "\u8fdb\u5165", "\u8be6\u60c5", "\u7f16\u8f91\u9875", "\u914d\u7f6e\u9875", "\u8bbe\u7f6e\u9875",
-	}) {
-		return consoleNavigationRouteHint{}, false
-	}
-	if parts.ModelTurnIntent != nil && modelTurnIntentAssetEffectIsDelete(parts.ModelTurnIntent.AssetEffect) {
-		return consoleNavigationRouteHint{}, false
-	}
-	agents := visibleAgentsForAgentManagementTargetResolution(parts)
-	matches := make([]visibleConsoleAgentResource, 0, 1)
-	for _, agent := range agents {
-		name := normalizeConsoleNavigationQuery(agent.Title)
-		if name == "" || !strings.Contains(normalized, name) {
-			continue
-		}
-		matches = append(matches, agent)
-	}
-	if len(matches) == 1 {
-		href := normalizeAgentDetailHref(matches[0].Href)
-		if href == "" && strings.TrimSpace(matches[0].ID) != "" {
-			href = consoleAgentDetailHref(matches[0].ID)
-		}
-		if href != "" {
-			return consoleNavigationRouteHint{Href: href, Label: firstNonEmptyString(matches[0].Title, "Agent detail")}, true
-		}
-	}
-	if len(matches) > 1 {
-		return consoleNavigationRouteHint{}, false
-	}
-	if containsAnySubstring(normalized, []string{"current agent", "this agent", "\u5f53\u524d\u667a\u80fd\u4f53", "\u8fd9\u4e2a\u667a\u80fd\u4f53"}) {
-		for _, agent := range agents {
-			if !agent.Selected {
-				continue
-			}
-			if href := normalizeAgentDetailHref(agent.Href); href != "" {
-				return consoleNavigationRouteHint{Href: href, Label: firstNonEmptyString(agent.Title, "Agent detail")}, true
-			}
-		}
-	}
 	return consoleNavigationRouteHint{}, false
 }
 

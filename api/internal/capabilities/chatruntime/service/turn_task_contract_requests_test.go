@@ -43,7 +43,7 @@ func TestTurnTaskContractRequestsUseOperationPlanContractBeforeModelIntent(t *te
 	}
 }
 
-func TestTurnTaskContractRequestsAllowLegacyOnlyForContinuation(t *testing.T) {
+func TestTurnTaskContractRequestsDoNotUseLegacyKeywordsForContinuation(t *testing.T) {
 	query := "delete the first file"
 	answerParts := &chatRequestParts{
 		Query: query,
@@ -61,8 +61,8 @@ func TestTurnTaskContractRequestsAllowLegacyOnlyForContinuation(t *testing.T) {
 			Intent: "continue_previous_task",
 		},
 	}
-	if !turnTaskContractRequestsFileDelete(continueParts, nil, "") {
-		t.Fatal("file delete did not allow legacy fallback for continuation task contract")
+	if turnTaskContractRequestsFileDelete(continueParts, nil, "") {
+		t.Fatal("file delete used legacy keywords for continuation task contract")
 	}
 
 	missingContractParts := &chatRequestParts{Query: query}

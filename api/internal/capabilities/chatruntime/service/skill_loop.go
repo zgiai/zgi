@@ -5965,7 +5965,7 @@ func allowAdditionalRequestedManagedFileGeneration(parts *chatRequestParts, req 
 }
 
 func latestRecentGeneratedArtifactSaveArguments(parts *chatRequestParts) map[string]interface{} {
-	if parts == nil || !isRecentGeneratedArtifactReferenceIntent(parts.Query) {
+	if parts == nil || !shouldReuseRecentGeneratedArtifactForManagedCreate(parts) {
 		return nil
 	}
 	for _, artifact := range parts.RecentGeneratedArtifacts {

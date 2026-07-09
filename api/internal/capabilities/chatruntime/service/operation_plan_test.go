@@ -3252,9 +3252,6 @@ func TestAgentCapabilityUpdateRouteContextBeatsTemporaryFileGeneration(t *testin
 		},
 		ModelTurnIntent: agentManagementModelIntentForTest("/console/agents/agent-1/agent", "agent.skill_backed_capability:enable:file generation"),
 	}
-	if !isTemporaryFileGenerateIntent(query) {
-		t.Fatalf("isTemporaryFileGenerateIntent(%q) = false, want true to cover ambiguous file-generation wording", query)
-	}
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
@@ -10468,9 +10465,6 @@ func TestAgentManagementCreateDescriptionDoesNotPlanDelete(t *testing.T) {
 	if agentManagementDeleteRequested(query) {
 		t.Fatalf("agentManagementDeleteRequested(%q) = true, want false for descriptive deletable text", query)
 	}
-	if wantsCreatedAgentDetailNavigation(query) {
-		t.Fatalf("wantsCreatedAgentDetailNavigation(%q) = true, want false for explicit no-navigation request", query)
-	}
 	parts := &chatRequestParts{
 		Query:           query,
 		Surface:         aiChatSurfaceContextualSidebar,
@@ -10493,10 +10487,6 @@ func TestAgentManagementCreateQuotedChineseDescriptionDoesNotPlanDelete(t *testi
 	if agentManagementBatchDeleteRequested(query) {
 		t.Fatalf("agentManagementBatchDeleteRequested(%q) = true, want false for quoted description payload", query)
 	}
-	if wantsCreatedAgentDetailNavigation(query) {
-		t.Fatalf("wantsCreatedAgentDetailNavigation(%q) = true, want false for explicit no-navigation request", query)
-	}
-
 	parts := &chatRequestParts{
 		Query:           query,
 		Surface:         aiChatSurfaceContextualSidebar,
@@ -10555,9 +10545,6 @@ func TestAgentManagementCreateOpenEditDetailDoesNotPlanConfigUpdate(t *testing.T
 	query := "\u8bf7\u5728\u5f53\u524d\u667a\u80fd\u4f53\u5217\u8868\u4e2d\u521b\u5efa\u4e00\u4e2a\u6d4b\u8bd5\u667a\u80fd\u4f53\uff0c\u540d\u79f0 GOAL-CLOSURE-SMOKE-1\uff0c\u63cf\u8ff0\u201cPlanner\u95ed\u73af\u9a8c\u8bc1 1\u201d\uff0c\u56fe\u6807\u7528 \U0001f9ed\u3002\u521b\u5efa\u6210\u529f\u540e\u6253\u5f00\u5b83\u7684\u7f16\u8f91\u8be6\u60c5\u9875\uff0c\u5e76\u53ea\u57fa\u4e8e\u5de5\u5177\u8fd4\u56de\u503c\u548c\u9875\u9762\u8bc1\u636e\u7b80\u77ed\u8bf4\u660e\u7ed3\u679c\u3002"
 	if !agentManagementCreateRequested(query) {
 		t.Fatalf("agentManagementCreateRequested(%q) = false, want true", query)
-	}
-	if !wantsCreatedAgentDetailNavigation(query) {
-		t.Fatalf("wantsCreatedAgentDetailNavigation(%q) = false, want true", query)
 	}
 	if agentManagementConfigUpdateRequested(query) {
 		t.Fatalf("agentManagementConfigUpdateRequested(%q) = true, want false for create plus edit-detail navigation", query)
@@ -11289,20 +11276,6 @@ func TestAgentManagementCurrentDetailDeletePlansSingleDeleteThenListNavigation(t
 		Arguments: map[string]interface{}{"href": "/console/agents"},
 	}); blocked {
 		t.Fatal("console-navigator/navigate was blocked after delete_agent completed, want route guard released")
-	}
-}
-
-func TestWantsCreatedAgentDetailNavigationHonorsChineseNegation(t *testing.T) {
-	query := "\u521b\u5efa 2 \u4e2a\u667a\u80fd\u4f53\uff0c\u4e0d\u8981\u5bfc\u822a\u5230\u8be6\u60c5\u9875"
-	if wantsCreatedAgentDetailNavigation(query) {
-		t.Fatalf("wantsCreatedAgentDetailNavigation(%q) = true, want false", query)
-	}
-}
-
-func TestWantsCreatedAgentDetailNavigationSupportsChineseDetailRequest(t *testing.T) {
-	query := "\u5220\u6389\u9875\u9762\u4e2d\u7684\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\uff0c\u7136\u540e\u521b\u5efa\u4e00\u4e2a\u65b0\u7684\u667a\u80fd\u4f53\uff0c\u53d6\u540d\u53eb\u5c0f\u8bf4\u521b\u4f5c\u5927\u5e08\uff0c\u6a21\u578b\u914d\u7f6e\u4e3adeepseek flash\uff0c\u7136\u540e\u8fdb\u5230\u8be6\u7ec6\u9875"
-	if !wantsCreatedAgentDetailNavigation(query) {
-		t.Fatalf("wantsCreatedAgentDetailNavigation(%q) = false, want true", query)
 	}
 }
 
@@ -13593,29 +13566,8 @@ func TestOperationPlanChineseStagedManagedCreateAndDeleteGoalUsesModelDecidesCon
 	}
 }
 
-func TestIsFileDeleteIntentAllowsConditionalChineseDeleteGoal(t *testing.T) {
-	query := "\u51bb\u7ed3\u6587\u4ef6\u5217\u8868\u5f53\u524d\u7b2c\u4e09\u4e2a\u6587\u4ef6\u4f5c\u4e3a\u5220\u9664\u76ee\u6807\uff0c\u53ea\u6709\u5f53\u7b2c\u4e09\u4e2a\u6587\u4ef6\u540d\u4ee5 SMOKE- \u5f00\u5934\u65f6\u624d\u8fdb\u5165\u5220\u9664\u5ba1\u6279\u5e76\u5220\u9664\uff0c\u5426\u5219\u505c\u6b62\u5e76\u8bf4\u660e\u539f\u56e0\u3002"
-	if !isFileDeleteIntent(query) {
-		t.Fatalf("isFileDeleteIntent(%q) = false, want true", query)
-	}
-}
-
-func TestFileMutationNegationDoesNotTreatFenbieAsBieNegation(t *testing.T) {
-	query := "\u6587\u4ef6\u540d\u5206\u522b\u662f SMOKE-COMPLEX.txt \u548c SMOKE-COMPLEX.svg\uff0c\u7136\u540e\u5220\u9664\u7b2c\u4e09\u4e2a\u6587\u4ef6"
-	if !isFileDeleteIntent(query) {
-		t.Fatalf("isFileDeleteIntent(%q) = false, want true; \u5206\u522b should not be treated as \u522b negation", query)
-	}
-	negated := "\u522b\u5220\u9664\u7b2c\u4e09\u4e2a\u6587\u4ef6"
-	if isFileDeleteIntent(negated) {
-		t.Fatalf("isFileDeleteIntent(%q) = true, want false for explicit \u522b\u5220\u9664", negated)
-	}
-}
-
 func TestNavigationStrategyIgnoresNegatedAssetMutationConstraint(t *testing.T) {
 	query := "\u8bf7\u5bfc\u822a\u5230\u667a\u80fd\u4f53\u5217\u8868\u9875\u9762\uff0c\u7b49\u9875\u9762\u4e0a\u4e0b\u6587\u52a0\u8f7d\u5b8c\u6210\u540e\uff0c\u53ea\u6839\u636e\u65b0\u9875\u9762\u4e0a\u4e0b\u6587\u56de\u7b54\u5f53\u524d\u9875\u9762\u6807\u9898\u6216\u6a21\u5757\u540d\u79f0\u3002\u4e0d\u8981\u521b\u5efa\u3001\u7f16\u8f91\u6216\u5220\u9664\u4efb\u4f55\u8d44\u4ea7\u3002"
-	if isFileDeleteIntent(query) {
-		t.Fatalf("isFileDeleteIntent(%q) = true, want false for negated asset deletion constraint", query)
-	}
 	parts := &chatRequestParts{
 		Query:          query,
 		Surface:        aiChatSurfaceContextualSidebar,
@@ -13629,6 +13581,7 @@ func TestNavigationStrategyIgnoresNegatedAssetMutationConstraint(t *testing.T) {
 		},
 		ModelTurnIntent: &AIChatModelTurnIntent{
 			Intent:     "navigate_console_page",
+			TargetPage: "/console/agents",
 			Confidence: 0.91,
 		},
 	}

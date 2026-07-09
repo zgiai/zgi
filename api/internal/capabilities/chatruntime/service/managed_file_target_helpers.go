@@ -102,14 +102,7 @@ func requestedManagedFileTargetsFromParts(parts *chatRequestParts) []requestedMa
 	if parts == nil {
 		return nil
 	}
-	targets := explicitRequestedManagedFileTargetsFromQuery(parts.Query)
-	if len(targets) > 0 {
-		return targets
-	}
-	if !partsAllowsLegacyFileIntentFallback(parts) {
-		return nil
-	}
-	return implicitRequestedManagedFileTargetsFromQuery(parts.Query)
+	return explicitRequestedManagedFileTargetsFromQuery(parts.Query)
 }
 
 func requestedManagedFileTargetsFromQuery(query string) []requestedManagedFileTarget {
@@ -329,42 +322,10 @@ func generatedArtifactMapSaveArguments(artifact map[string]interface{}) map[stri
 	return args
 }
 
-func isRecentGeneratedArtifactReferenceIntent(query string) bool {
-	text := strings.ToLower(strings.TrimSpace(query))
-	if text == "" {
-		return false
-	}
-	if !containsAnySubstring(text, []string{
-		"save", "upload", "import", "add", "put",
-		"\u4fdd\u5b58", "\u4e0a\u4f20", "\u5bfc\u5165", "\u6dfb\u52a0", "\u52a0\u5230", "\u653e\u5230", "\u5b58\u5230",
-	}) {
-		return false
-	}
-	return containsAnySubstring(text, []string{
-		"this file", "that file", "previous file", "last file", "generated file", "created file", "the file just",
-		"\u8fd9\u4e2a\u6587\u4ef6", "\u8fd9\u4efd\u6587\u4ef6", "\u8fd9\u4e2a", "\u8fd9\u4efd",
-		"\u521a\u521a\u7684\u6587\u4ef6", "\u521a\u624d\u7684\u6587\u4ef6", "\u521a\u751f\u6210\u7684\u6587\u4ef6",
-		"\u4e0a\u4e00\u4e2a\u6587\u4ef6", "\u4e0a\u4efd\u6587\u4ef6", "\u751f\u6210\u7684\u6587\u4ef6",
-	})
-}
-
 func shouldReuseRecentGeneratedArtifactForManagedCreate(parts *chatRequestParts) bool {
 	if parts == nil || len(parts.RecentGeneratedArtifacts) == 0 ||
 		!turnTaskContractRequestsManagedFileCreate(parts, nil, "") {
 		return false
 	}
-	if isRecentGeneratedArtifactReferenceIntent(parts.Query) {
-		return true
-	}
-	text := strings.ToLower(strings.TrimSpace(parts.Query))
-	if containsAnySubstring(text, []string{
-		"create", "generate", "write", "export", "make", "produce",
-		"\u521b\u5efa", "\u65b0\u5efa", "\u751f\u6210", "\u5199", "\u5199\u4e00\u4e2a", "\u5bfc\u51fa", "\u505a\u4e00\u4e2a",
-	}) {
-		return false
-	}
-	return containsAnySubstring(text, []string{
-		"save", "upload", "import", "add", "put",
-		"\u4fdd\u5b58", "\u4e0a\u4f20", "\u5bfc\u5165", "\u6dfb\u52a0", "\u52a0\u5230", "\u653e\u5230", "\u5b58\u5230",
-	})
+	return !modelTurnIntentRequestsTemporaryFileArtifact(parts.ModelTurnIntent)
 }
