@@ -137,7 +137,9 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 					"Also describe the user goal as phases and needed evidence. Phases are semantic checkpoints, not mandatory tool order.",
 					"Use recommended_capabilities for capabilities the executor may need, such as exact_agent_runtime, visible_file_content, page_navigation, generated_artifact, or asset_mutation.",
 					"For generated artifact turns, include chart_artifact for charts/graphs/data visualizations and file_artifact for ordinary documents, SVG/vector files, PDFs, spreadsheets, or text files.",
-					"For Agent management turns, include canonical Agent capability IDs in recommended_capabilities only when they may help the executor choose tools: agent.model_selection, agent.system_prompt, agent.skill_backed_capability:<capability query>, agent.accept_uploaded_files, agent.memory, agent.knowledge_binding, agent.database_binding, agent.workflow_binding, agent.suggested_questions. These are possible capabilities, not required completion facts. Do not treat a generic request to update an Agent as knowledge binding unless the user explicitly asks to bind or update knowledge files/datasets.",
+					"For Agent management turns, include canonical Agent capability IDs in recommended_capabilities only when they may help the executor choose tools: agent.model_selection, agent.system_prompt, agent.skill_backed_capability:<capability query>, agent.accept_uploaded_files, agent.memory, agent.knowledge_binding:<action>, agent.database_binding:<action>, agent.workflow_binding:<action>, agent.suggested_questions. These are possible capabilities, not required completion facts.",
+					"For binding capabilities, action must be explicit: :inspect for reading current bindings, :bind/:unbind/:replace only when the user explicitly asks to bind, unbind, replace, or update knowledge/database/workflow resources. Omit binding capabilities when the user only asks to update Agent instructions, persona, story context, or settings.",
+					"Use agent.system_prompt when the user asks to update an Agent's instructions, persona, behavior, story setting, or narrative context and does not explicitly ask for resource binding.",
 					"When the user refers to a visible current-page item by ordinal such as first, second, top, \u7b2c\u4e00\u4e2a, or \u7b2c\u4e8c\u4e2a, set target_visible_index to the 1-based visible index. Omit it when no visible ordinal is requested.",
 					"For Agent creation turns, set open_created_agent_detail=true only when the user explicitly asks to open, enter, edit, configure, or inspect the newly created Agent detail page after creation.",
 					"If the user asks for exact Agent prompt/config/runtime analysis and page context may be summary-level, set needs_exact_agent_runtime=true.",
@@ -191,8 +193,11 @@ func finalizeModelTurnIntent(intent *AIChatModelTurnIntent) {
 	intent.TaskType = strings.TrimSpace(intent.TaskType)
 	intent.Phases = normalizeModelTurnPlanStrings(intent.Phases, 8, 160)
 	intent.EvidenceRequired = normalizeModelTurnPlanStrings(intent.EvidenceRequired, 10, 160)
-	intent.RecommendedCapabilities = normalizeModelTurnPlanStrings(intent.RecommendedCapabilities, 10, 120)
+	intent.RecommendedCapabilities = normalizeModelTurnRecommendedCapabilities(normalizeModelTurnPlanStrings(intent.RecommendedCapabilities, 10, 120))
 	intent.CompletionCriteria = normalizeModelTurnPlanStrings(intent.CompletionCriteria, 8, 180)
+	intent.Phases = sanitizeModelTurnImplicitBindingAdvisoryStrings(intent.Phases, intent.RecommendedCapabilities)
+	intent.EvidenceRequired = sanitizeModelTurnImplicitBindingAdvisoryStrings(intent.EvidenceRequired, intent.RecommendedCapabilities)
+	intent.CompletionCriteria = sanitizeModelTurnImplicitBindingAdvisoryStrings(intent.CompletionCriteria, intent.RecommendedCapabilities)
 	intent.AssetEffect = strings.TrimSpace(intent.AssetEffect)
 	intent.AssetRisk = strings.TrimSpace(intent.AssetRisk)
 	intent.Approval = strings.TrimSpace(intent.Approval)
@@ -206,6 +211,81 @@ func finalizeModelTurnIntent(intent *AIChatModelTurnIntent) {
 	intent.Reason = trimRunes(strings.TrimSpace(intent.Reason), 240)
 	if unsupportedIntent && intent.Reason == "" {
 		intent.Reason = "unsupported compatibility intent label; using task contract as the source of truth"
+	}
+}
+
+func normalizeModelTurnRecommendedCapabilities(values []string) []string {
+	out := []string{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || agentCapabilityHintIsImplicitBinding(value) {
+			continue
+		}
+		out = appendUniqueStrings(out, value)
+	}
+	return out
+}
+
+func sanitizeModelTurnImplicitBindingAdvisoryStrings(values []string, capabilities []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	explicitBindingCapabilities := agentCapabilityExplicitBindingCapabilityIDs(capabilities)
+	out := []string{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if capabilityID := modelTurnImplicitBindingAdvisoryCapability(value); capabilityID != "" {
+			if _, ok := explicitBindingCapabilities[capabilityID]; !ok {
+				value = modelTurnGenericBindingAdvisory(value, capabilityID)
+			}
+		}
+		if value == "" {
+			continue
+		}
+		out = appendUniqueStrings(out, value)
+	}
+	return out
+}
+
+func modelTurnImplicitBindingAdvisoryCapability(value string) string {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	normalized := strings.NewReplacer("-", "_", " ", "_").Replace(lower)
+	switch {
+	case strings.Contains(normalized, "knowledge_binding") ||
+		strings.Contains(normalized, "knowledge_dataset") ||
+		strings.Contains(normalized, "knowledge_base"):
+		return agentCapabilityKnowledgeBinding
+	case strings.Contains(normalized, "database_binding") ||
+		strings.Contains(normalized, "database_table"):
+		return agentCapabilityDatabaseBinding
+	case strings.Contains(normalized, "workflow_binding"):
+		return agentCapabilityWorkflowBinding
+	default:
+		return ""
+	}
+}
+
+func modelTurnGenericBindingAdvisory(value string, capabilityID string) string {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	normalized := strings.NewReplacer("-", "_", " ", "_").Replace(lower)
+	switch {
+	case strings.Contains(normalized, "update_agent_knowledge_binding"):
+		return "update_agent_context"
+	case strings.Contains(normalized, "update_agent_database_binding") ||
+		strings.Contains(normalized, "update_agent_workflow_binding"):
+		return "update_agent_configuration"
+	case strings.Contains(lower, "current") || strings.Contains(lower, "read") || strings.Contains(lower, "verify"):
+		return "current Agent configuration if needed"
+	case strings.Contains(lower, "updated") || strings.Contains(lower, "include") || strings.Contains(lower, "bind"):
+		return "Agent configuration updated with the requested content"
+	default:
+		if capabilityID != "" {
+			return ""
+		}
+		return value
 	}
 }
 

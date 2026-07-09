@@ -485,31 +485,9 @@ func agentManagementCapabilityGoalsFromModelIntent(intent *AIChatModelTurnIntent
 }
 
 func agentCapabilityGoalFromModelCapabilityHint(hint string, intent *AIChatModelTurnIntent) (AIChatAgentCapabilityGoal, bool) {
-	raw := strings.TrimSpace(hint)
-	if raw == "" {
+	raw, capabilityID, action, target := agentCapabilityHintParts(hint)
+	if raw == "" || capabilityID == "" {
 		return AIChatAgentCapabilityGoal{}, false
-	}
-	parts := strings.Split(raw, ":")
-	for idx := range parts {
-		parts[idx] = strings.TrimSpace(parts[idx])
-	}
-	capabilityID := canonicalAgentCapabilityIDHint(parts[0])
-	if capabilityID == "" {
-		return AIChatAgentCapabilityGoal{}, false
-	}
-	action := ""
-	target := ""
-	for _, part := range parts[1:] {
-		if part == "" {
-			continue
-		}
-		if canonical := canonicalAgentCapabilityAction(part); canonical != "" && action == "" {
-			action = canonical
-			continue
-		}
-		if target == "" {
-			target = part
-		}
 	}
 	userIntent := modelIntentCapabilityUserIntent(intent)
 	goal := AIChatAgentCapabilityGoal{
@@ -554,6 +532,9 @@ func agentCapabilityGoalFromModelCapabilityHint(hint string, intent *AIChatModel
 			}
 		}
 	case agentCapabilityKnowledgeBinding, agentCapabilityDatabaseBinding, agentCapabilityWorkflowBinding:
+		if action == "" {
+			return AIChatAgentCapabilityGoal{}, false
+		}
 		field := operationPlanAgentResourceBindingFieldForCapability(capabilityID)
 		if field == "" {
 			return AIChatAgentCapabilityGoal{}, false
@@ -570,6 +551,62 @@ func agentCapabilityGoalFromModelCapabilityHint(hint string, intent *AIChatModel
 		goal.GoalAction = agentCapabilityActionUpdate
 	}
 	return agentCapabilityGoalWithDefaults(goal), true
+}
+
+func agentCapabilityHintParts(hint string) (string, string, string, string) {
+	raw := strings.TrimSpace(hint)
+	if raw == "" {
+		return "", "", "", ""
+	}
+	parts := strings.Split(raw, ":")
+	for idx := range parts {
+		parts[idx] = strings.TrimSpace(parts[idx])
+	}
+	capabilityID := canonicalAgentCapabilityIDHint(parts[0])
+	if capabilityID == "" {
+		return raw, "", "", ""
+	}
+	action := ""
+	target := ""
+	for _, part := range parts[1:] {
+		if part == "" {
+			continue
+		}
+		if canonical := canonicalAgentCapabilityAction(part); canonical != "" && action == "" {
+			action = canonical
+			continue
+		}
+		if target == "" {
+			target = part
+		}
+	}
+	return raw, capabilityID, action, target
+}
+
+func agentCapabilityHintIsImplicitBinding(hint string) bool {
+	_, capabilityID, action, _ := agentCapabilityHintParts(hint)
+	if capabilityID == "" || action != "" {
+		return false
+	}
+	_, ok := agentManagementBindingCapabilityDescriptorForCapability(capabilityID)
+	return ok
+}
+
+func agentCapabilityExplicitBindingCapabilityIDs(hints []string) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, hint := range hints {
+		_, capabilityID, action, _ := agentCapabilityHintParts(hint)
+		if capabilityID == "" || action == "" {
+			continue
+		}
+		if _, ok := agentManagementBindingCapabilityDescriptorForCapability(capabilityID); ok {
+			out[capabilityID] = struct{}{}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func canonicalAgentCapabilityIDHint(value string) string {

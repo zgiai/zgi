@@ -1466,6 +1466,60 @@ func TestModelTurnTaskContractKeepsLowConfidencePlanOnMainPath(t *testing.T) {
 	}
 }
 
+func TestModelTurnTaskContractSanitizesImplicitBindingHints(t *testing.T) {
+	intent, err := parseModelTurnIntentContent(`{
+		"intent":"manage_agent_asset",
+		"task_type":"multi_step_workflow",
+		"phases":["navigate_to_file_management","read_first_md_file","update_agent_knowledge_binding"],
+		"evidence_required":["visible_file_content of the first MD file","current knowledge bindings of the agent"],
+		"recommended_capabilities":["visible_file_content","agent.knowledge_binding","agent.system_prompt"],
+		"completion_criteria":["Agent knowledge bindings updated to include the new chapter"],
+		"asset_effect":"update",
+		"confidence":0.88
+	}`)
+	if err != nil {
+		t.Fatalf("parseModelTurnIntentContent() error = %v", err)
+	}
+	finalizeModelTurnIntent(intent)
+
+	if slices.Contains(intent.RecommendedCapabilities, agentCapabilityKnowledgeBinding) {
+		t.Fatalf("RecommendedCapabilities = %#v, want implicit knowledge binding dropped", intent.RecommendedCapabilities)
+	}
+	if !slices.Contains(intent.RecommendedCapabilities, agentCapabilitySystemPrompt) {
+		t.Fatalf("RecommendedCapabilities = %#v, want system prompt capability preserved", intent.RecommendedCapabilities)
+	}
+	if !slices.Contains(intent.Phases, "update_agent_context") {
+		t.Fatalf("Phases = %#v, want neutral agent context phase", intent.Phases)
+	}
+	for _, values := range [][]string{intent.Phases, intent.EvidenceRequired, intent.CompletionCriteria} {
+		for _, value := range values {
+			if strings.Contains(strings.ToLower(value), "knowledge_binding") || strings.Contains(strings.ToLower(value), "knowledge bindings") {
+				t.Fatalf("sanitized advisory value still contains binding wording: %q; intent=%#v", value, intent)
+			}
+		}
+	}
+
+	parts := &chatRequestParts{
+		Query:           "continue the first md file and update the current Agent with the new chapter",
+		Surface:         aiChatSurfaceContextualSidebar,
+		RuntimeContext:  "route=/console/agents/agent-1/agent",
+		SkillIDs:        []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement, skills.SkillFileReader},
+		SkillMode:       skillModeAuto,
+		ModelTurnIntent: intent,
+	}
+	strategy := contextualAIChatTurnStrategyFromParts(parts)
+	if strategy == nil {
+		t.Fatal("contextualAIChatTurnStrategyFromParts() = nil, want strategy")
+	}
+	plan := operationPlanFromTurnStrategy("task-implicit-binding-sanitized", parts, strategy)
+	if operationPlanCapabilityGoalsContainForTest(mapSliceFromAny(plan["capability_goals"]), agentCapabilityKnowledgeBinding) {
+		t.Fatalf("capability_goals = %#v, want no implicit knowledge binding goal; plan=%#v", plan["capability_goals"], plan)
+	}
+	if !operationPlanCapabilityGoalsContainForTest(mapSliceFromAny(plan["capability_goals"]), agentCapabilitySystemPrompt) {
+		t.Fatalf("capability_goals = %#v, want system prompt goal; plan=%#v", plan["capability_goals"], plan)
+	}
+}
+
 func TestModelTurnTaskContractUsesGenericPathForRawCompatibilityAlias(t *testing.T) {
 	intent, err := parseModelTurnIntentContent(`{
 		"intent":"create_agent",

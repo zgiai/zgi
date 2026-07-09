@@ -2354,6 +2354,29 @@ func TestAgentSkillBackedCapabilityGoalExposesEvidenceBoundaries(t *testing.T) {
 	}
 }
 
+func TestAgentBindingCapabilityGoalRequiresExplicitAction(t *testing.T) {
+	goals := agentManagementCapabilityGoalsFromModelIntent(&AIChatModelTurnIntent{
+		Intent:                  "manage_agent_asset",
+		RecommendedCapabilities: []string{"agent.knowledge_binding"},
+		Confidence:              0.95,
+	})
+	if len(goals) != 0 {
+		t.Fatalf("capability goals = %#v, want no implicit binding goal", goals)
+	}
+
+	goals = agentManagementCapabilityGoalsFromModelIntent(&AIChatModelTurnIntent{
+		Intent:                  "manage_agent_asset",
+		RecommendedCapabilities: []string{"agent.knowledge_binding:bind"},
+		Confidence:              0.95,
+	})
+	if len(goals) != 1 || goals[0].CapabilityID != agentCapabilityKnowledgeBinding {
+		t.Fatalf("capability goals = %#v, want explicit knowledge binding goal", goals)
+	}
+	if !agentCapabilityGoalsContainBindingActionForTest(goals, "knowledge_dataset_ids", "bind") {
+		t.Fatalf("capability goals = %#v, want knowledge_dataset_ids bind action", goals)
+	}
+}
+
 func TestAgentCapabilityModelRecognizesChineseSkillBackedCapability(t *testing.T) {
 	query := "\u8ba9\u8fd9\u4e2a\u667a\u80fd\u4f53\u80fd\u591f\u751f\u6210\u6587\u4ef6"
 	goals := agentManagementCapabilityGoalsForQuery(query)
