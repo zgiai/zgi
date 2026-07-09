@@ -137,9 +137,42 @@ export default function ApiKeyDialog({
   const canSubmit = !disabled && name.trim() !== '' && isCountValid && isQuotaValid;
 
   const copyText = (value: string): void => {
-    void navigator.clipboard.writeText(value).then(() => {
+    const textarea = document.createElement('textarea');
+    textarea.value = value;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '0';
+    textarea.style.top = '0';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    let copied = false;
+    try {
+      textarea.focus();
+      textarea.select();
+      textarea.setSelectionRange(0, value.length);
+      copied = document.execCommand('copy');
+    } finally {
+      document.body.removeChild(textarea);
+    }
+
+    if (copied) {
       toast.success(tCommon('toasts.copySuccess'));
-    });
+      return;
+    }
+
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard
+        .writeText(value)
+        .then(() => {
+          toast.success(tCommon('toasts.copySuccess'));
+        })
+        .catch(() => {
+          toast.error(tCommon('toasts.copyFailed'));
+        });
+      return;
+    }
+
+    toast.error(tCommon('toasts.copyFailed'));
   };
 
   const applyExpirationPreset = (preset: ExpirationPreset): void => {
