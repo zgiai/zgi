@@ -188,6 +188,23 @@ func TestDashboardServiceDatasetStatsUsesWorkspaceScopeOnly(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestDashboardServiceFileStatsUsesWorkspaceScopeOnly(t *testing.T) {
+	db, mock := openDashboardServiceMockDB(t)
+	svc := NewDashboardService(db).(*dashboardService)
+	svc.tableCache["upload_files"] = true
+
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "?upload_files"? WHERE workspace_id IN`).
+		WithArgs("ws-files").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
+
+	stats := svc.getResourceStats(context.Background(), "org-1", "acc-1", model.DashboardWorkspaceScopes{
+		FileWorkspaceIDs: []string{"ws-files"},
+	})
+
+	require.Equal(t, int64(3), stats.Files)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestDashboardServiceRecentDatasetsUsesWorkspaceScopeOnly(t *testing.T) {
 	db, mock := openDashboardServiceMockDB(t)
 	svc := NewDashboardService(db).(*dashboardService)
