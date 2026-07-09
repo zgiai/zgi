@@ -2,6 +2,7 @@ package workflowtest
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -45,18 +46,26 @@ func (r *WorkflowServiceRunner) RunCase(ctx context.Context, req RunCaseRequest)
 	turns := runnableCaseTurns(req.CaseSnapshot)
 	var lastResult *RunCaseResult
 	turnResults := make([]map[string]interface{}, 0, len(turns))
+	conversationID := ""
 	for index, turn := range turns {
-		result, err := r.runTurn(ctx, req.AgentID, turn, textInputName, startInputs, isChatDraft)
+		result, nextConversationID, err := r.runTurn(ctx, req.AgentID, turn, textInputName, startInputs, isChatDraft, conversationID, index+1)
 		if err != nil {
 			return nil, err
 		}
+		if nextConversationID != "" {
+			conversationID = nextConversationID
+		}
 		lastResult = result
-		turnResults = append(turnResults, map[string]interface{}{
+		turnResult := map[string]interface{}{
 			"turn_index":      index + 1,
 			"content":         turn.Content,
 			"workflow_run_id": result.WorkflowRunID,
 			"outputs":         result.Outputs,
-		})
+		}
+		if conversationID != "" {
+			turnResult["conversation_id"] = conversationID
+		}
+		turnResults = append(turnResults, turnResult)
 	}
 	if lastResult == nil {
 		return &RunCaseResult{Outputs: map[string]interface{}{}}, nil
@@ -209,7 +218,7 @@ func startInputVariablesFromGraph(graph map[string]interface{}) []startInputVari
 	return nil
 }
 
-func (r *WorkflowServiceRunner) runTurn(ctx context.Context, agentID string, turn CaseTurn, textInputName string, startInputs []startInputVariable, isChatDraft bool) (*RunCaseResult, error) {
+func (r *WorkflowServiceRunner) runTurn(ctx context.Context, agentID string, turn CaseTurn, textInputName string, startInputs []startInputVariable, isChatDraft bool, conversationID string, dialogueCount int) (*RunCaseResult, string, error) {
 	inputs := map[string]interface{}{
 		"sys.query": turn.Content,
 	}
@@ -219,6 +228,9 @@ func (r *WorkflowServiceRunner) runTurn(ctx context.Context, agentID string, tur
 	for key, value := range turn.Inputs {
 		name := strings.TrimSpace(key)
 		if name == "" {
+			continue
+		}
+		if isWorkflowTestReservedInputKey(name) {
 			continue
 		}
 		inputs[name] = value
@@ -249,8 +261,15 @@ func (r *WorkflowServiceRunner) runTurn(ctx context.Context, agentID string, tur
 	if isChatDraft {
 		inputs["query"] = turn.Content
 		inputs["sys.workflow_type"] = "chat"
-		inputs["sys.dialogue_count"] = 1
-		inputs["sys.parent_message_id"] = ""
+		if dialogueCount <= 0 {
+			dialogueCount = 1
+		}
+		inputs["sys.dialogue_count"] = dialogueCount
+		if strings.TrimSpace(conversationID) != "" {
+			inputs["sys.conversation_id"] = strings.TrimSpace(conversationID)
+		} else {
+			inputs["sys.parent_message_id"] = ""
+		}
 		inputs["conversation_params"] = map[string]interface{}{
 			"from_source": "account",
 			"invoke_from": "debugger",
@@ -264,9 +283,151 @@ func (r *WorkflowServiceRunner) runTurn(ctx context.Context, agentID string, tur
 	}
 	result, err := r.WorkflowService.RunDraftWorkflow(ctx, r.WorkspaceID, agentID, runReq, r.AccountID)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return normalizeWorkflowRunResult(result), nil
+	normalized := normalizeWorkflowRunResult(result)
+	r.attachWorkflowTrace(ctx, agentID, normalized)
+	nextConversationID := conversationIDFromRunInputs(runReq.Inputs)
+	if nextConversationID == "" {
+		nextConversationID = conversationIDFromOutputs(normalized.Outputs)
+	}
+	return normalized, nextConversationID, nil
+}
+
+func isWorkflowTestReservedInputKey(key string) bool {
+	switch strings.TrimSpace(key) {
+	case caseModeInputKey,
+		expectedChecksInputKey,
+		turnExpectationInputKey,
+		turnChecksInputKey,
+		conversationChecksInputKey,
+		"__fixture_spec",
+		"__asset_source",
+		"__tags":
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *WorkflowServiceRunner) attachWorkflowTrace(ctx context.Context, agentID string, result *RunCaseResult) {
+	if r == nil || r.WorkflowService == nil || result == nil || strings.TrimSpace(result.WorkflowRunID) == "" {
+		return
+	}
+	raw, err := r.WorkflowService.GetWorkflowRunNodeExecutions(ctx, r.WorkspaceID, agentID, result.WorkflowRunID)
+	if err != nil {
+		return
+	}
+	nodes := normalizeWorkflowTraceNodes(raw)
+	if len(nodes) == 0 {
+		return
+	}
+	if result.Outputs == nil {
+		result.Outputs = map[string]interface{}{}
+	}
+	result.Outputs["workflow_trace"] = map[string]interface{}{"nodes": nodes}
+}
+
+func normalizeWorkflowTraceNodes(raw interface{}) []map[string]interface{} {
+	switch typed := raw.(type) {
+	case *dto.WorkflowRunNodeExecutionListResponse:
+		if typed == nil {
+			return nil
+		}
+		return workflowTraceNodesFromResponses(typed.Data)
+	case dto.WorkflowRunNodeExecutionListResponse:
+		return workflowTraceNodesFromResponses(typed.Data)
+	case map[string]interface{}:
+		return workflowTraceNodesFromInterfaceSlice(typed["data"])
+	default:
+		return nil
+	}
+}
+
+func workflowTraceNodesFromResponses(responses []dto.WorkflowRunNodeExecutionResponse) []map[string]interface{} {
+	nodes := make([]map[string]interface{}, 0, len(responses))
+	for _, item := range responses {
+		nodes = append(nodes, map[string]interface{}{
+			"node_id":        item.NodeID,
+			"node_name":      item.Title,
+			"node_type":      item.NodeType,
+			"status":         item.Status,
+			"duration_ms":    item.ElapsedTime,
+			"input":          rawJSONMap(item.Inputs),
+			"output":         rawJSONMap(item.Outputs),
+			"error":          item.Error,
+			"started_at":     item.CreatedAt,
+			"finished_at":    item.FinishedAt,
+			"execution_id":   item.ID,
+			"predecessor":    item.PredecessorNodeID,
+			"process_data":   rawJSONMap(item.ProcessData),
+			"metadata":       rawJSONMap(item.ExecutionMetadata),
+			"triggered_from": item.TriggeredFrom,
+		})
+	}
+	return nodes
+}
+
+func rawJSONMap(raw json.RawMessage) map[string]interface{} {
+	if len(raw) == 0 || string(raw) == "null" {
+		return map[string]interface{}{}
+	}
+	var mapped map[string]interface{}
+	if err := json.Unmarshal(raw, &mapped); err != nil {
+		var value interface{}
+		if valueErr := json.Unmarshal(raw, &value); valueErr != nil {
+			return map[string]interface{}{}
+		}
+		if value == nil {
+			return map[string]interface{}{}
+		}
+		return map[string]interface{}{"value": value}
+	}
+	return mapped
+}
+
+func workflowTraceNodesFromInterfaceSlice(value interface{}) []map[string]interface{} {
+	values, ok := value.([]interface{})
+	if !ok {
+		return nil
+	}
+	nodes := make([]map[string]interface{}, 0, len(values))
+	for _, item := range values {
+		mapped, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		nodes = append(nodes, mapped)
+	}
+	return nodes
+}
+
+func conversationIDFromRunInputs(inputs map[string]interface{}) string {
+	if inputs == nil {
+		return ""
+	}
+	if value, ok := inputs["sys.conversation_id"].(string); ok {
+		return strings.TrimSpace(value)
+	}
+	if value, ok := inputs["conversation_id"].(string); ok {
+		return strings.TrimSpace(value)
+	}
+	return ""
+}
+
+func conversationIDFromOutputs(outputs map[string]interface{}) string {
+	if outputs == nil {
+		return ""
+	}
+	for _, key := range []string{"sys.conversation_id", "conversation_id"} {
+		if value, ok := outputs[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	if nested, ok := outputs["outputs"].(map[string]interface{}); ok {
+		return conversationIDFromOutputs(nested)
+	}
+	return ""
 }
 
 func assignAttachmentsToStartFileInputs(inputs map[string]interface{}, variables []startInputVariable, fileInputs []interface{}) {

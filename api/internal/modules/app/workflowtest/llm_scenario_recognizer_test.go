@@ -45,6 +45,14 @@ func TestParseScenarioRecognitionResponseAcceptsJSONCodeFence(t *testing.T) {
 	require.Equal(t, "case-1", result.Assignments[0].CaseID)
 }
 
+func TestParseScenarioRecognitionResponseExtractsJSONFromText(t *testing.T) {
+	result, err := parseScenarioRecognitionResponse("以下是识别结果：\n{\"scenarios\":[{\"name\":\"制度问答\",\"description\":\"内部制度咨询\"}],\"assignments\":[]}\n请查收。")
+
+	require.NoError(t, err)
+	require.Len(t, result.Scenarios, 1)
+	require.Equal(t, "制度问答", result.Scenarios[0].Name)
+}
+
 func TestParseScenarioRecognitionResponseRejectsEmptyResult(t *testing.T) {
 	_, err := parseScenarioRecognitionResponse(`{"scenarios":[{"name":"","description":"空名称"}]}`)
 
@@ -66,6 +74,56 @@ func TestBuildScenarioRecognitionPromptTruncatesLongCases(t *testing.T) {
 	require.Contains(t, prompt, "短问题")
 	require.Less(t, strings.Count(prompt, "很长的问题内容"), 80)
 	require.Contains(t, prompt, "...")
+}
+
+func TestBuildScenarioRecognitionPromptTreatsPromptAsUserSupplement(t *testing.T) {
+	prompt := buildScenarioRecognitionPrompt(ScenarioRecognitionInput{
+		Prompt: "Focus on reimbursement and approval scenarios.",
+	})
+
+	require.Contains(t, prompt, defaultScenarioRecognitionPrompt())
+	require.Contains(t, prompt, "User supplementary requirements")
+	require.Contains(t, prompt, "system rules must take priority")
+	require.Contains(t, prompt, "Focus on reimbursement and approval scenarios.")
+}
+
+func TestBuildScenarioRecognitionPromptUsesTaskModeRules(t *testing.T) {
+	prompt := buildScenarioRecognitionPrompt(ScenarioRecognitionInput{
+		CaseMode: "task",
+	})
+
+	require.Contains(t, prompt, defaultTaskScenarioRecognitionPrompt())
+	require.Contains(t, prompt, "Task workflows are function-like executions")
+	require.Contains(t, prompt, "business object/document type + processing goal")
+	require.Contains(t, prompt, "company contract")
+	require.Contains(t, prompt, "school exam paper")
+	require.Contains(t, prompt, "meeting notes")
+	require.Contains(t, prompt, "Do not create scenarios for unsupported format handling")
+	require.Contains(t, prompt, "field completeness checks")
+}
+
+func TestLLMScenarioRecognizerDoesNotForceResponseFormat(t *testing.T) {
+	client := &fakeLLMClient{
+		responseContent: `{"scenarios":[{"name":"售前咨询","description":"产品能力咨询"}]}`,
+	}
+	recognizer := &LLMScenarioRecognizer{
+		Client:      client,
+		WorkspaceID: "00000000-0000-0000-0000-000000000001",
+		AccountID:   "00000000-0000-0000-0000-000000000002",
+		AgentID:     "00000000-0000-0000-0000-000000000003",
+	}
+
+	result, err := recognizer.RecognizeScenarios(context.Background(), ScenarioRecognitionInput{
+		Prompt: "只返回 JSON",
+		Model:  &Model{Provider: "zgi-cloud", Name: "test-model"},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Scenarios, 1)
+	require.Len(t, client.requests, 1)
+	require.Nil(t, client.requests[0].ResponseFormat)
+	require.Equal(t, "zgi-cloud", client.requests[0].Provider)
+	require.Equal(t, "test-model", client.requests[0].Model)
 }
 
 func TestCreateScenarioRecognitionTaskSnapshotsWorkflowContext(t *testing.T) {

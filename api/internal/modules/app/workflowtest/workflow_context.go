@@ -41,11 +41,18 @@ func buildWorkflowRecognitionContext(draft any) string {
 	}
 
 	lines := []string{"Workflow structure summary:"}
+	includedNodeIDs := map[string]struct{}{}
 	for index, rawNode := range nodes {
 		node := mapValue(rawNode)
 		data := mapValue(node["data"])
 		id := stringValue(node["id"])
 		nodeType := firstNonEmptyString(stringValue(data["type"]), stringValue(node["type"]))
+		if isDisplayOnlyWorkflowNode(nodeType) {
+			continue
+		}
+		if id != "" {
+			includedNodeIDs[id] = struct{}{}
+		}
 		title := firstNonEmptyString(stringValue(data["title"]), id)
 		desc := stringValue(data["desc"])
 		if desc == "" {
@@ -62,13 +69,22 @@ func buildWorkflowRecognitionContext(draft any) string {
 		lines = append(lines, summarizeNodeData(nodeType, data)...)
 	}
 
-	edgeLines := summarizeEdges(edges)
+	edgeLines := summarizeEdges(edges, includedNodeIDs)
 	if len(edgeLines) > 0 {
 		lines = append(lines, "Edges:")
 		lines = append(lines, edgeLines...)
 	}
 
 	return truncateForPrompt(strings.Join(lines, "\n"), workflowRecognitionContextMaxChars)
+}
+
+func isDisplayOnlyWorkflowNode(nodeType string) bool {
+	switch strings.TrimSpace(strings.ToLower(nodeType)) {
+	case "note", "comment":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeWorkflowDraftMap(value any) map[string]any {
@@ -132,17 +148,17 @@ func summarizeNodeData(nodeType string, data map[string]any) []string {
 		return summarizeLLMNode(data)
 	case "if-else":
 		return summarizeIfElseNode(data)
-	case "question-answer":
+	case "question-answer", "question_answer":
 		return summarizeQuestionAnswerNode(data)
 	case "answer":
 		return summarizeTextField(data, "answer", "answer")
-	case "knowledge-retrieval":
+	case "knowledge-retrieval", "knowledge_retrieval":
 		return summarizeTextField(data, "query_variable_selector", "query selector")
-	case "http-request":
+	case "http-request", "httprequest":
 		return summarizeHTTPRequestNode(data)
-	case "tool":
+	case "tool", "tools":
 		return summarizeToolNode(data)
-	case "call-database", "sql-generator":
+	case "call-database", "call_database", "sql-generator", "sql_generator":
 		return summarizeDatabaseNode(data)
 	default:
 		return summarizeGenericNode(data)
@@ -300,7 +316,7 @@ func summarizeConditions(conditions []any) []string {
 	return items
 }
 
-func summarizeEdges(edges []any) []string {
+func summarizeEdges(edges []any, includedNodeIDs map[string]struct{}) []string {
 	lines := make([]string, 0, len(edges))
 	for _, raw := range edges {
 		edge := mapValue(raw)
@@ -308,6 +324,14 @@ func summarizeEdges(edges []any) []string {
 		target := stringValue(edge["target"])
 		if source == "" || target == "" {
 			continue
+		}
+		if len(includedNodeIDs) > 0 {
+			if _, ok := includedNodeIDs[source]; !ok {
+				continue
+			}
+			if _, ok := includedNodeIDs[target]; !ok {
+				continue
+			}
 		}
 		handle := firstNonEmptyString(stringValue(edge["sourceHandle"]), stringValue(edge["source_handle"]))
 		if handle != "" {

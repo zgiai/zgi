@@ -356,6 +356,21 @@ type formatSpec struct {
 	mimeType  string
 }
 
+// RenderGeneratedFile renders supported file content without choosing the
+// storage destination. Tool calls store the bytes as tool files; other callers
+// can persist them through their own file service.
+func RenderGeneratedFile(content string, format string, title string) ([]byte, string, string, error) {
+	normalizedFormat, spec, err := resolveFormat(format)
+	if err != nil {
+		return nil, "", "", err
+	}
+	data, err := renderContent(content, normalizedFormat, title)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return data, strings.TrimPrefix(spec.extension, "."), spec.mimeType, nil
+}
+
 func resolveFormat(raw string) (string, formatSpec, error) {
 	format := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(raw), "."))
 	if format == "" {

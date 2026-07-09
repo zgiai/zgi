@@ -2,6 +2,7 @@ package workflowtest
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -11,9 +12,11 @@ import (
 
 type runnerWorkflowServiceStub struct {
 	interfaces.WorkflowService
-	calls   []*dto.DraftWorkflowRunRequest
-	results []dto.WorkflowRunResponse
-	draft   interface{}
+	calls                  []*dto.DraftWorkflowRunRequest
+	results                []dto.WorkflowRunResponse
+	draft                  interface{}
+	createdConversationIDs []string
+	nodeExecutions         map[string]*dto.WorkflowRunNodeExecutionListResponse
 }
 
 func (s *runnerWorkflowServiceStub) GetDraftWorkflow(ctx context.Context, agentID string, hideSecrets ...bool) (interface{}, error) {
@@ -26,6 +29,12 @@ func (s *runnerWorkflowServiceStub) GetDraftWorkflow(ctx context.Context, agentI
 func (s *runnerWorkflowServiceStub) RunDraftWorkflow(ctx context.Context, workspaceID, agentID string, req interface{}, accountID string) (interface{}, error) {
 	runReq, ok := req.(*dto.DraftWorkflowRunRequest)
 	if ok {
+		if len(s.createdConversationIDs) > 0 {
+			if convID, _ := runReq.Inputs["sys.conversation_id"].(string); convID == "" {
+				runReq.Inputs["sys.conversation_id"] = s.createdConversationIDs[0]
+				s.createdConversationIDs = s.createdConversationIDs[1:]
+			}
+		}
 		s.calls = append(s.calls, runReq)
 	}
 	if len(s.results) == 0 {
@@ -34,6 +43,16 @@ func (s *runnerWorkflowServiceStub) RunDraftWorkflow(ctx context.Context, worksp
 	result := s.results[0]
 	s.results = s.results[1:]
 	return result, nil
+}
+
+func (s *runnerWorkflowServiceStub) GetWorkflowRunNodeExecutions(ctx context.Context, tenantID, agentID, runID string) (interface{}, error) {
+	if s.nodeExecutions == nil {
+		return &dto.WorkflowRunNodeExecutionListResponse{}, nil
+	}
+	if executions, ok := s.nodeExecutions[runID]; ok {
+		return executions, nil
+	}
+	return &dto.WorkflowRunNodeExecutionListResponse{}, nil
 }
 
 func TestWorkflowServiceRunnerMapsAttachmentToStartFileVariable(t *testing.T) {
@@ -265,6 +284,197 @@ func TestWorkflowServiceRunnerUsesUnifiedDraftWorkflowForTypedChatDraft(t *testi
 		"from_source": "account",
 		"invoke_from": "debugger",
 	}, call.Inputs["conversation_params"])
+}
+
+func TestWorkflowServiceRunnerFiltersWorkflowTestMetadataInputs(t *testing.T) {
+	workflowService := &runnerWorkflowServiceStub{
+		draft: dto.WorkflowDetail{
+			Graph: map[string]interface{}{
+				"nodes": []interface{}{
+					map[string]interface{}{
+						"data": map[string]interface{}{
+							"type": "start",
+							"variables": []interface{}{
+								map[string]interface{}{"variable": "question", "type": "text-input"},
+								map[string]interface{}{"variable": "customer", "type": "string"},
+							},
+						},
+					},
+				},
+			},
+		},
+		results: []dto.WorkflowRunResponse{{TaskID: "task-1", WorkflowRunID: "run-1"}},
+	}
+	runner := &WorkflowServiceRunner{
+		WorkflowService: workflowService,
+		WorkspaceID:     "workspace-1",
+		AccountID:       "account-1",
+	}
+
+	_, err := runner.RunCase(context.Background(), RunCaseRequest{
+		AgentID: "agent-1",
+		CaseSnapshot: CaseSnapshot{
+			Content: "question",
+			Turns: CaseTurns{{
+				Role:    "user",
+				Content: "question",
+				Inputs: JSONMap{
+					"customer":              "Acme",
+					caseModeInputKey:        "task",
+					expectedChecksInputKey:  map[string]interface{}{"output_contains": []interface{}{"ok"}},
+					turnExpectationInputKey: "expected",
+					turnChecksInputKey:      map[string]interface{}{"conditions": []interface{}{}},
+					conversationChecksInputKey: map[string]interface{}{
+						"conditions": []interface{}{},
+					},
+					"__fixture_spec": []interface{}{"fixture"},
+					"__asset_source": "workflow_test_generated",
+					"__tags":         []interface{}{"tag"},
+				},
+			}},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, workflowService.calls, 1)
+	callInputs := workflowService.calls[0].Inputs
+	require.Equal(t, "Acme", callInputs["customer"])
+	require.NotContains(t, callInputs, caseModeInputKey)
+	require.NotContains(t, callInputs, expectedChecksInputKey)
+	require.NotContains(t, callInputs, turnExpectationInputKey)
+	require.NotContains(t, callInputs, turnChecksInputKey)
+	require.NotContains(t, callInputs, conversationChecksInputKey)
+	require.NotContains(t, callInputs, "__fixture_spec")
+	require.NotContains(t, callInputs, "__asset_source")
+	require.NotContains(t, callInputs, "__tags")
+}
+
+func TestWorkflowServiceRunnerAttachesWorkflowTrace(t *testing.T) {
+	workflowService := &runnerWorkflowServiceStub{
+		draft:   dto.WorkflowDetail{},
+		results: []dto.WorkflowRunResponse{{TaskID: "task-1", WorkflowRunID: "run-1"}},
+		nodeExecutions: map[string]*dto.WorkflowRunNodeExecutionListResponse{
+			"run-1": {
+				Data: []dto.WorkflowRunNodeExecutionResponse{{
+					ID:          "exec-1",
+					NodeID:      "start",
+					NodeType:    "start",
+					Title:       "Start",
+					Status:      "succeeded",
+					Inputs:      json.RawMessage(`{"query":"hello"}`),
+					Outputs:     json.RawMessage(`{"answer":"world"}`),
+					ElapsedTime: 12,
+				}},
+			},
+		},
+	}
+	runner := &WorkflowServiceRunner{
+		WorkflowService: workflowService,
+		WorkspaceID:     "workspace-1",
+		AccountID:       "account-1",
+	}
+
+	result, err := runner.RunCase(context.Background(), RunCaseRequest{
+		AgentID: "agent-1",
+		CaseSnapshot: CaseSnapshot{
+			Content: "hello",
+		},
+	})
+
+	require.NoError(t, err)
+	trace, ok := result.Outputs["workflow_trace"].(map[string]interface{})
+	require.True(t, ok)
+	nodes, ok := trace["nodes"].([]map[string]interface{})
+	require.True(t, ok)
+	require.Len(t, nodes, 1)
+	require.Equal(t, "start", nodes[0]["node_id"])
+	require.Equal(t, map[string]interface{}{"query": "hello"}, nodes[0]["input"])
+	require.Equal(t, map[string]interface{}{"answer": "world"}, nodes[0]["output"])
+}
+
+func TestWorkflowServiceRunnerKeepsScalarWorkflowTraceOutput(t *testing.T) {
+	workflowService := &runnerWorkflowServiceStub{
+		draft:   dto.WorkflowDetail{},
+		results: []dto.WorkflowRunResponse{{TaskID: "task-1", WorkflowRunID: "run-1"}},
+		nodeExecutions: map[string]*dto.WorkflowRunNodeExecutionListResponse{
+			"run-1": {
+				Data: []dto.WorkflowRunNodeExecutionResponse{{
+					ID:      "exec-1",
+					NodeID:  "answer",
+					Title:   "Answer",
+					Status:  "succeeded",
+					Outputs: json.RawMessage(`"final answer"`),
+				}},
+			},
+		},
+	}
+	runner := &WorkflowServiceRunner{
+		WorkflowService: workflowService,
+		WorkspaceID:     "workspace-1",
+		AccountID:       "account-1",
+	}
+
+	result, err := runner.RunCase(context.Background(), RunCaseRequest{
+		AgentID:      "agent-1",
+		CaseSnapshot: CaseSnapshot{Content: "hello"},
+	})
+
+	require.NoError(t, err)
+	trace := result.Outputs["workflow_trace"].(map[string]interface{})
+	nodes := trace["nodes"].([]map[string]interface{})
+	require.Equal(t, map[string]interface{}{"value": "final answer"}, nodes[0]["output"])
+}
+
+func TestWorkflowServiceRunnerKeepsConversationContextAcrossChatTurns(t *testing.T) {
+	workflowService := &runnerWorkflowServiceStub{
+		draft: dto.WorkflowDetail{
+			Type: dto.WorkflowTypeChat,
+			Graph: map[string]interface{}{
+				"nodes": []interface{}{
+					map[string]interface{}{
+						"data": map[string]interface{}{
+							"type": "start",
+							"variables": []interface{}{
+								map[string]interface{}{"variable": "query", "type": "text-input"},
+							},
+						},
+					},
+				},
+			},
+		},
+		results: []dto.WorkflowRunResponse{
+			{TaskID: "task-1", WorkflowRunID: "run-1"},
+			{TaskID: "task-2", WorkflowRunID: "run-2"},
+		},
+		createdConversationIDs: []string{"conversation-1"},
+	}
+	runner := &WorkflowServiceRunner{
+		WorkflowService: workflowService,
+		WorkspaceID:     "workspace-1",
+		AccountID:       "account-1",
+	}
+
+	result, err := runner.RunCase(context.Background(), RunCaseRequest{
+		AgentID: "agent-1",
+		CaseSnapshot: CaseSnapshot{
+			Turns: CaseTurns{
+				{Role: "user", Content: "first turn"},
+				{Role: "user", Content: "follow up"},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, workflowService.calls, 2)
+	require.Equal(t, "conversation-1", workflowService.calls[0].Inputs["sys.conversation_id"])
+	require.Equal(t, 1, workflowService.calls[0].Inputs["sys.dialogue_count"])
+	require.Equal(t, "conversation-1", workflowService.calls[1].Inputs["sys.conversation_id"])
+	require.Equal(t, 2, workflowService.calls[1].Inputs["sys.dialogue_count"])
+	require.NotContains(t, workflowService.calls[1].Inputs, "sys.parent_message_id")
+	turnResults, ok := result.Outputs["turn_results"].([]map[string]interface{})
+	require.True(t, ok)
+	require.Len(t, turnResults, 2)
+	require.Equal(t, "conversation-1", turnResults[1]["conversation_id"])
 }
 
 func TestWorkflowServiceRunnerMapsAttachmentsToMultipleSingleFileVariables(t *testing.T) {

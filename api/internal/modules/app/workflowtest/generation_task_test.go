@@ -21,6 +21,7 @@ import (
 type fakeCaseGenerator struct {
 	requests []GenerateCasesRequest
 	result   *GenerateCasesResult
+	results  []*GenerateCasesResult
 }
 
 type fakeTaskCanceler struct {
@@ -33,6 +34,11 @@ func (c *fakeTaskCanceler) Cancel(taskID string) {
 
 func (g *fakeCaseGenerator) GenerateCases(ctx context.Context, req GenerateCasesRequest) (*GenerateCasesResult, error) {
 	g.requests = append(g.requests, req)
+	if len(g.results) > 0 {
+		result := g.results[0]
+		g.results = g.results[1:]
+		return result, nil
+	}
 	if g.result != nil {
 		return g.result, nil
 	}
@@ -48,8 +54,10 @@ func (g *fakeCaseGenerator) GenerateCases(ctx context.Context, req GenerateCases
 }
 
 type fakeLLMClient struct {
-	err      error
-	requests []*adapter.ChatRequest
+	err              error
+	responseContent  string
+	responseContents []string
+	requests         []*adapter.ChatRequest
 }
 
 func (c *fakeLLMClient) Chat(ctx context.Context, organizationID string, req *adapter.ChatRequest) (*adapter.ChatResponse, error) {
@@ -81,9 +89,17 @@ func (c *fakeLLMClient) AppChat(ctx context.Context, appCtx *llmclient.AppContex
 	if c.err != nil {
 		return nil, c.err
 	}
+	content := c.responseContent
+	if len(c.responseContents) > 0 {
+		content = c.responseContents[0]
+		c.responseContents = c.responseContents[1:]
+	}
+	if content == "" {
+		content = `{"cases":[{"content":"generated case","expected_result":"expected","question_type":"core"}]}`
+	}
 	return &adapter.ChatResponse{
 		Choices: []adapter.Choice{{
-			Message: adapter.Message{Content: `{"cases":[{"content":"generated case","expected_result":"expected","question_type":"core"}]}`},
+			Message: adapter.Message{Content: content},
 		}},
 	}, nil
 }
@@ -398,6 +414,95 @@ func TestGenerateCasesUsesGeneratedScenarioIDWhenSelected(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestEffectiveTurnStrategySchedulesMixedConversation(t *testing.T) {
+	req := GenerateCasesRequest{CaseMode: "conversation", TurnStrategy: "mixed"}
+
+	require.Equal(t, "single", effectiveTurnStrategy(req, 0))
+	require.Equal(t, "multi", effectiveTurnStrategy(req, 1))
+	require.Equal(t, "single", effectiveTurnStrategy(req, 2))
+	require.Equal(t, "multi", effectiveTurnStrategy(req, 3))
+	require.Equal(t, "multi", effectiveTurnStrategy(GenerateCasesRequest{CaseMode: "conversation", TurnStrategy: "multi"}, 0))
+	require.Equal(t, "single", effectiveTurnStrategy(GenerateCasesRequest{CaseMode: "task", TurnStrategy: "multi"}, 0))
+}
+
+func TestGenerateOneCaseForTurnStrategyRetriesSingleTurnMultiCase(t *testing.T) {
+	service := &Service{}
+	generator := &fakeCaseGenerator{results: []*GenerateCasesResult{
+		{Cases: []GeneratedCase{{
+			Content:      "single",
+			QuestionType: CaseTypeCore,
+			Turns: []CaseTurn{{
+				Role:    "user",
+				Content: "single turn",
+			}},
+		}}},
+		{Cases: []GeneratedCase{{
+			Content:      "two-turn",
+			QuestionType: CaseTypeCore,
+			Turns: []CaseTurn{
+				{Role: "user", Content: "first turn"},
+				{Role: "user", Content: "follow up"},
+			},
+		}}},
+		{Cases: []GeneratedCase{{
+			Content:      "multi",
+			QuestionType: CaseTypeCore,
+			Turns: []CaseTurn{
+				{Role: "user", Content: "first turn"},
+				{Role: "user", Content: "follow up"},
+				{Role: "user", Content: "final clarification"},
+			},
+		}}},
+	}}
+
+	result, err := service.generateOneCaseForTurnStrategy(context.Background(), generator, GenerateCasesRequest{
+		CaseMode:     "conversation",
+		TurnStrategy: "multi",
+		Prompt:       "base prompt",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Cases, 1)
+	require.Equal(t, "multi", result.Cases[0].Content)
+	require.Len(t, generator.requests, 3)
+	require.Equal(t, "base prompt", generator.requests[0].Prompt)
+	require.Contains(t, generator.requests[1].Prompt, "至少包含 3 个")
+	require.Contains(t, generator.requests[2].Prompt, "至少包含 3 个")
+}
+
+func TestGenerateOneCaseForTurnStrategySelectsMultiCaseFromResponse(t *testing.T) {
+	service := &Service{}
+	generator := &fakeCaseGenerator{result: &GenerateCasesResult{Cases: []GeneratedCase{
+		{
+			Content:      "single",
+			QuestionType: CaseTypeCore,
+			Turns: []CaseTurn{{
+				Role:    "user",
+				Content: "single turn",
+			}},
+		},
+		{
+			Content:      "multi",
+			QuestionType: CaseTypeCore,
+			Turns: []CaseTurn{
+				{Role: "user", Content: "first turn"},
+				{Role: "user", Content: "follow up"},
+				{Role: "user", Content: "final clarification"},
+			},
+		},
+	}}}
+
+	result, err := service.generateOneCaseForTurnStrategy(context.Background(), generator, GenerateCasesRequest{
+		CaseMode:     "conversation",
+		TurnStrategy: "multi",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Cases, 1)
+	require.Equal(t, "multi", result.Cases[0].Content)
+	require.Len(t, generator.requests, 1)
+}
+
 func TestCreateCaseIncrementsCurrentScenarioCountWithoutFullCaseRefresh(t *testing.T) {
 	db, mock, cleanup := newWorkflowTestMockDB(t)
 	defer cleanup()
@@ -559,6 +664,10 @@ func TestRunGenerationTaskSuccessfulPathFinishesCompleted(t *testing.T) {
 	))
 	expectListScenarios(mock, "agent-1", scenarioRows(now).AddRow("scenario-1", "agent-1", "Billing", "", "manual", 0, now, now))
 	expectListCases(mock, "agent-1", caseRows(now))
+	expectGenerationTaskByID(mock, "task-1", generationTaskRows().AddRow(
+		"task-1", "agent-1", "workspace-1", "account-1", GenerationTaskStatusRunning, 1, 0,
+		`["scenario-1"]`, `["core"]`, "mixed", "prompt", "context", "openai", "gpt-4.1", "", now, nil, nil, now, now,
+	))
 	expectListScenarios(mock, "agent-1", scenarioRows(now).AddRow("scenario-1", "agent-1", "Billing", "", "manual", 0, now, now))
 	expectCreateCase(mock, "case-1")
 	expectIncrementScenarioCaseCount(mock, "agent-1", "scenario-1", 1)
@@ -620,6 +729,10 @@ func TestRunGenerationTaskCancelingAfterCreatedCaseIncrementsBeforeCanceled(t *t
 	))
 	expectListScenarios(mock, "agent-1", scenarioRows(now).AddRow("scenario-1", "agent-1", "Billing", "", "manual", 0, now, now))
 	expectListCases(mock, "agent-1", caseRows(now))
+	expectGenerationTaskByID(mock, "task-1", generationTaskRows().AddRow(
+		"task-1", "agent-1", "workspace-1", "account-1", GenerationTaskStatusRunning, 1, 0,
+		`["scenario-1"]`, `["core"]`, "mixed", "", "", "", "", "", now, nil, nil, now, now,
+	))
 	expectListScenarios(mock, "agent-1", scenarioRows(now).AddRow("scenario-1", "agent-1", "Billing", "", "manual", 0, now, now))
 	expectCreateCase(mock, "case-1")
 	expectIncrementScenarioCaseCount(mock, "agent-1", "scenario-1", 1)
@@ -631,6 +744,72 @@ func TestRunGenerationTaskCancelingAfterCreatedCaseIncrementsBeforeCanceled(t *t
 	expectFinishGenerationTask(mock, "task-1", GenerationTaskStatusCanceled, "")
 
 	err := service.RunGenerationTask(ctx, "task-1", &fakeLLMClient{})
+
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestRunGenerationTaskCancelingAfterLLMStopsBeforeCreate(t *testing.T) {
+	db, mock, cleanup := newWorkflowTestMockDB(t)
+	defer cleanup()
+	service := NewService(NewRepository(db))
+	ctx := context.Background()
+	now := time.Date(2026, 5, 25, 17, 40, 0, 0, time.UTC)
+	expectGenerationTaskByID(mock, "task-1", generationTaskRows().AddRow(
+		"task-1", "agent-1", "workspace-1", "account-1", GenerationTaskStatusQueued, 1, 0,
+		`["scenario-1"]`, `["core"]`, "mixed", "", "", "", "", "", nil, nil, nil, now, now,
+	))
+	expectMarkGenerationTaskRunning(mock, "task-1", true)
+	expectGenerationTaskByID(mock, "task-1", generationTaskRows().AddRow(
+		"task-1", "agent-1", "workspace-1", "account-1", GenerationTaskStatusRunning, 1, 0,
+		`["scenario-1"]`, `["core"]`, "mixed", "", "", "", "", "", now, nil, nil, now, now,
+	))
+	expectGenerationTaskByID(mock, "task-1", generationTaskRows().AddRow(
+		"task-1", "agent-1", "workspace-1", "account-1", GenerationTaskStatusRunning, 1, 0,
+		`["scenario-1"]`, `["core"]`, "mixed", "", "", "", "", "", now, nil, nil, now, now,
+	))
+	expectListScenarios(mock, "agent-1", scenarioRows(now).AddRow("scenario-1", "agent-1", "Billing", "", "manual", 0, now, now))
+	expectListCases(mock, "agent-1", caseRows(now))
+	expectGenerationTaskByID(mock, "task-1", generationTaskRows().AddRow(
+		"task-1", "agent-1", "workspace-1", "account-1", GenerationTaskStatusCanceling, 1, 0,
+		`["scenario-1"]`, `["core"]`, "mixed", "", "", "", "", "", now, now, nil, now, now,
+	))
+	expectFinishGenerationTask(mock, "task-1", GenerationTaskStatusCanceled, "")
+
+	err := service.RunGenerationTask(ctx, "task-1", &fakeLLMClient{})
+
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestRunGenerationTaskContextCanceledWhileCancelingFinishesCanceled(t *testing.T) {
+	db, mock, cleanup := newWorkflowTestMockDB(t)
+	defer cleanup()
+	service := NewService(NewRepository(db))
+	ctx := context.Background()
+	now := time.Date(2026, 5, 25, 17, 42, 0, 0, time.UTC)
+	expectGenerationTaskByID(mock, "task-1", generationTaskRows().AddRow(
+		"task-1", "agent-1", "workspace-1", "account-1", GenerationTaskStatusQueued, 1, 0,
+		`["scenario-1"]`, `["core"]`, "mixed", "", "", "", "", "", nil, nil, nil, now, now,
+	))
+	expectMarkGenerationTaskRunning(mock, "task-1", true)
+	expectGenerationTaskByID(mock, "task-1", generationTaskRows().AddRow(
+		"task-1", "agent-1", "workspace-1", "account-1", GenerationTaskStatusRunning, 1, 0,
+		`["scenario-1"]`, `["core"]`, "mixed", "", "", "", "", "", now, nil, nil, now, now,
+	))
+	expectGenerationTaskByID(mock, "task-1", generationTaskRows().AddRow(
+		"task-1", "agent-1", "workspace-1", "account-1", GenerationTaskStatusRunning, 1, 0,
+		`["scenario-1"]`, `["core"]`, "mixed", "", "", "", "", "", now, nil, nil, now, now,
+	))
+	expectListScenarios(mock, "agent-1", scenarioRows(now).AddRow("scenario-1", "agent-1", "Billing", "", "manual", 0, now, now))
+	expectListCases(mock, "agent-1", caseRows(now))
+	expectGenerationTaskByID(mock, "task-1", generationTaskRows().AddRow(
+		"task-1", "agent-1", "workspace-1", "account-1", GenerationTaskStatusCanceling, 1, 0,
+		`["scenario-1"]`, `["core"]`, "mixed", "", "", "", "", "", now, now, nil, now, now,
+	))
+	expectFinishGenerationTask(mock, "task-1", GenerationTaskStatusCanceled, "")
+
+	err := service.RunGenerationTask(ctx, "task-1", &fakeLLMClient{err: context.Canceled})
 
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())

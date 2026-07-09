@@ -2,6 +2,8 @@ package workflowtest
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
@@ -17,6 +20,9 @@ import (
 const batchStaleFailureMessage = "测试执行长时间无进展，系统已自动停止未完成问题"
 
 var batchItemExecutionTimeout = 10 * time.Minute
+
+const generationContextCaseModePrefix = "[workflow_test_case_mode:"
+const generationContextFileGenerationPrefix = "[workflow_test_file_generation:"
 
 const (
 	generationPromptExistingCasesMaxTotal       = 30
@@ -33,6 +39,7 @@ type Service struct {
 	workflowContextProvider WorkflowContextProvider
 	defaultModelResolver    llmdefaultservice.DefaultModelResolver
 	taskCanceler            TaskCanceler
+	assetService            *workflowTestAssetService
 }
 
 func NewService(repo *Repository) *Service {
@@ -61,6 +68,10 @@ func (s *Service) SetWorkflowContextProvider(provider WorkflowContextProvider) {
 
 func (s *Service) SetTaskCanceler(canceler TaskCanceler) {
 	s.taskCanceler = canceler
+}
+
+func (s *Service) SetFileService(fileService interfaces.FileService) {
+	s.assetService = newWorkflowTestAssetService(fileService)
 }
 
 func (s *Service) SetDefaultModelResolver(resolver llmdefaultservice.DefaultModelResolver) {
@@ -537,6 +548,7 @@ func normalizeCaseContentAndTurns(content string, reqTurns []CaseTurn) (string, 
 			Role:        role,
 			Content:     turnContent,
 			Attachments: turn.Attachments,
+			Inputs:      turn.Inputs,
 		})
 		if normalizedContent == "" && turnContent != "" {
 			normalizedContent = turnContent
@@ -611,9 +623,14 @@ func (s *Service) CreateGenerationTask(ctx context.Context, agentID, workspaceID
 	if turnStrategy == "" {
 		turnStrategy = "mixed"
 	}
+	turnStrategy = normalizeTurnStrategy(turnStrategy)
 	questionTypes := normalizeQuestionTypes(req.QuestionTypes)
 	if len(questionTypes) == 0 {
-		questionTypes = []string{CaseTypeCore, CaseTypeExtension, CaseTypeFuzzy, CaseTypeManual}
+		if normalizeCaseMode(req.CaseMode) == "task" {
+			questionTypes = []string{CaseTypeCore, CaseTypeExtension, CaseTypeFuzzy}
+		} else {
+			questionTypes = []string{CaseTypeCore, CaseTypeExtension, CaseTypeFuzzy, CaseTypeManual}
+		}
 	}
 	now := time.Now()
 	task := &GenerationTask{
@@ -627,7 +644,7 @@ func (s *Service) CreateGenerationTask(ctx context.Context, agentID, workspaceID
 		QuestionTypes:  JSONList(questionTypes),
 		TurnStrategy:   turnStrategy,
 		Prompt:         strings.TrimSpace(req.Prompt),
-		Context:        strings.TrimSpace(req.Context),
+		Context:        encodeGenerationContext(req.Context, req.CaseMode, req.FileGeneration),
 		ModelProvider:  modelProvider,
 		ModelName:      modelName,
 		CreatedAt:      now,
@@ -718,12 +735,12 @@ func (s *Service) RunGenerationTask(ctx context.Context, taskID string, client l
 	}
 
 	checkCanceled := func(ctx context.Context) error {
-		current, err := s.repo.GetGenerationTaskByID(ctx, task.ID)
+		current, err := s.repo.GetGenerationTaskByID(context.WithoutCancel(ctx), task.ID)
 		if err != nil {
 			return err
 		}
 		if current.Status == GenerationTaskStatusCanceling {
-			if err := s.finishGenerationTask(ctx, task.ID, GenerationTaskStatusCanceled, ""); err != nil {
+			if err := s.finishGenerationTask(context.WithoutCancel(ctx), task.ID, GenerationTaskStatusCanceled, ""); err != nil {
 				return err
 			}
 			return errGenerationTaskCanceled
@@ -739,8 +756,9 @@ func (s *Service) RunGenerationTask(ctx context.Context, taskID string, client l
 	req := generationTaskGenerateCasesRequest(task)
 	_, err = s.generateCasesForScenarios(ctx, task.AgentID, req, []string(task.ScenarioIDs), generator, generateCaseProgressHooks{
 		BeforeScenario: checkCanceled,
+		BeforeCase:     checkCanceled,
 		AfterCreate: func(ctx context.Context, item Case) error {
-			if err := s.repo.IncrementGenerationTaskCreatedCount(ctx, task.ID, 1); err != nil {
+			if err := s.repo.IncrementGenerationTaskCreatedCount(context.WithoutCancel(ctx), task.ID, 1); err != nil {
 				return err
 			}
 			return checkCanceled(ctx)
@@ -750,8 +768,14 @@ func (s *Service) RunGenerationTask(ctx context.Context, taskID string, client l
 		if errors.Is(err, errGenerationTaskCanceled) {
 			return nil
 		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			current, getErr := s.repo.GetGenerationTaskByID(context.WithoutCancel(ctx), task.ID)
+			if getErr == nil && current.Status == GenerationTaskStatusCanceling {
+				return s.finishGenerationTask(context.WithoutCancel(ctx), task.ID, GenerationTaskStatusCanceled, "")
+			}
+		}
 		reason := generationTaskFailureReason(err)
-		if finishErr := s.finishGenerationTask(ctx, task.ID, GenerationTaskStatusFailed, reason); finishErr != nil {
+		if finishErr := s.finishGenerationTask(context.WithoutCancel(ctx), task.ID, GenerationTaskStatusFailed, reason); finishErr != nil {
 			// Do not retry the whole asynq task here: generation may have already
 			// created cases. Stale running rows are repaired by the repository
 			// recovery hook without re-running generation.
@@ -759,7 +783,7 @@ func (s *Service) RunGenerationTask(ctx context.Context, taskID string, client l
 		}
 		return err
 	}
-	return s.finishGenerationTask(ctx, task.ID, GenerationTaskStatusCompleted, "")
+	return s.finishGenerationTask(context.WithoutCancel(ctx), task.ID, GenerationTaskStatusCompleted, "")
 }
 
 func (s *Service) RecoverStaleRunningGenerationTasks(ctx context.Context, staleBefore time.Time) (int64, error) {
@@ -768,10 +792,13 @@ func (s *Service) RecoverStaleRunningGenerationTasks(ctx context.Context, staleB
 
 type generateCaseProgressHooks struct {
 	BeforeScenario func(context.Context) error
+	BeforeCase     func(context.Context) error
 	AfterCreate    func(context.Context, Case) error
 }
 
 var errGenerationTaskCanceled = errors.New("generation task canceled")
+
+const multiTurnConversationMinUserTurns = 3
 
 func (s *Service) finishGenerationTask(ctx context.Context, taskID, status, reason string) error {
 	now := time.Now()
@@ -788,13 +815,18 @@ func isTerminalGenerationTaskStatus(status string) bool {
 }
 
 func generationTaskGenerateCasesRequest(task *GenerationTask) GenerateCasesRequest {
+	context, caseMode, fileGeneration := decodeGenerationContext(task.Context)
 	req := GenerateCasesRequest{
-		Count:         task.RequestedCount,
-		ScenarioIDs:   []string(task.ScenarioIDs),
-		QuestionTypes: []string(task.QuestionTypes),
-		TurnStrategy:  task.TurnStrategy,
-		Prompt:        task.Prompt,
-		Context:       task.Context,
+		Count:          task.RequestedCount,
+		ScenarioIDs:    []string(task.ScenarioIDs),
+		QuestionTypes:  []string(task.QuestionTypes),
+		TurnStrategy:   task.TurnStrategy,
+		Prompt:         task.Prompt,
+		Context:        context,
+		CaseMode:       caseMode,
+		FileGeneration: fileGeneration,
+		WorkspaceID:    task.WorkspaceID,
+		AccountID:      task.AccountID,
 	}
 	if strings.TrimSpace(task.ModelProvider) != "" && strings.TrimSpace(task.ModelName) != "" {
 		req.Model = &Model{
@@ -803,6 +835,81 @@ func generationTaskGenerateCasesRequest(task *GenerationTask) GenerateCasesReque
 		}
 	}
 	return req
+}
+
+func normalizeCaseMode(value string) string {
+	switch strings.TrimSpace(value) {
+	case "task":
+		return "task"
+	case "conversation":
+		return "conversation"
+	default:
+		return ""
+	}
+}
+
+func normalizeTurnStrategy(value string) string {
+	switch strings.TrimSpace(value) {
+	case "single":
+		return "single"
+	case "multi":
+		return "multi"
+	default:
+		return "mixed"
+	}
+}
+
+func encodeGenerationContext(context string, caseMode string, fileGeneration *FileGenerationConfig) string {
+	mode := normalizeCaseMode(caseMode)
+	context = strings.TrimSpace(context)
+	parts := make([]string, 0, 3)
+	if mode != "" {
+		parts = append(parts, generationContextCaseModePrefix+mode+"]")
+	}
+	if config := normalizeFileGenerationConfig(fileGeneration); config.Enabled {
+		if data, err := json.Marshal(config); err == nil {
+			parts = append(parts, generationContextFileGenerationPrefix+base64.StdEncoding.EncodeToString(data)+"]")
+		}
+	}
+	if context != "" {
+		parts = append(parts, context)
+	}
+	return strings.Join(parts, "\n")
+}
+
+func decodeGenerationContext(context string) (string, string, *FileGenerationConfig) {
+	context = strings.TrimSpace(context)
+	mode := ""
+	var fileGeneration *FileGenerationConfig
+	for {
+		switch {
+		case strings.HasPrefix(context, generationContextCaseModePrefix):
+			end := strings.Index(context, "]")
+			if end < 0 {
+				return context, mode, fileGeneration
+			}
+			mode = normalizeCaseMode(strings.TrimPrefix(context[:end], generationContextCaseModePrefix))
+			context = strings.TrimSpace(context[end+1:])
+		case strings.HasPrefix(context, generationContextFileGenerationPrefix):
+			end := strings.Index(context, "]")
+			if end < 0 {
+				return context, mode, fileGeneration
+			}
+			raw := strings.TrimPrefix(context[:end], generationContextFileGenerationPrefix)
+			if data, err := base64.StdEncoding.DecodeString(raw); err == nil {
+				var config FileGenerationConfig
+				if err := json.Unmarshal(data, &config); err == nil {
+					normalized := normalizeFileGenerationConfig(&config)
+					if normalized.Enabled {
+						fileGeneration = &normalized
+					}
+				}
+			}
+			context = strings.TrimSpace(context[end+1:])
+		default:
+			return context, mode, fileGeneration
+		}
+	}
 }
 
 func generationTaskFailureReason(err error) string {
@@ -897,22 +1004,46 @@ func (s *Service) generateCasesForScenarios(ctx context.Context, agentID string,
 		return nil, err
 	}
 	generateReq.ExistingCases = selectExistingCasesForGenerationPrompt(existingCases, scenarioIDs)
-	generated, err := generator.GenerateCases(ctx, generateReq)
-	if err != nil {
-		return nil, err
+	organizationID := ""
+	if config := normalizeFileGenerationConfig(req.FileGeneration); config.Enabled {
+		if s.assetService == nil {
+			return nil, fmt.Errorf("workflow test file generation is not configured")
+		}
+		var err error
+		organizationID, err = s.repo.GetAgentOrganizationID(ctx, agentID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve workflow test file generation organization: %w", err)
+		}
+		req.FileGeneration = &config
+		generateReq.FileGeneration = &config
 	}
-	normalized, err := normalizeGeneratedCases(generated)
-	if err != nil {
-		return nil, err
-	}
-	if len(normalized) > req.Count {
-		normalized = normalized[:req.Count]
-	}
-	for index, item := range normalized {
+	for len(generatedCases) < req.Count {
+		index := len(generatedCases)
+		generateReq.Count = 1
+		generateReq.TurnStrategy = effectiveTurnStrategy(req, index)
+		generated, err := s.generateOneCaseForTurnStrategy(ctx, generator, generateReq)
+		if err != nil {
+			return nil, err
+		}
+		normalized, err := normalizeGeneratedCases(generated)
+		if err != nil {
+			return nil, err
+		}
+		if hooks.BeforeCase != nil {
+			if err := hooks.BeforeCase(ctx); err != nil {
+				return nil, err
+			}
+		}
+		item := normalized[0]
 		scenarioID := scenarioIDs[index%len(scenarioIDs)]
 		if itemScenarioID := strings.TrimSpace(item.ScenarioID); itemScenarioID != "" {
 			if _, ok := scenarioByID[itemScenarioID]; ok {
 				scenarioID = itemScenarioID
+			}
+		}
+		if s.assetService != nil {
+			if err := s.assetService.attachGeneratedAssets(ctx, req, organizationID, &item, index); err != nil {
+				return nil, err
 			}
 		}
 		created, err := s.CreateCase(ctx, agentID, CreateCaseRequest{
@@ -921,13 +1052,14 @@ func (s *Service) generateCasesForScenarios(ctx context.Context, agentID string,
 			ScenarioID:     scenarioID,
 			QuestionType:   item.QuestionType,
 			Status:         CaseStatusEnabled,
-			Turns:          []CaseTurn{{Role: "user", Content: item.Content}},
+			Turns:          item.Turns,
 		})
 		if err != nil {
 			return nil, err
 		}
 		items = append(items, *created)
 		generatedCases = append(generatedCases, item)
+		generateReq.ExistingCases = append(generateReq.ExistingCases, *created)
 		if hooks.AfterCreate != nil {
 			if err := hooks.AfterCreate(ctx, *created); err != nil {
 				return nil, err
@@ -935,6 +1067,78 @@ func (s *Service) generateCasesForScenarios(ctx context.Context, agentID string,
 		}
 	}
 	return &GenerateCasesResult{Cases: generatedCases, Items: items}, nil
+}
+
+func (s *Service) generateOneCaseForTurnStrategy(ctx context.Context, generator CaseGenerator, req GenerateCasesRequest) (*GenerateCasesResult, error) {
+	strategy := normalizeTurnStrategy(req.TurnStrategy)
+	if normalizeCaseMode(req.CaseMode) != "conversation" || strategy != "multi" {
+		return generator.GenerateCases(ctx, req)
+	}
+	var last *GenerateCasesResult
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		attemptReq := req
+		if attempt > 0 {
+			attemptReq.Prompt = strings.TrimSpace(req.Prompt + "\n\n本条必须生成真正的多轮对话测试样例：turns 至少包含 3 个 role=user 的用户输入轮次，建议 3-5 轮，并且后续轮次必须依赖前文上下文，不要只生成两轮或单轮问题。")
+		}
+		generated, err := generator.GenerateCases(ctx, attemptReq)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		last = generated
+		if filtered := filterMultiTurnCases(generated); len(filtered.Cases) > 0 {
+			return filtered, nil
+		}
+	}
+	if last != nil {
+		return nil, fmt.Errorf("生成多轮测试问题失败：模型连续返回少于 %d 轮的对话，请重试或补充更明确的多轮场景要求", multiTurnConversationMinUserTurns)
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("生成多轮测试问题失败：模型未返回有效内容")
+}
+
+func effectiveTurnStrategy(req GenerateCasesRequest, index int) string {
+	if normalizeCaseMode(req.CaseMode) == "task" {
+		return "single"
+	}
+	switch normalizeTurnStrategy(req.TurnStrategy) {
+	case "single":
+		return "single"
+	case "multi":
+		return "multi"
+	default:
+		if index%2 == 1 {
+			return "multi"
+		}
+		return "single"
+	}
+}
+
+func filterMultiTurnCases(result *GenerateCasesResult) *GenerateCasesResult {
+	filtered := &GenerateCasesResult{}
+	if result == nil {
+		return filtered
+	}
+	for _, item := range result.Cases {
+		if userTurnCount(item.Turns) >= multiTurnConversationMinUserTurns {
+			filtered.Cases = append(filtered.Cases, item)
+		}
+	}
+	return filtered
+}
+
+func userTurnCount(turns []CaseTurn) int {
+	count := 0
+	for _, turn := range turns {
+		role := strings.TrimSpace(turn.Role)
+		if role == "" || role == "user" {
+			count++
+		}
+	}
+	return count
 }
 
 func selectExistingCasesForGenerationPrompt(cases []Case, scenarioIDs []string) []Case {
@@ -1036,6 +1240,7 @@ func (s *Service) recognizeScenarios(ctx context.Context, agentID string, req Re
 		Context:           strings.TrimSpace(req.Context),
 		WorkflowContext:   strings.TrimSpace(workflowContext),
 		Prompt:            strings.TrimSpace(req.Prompt),
+		CaseMode:          normalizeCaseMode(req.CaseMode),
 		Model:             normalizeModel(req.Model),
 		Cases:             cases,
 		ExistingScenarios: existingScenarios,
@@ -1123,7 +1328,7 @@ func (s *Service) CreateScenarioRecognitionTask(ctx context.Context, agentID, wo
 		AccountID:               accountID,
 		Status:                  GenerationTaskStatusQueued,
 		Prompt:                  strings.TrimSpace(req.Prompt),
-		Context:                 strings.TrimSpace(req.Context),
+		Context:                 encodeGenerationContext(req.Context, req.CaseMode, nil),
 		WorkflowContextSnapshot: s.resolveWorkflowRecognitionContext(ctx, agentID),
 		ModelProvider:           modelProvider,
 		ModelName:               modelName,
@@ -1265,9 +1470,11 @@ func (s *Service) finishScenarioRecognitionTask(ctx context.Context, taskID, sta
 }
 
 func scenarioRecognitionTaskRequest(task *ScenarioRecognitionTask) RecognizeScenariosRequest {
+	context, caseMode, _ := decodeGenerationContext(task.Context)
 	req := RecognizeScenariosRequest{
-		Prompt:  task.Prompt,
-		Context: task.Context,
+		Prompt:   task.Prompt,
+		Context:  context,
+		CaseMode: caseMode,
 	}
 	if strings.TrimSpace(task.ModelProvider) != "" && strings.TrimSpace(task.ModelName) != "" {
 		req.Model = &Model{
@@ -1607,6 +1814,8 @@ func (s *Service) ExecuteStartedBatchWithRunnerJudgeAndSummarizer(ctx context.Co
 			}
 			failed++
 		} else {
+			analysis := analyzeWorkflowTestResult(snapshot, result)
+			result.Outputs = attachWorkflowTestAnalysis(result.Outputs, analysis)
 			if batch.JudgeModelNameSnapshot != "" {
 				if configuredJudge, ok := judge.(*LLMJudge); ok {
 					configuredJudge.Provider = batch.JudgeModelProviderSnapshot
@@ -1621,6 +1830,7 @@ func (s *Service) ExecuteStartedBatchWithRunnerJudgeAndSummarizer(ctx context.Co
 				CaseSnapshot:   snapshot,
 				RunResult:      *result,
 			})
+			judgeResult = mergeAnalysisWithJudgeResult(analysis, judgeResult)
 			item.Status = string(judgeResult.Status)
 			item.WorkflowRunID = result.WorkflowRunID
 			item.Outputs = JSONMap(result.Outputs)

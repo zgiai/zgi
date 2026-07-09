@@ -7,9 +7,10 @@ import (
 )
 
 type RecognizeScenariosRequest struct {
-	Context string `json:"context,omitempty"`
-	Prompt  string `json:"prompt,omitempty"`
-	Model   *Model `json:"model,omitempty"`
+	Context  string `json:"context,omitempty"`
+	Prompt   string `json:"prompt,omitempty"`
+	CaseMode string `json:"case_mode,omitempty"`
+	Model    *Model `json:"model,omitempty"`
 }
 
 type ScenarioRecognitionInput struct {
@@ -17,6 +18,7 @@ type ScenarioRecognitionInput struct {
 	Context           string
 	WorkflowContext   string
 	Prompt            string
+	CaseMode          string
 	Model             *Model
 	Cases             []Case
 	ExistingScenarios []Scenario

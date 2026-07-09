@@ -30,6 +30,7 @@ export interface WorkflowTestAttachment {
 export interface WorkflowTestTurn {
   role: string;
   content: string;
+  expected_result?: string;
   attachments?: WorkflowTestAttachment[];
   inputs?: Record<string, unknown>;
 }
@@ -91,6 +92,105 @@ export interface WorkflowTestBatchItem {
   judge_confidence: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface WorkflowTestAnalysisSummary {
+  status: 'passed' | 'failed' | 'review' | string;
+  main_issue?: string;
+  failed_stage?: string;
+  reference_score?: number;
+  total: number;
+  passed: number;
+  failed: number;
+  review: number;
+  critical_failed: number;
+}
+
+export interface WorkflowTestTraceNode {
+  node_id: string;
+  node_name: string;
+  node_type: string;
+  status: string;
+  duration_ms: number;
+  input?: Record<string, unknown>;
+  output?: Record<string, unknown>;
+  error?: string;
+}
+
+export interface WorkflowTestCheckResult {
+  id: string;
+  type: string;
+  label: string;
+  status: 'passed' | 'failed' | 'review' | string;
+  severity: 'critical' | 'normal' | 'hint' | string;
+  evidence: string;
+  suggestion?: string;
+}
+
+export interface WorkflowTestTurnAnalysis {
+  turn_index: number;
+  user_input: string;
+  expected?: string;
+  actual: string;
+  status: 'passed' | 'failed' | 'review' | string;
+  evidence: string;
+  suggestion?: string;
+}
+
+export interface WorkflowTestAnalysis {
+  mode: 'task' | 'conversation' | string;
+  evaluation_schema?: WorkflowTestEvaluationSchema;
+  trace: {
+    nodes: WorkflowTestTraceNode[];
+  };
+  comparisons: {
+    overall?: {
+      status: 'passed' | 'failed' | 'review' | string;
+      expected: string;
+      actual: string;
+      evidence: string;
+      suggestion?: string;
+    };
+    checks: WorkflowTestCheckResult[];
+    turns?: WorkflowTestTurnAnalysis[];
+  };
+  summary: WorkflowTestAnalysisSummary;
+  suggestions: Array<{
+    target: string;
+    type: string;
+    content: string;
+  }>;
+}
+
+export interface WorkflowTestEvaluationAssertion {
+  id?: string;
+  type?: string;
+  description?: string;
+  values?: string[];
+  operator?: string;
+  severity?: string;
+  match_mode?: string;
+  source?: string;
+}
+
+export interface WorkflowTestEvaluationSchema {
+  goal_type?: string;
+  primary_objective?: string;
+  assertions?: WorkflowTestEvaluationAssertion[];
+  missing_policy?: {
+    mode?: string;
+    accept_markers?: string[];
+    forbid_claims?: string[];
+    clarify_allowed?: boolean;
+  };
+  allowed_extra_types?: string[];
+  format?: {
+    type?: string;
+    fields?: string[];
+    strict?: boolean;
+    markdown?: boolean;
+  };
+  source_grounding?: string;
 }
 
 export interface WorkflowTestListResponse<T> {
@@ -158,6 +258,14 @@ export interface GenerateWorkflowTestCasesRequest {
   context?: string;
   question_types?: string[];
   turn_strategy?: 'single' | 'multi' | 'mixed';
+  case_mode?: 'task' | 'conversation';
+  file_generation?: {
+    enabled: boolean;
+    formats?: string[];
+    files_per_case?: number;
+    complexities?: string[];
+    content_types?: string[];
+  };
   prompt?: string;
   model?: {
     provider: string;
@@ -170,6 +278,8 @@ export interface GenerateWorkflowTestCasesResponse {
     content: string;
     expected_result: string;
     question_type: string;
+    turns?: WorkflowTestTurn[];
+    file_fixtures?: Array<Record<string, unknown>>;
   }>;
   items: WorkflowTestCase[];
 }
@@ -214,6 +324,7 @@ export type CreateWorkflowTestGenerationTaskRequest = GenerateWorkflowTestCasesR
 export interface RecognizeWorkflowTestScenariosRequest {
   context?: string;
   prompt?: string;
+  case_mode?: 'task' | 'conversation';
   model?: {
     provider: string;
     name: string;

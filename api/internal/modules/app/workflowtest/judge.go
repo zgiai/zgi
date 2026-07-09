@@ -2,7 +2,6 @@ package workflowtest
 
 import (
 	"context"
-	"fmt"
 )
 
 type JudgeRequest struct {
@@ -39,7 +38,7 @@ func runJudge(ctx context.Context, judge Judge, req JudgeRequest) *JudgeResult {
 		return &JudgeResult{
 			Status:     BatchItemStatusReview,
 			Reason:     judgeFailureReason(err),
-			Suggestion: "AI scoring failed; review manually or rerun the test",
+			Suggestion: judgeFailureSuggestion(err),
 			Confidence: 0,
 		}
 	}
@@ -48,9 +47,19 @@ func runJudge(ctx context.Context, judge Judge, req JudgeRequest) *JudgeResult {
 
 func judgeFailureReason(err error) string {
 	if err == nil {
-		return "judge failed"
+		return "AI 评分失败，请人工复核本次结果。"
 	}
-	return fmt.Sprintf("judge failed: %v", err)
+	if isModelUnavailableError(err) {
+		return "AI 评分失败：" + modelUnavailableReason
+	}
+	return "AI 评分失败，请人工复核本次结果。"
+}
+
+func judgeFailureSuggestion(err error) string {
+	if isModelUnavailableError(err) {
+		return modelUnavailableAction
+	}
+	return "AI 评分失败，请人工复核或重新测试。"
 }
 
 func normalizeJudgeResult(result *JudgeResult) *JudgeResult {

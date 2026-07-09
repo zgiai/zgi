@@ -291,6 +291,7 @@ func (c *ServiceContainer) GetTaskHandlerRegistry() *TaskHandlerRegistrar {
 func (c *ServiceContainer) GetWorkflowTestService() *workflowtest.Service {
 	if c.workflowTestService == nil {
 		c.workflowTestService = workflowtest.NewService(workflowtest.NewRepository(c.db))
+		c.workflowTestService.SetFileService(c.GetFileService())
 	}
 	return c.workflowTestService
 }

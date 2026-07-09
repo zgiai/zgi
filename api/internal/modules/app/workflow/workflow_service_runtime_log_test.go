@@ -708,6 +708,44 @@ func TestGetWorkflowRunNodeExecutions_FiltersFrontendInputs(t *testing.T) {
 	}
 }
 
+func TestGetWorkflowRunNodeExecutions_KeepsScalarOutputs(t *testing.T) {
+	outputsJSON := `"final answer"`
+	service := &WorkflowService{workflowNodeRuntimeLogRepo: &mockWorkflowNodeRuntimeLogRepo{
+		logsByWorkflowRunID: []WorkflowNodeRuntimeLog{
+			{
+				ID:       "node-log-1",
+				AgentID:  "agent-1",
+				NodeID:   "answer-node",
+				NodeType: "answer",
+				Title:    "Answer",
+				Index:    1,
+				Status:   "succeeded",
+				Outputs:  &outputsJSON,
+			},
+		},
+	}}
+
+	raw, err := service.GetWorkflowRunNodeExecutions(context.Background(), "tenant-1", "agent-1", "run-1")
+	if err != nil {
+		t.Fatalf("GetWorkflowRunNodeExecutions returned error: %v", err)
+	}
+	resp, ok := raw.(*dto.WorkflowRunNodeExecutionListResponse)
+	if !ok {
+		t.Fatalf("response type = %T, want *WorkflowRunNodeExecutionListResponse", raw)
+	}
+	if len(resp.Data) != 1 {
+		t.Fatalf("len(response.Data) = %d, want 1", len(resp.Data))
+	}
+
+	var outputs map[string]interface{}
+	if err := json.Unmarshal(resp.Data[0].Outputs, &outputs); err != nil {
+		t.Fatalf("unmarshal outputs: %v", err)
+	}
+	if got := outputs["value"]; got != "final answer" {
+		t.Fatalf("outputs[value] = %#v, want final answer", got)
+	}
+}
+
 func TestWorkflowStoredEventData_UsesNodeRuntimeLogSumForWorkflowFinished(t *testing.T) {
 	createdAt := time.Unix(1700000000, 0)
 	startFinishedAt := createdAt.Add(2 * time.Millisecond)

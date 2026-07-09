@@ -449,6 +449,8 @@ func (h *Handler) GenerateCases(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+	req.WorkspaceID = workspaceID
+	req.AccountID = accountID
 	generator := &LLMCaseGenerator{
 		Client:      h.llmClient,
 		WorkspaceID: workspaceID,

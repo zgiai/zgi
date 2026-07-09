@@ -37,7 +37,7 @@ interface BatchResultDetailProps {
 
 type BatchStatusKey = 'queued' | 'running' | 'completed' | 'stopped' | 'canceled';
 type BatchItemStatusKey = 'pending' | 'running' | 'passed' | 'failed' | 'review' | 'canceled';
-type SummaryKey = 'running' | 'allPassed' | 'hasIssues';
+type SummaryKey = 'running' | 'allPassed' | 'hasIssues' | 'modelUnavailable';
 const EMPTY_BATCHES: WorkflowTestBatch[] = [];
 const EMPTY_ITEMS: WorkflowTestBatchItem[] = [];
 const EMPTY_SCENARIOS: Array<{ id: string; name: string }> = [];
@@ -95,7 +95,7 @@ function buildSummary(
   t: (key: SummaryKey, values?: Record<string, string | number | Date>) => string
 ) {
   if (batch.summary) {
-    return batch.summary;
+    return localizeBatchSummary(batch.summary, t);
   }
   if (batch.status !== 'completed') {
     return t('running');
@@ -105,6 +105,22 @@ function buildSummary(
     return t('allPassed');
   }
   return t('hasIssues', { failed: batch.failed_count, review: reviewItems });
+}
+
+function localizeBatchSummary(summary: string, t: (key: SummaryKey) => string) {
+  const normalized = summary.trim().toLowerCase();
+  if (
+    normalized.includes('all providers failed') ||
+    normalized.includes('current user api does not support http call') ||
+    normalized.includes('upstream service error') ||
+    normalized.includes('no provider available') ||
+    normalized.includes('model unavailable')
+  ) {
+    const suffixStart = summary.indexOf('。');
+    const suffix = suffixStart >= 0 ? summary.slice(suffixStart + 1) : '';
+    return `${t('modelUnavailable')}${suffix}`;
+  }
+  return summary;
 }
 
 export function BatchResultDetail({ agentId, batchId, agentName }: BatchResultDetailProps) {
