@@ -9,13 +9,19 @@ func partsModelTurnIntentName(parts *chatRequestParts) string {
 	return normalizeModelTurnIntent(parts.ModelTurnIntent.Intent)
 }
 
-// partsAllowsLegacyBusinessIntentFallback is a compatibility escape hatch for
-// turns where no model-generated task contract is available. It must stay out of
-// the main semantic path: when a model intent exists, only explicit continuation
-// may use legacy text matching because continuation is a turn protocol command.
+// partsAllowsLegacyBusinessIntentFallback is limited to continuation turns.
+// Fresh requests should stay model-led even when no model-generated task
+// contract is available; otherwise old keyword matchers become a hidden
+// business-intent classifier again.
 func partsAllowsLegacyBusinessIntentFallback(parts *chatRequestParts) bool {
-	intent := partsModelTurnIntentName(parts)
-	return intent == "" || intent == "continue_previous_task"
+	switch partsModelTurnIntentName(parts) {
+	case "continue_previous_task":
+		return true
+	case "":
+		return partsRequestsContinuationWithFallback(parts, "")
+	default:
+		return false
+	}
 }
 
 func partsAllowsLegacyFileIntentFallback(parts *chatRequestParts) bool {
@@ -40,8 +46,11 @@ func partsRequestsManagedFileCreateWithFallback(parts *chatRequestParts, fallbac
 	switch partsModelTurnIntentName(parts) {
 	case "save_generated_file_to_file_management":
 		return true
-	case "continue_previous_task", "":
+	case "continue_previous_task":
 		return isManagedFileCreateIntent(partsFileIntentFallbackText(parts, fallback))
+	case "":
+		return partsAllowsLegacyBusinessIntentFallback(parts) &&
+			isManagedFileCreateIntent(partsFileIntentFallbackText(parts, fallback))
 	default:
 		return false
 	}
@@ -64,8 +73,11 @@ func partsRequestsFileDeleteWithFallback(parts *chatRequestParts, fallback strin
 	switch partsModelTurnIntentName(parts) {
 	case "delete_visible_file":
 		return true
-	case "continue_previous_task", "":
+	case "continue_previous_task":
 		return isFileDeleteIntent(partsFileIntentFallbackText(parts, fallback))
+	case "":
+		return partsAllowsLegacyBusinessIntentFallback(parts) &&
+			isFileDeleteIntent(partsFileIntentFallbackText(parts, fallback))
 	default:
 		return false
 	}
@@ -79,7 +91,7 @@ func partsRequestsFileReadWithFallback(parts *chatRequestParts, fallback string)
 	if parts != nil && modelTurnIntentHasRecommendedCapability(parts.ModelTurnIntent, "visible_file_content", "file_content", "source_file_content") {
 		return true
 	}
-	if intent != "" && intent != "continue_previous_task" {
+	if intent != "continue_previous_task" && !(intent == "" && partsAllowsLegacyBusinessIntentFallback(parts)) {
 		return false
 	}
 	return isFileReadIntent(partsFileIntentFallbackText(parts, fallback))
@@ -100,8 +112,11 @@ func partsRequestsConsoleNavigationWithFallback(parts *chatRequestParts, fallbac
 	switch partsModelTurnIntentName(parts) {
 	case "navigate_console_page":
 		return true
-	case "continue_previous_task", "":
+	case "continue_previous_task":
 		return isConsoleNavigationIntent(partsFileIntentFallbackText(parts, fallback))
+	case "":
+		return partsAllowsLegacyBusinessIntentFallback(parts) &&
+			isConsoleNavigationIntent(partsFileIntentFallbackText(parts, fallback))
 	default:
 		return false
 	}

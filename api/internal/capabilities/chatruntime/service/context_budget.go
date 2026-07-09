@@ -605,7 +605,7 @@ func buildContinuationTaskStateMessage(parts *chatRequestParts, branch []*runtim
 		appendBudgetedLine(&builder, recentContinuationBudgetChars, "\nRecent completed/blocked execution state:\n")
 		appendBudgetedLine(&builder, recentContinuationBudgetChars, toolState)
 	}
-	if pending := continuationPendingHints(goal, branch); len(pending) > 0 {
+	if pending := continuationPendingHints(branch); len(pending) > 0 {
 		appendBudgetedLine(&builder, recentContinuationBudgetChars, "\nPending-step hints:\n")
 		for _, line := range pending {
 			appendBudgetedLine(&builder, recentContinuationBudgetChars, "- "+line+"\n")
@@ -1047,7 +1047,7 @@ func operationPlanHasIncompleteWork(plan map[string]interface{}) bool {
 	return false
 }
 
-func continuationPendingHints(goal string, branch []*runtimemodel.Message) []string {
+func continuationPendingHints(branch []*runtimemodel.Message) []string {
 	hints := []string{}
 	addHint := func(hint string) {
 		for _, existing := range hints {
@@ -1057,24 +1057,11 @@ func continuationPendingHints(goal string, branch []*runtimemodel.Message) []str
 		}
 		hints = append(hints, hint)
 	}
-	goals := continuationTaskGoals(goal, branch, recentContinuationTurnLimit)
-	if len(goals) == 0 && strings.TrimSpace(goal) != "" {
-		goals = []string{strings.TrimSpace(goal)}
-	}
 	hasGeneratedArtifact := continuationHasSuccessfulGeneratedArtifact(branch)
 	hasManagedSave := continuationHasSuccessfulTool(branch, skills.SkillFileManager, "save_file_to_management")
 	hasDelete := continuationHasSuccessfulTool(branch, skills.SkillFileManager, "delete_file")
-	hasManagedCreateGoal := false
+	hasManagedCreateGoal := continuationHasPendingOperationPlanTool(branch, skills.SkillFileManager, "save_file_to_management")
 	hasDeleteGoal := continuationHasPendingOperationPlanTool(branch, skills.SkillFileManager, "delete_file")
-
-	for _, candidate := range goals {
-		if isManagedFileCreateIntent(candidate) {
-			hasManagedCreateGoal = true
-		}
-		if isFileDeleteIntent(candidate) {
-			hasDeleteGoal = true
-		}
-	}
 
 	if hasManagedCreateGoal {
 		if hasGeneratedArtifact && !hasManagedSave {

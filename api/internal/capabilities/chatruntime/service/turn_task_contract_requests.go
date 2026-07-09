@@ -51,8 +51,11 @@ func turnTaskContractRequestsManagedFileCreate(parts *chatRequestParts, metadata
 	switch turnTaskContractIntentLabel(turnTaskContractFromPartsAndMetadata(parts, metadata)) {
 	case "save_generated_file_to_file_management":
 		return true
-	case "continue_previous_task", "":
+	case "continue_previous_task":
 		return partsRequestsManagedFileCreateWithFallback(parts, fallback)
+	case "":
+		return partsAllowsLegacyBusinessIntentFallback(parts) &&
+			partsRequestsManagedFileCreateWithFallback(parts, fallback)
 	default:
 		return false
 	}
@@ -63,8 +66,11 @@ func turnTaskContractRequestsTemporaryFileGenerate(parts *chatRequestParts, meta
 	switch turnTaskContractIntentLabel(contract) {
 	case "generate_temporary_file_artifact":
 		return true
-	case "continue_previous_task", "":
+	case "continue_previous_task":
 		return partsRequestsTemporaryFileGenerateWithFallback(parts, fallback)
+	case "":
+		return partsAllowsLegacyBusinessIntentFallback(parts) &&
+			partsRequestsTemporaryFileGenerateWithFallback(parts, fallback)
 	default:
 		return turnTaskContractHasRecommendedCapability(contract,
 			"chart_artifact",
@@ -84,8 +90,11 @@ func turnTaskContractRequestsFileDelete(parts *chatRequestParts, metadata map[st
 	switch turnTaskContractIntentLabel(turnTaskContractFromPartsAndMetadata(parts, metadata)) {
 	case "delete_visible_file":
 		return true
-	case "continue_previous_task", "":
+	case "continue_previous_task":
 		return partsRequestsFileDeleteWithFallback(parts, fallback)
+	case "":
+		return partsAllowsLegacyBusinessIntentFallback(parts) &&
+			partsRequestsFileDeleteWithFallback(parts, fallback)
 	default:
 		return false
 	}
@@ -96,8 +105,11 @@ func turnTaskContractRequestsFileRead(parts *chatRequestParts, metadata map[stri
 	switch turnTaskContractIntentLabel(contract) {
 	case "read_visible_file_content":
 		return true
-	case "continue_previous_task", "":
+	case "continue_previous_task":
 		return partsRequestsFileReadWithFallback(parts, fallback)
+	case "":
+		return partsAllowsLegacyBusinessIntentFallback(parts) &&
+			partsRequestsFileReadWithFallback(parts, fallback)
 	default:
 		return turnTaskContractHasRecommendedCapability(contract, "visible_file_content", "file_content", "source_file_content")
 	}
@@ -107,8 +119,11 @@ func turnTaskContractRequestsConsoleNavigation(parts *chatRequestParts, metadata
 	switch turnTaskContractIntentLabel(turnTaskContractFromPartsAndMetadata(parts, metadata)) {
 	case "navigate_console_page":
 		return true
-	case "continue_previous_task", "":
+	case "continue_previous_task":
 		return partsRequestsConsoleNavigationWithFallback(parts, fallback)
+	case "":
+		return partsAllowsLegacyBusinessIntentFallback(parts) &&
+			partsRequestsConsoleNavigationWithFallback(parts, fallback)
 	default:
 		return false
 	}

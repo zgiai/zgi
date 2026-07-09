@@ -43,7 +43,7 @@ func TestTurnTaskContractRequestsUseOperationPlanContractBeforeModelIntent(t *te
 	}
 }
 
-func TestTurnTaskContractRequestsAllowLegacyOnlyForContinuationOrMissingContract(t *testing.T) {
+func TestTurnTaskContractRequestsAllowLegacyOnlyForContinuation(t *testing.T) {
 	query := "delete the first file"
 	answerParts := &chatRequestParts{
 		Query: query,
@@ -66,8 +66,8 @@ func TestTurnTaskContractRequestsAllowLegacyOnlyForContinuationOrMissingContract
 	}
 
 	missingContractParts := &chatRequestParts{Query: query}
-	if !turnTaskContractRequestsFileDelete(missingContractParts, nil, "") {
-		t.Fatal("file delete did not allow compatibility fallback when no task contract exists")
+	if turnTaskContractRequestsFileDelete(missingContractParts, nil, "") {
+		t.Fatal("file delete used legacy keywords when no task contract exists")
 	}
 }
 

@@ -149,13 +149,13 @@ func TestPartsConsoleNavigationHelpersPreferModelIntentOverLegacyKeywords(t *tes
 	}
 	strategy = contextualAIChatTurnStrategy(&PreparedChat{parts: legacyNavigationParts})
 	if strategy == nil {
-		t.Fatal("contextualAIChatTurnStrategy() = nil, want legacy navigation fallback strategy")
+		t.Fatal("contextualAIChatTurnStrategy() = nil, want default contextual strategy")
 	}
-	if strategy.Source != aiChatTurnStrategySourceLegacy {
-		t.Fatalf("Source = %q, want %q for legacy fallback; strategy=%#v", strategy.Source, aiChatTurnStrategySourceLegacy, strategy)
+	if strategy.Source != aiChatTurnStrategySourceDefault {
+		t.Fatalf("Source = %q, want %q without no-contract navigation fallback; strategy=%#v", strategy.Source, aiChatTurnStrategySourceDefault, strategy)
 	}
-	if strategy.Intent != "navigate_console_page" || !strategy.RouteRequired {
-		t.Fatalf("strategy = %#v, want legacy navigation fallback", strategy)
+	if strategy.Intent != "answer_or_explain_zgi_context" || strategy.RouteRequired {
+		t.Fatalf("strategy = %#v, want default model-led answer strategy without forced route", strategy)
 	}
 
 	modelNavigationParts := &chatRequestParts{
@@ -411,6 +411,10 @@ func TestSkillLoopAdditionalSystemMessagesResolvesRecentFileTarget(t *testing.T)
 	}
 	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
 	prepared.parts.SkillMode = skillModeAuto
+	prepared.parts.ModelTurnIntent = &AIChatModelTurnIntent{
+		Intent:     "read_visible_file_content",
+		Confidence: 0.91,
+	}
 	prepared.parts.RecentAssetCandidates = []ResourceCandidate{{
 		Type:      resourceTypeFile,
 		ID:        "file-1",
@@ -943,6 +947,10 @@ func TestContextualAIChatTurnStrategyResolvesChineseFilesRoute(t *testing.T) {
 			Surface:   aiChatSurfaceContextualSidebar,
 			SkillIDs:  []string{skills.SkillConsoleNavigator},
 			SkillMode: skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "navigate_console_page",
+				Confidence: 0.91,
+			},
 		},
 	}
 
@@ -1884,6 +1892,10 @@ func TestContextualAIChatTurnStrategyPrefersMultiRouteNavigationOverAgentManagem
 			Surface:   aiChatSurfaceContextualSidebar,
 			SkillIDs:  []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement, skills.SkillFileManager},
 			SkillMode: skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "navigate_console_page",
+				Confidence: 0.91,
+			},
 		},
 	}
 
@@ -1918,6 +1930,10 @@ func TestContextualAIChatTurnStrategyTreatsAutoContinueRouteSequenceAsNavigation
 			},
 			SkillIDs:  []string{skills.SkillConsoleNavigator, skills.SkillFileManager, skills.SkillFileGenerator},
 			SkillMode: skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "navigate_console_page",
+				Confidence: 0.91,
+			},
 		},
 	}
 
@@ -2234,6 +2250,10 @@ func TestContextualAIChatTurnStrategyResolvesShortChineseNavigation(t *testing.T
 			Surface:   aiChatSurfaceContextualSidebar,
 			SkillIDs:  []string{skills.SkillConsoleNavigator},
 			SkillMode: skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "navigate_console_page",
+				Confidence: 0.91,
+			},
 		},
 	}
 
@@ -2547,6 +2567,10 @@ func TestSkillLoopFinalAnswerGuardAllowsReadOnlyFilesQuestionWithNegativeOperati
 	}
 	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
 	prepared.parts.SkillMode = skillModeAuto
+	prepared.parts.ModelTurnIntent = &AIChatModelTurnIntent{
+		Intent:     "answer_or_explain_zgi_context",
+		Confidence: 0.91,
+	}
 
 	if isManagedFileCreateIntent(prepared.parts.Query) {
 		t.Fatal("isManagedFileCreateIntent() = true, want false for read-only request with negative operations")
@@ -2606,6 +2630,10 @@ func TestSkillLoopToolCallGuardAllowsManagedFileWorkBeforeOptionalFilesRoute(t *
 			RuntimeContext: "route=/console/work/chat",
 			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileManager, skills.SkillChartGenerator},
 			SkillMode:      skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "save_generated_file_to_file_management",
+				Confidence: 0.91,
+			},
 		},
 	}
 
@@ -3089,6 +3117,10 @@ func TestSkillLoopFinalAnswerGuardUsesMessageMetadataForUnsavedExplicitTargetAft
 			Query:     "please create and save aichat-one.txt and aichat-two.svg to File Management",
 			SkillIDs:  []string{skills.SkillFileGenerator, skills.SkillFileManager},
 			SkillMode: skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "save_generated_file_to_file_management",
+				Confidence: 0.91,
+			},
 		},
 	}
 
@@ -3153,6 +3185,10 @@ func TestSkillLoopFinalAnswerGuardUsesMetadataSaveStateAfterAssetObservation(t *
 			Query:     "please create and save aichat-one.txt and aichat-two.svg to File Management",
 			SkillIDs:  []string{skills.SkillFileGenerator, skills.SkillFileManager},
 			SkillMode: skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "save_generated_file_to_file_management",
+				Confidence: 0.91,
+			},
 		},
 	}
 
@@ -3278,7 +3314,7 @@ func TestSkillLoopFinalAnswerGuardPrioritizesUnsavedArtifactBeforeContinuationDe
 	if !blocked {
 		t.Fatal("guard allowed continuation delete messaging while an SVG artifact was still unsaved")
 	}
-	for _, want := range []string{"smoke-continue.svg", `"tool_file_id":"tool-2"`, skills.SkillFileManager, "save_file_to_management", "not saved to File Management"} {
+	for _, want := range []string{"smoke-continue.svg", `"tool_file_id":"tool-2"`, skills.SkillFileManager, "save_file_to_management", "not been saved yet"} {
 		if !strings.Contains(result.SystemMessage, want) && !strings.Contains(result.Message, want) {
 			t.Fatalf("guard result missing %q: %#v", want, result)
 		}
@@ -3302,6 +3338,10 @@ func TestSkillLoopFinalAnswerGuardDoesNotForceTemporaryContinuationArtifact(t *t
 	}
 	prepared.parts.SkillIDs = []string{skills.SkillFileGenerator, skills.SkillFileManager}
 	prepared.parts.SkillMode = skillModeAuto
+	prepared.parts.ModelTurnIntent = &AIChatModelTurnIntent{
+		Intent:     "continue_previous_task",
+		Confidence: 0.91,
+	}
 
 	guard := skillLoopFinalAnswerGuard(prepared)
 	if guard != nil {
@@ -3339,6 +3379,10 @@ func TestClientActionAssetObservationContinuesWhenExplicitManagedTargetUnsaved(t
 			Query:     "please create and save aichat-one.txt and aichat-two.svg to File Management",
 			SkillIDs:  []string{skills.SkillFileGenerator, skills.SkillFileManager},
 			SkillMode: skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "save_generated_file_to_file_management",
+				Confidence: 0.91,
+			},
 		},
 	}
 	if !managedFileCreateHasUnsavedExplicitTargets(prepared) {
@@ -3427,6 +3471,10 @@ func TestSkillLoopToolCallGuardUsesMetadataArtifactInsteadOfRegeneratingMissingT
 			Query:     "please create and save aichat-one.txt and aichat-two.svg to File Management",
 			SkillIDs:  []string{skills.SkillFileGenerator, skills.SkillFileManager},
 			SkillMode: skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "save_generated_file_to_file_management",
+				Confidence: 0.91,
+			},
 		},
 	}
 
@@ -3899,6 +3947,10 @@ func TestSkillLoopToolCallGuardBlocksRepeatedFilesNavigationAfterContinuation(t 
 			RuntimeContext: "route=/console/work/chat",
 			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillFileGenerator, skills.SkillFileManager},
 			SkillMode:      skillModeAuto,
+			ModelTurnIntent: &AIChatModelTurnIntent{
+				Intent:     "save_generated_file_to_file_management",
+				Confidence: 0.91,
+			},
 			OperationContext: map[string]interface{}{
 				"client_action_continuation": map[string]interface{}{
 					"action_type": "route_navigation",
@@ -4023,6 +4075,10 @@ func TestResolveConsoleNavigationTargetForPartsConsumesCompletedRouteSequence(t 
 		SkillIDs:  []string{skills.SkillConsoleNavigator},
 		SkillMode: skillModeAuto,
 		Surface:   aiChatSurfaceContextualSidebar,
+		ModelTurnIntent: &AIChatModelTurnIntent{
+			Intent:     "navigate_console_page",
+			Confidence: 0.91,
+		},
 		OperationContext: map[string]interface{}{
 			"completed_client_actions": []interface{}{
 				map[string]interface{}{
@@ -5441,6 +5497,10 @@ func TestSkillLoopFinalAnswerGuardBlocksRecentFileAnswerWithoutToolCall(t *testi
 	}
 	prepared.parts.SkillIDs = []string{skills.SkillFileReader}
 	prepared.parts.SkillMode = skillModeAuto
+	prepared.parts.ModelTurnIntent = &AIChatModelTurnIntent{
+		Intent:     "read_visible_file_content",
+		Confidence: 0.91,
+	}
 	prepared.parts.RecentAssetCandidates = []ResourceCandidate{{
 		Type:      resourceTypeFile,
 		ID:        "file-1",
@@ -5628,6 +5688,10 @@ func TestSkillLoopFinalAnswerGuardKeepsReadGuardWhenNavigationRequestsFileConten
 	prepared.parts.SkillIDs = []string{skills.SkillConsoleNavigator, skills.SkillFileReader}
 	prepared.parts.SkillMode = skillModeAuto
 	prepared.parts.Surface = aiChatSurfaceContextualSidebar
+	prepared.parts.ModelTurnIntent = &AIChatModelTurnIntent{
+		Intent:     "read_visible_file_content",
+		Confidence: 0.91,
+	}
 
 	guard := skillLoopFinalAnswerGuard(prepared)
 	if guard == nil {
@@ -5717,13 +5781,18 @@ func TestConsoleFilesRequiredToolFinalAnswerGuardRequiresAllTargetFileIDs(t *tes
 }
 
 func preparedConsoleFilesGuardReadTest(query string) *PreparedChat {
+	parts := consoleFilesSemanticTestParts(query, []consoleFilesTestFile{
+		{ID: "file-1", Name: "notes.txt", Extension: "txt", MimeType: "text/plain"},
+		{ID: "file-2", Name: "budget-q1.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+		{ID: "file-3", Name: "invoice.pdf", Extension: "pdf", MimeType: "application/pdf"},
+		{ID: "file-4", Name: "budget-q2.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+	})
+	parts.ModelTurnIntent = &AIChatModelTurnIntent{
+		Intent:     "read_visible_file_content",
+		Confidence: 0.91,
+	}
 	return &PreparedChat{
-		parts: consoleFilesSemanticTestParts(query, []consoleFilesTestFile{
-			{ID: "file-1", Name: "notes.txt", Extension: "txt", MimeType: "text/plain"},
-			{ID: "file-2", Name: "budget-q1.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
-			{ID: "file-3", Name: "invoice.pdf", Extension: "pdf", MimeType: "application/pdf"},
-			{ID: "file-4", Name: "budget-q2.xlsx", Extension: "xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
-		}),
+		parts: parts,
 	}
 }
 
@@ -5734,6 +5803,10 @@ func TestSkillLoopFinalAnswerGuardBlocksConsoleFilesDeleteWithoutToolCall(t *tes
 		}),
 	}
 	prepared.parts.SkillIDs = []string{skills.SkillFileManager}
+	prepared.parts.ModelTurnIntent = &AIChatModelTurnIntent{
+		Intent:     "delete_visible_file",
+		Confidence: 0.91,
+	}
 
 	guard := skillLoopFinalAnswerGuard(prepared)
 	if guard == nil {

@@ -142,6 +142,10 @@ func consoleFilesCreateCapabilityTestParts(query string) *chatRequestParts {
 		RuntimeContext:      "route=/console/files capabilities=file.create",
 		RawOperationContext: operationContext,
 		OperationContext:    operationContext,
+		ModelTurnIntent: &AIChatModelTurnIntent{
+			Intent:     "save_generated_file_to_file_management",
+			Confidence: 0.91,
+		},
 	}
 }
 

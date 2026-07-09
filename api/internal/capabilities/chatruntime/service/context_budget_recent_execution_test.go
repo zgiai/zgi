@@ -628,6 +628,37 @@ func TestContinuationTaskStateMessageRequiresGovernedDeleteWithoutNaturalConfirm
 			Query:  "\u5148\u5230\u6587\u4ef6\u7ba1\u7406\u521b\u5efa\u6587\u4ef6\uff0c\u6700\u540e\u5220\u9664\u5f53\u524d\u7b2c\u4e09\u4e2a\u6587\u4ef6",
 			Status: runtimemodel.MessageStatusCompleted,
 			Metadata: map[string]interface{}{
+				"operation_plan": map[string]interface{}{
+					"version":            operationPlanVersion,
+					"task_id":            "task-delete-pending",
+					"original_user_goal": "\u5148\u5230\u6587\u4ef6\u7ba1\u7406\u521b\u5efa\u6587\u4ef6\uff0c\u6700\u540e\u5220\u9664\u5f53\u524d\u7b2c\u4e09\u4e2a\u6587\u4ef6",
+					"status":             operationPlanStatusRunning,
+					"step_status": map[string]interface{}{
+						operationPlanToolStepID(skills.SkillFileGenerator, "generate_file"):         operationPlanStepStatusCompleted,
+						operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management"): operationPlanStepStatusCompleted,
+						operationPlanToolStepID(skills.SkillFileManager, "delete_file"):             operationPlanStepStatusPending,
+					},
+					"steps": []interface{}{
+						map[string]interface{}{
+							"id":        operationPlanToolStepID(skills.SkillFileGenerator, "generate_file"),
+							"status":    operationPlanStepStatusCompleted,
+							"skill_id":  skills.SkillFileGenerator,
+							"tool_name": "generate_file",
+						},
+						map[string]interface{}{
+							"id":        operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management"),
+							"status":    operationPlanStepStatusCompleted,
+							"skill_id":  skills.SkillFileManager,
+							"tool_name": "save_file_to_management",
+						},
+						map[string]interface{}{
+							"id":        operationPlanToolStepID(skills.SkillFileManager, "delete_file"),
+							"status":    operationPlanStepStatusPending,
+							"skill_id":  skills.SkillFileManager,
+							"tool_name": "delete_file",
+						},
+					},
+				},
 				"skill_invocations": []interface{}{
 					map[string]interface{}{
 						"kind":      "tool_call",
@@ -867,7 +898,7 @@ func TestContinuationPendingHintsDoNotTreatGenericFileManagerStepAsDelete(t *tes
 	if continuationHasPendingOperationPlanTool(branch, skills.SkillFileManager, "delete_file") {
 		t.Fatal("generic file-manager step was treated as a pending delete_file step")
 	}
-	for _, hint := range continuationPendingHints("\u7ee7\u7eed", branch) {
+	for _, hint := range continuationPendingHints(branch) {
 		if strings.Contains(hint, "delete_file") {
 			t.Fatalf("pending hint = %q, should not mention delete_file for a generic file-manager step", hint)
 		}

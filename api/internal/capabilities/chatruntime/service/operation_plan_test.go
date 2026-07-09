@@ -13627,6 +13627,10 @@ func TestNavigationStrategyIgnoresNegatedAssetMutationConstraint(t *testing.T) {
 			skills.SkillFileGenerator,
 			skills.SkillAgentManagement,
 		},
+		ModelTurnIntent: &AIChatModelTurnIntent{
+			Intent:     "navigate_console_page",
+			Confidence: 0.91,
+		},
 	}
 	strategy := contextualAIChatTurnStrategyFromParts(parts)
 	if strategy == nil {

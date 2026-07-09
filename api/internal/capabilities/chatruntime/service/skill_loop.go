@@ -2583,6 +2583,9 @@ func skillLoopShouldAllowUnplannedArtifactGeneration(prepared *PreparedChat, req
 		}
 		return false
 	}
+	if operationPlanHasToolStepWithStatus(plan, skills.SkillFileManager, "save_file_to_management", operationPlanStepStatusPending) {
+		return true
+	}
 	return turnTaskContractRequestsTemporaryFileGenerate(prepared.parts, prepared.Message.Metadata, goal) ||
 		turnTaskContractRequestsManagedFileCreate(prepared.parts, prepared.Message.Metadata, goal) ||
 		partsRequestsContinuationWithFallback(prepared.parts, goal)
@@ -4054,7 +4057,6 @@ const (
 	aiChatTurnStrategySourceDefault      = "default_contextual"
 	aiChatTurnStrategySourceModelIntent  = "model_intent"
 	aiChatTurnStrategySourceTurnProtocol = "turn_protocol"
-	aiChatTurnStrategySourceLegacy       = "legacy_fallback"
 )
 
 type AIChatTurnStrategyTool struct {
@@ -4145,18 +4147,11 @@ func contextualAIChatTurnStrategyFromParts(parts *chatRequestParts) *AIChatTurnS
 		return finalizeAIChatTurnStrategy(parts, strategy)
 	}
 
-	if target, ok := resolveConsoleNavigationTargetForParts(parts); ok {
-		strategy.TargetPage = target.Href
-		routeRequired := !clientActionContinuationLoadedRoute(parts, target.Href)
-		if consoleNavigationRouteAlreadyAvailable(parts, target.Href) {
-			routeRequired = false
+	if stagedCurrent {
+		if _, ok := resolveConsoleNavigationTargetForParts(parts); ok {
+			strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceTurnProtocol, "staged_current_navigation_scope")
+			return finalizeAIChatTurnStrategy(parts, contextualNavigationStrategy(parts, strategy))
 		}
-		strategy.RouteRequired = routeRequired
-		if routeRequired && skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
-			strategy.PrimarySkills = appendUniqueStrings(strategy.PrimarySkills, skills.SkillConsoleNavigator)
-		}
-		strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceLegacy, "legacy_navigation_query_fallback")
-		return finalizeAIChatTurnStrategy(parts, contextualNavigationStrategy(parts, strategy))
 	}
 
 	strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceDefault, "default_contextual_page_answer")
@@ -6385,7 +6380,7 @@ func stagedExecutionScopedParts(parts *chatRequestParts) (*chatRequestParts, boo
 	}
 	if partsRequestsContinuationWithFallback(parts, "") {
 		if current, ok := stagedContinuationResumeQuery(parts); ok {
-			return chatRequestPartsWithQuery(parts, current), false, true
+			return chatRequestPartsWithQueryAndIntent(parts, current, "continue_previous_task"), false, true
 		}
 		return parts, false, false
 	}
@@ -6406,6 +6401,24 @@ func chatRequestPartsWithQuery(parts *chatRequestParts, query string) *chatReque
 	next := *parts
 	next.Query = strings.TrimSpace(query)
 	return &next
+}
+
+func chatRequestPartsWithQueryAndIntent(parts *chatRequestParts, query string, intent string) *chatRequestParts {
+	next := chatRequestPartsWithQuery(parts, query)
+	if next == nil {
+		return nil
+	}
+	intent = strings.TrimSpace(intent)
+	if intent == "" {
+		return next
+	}
+	modelIntent := AIChatModelTurnIntent{}
+	if next.ModelTurnIntent != nil {
+		modelIntent = *next.ModelTurnIntent
+	}
+	modelIntent.Intent = intent
+	next.ModelTurnIntent = &modelIntent
+	return next
 }
 
 func stagedContinuationResumeQuery(parts *chatRequestParts) (string, bool) {
