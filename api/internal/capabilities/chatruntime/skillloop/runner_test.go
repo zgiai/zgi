@@ -42,9 +42,6 @@ func TestCompletionEvidenceContinuationSkipsPendingPlanStepForUnresolvedSkill(t 
 	if _, ok := completionEvidenceContinuationSystemMessage(evidence, 0, resolved); ok {
 		t.Fatal("completionEvidenceContinuationSystemMessage() ok = true, want false for unresolved pending skill")
 	}
-	if forced := completionEvidenceContinuationToolChoice(evidence, nil, resolved); forced != nil {
-		t.Fatalf("completionEvidenceContinuationToolChoice() = %#v, want nil for unresolved pending skill", forced)
-	}
 }
 
 func TestCompletionEvidenceContinuationAllowsPendingPlanStepForResolvedSkill(t *testing.T) {
@@ -69,11 +66,16 @@ func TestCompletionEvidenceContinuationAllowsPendingPlanStepForResolvedSkill(t *
 	if !ok {
 		t.Fatal("completionEvidenceContinuationSystemMessage() ok = false, want true for resolved pending skill")
 	}
-	if !strings.Contains(fmt.Sprint(feedback.Content), "agent-management/update_agent_config") {
-		t.Fatalf("feedback = %v, want pending tool guidance", feedback.Content)
+	content := fmt.Sprint(feedback.Content)
+	for _, leaked := range []string{"agent-management/update_agent_config", "suggested_next_tool", "pending_tool_step"} {
+		if strings.Contains(content, leaked) {
+			t.Fatalf("feedback leaked scripted tool directive %q: %v", leaked, feedback.Content)
+		}
 	}
-	if forced := completionEvidenceContinuationToolChoice(evidence, nil, resolved); forced == nil {
-		t.Fatal("completionEvidenceContinuationToolChoice() = nil, want forced load_skill")
+	for _, fragment := range []string{"operation strategy is advisory", "choose the concrete next action", "Pending phase evidence JSON"} {
+		if !strings.Contains(content, fragment) {
+			t.Fatalf("feedback = %v, want semantic fragment %q", feedback.Content, fragment)
+		}
 	}
 }
 
@@ -111,19 +113,6 @@ func TestInitialLoadedSkillsForRunTreatsSuccessfulToolCallAsLoaded(t *testing.T)
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
 		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
 	}}}
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": "in_progress",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/update_agent_config",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "update_agent_config",
-					"status":    "pending",
-				},
-			},
-		},
-	}
 	loaded := initialLoadedSkillsForRun(RunRequest{
 		CurrentMetadata: func() map[string]interface{} {
 			return map[string]interface{}{
@@ -140,9 +129,6 @@ func TestInitialLoadedSkillsForRunTreatsSuccessfulToolCallAsLoaded(t *testing.T)
 	}, resolved)
 	if _, ok := loaded[skills.SkillAgentManagement]; !ok {
 		t.Fatalf("loaded[%q] missing after successful tool_call; got %#v", skills.SkillAgentManagement, loaded)
-	}
-	if got := functionToolChoiceName(completionEvidenceContinuationToolChoice(evidence, loaded, resolved)); got != skills.MetaToolCallSkillTool {
-		t.Fatalf("completionEvidenceContinuationToolChoice() = %q, want %s after successful tool_call", got, skills.MetaToolCallSkillTool)
 	}
 }
 
@@ -315,11 +301,16 @@ func TestCompletionEvidenceContinuationAllowsPendingReadPlanStepForResolvedSkill
 	if !ok {
 		t.Fatal("completionEvidenceContinuationSystemMessage() ok = false, want true for resolved pending read step")
 	}
-	if !strings.Contains(fmt.Sprint(feedback.Content), "agent-management/get_agent_config") {
-		t.Fatalf("feedback = %v, want get_agent_config guidance", feedback.Content)
+	content := fmt.Sprint(feedback.Content)
+	for _, leaked := range []string{"agent-management/get_agent_config", "suggested_next_tool", "pending_tool_step"} {
+		if strings.Contains(content, leaked) {
+			t.Fatalf("feedback leaked scripted read directive %q: %v", leaked, feedback.Content)
+		}
 	}
-	if forced := completionEvidenceContinuationToolChoice(evidence, nil, resolved); forced == nil {
-		t.Fatal("completionEvidenceContinuationToolChoice() = nil, want forced load_skill")
+	for _, fragment := range []string{"operation strategy is advisory", "choose the concrete next action", "Pending phase evidence JSON"} {
+		if !strings.Contains(content, fragment) {
+			t.Fatalf("feedback = %v, want semantic fragment %q", feedback.Content, fragment)
+		}
 	}
 }
 
@@ -343,9 +334,6 @@ func TestCompletionEvidenceContinuationSkipsPostVerificationNavigationStep(t *te
 
 	if _, ok := completionEvidenceContinuationSystemMessage(evidence, 0, resolved); ok {
 		t.Fatal("completionEvidenceContinuationSystemMessage() ok = true, want false for post-verification navigation step")
-	}
-	if forced := completionEvidenceContinuationToolChoice(evidence, nil, resolved); forced != nil {
-		t.Fatalf("completionEvidenceContinuationToolChoice() = %#v, want nil for post-verification navigation step", forced)
 	}
 }
 
@@ -455,11 +443,16 @@ func TestCompletionEvidenceContinuationAllowsRequiredPostUpdateAgentConfigRead(t
 	if !ok {
 		t.Fatal("completionEvidenceContinuationSystemMessage() ok = false, want true for requested post-update config read")
 	}
-	if !strings.Contains(fmt.Sprint(feedback.Content), "agent-management/get_agent_config") {
-		t.Fatalf("feedback = %v, want get_agent_config guidance", feedback.Content)
+	content := fmt.Sprint(feedback.Content)
+	for _, leaked := range []string{"agent-management/get_agent_config", "suggested_next_tool", "pending_tool_step"} {
+		if strings.Contains(content, leaked) {
+			t.Fatalf("feedback leaked scripted post-update read directive %q: %v", leaked, feedback.Content)
+		}
 	}
-	if forced := completionEvidenceContinuationToolChoice(evidence, nil, resolved); forced == nil {
-		t.Fatal("completionEvidenceContinuationToolChoice() = nil, want forced load_skill")
+	for _, fragment := range []string{"operation strategy is advisory", "required_post_update_verification", "choose the concrete next action"} {
+		if !strings.Contains(content, fragment) {
+			t.Fatalf("feedback = %v, want semantic fragment %q", feedback.Content, fragment)
+		}
 	}
 }
 
@@ -494,7 +487,6 @@ func TestCompletionEvidenceContinuationAllowsModelDecidesRequiredPostUpdateAgent
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
 		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
 	}}}
-	loaded := map[string]struct{}{skills.SkillAgentManagement: {}}
 
 	feedback, ok := completionEvidenceContinuationSystemMessage(evidence, 0, resolved)
 	if !ok {
@@ -506,13 +498,10 @@ func TestCompletionEvidenceContinuationAllowsModelDecidesRequiredPostUpdateAgent
 			t.Fatalf("feedback leaked model-decides tool directive %q: %v", leaked, feedback.Content)
 		}
 	}
-	for _, fragment := range []string{"phase-only", "required_post_update_verification", "choose the concrete tool"} {
+	for _, fragment := range []string{"operation strategy is advisory", "required_post_update_verification", "choose the concrete next action"} {
 		if !strings.Contains(content, fragment) {
 			t.Fatalf("feedback = %v, want semantic fragment %q", feedback.Content, fragment)
 		}
-	}
-	if forced := completionEvidenceContinuationToolChoice(evidence, loaded, resolved); forced != nil {
-		t.Fatalf("completionEvidenceContinuationToolChoice() = %#v, want nil for model-decides continuation", forced)
 	}
 }
 
@@ -553,7 +542,6 @@ func TestCompletionEvidenceContinuationAllowsModelDecidesPendingAgentMutation(t 
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
 		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
 	}}}
-	loaded := map[string]struct{}{skills.SkillAgentManagement: {}}
 
 	feedback, ok := completionEvidenceContinuationSystemMessage(evidence, 0, resolved)
 	if !ok {
@@ -565,13 +553,10 @@ func TestCompletionEvidenceContinuationAllowsModelDecidesPendingAgentMutation(t 
 			t.Fatalf("feedback leaked model-decides tool directive %q: %v", leaked, feedback.Content)
 		}
 	}
-	for _, fragment := range []string{"phase-only", "pending_user_visible_operation", "choose the concrete tool"} {
+	for _, fragment := range []string{"operation strategy is advisory", "pending_user_visible_operation", "choose the concrete next action"} {
 		if !strings.Contains(content, fragment) {
 			t.Fatalf("feedback = %v, want semantic fragment %q", feedback.Content, fragment)
 		}
-	}
-	if forced := completionEvidenceContinuationToolChoice(evidence, loaded, resolved); forced != nil {
-		t.Fatalf("completionEvidenceContinuationToolChoice() = %#v, want nil for model-decides continuation", forced)
 	}
 }
 
@@ -4104,18 +4089,18 @@ Use delete_agents to delete several agents in one operation.
 	if fakeLLM.appChatCalls != 3 {
 		t.Fatalf("AppChat calls = %d, want final answer, load skill, delete_agents", fakeLLM.appChatCalls)
 	}
-	if !runnerTestRequestContains(fakeLLM.appChatRequests[1], "Pending plan step JSON") ||
-		!runnerTestRequestContains(fakeLLM.appChatRequests[1], "agent-management/delete_agents") {
-		t.Fatalf("second request missing pending plan continuation feedback")
+	if !runnerTestRequestContains(fakeLLM.appChatRequests[1], "Pending phase evidence JSON") ||
+		!runnerTestRequestContains(fakeLLM.appChatRequests[1], "operation strategy is advisory") {
+		t.Fatalf("second request missing semantic pending evidence feedback")
 	}
 	if !runnerTestRequestContains(fakeLLM.appChatRequests[1], "approval card has been submitted") {
 		t.Fatalf("second request missing governance pseudo-approval warning")
 	}
-	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[1]); got != skills.MetaToolLoadSkill {
-		t.Fatalf("second request tool_choice = %q, want %s for unloaded pending plan skill", got, skills.MetaToolLoadSkill)
+	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[1]); got != "" {
+		t.Fatalf("second request forced tool_choice = %q, want model to choose from exposed tools", got)
 	}
-	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[2]); got != skills.MetaToolCallSkillTool {
-		t.Fatalf("third request tool_choice = %q, want %s after pending plan skill loads", got, skills.MetaToolCallSkillTool)
+	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[2]); got != "" {
+		t.Fatalf("third request forced tool_choice = %q, want model to choose from exposed tools", got)
 	}
 	if strings.Contains(answer, "model final answer should not be used") || strings.Contains(answer, "I deleted") {
 		t.Fatalf("answer = %q, want evidence fast-path answer instead of unsupported model text", answer)
@@ -4278,14 +4263,11 @@ Use delete_agents to delete several agents in one operation.
 	if len(fakeLLM.appChatRequests) < 2 || !runnerTestRequestHasTool(fakeLLM.appChatRequests[1], skills.MetaToolLoadSkill) {
 		t.Fatalf("second request did not expose %s for the unloaded pending plan skill", skills.MetaToolLoadSkill)
 	}
-	if !runnerTestRequestContains(fakeLLM.appChatRequests[1], "first call load_skill with the exact skill_id") {
-		t.Fatalf("second request missing explicit load_skill-before-business-tool guidance")
+	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[1]); got != "" {
+		t.Fatalf("second request forced tool_choice = %q, want model to choose from exposed tools", got)
 	}
-	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[1]); got != skills.MetaToolLoadSkill {
-		t.Fatalf("second request tool_choice = %q, want %s for unloaded pending plan skill", got, skills.MetaToolLoadSkill)
-	}
-	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[2]); got != skills.MetaToolCallSkillTool {
-		t.Fatalf("third request tool_choice = %q, want %s after pending plan skill loads", got, skills.MetaToolCallSkillTool)
+	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[2]); got != "" {
+		t.Fatalf("third request forced tool_choice = %q, want model to choose from exposed tools", got)
 	}
 	if runnerTestRequestHasTool(fakeLLM.appChatRequests[1], skills.MetaToolCallSkillTool) {
 		t.Fatalf("second request exposed %s before the pending plan skill was loaded", skills.MetaToolCallSkillTool)
@@ -4436,14 +4418,14 @@ Use get_agent_config to inspect draft config and update_agent_config to patch se
 	if state.configUpdateCalls != 1 {
 		t.Fatalf("update_agent_config calls = %d, want one pending config mutation call", state.configUpdateCalls)
 	}
-	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[2]); got != skills.MetaToolCallSkillTool {
-		t.Fatalf("third request tool_choice = %q, want %s after first config read", got, skills.MetaToolCallSkillTool)
+	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[2]); got != "" {
+		t.Fatalf("third request forced tool_choice = %q, want model to choose from exposed tools", got)
 	}
-	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[3]); got != skills.MetaToolCallSkillTool {
-		t.Fatalf("fourth request tool_choice = %q, want %s after repeated config read feedback", got, skills.MetaToolCallSkillTool)
+	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[3]); got != "" {
+		t.Fatalf("fourth request forced tool_choice = %q, want model to choose from exposed tools", got)
 	}
 	if !runnerTestRequestContains(fakeLLM.appChatRequests[3], "Evidence-continuation retry 2") ||
-		!runnerTestRequestContains(fakeLLM.appChatRequests[3], "agent-management/update_agent_config") ||
+		!runnerTestRequestContains(fakeLLM.appChatRequests[3], "operation strategy is advisory") ||
 		!runnerTestRequestContains(fakeLLM.appChatRequests[3], "expected_updated_fields") {
 		t.Fatalf("fourth request missing reinforced pending config mutation guidance")
 	}
@@ -4764,12 +4746,12 @@ Use update_agent_identity for identity changes and get_agent to verify the updat
 	if len(fakeLLM.appChatRequests) < 3 {
 		t.Fatalf("AppChat request count = %d, want at least 3", len(fakeLLM.appChatRequests))
 	}
-	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[2]); got != skills.MetaToolCallSkillTool {
-		t.Fatalf("third request tool_choice = %q, want %s for pending post-update read", got, skills.MetaToolCallSkillTool)
+	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[2]); got != "" {
+		t.Fatalf("third request forced tool_choice = %q, want model to choose from exposed tools", got)
 	}
-	if !runnerTestRequestContains(fakeLLM.appChatRequests[2], "Pending plan step JSON") ||
-		!runnerTestRequestContains(fakeLLM.appChatRequests[2], "agent-management/get_agent") {
-		t.Fatalf("third request missing post-update read continuation guidance")
+	if !runnerTestRequestContains(fakeLLM.appChatRequests[2], "Pending phase evidence JSON") ||
+		!runnerTestRequestContains(fakeLLM.appChatRequests[2], "required_post_update_verification") {
+		t.Fatalf("third request missing semantic post-update read continuation guidance")
 	}
 	if strings.TrimSpace(answer) == "" {
 		t.Fatal("answer is empty, want verified completion answer")
@@ -5382,7 +5364,7 @@ Use echo_value to echo values.
 		t.Fatalf("missing deferred continuation feedback after tool responses")
 	}
 	feedback := reqAfterBatchTools.Messages[feedbackIndex]
-	if feedback.Role != "system" || !strings.Contains(messageContent(feedback.Content), "Runtime execution evidence requires continued tool use") {
+	if feedback.Role != "system" || !strings.Contains(messageContent(feedback.Content), "Runtime execution evidence requires continued work") {
 		t.Fatalf("message after tool responses = role %q content %q, want deferred continuation system feedback", feedback.Role, messageContent(feedback.Content))
 	}
 }

@@ -107,7 +107,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	completionVerificationRetryCount := 0
 	evidenceContinuationRetryCount := 0
 	finalizingProgressEmitted := false
-	forcedToolChoiceForNextRound := interface{}(nil)
 	skillToolCallCounts := map[string]int{}
 	attemptedToolCalls := []SkillToolCallRef{}
 	successfulToolCalls := []SkillToolCallRef{}
@@ -139,7 +138,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		if feedback, shouldContinue := completionEvidenceContinuationSystemMessage(evidence, evidenceContinuationRetryCount, resolved); shouldContinue {
 			evidenceContinuationRetryCount++
 			messages = append(messages, feedback)
-			forcedToolChoiceForNextRound = completionEvidenceContinuationToolChoice(evidence, loadedSkills, resolved)
 		}
 	}
 
@@ -149,10 +147,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		planningReq.Stream = false
 		planningReq.Tools = skills.MetaToolsForSkillState(resolved, loadedSkills)
 		planningReq.ToolChoice = "auto"
-		if forcedToolChoiceForNextRound != nil {
-			planningReq.ToolChoice = forcedToolChoiceForNextRound
-			forcedToolChoiceForNextRound = nil
-		}
 
 		planningResult, err := r.runSkillPlanning(ctx, prepared, planningReq, round, req.OnChunk, suppressFinalAnswerStream)
 		if err != nil {
@@ -239,7 +233,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 						r.emitAnswerRetract(ctx, prepared, text, nil)
 					}
 					messages = append(messages, feedback)
-					forcedToolChoiceForNextRound = completionEvidenceContinuationToolChoice(evidence, loadedSkills, resolved)
 					continue
 				}
 			}
@@ -494,9 +487,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 						roundCompletionFeedbackQueued = true
 					}
 				}
-				if forced := completionEvidenceContinuationToolChoice(evidence, loadedSkills, resolved); forced != nil {
-					forcedToolChoiceForNextRound = forced
-				}
 			}
 			if result.recoverable && failedCallKey != "" && strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") {
 				failedToolCallReasons[failedCallKey] = strings.TrimSpace(result.trace.Error)
@@ -552,13 +542,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					}
 					finalAnswerGuardBlockCount = 0
 					evidenceContinuationRetryCount = 0
-				}
-			}
-			if postVerificationConfigured &&
-				strings.EqualFold(strings.TrimSpace(result.trace.Kind), "skill_load") &&
-				strings.EqualFold(strings.TrimSpace(result.trace.Status), "success") {
-				if forced := completionEvidenceContinuationToolChoice(completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls), loadedSkills, resolved); forced != nil {
-					forcedToolChoiceForNextRound = forced
 				}
 			}
 			if result.pendingApproval != nil {
@@ -630,12 +613,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 						evidenceContinuationRetryCount++
 						roundCompletionFeedback = feedback
 						roundCompletionFeedbackQueued = true
-						if forced := completionEvidenceContinuationToolChoice(evidence, loadedSkills, resolved); forced != nil {
-							forcedToolChoiceForNextRound = forced
-						}
 					}
-				} else if forced := completionEvidenceContinuationToolChoice(evidence, loadedSkills, resolved); forced != nil {
-					forcedToolChoiceForNextRound = forced
 				}
 			}
 		}
@@ -761,28 +739,7 @@ func completionEvidenceContinuationPendingPlanStepSystemMessage(evidence map[str
 	if !completionEvidencePlanStepSkillResolved(step, resolved) {
 		return adapter.Message{}, false
 	}
-	if modelDecidesTools {
-		return completionEvidenceContinuationModelDecidesSystemMessage(evidence, step, retryCount), true
-	}
-	payloadJSON, err := json.Marshal(map[string]interface{}{
-		"suggested_next_tool": action,
-		"pending_tool_step":   step,
-	})
-	if err != nil {
-		payloadJSON = []byte(fmt.Sprint(step))
-	}
-	content := strings.Join([]string{
-		fmt.Sprintf("Runtime execution evidence requires continued tool use before a final answer. Evidence-continuation retry %d of %d.", retryCount+1, defaultMaxCompletionVerificationRetries),
-		"The operation plan is an advisory strategy snapshot, not proof of completion. It currently has a pending phase with no successful evidence.",
-		"If the current page context and available tools still support this action, load the suggested skill if needed and call the suggested tool. Resolve arguments from the latest user request, page context, and visible asset evidence.",
-		"If the pending step is agent-management/update_agent_config, use pending_tool_step.config_goal as the user-facing configuration target and infer concrete update_agent_config arguments from the tool schema, latest user request, page context, and prior read results; extract the target field values from the latest user request and read result. If pending_tool_step also lists expected_updated_fields, treat them as verification hints rather than the only allowed fields. Do not repeat an identical get_agent_config call when it already succeeded earlier in this turn.",
-		"If only load_skill is available for that skill, first call load_skill with the exact skill_id from suggested_next_tool, then call call_skill_tool with the exact skill_id/tool_name after the skill loads.",
-		"Do not tell the user an approval card has been submitted unless a governed tool call actually returned a pending governance event. Governance approval cards are created by tool calls, not by natural-language progress text.",
-		"If the action is impossible because context, permissions, or tool capability is missing, call the appropriate read/list tool when that can resolve the missing context; otherwise stop and explain the exact blocker truthfully.",
-		"Do not answer as complete until successful tool evidence and any required page observation evidence exist for this pending phase.",
-		"Pending plan step JSON:\n" + string(payloadJSON),
-	}, "\n")
-	return adapter.Message{Role: "system", Content: content}, true
+	return completionEvidenceContinuationModelDecidesSystemMessage(evidence, step, retryCount), true
 }
 
 func completionEvidenceContinuationOpenModelDecidesPhaseSystemMessage(evidence map[string]interface{}, retryCount int) adapter.Message {
@@ -843,7 +800,7 @@ func completionEvidenceContinuationModelDecidesSystemMessage(evidence map[string
 	}
 	content := strings.Join([]string{
 		fmt.Sprintf("Runtime execution evidence requires continued work before a final answer. Evidence-continuation retry %d of %d.", retryCount+1, defaultMaxCompletionVerificationRetries),
-		"The operation strategy is phase-only: it describes the user-visible phase that is not yet proven complete, but the model must choose the concrete tool from the currently available tool schemas and latest context.",
+		"The operation strategy is advisory: it describes user-visible work that is not yet proven complete, but the model must choose the concrete next action from the currently available tool schemas and latest context.",
 		"Use current page context, prior tool results, turn_state, and visible asset evidence to decide the next action. Do not repeat an action when matching evidence already proves it succeeded.",
 		"For Agent configuration work, apply the remaining user-requested changes with the available Agent management capability, then verify the refreshed configuration before the final answer.",
 		"If the original user request already asks for those remaining Agent changes, do not ask the user whether to continue after a read-only check shows missing configuration; choose the next appropriate available tool and let governed tool calls request approval when needed.",
@@ -901,40 +858,6 @@ func completionEvidenceContinuationPayloadValuePresent(value interface{}) bool {
 	default:
 		return false
 	}
-}
-
-func completionEvidenceContinuationToolChoice(evidence map[string]interface{}, loadedSkills map[string]struct{}, resolved *skills.ResolvedSkills) interface{} {
-	plan := evidenceMapFromAny(evidence["operation_plan"])
-	if completionEvidenceOperationPlanModelDecides(evidence) {
-		if _, ok := fastPathModelDecidesPendingAgentWorkStep(plan); !ok {
-			return nil
-		}
-		return nil
-	}
-	step, ok := completionVerificationPendingExecutablePlanStep(evidence)
-	if !ok {
-		return nil
-	}
-	action := completionVerificationPlanStepLabel(step)
-	if strings.TrimSpace(action) == "" {
-		return nil
-	}
-	if completionEvidenceContinuationShouldSkipPendingPlanStep(step, action) {
-		return nil
-	}
-	if !completionEvidencePlanStepSkillResolved(step, resolved) {
-		return nil
-	}
-	skillID := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(step["skill_id"])))
-	toolName := strings.TrimSpace(evidenceStringFromAny(step["tool_name"]))
-	if skillID == "" || toolName == "" {
-		return nil
-	}
-	loaded := normalizedLoadedSkillSet(loadedSkills)
-	if _, ok := loaded[skillID]; !ok {
-		return forcedFunctionToolChoice(skills.MetaToolLoadSkill)
-	}
-	return forcedFunctionToolChoice(skills.MetaToolCallSkillTool)
 }
 
 func initialLoadedSkillsForRun(req RunRequest, resolved *skills.ResolvedSkills) map[string]struct{} {
