@@ -27,3 +27,11 @@ func TestDecodeUpdateAPIKeyRequestLeavesMissingFieldsUnchanged(t *testing.T) {
 	require.False(t, req.ClearQuotaLimit)
 	require.False(t, req.ClearExpiresAt)
 }
+
+func TestDecodeUpdateAPIKeyRequestRejectsOversizedBody(t *testing.T) {
+	var req dto.UpdateAPIKeyRequest
+
+	err := decodeUpdateAPIKeyRequest(strings.NewReader(strings.Repeat("x", 64*1024+1)), &req)
+
+	require.ErrorContains(t, err, "request body exceeds 65536 bytes")
+}

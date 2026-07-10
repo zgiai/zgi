@@ -75,6 +75,10 @@ export default function ApiKeyDialog({
   const [allowAllModels, setAllowAllModels] = React.useState<boolean>(true);
   const [modelNames, setModelNames] = React.useState<string[]>([]);
   const [expiresAt, setExpiresAt] = React.useState<string>('');
+  const initialExpiresAtInput =
+    mode === 'edit' && initial?.expires_at
+      ? formatDateTimeLocalInput(initial.expires_at)
+      : '';
 
   const { createApiKey, isCreating } = useCreateApiKey();
   const { updateApiKey, isUpdating } = useUpdateApiKey();
@@ -193,6 +197,10 @@ export default function ApiKeyDialog({
   };
 
   const onSubmit = async (): Promise<void> => {
+    const expiresAtChanged =
+      mode === 'create' ? expiresAt !== '' : expiresAt !== initialExpiresAtInput;
+    const expiresAtISO = expiresAt ? datetimeLocalToISO(expiresAt) : undefined;
+
     if (mode === 'create') {
       if (parsedCount === null || parsedCount < 1 || parsedCount > BATCH_COUNT_MAX) {
         toast.error(t('dialog.errors.countInvalid', { max: BATCH_COUNT_MAX }));
@@ -216,8 +224,7 @@ export default function ApiKeyDialog({
       return;
     }
 
-    if (expiresAt) {
-      const expiresAtISO = datetimeLocalToISO(expiresAt);
+    if (expiresAtChanged && expiresAt) {
       if (!expiresAtISO || new Date(expiresAtISO) <= new Date()) {
         toast.error(t('dialog.errors.expiresInPast'));
         return;
@@ -233,7 +240,7 @@ export default function ApiKeyDialog({
           quotaType === ApiKeyQuotaType.Custom ? (parsedQuotaAmount ?? undefined) : undefined,
         allow_all_models: allowAllModels,
         model_names: allowAllModels ? undefined : modelNames,
-        expires_at: datetimeLocalToISO(expiresAt),
+        expires_at: expiresAtISO,
       };
 
       const res = await createApiKey(payload);
@@ -261,7 +268,7 @@ export default function ApiKeyDialog({
         quotaType === ApiKeyQuotaType.Custom && parsedQuotaAmount !== null
           ? parsedQuotaAmount
           : null,
-      expires_at: expiresAt ? (datetimeLocalToISO(expiresAt) ?? null) : null,
+      expires_at: expiresAtChanged ? (expiresAt ? expiresAtISO : null) : undefined,
     };
     await updateApiKey(initial.id, update);
     closeDialog();
@@ -372,7 +379,7 @@ export default function ApiKeyDialog({
                         max={BATCH_COUNT_MAX}
                         step={1}
                         value={count}
-                        onChange={e => setCount(e.target.value.replace(/\D/g, ''))}
+                        onChange={e => setCount(e.target.value)}
                         placeholder={t('dialog.placeholders.count')}
                       />
                       <p className="text-xs text-muted-foreground">

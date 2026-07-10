@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 
 	"github.com/gin-gonic/gin"
@@ -12,6 +13,8 @@ import (
 	workspace_repo "github.com/zgiai/zgi/api/internal/modules/workspace/repository"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
+
+const maxUpdateAPIKeyRequestBytes = 64 * 1024
 
 // APIKeyHandler handles HTTP requests for API key operations
 type APIKeyHandler struct {
@@ -140,6 +143,10 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 	var req dto.CreateAPIKeyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		return
+	}
+	if req.Count < 0 || req.Count > service.MaxAPIKeyBatchCount {
+		response.FailWithMessage(c, response.ErrInvalidParam, fmt.Sprintf("count must be between 1 and %d when provided", service.MaxAPIKeyBatchCount))
 		return
 	}
 
@@ -317,9 +324,12 @@ func (h *APIKeyHandler) UpdateAPIKey(c *gin.Context) {
 }
 
 func decodeUpdateAPIKeyRequest(body io.Reader, req *dto.UpdateAPIKeyRequest) error {
-	data, err := io.ReadAll(body)
+	data, err := io.ReadAll(io.LimitReader(body, maxUpdateAPIKeyRequestBytes+1))
 	if err != nil {
 		return err
+	}
+	if len(data) > maxUpdateAPIKeyRequestBytes {
+		return fmt.Errorf("request body exceeds %d bytes", maxUpdateAPIKeyRequestBytes)
 	}
 	if err := json.Unmarshal(data, req); err != nil {
 		return err

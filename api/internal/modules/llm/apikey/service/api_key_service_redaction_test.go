@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -87,6 +88,75 @@ func TestUpdateAPIKeyCanClearQuotaLimitAndExpiration(t *testing.T) {
 	require.Nil(t, updated.QuotaLimit)
 	require.Nil(t, updated.ExpiresAt)
 	require.Zero(t, updated.RemainQuota)
+}
+
+func TestCreateAPIKeyCountBounds(t *testing.T) {
+	tests := []struct {
+		name      string
+		count     int
+		wantCount int
+		wantError bool
+	}{
+		{name: "default count", count: 0, wantCount: 1},
+		{name: "maximum count", count: 20, wantCount: 20},
+		{name: "above maximum", count: 21, wantError: true},
+		{name: "negative count", count: -1, wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, db := newAPIKeyRedactionTestService(t)
+			organizationID := "11111111-1111-1111-1111-111111111111"
+
+			created, err := svc.CreateAPIKey(context.Background(), &dto.CreateAPIKeyRequest{
+				OrganizationID: &organizationID,
+				Name:           "batch",
+				Count:          tt.count,
+				QuotaType:      dto.QuotaTypeUnlimited,
+			})
+
+			if tt.wantError {
+				require.Error(t, err)
+				var count int64
+				require.NoError(t, db.Model(&model.TenantAPIKey{}).Count(&count).Error)
+				require.Zero(t, count)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Len(t, created.Keys, tt.wantCount)
+		})
+	}
+}
+
+func TestCreateAPIKeyRollsBackBatchWhenAnInsertFails(t *testing.T) {
+	svc, db := newAPIKeyRedactionTestService(t)
+	organizationID := "11111111-1111-1111-1111-111111111111"
+	createAttempts := 0
+	require.NoError(t, db.Callback().Create().Before("gorm:create").Register(
+		"test:fail_second_api_key_create",
+		func(tx *gorm.DB) {
+			if tx.Statement == nil || tx.Statement.Schema == nil || tx.Statement.Schema.Table != (model.TenantAPIKey{}).TableName() {
+				return
+			}
+			createAttempts++
+			if createAttempts == 2 {
+				tx.AddError(errors.New("forced second insert failure"))
+			}
+		},
+	))
+
+	_, err := svc.CreateAPIKey(context.Background(), &dto.CreateAPIKeyRequest{
+		OrganizationID: &organizationID,
+		Name:           "batch",
+		Count:          2,
+		QuotaType:      dto.QuotaTypeUnlimited,
+	})
+
+	require.ErrorContains(t, err, "forced second insert failure")
+	var count int64
+	require.NoError(t, db.Model(&model.TenantAPIKey{}).Count(&count).Error)
+	require.Zero(t, count)
 }
 
 func requireRedactedAPIKeyResponse(t *testing.T, response *dto.APIKeyResponse, fullKey string) {
