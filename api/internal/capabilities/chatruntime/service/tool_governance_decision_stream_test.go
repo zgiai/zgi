@@ -401,8 +401,8 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	if result.Status != runtimemodel.MessageStatusCompleted {
 		t.Fatalf("result status = %q, want completed", result.Status)
 	}
-	if result.Answer != "已删除文件「report.pdf」。" {
-		t.Fatalf("result answer = %q, want fast-path delete confirmation", result.Answer)
+	if result.Answer != "Deleted report.pdf." {
+		t.Fatalf("result answer = %q, want the main-model confirmation", result.Answer)
 	}
 	if len(fileService.deleted) != 1 || fileService.deleted[0] != "file-1" {
 		t.Fatalf("deleted files = %#v, want one delete for approved file-1", fileService.deleted)
@@ -413,8 +413,8 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	if len(llm.appChatRequests) != 0 {
 		t.Fatalf("AppChat requests = %d, want no model tool-planning calls", len(llm.appChatRequests))
 	}
-	if len(llm.streamRequests) != 0 {
-		t.Fatalf("AppChatStream requests = %d, want no summary call after fast path", len(llm.streamRequests))
+	if len(llm.streamRequests) != 1 {
+		t.Fatalf("AppChatStream requests = %d, want one main-model summary after approval", len(llm.streamRequests))
 	}
 
 	metadataEvent, ok := toolGovernanceDecisionEventFromMetadata(message.Metadata, "corr-approve")
@@ -441,7 +441,7 @@ func TestRunToolGovernanceDecisionStreamApproveExecutesBuiltinDeleteBeforeAnswer
 	}
 	clientAction := governanceMapFromAny(message.Metadata["client_action_continuation"])
 	if len(clientAction) != 0 {
-		t.Fatalf("client_action_continuation = %#v, want no asset observation when delete fast path completes", clientAction)
+		t.Fatalf("client_action_continuation = %#v, want no blocking continuation for record-only observation", clientAction)
 	}
 	continuation := governanceMapFromAny(message.Metadata["tool_governance_continuation"])
 	if continuation["status"] != "completed" || continuation["approval_status"] != "approved" {
@@ -559,17 +559,14 @@ func TestRunClientActionContinuationStreamAssetObservationUsesVerifierWithoutRep
 	if result.Answer != finalAnswer {
 		t.Fatalf("result answer = %q", result.Answer)
 	}
-	if len(llm.appChatRequests) != 2 {
-		t.Fatalf("AppChat requests = %d, want planning answer plus completion verifier", len(llm.appChatRequests))
+	if len(llm.appChatRequests) != 1 {
+		t.Fatalf("AppChat requests = %d, want the main-model answer without routine verifier", len(llm.appChatRequests))
 	}
-	if len(llm.streamRequests) != 0 {
-		t.Fatalf("AppChatStream requests = %d, want completion-verifier skill loop to suppress direct final streaming", len(llm.streamRequests))
+	if len(llm.streamRequests) != 1 {
+		t.Fatalf("AppChatStream requests = %d, want the main-model final answer to stream", len(llm.streamRequests))
 	}
 	if !toolGovernanceStreamRequestContains(llm.appChatRequests[0], "do not repeat the same side-effecting tool") {
 		t.Fatalf("skill-loop continuation request missing client action safety instruction: %q", toolGovernanceStreamRequestText(llm.appChatRequests[0]))
-	}
-	if !toolGovernanceStreamRequestContains(llm.appChatRequests[1], "completion post-verifier") {
-		t.Fatalf("second AppChat request = %q, want completion verifier", toolGovernanceStreamRequestText(llm.appChatRequests[1]))
 	}
 	if !messageRepo.updateCompletedCalled {
 		t.Fatal("UpdateCompleted was not called")
@@ -803,8 +800,8 @@ func TestRunClientActionContinuationStreamAgentUpdatedRouteCompletesWithoutRepea
 	if len(llm.appChatRequests) != 1 {
 		t.Fatalf("AppChat requests = %d, want planning answer without completion verifier", len(llm.appChatRequests))
 	}
-	if len(llm.streamRequests) != 0 {
-		t.Fatalf("AppChatStream requests = %d, want completion-verifier skill loop to suppress direct final streaming", len(llm.streamRequests))
+	if len(llm.streamRequests) != 1 {
+		t.Fatalf("AppChatStream requests = %d, want the main-model final answer to stream", len(llm.streamRequests))
 	}
 	if !toolGovernanceStreamRequestContains(llm.appChatRequests[0], "do not call console-navigator/navigate again for the same route") {
 		t.Fatalf("skill-loop continuation request missing route continuation instruction: %q", toolGovernanceStreamRequestText(llm.appChatRequests[0]))
@@ -1595,19 +1592,14 @@ func TestRunToolGovernanceDecisionStreamApproveToolFailureWithOperationPlanUsesV
 	if len(llm.appChatRequests) != 2 {
 		t.Fatalf("AppChat requests = %d, want failure answer plus completion verifier", len(llm.appChatRequests))
 	}
-	if len(llm.streamRequests) != 0 {
-		t.Fatalf("AppChatStream requests = %d, want operation-plan failure to use skill loop verifier", len(llm.streamRequests))
+	if len(llm.streamRequests) != 1 {
+		t.Fatalf("AppChatStream requests = %d, want the main-model failure answer to stream before audit", len(llm.streamRequests))
 	}
 	if !toolGovernanceStreamRequestContains(llm.appChatRequests[1], "completion post-verifier") {
 		t.Fatalf("second AppChat request = %q, want completion verifier", toolGovernanceStreamRequestText(llm.appChatRequests[1]))
 	}
-	if !strings.Contains(result.Answer, "没有被工具结果确认成功") ||
-		!strings.Contains(result.Answer, "file-manager/delete_file") ||
-		!strings.Contains(result.Answer, "file file-1 not found") {
-		t.Fatalf("result answer = %q, want verifier-backed failed-plan answer", result.Answer)
-	}
-	if strings.Contains(strings.ToLower(result.Answer), "success") {
-		t.Fatalf("result answer = %q, want no success claim after failed tool", result.Answer)
+	if result.Answer != finalAnswer {
+		t.Fatalf("result answer = %q, want verifier-approved main-model failure answer", result.Answer)
 	}
 	if len(fileService.deleted) != 0 {
 		t.Fatalf("deleted files = %#v, want none after execution failure", fileService.deleted)
@@ -1868,6 +1860,7 @@ func assertToolGovernanceApprovedStreamEvents(t *testing.T, events []StreamEvent
 	seen := map[string]bool{}
 	var approvedDecision bool
 	var finalMessage bool
+	var recordOnlyObservation bool
 	for _, event := range events {
 		seen[event.EventType] = true
 		if event.EventType == streamEventToolGovernanceDecision && event.Payload["approval_status"] == "approved" {
@@ -1882,9 +1875,9 @@ func assertToolGovernanceApprovedStreamEvents(t *testing.T, events []StreamEvent
 			}
 		}
 		if event.EventType == streamEventClientActionRequired && event.Payload["action_type"] == "asset_observation" {
-			t.Fatalf("events = %#v, want no asset observation client action after delete fast path", events)
+			recordOnlyObservation = event.Payload["continuation_policy"] == "record_only" && event.Payload["blocking"] == false
 		}
-		if event.EventType == streamEventMessage && strings.Contains(stringFromAny(event.Payload["answer"]), "已删除文件") {
+		if event.EventType == streamEventMessage && strings.Contains(stringFromAny(event.Payload["answer"]), "Deleted report.pdf") {
 			finalMessage = true
 		}
 	}
@@ -1893,6 +1886,7 @@ func assertToolGovernanceApprovedStreamEvents(t *testing.T, events []StreamEvent
 		streamEventToolGovernanceDecision,
 		streamEventSkillCallStart,
 		streamEventSkillCallEnd,
+		streamEventClientActionRequired,
 		streamEventMessage,
 		streamEventMessageEnd,
 	} {
@@ -1904,7 +1898,10 @@ func assertToolGovernanceApprovedStreamEvents(t *testing.T, events []StreamEvent
 		t.Fatalf("events = %#v, want approved tool governance decision", events)
 	}
 	if !finalMessage {
-		t.Fatalf("events = %#v, want fast-path final message", events)
+		t.Fatalf("events = %#v, want main-model final message", events)
+	}
+	if !recordOnlyObservation {
+		t.Fatalf("events = %#v, want a non-blocking record-only asset observation", events)
 	}
 }
 

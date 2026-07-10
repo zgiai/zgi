@@ -355,19 +355,6 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	if invocation != nil {
 		ensureOperationPlanInvocationStep(prepared.Message.Metadata, skillInvocationFromTrace(invocation.Trace, 0))
 		prepared.Message.Metadata = preparedOperationEvidenceMetadata(prepared.Message.Metadata)
-		if answer, ok := toolGovernanceFrozenFastPathAnswer(prepared, invocation.Trace); ok {
-			s.emitPreparedEvent(persistCtx, prepared, streamEventMessage, map[string]interface{}{
-				"conversation_id": prepared.Conversation.ID.String(),
-				"message_id":      prepared.Message.ID.String(),
-				"answer":          answer,
-			}, onEvent)
-			metadata := preparedResultMetadata(prepared.Message.Metadata, nil)
-			if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
-				return nil, true, err
-			}
-			s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
-			return &ChatResult{Answer: answer, Metadata: metadata, Usage: nil, Status: runtimemodel.MessageStatusCompleted}, true, nil
-		}
 	}
 
 	if toolGovernanceFrozenContinuationNeedsSkillLoop(prepared) {
@@ -485,32 +472,6 @@ func latestMatchingToolCallRuntimeID(metadata map[string]interface{}, skillID st
 	return ""
 }
 
-func toolGovernanceFrozenFastPathAnswer(prepared *PreparedChat, trace skills.SkillTrace) (string, bool) {
-	switch strings.ToLower(strings.TrimSpace(trace.Status)) {
-	case "error", "failed", "failure":
-		return "", false
-	}
-	if toolGovernanceFrozenPlanHasPendingFollowup(prepared, trace) {
-		return "", false
-	}
-	if prepared != nil && prepared.Message != nil {
-		evidence := skillLoopCompletionEvidence(prepared)()
-		if answer, ok := skillloop.FastPathFinalAnswerForCompletionEvidence(evidence); ok {
-			return answer, true
-		}
-		if answer, ok := skillloop.FastPathFinalAnswerForAgentMutationEvidence(evidence, trace); ok {
-			return answer, true
-		}
-	}
-	if answer, ok := toolGovernanceFrozenSimpleAgentConfigFastPathAnswer(prepared, trace); ok {
-		return answer, true
-	}
-	if prepared == nil || prepared.Message == nil {
-		return skillloop.FastPathFinalAnswerForToolTrace(trace)
-	}
-	return skillloop.FastPathFinalAnswerForToolTraceWithEvidence(trace, skillLoopCompletionEvidence(prepared)())
-}
-
 func toolGovernanceFrozenPlanHasPendingFollowup(prepared *PreparedChat, trace skills.SkillTrace) bool {
 	if prepared == nil || prepared.Message == nil || len(prepared.Message.Metadata) == 0 {
 		return false
@@ -535,43 +496,6 @@ func toolGovernanceFrozenPlanHasPendingFollowup(prepared *PreparedChat, trace sk
 		return true
 	}
 	return false
-}
-
-func toolGovernanceFrozenSimpleAgentConfigFastPathAnswer(prepared *PreparedChat, trace skills.SkillTrace) (string, bool) {
-	if prepared == nil || prepared.Message == nil ||
-		!strings.EqualFold(strings.TrimSpace(trace.SkillID), skills.SkillAgentManagement) ||
-		!strings.EqualFold(strings.TrimSpace(trace.ToolName), "update_agent_config") {
-		return "", false
-	}
-	status := strings.ToLower(strings.TrimSpace(trace.Status))
-	if status != "success" && status != "succeeded" && status != "completed" {
-		return "", false
-	}
-	answer, ok := skillloop.FastPathFinalAnswerForToolTrace(trace)
-	if !ok {
-		return "", false
-	}
-	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
-	if len(plan) == 0 || toolGovernanceFrozenPlanRequiresPostUpdateRead(plan) {
-		return "", false
-	}
-	if toolGovernanceFrozenPlanHasPendingAgentMutationOtherThan(plan, trace.ToolName) {
-		return "", false
-	}
-	expectedFields := toolGovernanceFrozenPlanExpectedAgentConfigFields(plan)
-	if len(expectedFields) == 0 {
-		expectedFields = operationPlanAgentConfigFieldsFromResult(trace.Result)
-	}
-	if len(expectedFields) == 0 || !toolGovernanceFrozenSimpleAgentConfigFields(expectedFields) {
-		return "", false
-	}
-	updatedFields := operationPlanAgentConfigFieldsFromResult(trace.Result)
-	for _, field := range expectedFields {
-		if !stringSliceContainsFold(updatedFields, field) {
-			return "", false
-		}
-	}
-	return answer, true
 }
 
 func toolGovernanceFrozenPlanHasPendingAgentMutationOtherThan(plan map[string]interface{}, completedToolName string) bool {

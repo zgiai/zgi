@@ -13,7 +13,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
-func TestRunPreparedSkillStreamUsesCompletionVerifierForInitialTurn(t *testing.T) {
+func TestRunPreparedSkillStreamUsesVerifierForLegacyOnlyEvidence(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writePostVerifierServiceTestSkill(t, catalogDir, "post-verifier-test")
@@ -94,19 +94,14 @@ func TestRunPreparedSkillStreamUsesCompletionVerifierForInitialTurn(t *testing.T
 	if len(llm.appChatRequests) != 2 {
 		t.Fatalf("AppChat requests = %d, want planning answer plus completion verifier", len(llm.appChatRequests))
 	}
-	if len(llm.streamRequests) != 0 {
-		t.Fatalf("AppChatStream requests = %d, want no direct final streaming before verifier", len(llm.streamRequests))
+	if len(llm.streamRequests) != 1 {
+		t.Fatalf("AppChatStream requests = %d, want the main-model answer to stream normally", len(llm.streamRequests))
 	}
 	if !toolGovernanceStreamRequestContains(llm.appChatRequests[1], "completion post-verifier") {
 		t.Fatalf("second AppChat request = %q, want completion verifier", toolGovernanceStreamRequestText(llm.appChatRequests[1]))
 	}
-	if !toolGovernanceStreamRequestContains(llm.appChatRequests[1], "operation_plan") {
-		t.Fatalf("completion verifier request missing operation_plan evidence: %q", toolGovernanceStreamRequestText(llm.appChatRequests[1]))
-	}
-	for _, want := range []string{"execution_ledger", "operation_ledger", "visible.md", "read_file"} {
-		if !toolGovernanceStreamRequestContains(llm.appChatRequests[1], want) {
-			t.Fatalf("completion verifier request missing %q evidence: %q", want, toolGovernanceStreamRequestText(llm.appChatRequests[1]))
-		}
+	if toolGovernanceStreamRequestContains(llm.appChatRequests[1], "visible.md") {
+		t.Fatalf("completion verifier request retained raw legacy resource metadata: %q", toolGovernanceStreamRequestText(llm.appChatRequests[1]))
 	}
 	if got := strings.TrimSpace(stringFromAny(prepared.Message.Metadata["guardrail_count"])); got != "" && got != "0" {
 		t.Fatalf("guardrail_count = %s, want no legacy guardrail traces when post verifier is configured", got)
@@ -118,7 +113,7 @@ func TestRunPreparedSkillStreamUsesCompletionVerifierForInitialTurn(t *testing.T
 	}
 }
 
-func TestRunPreparedSkillStreamMarksPlanFailedWhenVerifierStopsWithReplacementAnswer(t *testing.T) {
+func TestRunPreparedSkillStreamReturnsVerifierFailureToMainModel(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writePostVerifierServiceTestSkill(t, catalogDir, "post-verifier-test")
@@ -127,6 +122,7 @@ func TestRunPreparedSkillStreamMarksPlanFailedWhenVerifierStopsWithReplacementAn
 		appChatResponses: []*adapter.ChatResponse{
 			postVerifierServiceTestChatResponse("Agent configuration was updated."),
 			postVerifierServiceTestChatResponse(`{"status":"failed","reason":"update_agent_config was not executed","missing_steps":["tool:agent-management/update_agent_config"],"unsupported_claims":["Agent configuration was updated"],"final_answer":"\u6211\u8fd8\u4e0d\u80fd\u786e\u8ba4\u667a\u80fd\u4f53\u914d\u7f6e\u5df2\u66f4\u65b0\uff0c\u56e0\u4e3a update_agent_config \u8fd8\u6ca1\u6709\u6267\u884c\u3002"}`),
+			postVerifierServiceTestChatResponse("I could not confirm the Agent update because no configuration tool result is available."),
 		},
 	}
 	runtime := skills.NewRuntimeWithCatalog(nil, nil, catalogDir)
@@ -187,25 +183,22 @@ func TestRunPreparedSkillStreamMarksPlanFailedWhenVerifierStopsWithReplacementAn
 	if err != nil {
 		t.Fatalf("runPreparedSkillStream() error = %v", err)
 	}
-	if !strings.Contains(answer, "update_agent_config") {
-		t.Fatalf("answer = %q, want honest verifier replacement", answer)
+	if answer != "I could not confirm the Agent update because no configuration tool result is available." {
+		t.Fatalf("answer = %q, want the main-model repair", answer)
 	}
 	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
-	if got := stringFromAny(plan["status"]); got != operationPlanStatusFailed {
-		t.Fatalf("operation_plan status = %q, want failed; plan=%#v", got, plan)
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusCompleted {
+		t.Fatalf("operation_plan status = %q, want completed after truthful main-model final; plan=%#v", got, plan)
 	}
 	if got := stringFromAny(plan["pending_next_action"]); got != "none" {
 		t.Fatalf("pending_next_action = %q, want none; plan=%#v", got, plan)
 	}
-	if got := operationPlanStepStatusForTest(plan, updateStepID); got != operationPlanStepStatusFailed {
-		t.Fatalf("%s status = %q, want failed; plan=%#v", updateStepID, got, plan)
-	}
 	verification := mapFromOperationContext(plan["completion_verification"])
-	if got := stringFromAny(verification["status"]); got != "failed" {
-		t.Fatalf("completion_verification.status = %q, want failed", got)
+	if got := stringFromAny(verification["status"]); got != "pass" {
+		t.Fatalf("completion_verification.status = %q, want pass", got)
 	}
-	if missing := stringSliceFromAny(verification["missing_steps"]); len(missing) != 1 || missing[0] != updateStepID {
-		t.Fatalf("completion_verification.missing_steps = %#v, want update step", missing)
+	if got := stringFromAny(verification["source"]); got != "main_model_final" {
+		t.Fatalf("completion_verification.source = %q, want main_model_final", got)
 	}
 }
 
@@ -313,8 +306,8 @@ func TestRunPreparedSkillStreamDoesNotUseLegacyFinalAnswerGuardForConsoleFileDel
 	if answer != "The file has been deleted." {
 		t.Fatalf("answer = %q, want verifier-approved delete answer", answer)
 	}
-	if len(llm.appChatRequests) != 2 {
-		t.Fatalf("AppChat requests = %d, want planning answer plus completion verifier", len(llm.appChatRequests))
+	if len(llm.appChatRequests) != 1 {
+		t.Fatalf("AppChat requests = %d, want no routine verifier after canonical delete evidence", len(llm.appChatRequests))
 	}
 	for index, request := range llm.appChatRequests {
 		if toolGovernanceStreamRequestContains(request, "Runtime guardrail feedback") {
@@ -331,7 +324,7 @@ func TestRunPreparedSkillStreamDoesNotUseLegacyFinalAnswerGuardForConsoleFileDel
 	}
 }
 
-func TestRunPreparedSkillStreamOverridesVerifierPassWhenPlanFailed(t *testing.T) {
+func TestRunPreparedSkillStreamKeepsMainModelAnswerWhenVerifierPassesFailedEvidence(t *testing.T) {
 	ctx := context.Background()
 	llm := &toolGovernanceStreamLLM{
 		appChatResponses: []*adapter.ChatResponse{
@@ -411,13 +404,8 @@ func TestRunPreparedSkillStreamOverridesVerifierPassWhenPlanFailed(t *testing.T)
 	if err != nil {
 		t.Fatalf("runPreparedSkillStream() error = %v", err)
 	}
-	if strings.Contains(answer, "saved to File Management") {
-		t.Fatalf("answer = %q, want failed-plan override instead of optimistic candidate", answer)
-	}
-	for _, want := range []string{"file-manager/save_file_to_management", "workspace permission denied"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer = %q, want fragment %q", answer, want)
-		}
+	if answer != "The file has been saved to File Management." {
+		t.Fatalf("answer = %q, want verifier-approved main-model candidate", answer)
 	}
 	if len(llm.appChatRequests) != 2 {
 		t.Fatalf("AppChat requests = %d, want planning answer plus completion verifier", len(llm.appChatRequests))
@@ -427,7 +415,7 @@ func TestRunPreparedSkillStreamOverridesVerifierPassWhenPlanFailed(t *testing.T)
 	}
 }
 
-func TestRunPreparedSkillStreamOverridesVerifierPassWhenRouteClientActionFailed(t *testing.T) {
+func TestRunPreparedSkillStreamKeepsMainModelAnswerWhenRouteVerifierPasses(t *testing.T) {
 	ctx := context.Background()
 	llm := &toolGovernanceStreamLLM{
 		appChatResponses: []*adapter.ChatResponse{
@@ -506,13 +494,8 @@ func TestRunPreparedSkillStreamOverridesVerifierPassWhenRouteClientActionFailed(
 	if err != nil {
 		t.Fatalf("runPreparedSkillStream() error = %v", err)
 	}
-	if strings.Contains(answer, "now on the Files page") {
-		t.Fatalf("answer = %q, want failed route override instead of optimistic candidate", answer)
-	}
-	for _, want := range []string{"console-navigator/navigate", "route did not finish loading"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer = %q, want fragment %q", answer, want)
-		}
+	if answer != "You are now on the Files page." {
+		t.Fatalf("answer = %q, want verifier-approved main-model candidate", answer)
 	}
 	if len(llm.appChatRequests) != 2 {
 		t.Fatalf("AppChat requests = %d, want planning answer plus completion verifier", len(llm.appChatRequests))

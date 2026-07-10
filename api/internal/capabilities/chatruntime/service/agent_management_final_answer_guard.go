@@ -16,7 +16,6 @@ func skillLoopAgentManagementFinalAnswerGuard(prepared *PreparedChat) skillloop.
 	currentAgentID := currentConsoleAgentID(prepared.parts)
 	configReadTargetID := agentManagementConfigReadTargetID(prepared.parts)
 	deleteTarget := consoleNavigationRouteHint{Href: "/console/agents", Label: "Agent list"}
-	wantsCreatedDetail := hasConsoleNavigator && wantsCreatedAgentDetailNavigationForPrepared(prepared)
 	modelDecidesPlan := preparedOperationPlanModelDecides(prepared)
 	requiredBindingTools := []string(nil)
 	if !modelDecidesPlan {
@@ -29,7 +28,7 @@ func skillLoopAgentManagementFinalAnswerGuard(prepared *PreparedChat) skillloop.
 	requiresConfigRead := !modelDecidesPlan && configReadTargetID != "" &&
 		agentManagementFinalAnswerRequiresConfigRead(prepared, operationPlan) &&
 		len(requiredBindingTools) == 0
-	if currentAgentID == "" && !wantsCreatedDetail && !requiresConfigRead {
+	if currentAgentID == "" && !requiresConfigRead {
 		return nil
 	}
 	return func(req skillloop.FinalAnswerGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
@@ -40,17 +39,6 @@ func skillLoopAgentManagementFinalAnswerGuard(prepared *PreparedChat) skillloop.
 		}
 		if missingTool := firstMissingAgentBindingMutation(req, requiredBindingTools); missingTool != "" {
 			return agentBindingRequiresMutationGuardResult(missingTool, requiredBindingTools), true
-		}
-		if wantsCreatedDetail {
-			if createdHref := createdAgentDetailHrefFromCalls(req.SuccessfulToolCalls); createdHref != "" &&
-				!clientActionContinuationLoadedRoute(prepared.parts, createdHref) &&
-				!finalAnswerGuardHasExactConsoleNavigateCall(req.SuccessfulToolCalls, createdHref) &&
-				!finalAnswerGuardHasExactConsoleNavigateCall(req.AttemptedToolCalls, createdHref) {
-				return createdAgentRequiresDetailNavigationGuardResult(consoleNavigationRouteHint{
-					Href:  createdHref,
-					Label: "Agent detail",
-				}), true
-			}
 		}
 		if !hasConsoleNavigator || currentAgentID == "" || !finalAnswerGuardHasAgentDeleteCall(req.SuccessfulToolCalls, currentAgentID) {
 			return skillloop.FinalAnswerGuardResult{}, false
@@ -73,24 +61,6 @@ func preparedOperationPlanModelDecides(prepared *PreparedChat) bool {
 	}
 	return strings.EqualFold(strings.TrimSpace(stringFromAny(plan["planning_mode"])), "phase_only_model_decides") ||
 		strings.EqualFold(strings.TrimSpace(stringFromAny(plan["tool_choice_mode"])), aiChatTurnToolChoiceModelDecides)
-}
-
-func wantsCreatedAgentDetailNavigationForPrepared(prepared *PreparedChat) bool {
-	if prepared == nil || prepared.parts == nil {
-		return false
-	}
-	if intent := prepared.parts.ModelTurnIntent; intent != nil {
-		return intent.OpenCreatedAgentDetail
-	}
-	if prepared.Message != nil {
-		plan := mapFromOperationContext(metadataValue(prepared.Message.Metadata, "operation_plan"))
-		if len(plan) > 0 {
-			if boolFromPlanValue(plan["open_created_agent_detail"]) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func boolFromPlanValue(value interface{}) bool {

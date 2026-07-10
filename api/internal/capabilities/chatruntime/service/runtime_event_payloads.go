@@ -7,7 +7,6 @@ import (
 	"time"
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
-	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skilltrace"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
@@ -34,9 +33,6 @@ func clientActionRequiredPayload(prepared *PreparedChat, trace skills.SkillTrace
 		return payload
 	}
 	if isNonBlockingAgentManagementMutation(trace) {
-		return nil
-	}
-	if _, ok := skillloop.FastPathFinalAnswerForToolTrace(trace); ok {
 		return nil
 	}
 	if payload := assetObservationClientActionRequiredPayload(prepared, trace, callID); len(payload) > 0 {
@@ -116,15 +112,6 @@ func agentManagementRouteNavigationClientActionRequiredPayload(prepared *Prepare
 	routeKind := ""
 	reason := ""
 	switch strings.TrimSpace(trace.ToolName) {
-	case "create_agent":
-		if !createdAgentClientActionShouldOpenDetail(prepared) {
-			return nil
-		}
-		href = agentDetailHrefFromTrace(trace)
-		label = "Agent detail"
-		labelKey = "agentDetail"
-		routeKind = "agent_detail"
-		reason = "open_created_agent_detail"
 	case "delete_agent":
 		if !deletedAgentIsCurrentDetailPage(prepared, trace) {
 			return nil
@@ -175,13 +162,6 @@ func agentManagementRouteNavigationClientActionRequiredPayload(prepared *Prepare
 		"reason":              reason,
 		"result":              result,
 	})
-}
-
-func createdAgentClientActionShouldOpenDetail(prepared *PreparedChat) bool {
-	if prepared == nil || prepared.parts == nil {
-		return false
-	}
-	return wantsCreatedAgentDetailNavigationForPrepared(prepared)
 }
 
 func deletedAgentIsCurrentDetailPage(prepared *PreparedChat, trace skills.SkillTrace) bool {

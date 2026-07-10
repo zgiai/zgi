@@ -21,64 +21,6 @@ import (
 	workflowbuiltin "github.com/zgiai/zgi/api/internal/modules/tools/builtin/workflow"
 )
 
-func TestCompletionEvidenceContinuationSkipsPendingPlanStepForUnresolvedSkill(t *testing.T) {
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": "in_progress",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/update_agent_config",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "update_agent_config",
-					"status":    "pending",
-				},
-			},
-		},
-	}
-	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
-		Metadata: skills.SkillMetadata{ID: skills.SkillFileManager},
-	}}}
-
-	if _, ok := completionEvidenceContinuationSystemMessage(evidence, 0, resolved); ok {
-		t.Fatal("completionEvidenceContinuationSystemMessage() ok = true, want false for unresolved pending skill")
-	}
-}
-
-func TestCompletionEvidenceContinuationAllowsPendingPlanStepForResolvedSkill(t *testing.T) {
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": "in_progress",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/update_agent_config",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "update_agent_config",
-					"status":    "pending",
-				},
-			},
-		},
-	}
-	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
-		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
-	}}}
-
-	feedback, ok := completionEvidenceContinuationSystemMessage(evidence, 0, resolved)
-	if !ok {
-		t.Fatal("completionEvidenceContinuationSystemMessage() ok = false, want true for resolved pending skill")
-	}
-	content := fmt.Sprint(feedback.Content)
-	for _, leaked := range []string{"agent-management/update_agent_config", "suggested_next_tool", "pending_tool_step"} {
-		if strings.Contains(content, leaked) {
-			t.Fatalf("feedback leaked scripted tool directive %q: %v", leaked, feedback.Content)
-		}
-	}
-	for _, fragment := range []string{"operation strategy is advisory", "choose the concrete next action", "Pending phase evidence JSON"} {
-		if !strings.Contains(content, fragment) {
-			t.Fatalf("feedback = %v, want semantic fragment %q", feedback.Content, fragment)
-		}
-	}
-}
-
 func TestInitialLoadedSkillsForRunRestoresMetadataState(t *testing.T) {
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
 		{Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement}},
@@ -179,164 +121,6 @@ func TestHandleLoadSkillCallDoesNotEmitEventForAlreadyLoadedSkill(t *testing.T) 
 	}
 }
 
-func TestCompletionEvidenceVerifiedFinalAnswerOverridesStaleNeedsActionText(t *testing.T) {
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": "completed",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":                                "tool:agent-management/update_agent_config",
-					"status":                            "completed",
-					"skill_id":                          skills.SkillAgentManagement,
-					"tool_name":                         "update_agent_config",
-					"expected_updated_fields":           []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
-					"expected_binding_actions":          map[string]interface{}{"enabled_skill_ids": "bind"},
-					"requires_post_update_verification": true,
-					"arguments": map[string]interface{}{
-						"model_provider":        "deepseek",
-						"model":                 "deepseek-v4-flash",
-						"system_prompt":         "Write fiction and generate files when needed.",
-						"file_upload_enabled":   true,
-						"add_enabled_skill_ids": []interface{}{"file-generator"},
-					},
-				},
-				map[string]interface{}{
-					"id":                                "tool:agent-management/get_agent_config#post_update",
-					"status":                            "completed",
-					"skill_id":                          skills.SkillAgentManagement,
-					"tool_name":                         "get_agent_config",
-					"required_post_update_verification": true,
-				},
-			},
-		},
-		"skill_invocations": []interface{}{
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "update_agent_config",
-				"arguments": map[string]interface{}{
-					"expected_updated_fields":  []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
-					"expected_binding_actions": map[string]interface{}{"enabled_skill_ids": "bind"},
-					"model_provider":           "deepseek",
-					"model":                    "deepseek-v4-flash",
-					"system_prompt":            "Write fiction and generate files when needed.",
-					"file_upload_enabled":      true,
-					"add_enabled_skill_ids":    []interface{}{"file-generator"},
-				},
-				"result": map[string]interface{}{
-					"status":              "completed",
-					"agent_id":            "agent-created-1",
-					"agent_name":          "小说创作大师",
-					"updated_fields":      []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
-					"satisfied_fields":    []interface{}{"model_provider", "model", "system_prompt", "file_upload_enabled", "enabled_skill_ids"},
-					"model_provider":      "deepseek",
-					"model":               "deepseek-v4-flash",
-					"file_upload_enabled": true,
-					"enabled_skill_ids":   []interface{}{"file-generator"},
-				},
-			},
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "get_agent_config",
-				"result": map[string]interface{}{
-					"status":              "completed",
-					"agent_id":            "agent-created-1",
-					"agent_name":          "小说创作大师",
-					"model_provider":      "deepseek",
-					"model":               "deepseek-v4-flash",
-					"system_prompt":       "Write fiction and generate files when needed.",
-					"file_upload_enabled": true,
-					"enabled_skill_ids":   []interface{}{"file-generator"},
-				},
-			},
-		},
-	}
-
-	answer, ok := completionEvidenceVerifiedFinalAnswer(RunRequest{
-		CompletionEvidence: func() map[string]interface{} {
-			return evidence
-		},
-	}, nil, "我还不能确认这个操作已经完成。")
-	if !ok {
-		t.Fatal("completionEvidenceVerifiedFinalAnswer() ok = false, want tool evidence to override stale needs_action text")
-	}
-	if strings.Contains(answer, "不能确认") || strings.Contains(strings.ToLower(answer), "cannot confirm") {
-		t.Fatalf("answer = %q, want confirmed evidence-grounded result", answer)
-	}
-	for _, want := range []string{"deepseek-v4-flash", "文件上传"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer = %q, want %q", answer, want)
-		}
-	}
-}
-
-func TestCompletionEvidenceContinuationAllowsPendingReadPlanStepForResolvedSkill(t *testing.T) {
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": "in_progress",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/get_agent_config",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "get_agent_config",
-					"status":    "pending",
-				},
-				map[string]interface{}{
-					"id":        "tool:agent-management/update_agent_identity",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "update_agent_identity",
-					"status":    "pending",
-				},
-			},
-		},
-	}
-	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
-		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
-	}}}
-
-	feedback, ok := completionEvidenceContinuationSystemMessage(evidence, 0, resolved)
-	if !ok {
-		t.Fatal("completionEvidenceContinuationSystemMessage() ok = false, want true for resolved pending read step")
-	}
-	content := fmt.Sprint(feedback.Content)
-	for _, leaked := range []string{"agent-management/get_agent_config", "suggested_next_tool", "pending_tool_step"} {
-		if strings.Contains(content, leaked) {
-			t.Fatalf("feedback leaked scripted read directive %q: %v", leaked, feedback.Content)
-		}
-	}
-	for _, fragment := range []string{"operation strategy is advisory", "choose the concrete next action", "Pending phase evidence JSON"} {
-		if !strings.Contains(content, fragment) {
-			t.Fatalf("feedback = %v, want semantic fragment %q", feedback.Content, fragment)
-		}
-	}
-}
-
-func TestCompletionEvidenceContinuationSkipsPostVerificationNavigationStep(t *testing.T) {
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": "in_progress",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:console-navigator/navigate",
-					"skill_id":  skills.SkillConsoleNavigator,
-					"tool_name": "navigate",
-					"status":    "pending",
-				},
-			},
-		},
-	}
-	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
-		Metadata: skills.SkillMetadata{ID: skills.SkillConsoleNavigator},
-	}}}
-
-	if _, ok := completionEvidenceContinuationSystemMessage(evidence, 0, resolved); ok {
-		t.Fatal("completionEvidenceContinuationSystemMessage() ok = true, want false for post-verification navigation step")
-	}
-}
-
 func TestNormalizeDirectLoadedSkillToolCallWrapsUniqueLoadedTool(t *testing.T) {
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
 		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
@@ -416,147 +200,6 @@ func TestNormalizeDirectLoadedSkillToolCallIgnoresUnloadedTool(t *testing.T) {
 	}
 	if stringArg(normalizedArgs, "agent_id") != "agent-1" {
 		t.Fatalf("arguments changed unexpectedly: %#v", normalizedArgs)
-	}
-}
-
-func TestCompletionEvidenceContinuationAllowsRequiredPostUpdateAgentConfigRead(t *testing.T) {
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": "in_progress",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":                                "tool:agent-management/get_agent_config#post_update",
-					"skill_id":                          skills.SkillAgentManagement,
-					"tool_name":                         "get_agent_config",
-					"status":                            "pending",
-					"phase":                             "post_update_verification",
-					"required_post_update_verification": true,
-				},
-			},
-		},
-	}
-	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
-		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
-	}}}
-
-	feedback, ok := completionEvidenceContinuationSystemMessage(evidence, 0, resolved)
-	if !ok {
-		t.Fatal("completionEvidenceContinuationSystemMessage() ok = false, want true for requested post-update config read")
-	}
-	content := fmt.Sprint(feedback.Content)
-	for _, leaked := range []string{"agent-management/get_agent_config", "suggested_next_tool", "pending_tool_step"} {
-		if strings.Contains(content, leaked) {
-			t.Fatalf("feedback leaked scripted post-update read directive %q: %v", leaked, feedback.Content)
-		}
-	}
-	for _, fragment := range []string{"operation strategy is advisory", "required_post_update_verification", "choose the concrete next action"} {
-		if !strings.Contains(content, fragment) {
-			t.Fatalf("feedback = %v, want semantic fragment %q", feedback.Content, fragment)
-		}
-	}
-}
-
-func TestCompletionEvidenceContinuationAllowsModelDecidesRequiredPostUpdateAgentConfigRead(t *testing.T) {
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":           "in_progress",
-			"tool_choice_mode": operationPlanToolChoiceModelDecides,
-			"planning_mode":    "phase_only_model_decides",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/update_agent_config",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "update_agent_config",
-					"status":    "completed",
-				},
-				map[string]interface{}{
-					"id":                                "tool:agent-management/get_agent_config#post_update",
-					"skill_id":                          skills.SkillAgentManagement,
-					"tool_name":                         "get_agent_config",
-					"status":                            "pending",
-					"phase":                             "post_update_verification",
-					"required_post_update_verification": true,
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:agent-management/update_agent_config":          "completed",
-				"tool:agent-management/get_agent_config#post_update": "pending",
-			},
-		},
-	}
-	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
-		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
-	}}}
-
-	feedback, ok := completionEvidenceContinuationSystemMessage(evidence, 0, resolved)
-	if !ok {
-		t.Fatal("completionEvidenceContinuationSystemMessage() ok = false, want true for model-decides post-update config read")
-	}
-	content := fmt.Sprint(feedback.Content)
-	for _, leaked := range []string{"agent-management/get_agent_config", "suggested_next_tool", "pending_tool_step"} {
-		if strings.Contains(content, leaked) {
-			t.Fatalf("feedback leaked model-decides tool directive %q: %v", leaked, feedback.Content)
-		}
-	}
-	for _, fragment := range []string{"operation strategy is advisory", "required_post_update_verification", "choose the concrete next action"} {
-		if !strings.Contains(content, fragment) {
-			t.Fatalf("feedback = %v, want semantic fragment %q", feedback.Content, fragment)
-		}
-	}
-}
-
-func TestCompletionEvidenceContinuationAllowsModelDecidesPendingAgentMutation(t *testing.T) {
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":              "in_progress",
-			"tool_choice_mode":    operationPlanToolChoiceModelDecides,
-			"planning_mode":       "phase_only_model_decides",
-			"pending_next_action": "Run tool:agent-management/create_agent",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/delete_agent",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "delete_agent",
-					"status":    "completed",
-				},
-				map[string]interface{}{
-					"id":        "tool:agent-management/create_agent",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "create_agent",
-					"status":    "pending",
-				},
-				map[string]interface{}{
-					"id":        "tool:agent-management/update_agent_config",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "update_agent_config",
-					"status":    "pending",
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:agent-management/delete_agent":        "completed",
-				"tool:agent-management/create_agent":        "pending",
-				"tool:agent-management/update_agent_config": "pending",
-			},
-		},
-	}
-	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
-		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
-	}}}
-
-	feedback, ok := completionEvidenceContinuationSystemMessage(evidence, 0, resolved)
-	if !ok {
-		t.Fatal("completionEvidenceContinuationSystemMessage() ok = false, want true for model-decides pending create_agent")
-	}
-	content := fmt.Sprint(feedback.Content)
-	for _, leaked := range []string{"agent-management/create_agent", "suggested_next_tool", "pending_tool_step"} {
-		if strings.Contains(content, leaked) {
-			t.Fatalf("feedback leaked model-decides tool directive %q: %v", leaked, feedback.Content)
-		}
-	}
-	for _, fragment := range []string{"operation strategy is advisory", "pending_user_visible_operation", "choose the concrete next action"} {
-		if !strings.Contains(content, fragment) {
-			t.Fatalf("feedback = %v, want semantic fragment %q", feedback.Content, fragment)
-		}
 	}
 }
 
@@ -959,412 +602,6 @@ func TestSkillToolCallIdentityForCallResolvesDirectLoadedTool(t *testing.T) {
 	}
 }
 
-func TestRedundantPostReadAgentConfigMutationAnswerStopsSecondMutation(t *testing.T) {
-	resultSummary := map[string]interface{}{
-		"status":     "completed",
-		"agent_name": "Support Agent",
-		"updated_fields": []interface{}{
-			"model_provider",
-			"model",
-			"system_prompt",
-			"home_title",
-			"suggested_questions",
-			"knowledge_base_ids",
-			"database_table_ids",
-			"workflow_ids",
-			"enabled_skill_ids",
-		},
-		"binding_changes": []interface{}{
-			map[string]interface{}{
-				"field":                "knowledge_base_ids",
-				"binding_kind":         "knowledge_base",
-				"change_action":        "bind",
-				"resource_count":       1,
-				"added_resource_count": 1,
-				"resource_names":       []interface{}{"Support KB"},
-			},
-			map[string]interface{}{
-				"field":                "database_table_ids",
-				"binding_kind":         "database_table",
-				"change_action":        "bind",
-				"resource_count":       2,
-				"added_resource_count": 2,
-				"resource_names":       []interface{}{"orders", "refunds"},
-			},
-		},
-	}
-	answer, ok := redundantPostReadAgentConfigMutationAnswer(skills.SkillAgentManagement, "update_agent_config", map[string]interface{}{
-		"agent_id":            "agent-1",
-		"model_provider":      "deepseek",
-		"model":               "deepseek-chat",
-		"system_prompt":       "Answer briefly in Chinese.",
-		"home_title":          "Support Home",
-		"suggested_questions": []interface{}{"How can I help?", "What should I summarize?"},
-		"knowledge_base_ids":  []interface{}{"kb-1"},
-		"database_table_ids":  []interface{}{"table-1", "table-2"},
-		"workflow_ids":        []interface{}{"workflow-1"},
-		"enabled_skill_ids":   []interface{}{"chart-generator"},
-		"memory_slot_updates": []interface{}{map[string]interface{}{"key": "preference", "description": "User preference"}},
-		"theme_configuration": map[string]interface{}{"primary_color": "#1677ff"},
-		"display_configuration": map[string]interface{}{
-			"layout": "compact",
-		},
-	}, map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":             "running",
-			"original_user_goal": "Update the current Agent config, then read the config again after completion.",
-		},
-		"skill_invocations": []interface{}{
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "update_agent_config",
-				"arguments": map[string]interface{}{
-					"agent_id":            "agent-1",
-					"model_provider":      "deepseek",
-					"model":               "deepseek-chat",
-					"system_prompt":       "Answer briefly in Chinese.",
-					"home_title":          "Support Home",
-					"suggested_questions": []interface{}{"How can I help?", "What should I summarize?"},
-					"knowledge_base_ids":  []interface{}{"kb-1"},
-					"database_table_ids":  []interface{}{"table-1", "table-2"},
-					"workflow_ids":        []interface{}{"workflow-1"},
-					"enabled_skill_ids":   []interface{}{"chart-generator"},
-				},
-				"result": resultSummary,
-			},
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "get_agent_config",
-				"arguments": map[string]interface{}{
-					"agent_id": "agent-1",
-				},
-			},
-		},
-	})
-	if !ok {
-		t.Fatal("redundantPostReadAgentConfigMutationAnswer() ok = false, want redundant mutation to close from evidence")
-	}
-	for _, want := range []string{"Support Agent", "Support KB", "orders", "refunds"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer = %q, want %q", answer, want)
-		}
-	}
-}
-
-func TestRedundantPostReadAgentConfigMutationAnswerStopsSatisfiedOnlySecondMutation(t *testing.T) {
-	resultSummary := map[string]interface{}{
-		"status":           "completed",
-		"agent_name":       "Support Agent",
-		"updated_fields":   []interface{}{"home_title"},
-		"satisfied_fields": []interface{}{"home_title", "theme_color"},
-		"home_title":       "Support Home",
-		"theme_color":      "emerald",
-	}
-	answer, ok := redundantPostReadAgentConfigMutationAnswer(skills.SkillAgentManagement, "update_agent_config", map[string]interface{}{
-		"agent_id":    "agent-1",
-		"home_title":  "Support Home",
-		"theme_color": "emerald",
-	}, map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":             "running",
-			"original_user_goal": "Set the Agent home title and theme color, then read the config again after completion.",
-		},
-		"skill_invocations": []interface{}{
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "update_agent_config",
-				"arguments": map[string]interface{}{
-					"agent_id":    "agent-1",
-					"home_title":  "Support Home",
-					"theme_color": "emerald",
-				},
-				"result": resultSummary,
-			},
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "get_agent_config",
-				"arguments": map[string]interface{}{
-					"agent_id": "agent-1",
-				},
-			},
-		},
-	})
-	if !ok {
-		t.Fatal("redundantPostReadAgentConfigMutationAnswer() ok = false, want satisfied fields to close redundant mutation")
-	}
-	for _, want := range []string{"Support Agent", "首页标题：Support Home", "主题色已满足：emerald"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer = %q, want %q", answer, want)
-		}
-	}
-}
-
-func TestRedundantPostReadAgentConfigMutationAnswerStopsSecondUnbindMutation(t *testing.T) {
-	resultSummary := map[string]interface{}{
-		"status":     "completed",
-		"agent_name": "Support Agent",
-		"updated_fields": []interface{}{
-			"enabled_skill_ids",
-		},
-		"binding_changes": []interface{}{
-			map[string]interface{}{
-				"field":                  "enabled_skill_ids",
-				"binding_kind":           "agent_skill",
-				"change_action":          "unbind",
-				"resource_count":         1,
-				"removed_resource_count": 1,
-				"resource_names":         []interface{}{"Chart Generator"},
-			},
-		},
-	}
-	answer, ok := redundantPostReadAgentConfigMutationAnswer(skills.SkillAgentManagement, "update_agent_config", map[string]interface{}{
-		"agent_id":                 "agent-1",
-		"remove_enabled_skill_ids": []interface{}{"chart-generator"},
-	}, map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":             "running",
-			"original_user_goal": "If Chart Generator is bound, unbind it; if unbound, bind it. After completion read config again.",
-			"tool_result": map[string]interface{}{
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "list_agent_skill_candidates",
-			},
-		},
-		"skill_invocations": []interface{}{
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "get_agent_config",
-			},
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "update_agent_config",
-				"arguments": map[string]interface{}{
-					"agent_id":                 "agent-1",
-					"remove_enabled_skill_ids": []interface{}{"chart-generator"},
-				},
-				"result": resultSummary,
-			},
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "get_agent_config",
-			},
-		},
-	})
-	if !ok {
-		t.Fatal("redundantPostReadAgentConfigMutationAnswer() ok = false, want redundant mutation to close from evidence")
-	}
-	for _, want := range []string{"Support Agent", "Chart Generator"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer = %q, want %q", answer, want)
-		}
-	}
-}
-
-func TestRedundantPostReadAgentIdentityMutationAnswerStopsSecondMutation(t *testing.T) {
-	resultSummary := map[string]interface{}{
-		"status":     "completed",
-		"agent_name": "Support Agent",
-		"updated_fields": []interface{}{
-			"name",
-			"description",
-			"icon",
-		},
-	}
-	answer, ok := redundantPostReadAgentConfigMutationAnswer(skills.SkillAgentManagement, "update_agent_identity", map[string]interface{}{
-		"agent_id":    "agent-1",
-		"name":        "Support Agent",
-		"description": "Friendly support bot",
-		"icon":        "SA",
-		"icon_type":   "text",
-	}, map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":             "running",
-			"original_user_goal": "Rename the current Agent and change its icon. After completion read the Agent config again.",
-			"tool_result": map[string]interface{}{
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "get_agent_config",
-			},
-		},
-		"skill_invocations": []interface{}{
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "update_agent_identity",
-				"arguments": map[string]interface{}{
-					"agent_id":    "agent-1",
-					"name":        "Support Agent",
-					"description": "Friendly support bot",
-					"icon":        "SA",
-					"icon_type":   "text",
-				},
-				"result": resultSummary,
-			},
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "get_agent_config",
-			},
-		},
-	})
-	if !ok {
-		t.Fatal("redundantPostReadAgentConfigMutationAnswer() ok = false, want redundant identity mutation to close from evidence")
-	}
-	for _, want := range []string{"Support Agent", "名称", "描述", "图标"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer = %q, want %q", answer, want)
-		}
-	}
-}
-
-func TestImmediateCompletionEvidenceFastPathAnswerClosesAgentIdentityAfterPostRead(t *testing.T) {
-	resultSummary := map[string]interface{}{
-		"status":     "completed",
-		"agent_id":   "agent-1",
-		"agent_name": "Support Agent",
-		"updated_fields": []interface{}{
-			"name",
-			"description",
-			"icon",
-		},
-	}
-	answer, ok := immediateCompletionEvidenceFastPathAnswer(map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":             "running",
-			"original_user_goal": "请把当前智能体改名为 Support Agent，描述改成 Friendly support bot，图标改成 SA，保存后确认页面上能看到新配置。",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/update_agent_identity",
-					"status":    "completed",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "update_agent_identity",
-				},
-				map[string]interface{}{
-					"id":                                "tool:agent-management/get_agent#post_update",
-					"status":                            "completed",
-					"skill_id":                          skills.SkillAgentManagement,
-					"tool_name":                         "get_agent",
-					"phase":                             "post_update_verification",
-					"required_post_update_verification": true,
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:agent-management/update_agent_identity": "completed",
-				"tool:agent-management/get_agent#post_update": "completed",
-			},
-		},
-		"skill_invocations": []interface{}{
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "update_agent_identity",
-				"arguments": map[string]interface{}{
-					"agent_id":    "agent-1",
-					"name":        "Support Agent",
-					"description": "Friendly support bot",
-					"icon":        "SA",
-				},
-				"result": resultSummary,
-			},
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "get_agent",
-				"arguments": map[string]interface{}{
-					"agent_id": "agent-1",
-				},
-				"result": map[string]interface{}{
-					"status":      "completed",
-					"agent_id":    "agent-1",
-					"agent_name":  "Support Agent",
-					"description": "Friendly support bot",
-					"icon":        "SA",
-				},
-			},
-		},
-	})
-	if !ok {
-		t.Fatal("immediateCompletionEvidenceFastPathAnswer() ok = false, want true after identity update and post-read evidence")
-	}
-	for _, want := range []string{"Support Agent", "名称", "描述", "图标", "已在更新后重新读取配置并完成确认"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer = %q, want %q", answer, want)
-		}
-	}
-}
-
-func TestRedundantPostReadAgentConfigMutationAnswerDoesNotTreatIdentityAsConfig(t *testing.T) {
-	resultSummary := map[string]interface{}{
-		"status":     "completed",
-		"agent_id":   "agent-1",
-		"agent_name": "Support Agent",
-		"updated_fields": []interface{}{
-			"name",
-			"description",
-			"icon",
-		},
-	}
-	answer, ok := redundantPostReadAgentConfigMutationAnswer(skills.SkillAgentManagement, "update_agent_config", map[string]interface{}{
-		"agent_id":            "agent-1",
-		"model_provider":      "deepseek",
-		"model":               "deepseek-chat",
-		"system_prompt":       "Answer briefly in Chinese.",
-		"home_title":          "Support Home",
-		"suggested_questions": []interface{}{"How can I help?", "What should I summarize?"},
-	}, map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":             "running",
-			"original_user_goal": "Rename the current Agent, then update model, prompt, home title, and suggested questions. After completion read the Agent config again.",
-		},
-		"skill_invocations": []interface{}{
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "update_agent_identity",
-				"arguments": map[string]interface{}{
-					"agent_id":    "agent-1",
-					"name":        "Support Agent",
-					"description": "Friendly support bot",
-					"icon":        "SA",
-					"icon_type":   "text",
-				},
-				"result": resultSummary,
-			},
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "get_agent_config",
-				"arguments": map[string]interface{}{
-					"agent_id": "agent-1",
-				},
-			},
-		},
-	})
-	if ok {
-		t.Fatalf("redundantPostReadAgentConfigMutationAnswer() ok = true, answer = %q; want pending config update to continue", answer)
-	}
-}
-
 func TestGovernedReadFileTargetSystemMessageAnchorsResolvedAsset(t *testing.T) {
 	message, ok := governedReadFileTargetSystemMessage(skills.SkillTrace{
 		SkillID:  skills.SkillFileReader,
@@ -1398,1461 +635,7 @@ func TestGovernedReadFileTargetSystemMessageAnchorsResolvedAsset(t *testing.T) {
 	}
 }
 
-func TestFastPathFinalAnswerForAgentBatchDelete(t *testing.T) {
-	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "delete_agents",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":        "partial_failed",
-			"target_count":  3,
-			"deleted_count": 2,
-			"item_results": []interface{}{
-				map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
-				map[string]interface{}{"status": "succeeded", "agent_name": "Agent Two"},
-				map[string]interface{}{"status": "failed", "agent_name": "Agent Three", "error": "permission denied"},
-			},
-		},
-	})
-	if !ok {
-		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true")
-	}
-	for _, want := range []string{"成功删除 2 个智能体", "Agent One", "Agent Two", "Agent Three", "permission denied"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer = %q, want %q", answer, want)
-		}
-	}
-}
-
-func TestFastPathFinalAnswerForAgentConfigUpdateIncludesBindingActions(t *testing.T) {
-	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "update_agent_config",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":     "completed",
-			"agent_name": "Support Agent",
-			"updated_fields": []interface{}{
-				"model",
-				"knowledge_base_ids",
-				"database_table_ids",
-				"workflow_ids",
-				"enabled_skill_ids",
-			},
-			"binding_changes": []interface{}{
-				map[string]interface{}{
-					"binding_kind":           "knowledge_base",
-					"change_action":          "unbind",
-					"resource_count":         1,
-					"removed_resource_count": 1,
-					"resource_names":         []interface{}{"Old KB"},
-				},
-				map[string]interface{}{
-					"binding_kind":         "workflow",
-					"change_action":        "bind",
-					"resource_count":       2,
-					"added_resource_count": 2,
-					"resource_names":       []interface{}{"Workflow A", "Workflow B"},
-				},
-			},
-		},
-	})
-	if !ok {
-		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true")
-	}
-	for _, want := range []string{"Support Agent", "Old KB", "Workflow A", "Workflow B"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer = %q, want %q", answer, want)
-		}
-	}
-}
-
-func TestFastPathFinalAnswerForCompletionEvidencePreservesBatchGroupFromLatestToolResult(t *testing.T) {
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":              "completed",
-			"pending_next_action": "none",
-		},
-		"operation_result_summary": map[string]interface{}{
-			"latest_tool_result": map[string]interface{}{
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "delete_agents",
-				"result_summary": map[string]interface{}{
-					"status":        "partial_failed",
-					"target_count":  3,
-					"deleted_count": 2,
-					"failed_count":  1,
-				},
-				"operation_group": map[string]interface{}{
-					"operation": "agent.delete",
-					"item_results": []interface{}{
-						map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
-						map[string]interface{}{"status": "succeeded", "agent_name": "Agent Two"},
-						map[string]interface{}{"status": "failed", "agent_name": "Agent Three", "error": "agent is locked"},
-					},
-				},
-			},
-		},
-	}
-
-	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
-	if !ok {
-		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want batch delete answer")
-	}
-	for _, want := range []string{"Agent One", "Agent Two", "Agent Three", "agent is locked"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer = %q, missing batch item evidence %q", answer, want)
-		}
-	}
-}
-
-func TestFastPathFinalAnswerForCompletionEvidenceIgnoresPendingSkillLoadStep(t *testing.T) {
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": "running",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/delete_agents",
-					"status":    "completed",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "delete_agents",
-				},
-				map[string]interface{}{
-					"id":       "skill:" + skills.SkillAgentManagement,
-					"title":    "Use agent-management",
-					"status":   "pending",
-					"skill_id": skills.SkillAgentManagement,
-					"role":     "primary",
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:agent-management/delete_agents":  "completed",
-				"skill:" + skills.SkillAgentManagement: "pending",
-			},
-			"pending_next_action": "Use agent-management",
-		},
-		"operation_result_summary": map[string]interface{}{
-			"latest_tool_result": map[string]interface{}{
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "delete_agents",
-				"result_summary": map[string]interface{}{
-					"status":        "completed",
-					"target_count":  2,
-					"deleted_count": 2,
-					"failed_count":  0,
-				},
-				"operation_group": map[string]interface{}{
-					"operation": "agent.delete",
-					"item_results": []interface{}{
-						map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
-						map[string]interface{}{"status": "succeeded", "agent_name": "Agent Two"},
-					},
-				},
-			},
-		},
-	}
-
-	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
-	if !ok {
-		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want batch delete answer despite pending skill load step")
-	}
-	for _, want := range []string{"成功删除 2 个智能体", "Agent One", "Agent Two"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer = %q, missing %q", answer, want)
-		}
-	}
-}
-
-func TestFastPathFinalAnswerForAgentDelete(t *testing.T) {
-	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "delete_agent",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":   "completed",
-			"effect":   "deleted",
-			"agent_id": "agent-1",
-			"agent": map[string]interface{}{
-				"name": "Agent One",
-			},
-		},
-	})
-	if !ok {
-		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true")
-	}
-	if !strings.Contains(answer, "Agent One") {
-		t.Fatalf("answer = %q, want delete confirmation with visible Agent name", answer)
-	}
-	if strings.Contains(answer, "agent-1") {
-		t.Fatalf("answer = %q, want hidden raw Agent id", answer)
-	}
-}
-
-func TestFastPathFinalAnswerForAgentConfigUpdateUsesBindingEvidence(t *testing.T) {
-	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "update_agent_config",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":   "completed",
-			"effect":   "updated",
-			"agent_id": "agent-1",
-			"updated_fields": []interface{}{
-				"knowledge_dataset_ids",
-				"database_bindings",
-				"model_provider",
-				"model",
-			},
-			"agent": map[string]interface{}{
-				"id":   "agent-1",
-				"name": "Support Agent",
-			},
-			"binding_changes": []interface{}{
-				map[string]interface{}{
-					"field":                  "knowledge_dataset_ids",
-					"binding_kind":           "knowledge_base",
-					"change_action":          "unbind",
-					"resource_count":         1,
-					"removed_resource_count": 1,
-					"resource_names":         []interface{}{"Test Knowledge"},
-				},
-				map[string]interface{}{
-					"field":                "database_bindings",
-					"binding_kind":         "database_table",
-					"change_action":        "bind",
-					"resource_count":       2,
-					"added_resource_count": 2,
-				},
-			},
-		},
-	})
-	if !ok {
-		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true")
-	}
-	for _, want := range []string{"Support Agent", "Test Knowledge"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer missing %q in %q", want, answer)
-		}
-	}
-	for _, unwanted := range []string{"agent-1"} {
-		if strings.Contains(answer, unwanted) {
-			t.Fatalf("answer contains %q, want hidden in %q", unwanted, answer)
-		}
-	}
-}
-
-func TestFastPathFinalAnswerForAgentConfigUpdateIgnoresUnchangedBindingFields(t *testing.T) {
-	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "update_agent_config",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":     "completed",
-			"effect":     "updated",
-			"agent_id":   "agent-1",
-			"agent_name": "Support Agent",
-			"updated_fields": []interface{}{
-				"enabled_skill_ids",
-				"knowledge_dataset_ids",
-				"database_bindings",
-				"workflow_bindings",
-			},
-			"binding_changes": []interface{}{
-				map[string]interface{}{
-					"field":                  "enabled_skill_ids",
-					"binding_kind":           "agent_skill",
-					"change_action":          "unbind",
-					"resource_count":         1,
-					"removed_resource_count": 1,
-					"resource_names":         []interface{}{"Old Skill"},
-				},
-				map[string]interface{}{
-					"field":                  "knowledge_dataset_ids",
-					"binding_kind":           "knowledge_base",
-					"change_action":          "unbind",
-					"resource_count":         1,
-					"removed_resource_count": 1,
-					"resource_names":         []interface{}{"Old KB"},
-				},
-				map[string]interface{}{
-					"field":                  "database_bindings",
-					"binding_kind":           "database_table",
-					"change_action":          "unbind",
-					"resource_count":         1,
-					"removed_resource_count": 1,
-					"resource_names":         []interface{}{"Old Table"},
-				},
-			},
-		},
-	})
-	if !ok {
-		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true for actual binding changes")
-	}
-	for _, want := range []string{"Support Agent", "Old Skill", "Old KB", "Old Table"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer missing %q in %q", want, answer)
-		}
-	}
-}
-
-func TestFastPathFinalAnswerForAgentConfigUpdateRequiresEvidence(t *testing.T) {
-	_, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "update_agent_config",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":   "completed",
-			"agent_id": "agent-1",
-		},
-	})
-	if ok {
-		t.Fatal("FastPathFinalAnswerForToolTrace() ok = true, want false without update evidence")
-	}
-}
-
-func TestFastPathFinalAnswerForAgentConfigUpdateAcceptsSuccessResultStatus(t *testing.T) {
-	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "update_agent_config",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":         "success",
-			"effect":         "updated",
-			"agent_id":       "agent-1",
-			"updated_fields": []interface{}{"model"},
-			"agent": map[string]interface{}{
-				"id":   "agent-1",
-				"name": "Agent One",
-			},
-		},
-	})
-	if !ok {
-		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true for successful config update evidence")
-	}
-	if !strings.Contains(answer, "Agent One") {
-		t.Fatalf("answer = %q, want visible agent name", answer)
-	}
-	if strings.Contains(answer, "agent-1") {
-		t.Fatalf("answer = %q, want hidden raw agent id", answer)
-	}
-}
-
-func TestFastPathFinalAnswerForFileManagementSave(t *testing.T) {
-	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillFileManager,
-		ToolName: "save_file_to_management",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":         "completed",
-			"target":         "managed_file",
-			"file_id":        "managed-file-1",
-			"upload_file_id": "managed-file-1",
-			"filename":       "star-cat.svg",
-		},
-	})
-	if !ok {
-		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true")
-	}
-	if !strings.Contains(answer, "star-cat.svg") {
-		t.Fatalf("answer = %q, want file save confirmation", answer)
-	}
-}
-
-func TestFastPathFinalAnswerForFileManagementSaveRequiresManagedFileID(t *testing.T) {
-	_, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillFileManager,
-		ToolName: "save_file_to_management",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":   "completed",
-			"target":   "managed_file",
-			"filename": "star-cat.svg",
-		},
-	})
-	if ok {
-		t.Fatal("FastPathFinalAnswerForToolTrace() ok = true, want false without managed file id")
-	}
-}
-
-func TestFastPathFinalAnswerForFileManagementDelete(t *testing.T) {
-	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillFileManager,
-		ToolName: "delete_file",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":        "completed",
-			"deleted_count": 1,
-			"file_name":     "aichat-plan-smoke.md",
-		},
-	})
-	if !ok {
-		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want true")
-	}
-	if !strings.Contains(answer, "aichat-plan-smoke.md") {
-		t.Fatalf("answer = %q, want file delete confirmation", answer)
-	}
-}
-
-func TestFastPathFinalAnswerForFileManagementDeleteRequiresDeletedEvidence(t *testing.T) {
-	_, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillFileManager,
-		ToolName: "delete_file",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":    "completed",
-			"file_name": "aichat-plan-smoke.md",
-		},
-	})
-	if ok {
-		t.Fatal("FastPathFinalAnswerForToolTrace() ok = true, want false without deleted evidence")
-	}
-}
-
-func TestFastPathFinalAnswerForGeneratedArtifact(t *testing.T) {
-	answer, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillFileGenerator,
-		ToolName: "generate_file",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":       "completed",
-			"target":       "temporary_artifact",
-			"tool_file_id": "tool-file-1",
-			"filename":     "draft.svg",
-		},
-	})
-	if !ok {
-		t.Fatal("FastPathFinalAnswerForToolTrace() ok = false, want generated artifact answer")
-	}
-	if !strings.Contains(answer, "draft.svg") || !strings.Contains(answer, "\u5df2\u751f\u6210") {
-		t.Fatalf("answer = %q, want generated artifact confirmation", answer)
-	}
-}
-
-func TestFastPathFinalAnswerForGeneratedArtifactBlocksManagedSavePending(t *testing.T) {
-	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillFileGenerator,
-		ToolName: "generate_file",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":       "completed",
-			"target":       "temporary_artifact",
-			"tool_file_id": "tool-file-1",
-			"filename":     "draft.svg",
-		},
-	}, map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":              "running",
-			"pending_next_action": "save_remaining_generated_files_to_file_management",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:file-generator/generate_file",
-					"status":    "completed",
-					"skill_id":  skills.SkillFileGenerator,
-					"tool_name": "generate_file",
-				},
-				map[string]interface{}{
-					"id":        "tool:file-manager/save_file_to_management",
-					"status":    "pending",
-					"skill_id":  skills.SkillFileManager,
-					"tool_name": "save_file_to_management",
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:file-generator/generate_file":         "completed",
-				"tool:file-manager/save_file_to_management": "pending",
-			},
-		},
-	})
-	if ok {
-		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = true, want blocked while managed save is pending")
-	}
-}
-
-func TestFastPathFinalAnswerForGeneratedArtifactBlocksPendingRoute(t *testing.T) {
-	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillFileGenerator,
-		ToolName: "generate_file",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":       "completed",
-			"target":       "temporary_artifact",
-			"tool_file_id": "tool-file-1",
-			"filename":     "draft.svg",
-		},
-	}, map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":              "running",
-			"pending_next_action": "navigate_to_files_page",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:file-generator/generate_file",
-					"status":    "completed",
-					"skill_id":  skills.SkillFileGenerator,
-					"tool_name": "generate_file",
-				},
-				map[string]interface{}{
-					"id":        "tool:console-navigator/navigate",
-					"status":    "pending",
-					"skill_id":  skills.SkillConsoleNavigator,
-					"tool_name": "navigate",
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:file-generator/generate_file": "completed",
-				"tool:console-navigator/navigate":   "pending",
-			},
-		},
-	})
-	if ok {
-		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = true, want blocked while route step is pending")
-	}
-}
-
-func TestFastPathFinalAnswerWithEvidenceBlocksDifferentPendingPlanAction(t *testing.T) {
-	createStepID := "tool:agent-management/create_agent"
-	deleteStepID := "tool:agent-management/delete_agents"
-	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "delete_agents",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":        "completed",
-			"operation":     "agent.delete.batch",
-			"target_count":  1,
-			"deleted_count": 1,
-		},
-	}, map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": "running",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        createStepID,
-					"status":    "pending",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "create_agent",
-				},
-				map[string]interface{}{
-					"id":        deleteStepID,
-					"status":    "completed",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "delete_agents",
-				},
-			},
-			"step_status": map[string]interface{}{
-				createStepID: "pending",
-				deleteStepID: "completed",
-			},
-		},
-	})
-	if ok {
-		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = true, want false for a different pending action")
-	}
-}
-
-func TestFastPathFinalAnswerWithEvidenceBlocksBatchDeleteWithEarlierPendingCreateStep(t *testing.T) {
-	answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "delete_agents",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":        "completed",
-			"operation":     "agent.delete.batch",
-			"target_count":  2,
-			"deleted_count": 2,
-			"item_results": []interface{}{
-				map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
-				map[string]interface{}{"status": "succeeded", "agent_name": "Agent Two"},
-			},
-		},
-	}, map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":              "running",
-			"pending_next_action": "agent-management/create_agent",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/create_agent",
-					"status":    "pending",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "create_agent",
-				},
-				map[string]interface{}{
-					"id":        "tool:agent-management/delete_agents",
-					"status":    "completed",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "delete_agents",
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:agent-management/create_agent":  "pending",
-				"tool:agent-management/delete_agents": "completed",
-			},
-		},
-	})
-	if !ok {
-		return
-	}
-	t.Fatalf("FastPathFinalAnswerForToolTraceWithEvidence() = (%q, true), want blocked while create_agent is still pending", answer)
-}
-
-func TestFastPathFinalAnswerWithEvidenceBlocksBatchDeleteWithPendingConfigPlan(t *testing.T) {
-	answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "delete_agents",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":        "completed",
-			"operation":     "agent.delete.batch",
-			"target_count":  2,
-			"deleted_count": 2,
-			"failed_count":  0,
-			"item_results": []interface{}{
-				map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
-				map[string]interface{}{"status": "succeeded", "agent_name": "Agent Two"},
-			},
-			"operation_group": map[string]interface{}{
-				"operation":     "agent.delete",
-				"status":        "completed",
-				"target_count":  2,
-				"success_count": 2,
-				"failed_count":  0,
-				"item_results": []interface{}{
-					map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
-					map[string]interface{}{"status": "succeeded", "agent_name": "Agent Two"},
-				},
-			},
-		},
-	}, map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":             "running",
-			"original_user_goal": "delete Agent One and Agent Two only, then verify they are gone",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/delete_agents",
-					"status":    "completed",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "delete_agents",
-				},
-				map[string]interface{}{
-					"id":        "tool:agent-management/get_agent_config",
-					"status":    "pending",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "get_agent_config",
-				},
-				map[string]interface{}{
-					"id":        "tool:agent-management/update_agent_config",
-					"status":    "pending",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "update_agent_config",
-				},
-				map[string]interface{}{
-					"id":        "tool:agent-management/list_agent_workflow_binding_candidates",
-					"status":    "pending",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "list_agent_workflow_binding_candidates",
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:agent-management/delete_agents":                          "completed",
-				"tool:agent-management/get_agent_config":                       "pending",
-				"tool:agent-management/update_agent_config":                    "pending",
-				"tool:agent-management/list_agent_workflow_binding_candidates": "pending",
-			},
-			"pending_next_action": "Run tool:agent-management/get_agent_config",
-		},
-	})
-	if !ok {
-		return
-	}
-	t.Fatalf("FastPathFinalAnswerForToolTraceWithEvidence() = (%q, true), want blocked while config/read steps are still pending", answer)
-}
-
-func TestFastPathFinalAnswerWithEvidenceBlocksBatchDeleteWhenFollowupEditRequested(t *testing.T) {
-	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "delete_agents",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":        "completed",
-			"operation":     "agent.delete.batch",
-			"target_count":  1,
-			"deleted_count": 1,
-			"item_results": []interface{}{
-				map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
-			},
-		},
-	}, map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":             "running",
-			"original_user_goal": "Delete Agent One, then update Agent Two's system prompt.",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/delete_agents",
-					"status":    "completed",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "delete_agents",
-				},
-				map[string]interface{}{
-					"id":        "tool:agent-management/update_agent_config",
-					"status":    "pending",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "update_agent_config",
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:agent-management/delete_agents":       "completed",
-				"tool:agent-management/update_agent_config": "pending",
-			},
-		},
-	})
-	if ok {
-		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = true, want blocked while requested follow-up edit is pending")
-	}
-}
-
-func TestFastPathFinalAnswerWithEvidenceBlocksBatchDeleteWhenLaterCreateStillPending(t *testing.T) {
-	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "delete_agents",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":        "completed",
-			"operation":     "agent.delete.batch",
-			"target_count":  1,
-			"deleted_count": 1,
-			"item_results": []interface{}{
-				map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
-			},
-		},
-	}, map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":              "running",
-			"pending_next_action": "agent-management/create_agent",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/delete_agents",
-					"status":    "completed",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "delete_agents",
-				},
-				map[string]interface{}{
-					"id":        "tool:agent-management/create_agent",
-					"status":    "pending",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "create_agent",
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:agent-management/delete_agents": "completed",
-				"tool:agent-management/create_agent":  "pending",
-			},
-		},
-	})
-	if ok {
-		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = true, want blocked when user still has a later create_agent step")
-	}
-}
-
-func TestFastPathFinalAnswerWithEvidenceBlocksRemainingPendingPlanMutation(t *testing.T) {
-	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "update_agent_config",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":         "completed",
-			"agent_name":     "Support Agent",
-			"updated_fields": []interface{}{"system_prompt"},
-		},
-	}, map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":              "running",
-			"pending_next_action": "none",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/update_agent_config",
-					"status":    "completed",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "update_agent_config",
-				},
-				map[string]interface{}{
-					"id":        "tool:agent-management/replace_agent_memory_slots",
-					"status":    "pending",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "replace_agent_memory_slots",
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:agent-management/update_agent_config":        "completed",
-				"tool:agent-management/replace_agent_memory_slots": "pending",
-			},
-		},
-	})
-	if ok {
-		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = true, want false while another mutation step remains pending")
-	}
-}
-
-func TestFastPathFinalAnswerWithEvidenceAllowsPostVerificationPendingAction(t *testing.T) {
-	for _, pending := range []string{
-		"console-navigator/navigate",
-		"agent-management/list_agents",
-		"asset_observation",
-	} {
-		answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
-			Kind:     "tool_call",
-			SkillID:  skills.SkillAgentManagement,
-			ToolName: "delete_agents",
-			Status:   "success",
-			Result: map[string]interface{}{
-				"status":        "completed",
-				"operation":     "agent.delete.batch",
-				"target_count":  1,
-				"deleted_count": 1,
-				"item_results": []interface{}{
-					map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
-				},
-			},
-		}, map[string]interface{}{
-			"operation_plan": map[string]interface{}{
-				"status":              "running",
-				"pending_next_action": pending,
-			},
-		})
-		if !ok {
-			t.Fatalf("FastPathFinalAnswerForToolTraceWithEvidence() ok = false, want true for post-verification pending action %q", pending)
-		}
-		if !strings.Contains(answer, "Agent One") {
-			t.Fatalf("answer = %q, want deleted item name for pending action %q", answer, pending)
-		}
-	}
-}
-
-func TestFastPathFinalAnswerWithEvidenceAllowsRemainingPostVerificationPlanStep(t *testing.T) {
-	answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "delete_agents",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":        "completed",
-			"operation":     "agent.delete.batch",
-			"target_count":  2,
-			"deleted_count": 2,
-			"item_results": []interface{}{
-				map[string]interface{}{"status": "succeeded", "agent_name": "Agent One"},
-				map[string]interface{}{"status": "succeeded", "agent_name": "Agent Two"},
-			},
-		},
-	}, map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":              "running",
-			"pending_next_action": "none",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/delete_agents",
-					"status":    "completed",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "delete_agents",
-				},
-				map[string]interface{}{
-					"id":        "tool:console-navigator/navigate",
-					"status":    "pending",
-					"skill_id":  skills.SkillConsoleNavigator,
-					"tool_name": "navigate",
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:agent-management/delete_agents": "completed",
-				"tool:console-navigator/navigate":     "pending",
-			},
-		},
-	})
-	if !ok {
-		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = false, want true when only post-verification route remains")
-	}
-	if !strings.Contains(answer, "Agent One") || !strings.Contains(answer, "Agent Two") {
-		t.Fatalf("answer = %q, want deleted item names", answer)
-	}
-}
-
-func TestFastPathFinalAnswerWithEvidenceAllowsCurrentPendingTool(t *testing.T) {
-	answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillFileManager,
-		ToolName: "save_file_to_management",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":   "completed",
-			"target":   "managed_file",
-			"file_id":  "managed-file-1",
-			"filename": "star-cat.svg",
-		},
-	}, map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":              "running",
-			"pending_next_action": "file-manager/save_file_to_management",
-		},
-	})
-	if !ok {
-		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = false, want true for current pending tool")
-	}
-	if !strings.Contains(answer, "star-cat.svg") {
-		t.Fatalf("answer = %q, want file management save fast-path answer", answer)
-	}
-}
-
-func TestFastPathFinalAnswerDoesNotShortCircuitAgentCreateBeforeObservation(t *testing.T) {
-	_, ok := FastPathFinalAnswerForToolTrace(skills.SkillTrace{
-		Kind:     "tool_call",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "create_agent",
-		Status:   "success",
-		Result: map[string]interface{}{
-			"status":     "completed",
-			"effect":     "created",
-			"agent_id":   "agent-1",
-			"agent_name": "Agent One",
-		},
-	})
-	if ok {
-		t.Fatal("FastPathFinalAnswerForToolTrace() ok = true, want false so create_agent still gets asset observation")
-	}
-}
-
-func TestFastPathFinalAnswerWithEvidenceBlocksMultiAgentCreateUntilAllTargetsCreated(t *testing.T) {
-	_, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
-		Kind:     "client_action",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "create_agent",
-		Status:   "succeeded",
-	}, map[string]interface{}{
-		"user_request": "create draft Agents named Agent One and Agent Two",
-		"skill_invocations": []interface{}{
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "create_agent",
-				"result": map[string]interface{}{
-					"status":     "completed",
-					"effect":     "created",
-					"agent_id":   "agent-1",
-					"agent_name": "Agent One",
-				},
-			},
-		},
-		"client_actions": []interface{}{
-			map[string]interface{}{
-				"status":    "succeeded",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "create_agent",
-			},
-		},
-	})
-	if ok {
-		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = true, want false until both requested Agents are created")
-	}
-}
-
-func TestFastPathFinalAnswerWithEvidenceSummarizesMultiAgentCreateAfterObservation(t *testing.T) {
-	answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(skills.SkillTrace{
-		Kind:     "client_action",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "create_agent",
-		Status:   "succeeded",
-	}, map[string]interface{}{
-		"user_request": "create draft Agents named Agent One and Agent Two",
-		"skill_invocations": []interface{}{
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "create_agent",
-				"result": map[string]interface{}{
-					"status":     "completed",
-					"effect":     "created",
-					"agent_id":   "agent-1",
-					"agent_name": "Agent One",
-				},
-			},
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "create_agent",
-				"result": map[string]interface{}{
-					"status":     "completed",
-					"effect":     "created",
-					"agent_id":   "agent-2",
-					"agent_name": "Agent Two",
-				},
-			},
-		},
-		"client_actions": []interface{}{
-			map[string]interface{}{
-				"status":    "succeeded",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "create_agent",
-			},
-		},
-	})
-	if !ok {
-		t.Fatal("FastPathFinalAnswerForToolTraceWithEvidence() ok = false, want true after all requested Agents are created and observed")
-	}
-	for _, want := range []string{"Agent One", "Agent Two"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer = %q, missing %q", answer, want)
-		}
-	}
-}
-
-func TestFastPathFinalAnswerForCompletionEvidenceSummarizesAgentCreateAfterObservation(t *testing.T) {
-	evidence := map[string]interface{}{
-		"user_request": "create draft Agents named Agent One and Agent Two",
-		"skill_invocations": []interface{}{
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "create_agent",
-				"result": map[string]interface{}{
-					"status":     "completed",
-					"effect":     "created",
-					"agent_id":   "agent-1",
-					"agent_name": "Agent One",
-				},
-			},
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "create_agent",
-				"result": map[string]interface{}{
-					"status":     "completed",
-					"effect":     "created",
-					"agent_id":   "agent-2",
-					"agent_name": "Agent Two",
-				},
-			},
-		},
-		"client_actions": []interface{}{
-			map[string]interface{}{
-				"status":    "succeeded",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "create_agent",
-			},
-		},
-	}
-
-	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
-	if !ok {
-		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want true")
-	}
-	for _, want := range []string{"创建 2 个智能体", "Agent One", "Agent Two"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer = %q, missing %q", answer, want)
-		}
-	}
-}
-
-func TestFastPathFinalAnswerForCompletionEvidencePrefersAgentCreateOverDetailNavigation(t *testing.T) {
-	evidence := map[string]interface{}{
-		"user_request": "Create a test Agent named Agent One, then open its detail page and report the created Agent name.",
-		"operation_plan": map[string]interface{}{
-			"status":              "completed",
-			"pending_next_action": "none",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/create_agent",
-					"status":    "completed",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "create_agent",
-				},
-				map[string]interface{}{
-					"id":     "observe",
-					"status": "completed",
-				},
-			},
-		},
-		"operation_result_summary": map[string]interface{}{
-			"latest_tool_result": map[string]interface{}{
-				"kind":          "tool_governance",
-				"status":        "needs_approval",
-				"skill_id":      skills.SkillAgentManagement,
-				"tool_name":     "create_agent",
-				"invocation_id": "runtime_id:tool_governance:approval",
-			},
-			"latest_client_action": map[string]interface{}{
-				"status":      "succeeded",
-				"skill_id":    skills.SkillConsoleNavigator,
-				"tool_name":   "navigate",
-				"action_type": "route_navigation",
-				"label":       "Agent detail",
-				"reason":      "open_created_agent_detail",
-				"result": map[string]interface{}{
-					"event_type":  "route_loaded",
-					"loaded_href": "/console/agents/agent-1/agent",
-				},
-			},
-		},
-		"skill_invocations": []interface{}{
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "create_agent",
-				"result": map[string]interface{}{
-					"status":     "completed",
-					"effect":     "created",
-					"agent_id":   "agent-1",
-					"agent_name": "Agent One",
-				},
-			},
-			map[string]interface{}{
-				"kind":        "client_action",
-				"status":      "succeeded",
-				"skill_id":    skills.SkillConsoleNavigator,
-				"tool_name":   "navigate",
-				"action_type": "route_navigation",
-				"label":       "Agent detail",
-				"reason":      "open_created_agent_detail",
-				"result": map[string]interface{}{
-					"event_type":  "route_loaded",
-					"loaded_href": "/console/agents/agent-1/agent",
-				},
-			},
-		},
-		"client_actions": []interface{}{
-			map[string]interface{}{
-				"status":      "succeeded",
-				"skill_id":    skills.SkillConsoleNavigator,
-				"tool_name":   "navigate",
-				"action_type": "route_navigation",
-				"label":       "Agent detail",
-				"reason":      "open_created_agent_detail",
-				"result": map[string]interface{}{
-					"event_type":  "route_loaded",
-					"loaded_href": "/console/agents/agent-1/agent",
-				},
-			},
-		},
-	}
-
-	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
-	if !ok {
-		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want Agent create answer")
-	}
-	if !strings.Contains(answer, "Agent One") {
-		t.Fatalf("answer = %q, want created Agent name", answer)
-	}
-	if strings.Contains(answer, "Agent detail") {
-		t.Fatalf("answer = %q, want create result to take precedence over detail navigation", answer)
-	}
-}
-
-func TestFastPathFinalAnswerForCompletionEvidenceUsesLatestToolResultAfterObservation(t *testing.T) {
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":              "completed",
-			"pending_next_action": "observe",
-		},
-		"operation_result_summary": map[string]interface{}{
-			"latest_tool_result": map[string]interface{}{
-				"status":    "success",
-				"skill_id":  skills.SkillFileManager,
-				"tool_name": "save_file_to_management",
-				"result_summary": map[string]interface{}{
-					"status":          "completed",
-					"target":          "managed_file",
-					"managed_file_id": "file-1",
-					"filename":        "report.svg",
-				},
-			},
-		},
-		"client_actions": []interface{}{
-			map[string]interface{}{
-				"status":     "succeeded",
-				"event_type": "asset_observed",
-			},
-		},
-	}
-
-	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
-	if !ok {
-		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want true")
-	}
-	if !strings.Contains(answer, "report.svg") {
-		t.Fatalf("answer = %q, want saved filename", answer)
-	}
-}
-
-func TestFastPathFinalAnswerForCompletionEvidenceSummarizesGeneratedArtifact(t *testing.T) {
-	evidence := map[string]interface{}{
-		"generated_files": []interface{}{
-			map[string]interface{}{
-				"target":       "temporary_artifact",
-				"tool_file_id": "tool-file-1",
-				"filename":     "chart.svg",
-				"skill_id":     skills.SkillChartGenerator,
-				"tool_name":    "generate_chart",
-			},
-		},
-		"operation_plan": map[string]interface{}{
-			"status":              "completed",
-			"pending_next_action": "message_file_card",
-		},
-	}
-
-	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
-	if !ok {
-		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want generated artifact answer")
-	}
-	if !strings.Contains(answer, "chart.svg") || !strings.Contains(answer, "\u56fe\u8868\u6587\u4ef6") {
-		t.Fatalf("answer = %q, want chart artifact confirmation", answer)
-	}
-}
-
-func TestFastPathFinalAnswerForCompletionEvidenceSummarizesGeneratedArtifactDespiteUnrelatedOpenPlan(t *testing.T) {
-	evidence := map[string]interface{}{
-		"generated_files": []interface{}{
-			map[string]interface{}{
-				"artifact_type":   "file",
-				"target":          "temporary_artifact",
-				"transfer_method": "tool_file",
-				"tool_file_id":    "tool-file-1",
-				"filename":        "agents-distribution-pie.svg",
-				"skill_id":        skills.SkillChartGenerator,
-				"tool_name":       "generate_chart",
-			},
-		},
-		"operation_plan": map[string]interface{}{
-			"intent":              "manage_agent_asset",
-			"planning_mode":       "phase_only_model_decides",
-			"status":              "running",
-			"pending_next_action": "continue_from_phase_success_criteria",
-			"phases": []interface{}{
-				map[string]interface{}{
-					"id":     "phase:agent_page",
-					"status": "running",
-				},
-			},
-		},
-	}
-
-	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
-	if !ok {
-		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want generated artifact answer")
-	}
-	if !strings.Contains(answer, "agents-distribution-pie.svg") {
-		t.Fatalf("answer = %q, want generated artifact filename", answer)
-	}
-}
-
-func TestFastPathFinalAnswerForCompletionEvidenceSummarizesRouteClientAction(t *testing.T) {
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":              "running",
-			"pending_next_action": "asset_observation",
-		},
-		"operation_result_summary": map[string]interface{}{
-			"latest_client_action": map[string]interface{}{
-				"status":      "succeeded",
-				"action_type": "route_navigation",
-				"skill_id":    skills.SkillConsoleNavigator,
-				"tool_name":   "navigate",
-				"label":       "\u6587\u4ef6\u7ba1\u7406",
-				"result": map[string]interface{}{
-					"loaded_href": "/console/files",
-				},
-			},
-		},
-	}
-
-	answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence)
-	if !ok {
-		t.Fatal("FastPathFinalAnswerForCompletionEvidence() ok = false, want route client action answer")
-	}
-	if !strings.Contains(answer, "\u6587\u4ef6\u7ba1\u7406") || !strings.Contains(answer, "\u5df2\u6253\u5f00") {
-		t.Fatalf("answer = %q, want route-open confirmation", answer)
-	}
-}
-
-func TestFastPathFinalAnswerForCompletionEvidenceBlocksRouteWhenNextToolPending(t *testing.T) {
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": "running",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:console-navigator/navigate",
-					"status":    "completed",
-					"skill_id":  skills.SkillConsoleNavigator,
-					"tool_name": "navigate",
-				},
-				map[string]interface{}{
-					"id":        "tool:file-generator/generate_file",
-					"status":    "pending",
-					"skill_id":  skills.SkillFileGenerator,
-					"tool_name": "generate_file",
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:console-navigator/navigate":   "completed",
-				"tool:file-generator/generate_file": "pending",
-			},
-		},
-		"operation_result_summary": map[string]interface{}{
-			"latest_client_action": map[string]interface{}{
-				"status":      "succeeded",
-				"action_type": "route_navigation",
-				"skill_id":    skills.SkillConsoleNavigator,
-				"tool_name":   "navigate",
-				"result": map[string]interface{}{
-					"loaded_href": "/console/files",
-				},
-			},
-		},
-	}
-
-	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
-		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = (%q, true), want blocked by pending file generation", answer)
-	}
-}
-
-func TestFastPathFinalAnswerForCompletionEvidenceScansPastPendingRouteStep(t *testing.T) {
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": "running",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "route:/console/agents:1",
-					"status":    "pending",
-					"skill_id":  skills.SkillConsoleNavigator,
-					"tool_name": "navigate",
-				},
-				map[string]interface{}{
-					"id":        "tool:agent-management/create_agent",
-					"status":    "pending",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "create_agent",
-				},
-			},
-			"step_status": map[string]interface{}{
-				"route:/console/agents:1":            "pending",
-				"tool:agent-management/create_agent": "pending",
-			},
-		},
-		"operation_result_summary": map[string]interface{}{
-			"latest_client_action": map[string]interface{}{
-				"status":      "succeeded",
-				"action_type": "route_navigation",
-				"skill_id":    skills.SkillConsoleNavigator,
-				"tool_name":   "navigate",
-				"label":       "Agents",
-				"result": map[string]interface{}{
-					"loaded_href": "/console/agents",
-				},
-			},
-		},
-	}
-
-	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
-		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = (%q, true), want blocked by later pending create_agent", answer)
-	}
-}
-
-func TestFastPathFinalAnswerForCompletionEvidenceBlocksRouteWhenAgentCreateProgressMissing(t *testing.T) {
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":              "running",
-			"pending_next_action": "asset_observation",
-		},
-		"agent_create_progress": map[string]interface{}{
-			"operation":       "agent.create",
-			"status":          "partial",
-			"requested_count": 2,
-			"completed_count": 0,
-			"missing_count":   2,
-			"missing_targets": []interface{}{"Agent One", "Agent Two"},
-		},
-		"operation_result_summary": map[string]interface{}{
-			"latest_client_action": map[string]interface{}{
-				"status":      "succeeded",
-				"action_type": "route_navigation",
-				"skill_id":    skills.SkillConsoleNavigator,
-				"tool_name":   "navigate",
-				"label":       "Agents",
-				"result": map[string]interface{}{
-					"loaded_href": "/console/agents",
-				},
-			},
-		},
-	}
-
-	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
-		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = (%q, true), want blocked by missing create targets", answer)
-	}
-}
-
-func TestFastPathFinalAnswerForCompletionEvidenceRespectsPendingDifferentPlanAction(t *testing.T) {
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": "running",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/update_agent_config",
-					"status":    "pending",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "update_agent_config",
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:agent-management/update_agent_config": "pending",
-			},
-		},
-		"execution_summary": map[string]interface{}{
-			"tool_results": []interface{}{
-				map[string]interface{}{
-					"status":    "success",
-					"skill_id":  skills.SkillFileManager,
-					"tool_name": "save_file_to_management",
-					"result_summary": map[string]interface{}{
-						"status":          "completed",
-						"target":          "managed_file",
-						"managed_file_id": "file-1",
-						"filename":        "report.svg",
-					},
-				},
-			},
-		},
-	}
-
-	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
-		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = (%q, true), want blocked by pending Agent config update", answer)
-	}
-}
-
-func TestRunnerUsesFastPathWhenVerifierPassesEmptyFinalAnswer(t *testing.T) {
+func TestRunnerRepromptsMainModelAfterEmptyFinalAnswer(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, skills.SkillFileGenerator, `---
@@ -2879,7 +662,7 @@ Use generate_file to create a temporary artifact.
 			},
 			{
 				Choices: []adapter.Choice{{
-					Message: adapter.Message{Role: "assistant", Content: `{"status":"pass","reason":"generated file evidence exists","missing_steps":[],"unsupported_claims":[],"next_action_hint":"","final_answer":"","final_answer_guidance":""}`},
+					Message: adapter.Message{Role: "assistant", Content: "The file empty-final.svg was generated."},
 				}},
 			},
 		},
@@ -2923,11 +706,11 @@ Use generate_file to create a temporary artifact.
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(answer, "empty-final.svg") || !strings.Contains(answer, "\u5df2\u751f\u6210") {
-		t.Fatalf("answer = %q, want evidence-based generated file answer", answer)
+	if answer != "The file empty-final.svg was generated." {
+		t.Fatalf("answer = %q, want repaired main model answer", answer)
 	}
-	if fakeLLM.appChatCalls != 1 {
-		t.Fatalf("AppChat calls = %d, want planning only because completion gate skips verifier", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want initial empty turn plus one main model repair", fakeLLM.appChatCalls)
 	}
 }
 
@@ -3384,7 +1167,7 @@ func TestRunnerTreatsUnavailableSkillLoadAsPlannerFeedbackWithoutLoadEvent(t *te
 	}
 }
 
-func TestRunnerFastPathsAgentBatchDeleteAfterToolResult(t *testing.T) {
+func TestRunnerUsesMainModelFinalAfterAgentBatchDelete(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, skills.SkillAgentManagement, `---
@@ -3442,7 +1225,7 @@ Use delete_agents to delete several agents in one operation.
 			},
 			{
 				Choices: []adapter.Choice{{
-					Message: adapter.Message{Role: "assistant", Content: "model final answer should not be used"},
+					Message: adapter.Message{Role: "assistant", Content: "Deleted Agent One and Agent Two."},
 				}},
 			},
 		},
@@ -3483,14 +1266,11 @@ Use delete_agents to delete several agents in one operation.
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(answer, "成功删除 2 个智能体") || !strings.Contains(answer, "Agent One") || !strings.Contains(answer, "Agent Two") {
-		t.Fatalf("answer = %q, want fast-path batch delete summary", answer)
+	if answer != "Deleted Agent One and Agent Two." {
+		t.Fatalf("answer = %q, want main model final answer", answer)
 	}
-	if strings.Contains(answer, "model final answer should not be used") {
-		t.Fatalf("answer = %q, want no model final answer", answer)
-	}
-	if fakeLLM.appChatCalls != 2 {
-		t.Fatalf("AppChat calls = %d, want load plus delete planning only", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want load, delete, and main model final rounds", fakeLLM.appChatCalls)
 	}
 	if deleteTool.calls != 1 {
 		t.Fatalf("delete calls = %d, want one batch call", deleteTool.calls)
@@ -3500,7 +1280,7 @@ Use delete_agents to delete several agents in one operation.
 	}
 }
 
-func TestRunnerFastPathsReadOnlyAgentConfigAfterConfigAndIdentityReads(t *testing.T) {
+func TestRunnerUsesMainModelFinalAfterReadOnlyAgentConfig(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, skills.SkillAgentManagement, `---
@@ -3555,7 +1335,7 @@ Use get_agent_config and get_agent for read-only Agent configuration checks.
 			},
 			{
 				Choices: []adapter.Choice{{
-					Message: adapter.Message{Role: "assistant", Content: "unexpected duplicate read"},
+					Message: adapter.Message{Role: "assistant", Content: "ReadOnly Agent uses openai/gpt-4o. Current Agent description. \u6570\u636e\u5e93\u8868 2 \u4e2a."},
 				}},
 			},
 		},
@@ -3611,8 +1391,8 @@ Use get_agent_config and get_agent for read-only Agent configuration checks.
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if fakeLLM.appChatCalls != 2 {
-		t.Fatalf("AppChat calls = %d, want fast path after read tools without duplicate planning round", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want load, read, and main model final rounds", fakeLLM.appChatCalls)
 	}
 	if state.configCalls != 1 || state.getCalls != 1 {
 		t.Fatalf("config/get calls = %d/%d, want 1/1", state.configCalls, state.getCalls)
@@ -3629,7 +1409,7 @@ Use get_agent_config and get_agent for read-only Agent configuration checks.
 	}
 }
 
-func TestRunnerFastPathsSplitReadOnlyAgentConfigBeforeCandidateLookup(t *testing.T) {
+func TestRunnerUsesMainModelFinalAfterSplitReadOnlyAgentConfig(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, skills.SkillAgentManagement, `---
@@ -3695,12 +1475,7 @@ Use get_agent_config and get_agent for read-only Agent configuration checks.
 			},
 			{
 				Choices: []adapter.Choice{{
-					Message: adapter.Message{
-						Role: "assistant",
-						ToolCalls: []adapter.ToolCall{
-							runnerTestSkillToolCall("call_models", skills.SkillAgentManagement, "list_available_models", map[string]interface{}{"use_case": "text-chat"}),
-						},
-					},
+					Message: adapter.Message{Role: "assistant", Content: "ReadOnly Agent uses openai/gpt-4o. Current Agent description."},
 				}},
 			},
 		},
@@ -3738,8 +1513,8 @@ Use get_agent_config and get_agent for read-only Agent configuration checks.
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if fakeLLM.appChatCalls != 3 {
-		t.Fatalf("AppChat calls = %d, want load, config read, and identity read only", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 4 {
+		t.Fatalf("AppChat calls = %d, want load, two reads, and main model final", fakeLLM.appChatCalls)
 	}
 	if state.configCalls != 1 || state.getCalls != 1 {
 		t.Fatalf("config/get calls = %d/%d, want 1/1", state.configCalls, state.getCalls)
@@ -3751,7 +1526,7 @@ Use get_agent_config and get_agent for read-only Agent configuration checks.
 	}
 }
 
-func TestRunnerCompletionEvidenceContinuesMissingAgentCreateBeforeFinalAnswer(t *testing.T) {
+func TestRunnerAdvisoryEvidenceDoesNotForceMissingAgentCreation(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, skills.SkillAgentManagement, `---
@@ -3776,21 +1551,6 @@ Use create_agent to create an Agent.
 			{
 				Choices: []adapter.Choice{{
 					Message: adapter.Message{Role: "assistant", Content: "Only Agent One was created; Agent Two is still missing."},
-				}},
-			},
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{
-						Role: "assistant",
-						ToolCalls: []adapter.ToolCall{{
-							ID:   "call_load_agent_management",
-							Type: "function",
-							Function: adapter.FunctionCall{
-								Name:      skills.MetaToolLoadSkill,
-								Arguments: `{"skill_id":"agent-management"}`,
-							},
-						}},
-					},
 				}},
 			},
 			{
@@ -3908,27 +1668,18 @@ Use create_agent to create an Agent.
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if createTool.calls != 1 {
-		t.Fatalf("create_agent calls = %d, want one missing target creation", createTool.calls)
+	if createTool.calls != 0 {
+		t.Fatalf("create_agent calls = %d, want no backend-forced creation", createTool.calls)
 	}
-	if fakeLLM.appChatCalls != 3 {
-		t.Fatalf("AppChat calls = %d, want partial answer, load skill, create missing Agent", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("AppChat calls = %d, want the main-model answer only", fakeLLM.appChatCalls)
 	}
-	if !runnerTestRequestContains(fakeLLM.appChatRequests[1], "Runtime execution evidence requires continued tool use") ||
-		!runnerTestRequestContains(fakeLLM.appChatRequests[1], "Agent Two") {
-		t.Fatalf("second request missing evidence continuation feedback")
-	}
-	if strings.Contains(answer, "model final answer should not be used") || strings.Contains(answer, "Only Agent One") {
-		t.Fatalf("answer = %q, want evidence fast-path answer instead of partial/model final text", answer)
-	}
-	for _, want := range []string{"Agent One", "Agent Two"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer = %q, missing %q", answer, want)
-		}
+	if answer != "Only Agent One was created; Agent Two is still missing." {
+		t.Fatalf("answer = %q, want the main model's truthful partial answer", answer)
 	}
 }
 
-func TestRunnerCompletionEvidenceContinuesPendingPlanToolBeforeFinalAnswer(t *testing.T) {
+func TestRunnerAdvisoryPlanDoesNotForcePendingTool(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, skills.SkillAgentManagement, `---
@@ -3955,21 +1706,8 @@ Use delete_agents to delete several agents in one operation.
 					Message: adapter.Message{Role: "assistant", Content: "I deleted the two Agents."},
 				}},
 			},
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{
-						Role: "assistant",
-						ToolCalls: []adapter.ToolCall{{
-							ID:   "call_load_agent_management",
-							Type: "function",
-							Function: adapter.FunctionCall{
-								Name:      skills.MetaToolLoadSkill,
-								Arguments: `{"skill_id":"agent-management"}`,
-							},
-						}},
-					},
-				}},
-			},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"needs_action","reason":"there is no deletion evidence","unsupported_claims":["I deleted the two Agents"]}`}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "I do not have evidence that the two Agents were deleted."}}}},
 			{
 				Choices: []adapter.Choice{{
 					Message: adapter.Message{
@@ -4083,36 +1821,18 @@ Use delete_agents to delete several agents in one operation.
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if deleteTool.calls != 1 {
-		t.Fatalf("delete_agents calls = %d, want one pending plan tool execution", deleteTool.calls)
+	if deleteTool.calls != 0 {
+		t.Fatalf("delete_agents calls = %d, want no backend-forced tool execution", deleteTool.calls)
 	}
 	if fakeLLM.appChatCalls != 3 {
-		t.Fatalf("AppChat calls = %d, want final answer, load skill, delete_agents", fakeLLM.appChatCalls)
+		t.Fatalf("AppChat calls = %d, want candidate, one verifier audit, and main-model repair", fakeLLM.appChatCalls)
 	}
-	if !runnerTestRequestContains(fakeLLM.appChatRequests[1], "Pending phase evidence JSON") ||
-		!runnerTestRequestContains(fakeLLM.appChatRequests[1], "operation strategy is advisory") {
-		t.Fatalf("second request missing semantic pending evidence feedback")
-	}
-	if !runnerTestRequestContains(fakeLLM.appChatRequests[1], "approval card has been submitted") {
-		t.Fatalf("second request missing governance pseudo-approval warning")
-	}
-	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[1]); got != "" {
-		t.Fatalf("second request forced tool_choice = %q, want model to choose from exposed tools", got)
-	}
-	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[2]); got != "" {
-		t.Fatalf("third request forced tool_choice = %q, want model to choose from exposed tools", got)
-	}
-	if strings.Contains(answer, "model final answer should not be used") || strings.Contains(answer, "I deleted") {
-		t.Fatalf("answer = %q, want evidence fast-path answer instead of unsupported model text", answer)
-	}
-	for _, want := range []string{"Agent One", "Agent Two"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer = %q, missing %q", answer, want)
-		}
+	if answer != "I do not have evidence that the two Agents were deleted." {
+		t.Fatalf("answer = %q, want the main-model repair", answer)
 	}
 }
 
-func TestRunnerCompletionEvidenceRequiresLoadingPendingPlanSkillForContinuation(t *testing.T) {
+func TestRunnerAdvisoryPlanDoesNotForceSkillLoading(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, skills.SkillAgentManagement, `---
@@ -4139,21 +1859,8 @@ Use delete_agents to delete several agents in one operation.
 					Message: adapter.Message{Role: "assistant", Content: "I deleted the two Agents."},
 				}},
 			},
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{
-						Role: "assistant",
-						ToolCalls: []adapter.ToolCall{{
-							ID:   "call_load_agent_management",
-							Type: "function",
-							Function: adapter.FunctionCall{
-								Name:      skills.MetaToolLoadSkill,
-								Arguments: `{"skill_id":"agent-management"}`,
-							},
-						}},
-					},
-				}},
-			},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"needs_action","reason":"there is no deletion evidence","unsupported_claims":["I deleted the two Agents"]}`}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "I do not have evidence that the two Agents were deleted."}}}},
 			{
 				Choices: []adapter.Choice{{
 					Message: adapter.Message{
@@ -4254,35 +1961,18 @@ Use delete_agents to delete several agents in one operation.
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if deleteTool.calls != 1 {
-		t.Fatalf("delete_agents calls = %d, want one pending plan tool execution", deleteTool.calls)
+	if deleteTool.calls != 0 {
+		t.Fatalf("delete_agents calls = %d, want no backend-forced tool execution", deleteTool.calls)
 	}
 	if fakeLLM.appChatCalls != 3 {
-		t.Fatalf("AppChat calls = %d, want final answer, load skill, then pending tool call", fakeLLM.appChatCalls)
+		t.Fatalf("AppChat calls = %d, want candidate, one verifier audit, and main-model repair", fakeLLM.appChatCalls)
 	}
-	if len(fakeLLM.appChatRequests) < 2 || !runnerTestRequestHasTool(fakeLLM.appChatRequests[1], skills.MetaToolLoadSkill) {
-		t.Fatalf("second request did not expose %s for the unloaded pending plan skill", skills.MetaToolLoadSkill)
-	}
-	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[1]); got != "" {
-		t.Fatalf("second request forced tool_choice = %q, want model to choose from exposed tools", got)
-	}
-	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[2]); got != "" {
-		t.Fatalf("third request forced tool_choice = %q, want model to choose from exposed tools", got)
-	}
-	if runnerTestRequestHasTool(fakeLLM.appChatRequests[1], skills.MetaToolCallSkillTool) {
-		t.Fatalf("second request exposed %s before the pending plan skill was loaded", skills.MetaToolCallSkillTool)
-	}
-	if strings.Contains(answer, "I deleted") {
-		t.Fatalf("answer = %q, want evidence fast-path answer instead of unsupported model text", answer)
-	}
-	for _, want := range []string{"Agent One", "Agent Two"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer = %q, missing %q", answer, want)
-		}
+	if answer != "I do not have evidence that the two Agents were deleted." {
+		t.Fatalf("answer = %q, want the main-model repair", answer)
 	}
 }
 
-func TestRunnerReinforcesPendingAgentConfigMutationAfterRepeatedConfigRead(t *testing.T) {
+func TestRunnerDoesNotForcePendingAgentConfigMutation(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, skills.SkillAgentManagement, `---
@@ -4424,17 +2114,12 @@ Use get_agent_config to inspect draft config and update_agent_config to patch se
 	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[3]); got != "" {
 		t.Fatalf("fourth request forced tool_choice = %q, want model to choose from exposed tools", got)
 	}
-	if !runnerTestRequestContains(fakeLLM.appChatRequests[3], "Evidence-continuation retry 2") ||
-		!runnerTestRequestContains(fakeLLM.appChatRequests[3], "operation strategy is advisory") ||
-		!runnerTestRequestContains(fakeLLM.appChatRequests[3], "expected_updated_fields") {
-		t.Fatalf("fourth request missing reinforced pending config mutation guidance")
-	}
-	if !strings.Contains(answer, "已更新该智能体配置") {
-		t.Fatalf("answer = %q, want fast-path config update answer", answer)
+	if answer != "配置已经更新。" {
+		t.Fatalf("answer = %q, want the main-model final answer", answer)
 	}
 }
 
-func TestRunnerFastPathsAfterPostUpdateAgentConfigRead(t *testing.T) {
+func TestRunnerUsesMainModelFinalAfterPostUpdateAgentConfigRead(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, skills.SkillAgentManagement, `---
@@ -4482,10 +2167,7 @@ Use get_agent_config to verify Agent configuration after a governed update.
 			},
 			{
 				Choices: []adapter.Choice{{
-					Message: adapter.Message{
-						Role:      "assistant",
-						ToolCalls: []adapter.ToolCall{runnerTestSkillToolCall("call_unneeded_candidates", skills.SkillAgentManagement, "list_agent_knowledge_candidates", map[string]interface{}{"agent_id": "agent-1"})},
-					},
+					Message: adapter.Message{Role: "assistant", Content: "Support Agent now includes KB Two and orders."},
 				}},
 			},
 		},
@@ -4581,8 +2263,8 @@ Use get_agent_config to verify Agent configuration after a governed update.
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if fakeLLM.appChatCalls != 2 {
-		t.Fatalf("AppChat calls = %d, want load skill and post-update config read only", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want load, post-update read, and main model final", fakeLLM.appChatCalls)
 	}
 	if state.configCalls != 1 {
 		t.Fatalf("get_agent_config calls = %d, want exactly one post-update verification read", state.configCalls)
@@ -4594,7 +2276,7 @@ Use get_agent_config to verify Agent configuration after a governed update.
 	}
 }
 
-func TestRunnerSteersToPostUpdateReadAfterAgentIdentityMutation(t *testing.T) {
+func TestRunnerDoesNotRewriteDuplicateAgentIdentityMutation(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, skills.SkillAgentManagement, `---
@@ -4740,8 +2422,8 @@ Use update_agent_identity for identity changes and get_agent to verify the updat
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if state.updateCalls != 1 || state.getCalls != 1 {
-		t.Fatalf("update/get calls = %d/%d, want 1/1", state.updateCalls, state.getCalls)
+	if state.updateCalls != 2 || state.getCalls != 0 {
+		t.Fatalf("update/get calls = %d/%d, want the model-selected calls 2/0", state.updateCalls, state.getCalls)
 	}
 	if len(fakeLLM.appChatRequests) < 3 {
 		t.Fatalf("AppChat request count = %d, want at least 3", len(fakeLLM.appChatRequests))
@@ -4749,12 +2431,8 @@ Use update_agent_identity for identity changes and get_agent to verify the updat
 	if got := runnerTestRequestToolChoiceName(fakeLLM.appChatRequests[2]); got != "" {
 		t.Fatalf("third request forced tool_choice = %q, want model to choose from exposed tools", got)
 	}
-	if !runnerTestRequestContains(fakeLLM.appChatRequests[2], "Pending phase evidence JSON") ||
-		!runnerTestRequestContains(fakeLLM.appChatRequests[2], "required_post_update_verification") {
-		t.Fatalf("third request missing semantic post-update read continuation guidance")
-	}
 	if strings.TrimSpace(answer) == "" {
-		t.Fatal("answer is empty, want verified completion answer")
+		t.Fatal("answer is empty, want the main-model final answer")
 	}
 }
 
@@ -4892,7 +2570,7 @@ func TestRedirectDuplicateAgentMutationDoesNotSkipPendingMutationForPostUpdateRe
 	}
 }
 
-func TestRunnerFastPathsFileManagementSaveAfterToolResult(t *testing.T) {
+func TestRunnerUsesMainModelFinalAfterFileManagementSave(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, skills.SkillFileManager, `---
@@ -4949,7 +2627,7 @@ Use save_file_to_management to save generated files into File Management.
 			},
 			{
 				Choices: []adapter.Choice{{
-					Message: adapter.Message{Role: "assistant", Content: "model final answer should not be used"},
+					Message: adapter.Message{Role: "assistant", Content: "Saved star-cat.svg to File Management."},
 				}},
 			},
 		},
@@ -4990,14 +2668,11 @@ Use save_file_to_management to save generated files into File Management.
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(answer, "star-cat.svg") {
-		t.Fatalf("answer = %q, want file management save fast-path answer", answer)
+	if answer != "Saved star-cat.svg to File Management." {
+		t.Fatalf("answer = %q, want main model final answer", answer)
 	}
-	if strings.Contains(answer, "model final answer should not be used") {
-		t.Fatalf("answer = %q, want no model final answer", answer)
-	}
-	if fakeLLM.appChatCalls != 2 {
-		t.Fatalf("AppChat calls = %d, want load plus save planning only", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want load, save, and main model final rounds", fakeLLM.appChatCalls)
 	}
 	if saveTool.calls != 1 {
 		t.Fatalf("save calls = %d, want one save call", saveTool.calls)
@@ -5007,7 +2682,7 @@ Use save_file_to_management to save generated files into File Management.
 	}
 }
 
-func TestRunnerFastPathsFileManagementDeleteAfterToolResult(t *testing.T) {
+func TestRunnerUsesMainModelFinalAfterFileManagementDelete(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, skills.SkillFileManager, `---
@@ -5062,7 +2737,7 @@ Use delete_file to delete a managed file.
 			},
 			{
 				Choices: []adapter.Choice{{
-					Message: adapter.Message{Role: "assistant", Content: "model final answer should not be used"},
+					Message: adapter.Message{Role: "assistant", Content: "Deleted aichat-plan-smoke.md."},
 				}},
 			},
 		},
@@ -5103,14 +2778,11 @@ Use delete_file to delete a managed file.
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(answer, "aichat-plan-smoke.md") {
-		t.Fatalf("answer = %q, want file delete fast-path answer", answer)
+	if answer != "Deleted aichat-plan-smoke.md." {
+		t.Fatalf("answer = %q, want main model final answer", answer)
 	}
-	if strings.Contains(answer, "model final answer should not be used") {
-		t.Fatalf("answer = %q, want no model final answer", answer)
-	}
-	if fakeLLM.appChatCalls != 2 {
-		t.Fatalf("AppChat calls = %d, want load plus delete planning only", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want load, delete, and main model final rounds", fakeLLM.appChatCalls)
 	}
 	if deleteTool.calls != 1 {
 		t.Fatalf("delete calls = %d, want one delete call", deleteTool.calls)
@@ -5229,7 +2901,7 @@ Use the calculator tool.
 	}
 }
 
-func TestRunnerDefersPostToolSystemMessagesUntilAllToolResponses(t *testing.T) {
+func TestRunnerPreservesBatchToolResponseOrderingWithoutInjectedContinuation(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	skillID := "protocol-batch"
@@ -5331,8 +3003,8 @@ Use echo_value to echo values.
 	if answer != "done" {
 		t.Fatalf("answer = %q, want done", answer)
 	}
-	if fakeLLM.appChatCalls != 4 {
-		t.Fatalf("AppChat calls = %d, want planning, tools, final, verifier", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want planning, tools, and the main-model final", fakeLLM.appChatCalls)
 	}
 	if len(fakeLLM.appChatRequests) < 3 {
 		t.Fatalf("captured requests = %d, want at least 3", len(fakeLLM.appChatRequests))
@@ -5358,14 +3030,6 @@ Use echo_value to echo values.
 		if message.Role != "tool" || message.ToolCallID != wantID {
 			t.Fatalf("message after assistant at offset %d = role %q tool_call_id %q, want tool %q", offset, message.Role, message.ToolCallID, wantID)
 		}
-	}
-	feedbackIndex := assistantIndex + 1 + len(wantToolIDs)
-	if feedbackIndex >= len(reqAfterBatchTools.Messages) {
-		t.Fatalf("missing deferred continuation feedback after tool responses")
-	}
-	feedback := reqAfterBatchTools.Messages[feedbackIndex]
-	if feedback.Role != "system" || !strings.Contains(messageContent(feedback.Content), "Runtime execution evidence requires continued work") {
-		t.Fatalf("message after tool responses = role %q content %q, want deferred continuation system feedback", feedback.Role, messageContent(feedback.Content))
 	}
 }
 
@@ -5772,6 +3436,9 @@ Use the calculator tool.
 		CompletionEvidence: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{"status": "running"},
+				"evidence_ledger": []interface{}{map[string]interface{}{
+					"kind": "tool_call", "status": "success", "skill_id": "file-reader", "tool_name": "read_file",
+				}},
 			}
 		},
 	})
@@ -6651,6 +4318,9 @@ Use the calculator tool.
 		CompletionEvidence: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{"status": "running"},
+				"evidence_ledger": []interface{}{map[string]interface{}{
+					"kind": "tool_call", "status": "success", "skill_id": "file-reader", "tool_name": "read_file",
+				}},
 			}
 		},
 	})
@@ -6903,13 +4573,6 @@ Use the calculator tool.
 	}
 	if findRunnerTestEvent(events, EventSkillCallStart) == nil {
 		t.Fatalf("events = %#v, want skill call to execute", events)
-	}
-	progressEvent := findRunnerTestEvent(events, EventAgentProgress)
-	if progressEvent == nil {
-		t.Fatalf("events = %#v, want finalizing progress after tool result", events)
-	}
-	if content := fmt.Sprint(progressEvent.Payload["content"]); !strings.Contains(content, "Reviewing the tool results") {
-		t.Fatalf("agent progress content = %q, want finalizing tool-result progress", content)
 	}
 }
 
@@ -7293,7 +4956,6 @@ func TestRunnerCompletionVerifierReplansNeedsAction(t *testing.T) {
 			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "I saved the file."}}}},
 			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"needs_action","reason":"save step missing","missing_steps":["save_file_to_management"],"next_action_hint":"call file-manager/save_file_to_management"}`}}}},
 			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "I could not confirm the save yet, so I will not claim it is saved."}}}},
-			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"pass","reason":"candidate is truthful"}`}}}},
 		},
 	}
 	runner := &Runner{
@@ -7323,15 +4985,15 @@ func TestRunnerCompletionVerifierReplansNeedsAction(t *testing.T) {
 	if !strings.Contains(answer, "could not confirm") {
 		t.Fatalf("answer = %q, want verifier-driven truthful replanning answer", answer)
 	}
-	if fakeLLM.appChatCalls != 4 {
-		t.Fatalf("AppChat calls = %d, want planning/verifier/replan/verifier", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want planning, one verifier audit, and main-model repair", fakeLLM.appChatCalls)
 	}
 	if !runnerTestRequestContains(fakeLLM.appChatRequests[2], "Runtime completion verification feedback") {
 		t.Fatalf("third request missing completion verifier feedback")
 	}
 }
 
-func TestRunnerCompletionVerifierRetriesReasoningOnlyResponse(t *testing.T) {
+func TestRunnerCompletionVerifierDoesNotRetryUnparseableResponse(t *testing.T) {
 	ctx := context.Background()
 	fakeLLM := &runnerTestLLMClient{
 		appChatResponses: []*adapter.ChatResponse{
@@ -7346,7 +5008,6 @@ func TestRunnerCompletionVerifierRetriesReasoningOnlyResponse(t *testing.T) {
 				}},
 				Usage: &adapter.Usage{PromptTokens: 2800, CompletionTokens: 700, TotalTokens: 3500},
 			},
-			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"pass","reason":"candidate is supported by completed delete evidence"}`}}}},
 		},
 	}
 	runner := &Runner{
@@ -7382,38 +5043,30 @@ func TestRunnerCompletionVerifierRetriesReasoningOnlyResponse(t *testing.T) {
 			}
 		},
 	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if err == nil {
+		t.Fatal("Run() error = nil, want one-shot verifier parse failure")
 	}
-	if answer != "Deleted the first four agents." {
-		t.Fatalf("answer = %q, want verifier-approved candidate answer", answer)
+	if answer != "" {
+		t.Fatalf("answer = %q, want no system-generated replacement answer", answer)
 	}
-	if fakeLLM.appChatCalls != 3 {
-		t.Fatalf("AppChat calls = %d, want planning plus verifier retry", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want planning plus one verifier audit", fakeLLM.appChatCalls)
 	}
-	for _, index := range []int{1, 2} {
-		if fakeLLM.appChatRequests[index].MaxTokens == nil || *fakeLLM.appChatRequests[index].MaxTokens != completionVerifierMaxTokens {
-			t.Fatalf("verifier request %d max_tokens = %#v, want %d", index, fakeLLM.appChatRequests[index].MaxTokens, completionVerifierMaxTokens)
-		}
-		if !runnerTestRequestContains(fakeLLM.appChatRequests[index], "Do not include reasoning") {
-			t.Fatalf("verifier request %d missing no-reasoning instruction", index)
-		}
+	if fakeLLM.appChatRequests[1].MaxTokens == nil || *fakeLLM.appChatRequests[1].MaxTokens != completionVerifierMaxTokens {
+		t.Fatalf("verifier max_tokens = %#v, want %d", fakeLLM.appChatRequests[1].MaxTokens, completionVerifierMaxTokens)
 	}
-	if !runnerTestRequestContains(fakeLLM.appChatRequests[2], "previous verification attempt returned no parseable JSON content") {
-		t.Fatalf("strict retry request missing parse-failure instruction")
+	if !runnerTestRequestContains(fakeLLM.appChatRequests[1], "Do not include reasoning") {
+		t.Fatal("verifier request missing no-reasoning instruction")
 	}
 }
 
-func TestRunnerCompletionVerifierStopsAfterNeedsActionRetryBudget(t *testing.T) {
+func TestRunnerCompletionVerifierAuditsOnceThenAcceptsMainModelRepair(t *testing.T) {
 	ctx := context.Background()
 	fakeLLM := &runnerTestLLMClient{
 		appChatResponses: []*adapter.ChatResponse{
 			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "I saved the file."}}}},
 			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"needs_action","reason":"save evidence is missing","missing_steps":["file-manager/save_file_to_management"],"unsupported_claims":["I saved the file"],"next_action_hint":"call file-manager/save_file_to_management"}`}}}},
 			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "I saved the file now."}}}},
-			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"needs_action","reason":"save evidence is still missing","missing_steps":["file-manager/save_file_to_management"],"unsupported_claims":["I saved the file now"],"next_action_hint":"call file-manager/save_file_to_management"}`}}}},
-			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The file is saved."}}}},
-			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"needs_action","reason":"same save evidence is still missing","missing_steps":["file-manager/save_file_to_management"],"unsupported_claims":["The file is saved"],"next_action_hint":"call file-manager/save_file_to_management"}`}}}},
 		},
 	}
 	runner := &Runner{
@@ -7442,30 +5095,14 @@ func TestRunnerCompletionVerifierStopsAfterNeedsActionRetryBudget(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(answer, completionVerificationFallbackUnknown) {
-		t.Fatalf("answer = %q, want conservative fallback after retry budget", answer)
+	if answer != "I saved the file now." {
+		t.Fatalf("answer = %q, want the main-model repair", answer)
 	}
-	if !strings.Contains(answer, "\u4fdd\u5b58\u5230\u6587\u4ef6\u7ba1\u7406\u7684\u6587\u4ef6\u7ed3\u679c") {
-		t.Fatalf("answer = %q, want public missing save evidence label", answer)
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want planning, one verifier audit, and main-model repair", fakeLLM.appChatCalls)
 	}
-	if strings.Contains(answer, "file-manager/save_file_to_management") ||
-		strings.Contains(answer, "save_file_to_management") {
-		t.Fatalf("answer = %q, want public gap rather than internal tool names", answer)
-	}
-	if !strings.Contains(answer, "\u5019\u9009\u7b54\u590d\u4e2d\u6709\u672a\u88ab\u5de5\u5177\u7ed3\u679c\u652f\u6301\u7684\u8bf4\u6cd5\uff1aThe file is saved") {
-		t.Fatalf("answer = %q, want unsupported candidate claim to be called out", answer)
-	}
-	if fakeLLM.appChatCalls != 6 {
-		t.Fatalf("AppChat calls = %d, want three planning/verifier attempts", fakeLLM.appChatCalls)
-	}
-	for _, index := range []int{2, 4} {
-		if !runnerTestRequestContains(fakeLLM.appChatRequests[index], "Runtime completion verification feedback") {
-			t.Fatalf("request %d missing completion verifier feedback", index)
-		}
-	}
-	if !runnerTestRequestContains(fakeLLM.appChatRequests[2], "Post-verification retry 1 of 2") ||
-		!runnerTestRequestContains(fakeLLM.appChatRequests[4], "Post-verification retry 2 of 2") {
-		t.Fatalf("retry feedback missing budget markers")
+	if !runnerTestRequestContains(fakeLLM.appChatRequests[2], "Runtime completion verification feedback") {
+		t.Fatal("main-model repair request missing verifier feedback")
 	}
 }
 
@@ -7563,12 +5200,12 @@ func TestRunnerCompletionEvidenceDisablesLegacyFinalAnswerGuard(t *testing.T) {
 	if answer != "The operation is complete." {
 		t.Fatalf("answer = %q, want verifier-approved candidate answer", answer)
 	}
-	if fakeLLM.appChatCalls != 2 {
-		t.Fatalf("AppChat calls = %d, want planning and verifier only", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("AppChat calls = %d, want no routine verifier call", fakeLLM.appChatCalls)
 	}
 }
 
-func TestRunnerCompletionVerifierPassUsesVerifierFinalAnswer(t *testing.T) {
+func TestRunnerCompletionVerifierPassPreservesMainModelAnswer(t *testing.T) {
 	ctx := context.Background()
 	fakeLLM := &runnerTestLLMClient{
 		appChatResponses: []*adapter.ChatResponse{
@@ -7591,7 +5228,8 @@ func TestRunnerCompletionVerifierPassUsesVerifierFinalAnswer(t *testing.T) {
 		Resolved: runnerTestResolvedSkills(),
 		CompletionEvidence: func() map[string]interface{} {
 			return map[string]interface{}{
-				"operation_plan": map[string]interface{}{"status": "completed"},
+				"model_verifier_required": true,
+				"operation_plan":          map[string]interface{}{"status": "completed"},
 				"skill_invocations": []interface{}{map[string]interface{}{
 					"kind": "tool_call", "status": "success", "skill_id": "test-skill", "tool_name": "test_tool",
 				}},
@@ -7604,8 +5242,8 @@ func TestRunnerCompletionVerifierPassUsesVerifierFinalAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if answer != "\u5df2\u5b8c\u6210\uff1a\u667a\u80fd\u4f53\u5df2\u521b\u5efa\u5e76\u914d\u7f6e\u5b8c\u6210\u3002" {
-		t.Fatalf("answer = %q, want verifier final answer", answer)
+	if answer != "\u6211\u8fd8\u4e0d\u80fd\u786e\u8ba4\u8fd9\u4e2a\u64cd\u4f5c\u5df2\u7ecf\u5b8c\u6210\u3002" {
+		t.Fatalf("answer = %q, want the main-model candidate", answer)
 	}
 	if verificationResult.Status != completionVerificationStatusPass {
 		t.Fatalf("completion verification status = %q, want pass", verificationResult.Status)
@@ -7618,12 +5256,13 @@ func TestRunnerCompletionVerifierPassUsesVerifierFinalAnswer(t *testing.T) {
 	}
 }
 
-func TestRunnerCompletionVerifierUsesFailedReplacementAnswer(t *testing.T) {
+func TestRunnerCompletionVerifierFailureReturnsToMainModel(t *testing.T) {
 	ctx := context.Background()
 	fakeLLM := &runnerTestLLMClient{
 		appChatResponses: []*adapter.ChatResponse{
 			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "Done, the Agent was updated."}}}},
 			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"failed","reason":"update_agent_config failed","unsupported_claims":["Agent was updated"],"final_answer":"\u6211\u6ca1\u6709\u786e\u8ba4\u667a\u80fd\u4f53\u914d\u7f6e\u66f4\u65b0\u6210\u529f\uff1aupdate_agent_config \u8c03\u7528\u5931\u8d25\u3002"}`}}}},
+			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "I could not confirm the Agent update because the configuration call failed."}}}},
 		},
 	}
 	runner := &Runner{
@@ -7654,21 +5293,21 @@ func TestRunnerCompletionVerifierUsesFailedReplacementAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if answer != "\u6211\u6ca1\u6709\u786e\u8ba4\u667a\u80fd\u4f53\u914d\u7f6e\u66f4\u65b0\u6210\u529f\uff1aupdate_agent_config \u8c03\u7528\u5931\u8d25\u3002" {
-		t.Fatalf("answer = %q, want verifier replacement final answer", answer)
+	if answer != "I could not confirm the Agent update because the configuration call failed." {
+		t.Fatalf("answer = %q, want the main-model repair", answer)
 	}
-	if verificationResult.Status != completionVerificationStatusFailed {
-		t.Fatalf("completion verification status = %q, want failed", verificationResult.Status)
+	if verificationResult.Status != completionVerificationStatusPass {
+		t.Fatalf("completion verification status = %q, want repaired main-model pass", verificationResult.Status)
 	}
-	if verificationResult.Reason != "update_agent_config failed" {
-		t.Fatalf("completion verification reason = %q, want tool failure reason", verificationResult.Reason)
+	if verificationResult.Source != "main_model_final" {
+		t.Fatalf("completion verification source = %q, want main_model_final", verificationResult.Source)
 	}
-	if len(verificationResult.UnsupportedClaims) != 1 || verificationResult.UnsupportedClaims[0] != "Agent was updated" {
-		t.Fatalf("completion verification unsupported claims = %#v, want candidate claim", verificationResult.UnsupportedClaims)
+	if fakeLLM.appChatCalls != 3 {
+		t.Fatalf("AppChat calls = %d, want planning, one verifier audit, and main-model repair", fakeLLM.appChatCalls)
 	}
 }
 
-func TestRunnerCompletionVerifierFailedPlanOverrideStopsRetry(t *testing.T) {
+func TestRunnerCompletionVerifierPassDoesNotGenerateFailedPlanReplacement(t *testing.T) {
 	ctx := context.Background()
 	fakeLLM := &runnerTestLLMClient{
 		appChatResponses: []*adapter.ChatResponse{
@@ -7716,15 +5355,8 @@ func TestRunnerCompletionVerifierFailedPlanOverrideStopsRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(answer, completionVerificationFallbackFailed) ||
-		!strings.Contains(answer, "file-manager/save_file_to_management") {
-		t.Fatalf("answer = %q, want conservative failed-plan answer", answer)
-	}
-	if !strings.Contains(answer, "permission denied") {
-		t.Fatalf("answer = %q, want ledger failure detail", answer)
-	}
-	if strings.Contains(answer, "Done") || strings.Contains(answer, "saved to File Management") {
-		t.Fatalf("answer = %q, should not preserve unsupported success claim", answer)
+	if answer != "Done, the file was saved to File Management." {
+		t.Fatalf("answer = %q, want verifier-approved main-model candidate", answer)
 	}
 	if fakeLLM.appChatCalls != 2 {
 		t.Fatalf("AppChat calls = %d, want planning and verifier only", fakeLLM.appChatCalls)

@@ -105,7 +105,8 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	recoverableFailureCallCount := 0
 	finalAnswerGuardBlockCount := 0
 	completionVerificationRetryCount := 0
-	evidenceContinuationRetryCount := 0
+	completionVerifierInvoked := false
+	emptyFinalAnswerRetryCount := 0
 	finalizingProgressEmitted := false
 	skillToolCallCounts := map[string]int{}
 	attemptedToolCalls := []SkillToolCallRef{}
@@ -128,19 +129,8 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		toolCallGuard = nil
 	}
 	suppressFinalAnswerStream := false
-	if postVerificationConfigured {
-		suppressFinalAnswerStream = completionVerificationShouldRun(req.CompletionEvidence(), nil, nil, 0)
-	}
 	var answerBuilder strings.Builder
 	var usage *adapter.Usage
-	if postVerificationConfigured {
-		evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, nil)
-		if feedback, shouldContinue := completionEvidenceContinuationSystemMessage(evidence, evidenceContinuationRetryCount, resolved); shouldContinue {
-			evidenceContinuationRetryCount++
-			messages = append(messages, feedback)
-		}
-	}
-
 	for round := 0; round < defaultMaxSkillPlanningRounds; round++ {
 		planningReq := cloneChatRequest(prepared.LLMRequest)
 		planningReq.Messages = messages
@@ -186,16 +176,31 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 		}
 		if len(toolCalls) == 0 && postVerificationConfigured {
-			evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
-			if gate := completionGateEvaluate(evidence, text); gate.Path == completionGateDeterministicPass {
-				if planningResult.answerStreamed && text != "" {
-					r.emitAnswerRetract(ctx, prepared, text, nil)
+			if strings.TrimSpace(text) == "" {
+				emptyFinalAnswerRetryCount++
+				if emptyFinalAnswerRetryCount <= 1 {
+					messages = append(messages, adapter.Message{
+						Role:    "system",
+						Content: "The previous assistant turn returned neither a tool call nor a user-visible answer. Continue from the latest context: call another tool if work remains, otherwise provide the final answer directly.",
+					})
+					continue
 				}
+				return answerBuilder.String(), usage, fmt.Errorf("%w: model returned no final answer", ErrInvalidInput)
+			}
+			emptyFinalAnswerRetryCount = 0
+			evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
+			gate := completionGateEvaluate(evidence, text)
+			if completionVerifierInvoked {
+				gate = completionGateEvaluateVerifierRepair(evidence, text)
+			}
+			if gate.Path == completionGateDeterministicPass {
 				answer := strings.TrimSpace(firstNonEmptyString(gate.FinalAnswer, text))
 				appendAnswerText(&answerBuilder, answer)
-				r.emitAnswerChunk(ctx, prepared, answer, nil)
+				if !planningResult.answerStreamed {
+					r.emitAnswerChunk(ctx, prepared, answer, nil)
+				}
 				completionGateNotify(req, gate, answer)
-				logger.DebugContext(ctx, "aichat skill loop completed from completion gate",
+				logger.DebugContext(ctx, "aichat skill loop accepted main model final answer",
 					"conversation_id", prepared.Conversation.ID.String(),
 					"message_id", prepared.Message.ID.String(),
 					"completion_gate_path", string(gate.Path),
@@ -220,133 +225,54 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					messages = append(messages, completionVerificationSystemMessage(gate.completionVerificationDecision(), text, completionVerificationRetryCount, modelDecidesTools))
 					continue
 				}
-				answer := completionVerificationNeedsActionFinalAnswer(gate.completionVerificationDecision(), text)
-				completionGateNotify(req, gate, answer)
-				appendAnswerText(&answerBuilder, answer)
-				r.emitAnswerChunk(ctx, prepared, answer, nil)
-				return answerBuilder.String(), usage, nil
-			}
-			if feedback, shouldContinue := completionEvidenceContinuationSystemMessage(evidence, evidenceContinuationRetryCount, resolved); shouldContinue {
-				evidenceContinuationRetryCount++
-				if evidenceContinuationRetryCount <= defaultMaxCompletionVerificationRetries {
-					if planningResult.answerStreamed && text != "" {
-						r.emitAnswerRetract(ctx, prepared, text, nil)
-					}
-					messages = append(messages, feedback)
-					continue
-				}
+				completionGateNotify(req, gate, text)
+				return answerBuilder.String(), usage, fmt.Errorf("%w: completion gate still has an unresolved runtime blocker", ErrInvalidInput)
 			}
 			if !finalizingProgressEmitted && (toolCallCount > 0 || len(attemptedToolCalls) > 0 || len(successfulToolCalls) > 0) {
 				if r.emitAgentProgress(ctx, prepared, completionVerificationFinalizingProgressText(prepared, evidence), nil) {
 					finalizingProgressEmitted = true
 				}
 			}
+			if completionVerifierInvoked {
+				decision := completionVerificationDecision{
+					Status:         completionVerificationStatusNeedsAction,
+					Source:         "completion_gate",
+					Reason:         "candidate answer still requires evidence audit after the verifier repair round",
+					NextActionHint: "continue from the latest tool evidence or explain the concrete blocker without claiming completion",
+				}
+				notifyCompletionVerificationResult(req, decision, text)
+				return answerBuilder.String(), usage, fmt.Errorf("%w: completion remained ambiguous after verifier repair", ErrInvalidInput)
+			}
+			completionVerifierInvoked = true
 			decision, verifierUsage, err := r.runCompletionVerifier(ctx, prepared, req, text, round, attemptedToolCalls, successfulToolCalls, toolCallCount)
 			usage = mergeUsage(usage, verifierUsage)
 			if err != nil {
-				logger.WarnContext(ctx, "aichat completion verifier failed; using conservative fallback answer",
+				logger.WarnContext(ctx, "aichat completion verifier failed",
 					"conversation_id", prepared.Conversation.ID.String(),
 					"message_id", prepared.Message.ID.String(),
 					err,
 				)
-				decision := completionVerificationDecision{
+				failedDecision := completionVerificationDecision{
 					Status: completionVerificationStatusFailed,
+					Source: "model_verifier",
 					Reason: "\u6700\u7ec8\u7b54\u6848\u540e\u6821\u9a8c\u6682\u65f6\u4e0d\u53ef\u7528\uff0c\u56e0\u6b64\u4e0d\u80fd\u53ef\u9760\u786e\u8ba4\u672c\u8f6e\u64cd\u4f5c\u5df2\u7ecf\u5b8c\u6210\u3002",
 				}
-				if answer, ok := completionEvidenceVerifiedFinalAnswer(req, successfulToolCalls, text); ok {
-					text = answer
-					decision.Status = completionVerificationStatusPass
-					decision.Reason = "latest tool evidence satisfies the requested operation"
-				} else {
-					text = completionVerificationFallbackAnswer(decision, text)
-				}
+				notifyCompletionVerificationResult(req, failedDecision, text)
+				return answerBuilder.String(), usage, fmt.Errorf("completion verifier: %w", err)
+			}
+			if decision.normalizedStatus() == completionVerificationStatusPass {
+				completionVerificationRetryCount = 0
+				decision.FinalAnswer = ""
+				decision.FinalAnswerGuidance = ""
 				notifyCompletionVerificationResult(req, decision, text)
 			} else {
-				switch decision.normalizedStatus() {
-				case completionVerificationStatusPass:
-					completionVerificationRetryCount = 0
-					evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
-					if answer, ok := FastPathPreferredFinalAnswerForCompletionEvidence(evidence, text); ok {
-						text = answer
-					} else if answer := strings.TrimSpace(decision.FinalAnswer); answer != "" {
-						text = answer
-					} else if strings.TrimSpace(text) == "" {
-						if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
-							text = answer
-						}
-					}
-					notifyCompletionVerificationResult(req, decision, text)
-				case completionVerificationStatusNeedsAction:
-					if answer, ok := completionEvidenceVerifiedFinalAnswer(req, successfulToolCalls, text); ok {
-						text = answer
-						decision.Status = completionVerificationStatusPass
-						decision.Reason = "latest tool evidence satisfies the requested operation"
-						decision.MissingSteps = nil
-						decision.NextActionHint = ""
-						completionVerificationRetryCount = 0
-						notifyCompletionVerificationResult(req, decision, text)
-						break
-					}
-					completionVerificationRetryCount++
-					if completionVerificationRetryCount > defaultMaxCompletionVerificationRetries {
-						if answer, ok := completionEvidenceVerifiedFinalAnswer(req, successfulToolCalls, text); ok {
-							text = answer
-							decision.Status = completionVerificationStatusPass
-							decision.Reason = "latest tool evidence satisfies the requested operation"
-							decision.MissingSteps = nil
-							decision.NextActionHint = ""
-						} else {
-							text = completionVerificationNeedsActionFinalAnswer(decision, text)
-						}
-						notifyCompletionVerificationResult(req, decision, text)
-					} else {
-						modelDecidesTools := completionEvidenceOperationPlanModelDecides(evidence)
-						messages = append(messages, completionVerificationSystemMessage(decision, text, completionVerificationRetryCount, modelDecidesTools))
-						continue
-					}
-				case completionVerificationStatusFailed, completionVerificationStatusAskUser:
-					if replacement := strings.TrimSpace(decision.FinalAnswer); replacement != "" {
-						text = replacement
-						completionVerificationRetryCount = 0
-						notifyCompletionVerificationResult(req, decision, text)
-					} else {
-						completionVerificationRetryCount++
-						if completionVerificationRetryCount > defaultMaxCompletionVerificationRetries {
-							if answer, ok := completionEvidenceVerifiedFinalAnswer(req, successfulToolCalls, text); ok {
-								text = answer
-								decision.Status = completionVerificationStatusPass
-								decision.Reason = "latest tool evidence satisfies the requested operation"
-								decision.MissingSteps = nil
-								decision.NextActionHint = ""
-							} else {
-								text = completionVerificationFallbackAnswer(decision, text)
-							}
-							notifyCompletionVerificationResult(req, decision, text)
-						} else {
-							modelDecidesTools := completionEvidenceOperationPlanModelDecides(evidence)
-							messages = append(messages, completionVerificationSystemMessage(decision, text, completionVerificationRetryCount, modelDecidesTools))
-							continue
-						}
-					}
-				default:
-					completionVerificationRetryCount++
-					if completionVerificationRetryCount > defaultMaxCompletionVerificationRetries {
-						if answer, ok := completionEvidenceVerifiedFinalAnswer(req, successfulToolCalls, text); ok {
-							text = answer
-							decision.Status = completionVerificationStatusPass
-							decision.Reason = "latest tool evidence satisfies the requested operation"
-							decision.MissingSteps = nil
-							decision.NextActionHint = ""
-						} else {
-							text = completionVerificationFallbackAnswer(decision, text)
-						}
-						notifyCompletionVerificationResult(req, decision, text)
-					} else {
-						modelDecidesTools := completionEvidenceOperationPlanModelDecides(evidence)
-						messages = append(messages, completionVerificationSystemMessage(decision, text, completionVerificationRetryCount, modelDecidesTools))
-						continue
-					}
+				completionVerificationRetryCount++
+				evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
+				if planningResult.answerStreamed && text != "" {
+					r.emitAnswerRetract(ctx, prepared, text, nil)
 				}
+				messages = append(messages, completionVerificationSystemMessage(decision, text, completionVerificationRetryCount, completionEvidenceOperationPlanModelDecides(evidence)))
+				continue
 			}
 		}
 		if len(toolCalls) == 0 && prepared.parts.SkillMode == "required" && !skillUsed {
@@ -392,51 +318,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		roundHadSuccess := false
 		var lastRecoverableTrace skills.SkillTrace
 		roundDeferredSystemMessages := []adapter.Message{}
-		var roundCompletionFeedback adapter.Message
-		roundCompletionFeedbackQueued := false
 		for _, call := range toolCalls {
 			stepCount++
 			callSkillID, callToolName, callToolArgs, failedCallKey := skillToolCallIdentityForCall(resolved, loadedSkills, call)
 			callEvidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
-			if redirected, ok := redirectDuplicateAgentMutationToPendingPostUpdateReadCall(call, callSkillID, callToolName, callEvidence, currentMetadataForRun(req), successfulToolCalls); ok {
-				call = redirected
-				callSkillID, callToolName, callToolArgs, failedCallKey = skillToolCallIdentityForCall(resolved, loadedSkills, call)
-			}
-			if answer, ok := redundantPostReadAgentConfigMutationAnswer(callSkillID, callToolName, callToolArgs, callEvidence); ok {
-				appendAnswerText(&answerBuilder, answer)
-				r.emitAnswerChunk(ctx, prepared, answer, nil)
-				logger.DebugContext(ctx, "aichat skill loop completed before redundant post-read agent config mutation",
-					"conversation_id", prepared.Conversation.ID.String(),
-					"message_id", prepared.Message.ID.String(),
-					"skill_id", callSkillID,
-					"tool_name", callToolName,
-				)
-				return answerBuilder.String(), usage, nil
-			}
-			if fastPathAgentReadOnlyConfigToolName(callSkillID, callToolName) {
-				if answer, ok := agentReadOnlyConfigFastPathAnswerFromEvidence(callEvidence); ok {
-					appendAnswerText(&answerBuilder, answer)
-					r.emitAnswerChunk(ctx, prepared, answer, nil)
-					logger.DebugContext(ctx, "aichat skill loop completed before redundant read-only agent config call",
-						"conversation_id", prepared.Conversation.ID.String(),
-						"message_id", prepared.Message.ID.String(),
-						"skill_id", callSkillID,
-						"tool_name", callToolName,
-					)
-					return answerBuilder.String(), usage, nil
-				}
-			}
-			if answer, ok := agentReadOnlyConfigFastPathAnswerBeforeRedundantLookup(callSkillID, callToolName, callEvidence); ok {
-				appendAnswerText(&answerBuilder, answer)
-				r.emitAnswerChunk(ctx, prepared, answer, nil)
-				logger.DebugContext(ctx, "aichat skill loop completed before redundant read-only agent candidate lookup",
-					"conversation_id", prepared.Conversation.ID.String(),
-					"message_id", prepared.Message.ID.String(),
-					"skill_id", callSkillID,
-					"tool_name", callToolName,
-				)
-				return answerBuilder.String(), usage, nil
-			}
 			result := skillStepResult{}
 			if failedCallKey != "" {
 				if reason := failedToolCallReasons[failedCallKey]; strings.TrimSpace(reason) != "" {
@@ -478,16 +363,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			traces = append(traces, result.trace)
 			r.recordTrace(traces, result.trace)
 			r.logSkillTrace(ctx, prepared, result.trace)
-			if postVerificationConfigured && plannerFeedbackRequestsPendingMutation(result.trace) {
-				evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
-				if !roundCompletionFeedbackQueued {
-					if feedback, shouldContinue := completionEvidenceContinuationSystemMessage(evidence, evidenceContinuationRetryCount, resolved); shouldContinue {
-						evidenceContinuationRetryCount++
-						roundCompletionFeedback = feedback
-						roundCompletionFeedbackQueued = true
-					}
-				}
-			}
 			if result.recoverable && failedCallKey != "" && strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") {
 				failedToolCallReasons[failedCallKey] = strings.TrimSpace(result.trace.Error)
 				if failedToolCallReasons[failedCallKey] == "" {
@@ -541,7 +416,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 						}
 					}
 					finalAnswerGuardBlockCount = 0
-					evidenceContinuationRetryCount = 0
 				}
 			}
 			if result.pendingApproval != nil {
@@ -555,28 +429,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 			if result.pendingClientAction != nil {
 				return answerBuilder.String(), usage, &ClientActionPendingError{Payload: result.pendingClientAction}
-			}
-			fastPathEvidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
-			if gate := completionGateEvaluate(fastPathEvidence, ""); gate.Path == completionGateDeterministicPass {
-				answer := strings.TrimSpace(gate.FinalAnswer)
-				if answer == "" {
-					if fallback, ok := FastPathFinalAnswerForCompletionEvidence(fastPathEvidence); ok {
-						answer = fallback
-					}
-				}
-				if answer != "" {
-					appendAnswerText(&answerBuilder, answer)
-					r.emitAnswerChunk(ctx, prepared, answer, nil)
-					completionGateNotify(req, gate, answer)
-					logger.DebugContext(ctx, "aichat skill loop completed through completion gate",
-						"conversation_id", prepared.Conversation.ID.String(),
-						"message_id", prepared.Message.ID.String(),
-						"skill_id", result.trace.SkillID,
-						"tool_name", result.trace.ToolName,
-						"completion_gate_path", string(gate.Path),
-					)
-					return answerBuilder.String(), usage, nil
-				}
 			}
 			if result.answer != "" {
 				appendAnswerText(&answerBuilder, result.answer)
@@ -604,24 +456,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			if message, ok := governedReadFileTargetSystemMessage(result.trace); ok {
 				roundDeferredSystemMessages = append(roundDeferredSystemMessages, message)
 			}
-			if postVerificationConfigured &&
-				strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") &&
-				strings.EqualFold(strings.TrimSpace(result.trace.Status), "success") {
-				evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
-				if !roundCompletionFeedbackQueued {
-					if feedback, shouldContinue := completionEvidenceContinuationSystemMessage(evidence, evidenceContinuationRetryCount, resolved); shouldContinue {
-						evidenceContinuationRetryCount++
-						roundCompletionFeedback = feedback
-						roundCompletionFeedbackQueued = true
-					}
-				}
-			}
 		}
 		if len(roundDeferredSystemMessages) > 0 {
 			messages = append(messages, roundDeferredSystemMessages...)
-		}
-		if roundCompletionFeedbackQueued {
-			messages = append(messages, roundCompletionFeedback)
 		}
 		if roundHadRecoverableFailure {
 			recoverableFailureRoundCount++
@@ -669,197 +506,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	return answerBuilder.String(), usage, err
 }
 
-func completionEvidenceContinuationSystemMessage(evidence map[string]interface{}, retryCount int, resolved *skills.ResolvedSkills) (adapter.Message, bool) {
-	if feedback, ok := completionEvidenceContinuationAgentCreateSystemMessage(evidence, retryCount); ok {
-		return feedback, true
-	}
-	return completionEvidenceContinuationPendingPlanStepSystemMessage(evidence, retryCount, resolved)
-}
-
-func completionEvidenceContinuationAgentCreateSystemMessage(evidence map[string]interface{}, retryCount int) (adapter.Message, bool) {
-	progress := evidenceMapFromAny(evidence["agent_create_progress"])
-	if len(progress) == 0 {
-		return adapter.Message{}, false
-	}
-	status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(progress["status"])))
-	missingTargets := evidenceStringSliceFromAny(progress["missing_targets"])
-	missingCount := firstNonNegativeInt(progress["missing_count"])
-	if len(missingTargets) == 0 && missingCount <= 0 {
-		return adapter.Message{}, false
-	}
-	if status != "" && status != "partial" && status != "missing" && status != "incomplete" && status != "needs_action" {
-		return adapter.Message{}, false
-	}
-	payload := map[string]interface{}{
-		"operation":         "agent.create",
-		"missing_targets":   missingTargets,
-		"missing_count":     firstPositiveInt(missingCount, len(missingTargets)),
-		"completed_targets": evidenceStringSliceFromAny(progress["completed_targets"]),
-	}
-	if description := strings.TrimSpace(evidenceStringFromAny(progress["requested_description"])); description != "" {
-		payload["requested_description"] = description
-	}
-	payloadJSON, err := json.Marshal(payload)
-	if err != nil {
-		payloadJSON = []byte(fmt.Sprint(payload))
-	}
-	content := strings.Join([]string{
-		fmt.Sprintf("Runtime execution evidence requires continued tool use before a final answer. Evidence-continuation retry %d of %d.", retryCount+1, defaultMaxCompletionVerificationRetries),
-		"The current user goal is still missing one or more exact Agent creation targets.",
-		"Call agent-management/create_agent once for each exact missing target name. Use requested_description if present and the user did not provide per-target descriptions.",
-		"Do not answer as complete until successful create_agent tool evidence and the required frontend observation evidence exist for every requested target.",
-		"Do not treat a similar existing visible Agent with a different exact name as satisfying a missing target.",
-		"Agent creation progress JSON:\n" + string(payloadJSON),
-	}, "\n")
-	return adapter.Message{Role: "system", Content: content}, true
-}
-
-func completionEvidenceContinuationPendingPlanStepSystemMessage(evidence map[string]interface{}, retryCount int, resolved *skills.ResolvedSkills) (adapter.Message, bool) {
-	plan := evidenceMapFromAny(evidence["operation_plan"])
-	modelDecidesTools := completionEvidenceOperationPlanModelDecides(evidence)
-	if modelDecidesTools {
-		if _, ok := fastPathModelDecidesPendingAgentWorkStep(plan); !ok {
-			if completionVerificationModelDecidesPlanHasOpenPhase(plan) {
-				return completionEvidenceContinuationOpenModelDecidesPhaseSystemMessage(evidence, retryCount), true
-			}
-			return adapter.Message{}, false
-		}
-	}
-	step, ok := completionVerificationPendingExecutablePlanStep(evidence)
-	if !ok {
-		return adapter.Message{}, false
-	}
-	action := completionVerificationPlanStepLabel(step)
-	if strings.TrimSpace(action) == "" {
-		return adapter.Message{}, false
-	}
-	if completionEvidenceContinuationShouldSkipPendingPlanStep(step, action) {
-		return adapter.Message{}, false
-	}
-	if !completionEvidencePlanStepSkillResolved(step, resolved) {
-		return adapter.Message{}, false
-	}
-	return completionEvidenceContinuationModelDecidesSystemMessage(evidence, step, retryCount), true
-}
-
-func completionEvidenceContinuationOpenModelDecidesPhaseSystemMessage(evidence map[string]interface{}, retryCount int) adapter.Message {
-	plan := evidenceMapFromAny(evidence["operation_plan"])
-	payload := completionEvidenceContinuationOpenModelDecidesPhasePayload(plan)
-	payloadJSON, err := json.Marshal(payload)
-	if err != nil {
-		payloadJSON = []byte(fmt.Sprint(payload))
-	}
-	content := strings.Join([]string{
-		fmt.Sprintf("Runtime execution evidence requires continued work before a final answer. Evidence-continuation retry %d of %d.", retryCount+1, defaultMaxCompletionVerificationRetries),
-		"The operation strategy is phase-only: the current phase still lacks completion verification, but the model must choose the concrete next action from the currently available tool schemas and latest context.",
-		"Use the original user goal, phase success criteria, current page context, prior tool results, turn_state, and visible asset evidence to decide the next action.",
-		"Do not repeat an action when matching evidence already proves it succeeded.",
-		"If the remaining work is impossible because context, permissions, or tool capability is missing, use available read/list/observe capabilities when they can resolve the blocker; otherwise stop and explain the exact blocker truthfully.",
-		"Do not answer as complete until successful evidence supports the phase success criteria or a real blocker is proven.",
-		"Open phase evidence JSON:\n" + string(payloadJSON),
-	}, "\n")
-	return adapter.Message{Role: "system", Content: content}
-}
-
-func completionEvidenceContinuationOpenModelDecidesPhasePayload(plan map[string]interface{}) map[string]interface{} {
-	payload := map[string]interface{}{}
-	for _, key := range []string{
-		"original_user_goal",
-		"intent",
-		"planning_mode",
-		"tool_choice_mode",
-		"status",
-		"pending_next_action",
-		"phases",
-		"success_criteria",
-		"capability_goals",
-	} {
-		if value, ok := plan[key]; ok && completionEvidenceContinuationPayloadValuePresent(value) {
-			payload[key] = promptEvidenceCopy(value)
-		}
-	}
-	if goals := completionVerificationCapabilityGoalsForPrompt(plan["capability_goals"]); len(goals) > 0 {
-		payload["capability_goals"] = goals
-	}
-	if len(payload) == 0 {
-		payload["phase"] = "pending_user_visible_operation"
-	}
-	return payload
-}
-
-func completionEvidenceContinuationModelDecidesSystemMessage(evidence map[string]interface{}, step map[string]interface{}, retryCount int) adapter.Message {
-	payload := map[string]interface{}{
-		"pending_phase": completionEvidenceContinuationModelDecidesPhasePayload(step),
-	}
-	if goals := completionVerificationCapabilityGoalsForPrompt(evidenceMapFromAny(evidence["operation_plan"])["capability_goals"]); len(goals) > 0 {
-		payload["capability_goals"] = goals
-	}
-	payloadJSON, err := json.Marshal(payload)
-	if err != nil {
-		payloadJSON = []byte(fmt.Sprint(payload))
-	}
-	content := strings.Join([]string{
-		fmt.Sprintf("Runtime execution evidence requires continued work before a final answer. Evidence-continuation retry %d of %d.", retryCount+1, defaultMaxCompletionVerificationRetries),
-		"The operation strategy is advisory: it describes user-visible work that is not yet proven complete, but the model must choose the concrete next action from the currently available tool schemas and latest context.",
-		"Use current page context, prior tool results, turn_state, and visible asset evidence to decide the next action. Do not repeat an action when matching evidence already proves it succeeded.",
-		"For Agent configuration work, apply the remaining user-requested changes with the available Agent management capability, then verify the refreshed configuration before the final answer.",
-		"If the original user request already asks for those remaining Agent changes, do not ask the user whether to continue after a read-only check shows missing configuration; choose the next appropriate available tool and let governed tool calls request approval when needed.",
-		"Do not tell the user an approval card has been submitted unless a governed tool call actually returned a pending governance event. Governance approval cards are created by tool calls, not by natural-language progress text.",
-		"If the action is impossible because context, permissions, or tool capability is missing, use available read/list/observe capabilities when they can resolve the blocker; otherwise stop and explain the exact blocker truthfully.",
-		"Do not answer as complete until successful tool evidence and any required page observation evidence exist for this pending phase.",
-		"Pending phase evidence JSON:\n" + string(payloadJSON),
-	}, "\n")
-	return adapter.Message{Role: "system", Content: content}
-}
-
-func completionEvidenceContinuationModelDecidesPhasePayload(step map[string]interface{}) map[string]interface{} {
-	payload := map[string]interface{}{}
-	for _, key := range []string{
-		"title",
-		"phase",
-		"status",
-		"config_goal",
-		"expected_updated_fields",
-		"expected_binding_actions",
-		"required_post_update_verification",
-		"missing_updated_fields",
-		"target",
-		"targets",
-		"resource",
-		"resources",
-		"goal",
-	} {
-		if value, ok := step[key]; ok && completionEvidenceContinuationPayloadValuePresent(value) {
-			payload[key] = promptEvidenceCopy(value)
-		}
-	}
-	if _, ok := payload["phase"]; !ok {
-		payload["phase"] = "pending_user_visible_operation"
-	}
-	return payload
-}
-
-func completionEvidenceContinuationPayloadValuePresent(value interface{}) bool {
-	if value == nil {
-		return false
-	}
-	if strings.TrimSpace(evidenceStringFromAny(value)) != "" {
-		return true
-	}
-	if len(evidenceMapFromAny(value)) > 0 {
-		return true
-	}
-	if len(evidenceSliceFromAny(value)) > 0 {
-		return true
-	}
-	switch value.(type) {
-	case bool, int, int64, float64, float32, json.Number:
-		return true
-	default:
-		return false
-	}
-}
-
 func initialLoadedSkillsForRun(req RunRequest, resolved *skills.ResolvedSkills) map[string]struct{} {
 	loaded := map[string]struct{}{}
 	add := func(skillID string) {
@@ -902,17 +548,6 @@ func canonicalResolvedSkillID(resolved *skills.ResolvedSkills, skillID string) (
 		if strings.EqualFold(strings.TrimSpace(resolvedSkillID), skillID) {
 			return strings.TrimSpace(resolvedSkillID), true
 		}
-	}
-	return "", false
-}
-
-func completionEvidenceVerifiedFinalAnswer(req RunRequest, successful []SkillToolCallRef, candidate string) (string, bool) {
-	evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successful)
-	if answer, ok := FastPathPreferredFinalAnswerForCompletionEvidence(evidence, candidate); ok {
-		return answer, true
-	}
-	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
-		return answer, true
 	}
 	return "", false
 }
@@ -1000,62 +635,6 @@ func skillToolCallEvidenceSignature(skillID string, toolName string, arguments m
 	return string(data)
 }
 
-func completionEvidenceContinuationShouldSkipPendingPlanStep(step map[string]interface{}, action string) bool {
-	if completionEvidencePlanStepIsRequiredPostUpdateAgentConfigRead(step) {
-		return false
-	}
-	skillID := strings.TrimSpace(evidenceStringFromAny(step["skill_id"]))
-	toolName := strings.TrimSpace(evidenceStringFromAny(step["tool_name"]))
-	if completionEvidenceContinuationIsConsoleNavigateTool(skillID, toolName) {
-		return true
-	}
-	return fastPathPendingActionIsRoutePostVerification(action)
-}
-
-func completionEvidenceContinuationIsConsoleNavigateTool(skillID string, toolName string) bool {
-	return strings.EqualFold(strings.TrimSpace(skillID), skills.SkillConsoleNavigator) &&
-		strings.EqualFold(strings.TrimSpace(toolName), "navigate")
-}
-
-func completionEvidencePlanStepSkillResolved(step map[string]interface{}, resolved *skills.ResolvedSkills) bool {
-	skillID := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(step["skill_id"])))
-	if skillID == "" {
-		return false
-	}
-	for _, resolvedSkillID := range resolved.SkillIDs() {
-		if strings.EqualFold(strings.TrimSpace(resolvedSkillID), skillID) {
-			return true
-		}
-	}
-	return false
-}
-
-func normalizedLoadedSkillSet(loadedSkills map[string]struct{}) map[string]struct{} {
-	if len(loadedSkills) == 0 {
-		return nil
-	}
-	out := make(map[string]struct{}, len(loadedSkills))
-	for skillID := range loadedSkills {
-		if normalized := strings.ToLower(strings.TrimSpace(skillID)); normalized != "" {
-			out[normalized] = struct{}{}
-		}
-	}
-	return out
-}
-
-func forcedFunctionToolChoice(name string) interface{} {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return nil
-	}
-	return map[string]interface{}{
-		"type": "function",
-		"function": map[string]interface{}{
-			"name": name,
-		},
-	}
-}
-
 func notifyCompletionVerificationResult(req RunRequest, decision completionVerificationDecision, finalAnswer string) {
 	if req.OnCompletionVerification == nil {
 		return
@@ -1069,19 +648,6 @@ func notifyCompletionVerificationResult(req RunRequest, decision completionVerif
 		NextActionHint:    strings.TrimSpace(decision.NextActionHint),
 		FinalAnswer:       strings.TrimSpace(finalAnswer),
 	})
-}
-
-func notifyFastPathCompletionVerification(req RunRequest, finalAnswer string, reason string) {
-	if req.OnCompletionVerification == nil {
-		return
-	}
-	notifyCompletionVerificationResult(req, completionVerificationDecision{
-		Status: completionVerificationStatusPass,
-		Reason: strings.TrimSpace(firstNonEmptyString(
-			reason,
-			"completion evidence satisfied the requested operation",
-		)),
-	}, finalAnswer)
 }
 
 func evidenceStringSliceFromAny(value interface{}) []string {
@@ -1796,231 +1362,6 @@ func repeatedSuccessfulReadOnlyResultCollectionLength(value interface{}) int {
 	default:
 		return -1
 	}
-}
-
-func redundantPostReadAgentConfigMutationAnswer(skillID string, toolName string, args map[string]interface{}, evidence map[string]interface{}) (string, bool) {
-	if !strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentManagement) ||
-		!agentConfigMutationToolCanCloseFromPostRead(toolName) {
-		return "", false
-	}
-	if !fastPathGoalRequestsAgentConfigPostRead(evidence) {
-		return "", false
-	}
-	if !fastPathHasSuccessfulAgentConfigReadAfterUpdate(evidence) {
-		return "", false
-	}
-	if !agentConfigRedundantMutationCoveredByEvidence(toolName, args, evidence) {
-		return "", false
-	}
-	return agentConfigPostUpdateVerifiedFastPathAnswerFromEvidence(evidence)
-}
-
-func immediateCompletionEvidenceFastPathAnswer(evidence map[string]interface{}) (string, bool) {
-	if !fastPathEvidenceHasSuccessfulAgentConfigUpdate(evidence) {
-		return "", false
-	}
-	if !fastPathHasSuccessfulAgentConfigReadAfterUpdate(evidence) {
-		return "", false
-	}
-	return FastPathFinalAnswerForCompletionEvidence(evidence)
-}
-
-func agentConfigMutationToolCanCloseFromPostRead(toolName string) bool {
-	switch strings.ToLower(strings.TrimSpace(toolName)) {
-	case "update_agent_config", "update_agent_identity":
-		return true
-	default:
-		return false
-	}
-}
-
-func agentConfigRedundantMutationCoveredByEvidence(toolName string, args map[string]interface{}, evidence map[string]interface{}) bool {
-	trace, ok := fastPathLatestSuccessfulAgentConfigUpdateTrace(evidence)
-	if !ok {
-		return false
-	}
-	toolName = strings.ToLower(strings.TrimSpace(toolName))
-	if !strings.EqualFold(strings.TrimSpace(trace.ToolName), toolName) {
-		return false
-	}
-	if !agentConfigMutationTargetsSame(args, trace) {
-		return false
-	}
-	switch toolName {
-	case "update_agent_identity":
-		return stringSetContainsAll(
-			agentIdentityFieldsFromResult(trace.Result),
-			agentIdentityFieldsFromArguments(args),
-		)
-	case "update_agent_config":
-		return stringSetContainsAll(
-			agentConfigFieldsFromResult(trace.Result),
-			agentConfigFieldsFromArguments(args),
-		)
-	default:
-		return false
-	}
-}
-
-func agentConfigMutationTargetsSame(args map[string]interface{}, trace skills.SkillTrace) bool {
-	pending := strings.TrimSpace(firstNonEmptyString(args["agent_id"], args["id"]))
-	completed := strings.TrimSpace(firstNonEmptyString(
-		trace.Arguments["agent_id"],
-		trace.Arguments["id"],
-		trace.Result["agent_id"],
-		trace.Result["id"],
-	))
-	if completed == "" {
-		if agent := payloadMap(trace.Result, "agent"); len(agent) > 0 {
-			completed = strings.TrimSpace(firstNonEmptyString(agent["agent_id"], agent["id"]))
-		}
-	}
-	return pending == "" || completed == "" || pending == completed
-}
-
-func agentIdentityFieldsFromArguments(args map[string]interface{}) map[string]struct{} {
-	fields := map[string]struct{}{}
-	for _, field := range []string{"name", "description", "icon", "icon_type", "icon_background"} {
-		if _, ok := args[field]; ok {
-			fields[agentIdentityCanonicalField(field)] = struct{}{}
-		}
-	}
-	return fields
-}
-
-func agentIdentityFieldsFromResult(result map[string]interface{}) map[string]struct{} {
-	fields := map[string]struct{}{}
-	for _, field := range sanitizedStringListArgumentValue(result["updated_fields"]) {
-		if canonical := agentIdentityCanonicalField(field); canonical != "" {
-			fields[canonical] = struct{}{}
-		}
-	}
-	return fields
-}
-
-func agentIdentityCanonicalField(field string) string {
-	switch strings.TrimSpace(field) {
-	case "name":
-		return "name"
-	case "description":
-		return "description"
-	case "icon", "icon_type", "icon_background":
-		return "icon"
-	default:
-		return ""
-	}
-}
-
-func agentConfigFieldsFromArguments(args map[string]interface{}) map[string]struct{} {
-	fields := map[string]struct{}{}
-	for key := range args {
-		if canonical := agentConfigCanonicalFieldFromArgument(key); canonical != "" {
-			fields[canonical] = struct{}{}
-		}
-	}
-	return fields
-}
-
-func agentConfigFieldsFromResult(result map[string]interface{}) map[string]struct{} {
-	fields := map[string]struct{}{}
-	for _, field := range sanitizedStringListArgumentValue(result["updated_fields"]) {
-		if canonical := agentConfigCanonicalFieldFromResult(field); canonical != "" {
-			fields[canonical] = struct{}{}
-		}
-	}
-	for _, field := range sanitizedStringListArgumentValue(result["satisfied_fields"]) {
-		if canonical := agentConfigCanonicalFieldFromResult(field); canonical != "" {
-			fields[canonical] = struct{}{}
-		}
-	}
-	for _, change := range agentConfigChangeMaps(result) {
-		if canonical := agentConfigCanonicalFieldFromResult(firstNonEmptyString(change["field"], change["binding_kind"])); canonical != "" {
-			fields[canonical] = struct{}{}
-		}
-	}
-	return fields
-}
-
-func agentConfigCanonicalFieldFromArgument(field string) string {
-	switch strings.TrimSpace(field) {
-	case "system_prompt":
-		return "system_prompt"
-	case "model", "model_provider":
-		return "model"
-	case "model_parameters":
-		return "model_parameters"
-	case "enabled_skill_ids", "add_enabled_skill_ids", "remove_enabled_skill_ids":
-		return "enabled_skill_ids"
-	case "agent_memory_enabled":
-		return "agent_memory_enabled"
-	case "file_upload_enabled":
-		return "file_upload_enabled"
-	case "home_title":
-		return "home_title"
-	case "input_placeholder":
-		return "input_placeholder"
-	case "theme_color":
-		return "theme_color"
-	case "suggested_questions":
-		return "suggested_questions"
-	case "knowledge_dataset_ids", "dataset_ids", "add_knowledge_dataset_ids", "remove_knowledge_dataset_ids":
-		return "knowledge_dataset_ids"
-	case "knowledge_retrieval_config":
-		return "knowledge_retrieval_config"
-	case "database_bindings", "add_database_bindings", "remove_database_bindings":
-		return "database_bindings"
-	case "workflow_bindings", "add_workflow_bindings", "remove_workflow_bindings":
-		return "workflow_bindings"
-	default:
-		return ""
-	}
-}
-
-func agentConfigCanonicalFieldFromResult(field string) string {
-	switch strings.TrimSpace(field) {
-	case "system_prompt":
-		return "system_prompt"
-	case "model", "model_provider":
-		return "model"
-	case "model_parameters":
-		return "model_parameters"
-	case "enabled_skill_ids", "agent_skill":
-		return "enabled_skill_ids"
-	case "agent_memory_enabled":
-		return "agent_memory_enabled"
-	case "file_upload_enabled":
-		return "file_upload_enabled"
-	case "home_title":
-		return "home_title"
-	case "input_placeholder":
-		return "input_placeholder"
-	case "theme_color":
-		return "theme_color"
-	case "suggested_questions":
-		return "suggested_questions"
-	case "knowledge_dataset_ids", "dataset_ids", "knowledge_base":
-		return "knowledge_dataset_ids"
-	case "knowledge_retrieval_config":
-		return "knowledge_retrieval_config"
-	case "database_bindings", "database_table":
-		return "database_bindings"
-	case "workflow_bindings", "workflow":
-		return "workflow_bindings"
-	default:
-		return ""
-	}
-}
-
-func stringSetContainsAll(have map[string]struct{}, want map[string]struct{}) bool {
-	if len(want) == 0 {
-		return false
-	}
-	for field := range want {
-		if _, ok := have[field]; !ok {
-			return false
-		}
-	}
-	return true
 }
 
 func recoverableFailureFinalAnswer(trace skills.SkillTrace, err error) string {

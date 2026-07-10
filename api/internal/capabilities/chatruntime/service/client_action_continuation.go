@@ -140,21 +140,6 @@ func (s *service) RunClientActionContinuationStream(
 	s.emitPreparedEvent(ctx, prepared, streamEventMessageStart, messageStartPayload(conversation, message, false), onEvent)
 	s.emitPreparedEvent(ctx, prepared, streamEventClientActionResult, clientActionResultPayload(prepared, continuation.Event, req), onEvent)
 
-	if answer, ok := clientActionContinuationFastPathAnswer(prepared); ok {
-		s.emitPreparedEvent(ctx, prepared, streamEventMessage, map[string]interface{}{
-			"conversation_id": prepared.Conversation.ID.String(),
-			"message_id":      prepared.Message.ID.String(),
-			"answer":          answer,
-		}, onEvent)
-		metadata := preparedResultMetadata(prepared.Message.Metadata, nil)
-		prepared.Message.Metadata = metadata
-		if err := s.completePreparedChat(context.WithoutCancel(ctx), prepared, answer, metadata); err != nil {
-			return nil, err
-		}
-		s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
-		return &ChatResult{Answer: answer, Metadata: metadata, Status: runtimemodel.MessageStatusCompleted}, nil
-	}
-
 	var answer string
 	var usage *adapter.Usage
 	answer, usage, err = s.runPreparedSkillStream(runCtx, context.WithoutCancel(ctx), prepared, nil, onEvent)
@@ -209,16 +194,6 @@ func (s *service) RunClientActionContinuationStream(
 	}
 	s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, nil
-}
-
-func clientActionContinuationFastPathAnswer(prepared *PreparedChat) (string, bool) {
-	if prepared == nil || prepared.Message == nil || prepared.parts == nil {
-		return "", false
-	}
-	if clientActionContinuationIsRouteNavigation(prepared.Message.Metadata) {
-		return "", false
-	}
-	return skillloop.FastPathFinalAnswerForCompletionEvidence(skillLoopCompletionEvidence(prepared)())
 }
 
 func clientActionContinuationIsRouteNavigation(metadata map[string]interface{}) bool {

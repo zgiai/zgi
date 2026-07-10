@@ -17,9 +17,6 @@ func TestCompletionGateDeterministicPassForVerifiedAgentSystemPrompt(t *testing.
 	if strings.TrimSpace(decision.FinalAnswer) == "" {
 		t.Fatalf("completionGateEvaluate().FinalAnswer is empty; decision=%#v", decision)
 	}
-	if completionVerificationShouldRun(evidence, nil, nil, 6) {
-		t.Fatal("completionVerificationShouldRun() = true, want false when deterministic ledger coverage is sufficient")
-	}
 }
 
 func TestCompletionGateIgnoresKnowledgeBindingContractForSystemPromptEvidence(t *testing.T) {
@@ -124,7 +121,7 @@ func TestCompletionGateDoesNotAskUserFromLowConfidenceContractDriftAlone(t *test
 	}
 }
 
-func TestCompletionGateBlocksPartialFileWorkflowWhenAgentAndManagedPDFMissing(t *testing.T) {
+func TestCompletionGateDoesNotInferMissingWorkFromAdvisoryPlan(t *testing.T) {
 	evidence := map[string]interface{}{
 		"user_request": "rewrite the first md, generate a pdf in file management, then update this Agent with the new chapter",
 		"operation_plan": map[string]interface{}{
@@ -181,11 +178,30 @@ func TestCompletionGateBlocksPartialFileWorkflowWhenAgentAndManagedPDFMissing(t 
 	}
 
 	decision := completionGateEvaluate(evidence, "The PDF file has been generated.")
-	if decision.Path != completionGateModelVerifier {
-		t.Fatalf("completionGateEvaluate().Path = %q, want %q; decision=%#v", decision.Path, completionGateModelVerifier, decision)
+	if decision.Path != completionGateDeterministicPass {
+		t.Fatalf("completionGateEvaluate().Path = %q, want %q; decision=%#v", decision.Path, completionGateDeterministicPass, decision)
+	}
+	if decision.FinalAnswer != "The PDF file has been generated." {
+		t.Fatalf("completionGateEvaluate().FinalAnswer = %q, want main model candidate unchanged", decision.FinalAnswer)
 	}
 	if len(decision.MissingFacts) != 0 {
 		t.Fatalf("MissingFacts = %#v, want no contract-derived missing facts", decision.MissingFacts)
+	}
+}
+
+func TestCompletionGateAuditsFailedOpenItemInsteadOfTreatingItAsPendingProtocol(t *testing.T) {
+	decision := completionGateEvaluate(map[string]interface{}{
+		"turn_state": map[string]interface{}{
+			"open_items": []interface{}{map[string]interface{}{
+				"status": "error",
+				"reason": "failed_tool_call_needs_model_decision",
+			}},
+		},
+		"operation_plan": map[string]interface{}{"status": "failed"},
+	}, "The deletion failed because the file no longer exists.")
+
+	if decision.Path != completionGateModelVerifier {
+		t.Fatalf("completion gate path = %q, want model_verifier", decision.Path)
 	}
 }
 

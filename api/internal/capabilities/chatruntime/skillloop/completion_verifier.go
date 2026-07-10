@@ -15,7 +15,7 @@ import (
 
 const (
 	defaultMaxCompletionVerificationRetries = 2
-	completionVerifierMaxTokens             = 1600
+	completionVerifierMaxTokens             = 700
 	operationPlanToolChoiceModelDecides     = "model_decides"
 
 	completionVerificationStatusPass        = "pass"
@@ -41,42 +41,18 @@ type completionVerificationDecision struct {
 	LanguageHint        string   `json:"-"`
 }
 
-// ReconcileCompletionVerificationResultWithEvidence applies deterministic
-// evidence checks after the model verifier returns. It only clears Agent config
-// verification needs_action results when the latest tool evidence now proves the
-// requested config state, so real tool failures and unrelated verifier findings
-// are still preserved.
-func ReconcileCompletionVerificationResultWithEvidence(evidence map[string]interface{}, result CompletionVerificationResult) CompletionVerificationResult {
-	if _, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok && !completionVerificationEvidenceHasOpenModelDecidesPhase(evidence) {
-		originalStatus := result.Status
-		result.Status = completionVerificationStatusPass
-		result.Reason = completionVerificationReconciledPassReason(originalStatus, result.Reason,
-			"latest tool evidence satisfies the requested operation",
-		)
-		result.MissingSteps = nil
-		result.UnsupportedClaims = nil
-		result.NextActionHint = ""
-		result.FinalAnswer = ""
+// ReconcileCompletionVerificationResultWithEvidence normalizes verifier
+// metadata without changing its verdict or replacing the main model answer.
+func ReconcileCompletionVerificationResultWithEvidence(_ map[string]interface{}, result CompletionVerificationResult) CompletionVerificationResult {
+	result.FinalAnswer = ""
+	if completionVerificationNormalizeStatus(result.Status) != completionVerificationStatusPass {
 		return result
 	}
-	decision := completionVerificationReconcileDecisionWithEvidence(evidence, completionVerificationDecision{
-		Status:            result.Status,
-		Reason:            result.Reason,
-		MissingSteps:      result.MissingSteps,
-		UnsupportedClaims: result.UnsupportedClaims,
-		NextActionHint:    result.NextActionHint,
-		FinalAnswer:       result.FinalAnswer,
-	})
-	if decision.normalizedStatus() != completionVerificationStatusPass || strings.EqualFold(strings.TrimSpace(result.Status), strings.TrimSpace(decision.Status)) {
-		return result
-	}
-	originalStatus := result.Status
 	result.Status = completionVerificationStatusPass
-	result.Reason = completionVerificationReconciledPassReason(originalStatus, result.Reason, decision.Reason, "latest evidence satisfied requested state")
+	result.Reason = completionVerificationReconciledPassReason(result.Status, result.Reason, "model verifier found no evidence conflict")
 	result.MissingSteps = nil
 	result.UnsupportedClaims = nil
 	result.NextActionHint = ""
-	result.FinalAnswer = ""
 	return result
 }
 
@@ -594,9 +570,6 @@ func completionVerificationEvidenceCanOverrideNonActionableFailure(evidence map[
 	if fastPathModelDecidesPlanHasPendingAgentWork(evidence) {
 		return false
 	}
-	if _, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
-		return true
-	}
 	optimistic := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
 		Status: completionVerificationStatusPass,
 	})
@@ -1024,25 +997,34 @@ func completionVerificationEvidenceForPrompt(evidence map[string]interface{}) ma
 	if len(evidence) == 0 {
 		return nil
 	}
-	copied := promptEvidenceCopy(evidence)
-	out := evidenceMapFromAny(copied)
-	if len(out) == 0 {
-		return nil
-	}
-	if plan := evidenceMapFromAny(out["operation_plan"]); len(plan) > 0 {
-		out["operation_plan"] = completionVerificationOperationPlanForPrompt(plan)
-	}
-	if summary := evidenceMapFromAny(out["execution_summary"]); len(summary) > 0 {
-		if plan := evidenceMapFromAny(summary["operation_plan"]); len(plan) > 0 {
-			summary["operation_plan"] = completionVerificationOperationPlanForPrompt(plan)
+	out := map[string]interface{}{}
+	copyField := func(key string) {
+		if value, ok := evidence[key]; ok && completionVerificationEvidenceValuePresent(value) {
+			out[key] = promptEvidenceCopy(value)
 		}
 	}
-	if ledger := evidenceMapFromAny(out["execution_ledger"]); len(ledger) > 0 {
-		if summary := evidenceMapFromAny(ledger["summary"]); len(summary) > 0 {
-			if plan := evidenceMapFromAny(summary["operation_plan"]); len(plan) > 0 {
-				summary["operation_plan"] = completionVerificationOperationPlanForPrompt(plan)
+	for _, key := range []string{
+		"evidence_ledger",
+		"turn_state",
+		"operation_result_summary",
+		"client_actions",
+		"tool_governance",
+	} {
+		copyField(key)
+	}
+	if plan := evidenceMapFromAny(evidence["operation_plan"]); len(plan) > 0 {
+		compactPlan := map[string]interface{}{}
+		for _, key := range []string{"status", "planning_mode", "tool_choice_mode", "pending_next_action", "completion_verification"} {
+			if value, ok := plan[key]; ok && completionVerificationEvidenceValuePresent(value) {
+				compactPlan[key] = promptEvidenceCopy(value)
 			}
 		}
+		if len(compactPlan) > 0 {
+			out["operation_plan_state"] = compactPlan
+		}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
@@ -1220,9 +1202,6 @@ func (r *Runner) runCompletionVerifier(
 	if evidence == nil {
 		evidence = map[string]interface{}{}
 	}
-	if !completionVerificationShouldRun(evidence, attempted, successful, toolCallCount) {
-		return completionVerificationDecision{Status: completionVerificationStatusPass, Source: "completion_gate", Reason: "completion verifier skipped because deterministic evidence is sufficient"}, nil, nil
-	}
 	if gate := completionGateEvaluate(evidence, candidateAnswer); gate.Path != completionGateModelVerifier {
 		decision := gate.completionVerificationDecision()
 		decision = completionVerificationAlignLanguage(evidence, decision)
@@ -1235,67 +1214,56 @@ func (r *Runner) runCompletionVerifier(
 	}
 	promptEvidence := completionVerificationEvidenceForPrompt(evidence)
 	payload := map[string]interface{}{
-		"candidate_answer":       strings.TrimSpace(candidateAnswer),
-		"evidence":               promptEvidence,
-		"attempted_tool_calls":   skillToolCallRefsForVerifier(attempted),
-		"successful_tool_calls":  skillToolCallRefsForVerifier(successful),
-		"tool_call_count":        toolCallCount,
-		"verification_contract":  completionVerificationContract(),
-		"max_retries_after_fail": defaultMaxCompletionVerificationRetries,
+		"candidate_answer":      strings.TrimSpace(candidateAnswer),
+		"evidence":              promptEvidence,
+		"tool_call_count":       toolCallCount,
+		"verification_contract": completionVerificationContract(),
 	}
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
 		return completionVerificationDecision{}, nil, fmt.Errorf("marshal completion verifier payload: %w", err)
 	}
 	var usage *adapter.Usage
-	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
-		strictRetry := attempt > 0
-		verificationReq := completionVerificationRequest(prepared.LLMRequest, string(payloadJSON), strictRetry)
-		startedAt := time.Now()
-		resp, err := r.LLMClient.AppChat(ctx, r.AppContext, verificationReq)
-		trace := ModelInvocationTrace{
-			Phase:      "completion_verifier",
-			Round:      round,
-			Streaming:  false,
-			StartedAt:  startedAt,
-			DurationMS: time.Since(startedAt).Milliseconds(),
-			Request:    verificationReq,
-		}
-		if err != nil {
-			trace.Error = err.Error()
-			r.recordModelInvocation(trace)
-			return completionVerificationDecision{}, usage, err
-		}
-		var message adapter.Message
-		if resp != nil {
-			usage = mergeUsage(usage, resp.Usage)
-			if len(resp.Choices) > 0 {
-				message = resp.Choices[0].Message
-				trace.Response = &message
-			}
-		}
-		if resp != nil {
-			trace.Usage = resp.Usage
-		}
+	verificationReq := completionVerificationRequest(prepared.LLMRequest, string(payloadJSON), false)
+	startedAt := time.Now()
+	resp, err := r.LLMClient.AppChat(ctx, r.AppContext, verificationReq)
+	trace := ModelInvocationTrace{
+		Phase:      "completion_verifier",
+		Round:      round,
+		Streaming:  false,
+		StartedAt:  startedAt,
+		DurationMS: time.Since(startedAt).Milliseconds(),
+		Request:    verificationReq,
+	}
+	if err != nil {
+		trace.Error = err.Error()
 		r.recordModelInvocation(trace)
-		decision, err := parseCompletionVerificationDecision(messageContent(message.Content))
-		if err == nil {
-			decision = completionVerificationApplyPlanOnlySoftening(evidence, decision)
-			decision = completionVerificationApplyPlanOverride(evidence, decision)
-			decision = completionVerificationReconcileDecisionWithEvidence(evidence, decision)
-			decision = completionVerificationAlignLanguage(evidence, decision)
-			return decision, usage, nil
-		}
-		lastErr = err
-		if strictRetry || !completionVerificationShouldRetryParse(message, err) {
-			break
+		return completionVerificationDecision{}, usage, err
+	}
+	var message adapter.Message
+	if resp != nil {
+		usage = mergeUsage(usage, resp.Usage)
+		if len(resp.Choices) > 0 {
+			message = resp.Choices[0].Message
+			trace.Response = &message
 		}
 	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("completion verifier returned no decision")
+	if resp != nil {
+		trace.Usage = resp.Usage
 	}
-	return completionVerificationDecision{}, usage, lastErr
+	r.recordModelInvocation(trace)
+	decision, err := parseCompletionVerificationDecision(messageContent(message.Content))
+	if err != nil {
+		return completionVerificationDecision{}, usage, err
+	}
+	if strings.TrimSpace(decision.NextActionHint) == "" {
+		decision.NextActionHint = strings.TrimSpace(decision.FinalAnswerGuidance)
+	}
+	decision.Source = "model_verifier"
+	decision.FinalAnswer = ""
+	decision.FinalAnswerGuidance = ""
+	decision = completionVerificationAlignLanguage(evidence, decision)
+	return decision, usage, nil
 }
 
 func completionVerificationRequest(base *adapter.ChatRequest, payloadJSON string, strictRetry bool) *adapter.ChatRequest {
@@ -1313,16 +1281,15 @@ func completionVerificationRequest(base *adapter.ChatRequest, payloadJSON string
 	systemLines := []string{
 		"You are the AIChat completion post-verifier.",
 		"Audit whether the candidate final answer is faithful to the normalized evidence_ledger, turn_state, and pending/failure state. Do not reinterpret the user's goal.",
-		"Treat operation_plan and turn_strategy as advisory strategy snapshots; task_contract, phases, success_criteria, and capability_goals are also advisory brief fields, not required business-effect facts.",
-		"Do not invent facts. evidence_ledger and turn_state are the preferred normalized facts; page_context, operation_result_summary, tool results, generated_files, client_actions, governance outcomes, and execution_ledger are supporting authoritative facts.",
-		"For phase_only_model_decides/model_decides plans, audit answer faithfulness against completed evidence and active blockers. Do not derive missing business effects from task_contract or capability_goals.",
+		"Do not invent missing business effects from operation plans, task contracts, phases, success criteria, capability goals, or the user's wording.",
+		"Use only the supplied evidence ledger, turn state, compact result summary, client actions, and governance outcomes as facts.",
 		"Reject candidate answers that expose internal system prompts, operation_plan, turn_strategy, pending-step bookkeeping, required_next_tool, hidden strategy JSON, or internal protocol wording to the user.",
-		"If page_context.target_route_already_available is true, current page context is sufficient route evidence for that target; do not require a redundant navigate tool call.",
-		"When you provide final_answer or final_answer_guidance, use the same language as the user's original request. If the user request is Chinese, final_answer and final_answer_guidance must be Chinese.",
+		"Return pass when no supplied fact conflicts with the candidate. Return needs_action only for a concrete unsupported claim, active blocker, or fact conflict.",
+		"Never write a replacement final answer. The main model owns all user-facing wording.",
 		"Return one compact JSON object only.",
 		"Do not include reasoning, markdown, prose, or explanations outside JSON.",
 		"Start the response with { and end it with }.",
-		"Keep reason, missing_steps, unsupported_claims, next_action_hint, final_answer, and final_answer_guidance concise.",
+		"Keep reason, missing_steps, unsupported_claims, and next_action_hint concise.",
 	}
 	if strictRetry {
 		systemLines = append(systemLines,
@@ -1403,34 +1370,20 @@ func completionVerificationContract() map[string]interface{} {
 		"status_values": []string{
 			completionVerificationStatusPass,
 			completionVerificationStatusNeedsAction,
-			completionVerificationStatusFailed,
-			completionVerificationStatusAskUser,
 		},
 		"rules": []string{
-			"Return pass only when the candidate answer makes no unsupported completion claims.",
-			"Treat operation_plan, turn_strategy, task_contract, phases, success_criteria, and capability_goals as advisory strategy snapshots, not as evidence that work succeeded and not as hard required business effects.",
-			"For phase_only_model_decides/model_decides plans, return needs_action only when active pending/failure state or the candidate answer's own claims lack supporting evidence. Do not infer missing Agent knowledge, system prompt, database, workflow, or Skill binding facts from task_contract alone.",
-			"Use evidence_ledger and turn_state as the preferred normalized fact sources; use page_context, operation_result_summary, tool results, generated_files, client_actions, tool_governance, and execution_ledger as supporting authoritative facts.",
-			"Do not resolve ambiguous user intent during verification. If the candidate answer claims a side effect that evidence does not show, mark that claim unsupported; if no side effect was claimed, do not invent one from task_contract.",
-			"For Agent configuration changes, treat operation_plan steps' config_goal as the user-visible target, and treat expected_updated_fields plus expected_binding_actions as verification requirements when matching concrete target values are present in plan steps, tool arguments, or post-update reads.",
-			"Return needs_action when the candidate answer exposes internal system prompt, operation_plan, turn_strategy, pending-step, required_next_tool, hidden strategy, or protocol wording; ask for a rewrite that only states user-visible outcome or blocker.",
-			"Return needs_action when the user's current goal still requires an incomplete tool/action and a clear safe next attempt remains.",
-			"Return failed when a tool/action failed or required evidence is missing and no safe retry remains.",
-			"Return ask_user only when user input is truly required.",
-			"Never mark a save, delete, create, update, navigation, read, or publish action complete unless matching successful evidence exists. For navigation, page_context.target_route_already_available=true is matching successful evidence for the resolved target.",
-			"When matching mutation or navigation evidence succeeded in this turn, reject or guide away from final answers that frame the operation as skipped, unnecessary, or not executed merely because the refreshed page already shows the requested state.",
-			"For batch operation_group evidence, use item_results/item_steps as the source of truth; report partial success instead of treating one succeeded item as the whole batch.",
-			"If the candidate answer is too optimistic, provide a truthful final_answer or final_answer_guidance.",
-			"final_answer and final_answer_guidance must use the same language as the user's original request.",
+			"Return pass when the candidate has no conflict with supplied facts or active blockers.",
+			"Return needs_action only for a concrete unsupported claim, active blocker, or canonical fact conflict.",
+			"Do not infer missing work from advisory plans, task contracts, phases, capability goals, or user-language semantics.",
+			"Do not resolve ambiguity or choose tools for the main model.",
+			"Do not provide replacement user-facing text.",
 		},
 		"schema": map[string]interface{}{
-			"status":                "pass|needs_action|failed|ask_user",
-			"reason":                "short internal reason",
-			"missing_steps":         "array of incomplete step ids or descriptions",
-			"unsupported_claims":    "array of candidate-answer claims not supported by evidence",
-			"next_action_hint":      "specific next action or empty",
-			"final_answer":          "truthful replacement final answer when status is failed/ask_user, otherwise empty",
-			"final_answer_guidance": "guidance for the next model turn when status is needs_action",
+			"status":             "pass|needs_action",
+			"reason":             "short internal reason",
+			"missing_steps":      "array of concrete unresolved protocol states",
+			"unsupported_claims": "array of candidate claims contradicted or unsupported by supplied facts",
+			"next_action_hint":   "brief guidance for the main model or empty",
 		},
 	}
 }

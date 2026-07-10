@@ -42,85 +42,6 @@ func TestCompletionVerificationOperationPlanForPromptHidesModelDecidesCandidateT
 	}
 }
 
-func TestCompletionVerificationModelDecidesOpenPhaseBlocksFastPath(t *testing.T) {
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":              "running",
-			"planning_mode":       "phase_only_model_decides",
-			"tool_choice_mode":    "model_decides",
-			"pending_next_action": "continue_from_phase_success_criteria",
-			"original_user_goal":  "Create an Agent, configure it, bind useful resources, and verify the result.",
-			"phases": []interface{}{
-				map[string]interface{}{
-					"id":               "agent-management",
-					"success_criteria": []interface{}{"Agent is created, configured, bound, and verified."},
-				},
-			},
-		},
-		"skill_invocations": []interface{}{
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "create_agent",
-				"result": map[string]interface{}{
-					"status":     "completed",
-					"agent_name": "Smoke Agent",
-				},
-			},
-		},
-	}
-
-	if !completionVerificationPlanNeedsRuntimeEvidence(evidenceMapFromAny(evidence["operation_plan"])) {
-		t.Fatal("completionVerificationPlanNeedsRuntimeEvidence() = false, want open model-decides phase to need verification")
-	}
-	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); ok {
-		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = %q, true; want open phase to block fast path", answer)
-	}
-	decision := completionVerificationApplyPlanOverride(evidence, completionVerificationDecision{
-		Status: completionVerificationStatusPass,
-		Reason: "create_agent succeeded",
-	})
-	if got := decision.normalizedStatus(); got != completionVerificationStatusPass {
-		t.Fatalf("decision status = %q, want pass after model verifier pass; decision=%#v", got, decision)
-	}
-	if decision.NextActionHint != "" {
-		t.Fatalf("NextActionHint = %q, want empty after model verifier pass", decision.NextActionHint)
-	}
-}
-
-func TestCompletionVerificationModelDecidesVerifiedPhaseAllowsFastPath(t *testing.T) {
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":           "completed",
-			"planning_mode":    "phase_only_model_decides",
-			"tool_choice_mode": "model_decides",
-			"completion_verification": map[string]interface{}{
-				"status": "pass",
-			},
-		},
-		"skill_invocations": []interface{}{
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"status":    "success",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "create_agent",
-				"result": map[string]interface{}{
-					"status":     "completed",
-					"agent_name": "Smoke Agent",
-				},
-			},
-		},
-	}
-
-	if completionVerificationPlanNeedsRuntimeEvidence(evidenceMapFromAny(evidence["operation_plan"])) {
-		t.Fatal("completionVerificationPlanNeedsRuntimeEvidence() = true, want verified completed model-decides phase closed")
-	}
-	if answer, ok := FastPathFinalAnswerForCompletionEvidence(evidence); !ok || !strings.Contains(answer, "Smoke Agent") {
-		t.Fatalf("FastPathFinalAnswerForCompletionEvidence() = %q, %v; want verified evidence fast path", answer, ok)
-	}
-}
-
 func TestCompletionVerificationFallbackAnswerUsesReadableChinese(t *testing.T) {
 	answer := completionVerificationFallbackAnswer(completionVerificationDecision{
 		Status:            completionVerificationStatusFailed,
@@ -421,19 +342,11 @@ func TestCompletionVerificationContractTreatsPlanAsAdvisory(t *testing.T) {
 		t.Fatalf("rules = %#v, want []string", contract["rules"])
 	}
 	rules := strings.Join(rawRules, "\n")
-	if !strings.Contains(rules, "advisory strategy snapshots") {
+	if !strings.Contains(rules, "advisory plans") {
 		t.Fatalf("rules = %q, want operation plan advisory language", rules)
 	}
-	if !strings.Contains(rules, "execution_ledger") ||
-		!strings.Contains(rules, "authoritative facts") {
-		t.Fatalf("rules = %q, want ledger as authoritative fact source", rules)
-	}
-	if !strings.Contains(rules, "page_context") ||
-		!strings.Contains(rules, "target_route_already_available") {
-		t.Fatalf("rules = %q, want current page route evidence language", rules)
-	}
-	if !strings.Contains(rules, "operation as skipped, unnecessary, or not executed") {
-		t.Fatalf("rules = %q, want mutation evidence wording guidance", rules)
+	if !strings.Contains(rules, "Do not provide replacement user-facing text") {
+		t.Fatalf("rules = %q, want verifier to preserve main model ownership", rules)
 	}
 	if strings.Contains(rules, "operation_plan still has a pending executable tool step") {
 		t.Fatalf("rules = %q, must not force pending plan steps as hard verifier failures", rules)
@@ -448,11 +361,9 @@ func TestCompletionVerificationPromptTreatsEvidenceAsAuthoritative(t *testing.T)
 	system := messageContent(request.Messages[0].Content)
 	for _, fragment := range []string{
 		"faithful to the normalized evidence_ledger",
-		"operation_plan and turn_strategy as advisory strategy snapshots",
-		"not required business-effect facts",
-		"Do not derive missing business effects from task_contract or capability_goals",
-		"evidence_ledger and turn_state are the preferred normalized facts",
-		"target_route_already_available",
+		"Do not invent missing business effects",
+		"Use only the supplied evidence ledger",
+		"Never write a replacement final answer",
 	} {
 		if !strings.Contains(system, fragment) {
 			t.Fatalf("system message = %q, want fragment %q", system, fragment)
@@ -712,11 +623,11 @@ func TestCompletionVerificationApplyPlanOverrideUsesLatestPostUpdateAgentConfigR
 		MissingSteps:   []string{"agent-management/get_agent_config enabled_skill_ids missing bound target: file-generator"},
 		NextActionHint: "agent-management/update_agent_config",
 	})
-	if got := reconciled.Status; got != completionVerificationStatusPass {
-		t.Fatalf("reconciled status = %q, want pass; result=%#v", got, reconciled)
+	if got := reconciled.Status; got != completionVerificationStatusNeedsAction {
+		t.Fatalf("reconciled status = %q, want unchanged needs_action; result=%#v", got, reconciled)
 	}
-	if len(reconciled.MissingSteps) != 0 || reconciled.NextActionHint != "" {
-		t.Fatalf("reconciled = %#v, want cleared missing steps and next action", reconciled)
+	if len(reconciled.MissingSteps) == 0 || reconciled.NextActionHint == "" {
+		t.Fatalf("reconciled = %#v, want verifier blockers preserved", reconciled)
 	}
 }
 
@@ -831,8 +742,8 @@ func TestCompletionVerificationAgentConfigBindingUsesCandidateAliases(t *testing
 		MissingSteps:   []string{"agent-management/get_agent_config enabled_skill_ids missing bound target: 文件生成器"},
 		NextActionHint: "agent-management/update_agent_config",
 	})
-	if got := reconciled.Status; got != completionVerificationStatusPass {
-		t.Fatalf("reconciled status = %q, want pass; result=%#v", got, reconciled)
+	if got := reconciled.Status; got != completionVerificationStatusNeedsAction {
+		t.Fatalf("reconciled status = %q, want unchanged needs_action; result=%#v", got, reconciled)
 	}
 }
 
@@ -902,14 +813,11 @@ func TestCompletionVerificationReconcilesNonActionableFailedStatusWithCompleteEv
 		Reason: "Evidence confirms all requested changes, but verifier emitted failed status.",
 	})
 
-	if got := reconciled.Status; got != completionVerificationStatusPass {
-		t.Fatalf("reconciled status = %q, want pass; result=%#v", got, reconciled)
+	if got := reconciled.Status; got != completionVerificationStatusFailed {
+		t.Fatalf("reconciled status = %q, want unchanged failed; result=%#v", got, reconciled)
 	}
-	if strings.Contains(strings.ToLower(reconciled.Reason), "failed status") {
-		t.Fatalf("reconciled reason = %q, want evidence pass reason instead of stale failure reason", reconciled.Reason)
-	}
-	if len(reconciled.MissingSteps) != 0 || len(reconciled.UnsupportedClaims) != 0 || reconciled.NextActionHint != "" {
-		t.Fatalf("reconciled = %#v, want cleared blocker fields", reconciled)
+	if !strings.Contains(strings.ToLower(reconciled.Reason), "failed status") {
+		t.Fatalf("reconciled reason = %q, want verifier reason preserved", reconciled.Reason)
 	}
 }
 
@@ -2755,8 +2663,8 @@ func TestCompletionVerificationReconcilesLedgerVerifiedModelDecidesFailure(t *te
 		Status: "failed",
 		Reason: "Evidence confirms all requested changes, but the verifier emitted a failed status.",
 	})
-	if got := strings.TrimSpace(result.Status); got != completionVerificationStatusPass {
-		t.Fatalf("ReconcileCompletionVerificationResultWithEvidence().Status = %q, want pass; result=%#v", got, result)
+	if got := strings.TrimSpace(result.Status); got != completionVerificationStatusFailed {
+		t.Fatalf("ReconcileCompletionVerificationResultWithEvidence().Status = %q, want unchanged failed; result=%#v", got, result)
 	}
 }
 

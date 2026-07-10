@@ -36,9 +36,6 @@ func clientActionRequiredPayload(prepared *PreparedChat, trace skills.SkillTrace
 	if isNonBlockingAgentManagementMutation(trace) {
 		return nil
 	}
-	if _, ok := FastPathFinalAnswerForToolTrace(trace); ok {
-		return nil
-	}
 	if payload := assetObservationClientActionRequiredPayload(prepared, trace, callID); len(payload) > 0 {
 		return payload
 	}
@@ -109,15 +106,6 @@ func agentManagementRouteNavigationClientActionRequiredPayload(prepared *Prepare
 	routeKind := ""
 	reason := ""
 	switch strings.TrimSpace(trace.ToolName) {
-	case "create_agent":
-		if !createdAgentClientActionShouldOpenDetail(prepared) {
-			return nil
-		}
-		href = agentDetailHrefFromTraceResult(trace.Result)
-		label = "Agent detail"
-		labelKey = "agentDetail"
-		routeKind = "agent_detail"
-		reason = "open_created_agent_detail"
 	case "delete_agent":
 		if !deletedAgentIsCurrentDetailPage(prepared, trace) {
 			return nil
@@ -182,62 +170,6 @@ func isNonBlockingAgentManagementMutation(trace skills.SkillTrace) bool {
 	default:
 		return false
 	}
-}
-
-func createdAgentClientActionShouldOpenDetail(prepared *PreparedChat) bool {
-	if prepared == nil {
-		return false
-	}
-	return wantsCreatedAgentDetailNavigation(prepared.Query)
-}
-
-func wantsCreatedAgentDetailNavigation(query string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(query))
-	if normalized == "" || createdAgentDetailNavigationNegated(normalized) {
-		return false
-	}
-	hasCreate := false
-	for _, marker := range []string{"\u521b\u5efa", "\u65b0\u5efa", "create", "new agent"} {
-		if strings.Contains(normalized, marker) {
-			hasCreate = true
-			break
-		}
-	}
-	if !hasCreate {
-		return false
-	}
-	return payloadContainsAnySubstring(normalized, []string{
-		"\u6253\u5f00",
-		"\u8fdb\u5165",
-		"\u8be6\u60c5",
-		"open",
-		"enter",
-		"detail",
-		"view",
-	})
-}
-
-func createdAgentDetailNavigationNegated(normalized string) bool {
-	return payloadContainsAnySubstring(normalized, []string{
-		"do not navigate", "don't navigate", "dont navigate",
-		"do not open", "don't open", "dont open",
-		"do not enter", "don't enter", "dont enter",
-		"without navigating", "without opening",
-		"stay on the list", "stay on current page",
-		"\u4e0d\u8981\u5bfc\u822a", "\u4e0d\u8981\u8df3\u8f6c", "\u4e0d\u8981\u6253\u5f00", "\u4e0d\u8981\u8fdb\u5165",
-		"\u4e0d\u7528\u5bfc\u822a", "\u4e0d\u7528\u8df3\u8f6c", "\u4e0d\u7528\u6253\u5f00", "\u4e0d\u7528\u8fdb\u5165",
-		"\u65e0\u9700\u5bfc\u822a", "\u65e0\u9700\u8df3\u8f6c", "\u65e0\u9700\u6253\u5f00", "\u65e0\u9700\u8fdb\u5165",
-		"\u7559\u5728\u5217\u8868", "\u7559\u5728\u5f53\u524d\u9875",
-	})
-}
-
-func payloadContainsAnySubstring(text string, needles []string) bool {
-	for _, needle := range needles {
-		if needle != "" && strings.Contains(text, needle) {
-			return true
-		}
-	}
-	return false
 }
 
 func deletedAgentIsCurrentDetailPage(prepared *PreparedChat, trace skills.SkillTrace) bool {

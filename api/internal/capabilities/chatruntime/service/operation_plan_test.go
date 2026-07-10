@@ -12639,8 +12639,8 @@ func TestOperationPlanUpdatesFromGeneratedArtifactMetadata(t *testing.T) {
 	if stepStatus["observe"] != operationPlanStepStatusCompleted {
 		t.Fatalf("step_status = %#v, want observe completed", stepStatus)
 	}
-	if plan["status"] != operationPlanStatusCompleted {
-		t.Fatalf("plan status = %#v, want completed", plan["status"])
+	if plan["status"] != operationPlanStatusRunning {
+		t.Fatalf("plan status = %#v, want running until the main model final answer is accepted", plan["status"])
 	}
 }
 
@@ -12948,7 +12948,7 @@ func TestPreparedResultMetadataCompletesModelDecidesPlanWithVerification(t *test
 	}
 }
 
-func TestSkillLoopCompletionVerificationResultReconcilesPassAndSyncsSummary(t *testing.T) {
+func TestSkillLoopCompletionVerificationResultPreservesFailedVerifierVerdict(t *testing.T) {
 	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
 	postReadStepID := operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config")
 	updateInvocation := map[string]interface{}{
@@ -13063,19 +13063,19 @@ func TestSkillLoopCompletionVerificationResultReconcilesPassAndSyncsSummary(t *t
 	})
 
 	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
-	if got := stringFromAny(plan["status"]); got != operationPlanStatusCompleted {
-		t.Fatalf("operation_plan.status = %q, want completed; plan=%#v", got, plan)
+	if got := stringFromAny(plan["status"]); got != operationPlanStatusFailed {
+		t.Fatalf("operation_plan.status = %q, want failed; plan=%#v", got, plan)
 	}
 	if got := stringFromAny(plan["pending_next_action"]); got != "none" {
 		t.Fatalf("operation_plan.pending_next_action = %q, want none; plan=%#v", got, plan)
 	}
 	verification := mapFromOperationContext(plan["completion_verification"])
-	if got := stringFromAny(verification["status"]); got != "pass" {
-		t.Fatalf("completion_verification.status = %q, want pass; verification=%#v", got, verification)
+	if got := stringFromAny(verification["status"]); got != "failed" {
+		t.Fatalf("completion_verification.status = %q, want failed; verification=%#v", got, verification)
 	}
 	summary := mapFromOperationContext(prepared.Message.Metadata["operation_result_summary"])
-	if got := stringFromAny(summary["plan_status"]); got != operationPlanStatusCompleted {
-		t.Fatalf("operation_result_summary.plan_status = %q, want completed; summary=%#v", got, summary)
+	if got := stringFromAny(summary["plan_status"]); got != operationPlanStatusFailed {
+		t.Fatalf("operation_result_summary.plan_status = %q, want failed; summary=%#v", got, summary)
 	}
 	if got := stringFromAny(summary["pending_next_action"]); got != "none" {
 		t.Fatalf("operation_result_summary.pending_next_action = %q, want none; summary=%#v", got, summary)

@@ -5361,12 +5361,6 @@ func applyOperationPlanArtifactState(metadata map[string]interface{}, files []ma
 	if requiresManagedSave && len(unsavedFiles) > 0 {
 		pendingOverride = "save_remaining_generated_files_to_file_management"
 		statusOverride = operationPlanStatusRunning
-	} else if requiresManagedSave && managedCount > 0 {
-		pendingOverride = "none"
-		statusOverride = operationPlanStatusCompleted
-	} else if temporaryCount > 0 || managedCount > 0 {
-		pendingOverride = "none"
-		statusOverride = operationPlanStatusCompleted
 	}
 	applyOperationPlanProgress(plan, steps, stepStatus, pendingOverride, statusOverride)
 	latest := files[len(files)-1]
@@ -5630,11 +5624,12 @@ func applyOperationPlanCompletionVerificationResultWithSource(metadata map[strin
 
 	steps := mapSliceFromAny(plan["steps"])
 	if len(steps) == 0 {
-		if operationPlanModelDecidesTools(plan) {
+		switch {
+		case operationPlanCompletionVerificationPassStatus(status):
+			plan["status"] = operationPlanStatusCompleted
+			plan["pending_next_action"] = "none"
+		case operationPlanModelDecidesTools(plan):
 			switch {
-			case operationPlanCompletionVerificationPassStatus(status):
-				plan["status"] = operationPlanStatusCompleted
-				plan["pending_next_action"] = "none"
 			case operationPlanCompletionVerificationTerminalFailure(status):
 				plan["status"] = operationPlanStatusFailed
 				plan["pending_next_action"] = "none"
@@ -5646,15 +5641,13 @@ func applyOperationPlanCompletionVerificationResultWithSource(metadata map[strin
 					plan["pending_next_action"] = operationPlanPendingNextActionForPlan(plan, nil)
 				}
 			}
-			operationPlanSyncStrategyState(plan)
-			metadata["operation_plan"] = plan
-			syncOperationPlanCompletionMetadata(metadata)
-			return
+		default:
+			if !strings.EqualFold(strings.TrimSpace(stringFromAny(plan["status"])), operationPlanStatusCompleted) {
+				plan["status"] = operationPlanStatusFailed
+				plan["pending_next_action"] = "none"
+			}
 		}
-		if !strings.EqualFold(strings.TrimSpace(stringFromAny(plan["status"])), operationPlanStatusCompleted) {
-			plan["status"] = operationPlanStatusFailed
-			plan["pending_next_action"] = "none"
-		}
+		operationPlanSyncStrategyState(plan)
 		metadata["operation_plan"] = plan
 		syncOperationPlanCompletionMetadata(metadata)
 		return
@@ -5664,7 +5657,7 @@ func applyOperationPlanCompletionVerificationResultWithSource(metadata map[strin
 		stepStatus = map[string]interface{}{}
 	}
 
-	if operationPlanCompletionVerificationPassStatus(status) && operationPlanModelDecidesTools(plan) {
+	if operationPlanCompletionVerificationPassStatus(status) {
 		for _, step := range steps {
 			if !operationPlanStepBlocksCompletion(step) {
 				continue

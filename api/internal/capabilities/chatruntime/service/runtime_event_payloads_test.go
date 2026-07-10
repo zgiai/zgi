@@ -86,7 +86,7 @@ func TestAgentManagementCreateResultFromMessagesDoesNotEmitDetailNavigationByDef
 	}
 }
 
-func TestAgentManagementCreateResultFromMessagesEmitsDetailNavigationWhenRequested(t *testing.T) {
+func TestAgentManagementCreateResultFromMessagesRequiresExplicitNavigationTool(t *testing.T) {
 	prepared := &PreparedChat{
 		Conversation: &model.Conversation{ID: uuid.New()},
 		Message:      &model.Message{ID: uuid.New()},
@@ -114,22 +114,8 @@ func TestAgentManagementCreateResultFromMessagesEmitsDetailNavigationWhenRequest
 		},
 	}})
 
-	payload := clientActionRequiredPayload(prepared, trace, "call-create")
-	if payload == nil {
-		t.Fatal("clientActionRequiredPayload() = nil, want route navigation payload")
-	}
-	if payload["action_type"] != "route_navigation" ||
-		payload["skill_id"] != skills.SkillConsoleNavigator ||
-		payload["tool_name"] != "navigate" ||
-		payload["href"] != "/console/agents/agent-1/agent" ||
-		payload["label_key"] != "agentDetail" ||
-		payload["route_kind"] != "agent_detail" ||
-		payload["reason"] != "open_created_agent_detail" {
-		t.Fatalf("payload = %#v, want created Agent detail navigation", payload)
-	}
-	result, _ := payload["result"].(map[string]interface{})
-	if result["label_key"] != "agentDetail" || result["route_kind"] != "agent_detail" {
-		t.Fatalf("payload result = %#v, want created Agent detail label metadata", result)
+	if payload := clientActionRequiredPayload(prepared, trace, "call-create"); payload != nil {
+		t.Fatalf("clientActionRequiredPayload() = %#v, want model to call console navigation explicitly", payload)
 	}
 }
 
@@ -391,7 +377,7 @@ func TestAgentManagementDeleteResultFromListPageDoesNotNavigate(t *testing.T) {
 	}
 }
 
-func TestAgentManagementDeleteResultWithGovernanceFastPathsWithoutObservation(t *testing.T) {
+func TestAgentManagementDeleteResultWithGovernanceRecordsObservation(t *testing.T) {
 	prepared := &PreparedChat{
 		Conversation: &model.Conversation{ID: uuid.New()},
 		Message:      &model.Message{ID: uuid.New()},
@@ -429,12 +415,13 @@ func TestAgentManagementDeleteResultWithGovernanceFastPathsWithoutObservation(t 
 		},
 	}
 
-	if payload := clientActionRequiredPayload(prepared, trace, "call-delete"); payload != nil {
-		t.Fatalf("clientActionRequiredPayload() = %#v, want nil because delete result is enough for fast-path completion", payload)
+	payload := clientActionRequiredPayload(prepared, trace, "call-delete")
+	if payload["action_type"] != "asset_observation" || payload["continuation_policy"] != clientActionContinuationPolicyRecordOnly {
+		t.Fatalf("clientActionRequiredPayload() = %#v, want non-blocking asset observation", payload)
 	}
 }
 
-func TestAgentManagementBatchDeleteWithGovernanceFastPathsWithoutObservation(t *testing.T) {
+func TestAgentManagementBatchDeleteWithGovernanceRecordsObservation(t *testing.T) {
 	prepared := &PreparedChat{
 		Conversation: &model.Conversation{ID: uuid.New()},
 		Message:      &model.Message{ID: uuid.New()},
@@ -482,8 +469,9 @@ func TestAgentManagementBatchDeleteWithGovernanceFastPathsWithoutObservation(t *
 		},
 	}
 
-	if payload := clientActionRequiredPayload(prepared, trace, "call-delete-agents"); payload != nil {
-		t.Fatalf("clientActionRequiredPayload() = %#v, want nil because batch item_results are enough for fast-path completion", payload)
+	payload := clientActionRequiredPayload(prepared, trace, "call-delete-agents")
+	if payload["action_type"] != "asset_observation" || payload["continuation_policy"] != clientActionContinuationPolicyRecordOnly {
+		t.Fatalf("clientActionRequiredPayload() = %#v, want non-blocking batch asset observation", payload)
 	}
 }
 
