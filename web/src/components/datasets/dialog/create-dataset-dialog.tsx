@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { BookOpen, ChevronLeft, Pencil } from 'lucide-react';
+import { BookOpen, ChevronRight, Pencil } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -258,6 +258,9 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
 
     // Mark form as submitted to show validation errors
     setHasSubmitted(true);
+    if (!isEmbeddingModelValid) {
+      setShowAdvancedSettings(true);
+    }
 
     // Validate form and show toast for errors
     if (!validateForm()) {
@@ -418,58 +421,6 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                 </div>
               ) : null}
 
-              {/* Embedding Model Selector */}
-              {!isEditMode && (
-                <EmbeddingSettings
-                  embeddingModel={{
-                    provider: formData.embedding_model_provider || '',
-                    model: formData.embedding_model || '',
-                  }}
-                  onChange={embeddingModel => {
-                    setFormData(prev => ({
-                      ...prev,
-                      embedding_model_provider: embeddingModel.provider,
-                      embedding_model: embeddingModel.model,
-                    }));
-                  }}
-                  required
-                  title={t('datasets.createModal.embeddingModelLabel')}
-                  placeholder={t('datasets.createModal.embeddingModelPlaceholder')}
-                  hasError={hasSubmitted && !isEmbeddingModelValid}
-                  errorMessage={
-                    hasSubmitted && !isEmbeddingModelValid
-                      ? t('datasets.validation.embeddingModel.required')
-                      : undefined
-                  }
-                />
-              )}
-
-              {/* Rerank model selector - create mode only */}
-              {!isEditMode && (
-                <div className="space-y-2.5">
-                  <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                    {t('datasets.createWizard.processConfig.rerankModel')}
-                  </Label>
-                  <ModelSelector
-                    modelType="rerank"
-                    value={{
-                      provider: retrievalConfig.reranking_model?.reranking_provider_name || '',
-                      model: retrievalConfig.reranking_model?.reranking_model_name || '',
-                    }}
-                    onChange={({ provider, model }) =>
-                      setRetrievalConfig(prev => ({
-                        ...prev,
-                        reranking_enable: true,
-                        reranking_model: {
-                          reranking_provider_name: provider,
-                          reranking_model_name: model,
-                        },
-                      }))
-                    }
-                  />
-                </div>
-              )}
-
               {/* Advanced Settings */}
               <div className="space-y-3">
                 <button
@@ -477,10 +428,10 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                   onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
                   className="flex items-center gap-2 text-sm font-semibold hover:text-primary transition-colors focus:outline-none"
                 >
-                  <ChevronLeft
+                  <ChevronRight
                     className={cn(
                       'size-4 transition-transform duration-300',
-                      showAdvancedSettings ? '-rotate-90' : ''
+                      showAdvancedSettings ? 'rotate-90' : ''
                     )}
                   />
                   {t('datasets.createModal.advancedSettingsLabel')}
@@ -493,6 +444,59 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                   )}
                 >
                   <div className="space-y-4">
+                    {/* Embedding Model Selector */}
+                    {!isEditMode && (
+                      <EmbeddingSettings
+                        embeddingModel={{
+                          provider: formData.embedding_model_provider || '',
+                          model: formData.embedding_model || '',
+                        }}
+                        onChange={embeddingModel => {
+                          setFormData(prev => ({
+                            ...prev,
+                            embedding_model_provider: embeddingModel.provider,
+                            embedding_model: embeddingModel.model,
+                          }));
+                        }}
+                        required
+                        title={t('datasets.createModal.embeddingModelLabel')}
+                        placeholder={t('datasets.createModal.embeddingModelPlaceholder')}
+                        hasError={hasSubmitted && !isEmbeddingModelValid}
+                        errorMessage={
+                          hasSubmitted && !isEmbeddingModelValid
+                            ? t('datasets.validation.embeddingModel.required')
+                            : undefined
+                        }
+                      />
+                    )}
+
+                    {/* Rerank model selector - create mode only */}
+                    {!isEditMode && (
+                      <div className="space-y-2.5">
+                        <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                          {t('datasets.createWizard.processConfig.rerankModel')}
+                        </Label>
+                        <ModelSelector
+                          modelType="rerank"
+                          value={{
+                            provider:
+                              retrievalConfig.reranking_model?.reranking_provider_name || '',
+                            model: retrievalConfig.reranking_model?.reranking_model_name || '',
+                          }}
+                          onChange={({ provider, model }) =>
+                            setRetrievalConfig(prev => ({
+                              ...prev,
+                              reranking_enable: true,
+                              reranking_model: {
+                                reranking_provider_name: provider,
+                                reranking_model_name: model,
+                              },
+                            }))
+                          }
+                        />
+                      </div>
+                    )}
+
                     <div className="space-y-2.5">
                       <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                         {t('datasets.createModal.iconLabel')}

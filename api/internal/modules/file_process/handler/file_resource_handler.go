@@ -3,9 +3,9 @@ package handler
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -23,7 +23,14 @@ import (
 	"go.uber.org/zap"
 )
 
-const folderDuplicateNameMessage = "同一级目录下已存在同名文件夹，请更换名称。"
+const (
+	folderDuplicateNameMessage = "同一级目录下已存在同名文件夹，请更换名称。"
+	folderNameLengthMessage    = "文件夹名称需为 1-40 个字符。"
+)
+
+type deleteFolderRequest struct {
+	ConfirmFolderName string `json:"confirm_folder_name"`
+}
 
 // FileResourceHandler handles file and file resource-related HTTP requests
 type FileResourceHandler struct {
@@ -152,7 +159,7 @@ func (h *FileResourceHandler) PostFolder(c *gin.Context) {
 
 	// Validate name
 	if err := h.validateFolderName(req.Name); err != nil {
-		response.Fail(c, response.ErrInvalidParam)
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 		return
 	}
 
@@ -298,7 +305,7 @@ func (h *FileResourceHandler) PatchFolder(c *gin.Context) {
 	// Validate name if provided
 	if req.Name != nil {
 		if err := h.validateFolderName(*req.Name); err != nil {
-			response.Fail(c, response.ErrInvalidParam)
+			response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 			return
 		}
 	}
@@ -390,17 +397,65 @@ func (h *FileResourceHandler) DeleteFolder(c *gin.Context) {
 		return
 	}
 
-	if _, ok := authorizeFileFolderManageAccess(c, h.fileFolderService, h.enterpriseService, folderID); !ok {
+	folder, ok := authorizeFileFolderManageAccess(c, h.fileFolderService, h.enterpriseService, folderID)
+	if !ok {
 		return
 	}
 
-	err := h.fileFolderService.DeleteFolder(c.Request.Context(), folderID)
+	var req deleteFolderRequest
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			response.Fail(c, response.ErrInvalidParam)
+			return
+		}
+	}
+
+	summary, err := h.fileFolderService.GetFolderDeleteSummary(c.Request.Context(), folderID)
 	if err != nil {
-		response.Fail(c, response.ErrSystemError)
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
 		return
 	}
 
-	response.Success(c, gin.H{"result": "success"})
+	if len(summary.FileIDs) > 0 && strings.TrimSpace(req.ConfirmFolderName) != folder.Name {
+		response.Success(c, gin.H{
+			"result":                "confirmation_required",
+			"requires_confirmation": true,
+			"folder_name":           folder.Name,
+			"file_count":            len(summary.FileIDs),
+			"folder_count":          len(summary.FolderIDs),
+		})
+		return
+	}
+
+	if len(summary.FileIDs) > 0 {
+		for _, fileID := range summary.FileIDs {
+			relatedDatasetCount, err := h.fileFolderService.GetRelatedDatasetCount(c.Request.Context(), fileID)
+			if err != nil {
+				response.FailWithMessage(c, response.ErrSystemError, err.Error())
+				return
+			}
+			if relatedDatasetCount > 0 {
+				response.FailWithMessage(c, response.ErrFileInUse, "文件夹中存在已关联知识库的文件，请先解除关联后再删除。")
+				return
+			}
+		}
+		if err := h.fileService.DeleteFiles(c.Request.Context(), summary.FileIDs); err != nil {
+			response.FailWithMessage(c, response.ErrFileInUse, err.Error())
+			return
+		}
+	}
+
+	if err := h.fileFolderService.DeleteFolderTree(c.Request.Context(), folderID); err != nil {
+		response.FailWithMessage(c, response.ErrSystemError, err.Error())
+		return
+	}
+
+	response.Success(c, gin.H{
+		"result":       "success",
+		"deleted":      true,
+		"file_count":   len(summary.FileIDs),
+		"folder_count": len(summary.FolderIDs),
+	})
 }
 
 // GetFilesInFolder handles GET /file-folders/files
@@ -1524,8 +1579,9 @@ func (h *FileResourceHandler) UnarchiveFiles(c *gin.Context) {
 
 // Helper methods
 func (h *FileResourceHandler) validateFolderName(name string) error {
-	if len(name) < 1 || len(name) > 40 {
-		return fmt.Errorf("name must be between 1 to 40 characters")
+	nameLength := utf8.RuneCountInString(strings.TrimSpace(name))
+	if nameLength < 1 || nameLength > 40 {
+		return errors.New(folderNameLengthMessage)
 	}
 	return nil
 }

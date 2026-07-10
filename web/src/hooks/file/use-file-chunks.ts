@@ -10,6 +10,7 @@ import type {
   ListFileChunksResponse,
   BatchUpdateFileChunksRequest,
   BatchUpdateFileChunksResponse,
+  DeleteFileChunkResponse,
   UpdateFileChunkRequest,
   UpdateFileChunkResponse,
 } from '@/services/types/file';
@@ -89,6 +90,28 @@ export function useBatchUpdateFileChunks(fileId: string) {
     onError: error => {
       toast.error(
         (error as { message?: string }).message || t('detail.chunks.toasts.updateFailed')
+      );
+    },
+  });
+}
+
+export function useDeleteFileChunk(fileId: string) {
+  const t = useT('files');
+  const queryClient = useQueryClient();
+
+  return useMutation<ApiResponseData<DeleteFileChunkResponse>, unknown, string>({
+    mutationFn: chunkId => fileManageService.deleteFileChunk(fileId, chunkId),
+    onSuccess: async () => {
+      toast.success(t('detail.chunks.toasts.deleted'));
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: [FILE_CHUNKS_QUERY_KEY, fileId] }),
+        queryClient.invalidateQueries({ queryKey: getFileDetailKey(fileId) }),
+        queryClient.invalidateQueries({ queryKey: [FILES_QUERY_KEY] }),
+      ]);
+    },
+    onError: error => {
+      toast.error(
+        (error as { message?: string }).message || t('detail.chunks.toasts.deleteFailed')
       );
     },
   });

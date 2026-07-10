@@ -195,6 +195,14 @@ function DatasetsPageContent() {
   // Derived states for skeletons
   const showFolderSkeletons = isRootView ? isFoldersLoading : false;
   const showDatasetSkeletons = isDatasetsLoading;
+  const hasPageLevelEmptyState =
+    !showFolderSkeletons &&
+    !showDatasetSkeletons &&
+    (isRootView
+      ? rootFolders.length + allDatasetsRoot.length === 0
+      : datasetEntries.length === 0);
+  const shouldShowDatasetSectionNoResults =
+    Boolean(debouncedSearchKeyword) && !hasPageLevelEmptyState;
 
   // Virtualization decision is based on dataset entries only
   const enableVirtual = datasetEntries.length > 200;
@@ -335,7 +343,7 @@ function DatasetsPageContent() {
                 ) : // Dataset section empty state (only when folders exist but no datasets)
                 // Don't show if page-level empty state will be shown (both folders and datasets are empty)
                 // Don't show in organization mode (PersonalSpaceEmptyState handles it)
-                debouncedSearchKeyword ? (
+                shouldShowDatasetSectionNoResults ? (
                   <div className="flex flex-col items-center justify-center py-12 text-center">
                     <Search className="h-12 w-12 text-muted-foreground mb-4" />
                     <h3 className="text-lg font-medium mb-2">{t('datasets.empty.noResults')}</h3>
@@ -374,39 +382,35 @@ function DatasetsPageContent() {
           {/* Sentinel moved above to trigger earlier than visual spinner */}
 
           {/* Empty state: when both folders and datasets are empty and not loading */}
-          {!showFolderSkeletons &&
-            !showDatasetSkeletons &&
-            (isRootView
-              ? rootFolders.length + allDatasetsRoot.length === 0
-              : (datasetEntries.length || 0) === 0) && (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                {debouncedSearchKeyword ? (
-                  <>
-                    <Search className="h-12 w-12 text-muted-foreground mb-4" />
-                    <h3 className="text-lg font-medium mb-2">{t('datasets.empty.noResults')}</h3>
-                    <p className="text-muted-foreground mb-2 max-w-sm">
-                      {t('datasets.empty.noResultsFor', { query: debouncedSearchKeyword })}
-                    </p>
-                    <Button onClick={() => setSearchKeyword('')}>
-                      {t('datasets.messages.clearFilters')}
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <Search className="h-12 w-12 text-muted-foreground mb-4" />
-                    <h3 className="text-lg font-medium mb-2">{t('datasets.empty.empty')}</h3>
-                    <div className="flex gap-2">
-                      {canManage && (
-                        <Button onClick={handleCreate}>
-                          <Plus size={16} />
-                          {t('datasets.create')}
-                        </Button>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
+          {hasPageLevelEmptyState && (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              {debouncedSearchKeyword ? (
+                <>
+                  <Search className="h-12 w-12 text-muted-foreground mb-4" />
+                  <h3 className="text-lg font-medium mb-2">{t('datasets.empty.noResults')}</h3>
+                  <p className="text-muted-foreground mb-2 max-w-sm">
+                    {t('datasets.empty.noResultsFor', { query: debouncedSearchKeyword })}
+                  </p>
+                  <Button onClick={() => setSearchKeyword('')}>
+                    {t('datasets.messages.clearFilters')}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Search className="h-12 w-12 text-muted-foreground mb-4" />
+                  <h3 className="text-lg font-medium mb-2">{t('datasets.empty.empty')}</h3>
+                  <div className="flex gap-2">
+                    {canManage && (
+                      <Button onClick={handleCreate}>
+                        <Plus size={16} />
+                        {t('datasets.create')}
+                      </Button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </section>
       </div>
 

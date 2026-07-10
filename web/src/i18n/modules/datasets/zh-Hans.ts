@@ -228,6 +228,11 @@ const messages: DatasetMessages = {
       retry: '重试',
       removeFile: '从知识库移除 {name}',
       removeConfirm: '移除',
+      selectAll: '选择全部文件',
+      selectFile: '选择 {name}',
+      selectedCount: '已选择 {count} 个文件',
+      clearSelection: '取消选择',
+      batchRemove: '批量移除',
       toggleEnabled: '启用 {name} 参与召回',
       redirectTitle: '请在文件管理中查看文件',
       redirectDescription: '知识库中的切片只读，解析内容和切片维护统一在文件管理中完成。',
@@ -236,6 +241,11 @@ const messages: DatasetMessages = {
       confirmRemoveTitle: '从当前知识库移除 "{name}" 吗？',
       confirmRemoveDescription:
         '这会移除文件资产引用，并删除已复制到知识库的文档；不会删除文件管理中的源文件。',
+      confirmBatchRemoveTitle: '从当前知识库移除 {count} 个文件吗？',
+      confirmBatchRemoveDescription:
+        '这会移除选中文件的资产引用，并删除已复制到知识库的文档；不会删除文件管理中的源文件。',
+      batchRemoveSuccess: '已移除 {count} 个文件',
+      batchRemoveFailed: '文件移除失败，请重试',
       status: {
         pending: '等待同步',
         syncing: '同步中',
@@ -692,6 +702,7 @@ const messages: DatasetMessages = {
       embeddingModel: {
         title: '嵌入模型',
         placeholder: '选择嵌入模型',
+        lockedTooltip: '知识库创建后，嵌入模型不能修改。',
       },
 
       graphModel: {
@@ -778,6 +789,8 @@ const messages: DatasetMessages = {
       indexingTechnique: '索引技术',
       retrievalConfig: '检索配置',
       searchMethod: '搜索方式',
+      searchMethodHelp:
+        '向量搜索适合语义相近但关键词不同的问题；全文搜索按关键词精确匹配；混合搜索同时结合语义和关键词，通常更稳妥。',
       semanticSearch: '向量搜索',
       fullTextSearch: '全文搜索',
       hybridSearch: '混合搜索',
@@ -921,7 +934,7 @@ const messages: DatasetMessages = {
     processFailed: '启动文档处理失败',
     uploadSuccess: '文档上传成功',
     uploadFailed: '文档上传失败',
-    fileRefsCreateSuccess: '已投递 {count} 个文件资产同步任务',
+    fileRefsCreateSuccess: '添加成功',
     fileRefsCreatePartialFailed: '{count} 个文件资产未能添加',
     fileCandidateEmbeddingGenerating: '向量生成中，请稍等',
     fileCandidateEmbeddingQueued: '已开始生成知识库向量',
@@ -1148,7 +1161,10 @@ const messages: DatasetMessages = {
     noCompletedDocumentsDesc: '请等待文档索引完成后再进行召回测试。',
     foundResults: '召回 {count} 个结果',
     retrievalTime: '耗时',
-    childChunks: '子块',
+    childChunks: '二级切块',
+    secondaryChunk: '二级切块',
+    primaryChunkScore: '匹配度',
+    secondaryChunkScore: '匹配度',
     externalSourceDescription: '测试外部知识库召回',
     internalSourceDescription: '测试内部知识库召回',
     details: '详情',

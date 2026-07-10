@@ -25,6 +25,10 @@ func TestCurrentResultRepositories(t *testing.T) {
 		SourceFileID:    "file-1",
 		ProcessingRunID: &runID,
 		GenerationNo:    generationNo,
+		MetadataJSON: map[string]any{
+			"source":               "file_upload",
+			"final_parse_provider": "old",
+		},
 	}).Error; err != nil {
 		t.Fatalf("seed asset: %v", err)
 	}
@@ -36,6 +40,7 @@ func TestCurrentResultRepositories(t *testing.T) {
 		OrganizationID:         organizationID,
 		ProductStatus:          &ready,
 		ProcessingProgress:     &progress,
+		MetadataJSON:           map[string]any{"final_parse_provider": "reducto"},
 		RequireProcessingRunID: &runID,
 		RequireGenerationNo:    &generationNo,
 	})
@@ -44,6 +49,9 @@ func TestCurrentResultRepositories(t *testing.T) {
 	}
 	if gotAsset == nil || gotAsset.ProductStatus != ready || gotAsset.ProcessingProgress != progress {
 		t.Fatalf("asset patch not applied: %+v", gotAsset)
+	}
+	if gotAsset.MetadataJSON["source"] != "file_upload" || gotAsset.MetadataJSON["final_parse_provider"] != "reducto" {
+		t.Fatalf("metadata should be merged, got %+v", gotAsset.MetadataJSON)
 	}
 
 	confirmationRepo := NewParseConfirmationItemRepository(db)

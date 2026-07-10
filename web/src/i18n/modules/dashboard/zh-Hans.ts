@@ -339,7 +339,7 @@ const messages: DashboardMessages = {
     parserSettings: {
       title: '解析器配置',
       description:
-        '配置 Reducto 和 MinerU，用于文件重新解析。除必填密钥外，其他字段会自动带上默认值，也可以按部署环境修改。',
+        '配置 Reducto 和 MinerU，用于文件重新解析。除必填密钥外，其他字段会自动带上默认值，也可以按部署环境修改。只需要任选 Reducto 或 MinerU 配置成功一个，就可以获得更好的 PDF、Office、表格和扫描件解析效果。',
       guide: {
         title: '不知道选哪个解析服务？',
         description:
@@ -362,7 +362,7 @@ const messages: DashboardMessages = {
         checkFailed: '解析器可用性检查失败',
       },
       reducto: {
-        description: 'Reducto 官方解析服务。启用前需要先配置 API Key。',
+        description: 'Reducto 官方解析服务，海外或英文场景优先推荐。启用前需要先配置 API Key。',
         help: {
           title: '如何获取 Reducto API Key',
           action: '打开 Reducto Studio',
@@ -374,7 +374,7 @@ const messages: DashboardMessages = {
         },
       },
       mineru: {
-        description: 'MinerU 解析服务。选择本地服务或官方服务模式后，再配置对应字段。',
+        description: 'MinerU 解析服务，中国大陆或中文场景优先推荐官方服务。选择本地服务或官方服务模式后，再配置对应字段。',
         help: {
           title: '如何获取 MinerU 官方 Token',
           action: '打开 MinerU Token 管理',

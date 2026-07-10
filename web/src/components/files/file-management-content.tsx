@@ -12,6 +12,7 @@ import {
 import CreateLocalFileDialog from '@/components/files/create-local-file-dialog';
 import { useT } from '@/i18n';
 import {
+  AlertTriangle,
   Search,
   RefreshCw,
   Files,
@@ -22,6 +23,7 @@ import {
   Info,
   Upload,
   PanelLeft,
+  X,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -60,7 +62,7 @@ import {
   useCreateTextFile,
   useFileFolders,
   useUpdateFolder,
-  useMoveFolder,
+  useMoveFilesToFolder,
   useDeleteFolder,
   FILE_FOLDERS_KEY,
   STORAGE_USAGE_KEY,
@@ -90,8 +92,6 @@ import {
 } from '@/components/files/aichat';
 import {
   MAX_FILE_FOLDER_LEVEL,
-  getDescendantFolderIds,
-  getFolderSubtreeHeight,
   loadFileFolderOptions,
   type FileFolderOption,
 } from './file-folder-levels';
@@ -120,6 +120,25 @@ const SYSTEM_FILE_CATEGORIES = new Set(['all', 'needs_action', 'uploaded', 'defa
 const FILES_PAGE_SIZE = 20;
 const FILES_PAGE_LIMIT = String(FILES_PAGE_SIZE);
 const FILES_PAGE_SORT = 'created_at_desc';
+
+interface PendingFolderDeleteConfirmation {
+  folderName: string;
+  fileCount: number;
+  folderCount: number;
+}
+
+function ClearSearchButton({ onClick, label }: { onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      className="absolute right-1.5 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
+      onClick={onClick}
+      aria-label={label}
+    >
+      <X className="block size-4" />
+    </button>
+  );
+}
 
 function normalizeFolderName(name: string) {
   return name.trim().toLocaleLowerCase();
@@ -153,9 +172,9 @@ const FILE_PROCESSING_STATUS_FILTERS: Array<{
   labelKey: 'all' | 'needsAction' | 'ready' | 'storedOnly';
 }> = [
   { id: 'all', labelKey: 'all' },
-  { id: 'needs_action', labelKey: 'needsAction' },
   { id: 'ready', labelKey: 'ready' },
   { id: 'stored_only', labelKey: 'storedOnly' },
+  { id: 'needs_action', labelKey: 'needsAction' },
 ];
 
 function getFileProcessingStatus(file: FileItem): FileAssetProductStatus | string {
@@ -524,7 +543,7 @@ function RenameFolderDialog({
           <DialogDescription>{t('files.folder.renameDescription')}</DialogDescription>
         </DialogHeader>
         <form
-          className="space-y-4"
+          className="space-y-4 px-6 pb-6"
           onSubmit={event => {
             event.preventDefault();
             if (trimmedName) {
@@ -541,8 +560,8 @@ function RenameFolderDialog({
               autoFocus
             />
           </div>
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+          <DialogFooter className="px-0 pb-0 pt-4">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               {t('common.cancel')}
             </Button>
             <Button type="submit" disabled={!trimmedName || isSubmitting}>
@@ -555,30 +574,30 @@ function RenameFolderDialog({
   );
 }
 
-interface MoveFolderDialogProps {
-  folder: FileFolder | null;
+interface MoveFilesDialogProps {
+  fileCount: number;
   folders: FileFolder[];
+  workspaceId?: string;
   open: boolean;
   isSubmitting: boolean;
   onOpenChange: (open: boolean) => void;
-  onConfirm: (targetId: string) => void;
+  onConfirm: (folderId: string) => void;
 }
 
-function MoveFolderDialog({
-  folder,
+function MoveFilesDialog({
+  fileCount,
   folders,
+  workspaceId,
   open,
   isSubmitting,
   onOpenChange,
   onConfirm,
-}: MoveFolderDialogProps) {
+}: MoveFilesDialogProps) {
   const t = useT();
   const [targetId, setTargetId] = useState('root');
   const [targetOptions, setTargetOptions] = useState<FileFolderOption[]>([]);
   const [isTargetOptionsLoading, setIsTargetOptionsLoading] = useState(false);
-  const currentParentId = folder?.parent_id || 'root';
   const normalizedTargetId = targetId === 'root' ? '' : targetId;
-  const isSameTarget = targetId === currentParentId;
 
   useEffect(() => {
     if (!open) return;
@@ -589,11 +608,7 @@ function MoveFolderDialog({
       setIsTargetOptionsLoading(true);
 
       try {
-        const options = await loadFileFolderOptions(
-          folders,
-          folder?.workspace_id,
-          MAX_FILE_FOLDER_LEVEL
-        );
+        const options = await loadFileFolderOptions(folders, workspaceId, MAX_FILE_FOLDER_LEVEL);
         if (!ignore) {
           setTargetOptions(options);
         }
@@ -613,52 +628,39 @@ function MoveFolderDialog({
     return () => {
       ignore = true;
     };
-  }, [folder?.workspace_id, folders, open]);
+  }, [folders, open, workspaceId]);
 
   useEffect(() => {
     if (open) {
-      setTargetId(folder?.parent_id || 'root');
+      setTargetId('root');
     }
-  }, [folder?.parent_id, open]);
-
-  const descendantFolderIds = folder
-    ? getDescendantFolderIds(folder.id, targetOptions)
-    : new Set<string>();
-  const movingSubtreeHeight = folder ? getFolderSubtreeHeight(folder.id, targetOptions) : 1;
-  const allowedTargetOptions = targetOptions.filter(
-    targetFolder =>
-      targetFolder.id !== folder?.id &&
-      !descendantFolderIds.has(targetFolder.id) &&
-      targetFolder.depth + movingSubtreeHeight <= MAX_FILE_FOLDER_LEVEL
-  );
+  }, [open]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[420px]">
         <DialogHeader>
-          <DialogTitle>{t('files.folder.moveTitle')}</DialogTitle>
+          <DialogTitle>{t('files.moveFiles.title')}</DialogTitle>
           <DialogDescription>
-            {t('files.folder.moveDescription', { name: folder?.name ?? '' })}
+            {t('files.moveFiles.description', { count: fileCount })}
           </DialogDescription>
         </DialogHeader>
         <form
           className="px-6 pb-6"
           onSubmit={event => {
             event.preventDefault();
-            if (!isSameTarget) {
-              onConfirm(normalizedTargetId);
-            }
+            onConfirm(normalizedTargetId);
           }}
         >
           <div className="space-y-2.5">
-            <Label htmlFor="move-folder-target">{t('files.folder.targetFolder')}</Label>
+            <Label htmlFor="move-files-target">{t('files.moveFiles.targetFolder')}</Label>
             <Select value={targetId} onValueChange={setTargetId} disabled={isTargetOptionsLoading}>
-              <SelectTrigger id="move-folder-target" isLoading={isTargetOptionsLoading}>
+              <SelectTrigger id="move-files-target" isLoading={isTargetOptionsLoading}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="root">{t('files.upload.defaultFolder')}</SelectItem>
-                {allowedTargetOptions.map(targetFolder => (
+                {targetOptions.map(targetFolder => (
                   <SelectItem key={targetFolder.id} value={targetFolder.id}>
                     <span style={{ paddingLeft: `${(targetFolder.depth - 1) * 16}px` }}>
                       {targetFolder.name}
@@ -669,11 +671,11 @@ function MoveFolderDialog({
             </Select>
           </div>
           <DialogFooter className="px-0 pb-0 pt-8">
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               {t('common.cancel')}
             </Button>
-            <Button type="submit" disabled={isSameTarget || isSubmitting}>
-              {t('files.folder.actions.moveTo')}
+            <Button type="submit" disabled={isSubmitting}>
+              {isSubmitting ? t('files.moveFiles.moving') : t('files.moveFiles.confirm')}
             </Button>
           </DialogFooter>
         </form>
@@ -720,9 +722,10 @@ const FileManagementContent = ({
   const { createFolder } = useCreateFolder();
   const { createTextFile, isCreating: isCreatingTextFile } = useCreateTextFile();
   const { updateFolder, isUpdating: isUpdatingFolder } = useUpdateFolder();
-  const { moveFolder, isMoving: isMovingFolder } = useMoveFolder();
+  const { moveFilesToFolder, isMoving: isMovingFiles } = useMoveFilesToFolder();
   const { deleteFolder, isDeleting: isDeletingFolder } = useDeleteFolder();
   const { folders } = useFileFolders(workspaceId);
+  const folderById = useMemo(() => new Map(folders.map(folder => [folder.id, folder])), [folders]);
   const knownActiveFolderName = SYSTEM_FILE_CATEGORIES.has(activeCategory)
     ? ''
     : (folders.find(folder => folder.id === activeCategory)?.name ?? '');
@@ -1155,8 +1158,11 @@ const FileManagementContent = ({
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [folderToDelete, setFolderToDelete] = useState<FileFolder | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] =
+    useState<PendingFolderDeleteConfirmation | null>(null);
+  const [deleteConfirmName, setDeleteConfirmName] = useState('');
   const [folderToRename, setFolderToRename] = useState<FileFolder | null>(null);
-  const [folderToMove, setFolderToMove] = useState<FileFolder | null>(null);
+  const [fileIdsToMove, setFileIdsToMove] = useState<string[]>([]);
 
   const handleFolderRename = useCallback((folder: FileFolder) => {
     setFolderToRename(folder);
@@ -1180,44 +1186,110 @@ const FileManagementContent = ({
     [folderToRename, folders, t, updateFolder]
   );
 
-  const handleFolderMove = useCallback((folder: FileFolder) => {
-    setFolderToMove(folder);
+  const handleOpenMoveFiles = useCallback((fileIds: string[]) => {
+    const nextIds = [...new Set(fileIds.filter(Boolean))];
+    if (nextIds.length === 0) return;
+    setFileIdsToMove(nextIds);
   }, []);
 
-  const handleMoveConfirm = useCallback(
-    async (targetId: string) => {
-      if (!folderToMove) return;
+  const handleMoveFilesConfirm = useCallback(
+    async (folderId: string) => {
+      if (fileIdsToMove.length === 0) return;
 
-      if (hasSiblingFolderName(folders, folderToMove.name, targetId, folderToMove.id)) {
-        toast.error(t('files.folder.duplicateName'));
-        return;
-      }
-
-      await moveFolder({
-        folder_id: folderToMove.id,
-        target_id: targetId,
+      await moveFilesToFolder({
+        file_ids: fileIdsToMove,
+        folder_id: folderId,
       });
-      setFolderToMove(null);
+      setSelectedFiles(current => current.filter(id => !fileIdsToMove.includes(id)));
+      setFileIdsToMove([]);
     },
-    [folderToMove, folders, moveFolder, t]
+    [fileIdsToMove, moveFilesToFolder]
   );
 
   const handleFolderDelete = useCallback((folder: FileFolder) => {
     setFolderToDelete(folder);
+    setDeleteConfirmation(null);
+    setDeleteConfirmName('');
     setDeleteDialogOpen(true);
   }, []);
+
+  const resetFolderDeleteState = useCallback(() => {
+    setDeleteDialogOpen(false);
+    setFolderToDelete(null);
+    setDeleteConfirmation(null);
+    setDeleteConfirmName('');
+  }, []);
+
+  const isFolderWithinDeletedTree = useCallback(
+    (folderId: string, deletedFolderId: string) => {
+      let currentId: string | null | undefined = folderId;
+
+      while (currentId) {
+        if (currentId === deletedFolderId) return true;
+        currentId = folderById.get(currentId)?.parent_id;
+      }
+
+      return false;
+    },
+    [folderById]
+  );
+
+  const handleFolderDeleted = useCallback(() => {
+    if (
+      folderToDelete &&
+      !SYSTEM_FILE_CATEGORIES.has(activeCategory) &&
+      isFolderWithinDeletedTree(activeCategory, folderToDelete.id)
+    ) {
+      setActiveCategory('all');
+      setActiveFolderDepth(0);
+      setActiveFolderNoticeName('');
+      setProcessingStatusFilter('all');
+      setSelectedFiles([]);
+      goToPage(1);
+    }
+    resetFolderDeleteState();
+  }, [
+    activeCategory,
+    folderToDelete,
+    goToPage,
+    isFolderWithinDeletedTree,
+    resetFolderDeleteState,
+  ]);
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!folderToDelete) return;
 
     try {
-      await deleteFolder(folderToDelete.id);
-      setDeleteDialogOpen(false);
-      setFolderToDelete(null);
+      const result = await deleteFolder(folderToDelete.id);
+      if (result?.result === 'confirmation_required') {
+        setDeleteConfirmation({
+          folderName: result.folder_name || folderToDelete.name,
+          fileCount: result.file_count ?? 0,
+          folderCount: result.folder_count ?? 1,
+        });
+        setDeleteConfirmName('');
+        return;
+      }
+      handleFolderDeleted();
     } catch (error) {
       console.error('Failed to delete folder:', error);
     }
-  }, [folderToDelete, deleteFolder]);
+  }, [folderToDelete, deleteFolder, handleFolderDeleted]);
+
+  const handleForceDeleteConfirm = useCallback(async () => {
+    if (!folderToDelete || !deleteConfirmation) return;
+
+    try {
+      const result = await deleteFolder(folderToDelete.id, {
+        confirm_folder_name: deleteConfirmName.trim(),
+      });
+      if (result?.result === 'success') {
+        handleFolderDeleted();
+      }
+    } catch (error) {
+      console.error('Failed to delete folder:', error);
+    }
+  }, [deleteConfirmName, deleteConfirmation, deleteFolder, folderToDelete, handleFolderDeleted]);
 
   const sidebarContent = (
     <FileSidebar
@@ -1228,7 +1300,6 @@ const FileManagementContent = ({
       onUpload={canUpload ? handleUpload : undefined}
       onFolderCreateChild={canCreateFolder ? handleCreateChildFolder : undefined}
       onFolderRename={canManageFolder ? handleFolderRename : undefined}
-      onFolderMove={canManageFolder ? handleFolderMove : undefined}
       onFolderDelete={canManageFolder ? handleFolderDelete : undefined}
       workspaceId={workspaceId}
       flushTop
@@ -1393,6 +1464,8 @@ const FileManagementContent = ({
         maxCount={maxCount}
         isLoading={isLoading}
         selectionMode={selectionMode}
+        onMoveFiles={handleOpenMoveFiles}
+        isMovingFiles={isMovingFiles}
         activeCategory={activeCategory}
         folderNoticeName={activeFolderName}
         mobileEmptyActionLabel={mobilePrimaryActionLabel}
@@ -1463,8 +1536,11 @@ const FileManagementContent = ({
                 placeholder={t('files.search.placeholder')}
                 value={searchValue}
                 onChange={e => setSearchValue(e.target.value)}
-                className="h-10 pl-9"
+                className="h-10 pl-9 pr-10"
               />
+              {searchValue ? (
+                <ClearSearchButton onClick={() => setSearchValue('')} label={t('common.clear')} />
+              ) : null}
             </div>
           </div>
 
@@ -1515,8 +1591,14 @@ const FileManagementContent = ({
                     placeholder={t('files.search.placeholder')}
                     value={searchValue}
                     onChange={e => setSearchValue(e.target.value)}
-                    className="h-9 pl-9"
+                    className="h-9 pl-9 pr-10"
                   />
+                  {searchValue ? (
+                    <ClearSearchButton
+                      onClick={() => setSearchValue('')}
+                      label={t('common.clear')}
+                    />
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -1574,8 +1656,14 @@ const FileManagementContent = ({
                     placeholder={t('files.search.placeholder')}
                     value={searchValue}
                     onChange={e => setSearchValue(e.target.value)}
-                    className="h-10 rounded-lg bg-background pl-9 text-sm shadow-sm"
+                    className="h-10 rounded-lg bg-background pl-9 pr-10 text-sm shadow-sm"
                   />
+                  {searchValue ? (
+                    <ClearSearchButton
+                      onClick={() => setSearchValue('')}
+                      label={t('common.clear')}
+                    />
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -1673,17 +1761,18 @@ const FileManagementContent = ({
         isSubmitting={isUpdatingFolder}
         onConfirm={handleRenameConfirm}
       />
-      <MoveFolderDialog
-        open={!!folderToMove}
+      <MoveFilesDialog
+        open={fileIdsToMove.length > 0}
         onOpenChange={open => {
           if (!open) {
-            setFolderToMove(null);
+            setFileIdsToMove([]);
           }
         }}
-        folder={folderToMove}
+        fileCount={fileIdsToMove.length}
         folders={folders}
-        isSubmitting={isMovingFolder}
-        onConfirm={handleMoveConfirm}
+        workspaceId={workspaceId}
+        isSubmitting={isMovingFiles}
+        onConfirm={handleMoveFilesConfirm}
       />
       {/* Delete Folder Confirmation Dialog (only for full page mode) */}
       <ConfirmDialog
@@ -1695,8 +1784,76 @@ const FileManagementContent = ({
         confirmText={t('common.confirm')}
         cancelText={t('common.cancel')}
         onConfirm={handleDeleteConfirm}
+        onCancel={resetFolderDeleteState}
         loading={isDeletingFolder}
       />
+      <Dialog
+        open={Boolean(deleteConfirmation)}
+        onOpenChange={open => {
+          if (!open) {
+            resetFolderDeleteState();
+          }
+        }}
+      >
+        <DialogContent size="md" className="p-0 overflow-hidden">
+          <DialogHeader className="pr-12">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-600">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <DialogTitle className="text-lg">
+                  {t('files.delete.folderForceConfirmTitle', {
+                    name: deleteConfirmation?.folderName || '',
+                  })}
+                </DialogTitle>
+                <DialogDescription className="mt-2 leading-6">
+                  {t('files.delete.folderForceConfirmDescription', {
+                    fileCount: deleteConfirmation?.fileCount ?? 0,
+                    folderCount: deleteConfirmation?.folderCount ?? 0,
+                  })}
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+          <DialogBody className="space-y-3 px-6 pb-2 pt-0">
+            <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-sm leading-6 text-red-700">
+              {t('files.delete.folderForceConfirmWarning')}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="delete-folder-name" className="text-sm font-medium">
+                {t('files.delete.folderForceConfirmInputLabel', {
+                  name: deleteConfirmation?.folderName || '',
+                })}
+              </Label>
+              <Input
+                id="delete-folder-name"
+                value={deleteConfirmName}
+                onChange={event => setDeleteConfirmName(event.target.value)}
+                placeholder={deleteConfirmation?.folderName || ''}
+                autoComplete="off"
+              />
+            </div>
+          </DialogBody>
+          <DialogFooter className="border-t bg-white px-6 py-5">
+            <Button variant="outline" onClick={resetFolderDeleteState}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleForceDeleteConfirm}
+              disabled={
+                isDeletingFolder ||
+                deleteConfirmName.trim() !== (deleteConfirmation?.folderName || '')
+              }
+            >
+              {isDeletingFolder
+                ? t('files.delete.folderForceConfirmDeleting')
+                : t('files.delete.folderForceConfirmButton')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <FileSelectorSpaceSwitcherDialog
         open={spaceSwitcherOpen}
         onOpenChange={setSpaceSwitcherOpen}

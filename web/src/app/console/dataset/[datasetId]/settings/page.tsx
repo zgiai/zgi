@@ -50,6 +50,8 @@ export default function DatasetSettingsPage() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [iconValue, setIconValue] = useState<IconValue>(createTextIconValue(ICON_TEXT, ICON_BG));
+  const [hasSubmitted, setHasSubmitted] = useState(false);
+  const [nameTouched, setNameTouched] = useState(false);
   // const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   // Ref to get data from child component
@@ -89,6 +91,8 @@ export default function DatasetSettingsPage() {
     if (dataset) {
       setName(dataset.name || '');
       setDescription(dataset.description || '');
+      setHasSubmitted(false);
+      setNameTouched(false);
 
       // Initialize iconValue based on dataset icon data
       if (dataset.icon_type === 'image') {
@@ -162,8 +166,10 @@ export default function DatasetSettingsPage() {
   // Inline validation for name field
   const nameErrors = useMemo(() => getNameValidationErrors(name, { allowSpace: true }), [name]);
   const isNameValid = nameErrors.length === 0;
+  const showNameError = (hasSubmitted || nameTouched) && !isNameValid;
 
   const handleSave = useCallback(async () => {
+    setHasSubmitted(true);
     if (!canUpdateDataset) {
       toast.error(t('common.unauthorizedDescription'));
       return;
@@ -305,16 +311,19 @@ export default function DatasetSettingsPage() {
                 <Input
                   id="name"
                   value={name}
-                  onChange={e => setName(e.target.value)}
+                  onChange={e => {
+                    setName(e.target.value);
+                    setNameTouched(true);
+                  }}
                   placeholder={t('datasets.settings.namePlaceholder')}
                   disabled={!dataset?.embedding_available}
-                  aria-invalid={isNameValid ? 'false' : 'true'}
+                  aria-invalid={showNameError ? 'true' : 'false'}
                   className={cn(
                     'h-9',
-                    !isNameValid && 'border-destructive focus-visible:ring-destructive'
+                    showNameError && 'border-destructive focus-visible:ring-destructive'
                   )}
                 />
-                {!isNameValid && (
+                {showNameError && (
                   <div className="text-xs text-destructive">
                     {(() => {
                       const code = nameErrors[0];

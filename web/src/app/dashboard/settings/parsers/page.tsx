@@ -230,8 +230,6 @@ export default function ParserSettingsPage() {
         ) : null}
       </div>
 
-      <ParserSetupGuide />
-
       <div className="grid gap-4">
         <div ref={reductoRef}>
           <ParserCardShell
@@ -409,42 +407,6 @@ function ParserCardShell({
         {children}
       </CardContent>
     </Card>
-  );
-}
-
-function ParserSetupGuide() {
-  const t = useT();
-  return (
-    <section className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="space-y-1">
-          <div className="text-sm font-semibold">
-            {t('dashboard.configuration.parserSettings.guide.title')}
-          </div>
-          <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-            {t('dashboard.configuration.parserSettings.guide.description')}
-          </p>
-          <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm font-medium leading-6 text-foreground/80">
-            <span>{t('dashboard.configuration.parserSettings.guide.reductoRecommendation')}</span>
-            <span>{t('dashboard.configuration.parserSettings.guide.mineruRecommendation')}</span>
-          </div>
-        </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
-          <Button variant="outline" size="sm" asChild>
-            <a href={REDUCTO_STUDIO_URL} target="_blank" rel="noreferrer" className="gap-2">
-              {t('dashboard.configuration.parserSettings.guide.openReducto')}
-              <ExternalLink className="h-3.5 w-3.5" />
-            </a>
-          </Button>
-          <Button variant="outline" size="sm" asChild>
-            <a href={MINERU_TOKEN_URL} target="_blank" rel="noreferrer" className="gap-2">
-              {t('dashboard.configuration.parserSettings.guide.openMineru')}
-              <ExternalLink className="h-3.5 w-3.5" />
-            </a>
-          </Button>
-        </div>
-      </div>
-    </section>
   );
 }
 
