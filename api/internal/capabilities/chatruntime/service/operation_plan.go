@@ -5380,6 +5380,9 @@ func finalizeOperationPlanForResult(metadata map[string]interface{}) {
 }
 
 func finalizeOperationPlanForCompletedResult(metadata map[string]interface{}) {
+	if finalizeMainModelTerminalOperationPlan(metadata) {
+		return
+	}
 	finalizeOperationPlanForResult(metadata)
 	plan := mapFromOperationContext(metadata["operation_plan"])
 	if operationPlanReadyForPassiveCompletedResult(metadata, plan) {
@@ -5404,6 +5407,24 @@ func finalizeOperationPlanForCompletedResult(metadata map[string]interface{}) {
 	applyOperationPlanProgress(plan, steps, stepStatus, "none", operationPlanStatusCompleted)
 	metadata["operation_plan"] = plan
 	syncOperationPlanCompletionMetadata(metadata)
+}
+
+func finalizeMainModelTerminalOperationPlan(metadata map[string]interface{}) bool {
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	verification := mapFromOperationContext(plan["completion_verification"])
+	if len(plan) == 0 || !operationPlanCompletionVerificationPassStatus(stringFromAny(verification["status"])) {
+		return false
+	}
+	source := strings.ToLower(strings.TrimSpace(stringFromAny(verification["source"])))
+	if source != "main_model_final" && source != "terminal_state_guard" {
+		return false
+	}
+	plan["status"] = operationPlanStatusCompleted
+	plan["pending_next_action"] = "none"
+	operationPlanSyncStrategyState(plan)
+	metadata["operation_plan"] = plan
+	syncOperationPlanCompletionMetadata(metadata)
+	return true
 }
 
 func operationPlanReadyForPassiveCompletedResult(metadata map[string]interface{}, plan map[string]interface{}) bool {
@@ -5595,22 +5616,9 @@ func applyOperationPlanCompletionVerificationResultWithSource(metadata map[strin
 	}
 
 	if operationPlanCompletionVerificationPassStatus(status) {
-		for _, step := range steps {
-			if !operationPlanStepBlocksCompletion(step) {
-				continue
-			}
-			id := strings.TrimSpace(stringFromAny(step["id"]))
-			if id == "" {
-				continue
-			}
-			current := operationPlanNormalizeStepStatus(firstNonEmptyString(step["status"], stepStatus[id]))
-			if current == operationPlanStepStatusFailed {
-				continue
-			}
-			operationPlanSetStepStatus(steps, stepStatus, id, operationPlanStepStatusCompleted)
-			delete(step, "error")
-		}
-		applyOperationPlanProgress(plan, steps, stepStatus, "none", operationPlanStatusCompleted)
+		plan["status"] = operationPlanStatusCompleted
+		plan["pending_next_action"] = "none"
+		operationPlanSyncStrategyState(plan)
 		metadata["operation_plan"] = plan
 		syncOperationPlanCompletionMetadata(metadata)
 		return

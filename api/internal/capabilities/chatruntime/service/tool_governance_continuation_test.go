@@ -341,6 +341,7 @@ func TestToolGovernanceFrozenContinuationMessageIncludesTurnState(t *testing.T) 
 		"agent_theme",
 		"water fee confirmation",
 		"authoritative same-turn memory",
+		"first model response after this continuation",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("continuation message missing %q in:\n%s", want, content)

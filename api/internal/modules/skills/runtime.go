@@ -731,12 +731,14 @@ func MetaToolsForSkills(resolved *ResolvedSkills) []llmadapter.Tool {
 func MetaToolsForSkillState(resolved *ResolvedSkills, loadedSkillIDs map[string]struct{}) []llmadapter.Tool {
 	loaded := normalizedLoadedSkillIDs(loadedSkillIDs)
 	tools := []llmadapter.Tool{
-		loadSkillMetaTool(resolvedSkillIDs(resolved)),
 		requestUserInputMetaTool(),
 		turnStateMetaTool(),
 		updatePlanMetaTool(),
 		intermediateAnswerMetaTool(),
 		finalAnswerMetaTool(),
+	}
+	if skillIDs := unloadedSkillIDs(resolved, loaded); len(skillIDs) > 0 {
+		tools = append([]llmadapter.Tool{loadSkillMetaTool(skillIDs)}, tools...)
 	}
 	if referenceSkillIDs, referencePaths := loadedReferenceOptions(resolved, loaded); len(referenceSkillIDs) > 0 && len(referencePaths) > 0 {
 		tools = append(tools, readReferenceMetaTool(referenceSkillIDs, referencePaths))
@@ -768,7 +770,7 @@ func updatePlanMetaTool() llmadapter.Tool {
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolUpdatePlan,
-			Description: "Replace the current execution plan snapshot after new evidence changes phase progress. Keep stable phase IDs, allow at most one in_progress phase, cite successful evidence refs for completed phases, and include a reason for skipped phases. Valid refs include exact invocation IDs shown in evidence, tool:<skill_id>/<tool_name> for a successful ledger call, page_context:<route> for a ready current page, and turn_state:<key>. You may call update_plan together with the next business tool in the same response.",
+			Description: "Replace the current execution plan snapshot after progress changes. Keep stable phase IDs and allow at most one in_progress phase. Evidence refs are optional audit links: include exact refs when available, but do not delay work or revise a plan only to clear an unresolved ref. You may call update_plan together with the next business tool in the same response.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -999,7 +1001,7 @@ func finalAnswerMetaTool() llmadapter.Tool {
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolFinalAnswer,
-			Description: "Submit the final user-facing answer and end the current skill loop. Call this only after all required work is complete or after you have honestly reached a terminal outcome. This call is terminal: do not combine it with business tools or request_user_input. Put the complete final response in answer; ordinary assistant content is progress, not the final answer. When a model-maintained plan exists, include its final snapshot so every phase is completed or skipped with successful evidence refs.",
+			Description: "Submit the final user-facing answer and end the current skill loop when you judge the task complete or have honestly reached a terminal outcome. This call is terminal: do not combine it with business tools or request_user_input. Put the complete final response in answer; ordinary assistant content is progress, not the final answer. When a model-maintained plan exists, include its final snapshot and add evidence refs when they are readily available; refs are audit metadata, not a completion requirement.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -1137,6 +1139,21 @@ func normalizedLoadedSkillIDs(loadedSkillIDs map[string]struct{}) map[string]str
 		if id != "" {
 			out[id] = struct{}{}
 		}
+	}
+	return out
+}
+
+func unloadedSkillIDs(resolved *ResolvedSkills, loaded map[string]struct{}) []string {
+	ids := resolvedSkillIDs(resolved)
+	if len(ids) == 0 || len(loaded) == 0 {
+		return ids
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := loaded[normalizeSkillID(id)]; ok {
+			continue
+		}
+		out = append(out, id)
 	}
 	return out
 }

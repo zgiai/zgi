@@ -37,6 +37,12 @@ func TestCreateConversationForChatStoresSurfaceMetadata(t *testing.T) {
 	if conversationRepo.created == nil || conversationRepo.created.Metadata["surface"] != aiChatSurfaceContextualSidebar {
 		t.Fatalf("stored conversation surface metadata = %v, want %q", conversationRepo.created.Metadata["surface"], aiChatSurfaceContextualSidebar)
 	}
+	if conversation.Title != "hello from the sidebar" {
+		t.Fatalf("conversation title = %q, want first user input", conversation.Title)
+	}
+	if conversationRepo.created == nil || conversationRepo.created.Title != "hello from the sidebar" {
+		t.Fatalf("stored conversation title = %q, want first user input", conversationRepo.created.Title)
+	}
 }
 
 func TestListConversationsBySurfaceNormalizesSurface(t *testing.T) {

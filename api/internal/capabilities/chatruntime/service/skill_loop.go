@@ -110,23 +110,24 @@ func (s *service) runPreparedSkillStreamWithCompletionVerifier(
 		prepared.Message.Metadata["final_answer_protocol"] = "assistant_content"
 	}
 	return runner.Run(ctx, skillloop.RunRequest{
-		Prepared:                  loopPrepared,
-		Resolved:                  resolved,
-		ExecutionContext:          s.skillExecutionContext(prepared),
-		PreferExplicitFinalAnswer: preferExplicitFinalAnswer,
-		AdditionalSystemMessages:  skillLoopAdditionalSystemMessagesForResolved(prepared, resolved),
-		PlanToolGuard:             skillLoopPlanToolCallGuardWithResolved(prepared, resolved),
-		ToolArgumentResolver:      skillLoopToolArgumentResolver(prepared),
-		CompletionEvidence:        skillLoopCompletionEvidence(prepared),
-		CurrentMetadata:           skillLoopCurrentMetadata(prepared),
-		OnCompletionGateDecision:  skillLoopCompletionGateDecision(prepared),
-		OnCompletionVerification:  skillLoopCompletionVerificationResult(prepared),
-		OnChunk:                   onChunk,
+		Prepared:                       loopPrepared,
+		Resolved:                       resolved,
+		ExecutionContext:               s.skillExecutionContext(prepared),
+		PreferExplicitFinalAnswer:      preferExplicitFinalAnswer,
+		SuppressInitialNaturalProgress: prepared.SuppressInitialNaturalProgress,
+		AdditionalSystemMessages:       skillLoopAdditionalSystemMessagesForResolved(prepared, resolved),
+		PlanToolGuard:                  skillLoopPlanToolCallGuardWithResolved(prepared, resolved),
+		ToolArgumentResolver:           skillLoopToolArgumentResolver(prepared),
+		CompletionEvidence:             skillLoopCompletionEvidence(prepared),
+		CurrentMetadata:                skillLoopCurrentMetadata(prepared),
+		OnTerminalStateGuardDecision:   skillLoopTerminalStateGuardDecision(prepared),
+		OnCompletionVerification:       skillLoopCompletionVerificationResult(prepared),
+		OnChunk:                        onChunk,
 	})
 }
 
-func skillLoopCompletionGateDecision(prepared *PreparedChat) func(skillloop.CompletionGateDecisionRecord) {
-	return func(decision skillloop.CompletionGateDecisionRecord) {
+func skillLoopTerminalStateGuardDecision(prepared *PreparedChat) func(skillloop.TerminalStateGuardDecisionRecord) {
+	return func(decision skillloop.TerminalStateGuardDecisionRecord) {
 		if prepared == nil || prepared.Message == nil {
 			return
 		}
@@ -134,20 +135,20 @@ func skillLoopCompletionGateDecision(prepared *PreparedChat) func(skillloop.Comp
 		if metadata == nil {
 			metadata = map[string]interface{}{}
 		}
-		records := mapSliceFromAny(metadata["completion_gate_decisions"])
+		records := mapSliceFromAny(metadata["terminal_state_guard_decisions"])
 		record := map[string]interface{}{
 			"path":        strings.TrimSpace(decision.Path),
 			"reason":      compactForPrompt(decision.Reason, 500),
 			"observed_at": time.Now().UTC().Format(time.RFC3339),
 		}
-		if len(decision.MissingFacts) > 0 {
-			record["missing_facts"] = compactStringSliceForPrompt(decision.MissingFacts, 8, 240)
+		if len(decision.Blockers) > 0 {
+			record["blockers"] = compactStringSliceForPrompt(decision.Blockers, 8, 240)
 		}
 		records = append(records, record)
 		if len(records) > 16 {
 			records = records[len(records)-16:]
 		}
-		metadata["completion_gate_decisions"] = mapsToInterfaceSlice(records)
+		metadata["terminal_state_guard_decisions"] = mapsToInterfaceSlice(records)
 		prepared.Message.Metadata = metadata
 	}
 }
@@ -263,7 +264,6 @@ func skillLoopCompletionVerificationResult(prepared *PreparedChat) func(skillloo
 		if prepared == nil || prepared.Message == nil {
 			return
 		}
-		result = skillloop.ReconcileCompletionVerificationResultWithEvidence(skillLoopCompletionEvidence(prepared)(), result)
 		metadata := copyStringAnyMap(prepared.Message.Metadata)
 		applyOperationPlanCompletionVerificationResultWithSource(
 			metadata,
@@ -368,7 +368,7 @@ func skillLoopCompletionEvidenceLedger(metadata map[string]interface{}) []map[st
 		return nil
 	}
 	plan := mapFromOperationContext(metadata["operation_plan"])
-	if ledger := operationPlanCompactEvidenceLedger(plan[operationPlanEvidenceLedgerKey], 12); len(ledger) > 0 {
+	if ledger := operationPlanCompactEvidenceLedger(plan[operationPlanEvidenceLedgerKey], 50); len(ledger) > 0 {
 		return ledger
 	}
 	state := mapFromOperationContext(plan["strategy_state"])
@@ -4006,6 +4006,9 @@ func skillLoopShouldUsePlainStreamForPassiveAnswer(prepared *PreparedChat) bool 
 	}
 	strategy := contextualAIChatTurnStrategy(prepared)
 	if strategy == nil {
+		return false
+	}
+	if strings.TrimSpace(prepared.parts.ModelTurnIntentError) != "" {
 		return false
 	}
 	if !strings.EqualFold(strings.TrimSpace(strategy.Intent), "answer_or_explain_zgi_context") {

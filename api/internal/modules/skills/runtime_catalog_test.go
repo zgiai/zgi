@@ -1215,6 +1215,38 @@ func TestCalculatorMetaToolArgumentsExposeRequiredExpressionSchema(t *testing.T)
 	}
 }
 
+func TestMetaToolsForSkillStateDoesNotOfferAlreadyLoadedSkills(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillCalculator})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+
+	unloadedTools := MetaToolsForSkillState(resolved, nil)
+	loadTool := findMetaTool(unloadedTools, MetaToolLoadSkill)
+	if loadTool == nil {
+		t.Fatal("load_skill meta tool missing for an unloaded skill")
+	}
+	params, ok := loadTool.Function.Parameters.(map[string]interface{})
+	if !ok {
+		t.Fatalf("parameters type = %T, want map[string]interface{}", loadTool.Function.Parameters)
+	}
+	properties, _ := params["properties"].(map[string]interface{})
+	skillIDSchema, _ := properties["skill_id"].(map[string]interface{})
+	values, _ := skillIDSchema["enum"].([]string)
+	if len(values) != 1 || values[0] != SkillCalculator {
+		t.Fatalf("load_skill skill_id enum = %#v, want [%s]", values, SkillCalculator)
+	}
+
+	loadedTools := MetaToolsForSkillState(resolved, map[string]struct{}{SkillCalculator: {}})
+	if tool := findMetaTool(loadedTools, MetaToolLoadSkill); tool != nil {
+		t.Fatalf("load_skill meta tool = %#v, want omitted when every skill is loaded", tool.Function)
+	}
+	if tool := findMetaTool(loadedTools, MetaToolCallSkillTool); tool == nil {
+		t.Fatal("call_skill_tool meta tool missing for the loaded calculator skill")
+	}
+}
+
 func TestRequestUserInputMetaToolIsAlwaysExposed(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillCalculator})

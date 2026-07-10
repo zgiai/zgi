@@ -270,23 +270,25 @@ func (s *service) resolveChatConversation(ctx context.Context, scope Scope, call
 }
 
 func (s *service) createConversationForChat(ctx context.Context, scope Scope, caller Caller, parts *chatRequestParts) (*runtimemodel.Conversation, error) {
-	fallbackTitle := initialConversationTitle()
+	query := ""
 	surface := ""
 	if parts != nil {
+		query = parts.Query
 		surface = parts.Surface
 	}
-	conversation, err := s.createConversationForCaller(ctx, scope, caller, fallbackTitle, surface)
+	initialTitle := conversationTitleFallback(query, initialConversationTitle())
+	conversation, err := s.createConversationForCaller(ctx, scope, caller, initialTitle, surface)
 	if err != nil {
 		return nil, err
 	}
-	if s.titleGen == nil {
+	if s.titleGen == nil || normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
 		return conversation, nil
 	}
-	s.generateConversationTitleAsync(ctx, scope, conversation, parts, fallbackTitle)
+	s.generateConversationTitleAsync(ctx, scope, conversation, parts, initialTitle)
 	return conversation, nil
 }
 
-func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, parts *chatRequestParts, fallbackTitle string) {
+func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, parts *chatRequestParts, initialTitle string) {
 	if conversation == nil || s.titleGen == nil {
 		return
 	}
@@ -313,7 +315,7 @@ func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scop
 			SessionID:         conversationID.String(),
 			ConversationID:    conversationID.String(),
 			Messages:          []titlegen.Message{{Role: "user", Content: query}},
-			FallbackTitle:     fallbackTitle,
+			FallbackTitle:     initialTitle,
 			PreferredProvider: preferredProvider,
 			PreferredModel:    preferredModel,
 			PreferredUseCase:  string(llmmodelmodel.UseCaseTextChat),
@@ -322,8 +324,8 @@ func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scop
 			logger.WarnContext(titleCtx, "failed to generate aichat conversation title", "conversation_id", conversationID.String(), err)
 			return
 		}
-		title := normalizeTitle(result.Title, fallbackTitle)
-		if title == fallbackTitle {
+		title := normalizeTitle(result.Title, initialTitle)
+		if title == initialTitle {
 			return
 		}
 		if err := s.repos.Conversation.UpdateScoped(titleCtx, conversationID, scope.OrganizationID, scope.AccountID, map[string]interface{}{"title": title}); err != nil {
@@ -452,17 +454,51 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 }
 
 func (s *service) applyModelCapabilities(ctx context.Context, scope Scope, parts *chatRequestParts) error {
-	if parts == nil || s.modelSpecResolver == nil {
+	if parts == nil {
+		return nil
+	}
+	if s.modelSpecResolver == nil {
+		assumeModelFunctionCalling(parts, "resolver_unavailable", "")
 		return nil
 	}
 	spec, ok, err := s.modelSpecResolver.Resolve(ctx, scope.OrganizationID, parts.Provider, parts.ModelName)
 	if err != nil {
-		return err
+		assumeModelFunctionCalling(parts, "resolver_error", err.Error())
+		logger.WarnContext(ctx, "aichat model capabilities assumed because resolver failed",
+			"organization_id", scope.OrganizationID.String(),
+			"provider", parts.Provider,
+			"model", parts.ModelName,
+			"error", err.Error(),
+		)
+		return nil
+	}
+	if !ok {
+		assumeModelFunctionCalling(parts, "model_spec_unknown", "")
+		logger.DebugContext(ctx, "aichat model capabilities assumed because model spec is unknown",
+			"organization_id", scope.OrganizationID.String(),
+			"provider", parts.Provider,
+			"model", parts.ModelName,
+		)
+		return nil
 	}
 	parts.ModelSupportsVision = ok && spec.SupportsVision()
-	parts.FunctionCallingKnown = ok
-	parts.ModelSupportsFunctionCalling = ok && spec.SupportsFunctionCalling()
+	parts.FunctionCallingKnown = true
+	parts.ModelSupportsFunctionCalling = spec.SupportsFunctionCalling()
+	parts.FunctionCallingAssumed = false
+	parts.ModelCapabilityStatus = "resolved"
+	parts.ModelCapabilityError = ""
 	return nil
+}
+
+func assumeModelFunctionCalling(parts *chatRequestParts, status string, errMessage string) {
+	if parts == nil {
+		return
+	}
+	parts.FunctionCallingKnown = true
+	parts.ModelSupportsFunctionCalling = true
+	parts.FunctionCallingAssumed = true
+	parts.ModelCapabilityStatus = strings.TrimSpace(status)
+	parts.ModelCapabilityError = trimRunes(strings.TrimSpace(errMessage), 500)
 }
 
 func (s *service) applyOrganizationSkillConfig(ctx context.Context, scope Scope, parts *chatRequestParts) error {

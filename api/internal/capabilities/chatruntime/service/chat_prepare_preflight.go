@@ -2,9 +2,16 @@ package service
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+)
+
+const (
+	contextualPrepareIntentTimeout = 15 * time.Second
+	contextualPrepareMemoryTimeout = 8 * time.Second
 )
 
 type contextualPreparePreflightResult struct {
@@ -44,7 +51,9 @@ func (s *service) runContextualPreparePreflights(
 	if runIntent {
 		intentCh = make(chan contextualPrepareIntentResult, 1)
 		go func() {
-			intent, err := s.classifyContextualAIChatTurnIntent(ctx, scope, conversation, config, parts)
+			preflightCtx, cancel := context.WithTimeout(ctx, contextualPrepareIntentTimeout)
+			defer cancel()
+			intent, err := s.classifyContextualAIChatTurnIntent(preflightCtx, scope, conversation, config, parts)
 			intentCh <- contextualPrepareIntentResult{intent: intent, err: err}
 		}()
 	}
@@ -53,7 +62,9 @@ func (s *service) runContextualPreparePreflights(
 	if runMemory {
 		memoryCh = make(chan contextualPrepareMemoryResult, 1)
 		go func() {
-			result, err := s.runUserMemoryPreflightDuringPrepare(ctx, scope, conversation, config, parts, llmRequest)
+			preflightCtx, cancel := context.WithTimeout(ctx, contextualPrepareMemoryTimeout)
+			defer cancel()
+			result, err := s.runUserMemoryPreflightDuringPrepare(preflightCtx, scope, conversation, config, parts, llmRequest)
 			memoryCh <- contextualPrepareMemoryResult{result: result, err: err}
 		}()
 	}
@@ -66,7 +77,15 @@ func (s *service) runContextualPreparePreflights(
 	if memoryCh != nil {
 		memoryResult := <-memoryCh
 		if memoryResult.err != nil {
-			return preflight, memoryResult.err
+			if ctx.Err() != nil {
+				return preflight, memoryResult.err
+			}
+			if errors.Is(memoryResult.err, context.DeadlineExceeded) && ctx.Err() == nil {
+				markUserMemoryPreflightTimeout(parts)
+				return preflight, nil
+			}
+			markUserMemoryPreflightError(parts, memoryResult.err)
+			return preflight, nil
 		}
 		preflight.UserMemoryDone = true
 		if memoryResult.result != nil {
@@ -80,4 +99,43 @@ func (s *service) runContextualPreparePreflights(
 		}
 	}
 	return preflight, nil
+}
+
+func markUserMemoryPreflightTimeout(parts *chatRequestParts) {
+	if parts == nil {
+		return
+	}
+	contextControl := copyStringAnyMap(parts.ContextControl)
+	if contextControl == nil {
+		contextControl = map[string]interface{}{}
+	}
+	userMemory := copyStringAnyMap(mapFromOperationContext(contextControl["user_memory"]))
+	if userMemory == nil {
+		userMemory = map[string]interface{}{}
+	}
+	userMemory["planner_status"] = "timeout_non_blocking"
+	userMemory["planner_action"] = "none"
+	contextControl["user_memory"] = userMemory
+	parts.ContextControl = contextControl
+}
+
+func markUserMemoryPreflightError(parts *chatRequestParts, err error) {
+	if parts == nil {
+		return
+	}
+	contextControl := copyStringAnyMap(parts.ContextControl)
+	if contextControl == nil {
+		contextControl = map[string]interface{}{}
+	}
+	userMemory := copyStringAnyMap(mapFromOperationContext(contextControl["user_memory"]))
+	if userMemory == nil {
+		userMemory = map[string]interface{}{}
+	}
+	userMemory["planner_status"] = "error_non_blocking"
+	userMemory["planner_action"] = "none"
+	if err != nil {
+		userMemory["planner_error"] = trimRunes(err.Error(), 500)
+	}
+	contextControl["user_memory"] = userMemory
+	parts.ContextControl = contextControl
 }

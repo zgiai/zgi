@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useMemo } from 'react';
+import { use, useEffect, useMemo, useRef } from 'react';
 import { AlertCircle } from 'lucide-react';
 import AgentWebappChat from '@/components/webapp/agent-chat';
 import WebappChat from '@/components/webapp/chat';
@@ -14,6 +14,10 @@ import { useWebAppConfig } from '@/hooks/webapp/use-webapp';
 import { useT } from '@/i18n/translations';
 import { isWebAppNotPublishedError } from '@/utils/webapp/errors';
 import { detectWebappMode } from '@/utils/webapp/helpers';
+import {
+  createAIChatTraceInstanceId,
+  logAIChatSessionTrace,
+} from '@/components/chat/controllers/aichat/session-trace';
 
 const RECENT_WEBAPP_STORAGE_KEY = 'zgi:webapp:recent';
 
@@ -28,6 +32,7 @@ export default function ConsoleWorkAppDetailPage({ params }: ConsoleWorkAppDetai
   const {
     items,
     isLoading: isListLoading,
+    isFetching: isListFetching,
     canUseResourceList,
   } = useRunnableWebApps({ workspaceId: null });
 
@@ -36,9 +41,81 @@ export default function ConsoleWorkAppDetailPage({ params }: ConsoleWorkAppDetai
     [items, webAppId]
   );
   const shouldLoadConfig = !isListLoading && canUseResourceList && isRunnable;
-  const { data, error: configError, isLoading: isConfigLoading } = useWebAppConfig(webAppId, {
+  const {
+    data,
+    error: configError,
+    isLoading: isConfigLoading,
+    isFetching: isConfigFetching,
+  } = useWebAppConfig(webAppId, {
     enabled: shouldLoadConfig,
   });
+  const instanceIdRef = useRef<string | null>(null);
+  if (!instanceIdRef.current) {
+    instanceIdRef.current = createAIChatTraceInstanceId('app-detail');
+  }
+  const instanceId = instanceIdRef.current;
+
+  useEffect(() => {
+    logAIChatSessionTrace('app_detail_page_mounted', { instanceId, webAppId });
+    return () => {
+      logAIChatSessionTrace('app_detail_page_unmounted', {
+        instanceId,
+        webAppId,
+        unmountStack: new Error('ConsoleWorkAppDetailPage unmount observer').stack,
+      });
+    };
+  }, [instanceId, webAppId]);
+
+  useEffect(() => {
+    const renderBranch =
+      isListLoading || isConfigLoading
+        ? 'loading'
+        : !canUseResourceList
+          ? 'permission_denied'
+          : !isRunnable
+            ? 'not_runnable'
+            : isWebAppNotPublishedError(configError)
+              ? 'not_published'
+              : data?.data
+                ? data.data.config?.type?.toUpperCase?.() === 'AGENT'
+                  ? 'agent'
+                  : 'non_agent'
+                : 'missing_config';
+    logAIChatSessionTrace('app_detail_page_state', {
+      instanceId,
+      webAppId,
+      renderBranch,
+      itemCount: items.length,
+      isRunnable,
+      shouldLoadConfig,
+      canUseResourceList,
+      isListLoading,
+      isListFetching,
+      isConfigLoading,
+      isConfigFetching,
+      hasConfig: Boolean(data?.data),
+      configType: data?.data?.config?.type ?? null,
+      configError:
+        configError instanceof Error
+          ? configError.message
+          : configError
+            ? String(configError)
+            : null,
+    });
+  }, [
+    canUseResourceList,
+    configError,
+    data?.data,
+    instanceId,
+    isConfigFetching,
+    isConfigLoading,
+    isListFetching,
+    isListLoading,
+    isRunnable,
+    items.length,
+    shouldLoadConfig,
+    webAppId,
+  ]);
 
   useEffect(() => {
     if (!isRunnable || typeof window === 'undefined') return;

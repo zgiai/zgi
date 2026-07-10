@@ -1,13 +1,12 @@
 package skillloop
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
-func TestNormalizePlanSnapshotEnforcesProgressAndEvidenceRules(t *testing.T) {
+func TestNormalizePlanSnapshotEnforcesStructuralProgressRules(t *testing.T) {
 	_, err := normalizePlanSnapshot([]interface{}{
 		map[string]interface{}{"id": "phase-1", "step": "First", "status": "in_progress"},
 		map[string]interface{}{"id": "phase-2", "step": "Second", "status": "in_progress"},
@@ -16,11 +15,12 @@ func TestNormalizePlanSnapshotEnforcesProgressAndEvidenceRules(t *testing.T) {
 		t.Fatal("normalizePlanSnapshot() error = nil, want multiple in_progress rejection")
 	}
 
-	_, err = normalizePlanSnapshot([]interface{}{
+	phasesWithoutEvidence, err := normalizePlanSnapshot([]interface{}{
 		map[string]interface{}{"id": "phase-1", "step": "First", "status": "completed"},
+		map[string]interface{}{"id": "phase-2", "step": "Optional cleanup", "status": "skipped"},
 	})
-	if err == nil {
-		t.Fatal("normalizePlanSnapshot() error = nil, want missing evidence_refs rejection")
+	if err != nil || len(phasesWithoutEvidence) != 2 {
+		t.Fatalf("normalizePlanSnapshot() = %#v, %v; want advisory phases accepted", phasesWithoutEvidence, err)
 	}
 
 	phases, err := normalizePlanSnapshot([]interface{}{
@@ -54,21 +54,18 @@ func TestHandleUpdatePlanCallProducesPersistablePlanTrace(t *testing.T) {
 	}
 }
 
-func TestHandleUpdatePlanCallRejectsUnavailableEvidenceBeforeRecording(t *testing.T) {
+func TestHandleUpdatePlanCallRecordsUnavailableEvidenceAsAuditWarning(t *testing.T) {
 	step := (&Runner{}).handleUpdatePlanCall("call-plan", map[string]interface{}{
 		"plan": []interface{}{map[string]interface{}{
 			"id": "phase-1", "step": "Delete agent", "status": "completed", "evidence_refs": []interface{}{"agent-management/delete_agent"},
 		}},
 	}, successfulReadFileEvidence())
-	if step.fatalErr != nil || !step.recoverable || step.trace.Status != "error" {
-		t.Fatalf("handleUpdatePlanCall() step = %#v, want recoverable error trace", step)
+	if step.fatalErr != nil || step.recoverable || step.trace.Status != "success" {
+		t.Fatalf("handleUpdatePlanCall() step = %#v, want successful advisory plan trace", step)
 	}
-	content := stringFromInterface(step.toolMessage.Content)
-	if !strings.Contains(content, "unavailable evidence") {
-		t.Fatalf("tool message = %q, want unavailable evidence", content)
-	}
-	if !strings.Contains(content, "tool:file-reader/read_file") {
-		t.Fatalf("tool message = %q, want available canonical ref", content)
+	warnings := evidenceStringSliceFromAny(step.trace.Result["evidence_warnings"])
+	if len(warnings) != 1 || warnings[0] != "unresolved_evidence_ref:tool:agent-management/delete_agent" {
+		t.Fatalf("evidence_warnings = %#v", warnings)
 	}
 }
 

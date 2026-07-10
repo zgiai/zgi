@@ -64,6 +64,11 @@ func initialConversationTitle() string {
 	return defaultConversationTitle
 }
 
+func conversationTitleFallback(query string, fallback string) string {
+	query = strings.Join(strings.Fields(query), " ")
+	return normalizeTitle(query, fallback)
+}
+
 func isActiveMessageStatus(status string) bool {
 	return status == runtimemodel.MessageStatusPending || status == runtimemodel.MessageStatusStreaming
 }

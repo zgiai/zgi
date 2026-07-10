@@ -148,6 +148,15 @@ func applyPlanUpdateTraceMetadata(metadata map[string]interface{}, trace skills.
 	if explanation := strings.TrimSpace(stringFromAny(trace.Result["explanation"])); explanation != "" {
 		plan["phase_explanation"] = compactForPrompt(explanation, 500)
 	}
+	warnings := stringSliceFromAny(trace.Result["evidence_warnings"])
+	if warning := strings.TrimSpace(stringFromAny(trace.Result["plan_warning"])); warning != "" {
+		warnings = append(warnings, warning)
+	}
+	if len(warnings) > 0 {
+		plan["phase_evidence_warnings"] = compactStringSliceForPrompt(warnings, 16, 280)
+	} else {
+		delete(plan, "phase_evidence_warnings")
+	}
 	if strings.EqualFold(strings.TrimSpace(stringFromAny(plan["pending_next_action"])), userInputPendingActionReplan) {
 		delete(plan, "pending_next_action")
 		applyUserInputPlanRevisionState(metadata, intValueFromAny(plan["phase_revision"]))

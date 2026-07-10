@@ -11,15 +11,15 @@ const maxPlanPhases = 16
 
 func (r *Runner) handleUpdatePlanCall(callID string, args map[string]interface{}, evidence map[string]interface{}) skillStepResult {
 	phases, err := normalizePlanSnapshot(args["plan"])
-	if err == nil {
-		err = validatePlanSnapshotEvidenceRefs(phases, evidence)
-	}
 	if err != nil {
 		trace := failedSkillTrace("plan_update", skills.MetaToolUpdatePlan, err)
-		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, updatePlanRecoveryHint(evidence))), false, false)
+		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "submit a complete plan snapshot with stable IDs, valid statuses, and at most one in_progress phase")), false, false)
 	}
 	explanation := trimRunes(stringFromInterface(args["explanation"]), 500)
 	result := map[string]interface{}{"plan": phases}
+	if warnings := planEvidenceAuditWarnings(phases, evidence); len(warnings) > 0 {
+		result["evidence_warnings"] = warnings
+	}
 	if explanation != "" {
 		result["explanation"] = explanation
 	}
@@ -81,12 +81,6 @@ func normalizePlanSnapshot(value interface{}) ([]map[string]interface{}, error) 
 		}
 		note := trimRunes(stringFromInterface(item["note"]), 500)
 		refs := compactPlanEvidenceRefs(evidenceStringSliceFromAny(item["evidence_refs"]), 12, 240)
-		if status == "completed" && len(refs) == 0 {
-			return nil, fmt.Errorf("%w: completed phase %s requires evidence_refs", ErrInvalidInput, id)
-		}
-		if status == "skipped" && note == "" {
-			return nil, fmt.Errorf("%w: skipped phase %s requires note", ErrInvalidInput, id)
-		}
 		phase := map[string]interface{}{"id": id, "step": step, "title": step, "status": status}
 		if len(refs) > 0 {
 			phase["evidence_refs"] = refs
@@ -130,61 +124,77 @@ func canonicalPlanEvidenceRef(value string) string {
 	return ref
 }
 
-func validatePlanSnapshotEvidenceRefs(phases []map[string]interface{}, evidence map[string]interface{}) error {
+func planEvidenceAuditWarnings(phases []map[string]interface{}, evidence map[string]interface{}) []string {
+	warnings := []string{}
 	for _, phase := range phases {
 		if !strings.EqualFold(strings.TrimSpace(stringFromInterface(phase["status"])), "completed") {
 			continue
 		}
 		phaseID := strings.TrimSpace(stringFromInterface(phase["id"]))
-		for _, ref := range evidenceStringSliceFromAny(phase["evidence_refs"]) {
-			if completionGateEvidenceRefSucceeded(evidence, ref) {
+		refs := evidenceStringSliceFromAny(phase["evidence_refs"])
+		if len(refs) == 0 {
+			warnings = append(warnings, "completed_phase_without_evidence:"+phaseID)
+			continue
+		}
+		for _, ref := range refs {
+			if planEvidenceRefSucceeded(evidence, ref) {
 				continue
 			}
-			return fmt.Errorf("%w: completed phase %s references unavailable evidence %s", ErrInvalidInput, phaseID, ref)
+			warnings = append(warnings, "unresolved_evidence_ref:"+canonicalPlanEvidenceRef(ref))
 		}
 	}
-	return nil
+	return compactStringSlice(warnings, 16, 280)
 }
 
-func updatePlanRecoveryHint(evidence map[string]interface{}) string {
-	hint := "submit a complete plan snapshot with stable IDs, at most one in_progress phase, successful evidence refs for completed phases, and notes for skipped phases"
-	refs := successfulPlanEvidenceRefs(evidence, 12)
-	if len(refs) > 0 {
-		hint += "; available successful refs: " + strings.Join(refs, ", ")
+func planEvidenceRefSucceeded(evidence map[string]interface{}, ref string) bool {
+	ref = canonicalPlanEvidenceRef(ref)
+	if ref == "" {
+		return false
 	}
-	return hint
-}
-
-func successfulPlanEvidenceRefs(evidence map[string]interface{}, limit int) []string {
+	if strings.HasPrefix(ref, "turn_state:") {
+		key := strings.TrimSpace(strings.TrimPrefix(ref, "turn_state:"))
+		for _, item := range evidenceMapsFromAny(evidenceMapFromAny(evidence["turn_state"])["items"]) {
+			if strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(item["key"])), key) {
+				return true
+			}
+		}
+		return false
+	}
+	if strings.HasPrefix(ref, "page_context:") {
+		route := strings.TrimSpace(strings.TrimPrefix(ref, "page_context:"))
+		current := evidenceMapFromAny(evidence["current_page_context"])
+		return strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(current["status"])), "ready") &&
+			strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(current["route"])), route)
+	}
 	records := evidenceMapsFromAny(evidence["evidence_ledger"])
 	if len(records) == 0 {
 		records = evidenceMapsFromAny(evidenceMapFromAny(evidence["operation_plan"])["evidence_ledger"])
 	}
-	refs := make([]string, 0, limit)
-	seen := map[string]struct{}{}
-	appendRef := func(ref string) {
-		ref = canonicalPlanEvidenceRef(ref)
-		if ref == "" || len(refs) >= limit {
-			return
+	if strings.HasPrefix(ref, "tool:") {
+		pair := strings.TrimSpace(strings.TrimPrefix(ref, "tool:"))
+		skillID, toolName, ok := strings.Cut(pair, "/")
+		if ok {
+			for _, record := range records {
+				if strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(record["skill_id"])), strings.TrimSpace(skillID)) &&
+					strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(record["tool_name"])), strings.TrimSpace(toolName)) &&
+					planEvidenceRecordSucceeded(record) {
+					return true
+				}
+			}
 		}
-		if _, exists := seen[ref]; exists {
-			return
-		}
-		seen[ref] = struct{}{}
-		refs = append(refs, ref)
 	}
 	for _, record := range records {
 		if !planEvidenceRecordSucceeded(record) {
 			continue
 		}
-		appendRef(stringFromInterface(record["invocation_id"]))
-		skillID := strings.TrimSpace(stringFromInterface(record["skill_id"]))
-		toolName := strings.TrimSpace(stringFromInterface(record["tool_name"]))
-		if skillID != "" && toolName != "" {
-			appendRef("tool:" + skillID + "/" + toolName)
+		for _, field := range []string{"invocation_id", "runtime_id", "action_id", "call_id"} {
+			value := strings.TrimSpace(evidenceStringFromAny(record[field]))
+			if value != "" && (ref == value || ref == field+":"+value) {
+				return true
+			}
 		}
 	}
-	return refs
+	return false
 }
 
 func planEvidenceRecordSucceeded(record map[string]interface{}) bool {

@@ -2668,7 +2668,7 @@ func TestCompletionVerificationReconcilesLedgerVerifiedModelDecidesFailure(t *te
 	}
 }
 
-func TestCompletionVerificationShouldRunForLedgerOnlyEvidence(t *testing.T) {
+func TestCompletionVerificationDoesNotRunInMainPath(t *testing.T) {
 	tests := []struct {
 		name     string
 		evidence map[string]interface{}
@@ -2851,8 +2851,8 @@ func TestCompletionVerificationShouldRunForLedgerOnlyEvidence(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := completionVerificationShouldRun(tt.evidence, nil, nil, 0)
-			if got != tt.want {
-				t.Fatalf("completionVerificationShouldRun() = %v, want %v for evidence %#v", got, tt.want, tt.evidence)
+			if got {
+				t.Fatalf("completionVerificationShouldRun() = true for evidence %#v", tt.evidence)
 			}
 		})
 	}

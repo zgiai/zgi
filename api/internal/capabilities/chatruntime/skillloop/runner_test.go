@@ -74,6 +74,104 @@ func TestInitialLoadedSkillsForRunTreatsSuccessfulToolCallAsLoaded(t *testing.T)
 	}
 }
 
+func TestRestoredLoadedSkillInstructionsMessageRehydratesContinuation(t *testing.T) {
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
+		{
+			Metadata: skills.SkillMetadata{
+				ID:          skills.SkillAgentManagement,
+				Description: "Manage agents.",
+				WhenToUse:   "Use for Agent configuration.",
+			},
+			Instructions: "# Agent Management\nPreserve unmentioned settings.",
+		},
+		{
+			Metadata:     skills.SkillMetadata{ID: skills.SkillFileReader},
+			Instructions: "# File Reader\nRead exact file content.",
+		},
+	}}
+	message := restoredLoadedSkillInstructionsMessage(resolved, map[string]struct{}{
+		skills.SkillAgentManagement: {},
+	})
+	if message == nil {
+		t.Fatal("restoredLoadedSkillInstructionsMessage() = nil")
+	}
+	content := messageContent(message.Content)
+	for _, want := range []string{
+		"loaded earlier in this same user turn",
+		skills.SkillAgentManagement,
+		"Preserve unmentioned settings.",
+		"Do not call load_skill for these skills again",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("restored message missing %q in:\n%s", want, content)
+		}
+	}
+	if strings.Contains(content, "Read exact file content.") {
+		t.Fatalf("restored message included an unloaded skill:\n%s", content)
+	}
+}
+
+func TestCompactRestoredSkillInstructionsKeepsBoundariesWithinBudget(t *testing.T) {
+	instructions := "BEGIN\n" + strings.Repeat("middle details\n", 2000) + "END"
+	const budget = 600
+
+	got := compactRestoredSkillInstructions(instructions, budget)
+
+	if len([]rune(got)) > budget {
+		t.Fatalf("compacted instruction runes = %d, want <= %d", len([]rune(got)), budget)
+	}
+	for _, want := range []string{"BEGIN", "Detailed middle section omitted", "END"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("compacted instructions missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+func TestShouldEmitNaturalProgressOnlyForExecutableBusinessTools(t *testing.T) {
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
+		{
+			Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
+			Tools:    []skills.SkillToolDefinition{{Name: "get_agent_config"}},
+		},
+		{
+			Metadata: skills.SkillMetadata{ID: skills.SkillConsoleNavigator},
+			Tools:    []skills.SkillToolDefinition{{Name: "navigate"}},
+		},
+	}}
+	loaded := map[string]struct{}{skills.SkillAgentManagement: {}}
+	loadCall := adapter.ToolCall{Function: adapter.FunctionCall{
+		Name:      skills.MetaToolLoadSkill,
+		Arguments: `{"skill_id":"agent-management"}`,
+	}}
+	if shouldEmitNaturalProgressForToolCalls(resolved, loaded, []adapter.ToolCall{loadCall}) {
+		t.Fatal("load_skill-only turn was treated as user-visible business progress")
+	}
+	planCall := adapter.ToolCall{Function: adapter.FunctionCall{
+		Name:      skills.MetaToolUpdatePlan,
+		Arguments: `{"plan":[]}`,
+	}}
+	if shouldEmitNaturalProgressForToolCalls(resolved, loaded, []adapter.ToolCall{planCall}) {
+		t.Fatal("update_plan-only turn was treated as user-visible business progress")
+	}
+	businessCall := runnerTestSkillToolCall("call-1", skills.SkillAgentManagement, "get_agent_config", map[string]interface{}{
+		"agent_id": "agent-1",
+	})
+	if !shouldEmitNaturalProgressForToolCalls(resolved, loaded, []adapter.ToolCall{businessCall}) {
+		t.Fatal("loaded business tool turn did not allow user-visible progress")
+	}
+	unsupportedNavigate := adapter.ToolCall{Function: adapter.FunctionCall{
+		Name:      "navigate",
+		Arguments: `{"href":"/console/files"}`,
+	}}
+	if shouldEmitNaturalProgressForToolCalls(resolved, loaded, []adapter.ToolCall{unsupportedNavigate}) {
+		t.Fatal("unloaded direct navigate call was treated as executable progress")
+	}
+	loaded[skills.SkillConsoleNavigator] = struct{}{}
+	if !shouldEmitNaturalProgressForToolCalls(resolved, loaded, []adapter.ToolCall{unsupportedNavigate}) {
+		t.Fatal("direct tool call for a uniquely loaded skill did not allow progress")
+	}
+}
+
 func TestHandleLoadSkillCallDoesNotEmitEventForAlreadyLoadedSkill(t *testing.T) {
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
 		Metadata: skills.SkillMetadata{
@@ -216,7 +314,7 @@ func TestRepeatedSuccessfulReadOnlyToolCallFeedbackStepUsesPreviousResult(t *tes
 				"workflows": []interface{}{},
 			},
 		},
-	}, nil, nil, nil)
+	}, nil)
 
 	if result.trace.Kind != "planner_feedback" {
 		t.Fatalf("trace.Kind = %q, want planner_feedback", result.trace.Kind)
@@ -310,77 +408,6 @@ func TestPlanToolGuardAdvisoryStepDoesNotReturnRecoverableError(t *testing.T) {
 	}
 }
 
-func TestMissingAgentTargetListAgentsTerminalStepStopsThirdSearch(t *testing.T) {
-	previous := []SkillToolCallRef{
-		{
-			SkillID:   skills.SkillAgentManagement,
-			ToolName:  "list_agents",
-			Arguments: map[string]interface{}{"keyword": "AICHAT-NOT-EXIST-0702Z"},
-			Result:    map[string]interface{}{"status": "completed", "count": 0, "agents_count": 0},
-		},
-		{
-			SkillID:   skills.SkillAgentManagement,
-			ToolName:  "list_agents",
-			Arguments: map[string]interface{}{"keyword": "0702Z"},
-			Result:    map[string]interface{}{"status": "completed", "count": 0, "agents_count": 0},
-		},
-	}
-
-	result := missingAgentTargetListAgentsTerminalStep(
-		"call-3",
-		skills.SkillAgentManagement,
-		"list_agents",
-		map[string]interface{}{},
-		previous,
-		"请删除名为 AICHAT-NOT-EXIST-0702Z 的智能体，如果找不到就不要审批。",
-	)
-
-	if result.trace.Kind != "planner_feedback" {
-		t.Fatalf("trace.Kind = %q, want planner_feedback", result.trace.Kind)
-	}
-	if got := stringFromInterface(result.trace.Arguments["next_step"]); got != "answer_missing_agent_target" {
-		t.Fatalf("trace next_step = %q, want answer_missing_agent_target", got)
-	}
-	if got := stringFromInterface(result.trace.Arguments["target_name"]); got != "AICHAT-NOT-EXIST-0702Z" {
-		t.Fatalf("target_name = %q, want AICHAT-NOT-EXIST-0702Z", got)
-	}
-	if !result.terminal {
-		t.Fatal("terminal = false, want true")
-	}
-	if result.usedTool {
-		t.Fatal("usedTool = true, want false because the third search is not executed")
-	}
-	if !strings.Contains(result.answer, "没有发起审批") || !strings.Contains(result.answer, "没有执行修改或删除") {
-		t.Fatalf("answer = %q, want no-approval/no-mutation explanation", result.answer)
-	}
-	content := fmt.Sprint(result.toolMessage.Content)
-	if !strings.Contains(content, "agent_target_resolution_exhausted") {
-		t.Fatalf("tool message = %s, want missing-target advisory", content)
-	}
-}
-
-func TestMissingAgentTargetListAgentsTerminalStepAllowsSecondSearch(t *testing.T) {
-	result := missingAgentTargetListAgentsTerminalStep(
-		"call-2",
-		skills.SkillAgentManagement,
-		"list_agents",
-		map[string]interface{}{"keyword": "0702Z"},
-		[]SkillToolCallRef{
-			{
-				SkillID:   skills.SkillAgentManagement,
-				ToolName:  "list_agents",
-				Arguments: map[string]interface{}{"keyword": "AICHAT-NOT-EXIST-0702Z"},
-				Result:    map[string]interface{}{"status": "completed", "count": 0, "agents_count": 0},
-			},
-		},
-		"请删除名为 AICHAT-NOT-EXIST-0702Z 的智能体",
-	)
-
-	if result.trace.Kind != "" {
-		t.Fatalf("trace.Kind = %q, want empty so one broader check can run", result.trace.Kind)
-	}
-}
-
 func TestRepeatedSuccessfulReadOnlyToolCallFeedbackStepIgnoresDifferentArguments(t *testing.T) {
 	previousArgs := map[string]interface{}{"agent_id": "agent-1"}
 	result := repeatedSuccessfulReadOnlyToolCallFeedbackStep("call-2", skills.SkillAgentManagement, "list_agent_workflow_binding_candidates", map[string]interface{}{"agent_id": "agent-2"}, map[string]SkillToolCallRef{
@@ -390,14 +417,14 @@ func TestRepeatedSuccessfulReadOnlyToolCallFeedbackStepIgnoresDifferentArguments
 			Arguments: copyStringAnyMap(previousArgs),
 			Result:    map[string]interface{}{"status": "completed"},
 		},
-	}, nil, nil, nil)
+	}, nil)
 
 	if result.trace.Kind != "" {
 		t.Fatalf("trace.Kind = %q, want empty for different arguments", result.trace.Kind)
 	}
 }
 
-func TestRepeatedSuccessfulCandidateLookupWithDifferentArgumentsPointsToPendingMutation(t *testing.T) {
+func TestRepeatedSuccessfulCandidateLookupWithDifferentArgumentsLetsModelDecide(t *testing.T) {
 	previousArgs := map[string]interface{}{
 		"agent_id":       "agent-1",
 		"data_source_id": "database-1",
@@ -406,22 +433,6 @@ func TestRepeatedSuccessfulCandidateLookupWithDifferentArgumentsPointsToPendingM
 		"agent_id":       "agent-1",
 		"data_source_id": "database-2",
 	}
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/update_agent_config",
-					"status":    "pending",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "update_agent_config",
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:agent-management/update_agent_config": "pending",
-			},
-		},
-	}
-
 	result := repeatedSuccessfulReadOnlyToolCallFeedbackStep("call-2", skills.SkillAgentManagement, "list_agent_database_tables", nextArgs, nil, []SkillToolCallRef{
 		{
 			SkillID:   skills.SkillAgentManagement,
@@ -440,23 +451,10 @@ func TestRepeatedSuccessfulCandidateLookupWithDifferentArgumentsPointsToPendingM
 				}},
 			},
 		},
-	}, evidence, nil)
+	})
 
-	if result.trace.Kind != "planner_feedback" {
-		t.Fatalf("trace.Kind = %q, want planner_feedback", result.trace.Kind)
-	}
-	if got := stringFromInterface(result.trace.Arguments["next_step"]); got != "call_pending_agent_mutation" {
-		t.Fatalf("trace next_step = %q, want call_pending_agent_mutation", got)
-	}
-	if got := stringFromInterface(result.trace.Arguments["reason"]); got != "same_candidate_lookup_already_found_usable_result_while_mutation_step_pending" {
-		t.Fatalf("trace reason = %q, want candidate lookup reuse", got)
-	}
-	content := fmt.Sprint(result.toolMessage.Content)
-	if !strings.Contains(content, "agent-management/update_agent_config") {
-		t.Fatalf("tool message = %s, want update_agent_config guidance", content)
-	}
-	if !strings.Contains(content, "candidate_samples") || !strings.Contains(content, "database-1:table-1") || !strings.Contains(content, "table_ids") {
-		t.Fatalf("tool message = %s, want reusable candidate sample and binding", content)
+	if result.trace.Kind != "" {
+		t.Fatalf("trace.Kind = %q, want no backend semantic redirect for different arguments", result.trace.Kind)
 	}
 }
 
@@ -472,7 +470,7 @@ func TestRepeatedSuccessfulReadOnlyToolCallFeedbackStepIgnoresMutations(t *testi
 			Arguments: copyStringAnyMap(args),
 			Result:    map[string]interface{}{"status": "completed"},
 		},
-	}, nil, nil, nil)
+	}, nil)
 
 	if result.trace.Kind != "" {
 		t.Fatalf("trace.Kind = %q, want empty for mutation tool", result.trace.Kind)
@@ -502,32 +500,16 @@ func TestRepeatedSuccessfulReadOnlyToolCallFeedbackStepAllowsAgentConfigReadAfte
 			Arguments: copyStringAnyMap(args),
 			Result:    map[string]interface{}{"status": "completed"},
 		},
-	}, nil, nil)
+	})
 
 	if result.trace.Kind != "" {
 		t.Fatalf("trace.Kind = %q, want empty so post-update read can execute", result.trace.Kind)
 	}
 }
 
-func TestRepeatedSuccessfulReadOnlyToolCallFeedbackStepPointsToPendingAgentMutation(t *testing.T) {
+func TestRepeatedSuccessfulReadOnlyToolCallFeedbackStepDoesNotInterpretPendingPlan(t *testing.T) {
 	args := map[string]interface{}{"agent_id": "agent-1"}
 	key := failedToolCallKey(skills.SkillAgentManagement, "get_agent_config", args)
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/update_agent_config",
-					"status":    "pending",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "update_agent_config",
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:agent-management/update_agent_config": "pending",
-			},
-		},
-	}
-
 	result := repeatedSuccessfulReadOnlyToolCallFeedbackStep("call-4", skills.SkillAgentManagement, "get_agent_config", args, map[string]SkillToolCallRef{
 		key: {
 			SkillID:   skills.SkillAgentManagement,
@@ -548,23 +530,17 @@ func TestRepeatedSuccessfulReadOnlyToolCallFeedbackStepPointsToPendingAgentMutat
 			Arguments: copyStringAnyMap(args),
 			Result:    map[string]interface{}{"status": "completed", "agent_id": "agent-1"},
 		},
-	}, evidence, nil)
+	})
 
 	if result.trace.Kind != "planner_feedback" {
 		t.Fatalf("trace.Kind = %q, want planner_feedback", result.trace.Kind)
 	}
-	if got := stringFromInterface(result.trace.Arguments["next_step"]); got != "call_pending_agent_mutation" {
-		t.Fatalf("trace next_step = %q, want call_pending_agent_mutation", got)
+	if got := stringFromInterface(result.trace.Arguments["next_step"]); got != "answer_from_previous_result" {
+		t.Fatalf("trace next_step = %q, want answer_from_previous_result", got)
 	}
 	content := fmt.Sprint(result.toolMessage.Content)
-	if !strings.Contains(content, "agent-management/update_agent_config") {
-		t.Fatalf("tool message = %s, want update_agent_config guidance", content)
-	}
-	if !strings.Contains(content, "pending asset-changing Agent step") {
-		t.Fatalf("tool message = %s, want pending mutation guidance", content)
-	}
-	if !strings.Contains(content, "extract the target field values") {
-		t.Fatalf("tool message = %s, want config value extraction guidance", content)
+	if strings.Contains(content, "update_agent_config") || strings.Contains(content, "pending asset-changing Agent step") {
+		t.Fatalf("tool message = %s, want no backend-selected mutation", content)
 	}
 }
 
@@ -859,6 +835,92 @@ func TestRunnerRecordsTurnStateWithoutUserVisibleEvent(t *testing.T) {
 	for _, event := range events {
 		if event.Type == EventIntermediateAnswer {
 			t.Fatalf("event = %#v, want no user-visible intermediate answer for model_only turn state", event)
+		}
+	}
+}
+
+func TestRunnerContinuesAfterMetaToolTextInsteadOfCoalescingFinalAnswer(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role:    "assistant",
+						Content: "Configuration updated successfully.",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "turn-state-terminal",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolTurnState,
+								Arguments: `{"items":[{"kind":"verification","visibility":"model_only","key":"agent_updated","value":"true"}]}`,
+							},
+						}},
+					},
+				}},
+			},
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "final-answer",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolFinalAnswer,
+								Arguments: `{"answer":"Configuration updated successfully."}`,
+							},
+						}},
+					},
+				}},
+			},
+		},
+	}
+	var traces []skills.SkillTrace
+	var events []Event
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntimeWithCatalog(nil, nil, ""),
+		AppContext:   &llmclient.AppContext{},
+		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
+			traces = append(traces, trace)
+		},
+		OnEvent: func(event Event) error {
+			events = append(events, event)
+			return nil
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "update the agent"}},
+	})
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared:                  prepared,
+		Resolved:                  runnerTestResolvedSkills(),
+		PreferExplicitFinalAnswer: true,
+		CompletionEvidence:        func() map[string]interface{} { return map[string]interface{}{} },
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "Configuration updated successfully." {
+		t.Fatalf("answer = %q, want explicit final answer from second round", answer)
+	}
+	if fakeLLM.appChatCalls != 2 {
+		t.Fatalf("AppChat calls = %d, want meta-tool round plus final-answer round", fakeLLM.appChatCalls)
+	}
+	foundTurnState := false
+	foundFinalAnswer := false
+	for _, trace := range traces {
+		foundTurnState = foundTurnState || trace.Kind == "turn_state"
+		foundFinalAnswer = foundFinalAnswer || trace.Kind == "final_answer"
+	}
+	if !foundTurnState || !foundFinalAnswer {
+		t.Fatalf("traces = %#v, want turn_state and final_answer traces", traces)
+	}
+	for _, event := range events {
+		if event.Type == EventAgentProgress {
+			t.Fatalf("meta-tool text was emitted as progress: %#v", event.Payload)
 		}
 	}
 }
@@ -1824,11 +1886,11 @@ Use delete_agents to delete several agents in one operation.
 	if deleteTool.calls != 0 {
 		t.Fatalf("delete_agents calls = %d, want no backend-forced tool execution", deleteTool.calls)
 	}
-	if fakeLLM.appChatCalls != 3 {
-		t.Fatalf("AppChat calls = %d, want candidate, one verifier audit, and main-model repair", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("AppChat calls = %d, want one main-model call", fakeLLM.appChatCalls)
 	}
-	if answer != "I do not have evidence that the two Agents were deleted." {
-		t.Fatalf("answer = %q, want the main-model repair", answer)
+	if answer != "I deleted the two Agents." {
+		t.Fatalf("answer = %q, want the main-model answer", answer)
 	}
 }
 
@@ -1964,11 +2026,11 @@ Use delete_agents to delete several agents in one operation.
 	if deleteTool.calls != 0 {
 		t.Fatalf("delete_agents calls = %d, want no backend-forced tool execution", deleteTool.calls)
 	}
-	if fakeLLM.appChatCalls != 3 {
-		t.Fatalf("AppChat calls = %d, want candidate, one verifier audit, and main-model repair", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("AppChat calls = %d, want one main-model call", fakeLLM.appChatCalls)
 	}
-	if answer != "I do not have evidence that the two Agents were deleted." {
-		t.Fatalf("answer = %q, want the main-model repair", answer)
+	if answer != "I deleted the two Agents." {
+		t.Fatalf("answer = %q, want the main-model answer", answer)
 	}
 }
 
@@ -2433,140 +2495,6 @@ Use update_agent_identity for identity changes and get_agent to verify the updat
 	}
 	if strings.TrimSpace(answer) == "" {
 		t.Fatal("answer is empty, want the main-model final answer")
-	}
-}
-
-func TestRedirectDuplicateAgentMutationUsesEvidenceAfterGovernanceContinuation(t *testing.T) {
-	duplicate := runnerTestSkillToolCall(
-		"call_duplicate_update_identity",
-		skills.SkillAgentManagement,
-		"update_agent_identity",
-		map[string]interface{}{"agent_id": "agent-1", "name": "After Agent"},
-	)
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":              "running",
-			"pending_next_action": "agent-management/get_agent",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/update_agent_identity",
-					"status":    "completed",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "update_agent_identity",
-				},
-				map[string]interface{}{
-					"id":                                "tool:agent-management/get_agent#post_update",
-					"status":                            "pending",
-					"skill_id":                          skills.SkillAgentManagement,
-					"tool_name":                         "get_agent",
-					"phase":                             "post_update_verification",
-					"required_post_update_verification": true,
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:agent-management/update_agent_identity": "completed",
-				"tool:agent-management/get_agent#post_update": "pending",
-			},
-		},
-		"skill_invocations": []interface{}{
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "update_agent_identity",
-				"status":    "success",
-				"arguments": map[string]interface{}{"agent_id": "agent-1", "name": "After Agent"},
-				"result":    map[string]interface{}{"status": "completed", "agent_id": "agent-1", "agent_name": "After Agent"},
-			},
-		},
-	}
-
-	redirected, ok := redirectDuplicateAgentMutationToPendingPostUpdateReadCall(
-		duplicate,
-		skills.SkillAgentManagement,
-		"update_agent_identity",
-		evidence,
-		nil,
-		nil,
-	)
-	if !ok {
-		t.Fatal("redirectDuplicateAgentMutationToPendingPostUpdateReadCall() ok = false, want evidence-backed redirect")
-	}
-	if redirected.Function.Name != skills.MetaToolCallSkillTool {
-		t.Fatalf("redirected function = %q, want %s", redirected.Function.Name, skills.MetaToolCallSkillTool)
-	}
-	skillID, toolName, args, _ := skillToolCallIdentityForCall(runnerTestResolvedSkills(), map[string]struct{}{skills.SkillAgentManagement: {}}, redirected)
-	if skillID != skills.SkillAgentManagement || toolName != "get_agent" {
-		t.Fatalf("redirected call = %s/%s, want agent-management/get_agent", skillID, toolName)
-	}
-	if got := strings.TrimSpace(evidenceStringFromAny(args["agent_id"])); got != "agent-1" {
-		t.Fatalf("redirected agent_id = %q, want agent-1", got)
-	}
-}
-
-func TestRedirectDuplicateAgentMutationDoesNotSkipPendingMutationForPostUpdateRead(t *testing.T) {
-	updateConfig := runnerTestSkillToolCall(
-		"call_update_config",
-		skills.SkillAgentManagement,
-		"update_agent_config",
-		map[string]interface{}{
-			"agent_id":            "agent-1",
-			"home_title":          "new title",
-			"suggested_questions": []interface{}{"one", "two"},
-		},
-	)
-	evidence := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":              "running",
-			"pending_next_action": "agent-management/update_agent_config",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/update_agent_identity",
-					"status":    "completed",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "update_agent_identity",
-				},
-				map[string]interface{}{
-					"id":        "tool:agent-management/update_agent_config",
-					"status":    "pending",
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "update_agent_config",
-				},
-				map[string]interface{}{
-					"id":                                "tool:agent-management/get_agent_config#post_update",
-					"status":                            "pending",
-					"skill_id":                          skills.SkillAgentManagement,
-					"tool_name":                         "get_agent_config",
-					"phase":                             "post_update_verification",
-					"required_post_update_verification": true,
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:agent-management/update_agent_identity":        "completed",
-				"tool:agent-management/update_agent_config":          "pending",
-				"tool:agent-management/get_agent_config#post_update": "pending",
-			},
-		},
-		"skill_invocations": []interface{}{
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "update_agent_identity",
-				"status":    "success",
-				"arguments": map[string]interface{}{"agent_id": "agent-1", "name": "After Agent"},
-				"result":    map[string]interface{}{"status": "completed", "agent_id": "agent-1", "agent_name": "After Agent"},
-			},
-		},
-	}
-
-	if redirected, ok := redirectDuplicateAgentMutationToPendingPostUpdateReadCall(
-		updateConfig,
-		skills.SkillAgentManagement,
-		"update_agent_config",
-		evidence,
-		evidence,
-		nil,
-	); ok {
-		t.Fatalf("redirectDuplicateAgentMutationToPendingPostUpdateReadCall() redirected to %#v, want pending update_agent_config to execute", redirected)
 	}
 }
 
@@ -4576,51 +4504,6 @@ Use the calculator tool.
 	}
 }
 
-func TestCompletionVerificationFinalizingProgressTextUsesOperationSummary(t *testing.T) {
-	prepared := NewPreparedChat("conv-1", "msg-1", "\u5220\u9664\u524d\u4e24\u4e2a\u667a\u80fd\u4f53", "auto", &adapter.ChatRequest{
-		Messages: []adapter.Message{{Role: "user", Content: "\u5220\u9664\u524d\u4e24\u4e2a\u667a\u80fd\u4f53"}},
-	})
-	text := completionVerificationFinalizingProgressText(prepared, map[string]interface{}{
-		"operation_result_summary": map[string]interface{}{
-			"status":        "completed",
-			"operation":     "agent.delete",
-			"asset_type":    "agent",
-			"target_count":  2,
-			"success_count": 2,
-			"failed_count":  0,
-		},
-	})
-
-	if !strings.Contains(text, "\u5df2\u5220\u9664 2 \u4e2a\u667a\u80fd\u4f53") {
-		t.Fatalf("progress text = %q, want concrete agent delete progress", text)
-	}
-}
-
-func TestCompletionVerificationFinalizingProgressTextUsesPreparedQueryLanguageFallback(t *testing.T) {
-	prepared := NewPreparedChat("conv-1", "msg-1", "deepseek", "auto", &adapter.ChatRequest{
-		Messages: []adapter.Message{{Role: "system", Content: "continuation context"}},
-	})
-	prepared.Query = "\u5220\u9664\u524d\u4e24\u4e2a\u667a\u80fd\u4f53"
-
-	text := completionVerificationFinalizingProgressText(prepared, map[string]interface{}{
-		"operation_result_summary": map[string]interface{}{
-			"status":        "completed",
-			"operation":     "agent.delete",
-			"asset_type":    "agent",
-			"target_count":  2,
-			"success_count": 2,
-			"failed_count":  0,
-		},
-	})
-
-	if !strings.Contains(text, "\u5df2\u5220\u9664 2 \u4e2a\u667a\u80fd\u4f53") {
-		t.Fatalf("progress text = %q, want Chinese progress from prepared query fallback", text)
-	}
-	if strings.Contains(text, "Deleted") || strings.Contains(text, "reviewing") {
-		t.Fatalf("progress text = %q, want no English fallback for Chinese prepared query", text)
-	}
-}
-
 func TestRunnerCompletionEvidenceKeepsPlanToolGuard(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
@@ -4949,7 +4832,7 @@ Prepare professional prompts.
 	}
 }
 
-func TestRunnerCompletionVerifierReplansNeedsAction(t *testing.T) {
+func TestRunnerDoesNotInvokeCompletionVerifierForNeedsActionEvidence(t *testing.T) {
 	ctx := context.Background()
 	fakeLLM := &runnerTestLLMClient{
 		appChatResponses: []*adapter.ChatResponse{
@@ -4982,18 +4865,15 @@ func TestRunnerCompletionVerifierReplansNeedsAction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(answer, "could not confirm") {
-		t.Fatalf("answer = %q, want verifier-driven truthful replanning answer", answer)
+	if answer != "I saved the file." {
+		t.Fatalf("answer = %q, want main-model answer", answer)
 	}
-	if fakeLLM.appChatCalls != 3 {
-		t.Fatalf("AppChat calls = %d, want planning, one verifier audit, and main-model repair", fakeLLM.appChatCalls)
-	}
-	if !runnerTestRequestContains(fakeLLM.appChatRequests[2], "Runtime completion verification feedback") {
-		t.Fatalf("third request missing completion verifier feedback")
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("AppChat calls = %d, want one main-model call", fakeLLM.appChatCalls)
 	}
 }
 
-func TestRunnerCompletionVerifierDoesNotRetryUnparseableResponse(t *testing.T) {
+func TestRunnerDoesNotCallUnparseableCompletionVerifier(t *testing.T) {
 	ctx := context.Background()
 	fakeLLM := &runnerTestLLMClient{
 		appChatResponses: []*adapter.ChatResponse{
@@ -5043,24 +4923,18 @@ func TestRunnerCompletionVerifierDoesNotRetryUnparseableResponse(t *testing.T) {
 			}
 		},
 	})
-	if err == nil {
-		t.Fatal("Run() error = nil, want one-shot verifier parse failure")
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
 	}
-	if answer != "" {
-		t.Fatalf("answer = %q, want no system-generated replacement answer", answer)
+	if answer != "Deleted the first four agents." {
+		t.Fatalf("answer = %q, want main-model answer", answer)
 	}
-	if fakeLLM.appChatCalls != 2 {
-		t.Fatalf("AppChat calls = %d, want planning plus one verifier audit", fakeLLM.appChatCalls)
-	}
-	if fakeLLM.appChatRequests[1].MaxTokens == nil || *fakeLLM.appChatRequests[1].MaxTokens != completionVerifierMaxTokens {
-		t.Fatalf("verifier max_tokens = %#v, want %d", fakeLLM.appChatRequests[1].MaxTokens, completionVerifierMaxTokens)
-	}
-	if !runnerTestRequestContains(fakeLLM.appChatRequests[1], "Do not include reasoning") {
-		t.Fatal("verifier request missing no-reasoning instruction")
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("AppChat calls = %d, want one main-model call", fakeLLM.appChatCalls)
 	}
 }
 
-func TestRunnerCompletionVerifierAuditsOnceThenAcceptsMainModelRepair(t *testing.T) {
+func TestRunnerDoesNotAuditMainModelAnswer(t *testing.T) {
 	ctx := context.Background()
 	fakeLLM := &runnerTestLLMClient{
 		appChatResponses: []*adapter.ChatResponse{
@@ -5095,14 +4969,11 @@ func TestRunnerCompletionVerifierAuditsOnceThenAcceptsMainModelRepair(t *testing
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if answer != "I saved the file now." {
-		t.Fatalf("answer = %q, want the main-model repair", answer)
+	if answer != "I saved the file." {
+		t.Fatalf("answer = %q, want initial main-model answer", answer)
 	}
-	if fakeLLM.appChatCalls != 3 {
-		t.Fatalf("AppChat calls = %d, want planning, one verifier audit, and main-model repair", fakeLLM.appChatCalls)
-	}
-	if !runnerTestRequestContains(fakeLLM.appChatRequests[2], "Runtime completion verification feedback") {
-		t.Fatal("main-model repair request missing verifier feedback")
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("AppChat calls = %d, want one main-model call", fakeLLM.appChatCalls)
 	}
 }
 
@@ -5205,7 +5076,7 @@ func TestRunnerCompletionEvidenceDisablesLegacyFinalAnswerGuard(t *testing.T) {
 	}
 }
 
-func TestRunnerCompletionVerifierPassPreservesMainModelAnswer(t *testing.T) {
+func TestRunnerTerminalGuardPreservesMainModelAnswer(t *testing.T) {
 	ctx := context.Background()
 	fakeLLM := &runnerTestLLMClient{
 		appChatResponses: []*adapter.ChatResponse{
@@ -5251,12 +5122,12 @@ func TestRunnerCompletionVerifierPassPreservesMainModelAnswer(t *testing.T) {
 	if verificationResult.FinalAnswer != answer {
 		t.Fatalf("completion verification final answer = %q, want %q", verificationResult.FinalAnswer, answer)
 	}
-	if fakeLLM.appChatCalls != 2 {
-		t.Fatalf("AppChat calls = %d, want planning and verifier only", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("AppChat calls = %d, want one main-model call", fakeLLM.appChatCalls)
 	}
 }
 
-func TestRunnerCompletionVerifierFailureReturnsToMainModel(t *testing.T) {
+func TestRunnerDoesNotReplaceMainModelAnswerFromFailedEvidence(t *testing.T) {
 	ctx := context.Background()
 	fakeLLM := &runnerTestLLMClient{
 		appChatResponses: []*adapter.ChatResponse{
@@ -5293,8 +5164,8 @@ func TestRunnerCompletionVerifierFailureReturnsToMainModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if answer != "I could not confirm the Agent update because the configuration call failed." {
-		t.Fatalf("answer = %q, want the main-model repair", answer)
+	if answer != "Done, the Agent was updated." {
+		t.Fatalf("answer = %q, want initial main-model answer", answer)
 	}
 	if verificationResult.Status != completionVerificationStatusPass {
 		t.Fatalf("completion verification status = %q, want repaired main-model pass", verificationResult.Status)
@@ -5302,12 +5173,12 @@ func TestRunnerCompletionVerifierFailureReturnsToMainModel(t *testing.T) {
 	if verificationResult.Source != "main_model_final" {
 		t.Fatalf("completion verification source = %q, want main_model_final", verificationResult.Source)
 	}
-	if fakeLLM.appChatCalls != 3 {
-		t.Fatalf("AppChat calls = %d, want planning, one verifier audit, and main-model repair", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("AppChat calls = %d, want one main-model call", fakeLLM.appChatCalls)
 	}
 }
 
-func TestRunnerCompletionVerifierPassDoesNotGenerateFailedPlanReplacement(t *testing.T) {
+func TestRunnerTerminalGuardDoesNotGenerateFailedPlanReplacement(t *testing.T) {
 	ctx := context.Background()
 	fakeLLM := &runnerTestLLMClient{
 		appChatResponses: []*adapter.ChatResponse{
@@ -5358,8 +5229,8 @@ func TestRunnerCompletionVerifierPassDoesNotGenerateFailedPlanReplacement(t *tes
 	if answer != "Done, the file was saved to File Management." {
 		t.Fatalf("answer = %q, want verifier-approved main-model candidate", answer)
 	}
-	if fakeLLM.appChatCalls != 2 {
-		t.Fatalf("AppChat calls = %d, want planning and verifier only", fakeLLM.appChatCalls)
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("AppChat calls = %d, want one main-model call", fakeLLM.appChatCalls)
 	}
 }
 

@@ -20,6 +20,7 @@ func (r *Runner) runSkillPlanningStream(
 	onEvent func(Event) error,
 	terminalProtocol bool,
 	terminalStreamingAllowed bool,
+	suppressNaturalProgress bool,
 ) (planningResult, bool, error) {
 	streamReq := cloneChatRequest(planningReq)
 	streamReq.Stream = true
@@ -108,13 +109,7 @@ func (r *Runner) runSkillPlanningStream(
 				}
 				if text := streamChoiceText(choice); text != "" {
 					contentBuilder.WriteString(text)
-					if terminalProtocol {
-						// The complete sentence is emitted as progress once the turn mode is known.
-					} else if sawToolCall {
-						if !naturalProgressStreamed && r.emitAgentProgress(ctx, prepared, text, onEvent) {
-							naturalProgressStreamed = true
-						}
-					} else {
+					if !terminalProtocol && !suppressNaturalProgress && !sawToolCall {
 						r.emitAnswerChunk(ctx, prepared, text, onEvent)
 						speculativeAnswer.WriteString(text)
 						answerStreamed = true
@@ -126,11 +121,6 @@ func (r *Runner) runSkillPlanningStream(
 						if !terminalProtocol {
 							if speculative := speculativeAnswer.String(); speculative != "" {
 								r.emitAnswerRetract(ctx, prepared, speculative, onEvent)
-							}
-						}
-						if progress := strings.TrimSpace(contentBuilder.String()); progress != "" {
-							if r.emitAgentProgress(ctx, prepared, progress, onEvent) {
-								naturalProgressStreamed = true
 							}
 						}
 					}
@@ -159,12 +149,6 @@ streamDone:
 	if !sawChunk {
 		return planningResult{}, false, nil
 	}
-	if terminalProtocol && sawToolCall && !naturalProgressStreamed {
-		if progress := strings.TrimSpace(contentBuilder.String()); progress != "" {
-			naturalProgressStreamed = r.emitAgentProgress(ctx, prepared, progress, onEvent)
-		}
-	}
-
 	toolCalls := make([]adapter.ToolCall, 0, len(toolCallOrder))
 	for _, index := range toolCallOrder {
 		state := toolCallsByIndex[index]
@@ -180,6 +164,11 @@ streamDone:
 			answerStreamed = true
 		}
 		toolCalls = append(toolCalls, call)
+	}
+	if !terminalProtocol && len(toolCalls) > 0 && !suppressNaturalProgress {
+		if progress := strings.TrimSpace(contentBuilder.String()); progress != "" {
+			naturalProgressStreamed = r.emitAgentProgress(ctx, prepared, progress, onEvent)
+		}
 	}
 	message := adapter.Message{
 		Role:             "assistant",
@@ -210,10 +199,10 @@ streamDone:
 	}
 
 	return planningResult{
-		message:          message,
-		usage:            usage,
-		answerStreamed:   answerStreamed && (terminalProtocol || len(toolCalls) == 0),
-		progressStreamed: naturalProgressStreamed || toolPlanningProgressStreamed || fallbackProgressStreamed,
+		message:                 message,
+		usage:                   usage,
+		answerStreamed:          answerStreamed && (terminalProtocol || len(toolCalls) == 0),
+		naturalProgressStreamed: naturalProgressStreamed,
 	}, true, nil
 }
 

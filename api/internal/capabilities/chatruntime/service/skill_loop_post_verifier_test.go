@@ -13,7 +13,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
-func TestRunPreparedSkillStreamUsesVerifierForLegacyOnlyEvidence(t *testing.T) {
+func TestRunPreparedSkillStreamUsesMainModelTerminalDecisionForLegacyOnlyEvidence(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writePostVerifierServiceTestSkill(t, catalogDir, "post-verifier-test")
@@ -91,17 +91,19 @@ func TestRunPreparedSkillStreamUsesVerifierForLegacyOnlyEvidence(t *testing.T) {
 	if answer != "The operation is complete." {
 		t.Fatalf("answer = %q, want verifier-approved candidate answer", answer)
 	}
-	if len(llm.appChatRequests) != 2 {
-		t.Fatalf("AppChat requests = %d, want planning answer plus completion verifier", len(llm.appChatRequests))
+	if len(llm.appChatRequests) != 1 {
+		t.Fatalf("AppChat requests = %d, want one main-model terminal decision", len(llm.appChatRequests))
 	}
 	if len(llm.streamRequests) != 1 {
 		t.Fatalf("AppChatStream requests = %d, want the main-model answer to stream normally", len(llm.streamRequests))
 	}
-	if !toolGovernanceStreamRequestContains(llm.appChatRequests[1], "completion post-verifier") {
-		t.Fatalf("second AppChat request = %q, want completion verifier", toolGovernanceStreamRequestText(llm.appChatRequests[1]))
+	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
+	verification := mapFromOperationContext(plan["completion_verification"])
+	if got := stringFromAny(verification["status"]); got != "pass" {
+		t.Fatalf("completion_verification.status = %q, want pass", got)
 	}
-	if toolGovernanceStreamRequestContains(llm.appChatRequests[1], "visible.md") {
-		t.Fatalf("completion verifier request retained raw legacy resource metadata: %q", toolGovernanceStreamRequestText(llm.appChatRequests[1]))
+	if got := stringFromAny(verification["source"]); got != "main_model_final" {
+		t.Fatalf("completion_verification.source = %q, want main_model_final", got)
 	}
 	if got := strings.TrimSpace(stringFromAny(prepared.Message.Metadata["guardrail_count"])); got != "" && got != "0" {
 		t.Fatalf("guardrail_count = %s, want no legacy guardrail traces when post verifier is configured", got)
@@ -113,7 +115,7 @@ func TestRunPreparedSkillStreamUsesVerifierForLegacyOnlyEvidence(t *testing.T) {
 	}
 }
 
-func TestRunPreparedSkillStreamReturnsVerifierFailureToMainModel(t *testing.T) {
+func TestRunPreparedSkillStreamTrustsMainModelTerminalDecisionWithAdvisoryPlan(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writePostVerifierServiceTestSkill(t, catalogDir, "post-verifier-test")
@@ -183,8 +185,11 @@ func TestRunPreparedSkillStreamReturnsVerifierFailureToMainModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runPreparedSkillStream() error = %v", err)
 	}
-	if answer != "I could not confirm the Agent update because no configuration tool result is available." {
-		t.Fatalf("answer = %q, want the main-model repair", answer)
+	if answer != "Agent configuration was updated." {
+		t.Fatalf("answer = %q, want the main-model terminal answer", answer)
+	}
+	if len(llm.appChatRequests) != 1 {
+		t.Fatalf("AppChat requests = %d, want one main-model terminal decision", len(llm.appChatRequests))
 	}
 	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
 	if got := stringFromAny(plan["status"]); got != operationPlanStatusCompleted {
@@ -324,7 +329,7 @@ func TestRunPreparedSkillStreamDoesNotUseLegacyFinalAnswerGuardForConsoleFileDel
 	}
 }
 
-func TestRunPreparedSkillStreamKeepsMainModelAnswerWhenVerifierPassesFailedEvidence(t *testing.T) {
+func TestRunPreparedSkillStreamKeepsMainModelAnswerWithoutRecheckingFailedEvidence(t *testing.T) {
 	ctx := context.Background()
 	llm := &toolGovernanceStreamLLM{
 		appChatResponses: []*adapter.ChatResponse{
@@ -407,15 +412,12 @@ func TestRunPreparedSkillStreamKeepsMainModelAnswerWhenVerifierPassesFailedEvide
 	if answer != "The file has been saved to File Management." {
 		t.Fatalf("answer = %q, want verifier-approved main-model candidate", answer)
 	}
-	if len(llm.appChatRequests) != 2 {
-		t.Fatalf("AppChat requests = %d, want planning answer plus completion verifier", len(llm.appChatRequests))
-	}
-	if !toolGovernanceStreamRequestContains(llm.appChatRequests[1], "workspace permission denied") {
-		t.Fatalf("completion verifier request missing failure evidence: %q", toolGovernanceStreamRequestText(llm.appChatRequests[1]))
+	if len(llm.appChatRequests) != 1 {
+		t.Fatalf("AppChat requests = %d, want one main-model terminal decision", len(llm.appChatRequests))
 	}
 }
 
-func TestRunPreparedSkillStreamKeepsMainModelAnswerWhenRouteVerifierPasses(t *testing.T) {
+func TestRunPreparedSkillStreamKeepsMainModelAnswerWithoutRouteRecheck(t *testing.T) {
 	ctx := context.Background()
 	llm := &toolGovernanceStreamLLM{
 		appChatResponses: []*adapter.ChatResponse{
@@ -497,11 +499,8 @@ func TestRunPreparedSkillStreamKeepsMainModelAnswerWhenRouteVerifierPasses(t *te
 	if answer != "You are now on the Files page." {
 		t.Fatalf("answer = %q, want verifier-approved main-model candidate", answer)
 	}
-	if len(llm.appChatRequests) != 2 {
-		t.Fatalf("AppChat requests = %d, want planning answer plus completion verifier", len(llm.appChatRequests))
-	}
-	if !toolGovernanceStreamRequestContains(llm.appChatRequests[1], "route did not finish loading") {
-		t.Fatalf("completion verifier request missing route failure evidence: %q", toolGovernanceStreamRequestText(llm.appChatRequests[1]))
+	if len(llm.appChatRequests) != 1 {
+		t.Fatalf("AppChat requests = %d, want one main-model terminal decision", len(llm.appChatRequests))
 	}
 }
 

@@ -338,7 +338,7 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	prepared := &PreparedChat{
 		Conversation: continuation.Conversation, Message: message, Scope: scope,
 		Caller: Caller{Type: runtimemodel.ConversationCallerAIChat}, ParentID: message.ParentID, parts: parts,
-		Continuation: true,
+		Continuation: true, SuppressInitialNaturalProgress: true,
 	}
 	s.refreshPageContextAfterClientAction(ctx, prepared, continuation.Event, req)
 	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts)
@@ -551,6 +551,8 @@ func clientActionContinuationMessage(message *runtimemodel.Message, event map[st
 	content := strings.Join(contentParts, "\n\n")
 	system := strings.Join([]string{
 		"You are continuing the same AIChat turn after a frontend client action.",
+		"The user already saw progress emitted before this client action. Do not acknowledge or restate the original request, the latest correction, or completed progress. If you emit progress, begin directly with the newly reached evidence or next concrete action.",
+		"In the first model response after this continuation, do not emit ordinary assistant content before a tool call. Call update_plan and/or the next necessary tool directly; if the task is terminal and submit_final_answer is available, call it directly.",
 		"Use the updated transient ZGI page context already included in this request.",
 		"Use Current turn structured state as authoritative same-turn memory for derived facts and decisions, especially after route changes or approvals. Do not replace recorded exact values with placeholders.",
 		"When Current turn structured state or the operation plan already contains the file-derived summary, selected target, model choice, or configuration fact needed for the next step, reuse that recorded evidence directly instead of navigating back or rerunning the earlier read/list tool.",

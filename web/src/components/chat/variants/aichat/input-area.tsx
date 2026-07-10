@@ -30,6 +30,12 @@ import type { FileItem } from '@/services/types/file';
 import type { AIChatMessageFile, AIChatUserInputRequest } from '@/services/types/aichat';
 import type { AIChatToolGovernancePermissionTier } from '@/components/aichat/contextual/types';
 import {
+  createAIChatSendTraceContext,
+  logAIChatSessionTrace,
+  type AIChatSendTraceContext,
+  type AIChatSendTraceSource,
+} from '@/components/chat/controllers/aichat/session-trace';
+import {
   IMAGE_EXTENSIONS,
   buildFileInputAcceptAttribute,
   filterLowercaseExtensions,
@@ -197,7 +203,11 @@ interface AIChatInputAreaProps {
   canStop?: boolean;
   isStopping: boolean;
   onInputChange: (value: string) => void;
-  onSend: (files: AIChatMessageFile[], useMemory: boolean) => boolean | Promise<boolean>;
+  onSend: (
+    files: AIChatMessageFile[],
+    useMemory: boolean,
+    debugContext?: AIChatSendTraceContext
+  ) => boolean | Promise<boolean>;
   activeUserInputRequest?: AIChatUserInputRequest | null;
   onUserInputRequestSubmit?: (
     query: string,
@@ -347,22 +357,41 @@ export function AIChatInputArea({
     ignoreEnterAfterCompositionRef.current = false;
   }, []);
 
-  const handleCompositionStart = useCallback(() => {
-    clearCompositionEndGuard();
-    isComposingRef.current = true;
-  }, [clearCompositionEndGuard]);
+  const handleCompositionStart = useCallback(
+    (inputKind: 'composer' | 'question') => {
+      clearCompositionEndGuard();
+      isComposingRef.current = true;
+      logAIChatSessionTrace('composition_start', {
+        inputKind,
+        surface,
+        isHome,
+        activeConversationId,
+      });
+    },
+    [activeConversationId, clearCompositionEndGuard, isHome, surface]
+  );
 
-  const handleCompositionEnd = useCallback(() => {
-    isComposingRef.current = false;
-    ignoreEnterAfterCompositionRef.current = true;
-    if (compositionEndTimerRef.current !== null) {
-      window.clearTimeout(compositionEndTimerRef.current);
-    }
-    compositionEndTimerRef.current = window.setTimeout(() => {
-      compositionEndTimerRef.current = null;
-      ignoreEnterAfterCompositionRef.current = false;
-    }, COMPOSITION_END_ENTER_GRACE_MS);
-  }, []);
+  const handleCompositionEnd = useCallback(
+    (inputKind: 'composer' | 'question') => {
+      isComposingRef.current = false;
+      ignoreEnterAfterCompositionRef.current = true;
+      if (compositionEndTimerRef.current !== null) {
+        window.clearTimeout(compositionEndTimerRef.current);
+      }
+      compositionEndTimerRef.current = window.setTimeout(() => {
+        compositionEndTimerRef.current = null;
+        ignoreEnterAfterCompositionRef.current = false;
+      }, COMPOSITION_END_ENTER_GRACE_MS);
+      logAIChatSessionTrace('composition_end', {
+        inputKind,
+        surface,
+        isHome,
+        activeConversationId,
+        graceMs: COMPOSITION_END_ENTER_GRACE_MS,
+      });
+    },
+    [activeConversationId, isHome, surface]
+  );
 
   const shouldIgnoreCompositionEnter = useCallback(
     (event: KeyboardEvent<HTMLElement>) => {
@@ -891,18 +920,67 @@ export function AIChatInputArea({
     [allSelectableExtensions, allowedExtensions, canUseImage, imageExtensions, surface, t]
   );
 
-  const handleSend = useCallback(async () => {
-    if (!input.trim() || isPreparingSend || isUploading || hasUploadError) return;
-    setIsPreparingSend(true);
-    try {
-      const sent = await onSend(uploadedFiles, useMemory);
-      if (sent !== false) {
-        setAttachments([]);
+  const handleSend = useCallback(
+    async (source: AIChatSendTraceSource, existingContext?: AIChatSendTraceContext) => {
+      const debugContext = existingContext ?? createAIChatSendTraceContext(source);
+      const blockedBy = [
+        !input.trim() ? 'empty_input' : null,
+        isPreparingSend ? 'preparing_send' : null,
+        isUploading ? 'uploading' : null,
+        hasUploadError ? 'upload_error' : null,
+      ].filter((reason): reason is string => Boolean(reason));
+      logAIChatSessionTrace(
+        'input_send_requested',
+        {
+          surface,
+          isHome,
+          activeConversationId,
+          inputLength: input.length,
+          trimmedInputLength: input.trim().length,
+          attachmentCount: uploadedFiles.length,
+          isPreparingSend,
+          isUploading,
+          hasUploadError,
+          blockedBy,
+        },
+        debugContext
+      );
+      if (blockedBy.length > 0) {
+        logAIChatSessionTrace('input_send_blocked', { blockedBy }, debugContext);
+        return;
       }
-    } finally {
-      setIsPreparingSend(false);
-    }
-  }, [hasUploadError, input, isPreparingSend, isUploading, onSend, uploadedFiles, useMemory]);
+
+      setIsPreparingSend(true);
+      try {
+        const sent = await onSend(uploadedFiles, useMemory, debugContext);
+        logAIChatSessionTrace('input_send_completed', { sent }, debugContext);
+        if (sent !== false) {
+          setAttachments([]);
+        }
+      } catch (error) {
+        logAIChatSessionTrace(
+          'input_send_failed',
+          { error: error instanceof Error ? error.message : String(error) },
+          debugContext
+        );
+        throw error;
+      } finally {
+        setIsPreparingSend(false);
+      }
+    },
+    [
+      activeConversationId,
+      hasUploadError,
+      input,
+      isHome,
+      isPreparingSend,
+      isUploading,
+      onSend,
+      surface,
+      uploadedFiles,
+      useMemory,
+    ]
+  );
 
   const handleWorkflowApprovalSubmit = useCallback(
     async (payload: { inputs: Record<string, unknown>; action: string }) => {
@@ -1223,13 +1301,40 @@ export function AIChatInputArea({
                     }
                     onKeyDown={event => {
                       if (event.key === 'Enter') {
-                        if (shouldIgnoreCompositionEnter(event)) return;
+                        const debugContext = createAIChatSendTraceContext('keyboard');
+                        const nativeEvent = event.nativeEvent as globalThis.KeyboardEvent & {
+                          isComposing?: boolean;
+                        };
+                        const compositionState = {
+                          refIsComposing: isComposingRef.current,
+                          nativeIsComposing: nativeEvent.isComposing === true,
+                          keyCode: event.keyCode,
+                          ignoreAfterComposition: ignoreEnterAfterCompositionRef.current,
+                        };
+                        logAIChatSessionTrace(
+                          'question_enter_keydown',
+                          {
+                            ...compositionState,
+                            repeat: event.repeat,
+                            eventTargetTag: event.currentTarget.tagName,
+                            activeConversationId,
+                          },
+                          debugContext
+                        );
+                        if (shouldIgnoreCompositionEnter(event)) {
+                          logAIChatSessionTrace(
+                            'question_enter_ignored',
+                            compositionState,
+                            debugContext
+                          );
+                          return;
+                        }
                         event.preventDefault();
                         handleSubmitCurrentQuestion();
                       }
                     }}
-                    onCompositionStart={handleCompositionStart}
-                    onCompositionEnd={handleCompositionEnd}
+                    onCompositionStart={() => handleCompositionStart('question')}
+                    onCompositionEnd={() => handleCompositionEnd('question')}
                     placeholder={t('consoleChat.userInputRequest.freeAnswerPlaceholder')}
                     className="h-9 w-full rounded-md border bg-background px-2.5 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50"
                     disabled={isSending}
@@ -1294,11 +1399,47 @@ export function AIChatInputArea({
                     rows={1}
                     onChange={handleComposerInputChange}
                     onPaste={handlePaste}
-                    onCompositionStart={handleCompositionStart}
-                    onCompositionEnd={handleCompositionEnd}
+                    onCompositionStart={() => handleCompositionStart('composer')}
+                    onCompositionEnd={() => handleCompositionEnd('composer')}
                     onKeyDown={event => {
                       if (event.key === 'Enter' && !event.shiftKey) {
-                        if (shouldIgnoreCompositionEnter(event)) return;
+                        const debugContext = createAIChatSendTraceContext('keyboard');
+                        const nativeEvent = event.nativeEvent as globalThis.KeyboardEvent & {
+                          isComposing?: boolean;
+                        };
+                        const compositionState = {
+                          refIsComposing: isComposingRef.current,
+                          nativeIsComposing: nativeEvent.isComposing === true,
+                          keyCode: event.keyCode,
+                          ignoreAfterComposition: ignoreEnterAfterCompositionRef.current,
+                        };
+                        logAIChatSessionTrace(
+                          'composer_enter_keydown',
+                          {
+                            ...compositionState,
+                            repeat: event.repeat,
+                            defaultPrevented: event.defaultPrevented,
+                            eventTargetTag: event.currentTarget.tagName,
+                            surface,
+                            isHome,
+                            activeConversationId,
+                            inputLength: input.length,
+                            isSending,
+                            isPreparingSend,
+                            isModelInitializing,
+                            isUploading,
+                            hasUploadError,
+                          },
+                          debugContext
+                        );
+                        if (shouldIgnoreCompositionEnter(event)) {
+                          logAIChatSessionTrace(
+                            'composer_enter_ignored',
+                            compositionState,
+                            debugContext
+                          );
+                          return;
+                        }
                         if (
                           isSending ||
                           isPreparingSend ||
@@ -1306,10 +1447,26 @@ export function AIChatInputArea({
                           isUploading ||
                           hasUploadError
                         ) {
+                          logAIChatSessionTrace(
+                            'composer_enter_blocked',
+                            {
+                              isSending,
+                              isPreparingSend,
+                              isModelInitializing,
+                              isUploading,
+                              hasUploadError,
+                            },
+                            debugContext
+                          );
                           return;
                         }
                         event.preventDefault();
-                        void handleSend();
+                        logAIChatSessionTrace(
+                          'composer_enter_accepted',
+                          { activeConversationId },
+                          debugContext
+                        );
+                        void handleSend('keyboard', debugContext);
                       }
                     }}
                     placeholder={inputPlaceholder || t('chat.enterCommand')}
@@ -1386,7 +1543,7 @@ export function AIChatInputArea({
                 onSelectFromFiles={() => setIsFileSelectorOpen(true)}
                 onMemoryEnabledChange={setUseMemory}
                 onToggleComposerExpanded={() => setIsComposerExpanded(current => !current)}
-                onSend={handleSend}
+                onSend={() => void handleSend('button')}
                 onStop={onStop}
               />
             ) : null}

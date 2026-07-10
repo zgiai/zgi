@@ -6,6 +6,10 @@ import type {
 } from '@/services/types/aichat';
 import type { AIChatModelSelection } from '@/components/chat/controllers/aichat';
 import {
+  logAIChatSessionTrace,
+  type AIChatSendTraceContext,
+} from '@/components/chat/controllers/aichat/session-trace';
+import {
   canReplaceRootMessage,
   getNextActiveSendingState,
 } from '@/components/chat/controllers/aichat/selectors';
@@ -77,6 +81,7 @@ export function useChatRuntimeMessageActions({
       forceAdvanceLeaf = false,
       runtimeSurface,
       operationContext,
+      debugContext,
     }: {
       query: string;
       model: AIChatModelSelection;
@@ -86,6 +91,7 @@ export function useChatRuntimeMessageActions({
       forceAdvanceLeaf?: boolean;
       runtimeSurface?: AIChatRuntimeSurface;
       operationContext?: unknown;
+      debugContext?: AIChatSendTraceContext;
     }) => {
       const trimmedQuery = query.trim();
       const currentState = stateRef.current;
@@ -99,14 +105,38 @@ export function useChatRuntimeMessageActions({
       const isActiveStopping = activeConversationId
         ? currentState.stoppingByConversation[activeConversationId]
         : false;
-      if (
-        !trimmedQuery ||
-        (requireModel && !model.model) ||
-        currentState.isSending ||
-        isActiveRecovering ||
-        isActiveStopping ||
-        activeConversation?.runtime_status === 'streaming'
-      ) {
+      const blockedBy = [
+        !trimmedQuery ? 'empty_query' : null,
+        requireModel && !model.model ? 'model_required' : null,
+        currentState.isSending ? 'store_is_sending' : null,
+        isActiveRecovering ? 'active_recovering' : null,
+        isActiveStopping ? 'active_stopping' : null,
+        activeConversation?.runtime_status === 'streaming' ? 'runtime_streaming' : null,
+      ].filter((reason): reason is string => Boolean(reason));
+      logAIChatSessionTrace(
+        'controller_send_enter',
+        {
+          activeConversationId,
+          activeConversationStatus: activeConversation?.status ?? null,
+          activeRuntimeStatus: activeConversation?.runtime_status ?? null,
+          activeMessageId: activeConversation?.active_message_id ?? null,
+          currentLeafMessageId: activeConversation?.current_leaf_message_id ?? null,
+          conversationCount: currentState.conversations.length,
+          activeMessageCount: activeConversationId
+            ? (currentState.messagesByConversation[activeConversationId]?.length ?? 0)
+            : 0,
+          queryLength: trimmedQuery.length,
+          fileCount: files.length,
+          runtimeSurface: runtimeSurface ?? null,
+          isSending: currentState.isSending,
+          isActiveRecovering,
+          isActiveStopping,
+          blockedBy,
+        },
+        debugContext
+      );
+      if (blockedBy.length > 0) {
+        logAIChatSessionTrace('controller_send_blocked', { blockedBy }, debugContext);
         return;
       }
 
@@ -185,6 +215,18 @@ export function useChatRuntimeMessageActions({
         streamConversationId = draftConversationId;
       }
       const selectionSeq = markSelectionTarget(draftConversationId ?? activeConversationId);
+      logAIChatSessionTrace(
+        'controller_send_plan',
+        {
+          activeConversationId,
+          draftConversationId,
+          draftMessageId,
+          parentId: parentId ?? null,
+          currentPathLength: currentPath.length,
+          selectionSeq,
+        },
+        debugContext
+      );
 
       const recoverDetachedDraftConversation = async (conversationId?: string | null) => {
         if (!draftConversationId || !conversationId) return;
@@ -315,8 +357,29 @@ export function useChatRuntimeMessageActions({
           error: null,
         };
       });
+      const stateAfterSendStart = stateRef.current;
+      logAIChatSessionTrace(
+        'controller_send_state_applied',
+        {
+          activeConversationId: stateAfterSendStart.activeConversationId,
+          isSending: stateAfterSendStart.isSending,
+          conversationCount: stateAfterSendStart.conversations.length,
+          draftCreated: Boolean(draftConversationId),
+        },
+        debugContext
+      );
 
       try {
+        logAIChatSessionTrace(
+          'controller_transport_start',
+          {
+            requestConversationId: activeConversationId,
+            streamConversationId,
+            parentId: parentId ?? null,
+            runtimeSurface: runtimeSurface ?? null,
+          },
+          debugContext
+        );
         await transportRef.current.streamChat(
           {
             conversation_id: activeConversationId ?? undefined,
@@ -334,6 +397,17 @@ export function useChatRuntimeMessageActions({
           {
             onMessageStart: (payload, eventId) => {
               if (abortController.signal.aborted) return;
+              logAIChatSessionTrace(
+                'controller_message_start',
+                {
+                  eventId: eventId ?? null,
+                  serverConversationId: payload.conversation_id,
+                  serverMessageId: payload.message_id,
+                  previousConversationId: draftConversationId ?? activeConversationId,
+                  activeConversationIdBeforeApply: stateRef.current.activeConversationId,
+                },
+                debugContext
+              );
               if (payload.conversation_id) {
                 streamConversationId = payload.conversation_id;
                 streamAbortByConversationRef.current[payload.conversation_id] = abortController;
@@ -465,6 +539,16 @@ export function useChatRuntimeMessageActions({
             },
             onMessageEnd: (payload, eventId) => {
               if (abortController.signal.aborted) return;
+              logAIChatSessionTrace(
+                'controller_message_end',
+                {
+                  eventId: eventId ?? null,
+                  conversationId: payload.conversation_id,
+                  messageId: payload.message_id,
+                  activeConversationIdBeforeApply: stateRef.current.activeConversationId,
+                },
+                debugContext
+              );
               applyMessageEnd(payload, eventId);
               persistForcedLeaf(
                 payload.conversation_id || forceAdvanceLeafConversationId || undefined,
@@ -485,6 +569,15 @@ export function useChatRuntimeMessageActions({
             },
             onRequestError: error => {
               if (isAbortError(error)) return;
+              logAIChatSessionTrace(
+                'controller_request_error',
+                {
+                  error: error.message,
+                  streamConversationId,
+                  activeConversationId: stateRef.current.activeConversationId,
+                },
+                debugContext
+              );
               setControllerState(current => {
                 const isActiveStream =
                   streamConversationId === null
@@ -503,6 +596,15 @@ export function useChatRuntimeMessageActions({
               });
             },
             onClose: () => {
+              logAIChatSessionTrace(
+                'controller_stream_closed',
+                {
+                  streamConversationId,
+                  activeConversationId: stateRef.current.activeConversationId,
+                  aborted: abortController.signal.aborted,
+                },
+                debugContext
+              );
               if (streamConversationId) {
                 if (
                   streamAbortByConversationRef.current[streamConversationId] === abortController
@@ -532,6 +634,16 @@ export function useChatRuntimeMessageActions({
           abortController.signal
         );
       } catch (error) {
+        logAIChatSessionTrace(
+          'controller_transport_threw',
+          {
+            error: error instanceof Error ? error.message : String(error),
+            streamConversationId,
+            activeConversationId: stateRef.current.activeConversationId,
+            aborted: abortController.signal.aborted,
+          },
+          debugContext
+        );
         if (!isAbortError(error)) {
           setControllerState(current => {
             const isActiveStream =

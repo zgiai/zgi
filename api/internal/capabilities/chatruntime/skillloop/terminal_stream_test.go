@@ -45,7 +45,7 @@ func TestSkillPlanningStreamStreamsExplicitFinalAnswerWithoutRetract(t *testing.
 	}
 	prepared := NewPreparedChat("conv-1", "msg-1", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
 
-	result, ok, err := runner.runSkillPlanningStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, true, true)
+	result, ok, err := runner.runSkillPlanningStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, true, true, false)
 	if err != nil {
 		t.Fatalf("runSkillPlanningStream() error = %v", err)
 	}
@@ -79,7 +79,7 @@ func TestSkillPlanningStreamStreamsExplicitFinalAnswerWithoutRetract(t *testing.
 	}
 }
 
-func TestSkillPlanningStreamClassifiesToolTurnBodyAsProgress(t *testing.T) {
+func TestSkillPlanningStreamDefersTerminalToolTurnBodyUntilCallsAreValidated(t *testing.T) {
 	index := 0
 	client := &runnerTestLLMClient{appChatStreams: [][]adapter.StreamResponse{{
 		{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Content: "\u6211\u5148\u786e\u8ba4\u5f53\u524d\u6587\u4ef6\u3002", ToolCalls: []adapter.ToolCall{{
@@ -102,7 +102,7 @@ func TestSkillPlanningStreamClassifiesToolTurnBodyAsProgress(t *testing.T) {
 	prepared := NewPreparedChat("conv-1", "msg-1", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
 	prepared.Query = "\u8bfb\u53d6\u6587\u4ef6"
 
-	result, ok, err := runner.runSkillPlanningStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, true, true)
+	result, ok, err := runner.runSkillPlanningStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, true, true, false)
 	if err != nil || !ok {
 		t.Fatalf("runSkillPlanningStream() = ok %v, error %v", ok, err)
 	}
@@ -115,13 +115,112 @@ func TestSkillPlanningStreamClassifiesToolTurnBodyAsProgress(t *testing.T) {
 		case EventMessage, EventMessageRetract:
 			t.Fatalf("tool-turn process body emitted %s: %#v", event.Type, event.Payload)
 		case EventAgentProgress:
-			if strings.TrimSpace(stringFromInterface(event.Payload["content"])) != "" {
+			content, _ := event.Payload["content"].(string)
+			if strings.TrimSpace(content) != "" {
 				progressCount++
 			}
 		}
 	}
-	if progressCount == 0 {
-		t.Fatal("tool-turn process body did not produce user-visible progress")
+	if progressCount != 0 {
+		t.Fatalf("terminal meta-tool body produced %d user-visible progress events before validation", progressCount)
+	}
+	if result.naturalProgressStreamed {
+		t.Fatal("terminal meta-tool body was marked as streamed natural progress")
+	}
+}
+
+func TestSkillPlanningStreamSuppressesInitialContinuationBody(t *testing.T) {
+	index := 0
+	const repeatedSummary = "已完成前面的步骤，现在继续处理。"
+	client := &runnerTestLLMClient{appChatStreams: [][]adapter.StreamResponse{{
+		{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Content: repeatedSummary, ToolCalls: []adapter.ToolCall{{
+			Index: &index,
+			ID:    "load-1",
+			Type:  "function",
+			Function: adapter.FunctionCall{
+				Name:      skills.MetaToolLoadSkill,
+				Arguments: `{"skill_id":"file-reader"}`,
+			},
+		}}}}}},
+		{Choices: []adapter.StreamChoice{{FinishReason: "tool_calls"}}, Done: true},
+	}}}
+	events := make([]Event, 0)
+	runner := &Runner{LLMClient: client, OnEvent: func(event Event) error {
+		events = append(events, event)
+		return nil
+	}}
+	prepared := NewPreparedChat("conv-1", "msg-1", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
+
+	result, ok, err := runner.runSkillPlanningStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, false, false, true)
+	if err != nil || !ok {
+		t.Fatalf("runSkillPlanningStream() = ok %v, error %v", ok, err)
+	}
+	if result.answerStreamed || result.naturalProgressStreamed {
+		t.Fatalf("suppressed continuation body was marked streamed: %#v", result)
+	}
+	for _, event := range events {
+		content := strings.TrimSpace(stringFromInterface(event.Payload["content"]))
+		answer := strings.TrimSpace(stringFromInterface(event.Payload["answer"]))
+		if strings.Contains(content, repeatedSummary) || strings.Contains(answer, repeatedSummary) {
+			t.Fatalf("suppressed continuation body leaked through %s: %#v", event.Type, event.Payload)
+		}
+	}
+}
+
+func TestSkillPlanningStreamEmitsCompleteToolTurnProgress(t *testing.T) {
+	index := 0
+	toolCallDelta := adapter.StreamResponse{
+		Choices: []adapter.StreamChoice{{
+			Delta: adapter.Message{
+				ToolCalls: []adapter.ToolCall{{
+					Index: &index,
+					ID:    "load-1",
+					Type:  "function",
+					Function: adapter.FunctionCall{
+						Name:      skills.MetaToolLoadSkill,
+						Arguments: `{"skill_id":"file-reader"}`,
+					},
+				}},
+			},
+		}},
+	}
+	client := &runnerTestLLMClient{
+		appChatStreams: [][]adapter.StreamResponse{
+			{
+				{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Content: "\u5148\u68c0\u67e5\u5f53\u524d\u6587\u4ef6\u3002"}}}},
+				toolCallDelta,
+				{Choices: []adapter.StreamChoice{{Delta: adapter.Message{Content: "\u8bfb\u53d6\u540e\u6211\u4f1a\u7ee7\u7eed\u5904\u7406\uff0c\u4e0d\u4f1a\u4e22\u5931\u8fd9\u53e5\u8bdd\u3002"}}}},
+				{Choices: []adapter.StreamChoice{{FinishReason: "tool_calls"}}, Done: true},
+			},
+		},
+	}
+	events := make([]Event, 0)
+	runner := &Runner{LLMClient: client, OnEvent: func(event Event) error {
+		events = append(events, event)
+		return nil
+	}}
+	prepared := NewPreparedChat("conv-1", "msg-1", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
+	prepared.Query = "\u8bfb\u53d6\u6587\u4ef6"
+
+	result, ok, err := runner.runSkillPlanningStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, false, false, false)
+	if err != nil || !ok {
+		t.Fatalf("runSkillPlanningStream() = ok %v, error %v", ok, err)
+	}
+	const want = "\u5148\u68c0\u67e5\u5f53\u524d\u6587\u4ef6\u3002\u8bfb\u53d6\u540e\u6211\u4f1a\u7ee7\u7eed\u5904\u7406\uff0c\u4e0d\u4f1a\u4e22\u5931\u8fd9\u53e5\u8bdd\u3002"
+	if got := messageContent(result.message.Content); got != want {
+		t.Fatalf("tool-turn content = %q, want %q", got, want)
+	}
+	if !result.naturalProgressStreamed {
+		t.Fatal("complete tool-turn progress was not emitted")
+	}
+	progress := ""
+	for _, event := range events {
+		if event.Type == EventAgentProgress {
+			progress += stringFromInterface(event.Payload["content"])
+		}
+	}
+	if progress != want {
+		t.Fatalf("progress = %q, want %q", progress, want)
 	}
 }
 
@@ -140,7 +239,7 @@ func TestSkillPlanningStreamRejectsLengthTermination(t *testing.T) {
 	}
 	prepared := NewPreparedChat("conv-1", "msg-1", "qwen", "auto", &adapter.ChatRequest{Model: "qwen-plus"})
 
-	_, ok, err := runner.runSkillPlanningStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, true, true)
+	_, ok, err := runner.runSkillPlanningStream(context.Background(), prepared, prepared.LLMRequest, 0, nil, true, true, false)
 	if err == nil || !ok {
 		t.Fatalf("runSkillPlanningStream() = ok %v, error %v; want terminal error", ok, err)
 	}
@@ -149,7 +248,7 @@ func TestSkillPlanningStreamRejectsLengthTermination(t *testing.T) {
 	}
 }
 
-func TestCompletionGateTerminalBlocksPendingModelPlan(t *testing.T) {
+func TestTerminalStateGuardDoesNotJudgePendingModelPlan(t *testing.T) {
 	evidence := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
 			"phases": []interface{}{map[string]interface{}{
@@ -158,16 +257,13 @@ func TestCompletionGateTerminalBlocksPendingModelPlan(t *testing.T) {
 			}},
 		},
 	}
-	decision := completionGateEvaluateTerminal(evidence, "\u5df2\u5b8c\u6210\u3002")
-	if decision.Path != completionGateNeedsAction {
-		t.Fatalf("completionGateEvaluateTerminal().Path = %q, want %q", decision.Path, completionGateNeedsAction)
-	}
-	if len(decision.MissingFacts) != 1 || decision.MissingFacts[0] != "pending_phase:phase-1" {
-		t.Fatalf("completionGateEvaluateTerminal().MissingFacts = %#v, want pending phase", decision.MissingFacts)
+	decision := terminalStateGuardEvaluate(evidence, "\u5df2\u5b8c\u6210\u3002")
+	if decision.Path != terminalStateGuardAccepted {
+		t.Fatalf("terminalStateGuardEvaluate().Path = %q, want %q", decision.Path, terminalStateGuardAccepted)
 	}
 }
 
-func TestCompletionGateTerminalUsesSubmittedPlanSnapshot(t *testing.T) {
+func TestTerminalStateGuardStreamingIgnoresPlanProgress(t *testing.T) {
 	evidence := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
 			"phases": []interface{}{map[string]interface{}{
@@ -182,22 +278,16 @@ func TestCompletionGateTerminalUsesSubmittedPlanSnapshot(t *testing.T) {
 			"status":     "success",
 		}},
 	}
-	snapshot := []map[string]interface{}{{
-		"id":            "phase-1",
-		"step":          "update agent",
-		"status":        "completed",
-		"evidence_refs": []string{"runtime_id:tool-1"},
-	}}
-	if completionGateCanBeginTerminalStream(evidence) {
-		t.Fatal("terminal stream started before the stored plan was completed")
+	if !terminalStateGuardCanStream(evidence) {
+		t.Fatal("terminal stream was blocked by advisory plan progress")
 	}
-	decision := completionGateEvaluateTerminal(completionEvidenceWithPlanSnapshot(evidence, snapshot), "updated")
-	if decision.Path != completionGateDeterministicPass {
-		t.Fatalf("completionGateEvaluateTerminal().Path = %q, want %q", decision.Path, completionGateDeterministicPass)
+	decision := terminalStateGuardEvaluate(evidence, "updated")
+	if decision.Path != terminalStateGuardAccepted {
+		t.Fatalf("terminalStateGuardEvaluate().Path = %q, want %q", decision.Path, terminalStateGuardAccepted)
 	}
 }
 
-func TestCompletionGateTerminalBlocksUnresolvedFailure(t *testing.T) {
+func TestTerminalStateGuardIgnoresStaleTurnStateFailure(t *testing.T) {
 	evidence := map[string]interface{}{
 		"turn_state": map[string]interface{}{
 			"open_items": []interface{}{map[string]interface{}{
@@ -206,9 +296,9 @@ func TestCompletionGateTerminalBlocksUnresolvedFailure(t *testing.T) {
 			}},
 		},
 	}
-	decision := completionGateEvaluateTerminal(evidence, "\u5df2\u5b8c\u6210\u3002")
-	if decision.Path != completionGateNeedsAction {
-		t.Fatalf("completionGateEvaluateTerminal().Path = %q, want %q", decision.Path, completionGateNeedsAction)
+	decision := terminalStateGuardEvaluate(evidence, "\u5df2\u5b8c\u6210\u3002")
+	if decision.Path != terminalStateGuardAccepted {
+		t.Fatalf("terminalStateGuardEvaluate().Path = %q, want %q", decision.Path, terminalStateGuardAccepted)
 	}
 }
 
@@ -381,29 +471,12 @@ func TestRunnerAcceptsPlainCandidateThroughGateWhenFinalToolPreferred(t *testing
 	}
 }
 
-func TestRunnerReturnsPendingPlanToMainModelInsteadOfRequiringFinalTool(t *testing.T) {
-	client := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{
-		{
-			Choices: []adapter.Choice{{
-				Message: adapter.Message{Role: "assistant", Content: "current config summary"},
-			}},
-		},
-		{
-			Choices: []adapter.Choice{{
-				Message: adapter.Message{
-					Role: "assistant",
-					ToolCalls: []adapter.ToolCall{{
-						ID:   "clarify-pending-plan",
-						Type: "function",
-						Function: adapter.FunctionCall{
-							Name:      skills.MetaToolRequestUserInput,
-							Arguments: `{"message":"One decision is still needed.","questions":[{"id":"update_field","question":"Which field should be updated?","options":[{"label":"System prompt"},{"label":"Description"}]}]}`,
-						},
-					}},
-				},
-			}},
-		},
-	}}
+func TestRunnerAcceptsMainModelAnswerDespiteAdvisoryPendingPlan(t *testing.T) {
+	client := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
+		Choices: []adapter.Choice{{
+			Message: adapter.Message{Role: "assistant", Content: "current config summary"},
+		}},
+	}}}
 	runner := &Runner{
 		LLMClient:    client,
 		SkillRuntime: skills.NewRuntime(nil, nil),
@@ -421,29 +494,20 @@ func TestRunnerReturnsPendingPlanToMainModelInsteadOfRequiringFinalTool(t *testi
 		},
 	}
 
-	_, _, err := runner.Run(context.Background(), RunRequest{
+	answer, _, err := runner.Run(context.Background(), RunRequest{
 		Prepared:                  prepared,
 		Resolved:                  runnerTestResolvedSkills(),
 		PreferExplicitFinalAnswer: true,
 		CompletionEvidence:        func() map[string]interface{} { return evidence },
 	})
-	var pending *UserInputPendingError
-	if !errors.As(err, &pending) {
-		t.Fatalf("Run() error = %v, want UserInputPendingError", err)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
 	}
-	if client.appChatCalls != 2 {
-		t.Fatalf("AppChat calls = %d, want candidate plus main-model recovery", client.appChatCalls)
+	if answer != "current config summary" {
+		t.Fatalf("answer = %q, want main model candidate", answer)
 	}
-	request := client.appChatRequests[1]
-	joined := ""
-	for _, message := range request.Messages {
-		joined += "\n" + messageContent(message.Content)
-	}
-	if !strings.Contains(joined, "pending_phase:phase-update") {
-		t.Fatalf("recovery request missing pending phase feedback: %s", joined)
-	}
-	if strings.Contains(joined, "model did not use submit_final_answer") {
-		t.Fatalf("recovery request contains obsolete final-tool failure: %s", joined)
+	if client.appChatCalls != 1 {
+		t.Fatalf("AppChat calls = %d, want one", client.appChatCalls)
 	}
 }
 

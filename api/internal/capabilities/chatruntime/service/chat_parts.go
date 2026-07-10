@@ -325,6 +325,20 @@ func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) 
 	if parts.ContextControl != nil {
 		metadata["context_control"] = parts.ContextControl
 	}
+	if status := strings.TrimSpace(parts.ModelCapabilityStatus); status != "" || parts.FunctionCallingAssumed {
+		modelCapabilities := map[string]interface{}{
+			"function_calling_known":     parts.FunctionCallingKnown,
+			"function_calling_supported": parts.ModelSupportsFunctionCalling,
+			"function_calling_assumed":   parts.FunctionCallingAssumed,
+		}
+		if status != "" {
+			modelCapabilities["status"] = status
+		}
+		if errMessage := strings.TrimSpace(parts.ModelCapabilityError); errMessage != "" {
+			modelCapabilities["error"] = errMessage
+		}
+		metadata["model_capabilities"] = modelCapabilities
+	}
 	if parts.UseMemory {
 		metadata["use_memory"] = true
 	}

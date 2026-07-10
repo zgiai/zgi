@@ -137,7 +137,7 @@ This skill creates new workflow files; it does not edit an existing uploaded fil
    - Use `svg` when the user explicitly asks for an SVG/vector image file.
    - Use `json` for machine-readable structured data.
    - Use `csv` for table-like data.
-3. Read the reference document for the selected format before calling a tool.
+3. For PDF, DOCX, PPTX, XLSX, and SVG, read the selected format reference before calling a tool. For MD, TXT, JSON, CSV, and HTML, the tool schema and this core skill are sufficient unless advanced format details are needed.
 4. Use `generate_file` for simple exports.
 5. Use `generate_docx` when a Word document needs headings, fonts, font sizes, alignment, spacing, page margins, page breaks, colored/bold/underlined text, or simple tables.
 6. Use `generate_pdf` when a PDF needs richer layout, print CSS, tables, colors, page margins, page breaks, or business-report formatting.
@@ -152,7 +152,7 @@ This skill creates new workflow files; it does not edit an existing uploaded fil
 
 ## References
 
-Read exactly one reference after choosing the target format:
+Read exactly one reference after choosing a complex target format. References for MD, TXT, JSON, CSV, and HTML are optional and should be read only when the request needs format-specific details:
 
 | Requested format | Read reference |
 | --- | --- |
@@ -172,7 +172,7 @@ Read exactly one reference after choosing the target format:
 ## Constraints
 
 - The skill creates new files only. It does not edit existing uploaded files or preserve an existing template.
-- Do not call `generate_file`, `generate_docx`, `generate_pdf`, or `generate_pptx` until the selected format reference has been read.
+- Do not call `generate_docx`, `generate_pdf`, `generate_pptx`, or complex `generate_file` formats (XLSX or SVG) until the selected format reference has been read. MD, TXT, JSON, CSV, and HTML generation may proceed directly from the core skill and tool schema.
 - `generate_file` accepts only its documented simple parameters. Do not invent format-specific parameters such as `sheets`, `styles`, `pages`, `columns`, `headers`, or `metadata`. XLSX output applies the default table styling documented in `format-xlsx.md`; the caller cannot customize those styles through `generate_file`.
 - `generate_docx` accepts a JSON string document specification. Do not pass raw Markdown or HTML as `document`.
 - `generate_pdf` accepts self-contained HTML and optional inline CSS. Do not pass JSON document specs.

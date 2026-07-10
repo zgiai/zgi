@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { LogIn } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import Chat, { createAgentWebAppTransport, useAIChatController } from '@/components/chat';
@@ -11,6 +11,10 @@ import { ICON_BG } from '@/lib/config';
 import type { WebAppWorkflowConfig } from '@/services/types/webapp';
 import { useAuthStore } from '@/store/auth-store';
 import { WEBAPP_USER_MIGRATED_EVENT } from '@/hooks/webapp/use-maybe-migrate-user';
+import {
+  createAIChatTraceInstanceId,
+  logAIChatSessionTrace,
+} from '@/components/chat/controllers/aichat/session-trace';
 
 interface AgentWebappChatProps {
   webAppId: string;
@@ -63,8 +67,77 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
   const transport = useMemo(() => createAgentWebAppTransport(webAppId), [webAppId]);
   const uploadScope = useMemo(() => ({ type: 'webapp' as const, webAppId }), [webAppId]);
   const controller = useAIChatController({ transport, requireModel: false });
+  const controllerStore = controller.store;
+  const instanceIdRef = useRef<string | null>(null);
+  const pageExitReasonRef = useRef<string | null>(null);
+  if (!instanceIdRef.current) {
+    instanceIdRef.current = createAIChatTraceInstanceId('agent-webapp');
+  }
+  const instanceId = instanceIdRef.current;
   const initController = controller.init;
   const modelValue = useMemo(() => ({ provider: '', model: '', params: {} }), []);
+
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      pageExitReasonRef.current = 'beforeunload';
+      logAIChatSessionTrace('browser_beforeunload', {
+        instanceId,
+        webAppId,
+        activeConversationId: controllerStore.getState().activeConversationId,
+      });
+    };
+    const handlePageHide = (event: PageTransitionEvent) => {
+      pageExitReasonRef.current = event.persisted ? 'pagehide_bfcache' : 'pagehide';
+      logAIChatSessionTrace('browser_pagehide', {
+        instanceId,
+        webAppId,
+        persisted: event.persisted,
+        activeConversationId: controllerStore.getState().activeConversationId,
+      });
+    };
+
+    logAIChatSessionTrace('agent_webapp_chat_mounted', {
+      instanceId,
+      webAppId,
+      activeConversationId: controllerStore.getState().activeConversationId,
+    });
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('pagehide', handlePageHide);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handlePageHide);
+      const state = controllerStore.getState();
+      logAIChatSessionTrace('agent_webapp_chat_unmounted', {
+        instanceId,
+        webAppId,
+        exitReason: pageExitReasonRef.current ?? 'react_unmount',
+        activeConversationId: state.activeConversationId,
+        isSending: state.isSending,
+        conversationCount: state.conversations.length,
+        unmountStack: new Error('AgentWebappChat unmount observer').stack,
+      });
+    };
+  }, [controllerStore, instanceId, webAppId]);
+
+  useEffect(() => {
+    logAIChatSessionTrace('agent_webapp_auth_state', {
+      instanceId,
+      webAppId,
+      isAuthenticated,
+      isAuthLoading,
+      isAuthInitialized,
+      memoryEnabled,
+      requiresLoginForMemory,
+    });
+  }, [
+    instanceId,
+    isAuthenticated,
+    isAuthInitialized,
+    isAuthLoading,
+    memoryEnabled,
+    requiresLoginForMemory,
+    webAppId,
+  ]);
 
   useEffect(() => {
     if (requiresLoginForMemory) return;

@@ -20,6 +20,11 @@ import type {
   ModelSelectorValue,
 } from '@/components/common/model-selector';
 import type { AIChatController } from '@/components/chat/controllers/aichat-controller';
+import {
+  createAIChatSendTraceContext,
+  logAIChatSessionTrace,
+  type AIChatSendTraceContext,
+} from '@/components/chat/controllers/aichat/session-trace';
 import type {
   ConversationSearchFn,
   ConversationSummary,
@@ -670,19 +675,63 @@ export function AIChatShell({
   }, [isMobile]);
 
   const handleSend = useCallback(
-    async (files: AIChatMessageFile[] = [], useMemory = false): Promise<boolean> => {
+    async (
+      files: AIChatMessageFile[] = [],
+      useMemory = false,
+      existingContext?: AIChatSendTraceContext
+    ): Promise<boolean> => {
+      const debugContext = existingContext ?? createAIChatSendTraceContext('unknown');
+      const stateAtEntry = controller.store.getState();
+      const query = input.trim();
+      const blockedBy = [
+        activeWorkflowApprovalRequest ? 'active_workflow_approval' : null,
+        !query ? 'empty_input' : null,
+        isSending ? 'react_is_sending' : null,
+        stateAtEntry.isSending ? 'store_is_sending' : null,
+        requireModel && !modelSelectorValue.model ? 'model_required' : null,
+      ].filter((reason): reason is string => Boolean(reason));
+      logAIChatSessionTrace(
+        'shell_send_received',
+        {
+          surface,
+          runtimeSurface: effectiveRuntimeSurface,
+          reactActiveConversationId: activeConversationId,
+          storeActiveConversationId: stateAtEntry.activeConversationId,
+          conversationCount: stateAtEntry.conversations.length,
+          messageCount: activeMessages.length,
+          queryLength: query.length,
+          fileCount: files.length,
+          reactIsSending: isSending,
+          storeIsSending: stateAtEntry.isSending,
+          blockedBy,
+        },
+        debugContext
+      );
       if (activeWorkflowApprovalRequest) {
+        logAIChatSessionTrace('shell_send_blocked', { blockedBy }, debugContext);
         return false;
       }
-      const query = input.trim();
-      if (!query || isSending) return false;
+      if (!query || isSending) {
+        logAIChatSessionTrace('shell_send_blocked', { blockedBy }, debugContext);
+        return false;
+      }
       if (requireModel && !modelSelectorValue.model) {
+        logAIChatSessionTrace('shell_send_blocked', { blockedBy }, debugContext);
         toast.error(t('consoleChat.modelRequired'));
         return false;
       }
       if (beforeSend) {
+        logAIChatSessionTrace('shell_before_send_started', {}, debugContext);
         const canSend = await beforeSend();
-        if (!canSend) return false;
+        logAIChatSessionTrace('shell_before_send_completed', { canSend }, debugContext);
+        if (!canSend) {
+          logAIChatSessionTrace(
+            'shell_send_blocked',
+            { blockedBy: ['before_send_rejected'] },
+            debugContext
+          );
+          return false;
+        }
       }
 
       const pendingMessageId = Date.now();
@@ -697,7 +746,7 @@ export function AIChatShell({
         assistantCreatedAt: pendingMessageCreatedAt,
         showAssistantPlanning,
       });
-      void controller.send({
+      const controllerSend = controller.send({
         query,
         files,
         model: {
@@ -708,11 +757,43 @@ export function AIChatShell({
         useMemory: forcedUseMemory ?? useMemory,
         runtimeSurface: effectiveRuntimeSurface,
         operationContext: toolGovernanceOperationContext,
+        debugContext,
       });
+      const stateAfterDispatch = controller.store.getState();
+      logAIChatSessionTrace(
+        'shell_controller_send_dispatched',
+        {
+          activeConversationId: stateAfterDispatch.activeConversationId,
+          isSending: stateAfterDispatch.isSending,
+          conversationCount: stateAfterDispatch.conversations.length,
+        },
+        debugContext
+      );
+      void controllerSend
+        .then(() => {
+          const settledState = controller.store.getState();
+          logAIChatSessionTrace(
+            'shell_controller_send_settled',
+            {
+              activeConversationId: settledState.activeConversationId,
+              isSending: settledState.isSending,
+              error: settledState.error,
+            },
+            debugContext
+          );
+        })
+        .catch(error => {
+          logAIChatSessionTrace(
+            'shell_controller_send_rejected',
+            { error: error instanceof Error ? error.message : String(error) },
+            debugContext
+          );
+        });
       return true;
     },
     [
       activeWorkflowApprovalRequest,
+      activeMessages.length,
       activeConversationId,
       beforeSend,
       controller,
@@ -723,6 +804,7 @@ export function AIChatShell({
       modelSelectorValue,
       requireModel,
       effectiveRuntimeSurface,
+      surface,
       t,
       toolGovernanceOperationContext,
     ]

@@ -16,7 +16,7 @@ import (
 
 const (
 	modelTurnIntentMinimumConfidence = 0.5
-	modelTurnIntentMaxTokens         = 5000
+	modelTurnIntentMaxTokens         = 1200
 	modelTurnIntentPreviewRunes      = 500
 )
 
@@ -136,7 +136,7 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 					"- save_generated_file_to_file_management: save a generated/external artifact into File Management.",
 					"- generate_temporary_file_artifact: generate an artifact only for the chat response, not File Management.",
 					"- continue_previous_task: continue, retry, resume, or finish a previously paused operation.",
-					"Also describe the user goal as phases and needed evidence. Phases are semantic checkpoints, not mandatory tool order.",
+					"Also describe the user goal as phases and needed evidence. Phases are semantic checkpoints, not mandatory tool order. The phases value must be an array of concise strings, never objects.",
 					"Use recommended_capabilities for capabilities the executor may need, such as exact_agent_runtime, visible_file_content, page_navigation, generated_artifact, or asset_mutation.",
 					"For generated artifact turns, include chart_artifact for charts/graphs/data visualizations and file_artifact for ordinary documents, SVG/vector files, PDFs, spreadsheets, or text files.",
 					"For Agent management turns, include canonical Agent capability IDs in recommended_capabilities only when they may help the executor choose tools: agent.model_selection, agent.system_prompt, agent.skill_backed_capability:<capability query>, agent.accept_uploaded_files, agent.memory, agent.knowledge_binding:<action>, agent.database_binding:<action>, agent.workflow_binding:<action>, agent.suggested_questions. These are possible capabilities, not required completion facts.",
@@ -297,18 +297,11 @@ func parseModelTurnIntentMessage(message adapter.Message) (*AIChatModelTurnInten
 		source  string
 	}
 	finalContent := strings.TrimSpace(messageContentText(message.Content))
-	reasoningContent := strings.TrimSpace(message.ReasoningContent)
-	candidates := make([]candidate, 0, 2)
+	candidates := make([]candidate, 0, 1)
 	if finalContent != "" {
 		candidates = append(candidates, candidate{content: finalContent, source: "content"})
 	}
-	if reasoningContent != "" && classifierJSONText(reasoningContent) != "" {
-		candidates = append(candidates, candidate{content: reasoningContent, source: "reasoning_content"})
-	}
 	if len(candidates) == 0 {
-		if reasoningContent != "" {
-			return nil, reasoningContent, fmt.Errorf("empty classifier content: reasoning content did not contain json")
-		}
 		return nil, "", fmt.Errorf("empty classifier content")
 	}
 
@@ -339,7 +332,7 @@ func parseModelTurnIntentContent(content string) (*AIChatModelTurnIntent, error)
 	intent := &AIChatModelTurnIntent{
 		Intent:                   jsonRawString(raw["intent"]),
 		TaskType:                 firstNonEmptyString(jsonRawString(raw["task_type"]), jsonRawString(raw["goal_type"])),
-		Phases:                   jsonRawStringSlice(raw["phases"]),
+		Phases:                   jsonRawPhaseSlice(raw["phases"]),
 		EvidenceRequired:         firstNonEmptyStringSlice(jsonRawStringSlice(raw["evidence_required"]), jsonRawStringSlice(raw["needed_evidence"])),
 		RecommendedCapabilities:  firstNonEmptyStringSlice(jsonRawStringSlice(raw["recommended_capabilities"]), jsonRawStringSlice(raw["needed_capabilities"])),
 		CompletionCriteria:       firstNonEmptyStringSlice(jsonRawStringSlice(raw["completion_criteria"]), jsonRawStringSlice(raw["success_criteria"])),
@@ -477,6 +470,41 @@ func jsonRawStringSlice(raw json.RawMessage) []string {
 		return []string{text}
 	}
 	return nil
+}
+
+func jsonRawPhaseSlice(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var values []string
+	if err := json.Unmarshal(raw, &values); err == nil {
+		return values
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		if text := jsonRawString(raw); text != "" {
+			return []string{text}
+		}
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if text := jsonRawString(item); text != "" {
+			out = append(out, text)
+			continue
+		}
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(item, &object); err != nil {
+			continue
+		}
+		for _, key := range []string{"description", "step", "goal", "action", "title"} {
+			if text := jsonRawString(object[key]); text != "" {
+				out = append(out, text)
+				break
+			}
+		}
+	}
+	return out
 }
 
 func normalizeModelTurnPlanStrings(values []string, limit int, maxRunes int) []string {

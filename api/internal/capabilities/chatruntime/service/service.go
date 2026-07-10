@@ -306,16 +306,17 @@ func NewServiceWithSkillRuntime(
 }
 
 type PreparedChat struct {
-	Conversation *runtimemodel.Conversation
-	Message      *runtimemodel.Message
-	LLMRequest   *adapter.ChatRequest
-	ReplaceRoot  bool
-	Continuation bool
-	Scope        Scope
-	Caller       Caller
-	RunConfig    RunConfig
-	ParentID     *uuid.UUID
-	parts        *chatRequestParts
+	Conversation                   *runtimemodel.Conversation
+	Message                        *runtimemodel.Message
+	LLMRequest                     *adapter.ChatRequest
+	ReplaceRoot                    bool
+	Continuation                   bool
+	SuppressInitialNaturalProgress bool
+	Scope                          Scope
+	Caller                         Caller
+	RunConfig                      RunConfig
+	ParentID                       *uuid.UUID
+	parts                          *chatRequestParts
 
 	UserMemoryPreflightDone  bool
 	UserMemoryPreflightUsage *adapter.Usage
@@ -399,6 +400,9 @@ type chatRequestParts struct {
 	ModelSupportsVision          bool
 	FunctionCallingKnown         bool
 	ModelSupportsFunctionCalling bool
+	FunctionCallingAssumed       bool
+	ModelCapabilityStatus        string
+	ModelCapabilityError         string
 	UseMemory                    bool
 	SkillIDs                     []string
 	ToolSkillIDs                 []string

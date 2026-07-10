@@ -68,9 +68,6 @@ func FastPathFinalAnswerForToolTraceWithEvidence(trace skills.SkillTrace, eviden
 	if fastPathEvidenceSuppressesAutoFinalAnswer(evidence) {
 		return "", false
 	}
-	if fastPathEvidenceHasCompletionGateCoverageGaps(evidence) {
-		return "", false
-	}
 	if fastPathEvidenceHasUnresolvedPlanFailure(evidence) {
 		return "", false
 	}
@@ -1282,9 +1279,6 @@ func FastPathFinalAnswerForCompletionEvidence(evidence map[string]interface{}) (
 	if fastPathEvidenceSuppressesAutoFinalAnswer(evidence) {
 		return "", false
 	}
-	if fastPathEvidenceHasCompletionGateCoverageGaps(evidence) {
-		return "", false
-	}
 	if fastPathEvidenceHasUnresolvedPlanFailure(evidence) {
 		return "", false
 	}
@@ -1373,10 +1367,6 @@ func fastPathEvidenceSuppressesAutoFinalAnswer(evidence map[string]interface{}) 
 		return true
 	}
 	return boolFromAny(evidenceMapFromAny(executionLedger["summary"])["suppress_auto_final_answer_fast_path"])
-}
-
-func fastPathEvidenceHasCompletionGateCoverageGaps(evidence map[string]interface{}) bool {
-	return len(completionGateContractCoverageGaps(evidence)) > 0
 }
 
 func fastPathEvidenceHasUnresolvedPlanFailure(evidence map[string]interface{}) bool {
@@ -2591,6 +2581,29 @@ func mergeCurrentMetadataIntoFastPathEvidence(evidence map[string]interface{}, m
 		}
 	}
 	return evidence
+}
+
+// firstPendingAgentMutationPlanStep remains scoped to the legacy fast-path
+// implementation. The active runner no longer uses plan text to select tools.
+func firstPendingAgentMutationPlanStep(source map[string]interface{}) (map[string]interface{}, bool) {
+	if len(source) == 0 {
+		return nil, false
+	}
+	plan := evidenceMapFromAny(source["operation_plan"])
+	if len(plan) == 0 {
+		return nil, false
+	}
+	steps, _ := fastPathPendingExecutablePlanSteps(plan, 20)
+	for _, step := range steps {
+		if !strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(step["skill_id"])), skills.SkillAgentManagement) {
+			continue
+		}
+		if !isAgentManagementMutationTool(evidenceStringFromAny(step["skill_id"]), evidenceStringFromAny(step["tool_name"])) {
+			continue
+		}
+		return copyStringAnyMap(step), true
+	}
+	return nil, false
 }
 
 func latestUserMessageText(req RunRequest) string {

@@ -48,16 +48,8 @@ func parseFinalAnswerSubmission(call adapter.ToolCall, evidence map[string]inter
 		submission.planWarning = err.Error()
 		return submission, nil
 	}
-	if err := validatePlanSnapshotEvidenceRefs(phases, evidence); err != nil {
-		submission.planWarning = err.Error()
-		return submission, nil
-	}
-	for _, phase := range phases {
-		status := strings.ToLower(strings.TrimSpace(stringFromInterface(phase["status"])))
-		if status != "completed" && status != "skipped" {
-			submission.planWarning = fmt.Sprintf("submit_final_answer plan phase %s is not terminal", stringFromInterface(phase["id"]))
-			return submission, nil
-		}
+	if warnings := planEvidenceAuditWarnings(phases, evidence); len(warnings) > 0 {
+		submission.planWarning = strings.Join(warnings, "; ")
 	}
 	submission.plan = phases
 	return submission, nil

@@ -23,6 +23,10 @@ import {
   useWorkspaceStore,
 } from '@/store/workspace-store';
 import { getConsoleRouteAccess } from '@/routes/access';
+import {
+  createAIChatTraceInstanceId,
+  logAIChatSessionTrace,
+} from '@/components/chat/controllers/aichat/session-trace';
 import type {
   CustomerAdapter,
   CustomerConsoleShellProps,
@@ -95,6 +99,11 @@ function DefaultConsoleShell({ children }: CustomerConsoleShellProps) {
     isWorkspaceRequired,
   } = useAccountCapabilities();
   const [mobileSidebarOpen, setMobileSidebarOpen] = React.useState(false);
+  const shellInstanceIdRef = React.useRef<string | null>(null);
+  if (!shellInstanceIdRef.current) {
+    shellInstanceIdRef.current = createAIChatTraceInstanceId('console-shell');
+  }
+  const shellInstanceId = shellInstanceIdRef.current;
   const hiddenHeaderPaths: string[] = [];
   const hiddenSidebarPaths = [] as string[];
   const lastPath = pathname.split('/').pop();
@@ -119,9 +128,74 @@ function DefaultConsoleShell({ children }: CustomerConsoleShellProps) {
     routeAccess.scope === 'organization'
       ? !canUseOrganizationScope
       : canUseWorkspaceContext && !isWorkspaceRequired && !canUseWorkspaceScope;
-  const isCapabilityLoading = isCapabilitiesLoading || isCapabilitiesFetching;
+  // Keep the active route mounted during background capability refetches. Chat message
+  // components also observe this query, so treating `isFetching` as initial loading
+  // would abort an in-flight conversation whenever a stale query refreshes.
+  const isCapabilityLoading = isCapabilitiesLoading;
 
   useJoinedWorkspaces({ syncToStore: true });
+
+  React.useEffect(() => {
+    logAIChatSessionTrace('console_shell_mounted', {
+      shellInstanceId,
+      pathname,
+    });
+    return () => {
+      logAIChatSessionTrace('console_shell_unmounted', {
+        shellInstanceId,
+        pathname,
+        unmountStack: new Error('DefaultConsoleShell unmount observer').stack,
+      });
+    };
+  }, [pathname, shellInstanceId]);
+
+  React.useEffect(() => {
+    const contentBranch = isCapabilityLoading
+      ? 'capability_loading'
+      : shouldShowWorkspaceRequired
+        ? 'workspace_required'
+        : shouldShowAccessDenied || (!canRenderOrganizationRoute && !canRenderWorkspaceRoute)
+          ? 'access_denied'
+          : 'children';
+    logAIChatSessionTrace('console_shell_state', {
+      shellInstanceId,
+      pathname,
+      contentBranch,
+      routeScope: routeAccess.scope,
+      contextStatus,
+      currentWorkspaceId: currentWorkspace?.id ?? null,
+      hasActiveWorkspace,
+      isCapabilitiesLoading,
+      isCapabilitiesFetching,
+      isCapabilityLoading,
+      canUseOrganizationScope,
+      canUseWorkspaceScope,
+      isWorkspaceRequired,
+      canUseWorkspaceContext,
+      canRenderOrganizationRoute,
+      canRenderWorkspaceRoute,
+      shouldShowWorkspaceRequired,
+      shouldShowAccessDenied,
+    });
+  }, [
+    canRenderOrganizationRoute,
+    canRenderWorkspaceRoute,
+    canUseOrganizationScope,
+    canUseWorkspaceContext,
+    canUseWorkspaceScope,
+    contextStatus,
+    currentWorkspace?.id,
+    hasActiveWorkspace,
+    isCapabilitiesFetching,
+    isCapabilitiesLoading,
+    isCapabilityLoading,
+    isWorkspaceRequired,
+    pathname,
+    routeAccess.scope,
+    shellInstanceId,
+    shouldShowAccessDenied,
+    shouldShowWorkspaceRequired,
+  ]);
 
   let content = children;
   if (isCapabilityLoading) {

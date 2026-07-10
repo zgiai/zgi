@@ -1443,7 +1443,7 @@ func TestRunToolGovernanceDecisionStreamApproveToolFailureReturnsErrorToModel(t 
 	assertToolGovernanceApprovedFailureStreamEvents(t, events)
 }
 
-func TestRunToolGovernanceDecisionStreamApproveToolFailureWithOperationPlanUsesVerifier(t *testing.T) {
+func TestRunToolGovernanceDecisionStreamApproveToolFailureUsesMainModelTerminalDecision(t *testing.T) {
 	ctx := context.Background()
 	organizationID := uuid.New()
 	accountID := uuid.New()
@@ -1589,14 +1589,11 @@ func TestRunToolGovernanceDecisionStreamApproveToolFailureWithOperationPlanUsesV
 	if result.Status != runtimemodel.MessageStatusCompleted {
 		t.Fatalf("result status = %q, want completed", result.Status)
 	}
-	if len(llm.appChatRequests) != 2 {
-		t.Fatalf("AppChat requests = %d, want failure answer plus completion verifier", len(llm.appChatRequests))
+	if len(llm.appChatRequests) != 1 {
+		t.Fatalf("AppChat requests = %d, want one main-model failure answer", len(llm.appChatRequests))
 	}
 	if len(llm.streamRequests) != 1 {
 		t.Fatalf("AppChatStream requests = %d, want the main-model failure answer to stream before audit", len(llm.streamRequests))
-	}
-	if !toolGovernanceStreamRequestContains(llm.appChatRequests[1], "completion post-verifier") {
-		t.Fatalf("second AppChat request = %q, want completion verifier", toolGovernanceStreamRequestText(llm.appChatRequests[1]))
 	}
 	if result.Answer != finalAnswer {
 		t.Fatalf("result answer = %q, want verifier-approved main-model failure answer", result.Answer)
@@ -1610,8 +1607,8 @@ func TestRunToolGovernanceDecisionStreamApproveToolFailureWithOperationPlanUsesV
 	if !toolGovernanceStreamHasInvocation(message.Metadata, "tool_call", skills.SkillFileManager, "delete_file", "error") {
 		t.Fatalf("metadata skill_invocations = %#v, want failed file-manager/delete_file tool call", message.Metadata["skill_invocations"])
 	}
-	if !modelInvocationMetadataHasPhase(message.Metadata, "completion_verifier") {
-		t.Fatalf("metadata model_invocations = %#v, want completion_verifier trace", message.Metadata["model_invocations"])
+	if modelInvocationMetadataHasPhase(message.Metadata, "completion_verifier") {
+		t.Fatalf("metadata model_invocations = %#v, want no completion_verifier trace", message.Metadata["model_invocations"])
 	}
 	assertToolGovernanceApprovedFailureStreamEvents(t, events)
 }

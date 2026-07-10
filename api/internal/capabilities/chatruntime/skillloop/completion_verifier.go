@@ -739,37 +739,8 @@ func (d completionVerificationDecision) normalizedStatus() string {
 }
 
 func completionVerificationShouldRun(evidence map[string]interface{}, attempted []SkillToolCallRef, successful []SkillToolCallRef, toolCallCount int) bool {
-	if gate := completionGateEvaluate(evidence, ""); gate.Path == completionGateDeterministicPass {
-		return false
-	}
-	if toolCallCount > 0 || len(attempted) > 0 || len(successful) > 0 {
-		return true
-	}
-	if len(evidence) == 0 {
-		return false
-	}
-	if completionVerificationIsPassiveAssistantAnswer(evidence) {
-		return false
-	}
-	if plan := evidenceMapFromAny(evidence["operation_plan"]); len(plan) > 0 {
-		if completionVerificationPlanNeedsRuntimeEvidence(plan) {
-			return true
-		}
-	}
-	if invocations := evidenceSliceFromAny(evidence["skill_invocations"]); len(invocations) > 0 {
-		return true
-	}
-	if artifacts := evidenceSliceFromAny(evidence["generated_files"]); len(artifacts) > 0 {
-		return true
-	}
-	if completionVerificationEvidenceValuePresent(evidence["operation_ledger"]) ||
-		completionVerificationEvidenceValuePresent(evidence["client_actions"]) ||
-		completionVerificationEvidenceValuePresent(evidence["tool_governance"]) {
-		return true
-	}
-	if ledger := evidenceMapFromAny(evidence["execution_ledger"]); completionVerificationLedgerHasFacts(ledger) {
-		return true
-	}
+	// Completion verification is no longer part of the main execution path.
+	// Keep this helper for compatibility with debug-only callers.
 	return false
 }
 
@@ -1231,11 +1202,6 @@ func (r *Runner) runCompletionVerifier(
 	evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successful)
 	if evidence == nil {
 		evidence = map[string]interface{}{}
-	}
-	if gate := completionGateEvaluate(evidence, candidateAnswer); gate.Path != completionGateModelVerifier {
-		decision := gate.completionVerificationDecision()
-		decision = completionVerificationAlignLanguage(evidence, decision)
-		return decision, nil, nil
 	}
 	if completionVerificationCandidateAnswerLeaksInternalPlan(candidateAnswer) {
 		decision := completionVerificationInternalPlanLeakDecision(evidence)

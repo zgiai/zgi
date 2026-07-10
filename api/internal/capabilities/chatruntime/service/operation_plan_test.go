@@ -14941,7 +14941,7 @@ func TestApplyOperationPlanCompletionVerificationResultCompletesModelDecidesPhas
 	}
 }
 
-func TestApplyOperationPlanCompletionVerificationResultCompletesModelDecidesPendingStepsAndSummary(t *testing.T) {
+func TestApplyOperationPlanCompletionVerificationResultPreservesModelPlanAndCompletesSummary(t *testing.T) {
 	saveStepID := operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management")
 	metadata := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
@@ -15010,11 +15010,11 @@ func TestApplyOperationPlanCompletionVerificationResultCompletesModelDecidesPend
 	if got := stringFromAny(plan["pending_next_action"]); got != "none" {
 		t.Fatalf("operation_plan.pending_next_action = %q, want none; plan=%#v", got, plan)
 	}
-	if got := operationPlanStepStatusForTest(plan, saveStepID); got != operationPlanStepStatusCompleted {
-		t.Fatalf("%s status = %q, want completed; plan=%#v", saveStepID, got, plan)
+	if got := operationPlanStepStatusForTest(plan, saveStepID); got != operationPlanStepStatusPending {
+		t.Fatalf("%s status = %q, want pending because finalizer must not rewrite model plan steps; plan=%#v", saveStepID, got, plan)
 	}
-	if got := operationPlanStepFieldForTest(plan, saveStepID, "error"); got != "" {
-		t.Fatalf("%s error = %q, want cleared", saveStepID, got)
+	if got := operationPlanStepFieldForTest(plan, saveStepID, "error"); got != "stale pending step from planning" {
+		t.Fatalf("%s error = %q, want preserved audit value", saveStepID, got)
 	}
 	phase := mapSliceFromAny(plan["phases"])[0]
 	if got := stringFromAny(phase["status"]); got != operationPlanStepStatusPending {

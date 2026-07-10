@@ -1325,7 +1325,7 @@ func TestContextualAIChatTurnStrategyUsesGenericContractForUnsupportedActionable
 	}
 }
 
-func TestContextualAIChatTurnStrategyKeepsPassiveAnswerWhenClassifierFailsOnAgentPage(t *testing.T) {
+func TestContextualAIChatTurnStrategyUsesSkillLoopWhenClassifierFailsOnAgentPage(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
 			Query:                "what can you do here?",
@@ -1350,8 +1350,8 @@ func TestContextualAIChatTurnStrategyKeepsPassiveAnswerWhenClassifierFailsOnAgen
 	if slices.Contains(strategy.PrimarySkills, skills.SkillAgentManagement) {
 		t.Fatalf("PrimarySkills = %#v, want no agent-management primary skill for passive answer", strategy.PrimarySkills)
 	}
-	if !skillLoopShouldUsePlainStreamForPassiveAnswer(prepared) {
-		t.Fatal("skillLoopShouldUsePlainStreamForPassiveAnswer() = false, want true")
+	if skillLoopShouldUsePlainStreamForPassiveAnswer(prepared) {
+		t.Fatal("skillLoopShouldUsePlainStreamForPassiveAnswer() = true, want skill loop when classifier failed")
 	}
 }
 
@@ -1381,6 +1381,30 @@ func TestParseModelTurnIntentContentAcceptsVisibleIndex(t *testing.T) {
 	}
 	if intent.TargetVisibleIndex != 2 {
 		t.Fatalf("TargetVisibleIndex = %d, want 2", intent.TargetVisibleIndex)
+	}
+}
+
+func TestParseModelTurnIntentContentNormalizesObjectPhases(t *testing.T) {
+	intent, err := parseModelTurnIntentContent(`{
+		"intent":"manage_agent_asset",
+		"phases":[
+			{"id":"phase-1","action":"read the source file"},
+			{"step":"update the Agent configuration"},
+			{"unexpected":"ignored"}
+		],
+		"confidence":0.9
+	}`)
+	if err != nil {
+		t.Fatalf("parseModelTurnIntentContent() error = %v", err)
+	}
+	want := []string{"read the source file", "update the Agent configuration"}
+	if !slices.Equal(intent.Phases, want) {
+		t.Fatalf("Phases = %#v, want %#v", intent.Phases, want)
+	}
+	for _, phase := range intent.Phases {
+		if strings.HasPrefix(phase, "map[") {
+			t.Fatalf("phase leaked Go map formatting: %q", phase)
+		}
 	}
 }
 
@@ -1602,22 +1626,19 @@ func TestModelTurnTaskContractUsesGenericPathForRawCompatibilityAlias(t *testing
 	}
 }
 
-func TestParseModelTurnIntentMessageUsesReasoningJSONWhenContentEmpty(t *testing.T) {
-	intent, source, err := parseModelTurnIntentMessage(adapter.Message{
+func TestParseModelTurnIntentMessageIgnoresReasoningJSONWhenContentEmpty(t *testing.T) {
+	_, source, err := parseModelTurnIntentMessage(adapter.Message{
 		ReasoningContent: `We need classify this request.
 {"intent":"answer_or_explain_zgi_context","task_type":"agent_prompt_review","confidence":0.91,"approval":"none"}`,
 	})
-	if err != nil {
-		t.Fatalf("parseModelTurnIntentMessage() error = %v", err)
+	if err == nil {
+		t.Fatal("parseModelTurnIntentMessage() error = nil, want error")
 	}
-	if got := normalizeModelTurnIntent(intent.Intent); got != "answer_or_explain_zgi_context" {
-		t.Fatalf("Intent = %q, want answer_or_explain_zgi_context", got)
+	if !strings.Contains(err.Error(), "empty classifier content") {
+		t.Fatalf("error = %q, want empty classifier content", err.Error())
 	}
-	if intent.TaskType != "agent_prompt_review" {
-		t.Fatalf("TaskType = %q, want agent_prompt_review", intent.TaskType)
-	}
-	if !strings.Contains(source, `"intent"`) {
-		t.Fatalf("source = %q, want reasoning JSON preview", source)
+	if source != "" {
+		t.Fatalf("source = %q, want empty source because reasoning content is ignored", source)
 	}
 }
 
@@ -1628,11 +1649,11 @@ func TestParseModelTurnIntentMessageRejectsReasoningOnlyProse(t *testing.T) {
 	if err == nil {
 		t.Fatal("parseModelTurnIntentMessage() error = nil, want error")
 	}
-	if !strings.Contains(err.Error(), "reasoning content did not contain json") {
-		t.Fatalf("error = %q, want reasoning json error", err.Error())
+	if !strings.Contains(err.Error(), "empty classifier content") {
+		t.Fatalf("error = %q, want empty classifier content", err.Error())
 	}
-	if !strings.Contains(source, "We need to classify") {
-		t.Fatalf("source = %q, want reasoning preview", source)
+	if source != "" {
+		t.Fatalf("source = %q, want empty source because reasoning content is ignored", source)
 	}
 }
 

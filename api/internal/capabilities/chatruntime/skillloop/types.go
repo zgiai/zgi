@@ -134,27 +134,28 @@ type Runner struct {
 }
 
 type RunRequest struct {
-	Prepared                  *PreparedChat
-	Resolved                  *skills.ResolvedSkills
-	ExecutionContext          skills.ExecutionContext
-	PreferExplicitFinalAnswer bool
-	AdditionalSystemMessages  []adapter.Message
-	FinalAnswerGuard          FinalAnswerGuard
-	UserInputGuard            UserInputGuard
-	ToolCallGuard             ToolCallGuard
-	PlanToolGuard             ToolCallGuard
-	ToolArgumentResolver      ToolArgumentResolver
-	CompletionEvidence        CompletionEvidenceFunc
-	CurrentMetadata           func() map[string]interface{}
-	OnCompletionGateDecision  func(CompletionGateDecisionRecord)
-	OnCompletionVerification  func(CompletionVerificationResult)
-	OnChunk                   func(string) error
+	Prepared                       *PreparedChat
+	Resolved                       *skills.ResolvedSkills
+	ExecutionContext               skills.ExecutionContext
+	PreferExplicitFinalAnswer      bool
+	SuppressInitialNaturalProgress bool
+	AdditionalSystemMessages       []adapter.Message
+	FinalAnswerGuard               FinalAnswerGuard
+	UserInputGuard                 UserInputGuard
+	ToolCallGuard                  ToolCallGuard
+	PlanToolGuard                  ToolCallGuard
+	ToolArgumentResolver           ToolArgumentResolver
+	CompletionEvidence             CompletionEvidenceFunc
+	CurrentMetadata                func() map[string]interface{}
+	OnTerminalStateGuardDecision   func(TerminalStateGuardDecisionRecord)
+	OnCompletionVerification       func(CompletionVerificationResult)
+	OnChunk                        func(string) error
 }
 
-type CompletionGateDecisionRecord struct {
-	Path         string
-	Reason       string
-	MissingFacts []string
+type TerminalStateGuardDecisionRecord struct {
+	Path     string
+	Reason   string
+	Blockers []string
 }
 
 type FinalAnswerGuard func(FinalAnswerGuardRequest) (FinalAnswerGuardResult, bool)

@@ -1193,6 +1193,7 @@ func TestToolGovernanceApprovalContinuationMessageScopesRetryToGrant(t *testing.
 	content := messageContentText(message.Content)
 	for _, want := range []string{
 		"The user approved the pending tool governance request",
+		"first model response after this continuation",
 		"The approval is scoped to the governance grant",
 		"authoritative asset resolution",
 		"do not ask the user to identify the approved assets again",

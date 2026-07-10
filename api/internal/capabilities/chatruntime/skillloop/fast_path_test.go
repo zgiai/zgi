@@ -250,9 +250,6 @@ func TestFastPathCompletionEvidenceBlocksPendingManagedFileSave(t *testing.T) {
 		},
 	}
 
-	if gaps := completionGateContractCoverageGaps(evidence); len(gaps) != 0 {
-		t.Fatalf("completionGateContractCoverageGaps() = %#v, want no contract-derived gaps", gaps)
-	}
 	if answer, ok := FastPathFinalAnswerForToolTraceWithEvidence(trace, evidence); ok {
 		t.Fatalf("FastPathFinalAnswerForToolTraceWithEvidence() = (%q, true), want blocked by pending managed file save", answer)
 	}

@@ -46,7 +46,7 @@ func TestStructuredTurnStateOpenItemsDropsRecoveredFileReadToolMismatch(t *testi
 	}
 }
 
-func TestApplyOperationPlanCompletionVerificationPassCleansStaleReasonAndSource(t *testing.T) {
+func TestApplyMainModelTerminalResultCleansStaleReasonAndSource(t *testing.T) {
 	metadata := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
 			"tool_choice_mode": "model_decides",
@@ -57,7 +57,7 @@ func TestApplyOperationPlanCompletionVerificationPassCleansStaleReasonAndSource(
 	applyOperationPlanCompletionVerificationResultWithSource(
 		metadata,
 		"pass",
-		"completion_gate",
+		"main_model_final",
 		"最终答案后校验发现当前回答缺少工具结果支持",
 		nil,
 		nil,
@@ -69,8 +69,8 @@ func TestApplyOperationPlanCompletionVerificationPassCleansStaleReasonAndSource(
 	if got := stringFromAny(verification["status"]); got != "pass" {
 		t.Fatalf("completion_verification.status = %q, want pass; verification=%#v", got, verification)
 	}
-	if got := stringFromAny(verification["source"]); got != "completion_gate" {
-		t.Fatalf("completion_verification.source = %q, want completion_gate; verification=%#v", got, verification)
+	if got := stringFromAny(verification["source"]); got != "main_model_final" {
+		t.Fatalf("completion_verification.source = %q, want main_model_final; verification=%#v", got, verification)
 	}
 	if reason := stringFromAny(verification["reason"]); strings.Contains(reason, "缺少工具结果支持") {
 		t.Fatalf("completion_verification.reason = %q, want stale failure reason removed", reason)
