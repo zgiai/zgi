@@ -17,6 +17,7 @@ import {
 import { actionTypeRegistry, channelTypeRegistry } from './registry';
 import { safeJson, summarizeRecipients } from './utils';
 import type { TaskDetailViewData } from './types';
+import { useAgent } from '@/hooks/agent/use-agents';
 
 interface TaskOverviewTabProps {
   taskDetail: TaskDetailViewData;
@@ -54,6 +55,17 @@ export function TaskOverviewTab({ taskDetail, showUnsupportedHint }: TaskOvervie
   const [selectedActionIndex, setSelectedActionIndex] = React.useState<number | null>(null);
   const selectedAction =
     selectedActionIndex === null ? null : (taskDetail.actions[selectedActionIndex] ?? null);
+  const selectedWorkflowAgentId =
+    selectedAction?.action_type === 'run_workflow'
+      ? selectedAction.config.workflow_ref.agent_id
+      : '';
+  const selectedWorkflowAgent = useAgent(
+    selectedWorkflowAgentId || null,
+    Boolean(selectedWorkflowAgentId)
+  );
+  const selectedWorkflowAgentName =
+    selectedWorkflowAgent.agent?.data?.name ||
+    (selectedWorkflowAgent.isLoading ? t('actions.loadingWorkflows') : t('misc.notAvailable'));
 
   return (
     <div className="space-y-4">
@@ -258,8 +270,8 @@ export function TaskOverviewTab({ taskDetail, showUnsupportedHint }: TaskOvervie
                         <Workflow className="size-3.5" />
                         {t('actions.targetAgent')}
                       </div>
-                      <p className="break-all text-sm leading-6 text-foreground">
-                        {selectedAction.config.workflow_ref.agent_id || t('misc.notAvailable')}
+                      <p className="break-words text-sm leading-6 text-foreground">
+                        {selectedWorkflowAgentName}
                       </p>
                     </div>
 

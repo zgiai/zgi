@@ -58,6 +58,14 @@ const EDGE_TYPES = {
   simplebezier: SimpleBezierEdge,
 };
 
+const MIDDLE_MOUSE_BUTTON = 1;
+const CANVAS_PAN_BUTTONS = [MIDDLE_MOUSE_BUTTON];
+
+const isDraggingMultiSelection = (nodeId: string) => {
+  const selectedNodes = useWorkflowStore.getState().nodes.filter(node => node.selected);
+  return selectedNodes.length > 1 && selectedNodes.some(node => node.id === nodeId);
+};
+
 const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
   viewNodes,
   viewEdges,
@@ -145,7 +153,9 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
             selectNode?: (id: string | null) => void;
             setSelectionSource?: (src: string) => void;
           };
-          st.selectNode?.(node.id);
+          if (!isDraggingMultiSelection(node.id)) {
+            st.selectNode?.(node.id);
+          }
           st.setSelectionSource?.('drag');
         }}
         onNodeDragStop={(_e, node) => {
@@ -155,15 +165,17 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
             selectNode?: (id: string | null) => void;
             setSelectionSource?: (src: string) => void;
           };
-          // Ensure selection persists
-          st.selectNode?.(node.id);
+          const keepMultiSelection = isDraggingMultiSelection(node.id);
+          if (!keepMultiSelection) {
+            st.selectNode?.(node.id);
+          }
           // Defer setting to 'click' so React Flow finishes internal drag state and click suppression window passes
           if (typeof window !== 'undefined') {
             window.requestAnimationFrame(() => {
-              st.setSelectionSource?.('click');
+              st.setSelectionSource?.(keepMultiSelection ? 'none' : 'click');
             });
           } else {
-            st.setSelectionSource?.('click');
+            st.setSelectionSource?.(keepMultiSelection ? 'none' : 'click');
           }
         }}
         onNodeClick={onNodeClick}
@@ -211,12 +223,12 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
         deleteKeyCode={null}
         selectionKeyCode={null}
         multiSelectionKeyCode={null}
-        // Interaction based on mode and creation state
+        // Left-drag selects; middle-drag pans. Hand mode only keeps its scroll-pan behavior.
         elementsSelectable
         nodesDraggable={!isReadOnly}
         nodesConnectable={!isReadOnly}
-        selectionOnDrag={!isReadOnly && interactionMode !== 'hand'}
-        panOnDrag={interactionMode === 'hand' && !isConnecting}
+        selectionOnDrag={!isReadOnly && !isConnecting}
+        panOnDrag={isConnecting ? false : CANVAS_PAN_BUTTONS}
         zoomOnScroll
         panOnScroll={interactionMode === 'hand' && !isConnecting}
         panOnScrollMode={PanOnScrollMode.Free}
