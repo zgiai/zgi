@@ -19,8 +19,8 @@ func TestFinishWaitingApprovalMessagePromotesLeaf(t *testing.T) {
 	messageID := uuid.New()
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`(?s)UPDATE "chat_runtime_conversations" SET .*"current_leaf_message_id".*"dialogue_count"=dialogue_count \+ 1.* WHERE id = .* AND active_message_id = .* AND deleted_at IS NULL`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), conversationID, messageID).
+	mock.ExpectExec(`(?s)UPDATE "chat_runtime_conversations" SET .*"current_leaf_message_id".*"dialogue_count"=CASE WHEN current_leaf_message_id = .* THEN dialogue_count ELSE dialogue_count \+ 1 END.* WHERE id = .* AND active_message_id = .* AND deleted_at IS NULL`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), messageID, sqlmock.AnyArg(), sqlmock.AnyArg(), conversationID, messageID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 

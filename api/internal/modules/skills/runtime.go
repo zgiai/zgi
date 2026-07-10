@@ -29,7 +29,9 @@ const (
 	MetaToolCallSkillTool      = "call_skill_tool"
 	MetaToolIntermediateAnswer = "submit_intermediate_answer"
 	MetaToolTurnState          = "submit_turn_state"
+	MetaToolUpdatePlan         = "update_plan"
 	MetaToolRequestUserInput   = "request_user_input"
+	MetaToolFinalAnswer        = "submit_final_answer"
 )
 
 var ErrSkillNotFound = errors.New("skill not found")
@@ -732,7 +734,9 @@ func MetaToolsForSkillState(resolved *ResolvedSkills, loadedSkillIDs map[string]
 		loadSkillMetaTool(resolvedSkillIDs(resolved)),
 		requestUserInputMetaTool(),
 		turnStateMetaTool(),
+		updatePlanMetaTool(),
 		intermediateAnswerMetaTool(),
+		finalAnswerMetaTool(),
 	}
 	if referenceSkillIDs, referencePaths := loadedReferenceOptions(resolved, loaded); len(referenceSkillIDs) > 0 && len(referencePaths) > 0 {
 		tools = append(tools, readReferenceMetaTool(referenceSkillIDs, referencePaths))
@@ -749,12 +753,45 @@ func metaTools(includeToolCaller bool) []llmadapter.Tool {
 		readReferenceMetaTool(nil, nil),
 		requestUserInputMetaTool(),
 		turnStateMetaTool(),
+		updatePlanMetaTool(),
 		intermediateAnswerMetaTool(),
+		finalAnswerMetaTool(),
 	}
 	if includeToolCaller {
 		tools = append(tools, callSkillToolMetaTool(nil, nil, nil, nil, true))
 	}
 	return tools
+}
+
+func updatePlanMetaTool() llmadapter.Tool {
+	return llmadapter.Tool{
+		Type: "function",
+		Function: llmadapter.Function{
+			Name:        MetaToolUpdatePlan,
+			Description: "Replace the current execution plan snapshot after new evidence changes phase progress. Keep stable phase IDs, allow at most one in_progress phase, cite successful evidence refs for completed phases, and include a reason for skipped phases. Valid refs include exact invocation IDs shown in evidence, tool:<skill_id>/<tool_name> for a successful ledger call, page_context:<route> for a ready current page, and turn_state:<key>. You may call update_plan together with the next business tool in the same response.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"explanation": map[string]interface{}{"type": "string"},
+					"plan": map[string]interface{}{
+						"type": "array",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"id":            map[string]interface{}{"type": "string"},
+								"step":          map[string]interface{}{"type": "string"},
+								"status":        map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
+								"evidence_refs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+								"note":          map[string]interface{}{"type": "string"},
+							},
+							"required": []string{"step", "status"},
+						},
+					},
+				},
+				"required": []string{"plan"},
+			},
+		},
+	}
 }
 
 func loadSkillMetaTool(skillIDs []string) llmadapter.Tool {
@@ -953,6 +990,51 @@ func intermediateAnswerMetaTool() llmadapter.Tool {
 				},
 				"required": []string{"content"},
 			},
+		},
+	}
+}
+
+func finalAnswerMetaTool() llmadapter.Tool {
+	return llmadapter.Tool{
+		Type: "function",
+		Function: llmadapter.Function{
+			Name:        MetaToolFinalAnswer,
+			Description: "Submit the final user-facing answer and end the current skill loop. Call this only after all required work is complete or after you have honestly reached a terminal outcome. This call is terminal: do not combine it with business tools or request_user_input. Put the complete final response in answer; ordinary assistant content is progress, not the final answer. When a model-maintained plan exists, include its final snapshot so every phase is completed or skipped with successful evidence refs.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"answer": map[string]interface{}{
+						"type":        "string",
+						"description": "The complete final answer shown to the user, in the same language as the latest user request.",
+					},
+					"explanation": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional concise explanation for the final plan update. This is audit metadata and is not shown as the answer.",
+						"maxLength":   500,
+					},
+					"plan": planSnapshotSchema(),
+				},
+				"required": []string{"answer"},
+			},
+		},
+	}
+}
+
+func planSnapshotSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "array",
+		"description": "Optional final execution plan snapshot. Include it when the turn already has a model-maintained plan.",
+		"maxItems":    16,
+		"items": map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"id":            map[string]interface{}{"type": "string"},
+				"step":          map[string]interface{}{"type": "string"},
+				"status":        map[string]interface{}{"type": "string", "enum": []string{"completed", "skipped"}},
+				"evidence_refs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+				"note":          map[string]interface{}{"type": "string"},
+			},
+			"required": []string{"step", "status"},
 		},
 	}
 }

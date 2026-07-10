@@ -54,12 +54,22 @@ type FileService interface {
 	DeleteFiles(ctx context.Context, fileIDs []string) error
 }
 
+type FileListService interface {
+	ListFilesInFolderWithFilters(ctx context.Context, folderID string, page, limit int, keyword, sort, extension, processingStatus string, startTime, endTime *time.Time, tenantID string, visibleWorkspaceIDs []string) ([]*filemodel.UploadFile, int64, error)
+	ListAllFilesWithFilters(ctx context.Context, page, limit int, keyword, sort, extension, processingStatus string, startTime, endTime *time.Time, tenantID, accountID string, visibleWorkspaceIDs []string) ([]*filemodel.UploadFile, int64, error)
+	CheckFolderViewPermission(ctx context.Context, folderID, accountID, tenantID string, visibleWorkspaceIDs []string) (bool, error)
+}
+
 type ContentExtractionService interface {
 	ExtractMultipleFiles(ctx context.Context, fileIDs []string, tenantID string) ([]*workflowfile.FileContent, error)
 }
 
 type WorkspacePermissionService interface {
 	CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspacemodel.WorkspacePermissionCode) (bool, error)
+}
+
+type workspacePermissionLister interface {
+	ListWorkspaceIDsByPermission(ctx context.Context, organizationID, accountID string, permissionCode workspacemodel.WorkspacePermissionCode) ([]string, error)
 }
 
 type ToolFileStore interface {
@@ -72,6 +82,7 @@ type Provider struct {
 	fileService      FileService
 	contentExtractor ContentExtractionService
 	workspacePerms   WorkspacePermissionService
+	fileListService  FileListService
 	toolFiles        ToolFileStore
 }
 
@@ -80,6 +91,12 @@ type ProviderOption func(*Provider)
 func WithToolFileStore(store ToolFileStore) ProviderOption {
 	return func(p *Provider) {
 		p.toolFiles = store
+	}
+}
+
+func WithFileListService(service FileListService) ProviderOption {
+	return func(p *Provider) {
+		p.fileListService = service
 	}
 }
 
@@ -109,7 +126,7 @@ func NewProvider(fileService FileService, contentExtractor ContentExtractionServ
 		}
 	}
 	provider.RegisterTool(newReadFileTool(fileService, contentExtractor, workspacePerms))
-	provider.RegisterTool(newListVisibleFilesTool())
+	provider.RegisterTool(newListVisibleFilesTool(provider.fileListService, workspacePerms))
 	provider.RegisterTool(newDeleteFileTool(fileService, workspacePerms))
 	provider.RegisterTool(newSaveFileTool(fileService, workspacePerms, provider.toolFiles))
 	return provider
@@ -117,6 +134,8 @@ func NewProvider(fileService FileService, contentExtractor ContentExtractionServ
 
 type listVisibleFilesTool struct {
 	*builtin.BuiltinTool
+	fileListService FileListService
+	workspacePerms  WorkspacePermissionService
 }
 
 type readFileTool struct {
@@ -153,6 +172,7 @@ type saveFileSource struct {
 	SourceType string
 	SourceID   string
 	SourceURL  string
+	ExpiresAt  *time.Time
 }
 
 type readFileContent struct {
@@ -163,7 +183,7 @@ type readFileContent struct {
 
 type globalToolFileStore struct{}
 
-func newListVisibleFilesTool() tools.Tool {
+func newListVisibleFilesTool(fileListService FileListService, workspacePerms WorkspacePermissionService) tools.Tool {
 	entity := tools.ToolEntity{
 		Identity: tools.ToolIdentity{
 			Name:     ToolListVisibleFiles,
@@ -176,16 +196,34 @@ func newListVisibleFilesTool() tools.Tool {
 		},
 		Description: tools.ToolDescription{
 			Human: tools.I18nText{
-				"en_US": "List files visible in the current AIChat file page context.",
+				"en_US": "List files from the authoritative backend using the current Files page query.",
 			},
-			LLM: "List visible file assets from the current Console Files page context. Use this for questions like what files are visible, current files, selected files, or available files. This does not read file contents.",
+			LLM: "List file assets from the backend with the same page, filter, folder, and workspace query as Console Files. Use the returned order for ordinal targets such as the first visible file. This does not read file contents.",
+		},
+		Parameters: []tools.ToolParameter{
+			fileListStringParameter("workspace_id", "Workspace ID", "Optional current workspace filter."),
+			fileListStringParameter("keyword", "Keyword", "Optional current search keyword."),
+			fileListStringParameter("sort", "Sort", "Optional current sort, for example created_at_desc."),
+			fileListStringParameter("extension", "Extension", "Optional current extension filter."),
+			fileListStringParameter("processing_status", "Processing status", "Optional current processing status filter."),
+			fileListStringParameter("category", "Category", "Current Files category: all, needs_action, uploaded, default, or a folder ID."),
+			fileListStringParameter("folder_id", "Folder ID", "Optional explicit folder ID."),
+			{Name: "page", Label: tools.I18nText{"en_US": "Page"}, LLMDescription: "Current one-based page number.", Type: tools.ToolParameterTypeNumber, Form: tools.ToolParameterFormLLM, SupportVariable: true},
+			{Name: "page_size", Label: tools.I18nText{"en_US": "Page size"}, LLMDescription: "Current page size, capped at 100.", Type: tools.ToolParameterTypeNumber, Form: tools.ToolParameterFormLLM, SupportVariable: true},
+			{Name: "selected_ids", Label: tools.I18nText{"en_US": "Selected IDs"}, LLMDescription: "Optional selected file IDs. Selection is verified against this backend result.", Type: tools.ToolParameterTypeString, Form: tools.ToolParameterFormLLM, SupportVariable: true},
 		},
 		OutputType: "json",
 		Tags:       []string{"file", "system"},
 	}
 	return &listVisibleFilesTool{
-		BuiltinTool: builtin.NewBuiltinTool(entity, ""),
+		BuiltinTool:     builtin.NewBuiltinTool(entity, ""),
+		fileListService: fileListService,
+		workspacePerms:  workspacePerms,
 	}
+}
+
+func fileListStringParameter(name string, label string, description string) tools.ToolParameter {
+	return tools.ToolParameter{Name: name, Label: tools.I18nText{"en_US": label}, LLMDescription: description, Type: tools.ToolParameterTypeString, Form: tools.ToolParameterFormLLM, SupportVariable: true}
 }
 
 func newReadFileTool(fileService FileService, contentExtractor ContentExtractionService, workspacePerms WorkspacePermissionService) tools.Tool {
@@ -290,7 +328,7 @@ func newSaveFileTool(fileService FileService, workspacePerms WorkspacePermission
 			Human: tools.I18nText{
 				"en_US": "Save a generated file or external file URL into File Management.",
 			},
-			LLM: "Save an already generated tool file or a public external file URL into File Management. Use this only when the user explicitly asks to save, create, upload, import, or add the file to File Management/current Files page. If the file content still needs to be generated, first call file-generator to create a temporary artifact, then call this tool with source_type=tool_file and the generated tool_file_id. This operation mutates File Management and is governed by file.create approval.",
+			LLM: "Copy an already generated tool file or a public external file URL into File Management. The source tool file remains available until its original expiry time; this tool does not move, consume, delete, or extend the source. Use this only when the user explicitly asks to save, create, upload, import, or add the file to File Management/current Files page. If the file content still needs to be generated, first call file-generator to create a temporary artifact, then call this tool with source_type=tool_file and the generated tool_file_id. This operation mutates File Management and is governed by file.create approval.",
 		},
 		Parameters: []tools.ToolParameter{
 			{
@@ -356,41 +394,161 @@ func newSaveFileTool(fileService FileService, workspacePerms WorkspacePermission
 }
 
 func (t *listVisibleFilesTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
-	_ = ctx
-	_ = userID
-	_ = params
 	_ = conversationID
 	_ = appID
 	_ = messageID
-
-	files := visibleFilesFromRuntime(t.Runtime())
-	if len(files) == 0 {
-		return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(map[string]interface{}{
-			"status": "completed",
-			"count":  0,
-			"files":  []interface{}{},
-		})}, nil
+	if t.fileListService == nil {
+		return nil, fmt.Errorf("file list service is not configured")
 	}
+	scope, err := fileScopeFromRuntime(t.Runtime(), t.GetTenantID(), userID)
+	if err != nil {
+		return nil, err
+	}
+	page := intParam(params, "page", 1, 100000)
+	pageSize := intParam(params, "page_size", intParam(params, "limit", 20, 100), 100)
+	workspaceID := firstNonEmptyString(stringValue(params, "workspace_id"), scope.WorkspaceID)
+	visibleWorkspaceIDs, err := t.visibleWorkspaceIDs(ctx, scope, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	keyword := strings.TrimSpace(stringValue(params, "keyword"))
+	sortValue := strings.TrimSpace(stringValue(params, "sort"))
+	extension := strings.TrimSpace(stringValue(params, "extension"))
+	processingStatus := strings.TrimSpace(stringValue(params, "processing_status"))
+	category := strings.ToLower(strings.TrimSpace(stringValue(params, "category")))
+	if category == "" {
+		category = "all"
+	}
+	if processingStatus == "" && category == "needs_action" {
+		processingStatus = "parse_failed"
+	}
+	folderID := strings.TrimSpace(stringValue(params, "folder_id"))
+	if folderID == "" && category != "all" && category != "needs_action" && category != "uploaded" && category != "default" {
+		folderID = category
+	}
+	if folderID != "" {
+		allowed, permissionErr := t.fileListService.CheckFolderViewPermission(ctx, folderID, scope.AccountID, scope.OrganizationID, visibleWorkspaceIDs)
+		if permissionErr != nil {
+			return nil, permissionErr
+		}
+		if !allowed {
+			return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(map[string]interface{}{
+				"status": "completed", "source": "backend_api", "page": page, "page_size": pageSize, "total": int64(0), "count": 0, "files": []interface{}{},
+			})}, nil
+		}
+	}
+	var startTime *time.Time
+	if category == "uploaded" {
+		value := time.Now().AddDate(0, -3, 0)
+		startTime = &value
+	}
+	var files []*filemodel.UploadFile
+	var total int64
+	if category == "default" || folderID != "" {
+		files, total, err = t.fileListService.ListFilesInFolderWithFilters(ctx, folderID, page, pageSize, keyword, sortValue, extension, processingStatus, startTime, nil, scope.OrganizationID, visibleWorkspaceIDs)
+	} else {
+		files, total, err = t.fileListService.ListAllFilesWithFilters(ctx, page, pageSize, keyword, sortValue, extension, processingStatus, startTime, nil, scope.OrganizationID, scope.AccountID, visibleWorkspaceIDs)
+	}
+	if err != nil {
+		return nil, err
+	}
+	selected := stringSetFromAny(params["selected_ids"])
 	payloadFiles := make([]interface{}, 0, len(files))
 	selectedCount := 0
-	for _, file := range files {
-		if boolFromAny(file["selected"]) {
+	for idx, file := range files {
+		if file == nil {
+			continue
+		}
+		payload := uploadFileModelPayload(file)
+		payload["visible_index"] = idx + 1
+		if _, ok := selected[file.ID]; ok {
+			payload["selected"] = true
 			selectedCount++
 		}
-		payloadFiles = append(payloadFiles, file)
+		payloadFiles = append(payloadFiles, payload)
 	}
 	return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(map[string]interface{}{
 		"status":         "completed",
-		"count":          len(files),
+		"source":         "backend_api",
+		"page":           page,
+		"page_size":      pageSize,
+		"total":          total,
+		"has_more":       int64(page*pageSize) < total,
+		"count":          len(payloadFiles),
 		"selected_count": selectedCount,
-		"files":          payloadFiles,
+		"query": map[string]interface{}{
+			"workspace_id": workspaceID, "keyword": keyword, "sort": sortValue, "extension": extension,
+			"processing_status": processingStatus, "category": category, "folder_id": folderID,
+		},
+		"files": payloadFiles,
 	})}, nil
+}
+
+func (t *listVisibleFilesTool) visibleWorkspaceIDs(ctx context.Context, scope fileScope, workspaceID string) ([]string, error) {
+	if workspaceID != "" {
+		if t.workspacePerms == nil {
+			return nil, fmt.Errorf("workspace permission service is not configured")
+		}
+		allowed, err := t.workspacePerms.CheckWorkspacePermission(ctx, scope.OrganizationID, workspaceID, scope.AccountID, workspacemodel.WorkspacePermissionWorkspaceView)
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			return []string{}, nil
+		}
+		return []string{workspaceID}, nil
+	}
+	lister, ok := t.workspacePerms.(workspacePermissionLister)
+	if !ok {
+		return []string{}, nil
+	}
+	return lister.ListWorkspaceIDsByPermission(ctx, scope.OrganizationID, scope.AccountID, workspacemodel.WorkspacePermissionWorkspaceView)
 }
 
 func (t *listVisibleFilesTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
 	return &listVisibleFilesTool{
-		BuiltinTool: t.BuiltinTool.ForkToolRuntime(runtime),
+		BuiltinTool:     t.BuiltinTool.ForkToolRuntime(runtime),
+		fileListService: t.fileListService,
+		workspacePerms:  t.workspacePerms,
 	}
+}
+
+func uploadFileModelPayload(file *filemodel.UploadFile) map[string]interface{} {
+	payload := map[string]interface{}{
+		"id": file.ID, "file_id": file.ID, "name": file.Name, "size": file.Size, "extension": file.Extension,
+		"mime_type": file.MimeType, "is_temporary": file.IsTemporary, "created_by": file.CreatedBy,
+		"created_at": file.CreatedAt.Unix(),
+	}
+	if file.WorkspaceID != nil && strings.TrimSpace(*file.WorkspaceID) != "" {
+		payload["workspace_id"] = strings.TrimSpace(*file.WorkspaceID)
+	}
+	return payload
+}
+
+func stringSetFromAny(value interface{}) map[string]struct{} {
+	out := map[string]struct{}{}
+	appendValue := func(raw interface{}) {
+		for _, part := range strings.Split(strings.TrimSpace(fmt.Sprint(raw)), ",") {
+			if part = strings.TrimSpace(part); part != "" {
+				out[part] = struct{}{}
+			}
+		}
+	}
+	switch typed := value.(type) {
+	case []string:
+		for _, item := range typed {
+			appendValue(item)
+		}
+	case []interface{}:
+		for _, item := range typed {
+			appendValue(item)
+		}
+	default:
+		if value != nil {
+			appendValue(value)
+		}
+	}
+	return out
 }
 
 func (t *readFileTool) Invoke(ctx context.Context, userID string, params map[string]interface{}, conversationID *string, appID *string, messageID *string) ([]tools.ToolInvokeMessage, error) {
@@ -558,6 +716,8 @@ func (t *saveFileTool) Invoke(ctx context.Context, userID string, params map[str
 
 	payload := map[string]interface{}{
 		"status":          "completed",
+		"operation":       "copy",
+		"source_retained": true,
 		"file":            filePayload,
 		"file_id":         uploadFile.ID,
 		"upload_file_id":  uploadFile.ID,
@@ -575,6 +735,12 @@ func (t *saveFileTool) Invoke(ctx context.Context, userID string, params map[str
 	}
 	if source.SourceID != "" {
 		payload["source_file_id"] = source.SourceID
+		if source.SourceType == "tool_file" {
+			payload["source_tool_file_id"] = source.SourceID
+		}
+	}
+	if source.ExpiresAt != nil {
+		payload["source_expires_at"] = source.ExpiresAt.Unix()
 	}
 	if source.SourceURL != "" {
 		payload["source_url"] = source.SourceURL
@@ -701,6 +867,9 @@ func (t *saveFileTool) resolveToolFileSource(ctx context.Context, scope fileScop
 	if toolFile == nil {
 		return saveFileSource{}, fmt.Errorf("generated file %s not found", toolFileID)
 	}
+	if toolFile.IsExpired(time.Now()) {
+		return saveFileSource{}, fmt.Errorf("generated file %s has expired", toolFileID)
+	}
 	if strings.TrimSpace(toolFile.TenantID) != scope.OrganizationID {
 		return saveFileSource{}, fmt.Errorf("generated file is not accessible")
 	}
@@ -726,6 +895,7 @@ func (t *saveFileTool) resolveToolFileSource(ctx context.Context, scope fileScop
 		MimeType:   normalizeMimeType(mimeType),
 		SourceType: "tool_file",
 		SourceID:   toolFileID,
+		ExpiresAt:  toolFile.ExpiresAt,
 	}, nil
 }
 

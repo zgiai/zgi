@@ -6,10 +6,10 @@ import type {
 } from '@/services/types/aichat';
 import { type AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat/types';
 
-type RedisStreamEventIdParts = {
+interface RedisStreamEventIdParts {
   timestamp: number;
   sequence: number;
-};
+}
 
 function redisStreamEventIdParts(eventId?: string | null): RedisStreamEventIdParts | null {
   if (!eventId) return null;
@@ -254,12 +254,12 @@ function fileMetadataIdentity(file: AIChatMessageFile, index: number): string {
 }
 
 function generatedFileIdentity(file: AIChatGeneratedFile, index: number): string {
+  const fileId = file.upload_file_id || file.tool_file_id || file.file_id;
+  const lifecyclePrefix =
+    file.target === 'managed_file' || file.upload_file_id ? 'managed_file' : 'tool_file';
   return (
-    file.correlation_id ||
-    file.file_id ||
-    file.upload_file_id ||
-    file.tool_file_id ||
-    file.source_file_id ||
+    file.artifact_id ||
+    (fileId ? `${lifecyclePrefix}:${fileId}` : '') ||
     `${file.filename}:${file.extension}:${file.size}:${index}`
   );
 }
@@ -297,7 +297,7 @@ function skillInvocationNavigationTarget(invocation: AIChatSkillInvocation): str
   return href.replace(/\/+$/, '') || href;
 }
 
-type AssetOperationSemanticIdentityInput = {
+interface AssetOperationSemanticIdentityInput {
   audit?: unknown;
   result?: Record<string, unknown>;
   args?: Record<string, unknown>;
@@ -307,7 +307,7 @@ type AssetOperationSemanticIdentityInput = {
   actionId?: unknown;
   correlationId?: unknown;
   toolName?: unknown;
-};
+}
 
 function normalizeAssetOperationActionId(value: unknown): string {
   const actionId = invocationString(value);

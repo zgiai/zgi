@@ -34,6 +34,7 @@ import type {
   AIChatSkillReferenceReadEventData,
   AIChatStopConversationResponseData,
   AIChatToolGovernanceDecisionRequest,
+  AIChatUserInputContinuationRequest,
   AIChatToolGovernanceDecisionEventData,
   AIChatWorkflowEventData,
   AIChatWorkflowNodeEventData,
@@ -218,6 +219,14 @@ export interface AIChatRuntimeTransport {
     callbacks: AIChatStreamCallbacks,
     abortSignal?: AbortSignal
   ): Promise<{ close: () => void }>;
+  continueUserInput?(
+    conversationId: string,
+    messageId: string,
+    requestId: string,
+    payload: AIChatUserInputContinuationRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ): Promise<{ close: () => void }>;
 }
 
 export function mapAIChatSearchResult(item: AIChatSearchResult): ConversationSearchResult {
@@ -296,10 +305,7 @@ export function dispatchAIChatStreamEvent(
       );
       break;
     case 'client_action_result':
-      callbacks.onClientActionResult?.(
-        (data ?? {}) as AIChatClientActionResultEventData,
-        eventId
-      );
+      callbacks.onClientActionResult?.((data ?? {}) as AIChatClientActionResultEventData, eventId);
       break;
     case 'memory_create':
     case 'memory_update':
@@ -614,6 +620,30 @@ export class AIChatTransport implements AIChatRuntimeTransport {
       conversationId,
       messageId,
       actionId,
+      payload,
+      {
+        onEvent: (event, data, eventId) => {
+          dispatchAIChatStreamEvent(event, data, eventId, callbacks);
+        },
+        onError: callbacks.onRequestError,
+        onClose: callbacks.onClose,
+      },
+      abortSignal
+    );
+  }
+
+  continueUserInput(
+    conversationId: string,
+    messageId: string,
+    requestId: string,
+    payload: AIChatUserInputContinuationRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    return aichatService.continueUserInput(
+      conversationId,
+      messageId,
+      requestId,
       payload,
       {
         onEvent: (event, data, eventId) => {

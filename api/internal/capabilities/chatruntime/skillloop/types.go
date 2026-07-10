@@ -134,19 +134,27 @@ type Runner struct {
 }
 
 type RunRequest struct {
-	Prepared                 *PreparedChat
-	Resolved                 *skills.ResolvedSkills
-	ExecutionContext         skills.ExecutionContext
-	AdditionalSystemMessages []adapter.Message
-	FinalAnswerGuard         FinalAnswerGuard
-	UserInputGuard           UserInputGuard
-	ToolCallGuard            ToolCallGuard
-	PlanToolGuard            ToolCallGuard
-	ToolArgumentResolver     ToolArgumentResolver
-	CompletionEvidence       CompletionEvidenceFunc
-	CurrentMetadata          func() map[string]interface{}
-	OnCompletionVerification func(CompletionVerificationResult)
-	OnChunk                  func(string) error
+	Prepared                  *PreparedChat
+	Resolved                  *skills.ResolvedSkills
+	ExecutionContext          skills.ExecutionContext
+	PreferExplicitFinalAnswer bool
+	AdditionalSystemMessages  []adapter.Message
+	FinalAnswerGuard          FinalAnswerGuard
+	UserInputGuard            UserInputGuard
+	ToolCallGuard             ToolCallGuard
+	PlanToolGuard             ToolCallGuard
+	ToolArgumentResolver      ToolArgumentResolver
+	CompletionEvidence        CompletionEvidenceFunc
+	CurrentMetadata           func() map[string]interface{}
+	OnCompletionGateDecision  func(CompletionGateDecisionRecord)
+	OnCompletionVerification  func(CompletionVerificationResult)
+	OnChunk                   func(string) error
+}
+
+type CompletionGateDecisionRecord struct {
+	Path         string
+	Reason       string
+	MissingFacts []string
 }
 
 type FinalAnswerGuard func(FinalAnswerGuardRequest) (FinalAnswerGuardResult, bool)
@@ -215,15 +223,18 @@ type SkillToolCallRef struct {
 }
 
 type ModelInvocationTrace struct {
-	Phase      string
-	Round      int
-	Streaming  bool
-	StartedAt  time.Time
-	DurationMS int64
-	Request    *adapter.ChatRequest
-	Response   *adapter.Message
-	Usage      *adapter.Usage
-	Error      string
+	Phase              string
+	Round              int
+	Streaming          bool
+	StartedAt          time.Time
+	DurationMS         int64
+	Request            *adapter.ChatRequest
+	Response           *adapter.Message
+	Usage              *adapter.Usage
+	FinishReason       string
+	StreamDoneReceived bool
+	TerminatedBy       string
+	Error              string
 }
 
 type PreparedChat struct {

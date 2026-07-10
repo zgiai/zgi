@@ -51,9 +51,6 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 	if err != nil {
 		return nil, err
 	}
-	if err := s.completePlainUserInputLeafForNewTurn(ctx, scope, conversation, strings.TrimSpace(req.ParentID)); err != nil {
-		return nil, err
-	}
 	if err := s.ensureConversationAllowsNewTurn(ctx, scope, conversation); err != nil {
 		return nil, err
 	}
@@ -82,7 +79,7 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 	conversation.ActiveMessageID = &message.ID
 	s.appendStreamEventBestEffort(ctx, message.ID, conversation.ID, streamEventMessageStart, messageStartPayload(conversation, message, false))
 
-	return &PreparedChat{
+	prepared := &PreparedChat{
 		Conversation: conversation,
 		Message:      message,
 		Scope:        scope,
@@ -90,7 +87,9 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 		RunConfig:    config,
 		ParentID:     parentID,
 		parts:        parts,
-	}, nil
+	}
+	s.refreshInitialPageContext(ctx, prepared)
+	return prepared, nil
 }
 
 func (s *service) PrepareRootRegeneration(ctx context.Context, scope Scope, id uuid.UUID, req runtimedto.RegenerateMessageRequest) (*PreparedChat, error) {
@@ -244,48 +243,6 @@ func (s *service) ensureConversationAllowsNewTurn(ctx context.Context, scope Sco
 	if leafMessage.Status == runtimemodel.MessageStatusWaitingClientAction {
 		return ErrConversationWaitingAction
 	}
-	return nil
-}
-
-func (s *service) completePlainUserInputLeafForNewTurn(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, parentIDRaw string) error {
-	if conversation == nil ||
-		conversation.CurrentLeafMessageID == nil ||
-		conversation.RuntimeStatus != runtimemodel.ConversationRuntimeStatusIdle ||
-		s == nil ||
-		s.repos == nil ||
-		s.repos.Message == nil {
-		return nil
-	}
-	leafID := *conversation.CurrentLeafMessageID
-	if parentIDRaw != "" {
-		parentID, err := uuid.Parse(parentIDRaw)
-		if err != nil || parentID != leafID {
-			return nil
-		}
-	}
-	leafMessage, err := s.repos.Message.GetScoped(ctx, leafID, scope.OrganizationID, scope.AccountID)
-	if err != nil {
-		return mapRepoError(err)
-	}
-	if leafMessage.Status != runtimemodel.MessageStatusWaitingQuestion {
-		return nil
-	}
-	request := governanceMapFromAny(leafMessage.Metadata["user_input_request"])
-	if len(request) == 0 {
-		return nil
-	}
-	if strings.EqualFold(strings.TrimSpace(firstNonEmptyString(request["source"])), "agent_workflow_question_answer") {
-		return nil
-	}
-	if continuation := workflowApprovalContinuationFromMetadata(leafMessage.Metadata); continuation.WorkflowRunID != "" {
-		return nil
-	}
-	metadata := workflowContinuationMetadataWithoutUserInputRequest(leafMessage.Metadata)
-	if err := s.repos.Message.UpdateCompleted(ctx, leafMessage.ID, leafMessage.Answer, metadata); err != nil {
-		return mapRepoError(err)
-	}
-	leafMessage.Status = runtimemodel.MessageStatusCompleted
-	leafMessage.Metadata = metadata
 	return nil
 }
 

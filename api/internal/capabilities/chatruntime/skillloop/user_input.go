@@ -155,11 +155,12 @@ func userInputQuestionSummaries(questions []map[string]interface{}) []interface{
 	return summaries
 }
 
-func userInputRequestPayload(prepared *PreparedChat, requestID string, questions []map[string]interface{}) map[string]interface{} {
+func userInputRequestPayload(prepared *PreparedChat, requestID string, message string, questions []map[string]interface{}) map[string]interface{} {
 	payload := map[string]interface{}{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"request_id":      strings.TrimSpace(requestID),
+		"message":         strings.TrimSpace(message),
 		"questions":       questions,
 		"created_at":      time.Now().Unix(),
 	}

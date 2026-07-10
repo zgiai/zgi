@@ -68,6 +68,7 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.POST("/conversations/:id/messages/:message_id/tool-governance/:correlation_id", h.SubmitToolGovernanceDecision)
 	group.POST("/conversations/:id/messages/:message_id/tool-governance/:correlation_id/continue", h.ContinueToolGovernanceDecision)
 	group.POST("/conversations/:id/messages/:message_id/client-actions/:action_id/continue", h.ContinueClientAction)
+	group.POST("/conversations/:id/messages/:message_id/user-input/:request_id/continue", h.ContinueUserInput)
 	group.POST("/chat", h.Chat)
 }
 

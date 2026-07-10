@@ -9,26 +9,26 @@ import type {
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
   AIChatSkillInvocation,
-  AIChatUserInputRequestedEventData
+  AIChatUserInputRequestedEventData,
 } from '@/services/types/aichat';
 import {
   SENSITIVE_OUTPUT_BLOCKED_FLAG,
   SENSITIVE_OUTPUT_BLOCKED_TOKEN,
-  isSensitiveOutputBlockedValue
+  isSensitiveOutputBlockedValue,
 } from '@/utils/model-output-filter';
 import {
   DEFAULT_AICHAT_MESSAGE_PAGINATION,
   type AIChatControllerState,
   type AIChatAgenticTimelineItem,
   type AIChatMessageStartContext,
-  type AIChatStreamingMessageState
+  type AIChatStreamingMessageState,
 } from '@/components/chat/controllers/aichat/types';
 import {
   createDraftAIChatConversation,
   createStreamingAIChatMessage,
   normalizeAIChatStatus,
   replaceAIChatConversation,
-  upsertAIChatMessage
+  upsertAIChatMessage,
 } from '@/components/chat/utils/aichat-message';
 import { getNextActiveSendingState } from '../selectors';
 import {
@@ -37,7 +37,7 @@ import {
   clearRuntimeMessageMetadata,
   isStaleAIChatStreamEvent,
   preferCompleteIntermediateAnswerContent,
-  removeTransientProgressItems
+  removeTransientProgressItems,
 } from './shared';
 import { updateSkillInvocationMetadata } from './skill';
 
@@ -178,6 +178,8 @@ export function applyUserInputRequestedState(
   }
   const request = {
     request_id: payload.request_id,
+    message: payload.message,
+    status: payload.status ?? 'waiting_question',
     source: payload.source,
     workflow_run_id: payload.workflow_run_id,
     node_id: payload.node_id,
@@ -257,9 +259,10 @@ export function applyMessageStartState(
   const nextConversation: AIChatConversation = {
     ...existingConversation,
     title: payload.title || existingConversation.title,
-    current_leaf_message_id: (context.forceAdvanceLeaf || shouldAdvanceLeaf)
-      ? payload.message_id
-      : existingConversation.current_leaf_message_id,
+    current_leaf_message_id:
+      context.forceAdvanceLeaf || shouldAdvanceLeaf
+        ? payload.message_id
+        : existingConversation.current_leaf_message_id,
     runtime_status: 'streaming',
     active_message_id: payload.message_id,
     updated_at: createdAt,

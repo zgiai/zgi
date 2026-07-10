@@ -228,6 +228,10 @@ func createGeneratedFileForRuntime(ctx context.Context, tenantID string, runtime
 	if strings.TrimSpace(params.userID) == "" {
 		return nil, fmt.Errorf("user id is required")
 	}
+	lifecycle := params.lifecycle
+	if lifecycle == "" {
+		lifecycle = tool_file.ToolFileLifecycleTemporary
+	}
 
 	toolFile, err := tool_file.CreateFileByRawGlobal(ctx, tool_file.CreateFileByRawParams{
 		UserID:         params.userID,
@@ -236,7 +240,7 @@ func createGeneratedFileForRuntime(ctx context.Context, tenantID string, runtime
 		FileData:       params.data,
 		MimeType:       params.mimeType,
 		Filename:       &params.filename,
-		Lifecycle:      params.lifecycle,
+		Lifecycle:      lifecycle,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create generated file: %w", err)
@@ -264,6 +268,10 @@ func createGeneratedFileForRuntime(ctx context.Context, tenantID string, runtime
 	fileMeta["url"] = url
 	fileMeta["download_url"] = downloadURL
 	fileMeta["target"] = string(generatedFileTargetTemporaryArtifact)
+	fileMeta["lifecycle"] = toolFile.Lifecycle
+	if toolFile.ExpiresAt != nil {
+		fileMeta["expires_at"] = toolFile.ExpiresAt.Unix()
+	}
 
 	return []tools.ToolInvokeMessage{
 		{
@@ -283,8 +291,17 @@ func createGeneratedFileForRuntime(ctx context.Context, tenantID string, runtime
 			"url":          url,
 			"download_url": downloadURL,
 			"target":       string(generatedFileTargetTemporaryArtifact),
+			"lifecycle":    toolFile.Lifecycle,
+			"expires_at":   generatedToolFileExpiresAt(toolFile),
 		}),
 	}, nil
+}
+
+func generatedToolFileExpiresAt(toolFile *tool_file.ToolFile) interface{} {
+	if toolFile == nil || toolFile.ExpiresAt == nil {
+		return nil
+	}
+	return toolFile.ExpiresAt.Unix()
 }
 
 func (t *GenerateFileTool) enforceRuntimeFilePolicy(format string) error {

@@ -76,7 +76,7 @@ Use this skill to list visible file context or read content from a file that has
 
 1. Use this skill only when the user is asking about a specific file, uploaded attachment, historical file reference, or current console file context.
 2. Do not invent file IDs. Use a file ID supplied by resolved page context, attachment context, or governed asset resolution.
-3. For listing requests such as "what files do I have", "which files are visible", "current files", or "selected files", answer directly from the provided visible file context when it is present and sufficient. Call `list_visible_files` when that context is missing, ambiguous, stale, or needs an authoritative refresh. Do not use `read_file` for a list-only request unless the user asks for file contents.
+3. For listing requests such as "what files do I have", "which files are visible", "current files", or "selected files", use the current backend-backed page context when it is present and fresh. Call `list_visible_files` when that context is missing, ambiguous, stale, or needs an authoritative refresh. Do not use `read_file` for a list-only request unless the user asks for file contents.
 4. For read, summary, translation, extraction, comparison, or question answering, call `read_file` with `file_id`. Set `max_chars` only when you need more or less returned content.
 5. Inspect `content_status` before answering:
    - If `content_status` is `extracted`, answer from `content`.
@@ -96,11 +96,12 @@ Use this skill to list visible file context or read content from a file that has
 - Success evidence: the tool result must identify the resolved file and include `content_status`. Use `content` only when `content_status=extracted`. If `content_status=empty`, report that no extractable text was found. If `content_status=error`, report the actual read failure instead of summarizing from filename or page metadata.
 - Handoff evidence: when `content_lifetime=current_tool_result_only` and `content_redacted_in_history=true`, do not assume the raw `content` will be available after continuation boundaries. If `handoff_recommended=true` and later steps depend on this content or a derived summary, call `submit_turn_state` before continuing to those steps.
 
-`list_visible_files` accepts no parameters and returns:
+`list_visible_files` accepts the current page query when available: `page`, `page_size`, `keyword`, `sort`, `extension`, `processing_status`, `category`, `folder_id`, `workspace_id`, and optional `selected_ids`. It returns:
 
-- `count`: number of visible files supplied by the current page context.
+- `source=backend_api`: confirms the list came from the authoritative backend query.
+- `count`: number of files in the returned page.
 - `selected_count`: number of selected files.
-- `files`: ordered visible files with `visible_index`, `file_id`, `name`, `extension`, `mime_type`, optional `workspace_id`, and optional `selected`.
+- `files`: ordered files with ID, name, extension, MIME type, optional workspace ID, and verified selection state.
 - Success evidence: use the returned `files` list and `count` as the current visible-file state. Do not infer file contents from this list-only result.
 
 ## Truthfulness Contract

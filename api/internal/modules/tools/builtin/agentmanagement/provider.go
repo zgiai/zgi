@@ -158,11 +158,12 @@ func newListAgentsTool(agentsService interfaces.AgentsService) tools.Tool {
 	return &listAgentsTool{agentToolBase: newAgentToolBase(agentToolEntity(
 		ToolListAgents,
 		"List Agents",
-		"List or search Agent assets visible to the current AIChat user in the current workspace. Use this only when current page visible_agents are missing, insufficient, ambiguous, or the user asks to search beyond the visible page. For named mutation targets, do at most one exact-name search and one broader list/check before reporting a missing target; do not repeat near-duplicate searches.",
+		"List or search Agent assets from the authoritative backend in the current workspace. Use the returned order for ordinal targets such as the first visible Agent. For named mutation targets, do at most one exact-name search and one broader list/check before reporting a missing target; do not repeat near-duplicate searches.",
 		"list",
 		[]tools.ToolParameter{
 			stringParameter("workspace_id", "Workspace ID", "Optional workspace ID. Usually omit so current AIChat workspace context is used.", false),
 			stringParameter("keyword", "Keyword", "Optional search keyword for Agent name or description.", false),
+			numberParameter("page", "Page", "Optional one-based page number.", false),
 			numberParameter("limit", "Limit", "Optional maximum number of Agents to return, capped at 100.", false),
 		},
 	), agentsService, nil, nil)}
@@ -563,8 +564,9 @@ func (t *listAgentsTool) Invoke(ctx context.Context, userID string, params map[s
 	}
 	workspaceID := firstNonEmptyString(stringValue(params, "workspace_id"), scope.WorkspaceID)
 	limit := intParam(params, "limit", defaultAgentListPageSize, 100)
+	page := intParam(params, "page", 1, 100000)
 	req := dto.GetAgentsListRequest{
-		Page:        1,
+		Page:        page,
 		Limit:       limit,
 		PageSize:    limit,
 		WorkspaceID: workspaceID,
@@ -581,12 +583,17 @@ func (t *listAgentsTool) Invoke(ctx context.Context, userID string, params map[s
 	}
 	return []tools.ToolInvokeMessage{builtin.CreateJSONMessage(map[string]interface{}{
 		"status":       "completed",
+		"source":       "backend_api",
+		"page":         page,
+		"page_size":    limit,
 		"count":        len(agents),
 		"total":        resp.Total,
 		"has_more":     resp.HasMore,
 		"workspace_id": workspaceID,
-		"agents":       agents,
-		"visible_page": visibleAgentsFromRuntime(t.Runtime()),
+		"query": map[string]interface{}{
+			"page": page, "page_size": limit, "keyword": stringValue(params, "keyword"), "workspace_id": workspaceID, "asset_kind": "AGENT",
+		},
+		"agents": agents,
 	})}, nil
 }
 

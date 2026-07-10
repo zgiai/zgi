@@ -38,7 +38,7 @@ func consoleAgentsContextSnapshot(parts *chatRequestParts) map[string]interface{
 	if parts == nil || !isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
 		return nil
 	}
-	agents := consoleAgentsPromptVisibleAgents(parts)
+	agents := consoleAgentsPromptAgents(parts)
 	if len(agents) == 0 {
 		return nil
 	}
@@ -53,16 +53,29 @@ func consoleAgentsContextSnapshot(parts *chatRequestParts) map[string]interface{
 
 	route := consoleAgentsContextSnapshotRoute(parts, agents)
 	snapshot := map[string]interface{}{
-		"schema":         consoleAgentsContextSnapshotSchema,
-		"page":           "console.agents",
-		"route":          firstNonEmptyString(route, "/console/agents"),
-		"capabilities":   capabilities,
-		"visible_agents": copyMapSlice(agents),
+		"schema":       consoleAgentsContextSnapshotSchema,
+		"page":         "console.agents",
+		"route":        firstNonEmptyString(route, "/console/agents"),
+		"capabilities": capabilities,
+	}
+	if isConsoleAgentDetailRoute(route) {
+		agentID := agentIDFromConsoleAgentPageRoute(route)
+		for _, agent := range agents {
+			if strings.EqualFold(strings.TrimSpace(firstNonEmptyString(agent["agent_id"], agent["id"])), agentID) {
+				snapshot["current_agent"] = copyStringAnyMap(agent)
+				break
+			}
+		}
+		if _, ok := snapshot["current_agent"]; !ok && len(agents) > 0 {
+			snapshot["current_agent"] = copyStringAnyMap(agents[0])
+		}
+	} else {
+		snapshot["visible_agents"] = copyMapSlice(agents)
 	}
 	for key, value := range consoleAgentsPageSnapshotMetadata(parts) {
 		snapshot[key] = value
 	}
-	if _, ok := snapshot["visible_agent_count"]; !ok {
+	if _, ok := snapshot["visible_agent_count"]; !ok && !isConsoleAgentDetailRoute(route) {
 		snapshot["visible_agent_count"] = len(agents)
 	}
 	return snapshot
@@ -169,7 +182,7 @@ func restoreConsoleAgentsContextFromMetadata(parts *chatRequestParts, metadata m
 		return
 	}
 	if isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) &&
-		len(consoleAgentsPromptVisibleAgents(parts)) > 0 {
+		len(consoleAgentsPromptAgents(parts)) > 0 {
 		return
 	}
 
@@ -195,7 +208,8 @@ func consoleAgentsOperationContextFromSnapshot(snapshot map[string]interface{}) 
 		return nil
 	}
 	agents := mapSliceFromAny(snapshot["visible_agents"])
-	if len(agents) == 0 {
+	currentAgent := mapFromOperationContext(snapshot["current_agent"])
+	if len(agents) == 0 && len(currentAgent) == 0 {
 		return nil
 	}
 
@@ -211,7 +225,7 @@ func consoleAgentsOperationContextFromSnapshot(snapshot map[string]interface{}) 
 		}
 	}
 
-	resources := make([]interface{}, 0, len(agents)+1)
+	resources := make([]interface{}, 0, len(agents)+2)
 	resources = append(resources, map[string]interface{}{
 		"resource_id":   "console.agents",
 		"resource_type": "page",
@@ -220,6 +234,9 @@ func consoleAgentsOperationContextFromSnapshot(snapshot map[string]interface{}) 
 		"href":          route,
 		"metadata":      pageMetadata,
 	})
+	if len(currentAgent) > 0 {
+		agents = []map[string]interface{}{currentAgent}
+	}
 	for _, agent := range agents {
 		agentID := strings.TrimSpace(firstNonEmptyString(agent["agent_id"], agent["id"], agent["resource_id"]))
 		name := strings.TrimSpace(firstNonEmptyString(agent["name"], agent["title"], agent["agent_name"]))

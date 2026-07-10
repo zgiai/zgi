@@ -125,6 +125,8 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 					"You create a lightweight semantic Turn Contract for one ZGI sidebar assistant turn. Return JSON only.",
 					"This is not a tool script. Do not choose concrete tool names, tool arguments, or ordered tool calls.",
 					"The intent field is a broad compatibility label only. Phases, evidence_required, recommended_capabilities, and completion_criteria are advisory task brief fields for the executor, not a fixed tool script or completion verifier contract.",
+					"When recent_task_context is present, use it as conversation history for elliptical follow-ups, corrections, and constraint changes. Preserve the still-relevant goal and pending work, apply the latest user correction, and do not invent an unrelated update type from the latest sentence alone.",
+					"If the latest request and recent_task_context still leave a material side effect ambiguous, return a low-confidence task brief that identifies the ambiguity; the executor may ask the user instead of guessing.",
 					"Pick exactly one broad compatibility intent label from:",
 					"- answer_or_explain_zgi_context: answer questions about ZGI, the current page, or assistant capabilities without asset mutation.",
 					"- navigate_console_page: the user mainly asks to open or switch to a ZGI console page.",
@@ -564,7 +566,39 @@ func contextualTurnIntentClassifierPayload(parts *chatRequestParts) map[string]i
 	if len(parts.RecentGeneratedArtifacts) > 0 {
 		payload["recent_generated_artifacts"] = trimRunes(fmt.Sprint(parts.RecentGeneratedArtifacts), 1000)
 	}
+	if recentTaskContext := compactClassifierRecentTaskContext(parts.RecentOperationPlans, 2); len(recentTaskContext) > 0 {
+		payload["recent_task_context"] = recentTaskContext
+	}
 	return payload
+}
+
+func compactClassifierRecentTaskContext(plans []map[string]interface{}, limit int) []interface{} {
+	if len(plans) == 0 || limit <= 0 {
+		return nil
+	}
+	out := make([]interface{}, 0, minInt(len(plans), limit))
+	for _, plan := range plans {
+		if len(plan) == 0 {
+			continue
+		}
+		item := map[string]interface{}{}
+		for _, key := range []string{"status", "intent", "task_type", "pending_next_action", "current_page", "original_user_goal"} {
+			if value := strings.TrimSpace(stringFromAny(plan[key])); value != "" {
+				item[key] = trimRunes(value, 800)
+			}
+		}
+		if phases := operationPlanCompactPhasesForPrompt(plan["phases"], 8); len(phases) > 0 {
+			item["phases"] = phases
+		}
+		if len(item) == 0 {
+			continue
+		}
+		out = append(out, item)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
 }
 
 func compactClassifierMap(input map[string]interface{}, maxRunes int) map[string]interface{} {

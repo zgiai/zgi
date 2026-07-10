@@ -202,6 +202,10 @@ func withPayloadTimestamp(payload map[string]interface{}) map[string]interface{}
 
 // SkillArtifactsFromToolMessages extracts public file artifacts from tool messages.
 func SkillArtifactsFromToolMessages(ids PayloadIDs, trace skills.SkillTrace, messages []tools.ToolInvokeMessage) []map[string]interface{} {
+	if strings.EqualFold(strings.TrimSpace(trace.SkillID), skills.SkillFileManager) &&
+		strings.EqualFold(strings.TrimSpace(trace.ToolName), "save_file_to_management") {
+		return nil
+	}
 	artifacts := make([]map[string]interface{}, 0)
 	for _, message := range messages {
 		if message.Type != tools.ToolInvokeMessageTypeFile || len(message.Meta) == 0 {
@@ -212,9 +216,6 @@ func SkillArtifactsFromToolMessages(ids PayloadIDs, trace skills.SkillTrace, mes
 			continue
 		}
 		artifacts = append(artifacts, skillArtifactFromToolFile(ids, trace, message, file))
-	}
-	if artifact := skillArtifactFromManagedFileJSON(ids, trace, firstJSONToolPayload(messages)); len(artifact) > 0 && !containsSkillArtifact(artifacts, artifact) {
-		artifacts = append(artifacts, artifact)
 	}
 	return artifacts
 }
@@ -1200,13 +1201,19 @@ func skillArtifactFromToolFile(ids PayloadIDs, trace skills.SkillTrace, message 
 	if downloadURL == "" {
 		downloadURL = appendDownloadQuery(url)
 	}
+	fileID := firstNonEmptyString(file["id"], file["file_id"], file["related_id"])
+	artifactID := "tool_file:" + fileID
+	if strings.EqualFold(firstNonEmptyString(file["target"]), "managed_file") || firstNonEmptyString(file["upload_file_id"]) != "" {
+		artifactID = "managed_file:" + fileID
+	}
 	artifact := withPayloadTimestamp(map[string]interface{}{
 		"conversation_id": ids.ConversationID,
 		"message_id":      ids.MessageID,
+		"artifact_id":     artifactID,
 		"artifact_type":   "file",
 		"skill_id":        trace.SkillID,
 		"tool_name":       trace.ToolName,
-		"file_id":         firstNonEmptyString(file["id"], file["related_id"]),
+		"file_id":         fileID,
 		"filename":        stringFromAny(file["filename"]),
 		"extension":       stringFromAny(file["extension"]),
 		"mime_type":       stringFromAny(file["mime_type"]),
@@ -1215,6 +1222,15 @@ func skillArtifactFromToolFile(ids PayloadIDs, trace skills.SkillTrace, message 
 		"download_url":    downloadURL,
 		"transfer_method": stringFromAny(file["transfer_method"]),
 	})
+	if lifecycle := firstNonEmptyString(file["lifecycle"]); lifecycle != "" {
+		artifact["lifecycle"] = lifecycle
+	}
+	if expiresAt := firstNonEmptyValue(file["expires_at"]); expiresAt != nil {
+		artifact["expires_at"] = expiresAt
+	}
+	if strings.HasPrefix(artifactID, "tool_file:") {
+		artifact["tool_file_id"] = fileID
+	}
 	if fileType := stringFromAny(file["type"]); fileType != "" {
 		artifact["file_type"] = fileType
 	}
@@ -1233,76 +1249,6 @@ func skillArtifactFromToolFile(ids PayloadIDs, trace skills.SkillTrace, message 
 		}
 	}
 	return artifact
-}
-
-func skillArtifactFromManagedFileJSON(ids PayloadIDs, trace skills.SkillTrace, payload map[string]interface{}) map[string]interface{} {
-	if len(payload) == 0 {
-		return nil
-	}
-	if !strings.EqualFold(firstNonEmptyString(payload["target"]), "managed_file") {
-		return nil
-	}
-	file := recordFromAny(payload["file"])
-	fileID := firstNonEmptyString(payload["upload_file_id"], payload["file_id"], file["id"], file["file_id"])
-	if fileID == "" {
-		return nil
-	}
-	artifact := withPayloadTimestamp(map[string]interface{}{
-		"conversation_id": ids.ConversationID,
-		"message_id":      ids.MessageID,
-		"artifact_type":   "file",
-		"skill_id":        trace.SkillID,
-		"tool_name":       trace.ToolName,
-		"file_id":         fileID,
-		"upload_file_id":  fileID,
-		"filename":        firstNonEmptyString(payload["filename"], file["name"], file["filename"]),
-		"extension":       firstNonEmptyString(payload["extension"], file["extension"]),
-		"mime_type":       firstNonEmptyString(payload["mime_type"], file["mime_type"]),
-		"size":            firstNonEmptyValue(payload["size"], file["size"]),
-		"target":          "managed_file",
-		"workspace_id":    firstNonEmptyString(payload["workspace_id"], file["workspace_id"]),
-		"transfer_method": firstNonEmptyString(payload["transfer_method"]),
-	})
-	for _, field := range []string{"folder_id", "source_type", "source_file_id", "source_url", "url", "download_url"} {
-		if value := firstNonEmptyString(payload[field], file[field]); value != "" {
-			artifact[field] = value
-		}
-	}
-	if trace.Governance != nil {
-		if correlationID := strings.TrimSpace(trace.Governance.CorrelationID); correlationID != "" {
-			artifact["correlation_id"] = correlationID
-			artifact["operation_id"] = "tool_governance:" + correlationID
-		}
-		if len(trace.Governance.AssetOperationAudit) > 0 {
-			artifact["asset_operation_audit"] = trace.Governance.AssetOperationAudit
-		}
-	}
-	return artifact
-}
-
-func containsSkillArtifact(artifacts []map[string]interface{}, candidate map[string]interface{}) bool {
-	candidateKey := skillArtifactKey(candidate)
-	if candidateKey == "" {
-		return false
-	}
-	for _, artifact := range artifacts {
-		if skillArtifactKey(artifact) == candidateKey {
-			return true
-		}
-	}
-	return false
-}
-
-func skillArtifactKey(artifact map[string]interface{}) string {
-	if len(artifact) == 0 {
-		return ""
-	}
-	target := strings.ToLower(strings.TrimSpace(firstNonEmptyString(artifact["target"])))
-	id := strings.TrimSpace(firstNonEmptyString(artifact["upload_file_id"], artifact["file_id"]))
-	if id == "" {
-		return ""
-	}
-	return target + ":" + id
 }
 
 // TraceLooksLikeTemporaryFileArtifact reports whether a completed tool trace

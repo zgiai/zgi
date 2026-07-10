@@ -19,6 +19,7 @@ import type {
   AIChatRuntimeSurface,
   AIChatToolGovernanceDecisionEventData,
   AIChatToolGovernanceDecisionRequest,
+  AIChatUserInputContinuationRequest,
   AIChatWorkflowPausedEventData,
 } from '@/services/types/aichat';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
@@ -264,6 +265,12 @@ export interface AIChatController {
     messageId: string,
     actionId: string,
     payload: AIChatClientActionResultRequest
+  ) => Promise<void>;
+  continueUserInput?: (
+    conversationId: string,
+    messageId: string,
+    requestId: string,
+    payload: AIChatUserInputContinuationRequest
   ) => Promise<void>;
   switchBranch: (messageId: string) => void;
   search?: (

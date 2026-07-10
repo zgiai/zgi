@@ -319,6 +319,7 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 		return nil, err
 	}
 	restoreTurnInitialContextFromMetadata(parts, message.Metadata)
+	restoreCurrentPageContextFromMetadata(parts, message.Metadata)
 	if actionID := clientActionID(continuation.Event); actionID != "" {
 		message.Metadata = resolveClientActionContinuationMetadata(message.Metadata, actionID, req)
 	}
@@ -334,6 +335,12 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 		return nil, err
 	}
 	ensureClientActionContinuationSkill(parts, continuation.Event)
+	prepared := &PreparedChat{
+		Conversation: continuation.Conversation, Message: message, Scope: scope,
+		Caller: Caller{Type: runtimemodel.ConversationCallerAIChat}, ParentID: message.ParentID, parts: parts,
+		Continuation: true,
+	}
+	s.refreshPageContextAfterClientAction(ctx, prepared, continuation.Event, req)
 	contextResult, err := s.buildUpstreamMessages(ctx, scope, message.ParentID, parts)
 	if err != nil {
 		return nil, err
@@ -341,15 +348,8 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	parts.ContextControl = contextResult.Metadata
 	llmRequest := newLLMChatRequest(parts, contextResult.Messages)
 	llmRequest.Messages = append(llmRequest.Messages, clientActionContinuationMessage(message, continuation.Event, req))
-	return &PreparedChat{
-		Conversation: continuation.Conversation,
-		Message:      message,
-		LLMRequest:   llmRequest,
-		Scope:        scope,
-		Caller:       Caller{Type: runtimemodel.ConversationCallerAIChat},
-		ParentID:     message.ParentID,
-		parts:        parts,
-	}, nil
+	prepared.LLMRequest = llmRequest
+	return prepared, nil
 }
 
 func injectClientActionContinuationContext(parts *chatRequestParts, event map[string]interface{}, req runtimedto.ClientActionResultRequest, metadata map[string]interface{}) {
@@ -941,6 +941,7 @@ func (s *service) failClientActionContinuation(ctx context.Context, continuation
 	prepared := &PreparedChat{
 		Conversation: continuation.Conversation,
 		Message:      continuation.Message,
+		Continuation: true,
 	}
 	s.finalizePreparedError(ctx, prepared, cause, onEvent)
 	s.emitPreparedEvent(ctx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, continuation.Message.Metadata, runtimemodel.MessageStatusError), onEvent)

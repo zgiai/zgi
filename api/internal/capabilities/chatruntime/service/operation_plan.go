@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
@@ -242,84 +243,20 @@ func operationPlanPhasesFromTurnStrategy(strategy *AIChatTurnStrategy) []map[str
 	if strategy == nil {
 		return nil
 	}
-	statusPending := operationPlanStepStatusPending
 	if len(strategy.PhaseGoals) > 0 {
-		phases := make([]map[string]interface{}, 0, len(strategy.PhaseGoals)+1)
-		if strategy.RouteRequired || strings.TrimSpace(strategy.TargetPage) != "" {
-			phases = append(phases, map[string]interface{}{
-				"id":       "route_if_needed",
-				"title":    "Navigate only when the current page does not provide the needed context",
-				"status":   statusPending,
-				"evidence": []interface{}{"current route", "target route", "client navigation result"},
-			})
-		}
+		phases := make([]map[string]interface{}, 0, len(strategy.PhaseGoals))
 		for idx, goal := range compactStringSliceForPrompt(strategy.PhaseGoals, 8, 180) {
 			phase := map[string]interface{}{
-				"id":     fmt.Sprintf("semantic_phase_%d", idx+1),
+				"id":     fmt.Sprintf("phase-%d", idx+1),
+				"step":   goal,
 				"title":  goal,
-				"status": statusPending,
-			}
-			if len(strategy.EvidenceRequired) > 0 {
-				phase["evidence"] = stringSliceToInterfaceSlice(compactStringSliceForPrompt(strategy.EvidenceRequired, 6, 180))
+				"status": operationPlanStepStatusPending,
 			}
 			phases = append(phases, phase)
 		}
-		if successCriteria := operationPlanSuccessCriteriaFromTurnStrategy(strategy); len(successCriteria) > 0 && len(phases) > 0 {
-			phases[len(phases)-1]["success_criteria"] = compactStringSliceForPrompt(successCriteria, 8, 240)
-		}
-		if len(strategy.ObservationPoints) > 0 && len(phases) > 0 {
-			phases[len(phases)-1]["observation_points"] = compactStringSliceForPrompt(strategy.ObservationPoints, 8, 240)
-		}
 		return phases
 	}
-	phases := []map[string]interface{}{
-		{
-			"id":       "understand_context",
-			"title":    "Understand current context and target assets",
-			"status":   statusPending,
-			"evidence": []interface{}{"current page context", "visible assets", "user request"},
-		},
-		{
-			"id":       "act_with_tools",
-			"title":    "Use enabled tools to perform the requested work",
-			"status":   statusPending,
-			"evidence": []interface{}{"successful tool results", "governance decisions when required"},
-		},
-		{
-			"id":       "verify_result",
-			"title":    "Verify the result from tool or page evidence",
-			"status":   statusPending,
-			"evidence": []interface{}{"latest tool result", "refreshed page/client observation"},
-		},
-		{
-			"id":       "respond_truthfully",
-			"title":    "Respond from evidence without exposing internal plans",
-			"status":   statusPending,
-			"evidence": []interface{}{"success criteria", "known blockers"},
-		},
-	}
-	if strategy.RouteRequired || strings.TrimSpace(strategy.TargetPage) != "" {
-		phases = append([]map[string]interface{}{
-			{
-				"id":       "route_if_needed",
-				"title":    "Navigate only when the current page does not provide the needed context",
-				"status":   statusPending,
-				"evidence": []interface{}{"current route", "target route", "client navigation result"},
-			},
-		}, phases...)
-	}
-	if successCriteria := operationPlanSuccessCriteriaFromTurnStrategy(strategy); len(successCriteria) > 0 {
-		phases[len(phases)-1]["success_criteria"] = compactStringSliceForPrompt(successCriteria, 8, 240)
-	}
-	if len(strategy.ObservationPoints) > 0 {
-		for i := range phases {
-			if strings.EqualFold(stringFromAny(phases[i]["id"]), "verify_result") {
-				phases[i]["observation_points"] = compactStringSliceForPrompt(strategy.ObservationPoints, 8, 240)
-				break
-			}
-		}
-	}
-	return phases
+	return nil
 }
 
 func operationPlanStructuredPlanFromTurnStrategy(strategy *AIChatTurnStrategy) map[string]interface{} {
@@ -5294,7 +5231,8 @@ func applyOperationPlanArtifactState(metadata map[string]interface{}, files []ma
 	assetFiles := make([]interface{}, 0, minInt(len(files), 8))
 	logicalAssets := map[string]struct{}{}
 	temporaryCount := 0
-	managedCount := 0
+	successfulSaveCalls := successfulMetadataToolCalls(metadata, skills.SkillFileManager, "save_file_to_management")
+	managedCount := len(successfulSaveCalls)
 	for _, file := range files {
 		if len(assetFiles) >= 8 {
 			break
@@ -5329,7 +5267,7 @@ func applyOperationPlanArtifactState(metadata map[string]interface{}, files []ma
 	if logicalAssetCount == 0 {
 		logicalAssetCount = len(assetFiles)
 	}
-	unsavedFiles := compactUnsavedOperationPlanGeneratedFiles(files)
+	unsavedFiles := compactUnsavedOperationPlanGeneratedFiles(files, successfulSaveCalls)
 
 	assetState := map[string]interface{}{
 		"schema_version":         "operation_plan.asset_state.v1",
@@ -5532,7 +5470,6 @@ func finalizePassiveOperationPlanForCompletedResult(metadata map[string]interfac
 		"source": "passive_answer_finalizer",
 		"reason": "passive assistant answer completed without runtime tool actions",
 	}
-	operationPlanMarkPhasesStatus(plan, operationPlanStepStatusCompleted)
 	applyOperationPlanProgress(plan, nil, map[string]interface{}{}, "none", operationPlanStatusCompleted)
 	metadata["operation_plan"] = plan
 	syncOperationPlanCompletionMetadata(metadata)
@@ -5673,7 +5610,6 @@ func applyOperationPlanCompletionVerificationResultWithSource(metadata map[strin
 			operationPlanSetStepStatus(steps, stepStatus, id, operationPlanStepStatusCompleted)
 			delete(step, "error")
 		}
-		operationPlanMarkPhasesStatus(plan, operationPlanStepStatusCompleted)
 		applyOperationPlanProgress(plan, steps, stepStatus, "none", operationPlanStatusCompleted)
 		metadata["operation_plan"] = plan
 		syncOperationPlanCompletionMetadata(metadata)
@@ -5859,11 +5795,16 @@ func operationPlanRequiresManagedFileSave(plan map[string]interface{}, steps []m
 	return false
 }
 
-func compactUnsavedOperationPlanGeneratedFiles(files []map[string]interface{}) []map[string]interface{} {
+func compactUnsavedOperationPlanGeneratedFiles(files []map[string]interface{}, successfulSaveCalls []skillloop.SkillToolCallRef) []map[string]interface{} {
 	if len(files) == 0 {
 		return nil
 	}
 	savedSourceIDs := map[string]struct{}{}
+	for _, call := range successfulSaveCalls {
+		if sourceID := fileManagerSaveToolFileID(call); sourceID != "" {
+			savedSourceIDs[sourceID] = struct{}{}
+		}
+	}
 	for _, file := range files {
 		if !isManagedFileArtifact(file) {
 			continue

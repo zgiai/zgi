@@ -117,10 +117,18 @@ func TestReadFileToolReturnsAccessibleContent(t *testing.T) {
 }
 
 func TestListVisibleFilesToolReturnsRuntimeContextFiles(t *testing.T) {
-	provider := NewProvider(nil, nil, nil)
+	workspaceID := "workspace-1"
+	listService := &fakeFileListService{files: []*filemodel.UploadFile{
+		{ID: "file-1", OrganizationID: "org-1", Name: "one.txt", Extension: "txt", CreatedAt: time.Unix(1700000000, 0)},
+		{ID: "file-2", OrganizationID: "org-1", WorkspaceID: &workspaceID, Name: "two.pdf", Extension: "pdf", CreatedAt: time.Unix(1700000001, 0)},
+	}}
+	provider := NewProvider(nil, nil, &fakeWorkspacePermissionService{allowed: true}, WithFileListService(listService))
 	tool := listVisibleFilesRuntimeTool(t, provider, "org-1")
 
-	messages, err := tool.Invoke(context.Background(), "acct-1", nil, nil, nil, nil)
+	messages, err := tool.Invoke(context.Background(), "acct-1", map[string]interface{}{
+		"workspace_id": workspaceID,
+		"selected_ids": "file-2",
+	}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Invoke() error = %v", err)
 	}
@@ -145,6 +153,21 @@ func TestListVisibleFilesToolReturnsRuntimeContextFiles(t *testing.T) {
 	second, ok := files[1].(map[string]interface{})
 	if !ok || second["selected"] != true || second["workspace_id"] != "workspace-1" {
 		t.Fatalf("second file = %#v, want selected workspace file", files[1])
+	}
+}
+
+func TestListVisibleFilesToolNormalizesNeedsActionProcessingStatus(t *testing.T) {
+	listService := &fakeFileListService{}
+	provider := NewProvider(nil, nil, &fakeWorkspacePermissionService{allowed: true}, WithFileListService(listService))
+	tool := listVisibleFilesRuntimeTool(t, provider, "org-1")
+
+	if _, err := tool.Invoke(context.Background(), "acct-1", map[string]interface{}{
+		"category": "needs_action",
+	}, nil, nil, nil); err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if got := listService.last["processing_status"]; got != "parse_failed" {
+		t.Fatalf("processing_status = %#v, want parse_failed", got)
 	}
 }
 
@@ -216,7 +239,11 @@ func TestConsoleFilesReadFileSupportsDocumentFormats(t *testing.T) {
 			"console_files_visible_files": visibleFiles,
 		},
 	}
-	provider := NewProvider(fileService, extractor, nil)
+	listFiles := make([]*filemodel.UploadFile, 0, len(cases))
+	for _, tc := range cases {
+		listFiles = append(listFiles, &filemodel.UploadFile{ID: tc.id, OrganizationID: organizationID, Name: tc.name, Extension: tc.extension, MimeType: tc.mimeType, CreatedBy: accountID, CreatedAt: time.Unix(1700000200, 0)})
+	}
+	provider := NewProvider(fileService, extractor, &fakeWorkspacePermissionService{allowed: true}, WithFileListService(&fakeFileListService{files: listFiles}))
 
 	listTool, err := provider.GetTool(ToolListVisibleFiles)
 	if err != nil {
@@ -585,6 +612,7 @@ func TestSaveFileToolSavesGeneratedToolFileWithAdvancedPermission(t *testing.T) 
 	accountID := uuid.NewString()
 	workspaceID := uuid.NewString()
 	conversationID := uuid.NewString()
+	expiresAt := time.Now().Add(time.Hour)
 	fileService := &fakeFileService{
 		files: map[string]*dto.UploadFile{},
 	}
@@ -598,6 +626,8 @@ func TestSaveFileToolSavesGeneratedToolFileWithAdvancedPermission(t *testing.T) 
 				Name:           "draft.md",
 				MimeType:       "text/markdown",
 				Size:           13,
+				Lifecycle:      string(tool_file.ToolFileLifecycleTemporary),
+				ExpiresAt:      &expiresAt,
 			},
 		},
 		data: map[string][]byte{
@@ -636,6 +666,46 @@ func TestSaveFileToolSavesGeneratedToolFileWithAdvancedPermission(t *testing.T) 
 	payload := messages[0].Data
 	if payload["target"] != "managed_file" || payload["transfer_method"] != "local_file" || payload["upload_file_id"] == "" {
 		t.Fatalf("payload = %#v, want managed local file metadata", payload)
+	}
+	if payload["operation"] != "copy" || payload["source_retained"] != true || payload["source_tool_file_id"] != "tool-1" {
+		t.Fatalf("payload = %#v, want retained tool-file copy metadata", payload)
+	}
+	if payload["source_expires_at"] != expiresAt.Unix() {
+		t.Fatalf("source_expires_at = %#v, want %d", payload["source_expires_at"], expiresAt.Unix())
+	}
+}
+
+func TestSaveFileToolRejectsExpiredGeneratedToolFile(t *testing.T) {
+	organizationID := uuid.NewString()
+	accountID := uuid.NewString()
+	workspaceID := uuid.NewString()
+	conversationID := uuid.NewString()
+	expiresAt := time.Now().Add(-time.Minute)
+	toolFiles := &fakeToolFileStore{
+		files: map[string]*tool_file.ToolFile{
+			"tool-expired": {
+				ID: "tool-expired", UserID: accountID, TenantID: organizationID,
+				ConversationID: &conversationID, Name: "expired.md", MimeType: "text/markdown",
+				Lifecycle: string(tool_file.ToolFileLifecycleTemporary), ExpiresAt: &expiresAt,
+			},
+		},
+		data: map[string][]byte{"tool-expired": []byte("expired")},
+	}
+	fileService := &fakeFileService{files: map[string]*dto.UploadFile{}}
+	provider := NewProvider(fileService, nil, &fakeWorkspacePermissionService{allowed: true}, WithToolFileStore(toolFiles))
+	tool := saveFileRuntimeToolFrom(t, provider, organizationID, tools.ToolInvokeFromAIChat, map[string]interface{}{
+		"organization_id": organizationID, "workspace_id": workspaceID,
+		"tool_governance_permission_tier": "advanced",
+	})
+
+	_, err := tool.Invoke(context.Background(), accountID, map[string]interface{}{
+		"source_type": "tool_file", "tool_file_id": "tool-expired", "filename": "expired.md",
+	}, &conversationID, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "has expired") {
+		t.Fatalf("Invoke() error = %v, want expired generated file", err)
+	}
+	if len(fileService.uploads) != 0 {
+		t.Fatalf("uploads = %#v, want no managed copy", fileService.uploads)
 	}
 }
 
@@ -917,6 +987,25 @@ type fakeFileService struct {
 	content map[string]string
 	deleted []string
 	uploads []fakeFileUpload
+}
+
+type fakeFileListService struct {
+	files []*filemodel.UploadFile
+	last  map[string]interface{}
+}
+
+func (s *fakeFileListService) ListFilesInFolderWithFilters(_ context.Context, folderID string, page, limit int, keyword, sort, extension, processingStatus string, _ *time.Time, _ *time.Time, _ string, _ []string) ([]*filemodel.UploadFile, int64, error) {
+	s.last = map[string]interface{}{"folder_id": folderID, "page": page, "limit": limit, "keyword": keyword, "sort": sort, "extension": extension, "processing_status": processingStatus}
+	return s.files, int64(len(s.files)), nil
+}
+
+func (s *fakeFileListService) ListAllFilesWithFilters(_ context.Context, page, limit int, keyword, sort, extension, processingStatus string, _ *time.Time, _ *time.Time, _ string, _ string, _ []string) ([]*filemodel.UploadFile, int64, error) {
+	s.last = map[string]interface{}{"page": page, "limit": limit, "keyword": keyword, "sort": sort, "extension": extension, "processing_status": processingStatus}
+	return s.files, int64(len(s.files)), nil
+}
+
+func (s *fakeFileListService) CheckFolderViewPermission(_ context.Context, _ string, _ string, _ string, _ []string) (bool, error) {
+	return true, nil
 }
 
 type fakeFileUpload struct {

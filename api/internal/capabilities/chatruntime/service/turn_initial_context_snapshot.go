@@ -30,6 +30,35 @@ func turnInitialContextSnapshot(parts *chatRequestParts) map[string]interface{} 
 	if parts.OperationLedger != nil {
 		snapshot["operation_ledger"] = copyStringAnyMap(parts.OperationLedger)
 	}
+	resources := []map[string]interface{}{}
+	for _, source := range []map[string]interface{}{parts.RawOperationContext, parts.OperationContext} {
+		for _, resource := range mapSliceFromAny(source["resources"]) {
+			item := map[string]interface{}{}
+			metadata := mapFromOperationContext(resource["metadata"])
+			for _, key := range []string{"resource_type", "resource_id", "title", "href"} {
+				if value := strings.TrimSpace(stringFromAny(resource[key])); value != "" {
+					item[key] = compactForPrompt(value, 240)
+				}
+			}
+			for _, key := range []string{"agent_id", "file_id", "name", "selected", "visible_index"} {
+				if value, ok := metadata[key]; ok && value != nil {
+					item[key] = value
+				}
+			}
+			if len(item) > 0 {
+				resources = append(resources, item)
+			}
+			if len(resources) >= 20 {
+				break
+			}
+		}
+		if len(resources) >= 20 {
+			break
+		}
+	}
+	if len(resources) > 0 {
+		snapshot["resources"] = mapsToInterfaceSlice(resources)
+	}
 	if len(snapshot) <= 2 {
 		return nil
 	}
@@ -41,11 +70,19 @@ func restoreTurnInitialContextFromMetadata(parts *chatRequestParts, metadata map
 		return
 	}
 	snapshot := mapFromOperationContext(metadata[turnInitialContextSnapshotKey])
+	if start := mapFromOperationContext(metadata[turnStartContextKey]); len(start) > 0 {
+		snapshot = start
+	}
 	if len(snapshot) == 0 || !strings.EqualFold(strings.TrimSpace(stringFromAny(snapshot["schema"])), turnInitialContextSnapshotSchema) {
 		return
 	}
 	if strings.TrimSpace(parts.Surface) == "" {
 		parts.Surface = normalizeAIChatSurface(stringFromAny(snapshot["surface"]))
+	}
+	for _, target := range []map[string]interface{}{parts.RawOperationContext, parts.OperationContext} {
+		if target != nil {
+			target[turnStartContextKey] = copyStringAnyMap(snapshot)
+		}
 	}
 	if parts.OperationLedger == nil {
 		if ledger := mapFromOperationContext(snapshot["operation_ledger"]); len(ledger) > 0 {

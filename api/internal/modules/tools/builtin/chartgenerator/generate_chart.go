@@ -220,6 +220,10 @@ func (t *GenerateChartTool) Invoke(
 	fileMeta["url"] = url
 	fileMeta["download_url"] = downloadURL
 	fileMeta["target"] = "temporary_artifact"
+	fileMeta["lifecycle"] = toolFile.Lifecycle
+	if toolFile.ExpiresAt != nil {
+		fileMeta["expires_at"] = toolFile.ExpiresAt.Unix()
+	}
 
 	return []tools.ToolInvokeMessage{
 		{
@@ -238,10 +242,19 @@ func (t *GenerateChartTool) Invoke(
 			"url":          url,
 			"download_url": downloadURL,
 			"target":       "temporary_artifact",
+			"lifecycle":    toolFile.Lifecycle,
+			"expires_at":   chartToolFileExpiresAt(toolFile),
 			"x_count":      meta.XCount,
 			"series_count": meta.SeriesCount,
 		}),
 	}, nil
+}
+
+func chartToolFileExpiresAt(toolFile *tool_file.ToolFile) interface{} {
+	if toolFile == nil || toolFile.ExpiresAt == nil {
+		return nil
+	}
+	return toolFile.ExpiresAt.Unix()
 }
 
 func normalizeChartType(raw string) string {

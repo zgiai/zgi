@@ -62,6 +62,13 @@ type ClientActionResultRequest struct {
 	Error            string                 `json:"error,omitempty"`
 }
 
+type UserInputContinuationRequest struct {
+	Answers          map[string]string      `json:"answers" binding:"required"`
+	Surface          string                 `json:"surface,omitempty"`
+	RuntimeContext   string                 `json:"runtime_context,omitempty"`
+	OperationContext map[string]interface{} `json:"operation_context,omitempty"`
+}
+
 type StopConversationResponse struct {
 	ConversationID string  `json:"conversation_id"`
 	MessageID      *string `json:"message_id,omitempty"`

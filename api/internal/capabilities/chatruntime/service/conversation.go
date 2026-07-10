@@ -461,7 +461,7 @@ func (s *service) ListMessages(ctx context.Context, scope Scope, conversationID 
 	if err != nil {
 		return nil, 0, err
 	}
-	hydrateMessagesGeneratedFileURLs(messages)
+	hydrateMessagesGeneratedFileState(ctx, messages)
 	hydrateMessagesPublicErrors(messages)
 	return messages, total, nil
 }
@@ -483,7 +483,7 @@ func (s *service) ListMessagesByCaller(ctx context.Context, scope Scope, caller 
 	if err != nil {
 		return nil, 0, err
 	}
-	hydrateMessagesGeneratedFileURLs(messages)
+	hydrateMessagesGeneratedFileState(ctx, messages)
 	hydrateMessagesPublicErrors(messages)
 	return messages, total, nil
 }
@@ -502,7 +502,7 @@ func (s *service) ListMessagesByCallerSource(ctx context.Context, scope Scope, c
 	if err != nil {
 		return nil, 0, err
 	}
-	hydrateMessagesGeneratedFileURLs(messages)
+	hydrateMessagesGeneratedFileState(ctx, messages)
 	hydrateMessagesPublicErrors(messages)
 	return messages, total, nil
 }
@@ -517,7 +517,7 @@ func (s *service) ListMessagesByCallerLogFilters(ctx context.Context, scope Scop
 	if err != nil {
 		return nil, 0, err
 	}
-	hydrateMessagesGeneratedFileURLs(messages)
+	hydrateMessagesGeneratedFileState(ctx, messages)
 	hydrateMessagesPublicErrors(messages)
 	return messages, total, nil
 }
@@ -532,7 +532,7 @@ func (s *service) ListMessagesByCallerRuntimeLogFilters(ctx context.Context, sco
 	if err != nil {
 		return nil, 0, err
 	}
-	hydrateMessagesGeneratedFileURLs(messages)
+	hydrateMessagesGeneratedFileState(ctx, messages)
 	hydrateMessagesPublicErrors(messages)
 	return messages, total, nil
 }
@@ -549,7 +549,7 @@ func (s *service) GetMessageByCaller(ctx context.Context, scope Scope, caller Ca
 	if err != nil {
 		return nil, nil, err
 	}
-	hydrateMessageGeneratedFileURLs(message)
+	hydrateMessageGeneratedFileState(ctx, message)
 	hydrateMessagePublicError(message)
 	return message, conversation, nil
 }
@@ -568,7 +568,7 @@ func (s *service) GetMessageByCallerRuntimeLog(ctx context.Context, scope Scope,
 	if err != nil {
 		return nil, nil, mapRepoError(err)
 	}
-	hydrateMessageGeneratedFileURLs(message)
+	hydrateMessageGeneratedFileState(ctx, message)
 	hydrateMessagePublicError(message)
 	return message, conversation, nil
 }
@@ -597,7 +597,7 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 		return nil, mapRepoError(err)
 	}
 	if !isStoppableMessageStatus(message.Status) {
-		hydrateMessageGeneratedFileURLs(message)
+		hydrateMessageGeneratedFileState(ctx, message)
 		return message, nil
 	}
 
@@ -614,7 +614,7 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 	if err := s.repos.Message.UpdateStoppedAnswer(ctx, id, message.Answer, metadata); err != nil {
 		latest, loadErr := s.repos.Message.GetScoped(ctx, id, scope.OrganizationID, scope.AccountID)
 		if loadErr == nil && !isStoppableMessageStatus(latest.Status) {
-			hydrateMessageGeneratedFileURLs(latest)
+			hydrateMessageGeneratedFileState(ctx, latest)
 			return latest, nil
 		}
 		return nil, mapRepoError(err)
@@ -626,7 +626,7 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 	if err != nil {
 		return nil, mapRepoError(err)
 	}
-	hydrateMessageGeneratedFileURLs(stopped)
+	hydrateMessageGeneratedFileState(ctx, stopped)
 	return stopped, nil
 }
 

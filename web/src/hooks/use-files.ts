@@ -6,6 +6,7 @@ import { fileManageService } from '@/services/file-manage.service';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { useCurrentWorkspace } from '@/store/workspace-store';
+import { getFileDetailKey } from '@/hooks/file/use-file-detail';
 import type { ApiResponseData } from '@/services/types/common';
 import type {
   AllFilesResponse,
@@ -516,8 +517,11 @@ export function useDeleteFiles(): {
       }
       await fileManageService.deleteFiles(fileIds);
     },
-    onSuccess: () => {
+    onSuccess: (_data, { fileIds }) => {
       toast.success(t('toast.deleteSuccess'));
+      fileIds.forEach(fileId => {
+        void queryClient.invalidateQueries({ queryKey: getFileDetailKey(fileId), exact: true });
+      });
       // Invalidate both paginated and basic lists that are either unfiltered or belong to current workspace
       queryClient.invalidateQueries({
         queryKey: [FILES_QUERY_KEY],

@@ -882,6 +882,9 @@ const FileManagementContent = ({
             activeCategory,
             searchValue: debouncedSearchValue,
             extensionParam,
+            processingStatusParam:
+              processingStatusParam ||
+              (activeCategory === 'needs_action' ? 'parse_failed' : undefined),
             currentWorkspace,
             isOrganizationMode,
             activeFolderName: activeFolderContextName,
@@ -900,6 +903,7 @@ const FileManagementContent = ({
       debouncedSearchValue,
       enableAIChatContext,
       extensionParam,
+      processingStatusParam,
       files,
       filesContextReady,
       filesAIChatPresentation,

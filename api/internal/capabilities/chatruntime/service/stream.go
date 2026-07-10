@@ -549,6 +549,9 @@ func (s *service) completePreparedChat(ctx context.Context, prepared *PreparedCh
 	if prepared.ReplaceRoot {
 		return s.repos.Conversation.CompleteRootReplacement(ctx, prepared.Conversation.ID, prepared.Message.ID)
 	}
+	if prepared.Continuation {
+		return s.repos.Conversation.FinishContinuationMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
+	}
 	if err := s.repos.Conversation.UpdateAfterMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
 		return err
 	}
@@ -578,6 +581,9 @@ func (s *service) completePreparedError(ctx context.Context, prepared *PreparedC
 	if prepared.ReplaceRoot {
 		return s.repos.Conversation.CompleteRootReplacement(ctx, prepared.Conversation.ID, prepared.Message.ID)
 	}
+	if prepared.Continuation {
+		return s.repos.Conversation.FinishContinuationMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
+	}
 	return s.repos.Conversation.UpdateAfterMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
 }
 
@@ -596,6 +602,13 @@ func (s *service) persistStoppedAnswer(ctx context.Context, prepared *PreparedCh
 	}
 	if prepared.ReplaceRoot {
 		if err := s.repos.Conversation.CompleteRootReplacement(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
+			return err
+		}
+		s.appendStreamEventBestEffort(ctx, prepared.Message.ID, prepared.Conversation.ID, streamEventMessageEnd, messageEndPayload(prepared, metadata))
+		return nil
+	}
+	if prepared.Continuation {
+		if err := s.repos.Conversation.FinishContinuationMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
 			return err
 		}
 		s.appendStreamEventBestEffort(ctx, prepared.Message.ID, prepared.Conversation.ID, streamEventMessageEnd, messageEndPayload(prepared, metadata))

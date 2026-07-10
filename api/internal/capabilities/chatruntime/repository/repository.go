@@ -595,7 +595,7 @@ func (r *conversationRepository) FinishWaitingApprovalMessage(ctx context.Contex
 			"current_leaf_message_id": messageID,
 			"runtime_status":          runtimemodel.ConversationRuntimeStatusIdle,
 			"active_message_id":       nil,
-			"dialogue_count":          gorm.Expr("dialogue_count + 1"),
+			"dialogue_count":          gorm.Expr("CASE WHEN current_leaf_message_id = ? THEN dialogue_count ELSE dialogue_count + 1 END", messageID),
 			"updated_at":              time.Now(),
 		})
 	if result.Error != nil {

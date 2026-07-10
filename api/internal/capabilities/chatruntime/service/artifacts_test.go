@@ -3,6 +3,7 @@ package service
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
@@ -11,6 +12,7 @@ import (
 )
 
 func TestMergeGeneratedArtifactMetadataPersistsHydratableFile(t *testing.T) {
+	expiresAt := time.Now().Add(time.Hour).Unix()
 	metadata := mergeGeneratedArtifactMetadata(map[string]interface{}{}, map[string]interface{}{
 		"file_id":         "file-json",
 		"filename":        "evaluation-summary.json",
@@ -24,6 +26,8 @@ func TestMergeGeneratedArtifactMetadataPersistsHydratableFile(t *testing.T) {
 		"tool_name":       "run_script",
 		"operation_id":    "tool_governance:corr-1",
 		"correlation_id":  "corr-1",
+		"lifecycle":       "temporary",
+		"expires_at":      expiresAt,
 		"asset_operation_audit": map[string]interface{}{
 			"correlation_id":  "corr-1",
 			"tool_id":         "file.generate_pdf",
@@ -62,6 +66,9 @@ func TestMergeGeneratedArtifactMetadataPersistsHydratableFile(t *testing.T) {
 	}
 	if files[0]["operation_id"] != "tool_governance:corr-1" || files[0]["correlation_id"] != "corr-1" {
 		t.Fatalf("stored generated file operation fields = %#v", files[0])
+	}
+	if files[0]["artifact_id"] != "tool_file:file-json" || files[0]["lifecycle"] != "temporary" || files[0]["expires_at"] != expiresAt {
+		t.Fatalf("stored generated file lifecycle = %#v", files[0])
 	}
 	audit := governanceMapFromAny(files[0]["asset_operation_audit"])
 	if audit["tool_id"] != "file.generate_pdf" || audit["approval_status"] != "approved" {
@@ -238,7 +245,7 @@ func TestRecentGeneratedArtifactsFromBranchKeepsTemporaryToolFiles(t *testing.T)
 	}
 }
 
-func TestConversationArtifactsMarkTemporarySavedToManagement(t *testing.T) {
+func TestConversationArtifactsKeepTemporaryAvailableAfterManagementCopy(t *testing.T) {
 	metadata := mergeGeneratedArtifactMetadata(map[string]interface{}{}, map[string]interface{}{
 		"file_id":         "tool-1",
 		"tool_file_id":    "tool-1",
@@ -265,8 +272,8 @@ func TestConversationArtifactsMarkTemporarySavedToManagement(t *testing.T) {
 	}
 	temp := artifacts[0]
 	managed := artifacts[1]
-	if temp["artifact_id"] != "tool_file:tool-1" || temp["status"] != conversationArtifactStatusSaved || temp["managed_file_id"] != "managed-1" {
-		t.Fatalf("temporary artifact link = %#v, want saved link to managed-1", temp)
+	if temp["artifact_id"] != "tool_file:tool-1" || temp["status"] != conversationArtifactStatusAvailable || temp["managed_file_id"] != nil {
+		t.Fatalf("temporary artifact = %#v, want independently available source", temp)
 	}
 	if managed["artifact_id"] != "managed_file:managed-1" || managed["source_tool_file_id"] != "tool-1" {
 		t.Fatalf("managed artifact = %#v, want source tool_file link", managed)
@@ -277,12 +284,12 @@ func TestConversationArtifactsMarkTemporarySavedToManagement(t *testing.T) {
 		Status:   runtimemodel.MessageStatusCompleted,
 		Metadata: metadata,
 	}}
-	if recent := recentGeneratedArtifactsFromBranch(branch); len(recent) != 0 {
-		t.Fatalf("recent generated artifacts = %#v, want none after saved to management", recent)
+	if recent := recentGeneratedArtifactsFromBranch(branch); len(recent) != 1 || recent[0]["tool_file_id"] != "tool-1" {
+		t.Fatalf("recent generated artifacts = %#v, want retained tool-1 source", recent)
 	}
 }
 
-func TestRecentGeneratedArtifactsSkipsOlderTempAfterLaterManagedSave(t *testing.T) {
+func TestRecentGeneratedArtifactsKeepsOlderTempAfterLaterManagedCopy(t *testing.T) {
 	generatedMetadata := mergeGeneratedArtifactMetadata(map[string]interface{}{}, map[string]interface{}{
 		"file_id":         "tool-1",
 		"tool_file_id":    "tool-1",
@@ -315,8 +322,73 @@ func TestRecentGeneratedArtifactsSkipsOlderTempAfterLaterManagedSave(t *testing.
 		},
 	}
 
+	if recent := recentGeneratedArtifactsFromBranch(branch); len(recent) != 1 || recent[0]["tool_file_id"] != "tool-1" {
+		t.Fatalf("recent generated artifacts = %#v, want retained tool-1 source", recent)
+	}
+}
+
+func TestRecentGeneratedArtifactsSkipsExpiredTemporaryFile(t *testing.T) {
+	metadata := mergeGeneratedArtifactMetadata(map[string]interface{}{}, map[string]interface{}{
+		"file_id": "tool-expired", "tool_file_id": "tool-expired", "filename": "expired.txt",
+		"extension": ".txt", "mime_type": "text/plain", "transfer_method": "tool_file",
+		"target": "temporary_artifact", "lifecycle": "temporary", "expires_at": time.Now().Add(-time.Minute).Unix(),
+	})
+	branch := []*runtimemodel.Message{{
+		ID: uuid.MustParse("55555555-5555-5555-5555-555555555555"), Status: runtimemodel.MessageStatusCompleted, Metadata: metadata,
+	}}
 	if recent := recentGeneratedArtifactsFromBranch(branch); len(recent) != 0 {
-		t.Fatalf("recent generated artifacts = %#v, want none because newer managed artifact saved tool-1", recent)
+		t.Fatalf("recent generated artifacts = %#v, want expired source excluded", recent)
+	}
+}
+
+func TestHydrateGeneratedFileURLsMarksExpiredWithoutSigning(t *testing.T) {
+	restoreToolFileSignature(t)
+	message := &runtimemodel.Message{Metadata: map[string]interface{}{
+		"generated_files": []interface{}{map[string]interface{}{
+			"file_id": "tool-expired", "filename": "expired.txt", "extension": ".txt",
+			"mime_type": "text/plain", "transfer_method": "tool_file",
+			"lifecycle": "temporary", "expires_at": time.Now().Add(-time.Minute).Unix(),
+		}},
+	}}
+
+	hydrateMessageGeneratedFileURLs(message)
+	file := generatedFilesFromMetadata(message.Metadata["generated_files"])[0]
+	if file["availability"] != conversationArtifactAvailabilityGone || file["url"] != nil || file["download_url"] != nil {
+		t.Fatalf("hydrated expired file = %#v", file)
+	}
+}
+
+func TestHydrateGeneratedFileURLsBackfillsLegacyLifecycle(t *testing.T) {
+	restoreToolFileSignature(t)
+	expiresAt := time.Now().Add(time.Hour)
+	message := &runtimemodel.Message{Metadata: map[string]interface{}{
+		"generated_files": []interface{}{map[string]interface{}{
+			"file_id": "tool-legacy", "filename": "legacy.txt", "extension": ".txt",
+			"mime_type": "text/plain", "transfer_method": "tool_file",
+		}},
+	}}
+	hydrateMessageGeneratedFileURLsWithLookup(message, map[string]*tool_file.ToolFile{
+		"tool-legacy": {ID: "tool-legacy", Lifecycle: string(tool_file.ToolFileLifecycleTemporary), ExpiresAt: &expiresAt},
+	}, true, time.Now())
+
+	file := generatedFilesFromMetadata(message.Metadata["generated_files"])[0]
+	if file["lifecycle"] != "temporary" || file["expires_at"] != expiresAt.Unix() || file["availability"] != conversationArtifactAvailabilityLive {
+		t.Fatalf("hydrated legacy file = %#v", file)
+	}
+}
+
+func TestHydrateGeneratedFileURLsMarksMissingLegacyToolFileExpired(t *testing.T) {
+	message := &runtimemodel.Message{Metadata: map[string]interface{}{
+		"generated_files": []interface{}{map[string]interface{}{
+			"file_id": "tool-cleaned", "filename": "cleaned.txt", "extension": ".txt",
+			"mime_type": "text/plain", "transfer_method": "tool_file",
+		}},
+	}}
+	hydrateMessageGeneratedFileURLsWithLookup(message, map[string]*tool_file.ToolFile{}, true, time.Now())
+
+	file := generatedFilesFromMetadata(message.Metadata["generated_files"])[0]
+	if file["availability"] != conversationArtifactAvailabilityGone || file["url"] != nil || file["download_url"] != nil {
+		t.Fatalf("hydrated missing legacy file = %#v", file)
 	}
 }
 

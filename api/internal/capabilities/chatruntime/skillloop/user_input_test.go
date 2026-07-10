@@ -48,8 +48,8 @@ func TestRequestUserInputCallTerminatesTurnAndEmitsEvent(t *testing.T) {
 	if result.trace.Kind != "user_input_request" || result.trace.Message != "I found multiple candidate sheets and need your choice before editing the file." {
 		t.Fatalf("trace = %#v, want user input request trace", result.trace)
 	}
-	if result.answer != "I found multiple candidate sheets and need your choice before editing the file." {
-		t.Fatalf("answer = %q, want visible user input request message", result.answer)
+	if result.answer != "" {
+		t.Fatalf("answer = %q, want no premature final answer", result.answer)
 	}
 	if result.pendingUserInput == nil || result.pendingUserInput["request_id"] != "call_ask" {
 		t.Fatalf("pendingUserInput = %#v, want request payload", result.pendingUserInput)
@@ -59,6 +59,9 @@ func TestRequestUserInputCallTerminatesTurnAndEmitsEvent(t *testing.T) {
 	}
 	if events[0].Payload["request_id"] != "call_ask" {
 		t.Fatalf("payload = %#v, want request id", events[0].Payload)
+	}
+	if events[0].Payload["message"] != "I found multiple candidate sheets and need your choice before editing the file." {
+		t.Fatalf("payload = %#v, want visible request message", events[0].Payload)
 	}
 	questions, ok := events[0].Payload["questions"].([]map[string]interface{})
 	if !ok || len(questions) != 2 || questions[0]["question"] != "Which sheet should I process?" {
@@ -189,8 +192,11 @@ func TestRunnerReturnsPendingErrorForRequestUserInput(t *testing.T) {
 	if pending.Payload["request_id"] != "call_ask" {
 		t.Fatalf("pending payload = %#v, want request id", pending.Payload)
 	}
-	if answer != "I need one more decision before continuing." {
-		t.Fatalf("answer = %q, want visible pending message", answer)
+	if answer != "" {
+		t.Fatalf("answer = %q, want no premature final answer", answer)
+	}
+	if pending.Payload["message"] != "I need one more decision before continuing." {
+		t.Fatalf("pending payload = %#v, want visible pending message", pending.Payload)
 	}
 }
 

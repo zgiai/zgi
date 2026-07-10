@@ -279,6 +279,7 @@ export interface AIChatMessageFile {
 }
 
 export interface AIChatGeneratedFile {
+  artifact_id?: string;
   artifact_type: 'file';
   skill_id: string;
   tool_name: string;
@@ -286,11 +287,15 @@ export interface AIChatGeneratedFile {
   tool_file_id?: string;
   upload_file_id?: string;
   source_file_id?: string;
+  source_tool_file_id?: string;
   filename: string;
   extension: string;
   mime_type: string;
   size: number;
   target?: 'temporary_artifact' | 'managed_file' | (string & {});
+  lifecycle?: 'temporary' | 'persistent' | 'managed' | (string & {});
+  expires_at?: number;
+  availability?: 'available' | 'expired' | (string & {});
   url: string;
   download_url?: string;
   transfer_method: string;
@@ -342,6 +347,8 @@ export interface AIChatUserInputQuestion {
 
 export interface AIChatUserInputRequest {
   request_id?: string;
+  message?: string;
+  status?: 'waiting_question' | 'answered' | string;
   source?: string;
   workflow_run_id?: string;
   node_id?: string;
@@ -350,6 +357,13 @@ export interface AIChatUserInputRequest {
   round?: string | number;
   questions: AIChatUserInputQuestion[];
   created_at?: number;
+}
+
+export interface AIChatUserInputContinuationRequest {
+  answers: Record<string, string>;
+  surface?: AIChatRuntimeSurface;
+  runtime_context?: string;
+  operation_context?: unknown;
 }
 
 export interface AIChatConversation {
@@ -587,16 +601,21 @@ export interface AIChatSkillCallErrorEventData {
 }
 
 export interface AIChatSkillArtifactFile {
+  artifact_id?: string;
   artifact_type?: 'file';
   file_id: string;
   tool_file_id?: string;
   upload_file_id?: string;
   source_file_id?: string;
+  source_tool_file_id?: string;
   filename: string;
   extension: string;
   mime_type: string;
   size: number;
   target?: 'temporary_artifact' | 'managed_file' | (string & {});
+  lifecycle?: 'temporary' | 'persistent' | 'managed' | (string & {});
+  expires_at?: number;
+  availability?: 'available' | 'expired' | (string & {});
   url: string;
   download_url?: string;
   transfer_method?: string;

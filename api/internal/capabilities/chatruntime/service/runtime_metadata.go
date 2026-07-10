@@ -75,9 +75,12 @@ func mergeGeneratedArtifactMetadata(source map[string]interface{}, artifact map[
 	metadata = mergeConversationArtifactMetadata(metadata, artifact)
 	storedArtifact := persistentGeneratedArtifact(artifact)
 	files := generatedFilesFromMetadata(metadata["generated_files"])
+	artifactID := stringFromAny(storedArtifact["artifact_id"])
 	fileID := stringFromAny(storedArtifact["file_id"])
 	for idx, item := range files {
-		if fileID != "" && stringFromAny(item["file_id"]) == fileID {
+		itemArtifactID := stringFromAny(item["artifact_id"])
+		if (artifactID != "" && itemArtifactID == artifactID) ||
+			(artifactID == "" && itemArtifactID == "" && fileID != "" && stringFromAny(item["file_id"]) == fileID) {
 			files[idx] = storedArtifact
 			metadata["generated_files"] = files
 			metadata["generated_file_count"] = len(files)
@@ -105,6 +108,8 @@ func mergeSkillTraceMetadata(source map[string]interface{}, traces []skills.Skil
 	invocations := sanitizeSkillInvocationsForMetadata(skillInvocationsFromMetadata(metadata["skill_invocations"]))
 	for index, trace := range traces {
 		applyTurnStateTraceMetadata(metadata, trace)
+		applyPlanUpdateTraceMetadata(metadata, trace)
+		markMetadataCurrentPageContextStale(metadata, trace)
 		if !visibleSkillInvocationKind(trace.Kind) {
 			continue
 		}
@@ -115,10 +120,59 @@ func mergeSkillTraceMetadata(source map[string]interface{}, traces []skills.Skil
 		invocations = upsertSkillInvocation(invocations, invocation)
 	}
 	applySkillInvocationSummary(metadata, invocations)
+	if files := generatedFilesFromMetadata(metadata["generated_files"]); len(files) > 0 {
+		applyOperationPlanArtifactState(metadata, files)
+	}
 	applyOperationPlanInvocationState(metadata, invocations)
 	applyOperationPlanPlannerFeedbackState(metadata, traces)
 	applyStructuredTurnStateMetadata(metadata, invocations)
 	return metadata
+}
+
+func applyPlanUpdateTraceMetadata(metadata map[string]interface{}, trace skills.SkillTrace) {
+	kind := strings.TrimSpace(trace.Kind)
+	if metadata == nil || (kind != "plan_update" && kind != "final_answer") || !strings.EqualFold(strings.TrimSpace(trace.Status), "success") {
+		return
+	}
+	phases := mapSliceFromAny(trace.Result["plan"])
+	if len(phases) == 0 {
+		return
+	}
+	plan := copyStringAnyMap(mapFromOperationContext(metadata["operation_plan"]))
+	if plan == nil {
+		plan = map[string]interface{}{}
+	}
+	plan["phases"] = mapsToInterfaceSlice(phases)
+	plan["phase_revision"] = intValueFromAny(plan["phase_revision"]) + 1
+	plan["phase_updated_at"] = time.Now().UTC().Format(time.RFC3339)
+	if explanation := strings.TrimSpace(stringFromAny(trace.Result["explanation"])); explanation != "" {
+		plan["phase_explanation"] = compactForPrompt(explanation, 500)
+	}
+	if strings.EqualFold(strings.TrimSpace(stringFromAny(plan["pending_next_action"])), userInputPendingActionReplan) {
+		delete(plan, "pending_next_action")
+		applyUserInputPlanRevisionState(metadata, intValueFromAny(plan["phase_revision"]))
+	}
+	metadata["operation_plan"] = plan
+}
+
+func applyUserInputPlanRevisionState(metadata map[string]interface{}, phaseRevision int) {
+	summary := copyStringAnyMap(mapFromOperationContext(metadata["operation_result_summary"]))
+	if len(summary) > 0 && strings.EqualFold(strings.TrimSpace(stringFromAny(summary["pending_next_action"])), userInputPendingActionReplan) {
+		delete(summary, "pending_next_action")
+		summary["status"] = operationPlanStatusRunning
+		summary["plan_status"] = operationPlanStatusRunning
+		summary["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+		metadata["operation_result_summary"] = summary
+	}
+	continuation := copyStringAnyMap(mapFromOperationContext(metadata["user_input_continuation"]))
+	if len(continuation) == 0 || !strings.EqualFold(strings.TrimSpace(stringFromAny(continuation["status"])), userInputContinuationStatusAnswered) {
+		return
+	}
+	continuation["status"] = "plan_updated"
+	continuation["plan_revision"] = phaseRevision
+	continuation["plan_updated_at"] = time.Now().UTC().Format(time.RFC3339)
+	delete(continuation, "next_action")
+	metadata["user_input_continuation"] = continuation
 }
 
 func applyTurnStateTraceMetadata(metadata map[string]interface{}, trace skills.SkillTrace) {
@@ -659,6 +713,7 @@ func mergeSkillInvocationMetadata(source map[string]interface{}, invocations []m
 	}
 	stored := sanitizeSkillInvocationsForMetadata(skillInvocationsFromMetadata(metadata["skill_invocations"]))
 	for _, invocation := range invocations {
+		markMetadataCurrentPageContextStaleFromInvocation(metadata, invocation)
 		invocation = sanitizeSkillInvocationForMetadata(invocation)
 		if !visibleSkillInvocationKind(stringFromAny(invocation["kind"])) {
 			continue
@@ -730,6 +785,15 @@ func modelInvocationFromTrace(trace skillloop.ModelInvocationTrace, userSystemPr
 		"runtime_id":  fmt.Sprintf("model_call:%s:%d:%d", phase, trace.Round, startedAt.UnixNano()),
 		"usage":       usageMetadata(trace.Usage),
 		"error":       strings.TrimSpace(trace.Error),
+	}
+	if trace.Streaming || trace.StreamDoneReceived || strings.TrimSpace(trace.TerminatedBy) != "" || strings.TrimSpace(trace.FinishReason) != "" {
+		invocation["stream_done_received"] = trace.StreamDoneReceived
+	}
+	if finishReason := strings.TrimSpace(trace.FinishReason); finishReason != "" {
+		invocation["finish_reason"] = finishReason
+	}
+	if terminatedBy := strings.TrimSpace(trace.TerminatedBy); terminatedBy != "" {
+		invocation["terminated_by"] = terminatedBy
 	}
 	if modelInvocationDebugPayloadEnabled() {
 		invocation["request"] = modelInvocationRequestPayload(trace.Request, redactRequest)

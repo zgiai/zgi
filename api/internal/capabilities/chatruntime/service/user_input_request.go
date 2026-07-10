@@ -2,10 +2,17 @@ package service
 
 import (
 	"context"
+	"strings"
+	"time"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/logger"
+)
+
+const (
+	userInputPendingActionAwait  = "await_user_input"
+	userInputPendingActionReplan = "replan_after_user_input"
 )
 
 func (s *service) persistUserInputRequestBestEffort(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}) {
@@ -29,10 +36,37 @@ func mergeUserInputRequestMetadata(source map[string]interface{}, payload map[st
 	}
 	request := map[string]interface{}{
 		"request_id": payload["request_id"],
+		"message":    payload["message"],
 		"questions":  payload["questions"],
 		"created_at": payload["created_at"],
+		"status":     "waiting_question",
 	}
 	metadata["user_input_request"] = request
+	metadata = applyUserInputWaitingState(metadata)
+	return metadata
+}
+
+func applyUserInputWaitingState(metadata map[string]interface{}) map[string]interface{} {
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	plan := copyStringAnyMap(mapFromOperationContext(metadata["operation_plan"]))
+	if len(plan) > 0 {
+		if strings.TrimSpace(stringFromAny(plan["status"])) == "" || strings.EqualFold(strings.TrimSpace(stringFromAny(plan["status"])), operationPlanStatusCompleted) {
+			plan["status"] = operationPlanStatusRunning
+		}
+		plan["pending_next_action"] = userInputPendingActionAwait
+		metadata["operation_plan"] = plan
+	}
+	summary := copyStringAnyMap(mapFromOperationContext(metadata["operation_result_summary"]))
+	if summary == nil {
+		summary = map[string]interface{}{}
+	}
+	summary["status"] = "waiting_question"
+	summary["plan_status"] = operationPlanStatusRunning
+	summary["pending_next_action"] = userInputPendingActionAwait
+	summary["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+	metadata["operation_result_summary"] = summary
 	return metadata
 }
 

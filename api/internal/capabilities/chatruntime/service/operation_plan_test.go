@@ -4345,8 +4345,8 @@ func TestAgentResourceBindingUpdateConfigPostReadKeepsPlanOpenUntilVerification(
 			if got := stringFromAny(plan["status"]); got != operationPlanStatusRunning {
 				t.Fatalf("operation_plan status = %q, want running before explicit completion verification; plan=%#v", got, plan)
 			}
-			if got := stringFromAny(plan["pending_next_action"]); got != "continue_from_phase_success_criteria" {
-				t.Fatalf("pending_next_action = %q, want continue_from_phase_success_criteria before explicit verification; plan=%#v", got, plan)
+			if got := stringFromAny(plan["pending_next_action"]); got != "none" {
+				t.Fatalf("pending_next_action = %q, want model-owned continuation before explicit verification; plan=%#v", got, plan)
 			}
 
 			plan["completion_verification"] = map[string]interface{}{"status": "pass"}
@@ -8066,14 +8066,14 @@ func TestModelDecidesOperationPlanPendingExecutableStepsDoNotBecomeHardPlan(t *t
 	if pending := operationPlanPendingExecutableSteps(plan, 8); len(pending) != 0 {
 		t.Fatalf("pending executable steps = %#v, want none for model-decides plan hints", pending)
 	}
-	if got := stringFromAny(plan["pending_next_action"]); got != "continue_from_phase_success_criteria" {
-		t.Fatalf("pending_next_action = %q, want phase continuation without scripted steps; plan=%#v", got, plan)
+	if got := stringFromAny(plan["pending_next_action"]); got != "none" {
+		t.Fatalf("pending_next_action = %q, want model-owned continuation without a backend phase hint; plan=%#v", got, plan)
 	}
 	if got := stringFromAny(plan["planning_mode"]); got != "phase_only_model_decides" {
 		t.Fatalf("planning_mode = %q, want phase_only_model_decides; plan=%#v", got, plan)
 	}
-	if phases := mapSliceFromAny(plan["phases"]); len(phases) == 0 {
-		t.Fatalf("phases = %#v, want model-decides phase guidance", plan["phases"])
+	if phases := mapSliceFromAny(plan["phases"]); len(phases) != 0 {
+		t.Fatalf("phases = %#v, want no backend-generated phases without task_contract phase goals", phases)
 	}
 	if required, ok := plan["approval_required"].(bool); !ok || !required {
 		t.Fatalf("approval_required = %#v, want true for high-risk mutation hint; plan=%#v", plan["approval_required"], plan)
@@ -12189,7 +12189,7 @@ func TestContextualConsoleAgentsSkillMessagePrioritizesVisibleTargets(t *testing
 	}
 	content := stringFromAny(message.Content)
 	for _, want := range []string{
-		"visible_agents as authoritative resolved targets",
+		"backend-backed list and order as authoritative resolved targets",
 		"do not call list_agents only to rediscover the same visible targets",
 		"Do not call list_agents only to verify that same single Agent",
 		"read current config or list exact candidates only when the needed current binding set or candidate IDs/names are not already present",
@@ -15017,8 +15017,8 @@ func TestApplyOperationPlanCompletionVerificationResultCompletesModelDecidesPend
 		t.Fatalf("%s error = %q, want cleared", saveStepID, got)
 	}
 	phase := mapSliceFromAny(plan["phases"])[0]
-	if got := stringFromAny(phase["status"]); got != operationPlanStepStatusCompleted {
-		t.Fatalf("phase.status = %q, want completed; phase=%#v", got, phase)
+	if got := stringFromAny(phase["status"]); got != operationPlanStepStatusPending {
+		t.Fatalf("phase.status = %q, want pending because finalizer must not rewrite model plan phases; phase=%#v", got, phase)
 	}
 	verification := mapFromOperationContext(metadata["completion_verification"])
 	if got := stringFromAny(verification["status"]); got != "pass" {
@@ -15077,8 +15077,8 @@ func TestFinalizeOperationPlanForCompletedResultCompletesPassiveAnswerPlan(t *te
 		t.Fatalf("completion_verification.status = %q, want pass; metadata=%#v", got, metadata)
 	}
 	phases := mapSliceFromAny(plan["phases"])
-	if len(phases) != 1 || stringFromAny(phases[0]["status"]) != operationPlanStepStatusCompleted {
-		t.Fatalf("phases = %#v, want completed passive phase", phases)
+	if len(phases) != 1 || stringFromAny(phases[0]["status"]) != operationPlanStepStatusPending {
+		t.Fatalf("phases = %#v, want finalizer to preserve the model phase state", phases)
 	}
 }
 
@@ -15241,5 +15241,33 @@ func TestFinalAnswerGuardBatchAgentDeleteUsesItemResults(t *testing.T) {
 	}}
 	if finalAnswerGuardHasAgentDeleteCall(legacyCalls, "agent-legacy") {
 		t.Fatal("batch delete guard matched frozen arguments without item evidence")
+	}
+}
+
+func TestCompactUnsavedOperationPlanGeneratedFilesUsesSaveInvocationEvidence(t *testing.T) {
+	files := []map[string]interface{}{{
+		"target":       "temporary_artifact",
+		"file_id":      "tool-1",
+		"tool_file_id": "tool-1",
+		"filename":     "report.pdf",
+		"extension":    ".pdf",
+	}}
+	saveCalls := []skillloop.SkillToolCallRef{{
+		SkillID:  skills.SkillFileManager,
+		ToolName: "save_file_to_management",
+		Arguments: map[string]interface{}{
+			"source_type":  "tool_file",
+			"tool_file_id": "tool-1",
+			"filename":     "report.pdf",
+		},
+		Result: map[string]interface{}{
+			"status":              "completed",
+			"source_tool_file_id": "tool-1",
+			"target":              "managed_file",
+		},
+	}}
+
+	if unsaved := compactUnsavedOperationPlanGeneratedFiles(files, saveCalls); len(unsaved) != 0 {
+		t.Fatalf("unsaved files = %#v, want save invocation evidence to satisfy the temporary artifact", unsaved)
 	}
 }

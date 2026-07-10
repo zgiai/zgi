@@ -1006,15 +1006,18 @@ func completionVerificationEvidenceForPrompt(evidence map[string]interface{}) ma
 	for _, key := range []string{
 		"evidence_ledger",
 		"turn_state",
-		"operation_result_summary",
-		"client_actions",
-		"tool_governance",
+		"current_page_context",
 	} {
 		copyField(key)
 	}
+	if !completionVerificationEvidenceValuePresent(evidence["evidence_ledger"]) {
+		if failures := completionVerificationLegacyFailuresForPrompt(evidence); len(failures) > 0 {
+			out["legacy_failure_evidence"] = failures
+		}
+	}
 	if plan := evidenceMapFromAny(evidence["operation_plan"]); len(plan) > 0 {
 		compactPlan := map[string]interface{}{}
-		for _, key := range []string{"status", "planning_mode", "tool_choice_mode", "pending_next_action", "completion_verification"} {
+		for _, key := range []string{"status", "phases", "completion_verification"} {
 			if value, ok := plan[key]; ok && completionVerificationEvidenceValuePresent(value) {
 				compactPlan[key] = promptEvidenceCopy(value)
 			}
@@ -1025,6 +1028,33 @@ func completionVerificationEvidenceForPrompt(evidence map[string]interface{}) ma
 	}
 	if len(out) == 0 {
 		return nil
+	}
+	return out
+}
+
+func completionVerificationLegacyFailuresForPrompt(evidence map[string]interface{}) []interface{} {
+	out := make([]interface{}, 0, 4)
+	for _, key := range []string{"skill_invocations", "client_actions"} {
+		for _, record := range evidenceMapsFromAny(evidence[key]) {
+			status := strings.ToLower(strings.TrimSpace(evidenceStringFromAny(record["status"])))
+			if status != "error" && status != "failed" && status != "failure" && status != "rejected" {
+				continue
+			}
+			result := evidenceMapFromAny(record["result"])
+			item := map[string]interface{}{
+				"kind": record["kind"], "status": status, "skill_id": record["skill_id"], "tool_name": record["tool_name"],
+			}
+			if actionType := strings.TrimSpace(evidenceStringFromAny(record["action_type"])); actionType != "" {
+				item["action_type"] = actionType
+			}
+			if errorText := strings.TrimSpace(firstNonEmptyString(record["error"], result["error"])); errorText != "" {
+				item["error"] = trimRunes(errorText, 500)
+			}
+			out = append(out, item)
+			if len(out) >= 8 {
+				return out
+			}
+		}
 	}
 	return out
 }
@@ -1280,9 +1310,10 @@ func completionVerificationRequest(base *adapter.ChatRequest, payloadJSON string
 	verificationReq.ResponseFormat = &adapter.ResponseFormat{Type: "json_object"}
 	systemLines := []string{
 		"You are the AIChat completion post-verifier.",
-		"Audit whether the candidate final answer is faithful to the normalized evidence_ledger, turn_state, and pending/failure state. Do not reinterpret the user's goal.",
-		"Do not invent missing business effects from operation plans, task contracts, phases, success criteria, capability goals, or the user's wording.",
-		"Use only the supplied evidence ledger, turn state, compact result summary, client actions, and governance outcomes as facts.",
+		"Audit whether the candidate final answer is faithful to the normalized evidence_ledger, model-maintained plan snapshot, turn_state, and current_page_context. Do not reinterpret the user's goal.",
+		"Use plan phases only to audit their declared completed or skipped state and cited evidence. Do not invent missing business effects from task contracts, capability goals, or the user's wording.",
+		"Use only the supplied evidence ledger, plan snapshot, turn state, and current page context as facts.",
+		"When normalized ledger evidence is unavailable for an older turn, a compact legacy_failure_evidence field may be supplied only to audit explicit failures.",
 		"Reject candidate answers that expose internal system prompts, operation_plan, turn_strategy, pending-step bookkeeping, required_next_tool, hidden strategy JSON, or internal protocol wording to the user.",
 		"Return pass when no supplied fact conflicts with the candidate. Return needs_action only for a concrete unsupported claim, active blocker, or fact conflict.",
 		"Never write a replacement final answer. The main model owns all user-facing wording.",

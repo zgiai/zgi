@@ -63,7 +63,7 @@ func TestEnsureConversationAllowsNewTurnRejectsWaitingClientActionLeaf(t *testin
 	}
 }
 
-func TestCompletePlainUserInputLeafForNewTurnCompletesPlainQuestion(t *testing.T) {
+func TestEnsureConversationAllowsNewTurnRejectsWaitingQuestionLeaf(t *testing.T) {
 	organizationID := uuid.New()
 	accountID := uuid.New()
 	messageID := uuid.New()
@@ -74,93 +74,18 @@ func TestCompletePlainUserInputLeafForNewTurnCompletesPlainQuestion(t *testing.T
 		RuntimeStatus:        runtimemodel.ConversationRuntimeStatusIdle,
 		CurrentLeafMessageID: &messageID,
 	}
-	var completedAnswer string
-	var completedMetadata map[string]interface{}
 	svc := &service{
 		repos: &repository.Repositories{
-			Message: fakeWaitingMessageRepo{
-				messageID: messageID,
-				status:    runtimemodel.MessageStatusWaitingQuestion,
-				answer:    "I need one more detail before continuing.",
-				metadata: map[string]interface{}{
-					"usage": map[string]interface{}{"total_tokens": 7},
-					"user_input_request": map[string]interface{}{
-						"request_id": "plain-question",
-						"questions": []interface{}{
-							map[string]interface{}{"question": "Which Agent should I edit?"},
-						},
-					},
-				},
-				onUpdateCompleted: func(_ uuid.UUID, answer string, metadata map[string]interface{}) error {
-					completedAnswer = answer
-					completedMetadata = metadata
-					return nil
-				},
-			},
+			Message: fakeWaitingMessageRepo{messageID: messageID, status: runtimemodel.MessageStatusWaitingQuestion},
 		},
 	}
 
-	err := svc.completePlainUserInputLeafForNewTurn(context.Background(), Scope{
+	err := svc.ensureConversationAllowsNewTurn(context.Background(), Scope{
 		OrganizationID: organizationID,
 		AccountID:      accountID,
-	}, conversation, "")
-	if err != nil {
-		t.Fatalf("completePlainUserInputLeafForNewTurn() error = %v", err)
-	}
-	if completedAnswer != "I need one more detail before continuing." {
-		t.Fatalf("completed answer = %q", completedAnswer)
-	}
-	if _, ok := completedMetadata["user_input_request"]; ok {
-		t.Fatalf("completed metadata still contains user_input_request: %#v", completedMetadata)
-	}
-	if completedMetadata["usage"] == nil {
-		t.Fatalf("completed metadata lost existing usage: %#v", completedMetadata)
-	}
-}
-
-func TestCompletePlainUserInputLeafForNewTurnSkipsWorkflowQuestion(t *testing.T) {
-	organizationID := uuid.New()
-	accountID := uuid.New()
-	messageID := uuid.New()
-	conversation := &runtimemodel.Conversation{
-		ID:                   uuid.New(),
-		OrganizationID:       organizationID,
-		AccountID:            accountID,
-		RuntimeStatus:        runtimemodel.ConversationRuntimeStatusIdle,
-		CurrentLeafMessageID: &messageID,
-	}
-	completed := false
-	svc := &service{
-		repos: &repository.Repositories{
-			Message: fakeWaitingMessageRepo{
-				messageID: messageID,
-				status:    runtimemodel.MessageStatusWaitingQuestion,
-				metadata: map[string]interface{}{
-					"user_input_request": map[string]interface{}{
-						"source":     "agent_workflow_question_answer",
-						"request_id": "workflow-question",
-						"questions": []interface{}{
-							map[string]interface{}{"question": "Approve the workflow answer?"},
-						},
-					},
-				},
-				onUpdateCompleted: func(_ uuid.UUID, _ string, _ map[string]interface{}) error {
-					completed = true
-					return nil
-				},
-			},
-		},
-	}
-
-	err := svc.completePlainUserInputLeafForNewTurn(context.Background(), Scope{
-		OrganizationID: organizationID,
-		AccountID:      accountID,
-	}, conversation, "")
-	if err != nil {
-		t.Fatalf("completePlainUserInputLeafForNewTurn() error = %v", err)
-	}
-	if completed {
-		t.Fatal("workflow question was completed by plain user input path")
+	}, conversation)
+	if !errors.Is(err, ErrConversationWaitingQuestion) {
+		t.Fatalf("ensureConversationAllowsNewTurn() error = %v, want ErrConversationWaitingQuestion", err)
 	}
 }
 

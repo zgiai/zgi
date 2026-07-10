@@ -936,6 +936,7 @@ export function useChatRuntimeMessageActions({
     continueWorkflowQuestion,
     continueToolGovernanceDecision,
     continueClientAction,
+    continueUserInput,
   } = useWorkflowContinuationActions({
     stateRef,
     transportRef,
@@ -997,5 +998,6 @@ export function useChatRuntimeMessageActions({
     continueWorkflowQuestion,
     continueToolGovernanceDecision,
     continueClientAction,
+    continueUserInput,
   };
 }

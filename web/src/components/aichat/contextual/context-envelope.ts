@@ -13,6 +13,7 @@ import type {
   AIChatSkillCallEndEventData,
   AIChatToolGovernanceAssetRef,
   AIChatToolGovernanceDecisionRequest,
+  AIChatUserInputContinuationRequest,
 } from '@/services/types/aichat';
 import type {
   AIChatCapabilityDescriptor,
@@ -1201,6 +1202,35 @@ export function createContextualAIChatTransport(
         conversationId,
         messageId,
         actionId,
+        {
+          ...payload,
+          surface: 'contextual_sidebar',
+          runtime_context: envelope || payload.runtime_context,
+          operation_context: snapshotOperationContext(mergedOperationContext),
+        },
+        wrapContextualCallbacks(callbacks, getContextItems, options),
+        abortSignal
+      );
+    },
+    continueUserInput(
+      conversationId: string,
+      messageId: string,
+      requestId: string,
+      payload: AIChatUserInputContinuationRequest,
+      callbacks: AIChatStreamCallbacks,
+      abortSignal?: AbortSignal
+    ) {
+      const contextItems = withZGISystemContextItems(getContextItems());
+      const envelope = buildAIChatContextEnvelope(contextItems);
+      const operationContext = buildAIChatOperationContext(contextItems);
+      const mergedOperationContext = mergeAIChatOperationContext(
+        operationContext,
+        payload.operation_context
+      );
+      return aichatTransport.continueUserInput(
+        conversationId,
+        messageId,
+        requestId,
         {
           ...payload,
           surface: 'contextual_sidebar',

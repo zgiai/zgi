@@ -5437,9 +5437,12 @@ func runnerTestSkillToolCall(callID string, skillID string, toolName string, arg
 }
 
 type runnerTestLLMClient struct {
-	appChatResponses []*adapter.ChatResponse
-	appChatRequests  []*adapter.ChatRequest
-	appChatCalls     int
+	appChatResponses      []*adapter.ChatResponse
+	appChatRequests       []*adapter.ChatRequest
+	appChatCalls          int
+	appChatStreams        [][]adapter.StreamResponse
+	appChatStreamRequests []*adapter.ChatRequest
+	appChatStreamCalls    int
 }
 
 type runnerTestWorkflowRunner struct {
@@ -6623,7 +6626,18 @@ func (f *runnerTestLLMClient) AppChat(ctx context.Context, appCtx *llmclient.App
 }
 
 func (f *runnerTestLLMClient) AppChatStream(ctx context.Context, appCtx *llmclient.AppContext, req *adapter.ChatRequest) (<-chan adapter.StreamResponse, error) {
-	return nil, errors.New("not implemented")
+	if f.appChatStreamCalls >= len(f.appChatStreams) {
+		return nil, errors.New("unexpected AppChatStream call")
+	}
+	f.appChatStreamRequests = append(f.appChatStreamRequests, cloneChatRequest(req))
+	responses := append([]adapter.StreamResponse(nil), f.appChatStreams[f.appChatStreamCalls]...)
+	f.appChatStreamCalls++
+	stream := make(chan adapter.StreamResponse, len(responses))
+	for _, response := range responses {
+		stream <- response
+	}
+	close(stream)
+	return stream, nil
 }
 
 func (f *runnerTestLLMClient) AppCreateResponse(ctx context.Context, appCtx *llmclient.AppContext, req *adapter.CreateResponseRequest) (*adapter.CreateResponseResponse, error) {

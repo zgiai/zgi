@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/google/uuid"
@@ -80,6 +81,7 @@ func (s *service) runPreparedSkillStreamWithCompletionVerifier(
 		},
 		OnTrace: func(traces []skills.SkillTrace, trace skills.SkillTrace) {
 			timeline.RecordTrace(traces, trace)
+			markPreparedCurrentPageContextStale(prepared, trace)
 		},
 		OnArtifact: func(artifact map[string]interface{}) {
 			s.persistGeneratedArtifactBestEffort(ctx, prepared, artifact)
@@ -98,18 +100,56 @@ func (s *service) runPreparedSkillStreamWithCompletionVerifier(
 	loopPrepared.Query = strings.TrimSpace(prepared.parts.Query)
 	loopPrepared.CurrentRoute = contextualTurnCurrentPage(prepared.parts)
 	loopPrepared.Surface = normalizeAIChatSurface(prepared.parts.Surface)
+	preferExplicitFinalAnswer := skillLoopPrefersExplicitFinalAnswer(prepared)
+	if prepared.Message.Metadata == nil {
+		prepared.Message.Metadata = map[string]interface{}{}
+	}
+	if preferExplicitFinalAnswer {
+		prepared.Message.Metadata["final_answer_protocol"] = skills.MetaToolFinalAnswer + "_preferred"
+	} else {
+		prepared.Message.Metadata["final_answer_protocol"] = "assistant_content"
+	}
 	return runner.Run(ctx, skillloop.RunRequest{
-		Prepared:                 loopPrepared,
-		Resolved:                 resolved,
-		ExecutionContext:         s.skillExecutionContext(prepared),
-		AdditionalSystemMessages: skillLoopAdditionalSystemMessagesForResolved(prepared, resolved),
-		PlanToolGuard:            skillLoopPlanToolCallGuardWithResolved(prepared, resolved),
-		ToolArgumentResolver:     skillLoopToolArgumentResolver(prepared),
-		CompletionEvidence:       skillLoopCompletionEvidence(prepared),
-		CurrentMetadata:          skillLoopCurrentMetadata(prepared),
-		OnCompletionVerification: skillLoopCompletionVerificationResult(prepared),
-		OnChunk:                  onChunk,
+		Prepared:                  loopPrepared,
+		Resolved:                  resolved,
+		ExecutionContext:          s.skillExecutionContext(prepared),
+		PreferExplicitFinalAnswer: preferExplicitFinalAnswer,
+		AdditionalSystemMessages:  skillLoopAdditionalSystemMessagesForResolved(prepared, resolved),
+		PlanToolGuard:             skillLoopPlanToolCallGuardWithResolved(prepared, resolved),
+		ToolArgumentResolver:      skillLoopToolArgumentResolver(prepared),
+		CompletionEvidence:        skillLoopCompletionEvidence(prepared),
+		CurrentMetadata:           skillLoopCurrentMetadata(prepared),
+		OnCompletionGateDecision:  skillLoopCompletionGateDecision(prepared),
+		OnCompletionVerification:  skillLoopCompletionVerificationResult(prepared),
+		OnChunk:                   onChunk,
 	})
+}
+
+func skillLoopCompletionGateDecision(prepared *PreparedChat) func(skillloop.CompletionGateDecisionRecord) {
+	return func(decision skillloop.CompletionGateDecisionRecord) {
+		if prepared == nil || prepared.Message == nil {
+			return
+		}
+		metadata := prepared.Message.Metadata
+		if metadata == nil {
+			metadata = map[string]interface{}{}
+		}
+		records := mapSliceFromAny(metadata["completion_gate_decisions"])
+		record := map[string]interface{}{
+			"path":        strings.TrimSpace(decision.Path),
+			"reason":      compactForPrompt(decision.Reason, 500),
+			"observed_at": time.Now().UTC().Format(time.RFC3339),
+		}
+		if len(decision.MissingFacts) > 0 {
+			record["missing_facts"] = compactStringSliceForPrompt(decision.MissingFacts, 8, 240)
+		}
+		records = append(records, record)
+		if len(records) > 16 {
+			records = records[len(records)-16:]
+		}
+		metadata["completion_gate_decisions"] = mapsToInterfaceSlice(records)
+		prepared.Message.Metadata = metadata
+	}
 }
 
 func skillLoopCurrentMetadata(prepared *PreparedChat) func() map[string]interface{} {
@@ -284,6 +324,7 @@ func skillLoopCompletionEvidence(prepared *PreparedChat) skillloop.CompletionEvi
 			"client_actions",
 			"tool_governance",
 			"turn_state",
+			currentPageContextKey,
 			consoleFilesContextSnapshotKey,
 			consoleAgentsContextSnapshotKey,
 		} {
@@ -813,13 +854,16 @@ func operationPlanCompactPhasesForPrompt(value interface{}, limit int) []interfa
 			break
 		}
 		item := map[string]interface{}{}
-		for _, key := range []string{"id", "title", "status"} {
+		for _, key := range []string{"id", "step", "title", "status", "note"} {
 			if text := strings.TrimSpace(stringFromAny(phase[key])); text != "" {
 				item[key] = compactForPrompt(text, 240)
 			}
 		}
 		if evidence := stringSliceFromAny(phase["evidence"]); len(evidence) > 0 {
 			item["evidence"] = compactStringSliceForPrompt(evidence, 6, 180)
+		}
+		if refs := stringSliceFromAny(phase["evidence_refs"]); len(refs) > 0 {
+			item["evidence_refs"] = compactStringSliceForPrompt(refs, 12, 240)
 		}
 		if points := stringSliceFromAny(phase["observation_points"]); len(points) > 0 {
 			item["observation_points"] = compactStringSliceForPrompt(points, 6, 180)
@@ -3406,6 +3450,13 @@ func skillLoopHasOperationPlan(prepared *PreparedChat) bool {
 	return len(mapFromOperationContext(prepared.Message.Metadata["operation_plan"])) > 0
 }
 
+func skillLoopPrefersExplicitFinalAnswer(prepared *PreparedChat) bool {
+	if prepared == nil || normalizeCallerType(prepared.Caller.Type) == runtimemodel.ConversationCallerAgent {
+		return false
+	}
+	return skillLoopHasOperationPlan(prepared)
+}
+
 func skillLoopAllowedPlannedTools(prepared *PreparedChat) map[string]struct{} {
 	if prepared == nil || prepared.Message == nil {
 		return nil
@@ -3631,11 +3682,14 @@ func skillRuntimeParametersForPrepared(prepared *PreparedChat) map[string]interf
 	}
 	if prepared != nil && prepared.parts != nil && isConsoleAgentsContext(prepared.parts.RuntimeContext, prepared.parts.RawOperationContext, prepared.parts.OperationContext) {
 		params["console_agents_page"] = true
-		if route := consoleRouteFromRuntimeContext(prepared.parts.RuntimeContext); route != "" {
+		if route := contextualTurnCurrentPage(prepared.parts); route != "" {
 			params["console_current_route"] = route
 			params["console_agents_current_route"] = route
 		}
-		if visibleAgents := consoleAgentsPromptVisibleAgents(prepared.parts); len(visibleAgents) > 0 {
+		if currentAgent := consoleAgentsPromptCurrentAgent(prepared.parts); len(currentAgent) > 0 {
+			params["console_current_agent_id"] = firstNonEmptyString(currentAgent["agent_id"], currentAgent["id"])
+			params["console_agents_current_agent"] = currentAgent
+		} else if visibleAgents := consoleAgentsPromptVisibleAgents(prepared.parts); len(visibleAgents) > 0 {
 			params["console_agents_visible_agents"] = visibleAgents
 		}
 	}
@@ -4279,7 +4333,7 @@ func agentManagementCurrentAgentIDFromParts(parts *chatRequestParts) string {
 	if parts == nil || !isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
 		return ""
 	}
-	if agentID := agentIDFromConsoleAgentPageRoute(consoleRouteFromRuntimeContext(parts.RuntimeContext)); agentID != "" {
+	if agentID := agentIDFromConsoleAgentPageRoute(contextualTurnCurrentPage(parts)); agentID != "" {
 		return agentID
 	}
 	agents := consoleAgentsPromptVisibleAgents(parts)
@@ -4701,6 +4755,9 @@ func contextualTurnCurrentPage(parts *chatRequestParts) string {
 		return ""
 	}
 	for _, source := range []map[string]interface{}{parts.RawOperationContext, parts.OperationContext} {
+		if current := mapFromOperationContext(source[currentPageContextKey]); len(current) > 0 {
+			return normalizeConsoleNavigationGuardHref(stringFromAny(current["route"]))
+		}
 		for _, resource := range mapSliceFromAny(source["resources"]) {
 			if strings.TrimSpace(stringFromAny(resource["resource_type"])) != "page" {
 				continue
@@ -4859,12 +4916,19 @@ func contextualConsoleAgentsSkillMessageForResolved(prepared *PreparedChat, reso
 	}
 	listAgentsAvailable := agentManagementPromptToolListed(tools, skills.SkillAgentManagement, "list_agents")
 	getAgentAvailable := agentManagementPromptToolListed(tools, skills.SkillAgentManagement, "get_agent")
+	agents := consoleAgentsPromptVisibleAgents(parts)
+	currentAgent := consoleAgentsPromptCurrentAgent(parts)
 	payload := map[string]interface{}{
 		"page":                    "console.agents",
 		"preferred_skill":         skills.SkillAgentManagement,
-		"visible_agents":          consoleAgentsPromptVisibleAgents(parts),
 		"tools":                   tools,
 		"unsupported_in_this_mvp": []string{"publish_agent", "rollback_agent", "invoke_agent", "api_key", "webapp_online_offline"},
+	}
+	if len(agents) > 0 {
+		payload["visible_agents"] = agents
+	}
+	if len(currentAgent) > 0 {
+		payload["current_agent"] = currentAgent
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -4875,7 +4939,8 @@ func contextualConsoleAgentsSkillMessageForResolved(prepared *PreparedChat, reso
 		"Use agent-management for explicit Agent list, create, edit identity, delete, inspect draft config, update supported draft config, replace Agent memory slots, or edit knowledge/database/workflow bindings.",
 		"Use the Agent capability model as the semantic contract for planning: skill-backed capabilities require a matching enabled Skill; file upload and memory are config switches; model changes require a provider/model pair; knowledge, database, and workflow access are binding changes.",
 		"The tools array in Agent management JSON is the authoritative callable tool list for this turn. Do not call any agent-management or console-navigator tool that is absent from that tools array.",
-		"When Agent management JSON includes visible_agents and the user refers to visible Agents, selected Agents, the current page, the current Agent, first-N/top-N Agents, or these Agents, treat visible_agents as authoritative resolved targets. Use their agent_id/name/href directly; do not call list_agents only to rediscover the same visible targets.",
+		"When Agent management JSON includes visible_agents and the user refers to visible, selected, first-N/top-N, or page-list Agents, treat that backend-backed list and order as authoritative resolved targets. Use their agent_id/name/href directly; do not call list_agents only to rediscover the same visible targets.",
+		"When Agent management JSON includes current_agent, it describes only the Agent detail page target. Do not treat current_agent as a visible Agent list or use it to resolve ordinal list references.",
 		"For binding edits, read current config or list exact candidates only when the needed current binding set or candidate IDs/names are not already present in page context or prior tool results. Use one update_agent_config call with add_enabled_skill_ids/remove_enabled_skill_ids, add_knowledge_dataset_ids/remove_knowledge_dataset_ids, add_database_bindings/remove_database_bindings, add_workflow_bindings/remove_workflow_bindings, or full replacement fields when the user explicitly asks to replace or clear an entire binding section. Never pass resources the user wants to unbind as the final replacement list. Never guess resource IDs and never bind resources from another workspace.",
 		"Do not publish, roll back, invoke Agents, manage API keys, or change WebApp online/offline state in this MVP. If the user asks for those, explain the limit.",
 		"For edits, deletes, and config updates, resolve the Agent first and pass the exact agent_id. Do not invent IDs.",
@@ -5882,6 +5947,11 @@ func latestUnsavedGeneratedArtifactSaveArgumentsForTargetsFromMetadata(metadata 
 		return nil
 	}
 	savedToolFileIDs := map[string]struct{}{}
+	for _, call := range successfulMetadataToolCalls(metadata, skills.SkillFileManager, "save_file_to_management") {
+		if toolFileID := fileManagerSaveToolFileID(call); toolFileID != "" {
+			savedToolFileIDs[toolFileID] = struct{}{}
+		}
+	}
 	for _, artifact := range artifacts {
 		if !strings.EqualFold(strings.TrimSpace(stringFromAny(artifact["target"])), "managed_file") &&
 			strings.TrimSpace(stringFromAny(artifact["upload_file_id"])) == "" {
@@ -5935,7 +6005,7 @@ func managedFileCreateHasUnsavedExplicitTargets(prepared *PreparedChat) bool {
 }
 
 func managedFileCreateMissingSaveTargets(parts *chatRequestParts, metadata map[string]interface{}, successfulCalls []skillloop.SkillToolCallRef) []string {
-	metadataSaveCalls := managedFileSaveCallsFromGeneratedFilesMetadata(metadata)
+	metadataSaveCalls := successfulMetadataToolCalls(metadata, skills.SkillFileManager, "save_file_to_management")
 	allSuccessfulCalls := append([]skillloop.SkillToolCallRef{}, metadataSaveCalls...)
 	allSuccessfulCalls = append(allSuccessfulCalls, successfulCalls...)
 	if missingTargets := missingRequestedManagedFileSaveTargets(parts, allSuccessfulCalls); len(missingTargets) > 0 {
@@ -5951,7 +6021,7 @@ func managedFileCreateContinuationSaveFlowActive(parts *chatRequestParts, metada
 	if parts == nil || !partsRequestsContinuationWithFallback(parts, "") {
 		return false
 	}
-	return len(managedFileSaveCallsFromGeneratedFilesMetadata(metadata)) > 0 &&
+	return len(successfulMetadataToolCalls(metadata, skills.SkillFileManager, "save_file_to_management")) > 0 &&
 		len(unsavedGeneratedArtifactsFromMetadata(metadata, nil)) > 0
 }
 
@@ -6011,6 +6081,11 @@ func unsavedGeneratedArtifactsFromMetadata(metadata map[string]interface{}, succ
 		return nil
 	}
 	savedToolFileIDs := map[string]struct{}{}
+	for _, call := range successfulMetadataToolCalls(metadata, skills.SkillFileManager, "save_file_to_management") {
+		if toolFileID := fileManagerSaveToolFileID(call); toolFileID != "" {
+			savedToolFileIDs[toolFileID] = struct{}{}
+		}
+	}
 	for _, artifact := range artifacts {
 		if !strings.EqualFold(strings.TrimSpace(stringFromAny(artifact["target"])), "managed_file") &&
 			strings.TrimSpace(stringFromAny(artifact["upload_file_id"])) == "" {
@@ -6046,49 +6121,6 @@ func unsavedGeneratedArtifactsFromMetadata(metadata map[string]interface{}, succ
 		unsaved = append(unsaved, artifact)
 	}
 	return unsaved
-}
-
-func managedFileSaveCallsFromGeneratedFilesMetadata(metadata map[string]interface{}) []skillloop.SkillToolCallRef {
-	artifacts := generatedFilesFromMetadata(metadataValue(metadata, "generated_files"))
-	if len(artifacts) == 0 {
-		return nil
-	}
-	calls := make([]skillloop.SkillToolCallRef, 0, len(artifacts))
-	for _, artifact := range artifacts {
-		if !strings.EqualFold(strings.TrimSpace(stringFromAny(artifact["target"])), "managed_file") &&
-			strings.TrimSpace(stringFromAny(artifact["upload_file_id"])) == "" {
-			continue
-		}
-		filename := strings.TrimSpace(firstNonEmptyString(
-			artifact["filename"],
-			artifact["file_name"],
-			artifact["name"],
-		))
-		sourceFileID := strings.TrimSpace(firstNonEmptyString(
-			artifact["source_tool_file_id"],
-			artifact["source_file_id"],
-			artifact["tool_file_id"],
-		))
-		if filename == "" && sourceFileID == "" {
-			continue
-		}
-		calls = append(calls, skillloop.SkillToolCallRef{
-			SkillID:  skills.SkillFileManager,
-			ToolName: "save_file_to_management",
-			Arguments: map[string]interface{}{
-				"filename":     filename,
-				"tool_file_id": sourceFileID,
-				"source_type":  "tool_file",
-			},
-			Result: map[string]interface{}{
-				"file_name":      filename,
-				"filename":       filename,
-				"source_file_id": sourceFileID,
-				"target":         "managed_file",
-			},
-		})
-	}
-	return calls
 }
 
 func successfulMetadataToolCalls(metadata map[string]interface{}, skillID string, toolName string) []skillloop.SkillToolCallRef {
@@ -6393,6 +6425,9 @@ func consoleFilesPromptVisibleFiles(parts *chatRequestParts) []map[string]interf
 	if parts == nil {
 		return nil
 	}
+	if currentPageContextIsStale(parts) {
+		return nil
+	}
 	files := visibleFileResources(parts.RawOperationContext)
 	if len(files) == 0 {
 		files = visibleFileResources(parts.OperationContext)
@@ -6427,8 +6462,11 @@ func consoleFilesPromptVisibleFiles(parts *chatRequestParts) []map[string]interf
 	return out
 }
 
-func consoleAgentsPromptVisibleAgents(parts *chatRequestParts) []map[string]interface{} {
+func consoleAgentsPromptAgents(parts *chatRequestParts) []map[string]interface{} {
 	if parts == nil {
+		return nil
+	}
+	if currentPageContextIsStale(parts) {
 		return nil
 	}
 	agents := visibleAgentResources(parts.RawOperationContext)
@@ -6467,6 +6505,31 @@ func consoleAgentsPromptVisibleAgents(parts *chatRequestParts) []map[string]inte
 		out = append(out, item)
 	}
 	return out
+}
+
+func consoleAgentsPromptVisibleAgents(parts *chatRequestParts) []map[string]interface{} {
+	if isConsoleAgentDetailRoute(contextualTurnCurrentPage(parts)) {
+		return nil
+	}
+	return consoleAgentsPromptAgents(parts)
+}
+
+func consoleAgentsPromptCurrentAgent(parts *chatRequestParts) map[string]interface{} {
+	route := contextualTurnCurrentPage(parts)
+	if !isConsoleAgentDetailRoute(route) {
+		return nil
+	}
+	agentID := agentIDFromConsoleAgentPageRoute(route)
+	agents := consoleAgentsPromptAgents(parts)
+	for _, agent := range agents {
+		if strings.EqualFold(strings.TrimSpace(firstNonEmptyString(agent["agent_id"], agent["id"])), agentID) {
+			return copyStringAnyMap(agent)
+		}
+	}
+	if len(agents) == 1 {
+		return copyStringAnyMap(agents[0])
+	}
+	return nil
 }
 
 func consoleFilesPromptRecentGeneratedFiles(parts *chatRequestParts) []map[string]interface{} {

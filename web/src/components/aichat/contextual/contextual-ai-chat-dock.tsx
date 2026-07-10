@@ -655,9 +655,57 @@ function routeObservationContextItem(item: AIChatContextItem) {
   };
 }
 
+function metadataQueryValue(item: AIChatContextItem, key: string) {
+  const value = item.metadata?.[key];
+  return value === null || value === undefined || value === '' ? undefined : value;
+}
+
+function commaSeparatedMetadataValues(value: unknown) {
+  if (typeof value !== 'string') return undefined;
+  const values = value
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+  return values.length > 0 ? values : undefined;
+}
+
+function routeViewQuery(item: AIChatContextItem | undefined, href: string) {
+  if (!item) return undefined;
+  if (href === '/console/files') {
+    const category = metadataQueryValue(item, 'category');
+    const categoryText = typeof category === 'string' ? category : undefined;
+    const systemCategories = new Set(['all', 'needs_action', 'uploaded', 'default']);
+    return {
+      page: metadataQueryValue(item, 'current_page') ?? 1,
+      page_size: metadataQueryValue(item, 'page_size'),
+      keyword: metadataQueryValue(item, 'search'),
+      sort: metadataQueryValue(item, 'sort'),
+      extension: metadataQueryValue(item, 'extension_filter'),
+      category,
+      folder_id:
+        categoryText && !systemCategories.has(categoryText) ? categoryText : undefined,
+      processing_status: metadataQueryValue(item, 'processing_status'),
+      workspace_id: metadataQueryValue(item, 'workspace_id'),
+      selected_ids: commaSeparatedMetadataValues(metadataQueryValue(item, 'selected_file_ids')),
+    };
+  }
+  if (href === '/console/agents') {
+    return {
+      page: metadataQueryValue(item, 'current_page') ?? 1,
+      page_size: metadataQueryValue(item, 'page_size'),
+      keyword: metadataQueryValue(item, 'search'),
+      workspace_id: metadataQueryValue(item, 'workspace_id'),
+      asset_kind: metadataQueryValue(item, 'asset_kind'),
+      loaded_count: metadataQueryValue(item, 'loaded_agent_count'),
+    };
+  }
+  return undefined;
+}
+
 function routeContextObservation(items: AIChatContextItem[], href: string) {
   const matchedItem = items.find(item => routeHrefFromContextItem(item) === href);
   const readyItem = routeSpecificReadyContextItem(items, href);
+  const pageItem = readyItem ?? matchedItem;
   return {
     page_context_ready: Boolean(readyItem),
     matched_context_item_id: matchedItem ? `${matchedItem.type}:${matchedItem.id}` : undefined,
@@ -667,7 +715,8 @@ function routeContextObservation(items: AIChatContextItem[], href: string) {
     ready_context_item_id: readyItem ? `${readyItem.type}:${readyItem.id}` : undefined,
     ready_context_title: readyItem?.title,
     context_item_count: items.length,
-    context_items: items.slice(0, 6).map(routeObservationContextItem),
+    view_query: routeViewQuery(pageItem, href),
+    context_items: pageItem ? [routeObservationContextItem(pageItem)] : [],
   };
 }
 

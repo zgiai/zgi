@@ -120,7 +120,7 @@ func (r *processTimelineRecorder) RecordTrace(traces []skills.SkillTrace, trace 
 
 func nonVisibleTraceCarriesMetadata(trace skills.SkillTrace) bool {
 	switch strings.TrimSpace(trace.Kind) {
-	case "turn_state":
+	case "turn_state", "plan_update":
 		return true
 	default:
 		return false

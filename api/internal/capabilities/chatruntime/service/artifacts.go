@@ -1,7 +1,9 @@
 package service
 
 import (
+	"context"
 	"strings"
+	"time"
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	tool_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/tool_file"
@@ -15,6 +17,8 @@ const (
 	conversationArtifactTypeFile         = "file"
 	conversationArtifactStatusAvailable  = "available"
 	conversationArtifactStatusSaved      = "saved_to_file_management"
+	conversationArtifactAvailabilityLive = "available"
+	conversationArtifactAvailabilityGone = "expired"
 	conversationArtifactLifecycleTemp    = "temporary"
 	conversationArtifactLifecycleManaged = "managed"
 )
@@ -25,7 +29,23 @@ func hydrateMessagesGeneratedFileURLs(messages []*runtimemodel.Message) {
 	}
 }
 
+func hydrateMessagesGeneratedFileState(ctx context.Context, messages []*runtimemodel.Message) {
+	toolFiles, lookupAttempted := generatedToolFilesForHistory(ctx, messages)
+	now := time.Now()
+	for _, message := range messages {
+		hydrateMessageGeneratedFileURLsWithLookup(message, toolFiles, lookupAttempted, now)
+	}
+}
+
+func hydrateMessageGeneratedFileState(ctx context.Context, message *runtimemodel.Message) {
+	hydrateMessagesGeneratedFileState(ctx, []*runtimemodel.Message{message})
+}
+
 func hydrateMessageGeneratedFileURLs(message *runtimemodel.Message) {
+	hydrateMessageGeneratedFileURLsWithLookup(message, nil, false, time.Now())
+}
+
+func hydrateMessageGeneratedFileURLsWithLookup(message *runtimemodel.Message, toolFiles map[string]*tool_file.ToolFile, lookupAttempted bool, now time.Time) {
 	if message == nil || len(message.Metadata) == 0 {
 		return
 	}
@@ -35,21 +55,88 @@ func hydrateMessageGeneratedFileURLs(message *runtimemodel.Message) {
 	}
 	hydrated := make([]map[string]interface{}, 0, len(files))
 	for _, file := range files {
-		hydrated = append(hydrated, hydrateGeneratedFileURL(file))
+		hydrated = append(hydrated, hydrateGeneratedFileURLWithLookup(file, toolFiles, lookupAttempted, now))
 	}
 	metadata := copyStringAnyMap(message.Metadata)
 	metadata["generated_files"] = hydrated
 	message.Metadata = metadata
 }
 
+func generatedToolFilesForHistory(ctx context.Context, messages []*runtimemodel.Message) (map[string]*tool_file.ToolFile, bool) {
+	if tool_file.GlobalToolFileManager == nil {
+		return nil, false
+	}
+	seen := map[string]struct{}{}
+	toolFileIDs := make([]string, 0)
+	for _, message := range messages {
+		if message == nil || len(message.Metadata) == 0 {
+			continue
+		}
+		for _, file := range generatedFilesFromMetadata(message.Metadata["generated_files"]) {
+			if isManagedFileArtifact(file) || !generatedFileNeedsLifecycleLookup(file) {
+				continue
+			}
+			toolFileID := generatedArtifactToolFileID(file)
+			if toolFileID == "" {
+				continue
+			}
+			if _, exists := seen[toolFileID]; exists {
+				continue
+			}
+			seen[toolFileID] = struct{}{}
+			toolFileIDs = append(toolFileIDs, toolFileID)
+		}
+	}
+	if len(toolFileIDs) == 0 {
+		return nil, false
+	}
+	toolFiles, err := tool_file.GetToolFilesByIDsGlobal(ctx, toolFileIDs)
+	if err != nil {
+		return nil, false
+	}
+	return toolFiles, true
+}
+
+func generatedFileNeedsLifecycleLookup(file map[string]interface{}) bool {
+	return strings.TrimSpace(stringFromAny(file["lifecycle"])) == "" || file["expires_at"] == nil
+}
+
 func hydrateGeneratedFileURL(file map[string]interface{}) map[string]interface{} {
+	return hydrateGeneratedFileURLWithLookup(file, nil, false, time.Now())
+}
+
+func hydrateGeneratedFileURLWithLookup(file map[string]interface{}, toolFiles map[string]*tool_file.ToolFile, lookupAttempted bool, now time.Time) map[string]interface{} {
 	hydrated := copyStringAnyMap(file)
 	transferMethod := strings.TrimSpace(stringFromAny(hydrated["transfer_method"]))
-	if transferMethod != "" && transferMethod != "tool_file" {
+	if isManagedFileArtifact(hydrated) || (transferMethod != "" && transferMethod != "tool_file") {
+		if fileID := strings.TrimSpace(firstNonEmptyString(hydrated["upload_file_id"], hydrated["file_id"], hydrated["id"])); fileID != "" && strings.TrimSpace(stringFromAny(hydrated["artifact_id"])) == "" {
+			hydrated["artifact_id"] = "managed_file:" + fileID
+		}
 		hydrateManagedGeneratedFileURL(hydrated)
 		return hydrated
 	}
-	fileID := firstNonEmptyString(hydrated["file_id"])
+	fileID := generatedArtifactToolFileID(hydrated)
+	if fileID != "" && strings.TrimSpace(stringFromAny(hydrated["artifact_id"])) == "" {
+		hydrated["artifact_id"] = "tool_file:" + fileID
+	}
+	if toolFile := toolFiles[fileID]; toolFile != nil {
+		hydrated["lifecycle"] = string(toolFile.LifecycleValue())
+		if toolFile.ExpiresAt != nil {
+			hydrated["expires_at"] = toolFile.ExpiresAt.Unix()
+		}
+	} else if lookupAttempted && generatedFileNeedsLifecycleLookup(hydrated) {
+		hydrated["availability"] = conversationArtifactAvailabilityGone
+		delete(hydrated, "url")
+		delete(hydrated, "download_url")
+		return hydrated
+	}
+	if generatedArtifactExpired(hydrated, now) {
+		hydrated["availability"] = conversationArtifactAvailabilityGone
+		delete(hydrated, "url")
+		delete(hydrated, "download_url")
+		return hydrated
+	}
+	hydrated["availability"] = conversationArtifactAvailabilityLive
 	extension := normalizedFileExtension(hydrated["extension"])
 	if fileID == "" || extension == "" {
 		return hydrated
@@ -61,6 +148,18 @@ func hydrateGeneratedFileURL(file map[string]interface{}) map[string]interface{}
 	hydrated["url"] = url
 	hydrated["download_url"] = appendDownloadQuery(url)
 	return hydrated
+}
+
+func generatedArtifactToolFileID(file map[string]interface{}) string {
+	return strings.TrimSpace(firstNonEmptyString(file["tool_file_id"], file["file_id"], file["id"]))
+}
+
+func generatedArtifactExpired(file map[string]interface{}, now time.Time) bool {
+	if strings.EqualFold(strings.TrimSpace(stringFromAny(file["availability"])), conversationArtifactAvailabilityGone) {
+		return true
+	}
+	expiresAt, ok := unixSecondsFromAny(file["expires_at"])
+	return ok && expiresAt > 0 && expiresAt <= now.Unix()
 }
 
 func hydrateManagedGeneratedFileURL(file map[string]interface{}) {
@@ -102,6 +201,7 @@ func hydrateStreamEventGeneratedFileURL(event StreamEvent) StreamEvent {
 
 func persistentGeneratedArtifact(artifact map[string]interface{}) map[string]interface{} {
 	out := map[string]interface{}{}
+	copyStringField(out, artifact, "artifact_id")
 	copyStringField(out, artifact, "file_id")
 	copyStringField(out, artifact, "tool_file_id")
 	copyStringField(out, artifact, "source_file_id")
@@ -112,6 +212,7 @@ func persistentGeneratedArtifact(artifact map[string]interface{}) map[string]int
 	copyStringField(out, artifact, "transfer_method")
 	copyStringField(out, artifact, "file_type")
 	copyStringField(out, artifact, "target")
+	copyStringField(out, artifact, "lifecycle")
 	copyStringField(out, artifact, "workspace_id")
 	copyStringField(out, artifact, "folder_id")
 	copyStringField(out, artifact, "upload_file_id")
@@ -125,6 +226,17 @@ func persistentGeneratedArtifact(artifact map[string]interface{}) map[string]int
 	copyStringField(out, artifact, "correlation_id")
 	copyScalarField(out, artifact, "size")
 	copyScalarField(out, artifact, "created_at")
+	copyScalarField(out, artifact, "expires_at")
+	if strings.TrimSpace(stringFromAny(out["artifact_id"])) == "" {
+		if isManagedFileArtifact(out) {
+			if fileID := strings.TrimSpace(firstNonEmptyString(out["upload_file_id"], out["file_id"])); fileID != "" {
+				out["artifact_id"] = "managed_file:" + fileID
+			}
+		} else if toolFileID := generatedArtifactToolFileID(out); toolFileID != "" {
+			out["artifact_id"] = "tool_file:" + toolFileID
+			out["tool_file_id"] = toolFileID
+		}
+	}
 	if audit := governanceMapFromAny(artifact["asset_operation_audit"]); len(audit) > 0 {
 		out["asset_operation_audit"] = audit
 	}
@@ -136,7 +248,7 @@ func persistentConversationArtifact(artifact map[string]interface{}) map[string]
 		return nil
 	}
 	isManaged := isManagedFileArtifact(artifact)
-	toolFileID := strings.TrimSpace(firstNonEmptyString(artifact["tool_file_id"], artifact["source_file_id"], artifact["file_id"], artifact["id"]))
+	toolFileID := strings.TrimSpace(firstNonEmptyString(artifact["tool_file_id"], artifact["source_tool_file_id"], artifact["source_file_id"], artifact["file_id"], artifact["id"]))
 	managedFileID := strings.TrimSpace(firstNonEmptyString(artifact["upload_file_id"], artifact["file_id"], artifact["id"]))
 	if isManaged && managedFileID == "" {
 		return nil
@@ -162,7 +274,11 @@ func persistentConversationArtifact(artifact map[string]interface{}) map[string]
 	} else {
 		out["artifact_id"] = "tool_file:" + toolFileID
 		out["status"] = conversationArtifactStatusAvailable
-		out["lifecycle"] = conversationArtifactLifecycleTemp
+		if lifecycle := strings.TrimSpace(stringFromAny(artifact["lifecycle"])); lifecycle != "" {
+			out["lifecycle"] = lifecycle
+		} else {
+			out["lifecycle"] = conversationArtifactLifecycleTemp
+		}
 		out["file_id"] = toolFileID
 		out["tool_file_id"] = toolFileID
 		if target := strings.TrimSpace(stringFromAny(artifact["target"])); target != "" {
@@ -193,7 +309,7 @@ func persistentConversationArtifact(artifact map[string]interface{}) map[string]
 			out[key] = value
 		}
 	}
-	for _, key := range []string{"size", "created_at"} {
+	for _, key := range []string{"size", "created_at", "expires_at"} {
 		if value, ok := artifact[key]; ok && value != nil {
 			out[key] = value
 		}
@@ -218,9 +334,6 @@ func mergeConversationArtifactMetadata(metadata map[string]interface{}, artifact
 		return metadata
 	}
 	artifacts := conversationArtifactsFromMetadata(metadata["conversation_artifacts"])
-	if strings.TrimSpace(stringFromAny(storedArtifact["lifecycle"])) == conversationArtifactLifecycleManaged {
-		artifacts = markTemporaryArtifactSaved(artifacts, storedArtifact)
-	}
 	artifactID := strings.TrimSpace(stringFromAny(storedArtifact["artifact_id"]))
 	replaced := false
 	for idx, item := range artifacts {
@@ -239,32 +352,6 @@ func mergeConversationArtifactMetadata(metadata map[string]interface{}, artifact
 	metadata["conversation_artifacts"] = mapsToInterfaceSlice(artifacts)
 	metadata["conversation_artifact_count"] = len(artifacts)
 	return metadata
-}
-
-func markTemporaryArtifactSaved(artifacts []map[string]interface{}, managed map[string]interface{}) []map[string]interface{} {
-	sourceToolFileID := strings.TrimSpace(firstNonEmptyString(managed["source_tool_file_id"], managed["tool_file_id"], managed["source_file_id"]))
-	if sourceToolFileID == "" {
-		return artifacts
-	}
-	managedFileID := strings.TrimSpace(firstNonEmptyString(managed["upload_file_id"], managed["file_id"]))
-	for idx, item := range artifacts {
-		if strings.TrimSpace(firstNonEmptyString(item["tool_file_id"], item["file_id"])) != sourceToolFileID {
-			continue
-		}
-		if strings.TrimSpace(stringFromAny(item["lifecycle"])) == conversationArtifactLifecycleManaged {
-			continue
-		}
-		updated := copyStringAnyMap(item)
-		updated["status"] = conversationArtifactStatusSaved
-		if managedFileID != "" {
-			updated["managed_file_id"] = managedFileID
-		}
-		if filename := strings.TrimSpace(firstNonEmptyString(managed["filename"], managed["name"])); filename != "" {
-			updated["managed_filename"] = filename
-		}
-		artifacts[idx] = updated
-	}
-	return artifacts
 }
 
 func mergeConversationArtifact(existing map[string]interface{}, incoming map[string]interface{}) map[string]interface{} {
@@ -326,7 +413,6 @@ func recentGeneratedArtifactsFromBranch(branch []*runtimemodel.Message) []map[st
 		return nil
 	}
 	seen := map[string]struct{}{}
-	savedToolFiles := map[string]struct{}{}
 	out := make([]map[string]interface{}, 0, recentGeneratedArtifactLimit)
 	for i := len(branch) - 1; i >= 0 && len(out) < recentGeneratedArtifactLimit; i-- {
 		message := branch[i]
@@ -334,14 +420,10 @@ func recentGeneratedArtifactsFromBranch(branch []*runtimemodel.Message) []map[st
 			continue
 		}
 		artifacts := recentConversationArtifactCandidates(message)
-		collectSavedToolFileIDs(artifacts, savedToolFiles)
 		for j := len(artifacts) - 1; j >= 0 && len(out) < recentGeneratedArtifactLimit; j-- {
 			artifact := recentGeneratedArtifactCandidate(artifacts[j], message.ID.String())
 			toolFileID := strings.TrimSpace(stringFromAny(artifact["tool_file_id"]))
 			if toolFileID == "" {
-				continue
-			}
-			if _, saved := savedToolFiles[toolFileID]; saved {
 				continue
 			}
 			if _, exists := seen[toolFileID]; exists {
@@ -352,29 +434,6 @@ func recentGeneratedArtifactsFromBranch(branch []*runtimemodel.Message) []map[st
 		}
 	}
 	return out
-}
-
-func collectSavedToolFileIDs(artifacts []map[string]interface{}, saved map[string]struct{}) {
-	if len(artifacts) == 0 || saved == nil {
-		return
-	}
-	for _, artifact := range artifacts {
-		if len(artifact) == 0 {
-			continue
-		}
-		if !strings.EqualFold(strings.TrimSpace(stringFromAny(artifact["status"])), conversationArtifactStatusSaved) &&
-			!strings.EqualFold(strings.TrimSpace(stringFromAny(artifact["lifecycle"])), conversationArtifactLifecycleManaged) {
-			continue
-		}
-		toolFileID := strings.TrimSpace(firstNonEmptyString(
-			artifact["source_tool_file_id"],
-			artifact["source_file_id"],
-		))
-		if toolFileID == "" {
-			continue
-		}
-		saved[toolFileID] = struct{}{}
-	}
 }
 
 func recentConversationArtifactCandidates(message *runtimemodel.Message) []map[string]interface{} {
@@ -392,9 +451,6 @@ func recentGeneratedArtifactCandidate(file map[string]interface{}, messageID str
 	if len(file) == 0 {
 		return nil
 	}
-	if strings.EqualFold(strings.TrimSpace(stringFromAny(file["status"])), conversationArtifactStatusSaved) {
-		return nil
-	}
 	if strings.EqualFold(strings.TrimSpace(stringFromAny(file["lifecycle"])), conversationArtifactLifecycleManaged) {
 		return nil
 	}
@@ -406,6 +462,9 @@ func recentGeneratedArtifactCandidate(file map[string]interface{}, messageID str
 		return nil
 	}
 	if strings.TrimSpace(stringFromAny(file["upload_file_id"])) != "" {
+		return nil
+	}
+	if generatedArtifactExpired(file, time.Now()) {
 		return nil
 	}
 	toolFileID := firstNonEmptyString(file["tool_file_id"], file["file_id"], file["id"])
@@ -432,12 +491,13 @@ func recentGeneratedArtifactCandidate(file map[string]interface{}, messageID str
 		"tool_name",
 		"operation_id",
 		"correlation_id",
+		"availability",
 	} {
 		if value, ok := file[key]; ok && value != nil && strings.TrimSpace(stringFromAny(value)) != "" {
 			artifact[key] = value
 		}
 	}
-	for _, key := range []string{"size", "created_at"} {
+	for _, key := range []string{"size", "created_at", "expires_at"} {
 		if value, ok := file[key]; ok && value != nil {
 			artifact[key] = value
 		}

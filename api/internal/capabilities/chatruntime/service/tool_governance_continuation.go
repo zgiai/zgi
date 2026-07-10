@@ -87,6 +87,7 @@ func (s *service) failToolGovernanceContinuation(ctx context.Context, continuati
 	prepared := &PreparedChat{
 		Conversation: continuation.Conversation,
 		Message:      continuation.Message,
+		Continuation: true,
 	}
 	s.finalizePreparedError(ctx, prepared, cause, onEvent)
 	s.emitPreparedEvent(ctx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, continuation.Message.Metadata, runtimemodel.MessageStatusError), onEvent)
@@ -185,6 +186,7 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 	restoreConsoleFilesContextFromMetadata(parts, message.Metadata, continuation.Event)
 	restoreConsoleAgentsContextFromMetadata(parts, message.Metadata, continuation.Event)
 	restoreTurnInitialContextFromMetadata(parts, message.Metadata)
+	restoreCurrentPageContextFromMetadata(parts, message.Metadata)
 	parts.Attachments = attachmentBundleFromMessageMetadata(message.Metadata)
 	if configured, ok := stringSliceValue(message.Metadata["configured_skill_ids"]); ok && len(configured) > 0 {
 		parts.ConfiguredSkillIDs = configured
@@ -211,6 +213,7 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 		Scope:        scope,
 		Caller:       Caller{Type: runtimemodel.ConversationCallerAIChat},
 		ParentID:     message.ParentID,
+		Continuation: true,
 		parts:        parts,
 	}, nil
 }

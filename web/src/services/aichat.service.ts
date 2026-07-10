@@ -24,6 +24,7 @@ import type {
   AIChatMessageListResponse,
   AIChatRegenerateMessageRequest,
   AIChatRuntimeSurface,
+  AIChatUserInputContinuationRequest,
   AIChatSearchResponse,
   AIChatSkillConfigResponse,
   AIChatSkillDetailResponse,
@@ -360,6 +361,34 @@ export const aichatService = {
         conversationId
       )}/messages/${encodeURIComponent(messageId)}/client-actions/${encodeURIComponent(
         actionId
+      )}/continue`,
+      {
+        method: 'POST',
+        body: payload,
+        abortSignal,
+        isTerminalMessage: isAIChatTerminalMessage,
+        onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
+        onError: error => callbacks.onError?.(error),
+        onClose: callbacks.onClose,
+      }
+    );
+  },
+
+  continueUserInput(
+    conversationId: string,
+    messageId: string,
+    requestId: string,
+    payload: AIChatUserInputContinuationRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    const outputFilter = createAIChatStreamOutputFilter(callbacks);
+
+    return http.sse<AIChatSseEnvelope, AIChatUserInputContinuationRequest>(
+      `${AICHAT_BASE_PATH}/conversations/${encodeURIComponent(
+        conversationId
+      )}/messages/${encodeURIComponent(messageId)}/user-input/${encodeURIComponent(
+        requestId
       )}/continue`,
       {
         method: 'POST',

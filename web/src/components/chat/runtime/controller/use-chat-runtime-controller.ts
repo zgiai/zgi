@@ -210,6 +210,7 @@ export function useChatRuntimeController(options?: {
     continueWorkflowQuestion,
     continueToolGovernanceDecision,
     continueClientAction,
+    continueUserInput,
   } = useChatRuntimeMessageActions({
     stateRef,
     transportRef,
@@ -274,6 +275,7 @@ export function useChatRuntimeController(options?: {
     continueWorkflowQuestion,
     continueToolGovernanceDecision,
     continueClientAction,
+    continueUserInput,
     stop,
     switchBranch,
     search,

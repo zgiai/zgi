@@ -24,6 +24,7 @@ type userInputGuardState struct {
 	toolCallCount       int
 	attemptedToolCalls  []SkillToolCallRef
 	successfulToolCalls []SkillToolCallRef
+	completionEvidence  map[string]interface{}
 }
 
 func (r *Runner) handleProgressiveSkillCall(
@@ -84,6 +85,9 @@ func (r *Runner) handleProgressiveSkillCall(
 		}
 		if strings.EqualFold(toolName, skills.MetaToolTurnState) {
 			return r.handleTurnStateCall(ctx, prepared, call.ID, toolArgs, onEvent)
+		}
+		if strings.EqualFold(toolName, skills.MetaToolUpdatePlan) {
+			return r.handleUpdatePlanCall(call.ID, toolArgs, userInputGuard.completionEvidence)
 		}
 		if strings.EqualFold(toolName, skills.MetaToolIntermediateAnswer) {
 			return r.handleIntermediateAnswerCall(ctx, prepared, call.ID, toolArgs, onEvent)
@@ -155,15 +159,20 @@ func (r *Runner) handleProgressiveSkillCall(
 		return r.handleRequestUserInputCall(ctx, prepared, call.ID, args, userInputGuard, onEvent)
 	case skills.MetaToolTurnState:
 		return r.handleTurnStateCall(ctx, prepared, call.ID, args, onEvent)
+	case skills.MetaToolUpdatePlan:
+		return r.handleUpdatePlanCall(call.ID, args, userInputGuard.completionEvidence)
 	case skills.MetaToolIntermediateAnswer:
 		return r.handleIntermediateAnswerCall(ctx, prepared, call.ID, args, onEvent)
+	case skills.MetaToolFinalAnswer:
+		err := fmt.Errorf("%w: submit_final_answer must be handled as the terminal skill-loop action", ErrInvalidInput)
+		return failedFinalAnswerSkillStep(call.ID, err, "submit the final answer as the only terminal action")
 	default:
 		if isInjectedContextPseudoToolName(call.Function.Name) {
 			return injectedContextPseudoToolFeedbackStep(call.ID, call.Function.Name)
 		}
 		err := fmt.Errorf("%w: unsupported skill meta tool %s", ErrInvalidInput, call.Function.Name)
 		trace := failedSkillTrace("meta_tool", call.Function.Name, err)
-		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "use one of load_skill, request_user_input, read_skill_reference, call_skill_tool, submit_turn_state, or submit_intermediate_answer")), false, false)
+		return recoverableSkillStep(trace, skills.ToolResultMessage(call.ID, recoverableErrorPayload(err, "use one of load_skill, request_user_input, read_skill_reference, call_skill_tool, submit_turn_state, update_plan, submit_intermediate_answer, or submit_final_answer")), false, false)
 	}
 }
 
@@ -201,8 +210,10 @@ func isSkillMetaToolName(name string) bool {
 		skills.MetaToolReadSkillReference,
 		skills.MetaToolCallSkillTool,
 		skills.MetaToolTurnState,
+		skills.MetaToolUpdatePlan,
 		skills.MetaToolIntermediateAnswer,
-		skills.MetaToolRequestUserInput:
+		skills.MetaToolRequestUserInput,
+		skills.MetaToolFinalAnswer:
 		return true
 	default:
 		return false
@@ -327,7 +338,7 @@ func (r *Runner) handleRequestUserInputCall(
 	if visibleMessage != "" {
 		trace.Message = visibleMessage
 	}
-	pendingPayload := userInputRequestPayload(prepared, callID, questions)
+	pendingPayload := userInputRequestPayload(prepared, callID, visibleMessage, questions)
 	r.emitEvent(EventUserInputRequested, pendingPayload)
 	logger.DebugContext(ctx, "aichat user input requested",
 		"conversation_id", prepared.Conversation.ID.String(),
@@ -338,7 +349,6 @@ func (r *Runner) handleRequestUserInputCall(
 		"status":      "waiting_for_user",
 		"instruction": "The question is visible to the user. Stop this turn and wait for the next user message.",
 	}), false, false)
-	result.answer = visibleMessage
 	result.pendingUserInput = pendingPayload
 	return result
 }
@@ -577,6 +587,7 @@ func (r *Runner) handleCallSkillTool(
 		invocation.Trace.Result = summary
 	}
 	applyStateHandoffAdvisoryToToolMessage(invocation)
+	applyPageContextInvalidationAdvisory(invocation)
 	guardToolResult := skillToolResultForGuard(invocation.Trace.SkillID, invocation.Trace.ToolName, invocation.Messages, invocation.Trace.Result)
 	logger.DebugContext(ctx, "aichat skill tool completed",
 		"conversation_id", prepared.Conversation.ID.String(),

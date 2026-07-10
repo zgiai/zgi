@@ -5,6 +5,7 @@ import type {
   AIChatConversation,
   AIChatMessage,
   AIChatToolGovernanceDecisionRequest,
+  AIChatUserInputContinuationRequest,
 } from '@/services/types/aichat';
 import {
   getNextActiveSendingState,
@@ -73,10 +74,18 @@ export function useWorkflowContinuationActions({
       clientActionResult?: {
         actionId: string;
         payload: AIChatClientActionResultRequest;
+      },
+      userInputContinuation?: {
+        requestId: string;
+        payload: AIChatUserInputContinuationRequest;
       }
     ) => {
       const transport = transportRef.current;
-      if (clientActionResult) {
+      if (userInputContinuation) {
+        if (!transport.continueUserInput) {
+          throw new Error('User input continuation is unavailable.');
+        }
+      } else if (clientActionResult) {
         if (!transport.continueClientAction) {
           throw new Error('Client action continuation is unavailable.');
         }
@@ -94,24 +103,30 @@ export function useWorkflowContinuationActions({
       const continueToolGovernanceDecisionStream =
         transport.continueToolGovernanceDecision?.bind(transport);
       const continueClientActionStream = transport.continueClientAction?.bind(transport);
+      const continueUserInputStream = transport.continueUserInput?.bind(transport);
       const currentState = stateRef.current;
       const conversation =
         currentState.conversations.find(item => item.id === conversationId) ?? null;
       const messages = currentState.messagesByConversation[conversationId] ?? [];
       const persistedSourceMessage = messages.find(message => message.id === messageId);
       const previousStreaming = currentState.streamingByMessageId[messageId];
-      const fallbackSourceMessage: AIChatMessage | null = toolGovernanceDecision || clientActionResult
-        ? {
-            id: messageId,
-            conversation_id: conversationId,
-            query: '',
-            answer: previousStreaming?.answer ?? '',
-            status: clientActionResult ? 'waiting_client_action' : 'waiting_approval',
-            model_name: '',
-            created_at: Math.floor(Date.now() / 1000),
-            updated_at: Math.floor(Date.now() / 1000),
-          }
-        : null;
+      const fallbackSourceMessage: AIChatMessage | null =
+        toolGovernanceDecision || clientActionResult || userInputContinuation
+          ? {
+              id: messageId,
+              conversation_id: conversationId,
+              query: '',
+              answer: previousStreaming?.answer ?? '',
+              status: clientActionResult
+                ? 'waiting_client_action'
+                : userInputContinuation
+                  ? 'waiting_question'
+                  : 'waiting_approval',
+              model_name: '',
+              created_at: Math.floor(Date.now() / 1000),
+              updated_at: Math.floor(Date.now() / 1000),
+            }
+          : null;
       const sourceMessage = persistedSourceMessage ?? fallbackSourceMessage;
       const sourceTimeline = persistedSourceMessage
         ? mergeRuntimeTimelineWithMessageTimeline(
@@ -123,6 +138,7 @@ export function useWorkflowContinuationActions({
       const waitingForContinuation =
         Boolean(toolGovernanceDecision) ||
         Boolean(clientActionResult) ||
+        Boolean(userInputContinuation) ||
         sourceMessage?.status === 'waiting_approval' ||
         sourceMessage?.status === 'waiting_client_action' ||
         sourceMessage?.status === 'waiting_question' ||
@@ -133,22 +149,24 @@ export function useWorkflowContinuationActions({
         (currentState.isSending && !waitingForContinuation) ||
         (currentState.recoveringByConversation[conversationId] &&
           !toolGovernanceDecision &&
-          !clientActionResult)
+          !clientActionResult &&
+          !userInputContinuation)
       ) {
         return;
       }
       if (!conversation || !sourceMessage) return;
       const alreadyContinuingMessage =
         (currentState.isSending || conversation.runtime_status === 'streaming') &&
-        (previousStreaming?.status === 'streaming' ||
-          conversation.active_message_id === messageId);
+        (previousStreaming?.status === 'streaming' || conversation.active_message_id === messageId);
       if (alreadyContinuingMessage) return;
       const sourceConversation: AIChatConversation = conversation;
       let streamStarted = false;
       let streamEnded = false;
       let startError: Error | null = null;
       const shouldSyncContinuationOnClose =
-        Boolean(toolGovernanceDecision) || Boolean(clientActionResult);
+        Boolean(toolGovernanceDecision) ||
+        Boolean(clientActionResult) ||
+        Boolean(userInputContinuation);
       const syncContinuationState = () => {
         if (!shouldSyncContinuationOnClose) return;
         refreshConversationSilently(conversationId);
@@ -187,6 +205,13 @@ export function useWorkflowContinuationActions({
       streamAbortByConversationRef.current[conversationId] = abortController;
       markSelectionTarget(conversationId);
 
+      const continuationMetadata = sourceMessage.metadata
+        ? { ...sourceMessage.metadata }
+        : undefined;
+      if (userInputContinuation && continuationMetadata) {
+        delete continuationMetadata.user_input_request;
+      }
+
       setControllerState(current => {
         const now = Math.floor(Date.now() / 1000);
         return {
@@ -211,6 +236,7 @@ export function useWorkflowContinuationActions({
                 ...sourceMessage,
                 status: 'streaming',
                 error: undefined,
+                metadata: continuationMetadata,
                 updated_at: now,
               }
             ),
@@ -388,7 +414,7 @@ export function useWorkflowContinuationActions({
             if (isAbortError(error)) return;
             if (!streamStarted) {
               const suppressError =
-                (toolGovernanceDecision || clientActionResult) &&
+                (toolGovernanceDecision || clientActionResult || userInputContinuation) &&
                 isContinuationLikelyStartedError(error);
               if (!suppressError) {
                 startError = error;
@@ -400,7 +426,7 @@ export function useWorkflowContinuationActions({
               return;
             }
             const suppressError =
-              (toolGovernanceDecision || clientActionResult) &&
+              (toolGovernanceDecision || clientActionResult || userInputContinuation) &&
               isContinuationLikelyStartedError(error);
             if (suppressError) {
               syncContinuationState();
@@ -436,7 +462,18 @@ export function useWorkflowContinuationActions({
             }
           },
         };
-        if (clientActionResult) {
+        if (userInputContinuation) {
+          if (!continueUserInputStream) return;
+          await continueUserInputStream(
+            conversationId,
+            messageId,
+            userInputContinuation.requestId,
+            userInputContinuation.payload,
+            callbacks,
+            abortController.signal
+          );
+          if (startError) throw startError;
+        } else if (clientActionResult) {
           if (!continueClientActionStream) return;
           await continueClientActionStream(
             conversationId,
@@ -482,20 +519,20 @@ export function useWorkflowContinuationActions({
           if (!streamStarted) {
             const errorMessage = getErrorMessage(error);
             const suppressError =
-              (toolGovernanceDecision || clientActionResult) &&
+              (toolGovernanceDecision || clientActionResult || userInputContinuation) &&
               isContinuationLikelyStartedError(error);
             restoreWorkflowApprovalContinuation(suppressError ? undefined : errorMessage);
             if (suppressError) {
               syncContinuationState();
               return;
             }
-            if (clientActionResult || toolGovernanceDecision) {
+            if (clientActionResult || toolGovernanceDecision || userInputContinuation) {
               throw error instanceof Error ? error : new Error(errorMessage);
             }
             return;
           }
           if (
-            (toolGovernanceDecision || clientActionResult) &&
+            (toolGovernanceDecision || clientActionResult || userInputContinuation) &&
             isContinuationLikelyStartedError(error)
           ) {
             syncContinuationState();
@@ -581,13 +618,29 @@ export function useWorkflowContinuationActions({
       actionId: string,
       payload: AIChatClientActionResultRequest
     ) => {
+      await continueWorkflowApproval(conversationId, messageId, undefined, undefined, undefined, {
+        actionId,
+        payload,
+      });
+    },
+    [continueWorkflowApproval]
+  );
+
+  const continueUserInput = useCallback(
+    async (
+      conversationId: string,
+      messageId: string,
+      requestId: string,
+      payload: AIChatUserInputContinuationRequest
+    ) => {
       await continueWorkflowApproval(
         conversationId,
         messageId,
         undefined,
         undefined,
         undefined,
-        { actionId, payload }
+        undefined,
+        { requestId, payload }
       );
     },
     [continueWorkflowApproval]
@@ -598,5 +651,6 @@ export function useWorkflowContinuationActions({
     continueWorkflowQuestion,
     continueToolGovernanceDecision,
     continueClientAction,
+    continueUserInput,
   };
 }

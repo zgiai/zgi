@@ -4,7 +4,7 @@ import type {
   AIChatFileParseStartEventData,
   AIChatGeneratedFile,
   AIChatMessageFile,
-  AIChatSkillArtifactCreatedEventData
+  AIChatSkillArtifactCreatedEventData,
 } from '@/services/types/aichat';
 import { type AIChatControllerState } from '@/components/chat/controllers/aichat/types';
 import { isStaleAIChatStreamEvent } from './shared';
@@ -103,7 +103,9 @@ function upsertGeneratedFile(
   files: AIChatGeneratedFile[],
   incoming: AIChatGeneratedFile
 ): AIChatGeneratedFile[] {
-  const index = files.findIndex(file => file.file_id === incoming.file_id);
+  const index = files.findIndex(
+    file => generatedFileIdentity(file) === generatedFileIdentity(incoming)
+  );
   if (index < 0) {
     return [...files, incoming];
   }
@@ -116,6 +118,13 @@ function upsertGeneratedFile(
   return nextFiles;
 }
 
+function generatedFileIdentity(file: AIChatGeneratedFile): string {
+  if (file.artifact_id) return file.artifact_id;
+  const isManaged = file.target === 'managed_file' || Boolean(file.upload_file_id);
+  const fileId = file.upload_file_id || file.tool_file_id || file.file_id;
+  return `${isManaged ? 'managed_file' : 'tool_file'}:${fileId}`;
+}
+
 function normalizeSkillArtifactFile(
   payload: AIChatSkillArtifactCreatedEventData
 ): AIChatGeneratedFile | null {
@@ -123,6 +132,7 @@ function normalizeSkillArtifactFile(
   const toolFileId = file?.tool_file_id ?? payload.tool_file_id;
   const uploadFileId = file?.upload_file_id ?? payload.upload_file_id;
   const sourceFileId = file?.source_file_id ?? payload.source_file_id;
+  const sourceToolFileId = file?.source_tool_file_id ?? payload.source_tool_file_id;
   const fileId = file?.file_id ?? payload.file_id ?? uploadFileId ?? toolFileId;
   const filename = file?.filename ?? payload.filename;
   const extension = file?.extension ?? payload.extension;
@@ -146,6 +156,10 @@ function normalizeSkillArtifactFile(
   }
 
   return {
+    artifact_id:
+      file?.artifact_id ??
+      payload.artifact_id ??
+      `${isManagedFile ? 'managed_file' : 'tool_file'}:${fileId}`,
     artifact_type: 'file',
     skill_id: payload.skill_id,
     tool_name: payload.tool_name,
@@ -153,6 +167,7 @@ function normalizeSkillArtifactFile(
     tool_file_id: toolFileId,
     upload_file_id: uploadFileId,
     source_file_id: sourceFileId,
+    source_tool_file_id: sourceToolFileId,
     filename,
     extension,
     mime_type: mimeType,
@@ -160,6 +175,9 @@ function normalizeSkillArtifactFile(
     url,
     download_url: file?.download_url ?? payload.download_url,
     target,
+    lifecycle: file?.lifecycle ?? payload.lifecycle,
+    expires_at: file?.expires_at ?? payload.expires_at,
+    availability: file?.availability ?? payload.availability,
     transfer_method: file?.transfer_method ?? payload.transfer_method ?? 'tool_file',
     file_type: file?.file_type ?? payload.file_type,
     operation_id: file?.operation_id ?? payload.operation_id,

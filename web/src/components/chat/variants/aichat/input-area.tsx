@@ -87,6 +87,8 @@ const COMPOSER_TEXTAREA_EXPANDED_MIN_HEIGHT = 360;
 const COMPOSER_TEXTAREA_EXPANDED_MAX_HEIGHT = 720;
 const COMPOSER_TEXTAREA_EXPANDED_VIEWPORT_RATIO = 0.72;
 const COMPOSER_EXPAND_VISIBLE_LINE_COUNT = 4;
+// Some IMEs emit a non-composing Enter immediately after compositionend.
+const COMPOSITION_END_ENTER_GRACE_MS = 100;
 
 function getComposerExpandedMaxHeight(): number {
   if (typeof window === 'undefined') return COMPOSER_TEXTAREA_EXPANDED_MAX_HEIGHT;
@@ -309,6 +311,8 @@ export function AIChatInputArea({
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const dragDepthRef = useRef(0);
   const isComposingRef = useRef(false);
+  const ignoreEnterAfterCompositionRef = useRef(false);
+  const compositionEndTimerRef = useRef<number | null>(null);
   const [attachments, setAttachments] = useState<AIChatInputAttachment[]>([]);
   const [isFileSelectorOpen, setIsFileSelectorOpen] = useState(false);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
@@ -321,7 +325,6 @@ export function AIChatInputArea({
   const [isComposerOverflowing, setIsComposerOverflowing] = useState(false);
   const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
-  const [ignoredUserInputRequestKey, setIgnoredUserInputRequestKey] = useState<string | null>(null);
   const [submittedApprovalAction, setSubmittedApprovalAction] = useState<string | null>(null);
   const [activeToolGovernanceApproval, setActiveToolGovernanceApproval] =
     useState<ToolGovernancePendingApproval | null>(null);
@@ -335,6 +338,52 @@ export function AIChatInputArea({
   const approvalSubmitMutation = useSubmitApprovalForm(
     activeWorkflowApprovalRequest?.approvalToken
   );
+
+  const clearCompositionEndGuard = useCallback(() => {
+    if (compositionEndTimerRef.current !== null) {
+      window.clearTimeout(compositionEndTimerRef.current);
+      compositionEndTimerRef.current = null;
+    }
+    ignoreEnterAfterCompositionRef.current = false;
+  }, []);
+
+  const handleCompositionStart = useCallback(() => {
+    clearCompositionEndGuard();
+    isComposingRef.current = true;
+  }, [clearCompositionEndGuard]);
+
+  const handleCompositionEnd = useCallback(() => {
+    isComposingRef.current = false;
+    ignoreEnterAfterCompositionRef.current = true;
+    if (compositionEndTimerRef.current !== null) {
+      window.clearTimeout(compositionEndTimerRef.current);
+    }
+    compositionEndTimerRef.current = window.setTimeout(() => {
+      compositionEndTimerRef.current = null;
+      ignoreEnterAfterCompositionRef.current = false;
+    }, COMPOSITION_END_ENTER_GRACE_MS);
+  }, []);
+
+  const shouldIgnoreCompositionEnter = useCallback(
+    (event: KeyboardEvent<HTMLElement>) => {
+      if (isComposingRef.current || isComposingEnterEvent(event)) {
+        return true;
+      }
+      if (!ignoreEnterAfterCompositionRef.current) {
+        return false;
+      }
+
+      clearCompositionEndGuard();
+      event.preventDefault();
+      return true;
+    },
+    [clearCompositionEndGuard]
+  );
+
+  useEffect(() => {
+    return () => clearCompositionEndGuard();
+  }, [clearCompositionEndGuard]);
+
   const { data: uploadConfig } = useUploadConfig({
     enabled: enableUpload,
     scope: uploadScope.type === 'webapp' ? uploadScope : undefined,
@@ -401,8 +450,7 @@ export function AIChatInputArea({
       activeQuestions.map(question => question.id || question.question).join('|'),
     [activeQuestions, activeUserInputRequest?.request_id]
   );
-  const hasActiveUserInputRequest =
-    activeQuestions.length > 0 && ignoredUserInputRequestKey !== requestKey;
+  const hasActiveUserInputRequest = activeQuestions.length > 0;
   const hasActiveWorkflowApprovalRequest = Boolean(activeWorkflowApprovalRequest?.approvalToken);
   const isCurrentToolGovernanceApproval = useCallback(
     (approval: ToolGovernancePendingApproval | null) => {
@@ -449,8 +497,6 @@ export function AIChatInputArea({
     Boolean(onUserInputRequestSubmit) &&
     Boolean(activeQuestion) &&
     Boolean(activeQuestionAnswer.trim()) &&
-    !modelMissing &&
-    !isModelInitializing &&
     !isUploading &&
     !hasUploadError &&
     !isSending;
@@ -458,7 +504,6 @@ export function AIChatInputArea({
   useEffect(() => {
     setQuestionAnswers({});
     setActiveQuestionIndex(0);
-    setIgnoredUserInputRequestKey(null);
   }, [requestKey]);
 
   useEffect(() => {
@@ -571,11 +616,6 @@ export function AIChatInputArea({
       questionKeyForIndex,
     ]
   );
-
-  const handleIgnoreUserInputRequest = useCallback(() => {
-    setIgnoredUserInputRequestKey(requestKey);
-    setActiveQuestionIndex(0);
-  }, [requestKey]);
 
   const handlePreviousQuestion = useCallback(() => {
     setActiveQuestionIndex(index => Math.max(index - 1, 0));
@@ -1059,7 +1099,7 @@ export function AIChatInputArea({
                 : 'max-w-4xl'
           )}
         >
-          {modelMissing && !hasBlockingApproval ? (
+          {modelMissing && !hasBlockingApproval && !hasActiveUserInputRequest ? (
             <div className="pointer-events-auto mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
               {t('consoleChat.modelRequired')}
             </div>
@@ -1137,6 +1177,11 @@ export function AIChatInputArea({
                   </div>
                 </div>
                 <div className="space-y-3">
+                  {activeUserInputRequest?.message?.trim() ? (
+                    <div className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
+                      {activeUserInputRequest.message.trim()}
+                    </div>
+                  ) : null}
                   <div className="text-sm font-medium text-foreground">
                     {activeQuestion.question}
                   </div>
@@ -1178,17 +1223,13 @@ export function AIChatInputArea({
                     }
                     onKeyDown={event => {
                       if (event.key === 'Enter') {
-                        if (isComposingRef.current || isComposingEnterEvent(event)) return;
+                        if (shouldIgnoreCompositionEnter(event)) return;
                         event.preventDefault();
                         handleSubmitCurrentQuestion();
                       }
                     }}
-                    onCompositionStart={() => {
-                      isComposingRef.current = true;
-                    }}
-                    onCompositionEnd={() => {
-                      isComposingRef.current = false;
-                    }}
+                    onCompositionStart={handleCompositionStart}
+                    onCompositionEnd={handleCompositionEnd}
                     placeholder={t('consoleChat.userInputRequest.freeAnswerPlaceholder')}
                     className="h-9 w-full rounded-md border bg-background px-2.5 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50"
                     disabled={isSending}
@@ -1218,15 +1259,6 @@ export function AIChatInputArea({
                       onClick={handleNextQuestion}
                     >
                       <ChevronRight className="size-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="rounded-md text-muted-foreground"
-                      onClick={handleIgnoreUserInputRequest}
-                    >
-                      {t('consoleChat.userInputRequest.ignore')}
                     </Button>
                   </div>
                   <Button
@@ -1262,15 +1294,11 @@ export function AIChatInputArea({
                     rows={1}
                     onChange={handleComposerInputChange}
                     onPaste={handlePaste}
-                    onCompositionStart={() => {
-                      isComposingRef.current = true;
-                    }}
-                    onCompositionEnd={() => {
-                      isComposingRef.current = false;
-                    }}
+                    onCompositionStart={handleCompositionStart}
+                    onCompositionEnd={handleCompositionEnd}
                     onKeyDown={event => {
                       if (event.key === 'Enter' && !event.shiftKey) {
-                        if (isComposingRef.current || isComposingEnterEvent(event)) return;
+                        if (shouldIgnoreCompositionEnter(event)) return;
                         if (
                           isSending ||
                           isPreparingSend ||

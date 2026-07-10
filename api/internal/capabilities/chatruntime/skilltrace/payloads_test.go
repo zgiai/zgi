@@ -94,6 +94,8 @@ func TestSkillArtifactsFromToolMessagesIncludesGovernanceOperation(t *testing.T)
 				"url":             "http://files.example/file.pdf",
 				"download_url":    "http://files.example/file.pdf?download=1",
 				"transfer_method": "tool_file",
+				"lifecycle":       "temporary",
+				"expires_at":      int64(1700000000),
 			},
 		},
 	}})
@@ -105,13 +107,17 @@ func TestSkillArtifactsFromToolMessagesIncludesGovernanceOperation(t *testing.T)
 		artifacts[0]["operation_id"] != "tool_governance:corr-file-create" {
 		t.Fatalf("artifact operation fields = %#v", artifacts[0])
 	}
+	if artifacts[0]["artifact_id"] != "tool_file:file-1" || artifacts[0]["tool_file_id"] != "file-1" ||
+		artifacts[0]["lifecycle"] != "temporary" || artifacts[0]["expires_at"] != int64(1700000000) {
+		t.Fatalf("artifact lifecycle fields = %#v", artifacts[0])
+	}
 	audit, ok := artifacts[0]["asset_operation_audit"].(map[string]interface{})
 	if !ok || audit["tool_id"] != "file.generate_pdf" || audit["approval_status"] != "approved" {
 		t.Fatalf("asset_operation_audit = %#v, want governance audit payload", artifacts[0]["asset_operation_audit"])
 	}
 }
 
-func TestSkillArtifactsFromToolMessagesIncludesManagedFileJSON(t *testing.T) {
+func TestSkillArtifactsFromToolMessagesExcludesManagedFileCopy(t *testing.T) {
 	artifacts := SkillArtifactsFromToolMessages(PayloadIDs{
 		ConversationID: "conversation-1",
 		MessageID:      "message-1",
@@ -131,42 +137,24 @@ func TestSkillArtifactsFromToolMessagesIncludesManagedFileJSON(t *testing.T) {
 	}, []tools.ToolInvokeMessage{{
 		Type: tools.ToolInvokeMessageTypeJSON,
 		Data: map[string]interface{}{
-			"status":          "completed",
-			"file_id":         "managed-1",
-			"upload_file_id":  "managed-1",
-			"filename":        "chart.svg",
-			"mime_type":       "image/svg+xml",
-			"size":            int64(256),
-			"target":          "managed_file",
-			"workspace_id":    "workspace-1",
-			"transfer_method": "local_file",
-			"source_type":     "tool_file",
-			"source_file_id":  "tool-1",
-			"download_url":    "/console/api/files/managed-1/download",
+			"status":              "completed",
+			"file_id":             "managed-1",
+			"upload_file_id":      "managed-1",
+			"filename":            "chart.svg",
+			"mime_type":           "image/svg+xml",
+			"size":                int64(256),
+			"target":              "managed_file",
+			"workspace_id":        "workspace-1",
+			"transfer_method":     "local_file",
+			"source_type":         "tool_file",
+			"source_file_id":      "tool-1",
+			"source_tool_file_id": "tool-1",
+			"download_url":        "/console/api/files/managed-1/download",
 		},
 	}})
 
-	if len(artifacts) != 1 {
-		t.Fatalf("artifacts = %#v, want one managed artifact", artifacts)
-	}
-	artifact := artifacts[0]
-	for key, want := range map[string]interface{}{
-		"file_id":        "managed-1",
-		"upload_file_id": "managed-1",
-		"filename":       "chart.svg",
-		"target":         "managed_file",
-		"workspace_id":   "workspace-1",
-		"source_file_id": "tool-1",
-		"correlation_id": "corr-file-save",
-		"operation_id":   "tool_governance:corr-file-save",
-	} {
-		if artifact[key] != want {
-			t.Fatalf("managed artifact %s = %#v, want %#v in %#v", key, artifact[key], want, artifact)
-		}
-	}
-	audit, ok := artifact["asset_operation_audit"].(map[string]interface{})
-	if !ok || audit["tool_id"] != "file.save_to_management" || audit["approval_status"] != "approved" {
-		t.Fatalf("asset_operation_audit = %#v, want governance audit payload", artifact["asset_operation_audit"])
+	if len(artifacts) != 0 {
+		t.Fatalf("artifacts = %#v, want managed copy excluded from message artifacts", artifacts)
 	}
 }
 

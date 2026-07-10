@@ -178,14 +178,56 @@ func TestCompletionGateDoesNotInferMissingWorkFromAdvisoryPlan(t *testing.T) {
 	}
 
 	decision := completionGateEvaluate(evidence, "The PDF file has been generated.")
+	if decision.Path != completionGateNeedsAction {
+		t.Fatalf("completionGateEvaluate().Path = %q, want %q; decision=%#v", decision.Path, completionGateNeedsAction, decision)
+	}
+	if len(decision.MissingFacts) != 1 || decision.MissingFacts[0] != "pending_phase:read_first_md_file_content" {
+		t.Fatalf("MissingFacts = %#v, want pending model-maintained phase", decision.MissingFacts)
+	}
+}
+
+func TestCompletionGateAcceptsCompletedModelPlanWithCanonicalToolEvidenceRefs(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"phases": []interface{}{map[string]interface{}{
+				"id": "phase-1", "step": "Read the file", "status": "completed",
+				"evidence_refs": []interface{}{"tool:file-reader/read_file"},
+			}},
+		},
+		"evidence_ledger": []interface{}{map[string]interface{}{
+			"status": "completed", "skill_id": "file-reader", "tool_name": "read_file", "invocation_id": "runtime_id:read-1",
+		}},
+	}
+	decision := completionGateEvaluate(evidence, "The file has been read.")
 	if decision.Path != completionGateDeterministicPass {
-		t.Fatalf("completionGateEvaluate().Path = %q, want %q; decision=%#v", decision.Path, completionGateDeterministicPass, decision)
+		t.Fatalf("completionGateEvaluate().Path = %q, want pass; decision=%#v", decision.Path, decision)
 	}
-	if decision.FinalAnswer != "The PDF file has been generated." {
-		t.Fatalf("completionGateEvaluate().FinalAnswer = %q, want main model candidate unchanged", decision.FinalAnswer)
+}
+
+func TestCompletionGateAcceptsLegacyUnprefixedToolEvidenceRefs(t *testing.T) {
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"phases": []interface{}{map[string]interface{}{
+				"id": "phase-1", "step": "Read the file", "status": "completed",
+				"evidence_refs": []interface{}{"file-reader/read_file"},
+			}},
+		},
+		"evidence_ledger": []interface{}{map[string]interface{}{
+			"status": "completed", "skill_id": "file-reader", "tool_name": "read_file", "invocation_id": "runtime_id:read-1",
+		}},
 	}
-	if len(decision.MissingFacts) != 0 {
-		t.Fatalf("MissingFacts = %#v, want no contract-derived missing facts", decision.MissingFacts)
+	decision := completionGateEvaluate(evidence, "The file has been read.")
+	if decision.Path != completionGateDeterministicPass {
+		t.Fatalf("completionGateEvaluate().Path = %q, want pass for legacy ref; decision=%#v", decision.Path, decision)
+	}
+}
+
+func TestCompletionGateTerminalBlockerErrorDistinguishesPlanProtocol(t *testing.T) {
+	err := completionGateTerminalBlockerError(completionGateDecision{
+		Path: completionGateNeedsAction, MissingFacts: []string{"invalid_evidence_ref:file-reader/read_file"},
+	})
+	if !strings.Contains(err.Error(), "completion plan blocker") {
+		t.Fatalf("error = %q, want completion plan blocker", err)
 	}
 }
 

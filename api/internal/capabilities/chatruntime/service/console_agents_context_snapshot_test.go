@@ -23,12 +23,12 @@ func TestConsoleAgentsContextSnapshotStoredOutsideOperationContextMetadata(t *te
 	if got := stringMetadataValue(snapshot["route"]); got != "/console/agents/agent-1/agent" {
 		t.Fatalf("snapshot route = %q, want current Agent detail route", got)
 	}
-	agents := mapSliceFromAny(snapshot["visible_agents"])
-	if len(agents) != 1 {
-		t.Fatalf("snapshot visible_agents length = %d, want 1: %#v", len(agents), snapshot["visible_agents"])
+	if agents := mapSliceFromAny(snapshot["visible_agents"]); len(agents) != 0 {
+		t.Fatalf("snapshot visible_agents = %#v, want no list on Agent detail route", agents)
 	}
-	if agents[0]["agent_id"] != "agent-1" || agents[0]["name"] != "Support Bot" {
-		t.Fatalf("snapshot agent = %#v, want agent-1/Support Bot", agents[0])
+	currentAgent := mapFromOperationContext(snapshot["current_agent"])
+	if currentAgent["agent_id"] != "agent-1" || currentAgent["name"] != "Support Bot" {
+		t.Fatalf("snapshot current_agent = %#v, want agent-1/Support Bot", currentAgent)
 	}
 	if !snapshotHasCapability(snapshot, "agent.inspect") ||
 		!snapshotHasCapability(snapshot, "agent.update_config") {
@@ -50,18 +50,21 @@ func TestRestoreConsoleAgentsContextFromSnapshotMetadata(t *testing.T) {
 	if !hasConsoleAgentsManageCapability(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
 		t.Fatalf("restored parts missing manage capability: %#v", parts.OperationContext)
 	}
-	agents := consoleAgentsPromptVisibleAgents(parts)
-	if len(agents) != 1 {
-		t.Fatalf("restored visible agents length = %d, want 1: %#v", len(agents), agents)
+	if agents := consoleAgentsPromptVisibleAgents(parts); len(agents) != 0 {
+		t.Fatalf("restored visible agents = %#v, want no list on detail route", agents)
 	}
-	if agents[0]["agent_id"] != "agent-1" || agents[0]["name"] != "Support Bot" {
-		t.Fatalf("restored visible agent = %#v, want agent-1/Support Bot", agents[0])
+	currentAgent := consoleAgentsPromptCurrentAgent(parts)
+	if currentAgent["agent_id"] != "agent-1" || currentAgent["name"] != "Support Bot" {
+		t.Fatalf("restored current agent = %#v, want agent-1/Support Bot", currentAgent)
 	}
 
 	params := skillRuntimeParametersForPrepared(&PreparedChat{parts: parts})
 	if params["console_current_route"] != "/console/agents/agent-1/agent" ||
 		params["console_agents_current_route"] != "/console/agents/agent-1/agent" {
 		t.Fatalf("restored route params = %#v/%#v, want current Agent detail route", params["console_current_route"], params["console_agents_current_route"])
+	}
+	if params["console_current_agent_id"] != "agent-1" || params["console_agents_visible_agents"] != nil {
+		t.Fatalf("restored agent params = %#v, want current_agent_id without visible list", params)
 	}
 }
 
@@ -85,8 +88,11 @@ func TestRestoreConsoleAgentsContextFromApprovalEventFallback(t *testing.T) {
 	if !isConsoleAgentsContext(parts.RuntimeContext, parts.RawOperationContext, parts.OperationContext) {
 		t.Fatalf("fallback restored parts are not console agents context: %#v", parts.OperationContext)
 	}
-	agents := consoleAgentsPromptVisibleAgents(parts)
-	if len(agents) != 1 || agents[0]["agent_id"] != "agent-1" {
-		t.Fatalf("fallback visible agents = %#v, want agent-1", agents)
+	if agents := consoleAgentsPromptVisibleAgents(parts); len(agents) != 0 {
+		t.Fatalf("fallback visible agents = %#v, want no list on detail route", agents)
+	}
+	currentAgent := consoleAgentsPromptCurrentAgent(parts)
+	if currentAgent["agent_id"] != "agent-1" {
+		t.Fatalf("fallback current agent = %#v, want agent-1", currentAgent)
 	}
 }

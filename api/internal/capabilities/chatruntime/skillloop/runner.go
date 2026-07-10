@@ -26,6 +26,9 @@ const (
 	intermediateAnswerChunkRunes                  = 180
 	agentProgressMaxRunes                         = 96
 	streamedIntermediateAnswerArg                 = "_aichat_streamed_answer"
+	streamedFinalAnswerArg                        = "_aichat_streamed_final_answer"
+	userInputContinuationAnswered                 = "answered"
+	userInputContinuationReplan                   = "replan_after_user_input"
 )
 
 var (
@@ -38,6 +41,7 @@ type skillStepResult struct {
 	toolMessage         adapter.Message
 	toolResult          map[string]interface{}
 	answer              string
+	answerStreamed      bool
 	usedSkill           bool
 	usedTool            bool
 	recoverable         bool
@@ -60,9 +64,26 @@ type planningResult struct {
 type streamingToolCallState struct {
 	call                    adapter.ToolCall
 	emittedContent          string
+	emittedFinalAnswer      string
 	emittedPlanningProgress bool
 	emittedPlanningSkillID  string
 	emittedPlanningToolName string
+}
+
+func metaToolsForRun(resolved *skills.ResolvedSkills, loadedSkills map[string]struct{}, preferExplicitFinalAnswer bool) []adapter.Tool {
+	tools := skills.MetaToolsForSkillState(resolved, loadedSkills)
+	if preferExplicitFinalAnswer {
+		return tools
+	}
+
+	filtered := make([]adapter.Tool, 0, len(tools))
+	for _, tool := range tools {
+		if strings.EqualFold(strings.TrimSpace(tool.Function.Name), skills.MetaToolFinalAnswer) {
+			continue
+		}
+		filtered = append(filtered, tool)
+	}
+	return filtered
 }
 
 func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usage, error) {
@@ -80,6 +101,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	if resolved == nil || len(resolved.Skills) == 0 {
 		return "", nil, fmt.Errorf("%w: no skills available for configured skill ids", ErrInvalidInput)
 	}
+	preferExplicitFinalAnswer := req.PreferExplicitFinalAnswer
 
 	messages := append([]adapter.Message{}, prepared.LLMRequest.Messages...)
 	metadataMessage, metadataStats := skills.SkillMetadataSystemMessageWithBudget(
@@ -88,7 +110,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	)
 	messages = append(messages, metadataMessage)
 	messages = append(messages, validAdditionalSystemMessages(req.AdditionalSystemMessages)...)
-	messages = append(messages, agenticSkillLoopSystemMessage())
+	messages = append(messages, agenticSkillLoopSystemMessage(preferExplicitFinalAnswer))
 	traces := []skills.SkillTrace{metadataExposedTrace(resolved.SkillIDs(), metadataStats)}
 	r.recordTrace(traces, traces[0])
 	logger.DebugContext(ctx, "aichat skill metadata exposed",
@@ -128,17 +150,20 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		finalAnswerGuard = nil
 		toolCallGuard = nil
 	}
-	suppressFinalAnswerStream := false
 	var answerBuilder strings.Builder
 	var usage *adapter.Usage
 	for round := 0; round < defaultMaxSkillPlanningRounds; round++ {
 		planningReq := cloneChatRequest(prepared.LLMRequest)
 		planningReq.Messages = messages
 		planningReq.Stream = false
-		planningReq.Tools = skills.MetaToolsForSkillState(resolved, loadedSkills)
+		planningReq.Tools = metaToolsForRun(resolved, loadedSkills, preferExplicitFinalAnswer)
 		planningReq.ToolChoice = "auto"
 
-		planningResult, err := r.runSkillPlanning(ctx, prepared, planningReq, round, req.OnChunk, suppressFinalAnswerStream)
+		terminalAnswerStreamingAllowed := true
+		if preferExplicitFinalAnswer {
+			terminalAnswerStreamingAllowed = completionGateCanBeginTerminalStream(completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls))
+		}
+		planningResult, err := r.runSkillPlanning(ctx, prepared, planningReq, round, req.OnChunk, preferExplicitFinalAnswer, terminalAnswerStreamingAllowed)
 		if err != nil {
 			return answerBuilder.String(), usage, err
 		}
@@ -193,6 +218,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			if completionVerifierInvoked {
 				gate = completionGateEvaluateVerifierRepair(evidence, text)
 			}
+			completionGateRecord(req, gate)
 			if gate.Path == completionGateDeterministicPass {
 				answer := strings.TrimSpace(firstNonEmptyString(gate.FinalAnswer, text))
 				appendAnswerText(&answerBuilder, answer)
@@ -200,13 +226,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					r.emitAnswerChunk(ctx, prepared, answer, nil)
 				}
 				completionGateNotify(req, gate, answer)
-				logger.DebugContext(ctx, "aichat skill loop accepted main model final answer",
-					"conversation_id", prepared.Conversation.ID.String(),
-					"message_id", prepared.Message.ID.String(),
-					"completion_gate_path", string(gate.Path),
-				)
 				return answerBuilder.String(), usage, nil
-			} else if gate.Path == completionGateAskUser {
+			}
+			if gate.Path == completionGateAskUser {
 				if planningResult.answerStreamed && text != "" {
 					r.emitAnswerRetract(ctx, prepared, text, nil)
 				}
@@ -215,18 +237,18 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				appendAnswerText(&answerBuilder, answer)
 				r.emitAnswerChunk(ctx, prepared, answer, nil)
 				return answerBuilder.String(), usage, nil
-			} else if gate.Path == completionGateNeedsAction {
+			}
+			if gate.Path == completionGateNeedsAction {
 				completionVerificationRetryCount++
 				if completionVerificationRetryCount <= defaultMaxCompletionVerificationRetries {
 					if planningResult.answerStreamed && text != "" {
 						r.emitAnswerRetract(ctx, prepared, text, nil)
 					}
-					modelDecidesTools := completionEvidenceOperationPlanModelDecides(evidence)
-					messages = append(messages, completionVerificationSystemMessage(gate.completionVerificationDecision(), text, completionVerificationRetryCount, modelDecidesTools))
+					messages = append(messages, completionVerificationSystemMessage(gate.completionVerificationDecision(), text, completionVerificationRetryCount, completionEvidenceOperationPlanModelDecides(evidence)))
 					continue
 				}
 				completionGateNotify(req, gate, text)
-				return answerBuilder.String(), usage, fmt.Errorf("%w: completion gate still has an unresolved runtime blocker", ErrInvalidInput)
+				return answerBuilder.String(), usage, completionGateTerminalBlockerError(gate)
 			}
 			if !finalizingProgressEmitted && (toolCallCount > 0 || len(attemptedToolCalls) > 0 || len(successfulToolCalls) > 0) {
 				if r.emitAgentProgress(ctx, prepared, completionVerificationFinalizingProgressText(prepared, evidence), nil) {
@@ -244,21 +266,16 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				return answerBuilder.String(), usage, fmt.Errorf("%w: completion remained ambiguous after verifier repair", ErrInvalidInput)
 			}
 			completionVerifierInvoked = true
-			decision, verifierUsage, err := r.runCompletionVerifier(ctx, prepared, req, text, round, attemptedToolCalls, successfulToolCalls, toolCallCount)
+			decision, verifierUsage, verifierErr := r.runCompletionVerifier(ctx, prepared, req, text, round, attemptedToolCalls, successfulToolCalls, toolCallCount)
 			usage = mergeUsage(usage, verifierUsage)
-			if err != nil {
-				logger.WarnContext(ctx, "aichat completion verifier failed",
-					"conversation_id", prepared.Conversation.ID.String(),
-					"message_id", prepared.Message.ID.String(),
-					err,
-				)
+			if verifierErr != nil {
 				failedDecision := completionVerificationDecision{
 					Status: completionVerificationStatusFailed,
 					Source: "model_verifier",
-					Reason: "\u6700\u7ec8\u7b54\u6848\u540e\u6821\u9a8c\u6682\u65f6\u4e0d\u53ef\u7528\uff0c\u56e0\u6b64\u4e0d\u80fd\u53ef\u9760\u786e\u8ba4\u672c\u8f6e\u64cd\u4f5c\u5df2\u7ecf\u5b8c\u6210\u3002",
+					Reason: "final answer verification is temporarily unavailable",
 				}
 				notifyCompletionVerificationResult(req, failedDecision, text)
-				return answerBuilder.String(), usage, fmt.Errorf("completion verifier: %w", err)
+				return answerBuilder.String(), usage, fmt.Errorf("completion verifier: %w", verifierErr)
 			}
 			if decision.normalizedStatus() == completionVerificationStatusPass {
 				completionVerificationRetryCount = 0
@@ -267,13 +284,79 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				notifyCompletionVerificationResult(req, decision, text)
 			} else {
 				completionVerificationRetryCount++
-				evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
 				if planningResult.answerStreamed && text != "" {
 					r.emitAnswerRetract(ctx, prepared, text, nil)
 				}
 				messages = append(messages, completionVerificationSystemMessage(decision, text, completionVerificationRetryCount, completionEvidenceOperationPlanModelDecides(evidence)))
 				continue
 			}
+		}
+		emptyFinalAnswerRetryCount = 0
+		if call, ok := finalAnswerCall(toolCalls); ok && preferExplicitFinalAnswer {
+			evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
+			submission, parseErr := parseFinalAnswerSubmission(call, evidence)
+			if parseErr != nil {
+				result := failedFinalAnswerSkillStep(call.ID, parseErr, "fix submit_final_answer arguments and retry only after the turn is terminal")
+				traces = append(traces, result.trace)
+				r.recordTrace(traces, result.trace)
+				r.logSkillTrace(ctx, prepared, result.trace)
+				planningMessage.Content = ""
+				planningMessage.ReasoningContent = ""
+				planningMessage.ToolCalls = []adapter.ToolCall{call}
+				messages = append(messages, planningMessage, result.toolMessage)
+				continue
+			}
+
+			terminalEvidence := completionEvidenceWithPlanSnapshot(evidence, submission.plan)
+			gate := completionGateEvaluateTerminal(terminalEvidence, submission.answer)
+			if gate.Path == completionGateModelVerifier {
+				decision, verifierUsage, verifierErr := r.runCompletionVerifier(ctx, prepared, req, submission.answer, round, attemptedToolCalls, successfulToolCalls, toolCallCount)
+				usage = mergeUsage(usage, verifierUsage)
+				if verifierErr == nil && decision.normalizedStatus() == completionVerificationStatusPass {
+					gate = completionGatePassDecision(submission.answer, "gray-area verifier found the terminal answer faithful to current evidence")
+				} else {
+					reason := "gray-area verifier did not accept the terminal answer"
+					if verifierErr != nil {
+						reason = "gray-area verifier failed: " + verifierErr.Error()
+					} else if strings.TrimSpace(decision.Reason) != "" {
+						reason = decision.Reason
+					}
+					gate = completionGateDecision{
+						Path:           completionGateNeedsAction,
+						Reason:         reason,
+						NextActionHint: "continue from the latest evidence and resolve the concrete conflict before submitting the final answer again",
+					}
+				}
+			}
+			completionGateRecord(req, gate)
+			if gate.Path != completionGateDeterministicPass {
+				result := failedFinalAnswerSkillStep(call.ID, completionGateTerminalBlockerError(gate), gate.NextActionHint)
+				traces = append(traces, result.trace)
+				r.recordTrace(traces, result.trace)
+				r.logSkillTrace(ctx, prepared, result.trace)
+				planningMessage.Content = ""
+				planningMessage.ReasoningContent = ""
+				planningMessage.ToolCalls = []adapter.ToolCall{call}
+				messages = append(messages, planningMessage, result.toolMessage)
+				continue
+			}
+
+			result := finalAnswerSkillStep(call.ID, submission)
+			traces = append(traces, result.trace)
+			r.recordTrace(traces, result.trace)
+			r.logSkillTrace(ctx, prepared, result.trace)
+			appendAnswerText(&answerBuilder, result.answer)
+			if !result.answerStreamed {
+				r.emitAnswerChunk(ctx, prepared, result.answer, nil)
+			}
+			completionGateNotify(req, gate, result.answer)
+			logger.DebugContext(ctx, "aichat skill loop accepted explicit terminal answer",
+				"conversation_id", prepared.Conversation.ID.String(),
+				"message_id", prepared.Message.ID.String(),
+				"completion_gate_path", string(gate.Path),
+				"ignored_sibling_tool_calls", len(toolCalls)-1,
+			)
+			return answerBuilder.String(), usage, nil
 		}
 		if len(toolCalls) == 0 && prepared.parts.SkillMode == "required" && !skillUsed {
 			return answerBuilder.String(), usage, fmt.Errorf("%w: required skill was not used", ErrInvalidInput)
@@ -312,6 +395,11 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 
 		planningMessage.Role = "assistant"
 		planningMessage.ToolCalls = toolCalls
+		if preferExplicitFinalAnswer {
+			// Process narration is user-visible progress, not durable model context.
+			planningMessage.Content = ""
+			planningMessage.ReasoningContent = ""
+		}
 		messages = append(messages, planningMessage)
 
 		roundHadRecoverableFailure := false
@@ -323,7 +411,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			callSkillID, callToolName, callToolArgs, failedCallKey := skillToolCallIdentityForCall(resolved, loadedSkills, call)
 			callEvidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
 			result := skillStepResult{}
-			if failedCallKey != "" {
+			if userInputPlanRevisionPending(req) && planRevisionRequiredForTool(callSkillID, callToolName) {
+				result = pendingUserInputPlanRevisionStep(call.ID, callSkillID, callToolName, callToolArgs)
+			}
+			if result.trace.Kind == "" && failedCallKey != "" {
 				if reason := failedToolCallReasons[failedCallKey]; strings.TrimSpace(reason) != "" {
 					result = repeatedFailedToolCallRecoverableStep(call.ID, callSkillID, callToolName, callToolArgs, reason)
 				}
@@ -345,6 +436,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 					toolCallCount:       toolCallCount,
 					attemptedToolCalls:  append([]SkillToolCallRef{}, attemptedToolCalls...),
 					successfulToolCalls: append([]SkillToolCallRef{}, successfulToolCalls...),
+					completionEvidence:  callEvidence,
 				}, nil)
 			}
 			if strings.TrimSpace(result.trace.Kind) == "" {
@@ -703,6 +795,29 @@ func skillToolCallIdentityForCall(resolved *skills.ResolvedSkills, loadedSkills 
 	toolName := stringArg(args, "tool_name")
 	toolArgs := mapArg(args, "arguments")
 	return skillID, toolName, toolArgs, failedToolCallKey(skillID, toolName, toolArgs)
+}
+
+func userInputPlanRevisionPending(req RunRequest) bool {
+	metadata := currentMetadataForRun(req)
+	continuation := evidenceMapFromAny(metadata["user_input_continuation"])
+	return strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(continuation["status"])), userInputContinuationAnswered) &&
+		strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(continuation["next_action"])), userInputContinuationReplan)
+}
+
+func planRevisionRequiredForTool(skillID string, toolName string) bool {
+	if strings.TrimSpace(skillID) == "" || strings.TrimSpace(toolName) == "" {
+		return false
+	}
+	return !isSkillMetaToolName(toolName)
+}
+
+func pendingUserInputPlanRevisionStep(callID string, skillID string, toolName string, args map[string]interface{}) skillStepResult {
+	err := fmt.Errorf("%w: update the current plan before calling a business tool after user clarification", ErrInvalidInput)
+	trace := plannerFeedbackTrace(skillID, toolName, err)
+	trace.Arguments = summarizeSkillToolArguments(skillID, toolName, args)
+	trace.Arguments["next_step"] = skills.MetaToolUpdatePlan
+	nextAction := "Revise the pending plan phases from the user's clarification with update_plan, then choose the next business tool from the revised plan. Do not repeat this business call before the plan update succeeds."
+	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, nextAction, skillID, toolName)), false, false)
 }
 
 func redirectDuplicateAgentMutationToPendingPostUpdateReadCall(call adapter.ToolCall, skillID string, toolName string, evidence map[string]interface{}, metadata map[string]interface{}, successfulToolCalls []SkillToolCallRef) (adapter.ToolCall, bool) {
@@ -1583,9 +1698,9 @@ func appendAnswerText(builder *strings.Builder, text string) {
 	builder.WriteString(text)
 }
 
-func (r *Runner) runSkillPlanning(ctx context.Context, prepared *PreparedChat, planningReq *adapter.ChatRequest, round int, onChunk func(string) error, suppressFinalAnswerStream bool) (planningResult, error) {
-	if !suppressFinalAnswerStream && shouldStreamSkillPlanning(prepared) {
-		result, ok, err := r.runSkillPlanningStream(ctx, prepared, planningReq, round, nil)
+func (r *Runner) runSkillPlanning(ctx context.Context, prepared *PreparedChat, planningReq *adapter.ChatRequest, round int, onChunk func(string) error, terminalProtocol bool, terminalStreamingAllowed bool) (planningResult, error) {
+	if shouldStreamSkillPlanning(prepared) {
+		result, ok, err := r.runSkillPlanningStream(ctx, prepared, planningReq, round, nil, terminalProtocol, terminalStreamingAllowed)
 		if err != nil {
 			return planningResult{}, err
 		}
@@ -1611,17 +1726,49 @@ func (r *Runner) runSkillPlanning(ctx context.Context, prepared *PreparedChat, p
 	}
 	message := firstPlanningMessage(planningResp)
 	usage := planningRespUsage(planningResp)
+	finishReason := planningResponseFinishReason(planningResp)
+	terminationErr := nonStreamingPlanningTerminationError(finishReason)
 	r.recordModelInvocation(ModelInvocationTrace{
-		Phase:      "skill_planning",
-		Round:      round,
-		Streaming:  false,
-		StartedAt:  startedAt,
-		DurationMS: time.Since(startedAt).Milliseconds(),
-		Request:    planningReq,
-		Response:   &message,
-		Usage:      usage,
+		Phase:              "skill_planning",
+		Round:              round,
+		Streaming:          false,
+		StartedAt:          startedAt,
+		DurationMS:         time.Since(startedAt).Milliseconds(),
+		Request:            planningReq,
+		Response:           &message,
+		Usage:              usage,
+		FinishReason:       finishReason,
+		StreamDoneReceived: true,
+		TerminatedBy:       "response",
+		Error:              errorString(terminationErr),
 	})
+	if terminationErr != nil {
+		return planningResult{}, terminationErr
+	}
 	return planningResult{message: message, usage: usage}, nil
+}
+
+func planningResponseFinishReason(response *adapter.ChatResponse) string {
+	if response == nil || len(response.Choices) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(response.Choices[0].FinishReason)
+}
+
+func nonStreamingPlanningTerminationError(finishReason string) error {
+	switch strings.ToLower(strings.TrimSpace(finishReason)) {
+	case "length", "max_tokens", "content_filter":
+		return fmt.Errorf("skill planning response ended before a complete turn: finish_reason=%s", strings.TrimSpace(finishReason))
+	default:
+		return nil
+	}
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func (r *Runner) emitAnswerChunk(ctx context.Context, prepared *PreparedChat, text string, _ func(Event) error) {
@@ -1985,9 +2132,12 @@ func truncateRunes(text string, maxRunes int) string {
 	return strings.TrimSpace(string(runes[:maxRunes])) + "..."
 }
 
-func agenticSkillLoopSystemMessage() adapter.Message {
-	return adapter.Message{Role: "system", Content: strings.Join([]string{
+func agenticSkillLoopSystemMessage(preferExplicitFinalAnswer bool) adapter.Message {
+	instructions := []string{
 		"When using skills or tools, you may provide at most one brief, high-level user-facing progress sentence when it helps the user understand a multi-step operation.",
+		"Each progress sentence must describe only the newly reached judgment and the next useful action. Do not restate progress already visible earlier in this turn.",
+		"Progress emitted before a tool call must use planning language. Say an action is completed or a page has been reached only when the latest tool result or current_page_context proves it.",
+		"Treat turn_start_context as immutable historical context. Read the current route and current visible assets only from current_page_context and the latest evidence.",
 		"All user-facing progress, reasoning, request_user_input text, submit_intermediate_answer text, and final answers must use the same language as the user's latest request. If the user writes in Chinese, progress text must be Chinese.",
 		"Do not narrate every tool call, internal plan step, tool name, tool arguments, IDs, protocol details, or bookkeeping status.",
 		"If you share progress or reasoning, frame it around the user's goal, current page evidence, and the next useful action; do not expose a rigid hidden checklist.",
@@ -1997,6 +2147,7 @@ func agenticSkillLoopSystemMessage() adapter.Message {
 		"When an additional system message contains preferred_route_action or suggested_next_tool, treat it as an advisory next phase, not as a reason to ignore fresh evidence. Load and call it when the current page context and prior tool/client-action evidence show it is still needed; do not repeat the same navigation or business tool after matching evidence already satisfies the step.",
 		"Within one user request, do not reload a skill just because approval, navigation, refresh, or continuation resumed the loop. If the skill was already loaded and no newer instructions are needed, continue from the latest tool results, client-action evidence, and turn_state.",
 		"After each skill/tool result, continue with the next necessary action or final answer. Summarize only user-relevant outcomes, not internal bookkeeping.",
+		"For a multi-phase task, keep the supplied plan current with update_plan. Preserve stable phase IDs, cite successful evidence_refs when completing a phase, and update the plan in the same response as the next business tool whenever possible. Use exact IDs from evidence when available, or tool:<skill_id>/<tool_name>, page_context:<route>, and turn_state:<key> only when that successful evidence actually exists.",
 		"If a tool call fails, explain the likely user-relevant cause, fix the arguments, and retry when possible.",
 		"If a tool call fails, do not repeat the same tool with the same arguments. Re-plan from the error before retrying.",
 		"For deterministic batch work, prefer one suitable business tool call that handles the batch coherently over many small repeated tool calls.",
@@ -2017,15 +2168,25 @@ func agenticSkillLoopSystemMessage() adapter.Message {
 		"Do not call submit_intermediate_answer merely to repeat content that was already visible in an earlier assistant answer. For requests like exporting, saving, converting, or generating a file from existing content, pass the existing content directly to the file/tool call.",
 		"Do not skip submit_intermediate_answer by postponing or summarizing a new deliverable if the user explicitly asked for it as an intermediate phase.",
 		"When required information is missing or ambiguity blocks reliable progress, call request_user_input with a brief user-visible message plus a questions array containing one to five concise questions, then stop. The message should explain what you checked, why input is needed, and what you will do next. Prefer one to three questions. Do not call any other tools in the same turn after request_user_input.",
+		"Do not guess a revised business plan while the blocking clarification is still unanswered. After the clarification arrives, update the pending plan phases from that answer before the next business tool; update_plan and that next tool may be called in the same response, in that order.",
 		"When calling request_user_input, put the user-visible explanation only in the request_user_input message field. Do not also repeat that explanation in assistant text outside the tool call.",
 		"Each request_user_input question should ask one decision point. Include options only when each option is a concrete, directly usable answer. Do not include vague options such as free choice, freestyle, not sure, depends, any, or other; omit options for open-ended questions because the user can type freely.",
 		"Do not use request_user_input for information already confirmed in the conversation.",
-		"When no more tool or skill calls are needed, send a natural user-facing reply that is complete and self-contained. If you did not call submit_intermediate_answer for a new requested deliverable, that reply MUST include the deliverable in full, not a compressed summary.",
 		"Do not label the user-facing reply with protocol wording such as Final Answer, final result, or their Chinese equivalents unless the user explicitly asks for that wording.",
 		"When reusing existing conversation content, refer to it explicitly, for example as the previous outline or the current branch's draft; do not duplicate the full text unless the user asks to see it again.",
-	}, "\n")}
+	}
+	if preferExplicitFinalAnswer {
+		instructions = append(instructions,
+			"In this skill loop, ordinary assistant content is always transient process progress, never the terminal answer. The runtime may show one complete progress sentence but will not store it as final message content.",
+			"When no more tool or skill calls are needed, call submit_final_answer with the complete, natural, self-contained user-facing reply. Do not write the final reply as ordinary assistant content.",
+			"submit_final_answer is terminal. Do not combine it with business tools, request_user_input, or further actions. If a model-maintained plan exists, include its final completed/skipped snapshot so every phase is completed or skipped with successful evidence refs. If you did not call submit_intermediate_answer for a new requested deliverable, the answer field MUST include the deliverable in full, not a compressed summary.",
+		)
+	} else {
+		instructions = append(instructions, "When no tool or skill call is needed, provide the complete user-facing reply as ordinary assistant content and end the turn.")
+	}
+	return adapter.Message{Role: "system", Content: strings.Join(instructions, "\n")}
 }
 
 func AgenticSkillLoopSystemMessage() adapter.Message {
-	return agenticSkillLoopSystemMessage()
+	return agenticSkillLoopSystemMessage(true)
 }

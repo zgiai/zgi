@@ -499,7 +499,7 @@ export function AIChatShell({
             activeMessages,
             isSending,
             hasActiveStreamingMessage
-        )
+          )
         : null,
     [
       activeConversation,
@@ -729,7 +729,7 @@ export function AIChatShell({
   );
 
   const handleUserInputRequestSubmit = useCallback(
-    (query: string, useMemory: boolean, answers?: Record<string, string>) => {
+    (query: string, _useMemory: boolean, answers?: Record<string, string>) => {
       const trimmedQuery = query.trim();
       if (!trimmedQuery || isSending || !activeUserInputMessage) return;
       const activeRequest = activeUserInputMessage.metadata?.user_input_request;
@@ -744,40 +744,30 @@ export function AIChatShell({
         );
         return;
       }
-      if (requireModel && !modelSelectorValue.model) {
-        toast.error(t('consoleChat.modelRequired'));
+      const requestId = activeRequest?.request_id?.trim();
+      if (!requestId || !answers || !controller.continueUserInput) {
+        toast.error(t('consoleChat.userInputRequest.continuationUnavailable'));
         return;
       }
-
-      const pendingMessageId = Date.now();
-      const pendingMessageCreatedAt = Math.floor(pendingMessageId / 1000);
-      setPendingUserMessage({
-        id: `pending-user-${pendingMessageId}`,
-        query: trimmedQuery,
-        assistantModelName: modelSelectorValue.model,
-        assistantCreatedAt: pendingMessageCreatedAt,
-        showAssistantPlanning: true,
-      });
-      void controller.send({
-        query: trimmedQuery,
-        parentId: activeUserInputMessage.id,
-        model: {
-          provider: modelSelectorValue.provider,
-          model: modelSelectorValue.model,
-          parameters: modelSelectorValue.params,
-        },
-        useMemory: forcedUseMemory ?? useMemory,
-        runtimeSurface: effectiveRuntimeSurface,
-        operationContext: toolGovernanceOperationContext,
-      });
+      void controller
+        .continueUserInput(
+          activeUserInputMessage.conversation_id,
+          activeUserInputMessage.id,
+          requestId,
+          {
+            answers,
+            surface: effectiveRuntimeSurface,
+            operation_context: toolGovernanceOperationContext,
+          }
+        )
+        .catch(() => {
+          toast.error(t('consoleChat.userInputRequest.continuationUnavailable'));
+        });
     },
     [
       activeUserInputMessage,
       controller,
-      forcedUseMemory,
       isSending,
-      modelSelectorValue,
-      requireModel,
       effectiveRuntimeSurface,
       t,
       toolGovernanceOperationContext,
@@ -1105,9 +1095,7 @@ export function AIChatShell({
       <Button
         variant="ghost"
         isIcon
-        className={cn(
-          isEmbedded ? embeddedControlButtonClassName : 'size-8 text-muted-foreground'
-        )}
+        className={cn(isEmbedded ? embeddedControlButtonClassName : 'size-8 text-muted-foreground')}
         onClick={() => handleSkillPreferenceOpenChange(true)}
         title={t('consoleChat.skillPreferences.action')}
         aria-label={t('consoleChat.skillPreferences.action')}
@@ -1314,9 +1302,7 @@ export function AIChatShell({
             showToolGovernancePermissionControl={showToolGovernancePermissionControl}
             toolGovernancePermissionTier={toolGovernancePermissionTier}
             onToolGovernancePermissionTierChange={setToolGovernancePermissionTier}
-            enableToolGovernanceApprovals={
-              enableToolGovernanceApprovals && !isRecoveringMessages
-            }
+            enableToolGovernanceApprovals={enableToolGovernanceApprovals && !isRecoveringMessages}
             activeConversationId={activeConversation?.id ?? null}
             activeToolGovernanceMessageId={
               activeConversation?.active_message_id ??

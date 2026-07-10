@@ -11,7 +11,6 @@ import {
   Eye,
   FileImage,
   FileText,
-  HelpCircle,
   Loader2,
 } from 'lucide-react';
 import MarkdownViewer from '@/components/common/markdown-viewer';
@@ -28,7 +27,6 @@ import type {
   AIChatGeneratedFile,
   AIChatMessage,
   AIChatMessageFile,
-  AIChatUserInputRequest,
 } from '@/services/types/aichat';
 import { isSensitiveOutputBlockedValue } from '@/utils/model-output-filter';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
@@ -79,7 +77,6 @@ interface AIChatMessageBubbleProps {
   onEditChange?: (value: string) => void;
   onEditCancel?: () => void;
   onEditSubmit?: (message: AIChatMessage) => void;
-  hideUserInputRequest?: boolean;
   showAssistantModelMeta?: boolean;
   showMemoryKey?: boolean;
   showSkillEventDetails?: boolean;
@@ -89,7 +86,6 @@ interface AIChatMessageBubbleProps {
 
 const EMPTY_MESSAGE_FILES: AIChatMessageFile[] = [];
 const EMPTY_GENERATED_FILES: AIChatGeneratedFile[] = [];
-const EMPTY_TIMELINE: AIChatAgenticTimelineItem[] = [];
 
 function formatAIChatTime(timestamp: number): string {
   if (!timestamp) return '';
@@ -185,11 +181,11 @@ function hasAssetOperationEvidence(invocation: Record<string, unknown>): boolean
   const args = timelineRecord(invocation.arguments);
   return Boolean(
     invocation.asset_operation_audit ||
-    result.asset_operation_audit ||
-    result.asset_type ||
-    result.effect ||
-    args.asset_type ||
-    args.effect
+      result.asset_operation_audit ||
+      result.asset_type ||
+      result.effect ||
+      args.asset_type ||
+      args.effect
   );
 }
 
@@ -351,14 +347,12 @@ function timelineFirstRecord(value: unknown): Record<string, unknown> {
   return timelineRecord(value);
 }
 
-function streamingAgentConfigBindingAction(
-  result: Record<string, unknown>
-): { key?: StreamingOperationStatusKey; assetType?: string } {
+function streamingAgentConfigBindingAction(result: Record<string, unknown>): {
+  key?: StreamingOperationStatusKey;
+  assetType?: string;
+} {
   const change = timelineFirstRecord(result.binding_changes);
-  const action = timelineFirstString(
-    result.change_action,
-    change.change_action
-  ).toLowerCase();
+  const action = timelineFirstString(result.change_action, change.change_action).toLowerCase();
   const assetType = timelineFirstString(
     result.binding_kind,
     change.binding_kind,
@@ -765,6 +759,29 @@ function isManagedGeneratedFile(file: AIChatGeneratedFile): boolean {
   return file.target === 'managed_file' || Boolean(file.upload_file_id);
 }
 
+function generatedFileIsExpired(file: AIChatGeneratedFile, now = Date.now()): boolean {
+  if (isManagedGeneratedFile(file)) return false;
+  if (file.availability === 'expired') return true;
+  if (!file.expires_at) return false;
+  return file.expires_at * 1000 <= now;
+}
+
+function useGeneratedFileExpired(file: AIChatGeneratedFile): boolean {
+  const [isExpired, setIsExpired] = useState(() => generatedFileIsExpired(file));
+
+  useEffect(() => {
+    const expired = generatedFileIsExpired(file);
+    setIsExpired(expired);
+    if (expired || isManagedGeneratedFile(file) || !file.expires_at) return;
+
+    const delay = Math.max(0, file.expires_at * 1000 - Date.now());
+    const timeoutId = window.setTimeout(() => setIsExpired(true), delay + 50);
+    return () => window.clearTimeout(timeoutId);
+  }, [file]);
+
+  return isExpired;
+}
+
 function managedGeneratedFileId(file: AIChatGeneratedFile): string {
   if (!isManagedGeneratedFile(file)) return '';
   return file.upload_file_id || file.file_id || '';
@@ -785,9 +802,7 @@ function managedGeneratedFileDownloadUrl(file: AIChatGeneratedFile): string {
   if (file.url) {
     return appendQueryFlag(apiReachableUrl(file.url), 'as_attachment', 'true');
   }
-  return apiReachableUrl(
-    fileId ? `/console/api/files/${encodeURIComponent(fileId)}/download` : ''
-  );
+  return apiReachableUrl(fileId ? `/console/api/files/${encodeURIComponent(fileId)}/download` : '');
 }
 
 function generatedFilePreviewUrl(file: AIChatGeneratedFile): string {
@@ -851,41 +866,6 @@ function generatedImagePreviewFiles(
     if (!isOriginalPreviewImage(file.extension, file.mime_type)) return false;
     return true;
   });
-}
-
-function generatedFileDisplayRank(file: AIChatGeneratedFile): number {
-  if (isManagedGeneratedFile(file)) return 30;
-  if (file.url || file.download_url) return 20;
-  return 10;
-}
-
-function dedupeGeneratedFilesForDisplay(files: AIChatGeneratedFile[]): AIChatGeneratedFile[] {
-  if (files.length <= 1) return files;
-  const indexByDisplayKey = new Map<string, number>();
-  const out: AIChatGeneratedFile[] = [];
-  files.forEach(file => {
-    const key = (
-      file.filename ||
-      file.upload_file_id ||
-      file.file_id ||
-      file.tool_file_id ||
-      file.operation_id ||
-      file.correlation_id ||
-      ''
-    )
-      .trim()
-      .toLowerCase();
-    const existingIndex = indexByDisplayKey.get(key);
-    if (existingIndex === undefined) {
-      indexByDisplayKey.set(key, out.length);
-      out.push(file);
-      return;
-    }
-    if (generatedFileDisplayRank(file) >= generatedFileDisplayRank(out[existingIndex])) {
-      out[existingIndex] = file;
-    }
-  });
-  return out;
 }
 
 interface AIChatHistoryImagePreviewProps {
@@ -990,52 +970,56 @@ function AIChatGeneratedFileCard({ file }: AIChatGeneratedFileCardProps) {
   const extension = formatGeneratedFileExtension(file);
   const managedFileId = managedGeneratedFileId(file);
   const isManagedFile = isManagedGeneratedFile(file);
+  const isExpiredTemporaryFile = useGeneratedFileExpired(file);
   const { data: managedFileDetail, error: managedFileError } = useFileDetail(managedFileId, {
     enabled: isManagedFile && Boolean(managedFileId),
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
     skipErrorHandling: true,
   });
   const isArchivedManagedFile = Boolean(managedFileDetail?.data?.file?.is_archived);
   const isDeletedManagedFile =
     isManagedFile && (isArchivedManagedFile || generatedFileNotFoundError(managedFileError));
+  const isUnavailableFile = isDeletedManagedFile || isExpiredTemporaryFile;
   const downloadUrl = generatedFileDownloadUrl(file);
   const previewUrl = generatedFilePreviewUrl(file) || downloadUrl;
-  const canPreview = Boolean(previewUrl) && !isDeletedManagedFile;
-  const canDownload = Boolean(downloadUrl) && !isDeletedManagedFile;
+  const canPreview = Boolean(previewUrl) && !isUnavailableFile;
+  const canDownload = Boolean(downloadUrl) && !isUnavailableFile;
   const lifecycleLabel = isDeletedManagedFile
     ? t('consoleChat.attachments.deletedGeneratedFile')
-    : isManagedFile
-      ? t('consoleChat.attachments.managedGeneratedFile')
-      : t('consoleChat.attachments.temporaryGeneratedFile');
+    : isExpiredTemporaryFile
+      ? t('consoleChat.attachments.expiredGeneratedFile')
+      : isManagedFile
+        ? t('consoleChat.attachments.managedGeneratedFile')
+        : t('consoleChat.attachments.temporaryGeneratedFile');
 
   return (
     <>
       <div
         className={cn(
           'flex min-w-0 max-w-sm items-center gap-3 rounded-md border bg-background px-3 py-2 text-sm shadow-sm',
-          isDeletedManagedFile && 'border-destructive/30 bg-destructive/5'
+          isUnavailableFile && 'border-destructive/30 bg-destructive/5'
         )}
         title={file.filename}
       >
         <div
           className={cn(
             'flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground',
-            isDeletedManagedFile && 'bg-destructive/10 text-destructive'
+            isUnavailableFile && 'bg-destructive/10 text-destructive'
           )}
         >
-          {isDeletedManagedFile ? <AlertCircle className="size-4" /> : <FileText className="size-4" />}
+          {isUnavailableFile ? <AlertCircle className="size-4" /> : <FileText className="size-4" />}
         </div>
         <div className="min-w-0 flex-1">
           <div
             className={cn(
               'truncate font-medium text-foreground',
-              isDeletedManagedFile && 'text-muted-foreground'
+              isUnavailableFile && 'text-muted-foreground'
             )}
           >
             {file.filename}
           </div>
           <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-            <span className={cn(isDeletedManagedFile && 'text-destructive')}>{lifecycleLabel}</span>
+            <span className={cn(isUnavailableFile && 'text-destructive')}>{lifecycleLabel}</span>
             {extension ? <span>{extension}</span> : null}
             <span>{formatFileSize(file.size)}</span>
           </div>
@@ -1106,8 +1090,9 @@ interface AIChatGeneratedImagePreviewsProps {
 }
 
 function AIChatGeneratedImagePreview({ file }: { file: AIChatGeneratedFile }) {
+  const isExpired = useGeneratedFileExpired(file);
   const previewUrl = generatedFilePreviewUrl(file);
-  if (!previewUrl) {
+  if (!previewUrl || isExpired) {
     return null;
   }
 
@@ -1138,54 +1123,6 @@ function AIChatGeneratedImagePreviews({ files }: AIChatGeneratedImagePreviewsPro
   );
 }
 
-function AIChatUserInputRequestCard({ request }: { request: AIChatUserInputRequest }) {
-  const t = useT('webapp');
-  const questions = (request.questions ?? []).filter(question => question.question?.trim());
-  if (questions.length === 0) return null;
-
-  return (
-    <div className="mt-3 max-w-2xl rounded-md border bg-background px-3 py-3 text-sm shadow-sm">
-      <div className="flex items-start gap-2">
-        <HelpCircle className="mt-0.5 size-4 shrink-0 text-primary" />
-        <div className="min-w-0 flex-1 space-y-3">
-          <div className="space-y-1">
-            <div className="font-medium text-foreground">
-              {t('consoleChat.userInputRequest.title')}
-            </div>
-            <div className="text-xs text-muted-foreground">
-              {t('consoleChat.userInputRequest.description')}
-            </div>
-          </div>
-          {questions.map((question, index) => {
-            const options = (question.options ?? []).filter(option => option.label?.trim());
-            return (
-              <div key={question.id || `${index}-${question.question}`} className="min-w-0">
-                <div className="whitespace-pre-wrap break-words font-medium text-foreground">
-                  {questions.length > 1 ? `${index + 1}. ` : ''}
-                  {question.question}
-                </div>
-                {options.length > 0 ? (
-                  <div className="mt-2 flex flex-wrap gap-1.5 text-xs text-muted-foreground">
-                    {options.map(option => (
-                      <span
-                        key={option.label}
-                        className="max-w-full rounded-md border bg-muted/40 px-2 py-1"
-                        title={option.description || option.label}
-                      >
-                        {option.label}
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /**
  * @component AIChatMessageBubble
  * @category Feature
@@ -1212,7 +1149,6 @@ export function AIChatMessageBubble({
   onEditChange,
   onEditCancel,
   onEditSubmit,
-  hideUserInputRequest = false,
   showAssistantModelMeta = true,
   showMemoryKey = true,
   showSkillEventDetails = true,
@@ -1249,25 +1185,24 @@ export function AIChatMessageBubble({
     : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100';
   const files = message.metadata?.files ?? EMPTY_MESSAGE_FILES;
   const generatedFiles = message.metadata?.generated_files ?? EMPTY_GENERATED_FILES;
-  const visibleGeneratedFiles = useMemo(
-    () => dedupeGeneratedFilesForDisplay(generatedFiles),
-    [generatedFiles]
-  );
+  const visibleGeneratedFiles = generatedFiles;
   const generatedImagePreviewFilesForDisplay = useMemo(
     () => generatedImagePreviewFiles(displayAnswer, visibleGeneratedFiles, !isSensitiveBlocked),
     [displayAnswer, visibleGeneratedFiles, isSensitiveBlocked]
   );
   const hasGeneratedImagePreviews = generatedImagePreviewFilesForDisplay.length > 0;
   const answer = displayAnswer.trim();
+  const userInputRequest = message.metadata?.user_input_request;
   const waitingMessage =
     message.status === 'waiting_approval'
       ? t('consoleChat.waitingApprovalMessage')
       : message.status === 'waiting_question'
-        ? t('consoleChat.waitingQuestionMessage')
+        ? userInputRequest
+          ? null
+          : t('consoleChat.waitingQuestionMessage')
         : message.status === 'waiting_client_action'
           ? t('consoleChat.waitingClientActionMessage')
           : null;
-  const userInputRequest = hideUserInputRequest ? undefined : message.metadata?.user_input_request;
   const imageFiles = files.filter(file => file.kind === 'image');
   const documentFiles = files.filter(file => file.kind !== 'image');
   const historicalTimeline = useMemo<AIChatAgenticTimelineItem[]>(
@@ -1308,21 +1243,16 @@ export function AIChatMessageBubble({
     runtimeTimeline,
   ]);
   const hasTimeline = displayTimeline.length > 0;
-  const streamingStatus = useMemo(
-    () => {
-      if (isStreaming || isWaitingForClientAction) {
-        return streamingOperationStatus(displayTimeline, isStreaming);
-      }
-      return null;
-    },
-    [displayTimeline, isStreaming, isWaitingForClientAction]
-  );
+  const streamingStatus = useMemo(() => {
+    if (isStreaming || isWaitingForClientAction) {
+      return streamingOperationStatus(displayTimeline, isStreaming);
+    }
+    return null;
+  }, [displayTimeline, isStreaming, isWaitingForClientAction]);
   const streamingStatusLabel = useMemo(
     () =>
       streamingStatus
-        ? streamingOperationStatusText(streamingStatus, (key, values) =>
-            t(key as never, values)
-          )
+        ? streamingOperationStatusText(streamingStatus, (key, values) => t(key as never, values))
         : null,
     [streamingStatus, t]
   );
@@ -1543,9 +1473,7 @@ export function AIChatMessageBubble({
           {streamingStatusLabel ? (
             <div className="mb-3 flex min-w-0 items-center gap-2 rounded-md border border-muted-foreground/15 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
               <Loader2 className="size-3.5 shrink-0 animate-spin" />
-              <span className="min-w-0 break-words">
-                {streamingStatusLabel}
-              </span>
+              <span className="min-w-0 break-words">{streamingStatusLabel}</span>
             </div>
           ) : null}
 
@@ -1579,12 +1507,10 @@ export function AIChatMessageBubble({
           {visibleGeneratedFiles.length > 0 ? (
             <div className="mt-3 flex flex-wrap gap-2">
               {visibleGeneratedFiles.map(file => (
-                <AIChatGeneratedFileCard key={file.file_id} file={file} />
+                <AIChatGeneratedFileCard key={file.artifact_id || file.file_id} file={file} />
               ))}
             </div>
           ) : null}
-
-          {userInputRequest ? <AIChatUserInputRequestCard request={userInputRequest} /> : null}
 
           {isError ? (
             <div

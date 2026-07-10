@@ -3205,13 +3205,8 @@ func TestSkillLoopFinalAnswerGuardUsesMetadataSaveStateAfterAssetObservation(t *
 						"file_id":  "tool-2",
 						"filename": "aichat-two.svg",
 					},
-					map[string]interface{}{
-						"target":         "managed_file",
-						"upload_file_id": "managed-1",
-						"source_file_id": "tool-1",
-						"filename":       "aichat-one.txt",
-					},
 				},
+				"skill_invocations": []interface{}{successfulFileManagerSaveInvocation("tool-1", "aichat-one.txt")},
 			},
 		},
 		parts: &chatRequestParts{
@@ -3257,13 +3252,8 @@ func TestSkillLoopFinalAnswerGuardUsesContinuationMetadataSaveFlow(t *testing.T)
 						"file_id":  "tool-2",
 						"filename": "smoke-continue.svg",
 					},
-					map[string]interface{}{
-						"target":         "managed_file",
-						"upload_file_id": "managed-1",
-						"source_file_id": "tool-1",
-						"filename":       "smoke-continue.txt",
-					},
 				},
+				"skill_invocations": []interface{}{successfulFileManagerSaveInvocation("tool-1", "smoke-continue.txt")},
 			},
 		},
 		parts: consoleFilesCreateCapabilityTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE-1782312653811"),
@@ -3323,13 +3313,8 @@ func TestSkillLoopFinalAnswerGuardPrioritizesUnsavedArtifactBeforeContinuationDe
 						"file_id":  "tool-2",
 						"filename": "smoke-continue.svg",
 					},
-					map[string]interface{}{
-						"target":         "managed_file",
-						"upload_file_id": "managed-1",
-						"source_file_id": "tool-1",
-						"filename":       "smoke-continue.txt",
-					},
 				},
+				"skill_invocations": []interface{}{successfulFileManagerSaveInvocation("tool-1", "smoke-continue.txt")},
 			},
 		},
 		parts: consoleFilesCreateCapabilityTestParts("continue task marker SMOKE-CONTINUE: create and save smoke-continue.txt and smoke-continue.svg to File Management, then delete the current third file"),
@@ -3399,13 +3384,8 @@ func TestClientActionAssetObservationContinuesWhenExplicitManagedTargetUnsaved(t
 						"file_id":  "tool-2",
 						"filename": "aichat-two.svg",
 					},
-					map[string]interface{}{
-						"target":         "managed_file",
-						"upload_file_id": "managed-1",
-						"source_file_id": "tool-1",
-						"filename":       "aichat-one.txt",
-					},
 				},
+				"skill_invocations": []interface{}{successfulFileManagerSaveInvocation("tool-1", "aichat-one.txt")},
 			},
 		},
 		parts: &chatRequestParts{
@@ -3422,12 +3402,10 @@ func TestClientActionAssetObservationContinuesWhenExplicitManagedTargetUnsaved(t
 		t.Fatal("managedFileCreateHasUnsavedExplicitTargets() = false, want true while an explicit managed file target is still unsaved")
 	}
 
-	prepared.Message.Metadata["generated_files"] = append(prepared.Message.Metadata["generated_files"].([]interface{}), map[string]interface{}{
-		"target":         "managed_file",
-		"upload_file_id": "managed-2",
-		"source_file_id": "tool-2",
-		"filename":       "aichat-two.svg",
-	})
+	prepared.Message.Metadata["skill_invocations"] = append(
+		prepared.Message.Metadata["skill_invocations"].([]interface{}),
+		successfulFileManagerSaveInvocation("tool-2", "aichat-two.svg"),
+	)
 	if managedFileCreateHasUnsavedExplicitTargets(prepared) {
 		t.Fatal("managedFileCreateHasUnsavedExplicitTargets() = true, want false after all explicit managed file targets are saved")
 	}
@@ -3448,13 +3426,8 @@ func TestClientActionAssetObservationContinuesWhenContinuationArtifactUnsaved(t 
 						"file_id":  "tool-2",
 						"filename": "smoke-continue.svg",
 					},
-					map[string]interface{}{
-						"target":         "managed_file",
-						"upload_file_id": "managed-1",
-						"source_file_id": "tool-1",
-						"filename":       "smoke-continue.txt",
-					},
 				},
+				"skill_invocations": []interface{}{successfulFileManagerSaveInvocation("tool-1", "smoke-continue.txt")},
 			},
 		},
 		parts: consoleFilesCreateCapabilityTestParts("\u7ee7\u7eed\u3002\u4efb\u52a1\u6807\u8bb0\uff1aSMOKE-CONTINUE-1782312653811"),
@@ -3465,12 +3438,10 @@ func TestClientActionAssetObservationContinuesWhenContinuationArtifactUnsaved(t 
 		t.Fatal("managedFileCreateHasUnsavedExplicitTargets() = false, want true while continuation metadata still has an unsaved SVG artifact")
 	}
 
-	prepared.Message.Metadata["generated_files"] = append(prepared.Message.Metadata["generated_files"].([]interface{}), map[string]interface{}{
-		"target":         "managed_file",
-		"upload_file_id": "managed-2",
-		"source_file_id": "tool-2",
-		"filename":       "smoke-continue.svg",
-	})
+	prepared.Message.Metadata["skill_invocations"] = append(
+		prepared.Message.Metadata["skill_invocations"].([]interface{}),
+		successfulFileManagerSaveInvocation("tool-2", "smoke-continue.svg"),
+	)
 	if managedFileCreateHasUnsavedExplicitTargets(prepared) {
 		t.Fatal("managedFileCreateHasUnsavedExplicitTargets() = true, want false after continuation artifacts are all saved")
 	}
@@ -3491,13 +3462,8 @@ func TestSkillLoopToolCallGuardUsesMetadataArtifactInsteadOfRegeneratingMissingT
 						"file_id":  "tool-2",
 						"filename": "aichat-two.svg",
 					},
-					map[string]interface{}{
-						"target":         "managed_file",
-						"upload_file_id": "managed-1",
-						"source_file_id": "tool-1",
-						"filename":       "aichat-one.txt",
-					},
 				},
+				"skill_invocations": []interface{}{successfulFileManagerSaveInvocation("tool-1", "aichat-one.txt")},
 			},
 		},
 		parts: &chatRequestParts{
@@ -5710,5 +5676,25 @@ func TestSkillLoopAdditionalSystemMessagesSkipsConsoleFilesGuidanceWithoutFileRe
 
 	if messages := skillLoopAdditionalSystemMessages(prepared); len(messages) != 0 {
 		t.Fatalf("additional messages = %#v, want none without file-reader", messages)
+	}
+}
+
+func successfulFileManagerSaveInvocation(toolFileID string, filename string) map[string]interface{} {
+	return map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillFileManager,
+		"tool_name": "save_file_to_management",
+		"arguments": map[string]interface{}{
+			"source_type":  "tool_file",
+			"tool_file_id": toolFileID,
+			"filename":     filename,
+		},
+		"result": map[string]interface{}{
+			"status":              "completed",
+			"filename":            filename,
+			"source_tool_file_id": toolFileID,
+			"target":              "managed_file",
+		},
 	}
 }

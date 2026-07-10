@@ -435,8 +435,8 @@ func TestAgentManagementStructuredPlanIncludedInOperationPlanState(t *testing.T)
 	if steps := mapSliceFromAny(plan["steps"]); len(steps) != 0 {
 		t.Fatalf("operation_plan.steps = %#v, want no scripted tool steps", steps)
 	}
-	if phases := mapSliceFromAny(plan["phases"]); len(phases) == 0 {
-		t.Fatalf("operation_plan.phases = %#v, want phase checklist", plan["phases"])
+	if phases := mapSliceFromAny(plan["phases"]); len(phases) != 0 {
+		t.Fatalf("operation_plan.phases = %#v, want no backend-generated business phases when task_contract has none", plan["phases"])
 	}
 	state := mapFromOperationContext(plan["strategy_state"])
 	if stateStructured := mapFromOperationContext(state["structured_plan"]); len(stateStructured) != 0 {

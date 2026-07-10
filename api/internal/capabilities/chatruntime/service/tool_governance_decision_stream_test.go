@@ -173,8 +173,8 @@ func TestRunToolGovernanceDecisionStreamRejectsWithoutTools(t *testing.T) {
 	if !messageRepo.updateCompletedCalled {
 		t.Fatal("UpdateCompleted was not called")
 	}
-	if !conversationRepo.updateAfterMessageCalled {
-		t.Fatal("UpdateAfterMessage was not called")
+	if !conversationRepo.finishContinuationCalled {
+		t.Fatal("FinishContinuationMessage was not called")
 	}
 	if message.Status != runtimemodel.MessageStatusCompleted || message.Answer != result.Answer {
 		t.Fatalf("message = status %q answer %q, want completed result answer", message.Status, message.Answer)
@@ -2141,6 +2141,7 @@ type toolGovernanceStreamConversationRepo struct {
 	repository.ConversationRepository
 	conversation             *runtimemodel.Conversation
 	updateAfterMessageCalled bool
+	finishContinuationCalled bool
 	updateMetadataCalled     bool
 }
 
@@ -2167,7 +2168,9 @@ func (r *toolGovernanceStreamConversationRepo) UpdateMetadata(_ context.Context,
 	return nil
 }
 
-func (r *toolGovernanceStreamConversationRepo) FinishContinuationMessage(_ context.Context, _ uuid.UUID, _ uuid.UUID) error {
+func (r *toolGovernanceStreamConversationRepo) FinishContinuationMessage(_ context.Context, _ uuid.UUID, messageID uuid.UUID) error {
+	r.finishContinuationCalled = true
+	r.conversation.CurrentLeafMessageID = &messageID
 	r.conversation.RuntimeStatus = runtimemodel.ConversationRuntimeStatusIdle
 	r.conversation.ActiveMessageID = nil
 	r.conversation.UpdatedAt = time.Now()

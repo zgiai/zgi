@@ -22,6 +22,7 @@ export interface FilesAIChatContextSnapshot {
   activeCategory: string;
   searchValue: string;
   extensionParam?: string;
+  processingStatusParam?: string;
   currentWorkspace: Workspace | null;
   isOrganizationMode: boolean;
   activeFolderName?: string;

@@ -10,7 +10,7 @@ import (
 
 func consoleFilesFileManagementCreateFinalAnswerGuard(parts *chatRequestParts, metadata map[string]interface{}) skillloop.FinalAnswerGuard {
 	return func(req skillloop.FinalAnswerGuardRequest) (skillloop.FinalAnswerGuardResult, bool) {
-		metadataSaveCalls := managedFileSaveCallsFromGeneratedFilesMetadata(metadata)
+		metadataSaveCalls := successfulMetadataToolCalls(metadata, skills.SkillFileManager, "save_file_to_management")
 		successfulSaveCalls := append([]skillloop.SkillToolCallRef{}, metadataSaveCalls...)
 		successfulSaveCalls = append(successfulSaveCalls, req.SuccessfulToolCalls...)
 		missingTargets := managedFileCreateMissingSaveTargets(parts, metadata, req.SuccessfulToolCalls)

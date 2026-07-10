@@ -357,8 +357,8 @@ Use this skill for governed Agent asset operations in the contextual AIChat side
 
 ## Workflow
 
-1. Treat current page `visible_agents` / runtime `console_agents_visible_agents` as authoritative resolved targets when the user refers to visible Agents, selected Agents, the current page, the current Agent, first-N/top-N Agents, or these Agents. Use their `agent_id`, visible name, and `href` directly; do not call `list_agents` just to rediscover the same visible targets.
-2. Use `list_agents` only when the user asks what Agents exist beyond the current visible page context, asks to search/find an Agent by name, gives an Agent name without an exact visible/page-context match, or when no usable visible Agent context is available.
+1. Treat backend-backed current page `visible_agents` as authoritative resolved targets for list-page ordinal references. Agent detail pages expose only `current_agent`; they do not define a visible Agent list.
+2. Use `list_agents` when no fresh backend-backed list context is available, when a mutation made that list stale, or when the user asks to search beyond the current page query.
 3. When resolving a named Agent for mutation, do at most one exact-name `list_agents` search and, if needed, one broader workspace list/check. If neither proves a target, stop without requesting governance approval or deleting/modifying anything, and report the missing target with the evidence you checked. Do not keep retrying with near-duplicate keywords.
 4. Use `get_agent` when the user asks about one Agent's basic information and visible/page context does not already answer it.
 5. Use `create_agent` when the user asks to create a new Agent. Create only `AGENT` type drafts in the current workspace unless a target workspace is explicitly available in context. This skill does not create, edit, delete, or configure Workflow assets; Workflows live under `/console/workflows` and need a separate Workflow-specific capability.
@@ -426,6 +426,7 @@ For read-only questions such as “can this Agent generate files?” or “does 
 
 - `workspace_id`: optional. Usually omit it so current AIChat workspace context is used.
 - `keyword`: optional search keyword.
+- `page`: optional one-based page number.
 - `limit`: optional maximum result count.
 
 `get_agent` accepts:
