@@ -587,6 +587,7 @@ const messages: WebappMessages = {
       sources: {
         webapp: 'WebApp 日志',
         console: '调试日志',
+        externalApi: 'API 调用',
       },
       searchPlaceholder: '搜索用户提问或模型回复',
       conversationId: '会话 ID',

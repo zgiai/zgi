@@ -423,7 +423,8 @@ const messages = {
           'Attach images for this agent debug run. Up to {count} files, {size} MB each. Supported: {types}.',
       },
       agentWebapp: {
-        imageAttachmentHint: 'Uploaded images will be sent with this message for the app to understand.',
+        imageAttachmentHint:
+          'Uploaded images will be sent with this message for the app to understand.',
         imageVisionRequired:
           'This app has not enabled image understanding. Please contact the app administrator.',
         uploadImageTooltip:
@@ -605,6 +606,7 @@ const messages = {
       sources: {
         webapp: 'WebApp Logs',
         console: 'Debug Logs',
+        externalApi: 'API Calls',
       },
       searchPlaceholder: 'Search user questions or model replies',
       conversationId: 'Conversation ID',

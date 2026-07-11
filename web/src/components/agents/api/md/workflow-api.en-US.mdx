@@ -1,0 +1,237 @@
+# Workflow App API
+
+Use this API to call the latest published version of the current task workflow app from an external system.
+Task workflows do not keep conversation context and are best for one-off tasks such as translation, writing, summarization, and structured processing.
+
+<div>
+  ### Base URL
+
+<CodeGroup title="Code">
+
+```text
+{apibase}
+```
+
+</CodeGroup>
+
+### Authentication
+
+Requests must include an Agent API Key. `Authorization: Bearer` is recommended; `X-API-Key` is also supported for compatibility.
+
+<CodeGroup title="Headers" targetCode={`Authorization: Bearer {api_key}\nX-API-Key: {api_key}`}>
+
+```text
+Authorization: Bearer {API_KEY}
+X-API-Key: {API_KEY}
+```
+
+</CodeGroup>
+
+Keep API Keys on your server side. Do not expose them in browser code or public clients.
+
+</div>
+
+---
+
+<Heading url="/api/v1/workflows/run" method="POST" title="Run Workflow" name="#Execute-Workflow" />
+
+<Row>
+  <Col>
+    Run the latest published workflow for the app bound to the API Key.
+
+    ### Request Body
+
+    <Properties>
+      <Property name='inputs' type='object' propKey='inputs'>
+        Required. Values for variables defined by the workflow start node. Object keys are variable names.
+      </Property>
+    </Properties>
+
+    Task workflow external calls only expose business variables defined by the workflow start node. `model`, `provider`, `files`, `user`, and `response_mode` are not public task workflow inputs. Runtime settings come from the published workflow version, and the response is streaming.
+
+    ### Streaming Format
+
+    The response `Content-Type` is `text/event-stream`. Workflow streams use a JSON data envelope:
+
+    <CodeGroup title="SSE Format">
+    ```text {{ title: 'SSE' }}
+    data: {"event":"workflow_started","data":{"id":"run_123","workflow_id":"workflow_123","created_at":1715750400}}
+
+    data: {"event":"text_chunk","data":{"text":"Hello","from_variable_selector":["answer","text"]}}
+    ```
+    </CodeGroup>
+
+    The event name is inside the JSON `event` field. This endpoint usually does not use native `event: message` for business events. Clients should parse each `data:` JSON payload and dispatch by `event`.
+
+    Live streams may include `: ping` keepalive comments. Recovery streams may include native `event: ping`. Ignore these keepalive frames in business logic.
+
+    ### Common Fields
+
+    <Properties>
+      <Property name='event' type='string' propKey='event'>
+        Event type, for example `workflow_started`, `node_started`, or `text_chunk`.
+      </Property>
+      <Property name='data' type='object' propKey='data'>
+        Event payload. Fields vary by event and node type.
+      </Property>
+      <Property name='sequence' type='number' propKey='sequence'>
+        Persisted event sequence. Save the latest value and use it as `after` when recovering a stream.
+      </Property>
+    </Properties>
+
+    `workflow_run_id` is the main correlation id for troubleshooting. In the live stream, it is usually `workflow_started.data.id`; later events may expose it as `data.id`, `data.workflow_run_id`, or through the run context.
+
+    ### Events
+
+    - `workflow_started`: the run started. `data.id` is the `workflow_run_id`.
+    - `node_started`: a node started. Common fields: `id`, `node_id`, `node_type`, `title`, `index`, `predecessor_node_id`, `inputs`, `created_at`, `created_at_ms`.
+    - `node_finished`: a node finished. `data.status` can be `succeeded`, `failed`, `stopped`, or `skipped`; common fields include `outputs`, `process_data`, `execution_metadata`, `error`, `elapsed_time`, `created_at`, `finished_at`, and `files`.
+    - `text_chunk`: incremental text output from a watched workflow variable. Append `data.text`; `data.from_variable_selector` identifies the source variable path.
+    - `workflow_paused`: the workflow paused for approval or question-answer input. The live stream ends after this event unless a recovery stream is opened with `continue_on_pause=true`.
+    - `approval_requested`, `approval_result_filled`, `approval_expired`: approval lifecycle events.
+    - `question_answer_requested`, `question_answer_submitted`: question-answer lifecycle events.
+    - `workflow_finished`: terminal run event. `data.status` can be `succeeded`, `failed`, or `stopped`.
+    - `workflow_failed` / `workflow_stopped`: compatibility terminal events. Some paths represent them as `workflow_finished` with the matching status.
+    - `error`: stream or runtime error.
+
+    ### Loop and Iteration Events
+
+    Iteration and Loop nodes are container nodes. They emit container lifecycle events and child node events.
+
+    - Iteration events: `iteration_started`, `iteration_next`, `iteration_completed`, plus compatibility names `iteration_succeeded` and `iteration_failed`.
+    - Loop events: `loop_started`, `loop_next`, `loop_completed`, plus compatibility names `loop_succeeded` and `loop_failed`.
+    - `iteration_started` / `loop_started` identify the container node with `data.id` or `data.node_id`.
+    - `iteration_next` / `loop_next` indicate a new round. Prefer `data.iteration_index` or `data.loop_index` when present; otherwise use `data.index`. For historical loop events, clients that need a zero-based round key should follow the frontend behavior: if only `index` exists and it is greater than `0`, use `index - 1`.
+    - Child `node_started` / `node_finished` events may include `iteration_id`, `iteration_index`, `loop_id`, or `loop_index` either at the top level or inside `execution_metadata`.
+    - Completion events may include per-round duration metadata such as `execution_metadata.iteration_duration_map`, `execution_metadata.iteration_duration_list`, or `execution_metadata.loop_duration_map`.
+
+    For UI rendering, keep a map of container node id to rounds, attach child node events by `iteration_id` / `loop_id` and index, then sort nodes by `created_at_ms` or receive order.
+
+    ### Errors
+
+    - `400`: invalid request body or variables
+    - `401`: missing, invalid, inactive, expired, or revoked API Key
+    - `404`: app or published workflow not found
+    - `500`: internal service error or workflow execution error
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request" tag="POST" label="/api/v1/workflows/run" targetCode={`curl --location --no-buffer '{apibase}/workflows/run' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n  "inputs": {\n    "query": "Tell me a joke"\n  }\n}'`}>
+
+    ```bash {{ title: 'cURL' }}
+    curl --location --no-buffer '{apibase}/workflows/run' \
+    --header 'Content-Type: application/json' \
+    --header 'Authorization: Bearer {api_key}' \
+    --data '{
+      "inputs": {
+        "query": "Tell me a joke"
+      }
+    }'
+    ```
+
+    </CodeGroup>
+
+    ### Response Example
+
+    <CodeGroup title="Response">
+    ```text {{ title: 'SSE' }}
+    data: {"event":"workflow_started","data":{"id":"3b8f7c8e-0c1a-4c67-8a62-111111111111","workflow_id":"9f7e6d5c-2222-4333-8444-555555555555","sequence_number":1,"inputs":{"query":"Tell me a joke"},"created_at":1715750400},"sequence":1}
+
+    data: {"event":"text_chunk","data":{"text":"Sure, ","from_variable_selector":["answer","text"]},"sequence":4}
+
+    data: {"event":"workflow_finished","data":{"id":"3b8f7c8e-0c1a-4c67-8a62-111111111111","workflow_id":"9f7e6d5c-2222-4333-8444-555555555555","status":"succeeded","outputs":{"answer":"Sure, here is a joke."},"error":null,"elapsed_time":1580.2,"total_tokens":128,"total_steps":3,"created_at":1715750400,"finished_at":1715750402},"sequence":8}
+    ```
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/workflows/runs/{workflow_run_id}/events"
+  method="GET"
+  title="Recover Workflow Events"
+  name="#Recover-Workflow-Events"
+/>
+
+<Row>
+  <Col>
+    Use this endpoint to replay persisted workflow events or continue watching a running workflow after a disconnect.
+
+    ### Query Parameters
+
+    <Properties>
+      <Property name='after' type='number' propKey='after'>
+        Optional. Last persisted `sequence` received by your client. The server returns events with a greater sequence.
+      </Property>
+      <Property name='include_snapshot' type='boolean' propKey='include_snapshot'>
+        Optional. Set `true` when reconnecting without a saved `after` value and you need historical events. If omitted and `after` is not provided, the stream starts from the latest sequence and only follows new events.
+      </Property>
+      <Property name='continue_on_pause' type='boolean' propKey='continue_on_pause'>
+        Optional. Default `false`. When `false`, the stream ends after `workflow_paused`. Set `true` to keep watching later resume events.
+      </Property>
+      <Property name='include_message_events' type='boolean' propKey='include_message_events'>
+        Optional. Default `false`. Set `true` when replaying chat workflow message chunks. Task workflows usually do not need it.
+      </Property>
+    </Properties>
+
+    ### Recovery Flow
+
+    - Save `workflow_started.data.id` as `workflow_run_id`.
+    - Save the latest top-level `sequence` from every persisted event.
+    - Reconnect with `after={last_sequence}`.
+    - If the client lost its cursor, reconnect with `include_snapshot=true`.
+    - Stop after `workflow_finished`, or after `workflow_paused` when `continue_on_pause` is not enabled.
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Recover" tag="GET" label="/api/v1/workflows/runs/{workflow_run_id}/events" targetCode={`curl --location --no-buffer '{apibase}/workflows/runs/{workflow_run_id}/events?after={last_sequence}&include_snapshot=true&continue_on_pause=true' \\\n--header 'Authorization: Bearer {api_key}'`}>
+
+    ```bash {{ title: 'cURL' }}
+    curl --location --no-buffer '{apibase}/workflows/runs/{workflow_run_id}/events?after={last_sequence}&include_snapshot=true&continue_on_pause=true' \
+    --header 'Authorization: Bearer {api_key}'
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/workflows/tasks/{workflow_run_id}/stop"
+  method="POST"
+  title="Stop Workflow"
+  name="#Stop-Workflow"
+/>
+
+<Row>
+  <Col>
+    Stop a running workflow. Use `workflow_started.data.id` as the path value. The server route names this path value `task_id`, but the value expected by the runtime is the `workflow_run_id`.
+
+    This endpoint does not require a request body. It only stops workflow runs that belong to the Agent bound to the API Key.
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Stop" tag="POST" label="/api/v1/workflows/tasks/{workflow_run_id}/stop" targetCode={`curl --location --request POST '{apibase}/workflows/tasks/{workflow_run_id}/stop' \\\n--header 'Authorization: Bearer {api_key}'`}>
+
+    ```bash {{ title: 'cURL' }}
+    curl --location --request POST '{apibase}/workflows/tasks/{workflow_run_id}/stop' \
+    --header 'Authorization: Bearer {api_key}'
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+## Notes
+
+- This endpoint runs the latest published workflow bound to the API Key. Draft versions are not available.
+- Store `workflow_run_id` as the correlation id for server logs, client logs, event recovery, and troubleshooting.
+- SSE payloads vary by node type, published configuration, and pause/resume flow. Clients should tolerate added fields and missing optional fields.

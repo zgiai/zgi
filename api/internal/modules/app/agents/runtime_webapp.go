@@ -21,18 +21,35 @@ func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAp
 	if err != nil {
 		return nil, err
 	}
-	if !ag.IsWebAppActive() {
-		return nil, errAgentWebAppOffline
-	}
-	_, auth, err := s.publishedRuntimeAuthorizationForAgent(ctx, ag)
+	return s.publishedAgentRuntimeConfig(ctx, ag, true, true, true)
+}
+
+func (s *agentsService) GetPublishedAgentRuntimeConfig(ctx context.Context, agentID string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
+	ag, err := s.agentsRepo.GetByID(ctx, agentID)
 	if err != nil {
 		return nil, err
 	}
-	if !webAppRuntimeSurfaceEnabled(auth) {
+	return s.publishedAgentRuntimeConfig(ctx, ag, false, false, false)
+}
+
+func (s *agentsService) publishedAgentRuntimeConfig(ctx context.Context, ag *Agent, requireActiveWebApp bool, requireWebAppSurface bool, failOnOrganizationError bool) (*dto.AgentWebAppRuntimeConfigResponse, error) {
+	if ag == nil {
+		return nil, fmt.Errorf("agent not found")
+	}
+	if requireActiveWebApp && NormalizeAgentWebAppStatus(ag.WebAppStatus) != AgentWebAppStatusActive {
 		return nil, errAgentWebAppOffline
 	}
+	if requireWebAppSurface {
+		_, auth, err := s.publishedRuntimeAuthorizationForAgent(ctx, ag)
+		if err != nil {
+			return nil, err
+		}
+		if !webAppRuntimeSurfaceEnabled(auth) {
+			return nil, errAgentWebAppOffline
+		}
+	}
 	if ag.AgentsType != "AGENT" {
-		return nil, fmt.Errorf("web app is not an AGENT runtime")
+		return nil, fmt.Errorf("agent is not an AGENT runtime")
 	}
 	version, err := s.agentsRepo.GetLatestAgentPublishedVersion(ctx, ag.ID.String())
 	if err != nil {
@@ -46,9 +63,11 @@ func (s *agentsService) GetPublishedAgentWebAppConfig(ctx context.Context, webAp
 	if s.enterpriseService != nil {
 		org, err := s.enterpriseService.GetOrganizationByWorkspaceID(ctx, workspaceID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to resolve web app organization: %w", err)
+			if failOnOrganizationError {
+				return nil, fmt.Errorf("failed to resolve web app organization: %w", err)
+			}
 		}
-		if org != nil {
+		if err == nil && org != nil {
 			organizationID = org.ID
 		}
 	}

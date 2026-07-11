@@ -376,6 +376,8 @@ func applyRuntimeLogSourceFilter(query *gorm.DB, accountID uuid.UUID, source str
 	switch strings.TrimSpace(source) {
 	case runtimemodel.ConversationSourceWebApp:
 		return query.Where(sourceColumn+" = ? AND "+sourceWebAppIDColumn+" IS NOT NULL", runtimemodel.ConversationSourceWebApp)
+	case runtimemodel.ConversationSourceExternalAPI:
+		return query.Where(sourceColumn+" = ?", runtimemodel.ConversationSourceExternalAPI)
 	case runtimemodel.ConversationSourceConsole:
 		return query.Where(sourceColumn+" = ? AND "+accountIDColumn+" = ?", runtimemodel.ConversationSourceConsole, accountID)
 	case "":

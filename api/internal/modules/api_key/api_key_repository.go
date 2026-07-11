@@ -78,7 +78,7 @@ func (r *apiKeyRepository) GetByKeyHash(ctx context.Context, keyHash string) (*A
 func (r *apiKeyRepository) List(ctx context.Context, agentID, tenantID uuid.UUID) ([]*APIKey, error) {
 	var apiKeys []*APIKey
 	err := r.db.WithContext(ctx).
-		Where("agent_id = ? AND tenant_id = ?", agentID, tenantID).
+		Where("agent_id = ? AND tenant_id = ? AND status != ?", agentID, tenantID, APIKeyStatusRevoked).
 		Order("created_at DESC").
 		Find(&apiKeys).Error
 
@@ -148,12 +148,12 @@ func (r *apiKeyRepository) CheckNameExists(ctx context.Context, name string, age
 	query := r.db.WithContext(ctx).
 		Model(&APIKey{}).
 		Where("name = ? AND agent_id = ? AND tenant_id = ? AND status != ?", name, agentID, tenantID, APIKeyStatusRevoked)
-	
+
 	// Exclude the current API key when updating
 	if excludeID != nil {
 		query = query.Where("id != ?", *excludeID)
 	}
-	
+
 	err := query.Count(&count).Error
 	if err != nil {
 		return false, fmt.Errorf("failed to check name existence: %w", err)

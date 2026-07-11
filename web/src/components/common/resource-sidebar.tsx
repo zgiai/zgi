@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ArrowLeft, PanelLeftClose, PanelLeftOpen, Pencil } from 'lucide-react';
+import { ArrowLeft, ChevronDown, PanelLeftClose, PanelLeftOpen, Pencil } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -83,6 +83,11 @@ export function ResourceSidebar({
 }: ResourceSidebarProps) {
   const toggleLabel = isCollapsed ? expandLabel : collapseLabel;
   const ToggleIcon = isCollapsed ? PanelLeftOpen : PanelLeftClose;
+  const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({});
+
+  const toggleGroup = React.useCallback((key: string) => {
+    setOpenGroups(prev => ({ ...prev, [key]: !(prev[key] ?? true) }));
+  }, []);
 
   return (
     <aside
@@ -101,41 +106,92 @@ export function ResourceSidebar({
         <nav className="flex flex-1 flex-col gap-[3px] px-1 py-2 items-center">
           {navItems.map(item => {
             const Icon = item.icon;
+            const childItems = item.children ?? [];
+            const hasChildren = childItems.length > 0;
             const isActive = item.isActive
               ? item.isActive(pathname)
               : pathname === item.href || pathname.startsWith(`${item.href}/`);
 
+            if (isCollapsed && hasChildren) {
+              return childItems.map(child => {
+                const ChildIcon = child.icon;
+                const isChildActive = child.isActive
+                  ? child.isActive(pathname)
+                  : pathname === child.href || pathname.startsWith(`${child.href}/`);
+
+                return (
+                  <Link
+                    key={child.href}
+                    href={child.href}
+                    className={cn(
+                      'relative flex items-center rounded-md py-1.5 text-xs font-medium transition-colors',
+                      isChildActive
+                        ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
+                        : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
+                      'justify-center px-0 w-8'
+                    )}
+                    title={child.title}
+                  >
+                    <ChildIcon size={18} className="shrink-0" />
+                  </Link>
+                );
+              });
+            }
+
             return (
               <div key={item.href} className="w-full">
-                <Link
-                  href={item.href}
-                  className={cn(
-                    'relative flex items-center rounded-md py-1.5 text-xs font-medium transition-colors',
-                    isActive
-                      ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
-                      : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
-                    isCollapsed ? 'justify-center px-0 w-8' : 'px-2 w-full'
-                  )}
-                >
-                  {isActive && !isCollapsed ? (
-                    <span
-                      className="absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-r-full bg-foreground/70"
-                      aria-hidden="true"
-                    />
-                  ) : null}
-                  <Icon size={18} className="shrink-0" />
-                  <span
+                {hasChildren ? (
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(item.href)}
                     className={cn(
-                      'truncate font-normal opacity-100 transition-all duration-300',
-                      isCollapsed ? 'ml-0 w-0 overflow-hidden opacity-0' : 'ml-1 w-full'
+                      'flex w-full items-center justify-between rounded-md px-2 py-1 text-xs transition-colors',
+                      'text-muted-foreground hover:bg-background/70 hover:text-foreground'
                     )}
                   >
-                    {item.title}
-                  </span>
-                </Link>
-                {!isCollapsed && item.children?.length ? (
+                    <span className="flex min-w-0 items-center">
+                      <Icon size={16} className="shrink-0" />
+                      <span className="ml-1 truncate font-medium">{item.title}</span>
+                    </span>
+                    <ChevronDown
+                      className={cn(
+                        'h-3.5 w-3.5 shrink-0 transition-transform duration-200',
+                        !(openGroups[item.href] ?? true) && '-rotate-90'
+                      )}
+                    />
+                  </button>
+                ) : (
+                  <Link
+                    href={item.href}
+                    className={cn(
+                      'relative flex items-center rounded-md py-1.5 text-xs font-medium transition-colors',
+                      isActive
+                        ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
+                        : 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
+                      isCollapsed ? 'justify-center px-0 w-8' : 'px-2 w-full'
+                    )}
+                    title={isCollapsed ? item.title : undefined}
+                  >
+                    {isActive && !isCollapsed ? (
+                      <span
+                        className="absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-r-full bg-foreground/70"
+                        aria-hidden="true"
+                      />
+                    ) : null}
+                    <Icon size={18} className="shrink-0" />
+                    <span
+                      className={cn(
+                        'truncate font-normal opacity-100 transition-all duration-300',
+                        isCollapsed ? 'ml-0 w-0 overflow-hidden opacity-0' : 'ml-1 w-full'
+                      )}
+                    >
+                      {item.title}
+                    </span>
+                  </Link>
+                )}
+                {!isCollapsed && hasChildren && (openGroups[item.href] ?? true) ? (
                   <div className="mt-1 flex flex-col gap-[3px] pl-3">
-                    {item.children.map(child => {
+                    {childItems.map(child => {
                       const ChildIcon = child.icon;
                       const isChildActive = child.isActive
                         ? child.isActive(pathname)

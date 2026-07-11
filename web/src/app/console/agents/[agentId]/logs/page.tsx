@@ -50,10 +50,9 @@ interface AgentLogsPageProps {
 }
 
 type LogRunListItem = WorkflowRunItem | AgentRuntimeRunItem;
-type AgentRuntimeLogSource = 'webapp' | 'console';
+type AgentRuntimeLogSource = 'webapp' | 'console' | 'external-api';
 
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function normalizeTimestamp(value?: number | null): number {
   if (typeof value !== 'number' || Number.isNaN(value)) return 0;
@@ -526,7 +525,8 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
   };
 
   const handleRuntimeSourceChange = (value: string) => {
-    const nextSource: AgentRuntimeLogSource = value === 'console' ? 'console' : 'webapp';
+    const nextSource: AgentRuntimeLogSource =
+      value === 'console' || value === 'external-api' ? value : 'webapp';
     setRuntimeLogSource(nextSource);
     resetRuntimeLogSelection();
   };
@@ -669,6 +669,9 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
                     <TabsTrigger value="console" className="h-6 text-xs">
                       {t('appLogs.filters.sources.console')}
                     </TabsTrigger>
+                    <TabsTrigger value="external-api" className="h-6 text-xs">
+                      {t('appLogs.filters.sources.externalApi')}
+                    </TabsTrigger>
                   </TabsList>
                 </Tabs>
               ) : null}
@@ -728,7 +731,9 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
                   <div className="flex flex-wrap gap-2">
                     {normalizedSearchFilter ? (
                       <Badge variant="subtle" className="gap-1">
-                        <span>{t('appLogs.filters.searchChip', { keyword: normalizedSearchFilter })}</span>
+                        <span>
+                          {t('appLogs.filters.searchChip', { keyword: normalizedSearchFilter })}
+                        </span>
                         <button
                           type="button"
                           className="rounded-full p-0.5 hover:bg-background"

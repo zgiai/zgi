@@ -1,0 +1,290 @@
+# Agent API
+
+Use this API to call the latest published version of the current Agent from an external system.
+The API is streaming-only and runs under the Agent API Key that is bound to this Agent.
+
+<div>
+  ### Base URL
+
+<CodeGroup title="Code">
+
+```text
+{apibase}
+```
+
+</CodeGroup>
+
+### Authentication
+
+Send the Agent API Key from your server. `Authorization: Bearer` is preferred and takes precedence over `X-API-Key` when both are present.
+
+<CodeGroup title="Headers" targetCode={`Authorization: Bearer {api_key}\nX-API-Key: {api_key}`}>
+
+```text
+Authorization: Bearer {API_KEY}
+X-API-Key: {API_KEY}
+```
+
+</CodeGroup>
+
+Keep API Keys on your server side. Do not expose them in browser code or public clients.
+
+</div>
+
+---
+
+<Heading
+  url="/api/v1/agents/chat"
+  method="POST"
+  title="Send Chat Message"
+  name="#Create-Agent-Chat-Message"
+/>
+
+<Row>
+  <Col>
+    Create a message in the published Agent runtime.
+
+    ### Request Body
+
+    <Properties>
+      <Property name='query' type='string' propKey='query'>
+        Required. User input for this turn.
+      </Property>
+      <Property name='conversation_id' type='string' propKey='conversation_id'>
+        Optional. Pass a previous `conversation_id` to continue the same conversation.
+      </Property>
+      <Property name='parent_id' type='string' propKey='parent_id'>
+        Optional. Parent message id when continuing from a specific branch.
+      </Property>
+      <Property name='file_ids' type='array[string]' propKey='file_ids'>
+        Optional. Uploaded file ids attached to this message.
+      </Property>
+      <Property name='response_mode' type='string' propKey='response_mode'>
+        Optional. Defaults to `streaming`. Any other value returns `400`.
+      </Property>
+      <Property name='user' type='string' propKey='user'>
+        Required when Agent Memory is enabled with at least one enabled slot. Used to isolate long-term memory for the external end user. Optional otherwise, and still useful for traceability.
+      </Property>
+    </Properties>
+
+    `model`, `provider`, `parameters`, and `use_memory` are not public controls for this endpoint. The Agent uses the latest published configuration. `parameters` and `use_memory` are accepted only for compatibility and are not applied as external overrides.
+
+    ### Streaming Format
+
+    Agent streams use native SSE event names. The `data` line also contains a JSON envelope with the same `event` name.
+
+    <CodeGroup title="SSE Format">
+    ```text {{ title: 'SSE' }}
+    id: 1715750400000-0
+    event: message
+    data: {"event":"message","data":{"conversation_id":"...","message_id":"...","answer":"Hello"}}
+    ```
+    </CodeGroup>
+
+    Dispatch by the native `event:` value or by the JSON `event` field. For response text, concatenate `message.data.answer` by `message_id`. Recoverable `message` and progress events include an SSE `id`; keep the latest id for reconnects.
+
+    ### Core Events
+
+    - `message_start`: the assistant message was created. Save `conversation_id` and `message_id` for recovery and later continuation.
+    - `message`: answer chunk. Append `data.answer` to the visible answer.
+    - `message_end`: terminal state for the current assistant message. `data.status` can be `completed`, `stopped`, `error`, `waiting_approval`, or `waiting_question`.
+    - `error`: stream or runtime error. Treat it as terminal unless a later `message_end` is received.
+
+    ### Agent Runtime Events
+
+    The Agent may emit additional progress events before the final answer:
+
+    - File events: `file_parse_start`, `file_parse_end`, `file_parse_error`.
+    - Skill and tool events: `skill_load_start`, `skill_load_end`, `skill_reference_read`, `skill_call_start`, `skill_call_end`, `skill_call_error`, `skill_artifact_created`.
+    - Agent progress events: `agent_progress`, `agent_intermediate_answer`, `message_retract`, memory mutation events such as `memory_create` or `memory_update`.
+    - Workflow events from an Agent-bound workflow: `workflow_started`, `node_started`, `node_finished`, `iteration_started`, `iteration_next`, `iteration_completed`, `loop_started`, `loop_next`, `loop_completed`, `workflow_paused`, `approval_requested`, `question_answer_requested`, `question_answer_submitted`, `workflow_finished`, `workflow_failed`.
+
+    Workflow events in an Agent stream are progress events. Use them to render execution traces or waiting states; keep the visible assistant answer driven by `message` / `message_end`. For detailed workflow node, loop, and iteration fields, see the Workflow API document.
+
+    ### Waiting for User Input
+
+    If the Agent calls a workflow that pauses, the stream may emit `approval_requested`, `question_answer_requested`, or `user_input_requested`, and `message_end.status` may be `waiting_approval` or `waiting_question`.
+
+    - For question-answer pauses, render `user_input_requested.data.questions` when present. Submit the answer through the workflow continuation endpoint below.
+    - For approval pauses, use the `approval_requested` payload. Submit `approval_token`, `action`, and `inputs` through the workflow continuation endpoint below.
+    - Do not start a brand-new `/agents/chat` request to answer a pending workflow pause. Continue the same `conversation_id` and `message_id`.
+
+    ### Errors
+
+    - `400`: invalid request body, invalid ids, non-streaming `response_mode`, or missing `user` when Agent Memory is enabled
+    - `401`: missing, invalid, inactive, expired, or revoked API Key
+    - `404`: Agent has no published version or cannot be found
+    - `500`: internal service error
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Request" tag="POST" label="/api/v1/agents/chat" targetCode={`curl --location --no-buffer '{apibase}/agents/chat' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n  "query": "Hello, please answer in one sentence.",\n  "user": "external-user-1"\n}'`}>
+
+    ```bash {{ title: 'cURL' }}
+    curl --location --no-buffer '{apibase}/agents/chat' \
+    --header 'Content-Type: application/json' \
+    --header 'Authorization: Bearer {api_key}' \
+    --data '{
+      "query": "Hello, please answer in one sentence.",
+      "user": "external-user-1"
+    }'
+    ```
+
+    </CodeGroup>
+
+    ### Response Example
+
+    <CodeGroup title="Response">
+    ```text {{ title: 'SSE' }}
+    event: message_start
+    data: {"event":"message_start","data":{"conversation_id":"...","message_id":"...","model":"deepseek-chat"}}
+
+    id: 1715750400000-0
+    event: message
+    data: {"event":"message","data":{"conversation_id":"...","message_id":"...","answer":"Hello"}}
+
+    event: message_end
+    data: {"event":"message_end","data":{"conversation_id":"...","message_id":"...","status":"completed","metadata":{"usage":{"total_tokens":123}}}}
+    ```
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}/events"
+  method="GET"
+  title="Recover Agent Stream"
+  name="#Recover-Agent-Stream"
+/>
+
+<Row>
+  <Col>
+    Use this endpoint when the client disconnects while an Agent message is still running.
+
+    ### Query Parameters
+
+    <Properties>
+      <Property name='message_id' type='string' propKey='message_id'>
+        Required. The assistant `message_id` returned by `message_start`.
+      </Property>
+      <Property name='after_id' type='string' propKey='after_id'>
+        Optional. Last SSE `id` received by your client. Omit it to replay from the beginning of the recoverable stream.
+      </Property>
+    </Properties>
+
+    The event store is short-lived. Current runtime stores Agent stream events for 24 hours. If the stream is still active but the event store is unavailable or expired, the server emits `error` with `message: "stream events expired"`.
+
+    ### Recovery Flow
+
+    - Save `conversation_id`, `message_id`, and the latest SSE `id` from every Agent event that includes `id:`.
+    - On reconnect, call this endpoint with the same API Key.
+    - Resume from `after_id`. De-duplicate events by SSE `id` if your client may retry.
+    - If an event has no SSE `id`, treat it as a non-recoverable fallback event and do not use it as `after_id`.
+    - Stop listening after `message_end` with `completed`, `stopped`, `error`, or `failed`, or after an `error` event.
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Recover" tag="GET" label="/api/v1/agents/conversations/{conversation_id}/events" targetCode={`curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/events?message_id={message_id}&after_id={last_event_id}' \\\n--header 'Authorization: Bearer {api_key}'`}>
+
+    ```bash {{ title: 'cURL' }}
+    curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/events?message_id={message_id}&after_id={last_event_id}' \
+    --header 'Authorization: Bearer {api_key}'
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation"
+  method="POST"
+  title="Continue Paused Agent Workflow"
+  name="#Continue-Agent-Workflow"
+/>
+
+<Row>
+  <Col>
+    Continue an Agent message that is waiting on a workflow approval or question-answer node.
+
+    ### Question Answer Body
+
+    <Properties>
+      <Property name='type' type='string' propKey='type'>
+        Required. Use `question_answer`.
+      </Property>
+      <Property name='inputs' type='object' propKey='inputs'>
+        Required. Include `query`; include `question_answer_option_id` when the user selected an option from `user_input_requested`.
+      </Property>
+    </Properties>
+
+    ### Approval Body
+
+    <Properties>
+      <Property name='type' type='string' propKey='type'>
+        Required. Use `approval`.
+      </Property>
+      <Property name='approval_token' type='string' propKey='approval_token'>
+        Required. Token from `approval_requested`.
+      </Property>
+      <Property name='action' type='string' propKey='action'>
+        Required. Approval action id.
+      </Property>
+      <Property name='inputs' type='object' propKey='inputs'>
+        Optional. Approval form values.
+      </Property>
+    </Properties>
+
+    The response is another Agent SSE stream for the same `message_id`. It may emit more workflow events, another waiting `message_end`, or the final answer and completed `message_end`.
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="Question Answer" tag="POST" label="/api/v1/agents/.../workflow-continuation" targetCode={`curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n  "type": "question_answer",\n  "inputs": {\n    "query": "Continue",\n    "question_answer_option_id": "continue"\n  }\n}'`}>
+
+    ```bash {{ title: 'cURL - Question Answer' }}
+    curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \
+    --header 'Content-Type: application/json' \
+    --header 'Authorization: Bearer {api_key}' \
+    --data '{
+      "type": "question_answer",
+      "inputs": {
+        "query": "Continue",
+        "question_answer_option_id": "continue"
+      }
+    }'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="Approval" tag="POST" label="/api/v1/agents/.../workflow-continuation" targetCode={`curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n  "type": "approval",\n  "approval_token": "{approval_token}",\n  "action": "approve",\n  "inputs": {}\n}'`}>
+
+    ```bash {{ title: 'cURL - Approval' }}
+    curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \
+    --header 'Content-Type: application/json' \
+    --header 'Authorization: Bearer {api_key}' \
+    --data '{
+      "type": "approval",
+      "approval_token": "{approval_token}",
+      "action": "approve",
+      "inputs": {}
+    }'
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+## Notes
+
+- This API runs the latest published Agent version. Draft configuration is not available.
+- An API Key can only access the Agent it is bound to.
+- Use `conversation_id` for multi-turn context, `message_id` for stream recovery and workflow continuation, and `workflow_run_id` for workflow troubleshooting.

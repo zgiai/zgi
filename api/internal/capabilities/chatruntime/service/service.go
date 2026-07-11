@@ -66,10 +66,11 @@ var defaultSystemSkillIDs = []string{
 }
 
 type Scope struct {
-	OrganizationID  uuid.UUID
-	AccountID       uuid.UUID
-	WorkspaceID     *uuid.UUID
-	SkipAccessCheck bool
+	OrganizationID    uuid.UUID
+	AccountID         uuid.UUID
+	WorkspaceID       *uuid.UUID
+	AgentMemoryUserID *uuid.UUID
+	SkipAccessCheck   bool
 }
 
 type Caller struct {

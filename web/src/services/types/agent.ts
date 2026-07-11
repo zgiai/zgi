@@ -379,7 +379,7 @@ export interface AgentApiKeyCreateResponse {
   agent_id: string;
   key_prefix: string;
   name: string;
-  status: 'active' | 'revoked';
+  status: 'active' | 'inactive' | 'revoked';
   expires_at: string | null;
   created_at: string;
   updated_at: string;
@@ -391,7 +391,7 @@ export interface AgentApiKey {
   agent_id: string;
   key_prefix: string;
   name: string;
-  status: 'active' | 'revoked';
+  status: 'active' | 'inactive' | 'revoked';
   expires_at: string | null;
   created_at: string;
   updated_at: string;
@@ -462,6 +462,6 @@ export interface CreateAgentApiKeyRequest {
 
 export interface UpdateAgentApiKeyRequest {
   name?: string;
-  status?: 'active' | 'revoked';
+  status?: 'active' | 'inactive';
   expires_at?: string | null; // ISO timestamp
 }

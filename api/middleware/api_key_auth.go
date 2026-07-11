@@ -20,25 +20,9 @@ import (
 // APIKeyAuthMiddleware validates API key and extracts agent/tenant info
 func APIKeyAuthMiddleware(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Extract API key from Authorization header
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			response.Fail(c, response.ErrorCode{Code: 401001, Message: "Authorization header required", UserVisible: true})
-			c.Abort()
-			return
-		}
-
-		// Check if it's Bearer token format
-		if !strings.HasPrefix(authHeader, "Bearer ") {
-			response.Fail(c, response.ErrorCode{Code: 401002, Message: "Invalid authorization format. Expected: Bearer <token>", UserVisible: true})
-			c.Abort()
-			return
-		}
-
-		// Extract the actual token
-		apiKey := strings.TrimPrefix(authHeader, "Bearer ")
-		if apiKey == "" {
-			response.Fail(c, response.ErrorCode{Code: 401003, Message: "API key cannot be empty", UserVisible: true})
+		apiKey, errCode := extractExternalAPIKey(c)
+		if errCode != nil {
+			response.Fail(c, *errCode)
 			c.Abort()
 			return
 		}
@@ -66,6 +50,29 @@ func APIKeyAuthMiddleware(db *gorm.DB) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+func extractExternalAPIKey(c *gin.Context) (string, *response.ErrorCode) {
+	authHeader := strings.TrimSpace(c.GetHeader("Authorization"))
+	if authHeader != "" {
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			errCode := response.ErrorCode{Code: 401002, Message: "Invalid authorization format. Expected: Bearer <token>", UserVisible: true}
+			return "", &errCode
+		}
+		apiKey := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+		if apiKey == "" {
+			errCode := response.ErrorCode{Code: 401003, Message: "API key cannot be empty", UserVisible: true}
+			return "", &errCode
+		}
+		return apiKey, nil
+	}
+
+	apiKey := strings.TrimSpace(c.GetHeader("X-API-Key"))
+	if apiKey == "" {
+		errCode := response.ErrorCode{Code: 401001, Message: "Authorization header or X-API-Key required", UserVisible: true}
+		return "", &errCode
+	}
+	return apiKey, nil
 }
 
 // APIKeyInfo represents the validated API key information
@@ -157,13 +164,13 @@ func validateAgentAPISurface(db *gorm.DB, agentID, tenantID uuid.UUID) error {
 	return nil
 }
 
-// updateLastUsed updates the last used timestamp and usage counters for the API key
+// updateLastUsed updates the last used timestamp for the API key.
+// Usage count is incremented by APIKeyUsageLoggingMiddleware once the request is complete.
 func updateLastUsed(db *gorm.DB, keyID uuid.UUID) {
 	now := time.Now()
 
 	updates := map[string]interface{}{
 		"last_used_at": now,
-		"usage_count":  gorm.Expr("usage_count + 1"),
 	}
 
 	db.Model(&apiKeyModule.APIKey{}).

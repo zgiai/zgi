@@ -50,7 +50,9 @@ const messages: AgentsMessages = {
   conversationsDescription: '管理对话和聊天记录',
   settingsTitle: '设置',
   settingsDescription: '配置智能体设置和参数',
+  apiGroupTitle: 'API',
   apiTitle: 'API文档',
+  apiDocsNavTitle: 'API 文档',
   apiDescription: '外部API配置和管理',
 
   // Agent management
@@ -834,7 +836,8 @@ const messages: AgentsMessages = {
       actions: '操作',
     },
     active: '激活',
-    revoked: '禁用',
+    inactive: '停用',
+    revoked: '已撤销',
     noExpiry: '不过期',
     editTitle: '编辑 API Key',
     createTitle: '新建 API Key',
@@ -849,7 +852,7 @@ const messages: AgentsMessages = {
     creating: '创建中…',
     deleteConfirm: {
       title: '确认删除',
-      description: '该操作不可恢复，确定删除该 API Key 吗？',
+      description: '删除后该 API Key 将被永久禁用并从列表中隐藏，确定删除吗？',
     },
     validation: {
       missingName: '请填写名称',
@@ -864,7 +867,7 @@ const messages: AgentsMessages = {
       createFailed: '创建 API Key 失败',
       updateSuccess: 'API Key 更新成功',
       updateFailed: '更新 API Key 失败',
-      deleteSuccess: 'API Key 删除成功',
+      deleteSuccess: 'API Key 已删除',
       deleteFailed: '删除 API Key 失败',
     },
   },

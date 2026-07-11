@@ -2,7 +2,16 @@
 
 import * as React from 'react';
 import { usePathname, useParams } from 'next/navigation';
-import { BookOpen, History, KeyRound, PanelsTopLeft, RotateCcw, ScanSearch } from 'lucide-react';
+import {
+  BookOpen,
+  FileCode2,
+  History,
+  KeyRound,
+  PanelsTopLeft,
+  RotateCcw,
+  ScanSearch,
+  Server,
+} from 'lucide-react';
 import { useAgent } from '@/hooks/agent/use-agents';
 import { useT } from '@/i18n';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
@@ -16,7 +25,9 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { useWorkflowDebugFocusMode } from '@/components/workflow/hooks/use-debug-focus-mode';
 import { usePersistentSidebarCollapse } from '@/hooks/use-persistent-sidebar-collapse';
 import {
+  getAgentDetailApiDocsHref,
   getAgentDetailApiHref,
+  getAgentDetailApiKeysHref,
   getAgentDetailBatchTestHref,
   getAgentDetailLogsHref,
   getAgentDetailRouteAccess,
@@ -168,10 +179,29 @@ export function AgentSidebar({ isMismatch = false, routeKind }: AgentSidebarProp
     }
 
     if (routeAccess.canShowApiKeys) {
+      const apiRootHref = getAgentDetailApiHref(agentId, effectiveRouteKind);
+      const apiKeysHref = getAgentDetailApiKeysHref(agentId, effectiveRouteKind);
+      const apiDocsHref = getAgentDetailApiDocsHref(agentId, effectiveRouteKind);
+
       items.push({
-        title: t('agents.apiKeys.navTitle'),
-        href: getAgentDetailApiHref(agentId, effectiveRouteKind),
-        icon: KeyRound,
+        title: t('agents.apiGroupTitle'),
+        href: apiKeysHref,
+        icon: Server,
+        isActive: currentPathname => currentPathname.startsWith(apiRootHref),
+        children: [
+          {
+            title: t('agents.apiKeys.navTitle'),
+            href: apiKeysHref,
+            icon: KeyRound,
+            isActive: currentPathname => currentPathname === apiKeysHref,
+          },
+          {
+            title: t('agents.apiDocsNavTitle'),
+            href: apiDocsHref,
+            icon: FileCode2,
+            isActive: currentPathname => currentPathname === apiDocsHref,
+          },
+        ],
       });
     }
 

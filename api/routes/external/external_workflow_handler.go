@@ -892,38 +892,28 @@ func (h *ExternalWorkflowHandler) sendChatSSEError(ctx context.Context, w gin.Re
 func (h *ExternalWorkflowHandler) StopWorkflowTask(c *gin.Context) {
 	apiKeyInfo, exists := c.Get("api_key_info")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"message": "API key info not found"})
+		response.Fail(c, response.ErrorCode{Code: 401001, Message: "API key info not found", UserVisible: true})
 		return
 	}
 
 	keyInfo, ok := apiKeyInfo.(*middleware.APIKeyInfo)
 	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "Invalid API key info format"})
+		response.Fail(c, response.ErrorCode{Code: 500001, Message: "Invalid API key info format", UserVisible: false})
 		return
 	}
 
+	taskID := strings.TrimSpace(c.Param("task_id"))
+	if taskID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
 	if h.workflowService == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "workflow service not initialized"})
+		response.Fail(c, response.ErrSystemError)
 		return
 	}
 
-	var req struct {
-		User string `json:"user" binding:"required"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"message": "user parameter is required"})
-		return
-	}
-
-	taskID := c.Param("task_id")
-	if strings.TrimSpace(taskID) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "task_id is required"})
-		return
-	}
-
-	agentID := keyInfo.AgentID.String()
 	tenantID := keyInfo.TenantID.String()
+	agentID := keyInfo.AgentID.String()
 	apiKeyID := keyInfo.ID.String()
 
 	if err := h.workflowService.ValidateExternalWorkflowRunAccess(c.Request.Context(), tenantID, agentID, taskID, apiKeyID); err != nil {
@@ -938,17 +928,17 @@ func (h *ExternalWorkflowHandler) StopWorkflowTask(c *gin.Context) {
 	}
 
 	if err := h.workflowService.StopWorkflowTask(c.Request.Context(), tenantID, agentID, taskID, apiKeyID); err != nil {
-		logger.WarnContext(c.Request.Context(), "external api workflow task stop denied",
+		logger.CriticalContext(c.Request.Context(), "external api workflow stop failed",
 			"agent_id", agentID,
 			"tenant_id", tenantID,
 			"task_id", taskID,
 			err,
 		)
-		response.Fail(c, response.ErrorCode{Code: 404006, Message: "Workflow task not found or not accessible", UserVisible: true})
+		response.Fail(c, response.ErrSystemError)
 		return
 	}
 
-	c.JSON(http.StatusOK, dto.WorkflowTaskStopResponse{Result: "success"})
+	response.Success(c, nil)
 }
 
 func (h *ExternalWorkflowHandler) UploadFile(c *gin.Context) {
