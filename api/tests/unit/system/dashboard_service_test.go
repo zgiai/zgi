@@ -2,14 +2,19 @@ package system_test
 
 import (
 	"context"
+	"errors"
 	"regexp"
+	"sync"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	llmmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	"github.com/zgiai/zgi/api/internal/modules/system/service"
+	redisutil "github.com/zgiai/zgi/api/pkg/redis"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -40,6 +45,8 @@ func setupMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock, func()) {
 type fakeAvailableModelsLister struct {
 	models    []*llmmodelservice.AvailableModel
 	lastOrgID uuid.UUID
+	calls     int
+	err       error
 }
 
 func (f *fakeAvailableModelsLister) ListAvailable(
@@ -48,8 +55,196 @@ func (f *fakeAvailableModelsLister) ListAvailable(
 	_ string,
 	_ string,
 ) ([]*llmmodelservice.AvailableModel, error) {
+	f.calls++
 	f.lastOrgID = organizationID
+	return f.models, f.err
+}
+
+type blockingAvailableModelsLister struct {
+	models  []*llmmodelservice.AvailableModel
+	started chan struct{}
+	release chan struct{}
+
+	mu    sync.Mutex
+	calls int
+}
+
+func (f *blockingAvailableModelsLister) ListAvailable(
+	_ context.Context,
+	_ uuid.UUID,
+	_ string,
+	_ string,
+) ([]*llmmodelservice.AvailableModel, error) {
+	f.mu.Lock()
+	f.calls++
+	if f.calls == 1 {
+		close(f.started)
+	}
+	f.mu.Unlock()
+
+	<-f.release
 	return f.models, nil
+}
+
+func (f *blockingAvailableModelsLister) Calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+func TestDashboardService_CachesStatsResponses(t *testing.T) {
+	db, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	redisServer := miniredis.RunT(t)
+	redisClient := goredis.NewClient(&goredis.Options{Addr: redisServer.Addr()})
+	defer redisClient.Close()
+	previousRedis := redisutil.GetClient()
+	redisutil.SetClient(redisClient)
+	defer redisutil.SetClient(previousRedis)
+
+	orgID := uuid.New()
+	availableModels := &fakeAvailableModelsLister{models: []*llmmodelservice.AvailableModel{{
+		ID:       uuid.New(),
+		Name:     "gpt-4o",
+		Provider: "openai",
+		UseCases: []string{"text-chat"},
+	}}}
+	svc := service.NewDashboardServiceWithAvailableModels(db, availableModels)
+
+	tableExistsQuery := `SELECT EXISTS`
+	mock.ExpectQuery(tableExistsQuery).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(tableExistsQuery).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	first, err := svc.GetDashboardStats(context.Background(), orgID.String())
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), first.Models.Total)
+
+	second, err := svc.GetDashboardStats(context.Background(), orgID.String())
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), second.Models.Total)
+	assert.Equal(t, 1, availableModels.calls)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDashboardService_CachesRecentWorkResponses(t *testing.T) {
+	db, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	redisServer := miniredis.RunT(t)
+	redisClient := goredis.NewClient(&goredis.Options{Addr: redisServer.Addr()})
+	defer redisClient.Close()
+	previousRedis := redisutil.GetClient()
+	redisutil.SetClient(redisClient)
+	defer redisutil.SetClient(previousRedis)
+
+	svc := service.NewDashboardService(db)
+	tableExistsQuery := `SELECT EXISTS`
+	mock.ExpectQuery(tableExistsQuery).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(tableExistsQuery).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	first, err := svc.GetRecentWork(context.Background(), "organization-1", "account-1", 10)
+	assert.NoError(t, err)
+	assert.Empty(t, first.Items)
+
+	second, err := svc.GetRecentWork(context.Background(), "organization-1", "account-1", 10)
+	assert.NoError(t, err)
+	assert.Empty(t, second.Items)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDashboardService_DoesNotCacheDegradedStats(t *testing.T) {
+	db, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	redisServer := miniredis.RunT(t)
+	redisClient := goredis.NewClient(&goredis.Options{Addr: redisServer.Addr()})
+	defer redisClient.Close()
+	previousRedis := redisutil.GetClient()
+	redisutil.SetClient(redisClient)
+	defer redisutil.SetClient(previousRedis)
+
+	orgID := uuid.New()
+	availableModels := &fakeAvailableModelsLister{err: errors.New("available models unavailable")}
+	svc := service.NewDashboardServiceWithAvailableModels(db, availableModels)
+
+	tableExistsQuery := `SELECT EXISTS`
+	mock.ExpectQuery(tableExistsQuery).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(tableExistsQuery).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	first, err := svc.GetDashboardStats(context.Background(), orgID.String())
+	assert.NoError(t, err)
+	assert.Zero(t, first.Models.Total)
+
+	availableModels.err = nil
+	availableModels.models = []*llmmodelservice.AvailableModel{{
+		ID:       uuid.New(),
+		Name:     "gpt-4o",
+		Provider: "openai",
+		UseCases: []string{"text-chat"},
+	}}
+	second, err := svc.GetDashboardStats(context.Background(), orgID.String())
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), second.Models.Total)
+
+	_, err = svc.GetDashboardStats(context.Background(), orgID.String())
+	assert.NoError(t, err)
+	assert.Equal(t, 2, availableModels.calls)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDashboardService_CoalescesConcurrentStatsCacheMisses(t *testing.T) {
+	db, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	redisServer := miniredis.RunT(t)
+	redisClient := goredis.NewClient(&goredis.Options{Addr: redisServer.Addr()})
+	defer redisClient.Close()
+	previousRedis := redisutil.GetClient()
+	redisutil.SetClient(redisClient)
+	defer redisutil.SetClient(previousRedis)
+
+	lister := &blockingAvailableModelsLister{
+		models: []*llmmodelservice.AvailableModel{{
+			ID:       uuid.New(),
+			Name:     "gpt-4o",
+			Provider: "openai",
+			UseCases: []string{"text-chat"},
+		}},
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	svc := service.NewDashboardServiceWithAvailableModels(db, lister)
+
+	tableExistsQuery := `SELECT EXISTS`
+	mock.ExpectQuery(tableExistsQuery).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(tableExistsQuery).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	const callers = 6
+	results := make(chan error, callers)
+	for range callers {
+		go func() {
+			_, err := svc.GetDashboardStats(context.Background(), uuid.Nil.String())
+			results <- err
+		}()
+	}
+
+	<-lister.started
+	close(lister.release)
+	for range callers {
+		assert.NoError(t, <-results)
+	}
+
+	assert.Equal(t, 1, lister.Calls())
+	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestDashboardService_GetDashboardStats_UsesAvailableModels(t *testing.T) {

@@ -4,13 +4,16 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 
 	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
+	dashboardcache "github.com/zgiai/zgi/api/internal/modules/system/cache"
 	"github.com/zgiai/zgi/api/internal/modules/system/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
@@ -29,7 +32,11 @@ type AvailableModelsLister interface {
 type dashboardService struct {
 	db              *gorm.DB
 	availableModels AvailableModelsLister
+	dashboardCache  *dashboardcache.DashboardCache
 	tableCache      map[string]bool
+	tableCacheMu    sync.RWMutex
+	statsGroup      singleflight.Group
+	recentWorkGroup singleflight.Group
 }
 
 // NewDashboardService creates a new DashboardService instance
@@ -42,15 +49,21 @@ func NewDashboardServiceWithAvailableModels(db *gorm.DB, availableModels Availab
 	return &dashboardService{
 		db:              db,
 		availableModels: availableModels,
+		dashboardCache:  dashboardcache.NewDashboardCache(),
 		tableCache:      make(map[string]bool),
 	}
 }
 
 // tableExists checks if a table exists in the database (cached per service lifetime).
-func (s *dashboardService) tableExists(ctx context.Context, tableName string) bool {
+// The second result is false only when the database check itself failed.
+func (s *dashboardService) tableExists(ctx context.Context, tableName string) (bool, bool) {
+	s.tableCacheMu.RLock()
 	if cached, ok := s.tableCache[tableName]; ok {
-		return cached
+		s.tableCacheMu.RUnlock()
+		return cached, true
 	}
+	s.tableCacheMu.RUnlock()
+
 	var exists bool
 	err := s.db.Raw(
 		"SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = ?)",
@@ -61,16 +74,23 @@ func (s *dashboardService) tableExists(ctx context.Context, tableName string) bo
 			zap.String("table", tableName),
 			zap.Error(err),
 		)
-		return false
+		return false, false
 	}
+	s.tableCacheMu.Lock()
 	s.tableCache[tableName] = exists
-	return exists
+	s.tableCacheMu.Unlock()
+	return exists, true
 }
 
-// safeCount performs a COUNT query, returning 0 on any error
-func (s *dashboardService) safeCount(ctx context.Context, table string, where string, args ...interface{}) int64 {
-	if !s.tableExists(ctx, table) {
-		return 0
+// safeCount performs a COUNT query. The second result reports whether the
+// result is safe to cache; a missing optional table is a legitimate zero.
+func (s *dashboardService) safeCount(ctx context.Context, table string, where string, args ...interface{}) (int64, bool) {
+	exists, checked := s.tableExists(ctx, table)
+	if !checked {
+		return 0, false
+	}
+	if !exists {
+		return 0, true
 	}
 	var count int64
 	q := s.db.WithContext(ctx).Table(table)
@@ -82,21 +102,39 @@ func (s *dashboardService) safeCount(ctx context.Context, table string, where st
 			zap.String("table", table),
 			zap.Error(err),
 		)
-		return 0
+		return 0, false
 	}
-	return count
+	return count, true
 }
 
 // GetDashboardStats retrieves dashboard statistics for a given organization
 func (s *dashboardService) GetDashboardStats(ctx context.Context, organizationID string) (*model.DashboardStatsResponse, error) {
-	stats := model.DashboardStatsResponse{
-		Models: model.ModelsStats{ByUseCase: make(map[string]int64)},
+	if cached, ok := s.dashboardCache.GetStats(ctx, organizationID); ok {
+		return cached, nil
 	}
 
-	stats.Models = s.getModelStats(ctx, organizationID)
-	stats.Resources = s.getResourceStats(ctx, organizationID)
+	value, err, _ := s.statsGroup.Do("stats:"+organizationID, func() (interface{}, error) {
+		if cached, ok := s.dashboardCache.GetStats(ctx, organizationID); ok {
+			return cached, nil
+		}
 
-	return &stats, nil
+		stats := model.DashboardStatsResponse{
+			Models: model.ModelsStats{ByUseCase: make(map[string]int64)},
+		}
+		models, modelsCacheable := s.getModelStats(ctx, organizationID)
+		resources, resourcesCacheable := s.getResourceStats(ctx, organizationID)
+		stats.Models = models
+		stats.Resources = resources
+
+		if modelsCacheable && resourcesCacheable {
+			s.dashboardCache.SetStats(ctx, organizationID, &stats)
+		}
+		return &stats, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return value.(*model.DashboardStatsResponse), nil
 }
 
 // GetRecentWork retrieves recently updated console work items for an organization.
@@ -104,36 +142,60 @@ func (s *dashboardService) GetRecentWork(ctx context.Context, organizationID str
 	if limit <= 0 || limit > 20 {
 		limit = 10
 	}
-
-	wsIDs := s.getWorkspaceIDs(ctx, organizationID)
-	items := make([]model.RecentWorkItem, 0, limit)
-
-	if len(wsIDs) > 0 {
-		items = append(items, s.getRecentAgents(ctx, wsIDs, limit)...)
-		items = append(items, s.getRecentDatasets(ctx, wsIDs, limit)...)
-		items = append(items, s.getRecentAgentConversations(ctx, wsIDs, accountID, limit)...)
+	if cached, ok := s.dashboardCache.GetRecentWork(ctx, organizationID, accountID, limit); ok {
+		return cached, nil
 	}
-	items = append(items, s.getRecentDataSources(ctx, organizationID, limit)...)
 
-	sort.SliceStable(items, func(i, j int) bool {
-		return items[i].UpdatedAt > items[j].UpdatedAt
+	value, err, _ := s.recentWorkGroup.Do(fmt.Sprintf("recent-work:%s:%s:%d", organizationID, accountID, limit), func() (interface{}, error) {
+		if cached, ok := s.dashboardCache.GetRecentWork(ctx, organizationID, accountID, limit); ok {
+			return cached, nil
+		}
+
+		wsIDs, workspaceIDsCacheable := s.getWorkspaceIDs(ctx, organizationID)
+		items := make([]model.RecentWorkItem, 0, limit)
+		cacheable := workspaceIDsCacheable
+
+		if len(wsIDs) > 0 {
+			agents, agentsCacheable := s.getRecentAgents(ctx, wsIDs, limit)
+			datasets, datasetsCacheable := s.getRecentDatasets(ctx, wsIDs, limit)
+			conversations, conversationsCacheable := s.getRecentAgentConversations(ctx, wsIDs, accountID, limit)
+			items = append(items, agents...)
+			items = append(items, datasets...)
+			items = append(items, conversations...)
+			cacheable = cacheable && agentsCacheable && datasetsCacheable && conversationsCacheable
+		}
+		dataSources, dataSourcesCacheable := s.getRecentDataSources(ctx, organizationID, limit)
+		items = append(items, dataSources...)
+		cacheable = cacheable && dataSourcesCacheable
+
+		sort.SliceStable(items, func(i, j int) bool {
+			return items[i].UpdatedAt > items[j].UpdatedAt
+		})
+
+		if len(items) > limit {
+			items = items[:limit]
+		}
+
+		result := &model.RecentWorkResponse{Items: items}
+		if cacheable {
+			s.dashboardCache.SetRecentWork(ctx, organizationID, accountID, limit, result)
+		}
+		return result, nil
 	})
-
-	if len(items) > limit {
-		items = items[:limit]
+	if err != nil {
+		return nil, err
 	}
-
-	return &model.RecentWorkResponse{Items: items}, nil
+	return value.(*model.RecentWorkResponse), nil
 }
 
-func (s *dashboardService) getModelStats(ctx context.Context, organizationID string) model.ModelsStats {
+func (s *dashboardService) getModelStats(ctx context.Context, organizationID string) (model.ModelsStats, bool) {
 	if s.availableModels != nil {
 		return s.getAvailableModelStats(ctx, organizationID)
 	}
 	return s.getGlobalModelStats(ctx)
 }
 
-func (s *dashboardService) getAvailableModelStats(ctx context.Context, organizationID string) model.ModelsStats {
+func (s *dashboardService) getAvailableModelStats(ctx context.Context, organizationID string) (model.ModelsStats, bool) {
 	stats := model.ModelsStats{
 		ByUseCase: make(map[string]int64),
 	}
@@ -144,7 +206,7 @@ func (s *dashboardService) getAvailableModelStats(ctx context.Context, organizat
 			zap.String("organization_id", organizationID),
 			zap.Error(err),
 		)
-		return stats
+		return stats, false
 	}
 
 	models, err := s.availableModels.ListAvailable(ctx, orgUUID, "", "")
@@ -153,7 +215,7 @@ func (s *dashboardService) getAvailableModelStats(ctx context.Context, organizat
 			zap.String("organization_id", organizationID),
 			zap.Error(err),
 		)
-		return stats
+		return stats, false
 	}
 
 	for _, availableModel := range models {
@@ -168,21 +230,26 @@ func (s *dashboardService) getAvailableModelStats(ctx context.Context, organizat
 		}
 	}
 
-	return stats
+	return stats, true
 }
 
 // getGlobalModelStats retrieves model statistics from llm_models grouped by use_cases.
 // It is kept as a defensive fallback when the available-models service is not wired.
-func (s *dashboardService) getGlobalModelStats(ctx context.Context) model.ModelsStats {
+func (s *dashboardService) getGlobalModelStats(ctx context.Context) (model.ModelsStats, bool) {
 	stats := model.ModelsStats{
 		ByUseCase: make(map[string]int64),
 	}
 
-	if !s.tableExists(ctx, "llm_models") {
-		return stats
+	exists, checked := s.tableExists(ctx, "llm_models")
+	if !checked {
+		return stats, false
+	}
+	if !exists {
+		return stats, true
 	}
 
-	stats.Total = s.safeCount(ctx, "llm_models", "is_active = ? AND deleted_at IS NULL", true)
+	var countCacheable bool
+	stats.Total, countCacheable = s.safeCount(ctx, "llm_models", "is_active = ? AND deleted_at IS NULL", true)
 
 	type useCaseCount struct {
 		UseCase string `gorm:"column:use_case"`
@@ -196,7 +263,7 @@ func (s *dashboardService) getGlobalModelStats(ctx context.Context) model.Models
 			GROUP BY use_case`, true).
 		Scan(&ucCounts).Error; err != nil {
 		logger.WarnContext(ctx, "Dashboard model stats query failed", zap.Error(err))
-		return stats
+		return stats, false
 	}
 
 	for _, uc := range ucCounts {
@@ -205,32 +272,43 @@ func (s *dashboardService) getGlobalModelStats(ctx context.Context) model.Models
 		}
 	}
 
-	return stats
+	return stats, countCacheable
 }
 
 // getResourceStats retrieves resource statistics for the organization
-func (s *dashboardService) getResourceStats(ctx context.Context, organizationID string) model.ResourceStats {
+func (s *dashboardService) getResourceStats(ctx context.Context, organizationID string) (model.ResourceStats, bool) {
 	var stats model.ResourceStats
+	cacheable := true
 
-	wsIDs := s.getWorkspaceIDs(ctx, organizationID)
+	wsIDs, workspaceIDsCacheable := s.getWorkspaceIDs(ctx, organizationID)
+	cacheable = cacheable && workspaceIDsCacheable
 
 	if len(wsIDs) > 0 {
-		stats.Agents = s.safeCount(ctx, "agents",
+		var agentsCacheable, datasetsCacheable bool
+		stats.Agents, agentsCacheable = s.safeCount(ctx, "agents",
 			"tenant_id IN ? AND deleted_at IS NULL AND is_universal = ? AND (internal = ? OR internal IS NULL)",
 			wsIDs, false, false)
+		cacheable = cacheable && agentsCacheable
 
-		stats.Datasets = s.safeCount(ctx, "datasets", "workspace_id IN ?", wsIDs)
+		stats.Datasets, datasetsCacheable = s.safeCount(ctx, "datasets", "workspace_id IN ?", wsIDs)
+		cacheable = cacheable && datasetsCacheable
 	}
 
-	stats.DataSources = s.safeCount(ctx, "data_sources", "organization_id = ?", organizationID)
+	var dataSourcesCacheable bool
+	stats.DataSources, dataSourcesCacheable = s.safeCount(ctx, "data_sources", "organization_id = ?", organizationID)
+	cacheable = cacheable && dataSourcesCacheable
 
-	return stats
+	return stats, cacheable
 }
 
 // getWorkspaceIDs retrieves all workspace IDs belonging to an organization
-func (s *dashboardService) getWorkspaceIDs(ctx context.Context, organizationID string) []string {
-	if !s.tableExists(ctx, "workspaces") {
-		return nil
+func (s *dashboardService) getWorkspaceIDs(ctx context.Context, organizationID string) ([]string, bool) {
+	exists, checked := s.tableExists(ctx, "workspaces")
+	if !checked {
+		return nil, false
+	}
+	if !exists {
+		return nil, true
 	}
 	var ids []string
 	if err := s.db.WithContext(ctx).
@@ -241,9 +319,9 @@ func (s *dashboardService) getWorkspaceIDs(ctx context.Context, organizationID s
 			zap.String("organization_id", organizationID),
 			zap.Error(err),
 		)
-		return nil
+		return nil, false
 	}
-	return ids
+	return ids, true
 }
 
 type recentWorkRow struct {
@@ -255,9 +333,13 @@ type recentWorkRow struct {
 	CreatedAt  time.Time
 }
 
-func (s *dashboardService) getRecentAgents(ctx context.Context, workspaceIDs []string, limit int) []model.RecentWorkItem {
-	if !s.tableExists(ctx, "agents") {
-		return nil
+func (s *dashboardService) getRecentAgents(ctx context.Context, workspaceIDs []string, limit int) ([]model.RecentWorkItem, bool) {
+	exists, checked := s.tableExists(ctx, "agents")
+	if !checked {
+		return nil, false
+	}
+	if !exists {
+		return nil, true
 	}
 
 	var rows []recentWorkRow
@@ -270,15 +352,19 @@ func (s *dashboardService) getRecentAgents(ctx context.Context, workspaceIDs []s
 		Scan(&rows).Error
 	if err != nil {
 		logger.WarnContext(ctx, "Dashboard recent agents query failed", zap.Error(err))
-		return nil
+		return nil, false
 	}
 
-	return makeRecentWorkItems("agent", rows)
+	return makeRecentWorkItems("agent", rows), true
 }
 
-func (s *dashboardService) getRecentDatasets(ctx context.Context, workspaceIDs []string, limit int) []model.RecentWorkItem {
-	if !s.tableExists(ctx, "datasets") {
-		return nil
+func (s *dashboardService) getRecentDatasets(ctx context.Context, workspaceIDs []string, limit int) ([]model.RecentWorkItem, bool) {
+	exists, checked := s.tableExists(ctx, "datasets")
+	if !checked {
+		return nil, false
+	}
+	if !exists {
+		return nil, true
 	}
 
 	var rows []recentWorkRow
@@ -291,15 +377,19 @@ func (s *dashboardService) getRecentDatasets(ctx context.Context, workspaceIDs [
 		Scan(&rows).Error
 	if err != nil {
 		logger.WarnContext(ctx, "Dashboard recent datasets query failed", zap.Error(err))
-		return nil
+		return nil, false
 	}
 
-	return makeRecentWorkItems("dataset", rows)
+	return makeRecentWorkItems("dataset", rows), true
 }
 
-func (s *dashboardService) getRecentDataSources(ctx context.Context, organizationID string, limit int) []model.RecentWorkItem {
-	if !s.tableExists(ctx, "data_sources") {
-		return nil
+func (s *dashboardService) getRecentDataSources(ctx context.Context, organizationID string, limit int) ([]model.RecentWorkItem, bool) {
+	exists, checked := s.tableExists(ctx, "data_sources")
+	if !checked {
+		return nil, false
+	}
+	if !exists {
+		return nil, true
 	}
 
 	var rows []recentWorkRow
@@ -312,15 +402,26 @@ func (s *dashboardService) getRecentDataSources(ctx context.Context, organizatio
 		Scan(&rows).Error
 	if err != nil {
 		logger.WarnContext(ctx, "Dashboard recent data sources query failed", zap.Error(err))
-		return nil
+		return nil, false
 	}
 
-	return makeRecentWorkItems("database", rows)
+	return makeRecentWorkItems("database", rows), true
 }
 
-func (s *dashboardService) getRecentAgentConversations(ctx context.Context, workspaceIDs []string, accountID string, limit int) []model.RecentWorkItem {
-	if accountID == "" || !s.tableExists(ctx, "agents_conversations") || !s.tableExists(ctx, "agents") {
-		return nil
+func (s *dashboardService) getRecentAgentConversations(ctx context.Context, workspaceIDs []string, accountID string, limit int) ([]model.RecentWorkItem, bool) {
+	if accountID == "" {
+		return nil, true
+	}
+	conversationsExist, conversationsChecked := s.tableExists(ctx, "agents_conversations")
+	if !conversationsChecked {
+		return nil, false
+	}
+	agentsExist, agentsChecked := s.tableExists(ctx, "agents")
+	if !agentsChecked {
+		return nil, false
+	}
+	if !conversationsExist || !agentsExist {
+		return nil, true
 	}
 
 	var rows []recentWorkRow
@@ -334,10 +435,10 @@ func (s *dashboardService) getRecentAgentConversations(ctx context.Context, work
 		Scan(&rows).Error
 	if err != nil {
 		logger.WarnContext(ctx, "Dashboard recent conversations query failed", zap.Error(err))
-		return nil
+		return nil, false
 	}
 
-	return makeRecentWorkItems("conversation", rows)
+	return makeRecentWorkItems("conversation", rows), true
 }
 
 func makeRecentWorkItems(itemType string, rows []recentWorkRow) []model.RecentWorkItem {
