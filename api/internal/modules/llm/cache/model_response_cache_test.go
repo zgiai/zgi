@@ -32,3 +32,16 @@ func TestResponseCacheUsesGenerationForInvalidation(t *testing.T) {
 		t.Fatalf("stale response remained readable: %#v", stale)
 	}
 }
+
+func TestFillContextSurvivesCallerCancellation(t *testing.T) {
+	callerCtx, cancelCaller := context.WithCancel(context.Background())
+	fillCtx, cancelFill := FillContext(callerCtx)
+	defer cancelFill()
+
+	cancelCaller()
+	select {
+	case <-fillCtx.Done():
+		t.Fatalf("fill context was canceled with caller: %v", fillCtx.Err())
+	default:
+	}
+}

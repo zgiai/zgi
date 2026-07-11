@@ -748,5 +748,30 @@ func TestContainsUseCaseKeepsImageModelsOutOfTextChat(t *testing.T) {
 	}
 	if containsUseCase(types.StringArray{"text-chat"}, "image-gen") {
 		t.Fatal("text-chat model must not match image-gen")
+ 	}
+}
+
+func TestAvailableModelsObserveGenerationClearsLocalCaches(t *testing.T) {
+	organizationID := uuid.New()
+	cacheKey := availableModelsCacheKey{organizationID: organizationID}
+	svc := &availableModelsService{
+		tenantCache: map[uuid.UUID]*tenantCacheEntry{
+			organizationID: {updatedAt: time.Now()},
+		},
+		availableCache: map[availableModelsCacheKey]*availableModelsCacheEntry{
+			cacheKey: {updatedAt: time.Now()},
+		},
+		availableResponseCache: map[availableModelsCacheKey]*availableModelsResponseCacheEntry{
+			cacheKey: {response: []byte(`{}`), updatedAt: time.Now()},
+		},
 	}
+
+	svc.observeGeneration(organizationID, "0", "0")
+	if len(svc.tenantCache) != 1 || len(svc.availableCache) != 1 || len(svc.availableResponseCache) != 1 {
+		t.Fatal("first generation observation unexpectedly cleared local caches")
+	}
+
+	svc.observeGeneration(organizationID, "1", "0")
+	if len(svc.tenantCache) != 0 || len(svc.availableCache) != 0 || len(svc.availableResponseCache) != 0 {
+		t.Fatal("generation change did not clear local caches")
 }
