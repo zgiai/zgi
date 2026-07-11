@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	llmcache "github.com/zgiai/zgi/api/internal/modules/llm/cache"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
@@ -16,6 +17,7 @@ import (
 	providerrepo "github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared/types"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	"golang.org/x/sync/singleflight"
 )
 
 // ModelScene represents different business scenarios for model selection
@@ -91,6 +93,7 @@ type availableModelsService struct {
 
 	availableResponseCache   map[availableModelsCacheKey]*availableModelsResponseCacheEntry
 	availableResponseCacheMu sync.RWMutex
+	availableResponseGroup   singleflight.Group
 
 	// Cache configuration
 	tenantCacheTTL    time.Duration
@@ -117,6 +120,10 @@ type availableModelsCacheEntry struct {
 type availableModelsResponseCacheEntry struct {
 	response  []byte
 	updatedAt time.Time
+}
+
+func availableModelsResponseSingleflightKey(key availableModelsCacheKey) string {
+	return strings.Join([]string{key.organizationID.String(), key.provider, key.useCase}, "\x00")
 }
 
 type availableModelsSuccessResponse struct {
@@ -189,26 +196,56 @@ func (s *availableModelsService) ListAvailableJSON(ctx context.Context, organiza
 	if cached, ok := s.getAvailableResponseCache(cacheKey); ok {
 		return cached, nil
 	}
-
-	models, sourceUpdatedAt, err := s.getAvailableModelsForCache(ctx, cacheKey, organizationID, provider, useCase)
-	if err != nil {
-		return nil, err
+	generation := llmcache.Generation(ctx, organizationID.String())
+	globalGeneration := llmcache.GlobalGeneration(ctx)
+	var sharedResponse []byte
+	if llmcache.GetJSON(ctx, "available", organizationID.String(), generation, []string{globalGeneration, provider, useCase}, &sharedResponse) {
+		s.availableResponseCacheMu.Lock()
+		s.availableResponseCache[cacheKey] = &availableModelsResponseCacheEntry{response: cloneBytes(sharedResponse), updatedAt: time.Now()}
+		s.availableResponseCacheMu.Unlock()
+		return sharedResponse, nil
 	}
 
-	body, err := json.Marshal(availableModelsSuccessResponse{
-		Code:    "0",
-		Message: "success",
-		Data: availableModelsListResponse{
-			Items: models,
-			Total: len(models),
-		},
+	value, err, _ := s.availableResponseGroup.Do(availableModelsResponseSingleflightKey(cacheKey), func() (interface{}, error) {
+		if cached, ok := s.getAvailableResponseCache(cacheKey); ok {
+			return cached, nil
+		}
+
+		generation := llmcache.Generation(ctx, organizationID.String())
+		globalGeneration := llmcache.GlobalGeneration(ctx)
+		var sharedResponse []byte
+		if llmcache.GetJSON(ctx, "available", organizationID.String(), generation, []string{globalGeneration, provider, useCase}, &sharedResponse) {
+			s.availableResponseCacheMu.Lock()
+			s.availableResponseCache[cacheKey] = &availableModelsResponseCacheEntry{response: cloneBytes(sharedResponse), updatedAt: time.Now()}
+			s.availableResponseCacheMu.Unlock()
+			return sharedResponse, nil
+		}
+
+		models, sourceUpdatedAt, err := s.getAvailableModelsForCache(ctx, cacheKey, organizationID, provider, useCase)
+		if err != nil {
+			return nil, err
+		}
+
+		body, err := json.Marshal(availableModelsSuccessResponse{
+			Code:    "0",
+			Message: "success",
+			Data: availableModelsListResponse{
+				Items: models,
+				Total: len(models),
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		s.setAvailableResponseCache(cacheKey, body, sourceUpdatedAt)
+		llmcache.SetJSON(ctx, "available", organizationID.String(), generation, []string{globalGeneration, provider, useCase}, body)
+		return cloneBytes(body), nil
 	})
 	if err != nil {
 		return nil, err
 	}
-
-	s.setAvailableResponseCache(cacheKey, body, sourceUpdatedAt)
-	return cloneBytes(body), nil
+	return cloneBytes(value.([]byte)), nil
 }
 
 // ListAvailable returns available models and optionally filters by provider and use case.
@@ -566,7 +603,7 @@ func (s *availableModelsService) SetOfficialRouteBootstrapper(_ interfaces.Offic
 
 // RefreshCache forces a cache refresh for a tenant
 func (s *availableModelsService) RefreshCache(ctx context.Context, organizationID uuid.UUID) error {
-	s.invalidateAvailableCacheForTenant(organizationID)
+	s.InvalidateTenantCache(organizationID)
 	return s.refreshTenantCache(ctx, organizationID, true)
 }
 
@@ -576,6 +613,7 @@ func (s *availableModelsService) InvalidateTenantCache(organizationID uuid.UUID)
 	delete(s.tenantCache, organizationID)
 	s.tenantCacheMu.Unlock()
 	s.invalidateAvailableCacheForTenant(organizationID)
+	llmcache.Invalidate(context.Background(), organizationID.String())
 }
 
 // InvalidateGlobalCache clears the response cache because global model/provider changes can affect every tenant.
@@ -586,6 +624,7 @@ func (s *availableModelsService) InvalidateGlobalCache() {
 	s.availableResponseCacheMu.Lock()
 	s.availableResponseCache = make(map[availableModelsCacheKey]*availableModelsResponseCacheEntry)
 	s.availableResponseCacheMu.Unlock()
+	llmcache.InvalidateGlobal(context.Background())
 }
 
 func (s *availableModelsService) invalidateAvailableCacheForTenant(organizationID uuid.UUID) {
