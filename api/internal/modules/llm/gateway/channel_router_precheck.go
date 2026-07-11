@@ -121,7 +121,6 @@ func (r *ChannelRouter) candidateRoutesForResolvedModel(
 ) ([]*channelmodel.LLMRoute, error) {
 	modelName = normalizeRequestedModelName(modelName)
 	isPrivateCustomModel := privateModel != nil
-	isPassthroughMode := llmModel == nil && privateModel == nil
 	modelProvider := ""
 	if llmModel != nil {
 		modelProvider = llmModel.Provider
@@ -131,17 +130,9 @@ func (r *ChannelRouter) candidateRoutesForResolvedModel(
 		return nil, fmt.Errorf("no enabled routes found for organizationID %s", organizationID)
 	}
 
-	validRoutes := r.filterRoutesForSelection(routes, modelName, modelProvider, isPrivateCustomModel)
-	modelCategory, _ := ctx.Value(shared.ContextKeyModelCategory).(string)
-	validRoutes, err := filterRoutesForNativeProtocolOrError(validRoutes, llmModel, modelCategory)
+	validRoutes, err := r.prepareCandidateRoutes(ctx, organizationID, routes, modelName, modelProvider, isPrivateCustomModel, llmModel, false, false)
 	if err != nil {
 		return nil, err
-	}
-	if len(validRoutes) == 0 {
-		if isPassthroughMode {
-			return nil, llmerrors.NewModelNotFoundErrorWithName(modelName)
-		}
-		return nil, llmerrors.NewModelNotFoundErrorWithName(modelName)
 	}
 
 	return r.selectCandidateRoutesForAttemptWindow(validRoutes, maxSelections), nil

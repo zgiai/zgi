@@ -28,6 +28,7 @@ export interface ChannelItem {
   provider?: string;
   channel_provider?: string;
   remaining_funds?: number;
+  upstream_state?: UpstreamState;
 }
 
 // Extended channel detail (for detail API if needed)
@@ -55,8 +56,55 @@ export interface ChannelDetail {
   remaining_funds?: number;
   balance?: string;
   currency?: string;
+  upstream_state?: UpstreamState;
   created_at?: number;
   updated_at?: number;
+}
+
+export type UpstreamBalanceCapability =
+  | 'unknown'
+  | 'supported'
+  | 'unsupported'
+  | 'permission_denied';
+
+export type UpstreamAvailability = 'unknown' | 'available' | 'exhausted' | 'invalid_key';
+
+export interface UpstreamBalanceAmount {
+  currency: string;
+  remaining?: string;
+}
+
+export interface UpstreamWarningThreshold {
+  currency: string;
+  amount: string;
+}
+
+export interface UpstreamState {
+  balance_capability: UpstreamBalanceCapability;
+  balance_scope?: 'account_balance' | 'key_limit' | string;
+  balances?: UpstreamBalanceAmount[];
+  spendable?: boolean;
+  is_unlimited: boolean;
+  availability: UpstreamAvailability;
+  is_low: boolean;
+  is_stale: boolean;
+  balance_observed_at?: string;
+  last_check_at?: string;
+  last_check_status: 'unknown' | 'success' | 'failed' | 'unsupported';
+  last_check_error_kind?: string;
+  warning_thresholds?: UpstreamWarningThreshold[];
+  shared_channel_count: number;
+  block_reason?: 'balance_exhausted' | 'auth_invalid' | string;
+  cooldown_until?: string;
+  availability_observed_at?: string;
+  manual_retry_requested_at?: string;
+  provider_error_code?: string;
+  provider_error_status?: number;
+  would_guard: boolean;
+}
+
+export interface UpdateUpstreamStateSettingsRequest {
+  warning_thresholds: UpstreamWarningThreshold[];
 }
 
 export interface ChannelsResponse {

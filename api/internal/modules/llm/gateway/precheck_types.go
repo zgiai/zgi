@@ -13,9 +13,11 @@ const (
 )
 
 const (
-	AppModelRouteWarningKindOrganizationBalanceLow   AppModelRouteWarningKind = "organization_balance_low"
-	AppModelRouteWarningKindWorkspaceQuotaLow        AppModelRouteWarningKind = "workspace_quota_low"
-	AppModelRouteWarningKindPrivateChannelBalanceLow AppModelRouteWarningKind = "private_channel_balance_low"
+	AppModelRouteWarningKindOrganizationBalanceLow            AppModelRouteWarningKind = "organization_balance_low"
+	AppModelRouteWarningKindWorkspaceQuotaLow                 AppModelRouteWarningKind = "workspace_quota_low"
+	AppModelRouteWarningKindPrivateChannelBalanceLow          AppModelRouteWarningKind = "private_channel_balance_low"
+	AppModelRouteWarningKindPrivateChannelUpstreamBalanceLow  AppModelRouteWarningKind = "private_channel_upstream_balance_low"
+	AppModelRouteWarningKindPrivateChannelUpstreamUnavailable AppModelRouteWarningKind = "private_channel_upstream_unavailable"
 )
 
 const (
@@ -28,6 +30,7 @@ type AppModelRouteWarning struct {
 	Kind         AppModelRouteWarningKind
 	CurrentValue int64
 	Threshold    int64
+	Reason       string
 }
 
 type AppModelRoutePrecheckResult struct {

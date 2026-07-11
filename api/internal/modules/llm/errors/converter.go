@@ -19,10 +19,11 @@ var (
 	DomainErrCredentialNotFound = errors.New("credential not found")
 
 	// Domain errors for provider operations
-	DomainErrNoProviderAvailable = errors.New("no provider available for model")
-	DomainErrUpstreamFailed      = errors.New("upstream provider failed")
-	DomainErrUpstreamTimeout     = errors.New("upstream provider timeout")
-	DomainErrUpstreamUnavailable = errors.New("upstream provider unavailable")
+	DomainErrNoProviderAvailable               = errors.New("no provider available for model")
+	DomainErrUpstreamFailed                    = errors.New("upstream provider failed")
+	DomainErrUpstreamTimeout                   = errors.New("upstream provider timeout")
+	DomainErrUpstreamUnavailable               = errors.New("upstream provider unavailable")
+	DomainErrPrivateChannelUpstreamUnavailable = errors.New("private_channel_upstream_unavailable")
 
 	// Domain errors for authentication/authorization
 	DomainErrInvalidAPIKey       = errors.New("invalid API key")
@@ -76,6 +77,8 @@ func ConvertError(err error) response.ErrorCode {
 		return ErrUpstreamTimeout
 	case errors.Is(err, DomainErrUpstreamUnavailable):
 		return ErrUpstreamUnavailable
+	case errors.Is(err, DomainErrPrivateChannelUpstreamUnavailable):
+		return ErrPrivateChannelUpstreamUnavailable
 
 	// Authentication errors -> 401
 	case errors.Is(err, DomainErrInvalidAPIKey):

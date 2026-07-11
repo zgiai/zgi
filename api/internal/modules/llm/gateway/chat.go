@@ -446,6 +446,7 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 			return nil, rollbackErr
 		}
 		s.logProviderError(ctx, attemptIdx, providerSelection, err, "stream_call_failed")
+		s.recordUpstreamProviderError(ctx, providerSelection, billingCtx, err)
 
 		sentryHelper.CaptureLLMError(err, providerSelection.Provider.Provider, providerSelection.Model.Model, organizationID.String(), map[string]interface{}{
 			"attempt_index":       attemptIdx,

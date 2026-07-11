@@ -430,6 +430,18 @@ type Pricing struct {
 	InputCacheWrite   decimal.Decimal `json:"input_cache_write,omitempty"`  // Price per cache write
 }
 
+type BalanceScope string
+
+const (
+	BalanceScopeAccount  BalanceScope = "account_balance"
+	BalanceScopeKeyLimit BalanceScope = "key_limit"
+)
+
+type BalanceItem struct {
+	Currency  string          `json:"currency"`
+	Remaining decimal.Decimal `json:"remaining"`
+}
+
 // Balance balance information
 type Balance struct {
 	Total       decimal.Decimal `json:"total"`                  // Total quota
@@ -438,6 +450,9 @@ type Balance struct {
 	Currency    string          `json:"currency"`               // Currency unit (USD, CNY, etc.)
 	ExpiresAt   *time.Time      `json:"expires_at,omitempty"`   // Expiration time
 	IsUnlimited bool            `json:"is_unlimited,omitempty"` // Whether unlimited quota
+	Scope       BalanceScope    `json:"scope,omitempty"`
+	Items       []BalanceItem   `json:"items,omitempty"`
+	Spendable   *bool           `json:"spendable,omitempty"`
 }
 
 // ProviderInfo provider information

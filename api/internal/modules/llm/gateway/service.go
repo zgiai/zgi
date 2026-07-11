@@ -22,6 +22,7 @@ import (
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
 	"github.com/zgiai/zgi/api/internal/modules/llm/channelprovider"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/upstreamstate"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelrepo "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/repository"
@@ -128,6 +129,7 @@ type llmGatewayServiceImpl struct {
 	consoleProvider       pconsole.ConsoleProvider // Console provider for official channels
 	officialCreditChecker paymentservice.OfficialCreditChecker
 	policyPrompt          llmPolicyPromptInjector
+	upstreamState         *upstreamstate.Service
 }
 
 func (s *llmGatewayServiceImpl) isModelRoutable(ctx context.Context, organizationID uuid.UUID, modelName string) (bool, error) {
@@ -180,6 +182,10 @@ func NewLLMGatewayServiceWithCrypto(
 		channelRouter = NewChannelRouter(db, cryptoService, privateModels)
 	} else {
 		logger.Warn("llm gateway channel router not initialized", "reason", "crypto_service_nil")
+	}
+	var upstreamStateService *upstreamstate.Service
+	if channelRouter != nil {
+		upstreamStateService = channelRouter.upstreamState
 	}
 
 	// Get Console provider from platform container
@@ -235,6 +241,7 @@ func NewLLMGatewayServiceWithCrypto(
 		consoleProvider:       platformContainer.Console,
 		officialCreditChecker: paymentservice.NewConsoleOfficialCreditChecker(),
 		policyPrompt:          newLLMPolicyPromptInjector(cfg.LLMPolicyPrompt),
+		upstreamState:         upstreamStateService,
 	}, nil
 }
 
@@ -471,6 +478,7 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 
 	// Settle billing
 	if lastError != nil {
+		s.recordUpstreamProviderError(ctx, nil, billingCtx, lastError)
 		billingCtx.Status = billingContextStatusError
 		billingCtx.ErrorMessage = lastError.Error()
 		billingCtx.PromptTokens = 0
@@ -485,6 +493,7 @@ func (s *llmGatewayServiceImpl) handleStreamBilling(
 			s.healthTracker.RecordFailure(ctx, *channelID, autoBan)
 		}
 	} else {
+		s.recordUpstreamProviderSuccess(ctx, nil, billingCtx)
 		if settlement == nil && !useSystemProvider {
 			var currentUsage *adapter.Usage
 			if sawUsage {

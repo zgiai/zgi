@@ -398,6 +398,9 @@ type LLMConfig struct {
 	GuardOutboundURL        bool   `json:"guard_outbound_url"`
 	GuardOutboundDNS        bool   `json:"guard_outbound_dns"`
 	AllowPrivateBaseURL     bool   `json:"allow_private_base_url"`
+	UpstreamBalancePolling  bool   `json:"upstream_balance_polling"`
+	UpstreamGuardMode       string `json:"upstream_guard_mode"`
+	UpstreamGuardPercentage int    `json:"upstream_guard_percentage"`
 
 	guardOutboundURLSet bool
 }

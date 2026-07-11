@@ -16,12 +16,16 @@ import (
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
 	credentialmodel "github.com/zgiai/zgi/api/internal/modules/llm/credential/model"
+	credentialrepo "github.com/zgiai/zgi/api/internal/modules/llm/credential/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/upstreamstate"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"gorm.io/driver/postgres"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -39,6 +43,11 @@ func (stubCryptoService) Encrypt(plaintext string) (string, error) {
 func (stubCryptoService) Decrypt(ciphertext string) (string, error) {
 	return "test-api-key", nil
 }
+
+type identityCryptoService struct{}
+
+func (identityCryptoService) Encrypt(plaintext string) (string, error)  { return plaintext, nil }
+func (identityCryptoService) Decrypt(ciphertext string) (string, error) { return ciphertext, nil }
 
 type fakeCandidateRouteRepo struct {
 	routes       []*channelmodel.LLMRoute
@@ -132,6 +141,44 @@ func newGatewayTestRedis(t *testing.T) *redis.Client {
 		_ = client.Close()
 	})
 	return client
+}
+
+func openGatewayUpstreamGuardDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.Exec(`CREATE TABLE llm_credential_upstream_states (
+		credential_id text PRIMARY KEY,
+		organization_id text NOT NULL,
+		generation integer NOT NULL DEFAULT 1,
+		balance_capability text NOT NULL DEFAULT 'unknown',
+		balance_snapshot text,
+		balance_observed_at datetime,
+		warning_thresholds text NOT NULL DEFAULT '[]',
+		availability text NOT NULL DEFAULT 'unknown',
+		observation_source text,
+		availability_observed_at datetime,
+		last_check_at datetime,
+		last_check_status text NOT NULL DEFAULT 'unknown',
+		last_check_error_kind text,
+		next_check_at datetime,
+		check_lease_until datetime,
+		consecutive_failures integer NOT NULL DEFAULT 0,
+		block_reason text,
+		cooldown_until datetime,
+		guard_strikes integer NOT NULL DEFAULT 0,
+		half_open_lease_until datetime,
+		manual_retry_requested_at datetime,
+		provider_error_code text,
+		provider_error_status integer NOT NULL DEFAULT 0,
+		created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`).Error; err != nil {
+		t.Fatalf("create upstream state table: %v", err)
+	}
+	return db
 }
 
 func TestBuildChannelSelection_UsesModelListAsSourceOfTruth(t *testing.T) {
@@ -482,6 +529,367 @@ func TestCandidateRoutesForModelsLoadsEnabledRoutesOnce(t *testing.T) {
 	}
 	if len(routesByModel["model-b"]) != 1 {
 		t.Fatalf("model-b routes = %d, want 1", len(routesByModel["model-b"]))
+	}
+}
+
+func TestPrepareCandidateRoutes_GuardLetsFourthHealthyRouteFillAttemptWindow(t *testing.T) {
+	db := openGatewayUpstreamGuardDB(t)
+	oldConfig := config.GlobalConfig
+	config.GlobalConfig = &config.Config{LLM: config.LLMConfig{
+		UpstreamGuardMode:       "enforce",
+		UpstreamGuardPercentage: 100,
+	}}
+	t.Cleanup(func() { config.GlobalConfig = oldConfig })
+
+	organizationID := uuid.New()
+	modelName := "deepseek-chat"
+	cooldownUntil := time.Now().Add(time.Hour)
+	routes := make([]*channelmodel.LLMRoute, 0, 4)
+	for index := range 4 {
+		credentialID := uuid.New()
+		routes = append(routes, &channelmodel.LLMRoute{
+			ID:              uuid.New(),
+			OrganizationID:  organizationID,
+			Type:            shared.RouteTypePrivate,
+			CredentialID:    &credentialID,
+			ChannelProvider: "deepseek",
+			Models:          []string{modelName},
+			Priority:        400 - index*100,
+			IsEnabled:       true,
+		})
+		state := &upstreamstate.State{
+			CredentialID:      credentialID,
+			OrganizationID:    organizationID,
+			Generation:        1,
+			BalanceCapability: upstreamstate.BalanceCapabilitySupported,
+			Availability:      upstreamstate.AvailabilityAvailable,
+			LastCheckStatus:   upstreamstate.CheckStatusSuccess,
+			WarningThresholds: []upstreamstate.WarningThreshold{},
+		}
+		if index < 3 {
+			state.Availability = upstreamstate.AvailabilityExhausted
+			state.BlockReason = upstreamstate.GuardReasonBalanceExhausted
+			state.CooldownUntil = &cooldownUntil
+			state.GuardStrikes = 1
+		}
+		if err := db.Create(state).Error; err != nil {
+			t.Fatalf("create upstream state %d: %v", index, err)
+		}
+	}
+
+	router := &ChannelRouter{
+		strategyFactory: NewStrategyFactory(),
+		upstreamState:   upstreamstate.NewService(db, stubCryptoService{}),
+	}
+	eligible, err := router.prepareCandidateRoutes(
+		context.Background(),
+		organizationID,
+		routes,
+		modelName,
+		"deepseek",
+		false,
+		&llmmodel.LLMModel{Provider: "deepseek", Model: modelName},
+		true,
+		true,
+	)
+	if err != nil {
+		t.Fatalf("prepareCandidateRoutes() error = %v", err)
+	}
+	selected := router.selectRoutesByPriorityAndWeight(eligible, 3)
+	if len(selected) != 1 || selected[0].ID != routes[3].ID {
+		t.Fatalf("selected routes = %#v, want fourth healthy route", selected)
+	}
+
+	if err := db.Model(&upstreamstate.State{}).
+		Where("credential_id = ?", *routes[3].CredentialID).
+		Updates(map[string]any{
+			"availability":   upstreamstate.AvailabilityExhausted,
+			"block_reason":   upstreamstate.GuardReasonBalanceExhausted,
+			"cooldown_until": cooldownUntil,
+			"guard_strikes":  1,
+		}).Error; err != nil {
+		t.Fatalf("guard fourth credential: %v", err)
+	}
+	_, err = router.prepareCandidateRoutes(
+		context.Background(),
+		organizationID,
+		routes,
+		modelName,
+		"deepseek",
+		false,
+		&llmmodel.LLMModel{Provider: "deepseek", Model: modelName},
+		true,
+		true,
+	)
+	if !errors.Is(err, llmerrors.DomainErrPrivateChannelUpstreamUnavailable) {
+		t.Fatalf("prepareCandidateRoutes(all guarded) error = %v, want private upstream unavailable", err)
+	}
+}
+
+func TestUpstreamGenerationReloadsMatchingCredential(t *testing.T) {
+	db := openGatewayUpstreamGuardDB(t)
+	if err := db.Exec(`CREATE TABLE llm_credentials (
+		id text PRIMARY KEY,
+		organization_id text NOT NULL,
+		name text NOT NULL,
+		provider text NOT NULL,
+		api_key_ciphertext text NOT NULL,
+		api_key_hash text,
+		api_base_url text,
+		is_active numeric NOT NULL DEFAULT 1,
+		last_used_at datetime,
+		expires_at datetime,
+		metadata text,
+		created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		deleted_at datetime
+	)`).Error; err != nil {
+		t.Fatalf("create credential table: %v", err)
+	}
+	oldConfig := config.GlobalConfig
+	config.GlobalConfig = &config.Config{LLM: config.LLMConfig{UpstreamGuardMode: "off"}}
+	t.Cleanup(func() { config.GlobalConfig = oldConfig })
+
+	organizationID := uuid.New()
+	credentialID := uuid.New()
+	credential := &credentialmodel.TenantCredential{
+		ID:               credentialID,
+		OrganizationID:   organizationID,
+		Name:             "current",
+		ChannelProvider:  "openrouter",
+		APIKeyCiphertext: "current-key",
+		APIBaseURL:       "https://openrouter.ai/api/v1",
+		IsActive:         true,
+	}
+	if err := db.Create(credential).Error; err != nil {
+		t.Fatalf("create current credential: %v", err)
+	}
+	if err := db.Create(&upstreamstate.State{
+		CredentialID:      credentialID,
+		OrganizationID:    organizationID,
+		Generation:        2,
+		BalanceCapability: upstreamstate.BalanceCapabilityUnknown,
+		Availability:      upstreamstate.AvailabilityUnknown,
+		LastCheckStatus:   upstreamstate.CheckStatusUnknown,
+		WarningThresholds: []upstreamstate.WarningThreshold{},
+	}).Error; err != nil {
+		t.Fatalf("create upstream state: %v", err)
+	}
+
+	route := &channelmodel.LLMRoute{
+		ID:              uuid.New(),
+		OrganizationID:  organizationID,
+		Type:            shared.RouteTypePrivate,
+		CredentialID:    &credentialID,
+		ChannelProvider: "deepseek",
+		APIBaseURL:      "https://api.deepseek.com/v1",
+		Models:          []string{"shared-model"},
+		IsEnabled:       true,
+		TenantCredential: &credentialmodel.TenantCredential{
+			ID:               credentialID,
+			OrganizationID:   organizationID,
+			ChannelProvider:  "deepseek",
+			APIKeyCiphertext: "stale-key",
+			APIBaseURL:       "https://api.deepseek.com/v1",
+		},
+	}
+	router := &ChannelRouter{
+		organizationIDCredRepo: credentialrepo.NewTenantCredentialRepository(db),
+		cryptoService:          identityCryptoService{},
+		strategyFactory:        NewStrategyFactory(),
+		upstreamState:          upstreamstate.NewService(db, identityCryptoService{}),
+	}
+
+	filtered, guarded := router.filterRoutesByUpstreamGuard(context.Background(), organizationID, []*channelmodel.LLMRoute{route}, true, true)
+	if len(filtered) != 1 || guarded != 0 {
+		t.Fatalf("filter result = %d/%d, want one eligible route", len(filtered), guarded)
+	}
+	selection, err := router.buildChannelSelection(
+		context.Background(),
+		filtered[0],
+		&llmmodel.LLMModel{Model: "shared-model", Provider: "openrouter"},
+		nil,
+		"shared-model",
+		false,
+		"chat",
+	)
+	if err != nil {
+		t.Fatalf("buildChannelSelection() error = %v", err)
+	}
+	if selection.CredentialGeneration != 2 || selection.APIKey != "current-key" {
+		t.Fatalf("generation/key = %d/%q, want 2/current-key", selection.CredentialGeneration, selection.APIKey)
+	}
+	if selection.ChannelProvider != "openrouter" || selection.APIBaseURL != "https://openrouter.ai/api/v1" {
+		t.Fatalf("provider/base_url = %q/%q, want current credential values", selection.ChannelProvider, selection.APIBaseURL)
+	}
+}
+
+func TestUpstreamGuardOffKeepsRecoveryEvidenceWithoutBlocking(t *testing.T) {
+	db := openGatewayUpstreamGuardDB(t)
+	oldConfig := config.GlobalConfig
+	config.GlobalConfig = &config.Config{LLM: config.LLMConfig{UpstreamGuardMode: "off"}}
+	t.Cleanup(func() { config.GlobalConfig = oldConfig })
+
+	organizationID := uuid.New()
+	credentialID := uuid.New()
+	cooldownUntil := time.Now().Add(time.Hour)
+	if err := db.Create(&upstreamstate.State{
+		CredentialID:      credentialID,
+		OrganizationID:    organizationID,
+		Generation:        1,
+		BalanceCapability: upstreamstate.BalanceCapabilitySupported,
+		Availability:      upstreamstate.AvailabilityExhausted,
+		LastCheckStatus:   upstreamstate.CheckStatusSuccess,
+		WarningThresholds: []upstreamstate.WarningThreshold{},
+		BlockReason:       upstreamstate.GuardReasonBalanceExhausted,
+		CooldownUntil:     &cooldownUntil,
+		GuardStrikes:      1,
+	}).Error; err != nil {
+		t.Fatalf("create upstream state: %v", err)
+	}
+	route := &channelmodel.LLMRoute{
+		ID:              uuid.New(),
+		OrganizationID:  organizationID,
+		Type:            shared.RouteTypePrivate,
+		CredentialID:    &credentialID,
+		ChannelProvider: "deepseek",
+	}
+	router := &ChannelRouter{upstreamState: upstreamstate.NewService(db, stubCryptoService{})}
+
+	eligible, guarded := router.filterRoutesByUpstreamGuard(context.Background(), organizationID, []*channelmodel.LLMRoute{route}, true, true)
+	if len(eligible) != 1 || guarded != 0 {
+		t.Fatalf("filter result = %d/%d, want route allowed while guard is off", len(eligible), guarded)
+	}
+	if !eligible[0].UpstreamWouldGuard || eligible[0].UpstreamHalfOpen {
+		t.Fatalf("route evidence = would_guard:%t half_open:%t, want recovery evidence only", eligible[0].UpstreamWouldGuard, eligible[0].UpstreamHalfOpen)
+	}
+}
+
+func TestUpstreamGuardAutomaticHalfOpenRequiresHealthyBackup(t *testing.T) {
+	db := openGatewayUpstreamGuardDB(t)
+	oldConfig := config.GlobalConfig
+	config.GlobalConfig = &config.Config{LLM: config.LLMConfig{
+		UpstreamGuardMode:       "enforce",
+		UpstreamGuardPercentage: 100,
+	}}
+	t.Cleanup(func() { config.GlobalConfig = oldConfig })
+
+	organizationID := uuid.New()
+	blockedCredentialID := uuid.New()
+	healthyCredentialID := uuid.New()
+	cooldownEnded := time.Now().Add(-time.Minute)
+	states := []*upstreamstate.State{
+		{
+			CredentialID: blockedCredentialID, OrganizationID: organizationID, Generation: 1,
+			BalanceCapability: upstreamstate.BalanceCapabilityUnsupported,
+			Availability:      upstreamstate.AvailabilityExhausted, LastCheckStatus: upstreamstate.CheckStatusUnsupported,
+			WarningThresholds: []upstreamstate.WarningThreshold{}, BlockReason: upstreamstate.GuardReasonBillingUnavailable,
+			CooldownUntil: &cooldownEnded, GuardStrikes: 1,
+		},
+		{
+			CredentialID: healthyCredentialID, OrganizationID: organizationID, Generation: 1,
+			BalanceCapability: upstreamstate.BalanceCapabilityUnsupported,
+			Availability:      upstreamstate.AvailabilityUnknown, LastCheckStatus: upstreamstate.CheckStatusUnsupported,
+			WarningThresholds: []upstreamstate.WarningThreshold{},
+		},
+	}
+	for _, state := range states {
+		if err := db.Create(state).Error; err != nil {
+			t.Fatalf("create state: %v", err)
+		}
+	}
+	blockedRoute := &channelmodel.LLMRoute{ID: uuid.New(), OrganizationID: organizationID, Type: shared.RouteTypePrivate, CredentialID: &blockedCredentialID, ChannelProvider: "qwen"}
+	healthyRoute := &channelmodel.LLMRoute{ID: uuid.New(), OrganizationID: organizationID, Type: shared.RouteTypePrivate, CredentialID: &healthyCredentialID, ChannelProvider: "qwen"}
+	router := &ChannelRouter{upstreamState: upstreamstate.NewService(db, stubCryptoService{})}
+
+	withoutBackup, guarded := router.filterRoutesByUpstreamGuard(context.Background(), organizationID, []*channelmodel.LLMRoute{blockedRoute}, true, true)
+	if len(withoutBackup) != 0 || guarded != 1 {
+		t.Fatalf("without backup = %d/%d, want blocked", len(withoutBackup), guarded)
+	}
+	invalidPrivateRoute := &channelmodel.LLMRoute{ID: uuid.New(), OrganizationID: organizationID, Type: shared.RouteTypePrivate, ChannelProvider: "qwen"}
+	withInvalidBackup, guarded := router.filterRoutesByUpstreamGuard(context.Background(), organizationID, []*channelmodel.LLMRoute{blockedRoute, invalidPrivateRoute}, true, true)
+	if len(withInvalidBackup) != 1 || guarded != 1 || withInvalidBackup[0].ID != invalidPrivateRoute.ID {
+		t.Fatalf("invalid backup = %#v/%d, want guarded credential and unchanged invalid route", withInvalidBackup, guarded)
+	}
+
+	withoutFallback, guarded := router.filterRoutesByUpstreamGuard(context.Background(), organizationID, []*channelmodel.LLMRoute{blockedRoute, healthyRoute}, true, false)
+	if len(withoutFallback) != 1 || guarded != 1 || withoutFallback[0].ID != healthyRoute.ID {
+		t.Fatalf("without fallback support = %#v/%d, want only healthy route", withoutFallback, guarded)
+	}
+	if blockedRoute.UpstreamHalfOpen {
+		t.Fatal("blocked route received half-open lease without request fallback support")
+	}
+
+	withBackup, guarded := router.filterRoutesByUpstreamGuard(context.Background(), organizationID, []*channelmodel.LLMRoute{blockedRoute, healthyRoute}, true, true)
+	if len(withBackup) != 2 || guarded != 0 {
+		t.Fatalf("with backup = %d/%d, want half-open plus healthy", len(withBackup), guarded)
+	}
+	if !blockedRoute.UpstreamHalfOpen || !blockedRoute.UpstreamWouldGuard {
+		t.Fatalf("blocked route evidence = half_open:%t would_guard:%t", blockedRoute.UpstreamHalfOpen, blockedRoute.UpstreamWouldGuard)
+	}
+}
+
+func TestAllCandidateUpstreamBalancesLowRequiresEveryCandidate(t *testing.T) {
+	db := openGatewayUpstreamGuardDB(t)
+	organizationID := uuid.New()
+	observedAt := time.Now()
+	routes := make([]*channelmodel.LLMRoute, 0, 2)
+	for index, remaining := range []string{"2", "3"} {
+		credentialID := uuid.New()
+		routes = append(routes, &channelmodel.LLMRoute{
+			ID:             uuid.New(),
+			OrganizationID: organizationID,
+			Type:           shared.RouteTypePrivate,
+			CredentialID:   &credentialID,
+		})
+		state := &upstreamstate.State{
+			CredentialID:      credentialID,
+			OrganizationID:    organizationID,
+			Generation:        1,
+			BalanceCapability: upstreamstate.BalanceCapabilitySupported,
+			BalanceSnapshot: &upstreamstate.BalanceSnapshot{
+				Scope: "account_balance",
+				Items: []upstreamstate.BalanceAmount{{Currency: "USD", Remaining: remaining}},
+			},
+			BalanceObservedAt: &observedAt,
+			WarningThresholds: []upstreamstate.WarningThreshold{{Currency: "USD", Amount: "5"}},
+			Availability:      upstreamstate.AvailabilityAvailable,
+			LastCheckStatus:   upstreamstate.CheckStatusSuccess,
+		}
+		if err := db.Create(state).Error; err != nil {
+			t.Fatalf("create state %d: %v", index, err)
+		}
+	}
+	svc := &llmGatewayServiceImpl{upstreamState: upstreamstate.NewService(db, stubCryptoService{})}
+
+	allLow, err := svc.allCandidateUpstreamBalancesLow(context.Background(), organizationID, routes)
+	if err != nil {
+		t.Fatalf("allCandidateUpstreamBalancesLow() error = %v", err)
+	}
+	if !allLow {
+		t.Fatal("allCandidateUpstreamBalancesLow() = false, want true")
+	}
+
+	if err := db.Model(&upstreamstate.State{}).
+		Where("credential_id = ?", *routes[1].CredentialID).
+		Update("balance_snapshot", `{"scope":"account_balance","items":[{"currency":"USD","remaining":"8"}]}`).Error; err != nil {
+		t.Fatalf("raise second balance: %v", err)
+	}
+	allLow, err = svc.allCandidateUpstreamBalancesLow(context.Background(), organizationID, routes)
+	if err != nil {
+		t.Fatalf("allCandidateUpstreamBalancesLow() error = %v", err)
+	}
+	if allLow {
+		t.Fatal("allCandidateUpstreamBalancesLow() = true with one healthy candidate")
+	}
+
+	official := &channelmodel.LLMRoute{ID: uuid.New(), OrganizationID: organizationID, Type: shared.RouteTypeZGICloud, IsOfficial: true}
+	allLow, err = svc.allCandidateUpstreamBalancesLow(context.Background(), organizationID, append(routes, official))
+	if err != nil {
+		t.Fatalf("allCandidateUpstreamBalancesLow(mixed) error = %v", err)
+	}
+	if allLow {
+		t.Fatal("allCandidateUpstreamBalancesLow() = true with official candidate")
 	}
 }
 

@@ -757,6 +757,10 @@ const messages: AgentsMessages = {
         title: '渠道余额接近阈值',
         description: '当前渠道余额为 {currentValue}，预警阈值为 {threshold}。',
       },
+      '207015': {
+        title: '私人渠道上游暂不可用',
+        description: '所有候选 Credential 都已被上游明确拒绝，请联系组织管理员处理。',
+      },
       unknown: {
         title: '检测到潜在计费风险',
         description: '当前值为 {currentValue}，预警阈值为 {threshold}。',

@@ -360,7 +360,7 @@ func (c *HTTPClient) DoStreamRequest(ctx context.Context, method, url string, he
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("stream request failed with status %d: %s", resp.StatusCode, string(body))
+		return nil, NewHTTPStatusError(resp.StatusCode, body)
 	}
 
 	return resp, nil

@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/upstreamstate"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	paymentservice "github.com/zgiai/zgi/api/internal/modules/payment/service"
 	"gorm.io/gorm"
 )
@@ -100,6 +103,12 @@ func (s *llmGatewayServiceImpl) PrecheckAppModels(ctx context.Context, organizat
 func (s *llmGatewayServiceImpl) precheckSingleModelRoutes(ctx context.Context, shadowOrganizationID uuid.UUID, modelName string) ([]AppModelRouteWarning, error) {
 	routes, err := s.loadCandidateRoutesForModel(ctx, shadowOrganizationID, modelName, 3)
 	if err != nil {
+		if errors.Is(err, llmerrors.DomainErrPrivateChannelUpstreamUnavailable) {
+			return []AppModelRouteWarning{{
+				Kind:   AppModelRouteWarningKindPrivateChannelUpstreamUnavailable,
+				Reason: "credential_unavailable",
+			}}, nil
+		}
 		return nil, err
 	}
 
@@ -176,10 +185,48 @@ func (s *llmGatewayServiceImpl) evaluateCandidateRouteWarnings(ctx context.Conte
 	}
 
 	warnings := summarizeCandidateRouteWarnings(states)
+	upstreamLow, err := s.allCandidateUpstreamBalancesLow(ctx, organizationID, routes)
+	if err != nil {
+		return false, nil, err
+	}
+	if upstreamLow {
+		warnings = append(warnings, AppModelRouteWarning{
+			Kind: AppModelRouteWarningKindPrivateChannelUpstreamBalanceLow,
+		})
+	}
 	if len(warnings) == 0 {
 		return true, nil, nil
 	}
 	return false, warnings, nil
+}
+
+func (s *llmGatewayServiceImpl) allCandidateUpstreamBalancesLow(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	routes []*channelmodel.LLMRoute,
+) (bool, error) {
+	if s.upstreamState == nil || len(routes) == 0 {
+		return false, nil
+	}
+	credentialIDs := make([]uuid.UUID, 0, len(routes))
+	for _, route := range routes {
+		if route == nil || isOfficialRoute(route) || route.CredentialID == nil {
+			return false, nil
+		}
+		credentialIDs = append(credentialIDs, *route.CredentialID)
+	}
+	states, err := s.upstreamState.GetMany(ctx, organizationID, credentialIDs)
+	if err != nil {
+		return false, err
+	}
+	now := time.Now()
+	for _, credentialID := range credentialIDs {
+		state := states[credentialID]
+		if state == nil || upstreamstate.IsStale(state, now) || !upstreamstate.IsLow(state) {
+			return false, nil
+		}
+	}
+	return len(credentialIDs) > 0, nil
 }
 
 func summarizeCandidateRouteWarnings(states []candidateRouteWarningState) []AppModelRouteWarning {

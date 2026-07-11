@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -142,6 +143,10 @@ func (a *AliyunAdapter) ChatCompletionStream(ctx context.Context, request *adapt
 
 	resp, err := a.httpClient.DoStreamRequest(ctx, "POST", endpoint, a.aliyunSSEHeaders(), payload)
 	if err != nil {
+		var statusErr *adapter.HTTPStatusError
+		if errors.As(err, &statusErr) {
+			return nil, a.handleError(statusErr.StatusCode, statusErr.Body)
+		}
 		return nil, fmt.Errorf("stream request failed: %w", err)
 	}
 	if aliyunStreamDebugEnabled() {
@@ -962,7 +967,7 @@ func (a *AliyunAdapter) CreateResponseStream(ctx context.Context, request *adapt
 	if err != nil {
 		return nil, err
 	}
-	return rawOpenAIResponseStream(ctx, a.httpClient, a.openAICompatibleBaseURL(), openaiAdapter.buildHeaders(), request)
+	return rawOpenAIResponseStream(ctx, a.httpClient, a.openAICompatibleBaseURL(), openaiAdapter.buildHeaders(), request, a.handleError)
 }
 
 func (a *AliyunAdapter) CreateAnthropicMessage(ctx context.Context, request *adapter.AnthropicMessageRequest) (*adapter.RawResponse, error) {
@@ -974,7 +979,7 @@ func (a *AliyunAdapter) CreateAnthropicMessage(ctx context.Context, request *ada
 }
 
 func (a *AliyunAdapter) CreateAnthropicMessageStream(ctx context.Context, request *adapter.AnthropicMessageRequest) (<-chan adapter.RawStreamEvent, error) {
-	return rawAnthropicMessageStream(ctx, a.httpClient, a.anthropicMessagesBaseURL(), buildAnthropicRawHeaders(a.config, request.Headers), request)
+	return rawAnthropicMessageStream(ctx, a.httpClient, a.anthropicMessagesBaseURL(), buildAnthropicRawHeaders(a.config, request.Headers), request, a.handleError)
 }
 
 // CreateEmbeddings executes embeddings creation request.
@@ -1185,15 +1190,19 @@ func (a *AliyunAdapter) handleError(statusCode int, body []byte) error {
 		}
 
 		if code != "" {
-			// Map common errors to typed errors
+			normalizedCode := strings.ToLower(strings.TrimSpace(code))
+			switch normalizedCode {
+			case "arrearage", "prepaidbilloverdue", "postpaidbilloverdue":
+				return adapter.NewAdapterError(code, msg, statusCode, adapter.ErrBillingUnavailable)
+			case "allocationquota.freetieronly":
+				return adapter.NewAdapterError(code, msg, statusCode, adapter.ErrQuotaExhausted)
+			}
+
 			if statusCode == 401 {
 				return adapter.NewAdapterError(code, msg, statusCode, adapter.ErrAuthFailed)
 			}
 			if statusCode == 429 {
 				return adapter.NewAdapterError(code, msg, statusCode, adapter.ErrRateLimited)
-			}
-			if strings.Contains(strings.ToLower(msg), "balance") || strings.Contains(strings.ToLower(code), "balance") {
-				return adapter.NewAdapterError(code, msg, statusCode, adapter.ErrInsufficientBalance)
 			}
 			if statusCode == http.StatusBadRequest {
 				return adapter.NewAdapterError(code, msg, statusCode, adapter.ErrInvalidRequest)

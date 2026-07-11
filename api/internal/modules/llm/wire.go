@@ -21,6 +21,7 @@ import (
 	credentialhandler "github.com/zgiai/zgi/api/internal/modules/llm/credential/handler"
 	credentialrepo "github.com/zgiai/zgi/api/internal/modules/llm/credential/repository"
 	credentialsvc "github.com/zgiai/zgi/api/internal/modules/llm/credential/service"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/upstreamstate"
 	"github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel"
 	defaultmodelhandler "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/handler"
 	defaultmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
@@ -83,6 +84,7 @@ type LLMModule struct {
 	DefaultModelSvc     defaultmodelsvc.DefaultModelService
 	ChannelSvc          channelsvc.ChannelService
 	APIKeySvc           apikeysvc.APIKeyService
+	UpstreamStateSvc    *upstreamstate.Service
 
 	// Handlers
 	TenantCredentialHandler *credentialhandler.TenantCredentialHandler
@@ -162,6 +164,7 @@ func NewLLMModule(db *gorm.DB, crypto shared.CryptoService, tenantService interf
 	m.TenantRouteRepo = channelModule.TenantRouteRepo
 	m.ChannelSvc = channelModule.Service
 	m.ChannelHandler = channelModule.Handler
+	m.UpstreamStateSvc = channelModule.UpstreamState
 
 	// Initialize APIKey Module (requires TenantService, AccountService and EnterpriseService)
 	if tenantService != nil && accountService != nil && enterpriseService != nil {

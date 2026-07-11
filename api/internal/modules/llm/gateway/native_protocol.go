@@ -363,6 +363,7 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 			if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 				return nil, rollbackErr
 			}
+			s.recordUpstreamProviderError(ctx, providerSelection, billingCtx, err)
 			lastErr = err
 			if attemptIdx < len(providerSelections)-1 {
 				continue

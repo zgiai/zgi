@@ -101,6 +101,8 @@ func buildWorkflowRunPrecheckResponse(containsAICreditNodes bool, result *llmcli
 			code = response.ErrWorkflowWorkspaceQuotaLow.Code
 		case llmclient.AppModelPrecheckWarningPrivateChannelBalanceLow:
 			code = response.ErrWorkflowPrivateChannelBalanceLow.Code
+		case llmclient.AppModelPrecheckWarningPrivateChannelUpstreamUnavailable:
+			code = response.ErrWorkflowPrivateChannelUpstreamUnavailable.Code
 		default:
 			continue
 		}
@@ -109,6 +111,7 @@ func buildWorkflowRunPrecheckResponse(containsAICreditNodes bool, result *llmcli
 			Params: map[string]any{
 				"current_value": warning.CurrentValue,
 				"threshold":     warning.Threshold,
+				"reason":        warning.Reason,
 			},
 		})
 	}

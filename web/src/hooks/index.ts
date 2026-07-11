@@ -59,6 +59,9 @@ export {
   useDiscoverDraftChannelModels,
   useBatchTestChannelModels,
   useAdjustChannelWallet,
+  useCheckChannelUpstreamState,
+  useRetryChannelUpstreamState,
+  useUpdateChannelUpstreamSettings,
 } from './channel/use-channel';
 export {
   useAgentRuntimeSurfaces,

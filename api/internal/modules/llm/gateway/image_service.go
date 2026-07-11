@@ -203,6 +203,7 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	if err != nil {
 		// Log provider error
 		s.logProviderError(ctx, 0, selection, err, "image_generation")
+		s.recordUpstreamProviderError(ctx, selection, billingCtx, err)
 
 		// Record failure for health tracking
 		if selection.HasRoute() {
@@ -220,6 +221,7 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 	if selection.HasRoute() {
 		s.healthTracker.RecordSuccess(selection.RouteID)
 	}
+	s.recordUpstreamProviderSuccess(ctx, selection, billingCtx)
 
 	// 11. Settle billing
 	actualQuote := estimatedQuote

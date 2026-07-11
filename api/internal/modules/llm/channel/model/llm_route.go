@@ -67,7 +67,10 @@ type LLMRoute struct {
 	TenantCredential *credentialmodel.TenantCredential `gorm:"foreignKey:CredentialID;references:ID" json:"tenant_credential,omitempty"`
 
 	// Transient fields (not persisted)
-	PlatformAPIKey string `gorm:"-" json:"-"`
+	PlatformAPIKey     string `gorm:"-" json:"-"`
+	UpstreamGeneration int64  `gorm:"-" json:"-"`
+	UpstreamWouldGuard bool   `gorm:"-" json:"-"`
+	UpstreamHalfOpen   bool   `gorm:"-" json:"-"`
 }
 
 func (LLMRoute) TableName() string {

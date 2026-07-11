@@ -71,6 +71,7 @@ func TestWorkflowServicePrecheckWorkflowRun_MapsWarningCodes(t *testing.T) {
 			Warnings: []llmclient.AppModelPrecheckWarning{
 				{Kind: llmclient.AppModelPrecheckWarningOrganizationBalanceLow, CurrentValue: 300, Threshold: 500},
 				{Kind: llmclient.AppModelPrecheckWarningPrivateChannelBalanceLow, CurrentValue: 220, Threshold: 500},
+				{Kind: llmclient.AppModelPrecheckWarningPrivateChannelUpstreamUnavailable, Reason: "credential_unavailable"},
 			},
 		},
 	}
@@ -88,8 +89,8 @@ func TestWorkflowServicePrecheckWorkflowRun_MapsWarningCodes(t *testing.T) {
 	if result.Status != WorkflowRunPrecheckStatusWarning {
 		t.Fatalf("Status = %q, want %q", result.Status, WorkflowRunPrecheckStatusWarning)
 	}
-	if len(result.Warnings) != 2 {
-		t.Fatalf("len(Warnings) = %d, want 2", len(result.Warnings))
+	if len(result.Warnings) != 3 {
+		t.Fatalf("len(Warnings) = %d, want 3", len(result.Warnings))
 	}
 	if result.Warnings[0].Code != 207008 {
 		t.Fatalf("Warnings[0].Code = %d, want 207008", result.Warnings[0].Code)
@@ -99,6 +100,9 @@ func TestWorkflowServicePrecheckWorkflowRun_MapsWarningCodes(t *testing.T) {
 	}
 	if result.Warnings[1].Code != 207010 {
 		t.Fatalf("Warnings[1].Code = %d, want 207010", result.Warnings[1].Code)
+	}
+	if result.Warnings[2].Code != 207015 || result.Warnings[2].Params["reason"] != "credential_unavailable" {
+		t.Fatalf("Warnings[2] = %#v, want upstream unavailable", result.Warnings[2])
 	}
 }
 

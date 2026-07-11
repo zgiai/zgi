@@ -612,38 +612,7 @@ func shouldTreatOpenAIListModelsAsCapabilityUnsupported(statusCode int, body []b
 
 // GetBalance gets balance information
 func (a *OpenAIAdapter) GetBalance(ctx context.Context, apiKey string) (*adapter.Balance, error) {
-	if a.exactURL {
-		return nil, a.unsupportedExactMetadata("balance lookup")
-	}
-
-	// OpenAI needs to call two interfaces: subscription and usage
-	subscription, err := a.getSubscription(ctx, apiKey)
-	if err != nil {
-		return nil, err
-	}
-
-	usage, err := a.getUsage(ctx, apiKey)
-	if err != nil {
-		return nil, err
-	}
-
-	total := decimal.NewFromFloat(subscription.HardLimitUSD)
-	used := decimal.NewFromFloat(usage.TotalUsage / 100.0) // cents to dollars
-	remaining := total.Sub(used)
-
-	balance := &adapter.Balance{
-		Total:     total,
-		Used:      used,
-		Remaining: remaining,
-		Currency:  "USD",
-	}
-
-	if subscription.AccessUntil > 0 {
-		expires := time.Unix(subscription.AccessUntil, 0)
-		balance.ExpiresAt = &expires
-	}
-
-	return balance, nil
+	return nil, fmt.Errorf("%w: OpenAI inference keys do not expose account balance", adapter.ErrCapabilityUnsupported)
 }
 
 type openAISubscription struct {

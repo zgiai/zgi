@@ -55,6 +55,10 @@ func convertGatewayPrecheckResult(result *gateway.AppModelRoutePrecheckResult) *
 			kind = AppModelPrecheckWarningWorkspaceQuotaLow
 		case gateway.AppModelRouteWarningKindPrivateChannelBalanceLow:
 			kind = AppModelPrecheckWarningPrivateChannelBalanceLow
+		case gateway.AppModelRouteWarningKindPrivateChannelUpstreamBalanceLow:
+			kind = AppModelPrecheckWarningPrivateChannelUpstreamBalanceLow
+		case gateway.AppModelRouteWarningKindPrivateChannelUpstreamUnavailable:
+			kind = AppModelPrecheckWarningPrivateChannelUpstreamUnavailable
 		default:
 			continue
 		}
@@ -62,6 +66,7 @@ func convertGatewayPrecheckResult(result *gateway.AppModelRoutePrecheckResult) *
 			Kind:         kind,
 			CurrentValue: warning.CurrentValue,
 			Threshold:    warning.Threshold,
+			Reason:       warning.Reason,
 		})
 	}
 
