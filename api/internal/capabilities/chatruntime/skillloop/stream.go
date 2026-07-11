@@ -86,7 +86,7 @@ func (r *Runner) runSkillPlanningStream(
 					Usage:      usage,
 					Error:      response.Error.Error(),
 				})
-				return planningResult{}, true, response.Error
+				return planningResult{usage: usage}, true, wrapStreamedFinalAnswerError(response.Error, streamedFinalAnswerFromStates(toolCallsByIndex, toolCallOrder))
 			}
 			if len(response.Choices) == 0 {
 				if response.Done {
@@ -121,6 +121,8 @@ func (r *Runner) runSkillPlanningStream(
 						if !terminalProtocol {
 							if speculative := speculativeAnswer.String(); speculative != "" {
 								r.emitAnswerRetract(ctx, prepared, speculative, onEvent)
+								speculativeAnswer.Reset()
+								answerStreamed = false
 							}
 						}
 					}
@@ -150,6 +152,7 @@ streamDone:
 		return planningResult{}, false, nil
 	}
 	toolCalls := make([]adapter.ToolCall, 0, len(toolCallOrder))
+	finalAnswerStreamDiverged := false
 	for _, index := range toolCallOrder {
 		state := toolCallsByIndex[index]
 		if state == nil {
@@ -160,7 +163,12 @@ streamDone:
 			call.Function.Arguments = markIntermediateAnswerArgumentsStreamed(call.Function.Arguments, streamingIntermediateAnswerID(prepared, round, call))
 		}
 		if strings.EqualFold(strings.TrimSpace(call.Function.Name), skills.MetaToolFinalAnswer) && state.emittedFinalAnswer != "" {
-			call.Function.Arguments = markFinalAnswerArgumentsStreamed(call.Function.Arguments)
+			answer, complete := partialJSONStringField(call.Function.Arguments, "answer")
+			if complete && answer == state.emittedFinalAnswer {
+				call.Function.Arguments = markFinalAnswerArgumentsStreamed(call.Function.Arguments)
+			} else if complete {
+				finalAnswerStreamDiverged = true
+			}
 			answerStreamed = true
 		}
 		toolCalls = append(toolCalls, call)
@@ -177,6 +185,9 @@ streamDone:
 		ReasoningContent: reasoningBuilder.String(),
 	}
 	terminationErr := skillPlanningStreamTerminationError(finishReason, streamDoneReceived, terminatedBy)
+	if terminationErr == nil && finalAnswerStreamDiverged {
+		terminationErr = fmt.Errorf("streamed final answer diverged from completed tool arguments")
+	}
 	trace := ModelInvocationTrace{
 		Phase:              "skill_planning",
 		Round:              round,
@@ -195,7 +206,7 @@ streamDone:
 	}
 	r.recordModelInvocation(trace)
 	if terminationErr != nil {
-		return planningResult{}, true, terminationErr
+		return planningResult{usage: usage}, true, wrapStreamedFinalAnswerError(terminationErr, streamedFinalAnswerFromStates(toolCallsByIndex, toolCallOrder))
 	}
 
 	return planningResult{
@@ -204,6 +215,36 @@ streamDone:
 		answerStreamed:          answerStreamed && (terminalProtocol || len(toolCalls) == 0),
 		naturalProgressStreamed: naturalProgressStreamed,
 	}, true, nil
+}
+
+type streamedFinalAnswerError struct {
+	err    error
+	answer string
+}
+
+func (e *streamedFinalAnswerError) Error() string {
+	return e.err.Error()
+}
+
+func (e *streamedFinalAnswerError) Unwrap() error {
+	return e.err
+}
+
+func wrapStreamedFinalAnswerError(err error, answer string) error {
+	if err == nil || strings.TrimSpace(answer) == "" {
+		return err
+	}
+	return &streamedFinalAnswerError{err: err, answer: answer}
+}
+
+func streamedFinalAnswerFromStates(states map[int]*streamingToolCallState, order []int) string {
+	for _, index := range order {
+		state := states[index]
+		if state != nil && strings.EqualFold(strings.TrimSpace(state.call.Function.Name), skills.MetaToolFinalAnswer) {
+			return state.emittedFinalAnswer
+		}
+	}
+	return ""
 }
 
 func skillPlanningStreamTerminationError(finishReason string, streamDoneReceived bool, terminatedBy string) error {

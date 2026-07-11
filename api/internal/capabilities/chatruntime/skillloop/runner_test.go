@@ -925,6 +925,158 @@ func TestRunnerContinuesAfterMetaToolTextInsteadOfCoalescingFinalAnswer(t *testi
 	}
 }
 
+func TestRunnerAcceptsFinalAnswerWithoutPlanSnapshotWhenCurrentPlanHasOpenPhases(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role: "assistant",
+						ToolCalls: []adapter.ToolCall{{
+							ID:   "final-answer-missing-plan",
+							Type: "function",
+							Function: adapter.FunctionCall{
+								Name:      skills.MetaToolFinalAnswer,
+								Arguments: `{"answer":"Done."}`,
+							},
+						}},
+					},
+				}},
+			},
+		},
+	}
+	var traces []skills.SkillTrace
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntimeWithCatalog(nil, nil, ""),
+		AppContext:   &llmclient.AppContext{},
+		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
+			traces = append(traces, trace)
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "update the agent"}},
+	})
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"phases": []interface{}{map[string]interface{}{
+				"id":     "phase-update",
+				"step":   "Update the Agent",
+				"status": "pending",
+			}},
+		},
+		"evidence_ledger": []interface{}{map[string]interface{}{
+			"skill_id":  "agent-management",
+			"tool_name": "update_agent_config",
+			"status":    "completed",
+		}},
+	}
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared:                  prepared,
+		Resolved:                  runnerTestResolvedSkills(),
+		PreferExplicitFinalAnswer: true,
+		CompletionEvidence:        func() map[string]interface{} { return evidence },
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "Done." {
+		t.Fatalf("answer = %q, want model final answer", answer)
+	}
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("AppChat calls = %d, want one terminal decision", fakeLLM.appChatCalls)
+	}
+	failedFinalAnswers := 0
+	successFinalAnswers := 0
+	for _, trace := range traces {
+		if trace.Kind != "final_answer" {
+			continue
+		}
+		if trace.Status == "success" {
+			successFinalAnswers++
+		} else {
+			failedFinalAnswers++
+		}
+	}
+	if failedFinalAnswers != 0 || successFinalAnswers != 1 {
+		t.Fatalf("final answer traces failed=%d success=%d; traces=%#v", failedFinalAnswers, successFinalAnswers, traces)
+	}
+}
+
+func TestRunnerAcceptsOrdinaryTextFinalWhenPlanIsOpen(t *testing.T) {
+	ctx := context.Background()
+	fakeLLM := &runnerTestLLMClient{
+		appChatResponses: []*adapter.ChatResponse{
+			{
+				Choices: []adapter.Choice{{
+					Message: adapter.Message{
+						Role:    "assistant",
+						Content: "Only the file save has completed.",
+					},
+				}},
+			},
+		},
+	}
+	var traces []skills.SkillTrace
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntimeWithCatalog(nil, nil, ""),
+		AppContext:   &llmclient.AppContext{},
+		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
+			traces = append(traces, trace)
+		},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "save the generated file and update the agent"}},
+	})
+	evidence := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status": "running",
+			"steps": []interface{}{map[string]interface{}{
+				"id":        "tool:file-manager/save_file_to_management",
+				"status":    "completed",
+				"skill_id":  "file-manager",
+				"tool_name": "save_file_to_management",
+			}},
+			"step_status": map[string]interface{}{
+				"tool:file-manager/save_file_to_management": "completed",
+			},
+		},
+		"operation_result_summary": map[string]interface{}{
+			"plan_status": "running",
+			"status":      "running",
+		},
+		"evidence_ledger": []interface{}{map[string]interface{}{
+			"skill_id":  "file-manager",
+			"tool_name": "save_file_to_management",
+			"status":    "completed",
+		}},
+	}
+
+	answer, _, err := runner.Run(ctx, RunRequest{
+		Prepared:                  prepared,
+		Resolved:                  runnerTestResolvedSkills(),
+		PreferExplicitFinalAnswer: true,
+		CompletionEvidence:        func() map[string]interface{} { return evidence },
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "Only the file save has completed." {
+		t.Fatalf("answer = %q, want model final answer", answer)
+	}
+	if fakeLLM.appChatCalls != 1 {
+		t.Fatalf("AppChat calls = %d, want one terminal decision", fakeLLM.appChatCalls)
+	}
+	for _, trace := range traces {
+		if trace.Kind == "final_answer" && trace.Status == "success" {
+			t.Fatalf("ordinary final answer unexpectedly produced final_answer trace: %#v", trace)
+		}
+	}
+}
+
 func TestRunnerRecordsTurnStateWhenModelWrapsMetaToolInSkillToolCall(t *testing.T) {
 	ctx := context.Background()
 	fakeLLM := &runnerTestLLMClient{

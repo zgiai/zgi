@@ -3,6 +3,7 @@ package skillloop
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -153,16 +154,23 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		planningReq.Tools = metaToolsForRun(resolved, loadedSkills, preferExplicitFinalAnswer)
 		planningReq.ToolChoice = "auto"
 
-		terminalAnswerStreamingAllowed := true
-		if preferExplicitFinalAnswer {
-			terminalAnswerStreamingAllowed = terminalStateGuardCanStream(completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls))
+		roundCompletionEvidence := map[string]interface{}{}
+		terminalSubmissionAllowed := true
+		if terminalStateGuardConfigured {
+			roundCompletionEvidence = completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
+			terminalSubmissionAllowed = terminalStateGuardCanStream(roundCompletionEvidence)
 		}
 		suppressNaturalProgress := req.SuppressInitialNaturalProgress && round == 0
-		planningResult, err := r.runSkillPlanning(ctx, prepared, planningReq, round, req.OnChunk, preferExplicitFinalAnswer, terminalAnswerStreamingAllowed, suppressNaturalProgress)
+		deferTerminalContent := preferExplicitFinalAnswer || !terminalSubmissionAllowed
+		planningResult, err := r.runSkillPlanning(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress)
+		usage = mergeUsage(usage, planningResult.usage)
 		if err != nil {
+			var streamedErr *streamedFinalAnswerError
+			if errors.As(err, &streamedErr) {
+				appendAnswerText(&answerBuilder, strings.TrimSpace(streamedErr.answer))
+			}
 			return answerBuilder.String(), usage, err
 		}
-		usage = mergeUsage(usage, planningResult.usage)
 		planningMessage := planningResult.message
 		toolCalls := normalizeToolCalls(planningMessage.ToolCalls)
 		text := assistantMessageText(planningMessage)
@@ -208,13 +216,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				return answerBuilder.String(), usage, fmt.Errorf("%w: model returned no final answer", ErrInvalidInput)
 			}
 			emptyFinalAnswerRetryCount = 0
-			evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
-			guard := terminalStateGuardEvaluate(evidence, text)
+			guard := terminalStateGuardEvaluate(roundCompletionEvidence, text)
 			terminalStateGuardRecord(req, guard)
 			if guard.Path != terminalStateGuardAccepted {
-				if planningResult.answerStreamed && text != "" {
-					r.emitAnswerRetract(ctx, prepared, text, nil)
-				}
 				terminalStateGuardNotify(req, guard, text)
 				return answerBuilder.String(), usage, terminalStateGuardError(guard)
 			}
@@ -228,21 +232,21 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		}
 		emptyFinalAnswerRetryCount = 0
 		if call, ok := finalAnswerCall(toolCalls); ok && preferExplicitFinalAnswer {
-			evidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
-			submission, parseErr := parseFinalAnswerSubmission(call, evidence)
+			submission, parseErr := parseFinalAnswerSubmission(call, roundCompletionEvidence)
 			if parseErr != nil {
-				result := failedFinalAnswerSkillStep(call.ID, parseErr, "fix submit_final_answer arguments and retry only after the turn is terminal")
+				result := failedFinalAnswerSkillStep(call.ID, parseErr, "submit a complete final answer in a new user turn")
 				traces = append(traces, result.trace)
 				r.recordTrace(traces, result.trace)
 				r.logSkillTrace(ctx, prepared, result.trace)
-				planningMessage.Content = ""
-				planningMessage.ReasoningContent = ""
-				planningMessage.ToolCalls = []adapter.ToolCall{call}
-				messages = append(messages, planningMessage, result.toolMessage)
-				continue
+				if planningResult.answerStreamed {
+					partialAnswer, _ := partialJSONStringField(call.Function.Arguments, "answer")
+					appendAnswerText(&answerBuilder, strings.TrimSpace(partialAnswer))
+				}
+				return answerBuilder.String(), usage, parseErr
 			}
 
-			guard := terminalStateGuardEvaluate(evidence, submission.answer)
+			submission.streamed = submission.streamed || planningResult.answerStreamed
+			guard := terminalStateGuardEvaluate(roundCompletionEvidence, submission.answer)
 			terminalStateGuardRecord(req, guard)
 			if guard.Path != terminalStateGuardAccepted {
 				terminalStateGuardNotify(req, guard, submission.answer)
@@ -1329,7 +1333,7 @@ func (r *Runner) runSkillPlanning(ctx context.Context, prepared *PreparedChat, p
 	if shouldStreamSkillPlanning(prepared) {
 		result, ok, err := r.runSkillPlanningStream(ctx, prepared, planningReq, round, nil, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress)
 		if err != nil {
-			return planningResult{}, err
+			return result, err
 		}
 		if ok {
 			return result, nil
@@ -1496,7 +1500,7 @@ func agenticSkillLoopSystemMessage(preferExplicitFinalAnswer bool) adapter.Messa
 		instructions = append(instructions,
 			"In this skill loop, ordinary assistant content is always transient process progress, never the terminal answer. The runtime may show the complete progress update but will not store it as final message content.",
 			"When no more business tool, user input, state, or plan update calls are needed, call submit_final_answer with the complete, natural, self-contained user-facing reply. Do not write the final reply as ordinary assistant content.",
-			"submit_final_answer is terminal. Do not combine it with business tools, request_user_input, or further actions. If a model-maintained plan exists, include its final completed/skipped snapshot and add evidence refs when readily available; unresolved refs do not block the terminal answer. If you did not call submit_intermediate_answer for a new requested deliverable, the answer field MUST include the deliverable in full, not a compressed summary.",
+			"submit_final_answer is terminal. Do not combine it with business tools, request_user_input, or further actions. If a model-maintained plan exists, update it before finishing or include an optional final snapshot when useful; plan metadata never replaces the answer. Add evidence refs when readily available. If you did not call submit_intermediate_answer for a new requested deliverable, the answer field MUST include the deliverable in full, not a compressed summary.",
 		)
 	} else {
 		instructions = append(instructions, "When no tool or skill call is needed, provide the complete user-facing reply as ordinary assistant content and end the turn.")

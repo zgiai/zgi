@@ -19,6 +19,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/modules/tools"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 var agentManagementSkillIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
@@ -34,10 +35,10 @@ func (s *service) runPreparedSkillStream(
 	onChunk func(string) error,
 	onEvent func(StreamEvent) error,
 ) (string, *adapter.Usage, error) {
-	return s.runPreparedSkillStreamWithCompletionVerifier(ctx, persistCtx, prepared, onChunk, onEvent)
+	return s.runPreparedSkillLoop(ctx, persistCtx, prepared, onChunk, onEvent)
 }
 
-func (s *service) runPreparedSkillStreamWithCompletionVerifier(
+func (s *service) runPreparedSkillLoop(
 	ctx context.Context,
 	persistCtx context.Context,
 	prepared *PreparedChat,
@@ -109,7 +110,7 @@ func (s *service) runPreparedSkillStreamWithCompletionVerifier(
 	} else {
 		prepared.Message.Metadata["final_answer_protocol"] = "assistant_content"
 	}
-	return runner.Run(ctx, skillloop.RunRequest{
+	answer, usage, err := runner.Run(ctx, skillloop.RunRequest{
 		Prepared:                       loopPrepared,
 		Resolved:                       resolved,
 		ExecutionContext:               s.skillExecutionContext(prepared),
@@ -124,6 +125,28 @@ func (s *service) runPreparedSkillStreamWithCompletionVerifier(
 		OnCompletionVerification:       skillLoopCompletionVerificationResult(prepared),
 		OnChunk:                        onChunk,
 	})
+	if err != nil && strings.TrimSpace(answer) != "" {
+		s.persistPartialSkillLoopAnswerBestEffort(persistCtx, prepared, answer, usage)
+	}
+	return answer, usage, err
+}
+
+func (s *service) persistPartialSkillLoopAnswerBestEffort(ctx context.Context, prepared *PreparedChat, answer string, usage *adapter.Usage) {
+	if s == nil || s.repos == nil || s.repos.Message == nil || prepared == nil || prepared.Message == nil || strings.TrimSpace(answer) == "" {
+		return
+	}
+	metadata := copyStringAnyMap(prepared.Message.Metadata)
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	metadata["usage"] = usageMetadata(usage)
+	metadata["system_prompt_version"] = systemPromptVersion
+	if err := s.repos.Message.UpdatePartialAnswer(ctx, prepared.Message.ID, answer, metadata); err != nil {
+		logger.WarnContext(ctx, "failed to persist partial aichat skill-loop answer", "message_id", prepared.Message.ID.String(), err)
+		return
+	}
+	prepared.Message.Answer = answer
+	prepared.Message.Metadata = metadata
 }
 
 func skillLoopTerminalStateGuardDecision(prepared *PreparedChat) func(skillloop.TerminalStateGuardDecisionRecord) {

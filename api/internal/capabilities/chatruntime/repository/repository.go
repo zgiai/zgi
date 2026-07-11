@@ -58,6 +58,7 @@ type MessageRepository interface {
 	UpdateWaitingQuestion(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
 	UpdateWaitingClientAction(ctx context.Context, id uuid.UUID, metadata map[string]interface{}) error
 	UpdateError(ctx context.Context, id uuid.UUID, message string) error
+	UpdatePartialAnswer(ctx context.Context, id uuid.UUID, answer string, metadata map[string]interface{}) error
 	MarkStopped(ctx context.Context, id uuid.UUID) error
 	UpdateStoppedAnswer(ctx context.Context, id uuid.UUID, answer string, metadata map[string]interface{}) error
 	DeleteSubtreeScoped(ctx context.Context, id, organizationID, accountID uuid.UUID) (*MessageDeleteResult, error)
@@ -1162,6 +1163,30 @@ func (r *messageRepository) UpdateError(ctx context.Context, id uuid.UUID, messa
 		})
 	if result.Error != nil {
 		return fmt.Errorf("failed to mark aichat message error: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func (r *messageRepository) UpdatePartialAnswer(ctx context.Context, id uuid.UUID, answer string, metadata map[string]interface{}) error {
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal partial aichat metadata: %w", err)
+	}
+	result := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
+		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, activeMessageStatuses()).
+		Updates(map[string]interface{}{
+			"answer":     answer,
+			"metadata":   datatypes.JSON(metadataJSON),
+			"updated_at": time.Now(),
+		})
+	if result.Error != nil {
+		return fmt.Errorf("failed to persist partial aichat answer: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
 		return gorm.ErrRecordNotFound

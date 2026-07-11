@@ -28,7 +28,15 @@ func finalAnswerCall(calls []adapter.ToolCall) (adapter.ToolCall, bool) {
 func parseFinalAnswerSubmission(call adapter.ToolCall, evidence map[string]interface{}) (finalAnswerSubmission, error) {
 	args, err := skills.ParseArguments(call.Function.Arguments)
 	if err != nil {
-		return finalAnswerSubmission{}, fmt.Errorf("%w: submit_final_answer arguments are invalid: %v", ErrInvalidInput, err)
+		answer, complete := partialJSONStringField(call.Function.Arguments, "answer")
+		answer = strings.TrimSpace(answer)
+		if !complete || answer == "" {
+			return finalAnswerSubmission{}, fmt.Errorf("%w: submit_final_answer arguments are invalid: %v", ErrInvalidInput, err)
+		}
+		return finalAnswerSubmission{
+			answer:      answer,
+			planWarning: trimRunes("submit_final_answer optional metadata was invalid and ignored: "+err.Error(), 500),
+		}, nil
 	}
 	answer := strings.TrimSpace(stringArg(args, "answer"))
 	if answer == "" {
@@ -45,7 +53,7 @@ func parseFinalAnswerSubmission(call adapter.ToolCall, evidence map[string]inter
 	}
 	phases, err := normalizePlanSnapshot(args["plan"])
 	if err != nil {
-		submission.planWarning = err.Error()
+		submission.planWarning = trimRunes("submit_final_answer optional plan was ignored: "+err.Error(), 500)
 		return submission, nil
 	}
 	if warnings := planEvidenceAuditWarnings(phases, evidence); len(warnings) > 0 {

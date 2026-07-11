@@ -214,7 +214,8 @@ function visibleSkillInvocations(
     return (
       invocation.kind !== 'guardrail' &&
       invocation.kind !== 'metadata_exposed' &&
-      invocation.kind !== 'memory_planner'
+      invocation.kind !== 'memory_planner' &&
+      invocation.kind !== 'final_answer'
     );
   });
 }

@@ -1016,6 +1016,15 @@ func messageMetadataResponse(metadata map[string]interface{}) map[string]interfa
 		if key == "model_invocations_redacted" {
 			continue
 		}
+		if key == "skill_invocations" {
+			filtered, changed := messageSkillInvocationsResponse(value)
+			if changed {
+				if len(filtered) > 0 {
+					out[key] = filtered
+				}
+				continue
+			}
+		}
 		out[key] = value
 	}
 	if redactedModelInvocations {
@@ -1025,6 +1034,46 @@ func messageMetadataResponse(metadata map[string]interface{}) map[string]interfa
 		}
 	}
 	return out
+}
+
+func messageSkillInvocationsResponse(value interface{}) ([]interface{}, bool) {
+	items, ok := value.([]interface{})
+	if !ok {
+		if typed, ok := value.([]map[string]interface{}); ok {
+			items = make([]interface{}, 0, len(typed))
+			for _, item := range typed {
+				items = append(items, item)
+			}
+		}
+	}
+	if len(items) == 0 {
+		return nil, false
+	}
+	out := make([]interface{}, 0, len(items))
+	changed := false
+	for _, item := range items {
+		invocation, ok := item.(map[string]interface{})
+		if !ok {
+			out = append(out, item)
+			continue
+		}
+		if messageMetadataFinalAnswerInvocation(invocation) {
+			changed = true
+			continue
+		}
+		out = append(out, item)
+	}
+	return out, changed
+}
+
+func messageMetadataFinalAnswerInvocation(invocation map[string]interface{}) bool {
+	return strings.EqualFold(strings.TrimSpace(messageMetadataString(invocation["kind"])), "final_answer") ||
+		strings.EqualFold(strings.TrimSpace(messageMetadataString(invocation["tool_name"])), skills.MetaToolFinalAnswer)
+}
+
+func messageMetadataString(value interface{}) string {
+	text, _ := value.(string)
+	return text
 }
 
 func modelInvocationMetadataCount(value interface{}) int {

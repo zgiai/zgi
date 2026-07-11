@@ -176,6 +176,57 @@ func TestProcessTimelineRecorderPersistsTurnStateTraceWithoutVisibleInvocation(t
 	}
 }
 
+func TestProcessTimelineRecorderPersistsFinalAnswerPlanWithoutVisibleInvocation(t *testing.T) {
+	message := &runtimemodel.Message{
+		ID: uuid.New(),
+		Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"phases": []interface{}{map[string]interface{}{
+					"id":     "phase-1",
+					"status": "in_progress",
+				}},
+			},
+		},
+	}
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      message,
+	}
+	recorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, nil)
+
+	recorder.RecordTrace([]skills.SkillTrace{{
+		Kind:   "final_answer",
+		Status: "success",
+		Result: map[string]interface{}{
+			"plan": []interface{}{map[string]interface{}{
+				"id":            "phase-1",
+				"step":          "Complete the requested operation",
+				"status":        "completed",
+				"evidence_refs": []interface{}{"runtime_id:tool-1"},
+			}},
+		},
+	}}, skills.SkillTrace{
+		Kind:   "final_answer",
+		Status: "success",
+		Result: map[string]interface{}{
+			"plan": []interface{}{map[string]interface{}{
+				"id":            "phase-1",
+				"step":          "Complete the requested operation",
+				"status":        "completed",
+				"evidence_refs": []interface{}{"runtime_id:tool-1"},
+			}},
+		},
+	})
+
+	phases := mapSliceFromAny(mapFromOperationContext(message.Metadata["operation_plan"])["phases"])
+	if len(phases) != 1 || stringFromAny(phases[0]["status"]) != "completed" {
+		t.Fatalf("operation_plan.phases = %#v, want completed final answer plan snapshot", phases)
+	}
+	if invocations := skillInvocationsFromMetadata(message.Metadata["skill_invocations"]); len(invocations) != 0 {
+		t.Fatalf("skill_invocations = %#v, want final_answer hidden from visible timeline", invocations)
+	}
+}
+
 func TestUpsertSkillInvocationKeepsFirstSuccessfulSkillLoad(t *testing.T) {
 	first := map[string]interface{}{
 		"kind":          "skill_load",

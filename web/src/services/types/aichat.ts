@@ -46,6 +46,7 @@ export type AIChatSkillInvocationKind =
   | 'planner_feedback'
   | 'client_action'
   | 'intermediate_answer'
+  | 'final_answer'
   | 'user_input_request'
   | 'memory_planner';
 

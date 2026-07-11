@@ -1408,32 +1408,32 @@ func TestRunToolGovernanceDecisionStreamApproveToolFailureReturnsErrorToModel(t 
 		t.Fatalf("message status/error = %q/%#v, want completed with no message error", message.Status, message.Error)
 	}
 	if len(llm.streamRequests) != 1 {
-		t.Fatalf("AppChatStream requests = %d, want one execution-failure summary call", len(llm.streamRequests))
+		t.Fatalf("AppChatStream requests = %d, want one skill-loop continuation call", len(llm.streamRequests))
 	}
 	streamReq := llm.streamRequests[0]
 	if toolGovernanceStreamRequestHasTool(streamReq, skills.MetaToolCallSkillTool) {
-		t.Fatalf("execution-failure summary request should not expose %s tool", skills.MetaToolCallSkillTool)
+		t.Fatalf("execution-failure continuation should not expose %s tool before the skill is reloaded", skills.MetaToolCallSkillTool)
+	}
+	if toolGovernanceStreamRequestContains(streamReq, "Do not call tools") {
+		t.Fatalf("execution-failure continuation should not use the removed no-tools summary flow: %q", toolGovernanceStreamRequestText(streamReq))
 	}
 	for _, want := range []string{
+		"continuing the same AIChat turn",
 		"runtime attempted to execute the frozen invocation exactly once, but it failed",
-		"recoverable model feedback",
+		`"recoverable_feedback":true`,
 		"Runtime failure feedback:\nfile report.pdf not found",
 		"\"error\":\"file report.pdf not found\"",
 	} {
 		if !toolGovernanceStreamRequestContains(streamReq, want) {
-			t.Fatalf("execution-failure request missing %q in %q", want, toolGovernanceStreamRequestText(streamReq))
+			t.Fatalf("execution-failure continuation missing %q in %q", want, toolGovernanceStreamRequestText(streamReq))
 		}
 	}
 	for _, hidden := range []string{
 		`"execution_error"`,
-		`"file_id"`,
-		`"workspace_id"`,
-		"file-1",
-		"workspace-1",
 		"corr-approve",
 	} {
 		if toolGovernanceStreamRequestContains(streamReq, hidden) {
-			t.Fatalf("execution-failure request exposed %q in %q", hidden, toolGovernanceStreamRequestText(streamReq))
+			t.Fatalf("execution-failure continuation exposed %q in %q", hidden, toolGovernanceStreamRequestText(streamReq))
 		}
 	}
 	if !toolGovernanceStreamHasInvocation(message.Metadata, "tool_call", skills.SkillFileManager, "delete_file", "error") {

@@ -183,6 +183,10 @@ func (f fakeWaitingMessageRepo) UpdateError(context.Context, uuid.UUID, string) 
 	panic("not implemented")
 }
 
+func (f fakeWaitingMessageRepo) UpdatePartialAnswer(context.Context, uuid.UUID, string, map[string]interface{}) error {
+	panic("not implemented")
+}
+
 func (f fakeWaitingMessageRepo) MarkStopped(context.Context, uuid.UUID) error {
 	panic("not implemented")
 }

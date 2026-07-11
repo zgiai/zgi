@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -115,16 +116,14 @@ func TestRunPreparedSkillStreamUsesMainModelTerminalDecisionForLegacyOnlyEvidenc
 	}
 }
 
-func TestRunPreparedSkillStreamTrustsMainModelTerminalDecisionWithAdvisoryPlan(t *testing.T) {
+func TestRunPreparedSkillStreamAcceptsExplicitFinalAnswerWithoutClosingModelPlanPhases(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writePostVerifierServiceTestSkill(t, catalogDir, "post-verifier-test")
 
 	llm := &toolGovernanceStreamLLM{
 		appChatResponses: []*adapter.ChatResponse{
-			postVerifierServiceTestChatResponse("Agent configuration was updated."),
-			postVerifierServiceTestChatResponse(`{"status":"failed","reason":"update_agent_config was not executed","missing_steps":["tool:agent-management/update_agent_config"],"unsupported_claims":["Agent configuration was updated"],"final_answer":"\u6211\u8fd8\u4e0d\u80fd\u786e\u8ba4\u667a\u80fd\u4f53\u914d\u7f6e\u5df2\u66f4\u65b0\uff0c\u56e0\u4e3a update_agent_config \u8fd8\u6ca1\u6709\u6267\u884c\u3002"}`),
-			postVerifierServiceTestChatResponse("I could not confirm the Agent update because no configuration tool result is available."),
+			postVerifierServiceTestFinalAnswerResponse("Agent configuration was updated.", ""),
 		},
 	}
 	runtime := skills.NewRuntimeWithCatalog(nil, nil, catalogDir)
@@ -148,6 +147,13 @@ func TestRunPreparedSkillStreamTrustsMainModelTerminalDecisionWithAdvisoryPlan(t
 		"task_id":             messageID.String(),
 		"status":              operationPlanStatusRunning,
 		"pending_next_action": "Run tool:agent-management/update_agent_config",
+		"phases": []interface{}{
+			map[string]interface{}{
+				"id":     "phase-update",
+				"step":   "Update the Agent configuration",
+				"status": operationPlanStepStatusPending,
+			},
+		},
 		"steps": []interface{}{
 			map[string]interface{}{
 				"id":        updateStepID,
@@ -186,10 +192,10 @@ func TestRunPreparedSkillStreamTrustsMainModelTerminalDecisionWithAdvisoryPlan(t
 		t.Fatalf("runPreparedSkillStream() error = %v", err)
 	}
 	if answer != "Agent configuration was updated." {
-		t.Fatalf("answer = %q, want the main-model terminal answer", answer)
+		t.Fatalf("answer = %q, want the explicit main-model terminal answer", answer)
 	}
 	if len(llm.appChatRequests) != 1 {
-		t.Fatalf("AppChat requests = %d, want one main-model terminal decision", len(llm.appChatRequests))
+		t.Fatalf("AppChat requests = %d, want one explicit final-answer decision", len(llm.appChatRequests))
 	}
 	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
 	if got := stringFromAny(plan["status"]); got != operationPlanStatusCompleted {
@@ -197,6 +203,12 @@ func TestRunPreparedSkillStreamTrustsMainModelTerminalDecisionWithAdvisoryPlan(t
 	}
 	if got := stringFromAny(plan["pending_next_action"]); got != "none" {
 		t.Fatalf("pending_next_action = %q, want none; plan=%#v", got, plan)
+	}
+	if got := operationPlanStepStatusForTest(plan, updateStepID); got != operationPlanStepStatusPending {
+		t.Fatalf("step status = %q, want preserved pending model state; plan=%#v", got, plan)
+	}
+	if phase := mapSliceFromAny(plan["phases"])[0]; stringFromAny(phase["status"]) != operationPlanStepStatusPending {
+		t.Fatalf("phase status = %#v, want preserved pending model state", phase["status"])
 	}
 	verification := mapFromOperationContext(plan["completion_verification"])
 	if got := stringFromAny(verification["status"]); got != "pass" {
@@ -530,6 +542,29 @@ func postVerifierServiceTestChatResponse(content string) *adapter.ChatResponse {
 	return &adapter.ChatResponse{
 		Choices: []adapter.Choice{{
 			Message: adapter.Message{Role: "assistant", Content: content},
+		}},
+	}
+}
+
+func postVerifierServiceTestFinalAnswerResponse(answer string, planJSON string) *adapter.ChatResponse {
+	arguments := `{"answer":` + strconv.Quote(answer)
+	if strings.TrimSpace(planJSON) != "" {
+		arguments += `,"plan":` + planJSON
+	}
+	arguments += `}`
+	return &adapter.ChatResponse{
+		Choices: []adapter.Choice{{
+			Message: adapter.Message{
+				Role: "assistant",
+				ToolCalls: []adapter.ToolCall{{
+					ID:   "final-answer",
+					Type: "function",
+					Function: adapter.FunctionCall{
+						Name:      skills.MetaToolFinalAnswer,
+						Arguments: arguments,
+					},
+				}},
+			},
 		}},
 	}
 }

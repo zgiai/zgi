@@ -91,6 +91,7 @@ function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
     invocation.kind !== 'metadata_exposed' &&
     invocation.kind !== 'memory_planner' &&
     invocation.kind !== 'planner_feedback' &&
+    invocation.kind !== 'final_answer' &&
     invocation.kind !== 'user_input_request'
   );
 }

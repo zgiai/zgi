@@ -70,7 +70,7 @@ func (s *service) RunUserInputContinuationStream(
 	}
 
 	s.emitPreparedEvent(ctx, prepared, streamEventMessageStart, messageStartPayload(continuation.Conversation, continuation.Message, false), onEvent)
-	answer, usage, err := s.runPreparedSkillStreamWithCompletionVerifier(runCtx, context.WithoutCancel(ctx), prepared, nil, onEvent)
+	answer, usage, err := s.runPreparedSkillLoop(runCtx, context.WithoutCancel(ctx), prepared, nil, onEvent)
 	if err != nil {
 		return s.finishUserInputContinuationPendingOrError(ctx, prepared, answer, usage, err, onEvent)
 	}

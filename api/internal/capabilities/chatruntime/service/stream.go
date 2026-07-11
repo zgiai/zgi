@@ -527,6 +527,9 @@ func (s *service) deliverStreamEvent(ctx context.Context, messageID uuid.UUID, e
 	if event == nil || onEvent == nil {
 		return
 	}
+	if suppressClientStreamEvent(event.EventType, event.Payload) {
+		return
+	}
 	event.hydratePayloadEnvelope()
 	if err := onEvent(StreamEvent{
 		ID:          event.ID,
@@ -670,6 +673,9 @@ func (s *service) emitPreparedEvent(ctx context.Context, prepared *PreparedChat,
 	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil {
 		return
 	}
+	if suppressClientStreamEvent(eventType, payload) {
+		return
+	}
 	event := s.appendStreamEventBestEffort(ctx, prepared.Message.ID, prepared.Conversation.ID, eventType, payload)
 	if onEvent == nil {
 		return
@@ -785,7 +791,16 @@ func messageEndPayloadWithStatus(prepared *PreparedChat, metadata map[string]int
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"status":          strings.TrimSpace(status),
-		"metadata":        copyStringAnyMap(metadata),
+		"metadata":        clientVisibleMessageMetadata(metadata),
+	}
+}
+
+func suppressClientStreamEvent(eventType string, payload map[string]interface{}) bool {
+	switch strings.TrimSpace(eventType) {
+	case streamEventSkillCallStart, streamEventSkillCallEnd, streamEventSkillCallError:
+		return finalAnswerInvocation(payload)
+	default:
+		return false
 	}
 }
 

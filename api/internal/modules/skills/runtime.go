@@ -1001,7 +1001,7 @@ func finalAnswerMetaTool() llmadapter.Tool {
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolFinalAnswer,
-			Description: "Submit the final user-facing answer and end the current skill loop when you judge the task complete or have honestly reached a terminal outcome. This call is terminal: do not combine it with business tools or request_user_input. Put the complete final response in answer; ordinary assistant content is progress, not the final answer. When a model-maintained plan exists, include its final snapshot and add evidence refs when they are readily available; refs are audit metadata, not a completion requirement.",
+			Description: "Submit the final user-facing answer and end the current skill loop when you judge the task complete or have honestly reached a terminal outcome. This call is terminal: do not combine it with business tools or request_user_input. Put the complete final response in answer; ordinary assistant content is progress, not the final answer. A plan snapshot is optional audit metadata and never determines whether the answer is accepted.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -1025,14 +1025,14 @@ func finalAnswerMetaTool() llmadapter.Tool {
 func planSnapshotSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type":        "array",
-		"description": "Optional final execution plan snapshot. Include it when the turn already has a model-maintained plan.",
+		"description": "Optional execution plan snapshot for audit. It does not determine whether the final answer is accepted.",
 		"maxItems":    16,
 		"items": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"id":            map[string]interface{}{"type": "string"},
 				"step":          map[string]interface{}{"type": "string"},
-				"status":        map[string]interface{}{"type": "string", "enum": []string{"completed", "skipped"}},
+				"status":        map[string]interface{}{"type": "string", "enum": []string{"pending", "in_progress", "completed", "skipped"}},
 				"evidence_refs": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
 				"note":          map[string]interface{}{"type": "string"},
 			},

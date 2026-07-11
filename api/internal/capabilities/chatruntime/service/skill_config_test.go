@@ -1542,7 +1542,8 @@ func TestMessageEndPayloadPreservesTraceMetadata(t *testing.T) {
 			"agent_memory": map[string]interface{}{"planner_status": "success_update"},
 		},
 		"skill_invocations": []interface{}{
-			map[string]interface{}{"kind": "memory_planner"},
+			map[string]interface{}{"kind": "final_answer", "tool_name": skills.MetaToolFinalAnswer},
+			map[string]interface{}{"kind": "tool_call", "skill_id": skills.SkillFileReader, "tool_name": "read_file"},
 		},
 		"has_trace": true,
 	})
@@ -1553,6 +1554,31 @@ func TestMessageEndPayloadPreservesTraceMetadata(t *testing.T) {
 	}
 	if metadata["has_trace"] != true || metadata["skill_invocations"] == nil || metadata["context_control"] == nil {
 		t.Fatalf("metadata = %#v, want trace metadata preserved", metadata)
+	}
+	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
+	if len(invocations) != 1 || stringFromAny(invocations[0]["kind"]) != "tool_call" {
+		t.Fatalf("skill_invocations = %#v, want only user-visible tool call", metadata["skill_invocations"])
+	}
+}
+
+func TestEmitPreparedEventSuppressesFinalAnswerSkillCallEvent(t *testing.T) {
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      &runtimemodel.Message{ID: uuid.New()},
+	}
+	emitted := []StreamEvent{}
+
+	(&service{}).emitPreparedEvent(context.Background(), prepared, streamEventSkillCallEnd, map[string]interface{}{
+		"kind":      "final_answer",
+		"tool_name": skills.MetaToolFinalAnswer,
+		"status":    "success",
+	}, func(event StreamEvent) error {
+		emitted = append(emitted, event)
+		return nil
+	})
+
+	if len(emitted) != 0 {
+		t.Fatalf("emitted events = %#v, want final_answer skill event suppressed", emitted)
 	}
 }
 

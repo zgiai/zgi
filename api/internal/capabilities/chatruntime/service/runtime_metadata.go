@@ -738,6 +738,45 @@ func mergeSkillInvocationMetadata(source map[string]interface{}, invocations []m
 	return metadata
 }
 
+func clientVisibleMessageMetadata(source map[string]interface{}) map[string]interface{} {
+	metadata := copyStringAnyMap(source)
+	if len(metadata) == 0 {
+		return metadata
+	}
+	filtered, changed := filterFinalAnswerInvocations(metadata["skill_invocations"])
+	if !changed {
+		return metadata
+	}
+	if len(filtered) == 0 {
+		delete(metadata, "skill_invocations")
+		return metadata
+	}
+	metadata["skill_invocations"] = skillInvocationsToInterfaceSlice(filtered)
+	return metadata
+}
+
+func filterFinalAnswerInvocations(value interface{}) ([]map[string]interface{}, bool) {
+	invocations := skillInvocationsFromMetadata(value)
+	if len(invocations) == 0 {
+		return nil, false
+	}
+	out := make([]map[string]interface{}, 0, len(invocations))
+	changed := false
+	for _, invocation := range invocations {
+		if finalAnswerInvocation(invocation) {
+			changed = true
+			continue
+		}
+		out = append(out, invocation)
+	}
+	return out, changed
+}
+
+func finalAnswerInvocation(invocation map[string]interface{}) bool {
+	return strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "final_answer") ||
+		strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["tool_name"])), skills.MetaToolFinalAnswer)
+}
+
 func mergeModelInvocationMetadata(source map[string]interface{}, invocation map[string]interface{}) map[string]interface{} {
 	metadata := copyStringAnyMap(source)
 	if metadata == nil {

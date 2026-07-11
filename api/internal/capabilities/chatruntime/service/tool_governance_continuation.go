@@ -231,7 +231,7 @@ func (s *service) runToolGovernanceApprovedContinuation(ctx context.Context, pre
 		return result, nil
 	}
 	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, toolGovernanceApprovalContinuationMessage(event))
-	answer, usage, err := s.runPreparedSkillStreamWithCompletionVerifier(ctx, context.WithoutCancel(ctx), prepared, nil, onEvent)
+	answer, usage, err := s.runPreparedSkillLoop(ctx, context.WithoutCancel(ctx), prepared, nil, onEvent)
 	if err != nil {
 		var pendingGovernance *skillloop.ToolGovernancePendingError
 		if errors.As(err, &pendingGovernance) {
@@ -361,45 +361,27 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		prepared.Message.Metadata = preparedOperationEvidenceMetadata(prepared.Message.Metadata)
 	}
 
-	if toolGovernanceFrozenContinuationNeedsSkillLoop(prepared) {
-		prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, toolGovernanceFrozenExecutionContinuationMessage(prepared.Message, event, invocation, executionErr))
-		answer, usage, err := s.runPreparedSkillStreamWithCompletionVerifier(ctx, persistCtx, prepared, nil, onEvent)
-		if err != nil {
-			var pendingGovernance *skillloop.ToolGovernancePendingError
-			if errors.As(err, &pendingGovernance) {
-				metadata := s.persistToolGovernanceApprovalPending(persistCtx, prepared, pendingGovernance.Payload, usage)
-				s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
-				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, true, nil
-			}
-			var pendingClientAction *skillloop.ClientActionPendingError
-			if errors.As(err, &pendingClientAction) {
-				metadata := s.persistClientActionPending(persistCtx, prepared, pendingClientAction.Payload, usage)
-				s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction), onEvent)
-				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingClientAction}, true, nil
-			}
-			var pendingUserInput *skillloop.UserInputPendingError
-			if errors.As(err, &pendingUserInput) {
-				metadata := s.persistUserInputRequestPending(persistCtx, prepared, pendingUserInput.Payload, usage)
-				s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
-				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion}, true, nil
-			}
-			return nil, true, err
-		}
-		metadata := preparedResultMetadata(prepared.Message.Metadata, usage)
-		if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
-			return nil, true, err
-		}
-		s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
-		return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, true, nil
-	}
-
-	prepared.LLMRequest = toolGovernanceExecutionResultLLMRequest(prepared.Message, event, invocation, executionErr)
-	stream, err := s.openChatStream(ctx, prepared)
+	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, toolGovernanceFrozenExecutionContinuationMessage(prepared.Message, event, invocation, executionErr))
+	answer, usage, err := s.runPreparedSkillLoop(ctx, persistCtx, prepared, nil, onEvent)
 	if err != nil {
-		return nil, true, err
-	}
-	answer, usage, err := s.collectStreamAnswerWithEvents(ctx, prepared, stream, onEvent, nil)
-	if err != nil {
+		var pendingGovernance *skillloop.ToolGovernancePendingError
+		if errors.As(err, &pendingGovernance) {
+			metadata := s.persistToolGovernanceApprovalPending(persistCtx, prepared, pendingGovernance.Payload, usage)
+			s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
+			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, true, nil
+		}
+		var pendingClientAction *skillloop.ClientActionPendingError
+		if errors.As(err, &pendingClientAction) {
+			metadata := s.persistClientActionPending(persistCtx, prepared, pendingClientAction.Payload, usage)
+			s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction), onEvent)
+			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingClientAction}, true, nil
+		}
+		var pendingUserInput *skillloop.UserInputPendingError
+		if errors.As(err, &pendingUserInput) {
+			metadata := s.persistUserInputRequestPending(persistCtx, prepared, pendingUserInput.Payload, usage)
+			s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
+			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion}, true, nil
+		}
 		return nil, true, err
 	}
 	metadata := preparedResultMetadata(prepared.Message.Metadata, usage)
@@ -629,57 +611,6 @@ func toolGovernanceBoolFromAny(value interface{}) bool {
 	}
 }
 
-func toolGovernanceFrozenContinuationNeedsSkillLoop(prepared *PreparedChat) bool {
-	if prepared == nil || prepared.parts == nil || prepared.Message == nil {
-		return false
-	}
-	if plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"]); toolGovernanceFrozenPlanNeedsContinuation(plan) {
-		return true
-	}
-	if toolGovernanceFrozenModelIntentNeedsContinuation(prepared.Message.Metadata) {
-		return true
-	}
-	return len(managedFileCreateMissingSaveTargets(prepared.parts, prepared.Message.Metadata, nil)) > 0
-}
-
-func toolGovernanceFrozenModelIntentNeedsContinuation(metadata map[string]interface{}) bool {
-	if len(metadata) == 0 {
-		return false
-	}
-	plan := mapFromOperationContext(metadata["operation_plan"])
-	if !operationPlanModelDecidesTools(plan) || operationPlanModelDecidesCompletionVerified(plan) {
-		return false
-	}
-	intent := mapFromOperationContext(metadata["model_turn_intent"])
-	if len(intent) == 0 {
-		return false
-	}
-	if len(stringSliceFromAny(intent["phases"])) > len(mapSliceFromAny(plan["steps"])) {
-		return true
-	}
-	if len(stringSliceFromAny(intent["evidence_required"])) > 0 || len(stringSliceFromAny(intent["completion_criteria"])) > 0 {
-		return true
-	}
-	return false
-}
-
-func toolGovernanceFrozenPlanNeedsContinuation(plan map[string]interface{}) bool {
-	if toolGovernanceFrozenPlanHasPendingExecutableFollowup(plan) {
-		return true
-	}
-	return toolGovernanceFrozenPlanNeedsFailureVerifier(plan)
-}
-
-func toolGovernanceFrozenPlanHasPendingExecutableFollowup(plan map[string]interface{}) bool {
-	if len(plan) == 0 {
-		return false
-	}
-	if len(operationPlanPendingExecutableSteps(plan, 8)) > 0 {
-		return true
-	}
-	return toolGovernanceFrozenModelDecidesPlanNeedsContinuation(plan)
-}
-
 func toolGovernanceFrozenModelDecidesPlanNeedsContinuation(plan map[string]interface{}) bool {
 	if toolGovernanceFrozenModelDecidesPlanHasPendingAgentWork(plan) {
 		return true
@@ -741,25 +672,6 @@ func toolGovernanceFrozenPendingActionRequiresContinuation(value interface{}) bo
 	default:
 		return true
 	}
-}
-
-func toolGovernanceFrozenPlanNeedsFailureVerifier(plan map[string]interface{}) bool {
-	if len(plan) == 0 {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(stringFromAny(plan["status"]))) {
-	case operationPlanStatusFailed, "error", "failure", "blocked":
-		return true
-	}
-	stepStatus := mapFromOperationContext(plan["step_status"])
-	for _, step := range mapSliceFromAny(plan["steps"]) {
-		id := strings.TrimSpace(stringFromAny(step["id"]))
-		status := operationPlanNormalizeStepStatus(firstNonEmptyString(step["status"], stepStatus[id]))
-		if status == operationPlanStepStatusFailed {
-			return true
-		}
-	}
-	return false
 }
 
 func remapLegacyFileDeleteFrozenInvocation(frozen toolgovernance.FrozenInvocation) toolgovernance.FrozenInvocation {
@@ -863,74 +775,6 @@ func validateToolGovernanceFrozenInvocation(frozen toolgovernance.FrozenInvocati
 		return fmt.Errorf("%w: frozen invocation expired", ErrInvalidInput)
 	}
 	return nil
-}
-
-func toolGovernanceExecutionResultLLMRequest(
-	message *runtimemodel.Message,
-	event map[string]interface{},
-	invocation *skills.ToolInvocationResult,
-	executionErr error,
-) *adapter.ChatRequest {
-	provider := ""
-	if message != nil && message.ModelProvider != nil {
-		provider = strings.TrimSpace(*message.ModelProvider)
-	}
-	model := ""
-	userQuery := ""
-	if message != nil {
-		model = strings.TrimSpace(message.ModelName)
-		userQuery = strings.TrimSpace(message.Query)
-	}
-	operationSummary := toolGovernanceModelVisibleOperationSummary(event, invocation)
-	toolResult := toolGovernanceModelVisibleToolResult(event, invocation, executionErr)
-	outcome := "The user approved the pending governed tool call, and the runtime has already executed the frozen invocation exactly once."
-	systemPrompt := strings.Join([]string{
-		"You are continuing an AIChat turn after a governed tool call was approved and executed by runtime.",
-		"Do not call tools.",
-		"Answer in the user's language.",
-		"State the actual outcome based only on the model-visible runtime result.",
-		"For successful file actions, mention only the file name and action result.",
-		"Do not expose internal IDs, UUIDs, workspace identifiers, correlation values, raw JSON field names, or tool count fields.",
-		"Mention any error or limitation plainly.",
-	}, " ")
-	if executionErr != nil {
-		outcome = "The user approved the pending governed tool call, and the runtime attempted to execute the frozen invocation exactly once, but it failed. The failure is recoverable model feedback, not a top-level stream failure."
-		systemPrompt = strings.Join([]string{
-			"You are continuing an AIChat turn after a governed tool call was approved and attempted by runtime.",
-			"Do not call tools.",
-			"Answer in the user's language.",
-			"Treat the model-visible runtime result and failure feedback as authoritative.",
-			"Explain the failure plainly and decide the next safe step.",
-			"Do not claim the operation succeeded.",
-			"Do not expose internal IDs, UUIDs, workspace identifiers, correlation values, raw JSON field names, or tool count fields.",
-		}, " ")
-	}
-	contentParts := []string{
-		"Original user request:\n" + userQuery,
-		outcome,
-		"Approved operation summary JSON:\n" + compactJSON(operationSummary),
-		"Model-visible runtime result JSON:\n" + compactJSON(toolResult),
-	}
-	if executionErr != nil {
-		contentParts = append(contentParts, "Runtime failure feedback:\n"+toolGovernanceSafeErrorText(event, invocation, executionErr))
-	}
-	content := strings.Join(contentParts, "\n\n")
-	chatReq := &adapter.ChatRequest{
-		Provider: provider,
-		Model:    model,
-		Stream:   true,
-		Messages: []adapter.Message{
-			{
-				Role:    "system",
-				Content: systemPrompt,
-			},
-			{Role: "user", Content: content},
-		},
-	}
-	if message != nil {
-		applyModelParameters(chatReq, message.ModelParameters)
-	}
-	return chatReq
 }
 
 func toolGovernanceFrozenExecutionContinuationMessage(

@@ -137,7 +137,14 @@ func normalizeToolCalls(calls []adapter.ToolCall) []adapter.ToolCall {
 		if call.Index == nil {
 			call.Index = &index
 		}
-		call.Function.Arguments = normalizeToolCallArguments(call.Function.Arguments)
+		if strings.EqualFold(strings.TrimSpace(call.Function.Name), skills.MetaToolFinalAnswer) {
+			call.Function.Arguments = strings.TrimSpace(call.Function.Arguments)
+			if call.Function.Arguments == "" {
+				call.Function.Arguments = "{}"
+			}
+		} else {
+			call.Function.Arguments = normalizeToolCallArguments(call.Function.Arguments)
+		}
 		out = append(out, call)
 	}
 	return out

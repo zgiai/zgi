@@ -210,7 +210,11 @@ function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
       return false;
     }
   }
-  return invocation.kind !== 'metadata_exposed' && invocation.kind !== 'memory_planner';
+  return (
+    invocation.kind !== 'metadata_exposed' &&
+    invocation.kind !== 'memory_planner' &&
+    invocation.kind !== 'final_answer'
+  );
 }
 
 function upsertMemoryTimelineItem(

@@ -54,3 +54,29 @@ func TestMessageResponseRedactsModelInvocationMetadata(t *testing.T) {
 		t.Fatalf("metadata = %#v, should preserve lightweight message metadata", resp.Metadata)
 	}
 }
+
+func TestMessageResponseFiltersFinalAnswerInvocationMetadata(t *testing.T) {
+	message := &runtimemodel.Message{
+		ID:             uuid.New(),
+		ConversationID: uuid.New(),
+		Query:          "q",
+		Answer:         "a",
+		Status:         runtimemodel.MessageStatusCompleted,
+		Metadata: map[string]interface{}{
+			"skill_invocations": []interface{}{
+				map[string]interface{}{"kind": "final_answer", "tool_name": "submit_final_answer"},
+				map[string]interface{}{"kind": "tool_call", "skill_id": "file-reader", "tool_name": "read_file"},
+			},
+		},
+	}
+
+	resp := messageResponse(message)
+	invocations, _ := resp.Metadata["skill_invocations"].([]interface{})
+	if len(invocations) != 1 {
+		t.Fatalf("skill_invocations = %#v, want only one user-visible invocation", resp.Metadata["skill_invocations"])
+	}
+	invocation, _ := invocations[0].(map[string]interface{})
+	if invocation["kind"] != "tool_call" {
+		t.Fatalf("skill_invocations = %#v, want final_answer filtered", invocations)
+	}
+}
