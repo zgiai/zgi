@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/zgiai/zgi/api/internal/cache/keys"
 	redisutil "github.com/zgiai/zgi/api/pkg/redis"
 )
@@ -23,13 +24,22 @@ func FillContext(ctx context.Context) (context.Context, context.CancelFunc) {
 
 func Generation(ctx context.Context, organizationID string) string {
 	client := redisutil.GetClient()
-	if client == nil || organizationID == "" {
+	if client == nil {
 		return "0"
+	}
+	if organizationID == "" {
+		return ""
 	}
 	cacheCtx, cancel := context.WithTimeout(ctx, opTimeout)
 	defer cancel()
 	value, err := client.Get(cacheCtx, generationKey(organizationID)).Result()
-	if err != nil || value == "" {
+	if err == goredis.Nil {
+		return "0"
+	}
+	if err != nil {
+		return ""
+	}
+	if value == "" {
 		return "0"
 	}
 	return value
@@ -55,7 +65,7 @@ func InvalidateGlobal(ctx context.Context) {
 
 func GetJSON(ctx context.Context, kind, organizationID, generation string, parts []string, value any) bool {
 	client := redisutil.GetClient()
-	if client == nil || organizationID == "" {
+	if client == nil || organizationID == "" || generation == "" || hasEmptyPart(parts) {
 		return false
 	}
 	cacheCtx, cancel := context.WithTimeout(ctx, opTimeout)
@@ -66,7 +76,7 @@ func GetJSON(ctx context.Context, kind, organizationID, generation string, parts
 
 func SetJSON(ctx context.Context, kind, organizationID, generation string, parts []string, value any) {
 	client := redisutil.GetClient()
-	if client == nil || organizationID == "" || value == nil {
+	if client == nil || organizationID == "" || generation == "" || hasEmptyPart(parts) || value == nil {
 		return
 	}
 	payload, err := json.Marshal(value)
@@ -84,4 +94,13 @@ func generationKey(organizationID string) string {
 
 func responseKey(kind, organizationID, generation string, parts ...string) string {
 	return keys.DefaultBuilder().Build(modulePrefix, append([]string{kind, organizationID, generation}, parts...)...)
+}
+
+func hasEmptyPart(parts []string) bool {
+	for _, part := range parts {
+		if part == "" {
+			return true
+		}
+	}
+	return false
 }

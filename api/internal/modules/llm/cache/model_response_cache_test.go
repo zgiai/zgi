@@ -45,3 +45,25 @@ func TestFillContextSurvivesCallerCancellation(t *testing.T) {
 	default:
 	}
 }
+
+func TestGenerationReadFailureDisablesResponseCache(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	previous := redisutil.GetClient()
+	redisutil.SetClient(client)
+	t.Cleanup(func() { redisutil.SetClient(previous) })
+
+	ctx := context.Background()
+	SetJSON(ctx, "default", "org-1", "0", nil, map[string]string{"model": "stale"})
+	if err := client.Close(); err != nil {
+		t.Fatalf("close Redis client: %v", err)
+	}
+
+	if generation := Generation(ctx, "org-1"); generation != "" {
+		t.Fatalf("generation after Redis failure = %q, want empty", generation)
+	}
+	var cached map[string]string
+	if GetJSON(ctx, "default", "org-1", "", nil, &cached) {
+		t.Fatalf("response cache remained enabled after generation failure: %#v", cached)
+	}
+}
