@@ -56,7 +56,7 @@ const messages: ApikeysMessages = {
     badge: 'OpenAI / Anthropic 兼容',
     inlineTitle: '创建后的 API Key 可直接用于平台接口调用',
     inlineDescription:
-      'apikey 创建后可通过本平台的接口调用，支持 OpenAI 与 Anthropic 兼容协议。当前支持基础对话调用。',
+      'apikey 创建后可通过本平台的接口调用，支持 OpenAI 与 Anthropic 兼容协议。具体协议能力取决于所选模型。',
     apiBaseLabel: 'API Base：',
     openDialog: '查看接入说明',
     dialogTitle: 'API 调用说明',
@@ -67,9 +67,11 @@ const messages: ApikeysMessages = {
       apiBaseLabel: 'API Base',
       openAiBaseLabel: 'OpenAI Base URL',
       chatCompletionsLabel: 'Chat Completions 接口',
+      responsesLabel: 'Responses 接口',
       anthropicBaseLabel: 'Anthropic Base URL',
       anthropicMessagesLabel: 'Anthropic Messages 接口',
-      supportNote: '当前说明覆盖：OpenAI Chat Completions 与 Anthropic Messages 基础对话调用。',
+      supportNote:
+        '当前说明覆盖 OpenAI Chat Completions、Responses 与 Anthropic Messages；Responses 仅适用于支持该协议的模型。',
       tabs: {
         curl: 'curl',
         ts: 'TypeScript',
@@ -77,6 +79,7 @@ const messages: ApikeysMessages = {
       },
       exampleTitle: 'curl 调用示例',
       openAiCurlTitle: 'OpenAI Chat Completions',
+      openAiResponsesCurlTitle: 'OpenAI Responses',
       anthropicCurlTitle: 'Anthropic Messages',
       exampleNote: '请将 `YOUR_API_KEY` 替换为你的密钥，并将 `your-model-name` 替换为可用模型名。',
       tsExampleTitle: 'OpenAI SDK 调用示例（Node.js / TypeScript）',

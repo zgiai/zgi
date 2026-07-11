@@ -55,7 +55,7 @@ const messages = {
     badge: 'OpenAI / Anthropic Compatible',
     inlineTitle: 'Call the platform API with generated API keys',
     inlineDescription:
-      'After an API key is created, you can call platform APIs through OpenAI- and Anthropic-compatible protocols. Basic chat calls are currently supported.',
+      'After an API key is created, you can call platform APIs through OpenAI- and Anthropic-compatible protocols. Protocol availability depends on the selected model.',
     apiBaseLabel: 'API Base:',
     openDialog: 'View Access Guide',
     dialogTitle: 'API Access Guide',
@@ -68,9 +68,11 @@ const messages = {
       apiBaseLabel: 'API Base',
       openAiBaseLabel: 'OpenAI Base URL',
       chatCompletionsLabel: 'Chat Completions Endpoint',
+      responsesLabel: 'Responses Endpoint',
       anthropicBaseLabel: 'Anthropic Base URL',
       anthropicMessagesLabel: 'Anthropic Messages Endpoint',
-      supportNote: 'This guide covers basic OpenAI Chat Completions and Anthropic Messages calls.',
+      supportNote:
+        'This guide covers OpenAI Chat Completions, Responses, and Anthropic Messages. Responses is available only for models that support the protocol.',
       tabs: {
         curl: 'curl',
         ts: 'TypeScript',
@@ -78,6 +80,7 @@ const messages = {
       },
       exampleTitle: 'curl Example',
       openAiCurlTitle: 'OpenAI Chat Completions',
+      openAiResponsesCurlTitle: 'OpenAI Responses',
       anthropicCurlTitle: 'Anthropic Messages',
       exampleNote:
         'Replace `YOUR_API_KEY` with your API key and `your-model-name` with an available model.',
