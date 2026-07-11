@@ -222,6 +222,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		WorkspaceManagementService: serviceContainer.GetTenantService(),
 		OrganizationService:        serviceContainer.GetOrganizationService(),
 		ConsoleProvider:            serviceContainer.GetConsoleProvider(),
+		Scheduler:                  serviceContainer.GetScheduler(),
 	})
 	if llmModule != nil && llmModule.LLMModelModule != nil {
 		if err := serviceContainer.GetToolManager().RegisterProvider(agentmanagement_tools.NewProvider(agentsService, serviceContainer.GetOrganizationService(), llmModule.LLMModelModule.AvailableModelsSvc)); err != nil {

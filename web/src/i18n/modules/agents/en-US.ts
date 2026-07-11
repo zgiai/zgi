@@ -787,6 +787,11 @@ const messages = {
         title: 'Channel balance is running low',
         description: 'Current channel balance is {currentValue}. Warning threshold is {threshold}.',
       },
+      '207015': {
+        title: 'Private channel upstream unavailable',
+        description:
+          'Every candidate credential was explicitly rejected by its provider. Contact an organization administrator.',
+      },
       unknown: {
         title: 'Potential billing risk detected',
         description: 'Current value is {currentValue}. Warning threshold is {threshold}.',
@@ -810,7 +815,8 @@ const messages = {
       },
       '207014': {
         title: 'Model pricing is not configured',
-        description: 'Configure model pricing in Model Management or Billing Strategy, then run again.',
+        description:
+          'Configure model pricing in Model Management or Billing Strategy, then run again.',
         action: 'Configure pricing',
       },
       contactAdmin: 'Please contact an organization administrator to add balance or quota.',

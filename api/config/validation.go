@@ -102,6 +102,15 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("%s must be exactly 32 bytes long, got %d bytes", envLLMEncryptionKey, len(cfg.LLM.EncryptionKey))
 	}
 
+	switch cfg.LLM.UpstreamGuardMode {
+	case "off", "shadow", "enforce":
+	default:
+		return fmt.Errorf("%s must be one of: off, shadow, enforce", envLLMUpstreamGuardMode)
+	}
+	if cfg.LLM.UpstreamGuardPercentage < 0 || cfg.LLM.UpstreamGuardPercentage > 100 {
+		return fmt.Errorf("%s must be between 0 and 100", envLLMUpstreamGuardPercentage)
+	}
+
 	return nil
 }
 

@@ -4,10 +4,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/zgiai/zgi/api/config"
 	pconsole "github.com/zgiai/zgi/api/internal/infra/platform/console"
 	"github.com/zgiai/zgi/api/internal/modules/llm"
 	apikeyrepo "github.com/zgiai/zgi/api/internal/modules/llm/apikey/repository"
 	"github.com/zgiai/zgi/api/internal/modules/llm/client"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/upstreamstate"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway"
 	"github.com/zgiai/zgi/api/internal/modules/llm/handler"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -16,6 +18,7 @@ import (
 	"github.com/zgiai/zgi/api/middleware"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	redisPkg "github.com/zgiai/zgi/api/pkg/redis"
+	pkgscheduler "github.com/zgiai/zgi/api/pkg/scheduler"
 )
 
 type LLMRouteDeps struct {
@@ -24,6 +27,7 @@ type LLMRouteDeps struct {
 	WorkspaceManagementService interfaces.WorkspaceManagementService
 	OrganizationService        interfaces.OrganizationService
 	ConsoleProvider            pconsole.ConsoleProvider
+	Scheduler                  *pkgscheduler.Scheduler
 }
 
 // RegisterLLMRoutes registers all LLM-related routes
@@ -45,6 +49,7 @@ func RegisterLLMRoutes(router *gin.RouterGroup, deps LLMRouteDeps) *llm.LLMModul
 		deps.OrganizationService,
 		deps.ConsoleProvider,
 	)
+	registerLLMUpstreamPolling(deps.Scheduler, llmV2Module)
 
 	// ========== Initialize Internal AI Service (for workflows/knowledge base) ==========
 	llmAPIKeyRepo := apikeyrepo.NewAPIKeyRepository(deps.DB)
@@ -103,6 +108,20 @@ func RegisterLLMRoutes(router *gin.RouterGroup, deps LLMRouteDeps) *llm.LLMModul
 
 	logger.Info("LLM legacy internal routes registered", "path", "/llm/*")
 	return llmV2Module
+}
+
+func registerLLMUpstreamPolling(scheduler *pkgscheduler.Scheduler, module *llm.LLMModule) {
+	if scheduler == nil || module == nil || module.UpstreamStateSvc == nil || !config.Current().LLM.UpstreamBalancePolling {
+		return
+	}
+	task := upstreamstate.NewPollingTask()
+	if err := scheduler.RegisterTask(task, upstreamstate.NewPollingHandler(module.UpstreamStateSvc)); err != nil {
+		logger.Error("failed to register LLM upstream credential polling", err)
+		return
+	}
+	logger.Info("LLM upstream credential polling registered", map[string]interface{}{
+		"interval": task.Interval().String(),
+	})
 }
 
 func validateLLMRouteDeps(deps LLMRouteDeps) {

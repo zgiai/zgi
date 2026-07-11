@@ -115,8 +115,47 @@ type ChannelView struct {
 	Tags             []string                          `json:"tags,omitempty"`
 	Description      string                            `json:"description,omitempty"`
 	APIKeyMasked     string                            `json:"api_key_masked,omitempty"`
+	UpstreamState    *UpstreamStateView                `json:"upstream_state,omitempty"`
 	CreatedAt        int64                             `json:"created_at"`
 	UpdatedAt        int64                             `json:"updated_at"`
+}
+
+type UpstreamBalanceAmountView struct {
+	Currency  string `json:"currency"`
+	Remaining string `json:"remaining,omitempty"`
+}
+
+type UpstreamWarningThresholdView struct {
+	Currency string `json:"currency" binding:"required"`
+	Amount   string `json:"amount" binding:"required"`
+}
+
+type UpstreamStateView struct {
+	BalanceCapability      string                         `json:"balance_capability"`
+	BalanceScope           string                         `json:"balance_scope,omitempty"`
+	Balances               []UpstreamBalanceAmountView    `json:"balances,omitempty"`
+	Spendable              *bool                          `json:"spendable,omitempty"`
+	IsUnlimited            bool                           `json:"is_unlimited"`
+	Availability           string                         `json:"availability"`
+	IsLow                  bool                           `json:"is_low"`
+	IsStale                bool                           `json:"is_stale"`
+	BalanceObservedAt      string                         `json:"balance_observed_at,omitempty"`
+	LastCheckAt            string                         `json:"last_check_at,omitempty"`
+	LastCheckStatus        string                         `json:"last_check_status"`
+	LastCheckErrorKind     string                         `json:"last_check_error_kind,omitempty"`
+	WarningThresholds      []UpstreamWarningThresholdView `json:"warning_thresholds"`
+	SharedChannelCount     int64                          `json:"shared_channel_count"`
+	BlockReason            string                         `json:"block_reason,omitempty"`
+	CooldownUntil          string                         `json:"cooldown_until,omitempty"`
+	AvailabilityObservedAt string                         `json:"availability_observed_at,omitempty"`
+	ManualRetryRequestedAt string                         `json:"manual_retry_requested_at,omitempty"`
+	ProviderErrorCode      string                         `json:"provider_error_code,omitempty"`
+	ProviderErrorStatus    int                            `json:"provider_error_status,omitempty"`
+	WouldGuard             bool                           `json:"would_guard"`
+}
+
+type UpdateUpstreamStateSettingsRequest struct {
+	WarningThresholds []UpstreamWarningThresholdView `json:"warning_thresholds" binding:"max=20"`
 }
 
 // PlatformChannelView represents a single ZGI Cloud official channel route.

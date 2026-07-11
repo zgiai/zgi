@@ -25,6 +25,8 @@ import type {
   PlatformChannelsResponse,
   AdjustChannelWalletRequest,
   AdjustChannelWalletResponse,
+  UpstreamState,
+  UpdateUpstreamStateSettingsRequest,
 } from '@/services/types/channel';
 import { CHANNEL_KEYS, MODEL_KEYS } from '@/hooks/query-keys';
 import {
@@ -765,4 +767,109 @@ export function useAdjustChannelWallet(): {
   );
 
   return { adjustWallet, isAdjusting: isPending };
+}
+
+export function useCheckChannelUpstreamState(): {
+  checkUpstreamState: (channelId: string) => Promise<UpstreamState>;
+  checkingChannelId: string | null;
+} {
+  const t = useT('channels');
+  const queryClient = useQueryClient();
+  const { mutateAsync, isPending, variables } = useMutation({
+    mutationFn: async (channelId: string) => channelService.checkUpstreamState(channelId),
+    onSuccess: (_response, channelId) => {
+      toast.success(t('upstream.refreshSuccess'));
+      queryClient.invalidateQueries({ queryKey: CHANNEL_KEYS.all });
+      queryClient.invalidateQueries({ queryKey: CHANNEL_KEYS.detail(channelId) });
+    },
+    onError: (error: Error) => {
+      const title = t('upstream.refreshFailed');
+      toast.error(title, { description: normalizeToastDescription(title, error.message) });
+    },
+  });
+
+  const checkUpstreamState = useCallback(
+    async (channelId: string) => {
+      const response = await mutateAsync(channelId);
+      return response.data;
+    },
+    [mutateAsync]
+  );
+
+  return {
+    checkUpstreamState,
+    checkingChannelId: isPending ? (variables ?? null) : null,
+  };
+}
+
+export function useRetryChannelUpstreamState(): {
+  retryUpstreamState: (channelId: string) => Promise<UpstreamState>;
+  retryingChannelId: string | null;
+} {
+  const t = useT('channels');
+  const queryClient = useQueryClient();
+  const { mutateAsync, isPending, variables } = useMutation({
+    mutationFn: async (channelId: string) => channelService.retryUpstreamState(channelId),
+    onSuccess: (_response, channelId) => {
+      toast.success(t('upstream.retrySuccess'));
+      queryClient.invalidateQueries({ queryKey: CHANNEL_KEYS.all });
+      queryClient.invalidateQueries({ queryKey: CHANNEL_KEYS.detail(channelId) });
+    },
+    onError: (error: Error) => {
+      const title = t('upstream.retryFailed');
+      toast.error(title, { description: normalizeToastDescription(title, error.message) });
+    },
+  });
+
+  const retryUpstreamState = useCallback(
+    async (channelId: string) => {
+      const response = await mutateAsync(channelId);
+      return response.data;
+    },
+    [mutateAsync]
+  );
+
+  return {
+    retryUpstreamState,
+    retryingChannelId: isPending ? (variables ?? null) : null,
+  };
+}
+
+export function useUpdateChannelUpstreamSettings(): {
+  updateUpstreamSettings: (
+    channelId: string,
+    data: UpdateUpstreamStateSettingsRequest
+  ) => Promise<UpstreamState>;
+  isUpdating: boolean;
+} {
+  const t = useT('channels');
+  const queryClient = useQueryClient();
+  const { mutateAsync, isPending } = useMutation({
+    mutationFn: async ({
+      channelId,
+      data,
+    }: {
+      channelId: string;
+      data: UpdateUpstreamStateSettingsRequest;
+    }) => channelService.updateUpstreamStateSettings(channelId, data),
+    onSuccess: (_response, { channelId }) => {
+      toast.success(t('upstream.settingsSaved'));
+      queryClient.invalidateQueries({ queryKey: CHANNEL_KEYS.all });
+      queryClient.invalidateQueries({ queryKey: CHANNEL_KEYS.detail(channelId) });
+    },
+    onError: (error: Error) => {
+      const title = t('upstream.settingsFailed');
+      toast.error(title, { description: normalizeToastDescription(title, error.message) });
+    },
+  });
+
+  const updateUpstreamSettings = useCallback(
+    async (channelId: string, data: UpdateUpstreamStateSettingsRequest) => {
+      const response = await mutateAsync({ channelId, data });
+      return response.data;
+    },
+    [mutateAsync]
+  );
+
+  return { updateUpstreamSettings, isUpdating: isPending };
 }

@@ -596,6 +596,12 @@ const (
 	envLLMGuardOutboundDNS = "LLM_GUARD_OUTBOUND_DNS"
 	// envLLMAllowPrivateBaseURL allows Ollama to target private or localhost base URLs. Default: false.
 	envLLMAllowPrivateBaseURL = "LLM_ALLOW_PRIVATE_BASE_URL"
+	// envLLMUpstreamBalancePollingEnabled controls private credential balance polling. Default: false.
+	envLLMUpstreamBalancePollingEnabled = "LLM_UPSTREAM_BALANCE_POLLING_ENABLED"
+	// envLLMUpstreamGuardMode controls private credential route protection. Default: off.
+	envLLMUpstreamGuardMode = "LLM_UPSTREAM_GUARD_MODE"
+	// envLLMUpstreamGuardPercentage controls deterministic organization rollout. Default: 0.
+	envLLMUpstreamGuardPercentage = "LLM_UPSTREAM_GUARD_PERCENTAGE"
 
 	// Automation dispatch behavior.
 	// envAutomationDispatchEnabled controls whether this API instance registers automation due-task dispatch. Default: true.

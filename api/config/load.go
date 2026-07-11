@@ -1032,12 +1032,17 @@ func loadLLMConfig(cfg *Config, source *envSource) {
 	_, guardOutboundURLSet := source.lookup(envLLMGuardOutboundURL)
 	guardOutboundDNS, _ := source.bool(false, envLLMGuardOutboundDNS)
 	allowPrivateBaseURL, _ := source.bool(false, envLLMAllowPrivateBaseURL)
+	upstreamBalancePolling, _ := source.bool(false, envLLMUpstreamBalancePollingEnabled)
+	upstreamGuardPercentage, _ := source.int(0, envLLMUpstreamGuardPercentage)
 	cfg.LLM = LLMConfig{
 		EncryptionKey:           source.string("", envLLMEncryptionKey),
 		OfficialModelStrictSync: officialModelStrictSync,
 		GuardOutboundURL:        guardOutboundURL,
 		GuardOutboundDNS:        guardOutboundDNS,
 		AllowPrivateBaseURL:     allowPrivateBaseURL,
+		UpstreamBalancePolling:  upstreamBalancePolling,
+		UpstreamGuardMode:       strings.ToLower(strings.TrimSpace(source.string("off", envLLMUpstreamGuardMode))),
+		UpstreamGuardPercentage: upstreamGuardPercentage,
 		guardOutboundURLSet:     guardOutboundURLSet,
 	}
 }

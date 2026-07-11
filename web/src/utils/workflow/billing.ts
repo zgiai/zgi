@@ -17,9 +17,10 @@ export interface WorkflowTranslator {
 }
 
 const PRECHECK_WARNING_PRIORITY: Record<string, number> = {
-  '207009': 0,
-  '207008': 1,
-  '207010': 2,
+  '207015': 0,
+  '207009': 1,
+  '207008': 2,
+  '207010': 3,
 };
 
 export function normalizeWorkflowBillingCode(code: unknown): string | undefined {
@@ -47,14 +48,20 @@ export function isWorkflowBillingErrorCode(code: unknown): boolean {
 
 export function isWorkflowPrecheckWarningCode(code: unknown): boolean {
   const normalized = normalizeWorkflowBillingCode(code);
-  return normalized === '207008' || normalized === '207009' || normalized === '207010';
+  return (
+    normalized === '207008' ||
+    normalized === '207009' ||
+    normalized === '207010' ||
+    normalized === '207015'
+  );
 }
 
 export function sortWorkflowPrecheckWarnings(
   warnings: WorkflowPrecheckWarning[]
 ): WorkflowPrecheckWarning[] {
   return [...warnings].sort((left, right) => {
-    const leftPriority = PRECHECK_WARNING_PRIORITY[normalizeWorkflowBillingCode(left.code) ?? ''] ?? 999;
+    const leftPriority =
+      PRECHECK_WARNING_PRIORITY[normalizeWorkflowBillingCode(left.code) ?? ''] ?? 999;
     const rightPriority =
       PRECHECK_WARNING_PRIORITY[normalizeWorkflowBillingCode(right.code) ?? ''] ?? 999;
 
@@ -117,7 +124,9 @@ export function extractWorkflowRunError(error: unknown): WorkflowRunBillingError
         : undefined;
 
   return {
-    code: (record['code'] as string | number | undefined) ?? (nested?.['code'] as string | number | undefined),
+    code:
+      (record['code'] as string | number | undefined) ??
+      (nested?.['code'] as string | number | undefined),
     message:
       (typeof record['message'] === 'string' ? record['message'] : undefined) ??
       (typeof nested?.['message'] === 'string' ? nested['message'] : undefined),
@@ -198,7 +207,9 @@ export function resolveWorkflowBillingErrorCode(
     return normalizedCode;
   }
 
-  return inferWorkflowBillingCodeFromValue(normalizedCode) ?? inferWorkflowBillingCodeFromValue(message);
+  return (
+    inferWorkflowBillingCodeFromValue(normalizedCode) ?? inferWorkflowBillingCodeFromValue(message)
+  );
 }
 
 function getPrecheckMetricValue(
@@ -224,15 +235,18 @@ export function getWorkflowPrecheckWarningMessage(
   warning: WorkflowPrecheckWarning
 ): { title: string; description: string; code?: string } {
   const code = normalizeWorkflowBillingCode(warning.code);
-  const prefix = scope === 'agents' ? 'agents.workflow.precheckWarnings' : 'webapp.billing.precheckWarnings';
-  const currentValue = normalizeAiCreditMetricValue(getPrecheckMetricValue(warning, 'current_value'));
+  const prefix =
+    scope === 'agents' ? 'agents.workflow.precheckWarnings' : 'webapp.billing.precheckWarnings';
+  const currentValue = normalizeAiCreditMetricValue(
+    getPrecheckMetricValue(warning, 'current_value')
+  );
   const threshold = normalizeAiCreditMetricValue(getPrecheckMetricValue(warning, 'threshold'));
   const values = {
     currentValue: currentValue ?? '-',
     threshold: threshold ?? '-',
   };
 
-  if (code === '207008' || code === '207009' || code === '207010') {
+  if (code === '207008' || code === '207009' || code === '207010' || code === '207015') {
     return {
       code,
       title: t(`${prefix}.${code}.title`),
@@ -289,7 +303,10 @@ function getWorkflowModelPricingActionHref(error?: WorkflowRunBillingError | nul
   return `/dashboard/provider/${encodedProvider}?pricing=1&model=${encodedModel}`;
 }
 
-function getStringParam(params: Record<string, unknown> | undefined, key: string): string | undefined {
+function getStringParam(
+  params: Record<string, unknown> | undefined,
+  key: string
+): string | undefined {
   const value = params?.[key];
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
@@ -315,8 +332,7 @@ export function getWorkflowBillingErrorMessage(
       description: shouldShowBillingDescription
         ? t(`${prefix}.${code}.description`)
         : t(`${prefix}.contactAdmin`),
-      actionLabel:
-        options.isAdmin && href ? t(`${prefix}.${code}.action`) : undefined,
+      actionLabel: options.isAdmin && href ? t(`${prefix}.${code}.action`) : undefined,
       href,
     };
   }

@@ -43,58 +43,63 @@ type BillingService struct {
 
 // BillingContext contains billing-related information for a request
 type BillingContext struct {
-	APIKeyID          string
-	OrganizationID    string
-	DeductionID       string
-	AttemptID         string
-	QuotaSubjectType  string
-	QuotaSubjectID    string
-	AccountID         *uuid.UUID // Internal user ID when using models
-	GroupID           *uuid.UUID // Organization ID (formerly Shadow Tenant ID)
-	WorkspaceID       string
-	AppID             *uuid.UUID // App ID (agent or dataset)
-	AppType           *string    // App type: 'agent' or 'dataset'
-	SessionID         string
-	ConversationID    string
-	WorkflowID        string
-	WorkflowRunID     string
-	NodeID            string
-	NodeType          string
-	ModelID           uuid.UUID
-	ModelSource       PricingModelSource
-	PricingOperation  PricingOperation
-	ModelName         string // Model name for logging
-	ProviderID        uuid.UUID
-	ProviderName      string     // Provider name for logging
-	RouteID           *uuid.UUID // Selected route ID when the request is routed
-	ChannelID         *uuid.UUID // Tenant channel ID, nil if using system provider
-	AccountProviderID *uint      // Deprecated, kept for compatibility
-	EstimatedCredits  int64      // Estimated credits to deduct
-	ActualCredits     int64      // Actual credits used
-	PromptTokens      int
-	CompletionTokens  int
-	TotalTokens       int
-	InputCost         decimal.Decimal // Legacy: input credits consumed for logging/RPC compatibility
-	OutputCost        decimal.Decimal // Legacy: output credits consumed for logging/RPC compatibility
-	TotalCost         decimal.Decimal // Legacy: total credits consumed for logging/RPC compatibility
-	InputUSD          decimal.Decimal
-	OutputUSD         decimal.Decimal
-	TotalUSD          decimal.Decimal
-	PricingSource     PricingSource
-	UsageSource       UsageSource
-	PricingSnapshot   datatypes.JSON
-	LockedTokenQuote  *PricingQuote
-	BillingLane       UsageBillingLane
-	UseSystemProvider bool
-	IsStreaming       bool
-	RequestID         string
-	RequestCreatedAt  time.Time
-	SettledAt         time.Time
-	ResponseTime      int64 // milliseconds
-	Status            string
-	ErrorMessage      string
-	IPAddress         string
-	UserAgent         string
+	APIKeyID             string
+	OrganizationID       string
+	DeductionID          string
+	AttemptID            string
+	QuotaSubjectType     string
+	QuotaSubjectID       string
+	AccountID            *uuid.UUID // Internal user ID when using models
+	GroupID              *uuid.UUID // Organization ID (formerly Shadow Tenant ID)
+	WorkspaceID          string
+	AppID                *uuid.UUID // App ID (agent or dataset)
+	AppType              *string    // App type: 'agent' or 'dataset'
+	SessionID            string
+	ConversationID       string
+	WorkflowID           string
+	WorkflowRunID        string
+	NodeID               string
+	NodeType             string
+	ModelID              uuid.UUID
+	ModelSource          PricingModelSource
+	PricingOperation     PricingOperation
+	ModelName            string // Model name for logging
+	ProviderID           uuid.UUID
+	ProviderName         string     // Provider name for logging
+	RouteID              *uuid.UUID // Selected route ID when the request is routed
+	ChannelID            *uuid.UUID // Tenant channel ID, nil if using system provider
+	CredentialID         uuid.UUID
+	CredentialGeneration int64
+	ChannelProvider      string
+	UpstreamWouldGuard   bool
+	UpstreamHalfOpen     bool
+	AccountProviderID    *uint // Deprecated, kept for compatibility
+	EstimatedCredits     int64 // Estimated credits to deduct
+	ActualCredits        int64 // Actual credits used
+	PromptTokens         int
+	CompletionTokens     int
+	TotalTokens          int
+	InputCost            decimal.Decimal // Legacy: input credits consumed for logging/RPC compatibility
+	OutputCost           decimal.Decimal // Legacy: output credits consumed for logging/RPC compatibility
+	TotalCost            decimal.Decimal // Legacy: total credits consumed for logging/RPC compatibility
+	InputUSD             decimal.Decimal
+	OutputUSD            decimal.Decimal
+	TotalUSD             decimal.Decimal
+	PricingSource        PricingSource
+	UsageSource          UsageSource
+	PricingSnapshot      datatypes.JSON
+	LockedTokenQuote     *PricingQuote
+	BillingLane          UsageBillingLane
+	UseSystemProvider    bool
+	IsStreaming          bool
+	RequestID            string
+	RequestCreatedAt     time.Time
+	SettledAt            time.Time
+	ResponseTime         int64 // milliseconds
+	Status               string
+	ErrorMessage         string
+	IPAddress            string
+	UserAgent            string
 }
 
 // NewBillingService creates a new billing service

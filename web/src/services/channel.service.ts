@@ -17,6 +17,8 @@ import type {
   PlatformChannelModelsResponse,
   AdjustChannelWalletRequest,
   AdjustChannelWalletResponse,
+  UpstreamState,
+  UpdateUpstreamStateSettingsRequest,
 } from './types/channel';
 
 // channel management temporary service
@@ -123,6 +125,24 @@ export class ChannelService extends BaseService {
   ): Promise<ApiResponseData<AdjustChannelWalletResponse>> {
     const encoded = encodeURIComponent(channelId);
     return this.request('post', `/llm/channels/${encoded}/wallet/adjust`, data);
+  }
+
+  checkUpstreamState(channelId: string): Promise<ApiResponseData<UpstreamState>> {
+    const encoded = encodeURIComponent(channelId);
+    return this.request('post', `/llm/channels/${encoded}/upstream-state/check`);
+  }
+
+  retryUpstreamState(channelId: string): Promise<ApiResponseData<UpstreamState>> {
+    const encoded = encodeURIComponent(channelId);
+    return this.request('post', `/llm/channels/${encoded}/upstream-state/retry`);
+  }
+
+  updateUpstreamStateSettings(
+    channelId: string,
+    data: UpdateUpstreamStateSettingsRequest
+  ): Promise<ApiResponseData<UpstreamState>> {
+    const encoded = encodeURIComponent(channelId);
+    return this.request('put', `/llm/channels/${encoded}/upstream-state/settings`, data);
   }
 }
 

@@ -221,6 +221,9 @@ func (s *llmGatewayServiceImpl) tryChatCompletion(
 
 	normalizedReq := cloneChatRequestWithNormalizedModel(req)
 
+	if err := s.activateUpstreamProbeForAttempt(ctx, providerSelection, billingCtx); err != nil {
+		return nil, err
+	}
 	response, callErr = providerAdapter.ChatCompletion(ctx, normalizedReq)
 
 	responseTime := time.Since(startTime).Milliseconds()
@@ -440,12 +443,16 @@ func (s *llmGatewayServiceImpl) tryChatCompletionStream(
 		normalizedReq.StreamOptions.IncludeUsage = true
 	}
 
+	if err := s.activateUpstreamProbeForAttempt(ctx, providerSelection, billingCtx); err != nil {
+		return nil, err
+	}
 	streamChan, err := providerAdapter.ChatCompletionStream(ctx, normalizedReq)
 	if err != nil {
 		if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
 			return nil, rollbackErr
 		}
 		s.logProviderError(ctx, attemptIdx, providerSelection, err, "stream_call_failed")
+		s.recordUpstreamProviderError(ctx, providerSelection, billingCtx, err)
 
 		sentryHelper.CaptureLLMError(err, providerSelection.Provider.Provider, providerSelection.Model.Model, organizationID.String(), map[string]interface{}{
 			"attempt_index":       attemptIdx,

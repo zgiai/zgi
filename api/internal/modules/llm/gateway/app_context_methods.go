@@ -129,6 +129,10 @@ func (s *llmGatewayServiceImpl) createResponseInternal(
 			continue
 		}
 
+		if err := s.activateUpstreamProbeForAttempt(ctx, providerSelection, billingCtx); err != nil {
+			lastErr = err
+			continue
+		}
 		response, err := providerAdapter.CreateResponse(ctx, effectiveReq)
 		responseTime := time.Since(startTime).Milliseconds()
 
@@ -268,6 +272,10 @@ func (s *llmGatewayServiceImpl) createEmbeddingsInternal(
 			continue
 		}
 
+		if err := s.activateUpstreamProbeForAttempt(ctx, providerSelection, billingCtx); err != nil {
+			lastErr = err
+			continue
+		}
 		response, err := providerAdapter.CreateEmbeddings(ctx, req)
 		responseTime := time.Since(startTime).Milliseconds()
 
@@ -392,6 +400,10 @@ func (s *llmGatewayServiceImpl) rerankInternal(
 			continue
 		}
 
+		if err := s.activateUpstreamProbeForAttempt(ctx, providerSelection, billingCtx); err != nil {
+			lastErr = err
+			continue
+		}
 		response, err := providerAdapter.Rerank(ctx, req)
 		responseTime := time.Since(startTime).Milliseconds()
 

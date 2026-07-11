@@ -22,6 +22,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
 	providerrepo "github.com/zgiai/zgi/api/internal/modules/llm/provider/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -176,6 +177,32 @@ func routeClone(route *channelmodel.LLMRoute) *channelmodel.LLMRoute {
 		cloned.ValidationReport = mapsClone(route.ValidationReport)
 	}
 	return &cloned
+}
+
+func TestPrivateRouteCredentialIDRejectsCrossTenantAndOfficialRoutes(t *testing.T) {
+	organizationID := uuid.New()
+	channelID := uuid.New()
+
+	t.Run("cross tenant is not found", func(t *testing.T) {
+		svc := &channelService{tenantRouteRepo: &fakeTenantRouteRepo{getErr: gorm.ErrRecordNotFound}}
+		_, err := svc.privateRouteCredentialID(context.Background(), organizationID, channelID)
+		if !errors.Is(err, ErrRouteNotFound) {
+			t.Fatalf("privateRouteCredentialID() error = %v, want ErrRouteNotFound", err)
+		}
+	})
+
+	t.Run("official route is rejected", func(t *testing.T) {
+		svc := &channelService{tenantRouteRepo: &fakeTenantRouteRepo{routeByID: &channelmodel.LLMRoute{
+			ID:             channelID,
+			OrganizationID: organizationID,
+			Type:           shared.RouteTypeZGICloud,
+			IsOfficial:     true,
+		}}}
+		_, err := svc.privateRouteCredentialID(context.Background(), organizationID, channelID)
+		if !errors.Is(err, ErrInvalidRouteType) {
+			t.Fatalf("privateRouteCredentialID() error = %v, want ErrInvalidRouteType", err)
+		}
+	})
 }
 
 func mapsClone(src map[string]interface{}) map[string]interface{} {

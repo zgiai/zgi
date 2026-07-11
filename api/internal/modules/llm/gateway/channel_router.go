@@ -2,6 +2,8 @@ package gateway
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -9,12 +11,14 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	appconfig "github.com/zgiai/zgi/api/config"
 	platformchannel "github.com/zgiai/zgi/api/internal/infra/platform/channel"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
 	"github.com/zgiai/zgi/api/internal/modules/llm/channelprovider"
 	credentialmodel "github.com/zgiai/zgi/api/internal/modules/llm/credential/model"
 	credentialrepo "github.com/zgiai/zgi/api/internal/modules/llm/credential/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/upstreamstate"
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
@@ -37,6 +41,7 @@ type ChannelRouter struct {
 	strategyFactory         *StrategyFactory
 	channelProvider         platformchannel.ChannelProvider // Platform official channels
 	privateModels           llmmodelsvc.PrivateModelLookupService
+	upstreamState           *upstreamstate.Service
 }
 
 type channelModelSource string
@@ -58,17 +63,24 @@ type ProviderSelection struct {
 	UseSystemProvider bool
 
 	// Channel configuration from the selected route
-	RouteID         uuid.UUID
-	ChannelProvider string
-	APIKey          string // Decrypted API key
-	APIBaseURL      string
-	NativeProtocols channelmodel.NativeProtocolConfig
-	ModelMaps       map[string]interface{}
-	ParamOverride   map[string]interface{}
-	HeaderOverride  map[string]interface{}
-	Priority        int
-	Weight          int
-	AutoBan         bool
+	RouteID                     uuid.UUID
+	ChannelProvider             string
+	APIKey                      string // Decrypted API key
+	APIBaseURL                  string
+	NativeProtocols             channelmodel.NativeProtocolConfig
+	ModelMaps                   map[string]interface{}
+	ParamOverride               map[string]interface{}
+	HeaderOverride              map[string]interface{}
+	Priority                    int
+	Weight                      int
+	AutoBan                     bool
+	CredentialID                uuid.UUID
+	CredentialGeneration        int64
+	UpstreamWouldGuard          bool
+	UpstreamHalfOpen            bool
+	UpstreamProbe               bool
+	UpstreamProbeRequiresBackup bool
+	UpstreamProbeHasBackup      bool
 }
 
 // HasRoute returns true if this selection has a valid route
@@ -78,24 +90,30 @@ func (ps *ProviderSelection) HasRoute() bool {
 
 // ChannelSelection represents the selected channel configuration for API calls
 type ChannelSelection struct {
-	OrganizationID    uuid.UUID
-	RouteID           uuid.UUID
-	ModelName         string
-	ChannelProvider   string
-	APIBaseURL        string
-	NativeProtocols   channelmodel.NativeProtocolConfig
-	APIKey            string // Decrypted API key
-	ModelMaps         map[string]interface{}
-	ParamOverride     map[string]interface{}
-	HeaderOverride    map[string]interface{}
-	Model             *llmmodel.LLMModel
-	Priority          int
-	Weight            int
-	BillingLane       UsageBillingLane
-	UseSystemProvider bool
-	IsOfficial        bool // True for official aggregated routes
-	ModelSource       channelModelSource
-	ModelProviderID   uuid.UUID
+	OrganizationID              uuid.UUID
+	RouteID                     uuid.UUID
+	ModelName                   string
+	ChannelProvider             string
+	APIBaseURL                  string
+	NativeProtocols             channelmodel.NativeProtocolConfig
+	APIKey                      string // Decrypted API key
+	ModelMaps                   map[string]interface{}
+	ParamOverride               map[string]interface{}
+	HeaderOverride              map[string]interface{}
+	Model                       *llmmodel.LLMModel
+	Priority                    int
+	Weight                      int
+	BillingLane                 UsageBillingLane
+	UseSystemProvider           bool
+	IsOfficial                  bool // True for official aggregated routes
+	ModelSource                 channelModelSource
+	ModelProviderID             uuid.UUID
+	CredentialID                uuid.UUID
+	CredentialGeneration        int64
+	UpstreamWouldGuard          bool
+	UpstreamHalfOpen            bool
+	UpstreamProbe               bool
+	UpstreamProbeRequiresBackup bool
 }
 
 // NewChannelRouter creates a new channel router using V2 architecture
@@ -107,6 +125,7 @@ func NewChannelRouter(db *gorm.DB, cryptoService shared.CryptoService, privateMo
 		cryptoService:           cryptoService,
 		strategyFactory:         NewStrategyFactory(),
 		privateModels:           privateModels,
+		upstreamState:           upstreamstate.NewService(db, cryptoService),
 	}
 }
 
@@ -211,8 +230,7 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 		return nil, fmt.Errorf("no enabled routes found for organizationID %s. Please configure at least one active channel in your workspace", organizationID)
 	}
 
-	validRoutes := r.filterRoutesForSelection(routes, modelName, modelProvider, isPrivateCustomModel)
-	validRoutes, err = filterRoutesForNativeProtocolOrError(validRoutes, llmModel, modelCategory)
+	validRoutes, err := r.prepareCandidateRoutes(ctx, organizationID, routes, modelName, modelProvider, isPrivateCustomModel, llmModel, true, maxSelections > 1)
 	if err != nil {
 		return nil, err
 	}
@@ -220,15 +238,6 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 	logger.DebugContext(logCtx, "valid LLM routes filtered",
 		zap.Int("valid_route_count", len(validRoutes)),
 	)
-	if len(validRoutes) == 0 {
-		if isPassthroughMode {
-			// Custom model not found in any route - return domain error for proper error code
-			return nil, llmerrors.NewModelNotFoundErrorWithName(modelName)
-		}
-		// Standard model not found - return domain error for proper error code
-		return nil, llmerrors.NewModelNotFoundErrorWithName(modelName)
-	}
-
 	selectedRoutes := r.selectRoutesByPriorityAndWeight(validRoutes, maxSelections)
 
 	for i, route := range selectedRoutes {
@@ -509,9 +518,182 @@ func (r *ChannelRouter) filterRoutesForSelection(routes []*channelmodel.LLMRoute
 	return validRoutes
 }
 
+func (r *ChannelRouter) prepareCandidateRoutes(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	routes []*channelmodel.LLMRoute,
+	modelName, modelProvider string,
+	isPrivateCustomModel bool,
+	llmModel *llmmodel.LLMModel,
+	allowHalfOpen bool,
+	allowAutomaticHalfOpen bool,
+) ([]*channelmodel.LLMRoute, error) {
+	validRoutes := r.filterRoutesForSelection(routes, modelName, modelProvider, isPrivateCustomModel)
+	modelCategory, _ := ctx.Value(shared.ContextKeyModelCategory).(string)
+	validRoutes, err := filterRoutesForNativeProtocolOrError(validRoutes, llmModel, modelCategory)
+	if err != nil {
+		return nil, err
+	}
+	if len(validRoutes) == 0 {
+		return nil, llmerrors.NewModelNotFoundErrorWithName(modelName)
+	}
+
+	eligibleRoutes, guardedCount := r.filterRoutesByUpstreamGuard(ctx, organizationID, validRoutes, allowHalfOpen, allowAutomaticHalfOpen)
+	if len(eligibleRoutes) == 0 && guardedCount > 0 {
+		upstreamstate.RecordNoCandidateMetric(ctx, "private_only")
+		return nil, fmt.Errorf("%w", llmerrors.DomainErrPrivateChannelUpstreamUnavailable)
+	}
+	return eligibleRoutes, nil
+}
+
+func (r *ChannelRouter) filterRoutesByUpstreamGuard(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	routes []*channelmodel.LLMRoute,
+	allowHalfOpen bool,
+	allowAutomaticHalfOpen bool,
+) ([]*channelmodel.LLMRoute, int) {
+	if r.upstreamState == nil || len(routes) == 0 {
+		return routes, 0
+	}
+	credentialIDs := make([]uuid.UUID, 0, len(routes))
+	seen := make(map[uuid.UUID]struct{}, len(routes))
+	for _, route := range routes {
+		if route == nil || isOfficialRoute(route) || route.CredentialID == nil {
+			continue
+		}
+		if _, exists := seen[*route.CredentialID]; exists {
+			continue
+		}
+		seen[*route.CredentialID] = struct{}{}
+		credentialIDs = append(credentialIDs, *route.CredentialID)
+	}
+	states, err := r.upstreamState.GetMany(ctx, organizationID, credentialIDs)
+	if err != nil {
+		logger.WarnContext(ctx, "failed to load upstream credential guard state; allowing routes", err)
+		return routes, 0
+	}
+
+	cfg := appconfig.Current().LLM
+	mode := strings.ToLower(strings.TrimSpace(cfg.UpstreamGuardMode))
+	enforce := mode == "enforce" && organizationInUpstreamGuardRollout(organizationID, cfg.UpstreamGuardPercentage)
+	eligible := make([]*channelmodel.LLMRoute, 0, len(routes))
+	guardedCount := 0
+	for _, route := range routes {
+		if route == nil {
+			continue
+		}
+		route.UpstreamGeneration = 0
+		route.UpstreamWouldGuard = false
+		route.UpstreamHalfOpen = false
+		route.UpstreamProbe = false
+		route.UpstreamProbeRequiresBackup = false
+		if isOfficialRoute(route) || route.CredentialID == nil {
+			eligible = append(eligible, route)
+			continue
+		}
+		state := states[*route.CredentialID]
+		if state == nil {
+			eligible = append(eligible, route)
+			continue
+		}
+		// The state generation is read after routes are loaded. Reload the
+		// credential later so the key cannot come from an older generation.
+		route.TenantCredential = nil
+		route.UpstreamGeneration = state.Generation
+		if mode == "off" {
+			route.UpstreamWouldGuard = state.BlockReason != ""
+			eligible = append(eligible, route)
+			continue
+		}
+		decision := r.upstreamState.EvaluateGuardReadOnly(state, enforce)
+		if allowHalfOpen && decision.Block {
+			hasPotentialBackup := allowAutomaticHalfOpen && r.hasEligibleBackupRoute(routes, states, route, enforce)
+			probeEligible, requiresBackup := r.upstreamState.EvaluateProbeEligibility(state, enforce, hasPotentialBackup)
+			if probeEligible {
+				route.UpstreamProbe = true
+				route.UpstreamProbeRequiresBackup = requiresBackup
+				decision.Block = false
+			}
+		}
+		route.UpstreamWouldGuard = decision.WouldGuard
+		if decision.WouldGuard {
+			upstreamstate.RecordWouldGuardMetric(ctx, route.ChannelProvider, decision.Reason)
+		}
+		if decision.Block {
+			upstreamstate.RecordGuardMetric(ctx, route.ChannelProvider, decision.Reason)
+			guardedCount++
+			continue
+		}
+		eligible = append(eligible, route)
+	}
+	return eligible, guardedCount
+}
+
+func (r *ChannelRouter) hasEligibleBackupRoute(
+	routes []*channelmodel.LLMRoute,
+	states map[uuid.UUID]*upstreamstate.State,
+	current *channelmodel.LLMRoute,
+	enforce bool,
+) bool {
+	for _, candidate := range routes {
+		if candidate == nil || candidate == current {
+			continue
+		}
+		if isOfficialRoute(candidate) {
+			return true
+		}
+		if candidate.CredentialID == nil {
+			continue
+		}
+		if current != nil && current.CredentialID != nil && *candidate.CredentialID == *current.CredentialID {
+			continue
+		}
+		state := states[*candidate.CredentialID]
+		if state == nil || !r.upstreamState.EvaluateGuardReadOnly(state, enforce).Block {
+			return true
+		}
+	}
+	return false
+}
+
+func organizationInUpstreamGuardRollout(organizationID uuid.UUID, percentage int) bool {
+	if percentage <= 0 {
+		return false
+	}
+	if percentage >= 100 {
+		return true
+	}
+	sum := sha256.Sum256(organizationID[:])
+	bucket := int(binary.BigEndian.Uint16(sum[:2]) % 100)
+	return bucket < percentage
+}
+
 // selectRoutesByPriorityAndWeight selects routes based on priority and weight
 func (r *ChannelRouter) selectRoutesByPriorityAndWeight(routes []*channelmodel.LLMRoute, maxSelections int) []*channelmodel.LLMRoute {
-	if len(routes) == 0 {
+	if len(routes) == 0 || maxSelections <= 0 {
+		return nil
+	}
+
+	probeRoutes := make([]*channelmodel.LLMRoute, 0, len(routes))
+	regularRoutes := make([]*channelmodel.LLMRoute, 0, len(routes))
+	for _, route := range routes {
+		if route.UpstreamProbe {
+			probeRoutes = append(probeRoutes, route)
+			continue
+		}
+		regularRoutes = append(regularRoutes, route)
+	}
+	if len(probeRoutes) > 0 {
+		probe := r.selectRoutesByPriorityAndWeightWithoutProbe(probeRoutes, 1)
+		fallbacks := r.selectRoutesByPriorityAndWeightWithoutProbe(regularRoutes, maxSelections-1)
+		return append(probe, fallbacks...)
+	}
+	return r.selectRoutesByPriorityAndWeightWithoutProbe(regularRoutes, maxSelections)
+}
+
+func (r *ChannelRouter) selectRoutesByPriorityAndWeightWithoutProbe(routes []*channelmodel.LLMRoute, maxSelections int) []*channelmodel.LLMRoute {
+	if len(routes) == 0 || maxSelections <= 0 {
 		return nil
 	}
 
@@ -635,17 +817,25 @@ func (r *ChannelRouter) buildChannelSelection(
 	}
 	modelSource, modelProviderID := resolveChannelModelSource(privateModel, isPassthroughMode)
 	selection := &ChannelSelection{
-		OrganizationID:    route.OrganizationID,
-		RouteID:           route.ID,
-		Model:             llmModel,
-		ModelName:         targetModelName,
-		Priority:          route.Priority,
-		Weight:            route.Weight,
-		BillingLane:       billingLane,
-		UseSystemProvider: usageBillingLaneUsesSystemProvider(billingLane),
-		IsOfficial:        isOfficial,
-		ModelSource:       modelSource,
-		ModelProviderID:   modelProviderID,
+		OrganizationID:              route.OrganizationID,
+		RouteID:                     route.ID,
+		Model:                       llmModel,
+		ModelName:                   targetModelName,
+		Priority:                    route.Priority,
+		Weight:                      route.Weight,
+		BillingLane:                 billingLane,
+		UseSystemProvider:           usageBillingLaneUsesSystemProvider(billingLane),
+		IsOfficial:                  isOfficial,
+		ModelSource:                 modelSource,
+		ModelProviderID:             modelProviderID,
+		CredentialGeneration:        route.UpstreamGeneration,
+		UpstreamWouldGuard:          route.UpstreamWouldGuard,
+		UpstreamHalfOpen:            route.UpstreamHalfOpen,
+		UpstreamProbe:               route.UpstreamProbe,
+		UpstreamProbeRequiresBackup: route.UpstreamProbeRequiresBackup,
+	}
+	if route.CredentialID != nil {
+		selection.CredentialID = *route.CredentialID
 	}
 
 	selection.ChannelProvider = route.ChannelProvider
@@ -676,6 +866,9 @@ func (r *ChannelRouter) buildChannelSelection(
 		if err := r.populatePrivateRouteSelection(ctx, route, selection); err != nil {
 			return nil, err
 		}
+		if err := applyNativeProtocolBaseURL(selection, modelCategory); err != nil {
+			return nil, err
+		}
 	}
 
 	return selection, nil
@@ -703,7 +896,10 @@ func (r *ChannelRouter) populatePrivateRouteSelection(ctx context.Context, route
 		return nil
 	}
 
-	if selection.ChannelProvider == "" && cred.ChannelProvider != "" {
+	if selection.CredentialGeneration > 0 {
+		selection.ChannelProvider = cred.ChannelProvider
+		selection.APIBaseURL = cred.APIBaseURL
+	} else if selection.ChannelProvider == "" && cred.ChannelProvider != "" {
 		selection.ChannelProvider = cred.ChannelProvider
 	}
 
@@ -713,7 +909,7 @@ func (r *ChannelRouter) populatePrivateRouteSelection(ctx context.Context, route
 	}
 	selection.APIKey = apiKey
 
-	if selection.APIBaseURL == "" && cred.APIBaseURL != "" {
+	if selection.CredentialGeneration == 0 && selection.APIBaseURL == "" && cred.APIBaseURL != "" {
 		selection.APIBaseURL = cred.APIBaseURL
 	}
 
@@ -791,22 +987,28 @@ func (cs *ChannelSelection) ConvertToProviderSelectionWithCache(ctx context.Cont
 			return nil, err
 		}
 		return &ProviderSelection{
-			OrganizationID:    cs.OrganizationID,
-			Provider:          *customProvider,
-			Model:             modelForSelection(cs),
-			ModelSource:       pricingModelSourceFromChannelModelSource(cs.ModelSource),
-			BillingLane:       cs.BillingLane,
-			UseSystemProvider: cs.UseSystemProvider,
-			RouteID:           cs.RouteID,
-			ChannelProvider:   cs.ChannelProvider,
-			APIKey:            cs.APIKey,
-			APIBaseURL:        cs.APIBaseURL,
-			NativeProtocols:   cs.NativeProtocols,
-			ModelMaps:         cs.ModelMaps,
-			ParamOverride:     cs.ParamOverride,
-			HeaderOverride:    cs.HeaderOverride,
-			Priority:          cs.Priority,
-			Weight:            cs.Weight,
+			OrganizationID:              cs.OrganizationID,
+			Provider:                    *customProvider,
+			Model:                       modelForSelection(cs),
+			ModelSource:                 pricingModelSourceFromChannelModelSource(cs.ModelSource),
+			BillingLane:                 cs.BillingLane,
+			UseSystemProvider:           cs.UseSystemProvider,
+			RouteID:                     cs.RouteID,
+			ChannelProvider:             cs.ChannelProvider,
+			APIKey:                      cs.APIKey,
+			APIBaseURL:                  cs.APIBaseURL,
+			NativeProtocols:             cs.NativeProtocols,
+			ModelMaps:                   cs.ModelMaps,
+			ParamOverride:               cs.ParamOverride,
+			HeaderOverride:              cs.HeaderOverride,
+			Priority:                    cs.Priority,
+			Weight:                      cs.Weight,
+			CredentialID:                cs.CredentialID,
+			CredentialGeneration:        cs.CredentialGeneration,
+			UpstreamWouldGuard:          cs.UpstreamWouldGuard,
+			UpstreamHalfOpen:            cs.UpstreamHalfOpen,
+			UpstreamProbe:               cs.UpstreamProbe,
+			UpstreamProbeRequiresBackup: cs.UpstreamProbeRequiresBackup,
 		}, nil
 	}
 
@@ -851,22 +1053,28 @@ func (cs *ChannelSelection) ConvertToProviderSelectionWithCache(ctx context.Cont
 	}
 
 	return &ProviderSelection{
-		OrganizationID:    cs.OrganizationID,
-		Provider:          *provider,
-		Model:             modelForSelection(cs),
-		ModelSource:       pricingModelSourceFromChannelModelSource(cs.ModelSource),
-		BillingLane:       cs.BillingLane,
-		UseSystemProvider: cs.UseSystemProvider,
-		RouteID:           cs.RouteID,
-		ChannelProvider:   cs.ChannelProvider,
-		APIKey:            cs.APIKey,
-		APIBaseURL:        cs.APIBaseURL,
-		NativeProtocols:   cs.NativeProtocols,
-		ModelMaps:         cs.ModelMaps,
-		ParamOverride:     cs.ParamOverride,
-		HeaderOverride:    cs.HeaderOverride,
-		Priority:          cs.Priority,
-		Weight:            cs.Weight,
+		OrganizationID:              cs.OrganizationID,
+		Provider:                    *provider,
+		Model:                       modelForSelection(cs),
+		ModelSource:                 pricingModelSourceFromChannelModelSource(cs.ModelSource),
+		BillingLane:                 cs.BillingLane,
+		UseSystemProvider:           cs.UseSystemProvider,
+		RouteID:                     cs.RouteID,
+		ChannelProvider:             cs.ChannelProvider,
+		APIKey:                      cs.APIKey,
+		APIBaseURL:                  cs.APIBaseURL,
+		NativeProtocols:             cs.NativeProtocols,
+		ModelMaps:                   cs.ModelMaps,
+		ParamOverride:               cs.ParamOverride,
+		HeaderOverride:              cs.HeaderOverride,
+		Priority:                    cs.Priority,
+		Weight:                      cs.Weight,
+		CredentialID:                cs.CredentialID,
+		CredentialGeneration:        cs.CredentialGeneration,
+		UpstreamWouldGuard:          cs.UpstreamWouldGuard,
+		UpstreamHalfOpen:            cs.UpstreamHalfOpen,
+		UpstreamProbe:               cs.UpstreamProbe,
+		UpstreamProbeRequiresBackup: cs.UpstreamProbeRequiresBackup,
 	}, nil
 }
 

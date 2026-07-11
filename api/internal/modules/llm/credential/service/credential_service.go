@@ -13,6 +13,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/llm/credential/dto"
 	"github.com/zgiai/zgi/api/internal/modules/llm/credential/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/credential/repository"
+	"github.com/zgiai/zgi/api/internal/modules/llm/credential/upstreamstate"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"gorm.io/gorm"
 )
@@ -168,6 +169,25 @@ func (s *tenantCredentialService) Update(ctx context.Context, organizationID, id
 		}
 		credential.APIKeyCiphertext = ciphertext
 		credential.APIKeyHash = hashAPIKey(*req.APIKey)
+	}
+
+	connectionChanged := req.ChannelProvider != nil || req.APIBaseURL != nil || req.APIKey != nil
+	if s.db != nil {
+		err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := tx.Save(credential).Error; err != nil {
+				return fmt.Errorf("failed to update credential: %w", err)
+			}
+			if connectionChanged {
+				if err := upstreamstate.ResetForCredentialTx(tx, organizationID, id); err != nil {
+					return fmt.Errorf("failed to reset upstream state: %w", err)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		return credential, nil
 	}
 
 	if err := s.repo.Update(ctx, credential); err != nil {

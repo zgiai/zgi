@@ -227,6 +227,7 @@ var (
 	ErrWorkflowWorkspaceQuotaInsufficient        = ErrorCode{207012, "Workflow workspace quota is insufficient", true}
 	ErrWorkflowPrivateChannelBalanceInsufficient = ErrorCode{207013, "Workflow private channel balance is insufficient", true}
 	ErrWorkflowModelPricingNotConfigured         = ErrorCode{207014, "模型未配置价格，请先在模型管理或计费策略中配置价格。", true}
+	ErrWorkflowPrivateChannelUpstreamUnavailable = ErrorCode{207015, "Private channel upstream credential is unavailable", true}
 )
 
 var (

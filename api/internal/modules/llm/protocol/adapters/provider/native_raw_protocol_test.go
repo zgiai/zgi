@@ -116,8 +116,8 @@ func TestAliyunAdapterCreateResponseRaw_ParsesTopLevelError(t *testing.T) {
 	if !errors.Is(err, adapter.ErrInvalidRequest) {
 		t.Fatalf("error = %v, want ErrInvalidRequest", err)
 	}
-	if !strings.Contains(err.Error(), "tool_choice is not supported") {
-		t.Fatalf("error = %v, want upstream message", err)
+	if !strings.Contains(err.Error(), "provider rejected the request") {
+		t.Fatalf("error = %v, want sanitized provider message", err)
 	}
 }
 
