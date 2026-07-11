@@ -13,7 +13,13 @@ const (
 	modulePrefix = "llm.model_response"
 	entryTTL     = 30 * time.Second
 	opTimeout    = 10 * time.Millisecond
+	fillTimeout  = 5 * time.Second
 )
+
+// FillContext keeps a shared cache fill alive if its initiating request is canceled.
+func FillContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), fillTimeout)
+}
 
 func Generation(ctx context.Context, organizationID string) string {
 	client := redisutil.GetClient()

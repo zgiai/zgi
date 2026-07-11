@@ -96,22 +96,26 @@ func (s *defaultModelService) ListResolved(ctx context.Context, organizationID u
 	if llmcache.GetJSON(ctx, "default", organizationID.String(), generation, []string{globalGeneration}, &cached) {
 		return cached, nil
 	}
-	value, err, _ := s.resolvedCacheGroup.Do(organizationID.String(), func() (interface{}, error) {
-		generation := llmcache.Generation(ctx, organizationID.String())
-		globalGeneration := llmcache.GlobalGeneration(ctx)
+	value, err, _ := s.resolvedCacheGroup.Do(strings.Join([]string{organizationID.String(), generation, globalGeneration}, "\x00"), func() (interface{}, error) {
+		fillCtx, cancel := llmcache.FillContext(ctx)
+		defer cancel()
+
 		var cached []*ResolvedModel
-		if llmcache.GetJSON(ctx, "default", organizationID.String(), generation, []string{globalGeneration}, &cached) {
+		if llmcache.GetJSON(fillCtx, "default", organizationID.String(), generation, []string{globalGeneration}, &cached) {
 			return cached, nil
 		}
 
-		results, err := s.listResolvedUncached(ctx, organizationID)
+		results, err := s.listResolvedUncached(fillCtx, organizationID)
 		if err != nil {
 			return nil, err
 		}
-		llmcache.SetJSON(ctx, "default", organizationID.String(), generation, []string{globalGeneration}, results)
+		llmcache.SetJSON(fillCtx, "default", organizationID.String(), generation, []string{globalGeneration}, results)
 		return results, nil
 	})
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	return value.([]*ResolvedModel), nil
@@ -174,7 +178,7 @@ func (s *defaultModelService) Upsert(ctx context.Context, organizationID uuid.UU
 	if err := s.repo.Upsert(ctx, item); err != nil {
 		return nil, err
 	}
-	llmcache.Invalidate(ctx, organizationID.String())
+	llmcache.Invalidate(context.Background(), organizationID.String())
 	return item, nil
 }
 
@@ -185,7 +189,7 @@ func (s *defaultModelService) Delete(ctx context.Context, organizationID uuid.UU
 	if err := s.repo.DeleteByOrganizationAndUseCase(ctx, organizationID, string(useCase)); err != nil {
 		return err
 	}
-	llmcache.Invalidate(ctx, organizationID.String())
+	llmcache.Invalidate(context.Background(), organizationID.String())
 	return nil
 }
 

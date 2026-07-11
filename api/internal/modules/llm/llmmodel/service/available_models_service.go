@@ -94,6 +94,8 @@ type availableModelsService struct {
 	availableResponseCache   map[availableModelsCacheKey]*availableModelsResponseCacheEntry
 	availableResponseCacheMu sync.RWMutex
 	availableResponseGroup   singleflight.Group
+	observedGenerations      map[uuid.UUID]string
+	observedGenerationsMu    sync.Mutex
 
 	// Cache configuration
 	tenantCacheTTL    time.Duration
@@ -122,8 +124,8 @@ type availableModelsResponseCacheEntry struct {
 	updatedAt time.Time
 }
 
-func availableModelsResponseSingleflightKey(key availableModelsCacheKey) string {
-	return strings.Join([]string{key.organizationID.String(), key.provider, key.useCase}, "\x00")
+func availableModelsResponseSingleflightKey(key availableModelsCacheKey, generation string, globalGeneration string) string {
+	return strings.Join([]string{key.organizationID.String(), generation, globalGeneration, key.provider, key.useCase}, "\x00")
 }
 
 type availableModelsSuccessResponse struct {
@@ -175,6 +177,7 @@ func NewAvailableModelsServiceWithProviderRepos(
 		tenantCache:            make(map[uuid.UUID]*tenantCacheEntry),
 		availableCache:         make(map[availableModelsCacheKey]*availableModelsCacheEntry),
 		availableResponseCache: make(map[availableModelsCacheKey]*availableModelsResponseCacheEntry),
+		observedGenerations:    make(map[uuid.UUID]string),
 		tenantCacheTTL:         2 * time.Minute,  // Tenant configs may change more often
 		availableCacheTTL:      30 * time.Second, // Full response cache absorbs hot polling with short staleness.
 	}
@@ -193,11 +196,12 @@ func (s *availableModelsService) ListAvailableJSON(ctx context.Context, organiza
 		provider:       provider,
 		useCase:        useCase,
 	}
+	generation := llmcache.Generation(ctx, organizationID.String())
+	globalGeneration := llmcache.GlobalGeneration(ctx)
+	s.observeGeneration(organizationID, generation, globalGeneration)
 	if cached, ok := s.getAvailableResponseCache(cacheKey); ok {
 		return cached, nil
 	}
-	generation := llmcache.Generation(ctx, organizationID.String())
-	globalGeneration := llmcache.GlobalGeneration(ctx)
 	var sharedResponse []byte
 	if llmcache.GetJSON(ctx, "available", organizationID.String(), generation, []string{globalGeneration, provider, useCase}, &sharedResponse) {
 		s.availableResponseCacheMu.Lock()
@@ -206,22 +210,23 @@ func (s *availableModelsService) ListAvailableJSON(ctx context.Context, organiza
 		return sharedResponse, nil
 	}
 
-	value, err, _ := s.availableResponseGroup.Do(availableModelsResponseSingleflightKey(cacheKey), func() (interface{}, error) {
+	value, err, _ := s.availableResponseGroup.Do(availableModelsResponseSingleflightKey(cacheKey, generation, globalGeneration), func() (interface{}, error) {
+		fillCtx, cancel := llmcache.FillContext(ctx)
+		defer cancel()
+
+		s.observeGeneration(organizationID, generation, globalGeneration)
 		if cached, ok := s.getAvailableResponseCache(cacheKey); ok {
 			return cached, nil
 		}
-
-		generation := llmcache.Generation(ctx, organizationID.String())
-		globalGeneration := llmcache.GlobalGeneration(ctx)
 		var sharedResponse []byte
-		if llmcache.GetJSON(ctx, "available", organizationID.String(), generation, []string{globalGeneration, provider, useCase}, &sharedResponse) {
+		if llmcache.GetJSON(fillCtx, "available", organizationID.String(), generation, []string{globalGeneration, provider, useCase}, &sharedResponse) {
 			s.availableResponseCacheMu.Lock()
 			s.availableResponseCache[cacheKey] = &availableModelsResponseCacheEntry{response: cloneBytes(sharedResponse), updatedAt: time.Now()}
 			s.availableResponseCacheMu.Unlock()
 			return sharedResponse, nil
 		}
 
-		models, sourceUpdatedAt, err := s.getAvailableModelsForCache(ctx, cacheKey, organizationID, provider, useCase)
+		models, sourceUpdatedAt, err := s.getAvailableModelsForCache(fillCtx, cacheKey, organizationID, provider, useCase)
 		if err != nil {
 			return nil, err
 		}
@@ -239,10 +244,13 @@ func (s *availableModelsService) ListAvailableJSON(ctx context.Context, organiza
 		}
 
 		s.setAvailableResponseCache(cacheKey, body, sourceUpdatedAt)
-		llmcache.SetJSON(ctx, "available", organizationID.String(), generation, []string{globalGeneration, provider, useCase}, body)
+		llmcache.SetJSON(fillCtx, "available", organizationID.String(), generation, []string{globalGeneration, provider, useCase}, body)
 		return cloneBytes(body), nil
 	})
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	return cloneBytes(value.([]byte)), nil
@@ -257,6 +265,9 @@ func (s *availableModelsService) ListAvailable(ctx context.Context, organization
 		provider:       provider,
 		useCase:        useCase,
 	}
+	generation := llmcache.Generation(ctx, organizationID.String())
+	globalGeneration := llmcache.GlobalGeneration(ctx)
+	s.observeGeneration(organizationID, generation, globalGeneration)
 	models, _, err := s.getAvailableModelsForCache(ctx, cacheKey, organizationID, provider, useCase)
 	if err != nil {
 		return nil, err
@@ -625,6 +636,28 @@ func (s *availableModelsService) InvalidateGlobalCache() {
 	s.availableResponseCache = make(map[availableModelsCacheKey]*availableModelsResponseCacheEntry)
 	s.availableResponseCacheMu.Unlock()
 	llmcache.InvalidateGlobal(context.Background())
+}
+
+// observeGeneration clears process-local source caches after another API process
+// invalidates the shared response generation. The first observation is only
+// recorded so an initial shared response fill can still reuse warm local data.
+func (s *availableModelsService) observeGeneration(organizationID uuid.UUID, generation string, globalGeneration string) {
+	current := strings.Join([]string{generation, globalGeneration}, "\x00")
+	s.observedGenerationsMu.Lock()
+	if s.observedGenerations == nil {
+		s.observedGenerations = make(map[uuid.UUID]string)
+	}
+	previous, observed := s.observedGenerations[organizationID]
+	s.observedGenerations[organizationID] = current
+	s.observedGenerationsMu.Unlock()
+	if !observed || previous == current {
+		return
+	}
+
+	s.tenantCacheMu.Lock()
+	delete(s.tenantCache, organizationID)
+	s.tenantCacheMu.Unlock()
+	s.invalidateAvailableCacheForTenant(organizationID)
 }
 
 func (s *availableModelsService) invalidateAvailableCacheForTenant(organizationID uuid.UUID) {
