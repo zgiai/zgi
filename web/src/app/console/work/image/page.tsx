@@ -5,6 +5,7 @@ import { SysImage } from '@/components/chat/variants/img/sys-image';
 import { SingleChatController } from '@/components/chat/controllers/single-chat-controller';
 import { useBuiltInWorkflows } from '@/hooks/workflow/use-built-in-workflows';
 import { useWebappConversationTransport } from '@/hooks/webapp/use-webapp-transport';
+import { useAvailableModels } from '@/hooks/model/use-model';
 import { useInitializeDefaultModelByUseCase } from '@/hooks/model/use-default-model-by-use-case';
 import { useCurrentUser } from '@/store/auth-store';
 import { getLastSelectedAiModel, saveLastSelectedAiModel } from '@/utils/ui-local';
@@ -83,6 +84,13 @@ function ImagePageContent() {
   const user = useCurrentUser();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const {
+    models: availableImageModels,
+    isLoading: isLoadingAvailableImageModels,
+    error: availableImageModelsError,
+  } = useAvailableModels({
+    use_case: 'image-gen',
+  });
 
   // Model config state - initialize from saved preference
   const [modelSelectorValue, setModelSelectorValue] = React.useState<ModelSelectorParameterValue>(
@@ -126,6 +134,40 @@ function ImagePageContent() {
     },
     [user?.id]
   );
+
+  React.useEffect(() => {
+    if (isLoadingAvailableImageModels || availableImageModelsError || !modelSelectorValue.model) {
+      return;
+    }
+
+    const currentModelStillAvailable = availableImageModels.some(
+      item => item.provider === modelSelectorValue.provider && item.model === modelSelectorValue.model
+    );
+    if (currentModelStillAvailable) return;
+
+    const fallback = availableImageModels[0];
+    if (!fallback) return;
+
+    setModelSelectorValue(prev => ({
+      ...prev,
+      provider: fallback.provider,
+      model: fallback.model,
+    }));
+
+    if (user?.id) {
+      saveLastSelectedAiModel(user.id, 'imageGenChat', {
+        provider: fallback.provider,
+        model: fallback.model,
+      });
+    }
+  }, [
+    availableImageModels,
+    availableImageModelsError,
+    isLoadingAvailableImageModels,
+    modelSelectorValue.model,
+    modelSelectorValue.provider,
+    user?.id,
+  ]);
 
   const { transport, precheckWarnings } = useWebappConversationTransport(webAppId ?? '', {
     enablePrecheck: true,

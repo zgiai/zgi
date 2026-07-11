@@ -122,7 +122,7 @@ func (s *agentsService) GetRunnableWebApps(ctx context.Context, accountID string
 				IconType:  iconType,
 				IconUrl:   iconUrl,
 				Desc:      item.AgentDesc,
-				AgentType: item.AgentType,
+				AgentType: normalizeAgentTypeForResponse(item.AgentType),
 			},
 		})
 	}

@@ -67,6 +67,14 @@ export function getAgentDetailApiHref(agentId: string, agentType: AgentDetailTyp
   return `${getAgentDetailBaseHref(agentId, agentType)}/api`;
 }
 
+export function getAgentDetailApiKeysHref(agentId: string, agentType: AgentDetailType): string {
+  return `${getAgentDetailApiHref(agentId, agentType)}/keys`;
+}
+
+export function getAgentDetailApiDocsHref(agentId: string, agentType: AgentDetailType): string {
+  return `${getAgentDetailApiHref(agentId, agentType)}/docs`;
+}
+
 export function getAgentDetailBatchTestHref(
   agentId: string,
   agentType: AgentDetailType,
@@ -78,6 +86,10 @@ export function getAgentDetailBatchTestHref(
 
 export function supportsWorkflowDetailPages(agentType: AgentDetailType): boolean {
   return isWorkflowRuntimeType(agentType);
+}
+
+export function supportsAgentApiKeyPages(agentType: AgentDetailType): boolean {
+  return isAgentRuntimeType(agentType) || isWorkflowRuntimeType(agentType);
 }
 
 export function supportsAgentRuntimeLogs(agentType: AgentDetailType): boolean {
@@ -99,7 +111,7 @@ export function canShowAgentApiKeys(
   permissions: AgentDetailRoutePermissions
 ): boolean {
   return (
-    supportsWorkflowDetailPages(agentType) &&
+    supportsAgentApiKeyPages(agentType) &&
     Boolean(permissions.canManageRuntimeAccess ?? permissions.canManage)
   );
 }
@@ -166,7 +178,7 @@ export function getAgentDetailRouteAccess(
     canShowEditor: canOpenEditor,
     canEditRuntime,
     supportsWorkflowPages,
-    canShowApiKeys: supportsWorkflowPages && canManageRuntimeAccess,
+    canShowApiKeys: supportsAgentApiKeyPages(agentType) && canManageRuntimeAccess,
     canShowRuntimeAccess: canShowAgentRuntimeAccess(agentType, permissions),
     canShowRuntimeLogs: supportsAgentRuntimeLogs(agentType) && canViewRuntimeLogs,
     canShowBatchTest: supportsWorkflowPages && canViewBatchTest,

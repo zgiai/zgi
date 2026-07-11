@@ -283,6 +283,9 @@ export function WorkspaceDialog({
                 maxLength={30}
                 errorText={nameError}
               />
+              <p className="text-right text-xs text-muted-foreground">
+                {workspaceName.length}/30
+              </p>
             </div>
 
             {/* Leader */}

@@ -1,0 +1,290 @@
+# Agent API
+
+使用该接口从外部系统调用当前 Agent 的最新发布版本。
+接口只支持流式响应，并使用绑定到该 Agent 的 Agent API Key 鉴权。
+
+<div>
+  ### Base URL
+
+<CodeGroup title="代码">
+
+```text
+{apibase}
+```
+
+</CodeGroup>
+
+### 鉴权
+
+请在服务端发送 Agent API Key。推荐使用 `Authorization: Bearer`，当同时传入 `Authorization` 和 `X-API-Key` 时，优先使用 `Authorization`。
+
+<CodeGroup title="Headers" targetCode={`Authorization: Bearer {api_key}\nX-API-Key: {api_key}`}>
+
+```text
+Authorization: Bearer {API_KEY}
+X-API-Key: {API_KEY}
+```
+
+</CodeGroup>
+
+请只在服务端保存和使用 API Key，不要暴露在浏览器代码或公开客户端中。
+
+</div>
+
+---
+
+<Heading
+  url="/api/v1/agents/chat"
+  method="POST"
+  title="发送聊天消息"
+  name="#Create-Agent-Chat-Message"
+/>
+
+<Row>
+  <Col>
+    在已发布 Agent runtime 中创建一条用户消息。
+
+    ### 请求体
+
+    <Properties>
+      <Property name='query' type='string' propKey='query'>
+        必填。本轮用户输入内容。
+      </Property>
+      <Property name='conversation_id' type='string' propKey='conversation_id'>
+        可选。传入已有 `conversation_id` 可以继续同一段对话。
+      </Property>
+      <Property name='parent_id' type='string' propKey='parent_id'>
+        可选。指定父消息 id，用于从某条消息分支继续。
+      </Property>
+      <Property name='file_ids' type='array[string]' propKey='file_ids'>
+        可选。随本次消息附加的已上传文件 id。
+      </Property>
+      <Property name='response_mode' type='string' propKey='response_mode'>
+        可选。默认值为 `streaming`。传入其他值会返回 `400`。
+      </Property>
+      <Property name='user' type='string' propKey='user'>
+        当 Agent Memory 已启用且至少存在一个启用的记忆槽时必填，用于隔离外部终端用户的长期记忆。其他情况下可选，也可用于追踪。
+      </Property>
+    </Properties>
+
+    `model`、`provider`、`parameters`、`use_memory` 不作为该接口的公开控制项。Agent 始终使用最新发布版本的配置。`parameters` 和 `use_memory` 只作为兼容字段被解析，不会作为外部覆盖项传入 runtime。
+
+    ### 流式格式
+
+    Agent 使用原生 SSE event 名。`data` 行里也会包含一层 JSON envelope，并带有同名 `event` 字段。
+
+    <CodeGroup title="SSE 格式">
+    ```text {{ title: 'SSE' }}
+    id: 1715750400000-0
+    event: message
+    data: {"event":"message","data":{"conversation_id":"...","message_id":"...","answer":"你好"}}
+    ```
+    </CodeGroup>
+
+    客户端可以按原生 `event:` 分发，也可以解析 JSON 里的 `event` 字段。展示最终回答时，按 `message_id` 拼接 `message.data.answer`。可恢复的 `message` 和进度事件会带 SSE `id`，请保存最新 id 用于重连。
+
+    ### 核心事件
+
+    - `message_start`：助手消息已创建。请保存 `conversation_id` 和 `message_id`，用于断线恢复和后续继续。
+    - `message`：回答片段。将 `data.answer` 追加到当前回答。
+    - `message_end`：当前助手消息的终态。`data.status` 可能为 `completed`、`stopped`、`error`、`waiting_approval`、`waiting_question`。
+    - `error`：流式或运行时错误。除非随后收到 `message_end`，否则按终态处理。
+
+    ### Agent 运行事件
+
+    Agent 在最终回答之前，可能额外输出运行进度事件：
+
+    - 文件解析事件：`file_parse_start`、`file_parse_end`、`file_parse_error`。
+    - Skill 和工具事件：`skill_load_start`、`skill_load_end`、`skill_reference_read`、`skill_call_start`、`skill_call_end`、`skill_call_error`、`skill_artifact_created`。
+    - Agent 进度事件：`agent_progress`、`agent_intermediate_answer`、`message_retract`，以及 `memory_create`、`memory_update` 等记忆变更事件。
+    - Agent 绑定工作流产生的事件：`workflow_started`、`node_started`、`node_finished`、`iteration_started`、`iteration_next`、`iteration_completed`、`loop_started`、`loop_next`、`loop_completed`、`workflow_paused`、`approval_requested`、`question_answer_requested`、`question_answer_submitted`、`workflow_finished`、`workflow_failed`。
+
+    Agent 流里的工作流事件属于进度事件，可用于展示执行轨迹或等待状态；可见的助手回答仍以 `message` / `message_end` 为准。工作流节点、循环和迭代字段的详细含义，请参考 Workflow API 文档。
+
+    ### 等待用户输入
+
+    如果 Agent 调用的工作流发生暂停，流中可能出现 `approval_requested`、`question_answer_requested` 或 `user_input_requested`，并且 `message_end.status` 可能是 `waiting_approval` 或 `waiting_question`。
+
+    - 问答暂停：优先渲染 `user_input_requested.data.questions`。用户回答后，通过下方 workflow continuation 接口提交。
+    - 审批暂停：使用 `approval_requested` 里的审批信息。通过下方 workflow continuation 接口提交 `approval_token`、`action` 和表单 `inputs`。
+    - 不要通过新的 `/agents/chat` 请求回答一个正在等待的 workflow pause。应继续同一个 `conversation_id` 和 `message_id`。
+
+    ### 错误
+
+    - `400`：请求体错误、id 非法、`response_mode` 不是 `streaming`，或启用 Agent Memory 时缺少 `user`
+    - `401`：API Key 缺失、错误、已停用、已过期或已撤销
+    - `404`：Agent 不存在，或没有发布版本
+    - `500`：服务内部错误
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="请求" tag="POST" label="/api/v1/agents/chat" targetCode={`curl --location --no-buffer '{apibase}/agents/chat' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n  "query": "你好，请用一句话回答。",\n  "user": "external-user-1"\n}'`}>
+
+    ```bash {{ title: 'cURL' }}
+    curl --location --no-buffer '{apibase}/agents/chat' \
+    --header 'Content-Type: application/json' \
+    --header 'Authorization: Bearer {api_key}' \
+    --data '{
+      "query": "你好，请用一句话回答。",
+      "user": "external-user-1"
+    }'
+    ```
+
+    </CodeGroup>
+
+    ### 响应示例
+
+    <CodeGroup title="响应">
+    ```text {{ title: 'SSE' }}
+    event: message_start
+    data: {"event":"message_start","data":{"conversation_id":"...","message_id":"...","model":"deepseek-chat"}}
+
+    id: 1715750400000-0
+    event: message
+    data: {"event":"message","data":{"conversation_id":"...","message_id":"...","answer":"你好"}}
+
+    event: message_end
+    data: {"event":"message_end","data":{"conversation_id":"...","message_id":"...","status":"completed","metadata":{"usage":{"total_tokens":123}}}}
+    ```
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}/events"
+  method="GET"
+  title="恢复 Agent 流"
+  name="#Recover-Agent-Stream"
+/>
+
+<Row>
+  <Col>
+    当客户端在 Agent 消息仍在运行时断开连接，可以使用该接口恢复流。
+
+    ### Query 参数
+
+    <Properties>
+      <Property name='message_id' type='string' propKey='message_id'>
+        必填。`message_start` 返回的助手 `message_id`。
+      </Property>
+      <Property name='after_id' type='string' propKey='after_id'>
+        可选。客户端最后收到的 SSE `id`。不传则从可恢复流的开头回放。
+      </Property>
+    </Properties>
+
+    事件存储是短期的。当前 Agent stream events 保存 24 小时。如果消息仍在运行，但事件存储不可用或已过期，服务端会发送 `error`，其中 `message` 为 `stream events expired`。
+
+    ### 恢复流程
+
+    - 保存 `conversation_id`、`message_id`，以及每个带有 `id:` 的 Agent 事件的最新 SSE `id`。
+    - 断线后使用同一个 API Key 调用该接口。
+    - 使用 `after_id` 续拉；如果客户端可能重试，请按 SSE `id` 去重。
+    - 如果某个事件没有 SSE `id`，请把它视为不可恢复的降级事件，不要用作 `after_id`。
+    - 收到 `message_end` 且状态为 `completed`、`stopped`、`error`、`failed`，或收到 `error` 后结束监听。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="恢复" tag="GET" label="/api/v1/agents/conversations/{conversation_id}/events" targetCode={`curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/events?message_id={message_id}&after_id={last_event_id}' \\\n--header 'Authorization: Bearer {api_key}'`}>
+
+    ```bash {{ title: 'cURL' }}
+    curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/events?message_id={message_id}&after_id={last_event_id}' \
+    --header 'Authorization: Bearer {api_key}'
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+---
+
+<Heading
+  url="/api/v1/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation"
+  method="POST"
+  title="继续暂停的 Agent 工作流"
+  name="#Continue-Agent-Workflow"
+/>
+
+<Row>
+  <Col>
+    当 Agent 消息等待工作流审批或问答节点时，使用该接口继续同一条消息。
+
+    ### 问答请求体
+
+    <Properties>
+      <Property name='type' type='string' propKey='type'>
+        必填。固定为 `question_answer`。
+      </Property>
+      <Property name='inputs' type='object' propKey='inputs'>
+        必填。包含 `query`；如果用户从 `user_input_requested` 的选项中选择了答案，同时传入 `question_answer_option_id`。
+      </Property>
+    </Properties>
+
+    ### 审批请求体
+
+    <Properties>
+      <Property name='type' type='string' propKey='type'>
+        必填。固定为 `approval`。
+      </Property>
+      <Property name='approval_token' type='string' propKey='approval_token'>
+        必填。来自 `approval_requested`。
+      </Property>
+      <Property name='action' type='string' propKey='action'>
+        必填。审批动作 id。
+      </Property>
+      <Property name='inputs' type='object' propKey='inputs'>
+        可选。审批表单值。
+      </Property>
+    </Properties>
+
+    响应仍然是同一个 `message_id` 的 Agent SSE 流。它可能继续输出工作流事件、再次进入等待状态，也可能输出最终回答并以 `message_end.status: "completed"` 结束。
+
+  </Col>
+
+  <Col sticky>
+    <CodeGroup title="提交问答" tag="POST" label="/api/v1/agents/.../workflow-continuation" targetCode={`curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n  "type": "question_answer",\n  "inputs": {\n    "query": "继续",\n    "question_answer_option_id": "continue"\n  }\n}'`}>
+
+    ```bash {{ title: 'cURL - 提交问答' }}
+    curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \
+    --header 'Content-Type: application/json' \
+    --header 'Authorization: Bearer {api_key}' \
+    --data '{
+      "type": "question_answer",
+      "inputs": {
+        "query": "继续",
+        "question_answer_option_id": "continue"
+      }
+    }'
+    ```
+
+    </CodeGroup>
+
+    <CodeGroup title="提交审批" tag="POST" label="/api/v1/agents/.../workflow-continuation" targetCode={`curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \\\n--header 'Content-Type: application/json' \\\n--header 'Authorization: Bearer {api_key}' \\\n--data '{\n  "type": "approval",\n  "approval_token": "{approval_token}",\n  "action": "approve",\n  "inputs": {}\n}'`}>
+
+    ```bash {{ title: 'cURL - 提交审批' }}
+    curl --location --no-buffer '{apibase}/agents/conversations/{conversation_id}/messages/{message_id}/workflow-continuation' \
+    --header 'Content-Type: application/json' \
+    --header 'Authorization: Bearer {api_key}' \
+    --data '{
+      "type": "approval",
+      "approval_token": "{approval_token}",
+      "action": "approve",
+      "inputs": {}
+    }'
+    ```
+
+    </CodeGroup>
+
+  </Col>
+</Row>
+
+## 注意事项
+
+- 该接口始终运行 Agent 的最新发布版本，不能调用草稿配置。
+- API Key 只能访问它绑定的 Agent。
+- 多轮上下文使用 `conversation_id`，流恢复和 workflow continuation 使用 `message_id`，排查工作流节点事件使用 `workflow_run_id`。

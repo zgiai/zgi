@@ -50,7 +50,9 @@ const messages: AgentsMessages = {
   conversationsDescription: '管理对话和聊天记录',
   settingsTitle: '设置',
   settingsDescription: '配置智能体设置和参数',
+  apiGroupTitle: 'API',
   apiTitle: 'API文档',
+  apiDocsNavTitle: 'API 文档',
   apiDescription: '外部API配置和管理',
 
   // Agent management
@@ -604,6 +606,16 @@ const messages: AgentsMessages = {
       cancel: '取消',
     },
     fixErrorsBeforePublishing: '请先修正智能体流程错误再发布',
+    promptPublishRisk: {
+      title: '发布前确认提示词风险',
+      description: '当前有 {count} 个节点仍跟随提示词库“最新版本”。',
+      impact:
+        '发布后，这些节点会在后续提示词新版本创建时自动切换到新内容。生产流程建议跟随“线上稳定版”，把新版本先验证后再上线。',
+      unknownNode: '未命名节点',
+      more: '还有 {count} 个节点未展开。',
+      viewIssues: '查看问题',
+      confirm: '仍然发布',
+    },
     workflowSavedSuccessfully: '智能体已成功保存',
     workflowDraftSaveFailed: '保存智能体草稿失败',
     leaveGuard: {
@@ -790,8 +802,12 @@ const messages: AgentsMessages = {
   form: {
     name: '名称',
     namePlaceholder: '请输入智能体名称',
+    workflowName: '工作流名称',
+    workflowNamePlaceholder: '请输入工作流名称',
     description: '描述',
     descriptionPlaceholder: '请输入智能体描述',
+    workflowDescription: '工作流描述',
+    workflowDescriptionPlaceholder: '请输入工作流描述',
     department: '部门',
     departmentPlaceholder: '请选择部门',
     permissions: '权限',
@@ -830,7 +846,8 @@ const messages: AgentsMessages = {
       actions: '操作',
     },
     active: '激活',
-    revoked: '禁用',
+    inactive: '停用',
+    revoked: '已撤销',
     noExpiry: '不过期',
     editTitle: '编辑 API Key',
     createTitle: '新建 API Key',
@@ -845,7 +862,7 @@ const messages: AgentsMessages = {
     creating: '创建中…',
     deleteConfirm: {
       title: '确认删除',
-      description: '该操作不可恢复，确定删除该 API Key 吗？',
+      description: '删除后该 API Key 将被永久禁用并从列表中隐藏，确定删除吗？',
     },
     validation: {
       missingName: '请填写名称',
@@ -860,7 +877,7 @@ const messages: AgentsMessages = {
       createFailed: '创建 API Key 失败',
       updateSuccess: 'API Key 更新成功',
       updateFailed: '更新 API Key 失败',
-      deleteSuccess: 'API Key 删除成功',
+      deleteSuccess: 'API Key 已删除',
       deleteFailed: '删除 API Key 失败',
     },
   },
@@ -1919,6 +1936,9 @@ const messages: AgentsMessages = {
       tooLong: '名称最多32个字符',
       invalidChars: '仅允许字母、数字、下划线、短横线和空格',
       onlySpaces: '名称必须包含至少一个非空字符',
+    },
+    workflowName: {
+      required: '工作流名称为必填项',
     },
     workspace: {
       required: '请选择所属工作空间',

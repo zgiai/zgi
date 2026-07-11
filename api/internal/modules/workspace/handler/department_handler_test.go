@@ -45,6 +45,33 @@ func TestGetDepartmentRejectsDepartmentFromAnotherOrganization(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, recorder.Code)
 }
 
+func TestGetMemberDepartmentReturnsEmptySuccessWhenMemberHasNoDepartment(t *testing.T) {
+	handler := &DepartmentHandler{
+		departmentService: fakeDepartmentService{
+			getMemberDepartmentFn: func(ctx context.Context, organizationID, accountID string) (*model.Department, error) {
+				return nil, workspace_service.ErrMemberNotInDept
+			},
+		},
+		enterpriseService: fakeOrganizationService{
+			isOrganizationAdminOrOwnerFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+				return organizationID == "org-1" && accountID == "account-1", nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodGet, "/organizations/org-1/departments/member/account-1")
+	c.Set("account_id", "account-1")
+	c.Params = gin.Params{
+		{Key: "organization_id", Value: "org-1"},
+		{Key: "account_id", Value: "account-1"},
+	}
+
+	handler.GetMemberDepartment(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.JSONEq(t, `{"code":"0","message":"success"}`, recorder.Body.String())
+}
+
 func TestDepartmentMembersRejectsInvisibleDepartmentForNormalMember(t *testing.T) {
 	handler := &DepartmentHandler{
 		departmentService: fakeDepartmentService{

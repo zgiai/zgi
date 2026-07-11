@@ -25,6 +25,10 @@ import {
 } from '@/components/ui/select';
 import { useLocale } from '@/hooks/use-locale';
 import { useCurrentWorkspace } from '@/store/workspace-store';
+import {
+  promptLocaleLabelKey,
+  promptTypeLabelKey,
+} from '@/components/prompts/prompt-display-labels';
 import type { CreatePromptRequest, PromptSummary, PromptType } from '@/services/types/prompt';
 
 interface PromptFormDialogProps {
@@ -160,11 +164,13 @@ export function PromptFormDialog({
         initial_version: {
           prompt_type: promptType,
           content: parsedContent,
-          labels: ['production'],
+          labels: [],
           commit_message: commitMessage.trim() || null,
         },
       });
       onOpenChange(false);
+    } catch {
+      // The caller is responsible for showing a localized error toast.
     } finally {
       setIsSubmitting(false);
     }
@@ -182,7 +188,11 @@ export function PromptFormDialog({
           </div>
           <div className="space-y-2">
             <Label>{t('fields.name')}</Label>
-            <Input value={name} onChange={e => setName(e.target.value)} placeholder={t('placeholders.name')} />
+            <Input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder={t('placeholders.name')}
+            />
           </div>
           <div className="space-y-2">
             <Label>{t('fields.content')}</Label>
@@ -192,12 +202,14 @@ export function PromptFormDialog({
                 setContent(e.target.value);
                 setContentError('');
               }}
-              placeholder={promptType === 'chat' ? t('placeholders.chatContent') : t('placeholders.textContent')}
+              placeholder={
+                promptType === 'chat'
+                  ? t('placeholders.chatContent')
+                  : t('placeholders.textContent')
+              }
               className="min-h-56 font-mono text-xs"
             />
-            {contentError ? (
-              <div className="text-sm text-destructive">{contentError}</div>
-            ) : null}
+            {contentError ? <div className="text-sm text-destructive">{contentError}</div> : null}
           </div>
           <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
             <div className="rounded-xl border">
@@ -208,15 +220,24 @@ export function PromptFormDialog({
                   className="w-full justify-between rounded-xl px-4 py-3 h-auto"
                 >
                   <span>{advancedOpen ? t('actions.lessOptions') : t('actions.moreOptions')}</span>
-                  {advancedOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  {advancedOpen ? (
+                    <ChevronUp className="h-4 w-4" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4" />
+                  )}
                 </Button>
               </CollapsibleTrigger>
               <CollapsibleContent className="border-t px-4 py-4 space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>{t('fields.source')}</Label>
-                    <Select value={source} onValueChange={value => setSource(value as 'personal' | 'workspace')}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                    <Select
+                      value={source}
+                      onValueChange={value => setSource(value as 'personal' | 'workspace')}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="personal">{t('sources.personal')}</SelectItem>
                         <SelectItem value="workspace">{t('sources.workspace')}</SelectItem>
@@ -226,11 +247,15 @@ export function PromptFormDialog({
                   <div className="space-y-2">
                     <Label>{t('fields.locale')}</Label>
                     <Select value={locale} onValueChange={setLocale}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="zh-Hans">zh-Hans</SelectItem>
-                        <SelectItem value="en-US">en-US</SelectItem>
-                        <SelectItem value="ja-JP">ja-JP</SelectItem>
+                        <SelectItem value="zh-Hans">
+                          {t(promptLocaleLabelKey('zh-Hans'))}
+                        </SelectItem>
+                        <SelectItem value="en-US">{t(promptLocaleLabelKey('en-US'))}</SelectItem>
+                        <SelectItem value="ja-JP">{t(promptLocaleLabelKey('ja-JP'))}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -246,24 +271,38 @@ export function PromptFormDialog({
                         }
                       }}
                     >
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="text">text</SelectItem>
-                        <SelectItem value="chat">chat</SelectItem>
+                        <SelectItem value="text">{t(promptTypeLabelKey('text'))}</SelectItem>
+                        <SelectItem value="chat">{t(promptTypeLabelKey('chat'))}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-2">
                     <Label>{t('fields.slug')}</Label>
-                    <Input value={slug} onChange={e => setSlug(e.target.value)} placeholder={t('placeholders.slug')} />
+                    <Input
+                      value={slug}
+                      onChange={e => setSlug(e.target.value)}
+                      placeholder={t('placeholders.slug')}
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label>{t('fields.category')}</Label>
-                    <Input value={category} onChange={e => setCategory(e.target.value)} placeholder={t('placeholders.category')} />
+                    <Input
+                      value={category}
+                      onChange={e => setCategory(e.target.value)}
+                      placeholder={t('placeholders.category')}
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label>{t('fields.tags')}</Label>
-                    <Input value={tags} onChange={e => setTags(e.target.value)} placeholder={t('placeholders.tags')} />
+                    <Input
+                      value={tags}
+                      onChange={e => setTags(e.target.value)}
+                      placeholder={t('placeholders.tags')}
+                    />
                   </div>
                 </div>
                 <div className="space-y-2">

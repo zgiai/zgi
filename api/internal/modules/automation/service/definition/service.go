@@ -21,6 +21,7 @@ type Service interface {
 	GetTask(ctx context.Context, scope automationdto.TaskScope, taskID string) (*automationmodel.AutomationTask, error)
 	ListTasks(ctx context.Context, filter automationdto.TaskFilter) ([]*automationmodel.AutomationTask, error)
 	CountTasks(ctx context.Context, filter automationdto.TaskFilter) (int64, error)
+	CountTasksByStatus(ctx context.Context, scope automationdto.TaskScope) (map[automationmodel.AutomationTaskStatus]int64, error)
 	RunTaskNow(ctx context.Context, scope automationdto.TaskScope, taskID string) (*automationmodel.AutomationTaskRun, error)
 	PauseTask(ctx context.Context, scope automationdto.TaskScope, taskID string, actorID string) error
 	ResumeTask(ctx context.Context, scope automationdto.TaskScope, taskID string, actorID string) error
@@ -137,6 +138,11 @@ func (s *service) ListTasks(ctx context.Context, filter automationdto.TaskFilter
 // CountTasks counts tasks within scope.
 func (s *service) CountTasks(ctx context.Context, filter automationdto.TaskFilter) (int64, error) {
 	return s.taskRepo.Count(ctx, s.db, filter)
+}
+
+// CountTasksByStatus counts tasks within scope in a single aggregate query.
+func (s *service) CountTasksByStatus(ctx context.Context, scope automationdto.TaskScope) (map[automationmodel.AutomationTaskStatus]int64, error) {
+	return s.taskRepo.CountByStatus(ctx, s.db, scope)
 }
 
 // DispatchDueTasks turns due task definitions into queued task runs.

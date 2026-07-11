@@ -46,10 +46,10 @@ func (r *apiKeyUsageLogRepository) GetByAPIKeyID(ctx context.Context, apiKeyID u
 
 	// Apply date filters
 	if startDate != nil {
-		query = query.Where("request_time >= ?", startDate)
+		query = query.Where("created_at >= ?", startDate)
 	}
 	if endDate != nil {
-		query = query.Where("request_time <= ?", endDate)
+		query = query.Where("created_at <= ?", endDate)
 	}
 
 	// Count total
@@ -59,7 +59,7 @@ func (r *apiKeyUsageLogRepository) GetByAPIKeyID(ctx context.Context, apiKeyID u
 
 	// Get paginated results
 	offset := (page - 1) * limit
-	if err := query.Order("request_time DESC").Offset(offset).Limit(limit).Find(&logs).Error; err != nil {
+	if err := query.Order("created_at DESC").Offset(offset).Limit(limit).Find(&logs).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to get API key usage logs: %w", err)
 	}
 
@@ -75,10 +75,10 @@ func (r *apiKeyUsageLogRepository) GetByAgentID(ctx context.Context, agentID uui
 
 	// Apply date filters
 	if startDate != nil {
-		query = query.Where("request_time >= ?", startDate)
+		query = query.Where("created_at >= ?", startDate)
 	}
 	if endDate != nil {
-		query = query.Where("request_time <= ?", endDate)
+		query = query.Where("created_at <= ?", endDate)
 	}
 
 	// Count total
@@ -88,7 +88,7 @@ func (r *apiKeyUsageLogRepository) GetByAgentID(ctx context.Context, agentID uui
 
 	// Get paginated results
 	offset := (page - 1) * limit
-	if err := query.Order("request_time DESC").Offset(offset).Limit(limit).Find(&logs).Error; err != nil {
+	if err := query.Order("created_at DESC").Offset(offset).Limit(limit).Find(&logs).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to get API key usage logs: %w", err)
 	}
 
@@ -117,10 +117,10 @@ func (r *apiKeyUsageLogRepository) GetTotalTokensUsed(ctx context.Context, apiKe
 
 	// Apply date filters
 	if startDate != nil {
-		query = query.Where("request_time >= ?", startDate)
+		query = query.Where("created_at >= ?", startDate)
 	}
 	if endDate != nil {
-		query = query.Where("request_time <= ?", endDate)
+		query = query.Where("created_at <= ?", endDate)
 	}
 
 	if err := query.Scan(&totalTokens).Error; err != nil {
@@ -133,29 +133,29 @@ func (r *apiKeyUsageLogRepository) GetTotalTokensUsed(ctx context.Context, apiKe
 // GetUsageStats retrieves usage statistics for an API key
 func (r *apiKeyUsageLogRepository) GetUsageStats(ctx context.Context, apiKeyID uuid.UUID, startDate, endDate *time.Time) (map[string]interface{}, error) {
 	var stats struct {
-		TotalRequests    int64   `gorm:"column:total_requests"`
-		SuccessfulReqs   int64   `gorm:"column:successful_requests"`
-		FailedReqs       int64   `gorm:"column:failed_requests"`
-		TotalTokens      int64   `gorm:"column:total_tokens"`
-		AvgResponseTime  float64 `gorm:"column:avg_response_time"`
+		TotalRequests   int64   `gorm:"column:total_requests"`
+		SuccessfulReqs  int64   `gorm:"column:successful_requests"`
+		FailedReqs      int64   `gorm:"column:failed_requests"`
+		TotalTokens     int64   `gorm:"column:total_tokens"`
+		AvgResponseTime float64 `gorm:"column:avg_response_time"`
 	}
 
 	query := r.db.WithContext(ctx).Model(&APIKeyUsageLog{}).
 		Where("api_key_id = ?", apiKeyID).
 		Select(`
 			COUNT(*) as total_requests,
-			COUNT(CASE WHEN status_code >= 200 AND status_code < 300 THEN 1 END) as successful_requests,
-			COUNT(CASE WHEN status_code >= 400 OR error_message IS NOT NULL THEN 1 END) as failed_requests,
+			COUNT(CASE WHEN response_status_code >= 200 AND response_status_code < 300 THEN 1 END) as successful_requests,
+			COUNT(CASE WHEN response_status_code >= 400 OR error_message IS NOT NULL THEN 1 END) as failed_requests,
 			COALESCE(SUM(tokens_used), 0) as total_tokens,
-			COALESCE(AVG(EXTRACT(EPOCH FROM (response_time - request_time)) * 1000), 0) as avg_response_time
+			COALESCE(AVG(response_time_ms), 0) as avg_response_time
 		`)
 
 	// Apply date filters
 	if startDate != nil {
-		query = query.Where("request_time >= ?", startDate)
+		query = query.Where("created_at >= ?", startDate)
 	}
 	if endDate != nil {
-		query = query.Where("request_time <= ?", endDate)
+		query = query.Where("created_at <= ?", endDate)
 	}
 
 	if err := query.Scan(&stats).Error; err != nil {
@@ -163,10 +163,10 @@ func (r *apiKeyUsageLogRepository) GetUsageStats(ctx context.Context, apiKeyID u
 	}
 
 	return map[string]interface{}{
-		"total_requests":      stats.TotalRequests,
-		"successful_requests": stats.SuccessfulReqs,
-		"failed_requests":     stats.FailedReqs,
-		"total_tokens":        stats.TotalTokens,
+		"total_requests":       stats.TotalRequests,
+		"successful_requests":  stats.SuccessfulReqs,
+		"failed_requests":      stats.FailedReqs,
+		"total_tokens":         stats.TotalTokens,
 		"avg_response_time_ms": stats.AvgResponseTime,
 	}, nil
 }

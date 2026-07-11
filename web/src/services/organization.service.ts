@@ -12,6 +12,8 @@ import type {
   UpdateRoleInfoRequest,
   ApplyRoleTemplateRequest,
   ApplyRoleTemplateResponse,
+  ReplaceAndDeleteRoleRequest,
+  ReplaceAndDeleteRoleResponse,
   DepartmentList,
   AllDepartmentMemberList,
   DirectAddMemberRequest,
@@ -20,6 +22,7 @@ import type {
   JoinRequestList,
   ResetCurrentOrgMemberPasswordRequest,
   ResetCurrentOrgMemberPasswordResponse,
+  Department,
   CreateDepartmentRequest,
   UpdateDepartmentRequest,
   CheckMemberNameResponse,
@@ -235,6 +238,19 @@ class OrganizationService extends BaseService {
     return response.data;
   }
 
+  async replaceAndDeleteRole(
+    organizationId: string,
+    roleId: string,
+    data: ReplaceAndDeleteRoleRequest
+  ) {
+    const response = await this.request<ApiResponseData<ReplaceAndDeleteRoleResponse>>(
+      'post',
+      `/organizations/${organizationId}/roles/${roleId}/replace-and-delete`,
+      data
+    );
+    return response.data;
+  }
+
   // Get role detail
   async getRoleDetail(organizationId: string, roleId: string) {
     const response = await this.request<ApiResponseData<Role>>(
@@ -321,6 +337,17 @@ class OrganizationService extends BaseService {
       { params }
     );
     return response.data;
+  }
+
+  // Get the department for a member in an organization
+  async getMemberDepartment(organizationId: string, accountId: string) {
+    const response = await this.request<ApiResponseData<Department | null>>(
+      'get',
+      `/organizations/${organizationId}/departments/member/${accountId}`,
+      undefined,
+      { skipErrorHandling: true }
+    );
+    return response.data ?? null;
   }
 
   // Direct add member

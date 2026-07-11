@@ -64,7 +64,6 @@ function ConsolePageContextRegistration() {
   useAIChatContextRegistration(items, { scopeId: 'console-page' });
   return null;
 }
-
 function ConsoleAccessDeniedState() {
   const t = useT();
 
@@ -84,7 +83,6 @@ function ConsoleCapabilityLoadingState() {
     </div>
   );
 }
-
 function DefaultConsoleShell({ children }: CustomerConsoleShellProps) {
   const pathname = usePathname();
   const routeAccess = getConsoleRouteAccess(pathname);

@@ -29,6 +29,7 @@ import (
 
 	apikeymodel "github.com/zgiai/zgi/api/internal/modules/llm/apikey/model"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
+	workspacecache "github.com/zgiai/zgi/api/internal/modules/workspace/cache"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	workspace_repo "github.com/zgiai/zgi/api/internal/modules/workspace/repository"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -39,6 +40,7 @@ import (
 var ErrCannotUpdateBuiltinRole = errors.New("cannot update built-in role")
 var ErrRoleNameExists = errors.New("role name already exists")
 var ErrWorkspaceRoleInUse = errors.New("workspace role is assigned to members")
+var ErrCannotDeleteLastWorkspaceRoleTemplate = errors.New("cannot delete the last workspace role template")
 var ErrMemberNameExists = errors.New("member name already exists")
 var ErrOrganizationNotFound = errors.New("organization not found")
 var ErrOrganizationNameExists = errors.New("organization name already exists")
@@ -1089,6 +1091,7 @@ func (s *organizationService) UpdateCustomWorkspaceRole(ctx context.Context, req
 	if err := db.WithContext(ctx).Save(&role).Error; err != nil {
 		return nil, fmt.Errorf("failed to update role: %w", err)
 	}
+	s.invalidateOrganizationContext(ctx, req.OrganizationID)
 
 	summary := workspaceRoleSummaryFromCustomRole(role)
 	return &shared_dto.OrganizationRoleDetailResponse{
@@ -1134,6 +1137,7 @@ func (s *organizationService) UpdateWorkspaceRolePermissions(ctx context.Context
 	if err := db.WithContext(ctx).Save(&role).Error; err != nil {
 		return fmt.Errorf("failed to update role permissions: %w", err)
 	}
+	s.invalidateOrganizationContext(ctx, req.OrganizationID)
 
 	return nil
 }
@@ -1279,6 +1283,69 @@ func (s *organizationService) ApplyWorkspaceRoleTemplate(ctx context.Context, re
 	return response, nil
 }
 
+func (s *organizationService) ReplaceAndDeleteCustomWorkspaceRole(ctx context.Context, req *shared_dto.ReplaceWorkspaceRoleTemplateRequest) (*shared_dto.ReplaceWorkspaceRoleTemplateResponse, error) {
+	if req == nil {
+		return nil, ErrInvalidWorkspaceRoleTemplate
+	}
+
+	organizationID := strings.TrimSpace(req.OrganizationID)
+	roleID := strings.TrimSpace(req.RoleID)
+	replacementRoleID := strings.TrimSpace(req.ReplacementRoleID)
+	operatorID := strings.TrimSpace(req.OperatorID)
+	if organizationID == "" || roleID == "" || replacementRoleID == "" || operatorID == "" {
+		return nil, ErrInvalidWorkspaceRoleTemplate
+	}
+	if roleID == replacementRoleID {
+		return nil, ErrInvalidWorkspaceRoleTemplate
+	}
+	if model.IsBuiltinRole(roleID) || model.IsBuiltinRole(replacementRoleID) {
+		return nil, ErrCannotApplyOwnerRoleTemplate
+	}
+
+	db := s.organizationRepo.GetDB()
+	tenantSubquery := db.WithContext(ctx).Table("workspaces").
+		Select("id").
+		Where("organization_id = ?", organizationID)
+
+	var targets []shared_dto.ApplyWorkspaceRoleTemplateTarget
+	if err := db.WithContext(ctx).Table("workspace_members").
+		Select("workspace_id, account_id").
+		Where("workspace_id IN (?) AND role_id = ?", tenantSubquery, roleID).
+		Find(&targets).Error; err != nil {
+		return nil, fmt.Errorf("failed to list workspace role template assignments: %w", err)
+	}
+
+	response := &shared_dto.ReplaceWorkspaceRoleTemplateResponse{
+		Results: []shared_dto.ApplyWorkspaceRoleTemplateResult{},
+	}
+
+	if len(targets) > 0 {
+		applyResponse, err := s.ApplyWorkspaceRoleTemplate(ctx, &shared_dto.ApplyWorkspaceRoleTemplateRequest{
+			OrganizationID: organizationID,
+			RoleID:         replacementRoleID,
+			OperatorID:     operatorID,
+			Members:        targets,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		response.ReplacedCount = applyResponse.AppliedCount
+		response.FailedCount = applyResponse.FailedCount
+		response.Results = applyResponse.Results
+		if applyResponse.FailedCount > 0 {
+			return response, nil
+		}
+	}
+
+	if err := s.DeleteCustomWorkspaceRole(ctx, organizationID, roleID, operatorID); err != nil {
+		return nil, err
+	}
+	response.Deleted = true
+
+	return response, nil
+}
+
 func (s *organizationService) UpdateMemberInfo(ctx context.Context, req *shared_dto.UpdateOrganizationMemberRequest) error {
 	if req.Role != nil {
 		return ErrOrganizationMemberRoleUpdateUnsupported
@@ -1351,10 +1418,21 @@ func (s *organizationService) DeleteCustomWorkspaceRole(ctx context.Context, org
 		return fmt.Errorf("%w: %d member assignments still reference this role", ErrWorkspaceRoleInUse, assignedCount)
 	}
 
+	var activeRoleCount int64
+	if err := db.WithContext(ctx).Model(&model.WorkspaceCustomRole{}).
+		Where("group_id = ? AND status = ?", organizationID, model.WorkspaceCustomRoleStatusActive).
+		Count(&activeRoleCount).Error; err != nil {
+		return fmt.Errorf("failed to count active workspace role templates: %w", err)
+	}
+	if activeRoleCount <= 1 {
+		return ErrCannotDeleteLastWorkspaceRoleTemplate
+	}
+
 	role.Status = model.WorkspaceCustomRoleStatusDeleted
 	if err := db.WithContext(ctx).Save(&role).Error; err != nil {
 		return fmt.Errorf("failed to delete role: %w", err)
 	}
+	s.invalidateOrganizationContext(ctx, organizationID)
 
 	return nil
 }
@@ -1555,6 +1633,11 @@ func (s *organizationService) GetWorkspaceMemberPermissions(ctx context.Context,
 		return nil, fmt.Errorf("invalid parameters")
 	}
 
+	cacheToken := workspacecache.NewWorkspaceMemberPermissionsToken(ctx, organizationID, workspaceID, accountID, targetAccountID)
+	if cached, ok := workspacecache.GetWorkspaceMemberPermissions(ctx, cacheToken); ok {
+		return cached, nil
+	}
+
 	_, err := s.organizationRepo.GetByID(ctx, organizationID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -1644,7 +1727,7 @@ func (s *organizationService) GetWorkspaceMemberPermissions(ctx context.Context,
 		join.PermissionSource,
 	)
 
-	return &shared_dto.WorkspaceMemberPermissionsResponse{
+	result := &shared_dto.WorkspaceMemberPermissionsResponse{
 		OrganizationID:           organizationID,
 		WorkspaceID:              workspaceID,
 		WorkspaceName:            workspace.Name,
@@ -1656,7 +1739,9 @@ func (s *organizationService) GetWorkspaceMemberPermissions(ctx context.Context,
 		Permissions:              rolePermissions,
 		PermissionSource:         join.PermissionSource,
 		PermissionTemplateRoleID: join.PermissionTemplateRoleID,
-	}, nil
+	}
+	workspacecache.SetWorkspaceMemberPermissions(ctx, cacheToken, result)
+	return result, nil
 }
 
 // CreateOrganization creates a new organization and adds the creator as admin
@@ -1711,6 +1796,7 @@ func (s *organizationService) CreateOrganization(ctx context.Context, req *share
 	}
 	committed = true
 	s.bootstrapOfficialRoute(ctx, organization.ID)
+	s.invalidateOrganizationContext(ctx, organization.ID, req.CreatedBy)
 
 	return organization, nil
 }
@@ -1789,6 +1875,7 @@ func (s *organizationService) UpdateOrganization(ctx context.Context, id, accoun
 		return nil, fmt.Errorf("failed to update organization: %w", err)
 	}
 
+	s.invalidateOrganizationContext(ctx, id, accountID)
 	return organization, nil
 }
 
@@ -1840,6 +1927,14 @@ func currentOrganizationResponse(organization *model.Organization, role model.Or
 	}
 }
 
+func (s *organizationService) invalidateOrganizationContext(ctx context.Context, organizationID string, accountIDs ...string) {
+	db := s.db
+	if s.organizationRepo != nil {
+		db = s.organizationRepo.GetDB()
+	}
+	workspacecache.InvalidateOrganizationWithWorkspaceMembers(ctx, db, organizationID, accountIDs...)
+}
+
 // DeleteOrganization performs a soft delete of an organization (archives it)
 func (s *organizationService) DeleteOrganization(ctx context.Context, id string, accountID string) error {
 	organization, err := s.organizationRepo.GetByID(ctx, id)
@@ -1857,6 +1952,7 @@ func (s *organizationService) DeleteOrganization(ctx context.Context, id string,
 		return fmt.Errorf("failed to delete organization: %w", err)
 	}
 
+	s.invalidateOrganizationContext(ctx, id, accountID)
 	return nil
 }
 
@@ -1916,6 +2012,7 @@ func (s *organizationService) AddWorkspace(ctx context.Context, req *shared_dto.
 		return fmt.Errorf("failed to add workspace to organization: %w", err)
 	}
 
+	s.invalidateOrganizationContext(ctx, req.OrganizationID)
 	return nil
 }
 
@@ -1968,6 +2065,7 @@ func (s *organizationService) UpdateWorkspaceJoinMeta(ctx context.Context, organ
 		return fmt.Errorf("failed to update workspace join: %w", err)
 	}
 
+	s.invalidateOrganizationContext(ctx, organizationID)
 	return nil
 }
 
@@ -1995,6 +2093,7 @@ func (s *organizationService) RemoveWorkspace(ctx context.Context, organizationI
 		return fmt.Errorf("failed to remove workspace from organization: %w", err)
 	}
 
+	s.invalidateOrganizationContext(ctx, organizationID)
 	return nil
 }
 
@@ -2031,6 +2130,7 @@ func (s *organizationService) AddMember(ctx context.Context, req *shared_dto.Add
 		return fmt.Errorf("failed to add member to organization: %w", err)
 	}
 
+	s.invalidateOrganizationContext(ctx, req.OrganizationID, req.AccountID)
 	return nil
 }
 
@@ -2065,7 +2165,7 @@ func (s *organizationService) RemoveMember(ctx context.Context, organizationID, 
 	db := s.organizationRepo.GetDB()
 
 	// Use transaction to ensure atomicity
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. Get all tenant IDs where the member belongs under this organization
 		var workspaceIDs []string
 		groupTenantsSubquery := tx.Table("workspaces").
@@ -2116,7 +2216,13 @@ func (s *organizationService) RemoveMember(ctx context.Context, organizationID, 
 		}
 
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	s.accountService.InvalidateAccountProfileCache(accountID)
+	s.invalidateOrganizationContext(ctx, organizationID, accountID)
+	return nil
 }
 
 // UpdateMemberRole updates the role of a member in an organization
@@ -2152,6 +2258,8 @@ func (s *organizationService) UpdateMemberRole(ctx context.Context, req *shared_
 		return fmt.Errorf("failed to update member role: %w", err)
 	}
 
+	s.accountService.InvalidateAccountProfileCache(req.AccountID)
+	s.invalidateOrganizationContext(ctx, req.OrganizationID, req.AccountID)
 	return nil
 }
 
@@ -2221,6 +2329,8 @@ func (s *organizationService) UpdateCurrentOrganizationMemberRole(ctx context.Co
 		return fmt.Errorf("failed to update organization member role: %w", err)
 	}
 
+	s.accountService.InvalidateAccountProfileCache(memberID)
+	s.invalidateOrganizationContext(ctx, organizationID, memberID)
 	return nil
 }
 
@@ -2259,12 +2369,14 @@ func (s *organizationService) UpdateMemberStatus(ctx context.Context, req *share
 		return fmt.Errorf("failed to update member status: %w", err)
 	}
 
+	s.accountService.InvalidateAccountProfileCache(req.AccountID)
+	s.invalidateOrganizationContext(ctx, req.OrganizationID, req.AccountID)
 	return nil
 }
 
 // TransferOwnership transfers the ownership of the organization.
 func (s *organizationService) TransferOwnership(ctx context.Context, organizationID, currentOwnerID, newOwnerID string) error {
-	return s.organizationRepo.GetDB().Transaction(func(tx *gorm.DB) error {
+	if err := s.organizationRepo.GetDB().Transaction(func(tx *gorm.DB) error {
 		repoTx := s.organizationRepo.WithTx(tx)
 
 		// 1. Verify organization exists.
@@ -2318,7 +2430,14 @@ func (s *organizationService) TransferOwnership(ctx context.Context, organizatio
 		}
 
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	s.accountService.InvalidateAccountProfileCache(currentOwnerID)
+	s.accountService.InvalidateAccountProfileCache(newOwnerID)
+	s.invalidateOrganizationContext(ctx, organizationID, currentOwnerID, newOwnerID)
+	return nil
 }
 
 // GetOrganizationMembers retrieves all members of an organization
@@ -2403,6 +2522,10 @@ func (s *organizationService) GetOrganizationWorkspacesWithDetails(ctx context.C
 	if accountID == "" {
 		return nil, fmt.Errorf("user not found")
 	}
+	cacheToken := workspacecache.NewOrganizationWorkspaceToken(ctx, organizationID, accountID)
+	if cached, ok := workspacecache.GetOrganizationWorkspaces(ctx, cacheToken, page, limit, status, keyword); ok {
+		return cached, nil
+	}
 
 	_, err := s.accountService.GetAccountByID(ctx, accountID)
 	if err != nil {
@@ -2441,13 +2564,15 @@ func (s *organizationService) GetOrganizationWorkspacesWithDetails(ctx context.C
 		return nil, err
 	}
 
-	return &shared_dto.OrganizationWorkspacePaginationResponse{
+	response := &shared_dto.OrganizationWorkspacePaginationResponse{
 		Data:    items,
 		Page:    page,
 		Limit:   limit,
 		Total:   total,
 		HasMore: hasMore,
-	}, nil
+	}
+	workspacecache.SetOrganizationWorkspaces(ctx, cacheToken, page, limit, status, keyword, response)
+	return response, nil
 }
 
 func (s *organizationService) GetOrganizationWorkspaceDetail(ctx context.Context, organizationID, workspaceID, accountID string) (*shared_dto.OrganizationWorkspaceResponse, error) {
@@ -2986,11 +3111,17 @@ func (s *organizationService) CreateOrganizationWithWorkspace(ctx context.Contex
 		})
 	}
 
+	s.invalidateOrganizationContext(ctx, organization.ID, req.CreatedBy)
 	return organization, nil
 }
 
 // ListUserOrganizations retrieves all organizations a user has access to
 func (s *organizationService) ListUserOrganizations(ctx context.Context, page, limit int, status string, accountID string) (*shared_dto.OrganizationPaginationResponse, error) {
+	cacheToken := workspacecache.NewAccountScopedToken(ctx, accountID)
+	if cached, ok := workspacecache.GetOrganizationList(ctx, cacheToken, page, limit, status); ok {
+		return cached, nil
+	}
+
 	var organizations []*model.Organization
 	var total int64
 
@@ -3012,13 +3143,15 @@ func (s *organizationService) ListUserOrganizations(ctx context.Context, page, l
 
 	hasMore := int64(page*limit) < total
 
-	return &shared_dto.OrganizationPaginationResponse{
+	response := &shared_dto.OrganizationPaginationResponse{
 		Data:    organizationsWithRole,
 		Page:    page,
 		Limit:   limit,
 		Total:   total,
 		HasMore: hasMore,
-	}, nil
+	}
+	workspacecache.SetOrganizationList(ctx, cacheToken, page, limit, status, response)
+	return response, nil
 }
 
 func (s *organizationService) GetOrganizationWorkspacesList(ctx context.Context, organizationID string) ([]*model.Workspace, error) {
@@ -3395,6 +3528,11 @@ func (s *organizationService) GetFirstJoinedOrganization(ctx context.Context, ac
 }
 
 func (s *organizationService) GetCurrentOrganization(ctx context.Context, accountID string) (*shared_dto.CurrentOrganizationResponse, error) {
+	cacheToken := workspacecache.NewAccountScopedToken(ctx, accountID)
+	if cached, ok := workspacecache.GetCurrentOrganization(ctx, cacheToken); ok {
+		return cached, nil
+	}
+
 	// Try to get current organization ID from account context
 	orgID, err := s.accountService.EnsureCurrentOrganizationID(ctx, accountID)
 
@@ -3410,7 +3548,10 @@ func (s *organizationService) GetCurrentOrganization(ctx context.Context, accoun
 			return nil, fmt.Errorf("failed to get account: %w", err)
 		}
 
-		organizationName := fmt.Sprintf("%s's organization %s", account.Name, uuid.New().String()[:8])
+		organizationName, err := s.uniqueOwnedOrganizationName(ctx, account.Name, account.InterfaceLanguage)
+		if err != nil {
+			return nil, fmt.Errorf("failed to prepare organization name: %w", err)
+		}
 		organization, err := s.CreateOrganizationWithWorkspace(ctx, &shared_dto.CreateOrganizationWithWorkspaceRequest{
 			Name:      organizationName,
 			CreatedBy: accountID,
@@ -3450,7 +3591,9 @@ func (s *organizationService) GetCurrentOrganization(ctx context.Context, accoun
 		}
 
 		// Return the newly created organization
-		return currentOrganizationResponse(organization, model.OrganizationRoleOwner), nil
+		response := currentOrganizationResponse(organization, model.OrganizationRoleOwner)
+		workspacecache.SetCurrentOrganization(ctx, cacheToken, response)
+		return response, nil
 	}
 
 	// Organization found, fetch details
@@ -3469,7 +3612,41 @@ func (s *organizationService) GetCurrentOrganization(ctx context.Context, accoun
 
 	response := currentOrganizationResponse(organization, groupRole)
 
+	workspacecache.SetCurrentOrganization(ctx, cacheToken, response)
 	return response, nil
+}
+
+const maxOwnedOrganizationNameAttempts = 100
+
+func ownedOrganizationName(accountName string, language *string) string {
+	name := strings.TrimSpace(accountName)
+	if name == "" {
+		name = "User"
+	}
+	if language != nil && strings.HasPrefix(strings.ToLower(strings.TrimSpace(*language)), "zh") {
+		return fmt.Sprintf("%s 的组织", name)
+	}
+	return fmt.Sprintf("%s's Organization", name)
+}
+
+func (s *organizationService) uniqueOwnedOrganizationName(ctx context.Context, accountName string, language *string) (string, error) {
+	baseName := ownedOrganizationName(accountName, language)
+	for attempt := 0; attempt < maxOwnedOrganizationNameAttempts; attempt++ {
+		candidate := baseName
+		if attempt > 0 {
+			candidate = fmt.Sprintf("%s-%s", baseName, uuid.New().String()[:5])
+		}
+
+		exists, err := s.organizationRepo.ExistsByName(ctx, candidate)
+		if err != nil {
+			return "", fmt.Errorf("check organization name exists: %w", err)
+		}
+		if !exists {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf("failed to generate unique organization name")
 }
 
 func (s *organizationService) GetCurrentOrganizationDetail(ctx context.Context, accountID string) (*shared_dto.CurrentOrganizationDetailResponse, error) {

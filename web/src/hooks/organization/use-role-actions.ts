@@ -14,6 +14,7 @@ import type {
   UpdateRolePermissionsRequest,
   UpdateRoleInfoRequest,
   ApplyRoleTemplateRequest,
+  ReplaceAndDeleteRoleRequest,
 } from '@/services/types/organization';
 
 /**
@@ -133,6 +134,51 @@ export function useRoleActions() {
     },
   });
 
+  const replaceAndDeleteRoleMutation = useMutation({
+    mutationFn: async ({
+      roleId,
+      data,
+    }: {
+      roleId: string;
+      data: ReplaceAndDeleteRoleRequest;
+    }) => {
+      if (!currentOrganization?.id) {
+        throw new Error('No organization selected');
+      }
+      return await organizationService.replaceAndDeleteRole(currentOrganization.id, roleId, data);
+    },
+    onSuccess: (response, variables) => {
+      invalidateOrganizationMemberGraph(queryClient, currentOrganization?.id);
+      queryClient.invalidateQueries({
+        queryKey: ORGANIZATION_KEYS.roles(currentOrganization?.id || ''),
+      });
+      queryClient.removeQueries({
+        queryKey: ORGANIZATION_KEYS.roleMembers(currentOrganization?.id || '', variables.roleId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: ['workspace'],
+      });
+
+      if (response.failed_count > 0) {
+        toast.warning(
+          t('organization.permissions.deleteConfirm.migrationPartial', {
+            applied: response.replaced_count,
+            failed: response.failed_count,
+          })
+        );
+        return;
+      }
+
+      toast.success(t('organization.permissions.config.deleteSuccess'));
+      queryClient.removeQueries({
+        queryKey: ORGANIZATION_KEYS.roleDetail(currentOrganization?.id || '', variables.roleId),
+      });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('organization.permissions.config.deleteError'));
+    },
+  });
+
   // Delete role mutation
   const deleteRoleMutation = useMutation({
     mutationFn: async (roleId: string) => {
@@ -161,11 +207,13 @@ export function useRoleActions() {
     updateRolePermissions: updateRolePermissionsMutation.mutateAsync,
     updateRoleInfo: updateRoleInfoMutation.mutateAsync,
     applyRoleTemplate: applyRoleTemplateMutation.mutateAsync,
+    replaceAndDeleteRole: replaceAndDeleteRoleMutation.mutateAsync,
     deleteRole: deleteRoleMutation.mutateAsync,
     isCreating: createRoleMutation.isPending,
     isUpdating: updateRolePermissionsMutation.isPending,
     isUpdatingInfo: updateRoleInfoMutation.isPending,
     isApplyingTemplate: applyRoleTemplateMutation.isPending,
+    isReplacingAndDeleting: replaceAndDeleteRoleMutation.isPending,
     isDeleting: deleteRoleMutation.isPending,
     isSaving: createRoleMutation.isPending || updateRolePermissionsMutation.isPending,
   };

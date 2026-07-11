@@ -1,6 +1,7 @@
 ﻿'use client';
 
 import React, { useCallback, useMemo, useEffect, useState, useRef } from 'react';
+import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -87,6 +88,7 @@ import {
 } from '@dnd-kit/sortable';
 import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { CSS } from '@dnd-kit/utilities';
+import { toast } from 'sonner';
 
 interface LLMManagerProps {
   id: string;
@@ -133,8 +135,6 @@ const PromptBlockRowComponent: React.FC<PromptBlockRowProps> = ({
   const [localRole, setLocalRole] = useState(role);
   const [localText, setLocalText] = useState(text);
   const t = useT();
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [pendingTemplate, setPendingTemplate] = useState<string | null>(null);
 
   const lastPushedTextRef = useRef(text);
 
@@ -218,10 +218,10 @@ const PromptBlockRowComponent: React.FC<PromptBlockRowProps> = ({
         effectiveRoleLocked
           ? ([localRole] as Array<LLMNodeData['prompt_template'][number]['role']>)
           : idx === 0
-          ? (['system', 'user', 'assistant'] as Array<
-              LLMNodeData['prompt_template'][number]['role']
-            >)
-          : (['user', 'assistant'] as Array<LLMNodeData['prompt_template'][number]['role']>)
+            ? (['system', 'user', 'assistant'] as Array<
+                LLMNodeData['prompt_template'][number]['role']
+              >)
+            : (['user', 'assistant'] as Array<LLMNodeData['prompt_template'][number]['role']>)
       }
       placeholder={t('nodes.llm.placeholders.promptTemplate')}
       actions={
@@ -236,9 +236,7 @@ const PromptBlockRowComponent: React.FC<PromptBlockRowProps> = ({
                   className="hover:bg-background"
                   aria-label={t('nodes.common.insertVariable')}
                   disabled={readOnly || totalOptions === 0}
-                  title={
-                    totalOptions === 0 ? t('nodes.valueInserter.empty.noUpstream') : undefined
-                  }
+                  title={totalOptions === 0 ? t('nodes.valueInserter.empty.noUpstream') : undefined}
                   onClick={() => editorRef.current?.openVariableSelector()}
                 >
                   <Braces className="h-4 w-4" />
@@ -278,24 +276,8 @@ const PromptBlockRowComponent: React.FC<PromptBlockRowProps> = ({
               <PromptTemplateSelector
                 disabled={readOnly}
                 onApply={(text: string) => {
-                  setPendingTemplate(text);
-                  setConfirmOpen(true);
-                }}
-              />
-              <ConfirmDialog
-                variant="default"
-                open={confirmOpen}
-                onOpenChange={setConfirmOpen}
-                title={t('nodes.llm.promptTemplates.confirm.title')}
-                description={t('nodes.llm.promptTemplates.confirm.description')}
-                confirmText={t('nodes.llm.promptTemplates.confirm.confirm')}
-                cancelText={t('common.cancel')}
-                onConfirm={() => {
-                  if (typeof pendingTemplate === 'string') {
-                    setLocalText(pendingTemplate);
-                    editorRef.current?.focus();
-                  }
-                  setPendingTemplate(null);
+                  setLocalText(text);
+                  editorRef.current?.focus();
                 }}
               />
             </>
@@ -313,9 +295,7 @@ const PromptBlockRowComponent: React.FC<PromptBlockRowProps> = ({
                     onClick={() => onRemove(idx)}
                     aria-label={t('nodes.common.remove')}
                     disabled={readOnly || isSystemPrompt}
-                    title={
-                      isSystemPrompt ? t('nodes.llm.tips.cannotRemoveFirstSystem') : undefined
-                    }
+                    title={isSystemPrompt ? t('nodes.llm.tips.cannotRemoveFirstSystem') : undefined}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -354,9 +334,7 @@ const PromptBlockRow = React.memo(PromptBlockRowComponent);
 PromptBlockRow.displayName = 'PromptBlockRow';
 
 type PromptBlock = LLMNodeData['prompt_template'][number];
-type PromptOptimizerTarget =
-  | { type: 'node' }
-  | { type: 'draft'; blockId: string };
+type PromptOptimizerTarget = { type: 'node' } | { type: 'draft'; blockId: string };
 interface PromptOrderRemoveTarget {
   type: 'group';
   groupId: string;
@@ -398,10 +376,10 @@ const getPromptGroupLabelKind = (item: Extract<PromptOrderViewItem, { type: 'gro
   isSingleUserContextItem(item)
     ? 'singleUserMessage'
     : item.groupKind === 'current_user'
-    ? 'currentUser'
-    : item.groupKind === 'custom_context'
-      ? 'customContext'
-      : 'legacyContext';
+      ? 'currentUser'
+      : item.groupKind === 'custom_context'
+        ? 'customContext'
+        : 'legacyContext';
 
 const findBlockInGroup = (
   item: Extract<PromptOrderViewItem, { type: 'group' }>,
@@ -564,7 +542,9 @@ const buildPromptOrderView = (
   return items;
 };
 
-const materializePromptLayout = (data: LLMNodeData): Pick<LLMNodeData, 'prompt_template' | 'prompt_layout'> => {
+const materializePromptLayout = (
+  data: LLMNodeData
+): Pick<LLMNodeData, 'prompt_template' | 'prompt_layout'> => {
   const blocks = (data.prompt_template || []).map(block => ({
     ...block,
     id: block.id || generateClientId('prompt'),
@@ -730,17 +710,17 @@ const SortablePromptOrderRow: React.FC<SortablePromptOrderRowProps> = ({
       }}
       className={cn(
         'w-full max-w-full overflow-hidden rounded-lg border bg-background shadow-sm',
-        variant === 'history'
-          ? 'border-sky-200 border-l-4 border-l-sky-500'
-          : '',
+        variant === 'history' ? 'border-sky-200 border-l-4 border-l-sky-500' : '',
         isDragging && 'relative z-50 opacity-80'
       )}
     >
-      <div className={cn(
-        'flex items-center gap-3 px-3 py-2',
-        children && 'border-b',
-        variant === 'history' && 'border-sky-100'
-      )}>
+      <div
+        className={cn(
+          'flex items-center gap-3 px-3 py-2',
+          children && 'border-b',
+          variant === 'history' && 'border-sky-100'
+        )}
+      >
         <Button
           type="button"
           variant="ghost"
@@ -778,11 +758,7 @@ const SortablePromptOrderRow: React.FC<SortablePromptOrderRowProps> = ({
           </Tooltip>
         ) : null}
       </div>
-      {children ? (
-        <div className={cn('px-3 py-2.5', contentClassName)}>
-          {children}
-        </div>
-      ) : null}
+      {children ? <div className={cn('px-3 py-2.5', contentClassName)}>{children}</div> : null}
     </div>
   );
 };
@@ -820,8 +796,6 @@ const DraftPromptEditorRow: React.FC<DraftPromptEditorRowProps> = ({
 }) => {
   const t = useT();
   const editorRef = useRef<PromptEditorHandle | null>(null);
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [pendingTemplate, setPendingTemplate] = useState<string | null>(null);
   const isSystemPrompt = block.role === 'system';
 
   return (
@@ -891,24 +865,8 @@ const DraftPromptEditorRow: React.FC<DraftPromptEditorRowProps> = ({
               <PromptTemplateSelector
                 disabled={readOnly}
                 onApply={(text: string) => {
-                  setPendingTemplate(text);
-                  setConfirmOpen(true);
-                }}
-              />
-              <ConfirmDialog
-                variant="default"
-                open={confirmOpen}
-                onOpenChange={setConfirmOpen}
-                title={t('nodes.llm.promptTemplates.confirm.title')}
-                description={t('nodes.llm.promptTemplates.confirm.description')}
-                confirmText={t('nodes.llm.promptTemplates.confirm.confirm')}
-                cancelText={t('common.cancel')}
-                onConfirm={() => {
-                  if (typeof pendingTemplate === 'string') {
-                    onChange({ text: pendingTemplate });
-                    editorRef.current?.focus();
-                  }
-                  setPendingTemplate(null);
+                  onChange({ text });
+                  editorRef.current?.focus();
                 }}
               />
             </>
@@ -935,13 +893,13 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
   const updateData = useNodeDataUpdate<LLMNodeData>(nodeId);
   const selfNodeData = useNodeData<LLMNodeData>(nodeId);
   const agentType = useWorkflowStore.use.agentType();
+  const isWorkflowDirty = useWorkflowStore.use.isDirty();
   const supportsPromptConversationContext = agentType === AgentType.CONVERSATIONAL_AGENT;
   const [promptPickerOpen, setPromptPickerOpen] = useState(false);
   const [savePromptOpen, setSavePromptOpen] = useState(false);
   const [optimizerOpen, setOptimizerOpen] = useState(false);
   const [optimizerTarget, setOptimizerTarget] = useState<PromptOptimizerTarget>({ type: 'node' });
   const [playgroundOpen, setPlaygroundOpen] = useState(false);
-  const [managedPreviewOpen, setManagedPreviewOpen] = useState(false);
   const [variableGuideOpen, setVariableGuideOpen] = useState(false);
   const [contextPreviewOpen, setContextPreviewOpen] = useState(false);
   const [orderDialogOpen, setOrderDialogOpen] = useState(false);
@@ -1114,6 +1072,13 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
           ...next[idx],
           ...patch,
         };
+        if (prev.prompt_source === 'managed') {
+          return {
+            prompt_template: next,
+            prompt_source: 'inline',
+            prompt_reference: undefined,
+          };
+        }
         return { prompt_template: next };
       });
     },
@@ -1138,9 +1103,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
   );
   const hasCurrentUserPrompt = useMemo(
     () =>
-      promptOrderViewItems.some(
-        item => item.type === 'group' && item.groupKind === 'current_user'
-      ),
+      promptOrderViewItems.some(item => item.type === 'group' && item.groupKind === 'current_user'),
     [promptOrderViewItems]
   );
   const currentUserPromptItem = useMemo(
@@ -1222,10 +1185,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
 
       return {
         ...materialized,
-        prompt_template: [
-          ...currentPromptTemplate,
-          ...newBlocks,
-        ],
+        prompt_template: [...currentPromptTemplate, ...newBlocks],
         prompt_layout: {
           version: 1,
           items: (() => {
@@ -1397,7 +1357,9 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
   const outputs = useNodeOutputVariables(nodeId);
 
   const handleApplyPromptLibraryVersion = useCallback(
-    ({ version }: PromptPickerSelection) => {
+    (selection: PromptPickerSelection) => {
+      const { version } = selection;
+
       if (version.prompt_type === 'text' && typeof version.content === 'string') {
         const textContent = version.content;
         updateData((prev: LLMNodeData) => {
@@ -1415,6 +1377,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
             prompt_reference: undefined,
           };
         });
+        toast.info(t('nodes.llm.promptSource.copyAppliedToast'));
         return;
       }
 
@@ -1436,9 +1399,10 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
             prompt_reference: undefined,
           };
         });
+        toast.info(t('nodes.llm.promptSource.copyAppliedToast'));
       }
     },
-    [updateData]
+    [t, updateData]
   );
 
   const promptDraftForSave = useMemo<Partial<CreatePromptRequest>>(() => {
@@ -1447,7 +1411,10 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
       role: block.role,
       content: block.text,
     }));
-    const promptType = selfNodeData?.prompt_template?.length && selfNodeData.prompt_template.length > 1 ? 'chat' : 'text';
+    const promptType =
+      selfNodeData?.prompt_template?.length && selfNodeData.prompt_template.length > 1
+        ? 'chat'
+        : 'text';
     return {
       workspace_id: currentWorkspace?.id ?? '',
       source: 'personal',
@@ -1466,7 +1433,9 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
       const draftBlock = draftPromptBlocks.find(block => block.id === optimizerTarget.blockId);
       return draftBlock?.text ?? '';
     }
-    const systemBlock = (selfNodeData?.prompt_template || []).find(block => block.role === 'system');
+    const systemBlock = (selfNodeData?.prompt_template || []).find(
+      block => block.role === 'system'
+    );
     return systemBlock?.text ?? '';
   }, [draftPromptBlocks, optimizerTarget, selfNodeData?.prompt_template]);
 
@@ -1550,9 +1519,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
       const label = promptOrderLabels[getPromptGroupLabelKind(item)];
       labels.set(`group:${item.groupId}`, {
         label,
-        description: item.blocks
-          .map(({ block }) => roleLabels[block.role])
-          .join(' + '),
+        description: item.blocks.map(({ block }) => roleLabels[block.role]).join(' + '),
       });
     });
     return labels;
@@ -1617,22 +1584,26 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
     [sortableDraftOrderItems]
   );
 
-  const handlePromptOrderDragEnd = useCallback((event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    markPromptOrderDirty();
-    setDraftOrderItems(items => {
-      const movableItems = items.filter(item => !promptLayoutItemIsCurrentUser(item, draftPromptBlocks));
-      const fixedItems = items.filter(item => promptLayoutItemIsCurrentUser(item, draftPromptBlocks));
-      const oldIndex = movableItems.findIndex(item => promptLayoutItemKey(item) === active.id);
-      const newIndex = movableItems.findIndex(item => promptLayoutItemKey(item) === over.id);
-      if (oldIndex < 0 || newIndex < 0) return items;
-      return [
-        ...arrayMove(movableItems, oldIndex, newIndex),
-        ...fixedItems,
-      ];
-    });
-  }, [draftPromptBlocks, markPromptOrderDirty]);
+  const handlePromptOrderDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      markPromptOrderDirty();
+      setDraftOrderItems(items => {
+        const movableItems = items.filter(
+          item => !promptLayoutItemIsCurrentUser(item, draftPromptBlocks)
+        );
+        const fixedItems = items.filter(item =>
+          promptLayoutItemIsCurrentUser(item, draftPromptBlocks)
+        );
+        const oldIndex = movableItems.findIndex(item => promptLayoutItemKey(item) === active.id);
+        const newIndex = movableItems.findIndex(item => promptLayoutItemKey(item) === over.id);
+        if (oldIndex < 0 || newIndex < 0) return items;
+        return [...arrayMove(movableItems, oldIndex, newIndex), ...fixedItems];
+      });
+    },
+    [draftPromptBlocks, markPromptOrderDirty]
+  );
 
   const updateDraftPromptBlock = useCallback(
     (blockID: string, patch: Partial<PromptBlock>) => {
@@ -1690,21 +1661,20 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
           )
       );
       if (currentUserIndex < 0) return [...items, nextItem];
-      return [
-        ...items.slice(0, currentUserIndex),
-        nextItem,
-        ...items.slice(currentUserIndex),
-      ];
+      return [...items.slice(0, currentUserIndex), nextItem, ...items.slice(currentUserIndex)];
     });
   }, [draftPromptBlocks, markPromptOrderDirty]);
 
-  const handleRemoveDraftGroup = useCallback((groupID: string) => {
-    markPromptOrderDirty();
-    setDraftPromptBlocks(blocks => blocks.filter(block => block.group_id !== groupID));
-    setDraftOrderItems(items =>
-      items.filter(item => item.type !== 'group' || item.group_id !== groupID)
-    );
-  }, [markPromptOrderDirty]);
+  const handleRemoveDraftGroup = useCallback(
+    (groupID: string) => {
+      markPromptOrderDirty();
+      setDraftPromptBlocks(blocks => blocks.filter(block => block.group_id !== groupID));
+      setDraftOrderItems(items =>
+        items.filter(item => item.type !== 'group' || item.group_id !== groupID)
+      );
+    },
+    [markPromptOrderDirty]
+  );
 
   const handleDraftConversationHistoryToggle = useCallback(
     (enabled: boolean) => {
@@ -1794,6 +1764,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
       if (!label) return '';
       const normalized = label.toLowerCase();
       if (normalized === 'production') return t('nodes.llm.promptSource.releaseLabels.production');
+      if (normalized === 'latest') return t('nodes.llm.promptSource.releaseLabels.latest');
       if (normalized === 'staging') return t('nodes.llm.promptSource.releaseLabels.staging');
       if (normalized === 'gray-a') return t('nodes.llm.promptSource.releaseLabels.grayA');
       if (normalized === 'gray-b') return t('nodes.llm.promptSource.releaseLabels.grayB');
@@ -1813,6 +1784,19 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
       version: `v${selfNodeData.prompt_reference.version ?? '-'}`,
     });
   }, [releaseLabelText, selfNodeData?.prompt_reference, t]);
+
+  const handleMigrateManagedPromptToInline = useCallback(() => {
+    if (readOnly) return;
+    updateData((prev: LLMNodeData) => {
+      const materialized = materializePromptLayout(prev);
+      return {
+        ...materialized,
+        prompt_source: 'inline',
+        prompt_reference: undefined,
+      };
+    });
+    toast.info(t('nodes.llm.promptSource.migratedToInlineToast'));
+  }, [readOnly, t, updateData]);
 
   const handleApplyOptimizedPrompt = useCallback(
     async ({
@@ -2078,53 +2062,37 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
         <div className="space-y-3">
           <h3 className="text-base font-semibold">{t('nodes.llm.section.prompt')}</h3>
           {isManagedPrompt && selfNodeData.prompt_reference ? (
-            <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 space-y-3">
-              <div className="space-y-1">
-                <div className="text-sm font-medium">
-                  {t('nodes.llm.promptSource.currentUsing', {
-                    name: selfNodeData.prompt_reference.prompt_name || t('prompts.title'),
-                  })}
+            <div className="rounded-lg border bg-muted/20 px-4 py-3 space-y-2">
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="text-sm font-medium">
+                    {t('nodes.llm.promptSource.loadedFromAsset', {
+                      name: selfNodeData.prompt_reference.prompt_name || t('prompts.title'),
+                    })}
+                  </div>
+                  <div className="text-xs text-muted-foreground">{managedReferenceSummary}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {t('nodes.llm.promptSource.legacyManagedDescription')}
+                  </div>
                 </div>
-                <div className="text-xs text-muted-foreground">{managedReferenceSummary}</div>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
                 <Button
+                  type="button"
                   variant="outline"
                   size="sm"
-                  onClick={openNodePromptOptimizer}
+                  className="shrink-0"
                   disabled={readOnly}
+                  onClick={handleMigrateManagedPromptToInline}
                 >
-                  <WandSparkles className="h-4 w-4" />
-                  {t('nodes.llm.actions.optimizeAsInlineCopy')}
+                  <Pencil className="h-4 w-4" />
+                  {t('nodes.llm.actions.useInlineCopy')}
                 </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm" isIcon disabled={readOnly} aria-label={t('nodes.llm.actions.more')}>
-                      <MoreHorizontal className="h-4 w-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => setPromptPickerOpen(true)}>
-                      {t('nodes.llm.actions.changePromptReference')}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() =>
-                        updateData({ prompt_source: 'inline', prompt_reference: undefined })
-                      }
-                    >
-                      {t('nodes.llm.actions.useInlineCopy')}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setPlaygroundOpen(true)}>
-                      {t('nodes.llm.actions.testCurrentPrompt')}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setManagedPreviewOpen(prev => !prev)}>
-                      {managedPreviewOpen
-                        ? t('nodes.llm.actions.hidePromptPreview')
-                        : t('nodes.llm.actions.showPromptPreview')}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
               </div>
+              {isWorkflowDirty ? (
+                <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200">
+                  <Info className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{t('nodes.llm.promptSource.unsavedWorkflowHint')}</span>
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="rounded-lg border bg-muted/20 px-4 py-3">
@@ -2141,59 +2109,45 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
               disabled={readOnly}
             >
               <WandSparkles className="h-4 w-4" />
-              {isManagedPrompt
-                ? t('nodes.llm.actions.optimizeAsInlineCopy')
-                : t('nodes.llm.actions.optimizePrompt')}
+              {t('nodes.llm.actions.optimizePrompt')}
             </Button>
-            {!isManagedPrompt && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" isIcon disabled={readOnly} aria-label={t('nodes.llm.actions.more')}>
-                    <MoreHorizontal className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => setPromptPickerOpen(true)}>
-                    {t('prompts.picker.title')}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  isIcon
+                  disabled={readOnly}
+                  aria-label={t('nodes.llm.actions.more')}
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {selfNodeData?.prompt_reference?.prompt_id ? (
+                  <DropdownMenuItem asChild>
+                    <Link href={`/console/prompts/${selfNodeData.prompt_reference.prompt_id}`}>
+                      {t('nodes.llm.actions.openPromptAsset')}
+                    </Link>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setSavePromptOpen(true)}>
-                    {t('nodes.llm.actions.saveAsPrompt')}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => setPlaygroundOpen(true)}
-                    disabled={!optimizerInitialPrompt.trim()}
-                  >
-                    {t('nodes.llm.actions.testCurrentPrompt')}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
+                ) : null}
+                <DropdownMenuItem onClick={() => setPromptPickerOpen(true)}>
+                  {t('nodes.llm.actions.selectFromPromptLibrary')}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setSavePromptOpen(true)}>
+                  {t('nodes.llm.actions.saveAsPrompt')}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setPlaygroundOpen(true)}
+                  disabled={!optimizerInitialPrompt.trim()}
+                >
+                  {t('nodes.llm.actions.testCurrentPrompt')}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
-        {isManagedPrompt ? (
-          <div className="space-y-2">
-            {managedPreviewOpen &&
-              (selfNodeData?.prompt_template || []).map((blk, idx) => (
-                <div
-                  key={blk.id || idx}
-                  className="rounded-xl border bg-background overflow-hidden shadow-sm"
-                >
-                  <div className="flex items-center justify-between border-b bg-muted/50 px-3 py-2">
-                    <Badge variant="secondary">
-                      {roleLabels[blk.role]}
-                    </Badge>
-                    <span className="text-xs text-muted-foreground">
-                      {t('nodes.llm.promptSource.managedPreview')}
-                    </span>
-                  </div>
-                  <div className="px-4 py-3 text-sm leading-6 whitespace-pre-wrap break-words">
-                    {blk.text || t('nodes.llm.promptSource.emptyContent')}
-                  </div>
-                </div>
-              ))}
-          </div>
-        ) : (
-          <>
+        <>
             <div className="rounded-lg border bg-muted/20 p-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="text-sm font-medium">{t('nodes.llm.variableGuide.title')}</div>
@@ -2237,11 +2191,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
                 </div>
               )}
             </div>
-            <WorkflowValueInserter
-              nodeId={nodeId}
-              onInsert={handleInsert}
-              disabled={readOnly}
-            />
+            <WorkflowValueInserter nodeId={nodeId} onInsert={handleInsert} disabled={readOnly} />
             {isChatMode ? (
               <div className="space-y-2">
                 {systemPromptBlocks.map(({ block: blk, index: idx }) => (
@@ -2332,21 +2282,21 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
                         className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
                         onClick={() => setContextPreviewOpen(prev => !prev)}
                       >
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium">
-                          {t('nodes.llm.promptOrder.contextPlaceholder')}
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium">
+                            {t('nodes.llm.promptOrder.contextPlaceholder')}
+                          </div>
+                          <div className="mt-0.5 text-xs text-muted-foreground">
+                            {t('nodes.llm.promptOrder.contextPlaceholderDescription', {
+                              count: nonHistoryContextPreviewCount,
+                            })}
+                          </div>
                         </div>
-                        <div className="mt-0.5 text-xs text-muted-foreground">
-                          {t('nodes.llm.promptOrder.contextPlaceholderDescription', {
-                            count: nonHistoryContextPreviewCount,
-                          })}
-                        </div>
-                      </div>
-                      {contextPreviewOpen ? (
-                        <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      ) : (
-                        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      )}
+                        {contextPreviewOpen ? (
+                          <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        )}
                       </button>
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -2383,9 +2333,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
                                 <span className="font-medium">
                                   {t('nodes.llm.promptOrder.userLine')}
                                 </span>
-                                {renderPromptPreviewText(
-                                  promptPreviewText(user?.block.text || '')
-                                )}
+                                {renderPromptPreviewText(promptPreviewText(user?.block.text || ''))}
                               </div>
                               {assistant ? (
                                 <div className="leading-6">
@@ -2462,17 +2410,17 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
             ) : (
               <div className="space-y-2">
                 {(selfNodeData?.prompt_template || []).map((blk, idx) => (
-                      <PromptBlockRow
-                        key={blk.id || idx}
-                        idx={idx}
-                        role={blk.role}
-                        text={blk.text}
-                        nodeId={nodeId}
-                        readOnly={readOnly}
-                        onUpdate={updatePromptTemplate}
-                        onRemove={removePromptBlock}
-                        onFocusedEditor={handleEditorFocused}
-                      />
+                  <PromptBlockRow
+                    key={blk.id || idx}
+                    idx={idx}
+                    role={blk.role}
+                    text={blk.text}
+                    nodeId={nodeId}
+                    readOnly={readOnly}
+                    onUpdate={updatePromptTemplate}
+                    onRemove={removePromptBlock}
+                    onFocusedEditor={handleEditorFocused}
+                  />
                 ))}
                 <Button
                   className="w-full"
@@ -2486,7 +2434,6 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
               </div>
             )}
           </>
-        )}
       </div>
       <Dialog open={orderDialogOpen} onOpenChange={handleOrderDialogOpenChange}>
         <DialogContent size="lg">
@@ -2569,9 +2516,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
                         className="h-7 w-16 bg-background text-center"
                         value={String(draftConversationHistoryWindow)}
                         onChange={e =>
-                          handleDraftConversationHistoryWindowChange(
-                            e.currentTarget.valueAsNumber
-                          )
+                          handleDraftConversationHistoryWindowChange(e.currentTarget.valueAsNumber)
                         }
                         disabled={readOnly}
                       />
@@ -2603,8 +2548,8 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
                   {sortableDraftOrderItems.map(item => {
                     const id = promptLayoutItemKey(item);
                     const labelInfo = promptOrderItemLabels.get(id);
-                    const viewItem = draftPromptOrderViewItems.find(view =>
-                      view.type === 'group' && id === `group:${view.groupId}`
+                    const viewItem = draftPromptOrderViewItems.find(
+                      view => view.type === 'group' && id === `group:${view.groupId}`
                     );
                     return (
                       <SortablePromptOrderRow
@@ -2737,23 +2682,23 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
               if (viewItem?.type !== 'group') return null;
               return (
                 <div key={id}>
-                    {(() => {
-                      const user = findBlockInGroup(viewItem, 'user');
-                      if (!user?.block) return null;
-                      return (
-                        <DraftPromptEditorRow
-                          block={user.block}
-                          nodeId={nodeId}
-                          readOnly={readOnly}
-                          headerLabel={labelInfo?.label || t('nodes.llm.promptOrder.currentUser')}
-                          compact={false}
-                          onChange={patch => updateDraftPromptBlock(user.block.id || '', patch)}
-                          onFocusedEditor={handle => {
-                            activeEditorRef.current = handle;
-                          }}
-                        />
-                      );
-                    })()}
+                  {(() => {
+                    const user = findBlockInGroup(viewItem, 'user');
+                    if (!user?.block) return null;
+                    return (
+                      <DraftPromptEditorRow
+                        block={user.block}
+                        nodeId={nodeId}
+                        readOnly={readOnly}
+                        headerLabel={labelInfo?.label || t('nodes.llm.promptOrder.currentUser')}
+                        compact={false}
+                        onChange={patch => updateDraftPromptBlock(user.block.id || '', patch)}
+                        onFocusedEditor={handle => {
+                          activeEditorRef.current = handle;
+                        }}
+                      />
+                    );
+                  })()}
                 </div>
               );
             })}
@@ -2762,9 +2707,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
             <Button variant="outline" onClick={requestClosePromptOrderDialog}>
               {t('common.cancel')}
             </Button>
-            <Button onClick={handleSavePromptOrder}>
-              {t('common.save')}
-            </Button>
+            <Button onClick={handleSavePromptOrder}>{t('common.save')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2772,9 +2715,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
         <DialogContent size="lg">
           <DialogHeader>
             <DialogTitle>{t('nodes.llm.promptOrder.helpTitle')}</DialogTitle>
-            <DialogDescription>
-              {t('nodes.llm.promptOrder.helpDescription')}
-            </DialogDescription>
+            <DialogDescription>{t('nodes.llm.promptOrder.helpDescription')}</DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-4">
             <Tabs defaultValue="beginner" className="w-full">
@@ -2971,18 +2912,14 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
                 </div>
 
                 <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-6 text-amber-950">
-                  <span className="font-semibold">
-                    {t('nodes.llm.promptOrder.helpTipTitle')}
-                  </span>
+                  <span className="font-semibold">{t('nodes.llm.promptOrder.helpTipTitle')}</span>
                   {t('nodes.llm.promptOrder.helpTipText')}
                 </div>
               </TabsContent>
             </Tabs>
           </DialogBody>
           <DialogFooter>
-            <Button onClick={() => setOrderHelpOpen(false)}>
-              {t('common.confirm')}
-            </Button>
+            <Button onClick={() => setOrderHelpOpen(false)}>{t('common.confirm')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -3016,7 +2953,6 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
         open={promptPickerOpen}
         onOpenChange={setPromptPickerOpen}
         onApply={handleApplyPromptLibraryVersion}
-        applyMode="copy"
         applyLabel={t('nodes.llm.actions.applyPromptTemplate')}
         warnOnReplace={hasExistingPromptContent}
       />
@@ -3025,7 +2961,7 @@ const LLMManager: React.FC<LLMManagerProps> = ({ id: nodeId, className, readOnly
         onOpenChange={setSavePromptOpen}
         initialDraft={promptDraftForSave}
         onSubmit={async payload => {
-          await createPrompt.mutateAsync(payload);
+          await createPrompt.mutateAsync({ data: payload });
         }}
       />
       <PromptOptimizerDialog

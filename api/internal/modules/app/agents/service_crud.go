@@ -421,13 +421,14 @@ func (s *agentsService) GetAgent(ctx context.Context, agentID string) (interface
 		})
 	}
 
+	agentType := normalizeAgentTypeForResponse(ag.AgentsType)
 	resp := map[string]interface{}{
 		"id":             ag.ID.String(),
 		"tenant_id":      ag.TenantID.String(),
 		"workspace_id":   ag.TenantID.String(),
 		"name":           ag.Name,
 		"description":    ag.Description,
-		"agent_type":     ag.AgentsType,
+		"agent_type":     agentType,
 		"icon_type":      ag.IconType,
 		"icon":           ag.Icon,
 		"icon_url":       iconUrl,
@@ -458,7 +459,7 @@ func (s *agentsService) GetAgent(ctx context.Context, agentID string) (interface
 	// Set internal field from agent
 	resp["internal"] = ag.Internal
 
-	if ag.AgentsType == "WORKFLOW" || ag.AgentsType == "CONVERSATIONAL_WORKFLOW" || ag.AgentsType == "CHAT_AGENT" {
+	if isWorkflowLikeAgentType(agentType) {
 		// Workflow information will be handled by workflow service
 		resp["workflow"] = nil
 		resp["agent_config"] = nil

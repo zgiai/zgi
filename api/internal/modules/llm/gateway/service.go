@@ -731,14 +731,22 @@ func (s *llmGatewayServiceImpl) ListAvailableModels(
 		return nil, fmt.Errorf("invalid organization id %q: %w", apiKey.OrganizationID, err)
 	}
 
+	modelNames := make([]string, 0, len(models))
+	for _, m := range models {
+		modelNames = append(modelNames, m.Model)
+	}
+	if s.channelRouter == nil {
+		return []adapter.Model{}, nil
+	}
+	routableModels, err := s.channelRouter.CandidateRoutesForModels(ctx, organizationID, modelNames, 1)
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate routable models: %w", err)
+	}
+
 	// Convert to adapter models
 	result := make([]adapter.Model, 0, len(models))
 	for _, m := range models {
-		routable, err := s.isModelRoutable(ctx, organizationID, m.Model)
-		if err != nil {
-			return nil, fmt.Errorf("failed to evaluate routable model %s: %w", m.Model, err)
-		}
-		if !routable {
+		if len(routableModels[normalizeRequestedModelName(m.Model)]) == 0 {
 			continue
 		}
 

@@ -372,7 +372,7 @@ func loadPlatformConfig(cfg *Config, source *envSource) {
 	cfg.Platform = PlatformConfig{
 		Edition:                  platformRunMode(source),
 		AdminPass:                source.string("", envZGIAdminPass),
-		OrgInviteDefaultPassword: source.string("", envZGIOrgInviteDefaultPassword),
+		OrgInviteDefaultPassword: source.string(DefaultOrgInviteDefaultPassword, envZGIOrgInviteDefaultPassword),
 		CloudBootstrap: CloudBootstrapConfig{
 			AdminEmail:    source.string("", envCloudBootstrapAdminEmail),
 			AdminName:     source.string("", envCloudBootstrapAdminName),

@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
+import { UnsavedChangesConfirmDialog } from '@/components/ui/unsaved-changes-confirm-dialog';
 import {
   RuntimeAudienceChipList,
   RuntimeAudiencePickerDialog,
@@ -647,29 +648,18 @@ export function PublishSettingsDialog({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={closeConfirmOpen} onOpenChange={setCloseConfirmOpen}>
-        <DialogContent size="sm" className="p-0">
-          <DialogHeader>
-            <DialogTitle>{t('closeGuard.title')}</DialogTitle>
-            <DialogDescription>{t('closeGuard.description')}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="flex-col gap-2 border-t bg-muted/40 sm:flex-row sm:justify-end">
-            <Button variant="outline" onClick={discardAndClose} disabled={updateMutation.isPending}>
-              {t('closeGuard.discard')}
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => setCloseConfirmOpen(false)}
-              disabled={updateMutation.isPending}
-            >
-              {t('closeGuard.cancel')}
-            </Button>
-            <Button onClick={() => void handleSave()} disabled={updateMutation.isPending}>
-              {updateMutation.isPending ? t('actions.saving') : t('closeGuard.saveAndClose')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <UnsavedChangesConfirmDialog
+        open={closeConfirmOpen}
+        onOpenChange={setCloseConfirmOpen}
+        title={t('closeGuard.title')}
+        description={t('closeGuard.description')}
+        discardText={t('closeGuard.discard')}
+        cancelText={t('closeGuard.cancel')}
+        confirmText={updateMutation.isPending ? t('actions.saving') : t('closeGuard.saveAndClose')}
+        disabled={updateMutation.isPending}
+        onDiscard={discardAndClose}
+        onConfirm={() => void handleSave()}
+      />
     </>
   );
 }

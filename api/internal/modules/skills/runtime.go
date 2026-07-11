@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strings"
 	"time"
@@ -2670,6 +2671,12 @@ func ParseArguments(raw string) (map[string]interface{}, error) {
 func defaultSkillCatalogDir() string {
 	if _, err := os.Stat(defaultCatalogDir); err == nil {
 		return defaultCatalogDir
+	}
+	if _, filename, _, ok := goruntime.Caller(0); ok {
+		candidate := filepath.Join(filepath.Dir(filename), "catalog")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
 	}
 	return defaultCatalogDir
 }

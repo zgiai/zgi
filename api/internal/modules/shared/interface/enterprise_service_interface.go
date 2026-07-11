@@ -101,6 +101,7 @@ type OrganizationService interface {
 	UpdateCustomWorkspaceRole(ctx context.Context, req *dto.UpdateWorkspaceRoleRequest) (*dto.OrganizationRoleDetailResponse, error)
 	UpdateWorkspaceRolePermissions(ctx context.Context, req *dto.UpdateWorkspaceRolePermissionsRequest) error
 	ApplyWorkspaceRoleTemplate(ctx context.Context, req *dto.ApplyWorkspaceRoleTemplateRequest) (*dto.ApplyWorkspaceRoleTemplateResponse, error)
+	ReplaceAndDeleteCustomWorkspaceRole(ctx context.Context, req *dto.ReplaceWorkspaceRoleTemplateRequest) (*dto.ReplaceWorkspaceRoleTemplateResponse, error)
 	DeleteCustomWorkspaceRole(ctx context.Context, organizationID, roleID, accountID string) error
 	GetMemberEffectivePermissions(ctx context.Context, organizationID, accountID, targetAccountID string) (*dto.MemberPermissionsResponse, error)
 	GetWorkspaceMemberPermissions(ctx context.Context, organizationID, workspaceID, accountID, targetAccountID string) (*dto.WorkspaceMemberPermissionsResponse, error)
@@ -109,6 +110,7 @@ type OrganizationService interface {
 
 type OrganizationManagementService interface {
 	CreateOrganization(ctx context.Context, name string) (*model.Organization, error)
+	CheckOrganizationNameExists(ctx context.Context, name string) (bool, error)
 	UpsertOrganizationRole(ctx context.Context, organizationID string, accountID string, role model.OrganizationRole) error
 	AddWorkspace(ctx context.Context, organizationID string, workspaceID string) error
 	WithTx(tx *gorm.DB) OrganizationManagementService

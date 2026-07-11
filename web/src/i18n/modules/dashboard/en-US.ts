@@ -22,8 +22,8 @@ const messages = {
     apiKeys: 'API Keys',
     organization: 'Organization & Members',
     workspaces: 'Workspace Management',
-    contacts: 'Contacts',
-    permissions: 'Permissions',
+    contacts: 'Members & Departments',
+    permissions: 'Roles & Permissions',
     organizationSettings: 'Organization Settings',
     aichatSkills: 'Skill Management',
     modelSettings: 'Default Model Management',
@@ -193,7 +193,8 @@ const messages = {
         description:
           'Configure either Reducto or MinerU successfully to get better PDF, Office, table, and scanned document parsing.',
         reductoRecommendation: 'Reducto is recommended for overseas or English-heavy use cases.',
-        mineruRecommendation: 'MinerU official service is recommended for Mainland China or Chinese-heavy use cases.',
+        mineruRecommendation:
+          'MinerU official service is recommended for Mainland China or Chinese-heavy use cases.',
         openReducto: 'Get Reducto API key',
         openMineru: 'Get MinerU token',
       },
@@ -255,8 +256,7 @@ const messages = {
         secretRequired: 'Required before enabling',
       },
       hints: {
-        baseUrl:
-          'Enter the service root URL. The system automatically appends the endpoint path.',
+        baseUrl: 'Enter the service root URL. The system automatically appends the endpoint path.',
       },
       status: {
         not_configured: 'Not configured',
@@ -937,6 +937,22 @@ const messages = {
         cancel: 'Cancel',
         confirm: 'Confirm Delete',
         deleting: 'Deleting...',
+        keepOneToast:
+          'At least one permission template must remain. This template cannot be deleted.',
+        migrationTitle: 'Move members before deleting',
+        migrationDescription:
+          '"{roleName}" is still applied to {count} workspace members. Choose a replacement template and the system will switch those members before deleting this template.',
+        migrationWarning:
+          'Switching templates replaces each member permission snapshot in the related workspace. Make sure the replacement template is correct.',
+        replacementLabel: 'Switch to',
+        replacementPlaceholder: 'Select a replacement template',
+        replacementRequired: 'Select a replacement template',
+        noOrganization: 'No current organization found. Refresh and try again.',
+        migrateAndDelete: 'Switch and Delete',
+        migrating: 'Processing...',
+        migrationPartial:
+          'Switched {applied}; {failed} failed. Resolve the failed items before deleting.',
+        migrationError: 'Failed to delete template',
       },
       deleteSuccess: 'Template deleted successfully',
       deleteError: 'Delete failed',
@@ -1134,12 +1150,15 @@ const messages = {
       },
     },
     contacts: {
-      title: 'Contacts',
-      subtitle: 'Manage organization members and department structure',
-      departmentPanelTitle: 'Organization structure',
-      departmentPanelDescription: 'Select the organization or a department to view members',
-      allMembers: 'All Members',
-      allMembersDescription: 'All members in the current organization',
+      title: 'Members & Departments',
+      subtitle:
+        'Manage organization members, department assignments, and organization-level roles.',
+      departmentPanelTitle: 'Organization & Departments',
+      departmentPanelDescription:
+        'Select the organization or a department to view members, or create and manage departments.',
+      allMembers: 'Organization Members',
+      allMembersDescription:
+        'View and manage organization members, including status, organization role, and department assignment.',
       departmentMembersDescription: 'Members in the selected department',
       scopeOrganization: 'Organization scope',
       scopeDepartment: 'Department scope',
@@ -1148,6 +1167,9 @@ const messages = {
       scopeDepartmentHint:
         'Removing a member here only removes them from the selected department. The member remains in the organization root.',
       memberCount: '({count} total)',
+      memberScope: 'Member scope',
+      memberCountCompact: '{count} members',
+      includeSubDepartments: 'Include sub-department members',
       searchDepartment: 'Search department',
       searchMembers: 'Search members',
       selectDepartment: 'Please select a department to view members',
@@ -1156,7 +1178,7 @@ const messages = {
       noMembers: 'No members in this department',
       noMemberSearchResults: 'No members found',
       noMemberSearchResultsDescription: 'Try another keyword or switch departments',
-      name: 'Name',
+      name: 'Member',
       email: 'Email',
       organizationRole: 'Organization Role',
       organizationRoles: {
@@ -1224,8 +1246,13 @@ const messages = {
         removing: 'Removing...',
       },
       toggleStatusConfirm: {
-        enableDescription: 'Are you sure you want to enable member "{memberName}"?',
-        disableDescription: 'Are you sure you want to disable member "{memberName}"?',
+        title: 'Change member status',
+        enableDescription:
+          'Enable "{memberName}"? The member will be able to sign in and use authorized workspaces and apps again.',
+        disableDescription:
+          'Disable "{memberName}"? The member will no longer be able to use organization resources. Departments, workspaces, and permission settings will be kept and can be restored later.',
+        enableConfirm: 'Enable Member',
+        disableConfirm: 'Disable Member',
       },
       updateDepartmentSuccess: 'Department updated successfully',
       updateDepartmentError: 'Failed to update department',
@@ -1264,7 +1291,8 @@ const messages = {
         memberEmailPlaceholder: 'Enter member email',
         memberPassword: 'Password (optional)',
         memberPasswordPlaceholder: 'Leave blank to use the system default password',
-        defaultPasswordHint: 'If left blank, the system default password will be used.',
+        defaultPasswordHint:
+          'If left blank, the system default password ZGI@Welcome1 will be used.',
         memberDepartment: 'Department',
         memberDepartmentOptional: 'Department (optional)',
         memberWorkspaceOptional: 'Workspace (optional)',
@@ -1307,7 +1335,7 @@ const messages = {
         password: 'New password (optional)',
         passwordPlaceholder: 'Leave blank to use the system default password',
         defaultPasswordHint:
-          'If left blank, the system default password will be used. The frontend will not show or cache it.',
+          'If left blank, the system default password ZGI@Welcome1 will be used.',
         cancel: 'Cancel',
         confirm: 'Reset Password',
         resetting: 'Resetting...',
@@ -1387,6 +1415,8 @@ const messages = {
       disband: 'Disband',
       people: ' people',
       noWorkspaces: 'No workspaces',
+      noSearchResults: 'No matching workspace found. Try another keyword.',
+      clearSearch: 'Clear search',
       assignMemberBannerTitle: 'Assign a workspace for {member}',
       assignMemberBannerDescription:
         'Choose a target workspace. The detail page will open the add-member dialog and search by this member email.',
@@ -1539,6 +1569,14 @@ const messages = {
               'Enabling "{permission}" also requires "{dependencies}". Confirm to enable them together.',
             confirm: 'Enable together',
             cancel: 'Cancel',
+          },
+          closeGuard: {
+            title: 'Save permission changes?',
+            description:
+              'This member has unsaved permission changes. Save them before closing, close without saving, or keep editing.',
+            saveAndClose: 'Save and close',
+            discard: 'Close without saving',
+            cancel: 'Keep editing',
           },
         },
         assignMemberBannerTitle: 'Adding {member} to this workspace',

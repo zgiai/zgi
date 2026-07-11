@@ -43,7 +43,7 @@ type CreateAPIKeyRequestWithoutAgentID struct {
 // UpdateAPIKeyRequest represents the request to update an API key
 type UpdateAPIKeyRequest struct {
 	Name   *string `json:"name,omitempty" binding:"omitempty,min=1,max=255"`
-	Status *string `json:"status,omitempty" binding:"omitempty,oneof=active revoked"`
+	Status *string `json:"status,omitempty" binding:"omitempty,oneof=active inactive"`
 }
 
 // APIKeyResponse represents the response when returning API key information

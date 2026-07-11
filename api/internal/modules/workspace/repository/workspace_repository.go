@@ -38,6 +38,7 @@ type WorkspaceRepository interface {
 	CreateWorkspaceAccountJoin(ctx context.Context, join *model.WorkspaceMember) error
 	DeleteWorkspaceAccountJoin(ctx context.Context, workspaceID, accountID string) error
 	GetWorkspaceIDsByOrganizationID(ctx context.Context, organizationID string) ([]string, error)
+	GetDB() *gorm.DB
 	WithTx(tx *gorm.DB) WorkspaceRepository
 }
 
@@ -316,4 +317,8 @@ func (r *workspaceRepository) GetWorkspaceIDsByOrganizationID(ctx context.Contex
 
 func (r *workspaceRepository) WithTx(tx *gorm.DB) WorkspaceRepository {
 	return NewWorkspaceRepository(tx)
+}
+
+func (r *workspaceRepository) GetDB() *gorm.DB {
+	return r.db
 }

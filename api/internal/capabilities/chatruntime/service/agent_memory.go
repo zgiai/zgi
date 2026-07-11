@@ -34,7 +34,7 @@ func (s *service) appendAgentMemoryContext(ctx context.Context, scope Scope, par
 		MemoryService: s.agentMemoryService,
 		WorkspaceID:   workspaceID,
 		AgentID:       agentID,
-		UserID:        scope.AccountID,
+		UserID:        agentMemoryUserID(scope),
 		UserScope:     parts.AgentMemoryUserScope,
 		Budget:        agentMemoryContextBudgetChars,
 	})
@@ -111,7 +111,7 @@ func (s *service) runNativeAgentMemoryPreflight(
 		MemoryService:     s.agentMemoryService,
 		WorkspaceID:       workspaceID,
 		AgentID:           state.AgentID,
-		UserID:            prepared.Scope.AccountID,
+		UserID:            agentMemoryUserID(prepared.Scope),
 		UserScope:         prepared.parts.AgentMemoryUserScope,
 		MutationMetadata:  agentMemoryMutationMetadata(prepared),
 		LLMClient:         s.llmClient,
@@ -128,6 +128,13 @@ func (s *service) runNativeAgentMemoryPreflight(
 		prepared.LLMRequest.Messages = result.Messages
 	}
 	return result.Usage, nil
+}
+
+func agentMemoryUserID(scope Scope) uuid.UUID {
+	if scope.AgentMemoryUserID != nil && *scope.AgentMemoryUserID != uuid.Nil {
+		return *scope.AgentMemoryUserID
+	}
+	return scope.AccountID
 }
 
 func (s *service) emitAgentMemoryMutationEvent(ctx context.Context, prepared *PreparedChat, trace skills.SkillTrace, onEvent func(StreamEvent) error) {

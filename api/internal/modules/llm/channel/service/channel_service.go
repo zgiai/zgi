@@ -118,6 +118,12 @@ type channelService struct {
 	ollamaModelLister  func(ctx context.Context, apiBaseURL, apiKey string) ([]adapter.Model, error)
 }
 
+func (s *channelService) invalidateAvailableModelsCache(organizationID uuid.UUID) {
+	if s.availableModels != nil {
+		s.availableModels.InvalidateTenantCache(organizationID)
+	}
+}
+
 // NewChannelService creates a new channel service
 func NewChannelService(
 	tenantRouteRepo repository.TenantRouteRepository,
@@ -251,8 +257,12 @@ func (s *channelService) CreateRoute(ctx context.Context, organizationID uuid.UU
 		}
 		return nil, fmt.Errorf("failed to create route: %w", err)
 	}
-	if err := s.autoEnableModelsForRoute(ctx, organizationID, normalizedModels); err != nil {
+	cacheInvalidated, err := s.autoEnableModelsForRoute(ctx, organizationID, normalizedModels)
+	if err != nil {
 		return nil, fmt.Errorf("auto-enable route models: %w", err)
+	}
+	if !cacheInvalidated {
+		s.invalidateAvailableModelsCache(organizationID)
 	}
 
 	// Reload with credential for building the view
@@ -630,9 +640,15 @@ func (s *channelService) UpdateRoute(ctx context.Context, organizationID, id uui
 		return nil, fmt.Errorf("failed to update route: %w", err)
 	}
 	if req.Models != nil {
-		if err := s.autoEnableModelsForRoute(ctx, organizationID, route.Models); err != nil {
+		cacheInvalidated, err := s.autoEnableModelsForRoute(ctx, organizationID, route.Models)
+		if err != nil {
 			return nil, fmt.Errorf("auto-enable route models: %w", err)
 		}
+		if !cacheInvalidated {
+			s.invalidateAvailableModelsCache(organizationID)
+		}
+	} else {
+		s.invalidateAvailableModelsCache(organizationID)
 	}
 
 	view, err := s.buildChannelViewWithWalletBalance(ctx, organizationID, route)
@@ -764,6 +780,7 @@ func (s *channelService) DeleteRoute(ctx context.Context, organizationID, id uui
 	if credentialID != nil {
 		go s.cleanupUnusedCredential(context.Background(), organizationID, *credentialID)
 	}
+	s.invalidateAvailableModelsCache(organizationID)
 
 	return nil
 }
@@ -819,6 +836,7 @@ func (s *channelService) UpdateOfficialChannelSettings(ctx context.Context, orga
 		}
 		updated++
 	}
+	s.invalidateAvailableModelsCache(organizationID)
 
 	return updated, nil
 }
@@ -1098,7 +1116,11 @@ func (s *channelService) UpdatePlatformChannelSettings(ctx context.Context, orga
 		route.IsEnabled = *req.IsEnabled
 	}
 
-	return s.tenantRouteRepo.Update(ctx, route)
+	if err := s.tenantRouteRepo.Update(ctx, route); err != nil {
+		return err
+	}
+	s.invalidateAvailableModelsCache(organizationID)
+	return nil
 }
 
 // InitOfficialChannel ensures the tenant has an official route in cloud mode.
@@ -1119,7 +1141,11 @@ func (s *channelService) InitOfficialChannel(ctx context.Context, organizationID
 		existing.APIBaseURL = ""
 		now := time.Now().UTC()
 		existing.LastSyncedAt = &now
-		return s.tenantRouteRepo.Update(ctx, existing)
+		if err := s.tenantRouteRepo.Update(ctx, existing); err != nil {
+			return err
+		}
+		s.invalidateAvailableModelsCache(organizationID)
+		return nil
 	}
 
 	// Create new official route
@@ -1140,12 +1166,14 @@ func (s *channelService) InitOfficialChannel(ctx context.Context, organizationID
 		if isUniqueConstraintViolation(err) {
 			existing, findErr := s.findOfficialRoute(ctx, organizationID)
 			if findErr == nil && existing != nil {
+				s.invalidateAvailableModelsCache(organizationID)
 				return nil
 			}
 		}
 		return err
 	}
 
+	s.invalidateAvailableModelsCache(organizationID)
 	return nil
 }
 
@@ -1705,6 +1733,9 @@ func (s *channelService) BatchToggleRoutes(ctx context.Context, organizationID u
 
 		result.SuccessCount++
 	}
+	if result.SuccessCount > 0 {
+		s.invalidateAvailableModelsCache(organizationID)
+	}
 
 	return result, nil
 }
@@ -1728,6 +1759,9 @@ func (s *channelService) BatchDeleteRoutes(ctx context.Context, organizationID u
 		}
 
 		result.SuccessCount++
+	}
+	if result.SuccessCount > 0 {
+		s.invalidateAvailableModelsCache(organizationID)
 	}
 
 	return result, nil

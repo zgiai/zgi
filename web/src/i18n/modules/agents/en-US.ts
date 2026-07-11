@@ -47,7 +47,9 @@ const messages = {
   conversationsDescription: 'Manage conversations and chat history',
   settingsTitle: 'Settings',
   settingsDescription: 'Configure agent settings and parameters',
+  apiGroupTitle: 'API',
   apiTitle: 'API',
+  apiDocsNavTitle: 'API Docs',
   apiDescription: 'External API configuration and management',
 
   // Agent management
@@ -660,6 +662,16 @@ const messages = {
     autoSaveTips: 'Auto saved every {interval} seconds',
     panelAlreadyOpen: '{name} is already open',
     fixErrorsBeforePublishing: 'Please fix all errors before publishing',
+    promptPublishRisk: {
+      title: 'Confirm prompt risk before publishing',
+      description: '{count} node(s) still follow the prompt library Latest version.',
+      impact:
+        'After publishing, those nodes will automatically move when new prompt versions are created. Production flows should follow Online version so new versions are validated before rollout.',
+      unknownNode: 'Unnamed node',
+      more: '{count} more node(s) not shown.',
+      viewIssues: 'View issues',
+      confirm: 'Publish anyway',
+    },
     viewingRunHistory: 'Viewing Run History. Canvas is read-only.',
     viewingRunHistoryWithId: 'Viewing Run History (Run #{id}). Canvas is read-only.',
     returnToEdit: 'Back to Edit',
@@ -819,8 +831,12 @@ const messages = {
   form: {
     name: 'Name',
     namePlaceholder: 'Please enter agent name',
+    workflowName: 'Workflow name',
+    workflowNamePlaceholder: 'Please enter workflow name',
     description: 'Description',
     descriptionPlaceholder: 'Please enter agent description',
+    workflowDescription: 'Workflow description',
+    workflowDescriptionPlaceholder: 'Please enter workflow description',
     department: 'Department',
     departmentPlaceholder: 'Please select department',
     permissions: 'Permissions',
@@ -860,6 +876,7 @@ const messages = {
       actions: 'Actions',
     },
     active: 'Active',
+    inactive: 'Inactive',
     revoked: 'Revoked',
     noExpiry: 'No expiry',
     editTitle: 'Edit API Key',
@@ -876,7 +893,7 @@ const messages = {
     creating: 'Creating…',
     deleteConfirm: {
       title: 'Confirm Delete',
-      description: 'This action cannot be undone. Delete this API Key?',
+      description: 'This API Key will be permanently disabled and hidden from the list. Delete it?',
     },
     validation: {
       missingName: 'Please enter a name',
@@ -1517,6 +1534,9 @@ const messages = {
       tooLong: 'Name must be at most 32 characters',
       invalidChars: 'Only letters, numbers, underscores, hyphens and spaces are allowed',
       onlySpaces: 'Name must contain at least one non-space character',
+    },
+    workflowName: {
+      required: 'Workflow name is required',
     },
     workspace: {
       required: 'Please select an owning workspace',

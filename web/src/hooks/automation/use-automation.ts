@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { AUTOMATION_KEYS } from '@/hooks/query-keys';
@@ -11,12 +11,12 @@ import type {
   AutomationManualRunData,
   AutomationOperationResult,
   AutomationTaskActionParams,
+  AutomationTaskCounts,
   AutomationTaskDetailData,
   AutomationTaskList,
   AutomationTaskListItem,
   AutomationTaskRunItem,
   AutomationTaskRunsList,
-  AutomationTaskStatus,
   CreateAutomationTaskRequest,
   GenerateAutomationTaskDraftRequest,
   GenerateAutomationTaskDraftResponse,
@@ -33,58 +33,27 @@ function hasActiveAutomationRun(list?: AutomationTaskRunsList): boolean {
   );
 }
 
-type AutomationTaskCountKey = 'all' | AutomationTaskStatus;
-
-const TASK_COUNT_FILTERS: Array<{ key: AutomationTaskCountKey; statuses?: string }> = [
-  { key: 'all' },
-  { key: 'active', statuses: 'active' },
-  { key: 'paused', statuses: 'paused' },
-  { key: 'completed', statuses: 'completed' },
-  { key: 'archived', statuses: 'archived' },
-];
-
 /**
  * Hook for fetching status counts without loading full task pages.
  */
 export function useAutomationTaskCounts(workspaceId?: string): {
-  counts: Partial<Record<AutomationTaskCountKey, number>>;
+  counts: Partial<AutomationTaskCounts>;
   isFetching: boolean;
 } {
-  const queries = useQueries({
-    queries: TASK_COUNT_FILTERS.map(filter => {
-      const params: GetAutomationTasksParams = {
-        workspace_id: workspaceId,
-        statuses: filter.statuses,
-        page: 1,
-        limit: 1,
-      };
-
-      return {
-        queryKey: AUTOMATION_KEYS.list(params),
-        queryFn: () => automationService.getTasks(params),
-        enabled: Boolean(workspaceId),
-        staleTime: 60 * 1000,
-        gcTime: 10 * 60 * 1000,
-        refetchOnWindowFocus: false,
-        retry: false,
-      };
-    }),
+  const params = { workspace_id: workspaceId };
+  const { data, isFetching } = useQuery<ApiResponseData<AutomationTaskCounts>, unknown>({
+    queryKey: AUTOMATION_KEYS.count(params),
+    queryFn: () => automationService.getTaskCounts(params),
+    enabled: Boolean(workspaceId),
+    staleTime: 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    retry: false,
   });
 
-  const counts = TASK_COUNT_FILTERS.reduce<Partial<Record<AutomationTaskCountKey, number>>>(
-    (result, filter, index) => {
-      const total = queries[index]?.data?.data?.total;
-      if (typeof total === 'number') {
-        result[filter.key] = total;
-      }
-      return result;
-    },
-    {}
-  );
-
   return {
-    counts,
-    isFetching: queries.some(query => query.isFetching),
+    counts: data?.data ?? {},
+    isFetching,
   };
 }
 
@@ -297,6 +266,7 @@ export function useCreateAutomationTask(): {
     onSuccess: () => {
       toast.success(t('toasts.createSuccess'));
       queryClient.invalidateQueries({ queryKey: AUTOMATION_KEYS.lists() });
+      queryClient.invalidateQueries({ queryKey: AUTOMATION_KEYS.counts() });
     },
     onError: error => {
       toast.error(getErrorMessage(error) || t('toasts.createFailed'));
@@ -334,6 +304,7 @@ export function useUpdateAutomationTask(): {
     onSuccess: (_result, variables) => {
       toast.success(t('toasts.updateSuccess'));
       queryClient.invalidateQueries({ queryKey: AUTOMATION_KEYS.lists() });
+      queryClient.invalidateQueries({ queryKey: AUTOMATION_KEYS.counts() });
       queryClient.invalidateQueries({ queryKey: AUTOMATION_KEYS.detailPrefix(variables.id) });
     },
     onError: error => {
@@ -372,6 +343,7 @@ export function useRunAutomationTask(): {
     onSuccess: (_result, variables) => {
       toast.success(t('toasts.operationSuccess'));
       queryClient.invalidateQueries({ queryKey: AUTOMATION_KEYS.lists() });
+      queryClient.invalidateQueries({ queryKey: AUTOMATION_KEYS.counts() });
       queryClient.invalidateQueries({ queryKey: AUTOMATION_KEYS.detailPrefix(variables.id) });
       queryClient.invalidateQueries({ queryKey: AUTOMATION_KEYS.runs(variables.id) });
     },
@@ -419,6 +391,7 @@ function useAutomationOperationMutation(operation: 'pause' | 'resume' | 'archive
     onSuccess: (_result, variables) => {
       toast.success(t('toasts.operationSuccess'));
       queryClient.invalidateQueries({ queryKey: AUTOMATION_KEYS.lists() });
+      queryClient.invalidateQueries({ queryKey: AUTOMATION_KEYS.counts() });
       queryClient.invalidateQueries({ queryKey: AUTOMATION_KEYS.detailPrefix(variables.id) });
       queryClient.invalidateQueries({ queryKey: AUTOMATION_KEYS.runs(variables.id) });
     },

@@ -290,6 +290,10 @@ func (s *externalFileAccessService) UploadFile(context.Context, string, []byte, 
 	return nil, nil
 }
 
+func (s *externalFileAccessService) ReplaceFileContent(context.Context, string, string, []byte, string, string, string) (*dto.UploadFile, error) {
+	return nil, nil
+}
+
 func (s *externalFileAccessService) GetFilePreview(context.Context, string) (string, error) {
 	return "", nil
 }

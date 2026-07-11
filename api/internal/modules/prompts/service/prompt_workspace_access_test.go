@@ -213,6 +213,11 @@ func (r *promptWorkspaceAccessRepository) FindLatestVersions(context.Context, []
 	return nil, fmt.Errorf("not implemented")
 }
 
+func (r *promptWorkspaceAccessRepository) FindVersionsByPromptIDs(context.Context, []string) ([]*promptmodel.PromptVersion, error) {
+	r.findVersionsCalled = true
+	return nil, fmt.Errorf("not implemented")
+}
+
 func (r *promptWorkspaceAccessRepository) FindVersions(context.Context, string) ([]*promptmodel.PromptVersion, error) {
 	r.findVersionsCalled = true
 	return nil, fmt.Errorf("not implemented")

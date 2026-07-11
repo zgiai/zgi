@@ -498,6 +498,20 @@ type ApplyWorkspaceRoleTemplateResponse struct {
 	Results      []ApplyWorkspaceRoleTemplateResult `json:"results"`
 }
 
+type ReplaceWorkspaceRoleTemplateRequest struct {
+	OrganizationID    string `json:"organization_id"`
+	RoleID            string `json:"role_id"`
+	ReplacementRoleID string `json:"replacement_role_id" binding:"required"`
+	OperatorID        string `json:"-"`
+}
+
+type ReplaceWorkspaceRoleTemplateResponse struct {
+	ReplacedCount int                                `json:"replaced_count"`
+	FailedCount   int                                `json:"failed_count"`
+	Deleted       bool                               `json:"deleted"`
+	Results       []ApplyWorkspaceRoleTemplateResult `json:"results"`
+}
+
 // OrganizationRoleDetailResponse represents role detail
 type OrganizationRoleDetailResponse struct {
 	ID              string                          `json:"id"`

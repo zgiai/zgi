@@ -52,10 +52,6 @@ export interface AgentTemplatePromptReference {
   fallbackTitle: string;
 }
 
-export interface AgentTemplatePromptBinding extends AgentTemplatePromptReference {
-  nodeIds: string[];
-}
-
 export interface AgentTemplate {
   id: string;
   copyKey: string;
@@ -72,5 +68,4 @@ export interface AgentTemplate {
   tags: string[];
   iconLabel: string;
   recommendedPrompts?: AgentTemplatePromptReference[];
-  defaultPromptBindings?: AgentTemplatePromptBinding[];
 }

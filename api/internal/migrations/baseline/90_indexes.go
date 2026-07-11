@@ -29,6 +29,7 @@ var IndexesSchema = File{
 		`CREATE INDEX dataset_metadatas_dataset_id_idx ON public.dataset_metadatas USING btree (dataset_id);`,
 		`CREATE INDEX dataset_metadatas_tenant_id_idx ON public.dataset_metadatas USING btree (tenant_id);`,
 		`CREATE INDEX dataset_organization_id_idx ON public.datasets USING btree (organization_id);`,
+		`CREATE INDEX idx_datasets_organization_workspace_created ON public.datasets USING btree (organization_id, workspace_id, created_at DESC);`,
 		`CREATE INDEX dataset_permissions_account_id_idx ON public.dataset_permissions USING btree (account_id);`,
 		`CREATE INDEX dataset_permissions_dataset_id_idx ON public.dataset_permissions USING btree (dataset_id);`,
 		`CREATE INDEX dataset_process_rules_dataset_id_idx ON public.dataset_process_rules USING btree (dataset_id);`,

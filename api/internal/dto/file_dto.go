@@ -18,11 +18,12 @@ type FileListRequest struct {
 
 // FileListResponse represents response for file list
 type FileListResponse struct {
-	Data    []UploadFile `json:"data"`
-	HasMore bool         `json:"has_more"`
-	Limit   int          `json:"limit"`
-	Total   int64        `json:"total"`
-	Page    int          `json:"page"`
+	Data                   []UploadFile               `json:"data"`
+	HasMore                bool                       `json:"has_more"`
+	Limit                  int                        `json:"limit"`
+	Total                  int64                      `json:"total"`
+	Page                   int                        `json:"page"`
+	ProcessingStatusCounts FileProcessingStatusCounts `json:"processing_status_counts,omitempty"`
 }
 
 type FileMetadataListResponse struct {
@@ -115,6 +116,8 @@ type FileFolderListResponse struct {
 	Total   int64                `json:"total"`
 	Page    int                  `json:"page"`
 }
+
+type FileProcessingStatusCounts map[string]int64
 
 // MoveFilesToFolderRequest represents request for moving multiple files to folder
 type MoveFilesToFolderRequest struct {

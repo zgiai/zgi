@@ -71,6 +71,7 @@ import {
   normalizeOrganizationRole,
   normalizeWorkspaceMemberRole,
 } from '@/utils/role-labels';
+import { getOrganizationDisplayName } from '@/utils/organization-display';
 
 export default function WorkspaceDetailPage() {
   const params = useParams();
@@ -83,6 +84,7 @@ export default function WorkspaceDetailPage() {
 
   // Get organization
   const { currentOrganization } = useOrganizations();
+  const currentOrganizationDisplayName = getOrganizationDisplayName(currentOrganization);
 
   // Get roles for organization
   const { roles } = useOrganizationRoles();
@@ -628,7 +630,7 @@ export default function WorkspaceDetailPage() {
                         </Badge>
                       </TableCell>
                       <TableCell className="py-4 text-[13px] text-text-secondary font-medium">
-                        {member.department_name || '-'}
+                        {member.department_name || currentOrganizationDisplayName}
                       </TableCell>
                       <TableCell className="py-4 pr-8 text-right">
                         <div className="flex justify-end gap-1">

@@ -107,6 +107,7 @@ export function useAllFiles(
   isFetching: boolean;
   isFetched: boolean;
   error: string | null;
+  processingStatusCounts: Partial<Record<string, number>>;
   goToNextPage: () => void;
   goToPreviousPage: () => void;
   goToPage: (page: number) => void;
@@ -158,6 +159,7 @@ export function useAllFiles(
 
   const files: FileItem[] = data?.data?.data ?? [];
   const total = data?.data?.total ?? 0;
+  const processingStatusCounts = data?.data?.processing_status_counts ?? {};
   const hasMore = data?.data?.has_more ?? false;
   const hasPreviousPage = currentPage > 1;
   const totalPages = Math.ceil(total / Number(limit));
@@ -195,6 +197,7 @@ export function useAllFiles(
     isFetching,
     isFetched,
     error: error ? ((error as { message?: string }).message ?? 'error') : null,
+    processingStatusCounts,
     goToNextPage,
     goToPreviousPage,
     goToPage,
@@ -274,6 +277,7 @@ export function useFiles(
   isFetching: boolean;
   isFetched: boolean;
   error: string | null;
+  processingStatusCounts: Partial<Record<string, number>>;
   goToNextPage: () => void;
   goToPreviousPage: () => void;
   goToPage: (page: number) => void;
@@ -345,6 +349,7 @@ export function useFiles(
 
   const files: FileItem[] = data?.data?.data ?? [];
   const total = data?.data?.total ?? 0;
+  const processingStatusCounts = data?.data?.processing_status_counts ?? {};
   const hasMore = data?.data?.has_more ?? false;
   const hasPreviousPage = currentPage > 1;
   const totalPages = Math.ceil(total / Number(limit));
@@ -389,6 +394,7 @@ export function useFiles(
     isFetching,
     isFetched,
     error: error ? ((error as { message?: string }).message ?? 'error') : null,
+    processingStatusCounts,
     goToNextPage,
     goToPreviousPage,
     goToPage,

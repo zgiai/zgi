@@ -76,6 +76,7 @@ import { useWorkspaceStore } from '@/store/workspace-store';
 import type { FileAssetProductStatus, FileFolder, FileItem } from '@/services/types/file';
 import { cn } from '@/lib/utils';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
+import { getOrganizationDisplayName } from '@/utils/organization-display';
 import { useJoinedWorkspaces } from '@/hooks/workspace/use-joined-workspaces';
 import { useUpdateCurrentWorkspace } from '@/hooks/workspace/use-update-current-workspace';
 import { fileManageService } from '@/services/file-manage.service';
@@ -242,7 +243,7 @@ function FileSelectorOrganizationSwitcher({
   }
 
   const currentOrganizationLabel =
-    currentOrganization?.short_name || currentOrganization?.name || tNavigation('organizations');
+    getOrganizationDisplayName(currentOrganization) || tNavigation('organizations');
 
   return (
     <div
@@ -296,9 +297,7 @@ function FileSelectorOrganizationSwitcher({
                 <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
                   <Building2 className="h-3.5 w-3.5" />
                 </div>
-                <span className="truncate text-xs">
-                  {organization.short_name || organization.name}
-                </span>
+                <span className="truncate text-xs">{getOrganizationDisplayName(organization)}</span>
               </div>
               {organization.id === currentOrganization?.id ? (
                 <Check className="h-4 w-4 text-primary" />
@@ -780,6 +779,7 @@ const FileManagementContent = ({
     isFetching,
     isFetched,
     error,
+    processingStatusCounts,
     goToPage,
     reload,
   } = useFiles(FILES_PAGE_LIMIT, {
@@ -823,7 +823,9 @@ const FileManagementContent = ({
     ready: getProcessingStatusQueryParam('ready'),
     stored_only: getProcessingStatusQueryParam('stored_only'),
   };
+  const useMainListStatusCounts = activeCategory === 'all' || activeCategory === 'needs_action';
   const allFilesCount = useFiles('1', {
+    enabled: !useMainListStatusCounts,
     category: activeCategory,
     keyword: debouncedSearchValue,
     sort: 'created_at',
@@ -831,6 +833,7 @@ const FileManagementContent = ({
     workspaceId: workspaceId,
   });
   const needsActionFilesCount = useFiles('1', {
+    enabled: !useMainListStatusCounts,
     category: activeCategory,
     keyword: debouncedSearchValue,
     sort: 'created_at',
@@ -839,6 +842,7 @@ const FileManagementContent = ({
     workspaceId: workspaceId,
   });
   const readyFilesCount = useFiles('1', {
+    enabled: !useMainListStatusCounts,
     category: activeCategory,
     keyword: debouncedSearchValue,
     sort: 'created_at',
@@ -847,6 +851,7 @@ const FileManagementContent = ({
     workspaceId: workspaceId,
   });
   const storedOnlyFilesCount = useFiles('1', {
+    enabled: !useMainListStatusCounts,
     category: activeCategory,
     keyword: debouncedSearchValue,
     sort: 'created_at',
@@ -862,11 +867,22 @@ const FileManagementContent = ({
     return status === 'parsing' || status === 'generating';
   });
   const processingStatusFilterCounts: Record<FileProcessingStatusFilter, number> = {
-    all: allFilesCount.total,
-    needs_action:
-      activeCategory === 'needs_action' ? allFilesCount.total : needsActionFilesCount.total,
-    ready: activeCategory === 'needs_action' ? 0 : readyFilesCount.total,
-    stored_only: activeCategory === 'needs_action' ? 0 : storedOnlyFilesCount.total,
+    all: useMainListStatusCounts ? processingStatusCounts.all || total : allFilesCount.total,
+    needs_action: useMainListStatusCounts
+      ? processingStatusCounts.parse_failed || 0
+      : activeCategory === 'needs_action'
+        ? allFilesCount.total
+        : needsActionFilesCount.total,
+    ready: useMainListStatusCounts
+      ? processingStatusCounts.ready || 0
+      : activeCategory === 'needs_action'
+        ? 0
+        : readyFilesCount.total,
+    stored_only: useMainListStatusCounts
+      ? processingStatusCounts.stored_only || 0
+      : activeCategory === 'needs_action'
+        ? 0
+        : storedOnlyFilesCount.total,
   };
   const aiChatContextItems = useMemo(
     () =>
@@ -1437,7 +1453,7 @@ const FileManagementContent = ({
                     ? t('files.mobileSelector.browseAndUpload')
                     : canCreateTextFile
                       ? t('files.mobileSelector.browseAndCreateText')
-                    : t('files.mobileSelector.browse')}
+                      : t('files.mobileSelector.browse')}
                 </span>
               </Button>
             </div>

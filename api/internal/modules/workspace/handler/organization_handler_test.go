@@ -46,6 +46,7 @@ type fakeOrganizationService struct {
 	listWorkspaceRolesFn             func(ctx context.Context, organizationID, accountID string, includeOwner bool) (*shared_dto.WorkspaceRoleListResponse, error)
 	getWorkspaceRoleDetailFn         func(ctx context.Context, organizationID, roleID, accountID string) (*shared_dto.OrganizationRoleDetailResponse, error)
 	applyWorkspaceRoleTemplateFn     func(ctx context.Context, req *shared_dto.ApplyWorkspaceRoleTemplateRequest) (*shared_dto.ApplyWorkspaceRoleTemplateResponse, error)
+	replaceAndDeleteRoleFn           func(ctx context.Context, req *shared_dto.ReplaceWorkspaceRoleTemplateRequest) (*shared_dto.ReplaceWorkspaceRoleTemplateResponse, error)
 }
 
 func (f fakeOrganizationService) GetWorkspaceMemberPermissions(ctx context.Context, organizationID, workspaceID, accountID, targetAccountID string) (*shared_dto.WorkspaceMemberPermissionsResponse, error) {
@@ -209,6 +210,13 @@ func (f fakeOrganizationService) ApplyWorkspaceRoleTemplate(ctx context.Context,
 		return f.applyWorkspaceRoleTemplateFn(ctx, req)
 	}
 	return &shared_dto.ApplyWorkspaceRoleTemplateResponse{}, nil
+}
+
+func (f fakeOrganizationService) ReplaceAndDeleteCustomWorkspaceRole(ctx context.Context, req *shared_dto.ReplaceWorkspaceRoleTemplateRequest) (*shared_dto.ReplaceWorkspaceRoleTemplateResponse, error) {
+	if f.replaceAndDeleteRoleFn != nil {
+		return f.replaceAndDeleteRoleFn(ctx, req)
+	}
+	return &shared_dto.ReplaceWorkspaceRoleTemplateResponse{}, nil
 }
 
 type fakeWorkspaceManagementService struct {
@@ -1943,6 +1951,45 @@ func TestApplyWorkspaceRoleTemplateBindsTargetsAndOperator(t *testing.T) {
 	require.True(t, serviceCalled)
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Contains(t, recorder.Body.String(), `"applied_count":2`)
+}
+
+func TestReplaceAndDeleteWorkspaceRoleRequiresOrganizationAdminAndBindsReplacement(t *testing.T) {
+	t.Parallel()
+
+	serviceCalled := false
+	handler := &OrganizationHandler{
+		organizationService: fakeOrganizationService{
+			isOrganizationAdminOrOwnerFn: func(ctx context.Context, organizationID, accountID string) (bool, error) {
+				require.Equal(t, "org-1", organizationID)
+				require.Equal(t, "org-admin", accountID)
+				return true, nil
+			},
+			replaceAndDeleteRoleFn: func(ctx context.Context, req *shared_dto.ReplaceWorkspaceRoleTemplateRequest) (*shared_dto.ReplaceWorkspaceRoleTemplateResponse, error) {
+				serviceCalled = true
+				require.Equal(t, "org-1", req.OrganizationID)
+				require.Equal(t, "old-role", req.RoleID)
+				require.Equal(t, "new-role", req.ReplacementRoleID)
+				require.Equal(t, "org-admin", req.OperatorID)
+				return &shared_dto.ReplaceWorkspaceRoleTemplateResponse{ReplacedCount: 3, Deleted: true}, nil
+			},
+		},
+	}
+
+	c, recorder := newOrganizationHandlerTestContext(http.MethodPost, "/organizations/org-1/roles/old-role/replace-and-delete")
+	c.Set("account_id", "org-admin")
+	c.Params = gin.Params{
+		{Key: "organization_id", Value: "org-1"},
+		{Key: "role_id", Value: "old-role"},
+	}
+	c.Request.Body = io.NopCloser(bytes.NewBufferString(`{"replacement_role_id":"new-role"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	handler.ReplaceAndDeleteWorkspaceRole(c)
+
+	require.True(t, serviceCalled)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"replaced_count":3`)
+	require.Contains(t, recorder.Body.String(), `"deleted":true`)
 }
 
 func TestGetOrganizationMembersRejectsNonAdminWorkspaceManager(t *testing.T) {

@@ -67,10 +67,11 @@ func (s *streamEventStore) append(ctx context.Context, messageID uuid.UUID, conv
 	if err != nil {
 		return nil, fmt.Errorf("failed to append aichat stream event: %w", err)
 	}
+	event := newStreamEvent(id, eventType, payload, createdAt, createdAtMS)
 	if err := s.client.Expire(ctx, key, streamEventTTL).Err(); err != nil {
-		return nil, fmt.Errorf("failed to refresh aichat stream event ttl: %w", err)
+		return event, fmt.Errorf("failed to refresh aichat stream event ttl: %w", err)
 	}
-	return newStreamEvent(id, eventType, payload, createdAt, createdAtMS), nil
+	return event, nil
 }
 
 func (s *streamEventStore) exists(ctx context.Context, messageID uuid.UUID) (bool, error) {
@@ -277,6 +278,15 @@ func (b *streamMessageEventBuffer) add(ctx context.Context, chunk string) (*Stre
 	return b.flush(ctx)
 }
 
+func fallbackStreamMessageEvent(conversationID, messageID uuid.UUID, chunk string) *StreamEvent {
+	now := time.Now()
+	return newStreamEvent("", streamEventMessage, map[string]interface{}{
+		"conversation_id": conversationID.String(),
+		"message_id":      messageID.String(),
+		"answer":          chunk,
+	}, now.Unix(), now.UnixMilli())
+}
+
 func (b *streamMessageEventBuffer) flush(ctx context.Context) (*StreamEvent, error) {
 	if b == nil || b.builder.Len() == 0 {
 		return nil, nil
@@ -285,17 +295,16 @@ func (b *streamMessageEventBuffer) flush(ctx context.Context) (*StreamEvent, err
 	b.builder.Reset()
 	b.lastFlush = time.Now()
 	if !b.store.available() {
-		now := time.Now()
-		return newStreamEvent("", streamEventMessage, map[string]interface{}{
-			"conversation_id": b.conversationID.String(),
-			"message_id":      b.messageID.String(),
-			"answer":          chunk,
-		}, now.Unix(), now.UnixMilli()), nil
+		return fallbackStreamMessageEvent(b.conversationID, b.messageID, chunk), nil
 	}
-	event, err := b.store.append(ctx, b.messageID, b.conversationID, streamEventMessage, map[string]interface{}{
+	payload := map[string]interface{}{
 		"conversation_id": b.conversationID.String(),
 		"message_id":      b.messageID.String(),
 		"answer":          chunk,
-	})
+	}
+	event, err := b.store.append(ctx, b.messageID, b.conversationID, streamEventMessage, payload)
+	if err != nil && event == nil {
+		return fallbackStreamMessageEvent(b.conversationID, b.messageID, chunk), err
+	}
 	return event, err
 }

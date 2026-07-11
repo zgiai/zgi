@@ -33,6 +33,7 @@ import type { Role } from '@/services/types/organization';
 import { PermissionDeniedState } from '@/components/common/permission-gate-state';
 import { workspaceMemberRoleForAssignableRole } from '@/utils/workspace-role-templates';
 import { normalizeWorkspaceMemberRole } from '@/utils/role-labels';
+import { getOrganizationDisplayName } from '@/utils/organization-display';
 
 export default function WorkspaceMembersPage() {
   const t = useT();
@@ -71,6 +72,7 @@ export default function WorkspaceMembersPage() {
 
   // Get organization
   const { currentOrganization } = useOrganizations();
+  const currentOrganizationDisplayName = getOrganizationDisplayName(currentOrganization);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const canManageMembers = canManageWorkspaceMembers;
@@ -307,7 +309,7 @@ export default function WorkspaceMembersPage() {
               </TableCell>
               <TableCell className="py-3.5 text-muted-foreground">{member.email}</TableCell>
               <TableCell className="py-3.5 text-muted-foreground">
-                {member.department_name || '-'}
+                {member.department_name || currentOrganizationDisplayName}
               </TableCell>
               <TableCell className="py-3.5">
                 <div className="flex flex-col items-start gap-1">

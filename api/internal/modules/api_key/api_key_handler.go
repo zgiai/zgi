@@ -133,15 +133,9 @@ func (h *APIKeyHandler) ListAPIKeys(c *gin.Context) {
 		return
 	}
 
-	// Filter out revoked (deleted) API keys
-	activeAPIKeys := make([]*APIKey, 0)
-	for _, apiKey := range apiKeys {
-		activeAPIKeys = append(activeAPIKeys, apiKey)
-	}
-
 	// Convert to response format
-	apiKeyResponses := make([]APIKeyResponse, len(activeAPIKeys))
-	for i, apiKey := range activeAPIKeys {
+	apiKeyResponses := make([]APIKeyResponse, len(apiKeys))
+	for i, apiKey := range apiKeys {
 		apiKeyResponses[i] = apiKey.ToResponse()
 	}
 
@@ -229,6 +223,16 @@ func (h *APIKeyHandler) UpdateAPIKey(c *gin.Context) {
 	var req UpdateAPIKeyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+
+	currentAPIKey, err := h.apiKeyRepo.GetByID(c.Request.Context(), keyID, agentID, tenantUUID)
+	if err != nil {
+		response.Fail(c, response.ErrorCode{Code: 404001, Message: "API key not found", UserVisible: true})
+		return
+	}
+	if currentAPIKey.Status == APIKeyStatusRevoked {
+		response.Fail(c, response.ErrorCode{Code: 400001, Message: "Revoked API key cannot be updated", UserVisible: true})
 		return
 	}
 

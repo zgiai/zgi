@@ -109,7 +109,14 @@ export function PromptOptimizerDialog({
     setPlaygroundOpen(false);
     streamHandleRef.current?.close();
     streamHandleRef.current = null;
-  }, [initialEditInstruction, initialGoal, initialModel, initialPreserveVariables, initialPrompt, open]);
+  }, [
+    initialEditInstruction,
+    initialGoal,
+    initialModel,
+    initialPreserveVariables,
+    initialPrompt,
+    open,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -135,22 +142,25 @@ export function PromptOptimizerDialog({
   }, [defaultModel?.model, defaultModel?.provider, initialModel?.model, open, selectedModel]);
 
   const detectedVariables = useMemo(() => extractPromptVariables(sourcePrompt), [sourcePrompt]);
-  const visibleVariables =
-    result?.detected_variables?.length
-      ? result.detected_variables
-      : streamVariables.length > 0
-        ? streamVariables
-        : detectedVariables;
+  const visibleVariables = result?.detected_variables?.length
+    ? result.detected_variables
+    : streamVariables.length > 0
+      ? streamVariables
+      : detectedVariables;
   const currentOutput = result?.output ?? streamOutput;
-  const canApplyResult = Boolean(onApplyResult && result?.output && !result.truncated && runStatus === 'complete');
+  const canApplyResult = Boolean(
+    onApplyResult && result?.output && !result.truncated && runStatus === 'complete'
+  );
   const canCopyResult = Boolean(result?.output);
   const canTestResult = Boolean(result?.output && !result.truncated);
-  const activeModel = selectedModel ?? (defaultModel?.provider && defaultModel?.model
-    ? {
-        provider: defaultModel.provider,
-        model: defaultModel.model,
-      }
-    : null);
+  const activeModel =
+    selectedModel ??
+    (defaultModel?.provider && defaultModel?.model
+      ? {
+          provider: defaultModel.provider,
+          model: defaultModel.model,
+        }
+      : null);
 
   const handleRun = async (nextGoal: PromptOptimizerGoal = goal) => {
     if (!sourcePrompt.trim()) return;
@@ -225,8 +235,11 @@ export function PromptOptimizerDialog({
                 ? `${selectedModel.provider} / ${selectedModel.model}`
                 : selectedModel.model
               : undefined;
-            const normalized = getPromptRuntimeErrorMessage(error, modelLabel, isAdminOrOwner, (key, values) =>
-              t(key as never, values as never)
+            const normalized = getPromptRuntimeErrorMessage(
+              error,
+              modelLabel,
+              isAdminOrOwner,
+              (key, values) => t(key as never, values as never)
             );
             toast.error(normalized.message);
             setIsStreaming(false);
@@ -245,8 +258,11 @@ export function PromptOptimizerDialog({
           ? `${selectedModel.provider} / ${selectedModel.model}`
           : selectedModel.model
         : undefined;
-      const normalized = getPromptRuntimeErrorMessage(error, modelLabel, isAdminOrOwner, (key, values) =>
-        t(key as never, values as never)
+      const normalized = getPromptRuntimeErrorMessage(
+        error,
+        modelLabel,
+        isAdminOrOwner,
+        (key, values) => t(key as never, values as never)
       );
       toast.error(normalized.message);
       setIsStreaming(false);
@@ -301,6 +317,8 @@ export function PromptOptimizerDialog({
         variant: 'balanced',
       });
       onOpenChange(false);
+    } catch {
+      // The caller is responsible for showing a localized error toast.
     } finally {
       setIsApplying(false);
     }
@@ -311,13 +329,17 @@ export function PromptOptimizerDialog({
       <DialogContent className="h-[min(calc(100vh-48px),820px)] w-[min(calc(100vw-48px),1280px)] max-w-none">
         <DialogHeader className="border-b px-6 py-5">
           <DialogTitle>{t('optimizer.title')}</DialogTitle>
-          <div className="max-w-3xl text-sm text-muted-foreground">{t('optimizer.description')}</div>
+          <div className="max-w-3xl text-sm text-muted-foreground">
+            {t('optimizer.description')}
+          </div>
         </DialogHeader>
         <DialogBody className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-0 overflow-hidden p-0 md:grid-cols-[400px_minmax(0,1fr)] md:grid-rows-none xl:grid-cols-[420px_minmax(0,1fr)]">
           <section className="flex min-h-0 flex-col overflow-hidden border-b bg-muted/10 md:border-b-0 md:border-r">
             <div className="border-b bg-background px-5 py-4">
               <div className="text-sm font-medium">{t('optimizer.inputPanelLabel')}</div>
-              <div className="mt-1 text-xs text-muted-foreground">{t('optimizer.inputPanelDescription')}</div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {t('optimizer.inputPanelDescription')}
+              </div>
             </div>
 
             <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
@@ -367,7 +389,9 @@ export function PromptOptimizerDialog({
               <div className="space-y-4 rounded-lg border bg-background p-4">
                 <div>
                   <div className="text-sm font-medium">{t('optimizer.settingsPanelLabel')}</div>
-                  <div className="mt-1 text-xs text-muted-foreground">{t('optimizer.settingsPanelDescription')}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {t('optimizer.settingsPanelDescription')}
+                  </div>
                 </div>
 
                 <div className="space-y-2">
@@ -402,7 +426,9 @@ export function PromptOptimizerDialog({
                         {selectedModel?.provider && selectedModel?.model
                           ? ` ${selectedModel.provider} / ${selectedModel.model}`
                           : ''}
-                        {defaultModelSource !== 'none' && !selectedModel?.provider && defaultModel?.provider
+                        {defaultModelSource !== 'none' &&
+                        !selectedModel?.provider &&
+                        defaultModel?.provider
                           ? ` (${defaultModel.provider} / ${defaultModel.model})`
                           : ''}
                       </div>
@@ -427,7 +453,9 @@ export function PromptOptimizerDialog({
                       </Button>
                     ))}
                   </div>
-                  <div className="text-xs text-muted-foreground">{t(`optimizer.goals.${goal}.description`)}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {t(`optimizer.goals.${goal}.description`)}
+                  </div>
                 </div>
 
                 {targetMaxChars ? (
@@ -466,7 +494,9 @@ export function PromptOptimizerDialog({
                         ))}
                       </div>
                     ) : (
-                      <div className="text-xs text-muted-foreground">{t('optimizer.noVariables')}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {t('optimizer.noVariables')}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -520,18 +550,28 @@ export function PromptOptimizerDialog({
                         );
                       })}
                     </div>
-                    <div className="text-sm text-muted-foreground">{t('optimizer.runningDescription')}</div>
+                    <div className="text-sm text-muted-foreground">
+                      {t('optimizer.runningDescription')}
+                    </div>
                   </div>
-                  <Textarea value={streamOutput} readOnly className="min-h-[420px] resize-none font-mono text-xs" />
+                  <Textarea
+                    value={streamOutput}
+                    readOnly
+                    className="min-h-[420px] resize-none font-mono text-xs"
+                  />
                 </div>
               ) : !result ? (
                 <div className="flex min-h-[320px] items-center justify-center rounded-lg bg-muted/20 px-8 text-center">
                   <div className="max-w-sm space-y-2">
                     <div className="text-sm font-medium text-foreground">
-                      {runStatus === 'error' ? t('optimizer.errorStateTitle') : t('optimizer.waitingTitle')}
+                      {runStatus === 'error'
+                        ? t('optimizer.errorStateTitle')
+                        : t('optimizer.waitingTitle')}
                     </div>
                     <div className="text-sm text-muted-foreground">
-                      {runStatus === 'error' ? t('optimizer.errorStateDescription') : t('optimizer.emptyState')}
+                      {runStatus === 'error'
+                        ? t('optimizer.errorStateDescription')
+                        : t('optimizer.emptyState')}
                     </div>
                   </div>
                 </div>
@@ -545,7 +585,11 @@ export function PromptOptimizerDialog({
                       {t('optimizer.truncatedWarning')}
                     </div>
                   ) : null}
-                  <Textarea value={currentOutput} readOnly className="min-h-[460px] resize-none font-mono text-xs" />
+                  <Textarea
+                    value={currentOutput}
+                    readOnly
+                    className="min-h-[460px] resize-none font-mono text-xs"
+                  />
                 </div>
               )}
             </div>

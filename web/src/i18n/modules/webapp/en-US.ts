@@ -1039,6 +1039,7 @@ const messages = {
       sources: {
         webapp: 'WebApp Logs',
         console: 'Debug Logs',
+        externalApi: 'API Calls',
       },
       searchPlaceholder: 'Search user questions or model replies',
       conversationId: 'Conversation ID',

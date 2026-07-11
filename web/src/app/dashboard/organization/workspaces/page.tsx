@@ -12,7 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Pagination } from '@/components/ui/pagination';
 import { TableCell, TableRow } from '@/components/ui/table';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { Search, Plus, Users, ChevronRight, Pencil, Trash2 } from 'lucide-react';
+import { Search, Plus, Users, ChevronRight, Pencil, Trash2, X } from 'lucide-react';
 import { useWorkspaces } from '@/hooks/workspace/use-workspaces';
 import { useDeleteWorkspace } from '@/hooks/workspace/use-workspace-actions';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
@@ -42,6 +42,7 @@ function WorkspaceManagementPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const pathname = usePathname();
+  const searchParamsString = searchParams.toString();
   const [searchKeyword, setSearchKeyword] = useState(searchParams.get('q') || '');
   const [currentPage, setCurrentPage] = useState(Number(searchParams.get('page')) || 1);
   const [isWorkspacePageChanging, setIsWorkspacePageChanging] = useState(false);
@@ -85,6 +86,13 @@ function WorkspaceManagementPageContent() {
 
   // Debounce search keyword
   const debouncedSearchKeyword = useDebouncedValue(searchKeyword, 500);
+
+  useEffect(() => {
+    const nextKeyword = searchParams.get('q') || '';
+    const nextPage = Number(searchParams.get('page')) || 1;
+    setSearchKeyword(prev => (prev === nextKeyword ? prev : nextKeyword));
+    setCurrentPage(prev => (prev === nextPage ? prev : nextPage));
+  }, [searchParams, searchParamsString]);
 
   // Sync state to URL
   const updateUrl = useCallback(
@@ -131,6 +139,7 @@ function WorkspaceManagementPageContent() {
     hasMore,
     page: workspaceResponsePage,
     isLoading,
+    isFetching,
     isPlaceholderData: isPlaceholderWorkspaces,
   } = useWorkspaces(debouncedSearchKeyword, currentPage, pageSize, {
     keepPreviousData: true,
@@ -139,7 +148,8 @@ function WorkspaceManagementPageContent() {
   const loadedItemCount = (currentPage - 1) * pageSize + workspaces.length;
   const effectiveTotal = Math.max(total, loadedItemCount + (hasMore ? 1 : 0));
   const totalPages = Math.max(1, Math.ceil(effectiveTotal / pageSize));
-  const shouldShowWorkspaceSkeleton = isLoading || isWorkspacePageChanging;
+  const shouldShowWorkspaceSkeleton =
+    isLoading || (isWorkspacePageChanging && isFetching && workspaces.length === 0);
 
   // Handle case where current page > total pages (e.g. after deletion)
   useEffect(() => {
@@ -150,10 +160,14 @@ function WorkspaceManagementPageContent() {
   }, [currentPage, totalPages, handlePageChange]);
 
   useEffect(() => {
+    if (!isFetching) {
+      setIsWorkspacePageChanging(false);
+      return;
+    }
     if (!isPlaceholderWorkspaces && workspaceResponsePage === currentPage) {
       setIsWorkspacePageChanging(false);
     }
-  }, [currentPage, isPlaceholderWorkspaces, workspaceResponsePage]);
+  }, [currentPage, isFetching, isPlaceholderWorkspaces, workspaceResponsePage]);
 
   // Delete workspace hook
   const { deleteWorkspace, isDeleting } = useDeleteWorkspace();
@@ -242,6 +256,10 @@ function WorkspaceManagementPageContent() {
     });
   };
 
+  const handleClearSearch = useCallback(() => {
+    setSearchKeyword('');
+  }, []);
+
   const getWorkspaceDetailHref = (workspaceId: string) => {
     const query = assignMemberKeyword
       ? `?assignMember=${encodeURIComponent(assignMemberKeyword)}`
@@ -278,24 +296,9 @@ function WorkspaceManagementPageContent() {
   return (
     <div className="flex h-full flex-col space-y-5 overflow-auto bg-bg-canvas/50 p-4 lg:p-6">
       {/* Header */}
-      <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-text-primary">{t('title')}</h1>
-          <p className="mt-1 max-w-2xl text-sm text-text-secondary">{t('description')}</p>
-        </div>
-        <Button
-          onClick={() =>
-            setWorkspaceDialog({
-              open: true,
-              mode: 'create',
-              initialData: null,
-            })
-          }
-          className="h-10 rounded-md bg-primary px-4 font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary-hover hover:text-primary-foreground"
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          {t('newWorkspace')}
-        </Button>
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight text-text-primary">{t('title')}</h1>
+        <p className="mt-1 max-w-2xl text-sm text-text-secondary">{t('description')}</p>
       </div>
 
       {/* Main Content Area */}
@@ -317,16 +320,39 @@ function WorkspaceManagementPageContent() {
         ) : null}
 
         {/* Search Strip */}
-        <div className="flex flex-col items-center gap-4 border-b border-border/60 bg-background p-4 md:flex-row">
-          <div className="relative w-full max-w-md flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-placeholder" />
+        <div className="flex flex-col gap-2 border-b border-border/60 bg-background px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          <div className="relative w-full sm:w-[360px] sm:flex-none">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder={t('searchPlaceholder')}
               value={searchKeyword}
               onChange={e => setSearchKeyword(e.target.value)}
-              className="h-10 rounded-md bg-bg-canvas/50 pl-9 shadow-none transition-all focus:border-primary/40 focus:ring-0"
+              className="h-10 rounded-md bg-bg-canvas/50 pl-9 pr-9 shadow-none transition-all focus:border-primary/40 focus:ring-0"
             />
+            {searchKeyword ? (
+              <button
+                type="button"
+                aria-label={t('clearSearch')}
+                onClick={handleClearSearch}
+                className="absolute right-2 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-text-placeholder transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
           </div>
+          <Button
+            onClick={() =>
+              setWorkspaceDialog({
+                open: true,
+                mode: 'create',
+                initialData: null,
+              })
+            }
+            className="h-10 w-full shrink-0 rounded-md bg-primary px-4 font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary-hover hover:text-primary-foreground sm:w-auto"
+          >
+            <Plus className="h-4 w-4" />
+            {t('newWorkspace')}
+          </Button>
         </div>
 
         {/* Workspaces Table Section */}
@@ -355,7 +381,20 @@ function WorkspaceManagementPageContent() {
                 <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-4">
                   <Search className="h-8 w-8 opacity-20" />
                 </div>
-                <p className="text-sm font-medium">{t('noWorkspaces')}</p>
+                <p className="text-sm font-medium">
+                  {debouncedSearchKeyword ? t('noSearchResults') : t('noWorkspaces')}
+                </p>
+                {debouncedSearchKeyword ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-4"
+                    onClick={handleClearSearch}
+                  >
+                    {t('clearSearch')}
+                  </Button>
+                ) : null}
               </div>
             }
             scrollClassName="scrollbar-thumb-muted-foreground/20"

@@ -282,6 +282,9 @@ func renderPromptPlaygroundPayload(
 
 func normalizePromptPlaygroundVariableKey(token string) string {
 	trimmed := strings.TrimSpace(token)
+	if strings.HasPrefix(trimmed, "${") && strings.HasSuffix(trimmed, "}") {
+		return strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "${"), "}"))
+	}
 	trimmed = strings.TrimPrefix(trimmed, "{{")
 	trimmed = strings.TrimSuffix(trimmed, "}}")
 	trimmed = strings.TrimPrefix(trimmed, "#")

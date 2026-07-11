@@ -1,7 +1,11 @@
 package handler
 
 import (
+	"context"
+	"net/http"
+
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	"github.com/zgiai/zgi/api/pkg/response"
@@ -10,6 +14,10 @@ import (
 // AvailableModelsHandler handles available models API requests
 type AvailableModelsHandler struct {
 	service service.AvailableModelsService
+}
+
+type availableModelsJSONService interface {
+	ListAvailableJSON(ctx context.Context, organizationID uuid.UUID, provider string, useCase string) ([]byte, error)
 }
 
 // NewAvailableModelsHandler creates a new available models handler
@@ -64,6 +72,16 @@ func (h *AvailableModelsHandler) ListAvailable(c *gin.Context) {
 
 	if req.UseCase != "" && !isValidUseCase(req.UseCase) {
 		response.FailWithMessage(c, response.ErrInvalidParam, "invalid use_case")
+		return
+	}
+
+	if jsonSvc, ok := h.service.(availableModelsJSONService); ok {
+		body, err := jsonSvc.ListAvailableJSON(c.Request.Context(), organizationID, req.Provider, req.UseCase)
+		if err != nil {
+			response.FailWithMessage(c, response.ErrSystemError, err.Error())
+			return
+		}
+		c.Data(http.StatusOK, "application/json; charset=utf-8", body)
 		return
 	}
 

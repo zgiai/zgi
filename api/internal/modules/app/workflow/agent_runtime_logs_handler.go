@@ -122,6 +122,8 @@ func normalizeAgentRuntimeLogSource(source string) (string, bool) {
 		return runtimemodel.ConversationSourceWebApp, true
 	case runtimemodel.ConversationSourceConsole:
 		return runtimemodel.ConversationSourceConsole, true
+	case runtimemodel.ConversationSourceExternalAPI:
+		return runtimemodel.ConversationSourceExternalAPI, true
 	default:
 		return "", false
 	}
@@ -223,6 +225,9 @@ func (h *AgentRuntimeLogsHandler) runtimeMessage(c *gin.Context) (*runtimemodel.
 		return nil, nil, false
 	}
 	message, conversation, err := h.chatRuntime.GetMessageByCallerRuntimeLog(c.Request.Context(), scope, runtimeCaller(agentID), messageID, runtimemodel.ConversationSourceWebApp)
+	if err != nil {
+		message, conversation, err = h.chatRuntime.GetMessageByCallerRuntimeLog(c.Request.Context(), scope, runtimeCaller(agentID), messageID, runtimemodel.ConversationSourceExternalAPI)
+	}
 	if err != nil {
 		message, conversation, err = h.chatRuntime.GetMessageByCallerRuntimeLog(c.Request.Context(), scope, runtimeCaller(agentID), messageID, "")
 	}
@@ -380,7 +385,8 @@ func runtimeConversationSource(conversation *runtimemodel.Conversation, fallback
 
 func isRuntimeLogConversation(conversation *runtimemodel.Conversation) bool {
 	return isRuntimeWebAppConversation(conversation) ||
-		(conversation != nil && conversation.Source == runtimemodel.ConversationSourceConsole)
+		(conversation != nil && conversation.Source == runtimemodel.ConversationSourceConsole) ||
+		(conversation != nil && conversation.Source == runtimemodel.ConversationSourceExternalAPI)
 }
 
 func timeUnixPtr(value *time.Time) *int64 {
