@@ -341,13 +341,13 @@ class OrganizationService extends BaseService {
 
   // Get the department for a member in an organization
   async getMemberDepartment(organizationId: string, accountId: string) {
-    const response = await this.request<ApiResponseData<Department>>(
+    const response = await this.request<ApiResponseData<Department | null>>(
       'get',
       `/organizations/${organizationId}/departments/member/${accountId}`,
       undefined,
       { skipErrorHandling: true }
     );
-    return response.data;
+    return response.data ?? null;
   }
 
   // Direct add member

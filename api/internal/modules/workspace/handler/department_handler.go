@@ -597,7 +597,7 @@ func (h *DepartmentHandler) GetMemberDepartment(c *gin.Context) {
 	dept, err := h.departmentService.GetMemberDepartment(c.Request.Context(), organizationID, accountID)
 	if err != nil {
 		if errors.Is(err, service.ErrMemberNotInDept) {
-			c.JSON(http.StatusNotFound, gin.H{"code": "MemberNotInDepartment", "message": err.Error()})
+			response.Success(c, nil)
 			return
 		}
 		response.Fail(c, response.ErrSystemError)
