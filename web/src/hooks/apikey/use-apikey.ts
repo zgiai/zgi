@@ -179,7 +179,10 @@ export function useUpdateApiKey(): {
     mutationFn: async ({ id, data }) => {
       const payload: UpdateApiKeyRequest = {
         ...data,
-        quota_limit: denormalizeAiCreditValue(data.quota_limit) ?? undefined,
+        quota_limit:
+          data.quota_limit === null
+            ? null
+            : (denormalizeAiCreditValue(data.quota_limit) ?? undefined),
         remain_quota: denormalizeAiCreditValue(data.remain_quota) ?? undefined,
       };
       const response = await apiKeyService.updateApiKey(id, payload);

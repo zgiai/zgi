@@ -18,6 +18,7 @@ import (
 	credentialmodel "github.com/zgiai/zgi/api/internal/modules/llm/credential/model"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"gorm.io/driver/postgres"
@@ -725,6 +726,29 @@ func TestFilterRoutesForNativeProtocol_ResponsesRequiresModelCapabilityForKnownM
 	}
 
 	filtered := filterRoutesForNativeProtocol(routes, model, modelCategoryResponses)
+	if len(filtered) != 0 {
+		t.Fatalf("len(filtered) = %d, want 0", len(filtered))
+	}
+}
+
+func TestFilterRoutesForNativeProtocolOrError_ReportsUnsupportedProtocol(t *testing.T) {
+	routes := []*channelmodel.LLMRoute{
+		{
+			ID:              uuid.New(),
+			Type:            shared.RouteTypePrivate,
+			ChannelProvider: "qwen",
+		},
+	}
+	model := &llmmodel.LLMModel{
+		Model:     "chat-only-model",
+		Provider:  "qwen",
+		Responses: false,
+	}
+
+	filtered, err := filterRoutesForNativeProtocolOrError(routes, model, modelCategoryResponses)
+	if !adapter.IsCapabilityUnsupported(err) {
+		t.Fatalf("error = %v, want ErrCapabilityUnsupported", err)
+	}
 	if len(filtered) != 0 {
 		t.Fatalf("len(filtered) = %d, want 0", len(filtered))
 	}

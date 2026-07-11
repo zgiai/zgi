@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -953,7 +954,7 @@ func (a *AliyunAdapter) CreateResponseRaw(ctx context.Context, request *adapter.
 	if err != nil {
 		return nil, err
 	}
-	return rawOpenAIResponseRequest(ctx, a.httpClient, a.openAICompatibleBaseURL(), openaiAdapter.buildHeaders(), request, openaiAdapter.handleError)
+	return rawOpenAIResponseRequest(ctx, a.httpClient, a.openAICompatibleBaseURL(), openaiAdapter.buildHeaders(), request, a.handleError)
 }
 
 func (a *AliyunAdapter) CreateResponseStream(ctx context.Context, request *adapter.RawResponseRequest) (<-chan adapter.RawStreamEvent, error) {
@@ -1193,6 +1194,9 @@ func (a *AliyunAdapter) handleError(statusCode int, body []byte) error {
 			}
 			if strings.Contains(strings.ToLower(msg), "balance") || strings.Contains(strings.ToLower(code), "balance") {
 				return adapter.NewAdapterError(code, msg, statusCode, adapter.ErrInsufficientBalance)
+			}
+			if statusCode == http.StatusBadRequest {
+				return adapter.NewAdapterError(code, msg, statusCode, adapter.ErrInvalidRequest)
 			}
 
 			return adapter.NewAdapterError(code, msg, statusCode, adapter.ErrUpstreamError)

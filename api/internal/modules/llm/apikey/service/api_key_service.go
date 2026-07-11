@@ -18,6 +18,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const MaxAPIKeyBatchCount = 20
+
 type apiKeyServiceImpl struct {
 	db                  *gorm.DB
 	apiKeyRepo          repository.APIKeyRepository
@@ -162,52 +164,70 @@ func (s *apiKeyServiceImpl) CreateAPIKey(ctx context.Context, req *dto.CreateAPI
 		modelLimitsEnabled = true
 	}
 
-	// Default count to 1
+	// Default count to 1 and reject out-of-range batch requests.
 	count := req.Count
-	if count <= 0 {
+	if count == 0 {
 		count = 1
+	}
+	if count < 1 || count > MaxAPIKeyBatchCount {
+		return nil, fmt.Errorf("count must be between 1 and %d", MaxAPIKeyBatchCount)
+	}
+
+	created := make([]struct {
+		apiKey   *model.TenantAPIKey
+		plainKey string
+	}, 0, count)
+
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txRepo := repository.NewAPIKeyRepository(tx)
+		for i := 0; i < count; i++ {
+			key, err := generateAPIKey()
+			if err != nil {
+				return fmt.Errorf("failed to generate API key: %w", err)
+			}
+
+			keyName := req.Name
+			if count > 1 {
+				keyName = fmt.Sprintf("%s-%d", req.Name, i+1)
+			}
+
+			encryptedKey, err := util.EncryptAPIKey(key)
+			if err != nil {
+				return fmt.Errorf("failed to encrypt API key %d: %w", i+1, err)
+			}
+
+			apiKey := &model.TenantAPIKey{
+				OrganizationID:     finalOrganizationID,
+				Key:                encryptedKey,
+				KeyHash:            util.HashAPIKey(key),
+				Name:               keyName,
+				Status:             "active",
+				ExpiresAt:          req.ExpiresAt,
+				UsedQuota:          0,
+				RemainQuota:        remainQuota,
+				QuotaLimit:         quotaLimit,
+				ModelLimitsEnabled: modelLimitsEnabled,
+				ModelLimits:        modelLimits,
+				AllowIPs:           req.AllowIPs,
+			}
+
+			if err := txRepo.Create(ctx, apiKey); err != nil {
+				return fmt.Errorf("failed to create API key %d: %w", i+1, err)
+			}
+
+			created = append(created, struct {
+				apiKey   *model.TenantAPIKey
+				plainKey string
+			}{apiKey: apiKey, plainKey: key})
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	createdKeys := make([]dto.APIKeyResponse, 0, count)
-
-	for i := 0; i < count; i++ {
-		key, err := generateAPIKey()
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate API key: %w", err)
-		}
-
-		keyName := req.Name
-		if count > 1 {
-			keyName = fmt.Sprintf("%s-%d", req.Name, i+1)
-		}
-
-		encryptedKey, err := util.EncryptAPIKey(key)
-		if err != nil {
-			return nil, fmt.Errorf("failed to encrypt API key %d: %w", i+1, err)
-		}
-
-		keyHash := util.HashAPIKey(key)
-
-		apiKey := &model.TenantAPIKey{
-			OrganizationID:     finalOrganizationID,
-			Key:                encryptedKey,
-			KeyHash:            keyHash,
-			Name:               keyName,
-			Status:             "active",
-			ExpiresAt:          req.ExpiresAt,
-			UsedQuota:          0,
-			RemainQuota:        remainQuota,
-			QuotaLimit:         quotaLimit,
-			ModelLimitsEnabled: modelLimitsEnabled,
-			ModelLimits:        modelLimits,
-			AllowIPs:           req.AllowIPs,
-		}
-
-		if err := s.apiKeyRepo.Create(ctx, apiKey); err != nil {
-			return nil, fmt.Errorf("failed to create API key %d: %w", i+1, err)
-		}
-
-		resp := s.modelToResponse(ctx, apiKey, true, key)
+	for _, item := range created {
+		resp := s.modelToResponse(ctx, item.apiKey, true, item.plainKey)
 		createdKeys = append(createdKeys, *resp)
 	}
 
@@ -337,11 +357,16 @@ func (s *apiKeyServiceImpl) UpdateAPIKey(ctx context.Context, id string, organiz
 		apiKey.Status = *req.Status
 	}
 
-	if req.ExpiresAt != nil {
+	if req.ClearExpiresAt {
+		apiKey.ExpiresAt = nil
+	} else if req.ExpiresAt != nil {
 		apiKey.ExpiresAt = req.ExpiresAt
 	}
 
-	if req.QuotaLimit != nil {
+	if req.ClearQuotaLimit {
+		apiKey.QuotaLimit = nil
+		apiKey.RemainQuota = 0
+	} else if req.QuotaLimit != nil {
 		apiKey.QuotaLimit = req.QuotaLimit
 		remaining := *req.QuotaLimit - apiKey.UsedQuota
 		if remaining < 0 {
@@ -350,7 +375,7 @@ func (s *apiKeyServiceImpl) UpdateAPIKey(ctx context.Context, id string, organiz
 		apiKey.RemainQuota = remaining
 	}
 
-	if req.RemainQuota != nil {
+	if req.RemainQuota != nil && !req.ClearQuotaLimit {
 		apiKey.RemainQuota = *req.RemainQuota
 	}
 

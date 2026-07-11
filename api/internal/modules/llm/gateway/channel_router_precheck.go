@@ -133,7 +133,10 @@ func (r *ChannelRouter) candidateRoutesForResolvedModel(
 
 	validRoutes := r.filterRoutesForSelection(routes, modelName, modelProvider, isPrivateCustomModel)
 	modelCategory, _ := ctx.Value(shared.ContextKeyModelCategory).(string)
-	validRoutes = filterRoutesForNativeProtocol(validRoutes, llmModel, modelCategory)
+	validRoutes, err := filterRoutesForNativeProtocolOrError(validRoutes, llmModel, modelCategory)
+	if err != nil {
+		return nil, err
+	}
 	if len(validRoutes) == 0 {
 		if isPassthroughMode {
 			return nil, llmerrors.NewModelNotFoundErrorWithName(modelName)
