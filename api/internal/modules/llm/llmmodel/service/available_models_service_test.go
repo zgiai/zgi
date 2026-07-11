@@ -748,7 +748,7 @@ func TestContainsUseCaseKeepsImageModelsOutOfTextChat(t *testing.T) {
 	}
 	if containsUseCase(types.StringArray{"text-chat"}, "image-gen") {
 		t.Fatal("text-chat model must not match image-gen")
- 	}
+	}
 }
 
 func TestAvailableModelsObserveGenerationClearsLocalCaches(t *testing.T) {
@@ -774,4 +774,5 @@ func TestAvailableModelsObserveGenerationClearsLocalCaches(t *testing.T) {
 	svc.observeGeneration(organizationID, "1", "0")
 	if len(svc.tenantCache) != 0 || len(svc.availableCache) != 0 || len(svc.availableResponseCache) != 0 {
 		t.Fatal("generation change did not clear local caches")
+	}
 }
