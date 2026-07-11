@@ -30,6 +30,10 @@ import {
 import { ENABLE_ROOT_COOKIE_TOKEN_SYNC, ROOT_COOKIE_DOMAIN } from '@/lib/config';
 import { sessionManager } from '@/lib/auth/session-manager';
 
+type SystemFeaturesResponse = ApiResponseData<{ features: SystemFeatures }>;
+
+let inFlightSystemFeaturesRequest: Promise<SystemFeaturesResponse> | null = null;
+
 // Enhanced authentication service using unified architecture
 export class AuthenticationService extends BaseService {
   private readonly idTokenCookieName = 'idToken';
@@ -481,15 +485,11 @@ export class AuthenticationService extends BaseService {
   }
 
   // Get system features
-  async getSystemFeatures(
-    useCache: boolean = true
-  ): Promise<ApiResponseData<{ features: SystemFeatures }>> {
+  async getSystemFeatures(useCache: boolean = true): Promise<SystemFeaturesResponse> {
     // Client local cache first
     try {
       if (useCache && typeof window !== 'undefined') {
-        const cached = readClientCacheWithLegacyCookie<
-          ApiResponseData<{ features: SystemFeatures }>
-        >({
+        const cached = readClientCacheWithLegacyCookie<SystemFeaturesResponse>({
           key: CLIENT_CACHE_KEYS.systemFeatures,
           legacyCookieKey: LEGACY_CLIENT_CACHE_COOKIE_KEYS.systemFeatures,
           ttlMs: SYSTEM_FEATURES_CLIENT_CACHE_TTL_MS,
@@ -502,30 +502,50 @@ export class AuthenticationService extends BaseService {
       // ignore client cache errors and fall back to network
     }
 
-    const fresh = await this.request<ApiResponseData<{ features: SystemFeatures }>>(
-      'get',
-      '/system-features',
-      undefined,
-      {
-        skipAuth: true,
-      }
-    );
-
-    // Cache response for 3 days
-    try {
-      if (typeof window !== 'undefined') {
-        writeClientCache(
-          CLIENT_CACHE_KEYS.systemFeatures,
-          fresh,
-          SYSTEM_FEATURES_CLIENT_CACHE_TTL_MS
+    if (!inFlightSystemFeaturesRequest) {
+      const request = (async () => {
+        const fresh = await this.request<SystemFeaturesResponse>(
+          'get',
+          '/system-features',
+          undefined,
+          {
+            skipAuth: true,
+          }
         );
-        deleteCookie(LEGACY_CLIENT_CACHE_COOKIE_KEYS.systemFeatures);
-      }
-    } catch {
-      // silently ignore
+
+        // Cache response for 3 days.
+        try {
+          if (typeof window !== 'undefined') {
+            writeClientCache(
+              CLIENT_CACHE_KEYS.systemFeatures,
+              fresh,
+              SYSTEM_FEATURES_CLIENT_CACHE_TTL_MS
+            );
+            deleteCookie(LEGACY_CLIENT_CACHE_COOKIE_KEYS.systemFeatures);
+          }
+        } catch {
+          // silently ignore
+        }
+
+        return fresh;
+      })();
+
+      inFlightSystemFeaturesRequest = request;
+      request.then(
+        () => {
+          if (inFlightSystemFeaturesRequest === request) {
+            inFlightSystemFeaturesRequest = null;
+          }
+        },
+        () => {
+          if (inFlightSystemFeaturesRequest === request) {
+            inFlightSystemFeaturesRequest = null;
+          }
+        }
+      );
     }
 
-    return fresh;
+    return inFlightSystemFeaturesRequest;
   }
 
   // Get setup status
@@ -677,7 +697,7 @@ export const authService = {
     authenticationService.verifyForgotPassword(data),
 
   // System methods
-  getSystemFeatures: () => authenticationService.getSystemFeatures(),
+  getSystemFeatures: (useCache: boolean = true) => authenticationService.getSystemFeatures(useCache),
   getSetupStatus: () => authenticationService.getSetupStatus(),
   setup: (data: SetupRequest) => authenticationService.setup(data),
 

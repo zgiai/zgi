@@ -6,8 +6,6 @@ import { useDataset } from '@/hooks/dataset/use-datasets';
 import { useT } from '@/i18n';
 import { FileText, Search, Cog, ShieldAlert, Network } from 'lucide-react';
 import { getSidebarCollapsed, saveSidebarCollapsed } from '@/utils/ui-local';
-import { useAvailableModels } from '@/hooks/model/use-model';
-import { useIsInitialized } from '@/store/auth-store';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { WorkspaceMismatchGuard } from '@/components/common/workspace-mismatch-guard';
 import { ICON_BG } from '@/lib/config';
@@ -19,13 +17,6 @@ import {
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
 
 export default function DatasetDetailLayout({ children }: { children: React.ReactNode }) {
-  function DatasetModelsPreloader() {
-    useAvailableModels({ use_case: 'text-chat' });
-    useAvailableModels({ use_case: 'embedding' });
-    useAvailableModels({ use_case: 'rerank' });
-    return null;
-  }
-  const isAuthReady = useIsInitialized();
   const { datasetId } = useParams<{ datasetId: string }>();
   const pathname = usePathname();
   const { data, isLoading } = useDataset(datasetId, {
@@ -175,7 +166,6 @@ export default function DatasetDetailLayout({ children }: { children: React.Reac
           </div>
           <div className="flex-1 overflow-hidden">
             <div className="h-full overflow-y-auto" id="dataset-content-area">
-              {isAuthReady && <DatasetModelsPreloader />}
               <div className="h-full">{children}</div>
             </div>
           </div>

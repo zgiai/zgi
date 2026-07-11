@@ -4,12 +4,14 @@ import type {
   AutomationManualRunData,
   AutomationOperationResult,
   AutomationTaskDetailData,
+  AutomationTaskCounts,
   AutomationTaskList,
   AutomationTaskActionParams,
   CreateAutomationTaskRequest,
   GenerateAutomationTaskDraftRequest,
   GenerateAutomationTaskDraftResponse,
   GetAutomationTaskParams,
+  GetAutomationTaskCountsParams,
   GetAutomationTaskRunsParams,
   GetAutomationTasksParams,
   UpdateAutomationTaskRequest,
@@ -41,6 +43,12 @@ export class AutomationService extends BaseService {
 
   getTasks(params?: GetAutomationTasksParams): Promise<ApiResponseData<AutomationTaskList>> {
     return this.request('get', '/automations/tasks', undefined, { params });
+  }
+
+  getTaskCounts(
+    params?: GetAutomationTaskCountsParams
+  ): Promise<ApiResponseData<AutomationTaskCounts>> {
+    return this.request('get', '/automations/tasks/counts', undefined, { params });
   }
 
   getTask(
