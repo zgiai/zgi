@@ -44,7 +44,7 @@ func (s *WorkflowService) PrecheckWorkflowRun(ctx context.Context, workflow any,
 		}, nil
 	}
 
-	modelNames, _, err := collectWorkflowAICreditModelNames(graph, userInputs)
+	models, _, err := collectWorkflowAICreditModels(graph, userInputs)
 	if err != nil {
 		return &WorkflowRunPrecheckResponse{
 			ContainsAICreditNodes: true,
@@ -62,7 +62,7 @@ func (s *WorkflowService) PrecheckWorkflowRun(ctx context.Context, workflow any,
 		}, nil
 	}
 
-	result, err := prechecker.PrecheckAppModels(ctx, appCtx, modelNames)
+	result, err := prechecker.PrecheckAppModels(ctx, appCtx, models)
 	if err != nil || result == nil {
 		return &WorkflowRunPrecheckResponse{
 			ContainsAICreditNodes: true,
@@ -175,14 +175,14 @@ func graphContainsAICreditNodes(graph map[string]any) bool {
 	return false
 }
 
-func collectWorkflowAICreditModelNames(graph map[string]any, userInputs map[string]any) ([]string, bool, error) {
+func collectWorkflowAICreditModels(graph map[string]any, userInputs map[string]any) ([]llmclient.AppModelRef, bool, error) {
 	rawNodes, ok := toAnySlice(graph["nodes"])
 	if !ok {
 		return nil, false, nil
 	}
 
-	seen := map[string]struct{}{}
-	modelNames := make([]string, 0)
+	seen := map[llmclient.AppModelRef]struct{}{}
+	models := make([]llmclient.AppModelRef, 0)
 	containsAICreditNodes := false
 
 	for _, rawNode := range rawNodes {
@@ -201,21 +201,26 @@ func collectWorkflowAICreditModelNames(graph map[string]any, userInputs map[stri
 		}
 		containsAICreditNodes = true
 
-		names, err := resolveAICreditNodeModelNames(nodeType, data, userInputs)
+		resolvedModels, err := resolveAICreditNodeModels(nodeType, data, userInputs)
 		if err != nil {
 			return nil, true, err
 		}
-		for _, name := range names {
-			if _, exists := seen[name]; exists {
+		for _, model := range resolvedModels {
+			if _, exists := seen[model]; exists {
 				continue
 			}
-			seen[name] = struct{}{}
-			modelNames = append(modelNames, name)
+			seen[model] = struct{}{}
+			models = append(models, model)
 		}
 	}
 
-	sort.Strings(modelNames)
-	return modelNames, containsAICreditNodes, nil
+	sort.Slice(models, func(i, j int) bool {
+		if models[i].Provider == models[j].Provider {
+			return models[i].Model < models[j].Model
+		}
+		return models[i].Provider < models[j].Provider
+	})
+	return models, containsAICreditNodes, nil
 }
 
 func isAICreditNodeType(nodeType string) bool {
@@ -231,79 +236,84 @@ func isAICreditNodeType(nodeType string) bool {
 	}
 }
 
-func resolveAICreditNodeModelNames(nodeType string, data map[string]any, userInputs map[string]any) ([]string, error) {
+func resolveAICreditNodeModels(nodeType string, data map[string]any, userInputs map[string]any) ([]llmclient.AppModelRef, error) {
 	switch workflowshared.NodeType(nodeType) {
 	case workflowshared.LLM, workflowshared.ParameterExtractor, workflowshared.SQLGenerator, workflowshared.ImageGen:
-		name, err := resolveNodeModelNameWithRuntimeOverride(data, userInputs)
+		model, err := resolveNodeModelWithRuntimeOverride(data, userInputs)
 		if err != nil {
 			return nil, err
 		}
-		return []string{name}, nil
+		return []llmclient.AppModelRef{model}, nil
 	case workflowshared.KnowledgeRetrieval:
-		return resolveKnowledgeRetrievalModelNames(data)
+		return resolveKnowledgeRetrievalModels(data)
 	default:
 		return nil, nil
 	}
 }
 
-func resolveNodeModelNameWithRuntimeOverride(data map[string]any, userInputs map[string]any) (string, error) {
+func resolveNodeModelWithRuntimeOverride(data map[string]any, userInputs map[string]any) (llmclient.AppModelRef, error) {
 	if modelConfig, exists := userInputs["model_config"]; exists {
-		return extractModelNameFromValue(modelConfig)
+		return extractModelRefFromValue(modelConfig)
 	}
 
 	modelValue, exists := data["model"]
 	if !exists {
-		return "", fmt.Errorf("model config missing")
+		return llmclient.AppModelRef{}, fmt.Errorf("model config missing")
 	}
-	return extractModelNameFromValue(modelValue)
+	return extractModelRefFromValue(modelValue)
 }
 
-func resolveKnowledgeRetrievalModelNames(data map[string]any) ([]string, error) {
-	names := make([]string, 0, 4)
-	appendName := func(value any) error {
-		name, err := extractModelNameFromValue(value)
+func resolveKnowledgeRetrievalModels(data map[string]any) ([]llmclient.AppModelRef, error) {
+	models := make([]llmclient.AppModelRef, 0, 4)
+	appendModel := func(value any) error {
+		model, err := extractModelRefFromValue(value)
 		if err != nil {
 			return err
 		}
-		names = append(names, name)
+		models = append(models, model)
 		return nil
 	}
 
 	if single, ok := toStringAnyMap(data["single_retrieval_config"]); ok {
 		if _, exists := single["provider"]; exists {
-			if err := appendName(single); err != nil {
+			if err := appendModel(single); err != nil {
 				return nil, err
 			}
 		}
 	}
 
 	if metadataModel, exists := data["metadata_model_config"]; exists && metadataModel != nil {
-		if err := appendName(metadataModel); err != nil {
+		if err := appendModel(metadataModel); err != nil {
 			return nil, err
 		}
 	}
 
 	if multiple, ok := toStringAnyMap(data["multiple_retrieval_config"]); ok {
 		if rerankingModel, exists := multiple["reranking_model"]; exists && rerankingModel != nil {
-			if err := appendName(rerankingModel); err != nil {
+			if err := appendModel(rerankingModel); err != nil {
 				return nil, err
 			}
 		}
 		if vectorSetting, ok := nestedMap(multiple, "weights", "vector_setting"); ok {
+			embeddingProvider, _ := vectorSetting["embedding_provider_name"].(string)
+			embeddingProvider = strings.TrimSpace(embeddingProvider)
 			embeddingName, _ := vectorSetting["embedding_model_name"].(string)
 			embeddingName = strings.TrimSpace(embeddingName)
+			if embeddingProvider == "" {
+				return nil, fmt.Errorf("knowledge retrieval embedding provider missing")
+			}
 			if embeddingName == "" {
 				return nil, fmt.Errorf("knowledge retrieval embedding model missing")
 			}
-			names = append(names, embeddingName)
+			models = append(models, llmclient.AppModelRef{Provider: embeddingProvider, Model: embeddingName})
 		}
 	}
 
-	if len(names) == 0 {
+	if len(models) == 0 {
 		return nil, fmt.Errorf("knowledge retrieval model config missing")
 	}
 
-	return names, nil
+	return models, nil
 }
 
 func nestedMap(root map[string]any, keys ...string) (map[string]any, bool) {
@@ -325,10 +335,16 @@ func nestedMap(root map[string]any, keys ...string) (map[string]any, bool) {
 	return nil, false
 }
 
-func extractModelNameFromValue(value any) (string, error) {
+func extractModelRefFromValue(value any) (llmclient.AppModelRef, error) {
 	config, ok := toStringAnyMap(value)
 	if !ok {
-		return "", fmt.Errorf("model config must be an object")
+		return llmclient.AppModelRef{}, fmt.Errorf("model config must be an object")
+	}
+
+	provider, _ := config["provider"].(string)
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return llmclient.AppModelRef{}, fmt.Errorf("model provider missing")
 	}
 
 	name := ""
@@ -341,9 +357,9 @@ func extractModelNameFromValue(value any) (string, error) {
 		}
 	}
 	if name == "" {
-		return "", fmt.Errorf("model name missing")
+		return llmclient.AppModelRef{}, fmt.Errorf("model name missing")
 	}
-	return name, nil
+	return llmclient.AppModelRef{Provider: provider, Model: name}, nil
 }
 
 func toAnySlice(value any) ([]any, bool) {

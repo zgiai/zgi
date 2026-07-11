@@ -91,8 +91,8 @@ func TestRegisterTenantChannelRoutes_UpstreamStateRequiresAdminOrOwner(t *testin
 		if w.Code != http.StatusForbidden {
 			t.Fatalf("%s %s status = %d, want 403; body=%s", request.method, request.path, w.Code, w.Body.String())
 		}
-		if !strings.Contains(w.Body.String(), manageUpstreamStatePermissionMessage) {
-			t.Fatalf("%s %s body = %s, want permission message", request.method, request.path, w.Body.String())
+		if !strings.Contains(w.Body.String(), `"code":"403001"`) {
+			t.Fatalf("%s %s body = %s, want permission code 403001", request.method, request.path, w.Body.String())
 		}
 	}
 }

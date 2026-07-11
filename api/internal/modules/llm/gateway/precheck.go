@@ -34,7 +34,7 @@ func wrapBillingPredeductErrorForUser(err error, billingCtx *BillingContext, use
 	return err
 }
 
-func (s *llmGatewayServiceImpl) PrecheckAppModels(ctx context.Context, organizationID string, appCtx *AppContext, modelNames []string) (*AppModelRoutePrecheckResult, error) {
+func (s *llmGatewayServiceImpl) PrecheckAppModels(ctx context.Context, organizationID string, appCtx *AppContext, models []AppModelRouteRef) (*AppModelRoutePrecheckResult, error) {
 	organizationID = strings.TrimSpace(organizationID)
 	if organizationID == "" {
 		return nil, fmt.Errorf("organization_id is required")
@@ -69,15 +69,15 @@ func (s *llmGatewayServiceImpl) PrecheckAppModels(ctx context.Context, organizat
 		}
 	}
 
-	dedupedModels := dedupeStringsPreserveOrder(modelNames)
+	dedupedModels := dedupeAppModelRefsPreserveOrder(models)
 	if len(dedupedModels) == 0 {
 		return &AppModelRoutePrecheckResult{Status: AppModelRoutePrecheckStatusOK}, nil
 	}
 
 	aggregatedWarnings := make([]AppModelRouteWarning, 0)
 	seenWarnings := make(map[AppModelRouteWarningKind]struct{})
-	for _, modelName := range dedupedModels {
-		modelWarnings, err := s.precheckSingleModelRoutes(ctx, shadowOrganizationID, modelName)
+	for _, model := range dedupedModels {
+		modelWarnings, err := s.precheckSingleModelRoutes(ctx, shadowOrganizationID, model)
 		if err != nil {
 			return &AppModelRoutePrecheckResult{Status: AppModelRoutePrecheckStatusUnknown}, nil
 		}
@@ -100,8 +100,8 @@ func (s *llmGatewayServiceImpl) PrecheckAppModels(ctx context.Context, organizat
 	}, nil
 }
 
-func (s *llmGatewayServiceImpl) precheckSingleModelRoutes(ctx context.Context, shadowOrganizationID uuid.UUID, modelName string) ([]AppModelRouteWarning, error) {
-	routes, err := s.loadCandidateRoutesForModel(ctx, shadowOrganizationID, modelName, 3)
+func (s *llmGatewayServiceImpl) precheckSingleModelRoutes(ctx context.Context, shadowOrganizationID uuid.UUID, model AppModelRouteRef) ([]AppModelRouteWarning, error) {
+	routes, err := s.loadCandidateRoutesForModel(ctx, shadowOrganizationID, model.Provider, model.Model, 3)
 	if err != nil {
 		if errors.Is(err, llmerrors.DomainErrPrivateChannelUpstreamUnavailable) {
 			return []AppModelRouteWarning{{
@@ -273,11 +273,11 @@ func (s *llmGatewayServiceImpl) buildWorkspaceQuotaWarning(ctx context.Context, 
 	}, nil
 }
 
-func (s *llmGatewayServiceImpl) loadCandidateRoutesForModel(ctx context.Context, organizationID uuid.UUID, modelName string, maxSelections int) ([]*channelmodel.LLMRoute, error) {
+func (s *llmGatewayServiceImpl) loadCandidateRoutesForModel(ctx context.Context, organizationID uuid.UUID, provider, modelName string, maxSelections int) ([]*channelmodel.LLMRoute, error) {
 	if s.channelRouter == nil {
 		return nil, fmt.Errorf("channel router is not configured")
 	}
-	return s.channelRouter.CandidateRoutesForModel(ctx, organizationID, modelName, maxSelections)
+	return s.channelRouter.CandidateRoutesForProviderModel(ctx, organizationID, provider, modelName, maxSelections)
 }
 
 func (s *llmGatewayServiceImpl) loadWorkspaceQuota(ctx context.Context, organizationID uuid.UUID, workspaceID string) (*WorkspaceQuota, error) {
@@ -308,19 +308,21 @@ func (s *llmGatewayServiceImpl) loadPrivateChannelWalletBalance(ctx context.Cont
 	return wallet.Balance, nil
 }
 
-func dedupeStringsPreserveOrder(values []string) []string {
-	result := make([]string, 0, len(values))
+func dedupeAppModelRefsPreserveOrder(values []AppModelRouteRef) []AppModelRouteRef {
+	result := make([]AppModelRouteRef, 0, len(values))
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" {
+		provider := strings.ToLower(strings.TrimSpace(value.Provider))
+		model := strings.TrimSpace(value.Model)
+		if model == "" {
 			continue
 		}
-		if _, exists := seen[trimmed]; exists {
+		key := provider + "\x00" + model
+		if _, exists := seen[key]; exists {
 			continue
 		}
-		seen[trimmed] = struct{}{}
-		result = append(result, trimmed)
+		seen[key] = struct{}{}
+		result = append(result, AppModelRouteRef{Provider: provider, Model: model})
 	}
 	return result
 }

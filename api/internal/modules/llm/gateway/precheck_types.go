@@ -38,6 +38,11 @@ type AppModelRoutePrecheckResult struct {
 	Warnings []AppModelRouteWarning
 }
 
+type AppModelRouteRef struct {
+	Provider string
+	Model    string
+}
+
 type candidateRouteWarningState struct {
 	Route   *channelmodel.LLMRoute
 	Healthy bool

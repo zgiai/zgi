@@ -198,6 +198,9 @@ func (s *llmGatewayServiceImpl) createImageInternal(
 
 	// 10. Call adapter
 	providerReq := buildProviderImageRequest(effectiveReq)
+	if err := s.activateUpstreamProbeForAttempt(ctx, selection, billingCtx); err != nil {
+		return nil, err
+	}
 	resp, err := providerAdapter.CreateImage(ctx, &providerReq)
 	responseTime := time.Since(startTime).Milliseconds()
 	if err != nil {

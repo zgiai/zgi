@@ -12,7 +12,7 @@ import (
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
-const halfOpenLeaseDuration = 30 * time.Second
+const halfOpenLeaseDuration = 15 * time.Minute
 
 type GuardDecision struct {
 	WouldGuard bool
@@ -79,6 +79,25 @@ func (s *Service) EvaluateGuardReadOnly(state *State, enforce bool) GuardDecisio
 		decision.Block = true
 	}
 	return decision
+}
+
+// EvaluateProbeEligibility determines whether a blocked credential may be
+// considered for one real recovery request without acquiring its lease.
+func (s *Service) EvaluateProbeEligibility(state *State, enforce, allowAutomaticHalfOpen bool) (eligible, requiresBackup bool) {
+	if state == nil || state.BlockReason == "" || !enforce {
+		return false, false
+	}
+	now := s.now()
+	if state.HalfOpenLeaseUntil != nil && now.Before(*state.HalfOpenLeaseUntil) {
+		return false, false
+	}
+	if state.ManualRetryRequestedAt != nil {
+		return true, false
+	}
+	if !allowAutomaticHalfOpen || state.BlockReason == GuardReasonAuthInvalid || state.CooldownUntil == nil || now.Before(*state.CooldownUntil) {
+		return false, false
+	}
+	return true, true
 }
 
 func (s *Service) RecordProviderError(
@@ -219,7 +238,7 @@ func classifyProviderGuardError(provider string, providerErr error) (GuardReason
 			return GuardReasonBillingUnavailable, AvailabilityExhausted, adapterErr, true
 		case normalizedCode == "allocationquota.freetieronly":
 			return GuardReasonQuotaExhausted, AvailabilityExhausted, adapterErr, true
-		case adapterErr.StatusCode == http.StatusUnauthorized && errors.Is(providerErr, adapter.ErrAuthFailed):
+		case normalizedCode == "invalidapikey" && adapterErr.StatusCode == http.StatusUnauthorized && errors.Is(providerErr, adapter.ErrAuthFailed):
 			return GuardReasonAuthInvalid, AvailabilityInvalidKey, adapterErr, true
 		}
 	}

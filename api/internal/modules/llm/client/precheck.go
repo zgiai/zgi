@@ -32,6 +32,11 @@ type AppModelPrecheckResult struct {
 	Warnings []AppModelPrecheckWarning
 }
 
+type AppModelRef struct {
+	Provider string
+	Model    string
+}
+
 type AppModelPrechecker interface {
-	PrecheckAppModels(ctx context.Context, appCtx *AppContext, models []string) (*AppModelPrecheckResult, error)
+	PrecheckAppModels(ctx context.Context, appCtx *AppContext, models []AppModelRef) (*AppModelPrecheckResult, error)
 }

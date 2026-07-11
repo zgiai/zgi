@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -40,6 +41,24 @@ func TestAliyunAdapterHandleErrorUsesExactBillingCodes(t *testing.T) {
 				t.Fatalf("handleError() error = %v, want %v", err, testCase.want)
 			}
 		})
+	}
+}
+
+func TestAliyunAdapterHandleErrorDoesNotExposeProviderBillingMessage(t *testing.T) {
+	a, err := NewAliyunAdapter(&adapter.AdapterConfig{APIKey: "test-key"})
+	if err != nil {
+		t.Fatalf("NewAliyunAdapter() error = %v", err)
+	}
+
+	err = a.handleError(
+		http.StatusTooManyRequests,
+		[]byte(`{"code":"PrepaidBillOverdue","message":"account sk-sensitive-value is overdue"}`),
+	)
+	if !errors.Is(err, adapter.ErrBillingUnavailable) {
+		t.Fatalf("handleError() error = %v, want billing unavailable", err)
+	}
+	if strings.Contains(err.Error(), "sk-sensitive-value") {
+		t.Fatalf("handleError() exposed provider message: %v", err)
 	}
 }
 

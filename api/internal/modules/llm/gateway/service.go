@@ -338,14 +338,50 @@ func (s *llmGatewayServiceImpl) selectProvidersWithChannelRouter(
 		selections = append(selections, ps)
 	}
 
+	selections = finalizeUpstreamProbeSelections(selections)
 	if len(selections) > 0 {
 		return selections, nil
 	}
 	if len(conversionErrors) > 0 {
 		return nil, fmt.Errorf("failed to convert channel selections: %v", conversionErrors)
 	}
+	if len(channelSelections) > 0 {
+		return nil, fmt.Errorf("%w", llmerrors.DomainErrPrivateChannelUpstreamUnavailable)
+	}
 
 	return nil, fmt.Errorf("no channel selections available for model '%s' (tenant: %s)", modelName, organizationID)
+}
+
+func finalizeUpstreamProbeSelections(selections []*ProviderSelection) []*ProviderSelection {
+	probeSelections := make([]*ProviderSelection, 0, 1)
+	healthySelections := make([]*ProviderSelection, 0, len(selections))
+	for _, selection := range selections {
+		if selection == nil {
+			continue
+		}
+		if selection.UpstreamProbe {
+			probeSelections = append(probeSelections, selection)
+			continue
+		}
+		healthySelections = append(healthySelections, selection)
+	}
+	if len(probeSelections) == 0 {
+		return healthySelections
+	}
+
+	probe := probeSelections[0]
+	hasBackup := false
+	for _, candidate := range healthySelections {
+		if candidate.CredentialID == uuid.Nil || candidate.CredentialID != probe.CredentialID {
+			hasBackup = true
+			break
+		}
+	}
+	if probe.UpstreamProbeRequiresBackup && !hasBackup {
+		return healthySelections
+	}
+	probe.UpstreamProbeHasBackup = hasBackup
+	return append([]*ProviderSelection{probe}, healthySelections...)
 }
 
 // CreateResponse handles response creation requests

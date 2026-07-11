@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
@@ -594,6 +595,19 @@ func TestRecordProviderErrorOnlyGuardsVerifiedProviderEvidence(t *testing.T) {
 	}
 }
 
+func TestClassifyProviderGuardErrorRequiresExactQwenAuthCode(t *testing.T) {
+	unknown401 := adapter.NewAdapterError("WorkspaceAccessDenied", "not allowed", http.StatusUnauthorized, adapter.ErrAuthFailed)
+	if reason, _, _, precise := classifyProviderGuardError("qwen", unknown401); precise || reason != "" {
+		t.Fatalf("unknown 401 classified as reason=%q precise=%t, want fail open", reason, precise)
+	}
+
+	invalidKey := adapter.NewAdapterError("InvalidApiKey", "invalid key", http.StatusUnauthorized, adapter.ErrAuthFailed)
+	reason, availability, _, precise := classifyProviderGuardError("qwen", invalidKey)
+	if !precise || reason != GuardReasonAuthInvalid || availability != AvailabilityInvalidKey {
+		t.Fatalf("InvalidApiKey classified as reason=%q availability=%q precise=%t", reason, availability, precise)
+	}
+}
+
 func TestEvaluateGuardHalfOpenAllowsOneConcurrentRequest(t *testing.T) {
 	db := openUpstreamStateTestDB(t)
 	credential := createTestCredential(t, db)
@@ -642,6 +656,31 @@ func TestEvaluateGuardHalfOpenAllowsOneConcurrentRequest(t *testing.T) {
 	}
 	if !second.Block || second.HalfOpen {
 		t.Fatalf("second decision = %#v, want blocked while lease is held", second)
+	}
+}
+
+func TestEvaluateProbeEligibilityIsReadOnly(t *testing.T) {
+	now := time.Date(2026, time.July, 10, 9, 30, 0, 0, time.UTC)
+	cooldownEnded := now.Add(-time.Second)
+	state := &State{
+		BlockReason:   GuardReasonBillingUnavailable,
+		CooldownUntil: &cooldownEnded,
+	}
+	service := &Service{now: func() time.Time { return now }}
+
+	eligible, requiresBackup := service.EvaluateProbeEligibility(state, true, true)
+	if !eligible || !requiresBackup {
+		t.Fatalf("eligibility = %t/%t, want automatic probe requiring backup", eligible, requiresBackup)
+	}
+	if state.HalfOpenLeaseUntil != nil {
+		t.Fatalf("eligibility check mutated lease: %v", state.HalfOpenLeaseUntil)
+	}
+
+	retryRequestedAt := now.Add(-time.Minute)
+	state.ManualRetryRequestedAt = &retryRequestedAt
+	eligible, requiresBackup = service.EvaluateProbeEligibility(state, true, false)
+	if !eligible || requiresBackup {
+		t.Fatalf("manual eligibility = %t/%t, want probe without backup", eligible, requiresBackup)
 	}
 }
 

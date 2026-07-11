@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -1179,13 +1178,10 @@ func (a *AliyunAdapter) handleError(statusCode int, body []byte) error {
 
 	if err := json.Unmarshal(body, &errResp); err == nil {
 		code := errResp.Code
-		msg := errResp.Message
 		if code == "" && errResp.Error.Code != "" {
 			code = errResp.Error.Code
-			msg = errResp.Error.Message
 		} else if code == "" && errResp.Error.Message != "" {
 			// OpenAI compatible might have empty code but message
-			msg = errResp.Error.Message
 			code = "API_ERROR"
 		}
 
@@ -1193,22 +1189,20 @@ func (a *AliyunAdapter) handleError(statusCode int, body []byte) error {
 			normalizedCode := strings.ToLower(strings.TrimSpace(code))
 			switch normalizedCode {
 			case "arrearage", "prepaidbilloverdue", "postpaidbilloverdue":
-				return adapter.NewAdapterError(code, msg, statusCode, adapter.ErrBillingUnavailable)
+				return adapter.NewAdapterError(code, "provider billing is unavailable", statusCode, adapter.ErrBillingUnavailable)
 			case "allocationquota.freetieronly":
-				return adapter.NewAdapterError(code, msg, statusCode, adapter.ErrQuotaExhausted)
+				return adapter.NewAdapterError(code, "provider quota is exhausted", statusCode, adapter.ErrQuotaExhausted)
+			case "invalidparameter":
+				return adapter.NewAdapterError(code, "provider rejected the request", statusCode, adapter.ErrInvalidRequest)
 			}
 
 			if statusCode == 401 {
-				return adapter.NewAdapterError(code, msg, statusCode, adapter.ErrAuthFailed)
+				return adapter.NewAdapterError(code, "provider authentication failed", statusCode, adapter.ErrAuthFailed)
 			}
 			if statusCode == 429 {
-				return adapter.NewAdapterError(code, msg, statusCode, adapter.ErrRateLimited)
+				return adapter.NewAdapterError(code, "provider rate limit exceeded", statusCode, adapter.ErrRateLimited)
 			}
-			if statusCode == http.StatusBadRequest {
-				return adapter.NewAdapterError(code, msg, statusCode, adapter.ErrInvalidRequest)
-			}
-
-			return adapter.NewAdapterError(code, msg, statusCode, adapter.ErrUpstreamError)
+			return adapter.NewAdapterError(code, "provider request failed", statusCode, adapter.ErrUpstreamError)
 		}
 	}
 

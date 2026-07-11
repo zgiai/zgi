@@ -2,9 +2,11 @@ package gateway
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/modules/llm/credential/upstreamstate"
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
@@ -15,6 +17,56 @@ type upstreamCredentialEvidence struct {
 	provider       string
 	wouldGuard     bool
 	halfOpen       bool
+}
+
+func (s *llmGatewayServiceImpl) activateUpstreamProbe(
+	ctx context.Context,
+	selection *ProviderSelection,
+	billingCtx *BillingContext,
+) error {
+	if selection == nil || !selection.UpstreamProbe {
+		return nil
+	}
+	if s == nil || s.upstreamState == nil || selection.OrganizationID == uuid.Nil || selection.CredentialID == uuid.Nil || selection.CredentialGeneration <= 0 {
+		return fmt.Errorf("%w: upstream probe state is unavailable", llmerrors.DomainErrPrivateChannelUpstreamUnavailable)
+	}
+	state, err := s.upstreamState.Get(ctx, selection.OrganizationID, selection.CredentialID)
+	if err != nil {
+		return fmt.Errorf("load upstream probe state: %w", err)
+	}
+	if state.Generation != selection.CredentialGeneration {
+		return fmt.Errorf("%w: credential generation changed", llmerrors.DomainErrPrivateChannelUpstreamUnavailable)
+	}
+
+	decision, err := s.upstreamState.EvaluateGuard(ctx, state, true, selection.UpstreamProbeHasBackup)
+	if err != nil {
+		return err
+	}
+	if decision.Block || !decision.HalfOpen {
+		return fmt.Errorf("%w: half-open lease unavailable", llmerrors.DomainErrPrivateChannelUpstreamUnavailable)
+	}
+	selection.UpstreamHalfOpen = true
+	selection.UpstreamWouldGuard = decision.WouldGuard
+	if billingCtx != nil {
+		billingCtx.UpstreamHalfOpen = true
+		billingCtx.UpstreamWouldGuard = decision.WouldGuard
+	}
+	upstreamstate.RecordHalfOpenMetric(ctx, selection.ChannelProvider, "leased")
+	return nil
+}
+
+func (s *llmGatewayServiceImpl) activateUpstreamProbeForAttempt(
+	ctx context.Context,
+	selection *ProviderSelection,
+	billingCtx *BillingContext,
+) error {
+	if err := s.activateUpstreamProbe(ctx, selection, billingCtx); err != nil {
+		if rollbackErr := s.rollbackPreDeduction(ctx, billingCtx); rollbackErr != nil {
+			return rollbackErr
+		}
+		return err
+	}
+	return nil
 }
 
 func upstreamEvidence(providerSelection *ProviderSelection, billingCtx *BillingContext) upstreamCredentialEvidence {

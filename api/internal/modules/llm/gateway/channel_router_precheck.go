@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/google/uuid"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
@@ -22,12 +23,23 @@ func (r *ChannelRouter) CandidateRoutesForModel(
 	modelName string,
 	maxSelections int,
 ) ([]*channelmodel.LLMRoute, error) {
+	return r.CandidateRoutesForProviderModel(ctx, organizationID, "", modelName, maxSelections)
+}
+
+func (r *ChannelRouter) CandidateRoutesForProviderModel(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	providerHint string,
+	modelName string,
+	maxSelections int,
+) ([]*channelmodel.LLMRoute, error) {
 	if r == nil {
 		return nil, fmt.Errorf("channel router is nil")
 	}
 
 	modelName = normalizeRequestedModelName(modelName)
-	llmModel, privateModel, err := r.resolveCandidateModel(ctx, organizationID, modelName)
+	providerHint = strings.TrimSpace(providerHint)
+	llmModel, privateModel, err := r.resolveCandidateModel(ctx, organizationID, providerHint, modelName)
 	if err != nil {
 		return nil, err
 	}
@@ -42,14 +54,15 @@ func (r *ChannelRouter) CandidateRoutesForModel(
 func (r *ChannelRouter) resolveCandidateModel(
 	ctx context.Context,
 	organizationID uuid.UUID,
+	providerHint string,
 	modelName string,
 ) (*llmmodel.LLMModel, *llmmodel.CustomModel, error) {
-	llmModel, privateModel, err := r.resolveSelectionModel(ctx, organizationID, "", modelName)
+	llmModel, privateModel, err := r.resolveSelectionModel(ctx, organizationID, providerHint, modelName)
 	if err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil, fmt.Errorf("failed to resolve LLM model %q: %w", modelName, err)
 		}
-		knownGlobalModel, knownErr := r.globalModelExists(ctx, "", modelName)
+		knownGlobalModel, knownErr := r.globalModelExists(ctx, providerHint, modelName)
 		if knownErr != nil {
 			return nil, nil, fmt.Errorf("failed to check LLM model %q: %w", modelName, knownErr)
 		}
@@ -89,7 +102,7 @@ func (r *ChannelRouter) CandidateRoutesForModels(
 		if normalizedModelName == "" {
 			continue
 		}
-		llmModel, privateModel, err := r.resolveCandidateModel(ctx, organizationID, normalizedModelName)
+		llmModel, privateModel, err := r.resolveCandidateModel(ctx, organizationID, "", normalizedModelName)
 		if err != nil {
 			if !errors.Is(err, llmerrors.DomainErrModelNotFound) {
 				return nil, err

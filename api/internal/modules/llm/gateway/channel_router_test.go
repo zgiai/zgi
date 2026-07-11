@@ -822,10 +822,97 @@ func TestUpstreamGuardAutomaticHalfOpenRequiresHealthyBackup(t *testing.T) {
 
 	withBackup, guarded := router.filterRoutesByUpstreamGuard(context.Background(), organizationID, []*channelmodel.LLMRoute{blockedRoute, healthyRoute}, true, true)
 	if len(withBackup) != 2 || guarded != 0 {
-		t.Fatalf("with backup = %d/%d, want half-open plus healthy", len(withBackup), guarded)
+		t.Fatalf("with backup = %d/%d, want probe candidate plus healthy", len(withBackup), guarded)
 	}
-	if !blockedRoute.UpstreamHalfOpen || !blockedRoute.UpstreamWouldGuard {
-		t.Fatalf("blocked route evidence = half_open:%t would_guard:%t", blockedRoute.UpstreamHalfOpen, blockedRoute.UpstreamWouldGuard)
+	if !blockedRoute.UpstreamProbe || blockedRoute.UpstreamHalfOpen || !blockedRoute.UpstreamWouldGuard {
+		t.Fatalf("blocked route evidence = probe:%t half_open:%t would_guard:%t", blockedRoute.UpstreamProbe, blockedRoute.UpstreamHalfOpen, blockedRoute.UpstreamWouldGuard)
+	}
+	stored, err := upstreamstate.NewRepository(db).Get(context.Background(), organizationID, blockedCredentialID)
+	if err != nil {
+		t.Fatalf("load blocked state: %v", err)
+	}
+	if stored.HalfOpenLeaseUntil != nil {
+		t.Fatalf("route filtering acquired half-open lease until %v", stored.HalfOpenLeaseUntil)
+	}
+}
+
+func TestSelectRoutesByPriorityAndWeightPutsProbeBeforeFallback(t *testing.T) {
+	router := &ChannelRouter{}
+	probe := &channelmodel.LLMRoute{ID: uuid.New(), Priority: 1, Weight: 1, UpstreamProbe: true}
+	fallback := &channelmodel.LLMRoute{ID: uuid.New(), Priority: 100, Weight: 1}
+
+	selected := router.selectRoutesByPriorityAndWeight([]*channelmodel.LLMRoute{fallback, probe}, 2)
+	if len(selected) != 2 || selected[0].ID != probe.ID || selected[1].ID != fallback.ID {
+		t.Fatalf("selected routes = %#v, want probe then fallback", selected)
+	}
+}
+
+func TestFinalizeUpstreamProbeSelectionsRequiresBuiltFallback(t *testing.T) {
+	probeCredentialID := uuid.New()
+	probe := &ProviderSelection{
+		RouteID:                     uuid.New(),
+		CredentialID:                probeCredentialID,
+		UpstreamProbe:               true,
+		UpstreamProbeRequiresBackup: true,
+	}
+	if got := finalizeUpstreamProbeSelections([]*ProviderSelection{probe}); len(got) != 0 {
+		t.Fatalf("probe without built fallback = %#v, want no selections", got)
+	}
+
+	fallback := &ProviderSelection{RouteID: uuid.New(), CredentialID: uuid.New()}
+	got := finalizeUpstreamProbeSelections([]*ProviderSelection{fallback, probe})
+	if len(got) != 2 || got[0] != probe || got[1] != fallback || !probe.UpstreamProbeHasBackup {
+		t.Fatalf("probe with built fallback = %#v, want probe first with backup evidence", got)
+	}
+
+	manual := &ProviderSelection{RouteID: uuid.New(), CredentialID: uuid.New(), UpstreamProbe: true}
+	got = finalizeUpstreamProbeSelections([]*ProviderSelection{manual})
+	if len(got) != 1 || got[0] != manual || manual.UpstreamProbeHasBackup {
+		t.Fatalf("manual probe without fallback = %#v, want one manual probe", got)
+	}
+}
+
+func TestActivateUpstreamProbeAcquiresLeaseAtAttempt(t *testing.T) {
+	db := openGatewayUpstreamGuardDB(t)
+	organizationID := uuid.New()
+	credentialID := uuid.New()
+	cooldownEnded := time.Now().Add(-time.Minute)
+	if err := db.Create(&upstreamstate.State{
+		CredentialID: credentialID, OrganizationID: organizationID, Generation: 3,
+		BalanceCapability: upstreamstate.BalanceCapabilityUnsupported,
+		Availability:      upstreamstate.AvailabilityExhausted,
+		LastCheckStatus:   upstreamstate.CheckStatusUnsupported,
+		WarningThresholds: []upstreamstate.WarningThreshold{},
+		BlockReason:       upstreamstate.GuardReasonBillingUnavailable,
+		CooldownUntil:     &cooldownEnded,
+		GuardStrikes:      1,
+	}).Error; err != nil {
+		t.Fatalf("create upstream state: %v", err)
+	}
+
+	service := &llmGatewayServiceImpl{upstreamState: upstreamstate.NewService(db, stubCryptoService{})}
+	selection := &ProviderSelection{
+		OrganizationID:         organizationID,
+		CredentialID:           credentialID,
+		CredentialGeneration:   3,
+		ChannelProvider:        "qwen",
+		UpstreamProbe:          true,
+		UpstreamProbeHasBackup: true,
+	}
+	billingCtx := &BillingContext{}
+	if err := service.activateUpstreamProbe(context.Background(), selection, billingCtx); err != nil {
+		t.Fatalf("activateUpstreamProbe() error = %v", err)
+	}
+	if !selection.UpstreamHalfOpen || !billingCtx.UpstreamHalfOpen {
+		t.Fatalf("half-open evidence = selection:%t billing:%t, want true", selection.UpstreamHalfOpen, billingCtx.UpstreamHalfOpen)
+	}
+
+	stored, err := upstreamstate.NewRepository(db).Get(context.Background(), organizationID, credentialID)
+	if err != nil {
+		t.Fatalf("load upstream state: %v", err)
+	}
+	if stored.HalfOpenLeaseUntil == nil || time.Until(*stored.HalfOpenLeaseUntil) < 10*time.Minute {
+		t.Fatalf("half-open lease until = %v, want request-length lease", stored.HalfOpenLeaseUntil)
 	}
 }
 
