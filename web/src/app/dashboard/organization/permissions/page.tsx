@@ -20,7 +20,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Shield, Plus, Ellipsis, Users, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useOrganizationRoles } from '@/hooks/organization/use-organization-roles';
@@ -33,9 +39,7 @@ import { EditRoleInfoDialog } from '@/components/dashboard/organization/edit-rol
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { toast } from 'sonner';
 import type { Role } from '@/services/types/organization';
-import {
-  isSelectableWorkspacePermissionTemplate,
-} from '@/utils/workspace-role-templates';
+import { isSelectableWorkspacePermissionTemplate } from '@/utils/workspace-role-templates';
 
 export default function PermissionsPage() {
   const t = useT('dashboard.organization.permissions');
@@ -183,148 +187,145 @@ export default function PermissionsPage() {
       </div>
 
       {/* Role Cards Grid */}
-      <section className="space-y-3">
-        <div>
-          <h2 className="text-sm font-semibold text-text-primary">
-            {t('sections.templateTitle')}
-          </h2>
-          <p className="mt-1 text-xs text-text-secondary">{t('sections.templateSubtitle')}</p>
-        </div>
-      <div className="mx-auto grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-        {/* Loading Skeleton */}
-        {isLoading
-          ? Array.from({ length: 3 }).map((_, index) => (
-              <Card key={`skeleton-${index}`} className="rounded-xl border-border/80 bg-background">
-                <CardContent className="px-5 pb-5 pt-6">
-                  <div className="mb-5 flex items-center gap-3">
-                    <Skeleton className="w-12 h-12 rounded-xl" />
-                    <Skeleton className="h-6 w-28 rounded-lg" />
-                  </div>
-                  <Skeleton className="h-4 w-full mb-2" />
-                  <Skeleton className="h-4 w-5/6 mb-6 min-h-[3rem]" />
-                  <div className="flex items-center gap-2 mb-5">
-                    <Skeleton className="h-3.5 w-3.5" />
-                    <Skeleton className="h-3.5 w-20" />
-                  </div>
-                  <div className="flex gap-2">
-                    <Skeleton className="h-9 flex-1 rounded-lg" />
-                    <Skeleton className="h-9 flex-1 rounded-lg" />
-                  </div>
-                </CardContent>
-              </Card>
-            ))
-          : /* Existing Role Cards */
-            permissionTemplateRoles.map(role => (
-              <Card
-                key={role.id}
-                className={cn(
-                  'group relative overflow-hidden rounded-xl border-border/80 bg-background shadow-sm transition-colors hover:border-primary/30',
-                  role.id === 'admin' ? 'ring-1 ring-primary/10' : ''
-                )}
-              >
-                {/* Visual Decoration for Admin/Owner */}
-                {role.id === 'admin' && (
-                  <div className="absolute top-0 right-0 w-20 h-20 bg-primary/5 blur-2xl rounded-full -mr-6 -mt-6" />
-                )}
-
-                <CardContent className="relative z-10 px-5 pb-5 pt-6">
-                  {/* More Options Menu */}
-                  {role.editable && (
-                    <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            isIcon
-                            className="h-7 w-7 rounded-md hover:bg-accent/80"
-                          >
-                            <Ellipsis className="h-3.5 w-3.5" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="min-w-[110px]">
-                          <DropdownMenuItem
-                            onClick={() => handleEditClick(role)}
-                            className="text-xs cursor-pointer hover:bg-accent px-2.5 py-1.5"
-                          >
-                            {tCommon('edit')}
-                          </DropdownMenuItem>
-                          {role.deletable !== false ? (
-                            <DropdownMenuItem
-                              onClick={() => handleDeleteClick(role)}
-                              className="text-xs text-destructive focus:text-destructive cursor-pointer hover:bg-destructive/5 px-2.5 py-1.5"
-                            >
-                              {tCommon('delete')}
-                            </DropdownMenuItem>
-                          ) : null}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+      <section>
+        <div className="mx-auto grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+          {/* Loading Skeleton */}
+          {isLoading
+            ? Array.from({ length: 3 }).map((_, index) => (
+                <Card
+                  key={`skeleton-${index}`}
+                  className="rounded-xl border-border/80 bg-background"
+                >
+                  <CardContent className="px-5 pb-5 pt-6">
+                    <div className="mb-5 flex items-center gap-3">
+                      <Skeleton className="w-12 h-12 rounded-xl" />
+                      <Skeleton className="h-6 w-28 rounded-lg" />
                     </div>
+                    <Skeleton className="h-4 w-full mb-2" />
+                    <Skeleton className="h-4 w-5/6 mb-6 min-h-[3rem]" />
+                    <div className="flex items-center gap-2 mb-5">
+                      <Skeleton className="h-3.5 w-3.5" />
+                      <Skeleton className="h-3.5 w-20" />
+                    </div>
+                    <div className="flex gap-2">
+                      <Skeleton className="h-9 flex-1 rounded-lg" />
+                      <Skeleton className="h-9 flex-1 rounded-lg" />
+                    </div>
+                  </CardContent>
+                </Card>
+              ))
+            : /* Existing Role Cards */
+              permissionTemplateRoles.map(role => (
+                <Card
+                  key={role.id}
+                  className={cn(
+                    'group relative overflow-hidden rounded-xl border-border/80 bg-background shadow-sm transition-colors hover:border-primary/30',
+                    role.id === 'admin' ? 'ring-1 ring-primary/10' : ''
+                  )}
+                >
+                  {/* Visual Decoration for Admin/Owner */}
+                  {role.id === 'admin' && (
+                    <div className="absolute top-0 right-0 w-20 h-20 bg-primary/5 blur-2xl rounded-full -mr-6 -mt-6" />
                   )}
 
-                  {/* Role Icon & Name */}
-                  <div className="mb-5 flex items-center gap-3 w-full">
-                    <div
-                      className={cn(
-                        'flex h-11 w-11 shrink-0 items-center justify-center rounded-lg shadow-sm',
-                        role.id === 'admin'
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-card text-brand-main border'
-                      )}
-                    >
-                      <Shield className="h-6 w-6" />
+                  <CardContent className="relative z-10 px-5 pb-5 pt-6">
+                    {/* More Options Menu */}
+                    {role.editable && (
+                      <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              isIcon
+                              className="h-7 w-7 rounded-md hover:bg-accent/80"
+                            >
+                              <Ellipsis className="h-3.5 w-3.5" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="min-w-[110px]">
+                            <DropdownMenuItem
+                              onClick={() => handleEditClick(role)}
+                              className="text-xs cursor-pointer hover:bg-accent px-2.5 py-1.5"
+                            >
+                              {tCommon('edit')}
+                            </DropdownMenuItem>
+                            {role.deletable !== false ? (
+                              <DropdownMenuItem
+                                onClick={() => handleDeleteClick(role)}
+                                className="text-xs text-destructive focus:text-destructive cursor-pointer hover:bg-destructive/5 px-2.5 py-1.5"
+                              >
+                                {tCommon('delete')}
+                              </DropdownMenuItem>
+                            ) : null}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    )}
+
+                    {/* Role Icon & Name */}
+                    <div className="mb-5 flex items-center gap-3 w-full">
+                      <div
+                        className={cn(
+                          'flex h-11 w-11 shrink-0 items-center justify-center rounded-lg shadow-sm',
+                          role.id === 'admin'
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-card text-brand-main border'
+                        )}
+                      >
+                        <Shield className="h-6 w-6" />
+                      </div>
+                      <div className="flex w-0 grow items-center gap-2">
+                        <h3 className="text-lg font-bold text-text-primary tracking-tight w-0 grow line-clamp-2 break-words text-ellipsis">
+                          {getRoleDisplayName(role)}
+                        </h3>
+                        {role.builtin && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-muted text-text-placeholder font-bold uppercase tracking-wider shrink-0">
+                            System
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex w-0 grow items-center gap-2">
-                      <h3 className="text-lg font-bold text-text-primary tracking-tight w-0 grow line-clamp-2 break-words text-ellipsis">
-                        {getRoleDisplayName(role)}
-                      </h3>
-                      {role.builtin && (
-                        <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-muted text-text-placeholder font-bold uppercase tracking-wider shrink-0">
-                          System
-                        </span>
-                      )}
+
+                    {/* Role Description */}
+                    <p className="text-sm text-text-secondary mb-5 min-h-[3.5rem] leading-relaxed line-clamp-3 break-words">
+                      {getRoleDescription(role)}
+                    </p>
+
+                    {/* Member Count */}
+                    <div className="flex items-center gap-2 text-xs font-bold text-text-secondary mb-5 px-2.5 py-1.5 rounded-lg border border-border/20 w-fit">
+                      <Users className="h-3 w-3 text-primary/60" />
+                      <span>
+                        {(role.member_count ?? 0) > 0
+                          ? t('memberCount.people', {
+                              count: role.member_count ?? 0,
+                            })
+                          : t('memberCount.noMembers')}
+                      </span>
                     </div>
-                  </div>
 
-                  {/* Role Description */}
-                  <p className="text-sm text-text-secondary mb-5 min-h-[3.5rem] leading-relaxed line-clamp-3 break-words">
-                    {getRoleDescription(role)}
-                  </p>
-
-                  {/* Member Count */}
-                  <div className="flex items-center gap-2 text-xs font-bold text-text-secondary mb-5 px-2.5 py-1.5 rounded-lg border border-border/20 w-fit">
-                    <Users className="h-3 w-3 text-primary/60" />
-                    <span>
-                      {(role.member_count ?? 0) > 0
-                        ? t('memberCount.people', {
-                            count: role.member_count ?? 0,
-                          })
-                        : t('memberCount.noMembers')}
-                    </span>
-                  </div>
-
-                  {/* Action Buttons */}
-                  <div className="flex gap-2.5 mt-auto">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleViewMembers(role.id)}
-                      className="h-9 flex-1 rounded-md text-xs font-semibold transition-colors"
-                    >
-                      {t('actions.viewMembers')}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleConfigurePermissions(role.id)}
-                      className="h-9 flex-1 rounded-md border-primary/20 text-xs font-semibold transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
-                    >
-                      {t('actions.configurePermissions')}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-      </div>
+                    {/* Action Buttons */}
+                    <div className="flex gap-2.5 mt-auto">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleViewMembers(role.id)}
+                        className="h-9 flex-1 rounded-md text-xs font-semibold transition-colors"
+                      >
+                        {t('actions.viewMembers')}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleConfigurePermissions(role.id)}
+                        className="h-9 flex-1 rounded-md border-primary/20 text-xs font-semibold transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+                      >
+                        {t('actions.configurePermissions')}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+        </div>
       </section>
 
       {/* Modals remain functional */}

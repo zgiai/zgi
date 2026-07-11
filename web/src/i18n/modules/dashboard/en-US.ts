@@ -193,7 +193,8 @@ const messages = {
         description:
           'Configure either Reducto or MinerU successfully to get better PDF, Office, table, and scanned document parsing.',
         reductoRecommendation: 'Reducto is recommended for overseas or English-heavy use cases.',
-        mineruRecommendation: 'MinerU official service is recommended for Mainland China or Chinese-heavy use cases.',
+        mineruRecommendation:
+          'MinerU official service is recommended for Mainland China or Chinese-heavy use cases.',
         openReducto: 'Get Reducto API key',
         openMineru: 'Get MinerU token',
       },
@@ -255,8 +256,7 @@ const messages = {
         secretRequired: 'Required before enabling',
       },
       hints: {
-        baseUrl:
-          'Enter the service root URL. The system automatically appends the endpoint path.',
+        baseUrl: 'Enter the service root URL. The system automatically appends the endpoint path.',
       },
       status: {
         not_configured: 'Not configured',
@@ -937,7 +937,8 @@ const messages = {
         cancel: 'Cancel',
         confirm: 'Confirm Delete',
         deleting: 'Deleting...',
-        keepOneToast: 'At least one permission template must remain. This template cannot be deleted.',
+        keepOneToast:
+          'At least one permission template must remain. This template cannot be deleted.',
         migrationTitle: 'Move members before deleting',
         migrationDescription:
           '"{roleName}" is still applied to {count} workspace members. Choose a replacement template and the system will switch those members before deleting this template.',
@@ -949,7 +950,8 @@ const messages = {
         noOrganization: 'No current organization found. Refresh and try again.',
         migrateAndDelete: 'Switch and Delete',
         migrating: 'Processing...',
-        migrationPartial: 'Switched {applied}; {failed} failed. Resolve the failed items before deleting.',
+        migrationPartial:
+          'Switched {applied}; {failed} failed. Resolve the failed items before deleting.',
         migrationError: 'Failed to delete template',
       },
       deleteSuccess: 'Template deleted successfully',
@@ -1165,6 +1167,9 @@ const messages = {
       scopeDepartmentHint:
         'Removing a member here only removes them from the selected department. The member remains in the organization root.',
       memberCount: '({count} total)',
+      memberScope: 'Member scope',
+      memberCountCompact: '{count} members',
+      includeSubDepartments: 'Include sub-department members',
       searchDepartment: 'Search department',
       searchMembers: 'Search members',
       selectDepartment: 'Please select a department to view members',
@@ -1173,7 +1178,7 @@ const messages = {
       noMembers: 'No members in this department',
       noMemberSearchResults: 'No members found',
       noMemberSearchResultsDescription: 'Try another keyword or switch departments',
-      name: 'Name',
+      name: 'Member',
       email: 'Email',
       organizationRole: 'Organization Role',
       organizationRoles: {
@@ -1286,7 +1291,8 @@ const messages = {
         memberEmailPlaceholder: 'Enter member email',
         memberPassword: 'Password (optional)',
         memberPasswordPlaceholder: 'Leave blank to use the system default password',
-        defaultPasswordHint: 'If left blank, the system default password ZGI@Welcome1 will be used.',
+        defaultPasswordHint:
+          'If left blank, the system default password ZGI@Welcome1 will be used.',
         memberDepartment: 'Department',
         memberDepartmentOptional: 'Department (optional)',
         memberWorkspaceOptional: 'Workspace (optional)',
@@ -1328,7 +1334,8 @@ const messages = {
         email: 'Member Email',
         password: 'New password (optional)',
         passwordPlaceholder: 'Leave blank to use the system default password',
-        defaultPasswordHint: 'If left blank, the system default password ZGI@Welcome1 will be used.',
+        defaultPasswordHint:
+          'If left blank, the system default password ZGI@Welcome1 will be used.',
         cancel: 'Cancel',
         confirm: 'Reset Password',
         resetting: 'Resetting...',

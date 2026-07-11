@@ -1111,6 +1111,9 @@ const messages: DashboardMessages = {
       scopeOrganizationHint: '在这里移除成员会将其从整个组织中移出，并解除所有部门归属。',
       scopeDepartmentHint: '在这里移除成员只会将其移出当前部门，成员仍会保留在组织根目录。',
       memberCount: '（共{count}人）',
+      memberScope: '成员范围',
+      memberCountCompact: '{count} 位成员',
+      includeSubDepartments: '显示下级部门成员',
       searchDepartment: '搜索部门',
       searchMembers: '搜索成员',
       selectDepartment: '请选择一个部门查看成员',
@@ -1119,7 +1122,7 @@ const messages: DashboardMessages = {
       noMembers: '该部门暂无成员',
       noMemberSearchResults: '未找到成员',
       noMemberSearchResultsDescription: '换个关键词或切换部门再试试',
-      name: '姓名',
+      name: '成员',
       email: '邮箱',
       organizationRole: '组织角色',
       organizationRoles: {
@@ -1491,7 +1494,8 @@ const messages: DashboardMessages = {
           },
           closeGuard: {
             title: '保存权限修改？',
-            description: '当前成员权限有未保存的修改。关闭前请选择保存后关闭、不保存关闭，或继续编辑。',
+            description:
+              '当前成员权限有未保存的修改。关闭前请选择保存后关闭、不保存关闭，或继续编辑。',
             saveAndClose: '保存后关闭',
             discard: '不保存关闭',
             cancel: '继续编辑',

@@ -258,10 +258,7 @@ function WorkspaceManagementPageContent() {
 
   const handleClearSearch = useCallback(() => {
     setSearchKeyword('');
-    setCurrentPage(1);
-    setIsWorkspacePageChanging(true);
-    updateUrl({ q: null, status: null, page: 1 });
-  }, [updateUrl]);
+  }, []);
 
   const getWorkspaceDetailHref = (workspaceId: string) => {
     const query = assignMemberKeyword
@@ -299,24 +296,9 @@ function WorkspaceManagementPageContent() {
   return (
     <div className="flex h-full flex-col space-y-5 overflow-auto bg-bg-canvas/50 p-4 lg:p-6">
       {/* Header */}
-      <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-text-primary">{t('title')}</h1>
-          <p className="mt-1 max-w-2xl text-sm text-text-secondary">{t('description')}</p>
-        </div>
-        <Button
-          onClick={() =>
-            setWorkspaceDialog({
-              open: true,
-              mode: 'create',
-              initialData: null,
-            })
-          }
-          className="h-10 rounded-md bg-primary px-4 font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary-hover hover:text-primary-foreground"
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          {t('newWorkspace')}
-        </Button>
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight text-text-primary">{t('title')}</h1>
+        <p className="mt-1 max-w-2xl text-sm text-text-secondary">{t('description')}</p>
       </div>
 
       {/* Main Content Area */}
@@ -338,9 +320,9 @@ function WorkspaceManagementPageContent() {
         ) : null}
 
         {/* Search Strip */}
-        <div className="flex flex-col items-center gap-4 border-b border-border/60 bg-background p-4 md:flex-row">
-          <div className="relative w-full max-w-md flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-placeholder" />
+        <div className="flex flex-col gap-2 border-b border-border/60 bg-background px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          <div className="relative w-full sm:w-[360px] sm:flex-none">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder={t('searchPlaceholder')}
               value={searchKeyword}
@@ -358,6 +340,19 @@ function WorkspaceManagementPageContent() {
               </button>
             ) : null}
           </div>
+          <Button
+            onClick={() =>
+              setWorkspaceDialog({
+                open: true,
+                mode: 'create',
+                initialData: null,
+              })
+            }
+            className="h-10 w-full shrink-0 rounded-md bg-primary px-4 font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary-hover hover:text-primary-foreground sm:w-auto"
+          >
+            <Plus className="h-4 w-4" />
+            {t('newWorkspace')}
+          </Button>
         </div>
 
         {/* Workspaces Table Section */}
