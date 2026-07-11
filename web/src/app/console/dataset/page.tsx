@@ -30,18 +30,9 @@ import { VirtualContentGrid } from '@/components/datasets/page/virtual-content-g
 import type { OpenDatasetDialogPayload } from '@/components/datasets/dialog/types';
 import type { OpenFolderModalPayload } from '@/components/datasets/modal/folder-modal';
 import { useInfiniteObserver } from '@/hooks/use-infinite-observer';
-import { useAvailableModels } from '@/hooks/model/use-model';
-import { useIsInitialized } from '@/store/auth-store';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { cn } from '@/lib/utils';
-
-function DatasetModelsPreloader() {
-  useAvailableModels({ use_case: 'text-chat' });
-  useAvailableModels({ use_case: 'embedding' });
-  useAvailableModels({ use_case: 'rerank' });
-  return null;
-}
 
 function DatasetsPageContent() {
   const t = useT();
@@ -204,8 +195,6 @@ function DatasetsPageContent() {
   // Virtualization decision is based on dataset entries only
   const enableVirtual = datasetEntries.length > 200;
   const rowHeight = 160; // Tailwind h-40
-  const isAuthReady = useIsInitialized();
-
   // Access denied state
   if (!isPermissionsLoading && !canView) {
     return (
@@ -225,7 +214,6 @@ function DatasetsPageContent() {
 
   return (
     <>
-      {isAuthReady && <DatasetModelsPreloader />}
       <div ref={scrollRef} className="p-8 space-y-6 flex flex-col h-full overflow-y-auto">
         {/* Header */}
         <HeaderToolbar
@@ -422,11 +410,13 @@ function DatasetsPageContent() {
         folder={selectedFolder}
         parentFolderId={parentFolderId}
       />
-      <CreateDatasetDialog
-        open={datasetDialogOpen && datasetDialogMode === 'create'}
-        onOpenChange={setDatasetDialogOpen}
-        currentFolderId={datasetDialogFolderId}
-      />
+      {datasetDialogOpen && datasetDialogMode === 'create' && (
+        <CreateDatasetDialog
+          open
+          onOpenChange={setDatasetDialogOpen}
+          currentFolderId={datasetDialogFolderId}
+        />
+      )}
     </>
   );
 }
