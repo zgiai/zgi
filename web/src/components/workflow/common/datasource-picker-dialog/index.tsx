@@ -32,6 +32,7 @@ import {
   removeTableSelection,
   inferDatabaseType,
 } from '../../nodes/call-database/utils';
+import { useDatabaseNodePermissions } from '../../hooks';
 
 interface PickerDialogProps {
   open: boolean;
@@ -47,6 +48,7 @@ interface TableListProps {
   fallbackSchema: string;
   selected: TableRef[];
   onChange: (next: TableRef[]) => void;
+  canBrowseDatabaseMetadata: boolean;
 }
 
 interface TableItemProps {
@@ -54,15 +56,22 @@ interface TableItemProps {
   table: DbTable;
   selected: boolean;
   onToggle: (checked: boolean, table: DbTable) => void;
+  canBrowseDatabaseMetadata: boolean;
 }
 
 const TABLE_SKELETONS = Array.from({ length: 6 });
 
-const TableItem: React.FC<TableItemProps> = ({ dbId, table, selected, onToggle }) => {
+const TableItem: React.FC<TableItemProps> = ({
+  dbId,
+  table,
+  selected,
+  onToggle,
+  canBrowseDatabaseMetadata,
+}) => {
   const t = useT('nodes');
   const [expanded, setExpanded] = useState(false);
   const { columns, isLoading } = useDbTableColumns(dbId, table.id, {
-    enabled: expanded,
+    enabled: expanded && canBrowseDatabaseMetadata,
     refetchOnWindowFocus: false,
   });
 
@@ -187,13 +196,19 @@ const TableItem: React.FC<TableItemProps> = ({ dbId, table, selected, onToggle }
   );
 };
 
-const TableList: React.FC<TableListProps> = ({ dbId, fallbackSchema, selected, onChange }) => {
+const TableList: React.FC<TableListProps> = ({
+  dbId,
+  fallbackSchema,
+  selected,
+  onChange,
+  canBrowseDatabaseMetadata,
+}) => {
   const t = useT('nodes');
   const [keyword, setKeyword] = useState('');
   const debouncedKeyword = useDebouncedValue(keyword, 200);
 
   const { tables, isLoading } = useDbTables(dbId, {
-    enabled: Boolean(dbId),
+    enabled: Boolean(dbId) && canBrowseDatabaseMetadata,
     refetchOnWindowFocus: false,
   });
 
@@ -268,6 +283,7 @@ const TableList: React.FC<TableListProps> = ({ dbId, fallbackSchema, selected, o
                     table={table}
                     selected={isSelected}
                     onToggle={handleToggle}
+                    canBrowseDatabaseMetadata={canBrowseDatabaseMetadata}
                   />
                 );
               })}
@@ -292,6 +308,8 @@ const PickerDialog: React.FC<PickerDialogProps> = ({
   const debouncedKeyword = useDebouncedValue(keyword, 300);
   const [localSource, setLocalSource] = useState<DatabaseSourceRef | null>(value.dataSource);
   const [tableSelection, setTableSelection] = useState<TableRef[]>(value.tables);
+  const { canReadDatabaseBinding } = useDatabaseNodePermissions();
+  const canBrowseDatabaseMetadata = !readOnly && canReadDatabaseBinding;
 
   useEffect(() => {
     if (!open) return;
@@ -302,7 +320,7 @@ const PickerDialog: React.FC<PickerDialogProps> = ({
 
   const { dbs, isLoading } = useDbsBasic(
     { keyword: debouncedKeyword || undefined },
-    { enabled: open && !readOnly, refetchOnWindowFocus: false }
+    { enabled: open && canBrowseDatabaseMetadata, refetchOnWindowFocus: false }
   );
 
   const filteredDbs = useMemo(() => {
@@ -330,18 +348,18 @@ const PickerDialog: React.FC<PickerDialogProps> = ({
   const handleDbSelect = useCallback(
     (db: Db) => {
       const ref = createDatabaseSourceRef(db);
-      if (!ref || readOnly) return;
+      if (!ref || !canBrowseDatabaseMetadata) return;
       setLocalSource(ref);
       setTableSelection([]);
     },
-    [readOnly]
+    [canBrowseDatabaseMetadata]
   );
 
   const handleConfirm = useCallback(() => {
-    if (!localSource || readOnly) return;
+    if (!localSource || !canBrowseDatabaseMetadata) return;
     onConfirm({ dataSource: localSource, tables: tableSelection });
     onOpenChange(false);
-  }, [localSource, onConfirm, onOpenChange, readOnly, tableSelection]);
+  }, [canBrowseDatabaseMetadata, localSource, onConfirm, onOpenChange, tableSelection]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -369,7 +387,7 @@ const PickerDialog: React.FC<PickerDialogProps> = ({
                   className="h-10 shadow-sm font-medium bg-white"
                   value={keyword}
                   onChange={event => setKeyword(event.target.value)}
-                  disabled={readOnly}
+                  disabled={!canBrowseDatabaseMetadata}
                 />
 
                 <div className="grow bg-white rounded-2xl border border-neutral-100 shadow-sm overflow-hidden flex flex-col">
@@ -398,7 +416,7 @@ const PickerDialog: React.FC<PickerDialogProps> = ({
                                 selected
                                   ? 'border-primary bg-primary/5 shadow-premium-sm'
                                   : 'border-neutral-100 hover:border-neutral-200 hover:bg-neutral-50/50',
-                                readOnly && 'pointer-events-none opacity-60'
+                                !canBrowseDatabaseMetadata && 'pointer-events-none opacity-60'
                               )}
                               onClick={() => handleDbSelect(db)}
                             >
@@ -452,6 +470,7 @@ const PickerDialog: React.FC<PickerDialogProps> = ({
                     fallbackSchema={fallbackSchema}
                     selected={tableSelection}
                     onChange={setTableSelection}
+                    canBrowseDatabaseMetadata={canBrowseDatabaseMetadata}
                   />
                 ) : (
                   <div className="flex-1 flex flex-col items-center justify-center rounded-3xl border-2 border-dashed border-neutral-100 bg-neutral-50/30 p-12 text-center animate-in fade-in zoom-in-95 duration-300">
@@ -482,7 +501,7 @@ const PickerDialog: React.FC<PickerDialogProps> = ({
             onClick={handleConfirm}
             size="lg"
             className="px-10 font-bold shadow-sm"
-            disabled={!localSource || readOnly}
+            disabled={!localSource || !canBrowseDatabaseMetadata}
           >
             {t('callDatabase.actions.confirm')}
           </Button>

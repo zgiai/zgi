@@ -14,6 +14,7 @@ import (
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/agents"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
@@ -76,12 +77,18 @@ func (h *AgentHistoryDispatchHandler) GetConversations(c *gin.Context) {
 		h.getRuntimeConversations(c)
 		return
 	}
+	if !h.requireBuilderAgentHistoryView(c) {
+		return
+	}
 	h.workflowHistory.GetConversations(c)
 }
 
 func (h *AgentHistoryDispatchHandler) GetConversationDetail(c *gin.Context) {
 	if h.isRuntimeAgent(c) {
 		h.getRuntimeConversationDetail(c)
+		return
+	}
+	if !h.requireBuilderAgentHistoryView(c) {
 		return
 	}
 	h.workflowHistory.GetConversationDetail(c)
@@ -92,12 +99,18 @@ func (h *AgentHistoryDispatchHandler) GetChatMessages(c *gin.Context) {
 		h.getRuntimeChatMessages(c)
 		return
 	}
+	if !h.requireBuilderAgentHistoryView(c) {
+		return
+	}
 	h.workflowHistory.GetChatMessages(c)
 }
 
 func (h *AgentHistoryDispatchHandler) GetRuntimeLogs(c *gin.Context) {
 	if h.isRuntimeAgent(c) {
 		h.getRuntimeLogs(c)
+		return
+	}
+	if !h.requireBuilderAgentHistoryView(c) {
 		return
 	}
 	h.workflowRuntime.GetRuntimeLogs(c)
@@ -118,7 +131,20 @@ func (h *AgentHistoryDispatchHandler) isRuntimeAgent(c *gin.Context) bool {
 	return ag.AgentsType == "AGENT"
 }
 
+func (h *AgentHistoryDispatchHandler) requireBuilderAgentHistoryView(c *gin.Context) bool {
+	if h == nil || h.workflowRuns == nil {
+		response.Fail(c, response.ErrSystemError)
+		return false
+	}
+	_, ok := h.workflowRuns.requireAgentWorkspacePermission(c, c.Param("agent_id"), workspace_model.WorkspacePermissionWorkflowLogsView)
+	return ok
+}
+
 func (h *AgentHistoryDispatchHandler) runtimeScope(c *gin.Context) (runtimeservice.Scope, uuid.UUID, bool) {
+	if h == nil || h.agentsRepo == nil || h.chatRuntime == nil {
+		response.Fail(c, response.ErrNotFound)
+		return runtimeservice.Scope{}, uuid.Nil, false
+	}
 	accountID, err := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
 	if err != nil {
 		response.Fail(c, response.ErrUnauthorized)
@@ -135,25 +161,41 @@ func (h *AgentHistoryDispatchHandler) runtimeScope(c *gin.Context) (runtimeservi
 		return runtimeservice.Scope{}, uuid.Nil, false
 	}
 
-	var workspaceID *uuid.UUID
-	if h.agentsRepo != nil {
-		if ag, err := h.agentsRepo.GetByID(c.Request.Context(), agentID.String()); err == nil {
-			value := ag.TenantID
-			workspaceID = &value
-		}
+	agent, err := h.agentsRepo.GetByID(c.Request.Context(), agentID.String())
+	if err != nil || agent == nil || agent.AgentsType != "AGENT" {
+		response.Fail(c, response.ErrNotFound)
+		return runtimeservice.Scope{}, uuid.Nil, false
 	}
-	if workspaceID == nil {
-		if raw := strings.TrimSpace(util.GetWorkspaceID(c)); raw != "" {
-			if parsed, err := uuid.Parse(raw); err == nil {
-				workspaceID = &parsed
-			}
-		}
+	workspaceID := agent.TenantID
+	if h.workflowRuns == nil {
+		response.Fail(c, response.ErrSystemError)
+		return runtimeservice.Scope{}, uuid.Nil, false
+	}
+	permissionChecker := h.workflowRuns.getWorkspacePermissionChecker()
+	if permissionChecker == nil {
+		response.Fail(c, response.ErrSystemError)
+		return runtimeservice.Scope{}, uuid.Nil, false
+	}
+	hasPermission, err := permissionChecker.CheckWorkspacePermission(
+		c.Request.Context(),
+		organizationID.String(),
+		workspaceID.String(),
+		accountID.String(),
+		workspace_model.WorkspacePermissionAgentLogsView,
+	)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return runtimeservice.Scope{}, uuid.Nil, false
+	}
+	if !hasPermission {
+		response.Fail(c, response.ErrPermissionDenied)
+		return runtimeservice.Scope{}, uuid.Nil, false
 	}
 
 	return runtimeservice.Scope{
 		OrganizationID: organizationID,
 		AccountID:      accountID,
-		WorkspaceID:    workspaceID,
+		WorkspaceID:    &workspaceID,
 	}, agentID, true
 }
 
@@ -217,13 +259,9 @@ func (h *AgentHistoryDispatchHandler) getRuntimeChatMessages(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	if _, err := h.chatRuntime.GetConversationByCaller(c.Request.Context(), scope, h.runtimeCaller(agentID), conversationID); err != nil {
-		h.failRuntime(c, err)
-		return
-	}
 	page := parsePositiveInt(c.Query("page"), 1)
 	limit := parsePositiveInt(c.Query("limit"), 20)
-	messages, total, err := h.chatRuntime.ListMessages(c.Request.Context(), scope, conversationID, page, limit)
+	messages, total, err := h.chatRuntime.ListConversationMessagesByCaller(c.Request.Context(), scope, h.runtimeCaller(agentID), conversationID, page, limit)
 	if err != nil {
 		h.failRuntime(c, err)
 		return

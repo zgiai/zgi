@@ -26,7 +26,7 @@ type OrganizationService interface {
 
 	AddWorkspace(ctx context.Context, req *dto.AddWorkspaceToOrganizationRequest) error
 	RemoveWorkspace(ctx context.Context, organizationID, workspaceID string) error
-	UpdateWorkspaceJoinMeta(ctx context.Context, organizationID, workspaceID string, departmentID *string, apiKeyID *string) error
+	UpdateWorkspaceJoinMeta(ctx context.Context, organizationID, workspaceID string, apiKeyID *string) error
 	GetOrganizationWorkspaces(ctx context.Context, organizationID string, page, limit int, accountID string) (*dto.WorkspacePaginationResponse, error)
 	GetOrganizationWorkspacesWithDetails(ctx context.Context, organizationID string, page, limit int, accountID string, status string, keyword string) (*dto.OrganizationWorkspacePaginationResponse, error)
 	GetOrganizationWorkspaceDetail(ctx context.Context, organizationID, workspaceID, accountID string) (*dto.OrganizationWorkspaceResponse, error)
@@ -65,6 +65,7 @@ type OrganizationService interface {
 	GetUserWorkspacesInOrganization(ctx context.Context, organizationID, accountID string, page, limit int) (*dto.WorkspacePaginationResponse, error)
 	GetUserWorkspacesRolesInOrganization(ctx context.Context, organizationID, accountID string) ([]*dto.WorkspaceRoleResponse, error)
 	GetUserAllWorkspacesInOrganization(ctx context.Context, organizationID, accountID string) ([]*model.Workspace, error)
+	GetVisibleOrganizationMembersPaginated(ctx context.Context, organizationID, accountID string, page, limit int, keyword string) (*dto.OrganizationMemberPaginationResponse, error)
 	CheckWorkspaceAssets(ctx context.Context, workspaceID string) (bool, map[string]int64, error)
 	GetManagedWorkspacesInOrganization(ctx context.Context, organizationID, accountID string, page, limit int) (*dto.WorkspacePaginationResponse, error)
 	GetManagedAppWorkspacesInOrganization(ctx context.Context, organizationID, accountID string, page, limit int) (*dto.WorkspacePaginationResponse, error)
@@ -99,6 +100,8 @@ type OrganizationService interface {
 	CreateCustomWorkspaceRole(ctx context.Context, req *dto.CreateWorkspaceRoleRequest) (*dto.OrganizationRoleDetailResponse, error)
 	UpdateCustomWorkspaceRole(ctx context.Context, req *dto.UpdateWorkspaceRoleRequest) (*dto.OrganizationRoleDetailResponse, error)
 	UpdateWorkspaceRolePermissions(ctx context.Context, req *dto.UpdateWorkspaceRolePermissionsRequest) error
+	ApplyWorkspaceRoleTemplate(ctx context.Context, req *dto.ApplyWorkspaceRoleTemplateRequest) (*dto.ApplyWorkspaceRoleTemplateResponse, error)
+	ReplaceAndDeleteCustomWorkspaceRole(ctx context.Context, req *dto.ReplaceWorkspaceRoleTemplateRequest) (*dto.ReplaceWorkspaceRoleTemplateResponse, error)
 	DeleteCustomWorkspaceRole(ctx context.Context, organizationID, roleID, accountID string) error
 	GetMemberEffectivePermissions(ctx context.Context, organizationID, accountID, targetAccountID string) (*dto.MemberPermissionsResponse, error)
 	GetWorkspaceMemberPermissions(ctx context.Context, organizationID, workspaceID, accountID, targetAccountID string) (*dto.WorkspaceMemberPermissionsResponse, error)
@@ -107,6 +110,7 @@ type OrganizationService interface {
 
 type OrganizationManagementService interface {
 	CreateOrganization(ctx context.Context, name string) (*model.Organization, error)
+	CheckOrganizationNameExists(ctx context.Context, name string) (bool, error)
 	UpsertOrganizationRole(ctx context.Context, organizationID string, accountID string, role model.OrganizationRole) error
 	AddWorkspace(ctx context.Context, organizationID string, workspaceID string) error
 	WithTx(tx *gorm.DB) OrganizationManagementService

@@ -1,7 +1,13 @@
 package workflow
 
 import (
+	"strings"
+
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
+	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
@@ -32,7 +38,7 @@ func (h *BuiltInWorkflowHandler) GetBuiltInWorkflows(c *gin.Context) {
 	logger.Info("API: Getting all built-in workflows")
 
 	// Call service to get all built-in workflows
-	workflows, err := h.service.GetAllBuiltInWorkflows(c.Request.Context())
+	workflows, err := h.service.GetAllBuiltInWorkflows(c.Request.Context(), builtInRuntimeAudience(c))
 	if err != nil {
 		logger.Error("Failed to get built-in workflows", err)
 		response.Fail(c, response.ErrSystemError)
@@ -68,7 +74,7 @@ func (h *BuiltInWorkflowHandler) GetBuiltInWorkflowByScenario(c *gin.Context) {
 	}
 
 	// Call service to get workflow by scenario
-	workflow, err := h.service.GetBuiltInWorkflowByScenario(c.Request.Context(), scenario)
+	workflow, err := h.service.GetBuiltInWorkflowByScenario(c.Request.Context(), scenario, builtInRuntimeAudience(c))
 	if err != nil {
 		logger.Error("Failed to get built-in workflow by scenario", err)
 
@@ -102,6 +108,57 @@ func (h *BuiltInWorkflowHandler) GetBuiltInWorkflowByScenario(c *gin.Context) {
 
 	logger.Info("Successfully retrieved built-in workflow", "scenario", scenario, "agentID", workflow.AgentID)
 	response.Success(c, workflow)
+}
+
+func (h *BuiltInWorkflowHandler) GetBuiltInWorkflowRuntimeSurfaces(c *gin.Context) {
+	scenario := c.Param("scenario")
+	organizationID := strings.TrimSpace(util.GetOrganizationIDCompat(c))
+	auth, err := h.service.GetBuiltInWorkflowRuntimeSurfaces(c.Request.Context(), scenario, organizationID)
+	if err != nil {
+		handleBuiltInRuntimeSurfaceError(c, err)
+		return
+	}
+	response.Success(c, auth)
+}
+
+func (h *BuiltInWorkflowHandler) UpdateBuiltInWorkflowRuntimeSurfaces(c *gin.Context) {
+	scenario := c.Param("scenario")
+	organizationID := strings.TrimSpace(util.GetOrganizationIDCompat(c))
+
+	var req dto.UpdateAgentRuntimeSurfacesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
+		return
+	}
+
+	auth, err := h.service.UpdateBuiltInWorkflowRuntimeSurfaces(c.Request.Context(), scenario, organizationID, req)
+	if err != nil {
+		handleBuiltInRuntimeSurfaceError(c, err)
+		return
+	}
+	response.Success(c, auth)
+}
+
+func handleBuiltInRuntimeSurfaceError(c *gin.Context, err error) {
+	errMsg := err.Error()
+	switch {
+	case contains(errMsg, "invalid") || contains(errMsg, "required") || contains(errMsg, "duplicate") || contains(errMsg, "must") || contains(errMsg, "not in organization") || contains(errMsg, "not current organization"):
+		response.FailWithMessage(c, response.ErrInvalidParam, errMsg)
+	case contains(errMsg, "not found"):
+		response.FailWithMessage(c, response.ErrNotFound, errMsg)
+	default:
+		logger.Error("Failed to manage built-in workflow runtime surfaces", err)
+		response.Fail(c, response.ErrSystemError)
+	}
+}
+
+func builtInRuntimeAudience(c *gin.Context) runtimeauth.RuntimeAudience {
+	accountID, _ := uuid.Parse(strings.TrimSpace(c.GetString("account_id")))
+	organizationID, _ := uuid.Parse(strings.TrimSpace(util.GetOrganizationIDCompat(c)))
+	return runtimeauth.RuntimeAudience{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+	}
 }
 
 // contains checks if a string contains a substring (case-insensitive helper)

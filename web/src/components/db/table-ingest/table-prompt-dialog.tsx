@@ -25,10 +25,11 @@ interface TablePromptDialogProps {
   onOpenChange: (open: boolean) => void;
   dbId: string;
   tableId: string;
+  readOnly?: boolean;
 }
 
 export function TablePromptDialog(props: TablePromptDialogProps) {
-  const { open, onOpenChange, dbId, tableId } = props;
+  const { open, onOpenChange, dbId, tableId, readOnly = false } = props;
   const { prompt, isLoading } = useDbTablePrompt(dbId, tableId, { enabled: open });
   const { updatePrompt, isPending } = useUpdateDbTablePrompt(dbId, tableId);
   const t = useT();
@@ -65,13 +66,15 @@ export function TablePromptDialog(props: TablePromptDialogProps) {
           {/* Label row with reset link */}
           <div className="flex items-center justify-between">
             <Label className="text-sm">{t('dbs.promptDialog.contentLabel')}</Label>
-            <button
-              type="button"
-              onClick={handleResetDefault}
-              className="text-sm text-muted-foreground hover:text-foreground"
-            >
-              {t('dbs.promptDialog.resetDefault')}
-            </button>
+            {!readOnly && (
+              <button
+                type="button"
+                onClick={handleResetDefault}
+                className="text-sm text-muted-foreground hover:text-foreground"
+              >
+                {t('dbs.promptDialog.resetDefault')}
+              </button>
+            )}
           </div>
 
           {/* Textarea (skeleton on first load) */}
@@ -82,6 +85,7 @@ export function TablePromptDialog(props: TablePromptDialogProps) {
               value={value}
               onChange={e => setValue(e.target.value)}
               placeholder={(defaultPromptText as string) || FALLBACK_DEFAULT_PROMPT}
+              readOnly={readOnly}
               className="min-h-[160px] resize-none"
             />
           )}
@@ -96,9 +100,11 @@ export function TablePromptDialog(props: TablePromptDialogProps) {
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
             {t('common.cancel')}
           </Button>
-          <Button onClick={handleSave} disabled={isPending}>
-            {t('common.save')}
-          </Button>
+          {!readOnly && (
+            <Button onClick={handleSave} disabled={isPending}>
+              {t('common.save')}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

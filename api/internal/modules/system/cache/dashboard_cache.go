@@ -30,39 +30,36 @@ func NewDashboardCache() *DashboardCache {
 	return &DashboardCache{}
 }
 
-func (c *DashboardCache) GetStats(ctx context.Context, organizationID string) (*model.DashboardStatsResponse, bool) {
+func (c *DashboardCache) GetStats(ctx context.Context, organizationID, accountID, scopeKey string) (*model.DashboardStatsResponse, bool) {
 	var value model.DashboardStatsResponse
-	if !getJSON(ctx, statsKey(organizationID), &value) {
+	if !getJSON(ctx, statsKey(organizationID, accountID, scopeKey), &value) {
 		return nil, false
 	}
 	return &value, true
 }
 
-func (c *DashboardCache) SetStats(ctx context.Context, organizationID string, value *model.DashboardStatsResponse) {
-	setJSON(ctx, statsKey(organizationID), value)
+func (c *DashboardCache) SetStats(ctx context.Context, organizationID, accountID, scopeKey string, value *model.DashboardStatsResponse) {
+	setJSON(ctx, statsKey(organizationID, accountID, scopeKey), value)
 }
 
-func (c *DashboardCache) GetRecentWork(ctx context.Context, organizationID, accountID string, limit int) (*model.RecentWorkResponse, bool) {
+func (c *DashboardCache) GetRecentWork(ctx context.Context, organizationID, accountID string, limit int, scopeKey string) (*model.RecentWorkResponse, bool) {
 	var value model.RecentWorkResponse
-	if !getJSON(ctx, recentWorkKey(organizationID, accountID, limit), &value) {
+	if !getJSON(ctx, recentWorkKey(organizationID, accountID, limit, scopeKey), &value) {
 		return nil, false
 	}
 	return &value, true
 }
 
-func (c *DashboardCache) SetRecentWork(ctx context.Context, organizationID, accountID string, limit int, value *model.RecentWorkResponse) {
-	setJSON(ctx, recentWorkKey(organizationID, accountID, limit), value)
+func (c *DashboardCache) SetRecentWork(ctx context.Context, organizationID, accountID string, limit int, scopeKey string, value *model.RecentWorkResponse) {
+	setJSON(ctx, recentWorkKey(organizationID, accountID, limit, scopeKey), value)
 }
 
-func statsKey(organizationID string) string {
-	// The current dashboard stats handler resolves only an organization. Add
-	// workspace or other scope dimensions here only when the handler exposes
-	// those scopes as part of its request semantics.
-	return keys.DefaultBuilder().Build(dashboardModulePrefix, statsPart, organizationID)
+func statsKey(organizationID, accountID, scopeKey string) string {
+	return keys.DefaultBuilder().Build(dashboardModulePrefix, statsPart, organizationID, accountID, scopeKey)
 }
 
-func recentWorkKey(organizationID, accountID string, limit int) string {
-	return keys.DefaultBuilder().Build(dashboardModulePrefix, recentWorkPart, organizationID, accountID, strconv.Itoa(limit))
+func recentWorkKey(organizationID, accountID string, limit int, scopeKey string) string {
+	return keys.DefaultBuilder().Build(dashboardModulePrefix, recentWorkPart, organizationID, accountID, strconv.Itoa(limit), scopeKey)
 }
 
 func getJSON(ctx context.Context, key string, value any) bool {

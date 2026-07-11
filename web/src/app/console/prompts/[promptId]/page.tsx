@@ -65,6 +65,7 @@ import {
   getTemplateCopy,
   type TemplateTranslator,
 } from '@/components/agents/templates/template-labels';
+import { WORKFLOW_VISIBLE_PERMISSION_CODES } from '@/constants/permissions';
 import type {
   CreatePromptRequest,
   PromptOptimizationRun,
@@ -84,10 +85,16 @@ export default function PromptDetailPage() {
   const searchParams = useSearchParams();
   const promptId = params?.promptId ?? '';
   const templateT = rootT as unknown as TemplateTranslator;
+  const {
+    hasAnyPermission,
+    hasWorkspaceAccess,
+    isLoading: isPermissionsLoading,
+  } = useAccountPermissions();
+  const canUseWorkspaceTools = hasWorkspaceAccess();
+  const canOpenWorkflowAssets = hasAnyPermission(WORKFLOW_VISIBLE_PERMISSION_CODES);
+  const canView = canUseWorkspaceTools;
+  const canManage = canUseWorkspaceTools;
   const currentWorkspace = useCurrentWorkspace();
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canView = hasPermission('agent.view');
-  const canManage = hasPermission('agent.manage');
   const { prompt, isLoading } = usePrompt(promptId, canView);
   const {
     usage,
@@ -742,14 +749,14 @@ export default function PromptDetailPage() {
                       </div>
                     </div>
                   ) : null}
-                  {relatedTemplates.length > 0 ? (
+                  {canOpenWorkflowAssets && relatedTemplates.length > 0 ? (
                     <div className="space-y-2 border-t pt-3">
                       <div className="flex items-center justify-between gap-3">
                         <div className="text-xs font-medium text-muted-foreground">
                           {t('relatedTemplates.title')}
                         </div>
                         <Link
-                          href="/console/agents"
+                          href="/console/workflows"
                           className="text-xs text-primary hover:underline"
                         >
                           {t('relatedTemplates.openInGallery')}
@@ -761,7 +768,7 @@ export default function PromptDetailPage() {
                           return (
                             <Link
                               key={template.id}
-                              href={`/console/agents?template=${template.id}`}
+                              href={`/console/workflows?template=${template.id}`}
                               className="block rounded-md px-2 py-2 transition-colors hover:bg-background"
                             >
                               <div className="text-sm font-medium">{copy.title}</div>

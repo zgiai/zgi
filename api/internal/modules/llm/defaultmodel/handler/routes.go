@@ -1,11 +1,16 @@
 package handler
 
-import "github.com/gin-gonic/gin"
+import (
+	"github.com/gin-gonic/gin"
+	"github.com/zgiai/zgi/api/middleware"
+)
 
 func RegisterTenantDefaultModelRoutes(r *gin.RouterGroup, handler *Handler) {
 	g := r.Group("/default-models")
-	g.GET("", handler.List)
-	g.PUT("/:use_case", handler.Upsert)
-	g.DELETE("/:use_case", handler.Delete)
-}
+	admin := g.Group("")
+	admin.Use(middleware.EnterpriseAdminOrOwnerRequired())
 
+	g.GET("", handler.List)
+	admin.PUT("/:use_case", handler.Upsert)
+	admin.DELETE("/:use_case", handler.Delete)
+}

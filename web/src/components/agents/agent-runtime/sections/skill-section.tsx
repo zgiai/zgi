@@ -18,6 +18,7 @@ interface AgentRuntimeSkillSectionProps {
   selectableSkillsCount: number;
   isSkillsLoading: boolean;
   isSkillConfigLoading: boolean;
+  readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onOpenSkillDialog: () => void;
   onToggleSkill: (skillId: string, checked: boolean) => void;
@@ -31,6 +32,7 @@ export function AgentRuntimeSkillSection({
   selectableSkillsCount,
   isSkillsLoading,
   isSkillConfigLoading,
+  readOnly = false,
   onToggleSection,
   onOpenSkillDialog,
   onToggleSkill,
@@ -53,6 +55,7 @@ export function AgentRuntimeSkillSection({
             variant="outline"
             className="size-8"
             onClick={onOpenSkillDialog}
+            disabled={readOnly}
             aria-label={t('skills.add')}
             title={t('skills.add')}
           >
@@ -98,6 +101,7 @@ export function AgentRuntimeSkillSection({
                   variant="ghost"
                   className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
                   onClick={() => onToggleSkill(skill.skill_id, false)}
+                  disabled={readOnly}
                   aria-label={removeLabel}
                   title={removeLabel}
                 >

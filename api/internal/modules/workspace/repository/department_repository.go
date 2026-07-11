@@ -39,6 +39,7 @@ type DepartmentMemberDetail struct {
 	Avatar             *string                  `json:"avatar"`
 	GroupStatus        model.OrganizationStatus `json:"group_status"`
 	OrganizationStatus model.OrganizationStatus `json:"organization_status"`
+	OrganizationRole   model.OrganizationRole   `json:"organization_role"`
 	JoinedWorkspace    []JoinedWorkspaceInfo    `json:"joined_workspaces"`
 	CreatedAt          string                   `json:"created_at"`
 }
@@ -290,16 +291,17 @@ func joinCurrentOrganizationDepartmentMember(query *gorm.DB, organizationID stri
 func (r *departmentRepository) ListMembers(ctx context.Context, params *MemberListParams) ([]*DepartmentMemberDetail, int64, error) {
 	// Build base conditions
 	type memberBasic struct {
-		ID             string
-		DepartmentID   *string
-		DepartmentName *string
-		AccountID      string
-		AccountName    string
-		MemberName     *string
-		AccountEmail   string
-		Avatar         *string
-		GroupStatus    model.OrganizationStatus
-		CreatedAt      string
+		ID               string
+		DepartmentID     *string
+		DepartmentName   *string
+		AccountID        string
+		AccountName      string
+		MemberName       *string
+		AccountEmail     string
+		Avatar           *string
+		GroupStatus      model.OrganizationStatus
+		OrganizationRole model.OrganizationRole
+		CreatedAt        string
 	}
 
 	// Base query
@@ -315,6 +317,7 @@ func (r *departmentRepository) ListMembers(ctx context.Context, params *MemberLi
 			a.email AS account_email,
 			a.avatar,
 			egaj.status AS group_status,
+			egaj.role AS organization_role,
 			to_char(egaj.created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at
 		`).
 		Joins("JOIN accounts AS a ON a.id = egaj.account_id").
@@ -390,7 +393,11 @@ func (r *departmentRepository) ListMembers(ctx context.Context, params *MemberLi
 	// Apply pagination and execute
 	offset := (params.Page - 1) * params.Limit
 	var basics []memberBasic
-	if err := baseQuery.Order("a.name ASC").Offset(offset).Limit(params.Limit).Scan(&basics).Error; err != nil {
+	if err := baseQuery.
+		Order("CASE egaj.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END ASC, a.name ASC").
+		Offset(offset).
+		Limit(params.Limit).
+		Scan(&basics).Error; err != nil {
 		return nil, 0, err
 	}
 
@@ -433,6 +440,7 @@ func (r *departmentRepository) ListMembers(ctx context.Context, params *MemberLi
 			Avatar:             basic.Avatar,
 			GroupStatus:        basic.GroupStatus,
 			OrganizationStatus: basic.GroupStatus,
+			OrganizationRole:   basic.OrganizationRole,
 			JoinedWorkspace:    JoinedWorkspace,
 			CreatedAt:          basic.CreatedAt,
 		}
@@ -443,16 +451,17 @@ func (r *departmentRepository) ListMembers(ctx context.Context, params *MemberLi
 
 func (r *departmentRepository) GetMemberDetailByAccountIDInOrganization(ctx context.Context, organizationID, accountID string) (*DepartmentMemberDetail, error) {
 	type memberBasic struct {
-		ID             string
-		DepartmentID   *string
-		DepartmentName *string
-		AccountID      string
-		AccountName    string
-		MemberName     *string
-		AccountEmail   string
-		Avatar         *string
-		GroupStatus    model.OrganizationStatus
-		CreatedAt      string
+		ID               string
+		DepartmentID     *string
+		DepartmentName   *string
+		AccountID        string
+		AccountName      string
+		MemberName       *string
+		AccountEmail     string
+		Avatar           *string
+		GroupStatus      model.OrganizationStatus
+		OrganizationRole model.OrganizationRole
+		CreatedAt        string
 	}
 
 	var basic memberBasic
@@ -469,6 +478,7 @@ func (r *departmentRepository) GetMemberDetailByAccountIDInOrganization(ctx cont
 			a.email AS account_email,
 			a.avatar,
 			egaj.status AS group_status,
+			egaj.role AS organization_role,
 			to_char(egaj.created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at
 		`).
 		Joins("JOIN accounts AS a ON a.id = egaj.account_id").
@@ -524,6 +534,7 @@ func (r *departmentRepository) GetMemberDetailByAccountIDInOrganization(ctx cont
 		Avatar:             basic.Avatar,
 		GroupStatus:        basic.GroupStatus,
 		OrganizationStatus: basic.GroupStatus,
+		OrganizationRole:   basic.OrganizationRole,
 		JoinedWorkspace:    JoinedWorkspace,
 		CreatedAt:          basic.CreatedAt,
 	}
@@ -535,16 +546,17 @@ func (r *departmentRepository) GetMemberDetailByAccountIDInOrganization(ctx cont
 func (r *departmentRepository) GetMembersDetailByDepartmentID(ctx context.Context, organizationID, departmentID string) ([]*DepartmentMemberDetail, error) {
 	// First get basic member info with account details and organization status.
 	type memberBasic struct {
-		ID             string
-		DepartmentID   string
-		DepartmentName *string
-		AccountID      string
-		AccountName    string
-		MemberName     *string
-		AccountEmail   string
-		Avatar         *string
-		GroupStatus    model.OrganizationStatus
-		CreatedAt      string
+		ID               string
+		DepartmentID     string
+		DepartmentName   *string
+		AccountID        string
+		AccountName      string
+		MemberName       *string
+		AccountEmail     string
+		Avatar           *string
+		GroupStatus      model.OrganizationStatus
+		OrganizationRole model.OrganizationRole
+		CreatedAt        string
 	}
 
 	var basics []memberBasic
@@ -560,12 +572,13 @@ func (r *departmentRepository) GetMembersDetailByDepartmentID(ctx context.Contex
 			a.email AS account_email,
 			a.avatar,
 			egaj.status AS group_status,
+			egaj.role AS organization_role,
 			to_char(dm.created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at
 		`).
 		Joins("JOIN accounts AS a ON a.id = dm.account_id").
 		Joins("JOIN members AS egaj ON egaj.account_id = dm.account_id AND egaj.organization_id = ?", organizationID).
 		Where("dm.department_id = ?", departmentID).
-		Order("dm.created_at ASC").
+		Order("CASE egaj.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END ASC, dm.created_at ASC").
 		Scan(&basics).Error
 	if err != nil {
 		return nil, err
@@ -598,6 +611,7 @@ func (r *departmentRepository) GetMembersDetailByDepartmentID(ctx context.Contex
 			Avatar:             basic.Avatar,
 			GroupStatus:        basic.GroupStatus,
 			OrganizationStatus: basic.GroupStatus,
+			OrganizationRole:   basic.OrganizationRole,
 			JoinedWorkspace:    joinedWorkspaces,
 			CreatedAt:          basic.CreatedAt,
 		}

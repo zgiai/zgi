@@ -128,7 +128,7 @@ func (h *SetupHandler) SetupSystem(c *gin.Context) {
 	}
 
 	ipAddress := ExtractRemoteIP(c)
-	if err := h.setupService.Setup(c.Request.Context(), req.Email, req.Name, req.Password, ipAddress); err != nil {
+	if err := h.setupService.Setup(c.Request.Context(), req.Email, req.Name, req.Password, req.Language, ipAddress); err != nil {
 		switch {
 		case errors.Is(err, service.ErrAlreadySetup):
 			response.Fail(c, response.ErrAlreadySetup)

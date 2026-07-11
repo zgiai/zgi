@@ -12,8 +12,11 @@ import (
 	"github.com/google/uuid"
 	apiKeyModule "github.com/zgiai/zgi/api/internal/modules/api_key"
 	"github.com/zgiai/zgi/api/pkg/logger"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
+
+const apiKeyUsageMaxCapturedResponseBytes = 64 * 1024
 
 // responseWriter wraps gin.ResponseWriter to capture response data
 type responseWriter struct {
@@ -23,7 +26,14 @@ type responseWriter struct {
 }
 
 func (w *responseWriter) Write(b []byte) (int, error) {
-	w.body.Write(b)
+	if w.body.Len() < apiKeyUsageMaxCapturedResponseBytes {
+		remaining := apiKeyUsageMaxCapturedResponseBytes - w.body.Len()
+		if len(b) > remaining {
+			_, _ = w.body.Write(b[:remaining])
+		} else {
+			_, _ = w.body.Write(b)
+		}
+	}
 	return w.ResponseWriter.Write(b)
 }
 
@@ -80,12 +90,7 @@ func APIKeyUsageLoggingMiddleware(db *gorm.DB) gin.HandlerFunc {
 		// Prepare request headers (filter sensitive data)
 		requestHeaders := make(map[string]interface{})
 		for key, values := range c.Request.Header {
-			// Skip sensitive headers
-			if strings.ToLower(key) == "authorization" {
-				requestHeaders[key] = "Bearer ***"
-			} else {
-				requestHeaders[key] = values
-			}
+			requestHeaders[key] = sanitizedAPIKeyUsageHeader(key, values)
 		}
 
 		// Get client IP
@@ -141,25 +146,28 @@ func APIKeyUsageLoggingMiddleware(db *gorm.DB) gin.HandlerFunc {
 			}
 		}
 
-		// Create usage log entry
-		requestMethod := c.Request.Method
 		requestPath := c.Request.URL.Path
-		responseTimePtr := time.Now()
+		requestHeadersJSON, _ := json.Marshal(requestHeaders)
+		metadataJSON, _ := json.Marshal(metadata)
+
+		// Create usage log entry
 		usageLog := &apiKeyModule.APIKeyUsageLog{
-			ID:            uuid.New(),
-			APIKeyID:      keyInfo.ID,
-			AgentID:       keyInfo.AgentID,
-			TenantID:      keyInfo.TenantID,
-			RequestTime:   startTime,
-			ResponseTime:  &responseTimePtr,
-			StatusCode:    writer.statusCode,
-			TokensUsed:    int64(tokensUsed),
-			ErrorMessage:  errorMessage,
-			ClientIP:      &clientIP,
-			UserAgent:     &userAgent,
-			RequestPath:   &requestPath,
-			RequestMethod: &requestMethod,
-			CreatedAt:     time.Now(),
+			ID:                 uuid.New(),
+			APIKeyID:           keyInfo.ID,
+			AgentID:            keyInfo.AgentID,
+			TenantID:           keyInfo.TenantID,
+			RequestPath:        requestPath,
+			RequestIP:          clientIP,
+			UserAgent:          &userAgent,
+			RequestHeaders:     datatypes.JSON(requestHeadersJSON),
+			RequestBodySize:    int64(len(requestBody)),
+			ResponseStatusCode: writer.statusCode,
+			ResponseBodySize:   int64(responseBodySize),
+			ResponseTimeMS:     int(responseTime.Milliseconds()),
+			TokensUsed:         tokensUsed,
+			ErrorMessage:       errorMessage,
+			Metadata:           datatypes.JSON(metadataJSON),
+			CreatedAt:          startTime,
 		}
 
 		// Log usage asynchronously to avoid blocking the response
@@ -168,6 +176,17 @@ func APIKeyUsageLoggingMiddleware(db *gorm.DB) gin.HandlerFunc {
 				logger.Error("Failed to log API key usage", err)
 			}
 		}()
+	}
+}
+
+func sanitizedAPIKeyUsageHeader(key string, values []string) interface{} {
+	switch {
+	case strings.EqualFold(key, "Authorization"):
+		return "Bearer ***"
+	case strings.EqualFold(key, "X-API-Key"):
+		return "***"
+	default:
+		return values
 	}
 }
 

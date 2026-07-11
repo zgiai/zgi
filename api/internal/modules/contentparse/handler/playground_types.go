@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
@@ -12,6 +13,8 @@ import (
 	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/modules/contentparse/model"
 	"github.com/zgiai/zgi/api/internal/modules/contentparse/service"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	authmodel "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
@@ -33,6 +36,12 @@ type PlaygroundHandler struct {
 	runs         service.PlaygroundRunService
 	sessions     *playgroundParseSessionCache
 	catalogs     service.ProviderCatalogResolver
+	organization interfaces.OrganizationService
+	account      playgroundAccountContextReader
+}
+
+type playgroundAccountContextReader interface {
+	GetAccountContext(ctx context.Context, accountID string) (*authmodel.AccountContext, error)
 }
 
 type playgroundParseResponse struct {

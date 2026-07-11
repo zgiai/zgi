@@ -25,9 +25,7 @@ func promptVersionManagePermissionCodes() []workspace_model.WorkspacePermissionC
 }
 
 func promptLabelManagePermissionCodes() []workspace_model.WorkspacePermissionCode {
-	return []workspace_model.WorkspacePermissionCode{
-		workspace_model.WorkspacePermissionAgentManage,
-	}
+	return promptWorkspacePermissionCodes()
 }
 
 func promptOptimizePermissionCodes() []workspace_model.WorkspacePermissionCode {

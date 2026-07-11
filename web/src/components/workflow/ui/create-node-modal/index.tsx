@@ -4,6 +4,7 @@ import React from 'react';
 import CreateNodeModal from './create-node-modal';
 import { useCreateNodeModal } from '../../hooks/use-create-node-modal';
 import { useShallow } from 'zustand/react/shallow';
+import { useWorkflowStore } from '../../store';
 
 const CreateNodeModalHost: React.FC = () => {
   const { open, position, anchorClientPosition, closeModal, originatingHandle } =
@@ -16,10 +17,20 @@ const CreateNodeModalHost: React.FC = () => {
         originatingHandle: state.originatingHandle,
       }))
     );
+  const mode = useWorkflowStore.use.mode();
+  const canEdit = useWorkflowStore.use.canEdit();
+  const isReadOnly = mode === 'history' || !canEdit;
+
+  React.useEffect(() => {
+    if (open && isReadOnly) {
+      closeModal();
+    }
+  }, [closeModal, isReadOnly, open]);
 
   return (
     <CreateNodeModal
       isOpen={open}
+      isReadOnly={isReadOnly}
       onClose={closeModal}
       position={position}
       anchorClientPosition={anchorClientPosition}

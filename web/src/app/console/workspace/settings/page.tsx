@@ -3,12 +3,23 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useT } from '@/i18n';
-import { AlertTriangle, Check, Loader2, LogOut, Pencil, Search, X } from 'lucide-react';
-import { useCurrentWorkspace, usePermissions, useWorkspaceStore } from '@/store/workspace-store';
+import {
+  AlertTriangle,
+  Check,
+  Loader2,
+  LogOut,
+  Pencil,
+  Search,
+  ShieldCheck,
+  X,
+} from 'lucide-react';
+import { useCurrentWorkspace, useWorkspaceStore } from '@/store/workspace-store';
 import { useWorkspaceActions } from '@/hooks/workspace/use-workspace-actions';
 import { useOrganizations } from '@/hooks/organization/use-organizations';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useWorkspaceMembers } from '@/hooks/workspace/use-workspace-members';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { useCurrentUser } from '@/store/auth-store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Pagination } from '@/components/ui/pagination';
@@ -20,13 +31,6 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
@@ -36,10 +40,12 @@ export default function WorkspaceSettingsPage() {
   const router = useRouter();
 
   const currentWorkspace = useCurrentWorkspace();
+  const currentUser = useCurrentUser();
   const { currentOrganization } = useOrganizations();
-  const { workspaceRole, permissions } = usePermissions();
-  const isOwner = workspaceRole === 'owner';
-  const canManage = permissions.includes('workspace.manage');
+  const { organizationRole, workspaceRole } = useAccountPermissions();
+  const isOrganizationManager = organizationRole === 'owner' || organizationRole === 'admin';
+  const canManage = isOrganizationManager || workspaceRole === 'owner' || workspaceRole === 'admin';
+  const canTransferOwnership = isOrganizationManager || workspaceRole === 'owner';
 
   const {
     updateWorkspace,
@@ -73,8 +79,17 @@ export default function WorkspaceSettingsPage() {
     keyword: debouncedOwnerSearchKeyword,
     page: ownerPage,
     limit: ownerPageSize,
-    enabled: isOwner && !!currentWorkspace,
+    enabled: canTransferOwnership && !!currentWorkspace,
   });
+  const { members: ownerSnapshotMembers } = useWorkspaceMembers(
+    currentOrganization?.id || null,
+    currentWorkspace?.id || null,
+    {
+      page: 1,
+      limit: 100,
+      enabled: canTransferOwnership && !!currentWorkspace,
+    }
+  );
   const ownerCandidatesTotalPages = Math.max(1, Math.ceil(ownerCandidatesTotal / ownerPageSize));
 
   useEffect(() => {
@@ -158,8 +173,26 @@ export default function WorkspaceSettingsPage() {
     );
   }
 
-  // Filter out the current owner (user) from the potential new owners
-  const otherMembers = members.filter(m => m.role !== 'owner');
+  const currentLeadId = currentWorkspace.leader_id || '';
+  const currentLeadMember = ownerSnapshotMembers.find(
+    m => (currentLeadId && m.id === currentLeadId) || m.role === 'owner'
+  );
+  const resolvedCurrentLeadId = currentLeadId || currentLeadMember?.id || '';
+  const currentLeadName =
+    currentLeadMember?.member_name ||
+    currentLeadMember?.name ||
+    currentWorkspace.leader_name ||
+    currentLeadMember?.email ||
+    resolvedCurrentLeadId;
+  const currentLeadEmail = currentLeadMember?.email || '';
+  const hasCurrentLead = !!currentLeadName;
+  const otherMembers = members.filter(
+    m => m.role !== 'owner' && (!resolvedCurrentLeadId || m.id !== resolvedCurrentLeadId)
+  );
+  const selectedNewOwner = otherMembers.find(m => m.id === selectedNewOwnerId);
+  const isCurrentUserWorkspaceLead =
+    !!currentUser?.id && !!resolvedCurrentLeadId && resolvedCurrentLeadId === currentUser.id;
+  const isManagingByOrganization = isOrganizationManager && !isCurrentUserWorkspaceLead;
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-6">
@@ -252,12 +285,12 @@ export default function WorkspaceSettingsPage() {
           </CardContent>
         </Card>
 
-        {/* Transfer Ownership Card */}
-        {workspaceRole && isOwner && (
+        {/* Workspace Lead Card */}
+        {canTransferOwnership && (
           <Card className="border-border/80 shadow-sm">
             <CardHeader className="space-y-1.5">
               <CardTitle className="flex items-center gap-2 text-base text-foreground">
-                <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+                <ShieldCheck className="h-4 w-4 text-muted-foreground" />
                 {t('settings.transfer.title') || 'Transfer Ownership'}
               </CardTitle>
               <CardDescription>
@@ -265,7 +298,49 @@ export default function WorkspaceSettingsPage() {
                   'Transfer this workspace to another member. This action cannot be undone.'}
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-5">
+              {isManagingByOrganization && (
+                <div className="flex items-start gap-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-900">
+                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+                  <p className="leading-5">{t('settings.transfer.organizationManagerNotice')}</p>
+                </div>
+              )}
+
+              <div className="rounded-md border bg-muted/20 px-4 py-3">
+                <div className="mb-3 text-sm font-medium text-muted-foreground">
+                  {t('settings.transfer.currentLead')}
+                </div>
+                {hasCurrentLead ? (
+                  <div className="flex items-center gap-3">
+                    <Avatar className="h-9 w-9">
+                      <AvatarImage
+                        src={
+                          currentLeadMember?.avatar_url || currentLeadMember?.avatar || undefined
+                        }
+                      />
+                      <AvatarFallback className="text-xs">
+                        {(currentLeadName || '?').slice(0, 2).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold text-foreground">
+                        {currentLeadName}
+                      </div>
+                      {currentLeadEmail && (
+                        <div className="truncate text-xs text-muted-foreground">
+                          {currentLeadEmail}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <AlertTriangle className="h-4 w-4" />
+                    {t('settings.transfer.noCurrentLead')}
+                  </div>
+                )}
+              </div>
+
               <div className="flex flex-col space-y-2">
                 <label className="text-sm font-medium">
                   {t('settings.transfer.selectMember') || 'Select New Owner'}
@@ -280,56 +355,74 @@ export default function WorkspaceSettingsPage() {
                       className="h-9 bg-background pl-9"
                     />
                   </div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Select
-                      value={selectedNewOwnerId}
-                      onValueChange={value => {
-                        setSelectedNewOwnerId(value);
-                        setSelectedNewOwnerName(otherMembers.find(m => m.id === value)?.name || '');
-                      }}
-                      disabled={isLoadingMembers || isTransferring}
-                    >
-                      <SelectTrigger className="h-9 max-w-md bg-background">
-                        <SelectValue
-                          placeholder={t('settings.transfer.placeholder') || 'Choose a member...'}
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {isLoadingMembers ? (
-                          <div className="p-2 flex items-center justify-center">
-                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                          </div>
-                        ) : otherMembers.length > 0 ? (
-                          otherMembers.map(member => (
-                            <SelectItem key={member.id} value={member.id}>
-                              <div className="flex items-center gap-2">
-                                <Avatar className="h-5 w-5">
-                                  <AvatarImage
-                                    src={member.avatar_url || member.avatar || undefined}
-                                  />
-                                  <AvatarFallback className="text-[8px]">
-                                    {member.name.slice(0, 2).toUpperCase()}
-                                  </AvatarFallback>
-                                </Avatar>
-                                <span>{member.name}</span>
-                                <span className="text-xs text-muted-foreground">
-                                  ({member.email})
-                                </span>
+                  <div className="max-w-2xl space-y-3">
+                    <div className="grid max-h-[260px] gap-2 overflow-y-auto rounded-md border bg-background p-2">
+                      {isLoadingMembers ? (
+                        <div className="flex items-center justify-center py-8">
+                          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                        </div>
+                      ) : otherMembers.length > 0 ? (
+                        otherMembers.map(member => {
+                          const displayName = member.member_name || member.name || member.email;
+                          const isSelected = selectedNewOwnerId === member.id;
+                          return (
+                            <button
+                              key={member.id}
+                              type="button"
+                              disabled={isTransferring}
+                              onClick={() => {
+                                setSelectedNewOwnerId(member.id);
+                                setSelectedNewOwnerName(displayName);
+                              }}
+                              className={`flex w-full items-center gap-3 rounded-md border px-3 py-3 text-left transition-colors ${
+                                isSelected
+                                  ? 'border-primary bg-primary/5'
+                                  : 'border-transparent hover:bg-muted/60'
+                              }`}
+                            >
+                              <Avatar className="h-9 w-9">
+                                <AvatarImage
+                                  src={member.avatar_url || member.avatar || undefined}
+                                />
+                                <AvatarFallback className="text-xs">
+                                  {(displayName || '?').slice(0, 2).toUpperCase()}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-sm font-semibold text-foreground">
+                                  {displayName}
+                                </div>
+                                <div className="truncate text-xs text-muted-foreground">
+                                  {member.email}
+                                </div>
                               </div>
-                            </SelectItem>
-                          ))
-                        ) : (
-                          <div className="p-2 text-sm text-center text-muted-foreground">
-                            {t('settings.transfer.noMembers')}
-                          </div>
-                        )}
-                      </SelectContent>
-                    </Select>
-
+                              {isSelected && <Check className="h-4 w-4 text-primary" />}
+                            </button>
+                          );
+                        })
+                      ) : (
+                        <div className="px-3 py-8 text-center text-sm text-muted-foreground">
+                          {t('settings.transfer.noMembers')}
+                        </div>
+                      )}
+                    </div>
+                    <Pagination
+                      currentPage={ownerPage}
+                      totalPages={ownerCandidatesTotalPages}
+                      total={ownerCandidatesTotal}
+                      pageSize={ownerPageSize}
+                      onPageChange={setOwnerPage}
+                      showJump={false}
+                      className="max-w-md"
+                    />
                     <ConfirmDialog
                       title={t('settings.transfer.confirm.title')}
                       description={t('settings.transfer.confirm.description', {
-                        name: selectedNewOwnerName || 'the selected member',
+                        name:
+                          selectedNewOwnerName ||
+                          selectedNewOwner?.member_name ||
+                          selectedNewOwner?.name ||
+                          'the selected member',
                       })}
                       confirmText={t('settings.transfer.confirm.button') || 'Transfer'}
                       cancelText={tCommon('cancel')}
@@ -350,15 +443,6 @@ export default function WorkspaceSettingsPage() {
                       }
                     />
                   </div>
-                  <Pagination
-                    currentPage={ownerPage}
-                    totalPages={ownerCandidatesTotalPages}
-                    total={ownerCandidatesTotal}
-                    pageSize={ownerPageSize}
-                    onPageChange={setOwnerPage}
-                    showJump={false}
-                    className="max-w-md"
-                  />
                 </div>
               </div>
             </CardContent>
@@ -366,7 +450,7 @@ export default function WorkspaceSettingsPage() {
         )}
 
         {/* Leave Workspace Card */}
-        {workspaceRole && !isOwner && (
+        {workspaceRole && !isCurrentUserWorkspaceLead && !isOrganizationManager && (
           <Card className="border-border/80 shadow-sm">
             <CardHeader className="space-y-1.5">
               <CardTitle className="flex items-center gap-2 text-base text-foreground">

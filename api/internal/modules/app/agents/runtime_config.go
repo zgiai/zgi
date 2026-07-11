@@ -9,6 +9,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/gorm"
 	"sort"
 	"strconv"
@@ -23,7 +24,7 @@ var (
 )
 
 func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID string) (*dto.AgentConfigResponse, error) {
-	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true)
+	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true, agentRuntimeConfigReadPermissionCodes("AGENT")...)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +74,7 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 }
 
 func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID string, req dto.PublishAgentRequest) (*dto.PublishAgentResponse, error) {
-	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true)
+	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true, agentPublishPermissionCodes("AGENT")...)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +146,7 @@ func (s *agentsService) createAgentPublishedVersion(ctx context.Context, version
 }
 
 func (s *agentsService) ListAgentPublishedVersions(ctx context.Context, agentID, accountID string, page, limit int) (*dto.AgentPublishedVersionsResponse, error) {
-	_, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
+	_, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false, agentPublishPermissionCodes("AGENT")...)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +191,7 @@ func (s *agentsService) ListAgentPublishedVersions(ctx context.Context, agentID,
 }
 
 func (s *agentsService) RollbackAgentPublishedVersion(ctx context.Context, agentID, accountID string, req dto.RollbackAgentPublishedVersionRequest) (*dto.AgentConfigResponse, error) {
-	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true)
+	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true, agentPublishPermissionCodes("AGENT")...)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +253,7 @@ func (s *agentsService) RollbackAgentPublishedVersion(ctx context.Context, agent
 	return resp, nil
 }
 
-func (s *agentsService) loadAuthorizedAgentRuntimeDraft(ctx context.Context, agentID, accountID string, ensureConfig bool) (*Agent, *AgentsConfig, error) {
+func (s *agentsService) loadAuthorizedAgentRuntimeDraft(ctx context.Context, agentID, accountID string, ensureConfig bool, permissionCodes ...model.WorkspacePermissionCode) (*Agent, *AgentsConfig, error) {
 	ag, cfg, err := s.loadAgentRuntimeDraft(ctx, agentID)
 	if err != nil {
 		return nil, nil, err
@@ -260,7 +261,10 @@ func (s *agentsService) loadAuthorizedAgentRuntimeDraft(ctx context.Context, age
 	if ag.AgentsType != "AGENT" {
 		return nil, nil, fmt.Errorf("agent runtime config is only available for AGENT type")
 	}
-	if err := s.ensureCanManageAgent(ctx, ag, accountID); err != nil {
+	if len(permissionCodes) == 0 {
+		permissionCodes = agentRuntimeConfigManagePermissionCodes(ag.AgentsType)
+	}
+	if err := s.ensureCanManageAgent(ctx, ag, accountID, permissionCodes...); err != nil {
 		return nil, nil, err
 	}
 	if ensureConfig {
@@ -306,23 +310,6 @@ func (s *agentsService) ensureAgentRuntimeDraftConfig(ctx context.Context, ag *A
 		_ = s.agentsRepo.Update(ctx, ag)
 	}
 	return cfg, nil
-}
-
-func (s *agentsService) ensureAgentEditor(ctx context.Context, accountID string) error {
-	if strings.TrimSpace(accountID) == "" {
-		return fmt.Errorf("account id is required")
-	}
-	if s.accountService == nil {
-		return nil
-	}
-	ok, err := s.accountService.IsEditor(ctx, accountID)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("permission denied")
-	}
-	return nil
 }
 
 func normalizeAgentConfigRequest(req dto.AgentConfigRequest) dto.AgentConfigRequest {

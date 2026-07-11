@@ -13,9 +13,10 @@ export { useWorkflowVariableCatalog } from './use-workflow-variable-catalog';
 export { useResolvedVariableReference } from './use-resolved-variable-reference';
 export { useNodeOutputVariables } from './use-node-output-variables';
 export { useContainerVariableSources } from './use-container-variable-sources';
+export { useDatabaseNodePermissions } from './use-database-node-permissions';
+export { useKnowledgeNodePermissions } from './use-knowledge-node-permissions';
 export type {
   WorkflowVariableCatalogGroup,
   WorkflowVariableCatalogSelection,
   WorkflowVariableCatalogVariable,
 } from './use-workflow-variable-catalog';
-

@@ -24,6 +24,10 @@ import { AGENT_KEYS, DATASET_KEYS } from '@/hooks/query-keys';
 import { useLocale } from '@/hooks/use-locale';
 import { useAutoProfile } from '@/hooks/use-profile';
 import { useT } from '@/i18n';
+import {
+  AGENT_PERMISSION_ACTIONS,
+  KNOWLEDGE_BASE_READ_PERMISSION_CODES,
+} from '@/constants/permissions';
 import agentService from '@/services/agent.service';
 import { datasetService } from '@/services';
 import { getTemplateAwareCharacterCount } from '@/components/workflow/common/workflow-value-editor/utils/value-transform';
@@ -231,16 +235,32 @@ export function useAgentRuntimePageModel(agentId: string) {
   const { locale } = useLocale();
   const t = useT('agents.agentRuntime');
   const tRoot = useT();
-  const { agent, isLoading: isAgentLoading } = useAgent(agentId);
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canManageAgent = hasPermission('agent.manage');
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canCreateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.create);
+  const canImportAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.import);
+  const canUpdateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.update);
+  const canConfigureAgentRuntime = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeConfigManage);
+  const canPublishAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.publish);
+  const canManageAgentRuntimeAccess = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeAccessManage);
+  const canOpenAgentRuntimeEditor =
+    canCreateAgent ||
+    canImportAgent ||
+    canUpdateAgent ||
+    canConfigureAgentRuntime ||
+    canPublishAgent ||
+    canManageAgentRuntimeAccess;
+  const { agent, isLoading: isAgentLoading } = useAgent(agentId, canOpenAgentRuntimeEditor);
+  const canBindKnowledge = hasAnyPermission(KNOWLEDGE_BASE_READ_PERMISSION_CODES);
   const { data: profile } = useAutoProfile({ staleTime: 1_800_000 });
-  const { data: configResponse, isLoading: isConfigLoading } = useAgentConfig(agentId);
+  const { data: configResponse, isLoading: isConfigLoading } = useAgentConfig(
+    agentId,
+    canOpenAgentRuntimeEditor
+  );
   const { data: allSkills = [], isLoading: isSkillsLoading } = useAIChatSkills();
   const { data: workflowCandidatesResponse, isLoading: isWorkflowCandidatesLoading } = useQuery({
     queryKey: AGENT_KEYS.workflowBindingCandidates(agentId),
     queryFn: () => agentService.getAgentWorkflowBindingCandidates(agentId),
-    enabled: Boolean(agentId),
+    enabled: Boolean(agentId) && canConfigureAgentRuntime,
     staleTime: 60_000,
   });
   const publishAgent = usePublishAgent();
@@ -318,14 +338,14 @@ export function useAgentRuntimePageModel(agentId: string) {
     queries: knowledgeDatasetIds.map(datasetId => ({
       queryKey: DATASET_KEYS.detail(datasetId),
       queryFn: () => datasetService.getDataset(datasetId),
-      enabled: Boolean(datasetId),
+      enabled: Boolean(datasetId) && canBindKnowledge,
       staleTime: 5 * 60 * 1000,
       retry: false,
     })),
   });
   const { pages: knowledgeDialogPages, isLoading: isKnowledgeDialogDatasetsLoading } = useDatasets(
     { keyword: knowledgeSearch.trim(), limit: 50 },
-    { enabled: knowledgeDialogOpen }
+    { enabled: knowledgeDialogOpen && canBindKnowledge }
   );
   const selectedKnowledgeDatasets = useMemo(() => {
     const byID = new Map<string, AgentKnowledgeDataset>();
@@ -344,15 +364,19 @@ export function useAgentRuntimePageModel(agentId: string) {
       const dataset = byID.get(id);
       if (dataset) return dataset;
       const query = selectedDatasetQueries[index];
-      const hasLoadError = Boolean(query?.isError);
+      const hasLoadError = !canBindKnowledge || Boolean(query?.isError);
       return createAgentKnowledgeDatasetFallback(
         id,
         t('knowledge.loadFailedName'),
-        hasLoadError ? t('knowledge.loadFailedDescription') : '',
+        !canBindKnowledge
+          ? t('knowledge.bindingPermissionRequired')
+          : hasLoadError
+            ? t('knowledge.loadFailedDescription')
+            : '',
         hasLoadError
       );
     });
-  }, [knowledgeDatasetIds, knowledgeDialogPages, selectedDatasetQueries, t]);
+  }, [canBindKnowledge, knowledgeDatasetIds, knowledgeDialogPages, selectedDatasetQueries, t]);
   const isSelectedDatasetsLoading = selectedDatasetQueries.some(query => query.isLoading);
   const workflowCandidatesByBindingID = useMemo(
     () => new Map(workflowCandidates.map(candidate => [candidate.binding_id, candidate])),
@@ -603,7 +627,8 @@ export function useAgentRuntimePageModel(agentId: string) {
   } = useAgentRuntimeDraftPersistence({
     currentPayload,
     enabled: !isVersionPreviewing,
-    canSave: () => canManageAgent && !hasAgentMemorySlotErrors && !isSystemPromptTooLong,
+    canSave: () =>
+      canConfigureAgentRuntime && !hasAgentMemorySlotErrors && !isSystemPromptTooLong,
     savePayload: saveRuntimePayload,
     onSaveCommitted: result => {
       setAgentMemorySlots(result.savedPayload.agent_memory_slots ?? []);
@@ -813,7 +838,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   );
 
   const handleConfirmVersionRollback = useCallback(async () => {
-    if (!canManageAgent) {
+    if (!canPublishAgent) {
       toast.error(tRoot('common.unauthorizedDescription'));
       return;
     }
@@ -840,7 +865,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   }, [
     applyRuntimePayload,
     agentId,
-    canManageAgent,
+    canPublishAgent,
     isRollingBackVersion,
     markServerSaved,
     payloadFromRuntimeConfig,
@@ -856,7 +881,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   }, []);
 
   const handleManualSave = useCallback(async () => {
-    if (!canManageAgent) {
+    if (!canConfigureAgentRuntime) {
       toast.error(tRoot('common.unauthorizedDescription'));
       return;
     }
@@ -874,10 +899,17 @@ export function useAgentRuntimePageModel(agentId: string) {
     if (saved) {
       toast.success(t('toasts.saveSuccess'));
     }
-  }, [canManageAgent, hasAgentMemorySlotErrors, isSystemPromptTooLong, saveNow, t, tRoot]);
+  }, [
+    canConfigureAgentRuntime,
+    hasAgentMemorySlotErrors,
+    isSystemPromptTooLong,
+    saveNow,
+    t,
+    tRoot,
+  ]);
 
   const handlePublish = useCallback(async () => {
-    if (!canManageAgent) {
+    if (!canPublishAgent) {
       toast.error(tRoot('common.unauthorizedDescription'));
       return;
     }
@@ -891,8 +923,9 @@ export function useAgentRuntimePageModel(agentId: string) {
       );
       return;
     }
-    const saved = await saveNow({ silent: true, force: true });
-    if (saved) {
+    const canPublishCurrentDraft =
+      !canConfigureAgentRuntime || (await saveNow({ silent: true, force: true }));
+    if (canPublishCurrentDraft) {
       try {
         await publishAgent.mutateAsync({ agentId, silent: false });
       } catch {
@@ -901,7 +934,8 @@ export function useAgentRuntimePageModel(agentId: string) {
     }
   }, [
     agentId,
-    canManageAgent,
+    canPublishAgent,
+    canConfigureAgentRuntime,
     hasAgentMemorySlotErrors,
     isSystemPromptTooLong,
     publishAgent,
@@ -911,7 +945,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   ]);
 
   const handleSaveBeforeLeave = useCallback(() => {
-    if (!canManageAgent) {
+    if (!canConfigureAgentRuntime) {
       toast.error(tRoot('common.unauthorizedDescription'));
       return Promise.resolve(false);
     }
@@ -926,7 +960,14 @@ export function useAgentRuntimePageModel(agentId: string) {
       return Promise.resolve(false);
     }
     return saveNow({ silent: false, force: true });
-  }, [canManageAgent, hasAgentMemorySlotErrors, isSystemPromptTooLong, saveNow, t, tRoot]);
+  }, [
+    canConfigureAgentRuntime,
+    hasAgentMemorySlotErrors,
+    isSystemPromptTooLong,
+    saveNow,
+    t,
+    tRoot,
+  ]);
 
   const handlePreviewSheetOpenChange = useCallback(
     async (open: boolean) => {
@@ -934,7 +975,7 @@ export function useAgentRuntimePageModel(agentId: string) {
         setPreviewSheetOpen(false);
         return;
       }
-      if (!canManageAgent || isVersionPreviewing) {
+      if (!canConfigureAgentRuntime || isVersionPreviewing) {
         setPreviewSheetOpen(true);
         return;
       }
@@ -947,11 +988,21 @@ export function useAgentRuntimePageModel(agentId: string) {
         setPreviewSheetOpen(true);
       }
     },
-    [canManageAgent, hasAgentMemorySlotErrors, isSystemPromptTooLong, isVersionPreviewing, saveNow]
+    [
+      canConfigureAgentRuntime,
+      hasAgentMemorySlotErrors,
+      isSystemPromptTooLong,
+      isVersionPreviewing,
+      saveNow,
+    ]
   );
 
   const handlePreviewBeforeSend = useCallback(async () => {
-    if (!canManageAgent || isVersionPreviewing) {
+    if (!canConfigureAgentRuntime) {
+      toast.error(tRoot('common.unauthorizedDescription'));
+      return false;
+    }
+    if (isVersionPreviewing) {
       return true;
     }
     if (hasAgentMemorySlotErrors) {
@@ -965,22 +1016,32 @@ export function useAgentRuntimePageModel(agentId: string) {
       return false;
     }
     return saveNow({ silent: false, force: true });
-  }, [canManageAgent, hasAgentMemorySlotErrors, isSystemPromptTooLong, isVersionPreviewing, saveNow, t]);
+  }, [
+    canConfigureAgentRuntime,
+    hasAgentMemorySlotErrors,
+    isSystemPromptTooLong,
+    isVersionPreviewing,
+    saveNow,
+    t,
+    tRoot,
+  ]);
 
   const leaveGuardNode = useAgentRuntimeLeaveGuard({
-    enabled: canManageAgent && !isVersionPreviewing,
+    enabled: canConfigureAgentRuntime && !isVersionPreviewing,
     hasUnsavedChanges: isDirty,
     isSaving,
     onSave: handleSaveBeforeLeave,
   });
 
   const webAppUrl = agentDetail?.web_app_id ? `/webapp/${agentDetail.web_app_id}/chat` : '';
+  const isRuntimeConfigReadOnly = isVersionPreviewing || !canConfigureAgentRuntime;
 
   return {
     agentId,
     locale,
     t,
     isLoading: isAgentLoading || isConfigLoading || isPermissionsLoading,
+    canOpenAgentRuntimeEditor,
     leaveGuardNode,
     isTwoXlViewport,
     previewSheetOpen,
@@ -992,9 +1053,11 @@ export function useAgentRuntimePageModel(agentId: string) {
       saveText: getAgentRuntimeSaveText(t, saveState, lastSavedAt),
       isDirty,
       isPublishing: publishAgent.isPending,
-      disablePrimaryActions: isVersionPreviewing || !canManageAgent,
+      disablePrimaryActions: isVersionPreviewing || !canConfigureAgentRuntime,
+      disablePublishActions: isVersionPreviewing || !canPublishAgent,
+      disablePublishSettingsActions: isVersionPreviewing || !canManageAgentRuntimeAccess,
       webAppUrl,
-      showPreviewAction: true,
+      showPreviewAction: canConfigureAgentRuntime,
       isPreviewOpen: previewSheetOpen,
       onSave: handleManualSave,
       onPublish: handlePublish,
@@ -1007,7 +1070,8 @@ export function useAgentRuntimePageModel(agentId: string) {
       isLoading: isLoadingVersions,
       isRollingBack: isRollingBackVersion,
       isPreviewing: isVersionPreviewing,
-      canRollback: canManageAgent,
+      canRollback: canPublishAgent,
+      canOpen: canPublishAgent,
       versions: publishedVersions,
       selectedVersionId: selectedPublishedVersionId,
       onOpenChange: handlePublishedVersionsOpenChange,
@@ -1019,16 +1083,24 @@ export function useAgentRuntimePageModel(agentId: string) {
       onConfirmRollback: () => void handleConfirmVersionRollback(),
     },
     prompt: {
+      readOnly: isRuntimeConfigReadOnly,
       systemPrompt,
       selectedKnowledgeDatasets,
       selectedSkills,
       databaseBindings,
       workflowBindings,
       workflowCandidatesByBindingID,
-      onChangeSystemPrompt: setSystemPrompt,
-      onOpenOptimizer: () => setPromptOptimizerOpen(true),
+      onChangeSystemPrompt: (value: string) => {
+        if (isRuntimeConfigReadOnly) return;
+        setSystemPrompt(value);
+      },
+      onOpenOptimizer: () => {
+        if (isRuntimeConfigReadOnly) return;
+        setPromptOptimizerOpen(true);
+      },
     },
     orchestration: {
+      readOnly: isRuntimeConfigReadOnly,
       locale,
       openSections,
       modelValue,
@@ -1040,6 +1112,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       isSkillsLoading,
       isSkillConfigLoading: false,
       isDatasetsLoading: isSelectedDatasetsLoading,
+      canBindKnowledge,
       selectedKnowledgeDatasets,
       selectedKnowledgeDatasetIds: knowledgeDatasetIds,
       databaseBindings,
@@ -1056,24 +1129,69 @@ export function useAgentRuntimePageModel(agentId: string) {
       defaultInputPlaceholder,
       onToggleSection: (section: AgentConfigSection) =>
         setOpenSections(current => ({ ...current, [section]: !current[section] })),
-      onChangeModelValue: setModelValue,
-      onChangeHomeTitle: setHomeTitle,
-      onChangeInputPlaceholder: setInputPlaceholder,
-      onOpenSkillDialog: () => setSkillDialogOpen(true),
-      onOpenKnowledgeDialog: () => setKnowledgeDialogOpen(true),
-      onOpenWorkflowDialog: () => setWorkflowDialogOpen(true),
-      onToggleSkill: handleToggleSkill,
-      onToggleKnowledgeDataset: handleToggleKnowledgeDataset,
-      onChangeDatabaseBindings: setDatabaseBindings,
-      onChangeWorkflowBindings: (value: AgentWorkflowBinding[]) =>
-        setWorkflowBindings(normalizeAgentWorkflowBindings(value)),
-      onGenerateSuggestedQuestions: () => void handleGenerateSuggestedQuestions(),
-      onChangeSuggestedQuestions: setSuggestedQuestions,
-      onChangeFileUploadEnabled: setFileUploadEnabled,
-      onChangeAgentMemoryEnabled: setAgentMemoryEnabled,
-      onChangeAgentMemorySlots: setAgentMemorySlots,
+      onChangeModelValue: (value: ModelSelectorParameterValue) => {
+        if (isRuntimeConfigReadOnly) return;
+        setModelValue(value);
+      },
+      onChangeHomeTitle: (value: string) => {
+        if (isRuntimeConfigReadOnly) return;
+        setHomeTitle(value);
+      },
+      onChangeInputPlaceholder: (value: string) => {
+        if (isRuntimeConfigReadOnly) return;
+        setInputPlaceholder(value);
+      },
+      onOpenSkillDialog: () => {
+        if (isRuntimeConfigReadOnly) return;
+        setSkillDialogOpen(true);
+      },
+      onOpenKnowledgeDialog: () => {
+        if (isRuntimeConfigReadOnly || !canBindKnowledge) return;
+        setKnowledgeDialogOpen(true);
+      },
+      onOpenWorkflowDialog: () => {
+        if (isRuntimeConfigReadOnly) return;
+        setWorkflowDialogOpen(true);
+      },
+      onToggleSkill: (skillId: string, checked: boolean) => {
+        if (isRuntimeConfigReadOnly) return;
+        handleToggleSkill(skillId, checked);
+      },
+      onToggleKnowledgeDataset: (datasetId: string, checked: boolean) => {
+        if (isRuntimeConfigReadOnly || !canBindKnowledge) return;
+        handleToggleKnowledgeDataset(datasetId, checked);
+      },
+      onChangeDatabaseBindings: (value: AgentDatabaseBinding[]) => {
+        if (isRuntimeConfigReadOnly) return;
+        setDatabaseBindings(value);
+      },
+      onChangeWorkflowBindings: (value: AgentWorkflowBinding[]) => {
+        if (isRuntimeConfigReadOnly) return;
+        setWorkflowBindings(normalizeAgentWorkflowBindings(value));
+      },
+      onGenerateSuggestedQuestions: () => {
+        if (isRuntimeConfigReadOnly) return;
+        void handleGenerateSuggestedQuestions();
+      },
+      onChangeSuggestedQuestions: (value: string[]) => {
+        if (isRuntimeConfigReadOnly) return;
+        setSuggestedQuestions(value);
+      },
+      onChangeFileUploadEnabled: (value: boolean) => {
+        if (isRuntimeConfigReadOnly) return;
+        setFileUploadEnabled(value);
+      },
+      onChangeAgentMemoryEnabled: (value: boolean) => {
+        if (isRuntimeConfigReadOnly) return;
+        setAgentMemoryEnabled(value);
+      },
+      onChangeAgentMemorySlots: (value: AgentMemorySlotConfig[]) => {
+        if (isRuntimeConfigReadOnly) return;
+        setAgentMemorySlots(value);
+      },
     },
     preview: {
+      canUseDraftPreview: canConfigureAgentRuntime,
       controller: chatController,
       modelSelectorValue,
       modelProps: selectedModelProps,
@@ -1120,7 +1238,7 @@ export function useAgentRuntimePageModel(agentId: string) {
         onToggleSkill: handleToggleSkill,
       },
       knowledge: {
-        open: knowledgeDialogOpen,
+        open: knowledgeDialogOpen && canBindKnowledge,
         datasets: knowledgeDialogDatasets,
         selectedDatasetIds: knowledgeDatasetIds,
         search: knowledgeSearch,

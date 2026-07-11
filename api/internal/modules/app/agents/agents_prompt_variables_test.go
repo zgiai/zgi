@@ -45,6 +45,9 @@ func TestRenderAgentPromptDatabaseIncludesBoundTables(t *testing.T) {
 func TestAgentPromptDatabaseSummaryScansWithoutGormRelationError(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
+		if strings.Contains(err.Error(), "requires cgo") {
+			t.Skipf("sqlite driver unavailable without cgo: %v", err)
+		}
 		t.Fatalf("open sqlite: %v", err)
 	}
 	if err := db.Exec(`CREATE TABLE data_sources (

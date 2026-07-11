@@ -1,9 +1,8 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { workspaceService } from '@/services/workspace.service';
-import { accountService } from '@/services/account.service';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { getErrorMessage } from '@/utils/error-notifications';
@@ -11,16 +10,21 @@ import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { useWorkspaceStore } from '@/store/workspace-store';
 import { useAuthStore } from '@/store/auth-store';
 import { useOrganizationStore } from '@/store/organization-store';
-import type { WorkspaceManagementList } from '@/services/types/workspace';
-import { sessionManager } from '@/lib/auth/session-manager';
-import { clearProfileClientCache } from '@/utils/client-cache';
+import type {
+  WorkspaceEntity,
+  WorkspaceManagement,
+  WorkspaceManagementList,
+} from '@/services/types/workspace';
 
 import { WORKSPACE_KEYS } from '@/hooks/query-keys';
 
 const MAX_JOINED_WORKSPACE_PAGES = 100;
 
-type JoinedWorkspacePagesResult = WorkspaceManagementList & {
+type WorkspaceSwitcherItem = WorkspaceManagement | WorkspaceEntity;
+
+type JoinedWorkspacePagesResult = Omit<WorkspaceManagementList, 'data'> & {
   organizationId: string;
+  data: WorkspaceSwitcherItem[];
 };
 
 interface UseJoinedWorkspacesOptions {
@@ -28,6 +32,15 @@ interface UseJoinedWorkspacesOptions {
   limit?: number;
   /** If true, automatically sync to workspace store */
   syncToStore?: boolean;
+}
+
+function toWorkspaceStoreItem(workspace: WorkspaceSwitcherItem) {
+  return {
+    id: workspace.id,
+    name: workspace.name,
+    leader_id: 'leader_id' in workspace ? workspace.leader_id : undefined,
+    leader_name: 'leader_name' in workspace ? workspace.leader_name : undefined,
+  };
 }
 
 /**
@@ -45,21 +58,27 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
   const markWorkspaceRequired = useWorkspaceStore.use.markWorkspaceRequired();
   const selectWorkspace = useWorkspaceStore.use.selectWorkspace();
   const user = useAuthStore.use.user();
-  const isSwitchingOrganization =
-    useOrganizationStore.use.isSwitchingOrganization();
-  const autoPersistedWorkspaceIdRef = useRef<string | null>(null);
+  const isSwitchingOrganization = useOrganizationStore.use.isSwitchingOrganization();
 
   const organizationId = currentOrganization?.id ?? null;
+  const accountId = user?.id ?? null;
+  const organizationRole = currentOrganization?.organization_role ?? user?.organization_role ?? null;
+  const canManageOrganization = organizationRole === 'owner' || organizationRole === 'admin';
 
   const fetchJoinedWorkspacePages = async (): Promise<JoinedWorkspacePagesResult> => {
-    if (!organizationId) {
-      throw new Error('No organization selected');
+    if (!organizationId || !accountId) {
+      throw new Error('No organization or account selected');
     }
     const requestOrganizationId = organizationId;
+    const requestAccountId = accountId;
 
-    const firstPage = await workspaceService.getWorkspaces(requestOrganizationId, { page, limit });
+    const firstPage = await workspaceService.getJoinedWorkspaces(
+      requestOrganizationId,
+      requestAccountId,
+      { page, limit }
+    );
     const seenWorkspaceIds = new Set<string>();
-    const mergedWorkspaces = firstPage.data.filter(workspace => {
+    const mergedWorkspaces: WorkspaceSwitcherItem[] = firstPage.data.filter(workspace => {
       if (seenWorkspaceIds.has(workspace.id)) return false;
       seenWorkspaceIds.add(workspace.id);
       return true;
@@ -70,10 +89,14 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
     let nextPage = (firstPage.page || page) + 1;
 
     while (latestPage.has_more && pagesFetched < MAX_JOINED_WORKSPACE_PAGES) {
-      latestPage = await workspaceService.getWorkspaces(requestOrganizationId, {
-        page: nextPage,
-        limit,
-      });
+      latestPage = await workspaceService.getJoinedWorkspaces(
+        requestOrganizationId,
+        requestAccountId,
+        {
+          page: nextPage,
+          limit,
+        }
+      );
 
       latestPage.data.forEach(workspace => {
         if (seenWorkspaceIds.has(workspace.id)) return;
@@ -83,6 +106,37 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
 
       pagesFetched += 1;
       nextPage = (latestPage.page || nextPage) + 1;
+    }
+
+    if (canManageOrganization) {
+      let managedPage = await workspaceService.getManagedWorkspaces(requestOrganizationId, {
+        page: 1,
+        limit,
+      });
+      let managedPagesFetched = 1;
+      let nextManagedPage = (managedPage.page || 1) + 1;
+
+      managedPage.data.forEach(workspace => {
+        if (seenWorkspaceIds.has(workspace.id)) return;
+        seenWorkspaceIds.add(workspace.id);
+        mergedWorkspaces.push(workspace);
+      });
+
+      while (managedPage.has_more && managedPagesFetched < MAX_JOINED_WORKSPACE_PAGES) {
+        managedPage = await workspaceService.getManagedWorkspaces(requestOrganizationId, {
+          page: nextManagedPage,
+          limit,
+        });
+
+        managedPage.data.forEach(workspace => {
+          if (seenWorkspaceIds.has(workspace.id)) return;
+          seenWorkspaceIds.add(workspace.id);
+          mergedWorkspaces.push(workspace);
+        });
+
+        managedPagesFetched += 1;
+        nextManagedPage = (managedPage.page || nextManagedPage) + 1;
+      }
     }
 
     return {
@@ -103,18 +157,19 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
     error,
     refetch,
   } = useQuery({
-    queryKey: WORKSPACE_KEYS.forSwitcher(organizationId, { page, limit }),
+    queryKey: WORKSPACE_KEYS.forSwitcher(organizationId, {
+      page,
+      limit,
+      accountId,
+      organizationRole,
+    }),
     queryFn: fetchJoinedWorkspacePages,
-    enabled: !!organizationId && !isSwitchingOrganization,
+    enabled: !!organizationId && !!accountId && !isSwitchingOrganization,
     staleTime: 2 * 60 * 1000,
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
     retry: false,
   });
-
-  useEffect(() => {
-    autoPersistedWorkspaceIdRef.current = null;
-  }, [organizationId]);
 
   // 1. Sync workspaces to store and handle fallback logic
   useEffect(() => {
@@ -122,10 +177,7 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
     if (!syncToStore || !responseData?.data) return;
     if (responseData.organizationId !== organizationId) return;
 
-    const transformedWorkspaces = responseData.data.map(w => ({
-      id: w.id,
-      name: w.name,
-    }));
+    const transformedWorkspaces = responseData.data.map(toWorkspaceStoreItem);
 
     setWorkspaces(transformedWorkspaces);
 
@@ -139,10 +191,15 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
     if (currentWorkspace) {
       const stillInWorkspace = transformedWorkspaces.find(w => w.id === currentWorkspace.id);
       if (!stillInWorkspace) {
-        selectWorkspace(transformedWorkspaces[0]);
+        markWorkspaceRequired();
       } else if (contextStatus !== 'ready') {
         selectWorkspace(stillInWorkspace);
       }
+      return;
+    }
+
+    if (contextStatus !== 'workspace_required') {
+      markWorkspaceRequired();
     }
   }, [
     responseData,
@@ -157,8 +214,9 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
     isSwitchingOrganization,
   ]);
 
-  // 2. Synchronize from user profile ONLY when the profile's workspace ID changes
-  // and it differs from our current store value.
+  // 2. Synchronize from user profile ONLY when the profile's workspace ID changes.
+  // A missing profile workspace is a valid organization-only state; do not
+  // auto-persist the first workspace as a fallback.
   useEffect(() => {
     if (isSwitchingOrganization) return;
     if (!user || !responseData?.data || !syncToStore) return;
@@ -169,68 +227,23 @@ export function useJoinedWorkspaces(options: UseJoinedWorkspacesOptions = {}) {
 
     if (profileWorkspaceId !== storeWorkspaceId) {
       // Transform again to ensure we have the list
-      const workspaces = responseData.data.map(w => ({
-        id: w.id,
-        name: w.name,
-      }));
+      const workspaces = responseData.data.map(toWorkspaceStoreItem);
 
       if (profileWorkspaceId && profileWorkspaceId !== '') {
         const profileWorkspace = workspaces.find(w => w.id === profileWorkspaceId);
         if (profileWorkspace) {
           selectWorkspace(profileWorkspace);
-          autoPersistedWorkspaceIdRef.current = null;
-        } else {
-          const fallbackWorkspace = workspaces[0];
-          if (fallbackWorkspace) {
-            selectWorkspace(fallbackWorkspace);
-            if (autoPersistedWorkspaceIdRef.current !== fallbackWorkspace.id) {
-              autoPersistedWorkspaceIdRef.current = fallbackWorkspace.id;
-              void accountService
-                .updateContext({ current_workspace_id: fallbackWorkspace.id })
-                .then(async () => {
-                  clearProfileClientCache();
-                  await useAuthStore.getState().refreshProfile();
-                  sessionManager.broadcastContextChanged({
-                    currentWorkspaceId: fallbackWorkspace.id,
-                  });
-                })
-                .catch(error => {
-                  autoPersistedWorkspaceIdRef.current = null;
-                  console.error('Failed to persist fallback workspace:', error);
-                });
-            }
-          } else {
-            markWorkspaceRequired();
-          }
-        }
-      } else {
-        const fallbackWorkspace = workspaces[0];
-        if (fallbackWorkspace) {
-          selectWorkspace(fallbackWorkspace);
-          if (autoPersistedWorkspaceIdRef.current !== fallbackWorkspace.id) {
-            autoPersistedWorkspaceIdRef.current = fallbackWorkspace.id;
-            void accountService
-              .updateContext({ current_workspace_id: fallbackWorkspace.id })
-              .then(async () => {
-                clearProfileClientCache();
-                await useAuthStore.getState().refreshProfile();
-                sessionManager.broadcastContextChanged({
-                  currentWorkspaceId: fallbackWorkspace.id,
-                });
-              })
-              .catch(error => {
-                autoPersistedWorkspaceIdRef.current = null;
-                console.error('Failed to persist fallback workspace:', error);
-              });
-          }
         } else {
           markWorkspaceRequired();
         }
+      } else {
+        markWorkspaceRequired();
       }
     }
   }, [
     user,
     user?.current_workspace_id,
+    organizationRole,
     responseData?.data,
     responseData?.organizationId,
     organizationId,

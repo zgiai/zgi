@@ -31,6 +31,7 @@ interface TemplateGalleryDialogProps {
   onCreateBlank: () => void;
   onTemplateCreated?: () => void | Promise<void>;
   initialTemplateId?: string | null;
+  canCreateBlank?: boolean;
 }
 
 export function TemplateGalleryDialog({
@@ -40,6 +41,7 @@ export function TemplateGalleryDialog({
   onCreateBlank,
   onTemplateCreated,
   initialTemplateId,
+  canCreateBlank = true,
 }: TemplateGalleryDialogProps) {
   const t = useT();
   const templateT = t as TemplateTranslator;
@@ -257,25 +259,27 @@ export function TemplateGalleryDialog({
               />
             ) : (
               <>
-                <button
-                  type="button"
-                  disabled={isCreating}
-                  onClick={onCreateBlank}
-                  className="mb-4 flex w-full items-center gap-3 rounded-lg border border-primary/20 bg-background p-3 text-left shadow-sm transition-all hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
-                    <FilePlus2 className="size-4" />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-semibold text-foreground">
-                      {t('agents.templates.createFromBlank')}
+                {canCreateBlank && (
+                  <button
+                    type="button"
+                    disabled={isCreating}
+                    onClick={onCreateBlank}
+                    className="mb-4 flex w-full items-center gap-3 rounded-lg border border-primary/20 bg-background p-3 text-left shadow-sm transition-all hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+                      <FilePlus2 className="size-4" />
                     </span>
-                    <span className="mt-0.5 line-clamp-1 block text-xs leading-4 text-muted-foreground">
-                      {t('agents.templates.createFromBlankDescription')}
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-semibold text-foreground">
+                        {t('agents.templates.createFromBlank')}
+                      </span>
+                      <span className="mt-0.5 line-clamp-1 block text-xs leading-4 text-muted-foreground">
+                        {t('agents.templates.createFromBlankDescription')}
+                      </span>
                     </span>
-                  </span>
-                  <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-                </button>
+                    <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                  </button>
+                )}
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <h2 className="text-sm font-semibold text-foreground">
                     {getCategoryLabel(templateT, activeCategory)}

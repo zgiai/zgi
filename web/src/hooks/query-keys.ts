@@ -13,7 +13,12 @@ export const ORGANIZATION_KEYS = {
   current: () => [...ORGANIZATION_KEYS.all, 'current'] as const,
   currentMembers: (params?: unknown) =>
     [...ORGANIZATION_KEYS.all, 'current-members', params].filter(Boolean),
-  roles: (orgId: string) => [...ORGANIZATION_KEYS.all, 'roles', orgId] as const,
+  currentMember: (memberId: string | null) =>
+    [...ORGANIZATION_KEYS.all, 'current-member', memberId].filter(Boolean),
+  roles: (orgId: string, params?: unknown) =>
+    params === undefined
+      ? ([...ORGANIZATION_KEYS.all, 'roles', orgId] as const)
+      : ([...ORGANIZATION_KEYS.all, 'roles', orgId, params] as const),
   roleDetail: (orgId: string, roleId: string) =>
     [...ORGANIZATION_KEYS.all, 'role-detail', orgId, roleId] as const,
   roleMembers: (orgId: string, roleId: string) =>
@@ -43,6 +48,10 @@ export const WORKSPACE_KEYS = {
     [...WORKSPACE_KEYS.all, 'member-detail', orgId, wsId, memberId].filter(Boolean),
   availableMembers: (orgId: string | null, wsId: string | null, params?: unknown) =>
     [...WORKSPACE_KEYS.all, 'available-members', orgId, wsId, params].filter(Boolean),
+  memberOptionsInfinite: (orgId: string | null, wsId: string | null, params: unknown) =>
+    [...WORKSPACE_KEYS.all, 'member-options-infinite', orgId, wsId, params].filter(Boolean),
+  memberOptionDetail: (orgId: string | null, wsId: string | null, memberId: string | null) =>
+    [...WORKSPACE_KEYS.all, 'member-option-detail', orgId, wsId, memberId].filter(Boolean),
   membersInfinite: (orgId: string | null, wsId: string | null, params: unknown) =>
     [...WORKSPACE_KEYS.all, 'members-infinite', orgId, wsId, params].filter(Boolean),
   stats: (wsId: string) => [...WORKSPACE_KEYS.all, 'stats', wsId] as const,
@@ -62,6 +71,8 @@ export const AGENT_KEYS = {
     [...AGENT_KEYS.detail(id), 'workflow-binding-candidates'] as const,
   runnable: (workspaceId?: string | null) =>
     [...AGENT_KEYS.all, 'runnable-webapps', workspaceId || 'all'] as const,
+  runtimeSurfaces: (agentId: string) =>
+    [...AGENT_KEYS.detail(agentId), 'runtime-surfaces'] as const,
   runtimeRuns: (agentId: string, params: unknown) =>
     [...AGENT_KEYS.detail(agentId), 'runtime-runs', params] as const,
   runtimeRunDetail: (agentId: string, messageId: string) =>
@@ -149,6 +160,8 @@ export const WORKFLOW_KEYS = {
   chatMessages: (agentId: string, conversationId: string, params?: unknown) =>
     [...WORKFLOW_KEYS.runs(agentId), 'chat-messages', conversationId, params] as const,
   builtIn: () => ['built-in-workflows'] as const,
+  builtInRuntimeSurfaces: (scenario: string) =>
+    [...WORKFLOW_KEYS.builtIn(), 'runtime-surfaces', scenario] as const,
 } as const;
 
 export const WORKFLOW_TEST_KEYS = {
@@ -269,12 +282,14 @@ export const STATS_KEYS = {
 export const PROFILE_KEYS = {
   all: ['account'] as const,
   current: () => [...PROFILE_KEYS.all, 'profile'] as const,
+  capabilities: () => [...PROFILE_KEYS.all, 'capabilities'] as const,
 } as const;
 
 // 11. Webapp Related
 export const WEBAPP_KEYS = {
   all: ['webapp'] as const,
   config: (versionUuid: string) => [...WEBAPP_KEYS.all, 'config', versionUuid] as const,
+  capability: (webAppId: string) => [...WEBAPP_KEYS.all, 'capability', webAppId] as const,
   conversations: (versionUuid: string) =>
     [...WEBAPP_KEYS.all, 'conversations', versionUuid] as const,
   conversationList: (versionUuid: string, params: unknown) =>
@@ -332,6 +347,8 @@ export const CHANNEL_KEYS = {
 export const DASHBOARD_KEYS = {
   all: ['dashboard'] as const,
   stats: () => [...DASHBOARD_KEYS.all, 'stats'] as const,
+  recentWork: (scope: 'overview' | 'workspace', workspaceId?: string | null) =>
+    [...DASHBOARD_KEYS.all, 'recent-work', scope, workspaceId || 'all'] as const,
 } as const;
 
 // 18. Payment Related

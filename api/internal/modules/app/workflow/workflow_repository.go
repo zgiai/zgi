@@ -563,6 +563,7 @@ type WorkflowRunLogFilter struct {
 	Status        string
 	TriggeredFrom string
 	CreatedByRole string
+	CreatedBy     string
 	StartDate     *time.Time
 	EndDate       *time.Time
 	ExcludeDebug  bool
@@ -820,6 +821,9 @@ func (r *workflowRunLogRepository) applyRunLogFilters(query *gorm.DB, filter Wor
 	}
 	if filter.CreatedByRole != "" {
 		query = query.Where("created_by_role = ?", filter.CreatedByRole)
+	}
+	if filter.CreatedBy != "" {
+		query = query.Where("created_by = ?", filter.CreatedBy)
 	}
 	return query
 }

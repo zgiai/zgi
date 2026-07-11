@@ -5,7 +5,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { createSelectors } from './utils/selectors';
-import { ALL_PERMISSION_CODES, type PermissionCode } from '@/constants/permissions';
+import type { PermissionCode } from '@/constants/permissions';
 
 /**
  * Workspace entity representing a workspace in the frontend
@@ -13,6 +13,8 @@ import { ALL_PERMISSION_CODES, type PermissionCode } from '@/constants/permissio
 export interface Workspace {
   id: string;
   name: string;
+  leader_id?: string;
+  leader_name?: string;
 }
 
 export type WorkspaceContextStatus = 'loading' | 'ready' | 'workspace_required';
@@ -59,8 +61,8 @@ interface WorkspaceState {
   selectWorkspace: (workspace: Workspace) => void;
   // Permission check helpers
   hasPermission: (permission: PermissionCode) => boolean;
-  hasAnyPermission: (permissions: PermissionCode[]) => boolean;
-  hasAllPermissions: (permissions: PermissionCode[]) => boolean;
+  hasAnyPermission: (permissions: readonly PermissionCode[]) => boolean;
+  hasAllPermissions: (permissions: readonly PermissionCode[]) => boolean;
   isAdmin: () => boolean;
   // Hydration state
   _hasHydrated: boolean;
@@ -129,34 +131,40 @@ const useWorkspaceStoreBase = create<WorkspaceState>()(
       // Permission helpers
       hasPermission: (permission: PermissionCode) => {
         const { contextStatus, permissionState } = get();
-        if (contextStatus === 'workspace_required') {
-          const { organizationRole } = permissionState;
-          if (organizationRole === 'owner' || organizationRole === 'admin') {
-            return true;
-          }
-          return permission.endsWith('.view');
+        if (contextStatus !== 'ready') {
+          return false;
+        }
+        if (
+          permissionState.organizationRole === 'owner' ||
+          permissionState.organizationRole === 'admin'
+        ) {
+          return true;
         }
         return permissionState.permissions.includes(permission);
       },
-      hasAnyPermission: (permissions: PermissionCode[]) => {
+      hasAnyPermission: (permissions: readonly PermissionCode[]) => {
         const { contextStatus, permissionState } = get();
-        if (contextStatus === 'workspace_required') {
-          const { organizationRole } = permissionState;
-          if (organizationRole === 'owner' || organizationRole === 'admin') {
-            return permissions.length > 0;
-          }
-          return permissions.some(p => p.endsWith('.view'));
+        if (contextStatus !== 'ready') {
+          return false;
+        }
+        if (
+          permissionState.organizationRole === 'owner' ||
+          permissionState.organizationRole === 'admin'
+        ) {
+          return permissions.length > 0;
         }
         return permissions.some(p => permissionState.permissions.includes(p));
       },
-      hasAllPermissions: (permissions: PermissionCode[]) => {
+      hasAllPermissions: (permissions: readonly PermissionCode[]) => {
         const { contextStatus, permissionState } = get();
-        if (contextStatus === 'workspace_required') {
-          const { organizationRole } = permissionState;
-          if (organizationRole === 'owner' || organizationRole === 'admin') {
-            return permissions.every(p => ALL_PERMISSION_CODES.includes(p));
-          }
-          return permissions.every(p => p.endsWith('.view'));
+        if (contextStatus !== 'ready') {
+          return false;
+        }
+        if (
+          permissionState.organizationRole === 'owner' ||
+          permissionState.organizationRole === 'admin'
+        ) {
+          return true;
         }
         return permissions.every(p => permissionState.permissions.includes(p));
       },

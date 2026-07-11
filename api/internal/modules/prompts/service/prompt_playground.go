@@ -26,10 +26,19 @@ func (s *promptService) PlaygroundStream(
 	if rawPrompt == "" && !hasMessages {
 		return fmt.Errorf("prompt cannot be empty")
 	}
-	if err := s.ensureWorkspaceAccess(ctx, organizationID, accountID, workspaceID, promptPlaygroundPermissionCodes()...); err != nil {
+	if s == nil {
+		return fmt.Errorf("prompt playground is unavailable")
+	}
+	if err := s.requirePromptWorkspaceAccess(
+		ctx,
+		organizationID,
+		accountID,
+		workspaceID,
+		promptPlaygroundPermissionCodes()...,
+	); err != nil {
 		return err
 	}
-	if s == nil || s.llmClient == nil || s.defaultModelSvc == nil {
+	if s.llmClient == nil || s.defaultModelSvc == nil {
 		return fmt.Errorf("prompt playground is unavailable")
 	}
 

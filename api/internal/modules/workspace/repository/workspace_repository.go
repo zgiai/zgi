@@ -37,7 +37,6 @@ type WorkspaceRepository interface {
 	GetWorkspaceAccountJoins(ctx context.Context, workspaceID string) ([]*model.WorkspaceMember, error)
 	CreateWorkspaceAccountJoin(ctx context.Context, join *model.WorkspaceMember) error
 	DeleteWorkspaceAccountJoin(ctx context.Context, workspaceID, accountID string) error
-	GetWorkspaceIDsByGroupAdmin(ctx context.Context, accountID string) ([]string, error)
 	GetWorkspaceIDsByOrganizationID(ctx context.Context, organizationID string) ([]string, error)
 	GetDB() *gorm.DB
 	WithTx(tx *gorm.DB) WorkspaceRepository
@@ -184,7 +183,7 @@ func (r *workspaceRepository) GetWorkspaceStatistics(ctx context.Context, worksp
 	var datasetsCount int64
 	err = r.db.WithContext(ctx).
 		Model(&dataset_model.Dataset{}).
-		Where("tenant_id = ?", workspaceID).
+		Where("workspace_id = ?", workspaceID).
 		Count(&datasetsCount).Error
 	if err != nil {
 		return 0, 0, 0, 0, err
@@ -298,23 +297,6 @@ func (r *workspaceRepository) CreateWorkspaceAccountJoin(ctx context.Context, jo
 func (r *workspaceRepository) DeleteWorkspaceAccountJoin(ctx context.Context, workspaceID, accountID string) error {
 	return r.db.WithContext(ctx).
 		Delete(&model.WorkspaceMember{}, "workspace_id = ? AND account_id = ?", workspaceID, accountID).Error
-}
-
-func (r *workspaceRepository) GetWorkspaceIDsByGroupAdmin(ctx context.Context, accountID string) ([]string, error) {
-	var workspaceIDs []string
-
-	err := r.db.WithContext(ctx).
-		Table("members egaj").
-		Select("DISTINCT w.id").
-		Joins("JOIN workspaces w ON egaj.organization_id = w.organization_id").
-		Where("egaj.account_id = ? AND egaj.role IN (?)", accountID, []string{"owner", "admin"}).
-		Pluck("w.id", &workspaceIDs).Error
-
-	if err != nil {
-		return nil, err
-	}
-
-	return workspaceIDs, nil
 }
 
 func (r *workspaceRepository) GetWorkspaceIDsByOrganizationID(ctx context.Context, organizationID string) ([]string, error) {

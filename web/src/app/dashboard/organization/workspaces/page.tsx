@@ -7,11 +7,12 @@ import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Pagination } from '@/components/ui/pagination';
 import { TableCell, TableRow } from '@/components/ui/table';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { Search, Plus, Users, ChevronRight, Pencil, Trash2 } from 'lucide-react';
+import { Search, Plus, Users, ChevronRight, Pencil, Trash2, X } from 'lucide-react';
 import { useWorkspaces } from '@/hooks/workspace/use-workspaces';
 import { useDeleteWorkspace } from '@/hooks/workspace/use-workspace-actions';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
@@ -28,12 +29,20 @@ import { workspaceService as organizationService } from '@/services/workspace.se
 import { getErrorMessage } from '@/utils/error-notifications';
 import { useWorkspaceStore } from '@/store/workspace-store';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  formatAiCreditFiatEstimate,
+  formatChannelCreditPoints,
+  normalizeAiCreditValue,
+} from '@/utils/ai-credits';
+import { useLocale } from '@/hooks/use-locale';
 
 function WorkspaceManagementPageContent() {
   const t = useT('dashboard.organization.workspaceManagement');
+  const { locale } = useLocale();
   const router = useRouter();
   const searchParams = useSearchParams();
   const pathname = usePathname();
+  const searchParamsString = searchParams.toString();
   const [searchKeyword, setSearchKeyword] = useState(searchParams.get('q') || '');
   const [currentPage, setCurrentPage] = useState(Number(searchParams.get('page')) || 1);
   const [isWorkspacePageChanging, setIsWorkspacePageChanging] = useState(false);
@@ -77,6 +86,13 @@ function WorkspaceManagementPageContent() {
 
   // Debounce search keyword
   const debouncedSearchKeyword = useDebouncedValue(searchKeyword, 500);
+
+  useEffect(() => {
+    const nextKeyword = searchParams.get('q') || '';
+    const nextPage = Number(searchParams.get('page')) || 1;
+    setSearchKeyword(prev => (prev === nextKeyword ? prev : nextKeyword));
+    setCurrentPage(prev => (prev === nextPage ? prev : nextPage));
+  }, [searchParams, searchParamsString]);
 
   // Sync state to URL
   const updateUrl = useCallback(
@@ -123,6 +139,7 @@ function WorkspaceManagementPageContent() {
     hasMore,
     page: workspaceResponsePage,
     isLoading,
+    isFetching,
     isPlaceholderData: isPlaceholderWorkspaces,
   } = useWorkspaces(debouncedSearchKeyword, currentPage, pageSize, {
     keepPreviousData: true,
@@ -131,7 +148,8 @@ function WorkspaceManagementPageContent() {
   const loadedItemCount = (currentPage - 1) * pageSize + workspaces.length;
   const effectiveTotal = Math.max(total, loadedItemCount + (hasMore ? 1 : 0));
   const totalPages = Math.max(1, Math.ceil(effectiveTotal / pageSize));
-  const shouldShowWorkspaceSkeleton = isLoading || isWorkspacePageChanging;
+  const shouldShowWorkspaceSkeleton =
+    isLoading || (isWorkspacePageChanging && isFetching && workspaces.length === 0);
 
   // Handle case where current page > total pages (e.g. after deletion)
   useEffect(() => {
@@ -142,10 +160,14 @@ function WorkspaceManagementPageContent() {
   }, [currentPage, totalPages, handlePageChange]);
 
   useEffect(() => {
+    if (!isFetching) {
+      setIsWorkspacePageChanging(false);
+      return;
+    }
     if (!isPlaceholderWorkspaces && workspaceResponsePage === currentPage) {
       setIsWorkspacePageChanging(false);
     }
-  }, [currentPage, isPlaceholderWorkspaces, workspaceResponsePage]);
+  }, [currentPage, isFetching, isPlaceholderWorkspaces, workspaceResponsePage]);
 
   // Delete workspace hook
   const { deleteWorkspace, isDeleting } = useDeleteWorkspace();
@@ -234,6 +256,10 @@ function WorkspaceManagementPageContent() {
     });
   };
 
+  const handleClearSearch = useCallback(() => {
+    setSearchKeyword('');
+  }, []);
+
   const getWorkspaceDetailHref = (workspaceId: string) => {
     const query = assignMemberKeyword
       ? `?assignMember=${encodeURIComponent(assignMemberKeyword)}`
@@ -241,27 +267,38 @@ function WorkspaceManagementPageContent() {
     return `/dashboard/organization/workspaces/${workspaceId}${query}`;
   };
 
+  const getDisplayQuotaValue = (value?: number | null) => normalizeAiCreditValue(value) ?? 0;
+
+  const formatQuotaPoints = (value?: number | null) =>
+    formatChannelCreditPoints(getDisplayQuotaValue(value), { locale });
+
+  const formatQuotaFiatEstimate = (value?: number | null) =>
+    formatAiCreditFiatEstimate(getDisplayQuotaValue(value), { locale });
+
+  const getQuotaStatus = (workspace: WorkspaceManagement) => {
+    if (workspace.quota_limit === null || workspace.quota_limit === undefined) {
+      return {
+        label: t('quotaUnlimited'),
+        detail: null,
+        variant: 'secondary' as const,
+      };
+    }
+
+    return {
+      label: t('quotaRemaining', {
+        remain: formatQuotaPoints(workspace.remain_quota),
+      }),
+      detail: t('quotaFiatApprox', { amount: formatQuotaFiatEstimate(workspace.remain_quota) }),
+      variant: 'outline' as const,
+    };
+  };
+
   return (
     <div className="flex h-full flex-col space-y-5 overflow-auto bg-bg-canvas/50 p-4 lg:p-6">
       {/* Header */}
-      <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-text-primary">{t('title')}</h1>
-          <p className="mt-1 max-w-2xl text-sm text-text-secondary">{t('description')}</p>
-        </div>
-        <Button
-          onClick={() =>
-            setWorkspaceDialog({
-              open: true,
-              mode: 'create',
-              initialData: null,
-            })
-          }
-          className="h-10 rounded-md bg-primary px-4 font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary-hover hover:text-primary-foreground"
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          {t('newWorkspace')}
-        </Button>
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight text-text-primary">{t('title')}</h1>
+        <p className="mt-1 max-w-2xl text-sm text-text-secondary">{t('description')}</p>
       </div>
 
       {/* Main Content Area */}
@@ -283,16 +320,39 @@ function WorkspaceManagementPageContent() {
         ) : null}
 
         {/* Search Strip */}
-        <div className="flex flex-col items-center gap-4 border-b border-border/60 bg-background p-4 md:flex-row">
-          <div className="relative w-full max-w-md flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-placeholder" />
+        <div className="flex flex-col gap-2 border-b border-border/60 bg-background px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          <div className="relative w-full sm:w-[360px] sm:flex-none">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder={t('searchPlaceholder')}
               value={searchKeyword}
               onChange={e => setSearchKeyword(e.target.value)}
-              className="h-10 rounded-md bg-bg-canvas/50 pl-9 shadow-none transition-all focus:border-primary/40 focus:ring-0"
+              className="h-10 rounded-md bg-bg-canvas/50 pl-9 pr-9 shadow-none transition-all focus:border-primary/40 focus:ring-0"
             />
+            {searchKeyword ? (
+              <button
+                type="button"
+                aria-label={t('clearSearch')}
+                onClick={handleClearSearch}
+                className="absolute right-2 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-text-placeholder transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
           </div>
+          <Button
+            onClick={() =>
+              setWorkspaceDialog({
+                open: true,
+                mode: 'create',
+                initialData: null,
+              })
+            }
+            className="h-10 w-full shrink-0 rounded-md bg-primary px-4 font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary-hover hover:text-primary-foreground sm:w-auto"
+          >
+            <Plus className="h-4 w-4" />
+            {t('newWorkspace')}
+          </Button>
         </div>
 
         {/* Workspaces Table Section */}
@@ -301,7 +361,7 @@ function WorkspaceManagementPageContent() {
             columns={[
               { key: 'workspaceName', header: t('workspaceName'), className: 'pl-6' },
               { key: 'manager', header: t('manager') },
-              { key: 'department', header: t('department') },
+              { key: 'quota', header: t('quotaStatus') },
               { key: 'memberCount', header: t('memberCount') },
               { key: 'actions', header: t('actions'), align: 'right', className: 'pr-6' },
             ]}
@@ -321,7 +381,20 @@ function WorkspaceManagementPageContent() {
                 <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-4">
                   <Search className="h-8 w-8 opacity-20" />
                 </div>
-                <p className="text-sm font-medium">{t('noWorkspaces')}</p>
+                <p className="text-sm font-medium">
+                  {debouncedSearchKeyword ? t('noSearchResults') : t('noWorkspaces')}
+                </p>
+                {debouncedSearchKeyword ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-4"
+                    onClick={handleClearSearch}
+                  >
+                    {t('clearSearch')}
+                  </Button>
+                ) : null}
               </div>
             }
             scrollClassName="scrollbar-thumb-muted-foreground/20"
@@ -343,93 +416,103 @@ function WorkspaceManagementPageContent() {
             }
           >
             {!shouldShowWorkspaceSkeleton &&
-              workspaces.map((workspace: WorkspaceManagement) => (
-                <TableRow
-                  key={workspace.id}
-                  className="group border-b border-border/10 hover:bg-bg-canvas/40 transition-colors cursor-pointer interactive-subtle"
-                  onClick={() => router.push(getWorkspaceDetailHref(workspace.id))}
-                >
-                  <TableCell className="py-4 pl-6">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-primary text-primary-foreground flex items-center justify-center font-bold text-sm shadow-sm">
-                        {workspace.name.charAt(0).toUpperCase()}
+              workspaces.map((workspace: WorkspaceManagement) => {
+                const quotaStatus = getQuotaStatus(workspace);
+                return (
+                  <TableRow
+                    key={workspace.id}
+                    className="group border-b border-border/10 hover:bg-bg-canvas/40 transition-colors cursor-pointer interactive-subtle"
+                    onClick={() => router.push(getWorkspaceDetailHref(workspace.id))}
+                  >
+                    <TableCell className="py-4 pl-6">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-primary text-primary-foreground flex items-center justify-center font-bold text-sm shadow-sm">
+                          {workspace.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="font-semibold text-text-primary group-hover:text-primary transition-colors">
+                            {workspace.name}
+                          </span>
+                          <span className="text-[11px] text-text-placeholder uppercase font-medium tracking-tighter">
+                            ID: {workspace.id.slice(0, 8)}
+                          </span>
+                        </div>
+                        <ChevronRight className="h-4 w-4 text-text-placeholder opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300 ml-1" />
                       </div>
-                      <div className="flex flex-col">
-                        <span className="font-semibold text-text-primary group-hover:text-primary transition-colors">
-                          {workspace.name}
-                        </span>
-                        <span className="text-[11px] text-text-placeholder uppercase font-medium tracking-tighter">
-                          ID: {workspace.id.slice(0, 8)}
+                    </TableCell>
+                    <TableCell className="text-text-secondary font-medium">
+                      {workspace.leader_name || (
+                        <span className="text-text-placeholder italic">-</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-text-secondary font-medium">
+                      <div className="flex flex-col gap-1">
+                        <Badge variant={quotaStatus.variant} className="w-fit rounded-md">
+                          {quotaStatus.label}
+                        </Badge>
+                        {quotaStatus.detail ? (
+                          <span className="text-xs text-text-placeholder">
+                            {quotaStatus.detail}
+                          </span>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-text-secondary font-medium">
+                      <div className="flex items-center gap-1.5">
+                        <Users className="h-3.5 w-3.5 opacity-50" />
+                        <span>
+                          {workspace.member_count || 0}
+                          <span className="text-[12px] ml-0.5 opacity-70">{t('people')}</span>
                         </span>
                       </div>
-                      <ChevronRight className="h-4 w-4 text-text-placeholder opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300 ml-1" />
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-text-secondary font-medium">
-                    {workspace.leader_name || (
-                      <span className="text-text-placeholder italic">-</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-text-secondary font-medium">
-                    {workspace.department_name || (
-                      <span className="text-text-placeholder italic">-</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-text-secondary font-medium">
-                    <div className="flex items-center gap-1.5">
-                      <Users className="h-3.5 w-3.5 opacity-50" />
-                      <span>
-                        {workspace.member_count || 0}
-                        <span className="text-[12px] ml-0.5 opacity-70">{t('people')}</span>
-                      </span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right pr-6" onClick={e => e.stopPropagation()}>
-                    <div className="flex items-center justify-end gap-2">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            isIcon
-                            onClick={e => {
-                              e.stopPropagation();
-                              handleOpenEditDialog(workspace);
-                            }}
-                            className="h-8 w-8 rounded-lg hover:shadow-sm"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent className="glass-panel border-none text-xs">
-                          {t('edit')}
-                        </TooltipContent>
-                      </Tooltip>
+                    </TableCell>
+                    <TableCell className="text-right pr-6" onClick={e => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-2">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              isIcon
+                              onClick={e => {
+                                e.stopPropagation();
+                                handleOpenEditDialog(workspace);
+                              }}
+                              className="h-8 w-8 rounded-lg hover:shadow-sm"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent className="glass-panel border-none text-xs">
+                            {t('edit')}
+                          </TooltipContent>
+                        </Tooltip>
 
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            isIcon
-                            onClick={e => {
-                              e.stopPropagation();
-                              setWorkspaceToDelete(workspace);
-                              setDeleteConfirmOpen(true);
-                            }}
-                            className="h-8 w-8 rounded-lg text-text-placeholder hover:text-destructive-foreground hover:bg-destructive transition-all"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent className="glass-panel border-none text-xs">
-                          {t('disband')}
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              isIcon
+                              onClick={e => {
+                                e.stopPropagation();
+                                setWorkspaceToDelete(workspace);
+                                setDeleteConfirmOpen(true);
+                              }}
+                              className="h-8 w-8 rounded-lg text-text-placeholder hover:text-destructive-foreground hover:bg-destructive transition-all"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent className="glass-panel border-none text-xs">
+                            {t('disband')}
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
           </StickyDataTable>
         </div>
       </div>

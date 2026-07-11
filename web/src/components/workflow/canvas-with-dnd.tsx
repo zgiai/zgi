@@ -218,7 +218,7 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
           color="#e5e7eb"
         />
 
-        <GlobalContainerOverlay />
+        <GlobalContainerOverlay isReadOnly={isReadOnly} />
 
         <WorkflowCanvasPanels
           agentType={agentType}

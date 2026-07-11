@@ -2,15 +2,70 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/zgiai/zgi/api/internal/dto"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	shared_visibility "github.com/zgiai/zgi/api/internal/modules/shared/visibility"
-	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
+
+type agentListAssetKind string
+
+const (
+	agentListAssetKindAll      agentListAssetKind = ""
+	agentListAssetKindAgent    agentListAssetKind = "agent"
+	agentListAssetKindWorkflow agentListAssetKind = "workflow"
+)
+
+var errInvalidAgentListAssetKind = errors.New("invalid agent asset_kind")
+
+func resolveAgentListAssetKind(req dto.GetAgentsListRequest) (agentListAssetKind, error) {
+	switch strings.ToLower(strings.TrimSpace(req.AssetKind)) {
+	case "":
+		if strings.TrimSpace(req.AgentType) == "" {
+			return agentListAssetKindAll, nil
+		}
+		if isWorkflowRuntimePermissionType(req.AgentType) {
+			return agentListAssetKindWorkflow, nil
+		}
+		if normalizeMode(req.AgentType) == "AGENT" {
+			return agentListAssetKindAgent, nil
+		}
+		return agentListAssetKindAll, nil
+	case string(agentListAssetKindAgent):
+		return agentListAssetKindAgent, nil
+	case string(agentListAssetKindWorkflow):
+		return agentListAssetKindWorkflow, nil
+	default:
+		return agentListAssetKindAll, errInvalidAgentListAssetKind
+	}
+}
+
+func agentTypeFiltersForAssetKind(kind agentListAssetKind) []string {
+	switch kind {
+	case agentListAssetKindAgent:
+		return []string{"AGENT"}
+	case agentListAssetKindWorkflow:
+		return []string{"WORKFLOW", "CONVERSATIONAL_WORKFLOW", "CONVERSATIONAL_AGENT"}
+	default:
+		return nil
+	}
+}
+
+func visiblePermissionCodesForAssetKind(kind agentListAssetKind) []workspace_model.WorkspacePermissionCode {
+	switch kind {
+	case agentListAssetKindAgent:
+		return agentVisiblePermissionCodes()
+	case agentListAssetKindWorkflow:
+		return workflowVisiblePermissionCodes()
+	default:
+		return agentAssetVisiblePermissionCodes()
+	}
+}
 
 // GetAgentsListWithPermissions retrieves a paginated list of agents using the new permission system
 // This method uses buildPermissionContext to determine user permissions and calls the new
@@ -98,6 +153,14 @@ func (s *agentsService) GetAgentsListWithPermissions(
 		filter.AgentsType = normalizeMode(req.AgentType)
 	}
 
+	assetKind, err := resolveAgentListAssetKind(req)
+	if err != nil {
+		return nil, err
+	}
+	if len(agentTypeFiltersForAssetKind(assetKind)) > 0 {
+		filter.AgentTypes = agentTypeFiltersForAssetKind(assetKind)
+	}
+
 	// Requirement 9.3: Apply internal filter
 	if req.Internal != nil {
 		filter.Internal = req.Internal
@@ -124,6 +187,7 @@ func (s *agentsService) GetAgentsListWithPermissions(
 		"name":            filter.Name,
 		"keyword":         filter.Keyword,
 		"agent_type":      filter.AgentsType,
+		"asset_kind":      assetKind,
 		"created_by":      filter.CreatedBy,
 		"internal":        internalStr,
 		"page":            page,
@@ -136,9 +200,7 @@ func (s *agentsService) GetAgentsListWithPermissions(
 		currentOrganization.OrganizationID,
 		accountID,
 		filter.TenantID,
-		model.WorkspacePermissionAgentView,
-		model.WorkspacePermissionAgentManage,
-		model.WorkspacePermissionAgentLock,
+		visiblePermissionCodesForAssetKind(assetKind)...,
 	)
 	if err != nil {
 		logger.Error(fmt.Sprintf("GetAgentsListWithPermissions: Failed to resolve visible workspaces for account_id=%s, org_id=%s",
@@ -180,10 +242,12 @@ func (s *agentsService) GetAgentsListWithPermissions(
 		}
 
 		permissionResources = append(permissionResources, interfaces.ResourcePermissionInfo{
-			ResourceID:  a.ID.String(),
-			WorkspaceID: a.TenantID.String(),
-			CreatedBy:   createdBy,
-			GroupID:     nil, // Agents don't have group_id, only tenant_id
+			ResourceID:      a.ID.String(),
+			WorkspaceID:     a.TenantID.String(),
+			OrganizationID:  currentOrganization.OrganizationID,
+			CreatedBy:       createdBy,
+			GroupID:         nil, // Agents don't have group_id, only tenant_id
+			PermissionCodes: agentUpdatePermissionCodes(a.AgentsType),
 		})
 	}
 
@@ -245,7 +309,7 @@ func (s *agentsService) GetAgentsListWithPermissions(
 			ID:           a.ID.String(),
 			Name:         a.Name,
 			Description:  a.Description,
-			AgentType:    a.AgentsType,
+			AgentType:    normalizeAgentTypeForResponse(a.AgentsType),
 			TenantID:     a.TenantID.String(),
 			WorkspaceID:  a.TenantID.String(),
 			IconType:     iconType,

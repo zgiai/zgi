@@ -827,11 +827,6 @@ func (s *fileService) ListFiles(ctx context.Context, tenantID, accountID string,
 	}
 
 	allowAllFolders := false
-	if s.enterpriseService != nil && accountID != "" {
-		if isAdmin, err := s.enterpriseService.IsOrganizationAdminOrOwner(ctx, tenantID, accountID); err == nil {
-			allowAllFolders = isAdmin
-		}
-	}
 
 	var total int64
 	var fileModels []*model.UploadFile
@@ -877,11 +872,6 @@ func (s *fileService) ListArchivedFiles(ctx context.Context, tenantID, accountID
 	}
 
 	allowAllFolders := false
-	if s.enterpriseService != nil && accountID != "" {
-		if isAdmin, err := s.enterpriseService.IsOrganizationAdminOrOwner(ctx, tenantID, accountID); err == nil {
-			allowAllFolders = isAdmin
-		}
-	}
 
 	var fileModels []*model.UploadFile
 	var total int64

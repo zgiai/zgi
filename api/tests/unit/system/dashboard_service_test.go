@@ -13,6 +13,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	llmmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
+	systemmodel "github.com/zgiai/zgi/api/internal/modules/system/model"
 	"github.com/zgiai/zgi/api/internal/modules/system/service"
 	redisutil "github.com/zgiai/zgi/api/pkg/redis"
 	"gorm.io/driver/postgres"
@@ -112,17 +113,11 @@ func TestDashboardService_CachesStatsResponses(t *testing.T) {
 	}}}
 	svc := service.NewDashboardServiceWithAvailableModels(db, availableModels)
 
-	tableExistsQuery := `SELECT EXISTS`
-	mock.ExpectQuery(tableExistsQuery).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-	mock.ExpectQuery(tableExistsQuery).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-
-	first, err := svc.GetDashboardStats(context.Background(), orgID.String())
+	first, err := svc.GetDashboardStats(context.Background(), orgID.String(), "account-1", systemmodel.DashboardWorkspaceScopes{})
 	assert.NoError(t, err)
 	assert.Equal(t, int64(1), first.Models.Total)
 
-	second, err := svc.GetDashboardStats(context.Background(), orgID.String())
+	second, err := svc.GetDashboardStats(context.Background(), orgID.String(), "account-1", systemmodel.DashboardWorkspaceScopes{})
 	assert.NoError(t, err)
 	assert.Equal(t, int64(1), second.Models.Total)
 	assert.Equal(t, 1, availableModels.calls)
@@ -144,14 +139,13 @@ func TestDashboardService_CachesRecentWorkResponses(t *testing.T) {
 	tableExistsQuery := `SELECT EXISTS`
 	mock.ExpectQuery(tableExistsQuery).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-	mock.ExpectQuery(tableExistsQuery).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
-	first, err := svc.GetRecentWork(context.Background(), "organization-1", "account-1", 10)
+	request := systemmodel.RecentWorkRequest{OrganizationID: "organization-1", AccountID: "account-1", Limit: 10, AgentWorkspaceIDs: []string{"workspace-1"}}
+	first, err := svc.GetRecentWork(context.Background(), request)
 	assert.NoError(t, err)
 	assert.Empty(t, first.Items)
 
-	second, err := svc.GetRecentWork(context.Background(), "organization-1", "account-1", 10)
+	second, err := svc.GetRecentWork(context.Background(), request)
 	assert.NoError(t, err)
 	assert.Empty(t, second.Items)
 	assert.NoError(t, mock.ExpectationsWereMet())
@@ -172,13 +166,7 @@ func TestDashboardService_DoesNotCacheDegradedStats(t *testing.T) {
 	availableModels := &fakeAvailableModelsLister{err: errors.New("available models unavailable")}
 	svc := service.NewDashboardServiceWithAvailableModels(db, availableModels)
 
-	tableExistsQuery := `SELECT EXISTS`
-	mock.ExpectQuery(tableExistsQuery).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-	mock.ExpectQuery(tableExistsQuery).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-
-	first, err := svc.GetDashboardStats(context.Background(), orgID.String())
+	first, err := svc.GetDashboardStats(context.Background(), orgID.String(), "account-1", systemmodel.DashboardWorkspaceScopes{})
 	assert.NoError(t, err)
 	assert.Zero(t, first.Models.Total)
 
@@ -189,11 +177,11 @@ func TestDashboardService_DoesNotCacheDegradedStats(t *testing.T) {
 		Provider: "openai",
 		UseCases: []string{"text-chat"},
 	}}
-	second, err := svc.GetDashboardStats(context.Background(), orgID.String())
+	second, err := svc.GetDashboardStats(context.Background(), orgID.String(), "account-1", systemmodel.DashboardWorkspaceScopes{})
 	assert.NoError(t, err)
 	assert.Equal(t, int64(1), second.Models.Total)
 
-	_, err = svc.GetDashboardStats(context.Background(), orgID.String())
+	_, err = svc.GetDashboardStats(context.Background(), orgID.String(), "account-1", systemmodel.DashboardWorkspaceScopes{})
 	assert.NoError(t, err)
 	assert.Equal(t, 2, availableModels.calls)
 	assert.NoError(t, mock.ExpectationsWereMet())
@@ -222,17 +210,11 @@ func TestDashboardService_CoalescesConcurrentStatsCacheMisses(t *testing.T) {
 	}
 	svc := service.NewDashboardServiceWithAvailableModels(db, lister)
 
-	tableExistsQuery := `SELECT EXISTS`
-	mock.ExpectQuery(tableExistsQuery).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-	mock.ExpectQuery(tableExistsQuery).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-
 	const callers = 6
 	results := make(chan error, callers)
 	for range callers {
 		go func() {
-			_, err := svc.GetDashboardStats(context.Background(), uuid.Nil.String())
+			_, err := svc.GetDashboardStats(context.Background(), uuid.Nil.String(), "account-1", systemmodel.DashboardWorkspaceScopes{})
 			results <- err
 		}()
 	}
@@ -271,17 +253,7 @@ func TestDashboardService_GetDashboardStats_UsesAvailableModels(t *testing.T) {
 	svc := service.NewDashboardServiceWithAvailableModels(db, availableModels)
 	ctx := context.Background()
 
-	tableExistsQuery := `SELECT EXISTS`
-
-	// tableExists: workspaces
-	mock.ExpectQuery(tableExistsQuery).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-
-	// tableExists: data_sources
-	mock.ExpectQuery(tableExistsQuery).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-
-	stats, err := svc.GetDashboardStats(ctx, orgID.String())
+	stats, err := svc.GetDashboardStats(ctx, orgID.String(), "account-1", systemmodel.DashboardWorkspaceScopes{})
 
 	assert.NoError(t, err)
 	assert.NotNil(t, stats)
@@ -322,24 +294,13 @@ func TestDashboardService_GetDashboardStats(t *testing.T) {
 			AddRow("embedding", 12).
 			AddRow("rerank", 6))
 
-	// tableExists: workspaces
-	mock.ExpectQuery(tableExistsQuery).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
-
-	// 3. Resource stats - workspace IDs
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT "id" FROM "workspaces" WHERE organization_id = $1`)).
-		WithArgs(orgID).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).
-			AddRow("ws-1").
-			AddRow("ws-2"))
-
 	// tableExists: agents
 	mock.ExpectQuery(tableExistsQuery).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 
 	// 4. Agents count
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "agents" WHERE tenant_id IN ($1,$2) AND deleted_at IS NULL AND is_universal = $3 AND (internal = $4 OR internal IS NULL)`)).
-		WithArgs("ws-1", "ws-2", false, false).
+	mock.ExpectQuery(`SELECT count\(\*\) FROM "agents" WHERE .*tenant_id IN \(\$3,\$4\) AND agent_type = \$5`).
+		WithArgs(false, false, "ws-1", "ws-2", "AGENT").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(5))
 
 	// tableExists: datasets
@@ -356,12 +317,17 @@ func TestDashboardService_GetDashboardStats(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 
 	// 6. Data sources count
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "data_sources" WHERE organization_id = $1`)).
-		WithArgs(orgID).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "data_sources" WHERE organization_id = $1 AND workspace_id IN ($2,$3)`)).
+		WithArgs(orgID, "ws-1", "ws-2").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
 
 	// Execute
-	stats, err := svc.GetDashboardStats(ctx, orgID)
+	stats, err := svc.GetDashboardStats(ctx, orgID, "account-1", systemmodel.DashboardWorkspaceScopes{
+		WorkspaceIDs:           []string{"ws-1", "ws-2"},
+		AgentWorkspaceIDs:      []string{"ws-1", "ws-2"},
+		DatasetWorkspaceIDs:    []string{"ws-1", "ws-2"},
+		DataSourceWorkspaceIDs: []string{"ws-1", "ws-2"},
+	})
 
 	assert.NoError(t, err)
 	assert.NotNil(t, stats)
@@ -403,25 +369,7 @@ func TestDashboardService_GetDashboardStats_EmptyOrg(t *testing.T) {
 	mock.ExpectQuery(`SELECT unnest.*use_cases.*AS use_case`).
 		WillReturnRows(sqlmock.NewRows([]string{"use_case", "count"}))
 
-	// tableExists: workspaces
-	mock.ExpectQuery(tableExistsQuery).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
-
-	// Workspace IDs (empty)
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT "id" FROM "workspaces" WHERE organization_id = $1`)).
-		WithArgs(orgID).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}))
-
-	// tableExists: data_sources
-	mock.ExpectQuery(tableExistsQuery).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
-
-	// Data sources (no workspaces, but data_sources queries by org)
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "data_sources" WHERE organization_id = $1`)).
-		WithArgs(orgID).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-
-	stats, err := svc.GetDashboardStats(ctx, orgID)
+	stats, err := svc.GetDashboardStats(ctx, orgID, "account-1", systemmodel.DashboardWorkspaceScopes{})
 
 	assert.NoError(t, err)
 	assert.NotNil(t, stats)
@@ -456,25 +404,7 @@ func TestDashboardService_GetDashboardStats_DatabaseError(t *testing.T) {
 	mock.ExpectQuery(`SELECT unnest.*use_cases.*AS use_case`).
 		WillReturnRows(sqlmock.NewRows([]string{"use_case", "count"}))
 
-	// tableExists: workspaces
-	mock.ExpectQuery(tableExistsQuery).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
-
-	// Workspace IDs (empty)
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT "id" FROM "workspaces" WHERE organization_id = $1`)).
-		WithArgs(orgID).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}))
-
-	// tableExists: data_sources
-	mock.ExpectQuery(tableExistsQuery).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
-
-	// Data sources
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT count(*) FROM "data_sources" WHERE organization_id = $1`)).
-		WithArgs(orgID).
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-
-	stats, err := svc.GetDashboardStats(ctx, orgID)
+	stats, err := svc.GetDashboardStats(ctx, orgID, "account-1", systemmodel.DashboardWorkspaceScopes{})
 
 	assert.NoError(t, err)
 	assert.NotNil(t, stats)

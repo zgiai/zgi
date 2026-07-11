@@ -110,30 +110,38 @@ func (s *agentsService) validateDatabaseBindingGrant(ctx context.Context, organi
 }
 
 func (s *agentsService) requireDatabaseReadBindingPermission(ctx context.Context, organizationID, workspaceID, accountID string) error {
-	hasAIQuery, err := s.enterpriseService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionDatabaseAIQuery)
+	hasAIQuery, err := s.enterpriseService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionDatabaseAIQueryRead)
 	if err != nil {
 		return err
 	}
 	if !hasAIQuery {
 		return fmt.Errorf("database ai query permission is required")
 	}
-	hasView, err := s.enterpriseService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionDatabaseView)
+	hasView, err := s.enterpriseService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionDatabaseRecordView)
 	if err != nil {
 		return err
 	}
 	if !hasView {
-		return fmt.Errorf("database view permission is required")
+		return fmt.Errorf("database record view permission is required")
 	}
 	return nil
 }
 
 func (s *agentsService) requireDatabaseWriteBindingPermission(ctx context.Context, organizationID, workspaceID, accountID string) error {
-	hasWrite, err := s.enterpriseService.CheckWorkspaceOrganizationAnyPermission(ctx, organizationID, workspaceID, accountID, workspacemodel.WorkspacePermissionDatabaseDataEdit, workspacemodel.WorkspacePermissionDatabaseManage)
+	hasWrite, err := s.enterpriseService.CheckWorkspaceOrganizationAnyPermission(
+		ctx,
+		organizationID,
+		workspaceID,
+		accountID,
+		workspacemodel.WorkspacePermissionDatabaseRecordCreate,
+		workspacemodel.WorkspacePermissionDatabaseRecordUpdate,
+		workspacemodel.WorkspacePermissionDatabaseRecordDelete,
+	)
 	if err != nil {
 		return err
 	}
 	if !hasWrite {
-		return fmt.Errorf("database data edit or manage permission is required")
+		return fmt.Errorf("database record mutation permission is required")
 	}
 	return nil
 }

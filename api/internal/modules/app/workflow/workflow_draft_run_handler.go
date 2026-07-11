@@ -4,7 +4,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/zgiai/zgi/api/internal/dto"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
-	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"go.uber.org/zap"
@@ -26,40 +25,10 @@ import (
 func (h *WorkflowHandler) RunDraftWorkflow(c *gin.Context) {
 	appID := c.Param("agent_id")
 	accountID := c.GetString("account_id")
-	organizationID := util.GetOrganizationID(c)
 
-	if accountID == "" {
-		response.Fail(c, response.ErrUnauthorized)
+	appWorkspaceID, ok := h.requireAgentWorkspacePermission(c, appID, workspace_model.WorkspacePermissionWorkflowRunDraft)
+	if !ok {
 		return
-	}
-
-	appWorkspaceID, err := h.workflowService.GetAgentWorkspaceID(c.Request.Context(), appID)
-	if err != nil {
-		logger.CriticalContext(c.Request.Context(), "failed to get agent workspace id", "agent_id", appID, err)
-		if err.Error() == "agent not found" {
-			response.Fail(c, response.ErrAppNotFound)
-		} else {
-			response.Fail(c, response.ErrSystemError)
-		}
-		return
-	}
-
-	if h.enterpriseService != nil {
-		hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
-			c.Request.Context(),
-			organizationID,
-			appWorkspaceID,
-			accountID,
-			workspace_model.WorkspacePermissionAgentManage,
-		)
-		if err != nil {
-			response.Fail(c, response.ErrSystemError)
-			return
-		}
-		if !hasPermission {
-			response.Fail(c, response.ErrPermissionDenied)
-			return
-		}
 	}
 
 	var req dto.DraftWorkflowRunRequest
@@ -124,6 +93,15 @@ func (h *WorkflowHandler) RunDraftWorkflow(c *gin.Context) {
 				zap.Error(err),
 			)
 		}
+	}
+
+	if runType == "CONVERSATION_WORKFLOW" {
+		if err := validateWorkflowInputConversationAccess(c.Request.Context(), h.advancedChatHandler, req.Inputs, appID, accountID); err != nil {
+			logger.WarnContext(c.Request.Context(), "draft workflow run conversation access denied", "agent_id", appID, err)
+			failWebAppConversationAccess(c, err)
+			return
+		}
+		promoteWorkflowInputConversationIDToSystemInput(req.Inputs)
 	}
 
 	h.runWorkflowStream(c, appWorkspaceID, appID, &req, accountID, true, runType, "debugging")

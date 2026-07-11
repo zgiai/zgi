@@ -22,6 +22,7 @@ import (
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	shared_model "github.com/zgiai/zgi/api/internal/modules/shared/model"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/embedding"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	redisutil "github.com/zgiai/zgi/api/pkg/redis"
@@ -414,42 +415,23 @@ func (s *KnowledgeRetrievalService) canAccessKnowledgeWorkspace(ctx context.Cont
 		return false, nil
 	}
 
-	var workspace struct {
-		OrganizationID string `gorm:"column:organization_id"`
+	var member struct {
+		Role             string                                          `gorm:"column:role"`
+		RoleID           *string                                         `gorm:"column:role_id"`
+		Permissions      string                                          `gorm:"column:permissions"`
+		PermissionSource workspace_model.WorkspaceMemberPermissionSource `gorm:"column:permission_source"`
 	}
 	if err := s.db.WithContext(ctx).
-		Table("workspaces").
-		Select("organization_id").
-		Where("id = ?", workspaceID).
-		Take(&workspace).Error; err != nil {
+		Table("workspace_members").
+		Select("role, role_id, COALESCE(permissions::text, '') AS permissions, permission_source").
+		Where("workspace_id = ? AND account_id = ?", workspaceID, accountID).
+		Take(&member).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return false, nil
 		}
-		return false, fmt.Errorf("failed to load workspace: %w", err)
+		return false, fmt.Errorf("failed to check workspace knowledge permission: %w", err)
 	}
-
-	var memberCount int64
-	if err := s.db.WithContext(ctx).
-		Table("workspace_members").
-		Where("workspace_id = ? AND account_id = ?", workspaceID, accountID).
-		Count(&memberCount).Error; err != nil {
-		return false, fmt.Errorf("failed to check workspace membership: %w", err)
-	}
-	if memberCount > 0 {
-		return true, nil
-	}
-
-	if strings.TrimSpace(workspace.OrganizationID) == "" {
-		return false, nil
-	}
-	var adminCount int64
-	if err := s.db.WithContext(ctx).
-		Table("members").
-		Where("organization_id = ? AND account_id = ? AND role IN ?", workspace.OrganizationID, accountID, []string{"owner", "admin"}).
-		Count(&adminCount).Error; err != nil {
-		return false, fmt.Errorf("failed to check organization membership: %w", err)
-	}
-	return adminCount > 0, nil
+	return knowledgeWorkspaceMemberCanUseKnowledge(member.Role, member.RoleID, member.Permissions, member.PermissionSource), nil
 }
 
 func (s *KnowledgeRetrievalService) findAccessibleDatasets(ctx context.Context, workspaceIDs []string, search string, limit int) ([]*dataset_model.Dataset, error) {
@@ -508,31 +490,55 @@ func (s *KnowledgeRetrievalService) accessibleKnowledgeWorkspaceIDs(ctx context.
 
 	query := s.db.WithContext(ctx).
 		Table("workspaces").
-		Select("workspaces.id").
-		Where("workspaces.organization_id = ?", organizationID)
+		Select("workspaces.id, workspace_members.role, workspace_members.role_id, COALESCE(workspace_members.permissions::text, '') AS permissions, workspace_members.permission_source").
+		Joins("JOIN workspace_members ON workspace_members.workspace_id = workspaces.id").
+		Where("workspaces.organization_id = ? AND workspace_members.account_id = ?", organizationID, accountID)
 	if workspaceID != "" {
 		query = query.Where("workspaces.id = ?", workspaceID)
 	}
 
-	var adminCount int64
-	if err := s.db.WithContext(ctx).
-		Table("members").
-		Where("organization_id = ? AND account_id = ? AND role IN ?", organizationID, accountID, []string{"owner", "admin"}).
-		Count(&adminCount).Error; err != nil {
-		return nil, fmt.Errorf("failed to check organization membership: %w", err)
+	var rows []struct {
+		ID               string                                          `gorm:"column:id"`
+		Role             string                                          `gorm:"column:role"`
+		RoleID           *string                                         `gorm:"column:role_id"`
+		Permissions      string                                          `gorm:"column:permissions"`
+		PermissionSource workspace_model.WorkspaceMemberPermissionSource `gorm:"column:permission_source"`
 	}
-	if adminCount == 0 {
-		query = query.Joins("JOIN workspace_members ON workspace_members.workspace_id = workspaces.id").
-			Where("workspace_members.account_id = ?", accountID)
-	}
-
-	var workspaceIDs []string
 	if err := query.
 		Order("workspaces.created_at DESC, workspaces.id DESC").
-		Pluck("workspaces.id", &workspaceIDs).Error; err != nil {
+		Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("failed to list accessible workspaces: %w", err)
 	}
+	workspaceIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if knowledgeWorkspaceMemberCanUseKnowledge(row.Role, row.RoleID, row.Permissions, row.PermissionSource) {
+			workspaceIDs = append(workspaceIDs, row.ID)
+		}
+	}
 	return normalizeStringList(workspaceIDs), nil
+}
+
+func knowledgeWorkspaceMemberCanUseKnowledge(role string, roleID *string, rawPermissions string, permissionSource workspace_model.WorkspaceMemberPermissionSource) bool {
+	rawPermissions = strings.TrimSpace(rawPermissions)
+	permissions := []string{}
+	if rawPermissions != "" && rawPermissions != "null" {
+		if err := json.Unmarshal([]byte(rawPermissions), &permissions); err != nil {
+			permissions = []string{}
+		}
+	}
+
+	effectivePermissions := workspace_model.EffectiveWorkspaceMemberPermissionStrings(
+		workspace_model.WorkspaceMemberRole(strings.TrimSpace(role)),
+		roleID,
+		permissions,
+		permissionSource,
+	)
+	for _, permission := range knowledgeBaseReadPermissionCodes() {
+		if workspace_model.WorkspacePermissionStringsAllow(effectivePermissions, permission) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *KnowledgeRetrievalService) accessibleKnowledgeDataset(ctx context.Context, datasetID string, scope KnowledgeScope, agentBindingGrant bool) (*dataset_model.Dataset, error) {

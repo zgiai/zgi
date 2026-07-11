@@ -34,7 +34,7 @@ func RegisterDashboardRoutes(v1 *gin.RouterGroup, deps DashboardRouteDeps) {
 	}
 
 	dashboardService := service.NewDashboardServiceWithAvailableModels(deps.DB, deps.AvailableModels)
-	dashboardHandler := systemHandler.NewDashboardHandler(dashboardService, deps.OrganizationService)
+	dashboardHandler := systemHandler.NewDashboardHandler(dashboardService, deps.OrganizationService, deps.AccountService)
 
 	// Dashboard routes - requires authentication and tenant context
 	dashboard := v1.Group("/dashboard")

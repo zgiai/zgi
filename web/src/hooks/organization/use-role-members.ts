@@ -29,7 +29,10 @@ export function useRoleMembers(roleId: string | null, enabled: boolean = true) {
     isFetchingNextPage,
     refetch,
   } = useInfiniteQuery<RoleMemberList, unknown>({
-    queryKey: ORGANIZATION_KEYS.roleMembers(currentOrganization?.id || '', roleId || ''),
+    queryKey: [
+      ...ORGANIZATION_KEYS.roleMembers(currentOrganization?.id || '', roleId || ''),
+      { keyword: searchKeyword.trim() },
+    ],
     initialPageParam: 1,
     queryFn: async ({ pageParam }) => {
       if (!currentOrganization?.id || !roleId) {
@@ -39,6 +42,7 @@ export function useRoleMembers(roleId: string | null, enabled: boolean = true) {
       const response = await organizationService.getRoleMembers(currentOrganization.id, roleId, {
         page,
         limit: 20,
+        keyword: searchKeyword.trim() || undefined,
       });
       return response;
     },
@@ -59,11 +63,6 @@ export function useRoleMembers(roleId: string | null, enabled: boolean = true) {
     toast.error(getErrorMessage(error) || t('organization.permissions.loadError'));
   }, [error, t]);
 
-  useEffect(() => {
-    if (!searchKeyword.trim() || !hasNextPage || isFetchingNextPage) return;
-    fetchNextPage();
-  }, [fetchNextPage, hasNextPage, isFetchingNextPage, searchKeyword]);
-
   // Flatten all pages into single array
   const allMembers = useMemo(() => {
     const pages = data?.pages ?? [];
@@ -75,22 +74,12 @@ export function useRoleMembers(roleId: string | null, enabled: boolean = true) {
     return data?.pages?.[0]?.total ?? 0;
   }, [data]);
 
-  // Filter members by search keyword
-  const filteredMembers = useMemo(() => {
-    if (!searchKeyword.trim()) return allMembers;
-    const keyword = searchKeyword.toLowerCase();
-    return allMembers.filter(
-      member =>
-        member.name.toLowerCase().includes(keyword) || member.email.toLowerCase().includes(keyword)
-    );
-  }, [allMembers, searchKeyword]);
-
   const stableFetchNextPage = useCallback(async () => {
     await fetchNextPage();
   }, [fetchNextPage]);
 
   return {
-    members: filteredMembers,
+    members: allMembers,
     total,
     isLoading,
     isFetching,

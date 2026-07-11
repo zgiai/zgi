@@ -7,6 +7,7 @@ const messages: FilesMessages = {
 
   // Sidebar
   sidebar: {
+    newTextFile: '新建文本',
     storage: '文件存储',
     newFolder: '新建文件夹',
     uploadFile: '上传文件',
@@ -569,6 +570,9 @@ const messages: FilesMessages = {
     tipDescription: '只有当前工作空间具备文件上传权限时，左侧栏才会显示上传入口。',
   },
   mobileSelector: {
+    browseAndCreateText: '目录与新建文本',
+    emptyDescriptionWithTextCreate:
+      '当前还没有文件。点击上方“目录与新建文本”，然后使用其中的新建文本入口添加文件。',
     browse: '浏览目录',
     browseAndUpload: '目录与上传',
     switchSpace: '切换空间',
@@ -580,7 +584,7 @@ const messages: FilesMessages = {
   selectorEmptyState: {
     badge: '空状态',
     title: '当前无文件可选',
-    description: '组织视图下当前没有可选文件。如需上传文件，请先选择所属工作空间。',
+    description: '个人工作台下当前没有可选文件。如需上传文件，请先选择所属工作空间。',
     noticeTitle: '上传前需要选择工作空间',
     noticeDescription: '系统文件会绑定到工作空间存储，上传前请选择一个工作空间。',
     quickActionTitle: '选择工作空间',

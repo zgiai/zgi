@@ -2,7 +2,7 @@ export interface AgentRuntimeRunsQuery {
   page?: number;
   limit?: number;
   triggered_from?: 'web-app' | string;
-  source?: 'webapp' | 'console' | string;
+  source?: 'webapp' | 'console' | 'external-api' | string;
   q?: string;
   conversation_id?: string;
 }

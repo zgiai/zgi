@@ -9,6 +9,7 @@ import {
   workflowBillingToastClassNames,
 } from '@/components/workflow/common/workflow-billing-toast-action';
 import { useWorkspaceStore } from '@/store/workspace-store';
+import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import type { WorkflowRunBillingError, WorkflowPrecheckWarning } from '@/services/types/workflow';
 import {
   extractWorkflowRunError,
@@ -48,8 +49,7 @@ export function useWorkflowBillingFeedback(
     [t]
   );
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
-  const organizationRole = useWorkspaceStore.use.permissionState().organizationRole;
-  const isAdmin = organizationRole === 'owner' || organizationRole === 'admin';
+  const { canManageModelConfig: isAdmin } = useAccountCapabilities();
 
   const parseWorkflowRunError = useCallback((error: unknown) => extractWorkflowRunError(error), []);
 

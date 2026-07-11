@@ -20,9 +20,10 @@ import (
 )
 
 const (
-	defaultOrganizationName = "Default Group"
-	defaultWorkspaceName    = "Default Workspace"
-	bootstrapLockKey        = "cloud_setup"
+	defaultOrganizationNameZHHans = "默认组织"
+	defaultOrganizationNameEnUS   = "Default Organization"
+	defaultWorkspaceName          = "Default Workspace"
+	bootstrapLockKey              = "cloud_setup"
 )
 
 type BootstrapSource string
@@ -37,6 +38,7 @@ type BootstrapParams struct {
 	AdminEmail    string
 	AdminName     string
 	AdminPassword string
+	Language      string
 	IPAddress     string
 	Source        BootstrapSource
 }
@@ -89,11 +91,12 @@ func (s *BootstrapService) GetInitValidateStatus() (bool, error) {
 }
 
 // Setup adapts self-hosted HTTP input into the shared bootstrap flow.
-func (s *BootstrapService) Setup(ctx context.Context, email, name, password, ipAddress string) error {
+func (s *BootstrapService) Setup(ctx context.Context, email, name, password, language, ipAddress string) error {
 	return s.Bootstrap(ctx, BootstrapParams{
 		AdminEmail:    email,
 		AdminName:     name,
 		AdminPassword: password,
+		Language:      language,
 		IPAddress:     ipAddress,
 		Source:        BootstrapSourceSelfHostedHTTP,
 	})
@@ -128,7 +131,7 @@ func (s *BootstrapService) Bootstrap(ctx context.Context, params BootstrapParams
 			return err
 		}
 
-		organization, err := txGroupSvc.CreateOrganization(ctx, defaultOrganizationName)
+		organization, err := txGroupSvc.CreateOrganization(ctx, defaultOrganizationNameForLanguage(params.Language))
 		if err != nil {
 			return fmt.Errorf("create default organization: %w", err)
 		}
@@ -228,7 +231,7 @@ func (s *BootstrapService) createBootstrapAccount(
 		IsSuperAdmin:  true,
 		InitializedAt: &now,
 	}
-	defaultLanguage := "zh-Hans"
+	defaultLanguage := normalizeBootstrapLanguage(params.Language)
 	account.InterfaceLanguage = &defaultLanguage
 	if params.IPAddress != "" {
 		ipAddress := strings.TrimSpace(params.IPAddress)
@@ -251,6 +254,24 @@ func ValidatePassword(password string) error {
 		return ErrPasswordTooSimple
 	}
 	return nil
+}
+
+func defaultOrganizationNameForLanguage(language string) string {
+	if isChineseBootstrapLanguage(language) {
+		return defaultOrganizationNameZHHans
+	}
+	return defaultOrganizationNameEnUS
+}
+
+func normalizeBootstrapLanguage(language string) string {
+	if isChineseBootstrapLanguage(language) {
+		return "zh-Hans"
+	}
+	return "en-US"
+}
+
+func isChineseBootstrapLanguage(language string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(language)), "zh")
 }
 
 // IsPasswordValidationError reports whether err comes from bootstrap password validation.

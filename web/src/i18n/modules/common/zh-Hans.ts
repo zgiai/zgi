@@ -123,18 +123,19 @@ const messages: CommonMessages = {
     noWorkspaces: '没有可用的工作空间',
     noWorkspacesMember: '您还没有被分配到任何工作空间。',
     noWorkspacesAdmin: '当前还没有可用或已分配的工作空间。',
+    organizationMode: '个人工作台',
   },
 
   workspaceRequired: {
     title: '请选择一个工作空间后继续',
     description:
-      '工作台需要在具体工作空间内使用。请先选择工作空间，再开始对话、应用、绘图或定时任务。',
+      '资产管理和定时任务需要在具体工作空间内使用。请先选择工作空间后继续。',
     noWorkspacesTitle: '暂无可用工作空间',
     memberNoWorkspacesDescription: '您已加入组织，但尚未被分配到任何工作空间。',
     adminNoWorkspacesDescription:
-      '工作台需要在具体工作空间内使用。请先创建工作空间或完成成员分配。',
-    memberNoWorkspacesHint: '请联系组织管理员，将您加入至少一个工作空间后再使用工作台。',
-    adminNoWorkspacesHint: '请前往工作空间管理创建工作空间或分配成员，然后返回工作台继续使用。',
+      '资产管理和定时任务需要具体工作空间。请先创建工作空间或完成成员分配。',
+    memberNoWorkspacesHint: '如需管理资产或使用定时任务，请联系组织管理员加入对应工作空间。',
+    adminNoWorkspacesHint: '请前往工作空间管理创建工作空间或分配成员，然后返回继续使用。',
     loadingWorkspaces: '正在加载工作空间...',
     manageWorkspaces: '管理工作空间',
     refreshWorkspaces: '刷新工作空间',
@@ -201,13 +202,13 @@ const messages: CommonMessages = {
     scrollForMore: '滚动加载更多',
   },
 
-  // Organization View empty states
+  // Personal workbench empty states
   personalSpaceEmpty: {
     agents: '无可用智能体',
     datasets: '无可用知识库',
     databases: '无可用数据库',
     files: '无可用文件',
-    description: '在组织视图中，您可以浏览组织资源。如需执行工作空间内操作，请切换到具体工作空间。',
+    description: '在个人工作台中，您可以使用组织级产品入口。如需执行工作空间内操作，请切换到具体工作空间。',
     startCreating: '开始创建',
     selectWorkspaceHint: '请选择一个工作空间后继续',
     overlayHint: '点击高亮区域选择工作空间，或点击其他位置关闭',
@@ -218,7 +219,7 @@ const messages: CommonMessages = {
   workspaceMismatch: {
     title: '工作空间不匹配',
     description: '此资源属于工作空间“{workspaceName}”，您当前处于“{currentWorkspaceName}”。',
-    descriptionInOrg: '此资源属于工作空间“{workspaceName}”，您当前处于组织视图。',
+    descriptionInOrg: '此资源属于工作空间“{workspaceName}”，您当前处于个人工作台。',
     switchButton: '切换到该工作空间',
     actionHint: '请切换工作空间后重试',
   },

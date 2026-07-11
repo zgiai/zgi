@@ -99,7 +99,7 @@ func (s *promptService) List(ctx context.Context, organizationID, accountID stri
 	if err != nil {
 		return nil, fmt.Errorf("resolve prompt visibility scope: %w", err)
 	}
-	if len(scope.WorkspaceIDs) == 0 && !scope.AllowOrganizationScoped {
+	if len(scope.WorkspaceIDs) == 0 {
 		return &promptdto.PromptListResponse{
 			Data:    []promptdto.PromptSummaryResponse{},
 			HasMore: false,
@@ -392,6 +392,47 @@ func (s *promptService) ResolveRuntimeReference(ctx context.Context, organizatio
 	}, nil
 }
 
+func (s *promptService) requirePromptWorkspaceAccess(ctx context.Context, organizationID, accountID, workspaceID string, permissionCodes ...workspace_model.WorkspacePermissionCode) error {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return fmt.Errorf("workspace is required")
+	}
+
+	scope, err := shared_visibility.ResolveVisibleWorkspaceScope(
+		ctx,
+		s.organizationService,
+		organizationID,
+		accountID,
+		workspaceID,
+		permissionCodes...,
+	)
+	if err != nil {
+		return fmt.Errorf("resolve prompt workspace access: %w", err)
+	}
+	if !slices.Contains(scope.WorkspaceIDs, workspaceID) {
+		return fmt.Errorf("workspace not accessible")
+	}
+	return nil
+}
+
+func (s *promptService) requireAnyPromptWorkspaceAccess(ctx context.Context, organizationID, accountID string, permissionCodes ...workspace_model.WorkspacePermissionCode) error {
+	scope, err := shared_visibility.ResolveVisibleWorkspaceScope(
+		ctx,
+		s.organizationService,
+		organizationID,
+		accountID,
+		"",
+		permissionCodes...,
+	)
+	if err != nil {
+		return fmt.Errorf("resolve prompt access: %w", err)
+	}
+	if len(scope.WorkspaceIDs) == 0 {
+		return fmt.Errorf("prompt not found")
+	}
+	return nil
+}
+
 func (s *promptService) getAccessiblePrompt(ctx context.Context, organizationID, accountID, id string, permissionCodes ...workspace_model.WorkspacePermissionCode) (*promptmodel.Prompt, error) {
 	prompt, err := s.repo.FindByID(ctx, id)
 	if err != nil {
@@ -401,19 +442,8 @@ func (s *promptService) getAccessiblePrompt(ctx context.Context, organizationID,
 		return nil, fmt.Errorf("load prompt: %w", err)
 	}
 	if prompt.Source == promptmodel.PromptSourceOfficial {
-		scope, err := shared_visibility.ResolveVisibleWorkspaceScope(
-			ctx,
-			s.organizationService,
-			organizationID,
-			accountID,
-			"",
-			permissionCodes...,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("resolve prompt access: %w", err)
-		}
-		if len(scope.WorkspaceIDs) == 0 && !scope.AllowOrganizationScoped {
-			return nil, fmt.Errorf("prompt not found")
+		if err := s.requireAnyPromptWorkspaceAccess(ctx, organizationID, accountID, permissionCodes...); err != nil {
+			return nil, err
 		}
 		return prompt, nil
 	}

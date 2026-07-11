@@ -55,7 +55,10 @@ func (s *promptService) Optimize(
 	if optimizerPrompt == "" {
 		return nil, fmt.Errorf("raw prompt cannot be empty")
 	}
-	if err := s.ensureWorkspaceAccess(ctx, organizationID, accountID, workspaceID, promptOptimizePermissionCodes()...); err != nil {
+	if s == nil {
+		return nil, fmt.Errorf("prompt optimizer is unavailable")
+	}
+	if err := s.requirePromptWorkspaceAccess(ctx, organizationID, accountID, workspaceID, promptOptimizePermissionCodes()...); err != nil {
 		return nil, err
 	}
 
@@ -70,7 +73,7 @@ func (s *promptService) Optimize(
 	if err != nil {
 		return nil, err
 	}
-	if s == nil || s.llmClient == nil || s.defaultModelSvc == nil {
+	if s.llmClient == nil || s.defaultModelSvc == nil {
 		return nil, fmt.Errorf("prompt optimizer is unavailable")
 	}
 
@@ -192,7 +195,10 @@ func (s *promptService) OptimizeStream(
 	if optimizerPrompt == "" {
 		return nil, fmt.Errorf("raw prompt cannot be empty")
 	}
-	if err := s.ensureWorkspaceAccess(ctx, organizationID, accountID, workspaceID, promptOptimizePermissionCodes()...); err != nil {
+	if s == nil {
+		return nil, fmt.Errorf("prompt optimizer is unavailable")
+	}
+	if err := s.requirePromptWorkspaceAccess(ctx, organizationID, accountID, workspaceID, promptOptimizePermissionCodes()...); err != nil {
 		return nil, err
 	}
 
@@ -207,7 +213,7 @@ func (s *promptService) OptimizeStream(
 	if err != nil {
 		return nil, err
 	}
-	if s == nil || s.llmClient == nil || s.defaultModelSvc == nil {
+	if s.llmClient == nil || s.defaultModelSvc == nil {
 		return nil, fmt.Errorf("prompt optimizer is unavailable")
 	}
 
@@ -583,7 +589,8 @@ func (s *promptService) resolveOptimizerPromptID(
 	if err != nil {
 		return nil, err
 	}
-	if prompt.Source != promptmodel.PromptSourceOfficial && (prompt.WorkspaceID == nil || *prompt.WorkspaceID != workspaceID) {
+	if prompt.Source != promptmodel.PromptSourceOfficial &&
+		(prompt.WorkspaceID == nil || strings.TrimSpace(*prompt.WorkspaceID) != strings.TrimSpace(workspaceID)) {
 		return nil, fmt.Errorf("prompt not found")
 	}
 	return &prompt.ID, nil

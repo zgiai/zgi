@@ -32,9 +32,15 @@ import { useQueryClient } from '@tanstack/react-query';
 import { agentService } from '@/services';
 import { useExportWorkflow } from '@/hooks/workflow/use-workflow-import-export';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
-import { useOrganizations } from '@/hooks/organization/use-organizations';
 import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
-import { getAgentDetailEditHref } from '@/utils/agent-detail-routes';
+import {
+  getAgentDetailBaseHref,
+  getAgentDetailDefaultHref,
+  isAgentRuntimeType,
+  isWorkflowRuntimeType,
+} from '@/utils/agent-detail-routes';
+import { AGENT_PERMISSION_ACTIONS, WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
+import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 
 interface AgentCardProps {
   agent: Agent;
@@ -46,8 +52,6 @@ interface AgentCardProps {
   onDeleted?: (id: string, pageIndex: number) => void;
 }
 
-import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
-
 function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) {
   const t = useT('agents');
   const tCommon = useT('common');
@@ -58,13 +62,83 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
   const [moveOpen, setMoveOpen] = useState(false);
   const queryClient = useQueryClient();
   const { exportWorkflow, isExporting } = useExportWorkflow();
-  const { currentOrganization } = useOrganizations();
 
   // Permissions
-  const { hasPermission } = useAccountPermissions();
-  const canManage = hasPermission('agent.manage');
-  const canMoveAssets = ['owner', 'admin'].includes(currentOrganization?.organization_role ?? '');
-  const agentHref = getAgentDetailEditHref(agent.id, agent.agent_type);
+  const { hasAnyPermission } = useAccountPermissions();
+  const isAgentRuntime = isAgentRuntimeType(agent.agent_type);
+  const isWorkflowRuntime = isWorkflowRuntimeType(agent.agent_type);
+  const updatePermissionCodes = isWorkflowRuntime
+    ? WORKFLOW_PERMISSION_ACTIONS.update
+    : isAgentRuntime
+      ? AGENT_PERMISSION_ACTIONS.update
+      : [];
+  const exportPermissionCodes = isWorkflowRuntime
+    ? WORKFLOW_PERMISSION_ACTIONS.export
+    : [];
+  const deletePermissionCodes = isWorkflowRuntime
+    ? WORKFLOW_PERMISSION_ACTIONS.delete
+    : isAgentRuntime
+      ? AGENT_PERMISSION_ACTIONS.delete
+      : [];
+  const movePermissionCodes = isWorkflowRuntime
+    ? WORKFLOW_PERMISSION_ACTIONS.move
+    : isAgentRuntime
+      ? AGENT_PERMISSION_ACTIONS.move
+      : [];
+  const canCreateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.create);
+  const canImportAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.import);
+  const canUpdateRuntime = hasAnyPermission(updatePermissionCodes);
+  const canExportRuntime = hasAnyPermission(exportPermissionCodes);
+  const canDeleteRuntime = hasAnyPermission(deletePermissionCodes);
+  const canMoveAssets = hasAnyPermission(movePermissionCodes);
+  const canConfigureAgentRuntime = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeConfigManage);
+  const canPublishAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.publish);
+  const canManageAgentRuntimeAccess = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeAccessManage);
+  const canViewAgentLogs = hasAnyPermission(AGENT_PERMISSION_ACTIONS.logsView);
+  const canCreateWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.create);
+  const canImportWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.import);
+  const canRunWorkflowDraft = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runDraft);
+  const canPublishWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.publish);
+  const canConfigureWorkflowRuntime = hasAnyPermission(
+    WORKFLOW_PERMISSION_ACTIONS.runtimeConfigManage
+  );
+  const canManageWorkflowRuntimeAccess = hasAnyPermission(
+    WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage
+  );
+  const canViewWorkflowLogs = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
+  const canViewWorkflowTestLibrary = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.view);
+  const canShowActions = canUpdateRuntime || canExportRuntime || canDeleteRuntime || canMoveAssets;
+  const shouldPrefetchAgentDetail = canUpdateRuntime || canExportRuntime || canDeleteRuntime;
+  const canOpenAgentRuntimeEditor =
+    isAgentRuntime &&
+    (canCreateAgent ||
+      canImportAgent ||
+      canUpdateRuntime ||
+      canConfigureAgentRuntime ||
+      canPublishAgent ||
+      canManageAgentRuntimeAccess);
+  const canOpenWorkflowEditor =
+    isWorkflowRuntime &&
+    (canCreateWorkflow ||
+      canImportWorkflow ||
+      canUpdateRuntime ||
+      canRunWorkflowDraft ||
+      canPublishWorkflow ||
+      canConfigureWorkflowRuntime ||
+      canManageWorkflowRuntimeAccess);
+  const defaultAgentDetailHref = getAgentDetailDefaultHref(agent.id, agent.agent_type, {
+      canView: true,
+      canOpenEditor: isAgentRuntime ? canOpenAgentRuntimeEditor : canOpenWorkflowEditor,
+      canManageRuntimeAccess: isWorkflowRuntime && canManageWorkflowRuntimeAccess,
+      canViewRuntimeLogs: isAgentRuntime ? canViewAgentLogs : canViewWorkflowLogs,
+      canViewBatchTest:
+        isWorkflowRuntime && (canViewWorkflowTestLibrary || canViewWorkflowLogs),
+      canRunBatchTest: isWorkflowRuntime && canRunWorkflowDraft,
+      isPublished: agent.is_published,
+      preferBatchTestLibrary: canViewWorkflowTestLibrary,
+    });
+  const canOpenAgentDetail = Boolean(defaultAgentDetailHref);
+  const agentHref = defaultAgentDetailHref ?? getAgentDetailBaseHref(agent.id, agent.agent_type);
   const modeText =
     agent.agent_type === AgentType.AGENT
       ? t('modes.agent')
@@ -90,72 +164,80 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
       ? 'bg-success/10 text-success font-normal border-success'
       : 'bg-muted text-muted-foreground font-normal';
 
-  return (
-    <div className="relative h-48">
-      <Link href={agentHref} className="block h-full" onClick={onNavigate}>
-        <Card className="flex h-full shrink-0 flex-col border border-border/80 shadow-sm transition-colors hover:border-border hover:bg-muted/20 hover:shadow-sm">
-          <CardContent className="flex h-full min-w-0 flex-1 flex-col p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center">
-                <IconPreview
-                  icon={
-                    (() => {
+  const cardContent = (
+    <Card className="flex h-full shrink-0 flex-col border border-border/80 shadow-sm transition-colors hover:border-border hover:bg-muted/20 hover:shadow-sm">
+      <CardContent className="flex h-full min-w-0 flex-1 flex-col p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center">
+            <IconPreview
+              icon={
+                (() => {
+                  try {
+                    const iconData = JSON.parse(agent.icon || '{}');
+                    return iconData?.icon || '';
+                  } catch (_e) {
+                    return agent.name.slice(0, 2).toUpperCase() || ICON_TEXT;
+                  }
+                })() ||
+                agent.name.slice(0, 2).toUpperCase() ||
+                ICON_TEXT
+              }
+              iconType={agent.icon_type}
+              src={agent.icon_type === 'image' ? agent.icon_url || '' : ''}
+              iconBackground={
+                agent.icon_type === 'image'
+                  ? ''
+                  : (() => {
                       try {
                         const iconData = JSON.parse(agent.icon || '{}');
-                        return iconData?.icon || '';
+                        return iconData?.icon_background || ICON_BG;
                       } catch (_e) {
-                        return agent.name.slice(0, 2).toUpperCase() || ICON_TEXT;
+                        return '';
                       }
-                    })() ||
-                    agent.name.slice(0, 2).toUpperCase() ||
-                    ICON_TEXT
-                  }
-                  iconType={agent.icon_type}
-                  src={agent.icon_type === 'image' ? agent.icon_url || '' : ''}
-                  iconBackground={
-                    agent.icon_type === 'image'
-                      ? ''
-                      : (() => {
-                          try {
-                            const iconData = JSON.parse(agent.icon || '{}');
-                            return iconData?.icon_background || ICON_BG;
-                          } catch (_e) {
-                            return '';
-                          }
-                        })()
-                  }
-                  editable={false}
-                  size="sm"
-                />
-              </div>
-              <div className="shrink-0">
-                <Badge variant="outline" className={`text-[11px] ${statusClassName}`}>
-                  {statusText}
-                </Badge>
-              </div>
-            </div>
-            <h3
-              className="mt-3 line-clamp-2 min-h-10 break-all text-sm font-semibold leading-5 text-foreground"
-              title={agent.name}
-            >
-              {agent.name || t('noName')}
-            </h3>
-            <p className="mt-3 line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground">
-              {agent.description || t('noDescription')}
-            </p>
-            <div className="mt-auto flex items-center gap-2 pr-8 text-xs text-muted-foreground">
-              <ModeIcon className="h-4 w-4 shrink-0" />
-              <span className="truncate">{modeText}</span>
-            </div>
-          </CardContent>
-        </Card>
-      </Link>
-      {/* Show actions available to workspace managers or organization admins. */}
-      {(canManage || canMoveAssets) && (
+                    })()
+              }
+              editable={false}
+              size="sm"
+            />
+          </div>
+          <div className="shrink-0">
+            <Badge variant="outline" className={`text-[11px] ${statusClassName}`}>
+              {statusText}
+            </Badge>
+          </div>
+        </div>
+        <h3
+          className="mt-3 line-clamp-2 min-h-10 break-all text-sm font-semibold leading-5 text-foreground"
+          title={agent.name}
+        >
+          {agent.name || t('noName')}
+        </h3>
+        <p className="mt-3 line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground">
+          {agent.description || t('noDescription')}
+        </p>
+        <div className="mt-auto flex items-center gap-2 pr-8 text-xs text-muted-foreground">
+          <ModeIcon className="h-4 w-4 shrink-0" />
+          <span className="truncate">{modeText}</span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+
+  return (
+    <div className="relative h-48">
+      {canOpenAgentDetail ? (
+        <Link href={agentHref} className="block h-full" onClick={onNavigate}>
+          {cardContent}
+        </Link>
+      ) : (
+        <div className="h-full">{cardContent}</div>
+      )}
+      {/* Show only actions backed by the corresponding permission. */}
+      {canShowActions && (
         <div className="absolute bottom-2 right-2">
           <DropdownMenu
             onOpenChange={open => {
-              if (open && canManage) {
+              if (open && shouldPrefetchAgentDetail) {
                 // Prefetch agent detail when actions menu opens
                 queryClient.prefetchQuery({
                   queryKey: ['agents', 'detail', agent.id],
@@ -172,21 +254,21 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {canManage && (
-                <>
-                  <DropdownMenuItem inset onSelect={() => setEditOpen(true)}>
-                    <Edit className="h-4 w-4" />
-                    {t('actions.edit')}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    inset
-                    disabled={isExporting}
-                    onSelect={() => setExportConfirmOpen(true)}
-                  >
-                    <Download className="h-4 w-4" />
-                    {t('actions.exportYaml')}
-                  </DropdownMenuItem>
-                </>
+              {canUpdateRuntime && (
+                <DropdownMenuItem inset onSelect={() => setEditOpen(true)}>
+                  <Edit className="h-4 w-4" />
+                  {t('actions.edit')}
+                </DropdownMenuItem>
+              )}
+              {canExportRuntime && (
+                <DropdownMenuItem
+                  inset
+                  disabled={isExporting}
+                  onSelect={() => setExportConfirmOpen(true)}
+                >
+                  <Download className="h-4 w-4" />
+                  {t('actions.exportYaml')}
+                </DropdownMenuItem>
               )}
               {canMoveAssets && (
                 <DropdownMenuItem inset onSelect={() => setMoveOpen(true)}>
@@ -194,7 +276,7 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
                   {tCommon('assetMove.title')}
                 </DropdownMenuItem>
               )}
-              {canManage && (
+              {canDeleteRuntime && (
                 <DropdownMenuItem variant="destructive" inset onSelect={() => setConfirmOpen(true)}>
                   <Trash2 className="h-4 w-4" />
                   {t('actions.delete')}
@@ -221,6 +303,7 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
         confirmText={t('actions.exportYaml')}
         cancelText={tCommon('close')}
         onConfirm={() => {
+          if (!canExportRuntime) return;
           void exportWorkflow({
             agentId: agent.id,
             version: agent.is_published ? 'published' : 'draft',
@@ -239,12 +322,14 @@ function AgentCard({ agent, onDeleted, onNavigate, pageIndex }: AgentCardProps) 
         confirmText={tCommon('confirm')}
         cancelText={tCommon('close')}
         onConfirm={() =>
-          deleteMutation.mutate(agent.id, {
-            onSuccess: () => {
-              setConfirmOpen(false);
-              onDeleted?.(agent.id, pageIndex);
-            },
-          })
+          canDeleteRuntime
+            ? deleteMutation.mutate(agent.id, {
+                onSuccess: () => {
+                  setConfirmOpen(false);
+                  onDeleted?.(agent.id, pageIndex);
+                },
+              })
+            : undefined
         }
         loading={deleteMutation.isPending}
       />

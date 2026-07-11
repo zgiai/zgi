@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	apiKeyModule "github.com/zgiai/zgi/api/internal/modules/api_key"
+	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
 	"gorm.io/gorm"
@@ -18,25 +20,9 @@ import (
 // APIKeyAuthMiddleware validates API key and extracts agent/tenant info
 func APIKeyAuthMiddleware(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Extract API key from Authorization header
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			response.Fail(c, response.ErrorCode{Code: 401001, Message: "Authorization header required", UserVisible: true})
-			c.Abort()
-			return
-		}
-
-		// Check if it's Bearer token format
-		if !strings.HasPrefix(authHeader, "Bearer ") {
-			response.Fail(c, response.ErrorCode{Code: 401002, Message: "Invalid authorization format. Expected: Bearer <token>", UserVisible: true})
-			c.Abort()
-			return
-		}
-
-		// Extract the actual token
-		apiKey := strings.TrimPrefix(authHeader, "Bearer ")
-		if apiKey == "" {
-			response.Fail(c, response.ErrorCode{Code: 401003, Message: "API key cannot be empty", UserVisible: true})
+		apiKey, errCode := extractExternalAPIKey(c)
+		if errCode != nil {
+			response.Fail(c, *errCode)
 			c.Abort()
 			return
 		}
@@ -64,6 +50,29 @@ func APIKeyAuthMiddleware(db *gorm.DB) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+func extractExternalAPIKey(c *gin.Context) (string, *response.ErrorCode) {
+	authHeader := strings.TrimSpace(c.GetHeader("Authorization"))
+	if authHeader != "" {
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			errCode := response.ErrorCode{Code: 401002, Message: "Invalid authorization format. Expected: Bearer <token>", UserVisible: true}
+			return "", &errCode
+		}
+		apiKey := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+		if apiKey == "" {
+			errCode := response.ErrorCode{Code: 401003, Message: "API key cannot be empty", UserVisible: true}
+			return "", &errCode
+		}
+		return apiKey, nil
+	}
+
+	apiKey := strings.TrimSpace(c.GetHeader("X-API-Key"))
+	if apiKey == "" {
+		errCode := response.ErrorCode{Code: 401001, Message: "Authorization header or X-API-Key required", UserVisible: true}
+		return "", &errCode
+	}
+	return apiKey, nil
 }
 
 // APIKeyInfo represents the validated API key information
@@ -99,6 +108,10 @@ func validateAPIKey(db *gorm.DB, key string) (*APIKeyInfo, error) {
 		return nil, fmt.Errorf("failed to validate API key: %w", err)
 	}
 
+	if err := validateAgentAPISurface(db, apiKey.AgentID, apiKey.TenantID); err != nil {
+		return nil, err
+	}
+
 	return &APIKeyInfo{
 		ID:         apiKey.ID,
 		AgentID:    apiKey.AgentID,
@@ -113,13 +126,51 @@ func validateAPIKey(db *gorm.DB, key string) (*APIKeyInfo, error) {
 	}, nil
 }
 
-// updateLastUsed updates the last used timestamp and usage counters for the API key
+func validateAgentAPISurface(db *gorm.DB, agentID, tenantID uuid.UUID) error {
+	var surface struct {
+		ID           uuid.UUID `gorm:"column:id"`
+		TenantID     uuid.UUID `gorm:"column:tenant_id"`
+		EnableAPI    bool      `gorm:"column:enable_api"`
+		WebAppStatus string    `gorm:"column:web_app_status"`
+	}
+	err := db.
+		Table("agents").
+		Select("id", "tenant_id", "enable_api", "web_app_status", "deleted_at").
+		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", agentID, tenantID).
+		Take(&surface).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return fmt.Errorf("agent not found for API key")
+		}
+		return fmt.Errorf("failed to validate agent API surface: %w", err)
+	}
+	if runtimeauth.NormalizeWebAppStatus(surface.WebAppStatus) != runtimeauth.WebAppStatusActive {
+		return fmt.Errorf("agent is offline for API key")
+	}
+	fallback := runtimeauth.PolicyFromAgentFields(surface.WebAppStatus, surface.EnableAPI)
+	auth, err := runtimeauth.NewStore(db).GetResourceAuthorization(
+		context.Background(),
+		runtimeauth.PublishedRuntimeResourceAgent,
+		agentID,
+		fallback,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to validate agent api surface: %w", err)
+	}
+	policy := runtimeauth.PolicyFromAuthorization(fallback, auth)
+	if !policy.Allows(runtimeauth.PublishedRuntimeSurfaceAPI) {
+		return fmt.Errorf("agent api surface is disabled")
+	}
+	return nil
+}
+
+// updateLastUsed updates the last used timestamp for the API key.
+// Usage count is incremented by APIKeyUsageLoggingMiddleware once the request is complete.
 func updateLastUsed(db *gorm.DB, keyID uuid.UUID) {
 	now := time.Now()
 
 	updates := map[string]interface{}{
 		"last_used_at": now,
-		"usage_count":  gorm.Expr("usage_count + 1"),
 	}
 
 	db.Model(&apiKeyModule.APIKey{}).

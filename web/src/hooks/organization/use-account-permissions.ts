@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { workspaceService } from '@/services/workspace.service';
 import { toast } from 'sonner';
@@ -10,8 +10,7 @@ import { useWorkspaceStore } from '@/store/workspace-store';
 import type { PermissionState } from '@/store/workspace-store';
 import { useOrganizationStore } from '@/store/organization-store';
 import { WORKSPACE_KEYS } from '@/hooks/query-keys';
-import { ALL_PERMISSION_CODES, type PermissionCode } from '@/constants/permissions';
-import { useAuthStore } from '@/store';
+import type { PermissionCode } from '@/constants/permissions';
 
 interface UseAccountPermissionsOptions {
   /** Organization ID, defaults to 'current' */
@@ -46,19 +45,6 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
   const isSwitchingOrganization =
     useOrganizationStore.use.isSwitchingOrganization();
-  const user = useAuthStore.use.user();
-
-  // Determining role based on profile (user object) instead of currentOrganization
-  const organizationRoleFromProfile = user?.organization_role || null;
-  const isOrgAdmin =
-    organizationRoleFromProfile === 'owner' || organizationRoleFromProfile === 'admin';
-  const organizationViewPermissions = useMemo(
-    () =>
-      isOrgAdmin
-        ? [...ALL_PERMISSION_CODES]
-        : ALL_PERMISSION_CODES.filter(permission => permission.endsWith('.view')),
-    [isOrgAdmin]
-  );
 
   // Determine effective workspace ID
   const effectiveWorkspaceId =
@@ -103,17 +89,7 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
     if (!syncToStore) return;
 
     if (shouldSkip) {
-      if (isWorkspaceRequired) {
-        // Sync organization role and derived permissions for the restricted no-workspace state.
-        setPermissions({
-          organizationRole: organizationRoleFromProfile as PermissionState['organizationRole'],
-          workspaceRole: null,
-          workspaceRoleName: null,
-          permissions: organizationViewPermissions,
-        });
-      } else {
-        clearPermissions();
-      }
+      clearPermissions();
       return;
     }
 
@@ -126,16 +102,7 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
       };
       setPermissions(permissionState);
     }
-  }, [
-    permissionsData,
-    syncToStore,
-    shouldSkip,
-    setPermissions,
-    clearPermissions,
-    isWorkspaceRequired,
-    organizationRoleFromProfile,
-    organizationViewPermissions,
-  ]);
+  }, [permissionsData, syncToStore, shouldSkip, setPermissions, clearPermissions]);
 
   // Show error toast if query fails
   useEffect(() => {
@@ -145,16 +112,10 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
   }, [error, t, isSwitchingOrganization, hasUsableWorkspaceContext]);
 
   return {
-    permissions: isWorkspaceRequired
-      ? organizationViewPermissions
-      : hasUsableWorkspaceContext
-        ? (permissionsData?.permissions ?? [])
-        : [],
-    organizationRole: isWorkspaceRequired
-      ? organizationRoleFromProfile
-      : hasUsableWorkspaceContext
-        ? (permissionsData?.organization_role ?? null)
-        : null,
+    permissions: hasUsableWorkspaceContext ? (permissionsData?.permissions ?? []) : [],
+    organizationRole: hasUsableWorkspaceContext
+      ? (permissionsData?.organization_role ?? null)
+      : null,
     workspaceRole: hasUsableWorkspaceContext ? (permissionsData?.workspace_role ?? null) : null,
     workspaceRoleName: hasUsableWorkspaceContext
       ? (permissionsData?.workspace_role_name ?? null)
@@ -165,48 +126,51 @@ export function useAccountPermissions(options: UseAccountPermissionsOptions = {}
     refetch,
     // Helper functions with type-safe permission codes
     hasPermission: (permission: PermissionCode) => {
-      if (isWorkspaceRequired) {
-        if (isOrgAdmin) {
-          return true;
-        }
-        return permission.endsWith('.view');
-      }
       if (!hasUsableWorkspaceContext) {
         return false;
+      }
+      const gRole = permissionsData?.organization_role ?? null;
+      if (gRole === 'owner' || gRole === 'admin') {
+        return true;
       }
       return permissionsData?.permissions.includes(permission) ?? false;
     },
-    hasAnyPermission: (permissions: PermissionCode[]) => {
-      if (isWorkspaceRequired) {
-        if (isOrgAdmin) {
-          return permissions.length > 0;
-        }
-        return permissions.some(p => p.endsWith('.view'));
-      }
+    hasAnyPermission: (permissions: readonly PermissionCode[]) => {
       if (!hasUsableWorkspaceContext) {
         return false;
+      }
+      const gRole = permissionsData?.organization_role ?? null;
+      if (gRole === 'owner' || gRole === 'admin') {
+        return permissions.length > 0;
       }
       return permissions.some(p => permissionsData?.permissions.includes(p) ?? false);
     },
-    hasAllPermissions: (permissions: PermissionCode[]) => {
-      if (isWorkspaceRequired) {
-        if (isOrgAdmin) {
-          return permissions.every(p => ALL_PERMISSION_CODES.includes(p));
-        }
-        return permissions.every(p => p.endsWith('.view'));
-      }
+    hasAllPermissions: (permissions: readonly PermissionCode[]) => {
       if (!hasUsableWorkspaceContext) {
         return false;
+      }
+      const gRole = permissionsData?.organization_role ?? null;
+      if (gRole === 'owner' || gRole === 'admin') {
+        return true;
       }
       return permissions.every(p => permissionsData?.permissions.includes(p) ?? false);
     },
     isAdmin: () => {
-      const gRole = isWorkspaceRequired
-        ? organizationRoleFromProfile
-        : hasUsableWorkspaceContext
-          ? (permissionsData?.organization_role ?? null)
-          : null;
+      const gRole = hasUsableWorkspaceContext
+        ? (permissionsData?.organization_role ?? null)
+        : null;
       return gRole === 'owner' || gRole === 'admin';
+    },
+    hasWorkspaceAccess: () => hasUsableWorkspaceContext,
+    isWorkspaceManager: () => {
+      const gRole = hasUsableWorkspaceContext
+        ? (permissionsData?.organization_role ?? null)
+        : null;
+      if (gRole === 'owner' || gRole === 'admin') {
+        return true;
+      }
+      const wRole = hasUsableWorkspaceContext ? (permissionsData?.workspace_role ?? null) : null;
+      return wRole === 'owner' || wRole === 'admin';
     },
   };
 }

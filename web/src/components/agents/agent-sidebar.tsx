@@ -2,7 +2,16 @@
 
 import * as React from 'react';
 import { usePathname, useParams } from 'next/navigation';
-import { BookOpen, History, KeyRound, PanelsTopLeft, RotateCcw, ScanSearch } from 'lucide-react';
+import {
+  BookOpen,
+  FileCode2,
+  History,
+  KeyRound,
+  PanelsTopLeft,
+  RotateCcw,
+  ScanSearch,
+  Server,
+} from 'lucide-react';
 import { useAgent } from '@/hooks/agent/use-agents';
 import { useT } from '@/i18n';
 import { ICON_BG, ICON_TEXT } from '@/lib/config';
@@ -15,12 +24,28 @@ import AgentDialog from '@/components/agents/agent-dialog';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useWorkflowDebugFocusMode } from '@/components/workflow/hooks/use-debug-focus-mode';
 import { usePersistentSidebarCollapse } from '@/hooks/use-persistent-sidebar-collapse';
-import { getAgentDetailRouteAccess } from '@/utils/agent-detail-routes';
+import {
+  getAgentDetailApiDocsHref,
+  getAgentDetailApiHref,
+  getAgentDetailApiKeysHref,
+  getAgentDetailBatchTestHref,
+  getAgentDetailLogsHref,
+  getAgentDetailRouteAccess,
+  isAgentRuntimeType,
+  isWorkflowRuntimeType,
+  type AgentDetailRouteKind,
+} from '@/utils/agent-detail-routes';
+import {
+  AGENT_ASSET_VISIBLE_PERMISSION_CODES,
+  AGENT_PERMISSION_ACTIONS,
+  WORKFLOW_PERMISSION_ACTIONS,
+} from '@/constants/permissions';
 import { markAgentListRestoreIntentFromDetail } from '@/utils/agent-list-state';
 
 interface AgentSidebarProps {
   /** When true, hide navigation items (workspace mismatch mode) */
   isMismatch?: boolean;
+  routeKind?: AgentDetailRouteKind;
 }
 
 /**
@@ -29,15 +54,35 @@ interface AgentSidebarProps {
  * - First nav item links to the editor for the current agent type.
  * - Collapsed state persisted to localStorage
  */
-export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
+export function AgentSidebar({ isMismatch = false, routeKind }: AgentSidebarProps) {
   const pathname = usePathname();
   const params = useParams<{ agentId: string }>();
   const agentId = params?.agentId ?? '';
-  const { agent, isLoading } = useAgent(agentId);
   const t = useT();
-  const { hasPermission } = useAccountPermissions();
-  const canView = hasPermission('agent.view');
-  const canManage = hasPermission('agent.manage');
+  const { hasAnyPermission } = useAccountPermissions();
+  const canView = hasAnyPermission(AGENT_ASSET_VISIBLE_PERMISSION_CODES);
+  const { agent, isLoading } = useAgent(agentId, canView);
+  const canCreateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.create);
+  const canImportAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.import);
+  const canUpdateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.update);
+  const canConfigureAgentRuntime = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeConfigManage);
+  const canPublishAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.publish);
+  const canCreateWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.create);
+  const canImportWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.import);
+  const canUpdateWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.update);
+  const canRunWorkflowDraft = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.runDraft);
+  const canPublishWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.publish);
+  const canConfigureWorkflowRuntime = hasAnyPermission(
+    WORKFLOW_PERMISSION_ACTIONS.runtimeConfigManage
+  );
+  const canManageAgentRuntimeAccess = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeAccessManage);
+  const canManageWorkflowRuntimeAccess = hasAnyPermission(
+    WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage
+  );
+  const canViewAgentLogs = hasAnyPermission(AGENT_PERMISSION_ACTIONS.logsView);
+  const canViewWorkflowLogs = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
+  const canViewWorkflowTestLibrary = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.view);
+  const canViewWorkflowTestBatches = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.logsView);
   const [editOpen, setEditOpen] = React.useState(false);
   const isDebugFocusMode = useWorkflowDebugFocusMode();
   const [isCollapsed, setIsCollapsed] = usePersistentSidebarCollapse(
@@ -48,63 +93,166 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
 
   const toggleCollapse = () => setIsCollapsed(prev => !prev);
   const agentData = agent?.data;
+  const isAgentRuntime = isAgentRuntimeType(agentData?.agent_type);
+  const isWorkflowRuntime = isWorkflowRuntimeType(agentData?.agent_type);
+  const effectiveRouteKind: AgentDetailRouteKind =
+    routeKind ?? (isWorkflowRuntime ? 'workflow' : 'agent');
+  const listBackHref = effectiveRouteKind === 'workflow' ? '/console/workflows' : '/console/agents';
+  const listBackLabel = effectiveRouteKind === 'workflow'
+    ? t('agents.backToWorkflowList')
+    : t('agents.backToAgentList');
+  const canEditIdentity = isAgentRuntime
+    ? canUpdateAgent
+    : isWorkflowRuntime
+      ? canUpdateWorkflow
+      : false;
+  const canEditRuntime = isAgentRuntime
+    ? canCreateAgent ||
+      canImportAgent ||
+      canUpdateAgent ||
+      canConfigureAgentRuntime ||
+      canPublishAgent ||
+      canManageAgentRuntimeAccess
+    : isWorkflowRuntime
+      ? canCreateWorkflow ||
+        canImportWorkflow ||
+        canUpdateWorkflow ||
+        canRunWorkflowDraft ||
+        canPublishWorkflow ||
+        canConfigureWorkflowRuntime ||
+        canManageWorkflowRuntimeAccess
+      : false;
+  const canManageRuntimeAccess = isAgentRuntime
+    ? canManageAgentRuntimeAccess
+    : isWorkflowRuntime
+      ? canManageWorkflowRuntimeAccess
+      : false;
+  const canViewRuntimeLogs = isAgentRuntime
+    ? canViewAgentLogs
+    : isWorkflowRuntime
+      ? canViewWorkflowLogs
+      : false;
   const routeAccess = React.useMemo(
     () =>
       getAgentDetailRouteAccess(agentId, agentData?.agent_type, {
         canView,
-        canManage,
+        canOpenEditor: canEditRuntime,
+        canEditRuntime,
+        canManageRuntimeAccess,
+        canViewRuntimeLogs,
+        canViewBatchTest:
+          isWorkflowRuntime && (canViewWorkflowTestLibrary || canViewWorkflowTestBatches),
+        canRunBatchTest: isWorkflowRuntime && canRunWorkflowDraft,
       }),
-    [agentData?.agent_type, agentId, canManage, canView]
+    [
+      agentData?.agent_type,
+      agentId,
+      canEditRuntime,
+      canManageRuntimeAccess,
+      canRunWorkflowDraft,
+      canViewWorkflowTestBatches,
+      canViewWorkflowTestLibrary,
+      canView,
+      canViewRuntimeLogs,
+      isWorkflowRuntime,
+    ]
   );
 
   const navItems: ResourceSidebarNavItem[] = React.useMemo(() => {
-    const items: ResourceSidebarNavItem[] = [
-      { title: t('agents.actions.edit'), href: routeAccess.editHref, icon: PanelsTopLeft },
-    ];
+    const items: ResourceSidebarNavItem[] = [];
+
+    if (routeAccess.canShowEditor) {
+      items.push({
+        title: t('agents.actions.edit'),
+        href: routeAccess.editHref,
+        icon: PanelsTopLeft,
+        isActive: currentPathname => currentPathname === routeAccess.editHref,
+      });
+    }
 
     if (routeAccess.canShowRuntimeLogs && agentData?.is_published) {
       items.push({
         title: t('agents.workflow.webappLogs'),
-        href: `/console/agents/${agentId}/logs`,
+        href: getAgentDetailLogsHref(agentId, effectiveRouteKind),
         icon: History,
       });
     }
 
     if (routeAccess.canShowApiKeys) {
-      items.push({
-        title: t('agents.apiKeys.navTitle'),
-        href: `/console/agents/${agentId}/api`,
-        icon: KeyRound,
-      });
-    }
+      const apiRootHref = getAgentDetailApiHref(agentId, effectiveRouteKind);
+      const apiKeysHref = getAgentDetailApiKeysHref(agentId, effectiveRouteKind);
+      const apiDocsHref = getAgentDetailApiDocsHref(agentId, effectiveRouteKind);
 
-    if (routeAccess.canShowBatchTest) {
       items.push({
-        title: t('agents.workflowTest.navTitle'),
-        href: `/console/agents/${agentId}/batch-test`,
-        icon: ScanSearch,
+        title: t('agents.apiGroupTitle'),
+        href: apiKeysHref,
+        icon: Server,
+        isActive: currentPathname => currentPathname.startsWith(apiRootHref),
         children: [
           {
-            title: t('agents.workflowTest.subnav.caseLibrary'),
-            href: `/console/agents/${agentId}/batch-test`,
-            icon: BookOpen,
-            isActive: currentPathname =>
-              currentPathname === `/console/agents/${agentId}/batch-test`,
+            title: t('agents.apiKeys.navTitle'),
+            href: apiKeysHref,
+            icon: KeyRound,
+            isActive: currentPathname => currentPathname === apiKeysHref,
           },
           {
-            title: t('agents.workflowTest.subnav.batches'),
-            href: `/console/agents/${agentId}/batch-test/batches`,
-            icon: RotateCcw,
-            isActive: currentPathname =>
-              currentPathname === `/console/agents/${agentId}/batch-test/batches` ||
-              currentPathname.startsWith(`/console/agents/${agentId}/batch-test/`),
+            title: t('agents.apiDocsNavTitle'),
+            href: apiDocsHref,
+            icon: FileCode2,
+            isActive: currentPathname => currentPathname === apiDocsHref,
           },
         ],
       });
     }
 
+    if (routeAccess.canShowBatchTest) {
+      const batchTestHref = canViewWorkflowTestLibrary
+        ? getAgentDetailBatchTestHref(agentId, effectiveRouteKind)
+        : getAgentDetailBatchTestHref(agentId, effectiveRouteKind, 'batches');
+      const batchTestChildren: ResourceSidebarNavItem[] = [];
+
+      if (canViewWorkflowTestLibrary) {
+        const caseLibraryHref = getAgentDetailBatchTestHref(agentId, effectiveRouteKind);
+        batchTestChildren.push({
+          title: t('agents.workflowTest.subnav.caseLibrary'),
+          href: caseLibraryHref,
+          icon: BookOpen,
+          isActive: currentPathname => currentPathname === caseLibraryHref,
+        });
+      }
+
+      if (canViewWorkflowTestBatches) {
+        const batchesHref = getAgentDetailBatchTestHref(agentId, effectiveRouteKind, 'batches');
+        const batchTestRootHref = getAgentDetailBatchTestHref(agentId, effectiveRouteKind);
+        batchTestChildren.push({
+          title: t('agents.workflowTest.subnav.batches'),
+          href: batchesHref,
+          icon: RotateCcw,
+          isActive: currentPathname =>
+            currentPathname === batchesHref ||
+            (currentPathname.startsWith(`${batchTestRootHref}/`) &&
+              currentPathname !== batchTestRootHref),
+        });
+      }
+
+      items.push({
+        title: t('agents.workflowTest.navTitle'),
+        href: batchTestHref,
+        icon: ScanSearch,
+        children: batchTestChildren,
+      });
+    }
+
     return items;
-  }, [agentData?.is_published, agentId, routeAccess, t]);
+  }, [
+    agentData?.is_published,
+    agentId,
+    canViewWorkflowTestBatches,
+    canViewWorkflowTestLibrary,
+    effectiveRouteKind,
+    routeAccess,
+    t,
+  ]);
 
   const iconType = agentData?.icon_type;
   let textIcon = agentData?.name?.slice(0, 2).toUpperCase() || ICON_TEXT;
@@ -148,12 +296,14 @@ export function AgentSidebar({ isMismatch = false }: AgentSidebarProps) {
             name={agentData?.name || (isLoading ? t('agents.loading') : '-')}
             description={agentData?.description || ''}
             showIdentity={false}
-            backHref="/console/agents"
-            backLabel={t('agents.backToAgentList')}
+            backHref={listBackHref}
+            backLabel={listBackLabel}
             onBackClick={() => markAgentListRestoreIntentFromDetail(agentId)}
             iconActionLabel={t('agents.actions.edit')}
             onIconClick={
-              canManage && !isMismatch && agentData ? () => setEditOpen(true) : undefined
+              canEditIdentity && !isMismatch && agentData
+                ? () => setEditOpen(true)
+                : undefined
             }
           />
         }

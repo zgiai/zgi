@@ -2,7 +2,12 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"testing"
+
+	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/modules/app/conversation"
+	graph_entities "github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine/entities"
 )
 
 func TestBuildWorkflowStreamGraphIgnoresNodesUnreachableFromStart(t *testing.T) {
@@ -157,6 +162,210 @@ func TestBuildWorkflowStreamGraphKeepsNestedContainerSubgraphInRuntimeView(t *te
 	assertWorkflowStreamNodePresence(t, streamGraph.RuntimeNodeMap, "inner-loop", true)
 	assertWorkflowStreamNodePresence(t, streamGraph.RuntimeNodeMap, "inner-loop-start", true)
 	assertWorkflowStreamNodePresence(t, streamGraph.RuntimeNodeMap, "inner-loop-answer", true)
+}
+
+func TestBuildWorkflowStreamVariablePoolRejectsUnauthorizedConversationBeforeVariableLoad(t *testing.T) {
+	conversationID := uuid.New()
+	agentID := uuid.New()
+	accountID := uuid.New()
+	otherAccountID := uuid.New()
+	service := &workflowStreamVariablePoolConversationService{
+		conversation: &conversation.AgentConversation{
+			ID:            conversationID,
+			AgentID:       agentID,
+			FromAccountID: &otherAccountID,
+		},
+		variables: map[string]interface{}{"profile": "should-not-load"},
+	}
+
+	pool, err := buildWorkflowStreamVariablePool(context.Background(),
+		workflowStreamVariablePoolTestGraphData(),
+		map[string]interface{}{"sys.conversation_id": conversationID.String()},
+		nil,
+		"start",
+		workflowStreamVariablePoolScope{
+			ConversationAccess: service,
+			VariableLoader:     service,
+			AgentID:            agentID.String(),
+			AccountID:          accountID.String(),
+		},
+	)
+
+	if !errors.Is(err, errWebAppConversationAccessDenied) {
+		t.Fatalf("buildWorkflowStreamVariablePool() error = %v, want %v", err, errWebAppConversationAccessDenied)
+	}
+	if pool != nil {
+		t.Fatalf("buildWorkflowStreamVariablePool() pool = %#v, want nil", pool)
+	}
+	if !service.accessCalled {
+		t.Fatalf("conversation access check was not called")
+	}
+	if service.loadCalled {
+		t.Fatalf("conversation variables were loaded before caller scope was accepted")
+	}
+}
+
+func TestBuildWorkflowStreamVariablePoolLoadsConversationVariablesAfterAccessCheck(t *testing.T) {
+	conversationID := uuid.New()
+	agentID := uuid.New()
+	accountID := uuid.New()
+	service := &workflowStreamVariablePoolConversationService{
+		conversation: &conversation.AgentConversation{
+			ID:            conversationID,
+			AgentID:       agentID,
+			FromAccountID: &accountID,
+		},
+		variables: map[string]interface{}{"profile": "persisted-profile"},
+	}
+
+	pool, err := buildWorkflowStreamVariablePool(context.Background(),
+		workflowStreamVariablePoolTestGraphData(),
+		map[string]interface{}{"sys.conversation_id": conversationID.String()},
+		nil,
+		"start",
+		workflowStreamVariablePoolScope{
+			ConversationAccess: service,
+			VariableLoader:     service,
+			AgentID:            agentID.String(),
+			AccountID:          accountID.String(),
+		},
+	)
+
+	if err != nil {
+		t.Fatalf("buildWorkflowStreamVariablePool() error = %v", err)
+	}
+	if !service.accessCalled {
+		t.Fatalf("conversation access check was not called")
+	}
+	if !service.loadCalled {
+		t.Fatalf("conversation variables were not loaded after caller scope was accepted")
+	}
+	variable := pool.Get([]string{graph_entities.ConversationVariableNodeId, "profile"})
+	if variable == nil {
+		t.Fatalf("conversation profile variable missing")
+	}
+	if got := variable.ToObject(); got != "persisted-profile" {
+		t.Fatalf("conversation profile variable = %#v, want %#v", got, "persisted-profile")
+	}
+}
+
+func TestBuildWorkflowStreamVariablePoolSkipsConversationAccessWithoutConversationVariables(t *testing.T) {
+	conversationID := uuid.New()
+	service := &workflowStreamVariablePoolConversationService{
+		variables: map[string]interface{}{"profile": "should-not-load"},
+	}
+
+	pool, err := buildWorkflowStreamVariablePool(context.Background(),
+		map[string]any{
+			"environment_variables":  []any{},
+			"conversation_variables": []any{},
+		},
+		map[string]interface{}{"sys.conversation_id": conversationID.String()},
+		nil,
+		"start",
+		workflowStreamVariablePoolScope{
+			ConversationAccess: service,
+			VariableLoader:     service,
+		},
+	)
+
+	if err != nil {
+		t.Fatalf("buildWorkflowStreamVariablePool() error = %v", err)
+	}
+	if pool == nil {
+		t.Fatalf("buildWorkflowStreamVariablePool() pool is nil")
+	}
+	if service.accessCalled {
+		t.Fatalf("conversation access check should be skipped when no conversation variables are configured")
+	}
+	if service.loadCalled {
+		t.Fatalf("conversation variables should not be loaded when no conversation variables are configured")
+	}
+}
+
+func TestBuildWorkflowStreamVariablePoolFallsBackToDefaultWhenVariableLoadFails(t *testing.T) {
+	conversationID := uuid.New()
+	agentID := uuid.New()
+	accountID := uuid.New()
+	service := &workflowStreamVariablePoolConversationService{
+		conversation: &conversation.AgentConversation{
+			ID:            conversationID,
+			AgentID:       agentID,
+			FromAccountID: &accountID,
+		},
+		loadErr: errors.New("database unavailable"),
+	}
+
+	pool, err := buildWorkflowStreamVariablePool(context.Background(),
+		workflowStreamVariablePoolTestGraphData(),
+		map[string]interface{}{"sys.conversation_id": conversationID.String()},
+		nil,
+		"start",
+		workflowStreamVariablePoolScope{
+			ConversationAccess: service,
+			VariableLoader:     service,
+			AgentID:            agentID.String(),
+			AccountID:          accountID.String(),
+		},
+	)
+
+	if err != nil {
+		t.Fatalf("buildWorkflowStreamVariablePool() error = %v", err)
+	}
+	if !service.accessCalled {
+		t.Fatalf("conversation access check was not called")
+	}
+	if !service.loadCalled {
+		t.Fatalf("conversation variables were not loaded after caller scope was accepted")
+	}
+	variable := pool.Get([]string{graph_entities.ConversationVariableNodeId, "profile"})
+	if variable == nil {
+		t.Fatalf("conversation profile variable missing")
+	}
+	if got := variable.ToObject(); got != "default-profile" {
+		t.Fatalf("conversation profile variable = %#v, want %#v", got, "default-profile")
+	}
+}
+
+func workflowStreamVariablePoolTestGraphData() map[string]any {
+	return map[string]any{
+		"environment_variables": []any{},
+		"conversation_variables": []any{
+			map[string]any{
+				"name":  "profile",
+				"type":  "string",
+				"value": "default-profile",
+			},
+		},
+	}
+}
+
+type workflowStreamVariablePoolConversationService struct {
+	conversation *conversation.AgentConversation
+	variables    map[string]interface{}
+	loadErr      error
+
+	accessCalled bool
+	loadCalled   bool
+}
+
+func (s *workflowStreamVariablePoolConversationService) GetConversationByIDAndAgent(_ context.Context, conversationID, agentID uuid.UUID) (*conversation.AgentConversation, error) {
+	s.accessCalled = true
+	if s.conversation == nil || s.conversation.ID != conversationID || s.conversation.AgentID != agentID {
+		return nil, errors.New("conversation not found")
+	}
+	return s.conversation, nil
+}
+
+func (s *workflowStreamVariablePoolConversationService) LoadConversationVariables(conversationID uuid.UUID) (map[string]interface{}, error) {
+	s.loadCalled = true
+	if s.loadErr != nil {
+		return nil, s.loadErr
+	}
+	if s.conversation == nil || s.conversation.ID != conversationID {
+		return nil, errors.New("conversation not found")
+	}
+	return s.variables, nil
 }
 
 func workflowStreamTestNode(id string, nodeType string) map[string]interface{} {

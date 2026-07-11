@@ -16,6 +16,7 @@ interface AgentRuntimeExperienceSectionProps {
   isGeneratingSuggestions: boolean;
   defaultHomeTitle: string;
   defaultInputPlaceholder: string;
+  readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeHomeTitle: (value: string) => void;
   onChangeInputPlaceholder: (value: string) => void;
@@ -31,6 +32,7 @@ export function AgentRuntimeExperienceSection({
   isGeneratingSuggestions,
   defaultHomeTitle,
   defaultInputPlaceholder,
+  readOnly = false,
   onToggleSection,
   onChangeHomeTitle,
   onChangeInputPlaceholder,
@@ -38,7 +40,7 @@ export function AgentRuntimeExperienceSection({
   onChangeSuggestedQuestions,
 }: AgentRuntimeExperienceSectionProps) {
   const t = useT('agents.agentRuntime');
-  const canGenerateSuggestions = !isGeneratingSuggestions;
+  const canGenerateSuggestions = !readOnly && !isGeneratingSuggestions;
 
   return (
     <RuntimeSection
@@ -60,6 +62,7 @@ export function AgentRuntimeExperienceSection({
             maxLength={AGENT_HOME_TITLE_MAX_LENGTH}
             showCharacterCount
             placeholder={defaultHomeTitle}
+            disabled={readOnly}
             onChange={event =>
               onChangeHomeTitle(
                 Array.from(event.target.value).slice(0, AGENT_HOME_TITLE_MAX_LENGTH).join('')
@@ -82,6 +85,7 @@ export function AgentRuntimeExperienceSection({
             maxLength={AGENT_INPUT_PLACEHOLDER_MAX_LENGTH}
             showCharacterCount
             placeholder={defaultInputPlaceholder}
+            disabled={readOnly}
             onChange={event =>
               onChangeInputPlaceholder(
                 Array.from(event.target.value)
@@ -125,7 +129,7 @@ export function AgentRuntimeExperienceSection({
                   suggestedQuestions.length >= 6 ? suggestedQuestions : [...suggestedQuestions, '']
                 )
               }
-              disabled={suggestedQuestions.length >= 6}
+              disabled={readOnly || suggestedQuestions.length >= 6}
               aria-label={t('suggestions.add')}
               title={t('suggestions.add')}
             >
@@ -156,6 +160,7 @@ export function AgentRuntimeExperienceSection({
                 size="sm"
                 className="h-8 gap-1.5 px-2 text-xs"
                 onClick={() => onChangeSuggestedQuestions([''])}
+                disabled={readOnly}
               >
                 <Plus className="size-3.5" />
                 {t('suggestions.manualAdd')}
@@ -169,6 +174,7 @@ export function AgentRuntimeExperienceSection({
                 value={question}
                 maxLength={200}
                 placeholder={t('suggestions.placeholder')}
+                disabled={readOnly}
                 onChange={event =>
                   onChangeSuggestedQuestions(
                     suggestedQuestions.map((item, itemIndex) =>
@@ -186,6 +192,7 @@ export function AgentRuntimeExperienceSection({
                     suggestedQuestions.filter((_, itemIndex) => itemIndex !== index)
                   )
                 }
+                disabled={readOnly}
                 aria-label={t('suggestions.delete')}
                 title={t('suggestions.delete')}
               >

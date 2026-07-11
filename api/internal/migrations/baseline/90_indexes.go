@@ -350,6 +350,7 @@ var IndexesSchema = File{
 		`CREATE INDEX idx_refund_transaction ON public.refund_records USING btree (transaction_id);`,
 		`CREATE INDEX idx_relationships_deleted ON public.kb_relationships USING btree (is_deleted) WHERE (is_deleted = false);`,
 		`CREATE INDEX idx_roles_group_id ON public.roles USING btree (group_id);`,
+		`CREATE UNIQUE INDEX uk_roles_group_system_key ON public.roles USING btree (group_id, system_key) WHERE (system_key IS NOT NULL);`,
 		`CREATE INDEX idx_roles_status ON public.roles USING btree (status);`,
 		`CREATE INDEX idx_route_credential ON public.llm_routes USING btree (credential_id);`,
 		`CREATE INDEX idx_route_deleted ON public.llm_routes USING btree (deleted_at);`,

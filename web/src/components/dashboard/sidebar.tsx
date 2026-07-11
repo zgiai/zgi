@@ -86,16 +86,16 @@ function buildDashboardGroups(t: ReturnType<typeof useT<'dashboard'>>) {
       defaultOpen: true,
       items: [
         {
-          key: 'workspaces',
-          title: t('items.workspaces'),
-          href: '/dashboard/organization/workspaces',
-          icon: Building2,
-        },
-        {
           key: 'contacts',
           title: t('items.contacts'),
           href: '/dashboard/organization/contacts',
           icon: ContactRound,
+        },
+        {
+          key: 'workspaces',
+          title: t('items.workspaces'),
+          href: '/dashboard/organization/workspaces',
+          icon: Building2,
         },
         {
           key: 'permissions',

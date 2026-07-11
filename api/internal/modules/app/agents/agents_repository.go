@@ -13,6 +13,7 @@ type AgentsFilter struct {
 	Name       string
 	Keyword    string
 	AgentsType string
+	AgentTypes []string
 	CreatedBy  string
 	Internal   *bool
 }
@@ -242,6 +243,9 @@ func (r *agentsRepository) applyFiltersMultipleTenants(query *gorm.DB, filter Ag
 	}
 	if filter.AgentsType != "" {
 		query = query.Where("agent_type = ?", filter.AgentsType)
+	}
+	if len(filter.AgentTypes) > 0 {
+		query = query.Where("agent_type IN ?", filter.AgentTypes)
 	}
 	if filter.CreatedBy != "" {
 		query = query.Where("created_by = ?", filter.CreatedBy)
@@ -487,86 +491,7 @@ func (r *agentsRepository) GetPaginatedAgentsWithPermissions(
 	// Requirements: 8.5, 8.6
 	page, limit = r.normalizePaginationParams(page, limit)
 
-	// Determine which query path to use based on organization role
-	isOrgAdmin := permissionContext.OrganizationRole == "owner" || permissionContext.OrganizationRole == "admin"
-
-	if isOrgAdmin {
-		// Organization Admin/Owner: Simple query path
-		return r.getAgentsForOrgAdmin(ctx, permissionContext, filter, page, limit)
-	}
-
-	// Normal User: Complex permission logic
 	return r.getAgentsForNormalUser(ctx, accountID, permissionContext, filter, page, limit)
-}
-
-// getAgentsForOrgAdmin retrieves agents for organization admins/owners
-// Org admins can see all agents in all departments within their organization
-// Requirements: 2.1, 2.2, 2.3, 8.1, 8.2, 8.3, 8.4, 11.3, 11.5
-func (r *agentsRepository) getAgentsForOrgAdmin(
-	ctx context.Context,
-	permissionContext *PermissionContext,
-	filter AgentsFilter,
-	page, limit int,
-) ([]Agent, int64, error) {
-	var (
-		list  []Agent
-		total int64
-	)
-
-	// Build base query
-	query := r.db.WithContext(ctx).Model(&Agent{}).
-		Where("deleted_at IS NULL")
-
-	// Filter by organization department IDs
-	if filter.TenantID != "" {
-		query = query.Where("tenant_id = ?", filter.TenantID)
-	} else {
-		if len(permissionContext.OrganizationDeptIDs) > 0 {
-			query = query.Where("tenant_id IN ?", permissionContext.OrganizationDeptIDs)
-		} else {
-			// No departments in organization, return empty result
-			return []Agent{}, 0, nil
-		}
-	}
-
-	// Apply additional filters (name, keyword, agent_type, internal)
-	// Requirement 9.1, 9.2, 9.3
-	if filter.Name != "" {
-		query = query.Where("name ILIKE ?", "%"+filter.Name+"%")
-	}
-	if filter.Keyword != "" {
-		query = query.Where("(name ILIKE ? OR description ILIKE ?)", "%"+filter.Keyword+"%", "%"+filter.Keyword+"%")
-	}
-	if filter.AgentsType != "" {
-		query = query.Where("agent_type = ?", filter.AgentsType)
-	}
-	if filter.Internal != nil {
-		query = query.Where("internal = ?", *filter.Internal)
-	}
-
-	// Count total
-	// Requirement 8.4: WHEN counting total results, THE System SHALL count distinct agent IDs
-	// Requirement 11.3: Handle database errors (500) with logging
-	if err := query.Count(&total).Error; err != nil {
-		return nil, 0, fmt.Errorf("database error counting agents for org admin (org_id=%s, account_id=%s): %w",
-			permissionContext.OrganizationID, permissionContext.AccountID, err)
-	}
-
-	// Apply pagination and ordering
-	// Requirement 8.1: WHEN a page parameter is provided, THE System SHALL apply OFFSET based on (page - 1) * limit
-	// Requirement 8.2: WHEN a limit parameter is provided, THE System SHALL apply LIMIT to the query
-	// Requirement 8.3: WHEN pagination is applied, THE System SHALL apply it AFTER deduplication
-	// Requirement 11.3: Handle database errors (500) with logging
-	offset := (page - 1) * limit
-	if err := query.Order("created_at DESC").
-		Offset(offset).
-		Limit(limit).
-		Find(&list).Error; err != nil {
-		return nil, 0, fmt.Errorf("database error retrieving agents for org admin (org_id=%s, account_id=%s, page=%d, limit=%d): %w",
-			permissionContext.OrganizationID, permissionContext.AccountID, page, limit, err)
-	}
-
-	return list, total, nil
 }
 
 // getAgentsForNormalUser retrieves agents for normal users with complex permission logic
@@ -650,6 +575,9 @@ func (r *agentsRepository) buildPermissionSubquery(
 	}
 	if filter.AgentsType != "" {
 		baseQuery = baseQuery.Where("agents.agent_type = ?", filter.AgentsType)
+	}
+	if len(filter.AgentTypes) > 0 {
+		baseQuery = baseQuery.Where("agents.agent_type IN ?", filter.AgentTypes)
 	}
 	if filter.Internal != nil {
 		baseQuery = baseQuery.Where("agents.internal = ?", *filter.Internal)

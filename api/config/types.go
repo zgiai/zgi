@@ -10,6 +10,10 @@ const (
 	MaxChunkSize     = 1000
 	TempFileTenantID = "00000000-0000-0000-0000-000000000000"
 
+	// DefaultOrgInviteDefaultPassword is the self-hosted fallback password used
+	// when ZGI_ORG_INVITE_DEFAULT_PASSWORD is not configured.
+	DefaultOrgInviteDefaultPassword = "ZGI@Welcome1"
+
 	defaultServerPort = 2670
 	defaultGRPCPort   = 50051
 )

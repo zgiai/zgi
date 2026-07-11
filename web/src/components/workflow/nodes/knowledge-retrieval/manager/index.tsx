@@ -16,7 +16,12 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useT } from '@/i18n';
 import { useWorkflowEditor } from '@/components/workflow/hooks/use-workflow-editor';
 import OutputVariablesView from '../../../common/output-variables-view';
-import { useNodeData, useNodeDataUpdate, useNodeOutputVariables } from '../../../hooks';
+import {
+  useKnowledgeNodePermissions,
+  useNodeData,
+  useNodeDataUpdate,
+  useNodeOutputVariables,
+} from '../../../hooks';
 
 interface KnowledgeRetrievalManagerProps {
   id: string;
@@ -43,6 +48,8 @@ const KnowledgeRetrievalManager: React.FC<KnowledgeRetrievalManagerProps> = ({
   const debouncedKeyword = useDebouncedValue(keyword, 400);
   const t = useT();
   const { workspaceId } = useWorkflowEditor();
+  const { canReadKnowledgeBinding } = useKnowledgeNodePermissions();
+  const canEditKnowledgeSelection = !readOnly && canReadKnowledgeBinding;
 
   const nodeData = useNodeData<KnowledgeRetrievalNodeData>(nodeId);
   const updateNodeData = useNodeDataUpdate<KnowledgeRetrievalNodeData>(nodeId);
@@ -55,7 +62,7 @@ const KnowledgeRetrievalManager: React.FC<KnowledgeRetrievalManagerProps> = ({
       include_all: true,
       workspace_id: workspaceId,
     },
-    { enabled: true, refetchOnWindowFocus: false }
+    { enabled: canReadKnowledgeBinding, refetchOnWindowFocus: false }
   );
 
   // Use fine-grained selector to only get current node instead of entire nodes array
@@ -107,6 +114,7 @@ const KnowledgeRetrievalManager: React.FC<KnowledgeRetrievalManagerProps> = ({
     useCase: 'rerank',
     currentModel: nodeData?.multiple_retrieval_config.reranking_model ?? {},
     enabled:
+      !readOnly &&
       nodeData?.multiple_retrieval_config.reranking_enable &&
       nodeData?.multiple_retrieval_config.reranking_mode === 'reranking_model',
     onInitialize: v => {
@@ -153,7 +161,7 @@ const KnowledgeRetrievalManager: React.FC<KnowledgeRetrievalManagerProps> = ({
         {/* Datasets header moved into row below */}
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-semibold">{t('nodes.knowledgeRetrieval.datasets')}</h3>
-          <RecallSettingsDialog id={nodeId} />
+          <RecallSettingsDialog id={nodeId} readOnly={readOnly} />
         </div>
         <div className="mt-4 space-y-3">
           <div className="flex items-center gap-2">
@@ -161,7 +169,7 @@ const KnowledgeRetrievalManager: React.FC<KnowledgeRetrievalManagerProps> = ({
               placeholder={t('nodes.knowledgeRetrieval.searchDatasets')}
               value={keyword}
               onChange={e => setKeyword(e.target.value)}
-              disabled={readOnly}
+              disabled={!canEditKnowledgeSelection}
             />
           </div>
           {isLoading ? (
@@ -189,7 +197,7 @@ const KnowledgeRetrievalManager: React.FC<KnowledgeRetrievalManagerProps> = ({
                             toggleId(nodeData?.dataset_ids || [], ds.id, Boolean(checked))
                           )
                         }
-                        disabled={readOnly}
+                        disabled={!canEditKnowledgeSelection}
                       />
                       <div className="flex items-center gap-2">
                         <Database className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -227,7 +235,7 @@ const KnowledgeRetrievalManager: React.FC<KnowledgeRetrievalManagerProps> = ({
                         size="sm"
                         className="mt-4"
                         onClick={() => setKeyword('')}
-                        disabled={readOnly}
+                        disabled={!canEditKnowledgeSelection}
                       >
                         {t('nodes.knowledgeRetrieval.empty.clearSearch')}
                       </Button>

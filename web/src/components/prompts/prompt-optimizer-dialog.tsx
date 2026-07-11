@@ -29,8 +29,8 @@ import type {
 import { extractPromptVariables } from './prompt-optimizer-template';
 import { stripZGISlotBlocksForPromptOptimization } from '@/components/workflow/common/workflow-value-editor/utils/value-transform';
 import { getPromptRuntimeErrorMessage } from './prompt-runtime-errors';
-import { useWorkspaceStore } from '@/store/workspace-store';
 import { useLocale } from '@/hooks/use-locale';
+import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 
 interface PromptOptimizerDialogProps {
   open: boolean;
@@ -76,8 +76,7 @@ export function PromptOptimizerDialog({
 }: PromptOptimizerDialogProps) {
   const t = useT('prompts');
   const { locale } = useLocale();
-  const organizationRole = useWorkspaceStore.use.permissionState().organizationRole;
-  const isAdminOrOwner = organizationRole === 'owner' || organizationRole === 'admin';
+  const { canManageModelConfig: isAdminOrOwner } = useAccountCapabilities();
   const [sourcePrompt, setSourcePrompt] = useState('');
   const [goal, setGoal] = useState<PromptOptimizerGoal>('general');
   const [preserveVariables, setPreserveVariables] = useState(true);

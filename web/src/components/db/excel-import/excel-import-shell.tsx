@@ -76,6 +76,7 @@ import {
   isReservedDbColumnName,
   type TableNameErrorCode,
 } from '@/utils/validation';
+import { DATABASE_PERMISSION_ACTIONS } from '@/constants/permissions';
 
 type Step = 'file' | 'preview' | 'schema' | 'result';
 
@@ -114,10 +115,22 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
   const router = useRouter();
   const user = useCurrentUser();
   const { locale } = useLocale();
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canManage = hasPermission('database.manage');
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canAnalyzeImport = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.importAnalyze);
+  const canExecuteImport = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.importExecute);
+  const canViewImportErrors = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.importErrorsView);
+  const canOpenCreatedTableRecords = hasAnyPermission([
+    ...DATABASE_PERMISSION_ACTIONS.recordView,
+    ...DATABASE_PERMISSION_ACTIONS.recordCreate,
+    ...DATABASE_PERMISSION_ACTIONS.recordUpdate,
+    ...DATABASE_PERMISSION_ACTIONS.recordDelete,
+  ]);
+  const canOpenCreatedTableSchema = hasAnyPermission([
+    ...DATABASE_PERMISSION_ACTIONS.schemaView,
+    ...DATABASE_PERMISSION_ACTIONS.schemaManage,
+  ]);
   const { value: defaultModel } = useDefaultModelByUseCase('text-chat');
-  const { tables } = useDbTables(dbId, { enabled: canManage });
+  const { tables } = useDbTables(dbId, { enabled: canAnalyzeImport || canExecuteImport });
   const [step, setStep] = useState<Step>('file');
   const [fileDialogOpen, setFileDialogOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<FileItem | null>(null);
@@ -144,7 +157,9 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
     dbId,
     importResult?.job_id,
     { limit: 20, offset: 0 },
-    step === 'result' && Boolean(importResult && importResult.failed_rows > 0)
+    canViewImportErrors &&
+      step === 'result' &&
+      Boolean(importResult && importResult.failed_rows > 0)
   );
   const analyzeRequestSeq = useRef(0);
 
@@ -210,7 +225,7 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
   );
 
   const handleAnalyze = async (overrides?: { sheet_name?: string; header_row?: number }) => {
-    if (!selectedFile || !canManage) return;
+    if (!selectedFile || !canAnalyzeImport) return;
     const requestedSheetName = overrides?.sheet_name?.trim();
     if (requestedSheetName) {
       setSelectedSheetName(requestedSheetName);
@@ -247,7 +262,7 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
   };
 
   const handleConfirm = async () => {
-    if (!analysis || !canImport || !canManage) return;
+    if (!analysis || !canImport || !canExecuteImport) return;
     const payload: ConfirmExcelImportRequest = {
       table: {
         name: tableName.trim(),
@@ -297,6 +312,13 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
 
   const displayedFailedItems =
     importErrorsQuery.data?.data.data ?? importResult?.failed_items ?? [];
+  const createdTableHref = createdTableId
+    ? canOpenCreatedTableRecords
+      ? `/console/db/${dbId}/table/${createdTableId}`
+      : canOpenCreatedTableSchema
+        ? `/console/db/${dbId}/table/${createdTableId}/structure`
+        : null
+    : null;
 
   if (isPermissionsLoading) {
     return (
@@ -306,7 +328,7 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
     );
   }
 
-  if (!canManage) {
+  if (!canAnalyzeImport && !canExecuteImport) {
     return (
       <div className="flex h-full w-full flex-col items-center justify-center p-6 text-center">
         <ShieldAlert className="mb-4 h-12 w-12 text-muted-foreground" />
@@ -373,7 +395,7 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
           <div className="mt-6 flex justify-center">
             <Button
               onClick={() => handleAnalyze()}
-              disabled={!selectedFile || analyzeMutation.isPending}
+              disabled={!selectedFile || !canAnalyzeImport || analyzeMutation.isPending}
               className="gap-2"
             >
               {analyzeMutation.isPending ? (
@@ -688,7 +710,10 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
             <Button variant="outline" onClick={() => setStep('preview')}>
               {t('excelImport.actions.previous')}
             </Button>
-            <Button onClick={handleConfirm} disabled={!canImport || confirmMutation.isPending}>
+            <Button
+              onClick={handleConfirm}
+              disabled={!canImport || !canExecuteImport || confirmMutation.isPending}
+            >
               {confirmMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
               {t('excelImport.schema.import')}
             </Button>
@@ -756,9 +781,13 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
               </div>
             )}
             <div className="mt-6 flex justify-center gap-2">
-              {createdTableId && (
-                <Button onClick={() => router.push(`/console/db/${dbId}/table/${createdTableId}`)}>
-                  {t('excelImport.result.openTable')}
+              {createdTableHref && (
+                <Button asChild>
+                  <Link href={createdTableHref}>
+                    {canOpenCreatedTableRecords
+                      ? t('excelImport.result.openTable')
+                      : t('actions.manageStructure')}
+                  </Link>
                 </Button>
               )}
               <Button variant="outline" onClick={() => router.push(`/console/db/${dbId}`)}>

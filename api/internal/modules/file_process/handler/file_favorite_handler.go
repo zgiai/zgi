@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,7 @@ type FileFavoriteHandler struct {
 	fileFavoriteService service.FileFavoriteService
 	fileService         interfaces.FileService
 	accountService      interfaces.AccountService
+	enterpriseService   fileWorkspacePermissionChecker
 }
 
 // NewFileFavoriteHandler creates a new FileFavoriteHandler instance
@@ -25,11 +27,13 @@ func NewFileFavoriteHandler(
 	fileFavoriteService service.FileFavoriteService,
 	fileService interfaces.FileService,
 	accountService interfaces.AccountService,
+	enterpriseService interfaces.OrganizationService,
 ) *FileFavoriteHandler {
 	return &FileFavoriteHandler{
 		fileFavoriteService: fileFavoriteService,
 		fileService:         fileService,
 		accountService:      accountService,
+		enterpriseService:   enterpriseService,
 	}
 }
 
@@ -64,6 +68,10 @@ func (h *FileFavoriteHandler) FavoriteFile(c *gin.Context) {
 		return
 	}
 
+	if _, ok := authorizeFileViewAccess(c, h.fileService, h.enterpriseService, req.FileID); !ok {
+		return
+	}
+
 	// Favorite the file
 	err := h.fileFavoriteService.FavoriteFile(c.Request.Context(), req.FileID, accountID)
 	if err != nil {
@@ -91,6 +99,10 @@ func (h *FileFavoriteHandler) UnfavoriteFile(c *gin.Context) {
 	// Validate UUID format
 	if _, err := uuid.Parse(fileID); err != nil {
 		h.businessError(c, response.ErrInvalidParam)
+		return
+	}
+
+	if _, ok := authorizeFileViewAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
 		return
 	}
 
@@ -123,6 +135,12 @@ func (h *FileFavoriteHandler) BatchFavoriteFiles(c *gin.Context) {
 	for _, fileID := range req.FileIDs {
 		if _, err := uuid.Parse(fileID); err != nil {
 			h.businessError(c, response.ErrInvalidParam)
+			return
+		}
+	}
+
+	for _, fileID := range req.FileIDs {
+		if _, ok := authorizeFileViewAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
 			return
 		}
 	}
@@ -161,6 +179,12 @@ func (h *FileFavoriteHandler) BatchUnfavoriteFiles(c *gin.Context) {
 	for _, fileID := range req.FileIDs {
 		if _, err := uuid.Parse(fileID); err != nil {
 			h.businessError(c, response.ErrInvalidParam)
+			return
+		}
+	}
+
+	for _, fileID := range req.FileIDs {
+		if _, ok := authorizeFileViewAccess(c, h.fileService, h.enterpriseService, fileID); !ok {
 			return
 		}
 	}
@@ -219,25 +243,58 @@ func (h *FileFavoriteHandler) ListFavorites(c *gin.Context) {
 		return
 	}
 
-	// Convert to response DTOs
-	favoriteResponses := make([]dto.FileFavoriteResponse, len(favorites))
-	for i, favorite := range favorites {
-		favoriteResponses[i] = dto.FileFavoriteResponse{
+	// Convert to response DTOs and hide favorites whose file is no longer visible
+	// in the current organization/workspace scope.
+	favoriteResponses := make([]dto.FileFavoriteResponse, 0, len(favorites))
+	for _, favorite := range favorites {
+		allowed, err := h.canListFavoriteFile(c.Request.Context(), organizationID, accountID, favorite.FileID)
+		if err != nil {
+			h.businessError(c, response.ErrSystemError)
+			return
+		}
+		if !allowed {
+			continue
+		}
+		favoriteResponses = append(favoriteResponses, dto.FileFavoriteResponse{
 			ID:        favorite.ID,
 			FileID:    favorite.FileID,
 			AccountID: favorite.AccountID,
 			CreatedAt: favorite.CreatedAt,
-		}
+		})
 	}
 
 	// Calculate has more
-	hasMore := int64(req.Page*req.Limit) < total
+	filteredTotal := int64(len(favoriteResponses))
+	hasMore := int64(req.Page*req.Limit) < total && filteredTotal == int64(len(favorites))
 
 	response.Success(c, &dto.FileFavoriteListResponse{
 		Data:    favoriteResponses,
 		HasMore: hasMore,
 		Limit:   req.Limit,
-		Total:   total,
+		Total:   filteredTotal,
 		Page:    req.Page,
 	})
+}
+
+func (h *FileFavoriteHandler) canListFavoriteFile(ctx context.Context, organizationID, accountID, fileID string) (bool, error) {
+	uploadFile, err := h.fileService.GetFileByID(ctx, fileID)
+	if err != nil || uploadFile == nil {
+		return false, nil
+	}
+	if uploadFile.IsTemporary {
+		return uploadFile.CreatedBy == accountID, nil
+	}
+	if uploadFile.OrganizationID != organizationID {
+		return false, nil
+	}
+
+	workspaceID := getUploadFileWorkspaceID(uploadFile)
+	if workspaceID == "" {
+		return true, nil
+	}
+	if h.enterpriseService == nil {
+		return false, nil
+	}
+
+	return hasWorkspaceFilePermission(ctx, h.enterpriseService, organizationID, accountID, workspaceID, fileReadablePermissionCodes()...)
 }

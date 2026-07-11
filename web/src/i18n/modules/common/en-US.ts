@@ -122,21 +122,22 @@ const messages = {
     noWorkspaces: 'No workspaces available',
     noWorkspacesMember: 'You are not assigned to a workspace yet.',
     noWorkspacesAdmin: 'No workspaces are assigned or available yet.',
+    organizationMode: 'Personal workbench',
   },
 
   workspaceRequired: {
     title: 'Select a workspace to continue',
     description:
-      'The workbench runs inside a specific workspace. Select a workspace before starting chats, apps, image generation, or tasks.',
+      'Asset management and scheduled tasks run inside a specific workspace. Select a workspace to continue.',
     noWorkspacesTitle: 'No workspace is available',
     memberNoWorkspacesDescription:
       'You have joined the organization, but you have not been assigned to any workspace yet.',
     adminNoWorkspacesDescription:
-      'The workbench needs a concrete workspace before chats, apps, image generation, or tasks can be used.',
+      'Asset management and scheduled tasks need a concrete workspace. Create a workspace or assign members first.',
     memberNoWorkspacesHint:
-      'Ask an organization administrator to add you to a workspace before using the workbench.',
+      'Ask an organization administrator to add you to the right workspace before managing assets or scheduled tasks.',
     adminNoWorkspacesHint:
-      'Create a workspace or assign members in workspace management, then return to the workbench.',
+      'Create a workspace or assign members in workspace management, then return here.',
     loadingWorkspaces: 'Loading workspaces...',
     manageWorkspaces: 'Manage workspaces',
     refreshWorkspaces: 'Refresh workspaces',
@@ -204,14 +205,14 @@ const messages = {
     scrollForMore: 'Scroll for more',
   },
 
-  // Organization View empty states
+  // Personal workbench empty states
   personalSpaceEmpty: {
     agents: 'No agents available',
     datasets: 'No datasets available',
     databases: 'No databases available',
     files: 'No files available',
     description:
-      'In Organization View, you can browse organization resources. Switch to a workspace for workspace-specific actions.',
+      'In the personal workbench, you can use organization-level product entry points. Switch to a workspace for workspace-specific actions.',
     startCreating: 'Start Creating',
     selectWorkspaceHint: 'Select a workspace to continue',
     overlayHint: 'Click the area to select a workspace, or click elsewhere to close',
@@ -225,7 +226,7 @@ const messages = {
     description:
       'This resource belongs to "{workspaceName}", but you are currently in "{currentWorkspaceName}".',
     descriptionInOrg:
-      'This resource belongs to "{workspaceName}", but you are currently in Organization View.',
+      'This resource belongs to "{workspaceName}", but you are currently in the personal workbench.',
     switchButton: 'Switch to this workspace',
     actionHint: 'Please switch your current workspace and try again.',
   },

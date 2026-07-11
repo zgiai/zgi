@@ -219,6 +219,9 @@ func (h *AgentsHandler) webAppAgentRuntimeContext(c *gin.Context) (agentRuntimeC
 		response.Fail(c, response.ErrSystemError)
 		return agentRuntimeContext{}, false
 	}
+	if !h.requireWebAppRuntimeAccess(c) {
+		return agentRuntimeContext{}, false
+	}
 	published, err := h.appService.GetPublishedAgentWebAppConfig(c.Request.Context(), c.Param("web_app_id"))
 	if err != nil {
 		h.failWebAppRuntime(c, err)
@@ -441,16 +444,16 @@ func (h *AgentsHandler) updateRuntimeConversation(c *gin.Context, runtimeCtx age
 	if !ok {
 		return
 	}
+	if _, err := h.chatRuntimeService.GetConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID); err != nil {
+		h.failRuntime(c, err)
+		return
+	}
 	var req runtimedto.UpdateConversationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	if _, err := h.chatRuntimeService.GetConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID); err != nil {
-		h.failRuntime(c, err)
-		return
-	}
-	conversation, err := h.chatRuntimeService.UpdateConversation(c.Request.Context(), runtimeCtx.Scope, conversationID, req)
+	conversation, err := h.chatRuntimeService.UpdateConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID, req)
 	if err != nil {
 		h.failRuntime(c, err)
 		return
@@ -463,11 +466,7 @@ func (h *AgentsHandler) deleteRuntimeConversation(c *gin.Context, runtimeCtx age
 	if !ok {
 		return
 	}
-	if _, err := h.chatRuntimeService.GetConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID); err != nil {
-		h.failRuntime(c, err)
-		return
-	}
-	if err := h.chatRuntimeService.DeleteConversation(c.Request.Context(), runtimeCtx.Scope, conversationID); err != nil {
+	if err := h.chatRuntimeService.DeleteConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID); err != nil {
 		h.failRuntime(c, err)
 		return
 	}
@@ -479,13 +478,9 @@ func (h *AgentsHandler) listRuntimeMessages(c *gin.Context, runtimeCtx agentRunt
 	if !ok {
 		return
 	}
-	if _, err := h.chatRuntimeService.GetConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID); err != nil {
-		h.failRuntime(c, err)
-		return
-	}
 	page := positiveQueryInt(c, "page", 1)
 	limit := positiveQueryInt(c, "limit", 100)
-	messages, total, err := h.chatRuntimeService.ListMessages(c.Request.Context(), runtimeCtx.Scope, conversationID, page, limit)
+	messages, total, err := h.chatRuntimeService.ListConversationMessagesByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID, page, limit)
 	if err != nil {
 		h.failRuntime(c, err)
 		return
@@ -508,11 +503,7 @@ func (h *AgentsHandler) stopRuntimeConversation(c *gin.Context, runtimeCtx agent
 	if !ok {
 		return
 	}
-	if _, err := h.chatRuntimeService.GetConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID); err != nil {
-		h.failRuntime(c, err)
-		return
-	}
-	result, err := h.chatRuntimeService.StopConversation(c.Request.Context(), runtimeCtx.Scope, conversationID)
+	result, err := h.chatRuntimeService.StopConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID)
 	if err != nil {
 		h.failRuntime(c, err)
 		return
@@ -532,17 +523,17 @@ func (h *AgentsHandler) streamRuntimeEvents(c *gin.Context, runtimeCtx agentRunt
 	if !ok {
 		return
 	}
+	if _, err := h.chatRuntimeService.GetConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID); err != nil {
+		h.failRuntime(c, err)
+		return
+	}
 	messageID, err := uuid.Parse(strings.TrimSpace(c.Query("message_id")))
 	if err != nil {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	if _, err := h.chatRuntimeService.GetConversationByCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID); err != nil {
-		h.failRuntime(c, err)
-		return
-	}
 	setupAgentSSE(c)
-	err = h.chatRuntimeService.StreamConversationEvents(c.Request.Context(), runtimeCtx.Scope, conversationID, messageID, c.Query("after_id"), func(event runtimeservice.StreamEvent) error {
+	err = h.chatRuntimeService.StreamConversationEventsForCaller(c.Request.Context(), runtimeCtx.Scope, runtimeCtx.Caller, conversationID, messageID, c.Query("after_id"), func(event runtimeservice.StreamEvent) error {
 		return writeAgentSSEEvent(c, event.ID, event.EventType, event.Payload)
 	})
 	if err != nil {

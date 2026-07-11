@@ -13,9 +13,10 @@ const (
 	ConversationRuntimeStatusIdle      = "idle"
 	ConversationRuntimeStatusStreaming = "streaming"
 
-	ConversationSourceConsole   = "console"
-	ConversationSourceWebApp    = "webapp"
-	ConversationSourceMigration = "migration"
+	ConversationSourceConsole     = "console"
+	ConversationSourceWebApp      = "webapp"
+	ConversationSourceExternalAPI = "external-api"
+	ConversationSourceMigration   = "migration"
 
 	ConversationCallerAIChat = "aichat"
 	ConversationCallerAgent  = "agent"

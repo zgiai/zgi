@@ -51,6 +51,12 @@ func (s *OrganizationServiceImpl) CreateOrganization(ctx context.Context, name s
 	return organization, nil
 }
 
+func (s *OrganizationServiceImpl) CheckOrganizationNameExists(ctx context.Context, name string) (bool, error) {
+	var count int64
+	err := s.db.WithContext(ctx).Model(&model.Organization{}).Where("name = ?", name).Count(&count).Error
+	return count > 0, err
+}
+
 // UpsertOrganizationRole updates or inserts a organization role
 func (s *OrganizationServiceImpl) UpsertOrganizationRole(ctx context.Context, organizationID string, accountID string, role model.OrganizationRole) error {
 	organizationRole := &model.OrganizationMember{

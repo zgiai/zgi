@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
-import { Plus, MoreHorizontal, Copy, Edit, Trash2, KeyRound } from 'lucide-react';
+import { Plus, MoreHorizontal, Copy, Edit, Trash2, KeyRound, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -14,6 +14,7 @@ import {
   DialogFooter,
   DialogTitle,
   DialogBody,
+  DialogDescription,
 } from '@/components/ui/dialog';
 import {
   Table,
@@ -38,7 +39,6 @@ import {
   useUpdateAgentApiKey,
   useDeleteAgentApiKey,
 } from '@/hooks/agent/use-agent-api-keys';
-import { Alert } from '@/components/ui/alert';
 import { useT } from '@/i18n';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { agentService } from '@/services';
@@ -174,7 +174,7 @@ export default function ApiKeysTab({ agentId }: ApiKeysTabProps) {
     try {
       setTogglingId(keyId);
       await agentService.updateAgentApiKey(agentId, keyId, {
-        status: checked ? 'active' : 'revoked',
+        status: checked ? 'active' : 'inactive',
       });
       await refetch();
     } finally {
@@ -183,7 +183,7 @@ export default function ApiKeysTab({ agentId }: ApiKeysTabProps) {
   };
 
   return (
-    <div className="space-y-6 p-4">
+    <div className="space-y-5 p-4 sm:p-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -206,16 +206,6 @@ export default function ApiKeysTab({ agentId }: ApiKeysTabProps) {
         </div>
       </div>
 
-      {/* Toolbar */}
-      <div className="flex items-center gap-3">
-        <Input
-          placeholder={t('agents.apiKeys.searchPlaceholder')}
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="max-w-sm"
-        />
-      </div>
-
       {/* Table */}
       {isLoading ? (
         <div className="space-y-3">
@@ -224,132 +214,165 @@ export default function ApiKeysTab({ agentId }: ApiKeysTabProps) {
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-full" />
         </div>
-      ) : filteredKeys.length === 0 ? (
+      ) : keys.length === 0 ? (
         <div className="rounded-lg border border-dashed p-8 text-center">
           <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-lg bg-primary/10">
             <KeyRound className="size-6 text-primary" />
           </div>
           <h3 className="text-base font-semibold text-foreground">
-            {hasSearch ? t('agents.apiKeys.emptySearchTitle') : t('agents.apiKeys.emptyTitle')}
+            {t('agents.apiKeys.emptyTitle')}
           </h3>
           <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-            {hasSearch
-              ? t('agents.apiKeys.emptySearchDescription')
-              : t('agents.apiKeys.emptyDescription')}
+            {t('agents.apiKeys.emptyDescription')}
           </p>
           <div className="mt-5 flex justify-center gap-2">
-            {hasSearch ? (
-              <Button variant="outline" onClick={() => setSearch('')}>
-                {t('common.clear')}
-              </Button>
-            ) : (
-              <Button onClick={openCreate}>
-                <Plus className="size-4" />
-                {t('agents.apiKeys.actions.createKey')}
-              </Button>
-            )}
+            <Button onClick={openCreate}>
+              <Plus className="size-4" />
+              {t('agents.apiKeys.actions.createKey')}
+            </Button>
           </div>
         </div>
       ) : (
-        <div className="rounded-md border overflow-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t('agents.apiKeys.columns.name')}</TableHead>
-                <TableHead>{t('agents.apiKeys.columns.key')}</TableHead>
-                <TableHead>{t('agents.apiKeys.columns.updatedAt')}</TableHead>
-                <TableHead>{t('agents.apiKeys.columns.createdAt')}</TableHead>
-                <TableHead>{t('agents.apiKeys.columns.expiresAt')}</TableHead>
-                <TableHead>{t('agents.apiKeys.columns.status')}</TableHead>
-                <TableHead className="w-[80px]">{t('agents.apiKeys.columns.actions')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredKeys.map(k => (
-                <TableRow key={k.id}>
-                  <TableCell className="font-medium">{k.name || '-'}</TableCell>
-                  <TableCell>
-                    <span className="font-mono">
-                      {k.key_prefix ? `${k.key_prefix}*********` : '-'}
-                    </span>
-                  </TableCell>
-                  <TableCell>{k.updated_at ? formatDate(k.updated_at) : '-'}</TableCell>
-                  <TableCell>{k.created_at ? formatDate(k.created_at) : '-'}</TableCell>
-                  <TableCell>
-                    {k.expires_at ? formatDate(k.expires_at) : t('agents.apiKeys.noExpiry')}
-                  </TableCell>
-                  <TableCell>
-                    {k.status === 'active' ? (
-                      <Badge>{t('agents.apiKeys.active')}</Badge>
-                    ) : (
-                      <Badge variant="destructive">{t('agents.apiKeys.revoked')}</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        checked={k.status === 'active'}
-                        onCheckedChange={checked => handleToggleStatus(k.id, checked)}
-                        disabled={togglingId === k.id}
-                      />
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" isIcon>
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-40">
-                          <DropdownMenuItem onClick={() => openEdit(k.id)}>
-                            <Edit className="h-4 w-4 mr-2" /> {t('common.edit')}
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            className="text-destructive"
-                            onClick={() => {
-                              setDeleteId(k.id);
-                              setDeleteOpen(true);
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" /> {t('common.delete')}
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+        <div className="overflow-hidden rounded-lg border bg-background">
+          <div className="flex items-center border-b bg-muted/20 px-4 py-3">
+            <div className="relative w-full sm:w-80">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder={t('agents.apiKeys.searchPlaceholder')}
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="h-9 bg-background pl-9 pr-9 shadow-none"
+              />
+              {hasSearch ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  isIcon
+                  onClick={() => setSearch('')}
+                  className="absolute right-1 top-1/2 size-7 -translate-y-1/2 text-muted-foreground"
+                  aria-label={t('common.clear')}
+                >
+                  <X className="size-3.5" />
+                </Button>
+              ) : null}
+            </div>
+          </div>
+
+          {filteredKeys.length === 0 ? (
+            <div className="p-10 text-center">
+              <h3 className="text-sm font-semibold text-foreground">
+                {t('agents.apiKeys.emptySearchTitle')}
+              </h3>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {t('agents.apiKeys.emptySearchDescription')}
+              </p>
+              <Button variant="outline" onClick={() => setSearch('')} className="mt-4">
+                {t('common.clear')}
+              </Button>
+            </div>
+          ) : (
+            <div className="overflow-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t('agents.apiKeys.columns.name')}</TableHead>
+                    <TableHead>{t('agents.apiKeys.columns.key')}</TableHead>
+                    <TableHead>{t('agents.apiKeys.columns.updatedAt')}</TableHead>
+                    <TableHead>{t('agents.apiKeys.columns.createdAt')}</TableHead>
+                    <TableHead>{t('agents.apiKeys.columns.expiresAt')}</TableHead>
+                    <TableHead>{t('agents.apiKeys.columns.status')}</TableHead>
+                    <TableHead className="w-[80px]">
+                      {t('agents.apiKeys.columns.actions')}
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredKeys.map(k => (
+                    <TableRow key={k.id}>
+                      <TableCell className="font-medium">{k.name || '-'}</TableCell>
+                      <TableCell>
+                        <span className="font-mono">
+                          {k.key_prefix ? `${k.key_prefix}*********` : '-'}
+                        </span>
+                      </TableCell>
+                      <TableCell>{k.updated_at ? formatDate(k.updated_at) : '-'}</TableCell>
+                      <TableCell>{k.created_at ? formatDate(k.created_at) : '-'}</TableCell>
+                      <TableCell>
+                        {k.expires_at ? formatDate(k.expires_at) : t('agents.apiKeys.noExpiry')}
+                      </TableCell>
+                      <TableCell>
+                        {k.status === 'active' ? (
+                          <Badge>{t('agents.apiKeys.active')}</Badge>
+                        ) : k.status === 'inactive' ? (
+                          <Badge variant="secondary">{t('agents.apiKeys.inactive')}</Badge>
+                        ) : (
+                          <Badge variant="destructive">{t('agents.apiKeys.revoked')}</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            checked={k.status === 'active'}
+                            onCheckedChange={checked => handleToggleStatus(k.id, checked)}
+                            disabled={togglingId === k.id}
+                          />
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" isIcon>
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-40">
+                              <DropdownMenuItem onClick={() => openEdit(k.id)}>
+                                <Edit className="mr-2 h-4 w-4" /> {t('common.edit')}
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              {k.status !== 'revoked' ? (
+                                <DropdownMenuItem
+                                  className="text-destructive"
+                                  onClick={() => {
+                                    setDeleteId(k.id);
+                                    setDeleteOpen(true);
+                                  }}
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" /> {t('common.delete')}
+                                </DropdownMenuItem>
+                              ) : null}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </div>
       )}
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
-        <DialogContent className="max-w-md p-0 overflow-hidden">
+        <DialogContent size="md" className="overflow-hidden p-0">
           <DialogHeader>
-            <DialogTitle className="text-xl font-bold tracking-tight">
+            <DialogTitle>
               {isEdit ? t('agents.apiKeys.editTitle') : t('agents.apiKeys.createTitle')}
             </DialogTitle>
           </DialogHeader>
-          <DialogBody className="py-6 space-y-6">
+          <DialogBody className="space-y-5 pb-2">
             <div className="space-y-2">
-              <Label className="text-sm font-bold text-neutral-700 tracking-tight">
-                {t('common.name')}
-              </Label>
+              <Label>{t('common.name')}</Label>
               <Input
                 value={newName}
                 onChange={e => setNewName(e.target.value)}
                 placeholder={t('agents.apiKeys.namePlaceholder')}
-                className="h-11 rounded-xl border-neutral-200 focus:ring-blue-500/20 transition-all"
               />
             </div>
             {!isEdit && (
-              <div className="space-y-3 bg-neutral-50/50 p-4 rounded-2xl border border-neutral-100">
+              <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
                 <div className="flex items-center justify-between">
-                  <Label className="text-sm font-bold text-neutral-700 tracking-tight">
-                    {t('agents.apiKeys.expiryLabel')}
-                  </Label>
+                  <Label>{t('agents.apiKeys.expiryLabel')}</Label>
                   <div className="flex items-center gap-3">
-                    <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">
+                    <span className="text-xs text-muted-foreground">
                       {hasExpiry ? t('common.enabled') : t('agents.apiKeys.noExpiry')}
                     </span>
                     <Switch
@@ -369,23 +392,18 @@ export default function ApiKeysTab({ agentId }: ApiKeysTabProps) {
                   min={new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
                     .toISOString()
                     .slice(0, 16)}
-                  className="h-11 rounded-xl border-neutral-200 focus:ring-blue-500/20 transition-all bg-white disabled:opacity-50"
+                  className="bg-background"
                 />
               </div>
             )}
           </DialogBody>
-          <DialogFooter className="bg-neutral-50/50 pt-4 pb-6 px-6 border-t">
-            <Button
-              variant="ghost"
-              onClick={() => setFormOpen(false)}
-              className="font-bold rounded-xl h-11 px-6 hover:bg-neutral-100"
-            >
+          <DialogFooter className="border-t">
+            <Button variant="outline" onClick={() => setFormOpen(false)}>
               {t('common.cancel')}
             </Button>
             <Button
               onClick={handleSubmit}
               disabled={isEdit ? updateMutation.isPending : createMutation.isPending}
-              className="font-bold rounded-xl h-11 px-8 shadow-premium transition-all active:scale-95"
             >
               {isEdit
                 ? updateMutation.isPending
@@ -418,27 +436,20 @@ export default function ApiKeysTab({ agentId }: ApiKeysTabProps) {
 
       {/* Secret Dialog (only shows once after creation) */}
       <Dialog open={secretOpen} onOpenChange={setSecretOpen}>
-        <DialogContent className="max-w-md p-0 overflow-hidden">
+        <DialogContent size="md" className="overflow-hidden p-0">
           <DialogHeader>
-            <DialogTitle className="text-xl font-bold tracking-tight text-emerald-600">
-              {t('agents.apiKeys.createdTitle')}
-            </DialogTitle>
+            <DialogTitle>{t('agents.apiKeys.createdTitle')}</DialogTitle>
+            <DialogDescription className="leading-6">
+              {t('agents.apiKeys.createdNotice')}
+            </DialogDescription>
           </DialogHeader>
-          <DialogBody className="py-6 space-y-6">
-            <Alert
-              variant="destructive"
-              className="rounded-2xl border-red-100 bg-red-50 text-red-900 shadow-sm animate-in fade-in slide-in-from-top-2 duration-500"
-            >
-              <span className="text-xs font-medium leading-relaxed">
-                {t('agents.apiKeys.createdNotice')}
-              </span>
-            </Alert>
-            <div className="flex items-center gap-3 bg-neutral-900 text-white rounded-2xl p-5 shadow-2xl group transition-all hover:scale-[1.02]">
-              <div className="font-mono break-all text-sm flex-1 leading-relaxed opacity-90">
+          <DialogBody className="pb-2">
+            <div className="flex items-center gap-3 rounded-lg border bg-muted/30 p-4">
+              <code className="min-w-0 flex-1 break-all font-mono text-sm leading-6 text-foreground">
                 {createdSecretKey || '-'}
-              </div>
+              </code>
               <Button
-                variant="ghost"
+                variant="outline"
                 isIcon
                 onClick={() => {
                   if (createdSecretKey) {
@@ -446,20 +457,20 @@ export default function ApiKeysTab({ agentId }: ApiKeysTabProps) {
                     toast.success(t('agents.apiKeys.copiedTitle'));
                   }
                 }}
-                className="h-10 w-10 text-white hover:bg-white/10 rounded-xl"
+                className="shrink-0"
+                aria-label={t('agents.apiKeys.copy')}
               >
-                <Copy className="h-5 w-5" />
+                <Copy className="h-4 w-4" />
               </Button>
             </div>
           </DialogBody>
-          <DialogFooter className="bg-neutral-50/50 pt-4 pb-6 px-6 border-t">
+          <DialogFooter className="border-t">
             <Button
-              variant="ghost"
+              variant="outline"
               onClick={() => {
                 setSecretOpen(false);
                 setCreatedSecretKey('');
               }}
-              className="font-bold rounded-xl h-11 px-6 hover:bg-neutral-100"
             >
               {t('common.close')}
             </Button>
@@ -470,8 +481,8 @@ export default function ApiKeysTab({ agentId }: ApiKeysTabProps) {
                   toast.success(t('agents.apiKeys.copiedTitle'));
                 }
               }}
-              className="font-bold rounded-xl h-11 px-8 shadow-premium transition-all active:scale-95 bg-emerald-600 hover:bg-emerald-700"
             >
+              <Copy className="h-4 w-4" />
               {t('agents.apiKeys.copy')}
             </Button>
           </DialogFooter>

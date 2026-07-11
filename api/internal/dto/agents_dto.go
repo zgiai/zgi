@@ -55,6 +55,7 @@ type GetAgentsListRequest struct {
 	Keyword       string `form:"keyword" json:"keyword"`
 	IsCreatedByMe bool   `form:"is_created_by_me" json:"is_created_by_me"`
 	AgentType     string `form:"agent_type" json:"agent_type"`
+	AssetKind     string `form:"asset_kind" json:"asset_kind"`
 	Internal      *bool  `form:"internal" json:"internal"`
 }
 
@@ -148,6 +149,42 @@ type WebAppStatusResponse struct {
 	WebAppID     string `json:"web_app_id"`
 	WebAppStatus string `json:"web_app_status"`
 	UpdatedAt    int64  `json:"updated_at"`
+}
+
+type AgentRuntimeSurfaceAuthorizationResponse struct {
+	AgentID        string                             `json:"agent_id"`
+	WorkspaceID    string                             `json:"workspace_id"`
+	OrganizationID string                             `json:"organization_id"`
+	Surfaces       []AgentRuntimeSurfaceAuthorization `json:"surfaces"`
+}
+
+type UpdateAgentRuntimeSurfacesRequest struct {
+	Surfaces []UpdateAgentRuntimeSurfaceAuthorization `json:"surfaces" binding:"required"`
+}
+
+type UpdateAgentRuntimeSurfaceAuthorization struct {
+	Surface string                           `json:"surface" binding:"required"`
+	Enabled bool                             `json:"enabled"`
+	Grants  []UpdateAgentRuntimeSurfaceGrant `json:"grants,omitempty"`
+}
+
+type UpdateAgentRuntimeSurfaceGrant struct {
+	SubjectType string  `json:"subject_type" binding:"required"`
+	SubjectID   *string `json:"subject_id,omitempty"`
+	Enabled     *bool   `json:"enabled,omitempty"`
+}
+
+type AgentRuntimeSurfaceAuthorization struct {
+	Surface             string                     `json:"surface"`
+	Enabled             bool                       `json:"enabled"`
+	CompatibilitySource string                     `json:"compatibility_source"`
+	Grants              []AgentRuntimeSurfaceGrant `json:"grants"`
+}
+
+type AgentRuntimeSurfaceGrant struct {
+	SubjectType string  `json:"subject_type"`
+	SubjectID   *string `json:"subject_id"`
+	Enabled     bool    `json:"enabled"`
 }
 
 type AgentRuntimeModeConfig struct {
@@ -406,4 +443,19 @@ type AgentPublicWebAppConfigResponse struct {
 	AgentMemoryEnabled bool     `json:"agent_memory_enabled"`
 	Version            string   `json:"version"`
 	VersionUUID        string   `json:"version_uuid"`
+}
+
+type AgentWebAppRuntimeCapabilityResponse struct {
+	AgentID                string   `json:"agent_id"`
+	WebAppID               string   `json:"web_app_id"`
+	WorkspaceID            string   `json:"workspace_id"`
+	OrganizationID         string   `json:"organization_id"`
+	Surface                string   `json:"surface"`
+	Allowed                bool     `json:"allowed"`
+	Reason                 string   `json:"reason"`
+	AuthMode               string   `json:"auth_mode"`
+	PublicOnly             bool     `json:"public_only"`
+	PrivateAudienceEnabled bool     `json:"private_audience_enabled"`
+	SupportedSubjectTypes  []string `json:"supported_subject_types"`
+	VersionUUID            string   `json:"version_uuid,omitempty"`
 }

@@ -44,9 +44,10 @@ export default function PromptsPage() {
   const { locale } = useLocale();
   const searchParams = useSearchParams();
   const currentWorkspace = useCurrentWorkspace();
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canView = hasPermission('agent.view');
-  const canManage = hasPermission('agent.manage');
+  const { hasWorkspaceAccess, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canUseWorkspaceTools = Boolean(currentWorkspace?.id) && hasWorkspaceAccess();
+  const canView = canUseWorkspaceTools;
+  const canManage = canUseWorkspaceTools;
   const [keyword, setKeyword] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [optimizerOpen, setOptimizerOpen] = useState(false);

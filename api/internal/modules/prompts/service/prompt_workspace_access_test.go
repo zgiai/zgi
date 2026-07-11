@@ -155,44 +155,6 @@ func TestPromptOptimizerRejectsPromptFromAnotherWorkspace(t *testing.T) {
 	}
 }
 
-func TestPromptSetLabelsRequiresAgentManageBeforePublishingProduction(t *testing.T) {
-	workspaceID := "workspace-1"
-	promptID := "prompt-1"
-	repo := &promptWorkspaceAccessRepository{
-		prompt: &promptmodel.Prompt{
-			ID:             promptID,
-			OrganizationID: stringPtr("org-1"),
-			WorkspaceID:    &workspaceID,
-			Source:         promptmodel.PromptSourceWorkspace,
-		},
-	}
-	organizationService := &promptWorkspaceAccessOrganizationService{
-		allowed: false,
-		workspaces: []*workspace_model.Workspace{
-			{ID: workspaceID, Status: workspace_model.WorkspaceStatusNormal},
-		},
-	}
-	svc := &promptService{
-		repo:                repo,
-		organizationService: organizationService,
-	}
-
-	_, err := svc.SetLabels(context.Background(), "org-1", "account-1", promptID, promptdto.SetPromptLabelsRequest{
-		Version: 1,
-		Labels:  []string{"production"},
-	})
-
-	if err == nil || !strings.Contains(err.Error(), "prompt not found") {
-		t.Fatalf("SetLabels() error = %v, want prompt not found", err)
-	}
-	want := []workspace_model.WorkspacePermissionCode{
-		workspace_model.WorkspacePermissionAgentManage,
-	}
-	if got := organizationService.permissionCodes; !sameWorkspaceAccessPermissions(got, want) {
-		t.Fatalf("permission codes = %v, want %v", got, want)
-	}
-}
-
 func sameWorkspaceAccessPermissions(got, want []workspace_model.WorkspacePermissionCode) bool {
 	if len(got) != len(want) {
 		return false

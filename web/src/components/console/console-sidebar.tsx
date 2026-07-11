@@ -18,6 +18,7 @@ import {
   AppWindow,
   Clock3,
   ChevronDown,
+  Workflow,
 } from 'lucide-react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useT } from '@/i18n';
@@ -26,11 +27,19 @@ import { Button } from '@/components/ui/button';
 import { WorkspaceSwitcher } from './team-switcher';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useWorkspaceStore } from '@/store/workspace-store';
-import type { PermissionCode } from '@/constants/permissions';
+import {
+  AGENT_VISIBLE_PERMISSION_CODES,
+  DATABASE_VISIBLE_PERMISSION_CODES,
+  FILE_VISIBLE_PERMISSION_CODES,
+  KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES,
+  WORKFLOW_VISIBLE_PERMISSION_CODES,
+  type PermissionCode,
+} from '@/constants/permissions';
 import { ENABLE_THEME_SWITCH, withBasePathIfInternal } from '@/lib/config';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useWorkflowDebugFocusMode } from '@/components/workflow/hooks/use-debug-focus-mode';
 import { usePersistentSidebarCollapse } from '@/hooks/use-persistent-sidebar-collapse';
+import { getConsoleRouteAccess } from '@/routes/access';
 
 interface NavItem {
   title: string;
@@ -38,6 +47,8 @@ interface NavItem {
   icon: React.ElementType;
   /** Required permission to show this nav item (when workspace selected) */
   permission?: PermissionCode;
+  /** Any required permission to show this nav item (when workspace selected) */
+  permissions?: readonly PermissionCode[];
 }
 
 interface NavGroup {
@@ -77,6 +88,59 @@ function isRootRouteItemActive(pathname: string, item: RootRouteItem): boolean {
   });
 }
 
+type HasPermission = (permission: PermissionCode) => boolean;
+type HasAnyPermission = (permissions: readonly PermissionCode[]) => boolean;
+
+function shouldShowConsoleNavItem(
+  item: NavItem,
+  isWorkspaceRequired: boolean,
+  hasPermission: HasPermission,
+  hasAnyPermission: HasAnyPermission
+) {
+  const routeAccess = getConsoleRouteAccess(item.href);
+
+  if (isWorkspaceRequired) {
+    return routeAccess.scope === 'organization';
+  }
+
+  if (routeAccess.scope === 'organization') {
+    return true;
+  }
+
+  if (item.permissions?.length) {
+    return hasAnyPermission(item.permissions);
+  }
+
+  if (!item.permission) {
+    return true;
+  }
+
+  return hasPermission(item.permission);
+}
+
+function filterConsoleNavGroups(
+  groups: NavGroup[],
+  isWorkspaceRequired: boolean,
+  hasPermission: HasPermission,
+  hasAnyPermission: HasAnyPermission
+) {
+  return groups
+    .map(group => {
+      let items = group.items;
+
+      if (!ENABLE_THEME_SWITCH) {
+        items = items.filter(item => item.href !== '/console/settings');
+      }
+
+      items = items.filter(item =>
+        shouldShowConsoleNavItem(item, isWorkspaceRequired, hasPermission, hasAnyPermission)
+      );
+
+      return { ...group, items };
+    })
+    .filter(group => group.items.length > 0);
+}
+
 export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -85,7 +149,7 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
   const activePathname = datasetReturnTo ? '/console/dataset' : pathname;
 
   // Permission checking
-  const { hasPermission } = useAccountPermissions();
+  const { hasPermission, hasAnyPermission } = useAccountPermissions();
   const contextStatus = useWorkspaceStore.use.contextStatus();
   const isWorkspaceRequired = contextStatus === 'workspace_required';
   const isDebugFocusMode = useWorkflowDebugFocusMode();
@@ -134,25 +198,21 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
             title: t('chat'),
             href: '/console/work/chat',
             icon: MessageSquare,
-            permission: 'workspace.view',
           },
           {
             title: t('image'),
             href: '/console/work/image',
             icon: ImageIcon,
-            permission: 'workspace.view',
           },
           {
             title: t('app'),
             href: '/console/work/app',
             icon: AppWindow,
-            permission: 'workspace.view',
           },
           {
             title: t('task'),
             href: '/console/work/task',
             icon: Clock3,
-            permission: 'workspace.view',
           },
         ],
       },
@@ -160,15 +220,36 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
         key: 'resources',
         title: t('resources'),
         items: [
-          { title: t('agents'), href: '/console/agents', icon: Atom, permission: 'agent.view' },
+          {
+            title: t('agents'),
+            href: '/console/agents',
+            icon: Atom,
+            permissions: AGENT_VISIBLE_PERMISSION_CODES,
+          },
+          {
+            title: t('workflows'),
+            href: '/console/workflows',
+            icon: Workflow,
+            permissions: WORKFLOW_VISIBLE_PERMISSION_CODES,
+          },
           {
             title: t('datasets'),
             href: '/console/dataset',
             icon: BookOpen,
-            permission: 'knowledge_base.view',
+            permissions: KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES,
           },
-          { title: t('files'), href: '/console/files', icon: FileText, permission: 'file.view' },
-          { title: t('dbs'), href: '/console/db', icon: Database, permission: 'database.view' },
+          {
+            title: t('files'),
+            href: '/console/files',
+            icon: FileText,
+            permissions: FILE_VISIBLE_PERMISSION_CODES,
+          },
+          {
+            title: t('dbs'),
+            href: '/console/db',
+            icon: Database,
+            permissions: DATABASE_VISIBLE_PERMISSION_CODES,
+          },
         ],
       },
       {
@@ -179,13 +260,11 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
             title: t('prompts'),
             href: '/console/prompts',
             icon: BookText,
-            permission: 'agent.view',
           },
           {
             title: t('fileRecognition'),
             href: '/console/developer/content-parse',
             icon: FileSearch,
-            permission: 'workspace.view',
           },
         ],
       },
@@ -197,7 +276,6 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
             title: t('workspaceManagement'),
             href: '/console/workspace',
             icon: Users,
-            permission: 'workspace.view',
           },
           { title: t('systemSettings'), href: '/console/settings', icon: Settings },
         ],
@@ -208,32 +286,13 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
 
   // Filter groups and items
   const navGroups = React.useMemo(() => {
-    return allNavGroups
-      .map(group => {
-        let filteredItems = group.items;
-
-        // Hide workspace management when the console has no usable workspace.
-        if (group.key === 'management' && isWorkspaceRequired) {
-          filteredItems = filteredItems.filter(item => item.href !== '/console/workspace');
-        }
-
-        // Hide settings if theme switch disabled
-        if (!ENABLE_THEME_SWITCH) {
-          filteredItems = filteredItems.filter(item => item.href !== '/console/settings');
-        }
-
-        // Filter by permissions outside organization view
-        if (!isWorkspaceRequired) {
-          filteredItems = filteredItems.filter(item => {
-            if (!item.permission) return true;
-            return hasPermission(item.permission);
-          });
-        }
-
-        return { ...group, items: filteredItems };
-      })
-      .filter(group => group.items.length > 0);
-  }, [isWorkspaceRequired, hasPermission, allNavGroups]);
+    return filterConsoleNavGroups(
+      allNavGroups,
+      isWorkspaceRequired,
+      hasPermission,
+      hasAnyPermission
+    );
+  }, [isWorkspaceRequired, hasPermission, hasAnyPermission, allNavGroups]);
 
   const rootRouteItems = React.useMemo(
     (): RootRouteItem[] => [
@@ -474,7 +533,7 @@ export function ConsoleMobileSidebar({
   const t = useT('navigation');
   const datasetReturnTo = getDatasetReturnTo(searchParams.get('returnTo'));
   const activePathname = datasetReturnTo ? '/console/dataset' : pathname;
-  const { hasPermission } = useAccountPermissions();
+  const { hasPermission, hasAnyPermission } = useAccountPermissions();
   const contextStatus = useWorkspaceStore.use.contextStatus();
   const isWorkspaceRequired = contextStatus === 'workspace_required';
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({
@@ -494,25 +553,21 @@ export function ConsoleMobileSidebar({
             title: t('chat'),
             href: '/console/work/chat',
             icon: MessageSquare,
-            permission: 'workspace.view',
           },
           {
             title: t('image'),
             href: '/console/work/image',
             icon: ImageIcon,
-            permission: 'workspace.view',
           },
           {
             title: t('app'),
             href: '/console/work/app',
             icon: AppWindow,
-            permission: 'workspace.view',
           },
           {
             title: t('task'),
             href: '/console/work/task',
             icon: Clock3,
-            permission: 'workspace.view',
           },
         ],
       },
@@ -520,15 +575,36 @@ export function ConsoleMobileSidebar({
         key: 'resources',
         title: t('resources'),
         items: [
-          { title: t('agents'), href: '/console/agents', icon: Atom, permission: 'agent.view' },
+          {
+            title: t('agents'),
+            href: '/console/agents',
+            icon: Atom,
+            permissions: AGENT_VISIBLE_PERMISSION_CODES,
+          },
+          {
+            title: t('workflows'),
+            href: '/console/workflows',
+            icon: Workflow,
+            permissions: WORKFLOW_VISIBLE_PERMISSION_CODES,
+          },
           {
             title: t('datasets'),
             href: '/console/dataset',
             icon: BookOpen,
-            permission: 'knowledge_base.view',
+            permissions: KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES,
           },
-          { title: t('files'), href: '/console/files', icon: FileText, permission: 'file.view' },
-          { title: t('dbs'), href: '/console/db', icon: Database, permission: 'database.view' },
+          {
+            title: t('files'),
+            href: '/console/files',
+            icon: FileText,
+            permissions: FILE_VISIBLE_PERMISSION_CODES,
+          },
+          {
+            title: t('dbs'),
+            href: '/console/db',
+            icon: Database,
+            permissions: DATABASE_VISIBLE_PERMISSION_CODES,
+          },
         ],
       },
       {
@@ -539,13 +615,11 @@ export function ConsoleMobileSidebar({
             title: t('prompts'),
             href: '/console/prompts',
             icon: BookText,
-            permission: 'agent.view',
           },
           {
             title: t('fileRecognition'),
             href: '/console/developer/content-parse',
             icon: FileSearch,
-            permission: 'workspace.view',
           },
         ],
       },
@@ -557,33 +631,14 @@ export function ConsoleMobileSidebar({
             title: t('workspaceManagement'),
             href: '/console/workspace',
             icon: Users,
-            permission: 'workspace.view',
           },
           { title: t('systemSettings'), href: '/console/settings', icon: Settings },
         ],
       },
     ];
 
-    return groups
-      .map(group => {
-        let items = group.items;
-
-        if (group.key === 'management' && isWorkspaceRequired) {
-          items = items.filter(item => item.href !== '/console/workspace');
-        }
-
-        if (!ENABLE_THEME_SWITCH) {
-          items = items.filter(item => item.href !== '/console/settings');
-        }
-
-        if (!isWorkspaceRequired) {
-          items = items.filter(item => !item.permission || hasPermission(item.permission));
-        }
-
-        return { ...group, items };
-      })
-      .filter(group => group.items.length > 0);
-  }, [hasPermission, isWorkspaceRequired, t]);
+    return filterConsoleNavGroups(groups, isWorkspaceRequired, hasPermission, hasAnyPermission);
+  }, [hasPermission, hasAnyPermission, isWorkspaceRequired, t]);
 
   const closeSidebar = () => onOpenChange(false);
   const toggleGroup = (key: string) => setOpenGroups(prev => ({ ...prev, [key]: !prev[key] }));

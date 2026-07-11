@@ -11,6 +11,7 @@ import type { AgentConfigSection } from '../types';
 interface AgentRuntimeModelSectionProps {
   open: boolean;
   modelValue: ModelSelectorParameterValue;
+  readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeModelValue: (value: ModelSelectorParameterValue) => void;
 }
@@ -18,6 +19,7 @@ interface AgentRuntimeModelSectionProps {
 export function AgentRuntimeModelSection({
   open,
   modelValue,
+  readOnly = false,
   onToggleSection,
   onChangeModelValue,
 }: AgentRuntimeModelSectionProps) {
@@ -34,6 +36,7 @@ export function AgentRuntimeModelSection({
         modelType="text-chat"
         value={modelValue}
         onChange={onChangeModelValue}
+        disabled={readOnly}
         className="w-full"
       />
     </RuntimeSection>

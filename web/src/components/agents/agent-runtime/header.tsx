@@ -12,6 +12,7 @@ import {
   Loader2,
   Play,
   Save,
+  SlidersHorizontal,
   UploadCloud,
   X,
 } from 'lucide-react';
@@ -30,6 +31,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Label } from '@/components/ui/label';
@@ -40,6 +43,7 @@ import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { WebAppStatus } from '@/services/types/agent';
 import type { AgentRuntimeAgent, AgentRuntimeSaveState } from './types';
+import { PublishSettingsDialog } from './publish-settings-dialog';
 import { pickAgentInitials } from './utils';
 
 const WEB_APP_OFFLINE_REASON_MAX_LENGTH = 500;
@@ -52,6 +56,8 @@ interface AgentRuntimeHeaderProps {
   isDirty: boolean;
   isPublishing: boolean;
   disablePrimaryActions?: boolean;
+  disablePublishActions?: boolean;
+  disablePublishSettingsActions?: boolean;
   webAppUrl: string;
   versionControl?: ReactNode;
   showPreviewAction?: boolean;
@@ -71,6 +77,8 @@ export function AgentRuntimeHeader({
   isDirty,
   isPublishing,
   disablePrimaryActions = false,
+  disablePublishActions = disablePrimaryActions,
+  disablePublishSettingsActions = disablePublishActions,
   webAppUrl,
   versionControl,
   showPreviewAction = false,
@@ -84,6 +92,7 @@ export function AgentRuntimeHeader({
   const t = useT('agents.agentRuntime');
   const webAppStatusMutation = useUpdateWebAppStatus();
   const [webAppStatusDialogOpen, setWebAppStatusDialogOpen] = useState(false);
+  const [publishSettingsOpen, setPublishSettingsOpen] = useState(false);
   const [offlineReason, setOfflineReason] = useState('');
   const saveDotClassName =
     saveState === 'error'
@@ -104,6 +113,9 @@ export function AgentRuntimeHeader({
     : t('header.takeOffline');
   const offlineReasonLength = Array.from(offlineReason).length;
   const isOfflineReasonTooLong = offlineReasonLength > WEB_APP_OFFLINE_REASON_MAX_LENGTH;
+  const canPublish = !disablePublishActions;
+  const canManageRuntimeAccess = !disablePublishSettingsActions;
+  const canUsePublishDropdown = canPublish || canManageRuntimeAccess || Boolean(webAppUrl);
 
   const handleOpenWebApp = () => {
     if (!webAppUrl || isWebAppOffline) return;
@@ -118,7 +130,7 @@ export function AgentRuntimeHeader({
   };
 
   const handleWebAppStatusConfirm = () => {
-    if (disablePrimaryActions) {
+    if (!canManageRuntimeAccess) {
       return;
     }
     if (nextWebAppStatus === 'inactive' && isOfflineReasonTooLong) {
@@ -264,7 +276,7 @@ export function AgentRuntimeHeader({
                 size="sm"
                 className="flex items-center gap-1.5 rounded-md border border-primary/25 bg-primary/10 px-3.5 text-primary shadow-none transition-colors hover:border-primary/35 hover:bg-primary/15"
                 aria-label={isPublishing ? publishingLabel : publishLabel}
-                disabled={disablePrimaryActions || isPublishing || saveState === 'saving'}
+                disabled={!canUsePublishDropdown}
               >
                 {isPublishing ? (
                   <Loader2 className="size-4 animate-spin" />
@@ -275,24 +287,24 @@ export function AgentRuntimeHeader({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
-              <div className="px-2 py-1">
-                <Button
-                  className="w-full rounded-md border border-primary/25 bg-primary/10 text-primary shadow-none hover:border-primary/35 hover:bg-primary/15"
-                  onClick={onPublish}
-                  disabled={disablePrimaryActions || isPublishing || saveState === 'saving'}
-                >
-                  {isPublishing ? (
-                    <Loader2 className="size-5 animate-spin" />
-                  ) : (
-                    <UploadCloud className="size-5" />
-                  )}
-                  {isPublishing ? publishingLabel : publishLabel}
-                </Button>
-              </div>
+              <DropdownMenuItem
+                disabled={!canPublish || isPublishing || saveState === 'saving'}
+                onSelect={event => {
+                  event.preventDefault();
+                  onPublish();
+                }}
+              >
+                {isPublishing ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <UploadCloud className="size-4" />
+                )}
+                {isPublishing ? publishingLabel : publishLabel}
+              </DropdownMenuItem>
               {isPublished ? (
                 <>
-                  <div className="my-1 h-px w-full bg-border" />
-                  <div className="flex items-center justify-between gap-3 px-2 py-1.5 text-xs text-muted-foreground">
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
                     <span>{t('header.webAppStatus')}</span>
                     <Badge
                       variant="outline"
@@ -304,12 +316,12 @@ export function AgentRuntimeHeader({
                     >
                       {isWebAppOnline ? t('header.online') : t('header.offline')}
                     </Badge>
-                  </div>
+                  </DropdownMenuLabel>
                 </>
               ) : null}
               {isPublished ? (
                 <DropdownMenuItem
-                  disabled={disablePrimaryActions}
+                  disabled={!canManageRuntimeAccess}
                   onSelect={() => {
                     setWebAppStatusDialogOpen(true);
                   }}
@@ -318,6 +330,13 @@ export function AgentRuntimeHeader({
                   {webAppStatusActionLabel}
                 </DropdownMenuItem>
               ) : null}
+              <DropdownMenuItem
+                disabled={disablePublishSettingsActions}
+                onSelect={() => setPublishSettingsOpen(true)}
+              >
+                <SlidersHorizontal className="size-4" />
+                {t('header.publishSettings')}
+              </DropdownMenuItem>
               <DropdownMenuItem
                 disabled={!webAppUrl || isWebAppOffline}
                 onSelect={event => {
@@ -388,7 +407,7 @@ export function AgentRuntimeHeader({
               variant={isWebAppOffline ? 'default' : 'destructive'}
               onClick={handleWebAppStatusConfirm}
               disabled={
-                disablePrimaryActions || webAppStatusMutation.isPending || isOfflineReasonTooLong
+                !canManageRuntimeAccess || webAppStatusMutation.isPending || isOfflineReasonTooLong
               }
             >
               {webAppStatusMutation.isPending ? (
@@ -403,6 +422,12 @@ export function AgentRuntimeHeader({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <PublishSettingsDialog
+        agentId={agentId}
+        open={publishSettingsOpen}
+        canManage={!disablePublishSettingsActions}
+        onOpenChange={setPublishSettingsOpen}
+      />
     </>
   );
 }

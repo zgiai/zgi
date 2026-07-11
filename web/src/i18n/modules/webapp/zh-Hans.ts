@@ -79,7 +79,7 @@ const messages: WebappMessages = {
     workflowRunFailed: '执行失败',
     workflowRunFailedWithReason: '执行失败：{reason}',
     workspaceRequiredForConversation:
-      '当前账户未加入任何工作空间，请至少加入一个工作空间后再进行对话。',
+      '暂时无法确定该应用的运行空间，请联系管理员检查应用所属工作空间或组织运行空间配置。',
     imageHomeTitle: 'AI 图像生成',
     imageHomeSubtitle: '描述您的想象，让 AI 为您创造。',
     imageInput: {
@@ -126,6 +126,24 @@ const messages: WebappMessages = {
   notPublished: {
     title: 'WebApp 尚未发布',
     description: '请先发布这个智能体，再打开它的 WebApp。',
+  },
+  access: {
+    loading: {
+      title: '正在校验访问权限',
+      description: '正在确认当前账号是否可以使用这个 WebApp。',
+    },
+    login_required: {
+      title: '请登录后使用此 WebApp',
+      description: '该 WebApp 仅对指定组织成员或部门开放。',
+    },
+    no_access: {
+      title: '暂无访问权限',
+      description: '当前账号不在该 WebApp 的开放对象中。如需使用，请联系应用管理员。',
+    },
+    offline: {
+      title: '该 WebApp 已下架',
+      description: '当前应用暂不可访问。请联系应用管理员，或等待应用重新上架后再试。',
+    },
   },
   header: {
     guestMode: '访客模式：登录后可保存对话并使用更多能力。',
@@ -399,7 +417,7 @@ const messages: WebappMessages = {
   },
   appCenter: {
     title: '应用中心',
-    subtitle: '当前工作空间可直接使用的应用，选择一个应用开始对话或运行。',
+    subtitle: '发布给你的应用会在这里展示，选择一个应用开始对话或运行。',
     sidebarSubtitle: '快速切换应用',
     allApps: '全部应用',
     appList: '应用列表',
@@ -424,9 +442,9 @@ const messages: WebappMessages = {
     recentFallbackDescription: '打开这个应用，继续你上一次中断的工作。',
     quickStartFallbackDescription: '如果还没有使用记录，可以先从第一个可用应用开始。',
     noAppsTitle: '暂无可运行应用',
-    noAppsDescription: '当前上下文没有可直接运行的应用。',
+    noAppsDescription: '当前组织范围内暂无发布给你的可运行应用。',
     appUnavailableTitle: '应用不可用',
-    appUnavailableDescription: '该应用在你当前工作区下不可运行。',
+    appUnavailableDescription: '该应用未发布给你，或已经关闭应用中心入口。',
     loadAppFailed: '加载应用配置失败',
   },
   appLogs: {
@@ -569,6 +587,7 @@ const messages: WebappMessages = {
       sources: {
         webapp: 'WebApp 日志',
         console: '调试日志',
+        externalApi: 'API 调用',
       },
       searchPlaceholder: '搜索用户提问或模型回复',
       conversationId: '会话 ID',

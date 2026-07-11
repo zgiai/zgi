@@ -40,20 +40,6 @@ func ResolveVisibleWorkspaceScope(
 		return VisibleWorkspaceScope{}, nil
 	}
 
-	isAdmin, err := organizationService.IsOrganizationAdminOrOwner(ctx, organizationID, accountID)
-	if err != nil {
-		return VisibleWorkspaceScope{}, err
-	}
-	if isAdmin {
-		if workspaceID != "" {
-			return VisibleWorkspaceScope{WorkspaceIDs: []string{workspaceID}}, nil
-		}
-		return VisibleWorkspaceScope{
-			WorkspaceIDs:            normalWorkspaceIDs,
-			AllowOrganizationScoped: true,
-		}, nil
-	}
-
 	workspaceIDs, err := ResolveVisibleWorkspaceIDs(
 		ctx,
 		organizationService,
@@ -93,14 +79,6 @@ func ResolveVisibleWorkspaceIDs(
 			return []string{}, nil
 		}
 
-		isAdmin, err := organizationService.IsOrganizationAdminOrOwner(ctx, organizationID, accountID)
-		if err != nil {
-			return nil, err
-		}
-		if isAdmin {
-			return []string{workspaceID}, nil
-		}
-
 		hasPermission, err := organizationService.CheckWorkspaceOrganizationAnyPermission(
 			ctx,
 			organizationID,
@@ -116,14 +94,6 @@ func ResolveVisibleWorkspaceIDs(
 		}
 
 		return []string{workspaceID}, nil
-	}
-
-	isAdmin, err := organizationService.IsOrganizationAdminOrOwner(ctx, organizationID, accountID)
-	if err != nil {
-		return nil, err
-	}
-	if isAdmin {
-		return normalWorkspaceIDs, nil
 	}
 
 	visibleWorkspaceIDs := make([]string, 0, len(normalWorkspaceIDs))

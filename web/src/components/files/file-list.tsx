@@ -51,6 +51,7 @@ import { Badge } from '@/components/ui/badge';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { FilePreviewDialog } from './file-preview-dialog';
 import { isOriginalPreviewSupported } from '@/utils/file-helpers';
+import { FILE_PERMISSION_ACTIONS } from '@/constants/permissions';
 import { fileManageService } from '@/services/file-manage.service';
 import { StartFileParseDialog } from './start-file-parse-dialog';
 import { ReplaceDocumentDialog } from './replace-document-dialog';
@@ -243,13 +244,17 @@ function FileListBase({
   const [reparsingFileId, setReparsingFileId] = useState<string | null>(null);
 
   // Permission checks
-  const { hasPermission } = useAccountPermissions();
-  const canDownload = hasPermission('file.download');
-  const canManage = hasPermission('file.manage');
-  const canUpload = hasPermission('file.upload_create');
+  const { hasAnyPermission } = useAccountPermissions();
+  const canDownload = hasAnyPermission(FILE_PERMISSION_ACTIONS.download);
+  const canPreview = hasAnyPermission(FILE_PERMISSION_ACTIONS.preview);
+  const canUpdateFile = hasAnyPermission(FILE_PERMISSION_ACTIONS.update);
+  const canDeleteFilePermission = hasAnyPermission(FILE_PERMISSION_ACTIONS.delete);
+  const canUpload = hasAnyPermission(FILE_PERMISSION_ACTIONS.upload);
+  const canViewRelatedResources = !selectionMode;
   const canViewDetail = !selectionMode;
-  const canRequestProcessing = !selectionMode && (canManage || canUpload || canDownload);
-  const hasAnyAction = canViewDetail || canRequestProcessing || canDownload || canManage;
+  const canRequestProcessing = !selectionMode && canUpdateFile;
+  const hasAnyAction =
+    canViewDetail || canRequestProcessing || canDownload || canPreview || canDeleteFilePermission;
   const emptyDescription = mobileEmptyDescription
     ? mobileEmptyDescription
     : canUpload
@@ -330,6 +335,7 @@ function FileListBase({
   };
 
   const handleStartParse = async (file: FileItem) => {
+    if (!canRequestProcessing) return;
     try {
       setStartingParseFileId(file.id);
       await fileManageService.createProcessingRequest(file.id, {
@@ -351,6 +357,7 @@ function FileListBase({
   };
 
   const handleBatchParse = async () => {
+    if (!canRequestProcessing) return;
     if (selectedStoredOnlyCount === 0 || isBatchParsing) return;
     const targets = files.filter(
       file => selectedFiles.includes(file.id) && getProcessingStatus(file) === 'stored_only'
@@ -450,11 +457,13 @@ function FileListBase({
   };
 
   const handleBulkDeleteClick = () => {
+    if (!canDeleteFilePermission) return;
     if (selectedFiles.length === 0 || isDeleting) return;
     setShowBulkDeleteConfirm(true);
   };
 
   const handleBulkDeleteConfirm = async () => {
+    if (!canDeleteFilePermission) return;
     try {
       await deleteFiles(selectedFiles, files);
       onSelectionChange?.([]);
@@ -591,7 +600,10 @@ function FileListBase({
                 const canStartParse = processingStatus === 'stored_only' && canRequestProcessing;
                 const canOpenFileDetail = canViewDetail && processingStatus !== 'stored_only';
                 const canReplaceDocument =
-                  !selectionMode && canManage && Boolean(file.asset_id) && !isProcessingActive(processingStatus);
+                  !selectionMode &&
+                  canUpdateFile &&
+                  Boolean(file.asset_id) &&
+                  !isProcessingActive(processingStatus);
 
                 return (
                   <div
@@ -610,7 +622,11 @@ function FileListBase({
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex min-w-0 items-start gap-3">
                         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-muted">
-                          <FileTypeIcon extension={file.extension} filename={file.name} className="h-5 w-5" />
+                          <FileTypeIcon
+                            extension={file.extension}
+                            filename={file.name}
+                            className="h-5 w-5"
+                          />
                         </div>
                         <div className="min-w-0">
                           <div className="truncate text-sm font-semibold text-foreground">
@@ -623,7 +639,7 @@ function FileListBase({
                             >
                               {file.extension}
                             </Badge>
-                            {file.related_count > 0 ? (
+                            {canViewRelatedResources && file.related_count > 0 ? (
                               <Badge
                                 variant="secondary"
                                 className="rounded-full px-2 py-0.5 text-[11px]"
@@ -666,7 +682,7 @@ function FileListBase({
                             <Info className="h-4 w-4" />
                           </Button>
                         ) : null}
-                        {canDownload &&
+                        {canPreview &&
                         isOriginalPreviewSupported(file.extension, file.mime_type) ? (
                           <Button
                             isIcon
@@ -745,9 +761,11 @@ function FileListBase({
                           <span>{t('fileList.relatedStatus')}</span>
                         </div>
                         <div className="mt-1 text-sm font-medium text-foreground">
-                          {file.related_count > 0
-                            ? t('fileList.relatedCount', { count: file.related_count })
-                            : t('fileList.notRelated')}
+                          {canViewRelatedResources
+                            ? file.related_count > 0
+                              ? t('fileList.relatedCount', { count: file.related_count })
+                              : t('fileList.notRelated')
+                            : '-'}
                         </div>
                       </div>
                     </div>
@@ -794,9 +812,13 @@ function FileListBase({
             if (!open) setPreviewFile(null);
           }}
           file={previewFile}
-          onDownload={file => {
-            void handleDownload(file);
-          }}
+          onDownload={
+            canDownload
+              ? file => {
+                  void handleDownload(file);
+                }
+              : undefined
+          }
           isDownloading={isDownloading}
         />
       </div>
@@ -821,21 +843,25 @@ function FileListBase({
 
         {selectedFiles.length > 0 && !selectionMode ? (
           <div className="flex shrink-0 items-center gap-1.5 rounded-lg border bg-muted/30 p-1">
-            <Button
-              type="button"
-              size="sm"
-              className="h-8 rounded-md px-3 text-xs"
-              onClick={handleBatchParse}
-              disabled={selectedStoredOnlyCount === 0 || isBatchParsing}
-              title={selectedStoredOnlyCount === 0 ? t('actions.batchParseNoStoredOnly') : undefined}
-            >
-              <FileSearch className="h-4 w-4" />
-              {isBatchParsing ? t('actions.batchParsing') : t('actions.batchParse')}
-              {selectedStoredOnlyCount > 0 ? (
-                <span className="ml-1 text-[11px] opacity-80">{selectedStoredOnlyCount}</span>
-              ) : null}
-            </Button>
-            {canManage ? (
+            {canRequestProcessing ? (
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 rounded-md px-3 text-xs"
+                onClick={handleBatchParse}
+                disabled={selectedStoredOnlyCount === 0 || isBatchParsing}
+                title={
+                  selectedStoredOnlyCount === 0 ? t('actions.batchParseNoStoredOnly') : undefined
+                }
+              >
+                <FileSearch className="h-4 w-4" />
+                {isBatchParsing ? t('actions.batchParsing') : t('actions.batchParse')}
+                {selectedStoredOnlyCount > 0 ? (
+                  <span className="ml-1 text-[11px] opacity-80">{selectedStoredOnlyCount}</span>
+                ) : null}
+              </Button>
+            ) : null}
+            {canDeleteFilePermission ? (
               <Button
                 variant="ghost"
                 size="sm"
@@ -891,9 +917,7 @@ function FileListBase({
             <TableHead className="text-[13px]">{t('fileList.relatedStatus')}</TableHead>
             <TableHead className="text-[13px]">{t('fileList.uploadDate')}</TableHead>
             {hasAnyAction && (
-              <TableHead className="pr-8 text-right text-[13px]">
-                {t('fileList.actions')}
-              </TableHead>
+              <TableHead className="pr-8 text-right text-[13px]">{t('fileList.actions')}</TableHead>
             )}
           </TableRow>
         </TableHeader>
@@ -972,10 +996,13 @@ function FileListBase({
               const canStartParse = processingStatus === 'stored_only' && canRequestProcessing;
               const canOpenFileDetail = canViewDetail && processingStatus !== 'stored_only';
               const canPreviewOriginal =
-                canDownload && isOriginalPreviewSupported(file.extension, file.mime_type);
-              const canDeleteFile = canManage && !selectionMode;
+                canPreview && isOriginalPreviewSupported(file.extension, file.mime_type);
+              const canDeleteFile = canDeleteFilePermission && !selectionMode;
               const canReplaceDocument =
-                !selectionMode && canManage && Boolean(file.asset_id) && !isProcessingActive(processingStatus);
+                !selectionMode &&
+                canUpdateFile &&
+                Boolean(file.asset_id) &&
+                !isProcessingActive(processingStatus);
               const canShowActionsMenu =
                 canStartParse ||
                 canOpenFileDetail ||
@@ -1040,15 +1067,19 @@ function FileListBase({
                     <FileProcessingStatus file={file} />
                   </TableCell>
                   <TableCell>
-                    {file.related_count > 0 ? (
+                    {canViewRelatedResources && file.related_count > 0 ? (
                       <RelatedResourcesPopover fileId={file.id} relatedCount={file.related_count}>
                         <span className="inline-flex max-w-full cursor-pointer items-center rounded-full bg-primary/10 px-2 py-0.5 text-[12px] font-medium text-primary transition-colors hover:bg-primary/15">
                           {t('fileList.relatedCount', { count: file.related_count })}
                         </span>
                       </RelatedResourcesPopover>
-                    ) : (
+                    ) : canViewRelatedResources ? (
                       <span className="inline-flex max-w-full items-center rounded-full bg-muted px-2 py-0.5 text-[12px] font-medium text-muted-foreground">
                         {t('fileList.notRelated')}
+                      </span>
+                    ) : (
+                      <span className="inline-flex max-w-full items-center rounded-full bg-muted px-2 py-0.5 text-[12px] font-medium text-muted-foreground">
+                        -
                       </span>
                     )}
                   </TableCell>
@@ -1139,32 +1170,30 @@ function FileListBase({
                                   {t('actions.viewDetails')}
                                 </DropdownMenuItem>
                               ) : null}
-                              {canDownload && (
-                                <>
-                                  {canPreviewOriginal ? (
-                                    <DropdownMenuItem
-                                      onClick={e => {
-                                        e.stopPropagation();
-                                        handlePreview(file);
-                                      }}
-                                    >
-                                      <Eye className="h-4 w-4 mr-2" />
-                                      {t('actions.preview')}
-                                    </DropdownMenuItem>
-                                  ) : null}
+                              {canPreviewOriginal ? (
+                                <DropdownMenuItem
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    handlePreview(file);
+                                  }}
+                                >
+                                  <Eye className="h-4 w-4 mr-2" />
+                                  {t('actions.preview')}
+                                </DropdownMenuItem>
+                              ) : null}
 
-                                  <DropdownMenuItem
-                                    onClick={e => {
-                                      e.stopPropagation();
-                                      handleDownload(file);
-                                    }}
-                                    disabled={isDownloading}
-                                  >
-                                    <Download className="h-4 w-4 mr-2" />
-                                    {t('actions.downloadFile')}
-                                  </DropdownMenuItem>
-                                </>
-                              )}
+                              {canDownload ? (
+                                <DropdownMenuItem
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    handleDownload(file);
+                                  }}
+                                  disabled={isDownloading}
+                                >
+                                  <Download className="h-4 w-4 mr-2" />
+                                  {t('actions.downloadFile')}
+                                </DropdownMenuItem>
+                              ) : null}
 
                               {canReplaceDocument ? (
                                 <DropdownMenuItem
@@ -1257,9 +1286,13 @@ function FileListBase({
           if (!open) setPreviewFile(null);
         }}
         file={previewFile}
-        onDownload={file => {
-          void handleDownload(file);
-        }}
+        onDownload={
+          canDownload
+            ? file => {
+                void handleDownload(file);
+              }
+            : undefined
+        }
         isDownloading={isDownloading}
       />
       <StartFileParseDialog

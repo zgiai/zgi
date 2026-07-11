@@ -10,23 +10,27 @@ import (
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/dto"
+	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 	"github.com/zgiai/zgi/api/pkg/response"
 )
 
 // AgentRuntimeLogsHandler exposes dedicated AGENT runtime log APIs.
 type AgentRuntimeLogsHandler struct {
-	agentsRepo  agentRuntimeLookupRepository
-	chatRuntime runtimeservice.Service
+	agentsRepo        agentRuntimeLookupRepository
+	chatRuntime       runtimeservice.Service
+	enterpriseService runtimeLogWorkspacePermissionChecker
 }
 
 func NewAgentRuntimeLogsHandler(
 	agentsRepo agentRuntimeLookupRepository,
 	chatRuntime runtimeservice.Service,
+	enterpriseService runtimeLogWorkspacePermissionChecker,
 ) *AgentRuntimeLogsHandler {
 	return &AgentRuntimeLogsHandler{
-		agentsRepo:  agentsRepo,
-		chatRuntime: chatRuntime,
+		agentsRepo:        agentsRepo,
+		chatRuntime:       chatRuntime,
+		enterpriseService: enterpriseService,
 	}
 }
 
@@ -118,6 +122,8 @@ func normalizeAgentRuntimeLogSource(source string) (string, bool) {
 		return runtimemodel.ConversationSourceWebApp, true
 	case runtimemodel.ConversationSourceConsole:
 		return runtimemodel.ConversationSourceConsole, true
+	case runtimemodel.ConversationSourceExternalAPI:
+		return runtimemodel.ConversationSourceExternalAPI, true
 	default:
 		return "", false
 	}
@@ -182,6 +188,25 @@ func (h *AgentRuntimeLogsHandler) runtimeScope(c *gin.Context) (runtimeservice.S
 		return runtimeservice.Scope{}, uuid.Nil, false
 	}
 	workspaceID := agent.TenantID
+	if h.enterpriseService == nil {
+		response.Fail(c, response.ErrSystemError)
+		return runtimeservice.Scope{}, uuid.Nil, false
+	}
+	hasPermission, err := h.enterpriseService.CheckWorkspacePermission(
+		c.Request.Context(),
+		organizationID.String(),
+		workspaceID.String(),
+		accountID.String(),
+		workspace_model.WorkspacePermissionAgentLogsView,
+	)
+	if err != nil {
+		response.Fail(c, response.ErrSystemError)
+		return runtimeservice.Scope{}, uuid.Nil, false
+	}
+	if !hasPermission {
+		response.Fail(c, response.ErrPermissionDenied)
+		return runtimeservice.Scope{}, uuid.Nil, false
+	}
 	return runtimeservice.Scope{
 		OrganizationID: organizationID,
 		AccountID:      accountID,
@@ -200,6 +225,9 @@ func (h *AgentRuntimeLogsHandler) runtimeMessage(c *gin.Context) (*runtimemodel.
 		return nil, nil, false
 	}
 	message, conversation, err := h.chatRuntime.GetMessageByCallerRuntimeLog(c.Request.Context(), scope, runtimeCaller(agentID), messageID, runtimemodel.ConversationSourceWebApp)
+	if err != nil {
+		message, conversation, err = h.chatRuntime.GetMessageByCallerRuntimeLog(c.Request.Context(), scope, runtimeCaller(agentID), messageID, runtimemodel.ConversationSourceExternalAPI)
+	}
 	if err != nil {
 		message, conversation, err = h.chatRuntime.GetMessageByCallerRuntimeLog(c.Request.Context(), scope, runtimeCaller(agentID), messageID, "")
 	}
@@ -357,7 +385,8 @@ func runtimeConversationSource(conversation *runtimemodel.Conversation, fallback
 
 func isRuntimeLogConversation(conversation *runtimemodel.Conversation) bool {
 	return isRuntimeWebAppConversation(conversation) ||
-		(conversation != nil && conversation.Source == runtimemodel.ConversationSourceConsole)
+		(conversation != nil && conversation.Source == runtimemodel.ConversationSourceConsole) ||
+		(conversation != nil && conversation.Source == runtimemodel.ConversationSourceExternalAPI)
 }
 
 func timeUnixPtr(value *time.Time) *int64 {

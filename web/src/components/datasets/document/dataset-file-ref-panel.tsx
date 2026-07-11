@@ -23,6 +23,10 @@ import { formatDate } from '@/utils/format';
 interface DatasetFileRefPanelProps {
   refs: DatasetFileRef[];
   canEdit?: boolean;
+  canOpenSourceFile?: boolean;
+  canToggleEnabled?: boolean;
+  canRetry?: boolean;
+  canRemove?: boolean;
   retryingRefId?: string;
   removingRefId?: string;
   togglingRefId?: string;
@@ -120,6 +124,10 @@ function TableHeadWithHelp({ label, tooltip }: { label: string; tooltip: string 
 export function DatasetFileRefPanel({
   refs,
   canEdit = true,
+  canOpenSourceFile = true,
+  canToggleEnabled,
+  canRetry,
+  canRemove,
   retryingRefId,
   removingRefId,
   togglingRefId,
@@ -129,6 +137,9 @@ export function DatasetFileRefPanel({
 }: DatasetFileRefPanelProps) {
   const t = useT('datasets');
   const pathname = usePathname();
+  const canToggleEnabledAction = canToggleEnabled ?? canEdit;
+  const canRetryAction = canRetry ?? canEdit;
+  const canRemoveAction = canRemove ?? canEdit;
   const searchParams = useSearchParams();
   const currentSearch = searchParams.toString();
   const returnTo = `${pathname}${currentSearch ? `?${currentSearch}` : ''}`;
@@ -176,7 +187,8 @@ export function DatasetFileRefPanel({
             const isSynced = ref.sync_status === 'synced';
             const isFailed = ref.sync_status === 'failed';
             const enabled = Boolean(ref.dataset_document_enabled && isSynced);
-            const canToggle = canEdit && isSynced && Boolean(ref.dataset_document_id);
+            const canToggle =
+              canToggleEnabledAction && isSynced && Boolean(ref.dataset_document_id);
             const ext = fileExtension(ref.file_name);
 
             return (
@@ -226,15 +238,17 @@ export function DatasetFileRefPanel({
                 </TableCell>
                 <TableCell>
                   <div className="flex justify-end gap-1">
-                    <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs">
-                      <Link
-                        href={`/console/files/${ref.file_id}?returnTo=${encodeURIComponent(returnTo)}`}
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        {t('documents.fileRefs.openFile')}
-                      </Link>
-                    </Button>
-                    {canEdit && isFailed ? (
+                    {canOpenSourceFile ? (
+                      <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs">
+                        <Link
+                          href={`/console/files/${ref.file_id}?returnTo=${encodeURIComponent(returnTo)}`}
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          {t('documents.fileRefs.openFile')}
+                        </Link>
+                      </Button>
+                    ) : null}
+                    {canRetryAction && isFailed ? (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -246,7 +260,7 @@ export function DatasetFileRefPanel({
                         {t('documents.fileRefs.retry')}
                       </Button>
                     ) : null}
-                    {canEdit ? (
+                    {canRemoveAction ? (
                       <Button
                         variant="ghost"
                         size="sm"

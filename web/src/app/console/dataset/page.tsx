@@ -33,6 +33,10 @@ import { useInfiniteObserver } from '@/hooks/use-infinite-observer';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { cn } from '@/lib/utils';
+import {
+  KNOWLEDGE_BASE_PERMISSION_ACTIONS,
+  KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES,
+} from '@/constants/permissions';
 
 function DatasetsPageContent() {
   const t = useT();
@@ -41,9 +45,9 @@ function DatasetsPageContent() {
   const queryClient = useQueryClient();
 
   // Permission checking
-  const { hasPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
-  const canView = hasPermission('knowledge_base.view');
-  const canManage = hasPermission('knowledge_base.manage');
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const canView = hasAnyPermission(KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES);
+  const canManage = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.create);
 
   // Replace local create-only dialog with centralized dialog state
   // const [open, setOpen] = useState(false);
