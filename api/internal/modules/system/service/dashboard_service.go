@@ -39,6 +39,8 @@ type dashboardService struct {
 	recentWorkGroup singleflight.Group
 }
 
+const dashboardLoadTimeout = 5 * time.Second
+
 // NewDashboardService creates a new DashboardService instance
 func NewDashboardService(db *gorm.DB) DashboardService {
 	return NewDashboardServiceWithAvailableModels(db, nil)
@@ -114,20 +116,23 @@ func (s *dashboardService) GetDashboardStats(ctx context.Context, organizationID
 	}
 
 	value, err, _ := s.statsGroup.Do("stats:"+organizationID, func() (interface{}, error) {
-		if cached, ok := s.dashboardCache.GetStats(ctx, organizationID); ok {
+		loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dashboardLoadTimeout)
+		defer cancel()
+
+		if cached, ok := s.dashboardCache.GetStats(loadCtx, organizationID); ok {
 			return cached, nil
 		}
 
 		stats := model.DashboardStatsResponse{
 			Models: model.ModelsStats{ByUseCase: make(map[string]int64)},
 		}
-		models, modelsCacheable := s.getModelStats(ctx, organizationID)
-		resources, resourcesCacheable := s.getResourceStats(ctx, organizationID)
+		models, modelsCacheable := s.getModelStats(loadCtx, organizationID)
+		resources, resourcesCacheable := s.getResourceStats(loadCtx, organizationID)
 		stats.Models = models
 		stats.Resources = resources
 
 		if modelsCacheable && resourcesCacheable {
-			s.dashboardCache.SetStats(ctx, organizationID, &stats)
+			s.dashboardCache.SetStats(loadCtx, organizationID, &stats)
 		}
 		return &stats, nil
 	})
@@ -147,24 +152,27 @@ func (s *dashboardService) GetRecentWork(ctx context.Context, organizationID str
 	}
 
 	value, err, _ := s.recentWorkGroup.Do(fmt.Sprintf("recent-work:%s:%s:%d", organizationID, accountID, limit), func() (interface{}, error) {
-		if cached, ok := s.dashboardCache.GetRecentWork(ctx, organizationID, accountID, limit); ok {
+		loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dashboardLoadTimeout)
+		defer cancel()
+
+		if cached, ok := s.dashboardCache.GetRecentWork(loadCtx, organizationID, accountID, limit); ok {
 			return cached, nil
 		}
 
-		wsIDs, workspaceIDsCacheable := s.getWorkspaceIDs(ctx, organizationID)
+		wsIDs, workspaceIDsCacheable := s.getWorkspaceIDs(loadCtx, organizationID)
 		items := make([]model.RecentWorkItem, 0, limit)
 		cacheable := workspaceIDsCacheable
 
 		if len(wsIDs) > 0 {
-			agents, agentsCacheable := s.getRecentAgents(ctx, wsIDs, limit)
-			datasets, datasetsCacheable := s.getRecentDatasets(ctx, wsIDs, limit)
-			conversations, conversationsCacheable := s.getRecentAgentConversations(ctx, wsIDs, accountID, limit)
+			agents, agentsCacheable := s.getRecentAgents(loadCtx, wsIDs, limit)
+			datasets, datasetsCacheable := s.getRecentDatasets(loadCtx, wsIDs, limit)
+			conversations, conversationsCacheable := s.getRecentAgentConversations(loadCtx, wsIDs, accountID, limit)
 			items = append(items, agents...)
 			items = append(items, datasets...)
 			items = append(items, conversations...)
 			cacheable = cacheable && agentsCacheable && datasetsCacheable && conversationsCacheable
 		}
-		dataSources, dataSourcesCacheable := s.getRecentDataSources(ctx, organizationID, limit)
+		dataSources, dataSourcesCacheable := s.getRecentDataSources(loadCtx, organizationID, limit)
 		items = append(items, dataSources...)
 		cacheable = cacheable && dataSourcesCacheable
 
@@ -178,7 +186,7 @@ func (s *dashboardService) GetRecentWork(ctx context.Context, organizationID str
 
 		result := &model.RecentWorkResponse{Items: items}
 		if cacheable {
-			s.dashboardCache.SetRecentWork(ctx, organizationID, accountID, limit, result)
+			s.dashboardCache.SetRecentWork(loadCtx, organizationID, accountID, limit, result)
 		}
 		return result, nil
 	})

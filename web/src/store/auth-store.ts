@@ -230,7 +230,7 @@ const useAuthStoreBase = create<AuthState>()((set, get) => ({
       });
 
       await get().refreshProfile({ refresh: true });
-      await get().refreshSystemFeatures();
+      await get().refreshSystemFeatures(false);
     } catch (error) {
       console.error('Auth initialization failed:', error);
 
