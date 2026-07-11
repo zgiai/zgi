@@ -13,7 +13,6 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
-	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"gorm.io/gorm"
 )
 
@@ -545,9 +544,6 @@ func clientActionContinuationMessage(message *runtimemodel.Message, event map[st
 	if completedActions := completedClientActionsForContinuation(message); len(completedActions) > 0 {
 		contentParts = append(contentParts, "Completed client actions in this same AIChat turn JSON:\n"+compactJSON(completedActions))
 	}
-	if progress := clientActionAgentCreateProgress(message); len(progress) > 0 {
-		contentParts = append(contentParts, "Current-turn agent creation progress JSON:\n"+compactJSON(progress))
-	}
 	content := strings.Join(contentParts, "\n\n")
 	system := strings.Join([]string{
 		"You are continuing the same AIChat turn after a frontend client action.",
@@ -573,154 +569,6 @@ func clientActionContinuationMessage(message *runtimemodel.Message, event map[st
 		"Do not expose internal action ids, message ids, UUIDs, or raw JSON field names in the final user-visible answer.",
 	}, " ")
 	return adapter.Message{Role: "system", Content: system + "\n\n" + content}
-}
-
-func clientActionAgentCreateProgress(message *runtimemodel.Message) map[string]interface{} {
-	if message == nil {
-		return nil
-	}
-	plan := mapFromOperationContext(metadataValue(message.Metadata, "operation_plan"))
-	requestedTargets, requestedCount, ok := agentManagementCreateTargetsFromStructuredState(message.Metadata, plan)
-	if !ok {
-		return nil
-	}
-	completedTargets := agentCreateCompletedTargetNames(message.Metadata)
-	if requestedCount <= 1 && len(requestedTargets) <= 1 {
-		return nil
-	}
-	if len(requestedTargets) > 0 && requestedCount < len(requestedTargets) {
-		requestedCount = len(requestedTargets)
-	}
-	missingTargets := missingAgentCreateTargets(requestedTargets, completedTargets)
-	if len(requestedTargets) == 0 && requestedCount > len(completedTargets) {
-		for index := len(completedTargets); index < requestedCount; index++ {
-			missingTargets = append(missingTargets, fmt.Sprintf("target_%d", index+1))
-		}
-	}
-	out := map[string]interface{}{
-		"operation":         "agent.create",
-		"requested_count":   requestedCount,
-		"completed_count":   len(completedTargets),
-		"completed_targets": completedTargets,
-		"missing_count":     len(missingTargets),
-		"missing_targets":   missingTargets,
-	}
-	if len(requestedTargets) > 0 {
-		out["requested_targets"] = requestedTargets
-	}
-	if description := agentCreateRequestedDescriptionFromStructuredState(message.Metadata, plan); description != "" {
-		out["requested_description"] = description
-	}
-	if len(missingTargets) == 0 && requestedCount > 0 && len(completedTargets) >= requestedCount {
-		out["status"] = "completed"
-	} else {
-		out["status"] = "partial"
-	}
-	return out
-}
-
-func agentCreateCompletedTargetNames(metadata map[string]interface{}) []string {
-	calls := successfulMetadataToolCalls(metadata, skills.SkillAgentManagement, "create_agent")
-	out := make([]string, 0, len(calls))
-	seen := map[string]struct{}{}
-	for _, call := range calls {
-		name := strings.TrimSpace(firstNonEmptyString(call.Result["agent_name"], call.Result["name"], call.Arguments["name"]))
-		if name == "" {
-			if agent := governanceMapFromAny(call.Result["agent"]); len(agent) > 0 {
-				name = strings.TrimSpace(firstNonEmptyString(agent["agent_name"], agent["name"]))
-			}
-		}
-		if name == "" {
-			continue
-		}
-		key := strings.ToLower(name)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, name)
-	}
-	return out
-}
-
-func missingAgentCreateTargets(requested []string, completed []string) []string {
-	if len(requested) == 0 {
-		return nil
-	}
-	done := map[string]struct{}{}
-	for _, name := range completed {
-		name = strings.TrimSpace(name)
-		if name != "" {
-			done[strings.ToLower(name)] = struct{}{}
-		}
-	}
-	missing := make([]string, 0)
-	seen := map[string]struct{}{}
-	for _, name := range requested {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
-		key := strings.ToLower(name)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		if _, ok := done[key]; ok {
-			continue
-		}
-		missing = append(missing, name)
-	}
-	return missing
-}
-
-func agentCreateRequestedDescriptionFromStructuredState(metadata map[string]interface{}, plan map[string]interface{}) string {
-	if progress := mapFromOperationContext(metadataValue(metadata, "agent_create_progress")); len(progress) > 0 {
-		if description := strings.TrimSpace(stringFromAny(progress["requested_description"])); description != "" {
-			return description
-		}
-	}
-	if len(plan) == 0 {
-		return ""
-	}
-	if description := strings.TrimSpace(stringFromAny(plan["agent_create_description"])); description != "" {
-		return description
-	}
-	structuredPlan := mapFromOperationContext(plan["structured_plan"])
-	for _, operation := range mapSliceFromAny(structuredPlan["operations"]) {
-		if !strings.EqualFold(strings.TrimSpace(stringFromAny(operation["tool_name"])), "create_agent") &&
-			!strings.EqualFold(strings.TrimSpace(stringFromAny(operation["action"])), "create") {
-			continue
-		}
-		if resourceType := strings.TrimSpace(stringFromAny(operation["resource_type"])); resourceType != "" &&
-			!strings.EqualFold(resourceType, "agent") {
-			continue
-		}
-		args := mapFromOperationContext(operation["arguments"])
-		if description := strings.TrimSpace(firstNonEmptyString(operation["description"], args["description"])); description != "" {
-			return description
-		}
-	}
-	for _, tool := range mapSliceFromAny(structuredPlan["required_tool_sequence"]) {
-		if !strings.EqualFold(strings.TrimSpace(stringFromAny(tool["tool_name"])), "create_agent") {
-			continue
-		}
-		args := mapFromOperationContext(tool["arguments"])
-		if description := strings.TrimSpace(firstNonEmptyString(tool["description"], args["description"])); description != "" {
-			return description
-		}
-	}
-	for _, step := range mapSliceFromAny(plan["steps"]) {
-		if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skills.SkillAgentManagement) ||
-			!strings.EqualFold(strings.TrimSpace(stringFromAny(step["tool_name"])), "create_agent") {
-			continue
-		}
-		args := mapFromOperationContext(step["arguments"])
-		if description := strings.TrimSpace(firstNonEmptyString(step["description"], args["description"])); description != "" {
-			return description
-		}
-	}
-	return ""
 }
 
 func completedClientActionsForContinuation(message *runtimemodel.Message) []map[string]interface{} {

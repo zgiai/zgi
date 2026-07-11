@@ -807,8 +807,7 @@ func compactOperationPlanForPrompt(plan map[string]interface{}) map[string]inter
 		return nil
 	}
 	out := map[string]interface{}{}
-	modelDecides := operationPlanModelDecidesTools(plan)
-	for _, key := range []string{"version", "task_id", "intent", "task_type", "status", "pending_next_action", "original_user_goal", "risk_level", "approval", "planning_mode"} {
+	for _, key := range []string{"version", "task_id", "intent", "task_type", "status", "original_user_goal", "risk_level", "approval", "planning_mode", "plan_sync_status"} {
 		if value := strings.TrimSpace(stringFromAny(plan[key])); value != "" {
 			out[key] = compactForPrompt(value, 500)
 		}
@@ -831,26 +830,14 @@ func compactOperationPlanForPrompt(plan map[string]interface{}) map[string]inter
 	if capabilities := stringSliceFromAny(plan["recommended_capabilities"]); len(capabilities) > 0 {
 		out["recommended_capabilities"] = compactStringSliceForPrompt(capabilities, 10, 160)
 	}
-	if actions := stringSliceFromAny(plan["approval_actions"]); len(actions) > 0 {
-		out["approval_actions"] = compactStringSliceForPrompt(actions, 8, 180)
-	}
 	if criteria := stringSliceFromAny(plan["success_criteria"]); len(criteria) > 0 {
 		out["success_criteria"] = compactStringSliceForPrompt(criteria, 8, 240)
-	}
-	if criteria := stringSliceFromAny(plan["completion_criteria"]); len(criteria) > 0 {
-		out["completion_criteria"] = compactStringSliceForPrompt(criteria, 8, 240)
 	}
 	if goals := operationPlanCompactCapabilityGoals(plan["capability_goals"], 6); len(goals) > 0 {
 		out["capability_goals"] = goals
 	}
 	if contract := mapFromOperationContext(plan["task_contract"]); len(contract) > 0 {
 		out["task_contract"] = compactTaskContractForPrompt(contract)
-	}
-	if target := mapFromOperationContext(plan["asset_target"]); len(target) > 0 {
-		out["asset_target"] = target
-	}
-	if stepStatus := mapFromOperationContext(plan["step_status"]); len(stepStatus) > 0 && !modelDecides {
-		out["step_status"] = stepStatus
 	}
 	if result := mapFromOperationContext(plan["tool_result"]); len(result) > 0 {
 		out["tool_result"] = result
@@ -864,20 +851,10 @@ func compactOperationPlanForPrompt(plan map[string]interface{}) map[string]inter
 	if phases := operationPlanCompactPhasesForPrompt(plan["phases"], 8); len(phases) > 0 {
 		out["phases"] = phases
 	}
-	if completedSteps := operationPlanCompactProgressStepRecords(plan["completed_steps"], 8); len(completedSteps) > 0 && !modelDecides {
-		out["completed_steps"] = completedSteps
-	}
-	if failedSteps := operationPlanCompactProgressStepRecords(plan["failed_steps"], 8); len(failedSteps) > 0 && !modelDecides {
-		out["failed_steps"] = failedSteps
-	}
-	if deviations := skillLoopCompletionPlanDeviations(plan["deviations"], 6); len(deviations) > 0 {
-		out["deviations"] = deviations
-	}
-	if blockedDeviations := skillLoopCompletionPlanDeviations(plan["blocked_deviations"], 6); len(blockedDeviations) > 0 {
-		out["blocked_deviations"] = blockedDeviations
-	}
-	if steps := operationPlanCompactStepsForPrompt(plan["steps"], 8); len(steps) > 0 && !modelDecides {
-		out["steps"] = steps
+	for _, key := range []string{"last_plan_update_round", "evidence_sequence_at_plan_update", "evidence_after_last_plan_update"} {
+		if value := intValueFromAny(plan[key]); value > 0 {
+			out[key] = value
+		}
 	}
 	return out
 }
@@ -1021,95 +998,39 @@ func operationPlanHasIncompleteWork(plan map[string]interface{}) bool {
 	if status := strings.TrimSpace(stringFromAny(plan["status"])); status != "" {
 		return true
 	}
-	if pending := strings.TrimSpace(stringFromAny(plan["pending_next_action"])); pending != "" && !strings.EqualFold(pending, "none") {
-		return true
-	}
-	stepStatus := mapFromOperationContext(plan["step_status"])
-	blockingStepIDs := map[string]struct{}{}
-	for _, step := range mapSliceFromAny(plan["steps"]) {
-		if !operationPlanStepBlocksCompletion(step) {
-			continue
-		}
-		id := stringFromAny(step["id"])
-		blockingStepIDs[id] = struct{}{}
-		if operationPlanNormalizeStepStatus(firstNonEmptyString(step["status"], stepStatus[id])) != operationPlanStepStatusCompleted {
+	for _, phase := range mapSliceFromAny(plan["phases"]) {
+		status := strings.ToLower(strings.TrimSpace(stringFromAny(phase["status"])))
+		if status != operationPlanStepStatusCompleted && status != "skipped" {
 			return true
 		}
 	}
-	for id, value := range stepStatus {
-		if _, ok := blockingStepIDs[id]; !ok {
-			continue
+	if len(mapSliceFromAny(plan["phases"])) == 0 {
+		for _, step := range mapSliceFromAny(plan["steps"]) {
+			status := strings.ToLower(strings.TrimSpace(stringFromAny(step["status"])))
+			if status != operationPlanStepStatusCompleted && status != "skipped" && status != operationPlanStepStatusFailed {
+				return true
+			}
 		}
-		if operationPlanNormalizeStepStatus(stringFromAny(value)) != operationPlanStepStatusCompleted {
-			return true
+		if structured := mapFromOperationContext(plan["structured_plan"]); len(structured) > 0 {
+			for _, operation := range mapSliceFromAny(structured["operations"]) {
+				status := strings.ToLower(strings.TrimSpace(stringFromAny(operation["status"])))
+				if status != operationPlanStepStatusCompleted && status != "skipped" && status != operationPlanStepStatusFailed {
+					return true
+				}
+			}
 		}
 	}
 	return false
 }
 
 func continuationPendingHints(branch []*runtimemodel.Message) []string {
-	hints := []string{}
-	addHint := func(hint string) {
-		for _, existing := range hints {
-			if existing == hint {
-				return
-			}
-		}
-		hints = append(hints, hint)
+	if !continuationHasSuccessfulGeneratedArtifact(branch) {
+		return nil
 	}
-	hasGeneratedArtifact := continuationHasSuccessfulGeneratedArtifact(branch)
-	hasManagedSave := continuationHasSuccessfulTool(branch, skills.SkillFileManager, "save_file_to_management")
-	hasDelete := continuationHasSuccessfulTool(branch, skills.SkillFileManager, "delete_file")
-	hasManagedCreateGoal := continuationHasPendingOperationPlanTool(branch, skills.SkillFileManager, "save_file_to_management")
-	hasDeleteGoal := continuationHasPendingOperationPlanTool(branch, skills.SkillFileManager, "delete_file")
-
-	if hasManagedCreateGoal {
-		if hasGeneratedArtifact && !hasManagedSave {
-			addHint("A temporary artifact has already been generated; save that artifact with file-manager/save_file_to_management instead of generating another one.")
-		}
-		if hasManagedSave {
-			addHint("At least one generated artifact has already been saved to File Management; do not repeat that save unless the original goal requires another distinct file.")
-		}
+	if continuationHasSuccessfulTool(branch, skills.SkillFileManager, "save_file_to_management") {
+		return []string{"A generated artifact and a managed copy already exist in recent execution state. Reuse their exact facts and decide the next action from the user's current request."}
 	}
-	if hasDeleteGoal && !hasDelete {
-		addHint("The prior goal still appears to include a file deletion, and no successful file-manager/delete_file call is recorded; resolve the current visible target, call file-manager/delete_file, and wait for the governed tool result. Do not ask for a separate natural-language confirmation because tool governance handles the approval card.")
-	}
-	if len(hints) == 0 && hasGeneratedArtifact {
-		addHint("A generated artifact already exists in recent execution state; reuse it for save/export requests instead of regenerating the same file.")
-	}
-	return hints
-}
-
-func continuationHasPendingOperationPlanTool(branch []*runtimemodel.Message, skillID, toolName string) bool {
-	for _, plan := range recentContinuationOperationPlans(branch, recentContinuationTurnLimit) {
-		if operationPlanHasPendingToolStep(plan, skillID, toolName) {
-			return true
-		}
-	}
-	return false
-}
-
-func operationPlanHasPendingToolStep(plan map[string]interface{}, skillID, toolName string) bool {
-	if len(plan) == 0 {
-		return false
-	}
-	stepStatus := mapFromOperationContext(plan["step_status"])
-	for _, step := range mapSliceFromAny(plan["steps"]) {
-		if !operationPlanStepMatchesExactTool(step, skillID, toolName) {
-			continue
-		}
-		status := operationPlanNormalizeStepStatus(firstNonEmptyString(step["status"], stepStatus[stringFromAny(step["id"])]))
-		return status == operationPlanStepStatusPending
-	}
-	stepID := operationPlanToolStepID(skillID, toolName)
-	if stepID == "" {
-		return false
-	}
-	status, ok := stepStatus[stepID]
-	if !ok {
-		return false
-	}
-	return operationPlanNormalizeStepStatus(stringFromAny(status)) == operationPlanStepStatusPending
+	return []string{"A generated artifact already exists in recent execution state. Reuse its exact facts when they satisfy the current request instead of regenerating it."}
 }
 
 func operationPlanStepMatchesExactTool(step map[string]interface{}, skillID, toolName string) bool {

@@ -124,7 +124,6 @@ func mergeSkillTraceMetadata(source map[string]interface{}, traces []skills.Skil
 		applyOperationPlanArtifactState(metadata, files)
 	}
 	applyOperationPlanInvocationState(metadata, invocations)
-	applyOperationPlanPlannerFeedbackState(metadata, traces)
 	applyStructuredTurnStateMetadata(metadata, invocations)
 	return metadata
 }
@@ -148,6 +147,10 @@ func applyPlanUpdateTraceMetadata(metadata map[string]interface{}, trace skills.
 	if explanation := strings.TrimSpace(stringFromAny(trace.Result["explanation"])); explanation != "" {
 		plan["phase_explanation"] = compactForPrompt(explanation, 500)
 	}
+	plan["plan_sync_status"] = "current"
+	plan["last_plan_update_round"] = intValueFromAny(trace.Arguments["round"])
+	plan["evidence_sequence_at_plan_update"] = operationPlanLatestEvidenceSequence(plan)
+	plan["evidence_after_last_plan_update"] = 0
 	warnings := stringSliceFromAny(trace.Result["evidence_warnings"])
 	if warning := strings.TrimSpace(stringFromAny(trace.Result["plan_warning"])); warning != "" {
 		warnings = append(warnings, warning)

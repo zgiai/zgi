@@ -3251,6 +3251,26 @@ func (s *fakeAgentManagementService) GetAgent(_ context.Context, agentID string)
 	return nil, nil
 }
 
+func (s *fakeAgentManagementService) GetAgentRuntimeSurfaces(context.Context, string, string) (*dto.AgentRuntimeSurfaceAuthorizationResponse, error) {
+	return &dto.AgentRuntimeSurfaceAuthorizationResponse{}, nil
+}
+
+func (s *fakeAgentManagementService) RequireAgentManageAccess(context.Context, string, string) error {
+	return nil
+}
+
+func (s *fakeAgentManagementService) UpdateAgentRuntimeSurfaces(context.Context, string, string, dto.UpdateAgentRuntimeSurfacesRequest) (*dto.AgentRuntimeSurfaceAuthorizationResponse, error) {
+	return &dto.AgentRuntimeSurfaceAuthorizationResponse{}, nil
+}
+
+func (s *fakeAgentManagementService) GetPublishedAgentRuntimeConfig(context.Context, string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
+	return &dto.AgentWebAppRuntimeConfigResponse{}, nil
+}
+
+func (s *fakeAgentManagementService) GetWebAppRuntimeCapability(context.Context, string, string, bool) (*dto.AgentWebAppRuntimeCapabilityResponse, error) {
+	return &dto.AgentWebAppRuntimeCapabilityResponse{}, nil
+}
+
 func (s *fakeAgentManagementService) UpdateAgent(_ context.Context, agentID string, req interface{}) (interface{}, error) {
 	s.updateAgentCalls++
 	s.lastUpdateAgentID = agentID

@@ -357,7 +357,6 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	}
 
 	if invocation != nil {
-		ensureOperationPlanInvocationStep(prepared.Message.Metadata, skillInvocationFromTrace(invocation.Trace, 0))
 		prepared.Message.Metadata = preparedOperationEvidenceMetadata(prepared.Message.Metadata)
 	}
 
@@ -392,286 +391,15 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, true, nil
 }
 
-func (s *service) persistFrozenContinuationToolTraceBestEffort(ctx context.Context, prepared *PreparedChat, trace skills.SkillTrace) {
-	if prepared == nil || prepared.Message == nil {
-		return
-	}
-	metadata := mergeFrozenContinuationToolTraceMetadata(prepared.Message.Metadata, trace)
-	prepared.Message.Metadata = metadata
-	if s == nil || s.repos == nil || s.repos.Message == nil {
-		return
-	}
-	_ = s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata)
-}
-
-func mergeFrozenContinuationToolTraceMetadata(source map[string]interface{}, trace skills.SkillTrace) map[string]interface{} {
-	metadata := copyStringAnyMap(source)
-	if metadata == nil {
-		metadata = map[string]interface{}{}
-	}
-	if strings.TrimSpace(trace.SkillID) == "" || strings.TrimSpace(trace.ToolName) == "" {
-		return metadata
-	}
-	if strings.TrimSpace(trace.Kind) == "" || strings.EqualFold(strings.TrimSpace(trace.Kind), "tool_governance") {
-		trace.Kind = "tool_call"
-	}
-	if strings.TrimSpace(trace.Status) == "" {
-		trace.Status = "success"
-	}
-	invocation := skillInvocationFromTrace(trace, 0)
-	if runtimeID := latestMatchingToolCallRuntimeID(metadata, trace.SkillID, trace.ToolName); runtimeID != "" {
-		invocation["runtime_id"] = runtimeID
-	}
-	return mergeSkillInvocationMetadata(metadata, []map[string]interface{}{invocation})
-}
-
 func preparedOperationEvidenceMetadata(source map[string]interface{}) map[string]interface{} {
 	metadata := copyStringAnyMap(source)
 	if metadata == nil {
 		metadata = map[string]interface{}{}
 	}
-	finalizeOperationPlanForResult(metadata)
 	if summary := operationResultSummaryForPrompt(metadata); len(summary) > 0 {
 		metadata["operation_result_summary"] = summary
 	}
 	return metadata
-}
-
-func latestMatchingToolCallRuntimeID(metadata map[string]interface{}, skillID string, toolName string) string {
-	skillID = strings.TrimSpace(skillID)
-	toolName = strings.TrimSpace(toolName)
-	if len(metadata) == 0 || skillID == "" || toolName == "" {
-		return ""
-	}
-	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
-	for idx := len(invocations) - 1; idx >= 0; idx-- {
-		invocation := invocations[idx]
-		if !strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "tool_call") ||
-			!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["skill_id"])), skillID) ||
-			!strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["tool_name"])), toolName) {
-			continue
-		}
-		if runtimeID := strings.TrimSpace(stringFromAny(invocation["runtime_id"])); runtimeID != "" {
-			return runtimeID
-		}
-	}
-	return ""
-}
-
-func toolGovernanceFrozenPlanHasPendingFollowup(prepared *PreparedChat, trace skills.SkillTrace) bool {
-	if prepared == nil || prepared.Message == nil || len(prepared.Message.Metadata) == 0 {
-		return false
-	}
-	plan := mapFromOperationContext(prepared.Message.Metadata["operation_plan"])
-	if len(plan) == 0 {
-		return false
-	}
-	if toolGovernanceFrozenModelDecidesPlanNeedsContinuation(plan) {
-		return true
-	}
-	for _, step := range operationPlanPendingExecutableSteps(plan, 8) {
-		skillID := strings.TrimSpace(stringFromAny(step["skill_id"]))
-		toolName := strings.TrimSpace(stringFromAny(step["tool_name"]))
-		if skillID == "" && toolName == "" {
-			continue
-		}
-		if strings.EqualFold(skillID, strings.TrimSpace(trace.SkillID)) &&
-			strings.EqualFold(toolName, strings.TrimSpace(trace.ToolName)) {
-			continue
-		}
-		return true
-	}
-	return false
-}
-
-func toolGovernanceFrozenPlanHasPendingAgentMutationOtherThan(plan map[string]interface{}, completedToolName string) bool {
-	if len(plan) == 0 {
-		return false
-	}
-	completedToolName = strings.ToLower(strings.TrimSpace(completedToolName))
-	stepStatus := mapFromOperationContext(plan["step_status"])
-	for _, step := range mapSliceFromAny(plan["steps"]) {
-		if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skills.SkillAgentManagement) {
-			continue
-		}
-		toolName := strings.ToLower(strings.TrimSpace(stringFromAny(step["tool_name"])))
-		if toolName == "" || toolName == completedToolName || !toolGovernanceFrozenPlanAgentToolIsMutation(toolName) {
-			continue
-		}
-		id := strings.TrimSpace(stringFromAny(step["id"]))
-		status := operationPlanNormalizeStepStatus(firstNonEmptyString(step["status"], stepStatus[id]))
-		if status == operationPlanStepStatusCompleted || status == operationPlanStepStatusFailed {
-			continue
-		}
-		return true
-	}
-	return false
-}
-
-func toolGovernanceFrozenPlanAgentToolIsMutation(toolName string) bool {
-	switch strings.ToLower(strings.TrimSpace(toolName)) {
-	case "create_agent", "delete_agent", "delete_agents", "update_agent_identity", "update_agent_config",
-		"replace_agent_memory_slots", "replace_agent_skill_bindings", "replace_agent_knowledge_bindings",
-		"replace_agent_database_bindings", "replace_agent_workflow_bindings":
-		return true
-	default:
-		return false
-	}
-}
-
-func toolGovernanceFrozenPlanExpectedAgentConfigFields(plan map[string]interface{}) []string {
-	for _, step := range mapSliceFromAny(plan["steps"]) {
-		if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skills.SkillAgentManagement) ||
-			!strings.EqualFold(strings.TrimSpace(stringFromAny(step["tool_name"])), "update_agent_config") {
-			continue
-		}
-		if fields := operationPlanNormalizedAgentConfigFieldsFromAny(step[operationPlanExpectedUpdatedFieldsKey]); len(fields) > 0 {
-			return fields
-		}
-		args := mapFromOperationContext(step["arguments"])
-		if fields := operationPlanNormalizedAgentConfigFieldsFromAny(args[operationPlanExpectedUpdatedFieldsKey]); len(fields) > 0 {
-			return fields
-		}
-	}
-	return nil
-}
-
-func toolGovernanceFrozenSimpleAgentConfigFields(fields []string) bool {
-	if len(fields) == 0 {
-		return false
-	}
-	for _, field := range fields {
-		switch strings.TrimSpace(field) {
-		case "system_prompt", "model_provider", "model", "model_parameters",
-			"agent_memory_enabled", "file_upload_enabled",
-			"home_title", "input_placeholder", "theme_color", "suggested_questions":
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-func toolGovernanceFrozenPlanRequiresPostUpdateRead(plan map[string]interface{}) bool {
-	if len(plan) == 0 {
-		return false
-	}
-	goal := strings.ToLower(strings.TrimSpace(firstNonEmptyString(
-		plan["original_user_goal"],
-		plan["user_goal"],
-		plan["objective"],
-	)))
-	if goal != "" {
-		hasAfter := strings.Contains(goal, "after update") ||
-			strings.Contains(goal, "after completion") ||
-			strings.Contains(goal, "then read") ||
-			strings.Contains(goal, "read/observe") ||
-			strings.Contains(goal, "read again") ||
-			strings.Contains(goal, "verify") ||
-			strings.Contains(goal, "confirm") ||
-			strings.Contains(goal, "\u5b8c\u6210\u540e") ||
-			strings.Contains(goal, "\u4e4b\u540e") ||
-			strings.Contains(goal, "\u518d\u6b21\u8bfb\u53d6") ||
-			strings.Contains(goal, "\u91cd\u65b0\u8bfb\u53d6") ||
-			strings.Contains(goal, "\u9a8c\u8bc1")
-		if hasAfter {
-			return true
-		}
-	}
-	for _, step := range mapSliceFromAny(plan["steps"]) {
-		if !strings.EqualFold(strings.TrimSpace(stringFromAny(step["skill_id"])), skills.SkillAgentManagement) {
-			continue
-		}
-		toolName := strings.ToLower(strings.TrimSpace(stringFromAny(step["tool_name"])))
-		if toolName != "get_agent_config" && toolName != "get_agent" {
-			continue
-		}
-		if toolGovernanceBoolFromAny(step["required_post_update_verification"]) ||
-			strings.EqualFold(strings.TrimSpace(stringFromAny(step["phase"])), "post_update_verification") {
-			return true
-		}
-		id := strings.ToLower(strings.TrimSpace(stringFromAny(step["id"])))
-		if strings.Contains(id, "post_update") {
-			return true
-		}
-	}
-	return false
-}
-
-func toolGovernanceBoolFromAny(value interface{}) bool {
-	switch typed := value.(type) {
-	case bool:
-		return typed
-	case string:
-		return strings.EqualFold(strings.TrimSpace(typed), "true") ||
-			strings.EqualFold(strings.TrimSpace(typed), "yes") ||
-			strings.EqualFold(strings.TrimSpace(typed), "1")
-	default:
-		return false
-	}
-}
-
-func toolGovernanceFrozenModelDecidesPlanNeedsContinuation(plan map[string]interface{}) bool {
-	if toolGovernanceFrozenModelDecidesPlanHasPendingAgentWork(plan) {
-		return true
-	}
-	return toolGovernanceFrozenModelDecidesPlanHasOpenPhase(plan)
-}
-
-func toolGovernanceFrozenModelDecidesPlanHasPendingAgentWork(plan map[string]interface{}) bool {
-	if len(plan) == 0 || !operationPlanModelDecidesTools(plan) {
-		return false
-	}
-	stepStatus := mapFromOperationContext(plan["step_status"])
-	for _, step := range mapSliceFromAny(plan["steps"]) {
-		if !operationPlanStepBlocksCompletion(step) {
-			continue
-		}
-		id := strings.TrimSpace(stringFromAny(step["id"]))
-		status := operationPlanNormalizeStepStatus(firstNonEmptyString(step["status"], stepStatus[id]))
-		if status == operationPlanStepStatusCompleted || status == operationPlanStepStatusFailed {
-			continue
-		}
-		if operationPlanStepIsPendingAgentMutation(step, stepStatus) || operationPlanStepIsPostUpdateAgentRead(step) {
-			return true
-		}
-	}
-	return false
-}
-
-func toolGovernanceFrozenModelDecidesPlanHasOpenPhase(plan map[string]interface{}) bool {
-	if len(plan) == 0 || !operationPlanModelDecidesTools(plan) {
-		return false
-	}
-	if operationPlanModelDecidesCompletionVerified(plan) {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(stringFromAny(plan["status"]))) {
-	case operationPlanStatusFailed, "error", "failure", "blocked", "rejected":
-		return false
-	}
-	if toolGovernanceFrozenPendingActionRequiresContinuation(plan["pending_next_action"]) {
-		return true
-	}
-	phaseStatus := mapFromOperationContext(plan["phase_status"])
-	for _, phase := range mapSliceFromAny(plan["phases"]) {
-		id := strings.TrimSpace(stringFromAny(phase["id"]))
-		status := operationPlanNormalizeStepStatus(firstNonEmptyString(phase["status"], phaseStatus[id]))
-		if status == operationPlanStepStatusCompleted || status == operationPlanStepStatusFailed {
-			continue
-		}
-		return true
-	}
-	return false
-}
-
-func toolGovernanceFrozenPendingActionRequiresContinuation(value interface{}) bool {
-	switch strings.ToLower(strings.TrimSpace(stringFromAny(value))) {
-	case "", "none", "no_action", "noop", "answer", "final_answer", "respond", "respond_to_user":
-		return false
-	default:
-		return true
-	}
 }
 
 func remapLegacyFileDeleteFrozenInvocation(frozen toolgovernance.FrozenInvocation) toolgovernance.FrozenInvocation {
@@ -855,58 +583,18 @@ func toolGovernanceContinuationPlanStateSummary(message *runtimemodel.Message) m
 	if len(plan) == 0 {
 		return nil
 	}
-	stepStatus := mapFromOperationContext(plan["step_status"])
-	completed := make([]map[string]interface{}, 0, 6)
-	pending := make([]map[string]interface{}, 0, 6)
-	failed := make([]map[string]interface{}, 0, 3)
-	for _, step := range mapSliceFromAny(plan["steps"]) {
-		status := operationPlanStepResolvedStatus(step, stepStatus)
-		item := toolGovernanceContinuationPlanStepSummary(step, status)
-		if len(item) == 0 {
-			continue
-		}
-		switch status {
-		case operationPlanStepStatusCompleted:
-			if len(completed) < 6 {
-				completed = append(completed, item)
-			}
-		case operationPlanStepStatusFailed:
-			if len(failed) < 3 {
-				failed = append(failed, item)
-			}
-		default:
-			if len(pending) < 6 {
-				pending = append(pending, item)
-			}
-		}
-	}
 	summary := map[string]interface{}{
-		"status": strings.TrimSpace(firstNonEmptyString(plan["status"], "in_progress")),
+		"status":             strings.TrimSpace(firstNonEmptyString(plan["status"], "in_progress")),
+		"plan_sync_status":   strings.TrimSpace(stringFromAny(plan["plan_sync_status"])),
+		"original_user_goal": compactForPrompt(stringFromAny(plan["original_user_goal"]), 500),
 		"instructions": []string{
-			"Continue this same turn from the pending steps only.",
-			"Do not repeat completed steps or restate them as uncertain.",
-			"Use evidence_ledger result_facts as authoritative completed tool facts when pending steps depend on earlier tool output.",
-			"If pending_steps is empty, do not call more tools; produce a concise final answer grounded in completed_steps and tool results.",
+			"Continue the same user turn after the approved frozen invocation.",
+			"Treat phases as the model's advisory progress snapshot, not a required tool sequence.",
+			"Use evidence_ledger result_facts as authoritative completed tool facts and choose the next action yourself.",
 		},
 	}
-	if len(completed) > 0 {
-		summary["completed_steps"] = completed
-	}
-	if len(pending) > 0 {
-		summary["pending_steps"] = pending
-	} else {
-		summary["pending_steps"] = []interface{}{}
-		summary["all_required_steps_completed"] = true
-	}
-	if len(failed) > 0 {
-		summary["failed_steps"] = failed
-	}
-	if next := strings.TrimSpace(stringFromAny(plan["pending_next_action"])); next != "" {
-		summary["pending_next_action"] = next
-	}
-	if verification := mapFromOperationContext(plan["completion_verification"]); len(verification) > 0 &&
-		(len(pending) > 0 || strings.EqualFold(strings.TrimSpace(stringFromAny(verification["status"])), "pass")) {
-		summary["last_completion_verification"] = verification
+	if phases := operationPlanCompactPhasesForPrompt(plan["phases"], 8); len(phases) > 0 {
+		summary["phases"] = phases
 	}
 	if ledger := toolGovernanceContinuationEvidenceLedgerSummary(plan); len(ledger) > 0 {
 		summary["evidence_ledger"] = mapsToInterfaceSlice(ledger)
@@ -927,44 +615,6 @@ func toolGovernanceContinuationEvidenceLedgerSummary(plan map[string]interface{}
 		}
 	}
 	return operationPlanCompactEvidenceLedger(plan[operationPlanEvidenceLedgerKey], 8)
-}
-
-func toolGovernanceContinuationPlanStepSummary(step map[string]interface{}, status string) map[string]interface{} {
-	if len(step) == 0 {
-		return nil
-	}
-	skillID := strings.TrimSpace(stringFromAny(step["skill_id"]))
-	toolName := strings.TrimSpace(stringFromAny(step["tool_name"]))
-	id := strings.TrimSpace(stringFromAny(step["id"]))
-	title := strings.TrimSpace(firstNonEmptyString(step["title"], step["label"], step["description"]))
-	if title == "" && (skillID != "" || toolName != "") {
-		title = operationPlanToolStepTitle(skillID, toolName)
-	}
-	if id == "" && title == "" && skillID == "" && toolName == "" {
-		return nil
-	}
-	item := map[string]interface{}{
-		"status": operationPlanNormalizeStepStatus(status),
-	}
-	if id != "" {
-		item["id"] = id
-	}
-	if title != "" {
-		item["title"] = title
-	}
-	if skillID != "" {
-		item["skill_id"] = skillID
-	}
-	if toolName != "" {
-		item["tool_name"] = toolName
-	}
-	if target := operationPlanContinuationStepTargetSummary(step); target != "" {
-		item["target"] = target
-	}
-	if reason := strings.TrimSpace(stringFromAny(step["skipped_reason"])); reason != "" {
-		item["skipped_reason"] = reason
-	}
-	return item
 }
 
 func currentTurnExecutionStateSummary(message *runtimemodel.Message) map[string]interface{} {
@@ -1781,26 +1431,6 @@ func toolGovernanceApprovalEventFromEvent(event map[string]interface{}) map[stri
 		return governanceMapFromAny(governance["approval_event"])
 	}
 	return nil
-}
-
-func approvedGovernanceAssetSummary(approvalEvent map[string]interface{}, event map[string]interface{}) string {
-	assets := mapSliceFromAny(approvalEvent["assets"])
-	if len(assets) == 0 {
-		if governance := governanceMapFromAny(event["governance"]); len(governance) > 0 {
-			assets = mapSliceFromAny(governance["assets"])
-		}
-	}
-	if len(assets) == 0 {
-		return "the approved asset"
-	}
-	asset := assets[0]
-	name := strings.TrimSpace(firstNonEmptyString(asset["name"], asset["title"], asset["file_name"]))
-	switch {
-	case name != "":
-		return name
-	default:
-		return "the approved asset"
-	}
 }
 
 func toolGovernanceRejectionLLMRequest(message *runtimemodel.Message, req runtimedto.ToolGovernanceDecisionRequest, event map[string]interface{}) *adapter.ChatRequest {

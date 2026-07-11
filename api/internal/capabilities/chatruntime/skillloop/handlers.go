@@ -14,19 +14,6 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
-type userInputGuardState struct {
-	guard               UserInputGuard
-	toolCallGuard       ToolCallGuard
-	planToolGuard       ToolCallGuard
-	argumentResolver    ToolArgumentResolver
-	round               int
-	skillUsed           bool
-	toolCallCount       int
-	attemptedToolCalls  []SkillToolCallRef
-	successfulToolCalls []SkillToolCallRef
-	completionEvidence  map[string]interface{}
-}
-
 func (r *Runner) handleProgressiveSkillCall(
 	ctx context.Context,
 	prepared *PreparedChat,
@@ -36,7 +23,8 @@ func (r *Runner) handleProgressiveSkillCall(
 	currentToolCalls int,
 	skillToolCallCounts map[string]int,
 	loadedSkills map[string]struct{},
-	userInputGuard userInputGuardState,
+	runtimeState map[string]interface{},
+	round int,
 	onEvent func(Event) error,
 ) skillStepResult {
 	args, err := skills.ParseArguments(call.Function.Arguments)
@@ -56,18 +44,6 @@ func (r *Runner) handleProgressiveSkillCall(
 	}
 	switch call.Function.Name {
 	case skills.MetaToolLoadSkill:
-		skillID := normalizedSkillArg(args, "skill_id")
-		if guardResult, blocked := runToolCallGuard(userInputGuard.planToolGuard, ToolCallGuardRequest{
-			SkillID:             skillID,
-			ToolName:            "",
-			Round:               userInputGuard.round,
-			SkillUsed:           userInputGuard.skillUsed,
-			ToolCallCount:       userInputGuard.toolCallCount,
-			AttemptedToolCalls:  append([]SkillToolCallRef{}, userInputGuard.attemptedToolCalls...),
-			SuccessfulToolCalls: append([]SkillToolCallRef{}, userInputGuard.successfulToolCalls...),
-		}); blocked {
-			return planToolGuardRecoverableStep(call.ID, skillID, "", nil, guardResult)
-		}
 		return r.handleLoadSkillCall(ctx, prepared, resolved, call.ID, args, loadedSkills, onEvent)
 	case skills.MetaToolReadSkillReference:
 		if _, ok := loadedSkills[normalizedSkillArg(args, "skill_id")]; !ok {
@@ -81,13 +57,13 @@ func (r *Runner) handleProgressiveSkillCall(
 		toolName := stringArg(args, "tool_name")
 		toolArgs := mapArg(args, "arguments")
 		if strings.EqualFold(toolName, skills.MetaToolRequestUserInput) {
-			return r.handleRequestUserInputCall(ctx, prepared, call.ID, toolArgs, userInputGuard, onEvent)
+			return r.handleRequestUserInputCall(ctx, prepared, call.ID, toolArgs, onEvent)
 		}
 		if strings.EqualFold(toolName, skills.MetaToolTurnState) {
 			return r.handleTurnStateCall(ctx, prepared, call.ID, toolArgs, onEvent)
 		}
 		if strings.EqualFold(toolName, skills.MetaToolUpdatePlan) {
-			return r.handleUpdatePlanCall(call.ID, toolArgs, userInputGuard.completionEvidence)
+			return r.handleUpdatePlanCall(call.ID, toolArgs, runtimeState, round)
 		}
 		if strings.EqualFold(toolName, skills.MetaToolIntermediateAnswer) {
 			return r.handleIntermediateAnswerCall(ctx, prepared, call.ID, toolArgs, onEvent)
@@ -106,44 +82,6 @@ func (r *Runner) handleProgressiveSkillCall(
 			trace := blockedSkillGuardrailTrace(skillID, toolName, "skill does not provide callable tools")
 			return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, guardrailPayload(trace)), true, false)
 		}
-		if resolvedArgs, ok := runToolArgumentResolver(userInputGuard.argumentResolver, ToolCallGuardRequest{
-			SkillID:             skillID,
-			ToolName:            toolName,
-			Arguments:           copyStringAnyMap(toolArgs),
-			Round:               userInputGuard.round,
-			SkillUsed:           userInputGuard.skillUsed,
-			ToolCallCount:       userInputGuard.toolCallCount,
-			AttemptedToolCalls:  append([]SkillToolCallRef{}, userInputGuard.attemptedToolCalls...),
-			SuccessfulToolCalls: append([]SkillToolCallRef{}, userInputGuard.successfulToolCalls...),
-		}); ok {
-			toolArgs = resolvedArgs
-			args["arguments"] = toolArgs
-		}
-		if guardResult, blocked := runToolCallGuard(userInputGuard.planToolGuard, ToolCallGuardRequest{
-			SkillID:             skillID,
-			ToolName:            toolName,
-			Arguments:           copyStringAnyMap(toolArgs),
-			Round:               userInputGuard.round,
-			SkillUsed:           userInputGuard.skillUsed,
-			ToolCallCount:       userInputGuard.toolCallCount,
-			AttemptedToolCalls:  append([]SkillToolCallRef{}, userInputGuard.attemptedToolCalls...),
-			SuccessfulToolCalls: append([]SkillToolCallRef{}, userInputGuard.successfulToolCalls...),
-		}); blocked {
-			return planToolGuardRecoverableStep(call.ID, skillID, toolName, toolArgs, guardResult)
-		}
-		if guardResult, blocked := runToolCallGuard(userInputGuard.toolCallGuard, ToolCallGuardRequest{
-			SkillID:             skillID,
-			ToolName:            toolName,
-			Arguments:           copyStringAnyMap(toolArgs),
-			Round:               userInputGuard.round,
-			SkillUsed:           userInputGuard.skillUsed,
-			ToolCallCount:       userInputGuard.toolCallCount,
-			AttemptedToolCalls:  append([]SkillToolCallRef{}, userInputGuard.attemptedToolCalls...),
-			SuccessfulToolCalls: append([]SkillToolCallRef{}, userInputGuard.successfulToolCalls...),
-		}); blocked {
-			trace := toolCallGuardrailTrace(guardResult, skillID, toolName, toolArgs)
-			return successfulSkillStep(trace, skills.ToolResultMessage(call.ID, toolCallGuardrailPayload(guardResult, skillID, toolName)), false, false)
-		}
 		if currentToolCalls >= maxBusinessToolCalls(resolved) {
 			err := fmt.Errorf("%w: too many skill tool calls", ErrInvalidInput)
 			trace := skillToolLimitExceededTrace(skillID, toolName, toolArgs, err)
@@ -156,11 +94,11 @@ func (r *Runner) handleProgressiveSkillCall(
 		}
 		return r.handleCallSkillTool(ctx, prepared, resolved, call.ID, args, execCtx, onEvent)
 	case skills.MetaToolRequestUserInput:
-		return r.handleRequestUserInputCall(ctx, prepared, call.ID, args, userInputGuard, onEvent)
+		return r.handleRequestUserInputCall(ctx, prepared, call.ID, args, onEvent)
 	case skills.MetaToolTurnState:
 		return r.handleTurnStateCall(ctx, prepared, call.ID, args, onEvent)
 	case skills.MetaToolUpdatePlan:
-		return r.handleUpdatePlanCall(call.ID, args, userInputGuard.completionEvidence)
+		return r.handleUpdatePlanCall(call.ID, args, runtimeState, round)
 	case skills.MetaToolIntermediateAnswer:
 		return r.handleIntermediateAnswerCall(ctx, prepared, call.ID, args, onEvent)
 	case skills.MetaToolFinalAnswer:
@@ -255,33 +193,6 @@ func uniqueLoadedSkillForToolName(resolved *skills.ResolvedSkills, loadedSkills 
 	return matchedSkillID, matchedSkillID != ""
 }
 
-func planToolGuardRecoverableStep(callID string, skillID string, toolName string, args map[string]interface{}, result FinalAnswerGuardResult) skillStepResult {
-	message := strings.TrimSpace(result.Message)
-	if message == "" {
-		message = "tool is outside the current operation plan"
-	}
-	nextAction := strings.TrimSpace(result.SystemMessage)
-	if nextAction == "" {
-		nextAction = "continue with the pending tool from the current operation plan or answer from verified evidence"
-	}
-	if result.Advisory {
-		trace := plannerFeedbackTrace(skillID, toolName, nil)
-		if len(args) > 0 {
-			trace.Arguments = summarizeSkillToolArguments(skillID, toolName, args)
-		}
-		trace.Arguments["next_step"] = "continue_with_next_planned_step"
-		trace.Arguments["advisory"] = "planner_feedback"
-		return successfulSkillStep(trace, skills.ToolResultMessage(callID, plannerFeedbackAdvisoryPayload(message, nextAction, skillID, toolName)), false, false)
-	}
-	err := fmt.Errorf("%w: %s", ErrInvalidInput, message)
-	trace := plannerFeedbackTrace(skillID, toolName, err)
-	if len(args) > 0 {
-		trace.Arguments = summarizeSkillToolArguments(skillID, toolName, args)
-		trace.Arguments["next_step"] = "continue_planning"
-	}
-	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, nextAction, skillID, toolName)), false, false)
-}
-
 func injectedContextPseudoToolFeedbackStep(callID string, toolName string) skillStepResult {
 	err := fmt.Errorf("%w: current page context is already injected into the conversation, not exposed as a callable tool", ErrInvalidInput)
 	trace := plannerFeedbackTrace("", toolName, err)
@@ -299,7 +210,6 @@ func (r *Runner) handleRequestUserInputCall(
 	prepared *PreparedChat,
 	callID string,
 	args map[string]interface{},
-	guardState userInputGuardState,
 	onEvent func(Event) error,
 ) skillStepResult {
 	questions, err := normalizeUserInputRequestArgs(args)
@@ -312,18 +222,6 @@ func (r *Runner) handleRequestUserInputCall(
 		err := fmt.Errorf("%w: message is required", ErrInvalidInput)
 		trace := failedSkillTrace("user_input_request", "", err)
 		return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableErrorPayload(err, "call request_user_input again with a brief user-visible message and one to five questions")), false, false)
-	}
-	if guardResult, blocked := runUserInputGuard(guardState.guard, UserInputGuardRequest{
-		Message:             visibleMessage,
-		Questions:           cloneQuestionMaps(questions),
-		Round:               guardState.round,
-		SkillUsed:           guardState.skillUsed,
-		ToolCallCount:       guardState.toolCallCount,
-		AttemptedToolCalls:  append([]SkillToolCallRef{}, guardState.attemptedToolCalls...),
-		SuccessfulToolCalls: append([]SkillToolCallRef{}, guardState.successfulToolCalls...),
-	}); blocked {
-		trace := userInputGuardrailTrace(guardResult)
-		return successfulSkillStep(trace, skills.ToolResultMessage(callID, userInputGuardrailPayload(guardResult, visibleMessage, questions)), false, false)
 	}
 	firstQuestion := stringFromInterface(questions[0]["question"])
 	trace := skills.SkillTrace{

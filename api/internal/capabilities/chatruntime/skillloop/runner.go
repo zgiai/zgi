@@ -123,28 +123,13 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	recoverableFailureRoundCount := 0
 	consecutiveRecoverableFailureRounds := 0
 	recoverableFailureCallCount := 0
-	finalAnswerGuardBlockCount := 0
 	emptyFinalAnswerRetryCount := 0
 	skillToolCallCounts := map[string]int{}
-	attemptedToolCalls := []SkillToolCallRef{}
 	successfulToolCalls := []SkillToolCallRef{}
-	successfulToolCallsByKey := map[string]SkillToolCallRef{}
 	failedToolCallReasons := map[string]string{}
 	skillUsed := false
 	maxSkillSteps := maxSkillStepsForTurn(resolved)
 	terminalStateGuardConfigured := req.RuntimeStateSnapshot != nil
-	finalAnswerGuard := req.FinalAnswerGuard
-	userInputGuard := req.UserInputGuard
-	toolCallGuard := req.ToolCallGuard
-	if terminalStateGuardConfigured {
-		// The model owns tool selection and completion for agentic turns. Runtime authorization,
-		// approval, and the terminal state guard enforce protocol and safety boundaries.
-		// Keep the user-input guard so redundant clarification requests can still replan instead of
-		// interrupting a task that already has enough evidence to continue.
-		// Tool governance and backend authorization still enforce hard safety boundaries.
-		finalAnswerGuard = nil
-		toolCallGuard = nil
-	}
 	var answerBuilder strings.Builder
 	var usage *adapter.Usage
 	for round := 0; round < defaultMaxSkillPlanningRounds; round++ {
@@ -176,32 +161,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		text := assistantMessageText(planningMessage)
 		if text != "" && len(toolCalls) > 0 && !suppressNaturalProgress && !planningResult.naturalProgressStreamed && shouldEmitNaturalProgressForToolCalls(resolved, loadedSkills, toolCalls) {
 			r.emitAgentProgress(ctx, prepared, text, nil)
-		}
-		if len(toolCalls) == 0 {
-			if guardResult, blocked := runFinalAnswerGuard(finalAnswerGuard, FinalAnswerGuardRequest{
-				Answer:              text,
-				Round:               round,
-				SkillUsed:           skillUsed,
-				ToolCallCount:       toolCallCount,
-				AttemptedToolCalls:  append([]SkillToolCallRef{}, attemptedToolCalls...),
-				SuccessfulToolCalls: append([]SkillToolCallRef{}, successfulToolCalls...),
-			}); blocked {
-				finalAnswerGuardBlockCount++
-				if planningResult.answerStreamed && text != "" {
-					r.emitAnswerRetract(ctx, prepared, text, nil)
-				}
-				trace := finalAnswerGuardrailTrace(guardResult)
-				traces = append(traces, trace)
-				r.recordTrace(traces, trace)
-				r.logSkillTrace(ctx, prepared, trace)
-				if finalAnswerGuardBlockCount > defaultMaxConsecutiveRecoverableFailureRounds {
-					err := fmt.Errorf("%w: final answer guard blocked too many consecutive replies", ErrInvalidInput)
-					r.emitSkillError(ctx, prepared, failedSkillTrace("guardrail", guardResult.ToolName, err))
-					return answerBuilder.String(), usage, err
-				}
-				messages = append(messages, finalAnswerGuardSystemMessage(guardResult, text))
-				continue
-			}
 		}
 		if len(toolCalls) == 0 && terminalStateGuardConfigured {
 			if strings.TrimSpace(text) == "" {
@@ -332,21 +291,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				}
 			}
 			if result.trace.Kind == "" {
-				result = repeatedSuccessfulReadOnlyToolCallFeedbackStep(call.ID, callSkillID, callToolName, callToolArgs, successfulToolCallsByKey, successfulToolCalls)
-			}
-			if result.trace.Kind == "" {
-				result = r.handleProgressiveSkillCall(ctx, prepared, resolved, call, req.ExecutionContext, toolCallCount, skillToolCallCounts, loadedSkills, userInputGuardState{
-					guard:               userInputGuard,
-					toolCallGuard:       toolCallGuard,
-					planToolGuard:       req.PlanToolGuard,
-					argumentResolver:    req.ToolArgumentResolver,
-					round:               round,
-					skillUsed:           skillUsed,
-					toolCallCount:       toolCallCount,
-					attemptedToolCalls:  append([]SkillToolCallRef{}, attemptedToolCalls...),
-					successfulToolCalls: append([]SkillToolCallRef{}, successfulToolCalls...),
-					completionEvidence:  callEvidence,
-				}, nil)
+				result = r.handleProgressiveSkillCall(ctx, prepared, resolved, call, req.ExecutionContext, toolCallCount, skillToolCallCounts, loadedSkills, callEvidence, round+1, nil)
 			}
 			if strings.TrimSpace(result.trace.Kind) == "" {
 				if result.usedSkill {
@@ -389,14 +334,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			if result.usedSkill {
 				skillUsed = true
 			}
-			if strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") {
-				attemptedToolCalls = append(attemptedToolCalls, SkillToolCallRef{
-					SkillID:   strings.TrimSpace(result.trace.SkillID),
-					ToolName:  strings.TrimSpace(result.trace.ToolName),
-					Arguments: copyStringAnyMap(result.trace.Arguments),
-					Result:    copyStringAnyMap(result.toolResult),
-				})
-			}
 			if result.usedTool {
 				toolCallCount++
 				incrementSkillToolCallCount(skillToolCallCounts, result.trace.SkillID)
@@ -408,15 +345,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 						Arguments: copyStringAnyMap(result.trace.Arguments),
 						Result:    copyStringAnyMap(result.toolResult),
 					})
-					if failedCallKey != "" {
-						successfulToolCallsByKey[failedCallKey] = SkillToolCallRef{
-							SkillID:   strings.TrimSpace(callSkillID),
-							ToolName:  strings.TrimSpace(callToolName),
-							Arguments: copyStringAnyMap(callToolArgs),
-							Result:    copyStringAnyMap(result.toolResult),
-						}
-					}
-					finalAnswerGuardBlockCount = 0
 				}
 			}
 			if result.pendingApproval != nil {
@@ -829,189 +757,6 @@ func repeatedFailedToolCallRecoverableStep(callID string, skillID string, toolNa
 	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, nextAction, skillID, toolName)), false, false)
 }
 
-func repeatedSuccessfulReadOnlyToolCallFeedbackStep(callID string, skillID string, toolName string, args map[string]interface{}, successfulToolCallsByKey map[string]SkillToolCallRef, successfulToolCalls []SkillToolCallRef) skillStepResult {
-	if !skillToolCallLooksReadOnly(skillID, toolName) {
-		return skillStepResult{}
-	}
-	key := failedToolCallKey(skillID, toolName, args)
-	if key == "" {
-		return skillStepResult{}
-	}
-	previous, ok := successfulToolCallsByKey[key]
-	if !ok {
-		return skillStepResult{}
-	}
-	if repeatedReadOnlyToolShouldRunAfterMutation(skillID, toolName, args, successfulToolCalls) {
-		return skillStepResult{}
-	}
-	trace := plannerFeedbackTrace(skillID, toolName, nil)
-	trace.Arguments = summarizeSkillToolArguments(skillID, toolName, args)
-	trace.Arguments["next_step"] = "answer_from_previous_result"
-	trace.Arguments["reason"] = "same_read_only_tool_already_succeeded"
-	return successfulSkillStep(trace, skills.ToolResultMessage(callID, repeatedSuccessfulReadOnlyToolCallPayload(skillID, toolName, previous)), false, false)
-}
-
-func repeatedReadOnlyToolShouldRunAfterMutation(skillID string, toolName string, args map[string]interface{}, successfulToolCalls []SkillToolCallRef) bool {
-	if !strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentManagement) {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(toolName)) {
-	case "get_agent", "get_agent_config":
-	default:
-		return false
-	}
-	key := failedToolCallKey(skillID, toolName, args)
-	if key == "" {
-		return false
-	}
-	for i := len(successfulToolCalls) - 1; i >= 0; i-- {
-		call := successfulToolCalls[i]
-		if failedToolCallKey(call.SkillID, call.ToolName, call.Arguments) == key {
-			return false
-		}
-		if isAgentManagementMutationTool(call.SkillID, call.ToolName) {
-			return true
-		}
-	}
-	return false
-}
-
-func skillToolCallLooksReadOnly(skillID string, toolName string) bool {
-	skillID = strings.ToLower(strings.TrimSpace(skillID))
-	toolName = strings.ToLower(strings.TrimSpace(toolName))
-	if skillID == "" || toolName == "" {
-		return false
-	}
-	for _, prefix := range []string{"get_", "list_", "read_", "search_"} {
-		if strings.HasPrefix(toolName, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-func repeatedSuccessfulReadOnlyToolCallPayload(skillID string, toolName string, previous SkillToolCallRef) map[string]interface{} {
-	return map[string]interface{}{
-		"status":                  "completed",
-		"advisory":                "same_read_only_tool_already_succeeded",
-		"skill_id":                strings.TrimSpace(skillID),
-		"tool_name":               strings.TrimSpace(toolName),
-		"message":                 "This read-only tool call with identical arguments already succeeded earlier in this turn.",
-		"previous_result_summary": summarizeRepeatedSuccessfulReadOnlyResult(previous.Result),
-		"next_action":             "Do not call the same read-only tool with identical arguments again. Answer from the previous tool result already present in the message history; if that result is empty, say there are no matching candidates.",
-	}
-}
-
-func summarizeRepeatedSuccessfulReadOnlyResult(result map[string]interface{}) map[string]interface{} {
-	if len(result) == 0 {
-		return nil
-	}
-	summary := map[string]interface{}{}
-	for _, key := range []string{"status", "count", "total", "target_count", "success_count", "failed_count", "agent_id", "agent_name"} {
-		if value, ok := result[key]; ok {
-			summary[key] = value
-		}
-	}
-	for _, key := range []string{"items", "agents", "skills", "knowledge_bases", "databases", "database_tables", "workflows", "models"} {
-		if count := repeatedSuccessfulReadOnlyResultCollectionLength(result[key]); count >= 0 {
-			summary[key+"_count"] = count
-		}
-	}
-	if samples := repeatedSuccessfulReadOnlyCandidateSamples(result, 3); len(samples) > 0 {
-		summary["candidate_samples"] = samples
-	}
-	if len(summary) == 0 {
-		summary["available"] = true
-	}
-	return summary
-}
-
-func repeatedSuccessfulReadOnlyCandidateSamples(result map[string]interface{}, limit int) []map[string]interface{} {
-	if len(result) == 0 || limit <= 0 {
-		return nil
-	}
-	for _, key := range []string{
-		"binding_candidates",
-		"skills",
-		"knowledge_bases",
-		"databases",
-		"database_tables",
-		"tables",
-		"workflows",
-		"models",
-		"items",
-	} {
-		records := evidenceMapsFromAny(result[key])
-		if len(records) == 0 {
-			continue
-		}
-		out := make([]map[string]interface{}, 0, min(len(records), limit))
-		for _, record := range records {
-			item := repeatedSuccessfulReadOnlyCandidateSample(record)
-			if len(item) == 0 {
-				continue
-			}
-			out = append(out, item)
-			if len(out) >= limit {
-				break
-			}
-		}
-		if len(out) > 0 {
-			return out
-		}
-	}
-	return nil
-}
-
-func repeatedSuccessfulReadOnlyCandidateSample(record map[string]interface{}) map[string]interface{} {
-	if len(record) == 0 {
-		return nil
-	}
-	item := map[string]interface{}{}
-	if id := firstNonEmptyString(record["id"], record["skill_id"], record["dataset_id"], record["knowledge_base_id"], record["data_source_id"], record["table_id"], record["workflow_id"], record["binding_id"]); id != "" {
-		item["id"] = id
-	}
-	if name := firstNonEmptyString(record["name"], record["title"], record["label"], record["display_name"], record["dataset_name"], record["database_name"], record["table_name"], record["workflow_name"], record["model"]); name != "" {
-		item["name"] = name
-	}
-	for _, key := range []string{"selected", "writable", "provider", "model"} {
-		if value, ok := record[key]; ok && value != nil && value != "" {
-			item[key] = value
-		}
-	}
-	if binding := repeatedSuccessfulReadOnlyCandidateBinding(record["binding"]); len(binding) > 0 {
-		item["binding"] = binding
-	}
-	return item
-}
-
-func repeatedSuccessfulReadOnlyCandidateBinding(value interface{}) map[string]interface{} {
-	binding := evidenceMapFromAny(value)
-	if len(binding) == 0 {
-		return nil
-	}
-	item := map[string]interface{}{}
-	for _, key := range []string{"data_source_id", "table_ids", "writable_table_ids", "agent_id", "workflow_id", "binding_id", "version_strategy", "version_uuid", "timeout_seconds"} {
-		if value, ok := binding[key]; ok && value != nil && value != "" {
-			item[key] = value
-		}
-	}
-	return item
-}
-
-func repeatedSuccessfulReadOnlyResultCollectionLength(value interface{}) int {
-	switch typed := value.(type) {
-	case []interface{}:
-		return len(typed)
-	case []map[string]interface{}:
-		return len(typed)
-	case []string:
-		return len(typed)
-	default:
-		return -1
-	}
-}
-
 func recoverableFailureFinalAnswer(trace skills.SkillTrace, err error) string {
 	reason := strings.TrimSpace(trace.Error)
 	if reason == "" && err != nil {
@@ -1086,116 +831,6 @@ func governedReadFileTargetSystemMessage(trace skills.SkillTrace) (adapter.Messa
 		"Do not mention this correction, internal resolution, governance, redirects, caches, mismatched IDs, or internal file IDs in the final answer. Simply answer the user's request from the resolved file content.",
 	}, "\n")
 	return adapter.Message{Role: "system", Content: content}, true
-}
-
-func runFinalAnswerGuard(guard FinalAnswerGuard, req FinalAnswerGuardRequest) (FinalAnswerGuardResult, bool) {
-	if guard == nil {
-		return FinalAnswerGuardResult{}, false
-	}
-	result, blocked := guard(req)
-	if !blocked {
-		return FinalAnswerGuardResult{}, false
-	}
-	result.Message = strings.TrimSpace(result.Message)
-	if result.Message == "" {
-		result.Message = "The previous candidate final answer was blocked because the claimed outcome lacks successful skill/tool evidence in this turn. Continue from the latest evidence, call the next useful tool if it is still needed, and only then claim completion."
-	}
-	return result, true
-}
-
-func runUserInputGuard(guard UserInputGuard, req UserInputGuardRequest) (FinalAnswerGuardResult, bool) {
-	if guard == nil {
-		return FinalAnswerGuardResult{}, false
-	}
-	result, blocked := guard(req)
-	if !blocked {
-		return FinalAnswerGuardResult{}, false
-	}
-	result.Message = strings.TrimSpace(result.Message)
-	if result.Message == "" {
-		result.Message = "The requested user clarification was blocked because runtime context already contains the information needed to continue. Continue from the latest evidence and use the next useful tool before asking the user."
-	}
-	return result, true
-}
-
-func runToolCallGuard(guard ToolCallGuard, req ToolCallGuardRequest) (FinalAnswerGuardResult, bool) {
-	if guard == nil {
-		return FinalAnswerGuardResult{}, false
-	}
-	result, blocked := guard(req)
-	if !blocked {
-		return FinalAnswerGuardResult{}, false
-	}
-	result.Message = strings.TrimSpace(result.Message)
-	if result.Message == "" {
-		result.Message = "The requested skill tool call was blocked because it would run the task in the wrong order. Continue from the latest evidence and use the next useful tool first."
-	}
-	return result, true
-}
-
-func runToolArgumentResolver(resolver ToolArgumentResolver, req ToolCallGuardRequest) (map[string]interface{}, bool) {
-	if resolver == nil {
-		return nil, false
-	}
-	resolved, changed := resolver(req)
-	if !changed {
-		return nil, false
-	}
-	return copyStringAnyMap(resolved), true
-}
-
-func finalAnswerGuardrailTrace(result FinalAnswerGuardResult) skills.SkillTrace {
-	return skills.SkillTrace{
-		Kind:     "guardrail",
-		SkillID:  strings.TrimSpace(result.SkillID),
-		ToolName: strings.TrimSpace(result.ToolName),
-		Status:   "blocked",
-		Error:    strings.TrimSpace(result.Message),
-		Arguments: map[string]interface{}{
-			"next_step": "continue_planning",
-		},
-	}
-}
-
-func toolCallGuardrailTrace(result FinalAnswerGuardResult, blockedSkillID string, blockedToolName string, blockedArguments map[string]interface{}) skills.SkillTrace {
-	trace := finalAnswerGuardrailTrace(result)
-	trace.Arguments = map[string]interface{}{
-		"blocked_tool": strings.TrimSpace(blockedSkillID) + "/" + strings.TrimSpace(blockedToolName),
-		"next_step":    "continue_planning",
-	}
-	if len(blockedArguments) > 0 {
-		trace.Arguments["blocked_arguments"] = summarizeSkillToolArguments(blockedSkillID, blockedToolName, blockedArguments)
-	}
-	return trace
-}
-
-func userInputGuardrailTrace(result FinalAnswerGuardResult) skills.SkillTrace {
-	return skills.SkillTrace{
-		Kind:     "guardrail",
-		SkillID:  strings.TrimSpace(result.SkillID),
-		ToolName: strings.TrimSpace(result.ToolName),
-		Status:   "blocked",
-		Error:    strings.TrimSpace(result.Message),
-		Arguments: map[string]interface{}{
-			"blocked_tool": "request_user_input",
-			"next_step":    "continue_planning",
-		},
-	}
-}
-
-func finalAnswerGuardSystemMessage(result FinalAnswerGuardResult, candidateAnswer string) adapter.Message {
-	feedback := strings.TrimSpace(result.SystemMessage)
-	if feedback == "" {
-		feedback = strings.TrimSpace(result.Message)
-	}
-	lines := []string{
-		"Runtime guardrail feedback:",
-		feedback,
-	}
-	if text := strings.TrimSpace(candidateAnswer); text != "" {
-		lines = append(lines, "Blocked candidate answer:\n"+text)
-	}
-	return adapter.Message{Role: "system", Content: strings.Join(lines, "\n")}
 }
 
 func messageContent(content interface{}) string {

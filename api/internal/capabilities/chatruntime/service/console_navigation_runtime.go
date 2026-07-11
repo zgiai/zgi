@@ -1,8 +1,6 @@
 package service
 
 import (
-	"encoding/json"
-	"fmt"
 	"regexp"
 	"strings"
 
@@ -312,62 +310,6 @@ func consoleFilesRouteHint() consoleNavigationRouteHint {
 func isConsoleNavigatorNavigateTool(skillID string, toolName string) bool {
 	return strings.EqualFold(strings.TrimSpace(skillID), skills.SkillConsoleNavigator) &&
 		strings.EqualFold(strings.TrimSpace(toolName), "navigate")
-}
-
-func createdAgentRequiresDetailNavigationGuardResult(target consoleNavigationRouteHint) skillloop.FinalAnswerGuardResult {
-	message := strings.Join([]string{
-		fmt.Sprintf("The Agent was created successfully and the user asked to open its detail page (%s).", target.Href),
-		"Do not finish with a natural-language message saying the detail page is open yet.",
-		fmt.Sprintf("Call call_skill_tool with skill_id %q, tool_name %q, and href %q.", skills.SkillConsoleNavigator, "navigate", target.Href),
-		"Only after navigate succeeds in this turn may you tell the user that the Agent was created and opened.",
-	}, " ")
-	payload := map[string]interface{}{
-		"skill_id":  skills.SkillConsoleNavigator,
-		"tool_name": "navigate",
-		"arguments": map[string]interface{}{
-			"href": target.Href,
-		},
-		"label": target.Label,
-	}
-	encoded, err := json.Marshal(payload)
-	systemMessage := message
-	if err == nil {
-		systemMessage = systemMessage + " Resolved route JSON for tool arguments: " + string(encoded)
-	}
-	return skillloop.FinalAnswerGuardResult{
-		SkillID:       skills.SkillConsoleNavigator,
-		ToolName:      "navigate",
-		Message:       message,
-		SystemMessage: systemMessage,
-	}
-}
-
-func agentDeleteRequiresListNavigationGuardResult(target consoleNavigationRouteHint) skillloop.FinalAnswerGuardResult {
-	message := strings.Join([]string{
-		"The current Agent detail page was deleted successfully.",
-		"Do not finish with a natural-language message saying the Agent list is open yet.",
-		fmt.Sprintf("Call call_skill_tool with skill_id %q, tool_name %q, and href %q to navigate back to the Agent list.", skills.SkillConsoleNavigator, "navigate", target.Href),
-		"Only after navigate succeeds in this turn may you tell the user that the Agent was deleted and the list page is open.",
-	}, " ")
-	payload := map[string]interface{}{
-		"skill_id":  skills.SkillConsoleNavigator,
-		"tool_name": "navigate",
-		"arguments": map[string]interface{}{
-			"href": target.Href,
-		},
-		"label": target.Label,
-	}
-	encoded, err := json.Marshal(payload)
-	systemMessage := message
-	if err == nil {
-		systemMessage = systemMessage + " Resolved route JSON for tool arguments: " + string(encoded)
-	}
-	return skillloop.FinalAnswerGuardResult{
-		SkillID:       skills.SkillConsoleNavigator,
-		ToolName:      "navigate",
-		Message:       message,
-		SystemMessage: systemMessage,
-	}
 }
 
 func consoleNavigationLoadedHrefMatchesTarget(loadedHref string, targetHref string) bool {

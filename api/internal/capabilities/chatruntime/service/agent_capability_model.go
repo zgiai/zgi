@@ -1165,9 +1165,6 @@ func agentCapabilityGoalsFromOperationPlan(plan map[string]interface{}) []AIChat
 	if goals := agentCapabilityGoalsFromMaps(plan["capability_goals"]); len(goals) > 0 {
 		return goals
 	}
-	if structured := mapFromOperationContext(plan["structured_plan"]); len(structured) > 0 {
-		return agentCapabilityGoalsFromMaps(structured["capability_goals"])
-	}
 	return nil
 }
 

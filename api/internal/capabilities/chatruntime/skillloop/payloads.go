@@ -610,32 +610,3 @@ func guardrailPayload(trace skills.SkillTrace) map[string]interface{} {
 		"next_step": "call load_skill with the same skill_id before reading references or calling skill tools",
 	}
 }
-
-func userInputGuardrailPayload(result FinalAnswerGuardResult, blockedMessage string, questions []map[string]interface{}) map[string]interface{} {
-	return map[string]interface{}{
-		"error":             strings.TrimSpace(result.Message),
-		"status":            "blocked",
-		"blocked_tool":      "request_user_input",
-		"blocked_message":   strings.TrimSpace(blockedMessage),
-		"blocked_questions": userInputQuestionSummaries(questions),
-		"skill_id":          strings.TrimSpace(result.SkillID),
-		"tool_name":         strings.TrimSpace(result.ToolName),
-		"next_step":         "continue from available runtime context and use the next useful skill/tool instead of asking the user to clarify information already resolved in runtime context",
-	}
-}
-
-func toolCallGuardrailPayload(result FinalAnswerGuardResult, blockedSkillID string, blockedToolName string) map[string]interface{} {
-	nextStep := strings.TrimSpace(result.SystemMessage)
-	if nextStep == "" {
-		nextStep = strings.TrimSpace(result.Message)
-	}
-	return map[string]interface{}{
-		"error":          strings.TrimSpace(result.Message),
-		"status":         "blocked",
-		"blocked_tool":   strings.TrimSpace(blockedSkillID) + "/" + strings.TrimSpace(blockedToolName),
-		"skill_id":       strings.TrimSpace(result.SkillID),
-		"tool_name":      strings.TrimSpace(result.ToolName),
-		"model_feedback": nextStep,
-		"next_step":      "continue from available evidence and use the next useful skill/tool before retrying the blocked action",
-	}
-}

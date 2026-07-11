@@ -140,11 +140,6 @@ type RunRequest struct {
 	PreferExplicitFinalAnswer      bool
 	SuppressInitialNaturalProgress bool
 	AdditionalSystemMessages       []adapter.Message
-	FinalAnswerGuard               FinalAnswerGuard
-	UserInputGuard                 UserInputGuard
-	ToolCallGuard                  ToolCallGuard
-	PlanToolGuard                  ToolCallGuard
-	ToolArgumentResolver           ToolArgumentResolver
 	RuntimeStateSnapshot           RuntimeStateSnapshotFunc
 	CurrentMetadata                func() map[string]interface{}
 	OnTerminalStateGuardDecision   func(TerminalStateGuardDecisionRecord)
@@ -158,14 +153,6 @@ type TerminalStateGuardDecisionRecord struct {
 	Blockers []string
 }
 
-type FinalAnswerGuard func(FinalAnswerGuardRequest) (FinalAnswerGuardResult, bool)
-
-type UserInputGuard func(UserInputGuardRequest) (FinalAnswerGuardResult, bool)
-
-type ToolCallGuard func(ToolCallGuardRequest) (FinalAnswerGuardResult, bool)
-
-type ToolArgumentResolver func(ToolCallGuardRequest) (map[string]interface{}, bool)
-
 type RuntimeStateSnapshotFunc func() map[string]interface{}
 
 type TerminalCompletionResult struct {
@@ -173,44 +160,6 @@ type TerminalCompletionResult struct {
 	Source   string
 	Reason   string
 	Blockers []string
-}
-
-type FinalAnswerGuardRequest struct {
-	Answer              string
-	Round               int
-	SkillUsed           bool
-	ToolCallCount       int
-	AttemptedToolCalls  []SkillToolCallRef
-	SuccessfulToolCalls []SkillToolCallRef
-}
-
-type FinalAnswerGuardResult struct {
-	SkillID       string
-	ToolName      string
-	Message       string
-	SystemMessage string
-	Advisory      bool
-}
-
-type UserInputGuardRequest struct {
-	Message             string
-	Questions           []map[string]interface{}
-	Round               int
-	SkillUsed           bool
-	ToolCallCount       int
-	AttemptedToolCalls  []SkillToolCallRef
-	SuccessfulToolCalls []SkillToolCallRef
-}
-
-type ToolCallGuardRequest struct {
-	SkillID             string
-	ToolName            string
-	Arguments           map[string]interface{}
-	Round               int
-	SkillUsed           bool
-	ToolCallCount       int
-	AttemptedToolCalls  []SkillToolCallRef
-	SuccessfulToolCalls []SkillToolCallRef
 }
 
 type SkillToolCallRef struct {
