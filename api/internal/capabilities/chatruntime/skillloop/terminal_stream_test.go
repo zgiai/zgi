@@ -118,7 +118,7 @@ func TestRunnerAcceptsStreamedFinalAnswerWithPendingPlanWithoutRetract(t *testin
 		Prepared:                  prepared,
 		Resolved:                  runnerTestResolvedSkills(),
 		PreferExplicitFinalAnswer: true,
-		CompletionEvidence:        func() map[string]interface{} { return evidence },
+		RuntimeStateSnapshot:        func() map[string]interface{} { return evidence },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -178,7 +178,7 @@ func TestRunnerAcceptsStreamedAnswerWhenOptionalMetadataIsMalformed(t *testing.T
 		Prepared:                  prepared,
 		Resolved:                  runnerTestResolvedSkills(),
 		PreferExplicitFinalAnswer: true,
-		CompletionEvidence:        func() map[string]interface{} { return map[string]interface{}{} },
+		RuntimeStateSnapshot:        func() map[string]interface{} { return map[string]interface{}{} },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -233,7 +233,7 @@ func TestRunnerDoesNotStreamFinalAnswerWithPendingProtocolBlocker(t *testing.T) 
 		Prepared:                  prepared,
 		Resolved:                  runnerTestResolvedSkills(),
 		PreferExplicitFinalAnswer: true,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{"pending_approval": map[string]interface{}{"status": "waiting"}}
 		},
 	})
@@ -317,7 +317,7 @@ func TestRunnerReturnsPartialFinalAnswerWithoutRetryWhenStreamTerminatesEarly(t 
 		Prepared:                  prepared,
 		Resolved:                  runnerTestResolvedSkills(),
 		PreferExplicitFinalAnswer: true,
-		CompletionEvidence:        func() map[string]interface{} { return map[string]interface{}{} },
+		RuntimeStateSnapshot:        func() map[string]interface{} { return map[string]interface{}{} },
 	})
 	if err == nil {
 		t.Fatal("Run() error = nil, want truncated stream error")
@@ -575,7 +575,7 @@ func TestRunnerStreamsPlainAnswerWithoutExplicitFinalAnswerProtocol(t *testing.T
 	answer, _, err := runner.Run(context.Background(), RunRequest{
 		Prepared:           prepared,
 		Resolved:           runnerTestResolvedSkills(),
-		CompletionEvidence: func() map[string]interface{} { return map[string]interface{}{} },
+		RuntimeStateSnapshot: func() map[string]interface{} { return map[string]interface{}{} },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -642,7 +642,7 @@ func TestRunnerUsesExplicitFinalAnswerProtocolWhenPreferred(t *testing.T) {
 		Prepared:                  prepared,
 		Resolved:                  runnerTestResolvedSkills(),
 		PreferExplicitFinalAnswer: true,
-		CompletionEvidence:        func() map[string]interface{} { return map[string]interface{}{} },
+		RuntimeStateSnapshot:        func() map[string]interface{} { return map[string]interface{}{} },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -704,7 +704,7 @@ func TestRunnerAcceptsPlainCandidateThroughGateWhenFinalToolPreferred(t *testing
 		Prepared:                  prepared,
 		Resolved:                  runnerTestResolvedSkills(),
 		PreferExplicitFinalAnswer: true,
-		CompletionEvidence:        func() map[string]interface{} { return evidence },
+		RuntimeStateSnapshot:        func() map[string]interface{} { return evidence },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -749,7 +749,7 @@ func TestRunnerAcceptsMainModelAnswerWhenAdvisoryPlanIsPending(t *testing.T) {
 		Prepared:                  prepared,
 		Resolved:                  runnerTestResolvedSkills(),
 		PreferExplicitFinalAnswer: true,
-		CompletionEvidence:        func() map[string]interface{} { return evidence },
+		RuntimeStateSnapshot:        func() map[string]interface{} { return evidence },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -865,7 +865,7 @@ max_calls_per_turn: 20
 		Prepared:           prepared,
 		Resolved:           resolved,
 		CurrentMetadata:    func() map[string]interface{} { return metadata },
-		CompletionEvidence: func() map[string]interface{} { return metadata },
+		RuntimeStateSnapshot: func() map[string]interface{} { return metadata },
 	})
 	var pending *UserInputPendingError
 	if !errors.As(err, &pending) {

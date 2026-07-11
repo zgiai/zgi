@@ -384,7 +384,7 @@ func TestClientActionContinuationMessageIncludesMissingAgentCreateTargets(t *tes
 	}
 }
 
-func TestSkillLoopCompletionEvidenceIncludesAgentCreateProgress(t *testing.T) {
+func TestSkillLoopRuntimeStateSnapshotIncludesAgentCreateProgress(t *testing.T) {
 	prepared := &PreparedChat{
 		Message: &runtimemodel.Message{
 			Query: "create two draft agents named Agent One and Agent Two",
@@ -403,7 +403,7 @@ func TestSkillLoopCompletionEvidenceIncludesAgentCreateProgress(t *testing.T) {
 	}
 
 	prepared.Message.Metadata["operation_plan"] = agentCreateProgressPlanForTest("AIChat fast-path create regression")
-	evidence := skillLoopCompletionEvidence(prepared)()
+	evidence := skillLoopRuntimeStateSnapshot(prepared)()
 	progress := mapFromOperationContext(evidence["agent_create_progress"])
 	if progress["status"] != "partial" {
 		t.Fatalf("agent_create_progress status = %#v, want partial; progress=%#v", progress["status"], progress)

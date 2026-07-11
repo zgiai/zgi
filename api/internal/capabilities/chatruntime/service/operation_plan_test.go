@@ -99,7 +99,7 @@ func TestApplyOperationPlanCompletionVerificationMirrorsTopLevelMetadata(t *test
 		},
 	}
 
-	applyOperationPlanCompletionVerificationResult(metadata, "pass", "tool evidence is complete", nil, nil, "")
+	applyOperationPlanTerminalCompletionResult(metadata, "pass", "tool evidence is complete", nil, nil, "")
 
 	verification := mapFromOperationContext(metadata["completion_verification"])
 	if got := stringFromAny(verification["status"]); got != "pass" {
@@ -6334,7 +6334,7 @@ func TestAgentBroadEditableSmokePromptHonorsNoModifyNegation(t *testing.T) {
 	}
 }
 
-func TestSkillLoopCompletionEvidenceFinalizesObservationFromLedger(t *testing.T) {
+func TestSkillLoopRuntimeStateSnapshotFinalizesObservationFromLedger(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:          "\u8bf7\u8bfb\u53d6\u5f53\u524d Agent \u914d\u7f6e\uff0c\u4e0d\u8981\u4fee\u6539\u4efb\u4f55\u914d\u7f6e\u3002",
 		Surface:        aiChatSurfaceContextualSidebar,
@@ -6359,7 +6359,7 @@ func TestSkillLoopCompletionEvidenceFinalizesObservationFromLedger(t *testing.T)
 		},
 	}
 
-	evidence := skillLoopCompletionEvidence(prepared)()
+	evidence := skillLoopRuntimeStateSnapshot(prepared)()
 	plan := mapFromOperationContext(evidence["operation_plan"])
 	if got := stringFromAny(plan["status"]); got != operationPlanStatusCompleted {
 		t.Fatalf("evidence operation_plan.status = %q, want completed; plan=%#v", got, plan)
@@ -6378,7 +6378,7 @@ func TestSkillLoopCompletionEvidenceFinalizesObservationFromLedger(t *testing.T)
 	}
 }
 
-func TestSkillLoopCompletionEvidenceEmbedsOperationLedgerInExecutionLedger(t *testing.T) {
+func TestSkillLoopRuntimeStateSnapshotEmbedsOperationLedgerInExecutionLedger(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:     "Use the selected page resource.",
 		Surface:   aiChatSurfaceContextualSidebar,
@@ -6410,7 +6410,7 @@ func TestSkillLoopCompletionEvidenceEmbedsOperationLedgerInExecutionLedger(t *te
 		},
 	}
 
-	evidence := skillLoopCompletionEvidence(prepared)()
+	evidence := skillLoopRuntimeStateSnapshot(prepared)()
 	if ledger := mapFromOperationContext(evidence["operation_ledger"]); len(ledger) == 0 {
 		t.Fatalf("operation_ledger evidence = %#v, want map", evidence["operation_ledger"])
 	}
@@ -6432,7 +6432,7 @@ func TestSkillLoopCompletionEvidenceEmbedsOperationLedgerInExecutionLedger(t *te
 	}
 }
 
-func TestSkillLoopCompletionEvidenceBuildsExecutionSummaryForBatchAndDeviations(t *testing.T) {
+func TestSkillLoopRuntimeStateSnapshotBuildsExecutionSummaryForBatchAndDeviations(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:     "\u5220\u9664\u524d\u4e24\u4e2a\u667a\u80fd\u4f53\uff0c\u5982\u679c\u6709\u5931\u8d25\u8981\u544a\u8bc9\u6211",
 		Surface:   aiChatSurfaceContextualSidebar,
@@ -6478,7 +6478,7 @@ func TestSkillLoopCompletionEvidenceBuildsExecutionSummaryForBatchAndDeviations(
 		},
 	}
 
-	evidence := skillLoopCompletionEvidence(prepared)()
+	evidence := skillLoopRuntimeStateSnapshot(prepared)()
 	summary := mapFromOperationContext(evidence["execution_summary"])
 	if len(summary) == 0 {
 		t.Fatalf("execution_summary = %#v, want compact summary", evidence["execution_summary"])
@@ -6543,7 +6543,7 @@ func TestSkillLoopCompletionEvidenceBuildsExecutionSummaryForBatchAndDeviations(
 	}
 }
 
-func TestSkillLoopCompletionEvidenceDoesNotMaskFailedPlanWithLatestSuccess(t *testing.T) {
+func TestSkillLoopRuntimeStateSnapshotDoesNotMaskFailedPlanWithLatestSuccess(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:     "create a test Agent, then edit and verify all available configuration",
 		Surface:   aiChatSurfaceContextualSidebar,
@@ -6580,7 +6580,7 @@ func TestSkillLoopCompletionEvidenceDoesNotMaskFailedPlanWithLatestSuccess(t *te
 		},
 	}
 
-	evidence := skillLoopCompletionEvidence(prepared)()
+	evidence := skillLoopRuntimeStateSnapshot(prepared)()
 	operationSummary := mapFromOperationContext(evidence["operation_result_summary"])
 	if got := stringFromAny(operationSummary["plan_status"]); got != operationPlanStatusFailed {
 		t.Fatalf("operation_result_summary.plan_status = %q, want failed; summary=%#v", got, operationSummary)
@@ -6814,7 +6814,7 @@ func TestSkillLoopCompletionPlanSummaryCarriesStrategyState(t *testing.T) {
 	}
 }
 
-func TestSkillLoopCompletionEvidenceRefreshesOperationPlanPageEvidence(t *testing.T) {
+func TestSkillLoopRuntimeStateSnapshotRefreshesOperationPlanPageEvidence(t *testing.T) {
 	parts := consoleAgentsVisibleTargetsTestParts("show me the current agent list")
 	message := &runtimemodel.Message{
 		Metadata: map[string]interface{}{
@@ -6836,7 +6836,7 @@ func TestSkillLoopCompletionEvidenceRefreshesOperationPlanPageEvidence(t *testin
 		parts:   parts,
 	}
 
-	evidence := skillLoopCompletionEvidence(prepared)()
+	evidence := skillLoopRuntimeStateSnapshot(prepared)()
 	plan := mapFromOperationContext(evidence["operation_plan"])
 	if got := stringFromAny(plan["current_page"]); got != "/console/agents" {
 		t.Fatalf("operation_plan.current_page = %q, want refreshed /console/agents; plan=%#v", got, plan)
@@ -6889,7 +6889,7 @@ func TestSkillLoopCompletionPageContextEvidenceHonorsNoNavigationRequest(t *test
 	}
 }
 
-func TestSkillLoopCompletionEvidenceCarriesFailedManagedFileSaveLedger(t *testing.T) {
+func TestSkillLoopRuntimeStateSnapshotCarriesFailedManagedFileSaveLedger(t *testing.T) {
 	parts := &chatRequestParts{
 		Query:          "\u751f\u6210\u4e00\u4e2a SVG \u5e76\u4fdd\u5b58\u5230\u6587\u4ef6\u7ba1\u7406",
 		Surface:        aiChatSurfaceContextualSidebar,
@@ -6927,7 +6927,7 @@ func TestSkillLoopCompletionEvidenceCarriesFailedManagedFileSaveLedger(t *testin
 		},
 	}
 
-	evidence := skillLoopCompletionEvidence(prepared)()
+	evidence := skillLoopRuntimeStateSnapshot(prepared)()
 	plan := mapFromOperationContext(evidence["operation_plan"])
 	if got := stringFromAny(plan["status"]); got != operationPlanStatusFailed {
 		t.Fatalf("evidence operation_plan.status = %q, want failed; plan=%#v", got, plan)
@@ -12468,7 +12468,7 @@ func TestOperationPlanClearsStaleFailedBatchGroupAfterSuccessfulMutation(t *test
 			Metadata: metadata,
 		},
 	}
-	evidence := skillLoopCompletionEvidence(prepared)()
+	evidence := skillLoopRuntimeStateSnapshot(prepared)()
 	operationSummary := mapFromOperationContext(evidence["operation_result_summary"])
 	if len(operationSummary) == 0 {
 		t.Fatalf("operation_result_summary = %#v, want latest successful operation facts", evidence["operation_result_summary"])
@@ -12948,7 +12948,7 @@ func TestPreparedResultMetadataCompletesModelDecidesPlanWithVerification(t *test
 	}
 }
 
-func TestSkillLoopCompletionVerificationResultPreservesFailedVerifierVerdict(t *testing.T) {
+func TestSkillLoopTerminalCompletionResultPreservesFailedVerifierVerdict(t *testing.T) {
 	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
 	postReadStepID := operationPlanToolStepID(skills.SkillAgentManagement, "get_agent_config")
 	updateInvocation := map[string]interface{}{
@@ -13057,7 +13057,7 @@ func TestSkillLoopCompletionVerificationResultPreservesFailedVerifierVerdict(t *
 		},
 	}
 
-	skillLoopCompletionVerificationResult(prepared)(skillloop.CompletionVerificationResult{
+	skillLoopTerminalCompletionResult(prepared)(skillloop.TerminalCompletionResult{
 		Status: "failed",
 		Reason: "Evidence confirms all requested changes, but the verifier emitted a failed status.",
 	})
@@ -13082,7 +13082,7 @@ func TestSkillLoopCompletionVerificationResultPreservesFailedVerifierVerdict(t *
 	}
 }
 
-func TestSkillLoopCompletionEvidenceExposesNormalizedEvidenceLedgerAndTurnState(t *testing.T) {
+func TestSkillLoopRuntimeStateSnapshotExposesNormalizedEvidenceLedgerAndTurnState(t *testing.T) {
 	metadata := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
 			"status": operationPlanStatusCompleted,
@@ -13125,7 +13125,7 @@ func TestSkillLoopCompletionEvidenceExposesNormalizedEvidenceLedgerAndTurnState(
 		},
 	}
 
-	evidence := skillLoopCompletionEvidence(prepared)()
+	evidence := skillLoopRuntimeStateSnapshot(prepared)()
 
 	if ledger := mapSliceFromAny(evidence["evidence_ledger"]); len(ledger) != 1 {
 		t.Fatalf("evidence_ledger = %#v, want one normalized ledger entry", evidence["evidence_ledger"])
@@ -14733,7 +14733,7 @@ func TestEnsureOperationPlanInvocationStepAppendsFailedToolAndStopsPending(t *te
 	}
 }
 
-func TestApplyOperationPlanCompletionVerificationResultFailsPendingExecutableStep(t *testing.T) {
+func TestApplyOperationPlanTerminalCompletionResultFailsPendingExecutableStep(t *testing.T) {
 	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
 	metadata := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
@@ -14761,7 +14761,7 @@ func TestApplyOperationPlanCompletionVerificationResultFailsPendingExecutableSte
 		},
 	}
 
-	applyOperationPlanCompletionVerificationResult(
+	applyOperationPlanTerminalCompletionResult(
 		metadata,
 		"failed",
 		"update_agent_config was not executed",
@@ -14799,7 +14799,7 @@ func TestApplyOperationPlanCompletionVerificationResultFailsPendingExecutableSte
 	}
 }
 
-func TestApplyOperationPlanCompletionVerificationResultKeepsNeedsActionStepPending(t *testing.T) {
+func TestApplyOperationPlanTerminalCompletionResultKeepsNeedsActionStepPending(t *testing.T) {
 	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
 	metadata := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
@@ -14828,7 +14828,7 @@ func TestApplyOperationPlanCompletionVerificationResultKeepsNeedsActionStepPendi
 		},
 	}
 
-	applyOperationPlanCompletionVerificationResult(
+	applyOperationPlanTerminalCompletionResult(
 		metadata,
 		"needs_action",
 		"missing update_agent_config evidence",
@@ -14859,7 +14859,7 @@ func TestApplyOperationPlanCompletionVerificationResultKeepsNeedsActionStepPendi
 	}
 }
 
-func TestApplyOperationPlanCompletionVerificationResultKeepsCompletedPlanCompleted(t *testing.T) {
+func TestApplyOperationPlanTerminalCompletionResultKeepsCompletedPlanCompleted(t *testing.T) {
 	updateStepID := operationPlanToolStepID(skills.SkillAgentManagement, "update_agent_config")
 	metadata := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
@@ -14880,7 +14880,7 @@ func TestApplyOperationPlanCompletionVerificationResultKeepsCompletedPlanComplet
 		},
 	}
 
-	applyOperationPlanCompletionVerificationResult(
+	applyOperationPlanTerminalCompletionResult(
 		metadata,
 		"failed",
 		"candidate answer included unsupported extra wording",
@@ -14902,7 +14902,7 @@ func TestApplyOperationPlanCompletionVerificationResultKeepsCompletedPlanComplet
 	}
 }
 
-func TestApplyOperationPlanCompletionVerificationResultCompletesModelDecidesPhasePlan(t *testing.T) {
+func TestApplyOperationPlanTerminalCompletionResultCompletesModelDecidesPhasePlan(t *testing.T) {
 	metadata := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
 			"version":            operationPlanVersion,
@@ -14919,7 +14919,7 @@ func TestApplyOperationPlanCompletionVerificationResultCompletesModelDecidesPhas
 		},
 	}
 
-	applyOperationPlanCompletionVerificationResult(
+	applyOperationPlanTerminalCompletionResult(
 		metadata,
 		"pass",
 		"tool evidence satisfies the phase success criteria",
@@ -14941,7 +14941,7 @@ func TestApplyOperationPlanCompletionVerificationResultCompletesModelDecidesPhas
 	}
 }
 
-func TestApplyOperationPlanCompletionVerificationResultPreservesModelPlanAndCompletesSummary(t *testing.T) {
+func TestApplyOperationPlanTerminalCompletionResultPreservesModelPlanAndCompletesSummary(t *testing.T) {
 	saveStepID := operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management")
 	metadata := map[string]interface{}{
 		"operation_plan": map[string]interface{}{
@@ -14994,7 +14994,7 @@ func TestApplyOperationPlanCompletionVerificationResultPreservesModelPlanAndComp
 		},
 	}
 
-	applyOperationPlanCompletionVerificationResult(
+	applyOperationPlanTerminalCompletionResult(
 		metadata,
 		"pass",
 		"evidence ledger confirms the requested file workflow is complete",

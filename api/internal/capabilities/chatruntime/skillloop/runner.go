@@ -132,7 +132,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	failedToolCallReasons := map[string]string{}
 	skillUsed := false
 	maxSkillSteps := maxSkillStepsForTurn(resolved)
-	terminalStateGuardConfigured := req.CompletionEvidence != nil
+	terminalStateGuardConfigured := req.RuntimeStateSnapshot != nil
 	finalAnswerGuard := req.FinalAnswerGuard
 	userInputGuard := req.UserInputGuard
 	toolCallGuard := req.ToolCallGuard
@@ -154,11 +154,11 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		planningReq.Tools = metaToolsForRun(resolved, loadedSkills, preferExplicitFinalAnswer)
 		planningReq.ToolChoice = "auto"
 
-		roundCompletionEvidence := map[string]interface{}{}
+		roundRuntimeState := map[string]interface{}{}
 		terminalSubmissionAllowed := true
 		if terminalStateGuardConfigured {
-			roundCompletionEvidence = completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
-			terminalSubmissionAllowed = terminalStateGuardCanStream(roundCompletionEvidence)
+			roundRuntimeState = runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
+			terminalSubmissionAllowed = terminalStateGuardCanStream(roundRuntimeState)
 		}
 		suppressNaturalProgress := req.SuppressInitialNaturalProgress && round == 0
 		deferTerminalContent := preferExplicitFinalAnswer || !terminalSubmissionAllowed
@@ -216,10 +216,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				return answerBuilder.String(), usage, fmt.Errorf("%w: model returned no final answer", ErrInvalidInput)
 			}
 			emptyFinalAnswerRetryCount = 0
-			guard := terminalStateGuardEvaluate(roundCompletionEvidence, text)
+			guard := terminalStateGuardEvaluate(roundRuntimeState, text)
 			terminalStateGuardRecord(req, guard)
 			if guard.Path != terminalStateGuardAccepted {
-				terminalStateGuardNotify(req, guard, text)
+				terminalStateGuardNotify(req, guard)
 				return answerBuilder.String(), usage, terminalStateGuardError(guard)
 			}
 			answer := strings.TrimSpace(firstNonEmptyString(guard.FinalAnswer, text))
@@ -227,12 +227,12 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			if !planningResult.answerStreamed {
 				r.emitAnswerChunk(ctx, prepared, answer, nil)
 			}
-			terminalStateGuardNotify(req, guard, answer)
+			terminalStateGuardNotify(req, guard)
 			return answerBuilder.String(), usage, nil
 		}
 		emptyFinalAnswerRetryCount = 0
 		if call, ok := finalAnswerCall(toolCalls); ok && preferExplicitFinalAnswer {
-			submission, parseErr := parseFinalAnswerSubmission(call, roundCompletionEvidence)
+			submission, parseErr := parseFinalAnswerSubmission(call, roundRuntimeState)
 			if parseErr != nil {
 				result := failedFinalAnswerSkillStep(call.ID, parseErr, "submit a complete final answer in a new user turn")
 				traces = append(traces, result.trace)
@@ -246,10 +246,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 
 			submission.streamed = submission.streamed || planningResult.answerStreamed
-			guard := terminalStateGuardEvaluate(roundCompletionEvidence, submission.answer)
+			guard := terminalStateGuardEvaluate(roundRuntimeState, submission.answer)
 			terminalStateGuardRecord(req, guard)
 			if guard.Path != terminalStateGuardAccepted {
-				terminalStateGuardNotify(req, guard, submission.answer)
+				terminalStateGuardNotify(req, guard)
 				return answerBuilder.String(), usage, terminalStateGuardError(guard)
 			}
 
@@ -261,7 +261,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			if !result.answerStreamed {
 				r.emitAnswerChunk(ctx, prepared, result.answer, nil)
 			}
-			terminalStateGuardNotify(req, guard, result.answer)
+			terminalStateGuardNotify(req, guard)
 			logger.DebugContext(ctx, "aichat skill loop accepted explicit terminal answer",
 				"conversation_id", prepared.Conversation.ID.String(),
 				"message_id", prepared.Message.ID.String(),
@@ -321,7 +321,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		for _, call := range toolCalls {
 			stepCount++
 			callSkillID, callToolName, callToolArgs, failedCallKey := skillToolCallIdentityForCall(resolved, loadedSkills, call)
-			callEvidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
+			callEvidence := runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
 			result := skillStepResult{}
 			if userInputPlanRevisionPending(req) && planRevisionRequiredForTool(callSkillID, callToolName) {
 				result = pendingUserInputPlanRevisionStep(call.ID, callSkillID, callToolName, callToolArgs)
@@ -533,7 +533,7 @@ func initialLoadedSkillsForRun(req RunRequest, resolved *skills.ResolvedSkills) 
 			if !strings.EqualFold(kind, "skill_load") && !strings.EqualFold(kind, "tool_call") {
 				continue
 			}
-			if !completionVerificationInvocationSucceeded(invocation) {
+			if !runtimeInvocationSucceeded(invocation) {
 				continue
 			}
 			add(evidenceStringFromAny(invocation["skill_id"]))
@@ -695,104 +695,6 @@ func canonicalResolvedSkillID(resolved *skills.ResolvedSkills, skillID string) (
 		}
 	}
 	return "", false
-}
-
-func completionEvidenceForFastPathWithSuccessfulToolCalls(req RunRequest, successful []SkillToolCallRef) map[string]interface{} {
-	evidence := completionEvidenceForFastPath(req)
-	if len(successful) == 0 {
-		return evidence
-	}
-	if evidence == nil {
-		evidence = map[string]interface{}{}
-	} else {
-		evidence = copyStringAnyMap(evidence)
-	}
-	invocations := evidenceSliceFromAny(evidence["skill_invocations"])
-	existingInvocations := map[string]struct{}{}
-	for _, raw := range invocations {
-		invocation := evidenceMapFromAny(raw)
-		if len(invocation) == 0 || !strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "tool_call") {
-			continue
-		}
-		signature := skillToolCallEvidenceSignature(
-			stringFromAny(invocation["skill_id"]),
-			stringFromAny(invocation["tool_name"]),
-			evidenceMapFromAny(invocation["arguments"]),
-			evidenceMapFromAny(invocation["result"]),
-		)
-		if signature != "" {
-			existingInvocations[signature] = struct{}{}
-		}
-	}
-	for _, call := range successful {
-		skillID := strings.TrimSpace(call.SkillID)
-		toolName := strings.TrimSpace(call.ToolName)
-		if skillID == "" || toolName == "" {
-			continue
-		}
-		signature := skillToolCallEvidenceSignature(skillID, toolName, call.Arguments, call.Result)
-		if _, ok := existingInvocations[signature]; ok && signature != "" {
-			continue
-		}
-		invocation := map[string]interface{}{
-			"kind":      "tool_call",
-			"status":    "success",
-			"skill_id":  skillID,
-			"tool_name": toolName,
-		}
-		if len(call.Arguments) > 0 {
-			invocation["arguments"] = copyStringAnyMap(call.Arguments)
-		}
-		if len(call.Result) > 0 {
-			invocation["result"] = copyStringAnyMap(call.Result)
-		}
-		invocations = append(invocations, invocation)
-		if signature != "" {
-			existingInvocations[signature] = struct{}{}
-		}
-	}
-	if len(invocations) > 0 {
-		evidence["skill_invocations"] = invocations
-	}
-	return evidence
-}
-
-func skillToolCallEvidenceSignature(skillID string, toolName string, arguments map[string]interface{}, result map[string]interface{}) string {
-	skillID = strings.TrimSpace(skillID)
-	toolName = strings.TrimSpace(toolName)
-	if skillID == "" || toolName == "" {
-		return ""
-	}
-	payload := map[string]interface{}{
-		"skill_id":  skillID,
-		"tool_name": toolName,
-	}
-	if len(arguments) > 0 {
-		payload["arguments"] = arguments
-	}
-	if len(result) > 0 {
-		payload["result"] = result
-	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return skillID + "/" + toolName
-	}
-	return string(data)
-}
-
-func notifyCompletionVerificationResult(req RunRequest, decision completionVerificationDecision, finalAnswer string) {
-	if req.OnCompletionVerification == nil {
-		return
-	}
-	req.OnCompletionVerification(CompletionVerificationResult{
-		Status:            decision.normalizedStatus(),
-		Source:            strings.TrimSpace(decision.Source),
-		Reason:            strings.TrimSpace(decision.Reason),
-		MissingSteps:      append([]string(nil), decision.MissingSteps...),
-		UnsupportedClaims: append([]string(nil), decision.UnsupportedClaims...),
-		NextActionHint:    strings.TrimSpace(decision.NextActionHint),
-		FinalAnswer:       strings.TrimSpace(finalAnswer),
-	})
 }
 
 func evidenceStringSliceFromAny(value interface{}) []string {
@@ -1122,14 +1024,7 @@ func recoverableFailureFinalAnswer(trace skills.SkillTrace, err error) string {
 		}
 		step += toolName
 	}
-	decision := completionVerificationDecision{
-		Status: completionVerificationStatusFailed,
-		Reason: reason,
-	}
-	if step != "" {
-		decision.MissingSteps = []string{step}
-	}
-	return completionVerificationFallbackAnswer(decision, "")
+	return runtimeFailureAnswer(reason, step)
 }
 
 func planningRoundsExhaustedFinalAnswer(err error) string {
@@ -1137,10 +1032,7 @@ func planningRoundsExhaustedFinalAnswer(err error) string {
 	if err != nil {
 		reason = reason + " " + err.Error()
 	}
-	return completionVerificationFallbackAnswer(completionVerificationDecision{
-		Status: completionVerificationStatusFailed,
-		Reason: reason,
-	}, "")
+	return runtimeFailureAnswer(reason, "")
 }
 
 func validAdditionalSystemMessages(input []adapter.Message) []adapter.Message {

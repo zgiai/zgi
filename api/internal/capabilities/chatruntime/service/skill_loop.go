@@ -119,10 +119,10 @@ func (s *service) runPreparedSkillLoop(
 		AdditionalSystemMessages:       skillLoopAdditionalSystemMessagesForResolved(prepared, resolved),
 		PlanToolGuard:                  skillLoopPlanToolCallGuardWithResolved(prepared, resolved),
 		ToolArgumentResolver:           skillLoopToolArgumentResolver(prepared),
-		CompletionEvidence:             skillLoopCompletionEvidence(prepared),
+		RuntimeStateSnapshot:           skillLoopRuntimeStateSnapshot(prepared),
 		CurrentMetadata:                skillLoopCurrentMetadata(prepared),
 		OnTerminalStateGuardDecision:   skillLoopTerminalStateGuardDecision(prepared),
-		OnCompletionVerification:       skillLoopCompletionVerificationResult(prepared),
+		OnTerminalCompletion:           skillLoopTerminalCompletionResult(prepared),
 		OnChunk:                        onChunk,
 	})
 	if err != nil && strings.TrimSpace(answer) != "" {
@@ -282,20 +282,24 @@ func skillLoopResolveToolArgBindingExpression(prepared *PreparedChat, req skilll
 	}
 }
 
-func skillLoopCompletionVerificationResult(prepared *PreparedChat) func(skillloop.CompletionVerificationResult) {
-	return func(result skillloop.CompletionVerificationResult) {
+func skillLoopTerminalCompletionResult(prepared *PreparedChat) func(skillloop.TerminalCompletionResult) {
+	return func(result skillloop.TerminalCompletionResult) {
 		if prepared == nil || prepared.Message == nil {
 			return
 		}
+		status := strings.TrimSpace(result.Status)
+		if status == "blocked" {
+			status = "needs_action"
+		}
 		metadata := copyStringAnyMap(prepared.Message.Metadata)
-		applyOperationPlanCompletionVerificationResultWithSource(
+		applyOperationPlanTerminalCompletionResultWithSource(
 			metadata,
-			result.Status,
+			status,
 			result.Source,
 			result.Reason,
-			result.MissingSteps,
-			result.UnsupportedClaims,
-			result.NextActionHint,
+			result.Blockers,
+			nil,
+			"",
 		)
 		metadata = refreshOperationResultSummaryMetadata(metadata)
 		prepared.Message.Metadata = metadata
@@ -314,7 +318,7 @@ func refreshOperationResultSummaryMetadata(metadata map[string]interface{}) map[
 	return metadata
 }
 
-func skillLoopCompletionEvidence(prepared *PreparedChat) skillloop.CompletionEvidenceFunc {
+func skillLoopRuntimeStateSnapshot(prepared *PreparedChat) skillloop.RuntimeStateSnapshotFunc {
 	return func() map[string]interface{} {
 		evidence := map[string]interface{}{}
 		if prepared == nil || prepared.parts == nil {
@@ -333,7 +337,7 @@ func skillLoopCompletionEvidence(prepared *PreparedChat) skillloop.CompletionEvi
 		if prepared.Message == nil {
 			return evidence
 		}
-		metadata := skillLoopCompletionEvidenceMetadata(prepared.Message.Metadata)
+		metadata := skillLoopRuntimeStateSnapshotMetadata(prepared.Message.Metadata)
 		if len(pageContext) > 0 {
 			applyOperationPlanPageEvidence(metadata, pageContext)
 		}
@@ -361,7 +365,7 @@ func skillLoopCompletionEvidence(prepared *PreparedChat) skillloop.CompletionEvi
 				executionLedger[key] = value
 			}
 		}
-		if ledger := skillLoopCompletionEvidenceLedger(metadata); len(ledger) > 0 {
+		if ledger := skillLoopRuntimeStateSnapshotLedger(metadata); len(ledger) > 0 {
 			evidenceLedger := mapsToInterfaceSlice(ledger)
 			evidence["evidence_ledger"] = evidenceLedger
 			executionLedger["evidence_ledger"] = evidenceLedger
@@ -386,7 +390,7 @@ func skillLoopCompletionEvidence(prepared *PreparedChat) skillloop.CompletionEvi
 	}
 }
 
-func skillLoopCompletionEvidenceLedger(metadata map[string]interface{}) []map[string]interface{} {
+func skillLoopRuntimeStateSnapshotLedger(metadata map[string]interface{}) []map[string]interface{} {
 	if len(metadata) == 0 {
 		return nil
 	}
@@ -503,7 +507,7 @@ func skillLoopCompactPageContextResource(item map[string]interface{}) map[string
 	return compact
 }
 
-func skillLoopCompletionEvidenceMetadata(source map[string]interface{}) map[string]interface{} {
+func skillLoopRuntimeStateSnapshotMetadata(source map[string]interface{}) map[string]interface{} {
 	metadata := copyStringAnyMap(source)
 	if metadata == nil {
 		metadata = map[string]interface{}{}

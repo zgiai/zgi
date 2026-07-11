@@ -660,7 +660,7 @@ Use generate_file to create a temporary artifact.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"user_request": "create an svg file",
 				"generated_files": []interface{}{
@@ -898,7 +898,7 @@ func TestRunnerContinuesAfterMetaToolTextInsteadOfCoalescingFinalAnswer(t *testi
 		Prepared:                  prepared,
 		Resolved:                  runnerTestResolvedSkills(),
 		PreferExplicitFinalAnswer: true,
-		CompletionEvidence:        func() map[string]interface{} { return map[string]interface{}{} },
+		RuntimeStateSnapshot:        func() map[string]interface{} { return map[string]interface{}{} },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -977,7 +977,7 @@ func TestRunnerAcceptsFinalAnswerWithoutPlanSnapshotWhenCurrentPlanHasOpenPhases
 		Prepared:                  prepared,
 		Resolved:                  runnerTestResolvedSkills(),
 		PreferExplicitFinalAnswer: true,
-		CompletionEvidence:        func() map[string]interface{} { return evidence },
+		RuntimeStateSnapshot:        func() map[string]interface{} { return evidence },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -1059,7 +1059,7 @@ func TestRunnerAcceptsOrdinaryTextFinalWhenPlanIsOpen(t *testing.T) {
 		Prepared:                  prepared,
 		Resolved:                  runnerTestResolvedSkills(),
 		PreferExplicitFinalAnswer: true,
-		CompletionEvidence:        func() map[string]interface{} { return evidence },
+		RuntimeStateSnapshot:        func() map[string]interface{} { return evidence },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -1471,7 +1471,7 @@ Use delete_agents to delete several agents in one operation.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{"status": "running"},
 			}
@@ -1578,7 +1578,7 @@ Use get_agent_config and get_agent for read-only Agent configuration checks.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"user_request": "read-only check the current Agent configuration: name, description, model/provider, and current bound resource counts; do not modify config",
 				"operation_plan": map[string]interface{}{
@@ -1718,7 +1718,7 @@ Use get_agent_config and get_agent for read-only Agent configuration checks.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{"status": "running"},
 			}
@@ -1813,7 +1813,7 @@ Use create_agent to create an Agent.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			invocations := []interface{}{
 				map[string]interface{}{
 					"kind":      "tool_call",
@@ -1970,7 +1970,7 @@ Use delete_agents to delete several agents in one operation.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			planStepStatus := "pending"
 			planStatus := "running"
 			pendingNextAction := "agent-management/delete_agents"
@@ -2118,7 +2118,7 @@ Use delete_agents to delete several agents in one operation.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			planStepStatus := "pending"
 			planStatus := "running"
 			pendingNextAction := "agent-management/delete_agents"
@@ -2280,7 +2280,7 @@ Use get_agent_config to inspect draft config and update_agent_config to patch se
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			status := "running"
 			stepStatus := "pending"
 			pendingNextAction := "agent-management/update_agent_config"
@@ -2435,7 +2435,7 @@ Use get_agent_config to verify Agent configuration after a governed update.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"user_request": "Bind KB Two and orders to Support Agent, then read config again after completion and verify the bindings.",
 				"operation_plan": map[string]interface{}{
@@ -2589,7 +2589,7 @@ Use update_agent_identity for identity changes and get_agent to verify the updat
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			updateStatus := "pending"
 			readStatus := "pending"
 			planStatus := "running"
@@ -2739,7 +2739,7 @@ Use save_file_to_management to save generated files into File Management.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{"status": "running"},
 			}
@@ -2849,7 +2849,7 @@ Use delete_file to delete a managed file.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{"status": "running"},
 			}
@@ -3056,7 +3056,7 @@ Use echo_value to echo values.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			if echoTool.calls < 3 {
 				return map[string]interface{}{
 					"operation_plan": map[string]interface{}{
@@ -3359,7 +3359,7 @@ Use the calculator tool.
 	}
 }
 
-func TestRunnerCompletionEvidenceTurnsRepeatedRecoverableFailuresIntoTruthfulAnswer(t *testing.T) {
+func TestRunnerRuntimeStateSnapshotTurnsRepeatedRecoverableFailuresIntoTruthfulAnswer(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
@@ -3438,7 +3438,7 @@ Use the calculator tool.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{"status": "running"},
 			}
@@ -3455,7 +3455,7 @@ Use the calculator tool.
 	}
 }
 
-func TestRunnerCompletionEvidenceTurnsPlanningRoundExhaustionIntoTruthfulAnswer(t *testing.T) {
+func TestRunnerRuntimeStateSnapshotTurnsPlanningRoundExhaustionIntoTruthfulAnswer(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
@@ -3513,7 +3513,7 @@ Use the calculator tool.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{"status": "running"},
 				"evidence_ledger": []interface{}{map[string]interface{}{
@@ -4320,7 +4320,7 @@ Use the calculator tool.
 	}
 }
 
-func TestRunnerCompletionEvidenceKeepsUserInputGuardForRedundantClarification(t *testing.T) {
+func TestRunnerRuntimeStateSnapshotKeepsUserInputGuardForRedundantClarification(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
@@ -4395,7 +4395,7 @@ Use the calculator tool.
 				Message:  "target already resolved; continue from evidence instead of asking",
 			}, true
 		},
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{"status": "running"},
 				"evidence_ledger": []interface{}{map[string]interface{}{
@@ -4551,7 +4551,7 @@ Use the calculator tool.
 	}
 }
 
-func TestRunnerCompletionEvidenceDisablesLegacyToolCallGuard(t *testing.T) {
+func TestRunnerRuntimeStateSnapshotDisablesLegacyToolCallGuard(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
@@ -4636,7 +4636,7 @@ Use the calculator tool.
 				Message:  "legacy tool-call guard should not run when post verification is configured",
 			}, true
 		},
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{"status": "completed"},
 			}
@@ -4656,7 +4656,7 @@ Use the calculator tool.
 	}
 }
 
-func TestRunnerCompletionEvidenceKeepsPlanToolGuard(t *testing.T) {
+func TestRunnerRuntimeStateSnapshotKeepsPlanToolGuard(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
@@ -4749,7 +4749,7 @@ Use the calculator tool.
 				SystemMessage: "answer from existing evidence instead of running the unplanned tool",
 			}, true
 		},
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{"status": "running"},
 			}
@@ -5005,7 +5005,7 @@ func TestRunnerDoesNotInvokeCompletionVerifierForNeedsActionEvidence(t *testing.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: runnerTestResolvedSkills(),
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{
 					"status":              "running",
@@ -5054,7 +5054,7 @@ func TestRunnerDoesNotCallUnparseableCompletionVerifier(t *testing.T) {
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: runnerTestResolvedSkills(),
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{
 					"status": "completed",
@@ -5107,7 +5107,7 @@ func TestRunnerDoesNotAuditMainModelAnswer(t *testing.T) {
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: runnerTestResolvedSkills(),
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_ledger": []interface{}{
 					map[string]interface{}{
@@ -5129,59 +5129,7 @@ func TestRunnerDoesNotAuditMainModelAnswer(t *testing.T) {
 	}
 }
 
-func TestCompletionVerifierTreatsPendingPlanStepAsAdvisory(t *testing.T) {
-	decision := completionVerificationApplyPlanOverride(map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": "running",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/update_agent_config",
-					"status":    "pending",
-					"skill_id":  "agent-management",
-					"tool_name": "update_agent_config",
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:agent-management/update_agent_config": "pending",
-			},
-		},
-	}, completionVerificationDecision{Status: completionVerificationStatusPass, Reason: "truthful incomplete answer"})
-
-	if got := decision.normalizedStatus(); got != completionVerificationStatusPass {
-		t.Fatalf("decision status = %q, want pass; decision=%#v", got, decision)
-	}
-	if decision.NextActionHint != "" {
-		t.Fatalf("NextActionHint = %q, want empty hint for advisory pending plan", decision.NextActionHint)
-	}
-	if len(decision.MissingSteps) != 0 {
-		t.Fatalf("MissingSteps = %#v, want no forced missing steps", decision.MissingSteps)
-	}
-}
-
-func TestCompletionVerifierKeepsPassForCompletedPlan(t *testing.T) {
-	decision := completionVerificationApplyPlanOverride(map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": "completed",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/update_agent_config",
-					"status":    "completed",
-					"skill_id":  "agent-management",
-					"tool_name": "update_agent_config",
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:agent-management/update_agent_config": "completed",
-			},
-		},
-	}, completionVerificationDecision{Status: completionVerificationStatusPass, Reason: "done"})
-
-	if got := decision.normalizedStatus(); got != completionVerificationStatusPass {
-		t.Fatalf("decision status = %q, want pass; decision=%#v", got, decision)
-	}
-}
-
-func TestRunnerCompletionEvidenceDisablesLegacyFinalAnswerGuard(t *testing.T) {
+func TestRunnerRuntimeStateSnapshotDisablesLegacyFinalAnswerGuard(t *testing.T) {
 	ctx := context.Background()
 	fakeLLM := &runnerTestLLMClient{
 		appChatResponses: []*adapter.ChatResponse{
@@ -5208,7 +5156,7 @@ func TestRunnerCompletionEvidenceDisablesLegacyFinalAnswerGuard(t *testing.T) {
 				SystemMessage: "legacy guard should not be visible",
 			}, true
 		},
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{"status": "completed"},
 				"skill_invocations": []interface{}{map[string]interface{}{
@@ -5244,12 +5192,12 @@ func TestRunnerTerminalGuardPreservesMainModelAnswer(t *testing.T) {
 	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
 		Messages: []adapter.Message{{Role: "user", Content: "\u521b\u5efa\u4e00\u4e2a\u667a\u80fd\u4f53\u5e76\u5b8c\u6210\u914d\u7f6e"}},
 	})
-	var verificationResult CompletionVerificationResult
+	var verificationResult TerminalCompletionResult
 
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: runnerTestResolvedSkills(),
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"model_verifier_required": true,
 				"operation_plan":          map[string]interface{}{"status": "completed"},
@@ -5258,7 +5206,7 @@ func TestRunnerTerminalGuardPreservesMainModelAnswer(t *testing.T) {
 				}},
 			}
 		},
-		OnCompletionVerification: func(result CompletionVerificationResult) {
+		OnTerminalCompletion: func(result TerminalCompletionResult) {
 			verificationResult = result
 		},
 	})
@@ -5268,11 +5216,8 @@ func TestRunnerTerminalGuardPreservesMainModelAnswer(t *testing.T) {
 	if answer != "\u6211\u8fd8\u4e0d\u80fd\u786e\u8ba4\u8fd9\u4e2a\u64cd\u4f5c\u5df2\u7ecf\u5b8c\u6210\u3002" {
 		t.Fatalf("answer = %q, want the main-model candidate", answer)
 	}
-	if verificationResult.Status != completionVerificationStatusPass {
+	if verificationResult.Status != "pass" {
 		t.Fatalf("completion verification status = %q, want pass", verificationResult.Status)
-	}
-	if verificationResult.FinalAnswer != answer {
-		t.Fatalf("completion verification final answer = %q, want %q", verificationResult.FinalAnswer, answer)
 	}
 	if fakeLLM.appChatCalls != 1 {
 		t.Fatalf("AppChat calls = %d, want one main-model call", fakeLLM.appChatCalls)
@@ -5296,12 +5241,12 @@ func TestRunnerDoesNotReplaceMainModelAnswerFromFailedEvidence(t *testing.T) {
 	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
 		Messages: []adapter.Message{{Role: "user", Content: "update agent config"}},
 	})
-	var verificationResult CompletionVerificationResult
+	var verificationResult TerminalCompletionResult
 
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: runnerTestResolvedSkills(),
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{"status": "failed"},
 				"skill_invocations": []interface{}{map[string]interface{}{
@@ -5309,7 +5254,7 @@ func TestRunnerDoesNotReplaceMainModelAnswerFromFailedEvidence(t *testing.T) {
 				}},
 			}
 		},
-		OnCompletionVerification: func(result CompletionVerificationResult) {
+		OnTerminalCompletion: func(result TerminalCompletionResult) {
 			verificationResult = result
 		},
 	})
@@ -5319,7 +5264,7 @@ func TestRunnerDoesNotReplaceMainModelAnswerFromFailedEvidence(t *testing.T) {
 	if answer != "Done, the Agent was updated." {
 		t.Fatalf("answer = %q, want initial main-model answer", answer)
 	}
-	if verificationResult.Status != completionVerificationStatusPass {
+	if verificationResult.Status != "pass" {
 		t.Fatalf("completion verification status = %q, want repaired main-model pass", verificationResult.Status)
 	}
 	if verificationResult.Source != "main_model_final" {
@@ -5350,7 +5295,7 @@ func TestRunnerTerminalGuardDoesNotGenerateFailedPlanReplacement(t *testing.T) {
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: runnerTestResolvedSkills(),
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{
 					"status": "failed",
@@ -5405,7 +5350,7 @@ func TestRunnerCompletionVerifierSkipsWithoutEvidence(t *testing.T) {
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared:           prepared,
 		Resolved:           runnerTestResolvedSkills(),
-		CompletionEvidence: func() map[string]interface{} { return map[string]interface{}{} },
+		RuntimeStateSnapshot: func() map[string]interface{} { return map[string]interface{}{} },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)

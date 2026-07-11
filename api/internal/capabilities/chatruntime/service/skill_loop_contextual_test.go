@@ -4192,7 +4192,7 @@ func TestSkillLoopFinalAnswerGuardSkipsConsoleNavigationWhenTargetRouteAlreadyAv
 	if strategy.RouteRequired {
 		t.Fatal("strategy.RouteRequired = true, want false for current route")
 	}
-	evidence := skillLoopCompletionEvidence(prepared)()
+	evidence := skillLoopRuntimeStateSnapshot(prepared)()
 	pageContext := mapFromOperationContext(evidence["page_context"])
 	if len(pageContext) == 0 {
 		t.Fatalf("page_context evidence = %#v, want current page evidence", evidence["page_context"])

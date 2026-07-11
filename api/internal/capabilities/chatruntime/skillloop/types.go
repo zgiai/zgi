@@ -145,10 +145,10 @@ type RunRequest struct {
 	ToolCallGuard                  ToolCallGuard
 	PlanToolGuard                  ToolCallGuard
 	ToolArgumentResolver           ToolArgumentResolver
-	CompletionEvidence             CompletionEvidenceFunc
+	RuntimeStateSnapshot           RuntimeStateSnapshotFunc
 	CurrentMetadata                func() map[string]interface{}
 	OnTerminalStateGuardDecision   func(TerminalStateGuardDecisionRecord)
-	OnCompletionVerification       func(CompletionVerificationResult)
+	OnTerminalCompletion           func(TerminalCompletionResult)
 	OnChunk                        func(string) error
 }
 
@@ -166,16 +166,13 @@ type ToolCallGuard func(ToolCallGuardRequest) (FinalAnswerGuardResult, bool)
 
 type ToolArgumentResolver func(ToolCallGuardRequest) (map[string]interface{}, bool)
 
-type CompletionEvidenceFunc func() map[string]interface{}
+type RuntimeStateSnapshotFunc func() map[string]interface{}
 
-type CompletionVerificationResult struct {
-	Status            string
-	Source            string
-	Reason            string
-	MissingSteps      []string
-	UnsupportedClaims []string
-	NextActionHint    string
-	FinalAnswer       string
+type TerminalCompletionResult struct {
+	Status   string
+	Source   string
+	Reason   string
+	Blockers []string
 }
 
 type FinalAnswerGuardRequest struct {

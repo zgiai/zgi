@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestSkillLoopCompletionEvidenceLedgerKeepsEarlyPhaseEvidence(t *testing.T) {
+func TestSkillLoopRuntimeStateSnapshotLedgerKeepsEarlyPhaseEvidence(t *testing.T) {
 	ledger := make([]interface{}, 0, 14)
 	ledger = append(ledger, map[string]interface{}{
 		"status":        "completed",
@@ -22,7 +22,7 @@ func TestSkillLoopCompletionEvidenceLedgerKeepsEarlyPhaseEvidence(t *testing.T) 
 		})
 	}
 
-	got := skillLoopCompletionEvidenceLedger(map[string]interface{}{
+	got := skillLoopRuntimeStateSnapshotLedger(map[string]interface{}{
 		"operation_plan": map[string]interface{}{
 			operationPlanEvidenceLedgerKey: ledger,
 		},

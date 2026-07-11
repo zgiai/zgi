@@ -2911,7 +2911,7 @@ func operationPlanAgentManagementToolIsMutation(toolName string) bool {
 
 func operationPlanHasPendingStrictRuntimeStep(steps []map[string]interface{}, stepStatus map[string]interface{}) bool {
 	for _, step := range steps {
-		if !operationPlanStepBlocksCompletion(step) || !operationPlanStepRequiresStrictCompletionEvidence(step) {
+		if !operationPlanStepBlocksCompletion(step) || !operationPlanStepRequiresStrictRuntimeStateSnapshot(step) {
 			continue
 		}
 		id := strings.TrimSpace(stringFromAny(step["id"]))
@@ -3613,7 +3613,7 @@ func operationPlanCompletionCriteria(steps []map[string]interface{}) []string {
 		"Treat read, list, observe, and navigation steps as evidence collection points unless the final answer claims that specific action completed.",
 	}
 	for _, step := range steps {
-		if !operationPlanStepRequiresStrictCompletionEvidence(step) {
+		if !operationPlanStepRequiresStrictRuntimeStateSnapshot(step) {
 			continue
 		}
 		if title := strings.TrimSpace(stringFromAny(step["title"])); title != "" {
@@ -3632,7 +3632,7 @@ func operationPlanStepHasReadEffect(step map[string]interface{}) bool {
 	return strings.EqualFold(strings.TrimSpace(stringFromAny(target["effect"])), "read")
 }
 
-func operationPlanStepRequiresStrictCompletionEvidence(step map[string]interface{}) bool {
+func operationPlanStepRequiresStrictRuntimeStateSnapshot(step map[string]interface{}) bool {
 	if !operationPlanStepBlocksCompletion(step) {
 		return false
 	}
@@ -4297,7 +4297,7 @@ func operationPlanAdvanceInvocationOccurrence(occurrences map[string]int, invoca
 	if !strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "tool_call") {
 		return
 	}
-	if !operationPlanInvocationHasCompletionEvidence(invocation) {
+	if !operationPlanInvocationHasRuntimeStateSnapshot(invocation) {
 		return
 	}
 	key := operationPlanInvocationOccurrenceKey(invocation)
@@ -5541,11 +5541,11 @@ func operationPlanReadyForCompletedResult(plan map[string]interface{}) bool {
 	return hasBlockingStep
 }
 
-func applyOperationPlanCompletionVerificationResult(metadata map[string]interface{}, status string, reason string, missingSteps []string, unsupportedClaims []string, nextActionHint string) {
-	applyOperationPlanCompletionVerificationResultWithSource(metadata, status, "", reason, missingSteps, unsupportedClaims, nextActionHint)
+func applyOperationPlanTerminalCompletionResult(metadata map[string]interface{}, status string, reason string, missingSteps []string, unsupportedClaims []string, nextActionHint string) {
+	applyOperationPlanTerminalCompletionResultWithSource(metadata, status, "", reason, missingSteps, unsupportedClaims, nextActionHint)
 }
 
-func applyOperationPlanCompletionVerificationResultWithSource(metadata map[string]interface{}, status string, source string, reason string, missingSteps []string, unsupportedClaims []string, nextActionHint string) {
+func applyOperationPlanTerminalCompletionResultWithSource(metadata map[string]interface{}, status string, source string, reason string, missingSteps []string, unsupportedClaims []string, nextActionHint string) {
 	if len(metadata) == 0 {
 		return
 	}
@@ -6006,7 +6006,7 @@ func operationPlanStatusFromInvocation(invocation map[string]interface{}) string
 	if operationPlanInvocationResultSignalsFailure(invocation) {
 		return operationPlanStepStatusFailed
 	}
-	if !operationPlanInvocationHasCompletionEvidence(invocation) {
+	if !operationPlanInvocationHasRuntimeStateSnapshot(invocation) {
 		return operationPlanStepStatusPending
 	}
 	return status
@@ -6046,7 +6046,7 @@ func operationPlanInvocationResultSignalsFailure(invocation map[string]interface
 	return false
 }
 
-func operationPlanInvocationHasCompletionEvidence(invocation map[string]interface{}) bool {
+func operationPlanInvocationHasRuntimeStateSnapshot(invocation map[string]interface{}) bool {
 	if strings.TrimSpace(stringFromAny(invocation["kind"])) != "tool_call" {
 		return true
 	}
