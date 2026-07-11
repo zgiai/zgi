@@ -365,6 +365,8 @@ export const AUTOMATION_KEYS = {
   all: ['automation'] as const,
   lists: () => [...AUTOMATION_KEYS.all, 'list'] as const,
   list: (params: unknown) => [...AUTOMATION_KEYS.lists(), params] as const,
+  counts: () => [...AUTOMATION_KEYS.all, 'counts'] as const,
+  count: (params: unknown) => [...AUTOMATION_KEYS.counts(), params] as const,
   details: () => [...AUTOMATION_KEYS.all, 'detail'] as const,
   detailPrefix: (taskId: string) => [...AUTOMATION_KEYS.details(), taskId] as const,
   detail: (taskId: string, params: unknown) =>
