@@ -90,6 +90,7 @@ type fakeTenantRouteRepo struct {
 	created   *channelmodel.LLMRoute
 	updated   *channelmodel.LLMRoute
 	routeByID *channelmodel.LLMRoute
+	routes    []*channelmodel.LLMRoute
 	getErr    error
 }
 
@@ -116,6 +117,9 @@ func (f *fakeTenantRouteRepo) GetByID(_ context.Context, _, _ uuid.UUID) (*chann
 }
 
 func (f *fakeTenantRouteRepo) List(context.Context, uuid.UUID, *bool, int, int) ([]*channelmodel.LLMRoute, int64, error) {
+	if f.routes != nil {
+		return f.routes, int64(len(f.routes)), nil
+	}
 	return nil, 0, errors.New("not implemented")
 }
 
@@ -897,6 +901,38 @@ func TestUpdateRoute_AutoEnablesNewModelsWithoutOverwritingExistingConfig(t *tes
 	require.Len(t, configRepo.upserts, 1)
 	require.Equal(t, modelID, configRepo.upserts[0].ModelID)
 	require.True(t, configRepo.upserts[0].IsEnabled)
+	require.Equal(t, []uuid.UUID{orgID}, availableSvc.invalidated)
+}
+
+func TestUpdateOfficialChannelSettingsInvalidatesAvailableModelsCache(t *testing.T) {
+	orgID := uuid.New()
+	routeID := uuid.New()
+	enabled := false
+	availableSvc := &fakeAvailableModelsService{}
+	repo := &fakeTenantRouteRepo{
+		routes: []*channelmodel.LLMRoute{
+			{
+				ID:              routeID,
+				OrganizationID:  orgID,
+				IsOfficial:      true,
+				ChannelProvider: "zgi-cloud",
+				IsEnabled:       true,
+			},
+		},
+	}
+	svc := &channelService{
+		tenantRouteRepo: repo,
+		availableModels: availableSvc,
+	}
+
+	updated, err := svc.UpdateOfficialChannelSettings(context.Background(), orgID, &channeldto.UpdateOfficialChannelSettingsRequest{
+		GroupID:   "zgi-cloud",
+		IsEnabled: &enabled,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), updated)
+	require.NotNil(t, repo.updated)
+	require.False(t, repo.updated.IsEnabled)
 	require.Equal(t, []uuid.UUID{orgID}, availableSvc.invalidated)
 }
 

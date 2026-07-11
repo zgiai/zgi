@@ -412,8 +412,8 @@ export function CustomModelDialog({
       tier: 'standard',
       context_window: 128000,
       max_output_tokens: 4096,
-      input_price: '0',
-      output_price: '0',
+      input_price: '',
+      output_price: '',
       cached_input_price: '0',
       input_modalities: ['text'],
       output_modalities: ['text'],
@@ -530,8 +530,8 @@ export function CustomModelDialog({
         tier: normalizeTier(initialData.tier),
         context_window: initialData.context_window,
         max_output_tokens: initialData.max_output_tokens,
-        input_price: String(initialData.input_price || '0'),
-        output_price: String(initialData.output_price || '0'),
+        input_price: initialData.input_price_configured ? String(initialData.input_price) : '',
+        output_price: initialData.output_price_configured ? String(initialData.output_price) : '',
         cached_input_price: String(initialData.cached_input_price || '0'),
         input_modalities: initialData.input_modalities || ['text'],
         output_modalities: initialData.output_modalities || ['text'],
@@ -597,8 +597,8 @@ export function CustomModelDialog({
         tier: 'standard',
         context_window: 128000,
         max_output_tokens: 4096,
-        input_price: '0',
-        output_price: '0',
+        input_price: '',
+        output_price: '',
         cached_input_price: '0',
         input_modalities: ['text'],
         output_modalities: ['text'],
@@ -1016,6 +1016,9 @@ export function CustomModelDialog({
                                 <Input className="pl-6" {...field} />
                               </div>
                             </FormControl>
+                            <FormDescription>
+                              {t('aiProviders.models.fields.priceConfiguredHint')}
+                            </FormDescription>
                             <FormMessage />
                           </FormItem>
                         )}
@@ -1034,6 +1037,9 @@ export function CustomModelDialog({
                                 <Input className="pl-6" {...field} />
                               </div>
                             </FormControl>
+                            <FormDescription>
+                              {t('aiProviders.models.fields.priceConfiguredHint')}
+                            </FormDescription>
                             <FormMessage />
                           </FormItem>
                         )}

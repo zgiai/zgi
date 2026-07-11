@@ -45,6 +45,7 @@ type FileFolderService interface {
 	ListFilesInFolder(ctx context.Context, folderID string, page, limit int) ([]*file_model.UploadFile, int64, error)
 	ListFilesInFolderWithFilters(ctx context.Context, folderID string, page, limit int, keyword, sort, extension, processingStatus string, startTime, endTime *time.Time, tenantID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error)
 	ListAllFilesWithFilters(ctx context.Context, page, limit int, keyword, sort, extension, processingStatus string, startTime, endTime *time.Time, tenantID, accountID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error)
+	CountAllFilesByCurrentAssetProductStatus(ctx context.Context, keyword, extension string, startTime, endTime *time.Time, tenantID, accountID string, visibleWorkspaceIDs []string) (dto.FileProcessingStatusCounts, error)
 	ListFavoriteFiles(ctx context.Context, accountID string, page, limit int, keyword, sort, extension string, startTime, endTime *time.Time, tenantID string, visibleWorkspaceIDs []string) ([]*file_model.UploadFile, int64, error)
 	MoveFileToFolder(ctx context.Context, fileID, fromFolderID, toFolderID, accountID string) error
 	MoveFilesToFolder(ctx context.Context, fileIDs []string, toFolderID, accountID string) error
@@ -449,6 +450,27 @@ func (s *fileResourceService) ListAllFilesWithFilters(ctx context.Context, page,
 		return nil, 0, fmt.Errorf("failed to list all files with filters: %w", err)
 	}
 	return files, total, nil
+}
+
+func (s *fileResourceService) CountAllFilesByCurrentAssetProductStatus(ctx context.Context, keyword, extension string, startTime, endTime *time.Time, tenantID, accountID string, visibleWorkspaceIDs []string) (dto.FileProcessingStatusCounts, error) {
+	if len(visibleWorkspaceIDs) == 0 {
+		return dto.FileProcessingStatusCounts{}, nil
+	}
+
+	allowAllFolders := false
+	if s.accountService != nil && accountID != "" {
+		isAdmin, err := s.accountService.CheckOrganizationpAdminByWorkspace(ctx, accountID, tenantID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check group admin permission: %w", err)
+		}
+		allowAllFolders = isAdmin
+	}
+
+	counts, err := s.fileFolderRepo.CountAllFilesByCurrentAssetProductStatus(ctx, keyword, extension, startTime, endTime, tenantID, accountID, allowAllFolders, visibleWorkspaceIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count files by processing status: %w", err)
+	}
+	return dto.FileProcessingStatusCounts(counts), nil
 }
 
 // ListFavoriteFiles lists favorite files for an account with full file details

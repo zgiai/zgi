@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
@@ -9,9 +11,11 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 
 	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
+	dashboardcache "github.com/zgiai/zgi/api/internal/modules/system/cache"
 	"github.com/zgiai/zgi/api/internal/modules/system/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
@@ -30,11 +34,17 @@ type AvailableModelsLister interface {
 type dashboardService struct {
 	db              *gorm.DB
 	availableModels AvailableModelsLister
+	dashboardCache  *dashboardcache.DashboardCache
 	tableCacheMu    sync.RWMutex
 	tableCache      map[string]bool
+	statsGroup      singleflight.Group
+	recentWorkGroup singleflight.Group
 }
 
-const dashboardAgentTypeAgent = "AGENT"
+const (
+	dashboardAgentTypeAgent = "AGENT"
+	dashboardLoadTimeout    = 5 * time.Second
+)
 
 var dashboardWorkflowAgentTypes = []string{"WORKFLOW", "CONVERSATIONAL_WORKFLOW"}
 
@@ -48,6 +58,7 @@ func NewDashboardServiceWithAvailableModels(db *gorm.DB, availableModels Availab
 	return &dashboardService{
 		db:              db,
 		availableModels: availableModels,
+		dashboardCache:  dashboardcache.NewDashboardCache(),
 		tableCache:      make(map[string]bool),
 	}
 }
@@ -105,14 +116,35 @@ func (s *dashboardService) safeCount(ctx context.Context, table string, where st
 
 // GetDashboardStats retrieves dashboard statistics for the current account's visible organization scope.
 func (s *dashboardService) GetDashboardStats(ctx context.Context, organizationID string, accountID string, scopes model.DashboardWorkspaceScopes) (*model.DashboardStatsResponse, error) {
-	stats := model.DashboardStatsResponse{
-		Models: model.ModelsStats{ByUseCase: make(map[string]int64)},
+	scopeKey := dashboardStatsScopeKey(accountID, scopes)
+	if cached, ok := s.dashboardCache.GetStats(ctx, organizationID, accountID, scopeKey); ok {
+		return cached, nil
 	}
 
-	stats.Models = s.getModelStats(ctx, organizationID)
-	stats.Resources = s.getResourceStats(ctx, organizationID, accountID, scopes)
+	value, err, _ := s.statsGroup.Do("stats:"+organizationID+":"+accountID+":"+scopeKey, func() (interface{}, error) {
+		loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dashboardLoadTimeout)
+		defer cancel()
 
-	return &stats, nil
+		if cached, ok := s.dashboardCache.GetStats(loadCtx, organizationID, accountID, scopeKey); ok {
+			return cached, nil
+		}
+
+		stats := model.DashboardStatsResponse{
+			Models: model.ModelsStats{ByUseCase: make(map[string]int64)},
+		}
+		models, cacheable := s.getModelStats(loadCtx, organizationID)
+		stats.Models = models
+		stats.Resources = s.getResourceStats(loadCtx, organizationID, accountID, scopes)
+		if cacheable {
+			s.dashboardCache.SetStats(loadCtx, organizationID, accountID, scopeKey, &stats)
+		}
+		return &stats, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return value.(*model.DashboardStatsResponse), nil
 }
 
 // GetRecentWork retrieves recently updated console work items for the visible workspace sets.
@@ -130,6 +162,34 @@ func (s *dashboardService) GetRecentWork(ctx context.Context, req model.RecentWo
 		len(req.FileWorkspaceIDs) == 0 {
 		return &model.RecentWorkResponse{Items: []model.RecentWorkItem{}}, nil
 	}
+	req.Limit = limit
+	scopeKey := dashboardRecentWorkScopeKey(req)
+	if cached, ok := s.dashboardCache.GetRecentWork(ctx, req.OrganizationID, req.AccountID, limit, scopeKey); ok {
+		return cached, nil
+	}
+
+	value, err, _ := s.recentWorkGroup.Do(
+		fmt.Sprintf("recent-work:%s:%s:%d:%s", req.OrganizationID, req.AccountID, limit, scopeKey),
+		func() (interface{}, error) {
+			loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dashboardLoadTimeout)
+			defer cancel()
+
+			if cached, ok := s.dashboardCache.GetRecentWork(loadCtx, req.OrganizationID, req.AccountID, limit, scopeKey); ok {
+				return cached, nil
+			}
+			result := s.loadRecentWork(loadCtx, req)
+			s.dashboardCache.SetRecentWork(loadCtx, req.OrganizationID, req.AccountID, limit, scopeKey, result)
+			return result, nil
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	return value.(*model.RecentWorkResponse), nil
+}
+
+func (s *dashboardService) loadRecentWork(ctx context.Context, req model.RecentWorkRequest) *model.RecentWorkResponse {
+	limit := req.Limit
 
 	items := make([]model.RecentWorkItem, 0, limit)
 
@@ -148,17 +208,17 @@ func (s *dashboardService) GetRecentWork(ctx context.Context, req model.RecentWo
 		items = items[:limit]
 	}
 
-	return &model.RecentWorkResponse{Items: items}, nil
+	return &model.RecentWorkResponse{Items: items}
 }
 
-func (s *dashboardService) getModelStats(ctx context.Context, organizationID string) model.ModelsStats {
+func (s *dashboardService) getModelStats(ctx context.Context, organizationID string) (model.ModelsStats, bool) {
 	if s.availableModels != nil {
 		return s.getAvailableModelStats(ctx, organizationID)
 	}
 	return s.getGlobalModelStats(ctx)
 }
 
-func (s *dashboardService) getAvailableModelStats(ctx context.Context, organizationID string) model.ModelsStats {
+func (s *dashboardService) getAvailableModelStats(ctx context.Context, organizationID string) (model.ModelsStats, bool) {
 	stats := model.ModelsStats{
 		ByUseCase: make(map[string]int64),
 	}
@@ -169,7 +229,7 @@ func (s *dashboardService) getAvailableModelStats(ctx context.Context, organizat
 			zap.String("organization_id", organizationID),
 			zap.Error(err),
 		)
-		return stats
+		return stats, false
 	}
 
 	models, err := s.availableModels.ListAvailable(ctx, orgUUID, "", "")
@@ -178,7 +238,7 @@ func (s *dashboardService) getAvailableModelStats(ctx context.Context, organizat
 			zap.String("organization_id", organizationID),
 			zap.Error(err),
 		)
-		return stats
+		return stats, false
 	}
 
 	for _, availableModel := range models {
@@ -193,18 +253,18 @@ func (s *dashboardService) getAvailableModelStats(ctx context.Context, organizat
 		}
 	}
 
-	return stats
+	return stats, true
 }
 
 // getGlobalModelStats retrieves model statistics from llm_models grouped by use_cases.
 // It is kept as a defensive fallback when the available-models service is not wired.
-func (s *dashboardService) getGlobalModelStats(ctx context.Context) model.ModelsStats {
+func (s *dashboardService) getGlobalModelStats(ctx context.Context) (model.ModelsStats, bool) {
 	stats := model.ModelsStats{
 		ByUseCase: make(map[string]int64),
 	}
 
 	if !s.tableExists(ctx, "llm_models") {
-		return stats
+		return stats, true
 	}
 
 	stats.Total = s.safeCount(ctx, "llm_models", "is_active = ? AND deleted_at IS NULL", true)
@@ -221,7 +281,7 @@ func (s *dashboardService) getGlobalModelStats(ctx context.Context) model.Models
 			GROUP BY use_case`, true).
 		Scan(&ucCounts).Error; err != nil {
 		logger.WarnContext(ctx, "Dashboard model stats query failed", zap.Error(err))
-		return stats
+		return stats, false
 	}
 
 	for _, uc := range ucCounts {
@@ -230,7 +290,7 @@ func (s *dashboardService) getGlobalModelStats(ctx context.Context) model.Models
 		}
 	}
 
-	return stats
+	return stats, true
 }
 
 // getResourceStats retrieves resource statistics for the account-visible workspace scopes.
@@ -441,4 +501,62 @@ func makeRecentWorkItems(itemType string, rows []recentWorkRow) []model.RecentWo
 		})
 	}
 	return items
+}
+
+func dashboardStatsScopeKey(accountID string, scopes model.DashboardWorkspaceScopes) string {
+	return dashboardScopeFingerprint(struct {
+		AccountID                        string
+		WorkspaceIDs                     []string
+		AgentWorkspaceIDs                []string
+		WorkflowWorkspaceIDs             []string
+		AgentConversationWorkspaceIDs    []string
+		WorkflowConversationWorkspaceIDs []string
+		DatasetWorkspaceIDs              []string
+		DataSourceWorkspaceIDs           []string
+		FileWorkspaceIDs                 []string
+	}{
+		AccountID:                        accountID,
+		WorkspaceIDs:                     sortedWorkspaceIDs(scopes.WorkspaceIDs),
+		AgentWorkspaceIDs:                sortedWorkspaceIDs(scopes.AgentWorkspaceIDs),
+		WorkflowWorkspaceIDs:             sortedWorkspaceIDs(scopes.WorkflowWorkspaceIDs),
+		AgentConversationWorkspaceIDs:    sortedWorkspaceIDs(scopes.AgentConversationWorkspaceIDs),
+		WorkflowConversationWorkspaceIDs: sortedWorkspaceIDs(scopes.WorkflowConversationWorkspaceIDs),
+		DatasetWorkspaceIDs:              sortedWorkspaceIDs(scopes.DatasetWorkspaceIDs),
+		DataSourceWorkspaceIDs:           sortedWorkspaceIDs(scopes.DataSourceWorkspaceIDs),
+		FileWorkspaceIDs:                 sortedWorkspaceIDs(scopes.FileWorkspaceIDs),
+	})
+}
+
+func dashboardRecentWorkScopeKey(req model.RecentWorkRequest) string {
+	return dashboardScopeFingerprint(struct {
+		WorkspaceIDs                     []string
+		AgentWorkspaceIDs                []string
+		WorkflowWorkspaceIDs             []string
+		AgentConversationWorkspaceIDs    []string
+		WorkflowConversationWorkspaceIDs []string
+		DatasetWorkspaceIDs              []string
+		DataSourceWorkspaceIDs           []string
+		FileWorkspaceIDs                 []string
+	}{
+		WorkspaceIDs:                     sortedWorkspaceIDs(req.WorkspaceIDs),
+		AgentWorkspaceIDs:                sortedWorkspaceIDs(req.AgentWorkspaceIDs),
+		WorkflowWorkspaceIDs:             sortedWorkspaceIDs(req.WorkflowWorkspaceIDs),
+		AgentConversationWorkspaceIDs:    sortedWorkspaceIDs(req.AgentConversationWorkspaceIDs),
+		WorkflowConversationWorkspaceIDs: sortedWorkspaceIDs(req.WorkflowConversationWorkspaceIDs),
+		DatasetWorkspaceIDs:              sortedWorkspaceIDs(req.DatasetWorkspaceIDs),
+		DataSourceWorkspaceIDs:           sortedWorkspaceIDs(req.DataSourceWorkspaceIDs),
+		FileWorkspaceIDs:                 sortedWorkspaceIDs(req.FileWorkspaceIDs),
+	})
+}
+
+func dashboardScopeFingerprint(value interface{}) string {
+	payload, _ := json.Marshal(value)
+	sum := sha256.Sum256(payload)
+	return fmt.Sprintf("%x", sum[:8])
+}
+
+func sortedWorkspaceIDs(values []string) []string {
+	result := append([]string(nil), values...)
+	sort.Strings(result)
+	return result
 }

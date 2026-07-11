@@ -19,6 +19,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/shared/workspacebootstrap"
 	auth_model "github.com/zgiai/zgi/api/internal/modules/user/auth/model"
 	auth_repo "github.com/zgiai/zgi/api/internal/modules/user/auth/repository"
+	workspacecache "github.com/zgiai/zgi/api/internal/modules/workspace/cache"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/internal/util"
 )
@@ -265,6 +266,8 @@ func (s *RegisterServiceImpl) initializeAccountWorkspaceContext(ctx context.Cont
 		if err := s.accountRepo.CreateAccountContext(ctx, ctxModel); err != nil {
 			return fmt.Errorf("failed to create account context: %w", err)
 		}
+		workspacecache.InvalidateAccount(ctx, accountID)
+		workspacecache.SetAccountContext(ctx, workspacecache.NewAccountScopedToken(ctx, accountID), ctxModel)
 		return nil
 	}
 
@@ -276,6 +279,8 @@ func (s *RegisterServiceImpl) initializeAccountWorkspaceContext(ctx context.Cont
 		return fmt.Errorf("failed to update account context: %w", err)
 	}
 
+	workspacecache.InvalidateAccount(ctx, accountID)
+	workspacecache.SetAccountContext(ctx, workspacecache.NewAccountScopedToken(ctx, accountID), ctxModel)
 	return nil
 }
 

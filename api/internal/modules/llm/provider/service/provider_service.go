@@ -63,6 +63,12 @@ func (s *providerService) invalidateAvailableModelsCache(organizationID uuid.UUI
 	}
 }
 
+func (s *providerService) invalidateGlobalAvailableModelsCache() {
+	if s.availableModels != nil {
+		s.availableModels.InvalidateGlobalCache()
+	}
+}
+
 // ============================================================================
 // Global provider operations
 // ============================================================================
@@ -103,6 +109,7 @@ func (s *providerService) CreateGlobal(ctx context.Context, req *dto.CreateProvi
 	if err := s.globalRepo.Create(ctx, provider); err != nil {
 		return nil, fmt.Errorf("failed to create provider: %w", err)
 	}
+	s.invalidateGlobalAvailableModelsCache()
 
 	return provider, nil
 }
@@ -173,12 +180,17 @@ func (s *providerService) UpdateGlobal(ctx context.Context, id uuid.UUID, req *d
 	if err := s.globalRepo.Update(ctx, provider); err != nil {
 		return nil, fmt.Errorf("failed to update provider: %w", err)
 	}
+	s.invalidateGlobalAvailableModelsCache()
 
 	return provider, nil
 }
 
 func (s *providerService) DeleteGlobal(ctx context.Context, id uuid.UUID) error {
-	return s.globalRepo.Delete(ctx, id)
+	if err := s.globalRepo.Delete(ctx, id); err != nil {
+		return err
+	}
+	s.invalidateGlobalAvailableModelsCache()
+	return nil
 }
 
 // ============================================================================
@@ -266,6 +278,7 @@ func (s *providerService) CreateCustom(ctx context.Context, organizationID uuid.
 	if err := s.customRepo.Create(ctx, provider); err != nil {
 		return nil, fmt.Errorf("failed to create custom provider: %w", err)
 	}
+	s.invalidateAvailableModelsCache(organizationID)
 
 	return provider, nil
 }
@@ -319,12 +332,17 @@ func (s *providerService) UpdateCustom(ctx context.Context, organizationID, id u
 	if err := s.customRepo.Update(ctx, provider); err != nil {
 		return nil, fmt.Errorf("failed to update custom provider: %w", err)
 	}
+	s.invalidateAvailableModelsCache(organizationID)
 
 	return provider, nil
 }
 
 func (s *providerService) DeleteCustom(ctx context.Context, organizationID, id uuid.UUID) error {
-	return s.customRepo.Delete(ctx, organizationID, id)
+	if err := s.customRepo.Delete(ctx, organizationID, id); err != nil {
+		return err
+	}
+	s.invalidateAvailableModelsCache(organizationID)
+	return nil
 }
 
 func validateProviderBaseURL(ctx context.Context, fieldName, raw string) error {

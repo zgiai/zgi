@@ -1,9 +1,9 @@
 import type { PromptDetail, PromptSummary } from '@/services/types/prompt';
 
-type PromptCopy = {
+interface PromptCopy {
   name: string;
   description: string;
-};
+}
 
 const ZH_HANS_OFFICIAL_PROMPT_COPY_BY_ID: Record<string, PromptCopy> = {
   '9c6ff0a8-c53f-42b7-87c2-1d2f9f7f1d08': {

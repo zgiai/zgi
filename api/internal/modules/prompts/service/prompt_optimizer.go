@@ -32,13 +32,13 @@ const (
 )
 
 var promptOptimizerVariablePatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?s)<zgi:(knowledge|skill)\b[^>]*>.*?</zgi:(knowledge|skill)>`),
+	regexp.MustCompile(`(?s)<zgi:(knowledge|skill|database|table|workflow)\b[^>]*>.*?</zgi:(knowledge|skill|database|table|workflow)>`),
 	regexp.MustCompile(`\{\{#[^{}]+#\}\}`),
 	regexp.MustCompile(`\{\{[^{}]+\}\}`),
 	regexp.MustCompile(`\$\{[^{}]+\}`),
 }
 
-var promptOptimizerZGITemplateBlockPattern = regexp.MustCompile(`(?s)<zgi:(slot|knowledge|skill)\b([^>]*)>(.*?)</zgi:(slot|knowledge|skill)>`)
+var promptOptimizerZGITemplateBlockPattern = regexp.MustCompile(`(?s)<zgi:(slot|knowledge|skill|database|table|workflow)\b([^>]*)>(.*?)</zgi:(slot|knowledge|skill|database|table|workflow)>`)
 
 func (s *promptService) Optimize(
 	ctx context.Context,

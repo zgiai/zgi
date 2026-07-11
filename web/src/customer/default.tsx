@@ -9,7 +9,6 @@ import { WorkspaceRequiredState } from '@/components/common/workspace-required-s
 import { DashboardMobileSidebar, DashboardSidebar } from '@/components/dashboard/sidebar';
 import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import { useJoinedWorkspaces } from '@/hooks/workspace/use-joined-workspaces';
-import { useAvailableModels } from '@/hooks/model/use-model';
 import { useT } from '@/i18n';
 import { useCurrentWorkspace, useWorkspaceStore } from '@/store/workspace-store';
 import { getConsoleRouteAccess } from '@/routes/access';
@@ -19,11 +18,6 @@ import type {
   CustomerDashboardShellProps,
   CustomerSessionBridgeProviderProps,
 } from './types';
-
-function ConsoleModelsPreloader() {
-  useAvailableModels();
-  return null;
-}
 
 function ConsoleAccessDeniedState() {
   const t = useT();
@@ -44,7 +38,6 @@ function ConsoleCapabilityLoadingState() {
     </div>
   );
 }
-
 function DefaultConsoleShell({ children }: CustomerConsoleShellProps) {
   const pathname = usePathname();
   const routeAccess = getConsoleRouteAccess(pathname);
@@ -117,7 +110,6 @@ function DefaultConsoleShell({ children }: CustomerConsoleShellProps) {
         </main>
       </div>
       <ConsoleMobileSidebar open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen} />
-      <ConsoleModelsPreloader />
     </div>
   );
 }

@@ -42,6 +42,8 @@ export interface ConfirmDialogProps {
   footerClassName?: string;
   cancelClassName?: string;
   confirmClassName?: string;
+  titleClassName?: string;
+  descriptionClassName?: string;
 }
 
 export function ConfirmDialog({
@@ -60,6 +62,8 @@ export function ConfirmDialog({
   footerClassName,
   cancelClassName,
   confirmClassName,
+  titleClassName,
+  descriptionClassName,
 }: ConfirmDialogProps) {
   const [openInternal, setOpenInternal] = useState(false);
   const open = openProp !== undefined ? openProp : openInternal;
@@ -80,12 +84,16 @@ export function ConfirmDialog({
         className={cn('p-0 overflow-hidden', isDanger && 'max-w-md rounded-2xl', contentClassName)}
       >
         <DialogHeader>
-          <DialogTitle className="text-xl font-bold tracking-tight">{title}</DialogTitle>
+          <DialogTitle className={cn('text-xl font-bold tracking-tight', titleClassName)}>
+            {title}
+          </DialogTitle>
         </DialogHeader>
 
         {description && (
           <DialogBody>
-            <DialogDescription className="text-sm text-muted-foreground font-medium">
+            <DialogDescription
+              className={cn('text-sm text-muted-foreground font-medium', descriptionClassName)}
+            >
               {description}
             </DialogDescription>
           </DialogBody>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,6 +10,7 @@ import {
   Dialog,
   DialogBody,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -20,6 +21,12 @@ interface PromptVersionDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   defaultType: PromptType;
+  initialContent?: PromptVersionPayload['content'];
+  initialCommitMessage?: string;
+  title?: string;
+  description?: string;
+  submitLabel?: string;
+  governanceNote?: ReactNode;
   onSubmit: (payload: PromptVersionPayload) => Promise<unknown> | unknown;
 }
 
@@ -27,14 +34,32 @@ export function PromptVersionDialog({
   open,
   onOpenChange,
   defaultType,
+  initialContent,
+  initialCommitMessage,
+  title,
+  description,
+  submitLabel,
+  governanceNote,
   onSubmit,
 }: PromptVersionDialogProps) {
   const t = useT('prompts');
   const [content, setContent] = useState('');
   const [contentError, setContentError] = useState('');
-  const [labels, setLabels] = useState('');
   const [commitMessage, setCommitMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setContent(
+      initialContent
+        ? typeof initialContent === 'string'
+          ? initialContent
+          : JSON.stringify(initialContent, null, 2)
+        : ''
+    );
+    setCommitMessage(initialCommitMessage ?? '');
+    setContentError('');
+  }, [initialCommitMessage, initialContent, open]);
 
   const handleSubmit = async () => {
     if (!content.trim()) return;
@@ -53,17 +78,15 @@ export function PromptVersionDialog({
       await onSubmit({
         prompt_type: defaultType,
         content: parsedContent,
-        labels: labels
-          .split(',')
-          .map(item => item.trim())
-          .filter(Boolean),
+        labels: [],
         commit_message: commitMessage.trim() || null,
       });
       setContent('');
       setContentError('');
-      setLabels('');
       setCommitMessage('');
       onOpenChange(false);
+    } catch {
+      // The caller is responsible for showing a localized error toast.
     } finally {
       setIsSubmitting(false);
     }
@@ -73,9 +96,15 @@ export function PromptVersionDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{t('versions.createTitle')}</DialogTitle>
+          <DialogTitle>{title ?? t('versions.createTitle')}</DialogTitle>
+          {description ? <DialogDescription>{description}</DialogDescription> : null}
         </DialogHeader>
         <DialogBody className="space-y-4">
+          {governanceNote ? (
+            <div className="rounded-lg border bg-muted/20 p-3 text-sm text-muted-foreground">
+              {governanceNote}
+            </div>
+          ) : null}
           <div className="space-y-2">
             <Label>{t('fields.content')}</Label>
             <Textarea
@@ -85,15 +114,13 @@ export function PromptVersionDialog({
                 setContentError('');
               }}
               className="min-h-64 font-mono text-xs"
-              placeholder={defaultType === 'chat' ? t('placeholders.chatContent') : t('placeholders.textContent')}
+              placeholder={
+                defaultType === 'chat'
+                  ? t('placeholders.chatContent')
+                  : t('placeholders.textContent')
+              }
             />
-            {contentError ? (
-              <div className="text-sm text-destructive">{contentError}</div>
-            ) : null}
-          </div>
-          <div className="space-y-2">
-            <Label>{t('fields.labels')}</Label>
-            <Input value={labels} onChange={e => setLabels(e.target.value)} placeholder={t('placeholders.labels')} />
+            {contentError ? <div className="text-sm text-destructive">{contentError}</div> : null}
           </div>
           <div className="space-y-2">
             <Label>{t('fields.commitMessage')}</Label>
@@ -109,7 +136,7 @@ export function PromptVersionDialog({
             {t('actions.cancel')}
           </Button>
           <Button onClick={handleSubmit} disabled={isSubmitting || !content.trim()}>
-            {t('actions.createVersion')}
+            {submitLabel ?? t('actions.createVersion')}
           </Button>
         </DialogFooter>
       </DialogContent>

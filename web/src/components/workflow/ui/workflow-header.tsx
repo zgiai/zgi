@@ -18,6 +18,7 @@ import {
   KeySquare,
   MessageCircleCode,
   X,
+  AlertTriangle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AgentType, type WebAppStatus } from '@/services/types/agent';
@@ -140,8 +141,9 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
   const webAppStatusMutation = useUpdateWebAppStatus();
   const lastSavedAt = useWorkflowStore.use.lastSavedAt();
   const activePanel = useActivePanel(state => state.active);
-  const { errors } = useWorkflowValidation();
+  const { errors, warnings } = useWorkflowValidation();
   const [runWarnOpen, setRunWarnOpen] = React.useState(false);
+  const [publishPromptRiskOpen, setPublishPromptRiskOpen] = React.useState(false);
   const [webAppStatusDialogOpen, setWebAppStatusDialogOpen] = React.useState(false);
   const [publishSettingsOpen, setPublishSettingsOpen] = React.useState(false);
   const [offlineReason, setOfflineReason] = React.useState('');
@@ -254,6 +256,19 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
 
   const isDebugPanelOpen =
     agentType === AgentType.CONVERSATIONAL_AGENT ? activePanel === 'chat' : activePanel === 'run';
+  const latestPromptReferenceWarnings = React.useMemo(
+    () => warnings.filter(warning => warning.code === 'llm.validation.latestPromptReference'),
+    [warnings]
+  );
+
+  const handlePublishConfirmed = React.useCallback(async () => {
+    await onPublish({
+      silent: false,
+      saveToast: hasPubilshed
+        ? t('workflow.workflowUpdatedSuccessfully')
+        : t('workflow.workflowPublishedSuccessfully'),
+    });
+  }, [hasPubilshed, onPublish, t]);
 
   const handleRunClick = async () => {
     if (isDebugPanelOpen) {
@@ -284,12 +299,12 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
       return;
     }
 
-    await onPublish({
-      silent: false,
-      saveToast: hasPubilshed
-        ? t('workflow.workflowUpdatedSuccessfully')
-        : t('workflow.workflowPublishedSuccessfully'),
-    });
+    if (latestPromptReferenceWarnings.length > 0) {
+      setPublishPromptRiskOpen(true);
+      return;
+    }
+
+    await handlePublishConfirmed();
   };
 
   const handleWebAppStatusConfirm = () => {
@@ -688,6 +703,74 @@ const WorkflowHeader: React.FC<WorkflowHeaderProps> = ({
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
+              <Dialog open={publishPromptRiskOpen} onOpenChange={setPublishPromptRiskOpen}>
+                <DialogContent className="max-w-[480px] p-0 overflow-hidden text-left">
+                  <DialogHeader className="pb-2">
+                    <DialogTitle className="text-xl font-black tracking-tight flex items-center gap-3">
+                      <div className="h-8 w-8 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center">
+                        <AlertTriangle size={18} />
+                      </div>
+                      {t('workflow.promptPublishRisk.title')}
+                    </DialogTitle>
+                    <DialogDescription>
+                      {t('workflow.promptPublishRisk.description', {
+                        count: latestPromptReferenceWarnings.length,
+                      })}
+                    </DialogDescription>
+                  </DialogHeader>
+
+                  <DialogBody className="space-y-4">
+                    <div className="rounded-2xl border border-amber-100 bg-amber-50/70 p-4 text-sm leading-relaxed text-amber-950">
+                      {t('workflow.promptPublishRisk.impact')}
+                    </div>
+                    <div className="space-y-2">
+                      {latestPromptReferenceWarnings.slice(0, 4).map((warning, index) => (
+                        <div
+                          key={`${warning.nodeId || 'workflow'}-${index}`}
+                          className="rounded-lg border bg-background px-3 py-2 text-sm"
+                        >
+                          <div className="font-medium">
+                            {warning.nodeTitle || t('workflow.promptPublishRisk.unknownNode')}
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {warning.message}
+                          </div>
+                        </div>
+                      ))}
+                      {latestPromptReferenceWarnings.length > 4 ? (
+                        <div className="text-xs text-muted-foreground">
+                          {t('workflow.promptPublishRisk.more', {
+                            count: latestPromptReferenceWarnings.length - 4,
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
+                  </DialogBody>
+
+                  <DialogFooter className="bg-neutral-50/50 pt-4 pb-6 px-6 border-t font-medium">
+                    <Button
+                      variant="default"
+                      onClick={() => {
+                        setPublishPromptRiskOpen(false);
+                        openIssues();
+                      }}
+                    >
+                      {t('workflow.promptPublishRisk.viewIssues')}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      disabled={Boolean(isPublishing) || isSaving}
+                      onClick={async () => {
+                        setPublishPromptRiskOpen(false);
+                        await handlePublishConfirmed();
+                      }}
+                    >
+                      {isPublishing ? <Loader2 size={16} className="animate-spin" /> : null}
+                      {t('workflow.promptPublishRisk.confirm')}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
               <Dialog open={webAppStatusDialogOpen} onOpenChange={setWebAppStatusDialogOpen}>
                 <DialogContent size="md" className="p-0 overflow-hidden text-left">
                   <DialogHeader>
