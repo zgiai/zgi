@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	llmcache "github.com/zgiai/zgi/api/internal/modules/llm/cache"
 	defaultmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/model"
 	defaultmodelrepo "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/repository"
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
@@ -15,6 +16,7 @@ import (
 	llmmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	llmsharedtypes "github.com/zgiai/zgi/api/internal/modules/llm/shared/types"
 	sharedmodel "github.com/zgiai/zgi/api/internal/modules/shared/model"
+	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 )
 
@@ -59,6 +61,7 @@ type defaultModelService struct {
 	availableModelsSvc llmmodelservice.AvailableModelsService
 	globalRepo         llmmodelrepo.ModelRepository
 	customRepo         llmmodelrepo.CustomModelRepository
+	resolvedCacheGroup singleflight.Group
 }
 
 type modelSortMetadata struct {
@@ -87,6 +90,38 @@ func NewDefaultModelService(
 }
 
 func (s *defaultModelService) ListResolved(ctx context.Context, organizationID uuid.UUID) ([]*ResolvedModel, error) {
+	generation := llmcache.Generation(ctx, organizationID.String())
+	globalGeneration := llmcache.GlobalGeneration(ctx)
+	var cached []*ResolvedModel
+	if llmcache.GetJSON(ctx, "default", organizationID.String(), generation, []string{globalGeneration}, &cached) {
+		return cached, nil
+	}
+	value, err, _ := s.resolvedCacheGroup.Do(strings.Join([]string{organizationID.String(), generation, globalGeneration}, "\x00"), func() (interface{}, error) {
+		fillCtx, cancel := llmcache.FillContext(ctx)
+		defer cancel()
+
+		var cached []*ResolvedModel
+		if llmcache.GetJSON(fillCtx, "default", organizationID.String(), generation, []string{globalGeneration}, &cached) {
+			return cached, nil
+		}
+
+		results, err := s.listResolvedUncached(fillCtx, organizationID)
+		if err != nil {
+			return nil, err
+		}
+		llmcache.SetJSON(fillCtx, "default", organizationID.String(), generation, []string{globalGeneration}, results)
+		return results, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return value.([]*ResolvedModel), nil
+}
+
+func (s *defaultModelService) listResolvedUncached(ctx context.Context, organizationID uuid.UUID) ([]*ResolvedModel, error) {
 	defaults, err := s.repo.ListByOrganization(ctx, organizationID)
 	if err != nil {
 		return nil, err
@@ -143,6 +178,7 @@ func (s *defaultModelService) Upsert(ctx context.Context, organizationID uuid.UU
 	if err := s.repo.Upsert(ctx, item); err != nil {
 		return nil, err
 	}
+	llmcache.Invalidate(context.Background(), organizationID.String())
 	return item, nil
 }
 
@@ -150,7 +186,11 @@ func (s *defaultModelService) Delete(ctx context.Context, organizationID uuid.UU
 	if !isValidUseCase(useCase) {
 		return ErrInvalidUseCase
 	}
-	return s.repo.DeleteByOrganizationAndUseCase(ctx, organizationID, string(useCase))
+	if err := s.repo.DeleteByOrganizationAndUseCase(ctx, organizationID, string(useCase)); err != nil {
+		return err
+	}
+	llmcache.Invalidate(context.Background(), organizationID.String())
+	return nil
 }
 
 func (s *defaultModelService) ResolveModelType(ctx context.Context, organizationID string, explicitProvider, explicitModel *string, modelType sharedmodel.ModelType) (*ResolvedModel, error) {
