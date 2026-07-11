@@ -3,6 +3,8 @@ package gateway
 import (
 	"errors"
 	"fmt"
+
+	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 )
 
 // Gateway specific errors
@@ -16,7 +18,7 @@ var (
 
 	// Model errors
 	ErrModelNotFound      = errors.New("model not found")
-	ErrModelNotAuthorized = errors.New("model not authorized for this account")
+	ErrModelNotAuthorized = llmerrors.DomainErrModelNotAuthorized
 	ErrModelNotActive     = errors.New("model is not active")
 
 	// Provider errors

@@ -18,6 +18,7 @@ import (
 	llmerrors "github.com/zgiai/zgi/api/internal/modules/llm/errors"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelsvc "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	providermodel "github.com/zgiai/zgi/api/internal/modules/llm/provider/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -211,7 +212,10 @@ func (r *ChannelRouter) SelectChannelsForProvider(
 	}
 
 	validRoutes := r.filterRoutesForSelection(routes, modelName, modelProvider, isPrivateCustomModel)
-	validRoutes = filterRoutesForNativeProtocol(validRoutes, llmModel, modelCategory)
+	validRoutes, err = filterRoutesForNativeProtocolOrError(validRoutes, llmModel, modelCategory)
+	if err != nil {
+		return nil, err
+	}
 
 	logger.DebugContext(logCtx, "valid LLM routes filtered",
 		zap.Int("valid_route_count", len(validRoutes)),
@@ -283,6 +287,18 @@ func filterRoutesForNativeProtocol(routes []*channelmodel.LLMRoute, llmModel *ll
 	default:
 		return routes
 	}
+}
+
+func filterRoutesForNativeProtocolOrError(routes []*channelmodel.LLMRoute, llmModel *llmmodel.LLMModel, modelCategory string) ([]*channelmodel.LLMRoute, error) {
+	filtered := filterRoutesForNativeProtocol(routes, llmModel, modelCategory)
+	if modelCategory != "" && len(routes) > 0 && len(filtered) == 0 {
+		modelName := ""
+		if llmModel != nil {
+			modelName = llmModel.Model
+		}
+		return nil, fmt.Errorf("%w: model %q does not support %s on any enabled route", adapter.ErrCapabilityUnsupported, modelName, modelCategory)
+	}
+	return filtered, nil
 }
 
 func filterRoutesByCapability(routes []*channelmodel.LLMRoute, supports func(*channelmodel.LLMRoute) bool) []*channelmodel.LLMRoute {
