@@ -268,9 +268,7 @@ export function useAllModels(options?: {
   };
 }
 
-/**
- * Available models (enabled only) via new API, non-expiring cache + idle preloading
- */
+/** Available models (enabled only) via new API. */
 export function useAvailableModels(options?: { use_case?: ModelUseCase }): {
   models: ModelItem[];
   isLoading: boolean;
@@ -278,7 +276,6 @@ export function useAvailableModels(options?: { use_case?: ModelUseCase }): {
   error: string | null;
   refetch: () => Promise<void>;
 } {
-  const queryClient = useQueryClient();
   const t = useT('models');
   const use_case = options?.use_case || 'text-chat';
 
@@ -304,27 +301,6 @@ export function useAvailableModels(options?: { use_case?: ModelUseCase }): {
       toast.success(t('selector.refreshSuccess'));
     }
   }, [refetch, t]);
-
-  // Preload when browser is idle after first paint
-  useEffect(() => {
-    const hasData = queryClient.getQueryData(key) as ApiResponseData<ModelList> | undefined;
-    if (hasData?.data?.items?.length) return;
-    const cb = () => {
-      queryClient.prefetchQuery({
-        queryKey: key,
-        queryFn: async () => modelService.getAvailableModels({ use_case }),
-        staleTime: Number.POSITIVE_INFINITY,
-        gcTime: Number.POSITIVE_INFINITY,
-      });
-    };
-    const rIC = (window as unknown as { requestIdleCallback?: Function }).requestIdleCallback;
-    if (typeof rIC === 'function') {
-      rIC(cb, { timeout: 2000 });
-    } else {
-      setTimeout(cb, 1000);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryClient, key]);
 
   useEffect(() => {
     if (error) {

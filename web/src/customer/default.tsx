@@ -7,7 +7,6 @@ import { ConsoleMobileSidebar } from '@/components/console/console-sidebar';
 import { WorkspaceRequiredState } from '@/components/common/workspace-required-state';
 import { DashboardMobileSidebar, DashboardSidebar } from '@/components/dashboard/sidebar';
 import { useJoinedWorkspaces } from '@/hooks/workspace/use-joined-workspaces';
-import { useAvailableModels } from '@/hooks/model/use-model';
 import { useCurrentWorkspace, useWorkspaceStore } from '@/store/workspace-store';
 import type {
   CustomerAdapter,
@@ -15,11 +14,6 @@ import type {
   CustomerDashboardShellProps,
   CustomerSessionBridgeProviderProps,
 } from './types';
-
-function ConsoleModelsPreloader() {
-  useAvailableModels();
-  return null;
-}
 
 function DefaultConsoleShell({ children }: CustomerConsoleShellProps) {
   const pathname = usePathname();
@@ -60,7 +54,6 @@ function DefaultConsoleShell({ children }: CustomerConsoleShellProps) {
         </main>
       </div>
       <ConsoleMobileSidebar open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen} />
-      <ConsoleModelsPreloader />
     </div>
   );
 }
