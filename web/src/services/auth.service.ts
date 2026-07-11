@@ -697,7 +697,7 @@ export const authService = {
     authenticationService.verifyForgotPassword(data),
 
   // System methods
-  getSystemFeatures: () => authenticationService.getSystemFeatures(),
+  getSystemFeatures: (useCache: boolean = true) => authenticationService.getSystemFeatures(useCache),
   getSetupStatus: () => authenticationService.getSetupStatus(),
   setup: (data: SetupRequest) => authenticationService.setup(data),
 
