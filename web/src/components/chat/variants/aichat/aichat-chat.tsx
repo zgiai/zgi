@@ -4,6 +4,7 @@ import {
   createElement,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -13,13 +14,21 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useStore } from 'zustand';
-import { ArrowDown, MessageSquarePlus, PanelLeft, Settings2 } from 'lucide-react';
+import { ArrowDown, Settings2 } from 'lucide-react';
 import type {
   ModelSelectorModelProps,
   ModelSelectorValue,
 } from '@/components/common/model-selector';
 import type { AIChatController } from '@/components/chat/controllers/aichat-controller';
-import type { ConversationSummary } from '@/components/chat/controllers/types';
+import {
+  createAIChatSendTraceContext,
+  logAIChatSessionTrace,
+  type AIChatSendTraceContext,
+} from '@/components/chat/controllers/aichat/session-trace';
+import type {
+  ConversationSearchFn,
+  ConversationSummary,
+} from '@/components/chat/controllers/types';
 import {
   selectActiveConversation,
   selectActiveMessagePagination,
@@ -30,9 +39,11 @@ import {
   selectIsRecoveringMessages,
   selectIsLoadingOlderMessages,
   selectIsStopping,
+  mergeRuntimeTimelineWithMessageTimeline,
+  timelineFromAIChatMessage,
 } from '@/components/chat/controllers/aichat/selectors';
 import { Sidebar } from '@/components/chat/variants/common/sidebar';
-import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import {
   useAIChatSkillPreference,
@@ -49,6 +60,7 @@ import type {
   AIChatConversation,
   AIChatMessage,
   AIChatMessageFile,
+  AIChatRuntimeSurface,
   AIChatUserInputRequest,
   AIChatWorkflowRunMetadata,
 } from '@/services/types/aichat';
@@ -59,19 +71,37 @@ import {
 } from '@/components/chat/utils/message-tree';
 import { AIChatHeader } from '@/components/chat/variants/aichat/chat-header';
 import { AIChatHomeView } from '@/components/chat/variants/aichat/home-view';
+import { AIChatAssetAuditButton } from '@/components/chat/variants/aichat/asset-audit-button';
+import {
+  AIChatEmbeddedConversationControls,
+  embeddedControlButtonClassName,
+} from '@/components/chat/variants/aichat/embedded-conversation-controls';
 import {
   AIChatInputArea,
   type AIChatUploadScope,
 } from '@/components/chat/variants/aichat/input-area';
-import { AIChatMessageList } from '@/components/chat/variants/aichat/message-list';
+import {
+  AIChatMessageList,
+  type AIChatPendingUserMessage,
+} from '@/components/chat/variants/aichat/message-list';
+import {
+  resolvePendingToolGovernanceApprovalFromTimeline,
+  type AIChatToolGovernanceDecisionSubmitPayload,
+} from '@/components/chat/variants/aichat/agentic-timeline';
 import {
   buildAIChatSkillDisplayMap,
-  isHiddenSystemSkill,
+  isSkillSelectableForCaller,
 } from '@/components/chat/variants/aichat/skill-display';
 import { AIChatSkillPreferenceDialog } from '@/components/chat/variants/aichat/skill-preference-dialog';
+import {
+  isToolGovernancePendingApprovalDismissed,
+  ToolGovernancePendingApprovalScopeProvider,
+  type ToolGovernancePendingApproval,
+} from '@/components/chat/variants/aichat/tool-governance-decision-card';
 import { useAIChatScroll } from '@/components/chat/variants/aichat/use-aichat-scroll';
 import {
   getAIChatMessageErrorInput,
+  isAIChatContinuationLikelyStarted,
   resolveAIChatErrorMessage,
 } from '@/components/chat/variants/aichat/error-utils';
 import {
@@ -87,6 +117,10 @@ import {
   type AIChatWorkflowApprovalRequest,
   type AIChatWorkflowApprovalSubmitPayload,
 } from '@/components/chat/variants/aichat/types';
+import type {
+  AIChatOperationContext,
+  AIChatToolGovernancePermissionTier,
+} from '@/components/aichat/contextual/types';
 
 export { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
 export type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
@@ -126,7 +160,9 @@ interface AIChatShellProps {
   onStartNewConversation?: () => void;
   showAssistantModelMeta?: boolean;
   surface?: 'aichat' | 'agent-draft' | 'agent-webapp';
+  runtimeSurface?: AIChatRuntimeSurface;
   themeColor?: string;
+  enableToolGovernance?: boolean;
 }
 
 const CHAT_THEME_PRIMARY: Record<string, string> = {
@@ -138,6 +174,19 @@ const CHAT_THEME_PRIMARY: Record<string, string> = {
   slate: '215 20% 45%',
 };
 const AGENT_WORKFLOW_QUESTION_SOURCE = 'agent_workflow_question_answer';
+const TOOL_GOVERNANCE_PERMISSION_TIER_STORAGE_KEY = 'zgi:aichat:tool-governance-permission-tier';
+
+function normalizeToolGovernancePermissionTier(value: unknown): AIChatToolGovernancePermissionTier {
+  return value === 'advanced' || value === 'full' ? value : 'basic';
+}
+
+function toolGovernanceDecisionKey(
+  conversationId?: string | null,
+  messageId?: string | null,
+  correlationId?: string | null
+) {
+  return [conversationId, messageId, correlationId].map(value => value?.trim() ?? '').join(':');
+}
 
 function normalizeSkillIds(skillIds: string[]) {
   return Array.from(new Set(skillIds.filter(Boolean))).sort();
@@ -215,7 +264,9 @@ export function AIChatShell({
   onStartNewConversation,
   showAssistantModelMeta = true,
   surface = 'aichat',
+  runtimeSurface = 'work_chat',
   themeColor,
+  enableToolGovernance = false,
 }: AIChatShellProps) {
   const router = useRouter();
   const t = useT('webapp');
@@ -223,6 +274,7 @@ export function AIChatShell({
   const { locale } = useLocale();
   const isMobile = useIsMobile();
   const isEmbedded = variant === 'embedded';
+  const toolGovernanceApprovalScopeId = useId();
   const showEmbeddedConversationDrawer = isEmbedded && embeddedConversationMode === 'drawer';
   const themeStyle = useMemo<CSSProperties | undefined>(() => {
     const primary = themeColor ? CHAT_THEME_PRIMARY[themeColor] : undefined;
@@ -236,7 +288,17 @@ export function AIChatShell({
   const [externalControlsPortal, setExternalControlsPortal] = useState<HTMLElement | null>(null);
   const [skillPreferenceOpen, setSkillPreferenceOpen] = useState(false);
   const [draftSkillPreferenceIds, setDraftSkillPreferenceIds] = useState<string[]>([]);
+  const [submittedToolGovernanceDecisionKeys, setSubmittedToolGovernanceDecisionKeys] = useState<
+    Set<string>
+  >(() => new Set());
+  const [pendingUserMessage, setPendingUserMessage] = useState<AIChatPendingUserMessage | null>(
+    null
+  );
   const [inputAreaHeight, setInputAreaHeight] = useState(160);
+  const [toolGovernancePermissionTier, setToolGovernancePermissionTier] =
+    useState<AIChatToolGovernancePermissionTier>('basic');
+  const [toolGovernancePermissionTierLoaded, setToolGovernancePermissionTierLoaded] =
+    useState(false);
   const topologyRef = useRef<{ key: string; topology: ChatMessageTopology } | null>(null);
   const lastErrorToastRef = useRef<string | null>(null);
 
@@ -255,7 +317,9 @@ export function AIChatShell({
   const currentWorkspace = useWorkspaceStore.use.currentWorkspace();
   const { canManageModelConfig: isBillingAdmin } = useAccountCapabilities();
   const enableAIChatSkillPreference =
-    !isEmbedded && surface !== 'agent-draft' && surface !== 'agent-webapp';
+    surface === 'aichat' && (!isEmbedded || runtimeSurface === 'contextual_sidebar');
+  const effectiveRuntimeSurface: AIChatRuntimeSurface =
+    surface === 'agent-draft' || surface === 'agent-webapp' ? 'external_page_chat' : runtimeSurface;
   const { data: availableSkills = [] } = useAIChatSkills({ enabled: enableAIChatSkillPreference });
   const { data: skillPreference, isLoading: isLoadingSkillPreference } = useAIChatSkillPreference({
     enabled: enableAIChatSkillPreference,
@@ -269,9 +333,7 @@ export function AIChatShell({
     () =>
       availableSkills.filter(skill => {
         if (!skill.enabled || skill.status === 'invalid') return false;
-        if (isHiddenSystemSkill(skill.skill_id)) return false;
-        const callers = skill.supported_callers ?? [];
-        return callers.length === 0 || callers.includes('aichat');
+        return isSkillSelectableForCaller(skill, 'aichat');
       }),
     [availableSkills]
   );
@@ -280,6 +342,39 @@ export function AIChatShell({
     if (!enableAIChatSkillPreference || !skillPreference) return;
     setDraftSkillPreferenceIds(skillPreference.enabled_skill_ids ?? []);
   }, [enableAIChatSkillPreference, skillPreference]);
+  const enableToolGovernanceApprovals =
+    surface === 'aichat' && Boolean(controller.continueToolGovernanceDecision);
+  const showToolGovernancePermissionControl =
+    surface === 'aichat' &&
+    effectiveRuntimeSurface === 'contextual_sidebar' &&
+    enableToolGovernance;
+  useEffect(() => {
+    if (!showToolGovernancePermissionControl) {
+      setToolGovernancePermissionTierLoaded(false);
+      return;
+    }
+    if (typeof window === 'undefined') return;
+    const savedTier = window.localStorage.getItem(TOOL_GOVERNANCE_PERMISSION_TIER_STORAGE_KEY);
+    setToolGovernancePermissionTier(normalizeToolGovernancePermissionTier(savedTier));
+    setToolGovernancePermissionTierLoaded(true);
+  }, [showToolGovernancePermissionControl]);
+  useEffect(() => {
+    if (
+      !showToolGovernancePermissionControl ||
+      typeof window === 'undefined' ||
+      !toolGovernancePermissionTierLoaded
+    ) {
+      return;
+    }
+    window.localStorage.setItem(
+      TOOL_GOVERNANCE_PERMISSION_TIER_STORAGE_KEY,
+      toolGovernancePermissionTier
+    );
+  }, [
+    showToolGovernancePermissionControl,
+    toolGovernancePermissionTier,
+    toolGovernancePermissionTierLoaded,
+  ]);
   const savedSkillPreferenceIds = useMemo(
     () => skillPreference?.enabled_skill_ids ?? [],
     [skillPreference?.enabled_skill_ids]
@@ -288,7 +383,33 @@ export function AIChatShell({
     () => !areSkillIdsEqual(draftSkillPreferenceIds, savedSkillPreferenceIds),
     [draftSkillPreferenceIds, savedSkillPreferenceIds]
   );
-
+  const effectiveToolGovernancePermissionTier = showToolGovernancePermissionControl
+    ? toolGovernancePermissionTier
+    : 'basic';
+  const toolGovernanceOperationContext = useMemo<AIChatOperationContext | undefined>(
+    () =>
+      showToolGovernancePermissionControl
+        ? {
+            schema: 'zgi.aichat.operation_context.v1',
+            version: 1,
+            tool_governance: {
+              permission_tier: effectiveToolGovernancePermissionTier,
+            },
+            resources: [],
+            capabilities: [],
+            risk_summary: {
+              requires_confirmation: false,
+            },
+            summary: {
+              resource_count: 0,
+              capability_count: 0,
+              omitted_resource_count: 0,
+              omitted_capability_count: 0,
+            },
+          }
+        : undefined,
+    [effectiveToolGovernancePermissionTier, showToolGovernancePermissionControl]
+  );
   const messageTopologyKey = useMemo(
     () => buildChatMessageTopologyKey(activeMessages),
     [activeMessages]
@@ -309,6 +430,16 @@ export function AIChatShell({
   const messages = useMemo(
     () => selectDisplayMessages(displayMessageIds, activeMessages),
     [activeMessages, displayMessageIds]
+  );
+  const assetAuditRefreshKey = useMemo(
+    () =>
+      activeMessages
+        .map(message => {
+          const invocationCount = message.metadata?.skill_invocations?.length ?? 0;
+          return `${message.id}:${message.updated_at}:${message.status}:${invocationCount}`;
+        })
+        .join('|'),
+    [activeMessages]
   );
   const branchNavigationByMessageId = useMemo(
     () => selectBranchNavigationByMessageId(displayMessageIds, messageTopology),
@@ -342,6 +473,7 @@ export function AIChatShell({
     if (
       !activeConversation ||
       activeConversation.runtime_status !== 'idle' ||
+      isRecoveringMessages ||
       isSending ||
       hasActiveStreamingMessage
     ) {
@@ -350,16 +482,23 @@ export function AIChatShell({
     const leafMessageId = activeConversation.current_leaf_message_id;
     if (!leafMessageId) return null;
     const leafMessage = activeMessages.find(message => message.id === leafMessageId) ?? null;
+    if (!leafMessage || leafMessage.status !== 'waiting_question') return null;
     const request = leafMessage?.metadata?.user_input_request;
     if (!request?.questions?.some(question => question.question?.trim())) {
       return null;
     }
     return leafMessage;
-  }, [activeConversation, activeMessages, hasActiveStreamingMessage, isSending]);
+  }, [
+    activeConversation,
+    activeMessages,
+    hasActiveStreamingMessage,
+    isRecoveringMessages,
+    isSending,
+  ]);
   const activeUserInputRequest = activeUserInputMessage?.metadata?.user_input_request ?? null;
   const activeWorkflowApprovalRequest = useMemo(
     () =>
-      surface === 'agent-draft' || surface === 'agent-webapp'
+      !isRecoveringMessages && (surface === 'agent-draft' || surface === 'agent-webapp')
         ? resolveActiveWorkflowApprovalRequest(
             activeConversation,
             activeMessages,
@@ -367,7 +506,14 @@ export function AIChatShell({
             hasActiveStreamingMessage
           )
         : null,
-    [activeConversation, activeMessages, hasActiveStreamingMessage, isSending, surface]
+    [
+      activeConversation,
+      activeMessages,
+      hasActiveStreamingMessage,
+      isRecoveringMessages,
+      isSending,
+      surface,
+    ]
   );
   const canStopPendingWorkflowInteraction = Boolean(
     activeWorkflowApprovalRequest ||
@@ -376,6 +522,24 @@ export function AIChatShell({
   );
   const messageActionsLocked = Boolean(activeWorkflowApprovalRequest);
   const showResumeScrollButton = isAutoFollowPaused && (isSending || hasActiveStreamingMessage);
+  const visiblePendingUserMessage =
+    pendingUserMessage && isSending && !hasActiveStreamingMessage ? pendingUserMessage : null;
+  const showPlanningPlaceholder = Boolean(
+    visiblePendingUserMessage?.showAssistantPlanning && isSending && !hasActiveStreamingMessage
+  );
+  const showAssetAuditControl =
+    showToolGovernancePermissionControl && surface === 'aichat' && Boolean(activeConversationId);
+  const assetAuditButton = useMemo(
+    () =>
+      showAssetAuditControl ? (
+        <AIChatAssetAuditButton
+          conversationId={activeConversationId}
+          refreshKey={assetAuditRefreshKey}
+          className={embeddedControlButtonClassName}
+        />
+      ) : null,
+    [activeConversationId, assetAuditRefreshKey, showAssetAuditControl]
+  );
 
   useEffect(() => {
     if (!error) {
@@ -419,6 +583,13 @@ export function AIChatShell({
     });
   }, [activeMessages, currentWorkspace?.id, error, isBillingAdmin, router, tGlobal]);
 
+  useEffect(() => {
+    if (!pendingUserMessage) return;
+    if (hasActiveStreamingMessage || !isSending) {
+      setPendingUserMessage(null);
+    }
+  }, [hasActiveStreamingMessage, isSending, pendingUserMessage]);
+
   const conversationSummaries = useMemo<ConversationSummary[]>(
     () =>
       conversations.map(conversation => ({
@@ -446,12 +617,18 @@ export function AIChatShell({
     () =>
       [
         'aichat-runtime',
-        surface,
+        effectiveRuntimeSurface,
         uploadScope?.type === 'webapp' ? uploadScope.webAppId : 'console',
         'conversations',
         'search',
       ] as const,
-    [surface, uploadScope]
+    [effectiveRuntimeSurface, uploadScope]
+  );
+  const searchConversations = useCallback<ConversationSearchFn>(
+    (query, limit) =>
+      controller.search?.(query, limit, { surface: effectiveRuntimeSurface }) ??
+      Promise.resolve([]),
+    [controller, effectiveRuntimeSurface]
   );
 
   const suggestions = useMemo<AIChatSuggestion[]>(() => {
@@ -498,24 +675,78 @@ export function AIChatShell({
   }, [isMobile]);
 
   const handleSend = useCallback(
-    async (files: AIChatMessageFile[] = [], useMemory = false): Promise<boolean> => {
+    async (
+      files: AIChatMessageFile[] = [],
+      useMemory = false,
+      existingContext?: AIChatSendTraceContext
+    ): Promise<boolean> => {
+      const debugContext = existingContext ?? createAIChatSendTraceContext('unknown');
+      const stateAtEntry = controller.store.getState();
+      const query = input.trim();
+      const blockedBy = [
+        activeWorkflowApprovalRequest ? 'active_workflow_approval' : null,
+        !query ? 'empty_input' : null,
+        isSending ? 'react_is_sending' : null,
+        stateAtEntry.isSending ? 'store_is_sending' : null,
+        requireModel && !modelSelectorValue.model ? 'model_required' : null,
+      ].filter((reason): reason is string => Boolean(reason));
+      logAIChatSessionTrace(
+        'shell_send_received',
+        {
+          surface,
+          runtimeSurface: effectiveRuntimeSurface,
+          reactActiveConversationId: activeConversationId,
+          storeActiveConversationId: stateAtEntry.activeConversationId,
+          conversationCount: stateAtEntry.conversations.length,
+          messageCount: activeMessages.length,
+          queryLength: query.length,
+          fileCount: files.length,
+          reactIsSending: isSending,
+          storeIsSending: stateAtEntry.isSending,
+          blockedBy,
+        },
+        debugContext
+      );
       if (activeWorkflowApprovalRequest) {
-        toast.info(t('consoleChat.workflow.approvalInputLocked'));
+        logAIChatSessionTrace('shell_send_blocked', { blockedBy }, debugContext);
         return false;
       }
-      const query = input.trim();
-      if (!query || isSending) return false;
+      if (!query || isSending) {
+        logAIChatSessionTrace('shell_send_blocked', { blockedBy }, debugContext);
+        return false;
+      }
       if (requireModel && !modelSelectorValue.model) {
+        logAIChatSessionTrace('shell_send_blocked', { blockedBy }, debugContext);
         toast.error(t('consoleChat.modelRequired'));
         return false;
       }
       if (beforeSend) {
+        logAIChatSessionTrace('shell_before_send_started', {}, debugContext);
         const canSend = await beforeSend();
-        if (!canSend) return false;
+        logAIChatSessionTrace('shell_before_send_completed', { canSend }, debugContext);
+        if (!canSend) {
+          logAIChatSessionTrace(
+            'shell_send_blocked',
+            { blockedBy: ['before_send_rejected'] },
+            debugContext
+          );
+          return false;
+        }
       }
 
+      const pendingMessageId = Date.now();
+      const pendingMessageCreatedAt = Math.floor(pendingMessageId / 1000);
+      const showAssistantPlanning = Boolean(activeConversationId || messages.length > 0);
       setInput('');
-      void controller.send({
+      setPendingUserMessage({
+        id: `pending-user-${pendingMessageId}`,
+        query,
+        files,
+        assistantModelName: modelSelectorValue.model,
+        assistantCreatedAt: pendingMessageCreatedAt,
+        showAssistantPlanning,
+      });
+      const controllerSend = controller.send({
         query,
         files,
         model: {
@@ -524,24 +755,63 @@ export function AIChatShell({
           parameters: modelSelectorValue.params,
         },
         useMemory: forcedUseMemory ?? useMemory,
+        runtimeSurface: effectiveRuntimeSurface,
+        operationContext: toolGovernanceOperationContext,
+        debugContext,
       });
+      const stateAfterDispatch = controller.store.getState();
+      logAIChatSessionTrace(
+        'shell_controller_send_dispatched',
+        {
+          activeConversationId: stateAfterDispatch.activeConversationId,
+          isSending: stateAfterDispatch.isSending,
+          conversationCount: stateAfterDispatch.conversations.length,
+        },
+        debugContext
+      );
+      void controllerSend
+        .then(() => {
+          const settledState = controller.store.getState();
+          logAIChatSessionTrace(
+            'shell_controller_send_settled',
+            {
+              activeConversationId: settledState.activeConversationId,
+              isSending: settledState.isSending,
+              error: settledState.error,
+            },
+            debugContext
+          );
+        })
+        .catch(error => {
+          logAIChatSessionTrace(
+            'shell_controller_send_rejected',
+            { error: error instanceof Error ? error.message : String(error) },
+            debugContext
+          );
+        });
       return true;
     },
     [
       activeWorkflowApprovalRequest,
+      activeMessages.length,
+      activeConversationId,
       beforeSend,
       controller,
       forcedUseMemory,
       input,
       isSending,
+      messages.length,
       modelSelectorValue,
       requireModel,
+      effectiveRuntimeSurface,
+      surface,
       t,
+      toolGovernanceOperationContext,
     ]
   );
 
   const handleUserInputRequestSubmit = useCallback(
-    (query: string, useMemory: boolean, answers?: Record<string, string>) => {
+    (query: string, _useMemory: boolean, answers?: Record<string, string>) => {
       const trimmedQuery = query.trim();
       if (!trimmedQuery || isSending || !activeUserInputMessage) return;
       const activeRequest = activeUserInputMessage.metadata?.user_input_request;
@@ -556,30 +826,33 @@ export function AIChatShell({
         );
         return;
       }
-      if (requireModel && !modelSelectorValue.model) {
-        toast.error(t('consoleChat.modelRequired'));
+      const requestId = activeRequest?.request_id?.trim();
+      if (!requestId || !answers || !controller.continueUserInput) {
+        toast.error(t('consoleChat.userInputRequest.continuationUnavailable'));
         return;
       }
-
-      void controller.send({
-        query: trimmedQuery,
-        parentId: activeUserInputMessage.id,
-        model: {
-          provider: modelSelectorValue.provider,
-          model: modelSelectorValue.model,
-          parameters: modelSelectorValue.params,
-        },
-        useMemory: forcedUseMemory ?? useMemory,
-      });
+      void controller
+        .continueUserInput(
+          activeUserInputMessage.conversation_id,
+          activeUserInputMessage.id,
+          requestId,
+          {
+            answers,
+            surface: effectiveRuntimeSurface,
+            operation_context: toolGovernanceOperationContext,
+          }
+        )
+        .catch(() => {
+          toast.error(t('consoleChat.userInputRequest.continuationUnavailable'));
+        });
     },
     [
       activeUserInputMessage,
       controller,
-      forcedUseMemory,
       isSending,
-      modelSelectorValue,
-      requireModel,
+      effectiveRuntimeSurface,
       t,
+      toolGovernanceOperationContext,
     ]
   );
 
@@ -594,11 +867,18 @@ export function AIChatShell({
         return;
       }
 
-      void controller.regenerate(message.id, {
-        provider: modelSelectorValue.provider,
-        model: modelSelectorValue.model,
-        parameters: modelSelectorValue.params,
-      });
+      void controller.regenerate(
+        message.id,
+        {
+          provider: modelSelectorValue.provider,
+          model: modelSelectorValue.model,
+          parameters: modelSelectorValue.params,
+        },
+        {
+          operationContext: toolGovernanceOperationContext,
+          runtimeSurface: effectiveRuntimeSurface,
+        }
+      );
     },
     [
       branchNavigationByMessageId,
@@ -607,7 +887,9 @@ export function AIChatShell({
       messageActionsLocked,
       modelSelectorValue,
       requireModel,
+      effectiveRuntimeSurface,
       t,
+      toolGovernanceOperationContext,
     ]
   );
 
@@ -657,6 +939,8 @@ export function AIChatShell({
             model: modelSelectorValue.model,
             parameters: modelSelectorValue.params,
           },
+          runtimeSurface: effectiveRuntimeSurface,
+          operationContext: toolGovernanceOperationContext,
         });
         return;
       }
@@ -670,6 +954,9 @@ export function AIChatShell({
           parameters: modelSelectorValue.params,
         },
         useMemory: Boolean(message.metadata?.use_memory),
+        forceAdvanceLeaf: true,
+        runtimeSurface: effectiveRuntimeSurface,
+        operationContext: toolGovernanceOperationContext,
       });
     },
     [
@@ -681,7 +968,9 @@ export function AIChatShell({
       messageActionsLocked,
       modelSelectorValue,
       requireModel,
+      effectiveRuntimeSurface,
       t,
+      toolGovernanceOperationContext,
     ]
   );
 
@@ -705,6 +994,100 @@ export function AIChatShell({
     },
     [controller]
   );
+
+  const handleToolGovernanceDecision = useCallback(
+    (payload: AIChatToolGovernanceDecisionSubmitPayload) => {
+      if (!controller.continueToolGovernanceDecision) return;
+      const decisionKey = toolGovernanceDecisionKey(
+        payload.conversationId,
+        payload.messageId,
+        payload.correlationId
+      );
+      setSubmittedToolGovernanceDecisionKeys(current => {
+        const next = new Set(current);
+        next.add(decisionKey);
+        return next;
+      });
+      return controller
+        .continueToolGovernanceDecision(
+          payload.conversationId,
+          payload.messageId,
+          payload.correlationId,
+          {
+            action: payload.action,
+            reason: payload.reason,
+            remember_for_session: payload.rememberForSession,
+          }
+        )
+        .catch(error => {
+          if (isAIChatContinuationLikelyStarted(error)) {
+            return;
+          }
+          setSubmittedToolGovernanceDecisionKeys(current => {
+            const next = new Set(current);
+            next.delete(decisionKey);
+            return next;
+          });
+          throw error;
+        });
+    },
+    [controller]
+  );
+  useEffect(() => {
+    setSubmittedToolGovernanceDecisionKeys(new Set());
+  }, [activeConversation?.id]);
+
+  const activeToolGovernanceApprovalFallback = useMemo<ToolGovernancePendingApproval | null>(() => {
+    if (
+      !enableToolGovernanceApprovals ||
+      !activeConversation ||
+      activeConversation.runtime_status !== 'idle' ||
+      isRecoveringMessages ||
+      isSending ||
+      hasActiveStreamingMessage
+    ) {
+      return null;
+    }
+    const leafMessageId = activeConversation.current_leaf_message_id;
+    if (!leafMessageId) return null;
+    const leafMessage = activeMessages.find(message => message.id === leafMessageId) ?? null;
+    if (!leafMessage || leafMessage.status !== 'waiting_approval') return null;
+    const persistedTimeline = timelineFromAIChatMessage(leafMessage);
+    const streamingTimeline =
+      streamingByMessageId[leafMessage.id]?.conversation_id === activeConversation.id
+        ? streamingByMessageId[leafMessage.id]?.timeline
+        : undefined;
+    const timeline = mergeRuntimeTimelineWithMessageTimeline(persistedTimeline, streamingTimeline);
+    const approval = resolvePendingToolGovernanceApprovalFromTimeline(
+      timeline,
+      skillDisplayById,
+      locale,
+      t,
+      handleToolGovernanceDecision
+    );
+    if (
+      approval &&
+      (isToolGovernancePendingApprovalDismissed(approval.id, toolGovernanceApprovalScopeId) ||
+        submittedToolGovernanceDecisionKeys.has(approval.id))
+    ) {
+      return null;
+    }
+    return approval;
+  }, [
+    activeConversation,
+    activeMessages,
+    enableToolGovernanceApprovals,
+    handleToolGovernanceDecision,
+    hasActiveStreamingMessage,
+    isRecoveringMessages,
+    isSending,
+    locale,
+    skillDisplayById,
+    streamingByMessageId,
+    submittedToolGovernanceDecisionKeys,
+    t,
+    toolGovernanceApprovalScopeId,
+  ]);
 
   const handleNewChat = useCallback(() => {
     if (isHome) {
@@ -788,6 +1171,22 @@ export function AIChatShell({
     );
   }, [draftSkillPreferenceIds, t, updateSkillPreference]);
 
+  const skillPreferenceAction = useMemo(() => {
+    if (!enableAIChatSkillPreference) return null;
+    return (
+      <Button
+        variant="ghost"
+        isIcon
+        className={cn(isEmbedded ? embeddedControlButtonClassName : 'size-8 text-muted-foreground')}
+        onClick={() => handleSkillPreferenceOpenChange(true)}
+        title={t('consoleChat.skillPreferences.action')}
+        aria-label={t('consoleChat.skillPreferences.action')}
+      >
+        <Settings2 className="size-4" />
+      </Button>
+    );
+  }, [enableAIChatSkillPreference, handleSkillPreferenceOpenChange, isEmbedded, t]);
+
   const embeddedConversationControls = useMemo(() => {
     if (!showEmbeddedConversationDrawer) return null;
     const controls = {
@@ -799,32 +1198,28 @@ export function AIChatShell({
       return renderEmbeddedConversationControls(controls);
     }
     return (
-      <div className="flex items-center gap-1 rounded-full border bg-background/90 p-1 shadow-sm backdrop-blur">
-        <Button
-          variant="ghost"
-          isIcon
-          className="size-8 text-muted-foreground"
-          onClick={controls.openConversations}
-          title={t('consoleChat.toggleSidebar')}
-        >
-          <PanelLeft className="size-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          isIcon
-          className="size-8 text-muted-foreground"
-          onClick={controls.startNewConversation}
-          title={t('chat.newConversation')}
-        >
-          <MessageSquarePlus className="size-4" />
-        </Button>
-      </div>
+      <AIChatEmbeddedConversationControls
+        openConversations={controls.openConversations}
+        startNewConversation={controls.startNewConversation}
+        conversationsLabel={t('consoleChat.toggleSidebar')}
+        newConversationLabel={t('chat.newConversation')}
+        trailingAction={
+          assetAuditButton || skillPreferenceAction ? (
+            <>
+              {assetAuditButton}
+              {skillPreferenceAction}
+            </>
+          ) : null
+        }
+      />
     );
   }, [
+    assetAuditButton,
     handleNewChat,
     isHome,
     renderEmbeddedConversationControls,
     showEmbeddedConversationDrawer,
+    skillPreferenceAction,
     t,
   ]);
 
@@ -854,137 +1249,160 @@ export function AIChatShell({
             onDelete={handleDeleteConversation}
             onRename={handleRenameConversation}
             backgroundImage={AICHAT_SIDEBAR_BG_IMAGE}
-            search={controller.search}
+            search={searchConversations}
             searchKey={conversationSearchKey}
           />
         </div>
       ) : null}
 
-      <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
-        {!isEmbedded ? (
-          <AIChatHeader
-            isMobile={isMobile}
-            isHome={isHome}
-            title={activeConversation?.title || t('consoleChat.title')}
-            onToggleSidebar={handleToggleSidebar}
-            onStartNew={handleNewChat}
-            rightAction={
-              enableAIChatSkillPreference ? (
-                <Button
-                  variant="ghost"
-                  isIcon
-                  className="size-8 text-muted-foreground"
-                  onClick={() => handleSkillPreferenceOpenChange(true)}
-                  title={t('consoleChat.skillPreferences.action')}
-                >
-                  <Settings2 className="size-4" />
-                </Button>
-              ) : undefined
+      <ToolGovernancePendingApprovalScopeProvider scopeId={toolGovernanceApprovalScopeId}>
+        <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
+          {!isEmbedded ? (
+            <AIChatHeader
+              isMobile={isMobile}
+              isHome={isHome}
+              title={activeConversation?.title || t('consoleChat.title')}
+              onToggleSidebar={handleToggleSidebar}
+              onStartNew={handleNewChat}
+              rightAction={
+                assetAuditButton || skillPreferenceAction ? (
+                  <div className="flex items-center justify-end gap-1">
+                    {assetAuditButton}
+                    {skillPreferenceAction}
+                  </div>
+                ) : undefined
+              }
+            />
+          ) : null}
+
+          {showEmbeddedConversationDrawer && embeddedConversationControlsMode === 'internal' ? (
+            <div
+              className={cn(
+                'absolute z-30',
+                embeddedConversationControlsClassName ?? 'left-3 top-3'
+              )}
+            >
+              {embeddedConversationControls}
+            </div>
+          ) : null}
+
+          {externalControlsPortal && embeddedConversationControls
+            ? createPortal(embeddedConversationControls, externalControlsPortal)
+            : null}
+
+          <AIChatMessageList
+            messages={messages}
+            activeConversation={activeConversation}
+            activeMessageCount={activeMessages.length}
+            branchNavigationByMessageId={branchNavigationByMessageId}
+            isLoadingMessages={isLoadingMessages}
+            isLoadingOlderMessages={isLoadingOlderMessages}
+            isSending={isSending || messageActionsLocked}
+            streamingByMessageId={streamingByMessageId}
+            skillDisplayById={skillDisplayById}
+            editingMessageId={editingMessageId}
+            editingQuery={editingQuery}
+            bottomRef={bottomRef}
+            scrollViewportRef={scrollViewportRef}
+            bottomSpacerHeight={Math.max(inputAreaHeight + 72, 180)}
+            onScroll={handleMessagesScroll}
+            onRegenerate={handleRegenerate}
+            onToolGovernanceDecision={
+              enableToolGovernanceApprovals && !isRecoveringMessages
+                ? handleToolGovernanceDecision
+                : undefined
             }
+            enableToolGovernanceApprovals={enableToolGovernanceApprovals}
+            suppressPendingToolGovernanceApprovals={isRecoveringMessages}
+            onSwitchBranch={handleSwitchBranch}
+            onEditStart={handleEditStart}
+            onEditChange={setEditingQuery}
+            onEditCancel={handleEditCancel}
+            onEditSubmit={handleEditSubmit}
+            showAssistantModelMeta={showAssistantModelMeta}
+            layout={isEmbedded ? 'embedded' : 'full'}
+            showMemoryKey={surface !== 'agent-webapp'}
+            showSkillEventDetails={surface !== 'agent-webapp'}
+            showPlanningPlaceholder={showPlanningPlaceholder}
+            pendingUserMessage={visiblePendingUserMessage}
           />
-        ) : null}
 
-        {showEmbeddedConversationDrawer && embeddedConversationControlsMode === 'internal' ? (
-          <div
-            className={cn('absolute z-30', embeddedConversationControlsClassName ?? 'left-3 top-3')}
-          >
-            {embeddedConversationControls}
-          </div>
-        ) : null}
+          <AIChatHomeView
+            isVisible={isHome && !isLoadingMessages}
+            suggestions={suggestions}
+            onSelectSuggestion={setInput}
+            brand={homeBrand}
+            title={homeTitle}
+            description={homeDescription}
+            composerHeight={inputAreaHeight}
+            surface={surface}
+          />
 
-        {externalControlsPortal && embeddedConversationControls
-          ? createPortal(embeddedConversationControls, externalControlsPortal)
-          : null}
+          {showResumeScrollButton ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              className="absolute left-1/2 z-30 -translate-x-1/2 rounded-full border bg-background/95 px-3 shadow-lg backdrop-blur"
+              style={{ bottom: Math.max(inputAreaHeight + 18, 96) }}
+              onClick={resumeAutoFollow}
+            >
+              <ArrowDown className="mr-1.5 size-4" />
+              {t('consoleChat.resumeAutoScroll')}
+            </Button>
+          ) : null}
 
-        <AIChatMessageList
-          messages={messages}
-          activeConversation={activeConversation}
-          activeMessageCount={activeMessages.length}
-          branchNavigationByMessageId={branchNavigationByMessageId}
-          isLoadingMessages={isLoadingMessages}
-          isLoadingOlderMessages={isLoadingOlderMessages}
-          isSending={isSending || messageActionsLocked}
-          streamingByMessageId={streamingByMessageId}
-          skillDisplayById={skillDisplayById}
-          editingMessageId={editingMessageId}
-          editingQuery={editingQuery}
-          bottomRef={bottomRef}
-          scrollViewportRef={scrollViewportRef}
-          bottomSpacerHeight={Math.max(inputAreaHeight + 72, 180)}
-          onScroll={handleMessagesScroll}
-          onRegenerate={handleRegenerate}
-          onSwitchBranch={handleSwitchBranch}
-          onEditStart={handleEditStart}
-          onEditChange={setEditingQuery}
-          onEditCancel={handleEditCancel}
-          onEditSubmit={handleEditSubmit}
-          showAssistantModelMeta={showAssistantModelMeta}
-          layout={isEmbedded ? 'embedded' : 'full'}
-          showMemoryKey={surface !== 'agent-webapp'}
-          showSkillEventDetails={surface !== 'agent-webapp'}
-        />
-
-        <AIChatHomeView
-          isVisible={isHome && !isLoadingMessages}
-          suggestions={suggestions}
-          onSelectSuggestion={setInput}
-          brand={homeBrand}
-          title={homeTitle}
-          description={homeDescription}
-          composerHeight={inputAreaHeight}
-          surface={surface}
-        />
-
-        {showResumeScrollButton ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            className="absolute left-1/2 z-30 -translate-x-1/2 rounded-full border bg-background/95 px-3 shadow-lg backdrop-blur"
-            style={{ bottom: Math.max(inputAreaHeight + 18, 96) }}
-            onClick={resumeAutoFollow}
-          >
-            <ArrowDown className="mr-1.5 size-4" />
-            {t('consoleChat.resumeAutoScroll')}
-          </Button>
-        ) : null}
-
-        <AIChatInputArea
-          isHome={isHome}
-          isLoadingMessages={isLoadingMessages}
-          input={input}
-          modelSelectorValue={modelSelectorValue}
-          modelProps={modelProps}
-          supportsVisionOverride={supportsVisionOverride}
-          isModelInitializing={isModelInitializing}
-          modelMissing={modelMissing}
-          isSending={isSending}
-          canStop={canStopPendingWorkflowInteraction || isSending}
-          isStopping={isStopping}
-          onInputChange={setInput}
-          onSend={handleSend}
-          activeUserInputRequest={activeUserInputRequest}
-          onUserInputRequestSubmit={handleUserInputRequestSubmit}
-          activeWorkflowApprovalRequest={activeWorkflowApprovalRequest}
-          onWorkflowApprovalSubmit={handleWorkflowApprovalSubmit}
-          onStop={controller.stop}
-          onModelChange={onModelChange}
-          onHeightChange={setInputAreaHeight}
-          showModelSelector={showModelSelector}
-          showMemoryToggle={showMemoryToggle}
-          enableUpload={enableUpload}
-          uploadScope={uploadScope}
-          showFileLibraryPicker={showFileLibraryPicker}
-          allowWorkspaceSwitch={allowWorkspaceSwitch}
-          inputPlaceholder={inputPlaceholder}
-          surface={surface}
-        />
-      </main>
+          <AIChatInputArea
+            isHome={isHome}
+            isLoadingMessages={isLoadingMessages}
+            input={input}
+            modelSelectorValue={modelSelectorValue}
+            modelProps={modelProps}
+            supportsVisionOverride={supportsVisionOverride}
+            isModelInitializing={isModelInitializing}
+            modelMissing={modelMissing}
+            isSending={isSending}
+            canStop={canStopPendingWorkflowInteraction || isSending}
+            isStopping={isStopping}
+            onInputChange={setInput}
+            onSend={handleSend}
+            activeUserInputRequest={activeUserInputRequest}
+            onUserInputRequestSubmit={handleUserInputRequestSubmit}
+            activeWorkflowApprovalRequest={activeWorkflowApprovalRequest}
+            onWorkflowApprovalSubmit={handleWorkflowApprovalSubmit}
+            onStop={controller.stop}
+            onModelChange={onModelChange}
+            onHeightChange={setInputAreaHeight}
+            showModelSelector={showModelSelector}
+            showMemoryToggle={showMemoryToggle}
+            enableUpload={enableUpload}
+            uploadScope={uploadScope}
+            showFileLibraryPicker={showFileLibraryPicker}
+            allowWorkspaceSwitch={allowWorkspaceSwitch}
+            inputPlaceholder={inputPlaceholder}
+            surface={surface}
+            showToolGovernancePermissionControl={showToolGovernancePermissionControl}
+            toolGovernancePermissionTier={toolGovernancePermissionTier}
+            onToolGovernancePermissionTierChange={setToolGovernancePermissionTier}
+            enableToolGovernanceApprovals={enableToolGovernanceApprovals && !isRecoveringMessages}
+            activeConversationId={activeConversation?.id ?? null}
+            activeToolGovernanceMessageId={
+              activeConversation?.active_message_id ??
+              activeConversation?.current_leaf_message_id ??
+              null
+            }
+            activeToolGovernanceApprovalFallback={activeToolGovernanceApprovalFallback}
+          />
+        </main>
+      </ToolGovernancePendingApprovalScopeProvider>
 
       {!isEmbedded || showEmbeddedConversationDrawer ? (
         <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
           <SheetContent side="left" className="max-w-none p-0 sm:max-w-sm" showClose={false}>
             <SheetTitle className="sr-only">{t('chat.conversations')}</SheetTitle>
+            <SheetDescription className="sr-only">
+              {t('consoleChat.conversationListDescription')}
+            </SheetDescription>
             <Sidebar
               activeId={activeConversationId}
               conversations={conversationSummaries}
@@ -997,7 +1415,7 @@ export function AIChatShell({
               onRename={handleRenameConversation}
               backgroundImage={AICHAT_SIDEBAR_BG_IMAGE}
               onClose={() => setMobileSidebarOpen(false)}
-              search={controller.search}
+              search={searchConversations}
               searchKey={conversationSearchKey}
             />
           </SheetContent>

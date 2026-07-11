@@ -312,7 +312,7 @@ func (s *dashboardService) getResourceStats(ctx context.Context, organizationID 
 	}
 
 	if len(scopes.FileWorkspaceIDs) > 0 {
-		stats.Files = s.safeCount(ctx, "upload_files", "tenant_id IN ?", scopes.FileWorkspaceIDs)
+		stats.Files = s.safeCount(ctx, "upload_files", "workspace_id IN ?", scopes.FileWorkspaceIDs)
 	}
 
 	return stats

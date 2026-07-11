@@ -21,6 +21,7 @@ import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { AgentDatabaseBinding } from '@/services/types/agent';
 import type { DbTable } from '@/services/types/db';
+import { tablesForDataSource } from './utils';
 
 interface AgentRuntimeDatabaseTableDialogProps {
   open: boolean;
@@ -44,9 +45,13 @@ export function AgentRuntimeDatabaseTableDialog({
   const t = useT('agents.agentRuntime');
   const [localBindings, setLocalBindings] = useState<AgentDatabaseBinding[]>(bindings);
   const [tableSearch, setTableSearch] = useState('');
-  const { tables, isLoading } = useDbTables(dataSourceId, {
+  const { tables: rawTables, isLoading } = useDbTables(dataSourceId, {
     enabled: open && Boolean(dataSourceId),
   });
+  const tables = useMemo(
+    () => tablesForDataSource(rawTables, dataSourceId),
+    [dataSourceId, rawTables]
+  );
 
   useEffect(() => {
     if (!open) return;

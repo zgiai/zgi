@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { FileSidebar } from '@/components/files/file-sidebar';
 import { FileList } from '@/components/files/file-list';
 import { CreateFolderDialog, type CreateFolderData } from '@/components/files/create-folder-dialog';
@@ -85,6 +85,10 @@ import type { Organization } from '@/services/types/organization';
 import type { Workspace } from '@/store/workspace-store';
 import { FILE_PERMISSION_ACTIONS } from '@/constants/permissions';
 import {
+  buildFilesAIChatContextItems,
+  FilesAIChatContextRegistration,
+} from '@/components/files/aichat';
+import {
   MAX_FILE_FOLDER_LEVEL,
   getDescendantFolderIds,
   getFolderSubtreeHeight,
@@ -108,9 +112,14 @@ export interface FileManagementContentProps {
   acceptExt?: string[];
   /** Enable workspace switcher inside file selector empty state */
   allowWorkspaceSwitch?: boolean;
+  /** Register visible file-page state for contextual AIChat */
+  enableAIChatContext?: boolean;
 }
 
 const SYSTEM_FILE_CATEGORIES = new Set(['all', 'needs_action', 'uploaded', 'default']);
+const FILES_PAGE_SIZE = 20;
+const FILES_PAGE_LIMIT = String(FILES_PAGE_SIZE);
+const FILES_PAGE_SORT = 'created_at_desc';
 
 function normalizeFolderName(name: string) {
   return name.trim().toLocaleLowerCase();
@@ -288,9 +297,7 @@ function FileSelectorOrganizationSwitcher({
                 <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
                   <Building2 className="h-3.5 w-3.5" />
                 </div>
-                <span className="truncate text-xs">
-                  {getOrganizationDisplayName(organization)}
-                </span>
+                <span className="truncate text-xs">{getOrganizationDisplayName(organization)}</span>
               </div>
               {organization.id === currentOrganization?.id ? (
                 <Check className="h-4 w-4 text-primary" />
@@ -683,6 +690,7 @@ const FileManagementContent = ({
   acceptExt = [],
   maxCount,
   allowWorkspaceSwitch = false,
+  enableAIChatContext = false,
 }: FileManagementContentProps): React.ReactNode => {
   const [searchValue, setSearchValue] = useState('');
   const [processingStatusFilter, setProcessingStatusFilter] =
@@ -696,12 +704,13 @@ const FileManagementContent = ({
   const [spaceSwitcherOpen, setSpaceSwitcherOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const t = useT();
+  const tWebapp = useT('webapp');
   const tFiles = useT('files');
   const tNavigation = useT('navigation');
   const queryClient = useQueryClient();
   const isMobile = useIsMobile();
   const isAuthenticated = useAuthStore.use.isAuthenticated();
-  const { currentWorkspace, contextStatus } = useWorkspaceStore();
+  const { currentWorkspace, contextStatus, isOrganizationMode } = useWorkspaceStore();
   const hasReadyWorkspace = contextStatus === 'ready' && !!currentWorkspace;
   const isWorkspaceRequired = contextStatus === 'workspace_required';
   const workspaceId = hasReadyWorkspace ? currentWorkspace.id : undefined;
@@ -721,6 +730,7 @@ const FileManagementContent = ({
   const { hasAnyPermission } = useAccountPermissions();
   const canManageFolder = hasAnyPermission(FILE_PERMISSION_ACTIONS.folderManage);
   const canCreateFolder = canManageFolder;
+  const canManage = hasAnyPermission(FILE_PERMISSION_ACTIONS.delete);
   const canUpload = hasAnyPermission(FILE_PERMISSION_ACTIONS.upload);
   const canCreateTextFile = hasAnyPermission(FILE_PERMISSION_ACTIONS.textCreate);
   const canAddFile = canUpload || canCreateTextFile;
@@ -767,18 +777,47 @@ const FileManagementContent = ({
     total,
     isLoading,
     isFetching,
+    isFetched,
     error,
     processingStatusCounts,
     goToPage,
     reload,
-  } = useFiles('20', {
-      category: activeCategory,
-      keyword: debouncedSearchValue,
-      sort: 'created_at',
-      extension: extensionParam,
-      processingStatus: processingStatusParam,
-      workspaceId: workspaceId,
-    });
+  } = useFiles(FILES_PAGE_LIMIT, {
+    category: activeCategory,
+    keyword: debouncedSearchValue,
+    sort: FILES_PAGE_SORT,
+    extension: extensionParam,
+    processingStatus: processingStatusParam,
+    workspaceId: workspaceId,
+  });
+  const filesQuerySettled = (isFetched && !isLoading && !isFetching) || Boolean(error);
+  const filesContextReady = filesQuerySettled;
+  const filesQueryStatus = error ? 'error' : filesContextReady ? 'ready' : 'loading';
+  const activeFolderContextName = SYSTEM_FILE_CATEGORIES.has(activeCategory)
+    ? undefined
+    : activeFolderName || folders.find(folder => folder.id === activeCategory)?.name;
+  const filesAIChatPresentation = useMemo(() => {
+    const suggestions = [
+      tWebapp('consoleChat.contextual.suggestions.filesListVisible'),
+      selectedFiles.length > 0
+        ? tWebapp('consoleChat.contextual.suggestions.filesSummarizeSelected')
+        : files.length > 0
+          ? tWebapp('consoleChat.contextual.suggestions.filesSummarizeFirst')
+          : tWebapp('consoleChat.contextual.suggestions.filesExplainEmpty'),
+      tWebapp('consoleChat.contextual.suggestions.filesOrganizeVisible'),
+    ];
+
+    if (selectedFiles.length === 1 && canManage) {
+      suggestions.push(tWebapp('consoleChat.contextual.suggestions.filesDeleteSelected'));
+    }
+
+    return {
+      homeTitle: tWebapp('consoleChat.contextual.home.filesTitle'),
+      homeDescription: tWebapp('consoleChat.contextual.home.filesDescription'),
+      inputPlaceholder: tWebapp('consoleChat.contextual.input.filesPlaceholder'),
+      suggestions,
+    };
+  }, [canManage, files.length, selectedFiles.length, tWebapp]);
   const countProcessingStatuses = {
     needs_action: getProcessingStatusQueryParam('needs_action'),
     ready: getProcessingStatusQueryParam('ready'),
@@ -845,6 +884,54 @@ const FileManagementContent = ({
         ? 0
         : storedOnlyFilesCount.total,
   };
+  const aiChatContextItems = useMemo(
+    () =>
+      enableAIChatContext
+        ? buildFilesAIChatContextItems({
+            files,
+            selectedFileIds: selectedFiles,
+            currentPage,
+            totalPages,
+            total,
+            pageSize: FILES_PAGE_SIZE,
+            sort: FILES_PAGE_SORT,
+            activeCategory,
+            searchValue: debouncedSearchValue,
+            extensionParam,
+            processingStatusParam:
+              processingStatusParam ||
+              (activeCategory === 'needs_action' ? 'parse_failed' : undefined),
+            currentWorkspace,
+            isOrganizationMode,
+            activeFolderName: activeFolderContextName,
+            contextReady: filesContextReady,
+            queryStatus: filesQueryStatus,
+            canManage,
+            canUpload,
+            presentation: filesAIChatPresentation,
+          })
+        : [],
+    [
+      activeCategory,
+      activeFolderContextName,
+      currentPage,
+      currentWorkspace,
+      debouncedSearchValue,
+      enableAIChatContext,
+      extensionParam,
+      processingStatusParam,
+      files,
+      filesContextReady,
+      filesAIChatPresentation,
+      filesQueryStatus,
+      isOrganizationMode,
+      canManage,
+      canUpload,
+      selectedFiles,
+      total,
+      totalPages,
+    ]
+  );
 
   const prevPropRef = useRef<string[]>(selectedFileIds);
   const prevInternalRef = useRef<string[]>(selectedFiles);
@@ -875,6 +962,17 @@ const FileManagementContent = ({
       }
     }
   }, [selectionMode, selectedFiles, onSelectionChange, displayedFiles]);
+
+  useEffect(() => {
+    if (!enableAIChatContext || selectionMode || isLoading || selectedFiles.length === 0) return;
+
+    const visibleFileIds = new Set(files.map(file => file.id));
+    const nextSelectedFiles = selectedFiles.filter(id => visibleFileIds.has(id));
+    if (nextSelectedFiles.length === selectedFiles.length) return;
+
+    setSelectedFiles(nextSelectedFiles);
+    prevInternalRef.current = nextSelectedFiles;
+  }, [enableAIChatContext, files, isLoading, selectedFiles, selectionMode]);
 
   const isRefreshPending = isRefreshing || isFetching;
 
@@ -1324,7 +1422,7 @@ const FileManagementContent = ({
             currentPage={currentPage}
             totalPages={totalPages}
             total={total}
-            pageSize={20}
+            pageSize={FILES_PAGE_SIZE}
             onPageChange={goToPage}
             showInfo={false}
           />
@@ -1335,6 +1433,7 @@ const FileManagementContent = ({
 
   return (
     <>
+      {enableAIChatContext ? <FilesAIChatContextRegistration items={aiChatContextItems} /> : null}
       {isMobileSelectionMode ? (
         <div className="flex min-h-0 flex-1 flex-col bg-background">
           <div className="shrink-0 border-b bg-background px-3 py-3">
@@ -1354,7 +1453,7 @@ const FileManagementContent = ({
                     ? t('files.mobileSelector.browseAndUpload')
                     : canCreateTextFile
                       ? t('files.mobileSelector.browseAndCreateText')
-                    : t('files.mobileSelector.browse')}
+                      : t('files.mobileSelector.browse')}
                 </span>
               </Button>
             </div>

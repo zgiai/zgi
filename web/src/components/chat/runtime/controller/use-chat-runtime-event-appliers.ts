@@ -2,6 +2,8 @@ import { useCallback, useMemo } from 'react';
 import type { MutableRefObject } from 'react';
 import type {
   AIChatAgentProgressEventData,
+  AIChatClientActionRequiredEventData,
+  AIChatClientActionResultEventData,
   AIChatErrorEventData,
   AIChatFileParseEndEventData,
   AIChatFileParseErrorEventData,
@@ -19,6 +21,7 @@ import type {
   AIChatSkillLoadEndEventData,
   AIChatSkillLoadStartEventData,
   AIChatSkillReferenceReadEventData,
+  AIChatToolGovernanceDecisionEventData,
   AIChatUserInputRequestedEventData,
   AIChatWorkflowEventData,
   AIChatWorkflowNodeEventData,
@@ -51,6 +54,7 @@ import {
   applySkillLoadStartState,
   applySkillReferenceReadState,
   applyStreamErrorState,
+  applyToolGovernanceDecisionState,
   applyWorkflowApprovalRequestedState,
   applyWorkflowFailedState,
   applyWorkflowFinishedState,
@@ -59,7 +63,14 @@ import {
   applyWorkflowPausedState,
   applyWorkflowStartedState,
 } from '@/components/chat/controllers/aichat/state-reducers';
+import { debugAIChatTimeline } from '@/components/chat/controllers/aichat/debug';
 import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
+
+function runtimeDebugRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
 
 interface UseAIChatEventAppliersArgs {
   stateRef: MutableRefObject<AIChatControllerStore>;
@@ -93,6 +104,7 @@ function shouldRefreshConversationAfterMessageEnd(
   }
   if (
     status === 'waiting_approval' ||
+    status === 'waiting_client_action' ||
     status === 'waiting_question' ||
     status === 'stopped' ||
     status === 'error' ||
@@ -110,6 +122,60 @@ function shouldRefreshMessagesAfterMessageEnd(
 ): boolean {
   const messages = current.messagesByConversation[payload.conversation_id] ?? [];
   return !messages.some(message => message.id === payload.message_id);
+}
+
+function clientActionProgressPayload(
+  payload: AIChatClientActionRequiredEventData | AIChatClientActionResultEventData,
+  phase: AIChatAgentProgressEventData['phase']
+): AIChatAgentProgressEventData | null {
+  if (!payload.conversation_id || !payload.message_id || !payload.action_id) {
+    return null;
+  }
+  return {
+    conversation_id: payload.conversation_id,
+    message_id: payload.message_id,
+    phase,
+    skill_id: payload.skill_id,
+    tool_name: payload.tool_name,
+    action_id: payload.action_id,
+    action_type: payload.action_type,
+    continuation_policy: payload.continuation_policy,
+    blocking: payload.blocking,
+    status: payload.status,
+    effect: payload.effect,
+    asset_type: payload.asset_type,
+    assets: payload.assets,
+    correlation_id:
+      typeof payload.correlation_id === 'string' ? payload.correlation_id : undefined,
+    asset_operation_audit: payload.asset_operation_audit,
+    result: clientActionProgressResult(payload),
+    created_at: payload.created_at,
+  };
+}
+
+function clientActionProgressResult(
+  payload: AIChatClientActionRequiredEventData | AIChatClientActionResultEventData
+): Record<string, unknown> | null | undefined {
+  const result =
+    payload.result && typeof payload.result === 'object' && !Array.isArray(payload.result)
+      ? { ...payload.result }
+      : {};
+  const mergeIfPresent = (key: string, value: unknown) => {
+    if (value !== undefined && value !== null && result[key] === undefined) {
+      result[key] = value;
+    }
+  };
+
+  mergeIfPresent('action_type', payload.action_type);
+  mergeIfPresent('action_id', payload.action_id);
+  mergeIfPresent('correlation_id', payload.correlation_id);
+  mergeIfPresent('href', payload.href);
+  mergeIfPresent('effect', payload.effect);
+  mergeIfPresent('asset_type', payload.asset_type);
+  mergeIfPresent('assets', payload.assets);
+  mergeIfPresent('asset_operation_audit', payload.asset_operation_audit);
+
+  return Object.keys(result).length > 0 ? result : payload.result;
 }
 
 /**
@@ -135,6 +201,13 @@ export function useChatRuntimeEventAppliers({
       eventId?: string | null
     ) => {
       if (!payload.conversation_id || !payload.message_id) return;
+      debugAIChatTimeline('event:message_start', {
+        eventId,
+        conversation_id: payload.conversation_id,
+        message_id: payload.message_id,
+        replace: payload.replace,
+        status: 'streaming',
+      });
 
       const mode = resolveMessageStartMode(payload, context);
       const previousConversationId = context.previousConversationId ?? null;
@@ -182,6 +255,12 @@ export function useChatRuntimeEventAppliers({
   const applyMessageChunk = useCallback(
     (payload: AIChatMessageChunkEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id) return;
+      debugAIChatTimeline('event:message_chunk', {
+        eventId,
+        conversation_id: payload.conversation_id,
+        message_id: payload.message_id,
+        answer_len: (payload.answer ?? '').length,
+      });
       setControllerState(current => applyMessageChunkState(current, payload, eventId));
     },
     [setControllerState]
@@ -190,6 +269,13 @@ export function useChatRuntimeEventAppliers({
   const applyMessageRetract = useCallback(
     (payload: AIChatMessageRetractEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id) return;
+      debugAIChatTimeline('event:message_retract', {
+        eventId,
+        conversation_id: payload.conversation_id,
+        message_id: payload.message_id,
+        content_len: (payload.content ?? '').length,
+        length: payload.length,
+      });
       setControllerState(current => applyMessageRetractState(current, payload, eventId));
     },
     [setControllerState]
@@ -222,6 +308,21 @@ export function useChatRuntimeEventAppliers({
   const applySkillCallStart = useCallback(
     (payload: AIChatSkillCallStartEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id || !payload.skill_id) return;
+      const payloadRecord = runtimeDebugRecord(payload);
+      const dynamicPayload = payload as unknown as Record<string, unknown>;
+      debugAIChatTimeline('event:skill_call_start', {
+        eventId,
+        conversation_id: payload.conversation_id,
+        message_id: payload.message_id,
+        runtime_id: payload.runtime_id,
+        kind: payload.kind,
+        skill_id: payload.skill_id,
+        tool_name: payload.tool_name,
+        action_type: dynamicPayload.action_type,
+        action_id: dynamicPayload.action_id,
+        created_at: payload.created_at,
+        created_at_ms: payloadRecord.created_at_ms,
+      });
       setControllerState(current => applySkillCallStartState(current, payload, eventId));
     },
     [setControllerState]
@@ -230,6 +331,16 @@ export function useChatRuntimeEventAppliers({
   const applySkillLoadStart = useCallback(
     (payload: AIChatSkillLoadStartEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id || !payload.skill_id) return;
+      const payloadRecord = runtimeDebugRecord(payload);
+      debugAIChatTimeline('event:skill_load_start', {
+        eventId,
+        conversation_id: payload.conversation_id,
+        message_id: payload.message_id,
+        runtime_id: payloadRecord.runtime_id,
+        skill_id: payload.skill_id,
+        created_at: payload.created_at,
+        created_at_ms: payloadRecord.created_at_ms,
+      });
       setControllerState(current => applySkillLoadStartState(current, payload, eventId));
     },
     [setControllerState]
@@ -238,6 +349,17 @@ export function useChatRuntimeEventAppliers({
   const applySkillLoadEnd = useCallback(
     (payload: AIChatSkillLoadEndEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id || !payload.skill_id) return;
+      const payloadRecord = runtimeDebugRecord(payload);
+      debugAIChatTimeline('event:skill_load_end', {
+        eventId,
+        conversation_id: payload.conversation_id,
+        message_id: payload.message_id,
+        runtime_id: payloadRecord.runtime_id,
+        skill_id: payload.skill_id,
+        status: payload.status,
+        created_at: payload.created_at,
+        created_at_ms: payloadRecord.created_at_ms,
+      });
       setControllerState(current => applySkillLoadEndState(current, payload, eventId));
     },
     [setControllerState]
@@ -254,6 +376,21 @@ export function useChatRuntimeEventAppliers({
   const applySkillCallEnd = useCallback(
     (payload: AIChatSkillCallEndEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id || !payload.skill_id) return;
+      const payloadRecord = runtimeDebugRecord(payload);
+      debugAIChatTimeline('event:skill_call_end', {
+        eventId,
+        conversation_id: payload.conversation_id,
+        message_id: payload.message_id,
+        runtime_id: payload.runtime_id,
+        kind: payload.kind,
+        skill_id: payload.skill_id,
+        tool_name: payload.tool_name,
+        action_type: payload.action_type,
+        action_id: payload.action_id,
+        status: payload.status,
+        created_at: payload.created_at,
+        created_at_ms: payloadRecord.created_at_ms,
+      });
       setControllerState(current => applySkillCallEndState(current, payload, eventId));
     },
     [setControllerState]
@@ -282,6 +419,19 @@ export function useChatRuntimeEventAppliers({
     (payload: AIChatAgentProgressEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id) return;
       if (!payload.content && !payload.phase) return;
+      const payloadRecord = runtimeDebugRecord(payload);
+      debugAIChatTimeline('event:agent_progress', {
+        eventId,
+        conversation_id: payload.conversation_id,
+        message_id: payload.message_id,
+        phase: payload.phase,
+        content_len: (payload.content ?? '').length,
+        content_preview: (payload.content ?? '').slice(0, 80),
+        skill_id: payload.skill_id,
+        tool_name: payload.tool_name,
+        created_at: payload.created_at,
+        created_at_ms: payloadRecord.created_at_ms,
+      });
       setControllerState(current => applyAgentProgressState(current, payload, eventId));
     },
     [setControllerState]
@@ -308,6 +458,65 @@ export function useChatRuntimeEventAppliers({
     (payload: AIChatMemoryMutationEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id || !payload.action) return;
       setControllerState(current => applyMemoryMutationState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyToolGovernanceDecision = useCallback(
+    (payload: AIChatToolGovernanceDecisionEventData, eventId?: string | null) => {
+      if (!payload.conversation_id || !payload.message_id) return;
+      debugAIChatTimeline('event:tool_governance_decision', {
+        eventId,
+        conversation_id: payload.conversation_id,
+        message_id: payload.message_id,
+        runtime_id: payload.runtime_id,
+        skill_id: payload.skill_id,
+        tool_name: payload.tool_name,
+        status: payload.status,
+        approval_status: payload.approval_status,
+        correlation_id: payload.correlation_id,
+        created_at: payload.created_at,
+        created_at_ms: payload.created_at_ms,
+      });
+      setControllerState(current => applyToolGovernanceDecisionState(current, payload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyClientActionRequired = useCallback(
+    (payload: AIChatClientActionRequiredEventData, eventId?: string | null) => {
+      debugAIChatTimeline('event:client_action_required', {
+        eventId,
+        conversation_id: payload.conversation_id,
+        message_id: payload.message_id,
+        action_id: payload.action_id,
+        action_type: payload.action_type,
+        skill_id: payload.skill_id,
+        tool_name: payload.tool_name,
+        status: payload.status,
+      });
+      const progressPayload = clientActionProgressPayload(payload, 'client_action');
+      if (!progressPayload) return;
+      setControllerState(current => applyAgentProgressState(current, progressPayload, eventId));
+    },
+    [setControllerState]
+  );
+
+  const applyClientActionResult = useCallback(
+    (payload: AIChatClientActionResultEventData, eventId?: string | null) => {
+      debugAIChatTimeline('event:client_action_result', {
+        eventId,
+        conversation_id: payload.conversation_id,
+        message_id: payload.message_id,
+        action_id: payload.action_id,
+        action_type: payload.action_type,
+        skill_id: payload.skill_id,
+        tool_name: payload.tool_name,
+        status: payload.status,
+      });
+      const progressPayload = clientActionProgressPayload(payload, 'client_action_result');
+      if (!progressPayload) return;
+      setControllerState(current => applyAgentProgressState(current, progressPayload, eventId));
     },
     [setControllerState]
   );
@@ -347,9 +556,7 @@ export function useChatRuntimeEventAppliers({
   const applyWorkflowApprovalRequested = useCallback(
     (payload: AIChatWorkflowPausedEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id) return;
-      setControllerState(current =>
-        applyWorkflowApprovalRequestedState(current, payload, eventId)
-      );
+      setControllerState(current => applyWorkflowApprovalRequestedState(current, payload, eventId));
     },
     [setControllerState]
   );
@@ -371,7 +578,7 @@ export function useChatRuntimeEventAppliers({
   );
 
   const applyMessageEnd = useCallback(
-    (payload: AIChatMessageEndEventData, _eventId?: string | null) => {
+    (payload: AIChatMessageEndEventData, eventId?: string | null) => {
       if (!payload.conversation_id || !payload.message_id) return;
       const shouldRefreshConversation = shouldRefreshConversationAfterMessageEnd(
         stateRef.current,
@@ -381,7 +588,7 @@ export function useChatRuntimeEventAppliers({
       if (streamingMessageRef.current?.messageId === payload.message_id) {
         streamingMessageRef.current = null;
       }
-      setControllerState(current => applyMessageEndState(current, payload));
+      setControllerState(current => applyMessageEndState(current, payload, eventId));
 
       clearRecoveryRetry(payload.conversation_id);
       delete recoveryModeByConversationRef.current[payload.conversation_id];
@@ -461,6 +668,9 @@ export function useChatRuntimeEventAppliers({
       applySkillCallError,
       applySkillArtifactCreated,
       applyMemoryMutation,
+      applyToolGovernanceDecision,
+      applyClientActionRequired,
+      applyClientActionResult,
       applyWorkflowStarted,
       applyWorkflowNodeStarted,
       applyWorkflowNodeFinished,
@@ -476,6 +686,8 @@ export function useChatRuntimeEventAppliers({
     }),
     [
       applyAgentProgress,
+      applyClientActionRequired,
+      applyClientActionResult,
       applyFileParseEnd,
       applyFileParseError,
       applyFileParseStart,
@@ -501,6 +713,7 @@ export function useChatRuntimeEventAppliers({
       applySkillLoadStart,
       applySkillReferenceRead,
       applyStreamError,
+      applyToolGovernanceDecision,
     ]
   );
 }

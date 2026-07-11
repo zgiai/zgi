@@ -15,6 +15,67 @@ tools:
   - list_agent_workflows
   - run_agent_workflow
   - get_workflow_run_status
+tool_governance:
+  list_agent_workflows:
+    tool_id: workflow.list_agent_workflows
+    skill_id: agent-workflow
+    domain: workflow
+    effect: read
+    asset_type: workflow
+    risk_level: low
+    requires_asset_resolution: false
+    reversible: false
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - workflow:read
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
+  run_agent_workflow:
+    tool_id: workflow.run_agent_workflow
+    skill_id: agent-workflow
+    domain: workflow
+    effect: invoke
+    asset_type: workflow
+    risk_level: high
+    requires_asset_resolution: true
+    reversible: false
+    bulk_sensitive: false
+    external_side_effect: true
+    permission_scopes:
+      - workflow:invoke
+    default_approval_policy: always_ask
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: true
+  get_workflow_run_status:
+    tool_id: workflow.get_run_status
+    skill_id: agent-workflow
+    domain: workflow
+    effect: read
+    asset_type: workflow_run
+    risk_level: low
+    requires_asset_resolution: true
+    reversible: false
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - workflow:read
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
 display:
   icon: workflow
   category: system

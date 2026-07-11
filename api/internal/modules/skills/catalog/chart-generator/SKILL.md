@@ -12,6 +12,27 @@ supported_callers:
   - agent
 max_calls_per_turn: 5
 timeout_seconds: 5
+tool_governance:
+  generate_chart:
+    tool_id: chart.generate
+    skill_id: chart-generator
+    domain: files
+    effect: create
+    asset_type: file
+    risk_level: medium
+    requires_asset_resolution: false
+    reversible: true
+    bulk_sensitive: false
+    external_side_effect: false
+    permission_scopes:
+      - file:create
+    default_approval_policy: never_ask
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
 display:
   icon: chart-no-axes-combined
   category: visualization
@@ -58,7 +79,8 @@ Use this skill to generate downloadable SVG chart artifacts from structured data
 5. Convert the user's data into the JSON payload documented in the selected reference.
 6. Validate that all required data is present and internally consistent.
 7. Call `call_skill_tool` with `tool_name` set to `generate_chart`.
-8. In the final answer, briefly mention the generated chart filename and any assumptions. Do not paste SVG source unless the user explicitly asks for it.
+8. If the user explicitly asks to save, create, add, upload, or import the chart into File Management or the current Files page, first generate the temporary chart artifact here, then call `file-manager/save_file_to_management` with the returned `tool_file_id`/`file_id` and destination filename.
+9. In the final answer, briefly mention the generated chart filename and any assumptions. Do not paste SVG source unless the user explicitly asks for it.
 
 ## Clarification Workflow
 

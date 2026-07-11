@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	llmadapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 )
 
@@ -110,6 +111,30 @@ func TestAgentWorkflowSystemSkillExposeExpectedTools(t *testing.T) {
 	}
 	if got := ExpectedSkillToolArguments(SkillAgentWorkflow, "run_agent_workflow"); got == nil {
 		t.Fatal("run_agent_workflow contract missing")
+	}
+}
+
+func TestConsoleNavigatorSystemSkillMetadata(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillConsoleNavigator})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillConsoleNavigator)
+	if !ok {
+		t.Fatalf("console navigator skill was not resolved")
+	}
+	if got := toolNames(doc.Tools); !sameStrings(got, []string{"navigate"}) {
+		t.Fatalf("console navigator tools = %v, want navigate", got)
+	}
+	if doc.Metadata.RuntimeType != SkillRuntimeTypeTool {
+		t.Fatalf("runtime type = %q, want tool", doc.Metadata.RuntimeType)
+	}
+	if !sameStrings(doc.Metadata.SupportedCallers, []string{SkillCallerAIChat}) {
+		t.Fatalf("supported callers = %#v, want aichat", doc.Metadata.SupportedCallers)
+	}
+	if got := ExpectedSkillToolArguments(SkillConsoleNavigator, "navigate"); got == nil {
+		t.Fatal("console navigator navigate contract missing")
 	}
 }
 
@@ -259,12 +284,13 @@ func TestDefaultRuntimeUsesEmbeddedSystemCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Getwd() error = %v", err)
 	}
+	tempDir := t.TempDir()
 	t.Cleanup(func() {
 		if err := os.Chdir(previousWorkingDir); err != nil {
 			t.Fatalf("failed to restore working directory: %v", err)
 		}
 	})
-	if err := os.Chdir(t.TempDir()); err != nil {
+	if err := os.Chdir(tempDir); err != nil {
 		t.Fatalf("Chdir() error = %v", err)
 	}
 
@@ -1189,6 +1215,38 @@ func TestCalculatorMetaToolArgumentsExposeRequiredExpressionSchema(t *testing.T)
 	}
 }
 
+func TestMetaToolsForSkillStateDoesNotOfferAlreadyLoadedSkills(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillCalculator})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+
+	unloadedTools := MetaToolsForSkillState(resolved, nil)
+	loadTool := findMetaTool(unloadedTools, MetaToolLoadSkill)
+	if loadTool == nil {
+		t.Fatal("load_skill meta tool missing for an unloaded skill")
+	}
+	params, ok := loadTool.Function.Parameters.(map[string]interface{})
+	if !ok {
+		t.Fatalf("parameters type = %T, want map[string]interface{}", loadTool.Function.Parameters)
+	}
+	properties, _ := params["properties"].(map[string]interface{})
+	skillIDSchema, _ := properties["skill_id"].(map[string]interface{})
+	values, _ := skillIDSchema["enum"].([]string)
+	if len(values) != 1 || values[0] != SkillCalculator {
+		t.Fatalf("load_skill skill_id enum = %#v, want [%s]", values, SkillCalculator)
+	}
+
+	loadedTools := MetaToolsForSkillState(resolved, map[string]struct{}{SkillCalculator: {}})
+	if tool := findMetaTool(loadedTools, MetaToolLoadSkill); tool != nil {
+		t.Fatalf("load_skill meta tool = %#v, want omitted when every skill is loaded", tool.Function)
+	}
+	if tool := findMetaTool(loadedTools, MetaToolCallSkillTool); tool == nil {
+		t.Fatal("call_skill_tool meta tool missing for the loaded calculator skill")
+	}
+}
+
 func TestRequestUserInputMetaToolIsAlwaysExposed(t *testing.T) {
 	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
 	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillCalculator})
@@ -1217,6 +1275,36 @@ func TestRequestUserInputMetaToolIsAlwaysExposed(t *testing.T) {
 	}
 }
 
+func TestTurnStateMetaToolIsAlwaysExposed(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillCalculator})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	metaTools := MetaToolsForSkillState(resolved, map[string]struct{}{})
+	tool := findMetaTool(metaTools, MetaToolTurnState)
+	if tool == nil {
+		t.Fatalf("submit_turn_state meta tool not found")
+	}
+	params, ok := tool.Function.Parameters.(map[string]interface{})
+	if !ok {
+		t.Fatalf("parameters type = %T, want map[string]interface{}", tool.Function.Parameters)
+	}
+	properties, _ := params["properties"].(map[string]interface{})
+	items, ok := properties["items"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("items property missing from %#v", properties)
+	}
+	itemSchema, _ := items["items"].(map[string]interface{})
+	itemProperties, _ := itemSchema["properties"].(map[string]interface{})
+	if _, ok := itemProperties["kind"]; !ok {
+		t.Fatalf("kind property missing from %#v", itemProperties)
+	}
+	if _, ok := itemProperties["value"]; !ok {
+		t.Fatalf("value property missing from %#v", itemProperties)
+	}
+}
+
 func TestExpectedSkillToolArgumentsForCalculator(t *testing.T) {
 	expected := ExpectedSkillToolArguments(SkillCalculator, "evaluate_expression")
 	if expected == nil {
@@ -1241,7 +1329,10 @@ func TestSystemToolSkillsExposeArgumentContracts(t *testing.T) {
 		SkillAgentKnowledge,
 		SkillAgentDatabase,
 		SkillCalculator,
+		SkillConsoleNavigator,
 		SkillFileGenerator,
+		SkillFileManager,
+		SkillFileReader,
 		SkillPPTSlidePlanner,
 		SkillContractFieldExtractor,
 		SkillSensitiveRedaction,
@@ -1267,6 +1358,36 @@ func TestSystemToolSkillsExposeArgumentContracts(t *testing.T) {
 	}
 }
 
+func TestAgentManagementUsesUnifiedConfigBindingTool(t *testing.T) {
+	runtime := NewRuntimeWithCatalog(nil, nil, "catalog")
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{SkillAgentManagement})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get(SkillAgentManagement)
+	if !ok {
+		t.Fatalf("agent management skill was not resolved")
+	}
+	names := toolNames(doc.Tools)
+	nameSet := map[string]struct{}{}
+	for _, name := range names {
+		nameSet[name] = struct{}{}
+	}
+	if _, ok := nameSet["update_agent_config"]; !ok {
+		t.Fatalf("agent management tools = %v, want update_agent_config", names)
+	}
+	for _, legacy := range []string{
+		"replace_agent_skill_bindings",
+		"replace_agent_knowledge_bindings",
+		"replace_agent_database_bindings",
+		"replace_agent_workflow_bindings",
+	} {
+		if _, ok := nameSet[legacy]; ok {
+			t.Fatalf("agent management tools expose legacy binding tool %q: %v", legacy, names)
+		}
+	}
+}
+
 func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 	tests := []struct {
 		skillID  string
@@ -1274,6 +1395,9 @@ func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 		required []string
 	}{
 		{SkillFileGenerator, "generate_file", []string{"content", "format"}},
+		{SkillFileManager, "delete_file", []string{"file_id"}},
+		{SkillFileManager, "save_file_to_management", []string{"source_type", "filename"}},
+		{SkillFileReader, "read_file", []string{"file_id"}},
 		{SkillFileGenerator, "generate_docx", []string{"document"}},
 		{SkillFileGenerator, "generate_pdf", []string{"html"}},
 		{SkillFileGenerator, "generate_pptx", []string{"presentation"}},
@@ -1289,6 +1413,9 @@ func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 		{SkillAgentKnowledge, "retrieve_agent_knowledge", []string{"query"}},
 		{SkillInternalDatabase, "query_table_records", []string{"data_source_id", "table_id"}},
 		{SkillAgentDatabase, "insert_table_records", []string{"data_source_id", "table_id", "records"}},
+		{SkillConsoleNavigator, "navigate", []string{"href"}},
+		{SkillAgentManagement, "create_agent", []string{"name"}},
+		{SkillAgentManagement, "update_agent_config", []string{"agent_id"}},
 		{SkillTime, "date_calculate", []string{"operation"}},
 	}
 	for _, tt := range tests {
@@ -1311,6 +1438,74 @@ func TestExpectedSkillToolArgumentsForBuiltInRequiredTools(t *testing.T) {
 				t.Fatalf("example missing: %#v", expected["example"])
 			}
 		})
+	}
+}
+
+func TestExpectedSkillToolArgumentsForFileReaderListVisibleFiles(t *testing.T) {
+	expected := ExpectedSkillToolArguments(SkillFileReader, "list_visible_files")
+	if expected == nil {
+		t.Fatalf("ExpectedSkillToolArguments() = nil")
+	}
+	schema, ok := expected["schema"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("schema type = %T, want map[string]interface{}", expected["schema"])
+	}
+	required, ok := schema["required"].([]string)
+	if ok && len(required) > 0 {
+		t.Fatalf("required = %#v, want no required arguments", required)
+	}
+	properties, ok := schema["properties"].(map[string]interface{})
+	if !ok || len(properties) != 0 {
+		t.Fatalf("properties = %#v, want no arguments", schema["properties"])
+	}
+}
+
+func TestExpectedSkillToolArgumentsForAgentManagementListAvailableModels(t *testing.T) {
+	expected := ExpectedSkillToolArguments(SkillAgentManagement, "list_available_models")
+	if expected == nil {
+		t.Fatalf("ExpectedSkillToolArguments() = nil")
+	}
+	schema, ok := expected["schema"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("schema type = %T, want map[string]interface{}", expected["schema"])
+	}
+	required, ok := schema["required"].([]string)
+	if ok && len(required) > 0 {
+		t.Fatalf("required = %#v, want no required arguments", required)
+	}
+	properties, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("properties missing from %#v", schema)
+	}
+	for _, property := range []string{"use_case", "provider", "limit"} {
+		if _, ok := properties[property]; !ok {
+			t.Fatalf("property %s missing from %#v", property, properties)
+		}
+	}
+	useCase, ok := properties["use_case"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("use_case schema missing from %#v", properties)
+	}
+	if !schemaEnumContains(useCase, "text-chat") || !schemaEnumContains(useCase, "function-calling") {
+		t.Fatalf("use_case enum = %#v, want text-chat and function-calling", useCase["enum"])
+	}
+}
+
+func TestAgentManagementSkillConstrainsMissingTargetSearch(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(defaultSkillCatalogDir(), SkillAgentManagement, "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read agent-management SKILL.md: %v", err)
+	}
+	content := string(raw)
+	for _, want := range []string{
+		"do at most one exact-name `list_agents` search",
+		"one broader workspace list/check",
+		"stop without requesting governance approval or deleting/modifying anything",
+		"Do not keep retrying with near-duplicate keywords",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("agent-management SKILL.md missing search convergence guidance %q", want)
+		}
 	}
 }
 
@@ -1363,7 +1558,10 @@ func TestMetaToolArgumentsExposeAllLoadedSystemToolContracts(t *testing.T) {
 		SkillAgentKnowledge,
 		SkillAgentDatabase,
 		SkillCalculator,
+		SkillConsoleNavigator,
 		SkillFileGenerator,
+		SkillFileManager,
+		SkillFileReader,
 		SkillPPTSlidePlanner,
 		SkillContractFieldExtractor,
 		SkillSensitiveRedaction,
@@ -1408,10 +1606,193 @@ func TestMetaToolArgumentsExposeAllLoadedSystemToolContracts(t *testing.T) {
 	if !ok || len(anyOf) < 7 {
 		t.Fatalf("arguments.anyOf = %#v, want built-in tool schemas", arguments["anyOf"])
 	}
-	for _, required := range []string{"content", "query", "operation"} {
+	for _, required := range []string{"content", "file_id", "query", "operation"} {
 		if findSchemaWithRequired(anyOf, required) == nil {
 			t.Fatalf("schema requiring %s not found in %#v", required, anyOf)
 		}
+	}
+}
+
+func TestSystemSkillToolGovernanceManifestLoadedFromFrontmatter(t *testing.T) {
+	catalog := t.TempDir()
+	root := filepath.Join(catalog, "governance-skill")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	skill := `---
+name: governance-skill
+description: governance test skill
+when_to_use: verify governance manifest parsing
+provider_type: builtin
+provider_id: files
+tools:
+  - file.read
+  - file.delete
+runtime_type: tool
+tool_governance:
+  file.read:
+    tool_id: file.read
+    skill_id: governance-skill
+    domain: files
+    effect: read
+    asset_type: File
+    risk_level: LOW
+    requires_asset_resolution: true
+    permission_scopes:
+      - file:read
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
+  file.delete:
+    tool_id: files.delete
+    skill_id: governance-skill
+    domain: files
+    effect: delete
+    asset_type: file
+    risk_level: high
+    requires_asset_resolution: true
+    permission_scopes:
+      - file:manage
+    default_approval_policy: always_ask
+    allowed_permission_tiers:
+      - advanced
+      - full
+    audit_required: true
+    idempotency_required: false
+---
+Use governed tools.
+`
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte(skill), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	runtime := NewRuntimeWithCatalog(nil, nil, catalog)
+	resolved, err := runtime.ResolveEnabledSkills(context.Background(), []string{"governance-skill"})
+	if err != nil {
+		t.Fatalf("ResolveEnabledSkills() error = %v", err)
+	}
+	doc, ok := resolved.Get("governance-skill")
+	if !ok {
+		t.Fatalf("governance skill was not resolved")
+	}
+	readTool, ok := findSkillTool(*doc, "file.read")
+	if !ok {
+		t.Fatalf("file.read tool not found")
+	}
+	if readTool.Governance == nil {
+		t.Fatalf("file.read governance manifest missing")
+	}
+	if readTool.Governance.ToolID != "file.read" {
+		t.Fatalf("file.read tool_id = %q", readTool.Governance.ToolID)
+	}
+	if readTool.Governance.SkillID != "governance-skill" {
+		t.Fatalf("file.read skill_id = %q", readTool.Governance.SkillID)
+	}
+	if readTool.Governance.Effect != toolgovernance.EffectRead || readTool.Governance.AssetType != "file" || readTool.Governance.RiskLevel != toolgovernance.RiskLevelLow {
+		t.Fatalf("file.read governance not normalized: %#v", readTool.Governance)
+	}
+
+	deleteTool, ok := findSkillTool(*doc, "file.delete")
+	if !ok {
+		t.Fatalf("file.delete tool not found")
+	}
+	if deleteTool.Governance == nil {
+		t.Fatalf("file.delete governance manifest missing")
+	}
+	if deleteTool.Governance.ToolID != "files.delete" {
+		t.Fatalf("file.delete tool_id = %q", deleteTool.Governance.ToolID)
+	}
+	if deleteTool.Governance.DefaultApprovalPolicy != toolgovernance.ApprovalPolicyAlwaysAsk {
+		t.Fatalf("file.delete approval policy = %q", deleteTool.Governance.DefaultApprovalPolicy)
+	}
+	if got := deleteTool.Governance.AllowedPermissionTiers; len(got) != 2 || got[0] != toolgovernance.PermissionTierAdvanced || got[1] != toolgovernance.PermissionTierFull {
+		t.Fatalf("file.delete allowed tiers = %#v", got)
+	}
+}
+
+func TestSystemSkillToolGovernanceManifestFailsClosedOnInvalidFrontmatter(t *testing.T) {
+	tests := []struct {
+		name      string
+		fragment  string
+		wantField string
+	}{
+		{
+			name: "invalid risk",
+			fragment: `risk_level: hgh
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - basic`,
+			wantField: "risk_level",
+		},
+		{
+			name: "invalid approval policy",
+			fragment: `risk_level: low
+    default_approval_policy: always
+    allowed_permission_tiers:
+      - basic`,
+			wantField: "default_approval_policy",
+		},
+		{
+			name: "invalid allowed tier",
+			fragment: `risk_level: low
+    default_approval_policy: auto_by_permission_tier
+    allowed_permission_tiers:
+      - superuser`,
+			wantField: "allowed_permission_tiers",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			catalog := t.TempDir()
+			root := filepath.Join(catalog, "bad-governance")
+			if err := os.MkdirAll(root, 0o755); err != nil {
+				t.Fatalf("MkdirAll() error = %v", err)
+			}
+			skill := `---
+name: bad-governance
+description: governance test skill
+when_to_use: verify governance manifest validation
+provider_type: builtin
+provider_id: files
+tools:
+  - read_file
+runtime_type: tool
+tool_governance:
+  read_file:
+    tool_id: file.read
+    skill_id: bad-governance
+    domain: files
+    effect: read
+    asset_type: file
+    requires_asset_resolution: true
+    permission_scopes:
+      - file:read
+    ` + tt.fragment + `
+    audit_required: true
+    idempotency_required: false
+---
+Use governed tools.
+`
+			if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte(skill), 0o644); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			runtime := NewRuntimeWithCatalog(nil, nil, catalog)
+			_, err := runtime.ResolveEnabledSkills(context.Background(), []string{"bad-governance"})
+			if err == nil {
+				t.Fatalf("ResolveEnabledSkills() error = nil, want invalid governance manifest")
+			}
+			message := err.Error()
+			for _, want := range []string{"bad-governance", "read_file", tt.wantField} {
+				if !strings.Contains(message, want) {
+					t.Fatalf("ResolveEnabledSkills() error = %q, want %q", message, want)
+				}
+			}
+		})
 	}
 }
 
@@ -1497,6 +1878,26 @@ func hasRequired(schema map[string]interface{}, required string) bool {
 	if ok {
 		for _, value := range rawValues {
 			if value == required {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func schemaEnumContains(schema map[string]interface{}, want string) bool {
+	values, ok := schema["enum"].([]string)
+	if ok {
+		for _, value := range values {
+			if value == want {
+				return true
+			}
+		}
+	}
+	rawValues, ok := schema["enum"].([]interface{})
+	if ok {
+		for _, value := range rawValues {
+			if value == want {
 				return true
 			}
 		}

@@ -16,10 +16,14 @@ import (
 )
 
 func (s *service) CreateConversation(ctx context.Context, scope Scope, title string) (*runtimemodel.Conversation, error) {
-	return s.CreateConversationForCaller(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, title)
+	return s.createConversationForCaller(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, title, aiChatSurfaceWorkChat)
 }
 
 func (s *service) CreateConversationForCaller(ctx context.Context, scope Scope, caller Caller, title string) (*runtimemodel.Conversation, error) {
+	return s.createConversationForCaller(ctx, scope, caller, title, "")
+}
+
+func (s *service) createConversationForCaller(ctx context.Context, scope Scope, caller Caller, title string, surface string) (*runtimemodel.Conversation, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
@@ -43,6 +47,10 @@ func (s *service) CreateConversationForCaller(ctx context.Context, scope Scope, 
 		Status:         runtimemodel.ConversationStatusNormal,
 		Source:         source,
 		SourceWebAppID: sourceWebAppID,
+	}
+	if strings.TrimSpace(surface) != "" {
+		normalizedSurface := normalizeAIChatSurface(surface)
+		conversation.Metadata = map[string]interface{}{"surface": normalizedSurface}
 	}
 	if err := s.repos.Conversation.Create(ctx, conversation); err != nil {
 		return nil, err
@@ -226,7 +234,7 @@ func (s *service) UpdateAccountSkillPreference(ctx context.Context, scope Scope,
 }
 
 func (s *service) ListConversations(ctx context.Context, scope Scope, page, limit int) ([]*runtimemodel.Conversation, int64, error) {
-	return s.ListConversationsByCaller(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, page, limit)
+	return s.ListConversationsBySurface(ctx, scope, aiChatSurfaceWorkChat, page, limit)
 }
 
 func (s *service) ListConversationsByCaller(ctx context.Context, scope Scope, caller Caller, page, limit int) ([]*runtimemodel.Conversation, int64, error) {
@@ -238,11 +246,28 @@ func (s *service) ListConversationsByCaller(ctx context.Context, scope Scope, ca
 	return s.repos.Conversation.ListByCallerScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), limit, offset)
 }
 
+func (s *service) ListConversationsBySurface(ctx context.Context, scope Scope, surface string, page, limit int) ([]*runtimemodel.Conversation, int64, error) {
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return nil, 0, err
+	}
+	limit = clampLimit(limit, 20, 100)
+	offset := pageOffset(page, limit)
+	return s.repos.Conversation.ListByCallerSurfaceScoped(ctx, scope.OrganizationID, scope.AccountID, runtimemodel.ConversationCallerAIChat, nil, normalizeAIChatSurface(surface), limit, offset)
+}
+
 func (s *service) Search(ctx context.Context, scope Scope, query string, limit int) ([]*SearchResult, error) {
-	return s.SearchByCaller(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, query, limit)
+	return s.searchByCallerSurface(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, "", query, limit)
+}
+
+func (s *service) SearchBySurface(ctx context.Context, scope Scope, surface string, query string, limit int) ([]*SearchResult, error) {
+	return s.searchByCallerSurface(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, normalizeAIChatSurface(surface), query, limit)
 }
 
 func (s *service) SearchByCaller(ctx context.Context, scope Scope, caller Caller, query string, limit int) ([]*SearchResult, error) {
+	return s.searchByCallerSurface(ctx, scope, caller, "", query, limit)
+}
+
+func (s *service) searchByCallerSurface(ctx context.Context, scope Scope, caller Caller, surface string, query string, limit int) ([]*SearchResult, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
@@ -259,6 +284,7 @@ func (s *service) SearchByCaller(ctx context.Context, scope Scope, caller Caller
 		normalizeCallerID(caller.ID),
 		strings.TrimSpace(caller.Source),
 		normalizeCallerID(caller.SourceWebAppID),
+		strings.TrimSpace(surface),
 		query,
 		limit,
 	)
@@ -392,7 +418,14 @@ func (s *service) validateCurrentLeafMessage(ctx context.Context, scope Scope, c
 		return fmt.Errorf("%w: current leaf message belongs to another conversation", ErrInvalidInput)
 	}
 	switch message.Status {
-	case runtimemodel.MessageStatusCompleted, runtimemodel.MessageStatusStopped, runtimemodel.MessageStatusError:
+	case runtimemodel.MessageStatusPending:
+		return nil
+	case runtimemodel.MessageStatusCompleted,
+		runtimemodel.MessageStatusStopped,
+		runtimemodel.MessageStatusError,
+		runtimemodel.MessageStatusWaitingApproval,
+		runtimemodel.MessageStatusWaitingQuestion,
+		runtimemodel.MessageStatusWaitingClientAction:
 		return nil
 	case runtimemodel.MessageStatusStreaming:
 		if conversation.RuntimeStatus == runtimemodel.ConversationRuntimeStatusStreaming &&
@@ -430,7 +463,8 @@ func (s *service) ListMessages(ctx context.Context, scope Scope, conversationID 
 	if err != nil {
 		return nil, 0, err
 	}
-	hydrateMessagesGeneratedFileURLs(messages)
+	hydrateMessagesGeneratedFileState(ctx, messages)
+	hydrateMessagesPublicErrors(messages)
 	return messages, total, nil
 }
 
@@ -451,7 +485,8 @@ func (s *service) ListMessagesByCaller(ctx context.Context, scope Scope, caller 
 	if err != nil {
 		return nil, 0, err
 	}
-	hydrateMessagesGeneratedFileURLs(messages)
+	hydrateMessagesGeneratedFileState(ctx, messages)
+	hydrateMessagesPublicErrors(messages)
 	return messages, total, nil
 }
 
@@ -469,7 +504,8 @@ func (s *service) ListMessagesByCallerSource(ctx context.Context, scope Scope, c
 	if err != nil {
 		return nil, 0, err
 	}
-	hydrateMessagesGeneratedFileURLs(messages)
+	hydrateMessagesGeneratedFileState(ctx, messages)
+	hydrateMessagesPublicErrors(messages)
 	return messages, total, nil
 }
 
@@ -483,7 +519,8 @@ func (s *service) ListMessagesByCallerLogFilters(ctx context.Context, scope Scop
 	if err != nil {
 		return nil, 0, err
 	}
-	hydrateMessagesGeneratedFileURLs(messages)
+	hydrateMessagesGeneratedFileState(ctx, messages)
+	hydrateMessagesPublicErrors(messages)
 	return messages, total, nil
 }
 
@@ -497,7 +534,8 @@ func (s *service) ListMessagesByCallerRuntimeLogFilters(ctx context.Context, sco
 	if err != nil {
 		return nil, 0, err
 	}
-	hydrateMessagesGeneratedFileURLs(messages)
+	hydrateMessagesGeneratedFileState(ctx, messages)
+	hydrateMessagesPublicErrors(messages)
 	return messages, total, nil
 }
 
@@ -513,7 +551,8 @@ func (s *service) GetMessageByCaller(ctx context.Context, scope Scope, caller Ca
 	if err != nil {
 		return nil, nil, err
 	}
-	hydrateMessageGeneratedFileURLs(message)
+	hydrateMessageGeneratedFileState(ctx, message)
+	hydrateMessagePublicError(message)
 	return message, conversation, nil
 }
 
@@ -531,7 +570,8 @@ func (s *service) GetMessageByCallerRuntimeLog(ctx context.Context, scope Scope,
 	if err != nil {
 		return nil, nil, mapRepoError(err)
 	}
-	hydrateMessageGeneratedFileURLs(message)
+	hydrateMessageGeneratedFileState(ctx, message)
+	hydrateMessagePublicError(message)
 	return message, conversation, nil
 }
 
@@ -559,7 +599,7 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 		return nil, mapRepoError(err)
 	}
 	if !isStoppableMessageStatus(message.Status) {
-		hydrateMessageGeneratedFileURLs(message)
+		hydrateMessageGeneratedFileState(ctx, message)
 		return message, nil
 	}
 
@@ -576,7 +616,7 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 	if err := s.repos.Message.UpdateStoppedAnswer(ctx, id, message.Answer, metadata); err != nil {
 		latest, loadErr := s.repos.Message.GetScoped(ctx, id, scope.OrganizationID, scope.AccountID)
 		if loadErr == nil && !isStoppableMessageStatus(latest.Status) {
-			hydrateMessageGeneratedFileURLs(latest)
+			hydrateMessageGeneratedFileState(ctx, latest)
 			return latest, nil
 		}
 		return nil, mapRepoError(err)
@@ -588,7 +628,7 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 	if err != nil {
 		return nil, mapRepoError(err)
 	}
-	hydrateMessageGeneratedFileURLs(stopped)
+	hydrateMessageGeneratedFileState(ctx, stopped)
 	return stopped, nil
 }
 

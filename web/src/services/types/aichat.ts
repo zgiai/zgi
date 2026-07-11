@@ -7,6 +7,7 @@ export type AIChatMessageStatus =
   | 'pending'
   | 'streaming'
   | 'waiting_approval'
+  | 'waiting_client_action'
   | 'waiting_question'
   | 'completed'
   | 'error'
@@ -26,7 +27,13 @@ export type AIChatSkillActivityStatus =
   | 'loading'
   | 'loaded'
   | 'running'
+  | 'allowed'
+  | 'needs_approval'
+  | 'waiting_client_action'
+  | 'needs_resolution'
+  | 'denied'
   | 'success'
+  | 'advisory'
   | 'blocked'
   | 'error';
 export type AIChatSkillInvocationKind =
@@ -34,7 +41,12 @@ export type AIChatSkillInvocationKind =
   | 'skill_load'
   | 'reference_read'
   | 'tool_call'
+  | 'tool_governance'
+  | 'guardrail'
+  | 'planner_feedback'
+  | 'client_action'
   | 'intermediate_answer'
+  | 'final_answer'
   | 'user_input_request'
   | 'memory_planner';
 
@@ -51,6 +63,15 @@ export interface AIChatSkillDisplayMetadata {
   description?: Record<string, string>;
   when_to_use?: Record<string, string>;
   tags?: Record<string, string[]>;
+}
+
+export interface AIChatSkillExposureProfile {
+  category?: string;
+  user_selectable?: boolean;
+  runtime_managed?: boolean;
+  system_asset?: boolean;
+  page_context_required?: boolean;
+  governance_risk?: 'none' | 'low' | 'medium' | 'high' | 'mixed' | string;
 }
 
 export interface AIChatSkillMetadata {
@@ -72,6 +93,7 @@ export interface AIChatSkillMetadata {
   validation_error?: string;
   supported_callers?: Array<'aichat' | 'agent'>;
   required_config?: string[];
+  exposure?: AIChatSkillExposureProfile;
 }
 
 export type AIChatSkillListResponse = ApiResponseData<AIChatSkillMetadata[]>;
@@ -141,6 +163,15 @@ export interface AIChatSkillInvocation {
   kind?: AIChatSkillInvocationKind;
   runtime_id?: string;
   answer_id?: string;
+  action_id?: string;
+  action_type?: string;
+  continuation_policy?: string;
+  blocking?: boolean;
+  href?: string;
+  effect?: string;
+  asset_type?: string;
+  assets?: AIChatToolGovernanceAssetRef[];
+  correlation_id?: string;
   skill_id: string;
   tool_name?: string;
   title?: string;
@@ -151,6 +182,9 @@ export interface AIChatSkillInvocation {
   path?: string;
   message?: string;
   error?: string;
+  approval_status?: AIChatToolGovernanceDecisionEventData['approval_status'];
+  governance?: AIChatToolGovernanceDecision | null;
+  asset_operation_audit?: AIChatAssetOperationAudit;
   created_at?: number;
 }
 
@@ -246,18 +280,30 @@ export interface AIChatMessageFile {
 }
 
 export interface AIChatGeneratedFile {
+  artifact_id?: string;
   artifact_type: 'file';
   skill_id: string;
   tool_name: string;
   file_id: string;
+  tool_file_id?: string;
+  upload_file_id?: string;
+  source_file_id?: string;
+  source_tool_file_id?: string;
   filename: string;
   extension: string;
   mime_type: string;
   size: number;
+  target?: 'temporary_artifact' | 'managed_file' | (string & {});
+  lifecycle?: 'temporary' | 'persistent' | 'managed' | (string & {});
+  expires_at?: number;
+  availability?: 'available' | 'expired' | (string & {});
   url: string;
   download_url?: string;
   transfer_method: string;
   file_type?: string;
+  operation_id?: string;
+  correlation_id?: string;
+  asset_operation_audit?: AIChatAssetOperationAudit;
   created_at: number;
 }
 
@@ -302,6 +348,8 @@ export interface AIChatUserInputQuestion {
 
 export interface AIChatUserInputRequest {
   request_id?: string;
+  message?: string;
+  status?: 'waiting_question' | 'answered' | string;
   source?: string;
   workflow_run_id?: string;
   node_id?: string;
@@ -310,6 +358,13 @@ export interface AIChatUserInputRequest {
   round?: string | number;
   questions: AIChatUserInputQuestion[];
   created_at?: number;
+}
+
+export interface AIChatUserInputContinuationRequest {
+  answers: Record<string, string>;
+  surface?: AIChatRuntimeSurface;
+  runtime_context?: string;
+  operation_context?: unknown;
 }
 
 export interface AIChatConversation {
@@ -370,6 +425,9 @@ export interface AIChatPageData<T> {
 
 export type AIChatConversationListResponse = ApiResponseData<AIChatPageData<AIChatConversation>>;
 export type AIChatMessageListResponse = ApiResponseData<AIChatPageData<AIChatMessage>>;
+export type AIChatAssetOperationAuditListResponse = ApiResponseData<
+  AIChatPageData<AIChatAssetOperationAuditRecord>
+>;
 export type AIChatSearchResponse = ApiResponseData<AIChatSearchResult[]>;
 
 export interface AIChatCreateConversationRequest {
@@ -393,10 +451,15 @@ export interface AIChatModelParameters {
   [key: string]: number | string | boolean | string[] | undefined;
 }
 
+export type AIChatRuntimeSurface = 'work_chat' | 'contextual_sidebar' | 'external_page_chat';
+
 export interface AIChatChatRequest {
   conversation_id?: string;
   parent_id?: string;
   query: string;
+  surface?: AIChatRuntimeSurface;
+  runtime_context?: string;
+  operation_context?: unknown;
   model: string;
   provider?: string;
   file_ids?: string[];
@@ -407,6 +470,9 @@ export interface AIChatChatRequest {
 
 export interface AIChatRegenerateMessageRequest {
   query?: string;
+  surface?: AIChatRuntimeSurface;
+  runtime_context?: string;
+  operation_context?: unknown;
   model?: string;
   provider?: string;
   parameters?: AIChatModelParameters;
@@ -495,12 +561,21 @@ export interface AIChatSkillCallEndEventData {
   message_id: string;
   kind?: AIChatSkillInvocationKind;
   runtime_id?: string;
+  action_id?: string;
+  action_type?: string;
+  href?: string;
+  effect?: string;
+  asset_type?: string;
+  assets?: AIChatToolGovernanceAssetRef[];
+  correlation_id?: string;
   skill_id: string;
   tool_name: string;
   duration_ms?: number;
   status?: AIChatSkillActivityStatus;
   message?: string;
   result?: Record<string, unknown> | null;
+  governance?: AIChatToolGovernanceDecision | null;
+  asset_operation_audit?: AIChatAssetOperationAudit;
   created_at?: number;
 }
 
@@ -509,25 +584,46 @@ export interface AIChatSkillCallErrorEventData {
   message_id: string;
   kind?: AIChatSkillInvocationKind;
   runtime_id?: string;
+  action_id?: string;
+  action_type?: string;
+  href?: string;
+  effect?: string;
+  asset_type?: string;
+  assets?: AIChatToolGovernanceAssetRef[];
+  correlation_id?: string;
   skill_id: string;
   tool_name?: string;
   duration_ms?: number;
-  status: 'error';
+  status?: AIChatSkillActivityStatus;
   message?: string;
+  governance?: AIChatToolGovernanceDecision | null;
+  asset_operation_audit?: AIChatAssetOperationAudit;
   created_at?: number;
 }
 
 export interface AIChatSkillArtifactFile {
+  artifact_id?: string;
   artifact_type?: 'file';
   file_id: string;
+  tool_file_id?: string;
+  upload_file_id?: string;
+  source_file_id?: string;
+  source_tool_file_id?: string;
   filename: string;
   extension: string;
   mime_type: string;
   size: number;
+  target?: 'temporary_artifact' | 'managed_file' | (string & {});
+  lifecycle?: 'temporary' | 'persistent' | 'managed' | (string & {});
+  expires_at?: number;
+  availability?: 'available' | 'expired' | (string & {});
   url: string;
   download_url?: string;
   transfer_method?: string;
   file_type?: string;
+  operation_id?: string;
+  correlation_id?: string;
+  asset_operation_audit?: AIChatAssetOperationAudit;
   created_at?: number;
 }
 
@@ -539,14 +635,274 @@ export interface AIChatSkillArtifactCreatedEventData extends Partial<AIChatGener
   file?: AIChatSkillArtifactFile;
 }
 
+export type AIChatClientActionResultStatus = 'succeeded' | 'failed';
+
+export interface AIChatClientActionRequiredEventData extends Record<string, unknown> {
+  conversation_id: string;
+  message_id: string;
+  action_id: string;
+  action_type: 'route_navigation' | 'asset_observation' | (string & {});
+  status?: 'waiting_client_action' | string;
+  continuation_policy?: 'resume_model' | 'record_only' | (string & {});
+  blocking?: boolean;
+  skill_id?: string;
+  tool_name?: string;
+  href?: string;
+  label?: string;
+  label_key?: string;
+  route_kind?: string;
+  reason?: string;
+  effect?: string;
+  asset_type?: string;
+  assets?: AIChatToolGovernanceAssetRef[];
+  asset_operation_audit?: AIChatAssetOperationAudit;
+  result?: Record<string, unknown> | null;
+  created_at?: number;
+}
+
+export interface AIChatClientActionResultRequest {
+  status: AIChatClientActionResultStatus;
+  surface?: string;
+  runtime_context?: string;
+  operation_context?: unknown;
+  result?: Record<string, unknown>;
+  error?: string;
+}
+
+export interface AIChatClientActionResultEventData extends AIChatClientActionRequiredEventData {
+  error?: string;
+  resolved_at?: string;
+}
+
+export type AIChatToolGovernanceDecisionStatus =
+  | 'allowed'
+  | 'needs_approval'
+  | 'denied'
+  | 'needs_resolution'
+  | 'blocked'
+  | (string & {});
+
+export type AIChatToolGovernanceRiskLevel = 'low' | 'medium' | 'high' | 'critical' | (string & {});
+
+export type AIChatToolGovernanceEffect =
+  | 'none'
+  | 'read'
+  | 'create'
+  | 'update'
+  | 'delete'
+  | 'publish'
+  | 'invoke'
+  | 'schedule'
+  | 'external_send'
+  | (string & {});
+
+export interface AIChatToolGovernanceAssetRef extends Record<string, unknown> {
+  id?: string;
+  type?: string;
+  name?: string;
+  title?: string;
+  label?: string;
+  filename?: string;
+  file_name?: string;
+  file_type?: string;
+  extension?: string;
+  mime_type?: string;
+  size?: number;
+  workspace_id?: string;
+  source?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AIChatToolGovernanceManifest extends Record<string, unknown> {
+  tool_id?: string;
+  skill_id?: string;
+  domain?: string;
+  effect?: AIChatToolGovernanceEffect;
+  asset_type?: string;
+  risk_level?: AIChatToolGovernanceRiskLevel;
+  requires_asset_resolution?: boolean;
+  reversible?: boolean;
+  bulk_sensitive?: boolean;
+  external_side_effect?: boolean;
+  permission_scopes?: string[];
+  default_approval_policy?: string;
+  allowed_permission_tiers?: string[];
+  audit_required?: boolean;
+  idempotency_required?: boolean;
+}
+
+export interface AIChatToolGovernanceApprovalEvent extends Record<string, unknown> {
+  type?: string;
+  correlation_id?: string;
+  tool_id?: string;
+  skill_id?: string;
+  domain?: string;
+  effect?: AIChatToolGovernanceEffect;
+  asset_type?: string;
+  risk_level?: AIChatToolGovernanceRiskLevel;
+  assets?: AIChatToolGovernanceAssetRef[];
+  reversible?: boolean;
+  bulk_sensitive?: boolean;
+  external_side_effect?: boolean;
+  permission_tier?: string;
+  grant?: Record<string, unknown>;
+}
+
+export type AIChatAssetOperationAuditSource =
+  | 'tool_governance_decision'
+  | 'skill_invocation'
+  | (string & {});
+
+export interface AIChatAssetOperationAudit extends Record<string, unknown> {
+  schema_version?: string;
+  event_type?: string;
+  correlation_id?: string;
+  conversation_id?: string;
+  governance_status?: AIChatToolGovernanceDecisionStatus | (string & {});
+  approval_status?: 'pending' | 'approved' | 'rejected' | (string & {});
+  requires_approval?: boolean;
+  decision_reason?: string;
+  tool_id?: string;
+  skill_id?: string;
+  domain?: string;
+  effect?: AIChatToolGovernanceEffect;
+  asset_type?: string;
+  asset_count?: number;
+  risk_level?: AIChatToolGovernanceRiskLevel;
+  permission_tier?: string;
+  reversible?: boolean;
+  bulk_sensitive?: boolean;
+  external_side_effect?: boolean;
+  audit_required?: boolean;
+  idempotency_required?: boolean;
+  permission_scopes?: string[];
+  assets?: AIChatToolGovernanceAssetRef[];
+  approved_by_correlation_id?: string;
+  matched_grant?: Record<string, unknown>;
+  approved_grant?: Record<string, unknown>;
+  session_grant?: Record<string, unknown>;
+  action?: string;
+  reason?: string;
+  resolved_at?: string;
+  resolved_by?: string;
+  remember_for_session?: boolean;
+}
+
+export interface AIChatAssetOperationAuditRecord extends Record<string, unknown> {
+  id: string;
+  source: AIChatAssetOperationAuditSource;
+  source_id?: string;
+  conversation_id: string;
+  message_id: string;
+  runtime_id?: string;
+  correlation_id: string;
+  schema_version?: string;
+  status?: AIChatSkillActivityStatus | (string & {});
+  skill_id?: string;
+  tool_name?: string;
+  tool_id?: string;
+  effect?: AIChatToolGovernanceEffect;
+  asset_type?: string;
+  risk_level?: AIChatToolGovernanceRiskLevel;
+  approval_status?: 'pending' | 'approved' | 'rejected' | (string & {});
+  governance_status?: AIChatToolGovernanceDecisionStatus | (string & {});
+  action?: string;
+  reason?: string;
+  resolved_at?: string;
+  resolved_by?: string;
+  approved_by_correlation_id?: string;
+  approved_grant?: Record<string, unknown>;
+  session_grant?: Record<string, unknown>;
+  requires_approval?: boolean;
+  remember_for_session?: boolean;
+  asset_count?: number;
+  workspace_id?: string;
+  assets?: AIChatToolGovernanceAssetRef[];
+  created_at?: number;
+  message_created_at?: number;
+}
+
+export interface AIChatToolGovernanceDecision extends Record<string, unknown> {
+  status?: AIChatToolGovernanceDecisionStatus;
+  requires_approval?: boolean;
+  reason?: string;
+  correlation_id?: string;
+  approval_status?: 'approved' | 'rejected' | (string & {});
+  manifest?: AIChatToolGovernanceManifest;
+  assets?: AIChatToolGovernanceAssetRef[];
+  approval_event?: AIChatToolGovernanceApprovalEvent;
+  asset_operation_audit?: AIChatAssetOperationAudit;
+  matched_grant?: Record<string, unknown>;
+  approval_result?: Record<string, unknown>;
+  model_feedback?: Record<string, unknown>;
+}
+
+export interface AIChatToolGovernanceDecisionEventData extends Record<string, unknown> {
+  conversation_id: string;
+  message_id: string;
+  skill_id?: string;
+  tool_name?: string;
+  status?: AIChatToolGovernanceDecisionStatus;
+  duration_ms?: number;
+  created_at?: number;
+  governance?: AIChatToolGovernanceDecision;
+  correlation_id?: string;
+  decision?: AIChatToolGovernanceDecisionStatus;
+  requires_approval?: boolean;
+  reason?: string;
+  risk_level?: AIChatToolGovernanceRiskLevel;
+  effect?: AIChatToolGovernanceEffect;
+  asset_type?: string;
+  asset_operation_audit?: AIChatAssetOperationAudit;
+  approval_status?: 'approved' | 'rejected' | (string & {});
+  approval_event?: AIChatToolGovernanceApprovalEvent;
+  matched_grant?: Record<string, unknown>;
+  approval_result?: Record<string, unknown>;
+  model_feedback?: Record<string, unknown>;
+  session_grant?: Record<string, unknown>;
+  execution_status?: string;
+  execution_error?: string;
+  execution_message?: string;
+  execution_duration_ms?: number;
+  execution_result?: Record<string, unknown> | null;
+}
+
+export interface AIChatToolGovernanceDecisionRequest {
+  action: 'approve' | 'reject';
+  reason?: string;
+  remember_for_session?: boolean;
+}
+
+export interface AIChatToolGovernanceDecisionResponse {
+  conversation_id: string;
+  message_id: string;
+  correlation_id: string;
+  action: 'approve' | 'reject' | (string & {});
+  approval_status: 'approved' | 'rejected' | (string & {});
+  remember_for_session?: boolean;
+  session_grant?: Record<string, unknown>;
+  event: AIChatToolGovernanceDecisionEventData;
+}
+
 export interface AIChatAgentProgressEventData {
   conversation_id: string;
   message_id: string;
   content?: string;
-  phase?: 'planning' | 'tool_planning';
+  phase?: 'planning' | 'tool_planning' | 'client_action' | 'client_action_result';
   meta_tool_name?: string;
   skill_id?: string;
   tool_name?: string;
+  action_id?: string;
+  action_type?: string;
+  continuation_policy?: string;
+  blocking?: boolean;
+  status?: string;
+  effect?: string;
+  asset_type?: string;
+  assets?: AIChatToolGovernanceAssetRef[];
+  correlation_id?: string;
+  asset_operation_audit?: AIChatAssetOperationAudit;
+  result?: Record<string, unknown> | null;
   arguments_chars?: number;
   created_at?: number;
 }
@@ -680,6 +1036,9 @@ export type AIChatSseEventName =
   | 'skill_call_end'
   | 'skill_call_error'
   | 'skill_artifact_created'
+  | 'tool_governance_decision'
+  | 'client_action_required'
+  | 'client_action_result'
   | 'memory_create'
   | 'memory_update'
   | 'memory_delete'

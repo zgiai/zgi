@@ -10,8 +10,10 @@ import {
 } from '@/utils/sensitive-word-filter';
 import type { ApiResponseData, SuccessResponse } from './types/common';
 import type {
+  AIChatAssetOperationAuditListResponse,
   AIChatChatRequest,
   AIChatCancelImportSkillPreviewResponse,
+  AIChatClientActionResultRequest,
   AIChatConversation,
   AIChatConversationListResponse,
   AIChatConfirmImportSkillRequest,
@@ -21,6 +23,8 @@ import type {
   AIChatMessage,
   AIChatMessageListResponse,
   AIChatRegenerateMessageRequest,
+  AIChatRuntimeSurface,
+  AIChatUserInputContinuationRequest,
   AIChatSearchResponse,
   AIChatSkillConfigResponse,
   AIChatSkillDetailResponse,
@@ -30,6 +34,8 @@ import type {
   AIChatSkillPreferenceResponse,
   AIChatSseEnvelope,
   AIChatStopConversationResponseData,
+  AIChatToolGovernanceDecisionRequest,
+  AIChatToolGovernanceDecisionResponse,
   AIChatUpdateConversationRequest,
 } from './types/aichat';
 
@@ -235,15 +241,17 @@ export const aichatService = {
     );
   },
 
-  listConversations(params: { page?: number; limit?: number } = {}) {
+  listConversations(
+    params: { page?: number; limit?: number; surface?: AIChatRuntimeSurface } = {}
+  ) {
     return http.get<AIChatConversationListResponse>(`${AICHAT_BASE_PATH}/conversations`, {
       params,
     });
   },
 
-  search(query: string, limit = 20) {
+  search(query: string, limit = 20, params: { surface?: AIChatRuntimeSurface } = {}) {
     return http.get<AIChatSearchResponse>(`${AICHAT_BASE_PATH}/search`, {
-      params: { query, limit },
+      params: { query, limit, ...params },
     });
   },
 
@@ -281,8 +289,117 @@ export const aichatService = {
     });
   },
 
+  listAssetOperationAudits(id: string, params: { page?: number; limit?: number } = {}) {
+    return http.get<AIChatAssetOperationAuditListResponse>(
+      `${AICHAT_BASE_PATH}/conversations/${encodeURIComponent(id)}/asset-operation-audits`,
+      {
+        params,
+      }
+    );
+  },
+
   deleteMessage(id: string) {
     return http.delete<ApiResponseData<SuccessResponse>>(`${AICHAT_BASE_PATH}/messages/${id}`);
+  },
+
+  submitToolGovernanceDecision(
+    conversationId: string,
+    messageId: string,
+    correlationId: string,
+    payload: AIChatToolGovernanceDecisionRequest
+  ) {
+    return http.post<ApiResponseData<AIChatToolGovernanceDecisionResponse>>(
+      `${AICHAT_BASE_PATH}/conversations/${encodeURIComponent(
+        conversationId
+      )}/messages/${encodeURIComponent(messageId)}/tool-governance/${encodeURIComponent(
+        correlationId
+      )}`,
+      payload
+    );
+  },
+
+  continueToolGovernanceDecision(
+    conversationId: string,
+    messageId: string,
+    correlationId: string,
+    payload: AIChatToolGovernanceDecisionRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    const outputFilter = createAIChatStreamOutputFilter(callbacks);
+
+    return http.sse<AIChatSseEnvelope, AIChatToolGovernanceDecisionRequest>(
+      `${AICHAT_BASE_PATH}/conversations/${encodeURIComponent(
+        conversationId
+      )}/messages/${encodeURIComponent(messageId)}/tool-governance/${encodeURIComponent(
+        correlationId
+      )}/continue`,
+      {
+        method: 'POST',
+        body: payload,
+        abortSignal,
+        isTerminalMessage: isAIChatTerminalMessage,
+        onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
+        onError: error => callbacks.onError?.(error),
+        onClose: callbacks.onClose,
+      }
+    );
+  },
+
+  continueClientAction(
+    conversationId: string,
+    messageId: string,
+    actionId: string,
+    payload: AIChatClientActionResultRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    const outputFilter = createAIChatStreamOutputFilter(callbacks);
+
+    return http.sse<AIChatSseEnvelope, AIChatClientActionResultRequest>(
+      `${AICHAT_BASE_PATH}/conversations/${encodeURIComponent(
+        conversationId
+      )}/messages/${encodeURIComponent(messageId)}/client-actions/${encodeURIComponent(
+        actionId
+      )}/continue`,
+      {
+        method: 'POST',
+        body: payload,
+        abortSignal,
+        isTerminalMessage: isAIChatTerminalMessage,
+        onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
+        onError: error => callbacks.onError?.(error),
+        onClose: callbacks.onClose,
+      }
+    );
+  },
+
+  continueUserInput(
+    conversationId: string,
+    messageId: string,
+    requestId: string,
+    payload: AIChatUserInputContinuationRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    const outputFilter = createAIChatStreamOutputFilter(callbacks);
+
+    return http.sse<AIChatSseEnvelope, AIChatUserInputContinuationRequest>(
+      `${AICHAT_BASE_PATH}/conversations/${encodeURIComponent(
+        conversationId
+      )}/messages/${encodeURIComponent(messageId)}/user-input/${encodeURIComponent(
+        requestId
+      )}/continue`,
+      {
+        method: 'POST',
+        body: payload,
+        abortSignal,
+        isTerminalMessage: isAIChatTerminalMessage,
+        onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
+        onError: error => callbacks.onError?.(error),
+        onClose: callbacks.onClose,
+      }
+    );
   },
 
   streamChat(

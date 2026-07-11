@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -59,9 +61,14 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.POST("/conversations/:id/stop", h.StopConversation)
 	group.GET("/conversations/:id/events", h.StreamConversationEvents)
 	group.GET("/conversations/:id/messages", h.ListMessages)
+	group.GET("/conversations/:id/asset-operation-audits", h.ListAssetOperationAudits)
 	group.DELETE("/messages/:id", h.DeleteMessage)
 	group.POST("/messages/:id/stop", h.StopMessage)
 	group.POST("/messages/:id/regenerate", h.RegenerateMessage)
+	group.POST("/conversations/:id/messages/:message_id/tool-governance/:correlation_id", h.SubmitToolGovernanceDecision)
+	group.POST("/conversations/:id/messages/:message_id/tool-governance/:correlation_id/continue", h.ContinueToolGovernanceDecision)
+	group.POST("/conversations/:id/messages/:message_id/client-actions/:action_id/continue", h.ContinueClientAction)
+	group.POST("/conversations/:id/messages/:message_id/user-input/:request_id/continue", h.ContinueUserInput)
 	group.POST("/chat", h.Chat)
 }
 
@@ -256,7 +263,7 @@ func (h *Handler) ListConversations(c *gin.Context) {
 		return
 	}
 	page, limit := pagination(c, 1, defaultConversationPageLimit, maxConversationPageLimit)
-	conversations, total, err := h.service.ListConversations(c.Request.Context(), scope, page, limit)
+	conversations, total, err := h.service.ListConversationsBySurface(c.Request.Context(), scope, c.Query("surface"), page, limit)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -283,7 +290,7 @@ func (h *Handler) Search(c *gin.Context) {
 	if limit > maxSearchLimit {
 		limit = maxSearchLimit
 	}
-	results, err := h.service.Search(c.Request.Context(), scope, c.Query("query"), limit)
+	results, err := h.service.SearchBySurface(c.Request.Context(), scope, c.Query("surface"), c.Query("query"), limit)
 	if err != nil {
 		h.fail(c, err)
 		return
@@ -362,6 +369,35 @@ func (h *Handler) ListMessages(c *gin.Context) {
 	})
 }
 
+type assetOperationAuditLister interface {
+	ListAssetOperationAudits(ctx context.Context, scope runtimeservice.Scope, conversationID uuid.UUID, page, limit int) ([]runtimeservice.AssetOperationAuditRecord, int64, error)
+}
+
+func (h *Handler) ListAssetOperationAudits(c *gin.Context) {
+	scope, conversationID, ok := h.scopedID(c, "id")
+	if !ok {
+		return
+	}
+	lister, ok := h.service.(assetOperationAuditLister)
+	if !ok {
+		h.fail(c, fmt.Errorf("%w: asset operation audit service is not configured", runtimeservice.ErrInvalidInput))
+		return
+	}
+	page, limit := pagination(c, 1, defaultMessagePageLimit, maxMessagePageLimit)
+	items, total, err := lister.ListAssetOperationAudits(c.Request.Context(), scope, conversationID, page, limit)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	response.Success(c, runtimedto.ListResponse[runtimeservice.AssetOperationAuditRecord]{
+		Data:    items,
+		Page:    page,
+		Limit:   limit,
+		Total:   total,
+		HasMore: int64(page*limit) < total,
+	})
+}
+
 func (h *Handler) StreamConversationEvents(c *gin.Context) {
 	scope, conversationID, ok := h.scopedID(c, "id")
 	if !ok {
@@ -375,7 +411,7 @@ func (h *Handler) StreamConversationEvents(c *gin.Context) {
 
 	setupSSE(c)
 	err = h.service.StreamConversationEvents(c.Request.Context(), scope, conversationID, messageID, c.Query("after_id"), func(event runtimeservice.StreamEvent) error {
-		return writeSSEEvent(c, event.ID, event.EventType, event.Payload)
+		return writeStreamEvent(c, event)
 	})
 	if err != nil {
 		logger.WarnContext(c.Request.Context(), "aichat event stream failed", "conversation_id", conversationID.String(), "message_id", messageID.String(), err)
@@ -448,7 +484,7 @@ func (h *Handler) RegenerateMessage(c *gin.Context) {
 	result, err := h.service.RunPreparedStream(c.Request.Context(), prepared, func(chunk string) error {
 		return client.writeChunk(prepared, chunk)
 	}, func(event runtimeservice.StreamEvent) error {
-		return writeSSEEvent(c, event.ID, event.EventType, event.Payload)
+		return writeStreamEvent(c, event)
 	})
 	if err != nil {
 		if errors.Is(err, runtimeservice.ErrMessageStopped) {
@@ -488,7 +524,7 @@ func (h *Handler) Chat(c *gin.Context) {
 	result, err := h.service.RunPreparedStream(c.Request.Context(), prepared, func(chunk string) error {
 		return client.writeChunk(prepared, chunk)
 	}, func(event runtimeservice.StreamEvent) error {
-		return writeSSEEvent(c, event.ID, event.EventType, event.Payload)
+		return writeStreamEvent(c, event)
 	})
 	if err != nil {
 		if errors.Is(err, runtimeservice.ErrMessageStopped) {
@@ -513,14 +549,18 @@ func writeChatStart(c *gin.Context, prepared *runtimeservice.PreparedChat) {
 		"model":           prepared.Message.ModelName,
 		"replace":         prepared.ReplaceRoot,
 		"created_at":      prepared.Message.CreatedAt.Unix(),
+		"created_at_ms":   prepared.Message.CreatedAt.UnixMilli(),
 	})
 }
 
 func writeChatChunk(c *gin.Context, prepared *runtimeservice.PreparedChat, chunk string) error {
+	now := time.Now()
 	return writeSSE(c, "message", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
 		"answer":          chunk,
+		"created_at":      now.Unix(),
+		"created_at_ms":   now.UnixMilli(),
 	})
 }
 
@@ -530,13 +570,23 @@ func writeChatError(c *gin.Context, prepared *runtimeservice.PreparedChat, err e
 }
 
 func writeChatEnd(c *gin.Context, prepared *runtimeservice.PreparedChat, result *runtimeservice.ChatResult) {
-	_ = writeSSE(c, "message_end", gin.H{
+	metadata := map[string]interface{}{}
+	status := runtimemodel.MessageStatusCompleted
+	eventID := ""
+	if result != nil && result.Metadata != nil {
+		metadata = messageMetadataResponse(result.Metadata)
+	}
+	if result != nil && strings.TrimSpace(result.Status) != "" {
+		status = strings.TrimSpace(result.Status)
+	}
+	if result != nil {
+		eventID = strings.TrimSpace(result.MessageEndEventID)
+	}
+	_ = writeSSEEvent(c, eventID, "message_end", gin.H{
 		"conversation_id": prepared.Conversation.ID.String(),
 		"message_id":      prepared.Message.ID.String(),
-		"status":          runtimemodel.MessageStatusCompleted,
-		"metadata": gin.H{
-			"usage": result.Metadata["usage"],
-		},
+		"status":          status,
+		"metadata":        metadata,
 	})
 }
 
@@ -620,7 +670,11 @@ func (h *Handler) fail(c *gin.Context, err error) {
 		response.Fail(c, response.ErrNotFound)
 	case errors.Is(err, runtimeservice.ErrInvalidInput), errors.Is(err, runtimeservice.ErrInvalidModelParam):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
-	case errors.Is(err, runtimeservice.ErrConversationRunning), errors.Is(err, runtimeservice.ErrMessageReplaceNotAllowed):
+	case errors.Is(err, runtimeservice.ErrConversationRunning),
+		errors.Is(err, runtimeservice.ErrConversationWaitingApproval),
+		errors.Is(err, runtimeservice.ErrConversationWaitingQuestion),
+		errors.Is(err, runtimeservice.ErrConversationWaitingAction),
+		errors.Is(err, runtimeservice.ErrMessageReplaceNotAllowed):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 	default:
 		logger.ErrorContext(c.Request.Context(), "aichat request failed", err)
@@ -641,8 +695,12 @@ func writeSSE(c *gin.Context, event string, data interface{}) error {
 	return writeSSEEvent(c, "", event, data)
 }
 
+func writeStreamEvent(c *gin.Context, event runtimeservice.StreamEvent) error {
+	return writeSSEEvent(c, event.ID, event.EventType, event.Payload)
+}
+
 func writeSSEEvent(c *gin.Context, id string, event string, data interface{}) error {
-	payload := gin.H{"event": event, "data": data}
+	payload := gin.H{"event": event, "data": enrichSSEPayload(id, data)}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -657,6 +715,93 @@ func writeSSEEvent(c *gin.Context, id string, event string, data interface{}) er
 	}
 	c.Writer.Flush()
 	return nil
+}
+
+func enrichSSEPayload(id string, data interface{}) interface{} {
+	payload, ok := cloneSSEPayload(data)
+	if !ok {
+		return data
+	}
+	id = strings.TrimSpace(id)
+	if id != "" {
+		payload["event_id"] = id
+	}
+	if createdAtMS, sequence := redisStreamIDParts(id); createdAtMS > 0 {
+		payload["created_at_ms"] = createdAtMS
+		payload["created_at"] = createdAtMS / 1000
+		payload["sequence"] = sequence
+		return payload
+	}
+	if _, ok := payload["created_at_ms"]; !ok {
+		if createdAt := int64FromInterface(payload["created_at"]); createdAt > 0 {
+			payload["created_at_ms"] = createdAt * 1000
+		}
+	}
+	return payload
+}
+
+func cloneSSEPayload(data interface{}) (gin.H, bool) {
+	switch typed := data.(type) {
+	case gin.H:
+		cloned := make(gin.H, len(typed)+4)
+		for key, value := range typed {
+			cloned[key] = value
+		}
+		return cloned, true
+	case map[string]interface{}:
+		cloned := make(gin.H, len(typed)+4)
+		for key, value := range typed {
+			cloned[key] = value
+		}
+		return cloned, true
+	default:
+		return nil, false
+	}
+}
+
+func redisStreamIDParts(id string) (int64, int64) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return 0, 0
+	}
+	parts := strings.SplitN(id, "-", 2)
+	if len(parts) != 2 {
+		return 0, 0
+	}
+	createdAtMS, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || createdAtMS <= 0 {
+		return 0, 0
+	}
+	sequenceRaw := parts[1]
+	if index := strings.Index(sequenceRaw, ":"); index >= 0 {
+		sequenceRaw = sequenceRaw[:index]
+	}
+	sequence, err := strconv.ParseInt(sequenceRaw, 10, 64)
+	if err != nil || sequence < 0 {
+		sequence = 0
+	}
+	return createdAtMS, sequence
+}
+
+func int64FromInterface(value interface{}) int64 {
+	switch typed := value.(type) {
+	case int:
+		return int64(typed)
+	case int64:
+		return typed
+	case int32:
+		return int64(typed)
+	case float64:
+		return int64(typed)
+	case json.Number:
+		parsed, _ := typed.Int64()
+		return parsed
+	case string:
+		parsed, _ := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
+		return parsed
+	default:
+		return 0
+	}
 }
 
 func pagination(c *gin.Context, defaultPage, defaultLimit, maxLimit int) (int, int) {
@@ -741,6 +886,18 @@ func skillResponse(metadata skills.SkillDiscoveryMetadata) runtimedto.SkillRespo
 		ValidationError:  metadata.ValidationError,
 		SupportedCallers: metadata.SupportedCallers,
 		RequiredConfig:   metadata.RequiredConfig,
+		Exposure:         skillExposureResponse(skills.SkillExposureForMetadata(metadata)),
+	}
+}
+
+func skillExposureResponse(profile skills.SkillExposureProfile) runtimedto.SkillExposureResponse {
+	return runtimedto.SkillExposureResponse{
+		Category:            profile.Category,
+		UserSelectable:      profile.UserSelectable,
+		RuntimeManaged:      profile.RuntimeManaged,
+		SystemAsset:         profile.SystemAsset,
+		PageContextRequired: profile.PageContextRequired,
+		GovernanceRisk:      profile.GovernanceRisk,
 	}
 }
 
@@ -830,7 +987,7 @@ func messageResponse(message *runtimemodel.Message) runtimedto.MessageResponse {
 		ModelName:           message.ModelName,
 		BillingReasonSource: message.BillingReasonSource,
 		ModelParameters:     message.ModelParameters,
-		Metadata:            message.Metadata,
+		Metadata:            messageMetadataResponse(message.Metadata),
 		CreatedAt:           message.CreatedAt.Unix(),
 		UpdatedAt:           message.UpdatedAt.Unix(),
 	}
@@ -841,6 +998,93 @@ func messageResponse(message *runtimemodel.Message) runtimedto.MessageResponse {
 		resp.SourceMessageID = stringPtr(message.SourceMessageID.String())
 	}
 	return resp
+}
+
+func messageMetadataResponse(metadata map[string]interface{}) map[string]interface{} {
+	if len(metadata) == 0 {
+		return metadata
+	}
+	out := make(map[string]interface{}, len(metadata))
+	redactedModelInvocations := false
+	modelInvocationCount := 0
+	for key, value := range metadata {
+		if key == "model_invocations" {
+			redactedModelInvocations = true
+			modelInvocationCount = modelInvocationMetadataCount(value)
+			continue
+		}
+		if key == "model_invocations_redacted" {
+			continue
+		}
+		if key == "skill_invocations" {
+			filtered, changed := messageSkillInvocationsResponse(value)
+			if changed {
+				if len(filtered) > 0 {
+					out[key] = filtered
+				}
+				continue
+			}
+		}
+		out[key] = value
+	}
+	if redactedModelInvocations {
+		out["model_invocations_redacted"] = true
+		if modelInvocationCount > 0 {
+			out["model_invocation_count"] = modelInvocationCount
+		}
+	}
+	return out
+}
+
+func messageSkillInvocationsResponse(value interface{}) ([]interface{}, bool) {
+	items, ok := value.([]interface{})
+	if !ok {
+		if typed, ok := value.([]map[string]interface{}); ok {
+			items = make([]interface{}, 0, len(typed))
+			for _, item := range typed {
+				items = append(items, item)
+			}
+		}
+	}
+	if len(items) == 0 {
+		return nil, false
+	}
+	out := make([]interface{}, 0, len(items))
+	changed := false
+	for _, item := range items {
+		invocation, ok := item.(map[string]interface{})
+		if !ok {
+			out = append(out, item)
+			continue
+		}
+		if messageMetadataFinalAnswerInvocation(invocation) {
+			changed = true
+			continue
+		}
+		out = append(out, item)
+	}
+	return out, changed
+}
+
+func messageMetadataFinalAnswerInvocation(invocation map[string]interface{}) bool {
+	return strings.EqualFold(strings.TrimSpace(messageMetadataString(invocation["kind"])), "final_answer") ||
+		strings.EqualFold(strings.TrimSpace(messageMetadataString(invocation["tool_name"])), skills.MetaToolFinalAnswer)
+}
+
+func messageMetadataString(value interface{}) string {
+	text, _ := value.(string)
+	return text
+}
+
+func modelInvocationMetadataCount(value interface{}) int {
+	switch typed := value.(type) {
+	case []interface{}:
+		return len(typed)
+	case []map[string]interface{}:
+		return len(typed)
+	default:
+		return 0
+	}
 }
 
 func searchResultResponse(result *runtimeservice.SearchResult) runtimedto.SearchResultResponse {

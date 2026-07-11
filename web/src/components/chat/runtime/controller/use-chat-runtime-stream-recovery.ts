@@ -160,7 +160,7 @@ export function useChatRuntimeStreamRecovery({
                 message_id: messageId,
                 answer: nextMessage.answer,
                 status: 'streaming',
-                timeline: replayingFromStart ? [] : (previousStreaming?.timeline ?? []),
+                timeline: previousStreaming?.timeline ?? [],
                 last_event_id: afterId,
                 replay_base_answer: shouldDedupeReplay
                   ? preservedAnswer
@@ -265,6 +265,18 @@ export function useChatRuntimeStreamRecovery({
               onSkillArtifactCreated: (payload, eventId) => {
                 if (abortController.signal.aborted) return;
                 eventAppliers.applySkillArtifactCreated(payload, eventId);
+              },
+              onToolGovernanceDecision: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyToolGovernanceDecision(payload, eventId);
+              },
+              onClientActionRequired: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyClientActionRequired(payload, eventId);
+              },
+              onClientActionResult: (payload, eventId) => {
+                if (abortController.signal.aborted) return;
+                eventAppliers.applyClientActionResult(payload, eventId);
               },
               onMemoryMutation: (payload, eventId) => {
                 if (abortController.signal.aborted) return;

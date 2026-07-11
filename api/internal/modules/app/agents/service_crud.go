@@ -424,6 +424,8 @@ func (s *agentsService) GetAgent(ctx context.Context, agentID string) (interface
 	agentType := normalizeAgentTypeForResponse(ag.AgentsType)
 	resp := map[string]interface{}{
 		"id":             ag.ID.String(),
+		"tenant_id":      ag.TenantID.String(),
+		"workspace_id":   ag.TenantID.String(),
 		"name":           ag.Name,
 		"description":    ag.Description,
 		"agent_type":     agentType,
@@ -480,7 +482,9 @@ func (s *agentsService) GetAgent(ctx context.Context, agentID string) (interface
 	// Attach tenant brief
 	tenantID := ag.TenantID.String()
 	if t, err := s.tenantService.GetWorkspaceByID(ctx, tenantID); err == nil && t != nil {
-		resp["tenant"] = map[string]interface{}{"id": t.ID, "name": t.Name}
+		workspace := map[string]interface{}{"id": t.ID, "name": t.Name}
+		resp["tenant"] = workspace
+		resp["workspace"] = workspace
 	}
 
 	// Attach owner account brief

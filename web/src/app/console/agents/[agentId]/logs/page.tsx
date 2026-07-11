@@ -41,6 +41,7 @@ import {
 } from '@/components/workflow/ui/workflow-run-panel/utils/history-view-data';
 import { cn } from '@/lib/utils';
 import { AgentRuntimeLogDetailDrawer } from './_components/agent-runtime-log-detail-drawer';
+import { AgentLogsAIChatContextRegistration } from './_components/agent-logs-aichat-context';
 import { LogDetailDrawer, type HistoryTab } from './_components/log-detail-drawer';
 import { LogStatusBadge } from './_components/log-status-badge';
 import { AGENT_PERMISSION_ACTIONS, WORKFLOW_PERMISSION_ACTIONS } from '@/constants/permissions';
@@ -628,6 +629,24 @@ export default function AgentLogsPage({ params }: AgentLogsPageProps) {
 
   return (
     <div className="flex h-full w-full min-h-0 flex-col overflow-hidden bg-background">
+      <AgentLogsAIChatContextRegistration
+        agent={agentDetail}
+        isAgentRuntime={isAgentRuntime}
+        runtimeLogSource={runtimeLogSource}
+        searchFilter={normalizedSearchFilter}
+        conversationFilter={normalizedConversationFilter}
+        displayRunItems={displayRunItems}
+        effectiveRunId={effectiveRunId}
+        selectedWorkflowRun={selectedLog}
+        workflowDetail={detail}
+        workflowSummary={effectiveSummary}
+        workflowExecutionItems={executionItems}
+        selectedAgentRuntimeRun={selectedAgentRuntimeRun}
+        agentRuntimeDetail={agentRuntimeDetail}
+        agentRuntimeSteps={agentRuntimeSteps}
+        selectedMessageRunId={selectedMessageRunId}
+        publishedWorkflowId={latest?.data?.workflow_id}
+      />
       <div className="border-b px-6 py-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">

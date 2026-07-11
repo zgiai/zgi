@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type {
+  AIChatRuntimeSurface,
   AIChatMemoryMutationEventData,
   AIChatMessageStartEventData,
 } from '@/services/types/aichat';
@@ -207,6 +208,9 @@ export function useChatRuntimeController(options?: {
     replaceRootMessage,
     continueWorkflowApproval,
     continueWorkflowQuestion,
+    continueToolGovernanceDecision,
+    continueClientAction,
+    continueUserInput,
   } = useChatRuntimeMessageActions({
     stateRef,
     transportRef,
@@ -216,6 +220,9 @@ export function useChatRuntimeController(options?: {
     streamingMessageRef,
     setControllerState,
     markSelectionTarget,
+    isLatestSelection,
+    refreshConversationSilently,
+    refreshMessagesSilently,
     refreshAccountMemoryAfterMemoryMutation,
     eventAppliers,
   });
@@ -225,9 +232,14 @@ export function useChatRuntimeController(options?: {
     transportRef,
     setControllerState,
   });
-  const search = useCallback((query: string, limit: number) => {
-    return transportRef.current.searchConversations?.(query, limit) ?? Promise.resolve([]);
-  }, []);
+  const search = useCallback(
+    (query: string, limit: number, options?: { surface?: AIChatRuntimeSurface }) => {
+      return (
+        transportRef.current.searchConversations?.(query, limit, options) ?? Promise.resolve([])
+      );
+    },
+    []
+  );
   const viewModel = useChatRuntimeViewModel({ store, topologyRef });
   return {
     store,
@@ -261,6 +273,9 @@ export function useChatRuntimeController(options?: {
     replaceRootMessage,
     continueWorkflowApproval,
     continueWorkflowQuestion,
+    continueToolGovernanceDecision,
+    continueClientAction,
+    continueUserInput,
     stop,
     switchBranch,
     search,

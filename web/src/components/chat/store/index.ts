@@ -20,7 +20,7 @@ interface ChatState {
   setCurrent: (id: string) => void;
   updateConversation: (
     id: string,
-    data: { conversationId?: string; conversationData?: Record<string, unknown> }
+    data: { conversationId?: string; title?: string; conversationData?: Record<string, unknown> }
   ) => void;
   migrateConversation: (oldId: string, newId: string) => void;
   deleteConversation: (id: string) => void;
@@ -181,7 +181,7 @@ const useChatStoreBase = create<ChatState>()((set, get) => ({
       const conv: Conversation = {
         ...(existing || defaultConversation(conversation.id)),
         conversationId: conversation.conversationId ?? existing?.conversationId ?? '',
-        title: conversation.title ?? existing?.title ?? 'New Conversation',
+        title: conversation.title ?? existing?.title ?? '',
         messages: conversation.messages ?? existing?.messages ?? [],
         conversationData: conversation.conversationData ?? existing?.conversationData ?? {},
       };
@@ -204,6 +204,7 @@ const useChatStoreBase = create<ChatState>()((set, get) => ({
       const next: Conversation = {
         ...conv,
         conversationId: data.conversationId ?? conv.conversationId,
+        title: data.title ?? conv.title,
         conversationData: data.conversationData ?? conv.conversationData,
       };
       return { conversations: { ...state.conversations, [id]: next } };

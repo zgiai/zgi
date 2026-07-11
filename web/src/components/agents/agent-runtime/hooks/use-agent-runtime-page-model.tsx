@@ -7,7 +7,7 @@ import { createAgentDraftTransport, useAIChatController } from '@/components/cha
 import { findAIChatModelProps } from '@/components/chat/variants/aichat/model-props';
 import {
   getAIChatSkillDisplayInfo,
-  isHiddenSystemSkill,
+  isSkillSelectableForCaller,
 } from '@/components/chat/variants/aichat/skill-display';
 import type {
   ModelSelectorModelProps,
@@ -19,11 +19,11 @@ import { useAIChatSkills } from '@/hooks/aichat/use-aichat-skills';
 import { useDatasets } from '@/hooks/dataset/use-datasets';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
-import { useMediaQuery } from '@/hooks/use-media-query';
 import { AGENT_KEYS, DATASET_KEYS } from '@/hooks/query-keys';
 import { useLocale } from '@/hooks/use-locale';
 import { useAutoProfile } from '@/hooks/use-profile';
 import { useT } from '@/i18n';
+import { SUGGESTED_QUESTIONS_LIMIT } from '@/constants/suggested-questions';
 import {
   AGENT_PERMISSION_ACTIONS,
   KNOWLEDGE_BASE_READ_PERMISSION_CODES,
@@ -32,6 +32,7 @@ import agentService from '@/services/agent.service';
 import { datasetService } from '@/services';
 import { getTemplateAwareCharacterCount } from '@/components/workflow/common/workflow-value-editor/utils/value-transform';
 import type {
+  AgentDetail,
   AgentDatabaseBinding,
   AgentMemorySlotConfig,
   AgentRuntimeConfig,
@@ -43,7 +44,7 @@ import type { AIChatSkillMetadata } from '@/services/types/aichat';
 import type { Dataset } from '@/services/types/dataset';
 import { getErrorMessage } from '@/utils/error-notifications';
 import type { AgentConfigSection, AgentPublishedVersionListItem } from '../types';
-import { toModelParams, validateAgentMemorySlots } from '../utils';
+import { buildAgentRuntimeSignature, toModelParams, validateAgentMemorySlots } from '../utils';
 import { useAgentRuntimeDraftPersistence } from '../use-agent-runtime-draft-persistence';
 import { useAgentRuntimeLeaveGuard } from '../use-agent-runtime-leave-guard';
 import {
@@ -52,6 +53,7 @@ import {
   type VersionPreviewBackup,
 } from './page-model-utils';
 import { AGENT_SYSTEM_PROMPT_MAX_LENGTH } from '../prompt-limits';
+import { buildAgentRuntimeAIChatContext } from '../aichat-context';
 
 type AgentKnowledgeDataset = Dataset & { load_error?: boolean };
 
@@ -181,6 +183,16 @@ function compactSuggestedQuestionContextRef(value: string, maxLength = 180): str
   return `${text.slice(0, maxLength).trim()}...`;
 }
 
+function isDatasetInWorkspace(dataset: Dataset, workspaceId: string): boolean {
+  if (!workspaceId) return false;
+  const datasetWorkspaceId = dataset.workspace_id || dataset.workspace?.id;
+  return !datasetWorkspaceId || datasetWorkspaceId === workspaceId;
+}
+
+function agentDetailWorkspaceID(agent: AgentDetail | undefined): string {
+  return agent?.workspace?.id || agent?.workspace_id || agent?.tenant?.id || agent?.tenant_id || '';
+}
+
 function buildSuggestedQuestionContextRefs(params: {
   selectedKnowledgeDatasets: AgentKnowledgeDataset[];
   databaseBindings: AgentDatabaseBinding[];
@@ -235,13 +247,22 @@ export function useAgentRuntimePageModel(agentId: string) {
   const { locale } = useLocale();
   const t = useT('agents.agentRuntime');
   const tRoot = useT();
-  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
+  const {
+    permissions,
+    organizationRole,
+    workspaceRole,
+    workspaceRoleName,
+    hasAnyPermission,
+    isLoading: isPermissionsLoading,
+  } = useAccountPermissions();
   const canCreateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.create);
   const canImportAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.import);
   const canUpdateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.update);
   const canConfigureAgentRuntime = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeConfigManage);
   const canPublishAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.publish);
   const canManageAgentRuntimeAccess = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeAccessManage);
+  const canManageAgent =
+    canUpdateAgent || canConfigureAgentRuntime || canPublishAgent || canManageAgentRuntimeAccess;
   const canOpenAgentRuntimeEditor =
     canCreateAgent ||
     canImportAgent ||
@@ -271,6 +292,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   );
   const { models: availableChatModels } = useAvailableModels({ use_case: 'text-chat' });
   const agentDetail = agent?.data;
+  const agentWorkspaceId = agentDetailWorkspaceID(agentDetail);
   const defaultHomeTitle = agentDetail?.name?.trim() || t('defaultHomeTitle');
   const defaultInputPlaceholder = t('defaultInputPlaceholder');
 
@@ -306,7 +328,6 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
   const [publishedVersionsOpen, setPublishedVersionsOpen] = useState(false);
   const [previewSheetOpen, setPreviewSheetOpen] = useState(false);
-  const isTwoXlViewport = useMediaQuery('(min-width: 1536px)');
   const [publishedVersions, setPublishedVersions] = useState<AgentPublishedVersionListItem[]>([]);
   const [isLoadingVersions, setIsLoadingVersions] = useState(false);
   const [isRollingBackVersion, setIsRollingBackVersion] = useState(false);
@@ -323,14 +344,13 @@ export function useAgentRuntimePageModel(agentId: string) {
     memory: true,
   });
   const hydratedAgentIdRef = useRef<string | null>(null);
+  const hydratedConfigSignatureRef = useRef<string | null>(null);
   const versionPreviewBackupRef = useRef<VersionPreviewBackup | null>(null);
 
   const selectableSkills = useMemo(
     () =>
       allSkills.filter(skill => {
-        if (isHiddenSystemSkill(skill.skill_id)) return false;
-        const callers = skill.supported_callers ?? [];
-        return callers.length === 0 || callers.includes('agent');
+        return isSkillSelectableForCaller(skill, 'agent');
       }),
     [allSkills]
   );
@@ -344,8 +364,8 @@ export function useAgentRuntimePageModel(agentId: string) {
     })),
   });
   const { pages: knowledgeDialogPages, isLoading: isKnowledgeDialogDatasetsLoading } = useDatasets(
-    { keyword: knowledgeSearch.trim(), limit: 50 },
-    { enabled: knowledgeDialogOpen && canBindKnowledge }
+    { keyword: knowledgeSearch.trim(), limit: 50, workspace_id: agentWorkspaceId },
+    { enabled: knowledgeDialogOpen && canBindKnowledge && Boolean(agentWorkspaceId) }
   );
   const selectedKnowledgeDatasets = useMemo(() => {
     const byID = new Map<string, AgentKnowledgeDataset>();
@@ -387,6 +407,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     selectedKnowledgeDatasets.forEach(dataset => byID.set(dataset.id, dataset));
     knowledgeDialogPages.flat().forEach(dataset => byID.set(dataset.id, dataset));
     return Array.from(byID.values())
+      .filter(dataset => isDatasetInWorkspace(dataset, agentWorkspaceId))
       .filter(dataset => !showSelectedKnowledgeOnly || knowledgeDatasetIds.includes(dataset.id))
       .sort((left, right) => {
         const leftChecked = knowledgeDatasetIds.includes(left.id);
@@ -395,6 +416,7 @@ export function useAgentRuntimePageModel(agentId: string) {
         return left.name.localeCompare(right.name, locale);
       });
   }, [
+    agentWorkspaceId,
     knowledgeDatasetIds,
     knowledgeDialogPages,
     locale,
@@ -483,7 +505,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       suggested_questions: suggestedQuestions
         .map(item => item.trim())
         .filter(Boolean)
-        .slice(0, 6),
+        .slice(0, SUGGESTED_QUESTIONS_LIMIT),
       knowledge_dataset_ids: knowledgeDatasetIds,
       knowledge_retrieval_config: {},
       database_bindings: databaseBindings,
@@ -510,22 +532,17 @@ export function useAgentRuntimePageModel(agentId: string) {
     () => (
       <AgentHomeBrand
         iconType={agentDetail?.icon_type}
+        icon={agentDetail?.icon}
         iconUrl={agentDetail?.icon_url}
         name={agentDetail?.name}
       />
     ),
-    [agentDetail?.icon_type, agentDetail?.icon_url, agentDetail?.name]
+    [agentDetail?.icon, agentDetail?.icon_type, agentDetail?.icon_url, agentDetail?.name]
   );
 
   useEffect(() => {
     initChatController(null);
   }, [initChatController]);
-
-  useEffect(() => {
-    if (isTwoXlViewport && previewSheetOpen) {
-      setPreviewSheetOpen(false);
-    }
-  }, [isTwoXlViewport, previewSheetOpen]);
 
   const applyRuntimePayload = useCallback((payload: UpdateAgentRuntimeConfigRequest) => {
     setSystemPrompt(payload.system_prompt);
@@ -642,13 +659,31 @@ export function useAgentRuntimePageModel(agentId: string) {
 
   useEffect(() => {
     if (!config || !agentDetail) return;
-    if (hydratedAgentIdRef.current === agentId) return;
 
     const nextPayload = payloadFromRuntimeConfig(config);
+    const nextSignature = `${agentId}:${config.updated_at ?? ''}:${buildAgentRuntimeSignature(nextPayload)}`;
+    if (hydratedConfigSignatureRef.current === nextSignature) return;
+
+    const isFirstHydrationForAgent = hydratedAgentIdRef.current !== agentId;
+    const canApplyServerConfig =
+      isFirstHydrationForAgent || (!isDirty && saveState !== 'saving' && !isVersionPreviewing);
+    if (!canApplyServerConfig) return;
+
     applyRuntimePayload(nextPayload);
     hydratedAgentIdRef.current = agentId;
+    hydratedConfigSignatureRef.current = nextSignature;
     markHydrated(nextPayload, config.updated_at ?? null);
-  }, [agentDetail, agentId, applyRuntimePayload, config, markHydrated, payloadFromRuntimeConfig]);
+  }, [
+    agentDetail,
+    agentId,
+    applyRuntimePayload,
+    config,
+    isDirty,
+    isVersionPreviewing,
+    markHydrated,
+    payloadFromRuntimeConfig,
+    saveState,
+  ]);
 
   useEffect(() => {
     if (!workflowCandidatesResponse) return;
@@ -1035,15 +1070,54 @@ export function useAgentRuntimePageModel(agentId: string) {
 
   const webAppUrl = agentDetail?.web_app_id ? `/webapp/${agentDetail.web_app_id}/chat` : '';
   const isRuntimeConfigReadOnly = isVersionPreviewing || !canConfigureAgentRuntime;
+  const aiChatContext = useMemo(
+    () =>
+      buildAgentRuntimeAIChatContext({
+        agent: agentDetail,
+        locale,
+        payload: currentPayload,
+        promptCharacterCount: systemPromptEffectiveLength,
+        isPromptTooLong: isSystemPromptTooLong,
+        selectedSkills,
+        selectedKnowledgeDatasets,
+        permissions,
+        organizationRole,
+        workspaceRole,
+        workspaceRoleName,
+        canManageAgent,
+        saveState,
+        isDirty,
+        isVersionPreviewing,
+        webAppUrl,
+      }),
+    [
+      agentDetail,
+      canManageAgent,
+      currentPayload,
+      isDirty,
+      isSystemPromptTooLong,
+      isVersionPreviewing,
+      locale,
+      organizationRole,
+      permissions,
+      saveState,
+      selectedKnowledgeDatasets,
+      selectedSkills,
+      systemPromptEffectiveLength,
+      webAppUrl,
+      workspaceRole,
+      workspaceRoleName,
+    ]
+  );
 
   return {
     agentId,
     locale,
     t,
+    aiChatContext,
     isLoading: isAgentLoading || isConfigLoading || isPermissionsLoading,
     canOpenAgentRuntimeEditor,
     leaveGuardNode,
-    isTwoXlViewport,
     previewSheetOpen,
     setPreviewSheetOpen: handlePreviewSheetOpenChange,
     header: {
@@ -1085,6 +1159,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     prompt: {
       readOnly: isRuntimeConfigReadOnly,
       systemPrompt,
+      agentWorkspaceId,
       selectedKnowledgeDatasets,
       selectedSkills,
       databaseBindings,
@@ -1102,6 +1177,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     orchestration: {
       readOnly: isRuntimeConfigReadOnly,
       locale,
+      agentWorkspaceId,
       openSections,
       modelValue,
       homeTitle,

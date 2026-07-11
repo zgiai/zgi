@@ -14,10 +14,16 @@ export interface AIChatSkillDisplayInfo {
 export type AIChatSkillDisplayMap = Record<string, AIChatSkillDisplayInfo>;
 
 const USER_MEMORY_SKILL_ID = 'user-memory';
+const CONSOLE_NAVIGATOR_SKILL_ID = 'console-navigator';
+const FILE_MANAGER_SKILL_ID = 'file-manager';
+const FILE_READER_SKILL_ID = 'file-reader';
+const INTERNAL_KNOWLEDGE_SKILL_ID = 'internal-knowledge';
+const INTERNAL_DATABASE_SKILL_ID = 'internal-database';
 const AGENT_MEMORY_SKILL_ID = 'agent-memory';
 const AGENT_KNOWLEDGE_SKILL_ID = 'agent-knowledge';
 const AGENT_DATABASE_SKILL_ID = 'agent-database';
 const AGENT_WORKFLOW_SKILL_ID = 'agent-workflow';
+const AGENT_MANAGEMENT_SKILL_ID = 'agent-management';
 
 function normalizeSkillId(skillId: string): string {
   return skillId.trim().toLowerCase();
@@ -27,11 +33,32 @@ export function isHiddenSystemSkill(skillId: string): boolean {
   const normalized = normalizeSkillId(skillId);
   return (
     normalized === USER_MEMORY_SKILL_ID ||
+    normalized === CONSOLE_NAVIGATOR_SKILL_ID ||
+    normalized === FILE_MANAGER_SKILL_ID ||
+    normalized === INTERNAL_KNOWLEDGE_SKILL_ID ||
+    normalized === INTERNAL_DATABASE_SKILL_ID ||
     normalized === AGENT_MEMORY_SKILL_ID ||
     normalized === AGENT_KNOWLEDGE_SKILL_ID ||
     normalized === AGENT_DATABASE_SKILL_ID ||
-    normalized === AGENT_WORKFLOW_SKILL_ID
+    normalized === AGENT_WORKFLOW_SKILL_ID ||
+    normalized === AGENT_MANAGEMENT_SKILL_ID
   );
+}
+
+export function isSkillUserSelectable(skill: AIChatSkillMetadata): boolean {
+  if (typeof skill.exposure?.user_selectable === 'boolean') {
+    return skill.exposure.user_selectable;
+  }
+  return !isHiddenSystemSkill(skill.skill_id);
+}
+
+export function isSkillSelectableForCaller(
+  skill: AIChatSkillMetadata,
+  caller: 'aichat' | 'agent'
+): boolean {
+  if (!isSkillUserSelectable(skill)) return false;
+  const callers = skill.supported_callers ?? [];
+  return callers.length === 0 || callers.includes(caller);
 }
 
 type LocalizedText = Record<string, string>;
@@ -85,14 +112,57 @@ const SYSTEM_SKILL_DISPLAY: Record<string, {
     category: 'productivity',
     icon: 'calculator',
   },
+  [FILE_READER_SKILL_ID]: {
+    label: {
+      en_US: 'File Reader',
+      zh_Hans: '文件读取器',
+    },
+    description: {
+      en_US:
+        'Lists visible file context and reads accessible uploaded or console file text without changing file assets.',
+      zh_Hans: '列出当前可见文件，读取用户可访问的上传文件或控制台文件文本，不变更文件资产。',
+    },
+    whenToUse: {
+      en_US:
+        'Use when an answer needs content from a specific file available to the current user.',
+      zh_Hans: '当回答需要读取用户可访问的特定文件内容时使用。',
+    },
+    tags: {
+      en_US: ['File', 'Reading'],
+      zh_Hans: ['文件', '读取'],
+    },
+    category: 'productivity',
+    icon: 'file-text',
+  },
+  [FILE_MANAGER_SKILL_ID]: {
+    label: {
+      en_US: 'File Manager',
+      zh_Hans: '文件管理器',
+    },
+    description: {
+      en_US: 'Performs governed File Management asset operations such as deleting a visible file.',
+      zh_Hans: '执行受治理保护的文件管理操作，例如删除当前可见文件。',
+    },
+    whenToUse: {
+      en_US:
+        'Use when the user explicitly asks to change files in File Management and the target is resolved from page context.',
+      zh_Hans: '当用户明确要求变更文件管理中的文件，并且目标已从页面上下文解析时使用。',
+    },
+    tags: {
+      en_US: ['File', 'Management'],
+      zh_Hans: ['文件', '管理'],
+    },
+    category: 'productivity',
+    icon: 'folder-cog',
+  },
   'file-generator': {
     label: {
       en_US: 'File Generator',
       zh_Hans: '文件生成器',
     },
     description: {
-      en_US: 'Creates downloadable TXT, Markdown, HTML, JSON, CSV, DOCX, XLSX, PDF, and PPTX files.',
-      zh_Hans: '创建可下载的 TXT、Markdown、HTML、JSON、CSV、DOCX、XLSX、PDF 和 PPTX 文件。',
+      en_US: 'Creates downloadable TXT, Markdown, HTML, JSON, CSV, SVG, DOCX, XLSX, PDF, and PPTX files.',
+      zh_Hans: '创建可下载的 TXT、Markdown、HTML、JSON、CSV、SVG、DOCX、XLSX、PDF 和 PPTX 文件。',
     },
     whenToUse: {
       en_US: 'Use when the answer should be delivered as a generated file.',
@@ -104,6 +174,47 @@ const SYSTEM_SKILL_DISPLAY: Record<string, {
     },
     category: 'productivity',
     icon: 'file-plus',
+  },
+  [CONSOLE_NAVIGATOR_SKILL_ID]: {
+    label: {
+      en_US: 'Console Navigator',
+      zh_Hans: '控制台导航',
+    },
+    description: {
+      en_US: 'Routes AIChat to whitelisted internal ZGI console pages without mutating assets.',
+      zh_Hans: '将 AIChat 路由到白名单内的 ZGI 控制台页面，不会变更用户资产。',
+    },
+    whenToUse: {
+      en_US: 'Use when the user asks to open or switch to another ZGI module.',
+      zh_Hans: '当用户要求打开、进入或切换到另一个 ZGI 模块时使用。',
+    },
+    tags: {
+      en_US: ['Navigation', 'Console'],
+      zh_Hans: ['导航', '控制台'],
+    },
+    category: 'productivity',
+    icon: 'route',
+  },
+  [AGENT_MANAGEMENT_SKILL_ID]: {
+    label: {
+      en_US: 'Agent Manager',
+      zh_Hans: '智能体管理器',
+    },
+    description: {
+      en_US: 'Creates, edits, and deletes Agent assets from contextual AIChat with governance.',
+      zh_Hans: '在侧栏 AIChat 中创建、编辑和删除智能体，并通过治理审批保护关键操作。',
+    },
+    whenToUse: {
+      en_US:
+        'Use when the user explicitly asks the AIChat assistant to manage Agent assets or Agent configuration.',
+      zh_Hans: '当用户明确要求 AIChat 管理智能体资产或智能体配置时使用。',
+    },
+    tags: {
+      en_US: ['Agent', 'Management'],
+      zh_Hans: ['智能体', '管理'],
+    },
+    category: 'system',
+    icon: 'bot',
   },
   'work-report-generator': {
     label: {
@@ -332,6 +443,30 @@ const SYSTEM_SKILL_TOOL_LABELS: Record<string, Record<string, Record<string, str
       zh_Hans: '百分比计算',
     },
   },
+  [FILE_READER_SKILL_ID]: {
+    list_visible_files: {
+      en_US: 'List visible files',
+      zh_Hans: '列出可见文件',
+    },
+    read_file: {
+      en_US: 'Read file',
+      zh_Hans: '读取文件',
+    },
+    delete_file: {
+      en_US: 'Delete file',
+      zh_Hans: '删除文件',
+    },
+  },
+  [FILE_MANAGER_SKILL_ID]: {
+    delete_file: {
+      en_US: 'Delete file',
+      zh_Hans: '删除文件',
+    },
+    save_file_to_management: {
+      en_US: 'Save to File Management',
+      zh_Hans: '保存到文件管理',
+    },
+  },
   'file-generator': {
     generate_file: {
       en_US: 'Generate file',
@@ -348,6 +483,90 @@ const SYSTEM_SKILL_TOOL_LABELS: Record<string, Record<string, Record<string, str
     generate_pptx: {
       en_US: 'Generate PowerPoint',
       zh_Hans: '生成 PowerPoint',
+    },
+  },
+  [CONSOLE_NAVIGATOR_SKILL_ID]: {
+    navigate: {
+      en_US: 'Navigate console',
+      zh_Hans: '导航控制台',
+    },
+  },
+  [AGENT_MANAGEMENT_SKILL_ID]: {
+    list_agents: {
+      en_US: 'List agents',
+      zh_Hans: '列出智能体',
+    },
+    get_agent: {
+      en_US: 'Inspect agent',
+      zh_Hans: '查看智能体',
+    },
+    create_agent: {
+      en_US: 'Create agent',
+      zh_Hans: '创建智能体',
+    },
+    update_agent_identity: {
+      en_US: 'Update agent profile',
+      zh_Hans: '更新智能体资料',
+    },
+    delete_agent: {
+      en_US: 'Delete agent',
+      zh_Hans: '删除智能体',
+    },
+    delete_agents: {
+      en_US: 'Delete agents',
+      zh_Hans: '批量删除智能体',
+    },
+    get_agent_config: {
+      en_US: 'Inspect agent config',
+      zh_Hans: '查看智能体配置',
+    },
+    update_agent_config: {
+      en_US: 'Update agent config',
+      zh_Hans: '更新智能体配置',
+    },
+    replace_agent_memory_slots: {
+      en_US: 'Update agent memory slots',
+      zh_Hans: '更新智能体记忆槽',
+    },
+    list_agent_skill_candidates: {
+      en_US: 'List agent skills',
+      zh_Hans: '列出可用 Skill',
+    },
+    list_agent_knowledge_candidates: {
+      en_US: 'List agent knowledge bases',
+      zh_Hans: '列出可用知识库',
+    },
+    list_agent_database_candidates: {
+      en_US: 'List agent databases',
+      zh_Hans: '列出可用数据库',
+    },
+    list_agent_database_tables: {
+      en_US: 'List agent database tables',
+      zh_Hans: '列出智能体数据库表',
+    },
+    list_agent_workflow_binding_candidates: {
+      en_US: 'List agent workflows',
+      zh_Hans: '列出可用工作流',
+    },
+    replace_agent_skill_bindings: {
+      en_US: 'Update agent skills',
+      zh_Hans: '更新智能体 Skill',
+    },
+    replace_agent_knowledge_bindings: {
+      en_US: 'Update agent knowledge bases',
+      zh_Hans: '更新智能体知识库',
+    },
+    replace_agent_database_bindings: {
+      en_US: 'Update agent databases',
+      zh_Hans: '更新智能体数据库',
+    },
+    replace_agent_workflow_bindings: {
+      en_US: 'Update agent workflows',
+      zh_Hans: '更新智能体工作流',
+    },
+    list_available_models: {
+      en_US: 'List available models',
+      zh_Hans: '列出可用模型',
     },
   },
   'work-report-generator': {

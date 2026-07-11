@@ -32,7 +32,7 @@ func NewGeneratePPTXTool(tenantID string) *GeneratePPTXTool {
 				"en_US":   "Generate an editable PPTX presentation from a structured specification.",
 				"zh_Hans": "根据结构化规格生成可编辑的 PPTX 演示文稿。",
 			},
-			LLM: "Generate an editable static PPTX presentation from a JSON presentation specification. Use this when the user asks for PowerPoint, slides, or a presentation deck. Supports text, title, basic table, and simple shape elements; readable content must use non-overlapping boxes. Animations and speaker notes are not supported.",
+			LLM: "Generate an editable static PPTX temporary artifact from a JSON presentation specification. This tool does not write to File Management. When the user asks to save the result into File Management, generate the artifact first and then use file-manager/save_file_to_management. Use this when the user asks for PowerPoint, slides, or a presentation deck. Supports text, title, basic table, and simple shape elements; readable content must use non-overlapping boxes. Animations and speaker notes are not supported.",
 		},
 		Parameters: []tools.ToolParameter{
 			{
@@ -72,11 +72,11 @@ func NewGeneratePPTXTool(tenantID string) *GeneratePPTXTool {
 				Name:             "lifecycle",
 				Label:            tools.I18nText{"en_US": "Lifecycle", "zh_Hans": "生命周期"},
 				HumanDescription: tools.I18nText{"en_US": "Whether the generated file is persistent or temporary.", "zh_Hans": "生成文件是持久保存还是临时保存。"},
-				LLMDescription:   "File lifecycle: persistent or temporary. Defaults to persistent.",
+				LLMDescription:   "Temporary artifact lifecycle: persistent or temporary. Defaults to temporary.",
 				Type:             tools.ToolParameterTypeSelect,
 				Form:             tools.ToolParameterFormLLM,
 				Required:         false,
-				Default:          "persistent",
+				Default:          "temporary",
 				SupportVariable:  true,
 				Options: []tools.ToolParameterOption{
 					{Value: "persistent", Label: tools.I18nText{"en_US": "Persistent", "zh_Hans": "持久保存"}},

@@ -12,25 +12,32 @@ import (
 )
 
 const (
-	EventMessage              = "message"
-	EventMessageRetract       = "message_retract"
-	EventAgentProgress        = "agent_progress"
-	EventIntermediateAnswer   = "agent_intermediate_answer"
-	EventUserInputRequested   = "user_input_requested"
-	EventSkillCallStart       = "skill_call_start"
-	EventSkillCallEnd         = "skill_call_end"
-	EventSkillCallError       = "skill_call_error"
-	EventSkillLoadStart       = "skill_load_start"
-	EventSkillLoadEnd         = "skill_load_end"
-	EventSkillReferenceRead   = "skill_reference_read"
-	EventSkillArtifactCreated = "skill_artifact_created"
-	EventWorkflowStarted      = "workflow_started"
-	EventWorkflowNodeStarted  = "node_started"
-	EventWorkflowNodeFinished = "node_finished"
-	EventWorkflowPaused       = "workflow_paused"
-	EventWorkflowApproval     = "approval_requested"
-	EventWorkflowFinished     = "workflow_finished"
-	EventWorkflowFailed       = "workflow_failed"
+	EventMessage                = "message"
+	EventMessageRetract         = "message_retract"
+	EventAgentProgress          = "agent_progress"
+	EventIntermediateAnswer     = "agent_intermediate_answer"
+	EventUserInputRequested     = "user_input_requested"
+	EventSkillCallStart         = "skill_call_start"
+	EventSkillCallEnd           = "skill_call_end"
+	EventSkillCallError         = "skill_call_error"
+	EventClientActionRequired   = "client_action_required"
+	EventToolGovernanceDecision = "tool_governance_decision"
+	EventSkillLoadStart         = "skill_load_start"
+	EventSkillLoadEnd           = "skill_load_end"
+	EventSkillReferenceRead     = "skill_reference_read"
+	EventSkillArtifactCreated   = "skill_artifact_created"
+	EventWorkflowStarted        = "workflow_started"
+	EventWorkflowNodeStarted    = "node_started"
+	EventWorkflowNodeFinished   = "node_finished"
+	EventWorkflowPaused         = "workflow_paused"
+	EventWorkflowApproval       = "approval_requested"
+	EventWorkflowFinished       = "workflow_finished"
+	EventWorkflowFailed         = "workflow_failed"
+)
+
+const (
+	clientActionContinuationPolicyResumeModel = "resume_model"
+	clientActionContinuationPolicyRecordOnly  = "record_only"
 )
 
 var ErrInvalidInput = errors.New("invalid input")
@@ -65,6 +72,51 @@ func (e *WorkflowQuestionPendingError) Error() string {
 	return fmt.Sprintf("workflow question is pending for run %s", workflowRunID)
 }
 
+type ToolGovernancePendingError struct {
+	Payload map[string]interface{}
+}
+
+func (e *ToolGovernancePendingError) Error() string {
+	if e == nil {
+		return "tool governance approval is pending"
+	}
+	correlationID := stringFromInterface(e.Payload["correlation_id"])
+	if correlationID == "" {
+		return "tool governance approval is pending"
+	}
+	return fmt.Sprintf("tool governance approval is pending for %s", correlationID)
+}
+
+type ClientActionPendingError struct {
+	Payload map[string]interface{}
+}
+
+func (e *ClientActionPendingError) Error() string {
+	if e == nil {
+		return "client action is pending"
+	}
+	actionID := stringFromInterface(e.Payload["action_id"])
+	if actionID == "" {
+		return "client action is pending"
+	}
+	return fmt.Sprintf("client action is pending for %s", actionID)
+}
+
+type UserInputPendingError struct {
+	Payload map[string]interface{}
+}
+
+func (e *UserInputPendingError) Error() string {
+	if e == nil {
+		return "user input is pending"
+	}
+	requestID := stringFromInterface(e.Payload["request_id"])
+	if requestID == "" {
+		return "user input is pending"
+	}
+	return fmt.Sprintf("user input is pending for %s", requestID)
+}
+
 type Event struct {
 	Type    string
 	Payload map[string]interface{}
@@ -82,28 +134,116 @@ type Runner struct {
 }
 
 type RunRequest struct {
-	Prepared                 *PreparedChat
-	Resolved                 *skills.ResolvedSkills
-	ExecutionContext         skills.ExecutionContext
-	AdditionalSystemMessages []adapter.Message
-	OnChunk                  func(string) error
+	Prepared                       *PreparedChat
+	Resolved                       *skills.ResolvedSkills
+	ExecutionContext               skills.ExecutionContext
+	PreferExplicitFinalAnswer      bool
+	SuppressInitialNaturalProgress bool
+	AdditionalSystemMessages       []adapter.Message
+	FinalAnswerGuard               FinalAnswerGuard
+	UserInputGuard                 UserInputGuard
+	ToolCallGuard                  ToolCallGuard
+	PlanToolGuard                  ToolCallGuard
+	ToolArgumentResolver           ToolArgumentResolver
+	CompletionEvidence             CompletionEvidenceFunc
+	CurrentMetadata                func() map[string]interface{}
+	OnTerminalStateGuardDecision   func(TerminalStateGuardDecisionRecord)
+	OnCompletionVerification       func(CompletionVerificationResult)
+	OnChunk                        func(string) error
+}
+
+type TerminalStateGuardDecisionRecord struct {
+	Path     string
+	Reason   string
+	Blockers []string
+}
+
+type FinalAnswerGuard func(FinalAnswerGuardRequest) (FinalAnswerGuardResult, bool)
+
+type UserInputGuard func(UserInputGuardRequest) (FinalAnswerGuardResult, bool)
+
+type ToolCallGuard func(ToolCallGuardRequest) (FinalAnswerGuardResult, bool)
+
+type ToolArgumentResolver func(ToolCallGuardRequest) (map[string]interface{}, bool)
+
+type CompletionEvidenceFunc func() map[string]interface{}
+
+type CompletionVerificationResult struct {
+	Status            string
+	Source            string
+	Reason            string
+	MissingSteps      []string
+	UnsupportedClaims []string
+	NextActionHint    string
+	FinalAnswer       string
+}
+
+type FinalAnswerGuardRequest struct {
+	Answer              string
+	Round               int
+	SkillUsed           bool
+	ToolCallCount       int
+	AttemptedToolCalls  []SkillToolCallRef
+	SuccessfulToolCalls []SkillToolCallRef
+}
+
+type FinalAnswerGuardResult struct {
+	SkillID       string
+	ToolName      string
+	Message       string
+	SystemMessage string
+	Advisory      bool
+}
+
+type UserInputGuardRequest struct {
+	Message             string
+	Questions           []map[string]interface{}
+	Round               int
+	SkillUsed           bool
+	ToolCallCount       int
+	AttemptedToolCalls  []SkillToolCallRef
+	SuccessfulToolCalls []SkillToolCallRef
+}
+
+type ToolCallGuardRequest struct {
+	SkillID             string
+	ToolName            string
+	Arguments           map[string]interface{}
+	Round               int
+	SkillUsed           bool
+	ToolCallCount       int
+	AttemptedToolCalls  []SkillToolCallRef
+	SuccessfulToolCalls []SkillToolCallRef
+}
+
+type SkillToolCallRef struct {
+	SkillID   string
+	ToolName  string
+	Arguments map[string]interface{}
+	Result    map[string]interface{}
 }
 
 type ModelInvocationTrace struct {
-	Phase      string
-	Round      int
-	Streaming  bool
-	StartedAt  time.Time
-	DurationMS int64
-	Request    *adapter.ChatRequest
-	Response   *adapter.Message
-	Usage      *adapter.Usage
-	Error      string
+	Phase              string
+	Round              int
+	Streaming          bool
+	StartedAt          time.Time
+	DurationMS         int64
+	Request            *adapter.ChatRequest
+	Response           *adapter.Message
+	Usage              *adapter.Usage
+	FinishReason       string
+	StreamDoneReceived bool
+	TerminatedBy       string
+	Error              string
 }
 
 type PreparedChat struct {
 	Conversation *Conversation
 	Message      *Message
+	Query        string
+	CurrentRoute string
+	Surface      string
 	parts        *chatParts
 	LLMRequest   *adapter.ChatRequest
 }

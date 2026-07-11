@@ -8,6 +8,7 @@ export { AgentRuntimePromptPanel } from './prompt-panel';
 export { AgentRuntimeVersionPopover } from './published-versions-dialog';
 export { AgentRuntimeSkillDialog } from './skill-dialog';
 export { AgentRuntimeWorkbench } from './workbench';
+export { AgentRuntimeAIChatContextRegistration } from './aichat-context';
 export { useAgentRuntimePageModel } from './hooks/use-agent-runtime-page-model';
 export {
   useAgentRuntimeDraftPersistence,

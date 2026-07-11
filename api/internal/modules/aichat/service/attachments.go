@@ -1,3 +1,6 @@
+//go:build legacy_aichat_service
+// +build legacy_aichat_service
+
 package service
 
 import (
@@ -477,10 +480,24 @@ func (s *service) historicalImageParts(ctx context.Context, bundle *attachmentBu
 }
 
 func (s *service) currentUserContent(parts *chatRequestParts, text string) interface{} {
+	text = userContentWithRuntimeContext(parts, text)
 	if parts == nil || parts.Attachments == nil {
 		return strings.TrimSpace(text)
 	}
 	return multimodal.BuildUserContent(text, parts.Attachments.imageParts())
+}
+
+func userContentWithRuntimeContext(parts *chatRequestParts, text string) string {
+	text = strings.TrimSpace(text)
+	if parts == nil || strings.TrimSpace(parts.RuntimeContext) == "" {
+		return text
+	}
+	var builder strings.Builder
+	builder.WriteString("Transient ZGI page context. Use it only to answer this turn; do not store it as AIChat memory or Agent memory.\n")
+	builder.WriteString(strings.TrimSpace(parts.RuntimeContext))
+	builder.WriteString("\n\nUser request:\n")
+	builder.WriteString(text)
+	return builder.String()
 }
 
 func userContentWithAttachments(query string, attachmentSections string) string {

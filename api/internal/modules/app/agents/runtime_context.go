@@ -552,7 +552,9 @@ func (h *AgentsHandler) failRuntime(c *gin.Context, err error) {
 		response.Fail(c, response.ErrNotFound)
 	case errors.Is(err, runtimeservice.ErrInvalidInput):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
-	case errors.Is(err, runtimeservice.ErrConversationWaitingApproval):
+	case errors.Is(err, runtimeservice.ErrConversationWaitingApproval),
+		errors.Is(err, runtimeservice.ErrConversationWaitingQuestion),
+		errors.Is(err, runtimeservice.ErrConversationWaitingAction):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
 	case errors.Is(err, agentmemory.ErrInvalidInput):
 		response.FailWithMessage(c, response.ErrInvalidParam, err.Error())
@@ -578,6 +580,9 @@ func (h *AgentsHandler) failWebAppRuntime(c *gin.Context, err error) {
 		response.Fail(c, response.ErrWebAppOffline)
 	case errors.Is(err, errAgentWebAppNotPublished):
 		response.Fail(c, response.ErrWebAppNotPublished)
+	case errors.Is(err, errAgentWebAppNotAgentRuntime):
+		logger.DebugContext(c.Request.Context(), "agent webapp runtime request skipped for non-agent runtime", err)
+		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
 	default:
 		logger.ErrorContext(c.Request.Context(), "agent webapp runtime request failed", err)
 		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})

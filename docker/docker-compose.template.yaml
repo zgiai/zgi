@@ -115,6 +115,7 @@ services:
       - ../sandbox/.env
     environment:
       ZGI_SANDBOX_SERVER_PORT: 2660
+      ZGI_SANDBOX_API_KEY: ${ZGI_SANDBOX_API_KEY:-${CODE_EXECUTION_API_KEY:-}}
       ZGI_SANDBOX_DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in docker/.env or your environment}@postgres:5432/${POSTGRES_SANDBOX_DB:-zgi_sandbox}?sslmode=disable
       ZGI_SANDBOX_REDIS_ADDR: redis:6379
       ZGI_SANDBOX_REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in docker/.env or your environment}
@@ -164,6 +165,7 @@ services:
       VECTOR_STORE: ${VECTOR_STORE:-weaviate}
       WEAVIATE_ENDPOINT: ${WEAVIATE_ENDPOINT:-http://weaviate:8080}
       CODE_EXECUTION_ENDPOINT: ${CODE_EXECUTION_ENDPOINT:-http://zgi-sandbox:2660}
+      CODE_EXECUTION_API_KEY: ${CODE_EXECUTION_API_KEY:-}
       PLUGIN_RUNNER_ENABLED: ${PLUGIN_RUNNER_ENABLED:-true}
       PLUGIN_RUNNER_URL: ${PLUGIN_RUNNER_URL:-http://runner:2665}
       MARKETPLACE_API_URL: ${MARKETPLACE_API_URL:-https://market.zgiai.com}

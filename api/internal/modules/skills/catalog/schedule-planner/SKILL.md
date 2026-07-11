@@ -3,6 +3,10 @@ name: schedule-planner
 description: Plan daily, weekly, or project schedules from user goals, tasks, deadlines, availability, priorities, and constraints.
 when_to_use: Use this skill when the user asks to plan a day, arrange a week, schedule tasks, optimize workload, create a study plan, prepare a meeting agenda, or turn tasks and deadlines into a structured timetable.
 runtime_type: prompt
+supported_callers:
+  - aichat
+  - agent
+  - workflow
 max_calls_per_turn: 5
 timeout_seconds: 5
 display:

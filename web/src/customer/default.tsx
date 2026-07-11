@@ -3,15 +3,30 @@
 import * as React from 'react';
 import { usePathname } from 'next/navigation';
 import { Loader2, ShieldAlert } from 'lucide-react';
+import {
+  ContextualAIChatDock,
+  ContextualAIChatProvider,
+  useAIChatContextRegistration,
+  type AIChatContextItem,
+} from '@/components/aichat/contextual';
+import { WorkspaceRequiredState } from '@/components/common/workspace-required-state';
 import { ConsoleHeader, ConsoleSidebar } from '@/components/console/console-shell-entry';
 import { ConsoleMobileSidebar } from '@/components/console/console-sidebar';
-import { WorkspaceRequiredState } from '@/components/common/workspace-required-state';
 import { DashboardMobileSidebar, DashboardSidebar } from '@/components/dashboard/sidebar';
+import { useAvailableModels } from '@/hooks/model/use-model';
+import { useT } from '@/i18n';
 import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import { useJoinedWorkspaces } from '@/hooks/workspace/use-joined-workspaces';
-import { useT } from '@/i18n';
-import { useCurrentWorkspace, useWorkspaceStore } from '@/store/workspace-store';
+import {
+  useCurrentWorkspace,
+  useIsOrganizationMode,
+  useWorkspaceStore,
+} from '@/store/workspace-store';
 import { getConsoleRouteAccess } from '@/routes/access';
+import {
+  createAIChatTraceInstanceId,
+  logAIChatSessionTrace,
+} from '@/components/chat/controllers/aichat/session-trace';
 import type {
   CustomerAdapter,
   CustomerConsoleShellProps,
@@ -19,6 +34,36 @@ import type {
   CustomerSessionBridgeProviderProps,
 } from './types';
 
+function ConsoleModelsPreloader() {
+  useAvailableModels();
+  return null;
+}
+
+function ConsolePageContextRegistration() {
+  const pathname = usePathname();
+  const currentWorkspace = useCurrentWorkspace();
+  const isOrganizationMode = useIsOrganizationMode();
+  const items = React.useMemo<AIChatContextItem[]>(
+    () => [
+      {
+        id: pathname || '/console',
+        type: 'page',
+        title: pathname || '/console',
+        subtitle: 'Console page',
+        metadata: {
+          route: pathname,
+          workspace_id: currentWorkspace?.id,
+          workspace_name: currentWorkspace?.name,
+          organization_mode: isOrganizationMode,
+        },
+      },
+    ],
+    [currentWorkspace?.id, currentWorkspace?.name, isOrganizationMode, pathname]
+  );
+
+  useAIChatContextRegistration(items, { scopeId: 'console-page' });
+  return null;
+}
 function ConsoleAccessDeniedState() {
   const t = useT();
 
@@ -52,6 +97,11 @@ function DefaultConsoleShell({ children }: CustomerConsoleShellProps) {
     isWorkspaceRequired,
   } = useAccountCapabilities();
   const [mobileSidebarOpen, setMobileSidebarOpen] = React.useState(false);
+  const shellInstanceIdRef = React.useRef<string | null>(null);
+  if (!shellInstanceIdRef.current) {
+    shellInstanceIdRef.current = createAIChatTraceInstanceId('console-shell');
+  }
+  const shellInstanceId = shellInstanceIdRef.current;
   const hiddenHeaderPaths: string[] = [];
   const hiddenSidebarPaths = [] as string[];
   const lastPath = pathname.split('/').pop();
@@ -76,9 +126,74 @@ function DefaultConsoleShell({ children }: CustomerConsoleShellProps) {
     routeAccess.scope === 'organization'
       ? !canUseOrganizationScope
       : canUseWorkspaceContext && !isWorkspaceRequired && !canUseWorkspaceScope;
-  const isCapabilityLoading = isCapabilitiesLoading || isCapabilitiesFetching;
+  // Keep the active route mounted during background capability refetches. Chat message
+  // components also observe this query, so treating `isFetching` as initial loading
+  // would abort an in-flight conversation whenever a stale query refreshes.
+  const isCapabilityLoading = isCapabilitiesLoading;
 
   useJoinedWorkspaces({ syncToStore: true });
+
+  React.useEffect(() => {
+    logAIChatSessionTrace('console_shell_mounted', {
+      shellInstanceId,
+      pathname,
+    });
+    return () => {
+      logAIChatSessionTrace('console_shell_unmounted', {
+        shellInstanceId,
+        pathname,
+        unmountStack: new Error('DefaultConsoleShell unmount observer').stack,
+      });
+    };
+  }, [pathname, shellInstanceId]);
+
+  React.useEffect(() => {
+    const contentBranch = isCapabilityLoading
+      ? 'capability_loading'
+      : shouldShowWorkspaceRequired
+        ? 'workspace_required'
+        : shouldShowAccessDenied || (!canRenderOrganizationRoute && !canRenderWorkspaceRoute)
+          ? 'access_denied'
+          : 'children';
+    logAIChatSessionTrace('console_shell_state', {
+      shellInstanceId,
+      pathname,
+      contentBranch,
+      routeScope: routeAccess.scope,
+      contextStatus,
+      currentWorkspaceId: currentWorkspace?.id ?? null,
+      hasActiveWorkspace,
+      isCapabilitiesLoading,
+      isCapabilitiesFetching,
+      isCapabilityLoading,
+      canUseOrganizationScope,
+      canUseWorkspaceScope,
+      isWorkspaceRequired,
+      canUseWorkspaceContext,
+      canRenderOrganizationRoute,
+      canRenderWorkspaceRoute,
+      shouldShowWorkspaceRequired,
+      shouldShowAccessDenied,
+    });
+  }, [
+    canRenderOrganizationRoute,
+    canRenderWorkspaceRoute,
+    canUseOrganizationScope,
+    canUseWorkspaceContext,
+    canUseWorkspaceScope,
+    contextStatus,
+    currentWorkspace?.id,
+    hasActiveWorkspace,
+    isCapabilitiesFetching,
+    isCapabilitiesLoading,
+    isCapabilityLoading,
+    isWorkspaceRequired,
+    pathname,
+    routeAccess.scope,
+    shellInstanceId,
+    shouldShowAccessDenied,
+    shouldShowWorkspaceRequired,
+  ]);
 
   let content = children;
   if (isCapabilityLoading) {
@@ -92,25 +207,30 @@ function DefaultConsoleShell({ children }: CustomerConsoleShellProps) {
   }
 
   return (
-    <div className="flex h-screen min-h-0 flex-col bg-background overflow-hidden">
-      <ConsoleHeader
-        hidden={hiddenHeaderPaths.includes(lastPath || '_')}
-        onToggleMobileSidebar={() => setMobileSidebarOpen(true)}
-      />
-      <div className="flex h-0 grow min-h-0 min-w-0">
-        <ConsoleSidebar hidden={hiddenSidebarPaths.includes(lastPath || '_')} />
-        <main
-          className={
-            usesManagedViewport
-              ? 'h-full min-h-0 min-w-0 w-0 grow overflow-hidden'
-              : 'h-full min-h-0 min-w-0 w-0 grow overflow-auto bg-bg-canvas'
-          }
-        >
-          {content}
-        </main>
+    <ContextualAIChatProvider>
+      <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-background">
+        <ConsoleHeader
+          hidden={hiddenHeaderPaths.includes(lastPath || '_')}
+          onToggleMobileSidebar={() => setMobileSidebarOpen(true)}
+        />
+        <div className="flex h-0 min-h-0 min-w-0 grow">
+          <ConsoleSidebar hidden={hiddenSidebarPaths.includes(lastPath || '_')} />
+          <main
+            className={
+              usesManagedViewport
+                ? 'h-full min-h-0 w-0 min-w-0 grow overflow-hidden'
+                : 'h-full min-h-0 w-0 min-w-0 grow overflow-auto bg-bg-canvas'
+            }
+          >
+            {content}
+          </main>
+          <ContextualAIChatDock />
+        </div>
+        <ConsoleMobileSidebar open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen} />
+        <ConsoleModelsPreloader />
+        <ConsolePageContextRegistration />
       </div>
-      <ConsoleMobileSidebar open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen} />
-    </div>
+    </ContextualAIChatProvider>
   );
 }
 
@@ -118,11 +238,11 @@ function DefaultDashboardShell({ children }: CustomerDashboardShellProps) {
   const [mobileSidebarOpen, setMobileSidebarOpen] = React.useState(false);
 
   return (
-    <div className="flex min-h-screen min-w-0 flex-col bg-background overflow-hidden">
+    <div className="flex min-h-screen min-w-0 flex-col overflow-hidden bg-background">
       <ConsoleHeader onToggleMobileSidebar={() => setMobileSidebarOpen(true)} />
-      <div className="flex h-0 grow min-w-0">
+      <div className="flex h-0 min-w-0 grow">
         <DashboardSidebar />
-        <div className="flex-1 min-w-0 overflow-auto">{children}</div>
+        <div className="min-w-0 flex-1 overflow-auto">{children}</div>
       </div>
       {mobileSidebarOpen ? (
         <DashboardMobileSidebar open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen} />

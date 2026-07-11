@@ -8,6 +8,7 @@ import (
 	"github.com/zgiai/zgi/api/internal/container"
 	"github.com/zgiai/zgi/api/internal/modules/app/workflow/graph_engine"
 	system_service "github.com/zgiai/zgi/api/internal/modules/system/service"
+	agentmanagement_tools "github.com/zgiai/zgi/api/internal/modules/tools/builtin/agentmanagement"
 	workspace_service "github.com/zgiai/zgi/api/internal/modules/workspace/service"
 	"github.com/zgiai/zgi/api/pkg/database"
 	"github.com/zgiai/zgi/api/pkg/storage"
@@ -203,7 +204,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 
 	// ---------- Agent ----------
 	resourcePermissionService := serviceContainer.GetResourcePermissionService()
-	RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), config.Current().TaskQueue.WorkflowTestTaskBackend)
+	agentsService := RegisterAgentsRoutes(v1, db, accountService, tenantService, resourcePermissionService, serviceContainer.GetOrganizationService(), serviceContainer.GetQuotaService(), serviceContainer.GetFileService(), serviceContainer.GetContentExtractor(), serviceContainer.GetLLMClient(), serviceContainer.GetToolEngine(), serviceContainer.GetToolManager(), serviceContainer.GetMemoryService(), serviceContainer.GetGraphFlowService(), serviceContainer.GetPromptService(), serviceContainer.GetDataSourceService(), serviceContainer.GetKnowledgeRetrievalService(), workflowEngineFactory, serviceContainer.GetTaskManager(), serviceContainer.GetTaskHandlerRegistry(), serviceContainer.GetWorkflowTestService(), config.Current().TaskQueue.WorkflowTestTaskBackend)
 
 	// ---------- Prompt Library ----------
 	RegisterPromptRoutes(v1, PromptRouteDeps{
@@ -222,6 +223,13 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		OrganizationService:        serviceContainer.GetOrganizationService(),
 		ConsoleProvider:            serviceContainer.GetConsoleProvider(),
 	})
+	if llmModule != nil && llmModule.LLMModelModule != nil {
+		if err := serviceContainer.GetToolManager().RegisterProvider(agentmanagement_tools.NewProvider(agentsService, serviceContainer.GetOrganizationService(), llmModule.LLMModelModule.AvailableModelsSvc)); err != nil {
+			log.Printf("failed to register agent management tools: %v", err)
+		}
+	} else if err := serviceContainer.GetToolManager().RegisterProvider(agentmanagement_tools.NewProvider(agentsService, serviceContainer.GetOrganizationService(), nil)); err != nil {
+		log.Printf("failed to register agent management tools: %v", err)
+	}
 
 	// ---------- AIChat ----------
 	RegisterAIChatRoutes(v1, AIChatRouteDeps{

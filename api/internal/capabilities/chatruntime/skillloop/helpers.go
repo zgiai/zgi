@@ -1,6 +1,7 @@
 package skillloop
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -8,12 +9,14 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
+const maxInvalidToolArgumentPreviewRunes = 800
+
 func cloneChatRequest(source *adapter.ChatRequest) *adapter.ChatRequest {
 	if source == nil {
 		return &adapter.ChatRequest{}
 	}
 	cloned := *source
-	cloned.Messages = append([]adapter.Message{}, source.Messages...)
+	cloned.Messages = cloneMessagesForProvider(source.Messages)
 	cloned.Stop = append([]string{}, source.Stop...)
 	if source.AdditionalParameters != nil {
 		cloned.AdditionalParameters = copyStringAnyMap(source.AdditionalParameters)
@@ -25,6 +28,37 @@ func cloneChatRequest(source *adapter.ChatRequest) *adapter.ChatRequest {
 		}
 	}
 	return &cloned
+}
+
+func cloneMessagesForProvider(source []adapter.Message) []adapter.Message {
+	if len(source) == 0 {
+		return nil
+	}
+	out := make([]adapter.Message, 0, len(source))
+	for _, message := range source {
+		cloned := message
+		cloned.ToolCalls = normalizeToolCalls(message.ToolCalls)
+		if strings.EqualFold(strings.TrimSpace(cloned.Role), "tool") {
+			cloned.Content = providerSafeToolContent(cloned.Content)
+		}
+		out = append(out, cloned)
+	}
+	return out
+}
+
+func providerSafeToolContent(content interface{}) interface{} {
+	switch typed := content.(type) {
+	case nil:
+		return ""
+	case string:
+		return typed
+	default:
+		encoded, err := json.Marshal(typed)
+		if err == nil {
+			return string(encoded)
+		}
+		return fmt.Sprint(typed)
+	}
 }
 
 func copyStringAnyMap(source map[string]interface{}) map[string]interface{} {
@@ -103,9 +137,125 @@ func normalizeToolCalls(calls []adapter.ToolCall) []adapter.ToolCall {
 		if call.Index == nil {
 			call.Index = &index
 		}
+		if strings.EqualFold(strings.TrimSpace(call.Function.Name), skills.MetaToolFinalAnswer) {
+			call.Function.Arguments = strings.TrimSpace(call.Function.Arguments)
+			if call.Function.Arguments == "" {
+				call.Function.Arguments = "{}"
+			}
+		} else {
+			call.Function.Arguments = normalizeToolCallArguments(call.Function.Arguments)
+		}
 		out = append(out, call)
 	}
 	return out
+}
+
+func normalizeToolCallArguments(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "{}"
+	}
+	if normalized, ok := normalizeJSONObjectString(raw); ok {
+		return normalized
+	}
+	if repaired, changed := repairBareQuotesInJSONString(raw); changed {
+		if normalized, ok := normalizeJSONObjectString(repaired); ok {
+			return normalized
+		}
+	}
+	payload := map[string]interface{}{
+		"_invalid_tool_arguments": true,
+		"error":                   "tool arguments were not valid JSON",
+		"raw_preview":             truncateRunesForHelper(raw, maxInvalidToolArgumentPreviewRunes),
+		"next_action":             "retry the same tool with valid JSON arguments",
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return `{"_invalid_tool_arguments":true,"error":"tool arguments were not valid JSON"}`
+	}
+	return string(encoded)
+}
+
+func normalizeJSONObjectString(raw string) (string, bool) {
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &args); err != nil || args == nil {
+		return "", false
+	}
+	encoded, err := json.Marshal(args)
+	if err != nil {
+		return "", false
+	}
+	return string(encoded), true
+}
+
+func repairBareQuotesInJSONString(raw string) (string, bool) {
+	var builder strings.Builder
+	builder.Grow(len(raw) + 8)
+	inString := false
+	escaped := false
+	changed := false
+	for idx := 0; idx < len(raw); idx++ {
+		ch := raw[idx]
+		if !inString {
+			builder.WriteByte(ch)
+			if ch == '"' {
+				inString = true
+			}
+			continue
+		}
+		if escaped {
+			builder.WriteByte(ch)
+			escaped = false
+			continue
+		}
+		if ch == '\\' {
+			builder.WriteByte(ch)
+			escaped = true
+			continue
+		}
+		if ch == '"' {
+			if quoteLooksLikeJSONStringTerminator(raw, idx) {
+				builder.WriteByte(ch)
+				inString = false
+				continue
+			}
+			builder.WriteByte('\\')
+			builder.WriteByte('"')
+			changed = true
+			continue
+		}
+		builder.WriteByte(ch)
+	}
+	if !changed {
+		return raw, false
+	}
+	return builder.String(), true
+}
+
+func quoteLooksLikeJSONStringTerminator(raw string, quoteIndex int) bool {
+	for idx := quoteIndex + 1; idx < len(raw); idx++ {
+		switch raw[idx] {
+		case ' ', '\t', '\r', '\n':
+			continue
+		case ':', ',', '}', ']':
+			return true
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func truncateRunesForHelper(text string, maxRunes int) string {
+	text = strings.TrimSpace(text)
+	if maxRunes <= 0 || text == "" {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return text
+	}
+	return string(runes[:maxRunes]) + "..."
 }
 
 func maxBusinessToolCalls(resolved *skills.ResolvedSkills) int {

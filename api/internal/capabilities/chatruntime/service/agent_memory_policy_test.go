@@ -474,7 +474,7 @@ func TestAgenticSkillLoopSystemMessageKeepsVisibleSkillFlow(t *testing.T) {
 		t.Fatalf("agentic skill loop content type = %T, want string", msg.Content)
 	}
 	assertContains(t, content, "When using skills or tools")
-	assertContains(t, content, "summarize what happened")
+	assertContains(t, content, "Summarize only user-relevant outcomes")
 	assertNotContains(t, content, "agent-memory")
 }
 

@@ -10,6 +10,7 @@ import {
   type ChangeEvent,
   type ClipboardEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from 'react';
 import dynamic from 'next/dynamic';
 import { toast } from 'sonner';
@@ -27,19 +28,20 @@ import { cn } from '@/lib/utils';
 import { uploadService } from '@/services/upload.service';
 import type { FileItem } from '@/services/types/file';
 import type { AIChatMessageFile, AIChatUserInputRequest } from '@/services/types/aichat';
+import type { AIChatToolGovernancePermissionTier } from '@/components/aichat/contextual/types';
+import {
+  createAIChatSendTraceContext,
+  logAIChatSessionTrace,
+  type AIChatSendTraceContext,
+  type AIChatSendTraceSource,
+} from '@/components/chat/controllers/aichat/session-trace';
 import {
   IMAGE_EXTENSIONS,
   buildFileInputAcceptAttribute,
   filterLowercaseExtensions,
   formatExtensionsForDisplay,
 } from '@/utils/file-helpers';
-import {
-  ChevronLeft,
-  ChevronRight,
-  ExternalLink,
-  HelpCircle,
-  Loader2,
-} from 'lucide-react';
+import { ChevronLeft, ChevronRight, ExternalLink, HelpCircle, Loader2 } from 'lucide-react';
 import {
   AIChatAttachmentStrip,
   AIChatDragUploadOverlay,
@@ -68,6 +70,13 @@ import type {
   AIChatWorkflowApprovalRequest,
   AIChatWorkflowApprovalSubmitPayload,
 } from '@/components/chat/variants/aichat/types';
+import {
+  isToolGovernancePendingApprovalDismissed,
+  ToolGovernanceApprovalPanel,
+  useActiveToolGovernancePendingApproval,
+  useToolGovernancePendingApprovalScope,
+  type ToolGovernancePendingApproval,
+} from '@/components/chat/variants/aichat/tool-governance-decision-card';
 
 export type AIChatUploadScope = { type: 'console' } | { type: 'webapp'; webAppId: string };
 
@@ -84,6 +93,8 @@ const COMPOSER_TEXTAREA_EXPANDED_MIN_HEIGHT = 360;
 const COMPOSER_TEXTAREA_EXPANDED_MAX_HEIGHT = 720;
 const COMPOSER_TEXTAREA_EXPANDED_VIEWPORT_RATIO = 0.72;
 const COMPOSER_EXPAND_VISIBLE_LINE_COUNT = 4;
+// Some IMEs emit a non-composing Enter immediately after compositionend.
+const COMPOSITION_END_ENTER_GRACE_MS = 100;
 
 function getComposerExpandedMaxHeight(): number {
   if (typeof window === 'undefined') return COMPOSER_TEXTAREA_EXPANDED_MAX_HEIGHT;
@@ -192,7 +203,11 @@ interface AIChatInputAreaProps {
   canStop?: boolean;
   isStopping: boolean;
   onInputChange: (value: string) => void;
-  onSend: (files: AIChatMessageFile[], useMemory: boolean) => boolean | Promise<boolean>;
+  onSend: (
+    files: AIChatMessageFile[],
+    useMemory: boolean,
+    debugContext?: AIChatSendTraceContext
+  ) => boolean | Promise<boolean>;
   activeUserInputRequest?: AIChatUserInputRequest | null;
   onUserInputRequestSubmit?: (
     query: string,
@@ -215,6 +230,41 @@ interface AIChatInputAreaProps {
   allowWorkspaceSwitch?: boolean;
   inputPlaceholder?: string;
   surface?: AIChatComposerSurface;
+  topAccessory?: ReactNode;
+  showToolGovernancePermissionControl?: boolean;
+  toolGovernancePermissionTier?: AIChatToolGovernancePermissionTier;
+  onToolGovernancePermissionTierChange?: (tier: AIChatToolGovernancePermissionTier) => void;
+  enableToolGovernanceApprovals?: boolean;
+  activeConversationId?: string | null;
+  activeToolGovernanceMessageId?: string | null;
+  activeToolGovernanceApprovalFallback?: ToolGovernancePendingApproval | null;
+}
+
+function ToolGovernancePendingApprovalBridge({
+  enabled,
+  onApprovalChange,
+}: {
+  enabled: boolean;
+  onApprovalChange: (approval: ToolGovernancePendingApproval | null) => void;
+}) {
+  if (!enabled) return null;
+  return <ActiveToolGovernancePendingApprovalBridge onApprovalChange={onApprovalChange} />;
+}
+
+function ActiveToolGovernancePendingApprovalBridge({
+  onApprovalChange,
+}: {
+  onApprovalChange: (approval: ToolGovernancePendingApproval | null) => void;
+}) {
+  const approval = useActiveToolGovernancePendingApproval();
+
+  useEffect(() => {
+    onApprovalChange(approval);
+  }, [approval, onApprovalChange]);
+
+  useEffect(() => () => onApprovalChange(null), [onApprovalChange]);
+
+  return null;
 }
 
 /**
@@ -255,6 +305,14 @@ export function AIChatInputArea({
   allowWorkspaceSwitch = false,
   inputPlaceholder,
   surface = 'aichat',
+  topAccessory,
+  showToolGovernancePermissionControl = false,
+  toolGovernancePermissionTier = 'basic',
+  onToolGovernancePermissionTierChange,
+  enableToolGovernanceApprovals = false,
+  activeConversationId = null,
+  activeToolGovernanceMessageId = null,
+  activeToolGovernanceApprovalFallback = null,
 }: AIChatInputAreaProps) {
   const t = useT('webapp');
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -263,6 +321,8 @@ export function AIChatInputArea({
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const dragDepthRef = useRef(0);
   const isComposingRef = useRef(false);
+  const ignoreEnterAfterCompositionRef = useRef(false);
+  const compositionEndTimerRef = useRef<number | null>(null);
   const [attachments, setAttachments] = useState<AIChatInputAttachment[]>([]);
   const [isFileSelectorOpen, setIsFileSelectorOpen] = useState(false);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
@@ -275,8 +335,10 @@ export function AIChatInputArea({
   const [isComposerOverflowing, setIsComposerOverflowing] = useState(false);
   const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
-  const [ignoredUserInputRequestKey, setIgnoredUserInputRequestKey] = useState<string | null>(null);
   const [submittedApprovalAction, setSubmittedApprovalAction] = useState<string | null>(null);
+  const [activeToolGovernanceApproval, setActiveToolGovernanceApproval] =
+    useState<ToolGovernancePendingApproval | null>(null);
+  const toolGovernancePendingApprovalScopeId = useToolGovernancePendingApprovalScope();
   const activeApprovalForm = activeWorkflowApprovalRequest?.approvalForm ?? null;
   const approvalFormQuery = useApprovalForm(
     activeWorkflowApprovalRequest?.approvalToken,
@@ -286,6 +348,71 @@ export function AIChatInputArea({
   const approvalSubmitMutation = useSubmitApprovalForm(
     activeWorkflowApprovalRequest?.approvalToken
   );
+
+  const clearCompositionEndGuard = useCallback(() => {
+    if (compositionEndTimerRef.current !== null) {
+      window.clearTimeout(compositionEndTimerRef.current);
+      compositionEndTimerRef.current = null;
+    }
+    ignoreEnterAfterCompositionRef.current = false;
+  }, []);
+
+  const handleCompositionStart = useCallback(
+    (inputKind: 'composer' | 'question') => {
+      clearCompositionEndGuard();
+      isComposingRef.current = true;
+      logAIChatSessionTrace('composition_start', {
+        inputKind,
+        surface,
+        isHome,
+        activeConversationId,
+      });
+    },
+    [activeConversationId, clearCompositionEndGuard, isHome, surface]
+  );
+
+  const handleCompositionEnd = useCallback(
+    (inputKind: 'composer' | 'question') => {
+      isComposingRef.current = false;
+      ignoreEnterAfterCompositionRef.current = true;
+      if (compositionEndTimerRef.current !== null) {
+        window.clearTimeout(compositionEndTimerRef.current);
+      }
+      compositionEndTimerRef.current = window.setTimeout(() => {
+        compositionEndTimerRef.current = null;
+        ignoreEnterAfterCompositionRef.current = false;
+      }, COMPOSITION_END_ENTER_GRACE_MS);
+      logAIChatSessionTrace('composition_end', {
+        inputKind,
+        surface,
+        isHome,
+        activeConversationId,
+        graceMs: COMPOSITION_END_ENTER_GRACE_MS,
+      });
+    },
+    [activeConversationId, isHome, surface]
+  );
+
+  const shouldIgnoreCompositionEnter = useCallback(
+    (event: KeyboardEvent<HTMLElement>) => {
+      if (isComposingRef.current || isComposingEnterEvent(event)) {
+        return true;
+      }
+      if (!ignoreEnterAfterCompositionRef.current) {
+        return false;
+      }
+
+      clearCompositionEndGuard();
+      event.preventDefault();
+      return true;
+    },
+    [clearCompositionEndGuard]
+  );
+
+  useEffect(() => {
+    return () => clearCompositionEndGuard();
+  }, [clearCompositionEndGuard]);
+
   const { data: uploadConfig } = useUploadConfig({
     enabled: enableUpload,
     scope: uploadScope.type === 'webapp' ? uploadScope : undefined,
@@ -330,10 +457,7 @@ export function AIChatInputArea({
     [allSelectableExtensions]
   );
   const uploadedFiles = useMemo(() => getUploadedAIChatFiles(attachments), [attachments]);
-  const composerLineCount = useMemo(
-    () => Math.max(1, input.split(/\r\n|\r|\n/).length),
-    [input]
-  );
+  const composerLineCount = useMemo(() => Math.max(1, input.split(/\r\n|\r|\n/).length), [input]);
   const showComposerExpandButton =
     isComposerExpanded ||
     isComposerOverflowing ||
@@ -355,9 +479,42 @@ export function AIChatInputArea({
       activeQuestions.map(question => question.id || question.question).join('|'),
     [activeQuestions, activeUserInputRequest?.request_id]
   );
-  const hasActiveUserInputRequest =
-    activeQuestions.length > 0 && ignoredUserInputRequestKey !== requestKey;
+  const hasActiveUserInputRequest = activeQuestions.length > 0;
   const hasActiveWorkflowApprovalRequest = Boolean(activeWorkflowApprovalRequest?.approvalToken);
+  const isCurrentToolGovernanceApproval = useCallback(
+    (approval: ToolGovernancePendingApproval | null) => {
+      if (!approval) return false;
+      if (!activeConversationId || !activeToolGovernanceMessageId) return true;
+      return (
+        approval.conversationId === activeConversationId &&
+        approval.messageId === activeToolGovernanceMessageId
+      );
+    },
+    [activeConversationId, activeToolGovernanceMessageId]
+  );
+  const visibleActiveToolGovernanceApproval =
+    activeToolGovernanceApproval &&
+    isCurrentToolGovernanceApproval(activeToolGovernanceApproval) &&
+    !isToolGovernancePendingApprovalDismissed(
+      activeToolGovernanceApproval.id,
+      toolGovernancePendingApprovalScopeId
+    )
+      ? activeToolGovernanceApproval
+      : null;
+  const visibleFallbackToolGovernanceApproval =
+    activeToolGovernanceApprovalFallback &&
+    isCurrentToolGovernanceApproval(activeToolGovernanceApprovalFallback) &&
+    !isToolGovernancePendingApprovalDismissed(
+      activeToolGovernanceApprovalFallback.id,
+      toolGovernancePendingApprovalScopeId
+    )
+      ? activeToolGovernanceApprovalFallback
+      : null;
+  const effectiveToolGovernanceApproval = enableToolGovernanceApprovals
+    ? (visibleFallbackToolGovernanceApproval ?? visibleActiveToolGovernanceApproval)
+    : null;
+  const hasActiveToolGovernanceApproval = Boolean(effectiveToolGovernanceApproval);
+  const hasBlockingApproval = hasActiveWorkflowApprovalRequest || hasActiveToolGovernanceApproval;
   const activeQuestion = hasActiveUserInputRequest
     ? activeQuestions[Math.min(activeQuestionIndex, activeQuestions.length - 1)]
     : undefined;
@@ -369,8 +526,6 @@ export function AIChatInputArea({
     Boolean(onUserInputRequestSubmit) &&
     Boolean(activeQuestion) &&
     Boolean(activeQuestionAnswer.trim()) &&
-    !modelMissing &&
-    !isModelInitializing &&
     !isUploading &&
     !hasUploadError &&
     !isSending;
@@ -378,12 +533,17 @@ export function AIChatInputArea({
   useEffect(() => {
     setQuestionAnswers({});
     setActiveQuestionIndex(0);
-    setIgnoredUserInputRequestKey(null);
   }, [requestKey]);
 
   useEffect(() => {
     setSubmittedApprovalAction(null);
   }, [activeWorkflowApprovalRequest?.approvalToken]);
+
+  useEffect(() => {
+    if (!enableToolGovernanceApprovals) {
+      setActiveToolGovernanceApproval(null);
+    }
+  }, [enableToolGovernanceApprovals]);
 
   const questionKeyForIndex = useCallback(
     (index: number) => activeQuestions[index]?.id || `q${index + 1}`,
@@ -485,11 +645,6 @@ export function AIChatInputArea({
       questionKeyForIndex,
     ]
   );
-
-  const handleIgnoreUserInputRequest = useCallback(() => {
-    setIgnoredUserInputRequestKey(requestKey);
-    setActiveQuestionIndex(0);
-  }, [requestKey]);
 
   const handlePreviousQuestion = useCallback(() => {
     setActiveQuestionIndex(index => Math.max(index - 1, 0));
@@ -765,18 +920,67 @@ export function AIChatInputArea({
     [allSelectableExtensions, allowedExtensions, canUseImage, imageExtensions, surface, t]
   );
 
-  const handleSend = useCallback(async () => {
-    if (!input.trim() || isPreparingSend || isUploading || hasUploadError) return;
-    setIsPreparingSend(true);
-    try {
-      const sent = await onSend(uploadedFiles, useMemory);
-      if (sent !== false) {
-        setAttachments([]);
+  const handleSend = useCallback(
+    async (source: AIChatSendTraceSource, existingContext?: AIChatSendTraceContext) => {
+      const debugContext = existingContext ?? createAIChatSendTraceContext(source);
+      const blockedBy = [
+        !input.trim() ? 'empty_input' : null,
+        isPreparingSend ? 'preparing_send' : null,
+        isUploading ? 'uploading' : null,
+        hasUploadError ? 'upload_error' : null,
+      ].filter((reason): reason is string => Boolean(reason));
+      logAIChatSessionTrace(
+        'input_send_requested',
+        {
+          surface,
+          isHome,
+          activeConversationId,
+          inputLength: input.length,
+          trimmedInputLength: input.trim().length,
+          attachmentCount: uploadedFiles.length,
+          isPreparingSend,
+          isUploading,
+          hasUploadError,
+          blockedBy,
+        },
+        debugContext
+      );
+      if (blockedBy.length > 0) {
+        logAIChatSessionTrace('input_send_blocked', { blockedBy }, debugContext);
+        return;
       }
-    } finally {
-      setIsPreparingSend(false);
-    }
-  }, [hasUploadError, input, isPreparingSend, isUploading, onSend, uploadedFiles, useMemory]);
+
+      setIsPreparingSend(true);
+      try {
+        const sent = await onSend(uploadedFiles, useMemory, debugContext);
+        logAIChatSessionTrace('input_send_completed', { sent }, debugContext);
+        if (sent !== false) {
+          setAttachments([]);
+        }
+      } catch (error) {
+        logAIChatSessionTrace(
+          'input_send_failed',
+          { error: error instanceof Error ? error.message : String(error) },
+          debugContext
+        );
+        throw error;
+      } finally {
+        setIsPreparingSend(false);
+      }
+    },
+    [
+      activeConversationId,
+      hasUploadError,
+      input,
+      isHome,
+      isPreparingSend,
+      isUploading,
+      onSend,
+      surface,
+      uploadedFiles,
+      useMemory,
+    ]
+  );
 
   const handleWorkflowApprovalSubmit = useCallback(
     async (payload: { inputs: Record<string, unknown>; action: string }) => {
@@ -939,7 +1143,11 @@ export function AIChatInputArea({
 
   return (
     <>
-      {enableUpload && !hasActiveWorkflowApprovalRequest && isDraggingFiles ? (
+      <ToolGovernancePendingApprovalBridge
+        enabled={enableToolGovernanceApprovals}
+        onApprovalChange={setActiveToolGovernanceApproval}
+      />
+      {enableUpload && !hasBlockingApproval && isDraggingFiles ? (
         <AIChatDragUploadOverlay
           isSending={isSending}
           isUploading={isUploading}
@@ -969,10 +1177,13 @@ export function AIChatInputArea({
                 : 'max-w-4xl'
           )}
         >
-          {modelMissing && !hasActiveWorkflowApprovalRequest ? (
+          {modelMissing && !hasBlockingApproval && !hasActiveUserInputRequest ? (
             <div className="pointer-events-auto mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
               {t('consoleChat.modelRequired')}
             </div>
+          ) : null}
+          {!hasBlockingApproval && topAccessory ? (
+            <div className="pointer-events-auto mb-2">{topAccessory}</div>
           ) : null}
           <div className="pointer-events-auto rounded-2xl border bg-background p-2 shadow-sm focus-within:border-primary/40">
             {hasActiveWorkflowApprovalRequest && activeWorkflowApprovalRequest ? (
@@ -1020,6 +1231,8 @@ export function AIChatInputArea({
                   </div>
                 )}
               </div>
+            ) : hasActiveToolGovernanceApproval && effectiveToolGovernanceApproval ? (
+              <ToolGovernanceApprovalPanel approval={effectiveToolGovernanceApproval} />
             ) : hasActiveUserInputRequest && activeQuestion ? (
               <div className="mb-2 rounded-xl border bg-muted/30 px-3 py-3">
                 <div className="mb-3 flex items-start gap-2 text-sm">
@@ -1042,6 +1255,11 @@ export function AIChatInputArea({
                   </div>
                 </div>
                 <div className="space-y-3">
+                  {activeUserInputRequest?.message?.trim() ? (
+                    <div className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
+                      {activeUserInputRequest.message.trim()}
+                    </div>
+                  ) : null}
                   <div className="text-sm font-medium text-foreground">
                     {activeQuestion.question}
                   </div>
@@ -1083,17 +1301,40 @@ export function AIChatInputArea({
                     }
                     onKeyDown={event => {
                       if (event.key === 'Enter') {
-                        if (isComposingRef.current || isComposingEnterEvent(event)) return;
+                        const debugContext = createAIChatSendTraceContext('keyboard');
+                        const nativeEvent = event.nativeEvent as globalThis.KeyboardEvent & {
+                          isComposing?: boolean;
+                        };
+                        const compositionState = {
+                          refIsComposing: isComposingRef.current,
+                          nativeIsComposing: nativeEvent.isComposing === true,
+                          keyCode: event.keyCode,
+                          ignoreAfterComposition: ignoreEnterAfterCompositionRef.current,
+                        };
+                        logAIChatSessionTrace(
+                          'question_enter_keydown',
+                          {
+                            ...compositionState,
+                            repeat: event.repeat,
+                            eventTargetTag: event.currentTarget.tagName,
+                            activeConversationId,
+                          },
+                          debugContext
+                        );
+                        if (shouldIgnoreCompositionEnter(event)) {
+                          logAIChatSessionTrace(
+                            'question_enter_ignored',
+                            compositionState,
+                            debugContext
+                          );
+                          return;
+                        }
                         event.preventDefault();
                         handleSubmitCurrentQuestion();
                       }
                     }}
-                    onCompositionStart={() => {
-                      isComposingRef.current = true;
-                    }}
-                    onCompositionEnd={() => {
-                      isComposingRef.current = false;
-                    }}
+                    onCompositionStart={() => handleCompositionStart('question')}
+                    onCompositionEnd={() => handleCompositionEnd('question')}
                     placeholder={t('consoleChat.userInputRequest.freeAnswerPlaceholder')}
                     className="h-9 w-full rounded-md border bg-background px-2.5 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary/50"
                     disabled={isSending}
@@ -1124,15 +1365,6 @@ export function AIChatInputArea({
                     >
                       <ChevronRight className="size-4" />
                     </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="rounded-md text-muted-foreground"
-                      onClick={handleIgnoreUserInputRequest}
-                    >
-                      {t('consoleChat.userInputRequest.ignore')}
-                    </Button>
                   </div>
                   <Button
                     type="button"
@@ -1148,7 +1380,7 @@ export function AIChatInputArea({
                 </div>
               </div>
             ) : null}
-            {!hasActiveWorkflowApprovalRequest && !hasActiveUserInputRequest ? (
+            {!hasBlockingApproval && !hasActiveUserInputRequest ? (
               <>
                 <AIChatAttachmentStrip
                   attachments={attachments}
@@ -1167,15 +1399,47 @@ export function AIChatInputArea({
                     rows={1}
                     onChange={handleComposerInputChange}
                     onPaste={handlePaste}
-                    onCompositionStart={() => {
-                      isComposingRef.current = true;
-                    }}
-                    onCompositionEnd={() => {
-                      isComposingRef.current = false;
-                    }}
+                    onCompositionStart={() => handleCompositionStart('composer')}
+                    onCompositionEnd={() => handleCompositionEnd('composer')}
                     onKeyDown={event => {
                       if (event.key === 'Enter' && !event.shiftKey) {
-                        if (isComposingRef.current || isComposingEnterEvent(event)) return;
+                        const debugContext = createAIChatSendTraceContext('keyboard');
+                        const nativeEvent = event.nativeEvent as globalThis.KeyboardEvent & {
+                          isComposing?: boolean;
+                        };
+                        const compositionState = {
+                          refIsComposing: isComposingRef.current,
+                          nativeIsComposing: nativeEvent.isComposing === true,
+                          keyCode: event.keyCode,
+                          ignoreAfterComposition: ignoreEnterAfterCompositionRef.current,
+                        };
+                        logAIChatSessionTrace(
+                          'composer_enter_keydown',
+                          {
+                            ...compositionState,
+                            repeat: event.repeat,
+                            defaultPrevented: event.defaultPrevented,
+                            eventTargetTag: event.currentTarget.tagName,
+                            surface,
+                            isHome,
+                            activeConversationId,
+                            inputLength: input.length,
+                            isSending,
+                            isPreparingSend,
+                            isModelInitializing,
+                            isUploading,
+                            hasUploadError,
+                          },
+                          debugContext
+                        );
+                        if (shouldIgnoreCompositionEnter(event)) {
+                          logAIChatSessionTrace(
+                            'composer_enter_ignored',
+                            compositionState,
+                            debugContext
+                          );
+                          return;
+                        }
                         if (
                           isSending ||
                           isPreparingSend ||
@@ -1183,10 +1447,26 @@ export function AIChatInputArea({
                           isUploading ||
                           hasUploadError
                         ) {
+                          logAIChatSessionTrace(
+                            'composer_enter_blocked',
+                            {
+                              isSending,
+                              isPreparingSend,
+                              isModelInitializing,
+                              isUploading,
+                              hasUploadError,
+                            },
+                            debugContext
+                          );
                           return;
                         }
                         event.preventDefault();
-                        void handleSend();
+                        logAIChatSessionTrace(
+                          'composer_enter_accepted',
+                          { activeConversationId },
+                          debugContext
+                        );
+                        void handleSend('keyboard', debugContext);
                       }
                     }}
                     placeholder={inputPlaceholder || t('chat.enterCommand')}
@@ -1227,7 +1507,7 @@ export function AIChatInputArea({
               accept={buildFileInputAcceptAttribute(imageExtensions)}
               onChange={event => handleFilesSelected(event, 'image')}
             />
-            {!hasActiveWorkflowApprovalRequest ? (
+            {!hasBlockingApproval ? (
               <AIChatInputToolbar
                 modelSelectorValue={modelSelectorValue}
                 isModelInitializing={isModelInitializing}
@@ -1248,10 +1528,11 @@ export function AIChatInputArea({
                 imageExtensions={imageExtensions}
                 showModelSelector={showModelSelector}
                 showMemoryToggle={showMemoryToggle}
-                showComposerExpandButton={
-                  !hasActiveUserInputRequest && showComposerExpandButton
-                }
+                showComposerExpandButton={!hasActiveUserInputRequest && showComposerExpandButton}
                 isComposerExpanded={isComposerExpanded}
+                showToolGovernancePermissionControl={showToolGovernancePermissionControl}
+                toolGovernancePermissionTier={toolGovernancePermissionTier}
+                onToolGovernancePermissionTierChange={onToolGovernancePermissionTierChange}
                 enableUpload={!hasActiveUserInputRequest && enableUpload}
                 showFileLibraryPicker={showFileLibraryPicker}
                 surface={surface}
@@ -1262,7 +1543,7 @@ export function AIChatInputArea({
                 onSelectFromFiles={() => setIsFileSelectorOpen(true)}
                 onMemoryEnabledChange={setUseMemory}
                 onToggleComposerExpanded={() => setIsComposerExpanded(current => !current)}
-                onSend={handleSend}
+                onSend={() => void handleSend('button')}
                 onStop={onStop}
               />
             ) : null}

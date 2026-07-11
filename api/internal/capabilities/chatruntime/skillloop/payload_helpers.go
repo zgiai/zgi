@@ -39,3 +39,17 @@ func stringFromAny(value interface{}) string {
 		return ""
 	}
 }
+
+func payloadMap(source map[string]interface{}, key string) map[string]interface{} {
+	if source == nil {
+		return nil
+	}
+	value, ok := source[key]
+	if !ok || value == nil {
+		return nil
+	}
+	if mapped, ok := value.(map[string]interface{}); ok {
+		return mapped
+	}
+	return nil
+}

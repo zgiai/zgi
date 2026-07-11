@@ -31,6 +31,7 @@ const (
 	staleActiveMessageError  = "stream interrupted before completion"
 	streamEventsExpiredError = "stream events expired"
 	titleGenerationTimeout   = 15 * time.Second
+	runtimeContextMaxRunes   = 8000
 
 	streamEventMessageStart         = "message_start"
 	streamEventMessage              = "message"
@@ -46,6 +47,7 @@ const (
 	streamEventSkillCallStart       = "skill_call_start"
 	streamEventSkillCallEnd         = "skill_call_end"
 	streamEventSkillCallError       = "skill_call_error"
+	streamEventClientActionRequired = "client_action_required"
 	streamEventSkillLoadStart       = "skill_load_start"
 	streamEventSkillLoadEnd         = "skill_load_end"
 	streamEventSkillReferenceRead   = "skill_reference_read"
@@ -62,8 +64,17 @@ const (
 var defaultSystemSkillIDs = []string{
 	skills.SkillTime,
 	skills.SkillCalculator,
+	skills.SkillConsoleNavigator,
 	skills.SkillFileGenerator,
+	skills.SkillFileManager,
+	skills.SkillFileReader,
 }
+
+const (
+	aiChatSurfaceWorkChat          = "work_chat"
+	aiChatSurfaceContextualSidebar = "contextual_sidebar"
+	aiChatSurfaceExternalPageChat  = "external_page_chat"
+)
 
 type Scope struct {
 	OrganizationID    uuid.UUID
@@ -143,7 +154,9 @@ type Service interface {
 	CreateConversationForCaller(ctx context.Context, scope Scope, caller Caller, title string) (*runtimemodel.Conversation, error)
 	ListConversations(ctx context.Context, scope Scope, page, limit int) ([]*runtimemodel.Conversation, int64, error)
 	ListConversationsByCaller(ctx context.Context, scope Scope, caller Caller, page, limit int) ([]*runtimemodel.Conversation, int64, error)
+	ListConversationsBySurface(ctx context.Context, scope Scope, surface string, page, limit int) ([]*runtimemodel.Conversation, int64, error)
 	Search(ctx context.Context, scope Scope, query string, limit int) ([]*SearchResult, error)
+	SearchBySurface(ctx context.Context, scope Scope, surface string, query string, limit int) ([]*SearchResult, error)
 	SearchByCaller(ctx context.Context, scope Scope, caller Caller, query string, limit int) ([]*SearchResult, error)
 	GetConversation(ctx context.Context, scope Scope, id uuid.UUID) (*runtimemodel.Conversation, error)
 	GetConversationByCaller(ctx context.Context, scope Scope, caller Caller, id uuid.UUID) (*runtimemodel.Conversation, error)
@@ -170,6 +183,10 @@ type Service interface {
 	RunPreparedStream(ctx context.Context, prepared *PreparedChat, onChunk func(string) error, onEvent ...func(StreamEvent) error) (*ChatResult, error)
 	StreamConversationEvents(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, afterID string, onEvent func(StreamEvent) error) error
 	StreamConversationEventsForCaller(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID, afterID string, onEvent func(StreamEvent) error) error
+	SubmitToolGovernanceDecision(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, correlationID string, req runtimedto.ToolGovernanceDecisionRequest) (*runtimedto.ToolGovernanceDecisionResponse, error)
+	RunToolGovernanceDecisionStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, correlationID string, req runtimedto.ToolGovernanceDecisionRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
+	RunClientActionContinuationStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, actionID string, req runtimedto.ClientActionResultRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
+	RunUserInputContinuationStream(ctx context.Context, scope Scope, conversationID, messageID uuid.UUID, requestID string, req runtimedto.UserInputContinuationRequest, onEvent func(StreamEvent) error) (*ChatResult, error)
 	BeginWorkflowApprovalContinuation(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID) (*WorkflowApprovalContinuation, error)
 	RecordWorkflowApprovalContinuationEvent(ctx context.Context, continuation *WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (*StreamEvent, error)
 	AppendWorkflowApprovalContinuationStreamEvent(ctx context.Context, continuation *WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (*StreamEvent, error)
@@ -260,11 +277,16 @@ func NewServiceWithSkillRuntime(
 	workspacePerms WorkspacePermissionService,
 	skillRuntime *skills.Runtime,
 	memoryService UserMemoryService,
-	agentMemoryServices ...AgentMemoryContextService,
+	optionalServices ...interface{},
 ) Service {
 	var agentMemoryService AgentMemoryContextService
-	if len(agentMemoryServices) > 0 {
-		agentMemoryService = agentMemoryServices[0]
+	for _, item := range optionalServices {
+		switch typed := item.(type) {
+		case AgentMemoryContextService:
+			if agentMemoryService == nil {
+				agentMemoryService = typed
+			}
+		}
 	}
 	return &service{
 		repos:              repos,
@@ -285,21 +307,28 @@ func NewServiceWithSkillRuntime(
 }
 
 type PreparedChat struct {
-	Conversation *runtimemodel.Conversation
-	Message      *runtimemodel.Message
-	LLMRequest   *adapter.ChatRequest
-	ReplaceRoot  bool
-	Scope        Scope
-	Caller       Caller
-	RunConfig    RunConfig
-	ParentID     *uuid.UUID
-	parts        *chatRequestParts
+	Conversation                   *runtimemodel.Conversation
+	Message                        *runtimemodel.Message
+	LLMRequest                     *adapter.ChatRequest
+	ReplaceRoot                    bool
+	Continuation                   bool
+	SuppressInitialNaturalProgress bool
+	Scope                          Scope
+	Caller                         Caller
+	RunConfig                      RunConfig
+	ParentID                       *uuid.UUID
+	parts                          *chatRequestParts
+
+	UserMemoryPreflightDone  bool
+	UserMemoryPreflightUsage *adapter.Usage
 }
 
 type ChatResult struct {
-	Answer   string
-	Metadata map[string]interface{}
-	Usage    *adapter.Usage
+	Answer            string
+	Metadata          map[string]interface{}
+	Usage             *adapter.Usage
+	Status            string
+	MessageEndEventID string
 }
 
 type StopConversationResult struct {
@@ -355,15 +384,26 @@ type ExistingSkill struct {
 
 type chatRequestParts struct {
 	Query                        string
+	Surface                      string
+	RuntimeContext               string
+	RawOperationContext          map[string]interface{}
+	OperationContext             map[string]interface{}
+	OperationLedger              map[string]interface{}
 	ModelName                    string
 	Provider                     string
 	ProviderPtr                  *string
 	Parameters                   map[string]interface{}
 	ContextControl               map[string]interface{}
 	Attachments                  *attachmentBundle
+	RecentAssetCandidates        []ResourceCandidate
+	RecentGeneratedArtifacts     []map[string]interface{}
+	RecentOperationPlans         []map[string]interface{}
 	ModelSupportsVision          bool
 	FunctionCallingKnown         bool
 	ModelSupportsFunctionCalling bool
+	FunctionCallingAssumed       bool
+	ModelCapabilityStatus        string
+	ModelCapabilityError         string
 	UseMemory                    bool
 	SkillIDs                     []string
 	ToolSkillIDs                 []string
@@ -379,4 +419,6 @@ type chatRequestParts struct {
 	AgentMemoryAgentID           string
 	AgentMemoryRuntimeState      *AgentMemoryRuntimeState
 	BillingSource                string
+	ModelTurnIntent              *AIChatModelTurnIntent
+	ModelTurnIntentError         string
 }

@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import AgentCard from '@/components/agents/agent-card';
+import { AgentsAIChatContextRegistration } from '@/components/agents/aichat-context';
 import AgentDialog from '@/components/agents/agent-dialog';
 import { AgentEmptyElement, AgentEmptySearchResults } from '@/components/agents/empty-element';
 import ImportAgentDialog from '@/components/agents/import-agent-dialog';
@@ -31,6 +32,7 @@ import {
   type AgentListScope,
 } from '@/utils/agent-list-state';
 import {
+  AGENT_MANAGE_PERMISSION_CODES,
   AGENT_PERMISSION_ACTIONS,
   WORKFLOW_PERMISSION_ACTIONS,
 } from '@/constants/permissions';
@@ -55,6 +57,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
   );
   const canCreateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.create);
   const canCreateWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.create);
+  const canManageAgent = hasAnyPermission(AGENT_MANAGE_PERMISSION_CODES);
   const canCreateBlank = isWorkflowList ? canCreateWorkflow : canCreateAgent;
   const canImportWorkflow =
     isWorkflowList && hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.import);
@@ -342,6 +345,21 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
 
   return (
     <>
+      <AgentsAIChatContextRegistration
+        assetKind={assetKind}
+        agents={agents}
+        pageSize={PAGE_SIZE}
+        searchKeyword={debouncedSearchKeyword}
+        pageTitle={title}
+        workspaceId={currentWorkspace?.id}
+        workspaceName={currentWorkspace?.name}
+        canView={canView}
+        canManage={isWorkflowList ? false : canManageAgent}
+        isLoading={isLoading}
+        isFetching={isFetching}
+        permissionsSettled={!isPermissionsLoading}
+        hasNextPage={Boolean(hasNextPage)}
+      />
       <div
         ref={listScrollRef}
         onScroll={handleListScroll}

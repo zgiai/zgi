@@ -292,6 +292,10 @@ func createDiagramFile(
 	workflowMeta := fileObj.ToDict()
 	workflowMeta["url"] = url
 	workflowMeta["download_url"] = downloadURL
+	workflowMeta["lifecycle"] = toolFile.Lifecycle
+	if toolFile.ExpiresAt != nil {
+		workflowMeta["expires_at"] = toolFile.ExpiresAt.Unix()
+	}
 	fileMeta := map[string]interface{}{
 		"file_id":      toolFile.ID,
 		"filename":     toolFile.Name,
@@ -300,6 +304,10 @@ func createDiagramFile(
 		"size":         toolFile.Size,
 		"url":          url,
 		"download_url": downloadURL,
+		"lifecycle":    toolFile.Lifecycle,
+	}
+	if toolFile.ExpiresAt != nil {
+		fileMeta["expires_at"] = toolFile.ExpiresAt.Unix()
 	}
 	return fileMeta, tools.ToolInvokeMessage{
 		Type: tools.ToolInvokeMessageTypeFile,

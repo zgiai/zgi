@@ -11,15 +11,17 @@ type UpdateConversationRequest struct {
 }
 
 type ChatRequest struct {
-	ConversationID string                 `json:"conversation_id,omitempty"`
-	ParentID       string                 `json:"parent_id,omitempty"`
-	Query          string                 `json:"query" binding:"required"`
-	FileIDs        []string               `json:"file_ids,omitempty"`
-	Model          string                 `json:"model" binding:"required"`
-	Provider       string                 `json:"provider,omitempty"`
-	ResponseMode   string                 `json:"response_mode,omitempty"`
-	Parameters     map[string]interface{} `json:"parameters,omitempty"`
-	UseMemory      bool                   `json:"use_memory,omitempty"`
+	ConversationID   string                 `json:"conversation_id,omitempty"`
+	ParentID         string                 `json:"parent_id,omitempty"`
+	Query            string                 `json:"query" binding:"required"`
+	RuntimeContext   string                 `json:"runtime_context,omitempty"`
+	OperationContext map[string]interface{} `json:"operation_context,omitempty"`
+	FileIDs          []string               `json:"file_ids,omitempty"`
+	Model            string                 `json:"model" binding:"required"`
+	Provider         string                 `json:"provider,omitempty"`
+	ResponseMode     string                 `json:"response_mode,omitempty"`
+	Parameters       map[string]interface{} `json:"parameters,omitempty"`
+	UseMemory        bool                   `json:"use_memory,omitempty"`
 }
 
 type RegenerateMessageRequest struct {
@@ -38,22 +40,32 @@ type StopConversationResponse struct {
 }
 
 type SkillResponse struct {
-	SkillID          string               `json:"skill_id"`
-	Source           string               `json:"source"`
-	Name             string               `json:"name"`
-	Description      string               `json:"description"`
-	WhenToUse        string               `json:"when_to_use"`
-	Display          SkillDisplayResponse `json:"display"`
-	RuntimeType      string               `json:"runtime_type"`
-	Enabled          bool                 `json:"enabled"`
-	HasTools         bool                 `json:"has_tools"`
-	HasReferences    bool                 `json:"has_references"`
-	HasScripts       bool                 `json:"has_scripts"`
-	ScriptsSupported bool                 `json:"scripts_supported"`
-	MaxCallsPerTurn  int                  `json:"max_calls_per_turn"`
-	TimeoutSeconds   int                  `json:"timeout_seconds"`
-	Status           string               `json:"status"`
-	ValidationError  string               `json:"validation_error,omitempty"`
+	SkillID          string                `json:"skill_id"`
+	Source           string                `json:"source"`
+	Name             string                `json:"name"`
+	Description      string                `json:"description"`
+	WhenToUse        string                `json:"when_to_use"`
+	Display          SkillDisplayResponse  `json:"display"`
+	RuntimeType      string                `json:"runtime_type"`
+	Enabled          bool                  `json:"enabled"`
+	HasTools         bool                  `json:"has_tools"`
+	HasReferences    bool                  `json:"has_references"`
+	HasScripts       bool                  `json:"has_scripts"`
+	ScriptsSupported bool                  `json:"scripts_supported"`
+	MaxCallsPerTurn  int                   `json:"max_calls_per_turn"`
+	TimeoutSeconds   int                   `json:"timeout_seconds"`
+	Status           string                `json:"status"`
+	ValidationError  string                `json:"validation_error,omitempty"`
+	Exposure         SkillExposureResponse `json:"exposure"`
+}
+
+type SkillExposureResponse struct {
+	Category            string `json:"category"`
+	UserSelectable      bool   `json:"user_selectable"`
+	RuntimeManaged      bool   `json:"runtime_managed"`
+	SystemAsset         bool   `json:"system_asset"`
+	PageContextRequired bool   `json:"page_context_required"`
+	GovernanceRisk      string `json:"governance_risk"`
 }
 
 type SkillConfigResponse struct {

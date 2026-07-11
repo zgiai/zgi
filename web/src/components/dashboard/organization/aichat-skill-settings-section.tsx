@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import {
   getAIChatSkillDisplayInfo,
-  isHiddenSystemSkill,
+  isSkillUserSelectable,
   type AIChatSkillDisplayInfo,
 } from '@/components/chat/variants/aichat/skill-display';
 import { Badge } from '@/components/ui/badge';
@@ -721,7 +721,7 @@ export function AIChatSkillSettingsSection() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const importConfirmedRef = useRef(false);
   const manageableSkills = useMemo(
-    () => skills.filter(skill => !isHiddenSystemSkill(skill.skill_id)),
+    () => skills.filter(skill => isSkillUserSelectable(skill)),
     [skills]
   );
 

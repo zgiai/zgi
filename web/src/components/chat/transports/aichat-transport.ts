@@ -6,6 +6,9 @@ import {
 import type {
   AIChatChatRequest,
   AIChatAgentProgressEventData,
+  AIChatClientActionRequiredEventData,
+  AIChatClientActionResultEventData,
+  AIChatClientActionResultRequest,
   AIChatConversation,
   AIChatErrorEventData,
   AIChatFileParseEndEventData,
@@ -20,6 +23,7 @@ import type {
   AIChatIntermediateAnswerEventData,
   AIChatUserInputRequestedEventData,
   AIChatRegenerateMessageRequest,
+  AIChatRuntimeSurface,
   AIChatSearchResult,
   AIChatSkillCallEndEventData,
   AIChatSkillCallErrorEventData,
@@ -29,6 +33,9 @@ import type {
   AIChatSkillLoadStartEventData,
   AIChatSkillReferenceReadEventData,
   AIChatStopConversationResponseData,
+  AIChatToolGovernanceDecisionRequest,
+  AIChatUserInputContinuationRequest,
+  AIChatToolGovernanceDecisionEventData,
   AIChatWorkflowEventData,
   AIChatWorkflowNodeEventData,
   AIChatWorkflowPausedEventData,
@@ -101,6 +108,18 @@ export interface AIChatStreamCallbacks {
     payload: AIChatSkillArtifactCreatedEventData,
     eventId?: string | null
   ) => void;
+  onToolGovernanceDecision?: (
+    payload: AIChatToolGovernanceDecisionEventData,
+    eventId?: string | null
+  ) => void;
+  onClientActionRequired?: (
+    payload: AIChatClientActionRequiredEventData,
+    eventId?: string | null
+  ) => void;
+  onClientActionResult?: (
+    payload: AIChatClientActionResultEventData,
+    eventId?: string | null
+  ) => void;
   onMemoryMutation: (payload: AIChatMemoryMutationEventData, eventId?: string | null) => void;
   onWorkflowStarted?: (payload: AIChatWorkflowEventData, eventId?: string | null) => void;
   onWorkflowNodeStarted?: (payload: AIChatWorkflowNodeEventData, eventId?: string | null) => void;
@@ -127,7 +146,11 @@ export interface AIChatWorkflowApprovalContinuationPayload {
 }
 
 export interface AIChatRuntimeTransport {
-  listConversations(params: { page: number; limit: number }): Promise<AIChatConversationListResult>;
+  listConversations(params: {
+    page: number;
+    limit: number;
+    surface?: AIChatRuntimeSurface;
+  }): Promise<AIChatConversationListResult>;
   getConversation(conversationId: string): Promise<AIChatConversationDetail>;
   listMessages(
     conversationId: string,
@@ -143,7 +166,11 @@ export interface AIChatRuntimeTransport {
     }
   ): Promise<AIChatConversation>;
   removeConversation(conversationId: string): Promise<void>;
-  searchConversations?(query: string, limit: number): Promise<ConversationSearchResult[]>;
+  searchConversations?(
+    query: string,
+    limit: number,
+    options?: { surface?: AIChatRuntimeSurface }
+  ): Promise<ConversationSearchResult[]>;
   stopConversation(conversationId: string): Promise<AIChatStopConversationResponseData>;
   streamChat(
     payload: AIChatChatRequest,
@@ -173,6 +200,30 @@ export interface AIChatRuntimeTransport {
     conversationId: string,
     messageId: string,
     payload: { inputs: { query: string; question_answer_option_id?: string } },
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ): Promise<{ close: () => void }>;
+  continueToolGovernanceDecision?(
+    conversationId: string,
+    messageId: string,
+    correlationId: string,
+    payload: AIChatToolGovernanceDecisionRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ): Promise<{ close: () => void }>;
+  continueClientAction?(
+    conversationId: string,
+    messageId: string,
+    actionId: string,
+    payload: AIChatClientActionResultRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ): Promise<{ close: () => void }>;
+  continueUserInput?(
+    conversationId: string,
+    messageId: string,
+    requestId: string,
+    payload: AIChatUserInputContinuationRequest,
     callbacks: AIChatStreamCallbacks,
     abortSignal?: AbortSignal
   ): Promise<{ close: () => void }>;
@@ -241,6 +292,21 @@ export function dispatchAIChatStreamEvent(
         eventId
       );
       break;
+    case 'tool_governance_decision':
+      callbacks.onToolGovernanceDecision?.(
+        (data ?? {}) as AIChatToolGovernanceDecisionEventData,
+        eventId
+      );
+      break;
+    case 'client_action_required':
+      callbacks.onClientActionRequired?.(
+        (data ?? {}) as AIChatClientActionRequiredEventData,
+        eventId
+      );
+      break;
+    case 'client_action_result':
+      callbacks.onClientActionResult?.((data ?? {}) as AIChatClientActionResultEventData, eventId);
+      break;
     case 'memory_create':
     case 'memory_update':
     case 'memory_delete':
@@ -301,6 +367,7 @@ export function dispatchAIChatStreamEvent(
       callbacks.onWorkflowNodeFinished?.(
         {
           ...((data ?? {}) as AIChatWorkflowNodeEventData),
+          workflow_event: event,
           status: 'success',
           node_type: 'approval',
           title: 'Approval submitted',
@@ -317,6 +384,7 @@ export function dispatchAIChatStreamEvent(
       callbacks.onWorkflowNodeFinished?.(
         {
           ...((data ?? {}) as AIChatWorkflowNodeEventData),
+          workflow_event: event,
           status: 'failed',
           node_type: 'approval',
           title: 'Approval expired',
@@ -329,6 +397,7 @@ export function dispatchAIChatStreamEvent(
       callbacks.onWorkflowNodeFinished?.(
         {
           ...((data ?? {}) as AIChatWorkflowNodeEventData),
+          workflow_event: event,
           status: 'running',
           node_type: 'question-answer',
         },
@@ -368,6 +437,7 @@ export class AIChatTransport implements AIChatRuntimeTransport {
   async listConversations(params: {
     page: number;
     limit: number;
+    surface?: AIChatRuntimeSurface;
   }): Promise<AIChatConversationListResult> {
     const response = await aichatService.listConversations(params);
 
@@ -439,8 +509,12 @@ export class AIChatTransport implements AIChatRuntimeTransport {
     await aichatService.deleteConversation(conversationId);
   }
 
-  async searchConversations(query: string, limit: number): Promise<ConversationSearchResult[]> {
-    const response = await aichatService.search(query, limit);
+  async searchConversations(
+    query: string,
+    limit: number,
+    options?: { surface?: AIChatRuntimeSurface }
+  ): Promise<ConversationSearchResult[]> {
+    const response = await aichatService.search(query, limit, { surface: options?.surface });
     return (response.data ?? []).map(mapAIChatSearchResult);
   }
 
@@ -499,6 +573,78 @@ export class AIChatTransport implements AIChatRuntimeTransport {
         message_id: params.messageId,
         after_id: params.afterId,
       },
+      {
+        onEvent: (event, data, eventId) => {
+          dispatchAIChatStreamEvent(event, data, eventId, callbacks);
+        },
+        onError: callbacks.onRequestError,
+        onClose: callbacks.onClose,
+      },
+      abortSignal
+    );
+  }
+
+  continueToolGovernanceDecision(
+    conversationId: string,
+    messageId: string,
+    correlationId: string,
+    payload: AIChatToolGovernanceDecisionRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    return aichatService.continueToolGovernanceDecision(
+      conversationId,
+      messageId,
+      correlationId,
+      payload,
+      {
+        onEvent: (event, data, eventId) => {
+          dispatchAIChatStreamEvent(event, data, eventId, callbacks);
+        },
+        onError: callbacks.onRequestError,
+        onClose: callbacks.onClose,
+      },
+      abortSignal
+    );
+  }
+
+  continueClientAction(
+    conversationId: string,
+    messageId: string,
+    actionId: string,
+    payload: AIChatClientActionResultRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    return aichatService.continueClientAction(
+      conversationId,
+      messageId,
+      actionId,
+      payload,
+      {
+        onEvent: (event, data, eventId) => {
+          dispatchAIChatStreamEvent(event, data, eventId, callbacks);
+        },
+        onError: callbacks.onRequestError,
+        onClose: callbacks.onClose,
+      },
+      abortSignal
+    );
+  }
+
+  continueUserInput(
+    conversationId: string,
+    messageId: string,
+    requestId: string,
+    payload: AIChatUserInputContinuationRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    return aichatService.continueUserInput(
+      conversationId,
+      messageId,
+      requestId,
+      payload,
       {
         onEvent: (event, data, eventId) => {
           dispatchAIChatStreamEvent(event, data, eventId, callbacks);

@@ -35,6 +35,7 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 		return nil, err
 	}
 	applyRunConfigToParts(config, parts)
+	applyCallerRuntimeSurfacePolicy(caller, parts)
 	attachments, err := s.resolveChatAttachmentReferences(ctx, scope, req.FileIDs)
 	if err != nil {
 		return nil, err
@@ -57,15 +58,6 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 	if err != nil {
 		return nil, err
 	}
-	var llmRequest *adapter.ChatRequest
-	if parts.Attachments == nil || len(parts.Attachments.Files) == 0 {
-		contextResult, err := s.buildUpstreamMessages(ctx, scope, parentID, parts)
-		if err != nil {
-			return nil, err
-		}
-		parts.ContextControl = contextResult.Metadata
-		llmRequest = newLLMChatRequest(parts, contextResult.Messages)
-	}
 
 	message := newStreamingMessage(conversation.ID, parentID, parts)
 	if err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -87,16 +79,17 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 	conversation.ActiveMessageID = &message.ID
 	s.appendStreamEventBestEffort(ctx, message.ID, conversation.ID, streamEventMessageStart, messageStartPayload(conversation, message, false))
 
-	return &PreparedChat{
+	prepared := &PreparedChat{
 		Conversation: conversation,
 		Message:      message,
-		LLMRequest:   llmRequest,
 		Scope:        scope,
 		Caller:       caller,
 		RunConfig:    config,
 		ParentID:     parentID,
 		parts:        parts,
-	}, nil
+	}
+	s.refreshInitialPageContext(ctx, prepared)
+	return prepared, nil
 }
 
 func (s *service) PrepareRootRegeneration(ctx context.Context, scope Scope, id uuid.UUID, req runtimedto.RegenerateMessageRequest) (*PreparedChat, error) {
@@ -136,6 +129,7 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 		return nil, err
 	}
 	applyRunConfigToParts(config, parts)
+	applyCallerRuntimeSurfacePolicy(caller, parts)
 	parts.Attachments = attachmentBundleFromMessageMetadata(message.Metadata)
 	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
 		return nil, err
@@ -148,6 +142,11 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 		return nil, err
 	}
 	parts.ContextControl = contextResult.Metadata
+	llmRequest := newLLMChatRequest(parts, contextResult.Messages)
+	preflight, err := s.runContextualPreparePreflights(ctx, scope, conversation, config, parts, llmRequest)
+	if err != nil {
+		return nil, err
+	}
 	replacement := replacementRootMessage(message, parts)
 	if err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepos := repository.NewRepositories(tx)
@@ -181,13 +180,23 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 	return &PreparedChat{
 		Conversation: conversation,
 		Message:      replacement,
-		LLMRequest:   newLLMChatRequest(parts, contextResult.Messages),
+		LLMRequest:   llmRequest,
 		ReplaceRoot:  true,
 		Scope:        scope,
 		Caller:       caller,
 		RunConfig:    config,
 		parts:        parts,
+
+		UserMemoryPreflightDone:  preflight != nil && preflight.UserMemoryDone,
+		UserMemoryPreflightUsage: contextualPreflightUserMemoryUsage(preflight),
 	}, nil
+}
+
+func contextualPreflightUserMemoryUsage(preflight *contextualPreparePreflightResult) *adapter.Usage {
+	if preflight == nil {
+		return nil
+	}
+	return preflight.UserMemoryUsage
 }
 
 func (s *service) ensureMember(ctx context.Context, scope Scope) error {
@@ -231,6 +240,9 @@ func (s *service) ensureConversationAllowsNewTurn(ctx context.Context, scope Sco
 	if leafMessage.Status == runtimemodel.MessageStatusWaitingQuestion {
 		return ErrConversationWaitingQuestion
 	}
+	if leafMessage.Status == runtimemodel.MessageStatusWaitingClientAction {
+		return ErrConversationWaitingAction
+	}
 	return nil
 }
 
@@ -258,19 +270,25 @@ func (s *service) resolveChatConversation(ctx context.Context, scope Scope, call
 }
 
 func (s *service) createConversationForChat(ctx context.Context, scope Scope, caller Caller, parts *chatRequestParts) (*runtimemodel.Conversation, error) {
-	fallbackTitle := initialConversationTitle()
-	conversation, err := s.CreateConversationForCaller(ctx, scope, caller, fallbackTitle)
+	query := ""
+	surface := ""
+	if parts != nil {
+		query = parts.Query
+		surface = parts.Surface
+	}
+	initialTitle := conversationTitleFallback(query, initialConversationTitle())
+	conversation, err := s.createConversationForCaller(ctx, scope, caller, initialTitle, surface)
 	if err != nil {
 		return nil, err
 	}
-	if s.titleGen == nil {
+	if s.titleGen == nil || normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
 		return conversation, nil
 	}
-	s.generateConversationTitleAsync(ctx, scope, conversation, parts, fallbackTitle)
+	s.generateConversationTitleAsync(ctx, scope, conversation, parts, initialTitle)
 	return conversation, nil
 }
 
-func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, parts *chatRequestParts, fallbackTitle string) {
+func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, parts *chatRequestParts, initialTitle string) {
 	if conversation == nil || s.titleGen == nil {
 		return
 	}
@@ -297,7 +315,7 @@ func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scop
 			SessionID:         conversationID.String(),
 			ConversationID:    conversationID.String(),
 			Messages:          []titlegen.Message{{Role: "user", Content: query}},
-			FallbackTitle:     fallbackTitle,
+			FallbackTitle:     initialTitle,
 			PreferredProvider: preferredProvider,
 			PreferredModel:    preferredModel,
 			PreferredUseCase:  string(llmmodelmodel.UseCaseTextChat),
@@ -306,8 +324,8 @@ func (s *service) generateConversationTitleAsync(ctx context.Context, scope Scop
 			logger.WarnContext(titleCtx, "failed to generate aichat conversation title", "conversation_id", conversationID.String(), err)
 			return
 		}
-		title := normalizeTitle(result.Title, fallbackTitle)
-		if title == fallbackTitle {
+		title := normalizeTitle(result.Title, initialTitle)
+		if title == initialTitle {
 			return
 		}
 		if err := s.repos.Conversation.UpdateScoped(titleCtx, conversationID, scope.OrganizationID, scope.AccountID, map[string]interface{}{"title": title}); err != nil {
@@ -344,7 +362,7 @@ func (s *service) resolveParentMessage(ctx context.Context, scope Scope, convers
 func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parentID *uuid.UUID, parts *chatRequestParts) (*contextBudgetResult, error) {
 	systemPrompt := strings.TrimSpace(parts.SystemPrompt)
 	if systemPrompt == "" {
-		rendered, err := renderAIChatSystemPrompt()
+		rendered, err := renderAIChatSystemPrompt(parts.Surface)
 		if err != nil {
 			return nil, err
 		}
@@ -372,6 +390,9 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 			if err != nil {
 				return nil, err
 			}
+			applyRecentAssetCandidatesFromBranch(parts, branch)
+			applyRecentGeneratedArtifactsFromBranch(parts, branch)
+			applyRecentOperationPlansFromBranch(parts, branch)
 			result, err := s.buildTokenBudgetMessages(ctx, spec, parts, systemPrompt, branch)
 			if err != nil {
 				return nil, err
@@ -390,45 +411,94 @@ func (s *service) buildUpstreamMessages(ctx context.Context, scope Scope, parent
 		if err != nil {
 			return nil, err
 		}
-		for _, item := range branch {
-			if item == nil {
-				continue
-			}
-			userMessage, err := s.historicalUserMessage(ctx, item, parts.ModelSupportsVision)
-			if err != nil {
-				return nil, err
-			}
-			if userMessage != nil {
-				messages = append(messages, *userMessage)
-			}
-			if isUsableAssistantHistoryStatus(item.Status) && strings.TrimSpace(item.Answer) != "" {
-				messages = append(messages, adapter.Message{Role: "assistant", Content: item.Answer})
+		if !shouldIsolateHistoryForCurrentTurn(parts) {
+			for _, item := range branch {
+				if item == nil {
+					continue
+				}
+				userMessage, err := s.historicalUserMessage(ctx, item, parts.ModelSupportsVision)
+				if err != nil {
+					return nil, err
+				}
+				if userMessage != nil {
+					messages = append(messages, *userMessage)
+				}
+				if isUsableAssistantHistoryStatus(item.Status) && strings.TrimSpace(item.Answer) != "" {
+					messages = append(messages, adapter.Message{Role: "assistant", Content: item.Answer})
+				}
 			}
 		}
-		if recentExecutionContext, recentExecutionMetadata := buildRecentExecutionContextMessage(branch); recentExecutionContext != nil {
+		applyRecentOperationPlansFromBranch(parts, branch)
+		if recentExecutionContext, recentExecutionMetadata := buildRecentExecutionContextMessageForRequest(parts, branch); recentExecutionContext != nil {
 			messages = append(messages, *recentExecutionContext)
 			if contextMetadata == nil {
 				contextMetadata = map[string]interface{}{}
 			}
 			mergeRecentExecutionContextMetadata(contextMetadata, recentExecutionMetadata)
 		}
+		if continuationContext := buildContinuationTaskStateMessage(parts, branch); continuationContext != nil {
+			messages = append(messages, *continuationContext)
+			if contextMetadata == nil {
+				contextMetadata = map[string]interface{}{}
+			}
+			contextMetadata["continuation_task_state_included"] = true
+		}
+		if turnBoundaryContext := currentTurnBoundaryMessage(parts); turnBoundaryContext != nil {
+			messages = append(messages, *turnBoundaryContext)
+		}
+		applyRecentAssetCandidatesFromBranch(parts, branch)
+		applyRecentGeneratedArtifactsFromBranch(parts, branch)
 	}
 	messages = append(messages, adapter.Message{Role: "user", Content: currentContent})
 	return &contextBudgetResult{Messages: messages, Metadata: contextMetadata}, nil
 }
 
 func (s *service) applyModelCapabilities(ctx context.Context, scope Scope, parts *chatRequestParts) error {
-	if parts == nil || s.modelSpecResolver == nil {
+	if parts == nil {
+		return nil
+	}
+	if s.modelSpecResolver == nil {
+		assumeModelFunctionCalling(parts, "resolver_unavailable", "")
 		return nil
 	}
 	spec, ok, err := s.modelSpecResolver.Resolve(ctx, scope.OrganizationID, parts.Provider, parts.ModelName)
 	if err != nil {
-		return err
+		assumeModelFunctionCalling(parts, "resolver_error", err.Error())
+		logger.WarnContext(ctx, "aichat model capabilities assumed because resolver failed",
+			"organization_id", scope.OrganizationID.String(),
+			"provider", parts.Provider,
+			"model", parts.ModelName,
+			"error", err.Error(),
+		)
+		return nil
+	}
+	if !ok {
+		assumeModelFunctionCalling(parts, "model_spec_unknown", "")
+		logger.DebugContext(ctx, "aichat model capabilities assumed because model spec is unknown",
+			"organization_id", scope.OrganizationID.String(),
+			"provider", parts.Provider,
+			"model", parts.ModelName,
+		)
+		return nil
 	}
 	parts.ModelSupportsVision = ok && spec.SupportsVision()
-	parts.FunctionCallingKnown = ok
-	parts.ModelSupportsFunctionCalling = ok && spec.SupportsFunctionCalling()
+	parts.FunctionCallingKnown = true
+	parts.ModelSupportsFunctionCalling = spec.SupportsFunctionCalling()
+	parts.FunctionCallingAssumed = false
+	parts.ModelCapabilityStatus = "resolved"
+	parts.ModelCapabilityError = ""
 	return nil
+}
+
+func assumeModelFunctionCalling(parts *chatRequestParts, status string, errMessage string) {
+	if parts == nil {
+		return
+	}
+	parts.FunctionCallingKnown = true
+	parts.ModelSupportsFunctionCalling = true
+	parts.FunctionCallingAssumed = true
+	parts.ModelCapabilityStatus = strings.TrimSpace(status)
+	parts.ModelCapabilityError = trimRunes(strings.TrimSpace(errMessage), 500)
 }
 
 func (s *service) applyOrganizationSkillConfig(ctx context.Context, scope Scope, parts *chatRequestParts) error {
@@ -483,6 +553,9 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 		} else {
 			enabled = effectiveSkillIDsForCaller(parts.ConfiguredSkillIDs, catalog, orgEnabled, callerType, config)
 		}
+		enabled = filterAIChatSkillIDsForSurface(enabled, parts)
+		trustedCapabilities := s.trustedContextualAIChatSkillCapabilities(ctx, scope, parts)
+		enabled = addContextualAIChatSkillIDsWithCapabilities(enabled, orgEnabled, catalog, parts, trustedCapabilities)
 	}
 	parts.SkillIDs, parts.ToolSkillIDs = filterSkillsForModel(enabled, catalog, parts)
 	if len(parts.SkillIDs) == 0 {
@@ -500,12 +573,14 @@ func (s *service) loadContextBranch(ctx context.Context, parentID *uuid.UUID, ma
 	return s.repos.Message.ListBranch(ctx, *parentID, maxDepth)
 }
 
-func renderAIChatSystemPrompt() (string, error) {
+func renderAIChatSystemPrompt(surface string) (string, error) {
 	tmpl, err := prompt.GetTemplate(prompt.AIChatSystem)
 	if err != nil {
 		return "", err
 	}
-	return tmpl.Render(nil)
+	return tmpl.Render(map[string]interface{}{
+		"Surface": normalizeAIChatSurface(surface),
+	})
 }
 
 func (s *service) appendUserMemoryContext(ctx context.Context, scope Scope, parts *chatRequestParts, systemPrompt string) (string, map[string]interface{}, error) {

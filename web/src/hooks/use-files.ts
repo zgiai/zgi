@@ -6,6 +6,7 @@ import { fileManageService } from '@/services/file-manage.service';
 import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { useCurrentWorkspace } from '@/store/workspace-store';
+import { getFileDetailKey } from '@/hooks/file/use-file-detail';
 import type { ApiResponseData } from '@/services/types/common';
 import type {
   AllFilesResponse,
@@ -104,6 +105,7 @@ export function useAllFiles(
   hasPreviousPage: boolean;
   isLoading: boolean;
   isFetching: boolean;
+  isFetched: boolean;
   error: string | null;
   processingStatusCounts: Partial<Record<string, number>>;
   goToNextPage: () => void;
@@ -128,7 +130,9 @@ export function useAllFiles(
     setCurrentPage(1);
   }, [keyword, sort, extension]);
 
-  const { data, isLoading, isFetching, error } = useQuery<ApiResponseData<AllFilesResponse>>({
+  const { data, isLoading, isFetching, isFetched, error } = useQuery<
+    ApiResponseData<AllFilesResponse>
+  >({
     queryKey: getAllFilesKey(limit, currentPage, keyword, sort),
     queryFn: async () => {
       return fileManageService.getAllFiles({
@@ -191,6 +195,7 @@ export function useAllFiles(
     hasPreviousPage,
     isLoading,
     isFetching,
+    isFetched,
     error: error ? ((error as { message?: string }).message ?? 'error') : null,
     processingStatusCounts,
     goToNextPage,
@@ -270,6 +275,7 @@ export function useFiles(
   hasPreviousPage: boolean;
   isLoading: boolean;
   isFetching: boolean;
+  isFetched: boolean;
   error: string | null;
   processingStatusCounts: Partial<Record<string, number>>;
   goToNextPage: () => void;
@@ -303,7 +309,9 @@ export function useFiles(
 
   const serviceMethod = getServiceMethod(category);
 
-  const { data, isLoading, isFetching, error } = useQuery<ApiResponseData<AllFilesResponse>>({
+  const { data, isLoading, isFetching, isFetched, error } = useQuery<
+    ApiResponseData<AllFilesResponse>
+  >({
     queryKey: getFilesKey(
       category,
       limit,
@@ -384,6 +392,7 @@ export function useFiles(
     hasPreviousPage,
     isLoading,
     isFetching,
+    isFetched,
     error: error ? ((error as { message?: string }).message ?? 'error') : null,
     processingStatusCounts,
     goToNextPage,
@@ -514,8 +523,11 @@ export function useDeleteFiles(): {
       }
       await fileManageService.deleteFiles(fileIds);
     },
-    onSuccess: () => {
+    onSuccess: (_data, { fileIds }) => {
       toast.success(t('toast.deleteSuccess'));
+      fileIds.forEach(fileId => {
+        void queryClient.invalidateQueries({ queryKey: getFileDetailKey(fileId), exact: true });
+      });
       // Invalidate both paginated and basic lists that are either unfiltered or belong to current workspace
       queryClient.invalidateQueries({
         queryKey: [FILES_QUERY_KEY],

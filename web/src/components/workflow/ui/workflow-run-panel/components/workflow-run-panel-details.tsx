@@ -7,6 +7,8 @@ import { useT } from '@/i18n';
 import { useWorkflowBillingFeedback } from '@/hooks/workflow/use-workflow-billing-feedback';
 import type { WorkflowFinishedData } from '../types';
 
+const jsonViewLightTheme = lightTheme as React.CSSProperties;
+
 interface DetailsTabProps {
   runSummary: WorkflowFinishedData | null;
 }
@@ -103,7 +105,7 @@ const DetailsTab: React.FC<DetailsTabProps> = ({ runSummary }) => {
         <div className="text-xs font-medium mb-1">{t.agents('workflow.input')}</div>
         <JsonView
           value={(runSummary.inputs as unknown) ?? {}}
-          style={lightTheme}
+          style={jsonViewLightTheme}
           className="rounded-md overflow-auto max-h-60"
         />
       </div>
@@ -140,7 +142,7 @@ const DetailsTab: React.FC<DetailsTabProps> = ({ runSummary }) => {
             <div className="text-xs font-medium mb-1">{t.agents('workflow.output')}</div>
             <JsonView
               value={(runSummary.outputs as unknown) ?? {}}
-              style={lightTheme}
+              style={jsonViewLightTheme}
               className="rounded-md overflow-auto max-h-60"
             />
           </div>

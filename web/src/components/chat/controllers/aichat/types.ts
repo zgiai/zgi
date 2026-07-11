@@ -14,12 +14,18 @@ import type {
   AIChatMessageRetractEventData,
   AIChatMessageStartEventData,
   AIChatMemoryMutationEventData,
+  AIChatClientActionResultRequest,
   AIChatSkillInvocation,
+  AIChatRuntimeSurface,
+  AIChatToolGovernanceDecisionEventData,
+  AIChatToolGovernanceDecisionRequest,
+  AIChatUserInputContinuationRequest,
   AIChatWorkflowPausedEventData,
 } from '@/services/types/aichat';
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
 import type { ConversationSearchResult } from '@/components/chat/controllers/types';
 import type { NodeInfo, RunStatus } from '@/components/chat/types';
+import type { AIChatSendTraceContext } from '@/components/chat/controllers/aichat/session-trace';
 import type { StoreApi } from 'zustand/vanilla';
 
 export interface AIChatModelSelection {
@@ -39,7 +45,14 @@ export interface AIChatStreamingMessageState {
   conversation_id: string;
   message_id: string;
   answer: string;
-  status: 'streaming' | 'completed' | 'waiting_approval' | 'waiting_question' | 'stopped' | 'error';
+  status:
+    | 'streaming'
+    | 'completed'
+    | 'waiting_approval'
+    | 'waiting_client_action'
+    | 'waiting_question'
+    | 'stopped'
+    | 'error';
   timeline?: AIChatAgenticTimelineItem[];
   last_event_id?: string;
   replay_base_answer?: string;
@@ -58,6 +71,17 @@ export type AIChatAgenticTimelineItem =
       meta_tool_name?: string;
       skill_id?: string;
       tool_name?: string;
+      action_id?: string;
+      action_type?: string;
+      continuation_policy?: string;
+      blocking?: boolean;
+      status?: string;
+      effect?: string;
+      asset_type?: string;
+      assets?: AIChatAgentProgressEventData['assets'];
+      correlation_id?: string;
+      asset_operation_audit?: AIChatAgentProgressEventData['asset_operation_audit'];
+      result?: AIChatAgentProgressEventData['result'];
       arguments_chars?: number;
       created_at?: number;
       event_id?: string | null;
@@ -88,6 +112,13 @@ export type AIChatAgenticTimelineItem =
     }
   | {
       id: string;
+      type: 'tool_governance_decision';
+      event: AIChatToolGovernanceDecisionEventData;
+      created_at?: number;
+      event_id?: string | null;
+    }
+  | {
+      id: string;
       type: 'workflow_run';
       workflowRunId: string;
       status: RunStatus;
@@ -107,6 +138,7 @@ export interface AIChatMessageStartContext {
   files?: AIChatMessageFile[];
   previousConversationId?: string | null;
   resetAnswer?: boolean;
+  forceAdvanceLeaf?: boolean;
   mode?: AIChatRecoveryMode;
   moveToTop?: boolean;
 }
@@ -149,7 +181,7 @@ export interface AIChatControllerStore extends AIChatControllerState {
   applyFileParseStart: (payload: AIChatFileParseStartEventData, eventId?: string | null) => void;
   applyFileParseEnd: (payload: AIChatFileParseEndEventData, eventId?: string | null) => void;
   applyFileParseError: (payload: AIChatFileParseErrorEventData, eventId?: string | null) => void;
-  applyMessageEnd: (payload: AIChatMessageEndEventData) => void;
+  applyMessageEnd: (payload: AIChatMessageEndEventData, eventId?: string | null) => void;
   applyStreamError: (payload: AIChatErrorEventData, fallbackConversationId: string | null) => void;
   mergeMessages: (conversationId: string, messages: AIChatMessage[]) => void;
   setActiveConversationId: (conversationId: string | null) => void;
@@ -196,13 +228,23 @@ export interface AIChatController {
     files?: AIChatMessageFile[];
     parentId?: string | null;
     useMemory?: boolean;
+    forceAdvanceLeaf?: boolean;
+    runtimeSurface?: AIChatRuntimeSurface;
+    operationContext?: unknown;
+    debugContext?: AIChatSendTraceContext;
   }) => Promise<void>;
   stop: () => Promise<void>;
-  regenerate: (messageId: string, model: AIChatModelSelection) => Promise<void>;
+  regenerate: (
+    messageId: string,
+    model: AIChatModelSelection,
+    options?: { operationContext?: unknown; runtimeSurface?: AIChatRuntimeSurface }
+  ) => Promise<void>;
   replaceRootMessage: (payload: {
     messageId: string;
     query?: string;
     model?: AIChatModelSelection;
+    runtimeSurface?: AIChatRuntimeSurface;
+    operationContext?: unknown;
   }) => Promise<void>;
   continueWorkflowApproval?: (
     conversationId: string,
@@ -214,8 +256,30 @@ export interface AIChatController {
     messageId: string,
     inputs: { query: string; question_answer_option_id?: string }
   ) => Promise<void>;
+  continueToolGovernanceDecision?: (
+    conversationId: string,
+    messageId: string,
+    correlationId: string,
+    payload: AIChatToolGovernanceDecisionRequest
+  ) => Promise<void>;
+  continueClientAction?: (
+    conversationId: string,
+    messageId: string,
+    actionId: string,
+    payload: AIChatClientActionResultRequest
+  ) => Promise<void>;
+  continueUserInput?: (
+    conversationId: string,
+    messageId: string,
+    requestId: string,
+    payload: AIChatUserInputContinuationRequest
+  ) => Promise<void>;
   switchBranch: (messageId: string) => void;
-  search?: (query: string, limit: number) => Promise<ConversationSearchResult[]>;
+  search?: (
+    query: string,
+    limit: number,
+    options?: { surface?: AIChatRuntimeSurface }
+  ) => Promise<ConversationSearchResult[]>;
 }
 
 export type AIChatSetControllerState = (

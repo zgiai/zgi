@@ -61,6 +61,7 @@ export type AgentRuntimeStepType =
   | 'skill_load'
   | 'reference_read'
   | 'intermediate_answer'
+  | 'final_answer'
   | 'user_input_request'
   | 'guardrail'
   | 'workflow_run'

@@ -497,7 +497,10 @@ func (h *AgentsHandler) ListAgentWorkflowBindingCandidates(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := h.appService.ListAgentWorkflowBindingCandidates(ctx, c.Param("agent_id"), accountID)
+	result, err := h.appService.ListAgentWorkflowBindingCandidates(ctx, c.Param("agent_id"), accountID, dto.AgentWorkflowBindingCandidatesRequest{
+		IncludeSelected:    true,
+		IncludeStartInputs: true,
+	})
 	if err != nil {
 		h.failRuntime(c, err)
 		return
@@ -747,17 +750,7 @@ func (h *AgentsHandler) ChatAgent(c *gin.Context) {
 		})
 		return
 	}
-	if agentWorkflowContinuationWaiting(result.Metadata) {
-		return
-	}
-	_ = writeAgentSSE(c, "message_end", gin.H{
-		"conversation_id": prepared.Conversation.ID.String(),
-		"message_id":      prepared.Message.ID.String(),
-		"status":          runtimemodel.MessageStatusCompleted,
-		"metadata": gin.H{
-			"usage": result.Metadata["usage"],
-		},
-	})
+	writeAgentChatEnd(c, prepared, result)
 }
 
 func (h *AgentsHandler) ListAgentPublishedVersions(c *gin.Context) {
@@ -1141,17 +1134,7 @@ func (h *AgentsHandler) ChatWebAppAgent(c *gin.Context) {
 		})
 		return
 	}
-	if agentWorkflowContinuationWaiting(result.Metadata) {
-		return
-	}
-	_ = writeAgentSSE(c, "message_end", gin.H{
-		"conversation_id": prepared.Conversation.ID.String(),
-		"message_id":      prepared.Message.ID.String(),
-		"status":          runtimemodel.MessageStatusCompleted,
-		"metadata": gin.H{
-			"usage": result.Metadata["usage"],
-		},
-	})
+	writeAgentChatEnd(c, prepared, result)
 }
 
 func setupAgentSSE(c *gin.Context) {
@@ -1165,6 +1148,27 @@ func setupAgentSSE(c *gin.Context) {
 
 func writeAgentSSE(c *gin.Context, event string, data interface{}) error {
 	return writeAgentSSEEvent(c, "", event, data)
+}
+
+func writeAgentChatEnd(c *gin.Context, prepared *runtimeservice.PreparedChat, result *runtimeservice.ChatResult) {
+	status := runtimemodel.MessageStatusCompleted
+	metadata := map[string]interface{}{}
+	eventID := ""
+	if result != nil {
+		if strings.TrimSpace(result.Status) != "" {
+			status = strings.TrimSpace(result.Status)
+		}
+		if result.Metadata != nil {
+			metadata = result.Metadata
+		}
+		eventID = strings.TrimSpace(result.MessageEndEventID)
+	}
+	_ = writeAgentSSEEvent(c, eventID, "message_end", gin.H{
+		"conversation_id": prepared.Conversation.ID.String(),
+		"message_id":      prepared.Message.ID.String(),
+		"status":          status,
+		"metadata":        metadata,
+	})
 }
 
 func writeAgentSSEEvent(c *gin.Context, id string, event string, data interface{}) error {

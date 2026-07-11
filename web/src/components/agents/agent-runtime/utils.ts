@@ -2,6 +2,8 @@ import type {
   AgentMemorySlotConfig,
   UpdateAgentRuntimeConfigRequest,
 } from '@/services/types/agent';
+import { ICON_BG } from '@/lib/config';
+import type { DbTable } from '@/services/types/db';
 
 export type AgentMemorySlotValidationError =
   | 'required'
@@ -68,4 +70,45 @@ export function pickAgentInitials(name?: string): string {
   const trimmed = name?.trim();
   if (!trimmed) return 'A';
   return trimmed.slice(0, 2).toUpperCase();
+}
+
+export function getAgentTextIconDisplay(
+  iconType?: string,
+  icon?: string,
+  name?: string
+): { text: string; background: string } {
+  const fallback = {
+    text: pickAgentInitials(name),
+    background: ICON_BG,
+  };
+
+  if (iconType !== 'text' || !icon?.trim()) {
+    return fallback;
+  }
+
+  const trimmed = icon.trim();
+  try {
+    const parsed = JSON.parse(trimmed) as { icon?: unknown; icon_background?: unknown };
+    return {
+      text: typeof parsed.icon === 'string' && parsed.icon.trim() ? parsed.icon.trim() : fallback.text,
+      background:
+        typeof parsed.icon_background === 'string' && parsed.icon_background.trim()
+          ? parsed.icon_background.trim()
+          : fallback.background,
+    };
+  } catch {
+    return {
+      text: trimmed,
+      background: fallback.background,
+    };
+  }
+}
+
+export function tablesForDataSource(tables: DbTable[], dataSourceId: string): DbTable[] {
+  const normalizedDataSourceId = dataSourceId.trim();
+  if (!normalizedDataSourceId) return [];
+  return tables.filter(table => {
+    const tableDataSourceId = table.data_source_id?.trim();
+    return !tableDataSourceId || tableDataSourceId === normalizedDataSourceId;
+  });
 }

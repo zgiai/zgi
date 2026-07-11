@@ -104,16 +104,16 @@ export function EditAgentDialog({ open, onOpenChange, agentId }: EditAgentDialog
   useEffect(() => {
     const detail = agentDetailResp?.data as AgentDetail | undefined;
     if (!detail) return;
+    const workspace = detail.workspace ?? detail.tenant;
+    const workspaceId = workspace?.id || detail.workspace_id || detail.tenant_id;
     form.reset({
       name: detail.name || '',
       description: detail.description || '',
       icon: detail.icon || '',
       icon_type: (detail.icon_type as IconType) || 'text',
-      workspace_id: detail.workspace?.id,
+      workspace_id: workspaceId,
     });
-    setSelectedWorkspace(
-      detail.workspace ? { id: detail.workspace.id, name: detail.workspace.name } : undefined
-    );
+    setSelectedWorkspace(workspaceId ? { id: workspaceId, name: workspace?.name ?? '' } : undefined);
 
     if (detail.icon_type === 'text') {
       try {

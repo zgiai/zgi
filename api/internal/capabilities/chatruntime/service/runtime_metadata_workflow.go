@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"sort"
@@ -52,12 +54,17 @@ func (s *service) persistWorkflowApprovalPending(ctx context.Context, prepared *
 	if s == nil || s.repos == nil || s.repos.Message == nil || s.repos.Conversation == nil {
 		return metadata
 	}
-	if err := s.repos.Message.UpdateWaitingApproval(ctx, prepared.Message.ID, metadata); err != nil {
-		logger.WarnContext(ctx, "failed to mark aichat workflow approval pending", "message_id", prepared.Message.ID.String(), err)
-	}
-	if err := s.repos.Conversation.FinishWaitingApprovalMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
-		logger.WarnContext(ctx, "failed to finish aichat workflow approval pending message", "conversation_id", prepared.Conversation.ID.String(), err)
-	}
+	s.persistPendingMessageAndFinishConversationBestEffort(
+		ctx,
+		prepared,
+		"workflow approval",
+		func(repo repository.MessageRepository) error {
+			return repo.UpdateWaitingApproval(ctx, prepared.Message.ID, metadata)
+		},
+		func(repo repository.ConversationRepository) error {
+			return repo.FinishWaitingApprovalMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
+		},
+	)
 	return metadata
 }
 
@@ -91,12 +98,17 @@ func (s *service) persistWorkflowQuestionPending(ctx context.Context, prepared *
 	if s == nil || s.repos == nil || s.repos.Message == nil || s.repos.Conversation == nil {
 		return metadata
 	}
-	if err := s.repos.Message.UpdateWaitingQuestion(ctx, prepared.Message.ID, metadata); err != nil {
-		logger.WarnContext(ctx, "failed to mark aichat workflow question pending", "message_id", prepared.Message.ID.String(), err)
-	}
-	if err := s.repos.Conversation.FinishWaitingApprovalMessage(ctx, prepared.Conversation.ID, prepared.Message.ID); err != nil {
-		logger.WarnContext(ctx, "failed to finish aichat workflow question pending message", "conversation_id", prepared.Conversation.ID.String(), err)
-	}
+	s.persistPendingMessageAndFinishConversationBestEffort(
+		ctx,
+		prepared,
+		"workflow question",
+		func(repo repository.MessageRepository) error {
+			return repo.UpdateWaitingQuestion(ctx, prepared.Message.ID, metadata)
+		},
+		func(repo repository.ConversationRepository) error {
+			return repo.FinishWaitingApprovalMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
+		},
+	)
 	return metadata
 }
 

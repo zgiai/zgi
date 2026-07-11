@@ -178,6 +178,10 @@ export {
   useArchiveAutomationTask,
 } from './automation/use-automation';
 export {
+  useAIChatAssetOperationAudits,
+  type UseAIChatAssetOperationAuditsParams,
+} from './aichat/use-aichat-asset-operation-audits';
+export {
   useDeleteAIChatSkill,
   useAIChatSkill,
   useAIChatSkillConfig,

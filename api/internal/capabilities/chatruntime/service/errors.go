@@ -13,7 +13,9 @@ var (
 	ErrConversationRunning         = errors.New("conversation is already streaming")
 	ErrConversationWaitingApproval = errors.New("conversation is waiting for workflow approval")
 	ErrConversationWaitingQuestion = errors.New("conversation is waiting for workflow question answer")
+	ErrConversationWaitingAction   = errors.New("conversation is waiting for client action")
 	ErrStreamEventsUnavailable     = errors.New("stream events are unavailable")
+	ErrContinuationAlreadyRunning  = errors.New("continuation is already running")
 	ErrMessageReplaceNotAllowed    = errors.New("message replacement is only allowed for the only root message")
 )
 
@@ -45,4 +47,15 @@ func newFinalizedStreamError(cause error) error {
 func IsFinalizedStreamError(err error) bool {
 	var target *finalizedStreamError
 	return errors.As(err, &target)
+}
+
+func newContinuationAlreadyRunningError(message string) error {
+	if message == "" {
+		message = "reconnect to the active stream instead of retrying the action"
+	}
+	return errors.Join(ErrInvalidInput, ErrContinuationAlreadyRunning, errors.New(message))
+}
+
+func IsContinuationAlreadyRunningError(err error) bool {
+	return errors.Is(err, ErrContinuationAlreadyRunning)
 }

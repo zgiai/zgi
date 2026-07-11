@@ -1,12 +1,16 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuthStore } from '@/store/auth-store';
 import { AlertCircle } from 'lucide-react';
 import { ZgiLoadingScreen } from '@/components/brand/zgi-loading-screen';
 import { useT } from '@/i18n';
 import { consumePendingLogoutRedirect } from '@/utils/logout-redirect';
+import {
+  createAIChatTraceInstanceId,
+  logAIChatSessionTrace,
+} from '@/components/chat/controllers/aichat/session-trace';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -27,6 +31,11 @@ export function ProtectedRoute({ children, requireAdmin = false, fallback }: Pro
   const isLoading = useAuthStore.use.isLoading();
   const user = useAuthStore.use.user();
   const isSystemReady = useAuthStore.use.isSystemReady();
+  const instanceIdRef = useRef<string | null>(null);
+  if (!instanceIdRef.current) {
+    instanceIdRef.current = createAIChatTraceInstanceId('protected-route');
+  }
+  const instanceId = instanceIdRef.current;
 
   // Check admin requirements
   const isAdmin = useMemo(() => {
@@ -40,6 +49,37 @@ export function ProtectedRoute({ children, requireAdmin = false, fallback }: Pro
 
     return hasOrgAdminRole || hasGlobalAdminRole;
   }, [user]);
+
+  useEffect(() => {
+    const renderBranch =
+      !isSystemReady || isLoading
+        ? 'loading'
+        : !isAuthenticated
+          ? 'unauthenticated'
+          : requireAdmin && !isAdmin
+            ? 'access_denied'
+            : 'children';
+    logAIChatSessionTrace('protected_route_state', {
+      instanceId,
+      pathname,
+      renderBranch,
+      isAuthenticated,
+      isLoading,
+      isSystemReady,
+      requireAdmin,
+      isAdmin,
+      hasUser: Boolean(user),
+    });
+  }, [
+    instanceId,
+    isAdmin,
+    isAuthenticated,
+    isLoading,
+    isSystemReady,
+    pathname,
+    requireAdmin,
+    user,
+  ]);
 
   useEffect(() => {
     // Wait for system to be ready before making decisions

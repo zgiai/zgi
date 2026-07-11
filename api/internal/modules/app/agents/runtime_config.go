@@ -18,9 +18,10 @@ import (
 )
 
 var (
-	errAgentWebAppOffline      = errors.New("web app is offline")
-	errAgentWebAppNotPublished = errors.New("agent web app has no published version")
-	errAgentPromptTooLong      = errors.New("agent system prompt is too long")
+	errAgentWebAppOffline         = errors.New("web app is offline")
+	errAgentWebAppNotPublished    = errors.New("agent web app has no published version")
+	errAgentWebAppNotAgentRuntime = errors.New("web app is not an AGENT runtime")
+	errAgentPromptTooLong         = errors.New("agent system prompt is too long")
 )
 
 func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID string) (*dto.AgentConfigResponse, error) {
@@ -56,6 +57,9 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 	}
 	runtimeReq := normalizeAgentConfigRequest(req)
 	runtimeReq.WorkflowBindings = s.hydrateAgentWorkflowBindingTypes(ctx, ag.TenantID.String(), runtimeReq.WorkflowBindings)
+	if err := s.validateAgentEnabledSkillIDs(ctx, ag.TenantID.String(), accountID, runtimeReq.EnabledSkillIDs); err != nil {
+		return nil, err
+	}
 	if err := s.validateAgentBindingGrantChanges(ctx, ag, cfg, accountID, runtimeReq); err != nil {
 		return nil, err
 	}
@@ -593,7 +597,7 @@ func normalizeAgentEnabledSkillIDs(input []string) []string {
 	out := make([]string, 0, len(input))
 	for _, raw := range input {
 		id := strings.ToLower(strings.TrimSpace(raw))
-		if id == "" || skills.IsHiddenSystemSkill(id) {
+		if id == "" || !skills.IsUserSelectableSystemSkill(id) {
 			continue
 		}
 		if _, ok := seen[id]; ok {
@@ -604,6 +608,27 @@ func normalizeAgentEnabledSkillIDs(input []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func (s *agentsService) validateAgentEnabledSkillIDs(ctx context.Context, workspaceID, accountID string, skillIDs []string) error {
+	normalized := normalizeAgentEnabledSkillIDs(skillIDs)
+	if len(normalized) == 0 {
+		return nil
+	}
+	candidates, err := s.listAgentSkillCandidatesForWorkspace(ctx, workspaceID, accountID)
+	if err != nil {
+		return fmt.Errorf("validate agent skills: %w", err)
+	}
+	available := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		available[strings.ToLower(strings.TrimSpace(candidate.SkillID))] = struct{}{}
+	}
+	for _, id := range normalized {
+		if _, ok := available[strings.ToLower(strings.TrimSpace(id))]; !ok {
+			return fmt.Errorf("skill %s is not available for agent", id)
+		}
+	}
+	return nil
 }
 
 func normalizeAgentHomeTitle(input string) string {

@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  AgentRuntimeAIChatContextRegistration,
   AgentRuntimeDialogs,
   AgentRuntimeLoadingState,
   AgentRuntimeWorkbench,
@@ -25,6 +26,7 @@ export function AgentRuntimePageContent({ agentId }: AgentRuntimePageContentProp
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-background">
+      <AgentRuntimeAIChatContextRegistration context={model.aiChatContext} />
       {model.leaveGuardNode}
       <AgentRuntimeWorkbench model={model} />
       <AgentRuntimeDialogs model={model} />

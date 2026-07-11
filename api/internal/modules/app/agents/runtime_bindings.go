@@ -38,7 +38,7 @@ func (s *agentsService) validateAgentBindingGrantChanges(ctx context.Context, ag
 		}
 	}
 	if databaseBindingGrantNeedsRefresh(previous.DatabaseBindings, previous.DatabaseBoundByAccountID, previous.DatabaseBoundAtUnix, req.DatabaseBindings) {
-		if err := s.validateDatabaseBindingGrant(ctx, organizationID, accountID, req.DatabaseBindings); err != nil {
+		if err := s.validateDatabaseBindingGrant(ctx, organizationID, workspaceID, accountID, req.DatabaseBindings); err != nil {
 			return err
 		}
 	}
@@ -68,7 +68,7 @@ func (s *agentsService) validateKnowledgeBindingGrant(ctx context.Context, organ
 	return nil
 }
 
-func (s *agentsService) validateDatabaseBindingGrant(ctx context.Context, organizationID, accountID string, bindings []dto.AgentDatabaseBinding) error {
+func (s *agentsService) validateDatabaseBindingGrant(ctx context.Context, organizationID, workspaceID, accountID string, bindings []dto.AgentDatabaseBinding) error {
 	bindings = normalizeAgentDatabaseBindings(bindings)
 	if len(bindings) == 0 {
 		return nil
@@ -84,11 +84,11 @@ func (s *agentsService) validateDatabaseBindingGrant(ctx context.Context, organi
 		if dataSource == nil || strings.TrimSpace(dataSource.OrganizationID) != strings.TrimSpace(organizationID) {
 			return fmt.Errorf("database %s not found", binding.DataSourceID)
 		}
-		workspaceID := strings.TrimSpace(organizationID)
-		if dataSource.WorkspaceID != nil && strings.TrimSpace(*dataSource.WorkspaceID) != "" {
-			workspaceID = strings.TrimSpace(*dataSource.WorkspaceID)
+		sourceWorkspaceID := agentDataSourceWorkspaceID(organizationID, dataSource.WorkspaceID)
+		if sourceWorkspaceID != strings.TrimSpace(workspaceID) {
+			return fmt.Errorf("database %s not found in agent workspace", binding.DataSourceID)
 		}
-		if err := s.requireDatabaseReadBindingPermission(ctx, organizationID, workspaceID, accountID); err != nil {
+		if err := s.requireDatabaseReadBindingPermission(ctx, organizationID, sourceWorkspaceID, accountID); err != nil {
 			return fmt.Errorf("database %s read binding: %w", binding.DataSourceID, err)
 		}
 		for _, tableID := range binding.TableIDs {
@@ -101,12 +101,19 @@ func (s *agentsService) validateDatabaseBindingGrant(ctx context.Context, organi
 			}
 		}
 		if len(binding.WritableTableIDs) > 0 {
-			if err := s.requireDatabaseWriteBindingPermission(ctx, organizationID, workspaceID, accountID); err != nil {
+			if err := s.requireDatabaseWriteBindingPermission(ctx, organizationID, sourceWorkspaceID, accountID); err != nil {
 				return fmt.Errorf("database %s write binding: %w", binding.DataSourceID, err)
 			}
 		}
 	}
 	return nil
+}
+
+func agentDataSourceWorkspaceID(organizationID string, workspaceID *string) string {
+	if workspaceID != nil && strings.TrimSpace(*workspaceID) != "" {
+		return strings.TrimSpace(*workspaceID)
+	}
+	return strings.TrimSpace(organizationID)
 }
 
 func (s *agentsService) requireDatabaseReadBindingPermission(ctx context.Context, organizationID, workspaceID, accountID string) error {
@@ -265,8 +272,8 @@ type agentWorkflowCandidateRow struct {
 	UpdatedAt   time.Time
 }
 
-func (s *agentsService) ListAgentWorkflowBindingCandidates(ctx context.Context, agentID, accountID string) (*dto.AgentWorkflowBindingCandidatesResponse, error) {
-	ag, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
+func (s *agentsService) ListAgentWorkflowBindingCandidates(ctx context.Context, agentID, accountID string, req dto.AgentWorkflowBindingCandidatesRequest) (*dto.AgentWorkflowBindingCandidatesResponse, error) {
+	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false)
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +281,18 @@ func (s *agentsService) ListAgentWorkflowBindingCandidates(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	return &dto.AgentWorkflowBindingCandidatesResponse{Data: items}, nil
+	items = filterAgentWorkflowBindingCandidates(items, agentRuntimeModeFromConfig(cfg), req)
+	return &dto.AgentWorkflowBindingCandidatesResponse{
+		AgentID:            ag.ID.String(),
+		WorkspaceID:        ag.TenantID.String(),
+		Query:              strings.TrimSpace(req.Query),
+		AgentType:          strings.TrimSpace(req.AgentType),
+		Limit:              normalizeAgentBindingCandidateLimit(req.Limit),
+		IncludeSelected:    req.IncludeSelected,
+		IncludeStartInputs: req.IncludeStartInputs,
+		Count:              len(items),
+		Data:               items,
+	}, nil
 }
 
 func (s *agentsService) listAgentWorkflowBindingCandidatesForWorkspace(ctx context.Context, workspaceID string) ([]dto.AgentWorkflowBindingCandidate, error) {
