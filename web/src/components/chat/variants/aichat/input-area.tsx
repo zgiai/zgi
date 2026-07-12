@@ -26,6 +26,7 @@ import { useUploadConfig } from '@/hooks/use-upload';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { uploadService } from '@/services/upload.service';
+import { useCurrentWorkspace } from '@/store/workspace-store';
 import type { FileItem } from '@/services/types/file';
 import type { AIChatMessageFile, AIChatUserInputRequest } from '@/services/types/aichat';
 import type { AIChatToolGovernancePermissionTier } from '@/components/aichat/contextual/types';
@@ -390,6 +391,7 @@ export function AIChatInputArea({
     enabled: enableUpload,
     scope: uploadScope.type === 'webapp' ? uploadScope : undefined,
   });
+  const currentWorkspace = useCurrentWorkspace();
   const allowedExtensions = useMemo(
     () => filterLowercaseExtensions([...AICHAT_DOCUMENT_EXTENSIONS]),
     []
@@ -666,6 +668,7 @@ export function AIChatInputArea({
             ? await uploadService.uploadWebAppSingle(uploadScope.webAppId, file, { onProgress })
             : await uploadService.uploadSingle(file, {
                 is_temporary: true,
+                workspace_id: currentWorkspace?.id,
                 onProgress,
               });
         const uploadedFile = toAIChatMessageFile(response, kind);
@@ -705,7 +708,7 @@ export function AIChatInputArea({
         );
       }
     },
-    [t, uploadScope]
+    [currentWorkspace?.id, t, uploadScope]
   );
 
   const enqueueFiles = useCallback(
