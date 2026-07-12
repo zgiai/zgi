@@ -19,7 +19,16 @@ func RuntimeConfigForCandidate(catalog *contracts.ParseProviderCatalog, candidat
 		if strings.ToLower(strings.TrimSpace(provider.Name)) != providerKey {
 			continue
 		}
-		values := runtimeStringMap(provider.Metadata["env_overrides"])
+		rawOverrides, hasRequestOverrides := provider.Metadata["env_overrides"]
+		if !hasRequestOverrides {
+			// The built-in catalog describes process-level configuration through
+			// APIKeyEnv and ordinary metadata. Returning nil preserves the provider
+			// clients' static environment configuration without copying credentials
+			// into request state. Database-backed catalogs explicitly attach
+			// env_overrides and are converted to the isolated snapshot below.
+			return nil
+		}
+		values := runtimeStringMap(rawOverrides)
 		config := &contracts.ParseProviderRuntimeConfig{
 			ProviderKey:    providerKey,
 			BaseURL:        strings.TrimSpace(provider.BaseURL),

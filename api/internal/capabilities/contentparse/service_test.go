@@ -124,6 +124,16 @@ func TestRuntimeConfigForCandidate(t *testing.T) {
 	}
 }
 
+func TestRuntimeConfigForCandidateUsesStaticEnvironmentWhenOverridesAreAbsent(t *testing.T) {
+	catalog := DefaultProviderCatalog()
+
+	for _, providerKey := range []string{"reducto", "mineru"} {
+		if config := RuntimeConfigForCandidate(catalog, routing.RouteCandidate{ProviderKey: providerKey}); config != nil {
+			t.Fatalf("%s runtime config = %#v, want nil for static environment configuration", providerKey, config)
+		}
+	}
+}
+
 type concurrentRoutingAdapter struct {
 	entered chan string
 	release chan struct{}
