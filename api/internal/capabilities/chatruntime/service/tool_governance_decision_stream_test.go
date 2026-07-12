@@ -1342,11 +1342,11 @@ func TestRunToolGovernanceDecisionStreamApproveToolFailureReturnsErrorToModel(t 
 		t.Fatalf("AppChatStream requests = %d, want one skill-loop continuation call", len(llm.streamRequests))
 	}
 	streamReq := llm.streamRequests[0]
-	if !toolGovernanceStreamRequestHasTool(streamReq, skills.MetaToolCallSkillTool) {
-		t.Fatalf("execution-failure continuation should expose compact executable %s tool", skills.MetaToolCallSkillTool)
+	if !toolGovernanceStreamRequestHasTool(streamReq, skills.MetaToolLoadSkill) {
+		t.Fatalf("execution-failure continuation should expose %s before retrying another skill tool", skills.MetaToolLoadSkill)
 	}
-	if toolGovernanceStreamRequestHasTool(streamReq, skills.MetaToolLoadSkill) {
-		t.Fatalf("execution-failure continuation should not require %s for a built-in executable skill", skills.MetaToolLoadSkill)
+	if toolGovernanceStreamRequestHasTool(streamReq, skills.MetaToolCallSkillTool) {
+		t.Fatalf("execution-failure continuation should not expose %s before full skill instructions are loaded", skills.MetaToolCallSkillTool)
 	}
 	if toolGovernanceStreamRequestContains(streamReq, "Do not call tools") {
 		t.Fatalf("execution-failure continuation should not use the removed no-tools summary flow: %q", toolGovernanceStreamRequestText(streamReq))

@@ -819,17 +819,6 @@ func TestSkillLoopUsesMainLoopWithoutClassifiedIntent(t *testing.T) {
 	}
 }
 
-func TestSkillLoopPromptTokenSoftLimitUsesLowerContextBudget(t *testing.T) {
-	prepared := &PreparedChat{parts: &chatRequestParts{ContextControl: map[string]interface{}{"prompt_budget": 24000}}}
-	if got := skillLoopPromptTokenSoftLimit(prepared); got != 24000 {
-		t.Fatalf("skillLoopPromptTokenSoftLimit() = %d, want 24000", got)
-	}
-	prepared.parts.ContextControl["prompt_budget"] = 900000
-	if got := skillLoopPromptTokenSoftLimit(prepared); got != defaultSkillLoopPromptTokenSoftLimit {
-		t.Fatalf("skillLoopPromptTokenSoftLimit() = %d, want default %d", got, defaultSkillLoopPromptTokenSoftLimit)
-	}
-}
-
 func TestSkillLoopKeepsAgentActionsInSkillLoop(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{

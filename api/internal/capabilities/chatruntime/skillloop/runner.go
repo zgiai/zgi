@@ -96,12 +96,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		return "", nil, fmt.Errorf("%w: no skills available for configured skill ids", ErrInvalidInput)
 	}
 	preferExplicitFinalAnswer := req.PreferExplicitFinalAnswer
-	restoredLoadedSkills := initialLoadedSkillsForRun(req, resolved)
-	loadedSkills := copyLoadedSkillSet(restoredLoadedSkills)
-	compactExecutableSkills := compactExecutableSkillsForRun(resolved)
-	for skillID := range compactExecutableSkills {
-		loadedSkills[skillID] = struct{}{}
-	}
+	loadedSkills := initialLoadedSkillsForRun(req, resolved)
 
 	messages := append([]adapter.Message{}, prepared.LLMRequest.Messages...)
 	metadataMessage, metadataStats := skills.SkillMetadataSystemMessageWithBudget(
@@ -109,15 +104,11 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		skills.DefaultSkillMetadataPromptBudgetChars,
 	)
 	messages = append(messages, metadataMessage)
-	if manifest := compactExecutableSkillManifestMessage(resolved, compactExecutableSkills); manifest != nil {
-		messages = append(messages, *manifest)
-	}
-	if restored := restoredLoadedSkillInstructionsMessage(resolved, restoredLoadedSkills); restored != nil {
+	if restored := restoredLoadedSkillInstructionsMessage(resolved, loadedSkills); restored != nil {
 		messages = append(messages, *restored)
 	}
 	messages = append(messages, validAdditionalSystemMessages(req.AdditionalSystemMessages)...)
 	messages = append(messages, agenticSkillLoopSystemMessage(preferExplicitFinalAnswer))
-	staticMessageCount := len(messages)
 	traces := []skills.SkillTrace{metadataExposedTrace(resolved.SkillIDs(), metadataStats)}
 	r.recordTrace(traces, traces[0])
 	logger.DebugContext(ctx, "aichat skill metadata exposed",
@@ -141,20 +132,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	terminalStateGuardConfigured := req.RuntimeStateSnapshot != nil
 	var answerBuilder strings.Builder
 	var usage *adapter.Usage
-	lastPromptTokens := 0
 	for round := 0; round < defaultMaxSkillPlanningRounds; round++ {
-		if req.PromptTokenSoftLimit > 0 && lastPromptTokens > req.PromptTokenSoftLimit {
-			messages = compactSkillLoopMessages(messages, staticMessageCount, successfulToolCalls)
-			logger.DebugContext(ctx, "aichat skill planning context compacted from provider usage",
-				"conversation_id", prepared.Conversation.ID.String(),
-				"message_id", prepared.Message.ID.String(),
-				"round", round,
-				"provider_prompt_tokens", lastPromptTokens,
-				"soft_limit", req.PromptTokenSoftLimit,
-				"message_count", len(messages),
-			)
-			lastPromptTokens = 0
-		}
 		planningReq := cloneChatRequest(prepared.LLMRequest)
 		planningReq.Messages = messages
 		planningReq.Stream = false
@@ -171,9 +149,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		deferTerminalContent := preferExplicitFinalAnswer || !terminalSubmissionAllowed
 		planningResult, err := r.runSkillPlanning(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress)
 		usage = mergeUsage(usage, planningResult.usage)
-		if planningResult.usage != nil {
-			lastPromptTokens = planningResult.usage.PromptTokens
-		}
 		if err != nil {
 			var streamedErr *streamedFinalAnswerError
 			if errors.As(err, &streamedErr) {
@@ -464,144 +439,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		return answerBuilder.String(), usage, nil
 	}
 	return answerBuilder.String(), usage, err
-}
-
-func compactSkillLoopMessages(messages []adapter.Message, staticCount int, successful []SkillToolCallRef) []adapter.Message {
-	if staticCount < 0 {
-		staticCount = 0
-	}
-	if staticCount > len(messages) {
-		staticCount = len(messages)
-	}
-	dynamic := messages[staticCount:]
-	const recentDynamicMessageLimit = 12
-	if len(dynamic) <= recentDynamicMessageLimit {
-		return messages
-	}
-	start := len(dynamic) - recentDynamicMessageLimit
-	for start > 0 && strings.EqualFold(strings.TrimSpace(dynamic[start].Role), "tool") {
-		start--
-	}
-	recent := append([]adapter.Message(nil), dynamic[start:]...)
-	compacted := append([]adapter.Message(nil), messages[:staticCount]...)
-	if summary := compactSuccessfulToolCallsMessage(successful); summary != nil {
-		compacted = append(compacted, *summary)
-	}
-	return append(compacted, recent...)
-}
-
-func compactSuccessfulToolCallsMessage(calls []SkillToolCallRef) *adapter.Message {
-	if len(calls) == 0 {
-		return nil
-	}
-	start := 0
-	if len(calls) > 12 {
-		start = len(calls) - 12
-	}
-	records := make([]map[string]interface{}, 0, len(calls)-start)
-	for _, call := range calls[start:] {
-		record := map[string]interface{}{
-			"skill_id":  strings.TrimSpace(call.SkillID),
-			"tool_name": strings.TrimSpace(call.ToolName),
-			"status":    "success",
-		}
-		if value := compactJSONValueForSkillLoop(call.Arguments, 500); value != "" {
-			record["arguments"] = value
-		}
-		if value := compactJSONValueForSkillLoop(call.Result, 1200); value != "" {
-			record["result"] = value
-		}
-		records = append(records, record)
-	}
-	payload, err := json.Marshal(records)
-	if err != nil {
-		return nil
-	}
-	return &adapter.Message{
-		Role: "system",
-		Content: "Earlier skill-loop transcript was compacted after provider token usage exceeded the soft limit. " +
-			"These successful tool facts remain available; use the current operation plan, turn state, and latest tool messages for exact continuation. Compact facts JSON: " + string(payload),
-	}
-}
-
-func compactJSONValueForSkillLoop(value interface{}, maxRunes int) string {
-	payload, err := json.Marshal(value)
-	if err != nil {
-		return ""
-	}
-	return truncateRunesForHelper(string(payload), maxRunes)
-}
-
-func copyLoadedSkillSet(input map[string]struct{}) map[string]struct{} {
-	out := make(map[string]struct{}, len(input))
-	for skillID := range input {
-		out[skillID] = struct{}{}
-	}
-	return out
-}
-
-func compactExecutableSkillsForRun(resolved *skills.ResolvedSkills) map[string]struct{} {
-	loaded := map[string]struct{}{}
-	if resolved == nil {
-		return loaded
-	}
-	for index := range resolved.Skills {
-		doc := &resolved.Skills[index]
-		skillID := strings.TrimSpace(doc.Metadata.ID)
-		if skillID == "" || !strings.EqualFold(strings.TrimSpace(doc.Metadata.Source), skills.SkillSourceSystem) ||
-			len(doc.Tools) == 0 || doc.Metadata.HasScripts {
-			continue
-		}
-		switch strings.ToLower(strings.TrimSpace(doc.Metadata.RuntimeType)) {
-		case skills.SkillRuntimeTypeTool, skills.SkillRuntimeTypeHybrid:
-			loaded[skillID] = struct{}{}
-		}
-	}
-	return loaded
-}
-
-func compactExecutableSkillManifestMessage(resolved *skills.ResolvedSkills, executable map[string]struct{}) *adapter.Message {
-	if resolved == nil || len(executable) == 0 {
-		return nil
-	}
-	records := make([]map[string]interface{}, 0, len(executable))
-	for index := range resolved.Skills {
-		doc := &resolved.Skills[index]
-		skillID := strings.TrimSpace(doc.Metadata.ID)
-		if _, ok := executable[skillID]; !ok {
-			continue
-		}
-		toolNames := make([]string, 0, len(doc.Tools))
-		for _, tool := range doc.Tools {
-			if name := strings.TrimSpace(tool.Name); name != "" {
-				toolNames = append(toolNames, name)
-			}
-		}
-		record := map[string]interface{}{
-			"skill_id": skillID,
-			"tools":    toolNames,
-		}
-		if value := compactRestoredSkillInstructions(doc.Metadata.Description, 320); value != "" {
-			record["description"] = value
-		}
-		if value := compactRestoredSkillInstructions(doc.Metadata.WhenToUse, 240); value != "" {
-			record["when_to_use"] = value
-		}
-		records = append(records, record)
-	}
-	if len(records) == 0 {
-		return nil
-	}
-	payload, err := json.Marshal(records)
-	if err != nil {
-		return nil
-	}
-	return &adapter.Message{
-		Role: "system",
-		Content: "Compact executable skill manifest: these built-in skills are already enabled for direct execution. " +
-			"Choose their tools yourself from the exposed call_skill_tool schema. Do not call load_skill for these skill IDs. " +
-			"Use load_skill only for other enabled skills that the runtime still exposes as unloaded. Manifest JSON: " + string(payload),
-	}
 }
 
 func initialLoadedSkillsForRun(req RunRequest, resolved *skills.ResolvedSkills) map[string]struct{} {

@@ -51,71 +51,31 @@ func TestInitialLoadedSkillsForRunRestoresMetadataState(t *testing.T) {
 	}
 }
 
-func TestCompactExecutableSkillsForRunPreloadsBuiltInToolSkills(t *testing.T) {
-	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
-		{
-			Metadata: skills.SkillMetadata{ID: skills.SkillFileReader, Source: skills.SkillSourceSystem, RuntimeType: skills.SkillRuntimeTypeTool},
-			Tools:    []skills.SkillToolDefinition{{Name: "read_file"}},
-		},
-		{
-			Metadata: skills.SkillMetadata{ID: "custom-reader", Source: skills.SkillSourceCustom, RuntimeType: skills.SkillRuntimeTypeTool},
-			Tools:    []skills.SkillToolDefinition{{Name: "read_custom"}},
-		},
-		{
-			Metadata: skills.SkillMetadata{ID: "scripted-system", Source: skills.SkillSourceSystem, RuntimeType: skills.SkillRuntimeTypeHybrid, HasScripts: true},
-			Tools:    []skills.SkillToolDefinition{{Name: "run_script"}},
-		},
-	}}
-
-	loaded := compactExecutableSkillsForRun(resolved)
-	if _, ok := loaded[skills.SkillFileReader]; !ok {
-		t.Fatalf("compact executable skills = %#v, want %s", loaded, skills.SkillFileReader)
+func TestBuiltInToolSkillRequiresInstructionLoad(t *testing.T) {
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata:     skills.SkillMetadata{ID: skills.SkillFileManager, Source: skills.SkillSourceSystem, RuntimeType: skills.SkillRuntimeTypeTool},
+		Instructions: "# File Manager\nDo not invent file IDs.",
+		Tools:        []skills.SkillToolDefinition{{Name: "delete_file"}},
+	}}}
+	loaded := initialLoadedSkillsForRun(RunRequest{}, resolved)
+	if _, ok := loaded[skills.SkillFileManager]; ok {
+		t.Fatalf("built-in skill was marked loaded without its instructions: %#v", loaded)
 	}
-	for _, skillID := range []string{"custom-reader", "scripted-system"} {
-		if _, ok := loaded[skillID]; ok {
-			t.Fatalf("compact executable skills unexpectedly include %q: %#v", skillID, loaded)
+
+	tools := metaToolsForRun(resolved, loaded, true)
+	hasTool := func(name string) bool {
+		for _, tool := range tools {
+			if strings.EqualFold(strings.TrimSpace(tool.Function.Name), name) {
+				return true
+			}
 		}
+		return false
 	}
-
-	message := compactExecutableSkillManifestMessage(resolved, loaded)
-	if message == nil {
-		t.Fatal("compactExecutableSkillManifestMessage() = nil")
+	if !hasTool(skills.MetaToolLoadSkill) {
+		t.Fatalf("tools = %#v, want %s", tools, skills.MetaToolLoadSkill)
 	}
-	content := messageContent(message.Content)
-	for _, want := range []string{"Compact executable skill manifest", skills.SkillFileReader, "read_file", "Do not call load_skill"} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("compact manifest missing %q in %s", want, content)
-		}
-	}
-	if strings.Contains(content, "custom-reader") {
-		t.Fatalf("compact manifest includes custom skill: %s", content)
-	}
-}
-
-func TestCompactSkillLoopMessagesKeepsStaticAndRecentToolRound(t *testing.T) {
-	messages := []adapter.Message{{Role: "system", Content: "base"}, {Role: "user", Content: "task"}}
-	for index := 0; index < 10; index++ {
-		callID := fmt.Sprintf("call-%d", index)
-		messages = append(messages,
-			adapter.Message{Role: "assistant", ToolCalls: []adapter.ToolCall{{ID: callID}}},
-			adapter.Message{Role: "tool", ToolCallID: callID, Content: fmt.Sprintf("result-%d", index)},
-		)
-	}
-	calls := []SkillToolCallRef{{SkillID: skills.SkillFileReader, ToolName: "read_file", Result: map[string]interface{}{"status": "completed"}}}
-
-	compacted := compactSkillLoopMessages(messages, 2, calls)
-	if len(compacted) >= len(messages) {
-		t.Fatalf("compacted message count = %d, want less than %d", len(compacted), len(messages))
-	}
-	if messageContent(compacted[0].Content) != "base" || messageContent(compacted[1].Content) != "task" {
-		t.Fatalf("static messages changed: %#v", compacted[:2])
-	}
-	if !strings.Contains(messageContent(compacted[2].Content), "Compact facts JSON") {
-		t.Fatalf("compaction summary missing: %#v", compacted[2])
-	}
-	last := compacted[len(compacted)-1]
-	if last.ToolCallID != "call-9" || !strings.Contains(messageContent(last.Content), "result-9") {
-		t.Fatalf("latest tool result not preserved: %#v", last)
+	if hasTool(skills.MetaToolCallSkillTool) {
+		t.Fatalf("tools = %#v, should not expose %s before instructions load", tools, skills.MetaToolCallSkillTool)
 	}
 }
 

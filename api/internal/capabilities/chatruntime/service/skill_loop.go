@@ -119,25 +119,11 @@ func (s *service) runPreparedSkillLoop(
 		OnTerminalStateGuardDecision:   skillLoopTerminalStateGuardDecision(prepared),
 		OnTerminalCompletion:           skillLoopTerminalCompletionResult(prepared),
 		OnChunk:                        onChunk,
-		PromptTokenSoftLimit:           skillLoopPromptTokenSoftLimit(prepared),
 	})
 	if err != nil && strings.TrimSpace(answer) != "" {
 		s.persistPartialSkillLoopAnswerBestEffort(persistCtx, prepared, answer, usage)
 	}
 	return answer, usage, err
-}
-
-const defaultSkillLoopPromptTokenSoftLimit = 64000
-
-func skillLoopPromptTokenSoftLimit(prepared *PreparedChat) int {
-	limit := defaultSkillLoopPromptTokenSoftLimit
-	if prepared == nil || prepared.parts == nil {
-		return limit
-	}
-	if budget := intValueFromAny(mapFromOperationContext(prepared.parts.ContextControl)["prompt_budget"]); budget > 0 && budget < limit {
-		return budget
-	}
-	return limit
 }
 
 func (s *service) persistPartialSkillLoopAnswerBestEffort(ctx context.Context, prepared *PreparedChat, answer string, usage *adapter.Usage) {
