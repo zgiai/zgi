@@ -356,7 +356,7 @@ func (h *PlaygroundHandler) executeRoutePlan(c *gin.Context, catalog *contracts.
 		attemptStartedAt := time.Now()
 		envOverrides := service.RuntimeEnvOverridesForCandidate(catalog, candidate)
 		var artifact *contracts.ParseArtifact
-		err := envconfig.WithOverridesResult(envOverrides, func() error {
+		err := envconfig.WithExclusiveOverridesResult(envOverrides, func() error {
 			var parseErr error
 			artifact, parseErr = h.orchestrator.ParseWithAdapter(c.Request.Context(), adapterName, attemptReq)
 			return parseErr

@@ -136,6 +136,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		OrganizationService: serviceContainer.GetOrganizationService(),
 		LLMClient:           serviceContainer.GetLLMClient(),
 		DefaultModelService: serviceContainer.GetDefaultModelService(),
+		Module:              serviceContainer.GetContentParseModule(),
 	})
 
 	// ---------- Data Library ----------

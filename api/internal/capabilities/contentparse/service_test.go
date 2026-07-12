@@ -61,3 +61,64 @@ func TestServiceParseWithRoutingUsesPlannerProvider(t *testing.T) {
 		t.Fatalf("artifact metadata = %#v", artifact)
 	}
 }
+
+func TestServiceParseWithRoutingUsesRequestScopedCatalog(t *testing.T) {
+	adapter := &routingTestAdapter{}
+	staticCatalog := &contracts.ParseProviderCatalog{Providers: []contracts.ParseProviderConfig{
+		{Name: "mineru", Enabled: true, Priority: 100, Adapter: adapter.Name(), Engine: contracts.ParseEngineMineru},
+	}}
+	dynamicCatalog := &contracts.ParseProviderCatalog{Providers: []contracts.ParseProviderConfig{
+		{Name: "local", Enabled: true, Priority: 1000, FallbackOnly: true, Adapter: adapter.Name(), Engine: contracts.ParseEngineLocal},
+	}}
+	orchestrator := NewOrchestrator(NewDefaultStrategyResolver(staticCatalog, adapter.Name()), []ParseAdapter{adapter})
+	service := NewService(orchestrator, routing.NewDefaultPlanner(), staticCatalog).(*Service)
+	var resolvedOrganization string
+	service.SetProviderCatalogResolver(func(_ context.Context, req contracts.ParseRequest) (*contracts.ParseProviderCatalog, string, error) {
+		resolvedOrganization, _ = req.Metadata["organization_id"].(string)
+		return dynamicCatalog, "database_merged", nil
+	})
+
+	artifact, err := service.ParseWithRouting(context.Background(), contracts.ParseRequest{
+		SourceType: contracts.ParseSourceTypeBytes,
+		FileName:   "sample.pdf",
+		Data:       []byte("pdf"),
+		Intent:     contracts.ParseIntentChatContext,
+		Profile:    contracts.ParseProfileAuto,
+		Metadata: map[string]any{
+			"organization_id": "11111111-1111-1111-1111-111111111111",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ParseWithRouting() error = %v", err)
+	}
+	if resolvedOrganization != "11111111-1111-1111-1111-111111111111" {
+		t.Fatalf("resolver organization = %q", resolvedOrganization)
+	}
+	if adapter.gotReq.EngineHint != contracts.ParseEngineLocal {
+		t.Fatalf("engine hint = %q, want %q", adapter.gotReq.EngineHint, contracts.ParseEngineLocal)
+	}
+	if artifact.Metadata["provider_catalog_source"] != "database_merged" {
+		t.Fatalf("provider catalog source = %#v", artifact.Metadata["provider_catalog_source"])
+	}
+	if artifact.Metadata["executed_provider_key"] != "local" {
+		t.Fatalf("executed provider = %#v", artifact.Metadata["executed_provider_key"])
+	}
+}
+
+func TestRuntimeEnvOverridesForCandidate(t *testing.T) {
+	catalog := &contracts.ParseProviderCatalog{Providers: []contracts.ParseProviderConfig{
+		{
+			Name: "mineru",
+			Metadata: map[string]any{
+				"env_overrides": map[string]any{
+					"MINERU_MODE":    "official",
+					"MINERU_API_KEY": "secret",
+				},
+			},
+		},
+	}}
+	overrides := RuntimeEnvOverridesForCandidate(catalog, routing.RouteCandidate{ProviderKey: "mineru"})
+	if overrides["MINERU_MODE"] != "official" || overrides["MINERU_API_KEY"] != "secret" {
+		t.Fatalf("runtime overrides = %#v", overrides)
+	}
+}

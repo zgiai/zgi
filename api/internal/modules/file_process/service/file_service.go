@@ -113,7 +113,9 @@ func (s *fileService) GetUploadConfig() *interfaces.FileUploadConfigResponse {
 // UploadFile upload file
 func (s *fileService) UploadFile(ctx context.Context, filename string, content []byte, mimeType string, userID, organizationID string, userRole model.CreatedByRole, source *interfaces.FileSource, workspaceID *string, isTemporary bool, isIcon bool) (*dto.UploadFile, error) {
 	return s.UploadFileWithOptions(ctx, filename, content, mimeType, userID, organizationID, userRole, source, workspaceID, isTemporary, isIcon, UploadFileOptions{
-		StartLegacyContentExtraction: true,
+		// Temporary chat files are parsed on demand through the routed content
+		// parse service. Avoid racing that request with legacy background parsing.
+		StartLegacyContentExtraction: !isTemporary,
 	})
 }
 

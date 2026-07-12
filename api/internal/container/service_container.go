@@ -8,8 +8,6 @@ import (
 
 	"github.com/hibiken/asynq"
 	"github.com/zgiai/zgi/api/config"
-	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
-	hyperparsesdk "github.com/zgiai/zgi/api/internal/capabilities/contentparse/adapters/hyperparse_sdk"
 	shortlinkcap "github.com/zgiai/zgi/api/internal/capabilities/shortlink"
 	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/infra/platform"
@@ -165,6 +163,7 @@ type ServiceContainer struct {
 	fileFolderService             file_service.FileFolderService
 	contentExtractor              workflow_file.ContentExtractor
 	contentParseService           contracts.ContentParseService
+	contentParseModule            *contentparsemodule.Module
 
 	// DataSource service
 	dataSourceService service.DataSourceService
@@ -422,7 +421,11 @@ func (c *ServiceContainer) initializeWorkflowFileDependencies() {
 
 	storageClient := storage.GetStorage()
 	extractProcessor := extractor.NewExtractProcessor(storageClient)
-	workflow_file.InitGlobalContentExtractor(fileService, extractProcessor)
+	workflow_file.InitGlobalContentExtractor(
+		fileService,
+		extractProcessor,
+		workflow_file.WithContentParseService(c.GetContentParseService()),
+	)
 }
 
 func (c *ServiceContainer) GetRegisterService() interfaces.RegisterService {
@@ -605,13 +608,21 @@ func (c *ServiceContainer) GetFileFolderService() file_service.FileFolderService
 
 func (c *ServiceContainer) GetContentParseService() contracts.ContentParseService {
 	if c.contentParseService == nil {
-		c.contentParseService = contentparsecap.NewModule(
-			contentparsecap.WithFigureSummaryEnhancer(
-				hyperparsesdk.NewDefaultChatFigureSummaryLocalizer(c.GetLLMClient(), c.GetDefaultModelService()),
-			),
-		).Service
+		c.contentParseService = c.GetContentParseModule().ContentParseService
 	}
 	return c.contentParseService
+}
+
+func (c *ServiceContainer) GetContentParseModule() *contentparsemodule.Module {
+	if c.contentParseModule == nil {
+		c.contentParseModule = contentparsemodule.NewModule(
+			c.db,
+			contentparsemodule.WithAccountService(c.GetAccountService()),
+			contentparsemodule.WithOrganizationService(c.GetOrganizationService()),
+			contentparsemodule.WithSystemVisionModel(c.GetLLMClient(), c.GetDefaultModelService()),
+		)
+	}
+	return c.contentParseModule
 }
 
 func (c *ServiceContainer) GetContentExtractor() workflow_file.ContentExtractor {
@@ -629,7 +640,12 @@ func (c *ServiceContainer) GetContentExtractor() workflow_file.ContentExtractor 
 		config := workflow_file.GetContentExtractorConfig()
 
 		// Create ContentExtractor with FileService, ExtractProcessor, and Config
-		c.contentExtractor = workflow_file.NewContentExtractor(fileService, extractProcessor, config)
+		c.contentExtractor = workflow_file.NewContentExtractor(
+			fileService,
+			extractProcessor,
+			config,
+			workflow_file.WithContentParseService(c.GetContentParseService()),
+		)
 	}
 	return c.contentExtractor
 }
@@ -716,14 +732,10 @@ func (c *ServiceContainer) GetSQLBase() sql_base.SQLBase {
 
 func (c *ServiceContainer) GetDataLibraryModule() *datalibrarymodule.Module {
 	if c.dataLibraryModule == nil {
-		contentParseModule := contentparsemodule.NewModule(
-			c.db,
-			contentparsemodule.WithSystemVisionModel(c.GetLLMClient(), c.GetDefaultModelService()),
-		)
 		c.dataLibraryModule = datalibrarymodule.NewModuleWithContentParseModule(
 			c.db,
 			storage.GetStorage(),
-			contentParseModule,
+			c.GetContentParseModule(),
 			c.GetLLMClient(),
 			c.GetDefaultModelService(),
 		)

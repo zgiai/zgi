@@ -10,8 +10,9 @@ import (
 )
 
 var (
-	overrideMu sync.RWMutex
-	overrides  = map[string]string{}
+	overrideMu        sync.RWMutex
+	overrideExecution sync.Mutex
+	overrides         = map[string]string{}
 )
 
 // String reads runtime configuration through the application config source.
@@ -78,6 +79,15 @@ func WithOverridesResult(values map[string]string, fn func() error) error {
 	}()
 
 	return fn()
+}
+
+// WithExclusiveOverridesResult isolates request-scoped provider credentials
+// and endpoints from concurrent parse executions. Nested parser overrides use
+// WithOverridesResult so they can safely run inside this exclusive scope.
+func WithExclusiveOverridesResult(values map[string]string, fn func() error) error {
+	overrideExecution.Lock()
+	defer overrideExecution.Unlock()
+	return WithOverridesResult(values, fn)
 }
 
 func isTestBinary() bool {

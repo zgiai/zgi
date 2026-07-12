@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zgiai/zgi/api/internal/contracts"
+	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	"github.com/zgiai/zgi/api/internal/modules/file_process/service/extractor"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -263,7 +265,18 @@ type FileContent struct {
 type contentExtractor struct {
 	fileService      interfaces.FileService
 	extractProcessor *extractor.ExtractProcessor
+	contentParse     contracts.ContentParseService
 	config           *Config
+}
+
+type ContentExtractorOption func(*contentExtractor)
+
+// WithContentParseService routes on-demand document extraction through the
+// platform content-parse capability before using the legacy extractor fallback.
+func WithContentParseService(service contracts.ContentParseService) ContentExtractorOption {
+	return func(extractor *contentExtractor) {
+		extractor.contentParse = service
+	}
 }
 
 // NewContentExtractor creates a new ContentExtractor instance with the provided dependencies.
@@ -289,12 +302,18 @@ type contentExtractor struct {
 //	    CacheEnabled: true,
 //	}
 //	extractor := NewContentExtractor(fileService, extractProcessor, config)
-func NewContentExtractor(fileService interfaces.FileService, extractProcessor *extractor.ExtractProcessor, config *Config) ContentExtractor {
-	return &contentExtractor{
+func NewContentExtractor(fileService interfaces.FileService, extractProcessor *extractor.ExtractProcessor, config *Config, options ...ContentExtractorOption) ContentExtractor {
+	contentExtractor := &contentExtractor{
 		fileService:      fileService,
 		extractProcessor: extractProcessor,
 		config:           config,
 	}
+	for _, option := range options {
+		if option != nil {
+			option(contentExtractor)
+		}
+	}
+	return contentExtractor
 }
 
 func (ce *contentExtractor) getWorkflowRunIDFromContext(ctx context.Context) string {
@@ -437,14 +456,7 @@ func (ce *contentExtractor) ExtractFileContent(ctx context.Context, fileID strin
 	}
 
 	startTime := time.Now()
-	extractSetting := &extractor.ExtractSetting{
-		DatasourceType:     extractor.DatasourceTypeFile,
-		DocumentModel:      "text_model",
-		ExtractionStrategy: ce.config.Strategy,
-		// ExtractionFallbackEnabled nil → defaults to true, allowing automatic
-		// degradation through the strategy chain on failure.
-	}
-	extractOutput, text, err := ce.extractProcessor.LoadFromUploadFileWithSetting(extractCtx, modelUploadFile, true, false, extractSetting)
+	text, docCount, parserSource, err := ce.extractDocumentContent(extractCtx, uploadFile, modelUploadFile, tenantID)
 	elapsedMs := time.Since(startTime).Milliseconds()
 
 	if err != nil {
@@ -488,11 +500,6 @@ func (ce *contentExtractor) ExtractFileContent(ctx context.Context, fileID strin
 		logger.Warn("File content truncated due to size limit", logFields...)
 	}
 
-	docCount := 0
-	if extractOutput != nil {
-		docCount = len(extractOutput.Elements)
-	}
-
 	logFields := []interface{}{
 		"file_id", fileID,
 		"content_size", len(text),
@@ -500,6 +507,7 @@ func (ce *contentExtractor) ExtractFileContent(ctx context.Context, fileID strin
 		"cached", false,
 		"doc_count", docCount,
 		"truncated", truncated,
+		"parser_source", parserSource,
 	}
 	if workflowRunID != "" {
 		logFields = append(logFields, "workflow_run_id", workflowRunID)
@@ -527,6 +535,93 @@ func (ce *contentExtractor) ExtractFileContent(ctx context.Context, fileID strin
 		Size:        len(text),
 		FromCache:   false,
 	}, nil
+}
+
+func (ce *contentExtractor) extractDocumentContent(
+	ctx context.Context,
+	uploadFile *dto.UploadFile,
+	legacyUploadFile *model.UploadFile,
+	tenantID string,
+) (string, int, string, error) {
+	if ce.contentParse != nil {
+		artifact, err := ce.parseWithContentParse(ctx, uploadFile, tenantID)
+		if err == nil && artifact != nil {
+			return parseArtifactContent(artifact), len(artifact.Elements), "content_parse_routed", nil
+		}
+		if err == nil {
+			err = fmt.Errorf("content parse returned no artifact")
+		}
+		logger.WarnContext(ctx, "routed content parse failed; using legacy extractor fallback", "file_id", uploadFile.ID, "error", err)
+	}
+
+	if ce.extractProcessor == nil {
+		return "", 0, "", fmt.Errorf("legacy extract processor is not configured")
+	}
+	extractSetting := &extractor.ExtractSetting{
+		DatasourceType:     extractor.DatasourceTypeFile,
+		DocumentModel:      "text_model",
+		ExtractionStrategy: ce.config.Strategy,
+		// ExtractionFallbackEnabled nil defaults to true, preserving a final
+		// compatibility fallback when the routed capability is unavailable.
+	}
+	extractOutput, text, err := ce.extractProcessor.LoadFromUploadFileWithSetting(ctx, legacyUploadFile, true, false, extractSetting)
+	if err != nil {
+		return "", 0, "legacy_extract_processor", err
+	}
+	docCount := 0
+	if extractOutput != nil {
+		docCount = len(extractOutput.Elements)
+	}
+	return text, docCount, "legacy_extract_processor", nil
+}
+
+func (ce *contentExtractor) parseWithContentParse(ctx context.Context, uploadFile *dto.UploadFile, tenantID string) (*contracts.ParseArtifact, error) {
+	data, err := ce.fileService.DownloadFile(ctx, uploadFile.ID)
+	if err != nil {
+		return nil, fmt.Errorf("download file for content parse: %w", err)
+	}
+	metadata := map[string]any{
+		"source":          "content_extractor",
+		"organization_id": strings.TrimSpace(tenantID),
+		"account_id":      strings.TrimSpace(uploadFile.CreatedBy),
+		"upload_file_id":  uploadFile.ID,
+		"mime_type":       uploadFile.MimeType,
+	}
+	if uploadFile.WorkspaceID != nil && strings.TrimSpace(*uploadFile.WorkspaceID) != "" {
+		metadata["workspace_id"] = strings.TrimSpace(*uploadFile.WorkspaceID)
+	}
+	req := contracts.ParseRequest{
+		SourceType: contracts.ParseSourceTypeBytes,
+		SourceRef:  uploadFile.ID,
+		FileName:   uploadFile.Name,
+		Data:       data,
+		Intent:     contracts.ParseIntentChatContext,
+		Profile:    contracts.ParseProfileAuto,
+		Metadata:   metadata,
+	}
+	if routed, ok := ce.contentParse.(contracts.RoutedContentParseService); ok {
+		return routed.ParseWithRouting(ctx, req)
+	}
+	return ce.contentParse.Parse(ctx, req)
+}
+
+func parseArtifactContent(artifact *contracts.ParseArtifact) string {
+	if artifact == nil {
+		return ""
+	}
+	if content := strings.TrimSpace(artifact.Markdown); content != "" {
+		return content
+	}
+	if content := strings.TrimSpace(artifact.Text); content != "" {
+		return content
+	}
+	parts := make([]string, 0, len(artifact.Elements))
+	for _, element := range artifact.Elements {
+		if content := strings.TrimSpace(element.Content); content != "" {
+			parts = append(parts, content)
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func (ce *contentExtractor) updateCache(ctx context.Context, fileID string, content string, workflowRunID string) error {
@@ -819,9 +914,9 @@ var globalContentExtractor ContentExtractor
 //	fileService := file_service.NewFileService(...)
 //	extractProcessor := extractor.NewExtractProcessor(...)
 //	file.InitGlobalContentExtractor(fileService, extractProcessor)
-func InitGlobalContentExtractor(fileService interfaces.FileService, extractProcessor *extractor.ExtractProcessor) {
+func InitGlobalContentExtractor(fileService interfaces.FileService, extractProcessor *extractor.ExtractProcessor, options ...ContentExtractorOption) {
 	config := GetContentExtractorConfig()
-	globalContentExtractor = NewContentExtractor(fileService, extractProcessor, config)
+	globalContentExtractor = NewContentExtractor(fileService, extractProcessor, config, options...)
 	logger.Info("Global content extractor initialized",
 		"enabled", config.Enabled,
 		"max_content_size", config.MaxContentSize,

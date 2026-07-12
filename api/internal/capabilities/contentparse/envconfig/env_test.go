@@ -1,6 +1,9 @@
 package envconfig
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestStringUsesTestEnvironmentOverride(t *testing.T) {
 	t.Setenv("CONTENT_PARSE_ENVCONFIG_TEST_KEY", " from-test ")
@@ -36,4 +39,51 @@ func TestWithOverridesTakesPrecedenceAndRestores(t *testing.T) {
 	if got := String("CONTENT_PARSE_ENVCONFIG_TEST_OVERRIDE"); got != "from-env" {
 		t.Fatalf("String() after override = %q, want from-env", got)
 	}
+}
+
+func TestWithOverridesSerializesRequestScopedValues(t *testing.T) {
+	const key = "CONTENT_PARSE_ENVCONFIG_TEST_CONCURRENT_OVERRIDE"
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	firstResult := make(chan string, 1)
+	secondStarted := make(chan struct{})
+	secondEntered := make(chan struct{})
+	secondDone := make(chan struct{})
+
+	go func() {
+		_ = WithExclusiveOverridesResult(map[string]string{key: "first"}, func() error {
+			close(firstEntered)
+			<-releaseFirst
+			firstResult <- String(key)
+			return nil
+		})
+	}()
+	<-firstEntered
+
+	go func() {
+		close(secondStarted)
+		_ = WithExclusiveOverridesResult(map[string]string{key: "second"}, func() error {
+			close(secondEntered)
+			return nil
+		})
+		close(secondDone)
+	}()
+	<-secondStarted
+
+	select {
+	case <-secondEntered:
+		t.Fatal("second override entered before the first request completed")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(releaseFirst)
+
+	if got := <-firstResult; got != "first" {
+		t.Fatalf("first request observed %q, want first", got)
+	}
+	select {
+	case <-secondEntered:
+	case <-time.After(time.Second):
+		t.Fatal("second override did not proceed after the first request completed")
+	}
+	<-secondDone
 }

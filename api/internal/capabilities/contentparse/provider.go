@@ -11,15 +11,16 @@ import (
 // Module keeps the new capability easy to instantiate and wire later without
 // touching current runtime behavior.
 type Module struct {
-	Service      contracts.ContentParseService
-	Orchestrator *Orchestrator
-	Resolver     StrategyResolver
-	Planner      routing.Planner
-	ChunkMapper  contracts.ChunkSourceMapper
-	ChunkPlanner contracts.ChunkPlanner
-	SDKAdapter   ParseAdapter
-	APIAdapter   ParseAdapter
-	Catalog      *contracts.ParseProviderCatalog
+	Service       contracts.ContentParseService
+	RoutedService *Service
+	Orchestrator  *Orchestrator
+	Resolver      StrategyResolver
+	Planner       routing.Planner
+	ChunkMapper   contracts.ChunkSourceMapper
+	ChunkPlanner  contracts.ChunkPlanner
+	SDKAdapter    ParseAdapter
+	APIAdapter    ParseAdapter
+	Catalog       *contracts.ParseProviderCatalog
 }
 
 type ModuleOption func(*moduleOptions)
@@ -70,17 +71,19 @@ func NewModule(options ...ModuleOption) *Module {
 	adapters = append(adapters, opts.extraAdapters...)
 	orchestrator := NewOrchestrator(resolver, adapters)
 	service := NewService(orchestrator, planner, catalog)
+	routedService, _ := service.(*Service)
 
 	return &Module{
-		Service:      service,
-		Orchestrator: orchestrator,
-		Resolver:     resolver,
-		Planner:      planner,
-		ChunkMapper:  chunkMapper,
-		ChunkPlanner: chunkPlanner,
-		SDKAdapter:   sdkAdapter,
-		APIAdapter:   apiAdapter,
-		Catalog:      catalog,
+		Service:       service,
+		RoutedService: routedService,
+		Orchestrator:  orchestrator,
+		Resolver:      resolver,
+		Planner:       planner,
+		ChunkMapper:   chunkMapper,
+		ChunkPlanner:  chunkPlanner,
+		SDKAdapter:    sdkAdapter,
+		APIAdapter:    apiAdapter,
+		Catalog:       catalog,
 	}
 }
 

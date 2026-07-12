@@ -1549,7 +1549,7 @@ func (h *FileHandler) uploadFile(ctx context.Context, filename string, content [
 			isTemporary,
 			isIcon,
 			service.UploadFileOptions{
-				StartLegacyContentExtraction: !useAssetProcessing,
+				StartLegacyContentExtraction: !useAssetProcessing && !isTemporary,
 			},
 		)
 	}

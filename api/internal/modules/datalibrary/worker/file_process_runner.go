@@ -364,7 +364,7 @@ func (r *FileProcessRunner) executeRoutePlan(ctx context.Context, req contracts.
 		}
 		envOverrides := contentparseservice.RuntimeEnvOverridesForCandidate(catalog, candidate)
 		var artifact *contracts.ParseArtifact
-		err := envconfig.WithOverridesResult(envOverrides, func() error {
+		err := envconfig.WithExclusiveOverridesResult(envOverrides, func() error {
 			var parseErr error
 			artifact, parseErr = r.contentParseOrchestrator.ParseWithAdapter(ctx, adapterName, attemptReq)
 			return parseErr
