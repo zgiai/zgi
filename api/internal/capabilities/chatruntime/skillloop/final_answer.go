@@ -26,6 +26,7 @@ func finalAnswerCall(calls []adapter.ToolCall) (adapter.ToolCall, bool) {
 }
 
 func parseFinalAnswerSubmission(call adapter.ToolCall, evidence map[string]interface{}) (finalAnswerSubmission, error) {
+	requirePlan := finalAnswerPlanSnapshotRequired(evidence)
 	args, err := skills.ParseArguments(call.Function.Arguments)
 	if err != nil {
 		answer, complete := partialJSONStringField(call.Function.Arguments, "answer")
@@ -33,10 +34,11 @@ func parseFinalAnswerSubmission(call adapter.ToolCall, evidence map[string]inter
 		if !complete || answer == "" {
 			return finalAnswerSubmission{}, fmt.Errorf("%w: submit_final_answer arguments are invalid: %v", ErrInvalidInput, err)
 		}
-		return finalAnswerSubmission{
-			answer:      answer,
-			planWarning: trimRunes("submit_final_answer optional metadata was invalid and ignored: "+err.Error(), 500),
-		}, nil
+		warning := "submit_final_answer optional metadata was invalid and ignored: " + err.Error()
+		if requirePlan {
+			warning = "missing_or_invalid_final_plan_snapshot: " + err.Error()
+		}
+		return finalAnswerSubmission{answer: answer, planWarning: trimRunes(warning, 500)}, nil
 	}
 	answer := strings.TrimSpace(stringArg(args, "answer"))
 	if answer == "" {
@@ -49,18 +51,27 @@ func parseFinalAnswerSubmission(call adapter.ToolCall, evidence map[string]inter
 		streamed:    boolArg(args, streamedFinalAnswerArg),
 	}
 	if _, exists := args["plan"]; !exists {
+		if requirePlan {
+			submission.planWarning = "missing_or_invalid_final_plan_snapshot: plan is required when operation_plan.phases is non-empty"
+		}
 		return submission, nil
 	}
 	phases, err := normalizePlanSnapshot(args["plan"])
 	if err != nil {
-		submission.planWarning = trimRunes("submit_final_answer optional plan was ignored: "+err.Error(), 500)
+		warning := "submit_final_answer optional plan was ignored: " + err.Error()
+		if requirePlan {
+			warning = "missing_or_invalid_final_plan_snapshot: " + err.Error()
+		}
+		submission.planWarning = trimRunes(warning, 500)
 		return submission, nil
-	}
-	if warnings := planEvidenceAuditWarnings(phases, evidence); len(warnings) > 0 {
-		submission.planWarning = strings.Join(warnings, "; ")
 	}
 	submission.plan = phases
 	return submission, nil
+}
+
+func finalAnswerPlanSnapshotRequired(evidence map[string]interface{}) bool {
+	plan := evidenceMapFromAny(evidence["operation_plan"])
+	return len(mapSliceFromAny(plan["phases"])) > 0
 }
 
 func finalAnswerSkillStep(callID string, submission finalAnswerSubmission) skillStepResult {

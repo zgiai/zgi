@@ -64,8 +64,16 @@ type streamingToolCallState struct {
 	emittedPlanningToolName string
 }
 
-func metaToolsForRun(resolved *skills.ResolvedSkills, loadedSkills map[string]struct{}, preferExplicitFinalAnswer bool) []adapter.Tool {
-	tools := skills.MetaToolsForSkillState(resolved, loadedSkills)
+type restoredSkillInstructionState struct {
+	activeLoaded   map[string]struct{}
+	reloadRequired []string
+	message        *adapter.Message
+}
+
+func metaToolsForRun(resolved *skills.ResolvedSkills, loadedSkills map[string]struct{}, preferExplicitFinalAnswer bool, requireFinalPlanSnapshot bool) []adapter.Tool {
+	tools := skills.MetaToolsForSkillStateWithOptions(resolved, loadedSkills, skills.MetaToolOptions{
+		RequireFinalPlanSnapshot: requireFinalPlanSnapshot,
+	})
 	if preferExplicitFinalAnswer {
 		return tools
 	}
@@ -96,7 +104,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		return "", nil, fmt.Errorf("%w: no skills available for configured skill ids", ErrInvalidInput)
 	}
 	preferExplicitFinalAnswer := req.PreferExplicitFinalAnswer
-	loadedSkills := initialLoadedSkillsForRun(req, resolved)
+	historicalLoadedSkills := initialLoadedSkillsForRun(req, resolved)
+	restoredSkillState := restoredLoadedSkillInstructionState(resolved, historicalLoadedSkills)
+	loadedSkills := restoredSkillState.activeLoaded
 
 	messages := append([]adapter.Message{}, prepared.LLMRequest.Messages...)
 	metadataMessage, metadataStats := skills.SkillMetadataSystemMessageWithBudget(
@@ -104,8 +114,8 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		skills.DefaultSkillMetadataPromptBudgetChars,
 	)
 	messages = append(messages, metadataMessage)
-	if restored := restoredLoadedSkillInstructionsMessage(resolved, loadedSkills); restored != nil {
-		messages = append(messages, *restored)
+	if restoredSkillState.message != nil {
+		messages = append(messages, *restoredSkillState.message)
 	}
 	messages = append(messages, validAdditionalSystemMessages(req.AdditionalSystemMessages)...)
 	messages = append(messages, agenticSkillLoopSystemMessage(preferExplicitFinalAnswer))
@@ -136,7 +146,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		planningReq := cloneChatRequest(prepared.LLMRequest)
 		planningReq.Messages = messages
 		planningReq.Stream = false
-		planningReq.Tools = metaToolsForRun(resolved, loadedSkills, preferExplicitFinalAnswer)
+		planningReq.Tools = metaToolsForRun(resolved, loadedSkills, preferExplicitFinalAnswer, runRequiresFinalPlanSnapshot(req))
 		planningReq.ToolChoice = "auto"
 
 		roundRuntimeState := map[string]interface{}{}
@@ -213,6 +223,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 
 			result := finalAnswerSkillStep(call.ID, submission)
+			result.trace.Arguments["round"] = round + 1
 			traces = append(traces, result.trace)
 			r.recordTrace(traces, result.trace)
 			r.logSkillTrace(ctx, prepared, result.trace)
@@ -474,28 +485,32 @@ func initialLoadedSkillsForRun(req RunRequest, resolved *skills.ResolvedSkills) 
 	return loaded
 }
 
-func restoredLoadedSkillInstructionsMessage(resolved *skills.ResolvedSkills, loadedSkills map[string]struct{}) *adapter.Message {
-	if resolved == nil || len(loadedSkills) == 0 {
-		return nil
+func restoredLoadedSkillInstructionState(resolved *skills.ResolvedSkills, historicalLoadedSkills map[string]struct{}) restoredSkillInstructionState {
+	state := restoredSkillInstructionState{activeLoaded: map[string]struct{}{}}
+	if resolved == nil || len(historicalLoadedSkills) == 0 {
+		return state
 	}
 	sections := []string{
 		"The following skill instructions were loaded earlier in this same user turn and remain active after navigation, approval, refresh, or continuation.",
-		"Use them directly. Do not call load_skill for these skills again unless the runtime exposes that skill in load_skill.",
+		"Only skills whose complete instructions appear below are active. If a skill is listed as requiring reload, call load_skill before using its tools.",
 	}
 	remaining := restoredSkillInstructionsTotalBudgetChars
 	for _, skillID := range resolved.SkillIDs() {
-		if remaining <= 0 {
-			break
-		}
 		canonical, ok := canonicalResolvedSkillID(resolved, skillID)
 		if !ok {
 			continue
 		}
-		if _, ok := loadedSkills[canonical]; !ok {
+		if _, ok := historicalLoadedSkills[canonical]; !ok {
 			continue
 		}
 		doc, ok := resolved.Get(canonical)
 		if !ok || doc == nil {
+			continue
+		}
+		instructions := strings.TrimSpace(doc.Instructions)
+		instructionRunes := len([]rune(instructions))
+		if instructionRunes > restoredSkillInstructionsPerSkillBudgetChars || instructionRunes > remaining {
+			state.reloadRequired = append(state.reloadRequired, canonical)
 			continue
 		}
 		section := []string{"Restored skill: " + canonical}
@@ -505,38 +520,20 @@ func restoredLoadedSkillInstructionsMessage(resolved *skills.ResolvedSkills, loa
 		if whenToUse := strings.TrimSpace(doc.Metadata.WhenToUse); whenToUse != "" {
 			section = append(section, "When to use: "+whenToUse)
 		}
-		if instructions := strings.TrimSpace(doc.Instructions); instructions != "" {
-			budget := min(remaining, restoredSkillInstructionsPerSkillBudgetChars)
-			instructions = compactRestoredSkillInstructions(instructions, budget)
-			remaining -= len([]rune(instructions))
+		if instructions != "" {
+			remaining -= instructionRunes
 			section = append(section, "Instructions:\n"+instructions)
 		}
+		state.activeLoaded[canonical] = struct{}{}
 		sections = append(sections, strings.Join(section, "\n"))
 	}
-	if len(sections) == 2 {
-		return nil
+	if len(state.reloadRequired) > 0 {
+		sections = append(sections, "Skills requiring full reload before use: "+strings.Join(state.reloadRequired, ", "))
 	}
-	return &adapter.Message{Role: "system", Content: strings.Join(sections, "\n\n")}
-}
-
-func compactRestoredSkillInstructions(instructions string, maxRunes int) string {
-	instructions = strings.TrimSpace(instructions)
-	if maxRunes <= 0 || instructions == "" {
-		return ""
+	if len(sections) > 2 {
+		state.message = &adapter.Message{Role: "system", Content: strings.Join(sections, "\n\n")}
 	}
-	runes := []rune(instructions)
-	if len(runes) <= maxRunes {
-		return instructions
-	}
-	const marker = "\n\n[Detailed middle section omitted in continuation context. Use read_skill_reference or reload the skill only if those details are needed.]\n\n"
-	markerRunes := []rune(marker)
-	contentBudget := maxRunes - len(markerRunes)
-	if contentBudget <= 0 {
-		return strings.TrimSpace(string(runes[:maxRunes]))
-	}
-	headRunes := contentBudget * 2 / 3
-	tailRunes := contentBudget - headRunes
-	return strings.TrimSpace(string(runes[:headRunes])) + marker + strings.TrimSpace(string(runes[len(runes)-tailRunes:]))
+	return state
 }
 
 func shouldEmitNaturalProgressForToolCalls(resolved *skills.ResolvedSkills, loadedSkills map[string]struct{}, calls []adapter.ToolCall) bool {
@@ -708,6 +705,12 @@ func currentMetadataForRun(req RunRequest) map[string]interface{} {
 		return nil
 	}
 	return copyStringAnyMap(req.CurrentMetadata())
+}
+
+func runRequiresFinalPlanSnapshot(req RunRequest) bool {
+	metadata := currentMetadataForRun(req)
+	plan := evidenceMapFromAny(metadata["operation_plan"])
+	return len(mapSliceFromAny(plan["phases"])) > 0
 }
 
 func isAgentManagementMutationTool(skillID string, toolName string) bool {

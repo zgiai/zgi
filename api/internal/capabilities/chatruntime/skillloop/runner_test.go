@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -62,7 +63,7 @@ func TestBuiltInToolSkillRequiresInstructionLoad(t *testing.T) {
 		t.Fatalf("built-in skill was marked loaded without its instructions: %#v", loaded)
 	}
 
-	tools := metaToolsForRun(resolved, loaded, true)
+	tools := metaToolsForRun(resolved, loaded, true, false)
 	hasTool := func(name string) bool {
 		for _, tool := range tools {
 			if strings.EqualFold(strings.TrimSpace(tool.Function.Name), name) {
@@ -102,7 +103,7 @@ func TestInitialLoadedSkillsForRunTreatsSuccessfulToolCallAsLoaded(t *testing.T)
 	}
 }
 
-func TestRestoredLoadedSkillInstructionsMessageRehydratesContinuation(t *testing.T) {
+func TestRestoredLoadedSkillInstructionStateRehydratesCompleteContinuation(t *testing.T) {
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
 		{
 			Metadata: skills.SkillMetadata{
@@ -117,18 +118,18 @@ func TestRestoredLoadedSkillInstructionsMessageRehydratesContinuation(t *testing
 			Instructions: "# File Reader\nRead exact file content.",
 		},
 	}}
-	message := restoredLoadedSkillInstructionsMessage(resolved, map[string]struct{}{
+	state := restoredLoadedSkillInstructionState(resolved, map[string]struct{}{
 		skills.SkillAgentManagement: {},
 	})
-	if message == nil {
-		t.Fatal("restoredLoadedSkillInstructionsMessage() = nil")
+	if state.message == nil {
+		t.Fatal("restoredLoadedSkillInstructionState().message = nil")
 	}
-	content := messageContent(message.Content)
+	content := messageContent(state.message.Content)
 	for _, want := range []string{
 		"loaded earlier in this same user turn",
 		skills.SkillAgentManagement,
 		"Preserve unmentioned settings.",
-		"Do not call load_skill for these skills again",
+		"complete instructions appear below",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("restored message missing %q in:\n%s", want, content)
@@ -137,21 +138,97 @@ func TestRestoredLoadedSkillInstructionsMessageRehydratesContinuation(t *testing
 	if strings.Contains(content, "Read exact file content.") {
 		t.Fatalf("restored message included an unloaded skill:\n%s", content)
 	}
+	if _, ok := state.activeLoaded[skills.SkillAgentManagement]; !ok {
+		t.Fatalf("activeLoaded[%q] missing: %#v", skills.SkillAgentManagement, state.activeLoaded)
+	}
+	if len(state.reloadRequired) != 0 {
+		t.Fatalf("reloadRequired = %#v, want none", state.reloadRequired)
+	}
 }
 
-func TestCompactRestoredSkillInstructionsKeepsBoundariesWithinBudget(t *testing.T) {
-	instructions := "BEGIN\n" + strings.Repeat("middle details\n", 2000) + "END"
-	const budget = 600
+func TestRestoredLoadedSkillInstructionStateReopensOversizedSkill(t *testing.T) {
+	fullInstructions := "BEGIN\n" + strings.Repeat("authoritative contract\n", 1400) + "END"
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata:     skills.SkillMetadata{ID: skills.SkillAgentManagement},
+		Instructions: fullInstructions,
+		Tools:        []skills.SkillToolDefinition{{Name: "update_agent_config"}},
+	}}}
 
-	got := compactRestoredSkillInstructions(instructions, budget)
+	state := restoredLoadedSkillInstructionState(resolved, map[string]struct{}{
+		skills.SkillAgentManagement: {},
+	})
 
-	if len([]rune(got)) > budget {
-		t.Fatalf("compacted instruction runes = %d, want <= %d", len([]rune(got)), budget)
+	if _, ok := state.activeLoaded[skills.SkillAgentManagement]; ok {
+		t.Fatalf("activeLoaded[%q] present for oversized instructions", skills.SkillAgentManagement)
 	}
-	for _, want := range []string{"BEGIN", "Detailed middle section omitted", "END"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("compacted instructions missing %q in:\n%s", want, got)
+	if !reflect.DeepEqual(state.reloadRequired, []string{skills.SkillAgentManagement}) {
+		t.Fatalf("reloadRequired = %#v, want agent-management", state.reloadRequired)
+	}
+	content := messageContent(state.message.Content)
+	if strings.Contains(content, "authoritative contract") {
+		t.Fatalf("restored message included partial oversized instructions:\n%s", content)
+	}
+	if !strings.Contains(content, "requiring full reload") {
+		t.Fatalf("restored message omitted reload guidance:\n%s", content)
+	}
+	tools := metaToolsForRun(resolved, state.activeLoaded, true, false)
+	if !runnerTestHasTool(tools, skills.MetaToolLoadSkill) {
+		t.Fatalf("tools = %#v, want load_skill for oversized restored skill", tools)
+	}
+	if runnerTestHasTool(tools, skills.MetaToolCallSkillTool) {
+		t.Fatalf("tools = %#v, call_skill_tool exposed before full reload", tools)
+	}
+}
+
+func TestRestoredLoadedSkillInstructionStateReopensOnlySkillsBeyondTotalBudget(t *testing.T) {
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
+		{Metadata: skills.SkillMetadata{ID: "skill-a"}, Instructions: strings.Repeat("a", 9000)},
+		{Metadata: skills.SkillMetadata{ID: "skill-b"}, Instructions: strings.Repeat("b", 8000)},
+	}}
+	historical := map[string]struct{}{"skill-a": {}, "skill-b": {}}
+
+	state := restoredLoadedSkillInstructionState(resolved, historical)
+
+	if _, ok := state.activeLoaded["skill-a"]; !ok {
+		t.Fatalf("activeLoaded = %#v, want skill-a fully restored", state.activeLoaded)
+	}
+	if _, ok := state.activeLoaded["skill-b"]; ok {
+		t.Fatalf("activeLoaded = %#v, skill-b exceeded remaining total budget", state.activeLoaded)
+	}
+	if !reflect.DeepEqual(state.reloadRequired, []string{"skill-b"}) {
+		t.Fatalf("reloadRequired = %#v, want [skill-b]", state.reloadRequired)
+	}
+}
+
+func runnerTestHasTool(tools []adapter.Tool, name string) bool {
+	for _, tool := range tools {
+		if tool.Function.Name == name {
+			return true
 		}
+	}
+	return false
+}
+
+func TestRunRequiresFinalPlanSnapshotOnlyForNonEmptyPhases(t *testing.T) {
+	req := RunRequest{CurrentMetadata: func() map[string]interface{} {
+		return map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"phases": []interface{}{map[string]interface{}{
+					"id":     "phase-1",
+					"step":   "Complete the task",
+					"status": "in_progress",
+				}},
+			},
+		}
+	}}
+	if !runRequiresFinalPlanSnapshot(req) {
+		t.Fatal("runRequiresFinalPlanSnapshot() = false, want true")
+	}
+	req.CurrentMetadata = func() map[string]interface{} {
+		return map[string]interface{}{"operation_plan": map[string]interface{}{"phases": []interface{}{}}}
+	}
+	if runRequiresFinalPlanSnapshot(req) {
+		t.Fatal("runRequiresFinalPlanSnapshot() = true for empty phases")
 	}
 }
 
