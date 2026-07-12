@@ -157,7 +157,7 @@ export default function DbPage() {
               />
             )
           ) : (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-4">
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4">
               {filteredDbs.map(db => (
                 <DbCard
                   key={db.id}

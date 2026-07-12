@@ -413,7 +413,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
         </div>
 
         {isLoading && (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-4">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4">
             {Array.from({ length: 20 }).map((_, index) => (
               <Skeleton key={index} className="h-40 w-full" />
             ))}
@@ -472,7 +472,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
             />
           ))}
 
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-4">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4">
           {pages.map((list, pageIndex) =>
             list.map(agent => (
               <AgentCard

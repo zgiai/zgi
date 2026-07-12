@@ -256,7 +256,7 @@ function DatasetsPageContent() {
                 folderSkeletonCount={20}
               />
               {!showFolderSkeletons && (
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-4">
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4">
                   {rootFolders.map(folder => (
                     <FolderCard key={folder.id} folder={folder} />
                   ))}
@@ -313,7 +313,7 @@ function DatasetsPageContent() {
                         }}
                       />
                     ) : (
-                      <div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-4">
+                      <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4">
                         {datasetEntries.map(({ ds, pIndex }) => (
                           <DatasetCard
                             key={ds.id}

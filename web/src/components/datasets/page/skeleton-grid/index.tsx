@@ -18,7 +18,7 @@ export function SkeletonGrid({
   isRootView,
   folderSkeletonCount = 20,
   datasetSkeletonCount = 20,
-  className = 'grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-4',
+  className = 'grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4',
 }: SkeletonGridProps) {
   if (!showFolderSkeletons && !showDatasetSkeletons) return null;
 
