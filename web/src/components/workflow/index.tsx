@@ -84,7 +84,7 @@ const WorkflowEditor: React.FC<WorkflowEditorProps> = ({ agentDetail, focusNodeI
   const workspaceId = agentDetail.workspace?.id || '';
   // Use workflow-specific translation namespace for all workflow UI strings
   const t = useT('agents');
-  // Track whether a connection drag is in progress to temporarily disable panning in hand mode
+  // Track whether a connection drag is in progress to temporarily disable panning in trackpad mode
 
   // Edge types memoized within CanvasWithDnd
   // Workflow data hooks

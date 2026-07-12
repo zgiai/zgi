@@ -26,6 +26,7 @@ import { debounce } from '@/lib/utils';
 import { useAuthStore } from '@/store/auth-store';
 import type { BuiltinToolProvider } from '@/services/types/tool';
 import type { Locale } from '@/lib/i18n';
+import type { InteractionMode } from '@/utils/ui-local';
 
 export type { UpstreamExportItem } from './helpers/graph';
 
@@ -59,7 +60,7 @@ export interface WorkflowStore
   suppressNextViewportDirty?: boolean;
 
   // Interaction mode
-  interactionMode: 'pointer' | 'hand';
+  interactionMode: InteractionMode;
   // Editor mode: edit vs history (read-only)
   mode: 'edit' | 'history';
   // Selected workflow run id when in history mode
@@ -90,7 +91,7 @@ export interface WorkflowStore
   setNodes: (nodes: WorkflowNode[]) => void;
   setEdges: (edges: WorkflowEdge[]) => void;
   setViewport: (viewport: Viewport, options?: { markLayoutDirty?: boolean }) => void;
-  setInteractionMode: (mode: 'pointer' | 'hand') => void;
+  setInteractionMode: (mode: InteractionMode) => void;
   onNodesChange: OnNodesChange;
   onEdgesChange: OnEdgesChange;
   onConnect: OnConnect;

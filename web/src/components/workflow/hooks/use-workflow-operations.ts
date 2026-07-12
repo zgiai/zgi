@@ -1038,7 +1038,7 @@ const useWorkflowOperations = () => {
   // Copy selected node (to internal clipboard only)
   const copySelectedNode = useCallback(() => {
     const { nodes, selectedNodeId } = useWorkflowStore.getState();
-    // Multi-select: when multiple nodes are selected in pointer mode, copy all
+    // Multi-select: when multiple nodes are selected on the canvas, copy all
     const selectedNodesAll = nodes.filter(n => n.selected);
     // Ignore Start nodes during copy
     const selectedNodes = selectedNodesAll.filter(

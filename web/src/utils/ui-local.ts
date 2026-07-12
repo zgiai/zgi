@@ -3,7 +3,7 @@
 // UI local storage helpers for persistent user preferences
 // Strictly typed and client-only (localStorage)
 
-export type InteractionMode = 'pointer' | 'hand';
+export type InteractionMode = 'mouse' | 'trackpad';
 
 const UI_LOCAL_KEYS = {
   workflowInteractionMode: 'ui:workflow:interactionMode' as const,
@@ -17,7 +17,8 @@ export function getSavedWorkflowInteractionMode(): InteractionMode | null {
   if (typeof window === 'undefined') return null;
   try {
     const raw = window.localStorage.getItem(UI_LOCAL_KEYS.workflowInteractionMode);
-    if (raw === 'pointer' || raw === 'hand') return raw;
+    if (raw === 'mouse' || raw === 'trackpad') return raw;
+    if (raw === 'pointer' || raw === 'hand') return 'trackpad';
     return null;
   } catch {
     return null;

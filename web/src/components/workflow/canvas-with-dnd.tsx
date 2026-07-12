@@ -59,7 +59,9 @@ const EDGE_TYPES = {
 };
 
 const MIDDLE_MOUSE_BUTTON = 1;
-const CANVAS_PAN_BUTTONS = [MIDDLE_MOUSE_BUTTON];
+const LEFT_MOUSE_BUTTON = 0;
+const MOUSE_MODE_PAN_BUTTONS = [LEFT_MOUSE_BUTTON, MIDDLE_MOUSE_BUTTON];
+const TRACKPAD_MODE_PAN_BUTTONS = [MIDDLE_MOUSE_BUTTON];
 
 const isDraggingMultiSelection = (nodeId: string) => {
   const selectedNodes = useWorkflowStore.getState().nodes.filter(node => node.selected);
@@ -113,6 +115,7 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
       onNodesChange,
     });
   const hideRightPanels = isCanvasInteracting || Boolean(draggingNodeType) || createNodePickerOpen;
+  const isMouseMode = interactionMode === 'mouse';
 
   const onConnectWrapper = React.useMemo(
     () => (isReadOnly ? () => {} : onConnect),
@@ -221,18 +224,21 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
         snapGrid={[5, 5]}
         // Enforce our own keyboard logic by disabling RF defaults
         deleteKeyCode={null}
-        selectionKeyCode={null}
+        selectionKeyCode={isMouseMode ? 'Shift' : null}
         multiSelectionKeyCode={null}
-        // Left-drag selects; middle-drag pans. Hand mode only keeps its scroll-pan behavior.
+        // Mouse mode favors canvas panning; trackpad mode favors marquee selection.
         elementsSelectable
         nodesDraggable={!isReadOnly}
         nodesConnectable={!isReadOnly}
-        selectionOnDrag={!isReadOnly && !isConnecting}
-        panOnDrag={isConnecting ? false : CANVAS_PAN_BUTTONS}
+        selectionOnDrag={!isReadOnly && !isConnecting && !isMouseMode}
+        panOnDrag={
+          isConnecting ? false : isMouseMode ? MOUSE_MODE_PAN_BUTTONS : TRACKPAD_MODE_PAN_BUTTONS
+        }
         zoomOnScroll
-        panOnScroll={interactionMode === 'hand' && !isConnecting}
+        zoomOnPinch
+        panOnScroll={interactionMode === 'trackpad' && !isConnecting}
         panOnScrollMode={PanOnScrollMode.Free}
-        preventScrolling={false}
+        preventScrolling={isMouseMode}
       >
         <Background
           variant={BackgroundVariant.Lines}
