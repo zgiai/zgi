@@ -1,7 +1,9 @@
 package skilltrace
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"time"
@@ -716,9 +718,7 @@ func compactAgentConfigOperationResult(payload map[string]interface{}) map[strin
 		"theme_color",
 	} {
 		if field == "system_prompt" {
-			if value := compactStringValue(config[field], 2000); value != "" {
-				result[field] = value
-			}
+			addCompactSystemPromptEvidence(result, config[field])
 			continue
 		}
 		copyCompactField(result, config, field)
@@ -758,6 +758,21 @@ func compactAgentConfigOperationResult(payload map[string]interface{}) map[strin
 		result["knowledge_dataset_ids"] = datasetIDs
 	}
 	return result
+}
+
+func addCompactSystemPromptEvidence(result map[string]interface{}, value interface{}) {
+	if len(result) == 0 {
+		return
+	}
+	prompt := strings.TrimSpace(stringFromAny(value))
+	if prompt == "" {
+		return
+	}
+	digest := sha256.Sum256([]byte(prompt))
+	result["system_prompt"] = compactStringValue(prompt, 2000)
+	result["system_prompt_present"] = true
+	result["system_prompt_chars"] = len([]rune(prompt))
+	result["system_prompt_digest"] = fmt.Sprintf("sha256:%x", digest[:])
 }
 
 func agentConfigDatabaseTableCount(value interface{}) int {

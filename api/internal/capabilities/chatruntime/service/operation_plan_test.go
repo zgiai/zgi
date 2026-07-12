@@ -289,6 +289,40 @@ func TestOperationPlanEvidenceLedgerStoresAgentFactsAndPostReadVerification(t *t
 	}
 }
 
+func TestOperationPlanEvidenceUsesAuthoritativeSystemPromptDigestInsteadOfCompactPreview(t *testing.T) {
+	fullPrompt := strings.Repeat("existing chapter ", 180) + "第十章 persisted suffix"
+	compactPreview := string([]rune(fullPrompt)[:2000]) + "..."
+	invocation := map[string]interface{}{
+		"kind":      "tool_call",
+		"status":    "success",
+		"skill_id":  skills.SkillAgentManagement,
+		"tool_name": "update_agent_config",
+		"result": map[string]interface{}{
+			"status":                "completed",
+			"updated_fields":        []interface{}{"system_prompt"},
+			"system_prompt":         compactPreview,
+			"system_prompt_present": true,
+			"system_prompt_chars":   len([]rune(fullPrompt)),
+			"system_prompt_digest":  operationPlanEvidenceTextDigest(fullPrompt),
+		},
+	}
+
+	facts := operationPlanEvidenceLedgerResultFacts(invocation)
+
+	if got := stringFromAny(facts["system_prompt_digest"]); got != operationPlanEvidenceTextDigest(fullPrompt) {
+		t.Fatalf("system_prompt_digest = %q, want full persisted digest %q", got, operationPlanEvidenceTextDigest(fullPrompt))
+	}
+	if got := facts["system_prompt_chars"]; got != len([]rune(fullPrompt)) {
+		t.Fatalf("system_prompt_chars = %#v, want %d", got, len([]rune(fullPrompt)))
+	}
+	if got := stringFromAny(facts["system_prompt_digest"]); got == operationPlanEvidenceTextDigest(compactPreview) {
+		t.Fatalf("system_prompt_digest = %q, unexpectedly derived from compact preview", got)
+	}
+	if _, leaked := facts["system_prompt"]; leaked {
+		t.Fatalf("result_facts leaked system_prompt: %#v", facts)
+	}
+}
+
 func TestOperationPlanEvidenceLedgerStoresGeneratedFileFactsAndDedupesManagedSave(t *testing.T) {
 	plan := map[string]interface{}{
 		"status": operationPlanStatusRunning,
