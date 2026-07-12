@@ -169,13 +169,21 @@ func applyPlanUpdateTraceMetadata(metadata map[string]interface{}, trace skills.
 	if metadata == nil || (kind != "plan_update" && kind != "final_answer") || !strings.EqualFold(strings.TrimSpace(trace.Status), "success") {
 		return
 	}
-	phases := mapSliceFromAny(trace.Result["plan"])
-	if len(phases) == 0 {
-		return
-	}
 	plan := copyStringAnyMap(mapFromOperationContext(metadata["operation_plan"]))
 	if plan == nil {
 		plan = map[string]interface{}{}
+	}
+	if kind == "final_answer" {
+		if warning := strings.TrimSpace(stringFromAny(trace.Result["plan_warning"])); warning != "" {
+			plan["final_plan_warnings"] = []interface{}{compactForPrompt(warning, 500)}
+		} else {
+			delete(plan, "final_plan_warnings")
+		}
+		metadata["operation_plan"] = plan
+	}
+	phases := mapSliceFromAny(trace.Result["plan"])
+	if len(phases) == 0 {
+		return
 	}
 	plan["phases"] = mapsToInterfaceSlice(phases)
 	plan["phase_revision"] = intValueFromAny(plan["phase_revision"]) + 1

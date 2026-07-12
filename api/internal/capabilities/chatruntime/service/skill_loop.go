@@ -120,6 +120,7 @@ func (s *service) runPreparedSkillLoop(
 		OnTerminalCompletion:           skillLoopTerminalCompletionResult(prepared),
 		OnChunk:                        onChunk,
 	})
+	timeline.FlushPendingIntermediateAnswers(err)
 	if err != nil && strings.TrimSpace(answer) != "" {
 		s.persistPartialSkillLoopAnswerBestEffort(persistCtx, prepared, answer, usage)
 	}

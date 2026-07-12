@@ -4,10 +4,21 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
+
+const (
+	intermediateAnswerCheckpointInterval = 2 * time.Second
+	intermediateAnswerCheckpointBytes    = 4 * 1024
+)
+
+type intermediateAnswerPersistenceState struct {
+	lastPersistedAt   time.Time
+	lastPersistedSize int
+}
 
 type processTimelineRecorder struct {
 	service         *service
@@ -17,6 +28,8 @@ type processTimelineRecorder struct {
 	onEvent         func(StreamEvent) error
 	openRuntimeIDs  map[string]string
 	runtimeCounters map[string]int
+	intermediate    map[string]intermediateAnswerPersistenceState
+	now             func() time.Time
 }
 
 func newProcessTimelineRecorder(ctx context.Context, persistCtx context.Context, svc *service, prepared *PreparedChat, onEvent func(StreamEvent) error) *processTimelineRecorder {
@@ -28,6 +41,8 @@ func newProcessTimelineRecorder(ctx context.Context, persistCtx context.Context,
 		onEvent:         onEvent,
 		openRuntimeIDs:  map[string]string{},
 		runtimeCounters: map[string]int{},
+		intermediate:    map[string]intermediateAnswerPersistenceState{},
+		now:             time.Now,
 	}
 }
 
@@ -53,7 +68,11 @@ func (r *processTimelineRecorder) RecordEvent(eventType string, payload map[stri
 		if strings.TrimSpace(stringFromAny(invocation["kind"])) == "tool_governance" {
 			r.persistGovernedToolCallSuspension(payload)
 		}
-		r.persistInvocation(invocation)
+		if strings.TrimSpace(stringFromAny(invocation["kind"])) == "intermediate_answer" {
+			r.recordIntermediateAnswerInvocation(invocation)
+		} else {
+			r.persistInvocation(invocation)
+		}
 		copyInvocationRuntimeFields(payload, invocation)
 	}
 	r.Emit(eventType, payload)
@@ -188,7 +207,7 @@ func (r *processTimelineRecorder) RecordIntermediateAnswer(trace skills.SkillTra
 	if strings.TrimSpace(trace.Kind) == "" {
 		trace.Kind = "intermediate_answer"
 	}
-	r.persistInvocation(skillInvocationFromTrace(trace, 0))
+	r.recordIntermediateAnswerInvocation(skillInvocationFromTrace(trace, 0))
 	r.service.logSkillTrace(r.ctx, r.prepared, trace)
 }
 
@@ -454,6 +473,11 @@ func (r *processTimelineRecorder) persistInvocation(invocation map[string]interf
 	if r == nil || r.service == nil || r.prepared == nil || r.prepared.Message == nil || len(invocation) == 0 {
 		return
 	}
+	metadata := r.mergeInvocation(invocation)
+	r.persistMetadata(metadata, invocation)
+}
+
+func (r *processTimelineRecorder) mergeInvocation(invocation map[string]interface{}) map[string]interface{} {
 	metadata := mergeSkillInvocationMetadata(r.prepared.Message.Metadata, []map[string]interface{}{invocation})
 	if strings.TrimSpace(stringFromAny(invocation["kind"])) == "tool_governance" {
 		if event := toolGovernanceDecisionEventFromInvocation(invocation); toolGovernanceCorrelationID(event) != "" {
@@ -461,6 +485,10 @@ func (r *processTimelineRecorder) persistInvocation(invocation map[string]interf
 		}
 	}
 	r.prepared.Message.Metadata = metadata
+	return metadata
+}
+
+func (r *processTimelineRecorder) persistMetadata(metadata map[string]interface{}, invocation map[string]interface{}) {
 	if aichatTimelineDebugEnabled() {
 		invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
 		logger.DebugContext(r.ctx, "aichat timeline metadata persisted",
@@ -481,6 +509,76 @@ func (r *processTimelineRecorder) persistInvocation(invocation map[string]interf
 		return
 	}
 	_ = r.service.repos.Message.UpdateMetadata(r.persistCtx, r.prepared.Message.ID, metadata)
+}
+
+func (r *processTimelineRecorder) recordIntermediateAnswerInvocation(invocation map[string]interface{}) {
+	if r == nil || r.prepared == nil || r.prepared.Message == nil || len(invocation) == 0 {
+		return
+	}
+	runtimeID := strings.TrimSpace(stringFromAny(invocation["runtime_id"]))
+	if runtimeID == "" {
+		r.persistInvocation(invocation)
+		return
+	}
+	status := strings.TrimSpace(stringFromAny(invocation["status"]))
+	if status == "success" {
+		invocation["partial"] = false
+	} else {
+		invocation["partial"] = true
+	}
+	metadata := r.mergeInvocation(invocation)
+	now := r.currentTime()
+	state := r.intermediate[runtimeID]
+	messageSize := len([]byte(stringFromAny(invocation["message"])))
+	shouldPersist := status == "success" || state.lastPersistedAt.IsZero() ||
+		now.Sub(state.lastPersistedAt) >= intermediateAnswerCheckpointInterval ||
+		messageSize-state.lastPersistedSize >= intermediateAnswerCheckpointBytes
+	if !shouldPersist {
+		return
+	}
+	invocation["checkpointed_at"] = now.Unix()
+	metadata = r.mergeInvocation(invocation)
+	r.persistMetadata(metadata, invocation)
+	if status == "success" {
+		delete(r.intermediate, runtimeID)
+		return
+	}
+	r.intermediate[runtimeID] = intermediateAnswerPersistenceState{
+		lastPersistedAt:   now,
+		lastPersistedSize: messageSize,
+	}
+}
+
+func (r *processTimelineRecorder) FlushPendingIntermediateAnswers(terminationErr error) {
+	if r == nil || len(r.intermediate) == 0 {
+		return
+	}
+	for runtimeID := range r.intermediate {
+		invocation := r.existingInvocation(runtimeID)
+		if len(invocation) == 0 {
+			delete(r.intermediate, runtimeID)
+			continue
+		}
+		invocation = copyStringAnyMap(invocation)
+		invocation["status"] = "error"
+		invocation["partial"] = true
+		invocation["checkpointed_at"] = r.currentTime().Unix()
+		if terminationErr != nil {
+			invocation["error"] = trimRunes(terminationErr.Error(), 500)
+		} else {
+			invocation["error"] = "intermediate answer stream ended before completion"
+		}
+		metadata := r.mergeInvocation(invocation)
+		r.persistMetadata(metadata, invocation)
+		delete(r.intermediate, runtimeID)
+	}
+}
+
+func (r *processTimelineRecorder) currentTime() time.Time {
+	if r != nil && r.now != nil {
+		return r.now()
+	}
+	return time.Now()
 }
 
 func (r *processTimelineRecorder) persistGovernedToolCallSuspension(payload map[string]interface{}) {
