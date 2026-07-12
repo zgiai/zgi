@@ -330,6 +330,7 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
 		return nil, err
 	}
+	applyManagedUserMemoryPolicy(Caller{Type: runtimemodel.ConversationCallerAIChat}, parts)
 	if err := s.applySkillConfig(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, nil, parts); err != nil {
 		return nil, err
 	}
@@ -518,7 +519,7 @@ func clientActionContinuationMessage(message *runtimemodel.Message, event map[st
 	result := clientActionObservationRecord(event, req)
 	contentParts := []string{
 		"Original user request:\n" + userQuery,
-		"The frontend completed a client-side action for this same AIChat message.",
+		"The frontend completed a client-side action for this same assistant message.",
 		"Client action result JSON:\n" + compactJSON(result),
 	}
 	if feedback := clientActionFailureModelFeedback(event, req); len(feedback) > 0 {
@@ -542,14 +543,14 @@ func clientActionContinuationMessage(message *runtimemodel.Message, event map[st
 		}
 	}
 	if completedActions := completedClientActionsForContinuation(message); len(completedActions) > 0 {
-		contentParts = append(contentParts, "Completed client actions in this same AIChat turn JSON:\n"+compactJSON(completedActions))
+		contentParts = append(contentParts, "Completed client actions in this same assistant turn JSON:\n"+compactJSON(completedActions))
 	}
 	content := strings.Join(contentParts, "\n\n")
 	system := strings.Join([]string{
-		"You are continuing the same AIChat turn after a frontend client action.",
+		"You are continuing the same assistant turn after a frontend client action.",
 		"The user already saw progress emitted before this client action. Do not acknowledge or restate the original request, the latest correction, or completed progress. If you emit progress, begin directly with the newly reached evidence or next concrete action.",
 		"In the first model response after this continuation, do not emit ordinary assistant content before a tool call. Call update_plan and/or the next necessary tool directly; if the task is terminal and submit_final_answer is available, call it directly.",
-		"Use the updated transient ZGI page context already included in this request.",
+		"Use the updated transient console page context already included in this request.",
 		"Use Current turn structured state as authoritative same-turn memory for derived facts and decisions, especially after route changes or approvals. Do not replace recorded exact values with placeholders.",
 		"When Current turn structured state or the operation plan already contains the file-derived summary, selected target, model choice, or configuration fact needed for the next step, reuse that recorded evidence directly instead of navigating back or rerunning the earlier read/list tool.",
 		"If the client action status is succeeded and it loaded a route, do not call console-navigator/navigate again for the same route.",

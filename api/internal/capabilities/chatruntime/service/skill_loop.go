@@ -119,11 +119,25 @@ func (s *service) runPreparedSkillLoop(
 		OnTerminalStateGuardDecision:   skillLoopTerminalStateGuardDecision(prepared),
 		OnTerminalCompletion:           skillLoopTerminalCompletionResult(prepared),
 		OnChunk:                        onChunk,
+		PromptTokenSoftLimit:           skillLoopPromptTokenSoftLimit(prepared),
 	})
 	if err != nil && strings.TrimSpace(answer) != "" {
 		s.persistPartialSkillLoopAnswerBestEffort(persistCtx, prepared, answer, usage)
 	}
 	return answer, usage, err
+}
+
+const defaultSkillLoopPromptTokenSoftLimit = 64000
+
+func skillLoopPromptTokenSoftLimit(prepared *PreparedChat) int {
+	limit := defaultSkillLoopPromptTokenSoftLimit
+	if prepared == nil || prepared.parts == nil {
+		return limit
+	}
+	if budget := intValueFromAny(mapFromOperationContext(prepared.parts.ContextControl)["prompt_budget"]); budget > 0 && budget < limit {
+		return budget
+	}
+	return limit
 }
 
 func (s *service) persistPartialSkillLoopAnswerBestEffort(ctx context.Context, prepared *PreparedChat, answer string, usage *adapter.Usage) {
@@ -706,7 +720,7 @@ func skillLoopCompletionPlanSummary(plan map[string]interface{}) map[string]inte
 	if state := mapFromOperationContext(plan["strategy_state"]); len(state) > 0 {
 		summary["strategy_state"] = operationPlanCompactStrategyStateForPrompt(state, true)
 	}
-	for _, key := range []string{"last_plan_update_round", "evidence_sequence_at_plan_update", "evidence_after_last_plan_update"} {
+	for _, key := range []string{"last_plan_update_round", "evidence_revision", "evidence_revision_at_plan_update", "evidence_sequence_at_plan_update", "evidence_after_last_plan_update"} {
 		if value := intValueFromAny(plan[key]); value > 0 {
 			summary[key] = value
 		}
@@ -1352,7 +1366,7 @@ func contextualAIChatTurnStrategyMessage(prepared *PreparedChat) (adapter.Messag
 		return adapter.Message{}, false
 	}
 	content := strings.Join([]string{
-		"ZGI AIChat turn task contract:",
+		"Current assistant turn task contract:",
 		"This is a soft semantic contract for the current user turn, not a fixed action runtime plan.",
 		"Use it to understand phases, target assets, success criteria, and verification points. Treat intent as a broad compatibility label, not as the full task meaning.",
 		"Choose concrete tools from the currently enabled tool schemas and latest evidence.",
@@ -1433,42 +1447,6 @@ func skillLoopModelDecidesToolChoice(prepared *PreparedChat) bool {
 	return aiChatTurnStrategyModelDecidesTools(contextualAIChatTurnStrategy(prepared))
 }
 
-func skillLoopShouldUsePlainStreamForPassiveAnswer(prepared *PreparedChat) bool {
-	if prepared == nil || prepared.parts == nil || !prepared.skillsEnabled() {
-		return false
-	}
-	if prepared.parts.Attachments != nil && len(prepared.parts.Attachments.Files) > 0 {
-		return false
-	}
-	strategy := contextualAIChatTurnStrategy(prepared)
-	if strategy == nil {
-		return false
-	}
-	if strings.TrimSpace(prepared.parts.ModelTurnIntentError) != "" {
-		return false
-	}
-	if !strings.EqualFold(strings.TrimSpace(strategy.Intent), "answer_or_explain_zgi_context") {
-		return false
-	}
-	if strategy.RouteRequired || len(strategy.PlannedTools) > 0 {
-		return false
-	}
-	if !strings.EqualFold(strings.TrimSpace(strategy.Approval), "none") {
-		return false
-	}
-	if strategy.NeedsExactAgentRuntime {
-		return false
-	}
-	effect := strings.ToLower(strings.TrimSpace(strategy.AssetEffect))
-	if effect != "" && effect != "none" {
-		return false
-	}
-	if len(strategy.PrimarySkills) > 0 {
-		return false
-	}
-	return true
-}
-
 // AIChatTurnStrategy is the typed, internal plan hint for one contextual sidebar turn.
 // It is guidance for the skill loop, not an executable action plan.
 type AIChatTurnStrategy struct {
@@ -1538,19 +1516,23 @@ func contextualAIChatTurnStrategyFromParts(parts *chatRequestParts) *AIChatTurnS
 	}
 	currentPage := contextualTurnCurrentPage(parts)
 	strategy := &AIChatTurnStrategy{
-		Surface:           normalizeAIChatSurface(parts.Surface),
-		CurrentPage:       currentPage,
-		Source:            aiChatTurnStrategySourceDefault,
-		SourceReason:      "base_contextual_sidebar_strategy",
-		Intent:            "answer_or_explain_zgi_context",
-		TargetPage:        currentPage,
-		RouteRequired:     false,
-		PrimarySkills:     []string{},
-		SupportingSkills:  []string{},
-		AssetEffect:       "none",
-		AssetRisk:         "low",
-		Approval:          "none",
-		SuccessCriteria:   []string{"answer from the current ZGI page context and enabled skills"},
+		Surface:          normalizeAIChatSurface(parts.Surface),
+		CurrentPage:      currentPage,
+		Source:           aiChatTurnStrategySourceDefault,
+		SourceReason:     "base_contextual_sidebar_strategy",
+		Intent:           "model_decides",
+		TargetPage:       currentPage,
+		RouteRequired:    false,
+		PrimarySkills:    []string{},
+		SupportingSkills: []string{},
+		AssetEffect:      "model_decides",
+		AssetRisk:        "tool_dependent",
+		Approval:         "determined by the selected tool governance policy",
+		SuccessCriteria: []string{
+			"interpret the complete user request from conversation history and current page context",
+			"for multi-step work, maintain the phase plan and continue until the requested outcomes are handled",
+			"ground claims about actions in successful tool or client-action evidence",
+		},
 		ObservationPoints: []string{"current_page_context"},
 		ToolChoiceMode:    aiChatTurnToolChoiceModelDecides,
 	}
@@ -1600,7 +1582,7 @@ func contextualAIChatTurnStrategyFromParts(parts *chatRequestParts) *AIChatTurnS
 		}
 	}
 
-	strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceDefault, "default_contextual_page_answer")
+	strategy = markAIChatTurnStrategySource(strategy, aiChatTurnStrategySourceDefault, "main_model_contextual_task")
 	strategy.ToolChoiceMode = aiChatTurnToolChoiceModelDecides
 	if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
 		strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillConsoleNavigator)
@@ -2177,7 +2159,7 @@ func contextualNavigationStrategy(parts *chatRequestParts, strategy *AIChatTurnS
 	strategy.SuccessCriteria = []string{
 		"console-navigator/navigate succeeds for the resolved route",
 		"frontend client action reports route_loaded for the same href",
-		"the same AIChat turn continues from updated page context",
+		"the same assistant turn continues from updated page context",
 	}
 	strategy.ObservationPoints = []string{"route_navigation_client_action", "updated_page_context"}
 	return strategy
@@ -2301,8 +2283,8 @@ func contextualConsoleNavigationSkillMessageForResolved(prepared *PreparedChat, 
 	}
 
 	content := strings.Join([]string{
-		"ZGI console navigation guidance:",
-		"Use console-navigator/navigate when the user asks to open, go to, enter, switch to, or navigate to a known ZGI console module page.",
+		"Console navigation guidance:",
+		"Use console-navigator/navigate when the user asks to open, go to, enter, switch to, or navigate to a known console module page.",
 		"When the user explicitly asks to save, upload, import, or write a file into File Management from another console page, navigate to /console/files only if the current page context is not already Files and the File Management page context is still needed for the save.",
 		"If current page evidence already satisfies the target, or a low-risk observe/read/list step is needed to complete the user's goal, continue from that evidence instead of forcing a redundant navigate call.",
 		"Choose the destination from the route catalog and current page evidence; do not ask the user to repeat the page name when the request is already clear.",
@@ -2368,7 +2350,7 @@ func contextualConsoleAgentsSkillMessageForResolved(prepared *PreparedChat, reso
 		return adapter.Message{}, false
 	}
 	lines := []string{
-		"ZGI Agent management guidance:",
+		"Agent management guidance:",
 		"Use agent-management for explicit Agent list, create, edit identity, delete, inspect draft config, update supported draft config, replace Agent memory slots, or edit knowledge/database/workflow bindings.",
 		"Use the Agent capability model as the semantic contract for planning: skill-backed capabilities require a matching enabled Skill; file upload and memory are config switches; model changes require a provider/model pair; knowledge, database, and workflow access are binding changes.",
 		"The tools array in Agent management JSON is the authoritative callable tool list for this turn. Do not call any agent-management or console-navigator tool that is absent from that tools array.",

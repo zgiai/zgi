@@ -145,6 +145,7 @@ type RunRequest struct {
 	OnTerminalStateGuardDecision   func(TerminalStateGuardDecisionRecord)
 	OnTerminalCompletion           func(TerminalCompletionResult)
 	OnChunk                        func(string) error
+	PromptTokenSoftLimit           int
 }
 
 type TerminalStateGuardDecisionRecord struct {

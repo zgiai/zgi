@@ -565,7 +565,7 @@ func TestClientActionContinuationMessageIncludesCompletedClientActions(t *testin
 	got := clientActionContinuationMessage(message, event, req)
 	content := stringFromAny(got.Content)
 	for _, want := range []string{
-		"Completed client actions in this same AIChat turn",
+		"Completed client actions in this same assistant turn",
 		"/console/agents",
 		"/console/files",
 		"AIChat配置验证06231035-已编辑",

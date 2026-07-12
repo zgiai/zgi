@@ -177,7 +177,7 @@ func TestCurrentTurnAuthoritativeStateMessageIncludesSameTurnFacts(t *testing.T)
 	}
 	content := messageContentText(stateMessage.Content)
 	for _, want := range []string{
-		"Current AIChat turn authoritative state JSON",
+		"Current assistant turn authoritative state JSON",
 		"Continue only unfinished work",
 		"manage_agent_asset",
 		"agent.create",

@@ -58,13 +58,49 @@ func (s *service) persistModelInvocationBestEffort(ctx context.Context, prepared
 		return
 	}
 	metadata := mergeModelInvocationMetadata(prepared.Message.Metadata, invocation)
+	metadata = applyProviderPromptUsageCalibration(metadata, trace.Usage)
 	prepared.Message.Metadata = metadata
+	if prepared.parts != nil {
+		prepared.parts.ContextControl = copyStringAnyMap(mapFromOperationContext(metadata["context_control"]))
+	}
 	if s == nil || s.repos == nil || s.repos.Message == nil {
 		return
 	}
 	if err := s.repos.Message.UpdateMetadata(ctx, prepared.Message.ID, metadata); err != nil {
 		logger.WarnContext(ctx, "failed to persist aichat model invocation metadata", "message_id", prepared.Message.ID.String(), err)
 	}
+}
+
+func applyProviderPromptUsageCalibration(metadata map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
+	if metadata == nil || usage == nil || usage.PromptTokens <= 0 {
+		return metadata
+	}
+	next := copyStringAnyMap(metadata)
+	contextControl := copyStringAnyMap(mapFromOperationContext(next["context_control"]))
+	if contextControl == nil {
+		contextControl = map[string]interface{}{}
+	}
+	estimated := intValueFromAny(contextControl["estimated_prompt_tokens"])
+	actual := usage.PromptTokens
+	scale := 1.0
+	if estimated > 0 && actual > estimated {
+		scale = float64(actual) / float64(estimated)
+		if scale > 20 {
+			scale = 20
+		}
+	}
+	contextControl["provider_prompt_tokens"] = actual
+	if actual > intValueFromAny(contextControl["max_provider_prompt_tokens"]) {
+		contextControl["max_provider_prompt_tokens"] = actual
+	}
+	contextControl["calibrated_prompt_tokens"] = max(actual, estimated)
+	contextControl["prompt_estimate_scale"] = scale
+	contextControl["prompt_estimate_source"] = "provider_usage"
+	if budget := intValueFromAny(contextControl["prompt_budget"]); budget > 0 {
+		contextControl["provider_usage_over_budget"] = actual > budget
+	}
+	next["context_control"] = contextControl
+	return next
 }
 
 func mergeGeneratedArtifactMetadata(source map[string]interface{}, artifact map[string]interface{}) map[string]interface{} {
@@ -149,7 +185,10 @@ func applyPlanUpdateTraceMetadata(metadata map[string]interface{}, trace skills.
 	}
 	plan["plan_sync_status"] = "current"
 	plan["last_plan_update_round"] = intValueFromAny(trace.Arguments["round"])
-	plan["evidence_sequence_at_plan_update"] = operationPlanLatestEvidenceSequence(plan)
+	revision := operationPlanCurrentEvidenceRevision(plan)
+	plan["evidence_revision"] = revision
+	plan["evidence_revision_at_plan_update"] = revision
+	plan["evidence_sequence_at_plan_update"] = revision
 	plan["evidence_after_last_plan_update"] = 0
 	warnings := stringSliceFromAny(trace.Result["evidence_warnings"])
 	if warning := strings.TrimSpace(stringFromAny(trace.Result["plan_warning"])); warning != "" {

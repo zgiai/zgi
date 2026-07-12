@@ -96,7 +96,12 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		return "", nil, fmt.Errorf("%w: no skills available for configured skill ids", ErrInvalidInput)
 	}
 	preferExplicitFinalAnswer := req.PreferExplicitFinalAnswer
-	loadedSkills := initialLoadedSkillsForRun(req, resolved)
+	restoredLoadedSkills := initialLoadedSkillsForRun(req, resolved)
+	loadedSkills := copyLoadedSkillSet(restoredLoadedSkills)
+	compactExecutableSkills := compactExecutableSkillsForRun(resolved)
+	for skillID := range compactExecutableSkills {
+		loadedSkills[skillID] = struct{}{}
+	}
 
 	messages := append([]adapter.Message{}, prepared.LLMRequest.Messages...)
 	metadataMessage, metadataStats := skills.SkillMetadataSystemMessageWithBudget(
@@ -104,11 +109,15 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		skills.DefaultSkillMetadataPromptBudgetChars,
 	)
 	messages = append(messages, metadataMessage)
-	if restored := restoredLoadedSkillInstructionsMessage(resolved, loadedSkills); restored != nil {
+	if manifest := compactExecutableSkillManifestMessage(resolved, compactExecutableSkills); manifest != nil {
+		messages = append(messages, *manifest)
+	}
+	if restored := restoredLoadedSkillInstructionsMessage(resolved, restoredLoadedSkills); restored != nil {
 		messages = append(messages, *restored)
 	}
 	messages = append(messages, validAdditionalSystemMessages(req.AdditionalSystemMessages)...)
 	messages = append(messages, agenticSkillLoopSystemMessage(preferExplicitFinalAnswer))
+	staticMessageCount := len(messages)
 	traces := []skills.SkillTrace{metadataExposedTrace(resolved.SkillIDs(), metadataStats)}
 	r.recordTrace(traces, traces[0])
 	logger.DebugContext(ctx, "aichat skill metadata exposed",
@@ -132,7 +141,20 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	terminalStateGuardConfigured := req.RuntimeStateSnapshot != nil
 	var answerBuilder strings.Builder
 	var usage *adapter.Usage
+	lastPromptTokens := 0
 	for round := 0; round < defaultMaxSkillPlanningRounds; round++ {
+		if req.PromptTokenSoftLimit > 0 && lastPromptTokens > req.PromptTokenSoftLimit {
+			messages = compactSkillLoopMessages(messages, staticMessageCount, successfulToolCalls)
+			logger.DebugContext(ctx, "aichat skill planning context compacted from provider usage",
+				"conversation_id", prepared.Conversation.ID.String(),
+				"message_id", prepared.Message.ID.String(),
+				"round", round,
+				"provider_prompt_tokens", lastPromptTokens,
+				"soft_limit", req.PromptTokenSoftLimit,
+				"message_count", len(messages),
+			)
+			lastPromptTokens = 0
+		}
 		planningReq := cloneChatRequest(prepared.LLMRequest)
 		planningReq.Messages = messages
 		planningReq.Stream = false
@@ -149,6 +171,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		deferTerminalContent := preferExplicitFinalAnswer || !terminalSubmissionAllowed
 		planningResult, err := r.runSkillPlanning(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress)
 		usage = mergeUsage(usage, planningResult.usage)
+		if planningResult.usage != nil {
+			lastPromptTokens = planningResult.usage.PromptTokens
+		}
 		if err != nil {
 			var streamedErr *streamedFinalAnswerError
 			if errors.As(err, &streamedErr) {
@@ -439,6 +464,144 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		return answerBuilder.String(), usage, nil
 	}
 	return answerBuilder.String(), usage, err
+}
+
+func compactSkillLoopMessages(messages []adapter.Message, staticCount int, successful []SkillToolCallRef) []adapter.Message {
+	if staticCount < 0 {
+		staticCount = 0
+	}
+	if staticCount > len(messages) {
+		staticCount = len(messages)
+	}
+	dynamic := messages[staticCount:]
+	const recentDynamicMessageLimit = 12
+	if len(dynamic) <= recentDynamicMessageLimit {
+		return messages
+	}
+	start := len(dynamic) - recentDynamicMessageLimit
+	for start > 0 && strings.EqualFold(strings.TrimSpace(dynamic[start].Role), "tool") {
+		start--
+	}
+	recent := append([]adapter.Message(nil), dynamic[start:]...)
+	compacted := append([]adapter.Message(nil), messages[:staticCount]...)
+	if summary := compactSuccessfulToolCallsMessage(successful); summary != nil {
+		compacted = append(compacted, *summary)
+	}
+	return append(compacted, recent...)
+}
+
+func compactSuccessfulToolCallsMessage(calls []SkillToolCallRef) *adapter.Message {
+	if len(calls) == 0 {
+		return nil
+	}
+	start := 0
+	if len(calls) > 12 {
+		start = len(calls) - 12
+	}
+	records := make([]map[string]interface{}, 0, len(calls)-start)
+	for _, call := range calls[start:] {
+		record := map[string]interface{}{
+			"skill_id":  strings.TrimSpace(call.SkillID),
+			"tool_name": strings.TrimSpace(call.ToolName),
+			"status":    "success",
+		}
+		if value := compactJSONValueForSkillLoop(call.Arguments, 500); value != "" {
+			record["arguments"] = value
+		}
+		if value := compactJSONValueForSkillLoop(call.Result, 1200); value != "" {
+			record["result"] = value
+		}
+		records = append(records, record)
+	}
+	payload, err := json.Marshal(records)
+	if err != nil {
+		return nil
+	}
+	return &adapter.Message{
+		Role: "system",
+		Content: "Earlier skill-loop transcript was compacted after provider token usage exceeded the soft limit. " +
+			"These successful tool facts remain available; use the current operation plan, turn state, and latest tool messages for exact continuation. Compact facts JSON: " + string(payload),
+	}
+}
+
+func compactJSONValueForSkillLoop(value interface{}, maxRunes int) string {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return truncateRunesForHelper(string(payload), maxRunes)
+}
+
+func copyLoadedSkillSet(input map[string]struct{}) map[string]struct{} {
+	out := make(map[string]struct{}, len(input))
+	for skillID := range input {
+		out[skillID] = struct{}{}
+	}
+	return out
+}
+
+func compactExecutableSkillsForRun(resolved *skills.ResolvedSkills) map[string]struct{} {
+	loaded := map[string]struct{}{}
+	if resolved == nil {
+		return loaded
+	}
+	for index := range resolved.Skills {
+		doc := &resolved.Skills[index]
+		skillID := strings.TrimSpace(doc.Metadata.ID)
+		if skillID == "" || !strings.EqualFold(strings.TrimSpace(doc.Metadata.Source), skills.SkillSourceSystem) ||
+			len(doc.Tools) == 0 || doc.Metadata.HasScripts {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(doc.Metadata.RuntimeType)) {
+		case skills.SkillRuntimeTypeTool, skills.SkillRuntimeTypeHybrid:
+			loaded[skillID] = struct{}{}
+		}
+	}
+	return loaded
+}
+
+func compactExecutableSkillManifestMessage(resolved *skills.ResolvedSkills, executable map[string]struct{}) *adapter.Message {
+	if resolved == nil || len(executable) == 0 {
+		return nil
+	}
+	records := make([]map[string]interface{}, 0, len(executable))
+	for index := range resolved.Skills {
+		doc := &resolved.Skills[index]
+		skillID := strings.TrimSpace(doc.Metadata.ID)
+		if _, ok := executable[skillID]; !ok {
+			continue
+		}
+		toolNames := make([]string, 0, len(doc.Tools))
+		for _, tool := range doc.Tools {
+			if name := strings.TrimSpace(tool.Name); name != "" {
+				toolNames = append(toolNames, name)
+			}
+		}
+		record := map[string]interface{}{
+			"skill_id": skillID,
+			"tools":    toolNames,
+		}
+		if value := compactRestoredSkillInstructions(doc.Metadata.Description, 320); value != "" {
+			record["description"] = value
+		}
+		if value := compactRestoredSkillInstructions(doc.Metadata.WhenToUse, 240); value != "" {
+			record["when_to_use"] = value
+		}
+		records = append(records, record)
+	}
+	if len(records) == 0 {
+		return nil
+	}
+	payload, err := json.Marshal(records)
+	if err != nil {
+		return nil
+	}
+	return &adapter.Message{
+		Role: "system",
+		Content: "Compact executable skill manifest: these built-in skills are already enabled for direct execution. " +
+			"Choose their tools yourself from the exposed call_skill_tool schema. Do not call load_skill for these skill IDs. " +
+			"Use load_skill only for other enabled skills that the runtime still exposes as unloaded. Manifest JSON: " + string(payload),
+	}
 }
 
 func initialLoadedSkillsForRun(req RunRequest, resolved *skills.ResolvedSkills) map[string]struct{} {
@@ -996,6 +1159,8 @@ func agenticSkillLoopSystemMessage(preferExplicitFinalAnswer bool) adapter.Messa
 		"Within one user request, do not reload a skill just because approval, navigation, refresh, or continuation resumed the loop. If the skill was already loaded and no newer instructions are needed, continue from the latest tool results, client-action evidence, and turn_state.",
 		"After each skill/tool result, continue with the next necessary action or final answer. Summarize only user-relevant outcomes, not internal bookkeeping.",
 		"For a multi-phase task, keep the supplied plan current with update_plan. Preserve stable phase IDs and update the plan in the same response as the next business tool whenever possible. Include exact evidence_refs when they are readily available, but treat them as audit links and do not delay execution or finalization solely to repair a ref.",
+		"Before submitting the final answer, reconcile the complete user request with your latest plan and evidence. For every phase you still consider open, either continue the work, update it to completed, mark it skipped with a truthful user-relevant reason, or clearly state in the final answer that it was not completed. Never silently omit an open requested outcome.",
+		"Treat user-visible actions such as opening or returning to a console page as real requested outcomes when the user asked for them. A backend read or mutation does not prove that the page changed. Perform the navigation and observe matching route/current_page_context evidence, or state truthfully that the page transition was not completed.",
 		"If a tool call fails, explain the likely user-relevant cause, fix the arguments, and retry when possible.",
 		"If a tool call fails, do not repeat the same tool with the same arguments. Re-plan from the error before retrying.",
 		"For deterministic batch work, prefer one suitable business tool call that handles the batch coherently over many small repeated tool calls.",
@@ -1027,7 +1192,7 @@ func agenticSkillLoopSystemMessage(preferExplicitFinalAnswer bool) adapter.Messa
 		instructions = append(instructions,
 			"In this skill loop, ordinary assistant content is always transient process progress, never the terminal answer. The runtime may show the complete progress update but will not store it as final message content.",
 			"When no more business tool, user input, state, or plan update calls are needed, call submit_final_answer with the complete, natural, self-contained user-facing reply. Do not write the final reply as ordinary assistant content.",
-			"submit_final_answer is terminal. Do not combine it with business tools, request_user_input, or further actions. If a model-maintained plan exists, update it before finishing or include an optional final snapshot when useful; plan metadata never replaces the answer. Add evidence refs when readily available. If you did not call submit_intermediate_answer for a new requested deliverable, the answer field MUST include the deliverable in full, not a compressed summary.",
+			"submit_final_answer is terminal. Do not combine it with business tools, request_user_input, or further actions. Reconcile any model-maintained plan before finishing; do not submit while you still intend to perform an open phase or an unverified user-visible action. You may include an optional final plan snapshot, but plan metadata never replaces the answer. Add evidence refs when readily available. If you did not call submit_intermediate_answer for a new requested deliverable, the answer field MUST include the deliverable in full, not a compressed summary.",
 		)
 	} else {
 		instructions = append(instructions, "When no tool or skill call is needed, provide the complete user-facing reply as ordinary assistant content and end the turn.")

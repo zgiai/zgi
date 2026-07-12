@@ -21,7 +21,7 @@ func TestPartsFileIntentHelpersPreferModelIntentOverLegacyKeywords(t *testing.T)
 	}
 	answerParts := &chatRequestParts{
 		Query:           managedFileQuery,
-		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "answer_or_explain_zgi_context"},
+		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "answer_or_explain_console_context"},
 	}
 	if partsRequestsManagedFileCreate(answerParts) {
 		t.Fatal("managed file create intent used legacy keywords despite explicit model answer intent")
@@ -52,7 +52,7 @@ func TestPartsFileIntentHelpersPreferModelIntentOverLegacyKeywords(t *testing.T)
 	}
 	deleteAnswerParts := &chatRequestParts{
 		Query:           deleteQuery,
-		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "answer_or_explain_zgi_context"},
+		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "answer_or_explain_console_context"},
 	}
 	if partsRequestsFileDeleteWithFallback(deleteAnswerParts, "") {
 		t.Fatal("file delete intent used legacy keywords despite explicit model answer intent")
@@ -76,7 +76,7 @@ func TestPartsFileIntentHelpersPreferModelIntentOverLegacyKeywords(t *testing.T)
 
 	continueQuestionParts := &chatRequestParts{
 		Query:           "what does continue mean",
-		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "answer_or_explain_zgi_context"},
+		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "answer_or_explain_console_context"},
 	}
 	if partsRequestsContinuationWithFallback(continueQuestionParts, "") {
 		t.Fatal("continuation helper treated an explanatory question as a continue command")
@@ -91,7 +91,7 @@ func TestRequestedManagedFileTargetsFromPartsUsesExplicitFilenamesOnly(t *testin
 
 	answerParts := &chatRequestParts{
 		Query:           implicitTargetQuery,
-		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "answer_or_explain_zgi_context"},
+		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "answer_or_explain_console_context"},
 	}
 	if got := requestedManagedFileTargetsFromParts(answerParts); len(got) != 0 {
 		t.Fatalf("requestedManagedFileTargetsFromParts() returned %d targets for answer intent, want 0", len(got))
@@ -121,7 +121,7 @@ func TestPartsConsoleNavigationHelpersPreferModelIntentOverLegacyKeywords(t *tes
 		Surface:         aiChatSurfaceContextualSidebar,
 		SkillIDs:        []string{skills.SkillConsoleNavigator},
 		SkillMode:       skillModeAuto,
-		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "answer_or_explain_zgi_context"},
+		ModelTurnIntent: &AIChatModelTurnIntent{Intent: "answer_or_explain_console_context"},
 	}
 	if partsRequestsConsoleNavigationWithFallback(answerParts, "") {
 		t.Fatal("console navigation intent used legacy keywords despite explicit model answer intent")
@@ -133,7 +133,7 @@ func TestPartsConsoleNavigationHelpersPreferModelIntentOverLegacyKeywords(t *tes
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
 	}
-	if strategy.Intent != "answer_or_explain_zgi_context" || strategy.RouteRequired {
+	if strategy.Intent != "answer_or_explain_console_context" || strategy.RouteRequired {
 		t.Fatalf("strategy = %#v, want answer intent without route requirement", strategy)
 	}
 
@@ -150,8 +150,8 @@ func TestPartsConsoleNavigationHelpersPreferModelIntentOverLegacyKeywords(t *tes
 	if strategy.Source != aiChatTurnStrategySourceDefault {
 		t.Fatalf("Source = %q, want %q without no-contract navigation fallback; strategy=%#v", strategy.Source, aiChatTurnStrategySourceDefault, strategy)
 	}
-	if strategy.Intent != "answer_or_explain_zgi_context" || strategy.RouteRequired {
-		t.Fatalf("strategy = %#v, want default model-led answer strategy without forced route", strategy)
+	if strategy.Intent != "model_decides" || strategy.RouteRequired {
+		t.Fatalf("strategy = %#v, want default model-decides strategy without forced route", strategy)
 	}
 
 	modelNavigationParts := &chatRequestParts{
@@ -450,7 +450,7 @@ func TestContextualAIChatTurnStrategyPlansRouteBeforeManagedFileCreate(t *testin
 	}
 	content := messageContentText(message.Content)
 	for _, want := range []string{
-		"ZGI AIChat turn task contract",
+		"Current assistant turn task contract",
 		`"intent":"save_generated_file_to_file_management"`,
 		`"target_page":"/console/files"`,
 		`"route_required":true`,
@@ -776,7 +776,7 @@ func TestContextualAIChatTurnStrategyDoesNotNavigateForCurrentFilesPageQuestion(
 	parts.SkillMode = skillModeAuto
 	routeRequired := false
 	parts.ModelTurnIntent = &AIChatModelTurnIntent{
-		Intent:        "answer_or_explain_zgi_context",
+		Intent:        "answer_or_explain_console_context",
 		TargetPage:    "/console/files",
 		RouteRequired: &routeRequired,
 		Confidence:    0.96,
@@ -795,15 +795,15 @@ func TestContextualAIChatTurnStrategyDoesNotNavigateForCurrentFilesPageQuestion(
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
 	}
-	if strategy.Intent != "answer_or_explain_zgi_context" {
-		t.Fatalf("Intent = %q, want answer_or_explain_zgi_context; strategy=%#v", strategy.Intent, strategy)
+	if strategy.Intent != "answer_or_explain_console_context" {
+		t.Fatalf("Intent = %q, want answer_or_explain_console_context; strategy=%#v", strategy.Intent, strategy)
 	}
 	if strategy.RouteRequired {
 		t.Fatalf("RouteRequired = true, want false for already visible files page")
 	}
 }
 
-func TestSkillLoopUsesPlainStreamForPassiveContextAnswer(t *testing.T) {
+func TestSkillLoopUsesMainLoopWithoutClassifiedIntent(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
 			Query:          "你能做什么？",
@@ -814,8 +814,19 @@ func TestSkillLoopUsesPlainStreamForPassiveContextAnswer(t *testing.T) {
 		},
 	}
 
-	if !skillLoopShouldUsePlainStreamForPassiveAnswer(prepared) {
-		t.Fatalf("skillLoopShouldUsePlainStreamForPassiveAnswer() = false, want true")
+	if !prepared.skillsEnabled() {
+		t.Fatal("skillsEnabled() = false, want main skill loop path")
+	}
+}
+
+func TestSkillLoopPromptTokenSoftLimitUsesLowerContextBudget(t *testing.T) {
+	prepared := &PreparedChat{parts: &chatRequestParts{ContextControl: map[string]interface{}{"prompt_budget": 24000}}}
+	if got := skillLoopPromptTokenSoftLimit(prepared); got != 24000 {
+		t.Fatalf("skillLoopPromptTokenSoftLimit() = %d, want 24000", got)
+	}
+	prepared.parts.ContextControl["prompt_budget"] = 900000
+	if got := skillLoopPromptTokenSoftLimit(prepared); got != defaultSkillLoopPromptTokenSoftLimit {
+		t.Fatalf("skillLoopPromptTokenSoftLimit() = %d, want default %d", got, defaultSkillLoopPromptTokenSoftLimit)
 	}
 }
 
@@ -834,8 +845,8 @@ func TestSkillLoopKeepsAgentActionsInSkillLoop(t *testing.T) {
 		},
 	}
 
-	if skillLoopShouldUsePlainStreamForPassiveAnswer(prepared) {
-		t.Fatalf("skillLoopShouldUsePlainStreamForPassiveAnswer() = true, want false for agent action")
+	if !prepared.skillsEnabled() {
+		t.Fatal("skillsEnabled() = false, want main skill loop path")
 	}
 }
 
@@ -981,8 +992,8 @@ func TestContextualAIChatTurnStrategyDoesNotUseLegacyFallbackWhenModelIntentUnsu
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
 	}
-	if strategy.Intent != "answer_or_explain_zgi_context" {
-		t.Fatalf("Intent = %q, want safe model-intent default answer strategy; strategy=%#v", strategy.Intent, strategy)
+	if strategy.Intent != "model_decides" {
+		t.Fatalf("Intent = %q, want safe model-decides strategy; strategy=%#v", strategy.Intent, strategy)
 	}
 	if strategy.Source != aiChatTurnStrategySourceModelIntent {
 		t.Fatalf("Source = %q, want %q", strategy.Source, aiChatTurnStrategySourceModelIntent)
@@ -1011,8 +1022,8 @@ func TestContextualAIChatTurnStrategyUsesSkillLoopWhenClassifierFailsOnAgentPage
 	if strategy == nil {
 		t.Fatal("contextualAIChatTurnStrategy() = nil, want strategy")
 	}
-	if strategy.Intent != "answer_or_explain_zgi_context" {
-		t.Fatalf("Intent = %q, want answer_or_explain_zgi_context; strategy=%#v", strategy.Intent, strategy)
+	if strategy.Intent != "model_decides" {
+		t.Fatalf("Intent = %q, want model_decides; strategy=%#v", strategy.Intent, strategy)
 	}
 	if strategy.Source != aiChatTurnStrategySourceDefault {
 		t.Fatalf("Source = %q, want %q", strategy.Source, aiChatTurnStrategySourceDefault)
@@ -1020,8 +1031,8 @@ func TestContextualAIChatTurnStrategyUsesSkillLoopWhenClassifierFailsOnAgentPage
 	if slices.Contains(strategy.PrimarySkills, skills.SkillAgentManagement) {
 		t.Fatalf("PrimarySkills = %#v, want no agent-management primary skill for passive answer", strategy.PrimarySkills)
 	}
-	if skillLoopShouldUsePlainStreamForPassiveAnswer(prepared) {
-		t.Fatal("skillLoopShouldUsePlainStreamForPassiveAnswer() = true, want skill loop when classifier failed")
+	if !prepared.skillsEnabled() {
+		t.Fatal("skillsEnabled() = false, want main skill loop path")
 	}
 }
 
@@ -1030,8 +1041,8 @@ func TestParseModelTurnIntentContentAcceptsLooseClassifierJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseModelTurnIntentContent() error = %v", err)
 	}
-	if got := normalizeModelTurnIntent(intent.Intent); got != "answer_or_explain_zgi_context" {
-		t.Fatalf("Intent = %q, want answer_or_explain_zgi_context", got)
+	if got := normalizeModelTurnIntent(intent.Intent); got != "answer_or_explain_console_context" {
+		t.Fatalf("Intent = %q, want answer_or_explain_console_context", got)
 	}
 	if intent.Confidence != 0.91 {
 		t.Fatalf("Confidence = %v, want 0.91", intent.Confidence)
@@ -1041,6 +1052,12 @@ func TestParseModelTurnIntentContentAcceptsLooseClassifierJSON(t *testing.T) {
 	}
 	if intent.RouteRequired == nil || !*intent.RouteRequired {
 		t.Fatalf("RouteRequired = %#v, want true", intent.RouteRequired)
+	}
+}
+
+func TestNormalizeModelTurnIntentAcceptsLegacyBrandedAnswerIntent(t *testing.T) {
+	if got := normalizeModelTurnIntent("answer_or_explain_zgi_context"); got != "answer_or_explain_console_context" {
+		t.Fatalf("normalizeModelTurnIntent() = %q, want answer_or_explain_console_context", got)
 	}
 }
 
@@ -1092,7 +1109,7 @@ func TestModelTurnTaskContractKeepsUnsupportedIntentAsLowConfidenceContract(t *t
 		t.Fatalf("parseModelTurnIntentContent() error = %v", err)
 	}
 	finalizeModelTurnIntent(intent)
-	if intent.Intent != "answer_or_explain_zgi_context" {
+	if intent.Intent != "answer_or_explain_console_context" {
 		t.Fatalf("Intent = %q, want compatibility fallback answer intent", intent.Intent)
 	}
 	if intent.RawIntent != "inspect_and_prepare_agent_story_writer" {
@@ -1299,7 +1316,7 @@ func TestModelTurnTaskContractUsesGenericPathForRawCompatibilityAlias(t *testing
 func TestParseModelTurnIntentMessageIgnoresReasoningJSONWhenContentEmpty(t *testing.T) {
 	_, source, err := parseModelTurnIntentMessage(adapter.Message{
 		ReasoningContent: `We need classify this request.
-{"intent":"answer_or_explain_zgi_context","task_type":"agent_prompt_review","confidence":0.91,"approval":"none"}`,
+{"intent":"answer_or_explain_console_context","task_type":"agent_prompt_review","confidence":0.91,"approval":"none"}`,
 	})
 	if err == nil {
 		t.Fatal("parseModelTurnIntentMessage() error = nil, want error")
@@ -1339,7 +1356,7 @@ func TestParseModelTurnIntentContentRejectsPlainReasoningText(t *testing.T) {
 
 func TestContextualAIChatTurnStrategyUsesModelTurnPlanForExactAgentRuntime(t *testing.T) {
 	intent, err := parseModelTurnIntentContent(`{
-		"intent": "answer_or_explain_zgi_context",
+		"intent": "answer_or_explain_console_context",
 		"task_type": "agent_config_analysis",
 		"phases": ["confirm exact Agent runtime configuration", "analyze the actual prompt"],
 		"evidence_required": ["actual system prompt", "runtime model", "enabled skills"],
@@ -1383,8 +1400,8 @@ func TestContextualAIChatTurnStrategyUsesModelTurnPlanForExactAgentRuntime(t *te
 	if !slices.Contains(strategy.SupportingSkills, skills.SkillAgentManagement) {
 		t.Fatalf("SupportingSkills = %#v, want agent-management for exact runtime evidence", strategy.SupportingSkills)
 	}
-	if skillLoopShouldUsePlainStreamForPassiveAnswer(prepared) {
-		t.Fatal("skillLoopShouldUsePlainStreamForPassiveAnswer() = true, want false when exact Agent runtime is needed")
+	if !prepared.skillsEnabled() {
+		t.Fatal("skillsEnabled() = false, want main skill loop path")
 	}
 
 	plan := operationPlanFromTurnStrategy("task-1", prepared.parts, strategy)
@@ -1490,7 +1507,7 @@ func TestContextualAgentManagementStrategyUsesModelVisibleIndexForPageTargetGuid
 	}
 }
 
-func TestContextualAIChatTurnStrategyUsesPassiveModelIntentFastPath(t *testing.T) {
+func TestContextualAIChatTurnStrategyDoesNotUseLegacyPassiveFastPath(t *testing.T) {
 	prepared := &PreparedChat{
 		parts: &chatRequestParts{
 			Query:          "what can you do here?",
@@ -1499,7 +1516,7 @@ func TestContextualAIChatTurnStrategyUsesPassiveModelIntentFastPath(t *testing.T
 			SkillIDs:       []string{skills.SkillConsoleNavigator, skills.SkillAgentManagement},
 			SkillMode:      skillModeAuto,
 			ModelTurnIntent: &AIChatModelTurnIntent{
-				Intent:      "answer_or_explain_zgi_context",
+				Intent:      "answer_or_explain_console_context",
 				Confidence:  1,
 				Approval:    "none",
 				AssetEffect: "none",
@@ -1514,8 +1531,8 @@ func TestContextualAIChatTurnStrategyUsesPassiveModelIntentFastPath(t *testing.T
 	if len(strategy.PrimarySkills) != 0 {
 		t.Fatalf("PrimarySkills = %#v, want no primary skill for passive model intent", strategy.PrimarySkills)
 	}
-	if !skillLoopShouldUsePlainStreamForPassiveAnswer(prepared) {
-		t.Fatal("skillLoopShouldUsePlainStreamForPassiveAnswer() = false, want true")
+	if !prepared.skillsEnabled() {
+		t.Fatal("skillsEnabled() = false, want main skill loop path")
 	}
 }
 
@@ -1550,7 +1567,7 @@ func TestStreamingMetadataRecordsModelTurnIntent(t *testing.T) {
 		SkillIDs:  []string{skills.SkillConsoleNavigator},
 		SkillMode: skillModeAuto,
 		ModelTurnIntent: &AIChatModelTurnIntent{
-			Intent:     "answer_or_explain_zgi_context",
+			Intent:     "answer_or_explain_console_context",
 			Confidence: 0.88,
 			Reason:     "passive context question",
 		},
@@ -1558,7 +1575,7 @@ func TestStreamingMetadataRecordsModelTurnIntent(t *testing.T) {
 
 	metadata := streamingMessageMetadataWithTaskID(parts, "task-1")
 	raw, ok := metadata["model_turn_intent"].(*AIChatModelTurnIntent)
-	if !ok || raw.Intent != "answer_or_explain_zgi_context" {
+	if !ok || raw.Intent != "answer_or_explain_console_context" {
 		t.Fatalf("model_turn_intent = %#v, want recorded model intent", metadata["model_turn_intent"])
 	}
 	if _, ok := metadata["turn_strategy"].(*AIChatTurnStrategy); !ok {
@@ -1816,7 +1833,7 @@ func TestSkillLoopAdditionalSystemMessagesAddsConsoleNavigationGuidance(t *testi
 	}
 	content := messageContentText(messages[0].Content)
 	for _, want := range []string{
-		"ZGI console navigation guidance",
+		"Console navigation guidance",
 		"console-navigator/navigate",
 		"low-risk observe/read/list step",
 		"Choose the destination from the route catalog",

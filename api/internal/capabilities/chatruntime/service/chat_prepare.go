@@ -44,6 +44,7 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
 		return nil, err
 	}
+	applyManagedUserMemoryPolicy(caller, parts)
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
@@ -134,6 +135,7 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
 		return nil, err
 	}
+	applyManagedUserMemoryPolicy(caller, parts)
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
 	}
@@ -501,6 +503,17 @@ func assumeModelFunctionCalling(parts *chatRequestParts, status string, errMessa
 	parts.ModelCapabilityError = trimRunes(strings.TrimSpace(errMessage), 500)
 }
 
+func applyManagedUserMemoryPolicy(caller Caller, parts *chatRequestParts) {
+	if parts == nil {
+		return
+	}
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
+		parts.UseMemory = false
+		return
+	}
+	parts.UseMemory = parts.FunctionCallingKnown && parts.ModelSupportsFunctionCalling
+}
+
 func (s *service) applyOrganizationSkillConfig(ctx context.Context, scope Scope, parts *chatRequestParts) error {
 	return s.applySkillConfig(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, nil, parts)
 }
@@ -589,6 +602,13 @@ func (s *service) appendUserMemoryContext(ctx context.Context, scope Scope, part
 	}
 	if s.memoryService == nil {
 		return systemPrompt, map[string]interface{}{"user_memory": map[string]interface{}{"enabled": true, "available": false}}, nil
+	}
+	if manager, ok := s.memoryService.(interface {
+		EnsureRuntimeEnabled(context.Context, uuid.UUID) error
+	}); ok {
+		if err := manager.EnsureRuntimeEnabled(ctx, scope.AccountID); err != nil {
+			return "", nil, err
+		}
 	}
 	enabled, err := s.memoryService.IsEnabled(ctx, scope.AccountID)
 	if err != nil {

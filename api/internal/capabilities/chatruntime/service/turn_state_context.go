@@ -13,11 +13,11 @@ func currentTurnAuthoritativeStateMessage(message *runtimemodel.Message) *adapte
 		return nil
 	}
 	sections := []string{
-		"You are continuing the same AIChat turn. The JSON below is authoritative same-turn state assembled from persisted runtime metadata.",
+		"You are continuing the same assistant turn. The JSON below is authoritative same-turn state assembled from persisted runtime metadata.",
 		"Continue only unfinished work from this state. Do not restart the whole task, repeat completed side-effecting operations, or navigate back only to re-derive a fact that is already recorded here.",
 		"Use turn_state exact values for later tool arguments, summaries, names, prompts, and final answers. If later tool/page evidence contradicts a value, update turn_state before continuing.",
 		"Treat current_turn_execution_state completed_operations, completed_client_actions, and operation_result_summary as completed in this same user request, not as previous conversation history.",
-		"Current AIChat turn authoritative state JSON:\n" + compactJSONForPrompt(state, 7000),
+		"Current assistant turn authoritative state JSON:\n" + compactJSONForPrompt(state, 7000),
 	}
 	result := adapter.Message{Role: "system", Content: strings.Join(sections, "\n")}
 	return &result
@@ -207,7 +207,7 @@ func turnStateContinuationSummary(message *runtimemodel.Message) map[string]inte
 		return nil
 	}
 	out["instructions"] = []string{
-		"Treat these turn_state items, including user-visible deliverables, as authoritative state recorded earlier in this same AIChat turn.",
+		"Treat these turn_state items, including user-visible deliverables, as authoritative state recorded earlier in this same assistant turn.",
 		"Treat steps, tool_results, assets, navigations, and generated_artifacts as the current execution ledger for this same turn.",
 		"Reuse exact working_fact values, tool result facts, and generated artifact filenames for later tool arguments and final answers instead of re-deriving placeholders.",
 		"Reuse user_deliverable content when it is the only recorded summary for a later dependency; do not create a different private summary for the same source unless new evidence contradicts it.",

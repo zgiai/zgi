@@ -80,10 +80,10 @@ func TestAIChatSystemTemplateRender(t *testing.T) {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	for _, expected := range []string{
-		"ZGI workbench assistant",
+		"general-purpose workbench assistant",
 		"Do not claim to see or operate the current page",
 		"High-risk asset operations require",
-		"AIChat account memory and Agent memory are separate",
+		"Account-level assistant memory and Agent memory are separate",
 		"adjustable execution guide, not a fixed script",
 		"Prefer current page evidence",
 		"if the result is missing, partial, or failed, say that plainly",
@@ -101,12 +101,17 @@ func TestAIChatSystemTemplateRender(t *testing.T) {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	for _, expected := range []string{
-		"ZGI sidebar operation assistant",
+		"contextual console operation assistant",
 		"navigating to relevant internal console modules",
-		"Use navigation only when the user goal needs another ZGI page",
+		"Use navigation only when the user goal needs another console page",
 	} {
 		if !strings.Contains(contextual, expected) {
 			t.Fatalf("rendered contextual aichat system template does not contain %q: %s", expected, contextual)
+		}
+	}
+	for _, branded := range []string{"ZGI", "You are AIChat"} {
+		if strings.Contains(rendered, branded) || strings.Contains(contextual, branded) {
+			t.Fatalf("rendered assistant system template contains branded text %q", branded)
 		}
 	}
 }

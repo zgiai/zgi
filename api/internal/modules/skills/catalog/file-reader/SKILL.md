@@ -1,6 +1,6 @@
 ---
 name: file-reader
-description: Read text content from files the current AIChat user can access.
+description: Read text content from files the current user can access.
 when_to_use: Use this skill when the user asks to inspect, quote, summarize, compare, translate, or answer from an uploaded file, historical file reference, or a file shown in the console files page.
 provider_type: builtin
 provider_id: files
@@ -70,7 +70,7 @@ supported_callers:
 
 # File Reader Skill
 
-Use this skill to list visible file context or read content from a file that has already been resolved for the current AIChat turn.
+Use this skill to list visible file context or read content from a file that has already been resolved for the current assistant turn.
 
 ## Workflow
 

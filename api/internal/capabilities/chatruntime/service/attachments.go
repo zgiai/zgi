@@ -490,7 +490,7 @@ func userContentWithRuntimeContext(parts *chatRequestParts, text string) string 
 		return text
 	}
 	var builder strings.Builder
-	builder.WriteString("Transient ZGI page context. Use it only to answer this turn; do not store it as AIChat memory or Agent memory.\n")
+	builder.WriteString("Transient console page context. Use it only to answer this turn; do not store it as account-level assistant memory or Agent memory.\n")
 	builder.WriteString(strings.TrimSpace(parts.RuntimeContext))
 	builder.WriteString("\n\nUser request:\n")
 	builder.WriteString(text)

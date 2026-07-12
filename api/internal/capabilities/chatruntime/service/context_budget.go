@@ -492,7 +492,7 @@ func currentTurnBoundaryMessage(parts *chatRequestParts) *adapter.Message {
 		return nil
 	}
 	content := strings.Join([]string{
-		"Current AIChat turn boundary:",
+		"Current assistant turn boundary:",
 		"The latest user request below is the task to execute now.",
 		"Use older conversation messages only as background facts.",
 		"Do not continue, repeat, or complete earlier tasks unless the latest request explicitly asks to continue or reuse previous outputs.",
@@ -508,7 +508,7 @@ func buildRecentExecutionContextMessage(branch []*runtimemodel.Message) (*adapte
 	}
 
 	var builder strings.Builder
-	builder.WriteString("Recent AIChat execution context for continuity.\n")
+	builder.WriteString("Recent assistant execution context for continuity.\n")
 	builder.WriteString("Older turns are represented only by their final assistant answers in the conversation history.\n")
 	builder.WriteString("Use these notes as context; do not mention these storage rules to the user.\n")
 	builder.WriteString("Do not resubmit these notes as intermediate answers; reuse them directly for export, save, convert, or file-generation requests.\n")
@@ -581,7 +581,7 @@ func buildContinuationTaskStateMessage(parts *chatRequestParts, branch []*runtim
 	}
 
 	var builder strings.Builder
-	appendBudgetedLine(&builder, recentContinuationBudgetChars, "AIChat continuation task state.\n")
+	appendBudgetedLine(&builder, recentContinuationBudgetChars, "Assistant continuation task state.\n")
 	appendBudgetedLine(&builder, recentContinuationBudgetChars, "The user is asking to continue the most recent unfinished task, not starting a new generic page Q&A turn.\n")
 	appendBudgetedLine(&builder, recentContinuationBudgetChars, "Use this compact state as authoritative continuity guidance; do not mention these internal notes to the user.\n")
 	appendBudgetedLine(&builder, recentContinuationBudgetChars, "Most recent non-continuation user goal: "+compactForPrompt(goal, 500)+"\n")
@@ -851,7 +851,7 @@ func compactOperationPlanForPrompt(plan map[string]interface{}) map[string]inter
 	if phases := operationPlanCompactPhasesForPrompt(plan["phases"], 8); len(phases) > 0 {
 		out["phases"] = phases
 	}
-	for _, key := range []string{"last_plan_update_round", "evidence_sequence_at_plan_update", "evidence_after_last_plan_update"} {
+	for _, key := range []string{"last_plan_update_round", "evidence_revision", "evidence_revision_at_plan_update", "evidence_sequence_at_plan_update", "evidence_after_last_plan_update"} {
 		if value := intValueFromAny(plan[key]); value > 0 {
 			out[key] = value
 		}

@@ -46,7 +46,7 @@ func TestRuntimeContextIsTransientUserContent(t *testing.T) {
 		t.Fatalf("content type = %T, want string", content)
 	}
 	for _, want := range []string{
-		"Transient ZGI page context",
+		"Transient console page context",
 		"Page /console/agents with 2 context chips.",
 		"User request:",
 		"Summarize this page.",

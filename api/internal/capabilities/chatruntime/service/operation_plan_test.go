@@ -115,6 +115,44 @@ func TestInvocationEvidenceMarksPlanStaleWithoutUpdatingLegacyStepsOrPhases(t *t
 	}
 }
 
+func TestInvocationEvidenceUsesGlobalRevisionAcrossLocalToolSequences(t *testing.T) {
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"status":                           operationPlanStatusRunning,
+			"plan_sync_status":                 "current",
+			"evidence_revision":                1,
+			"evidence_revision_at_plan_update": 1,
+			"evidence_sequence_at_plan_update": 1,
+			operationPlanEvidenceLedgerKey: []interface{}{map[string]interface{}{
+				"kind": "tool_call", "status": "completed", "skill_id": skills.SkillFileReader,
+				"tool_name": "read_file", "invocation_id": "read-1", "sequence": 1, "ledger_revision": 1,
+				"keys": []interface{}{"tool:file-reader/read_file"},
+			}},
+		},
+	}
+
+	applyOperationPlanInvocationState(metadata, []map[string]interface{}{map[string]interface{}{
+		"kind": "tool_call", "status": "success", "runtime_id": "agent-list-1", "sequence": 1,
+		"skill_id": skills.SkillAgentManagement, "tool_name": "list_agents",
+		"result": map[string]interface{}{"status": "completed", "agents": []interface{}{}},
+	}})
+
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if got := intValueFromAny(plan["evidence_revision"]); got != 2 {
+		t.Fatalf("evidence_revision = %d, want 2", got)
+	}
+	if got := intValueFromAny(plan["evidence_after_last_plan_update"]); got != 1 {
+		t.Fatalf("evidence_after_last_plan_update = %d, want 1", got)
+	}
+	if got := stringFromAny(plan["plan_sync_status"]); got != "stale" {
+		t.Fatalf("plan_sync_status = %q, want stale", got)
+	}
+	ledger := mapSliceFromAny(plan[operationPlanEvidenceLedgerKey])
+	if len(ledger) != 2 || intValueFromAny(ledger[1]["ledger_revision"]) != 2 {
+		t.Fatalf("evidence ledger revisions = %#v, want global revisions 1,2", ledger)
+	}
+}
+
 func TestApplyOperationPlanCompletionVerificationMirrorsTopLevelMetadata(t *testing.T) {
 	metadata := map[string]interface{}{
 		"operation_plan": map[string]interface{}{

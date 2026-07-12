@@ -70,6 +70,8 @@ func operationPlanFromTurnStrategy(taskID string, parts *chatRequestParts, strat
 		"planning_mode":                    "phase_only_model_decides",
 		"success_criteria":                 operationPlanSuccessCriteriaFromTurnStrategy(strategy),
 		"plan_sync_status":                 "current",
+		"evidence_revision":                0,
+		"evidence_revision_at_plan_update": 0,
 		"evidence_sequence_at_plan_update": 0,
 		"evidence_after_last_plan_update":  0,
 		"derived_from":                     "turn_strategy",
@@ -367,6 +369,9 @@ func operationPlanCompactEvidenceLedger(value interface{}, limit int) []map[stri
 		}
 		if sequence := intValueFromAny(entry["sequence"]); sequence > 0 {
 			compact["sequence"] = sequence
+		}
+		if revision := intValueFromAny(entry["ledger_revision"]); revision > 0 {
+			compact["ledger_revision"] = revision
 		}
 		if target := operationPlanCompactEvidenceTarget(mapFromOperationContext(entry["target"])); len(target) > 0 {
 			compact["target"] = target
@@ -1135,6 +1140,9 @@ func operationPlanAppendEvidenceLedgerEntry(plan map[string]interface{}, invocat
 	if operationPlanEvidenceLedgerHasEntry(ledger, entry) {
 		return
 	}
+	revision := operationPlanCurrentEvidenceRevision(plan) + 1
+	entry["ledger_revision"] = revision
+	plan["evidence_revision"] = revision
 	ledger = append(ledger, entry)
 	if len(ledger) > 50 {
 		ledger = ledger[len(ledger)-50:]
@@ -1414,16 +1422,22 @@ func applyOperationPlanInvocationState(metadata map[string]interface{}, invocati
 	metadata["operation_plan"] = plan
 }
 
-func operationPlanLatestEvidenceSequence(plan map[string]interface{}) int {
+func operationPlanCurrentEvidenceRevision(plan map[string]interface{}) int {
+	if revision := intValueFromAny(plan["evidence_revision"]); revision > 0 {
+		return revision
+	}
 	ledger := mapSliceFromAny(plan[operationPlanEvidenceLedgerKey])
 	latest := 0
 	for index, entry := range ledger {
-		sequence := intValueFromAny(entry["sequence"])
-		if sequence <= 0 {
-			sequence = index + 1
+		revision := intValueFromAny(entry["ledger_revision"])
+		if revision <= 0 {
+			revision = index + 1
+			if legacySequence := intValueFromAny(entry["sequence"]); legacySequence > revision {
+				revision = legacySequence
+			}
 		}
-		if sequence > latest {
-			latest = sequence
+		if revision > latest {
+			latest = revision
 		}
 	}
 	return latest
@@ -1433,16 +1447,18 @@ func operationPlanRefreshSyncStatus(plan map[string]interface{}) {
 	if len(plan) == 0 {
 		return
 	}
-	baseline := intValueFromAny(plan["evidence_sequence_at_plan_update"])
-	after := 0
-	for index, entry := range mapSliceFromAny(plan[operationPlanEvidenceLedgerKey]) {
-		sequence := intValueFromAny(entry["sequence"])
-		if sequence <= 0 {
-			sequence = index + 1
-		}
-		if sequence > baseline {
-			after++
-		}
+	current := operationPlanCurrentEvidenceRevision(plan)
+	plan["evidence_revision"] = current
+	baseline := intValueFromAny(plan["evidence_revision_at_plan_update"])
+	if _, ok := plan["evidence_revision_at_plan_update"]; !ok {
+		baseline = intValueFromAny(plan["evidence_sequence_at_plan_update"])
+	}
+	if baseline < 0 {
+		baseline = 0
+	}
+	after := current - baseline
+	if after < 0 {
+		after = 0
 	}
 	plan["evidence_after_last_plan_update"] = after
 	if after > 0 {

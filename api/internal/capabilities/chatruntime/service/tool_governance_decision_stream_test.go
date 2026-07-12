@@ -1342,14 +1342,17 @@ func TestRunToolGovernanceDecisionStreamApproveToolFailureReturnsErrorToModel(t 
 		t.Fatalf("AppChatStream requests = %d, want one skill-loop continuation call", len(llm.streamRequests))
 	}
 	streamReq := llm.streamRequests[0]
-	if toolGovernanceStreamRequestHasTool(streamReq, skills.MetaToolCallSkillTool) {
-		t.Fatalf("execution-failure continuation should not expose %s tool before the skill is reloaded", skills.MetaToolCallSkillTool)
+	if !toolGovernanceStreamRequestHasTool(streamReq, skills.MetaToolCallSkillTool) {
+		t.Fatalf("execution-failure continuation should expose compact executable %s tool", skills.MetaToolCallSkillTool)
+	}
+	if toolGovernanceStreamRequestHasTool(streamReq, skills.MetaToolLoadSkill) {
+		t.Fatalf("execution-failure continuation should not require %s for a built-in executable skill", skills.MetaToolLoadSkill)
 	}
 	if toolGovernanceStreamRequestContains(streamReq, "Do not call tools") {
 		t.Fatalf("execution-failure continuation should not use the removed no-tools summary flow: %q", toolGovernanceStreamRequestText(streamReq))
 	}
 	for _, want := range []string{
-		"continuing the same AIChat turn",
+		"continuing the same assistant turn",
 		"runtime attempted to execute the frozen invocation exactly once, but it failed",
 		`"recoverable_feedback":true`,
 		"Runtime failure feedback:\nfile report.pdf not found",
