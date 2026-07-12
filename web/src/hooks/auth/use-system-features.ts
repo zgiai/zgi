@@ -11,19 +11,20 @@ export function useSystemFeatures(options?: {
   staleTime?: number;
   refetchOnWindowFocus?: boolean | 'always';
   refetchOnReconnect?: boolean | 'always';
+  refetchOnMount?: boolean | 'always';
   enabled?: boolean;
 }) {
   const result = useQuery<SystemFeatures | null>({
     queryKey: SYSTEM_KEYS.features(),
     queryFn: async () => {
-      const resp = await authenticationService.getSystemFeatures();
+      const resp = await authenticationService.getSystemFeatures(false);
       const features = resp?.data?.features ?? null;
       return features;
     },
     staleTime: options?.staleTime ?? 30 * 60 * 1000,
     refetchOnWindowFocus: options?.refetchOnWindowFocus ?? false,
     refetchOnReconnect: options?.refetchOnReconnect ?? false,
-    refetchOnMount: false,
+    refetchOnMount: options?.refetchOnMount ?? 'always',
     enabled: options?.enabled ?? true,
     initialData: () => {
       const current = useAuthStore.getState().systemFeatures;

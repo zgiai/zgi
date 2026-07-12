@@ -220,7 +220,7 @@ const useAuthStoreBase = create<AuthState>()((set, get) => ({
           isSystemReady: true,
         });
 
-        await get().refreshSystemFeatures();
+        await get().refreshSystemFeatures(false);
         return;
       }
 
