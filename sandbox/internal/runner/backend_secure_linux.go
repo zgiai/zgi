@@ -19,6 +19,7 @@ type linuxSecureBackend struct {
 	rootfs              string
 	dependencyRootFSDir string
 	bwrapBin            string
+	prlimitBin          string
 	limits              secureRuntimeLimits
 	allowShell          bool
 }
@@ -40,11 +41,22 @@ func newLinuxSecureBackend(cfg config.Config) (backend, error) {
 		return nil, fmt.Errorf("find bubblewrap binary: %w", err)
 	}
 
+	limits := secureRuntimeLimitsFromConfig(cfg)
+	prlimitBin := ""
+	if len(limits.prlimitArgs()) > 0 {
+		resolvedPrlimitBin, err := exec.LookPath("prlimit")
+		if err != nil {
+			return nil, fmt.Errorf("find prlimit binary: %w", err)
+		}
+		prlimitBin = resolvedPrlimitBin
+	}
+
 	return &linuxSecureBackend{
 		rootfs:              rootfs,
 		dependencyRootFSDir: strings.TrimSpace(cfg.DependencyRootFSDir),
 		bwrapBin:            bwrapBin,
-		limits:              secureRuntimeLimitsFromConfig(cfg),
+		prlimitBin:          prlimitBin,
+		limits:              limits,
 		allowShell:          true,
 	}, nil
 }
@@ -130,10 +142,19 @@ func (b *linuxSecureBackend) exec(ctx context.Context, workDir string, dependenc
 		ProfileEnv:          activation.ProfileEnv,
 		ProfileHostDir:      activation.ProfileHostDir,
 		ProfileContainerDir: activation.ProfileContainerDir,
-		Limits:              b.limits,
 	})
 
-	cmd := exec.CommandContext(ctx, b.bwrapBin, bwrapArgs...)
+	command := b.bwrapBin
+	commandArgs := bwrapArgs
+	if limitArgs := b.limits.prlimitArgs(); len(limitArgs) > 0 {
+		command = b.prlimitBin
+		commandArgs = make([]string, 0, len(limitArgs)+2+len(bwrapArgs))
+		commandArgs = append(commandArgs, limitArgs...)
+		commandArgs = append(commandArgs, "--", b.bwrapBin)
+		commandArgs = append(commandArgs, bwrapArgs...)
+	}
+
+	cmd := exec.CommandContext(ctx, command, commandArgs...)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
