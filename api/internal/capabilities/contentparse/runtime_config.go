@@ -1,17 +1,16 @@
 package contentparse
 
 import (
-	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
 	"github.com/zgiai/zgi/api/internal/contracts"
 )
 
-// RuntimeEnvOverridesForCandidate returns request-scoped provider settings
-// embedded by the provider catalog resolver. Keeping this in the capability
-// layer lets every routed consumer execute providers with identical settings.
-func RuntimeEnvOverridesForCandidate(catalog *contracts.ParseProviderCatalog, candidate routing.RouteCandidate) map[string]string {
+// RuntimeConfigForCandidate returns an isolated configuration snapshot for a
+// single provider attempt. Credentials never enter process-global state.
+func RuntimeConfigForCandidate(catalog *contracts.ParseProviderCatalog, candidate routing.RouteCandidate) *contracts.ParseProviderRuntimeConfig {
 	providerKey := strings.ToLower(strings.TrimSpace(candidate.ProviderKey))
 	if providerKey == "" || catalog == nil {
 		return nil
@@ -20,7 +19,33 @@ func RuntimeEnvOverridesForCandidate(catalog *contracts.ParseProviderCatalog, ca
 		if strings.ToLower(strings.TrimSpace(provider.Name)) != providerKey {
 			continue
 		}
-		return runtimeStringMap(provider.Metadata["env_overrides"])
+		values := runtimeStringMap(provider.Metadata["env_overrides"])
+		config := &contracts.ParseProviderRuntimeConfig{
+			ProviderKey:    providerKey,
+			BaseURL:        strings.TrimSpace(provider.BaseURL),
+			TimeoutSeconds: provider.TimeoutSec,
+		}
+		switch providerKey {
+		case "reducto":
+			config.Enabled = parseOptionalBool(values["REDUCTO_ENABLED"])
+			config.BaseURL = firstRuntimeValue(values["REDUCTO_BASE_URL"], config.BaseURL)
+			config.APIKey = strings.TrimSpace(values["REDUCTO_API_KEY"])
+			config.TimeoutSeconds = firstPositiveInt(values["REDUCTO_TIMEOUT_SECONDS"], config.TimeoutSeconds)
+		case "mineru":
+			config.Mode = strings.ToLower(strings.TrimSpace(values["MINERU_MODE"]))
+			if config.Mode == "official" {
+				config.BaseURL = firstRuntimeValue(values["MINERU_OFFICIAL_BASE_URL"], config.BaseURL)
+				config.APIKey = strings.TrimSpace(values["MINERU_OFFICIAL_TOKEN"])
+				config.TimeoutSeconds = firstPositiveInt(values["MINERU_OFFICIAL_TIMEOUT_SECONDS"], config.TimeoutSeconds)
+				config.PollIntervalSeconds = firstPositiveInt(values["MINERU_OFFICIAL_POLL_INTERVAL_SECONDS"], 0)
+				config.ModelVersion = strings.TrimSpace(values["MINERU_OFFICIAL_MODEL_VERSION"])
+			} else {
+				config.BaseURL = firstRuntimeValue(values["MINERU_API_URL"], config.BaseURL)
+				config.APIKey = strings.TrimSpace(values["MINERU_API_TOKEN"])
+				config.TimeoutSeconds = firstPositiveInt(values["MINERU_TIMEOUT_SECONDS"], config.TimeoutSeconds)
+			}
+		}
+		return config
 	}
 	return nil
 }
@@ -39,7 +64,8 @@ func runtimeStringMap(raw any) map[string]string {
 	case map[string]any:
 		out := make(map[string]string, len(typed))
 		for key, value := range typed {
-			text := strings.TrimSpace(fmt.Sprint(value))
+			text, _ := value.(string)
+			text = strings.TrimSpace(text)
 			if text != "" {
 				out[key] = text
 			}
@@ -49,4 +75,32 @@ func runtimeStringMap(raw any) map[string]string {
 		}
 	}
 	return nil
+}
+
+func firstRuntimeValue(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func firstPositiveInt(raw string, fallback int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err == nil && value > 0 {
+		return value
+	}
+	return fallback
+}
+
+func parseOptionalBool(raw string) *bool {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	value, err := strconv.ParseBool(strings.TrimSpace(raw))
+	if err != nil {
+		return nil
+	}
+	return &value
 }

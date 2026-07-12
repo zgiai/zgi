@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
 	"github.com/zgiai/zgi/api/internal/contracts"
 )
@@ -100,12 +99,8 @@ func (s *Service) ParseWithRouting(ctx context.Context, req contracts.ParseReque
 		if candidate.EngineName != "" {
 			attemptReq.EngineHint = candidate.EngineName
 		}
-		var artifact *contracts.ParseArtifact
-		err := envconfig.WithExclusiveOverridesResult(RuntimeEnvOverridesForCandidate(catalog, candidate), func() error {
-			var parseErr error
-			artifact, parseErr = s.orchestrator.ParseWithAdapter(ctx, adapterName, attemptReq)
-			return parseErr
-		})
+		attemptReq.ProviderRuntime = RuntimeConfigForCandidate(catalog, candidate)
+		artifact, err := s.orchestrator.ParseWithAdapter(ctx, adapterName, attemptReq)
 		if err != nil {
 			lastErr = err
 			continue

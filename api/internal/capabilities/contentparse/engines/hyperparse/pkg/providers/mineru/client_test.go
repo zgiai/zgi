@@ -329,3 +329,18 @@ func TestSyntheticContentListFromMarkdown(t *testing.T) {
 		t.Fatalf("body mismatch: %+v", doc.Chunks[1])
 	}
 }
+
+func TestRuntimeConfigForOptionsKeepsRequestCredentialsIsolated(t *testing.T) {
+	t.Setenv("MINERU_OFFICIAL_TOKEN", "global-token")
+	config := runtimeConfigForOptions(extractcommon.ParseOptions{
+		ProviderRuntime: extractcommon.ProviderRuntimeConfig{
+			ProviderKey: "mineru",
+			Mode:        "official",
+			BaseURL:     "https://tenant.example/",
+			APIKey:      "tenant-token",
+		},
+	})
+	if config.apiKey != "tenant-token" || config.baseURL != "https://tenant.example" {
+		t.Fatalf("runtime config = %#v", config)
+	}
+}

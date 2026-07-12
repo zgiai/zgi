@@ -37,12 +37,20 @@ var (
 
 type Client struct{}
 
+type runtimeConfig struct {
+	mode         string
+	baseURL      string
+	apiKey       string
+	timeout      time.Duration
+	pollInterval time.Duration
+	modelVersion string
+}
+
 func New() *Client { return &Client{} }
 
 // ParseBytes calls MinerU through either the sidecar(file_parse) mode or the official API.
 func (c *Client) ParseBytes(ctx context.Context, filename string, data []byte, opts extractcommon.ParseOptions) (*extractcommon.DocumentResult, error) {
-	_ = opts
-	resp, err := callMineruParse(ctx, filename, data)
+	resp, err := callMineruParse(ctx, runtimeConfigForOptions(opts), filename, data)
 	if err != nil {
 		return nil, err
 	}
@@ -59,10 +67,11 @@ func (c *Client) ParsePDFBytes(ctx context.Context, filename string, data []byte
 }
 
 func Configured() bool {
-	if mineruMode() == "official" {
-		return envconfig.String("MINERU_OFFICIAL_TOKEN") != ""
+	config := defaultRuntimeConfig()
+	if config.mode == "official" {
+		return config.apiKey != ""
 	}
-	return envconfig.String("MINERU_API_URL") != ""
+	return strings.TrimSpace(envconfig.String("MINERU_API_URL")) != ""
 }
 
 func Mode() string {
@@ -144,6 +153,57 @@ func secondsFromEnv(key string) int {
 	return 0
 }
 
+func defaultRuntimeConfig() runtimeConfig {
+	mode := mineruMode()
+	config := runtimeConfig{
+		mode:         mode,
+		baseURL:      baseURL(),
+		timeout:      timeout(),
+		pollInterval: defaultPollInterval,
+	}
+	if mode == "official" {
+		config.baseURL = officialBaseURL()
+		config.apiKey = envconfig.String("MINERU_OFFICIAL_TOKEN")
+		config.timeout = officialTimeout()
+		config.pollInterval = officialPollInterval()
+		config.modelVersion = envconfig.String("MINERU_OFFICIAL_MODEL_VERSION")
+	}
+	return config
+}
+
+func runtimeConfigForOptions(opts extractcommon.ParseOptions) runtimeConfig {
+	runtime := opts.ProviderRuntime
+	if !strings.EqualFold(strings.TrimSpace(runtime.ProviderKey), "mineru") {
+		return defaultRuntimeConfig()
+	}
+	mode := strings.ToLower(strings.TrimSpace(runtime.Mode))
+	if mode == "" {
+		mode = "sidecar"
+	}
+	config := runtimeConfig{
+		mode:         mode,
+		apiKey:       strings.TrimSpace(runtime.APIKey),
+		pollInterval: defaultPollInterval,
+		modelVersion: strings.TrimSpace(runtime.ModelVersion),
+	}
+	config.baseURL = strings.TrimRight(strings.TrimSpace(runtime.BaseURL), "/")
+	if config.baseURL == "" {
+		if mode == "official" {
+			config.baseURL = defaultOfficialBaseURL
+		} else {
+			config.baseURL = defaultBaseURL
+		}
+	}
+	config.timeout = defaultTimeout
+	if runtime.TimeoutSeconds > 0 {
+		config.timeout = time.Duration(runtime.TimeoutSeconds) * time.Second
+	}
+	if runtime.PollIntervalSeconds > 0 {
+		config.pollInterval = time.Duration(runtime.PollIntervalSeconds) * time.Second
+	}
+	return config
+}
+
 type parseResponse struct {
 	TaskID  string                 `json:"task_id"`
 	Status  string                 `json:"status"`
@@ -201,9 +261,9 @@ type middlePreprocBlock struct {
 	Type  string   `json:"type,omitempty"`
 }
 
-func callMineruParse(ctx context.Context, filename string, data []byte) (*parseResponse, error) {
-	if mineruMode() == "official" {
-		return callOfficialMineruParse(ctx, filename, data)
+func callMineruParse(ctx context.Context, config runtimeConfig, filename string, data []byte) (*parseResponse, error) {
+	if config.mode == "official" {
+		return callOfficialMineruParse(ctx, config, filename, data)
 	}
 
 	body := &bytes.Buffer{}
@@ -240,8 +300,8 @@ func callMineruParse(ctx context.Context, filename string, data []byte) (*parseR
 		return nil, fmt.Errorf("mineru: close multipart: %w", err)
 	}
 
-	url := baseURL() + "/file_parse"
-	reqCtx, cancel := context.WithTimeout(ctx, timeout())
+	url := config.baseURL + "/file_parse"
+	reqCtx, cancel := context.WithTimeout(ctx, config.timeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, body)
@@ -352,18 +412,18 @@ type officialZipArtifacts struct {
 	ContentListPath string
 }
 
-func callOfficialMineruParse(ctx context.Context, filename string, data []byte) (*parseResponse, error) {
-	token := envconfig.String("MINERU_OFFICIAL_TOKEN")
+func callOfficialMineruParse(ctx context.Context, config runtimeConfig, filename string, data []byte) (*parseResponse, error) {
+	token := config.apiKey
 	if token == "" {
 		return nil, fmt.Errorf("mineru official: MINERU_OFFICIAL_TOKEN is required")
 	}
 
-	reqCtx, cancel := context.WithTimeout(ctx, officialTimeout())
+	reqCtx, cancel := context.WithTimeout(ctx, config.timeout)
 	defer cancel()
 
 	client := &http.Client{}
 	dataID := "zgi_" + newID()
-	applyData, err := officialApplyUploadURL(reqCtx, client, token, filename, dataID)
+	applyData, err := officialApplyUploadURL(reqCtx, client, config, token, filename, dataID)
 	if err != nil {
 		return nil, err
 	}
@@ -377,7 +437,7 @@ func callOfficialMineruParse(ctx context.Context, filename string, data []byte) 
 		return nil, err
 	}
 
-	result, err := officialPollResult(reqCtx, client, token, applyData.BatchID, dataID)
+	result, err := officialPollResult(reqCtx, client, config, token, applyData.BatchID, dataID)
 	if err != nil {
 		return nil, err
 	}
@@ -395,7 +455,7 @@ func callOfficialMineruParse(ctx context.Context, filename string, data []byte) 
 	return &parseResponse{
 		TaskID:  coalesce(result.DataID, applyData.BatchID),
 		Status:  "completed",
-		Backend: "official:" + officialModelVersion(filename),
+		Backend: "official:" + officialModelVersion(config, filename),
 		Results: map[string]fileResults{
 			coalesce(result.FileName, filename): {
 				MdContent:   artifacts.Markdown,
@@ -407,7 +467,7 @@ func callOfficialMineruParse(ctx context.Context, filename string, data []byte) 
 	}, nil
 }
 
-func officialApplyUploadURL(ctx context.Context, client *http.Client, token, filename, dataID string) (*officialFileURLData, error) {
+func officialApplyUploadURL(ctx context.Context, client *http.Client, config runtimeConfig, token, filename, dataID string) (*officialFileURLData, error) {
 	payload := officialBatchRequest{
 		Files: []officialBatchFile{
 			{
@@ -416,7 +476,7 @@ func officialApplyUploadURL(ctx context.Context, client *http.Client, token, fil
 				IsOCR:  true,
 			},
 		},
-		ModelVersion:  officialModelVersion(filename),
+		ModelVersion:  officialModelVersion(config, filename),
 		EnableFormula: true,
 		EnableTable:   true,
 		Language:      detectLang(filename),
@@ -427,7 +487,7 @@ func officialApplyUploadURL(ctx context.Context, client *http.Client, token, fil
 	}
 
 	var parsed officialResponse[officialFileURLData]
-	if err := officialJSON(ctx, client, http.MethodPost, officialBaseURL()+"/api/v4/file-urls/batch", token, body, &parsed); err != nil {
+	if err := officialJSON(ctx, client, http.MethodPost, config.baseURL+"/api/v4/file-urls/batch", token, body, &parsed); err != nil {
 		return nil, err
 	}
 	if !parsed.Code.OK() {
@@ -453,12 +513,12 @@ func officialUploadFile(ctx context.Context, client *http.Client, uploadURL stri
 	return nil
 }
 
-func officialPollResult(ctx context.Context, client *http.Client, token, batchID, dataID string) (*officialExtractResult, error) {
-	ticker := time.NewTicker(officialPollInterval())
+func officialPollResult(ctx context.Context, client *http.Client, config runtimeConfig, token, batchID, dataID string) (*officialExtractResult, error) {
+	ticker := time.NewTicker(config.pollInterval)
 	defer ticker.Stop()
 
 	for {
-		result, err := officialGetBatchResult(ctx, client, token, batchID, dataID)
+		result, err := officialGetBatchResult(ctx, client, config, token, batchID, dataID)
 		if err != nil {
 			return nil, err
 		}
@@ -488,9 +548,9 @@ func officialPollResult(ctx context.Context, client *http.Client, token, batchID
 	}
 }
 
-func officialGetBatchResult(ctx context.Context, client *http.Client, token, batchID, dataID string) (*officialExtractResult, error) {
+func officialGetBatchResult(ctx context.Context, client *http.Client, config runtimeConfig, token, batchID, dataID string) (*officialExtractResult, error) {
 	var parsed officialResponse[officialBatchResultData]
-	if err := officialJSON(ctx, client, http.MethodGet, officialBaseURL()+"/api/v4/extract-results/batch/"+batchID, token, nil, &parsed); err != nil {
+	if err := officialJSON(ctx, client, http.MethodGet, config.baseURL+"/api/v4/extract-results/batch/"+batchID, token, nil, &parsed); err != nil {
 		return nil, err
 	}
 	if !parsed.Code.OK() {
@@ -710,12 +770,12 @@ func isOfficialImage(base string) bool {
 	}
 }
 
-func officialModelVersion(filename string) string {
+func officialModelVersion(config runtimeConfig, filename string) string {
 	if strings.EqualFold(filepath.Ext(filename), ".html") || strings.EqualFold(filepath.Ext(filename), ".htm") {
 		return "MinerU-HTML"
 	}
-	if v := envconfig.String("MINERU_OFFICIAL_MODEL_VERSION"); v != "" {
-		return v
+	if config.modelVersion != "" {
+		return config.modelVersion
 	}
 	return "vlm"
 }

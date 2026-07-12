@@ -129,3 +129,17 @@ func TestConfidenceScore(t *testing.T) {
 		t.Fatalf("granular confidence=%v", got)
 	}
 }
+
+func TestRuntimeConfigForOptionsKeepsRequestCredentialsIsolated(t *testing.T) {
+	t.Setenv("REDUCTO_API_KEY", "global-key")
+	config := runtimeConfigForOptions(extractcommon.ParseOptions{
+		ProviderRuntime: extractcommon.ProviderRuntimeConfig{
+			ProviderKey: "reducto",
+			BaseURL:     "https://tenant.example/",
+			APIKey:      "tenant-key",
+		},
+	})
+	if config.apiKey != "tenant-key" || config.baseURL != "https://tenant.example" {
+		t.Fatalf("runtime config = %#v", config)
+	}
+}
