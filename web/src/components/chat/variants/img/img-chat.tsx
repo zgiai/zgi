@@ -22,6 +22,7 @@ import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { useChatAutoFollow } from '../common/use-chat-auto-follow';
 import { ChatMessageViewport } from '../common/chat-message-viewport';
 import type { ImageSettings, ImageSettingsPatch } from './settings-toolbar';
+import type { ImageRuntimeModel } from '@/services/types/image-runtime';
 
 export interface ImgChatProps {
   controller: ChatController;
@@ -29,6 +30,7 @@ export interface ImgChatProps {
   onModelChange?: (value: ModelSelectorValue) => void;
   inputTopNotice?: React.ReactNode;
   conversationSearchKey?: readonly unknown[];
+  imageRuntimeModels?: ImageRuntimeModel[];
 }
 
 export function ImgChat({
@@ -37,6 +39,7 @@ export function ImgChat({
   onModelChange,
   inputTopNotice,
   conversationSearchKey,
+  imageRuntimeModels,
 }: ImgChatProps) {
   // Controller state
   const activeId = useStore(controller.store, s => s.activeId);
@@ -68,6 +71,17 @@ export function ImgChat({
     customRatio: { width: 1024, height: 1024 },
     isCustomRatio: false,
   });
+  const currentRuntimeModel = React.useMemo(
+    () =>
+      imageRuntimeModels?.find(
+        item => item.provider === modelSelectorValue?.provider && item.model === modelSelectorValue?.model
+      ),
+    [imageRuntimeModels, modelSelectorValue?.model, modelSelectorValue?.provider]
+  );
+  const ratioOptions = React.useMemo(
+    () => currentRuntimeModel?.supported_sizes.map(sizeToRatio).filter(Boolean),
+    [currentRuntimeModel?.supported_sizes]
+  );
 
   const handleSettingsChange = React.useCallback((next: ImageSettingsPatch) => {
     setImageSettings(prev => ({
@@ -306,6 +320,9 @@ export function ImgChat({
               setSettings={handleSettingsChange}
               modelSelectorValue={modelSelectorValue}
               onModelChange={onModelChange}
+              imageRuntimeModels={imageRuntimeModels}
+              ratioOptions={ratioOptions}
+              countOptions={currentRuntimeModel?.supported_counts}
               topNotice={inputTopNotice}
             />
           </div>
@@ -337,4 +354,19 @@ export function ImgChat({
       </Sheet>
     </div>
   );
+}
+
+function sizeToRatio(size: string): string {
+  switch (size) {
+    case '1792x1024':
+      return '16:9';
+    case '1024x1792':
+      return '9:16';
+    case '1024x768':
+      return '4:3';
+    case '1024x1024':
+      return '1:1';
+    default:
+      return '';
+  }
 }
