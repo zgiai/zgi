@@ -41,6 +41,7 @@ import {
   WORKFLOW_PERMISSION_ACTIONS,
 } from '@/constants/permissions';
 import { markAgentListRestoreIntentFromDetail } from '@/utils/agent-list-state';
+import { useContextualAIChat } from '@/components/aichat/contextual';
 
 interface AgentSidebarProps {
   /** When true, hide navigation items (workspace mismatch mode) */
@@ -56,6 +57,7 @@ interface AgentSidebarProps {
  */
 export function AgentSidebar({ isMismatch = false, routeKind }: AgentSidebarProps) {
   const pathname = usePathname();
+  const { isOpen: isContextualAIChatOpen } = useContextualAIChat();
   const params = useParams<{ agentId: string }>();
   const agentId = params?.agentId ?? '';
   const t = useT();
@@ -75,7 +77,9 @@ export function AgentSidebar({ isMismatch = false, routeKind }: AgentSidebarProp
   const canConfigureWorkflowRuntime = hasAnyPermission(
     WORKFLOW_PERMISSION_ACTIONS.runtimeConfigManage
   );
-  const canManageAgentRuntimeAccess = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeAccessManage);
+  const canManageAgentRuntimeAccess = hasAnyPermission(
+    AGENT_PERMISSION_ACTIONS.runtimeAccessManage
+  );
   const canManageWorkflowRuntimeAccess = hasAnyPermission(
     WORKFLOW_PERMISSION_ACTIONS.runtimeAccessManage
   );
@@ -98,9 +102,10 @@ export function AgentSidebar({ isMismatch = false, routeKind }: AgentSidebarProp
   const effectiveRouteKind: AgentDetailRouteKind =
     routeKind ?? (isWorkflowRuntime ? 'workflow' : 'agent');
   const listBackHref = effectiveRouteKind === 'workflow' ? '/console/workflows' : '/console/agents';
-  const listBackLabel = effectiveRouteKind === 'workflow'
-    ? t('agents.backToWorkflowList')
-    : t('agents.backToAgentList');
+  const listBackLabel =
+    effectiveRouteKind === 'workflow'
+      ? t('agents.backToWorkflowList')
+      : t('agents.backToAgentList');
   const canEditIdentity = isAgentRuntime
     ? canUpdateAgent
     : isWorkflowRuntime
@@ -283,6 +288,7 @@ export function AgentSidebar({ isMismatch = false, routeKind }: AgentSidebarProp
     <>
       <ResourceSidebar
         isCollapsed={isCollapsed}
+        temporarilyCollapsed={isContextualAIChatOpen}
         onToggleCollapse={toggleCollapse}
         expandLabel={t('navigation.expand')}
         collapseLabel={t('navigation.collapse')}
@@ -301,9 +307,7 @@ export function AgentSidebar({ isMismatch = false, routeKind }: AgentSidebarProp
             onBackClick={() => markAgentListRestoreIntentFromDetail(agentId)}
             iconActionLabel={t('agents.actions.edit')}
             onIconClick={
-              canEditIdentity && !isMismatch && agentData
-                ? () => setEditOpen(true)
-                : undefined
+              canEditIdentity && !isMismatch && agentData ? () => setEditOpen(true) : undefined
             }
           />
         }

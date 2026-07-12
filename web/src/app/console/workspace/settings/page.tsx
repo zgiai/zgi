@@ -195,7 +195,7 @@ export default function WorkspaceSettingsPage() {
   const isManagingByOrganization = isOrganizationManager && !isCurrentUserWorkspaceLead;
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-6">
+    <div className="mx-auto max-w-4xl px-4 py-5 @md/console:px-6 @md/console:py-6">
       {/* Header */}
       <div className="mb-5">
         <h2 className="text-2xl font-semibold tracking-tight text-foreground">

@@ -59,10 +59,10 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6 p-4 @md/console:p-6">
       <PageHeader title={t('settings.title')} description={t('settings.pageDescription')} />
 
-      <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
+      <div className="grid gap-6 @4xl/console:grid-cols-[260px_minmax(0,1fr)]">
         <aside className="h-fit rounded-lg border border-border bg-card p-2">
           <div className="px-3 py-2 text-xs font-medium text-muted-foreground">
             {t('settings.system.groups')}
@@ -103,7 +103,7 @@ export default function SettingsPage() {
           {ENABLE_THEME_SWITCH ? (
             <Card className="border-border">
               <CardHeader className="pb-4">
-                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <div className="flex flex-col gap-4 @3xl/console:flex-row @3xl/console:items-start @3xl/console:justify-between">
                   <div>
                     <CardTitle className="flex items-center gap-2 text-xl">
                       <SlidersHorizontal className="h-5 w-5 text-primary" />
@@ -133,7 +133,7 @@ export default function SettingsPage() {
               </CardHeader>
               <CardContent className="space-y-5">
                 <div className="rounded-lg border border-border bg-muted/25 p-4">
-                  <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                  <div className="flex flex-col gap-4 @3xl/console:flex-row @3xl/console:items-center @3xl/console:justify-between">
                     <div>
                       <div className="flex items-center gap-2">
                         <p className="text-sm font-medium text-muted-foreground">
@@ -174,7 +174,7 @@ export default function SettingsPage() {
                       {themes.length} {t('settings.themes.available')}
                     </Badge>
                   </div>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  <div className="grid grid-cols-[repeat(auto-fit,minmax(13rem,1fr))] gap-3">
                     {themes.map((themeConfig: ThemeConfig) => (
                       <ThemePreview
                         key={themeConfig.name}
@@ -200,7 +200,7 @@ export default function SettingsPage() {
               <CardDescription>{t('settings.system.languageLongDesc')}</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 @md/console:flex-row @md/console:items-center @md/console:justify-between">
                 <div>
                   <p className="text-sm font-medium">{t('settings.system.interfaceLanguage')}</p>
                   <p className="mt-1 text-sm text-muted-foreground">

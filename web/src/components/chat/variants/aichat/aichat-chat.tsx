@@ -20,11 +20,6 @@ import type {
   ModelSelectorValue,
 } from '@/components/common/model-selector';
 import type { AIChatController } from '@/components/chat/controllers/aichat-controller';
-import {
-  createAIChatSendTraceContext,
-  logAIChatSessionTrace,
-  type AIChatSendTraceContext,
-} from '@/components/chat/controllers/aichat/session-trace';
 import type {
   ConversationSearchFn,
   ConversationSummary,
@@ -71,7 +66,10 @@ import {
 } from '@/components/chat/utils/message-tree';
 import { AIChatHeader } from '@/components/chat/variants/aichat/chat-header';
 import { AIChatHomeView } from '@/components/chat/variants/aichat/home-view';
-import { AIChatAssetAuditButton } from '@/components/chat/variants/aichat/asset-audit-button';
+import {
+  AIChatAssetAuditButton,
+  AIChatAssetAuditPanel,
+} from '@/components/chat/variants/aichat/asset-audit-button';
 import {
   AIChatEmbeddedConversationControls,
   embeddedControlButtonClassName,
@@ -274,6 +272,8 @@ export function AIChatShell({
   const { locale } = useLocale();
   const isMobile = useIsMobile();
   const isEmbedded = variant === 'embedded';
+  const chatSurfaceBackground =
+    isEmbedded && surface !== 'agent-draft' ? 'bg-bg-canvas' : 'bg-background';
   const toolGovernanceApprovalScopeId = useId();
   const showEmbeddedConversationDrawer = isEmbedded && embeddedConversationMode === 'drawer';
   const themeStyle = useMemo<CSSProperties | undefined>(() => {
@@ -285,6 +285,7 @@ export function AIChatShell({
   const [editingQuery, setEditingQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [embeddedAssetAuditOpen, setEmbeddedAssetAuditOpen] = useState(false);
   const [externalControlsPortal, setExternalControlsPortal] = useState<HTMLElement | null>(null);
   const [skillPreferenceOpen, setSkillPreferenceOpen] = useState(false);
   const [draftSkillPreferenceIds, setDraftSkillPreferenceIds] = useState<string[]>([]);
@@ -529,6 +530,10 @@ export function AIChatShell({
   );
   const showAssetAuditControl =
     showToolGovernancePermissionControl && surface === 'aichat' && Boolean(activeConversationId);
+  const handleOpenAssetAudit = useCallback(() => {
+    setMobileSidebarOpen(false);
+    setEmbeddedAssetAuditOpen(true);
+  }, []);
   const assetAuditButton = useMemo(
     () =>
       showAssetAuditControl ? (
@@ -536,9 +541,16 @@ export function AIChatShell({
           conversationId={activeConversationId}
           refreshKey={assetAuditRefreshKey}
           className={embeddedControlButtonClassName}
+          onOpen={isEmbedded ? handleOpenAssetAudit : undefined}
         />
       ) : null,
-    [activeConversationId, assetAuditRefreshKey, showAssetAuditControl]
+    [
+      activeConversationId,
+      assetAuditRefreshKey,
+      handleOpenAssetAudit,
+      isEmbedded,
+      showAssetAuditControl,
+    ]
   );
 
   useEffect(() => {
@@ -675,63 +687,21 @@ export function AIChatShell({
   }, [isMobile]);
 
   const handleSend = useCallback(
-    async (
-      files: AIChatMessageFile[] = [],
-      useMemory = false,
-      existingContext?: AIChatSendTraceContext
-    ): Promise<boolean> => {
-      const debugContext = existingContext ?? createAIChatSendTraceContext('unknown');
-      const stateAtEntry = controller.store.getState();
-      const query = input.trim();
-      const blockedBy = [
-        activeWorkflowApprovalRequest ? 'active_workflow_approval' : null,
-        !query ? 'empty_input' : null,
-        isSending ? 'react_is_sending' : null,
-        stateAtEntry.isSending ? 'store_is_sending' : null,
-        requireModel && !modelSelectorValue.model ? 'model_required' : null,
-      ].filter((reason): reason is string => Boolean(reason));
-      logAIChatSessionTrace(
-        'shell_send_received',
-        {
-          surface,
-          runtimeSurface: effectiveRuntimeSurface,
-          reactActiveConversationId: activeConversationId,
-          storeActiveConversationId: stateAtEntry.activeConversationId,
-          conversationCount: stateAtEntry.conversations.length,
-          messageCount: activeMessages.length,
-          queryLength: query.length,
-          fileCount: files.length,
-          reactIsSending: isSending,
-          storeIsSending: stateAtEntry.isSending,
-          blockedBy,
-        },
-        debugContext
-      );
+    async (files: AIChatMessageFile[] = [], useMemory = false): Promise<boolean> => {
       if (activeWorkflowApprovalRequest) {
-        logAIChatSessionTrace('shell_send_blocked', { blockedBy }, debugContext);
         return false;
       }
+      const query = input.trim();
       if (!query || isSending) {
-        logAIChatSessionTrace('shell_send_blocked', { blockedBy }, debugContext);
         return false;
       }
       if (requireModel && !modelSelectorValue.model) {
-        logAIChatSessionTrace('shell_send_blocked', { blockedBy }, debugContext);
         toast.error(t('consoleChat.modelRequired'));
         return false;
       }
       if (beforeSend) {
-        logAIChatSessionTrace('shell_before_send_started', {}, debugContext);
         const canSend = await beforeSend();
-        logAIChatSessionTrace('shell_before_send_completed', { canSend }, debugContext);
-        if (!canSend) {
-          logAIChatSessionTrace(
-            'shell_send_blocked',
-            { blockedBy: ['before_send_rejected'] },
-            debugContext
-          );
-          return false;
-        }
+        if (!canSend) return false;
       }
 
       const pendingMessageId = Date.now();
@@ -746,7 +716,7 @@ export function AIChatShell({
         assistantCreatedAt: pendingMessageCreatedAt,
         showAssistantPlanning,
       });
-      const controllerSend = controller.send({
+      void controller.send({
         query,
         files,
         model: {
@@ -757,43 +727,11 @@ export function AIChatShell({
         useMemory: forcedUseMemory ?? useMemory,
         runtimeSurface: effectiveRuntimeSurface,
         operationContext: toolGovernanceOperationContext,
-        debugContext,
       });
-      const stateAfterDispatch = controller.store.getState();
-      logAIChatSessionTrace(
-        'shell_controller_send_dispatched',
-        {
-          activeConversationId: stateAfterDispatch.activeConversationId,
-          isSending: stateAfterDispatch.isSending,
-          conversationCount: stateAfterDispatch.conversations.length,
-        },
-        debugContext
-      );
-      void controllerSend
-        .then(() => {
-          const settledState = controller.store.getState();
-          logAIChatSessionTrace(
-            'shell_controller_send_settled',
-            {
-              activeConversationId: settledState.activeConversationId,
-              isSending: settledState.isSending,
-              error: settledState.error,
-            },
-            debugContext
-          );
-        })
-        .catch(error => {
-          logAIChatSessionTrace(
-            'shell_controller_send_rejected',
-            { error: error instanceof Error ? error.message : String(error) },
-            debugContext
-          );
-        });
       return true;
     },
     [
       activeWorkflowApprovalRequest,
-      activeMessages.length,
       activeConversationId,
       beforeSend,
       controller,
@@ -804,7 +742,6 @@ export function AIChatShell({
       modelSelectorValue,
       requireModel,
       effectiveRuntimeSurface,
-      surface,
       t,
       toolGovernanceOperationContext,
     ]
@@ -1093,6 +1030,7 @@ export function AIChatShell({
     if (isHome) {
       toast.info(t('chat.alreadyInDraft'));
       setMobileSidebarOpen(false);
+      setEmbeddedAssetAuditOpen(false);
       return;
     }
     if (onStartNewConversation) {
@@ -1101,6 +1039,7 @@ export function AIChatShell({
       controller.startNew();
     }
     setMobileSidebarOpen(false);
+    setEmbeddedAssetAuditOpen(false);
   }, [controller, isHome, onStartNewConversation, t]);
 
   const handleSelectConversation = useCallback(
@@ -1111,6 +1050,7 @@ export function AIChatShell({
         void controller.select(id);
       }
       setMobileSidebarOpen(false);
+      setEmbeddedAssetAuditOpen(false);
     },
     [controller, onSelectConversation]
   );
@@ -1119,6 +1059,7 @@ export function AIChatShell({
     (id: string) => {
       void controller.remove(id);
       setMobileSidebarOpen(false);
+      setEmbeddedAssetAuditOpen(false);
     },
     [controller]
   );
@@ -1190,7 +1131,10 @@ export function AIChatShell({
   const embeddedConversationControls = useMemo(() => {
     if (!showEmbeddedConversationDrawer) return null;
     const controls = {
-      openConversations: () => setMobileSidebarOpen(true),
+      openConversations: () => {
+        setEmbeddedAssetAuditOpen(false);
+        setMobileSidebarOpen(true);
+      },
       startNewConversation: handleNewChat,
       isHome,
     };
@@ -1201,7 +1145,7 @@ export function AIChatShell({
       <AIChatEmbeddedConversationControls
         openConversations={controls.openConversations}
         startNewConversation={controls.startNewConversation}
-        conversationsLabel={t('consoleChat.toggleSidebar')}
+        conversationsLabel={t('consoleChat.historySubtitle')}
         newConversationLabel={t('chat.newConversation')}
         trailingAction={
           assetAuditButton || skillPreferenceAction ? (
@@ -1236,7 +1180,10 @@ export function AIChatShell({
   }, [embeddedConversationControlsMode, embeddedConversationControlsPortalId]);
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-background" style={themeStyle}>
+    <div
+      className={cn('flex h-full w-full overflow-hidden', chatSurfaceBackground)}
+      style={themeStyle}
+    >
       {!isEmbedded ? (
         <div className="hidden md:block">
           <Sidebar
@@ -1255,148 +1202,179 @@ export function AIChatShell({
         </div>
       ) : null}
 
-      <ToolGovernancePendingApprovalScopeProvider scopeId={toolGovernanceApprovalScopeId}>
-        <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
-          {!isEmbedded ? (
-            <AIChatHeader
-              isMobile={isMobile}
-              isHome={isHome}
-              title={activeConversation?.title || t('consoleChat.title')}
-              onToggleSidebar={handleToggleSidebar}
-              onStartNew={handleNewChat}
-              rightAction={
-                assetAuditButton || skillPreferenceAction ? (
-                  <div className="flex items-center justify-end gap-1">
-                    {assetAuditButton}
-                    {skillPreferenceAction}
-                  </div>
-                ) : undefined
+      {showEmbeddedConversationDrawer && mobileSidebarOpen ? (
+        <Sidebar
+          activeId={activeConversationId}
+          conversations={conversationSummaries}
+          isOpen
+          isHome={isHome}
+          className="!w-full !border-r-0 !bg-transparent"
+          onNewChat={handleNewChat}
+          onSelect={handleSelectConversation}
+          onDelete={handleDeleteConversation}
+          onRename={handleRenameConversation}
+          onClose={() => setMobileSidebarOpen(false)}
+          alwaysShowHeader
+          useBackNavigation
+          search={searchConversations}
+          searchKey={conversationSearchKey}
+        />
+      ) : isEmbedded && embeddedAssetAuditOpen ? (
+        <AIChatAssetAuditPanel
+          conversationId={activeConversationId}
+          refreshKey={assetAuditRefreshKey}
+          onBack={() => setEmbeddedAssetAuditOpen(false)}
+        />
+      ) : (
+        <ToolGovernancePendingApprovalScopeProvider scopeId={toolGovernanceApprovalScopeId}>
+          <main
+            className={cn(
+              'relative flex min-w-0 flex-1 flex-col overflow-hidden',
+              chatSurfaceBackground
+            )}
+          >
+            {!isEmbedded ? (
+              <AIChatHeader
+                isMobile={isMobile}
+                isHome={isHome}
+                title={activeConversation?.title || t('consoleChat.title')}
+                onToggleSidebar={handleToggleSidebar}
+                onStartNew={handleNewChat}
+                rightAction={
+                  assetAuditButton || skillPreferenceAction ? (
+                    <div className="flex items-center justify-end gap-1">
+                      {assetAuditButton}
+                      {skillPreferenceAction}
+                    </div>
+                  ) : undefined
+                }
+              />
+            ) : null}
+
+            {showEmbeddedConversationDrawer && embeddedConversationControlsMode === 'internal' ? (
+              <div
+                className={cn(
+                  'absolute z-30',
+                  embeddedConversationControlsClassName ?? 'left-3 top-3'
+                )}
+              >
+                {embeddedConversationControls}
+              </div>
+            ) : null}
+
+            {externalControlsPortal && embeddedConversationControls
+              ? createPortal(embeddedConversationControls, externalControlsPortal)
+              : null}
+
+            <AIChatMessageList
+              messages={messages}
+              activeConversation={activeConversation}
+              activeMessageCount={activeMessages.length}
+              branchNavigationByMessageId={branchNavigationByMessageId}
+              isLoadingMessages={isLoadingMessages}
+              isLoadingOlderMessages={isLoadingOlderMessages}
+              isSending={isSending || messageActionsLocked}
+              streamingByMessageId={streamingByMessageId}
+              skillDisplayById={skillDisplayById}
+              editingMessageId={editingMessageId}
+              editingQuery={editingQuery}
+              bottomRef={bottomRef}
+              scrollViewportRef={scrollViewportRef}
+              bottomSpacerHeight={Math.max(inputAreaHeight + 72, 180)}
+              onScroll={handleMessagesScroll}
+              onRegenerate={handleRegenerate}
+              onToolGovernanceDecision={
+                enableToolGovernanceApprovals && !isRecoveringMessages
+                  ? handleToolGovernanceDecision
+                  : undefined
               }
+              enableToolGovernanceApprovals={enableToolGovernanceApprovals}
+              suppressPendingToolGovernanceApprovals={isRecoveringMessages}
+              onSwitchBranch={handleSwitchBranch}
+              onEditStart={handleEditStart}
+              onEditChange={setEditingQuery}
+              onEditCancel={handleEditCancel}
+              onEditSubmit={handleEditSubmit}
+              showAssistantModelMeta={showAssistantModelMeta}
+              layout={isEmbedded ? 'embedded' : 'full'}
+              showMemoryKey={surface !== 'agent-webapp'}
+              showSkillEventDetails={surface !== 'agent-webapp'}
+              showPlanningPlaceholder={showPlanningPlaceholder}
+              pendingUserMessage={visiblePendingUserMessage}
             />
-          ) : null}
 
-          {showEmbeddedConversationDrawer && embeddedConversationControlsMode === 'internal' ? (
-            <div
-              className={cn(
-                'absolute z-30',
-                embeddedConversationControlsClassName ?? 'left-3 top-3'
-              )}
-            >
-              {embeddedConversationControls}
-            </div>
-          ) : null}
+            <AIChatHomeView
+              isVisible={isHome && !isLoadingMessages}
+              suggestions={suggestions}
+              onSelectSuggestion={setInput}
+              brand={homeBrand}
+              title={homeTitle}
+              description={homeDescription}
+              composerHeight={inputAreaHeight}
+              surface={surface}
+            />
 
-          {externalControlsPortal && embeddedConversationControls
-            ? createPortal(embeddedConversationControls, externalControlsPortal)
-            : null}
+            {showResumeScrollButton ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="absolute left-1/2 z-30 -translate-x-1/2 rounded-full border bg-background/95 px-3 shadow-lg backdrop-blur"
+                style={{ bottom: Math.max(inputAreaHeight + 18, 96) }}
+                onClick={resumeAutoFollow}
+              >
+                <ArrowDown className="mr-1.5 size-4" />
+                {t('consoleChat.resumeAutoScroll')}
+              </Button>
+            ) : null}
 
-          <AIChatMessageList
-            messages={messages}
-            activeConversation={activeConversation}
-            activeMessageCount={activeMessages.length}
-            branchNavigationByMessageId={branchNavigationByMessageId}
-            isLoadingMessages={isLoadingMessages}
-            isLoadingOlderMessages={isLoadingOlderMessages}
-            isSending={isSending || messageActionsLocked}
-            streamingByMessageId={streamingByMessageId}
-            skillDisplayById={skillDisplayById}
-            editingMessageId={editingMessageId}
-            editingQuery={editingQuery}
-            bottomRef={bottomRef}
-            scrollViewportRef={scrollViewportRef}
-            bottomSpacerHeight={Math.max(inputAreaHeight + 72, 180)}
-            onScroll={handleMessagesScroll}
-            onRegenerate={handleRegenerate}
-            onToolGovernanceDecision={
-              enableToolGovernanceApprovals && !isRecoveringMessages
-                ? handleToolGovernanceDecision
-                : undefined
-            }
-            enableToolGovernanceApprovals={enableToolGovernanceApprovals}
-            suppressPendingToolGovernanceApprovals={isRecoveringMessages}
-            onSwitchBranch={handleSwitchBranch}
-            onEditStart={handleEditStart}
-            onEditChange={setEditingQuery}
-            onEditCancel={handleEditCancel}
-            onEditSubmit={handleEditSubmit}
-            showAssistantModelMeta={showAssistantModelMeta}
-            layout={isEmbedded ? 'embedded' : 'full'}
-            showMemoryKey={surface !== 'agent-webapp'}
-            showSkillEventDetails={surface !== 'agent-webapp'}
-            showPlanningPlaceholder={showPlanningPlaceholder}
-            pendingUserMessage={visiblePendingUserMessage}
-          />
+            <AIChatInputArea
+              isEmbedded={isEmbedded}
+              isHome={isHome}
+              isLoadingMessages={isLoadingMessages}
+              input={input}
+              modelSelectorValue={modelSelectorValue}
+              modelProps={modelProps}
+              supportsVisionOverride={supportsVisionOverride}
+              isModelInitializing={isModelInitializing}
+              modelMissing={modelMissing}
+              isSending={isSending}
+              canStop={canStopPendingWorkflowInteraction || isSending}
+              isStopping={isStopping}
+              onInputChange={setInput}
+              onSend={handleSend}
+              activeUserInputRequest={activeUserInputRequest}
+              onUserInputRequestSubmit={handleUserInputRequestSubmit}
+              activeWorkflowApprovalRequest={activeWorkflowApprovalRequest}
+              onWorkflowApprovalSubmit={handleWorkflowApprovalSubmit}
+              onStop={controller.stop}
+              onModelChange={onModelChange}
+              onHeightChange={setInputAreaHeight}
+              showModelSelector={showModelSelector}
+              showMemoryToggle={showMemoryToggle}
+              enableUpload={enableUpload}
+              uploadScope={uploadScope}
+              showFileLibraryPicker={showFileLibraryPicker}
+              allowWorkspaceSwitch={allowWorkspaceSwitch}
+              inputPlaceholder={inputPlaceholder}
+              surface={surface}
+              showToolGovernancePermissionControl={showToolGovernancePermissionControl}
+              toolGovernancePermissionTier={toolGovernancePermissionTier}
+              onToolGovernancePermissionTierChange={setToolGovernancePermissionTier}
+              enableToolGovernanceApprovals={enableToolGovernanceApprovals && !isRecoveringMessages}
+              activeConversationId={activeConversation?.id ?? null}
+              activeToolGovernanceMessageId={
+                activeConversation?.active_message_id ??
+                activeConversation?.current_leaf_message_id ??
+                null
+              }
+              activeToolGovernanceApprovalFallback={activeToolGovernanceApprovalFallback}
+            />
+          </main>
+        </ToolGovernancePendingApprovalScopeProvider>
+      )}
 
-          <AIChatHomeView
-            isVisible={isHome && !isLoadingMessages}
-            suggestions={suggestions}
-            onSelectSuggestion={setInput}
-            brand={homeBrand}
-            title={homeTitle}
-            description={homeDescription}
-            composerHeight={inputAreaHeight}
-            surface={surface}
-          />
-
-          {showResumeScrollButton ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              className="absolute left-1/2 z-30 -translate-x-1/2 rounded-full border bg-background/95 px-3 shadow-lg backdrop-blur"
-              style={{ bottom: Math.max(inputAreaHeight + 18, 96) }}
-              onClick={resumeAutoFollow}
-            >
-              <ArrowDown className="mr-1.5 size-4" />
-              {t('consoleChat.resumeAutoScroll')}
-            </Button>
-          ) : null}
-
-          <AIChatInputArea
-            isHome={isHome}
-            isLoadingMessages={isLoadingMessages}
-            input={input}
-            modelSelectorValue={modelSelectorValue}
-            modelProps={modelProps}
-            supportsVisionOverride={supportsVisionOverride}
-            isModelInitializing={isModelInitializing}
-            modelMissing={modelMissing}
-            isSending={isSending}
-            canStop={canStopPendingWorkflowInteraction || isSending}
-            isStopping={isStopping}
-            onInputChange={setInput}
-            onSend={handleSend}
-            activeUserInputRequest={activeUserInputRequest}
-            onUserInputRequestSubmit={handleUserInputRequestSubmit}
-            activeWorkflowApprovalRequest={activeWorkflowApprovalRequest}
-            onWorkflowApprovalSubmit={handleWorkflowApprovalSubmit}
-            onStop={controller.stop}
-            onModelChange={onModelChange}
-            onHeightChange={setInputAreaHeight}
-            showModelSelector={showModelSelector}
-            showMemoryToggle={showMemoryToggle}
-            enableUpload={enableUpload}
-            uploadScope={uploadScope}
-            showFileLibraryPicker={showFileLibraryPicker}
-            allowWorkspaceSwitch={allowWorkspaceSwitch}
-            inputPlaceholder={inputPlaceholder}
-            surface={surface}
-            showToolGovernancePermissionControl={showToolGovernancePermissionControl}
-            toolGovernancePermissionTier={toolGovernancePermissionTier}
-            onToolGovernancePermissionTierChange={setToolGovernancePermissionTier}
-            enableToolGovernanceApprovals={enableToolGovernanceApprovals && !isRecoveringMessages}
-            activeConversationId={activeConversation?.id ?? null}
-            activeToolGovernanceMessageId={
-              activeConversation?.active_message_id ??
-              activeConversation?.current_leaf_message_id ??
-              null
-            }
-            activeToolGovernanceApprovalFallback={activeToolGovernanceApprovalFallback}
-          />
-        </main>
-      </ToolGovernancePendingApprovalScopeProvider>
-
-      {!isEmbedded || showEmbeddedConversationDrawer ? (
+      {!isEmbedded ? (
         <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
           <SheetContent side="left" className="max-w-none p-0 sm:max-w-sm" showClose={false}>
             <SheetTitle className="sr-only">{t('chat.conversations')}</SheetTitle>

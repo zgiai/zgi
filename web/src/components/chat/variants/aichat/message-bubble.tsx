@@ -1403,152 +1403,156 @@ export function AIChatMessageBubble({
         </div>
       </div>
 
-      <div className="flex min-w-0 justify-start gap-3">
-        <div
-          className={cn(
-            'mt-1 flex size-7 shrink-0 items-center justify-center rounded-full',
-            showAssistantModelMeta ? 'border bg-background' : 'bg-primary text-primary-foreground'
-          )}
-        >
-          {showAssistantModelMeta ? (
-            <ModelIcon model={message.model_name || 'unknown'} size={28} />
-          ) : (
-            <Bot className="size-4" />
-          )}
-        </div>
-        <div className="min-w-0 max-w-full flex-1 overflow-hidden">
-          <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            {showAssistantModelMeta && message.model_name ? (
-              <span>{message.model_name}</span>
-            ) : null}
-            {message.created_at ? <span>{formatAIChatTime(message.created_at)}</span> : null}
-            {isStreaming ? (
-              <span className="inline-flex items-center gap-1">
-                <Loader2 className="size-3 animate-spin" />
-                {t('consoleChat.streaming')}
-              </span>
-            ) : null}
-            {!isStreaming && isWaitingForUser ? (
-              <span className="inline-flex items-center gap-1">
-                <Loader2 className="size-3 animate-spin" />
-                {message.status === 'waiting_approval'
-                  ? t('consoleChat.waitingApproval')
-                  : t('consoleChat.waitingQuestion')}
-              </span>
-            ) : null}
-            {!isStreaming && isWaitingForClientAction ? (
-              <span className="inline-flex items-center gap-1">
-                <Loader2 className="size-3 animate-spin" />
-                {t('consoleChat.waitingClientAction')}
-              </span>
-            ) : null}
-            {isStopped && answer ? (
-              <span
-                className="inline-flex items-center"
-                title={t('consoleChat.stopped')}
-                aria-label={t('consoleChat.stopped')}
-              >
-                <CircleStop className="size-3" />
-              </span>
-            ) : null}
+      <div className="min-w-0 max-w-full overflow-hidden">
+        <div className="mb-2 flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap text-sm text-muted-foreground">
+          <div
+            className={cn(
+              'flex size-6 shrink-0 items-center justify-center rounded-full',
+              showAssistantModelMeta ? 'border bg-background' : 'bg-primary text-primary-foreground'
+            )}
+          >
+            {showAssistantModelMeta ? (
+              <ModelIcon model={message.model_name || 'unknown'} size={24} />
+            ) : (
+              <Bot className="size-3.5" />
+            )}
           </div>
-
-          {hasTimeline ? (
-            <AIChatAgenticTimeline
-              key={`${message.id}-${isActiveMessage ? 'active' : 'history'}-${
-                shouldOpenTimelineByDefault ? 'open' : 'closed'
-              }`}
-              timeline={displayTimeline}
-              skillDisplayById={skillDisplayById}
-              defaultOpen={shouldOpenTimelineByDefault}
-              showMemoryKey={showMemoryKey}
-              showSkillEventDetails={showSkillEventDetails}
-              enableToolGovernanceApprovals={enableToolGovernanceApprovals}
-              suppressPendingToolGovernanceApprovals={suppressPendingToolGovernanceApprovals}
-              messageStatus={message.status}
-              onToolGovernanceDecision={onToolGovernanceDecision}
-            />
+          {showAssistantModelMeta && message.model_name ? (
+            <span className="min-w-0 truncate text-sm font-medium leading-5 text-foreground/80">
+              {message.model_name}
+            </span>
           ) : null}
-
-          {streamingStatusLabel ? (
-            <div className="mb-3 flex min-w-0 items-center gap-2 rounded-md border border-muted-foreground/15 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-              <Loader2 className="size-3.5 shrink-0 animate-spin" />
-              <span className="min-w-0 break-words">{streamingStatusLabel}</span>
-            </div>
+          {message.created_at ? (
+            <span className="shrink-0 text-sm leading-5">
+              {formatAIChatTime(message.created_at)}
+            </span>
           ) : null}
-
-          {answer ? (
-            <div className="prose prose-sm min-w-0 max-w-full overflow-hidden dark:prose-invert sm:pr-4 md:pr-6 lg:pr-8 xl:pr-9">
-              <MarkdownViewer
-                className="md-viewer min-w-0 max-w-full overflow-hidden break-words"
-                content={displayAnswer}
-                isStreaming={isStreaming}
-                renderIdentity={message.id}
-              />
-            </div>
-          ) : waitingMessage ? (
-            <div className="text-sm text-muted-foreground">{waitingMessage}</div>
-          ) : isStreaming &&
-            !streamingStatusLabel &&
-            !userInputRequest &&
-            !hasGeneratedImagePreviews ? (
-            <div className="border-l-2 border-muted-foreground/20 pl-3 text-sm leading-7 text-muted-foreground">
-              <span className="inline-flex min-w-0 items-center gap-2">
-                <Loader2 className="size-3.5 shrink-0 animate-spin" />
-                <span className="min-w-0">{t('consoleChat.operationStatus.planning')}</span>
-              </span>
-            </div>
-          ) : isStopped && !hasGeneratedImagePreviews ? (
-            <div className="text-sm text-muted-foreground">{t('consoleChat.stopped')}</div>
+          {isStreaming ? (
+            <span className="inline-flex items-center gap-1">
+              <Loader2 className="size-3 animate-spin" />
+              {t('consoleChat.streaming')}
+            </span>
           ) : null}
-
-          <AIChatGeneratedImagePreviews files={generatedImagePreviewFilesForDisplay} />
-
-          {visibleGeneratedFiles.length > 0 ? (
-            <div className="mt-3 flex flex-wrap gap-2">
-              {visibleGeneratedFiles.map(file => (
-                <AIChatGeneratedFileCard key={file.artifact_id || file.file_id} file={file} />
-              ))}
-            </div>
+          {!isStreaming && isWaitingForUser ? (
+            <span className="inline-flex items-center gap-1">
+              <Loader2 className="size-3 animate-spin" />
+              {message.status === 'waiting_approval'
+                ? t('consoleChat.waitingApproval')
+                : t('consoleChat.waitingQuestion')}
+            </span>
           ) : null}
-
-          {isError ? (
-            <div
-              className={cn(
-                'mt-2 flex items-start gap-2 rounded-md border p-3 text-sm',
-                errorDisplay?.isBilling
-                  ? 'border-amber-200 bg-amber-50 text-amber-950'
-                  : 'border-destructive/30 bg-destructive/10 text-destructive'
-              )}
+          {!isStreaming && isWaitingForClientAction ? (
+            <span className="inline-flex items-center gap-1">
+              <Loader2 className="size-3 animate-spin" />
+              {t('consoleChat.waitingClientAction')}
+            </span>
+          ) : null}
+          {isStopped && answer ? (
+            <span
+              className="inline-flex items-center"
+              title={t('consoleChat.stopped')}
+              aria-label={t('consoleChat.stopped')}
             >
-              <AlertCircle className="mt-0.5 size-4 shrink-0" />
-              <div className="min-w-0 flex-1 space-y-2">
-                <div>{errorDisplay?.description || t('consoleChat.streamError')}</div>
-                {isBillingAdmin && errorDisplay?.href && errorDisplay.actionLabel ? (
-                  <a
-                    href={errorDisplay.href}
-                    className="inline-flex h-7 items-center rounded-[4px] border border-amber-300 bg-white px-2.5 text-xs font-semibold text-amber-950 transition-colors hover:border-amber-400 hover:bg-amber-100"
-                  >
-                    {errorDisplay.actionLabel}
-                  </a>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-
-          {!shouldHideAssistantToolbar && (answer || canRegenerateMessage) ? (
-            <AssistantMessageToolbar
-              answer={answer}
-              canRegenerate={canRegenerateMessage}
-              isDisabled={isSending || isActiveMessage}
-              toolbarVisibility={toolbarVisibility}
-              branchNavigation={branchNavigation}
-              canSwitchBranch={canSwitchBranch}
-              onRegenerate={() => onRegenerate?.(message)}
-              onSwitchBranch={onSwitchBranch}
-            />
+              <CircleStop className="size-3" />
+            </span>
           ) : null}
         </div>
+
+        {hasTimeline ? (
+          <AIChatAgenticTimeline
+            key={`${message.id}-${isActiveMessage ? 'active' : 'history'}-${
+              shouldOpenTimelineByDefault ? 'open' : 'closed'
+            }`}
+            timeline={displayTimeline}
+            skillDisplayById={skillDisplayById}
+            defaultOpen={shouldOpenTimelineByDefault}
+            showMemoryKey={showMemoryKey}
+            showSkillEventDetails={showSkillEventDetails}
+            enableToolGovernanceApprovals={enableToolGovernanceApprovals}
+            suppressPendingToolGovernanceApprovals={suppressPendingToolGovernanceApprovals}
+            messageStatus={message.status}
+            onToolGovernanceDecision={onToolGovernanceDecision}
+          />
+        ) : null}
+
+        {streamingStatusLabel ? (
+          <div className="mb-3 flex min-w-0 items-center gap-2 rounded-md border border-muted-foreground/15 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            <Loader2 className="size-3.5 shrink-0 animate-spin" />
+            <span className="min-w-0 break-words">{streamingStatusLabel}</span>
+          </div>
+        ) : null}
+
+        {answer ? (
+          <div className="prose prose-sm min-w-0 max-w-full overflow-hidden dark:prose-invert">
+            <MarkdownViewer
+              className="md-viewer min-w-0 max-w-full overflow-hidden break-words"
+              content={displayAnswer}
+              isStreaming={isStreaming}
+              renderIdentity={message.id}
+            />
+          </div>
+        ) : waitingMessage ? (
+          <div className="text-sm text-muted-foreground">{waitingMessage}</div>
+        ) : isStreaming &&
+          !streamingStatusLabel &&
+          !userInputRequest &&
+          !hasGeneratedImagePreviews ? (
+          <div className="border-l-2 border-muted-foreground/20 pl-3 text-sm leading-7 text-muted-foreground">
+            <span className="inline-flex min-w-0 items-center gap-2">
+              <Loader2 className="size-3.5 shrink-0 animate-spin" />
+              <span className="min-w-0">{t('consoleChat.operationStatus.planning')}</span>
+            </span>
+          </div>
+        ) : isStopped && !hasGeneratedImagePreviews ? (
+          <div className="text-sm text-muted-foreground">{t('consoleChat.stopped')}</div>
+        ) : null}
+
+        <AIChatGeneratedImagePreviews files={generatedImagePreviewFilesForDisplay} />
+
+        {visibleGeneratedFiles.length > 0 ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {visibleGeneratedFiles.map(file => (
+              <AIChatGeneratedFileCard key={file.artifact_id || file.file_id} file={file} />
+            ))}
+          </div>
+        ) : null}
+
+        {isError ? (
+          <div
+            className={cn(
+              'mt-2 flex items-start gap-2 rounded-md border p-3 text-sm',
+              errorDisplay?.isBilling
+                ? 'border-amber-200 bg-amber-50 text-amber-950'
+                : 'border-destructive/30 bg-destructive/10 text-destructive'
+            )}
+          >
+            <AlertCircle className="mt-0.5 size-4 shrink-0" />
+            <div className="min-w-0 flex-1 space-y-2">
+              <div>{errorDisplay?.description || t('consoleChat.streamError')}</div>
+              {isBillingAdmin && errorDisplay?.href && errorDisplay.actionLabel ? (
+                <a
+                  href={errorDisplay.href}
+                  className="inline-flex h-7 items-center rounded-[4px] border border-amber-300 bg-white px-2.5 text-xs font-semibold text-amber-950 transition-colors hover:border-amber-400 hover:bg-amber-100"
+                >
+                  {errorDisplay.actionLabel}
+                </a>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {!shouldHideAssistantToolbar && (answer || canRegenerateMessage) ? (
+          <AssistantMessageToolbar
+            answer={answer}
+            canRegenerate={canRegenerateMessage}
+            isDisabled={isSending || isActiveMessage}
+            toolbarVisibility={toolbarVisibility}
+            branchNavigation={branchNavigation}
+            canSwitchBranch={canSwitchBranch}
+            onRegenerate={() => onRegenerate?.(message)}
+            onSwitchBranch={onSwitchBranch}
+          />
+        ) : null}
       </div>
     </div>
   );

@@ -74,34 +74,32 @@ export function AgentRuntimeWorkbench({ model }: AgentRuntimeWorkbenchProps) {
         versionControl={<AgentRuntimeVersionPopover {...model.version} />}
       />
 
-      <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto lg:overflow-hidden">
+      <div
+        ref={bodyRef}
+        className={cn('min-h-0 flex-1', canUseTwoColumns ? 'overflow-hidden' : 'overflow-y-auto')}
+      >
         <div
           className={cn(
             'grid min-h-full min-w-0 grid-cols-1',
-            canUseTwoColumns &&
-              'lg:h-full lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:divide-x',
-            showInlinePreview &&
-              'lg:grid-cols-[minmax(0,0.95fr)_minmax(0,0.95fr)_minmax(0,1.2fr)]'
+            canUseTwoColumns && 'h-full min-h-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] divide-x',
+            showInlinePreview && 'grid-cols-[minmax(0,0.95fr)_minmax(0,0.95fr)_minmax(0,1.2fr)]'
           )}
         >
           <div
             className={cn(
               'h-[45vh] min-h-[360px] min-w-0 border-b',
-              canUseTwoColumns && 'lg:h-full lg:min-h-0 lg:border-b-0'
+              canUseTwoColumns && 'h-full min-h-0 border-b-0'
             )}
           >
             <AgentRuntimePromptPanel className="h-full" {...model.prompt} />
           </div>
-          <div className={cn('min-h-0 min-w-0', canUseTwoColumns && 'lg:h-full')}>
+          <div className={cn('min-h-0 min-w-0', canUseTwoColumns && 'h-full')}>
             <AgentRuntimeOrchestrationPanel
-              className={cn('min-h-0', canUseTwoColumns && 'lg:h-full')}
-              scrollAreaClassName={cn(
-                'overflow-visible',
-                canUseTwoColumns && 'lg:overflow-hidden'
-              )}
+              className={cn('min-h-0', canUseTwoColumns ? 'h-full' : 'h-auto overflow-visible')}
+              scrollAreaClassName={cn('overflow-visible', canUseTwoColumns && 'overflow-hidden')}
               scrollViewportClassName={cn(
                 'h-auto w-full rounded-[inherit]',
-                canUseTwoColumns && 'lg:h-full'
+                canUseTwoColumns && 'h-full'
               )}
               {...model.orchestration}
             />
@@ -120,7 +118,9 @@ export function AgentRuntimeWorkbench({ model }: AgentRuntimeWorkbenchProps) {
             className="flex h-full min-h-0 w-[min(720px,100vw)] max-w-none flex-col p-0 sm:max-w-none"
           >
             <SheetTitle className="sr-only">{model.t('preview.title')}</SheetTitle>
-            <SheetDescription className="sr-only">{model.t('preview.description')}</SheetDescription>
+            <SheetDescription className="sr-only">
+              {model.t('preview.description')}
+            </SheetDescription>
             {renderPreviewPanel('sheet')}
           </SheetContent>
         </Sheet>

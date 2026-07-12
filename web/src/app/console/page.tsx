@@ -359,7 +359,9 @@ export default function ConsolePage() {
     setOpeningRecentWorkId(item.id);
     try {
       if (item.workspaceId && item.workspaceId !== currentWorkspace?.id) {
-        const targetWorkspace: Workspace = workspaces.find(workspace => workspace.id === item.workspaceId) ?? {
+        const targetWorkspace: Workspace = workspaces.find(
+          workspace => workspace.id === item.workspaceId
+        ) ?? {
           id: item.workspaceId,
           name:
             item.workspaceName ||
@@ -372,7 +374,8 @@ export default function ConsolePage() {
       router.push(item.href);
     } catch (error) {
       toast.error(
-        getErrorMessage(error) || t('dashboard.stats.consoleHome.workspaceOverview.openRecentFailed')
+        getErrorMessage(error) ||
+          t('dashboard.stats.consoleHome.workspaceOverview.openRecentFailed')
       );
     } finally {
       setOpeningRecentWorkId(null);
@@ -390,9 +393,9 @@ export default function ConsolePage() {
     isModelStatsRefetching || isRunnableAppsFetching || isRecentWorkFetching;
 
   return (
-    <div className="min-h-full bg-bg-canvas px-6 py-6 text-foreground md:px-8 lg:px-10">
+    <div className="min-h-full bg-bg-canvas px-4 py-5 text-foreground @md/console:px-6 @md/console:py-6 @5xl/console:px-8 @6xl/console:px-10">
       <div className="mx-auto max-w-7xl">
-        <header className="mb-6 flex flex-col gap-4 border-b border-border/70 pb-5 lg:flex-row lg:items-start lg:justify-between">
+        <header className="mb-6 flex flex-col gap-4 border-b border-border/70 pb-5 @4xl/console:flex-row @4xl/console:items-start @4xl/console:justify-between">
           <div className="min-w-0">
             <div className="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
               {APP_NAME} / {t('dashboard.stats.consoleHome.title')}
@@ -449,9 +452,9 @@ export default function ConsolePage() {
           </Button>
         </header>
 
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid gap-5 @6xl/console:grid-cols-[minmax(0,1fr)_360px]">
           <main className="min-w-0 space-y-5">
-            <section className="grid gap-4 md:grid-cols-3">
+            <section className="grid grid-cols-[repeat(auto-fit,minmax(13rem,1fr))] gap-4">
               {productEntries.map(entry => {
                 const Icon = entry.icon;
                 const content = (
@@ -494,7 +497,9 @@ export default function ConsolePage() {
             {isModelStatsLoading || hasVisibleWorkspaceAssets ? (
               <Card className="border-border/80 shadow-sm">
                 <CardHeader className="pb-4">
-                  <SectionLabel>{t('dashboard.stats.consoleHome.workspaceOverview.eyebrow')}</SectionLabel>
+                  <SectionLabel>
+                    {t('dashboard.stats.consoleHome.workspaceOverview.eyebrow')}
+                  </SectionLabel>
                   <CardTitle className="text-xl">
                     {t('dashboard.stats.consoleHome.workspaceOverview.title')}
                   </CardTitle>
@@ -504,7 +509,7 @@ export default function ConsolePage() {
                 </CardHeader>
                 <CardContent>
                   {isModelStatsLoading ? (
-                    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                    <section className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
                       {Array.from({ length: 5 }).map((_, index) => (
                         <div
                           key={`workspace-asset-skeleton-${index}`}
@@ -517,7 +522,7 @@ export default function ConsolePage() {
                       ))}
                     </section>
                   ) : (
-                    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                    <section className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
                       {workspaceAssetEntries.map(entry => {
                         const Icon = entry.icon;
 
@@ -532,9 +537,7 @@ export default function ConsolePage() {
                             <div className="text-2xl font-semibold tracking-tight">
                               {entry.value ?? 0}
                             </div>
-                            <div className="mt-1 text-sm text-muted-foreground">
-                              {entry.label}
-                            </div>
+                            <div className="mt-1 text-sm text-muted-foreground">{entry.label}</div>
                           </div>
                         );
                       })}
@@ -547,7 +550,7 @@ export default function ConsolePage() {
             {isModelStatsLoading || hasVisibleWorkspaceAssets ? (
               <Card className="border-border/80 shadow-sm">
                 <CardHeader className="pb-4">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex flex-col gap-3 @md/console:flex-row @md/console:items-start @md/console:justify-between">
                     <div>
                       <SectionLabel>
                         {t('dashboard.stats.consoleHome.workspaceOverview.recentEyebrow')}
@@ -587,7 +590,7 @@ export default function ConsolePage() {
                             type="button"
                             onClick={() => void handleOpenRecentWork(item)}
                             disabled={Boolean(openingRecentWorkId)}
-                            className="grid w-full gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40 disabled:cursor-wait disabled:opacity-70 md:grid-cols-[96px_minmax(0,1fr)_150px_auto_auto]"
+                            className="grid w-full gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40 disabled:cursor-wait disabled:opacity-70 @4xl/console:grid-cols-[96px_minmax(0,1fr)_150px_auto_auto]"
                           >
                             <span className="text-xs font-medium text-muted-foreground">
                               {t(`dashboard.stats.consoleHome.recentTypes.${item.type}`)}
@@ -623,9 +626,7 @@ export default function ConsolePage() {
                         {t('dashboard.stats.consoleHome.workspaceOverview.emptyRecentTitle')}
                       </h3>
                       <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                        {t(
-                          'dashboard.stats.consoleHome.workspaceOverview.emptyRecentDescription'
-                        )}
+                        {t('dashboard.stats.consoleHome.workspaceOverview.emptyRecentDescription')}
                       </p>
                     </div>
                   )}
@@ -635,7 +636,7 @@ export default function ConsolePage() {
 
             <Card className="border-border/80 shadow-sm">
               <CardHeader className="pb-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex flex-col gap-3 @md/console:flex-row @md/console:items-start @md/console:justify-between">
                   <div>
                     <SectionLabel>{t('dashboard.stats.consoleHome.runnableApps')}</SectionLabel>
                     <CardTitle className="text-xl">
@@ -657,7 +658,7 @@ export default function ConsolePage() {
               </CardHeader>
               <CardContent>
                 {isRunnableAppsLoading ? (
-                  <div className="grid gap-3 md:grid-cols-2">
+                  <div className="grid gap-3 @3xl/console:grid-cols-2">
                     {Array.from({ length: 4 }).map((_, index) => (
                       <div
                         key={`runnable-app-skeleton-${index}`}
@@ -683,7 +684,7 @@ export default function ConsolePage() {
                     </p>
                   </div>
                 ) : visibleRunnableApps.length > 0 ? (
-                  <div className="grid gap-3 md:grid-cols-2">
+                  <div className="grid gap-3 @3xl/console:grid-cols-2">
                     {visibleRunnableApps.map(item => {
                       const preview = toRunnableAppPreview(item);
 
@@ -732,7 +733,7 @@ export default function ConsolePage() {
 
             <Card className="border-border/80 shadow-sm">
               <CardHeader className="pb-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex flex-col gap-3 @md/console:flex-row @md/console:items-start @md/console:justify-between">
                   <div>
                     <SectionLabel>{t('dashboard.stats.consoleHome.systemReadiness')}</SectionLabel>
                     <CardTitle className="text-xl">
@@ -765,7 +766,7 @@ export default function ConsolePage() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="grid gap-4 @3xl/console:grid-cols-2">
                   {(['required', 'recommended'] as const).map(priority => (
                     <div key={priority} className="min-w-0">
                       <h3 className="mb-2 text-sm font-semibold text-foreground">
@@ -780,7 +781,7 @@ export default function ConsolePage() {
                             const modelCount = getModelCount(statsData, capability.type);
                             const configured = modelCount > 0;
                             const row = (
-                              <div className="grid gap-3 px-4 py-3 sm:grid-cols-[auto_1fr_auto]">
+                              <div className="grid gap-3 px-4 py-3 @md/console:grid-cols-[auto_1fr_auto]">
                                 <StatusDot
                                   configured={configured}
                                   priority={capability.priority}

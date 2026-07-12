@@ -19,9 +19,11 @@ import type {
 } from './types';
 
 const CONTEXTUAL_AICHAT_OPEN_STORAGE_KEY = 'consoleChat.contextualDockOpen';
+const CONTEXTUAL_AICHAT_MEDIA_QUERY = '(min-width: 1024px)';
 
 function readStoredOpenState() {
   if (typeof window === 'undefined') return false;
+  if (!window.matchMedia(CONTEXTUAL_AICHAT_MEDIA_QUERY).matches) return false;
   try {
     return window.sessionStorage.getItem(CONTEXTUAL_AICHAT_OPEN_STORAGE_KEY) === 'true';
   } catch {
@@ -32,10 +34,7 @@ function readStoredOpenState() {
 function storeOpenState(isOpen: boolean) {
   if (typeof window === 'undefined') return;
   try {
-    window.sessionStorage.setItem(
-      CONTEXTUAL_AICHAT_OPEN_STORAGE_KEY,
-      isOpen ? 'true' : 'false'
-    );
+    window.sessionStorage.setItem(CONTEXTUAL_AICHAT_OPEN_STORAGE_KEY, isOpen ? 'true' : 'false');
   } catch {
     // Session storage can be unavailable in restricted browser contexts.
   }
@@ -49,6 +48,7 @@ interface ContextualAIChatRegisteredGroup {
 }
 
 interface ContextualAIChatState {
+  isAvailable: boolean;
   isOpen: boolean;
   items: AIChatContextItem[];
   open: () => void;
@@ -156,13 +156,34 @@ function visibleGroups(groups: Record<string, ContextualAIChatRegisteredGroup>) 
     });
 }
 
-export function ContextualAIChatProvider({ children }: { children: ReactNode }) {
+export function ContextualAIChatProvider({
+  children,
+  enabled = true,
+}: {
+  children: ReactNode;
+  enabled?: boolean;
+}) {
   const [isOpen, setOpen] = useState(readStoredOpenState);
   const [groups, setGroups] = useState<Record<string, ContextualAIChatRegisteredGroup>>({});
 
   useEffect(() => {
-    storeOpenState(isOpen);
-  }, [isOpen]);
+    if (!enabled && isOpen) {
+      setOpen(false);
+      return;
+    }
+    storeOpenState(enabled && isOpen);
+  }, [enabled, isOpen]);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(CONTEXTUAL_AICHAT_MEDIA_QUERY);
+    const handleChange = () => {
+      if (!mediaQuery.matches) setOpen(false);
+    };
+
+    handleChange();
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
 
   const registerItems = useCallback(
     (items: AIChatContextItem[], options?: AIChatContextRegistrationOptions) => {
@@ -201,16 +222,24 @@ export function ContextualAIChatProvider({ children }: { children: ReactNode }) 
     [groups]
   );
 
+  const setAvailableOpen = useCallback(
+    (open: boolean) => {
+      setOpen(enabled && open);
+    },
+    [enabled]
+  );
+
   const value = useMemo<ContextualAIChatState>(
     () => ({
-      isOpen,
+      isAvailable: enabled,
+      isOpen: enabled && isOpen,
       items,
-      open: () => setOpen(true),
+      open: () => setAvailableOpen(true),
       close: () => setOpen(false),
-      setOpen,
+      setOpen: setAvailableOpen,
       registerItems,
     }),
-    [isOpen, items, registerItems]
+    [enabled, isOpen, items, registerItems, setAvailableOpen]
   );
 
   return (

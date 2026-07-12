@@ -140,6 +140,7 @@
   "devDependencies": {
     "@eslint/js": "^9.29.0",
     "@mdx-js/loader": "^3.1.1",
+    "@tailwindcss/container-queries": "^0.1.1",
     "@types/hast": "^3.0.4",
     "@types/node": "^20",
     "@types/react": "^18",

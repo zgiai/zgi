@@ -25,7 +25,6 @@ import type {
 import type { ChatBranchNavigation } from '@/components/chat/utils/message-tree';
 import type { ConversationSearchResult } from '@/components/chat/controllers/types';
 import type { NodeInfo, RunStatus } from '@/components/chat/types';
-import type { AIChatSendTraceContext } from '@/components/chat/controllers/aichat/session-trace';
 import type { StoreApi } from 'zustand/vanilla';
 
 export interface AIChatModelSelection {
@@ -231,7 +230,6 @@ export interface AIChatController {
     forceAdvanceLeaf?: boolean;
     runtimeSurface?: AIChatRuntimeSurface;
     operationContext?: unknown;
-    debugContext?: AIChatSendTraceContext;
   }) => Promise<void>;
   stop: () => Promise<void>;
   regenerate: (

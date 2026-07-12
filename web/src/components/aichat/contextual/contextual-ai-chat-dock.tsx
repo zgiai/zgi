@@ -4,7 +4,6 @@ import {
   useCallback,
   useEffect,
   useId,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -13,17 +12,11 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { ChevronDown, Sparkles, X } from 'lucide-react';
+import { PanelRightClose } from 'lucide-react';
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
 import Chat, { useAIChatController, type AIChatModelValue } from '@/components/chat';
 import type { ModelSelectorValue } from '@/components/common/model-selector';
 import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import {
   AGENT_KEYS,
   AUTOMATION_KEYS,
@@ -35,6 +28,7 @@ import {
 } from '@/hooks/query-keys';
 import { usePersistedAIChatModelSelection } from '@/hooks/model/use-persisted-ai-chat-model-selection';
 import { useT } from '@/i18n/translations';
+import { cn } from '@/lib/utils';
 import { useCurrentUser } from '@/store/auth-store';
 import { embeddedControlButtonClassName } from '@/components/chat/variants/aichat/embedded-conversation-controls';
 import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
@@ -57,10 +51,11 @@ import type {
 } from './types';
 
 const LOCAL_STORAGE_KEY = 'consoleChat';
-const DESKTOP_PANEL_MEDIA_QUERY = '(min-width: 1280px)';
+const DESKTOP_PANEL_MEDIA_QUERY = '(min-width: 1024px)';
 const DESKTOP_PANEL_WIDTH_STORAGE_KEY = 'consoleChat.aiChatDockWidth';
 const DEFAULT_DESKTOP_PANEL_WIDTH_RATIO = 0.28;
-const MIN_DESKTOP_PANEL_WIDTH = 520;
+const DESKTOP_PANEL_TRANSITION_MS = 300;
+const MIN_DESKTOP_PANEL_WIDTH = 440;
 const MAX_DESKTOP_PANEL_WIDTH_RATIO = 0.5;
 const MIN_DESKTOP_CONTENT_WIDTH = 360;
 const ASSET_OPERATION_REFRESH_DEDUPE_MS = 1800;
@@ -94,20 +89,12 @@ interface PendingClientActionContinuation {
   resuming?: boolean;
 }
 
-function clientActionContinuationKey(
-  conversationId: string,
-  messageId: string,
-  actionId: string
-) {
+function clientActionContinuationKey(conversationId: string, messageId: string, actionId: string) {
   return `${conversationId}:${messageId}:${actionId}`;
 }
 
 function clientActionRequestKey(request: ContextualAIChatClientActionRequest) {
-  return clientActionContinuationKey(
-    request.conversationId,
-    request.messageId,
-    request.actionId
-  );
+  return clientActionContinuationKey(request.conversationId, request.messageId, request.actionId);
 }
 
 function routeClientActionRequestKey(request: ContextualAIChatClientActionRequest, href: string) {
@@ -300,117 +287,6 @@ function pickPresentationHint(
   return items.find(item => item.hints?.presentation)?.hints?.presentation;
 }
 
-function getContextTypeLabel(type: AIChatContextItem['type'], t: ContextualDockTranslator) {
-  switch (type) {
-    case 'agent':
-      return t('consoleChat.contextual.contextTypes.agent');
-    case 'workflow':
-      return t('consoleChat.contextual.contextTypes.workflow');
-    case 'file':
-      return t('consoleChat.contextual.contextTypes.file');
-    case 'task':
-      return t('consoleChat.contextual.contextTypes.task');
-    case 'dataset':
-      return t('consoleChat.contextual.contextTypes.dataset');
-    case 'database':
-      return t('consoleChat.contextual.contextTypes.database');
-    case 'log':
-      return t('consoleChat.contextual.contextTypes.log');
-    case 'selection':
-      return t('consoleChat.contextual.contextTypes.selection');
-    case 'page':
-      return t('consoleChat.contextual.contextTypes.page');
-    default:
-      return t('consoleChat.contextual.contextTypes.context');
-  }
-}
-
-function getContextItemDisplayTitle(item: AIChatContextItem, t: ContextualDockTranslator) {
-  switch (item.title.trim()) {
-    case 'Runtime prompt and model':
-      return t('consoleChat.contextual.runtimeItems.promptModel');
-    case 'Runtime skills':
-      return t('consoleChat.contextual.runtimeItems.skills');
-    case 'Runtime knowledge':
-      return t('consoleChat.contextual.runtimeItems.knowledge');
-    case 'Runtime memory and files':
-      return t('consoleChat.contextual.runtimeItems.memoryFiles');
-    case 'Runtime resources':
-      return t('consoleChat.contextual.runtimeItems.resources');
-    case 'Runtime permissions':
-      return t('consoleChat.contextual.runtimeItems.permissions');
-    default:
-      return item.title;
-  }
-}
-
-function getLocalizedEnabledState(value: string, t: ContextualDockTranslator) {
-  return value.toLowerCase() === 'enabled'
-    ? t('consoleChat.contextual.contextStates.enabled')
-    : t('consoleChat.contextual.contextStates.disabled');
-}
-
-function getContextItemDisplaySubtitle(item: AIChatContextItem, t: ContextualDockTranslator) {
-  const subtitle = item.subtitle?.trim();
-  if (!subtitle) return undefined;
-
-  if (subtitle === 'Console page') {
-    return t('consoleChat.contextual.contextSubtitles.consolePage');
-  }
-
-  if (subtitle === 'No model selected') {
-    return t('consoleChat.contextual.contextSubtitles.noModelSelected');
-  }
-
-  if (subtitle === 'Can manage agent') {
-    return t('consoleChat.contextual.contextSubtitles.canManageAgent');
-  }
-
-  if (subtitle === 'View-only agent access') {
-    return t('consoleChat.contextual.contextSubtitles.viewOnlyAgentAccess');
-  }
-
-  const workspaceName = metadataText(item, 'workspace_name');
-  if (workspaceName && new RegExp(`\\bin\\s+${workspaceName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i').test(subtitle)) {
-    return t('consoleChat.contextual.contextSubtitles.resourceInWorkspace', {
-      type: getContextTypeLabel(item.type, t),
-      workspace: workspaceName,
-    });
-  }
-
-  const selectedMatch = subtitle.match(/^(\d+)\s+selected$/i);
-  if (selectedMatch) {
-    return t('consoleChat.contextual.contextSubtitles.selectedCount', {
-      count: Number(selectedMatch[1]),
-    });
-  }
-
-  const datasetMatch = subtitle.match(/^(\d+)\s+datasets?$/i);
-  if (datasetMatch) {
-    return t('consoleChat.contextual.contextSubtitles.datasetCount', {
-      count: Number(datasetMatch[1]),
-    });
-  }
-
-  const databaseWorkflowMatch = subtitle.match(/^(\d+)\s+databases?,\s*(\d+)\s+workflows?$/i);
-  if (databaseWorkflowMatch) {
-    return t('consoleChat.contextual.contextSubtitles.databaseWorkflowCount', {
-      databaseCount: Number(databaseWorkflowMatch[1]),
-      workflowCount: Number(databaseWorkflowMatch[2]),
-    });
-  }
-
-  const memoryFilesMatch = subtitle.match(/^memory\s+(enabled|disabled),\s*files\s+(enabled|disabled)$/i);
-  if (memoryFilesMatch) {
-    return t('consoleChat.contextual.contextSubtitles.memoryFiles', {
-      memory: getLocalizedEnabledState(memoryFilesMatch[1], t),
-      files: getLocalizedEnabledState(memoryFilesMatch[2], t),
-    });
-  }
-
-  return subtitle;
-}
-
 function hasPageAdapterSignal(item: AIChatContextItem) {
   if (item.type !== 'page') return false;
   const metadataPage = metadataText(item, 'page');
@@ -436,28 +312,6 @@ function isGenericRoutePageItem(item: AIChatContextItem) {
       normalizeZGIConsoleNavigationHref(metadataText(item, 'pathname')) ||
       normalizeZGIConsoleNavigationHref(metadataText(item, 'path'))
   );
-}
-
-function pickPrimaryContextItem(items: AIChatContextItem[]) {
-  const selectedItem = items.find(item => item.metadata?.selected === true);
-  if (selectedItem && !isGenericRoutePageItem(selectedItem)) return selectedItem;
-
-  const adaptedPageItem = items.find(item => item.type === 'page' && hasPageAdapterSignal(item));
-  return (
-    adaptedPageItem ??
-    selectedItem ??
-    items.find(item => !isGenericRoutePageItem(item)) ??
-    items[0]
-  );
-}
-
-function buildContextSummary(items: AIChatContextItem[], t: ContextualDockTranslator) {
-  const primaryItem = pickPrimaryContextItem(items);
-  if (!primaryItem) return t('consoleChat.contextual.contextSummaryEmpty');
-  return t('consoleChat.contextual.contextSummaryItem', {
-    type: getContextTypeLabel(primaryItem.type, t),
-    title: getContextItemDisplayTitle(primaryItem, t),
-  });
 }
 
 function buildSuggestions(
@@ -682,8 +536,7 @@ function routeViewQuery(item: AIChatContextItem | undefined, href: string) {
       sort: metadataQueryValue(item, 'sort'),
       extension: metadataQueryValue(item, 'extension_filter'),
       category,
-      folder_id:
-        categoryText && !systemCategories.has(categoryText) ? categoryText : undefined,
+      folder_id: categoryText && !systemCategories.has(categoryText) ? categoryText : undefined,
       processing_status: metadataQueryValue(item, 'processing_status'),
       workspace_id: metadataQueryValue(item, 'workspace_id'),
       selected_ids: commaSeparatedMetadataValues(metadataQueryValue(item, 'selected_file_ids')),
@@ -963,85 +816,6 @@ function assetOperationFromClientAction(
   };
 }
 
-interface ContextSummaryMenuProps {
-  items: AIChatContextItem[];
-  t: ContextualDockTranslator;
-}
-
-function ContextSummaryMenu({ items, t }: ContextSummaryMenuProps) {
-  const summary = buildContextSummary(items, t);
-  const hasContext = items.length > 0;
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="min-w-0 max-w-full basis-0 flex-1 shrink overflow-hidden rounded-full border border-border/70 bg-muted/30 px-3 text-left font-normal text-foreground hover:bg-muted/60"
-          title={summary}
-        >
-          <span className="min-w-0 flex-1 truncate">{summary}</span>
-          {hasContext ? (
-            <span className="ml-2 shrink-0 rounded-full bg-background px-2 py-0.5 text-[11px] leading-none text-muted-foreground">
-              {t('consoleChat.contextual.contextItems', { count: items.length })}
-            </span>
-          ) : null}
-          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-80 max-w-[calc(100vw-2rem)] p-2">
-        <div className="px-2 pb-1 text-xs font-medium text-muted-foreground">
-          {t('consoleChat.contextual.contextSummaryDetails')}
-        </div>
-        <DropdownMenuSeparator />
-        {hasContext ? (
-          <div className="max-h-72 space-y-1 overflow-y-auto">
-            {items.map(item => {
-              const displayTitle = getContextItemDisplayTitle(item, t);
-              const displaySubtitle = getContextItemDisplaySubtitle(item, t);
-
-              return (
-                <div key={`${item.type}:${item.id}`} className="min-w-0 rounded-md px-2 py-2 text-sm">
-                  <div className="flex min-w-0 items-start gap-2">
-                    <span className="mt-0.5 shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium leading-none text-muted-foreground">
-                      {getContextTypeLabel(item.type, t)}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate font-medium text-foreground" title={displayTitle}>
-                        {displayTitle}
-                      </div>
-                      {displaySubtitle ? (
-                        <div className="mt-0.5 truncate text-xs text-muted-foreground" title={displaySubtitle}>
-                          {displaySubtitle}
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="px-2 py-3 text-sm text-muted-foreground">
-            {t('consoleChat.contextual.contextSummaryEmpty')}
-          </div>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function ContextBrand({ label }: { label: string }) {
-  return (
-    <div className="flex size-10 items-center justify-center rounded-full border border-primary/20 bg-primary/10 text-primary">
-      <Sparkles className="size-5" />
-      <span className="sr-only">{label}</span>
-    </div>
-  );
-}
-
 interface ContextualAIChatPanelProps {
   controller: ReturnType<typeof useAIChatController>;
   isModelInitializing: boolean;
@@ -1082,22 +856,21 @@ function ContextualAIChatPanel({
     presentation?.inputPlaceholder ?? t('consoleChat.contextual.input.placeholder');
 
   return (
-    <div className="relative flex min-h-0 min-w-0 max-w-full flex-1 flex-col overflow-hidden">
-      <div className="flex min-h-14 min-w-0 shrink-0 items-center gap-2 overflow-hidden border-b border-border/70 bg-background/95 px-3 py-2">
-        <ContextSummaryMenu items={items} t={t} />
+    <div className="relative flex min-h-0 min-w-0 max-w-full flex-1 flex-col overflow-hidden bg-bg-canvas isolate">
+      <div className="flex min-h-12 min-w-0 shrink-0 items-center justify-between gap-2 overflow-hidden bg-transparent px-3 py-2">
+        <Button
+          type="button"
+          variant="ghost"
+          isIcon
+          className={embeddedControlButtonClassName}
+          onClick={onClose}
+          title={t('consoleChat.contextual.close')}
+        >
+          <PanelRightClose className="size-3.5" />
+          <span className="sr-only">{t('consoleChat.contextual.close')}</span>
+        </Button>
         <div className="ml-auto flex shrink-0 items-center gap-1">
           <div id={controlsPortalId} className="flex shrink-0 items-center" />
-          <Button
-            type="button"
-            variant="ghost"
-            isIcon
-            className={embeddedControlButtonClassName}
-            onClick={onClose}
-            title={t('consoleChat.contextual.close')}
-          >
-            <X className="size-3.5" />
-            <span className="sr-only">{t('consoleChat.contextual.close')}</span>
-          </Button>
         </div>
       </div>
       <div className="min-h-0 flex-1">
@@ -1108,16 +881,12 @@ function ContextualAIChatPanel({
           isModelInitializing={isModelInitializing}
           onModelChange={onModelChange}
           variant="embedded"
+          showMemoryToggle={false}
           runtimeSurface="contextual_sidebar"
           embeddedConversationMode="drawer"
           embeddedConversationControlsMode="external"
           embeddedConversationControlsPortalId={controlsPortalId}
           allowWorkspaceSwitch
-          homeBrand={
-            <ContextBrand
-              label={t('consoleChat.contextual.contextItems', { count: items.length })}
-            />
-          }
           homeTitle={homeTitle}
           homeDescription={homeDescription}
           inputPlaceholder={inputPlaceholder}
@@ -1138,6 +907,8 @@ export function ContextualAIChatDock() {
   const { isOpen, setOpen, items } = useContextualAIChat();
   const isDesktopPanelViewport = useIsDesktopPanelViewport();
   const [desktopPanelWidth, setDesktopPanelWidth] = useState<number | null>(null);
+  const [isPanelMounted, setIsPanelMounted] = useState(isOpen);
+  const [isResizing, setIsResizing] = useState(false);
   const itemsRef = useRef(items);
   const assetOperationRefreshRef = useRef<Map<string, number>>(new Map());
   const pendingClientActionsRef = useRef<Map<string, PendingClientActionContinuation>>(new Map());
@@ -1151,6 +922,19 @@ export function ContextualAIChatDock() {
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setIsPanelMounted(true);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(
+      () => setIsPanelMounted(false),
+      DESKTOP_PANEL_TRANSITION_MS
+    );
+    return () => window.clearTimeout(timeoutId);
+  }, [isOpen]);
 
   const clearClientActionTimeout = useCallback((pending: PendingClientActionContinuation) => {
     if (typeof window === 'undefined') return;
@@ -1173,10 +957,7 @@ export function ContextualAIChatDock() {
   }, [clearClientActionTimeout]);
 
   const completePendingClientAction = useCallback(
-    (
-      pending: PendingClientActionContinuation,
-      payload: AIChatClientActionResultRequest
-    ) => {
+    (pending: PendingClientActionContinuation, payload: AIChatClientActionResultRequest) => {
       const currentPending = pendingClientActionsRef.current.get(pending.key);
       if (currentPending !== pending || pending.completed) {
         return;
@@ -1378,9 +1159,7 @@ export function ContextualAIChatDock() {
           actionType: request.actionType,
           effect: typeof request.payload.effect === 'string' ? request.payload.effect : undefined,
           assetType:
-            typeof request.payload.asset_type === 'string'
-              ? request.payload.asset_type
-              : undefined,
+            typeof request.payload.asset_type === 'string' ? request.payload.asset_type : undefined,
           assets: recordListValue(request.payload.assets),
           requestedAt: Date.now(),
           completed: false,
@@ -1487,7 +1266,10 @@ export function ContextualAIChatDock() {
 
       if (currentHref === href) {
         const observation = routeContextObservation(itemsRef.current, href);
-        if (!routeShouldWaitForPageContext(itemsRef.current, href) || observation.page_context_ready) {
+        if (
+          !routeShouldWaitForPageContext(itemsRef.current, href) ||
+          observation.page_context_ready
+        ) {
           completePendingClientAction(pending, {
             status: 'succeeded',
             result: {
@@ -1651,7 +1433,10 @@ export function ContextualAIChatDock() {
       if (!href) return;
 
       const observation = routeContextObservation(itemsRef.current, href);
-      if (routeShouldWaitForPageContext(itemsRef.current, href) && !observation.page_context_ready) {
+      if (
+        routeShouldWaitForPageContext(itemsRef.current, href) &&
+        !observation.page_context_ready
+      ) {
         const elapsedMs = Date.now() - pending.requestedAt;
         const remainingWaitMs = CLIENT_ACTION_ROUTE_CONTEXT_MAX_WAIT_MS - elapsedMs;
         if (remainingWaitMs > 0) {
@@ -1708,12 +1493,7 @@ export function ContextualAIChatDock() {
     }
 
     return () => pendingTimers.forEach(timer => window.clearTimeout(timer));
-  }, [
-    completePendingClientAction,
-    items,
-    pathname,
-    pendingClientActionVersion,
-  ]);
+  }, [completePendingClientAction, items, pathname, pendingClientActionVersion]);
 
   const { modelSelectorValue, isModelInitializing, handleModelChange } =
     usePersistedAIChatModelSelection({
@@ -1747,26 +1527,42 @@ export function ContextualAIChatDock() {
       const startWidth = desktopPanelWidth ?? getDefaultDesktopPanelWidth();
       const previousCursor = document.body.style.cursor;
       const previousUserSelect = document.body.style.userSelect;
+      let latestWidth = startWidth;
+      let animationFrameId: number | null = null;
+      setIsResizing(true);
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
 
       const handlePointerMove = (moveEvent: PointerEvent) => {
-        const nextWidth = clampDesktopPanelWidth(startWidth + startX - moveEvent.clientX);
-        setDesktopPanelWidth(nextWidth);
-        storeDesktopPanelWidth(nextWidth);
+        latestWidth = clampDesktopPanelWidth(startWidth + startX - moveEvent.clientX);
+        if (animationFrameId !== null) return;
+
+        animationFrameId = window.requestAnimationFrame(() => {
+          animationFrameId = null;
+          setDesktopPanelWidth(latestWidth);
+        });
       };
 
       const handlePointerUp = () => {
+        if (animationFrameId !== null) {
+          window.cancelAnimationFrame(animationFrameId);
+          animationFrameId = null;
+          setDesktopPanelWidth(latestWidth);
+        }
+        storeDesktopPanelWidth(latestWidth);
+        setIsResizing(false);
         document.body.style.cursor = previousCursor;
         document.body.style.userSelect = previousUserSelect;
         window.removeEventListener('pointermove', handlePointerMove);
         window.removeEventListener('pointerup', handlePointerUp);
         window.removeEventListener('pointercancel', handlePointerUp);
+        window.removeEventListener('blur', handlePointerUp);
       };
 
       window.addEventListener('pointermove', handlePointerMove);
       window.addEventListener('pointerup', handlePointerUp);
       window.addEventListener('pointercancel', handlePointerUp);
+      window.addEventListener('blur', handlePointerUp);
     },
     [desktopPanelWidth, isDesktopPanelViewport]
   );
@@ -1822,37 +1618,48 @@ export function ContextualAIChatDock() {
   }
 
   if (isDesktopPanelViewport) {
-    return isOpen ? (
+    return (
       <aside
         aria-label={t('consoleChat.contextual.assistantLabel')}
-        className="relative hidden h-full min-h-0 min-w-[520px] shrink-0 overflow-hidden border-l border-border/70 bg-background shadow-sm lg:flex"
-        style={desktopPanelStyle}
+        aria-hidden={!isOpen}
+        className={cn(
+          'relative hidden h-full min-h-0 shrink-0 overflow-hidden bg-transparent lg:flex',
+          isResizing
+            ? 'transition-none'
+            : 'transition-[width,min-width,opacity] duration-300 ease-in-out',
+          isOpen ? 'min-w-[440px] opacity-100' : 'pointer-events-none min-w-0 opacity-0'
+        )}
+        style={isOpen ? desktopPanelStyle : { width: 0 }}
       >
         <div
           role="separator"
           aria-orientation="vertical"
           aria-label={t('consoleChat.contextual.resize')}
-          tabIndex={0}
+          tabIndex={isOpen ? 0 : -1}
           title={t('consoleChat.contextual.resizeHint')}
-          className="group absolute inset-y-0 left-0 z-50 flex w-3 -translate-x-1/2 cursor-col-resize items-center justify-center outline-none"
+          className="group absolute inset-y-0 left-0 z-50 flex w-2 cursor-col-resize items-center justify-start outline-none"
           onPointerDown={handleResizePointerDown}
           onKeyDown={handleResizeKeyDown}
         >
-          <span className="h-12 w-1 rounded-full bg-border opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
+          <span
+            aria-hidden="true"
+            className={cn(
+              'pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border-strong transition-opacity duration-150 group-hover:opacity-80 group-focus-visible:opacity-100',
+              isResizing ? 'opacity-100' : 'opacity-0'
+            )}
+          />
         </div>
-        {panel}
+        {isOpen || isPanelMounted ? (
+          <div
+            className="absolute inset-y-0 right-0 flex min-h-0 overflow-hidden"
+            style={desktopPanelStyle}
+          >
+            {panel}
+          </div>
+        ) : null}
       </aside>
-    ) : null;
+    );
   }
 
-  return isOpen ? (
-    <aside
-      role="dialog"
-      aria-modal="false"
-      aria-label={t('consoleChat.contextual.assistantLabel')}
-      className="fixed inset-y-0 right-0 z-50 flex h-full min-h-0 w-[min(640px,100vw)] max-w-full flex-col overflow-hidden border-l border-border/70 bg-background shadow-lg"
-    >
-      {panel}
-    </aside>
-  ) : null;
+  return null;
 }

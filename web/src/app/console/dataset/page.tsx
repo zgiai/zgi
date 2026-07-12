@@ -218,7 +218,10 @@ function DatasetsPageContent() {
 
   return (
     <>
-      <div ref={scrollRef} className="p-8 space-y-6 flex flex-col h-full overflow-y-auto">
+      <div
+        ref={scrollRef}
+        className="flex h-full flex-col space-y-6 overflow-y-auto p-4 @md/console:p-6 @5xl/console:p-8"
+      >
         {/* Header */}
         <HeaderToolbar
           titleText={t('datasets.title')}
@@ -253,7 +256,7 @@ function DatasetsPageContent() {
                 folderSkeletonCount={20}
               />
               {!showFolderSkeletons && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-4 md:gap-6 lg:gap-8 xl:gap-10 2xl:gap-12">
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-4">
                   {rootFolders.map(folder => (
                     <FolderCard key={folder.id} folder={folder} />
                   ))}
@@ -310,7 +313,7 @@ function DatasetsPageContent() {
                         }}
                       />
                     ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-4 md:gap-6 lg:gap-8 xl:gap-10 2xl:gap-12">
+                      <div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-4">
                         {datasetEntries.map(({ ds, pIndex }) => (
                           <DatasetCard
                             key={ds.id}

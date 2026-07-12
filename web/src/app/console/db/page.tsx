@@ -88,11 +88,11 @@ export default function DbPage() {
 
   return (
     <div
-      className="p-4 sm:p-6 lg:p-8 space-y-6 sm:space-y-8 lg:space-y-9 flex flex-col h-full overflow-y-auto"
+      className="flex h-full flex-col space-y-6 overflow-y-auto p-4 @md/console:space-y-8 @md/console:p-6 @5xl/console:space-y-9 @5xl/console:p-8"
       ref={scrollRef}
     >
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="mb-4 flex flex-col gap-4 @3xl/console:flex-row @3xl/console:items-center @3xl/console:justify-between">
         <div className="flex items-center gap-2">
           <h1 className="text-2xl font-bold">{t('dbs.title')}</h1>
           <Button
@@ -110,8 +110,8 @@ export default function DbPage() {
           </Button>
         </div>
 
-        <div className="flex gap-3 items-center">
-          <div className="relative max-w-md">
+        <div className="flex w-full flex-col gap-3 @3xl/console:w-auto @3xl/console:flex-row @3xl/console:items-center">
+          <div className="relative w-full @3xl/console:max-w-md">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder={t('dbs.search.placeholder')}
@@ -157,7 +157,7 @@ export default function DbPage() {
               />
             )
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-4 md:gap-6 lg:gap-8 xl:gap-10 2xl:gap-12">
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-4">
               {filteredDbs.map(db => (
                 <DbCard
                   key={db.id}

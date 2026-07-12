@@ -2,11 +2,10 @@
 
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
-import { ZgiDrawingWordmark } from '@/components/brand/zgi-drawing-wordmark';
 import { useT } from '@/i18n/translations';
-import { APP_NAME, HAS_CUSTOM_LOGO_URL, ICON_TEXT, IS_ZGI_BRAND, LOGO_URL } from '@/lib/config';
 import { cn } from '@/lib/utils';
 import type { AIChatSuggestion } from '@/components/chat/variants/aichat/types';
+import { AIChatBrandMark } from './brand-mark';
 
 interface AIChatHomeViewProps {
   isVisible: boolean;
@@ -40,9 +39,7 @@ export function AIChatHomeView({
 }: AIChatHomeViewProps) {
   const t = useT('webapp');
   const [isHydrated, setIsHydrated] = React.useState(false);
-  const fallbackText = (ICON_TEXT || APP_NAME.charAt(0) || 'A').slice(0, 2).toUpperCase();
-  const resolvedDescription =
-    description === '' ? '' : description || t('chat.chooseAssistant');
+  const resolvedDescription = description === '' ? '' : description || t('chat.chooseAssistant');
   const composerHeightPx = Math.max(96, Math.ceil(composerHeight ?? 140));
   const anchorStyle = {
     '--aichat-home-composer-half': `${Math.round(composerHeightPx / 2)}px`,
@@ -78,19 +75,7 @@ export function AIChatHomeView({
               'translateY(calc(-100% - var(--aichat-home-composer-half) - var(--aichat-home-title-gap)))',
           }}
         >
-          {brand ? (
-            brand
-          ) : isHydrated ? (
-            <div className="flex size-16 items-center justify-center rounded-2xl border border-brand-main/50 bg-bg-surface shadow-[0_0_0_4px_rgba(0,75,255,0.04),0_8px_18px_rgba(10,11,13,0.06)]">
-              {IS_ZGI_BRAND ? (
-                <ZgiDrawingWordmark className="w-11" loop={false} />
-              ) : HAS_CUSTOM_LOGO_URL ? (
-                <img src={LOGO_URL} alt={APP_NAME} className="max-h-10 max-w-11 object-contain" />
-              ) : (
-                <span className="text-lg font-semibold text-brand-main">{fallbackText}</span>
-              )}
-            </div>
-          ) : null}
+          {brand ? brand : isHydrated ? <AIChatBrandMark /> : null}
           <h2
             className={cn(
               'font-bold text-foreground',

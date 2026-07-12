@@ -17,7 +17,6 @@ import {
   removeStreamingStateByConversation,
 } from '@/components/chat/controllers/aichat/state-reducers';
 import type { AIChatRuntimeTransport } from '@/components/chat/transports/aichat-transport';
-import { logAIChatSessionTrace } from '@/components/chat/controllers/aichat/session-trace';
 import {
   isDraftAIChatConversationId,
   replaceAIChatConversation,
@@ -69,12 +68,6 @@ export function useChatRuntimeConversationActions({
   const select = useCallback(
     async (conversationId: string) => {
       if (!conversationId) return;
-      logAIChatSessionTrace('conversation_select_requested', {
-        requestedConversationId: conversationId,
-        activeConversationId: stateRef.current.activeConversationId,
-        isSending: stateRef.current.isSending,
-        conversationCount: stateRef.current.conversations.length,
-      });
       const selectionSeq = markSelectionTarget(conversationId);
       const previousState = stateRef.current;
       const previousConversationId = previousState.activeConversationId;
@@ -121,26 +114,9 @@ export function useChatRuntimeConversationActions({
           error: null,
         };
       });
-      logAIChatSessionTrace('conversation_select_state_applied', {
-        requestedConversationId: conversationId,
-        activeConversationId: stateRef.current.activeConversationId,
-        isLoadingMessages: stateRef.current.isLoadingMessages,
-        isSending: stateRef.current.isSending,
-        selectionSeq,
-      });
-
       try {
         const { conversation, messages, messagePagination } =
           await transportRef.current.getConversation(conversationId);
-        logAIChatSessionTrace('conversation_select_loaded', {
-          requestedConversationId: conversationId,
-          loadedConversationId: conversation.id,
-          messageCount: messages.length,
-          runtimeStatus: conversation.runtime_status,
-          activeMessageId: conversation.active_message_id ?? null,
-          activeConversationId: stateRef.current.activeConversationId,
-          selectionSeq,
-        });
 
         const isStreamingConversation =
           conversation.runtime_status === 'streaming' && Boolean(conversation.active_message_id);
@@ -271,13 +247,6 @@ export function useChatRuntimeConversationActions({
           });
         }
       } catch (error) {
-        logAIChatSessionTrace('conversation_select_failed', {
-          requestedConversationId: conversationId,
-          activeConversationId: stateRef.current.activeConversationId,
-          isLatestSelection: isLatestSelection(selectionSeq, conversationId),
-          error: error instanceof Error ? error.message : String(error),
-          selectionSeq,
-        });
         if (!isLatestSelection(selectionSeq, conversationId)) return;
         setControllerState(current => ({
           ...current,
@@ -313,11 +282,6 @@ export function useChatRuntimeConversationActions({
 
   const init = useCallback(
     (conversationId?: string | null) => {
-      logAIChatSessionTrace('conversation_init_requested', {
-        requestedConversationId: conversationId ?? null,
-        alreadyInitialized: initializedRef.current,
-        activeConversationId: stateRef.current.activeConversationId,
-      });
       if (initializedRef.current) {
         if (conversationId && conversationId !== stateRef.current.activeConversationId) {
           void select(conversationId);
@@ -327,11 +291,6 @@ export function useChatRuntimeConversationActions({
 
       initializedRef.current = true;
       void refreshList().then(() => {
-        logAIChatSessionTrace('conversation_init_list_loaded', {
-          requestedConversationId: conversationId ?? null,
-          activeConversationId: stateRef.current.activeConversationId,
-          conversationCount: stateRef.current.conversations.length,
-        });
         if (conversationId) {
           void select(conversationId);
         }
@@ -343,13 +302,6 @@ export function useChatRuntimeConversationActions({
   const startNew = useCallback(() => {
     const currentState = stateRef.current;
     const activeConversationId = stateRef.current.activeConversationId;
-    logAIChatSessionTrace('conversation_start_new_invoked', {
-      activeConversationId,
-      isSending: currentState.isSending,
-      conversationCount: currentState.conversations.length,
-      activeConversationIsDraft: isDraftAIChatConversationId(activeConversationId),
-      triggerStack: new Error('AIChat startNew call site').stack,
-    });
     markSelectionTarget(null);
     if (isDraftAIChatConversationId(activeConversationId)) {
       pendingStreamAbortRef.current?.abort();
@@ -392,12 +344,6 @@ export function useChatRuntimeConversationActions({
       isLoadingMessages: false,
       error: null,
     }));
-    logAIChatSessionTrace('conversation_start_new_applied', {
-      previousActiveConversationId: activeConversationId,
-      activeConversationId: stateRef.current.activeConversationId,
-      isSending: stateRef.current.isSending,
-      conversationCount: stateRef.current.conversations.length,
-    });
   }, [
     closeConversationConnection,
     markSelectionTarget,

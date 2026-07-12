@@ -7,6 +7,7 @@ import {
   ContextualAIChatDock,
   ContextualAIChatProvider,
   useAIChatContextRegistration,
+  useContextualAIChat,
   type AIChatContextItem,
 } from '@/components/aichat/contextual';
 import { WorkspaceRequiredState } from '@/components/common/workspace-required-state';
@@ -15,6 +16,7 @@ import { ConsoleMobileSidebar } from '@/components/console/console-sidebar';
 import { DashboardMobileSidebar, DashboardSidebar } from '@/components/dashboard/sidebar';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { useT } from '@/i18n';
+import { cn } from '@/lib/utils';
 import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import { useJoinedWorkspaces } from '@/hooks/workspace/use-joined-workspaces';
 import {
@@ -23,10 +25,6 @@ import {
   useWorkspaceStore,
 } from '@/store/workspace-store';
 import { getConsoleRouteAccess } from '@/routes/access';
-import {
-  createAIChatTraceInstanceId,
-  logAIChatSessionTrace,
-} from '@/components/chat/controllers/aichat/session-trace';
 import type {
   CustomerAdapter,
   CustomerConsoleShellProps,
@@ -37,6 +35,36 @@ import type {
 function ConsoleModelsPreloader() {
   useAvailableModels();
   return null;
+}
+
+function ContextualConsoleSidebar({ hidden }: { hidden?: boolean }) {
+  const { isOpen } = useContextualAIChat();
+  return <ConsoleSidebar hidden={hidden} temporarilyCollapsed={isOpen} />;
+}
+
+function ContextualConsoleFrame({ children }: { children: React.ReactNode }) {
+  const { isOpen } = useContextualAIChat();
+
+  return (
+    <div
+      className={cn(
+        'flex h-screen min-h-0 min-w-0 overflow-hidden transition-colors duration-300 ease-out',
+        isOpen ? 'bg-bg-canvas' : 'bg-background'
+      )}
+    >
+      <div
+        className={cn(
+          'min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background transition-[margin,border-radius,box-shadow] duration-300 ease-out',
+          isOpen
+            ? 'flex lg:relative lg:z-10 lg:mb-2 lg:ml-2 lg:mt-2 lg:rounded-lg lg:border lg:border-border/70 lg:shadow-[0_1px_4px_rgba(15,23,42,0.05),8px_0_22px_-14px_rgba(15,23,42,0.28)]'
+            : 'flex'
+        )}
+      >
+        {children}
+      </div>
+      <ContextualAIChatDock />
+    </div>
+  );
 }
 
 function ConsolePageContextRegistration() {
@@ -91,17 +119,11 @@ function DefaultConsoleShell({ children }: CustomerConsoleShellProps) {
   const contextStatus = useWorkspaceStore.use.contextStatus();
   const {
     isLoading: isCapabilitiesLoading,
-    isFetching: isCapabilitiesFetching,
     canUseOrganizationScope,
     canUseWorkspaceScope,
     isWorkspaceRequired,
   } = useAccountCapabilities();
   const [mobileSidebarOpen, setMobileSidebarOpen] = React.useState(false);
-  const shellInstanceIdRef = React.useRef<string | null>(null);
-  if (!shellInstanceIdRef.current) {
-    shellInstanceIdRef.current = createAIChatTraceInstanceId('console-shell');
-  }
-  const shellInstanceId = shellInstanceIdRef.current;
   const hiddenHeaderPaths: string[] = [];
   const hiddenSidebarPaths = [] as string[];
   const lastPath = pathname.split('/').pop();
@@ -113,6 +135,7 @@ function DefaultConsoleShell({ children }: CustomerConsoleShellProps) {
     ? workspaces.some(workspace => workspace.id === currentWorkspace.id)
     : false;
   const canUseWorkspaceContext = contextStatus === 'ready' && hasActiveWorkspace;
+  const canUseContextualAIChat = canUseWorkspaceContext;
   const canRenderOrganizationRoute =
     routeAccess.scope === 'organization' && canUseOrganizationScope;
   const canRenderWorkspaceRoute =
@@ -133,68 +156,6 @@ function DefaultConsoleShell({ children }: CustomerConsoleShellProps) {
 
   useJoinedWorkspaces({ syncToStore: true });
 
-  React.useEffect(() => {
-    logAIChatSessionTrace('console_shell_mounted', {
-      shellInstanceId,
-      pathname,
-    });
-    return () => {
-      logAIChatSessionTrace('console_shell_unmounted', {
-        shellInstanceId,
-        pathname,
-        unmountStack: new Error('DefaultConsoleShell unmount observer').stack,
-      });
-    };
-  }, [pathname, shellInstanceId]);
-
-  React.useEffect(() => {
-    const contentBranch = isCapabilityLoading
-      ? 'capability_loading'
-      : shouldShowWorkspaceRequired
-        ? 'workspace_required'
-        : shouldShowAccessDenied || (!canRenderOrganizationRoute && !canRenderWorkspaceRoute)
-          ? 'access_denied'
-          : 'children';
-    logAIChatSessionTrace('console_shell_state', {
-      shellInstanceId,
-      pathname,
-      contentBranch,
-      routeScope: routeAccess.scope,
-      contextStatus,
-      currentWorkspaceId: currentWorkspace?.id ?? null,
-      hasActiveWorkspace,
-      isCapabilitiesLoading,
-      isCapabilitiesFetching,
-      isCapabilityLoading,
-      canUseOrganizationScope,
-      canUseWorkspaceScope,
-      isWorkspaceRequired,
-      canUseWorkspaceContext,
-      canRenderOrganizationRoute,
-      canRenderWorkspaceRoute,
-      shouldShowWorkspaceRequired,
-      shouldShowAccessDenied,
-    });
-  }, [
-    canRenderOrganizationRoute,
-    canRenderWorkspaceRoute,
-    canUseOrganizationScope,
-    canUseWorkspaceContext,
-    canUseWorkspaceScope,
-    contextStatus,
-    currentWorkspace?.id,
-    hasActiveWorkspace,
-    isCapabilitiesFetching,
-    isCapabilitiesLoading,
-    isCapabilityLoading,
-    isWorkspaceRequired,
-    pathname,
-    routeAccess.scope,
-    shellInstanceId,
-    shouldShowAccessDenied,
-    shouldShowWorkspaceRequired,
-  ]);
-
   let content = children;
   if (isCapabilityLoading) {
     content = <ConsoleCapabilityLoadingState />;
@@ -207,29 +168,27 @@ function DefaultConsoleShell({ children }: CustomerConsoleShellProps) {
   }
 
   return (
-    <ContextualAIChatProvider>
-      <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-background">
+    <ContextualAIChatProvider enabled={canUseContextualAIChat}>
+      <ContextualConsoleFrame>
         <ConsoleHeader
           hidden={hiddenHeaderPaths.includes(lastPath || '_')}
           onToggleMobileSidebar={() => setMobileSidebarOpen(true)}
         />
         <div className="flex h-0 min-h-0 min-w-0 grow">
-          <ConsoleSidebar hidden={hiddenSidebarPaths.includes(lastPath || '_')} />
+          <ContextualConsoleSidebar hidden={hiddenSidebarPaths.includes(lastPath || '_')} />
           <main
-            className={
-              usesManagedViewport
-                ? 'h-full min-h-0 w-0 min-w-0 grow overflow-hidden'
-                : 'h-full min-h-0 w-0 min-w-0 grow overflow-auto bg-bg-canvas'
-            }
+            className={cn(
+              '@container/console h-full min-h-0 w-0 min-w-0 grow',
+              usesManagedViewport ? 'overflow-hidden' : 'overflow-auto bg-bg-canvas'
+            )}
           >
             {content}
           </main>
-          <ContextualAIChatDock />
         </div>
         <ConsoleMobileSidebar open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen} />
         <ConsoleModelsPreloader />
         <ConsolePageContextRegistration />
-      </div>
+      </ContextualConsoleFrame>
     </ContextualAIChatProvider>
   );
 }

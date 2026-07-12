@@ -1536,7 +1536,7 @@ const FileManagementContent = ({
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 bg-background text-foreground">
-          <div className="flex w-[208px] shrink-0 flex-col border-r bg-background">
+          <div className="flex w-44 shrink-0 flex-col border-r bg-background @5xl/console:w-[208px]">
             {spaceSwitcherButton ? (
               <div className="shrink-0 border-b px-4 py-2">{spaceSwitcherButton}</div>
             ) : null}
@@ -1545,8 +1545,8 @@ const FileManagementContent = ({
           </div>
 
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            <div className="shrink-0 border-b bg-background px-4 py-3 lg:px-7">
-              <div className="flex min-h-14 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="shrink-0 border-b bg-background px-4 py-3 @5xl/console:px-7">
+              <div className="flex min-h-14 flex-col gap-3 @4xl/console:flex-row @4xl/console:items-center @4xl/console:justify-between">
                 <div className="min-w-0">
                   <div className="flex min-w-0 items-center gap-2">
                     <h1 className="text-[28px] font-semibold leading-tight tracking-normal text-foreground">
@@ -1568,7 +1568,7 @@ const FileManagementContent = ({
                   </p>
                 </div>
 
-                <div className="relative w-full max-w-[280px] self-end lg:w-[300px] lg:max-w-none">
+                <div className="relative w-full @4xl/console:w-[300px] @4xl/console:max-w-none">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     placeholder={t('files.search.placeholder')}
@@ -1581,7 +1581,7 @@ const FileManagementContent = ({
             </div>
 
             <div className="shrink-0 border-b bg-background">
-              <div className="flex min-h-10 items-center gap-2 px-4 py-1.5 lg:px-7">
+              <div className="flex min-h-10 flex-wrap items-center gap-2 px-4 py-1.5 @5xl/console:px-7">
                 <span className="mr-1 text-sm font-semibold text-foreground">
                   {t('files.filter.processingStatusLabel')}
                 </span>

@@ -1,7 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { MessageSquarePlus, PanelLeft } from 'lucide-react';
+import { History, MessageSquarePlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -36,7 +36,7 @@ export function AIChatEmbeddedConversationControls({
         title={conversationsLabel}
         aria-label={conversationsLabel}
       >
-        <PanelLeft className="size-3.5" />
+        <History className="size-3.5" />
       </Button>
       <Button
         type="button"

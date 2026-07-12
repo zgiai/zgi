@@ -3,6 +3,7 @@
 import * as React from 'react';
 import {
   Check,
+  ArrowLeft,
   History,
   Loader2,
   MessageSquarePlus,
@@ -67,6 +68,8 @@ interface SidebarProps {
   className?: string;
   backgroundImage?: string;
   onClose?: () => void;
+  alwaysShowHeader?: boolean;
+  useBackNavigation?: boolean;
   search?: ConversationSearchFn;
   searchKey?: readonly unknown[];
   onSelectSearchResult?: (result: ConversationSearchResult) => void;
@@ -83,6 +86,8 @@ export function Sidebar({
   className,
   backgroundImage,
   onClose,
+  alwaysShowHeader = false,
+  useBackNavigation = false,
   search,
   searchKey,
   onSelectSearchResult,
@@ -146,11 +151,39 @@ export function Sidebar({
       style={backgroundStyle}
     >
       <div className="px-4 py-3 border-b border-border">
-        <div className={cn('flex w-full items-center justify-between mb-4 gap-2 sm:hidden')}>
-          <h2 className={cn('text-base font-semibold text-foreground truncate')}>
+        <div
+          className={cn(
+            'flex w-full items-center justify-between gap-2',
+            alwaysShowHeader ? 'mb-3' : 'mb-4',
+            !alwaysShowHeader && 'sm:hidden'
+          )}
+        >
+          {onClose && useBackNavigation ? (
+            <Button
+              variant="ghost"
+              isIcon
+              className={cn('h-6 w-6 text-muted-foreground', isOpen ? 'opacity-100' : 'opacity-0')}
+              onClick={onClose}
+              aria-label={t('common.back')}
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          ) : null}
+          <h2 className={cn('min-w-0 flex-1 truncate text-base font-semibold text-foreground')}>
             {t('webapp.chat.conversations')}
           </h2>
-          {onClose ? (
+          {alwaysShowHeader ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 shrink-0 gap-1.5 px-2.5 font-medium"
+              onClick={onNewChat}
+            >
+              <MessageSquarePlus className="size-4" />
+              {t('webapp.chat.newConversation')}
+            </Button>
+          ) : null}
+          {onClose && !useBackNavigation ? (
             <Button
               variant="ghost"
               isIcon
@@ -162,20 +195,23 @@ export function Sidebar({
             </Button>
           ) : null}
         </div>
+        {!alwaysShowHeader ? (
+          <Button
+            className={cn(
+              'w-full gap-2 font-bold overflow-hidden',
+              isOpen ? 'opacity-100' : 'opacity-0'
+            )}
+            variant="secondary"
+            onClick={onNewChat}
+          >
+            <MessageSquarePlus className="h-5 w-5" />
+            {t('webapp.chat.newConversation')}
+          </Button>
+        ) : null}
         <Button
           className={cn(
-            'w-full gap-2 font-bold overflow-hidden',
-            isOpen ? 'opacity-100' : 'opacity-0'
-          )}
-          variant="secondary"
-          onClick={onNewChat}
-        >
-          <MessageSquarePlus className="h-5 w-5" />
-          {t('webapp.chat.newConversation')}
-        </Button>
-        <Button
-          className={cn(
-            'mt-2 w-full justify-start gap-2 overflow-hidden bg-muted/80 font-medium text-muted-foreground hover:bg-muted',
+            'w-full justify-start gap-2 overflow-hidden bg-muted/80 font-medium text-muted-foreground hover:bg-muted',
+            !alwaysShowHeader && 'mt-2',
             isOpen ? 'opacity-100' : 'opacity-0'
           )}
           variant="ghost"

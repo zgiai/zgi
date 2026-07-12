@@ -219,7 +219,7 @@ const messages = {
     },
   },
   consoleChat: {
-    title: 'Console Chat',
+    title: 'Workbench assistant',
     loading: 'Loading chat service...',
     loadError: 'Failed to load chat service',
     notAvailable: 'Chat service is not available',
@@ -227,17 +227,18 @@ const messages = {
     modelRequired: 'Please select a model first',
     homeTitle: 'How can I help?',
     homeDescription:
-      'Start a standalone AIChat conversation. This chat no longer uses system workflows.',
-    historySubtitle: 'AIChat history',
-    conversationListDescription: 'Browse and switch AIChat conversations.',
+      'Answer questions, organize information, and help complete a wide range of tasks.',
+    inputPlaceholder: 'Describe your question or tell the workbench assistant what to do...',
+    historySubtitle: 'Workbench assistant history',
+    conversationListDescription: 'Browse and switch workbench assistant conversations.',
     streaming: 'Streaming',
     waitingApproval: 'Waiting for approval',
     waitingQuestion: 'Waiting for your response',
     waitingClientAction: 'Waiting for page action',
-    waitingApprovalMessage: 'AIChat is waiting for your approval to continue.',
-    waitingQuestionMessage: 'AIChat is waiting for your response to continue.',
+    waitingApprovalMessage: 'The assistant is waiting for your approval to continue.',
+    waitingQuestionMessage: 'The assistant is waiting for your response to continue.',
     waitingClientActionMessage:
-      'AIChat is waiting for the page action to finish and will continue automatically.',
+      'The assistant is waiting for the page action to finish and will continue automatically.',
     operationStatus: {
       planning: 'Planning the task…',
       toolCompleted: 'The operation is complete. Preparing the result…',
@@ -298,10 +299,10 @@ const messages = {
     },
     contextual: {
       assistantLabel: 'Platform operation assistant',
-      close: 'Close platform operation assistant',
+      close: 'Collapse platform operation assistant',
       resize: 'Resize platform operation assistant',
       resizeHint: 'Drag to resize platform operation assistant',
-      sheetDescription: 'Ask AIChat to help with the current ZGI page.',
+      sheetDescription: 'Ask the platform operation assistant for help with the current page.',
       contextItems: '{count} context items',
       contextSummaryEmpty: 'No page context',
       contextSummaryItem: '{type}: {title}',
@@ -342,18 +343,18 @@ const messages = {
         viewOnlyAgentAccess: 'View-only access',
       },
       home: {
-        filesTitle: 'Work with current files',
+        filesTitle: 'Platform operation assistant',
         filesDescription:
-          'AIChat will answer from visible or selected files, and can generate files into File Management when you ask. Managed file changes may require confirmation.',
-        contextTitle: 'Work with the current page',
-        contextDescription: 'AIChat will include the visible context in this turn.',
-        emptyTitle: 'AIChat assistant',
-        emptyDescription: 'Ask about this page, or have AIChat help plan the next step.',
+          'Use visible or selected files as context, and help generate or manage files. File changes may require confirmation.',
+        contextTitle: 'Platform operation assistant',
+        contextDescription:
+          'Use the current page context to answer questions and complete operations.',
+        emptyTitle: 'Platform operation assistant',
+        emptyDescription: 'Describe your goal and the assistant will work with the current page.',
       },
       input: {
-        placeholder: 'Ask about this page or tell AIChat what to do...',
-        filesPlaceholder:
-          'Ask about visible files, or ask AIChat to generate and save a file here.',
+        placeholder: 'Ask about the current page or describe the platform operation you need...',
+        filesPlaceholder: 'Describe the files to inspect, generate, or manage...',
       },
       suggestions: {
         filesListVisible: 'List the visible files',
@@ -545,6 +546,7 @@ const messages = {
         title: 'Asset operation audit',
         description:
           'Review the workspace asset operations this assistant actually ran or requested in this conversation.',
+        backToChat: 'Back to chat',
         refresh: 'Refresh',
         loading: 'Loading audit records...',
         loadFailed: 'Failed to load audit records',
@@ -668,9 +670,9 @@ const messages = {
       },
     },
     skillPreferences: {
-      action: 'My Skills',
-      title: 'My AIChat Skills',
-      description: 'Choose which organization-enabled Skills are active for your AIChat.',
+      action: 'Skill management',
+      title: 'Skill management',
+      description: 'Control which Skills the model can call in conversations.',
       empty: 'No organization-enabled AIChat Skill is available.',
       save: 'Save',
       saving: 'Saving...',

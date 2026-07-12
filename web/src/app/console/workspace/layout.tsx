@@ -115,10 +115,10 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex h-full bg-background">
       {/* Workspace Sidebar */}
-      <div className="w-60 shrink-0 border-r border-border/70 bg-muted/20">
+      <div className="w-14 shrink-0 border-r border-border/70 bg-muted/20 @5xl/console:w-60">
         <div className="flex h-full flex-col">
           {/* Header */}
-          <div className="border-b border-border/60 px-4 py-4">
+          <div className="hidden border-b border-border/60 px-4 py-4 @5xl/console:block">
             <div className="min-w-0">
               <h1 className="text-sm font-semibold text-foreground">{tWorkspace('pageTitle')}</h1>
               <p className="mt-1 truncate text-xs text-muted-foreground">{currentWorkspace.name}</p>
@@ -126,7 +126,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
           </div>
 
           {/* Workspace Navigation */}
-          <div className="flex-1 overflow-y-auto px-3 py-3">
+          <div className="flex-1 overflow-y-auto px-2 py-3 @5xl/console:px-3">
             <div className="space-y-0.5">
               {workspaceNavItems
                 .filter(item => item.visible !== false)
@@ -138,8 +138,9 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
                     <Link
                       key={item.id}
                       href={item.href}
+                      title={item.label}
                       className={cn(
-                        'group relative flex items-start gap-2 rounded-md px-2.5 py-2 text-sm transition-colors',
+                        'group relative flex items-start justify-center gap-2 rounded-md px-2 py-2 text-sm transition-colors @5xl/console:justify-start @5xl/console:px-2.5',
                         isActive
                           ? 'bg-background text-foreground shadow-sm ring-1 ring-border/70'
                           : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
@@ -157,7 +158,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
                         )}
                       />
 
-                      <div className="min-w-0 flex-1">
+                      <div className="hidden min-w-0 flex-1 @5xl/console:block">
                         <div className="flex items-center gap-2">
                           <span
                             className={cn(
