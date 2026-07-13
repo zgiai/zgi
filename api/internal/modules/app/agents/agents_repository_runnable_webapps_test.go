@@ -41,7 +41,7 @@ func TestAgentsRepository_ListRunnableWebApps_BranchesPublishedChecksByAgentType
 			"AGENT",
 		))
 
-	items, err := repo.ListRunnableWebApps(t.Context(), []string{workspaceID}, "", "")
+	items, err := repo.ListRunnableWebApps(t.Context(), []string{workspaceID}, runnableWebAppFilter{})
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	require.Equal(t, "Published Agent", items[0].AgentName)
@@ -69,7 +69,37 @@ func TestAgentsRepository_ListRunnableWebApps_FiltersByKeyword(t *testing.T) {
 			"agent_type",
 		}))
 
-	items, err := repo.ListRunnableWebApps(t.Context(), []string{workspaceID}, "", " report ")
+	items, err := repo.ListRunnableWebApps(t.Context(), []string{workspaceID}, runnableWebAppFilter{
+		Keyword: " report ",
+	})
+	require.NoError(t, err)
+	require.Empty(t, items)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAgentsRepository_ListRunnableWebApps_FiltersByWebAppID(t *testing.T) {
+	db, mock := newRunnableWebAppsMockDB(t)
+	repo := NewAgentsRepository(db)
+
+	workspaceID := "11111111-1111-1111-1111-111111111111"
+	webAppID := "22222222-2222-2222-2222-222222222222"
+	mock.ExpectQuery(`(?s)SELECT .* FROM "agents".*agents\.web_app_id = .*ORDER BY agents\.tenant_id ASC,agents\.created_at DESC`).
+		WithArgs(AgentWebAppStatusActive, workspaceID, "AGENT", "AGENT", "draft", webAppID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"agent_id",
+			"workspace_id",
+			"web_app_id",
+			"web_app_status",
+			"agent_name",
+			"agent_icon",
+			"agent_icon_type",
+			"agent_desc",
+			"agent_type",
+		}))
+
+	items, err := repo.ListRunnableWebApps(t.Context(), []string{workspaceID}, runnableWebAppFilter{
+		WebAppID: webAppID,
+	})
 	require.NoError(t, err)
 	require.Empty(t, items)
 	require.NoError(t, mock.ExpectationsWereMet())

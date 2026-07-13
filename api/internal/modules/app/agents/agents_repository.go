@@ -31,6 +31,12 @@ type runnableWebAppItem struct {
 	AgentType     string  `gorm:"column:agent_type"`
 }
 
+type runnableWebAppFilter struct {
+	WorkspaceID string
+	WebAppID    string
+	Keyword     string
+}
+
 // AgentsRepository defines the interface for agent data access operations in agents module
 type AgentsRepository interface {
 	Create(ctx context.Context, ag *Agent) error
@@ -61,7 +67,7 @@ type AgentsRepository interface {
 	UpdateWorkflowID(ctx context.Context, agentID, workflowID string) error
 	UpdateWorkflowConfig(ctx context.Context, agentID, workflowConfig string) error
 	HasPublishedWorkflow(ctx context.Context, agentID string) (bool, error)
-	ListRunnableWebApps(ctx context.Context, workspaceIDs []string, workspaceID, keyword string) ([]runnableWebAppItem, error)
+	ListRunnableWebApps(ctx context.Context, workspaceIDs []string, filter runnableWebAppFilter) ([]runnableWebAppItem, error)
 }
 
 // agentsRepository implements AgentsRepository
@@ -157,7 +163,7 @@ func (r *agentsRepository) GetByTenantID(ctx context.Context, tenantID string) (
 	return list, nil
 }
 
-func (r *agentsRepository) ListRunnableWebApps(ctx context.Context, workspaceIDs []string, workspaceID, keyword string) ([]runnableWebAppItem, error) {
+func (r *agentsRepository) ListRunnableWebApps(ctx context.Context, workspaceIDs []string, filter runnableWebAppFilter) ([]runnableWebAppItem, error) {
 	if len(workspaceIDs) == 0 {
 		return []runnableWebAppItem{}, nil
 	}
@@ -190,10 +196,13 @@ func (r *agentsRepository) ListRunnableWebApps(ctx context.Context, workspaceIDs
 			)
 		`, "AGENT", "AGENT", "draft")
 
-	if workspaceID != "" {
-		query = query.Where("agents.tenant_id = ?", workspaceID)
+	if filter.WorkspaceID != "" {
+		query = query.Where("agents.tenant_id = ?", filter.WorkspaceID)
 	}
-	if keyword = strings.TrimSpace(keyword); keyword != "" {
+	if webAppID := strings.TrimSpace(filter.WebAppID); webAppID != "" {
+		query = query.Where("agents.web_app_id = ?", webAppID)
+	}
+	if keyword := strings.TrimSpace(filter.Keyword); keyword != "" {
 		pattern := "%" + keyword + "%"
 		query = query.Where("(agents.name ILIKE ? OR agents.description ILIKE ?)", pattern, pattern)
 	}

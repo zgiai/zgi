@@ -11,13 +11,56 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { SearchInput } from '@/components/ui/input';
 import { Pagination } from '@/components/ui/pagination';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useRunnableWebApps } from '@/hooks/agent/use-runnable-webapps';
+import {
+  type RunnableWebAppResolvedItem,
+  useRunnableWebApps,
+} from '@/hooks/agent/use-runnable-webapps';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useT } from '@/i18n/translations';
 import { ICON_BG } from '@/lib/config';
 
 const RECENT_WEBAPP_STORAGE_KEY = 'zgi:webapp:recent';
 const APP_PAGE_SIZE = 12;
+
+interface AppCardItem {
+  id: string;
+  title: string;
+  desc: string | null;
+  iconType: 'image' | 'text';
+  icon: string;
+  iconBackground: string;
+  src: string;
+}
+
+function toAppCard(item: RunnableWebAppResolvedItem): AppCardItem {
+  const iconType = item.icon_type;
+  const iconRaw = item.meta_data.icon || '';
+  let icon = item.meta_data.title.slice(0, 2).toUpperCase();
+  let iconBackground = ICON_BG;
+  let src = '';
+
+  if (iconType === 'image') {
+    src = item.meta_data.icon_url || iconRaw;
+  } else {
+    try {
+      const parsed = JSON.parse(iconRaw) as { icon?: string; icon_background?: string };
+      icon = parsed.icon || icon;
+      iconBackground = parsed.icon_background || iconBackground;
+    } catch {
+      // Keep the generated text icon.
+    }
+  }
+
+  return {
+    id: item.web_app_id,
+    title: item.meta_data.title,
+    desc: item.meta_data.desc,
+    iconType,
+    icon,
+    iconBackground,
+    src,
+  };
+}
 
 export default function ConsoleWorkAppHomePage() {
   const t = useT('webapp');
@@ -32,6 +75,15 @@ export default function ConsoleWorkAppHomePage() {
     keyword: queryKeyword || undefined,
     page: currentPage,
     pageSize: APP_PAGE_SIZE,
+  });
+  const recentWebAppId = recentIds[0] ?? null;
+  const shouldLoadRecent = currentPage === 1 && !queryKeyword && Boolean(recentWebAppId);
+  const { items: recentItems } = useRunnableWebApps({
+    workspaceId: null,
+    webAppId: recentWebAppId,
+    page: 1,
+    pageSize: 1,
+    enabled: shouldLoadRecent,
   });
   const totalPages = Math.max(1, Math.ceil(total / (pageSize || APP_PAGE_SIZE)));
   const isSearchPending = search.trim() !== queryKeyword;
@@ -58,46 +110,15 @@ export default function ConsoleWorkAppHomePage() {
     }
   }, [currentPage, showLoading, total, totalPages]);
 
-  const cards = useMemo(
-    () =>
-      items.map(item => {
-        const iconType = item.icon_type;
-        const iconRaw = item.meta_data.icon || '';
-        let icon = item.meta_data.title.slice(0, 2).toUpperCase();
-        let iconBackground = ICON_BG;
-        let src = '';
-
-        if (iconType === 'image') {
-          src = item.meta_data.icon_url || iconRaw;
-        } else {
-          try {
-            const parsed = JSON.parse(iconRaw) as { icon?: string; icon_background?: string };
-            icon = parsed.icon || icon;
-            iconBackground = parsed.icon_background || iconBackground;
-          } catch {
-            // Ignore
-          }
-        }
-
-        return {
-          id: item.web_app_id,
-          title: item.meta_data.title,
-          desc: item.meta_data.desc,
-          iconType,
-          icon,
-          iconBackground,
-          src,
-        };
-      }),
-    [items]
-  );
+  const cards = useMemo(() => items.map(toAppCard), [items]);
 
   const normalizedSearch = queryKeyword.toLowerCase();
 
   const recentCard = useMemo(() => {
-    if (normalizedSearch || currentPage !== 1) return null;
-    return recentIds.map(id => cards.find(card => card.id === id)).find(Boolean) ?? null;
-  }, [cards, currentPage, normalizedSearch, recentIds]);
+    if (!shouldLoadRecent) return null;
+    const recentItem = recentItems.find(item => item.web_app_id === recentWebAppId);
+    return recentItem ? toAppCard(recentItem) : null;
+  }, [recentItems, recentWebAppId, shouldLoadRecent]);
 
   const gridCards = useMemo(() => {
     if (!recentCard) return cards;

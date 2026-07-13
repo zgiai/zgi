@@ -64,12 +64,10 @@ func (s *agentsService) GetRunnableWebApps(ctx context.Context, accountID string
 		return nil, err
 	}
 
-	resp := &dto.RunnableWebAppsResponse{
-		Items: make([]dto.RunnableWebAppItem, 0),
-	}
+	resp := newRunnableWebAppsResponse(req)
 
 	if req.WorkspaceID != "" && !slices.Contains(visibleWorkspaceIDs, req.WorkspaceID) {
-		return paginateRunnableWebApps(resp, req), nil
+		return resp, nil
 	}
 
 	candidateWorkspaceIDs := visibleWorkspaceIDs
@@ -80,10 +78,14 @@ func (s *agentsService) GetRunnableWebApps(ctx context.Context, accountID string
 		}
 	}
 	if len(candidateWorkspaceIDs) == 0 {
-		return paginateRunnableWebApps(resp, req), nil
+		return resp, nil
 	}
 
-	items, err := s.agentsRepo.ListRunnableWebApps(ctx, candidateWorkspaceIDs, req.WorkspaceID, req.Keyword)
+	items, err := s.agentsRepo.ListRunnableWebApps(ctx, candidateWorkspaceIDs, runnableWebAppFilter{
+		WorkspaceID: req.WorkspaceID,
+		WebAppID:    req.WebAppID,
+		Keyword:     req.Keyword,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list runnable web apps: %w", err)
 	}
@@ -91,6 +93,8 @@ func (s *agentsService) GetRunnableWebApps(ctx context.Context, accountID string
 	if err != nil {
 		return nil, err
 	}
+	items, pagination := paginateRunnableWebAppItems(items, req)
+	pagination.apply(resp)
 
 	resp.Items = make([]dto.RunnableWebAppItem, 0, len(items))
 	for _, item := range items {
@@ -127,12 +131,29 @@ func (s *agentsService) GetRunnableWebApps(ctx context.Context, accountID string
 		})
 	}
 
-	return paginateRunnableWebApps(resp, req), nil
+	return resp, nil
 }
 
-func paginateRunnableWebApps(resp *dto.RunnableWebAppsResponse, req dto.GetRunnableWebAppsRequest) *dto.RunnableWebAppsResponse {
-	if resp == nil || (req.Page == 0 && req.PageSize == 0) {
-		return resp
+type runnableWebAppPagination struct {
+	enabled  bool
+	page     int
+	pageSize int
+	total    int
+	hasMore  bool
+}
+
+func newRunnableWebAppsResponse(req dto.GetRunnableWebAppsRequest) *dto.RunnableWebAppsResponse {
+	resp := &dto.RunnableWebAppsResponse{
+		Items: make([]dto.RunnableWebAppItem, 0),
+	}
+	_, pagination := paginateRunnableWebAppItems(nil, req)
+	pagination.apply(resp)
+	return resp
+}
+
+func paginateRunnableWebAppItems(items []runnableWebAppItem, req dto.GetRunnableWebAppsRequest) ([]runnableWebAppItem, runnableWebAppPagination) {
+	if req.Page == 0 && req.PageSize == 0 {
+		return items, runnableWebAppPagination{}
 	}
 
 	page := req.Page
@@ -144,20 +165,38 @@ func paginateRunnableWebApps(resp *dto.RunnableWebAppsResponse, req dto.GetRunna
 		pageSize = 20
 	}
 
-	total := len(resp.Items)
-	start := (page - 1) * pageSize
-	if start >= total {
-		resp.Items = []dto.RunnableWebAppItem{}
-	} else {
-		end := min(start+pageSize, total)
-		resp.Items = resp.Items[start:end]
+	pagination := runnableWebAppPagination{
+		enabled:  true,
+		page:     page,
+		pageSize: pageSize,
+		total:    len(items),
+	}
+	if pagination.total == 0 {
+		return []runnableWebAppItem{}, pagination
 	}
 
-	resp.Page = page
-	resp.PageSize = pageSize
-	resp.Total = total
-	resp.HasMore = start+pageSize < total
-	return resp
+	maxPage := 1 + (pagination.total-1)/pageSize
+	if page > maxPage {
+		return []runnableWebAppItem{}, pagination
+	}
+
+	start := (page - 1) * pageSize
+	end := pagination.total
+	if pagination.total-start > pageSize {
+		end = start + pageSize
+	}
+	pagination.hasMore = end < pagination.total
+	return items[start:end], pagination
+}
+
+func (p runnableWebAppPagination) apply(resp *dto.RunnableWebAppsResponse) {
+	if !p.enabled || resp == nil {
+		return
+	}
+	resp.Page = p.page
+	resp.PageSize = p.pageSize
+	resp.Total = p.total
+	resp.HasMore = p.hasMore
 }
 
 type runnableWebAppAuthorizationCandidate struct {

@@ -146,6 +146,7 @@ export interface AgentListParams {
 
 export interface RunnableWebAppsParams {
   workspace_id?: string;
+  web_app_id?: string;
   keyword?: string;
   page?: number;
   page_size?: number;

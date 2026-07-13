@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -739,6 +740,71 @@ func TestAgentsService_GetRunnableWebApps_ReturnsRequestedPageAndForwardsKeyword
 	require.Equal(t, "agent-4", resp.Items[1].AgentID)
 }
 
+func TestAgentsService_GetRunnableWebApps_HandlesPageOverflow(t *testing.T) {
+	repo := &stubAgentsRepository{
+		items: []runnableWebAppItem{
+			{AgentID: "agent-1", WorkspaceID: "workspace-1", WebAppID: "app-1", AgentName: "One", WebAppStatus: string(AgentWebAppStatusActive)},
+		},
+	}
+	service := &agentsService{
+		agentsRepo: repo,
+		tenantService: &stubWorkspaceManagementService{currentOrganization: &workspace_model.OrganizationMember{
+			OrganizationID: "org-1",
+			AccountID:      "account-1",
+		}},
+		enterpriseService: &stubOrganizationService{permissionWorkspaceIDs: []string{"workspace-1"}},
+	}
+
+	maxInt := int(^uint(0) >> 1)
+	resp, err := service.GetRunnableWebApps(t.Context(), "account-1", dto.GetRunnableWebAppsRequest{
+		WebAppID: "app-1",
+		Page:     maxInt,
+		PageSize: 100,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "app-1", repo.lastWebAppID)
+	require.Empty(t, resp.Items)
+	require.Equal(t, maxInt, resp.Page)
+	require.Equal(t, 100, resp.PageSize)
+	require.Equal(t, 1, resp.Total)
+	require.False(t, resp.HasMore)
+}
+
+func TestAgentsService_GetRunnableWebApps_PaginatesBeforeResolvingImageURLs(t *testing.T) {
+	iconType := "image"
+	iconIDs := []string{"icon-1", "icon-2", "icon-3", "icon-4", "icon-5"}
+	items := make([]runnableWebAppItem, 0, len(iconIDs))
+	for index, iconID := range iconIDs {
+		items = append(items, runnableWebAppItem{
+			AgentID:       fmt.Sprintf("agent-%d", index+1),
+			WorkspaceID:   "workspace-1",
+			WebAppID:      fmt.Sprintf("app-%d", index+1),
+			WebAppStatus:  string(AgentWebAppStatusActive),
+			AgentName:     fmt.Sprintf("App %d", index+1),
+			AgentIcon:     &iconID,
+			AgentIconType: &iconType,
+		})
+	}
+	fileService := &countingRunnableWebAppFileService{}
+	service := &agentsService{
+		agentsRepo:  &stubAgentsRepository{items: items},
+		fileService: fileService,
+		tenantService: &stubWorkspaceManagementService{currentOrganization: &workspace_model.OrganizationMember{
+			OrganizationID: "org-1",
+			AccountID:      "account-1",
+		}},
+		enterpriseService: &stubOrganizationService{permissionWorkspaceIDs: []string{"workspace-1"}},
+	}
+
+	resp, err := service.GetRunnableWebApps(t.Context(), "account-1", dto.GetRunnableWebAppsRequest{
+		Page:     2,
+		PageSize: 2,
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.Items, 2)
+	require.Equal(t, []string{"icon-3", "icon-4"}, fileService.fileIDs)
+}
+
 type stubAgentsRepository struct {
 	AgentsRepository
 
@@ -746,19 +812,31 @@ type stubAgentsRepository struct {
 	err                       error
 	lastWorkspaceIDs          []string
 	lastWorkspaceID           string
+	lastWebAppID              string
 	lastKeyword               string
 	listRunnableWebAppsCalled bool
 }
 
-func (s *stubAgentsRepository) ListRunnableWebApps(_ context.Context, workspaceIDs []string, workspaceID, keyword string) ([]runnableWebAppItem, error) {
+func (s *stubAgentsRepository) ListRunnableWebApps(_ context.Context, workspaceIDs []string, filter runnableWebAppFilter) ([]runnableWebAppItem, error) {
 	s.listRunnableWebAppsCalled = true
 	s.lastWorkspaceIDs = append([]string(nil), workspaceIDs...)
-	s.lastWorkspaceID = workspaceID
-	s.lastKeyword = keyword
+	s.lastWorkspaceID = filter.WorkspaceID
+	s.lastWebAppID = filter.WebAppID
+	s.lastKeyword = filter.Keyword
 	if s.err != nil {
 		return nil, s.err
 	}
 	return s.items, nil
+}
+
+type countingRunnableWebAppFileService struct {
+	interfaces.FileService
+	fileIDs []string
+}
+
+func (s *countingRunnableWebAppFileService) GetFileURL(_ context.Context, fileID string) (string, error) {
+	s.fileIDs = append(s.fileIDs, fileID)
+	return "https://example.test/" + fileID, nil
 }
 
 type stubWorkspaceManagementService struct {
