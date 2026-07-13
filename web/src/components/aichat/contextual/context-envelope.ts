@@ -172,24 +172,25 @@ const ZGI_CONSOLE_DYNAMIC_ROUTES = [
   /^\/console\/work\/app\/[A-Za-z0-9_-]+$/,
 ];
 
-const ZGI_SYSTEM_CONTEXT_ITEM_ID = 'zgi.system_assistant';
+const PLATFORM_OPERATION_ASSISTANT_CONTEXT_ITEM_ID = 'assistant.platform_operation';
+const LEGACY_SYSTEM_CONTEXT_ITEM_ID = 'zgi.system_assistant';
 const ZGI_SITE_MAP_SUMMARY = ZGI_CONSOLE_SITE_MAP.map(
   route => `${route.label}=${route.href}(${route.purpose})`
 ).join('; ');
 
-const ZGI_SYSTEM_CONTEXT_ITEM: AIChatContextItem = {
-  id: ZGI_SYSTEM_CONTEXT_ITEM_ID,
+const PLATFORM_OPERATION_ASSISTANT_CONTEXT_ITEM: AIChatContextItem = {
+  id: PLATFORM_OPERATION_ASSISTANT_CONTEXT_ITEM_ID,
   type: 'custom',
-  title: 'ZGI AIChat system assistant',
+  title: 'Platform operation assistant',
   description:
-    'AIChat is the ZGI sidebar operation assistant. It can explain the current page, answer from registered page context, navigate to whitelisted internal console routes, and use enabled low-risk skills. High-risk asset mutations require supported governed tools and user approval and must not be promised when unavailable.',
+    'The platform operation assistant can explain the current page, answer from registered page context, navigate to whitelisted internal console routes, and use enabled low-risk skills. High-risk asset mutations require supported governed tools and user approval and must not be promised when unavailable.',
   source: 'system',
   status: 'available',
   risk: 'low',
   capabilities: [
     {
       id: 'page.navigate',
-      title: 'Navigate inside ZGI',
+      title: 'Navigate inside the console',
       description:
         'Switch the visible console page to a whitelisted internal route through console-navigator / navigate.',
       risk: 'low',
@@ -198,9 +199,9 @@ const ZGI_SYSTEM_CONTEXT_ITEM: AIChatContextItem = {
     },
     {
       id: 'assistant.self_describe',
-      title: 'Explain AIChat role and limits',
+      title: 'Explain the platform operation assistant role and limits',
       description:
-        'Describe AIChat as a ZGI operation assistant, including current page help, site-wide navigation, enabled skills, and high-risk operation limits.',
+        'Describe the assistant as a platform operation assistant, including current page help, console navigation, enabled skills, and high-risk operation limits.',
       risk: 'low',
       status: 'available',
     },
@@ -208,7 +209,7 @@ const ZGI_SYSTEM_CONTEXT_ITEM: AIChatContextItem = {
   metadata: {
     site_map: ZGI_SITE_MAP_SUMMARY,
     routing_tool: 'console-navigator / navigate',
-    memory_boundary: 'AIChat account memory and Agent memory are separate',
+    memory_boundary: 'Account-level assistant memory and Agent memory are separate',
     high_risk_limit:
       'Do not claim asset creation, deletion, publishing, workflow execution, scheduling, or agent mutation unless a supported governed tool result proves it.',
   },
@@ -441,12 +442,12 @@ export function buildAIChatContextEnvelope(items: AIChatContextItem[]): string {
   if (visibleItems.length === 0) return '';
 
   const lines = [
-    'AIChat role: ZGI sidebar system assistant for helping users operate the ZGI console, not a generic chat-only bot.',
-    `ZGI site map: ${ZGI_SITE_MAP_SUMMARY}.`,
+    'Assistant role: platform operation assistant for helping users operate the current console, not a generic chat-only bot.',
+    `Console site map: ${ZGI_SITE_MAP_SUMMARY}.`,
     'Navigation ability: for user-requested page switches, use console-navigator / navigate with a whitelisted internal /console route; do not navigate to external URLs.',
     'Execution boundary: do not claim high-risk asset operations such as delete, publish, workflow run, scheduling, or agent mutation unless a supported governed tool result proves it in this turn.',
-    'Current ZGI page context. Use it only to interpret this turn; do not save it as memory unless the user explicitly asks.',
-    'Important: AIChat account memory and Agent memory are separate. Do not claim they are shared.',
+    'Current console page context. Use it only to interpret this turn; do not save it as memory unless the user explicitly asks.',
+    'Important: account-level assistant memory and Agent memory are separate. Do not claim they are shared.',
     'Important: Workflow resources and Agent resources are distinct; a workflow binding does not make the workflow the Agent.',
     'Important: each numbered item has an explicit type. Count or list assets only when the item type or resource_kind matches the asset type the user asked for; page items are navigation/context, not user assets.',
     `Context item type inventory: ${buildResourceTypeInventory(items)}.`,
@@ -650,7 +651,14 @@ export function normalizeZGIConsoleNavigationHref(rawHref: string | undefined): 
 }
 
 function withZGISystemContextItems(items: AIChatContextItem[]): AIChatContextItem[] {
-  return [ZGI_SYSTEM_CONTEXT_ITEM, ...items.filter(item => item.id !== ZGI_SYSTEM_CONTEXT_ITEM_ID)];
+  return [
+    PLATFORM_OPERATION_ASSISTANT_CONTEXT_ITEM,
+    ...items.filter(
+      item =>
+        item.id !== PLATFORM_OPERATION_ASSISTANT_CONTEXT_ITEM_ID &&
+        item.id !== LEGACY_SYSTEM_CONTEXT_ITEM_ID
+    ),
+  ];
 }
 
 function normalizeToken(value: unknown): string | undefined {

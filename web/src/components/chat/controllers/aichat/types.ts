@@ -104,6 +104,32 @@ export type AIChatAgenticTimelineItem =
     }
   | {
       id: string;
+      type: 'user_input_request';
+      request_id?: string;
+      message?: string;
+      questions: Array<{
+        question_id?: string;
+        question: string;
+        options: string[];
+      }>;
+      created_at?: number;
+      event_id?: string | null;
+    }
+  | {
+      id: string;
+      type: 'user_input_response';
+      request_id?: string;
+      message?: string;
+      answers: Array<{
+        question_id?: string;
+        question: string;
+        value: string;
+      }>;
+      created_at?: number;
+      event_id?: string | null;
+    }
+  | {
+      id: string;
       type: 'memory_event';
       event: AIChatMemoryMutationEventData;
       created_at?: number;

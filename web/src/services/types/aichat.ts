@@ -329,6 +329,7 @@ export interface AIChatMessageMetadata {
   generated_file_count?: number;
   generated_files?: AIChatGeneratedFile[];
   user_input_request?: AIChatUserInputRequest;
+  user_input_responses?: AIChatUserInputResponse[];
   context_control?: Record<string, unknown>;
   [key: string]: unknown;
 }
@@ -358,6 +359,22 @@ export interface AIChatUserInputRequest {
   round?: string | number;
   questions: AIChatUserInputQuestion[];
   created_at?: number;
+}
+
+export interface AIChatUserInputAnswer {
+  question_id?: string;
+  question: string;
+  value: string;
+}
+
+export interface AIChatUserInputResponse {
+  request_id?: string;
+  message?: string;
+  status?: 'answered' | string;
+  answers: AIChatUserInputAnswer[];
+  answer_count?: number;
+  answered_at?: number;
+  optimistic?: boolean;
 }
 
 export interface AIChatUserInputContinuationRequest {

@@ -141,7 +141,7 @@ func (s *service) RunClientActionContinuationStream(
 
 	var answer string
 	var usage *adapter.Usage
-	answer, usage, err = s.runPreparedSkillStream(runCtx, context.WithoutCancel(ctx), prepared, nil, onEvent)
+	answer, usage, err = s.runPreparedToolStream(runCtx, context.WithoutCancel(ctx), prepared, nil, onEvent)
 	if err != nil {
 		var pendingGovernance *skillloop.ToolGovernancePendingError
 		if errors.As(err, &pendingGovernance) {

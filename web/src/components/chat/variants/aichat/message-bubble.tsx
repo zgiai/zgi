@@ -1260,6 +1260,8 @@ export function AIChatMessageBubble({
     isActiveMessage ||
     displayTimeline.some(
       item =>
+        item.type === 'user_input_request' ||
+        item.type === 'user_input_response' ||
         (item.type === 'skill_event' &&
           item.invocation.kind !== 'guardrail' &&
           (item.invocation.status === 'error' || item.invocation.status === 'blocked')) ||

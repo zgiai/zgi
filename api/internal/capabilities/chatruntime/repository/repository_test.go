@@ -238,6 +238,58 @@ func TestListByCallerSurfaceScopedWorkChatKeepsLegacyOnlyWhenNoOtherSurface(t *t
 	}
 }
 
+func TestListByCallerSourceScopedFiltersWebAppIdentity(t *testing.T) {
+	db, mock := newConversationRepositoryMockDB(t)
+	repo := NewConversationRepository(db)
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	agentID := uuid.New()
+	webAppID := uuid.New()
+
+	mock.ExpectQuery(`(?s).*FROM "chat_runtime_conversations".*caller_type.*caller_id.*source.*source_web_app_id.*`).
+		WithArgs(
+			organizationID,
+			accountID,
+			runtimemodel.ConversationCallerAgent,
+			agentID,
+			runtimemodel.ConversationSourceWebApp,
+			webAppID,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`(?s).*FROM "chat_runtime_conversations".*caller_type.*caller_id.*source.*source_web_app_id.*ORDER BY updated_at DESC.*LIMIT.*`).
+		WithArgs(
+			organizationID,
+			accountID,
+			runtimemodel.ConversationCallerAgent,
+			agentID,
+			runtimemodel.ConversationSourceWebApp,
+			webAppID,
+			20,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	results, total, err := repo.ListByCallerSourceScoped(
+		context.Background(),
+		organizationID,
+		accountID,
+		runtimemodel.ConversationCallerAgent,
+		&agentID,
+		runtimemodel.ConversationSourceWebApp,
+		&webAppID,
+		20,
+		0,
+	)
+	if err != nil {
+		t.Fatalf("ListByCallerSourceScoped: %v", err)
+	}
+	if total != 0 || len(results) != 0 {
+		t.Fatalf("results = %d total = %d, want empty", len(results), total)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
 func TestUpdateAfterMessagePromotesLeafWhenCurrentLeafIsParent(t *testing.T) {
 	db, mock := newConversationRepositoryMockDB(t)
 	repo := NewConversationRepository(db)

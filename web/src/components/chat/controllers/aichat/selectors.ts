@@ -63,15 +63,12 @@ function isVisibleSkillInvocation(invocation: AIChatSkillInvocation): boolean {
   ) {
     return false;
   }
-  if (
-    invocation.kind === 'skill_load' &&
-    invocation.skill_id === 'console-navigator'
-  ) {
+  if (invocation.kind === 'skill_load' && invocation.skill_id === 'console-navigator') {
     return false;
   }
   if (
     invocation.kind === 'client_action' &&
-    (actionType === 'route_navigation') &&
+    actionType === 'route_navigation' &&
     (status === 'success' || status === 'succeeded' || status === 'completed')
   ) {
     return false;
@@ -492,8 +489,65 @@ export function timelineFromAIChatMessage(message: AIChatMessage): AIChatAgentic
     };
   });
 
+  const responseRequestIds = new Set(
+    (message.metadata?.user_input_responses ?? [])
+      .map(response => response.request_id?.trim())
+      .filter((requestId): requestId is string => Boolean(requestId))
+  );
+  const pendingUserInputRequest = message.metadata?.user_input_request;
+  const pendingRequestId = pendingUserInputRequest?.request_id?.trim();
+  const pendingQuestions = (pendingUserInputRequest?.questions ?? [])
+    .map((question, index) => ({
+      question_id: question.id?.trim() || `q${index + 1}`,
+      question: question.question?.trim() ?? '',
+      options: (question.options ?? []).map(option => option.label?.trim() ?? '').filter(Boolean),
+    }))
+    .filter(question => question.question);
+  const pendingUserInputTimeline: AIChatAgenticTimelineItem[] =
+    pendingUserInputRequest &&
+    pendingUserInputRequest.status !== 'answered' &&
+    pendingQuestions.length > 0 &&
+    (!pendingRequestId || !responseRequestIds.has(pendingRequestId))
+      ? [
+          {
+            id: `history-user-input-request-${message.id}-${pendingRequestId || 'pending'}`,
+            type: 'user_input_request',
+            request_id: pendingUserInputRequest.request_id,
+            message: pendingUserInputRequest.message?.trim(),
+            questions: pendingQuestions,
+            created_at: pendingUserInputRequest.created_at,
+          },
+        ]
+      : [];
+
+  const userInputTimeline = (message.metadata?.user_input_responses ?? [])
+    .map((response, index): AIChatAgenticTimelineItem | null => {
+      const answers = (response.answers ?? [])
+        .map(answer => ({
+          question_id: answer.question_id,
+          question: answer.question?.trim() ?? '',
+          value: answer.value?.trim() ?? '',
+        }))
+        .filter(answer => answer.question && answer.value);
+      if (answers.length === 0) return null;
+      return {
+        id: `history-user-input-${message.id}-${response.request_id ?? index}`,
+        type: 'user_input_response',
+        request_id: response.request_id,
+        message: response.message?.trim(),
+        answers,
+        created_at: response.answered_at,
+      };
+    })
+    .filter((item): item is AIChatAgenticTimelineItem => item !== null);
+
   return sortTimelineItems(
-    dedupeTimelineItems([...skillTimeline, ...workflowTimelineFromMessage(message)])
+    dedupeTimelineItems([
+      ...skillTimeline,
+      ...pendingUserInputTimeline,
+      ...userInputTimeline,
+      ...workflowTimelineFromMessage(message),
+    ])
   );
 }
 
@@ -571,7 +625,7 @@ function skillInvocationNavigationTarget(invocation: AIChatSkillInvocation): str
   return href.replace(/\/+$/, '') || href;
 }
 
-type AssetOperationTimelineIdentityInput = {
+interface AssetOperationTimelineIdentityInput {
   audit?: unknown;
   result?: Record<string, unknown>;
   args?: Record<string, unknown>;
@@ -580,7 +634,7 @@ type AssetOperationTimelineIdentityInput = {
   assets?: unknown;
   actionId?: unknown;
   correlationId?: unknown;
-};
+}
 
 function normalizeAssetOperationActionId(value: unknown): string {
   const actionId = timelineString(value);
@@ -650,13 +704,9 @@ function assetOperationTimelineIdentity(input: AssetOperationTimelineIdentityInp
     normalizeAssetOperationActionId(args.action_id);
   if (actionId) return `skill:asset_operation:${actionId}`;
 
-  return [
-    'skill',
-    'asset_operation',
-    assetType,
-    effect,
-    stableTimelineValue(operationTarget),
-  ].join(':');
+  return ['skill', 'asset_operation', assetType, effect, stableTimelineValue(operationTarget)].join(
+    ':'
+  );
 }
 
 function observedAssetOperationTarget(
@@ -668,7 +718,7 @@ function observedAssetOperationTarget(
   const type = (timelineString(first.type) || timelineString(result.asset_type)).toLowerCase();
   const matchedContextId = timelineString(first.matched_context_item_id);
   const rawID = timelineString(first.id) || matchedContextId;
-  const id = rawID.includes(':') ? rawID.split(':').pop()?.trim() ?? '' : rawID;
+  const id = rawID.includes(':') ? (rawID.split(':').pop()?.trim() ?? '') : rawID;
   const name = timelineString(first.name) || timelineString(first.matched_context_title);
   if (!id && !name) return undefined;
   if (type === 'agent') {
@@ -802,8 +852,7 @@ function timelineSkillInvocationIdentity(invocation: AIChatSkillInvocation): str
     const record = invocation as unknown as Record<string, unknown>;
     const result = timelineRecord(invocation.result);
     const actionType = (
-      timelineString(invocation.action_type) ||
-      timelineString(result.action_type)
+      timelineString(invocation.action_type) || timelineString(result.action_type)
     ).toLowerCase();
     if (actionType === 'route_navigation') {
       const href = skillInvocationNavigationTarget(invocation);
@@ -889,8 +938,7 @@ function timelineItemIdentity(item: AIChatAgenticTimelineItem): string {
       if (item.phase === 'client_action' || item.phase === 'client_action_result') {
         const result = timelineRecord(item.result);
         const actionType = (
-          timelineString(item.action_type) ||
-          timelineString(result.action_type)
+          timelineString(item.action_type) || timelineString(result.action_type)
         ).toLowerCase();
         if (actionType === 'route_navigation') {
           const href =
@@ -942,6 +990,10 @@ function timelineItemIdentity(item: AIChatAgenticTimelineItem): string {
     }
     case 'intermediate_answer':
       return ['intermediate', item.answer_id ?? item.id].join(':');
+    case 'user_input_request':
+      return ['user-input-request', item.request_id ?? item.id].join(':');
+    case 'user_input_response':
+      return ['user-input-response', item.request_id ?? item.id].join(':');
     case 'memory_event':
       return ['memory', item.event_id ?? item.id].join(':');
     case 'tool_governance_decision':
@@ -1004,6 +1056,8 @@ function timelineItemRank(item: AIChatAgenticTimelineItem): number {
     if (status === 'needs_approval') return 20;
   }
   if (item.type === 'intermediate_answer' && item.status === 'success') return 30;
+  if (item.type === 'user_input_request') return 20;
+  if (item.type === 'user_input_response') return 30;
   return item.event_id ? 5 : 0;
 }
 
@@ -1075,8 +1129,7 @@ export function dedupeTimelineItems(
     rawItems
       .filter(
         (item): item is Extract<AIChatAgenticTimelineItem, { type: 'skill_event' }> =>
-          item.type === 'skill_event' &&
-          isTerminalGovernedToolExecutionInvocation(item.invocation)
+          item.type === 'skill_event' && isTerminalGovernedToolExecutionInvocation(item.invocation)
       )
       .map(item => governanceCorrelationId(item.invocation))
       .filter((correlationId): correlationId is string => Boolean(correlationId))
@@ -1102,10 +1155,7 @@ export function dedupeTimelineItems(
       const previousPendingBaseIdentity = pendingSkillTimelineBaseIdentity(out[existingIndex]);
       out[existingIndex] = preferTimelineItem(out[existingIndex], item);
       setTimelineAliasIndexes(indexByIdentity, out[existingIndex], existingIndex);
-      if (
-        previousPendingBaseIdentity &&
-        !pendingSkillTimelineBaseIdentity(out[existingIndex])
-      ) {
+      if (previousPendingBaseIdentity && !pendingSkillTimelineBaseIdentity(out[existingIndex])) {
         pendingIndexByBaseIdentity.delete(previousPendingBaseIdentity);
       }
       continue;

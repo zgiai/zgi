@@ -3,6 +3,7 @@ package skillloop
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
@@ -153,7 +154,7 @@ func TestRequestUserInputRejectsInvalidArguments(t *testing.T) {
 	}
 }
 
-func TestRunnerReturnsPendingErrorForRequestUserInput(t *testing.T) {
+func TestRunnerProtocolOnlyExposesUserInputWithoutBusinessTools(t *testing.T) {
 	ctx := context.Background()
 	fakeLLM := &runnerTestLLMClient{
 		appChatResponses: []*adapter.ChatResponse{
@@ -184,8 +185,9 @@ func TestRunnerReturnsPendingErrorForRequestUserInput(t *testing.T) {
 	})
 
 	answer, _, err := runner.Run(ctx, RunRequest{
-		Prepared: prepared,
-		Resolved: runnerTestResolvedSkills(),
+		Prepared:          prepared,
+		Resolved:          &skills.ResolvedSkills{},
+		ProtocolToolsOnly: true,
 	})
 
 	var pending *UserInputPendingError
@@ -200,6 +202,39 @@ func TestRunnerReturnsPendingErrorForRequestUserInput(t *testing.T) {
 	}
 	if pending.Payload["message"] != "I need one more decision before continuing." {
 		t.Fatalf("pending payload = %#v, want visible pending message", pending.Payload)
+	}
+	if len(fakeLLM.appChatRequests) != 1 {
+		t.Fatalf("AppChat requests = %d, want 1", len(fakeLLM.appChatRequests))
+	}
+	exposed := map[string]bool{}
+	for _, tool := range fakeLLM.appChatRequests[0].Tools {
+		exposed[tool.Function.Name] = true
+	}
+	if !exposed[skills.MetaToolRequestUserInput] {
+		t.Fatalf("tools = %#v, want %s", exposed, skills.MetaToolRequestUserInput)
+	}
+	for _, forbidden := range []string{skills.MetaToolLoadSkill, skills.MetaToolReadSkillReference, skills.MetaToolCallSkillTool} {
+		if exposed[forbidden] {
+			t.Fatalf("tools = %#v, protocol-only run must not expose %s", exposed, forbidden)
+		}
+	}
+}
+
+func TestRunnerRejectsEmptyResolvedWithoutProtocolOnlyMode(t *testing.T) {
+	runner := &Runner{
+		LLMClient:  &runnerTestLLMClient{},
+		AppContext: &llmclient.AppContext{},
+	}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "disabled", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "hello"}},
+	})
+
+	_, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared: prepared,
+		Resolved: &skills.ResolvedSkills{},
+	})
+	if !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "no skills available") {
+		t.Fatalf("Run() error = %v, want empty discovery rejection", err)
 	}
 }
 

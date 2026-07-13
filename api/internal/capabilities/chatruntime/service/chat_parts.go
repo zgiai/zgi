@@ -312,15 +312,20 @@ func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) 
 		"system_prompt_version": version,
 		"surface":               normalizeAIChatSurface(parts.Surface),
 	}
-	if parts.SkillMode != "" && parts.SkillMode != skillModeDisabled {
+	if parts.ProtocolToolsEnabled {
+		metadata["protocol_tools_enabled"] = true
+	}
+	if parts.ProtocolToolsEnabled || (parts.SkillMode != "" && parts.SkillMode != skillModeDisabled) {
 		metadata["has_trace"] = false
 		metadata["skill_call_count"] = 0
 		metadata["skill_names"] = []interface{}{}
 		metadata["tool_call_count"] = 0
 		metadata["tool_names"] = []interface{}{}
 		metadata["guardrail_count"] = 0
-		metadata["skill_mode"] = parts.SkillMode
-		metadata["configured_skill_ids"] = parts.SkillIDs
+		if parts.SkillMode != "" {
+			metadata["skill_mode"] = parts.SkillMode
+		}
+		metadata["configured_skill_ids"] = append([]string(nil), parts.SkillIDs...)
 	}
 	if parts.ContextControl != nil {
 		metadata["context_control"] = parts.ContextControl

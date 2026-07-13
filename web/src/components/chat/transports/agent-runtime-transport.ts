@@ -10,6 +10,7 @@ import type {
   AIChatSearchResponse,
   AIChatSseEnvelope,
   AIChatStopConversationResponseData,
+  AIChatUserInputContinuationRequest,
 } from '@/services/types/aichat';
 import {
   DEFAULT_AICHAT_MESSAGE_PAGINATION,
@@ -263,6 +264,38 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
           message_id: params.messageId,
           after_id: params.afterId,
         },
+        abortSignal,
+        isTerminalMessage: runtimeTerminalMessage,
+        onMessage: message =>
+          dispatchAIChatStreamEvent(
+            String((message.data as AIChatSseEnvelope | undefined)?.event ?? message.event ?? ''),
+            (message.data as AIChatSseEnvelope | undefined)?.data ?? message.data,
+            message.id,
+            callbacks
+          ),
+        onError: callbacks.onRequestError,
+        onClose: callbacks.onClose,
+      }
+    );
+  }
+
+  continueUserInput(
+    conversationId: string,
+    messageId: string,
+    requestId: string,
+    payload: AIChatUserInputContinuationRequest,
+    callbacks: AIChatStreamCallbacks,
+    abortSignal?: AbortSignal
+  ) {
+    return this.client.sse<AIChatSseEnvelope, AIChatUserInputContinuationRequest>(
+      `${this.runtimeBasePath}/conversations/${encodeURIComponent(
+        conversationId
+      )}/messages/${encodeURIComponent(messageId)}/user-input/${encodeURIComponent(
+        requestId
+      )}/continue`,
+      {
+        method: 'POST',
+        body: payload,
         abortSignal,
         isTerminalMessage: runtimeTerminalMessage,
         onMessage: message =>

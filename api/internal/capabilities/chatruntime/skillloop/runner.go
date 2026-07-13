@@ -91,8 +91,8 @@ func metaToolsForRun(resolved *skills.ResolvedSkills, loadedSkills map[string]st
 func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usage, error) {
 	prepared := req.Prepared
 	resolved := req.Resolved
-	if r == nil || r.SkillRuntime == nil {
-		return "", nil, fmt.Errorf("%w: skill runtime is not configured", ErrInvalidInput)
+	if r == nil {
+		return "", nil, fmt.Errorf("%w: runner is not configured", ErrInvalidInput)
 	}
 	if r.LLMClient == nil {
 		return "", nil, fmt.Errorf("llm client is not configured")
@@ -100,8 +100,14 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	if prepared == nil || prepared.LLMRequest == nil {
 		return "", nil, fmt.Errorf("%w: prepared chat is invalid", ErrInvalidInput)
 	}
-	if resolved == nil || len(resolved.Skills) == 0 {
+	if resolved == nil {
+		resolved = &skills.ResolvedSkills{}
+	}
+	if len(resolved.Skills) == 0 && !req.ProtocolToolsOnly {
 		return "", nil, fmt.Errorf("%w: no skills available for configured skill ids", ErrInvalidInput)
+	}
+	if len(resolved.Skills) > 0 && r.SkillRuntime == nil {
+		return "", nil, fmt.Errorf("%w: skill runtime is not configured", ErrInvalidInput)
 	}
 	preferExplicitFinalAnswer := req.PreferExplicitFinalAnswer
 	historicalLoadedSkills := initialLoadedSkillsForRun(req, resolved)
@@ -118,7 +124,11 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		messages = append(messages, *restoredSkillState.message)
 	}
 	messages = append(messages, validAdditionalSystemMessages(req.AdditionalSystemMessages)...)
-	messages = append(messages, agenticSkillLoopSystemMessage(preferExplicitFinalAnswer))
+	if req.ProtocolToolsOnly {
+		messages = append(messages, protocolToolLoopSystemMessage(preferExplicitFinalAnswer))
+	} else {
+		messages = append(messages, agenticSkillLoopSystemMessage(preferExplicitFinalAnswer))
+	}
 	traces := []skills.SkillTrace{metadataExposedTrace(resolved.SkillIDs(), metadataStats)}
 	r.recordTrace(traces, traces[0])
 	logger.DebugContext(ctx, "aichat skill metadata exposed",
@@ -1036,6 +1046,21 @@ func agenticSkillLoopSystemMessage(preferExplicitFinalAnswer bool) adapter.Messa
 		)
 	} else {
 		instructions = append(instructions, "When no tool or skill call is needed, provide the complete user-facing reply as ordinary assistant content and end the turn.")
+	}
+	return adapter.Message{Role: "system", Content: strings.Join(instructions, "\n")}
+}
+
+func protocolToolLoopSystemMessage(preferExplicitFinalAnswer bool) adapter.Message {
+	instructions := []string{
+		"Use only the function tools exposed in the current request. No business skills or business tools are available; do not invent, load, or call any.",
+		"All user-facing progress, request_user_input text, submit_intermediate_answer text, and final answers must use the same language as the user's latest request.",
+		"When required information is missing or ambiguity blocks a reliable answer, call request_user_input with a brief user-visible message and one to five concise questions, then stop.",
+		"Use update_plan, submit_turn_state, or submit_intermediate_answer only when their structured state is useful for the current request. Do not expose protocol names or bookkeeping to the user.",
+	}
+	if preferExplicitFinalAnswer {
+		instructions = append(instructions, "When the answer is complete, call submit_final_answer with the complete user-facing reply as the only terminal action.")
+	} else {
+		instructions = append(instructions, "When no protocol tool is needed, provide the complete user-facing reply as ordinary assistant content and end the turn.")
 	}
 	return adapter.Message{Role: "system", Content: strings.Join(instructions, "\n")}
 }

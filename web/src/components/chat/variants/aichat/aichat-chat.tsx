@@ -465,6 +465,7 @@ export function AIChatShell({
     isLoadingMessages,
     isLoadingOlderMessages,
     isSending,
+    bottomInsetHeight: inputAreaHeight,
     loadOlderMessages: controller.loadOlderMessages,
   });
   const hasActiveStreamingMessage = useMemo(
@@ -1275,7 +1276,11 @@ export function AIChatShell({
             editingQuery={editingQuery}
             bottomRef={bottomRef}
             scrollViewportRef={scrollViewportRef}
-            bottomSpacerHeight={Math.max(inputAreaHeight + 72, 180)}
+            bottomSpacerHeight={
+              activeUserInputRequest
+                ? Math.max(inputAreaHeight - 48, 180)
+                : Math.max(inputAreaHeight + 72, 180)
+            }
             onScroll={handleMessagesScroll}
             onRegenerate={handleRegenerate}
             onToolGovernanceDecision={

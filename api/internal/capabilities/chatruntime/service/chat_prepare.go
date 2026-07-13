@@ -44,6 +44,7 @@ func (s *service) PrepareConfiguredChat(ctx context.Context, scope Scope, caller
 	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
 		return nil, err
 	}
+	applyProtocolToolsPolicy(caller, parts)
 	applyManagedUserMemoryPolicy(caller, parts)
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
@@ -111,9 +112,9 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 	}
 	var conversation *runtimemodel.Conversation
 	if callerScoped {
-		conversation, err = s.repos.Conversation.GetByCallerScoped(ctx, message.ConversationID, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID))
+		conversation, err = s.getConversationByCallerScoped(ctx, scope, caller, message.ConversationID)
 		if err != nil {
-			return nil, mapRepoError(err)
+			return nil, err
 		}
 	} else {
 		conversation, err = s.getConversation(ctx, scope, message.ConversationID)
@@ -135,6 +136,7 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
 		return nil, err
 	}
+	applyProtocolToolsPolicy(caller, parts)
 	applyManagedUserMemoryPolicy(caller, parts)
 	if err := s.applySkillConfig(ctx, scope, caller, &config, parts); err != nil {
 		return nil, err
@@ -264,11 +266,7 @@ func (s *service) resolveChatConversation(ctx context.Context, scope Scope, call
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid conversation_id", ErrInvalidInput)
 	}
-	conversation, err := s.repos.Conversation.GetByCallerScoped(ctx, conversationID, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID))
-	if err != nil {
-		return nil, mapRepoError(err)
-	}
-	return conversation, nil
+	return s.getConversationByCallerScoped(ctx, scope, caller, conversationID)
 }
 
 func (s *service) createConversationForChat(ctx context.Context, scope Scope, caller Caller, parts *chatRequestParts) (*runtimemodel.Conversation, error) {
@@ -512,6 +510,14 @@ func applyManagedUserMemoryPolicy(caller Caller, parts *chatRequestParts) {
 		return
 	}
 	parts.UseMemory = parts.FunctionCallingKnown && parts.ModelSupportsFunctionCalling
+}
+
+func applyProtocolToolsPolicy(caller Caller, parts *chatRequestParts) {
+	if parts == nil {
+		return
+	}
+	parts.ProtocolToolsEnabled = normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent &&
+		parts.FunctionCallingKnown && parts.ModelSupportsFunctionCalling && !parts.FunctionCallingAssumed
 }
 
 func (s *service) applyOrganizationSkillConfig(ctx context.Context, scope Scope, parts *chatRequestParts) error {

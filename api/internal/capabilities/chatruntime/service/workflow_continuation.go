@@ -46,9 +46,9 @@ func (s *service) BeginWorkflowApprovalContinuation(ctx context.Context, scope S
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
-	conversation, err := s.repos.Conversation.GetByCallerScoped(ctx, conversationID, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID))
+	conversation, err := s.getConversationByCallerScoped(ctx, scope, caller, conversationID)
 	if err != nil {
-		return nil, mapRepoError(err)
+		return nil, err
 	}
 	message, err := s.repos.Message.GetScoped(ctx, messageID, scope.OrganizationID, scope.AccountID)
 	if err != nil {

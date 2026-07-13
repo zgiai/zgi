@@ -106,6 +106,10 @@ func TestApplyModelCapabilitiesAssumesFunctionCallingWhenSpecUnknown(t *testing.
 	if parts.ModelCapabilityStatus != "model_spec_unknown" {
 		t.Fatalf("ModelCapabilityStatus = %q", parts.ModelCapabilityStatus)
 	}
+	applyProtocolToolsPolicy(Caller{Type: runtimemodel.ConversationCallerAgent}, parts)
+	if parts.ProtocolToolsEnabled {
+		t.Fatal("ProtocolToolsEnabled = true for assumed function-calling capability")
+	}
 	metadata := streamingMessageMetadata(parts)
 	capabilities := mapFromOperationContext(metadata["model_capabilities"])
 	if capabilities["function_calling_assumed"] != true || capabilities["status"] != "model_spec_unknown" {
