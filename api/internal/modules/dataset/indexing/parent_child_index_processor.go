@@ -3,6 +3,7 @@ package indexing
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -48,6 +49,14 @@ var defaultSubchunkSeparators = []string{
 const defaultParentChunkMergeTarget = 500
 
 const structuredElementsMetadataKey = "structured_elements"
+
+const (
+	sectionPathMetadataKey     = "section_path"
+	sectionDepthMetadataKey    = "section_depth"
+	sectionPathTextMetadataKey = "section_path_text"
+	sectionScopeMetadataKey    = "_section_scope_path"
+	maxPrefixedHeadingLevel    = 4
+)
 
 const (
 	defaultElementGroupParentMinChars    = 1000
@@ -525,6 +534,7 @@ func (p *ParentChildIndexProcessor) buildElementGroupTransformedChunks(
 			}
 		}
 		metadata := parentChildMetadataForElements(output, group)
+		deleteSectionPathMetadata(metadata)
 		metadata["parent_mode"] = "element_group"
 		metadata["source_element_ids"] = sourceElementIDsFromExtract(group)
 		metadata["source_start_order"] = group[0].Ordinal
@@ -566,7 +576,7 @@ func (p *ParentChildIndexProcessor) buildElementGroupTransformedChunks(
 }
 
 func (p *ParentChildIndexProcessor) buildElementGroups(ctx context.Context, output *dto.ExtractOutput, params elementGroupParams) ([][]dto.ExtractElement, error) {
-	elements := sortedExtractElements(output)
+	elements := annotateElementSectionPaths(sortedExtractElements(output))
 	if len(elements) == 0 {
 		return nil, nil
 	}
@@ -616,6 +626,169 @@ func (p *ParentChildIndexProcessor) buildElementGroups(ctx context.Context, outp
 	return mergeSmallTrailingElementGroup(groups, params.ParentMinChars, params.ParentMaxChars), nil
 }
 
+type elementSectionHeading struct {
+	Level int
+	Title string
+}
+
+// annotateElementSectionPaths scans the entire ordered element stream before
+// parent grouping so groups that start in the middle of a section still inherit
+// headings from earlier elements.
+func annotateElementSectionPaths(elements []dto.ExtractElement) []dto.ExtractElement {
+	if len(elements) == 0 {
+		return elements
+	}
+
+	annotated := make([]dto.ExtractElement, len(elements))
+	stack := make([]elementSectionHeading, 0, 6)
+	for i, element := range elements {
+		annotated[i] = element
+		annotated[i].Metadata = cloneChunkMetadata(element.Metadata)
+
+		if level, ok := elementSectionHeadingLevel(element); ok {
+			title := elementSectionHeadingTitle(element)
+			if title != "" {
+				for len(stack) > 0 && stack[len(stack)-1].Level >= level {
+					stack = stack[:len(stack)-1]
+				}
+				stack = append(stack, elementSectionHeading{Level: level, Title: title})
+			}
+		}
+
+		path := make([]string, 0, len(stack))
+		scopePath := make([]string, 0, len(stack))
+		for _, heading := range stack {
+			scopePath = append(scopePath, heading.Title)
+			if heading.Level <= maxPrefixedHeadingLevel {
+				path = append(path, heading.Title)
+			}
+		}
+		setElementSectionPathMetadata(annotated[i].Metadata, path)
+		if len(scopePath) > 0 {
+			annotated[i].Metadata[sectionScopeMetadataKey] = scopePath
+		}
+	}
+	return annotated
+}
+
+func elementSectionHeadingLevel(element dto.ExtractElement) (int, bool) {
+	elementType := strings.ToLower(strings.TrimSpace(element.Type))
+	subtype := strings.ToLower(strings.TrimSpace(element.Subtype))
+	markdownLevel := markdownHeadingLevel(element.Content)
+	subtypeLevel := headingLevelFromSubtype(subtype)
+	isHeading := elementType == "heading" || elementType == "title" || markdownLevel > 0 ||
+		subtypeLevel > 0 || subtype == "title" || subtype == "section_header"
+	if !isHeading {
+		return 0, false
+	}
+	if elementType == "title" || subtype == "title" {
+		return 0, true
+	}
+
+	if subtypeLevel > 0 {
+		return subtypeLevel, true
+	}
+	for _, key := range []string{"heading_level", "text_level", "mineru_text_level"} {
+		if level := positiveInt(element.Metadata[key]); level > 0 {
+			return level, true
+		}
+	}
+	if payload, ok := element.Metadata["payload"].(map[string]any); ok {
+		for _, key := range []string{"heading_level", "text_level", "mineru_text_level"} {
+			if level := positiveInt(payload[key]); level > 0 {
+				return level, true
+			}
+		}
+	}
+	if markdownLevel > 0 {
+		return markdownLevel, true
+	}
+	return 2, true
+}
+
+func headingLevelFromSubtype(subtype string) int {
+	if len(subtype) < 2 || subtype[0] != 'h' {
+		return 0
+	}
+	level, err := strconv.Atoi(subtype[1:])
+	if err != nil || level < 1 || level > 6 {
+		return 0
+	}
+	return level
+}
+
+func markdownHeadingLevel(content string) int {
+	line := strings.TrimSpace(strings.SplitN(content, "\n", 2)[0])
+	level := 0
+	for level < len(line) && level < 6 && line[level] == '#' {
+		level++
+	}
+	if level == 0 || len(line) <= level || (line[level] != ' ' && line[level] != '\t') {
+		return 0
+	}
+	return level
+}
+
+func positiveInt(value any) int {
+	switch typed := value.(type) {
+	case int:
+		if typed > 0 {
+			return typed
+		}
+	case int32:
+		if typed > 0 {
+			return int(typed)
+		}
+	case int64:
+		if typed > 0 {
+			return int(typed)
+		}
+	case float32:
+		if typed > 0 {
+			return int(typed)
+		}
+	case float64:
+		if typed > 0 {
+			return int(typed)
+		}
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
+		if err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return 0
+}
+
+func elementSectionHeadingTitle(element dto.ExtractElement) string {
+	title := strings.TrimSpace(elementSearchText(element))
+	if title == "" {
+		return ""
+	}
+	title = strings.TrimSpace(strings.SplitN(title, "\n", 2)[0])
+	if level := markdownHeadingLevel(title); level > 0 {
+		title = strings.TrimSpace(title[level:])
+	}
+	return title
+}
+
+func setElementSectionPathMetadata(metadata map[string]any, path []string) {
+	deleteSectionPathMetadata(metadata)
+	if len(path) == 0 {
+		return
+	}
+	metadata[sectionPathMetadataKey] = append([]string(nil), path...)
+	metadata[sectionDepthMetadataKey] = len(path)
+	metadata[sectionPathTextMetadataKey] = strings.Join(path, " > ")
+}
+
+func deleteSectionPathMetadata(metadata map[string]any) {
+	delete(metadata, sectionPathMetadataKey)
+	delete(metadata, sectionDepthMetadataKey)
+	delete(metadata, sectionPathTextMetadataKey)
+	delete(metadata, sectionScopeMetadataKey)
+}
+
 func mergeSmallTrailingElementGroup(groups [][]dto.ExtractElement, minChars, maxChars int) [][]dto.ExtractElement {
 	if len(groups) < 2 {
 		return groups
@@ -646,7 +819,9 @@ func (p *ParentChildIndexProcessor) buildElementGroupChildren(elements []dto.Ext
 		if len(textGroup) == 0 {
 			return
 		}
-		children = append(children, buildTextElementChildren(textGroup, params)...)
+		path := elementSectionPath(textGroup[0])
+		textChildren := buildTextElementChildren(textGroup, elementGroupParamsWithSectionPrefix(params, path))
+		children = append(children, prependSectionPathToChildren(textChildren, path)...)
 		textGroup = textGroup[:0]
 	}
 
@@ -656,17 +831,130 @@ func (p *ParentChildIndexProcessor) buildElementGroupChildren(elements []dto.Ext
 		case "image", "formula":
 			flushText()
 			if child, ok := buildAtomicElementChild(element, kind); ok {
-				children = append(children, child)
+				children = append(children, prependSectionPathToChild(child, elementSectionPath(element)))
 			}
 		case "table":
 			flushText()
-			children = append(children, buildTableElementChildren(element, params)...)
+			path := elementSectionPath(element)
+			tableChildren := buildTableElementChildren(element, elementGroupParamsWithSectionPrefix(params, path))
+			children = append(children, prependSectionPathToChildren(tableChildren, path)...)
 		default:
+			if len(textGroup) > 0 && !sameSectionPath(elementSectionScopePath(textGroup[0]), elementSectionScopePath(element)) {
+				flushText()
+			}
 			textGroup = append(textGroup, element)
 		}
 	}
 	flushText()
 	return children
+}
+
+func elementSectionPath(element dto.ExtractElement) []string {
+	if len(element.Metadata) == 0 {
+		return nil
+	}
+	switch path := element.Metadata[sectionPathMetadataKey].(type) {
+	case []string:
+		return append([]string(nil), path...)
+	case []any:
+		result := make([]string, 0, len(path))
+		for _, item := range path {
+			if title := strings.TrimSpace(fmt.Sprint(item)); title != "" {
+				result = append(result, title)
+			}
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+func elementSectionScopePath(element dto.ExtractElement) []string {
+	if len(element.Metadata) == 0 {
+		return nil
+	}
+	switch path := element.Metadata[sectionScopeMetadataKey].(type) {
+	case []string:
+		return append([]string(nil), path...)
+	case []any:
+		result := make([]string, 0, len(path))
+		for _, item := range path {
+			if title := strings.TrimSpace(fmt.Sprint(item)); title != "" {
+				result = append(result, title)
+			}
+		}
+		return result
+	default:
+		return elementSectionPath(element)
+	}
+}
+
+func sameSectionPath(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func sectionPathPrefix(path []string) string {
+	if len(path) == 0 {
+		return ""
+	}
+	return strings.Join(path, " > ") + "\n\n"
+}
+
+func elementGroupParamsWithSectionPrefix(params elementGroupParams, path []string) elementGroupParams {
+	prefixRunes := len([]rune(sectionPathPrefix(path)))
+	if prefixRunes == 0 {
+		return params
+	}
+	params.ChildMinChars = sectionBodyBudget(params.ChildMinChars, prefixRunes)
+	params.ChildTargetChars = sectionBodyBudget(params.ChildTargetChars, prefixRunes)
+	params.ChildMaxChars = sectionBodyBudget(params.ChildMaxChars, prefixRunes)
+	params.TableMaxChars = sectionBodyBudget(params.TableMaxChars, prefixRunes)
+	return params
+}
+
+func sectionBodyBudget(limit, prefixRunes int) int {
+	if limit <= 0 {
+		return limit
+	}
+	remaining := limit - prefixRunes
+	if remaining < 1 {
+		return 1
+	}
+	return remaining
+}
+
+func prependSectionPathToChildren(children []dto.TransformedChildChunk, path []string) []dto.TransformedChildChunk {
+	for i := range children {
+		children[i] = prependSectionPathToChild(children[i], path)
+	}
+	return children
+}
+
+func prependSectionPathToChild(child dto.TransformedChildChunk, path []string) dto.TransformedChildChunk {
+	if child.Metadata != nil {
+		delete(child.Metadata, sectionScopeMetadataKey)
+	}
+	prefix := sectionPathPrefix(path)
+	if prefix == "" {
+		return child
+	}
+	content := strings.TrimSpace(child.Content)
+	if !strings.HasPrefix(content, prefix) {
+		child.Content = prefix + content
+	}
+	if child.Metadata == nil {
+		child.Metadata = map[string]any{}
+	}
+	setElementSectionPathMetadata(child.Metadata, path)
+	return child
 }
 
 func buildTextElementChildren(elements []dto.ExtractElement, params elementGroupParams) []dto.TransformedChildChunk {

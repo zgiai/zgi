@@ -2,6 +2,7 @@ package indexing
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -96,6 +97,254 @@ func TestParentChildElementGroupBuildsSizedParentGroups(t *testing.T) {
 	}
 	if len(got[0].Children) == 0 || got[0].Children[0].Metadata["child_kind"] != "text" {
 		t.Fatalf("children = %#v", got[0].Children)
+	}
+}
+
+func TestParentChildElementGroupPrependsHierarchicalSectionPathToChildren(t *testing.T) {
+	processor := &ParentChildIndexProcessor{
+		BaseIndexProcessorImpl: NewBaseIndexProcessorImpl(nil, nil, nil, ""),
+	}
+	output := &dto.ExtractOutput{
+		Metadata: map[string]any{"structured_elements": true},
+		Elements: []dto.ExtractElement{
+			{Type: "heading", Subtype: "h1", Content: "医院服务", Ordinal: 0},
+			{Type: "text", Content: "服务总览", Ordinal: 1},
+			{Type: "heading", Subtype: "h2", Content: "门诊服务", Ordinal: 2},
+			{Type: "text", Content: "门诊说明", Ordinal: 3},
+			{Type: "heading", Subtype: "h3", Content: "微信挂号", Ordinal: 4},
+			{Type: "text", Content: "通过微信公众号完成挂号", Ordinal: 5},
+			{Type: "heading", Subtype: "h2", Content: "住院服务", Ordinal: 6},
+			{Type: "text", Content: "办理入院手续", Ordinal: 7},
+		},
+	}
+	options := &ProcessOptions{ProcessRule: map[string]interface{}{
+		"parent_mode":         "element_group",
+		"parent_min_chars":    10,
+		"parent_target_chars": 500,
+		"parent_max_chars":    1000,
+		"child_min_chars":     10,
+		"child_target_chars":  300,
+		"child_max_chars":     500,
+		"child_overlap_chars": 0,
+	}}
+
+	got, err := processor.Transform(context.Background(), output, options)
+	if err != nil {
+		t.Fatalf("Transform returned error: %v", err)
+	}
+	if len(got) != 1 || len(got[0].Children) != 4 {
+		t.Fatalf("got = %#v, want one parent with four section children", got)
+	}
+	wantPaths := [][]string{
+		{"医院服务"},
+		{"医院服务", "门诊服务"},
+		{"医院服务", "门诊服务", "微信挂号"},
+		{"医院服务", "住院服务"},
+	}
+	for i, child := range got[0].Children {
+		path, ok := child.Metadata[sectionPathMetadataKey].([]string)
+		if !ok || !reflect.DeepEqual(path, wantPaths[i]) {
+			t.Fatalf("child %d path = %#v, want %#v", i, child.Metadata[sectionPathMetadataKey], wantPaths[i])
+		}
+		prefix := strings.Join(wantPaths[i], " > ") + "\n\n"
+		if !strings.HasPrefix(child.Content, prefix) {
+			t.Fatalf("child %d content = %q, want prefix %q", i, child.Content, prefix)
+		}
+	}
+	if !strings.Contains(got[0].Children[2].Content, "通过微信公众号完成挂号") {
+		t.Fatalf("nested section content = %q", got[0].Children[2].Content)
+	}
+	if !strings.Contains(got[0].Children[3].Content, "办理入院手续") {
+		t.Fatalf("sibling section content = %q", got[0].Children[3].Content)
+	}
+}
+
+func TestParentChildElementGroupPreservesSectionPathAcrossParentGroups(t *testing.T) {
+	processor := &ParentChildIndexProcessor{
+		BaseIndexProcessorImpl: NewBaseIndexProcessorImpl(nil, nil, nil, ""),
+	}
+	body := strings.Repeat("正文", 10)
+	output := &dto.ExtractOutput{
+		Metadata: map[string]any{"structured_elements": true},
+		Elements: []dto.ExtractElement{
+			{Type: "heading", Subtype: "h1", Content: "根目录", Ordinal: 0},
+			{Type: "text", Content: body, Ordinal: 1},
+		},
+	}
+	options := &ProcessOptions{ProcessRule: map[string]interface{}{
+		"parent_mode":         "element_group",
+		"parent_min_chars":    1,
+		"parent_target_chars": 4,
+		"parent_max_chars":    5,
+		"child_min_chars":     5,
+		"child_target_chars":  80,
+		"child_max_chars":     100,
+		"child_overlap_chars": 0,
+	}}
+
+	got, err := processor.Transform(context.Background(), output, options)
+	if err != nil {
+		t.Fatalf("Transform returned error: %v", err)
+	}
+	if len(got) != 2 || len(got[1].Children) != 1 {
+		t.Fatalf("got = %#v, want body in a separate parent group", got)
+	}
+	child := got[1].Children[0]
+	if !strings.HasPrefix(child.Content, "根目录\n\n") || !strings.Contains(child.Content, body) {
+		t.Fatalf("child content = %q, want inherited root path", child.Content)
+	}
+	if path, _ := child.Metadata[sectionPathMetadataKey].([]string); !reflect.DeepEqual(path, []string{"根目录"}) {
+		t.Fatalf("section path = %#v", child.Metadata[sectionPathMetadataKey])
+	}
+}
+
+func TestAnnotateElementSectionPathsUsesProviderHeadingMetadata(t *testing.T) {
+	elements := []dto.ExtractElement{
+		{Type: "heading", Subtype: "title", Content: "文档标题", Ordinal: 0},
+		{Type: "heading", Subtype: "section_header", Content: "一级栏目", Ordinal: 1},
+		{Type: "heading", Content: "详细栏目", Ordinal: 2, Metadata: map[string]any{
+			"payload": map[string]any{"mineru_text_level": float64(3)},
+		}},
+		{Type: "text", Content: "正文", Ordinal: 3},
+	}
+
+	annotated := annotateElementSectionPaths(elements)
+	path, _ := annotated[3].Metadata[sectionPathMetadataKey].([]string)
+	want := []string{"文档标题", "一级栏目", "详细栏目"}
+	if !reflect.DeepEqual(path, want) {
+		t.Fatalf("path = %#v, want %#v", path, want)
+	}
+	if len(elements[3].Metadata) != 0 {
+		t.Fatalf("source elements were mutated: %#v", elements[3].Metadata)
+	}
+}
+
+func TestElementSectionPathIncludesTitleThroughH4AndExcludesDeeperHeadings(t *testing.T) {
+	elements := []dto.ExtractElement{
+		{Type: "heading", Subtype: "title", Content: "文档标题", Ordinal: 0},
+		{Type: "heading", Subtype: "h1", Content: "一级", Ordinal: 1},
+		{Type: "heading", Subtype: "h2", Content: "二级", Ordinal: 2},
+		{Type: "heading", Subtype: "h3", Content: "三级", Ordinal: 3},
+		{Type: "heading", Subtype: "h4", Content: "四级", Ordinal: 4},
+		{Type: "heading", Subtype: "h5", Content: "五级甲", Ordinal: 5},
+		{Type: "text", Content: "甲正文", Ordinal: 6},
+		{Type: "heading", Subtype: "h5", Content: "五级乙", Ordinal: 7},
+		{Type: "text", Content: "乙正文", Ordinal: 8},
+	}
+
+	annotated := annotateElementSectionPaths(elements)
+	wantVisible := []string{"文档标题", "一级", "二级", "三级", "四级"}
+	for _, index := range []int{6, 8} {
+		path, _ := annotated[index].Metadata[sectionPathMetadataKey].([]string)
+		if !reflect.DeepEqual(path, wantVisible) {
+			t.Fatalf("element %d visible path = %#v, want %#v", index, path, wantVisible)
+		}
+	}
+	firstScope, _ := annotated[6].Metadata[sectionScopeMetadataKey].([]string)
+	secondScope, _ := annotated[8].Metadata[sectionScopeMetadataKey].([]string)
+	if reflect.DeepEqual(firstScope, secondScope) || firstScope[len(firstScope)-1] != "五级甲" || secondScope[len(secondScope)-1] != "五级乙" {
+		t.Fatalf("full scopes = %#v / %#v, want distinct H5 boundaries", firstScope, secondScope)
+	}
+
+	processor := &ParentChildIndexProcessor{}
+	children := processor.buildElementGroupChildren(annotated[5:], elementGroupParams{
+		ChildMinChars:     5,
+		ChildTargetChars:  100,
+		ChildMaxChars:     200,
+		ChildOverlapChars: 0,
+		TableMaxChars:     200,
+	})
+	if len(children) != 2 {
+		t.Fatalf("children = %#v, want separate children for the two H5 scopes", children)
+	}
+	wantPrefix := "文档标题 > 一级 > 二级 > 三级 > 四级\n\n"
+	for i, child := range children {
+		if !strings.HasPrefix(child.Content, wantPrefix) || strings.Contains(child.Content, "章节路径：") {
+			t.Fatalf("child %d content = %q", i, child.Content)
+		}
+		if directoryLine := strings.SplitN(child.Content, "\n", 2)[0]; directoryLine != strings.Join(wantVisible, " > ") {
+			t.Fatalf("child %d directory = %q, want title through H4", i, directoryLine)
+		}
+		if _, exists := child.Metadata[sectionScopeMetadataKey]; exists {
+			t.Fatalf("child %d leaked internal section scope: %#v", i, child.Metadata)
+		}
+	}
+}
+
+func TestParentChildElementGroupPrependsSectionPathToAtomicAndTableChildren(t *testing.T) {
+	processor := &ParentChildIndexProcessor{
+		BaseIndexProcessorImpl: NewBaseIndexProcessorImpl(nil, nil, nil, ""),
+	}
+	output := &dto.ExtractOutput{
+		Metadata: map[string]any{"structured_elements": true},
+		Elements: []dto.ExtractElement{
+			{Type: "heading", Subtype: "h1", Content: "检查指南", Ordinal: 0},
+			{Type: "image", Content: "检查流程图", Ordinal: 1},
+			{Type: "table", Content: "| 项目 | 地点 |\n| --- | --- |\n| CT | 一楼 |", Ordinal: 2},
+		},
+	}
+	options := &ProcessOptions{ProcessRule: map[string]interface{}{
+		"parent_mode":           "element_group",
+		"parent_min_chars":      10,
+		"parent_target_chars":   300,
+		"parent_max_chars":      500,
+		"child_min_chars":       5,
+		"child_target_chars":    80,
+		"child_max_chars":       120,
+		"child_overlap_chars":   0,
+		"table_child_max_chars": 120,
+	}}
+
+	got, err := processor.Transform(context.Background(), output, options)
+	if err != nil {
+		t.Fatalf("Transform returned error: %v", err)
+	}
+	if len(got) != 1 || len(got[0].Children) != 3 {
+		t.Fatalf("got = %#v, want heading, image, and table children", got)
+	}
+	for i, child := range got[0].Children {
+		if !strings.HasPrefix(child.Content, "检查指南\n\n") {
+			t.Fatalf("child %d content = %q", i, child.Content)
+		}
+	}
+	if got[0].Children[1].Metadata["child_kind"] != "image" || got[0].Children[2].Metadata["child_kind"] != "table" {
+		t.Fatalf("children = %#v", got[0].Children)
+	}
+}
+
+func TestParentChildElementGroupSectionPrefixCountsTowardChildLimit(t *testing.T) {
+	processor := &ParentChildIndexProcessor{
+		BaseIndexProcessorImpl: NewBaseIndexProcessorImpl(nil, nil, nil, ""),
+	}
+	output := &dto.ExtractOutput{
+		Metadata: map[string]any{"structured_elements": true},
+		Elements: []dto.ExtractElement{
+			{Type: "heading", Subtype: "h1", Content: "门诊服务", Ordinal: 0},
+			{Type: "text", Content: strings.Repeat("挂号缴费检查。", 20), Ordinal: 1},
+		},
+	}
+	options := &ProcessOptions{ProcessRule: map[string]interface{}{
+		"parent_mode":         "element_group",
+		"parent_min_chars":    10,
+		"parent_target_chars": 500,
+		"parent_max_chars":    1000,
+		"child_min_chars":     20,
+		"child_target_chars":  50,
+		"child_max_chars":     60,
+		"child_overlap_chars": 5,
+	}}
+
+	got, err := processor.Transform(context.Background(), output, options)
+	if err != nil {
+		t.Fatalf("Transform returned error: %v", err)
+	}
+	if len(got) != 1 || len(got[0].Children) < 2 {
+		t.Fatalf("got = %#v, want multiple child chunks", got)
+	}
+	for i, child := range got[0].Children {
+		if runes := len([]rune(child.Content)); runes > 60 {
+			t.Fatalf("child %d length = %d, want <= 60: %q", i, runes, child.Content)
+		}
 	}
 }
 
