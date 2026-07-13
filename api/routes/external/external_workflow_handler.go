@@ -1153,7 +1153,9 @@ func (h *ExternalWorkflowHandler) validateAndProcessFileVariables(ctx context.Co
 							"file_id", fileIDStr,
 						)
 					} else {
-						processedVars, err := h.contentExtractor.ProcessFileVariable(ctx, key, fileData, tenantID)
+						processedVars, err := h.contentExtractor.ProcessFileVariable(ctx, key, fileData, workflow_file.ContentExtractionScope{
+							OrganizationID: tenantID,
+						})
 						if err != nil {
 							logger.Warn("External API - File content extraction failed",
 								"variable_name", key,
@@ -1213,7 +1215,9 @@ func (h *ExternalWorkflowHandler) validateAndProcessFileVariables(ctx context.Co
 			}
 
 			if hasFileObjects && h.contentExtractor != nil {
-				processedVars, err := h.contentExtractor.ProcessFileListVariable(ctx, key, fileList, tenantID)
+				processedVars, err := h.contentExtractor.ProcessFileListVariable(ctx, key, fileList, workflow_file.ContentExtractionScope{
+					OrganizationID: tenantID,
+				})
 				if err != nil {
 					logger.Warn("External API - File list content extraction failed",
 						"variable_name", key,

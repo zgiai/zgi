@@ -175,6 +175,7 @@ func TestConsoleFilesReadFileSupportsDocumentFormats(t *testing.T) {
 	ctx := context.Background()
 	organizationID := uuid.NewString()
 	accountID := uuid.NewString()
+	workspaceID := uuid.NewString()
 	cases := []struct {
 		id        string
 		name      string
@@ -211,6 +212,7 @@ func TestConsoleFilesReadFileSupportsDocumentFormats(t *testing.T) {
 		fileService.files[tc.id] = &dto.UploadFile{
 			ID:             tc.id,
 			OrganizationID: organizationID,
+			WorkspaceID:    &workspaceID,
 			Name:           tc.name,
 			Extension:      tc.extension,
 			MimeType:       tc.mimeType,
@@ -236,6 +238,7 @@ func TestConsoleFilesReadFileSupportsDocumentFormats(t *testing.T) {
 		InvokeFrom: tools.ToolInvokeFromAIChat,
 		RuntimeParameters: map[string]interface{}{
 			"organization_id":             organizationID,
+			"workspace_id":                workspaceID,
 			"console_files_visible_files": visibleFiles,
 		},
 	}
@@ -295,14 +298,14 @@ func TestConsoleFilesReadFileSupportsDocumentFormats(t *testing.T) {
 		if file["extension"] != tc.extension || file["mime_type"] != tc.mimeType {
 			t.Fatalf("read %s file payload = %#v, want extension %s and mime %s", tc.id, file, tc.extension, tc.mimeType)
 		}
-		if len(extractor.requestedIDs) <= idx || len(extractor.tenantIDs) <= idx {
-			t.Fatalf("extractor calls = %d ids and %d tenants, want at least %d", len(extractor.requestedIDs), len(extractor.tenantIDs), idx+1)
+		if len(extractor.requestedIDs) <= idx || len(extractor.scopes) <= idx {
+			t.Fatalf("extractor calls = %d ids and %d scopes, want at least %d", len(extractor.requestedIDs), len(extractor.scopes), idx+1)
 		}
 		if gotIDs := extractor.requestedIDs[idx]; len(gotIDs) != 1 || gotIDs[0] != tc.id {
 			t.Fatalf("extractor request %d = %#v, want [%s]", idx, gotIDs, tc.id)
 		}
-		if gotTenant := extractor.tenantIDs[idx]; gotTenant != organizationID {
-			t.Fatalf("extractor tenant %d = %q, want %q", idx, gotTenant, organizationID)
+		if gotScope := extractor.scopes[idx]; gotScope.OrganizationID != organizationID || gotScope.WorkspaceID != workspaceID {
+			t.Fatalf("extractor scope %d = %#v, want organization %q and workspace %q", idx, gotScope, organizationID, workspaceID)
 		}
 	}
 }
@@ -1113,12 +1116,12 @@ func (s *fakeToolFileStore) GetFileBinary(_ context.Context, toolFileID string) 
 type fakeContentExtractor struct {
 	contents     map[string]*workflowfile.FileContent
 	requestedIDs [][]string
-	tenantIDs    []string
+	scopes       []workflowfile.ContentExtractionScope
 }
 
-func (e *fakeContentExtractor) ExtractMultipleFiles(_ context.Context, fileIDs []string, tenantID string) ([]*workflowfile.FileContent, error) {
+func (e *fakeContentExtractor) ExtractMultipleFiles(_ context.Context, fileIDs []string, scope workflowfile.ContentExtractionScope) ([]*workflowfile.FileContent, error) {
 	e.requestedIDs = append(e.requestedIDs, append([]string(nil), fileIDs...))
-	e.tenantIDs = append(e.tenantIDs, tenantID)
+	e.scopes = append(e.scopes, scope)
 	out := make([]*workflowfile.FileContent, 0, len(fileIDs))
 	for _, fileID := range fileIDs {
 		out = append(out, e.contents[fileID])

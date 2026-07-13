@@ -47,7 +47,7 @@ type FileLookupService interface {
 }
 
 type ContentExtractionService interface {
-	ExtractMultipleFiles(ctx context.Context, fileIDs []string, tenantID string) ([]*workflowfile.FileContent, error)
+	ExtractMultipleFiles(ctx context.Context, fileIDs []string, scope workflowfile.ContentExtractionScope) ([]*workflowfile.FileContent, error)
 }
 
 type WorkspacePermissionService interface {
@@ -150,7 +150,14 @@ func (s *service) extractPreparedAttachments(ctx context.Context, prepared *Prep
 }
 
 func (s *service) extractSingleAttachment(ctx context.Context, scope Scope, fileID string) (*workflowfile.FileContent, error) {
-	contents, err := s.contentExtractor.ExtractMultipleFiles(ctx, []string{fileID}, scope.OrganizationID.String())
+	workspaceID := ""
+	if scope.WorkspaceID != nil {
+		workspaceID = scope.WorkspaceID.String()
+	}
+	contents, err := s.contentExtractor.ExtractMultipleFiles(ctx, []string{fileID}, workflowfile.ContentExtractionScope{
+		OrganizationID: scope.OrganizationID.String(),
+		WorkspaceID:    workspaceID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to extract file content: %w", ErrInvalidInput, err)
 	}

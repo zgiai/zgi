@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	appconfig "github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/dto"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -59,14 +60,14 @@ func (s *contentParseFileServiceStub) UpdateContentText(_ context.Context, fileI
 	return nil
 }
 
-func TestContentExtractorUsesRoutedContentParse(t *testing.T) {
+func TestContentExtractorUsesWorkflowScopeForTemporaryUpload(t *testing.T) {
 	organizationID := "11111111-1111-1111-1111-111111111111"
 	workspaceID := "22222222-2222-2222-2222-222222222222"
 	fileService := &contentParseFileServiceStub{
 		file: &dto.UploadFile{
 			ID:             "file-1",
-			TenantID:       organizationID,
-			OrganizationID: organizationID,
+			TenantID:       appconfig.TempFileTenantID,
+			OrganizationID: appconfig.TempFileTenantID,
 			Name:           "report.pdf",
 			Extension:      "pdf",
 			MimeType:       "application/pdf",
@@ -89,7 +90,10 @@ func TestContentExtractorUsesRoutedContentParse(t *testing.T) {
 		WithContentParseService(parser),
 	)
 
-	content, err := extractor.ExtractFileContent(context.Background(), "file-1", workspaceID)
+	content, err := extractor.ExtractFileContent(context.Background(), "file-1", ContentExtractionScope{
+		OrganizationID: organizationID,
+		WorkspaceID:    workspaceID,
+	})
 	if err != nil {
 		t.Fatalf("ExtractFileContent() error = %v", err)
 	}
@@ -113,7 +117,7 @@ func TestContentExtractorUsesRoutedContentParse(t *testing.T) {
 	}
 }
 
-func TestContentExtractorUsesLegacyWorkflowWorkspaceFallback(t *testing.T) {
+func TestContentExtractorFallsBackToUploadOrganizationWhenScopeIsPartial(t *testing.T) {
 	organizationID := "44444444-4444-4444-4444-444444444444"
 	workspaceID := "55555555-5555-5555-5555-555555555555"
 	fileService := &contentParseFileServiceStub{
@@ -140,7 +144,9 @@ func TestContentExtractorUsesLegacyWorkflowWorkspaceFallback(t *testing.T) {
 		WithContentParseService(parser),
 	)
 
-	if _, err := extractor.ExtractFileContent(context.Background(), "file-legacy-scope", workspaceID); err != nil {
+	if _, err := extractor.ExtractFileContent(context.Background(), "file-legacy-scope", ContentExtractionScope{
+		WorkspaceID: workspaceID,
+	}); err != nil {
 		t.Fatalf("ExtractFileContent() error = %v", err)
 	}
 	if parser.req.Metadata["organization_id"] != organizationID {
@@ -168,7 +174,9 @@ func TestContentExtractorKeepsCachedContentFastPath(t *testing.T) {
 		WithContentParseService(parser),
 	)
 
-	content, err := extractor.ExtractFileContent(context.Background(), "file-2", "11111111-1111-1111-1111-111111111111")
+	content, err := extractor.ExtractFileContent(context.Background(), "file-2", ContentExtractionScope{
+		OrganizationID: "11111111-1111-1111-1111-111111111111",
+	})
 	if err != nil {
 		t.Fatalf("ExtractFileContent() error = %v", err)
 	}

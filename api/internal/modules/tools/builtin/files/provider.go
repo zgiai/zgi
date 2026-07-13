@@ -61,7 +61,7 @@ type FileListService interface {
 }
 
 type ContentExtractionService interface {
-	ExtractMultipleFiles(ctx context.Context, fileIDs []string, tenantID string) ([]*workflowfile.FileContent, error)
+	ExtractMultipleFiles(ctx context.Context, fileIDs []string, scope workflowfile.ContentExtractionScope) ([]*workflowfile.FileContent, error)
 }
 
 type WorkspacePermissionService interface {
@@ -1314,7 +1314,10 @@ func ensureScopedFilePermission(ctx context.Context, scope fileScope, file *dto.
 
 func (t *readFileTool) readContent(ctx context.Context, scope fileScope, fileID string) readFileContent {
 	if t.contentExtractor != nil {
-		contents, err := t.contentExtractor.ExtractMultipleFiles(ctx, []string{fileID}, scope.OrganizationID)
+		contents, err := t.contentExtractor.ExtractMultipleFiles(ctx, []string{fileID}, workflowfile.ContentExtractionScope{
+			OrganizationID: scope.OrganizationID,
+			WorkspaceID:    scope.WorkspaceID,
+		})
 		if err != nil {
 			return readFileContent{Error: fmt.Errorf("failed to extract file content: %w", err)}
 		}
