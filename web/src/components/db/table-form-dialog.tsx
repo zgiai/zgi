@@ -124,7 +124,7 @@ export function DbTableFormDialog({
               id="db-table-name"
               value={name}
               onChange={e => setName(e.target.value)}
-              maxLength={isEdit ? undefined : 25}
+              maxLength={isEdit ? undefined : 63}
               aria-invalid={tableNameErrors.length > 0}
             />
             {tableNameErrors.length > 0 && (

@@ -96,7 +96,7 @@ const messages: DbsMessages = {
   tableModal: {
     createTitle: '新建表',
     editTitle: '编辑表',
-    nameLimitHint: '{count}/25 个字符',
+    nameLimitHint: '{count}/63 个字符',
   },
   columns: {
     previewTitle: '表结构预览',

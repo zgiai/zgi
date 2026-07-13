@@ -104,7 +104,7 @@ const messages = {
   tableModal: {
     createTitle: 'Create Table',
     editTitle: 'Edit Table',
-    nameLimitHint: '{count}/25 characters',
+    nameLimitHint: '{count}/63 characters',
   },
 
   // Table columns UI
