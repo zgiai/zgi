@@ -13,8 +13,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/dto"
+	workflow_file "github.com/zgiai/zgi/api/internal/modules/app/workflow/file"
 	filemodel "github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/middleware"
 )
 
@@ -105,6 +107,50 @@ func TestExternalValidateAndProcessFileVariablesAllowsCurrentAPIKeyFilesWithoutE
 	}
 	if _, exists := inputs["documents_content"]; exists {
 		t.Fatalf("documents_content should not be added when content extractor is unavailable: %#v", inputs)
+	}
+}
+
+func TestExternalValidateAndProcessFileVariablesUsesCanonicalContentExtractionScope(t *testing.T) {
+	extractor := &externalScopeContentExtractor{}
+	organizationService := &externalScopeOrganizationService{
+		organization: &workspacemodel.Organization{ID: "organization-1"},
+	}
+	handler := newExternalFileAccessHandler(map[string]*dto.UploadFile{
+		"file-1": externalTemporaryFile("file-1", "api-key-1"),
+		"file-2": externalTemporaryFile("file-2", "api-key-1"),
+	})
+	handler.contentExtractor = extractor
+	handler.enterpriseService = organizationService
+	inputs := map[string]interface{}{
+		"document": map[string]interface{}{
+			"upload_file_id": "file-1",
+		},
+		"documents": []interface{}{
+			map[string]interface{}{"upload_file_id": "file-1"},
+			map[string]interface{}{"upload_file_id": "file-2"},
+		},
+	}
+
+	err := handler.validateAndProcessFileVariables(context.Background(), inputs, "workspace-1", "api-key-1")
+	if err != nil {
+		t.Fatalf("validateAndProcessFileVariables returned error: %v", err)
+	}
+	if organizationService.workspaceID != "workspace-1" {
+		t.Fatalf("organization lookup workspace ID = %q, want workspace-1", organizationService.workspaceID)
+	}
+	if organizationService.calls != 1 {
+		t.Fatalf("organization lookup calls = %d, want 1", organizationService.calls)
+	}
+
+	wantScope := workflow_file.ContentExtractionScope{
+		OrganizationID: "organization-1",
+		WorkspaceID:    "workspace-1",
+	}
+	if extractor.singleScope != wantScope {
+		t.Fatalf("single file extraction scope = %#v, want %#v", extractor.singleScope, wantScope)
+	}
+	if extractor.listScope != wantScope {
+		t.Fatalf("file list extraction scope = %#v, want %#v", extractor.listScope, wantScope)
 	}
 }
 
@@ -280,6 +326,42 @@ func externalTemporaryFile(id string, createdBy string) *dto.UploadFile {
 
 type externalFileAccessService struct {
 	files map[string]*dto.UploadFile
+}
+
+type externalScopeContentExtractor struct {
+	workflow_file.ContentExtractor
+	singleScope workflow_file.ContentExtractionScope
+	listScope   workflow_file.ContentExtractionScope
+}
+
+func (e *externalScopeContentExtractor) ProcessFileVariable(_ context.Context, variableName string, fileData map[string]interface{}, scope workflow_file.ContentExtractionScope) (map[string]interface{}, error) {
+	e.singleScope = scope
+	return map[string]interface{}{
+		variableName:              fileData,
+		variableName + "_content": "single content",
+	}, nil
+}
+
+func (e *externalScopeContentExtractor) ProcessFileListVariable(_ context.Context, variableName string, fileList []interface{}, scope workflow_file.ContentExtractionScope) (map[string]interface{}, error) {
+	e.listScope = scope
+	return map[string]interface{}{
+		variableName:              fileList,
+		variableName + "_content": "list content",
+	}, nil
+}
+
+type externalScopeOrganizationService struct {
+	interfaces.OrganizationService
+	organization *workspacemodel.Organization
+	err          error
+	workspaceID  string
+	calls        int
+}
+
+func (s *externalScopeOrganizationService) GetOrganizationByWorkspaceID(_ context.Context, workspaceID string) (*workspacemodel.Organization, error) {
+	s.calls++
+	s.workspaceID = workspaceID
+	return s.organization, s.err
 }
 
 func (s *externalFileAccessService) GetUploadConfig() *interfaces.FileUploadConfigResponse {
