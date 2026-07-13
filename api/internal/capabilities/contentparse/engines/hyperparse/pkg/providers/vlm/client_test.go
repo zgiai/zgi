@@ -1,6 +1,12 @@
 package vlm
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+
+	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+)
 
 func TestToDocumentResult_Shape(t *testing.T) {
 	batches := []*batchResult{
@@ -64,6 +70,53 @@ func TestImageFilenameAndMIME(t *testing.T) {
 				t.Fatalf("imageMIME(%q)=%q want=%q", tc.filename, got, tc.mime)
 			}
 		})
+	}
+}
+
+func TestParseBytesUsesImageUnderstandingPromptAndConsolidatesOutput(t *testing.T) {
+	var captured ChatCompletionRequest
+	client := NewWithChatCompletion("vision-model", "", func(ctx context.Context, req ChatCompletionRequest) (*ChatCompletionResponse, error) {
+		captured = req
+		return &ChatCompletionResponse{
+			Content: `{"chunks":[{"type":"heading","page":0,"text":"医院楼层导览","markdown":"# 医院楼层导览"},{"type":"text","page":0,"text":"8F 儿科一病区","markdown":"## 8F\n\n- 儿科一病区"}]}`,
+			Model:   "vision-model",
+		}, nil
+	})
+
+	doc, err := client.ParseBytes(context.Background(), "directory.jpg", []byte("image-bytes"), extractcommon.ParseOptions{})
+	if err != nil {
+		t.Fatalf("ParseBytes() error = %v", err)
+	}
+	if len(captured.UserContent) < 2 {
+		t.Fatalf("user content = %#v, want prompt and image", captured.UserContent)
+	}
+	prompt, _ := captured.UserContent[0]["text"].(string)
+	for _, required := range []string{"ONE coherent", "Preserve the source language exactly", "Flowchart or process diagram", "exactly ONE chunk"} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("image prompt missing %q", required)
+		}
+	}
+	if len(doc.Chunks) != 1 {
+		t.Fatalf("chunks = %d, want one consolidated image document", len(doc.Chunks))
+	}
+	chunk := doc.Chunks[0]
+	if chunk.Type != "text" || !strings.Contains(chunk.Markdown, "# 医院楼层导览") || !strings.Contains(chunk.Markdown, "儿科一病区") {
+		t.Fatalf("consolidated chunk = %#v", chunk)
+	}
+	if chunk.BBox == nil || chunk.BBox.Left != 0 || chunk.BBox.Top != 0 || chunk.BBox.Right != 1 || chunk.BBox.Bottom != 1 {
+		t.Fatalf("consolidated bbox = %#v, want full image", chunk.BBox)
+	}
+}
+
+func TestParseBytesRejectsNonImageInput(t *testing.T) {
+	client := NewWithChatCompletion("vision-model", "", func(ctx context.Context, req ChatCompletionRequest) (*ChatCompletionResponse, error) {
+		t.Fatal("vision model must not be called for non-image input")
+		return nil, nil
+	})
+
+	_, err := client.ParseBytes(context.Background(), "document.pdf", []byte("pdf"), extractcommon.ParseOptions{})
+	if err == nil || !strings.Contains(err.Error(), "unsupported non-image input") {
+		t.Fatalf("ParseBytes() error = %v, want non-image rejection", err)
 	}
 }
 

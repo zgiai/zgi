@@ -72,17 +72,17 @@ func NewWithChatCompletion(primaryModel, fallbackModel string, completion ChatCo
 	}
 }
 
-// ParseBytes supports PDFs and common image formats.
+// ParseBytes parses common image formats into one coherent knowledge document.
 func (c *Client) ParseBytes(ctx context.Context, filename string, data []byte, opts extractcommon.ParseOptions) (*extractcommon.DocumentResult, error) {
 	_ = opts
-	if isImageFilename(filename) {
-		doc, err := c.runImagePipeline(ctx, filename, data)
-		if err != nil {
-			return nil, err
-		}
-		return extractcommon.EnrichStructuredOutput(doc), nil
+	if !isImageFilename(filename) {
+		return nil, fmt.Errorf("vlm: unsupported non-image input %q", filename)
 	}
-	return c.ParsePDFBytes(ctx, filename, data, opts)
+	doc, err := c.runImagePipeline(ctx, filename, data)
+	if err != nil {
+		return nil, err
+	}
+	return extractcommon.EnrichStructuredOutput(doc), nil
 }
 
 func (c *Client) ParsePDFBytes(ctx context.Context, filename string, data []byte, opts extractcommon.ParseOptions) (*extractcommon.DocumentResult, error) {
@@ -200,7 +200,7 @@ func getSemaphore() chan struct{} {
 	return concurrencySem
 }
 
-const systemPrompt = `You are a PDF layout parser. Analyze this PDF and output all semantic blocks in reading order.
+const pdfLayoutPrompt = `You are a PDF layout parser. Analyze this PDF and output all semantic blocks in reading order.
 Preserve the source document language in extracted text.
 
 Return a strict JSON object only, with this shape:
@@ -227,6 +227,56 @@ Rules:
 7. Headings should set subtype by level, such as h1/h2/h3.
 8. Do not merge blocks of different types and do not drop visible content.
 9. Output only the JSON object: no code fences and no explanation.`
+
+const imageUnderstandingPrompt = `You are a high-accuracy image understanding, OCR, and knowledge-document reconstruction system.
+
+Analyze the attached IMAGE as a whole. Convert all useful visible information into ONE coherent, faithful Markdown knowledge document for search and retrieval. Do not treat the image as a PDF page and do not emit dozens of isolated layout fragments.
+
+Primary objectives, in priority order:
+1. Faithfulness: never invent text, values, relationships, arrows, labels, or conclusions that are not visible.
+2. Completeness: capture all legible text and all meaningful non-text information.
+3. Structure: preserve layout relationships such as columns, rows, sections, labels, hierarchy, adjacency, arrows, and reading order.
+4. Interpretation: explain the overall meaning and important relationships, while clearly separating interpretation from literal transcription.
+5. Retrieval quality: produce natural, self-contained text with enough context for each fact to be found later.
+
+Language and OCR rules:
+- Preserve the source language exactly. Do not translate Chinese into English or English into Chinese.
+- Preserve names, numbers, units, dates, floor numbers, codes, punctuation, and capitalization.
+- When the image is multilingual, retain every visible language without replacing one with another.
+- Mark genuinely unreadable text as [无法辨认] for primarily Chinese images or [unreadable] otherwise. Do not guess.
+- Do not output image URLs, base64 data, image Markdown placeholders, or decorative glyphs that carry no meaning.
+
+First identify the image type, then reconstruct it appropriately:
+- Flowchart or process diagram: transcribe every visible node; identify start/end, arrows, branches, decision conditions, loops, and outcomes; then explain the complete flow step by step. Never infer an edge that is not visible.
+- Table, directory, timetable, menu, or signboard: use Markdown tables or grouped lists. Keep each row/column association intact. For multi-column layouts, process each column independently before combining; never pair entries across unrelated rows or columns.
+- Chart or dashboard: capture title, axes, units, legend, series, visible values, comparisons, and trends. Distinguish directly visible values from qualitative interpretation.
+- UI screenshot or form: describe page purpose, sections, fields, controls, current values, statuses, warnings, and the visible interaction sequence.
+- Architecture, network, map, or labeled diagram: list components, labels, containment, direction, and connections, followed by an overall explanation.
+- General photograph or illustration: describe the scene, subjects, actions, spatial relationships, visible text, and the image's likely communicative purpose without speculating beyond evidence.
+
+Markdown document requirements:
+- Begin with a concise overall description of what the image is and communicates.
+- Organize the detailed transcription according to the image's real structure, not arbitrary OCR boxes.
+- Include a dedicated explanation for flows, relationships, or conclusions when the image contains them.
+- Avoid tiny standalone fragments. A floor number, label, or value must remain attached to the item it describes.
+- Avoid redundant repetition between transcription and interpretation unless repetition is needed for clarity.
+- Use headings, lists, and Markdown tables when they improve fidelity and retrieval.
+
+Return a strict JSON object only, with exactly ONE chunk:
+{
+  "chunks": [
+    {
+      "type": "text",
+      "subtype": "",
+      "page": 0,
+      "bbox": [0, 0, 1000, 1000],
+      "text": "",
+      "markdown": "<the complete Markdown knowledge document>"
+    }
+  ]
+}
+
+The markdown field must contain the complete result. Output only the JSON object, with no code fences and no commentary outside JSON.`
 
 type contentPart struct {
 	Type     string           `json:"type"`
@@ -358,7 +408,51 @@ func (c *Client) runImagePipeline(ctx context.Context, filename string, data []b
 	if err != nil {
 		return nil, err
 	}
+	br, err = consolidateImageBatchResult(br)
+	if err != nil {
+		return nil, err
+	}
 	return toDocumentResult(filename, 1, []*batchResult{br})
+}
+
+func consolidateImageBatchResult(result *batchResult) (*batchResult, error) {
+	if result == nil {
+		return nil, errors.New("vlm: image parser returned no result")
+	}
+
+	parts := make([]string, 0, len(result.Chunks))
+	seen := make(map[string]struct{}, len(result.Chunks))
+	for _, chunk := range result.Chunks {
+		content := strings.TrimSpace(chunk.Markdown)
+		if content == "" {
+			content = strings.TrimSpace(chunk.Text)
+		}
+		if content == "" {
+			continue
+		}
+		if _, exists := seen[content]; exists {
+			continue
+		}
+		seen[content] = struct{}{}
+		parts = append(parts, content)
+	}
+	if len(parts) == 0 {
+		return nil, errors.New("vlm: image parser returned no usable content")
+	}
+
+	markdown := strings.Join(parts, "\n\n")
+	return &batchResult{
+		Model: result.Model,
+		Chunks: []chunkItem{
+			{
+				Type:     "text",
+				Page:     0,
+				Bbox:     []float64{0, 0, bboxScale, bboxScale},
+				Text:     markdown,
+				Markdown: markdown,
+			},
+		},
+	}, nil
 }
 
 func (c *Client) callParse(ctx context.Context, filename string, pdfData []byte, batchIdx, batchTotal int, pageStart, pageEnd int) (*batchResult, error) {
@@ -443,7 +537,7 @@ func (c *Client) callOnce(ctx context.Context, filename string, pageDataURLs []s
 }
 
 func buildPDFPageImageContent(filename string, pageDataURLs []string) []map[string]any {
-	prompt := systemPrompt
+	prompt := pdfLayoutPrompt
 	if strings.TrimSpace(filename) != "" {
 		prompt += "\n\nThe attached images are rendered pages from PDF file: " + strings.TrimSpace(filename) + "."
 	}
@@ -469,7 +563,7 @@ func (c *Client) callImageOnce(ctx context.Context, filename string, imgData []b
 	dataURI := "data:" + mime + ";base64," + b64
 
 	userContent := []map[string]any{
-		{"type": "text", "text": systemPrompt},
+		{"type": "text", "text": imageUnderstandingPrompt},
 		{
 			"type": "image_url",
 			"image_url": map[string]any{

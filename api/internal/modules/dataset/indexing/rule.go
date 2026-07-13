@@ -11,6 +11,14 @@ type Rule struct {
 	Segmentation         *SegmentationRule         `json:"segmentation"`
 	ParentMode           *string                   `json:"parent_mode,omitempty"`
 	SubchunkSegmentation *SubchunkSegmentationRule `json:"subchunk_segmentation,omitempty"`
+	ParentMinChars       int                       `json:"parent_min_chars,omitempty"`
+	ParentTargetChars    int                       `json:"parent_target_chars,omitempty"`
+	ParentMaxChars       int                       `json:"parent_max_chars,omitempty"`
+	ChildMinChars        int                       `json:"child_min_chars,omitempty"`
+	ChildTargetChars     int                       `json:"child_target_chars,omitempty"`
+	ChildMaxChars        int                       `json:"child_max_chars,omitempty"`
+	ChildOverlapChars    int                       `json:"child_overlap_chars,omitempty"`
+	TableChildMaxChars   int                       `json:"table_child_max_chars,omitempty"`
 }
 
 // PreProcessingRule struct represents pre-processing rules
@@ -83,6 +91,15 @@ func ParseRule(rulesMap map[string]interface{}) (*Rule, error) {
 		rule.ParentMode = &parentMode
 	}
 
+	rule.ParentMinChars = intRuleValue(rulesMap, "parent_min_chars")
+	rule.ParentTargetChars = intRuleValue(rulesMap, "parent_target_chars")
+	rule.ParentMaxChars = intRuleValue(rulesMap, "parent_max_chars")
+	rule.ChildMinChars = intRuleValue(rulesMap, "child_min_chars")
+	rule.ChildTargetChars = intRuleValue(rulesMap, "child_target_chars")
+	rule.ChildMaxChars = intRuleValue(rulesMap, "child_max_chars")
+	rule.ChildOverlapChars = intRuleValue(rulesMap, "child_overlap_chars")
+	rule.TableChildMaxChars = intRuleValue(rulesMap, "table_child_max_chars")
+
 	// Parse subchunk_segmentation with default values
 	subchunkSegmentation := SubchunkSegmentationRule{
 		MaxTokens:    100,  // Default value for subchunk
@@ -109,6 +126,30 @@ func ParseRule(rulesMap map[string]interface{}) (*Rule, error) {
 	rule.SubchunkSegmentation = &subchunkSegmentation
 
 	return rule, nil
+}
+
+func intRuleValue(rulesMap map[string]interface{}, key string) int {
+	if rulesMap == nil {
+		return 0
+	}
+	switch value := rulesMap[key].(type) {
+	case int:
+		return value
+	case int8:
+		return int(value)
+	case int16:
+		return int(value)
+	case int32:
+		return int(value)
+	case int64:
+		return int(value)
+	case float32:
+		return int(value)
+	case float64:
+		return int(value)
+	default:
+		return 0
+	}
 }
 
 // RuleToJSONMap converts a Rule struct to map[string]interface{}

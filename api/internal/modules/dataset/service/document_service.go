@@ -334,7 +334,7 @@ func (s *DocumentServiceImpl) createDocumentsFromDataSource(ctx context.Context,
 	docForm := req.DocForm
 	if docForm == "" && dataset.ProcessRule != nil {
 		if parentMode, ok := dataset.ProcessRule["parent_mode"].(string); ok {
-			if parentMode == "parent_child" || parentMode == "paragraph" {
+			if parentMode == "parent_child" || parentMode == "paragraph" || parentMode == "element_group" {
 				docForm = "hierarchical_model"
 			} else {
 				docForm = "text_model"
@@ -847,7 +847,15 @@ func (s *DocumentServiceImpl) GetDefaultRules() map[string]interface{} {
 				{"id": "formula_accuracy_enhance", "enabled": false},
 				{"id": "generate_recommend_questions", "enabled": false},
 			},
-			"parent_mode": "paragraph",
+			"parent_mode":           "element_group",
+			"parent_min_chars":      1000,
+			"parent_target_chars":   1200,
+			"parent_max_chars":      1500,
+			"child_min_chars":       120,
+			"child_target_chars":    220,
+			"child_max_chars":       256,
+			"child_overlap_chars":   30,
+			"table_child_max_chars": 256,
 			"segmentation": map[string]interface{}{
 				"separator":     "\n\n",
 				"max_tokens":    500,
@@ -855,8 +863,8 @@ func (s *DocumentServiceImpl) GetDefaultRules() map[string]interface{} {
 			},
 			"subchunk_segmentation": map[string]interface{}{
 				"separator":     "\n",
-				"max_tokens":    200,
-				"chunk_overlap": 0,
+				"max_tokens":    220,
+				"chunk_overlap": 30,
 			},
 		},
 		"limits": map[string]interface{}{

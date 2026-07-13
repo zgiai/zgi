@@ -97,6 +97,13 @@ func TestDatasetRefSyncRunnerCopiesReadyAssetToDataset(t *testing.T) {
 	if len(vectorStore.storedIDs) != 1 || len(vectorStore.storedVectors[0]) != 3 {
 		t.Fatalf("stored vectors ids=%v vectors=%v", vectorStore.storedIDs, vectorStore.storedVectors)
 	}
+	if len(vectorStore.createdProperties) != 1 {
+		t.Fatalf("created vector class properties = %#v", vectorStore.createdProperties)
+	}
+	textProperty := vectorStore.createdProperties[0][0]
+	if textProperty["name"] != "text" || textProperty["tokenization"] != "gse_ch" || textProperty["indexSearchable"] != true {
+		t.Fatalf("text vector class property = %#v", textProperty)
+	}
 	properties := vectorStore.storedProperties[0]
 	if properties["asset_id"] != assetID.String() ||
 		properties["ref_id"] != refID.String() ||
@@ -515,11 +522,12 @@ func (f *fakeDatasetRefSyncEmbeddingStore) List(ctx context.Context, filter data
 }
 
 type fakeDatasetRefSyncVectorStore struct {
-	storedIDs        []string
-	storedVectors    [][]float64
-	storedProperties []map[string]interface{}
-	deletedIDs       []string
-	createdClasses   []string
+	storedIDs         []string
+	storedVectors     [][]float64
+	storedProperties  []map[string]interface{}
+	deletedIDs        []string
+	createdClasses    []string
+	createdProperties [][]map[string]interface{}
 }
 
 func (f *fakeDatasetRefSyncVectorStore) StoreVector(ctx context.Context, id, className string, properties map[string]interface{}, vector []float64) error {
@@ -544,6 +552,7 @@ func (f *fakeDatasetRefSyncVectorStore) SearchByFullText(ctx context.Context, cl
 
 func (f *fakeDatasetRefSyncVectorStore) CreateClass(ctx context.Context, className string, properties []map[string]interface{}) error {
 	f.createdClasses = append(f.createdClasses, className)
+	f.createdProperties = append(f.createdProperties, properties)
 	return nil
 }
 

@@ -1276,7 +1276,7 @@ function SecondaryChunkRow({ chunk, index }: { chunk: FileDocumentChunk; index: 
         </div>
       </div>
       <div className="mt-3 min-w-0 max-w-full overflow-hidden rounded-lg border border-border bg-background p-3 shadow-sm">
-        <div className="max-h-32 min-w-0 max-w-full flex-1 overflow-hidden whitespace-pre-wrap break-words text-sm leading-6 text-foreground [overflow-wrap:anywhere]">
+        <div className="min-w-0 max-w-full flex-1 whitespace-pre-wrap break-words text-sm leading-6 text-foreground [overflow-wrap:anywhere]">
           {chunk.content}
         </div>
       </div>
