@@ -55,6 +55,15 @@ func TestProtocolToolPolicyDoesNotEnableAIChatOrUnsupportedAgent(t *testing.T) {
 				ModelSupportsFunctionCalling: false,
 			},
 		},
+		{
+			name:   "agent model with assumed function calling",
+			caller: Caller{Type: runtimemodel.ConversationCallerAgent},
+			parts: chatRequestParts{
+				FunctionCallingKnown:         true,
+				ModelSupportsFunctionCalling: true,
+				FunctionCallingAssumed:       true,
+			},
+		},
 	}
 
 	for _, tt := range tests {

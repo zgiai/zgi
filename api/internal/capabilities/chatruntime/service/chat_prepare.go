@@ -517,7 +517,7 @@ func applyProtocolToolsPolicy(caller Caller, parts *chatRequestParts) {
 		return
 	}
 	parts.ProtocolToolsEnabled = normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent &&
-		parts.FunctionCallingKnown && parts.ModelSupportsFunctionCalling
+		parts.FunctionCallingKnown && parts.ModelSupportsFunctionCalling && !parts.FunctionCallingAssumed
 }
 
 func (s *service) applyOrganizationSkillConfig(ctx context.Context, scope Scope, parts *chatRequestParts) error {

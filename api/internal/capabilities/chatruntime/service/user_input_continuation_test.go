@@ -328,8 +328,11 @@ func TestPrepareUserInputContinuationRestoresAgentRunConfig(t *testing.T) {
 	if len(prepared.LLMRequest.Messages) == 0 || !strings.Contains(stringFromAny(prepared.LLMRequest.Messages[0].Content), config.SystemPrompt) {
 		t.Fatalf("system message = %#v, want configured prompt", prepared.LLMRequest.Messages)
 	}
-	if !prepared.parts.ProtocolToolsEnabled || !prepared.toolLoopEnabled() {
-		t.Fatalf("protocol tool loop disabled: parts=%#v", prepared.parts)
+	if prepared.parts.ProtocolToolsEnabled {
+		t.Fatalf("protocol tools enabled from assumed model capability: parts=%#v", prepared.parts)
+	}
+	if !prepared.toolLoopEnabled() {
+		t.Fatalf("configured skill tool loop disabled: parts=%#v", prepared.parts)
 	}
 	if !skillIDEnabled(prepared.parts.SkillIDs, skills.SkillCalculator) {
 		t.Fatalf("SkillIDs = %#v, want calculator", prepared.parts.SkillIDs)
