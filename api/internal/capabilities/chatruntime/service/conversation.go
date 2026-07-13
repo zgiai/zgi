@@ -88,6 +88,43 @@ func normalizeCallerID(value *uuid.UUID) *uuid.UUID {
 	return &out
 }
 
+func (s *service) getConversationByCallerScoped(ctx context.Context, scope Scope, caller Caller, id uuid.UUID) (*runtimemodel.Conversation, error) {
+	conversation, err := s.repos.Conversation.GetByCallerScoped(
+		ctx,
+		id,
+		scope.OrganizationID,
+		scope.AccountID,
+		normalizeCallerType(caller.Type),
+		normalizeCallerID(caller.ID),
+	)
+	if err != nil {
+		return nil, mapRepoError(err)
+	}
+	if !conversationMatchesCallerSource(conversation, caller) {
+		return nil, ErrNotFound
+	}
+	return conversation, nil
+}
+
+func conversationMatchesCallerSource(conversation *runtimemodel.Conversation, caller Caller) bool {
+	if conversation == nil {
+		return false
+	}
+	rawSource := strings.TrimSpace(caller.Source)
+	if rawSource == "" {
+		return true
+	}
+	source := normalizeConversationSource(rawSource)
+	if normalizeConversationSource(conversation.Source) != source {
+		return false
+	}
+	if source != runtimemodel.ConversationSourceWebApp {
+		return true
+	}
+	expectedWebAppID := normalizeCallerID(caller.SourceWebAppID)
+	return expectedWebAppID != nil && conversation.SourceWebAppID != nil && *conversation.SourceWebAppID == *expectedWebAppID
+}
+
 func (s *service) ListSkills(ctx context.Context, scope Scope) ([]skills.SkillDiscoveryMetadata, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
@@ -243,6 +280,19 @@ func (s *service) ListConversationsByCaller(ctx context.Context, scope Scope, ca
 	}
 	limit = clampLimit(limit, 20, 100)
 	offset := pageOffset(page, limit)
+	if strings.TrimSpace(caller.Source) != "" {
+		return s.repos.Conversation.ListByCallerSourceScoped(
+			ctx,
+			scope.OrganizationID,
+			scope.AccountID,
+			normalizeCallerType(caller.Type),
+			normalizeCallerID(caller.ID),
+			normalizeConversationSource(caller.Source),
+			normalizeCallerID(caller.SourceWebAppID),
+			limit,
+			offset,
+		)
+	}
 	return s.repos.Conversation.ListByCallerScoped(ctx, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID), limit, offset)
 }
 
@@ -359,11 +409,7 @@ func (s *service) GetConversationByCaller(ctx context.Context, scope Scope, call
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
-	conversation, err := s.repos.Conversation.GetByCallerScoped(ctx, id, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID))
-	if err != nil {
-		return nil, mapRepoError(err)
-	}
-	return conversation, nil
+	return s.getConversationByCallerScoped(ctx, scope, caller, id)
 }
 
 func (s *service) UpdateConversation(ctx context.Context, scope Scope, id uuid.UUID, req runtimedto.UpdateConversationRequest) (*runtimemodel.Conversation, error) {

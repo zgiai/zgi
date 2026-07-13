@@ -69,8 +69,8 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		return nil, newFinalizedStreamError(err)
 	}
 
-	if prepared.skillsEnabled() {
-		answer, usage, err := s.runPreparedSkillStream(runCtx, persistCtx, prepared, onChunk, eventCallback)
+	if prepared.toolLoopEnabled() {
+		answer, usage, err := s.runPreparedToolStream(runCtx, persistCtx, prepared, onChunk, eventCallback)
 		usage = mergeUsage(preflightUsage, usage)
 		if err != nil {
 			var pendingGovernance *skillloop.ToolGovernancePendingError
@@ -223,9 +223,9 @@ func (s *service) StreamConversationEventsForCaller(ctx context.Context, scope S
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return err
 	}
-	conversation, err := s.repos.Conversation.GetByCallerScoped(ctx, conversationID, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID))
+	conversation, err := s.getConversationByCallerScoped(ctx, scope, caller, conversationID)
 	if err != nil {
-		return mapRepoError(err)
+		return err
 	}
 	message, err := s.repos.Message.GetScoped(ctx, messageID, scope.OrganizationID, scope.AccountID)
 	if err != nil {
@@ -299,9 +299,9 @@ func (s *service) isConversationMessageStreaming(ctx context.Context, scope Scop
 }
 
 func (s *service) isConversationMessageStreamingForCaller(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID) (bool, error) {
-	conversation, err := s.repos.Conversation.GetByCallerScoped(ctx, conversationID, scope.OrganizationID, scope.AccountID, normalizeCallerType(caller.Type), normalizeCallerID(caller.ID))
+	conversation, err := s.getConversationByCallerScoped(ctx, scope, caller, conversationID)
 	if err != nil {
-		return false, mapRepoError(err)
+		return false, err
 	}
 	return conversationHasActiveMessage(conversation, messageID), nil
 }

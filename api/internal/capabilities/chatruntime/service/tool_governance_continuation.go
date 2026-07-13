@@ -232,7 +232,7 @@ func (s *service) runToolGovernanceApprovedContinuation(ctx context.Context, pre
 		return result, nil
 	}
 	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, toolGovernanceApprovalContinuationMessage(event))
-	answer, usage, err := s.runPreparedSkillLoop(ctx, context.WithoutCancel(ctx), prepared, nil, onEvent)
+	answer, usage, err := s.runPreparedToolLoop(ctx, context.WithoutCancel(ctx), prepared, nil, onEvent)
 	if err != nil {
 		var pendingGovernance *skillloop.ToolGovernancePendingError
 		if errors.As(err, &pendingGovernance) {
@@ -362,7 +362,7 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	}
 
 	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, toolGovernanceFrozenExecutionContinuationMessage(prepared.Message, event, invocation, executionErr))
-	answer, usage, err := s.runPreparedSkillLoop(ctx, persistCtx, prepared, nil, onEvent)
+	answer, usage, err := s.runPreparedToolLoop(ctx, persistCtx, prepared, nil, onEvent)
 	if err != nil {
 		var pendingGovernance *skillloop.ToolGovernancePendingError
 		if errors.As(err, &pendingGovernance) {

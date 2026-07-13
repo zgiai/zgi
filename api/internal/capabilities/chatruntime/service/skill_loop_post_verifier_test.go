@@ -85,9 +85,9 @@ func TestRunPreparedSkillStreamUsesMainModelTerminalDecisionForLegacyOnlyEvidenc
 		parts: parts,
 	}
 
-	answer, _, err := svc.runPreparedSkillStream(ctx, ctx, prepared, nil, nil)
+	answer, _, err := svc.runPreparedToolStream(ctx, ctx, prepared, nil, nil)
 	if err != nil {
-		t.Fatalf("runPreparedSkillStream() error = %v", err)
+		t.Fatalf("runPreparedToolStream() error = %v", err)
 	}
 	if answer != "The operation is complete." {
 		t.Fatalf("answer = %q, want verifier-approved candidate answer", answer)

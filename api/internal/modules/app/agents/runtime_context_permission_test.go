@@ -503,6 +503,98 @@ func TestAgentRuntimeEventsRequireCallerScopedConversationBeforeMessageIDValidat
 	}
 }
 
+func TestAgentRuntimeUserInputContinuationUsesConfiguredCaller(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ids := webAppRuntimePermissionIDs{
+		organizationID: uuid.New(),
+		workspaceID:    uuid.New(),
+		accountID:      uuid.New(),
+		agentID:        uuid.New(),
+		conversationID: uuid.New(),
+		messageID:      uuid.New(),
+	}
+	runtimeSvc := &webAppRuntimePermissionService{}
+	handler := NewAgentsHandler(newAgentRuntimePermissionAppService(ids), nil, nil, nil, nil, runtimeSvc)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/agents/"+ids.agentID.String()+"/runtime/conversations/"+ids.conversationID.String()+"/messages/"+ids.messageID.String()+"/user-input/ask-1/continue", bytes.NewBufferString(`{"answers":{"target":"Current Agent"}}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{
+		{Key: "agent_id", Value: ids.agentID.String()},
+		{Key: "conversation_id", Value: ids.conversationID.String()},
+		{Key: "message_id", Value: ids.messageID.String()},
+		{Key: "request_id", Value: "ask-1"},
+	}
+	c.Set("account_id", ids.accountID.String())
+	c.Set("organization_id", ids.organizationID.String())
+
+	handler.ContinueAgentRuntimeUserInput(c)
+
+	if !runtimeSvc.userInputContinuationCalled {
+		t.Fatal("RunConfiguredUserInputContinuationStream was not called")
+	}
+	assertAgentRuntimeCallerScope(t, runtimeSvc.lastScope, runtimeSvc.lastCaller, ids)
+	if runtimeSvc.lastConversationID != ids.conversationID || runtimeSvc.lastMessageID != ids.messageID || runtimeSvc.lastRequestID != "ask-1" {
+		t.Fatalf("continuation target = %s/%s/%q, want %s/%s/ask-1", runtimeSvc.lastConversationID, runtimeSvc.lastMessageID, runtimeSvc.lastRequestID, ids.conversationID, ids.messageID)
+	}
+	if runtimeSvc.lastRunConfig.SystemPromptVersion != "agent.draft" || runtimeSvc.lastRunConfig.BillingAppID != ids.agentID.String() {
+		t.Fatalf("RunConfig = %#v, want draft config for Agent", runtimeSvc.lastRunConfig)
+	}
+	if got := runtimeSvc.lastUserInputRequest.Answers["target"]; got != "Current Agent" {
+		t.Fatalf("answer = %q, want Current Agent", got)
+	}
+	if got := w.Header().Get("Content-Type"); got != "text/event-stream" {
+		t.Fatalf("content type = %q, want text/event-stream", got)
+	}
+}
+
+func TestWebAppRuntimeUserInputContinuationUsesConfiguredCaller(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ids := webAppRuntimePermissionIDs{
+		organizationID: uuid.New(),
+		workspaceID:    uuid.New(),
+		accountID:      uuid.New(),
+		agentID:        uuid.New(),
+		webAppID:       uuid.New(),
+		conversationID: uuid.New(),
+		messageID:      uuid.New(),
+	}
+	runtimeSvc := &webAppRuntimePermissionService{}
+	handler := NewAgentsHandler(newWebAppRuntimePermissionAppService(ids), nil, nil, nil, nil, runtimeSvc)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/webapps/"+ids.webAppID.String()+"/runtime/conversations/"+ids.conversationID.String()+"/messages/"+ids.messageID.String()+"/user-input/ask-1/continue", bytes.NewBufferString(`{"answers":{"target":"Published Agent"}}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{
+		{Key: "web_app_id", Value: ids.webAppID.String()},
+		{Key: "conversation_id", Value: ids.conversationID.String()},
+		{Key: "message_id", Value: ids.messageID.String()},
+		{Key: "request_id", Value: "ask-1"},
+	}
+	c.Set("account_id", ids.accountID.String())
+	c.Set("is_authenticated", true)
+
+	handler.ContinueWebAppAgentRuntimeUserInput(c)
+
+	if !runtimeSvc.userInputContinuationCalled {
+		t.Fatal("RunConfiguredUserInputContinuationStream was not called")
+	}
+	assertWebAppRuntimeCallerScope(t, runtimeSvc.lastScope, runtimeSvc.lastCaller, ids)
+	if runtimeSvc.lastRunConfig.SystemPromptVersion != "agent.published.v1" || runtimeSvc.lastRunConfig.BillingAppID != ids.agentID.String() {
+		t.Fatalf("RunConfig = %#v, want published config for Agent", runtimeSvc.lastRunConfig)
+	}
+	if got := runtimeSvc.lastUserInputRequest.Answers["target"]; got != "Published Agent" {
+		t.Fatalf("answer = %q, want Published Agent", got)
+	}
+	if got := w.Header().Get("Content-Type"); got != "text/event-stream" {
+		t.Fatalf("content type = %q, want text/event-stream", got)
+	}
+}
+
 func TestAgentRuntimeUpdateConversationRequiresCallerScopedConversationBeforeBindingRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -844,23 +936,27 @@ func (s *agentRuntimePermissionAppService) GetAgentDraftRuntimeConfig(_ context.
 type webAppRuntimePermissionService struct {
 	runtimeservice.Service
 
-	getConversationErr        error
-	beginContinuationErr      error
-	prepareRegenerationErr    error
-	getConversationCalled     bool
-	updateConversationCalled  bool
-	deleteConversationCalled  bool
-	listMessagesCalled        bool
-	stopConversationCalled    bool
-	streamCalled              bool
-	streamForCallerCalled     bool
-	beginContinuationCalled   bool
-	prepareRegenerationCalled bool
-	runPreparedStreamCalled   bool
-	lastScope                 runtimeservice.Scope
-	lastCaller                runtimeservice.Caller
-	lastConversationID        uuid.UUID
-	lastMessageID             uuid.UUID
+	getConversationErr          error
+	beginContinuationErr        error
+	prepareRegenerationErr      error
+	getConversationCalled       bool
+	updateConversationCalled    bool
+	deleteConversationCalled    bool
+	listMessagesCalled          bool
+	stopConversationCalled      bool
+	streamCalled                bool
+	streamForCallerCalled       bool
+	beginContinuationCalled     bool
+	prepareRegenerationCalled   bool
+	runPreparedStreamCalled     bool
+	userInputContinuationCalled bool
+	lastScope                   runtimeservice.Scope
+	lastCaller                  runtimeservice.Caller
+	lastRunConfig               runtimeservice.RunConfig
+	lastConversationID          uuid.UUID
+	lastMessageID               uuid.UUID
+	lastRequestID               string
+	lastUserInputRequest        runtimedto.UserInputContinuationRequest
 }
 
 func (s *webAppRuntimePermissionService) GetConversationByCaller(_ context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, id uuid.UUID) (*runtimemodel.Conversation, error) {
@@ -982,6 +1078,28 @@ func (s *webAppRuntimePermissionService) PrepareConfiguredRootRegeneration(_ con
 func (s *webAppRuntimePermissionService) RunPreparedStream(_ context.Context, _ *runtimeservice.PreparedChat, _ func(string) error, _ ...func(runtimeservice.StreamEvent) error) (*runtimeservice.ChatResult, error) {
 	s.runPreparedStreamCalled = true
 	return nil, nil
+}
+
+func (s *webAppRuntimePermissionService) RunConfiguredUserInputContinuationStream(
+	_ context.Context,
+	scope runtimeservice.Scope,
+	caller runtimeservice.Caller,
+	config runtimeservice.RunConfig,
+	conversationID uuid.UUID,
+	messageID uuid.UUID,
+	requestID string,
+	req runtimedto.UserInputContinuationRequest,
+	_ func(runtimeservice.StreamEvent) error,
+) (*runtimeservice.ChatResult, error) {
+	s.userInputContinuationCalled = true
+	s.lastScope = scope
+	s.lastCaller = caller
+	s.lastRunConfig = config
+	s.lastConversationID = conversationID
+	s.lastMessageID = messageID
+	s.lastRequestID = requestID
+	s.lastUserInputRequest = req
+	return &runtimeservice.ChatResult{Status: runtimemodel.MessageStatusCompleted}, nil
 }
 
 type fakeWorkflowContinuationRunner struct {

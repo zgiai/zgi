@@ -22,6 +22,7 @@ type ConversationRepository interface {
 	GetBySourceConversation(ctx context.Context, sourceConversationID uuid.UUID) (*runtimemodel.Conversation, error)
 	ListScoped(ctx context.Context, organizationID, accountID uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
 	ListByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
+	ListByCallerSourceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, sourceWebAppID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
 	ListByCallerSurfaceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, surface string, limit, offset int) ([]*runtimemodel.Conversation, int64, error)
 	SearchByCallerScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, sourceWebAppID *uuid.UUID, surface string, queryText string, limit int) ([]*SearchResult, error)
 	UpdateScoped(ctx context.Context, id, organizationID, accountID uuid.UUID, updates map[string]interface{}) error
@@ -226,6 +227,20 @@ func (r *conversationRepository) ListByCallerScoped(ctx context.Context, organiz
 	var total int64
 	query := applyCallerFilter(r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
 		Where("organization_id = ? AND account_id = ? AND deleted_at IS NULL", organizationID, accountID), callerType, callerID)
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to count chat runtime conversations: %w", err)
+	}
+	if err := query.Order("updated_at DESC, created_at DESC, id DESC").Limit(limit).Offset(offset).Find(&conversations).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to list chat runtime conversations: %w", err)
+	}
+	return conversations, total, nil
+}
+
+func (r *conversationRepository) ListByCallerSourceScoped(ctx context.Context, organizationID, accountID uuid.UUID, callerType string, callerID *uuid.UUID, source string, sourceWebAppID *uuid.UUID, limit, offset int) ([]*runtimemodel.Conversation, int64, error) {
+	var conversations []*runtimemodel.Conversation
+	var total int64
+	query := applyConversationSourceFilter(applyCallerFilter(r.db.WithContext(ctx).Model(&runtimemodel.Conversation{}).
+		Where("organization_id = ? AND account_id = ? AND deleted_at IS NULL", organizationID, accountID), callerType, callerID), source, sourceWebAppID)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to count chat runtime conversations: %w", err)
 	}
@@ -478,6 +493,21 @@ func applyRuntimeLogSourceFilter(query *gorm.DB, accountID uuid.UUID, source str
 	default:
 		return query.Where(sourceColumn+" = ? AND "+accountIDColumn+" = ?", source, accountID)
 	}
+}
+
+func applyConversationSourceFilter(query *gorm.DB, source string, sourceWebAppID *uuid.UUID) *gorm.DB {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return query
+	}
+	query = query.Where("source = ?", source)
+	if source != runtimemodel.ConversationSourceWebApp {
+		return query
+	}
+	if sourceWebAppID == nil || *sourceWebAppID == uuid.Nil {
+		return query.Where("source_web_app_id IS NULL")
+	}
+	return query.Where("source_web_app_id = ?", *sourceWebAppID)
 }
 
 func qualifiedColumn(alias string, column string) string {

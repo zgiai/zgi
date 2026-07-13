@@ -814,8 +814,8 @@ func TestSkillLoopUsesMainLoopWithoutClassifiedIntent(t *testing.T) {
 		},
 	}
 
-	if !prepared.skillsEnabled() {
-		t.Fatal("skillsEnabled() = false, want main skill loop path")
+	if !prepared.toolLoopEnabled() {
+		t.Fatal("toolLoopEnabled() = false, want main tool loop path")
 	}
 }
 
@@ -834,8 +834,8 @@ func TestSkillLoopKeepsAgentActionsInSkillLoop(t *testing.T) {
 		},
 	}
 
-	if !prepared.skillsEnabled() {
-		t.Fatal("skillsEnabled() = false, want main skill loop path")
+	if !prepared.toolLoopEnabled() {
+		t.Fatal("toolLoopEnabled() = false, want main tool loop path")
 	}
 }
 
@@ -1020,8 +1020,8 @@ func TestContextualAIChatTurnStrategyUsesSkillLoopWhenClassifierFailsOnAgentPage
 	if slices.Contains(strategy.PrimarySkills, skills.SkillAgentManagement) {
 		t.Fatalf("PrimarySkills = %#v, want no agent-management primary skill for passive answer", strategy.PrimarySkills)
 	}
-	if !prepared.skillsEnabled() {
-		t.Fatal("skillsEnabled() = false, want main skill loop path")
+	if !prepared.toolLoopEnabled() {
+		t.Fatal("toolLoopEnabled() = false, want main tool loop path")
 	}
 }
 
@@ -1389,8 +1389,8 @@ func TestContextualAIChatTurnStrategyUsesModelTurnPlanForExactAgentRuntime(t *te
 	if !slices.Contains(strategy.SupportingSkills, skills.SkillAgentManagement) {
 		t.Fatalf("SupportingSkills = %#v, want agent-management for exact runtime evidence", strategy.SupportingSkills)
 	}
-	if !prepared.skillsEnabled() {
-		t.Fatal("skillsEnabled() = false, want main skill loop path")
+	if !prepared.toolLoopEnabled() {
+		t.Fatal("toolLoopEnabled() = false, want main tool loop path")
 	}
 
 	plan := operationPlanFromTurnStrategy("task-1", prepared.parts, strategy)
@@ -1520,8 +1520,8 @@ func TestContextualAIChatTurnStrategyDoesNotUseLegacyPassiveFastPath(t *testing.
 	if len(strategy.PrimarySkills) != 0 {
 		t.Fatalf("PrimarySkills = %#v, want no primary skill for passive model intent", strategy.PrimarySkills)
 	}
-	if !prepared.skillsEnabled() {
-		t.Fatal("skillsEnabled() = false, want main skill loop path")
+	if !prepared.toolLoopEnabled() {
+		t.Fatal("toolLoopEnabled() = false, want main tool loop path")
 	}
 }
 

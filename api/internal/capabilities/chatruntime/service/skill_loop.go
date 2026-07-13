@@ -21,47 +21,52 @@ import (
 
 var agentManagementSkillIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-func (p *PreparedChat) skillsEnabled() bool {
-	return p != nil && chatPartsSkillsEnabled(p.parts)
+func (p *PreparedChat) toolLoopEnabled() bool {
+	return p != nil && chatPartsToolLoopEnabled(p.parts)
 }
 
-func (s *service) runPreparedSkillStream(
+func (s *service) runPreparedToolStream(
 	ctx context.Context,
 	persistCtx context.Context,
 	prepared *PreparedChat,
 	onChunk func(string) error,
 	onEvent func(StreamEvent) error,
 ) (string, *adapter.Usage, error) {
-	return s.runPreparedSkillLoop(ctx, persistCtx, prepared, onChunk, onEvent)
+	return s.runPreparedToolLoop(ctx, persistCtx, prepared, onChunk, onEvent)
 }
 
-func (s *service) runPreparedSkillLoop(
+func (s *service) runPreparedToolLoop(
 	ctx context.Context,
 	persistCtx context.Context,
 	prepared *PreparedChat,
 	onChunk func(string) error,
 	onEvent func(StreamEvent) error,
 ) (string, *adapter.Usage, error) {
-	if s.skillRuntime == nil {
-		return "", nil, fmt.Errorf("%w: skill runtime is not configured", ErrInvalidInput)
-	}
 	if s.llmClient == nil {
 		return "", nil, fmt.Errorf("llm client is not configured")
 	}
-	custom, err := s.customSkillCatalogEntries(ctx, prepared.Scope.OrganizationID)
-	if err != nil {
-		return "", nil, err
-	}
-	resolved, err := s.skillRuntime.ResolveEnabledSkillsWithCustom(ctx, prepared.parts.SkillIDs, custom)
-	if err != nil {
-		return "", nil, err
-	}
-	unrestrictedResolved := resolved
-	resolved = restrictResolvedSkillsForPreparedTurn(prepared, resolved)
-	if len(resolved.Skills) == 0 && skillLoopHasOperationPlan(prepared) {
-		resolved = unrestrictedResolved
-	}
-	if len(resolved.Skills) == 0 {
+	resolved := &skills.ResolvedSkills{}
+	if chatPartsBusinessSkillsEnabled(prepared.parts) {
+		if s.skillRuntime == nil {
+			return "", nil, fmt.Errorf("%w: skill runtime is not configured", ErrInvalidInput)
+		}
+		custom, err := s.customSkillCatalogEntries(ctx, prepared.Scope.OrganizationID)
+		if err != nil {
+			return "", nil, err
+		}
+		resolved, err = s.skillRuntime.ResolveEnabledSkillsWithCustom(ctx, prepared.parts.SkillIDs, custom)
+		if err != nil {
+			return "", nil, err
+		}
+		unrestrictedResolved := resolved
+		resolved = restrictResolvedSkillsForPreparedTurn(prepared, resolved)
+		if len(resolved.Skills) == 0 && skillLoopHasOperationPlan(prepared) {
+			resolved = unrestrictedResolved
+		}
+		if len(resolved.Skills) == 0 {
+			return "", nil, fmt.Errorf("%w: no skills available for configured skill ids", ErrInvalidInput)
+		}
+	} else if prepared.parts == nil || !prepared.parts.ProtocolToolsEnabled {
 		return "", nil, fmt.Errorf("%w: no skills available for configured skill ids", ErrInvalidInput)
 	}
 
@@ -110,6 +115,7 @@ func (s *service) runPreparedSkillLoop(
 	answer, usage, err := runner.Run(ctx, skillloop.RunRequest{
 		Prepared:                       loopPrepared,
 		Resolved:                       resolved,
+		ProtocolToolsOnly:              len(resolved.Skills) == 0,
 		ExecutionContext:               s.skillExecutionContext(prepared),
 		PreferExplicitFinalAnswer:      preferExplicitFinalAnswer,
 		SuppressInitialNaturalProgress: prepared.SuppressInitialNaturalProgress,
@@ -189,7 +195,10 @@ func skillLoopHasOperationPlan(prepared *PreparedChat) bool {
 }
 
 func skillLoopPrefersExplicitFinalAnswer(prepared *PreparedChat) bool {
-	if prepared == nil || normalizeCallerType(prepared.Caller.Type) == runtimemodel.ConversationCallerAgent {
+	if prepared == nil {
+		return false
+	}
+	if normalizeCallerType(prepared.Caller.Type) == runtimemodel.ConversationCallerAgent {
 		return false
 	}
 	return skillLoopHasOperationPlan(prepared)
@@ -1494,7 +1503,7 @@ func contextualAIChatTurnStrategy(prepared *PreparedChat) *AIChatTurnStrategy {
 }
 
 func contextualAIChatTurnStrategyFromParts(parts *chatRequestParts) *AIChatTurnStrategy {
-	if parts == nil || !isContextualAIChatSurface(parts.Surface) || !chatPartsSkillsEnabled(parts) {
+	if parts == nil || !isContextualAIChatSurface(parts.Surface) || !chatPartsBusinessSkillsEnabled(parts) {
 		return nil
 	}
 	strategyParts, stagedCurrent, stagedResume := stagedExecutionScopedParts(parts)
@@ -1878,8 +1887,12 @@ func aiChatTurnStrategyToolStepID(tool AIChatTurnStrategyTool) string {
 	return operationPlanToolStepID(tool.SkillID, tool.ToolName)
 }
 
-func chatPartsSkillsEnabled(parts *chatRequestParts) bool {
+func chatPartsBusinessSkillsEnabled(parts *chatRequestParts) bool {
 	return parts != nil && parts.SkillMode != skillModeDisabled && len(parts.SkillIDs) > 0
+}
+
+func chatPartsToolLoopEnabled(parts *chatRequestParts) bool {
+	return parts != nil && (parts.ProtocolToolsEnabled || chatPartsBusinessSkillsEnabled(parts))
 }
 
 func contextualAgentManagementStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {
