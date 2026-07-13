@@ -995,6 +995,7 @@ func publicAgentWebAppConfig(result *dto.AgentWebAppRuntimeConfigResponse) dto.A
 		IconType:           result.IconType,
 		IconURL:            result.IconURL,
 		HomeTitle:          result.Config.HomeTitle,
+		OpeningStatement:   result.Config.OpeningStatement,
 		InputPlaceholder:   result.Config.InputPlaceholder,
 		SuggestedQuestions: result.Config.SuggestedQuestions,
 		FileUpload:         result.Config.FileUpload,

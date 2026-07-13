@@ -1935,6 +1935,7 @@ func agentManagementUpdateConfigContract() SkillToolArgumentContract {
 				"agent_memory_enabled":         booleanSchema("Optional Agent memory switch."),
 				"file_upload_enabled":          booleanSchema("Optional file upload switch."),
 				"home_title":                   stringValueSchema("Optional Agent home title."),
+				"opening_statement":            stringValueSchema("Optional Markdown landing guide shown before the first message."),
 				"input_placeholder":            stringValueSchema("Optional chat input placeholder."),
 				"theme_color":                  enumStringSchema("Optional theme color.", []string{"default", "blue", "emerald", "violet", "rose", "amber", "slate"}),
 				"suggested_questions":          stringArrayOrCSVSchema("Optional full list of suggested questions."),

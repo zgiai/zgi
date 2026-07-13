@@ -1482,6 +1482,7 @@ func compactAgentManagementToolHistoryResultForPrompt(invocation map[string]inte
 		"database_bindings",
 		"workflow_bindings",
 		"home_title",
+		"opening_statement",
 		"input_placeholder",
 		"theme_color",
 		"suggested_questions",

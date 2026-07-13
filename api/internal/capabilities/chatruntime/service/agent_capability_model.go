@@ -118,6 +118,11 @@ func agentManagementConfigFieldDescriptors() []agentConfigFieldDescriptor {
 			semanticMarkers: []string{"home title", "\u9996\u9875"},
 		},
 		{
+			field:           "opening_statement",
+			aliases:         []string{"opening_statement"},
+			explicitMarkers: []string{"opening_statement"},
+		},
+		{
 			field:           "input_placeholder",
 			aliases:         []string{"input_placeholder"},
 			explicitMarkers: []string{"input_placeholder"},

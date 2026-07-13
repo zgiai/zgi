@@ -70,6 +70,7 @@ import {
   AIChatAssetAuditButton,
   AIChatAssetAuditPanel,
 } from '@/components/chat/variants/aichat/asset-audit-button';
+import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 import {
   AIChatEmbeddedConversationControls,
   embeddedControlButtonClassName,
@@ -141,6 +142,7 @@ interface AIChatShellProps {
   showFileLibraryPicker?: boolean;
   allowWorkspaceSwitch?: boolean;
   homeBrand?: React.ReactNode;
+  openingGuideBrand?: OpeningGuideBrand;
   homeTitle?: string;
   homeDescription?: string;
   suggestions?: string[];
@@ -249,6 +251,7 @@ export function AIChatShell({
   showFileLibraryPicker = true,
   allowWorkspaceSwitch = false,
   homeBrand,
+  openingGuideBrand,
   homeTitle,
   homeDescription,
   suggestions: configuredSuggestions,
@@ -1290,6 +1293,7 @@ export function AIChatShell({
             suggestions={suggestions}
             onSelectSuggestion={setInput}
             brand={homeBrand}
+            openingGuideBrand={openingGuideBrand}
             title={homeTitle}
             description={homeDescription}
             composerHeight={inputAreaHeight}

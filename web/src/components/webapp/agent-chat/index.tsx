@@ -11,6 +11,7 @@ import { ICON_BG } from '@/lib/config';
 import type { WebAppWorkflowConfig } from '@/services/types/webapp';
 import { useAuthStore } from '@/store/auth-store';
 import { WEBAPP_USER_MIGRATED_EVENT } from '@/hooks/webapp/use-maybe-migrate-user';
+import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 
 interface AgentWebappChatProps {
   webAppId: string;
@@ -59,6 +60,16 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
   const iconPreview = useMemo(
     () => resolveWebAppIcon(config, t('agentChat.fallbackTitle')),
     [config, t]
+  );
+  const openingGuideBrand = useMemo<OpeningGuideBrand>(
+    () => ({
+      title: config.config?.title,
+      iconType: iconPreview.iconType,
+      icon: iconPreview.icon,
+      iconBackground: iconPreview.iconBackground,
+      iconSrc: iconPreview.src,
+    }),
+    [config.config?.title, iconPreview]
   );
   const transport = useMemo(() => createAgentWebAppTransport(webAppId), [webAppId]);
   const uploadScope = useMemo(() => ({ type: 'webapp' as const, webAppId }), [webAppId]);
@@ -135,20 +146,9 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
       embeddedConversationMode="drawer"
       showAssistantModelMeta={false}
       surface="agent-webapp"
-      homeBrand={
-        <div className="flex size-16 items-center justify-center rounded-2xl border bg-background shadow-sm">
-          <IconPreview
-            iconType={iconPreview.iconType}
-            src={iconPreview.src}
-            icon={iconPreview.icon}
-            iconBackground={iconPreview.iconBackground}
-            editable={false}
-            size="lg"
-          />
-        </div>
-      }
+      openingGuideBrand={openingGuideBrand}
       homeTitle={homeTitle}
-      homeDescription=""
+      homeDescription={agentConfig?.opening_statement ?? ''}
     />
   );
 }

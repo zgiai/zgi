@@ -1112,10 +1112,8 @@ export function AIChatInputArea({
         className={cn(
           'pointer-events-none absolute inset-x-0 z-20 transition-[top,transform,padding,background-color,box-shadow] duration-300 ease-in-out',
           isEmbedded ? 'px-4' : 'px-4 sm:px-6 lg:px-8',
-          isHome && !isLoadingMessages
-            ? surface === 'agent-draft'
-              ? 'top-[58%] -translate-y-1/2 pb-0 pt-0 sm:top-1/2'
-              : 'top-[58%] -translate-y-1/2 pb-0 pt-0 sm:top-1/2'
+          isHome && !isLoadingMessages && surface === 'aichat'
+            ? 'top-[58%] -translate-y-1/2 pb-0 pt-0 sm:top-1/2'
             : isEmbedded
               ? cn(
                   'top-full -translate-y-full pb-2 pt-2',

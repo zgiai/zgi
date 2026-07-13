@@ -113,6 +113,32 @@ func TestGetPublishedAgentRuntimeConfigRejectsUnpublishedAgent(t *testing.T) {
 	}
 }
 
+func TestAgentOpeningStatementPersistsThroughDraftAndSnapshot(t *testing.T) {
+	cfg := &AgentsConfig{}
+	applied, err := applyAgentConfigRequestToDraft(cfg, dto.AgentConfigRequest{
+		HomeTitle:        "  Welcome  ",
+		OpeningStatement: "  ## Start here\r\n\r\n- Ask a question  ",
+	})
+	if err != nil {
+		t.Fatalf("applyAgentConfigRequestToDraft() error = %v", err)
+	}
+	const wantStatement = "## Start here\n\n- Ask a question"
+	if applied.OpeningStatement != wantStatement {
+		t.Fatalf("applied OpeningStatement = %q, want %q", applied.OpeningStatement, wantStatement)
+	}
+
+	response := agentConfigResponse("agent-1", cfg)
+	if response.OpeningStatement != wantStatement {
+		t.Fatalf("response OpeningStatement = %q, want %q", response.OpeningStatement, wantStatement)
+	}
+
+	snapshot := agentConfigSnapshot("agent-1", cfg)
+	fromSnapshot := agentConfigResponseFromSnapshot("agent-1", snapshot)
+	if fromSnapshot.OpeningStatement != wantStatement {
+		t.Fatalf("snapshot OpeningStatement = %q, want %q", fromSnapshot.OpeningStatement, wantStatement)
+	}
+}
+
 type publishedRuntimeRepo struct {
 	AgentsRepository
 	agent   *Agent

@@ -193,6 +193,7 @@ export interface AgentRuntimeConfig {
   agent_memory_slots?: AgentMemorySlotConfig[];
   file_upload_enabled: boolean;
   home_title: string;
+  opening_statement: string;
   input_placeholder: string;
   theme_color: string;
   suggested_questions: string[];
@@ -278,6 +279,7 @@ export interface UpdateAgentRuntimeConfigRequest {
   agent_memory_slots?: AgentMemorySlotConfig[];
   file_upload_enabled: boolean;
   home_title: string;
+  opening_statement: string;
   input_placeholder: string;
   theme_color: string;
   suggested_questions: string[];
@@ -300,6 +302,7 @@ export interface GenerateAgentSuggestedQuestionsRequest {
   model?: string;
   system_prompt?: string;
   home_title?: string;
+  opening_statement?: string;
   existing_questions?: string[];
   skills?: AgentSuggestedQuestionSkillContext[];
   knowledge_refs?: string[];

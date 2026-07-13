@@ -2,9 +2,11 @@
 
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
+import { ChatOpeningGuideView } from '@/components/chat/ui/chat-opening-guide-view';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import type { AIChatSuggestion } from '@/components/chat/variants/aichat/types';
+import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 import { AIChatBrandMark } from './brand-mark';
 
 interface AIChatHomeViewProps {
@@ -12,6 +14,7 @@ interface AIChatHomeViewProps {
   suggestions: AIChatSuggestion[];
   onSelectSuggestion: (value: string) => void;
   brand?: React.ReactNode;
+  openingGuideBrand?: OpeningGuideBrand;
   title?: string;
   description?: string;
   composerHeight?: number;
@@ -32,6 +35,7 @@ export function AIChatHomeView({
   suggestions,
   onSelectSuggestion,
   brand,
+  openingGuideBrand,
   title,
   description,
   composerHeight,
@@ -51,6 +55,35 @@ export function AIChatHomeView({
     setIsHydrated(true);
   }, []);
 
+  if (surface !== 'aichat') {
+    return (
+      <div
+        className={cn(
+          'absolute inset-0 z-0 px-4 transition-all duration-300 ease-in-out',
+          isVisible ? 'scale-100 opacity-100' : 'pointer-events-none -z-10 scale-95 opacity-0'
+        )}
+      >
+        <div
+          className={cn('h-full overflow-y-auto', surface === 'agent-webapp' ? 'pt-20' : 'pt-4')}
+          style={{ paddingBottom: composerHeightPx + 24 }}
+        >
+          <div className="mx-auto flex min-h-full w-full min-w-0 max-w-6xl flex-col items-center justify-center overflow-hidden px-4 py-8">
+            <ChatOpeningGuideView
+              title={title || t('chat.startConversation')}
+              message={resolvedDescription}
+              iconType={openingGuideBrand?.iconType}
+              icon={openingGuideBrand?.icon}
+              iconBackground={openingGuideBrand?.iconBackground}
+              iconSrc={openingGuideBrand?.iconSrc}
+              suggestions={suggestions.map(suggestion => suggestion.text)}
+              onSuggestionClick={onSelectSuggestion}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className={cn(
@@ -66,22 +99,14 @@ export function AIChatHomeView({
         )}
       >
         <div
-          className={cn(
-            'flex w-full flex-col items-center gap-4',
-            surface === 'agent-draft' ? 'max-w-[560px]' : 'max-w-3xl'
-          )}
+          className="flex w-full max-w-3xl flex-col items-center gap-4"
           style={{
             transform:
               'translateY(calc(-100% - var(--aichat-home-composer-half) - var(--aichat-home-title-gap)))',
           }}
         >
           {brand ? brand : isHydrated ? <AIChatBrandMark /> : null}
-          <h2
-            className={cn(
-              'font-bold text-foreground',
-              surface === 'agent-draft' ? 'text-xl xl:text-2xl' : 'text-2xl'
-            )}
-          >
+          <h2 className="text-2xl font-bold text-foreground">
             {title || t('chat.startConversation')}
           </h2>
           {resolvedDescription ? (
@@ -96,10 +121,7 @@ export function AIChatHomeView({
         )}
       >
         <div
-          className={cn(
-            'flex w-full flex-wrap items-center justify-center gap-2',
-            surface === 'agent-draft' ? 'max-w-[560px]' : 'max-w-3xl'
-          )}
+          className="flex w-full max-w-3xl flex-wrap items-center justify-center gap-2"
           style={{
             transform:
               'translateY(calc(var(--aichat-home-composer-half) + var(--aichat-home-suggestions-gap)))',

@@ -221,6 +221,7 @@ func (s *agentsService) RollbackAgentPublishedVersion(ctx context.Context, agent
 		AgentMemoryEnabled:        snapshot.AgentMemoryEnabled,
 		FileUpload:                snapshot.FileUpload,
 		HomeTitle:                 snapshot.HomeTitle,
+		OpeningStatement:          snapshot.OpeningStatement,
 		InputPlaceholder:          snapshot.InputPlaceholder,
 		ThemeColor:                snapshot.ThemeColor,
 		SuggestedQuestions:        snapshot.SuggestedQuestions,
@@ -321,6 +322,7 @@ func normalizeAgentConfigRequest(req dto.AgentConfigRequest) dto.AgentConfigRequ
 	req.ModelProvider = strings.TrimSpace(req.ModelProvider)
 	req.Model = strings.TrimSpace(req.Model)
 	req.HomeTitle = normalizeAgentHomeTitle(req.HomeTitle)
+	req.OpeningStatement = normalizeAgentOpeningStatement(req.OpeningStatement)
 	req.InputPlaceholder = normalizeAgentInputPlaceholder(req.InputPlaceholder)
 	req.ThemeColor = normalizeAgentThemeColor(req.ThemeColor)
 	if req.ModelParameters == nil {
@@ -381,6 +383,7 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 		AgentMemoryEnabled:        runtimeCfg.AgentMemoryEnabled,
 		FileUploadEnabled:         runtimeCfg.FileUpload,
 		HomeTitle:                 runtimeCfg.HomeTitle,
+		OpeningStatement:          runtimeCfg.OpeningStatement,
 		InputPlaceholder:          runtimeCfg.InputPlaceholder,
 		ThemeColor:                runtimeCfg.ThemeColor,
 		SuggestedQuestions:        runtimeCfg.SuggestedQuestions,
@@ -418,6 +421,7 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 		AgentMemorySlots:          normalizeAgentMemorySlotConfigs(mode.AgentMemorySlots),
 		FileUpload:                mode.FileUploadEnabled,
 		HomeTitle:                 normalizeAgentHomeTitle(mode.HomeTitle),
+		OpeningStatement:          normalizeAgentOpeningStatement(mode.OpeningStatement),
 		InputPlaceholder:          normalizeAgentInputPlaceholder(mode.InputPlaceholder),
 		ThemeColor:                normalizeAgentThemeColor(mode.ThemeColor),
 		SuggestedQuestions:        normalizeSuggestedQuestions(mode.SuggestedQuestions),
@@ -457,6 +461,7 @@ func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface
 		"agent_memory_slots":            normalizeAgentMemorySlotConfigs(resp.AgentMemorySlots),
 		"file_upload_enabled":           resp.FileUpload,
 		"home_title":                    resp.HomeTitle,
+		"opening_statement":             resp.OpeningStatement,
 		"input_placeholder":             resp.InputPlaceholder,
 		"theme_color":                   resp.ThemeColor,
 		"suggested_questions":           resp.SuggestedQuestions,
@@ -503,6 +508,7 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 		resp.FileUpload = fileUpload
 	}
 	resp.HomeTitle = normalizeAgentHomeTitle(stringFromSnapshot(snapshot, "home_title"))
+	resp.OpeningStatement = normalizeAgentOpeningStatement(stringFromSnapshot(snapshot, "opening_statement"))
 	resp.InputPlaceholder = normalizeAgentInputPlaceholder(stringFromSnapshot(snapshot, "input_placeholder"))
 	resp.ThemeColor = normalizeAgentThemeColor(stringFromSnapshot(snapshot, "theme_color"))
 	resp.SuggestedQuestions = normalizeSuggestedQuestions(stringSliceFromSnapshot(snapshot["suggested_questions"]))
@@ -632,7 +638,7 @@ func (s *agentsService) validateAgentEnabledSkillIDs(ctx context.Context, worksp
 }
 
 func normalizeAgentHomeTitle(input string) string {
-	const maxHomeTitleRunes = 40
+	const maxHomeTitleRunes = 150
 	title := strings.TrimSpace(input)
 	if title == "" {
 		return "title"
@@ -642,6 +648,10 @@ func normalizeAgentHomeTitle(input string) string {
 		return string(runes[:maxHomeTitleRunes])
 	}
 	return title
+}
+
+func normalizeAgentOpeningStatement(input string) string {
+	return strings.TrimSpace(strings.ReplaceAll(input, "\r\n", "\n"))
 }
 
 func normalizeAgentInputPlaceholder(input string) string {

@@ -714,11 +714,18 @@ func compactAgentConfigOperationResult(payload map[string]interface{}) map[strin
 		"model",
 		"system_prompt",
 		"home_title",
+		"opening_statement",
 		"input_placeholder",
 		"theme_color",
 	} {
 		if field == "system_prompt" {
 			addCompactSystemPromptEvidence(result, config[field])
+			continue
+		}
+		if field == "opening_statement" {
+			if value := compactStringValue(config[field], 2000); value != "" {
+				result[field] = value
+			}
 			continue
 		}
 		copyCompactField(result, config, field)

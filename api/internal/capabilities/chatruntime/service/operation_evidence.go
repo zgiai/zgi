@@ -158,6 +158,7 @@ func operationPlanCompactEvidenceResultSummary(summary map[string]interface{}) m
 		"file_upload",
 		"file_upload_enabled",
 		"home_title",
+		"opening_statement",
 		"input_placeholder",
 		"theme_color",
 		"suggested_questions",

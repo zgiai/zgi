@@ -1,7 +1,6 @@
 'use client';
 
 import type { AgentRuntimeSaveState } from '../types';
-import { getAgentTextIconDisplay } from '../utils';
 import type { AgentRuntimeDraftPersistenceSnapshot } from '../use-agent-runtime-draft-persistence';
 import type { UpdateAgentRuntimeConfigRequest } from '@/services/types/agent';
 import type { useT } from '@/i18n';
@@ -26,28 +25,4 @@ export function getAgentRuntimeSaveText(
     });
   }
   return t('saveState.saved');
-}
-
-interface AgentHomeBrandProps {
-  iconType?: string;
-  icon?: string;
-  iconUrl?: string;
-  name?: string;
-}
-
-export function AgentHomeBrand({ iconType, icon, iconUrl, name }: AgentHomeBrandProps) {
-  const textIcon = getAgentTextIconDisplay(iconType, icon, name);
-
-  return (
-    <div
-      className="flex size-16 items-center justify-center rounded-2xl border border-primary/30 bg-primary/10 text-xl font-semibold text-primary shadow-sm"
-      style={iconType === 'text' ? { backgroundColor: textIcon.background } : undefined}
-    >
-      {iconType === 'image' && iconUrl ? (
-        <img src={iconUrl} alt="" className="size-full rounded-2xl object-cover" />
-      ) : (
-        <span className={iconType === 'text' ? 'text-white' : undefined}>{textIcon.text}</span>
-      )}
-    </div>
-  );
 }

@@ -194,6 +194,7 @@ type AgentRuntimeModeConfig struct {
 	AgentMemorySlots          []AgentMemorySlotConfig `json:"agent_memory_slots,omitempty"`
 	FileUploadEnabled         bool                    `json:"file_upload_enabled"`
 	HomeTitle                 string                  `json:"home_title"`
+	OpeningStatement          string                  `json:"opening_statement"`
 	InputPlaceholder          string                  `json:"input_placeholder"`
 	ThemeColor                string                  `json:"theme_color"`
 	SuggestedQuestions        []string                `json:"suggested_questions"`
@@ -447,6 +448,7 @@ type AgentConfigRequest struct {
 	AgentMemoryEnabled        bool                   `json:"agent_memory_enabled"`
 	FileUpload                bool                   `json:"file_upload_enabled"`
 	HomeTitle                 string                 `json:"home_title"`
+	OpeningStatement          string                 `json:"opening_statement"`
 	InputPlaceholder          string                 `json:"input_placeholder"`
 	ThemeColor                string                 `json:"theme_color"`
 	SuggestedQuestions        []string               `json:"suggested_questions"`
@@ -475,6 +477,7 @@ type AgentConfigResponse struct {
 	AgentMemorySlots          []AgentMemorySlotConfig `json:"agent_memory_slots"`
 	FileUpload                bool                    `json:"file_upload_enabled"`
 	HomeTitle                 string                  `json:"home_title"`
+	OpeningStatement          string                  `json:"opening_statement"`
 	InputPlaceholder          string                  `json:"input_placeholder"`
 	ThemeColor                string                  `json:"theme_color"`
 	SuggestedQuestions        []string                `json:"suggested_questions"`
@@ -510,6 +513,7 @@ type GenerateAgentSuggestedQuestionsRequest struct {
 	Model             string                               `json:"model,omitempty"`
 	SystemPrompt      string                               `json:"system_prompt,omitempty"`
 	HomeTitle         string                               `json:"home_title,omitempty"`
+	OpeningStatement  string                               `json:"opening_statement,omitempty"`
 	ExistingQuestions []string                             `json:"existing_questions,omitempty"`
 	Skills            []AgentSuggestedQuestionSkillContext `json:"skills,omitempty"`
 	KnowledgeRefs     []string                             `json:"knowledge_refs,omitempty"`
@@ -576,6 +580,7 @@ type AgentPublicWebAppConfigResponse struct {
 	IconType           string   `json:"icon_type"`
 	IconURL            string   `json:"icon_url"`
 	HomeTitle          string   `json:"home_title"`
+	OpeningStatement   string   `json:"opening_statement"`
 	InputPlaceholder   string   `json:"input_placeholder"`
 	SuggestedQuestions []string `json:"suggested_questions"`
 	FileUpload         bool     `json:"file_upload_enabled"`
