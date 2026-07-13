@@ -134,6 +134,7 @@ export default function TableColumns({ dbId, tableId }: TableColumnsProps) {
       )}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
+          <h2 className="text-base font-semibold">{t('columns.previewTitle')}</h2>
           {isFetching && (
             <span className="text-xs text-muted-foreground">{t('columns.syncing')}</span>
           )}

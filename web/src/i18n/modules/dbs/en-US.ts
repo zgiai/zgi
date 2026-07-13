@@ -8,6 +8,8 @@ const messages = {
   database: 'Database',
   create: 'Create Database',
   edit: 'Edit Database',
+  databaseSettings: 'Database Settings',
+  backToDatabaseList: 'Back to database list',
   // Tables & features
   tables: 'Tables',
   createTable: 'Create Table',
@@ -33,7 +35,7 @@ const messages = {
     data: 'Table Data',
   },
   actions: {
-    edit: 'Edit Table Structure',
+    edit: 'Edit Table Information',
     delete: 'Delete',
     smartGenerate: 'AI Generate Table Structure',
     smartIngest: 'Smart Ingest',
@@ -102,10 +104,12 @@ const messages = {
   tableModal: {
     createTitle: 'Create Table',
     editTitle: 'Edit Table',
+    nameLimitHint: '{count}/25 characters',
   },
 
   // Table columns UI
   columns: {
+    previewTitle: 'Table Structure Preview',
     name: 'Storage Field Name',
     description: 'Description',
     type: 'Data Type',
@@ -127,6 +131,10 @@ const messages = {
   },
   // Table data UI
   tableData: {
+    title: 'Data Table',
+    discardConfirmTitle: 'Discard unsaved changes?',
+    discardConfirmDescription: 'Your current changes will not be saved.',
+    discardConfirmAction: 'Discard changes',
     rowsPerPage: 'Rows per page',
     sortBy: 'Sort by',
     ascending: 'Ascending',
@@ -141,7 +149,7 @@ const messages = {
     search: 'Search current page',
     searchPlaceholder: 'Search loaded rows...',
     columns: {
-      title: 'Columns',
+      title: 'Show/Hide Columns',
       visibleColumns: 'Visible columns',
       keepOneVisible: 'Keep at least one column visible',
     },
@@ -284,7 +292,7 @@ const messages = {
       bannerTitle: 'Uploads use the internal File Manager pipeline',
       bannerText: 'AI Recognition: AI will auto map content to table fields. {desc}',
       supportedDesc:
-        'Supports PDF, Word, Excel, images, and more. Multi-file selection is supported for AI recognition.',
+        'Supports PDF, Word, images, and more. Multi-file selection is supported for AI recognition.',
       chooseFromFiles: 'Select files from File Manager',
       selectedTitle: 'Selected Files ({count})',
       startRecognition: 'Start AI Recognition ({count} files)',

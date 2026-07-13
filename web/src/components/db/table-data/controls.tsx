@@ -115,6 +115,20 @@ const Controls: FC<TableDataControlsProps> = ({
   return (
     <div className="flex flex-wrap items-end justify-between gap-3">
       <div className="flex flex-wrap items-end gap-2">
+        {isEditing && (
+          <Button
+            onClick={onAddRow}
+            disabled={!hasDataFields}
+            title={
+              !hasDataFields
+                ? t('dbs.tableData.noFields.editDisabledTip')
+                : t('dbs.tableData.addRow')
+            }
+          >
+            <Plus className="w-4 h-4" />
+            {t('dbs.tableData.addRow')}
+          </Button>
+        )}
         {!isEditing && (
           <>
             <div className="min-w-[220px]">
@@ -154,35 +168,44 @@ const Controls: FC<TableDataControlsProps> = ({
               <span className="text-sm text-muted-foreground" title={t('dbs.tableData.sortBy')}>
                 {t('dbs.tableData.sortBy')}
               </span>
-              <Select value={normalizedSortKey} onValueChange={onSortKeyChange}>
-                <SelectTrigger className="h-8 w-48">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {columns.map(col => (
-                    <SelectItem key={col.id} value={col.name}>
-                      {col.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex items-center">
+                <Select value={normalizedSortKey} onValueChange={onSortKeyChange}>
+                  <SelectTrigger className="h-8 w-48 rounded-r-none">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {columns.map(col => (
+                      <SelectItem key={col.id} value={col.name} title={col.name}>
+                        {col.display_name?.trim() || col.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onToggleSortDir}
+                  className="rounded-l-none border-l-0"
+                  title={
+                    sortDir === 'ASC'
+                      ? t('dbs.tableData.descending')
+                      : t('dbs.tableData.ascending')
+                  }
+                  aria-label={
+                    sortDir === 'ASC'
+                      ? t('dbs.tableData.descending')
+                      : t('dbs.tableData.ascending')
+                  }
+                >
+                  <ArrowUp
+                    className={cn(
+                      'w-4 h-4 transition-transform duration-200',
+                      sortDir === 'ASC' ? 'rotate-180' : ''
+                    )}
+                  />
+                </Button>
+              </div>
             </div>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onToggleSortDir}
-              title={
-                sortDir === 'ASC' ? t('dbs.tableData.descending') : t('dbs.tableData.ascending')
-              }
-            >
-              <ArrowUp
-                className={cn(
-                  'w-4 h-4 transition-transform duration-200',
-                  sortDir === 'ASC' ? 'rotate-180' : ''
-                )}
-              />
-            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -245,18 +268,6 @@ const Controls: FC<TableDataControlsProps> = ({
       <div className="flex items-center gap-2">
         {isEditing ? (
           <>
-            <Button
-              onClick={onAddRow}
-              disabled={!hasDataFields}
-              title={
-                !hasDataFields
-                  ? t('dbs.tableData.noFields.editDisabledTip')
-                  : t('dbs.tableData.addRow')
-              }
-            >
-              <Plus className="w-4 h-4" />
-              {t('dbs.tableData.addRow')}
-            </Button>
             <Button
               variant="outline"
               onClick={onCancel}

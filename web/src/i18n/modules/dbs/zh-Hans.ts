@@ -10,6 +10,8 @@ const messages: DbsMessages = {
   database: '数据库',
   create: '新建数据库',
   edit: '编辑数据库',
+  databaseSettings: '数据库设置',
+  backToDatabaseList: '返回数据库列表',
   tables: '数据表',
   createTable: '新建表',
   goToDetail: '查看详情',
@@ -34,7 +36,7 @@ const messages: DbsMessages = {
     data: '数据表',
   },
   actions: {
-    edit: '编辑表结构',
+    edit: '编辑表格信息',
     delete: '删除',
     smartGenerate: '智能生成表结构',
     smartIngest: '智能录入',
@@ -94,8 +96,10 @@ const messages: DbsMessages = {
   tableModal: {
     createTitle: '新建表',
     editTitle: '编辑表',
+    nameLimitHint: '{count}/25 个字符',
   },
   columns: {
+    previewTitle: '表结构预览',
     name: '存储字段名称',
     description: '描述',
     type: '数据类型',
@@ -116,6 +120,10 @@ const messages: DbsMessages = {
     reservedNameTip: '禁止使用系统关键字作为字段名',
   },
   tableData: {
+    title: '数据表',
+    discardConfirmTitle: '确认不保存当前修改吗？',
+    discardConfirmDescription: '确认后将丢弃当前修改并退出编辑状态。',
+    discardConfirmAction: '确认不保存',
     rowsPerPage: '每页行数',
     sortBy: '排序字段',
     ascending: '升序',
@@ -130,7 +138,7 @@ const messages: DbsMessages = {
     search: '搜索当前页',
     searchPlaceholder: '搜索已加载行...',
     columns: {
-      title: '列',
+      title: '显示/隐藏列',
       visibleColumns: '显示列',
       keepOneVisible: '至少保留一列可见',
     },
@@ -266,7 +274,7 @@ const messages: DbsMessages = {
     stepOne: {
       bannerTitle: '文件统一走内部文件管理流程',
       bannerText: 'AI智能识别：AI将自动识别内容并匹配到表字段。{desc}',
-      supportedDesc: '支持 PDF、Word、Excel、图片等多种格式。支持批量选择多个文件进行AI识别。',
+      supportedDesc: '支持 PDF、Word、图片等多种格式。支持批量选择多个文件进行AI识别。',
       chooseFromFiles: '从文件管理中选择文件',
       selectedTitle: '已选择文件（{count}）',
       startRecognition: '开始AI识别（{count}个文件）',

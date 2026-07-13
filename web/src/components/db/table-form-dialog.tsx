@@ -112,11 +112,19 @@ export function DbTableFormDialog({
         </DialogHeader>
         <DialogBody className="space-y-3">
           <div className="space-y-1">
-            <Label htmlFor="db-table-name">{t('common.name')}</Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="db-table-name">{t('common.name')}</Label>
+              {!isEdit && (
+                <span className="text-xs text-muted-foreground">
+                  {t('dbs.tableModal.nameLimitHint', { count: name.length })}
+                </span>
+              )}
+            </div>
             <Input
               id="db-table-name"
               value={name}
               onChange={e => setName(e.target.value)}
+              maxLength={isEdit ? undefined : 25}
               aria-invalid={tableNameErrors.length > 0}
             />
             {tableNameErrors.length > 0 && (

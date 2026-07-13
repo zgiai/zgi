@@ -19,7 +19,7 @@ export interface TableDataHeaderProps {
 }
 
 function getColumnDisplayName(col: DbTableColumn): string {
-  return col.name;
+  return col.display_name?.trim() || col.name;
 }
 
 const Header: FC<TableDataHeaderProps> = ({
@@ -35,6 +35,12 @@ const Header: FC<TableDataHeaderProps> = ({
         {columns.map(col => {
           const showRequiredStar = isEditing && !col.is_system_field && !!col.is_required;
           const displayName = getColumnDisplayName(col);
+          const hasAlternativeName = displayName !== col.name;
+          const sourceColumnName = col.source_column_name?.trim();
+          const hasDistinctSourceName = Boolean(
+            sourceColumnName && sourceColumnName !== col.name && sourceColumnName !== displayName
+          );
+          const hasTooltip = hasAlternativeName || hasDistinctSourceName || Boolean(col.description);
           const sticky = stickyColumnNames.includes(col.name);
           const headClassName = cn(
             'border-r last:border-r-0 h-8 bg-muted/50',
@@ -50,18 +56,16 @@ const Header: FC<TableDataHeaderProps> = ({
               )}
             </span>
           );
-          return col.description ? (
+          return hasTooltip ? (
             <Tooltip key={`head-${col.id}`}>
               <TooltipTrigger asChild>
                 <TableHead className={cn(headClassName, 'cursor-help')}>{label}</TableHead>
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-[320px] break-words">
                 <div className="space-y-1 text-xs">
-                  {col.display_name?.trim() && col.display_name.trim() !== col.name && (
-                    <div>{col.display_name.trim()}</div>
-                  )}
-                  {col.source_column_name && <div>{col.source_column_name}</div>}
-                  <div>{col.description}</div>
+                  {hasAlternativeName && <div>{col.name}</div>}
+                  {hasDistinctSourceName && <div>{sourceColumnName}</div>}
+                  {col.description && <div>{col.description}</div>}
                 </div>
               </TooltipContent>
             </Tooltip>

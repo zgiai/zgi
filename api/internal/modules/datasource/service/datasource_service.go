@@ -3632,12 +3632,6 @@ func (s *dataSourceService) GenerateTableTemplateExcel(ctx context.Context, orga
 		f.SetCellValue(sheetName, cell, col.Name)
 	}
 
-	// Write example values (second row)
-	for colIdx, col := range columnsResp.Columns {
-		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 2)
-		f.SetCellValue(sheetName, cell, s.getExampleValueForType(col.Type))
-	}
-
 	// Write to buffer and return bytes
 	buffer, err := f.WriteToBuffer()
 	if err != nil {
@@ -3645,36 +3639,6 @@ func (s *dataSourceService) GenerateTableTemplateExcel(ctx context.Context, orga
 	}
 
 	return buffer.Bytes(), nil
-}
-
-// getExampleValueForType returns an example value for a given data type
-func (s *dataSourceService) getExampleValueForType(dataType string) string {
-	switch dataType {
-	case "varchar", "character varying", "text":
-		return "text"
-	case "int", "integer", "bigint", "smallint":
-		return "123"
-	case "float", "double", "real", "numeric", "decimal", "double precision":
-		return "123.45"
-	case "boolean", "bool":
-		return "true"
-	case "timestamp", "timestamptz", "timestamp without time zone", "timestamp with time zone":
-		return "2025-01-01 12:00:00"
-	case "date":
-		return "2023-01-01"
-	case "time":
-		return "12:00:00"
-	case "uuid":
-		return "550e8400-e29b-41d4-a716-446655440000"
-	case "json", "jsonb":
-		return `{"key": "value"}`
-	default:
-		// For array types or other complex types
-		if strings.HasSuffix(dataType, "[]") {
-			return "[value1, value2]"
-		}
-		return "text"
-	}
 }
 
 // ImportTableRecords imports records from an Excel file

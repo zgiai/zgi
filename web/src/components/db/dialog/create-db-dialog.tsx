@@ -252,18 +252,19 @@ export default function CreateDbDialog({ open, onOpenChange }: CreateDbDialogPro
               {/* Advanced Settings */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <Label
-                    className="flex items-center gap-1 cursor-pointer text-base"
+                  <button
+                    type="button"
                     onClick={() => setShowAdvanced(prev => !prev)}
+                    className="flex items-center gap-2 text-sm font-semibold hover:text-primary transition-colors focus:outline-none"
                   >
-                    {t('createModal.advancedSettingsLabel')}
                     <ChevronLeft
                       className={cn(
-                        'h-4 w-4 transition-transform duration-300',
+                        'size-4 transition-transform duration-300',
                         showAdvanced ? '-rotate-90' : ''
                       )}
                     />
-                  </Label>
+                    {t('createModal.advancedSettingsLabel')}
+                  </button>
                 </div>
 
                 <div

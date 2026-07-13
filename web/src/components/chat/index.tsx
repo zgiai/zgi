@@ -51,6 +51,7 @@ interface SingleTestVariantProps {
   /** Whether stop action is in progress */
   isStopping?: boolean;
   placeholder?: string;
+  inputClassName?: string;
   openingGuide?: OpeningGuideConfig;
   openingGuideBrand?: OpeningGuideBrand;
   suggestions?: string[];
@@ -182,6 +183,7 @@ const SingleTestChat: React.FC<SingleTestVariantProps> = ({
   isRunning,
   isStopping,
   placeholder,
+  inputClassName,
   openingGuide,
   openingGuideBrand,
   suggestions,
@@ -295,6 +297,7 @@ const SingleTestChat: React.FC<SingleTestVariantProps> = ({
               isRunning={isRunning}
               isStopping={isStopping}
               placeholder={placeholder}
+              className={inputClassName}
               toolbarForm={toolbarForm}
               topNotice={inputTopNotice}
               draftValue={draftSuggestion}

@@ -46,6 +46,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import FileSelectorDialog from '@/components/files/file-selector-dialog';
 import { ModelSelector, type ModelSelectorValue } from '@/components/common/model-selector';
+import { StepsProgressBar } from '@/components/common/steps-progress-bar';
 import type { FileItem } from '@/services/types/file';
 import {
   Type,
@@ -466,10 +467,9 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                 </div>
               )}
               <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-20">#</TableHead>
-                    {analysis.columns.map((col, index) => (
+              <TableHeader>
+                <TableRow>
+                  {analysis.columns.map((col, index) => (
                       <TableHead key={getExcelColumnKey(col, index)}>{col.display_name}</TableHead>
                     ))}
                   </TableRow>
@@ -477,7 +477,6 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                 <TableBody>
                   {analysis.preview_rows.map(row => (
                     <TableRow key={row.row_index}>
-                      <TableCell>{row.row_index}</TableCell>
                       {analysis.columns.map((col, index) => (
                         <TableCell key={getExcelColumnKey(col, index)}>
                           {String(row.values[col.name] ?? '')}
@@ -940,21 +939,16 @@ function StepIndicator({ step }: { step: Step }) {
   const t = useT('dbs');
   const steps: Step[] = ['file', 'preview', 'schema', 'result'];
   const activeIndex = steps.indexOf(step);
+
   return (
-    <div className="flex items-center gap-2">
-      {steps.map((item, index) => (
-        <div
-          key={item}
-          className={cn(
-            'h-7 rounded-md border px-2 text-xs flex items-center',
-            index <= activeIndex
-              ? 'border-highlight text-highlight bg-highlight/10'
-              : 'text-muted-foreground'
-          )}
-        >
-          {t(`excelImport.steps.${item}`)}
-        </div>
-      ))}
-    </div>
+    <StepsProgressBar
+      currentStep={activeIndex + 1}
+      totalSteps={steps.length}
+      getStepInfo={stepNumber => ({
+        title: t(`excelImport.steps.${steps[stepNumber - 1]}`),
+      })}
+      allowStepNavigation={false}
+      className="w-[560px]"
+    />
   );
 }

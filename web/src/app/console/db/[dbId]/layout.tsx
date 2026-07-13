@@ -13,6 +13,7 @@ import {
   Plus,
   Search,
   ScrollText,
+  Settings,
   ShieldAlert,
   Table,
 } from 'lucide-react';
@@ -199,7 +200,6 @@ export default function DbLayout({ children, params }: LayoutProps) {
             onToggleCollapse={toggleCollapse}
             expandLabel={t('navigation.expand')}
             collapseLabel={t('navigation.collapse')}
-            expandedWidthClassName="w-72"
             isNavigationHidden={isMismatch}
             header={
               <ResourceSidebarHeader
@@ -211,14 +211,12 @@ export default function DbLayout({ children, params }: LayoutProps) {
                 iconBackground={iconBackground}
                 name={db?.name || t('dbs.noName')}
                 description={db?.description || ''}
-                iconActionLabel={t('dbs.edit')}
-                onIconClick={
-                  canUpdateDatabase && !isMismatch && db ? () => setEditDbOpen(true) : undefined
-                }
+                backHref="/console/db"
+                backLabel={t('dbs.backToDatabaseList')}
               />
             }
           >
-            <nav className="flex flex-1 flex-col gap-0.5 px-1 py-1.5">
+            <nav className="flex flex-1 flex-col gap-[3px] px-1 py-2 items-center">
               {canViewTableMetadata && (
                 <button
                   type="button"
@@ -231,7 +229,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
                     }
                   }}
                   className={cn(
-                    'flex items-center rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
+                    'flex w-full items-center rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
                     pathname.startsWith(`/console/db/${dbId}/table`)
                       ? 'bg-primary/10 text-primary'
                       : 'hover:bg-primary/5 hover:text-primary',
@@ -259,7 +257,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
               )}
               {/* Table list */}
               {canViewTableMetadata && dbMenuOpen && !isCollapsed && (
-                <div className="pl-3 space-y-0.5">
+                <div className="min-w-0 overflow-hidden pl-3 space-y-0.5">
                   {/* Create table */}
                   {canManageSchema && (
                     <button
@@ -303,13 +301,13 @@ export default function DbLayout({ children, params }: LayoutProps) {
                       return (
                         <div
                           key={tableKey}
-                          className="w-full flex items-center justify-center gap-1 group relative"
+                          className="relative flex w-full min-w-0 items-center justify-center gap-1 overflow-hidden group"
                         >
                           {href ? (
                             <Link
                               href={href}
                               className={cn(
-                                'block h-7 grow cursor-pointer truncate rounded-md pl-2 pr-6 text-ellipsis text-xs leading-7 text-secondary-foreground overflow-hidden',
+                                'block h-7 w-0 min-w-0 grow cursor-pointer truncate rounded-md pl-2 pr-6 text-ellipsis text-xs leading-7 text-secondary-foreground overflow-hidden',
                                 active
                                   ? 'bg-primary/10 text-primary'
                                   : 'hover:bg-primary/5 hover:text-primary'
@@ -321,7 +319,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
                           ) : (
                             <span
                               className={cn(
-                                'block h-7 grow cursor-default truncate rounded-md pl-2 pr-6 text-ellipsis text-xs leading-7 text-muted-foreground overflow-hidden',
+                                'block h-7 w-0 min-w-0 grow cursor-default truncate rounded-md pl-2 pr-6 text-ellipsis text-xs leading-7 text-muted-foreground overflow-hidden',
                                 active && 'bg-primary/10 text-primary'
                               )}
                               title={label}
@@ -381,7 +379,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
                 <Link
                   href={`/console/db/${dbId}/search`}
                   className={cn(
-                    'flex items-center rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
+                    'flex w-full items-center rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
                     pathname === `/console/db/${dbId}/search` ||
                       pathname.startsWith(`/console/db/${dbId}/search/`)
                       ? 'bg-primary/10 text-primary'
@@ -404,7 +402,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
                 <Link
                   href={`/console/db/${dbId}/record`}
                   className={cn(
-                    'flex items-center rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
+                    'flex w-full items-center rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
                     pathname === `/console/db/${dbId}/record` ||
                       pathname.startsWith(`/console/db/${dbId}/record/`)
                       ? 'bg-primary/10 text-primary'
@@ -422,6 +420,27 @@ export default function DbLayout({ children, params }: LayoutProps) {
                     {t('dbs.features.logs')}
                   </span>
                 </Link>
+              )}
+              {canUpdateDatabase && !isMismatch && db && (
+                <button
+                  type="button"
+                  onClick={() => setEditDbOpen(true)}
+                  className={cn(
+                    'flex w-full items-center rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-primary/5 hover:text-primary',
+                    isCollapsed && 'justify-center px-0'
+                  )}
+                  title={isCollapsed ? t('dbs.databaseSettings') : undefined}
+                >
+                  <Settings className="h-4 w-4 shrink-0" />
+                  <span
+                    className={cn(
+                      'truncate ml-1.5 transition-all duration-300',
+                      isCollapsed && 'ml-0 w-0 overflow-hidden opacity-0'
+                    )}
+                  >
+                    {t('dbs.databaseSettings')}
+                  </span>
+                </button>
               )}
             </nav>
           </ResourceSidebar>
