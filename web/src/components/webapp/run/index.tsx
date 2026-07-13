@@ -1900,12 +1900,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   );
 
   const inputSection = (
-    <div
-      className={cn(
-        'flex h-full w-full flex-col overflow-hidden rounded-xl border bg-card shadow-sm',
-        !isCompactLayout && 'w-[clamp(360px,34%,420px)] shrink-0'
-      )}
-    >
+    <div className="flex h-full w-full flex-col overflow-hidden rounded-xl border bg-card shadow-sm">
       <div className="flex h-11 shrink-0 items-center gap-2 border-b bg-muted/30 px-4">
         {isApprovalPending ? (
           <Clock3 className="size-5 text-amber-600" />
@@ -1999,69 +1994,77 @@ export const WebappRun: React.FC<WebappRunProps> = ({
 
   return (
     <div ref={runContainerRef} className="h-full w-full overflow-hidden p-2 md:p-4">
-      {!isCompactLayout ? (
-        <div className="flex h-full flex-row gap-4 overflow-hidden">
-          {inputSection}
-          <div className="flex h-full min-w-0 flex-1 flex-col gap-3 overflow-hidden">
-            {executionSection}
-            {outputSection}
-          </div>
-        </div>
-      ) : (
-        <div className="flex h-full min-h-0 flex-col gap-2">
-          <Tabs
-            value={activeTab}
-            onValueChange={setActiveTab}
-            className="flex min-h-0 flex-1 flex-col"
-          >
-            <TabsList className="mb-2 grid shrink-0 grid-cols-3">
-              <TabsTrigger value="input" className="flex min-w-0 items-center gap-1.5">
-                <Settings2 className="w-3.5 h-3.5" />
-                <span className="truncate">{t('run.inputsTitle')}</span>
-              </TabsTrigger>
-              <TabsTrigger value="execution" className="flex min-w-0 items-center gap-1.5">
-                <Activity className="w-3.5 h-3.5" />
-                <span className="truncate">{t('run.execution')}</span>
-                {isRunning || waitingForInput ? (
-                  <span
-                    className={cn(
-                      'size-1.5 shrink-0 rounded-full',
-                      isRunning ? 'animate-pulse bg-primary' : 'bg-amber-500'
-                    )}
-                  />
-                ) : null}
-              </TabsTrigger>
-              <TabsTrigger value="result" className="flex min-w-0 items-center gap-1.5">
-                <Terminal className="w-3.5 h-3.5" />
-                <span className="truncate">{t('run.output')}</span>
-              </TabsTrigger>
-            </TabsList>
+      <Tabs
+        value={activeTab}
+        onValueChange={setActiveTab}
+        className={cn(
+          'grid h-full min-h-0 overflow-hidden',
+          isCompactLayout
+            ? 'grid-cols-1 grid-rows-[auto_minmax(0,1fr)_auto] gap-2'
+            : 'grid-cols-[clamp(360px,34%,420px)_minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] gap-x-4 gap-y-3'
+        )}
+      >
+        <TabsList className={cn('grid shrink-0 grid-cols-3', !isCompactLayout && 'hidden')}>
+          <TabsTrigger value="input" className="flex min-w-0 items-center gap-1.5">
+            <Settings2 className="w-3.5 h-3.5" />
+            <span className="truncate">{t('run.inputsTitle')}</span>
+          </TabsTrigger>
+          <TabsTrigger value="execution" className="flex min-w-0 items-center gap-1.5">
+            <Activity className="w-3.5 h-3.5" />
+            <span className="truncate">{t('run.execution')}</span>
+            {isRunning || waitingForInput ? (
+              <span
+                className={cn(
+                  'size-1.5 shrink-0 rounded-full',
+                  isRunning ? 'animate-pulse bg-primary' : 'bg-amber-500'
+                )}
+              />
+            ) : null}
+          </TabsTrigger>
+          <TabsTrigger value="result" className="flex min-w-0 items-center gap-1.5">
+            <Terminal className="w-3.5 h-3.5" />
+            <span className="truncate">{t('run.output')}</span>
+          </TabsTrigger>
+        </TabsList>
 
-            <div className="relative min-h-0 flex-1 overflow-hidden">
-              <TabsContent
-                value="input"
-                forceMount
-                className="m-0 h-full overflow-hidden p-1 focus-visible:ring-0 data-[state=inactive]:hidden"
-              >
-                {inputSection}
-              </TabsContent>
-              <TabsContent
-                value="execution"
-                className="m-0 h-full overflow-hidden p-1 focus-visible:ring-0"
-              >
-                {executionSection}
-              </TabsContent>
-              <TabsContent
-                value="result"
-                className="m-0 h-full overflow-hidden p-1 focus-visible:ring-0"
-              >
-                {outputSection}
-              </TabsContent>
-            </div>
-          </Tabs>
-          {runActionFooter}
-        </div>
-      )}
+        <TabsContent
+          value="input"
+          forceMount
+          className={cn(
+            'm-0 min-h-0 overflow-hidden focus-visible:ring-0',
+            isCompactLayout
+              ? 'col-start-1 row-start-2 h-full p-1 data-[state=inactive]:hidden'
+              : 'col-start-1 row-span-2 row-start-1 h-full'
+          )}
+        >
+          {inputSection}
+        </TabsContent>
+        <TabsContent
+          value="execution"
+          forceMount
+          className={cn(
+            'm-0 min-h-0 overflow-hidden focus-visible:ring-0',
+            isCompactLayout
+              ? 'col-start-1 row-start-2 h-full p-1 data-[state=inactive]:hidden'
+              : 'col-start-2 row-start-1'
+          )}
+        >
+          {executionSection}
+        </TabsContent>
+        <TabsContent
+          value="result"
+          forceMount
+          className={cn(
+            'm-0 min-h-0 overflow-hidden focus-visible:ring-0',
+            isCompactLayout
+              ? 'col-start-1 row-start-2 h-full p-1 data-[state=inactive]:hidden'
+              : 'col-start-2 row-start-2 h-full'
+          )}
+        >
+          {outputSection}
+        </TabsContent>
+        {isCompactLayout ? runActionFooter : null}
+      </Tabs>
     </div>
   );
 };
