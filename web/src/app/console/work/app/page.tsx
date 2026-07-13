@@ -21,6 +21,8 @@ import { ICON_BG } from '@/lib/config';
 
 const RECENT_WEBAPP_STORAGE_KEY = 'zgi:webapp:recent';
 const APP_PAGE_SIZE = 12;
+const RECENT_APP_CANDIDATE_LIMIT = 6;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface AppCardItem {
   id: string;
@@ -70,19 +72,22 @@ export default function ConsoleWorkAppHomePage() {
   const [recentIds, setRecentIds] = useState<string[]>([]);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const debouncedSearch = useDebouncedValue(search.trim(), 300);
+  const recentCandidateIds = useMemo(
+    () => recentIds.filter(id => UUID_PATTERN.test(id)).slice(0, RECENT_APP_CANDIDATE_LIMIT),
+    [recentIds]
+  );
   const { items, isLoading, isFetching, canUseResourceList, total, pageSize } = useRunnableWebApps({
     workspaceId: null,
     keyword: queryKeyword || undefined,
     page: currentPage,
     pageSize: APP_PAGE_SIZE,
   });
-  const recentWebAppId = recentIds[0] ?? null;
-  const shouldLoadRecent = currentPage === 1 && !queryKeyword && Boolean(recentWebAppId);
+  const shouldLoadRecent = currentPage === 1 && !queryKeyword && recentCandidateIds.length > 0;
   const { items: recentItems } = useRunnableWebApps({
     workspaceId: null,
-    webAppId: recentWebAppId,
+    webAppIds: recentCandidateIds,
     page: 1,
-    pageSize: 1,
+    pageSize: Math.max(1, recentCandidateIds.length),
     enabled: shouldLoadRecent,
   });
   const totalPages = Math.max(1, Math.ceil(total / (pageSize || APP_PAGE_SIZE)));
@@ -93,7 +98,10 @@ export default function ConsoleWorkAppHomePage() {
     if (typeof window === 'undefined') return;
     try {
       const raw = window.localStorage.getItem(RECENT_WEBAPP_STORAGE_KEY);
-      setRecentIds(raw ? (JSON.parse(raw) as string[]) : []);
+      const parsed: unknown = raw ? JSON.parse(raw) : [];
+      setRecentIds(
+        Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []
+      );
     } catch {
       setRecentIds([]);
     }
@@ -116,9 +124,12 @@ export default function ConsoleWorkAppHomePage() {
 
   const recentCard = useMemo(() => {
     if (!shouldLoadRecent) return null;
-    const recentItem = recentItems.find(item => item.web_app_id === recentWebAppId);
-    return recentItem ? toAppCard(recentItem) : null;
-  }, [recentItems, recentWebAppId, shouldLoadRecent]);
+    for (const id of recentCandidateIds) {
+      const recentItem = recentItems.find(item => item.web_app_id === id);
+      if (recentItem) return toAppCard(recentItem);
+    }
+    return null;
+  }, [recentCandidateIds, recentItems, shouldLoadRecent]);
 
   const gridCards = useMemo(() => {
     if (!recentCard) return cards;

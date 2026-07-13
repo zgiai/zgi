@@ -805,6 +805,32 @@ func TestAgentsService_GetRunnableWebApps_PaginatesBeforeResolvingImageURLs(t *t
 	require.Equal(t, []string{"icon-3", "icon-4"}, fileService.fileIDs)
 }
 
+func TestAgentsService_GetRunnableWebApps_ForwardsRecentWebAppCandidates(t *testing.T) {
+	firstID := uuid.NewString()
+	secondID := uuid.NewString()
+	repo := &stubAgentsRepository{}
+	service := &agentsService{
+		agentsRepo: repo,
+		tenantService: &stubWorkspaceManagementService{currentOrganization: &workspace_model.OrganizationMember{
+			OrganizationID: "org-1",
+			AccountID:      "account-1",
+		}},
+		enterpriseService: &stubOrganizationService{permissionWorkspaceIDs: []string{"workspace-1"}},
+	}
+
+	_, err := service.GetRunnableWebApps(t.Context(), "account-1", dto.GetRunnableWebAppsRequest{
+		WebAppIDs: firstID + "," + secondID + "," + firstID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{firstID, secondID}, repo.lastWebAppIDs)
+}
+
+func TestParseRunnableWebAppIDs_RejectsInvalidCandidate(t *testing.T) {
+	ids, err := parseRunnableWebAppIDs(uuid.NewString() + ",invalid")
+	require.ErrorIs(t, err, errInvalidRunnableWebAppIDs)
+	require.Nil(t, ids)
+}
+
 type stubAgentsRepository struct {
 	AgentsRepository
 
@@ -813,20 +839,22 @@ type stubAgentsRepository struct {
 	lastWorkspaceIDs          []string
 	lastWorkspaceID           string
 	lastWebAppID              string
+	lastWebAppIDs             []string
 	lastKeyword               string
 	listRunnableWebAppsCalled bool
 }
 
-func (s *stubAgentsRepository) ListRunnableWebApps(_ context.Context, workspaceIDs []string, filter runnableWebAppFilter) ([]runnableWebAppItem, error) {
+func (s *stubAgentsRepository) ListRunnableWebApps(_ context.Context, workspaceIDs []string, filter runnableWebAppFilter) (runnableWebAppListResult, error) {
 	s.listRunnableWebAppsCalled = true
 	s.lastWorkspaceIDs = append([]string(nil), workspaceIDs...)
 	s.lastWorkspaceID = filter.WorkspaceID
 	s.lastWebAppID = filter.WebAppID
+	s.lastWebAppIDs = append([]string(nil), filter.WebAppIDs...)
 	s.lastKeyword = filter.Keyword
 	if s.err != nil {
-		return nil, s.err
+		return runnableWebAppListResult{}, s.err
 	}
-	return s.items, nil
+	return runnableWebAppListResult{Items: s.items}, nil
 }
 
 type countingRunnableWebAppFileService struct {

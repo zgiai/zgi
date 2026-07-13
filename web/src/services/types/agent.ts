@@ -147,6 +147,7 @@ export interface AgentListParams {
 export interface RunnableWebAppsParams {
   workspace_id?: string;
   web_app_id?: string;
+  web_app_ids?: string;
   keyword?: string;
   page?: number;
   page_size?: number;
@@ -420,21 +421,10 @@ export interface AgentApiKeyList {
 }
 
 export type AgentRuntimeSurface =
-  | 'webapp'
-  | 'api'
-  | 'app_center'
-  | 'builtin_app'
-  | 'internal'
-  | string;
+  'webapp' | 'api' | 'app_center' | 'builtin_app' | 'internal' | string;
 
 export type AgentRuntimeGrantSubject =
-  | 'public'
-  | 'organization'
-  | 'department'
-  | 'workspace'
-  | 'account'
-  | 'internal'
-  | string;
+  'public' | 'organization' | 'department' | 'workspace' | 'account' | 'internal' | string;
 
 export interface AgentRuntimeSurfaceGrant {
   subject_type: AgentRuntimeGrantSubject;

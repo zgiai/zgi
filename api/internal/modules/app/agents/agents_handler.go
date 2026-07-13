@@ -234,10 +234,16 @@ func (h *AgentsHandler) GetRunnableWebApps(c *gin.Context) {
 			return
 		}
 	}
+	if _, err := parseRunnableWebAppIDs(req.WebAppIDs); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
 
 	result, err := h.appService.GetRunnableWebApps(c.Request.Context(), accountID, req)
 	if err != nil {
 		switch {
+		case errors.Is(err, errInvalidRunnableWebAppIDs):
+			response.Fail(c, response.ErrInvalidParam)
 		case errors.Is(err, errCurrentOrganizationNotFound):
 			response.Fail(c, response.ErrOrganizationNotFound)
 		default:

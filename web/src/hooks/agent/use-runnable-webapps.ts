@@ -30,6 +30,7 @@ interface UseRunnableWebAppsOptions {
   enabled?: boolean;
   staleTime?: number;
   webAppId?: string | null;
+  webAppIds?: string[];
   keyword?: string;
   page?: number;
   pageSize?: number;
@@ -40,6 +41,7 @@ export function useRunnableWebApps({
   enabled = true,
   staleTime = 60 * 1000,
   webAppId,
+  webAppIds,
   keyword,
   page,
   pageSize,
@@ -60,15 +62,25 @@ export function useRunnableWebApps({
     return currentWorkspace?.id ?? null;
   }, [workspaceId, currentWorkspace?.id]);
 
+  const webAppIDsParam = useMemo(
+    () =>
+      webAppIds
+        ?.map(id => id.trim())
+        .filter(Boolean)
+        .join(',') || undefined,
+    [webAppIds]
+  );
+
   const requestParams = useMemo<RunnableWebAppsParams>(
     () => ({
       workspace_id: resolvedWorkspaceId || undefined,
       web_app_id: webAppId?.trim() || undefined,
+      web_app_ids: webAppIDsParam,
       keyword: keyword?.trim() || undefined,
       page,
       page_size: pageSize,
     }),
-    [keyword, page, pageSize, resolvedWorkspaceId, webAppId]
+    [keyword, page, pageSize, resolvedWorkspaceId, webAppId, webAppIDsParam]
   );
 
   const query = useQuery<ApiResponseData<RunnableWebAppsData>>({
