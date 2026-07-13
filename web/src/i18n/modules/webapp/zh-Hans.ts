@@ -841,6 +841,8 @@ const messages: WebappMessages = {
     appList: '应用列表',
     closeAppList: '关闭应用列表',
     loadingApps: '正在加载应用...',
+    loadingMoreApps: '正在加载更多应用...',
+    noMoreApps: '没有更多啦~',
     openApp: '打开应用',
     openRecent: '继续使用',
     clearSearch: '清空',

@@ -71,6 +71,8 @@ export const AGENT_KEYS = {
     [...AGENT_KEYS.detail(id), 'workflow-binding-candidates'] as const,
   runnable: (workspaceId?: string | null, params?: unknown) =>
     [...AGENT_KEYS.all, 'runnable-webapps', workspaceId || 'all', params] as const,
+  runnableInfinite: (workspaceId?: string | null, params?: unknown) =>
+    [...AGENT_KEYS.all, 'runnable-webapps-infinite', workspaceId || 'all', params] as const,
   runtimeSurfaces: (agentId: string) =>
     [...AGENT_KEYS.detail(agentId), 'runtime-surfaces'] as const,
   runtimeRuns: (agentId: string, params: unknown) =>

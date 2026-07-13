@@ -866,6 +866,8 @@ const messages = {
     appList: 'App List',
     closeAppList: 'Close app list',
     loadingApps: 'Loading apps...',
+    loadingMoreApps: 'Loading more apps...',
+    noMoreApps: 'No more apps~',
     openApp: 'Open App',
     openRecent: 'Resume app',
     clearSearch: 'Clear',

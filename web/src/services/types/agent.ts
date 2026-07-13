@@ -162,9 +162,9 @@ export interface RunnableWebAppItem {
 }
 
 export interface RunnableWebAppMetaData {
-  title: string;
-  icon: string;
-  icon_type?: string;
+  name: string;
+  icon: string | null;
+  icon_type?: string | null;
   icon_url?: string;
   desc: string | null;
   agent_type: AgentType | string;

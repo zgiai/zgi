@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { AppWindow, ArrowRightToLine, PanelLeft, X } from 'lucide-react';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
@@ -11,13 +11,16 @@ import { SearchInput } from '@/components/ui/input';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { useRunnableWebApps } from '@/hooks/agent/use-runnable-webapps';
+import { useInfiniteRunnableWebApps, useRunnableWebApps } from '@/hooks/agent/use-runnable-webapps';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { useInfiniteObserver } from '@/hooks/use-infinite-observer';
 import { useT } from '@/i18n/translations';
 import { getSidebarCollapsed, saveSidebarCollapsed } from '@/utils/ui-local';
 import type { RunnableWebAppResolvedItem } from '@/hooks/agent/use-runnable-webapps';
 import { Logo } from '@/components/logo';
 import { ICON_BG } from '@/lib/config';
+
+const SIDEBAR_PAGE_SIZE = 20;
 
 function toPreviewData(item: RunnableWebAppResolvedItem) {
   let iconType: 'image' | 'text' = item.icon_type === 'image' ? 'image' : 'text';
@@ -55,12 +58,40 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
   const [searchQuery, setSearchQuery] = useState('');
   const [queryKeyword, setQueryKeyword] = useState('');
   const debouncedSearchQuery = useDebouncedValue(searchQuery.trim(), 300);
-  const { items, isLoading, isFetching } = useRunnableWebApps({
+  const currentWebappId = useMemo(() => {
+    const match = pathname.match(/^\/console\/work\/app\/([^/?#]+)/);
+    return match?.[1] ?? null;
+  }, [pathname]);
+  const { items, isLoading, isFetching, fetchNextPage, hasMore, isFetchingNextPage } =
+    useInfiniteRunnableWebApps({
+      workspaceId: null,
+      keyword: queryKeyword || undefined,
+      pageSize: SIDEBAR_PAGE_SIZE,
+    });
+  const { items: currentItems } = useRunnableWebApps({
     workspaceId: null,
-    keyword: queryKeyword || undefined,
+    webAppId: currentWebappId,
+    page: 1,
+    pageSize: 1,
+    enabled: Boolean(currentWebappId),
   });
   const isSearchPending = searchQuery.trim() !== queryKeyword;
-  const showNavLoading = isLoading || isFetching || isSearchPending;
+  const showNavLoading = isLoading || isSearchPending || (isFetching && items.length === 0);
+  const desktopScrollRef = useRef<HTMLDivElement>(null);
+  const mobileScrollRef = useRef<HTMLDivElement>(null);
+  const desktopLoadMoreRef = useInfiniteObserver({
+    hasNextPage: hasMore && !isSearchPending,
+    isFetchingNextPage,
+    fetchNextPage,
+    rootRef: desktopScrollRef,
+  });
+  const mobileLoadMoreRef = useInfiniteObserver({
+    hasNextPage: hasMore && !isSearchPending,
+    isFetchingNextPage,
+    fetchNextPage,
+    rootRef: mobileScrollRef,
+    enabled: mobileDrawerOpen,
+  });
 
   useEffect(() => {
     saveSidebarCollapsed('app', isCollapsed);
@@ -70,9 +101,21 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
     setQueryKeyword(debouncedSearchQuery);
   }, [debouncedSearchQuery]);
 
+  const currentApp = useMemo(
+    () =>
+      currentItems[0] ??
+      (currentWebappId ? items.find(item => item.web_app_id === currentWebappId) : null),
+    [currentItems, currentWebappId, items]
+  );
+
+  const sidebarItems = useMemo(() => {
+    if (!currentApp || queryKeyword) return items;
+    return [currentApp, ...items.filter(item => item.web_app_id !== currentApp.web_app_id)];
+  }, [currentApp, items, queryKeyword]);
+
   const navItems = useMemo(
     () =>
-      items.map(item => {
+      sidebarItems.map(item => {
         const title = item.meta_data.title;
         const preview = toPreviewData(item);
         return {
@@ -82,17 +125,7 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
           preview,
         };
       }),
-    [items]
-  );
-
-  const currentWebappId = useMemo(() => {
-    const match = pathname.match(/^\/console\/work\/app\/([^/?#]+)/);
-    return match?.[1] ?? null;
-  }, [pathname]);
-
-  const currentApp = useMemo(
-    () => (currentWebappId ? items.find(item => item.web_app_id === currentWebappId) : null),
-    [currentWebappId, items]
+    [sidebarItems]
   );
 
   const currentAppPreview = useMemo(
@@ -140,7 +173,7 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
           {appSearch}
         </div>
       ) : null}
-      <div className="w-full flex-1 overflow-y-auto">
+      <div ref={desktopScrollRef} className="w-full flex-1 overflow-y-auto">
         <div className={cn('flex w-full flex-col gap-0.5 p-2', isCollapsed && 'px-2')}>
           <Link
             href="/console/work/app"
@@ -233,6 +266,21 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
               </Button>
             </div>
           ) : null}
+          {!showNavLoading && isFetchingNextPage ? (
+            <div className={cn('space-y-1 py-1', isCollapsed && 'px-1')} role="status">
+              <span className="sr-only">{t('appCenter.loadingMoreApps')}</span>
+              <Skeleton className="h-10 w-full rounded-md" />
+              <Skeleton className="h-10 w-full rounded-md" />
+            </div>
+          ) : null}
+          {!showNavLoading && hasMore ? (
+            <div ref={desktopLoadMoreRef} className="h-1 shrink-0" aria-hidden="true" />
+          ) : null}
+          {!showNavLoading && !hasMore && navItems.length > 0 && !isCollapsed ? (
+            <div className="px-3 py-3 text-center text-xs text-muted-foreground">
+              {t('appCenter.noMoreApps')}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -323,7 +371,7 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
             </Button>
           </SheetHeader>
           <div className="border-b px-3 py-3">{appSearch}</div>
-          <div className="h-0 grow overflow-y-auto">
+          <div ref={mobileScrollRef} className="h-0 grow overflow-y-auto">
             <div className="p-2 space-y-1">
               <Link
                 href="/console/work/app"
@@ -392,6 +440,21 @@ export default function ConsoleWorkAppLayout({ children }: { children: React.Rea
                   >
                     {t('appCenter.clearSearch')}
                   </Button>
+                </div>
+              ) : null}
+              {!showNavLoading && isFetchingNextPage ? (
+                <div className="space-y-1 py-1" role="status">
+                  <span className="sr-only">{t('appCenter.loadingMoreApps')}</span>
+                  <Skeleton className="h-10 w-full rounded-md" />
+                  <Skeleton className="h-10 w-full rounded-md" />
+                </div>
+              ) : null}
+              {!showNavLoading && hasMore ? (
+                <div ref={mobileLoadMoreRef} className="h-1 shrink-0" aria-hidden="true" />
+              ) : null}
+              {!showNavLoading && !hasMore && navItems.length > 0 ? (
+                <div className="px-3 py-3 text-center text-xs text-muted-foreground">
+                  {t('appCenter.noMoreApps')}
                 </div>
               ) : null}
             </div>
