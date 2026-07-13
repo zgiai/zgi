@@ -146,6 +146,9 @@ export interface AgentListParams {
 
 export interface RunnableWebAppsParams {
   workspace_id?: string;
+  keyword?: string;
+  page?: number;
+  page_size?: number;
 }
 
 export interface RunnableWebAppItem {
@@ -167,6 +170,10 @@ export interface RunnableWebAppMetaData {
 
 export interface RunnableWebAppsData {
   items: RunnableWebAppItem[];
+  page?: number;
+  page_size?: number;
+  total?: number;
+  has_more?: boolean;
 }
 
 export interface UpdateWebAppStatusRequest {

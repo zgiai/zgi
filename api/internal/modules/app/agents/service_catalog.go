@@ -69,7 +69,7 @@ func (s *agentsService) GetRunnableWebApps(ctx context.Context, accountID string
 	}
 
 	if req.WorkspaceID != "" && !slices.Contains(visibleWorkspaceIDs, req.WorkspaceID) {
-		return resp, nil
+		return paginateRunnableWebApps(resp, req), nil
 	}
 
 	candidateWorkspaceIDs := visibleWorkspaceIDs
@@ -80,10 +80,10 @@ func (s *agentsService) GetRunnableWebApps(ctx context.Context, accountID string
 		}
 	}
 	if len(candidateWorkspaceIDs) == 0 {
-		return resp, nil
+		return paginateRunnableWebApps(resp, req), nil
 	}
 
-	items, err := s.agentsRepo.ListRunnableWebApps(ctx, candidateWorkspaceIDs, req.WorkspaceID)
+	items, err := s.agentsRepo.ListRunnableWebApps(ctx, candidateWorkspaceIDs, req.WorkspaceID, req.Keyword)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list runnable web apps: %w", err)
 	}
@@ -127,7 +127,37 @@ func (s *agentsService) GetRunnableWebApps(ctx context.Context, accountID string
 		})
 	}
 
-	return resp, nil
+	return paginateRunnableWebApps(resp, req), nil
+}
+
+func paginateRunnableWebApps(resp *dto.RunnableWebAppsResponse, req dto.GetRunnableWebAppsRequest) *dto.RunnableWebAppsResponse {
+	if resp == nil || (req.Page == 0 && req.PageSize == 0) {
+		return resp
+	}
+
+	page := req.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := req.PageSize
+	if pageSize < 1 {
+		pageSize = 20
+	}
+
+	total := len(resp.Items)
+	start := (page - 1) * pageSize
+	if start >= total {
+		resp.Items = []dto.RunnableWebAppItem{}
+	} else {
+		end := min(start+pageSize, total)
+		resp.Items = resp.Items[start:end]
+	}
+
+	resp.Page = page
+	resp.PageSize = pageSize
+	resp.Total = total
+	resp.HasMore = start+pageSize < total
+	return resp
 }
 
 type runnableWebAppAuthorizationCandidate struct {

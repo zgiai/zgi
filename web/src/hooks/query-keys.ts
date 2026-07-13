@@ -69,8 +69,8 @@ export const AGENT_KEYS = {
   config: (id: string) => [...AGENT_KEYS.detail(id), 'config'] as const,
   workflowBindingCandidates: (id: string) =>
     [...AGENT_KEYS.detail(id), 'workflow-binding-candidates'] as const,
-  runnable: (workspaceId?: string | null) =>
-    [...AGENT_KEYS.all, 'runnable-webapps', workspaceId || 'all'] as const,
+  runnable: (workspaceId?: string | null, params?: unknown) =>
+    [...AGENT_KEYS.all, 'runnable-webapps', workspaceId || 'all', params] as const,
   runtimeSurfaces: (agentId: string) =>
     [...AGENT_KEYS.detail(agentId), 'runtime-surfaces'] as const,
   runtimeRuns: (agentId: string, params: unknown) =>

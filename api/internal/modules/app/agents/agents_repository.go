@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -60,7 +61,7 @@ type AgentsRepository interface {
 	UpdateWorkflowID(ctx context.Context, agentID, workflowID string) error
 	UpdateWorkflowConfig(ctx context.Context, agentID, workflowConfig string) error
 	HasPublishedWorkflow(ctx context.Context, agentID string) (bool, error)
-	ListRunnableWebApps(ctx context.Context, workspaceIDs []string, workspaceID string) ([]runnableWebAppItem, error)
+	ListRunnableWebApps(ctx context.Context, workspaceIDs []string, workspaceID, keyword string) ([]runnableWebAppItem, error)
 }
 
 // agentsRepository implements AgentsRepository
@@ -156,7 +157,7 @@ func (r *agentsRepository) GetByTenantID(ctx context.Context, tenantID string) (
 	return list, nil
 }
 
-func (r *agentsRepository) ListRunnableWebApps(ctx context.Context, workspaceIDs []string, workspaceID string) ([]runnableWebAppItem, error) {
+func (r *agentsRepository) ListRunnableWebApps(ctx context.Context, workspaceIDs []string, workspaceID, keyword string) ([]runnableWebAppItem, error) {
 	if len(workspaceIDs) == 0 {
 		return []runnableWebAppItem{}, nil
 	}
@@ -191,6 +192,10 @@ func (r *agentsRepository) ListRunnableWebApps(ctx context.Context, workspaceIDs
 
 	if workspaceID != "" {
 		query = query.Where("agents.tenant_id = ?", workspaceID)
+	}
+	if keyword = strings.TrimSpace(keyword); keyword != "" {
+		pattern := "%" + keyword + "%"
+		query = query.Where("(agents.name ILIKE ? OR agents.description ILIKE ?)", pattern, pattern)
 	}
 
 	if err := query.

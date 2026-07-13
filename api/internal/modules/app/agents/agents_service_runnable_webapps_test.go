@@ -703,6 +703,42 @@ func TestAgentsService_GetRunnableWebApps_ReturnsErrorWhenCurrentOrganizationMis
 	require.Nil(t, resp)
 }
 
+func TestAgentsService_GetRunnableWebApps_ReturnsRequestedPageAndForwardsKeyword(t *testing.T) {
+	ctx := t.Context()
+	repo := &stubAgentsRepository{
+		items: []runnableWebAppItem{
+			{AgentID: "agent-1", WorkspaceID: "workspace-1", WebAppID: "app-1", AgentName: "One", WebAppStatus: string(AgentWebAppStatusActive)},
+			{AgentID: "agent-2", WorkspaceID: "workspace-1", WebAppID: "app-2", AgentName: "Two", WebAppStatus: string(AgentWebAppStatusActive)},
+			{AgentID: "agent-3", WorkspaceID: "workspace-1", WebAppID: "app-3", AgentName: "Three", WebAppStatus: string(AgentWebAppStatusActive)},
+			{AgentID: "agent-4", WorkspaceID: "workspace-1", WebAppID: "app-4", AgentName: "Four", WebAppStatus: string(AgentWebAppStatusActive)},
+			{AgentID: "agent-5", WorkspaceID: "workspace-1", WebAppID: "app-5", AgentName: "Five", WebAppStatus: string(AgentWebAppStatusActive)},
+		},
+	}
+	service := &agentsService{
+		agentsRepo: repo,
+		tenantService: &stubWorkspaceManagementService{currentOrganization: &workspace_model.OrganizationMember{
+			OrganizationID: "org-1",
+			AccountID:      "account-1",
+		}},
+		enterpriseService: &stubOrganizationService{permissionWorkspaceIDs: []string{"workspace-1"}},
+	}
+
+	resp, err := service.GetRunnableWebApps(ctx, "account-1", dto.GetRunnableWebAppsRequest{
+		Keyword:  "report",
+		Page:     2,
+		PageSize: 2,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "report", repo.lastKeyword)
+	require.Equal(t, 2, resp.Page)
+	require.Equal(t, 2, resp.PageSize)
+	require.Equal(t, 5, resp.Total)
+	require.True(t, resp.HasMore)
+	require.Len(t, resp.Items, 2)
+	require.Equal(t, "agent-3", resp.Items[0].AgentID)
+	require.Equal(t, "agent-4", resp.Items[1].AgentID)
+}
+
 type stubAgentsRepository struct {
 	AgentsRepository
 
@@ -710,13 +746,15 @@ type stubAgentsRepository struct {
 	err                       error
 	lastWorkspaceIDs          []string
 	lastWorkspaceID           string
+	lastKeyword               string
 	listRunnableWebAppsCalled bool
 }
 
-func (s *stubAgentsRepository) ListRunnableWebApps(_ context.Context, workspaceIDs []string, workspaceID string) ([]runnableWebAppItem, error) {
+func (s *stubAgentsRepository) ListRunnableWebApps(_ context.Context, workspaceIDs []string, workspaceID, keyword string) ([]runnableWebAppItem, error) {
 	s.listRunnableWebAppsCalled = true
 	s.lastWorkspaceIDs = append([]string(nil), workspaceIDs...)
 	s.lastWorkspaceID = workspaceID
+	s.lastKeyword = keyword
 	if s.err != nil {
 		return nil, s.err
 	}

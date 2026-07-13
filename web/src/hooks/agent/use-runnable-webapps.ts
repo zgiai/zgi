@@ -12,6 +12,7 @@ import type {
   RunnableWebAppItem,
   RunnableWebAppsData,
   RunnableWebAppMetaData,
+  RunnableWebAppsParams,
 } from '@/services/types/agent';
 import { WebAppService } from '@/services/webapp.service';
 import { useCurrentWorkspace } from '@/store/workspace-store';
@@ -28,12 +29,18 @@ interface UseRunnableWebAppsOptions {
   workspaceId?: string | null;
   enabled?: boolean;
   staleTime?: number;
+  keyword?: string;
+  page?: number;
+  pageSize?: number;
 }
 
 export function useRunnableWebApps({
   workspaceId,
   enabled = true,
   staleTime = 60 * 1000,
+  keyword,
+  page,
+  pageSize,
 }: UseRunnableWebAppsOptions = {}) {
   const currentWorkspace = useCurrentWorkspace();
   const {
@@ -51,19 +58,29 @@ export function useRunnableWebApps({
     return currentWorkspace?.id ?? null;
   }, [workspaceId, currentWorkspace?.id]);
 
+  const requestParams = useMemo<RunnableWebAppsParams>(
+    () => ({
+      workspace_id: resolvedWorkspaceId || undefined,
+      keyword: keyword?.trim() || undefined,
+      page,
+      page_size: pageSize,
+    }),
+    [keyword, page, pageSize, resolvedWorkspaceId]
+  );
+
   const query = useQuery<ApiResponseData<RunnableWebAppsData>>({
-    queryKey: AGENT_KEYS.runnable(resolvedWorkspaceId),
-    queryFn: () =>
-      agentService.getRunnableWebApps(
-        resolvedWorkspaceId ? { workspace_id: resolvedWorkspaceId } : undefined
-      ),
+    queryKey: AGENT_KEYS.runnable(resolvedWorkspaceId, requestParams),
+    queryFn: () => agentService.getRunnableWebApps(requestParams),
     enabled: queryEnabled,
     staleTime,
     gcTime: 10 * 60 * 1000,
     retry: false,
   });
 
-  const rawItems = useMemo(() => query.data?.data?.items ?? [], [query.data?.data?.items]);
+  const rawItems = useMemo<RunnableWebAppItem[]>(
+    () => query.data?.data?.items ?? [],
+    [query.data?.data?.items]
+  );
 
   const configQueries = useQueries({
     queries: rawItems.map(item => ({
@@ -109,6 +126,10 @@ export function useRunnableWebApps({
   return {
     ...query,
     items: queryEnabled ? items : [],
+    page: query.data?.data?.page ?? page ?? 1,
+    pageSize: query.data?.data?.page_size ?? pageSize ?? items.length,
+    total: query.data?.data?.total ?? items.length,
+    hasMore: query.data?.data?.has_more ?? false,
     isLoading: enabled && isCapabilitiesLoading ? true : query.isLoading,
     isFetching: (enabled && isCapabilitiesFetching) || query.isFetching,
     canUseResourceList: canUseAppCenterResourceList,

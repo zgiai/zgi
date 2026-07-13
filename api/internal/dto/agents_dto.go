@@ -61,6 +61,9 @@ type GetAgentsListRequest struct {
 
 type GetRunnableWebAppsRequest struct {
 	WorkspaceID string `form:"workspace_id" json:"workspace_id"`
+	Keyword     string `form:"keyword" json:"keyword" binding:"omitempty,max=200"`
+	Page        int    `form:"page" json:"page" binding:"omitempty,min=1"`
+	PageSize    int    `form:"page_size" json:"page_size" binding:"omitempty,min=1,max=100"`
 }
 
 type RunnableWebAppMetaData struct {
@@ -81,7 +84,11 @@ type RunnableWebAppItem struct {
 }
 
 type RunnableWebAppsResponse struct {
-	Items []RunnableWebAppItem `json:"items"`
+	Items    []RunnableWebAppItem `json:"items"`
+	Page     int                  `json:"page,omitempty"`
+	PageSize int                  `json:"page_size,omitempty"`
+	Total    int                  `json:"total,omitempty"`
+	HasMore  bool                 `json:"has_more,omitempty"`
 }
 
 // AgentListItem represents a single agent in the list response
