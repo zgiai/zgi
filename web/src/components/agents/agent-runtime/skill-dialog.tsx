@@ -68,9 +68,12 @@ export function AgentRuntimeSkillDialog({
             <button
               key={skill.skill_id}
               type="button"
+              aria-pressed={checked}
               className={cn(
-                'flex min-h-32 cursor-pointer flex-col rounded-lg border bg-background p-4 text-left transition-colors hover:border-primary/50 hover:bg-muted/30 disabled:cursor-not-allowed disabled:opacity-60',
-                checked ? 'border-primary bg-primary/5' : ''
+                'flex min-h-32 cursor-pointer flex-col rounded-lg border bg-background p-4 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                checked
+                  ? 'border-primary bg-primary/5 hover:border-primary hover:bg-primary/10'
+                  : 'border-border hover:border-primary/50 hover:bg-muted/30'
               )}
               onClick={() => onToggleSkill(skill.skill_id, !checked)}
             >

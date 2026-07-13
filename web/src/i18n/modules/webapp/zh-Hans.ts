@@ -665,7 +665,7 @@ const messages: WebappMessages = {
       enabled: '已启用',
       disabled: '未启用',
       selectedCount: '已选择 {count} 个',
-      visibleCount: '显示 {count}/{total} 个',
+      matchingCount: '匹配 {count} 个',
       searchPlaceholder: '搜索 Skill',
       noResults: '没有匹配当前搜索的 Skill。',
       closeConfirm: {

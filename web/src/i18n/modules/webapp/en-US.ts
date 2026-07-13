@@ -685,7 +685,7 @@ const messages = {
       enabled: 'Enabled',
       disabled: 'Disabled',
       selectedCount: '{count} selected',
-      visibleCount: '{count}/{total} shown',
+      matchingCount: '{count} matches',
       searchPlaceholder: 'Search Skills',
       noResults: 'No Skills match the current search.',
       closeConfirm: {
