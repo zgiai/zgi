@@ -22,6 +22,10 @@ import {
   isAbortError,
   isContinuationLikelyStartedError,
 } from '@/components/chat/runtime/controller/chat-runtime-controller-utils';
+import {
+  buildOptimisticUserInputResponse,
+  upsertUserInputResponse,
+} from '@/components/chat/controllers/aichat/user-input-response';
 
 import type { UseChatRuntimeMessageActionsArgs } from './types';
 
@@ -209,6 +213,17 @@ export function useWorkflowContinuationActions({
         ? { ...sourceMessage.metadata }
         : undefined;
       if (userInputContinuation && continuationMetadata) {
+        const response = buildOptimisticUserInputResponse(
+          continuationMetadata.user_input_request,
+          userInputContinuation.requestId,
+          userInputContinuation.payload.answers
+        );
+        if (response) {
+          continuationMetadata.user_input_responses = upsertUserInputResponse(
+            continuationMetadata.user_input_responses,
+            response
+          );
+        }
         delete continuationMetadata.user_input_request;
       }
 

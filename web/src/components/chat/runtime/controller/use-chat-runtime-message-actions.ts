@@ -660,11 +660,18 @@ export function useChatRuntimeMessageActions({
       setControllerState(current => {
         const now = Math.floor(Date.now() / 1000);
         const cleanedSourceMessage = clearStreamingRuntimeMessageMetadata(sourceMessage);
+        const replacementMetadata = cleanedSourceMessage.metadata
+          ? { ...cleanedSourceMessage.metadata }
+          : undefined;
+        if (replacementMetadata) {
+          delete replacementMetadata.user_input_responses;
+        }
         const nextMessage: AIChatMessage = {
           ...cleanedSourceMessage,
           answer: '',
           status: 'streaming',
           error: undefined,
+          metadata: replacementMetadata,
           updated_at: now,
         };
 

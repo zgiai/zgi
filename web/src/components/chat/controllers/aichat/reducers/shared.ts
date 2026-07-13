@@ -3,6 +3,7 @@ import type {
   AIChatGeneratedFile,
   AIChatMessageMetadata,
   AIChatSkillInvocation,
+  AIChatUserInputResponse,
 } from '@/services/types/aichat';
 import { type AIChatAgenticTimelineItem } from '@/components/chat/controllers/aichat/types';
 
@@ -99,8 +100,44 @@ export function mergeMessageMetadata(
     workflowRunIdentity,
     (existing, incoming) => ({ ...existing, ...incoming })
   );
-  const userInputRequest =
+  const hasUserInputResponseMetadata = Boolean(
+    existingMetadata?.user_input_responses || incomingMetadata?.user_input_responses
+  );
+  let userInputResponses = mergeByIdentity(
+    existingMetadata?.user_input_responses ?? [],
+    incomingMetadata?.user_input_responses ?? [],
+    userInputResponseIdentity,
+    (existing, incoming) => ({
+      ...existing,
+      ...incoming,
+      answers: incoming.answers?.length ? incoming.answers : existing.answers,
+      optimistic: incoming.optimistic,
+    })
+  );
+  const incomingRequestId = incomingMetadata?.user_input_request?.request_id?.trim();
+  if (incomingRequestId) {
+    const hasAuthoritativeResponse = (incomingMetadata?.user_input_responses ?? []).some(
+      response => response.request_id?.trim() === incomingRequestId
+    );
+    if (!hasAuthoritativeResponse) {
+      userInputResponses = userInputResponses.filter(
+        response => !(response.optimistic && response.request_id?.trim() === incomingRequestId)
+      );
+    }
+  }
+  const answeredRequestIds = new Set(
+    userInputResponses
+      .filter(response => !response.optimistic)
+      .map(response => response.request_id?.trim())
+      .filter((requestId): requestId is string => Boolean(requestId))
+  );
+  const candidateUserInputRequest =
     incomingMetadata?.user_input_request ?? existingMetadata?.user_input_request;
+  const userInputRequest =
+    candidateUserInputRequest?.request_id &&
+    answeredRequestIds.has(candidateUserInputRequest.request_id)
+      ? undefined
+      : candidateUserInputRequest;
   const existingSkillInvocations = visibleSkillInvocations(existingMetadata?.skill_invocations);
   const incomingSkillInvocations = visibleSkillInvocations(incomingMetadata?.skill_invocations);
   const hasSkillInvocationMetadata = Boolean(
@@ -125,7 +162,7 @@ export function mergeMessageMetadata(
       .filter((toolName): toolName is string => Boolean(toolName))
   );
 
-  return {
+  const mergedMetadata: AIChatMessageMetadata = {
     ...(existingMetadata ?? {}),
     ...(incomingMetadata ?? {}),
     ...(files.length > 0
@@ -144,6 +181,11 @@ export function mergeMessageMetadata(
       ? {
           workflow_run_count: workflowRuns.length,
           workflow_runs: workflowRuns,
+        }
+      : {}),
+    ...(hasUserInputResponseMetadata
+      ? {
+          user_input_responses: userInputResponses,
         }
       : {}),
     ...(hasSkillInvocationMetadata
@@ -165,6 +207,14 @@ export function mergeMessageMetadata(
         }
       : {}),
   };
+  if (!userInputRequest) {
+    delete mergedMetadata.user_input_request;
+  }
+  return mergedMetadata;
+}
+
+function userInputResponseIdentity(response: AIChatUserInputResponse, index: number): string {
+  return response.request_id?.trim() || `user-input-response:${response.answered_at ?? index}`;
 }
 
 function visibleSkillInvocations(
