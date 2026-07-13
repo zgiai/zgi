@@ -9,6 +9,8 @@ const messages: WebappMessages = {
     renameConversation: '重命名会话',
     conversations: '会话管理',
     recentConversations: '近期会话',
+    loadingConversations: '正在加载更多会话...',
+    noMoreConversations: '没有更多啦~',
     searchResultGroups: {
       today: '今天',
       yesterday: '昨天',

@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { History, Loader2, MessageSquare, MessageSquarePlus, Search, X } from 'lucide-react';
+import { History, Loader2, MessageSquare, Search, X } from 'lucide-react';
 import {
   Dialog,
   DialogBody,
@@ -11,7 +11,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
@@ -22,6 +21,10 @@ import type {
   ConversationSummary,
 } from '@/components/chat/controllers/types';
 import { useQuery } from '@tanstack/react-query';
+import {
+  groupByConversationTime,
+  type ConversationTimeGroup,
+} from '@/components/chat/variants/common/conversation-time-groups';
 
 const recentConversationLimit = 6;
 const minRemoteSearchLength = 2;
@@ -33,7 +36,6 @@ interface ConversationSearchDialogProps {
   activeId: string | null;
   onOpenChange: (open: boolean) => void;
   onSelect: (id: string) => void;
-  onNewConversation?: () => void;
   onSelectSearchResult?: (result: ConversationSearchResult) => void;
   search?: ConversationSearchFn;
   searchKey?: readonly unknown[];
@@ -47,28 +49,6 @@ interface ConversationSearchItemProps {
   isActive: boolean;
   onClick: () => void;
 }
-
-type SearchResultGroupKey =
-  | 'today'
-  | 'yesterday'
-  | 'previous7Days'
-  | 'previous30Days'
-  | 'older'
-  | 'undated';
-
-interface SearchResultGroup<T> {
-  key: SearchResultGroupKey;
-  items: T[];
-}
-
-const searchResultGroupOrder: SearchResultGroupKey[] = [
-  'today',
-  'yesterday',
-  'previous7Days',
-  'previous30Days',
-  'older',
-  'undated',
-];
 
 function normalizeSearchText(value: string): string {
   return value.trim().toLowerCase();
@@ -123,49 +103,6 @@ function formatConversationTime(updatedAt?: number): string {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(timestamp));
-}
-
-function startOfLocalDay(timestamp: number): number {
-  const date = new Date(timestamp);
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-}
-
-function normalizeTimestamp(updatedAt?: number): number | null {
-  if (!updatedAt || !Number.isFinite(updatedAt)) return null;
-  return updatedAt < 1_000_000_000_000 ? updatedAt * 1000 : updatedAt;
-}
-
-function getSearchResultGroupKey(updatedAt?: number, now = Date.now()): SearchResultGroupKey {
-  const timestamp = normalizeTimestamp(updatedAt);
-  if (timestamp === null) return 'undated';
-
-  const todayStart = startOfLocalDay(now);
-  const itemDayStart = startOfLocalDay(timestamp);
-  const dayDiff = Math.floor((todayStart - itemDayStart) / 86_400_000);
-
-  if (dayDiff <= 0) return 'today';
-  if (dayDiff === 1) return 'yesterday';
-  if (dayDiff <= 7) return 'previous7Days';
-  if (dayDiff <= 30) return 'previous30Days';
-  return 'older';
-}
-
-function groupBySearchResultTime<T>(
-  items: T[],
-  getUpdatedAt: (item: T) => number | undefined
-): Array<SearchResultGroup<T>> {
-  const grouped = new Map<SearchResultGroupKey, T[]>();
-
-  items.forEach(item => {
-    const key = getSearchResultGroupKey(getUpdatedAt(item));
-    const groupItems = grouped.get(key) ?? [];
-    groupItems.push(item);
-    grouped.set(key, groupItems);
-  });
-
-  return searchResultGroupOrder
-    .map(key => ({ key, items: grouped.get(key) ?? [] }))
-    .filter(group => group.items.length > 0);
 }
 
 function renderHighlightedText(text: string, query: string): React.ReactNode {
@@ -240,7 +177,6 @@ export function ConversationSearchDialog({
   activeId,
   onOpenChange,
   onSelect,
-  onNewConversation,
   onSelectSearchResult,
   search,
   searchKey,
@@ -256,7 +192,7 @@ export function ConversationSearchDialog({
     debouncedQuery.length >= minRemoteSearchLength && debouncedQuery === normalizedQuery;
   const searchEnabled = open && canSearchRemote && debouncedCanSearchRemote;
   const newConversationText = t('webapp.chat.newConversation');
-  const searchQuery = useQuery({
+  const searchQuery = useQuery<ConversationSearchResult[]>({
     queryKey: [...(searchKey ?? ['conversation-search']), debouncedQuery, 20],
     queryFn: async () => {
       if (!search) return [];
@@ -298,13 +234,12 @@ export function ConversationSearchDialog({
     );
   }, [conversations, newConversationText, normalizedQuery]);
   const groupedVisibleConversations = React.useMemo(
-    () => groupBySearchResultTime(visibleConversations, conversation => conversation.updatedAt),
+    () => groupByConversationTime(visibleConversations, conversation => conversation.updatedAt),
     [visibleConversations]
   );
-  const visibleConversationGroups = React.useMemo<Array<SearchResultGroup<ConversationSummary>>>(
-    () => groupedVisibleConversations,
-    [groupedVisibleConversations]
-  );
+  const visibleConversationGroups = React.useMemo<
+    Array<ConversationTimeGroup<ConversationSummary>>
+  >(() => groupedVisibleConversations, [groupedVisibleConversations]);
 
   const handleSelect = React.useCallback(
     (id: string) => {
@@ -324,15 +259,12 @@ export function ConversationSearchDialog({
     },
     [onOpenChange, onSelect, onSelectSearchResult]
   );
-  const handleNewConversation = React.useCallback(() => {
-    if (!onNewConversation) return;
-    onNewConversation();
-    onOpenChange(false);
-  }, [onNewConversation, onOpenChange]);
-
-  const searchResults = React.useMemo(() => searchQuery.data ?? [], [searchQuery.data]);
+  const searchResults = React.useMemo(
+    () => (searchQuery.data ?? []) as ConversationSearchResult[],
+    [searchQuery.data]
+  );
   const groupedSearchResults = React.useMemo(
-    () => groupBySearchResultTime(searchResults, result => result.updatedAt),
+    () => groupByConversationTime(searchResults, result => result.updatedAt),
     [searchResults]
   );
   const hasQuery = normalizedQuery.length > 0;
@@ -381,22 +313,11 @@ export function ConversationSearchDialog({
           </div>
         </DialogHeader>
         <DialogBody className="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden p-0">
-          <div className="shrink-0 bg-background px-1 py-2">
-            {hasQuery ? (
+          {hasQuery ? (
+            <div className="shrink-0 bg-background px-1 py-2">
               <div className="text-sm font-semibold text-foreground">{t('common.results')}</div>
-            ) : (
-              <Button
-                type="button"
-                variant="ghost"
-                className="h-9 w-full justify-start gap-2 rounded-lg bg-muted/80 px-3 font-medium text-foreground hover:bg-muted"
-                onClick={handleNewConversation}
-                disabled={!onNewConversation}
-              >
-                <MessageSquarePlus className="size-4 text-muted-foreground" />
-                {newConversationText}
-              </Button>
-            )}
-          </div>
+            </div>
+          ) : null}
           <ScrollArea className="min-h-0 flex-1" viewportProps={{ className: 'pr-6' }}>
             <div className="space-y-1 px-1 py-2">
               {showRemoteSearchResults ? (
@@ -459,42 +380,42 @@ export function ConversationSearchDialog({
                 </div>
               ) : (
                 visibleConversationGroups.map((group, groupIndex) => (
-                    <div
-                      key={group.key}
-                      className={cn('space-y-1', groupIndex > 0 && 'border-t pt-2')}
-                    >
-                      <div className="px-3 pb-1 text-xs font-semibold text-muted-foreground">
-                        {t(`webapp.chat.searchResultGroups.${group.key}`)}
-                      </div>
-                      {group.items.map(conversation => {
-                        const title = getConversationTitle(conversation, newConversationText);
-                        const updatedAt = formatConversationTime(conversation.updatedAt);
-                        const isActive = conversation.id === activeId;
-
-                        return (
-                          <ConversationSearchItem
-                            key={conversation.id}
-                            title={renderHighlightedText(title, normalizedQuery)}
-                            titleText={title}
-                            meta={
-                              <span className="inline-flex min-w-0 max-w-full items-center gap-1.5 overflow-hidden">
-                                <MessageSquare className="size-3 shrink-0" />
-                                <span className="shrink-0">
-                                  {t('webapp.chat.messageCount', {
-                                    count: conversation.dialogueCount ?? 0,
-                                  })}
-                                </span>
-                                {updatedAt ? <span className="truncate">- {updatedAt}</span> : null}
-                              </span>
-                            }
-                            icon={<History className="size-4" />}
-                            isActive={isActive}
-                            onClick={() => handleSelect(conversation.id)}
-                          />
-                        );
-                      })}
+                  <div
+                    key={group.key}
+                    className={cn('space-y-1', groupIndex > 0 && 'border-t pt-2')}
+                  >
+                    <div className="px-3 pb-1 text-xs font-semibold text-muted-foreground">
+                      {t(`webapp.chat.searchResultGroups.${group.key}`)}
                     </div>
-                  ))
+                    {group.items.map(conversation => {
+                      const title = getConversationTitle(conversation, newConversationText);
+                      const updatedAt = formatConversationTime(conversation.updatedAt);
+                      const isActive = conversation.id === activeId;
+
+                      return (
+                        <ConversationSearchItem
+                          key={conversation.id}
+                          title={renderHighlightedText(title, normalizedQuery)}
+                          titleText={title}
+                          meta={
+                            <span className="inline-flex min-w-0 max-w-full items-center gap-1.5 overflow-hidden">
+                              <MessageSquare className="size-3 shrink-0" />
+                              <span className="shrink-0">
+                                {t('webapp.chat.messageCount', {
+                                  count: conversation.dialogueCount ?? 0,
+                                })}
+                              </span>
+                              {updatedAt ? <span className="truncate">- {updatedAt}</span> : null}
+                            </span>
+                          }
+                          icon={<History className="size-4" />}
+                          isActive={isActive}
+                          onClick={() => handleSelect(conversation.id)}
+                        />
+                      );
+                    })}
+                  </div>
+                ))
               )}
             </div>
           </ScrollArea>

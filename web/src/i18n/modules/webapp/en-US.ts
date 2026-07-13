@@ -7,6 +7,8 @@ const messages = {
     renameConversation: 'Rename conversation',
     conversations: 'Conversations',
     recentConversations: 'Recent conversations',
+    loadingConversations: 'Loading more conversations...',
+    noMoreConversations: 'No more conversations~',
     searchResultGroups: {
       today: 'Today',
       yesterday: 'Yesterday',

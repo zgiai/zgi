@@ -307,11 +307,13 @@ export function AIChatShell({
   const lastErrorToastRef = useRef<string | null>(null);
 
   const conversations = useStore(controller.store, state => state.conversations);
+  const conversationPagination = useStore(controller.store, state => state.pagination);
   const activeConversationId = useStore(controller.store, state => state.activeConversationId);
   const activeConversation = useStore(controller.store, selectActiveConversation);
   const activeMessages = useStore(controller.store, selectActiveMessages);
   const activeMessagePagination = useStore(controller.store, selectActiveMessagePagination);
   const isLoadingMessages = useStore(controller.store, state => state.isLoadingMessages);
+  const isLoadingConversationList = useStore(controller.store, state => state.isLoadingList);
   const isLoadingOlderMessages = useStore(controller.store, selectIsLoadingOlderMessages);
   const isRecoveringMessages = useStore(controller.store, selectIsRecoveringMessages);
   const isStopping = useStore(controller.store, selectIsStopping);
@@ -1045,6 +1047,11 @@ export function AIChatShell({
     setEmbeddedAssetAuditOpen(false);
   }, [controller, isHome, onStartNewConversation, t]);
 
+  const handleLoadMoreConversations = useCallback(
+    (page: number) => controller.refreshList({ page, append: true }),
+    [controller]
+  );
+
   const handleSelectConversation = useCallback(
     (id: string) => {
       if (onSelectConversation) {
@@ -1205,6 +1212,9 @@ export function AIChatShell({
             backgroundImage={AICHAT_SIDEBAR_BG_IMAGE}
             search={searchConversations}
             searchKey={conversationSearchKey}
+            pagination={conversationPagination}
+            isLoadingList={isLoadingConversationList}
+            onLoadMore={handleLoadMoreConversations}
           />
         </div>
       ) : null}
@@ -1222,7 +1232,7 @@ export function AIChatShell({
             <AIChatHeader
               isMobile={isMobile}
               isHome={isHome}
-              title={activeConversation?.title || t('consoleChat.title')}
+              title={activeConversation?.title || ''}
               onToggleSidebar={handleToggleSidebar}
               onStartNew={handleNewChat}
               rightAction={
@@ -1419,6 +1429,9 @@ export function AIChatShell({
               onClose={() => setMobileSidebarOpen(false)}
               search={searchConversations}
               searchKey={conversationSearchKey}
+              pagination={conversationPagination}
+              isLoadingList={isLoadingConversationList}
+              onLoadMore={handleLoadMoreConversations}
             />
           </SheetContent>
         </Sheet>
