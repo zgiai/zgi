@@ -70,6 +70,26 @@ func TestAgentsHandler_UpdateWebAppStatus_MapsInvalidStatus(t *testing.T) {
 	require.True(t, service.called)
 }
 
+func TestAgentsHandler_GetRunnableWebApps_RejectsInvalidWebAppID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	service := &stubWebAppStatusHandlerService{}
+	handler := NewAgentsHandler(service, nil, nil, nil, nil)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("account_id", "99999999-9999-4999-8999-999999999999")
+		c.Next()
+	})
+	router.GET("/agents/runnable-webapps", handler.GetRunnableWebApps)
+
+	req := httptest.NewRequest(http.MethodGet, "/agents/runnable-webapps?web_app_id=invalid", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.False(t, service.runnableWebAppsCalled)
+}
+
 func TestAgentsHandler_GetAgentRuntimeSurfaces_PassesContext(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -782,6 +802,7 @@ type stubWebAppStatusHandlerService struct {
 	runtimeCapabilityAccountID          string
 	runtimeCapabilityAuthenticated      bool
 	runtimeCapabilityResp               *dto.AgentWebAppRuntimeCapabilityResponse
+	runnableWebAppsCalled               bool
 }
 
 func (s *stubWebAppStatusHandlerService) GetAgentsListWithPermissions(context.Context, string, dto.GetAgentsListRequest) (*dto.AgentsListResponse, error) {
@@ -789,6 +810,7 @@ func (s *stubWebAppStatusHandlerService) GetAgentsListWithPermissions(context.Co
 }
 
 func (s *stubWebAppStatusHandlerService) GetRunnableWebApps(context.Context, string, dto.GetRunnableWebAppsRequest) (*dto.RunnableWebAppsResponse, error) {
+	s.runnableWebAppsCalled = true
 	return nil, nil
 }
 

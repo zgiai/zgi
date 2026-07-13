@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -13,6 +14,10 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
 )
+
+var errInvalidRunnableWebAppIDs = errors.New("invalid runnable web app ids")
+
+const maxRunnableWebAppIDs = 6
 
 type textIcon struct {
 	Icon           string `json:"icon"`
@@ -64,9 +69,7 @@ func (s *agentsService) GetRunnableWebApps(ctx context.Context, accountID string
 		return nil, err
 	}
 
-	resp := &dto.RunnableWebAppsResponse{
-		Items: make([]dto.RunnableWebAppItem, 0),
-	}
+	resp := newRunnableWebAppsResponse(req)
 
 	if req.WorkspaceID != "" && !slices.Contains(visibleWorkspaceIDs, req.WorkspaceID) {
 		return resp, nil
@@ -83,14 +86,34 @@ func (s *agentsService) GetRunnableWebApps(ctx context.Context, accountID string
 		return resp, nil
 	}
 
-	items, err := s.agentsRepo.ListRunnableWebApps(ctx, candidateWorkspaceIDs, req.WorkspaceID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list runnable web apps: %w", err)
-	}
-	items, err = s.filterRunnableWebAppsByAppCenterAuthorization(ctx, currentOrganization, items)
+	webAppIDs, err := parseRunnableWebAppIDs(req.WebAppIDs)
 	if err != nil {
 		return nil, err
 	}
+	authorization, err := s.runnableWebAppAuthorizationFilter(ctx, currentOrganization)
+	if err != nil {
+		return nil, err
+	}
+	listResult, err := s.agentsRepo.ListRunnableWebApps(ctx, candidateWorkspaceIDs, runnableWebAppFilter{
+		WorkspaceID:   req.WorkspaceID,
+		WebAppID:      req.WebAppID,
+		WebAppIDs:     webAppIDs,
+		Keyword:       req.Keyword,
+		Pagination:    runnableWebAppPaginationForRequest(req),
+		Authorization: authorization,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list runnable web apps: %w", err)
+	}
+	items, err := s.filterRunnableWebAppsByAppCenterAuthorization(ctx, authorization, listResult.Items)
+	if err != nil {
+		return nil, err
+	}
+	pagination := listResult.Pagination
+	if !pagination.enabled {
+		items, pagination = paginateRunnableWebAppItems(items, req)
+	}
+	pagination.apply(resp)
 
 	resp.Items = make([]dto.RunnableWebAppItem, 0, len(items))
 	for _, item := range items {
@@ -130,16 +153,115 @@ func (s *agentsService) GetRunnableWebApps(ctx context.Context, accountID string
 	return resp, nil
 }
 
+type runnableWebAppPagination struct {
+	enabled  bool
+	page     int
+	pageSize int
+	total    int
+	hasMore  bool
+}
+
+func newRunnableWebAppsResponse(req dto.GetRunnableWebAppsRequest) *dto.RunnableWebAppsResponse {
+	resp := &dto.RunnableWebAppsResponse{
+		Items: make([]dto.RunnableWebAppItem, 0),
+	}
+	_, pagination := paginateRunnableWebAppItems(nil, req)
+	pagination.apply(resp)
+	return resp
+}
+
+func runnableWebAppPaginationForRequest(req dto.GetRunnableWebAppsRequest) runnableWebAppPagination {
+	if req.Page == 0 && req.PageSize == 0 {
+		return runnableWebAppPagination{}
+	}
+
+	page := req.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := req.PageSize
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	return runnableWebAppPagination{
+		enabled:  true,
+		page:     page,
+		pageSize: pageSize,
+	}
+}
+
+func paginateRunnableWebAppItems(items []runnableWebAppItem, req dto.GetRunnableWebAppsRequest) ([]runnableWebAppItem, runnableWebAppPagination) {
+	pagination := runnableWebAppPaginationForRequest(req)
+	if !pagination.enabled {
+		return items, runnableWebAppPagination{}
+	}
+	pagination.total = len(items)
+	if pagination.total == 0 {
+		return []runnableWebAppItem{}, pagination
+	}
+
+	maxPage := 1 + (pagination.total-1)/pagination.pageSize
+	if pagination.page > maxPage {
+		return []runnableWebAppItem{}, pagination
+	}
+
+	start := (pagination.page - 1) * pagination.pageSize
+	end := pagination.total
+	if pagination.total-start > pagination.pageSize {
+		end = start + pagination.pageSize
+	}
+	pagination.hasMore = end < pagination.total
+	return items[start:end], pagination
+}
+
+func (p runnableWebAppPagination) apply(resp *dto.RunnableWebAppsResponse) {
+	if !p.enabled || resp == nil {
+		return
+	}
+	resp.Page = p.page
+	resp.PageSize = p.pageSize
+	resp.Total = p.total
+	resp.HasMore = p.hasMore
+}
+
 type runnableWebAppAuthorizationCandidate struct {
 	item        runnableWebAppItem
 	resourceID  uuid.UUID
 	workspaceID uuid.UUID
 }
 
-func (s *agentsService) filterRunnableWebAppsByAppCenterAuthorization(ctx context.Context, currentOrganization *model.OrganizationMember, items []runnableWebAppItem) ([]runnableWebAppItem, error) {
-	items = activeRunnableWebAppItems(items)
-	if len(items) == 0 || s.db == nil {
-		return items, nil
+func parseRunnableWebAppIDs(value string) ([]string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+
+	parts := strings.Split(value, ",")
+	if len(parts) > maxRunnableWebAppIDs {
+		return nil, errInvalidRunnableWebAppIDs
+	}
+
+	seen := make(map[string]struct{}, len(parts))
+	ids := make([]string, 0, len(parts))
+	for _, part := range parts {
+		id := strings.TrimSpace(part)
+		parsed, err := uuid.Parse(id)
+		if err != nil {
+			return nil, errInvalidRunnableWebAppIDs
+		}
+		normalized := parsed.String()
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		ids = append(ids, normalized)
+	}
+	return ids, nil
+}
+
+func (s *agentsService) runnableWebAppAuthorizationFilter(ctx context.Context, currentOrganization *model.OrganizationMember) (*runnableWebAppAuthorizationFilter, error) {
+	if s.db == nil {
+		return nil, nil
 	}
 	if currentOrganization == nil {
 		return nil, errCurrentOrganizationNotFound
@@ -153,6 +275,30 @@ func (s *agentsService) filterRunnableWebAppsByAppCenterAuthorization(ctx contex
 	if err != nil {
 		return nil, fmt.Errorf("invalid app center account id: %w", err)
 	}
+	audience := runtimeauth.RuntimeAudience{
+		OrganizationID: organizationID,
+		AccountID:      accountID,
+	}
+	departmentIDs, err := s.runnableWebAppDepartmentIDsForAudience(ctx, audience)
+	if err != nil {
+		return nil, err
+	}
+	workspaceIDs, err := s.runnableWebAppWorkspaceIDsForAudience(ctx, audience)
+	if err != nil {
+		return nil, err
+	}
+	audience.DepartmentIDs = departmentIDs
+	audience.WorkspaceIDs = workspaceIDs
+	return &runnableWebAppAuthorizationFilter{Audience: audience}, nil
+}
+
+func (s *agentsService) filterRunnableWebAppsByAppCenterAuthorization(ctx context.Context, authorization *runnableWebAppAuthorizationFilter, items []runnableWebAppItem) ([]runnableWebAppItem, error) {
+	items = activeRunnableWebAppItems(items)
+	if len(items) == 0 || s.db == nil || authorization == nil {
+		return items, nil
+	}
+	audience := authorization.Audience
+	organizationID := audience.OrganizationID
 
 	parsedCandidates := make([]runnableWebAppAuthorizationCandidate, 0, len(items))
 	candidates := make([]runtimeauth.ResourceAuthorizationCandidate, 0, len(items))
@@ -180,21 +326,6 @@ func (s *agentsService) filterRunnableWebAppsByAppCenterAuthorization(ctx contex
 	if len(parsedCandidates) == 0 {
 		return []runnableWebAppItem{}, nil
 	}
-
-	audience := runtimeauth.RuntimeAudience{
-		OrganizationID: organizationID,
-		AccountID:      accountID,
-	}
-	departmentIDs, err := s.runnableWebAppDepartmentIDsForAudience(ctx, audience)
-	if err != nil {
-		return nil, err
-	}
-	workspaceIDs, err := s.runnableWebAppWorkspaceIDsForAudience(ctx, audience)
-	if err != nil {
-		return nil, err
-	}
-	audience.DepartmentIDs = departmentIDs
-	audience.WorkspaceIDs = workspaceIDs
 
 	persistedSurfaceIDs, err := s.persistedAppCenterSurfaceResourceIDs(ctx, organizationID, resourceIDs)
 	if err != nil {

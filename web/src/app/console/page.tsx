@@ -187,7 +187,7 @@ export default function ConsolePage() {
     isFetching: isRunnableAppsFetching,
     refetch: refetchRunnableApps,
     canUseResourceList: canUseRunnableApps,
-  } = useRunnableWebApps({ workspaceId: null });
+  } = useRunnableWebApps({ workspaceId: null, page: 1, pageSize: 4 });
   const {
     data: recentWorkItems = [],
     isLoading: isRecentWorkLoading,

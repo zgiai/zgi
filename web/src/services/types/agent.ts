@@ -146,6 +146,11 @@ export interface AgentListParams {
 
 export interface RunnableWebAppsParams {
   workspace_id?: string;
+  web_app_id?: string;
+  web_app_ids?: string;
+  keyword?: string;
+  page?: number;
+  page_size?: number;
 }
 
 export interface RunnableWebAppItem {
@@ -157,9 +162,9 @@ export interface RunnableWebAppItem {
 }
 
 export interface RunnableWebAppMetaData {
-  title: string;
-  icon: string;
-  icon_type?: string;
+  name: string;
+  icon: string | null;
+  icon_type?: string | null;
   icon_url?: string;
   desc: string | null;
   agent_type: AgentType | string;
@@ -167,6 +172,10 @@ export interface RunnableWebAppMetaData {
 
 export interface RunnableWebAppsData {
   items: RunnableWebAppItem[];
+  page?: number;
+  page_size?: number;
+  total?: number;
+  has_more?: boolean;
 }
 
 export interface UpdateWebAppStatusRequest {
@@ -412,21 +421,10 @@ export interface AgentApiKeyList {
 }
 
 export type AgentRuntimeSurface =
-  | 'webapp'
-  | 'api'
-  | 'app_center'
-  | 'builtin_app'
-  | 'internal'
-  | string;
+  'webapp' | 'api' | 'app_center' | 'builtin_app' | 'internal' | string;
 
 export type AgentRuntimeGrantSubject =
-  | 'public'
-  | 'organization'
-  | 'department'
-  | 'workspace'
-  | 'account'
-  | 'internal'
-  | string;
+  'public' | 'organization' | 'department' | 'workspace' | 'account' | 'internal' | string;
 
 export interface AgentRuntimeSurfaceGrant {
   subject_type: AgentRuntimeGrantSubject;

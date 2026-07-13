@@ -29,7 +29,12 @@ export default function ConsoleWorkAppDetailPage({ params }: ConsoleWorkAppDetai
     items,
     isLoading: isListLoading,
     canUseResourceList,
-  } = useRunnableWebApps({ workspaceId: null });
+  } = useRunnableWebApps({
+    workspaceId: null,
+    webAppId,
+    page: 1,
+    pageSize: 1,
+  });
 
   const isRunnable = useMemo(
     () => items.some(item => item.web_app_id === webAppId),

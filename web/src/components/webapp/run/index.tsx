@@ -14,17 +14,17 @@ import type { WebAppWorkflowConfig, WebAppVariable } from '@/services/types/weba
 import { useRunWebAppWorkflowStream } from '@/hooks/webapp/use-run-webapp-workflow-stream';
 import { useWorkflowRunEventsStream } from '@/hooks/workflow/use-workflow-run-events-stream';
 import { Button } from '@/components/ui/button';
-import { Clock3, HelpCircle, Loader2, Play, FileOutput, Send } from 'lucide-react';
+import { ChevronDown, Clock3, HelpCircle, Loader2, Play, FileOutput, Send } from 'lucide-react';
 import { useT } from '@/i18n';
 import { toast } from 'sonner';
 import ExecutionTab from '@/components/workflow/ui/workflow-run-panel/components/workflow-run-panel-execution';
 import Results from '@/components/workflow/ui/workflow-run-panel/components/results';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Settings2, Activity, Terminal } from 'lucide-react';
 import type { HistoryResult } from '@/components/workflow/ui/workflow-run-panel/types';
 import type { WorkflowRunNodeListItem } from '@/components/workflow/ui/workflow-run-nodes-list';
 import { unwrap } from '@/utils/webapp/run-mappers';
-import { useIsMobile } from '@/hooks/use-mobile';
 import { useWebAppPrecheck } from '@/hooks/webapp/use-webapp-precheck';
 import { WorkflowPrecheckWarningBanner } from '@/components/workflow/common/workflow-precheck-warning';
 import type { WorkflowPrecheckWarning } from '@/services/types/workflow';
@@ -76,6 +76,35 @@ interface WebappRunProps {
   versionUuid: string;
   config: WebAppWorkflowConfig;
   enablePrecheck?: boolean;
+}
+
+const COMPACT_RUN_LAYOUT_WIDTH = 960;
+
+function useMeasuredRunWidth() {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(0);
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+
+    const measure = () => setWidth(Math.floor(node.getBoundingClientRect().width));
+    measure();
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure);
+      return () => window.removeEventListener('resize', measure);
+    }
+
+    const observer = new ResizeObserver(entries => {
+      const entry = entries[0];
+      setWidth(Math.floor(entry?.contentRect.width ?? node.getBoundingClientRect().width));
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  return { ref, width };
 }
 
 // Convert webapp variables to InputVar[] for WorkflowInputForm
@@ -150,6 +179,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   const [isRunning, setIsRunning] = useState(false);
   const [finalResult, setFinalResult] = useState<HistoryResult | null>(null);
   const [activeTab, setActiveTab] = useState('input');
+  const [executionOpen, setExecutionOpen] = useState(false);
   const [precheckWarnings, setPrecheckWarnings] = useState<WorkflowPrecheckWarning[]>([]);
   const [approvalPaused, setApprovalPaused] = useState(false);
   const [questionAnswerPrompt, setQuestionAnswerPrompt] = useState<{
@@ -182,7 +212,8 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   const startWorkflowRunEventStreamRef = useRef<(payload?: unknown) => void>(() => {});
   const questionAnswerResumeRef = useRef(false);
   const isAuthenticated = useAuthStore.use.isAuthenticated();
-  const isMobile = useIsMobile();
+  const { ref: runContainerRef, width: runContainerWidth } = useMeasuredRunWidth();
+  const isCompactLayout = runContainerWidth === 0 || runContainerWidth < COMPACT_RUN_LAYOUT_WIDTH;
   const searchParams = useSearchParams();
   const conversationIdParam = searchParams.get('convId')?.trim() || '';
   const formRef = useRef<WorkflowInputFormHandle | null>(null);
@@ -1076,8 +1107,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       const variableMap: Record<string, unknown> | undefined =
         execMeta && typeof execMeta === 'object'
           ? ((execMeta as Record<string, unknown>)['loop_variable_map'] as
-              | Record<string, unknown>
-              | undefined)
+              Record<string, unknown> | undefined)
           : undefined;
       const roundDurations = getWorkflowRunRoundDurationMap(d, 'loop');
       const sess = loopSessions.current.get(key) ?? {
@@ -1548,6 +1578,14 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   );
   const isQuestionAnswerPending = Boolean(questionAnswerPrompt);
   const questionAnswerHasChoices = Boolean((questionAnswerPrompt?.choices.length ?? 0) > 0);
+  const hasExecutionActivity = isRunning || runItems.length > 0;
+  const hasRunState = runItems.length > 0 || Boolean(finalResult) || streamedText.trim().length > 0;
+
+  useEffect(() => {
+    if (hasExecutionActivity) {
+      setExecutionOpen(true);
+    }
+  }, [hasExecutionActivity]);
 
   const handleSubmit = useCallback(
     async (values: FormInputs) => {
@@ -1698,42 +1736,49 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   }
 
   const inputFormContent = (
-    <WorkflowInputForm
-      key={varsSig}
-      ref={formRef}
-      startVariables={startVariables}
-      isStarting={
-        isStarting ||
-        isRunning ||
-        isApprovalPending ||
-        questionAnswerHasChoices ||
-        questionAnswerSubmitting
-      }
-      onSubmit={handleSubmit}
-      hideSubmitButton
-      fileUploadAccessMode={isAuthenticated ? 'enabled' : 'login-required'}
-      allowWorkspaceSwitch
-      topNotice={
-        <>
-          {precheckWarnings.length > 0 ? (
-            <WorkflowPrecheckWarningBanner
-              warnings={precheckWarnings}
-              scope="webapp"
-              storageKey={`webapp-run:${versionUuid}`}
-              placement="inline"
-            />
-          ) : null}
-          {questionAnswerNotice}
-          {hasAnonymousFileInputs ? (
-            <div className="mb-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-              {hasRequiredAnonymousFileInputs
-                ? t('run.loginRequiredToRunWithFiles')
-                : t('run.loginRequiredForFileInputs')}
-            </div>
-          ) : null}
-        </>
-      }
-    />
+    <>
+      {startVariables.length === 0 && !isQuestionAnswerPending ? (
+        <div className="mb-3 rounded-lg border border-dashed bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+          {t('run.noInputsRequired')}
+        </div>
+      ) : null}
+      <WorkflowInputForm
+        key={varsSig}
+        ref={formRef}
+        startVariables={startVariables}
+        isStarting={
+          isStarting ||
+          isRunning ||
+          isApprovalPending ||
+          questionAnswerHasChoices ||
+          questionAnswerSubmitting
+        }
+        onSubmit={handleSubmit}
+        hideSubmitButton
+        fileUploadAccessMode={isAuthenticated ? 'enabled' : 'login-required'}
+        allowWorkspaceSwitch
+        topNotice={
+          <>
+            {precheckWarnings.length > 0 ? (
+              <WorkflowPrecheckWarningBanner
+                warnings={precheckWarnings}
+                scope="webapp"
+                storageKey={`webapp-run:${versionUuid}`}
+                placement="inline"
+              />
+            ) : null}
+            {questionAnswerNotice}
+            {hasAnonymousFileInputs ? (
+              <div className="mb-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+                {hasRequiredAnonymousFileInputs
+                  ? t('run.loginRequiredToRunWithFiles')
+                  : t('run.loginRequiredForFileInputs')}
+              </div>
+            ) : null}
+          </>
+        }
+      />
+    </>
   );
 
   const approvalInputContent = approvalSubmittedAction ? (
@@ -1776,17 +1821,95 @@ export const WebappRun: React.FC<WebappRunProps> = ({
     <ApprovalWaitingState loading />
   );
 
+  const failedExecution = runItems.some(item => item.status === 'failed');
+  const stoppedExecution = runItems.some(item => item.status === 'stopped');
+  const waitingForInput = isApprovalPending || isQuestionAnswerPending;
+  const executionStatus = isRunning
+    ? t('run.statusRunning')
+    : waitingForInput
+      ? t('run.statusWaiting')
+      : failedExecution
+        ? t('run.statusFailed')
+        : stoppedExecution
+          ? t('run.stopped')
+          : runItems.length > 0
+            ? t('run.completed')
+            : t('run.notRunYet');
+  const executionStatusClassName = isRunning
+    ? 'bg-primary'
+    : waitingForInput
+      ? 'bg-amber-500'
+      : failedExecution
+        ? 'bg-destructive'
+        : stoppedExecution
+          ? 'bg-muted-foreground'
+          : runItems.length > 0
+            ? 'bg-emerald-500'
+            : 'bg-muted-foreground/50';
+
+  const runActionFooter = (
+    <div
+      className={cn(
+        'shrink-0 bg-background/95 backdrop-blur',
+        isCompactLayout ? 'rounded-xl border p-2 shadow-sm' : 'border-t border-border/70 px-4 py-3'
+      )}
+    >
+      {isApprovalPending ? (
+        <div className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border bg-muted/40 text-sm font-medium text-muted-foreground">
+          <Clock3 className="size-4" />
+          {isApprovalStopBlocked
+            ? globalT('nodes.approval.runtime.stopDisabled')
+            : globalT('nodes.approval.runtime.paused')}
+        </div>
+      ) : isRunning ? (
+        <Button onClick={handleStop} variant="destructive" className="h-10 w-full font-medium">
+          {t('run.stop')}
+        </Button>
+      ) : questionAnswerHasChoices ? (
+        <div className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border bg-muted/40 text-sm font-medium text-muted-foreground">
+          <Clock3 className="size-4" />
+          {globalT('nodes.questionAnswer.runtime.chooseOne')}
+        </div>
+      ) : (
+        <Button
+          onClick={() => {
+            formRef.current?.submit();
+          }}
+          disabled={
+            isStarting ||
+            questionAnswerSubmitting ||
+            isApprovalPending ||
+            (!isQuestionAnswerPending && hasRequiredAnonymousFileInputs)
+          }
+          className="h-10 w-full font-medium shadow-sm"
+        >
+          <Play className="mr-2 size-4" />
+          {isStarting || questionAnswerSubmitting
+            ? t('run.starting')
+            : isQuestionAnswerPending
+              ? t('consoleChat.send')
+              : hasRunState
+                ? t('run.rerun')
+                : t('run.runNow')}
+        </Button>
+      )}
+      {!isRunning && !isQuestionAnswerPending && hasRequiredAnonymousFileInputs ? (
+        <p className="pt-2 text-xs text-muted-foreground">{t('run.loginRequiredToRunWithFiles')}</p>
+      ) : null}
+    </div>
+  );
+
   const inputSection = (
-    <div className="w-full md:w-1/3 md:min-w-[360px] md:max-w-[420px] md:shrink-0 border md:border rounded-xl pb-5 md:overflow-visible bg-card shadow-sm hover:shadow-md transition-all duration-300 animate-in fade-in-0 slide-in-from-left-4 h-full flex flex-col group/input">
-      <div className="px-3 py-2 border-b gap-2 flex items-center bg-muted/30">
+    <div className="flex h-full w-full flex-col overflow-hidden rounded-xl border bg-card shadow-sm">
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b bg-muted/30 px-4">
         {isApprovalPending ? (
-          <Clock3 className="w-5 h-5 text-amber-600" />
+          <Clock3 className="size-5 text-amber-600" />
         ) : isQuestionAnswerPending ? (
-          <HelpCircle className="w-5 h-5 text-highlight" />
+          <HelpCircle className="size-5 text-highlight" />
         ) : (
-          <FileOutput className="w-5 h-5 text-highlight" />
+          <FileOutput className="size-5 text-highlight" />
         )}
-        <h2 className="text-sm font-semibold text-foreground bg-clip-text">
+        <h2 className="text-sm font-semibold text-foreground">
           {isApprovalPending
             ? globalT('nodes.approval.runtime.paused')
             : isQuestionAnswerPending
@@ -1797,128 +1920,151 @@ export const WebappRun: React.FC<WebappRunProps> = ({
       <div className="flex-1 overflow-auto px-5 py-3">
         {isApprovalPending ? approvalInputContent : inputFormContent}
       </div>
-      <div className="flex items-center gap-2 pt-4 px-5 border-t border-border/50 bg-card/50">
-        {isApprovalPending ? (
-          <div className="flex h-11 w-full items-center justify-center gap-2 rounded-lg border bg-muted/40 text-sm font-medium text-muted-foreground">
-            <Clock3 className="size-4" />
-            {isApprovalStopBlocked
-              ? globalT('nodes.approval.runtime.stopDisabled')
-              : globalT('nodes.approval.runtime.paused')}
-          </div>
-        ) : isRunning ? (
-          <Button
-            onClick={handleStop}
-            variant="destructive"
-            className="w-full shadow-lg font-medium h-11"
-          >
-            {t('run.stop')}
-          </Button>
-        ) : questionAnswerHasChoices ? (
-          <div className="flex h-11 w-full items-center justify-center gap-2 rounded-lg border bg-muted/40 text-sm font-medium text-muted-foreground">
-            <Clock3 className="size-4" />
-            {globalT('nodes.questionAnswer.runtime.chooseOne')}
-          </div>
-        ) : (
-          <Button
-            onClick={() => {
-              formRef.current?.submit();
-            }}
-            disabled={
-              isStarting ||
-              questionAnswerSubmitting ||
-              isApprovalPending ||
-              (!isQuestionAnswerPending && hasRequiredAnonymousFileInputs)
-            }
-            className="w-full shadow-lg transition-all duration-300 hover:shadow-xl hover:shadow-primary/30 font-medium h-11"
-          >
-            <Play className="w-4 h-4 mr-2" />
-            {isStarting || questionAnswerSubmitting
-              ? t('run.starting')
-              : isQuestionAnswerPending
-                ? t('consoleChat.send')
-                : t('run.runNow')}
-          </Button>
-        )}
-      </div>
-      {!isRunning && !isQuestionAnswerPending && hasRequiredAnonymousFileInputs ? (
-        <p className="px-5 pt-2 text-xs text-muted-foreground">
-          {t('run.loginRequiredToRunWithFiles')}
-        </p>
-      ) : null}
+      {!isCompactLayout ? runActionFooter : null}
     </div>
   );
 
   const executionSection = (
-    <div className="min-h-[200px] flex-[1] flex flex-col bg-card border rounded-2xl overflow-hidden shadow-sm shadow-black/5 hover:shadow-md transition-all duration-300">
-      <ExecutionTab items={runItems} showDetail={false} />
-    </div>
+    <Collapsible
+      open={executionOpen}
+      onOpenChange={setExecutionOpen}
+      className={cn(
+        'flex min-h-0 flex-col overflow-hidden rounded-xl border bg-card shadow-sm',
+        isCompactLayout && executionOpen ? 'h-full' : 'shrink-0'
+      )}
+    >
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          aria-label={executionOpen ? t('run.collapseExecution') : t('run.expandExecution')}
+          className="focus-ring flex h-11 w-full shrink-0 items-center gap-2 bg-muted/30 px-4 text-left transition-colors hover:bg-muted/50"
+        >
+          <Activity className="size-5 shrink-0 text-emerald-600" />
+          <span className="text-sm font-semibold text-foreground">{t('run.execution')}</span>
+          <span className="ml-auto flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+            <span className={cn('size-2 shrink-0 rounded-full', executionStatusClassName)} />
+            <span aria-live="polite" className="truncate">
+              {executionStatus}
+            </span>
+            {runItems.length > 0 ? (
+              <span className="shrink-0 rounded-full bg-background px-2 py-0.5">
+                {t('run.stepCount', { count: runItems.length })}
+              </span>
+            ) : null}
+          </span>
+          <ChevronDown
+            className={cn(
+              'size-4 shrink-0 text-muted-foreground transition-transform',
+              executionOpen && 'rotate-180'
+            )}
+          />
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent
+        className={cn(
+          'min-h-0 overflow-hidden border-t',
+          isCompactLayout ? 'flex-1' : 'h-[clamp(180px,32vh,320px)]'
+        )}
+      >
+        <ExecutionTab
+          items={runItems}
+          showDetail={false}
+          showHeader={false}
+          emptyTitle={t('run.notRunYet')}
+          emptyDescription={t('run.executionEmptyDescription')}
+          className="h-full"
+        />
+      </CollapsibleContent>
+    </Collapsible>
   );
 
   const outputSection = (
-    <div className="flex-[3] flex flex-col min-h-0 bg-card border rounded-2xl overflow-hidden shadow-sm shadow-black/5 hover:shadow-md transition-all duration-300">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card shadow-sm">
       <Results
         mode="draft"
         title={t('run.output')}
         streamedText={streamedText}
         historyResult={finalResult}
-        emptyText={t('run.noOutput')}
+        emptyText={t('run.outputEmptyDescription')}
+        headerClassName="h-11 px-4 py-0"
+        emptyStateClassName="gap-3 text-muted-foreground [&_svg]:size-10"
       />
     </div>
   );
 
   return (
-    <div className="h-full w-full p-2 md:p-4 overflow-hidden">
-      {!isMobile ? (
-        /* Desktop Layout */
-        <div className="flex h-full flex-row gap-4 overflow-visible">
-          {inputSection}
-          <div className="flex-1 flex flex-col min-w-0 gap-4 overflow-visible h-full">
-            {executionSection}
-            {outputSection}
-          </div>
-        </div>
-      ) : (
-        /* Mobile Layout */
-        <div className="flex h-full flex-col">
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
-            <TabsList className="grid grid-cols-3 mb-2">
-              <TabsTrigger value="input" className="flex items-center gap-1.5">
-                <Settings2 className="w-3.5 h-3.5" />
-                <span>{t('run.inputsTitle')}</span>
-              </TabsTrigger>
-              <TabsTrigger value="execution" className="flex items-center gap-1.5">
-                <Activity className="w-3.5 h-3.5" />
-                <span>{t('run.details')}</span>
-              </TabsTrigger>
-              <TabsTrigger value="result" className="flex items-center gap-1.5">
-                <Terminal className="w-3.5 h-3.5" />
-                <span>{t('run.output')}</span>
-              </TabsTrigger>
-            </TabsList>
+    <div ref={runContainerRef} className="h-full w-full overflow-hidden p-2 md:p-4">
+      <Tabs
+        value={activeTab}
+        onValueChange={setActiveTab}
+        className={cn(
+          'grid h-full min-h-0 overflow-hidden',
+          isCompactLayout
+            ? 'grid-cols-1 grid-rows-[auto_minmax(0,1fr)_auto] gap-2'
+            : 'grid-cols-[clamp(360px,34%,420px)_minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] gap-x-4 gap-y-3'
+        )}
+      >
+        <TabsList className={cn('grid shrink-0 grid-cols-3', !isCompactLayout && 'hidden')}>
+          <TabsTrigger value="input" className="flex min-w-0 items-center gap-1.5">
+            <Settings2 className="w-3.5 h-3.5" />
+            <span className="truncate">{t('run.inputsTitle')}</span>
+          </TabsTrigger>
+          <TabsTrigger value="execution" className="flex min-w-0 items-center gap-1.5">
+            <Activity className="w-3.5 h-3.5" />
+            <span className="truncate">{t('run.execution')}</span>
+            {isRunning || waitingForInput ? (
+              <span
+                className={cn(
+                  'size-1.5 shrink-0 rounded-full',
+                  isRunning ? 'animate-pulse bg-primary' : 'bg-amber-500'
+                )}
+              />
+            ) : null}
+          </TabsTrigger>
+          <TabsTrigger value="result" className="flex min-w-0 items-center gap-1.5">
+            <Terminal className="w-3.5 h-3.5" />
+            <span className="truncate">{t('run.output')}</span>
+          </TabsTrigger>
+        </TabsList>
 
-            <div className="flex-1 min-h-0 overflow-hidden relative">
-              <TabsContent
-                value="input"
-                className="h-full m-0 focus-visible:ring-0 overflow-visible p-1"
-              >
-                {inputSection}
-              </TabsContent>
-              <TabsContent
-                value="execution"
-                className="h-full m-0 focus-visible:ring-0 overflow-visible p-1"
-              >
-                {executionSection}
-              </TabsContent>
-              <TabsContent
-                value="result"
-                className="h-full m-0 focus-visible:ring-0 overflow-visible p-1"
-              >
-                {outputSection}
-              </TabsContent>
-            </div>
-          </Tabs>
-        </div>
-      )}
+        <TabsContent
+          value="input"
+          forceMount
+          className={cn(
+            'm-0 min-h-0 overflow-hidden focus-visible:ring-0',
+            isCompactLayout
+              ? 'col-start-1 row-start-2 h-full p-1 data-[state=inactive]:hidden'
+              : 'col-start-1 row-span-2 row-start-1 h-full'
+          )}
+        >
+          {inputSection}
+        </TabsContent>
+        <TabsContent
+          value="execution"
+          forceMount
+          className={cn(
+            'm-0 min-h-0 overflow-hidden focus-visible:ring-0',
+            isCompactLayout
+              ? 'col-start-1 row-start-2 h-full p-1 data-[state=inactive]:hidden'
+              : 'col-start-2 row-start-1'
+          )}
+        >
+          {executionSection}
+        </TabsContent>
+        <TabsContent
+          value="result"
+          forceMount
+          className={cn(
+            'm-0 min-h-0 overflow-hidden focus-visible:ring-0',
+            isCompactLayout
+              ? 'col-start-1 row-start-2 h-full p-1 data-[state=inactive]:hidden'
+              : 'col-start-2 row-start-2 h-full'
+          )}
+        >
+          {outputSection}
+        </TabsContent>
+        {isCompactLayout ? runActionFooter : null}
+      </Tabs>
     </div>
   );
 };

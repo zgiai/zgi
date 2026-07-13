@@ -1,10 +1,9 @@
 'use client';
 
 import { useEffect, useMemo } from 'react';
-import { useQueries, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { AGENT_KEYS } from '@/hooks/query-keys';
-import { WEBAPP_KEYS } from '@/hooks/query-keys';
 import { useAccountCapabilities } from '@/hooks/use-account-capabilities';
 import { agentService } from '@/services';
 import type { ApiResponseData } from '@/services/types/common';
@@ -12,29 +11,47 @@ import type {
   RunnableWebAppItem,
   RunnableWebAppsData,
   RunnableWebAppMetaData,
+  RunnableWebAppsParams,
 } from '@/services/types/agent';
-import { WebAppService } from '@/services/webapp.service';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { getErrorMessage } from '@/utils/error-notifications';
 
 export type RunnableWebAppIconType = 'image' | 'text';
 
-export interface RunnableWebAppResolvedItem extends RunnableWebAppItem {
-  meta_data: RunnableWebAppMetaData;
+export interface RunnableWebAppResolvedMetaData {
+  title: string;
+  icon: string;
   icon_type: RunnableWebAppIconType;
+  icon_url: string;
+  desc: string | null;
+  agent_type: RunnableWebAppMetaData['agent_type'];
 }
+
+export type RunnableWebAppResolvedItem = Omit<RunnableWebAppItem, 'meta_data'> & {
+  meta_data: RunnableWebAppResolvedMetaData;
+  icon_type: RunnableWebAppIconType;
+};
 
 interface UseRunnableWebAppsOptions {
   workspaceId?: string | null;
   enabled?: boolean;
   staleTime?: number;
+  webAppId?: string | null;
+  webAppIds?: string[];
+  keyword?: string;
+  page?: number;
+  pageSize?: number;
 }
 
-export function useRunnableWebApps({
-  workspaceId,
-  enabled = true,
-  staleTime = 60 * 1000,
-}: UseRunnableWebAppsOptions = {}) {
+interface UseInfiniteRunnableWebAppsOptions {
+  workspaceId?: string | null;
+  enabled?: boolean;
+  staleTime?: number;
+  keyword?: string;
+  pageSize?: number;
+}
+
+function useRunnableWebAppQueryScope(workspaceId?: string | null) {
   const currentWorkspace = useCurrentWorkspace();
   const {
     canUseRuntimeResourceList,
@@ -42,8 +59,6 @@ export function useRunnableWebApps({
     isFetching: isCapabilitiesFetching,
   } = useAccountCapabilities();
   const canUseAppCenterResourceList = canUseRuntimeResourceList('app_center');
-  const queryEnabled = enabled && canUseAppCenterResourceList;
-
   const resolvedWorkspaceId = useMemo(() => {
     if (typeof workspaceId !== 'undefined') {
       return workspaceId;
@@ -51,55 +66,67 @@ export function useRunnableWebApps({
     return currentWorkspace?.id ?? null;
   }, [workspaceId, currentWorkspace?.id]);
 
+  return {
+    resolvedWorkspaceId,
+    canUseAppCenterResourceList,
+    isCapabilitiesLoading,
+    isCapabilitiesFetching,
+  };
+}
+
+export function useRunnableWebApps({
+  workspaceId,
+  enabled = true,
+  staleTime = 60 * 1000,
+  webAppId,
+  webAppIds,
+  keyword,
+  page,
+  pageSize,
+}: UseRunnableWebAppsOptions = {}) {
+  const {
+    resolvedWorkspaceId,
+    canUseAppCenterResourceList,
+    isCapabilitiesLoading,
+    isCapabilitiesFetching,
+  } = useRunnableWebAppQueryScope(workspaceId);
+  const queryEnabled = enabled && canUseAppCenterResourceList;
+
+  const webAppIDsParam = useMemo(
+    () =>
+      webAppIds
+        ?.map(id => id.trim())
+        .filter(Boolean)
+        .join(',') || undefined,
+    [webAppIds]
+  );
+
+  const requestParams = useMemo<RunnableWebAppsParams>(
+    () => ({
+      workspace_id: resolvedWorkspaceId || undefined,
+      web_app_id: webAppId?.trim() || undefined,
+      web_app_ids: webAppIDsParam,
+      keyword: keyword?.trim() || undefined,
+      page,
+      page_size: pageSize,
+    }),
+    [keyword, page, pageSize, resolvedWorkspaceId, webAppId, webAppIDsParam]
+  );
+
   const query = useQuery<ApiResponseData<RunnableWebAppsData>>({
-    queryKey: AGENT_KEYS.runnable(resolvedWorkspaceId),
-    queryFn: () =>
-      agentService.getRunnableWebApps(
-        resolvedWorkspaceId ? { workspace_id: resolvedWorkspaceId } : undefined
-      ),
+    queryKey: AGENT_KEYS.runnable(resolvedWorkspaceId, requestParams),
+    queryFn: () => agentService.getRunnableWebApps(requestParams),
     enabled: queryEnabled,
     staleTime,
     gcTime: 10 * 60 * 1000,
     retry: false,
   });
 
-  const rawItems = useMemo(() => query.data?.data?.items ?? [], [query.data?.data?.items]);
-
-  const configQueries = useQueries({
-    queries: rawItems.map(item => ({
-      queryKey: WEBAPP_KEYS.config(item.web_app_id),
-      queryFn: () => WebAppService.getConfig(item.web_app_id),
-      staleTime,
-      enabled: queryEnabled,
-      retry: false,
-    })),
-  });
-
-  const items = useMemo<RunnableWebAppResolvedItem[]>(() => {
-    return rawItems.map((item, index) => {
-      const configMeta = configQueries[index]?.data?.data?.config;
-      const apiMeta = item.meta_data;
-      const title = apiMeta?.title || configMeta?.title || `App ${index + 1}`;
-      const icon = apiMeta?.icon || configMeta?.icon || '';
-      const iconType = apiMeta?.icon_type || configMeta?.icon_type || inferIconType(icon);
-      const iconUrl = apiMeta?.icon_url || configMeta?.icon_url || '';
-      const desc = apiMeta?.desc ?? null;
-      const agentType = apiMeta?.agent_type || configMeta?.type || 'CONVERSATIONAL_WORKFLOW';
-
-      return {
-        ...item,
-        meta_data: {
-          title,
-          icon,
-          icon_type: iconType,
-          icon_url: iconUrl,
-          desc,
-          agent_type: agentType,
-        },
-        icon_type: iconType as RunnableWebAppIconType,
-      };
-    });
-  }, [configQueries, rawItems]);
+  const rawItems = useMemo<RunnableWebAppItem[]>(
+    () => query.data?.data?.items ?? [],
+    [query.data?.data?.items]
+  );
+  const items = useMemo(() => resolveRunnableWebAppItems(rawItems), [rawItems]);
 
   useEffect(() => {
     if (!queryEnabled || !query.isError) return;
@@ -109,10 +136,96 @@ export function useRunnableWebApps({
   return {
     ...query,
     items: queryEnabled ? items : [],
+    page: query.data?.data?.page ?? page ?? 1,
+    pageSize: query.data?.data?.page_size ?? pageSize ?? items.length,
+    total: query.data?.data?.total ?? items.length,
+    hasMore: query.data?.data?.has_more ?? false,
     isLoading: enabled && isCapabilitiesLoading ? true : query.isLoading,
     isFetching: (enabled && isCapabilitiesFetching) || query.isFetching,
     canUseResourceList: canUseAppCenterResourceList,
   };
+}
+
+export function useInfiniteRunnableWebApps({
+  workspaceId,
+  enabled = true,
+  staleTime = 60 * 1000,
+  keyword,
+  pageSize = 20,
+}: UseInfiniteRunnableWebAppsOptions = {}) {
+  const {
+    resolvedWorkspaceId,
+    canUseAppCenterResourceList,
+    isCapabilitiesLoading,
+    isCapabilitiesFetching,
+  } = useRunnableWebAppQueryScope(workspaceId);
+  const queryEnabled = enabled && canUseAppCenterResourceList;
+  const requestParams = useMemo<RunnableWebAppsParams>(
+    () => ({
+      workspace_id: resolvedWorkspaceId || undefined,
+      keyword: keyword?.trim() || undefined,
+      page_size: pageSize,
+    }),
+    [keyword, pageSize, resolvedWorkspaceId]
+  );
+
+  const query = useInfiniteQuery<ApiResponseData<RunnableWebAppsData>>({
+    queryKey: AGENT_KEYS.runnableInfinite(resolvedWorkspaceId, requestParams),
+    queryFn: ({ pageParam }) =>
+      agentService.getRunnableWebApps({ ...requestParams, page: Number(pageParam) }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, allPages) => {
+      const pageData = lastPage.data;
+      if (!pageData?.has_more) return undefined;
+      return (pageData.page ?? allPages.length) + 1;
+    },
+    enabled: queryEnabled,
+    staleTime,
+    gcTime: 10 * 60 * 1000,
+    retry: false,
+  });
+
+  const rawItems = useMemo(
+    () => query.data?.pages.flatMap(page => page.data?.items ?? []) ?? [],
+    [query.data?.pages]
+  );
+  const items = useMemo(() => resolveRunnableWebAppItems(rawItems), [rawItems]);
+
+  useEffect(() => {
+    if (!queryEnabled || !query.isError) return;
+    toast.error(getErrorMessage(query.error));
+  }, [queryEnabled, query.isError, query.error]);
+
+  return {
+    ...query,
+    items: queryEnabled ? items : [],
+    hasMore: query.hasNextPage ?? false,
+    isLoading: enabled && isCapabilitiesLoading ? true : query.isLoading,
+    isFetching: (enabled && isCapabilitiesFetching) || query.isFetching,
+    canUseResourceList: canUseAppCenterResourceList,
+  };
+}
+
+function resolveRunnableWebAppItems(rawItems: RunnableWebAppItem[]): RunnableWebAppResolvedItem[] {
+  return rawItems.map((item, index) => {
+    const apiMeta = item.meta_data;
+    const title = apiMeta?.name?.trim() || `App ${index + 1}`;
+    const icon = apiMeta?.icon || '';
+    const iconType = (apiMeta?.icon_type || inferIconType(icon)) as RunnableWebAppIconType;
+
+    return {
+      ...item,
+      meta_data: {
+        title,
+        icon,
+        icon_type: iconType,
+        icon_url: apiMeta?.icon_url || '',
+        desc: apiMeta?.desc ?? null,
+        agent_type: apiMeta?.agent_type || 'CONVERSATIONAL_WORKFLOW',
+      },
+      icon_type: iconType,
+    };
+  });
 }
 
 function inferIconType(icon: string): RunnableWebAppIconType {
