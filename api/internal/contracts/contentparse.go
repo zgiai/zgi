@@ -89,7 +89,24 @@ type ParseRequest struct {
 	EngineHint ParseEngine  `json:"engine_hint,omitempty"`
 	Force      bool         `json:"force,omitempty"`
 
+	// ProviderRuntime carries request-scoped provider credentials and endpoints.
+	// It is intentionally excluded from serialization and artifact metadata.
+	ProviderRuntime *ParseProviderRuntimeConfig `json:"-"`
+
 	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+// ParseProviderRuntimeConfig is an immutable-by-convention execution snapshot
+// resolved for one route candidate. Adapters must not retain or mutate it.
+type ParseProviderRuntimeConfig struct {
+	ProviderKey         string
+	Enabled             *bool
+	Mode                string
+	BaseURL             string
+	APIKey              string
+	TimeoutSeconds      int
+	PollIntervalSeconds int
+	ModelVersion        string
 }
 
 type ParseBoundingBox struct {

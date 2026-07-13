@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	extractcommon "github.com/zgiai/zgi/api/internal/capabilities/contentparse/engines/hyperparse/pkg/providers/common"
+	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 )
 
 func TestToDocumentResultMapsBlocksAndBBoxes(t *testing.T) {
@@ -127,5 +128,33 @@ func TestConfidenceScore(t *testing.T) {
 	}
 	if got := confidenceScore(nil, map[string]any{"parse_confidence": 0.42}); math.Abs(got-0.42) > 0.000001 {
 		t.Fatalf("granular confidence=%v", got)
+	}
+}
+
+func TestRuntimeConfigForOptionsKeepsRequestCredentialsIsolated(t *testing.T) {
+	t.Setenv("REDUCTO_API_KEY", "global-key")
+	config := runtimeConfigForOptions(extractcommon.ParseOptions{
+		ProviderRuntime: extractcommon.ProviderRuntimeConfig{
+			ProviderKey: "reducto",
+			BaseURL:     "https://tenant.example/",
+			APIKey:      "tenant-key",
+		},
+	})
+	if config.apiKey != "tenant-key" || config.baseURL != "https://tenant.example" {
+		t.Fatalf("runtime config = %#v", config)
+	}
+}
+
+func TestRuntimeConfigForOptionsUsesStaticEnvironmentWithoutRequestConfig(t *testing.T) {
+	var config runtimeConfig
+	envconfig.WithOverrides(map[string]string{
+		"REDUCTO_ENABLED":  "true",
+		"REDUCTO_BASE_URL": "https://static-reducto.example/",
+		"REDUCTO_API_KEY":  "static-key",
+	}, func() {
+		config = runtimeConfigForOptions(extractcommon.ParseOptions{})
+	})
+	if !config.enabled || config.apiKey != "static-key" || config.baseURL != "https://static-reducto.example" {
+		t.Fatalf("runtime config = %#v", config)
 	}
 }

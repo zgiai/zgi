@@ -2164,6 +2164,7 @@ func TestUpdateAgentConfigChangesModelWithProvider(t *testing.T) {
 		"agent_memory_enabled": true,
 		"file_upload_enabled":  true,
 		"home_title":           "Agent Home",
+		"opening_statement":    "## Welcome\n\nAsk me anything.",
 		"input_placeholder":    "Ask the agent",
 		"theme_color":          "blue",
 		"suggested_questions":  `["hello","status"]`,
@@ -2188,6 +2189,7 @@ func TestUpdateAgentConfigChangesModelWithProvider(t *testing.T) {
 		"agent_memory_enabled",
 		"file_upload_enabled",
 		"home_title",
+		"opening_statement",
 		"input_placeholder",
 		"theme_color",
 		"suggested_questions",
@@ -2205,7 +2207,7 @@ func TestUpdateAgentConfigChangesModelWithProvider(t *testing.T) {
 	if messages[0].Data["agent_id"] != agentID || messages[0].Data["workspace_id"] != "agent-workspace" {
 		t.Fatalf("payload identity = %#v, want agent/workspace evidence", messages[0].Data)
 	}
-	if messages[0].Data["home_title"] != "Agent Home" || messages[0].Data["input_placeholder"] != "Ask the agent" || messages[0].Data["theme_color"] != "blue" {
+	if messages[0].Data["home_title"] != "Agent Home" || messages[0].Data["opening_statement"] != "## Welcome\n\nAsk me anything." || messages[0].Data["input_placeholder"] != "Ask the agent" || messages[0].Data["theme_color"] != "blue" {
 		t.Fatalf("payload visible config = %#v, want updated home/input/theme evidence", messages[0].Data)
 	}
 	questions, ok := messages[0].Data["suggested_questions"].([]string)
@@ -3251,6 +3253,26 @@ func (s *fakeAgentManagementService) GetAgent(_ context.Context, agentID string)
 	return nil, nil
 }
 
+func (s *fakeAgentManagementService) GetAgentRuntimeSurfaces(context.Context, string, string) (*dto.AgentRuntimeSurfaceAuthorizationResponse, error) {
+	return &dto.AgentRuntimeSurfaceAuthorizationResponse{}, nil
+}
+
+func (s *fakeAgentManagementService) RequireAgentManageAccess(context.Context, string, string) error {
+	return nil
+}
+
+func (s *fakeAgentManagementService) UpdateAgentRuntimeSurfaces(context.Context, string, string, dto.UpdateAgentRuntimeSurfacesRequest) (*dto.AgentRuntimeSurfaceAuthorizationResponse, error) {
+	return &dto.AgentRuntimeSurfaceAuthorizationResponse{}, nil
+}
+
+func (s *fakeAgentManagementService) GetPublishedAgentRuntimeConfig(context.Context, string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
+	return &dto.AgentWebAppRuntimeConfigResponse{}, nil
+}
+
+func (s *fakeAgentManagementService) GetWebAppRuntimeCapability(context.Context, string, string, bool) (*dto.AgentWebAppRuntimeCapabilityResponse, error) {
+	return &dto.AgentWebAppRuntimeCapabilityResponse{}, nil
+}
+
 func (s *fakeAgentManagementService) UpdateAgent(_ context.Context, agentID string, req interface{}) (interface{}, error) {
 	s.updateAgentCalls++
 	s.lastUpdateAgentID = agentID
@@ -3310,6 +3332,7 @@ func (s *fakeAgentManagementService) UpdateAgentConfig(_ context.Context, _ stri
 	resp.AgentMemoryEnabled = req.AgentMemoryEnabled
 	resp.FileUpload = req.FileUpload
 	resp.HomeTitle = req.HomeTitle
+	resp.OpeningStatement = req.OpeningStatement
 	resp.InputPlaceholder = req.InputPlaceholder
 	resp.ThemeColor = req.ThemeColor
 	resp.SuggestedQuestions = append([]string(nil), req.SuggestedQuestions...)

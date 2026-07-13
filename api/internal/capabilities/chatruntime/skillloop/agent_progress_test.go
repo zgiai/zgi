@@ -64,6 +64,9 @@ func TestAgenticSkillLoopSystemMessageProgressGuidance(t *testing.T) {
 		"Do not start every task by listing resources or navigating",
 		"Do not announce that you need to navigate",
 		"describe the outcome as executed and verified",
+		"reconcile the complete user request with your latest plan and evidence",
+		"A backend read or mutation does not prove that the page changed",
+		"do not submit while you still intend to perform an open phase",
 		"submit_intermediate_answer is for substantial user-facing deliverables only",
 	} {
 		if !strings.Contains(content, want) {

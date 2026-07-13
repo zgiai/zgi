@@ -48,7 +48,7 @@ func terminalStateGuardCanStream(evidence map[string]interface{}) bool {
 
 func terminalStateGuardPendingProtocolBlocker(evidence map[string]interface{}) string {
 	for _, key := range []string{"pending_approval", "pending_client_action", "pending_question", "pending_user_input"} {
-		if completionVerificationEvidenceValuePresent(evidence[key]) {
+		if evidenceValuePresent(evidence[key]) {
 			return "pending_protocol:" + strings.TrimPrefix(key, "pending_")
 		}
 	}
@@ -133,31 +133,22 @@ func terminalStateGuardError(decision terminalStateGuardDecision) error {
 	return fmt.Errorf("%w: terminal state blocked: %s", ErrInvalidInput, firstNonEmptyString(blocker, decision.Reason))
 }
 
-func terminalStateGuardNotify(req RunRequest, decision terminalStateGuardDecision, fallbackAnswer string) {
-	if req.OnCompletionVerification == nil {
+func terminalStateGuardNotify(req RunRequest, decision terminalStateGuardDecision) {
+	if req.OnTerminalCompletion == nil {
 		return
 	}
-	status := completionVerificationStatusNeedsAction
+	status := "blocked"
 	source := "terminal_state_guard"
 	if decision.Path == terminalStateGuardAccepted {
-		status = completionVerificationStatusPass
+		status = "pass"
 		source = "main_model_final"
 	}
-	notifyCompletionVerificationResult(req, completionVerificationDecision{
-		Status:         status,
-		Source:         source,
-		Reason:         strings.TrimSpace(decision.Reason),
-		MissingSteps:   append([]string(nil), decision.Blockers...),
-		NextActionHint: terminalStateGuardNextAction(decision),
-		FinalAnswer:    strings.TrimSpace(firstNonEmptyString(decision.FinalAnswer, fallbackAnswer)),
-	}, fallbackAnswer)
-}
-
-func terminalStateGuardNextAction(decision terminalStateGuardDecision) string {
-	if decision.Path == terminalStateGuardAccepted {
-		return ""
-	}
-	return "wait for or resolve the active runtime protocol before submitting the final answer"
+	req.OnTerminalCompletion(TerminalCompletionResult{
+		Status:   status,
+		Source:   source,
+		Reason:   strings.TrimSpace(decision.Reason),
+		Blockers: append([]string(nil), decision.Blockers...),
+	})
 }
 
 func terminalStateGuardRecord(req RunRequest, decision terminalStateGuardDecision) {

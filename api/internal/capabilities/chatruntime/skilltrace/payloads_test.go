@@ -2,6 +2,7 @@ package skilltrace
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
@@ -384,6 +385,7 @@ func TestSummarizeToolResultCompactsAgentWorkflowPayload(t *testing.T) {
 }
 
 func TestSummarizeToolResultPreservesAgentConfigUpdatedFields(t *testing.T) {
+	systemPrompt := strings.Repeat("existing chapter ", 180) + "第十章 persisted suffix"
 	result := SummarizeToolResult(skills.SkillAgentManagement, "update_agent_config", []tools.ToolInvokeMessage{{
 		Type: tools.ToolInvokeMessageTypeJSON,
 		Data: map[string]interface{}{
@@ -394,8 +396,14 @@ func TestSummarizeToolResultPreservesAgentConfigUpdatedFields(t *testing.T) {
 			"requested_fields": []string{"model_provider", "model", "home_title", "theme_color"},
 			"satisfied_fields": []string{"model_provider", "model", "home_title", "theme_color"},
 			"updated_fields":   []string{"model_provider", "model", "home_title"},
+			"agent": map[string]interface{}{
+				"id": "agent-1",
+				"config": map[string]interface{}{
+					"system_prompt": "stale prompt from identity snapshot",
+				},
+			},
 			"config": map[string]interface{}{
-				"system_prompt":        "full prompt should stay out of compact trace",
+				"system_prompt":        systemPrompt,
 				"model_provider":       "deepseek",
 				"model":                "deepseek-chat",
 				"home_title":           "Home",
@@ -433,6 +441,15 @@ func TestSummarizeToolResultPreservesAgentConfigUpdatedFields(t *testing.T) {
 	}
 	if result["suggested_question_count"] != 2 {
 		t.Fatalf("suggested_question_count = %#v, want 2", result["suggested_question_count"])
+	}
+	if got := result["system_prompt_chars"]; got != len([]rune(systemPrompt)) {
+		t.Fatalf("system_prompt_chars = %#v, want %d", got, len([]rune(systemPrompt)))
+	}
+	if got := strings.TrimSpace(stringFromAny(result["system_prompt_digest"])); !strings.HasPrefix(got, "sha256:") {
+		t.Fatalf("system_prompt_digest = %q, want sha256 digest", got)
+	}
+	if preview := stringFromAny(result["system_prompt"]); len([]rune(preview)) > 2003 || strings.Contains(preview, "persisted suffix") {
+		t.Fatalf("system_prompt preview = %q, want compact prefix without appended suffix", preview)
 	}
 }
 

@@ -16,6 +16,10 @@ const (
 type ParseOptions struct {
 	Mode string
 
+	// ProviderRuntime is a request-scoped configuration snapshot. It must never
+	// be written into process-global environment or package state.
+	ProviderRuntime ProviderRuntimeConfig
+
 	// ForceLocalVLM only affects the local engine: force the VLM fallback-page
 	// selector after native parsing. This is a slower high-accuracy path and
 	// should not be enabled by ordinary retry/no-cache operations.
@@ -40,6 +44,17 @@ type ParseOptions struct {
 	// OnProgress optionally reports long-running parse stages to the host UI.
 	// It is mainly used by local image captioning and OCR fallback stages.
 	OnProgress func(ParseProgress)
+}
+
+type ProviderRuntimeConfig struct {
+	ProviderKey         string
+	Enabled             *bool
+	Mode                string
+	BaseURL             string
+	APIKey              string
+	TimeoutSeconds      int
+	PollIntervalSeconds int
+	ModelVersion        string
 }
 
 // ParseProgress is a lightweight progress event emitted to the host service.

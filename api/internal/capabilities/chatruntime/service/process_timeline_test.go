@@ -2,14 +2,153 @@ package service
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
+
+type countingTimelineMessageRepo struct {
+	repository.MessageRepository
+	updates  int
+	metadata map[string]interface{}
+}
+
+func (r *countingTimelineMessageRepo) UpdateMetadata(_ context.Context, _ uuid.UUID, metadata map[string]interface{}) error {
+	r.updates++
+	r.metadata = copyStringAnyMap(metadata)
+	return nil
+}
+
+func TestProcessTimelineRecorderCheckpointsIntermediateAnswerWithoutWriteAmplification(t *testing.T) {
+	messageRepo := &countingTimelineMessageRepo{}
+	message := &runtimemodel.Message{ID: uuid.New(), Metadata: map[string]interface{}{}}
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      message,
+	}
+	recorder := newProcessTimelineRecorder(
+		context.Background(),
+		context.Background(),
+		&service{repos: &repository.Repositories{Message: messageRepo}},
+		prepared,
+		nil,
+	)
+	now := time.Unix(1_700_000_000, 0)
+	recorder.now = func() time.Time { return now }
+
+	for range 1490 {
+		recorder.RecordEvent(streamEventIntermediateAnswer, map[string]interface{}{
+			"answer_id": "draft-1",
+			"content":   "ab",
+			"delta":     true,
+		})
+	}
+	recorder.RecordEvent(streamEventIntermediateAnswer, map[string]interface{}{
+		"answer_id": "draft-1",
+		"done":      true,
+	})
+
+	if messageRepo.updates != 2 {
+		t.Fatalf("UpdateMetadata calls = %d, want first checkpoint plus final write", messageRepo.updates)
+	}
+	invocations := skillInvocationsFromMetadata(messageRepo.metadata["skill_invocations"])
+	if len(invocations) != 1 {
+		t.Fatalf("skill_invocations = %#v, want one intermediate answer", invocations)
+	}
+	if got := len(stringFromAny(invocations[0]["message"])); got != 2980 {
+		t.Fatalf("persisted message length = %d, want 2980", got)
+	}
+	if got := stringFromAny(invocations[0]["status"]); got != "success" {
+		t.Fatalf("status = %q, want success", got)
+	}
+	if partial, _ := invocations[0]["partial"].(bool); partial {
+		t.Fatalf("partial = true, want false: %#v", invocations[0])
+	}
+}
+
+func TestProcessTimelineRecorderPersistsIntermediateAnswerOnTimeOrSizeCheckpoint(t *testing.T) {
+	messageRepo := &countingTimelineMessageRepo{}
+	message := &runtimemodel.Message{ID: uuid.New(), Metadata: map[string]interface{}{}}
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      message,
+	}
+	recorder := newProcessTimelineRecorder(
+		context.Background(),
+		context.Background(),
+		&service{repos: &repository.Repositories{Message: messageRepo}},
+		prepared,
+		nil,
+	)
+	now := time.Unix(1_700_000_000, 0)
+	recorder.now = func() time.Time { return now }
+
+	recorder.RecordEvent(streamEventIntermediateAnswer, map[string]interface{}{"answer_id": "draft-1", "content": "a", "delta": true})
+	now = now.Add(time.Second)
+	recorder.RecordEvent(streamEventIntermediateAnswer, map[string]interface{}{"answer_id": "draft-1", "content": "b", "delta": true})
+	if messageRepo.updates != 1 {
+		t.Fatalf("UpdateMetadata calls before threshold = %d, want 1", messageRepo.updates)
+	}
+	now = now.Add(time.Second)
+	recorder.RecordEvent(streamEventIntermediateAnswer, map[string]interface{}{"answer_id": "draft-1", "content": "c", "delta": true})
+	if messageRepo.updates != 2 {
+		t.Fatalf("UpdateMetadata calls after time threshold = %d, want 2", messageRepo.updates)
+	}
+	recorder.RecordEvent(streamEventIntermediateAnswer, map[string]interface{}{
+		"answer_id": "draft-1",
+		"content":   strings.Repeat("x", intermediateAnswerCheckpointBytes),
+		"delta":     true,
+	})
+	if messageRepo.updates != 3 {
+		t.Fatalf("UpdateMetadata calls after size threshold = %d, want 3", messageRepo.updates)
+	}
+}
+
+func TestProcessTimelineRecorderFlushesPartialIntermediateAnswerOnError(t *testing.T) {
+	messageRepo := &countingTimelineMessageRepo{}
+	message := &runtimemodel.Message{ID: uuid.New(), Metadata: map[string]interface{}{}}
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      message,
+	}
+	recorder := newProcessTimelineRecorder(
+		context.Background(),
+		context.Background(),
+		&service{repos: &repository.Repositories{Message: messageRepo}},
+		prepared,
+		nil,
+	)
+	recorder.RecordEvent(streamEventIntermediateAnswer, map[string]interface{}{"answer_id": "draft-1", "content": "first ", "delta": true})
+	recorder.RecordEvent(streamEventIntermediateAnswer, map[string]interface{}{"answer_id": "draft-1", "content": "second", "delta": true})
+	recorder.FlushPendingIntermediateAnswers(errors.New("model stream interrupted"))
+
+	if messageRepo.updates != 2 {
+		t.Fatalf("UpdateMetadata calls = %d, want checkpoint plus error flush", messageRepo.updates)
+	}
+	invocations := skillInvocationsFromMetadata(messageRepo.metadata["skill_invocations"])
+	if len(invocations) != 1 {
+		t.Fatalf("skill_invocations = %#v, want one intermediate answer", invocations)
+	}
+	if got := stringFromAny(invocations[0]["message"]); got != "first second" {
+		t.Fatalf("message = %q, want full partial answer", got)
+	}
+	if got := stringFromAny(invocations[0]["status"]); got != "error" {
+		t.Fatalf("status = %q, want error", got)
+	}
+	if partial, _ := invocations[0]["partial"].(bool); !partial {
+		t.Fatalf("partial = false, want true: %#v", invocations[0])
+	}
+	if got := stringFromAny(invocations[0]["error"]); got != "model stream interrupted" {
+		t.Fatalf("error = %q, want model stream interrupted", got)
+	}
+}
 
 func TestProcessTimelineRecorderReusesPendingGovernedToolCallRuntimeID(t *testing.T) {
 	const runtimeID = "tool_call:agent-management:delete_agent::#1"
@@ -222,8 +361,52 @@ func TestProcessTimelineRecorderPersistsFinalAnswerPlanWithoutVisibleInvocation(
 	if len(phases) != 1 || stringFromAny(phases[0]["status"]) != "completed" {
 		t.Fatalf("operation_plan.phases = %#v, want completed final answer plan snapshot", phases)
 	}
+	plan := mapFromOperationContext(message.Metadata["operation_plan"])
+	if got := stringFromAny(plan["plan_sync_status"]); got != "current" {
+		t.Fatalf("plan_sync_status = %q, want current", got)
+	}
 	if invocations := skillInvocationsFromMetadata(message.Metadata["skill_invocations"]); len(invocations) != 0 {
 		t.Fatalf("skill_invocations = %#v, want final_answer hidden from visible timeline", invocations)
+	}
+}
+
+func TestProcessTimelineRecorderPersistsMissingFinalPlanWarningWithoutClosingStalePlan(t *testing.T) {
+	message := &runtimemodel.Message{
+		ID: uuid.New(),
+		Metadata: map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"plan_sync_status": "stale",
+				"phases": []interface{}{map[string]interface{}{
+					"id":     "phase-1",
+					"status": "in_progress",
+				}},
+			},
+		},
+	}
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
+		Message:      message,
+	}
+	recorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, nil)
+	warning := "missing_or_invalid_final_plan_snapshot: plan is required when operation_plan.phases is non-empty"
+
+	recorder.RecordTrace([]skills.SkillTrace{{
+		Kind:   "final_answer",
+		Status: "success",
+		Result: map[string]interface{}{"plan_warning": warning},
+	}}, skills.SkillTrace{
+		Kind:   "final_answer",
+		Status: "success",
+		Result: map[string]interface{}{"plan_warning": warning},
+	})
+
+	plan := mapFromOperationContext(message.Metadata["operation_plan"])
+	if got := stringFromAny(plan["plan_sync_status"]); got != "stale" {
+		t.Fatalf("plan_sync_status = %q, want stale", got)
+	}
+	warnings := stringSliceFromAny(plan["final_plan_warnings"])
+	if len(warnings) != 1 || warnings[0] != warning {
+		t.Fatalf("final_plan_warnings = %#v, want missing plan warning", warnings)
 	}
 }
 

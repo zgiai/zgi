@@ -59,6 +59,41 @@ func TestFinalAnswerTraceAppliesFinalPlanSnapshot(t *testing.T) {
 	}
 }
 
+func TestPlanUpdateTraceMarksPlanCurrentAtLatestEvidence(t *testing.T) {
+	metadata := map[string]interface{}{
+		"operation_plan": map[string]interface{}{
+			"plan_sync_status": "stale",
+			operationPlanEvidenceLedgerKey: []interface{}{map[string]interface{}{
+				"status": "completed", "sequence": 4,
+			}},
+		},
+	}
+	applyPlanUpdateTraceMetadata(metadata, skills.SkillTrace{
+		Kind:      "plan_update",
+		Status:    "success",
+		Arguments: map[string]interface{}{"round": 3},
+		Result: map[string]interface{}{
+			"plan": []interface{}{map[string]interface{}{
+				"id": "phase-1", "step": "Continue the task", "status": "in_progress",
+			}},
+		},
+	})
+
+	plan := mapFromOperationContext(metadata["operation_plan"])
+	if got := stringFromAny(plan["plan_sync_status"]); got != "current" {
+		t.Fatalf("plan_sync_status = %q, want current", got)
+	}
+	if got := intValueFromAny(plan["last_plan_update_round"]); got != 3 {
+		t.Fatalf("last_plan_update_round = %d, want 3", got)
+	}
+	if got := intValueFromAny(plan["evidence_sequence_at_plan_update"]); got != 4 {
+		t.Fatalf("evidence_sequence_at_plan_update = %d, want 4", got)
+	}
+	if got := intValueFromAny(plan["evidence_after_last_plan_update"]); got != 0 {
+		t.Fatalf("evidence_after_last_plan_update = %d, want 0", got)
+	}
+}
+
 func TestSkillLoopPrefersExplicitFinalAnswerOnlyForPlannedAIChatTurn(t *testing.T) {
 	tests := []struct {
 		name       string

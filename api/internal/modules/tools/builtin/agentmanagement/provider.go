@@ -272,6 +272,7 @@ func newUpdateAgentConfigTool(agentsService interfaces.AgentsService, availableM
 			boolParameter("agent_memory_enabled", "Agent memory enabled", "Optional Agent memory switch.", false),
 			boolParameter("file_upload_enabled", "File upload enabled", "Optional file upload switch.", false),
 			stringParameter("home_title", "Home title", "Optional Agent home title.", false),
+			stringParameter("opening_statement", "Opening statement", "Optional Markdown landing guide shown before the first message.", false),
 			stringParameter("input_placeholder", "Input placeholder", "Optional chat input placeholder.", false),
 			stringParameter("theme_color", "Theme color", "Optional theme color: default, blue, emerald, violet, rose, amber, or slate.", false),
 			stringArrayParameter("suggested_questions", "Suggested questions", "Optional full list of suggested questions.", false),
@@ -2554,6 +2555,10 @@ func mergeAgentConfigRequest(current dto.AgentConfigResponse, params map[string]
 		req.HomeTitle = value
 		changedFields = append(changedFields, "home_title")
 	}
+	if value, ok := optionalStringParam(params, "opening_statement"); ok {
+		req.OpeningStatement = value
+		changedFields = append(changedFields, "opening_statement")
+	}
 	if value, ok := optionalStringParam(params, "input_placeholder"); ok {
 		req.InputPlaceholder = value
 		changedFields = append(changedFields, "input_placeholder")
@@ -3193,6 +3198,8 @@ func agentConfigFieldActuallyChanged(before dto.AgentConfigResponse, after dto.A
 		return before.FileUpload != after.FileUpload
 	case "home_title":
 		return before.HomeTitle != after.HomeTitle
+	case "opening_statement":
+		return before.OpeningStatement != after.OpeningStatement
 	case "input_placeholder":
 		return before.InputPlaceholder != after.InputPlaceholder
 	case "theme_color":
@@ -3282,6 +3289,7 @@ func agentConfigWrapperKeys() []string {
 		"agent_memory_enabled",
 		"file_upload_enabled",
 		"home_title",
+		"opening_statement",
 		"input_placeholder",
 		"theme_color",
 		"suggested_questions",
@@ -3311,6 +3319,7 @@ func agentConfigRequestFromResponse(current dto.AgentConfigResponse) dto.AgentCo
 		AgentMemoryEnabled:       current.AgentMemoryEnabled,
 		FileUpload:               current.FileUpload,
 		HomeTitle:                current.HomeTitle,
+		OpeningStatement:         current.OpeningStatement,
 		InputPlaceholder:         current.InputPlaceholder,
 		ThemeColor:               current.ThemeColor,
 		SuggestedQuestions:       append([]string(nil), current.SuggestedQuestions...),
@@ -3331,6 +3340,7 @@ func agentConfigResponseFromRequest(current dto.AgentConfigResponse, req dto.Age
 	after.AgentMemoryEnabled = req.AgentMemoryEnabled
 	after.FileUpload = req.FileUpload
 	after.HomeTitle = req.HomeTitle
+	after.OpeningStatement = req.OpeningStatement
 	after.InputPlaceholder = req.InputPlaceholder
 	after.ThemeColor = req.ThemeColor
 	after.SuggestedQuestions = append([]string(nil), req.SuggestedQuestions...)
@@ -3456,6 +3466,7 @@ func agentConfigMutationPayload(effect string, agentID string, workspaceID strin
 		payload["agent_memory_enabled"] = config.AgentMemoryEnabled
 		payload["file_upload_enabled"] = config.FileUpload
 		payload["home_title"] = config.HomeTitle
+		payload["opening_statement"] = config.OpeningStatement
 		payload["input_placeholder"] = config.InputPlaceholder
 		payload["theme_color"] = config.ThemeColor
 		payload["suggested_questions"] = append([]string(nil), config.SuggestedQuestions...)

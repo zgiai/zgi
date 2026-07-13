@@ -4,9 +4,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentProps } from 'react';
 import {
   AlertTriangle,
+  ArrowLeft,
   CheckCircle2,
   Clock3,
-  History,
   Loader2,
   RefreshCw,
   ShieldCheck,
@@ -19,7 +19,6 @@ import {
   Sheet,
   SheetContent,
   SheetDescription,
-  SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
 import { useAIChatAssetOperationAudits } from '@/hooks/aichat/use-aichat-asset-operation-audits';
@@ -40,6 +39,13 @@ interface AIChatAssetAuditButtonProps {
   enabled?: boolean;
   refreshKey?: string;
   className?: string;
+  onOpen?: () => void;
+}
+
+interface AIChatAssetAuditPanelProps {
+  conversationId?: string | null;
+  refreshKey?: string;
+  onBack: () => void;
 }
 
 type BadgeVariant = ComponentProps<typeof Badge>['variant'];
@@ -59,14 +65,81 @@ export function AIChatAssetAuditButton({
   enabled = true,
   refreshKey,
   className,
+  onOpen,
 }: AIChatAssetAuditButtonProps) {
   const t = useT('webapp');
   const [open, setOpen] = useState(false);
-  const canLoad = enabled && Boolean(conversationId);
+  const canOpen = enabled && Boolean(conversationId);
+  const auditState = useAssetAuditRecords(conversationId, enabled && open, refreshKey);
+  const { records } = auditState;
+
+  return (
+    <>
+      <Button
+        type="button"
+        variant="ghost"
+        isIcon
+        className={cn('relative size-8 text-muted-foreground', className)}
+        disabled={!canOpen}
+        onClick={() => {
+          if (onOpen) {
+            onOpen();
+            return;
+          }
+          setOpen(true);
+        }}
+        aria-label={
+          canOpen
+            ? t('consoleChat.governance.audit.action')
+            : t('consoleChat.governance.audit.noConversation')
+        }
+        title={
+          canOpen
+            ? t('consoleChat.governance.audit.action')
+            : t('consoleChat.governance.audit.noConversation')
+        }
+      >
+        <ShieldCheck className="size-4" />
+        {records.length > 0 ? (
+          <span className="absolute right-1 top-1 size-1.5 rounded-full bg-primary" />
+        ) : null}
+      </Button>
+      {!onOpen ? (
+        <Sheet open={open} onOpenChange={setOpen}>
+          <SheetContent side="right" className="flex w-full flex-col p-0 sm:max-w-xl">
+            <SheetTitle className="sr-only">
+              {t('consoleChat.governance.audit.title')}
+            </SheetTitle>
+            <SheetDescription className="sr-only">
+              {t('consoleChat.governance.audit.description')}
+            </SheetDescription>
+            <AssetAuditView state={auditState} />
+          </SheetContent>
+        </Sheet>
+      ) : null}
+    </>
+  );
+}
+
+export function AIChatAssetAuditPanel({
+  conversationId,
+  refreshKey,
+  onBack,
+}: AIChatAssetAuditPanelProps) {
+  const auditState = useAssetAuditRecords(conversationId, true, refreshKey);
+  return <AssetAuditView state={auditState} onBack={onBack} />;
+}
+
+function useAssetAuditRecords(
+  conversationId: string | null | undefined,
+  active: boolean,
+  refreshKey?: string
+) {
+  const canLoad = Boolean(conversationId);
   const auditQuery = useAIChatAssetOperationAudits(
     conversationId,
     { page: 1, limit: AUDIT_PAGE_SIZE },
-    { enabled: open && canLoad }
+    { enabled: active && canLoad }
   );
   const lastRefreshKeyRef = useRef<string | undefined>(refreshKey);
   const auditData = auditQuery.data;
@@ -74,101 +147,102 @@ export function AIChatAssetAuditButton({
   const records = useMemo(() => auditData?.data ?? [], [auditData?.data]);
 
   useEffect(() => {
-    if (!open || !canLoad) {
+    if (!active || !canLoad) {
       lastRefreshKeyRef.current = refreshKey;
       return;
     }
     if (lastRefreshKeyRef.current === refreshKey) return;
     lastRefreshKeyRef.current = refreshKey;
     void refetch();
-  }, [canLoad, open, refetch, refreshKey]);
+  }, [active, canLoad, refetch, refreshKey]);
+
+  return { auditData, auditQuery, canLoad, records, refetch };
+}
+
+function AssetAuditView({
+  state,
+  onBack,
+}: {
+  state: ReturnType<typeof useAssetAuditRecords>;
+  onBack?: () => void;
+}) {
+  const t = useT('webapp');
+  const { auditData, auditQuery, canLoad, records, refetch } = state;
 
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
-      <Button
-        type="button"
-        variant="ghost"
-        isIcon
-        className={cn('relative size-8 text-muted-foreground', className)}
-        disabled={!canLoad}
-        onClick={() => setOpen(true)}
-        aria-label={
-          canLoad
-            ? t('consoleChat.governance.audit.action')
-            : t('consoleChat.governance.audit.noConversation')
-        }
-        title={
-          canLoad
-            ? t('consoleChat.governance.audit.action')
-            : t('consoleChat.governance.audit.noConversation')
-        }
-      >
-        <History className="size-4" />
-        {records.length > 0 ? (
-          <span className="absolute right-1 top-1 size-1.5 rounded-full bg-primary" />
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col">
+      <div className="flex items-start gap-2 px-4 py-3">
+        {onBack ? (
+          <Button
+            type="button"
+            variant="ghost"
+            isIcon
+            className="size-8 shrink-0 text-muted-foreground"
+            onClick={onBack}
+            aria-label={t('consoleChat.governance.audit.backToChat')}
+            title={t('consoleChat.governance.audit.backToChat')}
+          >
+            <ArrowLeft className="size-4" />
+          </Button>
         ) : null}
-      </Button>
-      <SheetContent side="right" className="flex w-full flex-col p-0 sm:max-w-xl">
-        <SheetHeader className="border-b px-4 py-4 pr-11 text-left">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <SheetTitle className="text-base">
-                {t('consoleChat.governance.audit.title')}
-              </SheetTitle>
-              <SheetDescription className="mt-1">
-                {t('consoleChat.governance.audit.description')}
-              </SheetDescription>
-            </div>
-            <Button
-              type="button"
-              variant="ghost"
-              isIcon
-              className="size-8 shrink-0 text-muted-foreground"
-              onClick={() => void refetch()}
-              disabled={!canLoad || auditQuery.isFetching}
-              aria-label={t('consoleChat.governance.audit.refresh')}
-              title={t('consoleChat.governance.audit.refresh')}
-            >
-              <RefreshCw className={cn('size-4', auditQuery.isFetching && 'animate-spin')} />
-            </Button>
-          </div>
-        </SheetHeader>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-base font-semibold text-foreground">
+            {t('consoleChat.governance.audit.title')}
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t('consoleChat.governance.audit.description')}
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          isIcon
+          className="size-8 shrink-0 text-muted-foreground"
+          onClick={() => void refetch()}
+          disabled={!canLoad || auditQuery.isFetching}
+          aria-label={t('consoleChat.governance.audit.refresh')}
+          title={t('consoleChat.governance.audit.refresh')}
+        >
+          <RefreshCw className={cn('size-4', auditQuery.isFetching && 'animate-spin')} />
+        </Button>
+      </div>
 
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="space-y-3 p-4">
-            {auditQuery.isLoading ? <AuditLoading label={t('consoleChat.governance.audit.loading')} /> : null}
-            {auditQuery.isError ? (
-              <AuditEmptyState
-                tone="error"
-                title={t('consoleChat.governance.audit.loadFailed')}
-                description={
-                  auditQuery.error instanceof Error
-                    ? auditQuery.error.message
-                    : t('consoleChat.governance.audit.loadFailed')
-                }
-              />
-            ) : null}
-            {!auditQuery.isLoading && !auditQuery.isError && records.length === 0 ? (
-              <AuditEmptyState
-                title={t('consoleChat.governance.audit.emptyTitle')}
-                description={t('consoleChat.governance.audit.emptyDescription')}
-              />
-            ) : null}
-            {!auditQuery.isError
-              ? records.map(record => <AuditRecordCard key={record.id} record={record} />)
-              : null}
-            {auditData?.has_more ? (
-              <p className="px-1 text-xs text-muted-foreground">
-                {t('consoleChat.governance.audit.firstPageOnly', {
-                  count: records.length,
-                  total: auditData.total,
-                })}
-              </p>
-            ) : null}
-          </div>
-        </ScrollArea>
-      </SheetContent>
-    </Sheet>
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="space-y-3 p-4 pt-1">
+          {auditQuery.isLoading ? (
+            <AuditLoading label={t('consoleChat.governance.audit.loading')} />
+          ) : null}
+          {auditQuery.isError ? (
+            <AuditEmptyState
+              tone="error"
+              title={t('consoleChat.governance.audit.loadFailed')}
+              description={
+                auditQuery.error instanceof Error
+                  ? auditQuery.error.message
+                  : t('consoleChat.governance.audit.loadFailed')
+              }
+            />
+          ) : null}
+          {!auditQuery.isLoading && !auditQuery.isError && records.length === 0 ? (
+            <AuditEmptyState
+              title={t('consoleChat.governance.audit.emptyTitle')}
+              description={t('consoleChat.governance.audit.emptyDescription')}
+            />
+          ) : null}
+          {!auditQuery.isError
+            ? records.map(record => <AuditRecordCard key={record.id} record={record} />)
+            : null}
+          {auditData?.has_more ? (
+            <p className="px-1 text-xs text-muted-foreground">
+              {t('consoleChat.governance.audit.firstPageOnly', {
+                count: records.length,
+                total: auditData.total,
+              })}
+            </p>
+          ) : null}
+        </div>
+      </ScrollArea>
+    </div>
   );
 }
 

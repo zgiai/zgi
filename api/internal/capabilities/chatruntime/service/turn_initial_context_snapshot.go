@@ -98,7 +98,7 @@ func restoreTurnInitialContextFromMetadata(parts *chatRequestParts, metadata map
 		return
 	}
 	var builder strings.Builder
-	builder.WriteString("Restored send-time ZGI page context from the original AIChat turn.")
+	builder.WriteString("Restored send-time console page context from the original assistant turn.")
 	if page != "" {
 		builder.WriteString(" page=")
 		builder.WriteString(page)

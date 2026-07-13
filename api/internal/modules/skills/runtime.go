@@ -729,14 +729,22 @@ func MetaToolsForSkills(resolved *ResolvedSkills) []llmadapter.Tool {
 	return metaTools(resolvedHasToolSkills(resolved))
 }
 
+type MetaToolOptions struct {
+	RequireFinalPlanSnapshot bool
+}
+
 func MetaToolsForSkillState(resolved *ResolvedSkills, loadedSkillIDs map[string]struct{}) []llmadapter.Tool {
+	return MetaToolsForSkillStateWithOptions(resolved, loadedSkillIDs, MetaToolOptions{})
+}
+
+func MetaToolsForSkillStateWithOptions(resolved *ResolvedSkills, loadedSkillIDs map[string]struct{}, options MetaToolOptions) []llmadapter.Tool {
 	loaded := normalizedLoadedSkillIDs(loadedSkillIDs)
 	tools := []llmadapter.Tool{
 		requestUserInputMetaTool(),
 		turnStateMetaTool(),
 		updatePlanMetaTool(),
 		intermediateAnswerMetaTool(),
-		finalAnswerMetaTool(),
+		finalAnswerMetaToolWithOptions(options),
 	}
 	if skillIDs := unloadedSkillIDs(resolved, loaded); len(skillIDs) > 0 {
 		tools = append([]llmadapter.Tool{loadSkillMetaTool(skillIDs)}, tools...)
@@ -998,11 +1006,21 @@ func intermediateAnswerMetaTool() llmadapter.Tool {
 }
 
 func finalAnswerMetaTool() llmadapter.Tool {
+	return finalAnswerMetaToolWithOptions(MetaToolOptions{})
+}
+
+func finalAnswerMetaToolWithOptions(options MetaToolOptions) llmadapter.Tool {
+	description := "Submit the final user-facing answer and end the current skill loop when you judge the task complete or have honestly reached a terminal outcome. This call is terminal: do not combine it with business tools or request_user_input. Put the complete final response in answer; ordinary assistant content is progress, not the final answer. A plan snapshot is optional audit metadata and never determines whether the answer is accepted."
+	required := []string{"answer"}
+	if options.RequireFinalPlanSnapshot {
+		description = "Submit the final user-facing answer and the latest execution plan snapshot in the same call when you judge the task complete or have honestly reached a terminal outcome. This call is terminal: do not combine it with business tools or request_user_input. Put the complete final response in answer; ordinary assistant content is progress, not the final answer. The plan is required for synchronization but remains advisory and never determines whether the answer is accepted."
+		required = append(required, "plan")
+	}
 	return llmadapter.Tool{
 		Type: "function",
 		Function: llmadapter.Function{
 			Name:        MetaToolFinalAnswer,
-			Description: "Submit the final user-facing answer and end the current skill loop when you judge the task complete or have honestly reached a terminal outcome. This call is terminal: do not combine it with business tools or request_user_input. Put the complete final response in answer; ordinary assistant content is progress, not the final answer. A plan snapshot is optional audit metadata and never determines whether the answer is accepted.",
+			Description: description,
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -1017,7 +1035,7 @@ func finalAnswerMetaTool() llmadapter.Tool {
 					},
 					"plan": planSnapshotSchema(),
 				},
-				"required": []string{"answer"},
+				"required": required,
 			},
 		},
 	}
@@ -1917,6 +1935,7 @@ func agentManagementUpdateConfigContract() SkillToolArgumentContract {
 				"agent_memory_enabled":         booleanSchema("Optional Agent memory switch."),
 				"file_upload_enabled":          booleanSchema("Optional file upload switch."),
 				"home_title":                   stringValueSchema("Optional Agent home title."),
+				"opening_statement":            stringValueSchema("Optional Markdown landing guide shown before the first message."),
 				"input_placeholder":            stringValueSchema("Optional chat input placeholder."),
 				"theme_color":                  enumStringSchema("Optional theme color.", []string{"default", "blue", "emerald", "violet", "rose", "amber", "slate"}),
 				"suggested_questions":          stringArrayOrCSVSchema("Optional full list of suggested questions."),

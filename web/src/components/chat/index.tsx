@@ -134,6 +134,7 @@ interface AIChatVariantProps {
   showFileLibraryPicker?: boolean;
   allowWorkspaceSwitch?: boolean;
   homeBrand?: React.ReactNode;
+  openingGuideBrand?: OpeningGuideBrand;
   homeTitle?: string;
   homeDescription?: string;
   suggestions?: string[];

@@ -1001,6 +1001,37 @@ func TestApplyRunConfigToPartsDisablesAccountMemoryForAgentCaller(t *testing.T) 
 	}
 }
 
+func TestApplyManagedUserMemoryPolicyUsesModelToolCallingCapability(t *testing.T) {
+	parts := &chatRequestParts{
+		FunctionCallingKnown:         true,
+		ModelSupportsFunctionCalling: true,
+	}
+
+	applyManagedUserMemoryPolicy(Caller{Type: runtimemodel.ConversationCallerAIChat}, parts)
+	if !parts.UseMemory {
+		t.Fatal("applyManagedUserMemoryPolicy() disabled memory for a tool-capable AIChat model")
+	}
+
+	parts.ModelSupportsFunctionCalling = false
+	applyManagedUserMemoryPolicy(Caller{Type: runtimemodel.ConversationCallerAIChat}, parts)
+	if parts.UseMemory {
+		t.Fatal("applyManagedUserMemoryPolicy() enabled memory for a model without tool calling")
+	}
+}
+
+func TestApplyManagedUserMemoryPolicyKeepsAgentAccountMemoryDisabled(t *testing.T) {
+	parts := &chatRequestParts{
+		FunctionCallingKnown:         true,
+		ModelSupportsFunctionCalling: true,
+		UseMemory:                    true,
+	}
+
+	applyManagedUserMemoryPolicy(Caller{Type: runtimemodel.ConversationCallerAgent}, parts)
+	if parts.UseMemory {
+		t.Fatal("applyManagedUserMemoryPolicy() enabled account memory for an Agent caller")
+	}
+}
+
 func TestSkillRuntimeParametersUseCapabilityConfig(t *testing.T) {
 	organizationID := uuid.New()
 	workspaceID := uuid.New()

@@ -96,6 +96,9 @@ export interface AgentRuntimeAIChatContext {
     knowledge: AgentRuntimeAIChatKnowledgeContext[];
     memory: AgentRuntimeAIChatMemoryContext;
     fileUploadEnabled: boolean;
+    homeTitle: string;
+    openingStatement: string;
+    inputPlaceholder: string;
     suggestedQuestions: string[];
     databaseBindings: AgentDatabaseBinding[];
     workflowBindings: AgentWorkflowBinding[];
@@ -509,6 +512,9 @@ export function buildAgentRuntimeAIChatContext({
         })),
       },
       fileUploadEnabled: payload.file_upload_enabled,
+      homeTitle: payload.home_title,
+      openingStatement: payload.opening_statement,
+      inputPlaceholder: payload.input_placeholder,
       suggestedQuestions: payload.suggested_questions,
       databaseBindings: payload.database_bindings ?? [],
       workflowBindings: payload.workflow_bindings ?? [],
@@ -696,6 +702,7 @@ function buildAgentRuntimeAIChatContextItems(
         [
           `Databases: ${summarizeNames(databaseLabels)}`,
           `Workflows: ${summarizeNames(workflowLabels)}`,
+          `Home guide: ${compactContextField(context.configuration.openingStatement) || 'none'}`,
           `Suggested questions: ${summarizeNames(context.configuration.suggestedQuestions)}`,
         ].join(' | ')
       ),
@@ -704,6 +711,9 @@ function buildAgentRuntimeAIChatContextItems(
         agent_id: context.agent.id,
         database_binding_count: context.configuration.databaseBindings.length,
         workflow_binding_count: context.configuration.workflowBindings.length,
+        home_title: context.configuration.homeTitle,
+        opening_statement: compactContextField(context.configuration.openingStatement),
+        input_placeholder: context.configuration.inputPlaceholder,
         suggested_question_count: context.configuration.suggestedQuestions.length,
       },
     },

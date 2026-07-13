@@ -109,24 +109,6 @@ func canonicalModelTurnCapabilityHint(value string) string {
 	return value
 }
 
-func finalAnswerGuardHasSuccessfulArtifactProducerTool(req skillloop.FinalAnswerGuardRequest) bool {
-	for _, call := range req.SuccessfulToolCalls {
-		if isKnownArtifactGeneratorToolCall(call.SkillID, call.ToolName) {
-			return true
-		}
-	}
-	return false
-}
-
-func finalAnswerGuardHasAttemptedArtifactProducerTool(req skillloop.FinalAnswerGuardRequest) bool {
-	for _, call := range req.AttemptedToolCalls {
-		if isKnownArtifactGeneratorToolCall(call.SkillID, call.ToolName) {
-			return true
-		}
-	}
-	return false
-}
-
 func isFileGeneratorToolCall(skillID string, toolName string) bool {
 	if !strings.EqualFold(strings.TrimSpace(skillID), skills.SkillFileGenerator) {
 		return false

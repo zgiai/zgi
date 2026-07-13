@@ -118,6 +118,11 @@ func agentManagementConfigFieldDescriptors() []agentConfigFieldDescriptor {
 			semanticMarkers: []string{"home title", "\u9996\u9875"},
 		},
 		{
+			field:           "opening_statement",
+			aliases:         []string{"opening_statement"},
+			explicitMarkers: []string{"opening_statement"},
+		},
+		{
 			field:           "input_placeholder",
 			aliases:         []string{"input_placeholder"},
 			explicitMarkers: []string{"input_placeholder"},
@@ -1164,9 +1169,6 @@ func agentCapabilityGoalsFromOperationPlan(plan map[string]interface{}) []AIChat
 	}
 	if goals := agentCapabilityGoalsFromMaps(plan["capability_goals"]); len(goals) > 0 {
 		return goals
-	}
-	if structured := mapFromOperationContext(plan["structured_plan"]); len(structured) > 0 {
-		return agentCapabilityGoalsFromMaps(structured["capability_goals"])
 	}
 	return nil
 }

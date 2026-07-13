@@ -9,7 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 	chunkexecutor "github.com/zgiai/zgi/api/internal/capabilities/chunking/executor"
 	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
-	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
 	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/modules/contentparse/service"
@@ -352,15 +351,10 @@ func (h *PlaygroundHandler) executeRoutePlan(c *gin.Context, catalog *contracts.
 		if candidate.EngineName != "" {
 			attemptReq.EngineHint = candidate.EngineName
 		}
+		attemptReq.ProviderRuntime = contentparsecap.RuntimeConfigForCandidate(catalog, candidate)
 
 		attemptStartedAt := time.Now()
-		envOverrides := service.RuntimeEnvOverridesForCandidate(catalog, candidate)
-		var artifact *contracts.ParseArtifact
-		err := envconfig.WithOverridesResult(envOverrides, func() error {
-			var parseErr error
-			artifact, parseErr = h.orchestrator.ParseWithAdapter(c.Request.Context(), adapterName, attemptReq)
-			return parseErr
-		})
+		artifact, err := h.orchestrator.ParseWithAdapter(c.Request.Context(), adapterName, attemptReq)
 		attempt := map[string]any{
 			"provider_key": candidate.ProviderKey,
 			"adapter_name": adapterName,

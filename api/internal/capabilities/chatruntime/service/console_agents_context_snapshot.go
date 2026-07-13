@@ -196,7 +196,7 @@ func restoreConsoleAgentsContextFromMetadata(parts *chatRequestParts, metadata m
 	}
 
 	route := firstNonEmptyString(snapshot["route"], "/console/agents")
-	parts.RuntimeContext = "Restored Console Agents page context from the original AIChat turn. route=" + route
+	parts.RuntimeContext = "Restored Console Agents page context from the original assistant turn. route=" + route
 	parts.RawOperationContext = copyStringAnyMap(operationContext)
 	normalized, ledger := normalizeOperationContext(operationContext)
 	parts.OperationContext = normalized

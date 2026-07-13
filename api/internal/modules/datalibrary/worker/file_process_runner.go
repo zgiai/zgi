@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	contentparsecap "github.com/zgiai/zgi/api/internal/capabilities/contentparse"
-	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/envconfig"
 	"github.com/zgiai/zgi/api/internal/capabilities/contentparse/routing"
 	"github.com/zgiai/zgi/api/internal/contracts"
 	contentparseservice "github.com/zgiai/zgi/api/internal/modules/contentparse/service"
@@ -362,13 +361,8 @@ func (r *FileProcessRunner) executeRoutePlan(ctx context.Context, req contracts.
 		if candidate.EngineName != "" {
 			attemptReq.EngineHint = candidate.EngineName
 		}
-		envOverrides := contentparseservice.RuntimeEnvOverridesForCandidate(catalog, candidate)
-		var artifact *contracts.ParseArtifact
-		err := envconfig.WithOverridesResult(envOverrides, func() error {
-			var parseErr error
-			artifact, parseErr = r.contentParseOrchestrator.ParseWithAdapter(ctx, adapterName, attemptReq)
-			return parseErr
-		})
+		attemptReq.ProviderRuntime = contentparsecap.RuntimeConfigForCandidate(catalog, candidate)
+		artifact, err := r.contentParseOrchestrator.ParseWithAdapter(ctx, adapterName, attemptReq)
 		if err != nil {
 			lastErr = err
 			continue

@@ -1,7 +1,7 @@
 ---
 name: internal-knowledge
-description: Discover and retrieve from knowledge bases the current AIChat user can access.
-when_to_use: Use this skill when an internal AIChat answer needs factual context from workspace knowledge bases.
+description: Discover and retrieve from knowledge bases the current user can access.
+when_to_use: Use this skill when an assistant answer needs factual context from workspace knowledge bases.
 provider_type: builtin
 provider_id: knowledge
 runtime_type: tool
@@ -58,11 +58,11 @@ display:
     en_US: Internal Knowledge
     zh_Hans: 内部知识库
   description:
-    en_US: Finds knowledge bases accessible to the current AIChat user and retrieves relevant context.
-    zh_Hans: 查找当前 AIChat 用户可访问的知识库，并检索相关上下文。
+    en_US: Finds knowledge bases accessible to the current user and retrieves relevant context.
+    zh_Hans: 查找当前用户可访问的知识库，并检索相关上下文。
   when_to_use:
-    en_US: Use when an AIChat answer needs facts or source context from accessible knowledge bases.
-    zh_Hans: 当 AIChat 回复需要引用可访问知识库中的事实或来源上下文时使用。
+    en_US: Use when an assistant answer needs facts or source context from accessible knowledge bases.
+    zh_Hans: 当助手回复需要引用可访问知识库中的事实或来源上下文时使用。
   tags:
     en_US:
       - Knowledge
@@ -74,7 +74,7 @@ display:
 
 # Internal Knowledge Skill
 
-Use this skill to answer internal AIChat questions with context from knowledge bases the current user can access.
+Use this skill to answer internal assistant questions with context from knowledge bases the current user can access.
 
 ## Workflow
 

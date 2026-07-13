@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
-	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
 
 func TestNormalizeUserInputContinuationResponseRequiresEveryAnswer(t *testing.T) {
@@ -42,58 +41,6 @@ func TestNormalizeUserInputContinuationResponseRequiresEveryAnswer(t *testing.T)
 	}
 }
 
-func TestResolveUserInputContinuationMetadataKeepsSameTurnEvidence(t *testing.T) {
-	request := map[string]interface{}{
-		"request_id": "ask-1",
-		"message":    "I need one clarification.",
-		"questions": []interface{}{
-			map[string]interface{}{"id": "target", "question": "Which target?"},
-		},
-	}
-	response, err := normalizeUserInputContinuationResponse("ask-1", request, map[string]string{
-		"target": "Current Agent",
-	})
-	if err != nil {
-		t.Fatalf("normalize response: %v", err)
-	}
-	metadata := resolveUserInputContinuationMetadata(map[string]interface{}{
-		"user_input_request": request,
-		"user_input_continuation": map[string]interface{}{
-			"status":         "waiting_question",
-			"original_query": "Update the Agent",
-		},
-		"operation_plan": map[string]interface{}{
-			"status": "running",
-		},
-	}, request, response)
-
-	if _, exists := metadata["user_input_request"]; exists {
-		t.Fatalf("user_input_request still active: %#v", metadata["user_input_request"])
-	}
-	if !userInputResponseRecorded(metadata, "ask-1") {
-		t.Fatalf("user input response was not recorded: %#v", metadata["user_input_responses"])
-	}
-	continuation := mapFromOperationContext(metadata["user_input_continuation"])
-	if got := stringFromAny(continuation["original_query"]); got != "Update the Agent" {
-		t.Fatalf("original_query = %q, want preserved query", got)
-	}
-	plan := mapFromOperationContext(metadata["operation_plan"])
-	if got := stringFromAny(plan["pending_next_action"]); got != userInputPendingActionReplan {
-		t.Fatalf("plan pending_next_action = %q, want %q", got, userInputPendingActionReplan)
-	}
-	ledger := mapSliceFromAny(plan[operationPlanEvidenceLedgerKey])
-	if len(ledger) != 1 {
-		t.Fatalf("evidence ledger = %#v, want one user input response", ledger)
-	}
-	if got := stringFromAny(ledger[0]["invocation_id"]); got != "runtime_id:user_input:ask-1" {
-		t.Fatalf("invocation_id = %q", got)
-	}
-	summary := mapFromOperationContext(metadata["operation_result_summary"])
-	if got := stringFromAny(summary["pending_next_action"]); got != userInputPendingActionReplan {
-		t.Fatalf("summary pending_next_action = %q, want %q", got, userInputPendingActionReplan)
-	}
-}
-
 func TestUserInputContinuationMessageRequiresPlanRevisionBeforeBusinessTools(t *testing.T) {
 	message := userInputContinuationMessage(
 		&runtimemodel.Message{Query: "Update the Agent after I choose the target"},
@@ -108,57 +55,6 @@ func TestUserInputContinuationMessageRequiresPlanRevisionBeforeBusinessTools(t *
 		if !strings.Contains(content, want) {
 			t.Fatalf("continuation message = %q, want %q", content, want)
 		}
-	}
-}
-
-func TestPlanUpdateAfterUserInputClearsReplanState(t *testing.T) {
-	metadata := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":              operationPlanStatusRunning,
-			"pending_next_action": userInputPendingActionReplan,
-			"phase_revision":      2,
-		},
-		"operation_result_summary": map[string]interface{}{
-			"status":              "user_input_received",
-			"plan_status":         operationPlanStatusRunning,
-			"pending_next_action": userInputPendingActionReplan,
-		},
-		"user_input_continuation": map[string]interface{}{
-			"status":      userInputContinuationStatusAnswered,
-			"request_id":  "ask-1",
-			"next_action": userInputPendingActionReplan,
-		},
-	}
-	applyPlanUpdateTraceMetadata(metadata, skills.SkillTrace{
-		Kind:   "plan_update",
-		Status: "success",
-		Result: map[string]interface{}{
-			"plan": []interface{}{
-				map[string]interface{}{"id": "phase-1", "step": "Use the clarified target", "status": "in_progress"},
-			},
-		},
-	})
-
-	plan := mapFromOperationContext(metadata["operation_plan"])
-	if got := stringFromAny(plan["pending_next_action"]); got != "" {
-		t.Fatalf("plan pending_next_action = %q, want cleared", got)
-	}
-	if got := intValueFromAny(plan["phase_revision"]); got != 3 {
-		t.Fatalf("plan phase_revision = %d, want 3", got)
-	}
-	summary := mapFromOperationContext(metadata["operation_result_summary"])
-	if got := stringFromAny(summary["pending_next_action"]); got != "" {
-		t.Fatalf("summary pending_next_action = %q, want cleared", got)
-	}
-	if got := stringFromAny(summary["status"]); got != operationPlanStatusRunning {
-		t.Fatalf("summary status = %q, want running", got)
-	}
-	continuation := mapFromOperationContext(metadata["user_input_continuation"])
-	if got := stringFromAny(continuation["status"]); got != "plan_updated" {
-		t.Fatalf("continuation status = %q, want plan_updated", got)
-	}
-	if got := intValueFromAny(continuation["plan_revision"]); got != 3 {
-		t.Fatalf("continuation plan_revision = %d, want 3", got)
 	}
 }
 

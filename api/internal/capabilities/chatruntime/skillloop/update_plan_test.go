@@ -45,12 +45,15 @@ func TestHandleUpdatePlanCallProducesPersistablePlanTrace(t *testing.T) {
 		"plan": []interface{}{map[string]interface{}{
 			"id": "phase-1", "step": "Read file", "status": "completed", "evidence_refs": []interface{}{"tool:file-reader/read_file"},
 		}},
-	}, successfulReadFileEvidence())
+	}, successfulReadFileEvidence(), 2)
 	if step.fatalErr != nil || step.trace.Kind != "plan_update" || step.trace.Status != "success" {
 		t.Fatalf("handleUpdatePlanCall() step = %#v", step)
 	}
 	if step.trace.ToolName != skills.MetaToolUpdatePlan {
 		t.Fatalf("trace.ToolName = %q, want %q", step.trace.ToolName, skills.MetaToolUpdatePlan)
+	}
+	if got, ok := step.trace.Arguments["round"].(int); !ok || got != 2 {
+		t.Fatalf("trace round = %#v, want 2", step.trace.Arguments["round"])
 	}
 }
 
@@ -59,7 +62,7 @@ func TestHandleUpdatePlanCallRecordsUnavailableEvidenceAsAuditWarning(t *testing
 		"plan": []interface{}{map[string]interface{}{
 			"id": "phase-1", "step": "Delete agent", "status": "completed", "evidence_refs": []interface{}{"agent-management/delete_agent"},
 		}},
-	}, successfulReadFileEvidence())
+	}, successfulReadFileEvidence(), 2)
 	if step.fatalErr != nil || step.recoverable || step.trace.Status != "success" {
 		t.Fatalf("handleUpdatePlanCall() step = %#v, want successful advisory plan trace", step)
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +52,34 @@ func TestInitialLoadedSkillsForRunRestoresMetadataState(t *testing.T) {
 	}
 }
 
+func TestBuiltInToolSkillRequiresInstructionLoad(t *testing.T) {
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata:     skills.SkillMetadata{ID: skills.SkillFileManager, Source: skills.SkillSourceSystem, RuntimeType: skills.SkillRuntimeTypeTool},
+		Instructions: "# File Manager\nDo not invent file IDs.",
+		Tools:        []skills.SkillToolDefinition{{Name: "delete_file"}},
+	}}}
+	loaded := initialLoadedSkillsForRun(RunRequest{}, resolved)
+	if _, ok := loaded[skills.SkillFileManager]; ok {
+		t.Fatalf("built-in skill was marked loaded without its instructions: %#v", loaded)
+	}
+
+	tools := metaToolsForRun(resolved, loaded, true, false)
+	hasTool := func(name string) bool {
+		for _, tool := range tools {
+			if strings.EqualFold(strings.TrimSpace(tool.Function.Name), name) {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasTool(skills.MetaToolLoadSkill) {
+		t.Fatalf("tools = %#v, want %s", tools, skills.MetaToolLoadSkill)
+	}
+	if hasTool(skills.MetaToolCallSkillTool) {
+		t.Fatalf("tools = %#v, should not expose %s before instructions load", tools, skills.MetaToolCallSkillTool)
+	}
+}
+
 func TestInitialLoadedSkillsForRunTreatsSuccessfulToolCallAsLoaded(t *testing.T) {
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
 		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
@@ -74,7 +103,7 @@ func TestInitialLoadedSkillsForRunTreatsSuccessfulToolCallAsLoaded(t *testing.T)
 	}
 }
 
-func TestRestoredLoadedSkillInstructionsMessageRehydratesContinuation(t *testing.T) {
+func TestRestoredLoadedSkillInstructionStateRehydratesCompleteContinuation(t *testing.T) {
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
 		{
 			Metadata: skills.SkillMetadata{
@@ -89,18 +118,18 @@ func TestRestoredLoadedSkillInstructionsMessageRehydratesContinuation(t *testing
 			Instructions: "# File Reader\nRead exact file content.",
 		},
 	}}
-	message := restoredLoadedSkillInstructionsMessage(resolved, map[string]struct{}{
+	state := restoredLoadedSkillInstructionState(resolved, map[string]struct{}{
 		skills.SkillAgentManagement: {},
 	})
-	if message == nil {
-		t.Fatal("restoredLoadedSkillInstructionsMessage() = nil")
+	if state.message == nil {
+		t.Fatal("restoredLoadedSkillInstructionState().message = nil")
 	}
-	content := messageContent(message.Content)
+	content := messageContent(state.message.Content)
 	for _, want := range []string{
 		"loaded earlier in this same user turn",
 		skills.SkillAgentManagement,
 		"Preserve unmentioned settings.",
-		"Do not call load_skill for these skills again",
+		"complete instructions appear below",
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("restored message missing %q in:\n%s", want, content)
@@ -109,21 +138,97 @@ func TestRestoredLoadedSkillInstructionsMessageRehydratesContinuation(t *testing
 	if strings.Contains(content, "Read exact file content.") {
 		t.Fatalf("restored message included an unloaded skill:\n%s", content)
 	}
+	if _, ok := state.activeLoaded[skills.SkillAgentManagement]; !ok {
+		t.Fatalf("activeLoaded[%q] missing: %#v", skills.SkillAgentManagement, state.activeLoaded)
+	}
+	if len(state.reloadRequired) != 0 {
+		t.Fatalf("reloadRequired = %#v, want none", state.reloadRequired)
+	}
 }
 
-func TestCompactRestoredSkillInstructionsKeepsBoundariesWithinBudget(t *testing.T) {
-	instructions := "BEGIN\n" + strings.Repeat("middle details\n", 2000) + "END"
-	const budget = 600
+func TestRestoredLoadedSkillInstructionStateReopensOversizedSkill(t *testing.T) {
+	fullInstructions := "BEGIN\n" + strings.Repeat("authoritative contract\n", 1400) + "END"
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata:     skills.SkillMetadata{ID: skills.SkillAgentManagement},
+		Instructions: fullInstructions,
+		Tools:        []skills.SkillToolDefinition{{Name: "update_agent_config"}},
+	}}}
 
-	got := compactRestoredSkillInstructions(instructions, budget)
+	state := restoredLoadedSkillInstructionState(resolved, map[string]struct{}{
+		skills.SkillAgentManagement: {},
+	})
 
-	if len([]rune(got)) > budget {
-		t.Fatalf("compacted instruction runes = %d, want <= %d", len([]rune(got)), budget)
+	if _, ok := state.activeLoaded[skills.SkillAgentManagement]; ok {
+		t.Fatalf("activeLoaded[%q] present for oversized instructions", skills.SkillAgentManagement)
 	}
-	for _, want := range []string{"BEGIN", "Detailed middle section omitted", "END"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("compacted instructions missing %q in:\n%s", want, got)
+	if !reflect.DeepEqual(state.reloadRequired, []string{skills.SkillAgentManagement}) {
+		t.Fatalf("reloadRequired = %#v, want agent-management", state.reloadRequired)
+	}
+	content := messageContent(state.message.Content)
+	if strings.Contains(content, "authoritative contract") {
+		t.Fatalf("restored message included partial oversized instructions:\n%s", content)
+	}
+	if !strings.Contains(content, "requiring full reload") {
+		t.Fatalf("restored message omitted reload guidance:\n%s", content)
+	}
+	tools := metaToolsForRun(resolved, state.activeLoaded, true, false)
+	if !runnerTestHasTool(tools, skills.MetaToolLoadSkill) {
+		t.Fatalf("tools = %#v, want load_skill for oversized restored skill", tools)
+	}
+	if runnerTestHasTool(tools, skills.MetaToolCallSkillTool) {
+		t.Fatalf("tools = %#v, call_skill_tool exposed before full reload", tools)
+	}
+}
+
+func TestRestoredLoadedSkillInstructionStateReopensOnlySkillsBeyondTotalBudget(t *testing.T) {
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
+		{Metadata: skills.SkillMetadata{ID: "skill-a"}, Instructions: strings.Repeat("a", 9000)},
+		{Metadata: skills.SkillMetadata{ID: "skill-b"}, Instructions: strings.Repeat("b", 8000)},
+	}}
+	historical := map[string]struct{}{"skill-a": {}, "skill-b": {}}
+
+	state := restoredLoadedSkillInstructionState(resolved, historical)
+
+	if _, ok := state.activeLoaded["skill-a"]; !ok {
+		t.Fatalf("activeLoaded = %#v, want skill-a fully restored", state.activeLoaded)
+	}
+	if _, ok := state.activeLoaded["skill-b"]; ok {
+		t.Fatalf("activeLoaded = %#v, skill-b exceeded remaining total budget", state.activeLoaded)
+	}
+	if !reflect.DeepEqual(state.reloadRequired, []string{"skill-b"}) {
+		t.Fatalf("reloadRequired = %#v, want [skill-b]", state.reloadRequired)
+	}
+}
+
+func runnerTestHasTool(tools []adapter.Tool, name string) bool {
+	for _, tool := range tools {
+		if tool.Function.Name == name {
+			return true
 		}
+	}
+	return false
+}
+
+func TestRunRequiresFinalPlanSnapshotOnlyForNonEmptyPhases(t *testing.T) {
+	req := RunRequest{CurrentMetadata: func() map[string]interface{} {
+		return map[string]interface{}{
+			"operation_plan": map[string]interface{}{
+				"phases": []interface{}{map[string]interface{}{
+					"id":     "phase-1",
+					"step":   "Complete the task",
+					"status": "in_progress",
+				}},
+			},
+		}
+	}}
+	if !runRequiresFinalPlanSnapshot(req) {
+		t.Fatal("runRequiresFinalPlanSnapshot() = false, want true")
+	}
+	req.CurrentMetadata = func() map[string]interface{} {
+		return map[string]interface{}{"operation_plan": map[string]interface{}{"phases": []interface{}{}}}
+	}
+	if runRequiresFinalPlanSnapshot(req) {
+		t.Fatal("runRequiresFinalPlanSnapshot() = true for empty phases")
 	}
 }
 
@@ -301,249 +406,6 @@ func TestNormalizeDirectLoadedSkillToolCallIgnoresUnloadedTool(t *testing.T) {
 	}
 }
 
-func TestRepeatedSuccessfulReadOnlyToolCallFeedbackStepUsesPreviousResult(t *testing.T) {
-	args := map[string]interface{}{"agent_id": "agent-1"}
-	result := repeatedSuccessfulReadOnlyToolCallFeedbackStep("call-2", skills.SkillAgentManagement, "list_agent_workflow_binding_candidates", args, map[string]SkillToolCallRef{
-		failedToolCallKey(skills.SkillAgentManagement, "list_agent_workflow_binding_candidates", args): {
-			SkillID:   skills.SkillAgentManagement,
-			ToolName:  "list_agent_workflow_binding_candidates",
-			Arguments: copyStringAnyMap(args),
-			Result: map[string]interface{}{
-				"status":    "completed",
-				"count":     0,
-				"workflows": []interface{}{},
-			},
-		},
-	}, nil)
-
-	if result.trace.Kind != "planner_feedback" {
-		t.Fatalf("trace.Kind = %q, want planner_feedback", result.trace.Kind)
-	}
-	if result.trace.Status != "advisory" {
-		t.Fatalf("trace.Status = %q, want advisory", result.trace.Status)
-	}
-	if result.recoverable {
-		t.Fatal("result.recoverable = true, want false for advisory feedback")
-	}
-	if result.usedTool {
-		t.Fatal("result.usedTool = true, want false because no tool was executed")
-	}
-	if got := result.trace.Arguments["next_step"]; got != "answer_from_previous_result" {
-		t.Fatalf("trace next_step = %#v, want answer_from_previous_result", got)
-	}
-	content, ok := result.toolMessage.Content.(string)
-	if !ok {
-		t.Fatalf("tool message content type = %T, want string", result.toolMessage.Content)
-	}
-	var payload map[string]interface{}
-	if err := json.Unmarshal([]byte(content), &payload); err != nil {
-		t.Fatalf("tool message JSON error = %v; content = %s", err, content)
-	}
-	if got := payload["advisory"]; got != "same_read_only_tool_already_succeeded" {
-		t.Fatalf("payload advisory = %#v, want same_read_only_tool_already_succeeded", got)
-	}
-	summary, ok := payload["previous_result_summary"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("previous_result_summary = %#v, want object", payload["previous_result_summary"])
-	}
-	if got := summary["count"]; got != float64(0) {
-		t.Fatalf("summary count = %#v, want 0", got)
-	}
-	if got := summary["workflows_count"]; got != float64(0) {
-		t.Fatalf("summary workflows_count = %#v, want 0", got)
-	}
-	if !strings.Contains(fmt.Sprint(payload["next_action"]), "previous tool result") {
-		t.Fatalf("next_action = %#v, want previous-result guidance", payload["next_action"])
-	}
-}
-
-func TestPlanToolGuardAdvisoryStepDoesNotReturnRecoverableError(t *testing.T) {
-	result := planToolGuardRecoverableStep("call-1", skills.SkillAgentManagement, "list_agent_database_tables", map[string]interface{}{
-		"agent_id": "agent-1",
-	}, FinalAnswerGuardResult{
-		SkillID:       skills.SkillAgentManagement,
-		ToolName:      "get_agent_config",
-		Message:       "agent-management/list_agent_database_tables already has successful evidence for this turn.",
-		SystemMessage: "Continue with the next pending planned step: agent-management/get_agent_config.",
-		Advisory:      true,
-	})
-
-	if result.recoverable {
-		t.Fatal("result.recoverable = true, want false for advisory feedback")
-	}
-	if result.trace.Kind != "planner_feedback" {
-		t.Fatalf("trace.Kind = %q, want planner_feedback", result.trace.Kind)
-	}
-	if result.trace.Status != "advisory" {
-		t.Fatalf("trace.Status = %q, want advisory", result.trace.Status)
-	}
-	if result.trace.Error != "" {
-		t.Fatalf("trace.Error = %q, want empty advisory error", result.trace.Error)
-	}
-	if got := result.trace.Arguments["next_step"]; got != "continue_with_next_planned_step" {
-		t.Fatalf("trace next_step = %#v, want continue_with_next_planned_step", got)
-	}
-	content, ok := result.toolMessage.Content.(string)
-	if !ok {
-		t.Fatalf("tool message content type = %T, want string", result.toolMessage.Content)
-	}
-	if strings.Contains(content, "invalid input") {
-		t.Fatalf("tool message content = %s, want no invalid input", content)
-	}
-	var payload map[string]interface{}
-	if err := json.Unmarshal([]byte(content), &payload); err != nil {
-		t.Fatalf("tool message JSON error = %v; content = %s", err, content)
-	}
-	if got := payload["status"]; got != "advisory" {
-		t.Fatalf("payload status = %#v, want advisory", got)
-	}
-	if got := payload["advisory"]; got != "planner_feedback" {
-		t.Fatalf("payload advisory = %#v, want planner_feedback", got)
-	}
-	if _, ok := payload["error"]; ok {
-		t.Fatalf("payload error = %#v, want no error field", payload["error"])
-	}
-	if !strings.Contains(fmt.Sprint(payload["next_action"]), "get_agent_config") {
-		t.Fatalf("next_action = %#v, want next planned step guidance", payload["next_action"])
-	}
-}
-
-func TestRepeatedSuccessfulReadOnlyToolCallFeedbackStepIgnoresDifferentArguments(t *testing.T) {
-	previousArgs := map[string]interface{}{"agent_id": "agent-1"}
-	result := repeatedSuccessfulReadOnlyToolCallFeedbackStep("call-2", skills.SkillAgentManagement, "list_agent_workflow_binding_candidates", map[string]interface{}{"agent_id": "agent-2"}, map[string]SkillToolCallRef{
-		failedToolCallKey(skills.SkillAgentManagement, "list_agent_workflow_binding_candidates", previousArgs): {
-			SkillID:   skills.SkillAgentManagement,
-			ToolName:  "list_agent_workflow_binding_candidates",
-			Arguments: copyStringAnyMap(previousArgs),
-			Result:    map[string]interface{}{"status": "completed"},
-		},
-	}, nil)
-
-	if result.trace.Kind != "" {
-		t.Fatalf("trace.Kind = %q, want empty for different arguments", result.trace.Kind)
-	}
-}
-
-func TestRepeatedSuccessfulCandidateLookupWithDifferentArgumentsLetsModelDecide(t *testing.T) {
-	previousArgs := map[string]interface{}{
-		"agent_id":       "agent-1",
-		"data_source_id": "database-1",
-	}
-	nextArgs := map[string]interface{}{
-		"agent_id":       "agent-1",
-		"data_source_id": "database-2",
-	}
-	result := repeatedSuccessfulReadOnlyToolCallFeedbackStep("call-2", skills.SkillAgentManagement, "list_agent_database_tables", nextArgs, nil, []SkillToolCallRef{
-		{
-			SkillID:   skills.SkillAgentManagement,
-			ToolName:  "list_agent_database_tables",
-			Arguments: copyStringAnyMap(previousArgs),
-			Result: map[string]interface{}{
-				"status": "completed",
-				"count":  2,
-				"binding_candidates": []interface{}{map[string]interface{}{
-					"id":   "database-1:table-1",
-					"name": "test1",
-					"binding": map[string]interface{}{
-						"data_source_id": "database-1",
-						"table_ids":      []interface{}{"table-1"},
-					},
-				}},
-			},
-		},
-	})
-
-	if result.trace.Kind != "" {
-		t.Fatalf("trace.Kind = %q, want no backend semantic redirect for different arguments", result.trace.Kind)
-	}
-}
-
-func TestRepeatedSuccessfulReadOnlyToolCallFeedbackStepIgnoresMutations(t *testing.T) {
-	args := map[string]interface{}{
-		"agent_id": "agent-1",
-		"name":     "Support Agent",
-	}
-	result := repeatedSuccessfulReadOnlyToolCallFeedbackStep("call-2", skills.SkillAgentManagement, "update_agent_identity", args, map[string]SkillToolCallRef{
-		failedToolCallKey(skills.SkillAgentManagement, "update_agent_identity", args): {
-			SkillID:   skills.SkillAgentManagement,
-			ToolName:  "update_agent_identity",
-			Arguments: copyStringAnyMap(args),
-			Result:    map[string]interface{}{"status": "completed"},
-		},
-	}, nil)
-
-	if result.trace.Kind != "" {
-		t.Fatalf("trace.Kind = %q, want empty for mutation tool", result.trace.Kind)
-	}
-}
-
-func TestRepeatedSuccessfulReadOnlyToolCallFeedbackStepAllowsAgentConfigReadAfterMutation(t *testing.T) {
-	args := map[string]interface{}{"agent_id": "agent-1"}
-	key := failedToolCallKey(skills.SkillAgentManagement, "get_agent_config", args)
-	result := repeatedSuccessfulReadOnlyToolCallFeedbackStep("call-3", skills.SkillAgentManagement, "get_agent_config", args, map[string]SkillToolCallRef{
-		key: {
-			SkillID:   skills.SkillAgentManagement,
-			ToolName:  "get_agent_config",
-			Arguments: copyStringAnyMap(args),
-			Result:    map[string]interface{}{"status": "completed"},
-		},
-	}, []SkillToolCallRef{
-		{
-			SkillID:   skills.SkillAgentManagement,
-			ToolName:  "get_agent_config",
-			Arguments: copyStringAnyMap(args),
-			Result:    map[string]interface{}{"status": "completed"},
-		},
-		{
-			SkillID:   skills.SkillAgentManagement,
-			ToolName:  "update_agent_config",
-			Arguments: copyStringAnyMap(args),
-			Result:    map[string]interface{}{"status": "completed"},
-		},
-	})
-
-	if result.trace.Kind != "" {
-		t.Fatalf("trace.Kind = %q, want empty so post-update read can execute", result.trace.Kind)
-	}
-}
-
-func TestRepeatedSuccessfulReadOnlyToolCallFeedbackStepDoesNotInterpretPendingPlan(t *testing.T) {
-	args := map[string]interface{}{"agent_id": "agent-1"}
-	key := failedToolCallKey(skills.SkillAgentManagement, "get_agent_config", args)
-	result := repeatedSuccessfulReadOnlyToolCallFeedbackStep("call-4", skills.SkillAgentManagement, "get_agent_config", args, map[string]SkillToolCallRef{
-		key: {
-			SkillID:   skills.SkillAgentManagement,
-			ToolName:  "get_agent_config",
-			Arguments: copyStringAnyMap(args),
-			Result:    map[string]interface{}{"status": "completed", "agent_id": "agent-1"},
-		},
-	}, []SkillToolCallRef{
-		{
-			SkillID:   skills.SkillAgentManagement,
-			ToolName:  "update_agent_identity",
-			Arguments: copyStringAnyMap(args),
-			Result:    map[string]interface{}{"status": "completed", "agent_id": "agent-1"},
-		},
-		{
-			SkillID:   skills.SkillAgentManagement,
-			ToolName:  "get_agent_config",
-			Arguments: copyStringAnyMap(args),
-			Result:    map[string]interface{}{"status": "completed", "agent_id": "agent-1"},
-		},
-	})
-
-	if result.trace.Kind != "planner_feedback" {
-		t.Fatalf("trace.Kind = %q, want planner_feedback", result.trace.Kind)
-	}
-	if got := stringFromInterface(result.trace.Arguments["next_step"]); got != "answer_from_previous_result" {
-		t.Fatalf("trace next_step = %q, want answer_from_previous_result", got)
-	}
-	content := fmt.Sprint(result.toolMessage.Content)
-	if strings.Contains(content, "update_agent_config") || strings.Contains(content, "pending asset-changing Agent step") {
-		t.Fatalf("tool message = %s, want no backend-selected mutation", content)
-	}
-}
-
 func TestSkillToolCallIdentityForCallResolvesDirectLoadedTool(t *testing.T) {
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
 		Metadata: skills.SkillMetadata{ID: skills.SkillAgentManagement},
@@ -660,7 +522,7 @@ Use generate_file to create a temporary artifact.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"user_request": "create an svg file",
 				"generated_files": []interface{}{
@@ -898,7 +760,7 @@ func TestRunnerContinuesAfterMetaToolTextInsteadOfCoalescingFinalAnswer(t *testi
 		Prepared:                  prepared,
 		Resolved:                  runnerTestResolvedSkills(),
 		PreferExplicitFinalAnswer: true,
-		CompletionEvidence:        func() map[string]interface{} { return map[string]interface{}{} },
+		RuntimeStateSnapshot:      func() map[string]interface{} { return map[string]interface{}{} },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -977,7 +839,7 @@ func TestRunnerAcceptsFinalAnswerWithoutPlanSnapshotWhenCurrentPlanHasOpenPhases
 		Prepared:                  prepared,
 		Resolved:                  runnerTestResolvedSkills(),
 		PreferExplicitFinalAnswer: true,
-		CompletionEvidence:        func() map[string]interface{} { return evidence },
+		RuntimeStateSnapshot:      func() map[string]interface{} { return evidence },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -1059,7 +921,7 @@ func TestRunnerAcceptsOrdinaryTextFinalWhenPlanIsOpen(t *testing.T) {
 		Prepared:                  prepared,
 		Resolved:                  runnerTestResolvedSkills(),
 		PreferExplicitFinalAnswer: true,
-		CompletionEvidence:        func() map[string]interface{} { return evidence },
+		RuntimeStateSnapshot:      func() map[string]interface{} { return evidence },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -1471,7 +1333,7 @@ Use delete_agents to delete several agents in one operation.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{"status": "running"},
 			}
@@ -1578,7 +1440,7 @@ Use get_agent_config and get_agent for read-only Agent configuration checks.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"user_request": "read-only check the current Agent configuration: name, description, model/provider, and current bound resource counts; do not modify config",
 				"operation_plan": map[string]interface{}{
@@ -1718,7 +1580,7 @@ Use get_agent_config and get_agent for read-only Agent configuration checks.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{"status": "running"},
 			}
@@ -1813,7 +1675,7 @@ Use create_agent to create an Agent.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			invocations := []interface{}{
 				map[string]interface{}{
 					"kind":      "tool_call",
@@ -1970,7 +1832,7 @@ Use delete_agents to delete several agents in one operation.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			planStepStatus := "pending"
 			planStatus := "running"
 			pendingNextAction := "agent-management/delete_agents"
@@ -2118,7 +1980,7 @@ Use delete_agents to delete several agents in one operation.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			planStepStatus := "pending"
 			planStatus := "running"
 			pendingNextAction := "agent-management/delete_agents"
@@ -2186,7 +2048,7 @@ Use delete_agents to delete several agents in one operation.
 	}
 }
 
-func TestRunnerDoesNotForcePendingAgentConfigMutation(t *testing.T) {
+func TestRunnerIgnoresExecutablePlanAndAllowsRepeatedReadBeforeMutation(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, skills.SkillAgentManagement, `---
@@ -2280,7 +2142,7 @@ Use get_agent_config to inspect draft config and update_agent_config to patch se
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			status := "running"
 			stepStatus := "pending"
 			pendingNextAction := "agent-management/update_agent_config"
@@ -2316,8 +2178,8 @@ Use get_agent_config to inspect draft config and update_agent_config to patch se
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if state.configCalls != 1 {
-		t.Fatalf("get_agent_config calls = %d, want one executed read despite repeated model call", state.configCalls)
+	if state.configCalls != 2 {
+		t.Fatalf("get_agent_config calls = %d, want both model-selected reads to execute", state.configCalls)
 	}
 	if state.configUpdateCalls != 1 {
 		t.Fatalf("update_agent_config calls = %d, want one pending config mutation call", state.configUpdateCalls)
@@ -2435,7 +2297,7 @@ Use get_agent_config to verify Agent configuration after a governed update.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"user_request": "Bind KB Two and orders to Support Agent, then read config again after completion and verify the bindings.",
 				"operation_plan": map[string]interface{}{
@@ -2589,7 +2451,7 @@ Use update_agent_identity for identity changes and get_agent to verify the updat
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			updateStatus := "pending"
 			readStatus := "pending"
 			planStatus := "running"
@@ -2739,7 +2601,7 @@ Use save_file_to_management to save generated files into File Management.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{"status": "running"},
 			}
@@ -2849,7 +2711,7 @@ Use delete_file to delete a managed file.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{"status": "running"},
 			}
@@ -3056,7 +2918,7 @@ Use echo_value to echo values.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			if echoTool.calls < 3 {
 				return map[string]interface{}{
 					"operation_plan": map[string]interface{}{
@@ -3359,7 +3221,7 @@ Use the calculator tool.
 	}
 }
 
-func TestRunnerCompletionEvidenceTurnsRepeatedRecoverableFailuresIntoTruthfulAnswer(t *testing.T) {
+func TestRunnerRuntimeStateSnapshotTurnsRepeatedRecoverableFailuresIntoTruthfulAnswer(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
@@ -3438,7 +3300,7 @@ Use the calculator tool.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{"status": "running"},
 			}
@@ -3455,7 +3317,7 @@ Use the calculator tool.
 	}
 }
 
-func TestRunnerCompletionEvidenceTurnsPlanningRoundExhaustionIntoTruthfulAnswer(t *testing.T) {
+func TestRunnerRuntimeStateSnapshotTurnsPlanningRoundExhaustionIntoTruthfulAnswer(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
 	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
@@ -3513,7 +3375,7 @@ Use the calculator tool.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: resolved,
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{"status": "running"},
 				"evidence_ledger": []interface{}{map[string]interface{}{
@@ -4045,847 +3907,6 @@ Use governed file tools.
 	}
 }
 
-func TestRunnerFinalAnswerGuardForcesRequiredToolBeforeCompletion(t *testing.T) {
-	ctx := context.Background()
-	catalogDir := t.TempDir()
-	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
-name: limited-calculator
-description: Calculate with a required tool.
-when_to_use: Use when testing final answer guards.
-provider_type: builtin
-provider_id: calculator
-runtime_type: tool
-tools:
-  - evaluate_expression
----
-
-# Limited Calculator
-
-Use the calculator tool.
-`)
-	fakeLLM := &runnerTestLLMClient{
-		appChatResponses: []*adapter.ChatResponse{
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{Role: "assistant", Content: "The file has been deleted."},
-				}},
-			},
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{
-						Role: "assistant",
-						ToolCalls: []adapter.ToolCall{{
-							ID:   "call_load",
-							Type: "function",
-							Function: adapter.FunctionCall{
-								Name:      skills.MetaToolLoadSkill,
-								Arguments: `{"skill_id":"limited-calculator"}`,
-							},
-						}},
-					},
-				}},
-			},
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{
-						Role: "assistant",
-						ToolCalls: []adapter.ToolCall{
-							runnerTestSkillToolCall("call_eval", "limited-calculator", "evaluate_expression", map[string]interface{}{
-								"expression": "1+1",
-							}),
-						},
-					},
-				}},
-			},
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{Role: "assistant", Content: "tool-backed answer"},
-				}},
-			},
-		},
-	}
-	manager := tools.NewToolManager(nil)
-	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
-		t.Fatalf("register calculator provider: %v", err)
-	}
-	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
-	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"limited-calculator"})
-	if err != nil {
-		t.Fatalf("resolve skills: %v", err)
-	}
-	var traces []skills.SkillTrace
-	runner := &Runner{
-		LLMClient:    fakeLLM,
-		SkillRuntime: runtime,
-		AppContext:   &llmclient.AppContext{},
-		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
-			traces = append(traces, trace)
-		},
-	}
-	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
-		Messages: []adapter.Message{{Role: "user", Content: "delete file-1"}},
-	})
-	guardCalls := 0
-	sawSuccessfulToolArguments := false
-	answer, _, err := runner.Run(ctx, RunRequest{
-		Prepared: prepared,
-		Resolved: resolved,
-		FinalAnswerGuard: func(req FinalAnswerGuardRequest) (FinalAnswerGuardResult, bool) {
-			guardCalls++
-			for _, call := range req.SuccessfulToolCalls {
-				if call.SkillID == "limited-calculator" && call.ToolName == "evaluate_expression" {
-					if summary, ok := call.Arguments["expression"].(map[string]interface{}); ok && summary["length"] == 3 {
-						sawSuccessfulToolArguments = true
-					}
-					return FinalAnswerGuardResult{}, false
-				}
-			}
-			return FinalAnswerGuardResult{
-				SkillID:  "limited-calculator",
-				ToolName: "evaluate_expression",
-				Message:  "call evaluate_expression before claiming completion",
-			}, true
-		},
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if answer != "tool-backed answer" {
-		t.Fatalf("answer = %q, want tool-backed answer", answer)
-	}
-	if guardCalls != 2 {
-		t.Fatalf("guard calls = %d, want 2", guardCalls)
-	}
-	if !sawSuccessfulToolArguments {
-		t.Fatalf("final answer guard did not receive summarized tool arguments")
-	}
-	if fakeLLM.appChatCalls != 4 {
-		t.Fatalf("AppChat calls = %d, want guard-triggered replan plus tool run", fakeLLM.appChatCalls)
-	}
-	if len(fakeLLM.appChatRequests) < 2 || !runnerTestRequestContains(fakeLLM.appChatRequests[1], "Runtime guardrail feedback") {
-		t.Fatalf("second planning request did not include guardrail feedback")
-	}
-	foundGuardrail := false
-	for _, trace := range traces {
-		if trace.Kind == "guardrail" && trace.ToolName == "evaluate_expression" && strings.Contains(trace.Error, "call evaluate_expression") {
-			foundGuardrail = true
-			break
-		}
-	}
-	if !foundGuardrail {
-		t.Fatalf("traces = %#v, want final answer guardrail trace", traces)
-	}
-}
-
-func TestFinalAnswerGuardSystemMessageUsesPrivateModelFeedbackWithoutLeakingTrace(t *testing.T) {
-	result := FinalAnswerGuardResult{
-		SkillID:       "file-reader",
-		ToolName:      "delete_file",
-		Message:       "Call delete_file for report.pdf before claiming completion.",
-		SystemMessage: `Call delete_file with {"file_id":"file-internal-1"} before claiming completion.`,
-	}
-
-	trace := finalAnswerGuardrailTrace(result)
-	if strings.Contains(trace.Error, "file-internal-1") {
-		t.Fatalf("trace error exposed private model feedback: %q", trace.Error)
-	}
-	if !strings.Contains(trace.Error, "report.pdf") {
-		t.Fatalf("trace error = %q, want display-safe message", trace.Error)
-	}
-
-	message := finalAnswerGuardSystemMessage(result, "Done.")
-	content, ok := message.Content.(string)
-	if !ok {
-		t.Fatalf("system message content type = %T, want string", message.Content)
-	}
-	if !strings.Contains(content, "file-internal-1") {
-		t.Fatalf("system message missing private model feedback: %q", content)
-	}
-	if !strings.Contains(content, "Blocked candidate answer") {
-		t.Fatalf("system message missing blocked candidate answer: %q", content)
-	}
-}
-
-func TestRunnerUserInputGuardBlocksClarificationAndReplans(t *testing.T) {
-	ctx := context.Background()
-	catalogDir := t.TempDir()
-	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
-name: limited-calculator
-description: Calculate with a required tool.
-when_to_use: Use when testing user input guards.
-provider_type: builtin
-provider_id: calculator
-runtime_type: tool
-tools:
-  - evaluate_expression
----
-
-# Limited Calculator
-
-Use the calculator tool.
-`)
-	fakeLLM := &runnerTestLLMClient{
-		appChatResponses: []*adapter.ChatResponse{
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{
-						Role: "assistant",
-						ToolCalls: []adapter.ToolCall{{
-							ID:   "call_ask",
-							Type: "function",
-							Function: adapter.FunctionCall{
-								Name:      skills.MetaToolRequestUserInput,
-								Arguments: `{"message":"I found two candidate files and need your choice.","questions":[{"id":"file","question":"Which file should I read?","options":[{"label":"first.xlsx"},{"label":"second.xlsx"}]}]}`,
-							},
-						}},
-					},
-				}},
-			},
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{Role: "assistant", Content: "continued after guard"},
-				}},
-			},
-		},
-	}
-	manager := tools.NewToolManager(nil)
-	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
-		t.Fatalf("register calculator provider: %v", err)
-	}
-	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
-	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"limited-calculator"})
-	if err != nil {
-		t.Fatalf("resolve skills: %v", err)
-	}
-	var events []Event
-	var traces []skills.SkillTrace
-	runner := &Runner{
-		LLMClient:    fakeLLM,
-		SkillRuntime: runtime,
-		AppContext:   &llmclient.AppContext{},
-		OnEvent: func(event Event) error {
-			events = append(events, event)
-			return nil
-		},
-		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
-			traces = append(traces, trace)
-		},
-	}
-	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
-		Messages: []adapter.Message{{Role: "user", Content: "read the resolved file"}},
-	})
-	guardCalls := 0
-	answer, _, err := runner.Run(ctx, RunRequest{
-		Prepared: prepared,
-		Resolved: resolved,
-		UserInputGuard: func(req UserInputGuardRequest) (FinalAnswerGuardResult, bool) {
-			guardCalls++
-			if req.Message != "I found two candidate files and need your choice." || len(req.Questions) != 1 {
-				t.Fatalf("guard request = %#v, want normalized user input request", req)
-			}
-			return FinalAnswerGuardResult{
-				SkillID:  "file-reader",
-				ToolName: "read_file",
-				Message:  "target already resolved; call read_file instead of asking",
-			}, true
-		},
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if answer != "continued after guard" {
-		t.Fatalf("answer = %q, want replanned answer", answer)
-	}
-	if guardCalls != 1 {
-		t.Fatalf("guard calls = %d, want 1", guardCalls)
-	}
-	if findRunnerTestEvent(events, EventUserInputRequested) != nil {
-		t.Fatalf("events = %#v, want no user_input_requested event after guard block", events)
-	}
-	if fakeLLM.appChatCalls != 2 {
-		t.Fatalf("AppChat calls = %d, want guard-triggered replan", fakeLLM.appChatCalls)
-	}
-	if len(fakeLLM.appChatRequests) < 2 || !runnerTestRequestContains(fakeLLM.appChatRequests[1], "target already resolved; call read_file instead of asking") {
-		t.Fatalf("second planning request did not include user input guard feedback")
-	}
-	foundGuardrail := false
-	for _, trace := range traces {
-		if trace.Kind == "guardrail" && trace.ToolName == "read_file" && strings.Contains(trace.Error, "target already resolved") {
-			foundGuardrail = true
-			break
-		}
-	}
-	if !foundGuardrail {
-		t.Fatalf("traces = %#v, want user input guardrail trace", traces)
-	}
-}
-
-func TestRunnerCompletionEvidenceKeepsUserInputGuardForRedundantClarification(t *testing.T) {
-	ctx := context.Background()
-	catalogDir := t.TempDir()
-	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
-name: limited-calculator
-description: Calculate with a required tool.
-when_to_use: Use when testing user input guard behavior.
-provider_type: builtin
-provider_id: calculator
-runtime_type: tool
-tools:
-  - evaluate_expression
----
-
-# Limited Calculator
-
-Use the calculator tool.
-`)
-	fakeLLM := &runnerTestLLMClient{
-		appChatResponses: []*adapter.ChatResponse{
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{
-						Role: "assistant",
-						ToolCalls: []adapter.ToolCall{{
-							ID:   "call_ask",
-							Type: "function",
-							Function: adapter.FunctionCall{
-								Name:      skills.MetaToolRequestUserInput,
-								Arguments: `{"message":"I need your preferred target file before continuing.","questions":[{"id":"file","question":"Which file should I read?","options":[{"label":"first.xlsx"},{"label":"second.xlsx"}]}]}`,
-							},
-						}},
-					},
-				}},
-			},
-			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "I will continue from the resolved evidence instead of asking again."}}}},
-		},
-	}
-	manager := tools.NewToolManager(nil)
-	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
-		t.Fatalf("register calculator provider: %v", err)
-	}
-	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
-	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"limited-calculator"})
-	if err != nil {
-		t.Fatalf("resolve skills: %v", err)
-	}
-	var events []Event
-	runner := &Runner{
-		LLMClient:    fakeLLM,
-		SkillRuntime: runtime,
-		AppContext:   &llmclient.AppContext{},
-		OnEvent: func(event Event) error {
-			events = append(events, event)
-			return nil
-		},
-	}
-	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
-		Messages: []adapter.Message{{Role: "user", Content: "read a file after I choose it"}},
-	})
-	guardCalls := 0
-	answer, _, err := runner.Run(ctx, RunRequest{
-		Prepared: prepared,
-		Resolved: resolved,
-		UserInputGuard: func(req UserInputGuardRequest) (FinalAnswerGuardResult, bool) {
-			guardCalls++
-			if req.Message != "I need your preferred target file before continuing." || len(req.Questions) != 1 {
-				t.Fatalf("guard request = %#v, want normalized user input request", req)
-			}
-			return FinalAnswerGuardResult{
-				SkillID:  "legacy-guard",
-				ToolName: "read_file",
-				Message:  "target already resolved; continue from evidence instead of asking",
-			}, true
-		},
-		CompletionEvidence: func() map[string]interface{} {
-			return map[string]interface{}{
-				"operation_plan": map[string]interface{}{"status": "running"},
-				"evidence_ledger": []interface{}{map[string]interface{}{
-					"kind": "tool_call", "status": "success", "skill_id": "file-reader", "tool_name": "read_file",
-				}},
-			}
-		},
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if answer != "I will continue from the resolved evidence instead of asking again." {
-		t.Fatalf("answer = %q, want replanned answer", answer)
-	}
-	if guardCalls != 1 {
-		t.Fatalf("user input guard calls = %d, want 1", guardCalls)
-	}
-	if findRunnerTestEvent(events, EventUserInputRequested) != nil {
-		t.Fatalf("events = %#v, want no user_input_requested event after guard block", events)
-	}
-	if fakeLLM.appChatCalls != 2 {
-		t.Fatalf("AppChat calls = %d, want guard-triggered replan", fakeLLM.appChatCalls)
-	}
-	if len(fakeLLM.appChatRequests) < 2 || !runnerTestRequestContains(fakeLLM.appChatRequests[1], "target already resolved; continue from evidence instead of asking") {
-		t.Fatalf("second planning request did not include user input guard feedback")
-	}
-}
-
-func TestRunnerToolCallGuardBlocksToolBeforeExecutionAndReplans(t *testing.T) {
-	ctx := context.Background()
-	catalogDir := t.TempDir()
-	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
-name: limited-calculator
-description: Calculate with a required tool.
-when_to_use: Use when testing tool call guards.
-provider_type: builtin
-provider_id: calculator
-runtime_type: tool
-tools:
-  - evaluate_expression
----
-
-# Limited Calculator
-
-Use the calculator tool.
-`)
-	fakeLLM := &runnerTestLLMClient{
-		appChatResponses: []*adapter.ChatResponse{
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{
-						Role: "assistant",
-						ToolCalls: []adapter.ToolCall{{
-							ID:   "call_load",
-							Type: "function",
-							Function: adapter.FunctionCall{
-								Name:      skills.MetaToolLoadSkill,
-								Arguments: `{"skill_id":"limited-calculator"}`,
-							},
-						}},
-					},
-				}},
-			},
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{
-						Role: "assistant",
-						ToolCalls: []adapter.ToolCall{
-							runnerTestSkillToolCall("call_eval", "limited-calculator", "evaluate_expression", map[string]interface{}{
-								"expression": "1+1",
-							}),
-						},
-					},
-				}},
-			},
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{Role: "assistant", Content: "continued after tool guard"},
-				}},
-			},
-		},
-	}
-	manager := tools.NewToolManager(nil)
-	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
-		t.Fatalf("register calculator provider: %v", err)
-	}
-	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
-	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"limited-calculator"})
-	if err != nil {
-		t.Fatalf("resolve skills: %v", err)
-	}
-	var events []Event
-	var traces []skills.SkillTrace
-	runner := &Runner{
-		LLMClient:    fakeLLM,
-		SkillRuntime: runtime,
-		AppContext:   &llmclient.AppContext{},
-		OnEvent: func(event Event) error {
-			events = append(events, event)
-			return nil
-		},
-		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
-			traces = append(traces, trace)
-		},
-	}
-	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
-		Messages: []adapter.Message{{Role: "user", Content: "calculate after navigation"}},
-	})
-	guardCalls := 0
-	answer, _, err := runner.Run(ctx, RunRequest{
-		Prepared: prepared,
-		Resolved: resolved,
-		ToolCallGuard: func(req ToolCallGuardRequest) (FinalAnswerGuardResult, bool) {
-			guardCalls++
-			if req.SkillID != "limited-calculator" || req.ToolName != "evaluate_expression" {
-				t.Fatalf("tool call guard request = %#v, want limited-calculator/evaluate_expression", req)
-			}
-			return FinalAnswerGuardResult{
-				SkillID:       "console-navigator",
-				ToolName:      "navigate",
-				Message:       "navigate first",
-				SystemMessage: `call console-navigator/navigate with href "/console/files" before evaluating`,
-			}, true
-		},
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if answer != "continued after tool guard" {
-		t.Fatalf("answer = %q, want replanned answer", answer)
-	}
-	if guardCalls != 1 {
-		t.Fatalf("guard calls = %d, want 1", guardCalls)
-	}
-	if findRunnerTestEvent(events, EventSkillCallStart) != nil {
-		t.Fatalf("events = %#v, want no skill_call_start for guarded tool call", events)
-	}
-	if fakeLLM.appChatCalls != 3 {
-		t.Fatalf("AppChat calls = %d, want guard-triggered replan", fakeLLM.appChatCalls)
-	}
-	if len(fakeLLM.appChatRequests) < 3 || !runnerTestRequestContains(fakeLLM.appChatRequests[2], "navigate first") {
-		t.Fatalf("third planning request did not include tool guard feedback")
-	}
-	foundGuardrail := false
-	for _, trace := range traces {
-		if trace.Kind == "guardrail" && trace.ToolName == "navigate" && strings.Contains(trace.Error, "navigate first") {
-			foundGuardrail = true
-			break
-		}
-	}
-	if !foundGuardrail {
-		t.Fatalf("traces = %#v, want tool call guardrail trace", traces)
-	}
-}
-
-func TestRunnerCompletionEvidenceDisablesLegacyToolCallGuard(t *testing.T) {
-	ctx := context.Background()
-	catalogDir := t.TempDir()
-	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
-name: limited-calculator
-description: Calculate with a required tool.
-when_to_use: Use when testing tool call guards.
-provider_type: builtin
-provider_id: calculator
-runtime_type: tool
-tools:
-  - evaluate_expression
----
-
-# Limited Calculator
-
-Use the calculator tool.
-`)
-	fakeLLM := &runnerTestLLMClient{
-		appChatResponses: []*adapter.ChatResponse{
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{
-						Role: "assistant",
-						ToolCalls: []adapter.ToolCall{{
-							ID:   "call_load",
-							Type: "function",
-							Function: adapter.FunctionCall{
-								Name:      skills.MetaToolLoadSkill,
-								Arguments: `{"skill_id":"limited-calculator"}`,
-							},
-						}},
-					},
-				}},
-			},
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{
-						Role: "assistant",
-						ToolCalls: []adapter.ToolCall{
-							runnerTestSkillToolCall("call_eval", "limited-calculator", "evaluate_expression", map[string]interface{}{
-								"expression": "1+1",
-							}),
-						},
-					},
-				}},
-			},
-			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The result is 2."}}}},
-			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"pass","reason":"calculator tool succeeded"}`}}}},
-		},
-	}
-	manager := tools.NewToolManager(nil)
-	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
-		t.Fatalf("register calculator provider: %v", err)
-	}
-	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
-	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"limited-calculator"})
-	if err != nil {
-		t.Fatalf("resolve skills: %v", err)
-	}
-	var events []Event
-	runner := &Runner{
-		LLMClient:    fakeLLM,
-		SkillRuntime: runtime,
-		AppContext:   &llmclient.AppContext{},
-		OnEvent: func(event Event) error {
-			events = append(events, event)
-			return nil
-		},
-	}
-	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
-		Messages: []adapter.Message{{Role: "user", Content: "calculate 1+1"}},
-	})
-	guardCalls := 0
-	answer, _, err := runner.Run(ctx, RunRequest{
-		Prepared: prepared,
-		Resolved: resolved,
-		ToolCallGuard: func(req ToolCallGuardRequest) (FinalAnswerGuardResult, bool) {
-			guardCalls++
-			return FinalAnswerGuardResult{
-				SkillID:  "legacy-guard",
-				ToolName: req.ToolName,
-				Message:  "legacy tool-call guard should not run when post verification is configured",
-			}, true
-		},
-		CompletionEvidence: func() map[string]interface{} {
-			return map[string]interface{}{
-				"operation_plan": map[string]interface{}{"status": "completed"},
-			}
-		},
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if answer != "The result is 2." {
-		t.Fatalf("answer = %q, want verifier-approved tool result answer", answer)
-	}
-	if guardCalls != 0 {
-		t.Fatalf("tool call guard calls = %d, want 0", guardCalls)
-	}
-	if findRunnerTestEvent(events, EventSkillCallStart) == nil {
-		t.Fatalf("events = %#v, want skill call to execute", events)
-	}
-}
-
-func TestRunnerCompletionEvidenceKeepsPlanToolGuard(t *testing.T) {
-	ctx := context.Background()
-	catalogDir := t.TempDir()
-	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
-name: limited-calculator
-description: Calculate with a required tool.
-when_to_use: Use when testing plan tool guards.
-provider_type: builtin
-provider_id: calculator
-runtime_type: tool
-tools:
-  - evaluate_expression
----
-
-# Limited Calculator
-
-Use the calculator tool.
-`)
-	fakeLLM := &runnerTestLLMClient{
-		appChatResponses: []*adapter.ChatResponse{
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{
-						Role: "assistant",
-						ToolCalls: []adapter.ToolCall{{
-							ID:   "call_load",
-							Type: "function",
-							Function: adapter.FunctionCall{
-								Name:      skills.MetaToolLoadSkill,
-								Arguments: `{"skill_id":"limited-calculator"}`,
-							},
-						}},
-					},
-				}},
-			},
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{
-						Role: "assistant",
-						ToolCalls: []adapter.ToolCall{
-							runnerTestSkillToolCall("call_eval", "limited-calculator", "evaluate_expression", map[string]interface{}{
-								"expression": "1+1",
-							}),
-						},
-					},
-				}},
-			},
-			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "I cannot run that unplanned tool."}}}},
-			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"pass","reason":"reported the blocked tool honestly"}`}}}},
-		},
-	}
-	manager := tools.NewToolManager(nil)
-	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
-		t.Fatalf("register calculator provider: %v", err)
-	}
-	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
-	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"limited-calculator"})
-	if err != nil {
-		t.Fatalf("resolve skills: %v", err)
-	}
-	var events []Event
-	var traces []skills.SkillTrace
-	runner := &Runner{
-		LLMClient:    fakeLLM,
-		SkillRuntime: runtime,
-		AppContext:   &llmclient.AppContext{},
-		OnEvent: func(event Event) error {
-			events = append(events, event)
-			return nil
-		},
-		OnTrace: func(_ []skills.SkillTrace, trace skills.SkillTrace) {
-			traces = append(traces, trace)
-		},
-	}
-	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
-		Messages: []adapter.Message{{Role: "user", Content: "calculate 1+1"}},
-	})
-	blockedPlanCalls := 0
-	answer, _, err := runner.Run(ctx, RunRequest{
-		Prepared: prepared,
-		Resolved: resolved,
-		PlanToolGuard: func(req ToolCallGuardRequest) (FinalAnswerGuardResult, bool) {
-			if req.ToolName == "" {
-				return FinalAnswerGuardResult{}, false
-			}
-			blockedPlanCalls++
-			return FinalAnswerGuardResult{
-				SkillID:       req.SkillID,
-				ToolName:      req.ToolName,
-				Message:       "tool is not part of the current operation plan",
-				SystemMessage: "answer from existing evidence instead of running the unplanned tool",
-			}, true
-		},
-		CompletionEvidence: func() map[string]interface{} {
-			return map[string]interface{}{
-				"operation_plan": map[string]interface{}{"status": "running"},
-			}
-		},
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if answer != "I cannot run that unplanned tool." {
-		t.Fatalf("answer = %q, want plan-guard-aware answer", answer)
-	}
-	if blockedPlanCalls != 1 {
-		t.Fatalf("blocked plan calls = %d, want 1", blockedPlanCalls)
-	}
-	if findRunnerTestEvent(events, EventSkillCallStart) != nil {
-		t.Fatalf("events = %#v, want no skill tool execution for plan-blocked call", events)
-	}
-	if findRunnerTestEvent(events, EventSkillCallError) != nil {
-		t.Fatalf("events = %#v, want no user-visible error for internal plan feedback", events)
-	}
-	foundPlannerFeedback := false
-	for _, trace := range traces {
-		if trace.Kind == "guardrail" {
-			t.Fatalf("trace kind = guardrail for plan tool guard; traces=%#v", traces)
-		}
-		if trace.Kind == "planner_feedback" &&
-			trace.SkillID == "limited-calculator" &&
-			trace.ToolName == "evaluate_expression" {
-			foundPlannerFeedback = true
-		}
-	}
-	if !foundPlannerFeedback {
-		t.Fatalf("traces = %#v, want internal planner feedback trace for blocked plan tool", traces)
-	}
-}
-
-func TestRunnerFinalAnswerGuardAllowsAnswerAfterRequiredToolAttemptFails(t *testing.T) {
-	ctx := context.Background()
-	catalogDir := t.TempDir()
-	writeRunnerTestSkill(t, catalogDir, "limited-calculator", `---
-name: limited-calculator
-description: Calculate with a required tool.
-when_to_use: Use when testing final answer guards.
-provider_type: builtin
-provider_id: calculator
-runtime_type: tool
-tools:
-  - evaluate_expression
----
-
-# Limited Calculator
-
-Use the calculator tool.
-`)
-	fakeLLM := &runnerTestLLMClient{
-		appChatResponses: []*adapter.ChatResponse{
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{
-						Role: "assistant",
-						ToolCalls: []adapter.ToolCall{{
-							ID:   "call_load",
-							Type: "function",
-							Function: adapter.FunctionCall{
-								Name:      skills.MetaToolLoadSkill,
-								Arguments: `{"skill_id":"limited-calculator"}`,
-							},
-						}},
-					},
-				}},
-			},
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{
-						Role: "assistant",
-						ToolCalls: []adapter.ToolCall{
-							runnerTestSkillToolCall("call_eval", "limited-calculator", "evaluate_expression", map[string]interface{}{
-								"expression": "1/",
-							}),
-						},
-					},
-				}},
-			},
-			{
-				Choices: []adapter.Choice{{
-					Message: adapter.Message{Role: "assistant", Content: "I tried the required tool, but it failed."},
-				}},
-			},
-		},
-	}
-	manager := tools.NewToolManager(nil)
-	if err := manager.RegisterProvider(calculator.NewProvider()); err != nil {
-		t.Fatalf("register calculator provider: %v", err)
-	}
-	runtime := skills.NewRuntimeWithCatalog(tools.NewToolEngine(manager), manager, catalogDir)
-	resolved, err := runtime.ResolveEnabledSkills(ctx, []string{"limited-calculator"})
-	if err != nil {
-		t.Fatalf("resolve skills: %v", err)
-	}
-	runner := &Runner{
-		LLMClient:    fakeLLM,
-		SkillRuntime: runtime,
-		AppContext:   &llmclient.AppContext{},
-	}
-	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
-		Messages: []adapter.Message{{Role: "user", Content: "calculate with the required tool"}},
-	})
-	guardCalls := 0
-	answer, _, err := runner.Run(ctx, RunRequest{
-		Prepared: prepared,
-		Resolved: resolved,
-		FinalAnswerGuard: func(req FinalAnswerGuardRequest) (FinalAnswerGuardResult, bool) {
-			guardCalls++
-			for _, call := range req.AttemptedToolCalls {
-				if call.SkillID == "limited-calculator" && call.ToolName == "evaluate_expression" {
-					return FinalAnswerGuardResult{}, false
-				}
-			}
-			return FinalAnswerGuardResult{
-				SkillID:  "limited-calculator",
-				ToolName: "evaluate_expression",
-				Message:  "call evaluate_expression before claiming completion",
-			}, true
-		},
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if answer != "I tried the required tool, but it failed." {
-		t.Fatalf("answer = %q, want failed-tool explanation", answer)
-	}
-	if guardCalls != 1 {
-		t.Fatalf("guard calls = %d, want 1 after failed tool attempt", guardCalls)
-	}
-}
-
 func TestRunnerBlocksProfessionalToolWithoutPromptProfessionalizer(t *testing.T) {
 	ctx := context.Background()
 	catalogDir := t.TempDir()
@@ -5005,7 +4026,7 @@ func TestRunnerDoesNotInvokeCompletionVerifierForNeedsActionEvidence(t *testing.
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: runnerTestResolvedSkills(),
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{
 					"status":              "running",
@@ -5054,7 +4075,7 @@ func TestRunnerDoesNotCallUnparseableCompletionVerifier(t *testing.T) {
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: runnerTestResolvedSkills(),
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{
 					"status": "completed",
@@ -5107,7 +4128,7 @@ func TestRunnerDoesNotAuditMainModelAnswer(t *testing.T) {
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: runnerTestResolvedSkills(),
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_ledger": []interface{}{
 					map[string]interface{}{
@@ -5129,106 +4150,7 @@ func TestRunnerDoesNotAuditMainModelAnswer(t *testing.T) {
 	}
 }
 
-func TestCompletionVerifierTreatsPendingPlanStepAsAdvisory(t *testing.T) {
-	decision := completionVerificationApplyPlanOverride(map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": "running",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/update_agent_config",
-					"status":    "pending",
-					"skill_id":  "agent-management",
-					"tool_name": "update_agent_config",
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:agent-management/update_agent_config": "pending",
-			},
-		},
-	}, completionVerificationDecision{Status: completionVerificationStatusPass, Reason: "truthful incomplete answer"})
-
-	if got := decision.normalizedStatus(); got != completionVerificationStatusPass {
-		t.Fatalf("decision status = %q, want pass; decision=%#v", got, decision)
-	}
-	if decision.NextActionHint != "" {
-		t.Fatalf("NextActionHint = %q, want empty hint for advisory pending plan", decision.NextActionHint)
-	}
-	if len(decision.MissingSteps) != 0 {
-		t.Fatalf("MissingSteps = %#v, want no forced missing steps", decision.MissingSteps)
-	}
-}
-
-func TestCompletionVerifierKeepsPassForCompletedPlan(t *testing.T) {
-	decision := completionVerificationApplyPlanOverride(map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": "completed",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        "tool:agent-management/update_agent_config",
-					"status":    "completed",
-					"skill_id":  "agent-management",
-					"tool_name": "update_agent_config",
-				},
-			},
-			"step_status": map[string]interface{}{
-				"tool:agent-management/update_agent_config": "completed",
-			},
-		},
-	}, completionVerificationDecision{Status: completionVerificationStatusPass, Reason: "done"})
-
-	if got := decision.normalizedStatus(); got != completionVerificationStatusPass {
-		t.Fatalf("decision status = %q, want pass; decision=%#v", got, decision)
-	}
-}
-
-func TestRunnerCompletionEvidenceDisablesLegacyFinalAnswerGuard(t *testing.T) {
-	ctx := context.Background()
-	fakeLLM := &runnerTestLLMClient{
-		appChatResponses: []*adapter.ChatResponse{
-			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "The operation is complete."}}}},
-			{Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: `{"status":"pass","reason":"candidate is supported by evidence"}`}}}},
-		},
-	}
-	runner := &Runner{
-		LLMClient:    fakeLLM,
-		SkillRuntime: skills.NewRuntime(nil, nil),
-		AppContext:   &llmclient.AppContext{},
-	}
-	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
-		Messages: []adapter.Message{{Role: "user", Content: "complete the operation"}},
-	})
-
-	answer, _, err := runner.Run(ctx, RunRequest{
-		Prepared: prepared,
-		Resolved: runnerTestResolvedSkills(),
-		FinalAnswerGuard: func(FinalAnswerGuardRequest) (FinalAnswerGuardResult, bool) {
-			return FinalAnswerGuardResult{
-				ToolName:      "legacy_guard",
-				Message:       "legacy guard should not run when post verification is configured",
-				SystemMessage: "legacy guard should not be visible",
-			}, true
-		},
-		CompletionEvidence: func() map[string]interface{} {
-			return map[string]interface{}{
-				"operation_plan": map[string]interface{}{"status": "completed"},
-				"skill_invocations": []interface{}{map[string]interface{}{
-					"kind": "tool_call", "status": "success", "skill_id": "test-skill", "tool_name": "test_tool",
-				}},
-			}
-		},
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if answer != "The operation is complete." {
-		t.Fatalf("answer = %q, want verifier-approved candidate answer", answer)
-	}
-	if fakeLLM.appChatCalls != 1 {
-		t.Fatalf("AppChat calls = %d, want no routine verifier call", fakeLLM.appChatCalls)
-	}
-}
-
-func TestRunnerTerminalGuardPreservesMainModelAnswer(t *testing.T) {
+func TestRunnerTerminalGuardPreservesMainModelAnswerWithPendingAdvisoryPhase(t *testing.T) {
 	ctx := context.Background()
 	fakeLLM := &runnerTestLLMClient{
 		appChatResponses: []*adapter.ChatResponse{
@@ -5244,21 +4166,26 @@ func TestRunnerTerminalGuardPreservesMainModelAnswer(t *testing.T) {
 	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
 		Messages: []adapter.Message{{Role: "user", Content: "\u521b\u5efa\u4e00\u4e2a\u667a\u80fd\u4f53\u5e76\u5b8c\u6210\u914d\u7f6e"}},
 	})
-	var verificationResult CompletionVerificationResult
+	var verificationResult TerminalCompletionResult
 
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: runnerTestResolvedSkills(),
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"model_verifier_required": true,
-				"operation_plan":          map[string]interface{}{"status": "completed"},
+				"operation_plan": map[string]interface{}{
+					"status": "running",
+					"phases": []interface{}{map[string]interface{}{
+						"id": "phase-1", "step": "Optional model progress", "status": "pending",
+					}},
+				},
 				"skill_invocations": []interface{}{map[string]interface{}{
 					"kind": "tool_call", "status": "success", "skill_id": "test-skill", "tool_name": "test_tool",
 				}},
 			}
 		},
-		OnCompletionVerification: func(result CompletionVerificationResult) {
+		OnTerminalCompletion: func(result TerminalCompletionResult) {
 			verificationResult = result
 		},
 	})
@@ -5268,11 +4195,8 @@ func TestRunnerTerminalGuardPreservesMainModelAnswer(t *testing.T) {
 	if answer != "\u6211\u8fd8\u4e0d\u80fd\u786e\u8ba4\u8fd9\u4e2a\u64cd\u4f5c\u5df2\u7ecf\u5b8c\u6210\u3002" {
 		t.Fatalf("answer = %q, want the main-model candidate", answer)
 	}
-	if verificationResult.Status != completionVerificationStatusPass {
+	if verificationResult.Status != "pass" {
 		t.Fatalf("completion verification status = %q, want pass", verificationResult.Status)
-	}
-	if verificationResult.FinalAnswer != answer {
-		t.Fatalf("completion verification final answer = %q, want %q", verificationResult.FinalAnswer, answer)
 	}
 	if fakeLLM.appChatCalls != 1 {
 		t.Fatalf("AppChat calls = %d, want one main-model call", fakeLLM.appChatCalls)
@@ -5296,12 +4220,12 @@ func TestRunnerDoesNotReplaceMainModelAnswerFromFailedEvidence(t *testing.T) {
 	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
 		Messages: []adapter.Message{{Role: "user", Content: "update agent config"}},
 	})
-	var verificationResult CompletionVerificationResult
+	var verificationResult TerminalCompletionResult
 
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: runnerTestResolvedSkills(),
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{"status": "failed"},
 				"skill_invocations": []interface{}{map[string]interface{}{
@@ -5309,7 +4233,7 @@ func TestRunnerDoesNotReplaceMainModelAnswerFromFailedEvidence(t *testing.T) {
 				}},
 			}
 		},
-		OnCompletionVerification: func(result CompletionVerificationResult) {
+		OnTerminalCompletion: func(result TerminalCompletionResult) {
 			verificationResult = result
 		},
 	})
@@ -5319,7 +4243,7 @@ func TestRunnerDoesNotReplaceMainModelAnswerFromFailedEvidence(t *testing.T) {
 	if answer != "Done, the Agent was updated." {
 		t.Fatalf("answer = %q, want initial main-model answer", answer)
 	}
-	if verificationResult.Status != completionVerificationStatusPass {
+	if verificationResult.Status != "pass" {
 		t.Fatalf("completion verification status = %q, want repaired main-model pass", verificationResult.Status)
 	}
 	if verificationResult.Source != "main_model_final" {
@@ -5350,7 +4274,7 @@ func TestRunnerTerminalGuardDoesNotGenerateFailedPlanReplacement(t *testing.T) {
 	answer, _, err := runner.Run(ctx, RunRequest{
 		Prepared: prepared,
 		Resolved: runnerTestResolvedSkills(),
-		CompletionEvidence: func() map[string]interface{} {
+		RuntimeStateSnapshot: func() map[string]interface{} {
 			return map[string]interface{}{
 				"operation_plan": map[string]interface{}{
 					"status": "failed",
@@ -5403,9 +4327,9 @@ func TestRunnerCompletionVerifierSkipsWithoutEvidence(t *testing.T) {
 	})
 
 	answer, _, err := runner.Run(ctx, RunRequest{
-		Prepared:           prepared,
-		Resolved:           runnerTestResolvedSkills(),
-		CompletionEvidence: func() map[string]interface{} { return map[string]interface{}{} },
+		Prepared:             prepared,
+		Resolved:             runnerTestResolvedSkills(),
+		RuntimeStateSnapshot: func() map[string]interface{} { return map[string]interface{}{} },
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)

@@ -19,11 +19,13 @@ import {
   KNOWLEDGE_BASE_PERMISSION_ACTIONS,
   KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES,
 } from '@/constants/permissions';
+import { useContextualAIChat } from '@/components/aichat/contextual';
 
 export default function DatasetDetailLayout({ children }: { children: React.ReactNode }) {
   const { datasetId } = useParams<{ datasetId: string }>();
   const pathname = usePathname();
   const t = useT();
+  const { isOpen: isContextualAIChatOpen } = useContextualAIChat();
 
   // Permission checking
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
@@ -47,9 +49,7 @@ export default function DatasetDetailLayout({ children }: { children: React.Reac
     refetchInterval: 10000,
     refetchIntervalInBackground: false,
   });
-  const canOpenSettings = hasAnyPermission([
-    ...KNOWLEDGE_BASE_PERMISSION_ACTIONS.update,
-  ]);
+  const canOpenSettings = hasAnyPermission([...KNOWLEDGE_BASE_PERMISSION_ACTIONS.update]);
 
   // Get dataset details for conditional rendering
   const dataset = data?.data;
@@ -150,6 +150,7 @@ export default function DatasetDetailLayout({ children }: { children: React.Reac
       <div className="flex h-full bg-background min-w-0">
         <ResourceSidebar
           isCollapsed={isCollapsed}
+          temporarilyCollapsed={isContextualAIChatOpen}
           onToggleCollapse={toggleCollapse}
           expandLabel={t('navigation.expand')}
           collapseLabel={t('navigation.collapse')}

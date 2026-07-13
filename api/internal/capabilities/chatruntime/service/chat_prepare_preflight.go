@@ -10,18 +10,12 @@ import (
 )
 
 const (
-	contextualPrepareIntentTimeout = 15 * time.Second
 	contextualPrepareMemoryTimeout = 8 * time.Second
 )
 
 type contextualPreparePreflightResult struct {
 	UserMemoryDone  bool
 	UserMemoryUsage *adapter.Usage
-}
-
-type contextualPrepareIntentResult struct {
-	intent *AIChatModelTurnIntent
-	err    error
 }
 
 type contextualPrepareMemoryResult struct {
@@ -41,21 +35,9 @@ func (s *service) runContextualPreparePreflights(
 		return nil, nil
 	}
 
-	runIntent := s.shouldClassifyContextualAIChatTurnIntent(conversation, parts)
 	runMemory := s.shouldRunUserMemoryPreflightDuringPrepare(parts, llmRequest)
-	if !runIntent && !runMemory {
+	if !runMemory {
 		return nil, nil
-	}
-
-	var intentCh chan contextualPrepareIntentResult
-	if runIntent {
-		intentCh = make(chan contextualPrepareIntentResult, 1)
-		go func() {
-			preflightCtx, cancel := context.WithTimeout(ctx, contextualPrepareIntentTimeout)
-			defer cancel()
-			intent, err := s.classifyContextualAIChatTurnIntent(preflightCtx, scope, conversation, config, parts)
-			intentCh <- contextualPrepareIntentResult{intent: intent, err: err}
-		}()
 	}
 
 	var memoryCh chan contextualPrepareMemoryResult
@@ -70,10 +52,6 @@ func (s *service) runContextualPreparePreflights(
 	}
 
 	preflight := &contextualPreparePreflightResult{}
-	if intentCh != nil {
-		intentResult := <-intentCh
-		s.applyContextualAIChatModelTurnIntentResult(ctx, conversation, parts, intentResult.intent, intentResult.err)
-	}
 	if memoryCh != nil {
 		memoryResult := <-memoryCh
 		if memoryResult.err != nil {

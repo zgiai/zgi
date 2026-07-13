@@ -158,6 +158,7 @@ func operationPlanCompactEvidenceResultSummary(summary map[string]interface{}) m
 		"file_upload",
 		"file_upload_enabled",
 		"home_title",
+		"opening_statement",
 		"input_placeholder",
 		"theme_color",
 		"suggested_questions",
@@ -675,6 +676,21 @@ func operationPlanEvidenceExtensionFromMimeType(mimeType string) string {
 }
 
 func operationPlanAddSystemPromptEvidenceFacts(facts map[string]interface{}, sources []map[string]interface{}) {
+	for _, source := range sources {
+		digest := strings.TrimSpace(stringFromAny(source["system_prompt_digest"]))
+		if !strings.HasPrefix(digest, operationPlanEvidenceDigestPrefix) {
+			continue
+		}
+		facts["system_prompt_present"] = true
+		facts["system_prompt_digest"] = digest
+		facts["agent.config.system_prompt_present"] = true
+		facts["agent.config.system_prompt_digest"] = digest
+		if chars, ok := operationPlanEvidenceIntFromAny(source["system_prompt_chars"]); ok && chars > 0 {
+			facts["system_prompt_chars"] = chars
+			facts["agent.config.system_prompt_chars"] = chars
+		}
+		return
+	}
 	prompt := firstStringFromSources(sources, "system_prompt")
 	if prompt == "" {
 		return
@@ -686,6 +702,23 @@ func operationPlanAddSystemPromptEvidenceFacts(facts map[string]interface{}, sou
 	facts["agent.config.system_prompt_present"] = true
 	facts["agent.config.system_prompt_chars"] = len([]rune(prompt))
 	facts["agent.config.system_prompt_digest"] = digest
+}
+
+func operationPlanEvidenceIntFromAny(value interface{}) (int, bool) {
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case int32:
+		return int(typed), true
+	case int64:
+		return int(typed), true
+	case float32:
+		return int(typed), true
+	case float64:
+		return int(typed), true
+	default:
+		return 0, false
+	}
 }
 
 func operationPlanAnnotateAgentConfigReadVerification(entry map[string]interface{}, expected map[string]interface{}) {

@@ -64,8 +64,16 @@ type streamingToolCallState struct {
 	emittedPlanningToolName string
 }
 
-func metaToolsForRun(resolved *skills.ResolvedSkills, loadedSkills map[string]struct{}, preferExplicitFinalAnswer bool) []adapter.Tool {
-	tools := skills.MetaToolsForSkillState(resolved, loadedSkills)
+type restoredSkillInstructionState struct {
+	activeLoaded   map[string]struct{}
+	reloadRequired []string
+	message        *adapter.Message
+}
+
+func metaToolsForRun(resolved *skills.ResolvedSkills, loadedSkills map[string]struct{}, preferExplicitFinalAnswer bool, requireFinalPlanSnapshot bool) []adapter.Tool {
+	tools := skills.MetaToolsForSkillStateWithOptions(resolved, loadedSkills, skills.MetaToolOptions{
+		RequireFinalPlanSnapshot: requireFinalPlanSnapshot,
+	})
 	if preferExplicitFinalAnswer {
 		return tools
 	}
@@ -96,7 +104,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		return "", nil, fmt.Errorf("%w: no skills available for configured skill ids", ErrInvalidInput)
 	}
 	preferExplicitFinalAnswer := req.PreferExplicitFinalAnswer
-	loadedSkills := initialLoadedSkillsForRun(req, resolved)
+	historicalLoadedSkills := initialLoadedSkillsForRun(req, resolved)
+	restoredSkillState := restoredLoadedSkillInstructionState(resolved, historicalLoadedSkills)
+	loadedSkills := restoredSkillState.activeLoaded
 
 	messages := append([]adapter.Message{}, prepared.LLMRequest.Messages...)
 	metadataMessage, metadataStats := skills.SkillMetadataSystemMessageWithBudget(
@@ -104,8 +114,8 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		skills.DefaultSkillMetadataPromptBudgetChars,
 	)
 	messages = append(messages, metadataMessage)
-	if restored := restoredLoadedSkillInstructionsMessage(resolved, loadedSkills); restored != nil {
-		messages = append(messages, *restored)
+	if restoredSkillState.message != nil {
+		messages = append(messages, *restoredSkillState.message)
 	}
 	messages = append(messages, validAdditionalSystemMessages(req.AdditionalSystemMessages)...)
 	messages = append(messages, agenticSkillLoopSystemMessage(preferExplicitFinalAnswer))
@@ -123,42 +133,27 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	recoverableFailureRoundCount := 0
 	consecutiveRecoverableFailureRounds := 0
 	recoverableFailureCallCount := 0
-	finalAnswerGuardBlockCount := 0
 	emptyFinalAnswerRetryCount := 0
 	skillToolCallCounts := map[string]int{}
-	attemptedToolCalls := []SkillToolCallRef{}
 	successfulToolCalls := []SkillToolCallRef{}
-	successfulToolCallsByKey := map[string]SkillToolCallRef{}
 	failedToolCallReasons := map[string]string{}
 	skillUsed := false
 	maxSkillSteps := maxSkillStepsForTurn(resolved)
-	terminalStateGuardConfigured := req.CompletionEvidence != nil
-	finalAnswerGuard := req.FinalAnswerGuard
-	userInputGuard := req.UserInputGuard
-	toolCallGuard := req.ToolCallGuard
-	if terminalStateGuardConfigured {
-		// The model owns tool selection and completion for agentic turns. Runtime authorization,
-		// approval, and the terminal state guard enforce protocol and safety boundaries.
-		// Keep the user-input guard so redundant clarification requests can still replan instead of
-		// interrupting a task that already has enough evidence to continue.
-		// Tool governance and backend authorization still enforce hard safety boundaries.
-		finalAnswerGuard = nil
-		toolCallGuard = nil
-	}
+	terminalStateGuardConfigured := req.RuntimeStateSnapshot != nil
 	var answerBuilder strings.Builder
 	var usage *adapter.Usage
 	for round := 0; round < defaultMaxSkillPlanningRounds; round++ {
 		planningReq := cloneChatRequest(prepared.LLMRequest)
 		planningReq.Messages = messages
 		planningReq.Stream = false
-		planningReq.Tools = metaToolsForRun(resolved, loadedSkills, preferExplicitFinalAnswer)
+		planningReq.Tools = metaToolsForRun(resolved, loadedSkills, preferExplicitFinalAnswer, runRequiresFinalPlanSnapshot(req))
 		planningReq.ToolChoice = "auto"
 
-		roundCompletionEvidence := map[string]interface{}{}
+		roundRuntimeState := map[string]interface{}{}
 		terminalSubmissionAllowed := true
 		if terminalStateGuardConfigured {
-			roundCompletionEvidence = completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
-			terminalSubmissionAllowed = terminalStateGuardCanStream(roundCompletionEvidence)
+			roundRuntimeState = runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
+			terminalSubmissionAllowed = terminalStateGuardCanStream(roundRuntimeState)
 		}
 		suppressNaturalProgress := req.SuppressInitialNaturalProgress && round == 0
 		deferTerminalContent := preferExplicitFinalAnswer || !terminalSubmissionAllowed
@@ -177,32 +172,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		if text != "" && len(toolCalls) > 0 && !suppressNaturalProgress && !planningResult.naturalProgressStreamed && shouldEmitNaturalProgressForToolCalls(resolved, loadedSkills, toolCalls) {
 			r.emitAgentProgress(ctx, prepared, text, nil)
 		}
-		if len(toolCalls) == 0 {
-			if guardResult, blocked := runFinalAnswerGuard(finalAnswerGuard, FinalAnswerGuardRequest{
-				Answer:              text,
-				Round:               round,
-				SkillUsed:           skillUsed,
-				ToolCallCount:       toolCallCount,
-				AttemptedToolCalls:  append([]SkillToolCallRef{}, attemptedToolCalls...),
-				SuccessfulToolCalls: append([]SkillToolCallRef{}, successfulToolCalls...),
-			}); blocked {
-				finalAnswerGuardBlockCount++
-				if planningResult.answerStreamed && text != "" {
-					r.emitAnswerRetract(ctx, prepared, text, nil)
-				}
-				trace := finalAnswerGuardrailTrace(guardResult)
-				traces = append(traces, trace)
-				r.recordTrace(traces, trace)
-				r.logSkillTrace(ctx, prepared, trace)
-				if finalAnswerGuardBlockCount > defaultMaxConsecutiveRecoverableFailureRounds {
-					err := fmt.Errorf("%w: final answer guard blocked too many consecutive replies", ErrInvalidInput)
-					r.emitSkillError(ctx, prepared, failedSkillTrace("guardrail", guardResult.ToolName, err))
-					return answerBuilder.String(), usage, err
-				}
-				messages = append(messages, finalAnswerGuardSystemMessage(guardResult, text))
-				continue
-			}
-		}
 		if len(toolCalls) == 0 && terminalStateGuardConfigured {
 			if strings.TrimSpace(text) == "" {
 				emptyFinalAnswerRetryCount++
@@ -216,10 +185,10 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				return answerBuilder.String(), usage, fmt.Errorf("%w: model returned no final answer", ErrInvalidInput)
 			}
 			emptyFinalAnswerRetryCount = 0
-			guard := terminalStateGuardEvaluate(roundCompletionEvidence, text)
+			guard := terminalStateGuardEvaluate(roundRuntimeState, text)
 			terminalStateGuardRecord(req, guard)
 			if guard.Path != terminalStateGuardAccepted {
-				terminalStateGuardNotify(req, guard, text)
+				terminalStateGuardNotify(req, guard)
 				return answerBuilder.String(), usage, terminalStateGuardError(guard)
 			}
 			answer := strings.TrimSpace(firstNonEmptyString(guard.FinalAnswer, text))
@@ -227,12 +196,12 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			if !planningResult.answerStreamed {
 				r.emitAnswerChunk(ctx, prepared, answer, nil)
 			}
-			terminalStateGuardNotify(req, guard, answer)
+			terminalStateGuardNotify(req, guard)
 			return answerBuilder.String(), usage, nil
 		}
 		emptyFinalAnswerRetryCount = 0
 		if call, ok := finalAnswerCall(toolCalls); ok && preferExplicitFinalAnswer {
-			submission, parseErr := parseFinalAnswerSubmission(call, roundCompletionEvidence)
+			submission, parseErr := parseFinalAnswerSubmission(call, roundRuntimeState)
 			if parseErr != nil {
 				result := failedFinalAnswerSkillStep(call.ID, parseErr, "submit a complete final answer in a new user turn")
 				traces = append(traces, result.trace)
@@ -246,14 +215,15 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			}
 
 			submission.streamed = submission.streamed || planningResult.answerStreamed
-			guard := terminalStateGuardEvaluate(roundCompletionEvidence, submission.answer)
+			guard := terminalStateGuardEvaluate(roundRuntimeState, submission.answer)
 			terminalStateGuardRecord(req, guard)
 			if guard.Path != terminalStateGuardAccepted {
-				terminalStateGuardNotify(req, guard, submission.answer)
+				terminalStateGuardNotify(req, guard)
 				return answerBuilder.String(), usage, terminalStateGuardError(guard)
 			}
 
 			result := finalAnswerSkillStep(call.ID, submission)
+			result.trace.Arguments["round"] = round + 1
 			traces = append(traces, result.trace)
 			r.recordTrace(traces, result.trace)
 			r.logSkillTrace(ctx, prepared, result.trace)
@@ -261,7 +231,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			if !result.answerStreamed {
 				r.emitAnswerChunk(ctx, prepared, result.answer, nil)
 			}
-			terminalStateGuardNotify(req, guard, result.answer)
+			terminalStateGuardNotify(req, guard)
 			logger.DebugContext(ctx, "aichat skill loop accepted explicit terminal answer",
 				"conversation_id", prepared.Conversation.ID.String(),
 				"message_id", prepared.Message.ID.String(),
@@ -321,7 +291,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		for _, call := range toolCalls {
 			stepCount++
 			callSkillID, callToolName, callToolArgs, failedCallKey := skillToolCallIdentityForCall(resolved, loadedSkills, call)
-			callEvidence := completionEvidenceForFastPathWithSuccessfulToolCalls(req, successfulToolCalls)
+			callEvidence := runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
 			result := skillStepResult{}
 			if userInputPlanRevisionPending(req) && planRevisionRequiredForTool(callSkillID, callToolName) {
 				result = pendingUserInputPlanRevisionStep(call.ID, callSkillID, callToolName, callToolArgs)
@@ -332,21 +302,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 				}
 			}
 			if result.trace.Kind == "" {
-				result = repeatedSuccessfulReadOnlyToolCallFeedbackStep(call.ID, callSkillID, callToolName, callToolArgs, successfulToolCallsByKey, successfulToolCalls)
-			}
-			if result.trace.Kind == "" {
-				result = r.handleProgressiveSkillCall(ctx, prepared, resolved, call, req.ExecutionContext, toolCallCount, skillToolCallCounts, loadedSkills, userInputGuardState{
-					guard:               userInputGuard,
-					toolCallGuard:       toolCallGuard,
-					planToolGuard:       req.PlanToolGuard,
-					argumentResolver:    req.ToolArgumentResolver,
-					round:               round,
-					skillUsed:           skillUsed,
-					toolCallCount:       toolCallCount,
-					attemptedToolCalls:  append([]SkillToolCallRef{}, attemptedToolCalls...),
-					successfulToolCalls: append([]SkillToolCallRef{}, successfulToolCalls...),
-					completionEvidence:  callEvidence,
-				}, nil)
+				result = r.handleProgressiveSkillCall(ctx, prepared, resolved, call, req.ExecutionContext, toolCallCount, skillToolCallCounts, loadedSkills, callEvidence, round+1, nil)
 			}
 			if strings.TrimSpace(result.trace.Kind) == "" {
 				if result.usedSkill {
@@ -389,14 +345,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			if result.usedSkill {
 				skillUsed = true
 			}
-			if strings.EqualFold(strings.TrimSpace(result.trace.Kind), "tool_call") {
-				attemptedToolCalls = append(attemptedToolCalls, SkillToolCallRef{
-					SkillID:   strings.TrimSpace(result.trace.SkillID),
-					ToolName:  strings.TrimSpace(result.trace.ToolName),
-					Arguments: copyStringAnyMap(result.trace.Arguments),
-					Result:    copyStringAnyMap(result.toolResult),
-				})
-			}
 			if result.usedTool {
 				toolCallCount++
 				incrementSkillToolCallCount(skillToolCallCounts, result.trace.SkillID)
@@ -408,15 +356,6 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 						Arguments: copyStringAnyMap(result.trace.Arguments),
 						Result:    copyStringAnyMap(result.toolResult),
 					})
-					if failedCallKey != "" {
-						successfulToolCallsByKey[failedCallKey] = SkillToolCallRef{
-							SkillID:   strings.TrimSpace(callSkillID),
-							ToolName:  strings.TrimSpace(callToolName),
-							Arguments: copyStringAnyMap(callToolArgs),
-							Result:    copyStringAnyMap(result.toolResult),
-						}
-					}
-					finalAnswerGuardBlockCount = 0
 				}
 			}
 			if result.pendingApproval != nil {
@@ -533,7 +472,7 @@ func initialLoadedSkillsForRun(req RunRequest, resolved *skills.ResolvedSkills) 
 			if !strings.EqualFold(kind, "skill_load") && !strings.EqualFold(kind, "tool_call") {
 				continue
 			}
-			if !completionVerificationInvocationSucceeded(invocation) {
+			if !runtimeInvocationSucceeded(invocation) {
 				continue
 			}
 			add(evidenceStringFromAny(invocation["skill_id"]))
@@ -546,28 +485,32 @@ func initialLoadedSkillsForRun(req RunRequest, resolved *skills.ResolvedSkills) 
 	return loaded
 }
 
-func restoredLoadedSkillInstructionsMessage(resolved *skills.ResolvedSkills, loadedSkills map[string]struct{}) *adapter.Message {
-	if resolved == nil || len(loadedSkills) == 0 {
-		return nil
+func restoredLoadedSkillInstructionState(resolved *skills.ResolvedSkills, historicalLoadedSkills map[string]struct{}) restoredSkillInstructionState {
+	state := restoredSkillInstructionState{activeLoaded: map[string]struct{}{}}
+	if resolved == nil || len(historicalLoadedSkills) == 0 {
+		return state
 	}
 	sections := []string{
 		"The following skill instructions were loaded earlier in this same user turn and remain active after navigation, approval, refresh, or continuation.",
-		"Use them directly. Do not call load_skill for these skills again unless the runtime exposes that skill in load_skill.",
+		"Only skills whose complete instructions appear below are active. If a skill is listed as requiring reload, call load_skill before using its tools.",
 	}
 	remaining := restoredSkillInstructionsTotalBudgetChars
 	for _, skillID := range resolved.SkillIDs() {
-		if remaining <= 0 {
-			break
-		}
 		canonical, ok := canonicalResolvedSkillID(resolved, skillID)
 		if !ok {
 			continue
 		}
-		if _, ok := loadedSkills[canonical]; !ok {
+		if _, ok := historicalLoadedSkills[canonical]; !ok {
 			continue
 		}
 		doc, ok := resolved.Get(canonical)
 		if !ok || doc == nil {
+			continue
+		}
+		instructions := strings.TrimSpace(doc.Instructions)
+		instructionRunes := len([]rune(instructions))
+		if instructionRunes > restoredSkillInstructionsPerSkillBudgetChars || instructionRunes > remaining {
+			state.reloadRequired = append(state.reloadRequired, canonical)
 			continue
 		}
 		section := []string{"Restored skill: " + canonical}
@@ -577,38 +520,20 @@ func restoredLoadedSkillInstructionsMessage(resolved *skills.ResolvedSkills, loa
 		if whenToUse := strings.TrimSpace(doc.Metadata.WhenToUse); whenToUse != "" {
 			section = append(section, "When to use: "+whenToUse)
 		}
-		if instructions := strings.TrimSpace(doc.Instructions); instructions != "" {
-			budget := min(remaining, restoredSkillInstructionsPerSkillBudgetChars)
-			instructions = compactRestoredSkillInstructions(instructions, budget)
-			remaining -= len([]rune(instructions))
+		if instructions != "" {
+			remaining -= instructionRunes
 			section = append(section, "Instructions:\n"+instructions)
 		}
+		state.activeLoaded[canonical] = struct{}{}
 		sections = append(sections, strings.Join(section, "\n"))
 	}
-	if len(sections) == 2 {
-		return nil
+	if len(state.reloadRequired) > 0 {
+		sections = append(sections, "Skills requiring full reload before use: "+strings.Join(state.reloadRequired, ", "))
 	}
-	return &adapter.Message{Role: "system", Content: strings.Join(sections, "\n\n")}
-}
-
-func compactRestoredSkillInstructions(instructions string, maxRunes int) string {
-	instructions = strings.TrimSpace(instructions)
-	if maxRunes <= 0 || instructions == "" {
-		return ""
+	if len(sections) > 2 {
+		state.message = &adapter.Message{Role: "system", Content: strings.Join(sections, "\n\n")}
 	}
-	runes := []rune(instructions)
-	if len(runes) <= maxRunes {
-		return instructions
-	}
-	const marker = "\n\n[Detailed middle section omitted in continuation context. Use read_skill_reference or reload the skill only if those details are needed.]\n\n"
-	markerRunes := []rune(marker)
-	contentBudget := maxRunes - len(markerRunes)
-	if contentBudget <= 0 {
-		return strings.TrimSpace(string(runes[:maxRunes]))
-	}
-	headRunes := contentBudget * 2 / 3
-	tailRunes := contentBudget - headRunes
-	return strings.TrimSpace(string(runes[:headRunes])) + marker + strings.TrimSpace(string(runes[len(runes)-tailRunes:]))
+	return state
 }
 
 func shouldEmitNaturalProgressForToolCalls(resolved *skills.ResolvedSkills, loadedSkills map[string]struct{}, calls []adapter.ToolCall) bool {
@@ -697,104 +622,6 @@ func canonicalResolvedSkillID(resolved *skills.ResolvedSkills, skillID string) (
 	return "", false
 }
 
-func completionEvidenceForFastPathWithSuccessfulToolCalls(req RunRequest, successful []SkillToolCallRef) map[string]interface{} {
-	evidence := completionEvidenceForFastPath(req)
-	if len(successful) == 0 {
-		return evidence
-	}
-	if evidence == nil {
-		evidence = map[string]interface{}{}
-	} else {
-		evidence = copyStringAnyMap(evidence)
-	}
-	invocations := evidenceSliceFromAny(evidence["skill_invocations"])
-	existingInvocations := map[string]struct{}{}
-	for _, raw := range invocations {
-		invocation := evidenceMapFromAny(raw)
-		if len(invocation) == 0 || !strings.EqualFold(strings.TrimSpace(stringFromAny(invocation["kind"])), "tool_call") {
-			continue
-		}
-		signature := skillToolCallEvidenceSignature(
-			stringFromAny(invocation["skill_id"]),
-			stringFromAny(invocation["tool_name"]),
-			evidenceMapFromAny(invocation["arguments"]),
-			evidenceMapFromAny(invocation["result"]),
-		)
-		if signature != "" {
-			existingInvocations[signature] = struct{}{}
-		}
-	}
-	for _, call := range successful {
-		skillID := strings.TrimSpace(call.SkillID)
-		toolName := strings.TrimSpace(call.ToolName)
-		if skillID == "" || toolName == "" {
-			continue
-		}
-		signature := skillToolCallEvidenceSignature(skillID, toolName, call.Arguments, call.Result)
-		if _, ok := existingInvocations[signature]; ok && signature != "" {
-			continue
-		}
-		invocation := map[string]interface{}{
-			"kind":      "tool_call",
-			"status":    "success",
-			"skill_id":  skillID,
-			"tool_name": toolName,
-		}
-		if len(call.Arguments) > 0 {
-			invocation["arguments"] = copyStringAnyMap(call.Arguments)
-		}
-		if len(call.Result) > 0 {
-			invocation["result"] = copyStringAnyMap(call.Result)
-		}
-		invocations = append(invocations, invocation)
-		if signature != "" {
-			existingInvocations[signature] = struct{}{}
-		}
-	}
-	if len(invocations) > 0 {
-		evidence["skill_invocations"] = invocations
-	}
-	return evidence
-}
-
-func skillToolCallEvidenceSignature(skillID string, toolName string, arguments map[string]interface{}, result map[string]interface{}) string {
-	skillID = strings.TrimSpace(skillID)
-	toolName = strings.TrimSpace(toolName)
-	if skillID == "" || toolName == "" {
-		return ""
-	}
-	payload := map[string]interface{}{
-		"skill_id":  skillID,
-		"tool_name": toolName,
-	}
-	if len(arguments) > 0 {
-		payload["arguments"] = arguments
-	}
-	if len(result) > 0 {
-		payload["result"] = result
-	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return skillID + "/" + toolName
-	}
-	return string(data)
-}
-
-func notifyCompletionVerificationResult(req RunRequest, decision completionVerificationDecision, finalAnswer string) {
-	if req.OnCompletionVerification == nil {
-		return
-	}
-	req.OnCompletionVerification(CompletionVerificationResult{
-		Status:            decision.normalizedStatus(),
-		Source:            strings.TrimSpace(decision.Source),
-		Reason:            strings.TrimSpace(decision.Reason),
-		MissingSteps:      append([]string(nil), decision.MissingSteps...),
-		UnsupportedClaims: append([]string(nil), decision.UnsupportedClaims...),
-		NextActionHint:    strings.TrimSpace(decision.NextActionHint),
-		FinalAnswer:       strings.TrimSpace(finalAnswer),
-	})
-}
-
 func evidenceStringSliceFromAny(value interface{}) []string {
 	switch typed := value.(type) {
 	case []string:
@@ -880,6 +707,12 @@ func currentMetadataForRun(req RunRequest) map[string]interface{} {
 	return copyStringAnyMap(req.CurrentMetadata())
 }
 
+func runRequiresFinalPlanSnapshot(req RunRequest) bool {
+	metadata := currentMetadataForRun(req)
+	plan := evidenceMapFromAny(metadata["operation_plan"])
+	return len(mapSliceFromAny(plan["phases"])) > 0
+}
+
 func isAgentManagementMutationTool(skillID string, toolName string) bool {
 	if !strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentManagement) {
 		return false
@@ -927,189 +760,6 @@ func repeatedFailedToolCallRecoverableStep(callID string, skillID string, toolNa
 	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, nextAction, skillID, toolName)), false, false)
 }
 
-func repeatedSuccessfulReadOnlyToolCallFeedbackStep(callID string, skillID string, toolName string, args map[string]interface{}, successfulToolCallsByKey map[string]SkillToolCallRef, successfulToolCalls []SkillToolCallRef) skillStepResult {
-	if !skillToolCallLooksReadOnly(skillID, toolName) {
-		return skillStepResult{}
-	}
-	key := failedToolCallKey(skillID, toolName, args)
-	if key == "" {
-		return skillStepResult{}
-	}
-	previous, ok := successfulToolCallsByKey[key]
-	if !ok {
-		return skillStepResult{}
-	}
-	if repeatedReadOnlyToolShouldRunAfterMutation(skillID, toolName, args, successfulToolCalls) {
-		return skillStepResult{}
-	}
-	trace := plannerFeedbackTrace(skillID, toolName, nil)
-	trace.Arguments = summarizeSkillToolArguments(skillID, toolName, args)
-	trace.Arguments["next_step"] = "answer_from_previous_result"
-	trace.Arguments["reason"] = "same_read_only_tool_already_succeeded"
-	return successfulSkillStep(trace, skills.ToolResultMessage(callID, repeatedSuccessfulReadOnlyToolCallPayload(skillID, toolName, previous)), false, false)
-}
-
-func repeatedReadOnlyToolShouldRunAfterMutation(skillID string, toolName string, args map[string]interface{}, successfulToolCalls []SkillToolCallRef) bool {
-	if !strings.EqualFold(strings.TrimSpace(skillID), skills.SkillAgentManagement) {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(toolName)) {
-	case "get_agent", "get_agent_config":
-	default:
-		return false
-	}
-	key := failedToolCallKey(skillID, toolName, args)
-	if key == "" {
-		return false
-	}
-	for i := len(successfulToolCalls) - 1; i >= 0; i-- {
-		call := successfulToolCalls[i]
-		if failedToolCallKey(call.SkillID, call.ToolName, call.Arguments) == key {
-			return false
-		}
-		if isAgentManagementMutationTool(call.SkillID, call.ToolName) {
-			return true
-		}
-	}
-	return false
-}
-
-func skillToolCallLooksReadOnly(skillID string, toolName string) bool {
-	skillID = strings.ToLower(strings.TrimSpace(skillID))
-	toolName = strings.ToLower(strings.TrimSpace(toolName))
-	if skillID == "" || toolName == "" {
-		return false
-	}
-	for _, prefix := range []string{"get_", "list_", "read_", "search_"} {
-		if strings.HasPrefix(toolName, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-func repeatedSuccessfulReadOnlyToolCallPayload(skillID string, toolName string, previous SkillToolCallRef) map[string]interface{} {
-	return map[string]interface{}{
-		"status":                  "completed",
-		"advisory":                "same_read_only_tool_already_succeeded",
-		"skill_id":                strings.TrimSpace(skillID),
-		"tool_name":               strings.TrimSpace(toolName),
-		"message":                 "This read-only tool call with identical arguments already succeeded earlier in this turn.",
-		"previous_result_summary": summarizeRepeatedSuccessfulReadOnlyResult(previous.Result),
-		"next_action":             "Do not call the same read-only tool with identical arguments again. Answer from the previous tool result already present in the message history; if that result is empty, say there are no matching candidates.",
-	}
-}
-
-func summarizeRepeatedSuccessfulReadOnlyResult(result map[string]interface{}) map[string]interface{} {
-	if len(result) == 0 {
-		return nil
-	}
-	summary := map[string]interface{}{}
-	for _, key := range []string{"status", "count", "total", "target_count", "success_count", "failed_count", "agent_id", "agent_name"} {
-		if value, ok := result[key]; ok {
-			summary[key] = value
-		}
-	}
-	for _, key := range []string{"items", "agents", "skills", "knowledge_bases", "databases", "database_tables", "workflows", "models"} {
-		if count := repeatedSuccessfulReadOnlyResultCollectionLength(result[key]); count >= 0 {
-			summary[key+"_count"] = count
-		}
-	}
-	if samples := repeatedSuccessfulReadOnlyCandidateSamples(result, 3); len(samples) > 0 {
-		summary["candidate_samples"] = samples
-	}
-	if len(summary) == 0 {
-		summary["available"] = true
-	}
-	return summary
-}
-
-func repeatedSuccessfulReadOnlyCandidateSamples(result map[string]interface{}, limit int) []map[string]interface{} {
-	if len(result) == 0 || limit <= 0 {
-		return nil
-	}
-	for _, key := range []string{
-		"binding_candidates",
-		"skills",
-		"knowledge_bases",
-		"databases",
-		"database_tables",
-		"tables",
-		"workflows",
-		"models",
-		"items",
-	} {
-		records := evidenceMapsFromAny(result[key])
-		if len(records) == 0 {
-			continue
-		}
-		out := make([]map[string]interface{}, 0, min(len(records), limit))
-		for _, record := range records {
-			item := repeatedSuccessfulReadOnlyCandidateSample(record)
-			if len(item) == 0 {
-				continue
-			}
-			out = append(out, item)
-			if len(out) >= limit {
-				break
-			}
-		}
-		if len(out) > 0 {
-			return out
-		}
-	}
-	return nil
-}
-
-func repeatedSuccessfulReadOnlyCandidateSample(record map[string]interface{}) map[string]interface{} {
-	if len(record) == 0 {
-		return nil
-	}
-	item := map[string]interface{}{}
-	if id := firstNonEmptyString(record["id"], record["skill_id"], record["dataset_id"], record["knowledge_base_id"], record["data_source_id"], record["table_id"], record["workflow_id"], record["binding_id"]); id != "" {
-		item["id"] = id
-	}
-	if name := firstNonEmptyString(record["name"], record["title"], record["label"], record["display_name"], record["dataset_name"], record["database_name"], record["table_name"], record["workflow_name"], record["model"]); name != "" {
-		item["name"] = name
-	}
-	for _, key := range []string{"selected", "writable", "provider", "model"} {
-		if value, ok := record[key]; ok && value != nil && value != "" {
-			item[key] = value
-		}
-	}
-	if binding := repeatedSuccessfulReadOnlyCandidateBinding(record["binding"]); len(binding) > 0 {
-		item["binding"] = binding
-	}
-	return item
-}
-
-func repeatedSuccessfulReadOnlyCandidateBinding(value interface{}) map[string]interface{} {
-	binding := evidenceMapFromAny(value)
-	if len(binding) == 0 {
-		return nil
-	}
-	item := map[string]interface{}{}
-	for _, key := range []string{"data_source_id", "table_ids", "writable_table_ids", "agent_id", "workflow_id", "binding_id", "version_strategy", "version_uuid", "timeout_seconds"} {
-		if value, ok := binding[key]; ok && value != nil && value != "" {
-			item[key] = value
-		}
-	}
-	return item
-}
-
-func repeatedSuccessfulReadOnlyResultCollectionLength(value interface{}) int {
-	switch typed := value.(type) {
-	case []interface{}:
-		return len(typed)
-	case []map[string]interface{}:
-		return len(typed)
-	case []string:
-		return len(typed)
-	default:
-		return -1
-	}
-}
-
 func recoverableFailureFinalAnswer(trace skills.SkillTrace, err error) string {
 	reason := strings.TrimSpace(trace.Error)
 	if reason == "" && err != nil {
@@ -1122,14 +772,7 @@ func recoverableFailureFinalAnswer(trace skills.SkillTrace, err error) string {
 		}
 		step += toolName
 	}
-	decision := completionVerificationDecision{
-		Status: completionVerificationStatusFailed,
-		Reason: reason,
-	}
-	if step != "" {
-		decision.MissingSteps = []string{step}
-	}
-	return completionVerificationFallbackAnswer(decision, "")
+	return runtimeFailureAnswer(reason, step)
 }
 
 func planningRoundsExhaustedFinalAnswer(err error) string {
@@ -1137,10 +780,7 @@ func planningRoundsExhaustedFinalAnswer(err error) string {
 	if err != nil {
 		reason = reason + " " + err.Error()
 	}
-	return completionVerificationFallbackAnswer(completionVerificationDecision{
-		Status: completionVerificationStatusFailed,
-		Reason: reason,
-	}, "")
+	return runtimeFailureAnswer(reason, "")
 }
 
 func validAdditionalSystemMessages(input []adapter.Message) []adapter.Message {
@@ -1194,116 +834,6 @@ func governedReadFileTargetSystemMessage(trace skills.SkillTrace) (adapter.Messa
 		"Do not mention this correction, internal resolution, governance, redirects, caches, mismatched IDs, or internal file IDs in the final answer. Simply answer the user's request from the resolved file content.",
 	}, "\n")
 	return adapter.Message{Role: "system", Content: content}, true
-}
-
-func runFinalAnswerGuard(guard FinalAnswerGuard, req FinalAnswerGuardRequest) (FinalAnswerGuardResult, bool) {
-	if guard == nil {
-		return FinalAnswerGuardResult{}, false
-	}
-	result, blocked := guard(req)
-	if !blocked {
-		return FinalAnswerGuardResult{}, false
-	}
-	result.Message = strings.TrimSpace(result.Message)
-	if result.Message == "" {
-		result.Message = "The previous candidate final answer was blocked because the claimed outcome lacks successful skill/tool evidence in this turn. Continue from the latest evidence, call the next useful tool if it is still needed, and only then claim completion."
-	}
-	return result, true
-}
-
-func runUserInputGuard(guard UserInputGuard, req UserInputGuardRequest) (FinalAnswerGuardResult, bool) {
-	if guard == nil {
-		return FinalAnswerGuardResult{}, false
-	}
-	result, blocked := guard(req)
-	if !blocked {
-		return FinalAnswerGuardResult{}, false
-	}
-	result.Message = strings.TrimSpace(result.Message)
-	if result.Message == "" {
-		result.Message = "The requested user clarification was blocked because runtime context already contains the information needed to continue. Continue from the latest evidence and use the next useful tool before asking the user."
-	}
-	return result, true
-}
-
-func runToolCallGuard(guard ToolCallGuard, req ToolCallGuardRequest) (FinalAnswerGuardResult, bool) {
-	if guard == nil {
-		return FinalAnswerGuardResult{}, false
-	}
-	result, blocked := guard(req)
-	if !blocked {
-		return FinalAnswerGuardResult{}, false
-	}
-	result.Message = strings.TrimSpace(result.Message)
-	if result.Message == "" {
-		result.Message = "The requested skill tool call was blocked because it would run the task in the wrong order. Continue from the latest evidence and use the next useful tool first."
-	}
-	return result, true
-}
-
-func runToolArgumentResolver(resolver ToolArgumentResolver, req ToolCallGuardRequest) (map[string]interface{}, bool) {
-	if resolver == nil {
-		return nil, false
-	}
-	resolved, changed := resolver(req)
-	if !changed {
-		return nil, false
-	}
-	return copyStringAnyMap(resolved), true
-}
-
-func finalAnswerGuardrailTrace(result FinalAnswerGuardResult) skills.SkillTrace {
-	return skills.SkillTrace{
-		Kind:     "guardrail",
-		SkillID:  strings.TrimSpace(result.SkillID),
-		ToolName: strings.TrimSpace(result.ToolName),
-		Status:   "blocked",
-		Error:    strings.TrimSpace(result.Message),
-		Arguments: map[string]interface{}{
-			"next_step": "continue_planning",
-		},
-	}
-}
-
-func toolCallGuardrailTrace(result FinalAnswerGuardResult, blockedSkillID string, blockedToolName string, blockedArguments map[string]interface{}) skills.SkillTrace {
-	trace := finalAnswerGuardrailTrace(result)
-	trace.Arguments = map[string]interface{}{
-		"blocked_tool": strings.TrimSpace(blockedSkillID) + "/" + strings.TrimSpace(blockedToolName),
-		"next_step":    "continue_planning",
-	}
-	if len(blockedArguments) > 0 {
-		trace.Arguments["blocked_arguments"] = summarizeSkillToolArguments(blockedSkillID, blockedToolName, blockedArguments)
-	}
-	return trace
-}
-
-func userInputGuardrailTrace(result FinalAnswerGuardResult) skills.SkillTrace {
-	return skills.SkillTrace{
-		Kind:     "guardrail",
-		SkillID:  strings.TrimSpace(result.SkillID),
-		ToolName: strings.TrimSpace(result.ToolName),
-		Status:   "blocked",
-		Error:    strings.TrimSpace(result.Message),
-		Arguments: map[string]interface{}{
-			"blocked_tool": "request_user_input",
-			"next_step":    "continue_planning",
-		},
-	}
-}
-
-func finalAnswerGuardSystemMessage(result FinalAnswerGuardResult, candidateAnswer string) adapter.Message {
-	feedback := strings.TrimSpace(result.SystemMessage)
-	if feedback == "" {
-		feedback = strings.TrimSpace(result.Message)
-	}
-	lines := []string{
-		"Runtime guardrail feedback:",
-		feedback,
-	}
-	if text := strings.TrimSpace(candidateAnswer); text != "" {
-		lines = append(lines, "Blocked candidate answer:\n"+text)
-	}
-	return adapter.Message{Role: "system", Content: strings.Join(lines, "\n")}
 }
 
 func messageContent(content interface{}) string {
@@ -1469,6 +999,8 @@ func agenticSkillLoopSystemMessage(preferExplicitFinalAnswer bool) adapter.Messa
 		"Within one user request, do not reload a skill just because approval, navigation, refresh, or continuation resumed the loop. If the skill was already loaded and no newer instructions are needed, continue from the latest tool results, client-action evidence, and turn_state.",
 		"After each skill/tool result, continue with the next necessary action or final answer. Summarize only user-relevant outcomes, not internal bookkeeping.",
 		"For a multi-phase task, keep the supplied plan current with update_plan. Preserve stable phase IDs and update the plan in the same response as the next business tool whenever possible. Include exact evidence_refs when they are readily available, but treat them as audit links and do not delay execution or finalization solely to repair a ref.",
+		"Before submitting the final answer, reconcile the complete user request with your latest plan and evidence. For every phase you still consider open, either continue the work, update it to completed, mark it skipped with a truthful user-relevant reason, or clearly state in the final answer that it was not completed. Never silently omit an open requested outcome.",
+		"Treat user-visible actions such as opening or returning to a console page as real requested outcomes when the user asked for them. A backend read or mutation does not prove that the page changed. Perform the navigation and observe matching route/current_page_context evidence, or state truthfully that the page transition was not completed.",
 		"If a tool call fails, explain the likely user-relevant cause, fix the arguments, and retry when possible.",
 		"If a tool call fails, do not repeat the same tool with the same arguments. Re-plan from the error before retrying.",
 		"For deterministic batch work, prefer one suitable business tool call that handles the batch coherently over many small repeated tool calls.",
@@ -1500,7 +1032,7 @@ func agenticSkillLoopSystemMessage(preferExplicitFinalAnswer bool) adapter.Messa
 		instructions = append(instructions,
 			"In this skill loop, ordinary assistant content is always transient process progress, never the terminal answer. The runtime may show the complete progress update but will not store it as final message content.",
 			"When no more business tool, user input, state, or plan update calls are needed, call submit_final_answer with the complete, natural, self-contained user-facing reply. Do not write the final reply as ordinary assistant content.",
-			"submit_final_answer is terminal. Do not combine it with business tools, request_user_input, or further actions. If a model-maintained plan exists, update it before finishing or include an optional final snapshot when useful; plan metadata never replaces the answer. Add evidence refs when readily available. If you did not call submit_intermediate_answer for a new requested deliverable, the answer field MUST include the deliverable in full, not a compressed summary.",
+			"submit_final_answer is terminal. Do not combine it with business tools, request_user_input, or further actions. Reconcile any model-maintained plan before finishing; do not submit while you still intend to perform an open phase or an unverified user-visible action. You may include an optional final plan snapshot, but plan metadata never replaces the answer. Add evidence refs when readily available. If you did not call submit_intermediate_answer for a new requested deliverable, the answer field MUST include the deliverable in full, not a compressed summary.",
 		)
 	} else {
 		instructions = append(instructions, "When no tool or skill call is needed, provide the complete user-facing reply as ordinary assistant content and end the turn.")

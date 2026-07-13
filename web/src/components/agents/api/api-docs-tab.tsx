@@ -82,13 +82,17 @@ export default function ApiDocsTab({ agentType }: ApiDocsTabProps) {
   };
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="@container/api-docs p-4">
       <ApiDocsProvider apibase={apiBase}>
-        <div ref={contentRef} className="prose dark:prose-invert max-w-5xl mx-auto text-[14px]">
-          <MDXProvider components={components}>{renderDocs()}</MDXProvider>
+        <div className="mx-auto grid w-full max-w-[1360px] items-start gap-8 @5xl/api-docs:grid-cols-[minmax(0,1fr)_280px]">
+          <div ref={contentRef} className="prose min-w-0 max-w-5xl text-[14px] dark:prose-invert">
+            <MDXProvider components={components}>{renderDocs()}</MDXProvider>
+          </div>
+          <div className="hidden self-stretch @5xl/api-docs:block">
+            <FloatingToc rootRef={contentRef} />
+          </div>
         </div>
       </ApiDocsProvider>
-      <FloatingToc rootRef={contentRef} />
     </div>
   );
 }

@@ -11,7 +11,6 @@ import (
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
-	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 const (
@@ -62,45 +61,6 @@ type AIChatModelTurnIntent struct {
 	Reason                   string   `json:"reason,omitempty"`
 }
 
-func (s *service) applyContextualAIChatModelTurnIntent(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, config RunConfig, parts *chatRequestParts) {
-	if !s.shouldClassifyContextualAIChatTurnIntent(conversation, parts) {
-		return
-	}
-	intent, err := s.classifyContextualAIChatTurnIntent(ctx, scope, conversation, config, parts)
-	s.applyContextualAIChatModelTurnIntentResult(ctx, conversation, parts, intent, err)
-}
-
-func (s *service) shouldClassifyContextualAIChatTurnIntent(conversation *runtimemodel.Conversation, parts *chatRequestParts) bool {
-	if s == nil || s.llmClient == nil || conversation == nil || parts == nil {
-		return false
-	}
-	if parts.ModelTurnIntent != nil || strings.TrimSpace(parts.ModelTurnIntentError) != "" {
-		return false
-	}
-	return isContextualAIChatSurface(parts.Surface) && chatPartsSkillsEnabled(parts)
-}
-
-func (s *service) applyContextualAIChatModelTurnIntentResult(ctx context.Context, conversation *runtimemodel.Conversation, parts *chatRequestParts, intent *AIChatModelTurnIntent, err error) {
-	if parts == nil {
-		return
-	}
-	if err != nil {
-		parts.ModelTurnIntentError = err.Error()
-		fields := []interface{}{
-			"error", err.Error(),
-		}
-		if conversation != nil {
-			fields = append([]interface{}{"conversation_id", conversation.ID.String()}, fields...)
-		}
-		if classifierErr, ok := err.(*modelTurnIntentClassifierError); ok && strings.TrimSpace(classifierErr.preview) != "" {
-			fields = append(fields, "classifier_content_preview", classifierErr.preview)
-		}
-		logger.DebugContext(ctx, "aichat model turn intent classification skipped", fields...)
-		return
-	}
-	parts.ModelTurnIntent = intent
-}
-
 func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope Scope, conversation *runtimemodel.Conversation, config RunConfig, parts *chatRequestParts) (*AIChatModelTurnIntent, error) {
 	if strings.TrimSpace(parts.ModelName) == "" {
 		return nil, fmt.Errorf("model is required")
@@ -122,14 +82,14 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 			{
 				Role: "system",
 				Content: strings.Join([]string{
-					"You create a lightweight semantic Turn Contract for one ZGI sidebar assistant turn. Return JSON only.",
+					"You create a lightweight semantic Turn Contract for one contextual console assistant turn. Return JSON only.",
 					"This is not a tool script. Do not choose concrete tool names, tool arguments, or ordered tool calls.",
 					"The intent field is a broad compatibility label only. Phases, evidence_required, recommended_capabilities, and completion_criteria are advisory task brief fields for the executor, not a fixed tool script or completion verifier contract.",
 					"When recent_task_context is present, use it as conversation history for elliptical follow-ups, corrections, and constraint changes. Preserve the still-relevant goal and pending work, apply the latest user correction, and do not invent an unrelated update type from the latest sentence alone.",
 					"If the latest request and recent_task_context still leave a material side effect ambiguous, return a low-confidence task brief that identifies the ambiguity; the executor may ask the user instead of guessing.",
 					"Pick exactly one broad compatibility intent label from:",
-					"- answer_or_explain_zgi_context: answer questions about ZGI, the current page, or assistant capabilities without asset mutation.",
-					"- navigate_console_page: the user mainly asks to open or switch to a ZGI console page.",
+					"- answer_or_explain_console_context: answer questions about the current console, the current page, or assistant capabilities without asset mutation.",
+					"- navigate_console_page: the user mainly asks to open or switch to a console page.",
 					"- manage_agent_asset: create, edit, delete, inspect, bind, unbind, configure, or verify Agents.",
 					"- read_visible_file_content: read or summarize an existing visible/workspace file.",
 					"- delete_visible_file: delete an existing visible/workspace file.",
@@ -182,7 +142,7 @@ func finalizeModelTurnIntent(intent *AIChatModelTurnIntent) {
 	normalizedIntent := normalizeModelTurnIntent(rawIntent)
 	unsupportedIntent := rawIntent != "" && normalizedIntent == ""
 	if normalizedIntent == "" {
-		normalizedIntent = "answer_or_explain_zgi_context"
+		normalizedIntent = "answer_or_explain_console_context"
 	}
 	intent.Intent = normalizedIntent
 	if rawIntent != "" && !strings.EqualFold(rawIntent, normalizedIntent) {
@@ -672,8 +632,8 @@ func newIntentClassifierAppContext(scope Scope, conversation *runtimemodel.Conve
 
 func normalizeModelTurnIntent(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "answer_or_explain_zgi_context", "answer", "explain", "page_qa", "assistant_capabilities":
-		return "answer_or_explain_zgi_context"
+	case "answer_or_explain_console_context", "answer_or_explain_zgi_context", "answer", "explain", "page_qa", "assistant_capabilities":
+		return "answer_or_explain_console_context"
 	case "navigate_console_page", "navigation", "navigate", "route", "open_page":
 		return "navigate_console_page"
 	case "manage_agent_asset", "agent_management", "agent", "create_agent", "edit_agent", "delete_agent", "configure_agent":
@@ -720,7 +680,8 @@ func contextualAIChatTurnStrategyFromModelIntent(parts *chatRequestParts, strate
 		return contextualFileDeleteStrategy(parts, strategy), true
 	case "read_visible_file_content":
 		return contextualFileReadStrategy(parts, strategy), true
-	case "answer_or_explain_zgi_context":
+	case "answer_or_explain_console_context":
+		strategy.Intent = intent.Intent
 		strategy.ToolChoiceMode = aiChatTurnToolChoiceModelDecides
 		if skillIDEnabled(parts.SkillIDs, skills.SkillConsoleNavigator) {
 			strategy.SupportingSkills = appendUniqueStrings(strategy.SupportingSkills, skills.SkillConsoleNavigator)

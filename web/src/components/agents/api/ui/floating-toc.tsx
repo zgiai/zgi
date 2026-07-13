@@ -10,7 +10,7 @@ export function FloatingToc({ rootRef }: { rootRef: React.RefObject<HTMLElement>
   const [open, setOpen] = React.useState(true);
 
   return (
-    <div className={cn('fixed top-20 right-4 z-50 flex flex-col items-end')}>
+    <div className={cn('sticky top-4 z-10 flex w-[280px] flex-col items-end')}>
       <Button
         variant="outline"
         isIcon

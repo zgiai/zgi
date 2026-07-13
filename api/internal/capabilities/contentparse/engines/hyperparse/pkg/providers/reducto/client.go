@@ -26,22 +26,29 @@ const (
 
 type Client struct{}
 
+type runtimeConfig struct {
+	enabled bool
+	baseURL string
+	apiKey  string
+	timeout time.Duration
+}
+
 func New() *Client { return &Client{} }
 
 func Configured() bool {
-	return reductoEnabled() && envconfig.String("REDUCTO_API_KEY") != ""
+	return configured(defaultRuntimeConfig())
 }
 
 func (c *Client) ParseBytes(ctx context.Context, filename string, data []byte, opts extractcommon.ParseOptions) (*extractcommon.DocumentResult, error) {
-	_ = opts
-	if !Configured() {
+	config := runtimeConfigForOptions(opts)
+	if !configured(config) {
 		return nil, fmt.Errorf("REDUCTO_ENABLED/REDUCTO_API_KEY is not configured")
 	}
-	fileID, err := upload(ctx, filename, data)
+	fileID, err := upload(ctx, config, filename, data)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := parse(ctx, fileID)
+	resp, err := parse(ctx, config, fileID)
 	if err != nil {
 		return nil, err
 	}
@@ -50,11 +57,11 @@ func (c *Client) ParseBytes(ctx context.Context, filename string, data []byte, o
 }
 
 func (c *Client) ParseInput(ctx context.Context, input string, opts extractcommon.ParseOptions) (*extractcommon.DocumentResult, error) {
-	_ = opts
-	if !Configured() {
+	config := runtimeConfigForOptions(opts)
+	if !configured(config) {
 		return nil, fmt.Errorf("REDUCTO_ENABLED/REDUCTO_API_KEY is not configured")
 	}
-	resp, err := parse(ctx, strings.TrimSpace(input))
+	resp, err := parse(ctx, config, strings.TrimSpace(input))
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +96,45 @@ func timeout() time.Duration {
 	return defaultTimeout
 }
 
-func upload(ctx context.Context, filename string, data []byte) (string, error) {
+func defaultRuntimeConfig() runtimeConfig {
+	return runtimeConfig{
+		enabled: reductoEnabled(),
+		baseURL: baseURL(),
+		apiKey:  envconfig.String("REDUCTO_API_KEY"),
+		timeout: timeout(),
+	}
+}
+
+func runtimeConfigForOptions(opts extractcommon.ParseOptions) runtimeConfig {
+	runtime := opts.ProviderRuntime
+	if !strings.EqualFold(strings.TrimSpace(runtime.ProviderKey), "reducto") {
+		return defaultRuntimeConfig()
+	}
+	enabled := true
+	if runtime.Enabled != nil {
+		enabled = *runtime.Enabled
+	}
+	base := strings.TrimRight(strings.TrimSpace(runtime.BaseURL), "/")
+	if base == "" {
+		base = defaultBaseURL
+	}
+	requestTimeout := defaultTimeout
+	if runtime.TimeoutSeconds > 0 {
+		requestTimeout = time.Duration(runtime.TimeoutSeconds) * time.Second
+	}
+	return runtimeConfig{
+		enabled: enabled,
+		baseURL: base,
+		apiKey:  strings.TrimSpace(runtime.APIKey),
+		timeout: requestTimeout,
+	}
+}
+
+func configured(config runtimeConfig) bool {
+	return config.enabled && config.apiKey != ""
+}
+
+func upload(ctx context.Context, config runtimeConfig, filename string, data []byte) (string, error) {
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 	part, err := mw.CreateFormFile("file", filepath.Base(filename))
@@ -103,13 +148,13 @@ func upload(ctx context.Context, filename string, data []byte) (string, error) {
 		return "", fmt.Errorf("reducto: close multipart: %w", err)
 	}
 
-	reqCtx, cancel := context.WithTimeout(ctx, timeout())
+	reqCtx, cancel := context.WithTimeout(ctx, config.timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, baseURL()+"/upload", &body)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, config.baseURL+"/upload", &body)
 	if err != nil {
 		return "", fmt.Errorf("reducto: new upload request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+envconfig.String("REDUCTO_API_KEY"))
+	req.Header.Set("Authorization", "Bearer "+config.apiKey)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 
 	resp, err := http.DefaultClient.Do(req)
@@ -183,7 +228,7 @@ type parseBlock struct {
 	ImageURL           string         `json:"image_url,omitempty"`
 }
 
-func parse(ctx context.Context, input string) (*parseResponse, error) {
+func parse(ctx context.Context, config runtimeConfig, input string) (*parseResponse, error) {
 	reqBody := map[string]any{
 		"input": input,
 		"formatting": map[string]any{
@@ -204,13 +249,13 @@ func parse(ctx context.Context, input string) (*parseResponse, error) {
 		return nil, fmt.Errorf("reducto: marshal parse request: %w", err)
 	}
 
-	reqCtx, cancel := context.WithTimeout(ctx, timeout())
+	reqCtx, cancel := context.WithTimeout(ctx, config.timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, baseURL()+"/parse", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, config.baseURL+"/parse", bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("reducto: new parse request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+envconfig.String("REDUCTO_API_KEY"))
+	req.Header.Set("Authorization", "Bearer "+config.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -230,7 +275,7 @@ func parse(ctx context.Context, input string) (*parseResponse, error) {
 		return nil, fmt.Errorf("reducto: decode parse response: %w", err)
 	}
 	if strings.EqualFold(parsed.Result.Type, "url") && strings.TrimSpace(parsed.Result.URL) != "" {
-		chunks, err := fetchURLChunks(ctx, parsed.Result.URL)
+		chunks, err := fetchURLChunks(ctx, config, parsed.Result.URL)
 		if err != nil {
 			return nil, err
 		}
@@ -239,8 +284,8 @@ func parse(ctx context.Context, input string) (*parseResponse, error) {
 	return &parsed, nil
 }
 
-func fetchURLChunks(ctx context.Context, resultURL string) ([]parseChunk, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, timeout())
+func fetchURLChunks(ctx context.Context, config runtimeConfig, resultURL string) ([]parseChunk, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, config.timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, resultURL, nil)
 	if err != nil {

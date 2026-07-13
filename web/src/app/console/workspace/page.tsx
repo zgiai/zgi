@@ -29,10 +29,7 @@ import { useT, type WorkspaceKey } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { useCurrentWorkspace } from '@/store/workspace-store';
 import { formatAiCreditFiatEstimate, formatChannelCreditPoints } from '@/utils/ai-credits';
-import {
-  normalizeOrganizationRole,
-  normalizeWorkspaceMemberRole,
-} from '@/utils/role-labels';
+import { normalizeOrganizationRole, normalizeWorkspaceMemberRole } from '@/utils/role-labels';
 import {
   AGENT_VISIBLE_PERMISSION_CODES,
   DATABASE_VISIBLE_PERMISSION_CODES,
@@ -180,7 +177,9 @@ export default function WorkspacePage() {
           ? t(`workspace.members.roles.${normalizedWorkspaceRole}` as WorkspaceKey)
           : t('workspace.overview.permissions.roleFallback'));
   const organizationRoleLabel = normalizedOrganizationRole
-    ? t(`workspace.overview.permissions.organizationRoles.${normalizedOrganizationRole}` as WorkspaceKey)
+    ? t(
+        `workspace.overview.permissions.organizationRoles.${normalizedOrganizationRole}` as WorkspaceKey
+      )
     : t('workspace.overview.permissions.organizationRoleFallback');
   const workspaceQuotaBalance = workspaceQuota?.remain_quota ?? 0;
   const quotaBalanceValue = !hasQuotaData
@@ -342,8 +341,8 @@ export default function WorkspacePage() {
   }
 
   return (
-    <div className="mx-auto flex h-full max-w-7xl flex-col px-6 py-6">
-      <header className="mb-5 flex flex-col gap-4 border-b border-border/70 pb-5 lg:flex-row lg:items-start lg:justify-between">
+    <div className="mx-auto flex h-full max-w-7xl flex-col px-4 py-5 @md/console:px-6 @md/console:py-6">
+      <header className="mb-5 flex flex-col gap-4 border-b border-border/70 pb-5 @4xl/console:flex-row @4xl/console:items-start @4xl/console:justify-between">
         <div className="min-w-0">
           <div className="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
             {t('workspace.overview.eyebrow')}
@@ -363,13 +362,15 @@ export default function WorkspacePage() {
           disabled={isStatsLoading || isStatsFetching || isQuotaBusy}
           className="self-start"
         >
-          <RefreshCw className={`size-4 ${isStatsFetching || isQuotaFetching ? 'animate-spin' : ''}`} />
+          <RefreshCw
+            className={`size-4 ${isStatsFetching || isQuotaFetching ? 'animate-spin' : ''}`}
+          />
           {t('common.refresh')}
         </Button>
       </header>
 
       <main className="min-h-0 flex-1 space-y-5 overflow-y-auto">
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <section className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-4">
           <Card className="h-full border-border/80 shadow-sm">
             <CardHeader className="p-4 pb-3">
               <div className="flex items-center justify-between gap-3">
@@ -434,19 +435,17 @@ export default function WorkspacePage() {
           })}
         </section>
 
-        <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <section className="grid gap-5 @6xl/console:grid-cols-[minmax(0,1fr)_360px]">
           <Card className="border-border/80 shadow-sm">
             <CardHeader>
               <SectionLabel>{t('workspace.overview.management.eyebrow')}</SectionLabel>
-              <CardTitle className="text-lg">
-                {t('workspace.overview.management.title')}
-              </CardTitle>
+              <CardTitle className="text-lg">{t('workspace.overview.management.title')}</CardTitle>
               <CardDescription className="mt-2 leading-6">
                 {t('workspace.overview.management.description')}
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-3 md:grid-cols-2">
+              <div className="grid gap-3 @3xl/console:grid-cols-2">
                 {actionEntries.map(entry => (
                   <ActionTile key={entry.key} entry={entry} />
                 ))}
@@ -457,9 +456,7 @@ export default function WorkspacePage() {
           <Card className="border-border/80 shadow-sm">
             <CardHeader>
               <SectionLabel>{t('workspace.overview.permissions.eyebrow')}</SectionLabel>
-              <CardTitle className="text-lg">
-                {t('workspace.overview.permissions.title')}
-              </CardTitle>
+              <CardTitle className="text-lg">{t('workspace.overview.permissions.title')}</CardTitle>
               <CardDescription className="mt-2 leading-6">
                 {t('workspace.overview.permissions.description')}
               </CardDescription>
@@ -481,10 +478,7 @@ export default function WorkspacePage() {
 
               <div className="divide-y divide-border/70 rounded-lg border border-border/70">
                 {permissionItems.map(item => (
-                  <div
-                    key={item.key}
-                    className="flex items-center justify-between gap-3 px-4 py-3"
-                  >
+                  <div key={item.key} className="flex items-center justify-between gap-3 px-4 py-3">
                     <span className="min-w-0 text-sm font-medium text-foreground">
                       {item.label}
                     </span>
@@ -495,7 +489,7 @@ export default function WorkspacePage() {
             </CardContent>
           </Card>
 
-          <Card className="border-border/80 shadow-sm xl:col-span-2">
+          <Card className="border-border/80 shadow-sm @6xl/console:col-span-2">
             <CardHeader>
               <SectionLabel>{t('workspace.overview.governance.eyebrow')}</SectionLabel>
               <CardTitle className="text-lg">
@@ -510,7 +504,7 @@ export default function WorkspacePage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-3 md:grid-cols-2">
+              <div className="grid gap-3 @3xl/console:grid-cols-2">
                 <div className="rounded-lg border border-border/70 p-4">
                   <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                     <ShieldCheck className="size-4 text-muted-foreground" />

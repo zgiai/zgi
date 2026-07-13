@@ -39,7 +39,7 @@ function HeaderToolbarBase({
   );
 
   return (
-    <div className="flex items-center justify-between">
+    <div className="flex flex-col gap-4 @3xl/console:flex-row @3xl/console:items-center @3xl/console:justify-between">
       <div className="flex items-center gap-2">
         {!isRootView && onBack && (
           <Button
@@ -63,9 +63,9 @@ function HeaderToolbarBase({
         </Button>
       </div>
 
-      <div className="flex gap-3">
+      <div className="flex w-full flex-col gap-3 @3xl/console:w-auto @3xl/console:flex-row">
         {/* Search Bar */}
-        <div className="relative max-w-md">
+        <div className="relative w-full @3xl/console:max-w-md">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder={searchPlaceholder}

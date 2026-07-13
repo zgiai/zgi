@@ -129,6 +129,10 @@ function ChatPageContent() {
           modelSelectorValue={modelSelectorValue}
           isModelInitializing={isModelInitializing}
           onModelChange={handleModelChange}
+          showMemoryToggle={false}
+          homeTitle={t('consoleChat.homeTitle')}
+          homeDescription={t('consoleChat.homeDescription')}
+          inputPlaceholder={t('consoleChat.inputPlaceholder')}
           onSelectConversation={handleSelectConversation}
           onStartNewConversation={handleStartNewConversation}
         />

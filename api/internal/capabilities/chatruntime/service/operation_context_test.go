@@ -272,7 +272,7 @@ func TestOperationContextDoesNotEnterModelContentAndRuntimeContextRemainsTransie
 		t.Fatalf("content type = %T, want string", content)
 	}
 	for _, want := range []string{
-		"Transient ZGI page context",
+		"Transient console page context",
 		runtimeContext,
 		"User request:",
 		"Use the visible page context.",

@@ -475,60 +475,6 @@ func TestAgentManagementBatchDeleteWithGovernanceRecordsObservation(t *testing.T
 	}
 }
 
-func TestAgentManagementIntentIgnoresNegatedFileMutationConstraint(t *testing.T) {
-	query := "\u8bf7\u5148\u5207\u5230\u667a\u80fd\u4f53\u9875\uff0c\u7136\u540e\u518d\u5207\u56de\u6587\u4ef6\u7ba1\u7406\u9875\uff1b\u4e0d\u8981\u521b\u5efa\u3001\u4fdd\u5b58\u3001\u5220\u9664\u6587\u4ef6\u3002"
-	if isAgentManagementIntent(query) {
-		t.Fatal("isAgentManagementIntent() = true, want false for navigation with negated file mutation constraint")
-	}
-	if isFileDeleteIntent(query) {
-		t.Fatal("isFileDeleteIntent() = true, want false for negated delete constraint")
-	}
-	assetQuery := "\u8bf7\u8fde\u7eed\u5bfc\u822a\u5e76\u89c2\u5bdf\u9875\u9762\uff0c\u4e0d\u8981\u521b\u5efa\u6216\u5220\u9664\u4efb\u4f55\u8d44\u4ea7\u3002"
-	if isFileDeleteIntent(assetQuery) {
-		t.Fatal("isFileDeleteIntent() = true, want false for negated asset delete constraint")
-	}
-	deleteWithTargetFreezeQuery := "\u8bf7\u5148\u57fa\u4e8e\u5f53\u524d\u6587\u4ef6\u7ba1\u7406\u9875\u9762\u6700\u65b0\u53ef\u89c1\u5217\u8868\u51bb\u7ed3\u201c\u5f53\u524d\u7b2c\u4e09\u4e2a\u6587\u4ef6\u201d\u4e3a\u5220\u9664\u76ee\u6807\uff0c\u7136\u540e\u5220\u9664\u8fd9\u4e2a\u51bb\u7ed3\u76ee\u6807\u3002\u6700\u7ec8\u56de\u7b54\u8bf7\u5199\u51fa\u88ab\u51bb\u7ed3\u5e76\u5220\u9664\u7684\u6587\u4ef6\u540d\uff0c\u4e14\u4e0d\u8981\u91cd\u65b0\u89e3\u6790\u7b2c\u4e09\u4e2a\u6587\u4ef6\u3002"
-	if !isFileDeleteIntent(deleteWithTargetFreezeQuery) {
-		t.Fatal("isFileDeleteIntent() = false, want true for delete request with target-freeze negation")
-	}
-	if isTemporaryFileGenerateIntent(deleteWithTargetFreezeQuery) {
-		t.Fatal("isTemporaryFileGenerateIntent() = true, want false for delete request with target-freeze negation")
-	}
-}
-
-func TestAgentManagementIntentIgnoresFileContentAgentNameReference(t *testing.T) {
-	query := "\u518d\u8fdb\u5165\u6587\u4ef6\u7ba1\u7406\uff0c\u521b\u5efa\u5e76\u4fdd\u5b58 smoke.txt\uff1btxt \u5185\u5bb9\u5199\u5165\u8bfb\u53d6\u5230\u7684\u667a\u80fd\u4f53\u540d\u79f0"
-	if isAgentManagementIntent(query) {
-		t.Fatal("isAgentManagementIntent() = true, want false for file content referencing an Agent name")
-	}
-	if !isManagedFileCreateIntent(query) {
-		t.Fatal("isManagedFileCreateIntent() = false, want true for managed file create")
-	}
-}
-
-func TestAgentManagementIntentRecognizesNearbyAgentMutation(t *testing.T) {
-	for _, query := range []string{
-		"\u4fee\u6539\u667a\u80fd\u4f53\u540d\u79f0",
-		"\u628a\u7b2c\u4e00\u4e2a\u667a\u80fd\u4f53\u7684\u56fe\u6807\u6539\u6389",
-		"\u8bf7\u628a\u5f53\u524d\u667a\u80fd\u4f53\u7684\u56fe\u8868\u751f\u6210\u5668 Skill \u89e3\u7ed1/\u505c\u7528",
-		"agent.update_identity",
-	} {
-		if !isAgentManagementIntent(query) {
-			t.Fatalf("isAgentManagementIntent(%q) = false, want true", query)
-		}
-	}
-}
-
-func TestAgentManagementIntentRecognizesConfigEditWithFileUploadAndSkillCandidate(t *testing.T) {
-	query := "edit current agent config; enable \u6587\u4ef6\u4e0a\u4f20 and memory; call list_available_models with use_case text-chat; call list_agent_skill_candidates with query \u56fe\u8868\u751f\u6210\u5668 and add that skill; \u4e0d\u8981\u7ed1\u5b9a\u77e5\u8bc6\u5e93\u3001\u6570\u636e\u5e93\u6216\u5de5\u4f5c\u6d41"
-	if !isAgentManagementIntent(query) {
-		t.Fatal("isAgentManagementIntent() = false, want true for explicit Agent config tool flow")
-	}
-	if got := requiredAgentBindingMutationTools(query); len(got) != 0 {
-		t.Fatalf("requiredAgentBindingMutationTools() = %#v, want no knowledge/database/workflow binding tools for explicit no-bind constraint", got)
-	}
-}
-
 func TestClientActionContinuationMessageIncludesPrecedingToolResult(t *testing.T) {
 	actionID := "route_navigation:call-delete"
 	message := &model.Message{
@@ -619,7 +565,7 @@ func TestClientActionContinuationMessageIncludesCompletedClientActions(t *testin
 	got := clientActionContinuationMessage(message, event, req)
 	content := stringFromAny(got.Content)
 	for _, want := range []string{
-		"Completed client actions in this same AIChat turn",
+		"Completed client actions in this same assistant turn",
 		"/console/agents",
 		"/console/files",
 		"AIChat配置验证06231035-已编辑",

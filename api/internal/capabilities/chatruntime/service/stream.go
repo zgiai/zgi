@@ -69,7 +69,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		return nil, newFinalizedStreamError(err)
 	}
 
-	if prepared.skillsEnabled() && !skillLoopShouldUsePlainStreamForPassiveAnswer(prepared) {
+	if prepared.skillsEnabled() {
 		answer, usage, err := s.runPreparedSkillStream(runCtx, persistCtx, prepared, onChunk, eventCallback)
 		usage = mergeUsage(preflightUsage, usage)
 		if err != nil {

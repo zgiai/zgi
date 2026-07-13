@@ -39,10 +39,7 @@ export default function WorkspaceMembersPage() {
   const t = useT();
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 20;
-  const {
-    isWorkspaceManager,
-    isLoading: isLoadingPermissions,
-  } = useAccountPermissions();
+  const { isWorkspaceManager, isLoading: isLoadingPermissions } = useAccountPermissions();
   const canManageWorkspaceMembers = isWorkspaceManager();
   const { members, total, isLoading, error } = useWorkspaceMembers(undefined, undefined, {
     page: currentPage,
@@ -211,9 +208,9 @@ export default function WorkspaceMembersPage() {
   }
 
   return (
-    <div className="mx-auto flex h-full max-w-7xl flex-col px-6 py-6">
+    <div className="mx-auto flex h-full max-w-7xl flex-col px-4 py-5 @md/console:px-6 @md/console:py-6">
       {/* Header */}
-      <div className="mb-5 flex items-start justify-between gap-4">
+      <div className="mb-5 flex flex-col gap-4 @md/console:flex-row @md/console:items-start @md/console:justify-between">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-foreground">
             {t('workspace.members.title')}

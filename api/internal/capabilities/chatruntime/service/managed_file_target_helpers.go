@@ -5,7 +5,18 @@ import (
 	"strings"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
+
+func hasFileManagerSaveCall(calls []skillloop.SkillToolCallRef) bool {
+	for _, call := range calls {
+		if strings.EqualFold(strings.TrimSpace(call.SkillID), skills.SkillFileManager) &&
+			strings.EqualFold(strings.TrimSpace(call.ToolName), "save_file_to_management") {
+			return true
+		}
+	}
+	return false
+}
 
 var managedFileTargetPattern = regexp.MustCompile(`(?i)([^\s，,。；;、：:（）()【】\[\]{}"'“”‘’<>]+?\.(?:txt|md|markdown|html|json|csv|svg|pdf|docx|xlsx|pptx))`)
 
@@ -39,7 +50,7 @@ func managedFileTargetFromArguments(args map[string]interface{}) requestedManage
 }
 
 func managedFileTargetFromSuccessfulCall(call skillloop.SkillToolCallRef) requestedManagedFileTarget {
-	if finalAnswerGuardHasFileManagerSaveCall([]skillloop.SkillToolCallRef{call}) {
+	if hasFileManagerSaveCall([]skillloop.SkillToolCallRef{call}) {
 		return managedFileTargetFromArguments(map[string]interface{}{
 			"filename": firstNonEmptyString(
 				call.Result["file_name"],
@@ -145,7 +156,7 @@ func missingRequestedManagedFileSaveTargets(parts *chatRequestParts, calls []ski
 	savedNames := map[string]int{}
 	savedExtensions := map[string]int{}
 	for _, call := range calls {
-		if !finalAnswerGuardHasFileManagerSaveCall([]skillloop.SkillToolCallRef{call}) {
+		if !hasFileManagerSaveCall([]skillloop.SkillToolCallRef{call}) {
 			continue
 		}
 		name := savedManagedFileName(call)
@@ -178,7 +189,7 @@ func missingRequestedManagedFileSaveTargets(parts *chatRequestParts, calls []ski
 }
 
 func savedManagedFileName(call skillloop.SkillToolCallRef) string {
-	if !finalAnswerGuardHasFileManagerSaveCall([]skillloop.SkillToolCallRef{call}) {
+	if !hasFileManagerSaveCall([]skillloop.SkillToolCallRef{call}) {
 		return ""
 	}
 	return normalizeManagedFileTargetName(firstNonEmptyString(
@@ -191,7 +202,7 @@ func savedManagedFileName(call skillloop.SkillToolCallRef) string {
 }
 
 func fileManagerSaveToolFileID(call skillloop.SkillToolCallRef) string {
-	if !finalAnswerGuardHasFileManagerSaveCall([]skillloop.SkillToolCallRef{call}) {
+	if !hasFileManagerSaveCall([]skillloop.SkillToolCallRef{call}) {
 		return ""
 	}
 	return strings.TrimSpace(firstNonEmptyString(
@@ -251,7 +262,7 @@ func normalizeManagedFileTargetExtension(extension string) string {
 }
 
 func generatedArtifactSaveArguments(call skillloop.SkillToolCallRef) map[string]interface{} {
-	if finalAnswerGuardHasFileManagerSaveCall([]skillloop.SkillToolCallRef{call}) {
+	if hasFileManagerSaveCall([]skillloop.SkillToolCallRef{call}) {
 		return nil
 	}
 	if !toolCallResultLooksLikeGeneratedArtifact(call) {

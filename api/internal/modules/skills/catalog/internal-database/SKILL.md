@@ -1,7 +1,7 @@
 ---
 name: internal-database
-description: Discover and operate database tables the current AIChat user can access.
-when_to_use: Use this skill when an internal AIChat answer needs to inspect, query, insert, update, or delete structured database records.
+description: Discover and operate database tables the current user can access.
+when_to_use: Use this skill when an assistant answer needs to inspect, query, insert, update, or delete structured database records.
 provider_type: builtin
 provider_id: database
 runtime_type: tool
@@ -166,8 +166,8 @@ display:
     en_US: Finds accessible databases, inspects tables, and performs structured record operations.
     zh_Hans: 查找可访问的数据库、查看表结构，并执行结构化记录操作。
   when_to_use:
-    en_US: Use when AIChat needs facts or changes from workspace database tables.
-    zh_Hans: 当 AIChat 需要从工作区数据库表读取事实或写入变更时使用。
+    en_US: Use when the assistant needs facts or changes from workspace database tables.
+    zh_Hans: 当助手需要从工作区数据库表读取事实或写入变更时使用。
   tags:
     en_US:
       - Database
@@ -181,7 +181,7 @@ supported_callers:
 
 # Internal Database Skill
 
-Use this skill to work with database tables the current AIChat user can access.
+Use this skill to work with database tables the current user can access.
 
 ## Workflow
 

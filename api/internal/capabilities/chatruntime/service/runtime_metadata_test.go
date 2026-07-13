@@ -88,3 +88,27 @@ func TestModelInvocationRequestPayloadRedactsEmbeddedImageDataURLText(t *testing
 		t.Fatalf("content base64 chars = %d, want %d", got, len(imageBody))
 	}
 }
+
+func TestApplyProviderPromptUsageCalibrationUsesActualPromptTokens(t *testing.T) {
+	metadata := map[string]interface{}{
+		"context_control": map[string]interface{}{
+			"estimated_prompt_tokens": 5000,
+			"prompt_budget":           64000,
+		},
+	}
+
+	calibrated := applyProviderPromptUsageCalibration(metadata, &adapter.Usage{PromptTokens: 55000})
+	contextControl := mapFromOperationContext(calibrated["context_control"])
+	if got := intValueFromAny(contextControl["provider_prompt_tokens"]); got != 55000 {
+		t.Fatalf("provider_prompt_tokens = %d, want 55000", got)
+	}
+	if got := intValueFromAny(contextControl["calibrated_prompt_tokens"]); got != 55000 {
+		t.Fatalf("calibrated_prompt_tokens = %d, want 55000", got)
+	}
+	if got, ok := contextControl["prompt_estimate_scale"].(float64); !ok || got != 11 {
+		t.Fatalf("prompt_estimate_scale = %#v, want 11", contextControl["prompt_estimate_scale"])
+	}
+	if got := stringFromAny(contextControl["prompt_estimate_source"]); got != "provider_usage" {
+		t.Fatalf("prompt_estimate_source = %q, want provider_usage", got)
+	}
+}

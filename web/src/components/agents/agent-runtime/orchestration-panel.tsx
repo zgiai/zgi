@@ -6,6 +6,8 @@ import { Separator } from '@/components/ui/separator';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
+import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
+import type { OpeningStatementDialogValue } from '@/components/workflow/ui/features-panel/opening-statement-dialog';
 import type {
   AgentDatabaseBinding,
   AgentMemorySlotConfig,
@@ -30,6 +32,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   openSections: Record<AgentConfigSection, boolean>;
   modelValue: ModelSelectorParameterValue;
   homeTitle: string;
+  openingStatement: string;
   inputPlaceholder: string;
   selectedSkills: AIChatSkillMetadata[];
   normalizedSelectedSkillIds: string[];
@@ -52,6 +55,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   agentMemorySlotValidationErrors: AgentMemorySlotValidationError[];
   defaultHomeTitle: string;
   defaultInputPlaceholder: string;
+  openingGuideBrand?: OpeningGuideBrand;
   className?: string;
   scrollAreaClassName?: string;
   scrollViewportClassName?: string;
@@ -59,6 +63,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeModelValue: (value: ModelSelectorParameterValue) => void;
   onChangeHomeTitle: (value: string) => void;
+  onChangeOpeningStatement: (value: string) => void;
   onChangeInputPlaceholder: (value: string) => void;
   onOpenSkillDialog: () => void;
   onOpenKnowledgeDialog: () => void;
@@ -67,7 +72,9 @@ interface AgentRuntimeOrchestrationPanelProps {
   onToggleKnowledgeDataset: (datasetId: string, checked: boolean) => void;
   onChangeDatabaseBindings: (value: AgentDatabaseBinding[]) => void;
   onChangeWorkflowBindings: (value: AgentWorkflowBinding[]) => void;
-  onGenerateSuggestedQuestions: () => void;
+  onGenerateSuggestedQuestions: (
+    value: OpeningStatementDialogValue
+  ) => Promise<{ questions: string[]; warnings?: string[] } | undefined>;
   onChangeSuggestedQuestions: (value: string[]) => void;
   onChangeFileUploadEnabled: (value: boolean) => void;
   onChangeAgentMemoryEnabled: (value: boolean) => void;
@@ -80,6 +87,7 @@ export function AgentRuntimeOrchestrationPanel({
   openSections,
   modelValue,
   homeTitle,
+  openingStatement,
   inputPlaceholder,
   selectedSkills,
   normalizedSelectedSkillIds,
@@ -102,6 +110,7 @@ export function AgentRuntimeOrchestrationPanel({
   agentMemorySlotValidationErrors,
   defaultHomeTitle,
   defaultInputPlaceholder,
+  openingGuideBrand,
   className,
   scrollAreaClassName,
   scrollViewportClassName,
@@ -109,6 +118,7 @@ export function AgentRuntimeOrchestrationPanel({
   onToggleSection,
   onChangeModelValue,
   onChangeHomeTitle,
+  onChangeOpeningStatement,
   onChangeInputPlaceholder,
   onOpenSkillDialog,
   onOpenKnowledgeDialog,
@@ -230,14 +240,17 @@ export function AgentRuntimeOrchestrationPanel({
           <AgentRuntimeExperienceSection
             open={openSections.experience}
             homeTitle={homeTitle}
+            openingStatement={openingStatement}
             inputPlaceholder={inputPlaceholder}
             suggestedQuestions={suggestedQuestions}
             isGeneratingSuggestions={isGeneratingSuggestions}
             defaultHomeTitle={defaultHomeTitle}
             defaultInputPlaceholder={defaultInputPlaceholder}
+            openingGuideBrand={openingGuideBrand}
             readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChangeHomeTitle={onChangeHomeTitle}
+            onChangeOpeningStatement={onChangeOpeningStatement}
             onChangeInputPlaceholder={onChangeInputPlaceholder}
             onGenerateSuggestedQuestions={onGenerateSuggestedQuestions}
             onChangeSuggestedQuestions={onChangeSuggestedQuestions}

@@ -165,7 +165,7 @@ func restoreConsoleFilesContextFromMetadata(parts *chatRequestParts, metadata ma
 		return
 	}
 
-	parts.RuntimeContext = "Restored Console Files page context from the original AIChat turn."
+	parts.RuntimeContext = "Restored Console Files page context from the original assistant turn."
 	parts.RawOperationContext = copyStringAnyMap(operationContext)
 	normalized, ledger := normalizeOperationContext(operationContext)
 	parts.OperationContext = normalized

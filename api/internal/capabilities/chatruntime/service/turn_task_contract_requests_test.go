@@ -7,7 +7,7 @@ func TestTurnTaskContractRequestsPreferExplicitContractOverLegacyKeywords(t *tes
 	parts := &chatRequestParts{
 		Query: legacyManagedCreateQuery,
 		ModelTurnIntent: &AIChatModelTurnIntent{
-			Intent: "answer_or_explain_zgi_context",
+			Intent: "answer_or_explain_console_context",
 		},
 	}
 	if turnTaskContractRequestsManagedFileCreate(parts, nil, "") {
@@ -28,7 +28,7 @@ func TestTurnTaskContractRequestsUseOperationPlanContractBeforeModelIntent(t *te
 	parts := &chatRequestParts{
 		Query: "explain what file management does",
 		ModelTurnIntent: &AIChatModelTurnIntent{
-			Intent: "answer_or_explain_zgi_context",
+			Intent: "answer_or_explain_console_context",
 		},
 	}
 	metadata := map[string]interface{}{
@@ -48,7 +48,7 @@ func TestTurnTaskContractRequestsDoNotUseLegacyKeywordsForContinuation(t *testin
 	answerParts := &chatRequestParts{
 		Query: query,
 		ModelTurnIntent: &AIChatModelTurnIntent{
-			Intent: "answer_or_explain_zgi_context",
+			Intent: "answer_or_explain_console_context",
 		},
 	}
 	if turnTaskContractRequestsFileDelete(answerParts, nil, "") {
@@ -75,7 +75,7 @@ func TestTurnTaskContractRequestsUseCapabilitiesForArtifactAndReadNeeds(t *testi
 	artifactParts := &chatRequestParts{
 		Query: "make something useful",
 		ModelTurnIntent: &AIChatModelTurnIntent{
-			Intent:                  "answer_or_explain_zgi_context",
+			Intent:                  "answer_or_explain_console_context",
 			RecommendedCapabilities: []string{"chart_artifact"},
 		},
 	}
@@ -86,7 +86,7 @@ func TestTurnTaskContractRequestsUseCapabilitiesForArtifactAndReadNeeds(t *testi
 	readParts := &chatRequestParts{
 		Query: "tell me about it",
 		ModelTurnIntent: &AIChatModelTurnIntent{
-			Intent:                  "answer_or_explain_zgi_context",
+			Intent:                  "answer_or_explain_console_context",
 			RecommendedCapabilities: []string{"visible_file_content"},
 		},
 	}

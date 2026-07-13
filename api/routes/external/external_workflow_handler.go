@@ -1123,9 +1123,23 @@ func (h *ExternalWorkflowHandler) GetAppParameters(c *gin.Context) {
 
 // validateAndProcessFileVariables validates file variables in workflow inputs
 // It checks if file IDs exist and are accessible, extracts file content, and adds _content variables
-func (h *ExternalWorkflowHandler) validateAndProcessFileVariables(ctx context.Context, inputs map[string]interface{}, tenantID string, apiKeyID string) error {
+func (h *ExternalWorkflowHandler) validateAndProcessFileVariables(ctx context.Context, inputs map[string]interface{}, workspaceID string, apiKeyID string) error {
 	if inputs == nil {
 		return nil
+	}
+
+	var extractionScope *workflow_file.ContentExtractionScope
+	getExtractionScope := func() (workflow_file.ContentExtractionScope, error) {
+		if extractionScope != nil {
+			return *extractionScope, nil
+		}
+
+		scope, err := h.resolveContentExtractionScope(ctx, workspaceID)
+		if err != nil {
+			return workflow_file.ContentExtractionScope{}, err
+		}
+		extractionScope = &scope
+		return scope, nil
 	}
 
 	fileCount := 0
@@ -1137,14 +1151,14 @@ func (h *ExternalWorkflowHandler) validateAndProcessFileVariables(ctx context.Co
 					fileCount++
 
 					// Validate file exists and is accessible
-					if err := h.validateFileAccess(ctx, fileIDStr, tenantID, apiKeyID); err != nil {
+					if err := h.validateFileAccess(ctx, fileIDStr, workspaceID, apiKeyID); err != nil {
 						return fmt.Errorf("file variable '%s' validation failed: %w", key, err)
 					}
 
 					logger.Info("External API - File variable validated",
 						"variable_name", key,
 						"file_id", fileIDStr,
-						"tenant_id", tenantID,
+						"workspace_id", workspaceID,
 					)
 
 					if h.contentExtractor == nil {
@@ -1153,7 +1167,12 @@ func (h *ExternalWorkflowHandler) validateAndProcessFileVariables(ctx context.Co
 							"file_id", fileIDStr,
 						)
 					} else {
-						processedVars, err := h.contentExtractor.ProcessFileVariable(ctx, key, fileData, tenantID)
+						scope, err := getExtractionScope()
+						if err != nil {
+							return fmt.Errorf("file variable '%s' content extraction scope resolution failed: %w", key, err)
+						}
+
+						processedVars, err := h.contentExtractor.ProcessFileVariable(ctx, key, fileData, scope)
 						if err != nil {
 							logger.Warn("External API - File content extraction failed",
 								"variable_name", key,
@@ -1168,7 +1187,7 @@ func (h *ExternalWorkflowHandler) validateAndProcessFileVariables(ctx context.Co
 									inputs[k] = v
 									logger.Info("External API - Added file content variable",
 										"variable_name", k,
-										"tenant_id", tenantID,
+										"workspace_id", workspaceID,
 									)
 								}
 							}
@@ -1189,7 +1208,7 @@ func (h *ExternalWorkflowHandler) validateAndProcessFileVariables(ctx context.Co
 							fileCount++
 
 							// Validate file exists and is accessible
-							if err := h.validateFileAccess(ctx, fileIDStr, tenantID, apiKeyID); err != nil {
+							if err := h.validateFileAccess(ctx, fileIDStr, workspaceID, apiKeyID); err != nil {
 								return fmt.Errorf("file list variable '%s[%d]' validation failed: %w", key, i, err)
 							}
 
@@ -1197,7 +1216,7 @@ func (h *ExternalWorkflowHandler) validateAndProcessFileVariables(ctx context.Co
 								"variable_name", key,
 								"index", i,
 								"file_id", fileIDStr,
-								"tenant_id", tenantID,
+								"workspace_id", workspaceID,
 							)
 						}
 					}
@@ -1208,12 +1227,17 @@ func (h *ExternalWorkflowHandler) validateAndProcessFileVariables(ctx context.Co
 			if hasFileObjects && h.contentExtractor == nil {
 				logger.Warn("External API - Content extractor not available, skipping file list content extraction",
 					"variable_name", key,
-					"tenant_id", tenantID,
+					"workspace_id", workspaceID,
 				)
 			}
 
 			if hasFileObjects && h.contentExtractor != nil {
-				processedVars, err := h.contentExtractor.ProcessFileListVariable(ctx, key, fileList, tenantID)
+				scope, err := getExtractionScope()
+				if err != nil {
+					return fmt.Errorf("file list variable '%s' content extraction scope resolution failed: %w", key, err)
+				}
+
+				processedVars, err := h.contentExtractor.ProcessFileListVariable(ctx, key, fileList, scope)
 				if err != nil {
 					logger.Warn("External API - File list content extraction failed",
 						"variable_name", key,
@@ -1227,7 +1251,7 @@ func (h *ExternalWorkflowHandler) validateAndProcessFileVariables(ctx context.Co
 							inputs[k] = v
 							logger.Info("External API - Added file list content variable",
 								"variable_name", k,
-								"tenant_id", tenantID,
+								"workspace_id", workspaceID,
 							)
 						}
 					}
@@ -1239,11 +1263,34 @@ func (h *ExternalWorkflowHandler) validateAndProcessFileVariables(ctx context.Co
 	if fileCount > 0 {
 		logger.Info("External API - File variables processed",
 			"file_count", fileCount,
-			"tenant_id", tenantID,
+			"workspace_id", workspaceID,
 		)
 	}
 
 	return nil
+}
+
+func (h *ExternalWorkflowHandler) resolveContentExtractionScope(ctx context.Context, workspaceID string) (workflow_file.ContentExtractionScope, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return workflow_file.ContentExtractionScope{}, errors.New("workspace ID is required")
+	}
+	if h.enterpriseService == nil {
+		return workflow_file.ContentExtractionScope{}, errors.New("organization service is unavailable")
+	}
+
+	organization, err := h.enterpriseService.GetOrganizationByWorkspaceID(ctx, workspaceID)
+	if err != nil {
+		return workflow_file.ContentExtractionScope{}, fmt.Errorf("resolve organization for workspace %q: %w", workspaceID, err)
+	}
+	if organization == nil || strings.TrimSpace(organization.ID) == "" {
+		return workflow_file.ContentExtractionScope{}, fmt.Errorf("organization for workspace %q was not found", workspaceID)
+	}
+
+	return workflow_file.ContentExtractionScope{
+		OrganizationID: organization.ID,
+		WorkspaceID:    workspaceID,
+	}, nil
 }
 
 // validateFileAccess validates that a file exists and is accessible by the tenant

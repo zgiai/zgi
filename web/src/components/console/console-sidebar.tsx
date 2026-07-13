@@ -24,6 +24,7 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { WorkspaceSwitcher } from './team-switcher';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { useWorkspaceStore } from '@/store/workspace-store';
@@ -67,6 +68,17 @@ interface RootRouteItem {
 }
 
 const STORAGE_KEY = 'zgi:console:sidebar:groups';
+
+function CollapsedNavTooltip({ label, children }: { label: string; children: React.ReactElement }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side="right" sideOffset={8} className="px-2.5 py-1.5 text-xs">
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 function getDatasetReturnTo(value: string | null): string | null {
   if (!value) return null;
@@ -141,7 +153,13 @@ function filterConsoleNavGroups(
     .filter(group => group.items.length > 0);
 }
 
-export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
+export function ConsoleSidebar({
+  hidden,
+  temporarilyCollapsed = false,
+}: {
+  hidden?: boolean;
+  temporarilyCollapsed?: boolean;
+}) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const t = useT('navigation');
@@ -155,11 +173,13 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
   const isDebugFocusMode = useWorkflowDebugFocusMode();
 
   // Collapsed state persisted via ui-local helpers
-  const [isCollapsed, setIsCollapsed] = usePersistentSidebarCollapse(
+  const [persistedIsCollapsed, setIsCollapsed] = usePersistentSidebarCollapse(
     'console',
     false,
-    isDebugFocusMode
+    isDebugFocusMode || temporarilyCollapsed
   );
+  const isTemporarilyCollapsed = isDebugFocusMode || temporarilyCollapsed;
+  const isCollapsed = isTemporarilyCollapsed || persistedIsCollapsed;
 
   const toggleCollapse = () => setIsCollapsed(prev => !prev);
 
@@ -309,6 +329,31 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
     []
   );
 
+  const homeNavLink = (
+    <Link
+      href="/console"
+      className={cn(
+        'flex items-center gap-2 rounded-md py-1.5 text-[13px] transition-colors shrink-0 w-full',
+        isCollapsed ? 'justify-center px-0 w-8' : 'justify-start px-2',
+        'text-foreground/70 hover:bg-muted/70 hover:text-foreground',
+        pathname === '/console' && 'bg-muted/80 text-foreground'
+      )}
+    >
+      <Home
+        size={16}
+        className={cn('shrink-0 text-foreground/65', pathname === '/console' && 'text-foreground')}
+      />
+      <span
+        className={cn(
+          'truncate transition-all duration-300 opacity-100 font-normal',
+          isCollapsed && 'ml-0 opacity-0 w-0 hidden'
+        )}
+      >
+        {t('home')}
+      </span>
+    </Link>
+  );
+
   const sidebarContent = (
     <div className="flex flex-col flex-1 h-full overflow-hidden">
       {/* Workspace Switcher */}
@@ -322,32 +367,11 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
           isCollapsed ? 'items-center' : 'items-start'
         )}
       >
-        <Link
-          href="/console"
-          className={cn(
-            'flex items-center gap-2 rounded-md py-1.5 text-[13px] transition-colors shrink-0 w-full',
-            // Adjust padding based on collapse state
-            isCollapsed ? 'justify-center px-0 w-8' : 'justify-start px-2',
-            'text-foreground/70 hover:bg-muted/70 hover:text-foreground',
-            pathname === '/console' && 'bg-muted/80 text-foreground'
-          )}
-        >
-          <Home
-            size={16}
-            className={cn(
-              'shrink-0 text-foreground/65',
-              pathname === '/console' && 'text-foreground'
-            )}
-          />
-          <span
-            className={cn(
-              'truncate transition-all duration-300 opacity-100 font-normal',
-              isCollapsed && 'ml-0 opacity-0 w-0 hidden'
-            )}
-          >
-            {t('home')}
-          </span>
-        </Link>
+        {isCollapsed ? (
+          <CollapsedNavTooltip label={t('home')}>{homeNavLink}</CollapsedNavTooltip>
+        ) : (
+          homeNavLink
+        )}
 
         {navGroups.map(group => {
           // If collapsed, we flatten the structure visually (hide headers, show items)
@@ -356,21 +380,21 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
               const Icon = item.icon;
               const isActive = isItemActive(activePathname, item.href);
               return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    'flex w-8 items-center justify-center rounded-md py-1.5 text-[13px] font-medium transition-colors',
-                    'text-foreground/70 hover:bg-muted/70 hover:text-foreground',
-                    isActive && 'bg-muted/80 text-foreground'
-                  )}
-                  title={item.title}
-                >
-                  <Icon
-                    size={16}
-                    className={cn('shrink-0 text-foreground/65', isActive && 'text-foreground')}
-                  />
-                </Link>
+                <CollapsedNavTooltip key={item.href} label={item.title}>
+                  <Link
+                    href={item.href}
+                    className={cn(
+                      'flex w-8 items-center justify-center rounded-md py-1.5 text-[13px] font-medium transition-colors',
+                      'text-foreground/70 hover:bg-muted/70 hover:text-foreground',
+                      isActive && 'bg-muted/80 text-foreground'
+                    )}
+                  >
+                    <Icon
+                      size={16}
+                      className={cn('shrink-0 text-foreground/65', isActive && 'text-foreground')}
+                    />
+                  </Link>
+                </CollapsedNavTooltip>
               );
             });
           }
@@ -440,9 +464,8 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
               const Icon = item.icon;
               const isActive = isRootRouteItemActive(activePathname, item);
 
-              return (
+              const rootLink = (
                 <Link
-                  key={item.key}
                   href={item.href}
                   target={item.target}
                   rel={item.target === '_blank' ? 'noreferrer' : undefined}
@@ -452,7 +475,6 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
                     'text-foreground/70 hover:bg-muted/70 hover:text-foreground',
                     isActive && 'bg-muted/80 text-foreground'
                   )}
-                  title={item.title}
                 >
                   <Icon
                     size={16}
@@ -469,6 +491,14 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
                   </span>
                 </Link>
               );
+
+              return isCollapsed ? (
+                <CollapsedNavTooltip key={item.key} label={item.title}>
+                  {rootLink}
+                </CollapsedNavTooltip>
+              ) : (
+                <React.Fragment key={item.key}>{rootLink}</React.Fragment>
+              );
             })}
           </div>
         ) : null}
@@ -482,41 +512,42 @@ export function ConsoleSidebar({ hidden }: { hidden?: boolean }) {
   return (
     <aside
       className={cn(
-        'hidden md:flex md:flex-col shrink-0 border-r border-border/60 bg-background text-sidebar-foreground transition-all duration-300',
+        'hidden md:flex md:flex-col shrink-0 border-r border-border/60 bg-background text-sidebar-foreground transition-[width] duration-300 ease-in-out',
         isCollapsed ? 'w-12' : 'w-44'
       )}
     >
       {sidebarContent}
-      {/* Collapse toggle button */}
-      <div className={cn('shrink-0 flex p-2 pt-1', isCollapsed && 'justify-center')}>
-        <Button
-          onClick={toggleCollapse}
-          variant="ghost"
-          size="xs"
-          aria-label={isCollapsed ? t('expand') : t('collapse')}
-          className={cn(
-            'flex h-7 items-center rounded-md py-0 text-[13px] font-medium transition-colors gap-0',
-            isCollapsed ? 'justify-center w-8 px-0' : 'justify-start w-full px-2',
-            'text-foreground/70 hover:bg-muted/70 hover:text-foreground'
-          )}
-        >
-          <ArrowRightToLine
-            size={16}
+      {!isTemporarilyCollapsed ? (
+        <div className={cn('shrink-0 flex p-2 pt-1', isCollapsed && 'justify-center')}>
+          <Button
+            onClick={toggleCollapse}
+            variant="ghost"
+            size="xs"
+            aria-label={isCollapsed ? t('expand') : t('collapse')}
             className={cn(
-              'shrink-0 transition-transform duration-300',
-              !isCollapsed && 'rotate-180'
-            )}
-          />
-          <span
-            className={cn(
-              'truncate transition-all duration-300 ml-2 opacity-100 font-normal',
-              isCollapsed && 'ml-0 opacity-0 w-0 hidden'
+              'flex h-7 items-center rounded-md py-0 text-[13px] font-medium transition-colors gap-0',
+              isCollapsed ? 'justify-center w-8 px-0' : 'justify-start w-full px-2',
+              'text-foreground/70 hover:bg-muted/70 hover:text-foreground'
             )}
           >
-            {isCollapsed ? t('expand') : t('collapse')}
-          </span>
-        </Button>
-      </div>
+            <ArrowRightToLine
+              size={16}
+              className={cn(
+                'shrink-0 transition-transform duration-300',
+                !isCollapsed && 'rotate-180'
+              )}
+            />
+            <span
+              className={cn(
+                'truncate transition-all duration-300 ml-2 opacity-100 font-normal',
+                isCollapsed && 'ml-0 opacity-0 w-0 hidden'
+              )}
+            >
+              {isCollapsed ? t('expand') : t('collapse')}
+            </span>
+          </Button>
+        </div>
+      ) : null}
     </aside>
   );
 }

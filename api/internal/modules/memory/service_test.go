@@ -458,6 +458,27 @@ func TestRenderContextReturnsEmptyWhenMemoryDisabled(t *testing.T) {
 	}
 }
 
+func TestEnsureRuntimeEnabledEnablesBackendManagedMemory(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newTestService()
+	accountID := uuid.New()
+
+	if err := svc.EnsureRuntimeEnabled(ctx, accountID); err != nil {
+		t.Fatalf("EnsureRuntimeEnabled() error = %v", err)
+	}
+	enabled, err := svc.IsEnabled(ctx, accountID)
+	if err != nil {
+		t.Fatalf("IsEnabled() error = %v", err)
+	}
+	if !enabled {
+		t.Fatal("IsEnabled() = false, want backend-managed memory enabled")
+	}
+
+	if err := svc.EnsureRuntimeEnabled(ctx, accountID); err != nil {
+		t.Fatalf("second EnsureRuntimeEnabled() error = %v", err)
+	}
+}
+
 func TestListTemporaryEntriesCanReturnExpiredHistory(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService()

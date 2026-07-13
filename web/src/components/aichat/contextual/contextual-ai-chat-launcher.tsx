@@ -1,7 +1,7 @@
 'use client';
 
-import { Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { AIChatBrandMark } from '@/components/chat/variants/aichat/brand-mark';
 import { useT } from '@/i18n/translations';
 import { cn } from '@/lib/utils';
 import { useContextualAIChat } from './contextual-ai-chat-context';
@@ -12,9 +12,11 @@ interface ContextualAIChatLauncherProps {
 }
 
 export function ContextualAIChatLauncher({ className, compact }: ContextualAIChatLauncherProps) {
-  const { isOpen, setOpen } = useContextualAIChat();
+  const { isAvailable, isOpen, setOpen } = useContextualAIChat();
   const t = useT('webapp');
   const assistantLabel = t('consoleChat.contextual.assistantLabel');
+
+  if (!isAvailable) return null;
 
   return (
     <Button
@@ -24,7 +26,7 @@ export function ContextualAIChatLauncher({ className, compact }: ContextualAICha
       size={compact ? 'default' : 'sm'}
       isIcon={compact}
       className={cn(
-        'border-primary/25 bg-primary/5 text-primary hover:bg-primary/10 hover:text-primary',
+        'hidden border-primary/25 bg-primary/5 text-primary hover:bg-primary/10 hover:text-primary lg:inline-flex',
         !compact && 'gap-2',
         className
       )}
@@ -32,7 +34,7 @@ export function ContextualAIChatLauncher({ className, compact }: ContextualAICha
       title={assistantLabel}
       aria-pressed={isOpen}
     >
-      <Sparkles className="size-4" />
+      <AIChatBrandMark variant="compact" />
       {!compact ? <span className="hidden lg:inline">{assistantLabel}</span> : null}
     </Button>
   );

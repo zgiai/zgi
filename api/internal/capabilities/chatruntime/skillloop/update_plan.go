@@ -9,7 +9,7 @@ import (
 
 const maxPlanPhases = 16
 
-func (r *Runner) handleUpdatePlanCall(callID string, args map[string]interface{}, evidence map[string]interface{}) skillStepResult {
+func (r *Runner) handleUpdatePlanCall(callID string, args map[string]interface{}, evidence map[string]interface{}, round int) skillStepResult {
 	phases, err := normalizePlanSnapshot(args["plan"])
 	if err != nil {
 		trace := failedSkillTrace("plan_update", skills.MetaToolUpdatePlan, err)
@@ -29,6 +29,7 @@ func (r *Runner) handleUpdatePlanCall(callID string, args map[string]interface{}
 		Status:   "success",
 		Arguments: map[string]interface{}{
 			"phase_count": len(phases),
+			"round":       round,
 		},
 		Result: result,
 	}

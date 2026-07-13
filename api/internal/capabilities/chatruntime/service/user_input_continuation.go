@@ -357,6 +357,7 @@ func (s *service) prepareUserInputContinuationChat(ctx context.Context, scope Sc
 	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
 		return nil, err
 	}
+	applyManagedUserMemoryPolicy(Caller{Type: runtimemodel.ConversationCallerAIChat}, parts)
 	if err := s.applySkillConfig(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, nil, parts); err != nil {
 		return nil, err
 	}
@@ -396,7 +397,7 @@ func userInputContinuationMessage(message *runtimemodel.Message, request map[str
 	return adapter.Message{
 		Role: "user",
 		Content: strings.Join([]string{
-			"This is the user's clarification for the same AIChat turn.",
+			"This is the user's clarification for the same assistant turn.",
 			"Continue the unfinished task from the authoritative same-turn state. Do not restart completed work and do not ask the same question again.",
 			"Before calling any remaining business tool, revise the current plan with update_plan so it reflects this clarification. You may call update_plan first and the next business tool in the same assistant response.",
 			"Preserve completed phases and their evidence_refs. Change only the pending or ambiguous phases affected by the clarification.",

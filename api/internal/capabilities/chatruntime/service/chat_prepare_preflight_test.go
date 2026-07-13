@@ -6,7 +6,43 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
+
+func TestContextualPreparePreflightsDoNotClassifyTurnIntent(t *testing.T) {
+	fakeLLM := &fakeAgentMemoryPlannerLLM{}
+	svc := &service{llmClient: fakeLLM}
+	parts := &chatRequestParts{
+		Query:     "open files and read the first document",
+		Surface:   aiChatSurfaceContextualSidebar,
+		ModelName: "test-model",
+		SkillMode: skillModeAuto,
+		SkillIDs:  []string{skills.SkillConsoleNavigator, skills.SkillFileReader},
+	}
+
+	preflight, err := svc.runContextualPreparePreflights(
+		context.Background(),
+		Scope{OrganizationID: uuid.New(), AccountID: uuid.New()},
+		&runtimemodel.Conversation{ID: uuid.New()},
+		RunConfig{},
+		parts,
+		&adapter.ChatRequest{},
+	)
+	if err != nil {
+		t.Fatalf("runContextualPreparePreflights() error = %v", err)
+	}
+	if preflight != nil {
+		t.Fatalf("preflight = %#v, want nil when no memory preflight is needed", preflight)
+	}
+	if len(fakeLLM.requests) != 0 {
+		t.Fatalf("LLM preflight requests = %d, want 0", len(fakeLLM.requests))
+	}
+	if parts.ModelTurnIntent != nil || parts.ModelTurnIntentError != "" {
+		t.Fatalf("turn intent metadata was populated: intent=%#v error=%q", parts.ModelTurnIntent, parts.ModelTurnIntentError)
+	}
+}
 
 func TestMarkUserMemoryPreflightTimeoutPreservesContext(t *testing.T) {
 	parts := &chatRequestParts{ContextControl: map[string]interface{}{

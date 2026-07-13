@@ -99,6 +99,7 @@ export interface WebAppWorkflowConfig {
     file_upload_enabled?: boolean;
     supports_vision?: boolean;
     home_title?: string;
+    opening_statement?: string;
     input_placeholder?: string;
     suggested_questions?: string[];
   };

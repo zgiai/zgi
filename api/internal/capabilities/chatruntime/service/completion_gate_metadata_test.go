@@ -54,7 +54,7 @@ func TestApplyMainModelTerminalResultCleansStaleReasonAndSource(t *testing.T) {
 		},
 	}
 
-	applyOperationPlanCompletionVerificationResultWithSource(
+	applyOperationPlanTerminalCompletionResultWithSource(
 		metadata,
 		"pass",
 		"main_model_final",

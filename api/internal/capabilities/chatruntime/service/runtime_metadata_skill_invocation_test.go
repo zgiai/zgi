@@ -130,86 +130,6 @@ func TestTurnStateContinuationSummaryIncludesUserVisibleDeliverable(t *testing.T
 	}
 }
 
-func TestMergeSkillInvocationMetadataBuildsStructuredTurnState(t *testing.T) {
-	metadata := mergeSkillInvocationMetadata(nil, []map[string]interface{}{{
-		"kind":       "tool_call",
-		"skill_id":   skills.SkillAgentManagement,
-		"tool_name":  "create_agent",
-		"status":     "success",
-		"runtime_id": "tool-call:agent-management:create_agent:test",
-		"arguments": map[string]interface{}{
-			"name": "Story Agent",
-		},
-		"result": map[string]interface{}{
-			"agent_id":   "agent-1",
-			"agent_name": "Story Agent",
-			"status":     "completed",
-		},
-	}})
-
-	state := mapFromOperationContext(metadata["turn_state"])
-	if len(state) == 0 {
-		t.Fatal("turn_state is empty, want structured state")
-	}
-	if steps := mapSliceFromAny(state["steps"]); len(steps) != 1 {
-		t.Fatalf("turn_state.steps = %#v, want one step", state["steps"])
-	}
-	results := mapSliceFromAny(state["tool_results"])
-	if len(results) != 1 {
-		t.Fatalf("turn_state.tool_results = %#v, want one tool result", state["tool_results"])
-	}
-	target := mapFromOperationContext(results[0]["target"])
-	if got := stringFromAny(target["name"]); got != "Story Agent" {
-		t.Fatalf("tool result target name = %q, want Story Agent; result=%#v", got, results[0])
-	}
-	if assets := mapSliceFromAny(state["assets"]); len(assets) != 1 {
-		t.Fatalf("turn_state.assets = %#v, want created asset", state["assets"])
-	}
-}
-
-func TestTurnStateContinuationSummaryIncludesStructuredExecutionLedger(t *testing.T) {
-	message := &runtimemodel.Message{
-		Metadata: map[string]interface{}{
-			"turn_state": map[string]interface{}{
-				"steps": []interface{}{
-					map[string]interface{}{
-						"kind":      "tool_call",
-						"skill_id":  skills.SkillAgentManagement,
-						"tool_name": "create_agent",
-						"status":    "success",
-						"target": map[string]interface{}{
-							"asset_type": "agent",
-							"name":       "Story Agent",
-						},
-					},
-				},
-				"tool_results": []interface{}{
-					map[string]interface{}{
-						"skill_id":  skills.SkillAgentManagement,
-						"tool_name": "create_agent",
-						"status":    "success",
-						"target": map[string]interface{}{
-							"asset_type": "agent",
-							"name":       "Story Agent",
-						},
-					},
-				},
-			},
-		},
-	}
-
-	summary := turnStateContinuationSummary(message)
-	if len(summary) == 0 {
-		t.Fatal("turnStateContinuationSummary() = nil, want structured summary")
-	}
-	if got := len(mapSliceFromAny(summary["steps"])); got != 1 {
-		t.Fatalf("summary.steps len = %d, want 1; summary=%#v", got, summary)
-	}
-	if got := len(mapSliceFromAny(summary["tool_results"])); got != 1 {
-		t.Fatalf("summary.tool_results len = %d, want 1; summary=%#v", got, summary)
-	}
-}
-
 func TestCurrentTurnAuthoritativeStateMessageRequiresRuntimeState(t *testing.T) {
 	message := &runtimemodel.Message{Query: "create an agent"}
 
@@ -257,10 +177,9 @@ func TestCurrentTurnAuthoritativeStateMessageIncludesSameTurnFacts(t *testing.T)
 	}
 	content := messageContentText(stateMessage.Content)
 	for _, want := range []string{
-		"Current AIChat turn authoritative state JSON",
+		"Current assistant turn authoritative state JSON",
 		"Continue only unfinished work",
 		"manage_agent_asset",
-		"configure created agent",
 		"agent.create",
 		"worldview_summary",
 		"雪是灵潮学院世界观中的核心角色",
@@ -268,6 +187,9 @@ func TestCurrentTurnAuthoritativeStateMessageIncludesSameTurnFacts(t *testing.T)
 		if !strings.Contains(content, want) {
 			t.Fatalf("current turn state message missing %q in:\n%s", want, content)
 		}
+	}
+	if strings.Contains(content, "configure created agent") {
+		t.Fatalf("current turn state message leaked legacy pending_next_action:\n%s", content)
 	}
 }
 
@@ -764,161 +686,6 @@ func TestMergeSkillTraceMetadataOmitsPlannerFeedback(t *testing.T) {
 	}
 }
 
-func TestMergeSkillTraceMetadataRecordsMissingAgentTargetPlannerFeedbackInOperationPlan(t *testing.T) {
-	deleteStepID := operationPlanToolStepID(skills.SkillAgentManagement, "delete_agent")
-	metadata := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": operationPlanStatusRunning,
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        deleteStepID,
-					"status":    operationPlanStepStatusPending,
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "delete_agent",
-					"asset_target": map[string]interface{}{
-						"effect":     "delete",
-						"asset_type": "agent",
-					},
-				},
-			},
-			"step_status": map[string]interface{}{
-				deleteStepID: operationPlanStepStatusPending,
-			},
-		},
-	}
-
-	metadata = mergeSkillTraceMetadata(metadata, []skills.SkillTrace{{
-		Kind:     "planner_feedback",
-		SkillID:  skills.SkillAgentManagement,
-		ToolName: "list_agents",
-		Status:   "advisory",
-		Arguments: map[string]interface{}{
-			"next_step":                  "answer_missing_agent_target",
-			"reason":                     "agent_target_resolution_exhausted",
-			"target_name":                "AICHAT-NOT-EXIST",
-			"previous_list_agents_calls": 2,
-			"empty_result_calls":         2,
-		},
-	}})
-
-	if invocations := skillInvocationsFromMetadata(metadata["skill_invocations"]); len(invocations) != 0 {
-		t.Fatalf("skill_invocations = %#v, want no user-visible planner feedback", invocations)
-	}
-	if metadata["guardrail_count"] != 0 {
-		t.Fatalf("guardrail_count = %#v, want 0", metadata["guardrail_count"])
-	}
-	plan := mapFromOperationContext(metadata["operation_plan"])
-	if got := stringFromAny(plan["status"]); got != operationPlanStatusFailed {
-		t.Fatalf("operation_plan.status = %q, want %q; plan=%#v", got, operationPlanStatusFailed, plan)
-	}
-	stepStatus := mapFromOperationContext(plan["step_status"])
-	if got := stringFromAny(stepStatus[deleteStepID]); got != operationPlanStepStatusFailed {
-		t.Fatalf("step_status[%s] = %q, want %q; plan=%#v", deleteStepID, got, operationPlanStepStatusFailed, plan)
-	}
-	targetResolution := mapFromOperationContext(plan["target_resolution"])
-	if got := stringFromAny(targetResolution["status"]); got != "missing" {
-		t.Fatalf("target_resolution.status = %q, want missing; target_resolution=%#v", got, targetResolution)
-	}
-	if got := stringFromAny(targetResolution["target_name"]); got != "AICHAT-NOT-EXIST" {
-		t.Fatalf("target_resolution.target_name = %q, want AICHAT-NOT-EXIST", got)
-	}
-	deviations := mapSliceFromAny(plan["deviations"])
-	foundDeviation := false
-	for _, deviation := range deviations {
-		if stringFromAny(deviation["skill_id"]) == skills.SkillAgentManagement &&
-			stringFromAny(deviation["tool_name"]) == "list_agents" &&
-			stringFromAny(deviation["reason"]) == "agent_target_resolution_exhausted" &&
-			stringFromAny(deviation["outcome"]) == "failed" {
-			foundDeviation = true
-			break
-		}
-	}
-	if !foundDeviation {
-		t.Fatalf("deviations = %#v, want failed agent target resolution deviation", deviations)
-	}
-	strategyState := mapFromOperationContext(plan["strategy_state"])
-	lastFeedback := mapFromOperationContext(strategyState["last_feedback"])
-	if got := stringFromAny(lastFeedback["next_step"]); got != "answer_missing_agent_target" {
-		t.Fatalf("strategy_state.last_feedback.next_step = %q, want answer_missing_agent_target; state=%#v", got, strategyState)
-	}
-	failedSteps := mapSliceFromAny(plan["failed_steps"])
-	if len(failedSteps) != 1 || stringFromAny(failedSteps[0]["id"]) != deleteStepID {
-		t.Fatalf("failed_steps = %#v, want failed delete step %s", failedSteps, deleteStepID)
-	}
-}
-
-func TestFinalizeOperationPlanMarksMissingAgentTargetFromEmptyListEvidence(t *testing.T) {
-	deleteStepID := operationPlanToolStepID(skills.SkillAgentManagement, "delete_agent")
-	metadata := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":             operationPlanStatusRunning,
-			"original_user_goal": "请删除不存在的智能体 AICHAT-NOT-EXIST-FINALIZE。",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        deleteStepID,
-					"status":    operationPlanStepStatusPending,
-					"skill_id":  skills.SkillAgentManagement,
-					"tool_name": "delete_agent",
-					"asset_target": map[string]interface{}{
-						"effect":     "delete",
-						"asset_type": "agent",
-					},
-				},
-			},
-			"step_status": map[string]interface{}{
-				deleteStepID: operationPlanStepStatusPending,
-			},
-		},
-		"skill_invocations": []interface{}{
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "list_agents",
-				"status":    "success",
-				"result": map[string]interface{}{
-					"status":       "completed",
-					"count":        0,
-					"agents_count": 0,
-				},
-			},
-			map[string]interface{}{
-				"kind":      "tool_call",
-				"skill_id":  skills.SkillAgentManagement,
-				"tool_name": "list_agents",
-				"status":    "success",
-				"result": map[string]interface{}{
-					"status":       "completed",
-					"count":        0,
-					"agents_count": 0,
-				},
-			},
-		},
-	}
-
-	finalizeOperationPlanForResult(metadata)
-
-	plan := mapFromOperationContext(metadata["operation_plan"])
-	if got := stringFromAny(plan["status"]); got != operationPlanStatusFailed {
-		t.Fatalf("operation_plan.status = %q, want %q; plan=%#v", got, operationPlanStatusFailed, plan)
-	}
-	targetResolution := mapFromOperationContext(plan["target_resolution"])
-	if got := stringFromAny(targetResolution["target_name"]); got != "AICHAT-NOT-EXIST-FINALIZE" {
-		t.Fatalf("target_resolution.target_name = %q, want AICHAT-NOT-EXIST-FINALIZE; target_resolution=%#v", got, targetResolution)
-	}
-	if got := stringFromAny(targetResolution["reason"]); got != "agent_target_resolution_exhausted" {
-		t.Fatalf("target_resolution.reason = %q, want agent_target_resolution_exhausted", got)
-	}
-	stepStatus := mapFromOperationContext(plan["step_status"])
-	if got := stringFromAny(stepStatus[deleteStepID]); got != operationPlanStepStatusFailed {
-		t.Fatalf("step_status[%s] = %q, want %q; plan=%#v", deleteStepID, got, operationPlanStepStatusFailed, plan)
-	}
-	strategyState := mapFromOperationContext(plan["strategy_state"])
-	lastFeedback := mapFromOperationContext(strategyState["last_feedback"])
-	if got := stringFromAny(lastFeedback["reason"]); got != "agent_target_resolution_exhausted" {
-		t.Fatalf("strategy_state.last_feedback.reason = %q, want agent_target_resolution_exhausted; state=%#v", got, strategyState)
-	}
-}
-
 func TestMergeClientActionMetadataDoesNotReviveInternalPlannerGuardrail(t *testing.T) {
 	metadata := map[string]interface{}{
 		"skill_invocations": []interface{}{
@@ -1005,117 +772,5 @@ func TestMergeToolGovernanceDecisionMetadataDoesNotReviveInternalPlannerGuardrai
 	}
 	if metadata["guardrail_count"] != 0 {
 		t.Fatalf("guardrail_count = %#v, want 0", metadata["guardrail_count"])
-	}
-}
-
-func TestMergeToolGovernanceDecisionMetadataUpdatesOperationPlan(t *testing.T) {
-	metadata := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status": operationPlanStatusRunning,
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management"),
-					"status":    operationPlanStepStatusPending,
-					"skill_id":  skills.SkillFileManager,
-					"tool_name": "save_file_to_management",
-				},
-			},
-			"step_status": map[string]interface{}{
-				operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management"): operationPlanStepStatusPending,
-			},
-		},
-		"skill_invocations": []interface{}{
-			map[string]interface{}{
-				"kind":           "tool_call",
-				"skill_id":       skills.SkillFileManager,
-				"tool_name":      "save_file_to_management",
-				"status":         "waiting_approval",
-				"runtime_id":     "save-tool",
-				"correlation_id": "corr-save",
-			},
-		},
-	}
-
-	metadata = mergeToolGovernanceDecisionMetadata(metadata, map[string]interface{}{
-		"correlation_id":  "corr-save",
-		"skill_id":        skills.SkillFileManager,
-		"tool_name":       "save_file_to_management",
-		"approval_status": "approved",
-		"status":          "allowed",
-	})
-
-	plan := mapFromOperationContext(metadata["operation_plan"])
-	if got := stringFromAny(plan["status"]); got != operationPlanStatusRunning {
-		t.Fatalf("operation_plan.status = %q, want %q until save result evidence arrives; plan=%#v", got, operationPlanStatusRunning, plan)
-	}
-	stepStatus := mapFromOperationContext(plan["step_status"])
-	stepID := operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management")
-	if got := stringFromAny(stepStatus[stepID]); got != operationPlanStepStatusPending {
-		t.Fatalf("step_status[%s] = %q, want %q until save result evidence arrives; plan=%#v", stepID, got, operationPlanStepStatusPending, plan)
-	}
-}
-
-func TestMergeToolGovernanceDecisionMetadataRejectedGovernanceClosesOperationPlan(t *testing.T) {
-	stepID := operationPlanToolStepID(skills.SkillFileManager, "save_file_to_management")
-	metadata := map[string]interface{}{
-		"operation_plan": map[string]interface{}{
-			"status":              operationPlanStatusRunning,
-			"pending_next_action": "Save generated file",
-			"steps": []interface{}{
-				map[string]interface{}{
-					"id":        stepID,
-					"status":    operationPlanStepStatusPending,
-					"skill_id":  skills.SkillFileManager,
-					"tool_name": "save_file_to_management",
-				},
-			},
-			"step_status": map[string]interface{}{
-				stepID: operationPlanStepStatusPending,
-			},
-		},
-		"skill_invocations": []interface{}{
-			map[string]interface{}{
-				"kind":       "tool_governance",
-				"skill_id":   skills.SkillFileManager,
-				"tool_name":  "save_file_to_management",
-				"status":     "needs_approval",
-				"runtime_id": "tool_governance:corr-save",
-				"governance": map[string]interface{}{
-					"status":            "needs_approval",
-					"correlation_id":    "corr-save",
-					"requires_approval": true,
-					"approval_event": map[string]interface{}{
-						"correlation_id": "corr-save",
-						"skill_id":       skills.SkillFileManager,
-						"tool_name":      "save_file_to_management",
-						"tool_id":        "file.create",
-					},
-				},
-			},
-		},
-	}
-
-	metadata = mergeToolGovernanceDecisionMetadata(metadata, map[string]interface{}{
-		"correlation_id":  "corr-save",
-		"skill_id":        skills.SkillFileManager,
-		"tool_name":       "save_file_to_management",
-		"approval_status": "rejected",
-		"status":          "rejected",
-	})
-
-	plan := mapFromOperationContext(metadata["operation_plan"])
-	if got := stringFromAny(plan["status"]); got != operationPlanStatusFailed {
-		t.Fatalf("operation_plan.status = %q, want %q after rejected governance decision; plan=%#v", got, operationPlanStatusFailed, plan)
-	}
-	if got := stringFromAny(plan["pending_next_action"]); got != "none" {
-		t.Fatalf("operation_plan.pending_next_action = %q, want none after rejection; plan=%#v", got, plan)
-	}
-	stepStatus := mapFromOperationContext(plan["step_status"])
-	if got := stringFromAny(stepStatus[stepID]); got != operationPlanStepStatusFailed {
-		t.Fatalf("step_status[%s] = %q, want %q after rejected governance decision; plan=%#v", stepID, got, operationPlanStepStatusFailed, plan)
-	}
-	invocations := skillInvocationsFromMetadata(metadata["skill_invocations"])
-	if len(invocations) != 1 || stringFromAny(invocations[0]["status"]) != "rejected" {
-		t.Fatalf("skill_invocations = %#v, want governance invocation status rejected", invocations)
 	}
 }

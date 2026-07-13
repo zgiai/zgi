@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, type ReactNode } from 'react';
+import { useId } from 'react';
 import { Eye, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Chat, { type AIChatController } from '@/components/chat';
@@ -14,6 +14,7 @@ import type {
   ModelSelectorValue,
 } from '@/components/common/model-selector';
 import { useT } from '@/i18n';
+import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 
 interface AgentRuntimePreviewPanelProps {
   controller: AIChatController;
@@ -23,8 +24,9 @@ interface AgentRuntimePreviewPanelProps {
   fileUploadEnabled: boolean;
   suggestions: string[];
   inputPlaceholder: string;
-  homeBrand: ReactNode;
+  openingGuideBrand: OpeningGuideBrand;
   homeTitle: string;
+  openingStatement: string;
   surfaceMode?: 'inline' | 'sheet';
   onOpenMemoryValues: () => void;
   onModelChange: (value: ModelSelectorValue) => void;
@@ -40,8 +42,9 @@ export function AgentRuntimePreviewPanel({
   fileUploadEnabled,
   suggestions,
   inputPlaceholder,
-  homeBrand,
+  openingGuideBrand,
   homeTitle,
+  openingStatement,
   surfaceMode = 'inline',
   onOpenMemoryValues,
   onModelChange,
@@ -120,9 +123,9 @@ export function AgentRuntimePreviewPanel({
           )}
           showAssistantModelMeta={false}
           surface="agent-draft"
-          homeBrand={homeBrand}
+          openingGuideBrand={openingGuideBrand}
           homeTitle={homeTitle}
-          homeDescription=""
+          homeDescription={openingStatement}
         />
       </div>
     </section>

@@ -1,7 +1,7 @@
 ---
 name: agent-management
-description: Manage Agent assets and governed Agent bindings from the contextual AIChat sidebar when the user has the required workspace permissions.
-when_to_use: Use this hidden skill when the user asks AIChat to create an Agent, edit Agent details, delete an Agent, inspect Agent draft config, query available Agent runtime models, update supported draft config fields, or replace Agent skill/knowledge/database/workflow bindings.
+description: Manage Agent assets and governed Agent bindings from the contextual console assistant when the user has the required workspace permissions.
+when_to_use: Use this hidden skill when the user asks the assistant to create an Agent, edit Agent details, delete an Agent, inspect Agent draft config, query available Agent runtime models, update supported draft config fields, or replace Agent skill/knowledge/database/workflow bindings.
 provider_type: builtin
 provider_id: agent_management
 runtime_type: tool
@@ -335,11 +335,11 @@ display:
     en_US: Agent Manager
     zh_Hans: 智能体管理器
   description:
-    en_US: Performs governed Agent asset operations from contextual AIChat.
-    zh_Hans: 在侧栏 AIChat 中执行受治理保护的智能体资产操作。
+    en_US: Performs governed Agent asset operations from the contextual console assistant.
+    zh_Hans: 在控制台操作助手中执行受治理保护的智能体资产操作。
   when_to_use:
-    en_US: Use when the user explicitly asks to manage Agents in the ZGI console.
-    zh_Hans: 当用户明确要求在 ZGI 控制台管理智能体时使用。
+    en_US: Use when the user explicitly asks to manage Agents in the current console.
+    zh_Hans: 当用户明确要求在当前控制台管理智能体时使用。
   tags:
     en_US:
       - Agent
@@ -353,7 +353,7 @@ supported_callers:
 
 # Agent Management Skill
 
-Use this skill for governed Agent asset operations in the contextual AIChat sidebar. It is intentionally separate from Agent runtime skills: this skill changes Agent assets in the console; it does not invoke Agents, publish Agents, roll back versions, expose API keys, or run bound workflows.
+Use this skill for governed Agent asset operations in the contextual console assistant. It is intentionally separate from Agent runtime skills: this skill changes Agent assets in the console; it does not invoke Agents, publish Agents, roll back versions, expose API keys, or run bound workflows.
 
 ## Workflow
 
@@ -365,7 +365,7 @@ Use this skill for governed Agent asset operations in the contextual AIChat side
 6. Use `update_agent_identity` for Agent name, description, or icon changes. `update_agent_config` does not change Agent name, description, icon text, or icon background.
    When one user turn asks to change both identity fields and runtime/draft config fields, plan and execute both tools: `update_agent_identity` for identity fields and `update_agent_config` for config fields. Do not finish after only one of them unless the other tool failed or the user no longer wants that part.
 7. Use `get_agent_config` before changing draft runtime configuration if the current config is not already known from page context.
-8. For read-only current configuration checks, `get_agent_config` is enough to answer the Agent's name, description, icon, model/provider, prompt, memory/file-upload settings, and currently bound Skill/knowledge/database/workflow counts. Do not call candidate-list tools or table-list tools just to inspect existing bindings or counts; call them only when the user asks what resources are available/bindable/selectable, or when a bind/unbind/replace operation needs exact candidate IDs. Do not call `get_current_page_context`; current page context is injected by AIChat and is not a skill tool.
+8. For read-only current configuration checks, `get_agent_config` is enough to answer the Agent's name, description, icon, model/provider, prompt, memory/file-upload settings, and currently bound Skill/knowledge/database/workflow counts. Do not call candidate-list tools or table-list tools just to inspect existing bindings or counts; call them only when the user asks what resources are available/bindable/selectable, or when a bind/unbind/replace operation needs exact candidate IDs. Do not call `get_current_page_context`; current page context is injected by the runtime and is not a skill tool.
 9. Use `list_available_models` before replacing an Agent model unless the user already provided an exact provider/model pair from current page context. Default to `use_case: "text-chat"` for ordinary Agent runtime model replacement; use `reasoning`, `vision`, or `function-calling` only when the user clearly asks for that capability.
 10. Use `update_agent_config` for supported draft fields: system prompt, model provider/model, model parameters, Agent memory switch, file upload switch, home title, input placeholder, theme color, suggested questions, and Agent skill/knowledge/database/workflow binding edits. Prefer one `update_agent_config` call when the user asks to change multiple config sections in the same turn.
 11. To replace the Agent model, choose one item from `list_available_models` and pass that item's `provider` as `model_provider` and `model` as `model` to `update_agent_config`.
@@ -383,7 +383,7 @@ Use this skill for governed Agent asset operations in the contextual AIChat side
 23. After `create_agent` succeeds, route to `/console/agents/{agentId}` only when the user asked to open the new Agent or the operation needs the detail page for follow-up edits. If the frontend client action already loaded that route, do not navigate again.
 24. If `delete_agent` succeeds while the current page is that Agent's detail page, or `delete_agents` succeeds and includes the current detail Agent, use `console-navigator` to route to `/console/agents` before the final answer. When deleting multiple Agents from the list page, do not navigate after the first item; rely on page refresh/observation and the batch `item_results`.
 25. A successful mutation result is the next step's primary evidence. After `create_agent`, use the returned `agent_id`/`detail_href` for follow-up `update_agent_config`, navigation, and verification in the same turn. Do not search for the newly created Agent by name unless the tool result is missing the ID or verification requires a fresh list.
-26. Within one AIChat turn, once this skill has been loaded, do not reload it just because tool governance approval, navigation, refresh, or client-action continuation resumed the loop. Continue from the latest tool result, client-action evidence, page context, and `turn_state`.
+26. Within one assistant turn, once this skill has been loaded, do not reload it just because tool governance approval, navigation, refresh, or client-action continuation resumed the loop. Continue from the latest tool result, client-action evidence, page context, and `turn_state`.
 27. When a later Agent field must reuse a value derived from another tool, such as a file summary/theme, selected model, selected Skill, or chosen target Agent, first preserve the reusable fact with `submit_turn_state` before crossing approval, navigation, refresh, or another tool phase. Use the stored exact fact later instead of placeholders such as `file content`, `读取到的内容`, or `previous result`.
 
 ## Agent Capability Semantics
@@ -424,7 +424,7 @@ For read-only questions such as “can this Agent generate files?” or “does 
 
 `list_agents` accepts:
 
-- `workspace_id`: optional. Usually omit it so current AIChat workspace context is used.
+- `workspace_id`: optional. Usually omit it so the current assistant workspace context is used.
 - `keyword`: optional search keyword.
 - `page`: optional one-based page number.
 - `limit`: optional maximum result count.

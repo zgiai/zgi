@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { createAgentDraftTransport, useAIChatController } from '@/components/chat';
+import { buildOpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 import { findAIChatModelProps } from '@/components/chat/variants/aichat/model-props';
 import {
   getAIChatSkillDisplayInfo,
@@ -31,6 +32,7 @@ import {
 import agentService from '@/services/agent.service';
 import { datasetService } from '@/services';
 import { getTemplateAwareCharacterCount } from '@/components/workflow/common/workflow-value-editor/utils/value-transform';
+import type { OpeningStatementDialogValue } from '@/components/workflow/ui/features-panel/opening-statement-dialog';
 import type {
   AgentDetail,
   AgentDatabaseBinding,
@@ -47,11 +49,7 @@ import type { AgentConfigSection, AgentPublishedVersionListItem } from '../types
 import { buildAgentRuntimeSignature, toModelParams, validateAgentMemorySlots } from '../utils';
 import { useAgentRuntimeDraftPersistence } from '../use-agent-runtime-draft-persistence';
 import { useAgentRuntimeLeaveGuard } from '../use-agent-runtime-leave-guard';
-import {
-  AgentHomeBrand,
-  getAgentRuntimeSaveText,
-  type VersionPreviewBackup,
-} from './page-model-utils';
+import { getAgentRuntimeSaveText, type VersionPreviewBackup } from './page-model-utils';
 import { AGENT_SYSTEM_PROMPT_MAX_LENGTH } from '../prompt-limits';
 import { buildAgentRuntimeAIChatContext } from '../aichat-context';
 
@@ -311,6 +309,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [agentMemorySlots, setAgentMemorySlots] = useState<AgentMemorySlotConfig[]>([]);
   const [fileUploadEnabled, setFileUploadEnabled] = useState(false);
   const [homeTitle, setHomeTitle] = useState(defaultHomeTitle);
+  const [openingStatement, setOpeningStatement] = useState('');
   const [inputPlaceholder, setInputPlaceholder] = useState(defaultInputPlaceholder);
   const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
   const [knowledgeDatasetIds, setKnowledgeDatasetIds] = useState<string[]>([]);
@@ -500,6 +499,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       })),
       file_upload_enabled: fileUploadEnabled,
       home_title: homeTitle.trim() || defaultHomeTitle,
+      opening_statement: openingStatement,
       input_placeholder: inputPlaceholder.trim() || defaultInputPlaceholder,
       theme_color: 'default',
       suggested_questions: suggestedQuestions
@@ -518,6 +518,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       agentMemoryEnabled,
       agentMemorySlots,
       homeTitle,
+      openingStatement,
       inputPlaceholder,
       modelValue,
       normalizedSelectedSkillIds,
@@ -528,15 +529,14 @@ export function useAgentRuntimePageModel(agentId: string) {
       systemPrompt,
     ]
   );
-  const agentHomeBrand = useMemo(
-    () => (
-      <AgentHomeBrand
-        iconType={agentDetail?.icon_type}
-        icon={agentDetail?.icon}
-        iconUrl={agentDetail?.icon_url}
-        name={agentDetail?.name}
-      />
-    ),
+  const agentOpeningGuideBrand = useMemo(
+    () =>
+      buildOpeningGuideBrand({
+        title: agentDetail?.name,
+        iconType: agentDetail?.icon_type,
+        icon: agentDetail?.icon,
+        iconUrl: agentDetail?.icon_url,
+      }),
     [agentDetail?.icon, agentDetail?.icon_type, agentDetail?.icon_url, agentDetail?.name]
   );
 
@@ -556,6 +556,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     setAgentMemorySlots(payload.agent_memory_slots ?? []);
     setFileUploadEnabled(payload.file_upload_enabled);
     setHomeTitle(payload.home_title);
+    setOpeningStatement(payload.opening_statement ?? '');
     setInputPlaceholder(payload.input_placeholder);
     setSuggestedQuestions(payload.suggested_questions);
     setKnowledgeDatasetIds(payload.knowledge_dataset_ids ?? []);
@@ -578,6 +579,7 @@ export function useAgentRuntimePageModel(agentId: string) {
         !runtimeConfig.home_title || runtimeConfig.home_title === 'title'
           ? defaultHomeTitle
           : runtimeConfig.home_title,
+      opening_statement: runtimeConfig.opening_statement ?? '',
       input_placeholder: runtimeConfig.input_placeholder ?? defaultInputPlaceholder,
       theme_color: 'default',
       suggested_questions: runtimeConfig.suggested_questions ?? [],
@@ -732,69 +734,72 @@ export function useAgentRuntimePageModel(agentId: string) {
     [workflowCandidates]
   );
 
-  const handleGenerateSuggestedQuestions = useCallback(async () => {
-    if (isGeneratingSuggestions) return;
-    setIsGeneratingSuggestions(true);
-    try {
-      const skills = selectedSkills.map(skill => {
-        const display = getAIChatSkillDisplayInfo(skill, locale);
-        return {
-          id: skill.skill_id,
-          name: display.label,
-          description: display.description || skill.description || '',
-        };
-      });
-      const response = await agentService.generateSuggestedQuestions(agentId, {
-        locale,
-        count: 6,
-        provider: modelValue.provider,
-        model: modelValue.model,
-        system_prompt: systemPrompt,
-        home_title: homeTitle,
-        existing_questions: currentPayload.suggested_questions,
-        skills,
-        knowledge_refs: buildSuggestedQuestionContextRefs({
-          selectedKnowledgeDatasets,
-          databaseBindings,
-          workflowBindings,
-          workflowCandidatesByBindingID,
-          fileUploadEnabled,
-          agentMemoryEnabled,
-        }),
-      });
-      const generated = (response.data.questions ?? [])
-        .map(item => item.text.trim())
-        .filter(Boolean)
-        .slice(0, 6);
-      if (generated.length === 0) {
-        toast.info(t('toasts.noGeneratedSuggestions'));
-        return;
+  const handleGenerateSuggestedQuestions = useCallback(
+    async (value: OpeningStatementDialogValue) => {
+      if (isGeneratingSuggestions) return undefined;
+      setIsGeneratingSuggestions(true);
+      try {
+        const skills = selectedSkills.map(skill => {
+          const display = getAIChatSkillDisplayInfo(skill, locale);
+          return {
+            id: skill.skill_id,
+            name: display.label,
+            description: display.description || skill.description || '',
+          };
+        });
+        const response = await agentService.generateSuggestedQuestions(agentId, {
+          locale,
+          count: SUGGESTED_QUESTIONS_LIMIT,
+          provider: modelValue.provider,
+          model: modelValue.model,
+          system_prompt: systemPrompt,
+          home_title: value.title,
+          opening_statement: value.message,
+          existing_questions: value.suggestedQuestions,
+          skills,
+          knowledge_refs: buildSuggestedQuestionContextRefs({
+            selectedKnowledgeDatasets,
+            databaseBindings,
+            workflowBindings,
+            workflowCandidatesByBindingID,
+            fileUploadEnabled,
+            agentMemoryEnabled,
+          }),
+        });
+        const generated = (response.data.questions ?? [])
+          .map(item => item.text.trim())
+          .filter(Boolean)
+          .slice(0, SUGGESTED_QUESTIONS_LIMIT);
+        if (generated.length === 0) {
+          toast.info(t('toasts.noGeneratedSuggestions'));
+          return undefined;
+        }
+        toast.success(t('toasts.suggestionsGenerated'));
+        return { questions: generated };
+      } catch (error) {
+        toast.error(getErrorMessage(error) || t('toasts.generateSuggestionsFailed'));
+        return undefined;
+      } finally {
+        setIsGeneratingSuggestions(false);
       }
-      setSuggestedQuestions(generated);
-      toast.success(t('toasts.suggestionsGenerated'));
-    } catch (error) {
-      toast.error(getErrorMessage(error) || t('toasts.generateSuggestionsFailed'));
-    } finally {
-      setIsGeneratingSuggestions(false);
-    }
-  }, [
-    agentId,
-    currentPayload.suggested_questions,
-    databaseBindings,
-    fileUploadEnabled,
-    agentMemoryEnabled,
-    homeTitle,
-    isGeneratingSuggestions,
-    locale,
-    modelValue.model,
-    modelValue.provider,
-    selectedSkills,
-    selectedKnowledgeDatasets,
-    systemPrompt,
-    t,
-    workflowBindings,
-    workflowCandidatesByBindingID,
-  ]);
+    },
+    [
+      agentId,
+      databaseBindings,
+      fileUploadEnabled,
+      agentMemoryEnabled,
+      isGeneratingSuggestions,
+      locale,
+      modelValue.model,
+      modelValue.provider,
+      selectedSkills,
+      selectedKnowledgeDatasets,
+      systemPrompt,
+      t,
+      workflowBindings,
+      workflowCandidatesByBindingID,
+    ]
+  );
 
   const handleCopyWebAppUrl = useCallback(async () => {
     const webAppID = agentDetail?.web_app_id;
@@ -1181,6 +1186,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       openSections,
       modelValue,
       homeTitle,
+      openingStatement,
       inputPlaceholder,
       selectedSkills,
       normalizedSelectedSkillIds,
@@ -1203,6 +1209,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       agentMemorySlotValidationErrors,
       defaultHomeTitle,
       defaultInputPlaceholder,
+      openingGuideBrand: agentOpeningGuideBrand,
       onToggleSection: (section: AgentConfigSection) =>
         setOpenSections(current => ({ ...current, [section]: !current[section] })),
       onChangeModelValue: (value: ModelSelectorParameterValue) => {
@@ -1212,6 +1219,10 @@ export function useAgentRuntimePageModel(agentId: string) {
       onChangeHomeTitle: (value: string) => {
         if (isRuntimeConfigReadOnly) return;
         setHomeTitle(value);
+      },
+      onChangeOpeningStatement: (value: string) => {
+        if (isRuntimeConfigReadOnly) return;
+        setOpeningStatement(value);
       },
       onChangeInputPlaceholder: (value: string) => {
         if (isRuntimeConfigReadOnly) return;
@@ -1245,9 +1256,9 @@ export function useAgentRuntimePageModel(agentId: string) {
         if (isRuntimeConfigReadOnly) return;
         setWorkflowBindings(normalizeAgentWorkflowBindings(value));
       },
-      onGenerateSuggestedQuestions: () => {
-        if (isRuntimeConfigReadOnly) return;
-        void handleGenerateSuggestedQuestions();
+      onGenerateSuggestedQuestions: async (value: OpeningStatementDialogValue) => {
+        if (isRuntimeConfigReadOnly) return undefined;
+        return handleGenerateSuggestedQuestions(value);
       },
       onChangeSuggestedQuestions: (value: string[]) => {
         if (isRuntimeConfigReadOnly) return;
@@ -1275,8 +1286,9 @@ export function useAgentRuntimePageModel(agentId: string) {
       fileUploadEnabled,
       suggestions: currentPayload.suggested_questions,
       inputPlaceholder: currentPayload.input_placeholder,
-      homeBrand: agentHomeBrand,
+      openingGuideBrand: agentOpeningGuideBrand,
       homeTitle: currentPayload.home_title || defaultHomeTitle,
+      openingStatement: currentPayload.opening_statement,
       beforeSend: handlePreviewBeforeSend,
       onOpenMemoryValues: () => setMemoryValuesOpen(true),
       onModelChange: handleModelChange,

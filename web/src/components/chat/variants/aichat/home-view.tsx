@@ -2,17 +2,19 @@
 
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
-import { ZgiDrawingWordmark } from '@/components/brand/zgi-drawing-wordmark';
+import { ChatOpeningGuideView } from '@/components/chat/ui/chat-opening-guide-view';
 import { useT } from '@/i18n/translations';
-import { APP_NAME, HAS_CUSTOM_LOGO_URL, ICON_TEXT, IS_ZGI_BRAND, LOGO_URL } from '@/lib/config';
 import { cn } from '@/lib/utils';
 import type { AIChatSuggestion } from '@/components/chat/variants/aichat/types';
+import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
+import { AIChatBrandMark } from './brand-mark';
 
 interface AIChatHomeViewProps {
   isVisible: boolean;
   suggestions: AIChatSuggestion[];
   onSelectSuggestion: (value: string) => void;
   brand?: React.ReactNode;
+  openingGuideBrand?: OpeningGuideBrand;
   title?: string;
   description?: string;
   composerHeight?: number;
@@ -33,6 +35,7 @@ export function AIChatHomeView({
   suggestions,
   onSelectSuggestion,
   brand,
+  openingGuideBrand,
   title,
   description,
   composerHeight,
@@ -40,9 +43,7 @@ export function AIChatHomeView({
 }: AIChatHomeViewProps) {
   const t = useT('webapp');
   const [isHydrated, setIsHydrated] = React.useState(false);
-  const fallbackText = (ICON_TEXT || APP_NAME.charAt(0) || 'A').slice(0, 2).toUpperCase();
-  const resolvedDescription =
-    description === '' ? '' : description || t('chat.chooseAssistant');
+  const resolvedDescription = description === '' ? '' : description || t('chat.chooseAssistant');
   const composerHeightPx = Math.max(96, Math.ceil(composerHeight ?? 140));
   const anchorStyle = {
     '--aichat-home-composer-half': `${Math.round(composerHeightPx / 2)}px`,
@@ -53,6 +54,35 @@ export function AIChatHomeView({
   React.useEffect(() => {
     setIsHydrated(true);
   }, []);
+
+  if (surface !== 'aichat') {
+    return (
+      <div
+        className={cn(
+          'absolute inset-0 z-0 px-4 transition-all duration-300 ease-in-out',
+          isVisible ? 'scale-100 opacity-100' : 'pointer-events-none -z-10 scale-95 opacity-0'
+        )}
+      >
+        <div
+          className={cn('h-full overflow-y-auto', surface === 'agent-webapp' ? 'pt-20' : 'pt-4')}
+          style={{ paddingBottom: composerHeightPx + 24 }}
+        >
+          <div className="mx-auto flex min-h-full w-full min-w-0 max-w-6xl flex-col items-center justify-center overflow-hidden px-4 py-8">
+            <ChatOpeningGuideView
+              title={title || t('chat.startConversation')}
+              message={resolvedDescription}
+              iconType={openingGuideBrand?.iconType}
+              icon={openingGuideBrand?.icon}
+              iconBackground={openingGuideBrand?.iconBackground}
+              iconSrc={openingGuideBrand?.iconSrc}
+              suggestions={suggestions.map(suggestion => suggestion.text)}
+              onSuggestionClick={onSelectSuggestion}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -69,34 +99,14 @@ export function AIChatHomeView({
         )}
       >
         <div
-          className={cn(
-            'flex w-full flex-col items-center gap-4',
-            surface === 'agent-draft' ? 'max-w-[560px]' : 'max-w-3xl'
-          )}
+          className="flex w-full max-w-3xl flex-col items-center gap-4"
           style={{
             transform:
               'translateY(calc(-100% - var(--aichat-home-composer-half) - var(--aichat-home-title-gap)))',
           }}
         >
-          {brand ? (
-            brand
-          ) : isHydrated ? (
-            <div className="flex size-16 items-center justify-center rounded-2xl border border-brand-main/50 bg-bg-surface shadow-[0_0_0_4px_rgba(0,75,255,0.04),0_8px_18px_rgba(10,11,13,0.06)]">
-              {IS_ZGI_BRAND ? (
-                <ZgiDrawingWordmark className="w-11" loop={false} />
-              ) : HAS_CUSTOM_LOGO_URL ? (
-                <img src={LOGO_URL} alt={APP_NAME} className="max-h-10 max-w-11 object-contain" />
-              ) : (
-                <span className="text-lg font-semibold text-brand-main">{fallbackText}</span>
-              )}
-            </div>
-          ) : null}
-          <h2
-            className={cn(
-              'font-bold text-foreground',
-              surface === 'agent-draft' ? 'text-xl xl:text-2xl' : 'text-2xl'
-            )}
-          >
+          {brand ? brand : isHydrated ? <AIChatBrandMark /> : null}
+          <h2 className="text-2xl font-bold text-foreground">
             {title || t('chat.startConversation')}
           </h2>
           {resolvedDescription ? (
@@ -111,10 +121,7 @@ export function AIChatHomeView({
         )}
       >
         <div
-          className={cn(
-            'flex w-full flex-wrap items-center justify-center gap-2',
-            surface === 'agent-draft' ? 'max-w-[560px]' : 'max-w-3xl'
-          )}
+          className="flex w-full max-w-3xl flex-wrap items-center justify-center gap-2"
           style={{
             transform:
               'translateY(calc(var(--aichat-home-composer-half) + var(--aichat-home-suggestions-gap)))',

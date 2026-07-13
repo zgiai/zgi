@@ -20,11 +20,6 @@ import type {
   ModelSelectorValue,
 } from '@/components/common/model-selector';
 import type { AIChatController } from '@/components/chat/controllers/aichat-controller';
-import {
-  createAIChatSendTraceContext,
-  logAIChatSessionTrace,
-  type AIChatSendTraceContext,
-} from '@/components/chat/controllers/aichat/session-trace';
 import type {
   ConversationSearchFn,
   ConversationSummary,
@@ -71,7 +66,11 @@ import {
 } from '@/components/chat/utils/message-tree';
 import { AIChatHeader } from '@/components/chat/variants/aichat/chat-header';
 import { AIChatHomeView } from '@/components/chat/variants/aichat/home-view';
-import { AIChatAssetAuditButton } from '@/components/chat/variants/aichat/asset-audit-button';
+import {
+  AIChatAssetAuditButton,
+  AIChatAssetAuditPanel,
+} from '@/components/chat/variants/aichat/asset-audit-button';
+import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 import {
   AIChatEmbeddedConversationControls,
   embeddedControlButtonClassName,
@@ -143,6 +142,7 @@ interface AIChatShellProps {
   showFileLibraryPicker?: boolean;
   allowWorkspaceSwitch?: boolean;
   homeBrand?: React.ReactNode;
+  openingGuideBrand?: OpeningGuideBrand;
   homeTitle?: string;
   homeDescription?: string;
   suggestions?: string[];
@@ -251,6 +251,7 @@ export function AIChatShell({
   showFileLibraryPicker = true,
   allowWorkspaceSwitch = false,
   homeBrand,
+  openingGuideBrand,
   homeTitle,
   homeDescription,
   suggestions: configuredSuggestions,
@@ -274,6 +275,8 @@ export function AIChatShell({
   const { locale } = useLocale();
   const isMobile = useIsMobile();
   const isEmbedded = variant === 'embedded';
+  const chatSurfaceBackground =
+    isEmbedded && surface !== 'agent-draft' ? 'bg-bg-canvas' : 'bg-background';
   const toolGovernanceApprovalScopeId = useId();
   const showEmbeddedConversationDrawer = isEmbedded && embeddedConversationMode === 'drawer';
   const themeStyle = useMemo<CSSProperties | undefined>(() => {
@@ -285,6 +288,7 @@ export function AIChatShell({
   const [editingQuery, setEditingQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [embeddedAssetAuditOpen, setEmbeddedAssetAuditOpen] = useState(false);
   const [externalControlsPortal, setExternalControlsPortal] = useState<HTMLElement | null>(null);
   const [skillPreferenceOpen, setSkillPreferenceOpen] = useState(false);
   const [draftSkillPreferenceIds, setDraftSkillPreferenceIds] = useState<string[]>([]);
@@ -303,11 +307,13 @@ export function AIChatShell({
   const lastErrorToastRef = useRef<string | null>(null);
 
   const conversations = useStore(controller.store, state => state.conversations);
+  const conversationPagination = useStore(controller.store, state => state.pagination);
   const activeConversationId = useStore(controller.store, state => state.activeConversationId);
   const activeConversation = useStore(controller.store, selectActiveConversation);
   const activeMessages = useStore(controller.store, selectActiveMessages);
   const activeMessagePagination = useStore(controller.store, selectActiveMessagePagination);
   const isLoadingMessages = useStore(controller.store, state => state.isLoadingMessages);
+  const isLoadingConversationList = useStore(controller.store, state => state.isLoadingList);
   const isLoadingOlderMessages = useStore(controller.store, selectIsLoadingOlderMessages);
   const isRecoveringMessages = useStore(controller.store, selectIsRecoveringMessages);
   const isStopping = useStore(controller.store, selectIsStopping);
@@ -529,6 +535,10 @@ export function AIChatShell({
   );
   const showAssetAuditControl =
     showToolGovernancePermissionControl && surface === 'aichat' && Boolean(activeConversationId);
+  const handleOpenAssetAudit = useCallback(() => {
+    setMobileSidebarOpen(false);
+    setEmbeddedAssetAuditOpen(true);
+  }, []);
   const assetAuditButton = useMemo(
     () =>
       showAssetAuditControl ? (
@@ -536,9 +546,16 @@ export function AIChatShell({
           conversationId={activeConversationId}
           refreshKey={assetAuditRefreshKey}
           className={embeddedControlButtonClassName}
+          onOpen={isEmbedded ? handleOpenAssetAudit : undefined}
         />
       ) : null,
-    [activeConversationId, assetAuditRefreshKey, showAssetAuditControl]
+    [
+      activeConversationId,
+      assetAuditRefreshKey,
+      handleOpenAssetAudit,
+      isEmbedded,
+      showAssetAuditControl,
+    ]
   );
 
   useEffect(() => {
@@ -675,63 +692,21 @@ export function AIChatShell({
   }, [isMobile]);
 
   const handleSend = useCallback(
-    async (
-      files: AIChatMessageFile[] = [],
-      useMemory = false,
-      existingContext?: AIChatSendTraceContext
-    ): Promise<boolean> => {
-      const debugContext = existingContext ?? createAIChatSendTraceContext('unknown');
-      const stateAtEntry = controller.store.getState();
-      const query = input.trim();
-      const blockedBy = [
-        activeWorkflowApprovalRequest ? 'active_workflow_approval' : null,
-        !query ? 'empty_input' : null,
-        isSending ? 'react_is_sending' : null,
-        stateAtEntry.isSending ? 'store_is_sending' : null,
-        requireModel && !modelSelectorValue.model ? 'model_required' : null,
-      ].filter((reason): reason is string => Boolean(reason));
-      logAIChatSessionTrace(
-        'shell_send_received',
-        {
-          surface,
-          runtimeSurface: effectiveRuntimeSurface,
-          reactActiveConversationId: activeConversationId,
-          storeActiveConversationId: stateAtEntry.activeConversationId,
-          conversationCount: stateAtEntry.conversations.length,
-          messageCount: activeMessages.length,
-          queryLength: query.length,
-          fileCount: files.length,
-          reactIsSending: isSending,
-          storeIsSending: stateAtEntry.isSending,
-          blockedBy,
-        },
-        debugContext
-      );
+    async (files: AIChatMessageFile[] = [], useMemory = false): Promise<boolean> => {
       if (activeWorkflowApprovalRequest) {
-        logAIChatSessionTrace('shell_send_blocked', { blockedBy }, debugContext);
         return false;
       }
+      const query = input.trim();
       if (!query || isSending) {
-        logAIChatSessionTrace('shell_send_blocked', { blockedBy }, debugContext);
         return false;
       }
       if (requireModel && !modelSelectorValue.model) {
-        logAIChatSessionTrace('shell_send_blocked', { blockedBy }, debugContext);
         toast.error(t('consoleChat.modelRequired'));
         return false;
       }
       if (beforeSend) {
-        logAIChatSessionTrace('shell_before_send_started', {}, debugContext);
         const canSend = await beforeSend();
-        logAIChatSessionTrace('shell_before_send_completed', { canSend }, debugContext);
-        if (!canSend) {
-          logAIChatSessionTrace(
-            'shell_send_blocked',
-            { blockedBy: ['before_send_rejected'] },
-            debugContext
-          );
-          return false;
-        }
+        if (!canSend) return false;
       }
 
       const pendingMessageId = Date.now();
@@ -746,7 +721,7 @@ export function AIChatShell({
         assistantCreatedAt: pendingMessageCreatedAt,
         showAssistantPlanning,
       });
-      const controllerSend = controller.send({
+      void controller.send({
         query,
         files,
         model: {
@@ -757,43 +732,11 @@ export function AIChatShell({
         useMemory: forcedUseMemory ?? useMemory,
         runtimeSurface: effectiveRuntimeSurface,
         operationContext: toolGovernanceOperationContext,
-        debugContext,
       });
-      const stateAfterDispatch = controller.store.getState();
-      logAIChatSessionTrace(
-        'shell_controller_send_dispatched',
-        {
-          activeConversationId: stateAfterDispatch.activeConversationId,
-          isSending: stateAfterDispatch.isSending,
-          conversationCount: stateAfterDispatch.conversations.length,
-        },
-        debugContext
-      );
-      void controllerSend
-        .then(() => {
-          const settledState = controller.store.getState();
-          logAIChatSessionTrace(
-            'shell_controller_send_settled',
-            {
-              activeConversationId: settledState.activeConversationId,
-              isSending: settledState.isSending,
-              error: settledState.error,
-            },
-            debugContext
-          );
-        })
-        .catch(error => {
-          logAIChatSessionTrace(
-            'shell_controller_send_rejected',
-            { error: error instanceof Error ? error.message : String(error) },
-            debugContext
-          );
-        });
       return true;
     },
     [
       activeWorkflowApprovalRequest,
-      activeMessages.length,
       activeConversationId,
       beforeSend,
       controller,
@@ -804,7 +747,6 @@ export function AIChatShell({
       modelSelectorValue,
       requireModel,
       effectiveRuntimeSurface,
-      surface,
       t,
       toolGovernanceOperationContext,
     ]
@@ -1093,6 +1035,7 @@ export function AIChatShell({
     if (isHome) {
       toast.info(t('chat.alreadyInDraft'));
       setMobileSidebarOpen(false);
+      setEmbeddedAssetAuditOpen(false);
       return;
     }
     if (onStartNewConversation) {
@@ -1101,7 +1044,13 @@ export function AIChatShell({
       controller.startNew();
     }
     setMobileSidebarOpen(false);
+    setEmbeddedAssetAuditOpen(false);
   }, [controller, isHome, onStartNewConversation, t]);
+
+  const handleLoadMoreConversations = useCallback(
+    (page: number) => controller.refreshList({ page, append: true }),
+    [controller]
+  );
 
   const handleSelectConversation = useCallback(
     (id: string) => {
@@ -1111,6 +1060,7 @@ export function AIChatShell({
         void controller.select(id);
       }
       setMobileSidebarOpen(false);
+      setEmbeddedAssetAuditOpen(false);
     },
     [controller, onSelectConversation]
   );
@@ -1119,6 +1069,7 @@ export function AIChatShell({
     (id: string) => {
       void controller.remove(id);
       setMobileSidebarOpen(false);
+      setEmbeddedAssetAuditOpen(false);
     },
     [controller]
   );
@@ -1190,7 +1141,10 @@ export function AIChatShell({
   const embeddedConversationControls = useMemo(() => {
     if (!showEmbeddedConversationDrawer) return null;
     const controls = {
-      openConversations: () => setMobileSidebarOpen(true),
+      openConversations: () => {
+        setEmbeddedAssetAuditOpen(false);
+        setMobileSidebarOpen(true);
+      },
       startNewConversation: handleNewChat,
       isHome,
     };
@@ -1201,7 +1155,7 @@ export function AIChatShell({
       <AIChatEmbeddedConversationControls
         openConversations={controls.openConversations}
         startNewConversation={controls.startNewConversation}
-        conversationsLabel={t('consoleChat.toggleSidebar')}
+        conversationsLabel={t('consoleChat.historySubtitle')}
         newConversationLabel={t('chat.newConversation')}
         trailingAction={
           assetAuditButton || skillPreferenceAction ? (
@@ -1235,8 +1189,15 @@ export function AIChatShell({
     setExternalControlsPortal(document.getElementById(embeddedConversationControlsPortalId));
   }, [embeddedConversationControlsMode, embeddedConversationControlsPortalId]);
 
+  const embeddedConversationOverlayOpen = showEmbeddedConversationDrawer && mobileSidebarOpen;
+  const embeddedAssetAuditOverlayOpen = isEmbedded && embeddedAssetAuditOpen;
+  const embeddedOverlayOpen = embeddedConversationOverlayOpen || embeddedAssetAuditOverlayOpen;
+
   return (
-    <div className="flex h-full w-full overflow-hidden bg-background" style={themeStyle}>
+    <div
+      className={cn('relative flex h-full w-full overflow-hidden', chatSurfaceBackground)}
+      style={themeStyle}
+    >
       {!isEmbedded ? (
         <div className="hidden md:block">
           <Sidebar
@@ -1251,17 +1212,27 @@ export function AIChatShell({
             backgroundImage={AICHAT_SIDEBAR_BG_IMAGE}
             search={searchConversations}
             searchKey={conversationSearchKey}
+            pagination={conversationPagination}
+            isLoadingList={isLoadingConversationList}
+            onLoadMore={handleLoadMoreConversations}
           />
         </div>
       ) : null}
 
       <ToolGovernancePendingApprovalScopeProvider scopeId={toolGovernanceApprovalScopeId}>
-        <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
+        <main
+          aria-hidden={embeddedOverlayOpen || undefined}
+          inert={embeddedOverlayOpen}
+          className={cn(
+            'relative flex min-w-0 flex-1 flex-col overflow-hidden',
+            chatSurfaceBackground
+          )}
+        >
           {!isEmbedded ? (
             <AIChatHeader
               isMobile={isMobile}
               isHome={isHome}
-              title={activeConversation?.title || t('consoleChat.title')}
+              title={activeConversation?.title || ''}
               onToggleSidebar={handleToggleSidebar}
               onStartNew={handleNewChat}
               rightAction={
@@ -1332,6 +1303,7 @@ export function AIChatShell({
             suggestions={suggestions}
             onSelectSuggestion={setInput}
             brand={homeBrand}
+            openingGuideBrand={openingGuideBrand}
             title={homeTitle}
             description={homeDescription}
             composerHeight={inputAreaHeight}
@@ -1353,6 +1325,7 @@ export function AIChatShell({
           ) : null}
 
           <AIChatInputArea
+            isEmbedded={isEmbedded}
             isHome={isHome}
             isLoadingMessages={isLoadingMessages}
             input={input}
@@ -1396,7 +1369,46 @@ export function AIChatShell({
         </main>
       </ToolGovernancePendingApprovalScopeProvider>
 
-      {!isEmbedded || showEmbeddedConversationDrawer ? (
+      {embeddedConversationOverlayOpen ? (
+        <div
+          className={cn(
+            'absolute inset-0 z-40 flex min-h-0 min-w-0 overflow-hidden',
+            chatSurfaceBackground
+          )}
+        >
+          <Sidebar
+            activeId={activeConversationId}
+            conversations={conversationSummaries}
+            isOpen
+            isHome={isHome}
+            className="!w-full !border-r-0 !bg-transparent"
+            onNewChat={handleNewChat}
+            onSelect={handleSelectConversation}
+            onDelete={handleDeleteConversation}
+            onRename={handleRenameConversation}
+            onClose={() => setMobileSidebarOpen(false)}
+            alwaysShowHeader
+            useBackNavigation
+            search={searchConversations}
+            searchKey={conversationSearchKey}
+          />
+        </div>
+      ) : embeddedAssetAuditOverlayOpen ? (
+        <div
+          className={cn(
+            'absolute inset-0 z-40 flex min-h-0 min-w-0 overflow-hidden',
+            chatSurfaceBackground
+          )}
+        >
+          <AIChatAssetAuditPanel
+            conversationId={activeConversationId}
+            refreshKey={assetAuditRefreshKey}
+            onBack={() => setEmbeddedAssetAuditOpen(false)}
+          />
+        </div>
+      ) : null}
+
+      {!isEmbedded ? (
         <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
           <SheetContent side="left" className="max-w-none p-0 sm:max-w-sm" showClose={false}>
             <SheetTitle className="sr-only">{t('chat.conversations')}</SheetTitle>
@@ -1417,6 +1429,9 @@ export function AIChatShell({
               onClose={() => setMobileSidebarOpen(false)}
               search={searchConversations}
               searchKey={conversationSearchKey}
+              pagination={conversationPagination}
+              isLoadingList={isLoadingConversationList}
+              onLoadMore={handleLoadMoreConversations}
             />
           </SheetContent>
         </Sheet>

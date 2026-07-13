@@ -59,8 +59,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
   const canCreateWorkflow = hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.create);
   const canManageAgent = hasAnyPermission(AGENT_MANAGE_PERMISSION_CODES);
   const canCreateBlank = isWorkflowList ? canCreateWorkflow : canCreateAgent;
-  const canImportWorkflow =
-    isWorkflowList && hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.import);
+  const canImportWorkflow = isWorkflowList && hasAnyPermission(WORKFLOW_PERMISSION_ACTIONS.import);
   const canCreate = isWorkflowList ? canCreateBlank || canImportWorkflow : canCreateBlank;
 
   const [open, setOpen] = useState(false);
@@ -103,9 +102,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
   const emptyDescription = isWorkflowList ? t('agents.noWorkflowsDescription') : undefined;
   const dialogAgentTypes = useMemo(
     () =>
-      isWorkflowList
-        ? [AgentType.CONVERSATIONAL_AGENT, AgentType.WORKFLOW]
-        : [AgentType.AGENT],
+      isWorkflowList ? [AgentType.CONVERSATIONAL_AGENT, AgentType.WORKFLOW] : [AgentType.AGENT],
     [isWorkflowList]
   );
 
@@ -363,9 +360,9 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
       <div
         ref={listScrollRef}
         onScroll={handleListScroll}
-        className="flex h-full flex-col space-y-6 overflow-y-auto p-4 sm:space-y-8 sm:p-6 lg:space-y-9 lg:p-8"
+        className="flex h-full flex-col space-y-6 overflow-y-auto p-4 @md/console:space-y-8 @md/console:p-6 @5xl/console:space-y-9 @5xl/console:p-8"
       >
-        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+        <div className="flex flex-col justify-between gap-4 @3xl/console:flex-row @3xl/console:items-center">
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-semibold sm:text-2xl">{title}</h1>
             <Button
@@ -382,8 +379,8 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
             </Button>
           </div>
 
-          <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
-            <div className="relative w-full sm:max-w-md">
+          <div className="flex w-full flex-col gap-3 @3xl/console:w-auto @3xl/console:flex-row">
+            <div className="relative w-full @3xl/console:max-w-md">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 rounded-lg bg-background text-sm text-muted-foreground" />
               <Input
                 placeholder={searchPlaceholder}
@@ -395,13 +392,17 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
             {(canImportWorkflow || canCreate) && (
               <>
                 {canImportWorkflow && (
-                  <Button variant="outline" onClick={handleImport} className="w-full sm:w-auto">
+                  <Button
+                    variant="outline"
+                    onClick={handleImport}
+                    className="w-full @3xl/console:w-auto"
+                  >
                     <Upload className="h-4 w-4" />
                     <span className="text-sm">{importLabel}</span>
                   </Button>
                 )}
                 {canCreate && (
-                  <Button onClick={handleCreate} className="w-full sm:w-auto">
+                  <Button onClick={handleCreate} className="w-full @3xl/console:w-auto">
                     <Plus className="h-4 w-4" />
                     <span className="text-sm">{createLabel}</span>
                   </Button>
@@ -412,7 +413,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
         </div>
 
         {isLoading && (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 md:grid-cols-3 md:gap-6 lg:grid-cols-4 lg:gap-8 xl:gap-10 2xl:grid-cols-5 2xl:gap-12">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4">
             {Array.from({ length: 20 }).map((_, index) => (
               <Skeleton key={index} className="h-40 w-full" />
             ))}
@@ -471,7 +472,7 @@ export function AgentAssetListPage({ assetKind }: AgentAssetListPageProps) {
             />
           ))}
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 md:gap-4 lg:grid-cols-4 lg:gap-6 xl:gap-8 2xl:grid-cols-5 2xl:gap-10">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4">
           {pages.map((list, pageIndex) =>
             list.map(agent => (
               <AgentCard

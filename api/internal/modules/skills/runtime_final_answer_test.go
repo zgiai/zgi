@@ -32,3 +32,19 @@ func TestFinalAnswerPlanSnapshotSchemaIsAdvisory(t *testing.T) {
 		}
 	}
 }
+
+func TestFinalAnswerPlanSnapshotSchemaCanRequirePlanForSynchronization(t *testing.T) {
+	tools := MetaToolsForSkillStateWithOptions(nil, nil, MetaToolOptions{RequireFinalPlanSnapshot: true})
+	for _, tool := range tools {
+		if tool.Function.Name != MetaToolFinalAnswer {
+			continue
+		}
+		parameters, _ := tool.Function.Parameters.(map[string]interface{})
+		required, _ := parameters["required"].([]string)
+		if len(required) != 2 || required[0] != "answer" || required[1] != "plan" {
+			t.Fatalf("required = %#v, want answer and plan", required)
+		}
+		return
+	}
+	t.Fatalf("MetaToolsForSkillStateWithOptions() does not include %s", MetaToolFinalAnswer)
+}

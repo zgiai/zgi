@@ -1,7 +1,7 @@
 ---
 name: file-manager
-description: Manage File Management assets when AIChat has concrete, user-authorized file targets.
-when_to_use: Use this hidden skill when the user explicitly asks AIChat to create, save, import, or delete files in File Management.
+description: Manage File Management assets when the assistant has concrete, user-authorized file targets.
+when_to_use: Use this hidden skill when the user explicitly asks the assistant to create, save, import, or delete files in File Management.
 provider_type: builtin
 provider_id: files
 runtime_type: tool
@@ -105,7 +105,7 @@ Use this skill for governed File Management asset operations. It is intentionall
 - `tool_file_id`: required when `source_type=tool_file`; use the generated artifact ID returned by the generation tool.
 - `url`: required when `source_type=url`; must be an absolute public HTTP or HTTPS URL supplied by the user.
 - `filename`: required destination filename shown in File Management. Include a suitable extension.
-- `workspace_id`: optional target workspace ID. Usually omit it so current AIChat workspace context is used. Do not invent IDs.
+- `workspace_id`: optional target workspace ID. Usually omit it so the current assistant workspace context is used. Do not invent IDs.
 - Success evidence: the tool result must include a managed File Management identity such as `managed_file_id`, `upload_file_id`, or a successful saved-file record plus the saved `filename`. If only a temporary artifact exists, do not say the file was saved into File Management.
 
 ## Truthfulness Contract
