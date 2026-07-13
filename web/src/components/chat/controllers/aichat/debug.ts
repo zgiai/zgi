@@ -24,12 +24,14 @@ export function isAIChatTimelineDebugEnabled(): boolean {
 export function debugAIChatTimeline(label: string, data: Record<string, unknown>) {
   if (!isAIChatTimelineDebugEnabled()) return;
   try {
-    type DebugLog = {
+    interface DebugLog {
       at: string;
       label: string;
       data: Record<string, unknown>;
-    };
-    let debugElement = document.getElementById(AICHAT_TIMELINE_DEBUG_ELEMENT_ID) as HTMLScriptElement | null;
+    }
+    let debugElement = document.getElementById(
+      AICHAT_TIMELINE_DEBUG_ELEMENT_ID
+    ) as HTMLScriptElement | null;
     if (!debugElement) {
       debugElement = document.createElement('script');
       debugElement.id = AICHAT_TIMELINE_DEBUG_ELEMENT_ID;
@@ -102,6 +104,24 @@ export function summarizeAIChatTimeline(timeline: AIChatAgenticTimelineItem[]) {
         created_at: item.created_at,
         content_len: item.content.length,
         status: item.status,
+      };
+    }
+    if (item.type === 'user_input_request') {
+      return {
+        index,
+        type: item.type,
+        request_id: item.request_id,
+        created_at: item.created_at,
+        question_count: item.questions.length,
+      };
+    }
+    if (item.type === 'user_input_response') {
+      return {
+        index,
+        type: item.type,
+        request_id: item.request_id,
+        created_at: item.created_at,
+        answer_count: item.answers.length,
       };
     }
     if (item.type === 'tool_governance_decision') {

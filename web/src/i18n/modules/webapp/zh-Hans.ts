@@ -226,6 +226,11 @@ const messages: WebappMessages = {
     waitingApprovalMessage: '助手正在等待你的审批，确认后会继续执行。',
     waitingQuestionMessage: '助手正在等待你补充信息，提交后会继续执行。',
     waitingClientActionMessage: '助手正在等待页面完成操作，完成后会自动继续。',
+    userInputHistory: {
+      pendingTitle: '需要补充信息',
+      questionCount: '{count} 个问题',
+      title: '已提交的信息',
+    },
     operationStatus: {
       planning: '正在进行任务规划…',
       toolCompleted: '操作已完成，正在整理结果…',

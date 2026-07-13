@@ -24,6 +24,8 @@
     "test:file-upload-close-confirmation": "node scripts/test-file-upload-close-confirmation.mjs",
     "test:opening-statement-draft-preservation": "node scripts/test-opening-statement-draft-preservation.mjs",
     "test:contextual-assistant-brand-neutrality": "node scripts/test-contextual-assistant-brand-neutrality.mjs",
+    "test:agent-runtime-user-input-continuation": "node scripts/test-agent-runtime-user-input-continuation.mjs",
+    "test:user-input-response-history": "node scripts/test-user-input-response-history.mjs",
     "test:reparse-parser-config-confirmation": "node scripts/test-reparse-parser-config-confirmation.mjs",
     "test:file-detail-return-context": "node scripts/test-file-detail-return-context.mjs",
     "test:dataset-file-asset-selection": "node scripts/test-dataset-file-asset-selection.mjs",

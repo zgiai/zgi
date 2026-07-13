@@ -241,6 +241,11 @@ const messages = {
     waitingQuestionMessage: 'The assistant is waiting for your response to continue.',
     waitingClientActionMessage:
       'The assistant is waiting for the page action to finish and will continue automatically.',
+    userInputHistory: {
+      pendingTitle: 'More information needed',
+      questionCount: '{count} question(s)',
+      title: 'Submitted information',
+    },
     operationStatus: {
       planning: 'Planning the task…',
       toolCompleted: 'The operation is complete. Preparing the result…',

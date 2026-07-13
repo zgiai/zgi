@@ -10,6 +10,7 @@ interface UseAIChatScrollParams {
   isLoadingMessages: boolean;
   isLoadingOlderMessages: boolean;
   isSending: boolean;
+  bottomInsetHeight: number;
   loadOlderMessages: () => Promise<void>;
 }
 
@@ -31,6 +32,7 @@ export function useAIChatScroll({
   isLoadingMessages,
   isLoadingOlderMessages,
   isSending,
+  bottomInsetHeight,
   loadOlderMessages,
 }: UseAIChatScrollParams) {
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -78,6 +80,12 @@ export function useAIChatScroll({
       scrollToBottom();
     }
   }, [messages, isSending, scrollToBottom]);
+
+  useEffect(() => {
+    if (autoFollowRef.current) {
+      scrollToBottom();
+    }
+  }, [bottomInsetHeight, scrollToBottom]);
 
   const handleMessagesScroll = useCallback(
     (event: UIEvent<HTMLDivElement>) => {
