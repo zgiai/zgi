@@ -2040,7 +2040,8 @@ export const WebappRun: React.FC<WebappRunProps> = ({
             <div className="relative min-h-0 flex-1 overflow-hidden">
               <TabsContent
                 value="input"
-                className="m-0 h-full overflow-hidden p-1 focus-visible:ring-0"
+                forceMount
+                className="m-0 h-full overflow-hidden p-1 focus-visible:ring-0 data-[state=inactive]:hidden"
               >
                 {inputSection}
               </TabsContent>
