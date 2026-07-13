@@ -61,6 +61,12 @@ function getSidebarBackgroundStyle(backgroundImage?: string): React.CSSPropertie
   };
 }
 
+function isVisibleHistoryViewport(viewport: HTMLDivElement): boolean {
+  return (
+    viewport.clientWidth > 0 && viewport.clientHeight > 0 && viewport.getClientRects().length > 0
+  );
+}
+
 interface SidebarProps {
   isOpen: boolean;
   activeId: string | null;
@@ -186,6 +192,8 @@ export function Sidebar({
   const handleHistoryScroll = React.useCallback(
     (event: React.UIEvent<HTMLDivElement>) => {
       const viewport = event.currentTarget;
+      if (!isVisibleHistoryViewport(viewport)) return;
+
       const nearBottom = viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 64;
       if (!nearBottom) return;
 
@@ -197,16 +205,32 @@ export function Sidebar({
   React.useEffect(() => {
     if (!pagination?.hasMore || isLoadingList) return;
 
-    const frame = requestAnimationFrame(() => {
-      const viewport = viewportRef.current;
-      if (!viewport) return;
-      const isViewportFilled = viewport.scrollHeight > viewport.clientHeight + 64;
-      if (!isViewportFilled) {
-        requestNextPage('fill');
-      }
-    });
+    const viewport = viewportRef.current;
+    if (!viewport) return;
 
-    return () => cancelAnimationFrame(frame);
+    let frame: number | null = null;
+    const requestFillIfNeeded = () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        if (!isVisibleHistoryViewport(viewport)) return;
+
+        const isViewportFilled = viewport.scrollHeight > viewport.clientHeight + 64;
+        if (!isViewportFilled) {
+          requestNextPage('fill');
+        }
+      });
+    };
+
+    requestFillIfNeeded();
+
+    const resizeObserver = new ResizeObserver(requestFillIfNeeded);
+    resizeObserver.observe(viewport);
+
+    return () => {
+      resizeObserver.disconnect();
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
   }, [conversations.length, isLoadingList, pagination?.hasMore, requestNextPage]);
 
   return (
@@ -464,7 +488,7 @@ export function Sidebar({
               {t('webapp.chat.loadingConversations')}
             </div>
           ) : null}
-          {!pagination?.hasMore && conversations.length > 0 && !isLoadingList ? (
+          {pagination?.hasMore === false && conversations.length > 0 && !isLoadingList ? (
             <div className="py-3 text-center text-xs text-muted-foreground/70">
               {t('webapp.chat.noMoreConversations')}
             </div>
