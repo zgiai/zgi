@@ -163,21 +163,17 @@ export function ContextualAIChatProvider({
   children: ReactNode;
   enabled?: boolean;
 }) {
-  const [isOpen, setOpen] = useState(readStoredOpenState);
+  const [rememberedOpen, setRememberedOpen] = useState(readStoredOpenState);
   const [groups, setGroups] = useState<Record<string, ContextualAIChatRegisteredGroup>>({});
 
   useEffect(() => {
-    if (!enabled && isOpen) {
-      setOpen(false);
-      return;
-    }
-    storeOpenState(enabled && isOpen);
-  }, [enabled, isOpen]);
+    storeOpenState(rememberedOpen);
+  }, [rememberedOpen]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia(CONTEXTUAL_AICHAT_MEDIA_QUERY);
     const handleChange = () => {
-      if (!mediaQuery.matches) setOpen(false);
+      if (!mediaQuery.matches) setRememberedOpen(false);
     };
 
     handleChange();
@@ -224,7 +220,8 @@ export function ContextualAIChatProvider({
 
   const setAvailableOpen = useCallback(
     (open: boolean) => {
-      setOpen(enabled && open);
+      if (open && !enabled) return;
+      setRememberedOpen(open);
     },
     [enabled]
   );
@@ -232,14 +229,14 @@ export function ContextualAIChatProvider({
   const value = useMemo<ContextualAIChatState>(
     () => ({
       isAvailable: enabled,
-      isOpen: enabled && isOpen,
+      isOpen: enabled && rememberedOpen,
       items,
       open: () => setAvailableOpen(true),
-      close: () => setOpen(false),
+      close: () => setRememberedOpen(false),
       setOpen: setAvailableOpen,
       registerItems,
     }),
-    [enabled, isOpen, items, registerItems, setAvailableOpen]
+    [enabled, items, registerItems, rememberedOpen, setAvailableOpen]
   );
 
   return (
