@@ -60,16 +60,19 @@ func (s *contentParseFileServiceStub) UpdateContentText(_ context.Context, fileI
 }
 
 func TestContentExtractorUsesRoutedContentParse(t *testing.T) {
+	organizationID := "11111111-1111-1111-1111-111111111111"
 	workspaceID := "22222222-2222-2222-2222-222222222222"
 	fileService := &contentParseFileServiceStub{
 		file: &dto.UploadFile{
-			ID:          "file-1",
-			Name:        "report.pdf",
-			Extension:   "pdf",
-			MimeType:    "application/pdf",
-			CreatedBy:   "33333333-3333-3333-3333-333333333333",
-			WorkspaceID: &workspaceID,
-			IsTemporary: true,
+			ID:             "file-1",
+			TenantID:       organizationID,
+			OrganizationID: organizationID,
+			Name:           "report.pdf",
+			Extension:      "pdf",
+			MimeType:       "application/pdf",
+			CreatedBy:      "33333333-3333-3333-3333-333333333333",
+			WorkspaceID:    &workspaceID,
+			IsTemporary:    true,
 		},
 		data: []byte("pdf bytes"),
 	}
@@ -86,7 +89,7 @@ func TestContentExtractorUsesRoutedContentParse(t *testing.T) {
 		WithContentParseService(parser),
 	)
 
-	content, err := extractor.ExtractFileContent(context.Background(), "file-1", "11111111-1111-1111-1111-111111111111")
+	content, err := extractor.ExtractFileContent(context.Background(), "file-1", workspaceID)
 	if err != nil {
 		t.Fatalf("ExtractFileContent() error = %v", err)
 	}
@@ -99,7 +102,7 @@ func TestContentExtractorUsesRoutedContentParse(t *testing.T) {
 	if parser.req.Intent != contracts.ParseIntentChatContext || parser.req.Profile != contracts.ParseProfileAuto {
 		t.Fatalf("parse request intent/profile = %q/%q", parser.req.Intent, parser.req.Profile)
 	}
-	if parser.req.Metadata["organization_id"] != "11111111-1111-1111-1111-111111111111" {
+	if parser.req.Metadata["organization_id"] != organizationID {
 		t.Fatalf("organization metadata = %#v", parser.req.Metadata["organization_id"])
 	}
 	if parser.req.Metadata["workspace_id"] != workspaceID {
@@ -107,6 +110,44 @@ func TestContentExtractorUsesRoutedContentParse(t *testing.T) {
 	}
 	if fileService.updatedFileID != "file-1" || fileService.updatedContent != "# Routed content" {
 		t.Fatalf("cache update = %q/%q", fileService.updatedFileID, fileService.updatedContent)
+	}
+}
+
+func TestContentExtractorUsesLegacyWorkflowWorkspaceFallback(t *testing.T) {
+	organizationID := "44444444-4444-4444-4444-444444444444"
+	workspaceID := "55555555-5555-5555-5555-555555555555"
+	fileService := &contentParseFileServiceStub{
+		file: &dto.UploadFile{
+			ID:        "file-legacy-scope",
+			TenantID:  organizationID,
+			Name:      "legacy-scope.pdf",
+			Extension: "pdf",
+			MimeType:  "application/pdf",
+			CreatedBy: "66666666-6666-6666-6666-666666666666",
+		},
+		data: []byte("pdf bytes"),
+	}
+	parser := &routedContentParseStub{}
+	extractor := NewContentExtractor(
+		fileService,
+		nil,
+		&Config{
+			Enabled:           true,
+			MaxContentSize:    1024,
+			ExtractionTimeout: time.Second,
+			CacheEnabled:      true,
+		},
+		WithContentParseService(parser),
+	)
+
+	if _, err := extractor.ExtractFileContent(context.Background(), "file-legacy-scope", workspaceID); err != nil {
+		t.Fatalf("ExtractFileContent() error = %v", err)
+	}
+	if parser.req.Metadata["organization_id"] != organizationID {
+		t.Fatalf("organization metadata = %#v", parser.req.Metadata["organization_id"])
+	}
+	if parser.req.Metadata["workspace_id"] != workspaceID {
+		t.Fatalf("workspace metadata = %#v", parser.req.Metadata["workspace_id"])
 	}
 }
 

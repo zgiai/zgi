@@ -580,15 +580,26 @@ func (ce *contentExtractor) parseWithContentParse(ctx context.Context, uploadFil
 	if err != nil {
 		return nil, fmt.Errorf("download file for content parse: %w", err)
 	}
+	organizationID := strings.TrimSpace(uploadFile.OrganizationID)
+	if organizationID == "" {
+		organizationID = strings.TrimSpace(uploadFile.TenantID)
+	}
+	workspaceID := ""
+	if uploadFile.WorkspaceID != nil {
+		workspaceID = strings.TrimSpace(*uploadFile.WorkspaceID)
+	}
+	if workspaceID == "" {
+		workspaceID = strings.TrimSpace(tenantID)
+	}
 	metadata := map[string]any{
 		"source":          "content_extractor",
-		"organization_id": strings.TrimSpace(tenantID),
+		"organization_id": organizationID,
 		"account_id":      strings.TrimSpace(uploadFile.CreatedBy),
 		"upload_file_id":  uploadFile.ID,
 		"mime_type":       uploadFile.MimeType,
 	}
-	if uploadFile.WorkspaceID != nil && strings.TrimSpace(*uploadFile.WorkspaceID) != "" {
-		metadata["workspace_id"] = strings.TrimSpace(*uploadFile.WorkspaceID)
+	if workspaceID != "" {
+		metadata["workspace_id"] = workspaceID
 	}
 	req := contracts.ParseRequest{
 		SourceType: contracts.ParseSourceTypeBytes,
