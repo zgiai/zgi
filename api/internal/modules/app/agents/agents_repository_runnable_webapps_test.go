@@ -19,7 +19,7 @@ func TestAgentsRepository_ListRunnableWebApps_BranchesPublishedChecksByAgentType
 	agentID := "22222222-2222-2222-2222-222222222222"
 	webAppID := "33333333-3333-3333-3333-333333333333"
 
-	mock.ExpectQuery(`(?s)SELECT .* FROM "agents".*agents\.agent_type = .*agent_published_versions.*agent_published_versions\.deleted_at IS NULL.*agents\.agent_type != .*workflows.*workflows\.version !=.*ORDER BY agents\.tenant_id ASC,agents\.created_at DESC`).
+	mock.ExpectQuery(`(?s)SELECT .* FROM "agents".*agents\.agent_type = .*agent_published_versions.*agent_published_versions\.deleted_at IS NULL.*agents\.agent_type != .*workflows.*workflows\.version !=.*ORDER BY agents\.tenant_id ASC,agents\.created_at DESC,agents\.id ASC`).
 		WithArgs(AgentWebAppStatusActive, workspaceID, "AGENT", "AGENT", "draft").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"agent_id",
@@ -68,7 +68,7 @@ func TestAgentsRepository_ListRunnableWebApps_AppliesAuthorizationBeforePaginati
 
 	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "agents".*published_runtime_surfaces.*published_runtime_surface_grants`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(5))
-	mock.ExpectQuery(`(?s)SELECT agents\.id AS agent_id.*FROM "agents".*published_runtime_surfaces.*published_runtime_surface_grants.*ORDER BY agents\.tenant_id ASC,agents\.created_at DESC LIMIT .* OFFSET .*`).
+	mock.ExpectQuery(`(?s)SELECT agents\.id AS agent_id.*FROM "agents".*published_runtime_surfaces.*published_runtime_surface_grants.*ORDER BY agents\.tenant_id ASC,agents\.created_at DESC,agents\.id ASC LIMIT .* OFFSET .*`).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"agent_id",
 			"workspace_id",
@@ -112,7 +112,7 @@ func TestAgentsRepository_ListRunnableWebApps_FiltersByKeyword(t *testing.T) {
 
 	workspaceID := "11111111-1111-1111-1111-111111111111"
 	pattern := "%report%"
-	mock.ExpectQuery(`(?s)SELECT .* FROM "agents".*agents\.name ILIKE .*agents\.description ILIKE.*ORDER BY agents\.tenant_id ASC,agents\.created_at DESC`).
+	mock.ExpectQuery(`(?s)SELECT .* FROM "agents".*agents\.name ILIKE .*agents\.description ILIKE.*ORDER BY agents\.tenant_id ASC,agents\.created_at DESC,agents\.id ASC`).
 		WithArgs(AgentWebAppStatusActive, workspaceID, "AGENT", "AGENT", "draft", pattern, pattern).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"agent_id",
@@ -140,7 +140,7 @@ func TestAgentsRepository_ListRunnableWebApps_FiltersByWebAppID(t *testing.T) {
 
 	workspaceID := "11111111-1111-1111-1111-111111111111"
 	webAppID := "22222222-2222-2222-2222-222222222222"
-	mock.ExpectQuery(`(?s)SELECT .* FROM "agents".*agents\.web_app_id = .*ORDER BY agents\.tenant_id ASC,agents\.created_at DESC`).
+	mock.ExpectQuery(`(?s)SELECT .* FROM "agents".*agents\.web_app_id = .*ORDER BY agents\.tenant_id ASC,agents\.created_at DESC,agents\.id ASC`).
 		WithArgs(AgentWebAppStatusActive, workspaceID, "AGENT", "AGENT", "draft", webAppID).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"agent_id",

@@ -254,6 +254,7 @@ func (r *agentsRepository) ListRunnableWebApps(ctx context.Context, workspaceIDs
 		Select("agents.id AS agent_id, agents.tenant_id AS workspace_id, agents.web_app_id AS web_app_id, agents.web_app_status AS web_app_status, agents.name AS agent_name, agents.icon AS agent_icon, agents.icon_type AS agent_icon_type, agents.description AS agent_desc, agents.agent_type AS agent_type").
 		Order("agents.tenant_id ASC").
 		Order("agents.created_at DESC").
+		Order("agents.id ASC").
 		Find(&items).Error; err != nil {
 		return runnableWebAppListResult{}, fmt.Errorf("failed to list runnable web apps: %w", err)
 	}
