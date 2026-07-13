@@ -18,7 +18,8 @@ export function getSavedWorkflowInteractionMode(): InteractionMode | null {
   try {
     const raw = window.localStorage.getItem(UI_LOCAL_KEYS.workflowInteractionMode);
     if (raw === 'mouse' || raw === 'trackpad') return raw;
-    if (raw === 'pointer' || raw === 'hand') return 'trackpad';
+    if (raw === 'hand') return 'mouse';
+    if (raw === 'pointer') return 'trackpad';
     return null;
   } catch {
     return null;

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { Button } from '@/components/ui/button';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
@@ -18,7 +18,7 @@ import { useWorkflowStore } from '../store';
 import { useCreateNodeModal } from '../hooks/use-create-node-modal';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n';
-import { getSavedWorkflowInteractionMode, saveWorkflowInteractionMode } from '@/utils/ui-local';
+import { saveWorkflowInteractionMode } from '@/utils/ui-local';
 
 /**
  * Bottom toolbar for workflow editor interactions
@@ -60,14 +60,6 @@ const WorkflowBottomToolbar: React.FC = () => {
   };
 
   const groupValue = useMemo(() => interactionMode, [interactionMode]);
-
-  // Restore last selected interaction mode on mount; fallback handled by store default
-  useEffect(() => {
-    const saved = getSavedWorkflowInteractionMode();
-    if (saved) {
-      setInteractionMode(saved);
-    }
-  }, [setInteractionMode]);
 
   return (
     <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2">

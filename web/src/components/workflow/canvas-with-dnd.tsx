@@ -28,6 +28,7 @@ import { useNodeAlignmentGuides } from './hooks/use-node-alignment-guides';
 import WorkflowCanvasPanels from './ui/workflow-canvas-panels';
 import WorkflowAlignmentGuides from './ui/workflow-alignment-guides';
 import type { WorkflowEdge, WorkflowNode } from './store/type';
+import { getSavedWorkflowInteractionMode } from '@/utils/ui-local';
 
 interface CanvasWithDndProps {
   viewNodes: WorkflowNode[];
@@ -91,6 +92,7 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
   const createNodePickerOpen = useCreateNodeModal(state => state.open);
 
   const interactionMode = useWorkflowStore.use.interactionMode();
+  const setInteractionMode = useWorkflowStore.use.setInteractionMode();
   const {
     isConnecting,
     isCanvasInteracting,
@@ -121,6 +123,13 @@ const CanvasWithDnd: React.FC<CanvasWithDndProps> = ({
     () => (isReadOnly ? () => {} : onConnect),
     [isReadOnly, onConnect]
   );
+
+  React.useEffect(() => {
+    const saved = getSavedWorkflowInteractionMode();
+    if (saved) {
+      setInteractionMode(saved);
+    }
+  }, [setInteractionMode]);
 
   const setEdgeDescId = useWorkflowStore.use.setEdgeDescId();
   const setEdgeDescPosition = useWorkflowStore.use.setEdgeDescPosition();
