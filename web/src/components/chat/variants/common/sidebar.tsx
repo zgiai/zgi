@@ -270,7 +270,7 @@ export function Sidebar({
               'w-full gap-2 font-bold overflow-hidden',
               isOpen ? 'opacity-100' : 'opacity-0'
             )}
-            variant="secondary"
+            variant="default"
             onClick={onNewChat}
           >
             <MessageSquarePlus className="h-5 w-5" />
