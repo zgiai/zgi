@@ -128,14 +128,18 @@ export function useAgentRuntimeDraftPersistence({
 
       try {
         const result = await savePayloadRef.current(submittedPayload, options);
+        const savedSignature = buildAgentRuntimeSignature(result.savedPayload);
 
-        if (currentSignatureRef.current !== submittedSignature) {
+        if (
+          currentSignatureRef.current !== submittedSignature &&
+          currentSignatureRef.current !== savedSignature
+        ) {
           setSaveState('dirty');
           return false;
         }
 
         onSaveCommittedRef.current?.(result);
-        lastSavedSignatureRef.current = buildAgentRuntimeSignature(result.savedPayload);
+        lastSavedSignatureRef.current = savedSignature;
         setLastSavedAt(result.updatedAt);
         setSaveState('saved');
         return true;

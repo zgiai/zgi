@@ -624,6 +624,8 @@ export function useAgentRuntimePageModel(agentId: string) {
         );
       }
       let configPayload = payload;
+      let wasBindingRevisionRebased = false;
+      let rebasedBindingHealth: AgentBindingHealth | undefined;
       let response: Awaited<ReturnType<typeof agentService.updateAgentConfig>>;
       try {
         response = await agentService.updateAgentConfig(agentId, configPayload);
@@ -648,7 +650,8 @@ export function useAgentRuntimePageModel(agentId: string) {
           workflow_bindings: normalizeAgentWorkflowBindings(serverConfig.workflow_bindings ?? []),
           binding_revision: serverConfig.binding_revision,
         };
-        applyServerBindingPayload(configPayload, conflict?.bindingHealth);
+        wasBindingRevisionRebased = true;
+        rebasedBindingHealth = conflict?.bindingHealth;
         response = await agentService.updateAgentConfig(agentId, configPayload);
       }
       const updatedAt = response.data.updated_at ?? Math.floor(Date.now() / 1000);
@@ -660,6 +663,13 @@ export function useAgentRuntimePageModel(agentId: string) {
           response.data.agent_memory_slots ??
           payload.agent_memory_slots,
       };
+
+      if (wasBindingRevisionRebased) {
+        applyServerBindingPayload(
+          savedPayload,
+          response.data.binding_health ?? rebasedBindingHealth
+        );
+      }
 
       queryClient.setQueryData(AGENT_KEYS.config(agentId), {
         ...response,

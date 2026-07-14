@@ -19,6 +19,9 @@ const workflowDialog = read('src/components/agents/agent-runtime/workflow-dialog
 const orchestrationPanel = read('src/components/agents/agent-runtime/orchestration-panel.tsx');
 const dialogs = read('src/components/agents/agent-runtime/dialogs.tsx');
 const previewPanel = read('src/components/agents/agent-runtime/preview-panel.tsx');
+const draftPersistence = read(
+  'src/components/agents/agent-runtime/use-agent-runtime-draft-persistence.ts'
+);
 
 assert.match(types, /binding_revision\?: string/);
 assert.match(types, /binding_health\?: AgentBindingHealth/);
@@ -53,6 +56,12 @@ assert.match(
   pageModel,
   /response = await agentService\.updateAgentConfig\(agentId, configPayload\)/
 );
+assert.match(pageModel, /applyServerBindingPayload\(\s*savedPayload,/);
+assert.doesNotMatch(
+  pageModel,
+  /applyServerBindingPayload\(configPayload, conflict\?\.bindingHealth\)/
+);
+assert.match(draftPersistence, /currentSignatureRef\.current !== savedSignature/);
 assert.doesNotMatch(pageModel, /setBindingHealth\(\{\s*status: 'healthy'/);
 assert.match(pageModel, /setIsAbnormalBindingCleanupPending\(true\)/);
 assert.match(pageModel, /getAgentRollbackImpactChanged\(error\)/);
@@ -61,7 +70,10 @@ assert.match(pageModel, /setCleanupBindingsDialogOpen\(true\)/);
 
 assert.doesNotMatch(databaseDialog, /selectedDbIds\.filter\(dbId => scopedDbIds\.has\(dbId\)\)/);
 assert.match(databaseDialog, /onConfirmDatabases\(\s*selectedDbIds,/);
-assert.match(databaseDialog, /setSelectedDbIds\(bindings\.map\(binding => binding\.data_source_id\)\)/);
+assert.match(
+  databaseDialog,
+  /setSelectedDbIds\(bindings\.map\(binding => binding\.data_source_id\)\)/
+);
 assert.match(skillDialog, /setLocalSelectedSkillIds\(normalizedSelectedSkillIds\)/);
 assert.match(knowledgeDialog, /setLocalSelectedDatasetIds\(selectedDatasetIds\)/);
 assert.match(workflowDialog, /const existing = new Map\(bindings\.map/);
