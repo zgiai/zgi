@@ -277,22 +277,151 @@ func (s *agentsService) ListAgentWorkflowBindingCandidates(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	items, err := s.listAgentWorkflowBindingCandidatesForWorkspace(ctx, ag.TenantID.String())
+	items, total, err := s.listAgentWorkflowBindingCandidatesForWorkspacePage(
+		ctx,
+		ag.TenantID.String(),
+		agentRuntimeModeFromConfig(cfg),
+		req,
+	)
 	if err != nil {
 		return nil, err
 	}
-	items = filterAgentWorkflowBindingCandidates(items, agentRuntimeModeFromConfig(cfg), req)
+	page := normalizeAgentBindingCandidatePage(req.Page)
+	limit := normalizeAgentBindingCandidateLimit(req.Limit)
 	return &dto.AgentWorkflowBindingCandidatesResponse{
 		AgentID:            ag.ID.String(),
 		WorkspaceID:        ag.TenantID.String(),
 		Query:              strings.TrimSpace(req.Query),
 		AgentType:          strings.TrimSpace(req.AgentType),
-		Limit:              normalizeAgentBindingCandidateLimit(req.Limit),
+		Limit:              limit,
+		Page:               page,
+		Total:              total,
+		HasMore:            page < agentBindingCandidatePageCount(total, limit),
 		IncludeSelected:    req.IncludeSelected,
 		IncludeStartInputs: req.IncludeStartInputs,
 		Count:              len(items),
 		Data:               items,
 	}, nil
+}
+
+func (s *agentsService) listAgentWorkflowBindingCandidatesForWorkspacePage(
+	ctx context.Context,
+	workspaceID string,
+	mode dto.AgentRuntimeModeConfig,
+	req dto.AgentWorkflowBindingCandidatesRequest,
+) ([]dto.AgentWorkflowBindingCandidate, int, error) {
+	if s.db == nil {
+		return nil, 0, fmt.Errorf("database is required")
+	}
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return []dto.AgentWorkflowBindingCandidate{}, 0, nil
+	}
+
+	const latestWorkflowCandidatesSQL = `
+		WITH ranked_workflows AS (
+			SELECT
+				workflows.agent_id AS agent_id,
+				workflows.id AS workflow_id,
+				agents.agent_type AS agent_type,
+				workflows.version_uuid AS version_uuid,
+				workflows.version AS version,
+				workflows.graph AS graph,
+				agents.name AS label,
+				agents.description AS description,
+				agents.icon AS icon,
+				agents.icon_type AS icon_type,
+				workflows.created_at AS updated_at,
+				ROW_NUMBER() OVER (
+					PARTITION BY workflows.agent_id
+					ORDER BY workflows.created_at DESC, workflows.id DESC
+				) AS row_number
+			FROM workflows
+			JOIN agents ON agents.id = workflows.agent_id
+			WHERE workflows.tenant_id = ?
+				AND workflows.version != ?
+				AND agents.deleted_at IS NULL
+				AND agents.web_app_status = ?
+				AND agents.agent_type IN (?, ?)
+		)
+	`
+
+	filters := " WHERE row_number = 1"
+	args := []interface{}{
+		workspaceID,
+		"draft",
+		AgentWebAppStatusActive,
+		"WORKFLOW",
+		"CONVERSATIONAL_WORKFLOW",
+	}
+	if query := strings.ToLower(strings.TrimSpace(req.Query)); query != "" {
+		pattern := "%" + query + "%"
+		filters += ` AND (
+			LOWER(COALESCE(label, '')) LIKE ? OR
+			LOWER(COALESCE(description, '')) LIKE ? OR
+			LOWER(COALESCE(agent_id::text, '')) LIKE ? OR
+			LOWER(COALESCE(workflow_id::text, '')) LIKE ?
+		)`
+		args = append(args, pattern, pattern, pattern, pattern)
+	}
+	if agentType := strings.TrimSpace(req.AgentType); agentType != "" {
+		filters += " AND agent_type = ?"
+		args = append(args, agentType)
+	}
+
+	selectedSet := selectedWorkflowBindingSet(mode.WorkflowBindings)
+	selectedIDs := make([]string, 0, len(selectedSet))
+	for bindingID := range selectedSet {
+		selectedIDs = append(selectedIDs, bindingID)
+	}
+	sort.Strings(selectedIDs)
+	if !req.IncludeSelected && len(selectedIDs) > 0 {
+		filters += " AND LOWER(agent_id::text) NOT IN ?"
+		args = append(args, selectedIDs)
+	}
+
+	var total int64
+	countSQL := latestWorkflowCandidatesSQL + " SELECT COUNT(*) FROM ranked_workflows" + filters
+	if err := s.db.WithContext(ctx).Raw(countSQL, args...).Scan(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	page := normalizeAgentBindingCandidatePage(req.Page)
+	limit := normalizeAgentBindingCandidateLimit(req.Limit)
+	pageCount := agentBindingCandidatePageCount(int(total), limit)
+	if total == 0 || page > pageCount {
+		return []dto.AgentWorkflowBindingCandidate{}, int(total), nil
+	}
+	offset := (page - 1) * limit
+	orderSQL := " ORDER BY LOWER(COALESCE(label, '')) ASC, agent_id ASC"
+	pageArgs := append([]interface{}{}, args...)
+	if req.IncludeSelected && len(selectedIDs) > 0 {
+		orderSQL = " ORDER BY CASE WHEN LOWER(agent_id::text) IN ? THEN 0 ELSE 1 END, LOWER(COALESCE(label, '')) ASC, agent_id ASC"
+		pageArgs = append(pageArgs, selectedIDs)
+	}
+	pageArgs = append(pageArgs, limit, offset)
+	listSQL := latestWorkflowCandidatesSQL + `
+		SELECT agent_id, workflow_id, agent_type, version_uuid, version, graph,
+			label, description, icon, icon_type, updated_at
+		FROM ranked_workflows` + filters + orderSQL + " LIMIT ? OFFSET ?"
+
+	var rows []agentWorkflowCandidateRow
+	if err := s.db.WithContext(ctx).Raw(listSQL, pageArgs...).Scan(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+
+	items := make([]dto.AgentWorkflowBindingCandidate, 0, len(rows))
+	for _, row := range rows {
+		item := s.agentWorkflowBindingCandidateFromRow(ctx, row)
+		_, item.Selected = selectedSet[strings.ToLower(strings.TrimSpace(item.BindingID))]
+		if !req.IncludeStartInputs {
+			item.StartInputs = nil
+			item.RequiredInputs = nil
+			item.DefaultInputKey = ""
+		}
+		items = append(items, item)
+	}
+	return items, int(total), nil
 }
 
 func (s *agentsService) listAgentWorkflowBindingCandidatesForWorkspace(ctx context.Context, workspaceID string) ([]dto.AgentWorkflowBindingCandidate, error) {

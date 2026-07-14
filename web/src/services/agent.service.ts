@@ -11,6 +11,10 @@ import type {
   UpdateWebAppStatusRequest,
   UpdateWebAppStatusResponse,
   AgentRuntimeConfig,
+  AgentSkillBindingCandidatesResponse,
+  AgentKnowledgeBindingCandidatesResponse,
+  AgentDatabaseBindingCandidatesResponse,
+  AgentDatabaseTableBindingCandidatesResponse,
   AgentWorkflowBindingCandidatesResponse,
   UpdateAgentRuntimeConfigRequest,
   AgentMemorySlotConfig,
@@ -168,11 +172,65 @@ class AgentService extends BaseService {
   }
 
   getAgentWorkflowBindingCandidates(
-    agentId: string
+    agentId: string,
+    params?: { query?: string; page?: number; limit?: number }
   ): Promise<ApiResponseData<AgentWorkflowBindingCandidatesResponse>> {
-    return this.request('get', `/agents/${agentId}/workflow-bindings/candidates`, undefined, {
+    return this.request('get', `/agents/${agentId}/candidates/workflows`, undefined, {
       headers: { 'Content-Type': 'application/json' },
+      params,
     });
+  }
+
+  getAgentSkillBindingCandidates(
+    agentId: string,
+    params?: { query?: string; source?: 'system' | 'custom'; page?: number; limit?: number }
+  ): Promise<ApiResponseData<AgentSkillBindingCandidatesResponse>> {
+    return this.request('get', `/agents/${agentId}/candidates/skills`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+      params,
+    });
+  }
+
+  getAgentKnowledgeBindingCandidates(
+    agentId: string,
+    params?: { query?: string; page?: number; limit?: number }
+  ): Promise<ApiResponseData<AgentKnowledgeBindingCandidatesResponse>> {
+    return this.request('get', `/agents/${agentId}/candidates/knowledge`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+      params,
+    });
+  }
+
+  getAgentDatabaseBindingCandidates(
+    agentId: string,
+    params?: {
+      query?: string;
+      page?: number;
+      limit?: number;
+      available_only?: boolean;
+      require_write?: boolean;
+    }
+  ): Promise<ApiResponseData<AgentDatabaseBindingCandidatesResponse>> {
+    return this.request('get', `/agents/${agentId}/candidates/databases`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+      params,
+    });
+  }
+
+  getAgentDatabaseTableBindingCandidates(
+    agentId: string,
+    dataSourceId: string,
+    params?: { query?: string; page?: number; limit?: number; include_columns?: boolean }
+  ): Promise<ApiResponseData<AgentDatabaseTableBindingCandidatesResponse>> {
+    return this.request(
+      'get',
+      `/agents/${agentId}/candidates/databases/${dataSourceId}/tables`,
+      undefined,
+      {
+        headers: { 'Content-Type': 'application/json' },
+        params,
+      }
+    );
   }
 
   getAgentMemorySlots(

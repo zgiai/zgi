@@ -503,10 +503,144 @@ func (h *AgentsHandler) ListAgentWorkflowBindingCandidates(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := h.appService.ListAgentWorkflowBindingCandidates(ctx, c.Param("agent_id"), accountID, dto.AgentWorkflowBindingCandidatesRequest{
-		IncludeSelected:    true,
-		IncludeStartInputs: true,
-	})
+	var req dto.AgentWorkflowBindingCandidatesRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if req.Limit == 0 {
+		req.Limit = maxAgentBindingCandidateLimit
+	}
+	if req.Page == 0 {
+		req.Page = 1
+	}
+	req.IncludeSelected = true
+	req.IncludeStartInputs = true
+	result, err := h.appService.ListAgentWorkflowBindingCandidates(ctx, c.Param("agent_id"), accountID, req)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) ListAgentSkillBindingCandidates(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx, ok := h.requireAgentManageAccess(c, accountID)
+	if !ok {
+		return
+	}
+	var req dto.AgentSkillCandidatesRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if req.Limit == 0 {
+		req.Limit = maxAgentBindingCandidateLimit
+	}
+	if req.Page == 0 {
+		req.Page = 1
+	}
+	req.IncludeSelected = true
+	result, err := h.appService.ListAgentSkillCandidates(ctx, c.Param("agent_id"), accountID, req)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) ListAgentKnowledgeBindingCandidates(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx, ok := h.requireAgentManageAccess(c, accountID)
+	if !ok {
+		return
+	}
+	var req dto.AgentKnowledgeCandidatesRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if req.Limit == 0 {
+		req.Limit = maxAgentBindingCandidateLimit
+	}
+	if req.Page == 0 {
+		req.Page = 1
+	}
+	req.IncludeSelected = true
+	result, err := h.appService.ListAgentKnowledgeCandidates(ctx, c.Param("agent_id"), accountID, req)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) ListAgentDatabaseBindingCandidates(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx, ok := h.requireAgentManageAccess(c, accountID)
+	if !ok {
+		return
+	}
+	var req dto.AgentDatabaseCandidatesRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if req.Limit == 0 {
+		req.Limit = maxAgentBindingCandidateLimit
+	}
+	if req.Page == 0 {
+		req.Page = 1
+	}
+	if _, provided := c.GetQuery("available_only"); !provided {
+		req.AvailableOnly = true
+	}
+	req.IncludeSelected = true
+	result, err := h.appService.ListAgentDatabaseCandidates(ctx, c.Param("agent_id"), accountID, req)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) ListAgentDatabaseTableBindingCandidates(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx, ok := h.requireAgentManageAccess(c, accountID)
+	if !ok {
+		return
+	}
+	var req dto.AgentDatabaseTablesRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if req.Limit == 0 {
+		req.Limit = maxAgentBindingCandidateLimit
+	}
+	if req.Page == 0 {
+		req.Page = 1
+	}
+	req.DataSourceID = c.Param("data_source_id")
+	req.IncludeSelected = true
+	result, err := h.appService.ListAgentDatabaseTables(ctx, c.Param("agent_id"), accountID, req)
 	if err != nil {
 		h.failRuntime(c, err)
 		return

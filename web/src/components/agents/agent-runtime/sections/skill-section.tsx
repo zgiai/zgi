@@ -48,14 +48,14 @@ export function AgentRuntimeSkillSection({
       action={
         <div className="flex items-center gap-2">
           <Badge variant="subtle">
-            {t('skills.selectedCount', { count: normalizedSelectedSkillIds.length })}
+            {t('selectedCount', { count: normalizedSelectedSkillIds.length })}
           </Badge>
           <Button
             isIcon
             variant="outline"
             className="size-8"
             onClick={onOpenSkillDialog}
-            disabled={readOnly}
+            disabled={readOnly || isSkillsLoading || isSkillConfigLoading}
             aria-label={t('skills.add')}
             title={t('skills.add')}
           >

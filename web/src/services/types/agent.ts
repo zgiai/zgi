@@ -239,10 +239,107 @@ export interface AgentWorkflowBindingCandidate extends AgentWorkflowBinding {
   icon_type?: AgentIconType | string;
   icon_url?: string;
   updated_at?: number;
+  selected?: boolean;
 }
 
 export interface AgentWorkflowBindingCandidatesResponse {
   data: AgentWorkflowBindingCandidate[];
+  page: number;
+  limit: number;
+  total: number;
+  has_more: boolean;
+}
+
+export interface AgentSkillBindingCandidate {
+  skill_id: string;
+  name: string;
+  description?: string;
+  when_to_use?: string;
+  source?: 'system' | 'custom' | string;
+  runtime_type?: string;
+  has_tools: boolean;
+  has_references: boolean;
+  has_scripts: boolean;
+  scripts_supported: boolean;
+  required_config?: string[];
+  display?: {
+    icon?: string;
+    category?: string;
+    label?: Record<string, string>;
+    description?: Record<string, string>;
+    when_to_use?: Record<string, string>;
+    tags?: Record<string, string[]>;
+  };
+  selected?: boolean;
+}
+
+export interface AgentCandidatePage<T> {
+  agent_id?: string;
+  workspace_id?: string;
+  query?: string;
+  page: number;
+  limit: number;
+  total: number;
+  has_more: boolean;
+  count?: number;
+  data: T[];
+}
+
+export interface AgentSkillBindingCandidatesResponse
+  extends AgentCandidatePage<AgentSkillBindingCandidate> {
+  source?: string;
+}
+
+export interface AgentKnowledgeBindingCandidate {
+  dataset_id: string;
+  name: string;
+  description?: string;
+  provider?: string;
+  enable_graph_flow: boolean;
+  selected?: boolean;
+}
+
+export type AgentKnowledgeBindingCandidatesResponse =
+  AgentCandidatePage<AgentKnowledgeBindingCandidate>;
+
+export interface AgentDatabaseBindingCandidate {
+  data_source_id: string;
+  name: string;
+  description?: string;
+  status?: string;
+  workspace_id?: string;
+  can_edit?: boolean;
+  can_write?: boolean;
+  icon?: string;
+  icon_type?: AgentIconType | string;
+  icon_background?: string;
+  updated_at?: number;
+  table_count: number;
+  selected?: boolean;
+}
+
+export interface AgentDatabaseBindingCandidatesResponse
+  extends AgentCandidatePage<AgentDatabaseBindingCandidate> {
+  available_only: boolean;
+  require_write?: boolean;
+}
+
+export interface AgentDatabaseTableBindingCandidate {
+  table_id: string;
+  data_source_id: string;
+  name: string;
+  description?: string;
+  physical_table_name?: string;
+  updated_at?: number;
+  selected?: boolean;
+  writable?: boolean;
+  columns?: unknown[];
+}
+
+export interface AgentDatabaseTableBindingCandidatesResponse
+  extends AgentCandidatePage<AgentDatabaseTableBindingCandidate> {
+  data_source_id: string;
+  include_columns?: boolean;
 }
 
 export interface AgentMemorySlotConfig {
@@ -421,10 +518,21 @@ export interface AgentApiKeyList {
 }
 
 export type AgentRuntimeSurface =
-  'webapp' | 'api' | 'app_center' | 'builtin_app' | 'internal' | string;
+  | 'webapp'
+  | 'api'
+  | 'app_center'
+  | 'builtin_app'
+  | 'internal'
+  | string;
 
 export type AgentRuntimeGrantSubject =
-  'public' | 'organization' | 'department' | 'workspace' | 'account' | 'internal' | string;
+  | 'public'
+  | 'organization'
+  | 'department'
+  | 'workspace'
+  | 'account'
+  | 'internal'
+  | string;
 
 export interface AgentRuntimeSurfaceGrant {
   subject_type: AgentRuntimeGrantSubject;

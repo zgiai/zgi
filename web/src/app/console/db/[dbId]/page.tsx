@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useDb } from '@/hooks';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useT } from '@/i18n';
 import { useDbTables } from '@/hooks/db/use-db-tables';
 import { DbTableFormDialog } from '@/components/db/table-form-dialog';
@@ -20,10 +20,11 @@ import {
 export default function DbOverviewPage() {
   const { dbId } = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const t = useT();
 
   // Permissions
-  const { hasAnyPermission } = useAccountPermissions();
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const canManageSchema = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.schemaManage);
   const canImportExcel = hasAnyPermission([
     ...DATABASE_PERMISSION_ACTIONS.importAnalyze,
@@ -40,6 +41,19 @@ export default function DbOverviewPage() {
 
   // Create table dialog state
   const [createOpen, setCreateOpen] = useState(false);
+
+  useEffect(() => {
+    if (searchParams.get('createTable') !== '1' || isPermissionsLoading) return;
+
+    if (canManageSchema) {
+      setCreateOpen(true);
+    }
+
+    const nextSearchParams = new URLSearchParams(searchParams.toString());
+    nextSearchParams.delete('createTable');
+    const query = nextSearchParams.toString();
+    router.replace(`/console/db/${dbId}${query ? `?${query}` : ''}`, { scroll: false });
+  }, [canManageSchema, dbId, isPermissionsLoading, router, searchParams]);
 
   const isLoading = isDbLoading || (canViewTableMetadata && isTablesLoading);
   const hasTables = tables.length > 0;

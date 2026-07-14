@@ -266,6 +266,9 @@ type AgentWorkflowBindingCandidatesResponse struct {
 	Query              string                          `json:"query,omitempty"`
 	AgentType          string                          `json:"agent_type,omitempty"`
 	Limit              int                             `json:"limit,omitempty"`
+	Page               int                             `json:"page"`
+	Total              int                             `json:"total"`
+	HasMore            bool                            `json:"has_more"`
 	IncludeSelected    bool                            `json:"include_selected,omitempty"`
 	IncludeStartInputs bool                            `json:"include_start_inputs,omitempty"`
 	Count              int                             `json:"count"`
@@ -273,39 +276,56 @@ type AgentWorkflowBindingCandidatesResponse struct {
 }
 
 type AgentSkillCandidatesRequest struct {
-	Query           string `json:"query,omitempty"`
-	Limit           int    `json:"limit,omitempty"`
+	Query           string `form:"query" json:"query,omitempty" binding:"omitempty,max=200"`
+	Source          string `form:"source" json:"source,omitempty" binding:"omitempty,oneof=system custom"`
+	Page            int    `form:"page" json:"page,omitempty" binding:"omitempty,min=1,max=99999"`
+	Limit           int    `form:"limit" json:"limit,omitempty" binding:"omitempty,min=1,max=100"`
 	IncludeSelected bool   `json:"include_selected,omitempty"`
 }
 
+type AgentSkillDisplayMetadata struct {
+	Icon        string              `json:"icon,omitempty"`
+	Category    string              `json:"category,omitempty"`
+	Label       map[string]string   `json:"label,omitempty"`
+	Description map[string]string   `json:"description,omitempty"`
+	WhenToUse   map[string]string   `json:"when_to_use,omitempty"`
+	Tags        map[string][]string `json:"tags,omitempty"`
+}
+
 type AgentSkillCandidate struct {
-	SkillID          string   `json:"skill_id"`
-	Name             string   `json:"name"`
-	Description      string   `json:"description,omitempty"`
-	WhenToUse        string   `json:"when_to_use,omitempty"`
-	Source           string   `json:"source,omitempty"`
-	RuntimeType      string   `json:"runtime_type,omitempty"`
-	HasTools         bool     `json:"has_tools"`
-	HasReferences    bool     `json:"has_references"`
-	HasScripts       bool     `json:"has_scripts"`
-	ScriptsSupported bool     `json:"scripts_supported"`
-	RequiredConfig   []string `json:"required_config,omitempty"`
-	Selected         bool     `json:"selected,omitempty"`
+	SkillID          string                    `json:"skill_id"`
+	Name             string                    `json:"name"`
+	Description      string                    `json:"description,omitempty"`
+	WhenToUse        string                    `json:"when_to_use,omitempty"`
+	Source           string                    `json:"source,omitempty"`
+	RuntimeType      string                    `json:"runtime_type,omitempty"`
+	HasTools         bool                      `json:"has_tools"`
+	HasReferences    bool                      `json:"has_references"`
+	HasScripts       bool                      `json:"has_scripts"`
+	ScriptsSupported bool                      `json:"scripts_supported"`
+	RequiredConfig   []string                  `json:"required_config,omitempty"`
+	Display          AgentSkillDisplayMetadata `json:"display,omitempty"`
+	Selected         bool                      `json:"selected,omitempty"`
 }
 
 type AgentSkillCandidatesResponse struct {
 	AgentID         string                `json:"agent_id,omitempty"`
 	WorkspaceID     string                `json:"workspace_id,omitempty"`
 	Query           string                `json:"query,omitempty"`
+	Source          string                `json:"source,omitempty"`
+	Page            int                   `json:"page"`
 	Limit           int                   `json:"limit,omitempty"`
+	Total           int                   `json:"total"`
+	HasMore         bool                  `json:"has_more"`
 	IncludeSelected bool                  `json:"include_selected,omitempty"`
 	Count           int                   `json:"count"`
 	Data            []AgentSkillCandidate `json:"data"`
 }
 
 type AgentKnowledgeCandidatesRequest struct {
-	Query           string `json:"query,omitempty"`
-	Limit           int    `json:"limit,omitempty"`
+	Query           string `form:"query" json:"query,omitempty" binding:"omitempty,max=200"`
+	Page            int    `form:"page" json:"page,omitempty" binding:"omitempty,min=1,max=99999"`
+	Limit           int    `form:"limit" json:"limit,omitempty" binding:"omitempty,min=1,max=100"`
 	IncludeSelected bool   `json:"include_selected,omitempty"`
 }
 
@@ -322,7 +342,10 @@ type AgentKnowledgeCandidatesResponse struct {
 	AgentID         string                    `json:"agent_id,omitempty"`
 	WorkspaceID     string                    `json:"workspace_id,omitempty"`
 	Query           string                    `json:"query,omitempty"`
+	Page            int                       `json:"page"`
 	Limit           int                       `json:"limit,omitempty"`
+	Total           int                       `json:"total"`
+	HasMore         bool                      `json:"has_more"`
 	IncludeSelected bool                      `json:"include_selected,omitempty"`
 	Count           int                       `json:"count"`
 	Warnings        []string                  `json:"warnings,omitempty"`
@@ -330,10 +353,12 @@ type AgentKnowledgeCandidatesResponse struct {
 }
 
 type AgentDatabaseCandidatesRequest struct {
-	Query           string `json:"query,omitempty"`
-	Limit           int    `json:"limit,omitempty"`
+	Query           string `form:"query" json:"query,omitempty" binding:"omitempty,max=200"`
+	Page            int    `form:"page" json:"page,omitempty" binding:"omitempty,min=1,max=99999"`
+	Limit           int    `form:"limit" json:"limit,omitempty" binding:"omitempty,min=1,max=100"`
+	AvailableOnly   bool   `form:"available_only" json:"available_only,omitempty"`
 	IncludeSelected bool   `json:"include_selected,omitempty"`
-	RequireWrite    bool   `json:"require_write,omitempty"`
+	RequireWrite    bool   `form:"require_write" json:"require_write,omitempty"`
 }
 
 type AgentDatabaseCandidate struct {
@@ -348,6 +373,7 @@ type AgentDatabaseCandidate struct {
 	IconType       string `json:"icon_type,omitempty"`
 	IconBackground string `json:"icon_background,omitempty"`
 	UpdatedAt      int64  `json:"updated_at,omitempty"`
+	TableCount     int64  `json:"table_count"`
 	Selected       bool   `json:"selected,omitempty"`
 }
 
@@ -355,7 +381,11 @@ type AgentDatabaseCandidatesResponse struct {
 	AgentID         string                   `json:"agent_id,omitempty"`
 	WorkspaceID     string                   `json:"workspace_id,omitempty"`
 	Query           string                   `json:"query,omitempty"`
+	Page            int                      `json:"page"`
 	Limit           int                      `json:"limit,omitempty"`
+	Total           int                      `json:"total"`
+	HasMore         bool                     `json:"has_more"`
+	AvailableOnly   bool                     `json:"available_only"`
 	IncludeSelected bool                     `json:"include_selected,omitempty"`
 	RequireWrite    bool                     `json:"require_write,omitempty"`
 	Count           int                      `json:"count"`
@@ -365,9 +395,10 @@ type AgentDatabaseCandidatesResponse struct {
 
 type AgentDatabaseTablesRequest struct {
 	DataSourceID    string `json:"data_source_id"`
-	Query           string `json:"query,omitempty"`
-	Limit           int    `json:"limit,omitempty"`
-	IncludeColumns  bool   `json:"include_columns,omitempty"`
+	Query           string `form:"query" json:"query,omitempty" binding:"omitempty,max=200"`
+	Page            int    `form:"page" json:"page,omitempty" binding:"omitempty,min=1,max=99999"`
+	Limit           int    `form:"limit" json:"limit,omitempty" binding:"omitempty,min=1,max=100"`
+	IncludeColumns  bool   `form:"include_columns" json:"include_columns,omitempty"`
 	IncludeSelected bool   `json:"include_selected,omitempty"`
 }
 
@@ -388,7 +419,10 @@ type AgentDatabaseTablesResponse struct {
 	WorkspaceID     string                        `json:"workspace_id,omitempty"`
 	DataSourceID    string                        `json:"data_source_id"`
 	Query           string                        `json:"query,omitempty"`
+	Page            int                           `json:"page"`
 	Limit           int                           `json:"limit,omitempty"`
+	Total           int                           `json:"total"`
+	HasMore         bool                          `json:"has_more"`
 	IncludeColumns  bool                          `json:"include_columns,omitempty"`
 	IncludeSelected bool                          `json:"include_selected,omitempty"`
 	Count           int                           `json:"count"`
@@ -396,9 +430,10 @@ type AgentDatabaseTablesResponse struct {
 }
 
 type AgentWorkflowBindingCandidatesRequest struct {
-	Query              string `json:"query,omitempty"`
-	AgentType          string `json:"agent_type,omitempty"`
-	Limit              int    `json:"limit,omitempty"`
+	Query              string `form:"query" json:"query,omitempty" binding:"omitempty,max=200"`
+	AgentType          string `form:"agent_type" json:"agent_type,omitempty"`
+	Page               int    `form:"page" json:"page,omitempty" binding:"omitempty,min=1,max=99999"`
+	Limit              int    `form:"limit" json:"limit,omitempty" binding:"omitempty,min=1,max=100"`
 	IncludeStartInputs bool   `json:"include_start_inputs,omitempty"`
 	IncludeSelected    bool   `json:"include_selected,omitempty"`
 }

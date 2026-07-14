@@ -5,12 +5,7 @@ import { toast } from 'sonner';
 import { useT } from '@/i18n';
 import { organizationService } from '@/services/organization.service';
 import type { WorkspaceAssetMoveRequest } from '@/services/types/organization';
-import {
-  AGENT_KEYS,
-  DATASET_KEYS,
-  DB_KEYS,
-  WORKSPACE_KEYS,
-} from '@/hooks/query-keys';
+import { AGENT_KEYS, DATASET_KEYS, DB_KEYS, WORKSPACE_KEYS } from '@/hooks/query-keys';
 import { DATASET_FOLDERS_QUERY_KEY } from '@/hooks/dataset/use-dataset-folders';
 import { FILES_QUERY_KEY } from '@/hooks/use-files';
 import { getErrorMessage } from '@/utils/error-notifications';
@@ -22,9 +17,6 @@ export function useWorkspaceAssetMove() {
   const previewMutation = useMutation({
     mutationFn: async (request: WorkspaceAssetMoveRequest) =>
       organizationService.previewWorkspaceAssetMove(request),
-    onError: error => {
-      toast.error(getErrorMessage(error) || t('assetMove.previewFailed'));
-    },
   });
 
   const moveMutation = useMutation({

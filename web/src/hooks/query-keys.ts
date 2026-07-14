@@ -67,8 +67,13 @@ export const AGENT_KEYS = {
   details: () => [...AGENT_KEYS.all, 'detail'] as const,
   detail: (id: string) => [...AGENT_KEYS.details(), id] as const,
   config: (id: string) => [...AGENT_KEYS.detail(id), 'config'] as const,
-  workflowBindingCandidates: (id: string) =>
-    [...AGENT_KEYS.detail(id), 'workflow-binding-candidates'] as const,
+  candidates: (id: string) => [...AGENT_KEYS.detail(id), 'candidates'] as const,
+  skillBindingCandidates: (id: string) => [...AGENT_KEYS.candidates(id), 'skills'] as const,
+  knowledgeBindingCandidates: (id: string) => [...AGENT_KEYS.candidates(id), 'knowledge'] as const,
+  workflowBindingCandidates: (id: string) => [...AGENT_KEYS.candidates(id), 'workflows'] as const,
+  databaseBindingCandidates: (id: string) => [...AGENT_KEYS.candidates(id), 'databases'] as const,
+  databaseTableBindingCandidates: (id: string, dataSourceId: string) =>
+    [...AGENT_KEYS.candidates(id), 'databases', dataSourceId, 'tables'] as const,
   runnable: (workspaceId?: string | null, params?: unknown) =>
     [...AGENT_KEYS.all, 'runnable-webapps', workspaceId || 'all', params] as const,
   runnableInfinite: (workspaceId?: string | null, params?: unknown) =>
@@ -196,7 +201,13 @@ export const AICHAT_KEYS = {
   skillConfig: () => [...AICHAT_KEYS.skills(), 'config'] as const,
   skillPreference: () => [...AICHAT_KEYS.skills(), 'preference', 'me'] as const,
   assetOperationAudits: (conversationId: string, params?: unknown) =>
-    [...AICHAT_KEYS.all, 'conversations', conversationId, 'asset-operation-audits', params] as const,
+    [
+      ...AICHAT_KEYS.all,
+      'conversations',
+      conversationId,
+      'asset-operation-audits',
+      params,
+    ] as const,
   agentSkillVariables: (agentId: string, skillId: string) =>
     [...AICHAT_KEYS.all, 'agents', agentId, 'skills', skillId, 'variables'] as const,
   search: (query: string, limit: number, surface?: string) =>
