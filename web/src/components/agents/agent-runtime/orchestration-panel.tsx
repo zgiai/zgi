@@ -27,8 +27,8 @@ import type { AgentConfigSection } from './types';
 import type { AgentMemorySlotValidationError } from './utils';
 
 interface AgentRuntimeOrchestrationPanelProps {
+  agentId: string;
   locale: string;
-  agentWorkspaceId?: string;
   openSections: Record<AgentConfigSection, boolean>;
   modelValue: ModelSelectorParameterValue;
   homeTitle: string;
@@ -82,8 +82,8 @@ interface AgentRuntimeOrchestrationPanelProps {
 }
 
 export function AgentRuntimeOrchestrationPanel({
+  agentId,
   locale,
-  agentWorkspaceId,
   openSections,
   modelValue,
   homeTitle,
@@ -191,8 +191,8 @@ export function AgentRuntimeOrchestrationPanel({
           <Separator className="h-px" />
 
           <AgentRuntimeDatabaseSection
+            agentId={agentId}
             open={openSections.databases}
-            workspaceId={agentWorkspaceId}
             bindings={databaseBindings}
             readOnly={readOnly}
             onToggleSection={onToggleSection}

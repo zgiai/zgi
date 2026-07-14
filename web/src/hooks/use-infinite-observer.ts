@@ -22,7 +22,7 @@ export function useInfiniteObserver({
   rootMargin = '200px',
   rootRef,
 }: UseInfiniteObserverParams) {
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!enabled) return;

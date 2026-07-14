@@ -145,16 +145,25 @@ const messages = {
 
   assetMove: {
     title: 'Move to Workspace',
-    description: 'Select a target workspace and review the move check before confirming.',
-    descriptionWithName: 'Move "{name}" to another workspace after reviewing the move check.',
+    description:
+      'Select a target workspace. The system will check related dependencies and access permissions. After the move, the asset will belong to the target workspace and members of the current workspace may lose access.',
+    descriptionWithName:
+      'Select where to move "{name}". The system will check related dependencies and access permissions. After the move, the asset will belong to the target workspace and members of the current workspace may lose access.',
+    locationTitle: 'Move location',
+    locationDescription:
+      'The asset will move from its current workspace to the selected workspace.',
+    currentWorkspace: 'Current workspace',
     targetWorkspace: 'Target workspace',
     targetWorkspacePlaceholder: 'Select target workspace',
-    previewing: 'Checking move...',
+    previewing: 'Checking asset dependencies and access permissions...',
     unknownWorkspace: 'Unknown workspace',
-    blockersTitle: 'Move blocked',
-    warningsTitle: 'Review warnings',
-    confirm: 'Move',
-    previewFailed: 'Failed to check move',
+    readyTitle: 'Ready to move',
+    readyDescription:
+      'Asset dependencies and access permissions passed the check. Confirm to move it to the target workspace.',
+    blockersTitle: 'Cannot move yet',
+    warningsTitle: 'Review before moving',
+    confirm: 'Confirm move',
+    previewFailed: 'Could not check asset dependencies and access permissions',
     moveSuccess: 'Moved successfully',
     moveFailed: 'Failed to move',
   },

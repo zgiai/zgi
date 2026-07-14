@@ -128,8 +128,7 @@ const messages: CommonMessages = {
 
   workspaceRequired: {
     title: '请选择一个工作空间后继续',
-    description:
-      '资产管理和定时任务需要在具体工作空间内使用。请先选择工作空间后继续。',
+    description: '资产管理和定时任务需要在具体工作空间内使用。请先选择工作空间后继续。',
     noWorkspacesTitle: '暂无可用工作空间',
     memberNoWorkspacesDescription: '您已加入组织，但尚未被分配到任何工作空间。',
     adminNoWorkspacesDescription:
@@ -143,16 +142,23 @@ const messages: CommonMessages = {
 
   assetMove: {
     title: '移动到工作空间',
-    description: '选择目标工作空间，并在确认前查看移动检查结果。',
-    descriptionWithName: '将“{name}”移动到其他工作空间，确认前请查看移动检查结果。',
+    description:
+      '选择目标工作空间后，系统会检查相关依赖和访问权限。确认移动后，资产归属将变更，原工作空间成员可能无法继续访问。',
+    descriptionWithName:
+      '选择“{name}”要移入的工作空间。系统会检查相关依赖和访问权限；确认后，资产归属将变更，原工作空间成员可能无法继续访问。',
+    locationTitle: '移动位置',
+    locationDescription: '资产将从当前工作空间转移到你选择的目标工作空间。',
+    currentWorkspace: '当前工作空间',
     targetWorkspace: '目标工作空间',
     targetWorkspacePlaceholder: '选择目标工作空间',
-    previewing: '正在检查移动...',
+    previewing: '正在检查资产依赖和访问权限...',
     unknownWorkspace: '未知工作空间',
-    blockersTitle: '无法移动',
-    warningsTitle: '请确认提示',
-    confirm: '移动',
-    previewFailed: '移动检查失败',
+    readyTitle: '可以移动',
+    readyDescription: '资产依赖和访问权限检查通过，确认后将移动到目标工作空间。',
+    blockersTitle: '当前无法移动',
+    warningsTitle: '移动前请注意',
+    confirm: '确认移动',
+    previewFailed: '无法检查资产依赖和访问权限',
     moveSuccess: '移动成功',
     moveFailed: '移动失败',
   },
@@ -208,7 +214,8 @@ const messages: CommonMessages = {
     datasets: '无可用知识库',
     databases: '无可用数据库',
     files: '无可用文件',
-    description: '在个人工作台中，您可以使用组织级产品入口。如需执行工作空间内操作，请切换到具体工作空间。',
+    description:
+      '在个人工作台中，您可以使用组织级产品入口。如需执行工作空间内操作，请切换到具体工作空间。',
     startCreating: '开始创建',
     selectWorkspaceHint: '请选择一个工作空间后继续',
     overlayHint: '点击高亮区域选择工作空间，或点击其他位置关闭',

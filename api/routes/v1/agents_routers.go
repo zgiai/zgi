@@ -116,6 +116,13 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	appsGroup.GET("", appHandler.GetAgentsList)
 	appsGroup.GET("/runnable-webapps", appHandler.GetRunnableWebApps)
 	appsGroup.POST("", appHandler.CreateAgent)
+	appsGroup.GET("/:agent_id/candidates/skills", appHandler.ListAgentSkillBindingCandidates)
+	appsGroup.GET("/:agent_id/candidates/knowledge", appHandler.ListAgentKnowledgeBindingCandidates)
+	appsGroup.GET("/:agent_id/candidates/workflows", appHandler.ListAgentWorkflowBindingCandidates)
+	appsGroup.GET("/:agent_id/candidates/databases", appHandler.ListAgentDatabaseBindingCandidates)
+	appsGroup.GET("/:agent_id/candidates/databases/:data_source_id/tables", appHandler.ListAgentDatabaseTableBindingCandidates)
+	// Compatibility aliases for clients using the original candidate paths.
+	appsGroup.GET("/:agent_id/skills/candidates", appHandler.ListAgentSkillBindingCandidates)
 	appsGroup.GET("/:agent_id/workflow-bindings/candidates", appHandler.ListAgentWorkflowBindingCandidates)
 	appsGroup.GET("/:agent_id", appHandler.GetAgent)
 	appsGroup.GET("/:agent_id/config", appHandler.GetAgentConfig)

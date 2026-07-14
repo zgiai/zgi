@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useT } from '@/i18n';
 import { RuntimeSection } from './runtime-section';
 import type { AgentConfigSection } from './types';
 
@@ -49,9 +50,10 @@ export function AgentRuntimeResourceSection({
   readOnly = false,
   children,
 }: AgentRuntimeResourceSectionProps) {
+  const t = useT('agents.agentRuntime');
   const action = (
     <div className="flex items-center gap-2">
-      <Badge variant="subtle">{count}</Badge>
+      <Badge variant="subtle">{t('selectedCount', { count })}</Badge>
       <ResourceAddButton label={addLabel} tooltip={addTooltip} onAdd={onAdd} disabled={readOnly} />
     </div>
   );

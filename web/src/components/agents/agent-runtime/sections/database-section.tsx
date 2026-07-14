@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { AlertCircle, Database, Plus, Table2, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -8,13 +9,15 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDbTables } from '@/hooks/db/use-db-tables';
-import { useDbsBasic } from '@/hooks/db/use-dbs';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
+import { AGENT_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
-import type { AgentDatabaseBinding } from '@/services/types/agent';
+import agentService from '@/services/agent.service';
+import type { AgentDatabaseBinding, AgentDatabaseBindingCandidate } from '@/services/types/agent';
 import type { DbTable } from '@/services/types/db';
 import { AgentRuntimeDatabaseDialog } from '../database-dialog';
 import { AgentRuntimeDatabaseTableDialog } from '../database-table-dialog';
+import { planAgentDatabaseSelection } from '../database-binding-draft';
 import { AgentRuntimeResourceCard, AgentRuntimeResourceSection } from '../resource-section';
 import type { AgentConfigSection } from '../types';
 import {
@@ -24,17 +27,22 @@ import {
 import { tablesForDataSource } from '../utils';
 
 interface AgentRuntimeDatabaseSectionProps {
+  agentId: string;
   open: boolean;
-  workspaceId?: string;
   bindings: AgentDatabaseBinding[];
   readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeBindings: (value: AgentDatabaseBinding[]) => void;
 }
 
+interface DatabaseTableDialogSession {
+  databases: Array<{ id: string; name?: string; tableCount?: number }>;
+  initialBindings: AgentDatabaseBinding[];
+}
+
 export function AgentRuntimeDatabaseSection({
+  agentId,
   open,
-  workspaceId,
   bindings,
   readOnly = false,
   onToggleSection,
@@ -42,14 +50,23 @@ export function AgentRuntimeDatabaseSection({
 }: AgentRuntimeDatabaseSectionProps) {
   const t = useT('agents.agentRuntime');
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [tableDialogDbId, setTableDialogDbId] = useState('');
-  const [pendingTableDialogDbIds, setPendingTableDialogDbIds] = useState<string[]>([]);
+  const [tableDialogSession, setTableDialogSession] = useState<DatabaseTableDialogSession | null>(
+    null
+  );
   const { hasAnyPermission, hasAllPermissions } = useAccountPermissions();
   const canBindReadableDatabase = hasAllPermissions(DATABASE_READ_BINDING_PERMISSION_CODES);
-  const { dbs, isLoading: isDbsLoading } = useDbsBasic(
-    { workspace_id: workspaceId },
-    { enabled: open && canBindReadableDatabase && Boolean(workspaceId) }
-  );
+  const databaseCandidatesQuery = useQuery({
+    queryKey: [...AGENT_KEYS.databaseBindingCandidates(agentId), 'section'],
+    queryFn: () =>
+      agentService.getAgentDatabaseBindingCandidates(agentId, {
+        page: 1,
+        limit: 100,
+        available_only: false,
+      }),
+    enabled: open && canBindReadableDatabase && Boolean(agentId),
+    staleTime: 60_000,
+    retry: false,
+  });
   const canUseAiQuery = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.aiQueryRead);
   const canWriteDatabaseRecords = hasAnyPermission([
     ...DATABASE_PERMISSION_ACTIONS.recordCreate,
@@ -59,8 +76,14 @@ export function AgentRuntimeDatabaseSection({
   const canEditWritable =
     !readOnly && canBindReadableDatabase && canUseAiQuery && canWriteDatabaseRecords;
   const selectedCount = bindings.reduce((count, binding) => count + binding.table_ids.length, 0);
-  const dbsByID = useMemo(() => new Map(dbs.map(db => [db.id, db])), [dbs]);
-  const tableDialogDb = tableDialogDbId ? dbsByID.get(tableDialogDbId) : undefined;
+  const dbsByID = useMemo(() => {
+    const byID = new Map<string, AgentDatabaseBindingCandidate>();
+    (databaseCandidatesQuery.data?.data.data ?? []).forEach(db => {
+      if (db.data_source_id) byID.set(db.data_source_id, db);
+    });
+    return byID;
+  }, [databaseCandidatesQuery.data?.data.data]);
+  const isDbsLoading = databaseCandidatesQuery.isLoading;
 
   const removeTable = (dataSourceID: string, tableID: string) => {
     if (readOnly) return;
@@ -116,28 +139,41 @@ export function AgentRuntimeDatabaseSection({
 
   const openTableDialog = (dataSourceID: string) => {
     if (readOnly || !dbsByID.has(dataSourceID)) return;
-    setTableDialogDbId(dataSourceID);
+    setTableDialogSession({
+      databases: [
+        {
+          id: dataSourceID,
+          name: dbsByID.get(dataSourceID)?.name,
+          tableCount: dbsByID.get(dataSourceID)?.table_count,
+        },
+      ],
+      initialBindings: bindings,
+    });
   };
 
-  const handleCloseTableDialog = () => {
-    const [nextDbId, ...restDbIds] = pendingTableDialogDbIds;
-    setPendingTableDialogDbIds(restDbIds);
-    setTableDialogDbId(nextDbId ?? '');
-  };
-
-  const handleConfirmDatabases = (dataSourceIDs: string[]) => {
+  const handleConfirmDatabases = (
+    dataSourceIDs: string[],
+    selectedDatabases: AgentDatabaseBindingCandidate[]
+  ) => {
     if (readOnly) return;
-    const selected = new Set(dataSourceIDs);
-    const existing = new Set(bindings.map(binding => binding.data_source_id));
-    const keptBindings = bindings.filter(binding => selected.has(binding.data_source_id));
-    const pendingDbIds = dataSourceIDs.filter(dataSourceID => !existing.has(dataSourceID));
+    const plan = planAgentDatabaseSelection(bindings, dataSourceIDs);
 
-    onChangeBindings(keptBindings);
-    if (pendingDbIds.length > 0) {
-      const [firstDbId, ...restDbIds] = pendingDbIds;
-      setPendingTableDialogDbIds(restDbIds);
-      setTableDialogDbId(firstDbId ?? '');
+    if (plan.newDataSourceIds.length === 0) {
+      onChangeBindings(plan.initialBindings);
+      return;
     }
+
+    const selectedDatabasesByID = new Map(selectedDatabases.map(db => [db.data_source_id, db]));
+    setTableDialogSession({
+      databases: plan.newDataSourceIds.map(dataSourceID => ({
+        id: dataSourceID,
+        name: selectedDatabasesByID.get(dataSourceID)?.name ?? dbsByID.get(dataSourceID)?.name,
+        tableCount:
+          selectedDatabasesByID.get(dataSourceID)?.table_count ??
+          dbsByID.get(dataSourceID)?.table_count,
+      })),
+      initialBindings: plan.initialBindings,
+    });
   };
 
   return (
@@ -185,22 +221,26 @@ export function AgentRuntimeDatabaseSection({
       </AgentRuntimeResourceSection>
 
       <AgentRuntimeDatabaseDialog
+        agentId={agentId}
         open={dialogOpen && canBindReadableDatabase}
-        workspaceId={workspaceId}
         bindings={bindings}
         onOpenChange={setDialogOpen}
         onConfirmDatabases={handleConfirmDatabases}
       />
       <AgentRuntimeDatabaseTableDialog
-        open={Boolean(tableDialogDbId)}
-        dataSourceId={tableDialogDbId}
-        dataSourceName={tableDialogDb?.name}
+        agentId={agentId}
+        open={Boolean(tableDialogSession)}
+        databases={tableDialogSession?.databases ?? []}
         bindings={bindings}
+        initialBindings={tableDialogSession?.initialBindings ?? bindings}
         canEditWritable={canEditWritable}
         onOpenChange={open => {
-          if (!open) handleCloseTableDialog();
+          if (!open) setTableDialogSession(null);
         }}
-        onConfirm={onChangeBindings}
+        onConfirm={value => {
+          onChangeBindings(value);
+          setTableDialogSession(null);
+        }}
       />
     </>
   );
@@ -235,7 +275,11 @@ function DatabaseBindingCard({
 }) {
   const writableSet = useMemo(() => new Set(writableTableIDs), [writableTableIDs]);
   const t = useT('agents.agentRuntime');
-  const { tables: rawTables, isLoading, error } = useDbTables(dataSourceID, {
+  const {
+    tables: rawTables,
+    isLoading,
+    error,
+  } = useDbTables(dataSourceID, {
     enabled: canReadBinding && isScopedDatabase && tableIDs.length > 0,
   });
   const tables = useMemo(

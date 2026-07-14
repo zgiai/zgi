@@ -19,6 +19,7 @@ interface UnsavedChangesConfirmDialogProps {
   cancelText: string;
   confirmText: string;
   disabled?: boolean;
+  confirmDisabled?: boolean;
   onDiscard: () => void;
   onConfirm: () => void;
 }
@@ -32,6 +33,7 @@ export function UnsavedChangesConfirmDialog({
   cancelText,
   confirmText,
   disabled = false,
+  confirmDisabled = false,
   onDiscard,
   onConfirm,
 }: UnsavedChangesConfirmDialogProps) {
@@ -49,7 +51,7 @@ export function UnsavedChangesConfirmDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={disabled}>
             {cancelText}
           </Button>
-          <Button onClick={onConfirm} disabled={disabled}>
+          <Button onClick={onConfirm} disabled={disabled || confirmDisabled}>
             {confirmText}
           </Button>
         </DialogFooter>

@@ -408,6 +408,7 @@ export function useUpdateAgentConfig() {
     onSuccess: (_data, { agentId }) => {
       queryClient.invalidateQueries({ queryKey: AGENT_KEYS.config(agentId) });
       queryClient.invalidateQueries({ queryKey: AGENT_KEYS.detail(agentId) });
+      queryClient.invalidateQueries({ queryKey: AGENT_KEYS.candidates(agentId) });
       toast.success(t('toasts.saveSuccess'));
     },
     onError: (error: unknown) => {
