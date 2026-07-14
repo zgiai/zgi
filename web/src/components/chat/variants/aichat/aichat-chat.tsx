@@ -785,7 +785,6 @@ export function AIChatShell({
           requestId,
           {
             answers,
-            surface: effectiveRuntimeSurface,
             operation_context: toolGovernanceOperationContext,
           }
         )
@@ -797,7 +796,6 @@ export function AIChatShell({
       activeUserInputMessage,
       controller,
       isSending,
-      effectiveRuntimeSurface,
       t,
       toolGovernanceOperationContext,
     ]
@@ -886,7 +884,6 @@ export function AIChatShell({
             model: modelSelectorValue.model,
             parameters: modelSelectorValue.params,
           },
-          runtimeSurface: effectiveRuntimeSurface,
           operationContext: toolGovernanceOperationContext,
         });
         return;
