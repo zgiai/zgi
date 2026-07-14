@@ -341,9 +341,7 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	if err != nil {
 		return nil, err
 	}
-	if err := applyCanonicalConversationSurface(continuation.Conversation, parts); err != nil {
-		return nil, err
-	}
+	applyPersistedConversationSurface(continuation.Conversation, parts)
 	restoreTurnInitialContextFromMetadata(parts, message.Metadata)
 	restoreCurrentPageContextFromMetadata(parts, message.Metadata)
 	if actionID := clientActionID(continuation.Event); actionID != "" {

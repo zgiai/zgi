@@ -73,29 +73,19 @@ func applyCallerRuntimeSurfacePolicy(caller Caller, parts *chatRequestParts) {
 	parts.Surface = normalizeRuntimeSurfaceForCaller(caller, parts.Surface)
 }
 
-// applyCanonicalConversationSurface prevents a persisted conversation from
-// switching runtime capabilities between product surfaces. Conversations that
-// predate surface metadata keep their legacy behavior and are not migrated here.
-func applyCanonicalConversationSurface(conversation *runtimemodel.Conversation, parts *chatRequestParts) error {
+// applyPersistedConversationSurface keeps a conversation on the runtime surface
+// selected when it was created. Later requests may carry stale surface hints,
+// but they cannot change the conversation's runtime capabilities. Conversations
+// that predate surface metadata keep their legacy behavior and are not migrated.
+func applyPersistedConversationSurface(conversation *runtimemodel.Conversation, parts *chatRequestParts) {
 	if conversation == nil || parts == nil || conversation.Metadata == nil {
-		return nil
+		return
 	}
 	persisted := strings.TrimSpace(stringMetadataValue(conversation.Metadata["surface"]))
 	if persisted == "" {
-		return nil
+		return
 	}
-	persisted = normalizeAIChatSurface(persisted)
-	requested := normalizeAIChatSurface(parts.Surface)
-	if requested != persisted {
-		return fmt.Errorf(
-			"%w: conversation surface is %s, request surface is %s",
-			ErrInvalidInput,
-			persisted,
-			requested,
-		)
-	}
-	parts.Surface = persisted
-	return nil
+	parts.Surface = normalizeAIChatSurface(persisted)
 }
 
 func runConfigAllowsUserMemory(config RunConfig) bool {

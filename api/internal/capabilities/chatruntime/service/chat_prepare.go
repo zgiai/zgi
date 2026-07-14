@@ -132,9 +132,7 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 	}
 	applyRunConfigToParts(config, parts)
 	applyCallerRuntimeSurfacePolicy(caller, parts)
-	if err := applyCanonicalConversationSurface(conversation, parts); err != nil {
-		return nil, err
-	}
+	applyPersistedConversationSurface(conversation, parts)
 	parts.Attachments = attachmentBundleFromMessageMetadata(message.Metadata)
 	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
 		return nil, err
@@ -273,9 +271,7 @@ func (s *service) resolveChatConversation(ctx context.Context, scope Scope, call
 	if err != nil {
 		return nil, err
 	}
-	if err := applyCanonicalConversationSurface(conversation, parts); err != nil {
-		return nil, err
-	}
+	applyPersistedConversationSurface(conversation, parts)
 	return conversation, nil
 }
 

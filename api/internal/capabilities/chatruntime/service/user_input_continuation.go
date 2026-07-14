@@ -399,9 +399,7 @@ func (s *service) prepareUserInputContinuationChat(
 	}
 	applyRunConfigToParts(config, parts)
 	applyCallerRuntimeSurfacePolicy(caller, parts)
-	if err := applyCanonicalConversationSurface(continuation.Conversation, parts); err != nil {
-		return nil, err
-	}
+	applyPersistedConversationSurface(continuation.Conversation, parts)
 	restoreConsoleFilesContextFromMetadata(parts, message.Metadata, nil)
 	restoreConsoleAgentsContextFromMetadata(parts, message.Metadata, nil)
 	restoreTurnInitialContextFromMetadata(parts, message.Metadata)

@@ -278,10 +278,17 @@ func TestPrepareUserInputContinuationRestoresAgentRunConfig(t *testing.T) {
 	message.ModelProvider = &legacyProvider
 	message.ModelName = "legacy-model"
 	continuation := &UserInputContinuation{
-		Conversation: &runtimemodel.Conversation{ID: conversationID, OrganizationID: organizationID, AccountID: accountID},
-		Message:      message,
-		Request:      governanceMapFromAny(message.Metadata["user_input_request"]),
-		Response:     map[string]interface{}{"request_id": "ask-1", "answers": []interface{}{}},
+		Conversation: &runtimemodel.Conversation{
+			ID:             conversationID,
+			OrganizationID: organizationID,
+			AccountID:      accountID,
+			Metadata: map[string]interface{}{
+				"surface": aiChatSurfaceExternalPageChat,
+			},
+		},
+		Message:  message,
+		Request:  governanceMapFromAny(message.Metadata["user_input_request"]),
+		Response: map[string]interface{}{"request_id": "ask-1", "answers": []interface{}{}},
 	}
 	config := RunConfig{
 		SystemPrompt:        "Agent system prompt",
@@ -308,7 +315,7 @@ func TestPrepareUserInputContinuationRestoresAgentRunConfig(t *testing.T) {
 		caller,
 		config,
 		continuation,
-		runtimedto.UserInputContinuationRequest{},
+		runtimedto.UserInputContinuationRequest{Surface: aiChatSurfaceWorkChat},
 	)
 	if err != nil {
 		t.Fatalf("prepareUserInputContinuationChat() error = %v", err)
@@ -318,6 +325,9 @@ func TestPrepareUserInputContinuationRestoresAgentRunConfig(t *testing.T) {
 	}
 	if prepared.Caller.Type != caller.Type || prepared.Caller.ID == nil || *prepared.Caller.ID != agentID {
 		t.Fatalf("prepared caller = %#v, want %#v", prepared.Caller, caller)
+	}
+	if prepared.parts.Surface != aiChatSurfaceExternalPageChat {
+		t.Fatalf("surface = %q, want persisted %q", prepared.parts.Surface, aiChatSurfaceExternalPageChat)
 	}
 	if prepared.LLMRequest.Model != config.Model || prepared.LLMRequest.Provider != config.ModelProvider {
 		t.Fatalf("LLM model = %s/%s, want %s/%s", prepared.LLMRequest.Provider, prepared.LLMRequest.Model, config.ModelProvider, config.Model)
@@ -357,10 +367,17 @@ func TestPrepareUserInputContinuationKeepsAIChatMetadataSkills(t *testing.T) {
 	message.ModelName = "chat-model"
 	message.Metadata["configured_skill_ids"] = []string{skills.SkillCalculator}
 	continuation := &UserInputContinuation{
-		Conversation: &runtimemodel.Conversation{ID: conversationID, OrganizationID: organizationID, AccountID: accountID},
-		Message:      message,
-		Request:      governanceMapFromAny(message.Metadata["user_input_request"]),
-		Response:     map[string]interface{}{"request_id": "ask-1", "answers": []interface{}{}},
+		Conversation: &runtimemodel.Conversation{
+			ID:             conversationID,
+			OrganizationID: organizationID,
+			AccountID:      accountID,
+			Metadata: map[string]interface{}{
+				"surface": aiChatSurfaceContextualSidebar,
+			},
+		},
+		Message:  message,
+		Request:  governanceMapFromAny(message.Metadata["user_input_request"]),
+		Response: map[string]interface{}{"request_id": "ask-1", "answers": []interface{}{}},
 	}
 	svc := &service{
 		skillRuntime: skills.NewRuntime(nil, nil),
@@ -375,7 +392,7 @@ func TestPrepareUserInputContinuationKeepsAIChatMetadataSkills(t *testing.T) {
 		Caller{Type: runtimemodel.ConversationCallerAIChat},
 		RunConfig{},
 		continuation,
-		runtimedto.UserInputContinuationRequest{},
+		runtimedto.UserInputContinuationRequest{Surface: aiChatSurfaceWorkChat},
 	)
 	if err != nil {
 		t.Fatalf("prepareUserInputContinuationChat() error = %v", err)
@@ -383,8 +400,14 @@ func TestPrepareUserInputContinuationKeepsAIChatMetadataSkills(t *testing.T) {
 	if prepared.parts.ProtocolToolsEnabled {
 		t.Fatal("AIChat continuation unexpectedly enabled Agent protocol-only policy")
 	}
-	if len(prepared.parts.SkillIDs) != 1 || prepared.parts.SkillIDs[0] != skills.SkillCalculator {
+	if prepared.parts.Surface != aiChatSurfaceContextualSidebar {
+		t.Fatalf("surface = %q, want persisted %q", prepared.parts.Surface, aiChatSurfaceContextualSidebar)
+	}
+	if !skillIDEnabled(prepared.parts.SkillIDs, skills.SkillCalculator) {
 		t.Fatalf("SkillIDs = %#v, want restored AIChat calculator skill", prepared.parts.SkillIDs)
+	}
+	if !skillIDEnabled(prepared.parts.SkillIDs, skills.SkillConsoleNavigator) {
+		t.Fatalf("SkillIDs = %#v, want contextual console navigator", prepared.parts.SkillIDs)
 	}
 	if !prepared.toolLoopEnabled() {
 		t.Fatal("AIChat skill continuation no longer enters the tool loop")
