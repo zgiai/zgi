@@ -20,7 +20,8 @@ export type ModelUseCase =
   | 'video-gen'
   | 'moderation'
   | 'reasoning'
-  | 'function-calling';
+  | 'function-calling'
+  | 'agent';
 
 export type DefaultModelUseCase = ModelUseCase;
 export type DefaultModelSource = 'explicit' | 'auto' | 'none';

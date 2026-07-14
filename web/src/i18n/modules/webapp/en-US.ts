@@ -237,6 +237,8 @@ const messages = {
     notAvailable: 'Chat service is not available',
     modelConfig: 'Model',
     modelRequired: 'Please select a model first',
+    modelUnavailable:
+      'This model is no longer available for AI Chat. Select another model. The previous configuration is preserved.',
     homeTitle: 'How can I help?',
     homeDescription:
       'Answer questions, organize information, and help complete a wide range of tasks.',

@@ -31,6 +31,7 @@ interface AgentRuntimeOrchestrationPanelProps {
   agentId: string;
   openSections: Record<AgentConfigSection, boolean>;
   modelValue: ModelSelectorParameterValue;
+  isAgentModelUnavailable: boolean;
   homeTitle: string;
   openingStatement: string;
   inputPlaceholder: string;
@@ -88,6 +89,7 @@ export function AgentRuntimeOrchestrationPanel({
   agentId,
   openSections,
   modelValue,
+  isAgentModelUnavailable,
   homeTitle,
   openingStatement,
   inputPlaceholder,
@@ -165,6 +167,7 @@ export function AgentRuntimeOrchestrationPanel({
           <AgentRuntimeModelSection
             open={openSections.model}
             modelValue={modelValue}
+            unavailable={isAgentModelUnavailable}
             readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChangeModelValue={onChangeModelValue}

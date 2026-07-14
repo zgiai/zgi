@@ -439,6 +439,12 @@ func TestGLMAdapterListModels_FallsBackToOfficialCatalogWhenModelsEndpointUnsupp
 		t.Fatalf("ListModels() error = %v, want documented fallback", err)
 	}
 
+	if findGLMModel(t, models, "glm-5.2").Type != "chat" {
+		t.Fatalf("glm-5.2 missing from fallback catalog: %#v", models)
+	}
+	if findGLMModel(t, models, "glm-5.1").Type != "chat" {
+		t.Fatalf("glm-5.1 missing from fallback catalog: %#v", models)
+	}
 	if findGLMModel(t, models, "glm-5").Type != "chat" {
 		t.Fatalf("glm-5 missing from fallback catalog: %#v", models)
 	}

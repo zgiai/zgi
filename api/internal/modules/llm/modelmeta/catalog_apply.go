@@ -3,6 +3,9 @@ package modelmeta
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,7 +15,10 @@ import (
 	"gorm.io/gorm"
 )
 
-const catalogSyncStateKey = "platform_catalog"
+const (
+	catalogSyncStateKey                       = "platform_catalog"
+	missingPublishedProviderDeprecationReason = "provider missing from published catalog"
+)
 
 type PublishedCatalog struct {
 	Version     int64
@@ -60,6 +66,7 @@ type PublishedModel struct {
 	InputPrice             float64
 	OutputPrice            float64
 	CachedInputPrice       float64
+	Pricing                json.RawMessage
 	InputPriceConfigured   bool
 	OutputPriceConfigured  bool
 	UseCases               []string
@@ -81,19 +88,31 @@ type PublishedModel struct {
 }
 
 func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCatalog) error {
+	if err := validatePublishedCatalog(catalog); err != nil {
+		return err
+	}
+
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txService := *s
 		txService.db = tx
 
 		skippedProviders := make(map[string]bool)
+		providerNames := make([]string, 0, len(catalog.Providers))
+		appliedProviderNames := make([]string, 0, len(catalog.Providers))
 		for _, provider := range catalog.Providers {
+			providerNames = append(providerNames, provider.Provider)
 			skipped, err := txService.upsertPublishedProvider(ctx, provider)
 			if err != nil {
 				return err
 			}
 			if skipped {
 				skippedProviders[provider.Provider] = true
+				continue
 			}
+			appliedProviderNames = append(appliedProviderNames, provider.Provider)
+		}
+		if _, err := txService.markMissingProvidersDeprecated(ctx, providerNames); err != nil {
+			return err
 		}
 
 		modelKeys := make([]catalogModelKey, 0, len(catalog.Models))
@@ -109,7 +128,7 @@ func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCa
 				modelKeys = append(modelKeys, catalogModelKey{Provider: model.Provider, Model: model.Model})
 			}
 		}
-		if _, err := txService.markMissingModelsDeprecated(ctx, modelKeys); err != nil {
+		if _, err := txService.markPublishedModelsMissingFromCatalogDeprecated(ctx, appliedProviderNames, modelKeys); err != nil {
 			return err
 		}
 
@@ -122,6 +141,64 @@ func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCa
 		invalidator.InvalidateModelCache(ctx)
 	}
 	return nil
+}
+
+func validatePublishedCatalog(catalog PublishedCatalog) error {
+	if catalog.Version <= 0 {
+		return errors.New("published catalog version must be positive")
+	}
+	if catalog.PublishedAt.IsZero() {
+		return errors.New("published catalog timestamp is required")
+	}
+	if len(catalog.Providers) == 0 {
+		return errors.New("published catalog providers are empty")
+	}
+	if len(catalog.Models) == 0 {
+		return errors.New("published catalog models are empty")
+	}
+
+	providers := make(map[string]struct{}, len(catalog.Providers))
+	for _, provider := range catalog.Providers {
+		name := strings.TrimSpace(provider.Provider)
+		if name == "" {
+			return errors.New("published catalog contains an empty provider")
+		}
+		if _, ok := providers[name]; ok {
+			return fmt.Errorf("published catalog contains duplicate provider %s", name)
+		}
+		providers[name] = struct{}{}
+	}
+
+	models := make(map[catalogModelKey]struct{}, len(catalog.Models))
+	for _, model := range catalog.Models {
+		provider := strings.TrimSpace(model.Provider)
+		name := strings.TrimSpace(model.Model)
+		if provider == "" || name == "" {
+			return errors.New("published catalog contains a model with an empty provider or name")
+		}
+		if _, ok := providers[provider]; !ok {
+			return fmt.Errorf("published catalog model %s/%s references an unknown provider", provider, name)
+		}
+		if !validPublishedPricing(model.Pricing) {
+			return fmt.Errorf("published catalog model %s/%s contains invalid pricing JSON", provider, name)
+		}
+		key := catalogModelKey{Provider: provider, Model: name}
+		if _, ok := models[key]; ok {
+			return fmt.Errorf("published catalog contains duplicate model %s/%s", provider, name)
+		}
+		models[key] = struct{}{}
+	}
+
+	return nil
+}
+
+func validPublishedPricing(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return true
+	}
+	var object map[string]json.RawMessage
+	return json.Unmarshal(raw, &object) == nil && object != nil
 }
 
 func (s *Service) RecordPublishedCatalogSyncError(ctx context.Context, message string) error {
@@ -205,6 +282,12 @@ func (s *Service) createPublishedProvider(ctx context.Context, provider Publishe
 	if hasColumn(s.db, "llm_providers", "status") {
 		values["status"] = provider.Status
 	}
+	if hasColumn(s.db, "llm_providers", "is_active") {
+		values["is_active"] = provider.IsActive
+	}
+	if hasColumn(s.db, "llm_providers", "is_system_enabled") {
+		values["is_system_enabled"] = provider.IsSystemEnabled
+	}
 
 	return s.db.WithContext(ctx).Table("llm_providers").Create(values).Error
 }
@@ -230,6 +313,12 @@ func (s *Service) updatePublishedProvider(ctx context.Context, id string, provid
 	}
 	if hasColumn(s.db, "llm_providers", "status") {
 		updates["status"] = provider.Status
+	}
+	if hasColumn(s.db, "llm_providers", "is_active") {
+		updates["is_active"] = provider.IsActive
+	}
+	if hasColumn(s.db, "llm_providers", "is_system_enabled") {
+		updates["is_system_enabled"] = provider.IsSystemEnabled
 	}
 
 	return s.db.WithContext(ctx).Table("llm_providers").Where("id = ?", id).Updates(updates).Error
@@ -304,19 +393,37 @@ func (s *Service) markMissingModelsDeprecated(ctx context.Context, appliedModels
 		providers = append(providers, key.Provider)
 	}
 
+	return s.markPublishedModelsMissingFromCatalogDeprecated(ctx, providers, appliedModels)
+}
+
+func (s *Service) markPublishedModelsMissingFromCatalogDeprecated(
+	ctx context.Context,
+	providers []string,
+	appliedModels []catalogModelKey,
+) (int64, error) {
+	if len(providers) == 0 {
+		return 0, nil
+	}
+
 	query := s.db.WithContext(ctx).
 		Table("llm_models").
 		Where("deleted_at IS NULL").
-		Where("provider IN ?", providers).
-		Where("status <> ?", llmmodel.ModelStatusDeprecated)
-
-	clauses := make([]string, 0, len(appliedModels))
-	args := make([]interface{}, 0, len(appliedModels)*2)
-	for _, key := range appliedModels {
-		clauses = append(clauses, "(provider = ? AND name = ?)")
-		args = append(args, key.Provider, key.Model)
+		Where("provider IN ?", providers)
+	if hasColumn(s.db, "llm_models", "is_active") && hasColumn(s.db, "llm_models", "is_system_enabled") {
+		query = query.Where("status <> ? OR is_active = ? OR is_system_enabled = ?", llmmodel.ModelStatusDeprecated, true, true)
+	} else {
+		query = query.Where("status <> ?", llmmodel.ModelStatusDeprecated)
 	}
-	query = query.Not("("+joinWithOr(clauses)+")", args...)
+
+	if len(appliedModels) > 0 {
+		clauses := make([]string, 0, len(appliedModels))
+		args := make([]interface{}, 0, len(appliedModels)*2)
+		for _, key := range appliedModels {
+			clauses = append(clauses, "(provider = ? AND name = ?)")
+			args = append(args, key.Provider, key.Model)
+		}
+		query = query.Not("("+joinWithOr(clauses)+")", args...)
+	}
 
 	updates := map[string]interface{}{
 		"status":     llmmodel.ModelStatusDeprecated,
@@ -331,11 +438,71 @@ func (s *Service) markMissingModelsDeprecated(ctx context.Context, appliedModels
 	if hasColumn(s.db, "llm_models", "deprecation_reason") {
 		updates["deprecation_reason"] = ""
 	}
+	if hasColumn(s.db, "llm_models", "is_active") {
+		updates["is_active"] = false
+	}
+	if hasColumn(s.db, "llm_models", "is_system_enabled") {
+		updates["is_system_enabled"] = false
+	}
 	tx := query.Updates(updates)
 	if tx.Error != nil {
 		return 0, tx.Error
 	}
 	return tx.RowsAffected, nil
+}
+
+func (s *Service) markMissingProvidersDeprecated(ctx context.Context, appliedProviders []string) (int64, error) {
+	providerUpdates := map[string]interface{}{
+		"updated_at": time.Now().UTC(),
+	}
+	if hasColumn(s.db, "llm_providers", "status") {
+		providerUpdates["status"] = llmmodel.ModelStatusDeprecated
+	}
+	if hasColumn(s.db, "llm_providers", "is_active") {
+		providerUpdates["is_active"] = false
+	}
+	if hasColumn(s.db, "llm_providers", "is_system_enabled") {
+		providerUpdates["is_system_enabled"] = false
+	}
+
+	providerQuery := s.db.WithContext(ctx).
+		Table("llm_providers").
+		Where("deleted_at IS NULL").
+		Where("provider NOT IN ?", appliedProviders)
+	providerTx := providerQuery.Updates(providerUpdates)
+	if providerTx.Error != nil {
+		return 0, providerTx.Error
+	}
+
+	modelUpdates := map[string]interface{}{
+		"status":     llmmodel.ModelStatusDeprecated,
+		"updated_at": time.Now().UTC(),
+	}
+	if hasColumn(s.db, "llm_models", "replacement_provider") {
+		modelUpdates["replacement_provider"] = ""
+	}
+	if hasColumn(s.db, "llm_models", "replacement_model") {
+		modelUpdates["replacement_model"] = ""
+	}
+	if hasColumn(s.db, "llm_models", "deprecation_reason") {
+		modelUpdates["deprecation_reason"] = missingPublishedProviderDeprecationReason
+	}
+	if hasColumn(s.db, "llm_models", "is_active") {
+		modelUpdates["is_active"] = false
+	}
+	if hasColumn(s.db, "llm_models", "is_system_enabled") {
+		modelUpdates["is_system_enabled"] = false
+	}
+	modelTx := s.db.WithContext(ctx).
+		Table("llm_models").
+		Where("deleted_at IS NULL").
+		Where("provider NOT IN ?", appliedProviders).
+		Updates(modelUpdates)
+	if modelTx.Error != nil {
+		return 0, modelTx.Error
+	}
+
+	return providerTx.RowsAffected, nil
 }
 
 func (s *Service) upsertCatalogSyncState(ctx context.Context, version int64, appliedAt time.Time, lastError string) error {
@@ -453,12 +620,21 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 		"output_price":       normalizePublishedPrice(model.OutputPrice),
 		"cached_input_price": normalizePublishedPrice(model.CachedInputPrice),
 	}
+	if hasColumn(db, "llm_models", "is_active") {
+		values["is_active"] = model.IsActive
+	}
+	if hasColumn(db, "llm_models", "is_system_enabled") {
+		values["is_system_enabled"] = model.IsSystemEnabled
+	}
 
 	if hasColumn(db, "llm_models", "input_price_configured") {
 		values["input_price_configured"] = model.InputPriceConfigured
 	}
 	if hasColumn(db, "llm_models", "output_price_configured") {
 		values["output_price_configured"] = model.OutputPriceConfigured
+	}
+	if hasColumn(db, "llm_models", "pricing") {
+		values["pricing"] = serializePricing(model.Pricing)
 	}
 	if hasColumn(db, "llm_models", "family_default") {
 		values["family_default"] = model.FamilyDefault
@@ -498,6 +674,14 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 	}
 
 	return values
+}
+
+func serializePricing(raw json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return "{}"
+	}
+	return trimmed
 }
 
 func applyPublishedLifecycleColumns(db *gorm.DB, values map[string]interface{}, model PublishedModel) {

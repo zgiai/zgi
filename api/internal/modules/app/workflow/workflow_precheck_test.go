@@ -43,7 +43,7 @@ func TestWorkflowServicePrecheckWorkflowRun_UsesRuntimeModelOverride(t *testing.
 	result, err := svc.PrecheckWorkflowRun(
 		context.Background(),
 		workflowMap,
-		&llmclient.AppContext{OrganizationID: "org-1", WorkspaceID: "ws-1", BillingSubjectType: llmclient.BillingSubjectTypeWorkspace, AppID: "app-1", AppType: "agent", AccountID: "account-1"},
+		&llmclient.AppContext{OrganizationID: "org-1", WorkspaceID: "ws-1", BillingSubjectType: llmclient.BillingSubjectTypeWorkspace, AppID: "app-1", AppType: "workflow", AccountID: "account-1"},
 		map[string]any{"model_config": map[string]any{"provider": "openai", "model": "gpt-override"}},
 	)
 	if err != nil {
@@ -81,7 +81,7 @@ func TestWorkflowServicePrecheckWorkflowRun_MapsWarningCodes(t *testing.T) {
 	result, err := svc.PrecheckWorkflowRun(
 		context.Background(),
 		map[string]any{"graph": map[string]any{"nodes": []any{map[string]any{"id": "llm-1", "data": map[string]any{"type": "llm", "model": map[string]any{"provider": "openai", "name": "gpt-4o"}}}}}},
-		&llmclient.AppContext{OrganizationID: "org-1", WorkspaceID: "ws-1", AppID: "app-1", AppType: "agent", AccountID: "account-1"},
+		&llmclient.AppContext{OrganizationID: "org-1", WorkspaceID: "ws-1", AppID: "app-1", AppType: "workflow", AccountID: "account-1"},
 		nil,
 	)
 	if err != nil {
@@ -115,7 +115,7 @@ func TestWorkflowServicePrecheckWorkflowRun_ReturnsUnknownWhenModelCannotBeResol
 	result, err := svc.PrecheckWorkflowRun(
 		context.Background(),
 		map[string]any{"graph": map[string]any{"nodes": []any{map[string]any{"id": "image-1", "data": map[string]any{"type": "image-gen", "model": map[string]any{}}}}}},
-		&llmclient.AppContext{OrganizationID: "org-1", WorkspaceID: "ws-1", AppID: "app-1", AppType: "agent", AccountID: "account-1"},
+		&llmclient.AppContext{OrganizationID: "org-1", WorkspaceID: "ws-1", AppID: "app-1", AppType: "workflow", AccountID: "account-1"},
 		nil,
 	)
 	if err != nil {
@@ -161,7 +161,7 @@ func TestWorkflowServicePrecheckWorkflowRun_CollectsKnowledgeRetrievalModels(t *
 	result, err := svc.PrecheckWorkflowRun(
 		context.Background(),
 		workflowMap,
-		&llmclient.AppContext{OrganizationID: "org-1", WorkspaceID: "ws-1", AppID: "app-1", AppType: "agent", AccountID: "account-1"},
+		&llmclient.AppContext{OrganizationID: "org-1", WorkspaceID: "ws-1", AppID: "app-1", AppType: "workflow", AccountID: "account-1"},
 		nil,
 	)
 	if err != nil {

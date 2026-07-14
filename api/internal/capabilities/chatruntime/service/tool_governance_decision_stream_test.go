@@ -217,11 +217,16 @@ func TestRunToolGovernanceDecisionStreamRejectsWithoutTools(t *testing.T) {
 	llm := &toolGovernanceStreamLLM{
 		streamChunks: []string{"I kept the file. ", "No deletion was performed."},
 	}
-	svc := NewService(&repository.Repositories{
-		Access:       toolGovernanceStreamAccessRepo{},
-		Conversation: conversationRepo,
-		Message:      messageRepo,
-	}, llm).(*service)
+	svc := NewServiceWithTitleGeneratorAndModelSpecResolver(
+		&repository.Repositories{
+			Access:       toolGovernanceStreamAccessRepo{},
+			Conversation: conversationRepo,
+			Message:      messageRepo,
+		},
+		llm,
+		nil,
+		toolGovernanceStreamModelSpecResolver{},
+	).(*service)
 	svc.events = newStreamEventStore(nil)
 
 	var events []StreamEvent

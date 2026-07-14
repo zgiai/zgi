@@ -298,7 +298,11 @@ export function useAgentRuntimePageModel(agentId: string) {
     () => (workflowCandidatesResponse?.data.data ?? []) as AgentWorkflowBindingCandidate[],
     [workflowCandidatesResponse?.data.data]
   );
-  const { models: availableChatModels } = useAvailableModels({ use_case: 'text-chat' });
+  const {
+    models: availableChatModels,
+    isLoading: isAgentModelsLoading,
+    error: agentModelsError,
+  } = useAvailableModels({ use_case: 'agent' });
   const agentDetail = agent?.data;
   const agentWorkspaceId = agentDetailWorkspaceID(agentDetail);
   const defaultHomeTitle = agentDetail?.name?.trim() || t('defaultHomeTitle');
@@ -362,6 +366,21 @@ export function useAgentRuntimePageModel(agentId: string) {
   const rollbackPreviewRequestRef = useRef(0);
   const lastSaveBindingHealthRef = useRef<AgentBindingHealth>();
   const bindingRevisionRef = useRef('');
+
+  const isAgentModelUnavailable = useMemo(() => {
+    if (isAgentModelsLoading || agentModelsError || !modelValue.provider || !modelValue.model) {
+      return false;
+    }
+    return !availableChatModels.some(
+      item => item.provider === modelValue.provider && item.model === modelValue.model
+    );
+  }, [
+    agentModelsError,
+    availableChatModels,
+    isAgentModelsLoading,
+    modelValue.model,
+    modelValue.provider,
+  ]);
 
   const selectableSkills = useMemo(() => {
     return (skillCandidatesResponse?.data.data ?? []).map(candidateToSkillMetadata);
@@ -679,7 +698,12 @@ export function useAgentRuntimePageModel(agentId: string) {
   } = useAgentRuntimeDraftPersistence({
     currentPayload,
     enabled: !isVersionPreviewing,
-    canSave: () => canConfigureAgentRuntime && !hasAgentMemorySlotErrors && !isSystemPromptTooLong,
+    canSave: () =>
+      canConfigureAgentRuntime &&
+      Boolean(modelValue.provider && modelValue.model) &&
+      !isAgentModelUnavailable &&
+      !hasAgentMemorySlotErrors &&
+      !isSystemPromptTooLong,
     savePayload: saveRuntimePayload,
     onSaveCommitted: result => {
       setAgentMemorySlots(result.savedPayload.agent_memory_slots ?? []);
@@ -1041,6 +1065,10 @@ export function useAgentRuntimePageModel(agentId: string) {
       toast.error(t('toasts.fixMemorySlotsBeforeSave'));
       return;
     }
+    if (isAgentModelUnavailable) {
+      toast.error(t('toasts.modelUnavailable'));
+      return;
+    }
     if (isSystemPromptTooLong) {
       toast.error(
         t('toasts.systemPromptTooLongBeforeSave', { limit: AGENT_SYSTEM_PROMPT_MAX_LENGTH })
@@ -1061,6 +1089,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   }, [
     canConfigureAgentRuntime,
     hasAgentMemorySlotErrors,
+    isAgentModelUnavailable,
     isSystemPromptTooLong,
     saveNow,
     t,
@@ -1134,6 +1163,10 @@ export function useAgentRuntimePageModel(agentId: string) {
       toast.error(t('toasts.fixMemorySlotsBeforePublish'));
       return;
     }
+    if (isAgentModelUnavailable) {
+      toast.error(t('toasts.modelUnavailable'));
+      return;
+    }
     if (isSystemPromptTooLong) {
       toast.error(
         t('toasts.systemPromptTooLongBeforePublish', { limit: AGENT_SYSTEM_PROMPT_MAX_LENGTH })
@@ -1149,6 +1182,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     canPublishAgent,
     canConfigureAgentRuntime,
     hasAgentMemorySlotErrors,
+    isAgentModelUnavailable,
     isSystemPromptTooLong,
     publishCurrentDraft,
     saveNow,
@@ -1165,6 +1199,10 @@ export function useAgentRuntimePageModel(agentId: string) {
       toast.error(t('toasts.fixMemorySlotsBeforeSave'));
       return Promise.resolve(false);
     }
+    if (isAgentModelUnavailable) {
+      toast.error(t('toasts.modelUnavailable'));
+      return Promise.resolve(false);
+    }
     if (isSystemPromptTooLong) {
       toast.error(
         t('toasts.systemPromptTooLongBeforeSave', { limit: AGENT_SYSTEM_PROMPT_MAX_LENGTH })
@@ -1175,6 +1213,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   }, [
     canConfigureAgentRuntime,
     hasAgentMemorySlotErrors,
+    isAgentModelUnavailable,
     isSystemPromptTooLong,
     saveNow,
     t,
@@ -1191,7 +1230,10 @@ export function useAgentRuntimePageModel(agentId: string) {
         setPreviewSheetOpen(true);
         return;
       }
-      if (hasAgentMemorySlotErrors || isSystemPromptTooLong) {
+      if (hasAgentMemorySlotErrors || isAgentModelUnavailable || isSystemPromptTooLong) {
+        if (isAgentModelUnavailable) {
+          toast.error(t('toasts.modelUnavailable'));
+        }
         setPreviewSheetOpen(false);
         return;
       }
@@ -1203,9 +1245,11 @@ export function useAgentRuntimePageModel(agentId: string) {
     [
       canConfigureAgentRuntime,
       hasAgentMemorySlotErrors,
+      isAgentModelUnavailable,
       isSystemPromptTooLong,
       isVersionPreviewing,
       saveNow,
+      t,
     ]
   );
 
@@ -1221,6 +1265,10 @@ export function useAgentRuntimePageModel(agentId: string) {
       toast.error(t('toasts.fixMemorySlotsBeforeSave'));
       return false;
     }
+    if (isAgentModelUnavailable) {
+      toast.error(t('toasts.modelUnavailable'));
+      return false;
+    }
     if (isSystemPromptTooLong) {
       toast.error(
         t('toasts.systemPromptTooLongBeforeSave', { limit: AGENT_SYSTEM_PROMPT_MAX_LENGTH })
@@ -1231,6 +1279,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   }, [
     canConfigureAgentRuntime,
     hasAgentMemorySlotErrors,
+    isAgentModelUnavailable,
     isSystemPromptTooLong,
     isVersionPreviewing,
     saveNow,
@@ -1359,6 +1408,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       agentId,
       openSections,
       modelValue,
+      isAgentModelUnavailable,
       homeTitle,
       openingStatement,
       inputPlaceholder,

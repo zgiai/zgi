@@ -1598,6 +1598,7 @@ const messages = {
         'Configuration saved with {count} binding issue(s). Review them before publishing.',
       saveFailed: 'Save failed',
       saveFailedDraftKept: 'Save failed. Your changes are kept.',
+      modelUnavailable: 'The previous model is no longer eligible for Agents. Select another model.',
       noGeneratedSuggestions: 'No usable request examples were generated',
       suggestionsGenerated: 'Request examples generated',
       generateSuggestionsFailed: 'Failed to generate request examples',

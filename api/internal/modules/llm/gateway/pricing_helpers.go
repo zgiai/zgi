@@ -38,6 +38,23 @@ func (s *llmGatewayServiceImpl) quoteTokenPricing(
 	return quote, nil
 }
 
+func (s *llmGatewayServiceImpl) quoteTokenPricingForSelection(
+	ctx context.Context,
+	selection *ProviderSelection,
+	model PricingModelRef,
+	promptTokens int,
+	completionTokens int,
+) (PricingQuote, error) {
+	lane, err := usageBillingLaneFromContext(selection, nil)
+	if err != nil {
+		return PricingQuote{}, fmt.Errorf("failed to resolve billing lane for token pricing: %w", err)
+	}
+	if lane == UsageBillingLanePlatform {
+		return PricingQuote{}, nil
+	}
+	return s.quoteTokenPricing(ctx, model, promptTokens, completionTokens)
+}
+
 func (s *llmGatewayServiceImpl) quoteTokenPricingForSettlement(
 	ctx context.Context,
 	bc *BillingContext,
@@ -72,6 +89,22 @@ func (s *llmGatewayServiceImpl) quoteImagePricing(
 		}))
 	}
 	return quote, nil
+}
+
+func (s *llmGatewayServiceImpl) quoteImagePricingForSelection(
+	ctx context.Context,
+	selection *ProviderSelection,
+	model PricingModelRef,
+	req *adapter.ImageRequest,
+) (PricingQuote, error) {
+	lane, err := usageBillingLaneFromContext(selection, nil)
+	if err != nil {
+		return PricingQuote{}, fmt.Errorf("failed to resolve billing lane for image pricing: %w", err)
+	}
+	if lane == UsageBillingLanePlatform {
+		return PricingQuote{}, nil
+	}
+	return s.quoteImagePricing(ctx, model, req)
 }
 
 func pricingErrorParamsFromModelRef(model PricingModelRef) map[string]interface{} {

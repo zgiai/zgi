@@ -420,6 +420,9 @@ func (s *modelService) CreateCustom(ctx context.Context, organizationID uuid.UUI
 		inferred := model.DefaultParameters()
 		parameters = &inferred
 	}
+	if err := validateCustomAgentCapabilities(useCases, endpoints, features); err != nil {
+		return nil, err
+	}
 
 	m := &model.CustomModel{
 		OrganizationID:        organizationID,
@@ -526,7 +529,7 @@ func (s *modelService) UpdateCustom(ctx context.Context, organizationID, id uuid
 		m.SortOrder = *req.SortOrder
 	}
 	if req.UseCases != nil {
-		m.UseCases = req.UseCases
+		m.UseCases = model.StringArray(model.EnsureUseCases(req.UseCases, req.Endpoints))
 	}
 	if req.Endpoints != nil {
 		m.Endpoints = req.Endpoints
@@ -547,6 +550,10 @@ func (s *modelService) UpdateCustom(ctx context.Context, organizationID, id uuid
 		}
 		m.ConfigParameters = configParameters
 	}
+	m.UseCases = model.StringArray(model.EnsureUseCases([]string(m.UseCases), m.Endpoints))
+	if err := validateCustomAgentCapabilities([]string(m.UseCases), m.Endpoints, m.Features); err != nil {
+		return nil, err
+	}
 
 	if err := s.customRepo.Update(ctx, m); err != nil {
 		return nil, fmt.Errorf("failed to update custom model: %w", err)
@@ -556,6 +563,32 @@ func (s *modelService) UpdateCustom(ctx context.Context, organizationID, id uuid
 	}
 
 	return m, nil
+}
+
+func validateCustomAgentCapabilities(useCases []string, endpoints *model.ModelEndpoints, features *model.ModelFeatures) error {
+	useCases = model.NormalizeUseCases(useCases)
+	if !hasUseCase(useCases, string(model.UseCaseAgent)) {
+		return nil
+	}
+	if !hasUseCase(useCases, string(model.UseCaseTextChat)) || !hasUseCase(useCases, string(model.UseCaseFuncCalling)) {
+		return fmt.Errorf("custom agent model requires text-chat and function-calling use cases")
+	}
+	if endpoints == nil || !endpoints.ChatCompletions {
+		return fmt.Errorf("custom agent model requires chat_completions endpoint")
+	}
+	if features == nil || !features.Streaming || !features.FunctionCalling || !features.SystemPrompt {
+		return fmt.Errorf("custom agent model requires streaming, function_calling, and system_prompt features")
+	}
+	return nil
+}
+
+func hasUseCase(useCases []string, target string) bool {
+	for _, useCase := range useCases {
+		if useCase == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *modelService) DeleteCustom(ctx context.Context, organizationID, id uuid.UUID) error {

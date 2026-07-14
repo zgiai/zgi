@@ -2012,13 +2012,13 @@ func agentManagementListAvailableModelsContract() SkillToolArgumentContract {
 		Description: "List Agent runtime model candidates available to the current organization. Use this before changing an Agent model, then pass one returned item's provider and model together to update_agent_config.",
 		Schema: objectSchema(
 			map[string]interface{}{
-				"use_case": enumStringSchema("Optional model use case. Defaults to text-chat for normal Agent runtime replacement. Use all only when the user asks to inspect every model.", []string{"text-chat", "reasoning", "vision", "function-calling", "all"}),
+				"use_case": enumStringSchema("Optional model use case. Defaults to agent for normal Agent runtime replacement. Use all only when the user asks to inspect every model.", []string{"agent", "workflow", "text-chat", "reasoning", "vision", "function-calling", "all"}),
 				"provider": stringValueSchema("Optional provider slug filter, such as openai or deepseek."),
 				"limit":    numberSchema("Optional maximum number of model candidates. Defaults to 20 and is capped by the backend."),
 			},
 			nil,
 		),
-		Example: map[string]interface{}{"use_case": "text-chat", "limit": 20},
+		Example: map[string]interface{}{"use_case": "agent", "limit": 20},
 	}
 }
 

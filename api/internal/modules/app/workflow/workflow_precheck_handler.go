@@ -255,7 +255,7 @@ func (h *WorkflowHandler) respondWorkflowRunPrecheck(c *gin.Context, workflow an
 		WorkspaceID:        workspaceID,
 		BillingSubjectType: billingSubjectType,
 		AppID:              appID,
-		AppType:            "agent",
+		AppType:            "workflow",
 		AccountID:          accountID,
 	}
 

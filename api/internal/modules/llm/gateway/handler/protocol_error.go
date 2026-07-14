@@ -44,6 +44,8 @@ func classifyProtocolError(err error) protocolError {
 		return newProtocolError(http.StatusTooManyRequests, "rate_limit_error", "rate_limit_exceeded", "rate_limit_error", "Rate limit exceeded")
 	case errors.Is(err, llmerrors.DomainErrPrivateChannelUpstreamUnavailable):
 		return newProtocolError(http.StatusServiceUnavailable, "server_error", "private_channel_upstream_unavailable", "api_error", "Private channel upstream credential is unavailable")
+	case errors.Is(err, adapter.ErrPlatformChannelUnavailable):
+		return newProtocolError(http.StatusBadGateway, "server_error", adapter.ErrorCodePlatformChannelUnavailable, "api_error", "Platform model service is temporarily unavailable")
 	case errors.Is(err, gateway.ErrNoProviderAvailable), errors.Is(err, gateway.ErrProviderNotFound), errors.Is(err, gateway.ErrProviderUnavailable), errors.Is(err, llmerrors.DomainErrNoProviderAvailable), errors.Is(err, llmerrors.DomainErrProviderNotFound), errors.Is(err, llmerrors.DomainErrChannelNotFound), errors.Is(err, llmerrors.DomainErrUpstreamUnavailable), strings.Contains(err.Error(), "no provider available"):
 		return newProtocolError(http.StatusServiceUnavailable, "server_error", "provider_unavailable", "api_error", "No provider is currently available for this model")
 	case errors.Is(err, adapter.ErrTimeout), errors.Is(err, llmerrors.DomainErrUpstreamTimeout):

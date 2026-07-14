@@ -57,6 +57,7 @@ const (
 	UseCaseModeration    UseCase = "moderation"       // Content moderation
 	UseCaseReasoning     UseCase = "reasoning"        // Deep reasoning
 	UseCaseFuncCalling   UseCase = "function-calling" // Function calling
+	UseCaseAgent         UseCase = "agent"            // Tool-using agents
 )
 
 // ValidUseCases returns all valid use case values
@@ -65,5 +66,6 @@ func ValidUseCases() []UseCase {
 		UseCaseTextChat, UseCaseVision, UseCaseImageGen, UseCaseEmbedding,
 		UseCaseRerank, UseCaseSpeechToText, UseCaseTextToSpeech, UseCaseRealtimeAudio,
 		UseCaseVideoGen, UseCaseModeration, UseCaseReasoning, UseCaseFuncCalling,
+		UseCaseAgent,
 	}
 }

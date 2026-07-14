@@ -1499,6 +1499,7 @@ const messages: AgentsMessages = {
       saveSuccessWithBindingWarnings: '配置已保存，但仍有 {count} 个绑定异常，请在发布前检查。',
       saveFailed: '保存失败',
       saveFailedDraftKept: '保存失败，修改已保留。',
+      modelUnavailable: '原模型已不再支持智能体场景，请重新选择模型。',
       noGeneratedSuggestions: '没有生成可用的请求示例',
       suggestionsGenerated: '已生成请求示例',
       generateSuggestionsFailed: '生成请求示例失败',

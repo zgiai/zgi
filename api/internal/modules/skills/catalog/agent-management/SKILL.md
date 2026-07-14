@@ -366,7 +366,7 @@ Use this skill for governed Agent asset operations in the contextual console ass
    When one user turn asks to change both identity fields and runtime/draft config fields, plan and execute both tools: `update_agent_identity` for identity fields and `update_agent_config` for config fields. Do not finish after only one of them unless the other tool failed or the user no longer wants that part.
 7. Use `get_agent_config` before changing draft runtime configuration if the current config is not already known from page context.
 8. For read-only current configuration checks, `get_agent_config` is enough to answer the Agent's name, description, icon, model/provider, prompt, memory/file-upload settings, and currently bound Skill/knowledge/database/workflow counts. Do not call candidate-list tools or table-list tools just to inspect existing bindings or counts; call them only when the user asks what resources are available/bindable/selectable, or when a bind/unbind/replace operation needs exact candidate IDs. Do not call `get_current_page_context`; current page context is injected by the runtime and is not a skill tool.
-9. Use `list_available_models` before replacing an Agent model unless the user already provided an exact provider/model pair from current page context. Default to `use_case: "text-chat"` for ordinary Agent runtime model replacement; use `reasoning`, `vision`, or `function-calling` only when the user clearly asks for that capability.
+9. Use `list_available_models` before replacing an Agent model unless the user already provided an exact provider/model pair from current page context. Default to `use_case: "agent"` for ordinary Agent runtime model replacement.
 10. Use `update_agent_config` for supported draft fields: system prompt, model provider/model, model parameters, Agent memory switch, file upload switch, home title, input placeholder, theme color, suggested questions, and Agent skill/knowledge/database/workflow binding edits. Prefer one `update_agent_config` call when the user asks to change multiple config sections in the same turn.
 11. To replace the Agent model, choose one item from `list_available_models` and pass that item's `provider` as `model_provider` and `model` as `model` to `update_agent_config`.
 12. Use `replace_agent_memory_slots` to replace the full Agent memory slot list. If the user asks to enable memory and create slots, call `update_agent_config` with `agent_memory_enabled: true`, then call `replace_agent_memory_slots`.
@@ -488,7 +488,7 @@ For read-only questions such as “can this Agent generate files?” or “does 
 
 `list_available_models` accepts:
 
-- `use_case`: optional model use case. Defaults to `text-chat` for Agent runtime model replacement. Use `all` only when the user asks to inspect every available model.
+- `use_case`: optional model use case. Defaults to `agent` for Agent runtime model replacement. Use `all` only when the user asks to inspect every available model.
 - `provider`: optional provider slug filter.
 - `query`: optional natural-language model phrase. Matching models are ranked first and include `match` evidence.
 - `limit`: optional maximum result count, capped at 100.

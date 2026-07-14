@@ -28,6 +28,8 @@ var (
 	errAgentPromptTooLong         = errors.New("agent system prompt is too long")
 )
 
+const agentModelSelectionUseCase = "agent"
+
 func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID string) (*dto.AgentConfigResponse, error) {
 	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true, agentRuntimeConfigReadPermissionCodes("AGENT")...)
 	if err != nil {
@@ -68,6 +70,13 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 		return nil, err
 	}
 	runtimeReq := normalizeAgentConfigRequest(req)
+	organizationID, err := s.organizationUUIDForAgentWorkspace(ctx, ag.TenantID.String())
+	if err != nil {
+		return nil, err
+	}
+	if err := s.validateAgentModelEligibility(ctx, organizationID, runtimeReq.ModelProvider, runtimeReq.Model); err != nil {
+		return nil, err
+	}
 	runtimeReq.WorkflowBindings = s.hydrateAgentWorkflowBindingTypes(ctx, ag.TenantID.String(), runtimeReq.WorkflowBindings)
 	previous := agentConfigResponse(ag.ID.String(), cfg)
 	previousRows, currentRevision, currentHealth, err := s.draftBindingState(ctx, ag, cfg, accountID)
@@ -240,6 +249,22 @@ func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID str
 	if err != nil {
 		return nil, err
 	}
+	snapshot := agentConfigSnapshot(ag.ID.String(), cfg)
+	organizationID, err := s.organizationUUIDForAgentWorkspace(ctx, ag.TenantID.String())
+	if err != nil {
+		return nil, err
+	}
+	if err := s.validateAgentModelEligibility(
+		ctx,
+		organizationID,
+		stringFromSnapshot(snapshot, "model_provider"),
+		stringFromSnapshot(snapshot, "model"),
+	); err != nil {
+		return nil, err
+	}
+	if err := validateAgentSystemPromptSource(stringFromSnapshot(snapshot, "system_prompt")); err != nil {
+		return nil, err
+	}
 	_, bindingRevision, bindingHealth, err := s.draftBindingState(ctx, ag, cfg, accountID)
 	if err != nil {
 		return nil, err
@@ -332,6 +357,27 @@ func ensureAgentWorkspaceUnchanged(ctx context.Context, tx *gorm.DB, ag *Agent) 
 		}
 	}
 	return nil
+}
+
+func (s *agentsService) validateAgentModelEligibility(ctx context.Context, organizationID uuid.UUID, provider, modelName string) error {
+	provider = strings.TrimSpace(provider)
+	modelName = strings.TrimSpace(modelName)
+	if provider == "" || modelName == "" {
+		return fmt.Errorf("agent model provider and model are required")
+	}
+	if s.agentModels == nil {
+		return fmt.Errorf("agent model eligibility service is unavailable")
+	}
+	models, err := s.agentModels.ListAvailable(ctx, organizationID, provider, agentModelSelectionUseCase)
+	if err != nil {
+		return fmt.Errorf("list available agent models: %w", err)
+	}
+	for _, candidate := range models {
+		if candidate != nil && candidate.Provider == provider && candidate.Name == modelName {
+			return nil
+		}
+	}
+	return fmt.Errorf("agent model %s/%s is unavailable", provider, modelName)
 }
 
 func (s *agentsService) createAgentPublishedVersion(

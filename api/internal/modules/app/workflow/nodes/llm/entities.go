@@ -5,7 +5,7 @@ import (
 )
 
 const (
-	AppType = "agent"
+	AppType = "workflow"
 )
 
 // NodeData represents the data structure for LLM nodes

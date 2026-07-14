@@ -847,6 +847,66 @@ func TestSelectRoutesByPriorityAndWeightPutsProbeBeforeFallback(t *testing.T) {
 	}
 }
 
+func TestFilterRoutesForModelScene_AgentUsesCatalogTagForOfficialAndPrivateRoutes(t *testing.T) {
+	official := &channelmodel.LLMRoute{
+		ID:         uuid.New(),
+		Type:       shared.RouteTypeZGICloud,
+		IsOfficial: true,
+		Models:     []string{"gpt-agent"},
+	}
+	private := &channelmodel.LLMRoute{
+		ID:              uuid.New(),
+		Type:            shared.RouteTypePrivate,
+		ChannelProvider: "openai-compatible",
+		Models:          []string{"gpt-agent"},
+	}
+	modelRecord := &llmmodel.LLMModel{
+		Model:    "gpt-agent",
+		UseCases: llmmodel.StringArray{"text-chat", "function-calling", "agent"},
+	}
+
+	got := filterRoutesForModelScene([]*channelmodel.LLMRoute{official, private}, "gpt-agent", modelRecord, string(llmmodel.UseCaseAgent))
+	if len(got) != 2 {
+		t.Fatalf("agent routes = %#v, want official and private", got)
+	}
+}
+
+func TestFilterRoutesForModelScene_AgentRejectsUntaggedOfficialModel(t *testing.T) {
+	official := &channelmodel.LLMRoute{
+		ID:         uuid.New(),
+		Type:       shared.RouteTypeZGICloud,
+		IsOfficial: true,
+		Models:     []string{"gpt-workflow"},
+	}
+	modelRecord := &llmmodel.LLMModel{
+		Model:    "gpt-workflow",
+		UseCases: llmmodel.StringArray{"text-chat"},
+	}
+
+	got := filterRoutesForModelScene([]*channelmodel.LLMRoute{official}, "gpt-workflow", modelRecord, string(llmmodel.UseCaseAgent))
+	if len(got) != 0 {
+		t.Fatalf("agent routes = %#v, want none", got)
+	}
+}
+
+func TestFilterRoutesForModelScene_AgentRejectsUnsupportedAdapter(t *testing.T) {
+	google := &channelmodel.LLMRoute{
+		ID:              uuid.New(),
+		Type:            shared.RouteTypePrivate,
+		ChannelProvider: "google",
+		Models:          []string{"gemini-agent"},
+	}
+	modelRecord := &llmmodel.LLMModel{
+		Model:    "gemini-agent",
+		UseCases: llmmodel.StringArray{"text-chat", "function-calling", "agent"},
+	}
+
+	got := filterRoutesForModelScene([]*channelmodel.LLMRoute{google}, "gemini-agent", modelRecord, string(llmmodel.UseCaseAgent))
+	if len(got) != 0 {
+		t.Fatalf("agent routes = %#v, want none for unsupported adapter", got)
+	}
+}
+
 func TestFinalizeUpstreamProbeSelectionsRequiresBuiltFallback(t *testing.T) {
 	probeCredentialID := uuid.New()
 	probe := &ProviderSelection{

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"time"
 
@@ -23,7 +24,7 @@ import (
 const (
 	modelMetaAPIVersion     = "v1"
 	defaultModelMetaAPIBase = "https://models.zgi.ai"
-	priceScale              = 4
+	priceScale              = 6
 )
 
 var errModelMetaAPIURLNotConfigured = errors.New("MODELMETA_API_URL is not configured")
@@ -135,6 +136,7 @@ type ModelMetaData struct {
 	InputPrice       *float64               `json:"input_price"`
 	OutputPrice      *float64               `json:"output_price"`
 	CachedInputPrice float64                `json:"cached_input_price"`
+	Pricing          json.RawMessage        `json:"pricing"`
 	IsFlagship       bool                   `json:"is_flagship"`
 	IsRecommended    bool                   `json:"is_recommended"`
 	IsFeatured       bool                   `json:"is_featured"`
@@ -762,6 +764,22 @@ func useCasesDiffer(local llmmodel.StringArray, remote []string) bool {
 	return !equalStringSlices(llmmodel.NormalizeUseCases([]string(local)), llmmodel.NormalizeUseCases(remote))
 }
 
+func structuredPricingDiffer(local datatypes.JSON, remote json.RawMessage) bool {
+	return !reflect.DeepEqual(normalizedStructuredPricing(local), normalizedStructuredPricing(remote))
+}
+
+func normalizedStructuredPricing(raw []byte) interface{} {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return map[string]interface{}{}
+	}
+	var value interface{}
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return trimmed
+	}
+	return value
+}
+
 // hasChanges checks if a model has changes compared to remote data
 func (s *Service) hasChanges(local *llmmodel.LLMModel, remote *ModelMetaData) bool {
 	if local.ModelName != remote.ModelName {
@@ -786,6 +804,9 @@ func (s *Service) hasChanges(local *llmmodel.LLMModel, remote *ModelMetaData) bo
 		return true
 	}
 	if pricesDiffer(local.CachedInputPrice, remote.CachedInputPrice) {
+		return true
+	}
+	if structuredPricingDiffer(local.Pricing, remote.Pricing) {
 		return true
 	}
 	if local.Status != remote.Status {
@@ -888,6 +909,13 @@ func (s *Service) computeDiffFields(local *llmmodel.LLMModel, remote *ModelMetaD
 			NewValue: normalizedRemotePriceValue(remote.CachedInputPrice),
 		})
 	}
+	if structuredPricingDiffer(local.Pricing, remote.Pricing) {
+		diffs = append(diffs, DiffField{
+			Field:    "pricing",
+			OldValue: normalizedStructuredPricing(local.Pricing),
+			NewValue: normalizedStructuredPricing(remote.Pricing),
+		})
+	}
 	if local.Status != remote.Status {
 		diffs = append(diffs, DiffField{Field: "status", OldValue: local.Status, NewValue: remote.Status})
 	}
@@ -961,6 +989,7 @@ func publishedModelFromMeta(meta *ModelMetaData) PublishedModel {
 	tools := parsePublishedModelTools(meta.Tools)
 	parameters := parsePublishedModelParameters(meta.Parameters)
 	description := normalizeOptionalString(meta.Description)
+	isActive := meta.Status == llmmodel.ModelStatusActive
 
 	return PublishedModel{
 		Provider:               meta.Provider,
@@ -983,12 +1012,15 @@ func publishedModelFromMeta(meta *ModelMetaData) PublishedModel {
 		InputPrice:             remotePriceValue(meta.InputPrice),
 		OutputPrice:            remotePriceValue(meta.OutputPrice),
 		CachedInputPrice:       meta.CachedInputPrice,
+		Pricing:                meta.Pricing,
 		InputPriceConfigured:   meta.InputPrice != nil,
 		OutputPriceConfigured:  meta.OutputPrice != nil,
 		UseCases:               llmmodel.EnsureUseCases(meta.UseCases, endpoints),
 		InputModalities:        normalizeStringValues(meta.InputModalities),
 		OutputModalities:       normalizeStringValues(meta.OutputModalities),
 		KnowledgeCutoff:        strings.TrimSpace(meta.KnowledgeCutoff),
+		IsActive:               isActive,
+		IsSystemEnabled:        isActive,
 		SupportedParameters:    marshalJSONRaw(meta.Parameters),
 		ConfigParameters:       meta.ConfigParameters,
 		Endpoints:              endpoints,

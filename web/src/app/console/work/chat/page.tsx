@@ -8,6 +8,7 @@ import { useT } from '@/i18n/translations';
 import { useCurrentUser } from '@/store/auth-store';
 import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
 import { isConversationRouteRestoring } from '@/components/chat/runtime/conversation-route-state';
+import { toast } from 'sonner';
 
 function ChatLoading() {
   const t = useT('webapp');
@@ -30,16 +31,22 @@ function ChatPageContent() {
   const startNewRef = useRef(startNew);
   const lastInitializedConversationIdRef = useRef<string | null | undefined>(undefined);
   const routeSelectionTargetRef = useRef<string | null | undefined>(undefined);
-  const { modelSelectorValue, isModelInitializing, handleModelChange } =
+  const { modelSelectorValue, isModelInitializing, isSelectedModelUnavailable, handleModelChange } =
     usePersistedAIChatModelSelection({
       accountId: user?.id,
       scope: 'consoleChat',
-      useCase: 'text-chat',
+      useCase: 'agent',
     });
   const isRestoringConversationRoute = isConversationRouteRestoring(
     conversationIdParam,
     activeConversationId
   );
+
+  const handleBeforeSend = useCallback(() => {
+    if (!isSelectedModelUnavailable) return true;
+    toast.error(t('consoleChat.modelUnavailable'));
+    return false;
+  }, [isSelectedModelUnavailable, t]);
 
   const replaceConversationRoute = useCallback(
     (conversationId: string | null) => {
@@ -140,27 +147,38 @@ function ChatPageContent() {
   }, [activeConversationId, router, searchParams]);
 
   return (
-    <div className="h-full w-full">
-      {isRestoringConversationRoute ? (
-        <ChatLoading />
-      ) : (
-        <React.Suspense fallback={<ChatLoading />}>
-          <Chat
-            mode="aichat"
-            controller={controller}
-            runtimeSurface="work_chat"
-            modelSelectorValue={modelSelectorValue}
-            isModelInitializing={isModelInitializing}
-            onModelChange={handleModelChange}
-            showMemoryToggle={false}
-            homeTitle={t('consoleChat.homeTitle')}
-            homeDescription={t('consoleChat.homeDescription')}
-            inputPlaceholder={t('consoleChat.inputPlaceholder')}
-            onSelectConversation={handleSelectConversation}
-            onStartNewConversation={handleStartNewConversation}
-          />
-        </React.Suspense>
-      )}
+    <div className="flex h-full w-full flex-col">
+      {isSelectedModelUnavailable ? (
+        <div
+          role="alert"
+          className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-4 py-2 text-sm text-destructive"
+        >
+          {t('consoleChat.modelUnavailable')}
+        </div>
+      ) : null}
+      <div className="min-h-0 flex-1">
+        {isRestoringConversationRoute ? (
+          <ChatLoading />
+        ) : (
+          <React.Suspense fallback={<ChatLoading />}>
+            <Chat
+              mode="aichat"
+              controller={controller}
+              runtimeSurface="work_chat"
+              modelSelectorValue={modelSelectorValue}
+              isModelInitializing={isModelInitializing}
+              onModelChange={handleModelChange}
+              beforeSend={handleBeforeSend}
+              showMemoryToggle={false}
+              homeTitle={t('consoleChat.homeTitle')}
+              homeDescription={t('consoleChat.homeDescription')}
+              inputPlaceholder={t('consoleChat.inputPlaceholder')}
+              onSelectConversation={handleSelectConversation}
+              onStartNewConversation={handleStartNewConversation}
+            />
+          </React.Suspense>
+        )}
+      </div>
     </div>
   );
 }

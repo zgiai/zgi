@@ -15,13 +15,12 @@ export default function ConsoleWorkLayout({ children }: { children: React.ReactN
   const currentWorkspace = useCurrentWorkspace();
   const {
     isLoading: isCapabilitiesLoading,
-    isFetching: isCapabilitiesFetching,
     canUseOrganizationScope,
     canUseWorkspaceScope,
     isWorkspaceRequired,
   } = useAccountCapabilities();
 
-  if (isCapabilitiesLoading || isCapabilitiesFetching) {
+  if (isCapabilitiesLoading) {
     return (
       <div className="flex h-full w-full items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />

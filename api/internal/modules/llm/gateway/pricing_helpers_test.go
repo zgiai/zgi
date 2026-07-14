@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/google/uuid"
@@ -65,6 +66,102 @@ func TestQuoteImagePricingWrapsMissingPricingAsBillingUserError(t *testing.T) {
 		userErr.Params["provider"] != "qwen" ||
 		userErr.Params["model"] != "qwen-image" {
 		t.Fatalf("params = %#v, want image operation", userErr.Params)
+	}
+}
+
+func TestQuoteTokenPricingForSelectionSkipsLocalPricingForOfficialRoute(t *testing.T) {
+	engine := &fakePricingEngine{tokenErr: ErrPricingNotConfigured}
+	svc := &llmGatewayServiceImpl{pricingEngine: engine}
+	selection := &ProviderSelection{
+		UseSystemProvider: true,
+		BillingLane:       UsageBillingLanePlatform,
+	}
+
+	quote, err := svc.quoteTokenPricingForSelection(
+		context.Background(),
+		selection,
+		PricingModelRef{Provider: "openai", Model: "gpt-5.4"},
+		1,
+		1,
+	)
+	if err != nil {
+		t.Fatalf("quoteTokenPricingForSelection() error = %v, want nil", err)
+	}
+	if !reflect.DeepEqual(quote, PricingQuote{}) {
+		t.Fatalf("quote = %#v, want zero quote", quote)
+	}
+	if engine.tokenCalls != 0 {
+		t.Fatalf("local pricing calls = %d, want 0", engine.tokenCalls)
+	}
+}
+
+func TestQuoteTokenPricingForSelectionRequiresLocalPricingForPrivateRoute(t *testing.T) {
+	engine := &fakePricingEngine{tokenErr: ErrPricingNotConfigured}
+	svc := &llmGatewayServiceImpl{pricingEngine: engine}
+	selection := &ProviderSelection{
+		UseSystemProvider: false,
+		BillingLane:       UsageBillingLanePrivate,
+	}
+
+	_, err := svc.quoteTokenPricingForSelection(
+		context.Background(),
+		selection,
+		PricingModelRef{Provider: "openai", Model: "gpt-5.4"},
+		1,
+		1,
+	)
+	if err == nil {
+		t.Fatal("quoteTokenPricingForSelection() error = nil, want error")
+	}
+	var userErr *BillingUserError
+	if !errors.As(err, &userErr) {
+		t.Fatalf("error = %v, want BillingUserError", err)
+	}
+	if userErr.Kind != BillingUserErrorKindModelPricingNotConfigured {
+		t.Fatalf("kind = %s, want %s", userErr.Kind, BillingUserErrorKindModelPricingNotConfigured)
+	}
+	if engine.tokenCalls != 1 {
+		t.Fatalf("local pricing calls = %d, want 1", engine.tokenCalls)
+	}
+}
+
+func TestQuoteImagePricingForSelectionSkipsLocalPricingForOfficialRoute(t *testing.T) {
+	svc := &llmGatewayServiceImpl{pricingEngine: &fakePricingEngine{imageErr: ErrPricingNotConfigured}}
+	selection := &ProviderSelection{
+		UseSystemProvider: true,
+		BillingLane:       UsageBillingLanePlatform,
+	}
+
+	quote, err := svc.quoteImagePricingForSelection(
+		context.Background(),
+		selection,
+		PricingModelRef{Provider: "openai", Model: "gpt-image-1"},
+		&adapter.ImageRequest{Model: "gpt-image-1"},
+	)
+	if err != nil {
+		t.Fatalf("quoteImagePricingForSelection() error = %v, want nil", err)
+	}
+	if !reflect.DeepEqual(quote, PricingQuote{}) {
+		t.Fatalf("quote = %#v, want zero quote", quote)
+	}
+}
+
+func TestQuoteTokenPricingForSelectionRejectsInvalidBillingLane(t *testing.T) {
+	svc := &llmGatewayServiceImpl{pricingEngine: &fakePricingEngine{}}
+	selection := &ProviderSelection{
+		UseSystemProvider: true,
+		BillingLane:       UsageBillingLane("invalid"),
+	}
+
+	_, err := svc.quoteTokenPricingForSelection(
+		context.Background(),
+		selection,
+		PricingModelRef{Provider: "openai", Model: "gpt-5.4"},
+		1,
+		1,
+	)
+	if err == nil {
+		t.Fatal("quoteTokenPricingForSelection() error = nil, want error")
 	}
 }
 

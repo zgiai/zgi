@@ -802,7 +802,7 @@ export function AIChatShell({
   );
 
   const handleRegenerate = useCallback(
-    (message: AIChatMessage) => {
+    async (message: AIChatMessage) => {
       const branchCount = branchNavigationByMessageId.get(message.id)?.total ?? 1;
       const canReplaceRoot = canReplaceRootMessage(message);
       if (messageActionsLocked) return;
@@ -811,6 +811,7 @@ export function AIChatShell({
         toast.error(t('consoleChat.modelRequired'));
         return;
       }
+      if (beforeSend && !(await beforeSend())) return;
 
       void controller.regenerate(
         message.id,
@@ -827,6 +828,7 @@ export function AIChatShell({
     },
     [
       branchNavigationByMessageId,
+      beforeSend,
       canReplaceRootMessage,
       controller,
       messageActionsLocked,
