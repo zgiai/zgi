@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/zgiai/zgi/api/internal/modules/file_process/model"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
@@ -65,6 +66,8 @@ func (s *workflowTestAssetService) attachGeneratedAssets(ctx context.Context, re
 	}
 
 	uploaded := make([]map[string]interface{}, 0, len(fixtures))
+	generatedAttachments := make([]CaseAttachment, 0, len(fixtures))
+	uploadedFileIDs := make([]string, 0, len(fixtures))
 	source := interfaces.FileSourceWorkflow
 	workspaceID := strings.TrimSpace(req.WorkspaceID)
 	var workspaceIDPtr *string
@@ -74,6 +77,7 @@ func (s *workflowTestAssetService) attachGeneratedAssets(ctx context.Context, re
 	for fixtureIndex, fixture := range fixtures {
 		data, extension, mimeType, err := filegenerator.RenderGeneratedFile(renderFixtureContent(fixture), fixture.Format, fixture.Title)
 		if err != nil {
+			s.cleanupGeneratedAssetFiles(uploadedFileIDs)
 			return fmt.Errorf("render workflow test fixture file: %w", err)
 		}
 		filename := buildGeneratedAssetFilename(fixture, extension, index, fixtureIndex)
@@ -91,9 +95,22 @@ func (s *workflowTestAssetService) attachGeneratedAssets(ctx context.Context, re
 			false,
 		)
 		if err != nil {
+			s.cleanupGeneratedAssetFiles(uploadedFileIDs)
 			return fmt.Errorf("upload workflow test fixture file: %w", err)
 		}
-		item.Turns[0].Attachments = append(item.Turns[0].Attachments, CaseAttachment{
+		uploadedFileIDs = append(uploadedFileIDs, file.ID)
+		if shouldValidateGeneratedAssetExtraction(extension) {
+			extracted, extractErr := s.fileService.GetFile(ctx, file.ID)
+			if extractErr != nil {
+				s.cleanupGeneratedAssetFiles(uploadedFileIDs)
+				return fmt.Errorf("回读系统生成文件 %s 失败: %w", file.Name, extractErr)
+			}
+			if validateErr := validateGeneratedAssetExtraction(fixture, extracted); validateErr != nil {
+				s.cleanupGeneratedAssetFiles(uploadedFileIDs)
+				return fmt.Errorf("系统生成文件 %s 无法被当前文档抽取链可靠读取: %w", file.Name, validateErr)
+			}
+		}
+		generatedAttachments = append(generatedAttachments, CaseAttachment{
 			Type:           attachmentTypeForFormat(extension),
 			TransferMethod: "local_file",
 			UploadFileID:   file.ID,
@@ -107,8 +124,16 @@ func (s *workflowTestAssetService) attachGeneratedAssets(ctx context.Context, re
 			"fixture":        fixture,
 		})
 	}
+	for turnIndex := range item.Turns {
+		item.Turns[turnIndex].Attachments = nil
+	}
+	item.Turns[0].Attachments = generatedAttachments
 	item.Turns[0].Inputs[generatedAssetSourceKey] = generatedAssetSource
 	item.Turns[0].Inputs[generatedFixtureSpecKey] = uploaded
+	if err := validateGeneratedAssetBindings(CaseTurns(item.Turns)); err != nil {
+		s.cleanupGeneratedAssetFiles(uploadedFileIDs)
+		return fmt.Errorf("系统生成文件绑定校验失败: %w", err)
+	}
 	caseMode := normalizeCaseMode(req.CaseMode)
 	if caseMode == "" {
 		caseMode = "task"
@@ -138,6 +163,64 @@ func (s *workflowTestAssetService) attachGeneratedAssets(ctx context.Context, re
 	checks := expectedChecksFromInput(item.Turns[0].Inputs[expectedChecksInputKey])
 	item.Turns[0].Inputs[evaluationSchemaInputKey] = buildGeneratedTaskEvaluationSchema(item, checks)
 	return nil
+}
+
+func (s *workflowTestAssetService) cleanupGeneratedAssetFiles(fileIDs []string) {
+	if s == nil || s.fileService == nil || len(fileIDs) == 0 {
+		return
+	}
+	_ = s.fileService.DeleteFiles(context.Background(), fileIDs)
+}
+
+func shouldValidateGeneratedAssetExtraction(format string) bool {
+	switch strings.ToLower(strings.TrimPrefix(strings.TrimSpace(format), ".")) {
+	case "doc", "docx", "pdf", "txt", "md", "csv", "xls", "xlsx":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateGeneratedAssetExtraction(fixture GeneratedFileFixture, extracted string) error {
+	expected := normalizeGeneratedAssetExtractionText(renderFixtureContent(fixture))
+	actual := normalizeGeneratedAssetExtractionText(extracted)
+	if expected == "" {
+		return nil
+	}
+	if actual == "" {
+		return fmt.Errorf("抽取结果为空")
+	}
+	if strings.Contains(actual, expected) {
+		return nil
+	}
+
+	lines := strings.Split(strings.ReplaceAll(renderFixtureContent(fixture), "\r\n", "\n"), "\n")
+	matched := 0
+	required := 0
+	for _, line := range lines {
+		normalized := normalizeGeneratedAssetExtractionText(line)
+		if len([]rune(normalized)) < 4 {
+			continue
+		}
+		required++
+		if strings.Contains(actual, normalized) {
+			matched++
+		}
+	}
+	if required > 0 && matched*5 >= required*4 {
+		return nil
+	}
+	return fmt.Errorf("回读内容与生成内容不一致（命中 %d/%d 个有效文本段）", matched, required)
+}
+
+func normalizeGeneratedAssetExtractionText(value string) string {
+	var builder strings.Builder
+	for _, r := range strings.ToLower(value) {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) || strings.ContainsRune("%°℃+-±×/._", r) {
+			builder.WriteRune(r)
+		}
+	}
+	return builder.String()
 }
 
 func enrichGeneratedAssetConversationChecks(item *GeneratedCase, fixtures []GeneratedFileFixture) {
@@ -192,11 +275,15 @@ func normalizeFileGenerationConfig(config *FileGenerationConfig) FileGenerationC
 	if filesPerCase > 5 {
 		filesPerCase = 5
 	}
+	complexities := normalizeFileGenerationList(config.Complexities)
+	if len(complexities) == 0 {
+		complexities = []string{"normal"}
+	}
 	return FileGenerationConfig{
 		Enabled:      true,
 		Formats:      formats,
 		FilesPerCase: filesPerCase,
-		Complexities: normalizeFileGenerationList(config.Complexities),
+		Complexities: complexities,
 		ContentTypes: normalizeFileGenerationList(config.ContentTypes),
 	}
 }

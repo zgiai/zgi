@@ -100,6 +100,12 @@ func TestBuildScenarioRecognitionPromptUsesTaskModeRules(t *testing.T) {
 	require.Contains(t, prompt, "meeting notes")
 	require.Contains(t, prompt, "Do not create scenarios for unsupported format handling")
 	require.Contains(t, prompt, "field completeness checks")
+	require.Contains(t, prompt, "输入内容")
+	require.Contains(t, prompt, "目标")
+	require.Contains(t, prompt, "测试重点")
+	require.NotContains(t, prompt, "Input: ...")
+	require.NotContains(t, prompt, "Goal: ...")
+	require.NotContains(t, prompt, "Test focus: ...")
 }
 
 func TestLLMScenarioRecognizerDoesNotForceResponseFormat(t *testing.T) {

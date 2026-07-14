@@ -946,6 +946,8 @@ const messages = {
         recognizingScenarios: 'Recognizing...',
         cancelRecognition: 'Stop Recognition',
         cancelGeneration: 'Stop Generation',
+        resumeGeneration: 'Continue Generation',
+        deleteGenerationTask: 'Delete Record',
         editScenarios: 'Edit Scenarios',
         createBatch: 'New Test',
       },
@@ -1280,6 +1282,8 @@ const messages = {
         turnStrategyHelpSingle: 'Single-turn: generate one-question, one-response test cases only.',
         turnStrategyHelpMulti:
           'Multi-turn: generate test cases with follow-up questions and carried context only.',
+        turnStrategyFilesRequired:
+          'This workflow requires an attachment on every run, so generated-file tests must use a single turn.',
         taskStrategyHelpSingle:
           'Single input: each case validates one task trigger and the final output.',
         taskStrategyHelpMulti:
@@ -1519,6 +1523,7 @@ const messages = {
       expectedResult: 'Expected Result',
       judgeDetail: 'AI Scoring Details',
       judgeScore: 'AI Score',
+      notScored: 'Not scored',
       judgeOpinion: 'Review Opinion',
       analysisAdvice: 'AI Analysis Advice',
       executionRecord: 'Execution Record',
@@ -1529,6 +1534,9 @@ const messages = {
       conversationContent: 'Conversation',
       userQuestion: 'User Question',
       agentReply: 'Agent Reply',
+      executionFailedWithReason: 'Execution failed: {reason}',
+      executionFailedNoReply: 'Execution failed: workflow did not return a valid reply',
+      nodeExecutionFailed: 'Node execution failed',
       systemReply: 'System Reply',
       rawData: 'Raw Data',
       rawOutput: 'Raw Output',
@@ -1616,6 +1624,10 @@ const messages = {
       casesGenerationStarted: 'Generating {count} test questions',
       casesGenerationCancelRequested: 'Test question generation stop requested',
       casesGenerationCancelFailed: 'Failed to stop test question generation',
+      casesGenerationResumed: 'Continuing generation for remaining {count} test questions',
+      casesGenerationResumeFailed: 'Failed to continue test question generation',
+      casesGenerationTaskDeleted: 'Generation record deleted',
+      casesGenerationTaskDeleteFailed: 'Failed to delete generation record',
       casesGenerationCompleted: 'Generated {count} test questions',
       batchCreated: 'Test batch created',
       batchCreateFailed: 'Failed to create test batch',

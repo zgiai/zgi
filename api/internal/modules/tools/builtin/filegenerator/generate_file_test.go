@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	textpdf "github.com/ledongthuc/pdf"
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/stretchr/testify/require"
 	"github.com/xuri/excelize/v2"
@@ -114,6 +115,31 @@ func TestRenderContentGeneratesValidOfficeAndPDF(t *testing.T) {
 		require.Contains(t, string(data), "00430061006600E9")
 		require.NoError(t, api.Validate(bytes.NewReader(data), nil))
 	})
+}
+
+func TestRenderPDFTextCanBeReadByDefaultExtractorLibrary(t *testing.T) {
+	data, err := renderPDF("设备操作手册\n第1章 安全须知\n警告：操作前务必断电。\n按下 POWER 键。", "回读测试")
+	require.NoError(t, err)
+
+	filePath := t.TempDir() + string(os.PathSeparator) + "generated.pdf"
+	require.NoError(t, os.WriteFile(filePath, data, 0o600))
+	file, reader, err := textpdf.Open(filePath)
+	require.NoError(t, err)
+	defer file.Close()
+
+	var extracted strings.Builder
+	for pageIndex := 1; pageIndex <= reader.NumPage(); pageIndex++ {
+		rows, rowErr := reader.Page(pageIndex).GetTextByRow()
+		require.NoError(t, rowErr)
+		for _, row := range rows {
+			for _, word := range row.Content {
+				extracted.WriteString(word.S)
+			}
+		}
+	}
+	require.Contains(t, extracted.String(), "设备操作手册")
+	require.Contains(t, extracted.String(), "第1章 安全须知")
+	require.Contains(t, extracted.String(), "POWER")
 }
 
 func TestRenderXLSXAppliesDefaultTableStyle(t *testing.T) {

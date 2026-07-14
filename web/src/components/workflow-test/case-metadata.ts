@@ -208,7 +208,9 @@ function extensionList(value: unknown): string[] {
 
 function attachmentTypesToExtensions(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return value.flatMap(type => DEFAULT_ATTACHMENT_EXTENSIONS_BY_TYPE[asString(type).toLowerCase()] ?? []);
+  return value.flatMap(
+    type => DEFAULT_ATTACHMENT_EXTENSIONS_BY_TYPE[asString(type).toLowerCase()] ?? []
+  );
 }
 
 function getDraftFeatures(draft: unknown): Record<string, unknown> {
@@ -220,6 +222,11 @@ function getDraftNodes(draft: unknown): unknown[] {
   return draft.graph.nodes;
 }
 
+function getDraftEdges(draft: unknown): unknown[] {
+  if (!isRecord(draft) || !isRecord(draft.graph) || !Array.isArray(draft.graph.edges)) return [];
+  return draft.graph.edges;
+}
+
 function startNodeVariables(draft: unknown): unknown[] {
   const startNode = getDraftNodes(draft).find(node => {
     if (!isRecord(node)) return false;
@@ -227,6 +234,30 @@ function startNodeVariables(draft: unknown): unknown[] {
   });
   const variables = getNodeData(startNode).variables;
   return Array.isArray(variables) ? variables : [];
+}
+
+function selectorEquals(value: unknown, expected: string[]) {
+  const selector = asStringArray(value);
+  if (selector.length < expected.length) return false;
+  return expected.every((part, index) => selector[index] === part);
+}
+
+function draftHasSystemFilesConsumer(draft: unknown): boolean {
+  return getDraftNodes(draft).some(node => {
+    const data = getNodeData(node);
+    const type = normalizeNodeType(
+      asString(data.type) || (isRecord(node) ? asString(node.type) : '')
+    );
+    if (type === 'document-extractor' || type === 'document_extractor') {
+      return selectorEquals(data.variable_selector, ['sys', 'files']);
+    }
+    if (type === 'llm') {
+      const vision = isRecord(data.vision) ? data.vision : {};
+      const configs = isRecord(vision.configs) ? vision.configs : {};
+      return selectorEquals(configs.variable_selector, ['sys', 'files']);
+    }
+    return false;
+  });
 }
 
 function createConditionId(index: number, type: ExpectedCheckType) {
@@ -269,7 +300,10 @@ function normalizeCondition(raw: unknown, index: number): ExpectedCheckCondition
   return condition;
 }
 
-function normalizeConversationCondition(raw: unknown, index: number): ConversationCheckCondition | null {
+function normalizeConversationCondition(
+  raw: unknown,
+  index: number
+): ConversationCheckCondition | null {
   if (!isRecord(raw)) return null;
   const type = asString(raw.type) as ConversationCheckType;
   if (!conversationCheckTypes().includes(type)) return null;
@@ -387,7 +421,9 @@ export function defaultOperatorForCheckType(type: ExpectedCheckType): string {
   return 'contains';
 }
 
-export function createExpectedCheckCondition(type: ExpectedCheckType = 'output_contains'): ExpectedCheckCondition {
+export function createExpectedCheckCondition(
+  type: ExpectedCheckType = 'output_contains'
+): ExpectedCheckCondition {
   return {
     id: globalThis.crypto?.randomUUID?.() ?? `check_${Date.now()}_${Math.random()}`,
     type,
@@ -453,11 +489,70 @@ export function draftSupportsFileInputs(draft: unknown): boolean {
     const features = getDraftFeatures(draft);
     const fileUpload = isRecord(features.file_upload) ? features.file_upload : {};
     const legacyImageUpload = isRecord(fileUpload.image) ? fileUpload.image : {};
-    return Boolean(asBoolean(fileUpload.enabled) ?? asBoolean(legacyImageUpload.enabled) ?? false);
+    return Boolean(
+      asBoolean(fileUpload.enabled) ||
+        asBoolean(legacyImageUpload.enabled) ||
+        draftHasSystemFilesConsumer(draft)
+    );
   }
   const variables = startNodeVariables(draft);
   if (variables.length === 0) return false;
   return variables.some(variable => isRecord(variable) && isFileInputType(variable.type));
+}
+
+export function draftRequiresCurrentTurnFiles(draft: unknown): boolean {
+  const nodes = getDraftNodes(draft);
+  if (nodes.length === 0) return false;
+
+  const nodeRequiresFiles = new Map<string, boolean>();
+  const knownNodeIds = new Set<string>();
+  const startNodeIds: string[] = [];
+  nodes.forEach(node => {
+    if (!isRecord(node)) return;
+    const id = asString(node.id);
+    const data = getNodeData(node);
+    const type = normalizeNodeType(asString(data.type) || asString(node.type));
+    if (!id || type === 'note' || type === 'comment') return;
+    knownNodeIds.add(id);
+    if (type === 'start') startNodeIds.push(id);
+    if (type === 'document-extractor' || type === 'document_extractor') {
+      nodeRequiresFiles.set(id, selectorEquals(data.variable_selector, ['sys', 'files']));
+    }
+  });
+  if (startNodeIds.length === 0) return false;
+
+  const children = new Map<string, string[]>();
+  getDraftEdges(draft).forEach(edge => {
+    if (!isRecord(edge)) return;
+    const source = asString(edge.source);
+    const target = asString(edge.target);
+    if (!knownNodeIds.has(source) || !knownNodeIds.has(target)) return;
+    children.set(source, [...(children.get(source) ?? []), target]);
+  });
+
+  const walk = (
+    nodeId: string,
+    filesSeen: boolean,
+    visiting: Set<string>
+  ): { hasTerminal: boolean; allRequireFiles: boolean } => {
+    if (visiting.has(nodeId)) return { hasTerminal: false, allRequireFiles: false };
+    const nextFilesSeen = filesSeen || nodeRequiresFiles.get(nodeId) === true;
+    const next = children.get(nodeId) ?? [];
+    if (next.length === 0) return { hasTerminal: true, allRequireFiles: nextFilesSeen };
+    const nextVisiting = new Set(visiting).add(nodeId);
+    const results = next.map(target => walk(target, nextFilesSeen, nextVisiting));
+    const terminalResults = results.filter(result => result.hasTerminal);
+    if (terminalResults.length === 0) return { hasTerminal: false, allRequireFiles: false };
+    return {
+      hasTerminal: true,
+      allRequireFiles: terminalResults.every(result => result.allRequireFiles),
+    };
+  };
+
+  return startNodeIds.every(startNodeId => {
+    const result = walk(startNodeId, false, new Set());
+    return result.hasTerminal && result.allRequireFiles;
+  });
 }
 
 export function draftAttachmentAcceptExtensions(draft: unknown): string[] {
@@ -469,6 +564,9 @@ export function draftAttachmentAcceptExtensions(draft: unknown): string[] {
     if (explicitExtensions.length > 0) return explicitExtensions;
     const fromTypes = attachmentTypesToExtensions(fileUpload.allowed_file_types);
     if (fromTypes.length > 0) return Array.from(new Set(fromTypes));
+    if (draftHasSystemFilesConsumer(draft)) {
+      return DEFAULT_ATTACHMENT_EXTENSIONS_BY_TYPE.document;
+    }
     return [];
   }
   const variables = startNodeVariables(draft).filter(
@@ -488,7 +586,10 @@ export function turnInputs(turn?: WorkflowTestTurn): Record<string, unknown> {
   return isRecord(turn?.inputs) ? turn.inputs : {};
 }
 
-export function caseModeFromCase(item: WorkflowTestCase, fallback: WorkflowTestMode): WorkflowTestMode {
+export function caseModeFromCase(
+  item: WorkflowTestCase,
+  fallback: WorkflowTestMode
+): WorkflowTestMode {
   const mode = turnInputs(item.turns?.[0])[CASE_MODE_KEY];
   return mode === 'task' || mode === 'conversation' ? mode : fallback;
 }
@@ -517,7 +618,10 @@ export function fixtureSpecsFromInputs(inputs: Record<string, unknown>): Generat
       };
     })
     .filter((item): item is GeneratedFixtureSpec =>
-      Boolean(item && (item.name || item.title || item.facts.length > 0 || item.expected_checks.length > 0))
+      Boolean(
+        item &&
+          (item.name || item.title || item.facts.length > 0 || item.expected_checks.length > 0)
+      )
     );
 }
 
@@ -549,7 +653,10 @@ export function normalizeExpectedChecks(raw: unknown): ExpectedChecks {
   };
 }
 
-export function normalizeConversationChecks(raw: unknown, fallbackExpectation = ''): ConversationChecks {
+export function normalizeConversationChecks(
+  raw: unknown,
+  fallbackExpectation = ''
+): ConversationChecks {
   if (isRecord(raw) && Array.isArray(raw.conditions)) {
     return {
       conditions: raw.conditions
@@ -591,7 +698,9 @@ export function conversationCheckConditionCount(item: WorkflowTestCase): number 
   return turnCheckCount + (conversationChecks(item).conditions?.length ?? 0);
 }
 
-export function buildConversationChecksPayload(conditions: ConversationCheckCondition[]): ConversationChecks {
+export function buildConversationChecksPayload(
+  conditions: ConversationCheckCondition[]
+): ConversationChecks {
   const normalized = conditions
     .map((condition, index): ConversationCheckCondition | null => {
       const type = condition.type;
@@ -640,7 +749,8 @@ function normalizeCheckTarget(
   }
   const targetId = asString(condition.target_id);
   const targetLabel = asString(condition.target_label);
-  const matched = sourceOptions.find(option => option.id === targetId) ||
+  const matched =
+    sourceOptions.find(option => option.id === targetId) ||
     sourceOptions.find(option => option.label === targetLabel) ||
     sourceOptions.find(option => option.id === targetLabel);
   if (!matched) {
@@ -679,10 +789,14 @@ export function buildExpectedChecksPayload(
         base.value_ms = normalizedTarget.value_ms;
       }
 
-      if ((type === 'node' || type === 'capability') && !base.target_id && !base.target_label) return null;
+      if ((type === 'node' || type === 'capability') && !base.target_id && !base.target_label) {
+        return null;
+      }
       if (
         type === 'node' &&
-        ['input_contains', 'input_not_contains', 'output_contains', 'output_not_contains'].includes(base.operator) &&
+        ['input_contains', 'input_not_contains', 'output_contains', 'output_not_contains'].includes(
+          base.operator
+        ) &&
         (!base.values || base.values.length === 0)
       ) {
         return null;
@@ -708,19 +822,24 @@ export function buildExpectedChecksPayload(
       .map(condition => condition.target_label || condition.target_id || '')
       .filter(Boolean),
     output_contains: normalized
-      .filter(condition => condition.type === 'output_contains' && condition.operator === 'contains')
+      .filter(
+        condition => condition.type === 'output_contains' && condition.operator === 'contains'
+      )
       .flatMap(condition => condition.values ?? []),
   };
-  const latency = normalized.find(condition => condition.type === 'latency' && condition.operator === 'lte');
+  const latency = normalized.find(
+    condition => condition.type === 'latency' && condition.operator === 'lte'
+  );
   if (latency?.value_ms !== undefined) {
     payload.max_latency_ms = latency.value_ms;
   }
   return payload;
 }
 
-export function buildWorkflowCheckOptions(
-  draft: { graph?: { nodes?: unknown[] } } | undefined
-): { nodeOptions: WorkflowCheckOption[]; capabilityOptions: WorkflowCheckOption[] } {
+export function buildWorkflowCheckOptions(draft: { graph?: { nodes?: unknown[] } } | undefined): {
+  nodeOptions: WorkflowCheckOption[];
+  capabilityOptions: WorkflowCheckOption[];
+} {
   const nodes = draft?.graph?.nodes;
   if (!Array.isArray(nodes)) {
     return { nodeOptions: [], capabilityOptions: [] };
@@ -732,7 +851,8 @@ export function buildWorkflowCheckOptions(
       if (!id) return null;
       const type = normalizeNodeType(getNodeDataString(node, 'type') || asString(node.type));
       if (!CHECKABLE_NODE_TYPES.has(type)) return null;
-      const label = getNodeDataString(node, 'title') || getNodeDataString(node, 'name') || type || id;
+      const label =
+        getNodeDataString(node, 'title') || getNodeDataString(node, 'name') || type || id;
       return { id, label, type };
     })
     .filter((item): item is WorkflowCheckOption => Boolean(item));
@@ -771,12 +891,10 @@ export function turnExpectation(turn?: WorkflowTestTurn): string {
 export function visibleInputEntries(turn?: WorkflowTestTurn): Array<[string, string]> {
   return Object.entries(turnInputs(turn))
     .filter(([key]) => !key.startsWith('__'))
-    .map(
-      ([key, value]): [string, string] => [
-        key,
-        typeof value === 'string' ? value : JSON.stringify(value),
-      ]
-    )
+    .map(([key, value]): [string, string] => [
+      key,
+      typeof value === 'string' ? value : JSON.stringify(value),
+    ])
     .filter(([, value]) => value !== undefined && value !== '');
 }
 

@@ -151,7 +151,7 @@ func evaluateTaskWorkflow(snapshot CaseSnapshot, outputs map[string]interface{},
 
 func shouldEvaluateTaskConditionOutsideSchema(condition TaskExpectedCheckCondition) bool {
 	switch condition.Type {
-	case "node", "capability", "latency":
+	case "node", "capability", "output_contains", "latency":
 		return true
 	default:
 		return false
@@ -577,14 +577,21 @@ func finalizeWorkflowTestAnalysis(analysis *WorkflowTestAnalysis) {
 			Evidence: analysis.Comparisons.Overall.Evidence,
 		})
 	}
-	summary := WorkflowTestAnalysisSummary{Status: "passed", Total: len(allChecks)}
+	scoredChecks := make([]WorkflowTestCheckResult, 0, len(allChecks))
 	for _, check := range allChecks {
+		if check.Severity == "hint" {
+			continue
+		}
+		scoredChecks = append(scoredChecks, check)
+	}
+	summary := WorkflowTestAnalysisSummary{Status: "passed", Total: len(scoredChecks)}
+	for _, check := range scoredChecks {
 		switch check.Status {
 		case "passed":
 			summary.Passed++
 		case "failed":
 			summary.Failed++
-			if summary.MainIssue == "" {
+			if summary.MainIssue == "" || summary.Failed == 1 {
 				summary.MainIssue = check.Label
 				summary.FailedStage = check.Type
 			}
@@ -628,7 +635,7 @@ func workflowTestReferenceScore(summary WorkflowTestAnalysisSummary) float64 {
 	if summary.Total <= 0 {
 		return 0
 	}
-	return (float64(summary.Passed) + float64(summary.Review)*0.5) / float64(summary.Total) * 5
+	return (float64(summary.Passed) + float64(summary.Review)*0.8) / float64(summary.Total) * 5
 }
 
 func taskWorkflowSummaryStatus(summary WorkflowTestAnalysisSummary, checks []WorkflowTestCheckResult) string {
@@ -641,10 +648,13 @@ func taskWorkflowSummaryStatus(summary WorkflowTestAnalysisSummary, checks []Wor
 	if summary.Failed == 0 && summary.Review == 0 {
 		return "passed"
 	}
-	if summary.ReferenceScore >= 4.5 && summary.CriticalFailed == 0 {
+	if !taskHasSubstantivePassedCheck(checks) && summary.Failed == 0 && summary.Review > 0 {
+		return "review"
+	}
+	if summary.ReferenceScore >= 4 && summary.CriticalFailed == 0 {
 		return "passed"
 	}
-	if summary.ReferenceScore < 3.5 {
+	if summary.ReferenceScore < 3 {
 		return "failed"
 	}
 	return "review"
@@ -657,11 +667,28 @@ func taskHasBlockingFailure(checks []WorkflowTestCheckResult) bool {
 		}
 		switch check.Type {
 		case "assertion_must_not_include", "assertion_missing_policy":
-			return true
+			if check.Severity == "critical" {
+				return true
+			}
 		case "node", "capability":
 			if check.Severity == "critical" {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func taskHasSubstantivePassedCheck(checks []WorkflowTestCheckResult) bool {
+	for _, check := range checks {
+		if check.Status != "passed" {
+			continue
+		}
+		switch check.Type {
+		case "assertion_missing_policy":
+			continue
+		default:
+			return true
 		}
 	}
 	return false
@@ -1411,7 +1438,7 @@ func mergeAnalysisWithJudgeResult(analysis *WorkflowTestAnalysis, judgeResult *J
 	if analysis.Mode == "task" && analysis.EvaluationSchema != nil && result.Status == BatchItemStatusPassed && analysis.Summary.CriticalFailed == 0 {
 		return result
 	}
-	if analysis.Mode == "task" && analysis.EvaluationSchema != nil && result.Status == BatchItemStatusFailed && analysis.Summary.CriticalFailed == 0 {
+	if analysis.Mode == "task" && analysis.EvaluationSchema != nil && result.Status == BatchItemStatusFailed && analysis.Summary.CriticalFailed == 0 && taskHasSubstantivePassedCheck(analysis.Comparisons.Checks) {
 		result.Status = BatchItemStatusReview
 		if strings.TrimSpace(result.Reason) == "" {
 			result.Reason = "AI 评分与结构化评价断言存在冲突，需人工复核。"
@@ -1421,7 +1448,7 @@ func mergeAnalysisWithJudgeResult(analysis *WorkflowTestAnalysis, judgeResult *J
 		}
 		return result
 	}
-	if analysis.Mode == "task" && analysis.EvaluationSchema != nil && analysis.Summary.Status == "review" && result.Status == BatchItemStatusFailed && analysis.Summary.ReferenceScore >= 3.5 {
+	if analysis.Mode == "task" && analysis.EvaluationSchema != nil && analysis.Summary.Status == "review" && result.Status == BatchItemStatusFailed && taskHasSubstantivePassedCheck(analysis.Comparisons.Checks) && analysis.Summary.ReferenceScore >= 3.5 {
 		result.Status = BatchItemStatusReview
 		result.Reason = fmt.Sprintf("结构化评价参考分 %.1f/5，存在少量未满足或需确认的检查点，建议人工复核后决定是否优化工作流。", analysis.Summary.ReferenceScore)
 		if len(analysis.Suggestions) > 0 {
@@ -1432,6 +1459,9 @@ func mergeAnalysisWithJudgeResult(analysis *WorkflowTestAnalysis, judgeResult *J
 		return result
 	}
 	if analysis.Summary.Status == "review" && result.Status == BatchItemStatusPassed {
+		if analysis.Summary.Failed == 0 && analysis.Summary.CriticalFailed == 0 {
+			return result
+		}
 		result.Status = BatchItemStatusReview
 		if strings.TrimSpace(result.Reason) == "" {
 			result.Reason = analysis.Summary.MainIssue

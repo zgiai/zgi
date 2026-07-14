@@ -16,6 +16,14 @@ type WorkflowContextProvider interface {
 	WorkflowRecognitionContext(ctx context.Context, agentID string) string
 }
 
+type WorkflowTestCapabilities struct {
+	RequiresCurrentTurnFiles bool
+}
+
+type WorkflowCapabilityProvider interface {
+	WorkflowTestCapabilities(ctx context.Context, agentID string) WorkflowTestCapabilities
+}
+
 type WorkflowServiceContextProvider struct {
 	WorkflowService interfaces.WorkflowService
 }
@@ -29,6 +37,105 @@ func (p WorkflowServiceContextProvider) WorkflowRecognitionContext(ctx context.C
 		return ""
 	}
 	return buildWorkflowRecognitionContext(draft)
+}
+
+func (p WorkflowServiceContextProvider) WorkflowTestCapabilities(ctx context.Context, agentID string) WorkflowTestCapabilities {
+	if p.WorkflowService == nil {
+		return WorkflowTestCapabilities{}
+	}
+	draft, err := p.WorkflowService.GetDraftWorkflow(ctx, agentID, true)
+	if err != nil || draft == nil {
+		return WorkflowTestCapabilities{}
+	}
+	return WorkflowTestCapabilities{
+		RequiresCurrentTurnFiles: draftRequiresCurrentTurnFiles(draft),
+	}
+}
+
+func draftRequiresCurrentTurnFiles(draft any) bool {
+	workflow := normalizeWorkflowDraftMap(draft)
+	graph := graphMapFromValue(workflow["graph"])
+	nodes := anySlice(graph["nodes"])
+	if len(nodes) == 0 {
+		return false
+	}
+
+	nodeRequiresFiles := make(map[string]bool, len(nodes))
+	children := make(map[string][]string, len(nodes))
+	starts := make([]string, 0, 1)
+	knownNodes := make(map[string]struct{}, len(nodes))
+	for _, rawNode := range nodes {
+		node := mapValue(rawNode)
+		data := mapValue(node["data"])
+		id := stringValue(node["id"])
+		nodeType := strings.ToLower(firstNonEmptyString(stringValue(data["type"]), stringValue(node["type"])))
+		if id == "" || isDisplayOnlyWorkflowNode(nodeType) {
+			continue
+		}
+		knownNodes[id] = struct{}{}
+		if nodeType == "start" {
+			starts = append(starts, id)
+		}
+		if nodeType == "document-extractor" || nodeType == "document_extractor" {
+			nodeRequiresFiles[id] = selectorReferencesSystemFiles(data["variable_selector"])
+		}
+	}
+	if len(starts) == 0 {
+		return false
+	}
+	for _, rawEdge := range anySlice(graph["edges"]) {
+		edge := mapValue(rawEdge)
+		source := stringValue(edge["source"])
+		target := stringValue(edge["target"])
+		if _, ok := knownNodes[source]; !ok {
+			continue
+		}
+		if _, ok := knownNodes[target]; !ok {
+			continue
+		}
+		children[source] = append(children[source], target)
+	}
+
+	var allTerminalPathsRequireFiles func(string, bool, map[string]bool) (bool, bool)
+	allTerminalPathsRequireFiles = func(nodeID string, filesSeen bool, visiting map[string]bool) (bool, bool) {
+		if visiting[nodeID] {
+			return false, false
+		}
+		filesSeen = filesSeen || nodeRequiresFiles[nodeID]
+		next := children[nodeID]
+		if len(next) == 0 {
+			return true, filesSeen
+		}
+		visiting[nodeID] = true
+		defer delete(visiting, nodeID)
+		hasTerminalPath := false
+		allRequireFiles := true
+		for _, target := range next {
+			hasTerminal, requiresFiles := allTerminalPathsRequireFiles(target, filesSeen, visiting)
+			if !hasTerminal {
+				continue
+			}
+			hasTerminalPath = true
+			allRequireFiles = allRequireFiles && requiresFiles
+		}
+		return hasTerminalPath, allRequireFiles
+	}
+
+	for _, start := range starts {
+		hasTerminal, requiresFiles := allTerminalPathsRequireFiles(start, false, map[string]bool{})
+		if !hasTerminal || !requiresFiles {
+			return false
+		}
+	}
+	return true
+}
+
+func selectorReferencesSystemFiles(value any) bool {
+	values := anySlice(value)
+	if len(values) >= 2 && stringValue(values[0]) == "sys" && stringValue(values[1]) == "files" {
+		return true
+	}
+	return false
 }
 
 func buildWorkflowRecognitionContext(draft any) string {

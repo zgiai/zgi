@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
@@ -20,6 +21,9 @@ import (
 const batchStaleFailureMessage = "测试执行长时间无进展，系统已自动停止未完成问题"
 
 var batchItemExecutionTimeout = 10 * time.Minute
+
+const batchExecutionConcurrency = 4
+const caseGenerationConcurrency = 4
 
 const generationContextCaseModePrefix = "[workflow_test_case_mode:"
 const generationContextFileGenerationPrefix = "[workflow_test_file_generation:"
@@ -405,6 +409,9 @@ func (s *Service) CreateCase(ctx context.Context, agentID string, req CreateCase
 	if err != nil {
 		return nil, err
 	}
+	if err := validateGeneratedAssetBindings(turns); err != nil {
+		return nil, fmt.Errorf("测试问题文件校验失败: %w", err)
+	}
 	expectedResult := normalizeExpectedResult(req.ExpectedResult)
 	status, err := normalizeCaseStatus(req.Status)
 	if err != nil {
@@ -458,6 +465,9 @@ func (s *Service) UpdateCase(ctx context.Context, agentID string, caseID string,
 	content, turns, err := normalizeCaseContentAndTurns(req.Content, req.Turns)
 	if err != nil {
 		return nil, err
+	}
+	if err := validateGeneratedAssetBindings(turns); err != nil {
+		return nil, fmt.Errorf("测试问题文件校验失败: %w", err)
 	}
 	expectedResult := normalizeExpectedResult(req.ExpectedResult)
 	status, err := normalizeCaseStatus(req.Status)
@@ -626,11 +636,7 @@ func (s *Service) CreateGenerationTask(ctx context.Context, agentID, workspaceID
 	turnStrategy = normalizeTurnStrategy(turnStrategy)
 	questionTypes := normalizeQuestionTypes(req.QuestionTypes)
 	if len(questionTypes) == 0 {
-		if normalizeCaseMode(req.CaseMode) == "task" {
-			questionTypes = []string{CaseTypeCore, CaseTypeExtension, CaseTypeFuzzy}
-		} else {
-			questionTypes = []string{CaseTypeCore, CaseTypeExtension, CaseTypeFuzzy, CaseTypeManual}
-		}
+		questionTypes = []string{CaseTypeCore}
 	}
 	now := time.Now()
 	task := &GenerationTask{
@@ -687,6 +693,34 @@ func (s *Service) CancelGenerationTask(ctx context.Context, agentID, taskID stri
 		s.taskCanceler.Cancel(taskID)
 	}
 	return s.GetGenerationTask(ctx, agentID, taskID)
+}
+
+func (s *Service) ResumeGenerationTask(ctx context.Context, agentID, taskID string) (*GenerationTask, error) {
+	task, err := s.repo.GetGenerationTask(ctx, agentID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if !isTerminalGenerationTaskStatus(task.Status) {
+		return nil, fmt.Errorf("generation task is not finished")
+	}
+	remaining := task.RequestedCount - task.CreatedCount
+	if remaining <= 0 {
+		return nil, fmt.Errorf("generation task has no remaining cases")
+	}
+	req := generationTaskGenerateCasesRequest(task)
+	req.Count = remaining
+	return s.CreateGenerationTask(ctx, agentID, task.WorkspaceID, task.AccountID, req)
+}
+
+func (s *Service) DeleteGenerationTask(ctx context.Context, agentID, taskID string) error {
+	deleted, err := s.repo.DeleteGenerationTask(ctx, agentID, taskID)
+	if err != nil {
+		return err
+	}
+	if !deleted {
+		return fmt.Errorf("generation task can only be deleted after it is completed, failed, or canceled")
+	}
+	return nil
 }
 
 func (s *Service) RunGenerationTask(ctx context.Context, taskID string, client llmclient.LLMClient) error {
@@ -985,6 +1019,10 @@ func (s *Service) generateCasesForScenarios(ctx context.Context, agentID string,
 	generateReq.ScenarioID = ""
 	generateReq.ScenarioIDs = scenarioIDs
 	generateReq.WorkflowContext = s.resolveWorkflowRecognitionContext(ctx, agentID)
+	generateReq.RequiresCurrentTurnFiles = s.resolveWorkflowTestCapabilities(ctx, agentID).RequiresCurrentTurnFiles
+	if err := validateGeneratedFileTurnStrategy(generateReq); err != nil {
+		return nil, err
+	}
 	scenarios, err := s.ListScenarios(ctx, agentID)
 	if err != nil {
 		return nil, err
@@ -1004,6 +1042,7 @@ func (s *Service) generateCasesForScenarios(ctx context.Context, agentID string,
 		return nil, err
 	}
 	generateReq.ExistingCases = selectExistingCasesForGenerationPrompt(existingCases, scenarioIDs)
+	signatureRegistry := newGeneratedCaseSignatureRegistry(existingCases)
 	organizationID := ""
 	if config := normalizeFileGenerationConfig(req.FileGeneration); config.Enabled {
 		if s.assetService == nil {
@@ -1017,56 +1056,216 @@ func (s *Service) generateCasesForScenarios(ctx context.Context, agentID string,
 		req.FileGeneration = &config
 		generateReq.FileGeneration = &config
 	}
-	for len(generatedCases) < req.Count {
-		index := len(generatedCases)
-		generateReq.Count = 1
-		generateReq.TurnStrategy = effectiveTurnStrategy(req, index)
-		generated, err := s.generateOneCaseForTurnStrategy(ctx, generator, generateReq)
-		if err != nil {
-			return nil, err
+	type generatedCaseResult struct {
+		index    int
+		caseItem GeneratedCase
+	}
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	indexCh := make(chan int)
+	resultCh := make(chan generatedCaseResult, req.Count)
+	errCh := make(chan error, 1)
+	setError := func(err error) {
+		if err == nil {
+			return
 		}
-		normalized, err := normalizeGeneratedCases(generated)
-		if err != nil {
-			return nil, err
+		select {
+		case errCh <- err:
+			cancel()
+		default:
 		}
-		if hooks.BeforeCase != nil {
-			if err := hooks.BeforeCase(ctx); err != nil {
-				return nil, err
+	}
+	workerCount := minInt(caseGenerationConcurrency, req.Count)
+	if workerCount < 1 {
+		workerCount = 1
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range indexCh {
+				if workerCtx.Err() != nil {
+					return
+				}
+				item, err := s.generateUniqueCaseForIndex(workerCtx, generator, generateReq, req, index, scenarioByID, signatureRegistry)
+				if err != nil {
+					setError(err)
+					return
+				}
+				select {
+				case resultCh <- generatedCaseResult{index: index, caseItem: *item}:
+				case <-workerCtx.Done():
+					return
+				}
+			}
+		}()
+	}
+	go func() {
+		defer close(indexCh)
+		for index := 0; index < req.Count; index++ {
+			select {
+			case indexCh <- index:
+			case <-workerCtx.Done():
+				return
 			}
 		}
-		item := normalized[0]
-		scenarioID := scenarioIDs[index%len(scenarioIDs)]
-		if itemScenarioID := strings.TrimSpace(item.ScenarioID); itemScenarioID != "" {
-			if _, ok := scenarioByID[itemScenarioID]; ok {
-				scenarioID = itemScenarioID
-			}
+	}()
+	doneCh := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(resultCh)
+		close(doneCh)
+	}()
+	waitWorkers := func() {
+		if doneCh == nil {
+			return
 		}
-		if s.assetService != nil {
-			if err := s.assetService.attachGeneratedAssets(ctx, req, organizationID, &item, index); err != nil {
-				return nil, err
-			}
-		}
-		created, err := s.CreateCase(ctx, agentID, CreateCaseRequest{
-			Content:        item.Content,
-			ExpectedResult: item.ExpectedResult,
-			ScenarioID:     scenarioID,
-			QuestionType:   item.QuestionType,
-			Status:         CaseStatusEnabled,
-			Turns:          item.Turns,
-		})
-		if err != nil {
+		<-doneCh
+		doneCh = nil
+	}
+	resultCount := 0
+	createdIndexes := make(map[int]struct{}, req.Count)
+	for resultCount < req.Count {
+		select {
+		case err := <-errCh:
 			return nil, err
-		}
-		items = append(items, *created)
-		generatedCases = append(generatedCases, item)
-		generateReq.ExistingCases = append(generateReq.ExistingCases, *created)
-		if hooks.AfterCreate != nil {
-			if err := hooks.AfterCreate(ctx, *created); err != nil {
+		case result, ok := <-resultCh:
+			if !ok {
+				if resultCount == req.Count {
+					break
+				}
+				if workerCtx.Err() != nil {
+					return nil, workerCtx.Err()
+				}
+				return nil, fmt.Errorf("generated case count mismatch: expected %d, got %d", req.Count, resultCount)
+			}
+			if _, exists := createdIndexes[result.index]; exists {
+				continue
+			}
+			if hooks.BeforeCase != nil {
+				if err := hooks.BeforeCase(ctx); err != nil {
+					cancel()
+					waitWorkers()
+					return nil, err
+				}
+			}
+			item := result.caseItem
+			scenarioID := scenarioIDs[result.index%len(scenarioIDs)]
+			if s.assetService != nil {
+				if err := s.assetService.attachGeneratedAssets(ctx, req, organizationID, &item, result.index); err != nil {
+					cancel()
+					waitWorkers()
+					return nil, err
+				}
+			}
+			created, err := s.CreateCase(ctx, agentID, CreateCaseRequest{
+				Content:        item.Content,
+				ExpectedResult: item.ExpectedResult,
+				ScenarioID:     scenarioID,
+				QuestionType:   item.QuestionType,
+				Status:         CaseStatusEnabled,
+				Turns:          item.Turns,
+			})
+			if err != nil {
+				cancel()
+				waitWorkers()
 				return nil, err
+			}
+			items = append(items, *created)
+			generatedCases = append(generatedCases, item)
+			if hooks.AfterCreate != nil {
+				if err := hooks.AfterCreate(ctx, *created); err != nil {
+					cancel()
+					waitWorkers()
+					return nil, err
+				}
+			}
+			createdIndexes[result.index] = struct{}{}
+			resultCount++
+		case <-doneCh:
+			doneCh = nil
+			select {
+			case err := <-errCh:
+				return nil, err
+			default:
 			}
 		}
 	}
 	return &GenerateCasesResult{Cases: generatedCases, Items: items}, nil
+}
+
+func (s *Service) generateUniqueCaseForIndex(ctx context.Context, generator CaseGenerator, baseReq GenerateCasesRequest, originalReq GenerateCasesRequest, index int, scenarioByID map[string]Scenario, signatures *generatedCaseSignatureRegistry) (*GeneratedCase, error) {
+	var lastDuplicate workflowTestCaseSignature
+	var lastErr error
+	for attempt := 0; attempt < generatedCaseDuplicateMaxAttempts; attempt++ {
+		caseReq := scopedGenerateCaseRequest(baseReq, index, scenarioByID)
+		caseReq.Count = 1
+		caseReq.TurnStrategy = effectiveTurnStrategy(originalReq, index)
+		if prompt := signatures.avoidancePrompt(8); strings.TrimSpace(prompt) != "" {
+			caseReq.Prompt = appendGenerationPrompt(caseReq.Prompt, prompt)
+		}
+		if attempt > 0 && lastDuplicate.preview != "" {
+			caseReq.Prompt = appendGenerationPrompt(caseReq.Prompt, buildDuplicateAvoidancePrompt([]string{lastDuplicate.preview}))
+		}
+		generated, err := s.generateOneCaseForTurnStrategy(ctx, generator, caseReq)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		normalized, err := normalizeGeneratedCases(generated)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		for itemIndex := range normalized {
+			signature, ok := signatures.reserve(normalized[itemIndex])
+			if ok {
+				item := normalized[itemIndex]
+				return &item, nil
+			}
+			lastDuplicate = signature
+		}
+	}
+	if lastDuplicate.preview != "" {
+		return nil, fmt.Errorf("生成测试问题重复：%s，请调整场景、问题类型或补充生成要求后重试", lastDuplicate.preview)
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("生成测试问题重复，请调整场景、问题类型或补充生成要求后重试")
+}
+
+func scopedGenerateCaseRequest(baseReq GenerateCasesRequest, index int, scenarioByID map[string]Scenario) GenerateCasesRequest {
+	req := baseReq
+	if len(baseReq.ScenarioIDs) == 0 {
+		return req
+	}
+	scenarioID := strings.TrimSpace(baseReq.ScenarioIDs[index%len(baseReq.ScenarioIDs)])
+	if scenarioID == "" {
+		return req
+	}
+	req.ScenarioID = scenarioID
+	req.ScenarioIDs = []string{scenarioID}
+	if scenario, ok := scenarioByID[scenarioID]; ok {
+		req.Scenarios = []Scenario{scenario}
+	} else {
+		req.Scenarios = nil
+	}
+	req.ExistingCases = selectExistingCasesForGenerationPrompt(baseReq.ExistingCases, []string{scenarioID})
+	return req
+}
+
+func appendGenerationPrompt(base string, addition string) string {
+	base = strings.TrimSpace(base)
+	addition = strings.TrimSpace(addition)
+	if addition == "" {
+		return base
+	}
+	if base == "" {
+		return addition
+	}
+	return base + "\n\n" + addition
 }
 
 func (s *Service) generateOneCaseForTurnStrategy(ctx context.Context, generator CaseGenerator, req GenerateCasesRequest) (*GenerateCasesResult, error) {
@@ -1115,6 +1314,16 @@ func effectiveTurnStrategy(req GenerateCasesRequest, index int) string {
 		}
 		return "single"
 	}
+}
+
+func validateGeneratedFileTurnStrategy(req GenerateCasesRequest) error {
+	if normalizeCaseMode(req.CaseMode) != "conversation" ||
+		!normalizeFileGenerationConfig(req.FileGeneration).Enabled ||
+		!req.RequiresCurrentTurnFiles ||
+		normalizeTurnStrategy(req.TurnStrategy) == "single" {
+		return nil
+	}
+	return fmt.Errorf("当前对话工作流的每次运行都必须读取本轮附件，不能生成仅首轮带附件的多轮测试；请选择单轮对话，或先为工作流增加不依赖 sys.files 的后续追问路径")
 }
 
 func filterMultiTurnCases(result *GenerateCasesResult) *GenerateCasesResult {
@@ -1499,6 +1708,17 @@ func (s *Service) resolveWorkflowRecognitionContext(ctx context.Context, agentID
 	return strings.TrimSpace(s.workflowContextProvider.WorkflowRecognitionContext(ctx, agentID))
 }
 
+func (s *Service) resolveWorkflowTestCapabilities(ctx context.Context, agentID string) WorkflowTestCapabilities {
+	if s == nil || s.workflowContextProvider == nil {
+		return WorkflowTestCapabilities{}
+	}
+	provider, ok := s.workflowContextProvider.(WorkflowCapabilityProvider)
+	if !ok {
+		return WorkflowTestCapabilities{}
+	}
+	return provider.WorkflowTestCapabilities(ctx, agentID)
+}
+
 func normalizeModel(model *Model) *Model {
 	if model == nil {
 		return nil
@@ -1567,6 +1787,11 @@ func (s *Service) CreateBatch(ctx context.Context, agentID string, req CreateBat
 	}
 	if len(selectedCases) == 0 {
 		return nil, fmt.Errorf("at least one enabled case is required")
+	}
+	for _, testCase := range selectedCases {
+		if err := validateGeneratedAssetBindings(testCase.Turns); err != nil {
+			return nil, fmt.Errorf("测试问题“%s”文件校验失败: %w", testCase.Content, err)
+		}
 	}
 	versionMode, versionUUID, versionLabel, err := normalizeWorkflowVersionScope(req.WorkflowVersionMode, req.WorkflowVersionUUID)
 	if err != nil {
@@ -1767,96 +1992,96 @@ func (s *Service) ExecuteStartedBatchWithRunnerJudgeAndSummarizer(ctx context.Co
 		return nil, err
 	}
 	processedItems := make([]BatchItem, 0, len(items))
+	var mu sync.Mutex
+	var firstErr error
+	var canceledBatch *Batch
+
+	setError := func(err error) {
+		if err == nil {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	setCanceled := func(batch *Batch) {
+		if batch == nil {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if canceledBatch == nil {
+			canceledBatch = batch
+		}
+	}
+	shouldStop := func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return firstErr != nil || canceledBatch != nil
+	}
+	recordProcessedItem := func(item BatchItem) {
+		mu.Lock()
+		defer mu.Unlock()
+		processedItems = append(processedItems, item)
+	}
+
+	itemCh := make(chan BatchItem)
+	workerCount := minInt(batchExecutionConcurrency, len(items))
+	if workerCount < 1 {
+		workerCount = 1
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for item := range itemCh {
+				if shouldStop() {
+					continue
+				}
+				processedItem, currentBatch, err := s.executeBatchItem(ctx, agentID, batch, item, runner, judge)
+				if err != nil {
+					setError(err)
+					continue
+				}
+				if currentBatch != nil && currentBatch.Status == BatchStatusCanceled {
+					setCanceled(currentBatch)
+					continue
+				}
+				if processedItem != nil {
+					recordProcessedItem(*processedItem)
+				}
+			}
+		}()
+	}
+	for _, item := range items {
+		if shouldStop() {
+			break
+		}
+		itemCh <- item
+	}
+	close(itemCh)
+	wg.Wait()
+
+	if canceledBatch != nil {
+		return canceledBatch, nil
+	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
 	passed := 0
 	failed := 0
 	review := 0
-	for _, item := range items {
-		currentBatch, err := s.repo.GetBatch(ctx, agentID, batchID)
-		if err != nil {
-			return nil, err
-		}
-		if currentBatch.Status == BatchStatusCanceled {
-			return currentBatch, nil
-		}
-		if item.Status == string(BatchItemStatusCanceled) {
-			continue
-		}
-		if item.Status == string(BatchItemStatusPending) {
-			updated, err := s.repo.UpdateBatchItemStatusIfCurrent(ctx, agentID, item.ID, string(BatchItemStatusPending), string(BatchItemStatusRunning))
-			if err != nil {
-				return nil, err
-			}
-			if !updated {
-				continue
-			}
-			item.Status = string(BatchItemStatusRunning)
-		}
-		if item.Status != string(BatchItemStatusRunning) {
-			continue
-		}
-		snapshot := CaseSnapshot(item.CaseSnapshot)
-		itemCtx, cancel := context.WithTimeout(ctx, batchItemExecutionTimeout)
-		result, runErr := runBatchItem(itemCtx, runner, RunCaseRequest{
-			AgentID:      agentID,
-			BatchID:      batchID,
-			BatchItemID:  item.ID,
-			CaseSnapshot: snapshot,
-		})
-		timedOut := errors.Is(itemCtx.Err(), context.DeadlineExceeded)
-		cancel()
-		item.Outputs = JSONMap{}
-		if runErr != nil {
-			item.Status = string(BatchItemStatusFailed)
-			if timedOut {
-				item.Error = "测试问题执行超时"
-			} else {
-				item.Error = runErr.Error()
-			}
+	for _, item := range processedItems {
+		switch BatchItemStatus(item.Status) {
+		case BatchItemStatusPassed:
+			passed++
+		case BatchItemStatusFailed:
 			failed++
-		} else {
-			analysis := analyzeWorkflowTestResult(snapshot, result)
-			result.Outputs = attachWorkflowTestAnalysis(result.Outputs, analysis)
-			if batch.JudgeModelNameSnapshot != "" {
-				if configuredJudge, ok := judge.(*LLMJudge); ok {
-					configuredJudge.Provider = batch.JudgeModelProviderSnapshot
-					configuredJudge.Model = batch.JudgeModelNameSnapshot
-				}
-			}
-			judgeResult := runJudge(ctx, judge, JudgeRequest{
-				AgentID:        agentID,
-				BatchID:        batchID,
-				BatchItemID:    item.ID,
-				PromptTemplate: batch.JudgePromptSnapshot,
-				CaseSnapshot:   snapshot,
-				RunResult:      *result,
-			})
-			judgeResult = mergeAnalysisWithJudgeResult(analysis, judgeResult)
-			item.Status = string(judgeResult.Status)
-			item.WorkflowRunID = result.WorkflowRunID
-			item.Outputs = JSONMap(result.Outputs)
-			item.Error = ""
-			item.JudgeReason = judgeResult.Reason
-			item.JudgeSuggestion = judgeResult.Suggestion
-			item.JudgeConfidence = judgeResult.Confidence
-			switch judgeResult.Status {
-			case BatchItemStatusPassed:
-				passed++
-			case BatchItemStatusFailed:
-				failed++
-			default:
-				review++
-			}
-		}
-		if err := s.repo.UpdateBatchItemResult(ctx, &item); err != nil {
-			currentBatch, batchErr := s.repo.GetBatch(ctx, agentID, batchID)
-			if batchErr == nil && currentBatch.Status == BatchStatusCanceled {
-				return currentBatch, nil
-			}
-			return nil, err
-		}
-		processedItems = append(processedItems, item)
-		if err := s.repo.TouchBatch(ctx, agentID, batchID); err != nil {
-			return nil, err
+		default:
+			review++
 		}
 	}
 	batch.PassedCount = passed
@@ -1877,6 +2102,99 @@ func (s *Service) ExecuteStartedBatchWithRunnerJudgeAndSummarizer(ctx context.Co
 		return nil, err
 	}
 	return s.repo.GetBatch(ctx, agentID, batchID)
+}
+
+func (s *Service) executeBatchItem(ctx context.Context, agentID string, batch *Batch, item BatchItem, runner Runner, judge Judge) (*BatchItem, *Batch, error) {
+	currentBatch, err := s.repo.GetBatch(ctx, agentID, batch.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if currentBatch.Status == BatchStatusCanceled {
+		return nil, currentBatch, nil
+	}
+	if item.Status == string(BatchItemStatusCanceled) {
+		return nil, nil, nil
+	}
+	if item.Status == string(BatchItemStatusPending) {
+		updated, err := s.repo.UpdateBatchItemStatusIfCurrent(ctx, agentID, item.ID, string(BatchItemStatusPending), string(BatchItemStatusRunning))
+		if err != nil {
+			return nil, nil, err
+		}
+		if !updated {
+			return nil, nil, nil
+		}
+		item.Status = string(BatchItemStatusRunning)
+	}
+	if item.Status != string(BatchItemStatusRunning) {
+		return nil, nil, nil
+	}
+	snapshot := CaseSnapshot(item.CaseSnapshot)
+	itemCtx, cancel := context.WithTimeout(ctx, batchItemExecutionTimeout)
+	result, runErr := runBatchItem(itemCtx, runner, RunCaseRequest{
+		AgentID:      agentID,
+		BatchID:      batch.ID,
+		BatchItemID:  item.ID,
+		CaseSnapshot: snapshot,
+	})
+	timedOut := errors.Is(itemCtx.Err(), context.DeadlineExceeded)
+	cancel()
+	if result == nil && runErr == nil {
+		runErr = fmt.Errorf("工作流执行未返回结果")
+	}
+	item.Outputs = JSONMap{}
+	if result != nil {
+		item.WorkflowRunID = result.WorkflowRunID
+		item.Outputs = JSONMap(result.Outputs)
+	}
+	if runErr != nil {
+		item.Status = string(BatchItemStatusFailed)
+		if timedOut {
+			item.Error = "测试问题执行超时"
+		} else {
+			item.Error = runErr.Error()
+		}
+	} else {
+		analysis := analyzeWorkflowTestResult(snapshot, result)
+		result.Outputs = attachWorkflowTestAnalysis(result.Outputs, analysis)
+		judgeResult := runJudge(ctx, batchJudge(judge, batch), JudgeRequest{
+			AgentID:        agentID,
+			BatchID:        batch.ID,
+			BatchItemID:    item.ID,
+			PromptTemplate: batch.JudgePromptSnapshot,
+			CaseSnapshot:   snapshot,
+			RunResult:      *result,
+		})
+		judgeResult = mergeAnalysisWithJudgeResult(analysis, judgeResult)
+		item.Status = string(judgeResult.Status)
+		item.Error = ""
+		item.JudgeReason = judgeResult.Reason
+		item.JudgeSuggestion = judgeResult.Suggestion
+		item.JudgeConfidence = judgeResult.Confidence
+	}
+	if err := s.repo.UpdateBatchItemResult(ctx, &item); err != nil {
+		currentBatch, batchErr := s.repo.GetBatch(ctx, agentID, batch.ID)
+		if batchErr == nil && currentBatch.Status == BatchStatusCanceled {
+			return nil, currentBatch, nil
+		}
+		return nil, nil, err
+	}
+	if err := s.repo.TouchBatch(ctx, agentID, batch.ID); err != nil {
+		return nil, nil, err
+	}
+	return &item, nil, nil
+}
+
+func batchJudge(judge Judge, batch *Batch) Judge {
+	if batch == nil || strings.TrimSpace(batch.JudgeModelNameSnapshot) == "" {
+		return judge
+	}
+	if configuredJudge, ok := judge.(*LLMJudge); ok && configuredJudge != nil {
+		cloned := *configuredJudge
+		cloned.Provider = batch.JudgeModelProviderSnapshot
+		cloned.Model = batch.JudgeModelNameSnapshot
+		return &cloned
+	}
+	return judge
 }
 
 func (s *Service) MarkBatchExecutionFailed(ctx context.Context, agentID string, batchID string, err error) {

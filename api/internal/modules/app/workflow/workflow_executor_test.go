@@ -218,6 +218,54 @@ func TestCreateVariablePoolWithVars_PreservesOrganizationID(t *testing.T) {
 	}
 }
 
+func TestCreateVariablePoolWithVars_RegistersSystemFiles(t *testing.T) {
+	executor := &WorkflowExecutor{}
+	files := []interface{}{
+		map[string]interface{}{
+			"type":            "document",
+			"transfer_method": "local_file",
+			"upload_file_id":  "file-1",
+			"name":            "contract.docx",
+		},
+	}
+
+	variablePool := executor.createVariablePoolWithVars(map[string]any{
+		"sys.files": files,
+	}, nil, nil)
+
+	variable := variablePool.GetWithPath([]string{"sys", "files"})
+	if variable == nil {
+		t.Fatalf("expected sys.files to be registered in variable pool")
+	}
+	if got := variable.GetType(); got != shared.SegmentTypeArrayFile {
+		t.Fatalf("sys.files type = %s, want %s", got, shared.SegmentTypeArrayFile)
+	}
+}
+
+func TestCreateVariablePoolWithVars_RegistersHashFilesAsSystemFiles(t *testing.T) {
+	executor := &WorkflowExecutor{}
+	files := []interface{}{
+		map[string]interface{}{
+			"type":            "document",
+			"transfer_method": "local_file",
+			"upload_file_id":  "file-1",
+			"name":            "contract.docx",
+		},
+	}
+
+	variablePool := executor.createVariablePoolWithVars(map[string]any{
+		"#files#": files,
+	}, nil, nil)
+
+	variable := variablePool.GetWithPath([]string{"sys", "files"})
+	if variable == nil {
+		t.Fatalf("expected #files# to be registered as sys.files in variable pool")
+	}
+	if got := variable.GetType(); got != shared.SegmentTypeArrayFile {
+		t.Fatalf("sys.files type = %s, want %s", got, shared.SegmentTypeArrayFile)
+	}
+}
+
 func TestExecuteWorkflowNodeWithCallbacks_VisionOnlyImageInputReachesGateway(t *testing.T) {
 	var capturedRequest *llmAdapter.ChatRequest
 

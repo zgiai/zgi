@@ -9,8 +9,8 @@ export const QUESTION_TYPE_OPTIONS: Array<{ value: QuestionTypeKey; labelKey: Qu
   { value: 'manual', labelKey: 'manual' },
 ];
 
-export const DEFAULT_QUESTION_TYPES = QUESTION_TYPE_OPTIONS.map(item => item.value);
-export const DEFAULT_TASK_QUESTION_TYPES: QuestionTypeKey[] = ['core', 'extension', 'fuzzy'];
+export const DEFAULT_QUESTION_TYPES: QuestionTypeKey[] = ['core'];
+export const DEFAULT_TASK_QUESTION_TYPES: QuestionTypeKey[] = ['core'];
 
 export function formatQuestionTypeLabel(
   value: string | null | undefined,

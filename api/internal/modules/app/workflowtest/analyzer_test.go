@@ -59,8 +59,9 @@ func TestAnalyzeWorkflowTestResultEvaluatesTaskChecks(t *testing.T) {
 
 	require.Equal(t, "task", analysis.Mode)
 	require.Equal(t, "passed", analysis.Summary.Status)
-	require.Equal(t, 4, analysis.Summary.Total)
-	require.Equal(t, 4, analysis.Summary.Passed)
+	require.Equal(t, 5, analysis.Summary.Total)
+	require.Equal(t, 3, analysis.Summary.Passed)
+	require.Equal(t, 2, analysis.Summary.Review)
 	require.Len(t, analysis.Trace.Nodes, 1)
 	require.Equal(t, "extract", analysis.Trace.Nodes[0].NodeID)
 }
@@ -122,7 +123,14 @@ func TestAnalyzeWorkflowTestResultUsesNestedSummaryForTaskChecks(t *testing.T) {
 	analysis := analyzeWorkflowTestResult(snapshot, result)
 
 	require.Equal(t, "passed", analysis.Summary.Status)
-	require.Equal(t, "passed", analysis.Comparisons.Checks[0].Status)
+	var outputCheck WorkflowTestCheckResult
+	for _, check := range analysis.Comparisons.Checks {
+		if check.ID == "check_summary" {
+			outputCheck = check
+			break
+		}
+	}
+	require.Equal(t, "passed", outputCheck.Status)
 }
 
 func TestAnalyzeWorkflowTestResultFailsCriticalTaskCheck(t *testing.T) {
@@ -152,10 +160,46 @@ func TestAnalyzeWorkflowTestResultFailsCriticalTaskCheck(t *testing.T) {
 
 	analysis := analyzeWorkflowTestResult(snapshot, result)
 
-	require.Equal(t, "failed", analysis.Summary.Status)
+	require.Equal(t, "review", analysis.Summary.Status)
 	require.Equal(t, 1, analysis.Summary.Failed)
 	require.Equal(t, 1, analysis.Summary.CriticalFailed)
-	require.Contains(t, analysis.Comparisons.Checks[0].Evidence, "required field")
+	var outputCheck WorkflowTestCheckResult
+	for _, check := range analysis.Comparisons.Checks {
+		if check.ID == "check_output" {
+			outputCheck = check
+			break
+		}
+	}
+	require.Contains(t, outputCheck.Evidence, "required field")
+}
+
+func TestTaskFallbackOnlyReviewDoesNotOverrideJudgeFailure(t *testing.T) {
+	snapshot := CaseSnapshot{
+		Content:        "请总结文件",
+		ExpectedResult: "应大体总结文件中的关键事实。",
+		Turns: CaseTurns{{
+			Role:    "user",
+			Content: "请总结文件",
+			Inputs: JSONMap{
+				caseModeInputKey: "task",
+			},
+		}},
+	}
+	result := &RunCaseResult{Outputs: map[string]interface{}{"answer": "完全无关的输出"}}
+
+	analysis := analyzeWorkflowTestResult(snapshot, result)
+
+	require.Equal(t, "review", analysis.Summary.Status)
+	require.Equal(t, 1, analysis.Summary.Passed)
+	require.Equal(t, 2, analysis.Summary.Review)
+
+	merged := mergeAnalysisWithJudgeResult(analysis, &JudgeResult{
+		Status:     BatchItemStatusFailed,
+		Reason:     "输出没有完成核心任务。",
+		Confidence: 0.9,
+	})
+
+	require.Equal(t, BatchItemStatusFailed, merged.Status)
 }
 
 func TestAnalyzeTaskSchemaAllowsReasonableBusinessMissingInfo(t *testing.T) {
@@ -536,10 +580,11 @@ func TestAnalyzeTaskMissingFieldExpectationPassesWithChinesePlaceholders(t *test
 
 	analysis := analyzeWorkflowTestResult(snapshot, result)
 
-	require.Equal(t, "passed", analysis.Summary.Status)
-	require.Equal(t, 1, analysis.Summary.Total)
+	require.Equal(t, "review", analysis.Summary.Status)
+	require.Equal(t, 4, analysis.Summary.Total)
 	require.Equal(t, 1, analysis.Summary.Passed)
-	require.Empty(t, analysis.Suggestions)
+	require.Equal(t, 3, analysis.Summary.Review)
+	require.NotEmpty(t, analysis.Suggestions)
 
 	merged := mergeAnalysisWithJudgeResult(analysis, &JudgeResult{
 		Status:     BatchItemStatusReview,
@@ -547,8 +592,8 @@ func TestAnalyzeTaskMissingFieldExpectationPassesWithChinesePlaceholders(t *test
 		Suggestion: "missing field: date、missing field: related party: 请在工作流回复生成策略中补充这些业务要点。",
 		Confidence: 0.5,
 	})
-	require.Equal(t, BatchItemStatusPassed, merged.Status)
-	require.Empty(t, merged.Suggestion)
+	require.Equal(t, BatchItemStatusReview, merged.Status)
+	require.NotEmpty(t, merged.Suggestion)
 }
 
 func TestAnalyzeTaskSchemaFailsTechnicalMissingClaim(t *testing.T) {
@@ -613,6 +658,29 @@ func TestMergeAnalysisKeepsTaskJudgePassedWhenOnlyStructuredReview(t *testing.T)
 
 	require.Equal(t, BatchItemStatusPassed, merged.Status)
 	require.Equal(t, "输出完整包含所有关键要素。", merged.Reason)
+}
+
+func TestMergeAnalysisLetsJudgeResolveConversationSemanticReview(t *testing.T) {
+	analysis := &WorkflowTestAnalysis{
+		Mode: "conversation",
+		Summary: WorkflowTestAnalysisSummary{
+			Status:         "review",
+			Total:          3,
+			Passed:         1,
+			Review:         2,
+			CriticalFailed: 0,
+		},
+	}
+	judgeResult := &JudgeResult{
+		Status:     BatchItemStatusPassed,
+		Reason:     "回复完成了翻译并保留了关键参数。",
+		Confidence: 0.9,
+	}
+
+	merged := mergeAnalysisWithJudgeResult(analysis, judgeResult)
+
+	require.Equal(t, BatchItemStatusPassed, merged.Status)
+	require.Equal(t, judgeResult.Reason, merged.Reason)
 }
 
 func TestAnalyzeWorkflowTestResultComparesConversationTurnExpectation(t *testing.T) {

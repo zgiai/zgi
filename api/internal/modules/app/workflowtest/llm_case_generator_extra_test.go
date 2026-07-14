@@ -53,7 +53,53 @@ func TestBuildGenerateCasesPromptAllowsConversationFileGeneration(t *testing.T) 
 	require.Contains(t, prompt, "at least three role=user turns")
 	require.Contains(t, prompt, "attach them to the first user turn")
 	require.Contains(t, prompt, "do not generate task workflow node checks")
+	require.Contains(t, prompt, "not a full chat transcript")
+	require.Contains(t, prompt, "only the end user's sequential inputs")
 	require.NotContains(t, prompt, "This task workflow requires generated input files")
+}
+
+func TestSanitizeConversationGeneratedCasesRemovesAssistantScriptTurns(t *testing.T) {
+	result := sanitizeConversationGeneratedCases(&GenerateCasesResult{
+		Cases: []GeneratedCase{{
+			Content:        "Translate this file.",
+			ExpectedResult: "The agent should translate the uploaded file.",
+			QuestionType:   CaseTypeCore,
+			Turns: []CaseTurn{
+				{Role: "user", Content: "Please translate this file."},
+				{Role: "assistant", Content: "I have received the file and will translate it now."},
+				{Role: "user", Content: "翻译完成。以下是结果。"},
+				{Role: "user", Content: "Can you make the term thermal throttling easier to understand?"},
+			},
+		}},
+	})
+
+	require.NotNil(t, result)
+	require.Len(t, result.Cases, 1)
+	require.Equal(t, "Please translate this file.", result.Cases[0].Content)
+	require.Equal(t, []CaseTurn{
+		{Role: "user", Content: "Please translate this file."},
+		{Role: "user", Content: "Can you make the term thermal throttling easier to understand?"},
+	}, result.Cases[0].Turns)
+}
+
+func TestLLMCaseGeneratorRejectsConversationWithOnlyAssistantScriptTurns(t *testing.T) {
+	client := &fakeLLMClient{
+		responseContent: `{"cases":[{"content":"已收到文件，正在处理。","expected_result":"Should translate the file.","question_type":"core","turns":[{"role":"assistant","content":"已收到文件，正在处理。"},{"role":"user","content":"翻译完成。以下是结果。"}]}]}`,
+	}
+	generator := &LLMCaseGenerator{
+		Client:      client,
+		WorkspaceID: "workspace-1",
+		AccountID:   "account-1",
+		AgentID:     "agent-1",
+	}
+
+	_, err := generator.GenerateCases(context.Background(), GenerateCasesRequest{
+		Count:    1,
+		CaseMode: "conversation",
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "instead of user inputs")
 }
 
 func TestBuildGenerateCasesPromptTreatsPromptAsUserSupplement(t *testing.T) {
@@ -77,7 +123,7 @@ func TestBuildGenerateCasesPromptUsesTaskQuestionTypeSemantics(t *testing.T) {
 
 	require.Contains(t, prompt, "manual=failed execution or needs-review output state")
 	require.Contains(t, prompt, "manual never means human handoff")
-	require.Contains(t, prompt, "core, extension, fuzzy")
+	require.Contains(t, prompt, "question_type 只能是 core 之一")
 	require.Contains(t, prompt, "Keep these four dimensions separate")
 	require.Contains(t, prompt, "Business scenario = the concrete business object/document type and processing goal")
 	require.Contains(t, prompt, "question_type = the coverage angle")

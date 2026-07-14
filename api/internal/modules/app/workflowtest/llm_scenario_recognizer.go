@@ -122,7 +122,8 @@ func defaultScenarioRecognitionPrompt() string {
 4. 每个场景输出名称、判断说明和适合生成测试问题的覆盖角度。
 5. 优先覆盖高频、关键、异常和兜底场景。
 6. 已有场景名称完全相同或语义高度一致则复用，不要重复创建。
-7. 如果提供了测试问题，请把能明确归类的问题分配到 assignments；无法明确归类的问题可以不分配，不要强行归类。`
+7. 如果提供了测试问题，请把能明确归类的问题分配到 assignments；无法明确归类的问题可以不分配，不要强行归类。
+8. 场景名称和说明必须面向业务用户，不要直接输出 input、output、node、tool、sys.query、sys.files、workflow_run_id 等内部字段；需要表达时改写为“用户输入、输出结果、处理节点、工具能力、上传文件”。`
 }
 
 func defaultTaskScenarioRecognitionPrompt() string {
@@ -135,9 +136,10 @@ Requirements:
 3. Prefer scenarios derived from workflow name/description, start-node variables, sys.query, sys.files, document/object types implied by prompts, processing nodes, tools, and end-node output requirements.
 4. If workflow context is sparse, infer reasonable concrete business objects from the workflow name and description, but keep them close to the actual task. For a document summary workflow, good scenarios include company contracts, delivery confirmations, meeting notes, school exam papers, notices, reports, invoices, or other real documents.
 5. Group similar scenarios, but keep names clear, concrete, and testable. Prefer 3-8 scenarios.
-6. Scenario descriptions must be structured as: Input: ...; Goal: ...; Test focus: ... . Test focus may mention what kinds of cases can later be generated, but must not turn the scenario itself into an abnormal input, file format, or assertion.
+6. Scenario descriptions must be written in user-facing Chinese. If a structured description is useful, use Chinese labels only: 输入内容：...；目标：...；测试重点：...。Do not output English labels such as Input, Goal, Test focus, Test Focus, input, goal, or focus. Test focus may mention what kinds of cases can later be generated, but must not turn the scenario itself into an abnormal input, file format, or assertion.
 7. If existing scenarios are semantically equivalent, reuse them instead of creating duplicates.
-8. If existing test cases are provided, assign only clearly matching cases to assignments.`
+8. If existing test cases are provided, assign only clearly matching cases to assignments.
+9. Scenario names and descriptions must be user-facing Chinese business text when the surrounding context is Chinese. Do not expose internal English field names or section labels such as Input, Goal, Test focus, input, output, node, tool, sys.query, sys.files, workflow_run_id, node_id, or node_type. Rewrite them as 用户输入、目标、测试重点、输出结果、处理节点、工具能力、上传文件, or omit them when they are not needed.`
 }
 
 func defaultScenarioRecognitionPromptForMode(caseMode string) string {

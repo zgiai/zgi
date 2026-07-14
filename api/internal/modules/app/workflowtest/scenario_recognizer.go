@@ -64,7 +64,7 @@ type ScenarioRecognizer interface {
 }
 
 func normalizeRecognizedScenarioName(name string) string {
-	return strings.TrimSpace(name)
+	return sanitizeScenarioBusinessText(name)
 }
 
 func normalizeScenarioRecognitionResult(result *ScenarioRecognitionResult) (*ScenarioRecognitionResult, error) {
@@ -84,7 +84,7 @@ func normalizeScenarioRecognitionResult(result *ScenarioRecognitionResult) (*Sce
 		seen[name] = struct{}{}
 		scenarios = append(scenarios, RecognizedScenario{
 			Name:        name,
-			Description: strings.TrimSpace(scenario.Description),
+			Description: sanitizeScenarioBusinessText(scenario.Description),
 		})
 	}
 	assignments := make([]RecognizedCaseAssignment, 0, len(result.Assignments))
@@ -103,4 +103,42 @@ func normalizeScenarioRecognitionResult(result *ScenarioRecognitionResult) (*Sce
 		return nil, fmt.Errorf("scenario recognition result is empty")
 	}
 	return &ScenarioRecognitionResult{Scenarios: scenarios, Assignments: assignments}, nil
+}
+
+func sanitizeScenarioBusinessText(value string) string {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return ""
+	}
+	replacements := []struct {
+		old string
+		new string
+	}{
+		{"sys.query", "用户输入"},
+		{"sys.files", "上传文件"},
+		{"sys.tenant_id", "租户 ID"},
+		{"sys.user_id", "用户 ID"},
+		{"sys.agent_id", "智能体 ID"},
+		{"sys.workflow_id", "流程 ID"},
+		{"sys.workflow_run_id", "流程运行 ID"},
+		{"sys.workflow_type", "流程类型"},
+		{"sys.conversation_id", "对话 ID"},
+		{"workflow_run_id", "流程运行 ID"},
+		{"node_id", "节点 ID"},
+		{"node_name", "节点名称"},
+		{"node_type", "节点类型"},
+		{"input", "输入内容"},
+		{"Input", "输入内容"},
+		{"OUTPUT", "输出结果"},
+		{"Output", "输出结果"},
+		{"output", "输出结果"},
+		{"tool", "工具能力"},
+		{"Tool", "工具能力"},
+		{"node", "处理节点"},
+		{"Node", "处理节点"},
+	}
+	for _, item := range replacements {
+		text = strings.ReplaceAll(text, item.old, item.new)
+	}
+	return strings.TrimSpace(text)
 }

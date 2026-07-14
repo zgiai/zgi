@@ -569,6 +569,20 @@ func (r *Repository) CancelGenerationTask(ctx context.Context, agentID, taskID s
 	return changed, err
 }
 
+func (r *Repository) DeleteGenerationTask(ctx context.Context, agentID, taskID string) (bool, error) {
+	result := r.db.WithContext(ctx).
+		Where("agent_id = ? AND id = ? AND status IN ?", agentID, taskID, []string{
+			GenerationTaskStatusCompleted,
+			GenerationTaskStatusCanceled,
+			GenerationTaskStatusFailed,
+		}).
+		Delete(&GenerationTask{})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
 func activeScenarioRecognitionStatuses() []string {
 	return []string{
 		GenerationTaskStatusQueued,

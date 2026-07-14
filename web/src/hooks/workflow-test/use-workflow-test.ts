@@ -380,6 +380,50 @@ export function useCancelWorkflowTestGenerationTask(agentId: string) {
   });
 }
 
+export function useResumeWorkflowTestGenerationTask(agentId: string) {
+  const t = useT('agents.workflowTest.toasts');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (taskId: string) => workflowTestService.resumeGenerationTask(agentId, taskId),
+    onSuccess: response => {
+      const count = response.data.task?.requested_count ?? 0;
+      toast.info(t('casesGenerationResumed', { count }));
+      queryClient.setQueryData(WORKFLOW_TEST_KEYS.generationTaskLatest(agentId), response);
+      queryClient.setQueryData(WORKFLOW_TEST_KEYS.generationTaskActive(agentId), response);
+      queryClient.invalidateQueries({
+        queryKey: WORKFLOW_TEST_KEYS.generationTaskActive(agentId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: WORKFLOW_TEST_KEYS.generationTaskLatest(agentId),
+      });
+      queryClient.invalidateQueries({ queryKey: WORKFLOW_TEST_KEYS.cases(agentId) });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('casesGenerationResumeFailed'));
+    },
+  });
+}
+
+export function useDeleteWorkflowTestGenerationTask(agentId: string) {
+  const t = useT('agents.workflowTest.toasts');
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (taskId: string) => workflowTestService.deleteGenerationTask(agentId, taskId),
+    onSuccess: () => {
+      toast.info(t('casesGenerationTaskDeleted'));
+      queryClient.invalidateQueries({
+        queryKey: WORKFLOW_TEST_KEYS.generationTaskActive(agentId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: WORKFLOW_TEST_KEYS.generationTaskLatest(agentId),
+      });
+    },
+    onError: error => {
+      toast.error(getErrorMessage(error) || t('casesGenerationTaskDeleteFailed'));
+    },
+  });
+}
+
 export function useWorkflowTestBatches(agentId: string) {
   return useQuery({
     queryKey: WORKFLOW_TEST_KEYS.batches(agentId),

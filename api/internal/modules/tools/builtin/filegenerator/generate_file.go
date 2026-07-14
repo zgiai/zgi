@@ -713,14 +713,16 @@ func xlsxDisplayWidth(value string) int {
 
 func renderPDF(content string, title string) ([]byte, error) {
 	textStream := renderPDFTextStream(content, title)
+	toUnicodeCMap := renderPDFToUnicodeCMap(content, title)
 	objects := []string{
 		"<< /Type /Catalog /Pages 2 0 R >>",
 		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
 		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-		"<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [6 0 R] >>",
+		"<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /Identity-H /DescendantFonts [6 0 R] /ToUnicode 8 0 R >>",
 		fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(textStream), textStream),
-		"<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 2 >> /FontDescriptor 7 0 R /DW 1000 >>",
+		"<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 7 0 R /DW 1000 >>",
 		"<< /Type /FontDescriptor /FontName /STSong-Light /Flags 6 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 880 /StemV 80 >>",
+		fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(toUnicodeCMap), toUnicodeCMap),
 	}
 
 	var buf bytes.Buffer
@@ -741,6 +743,47 @@ func renderPDF(content string, title string) ([]byte, error) {
 	fmt.Fprintf(&buf, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xrefOffset)
 
 	return buf.Bytes(), nil
+}
+
+func renderPDFToUnicodeCMap(content string, title string) string {
+	codePoints := map[int]struct{}{}
+	for _, r := range title + "\n" + content {
+		if r == '\t' {
+			r = ' '
+		}
+		if r < 0x20 {
+			continue
+		}
+		if r > 0xffff {
+			r = '?'
+		}
+		codePoints[int(r)] = struct{}{}
+	}
+	codes := make([]int, 0, len(codePoints))
+	for code := range codePoints {
+		codes = append(codes, code)
+	}
+	sort.Ints(codes)
+
+	var cmap strings.Builder
+	cmap.WriteString("/CIDInit /ProcSet findresource begin\n")
+	cmap.WriteString("12 dict begin\nbegincmap\n")
+	cmap.WriteString("/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n")
+	cmap.WriteString("/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n")
+	cmap.WriteString("1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n")
+	for start := 0; start < len(codes); start += 100 {
+		end := start + 100
+		if end > len(codes) {
+			end = len(codes)
+		}
+		fmt.Fprintf(&cmap, "%d beginbfchar\n", end-start)
+		for _, code := range codes[start:end] {
+			fmt.Fprintf(&cmap, "<%04X> <%04X>\n", code, code)
+		}
+		cmap.WriteString("endbfchar\n")
+	}
+	cmap.WriteString("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend")
+	return cmap.String()
 }
 
 func renderPDFTextStream(content string, title string) string {

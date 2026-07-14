@@ -1,7 +1,16 @@
 'use client';
 
 import * as React from 'react';
-import { ChevronDown, FileText, ImageIcon, Paperclip, Plus, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import {
+  ChevronDown,
+  FileText,
+  ImageIcon,
+  Paperclip,
+  Plus,
+  SlidersHorizontal,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -16,7 +25,13 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import FileSelectorDialog from '@/components/files/file-selector-dialog';
 import {
@@ -29,9 +44,12 @@ import type { FileItem } from '@/services/types/file';
 import type { WorkflowTestAttachment, WorkflowTestCase } from '@/services/types/workflow-test';
 import { QUESTION_TYPE_OPTIONS } from './question-type';
 import {
+  ASSET_SOURCE_KEY,
   CASE_MODE_KEY,
   CONVERSATION_CHECKS_KEY,
   EXPECTED_CHECKS_KEY,
+  FIXTURE_SPEC_KEY,
+  GENERATED_ASSET_SOURCE,
   TURN_CHECKS_KEY,
   TURN_EXPECTATION_KEY,
   buildConversationChecksPayload,
@@ -92,8 +110,13 @@ function createTurn(
   return {
     id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
     content,
-    expectation: typeof inputs[TURN_EXPECTATION_KEY] === 'string' ? inputs[TURN_EXPECTATION_KEY] : '',
-    checks: normalizeConversationChecks(inputs[TURN_CHECKS_KEY], typeof inputs[TURN_EXPECTATION_KEY] === 'string' ? inputs[TURN_EXPECTATION_KEY] : '').conditions ?? [],
+    expectation:
+      typeof inputs[TURN_EXPECTATION_KEY] === 'string' ? inputs[TURN_EXPECTATION_KEY] : '',
+    checks:
+      normalizeConversationChecks(
+        inputs[TURN_CHECKS_KEY],
+        typeof inputs[TURN_EXPECTATION_KEY] === 'string' ? inputs[TURN_EXPECTATION_KEY] : ''
+      ).conditions ?? [],
     attachments,
     selectedFiles: [],
     inputs,
@@ -146,7 +169,9 @@ export function CaseDialog({
   const [status, setStatus] = React.useState('enabled');
   const [taskVariableRows, setTaskVariableRows] = React.useState<TaskVariableRow[]>([]);
   const [checkConditions, setCheckConditions] = React.useState<ExpectedCheckCondition[]>([]);
-  const [conversationCheckConditions, setConversationCheckConditions] = React.useState<ConversationCheckCondition[]>([]);
+  const [conversationCheckConditions, setConversationCheckConditions] = React.useState<
+    ConversationCheckCondition[]
+  >([]);
   const [advancedChecksOpen, setAdvancedChecksOpen] = React.useState(false);
   const workflowCheckOptions = React.useMemo(
     () => buildWorkflowCheckOptions(workflowDraft),
@@ -196,7 +221,9 @@ export function CaseDialog({
   React.useEffect(() => {
     if (open && caseItem) {
       const existingTurns = caseItem.turns?.length
-        ? caseItem.turns.map(turn => createTurn(turn.content, turn.attachments ?? [], turnInputs(turn)))
+        ? caseItem.turns.map(turn =>
+            createTurn(turn.content, turn.attachments ?? [], turnInputs(turn))
+          )
         : [createTurn(caseItem.content)];
       setTurns(existingTurns.length ? existingTurns : [createTurn(caseItem.content)]);
       setScenarioId(caseItem.scenario_id || '');
@@ -207,7 +234,9 @@ export function CaseDialog({
       setTaskVariableRows(formatTaskVariableRows(firstInputs));
       const checks = normalizeExpectedChecks(firstInputs[EXPECTED_CHECKS_KEY]);
       setCheckConditions(checks.conditions ?? []);
-      setConversationCheckConditions(normalizeConversationChecks(firstInputs[CONVERSATION_CHECKS_KEY]).conditions ?? []);
+      setConversationCheckConditions(
+        normalizeConversationChecks(firstInputs[CONVERSATION_CHECKS_KEY]).conditions ?? []
+      );
       setAdvancedChecksOpen(false);
       setFileSelectorTurnId(null);
       return;
@@ -242,7 +271,15 @@ export function CaseDialog({
           }),
         }))
         .filter(turn => turn.content || turn.attachments.length > 0),
-    [checkConditions, conversationCheckConditions, mode, supportsAttachments, taskVariableRows, turns, workflowCheckOptions]
+    [
+      checkConditions,
+      conversationCheckConditions,
+      mode,
+      supportsAttachments,
+      taskVariableRows,
+      turns,
+      workflowCheckOptions,
+    ]
   );
   const content = normalizedTurns.find(turn => turn.content)?.content ?? '';
   const canSubmit = Boolean(content) && Boolean(scenarioId) && !isPending;
@@ -270,7 +307,9 @@ export function CaseDialog({
   const changeCheckConditionType = (conditionId: string, type: ExpectedCheckType) => {
     setCheckConditions(prev =>
       prev.map(condition =>
-        condition.id === conditionId ? { ...createExpectedCheckCondition(type), id: condition.id } : condition
+        condition.id === conditionId
+          ? { ...createExpectedCheckCondition(type), id: condition.id }
+          : condition
       )
     );
   };
@@ -281,7 +320,10 @@ export function CaseDialog({
 
   const addTurnCheckCondition = (turnId: string) => {
     updateTurn(turnId, {
-      checks: [...(turns.find(turn => turn.id === turnId)?.checks ?? []), createConversationCheckCondition()],
+      checks: [
+        ...(turns.find(turn => turn.id === turnId)?.checks ?? []),
+        createConversationCheckCondition(),
+      ],
     });
   };
 
@@ -320,7 +362,10 @@ export function CaseDialog({
   };
 
   const addConversationCheckCondition = () => {
-    setConversationCheckConditions(prev => [...prev, createConversationCheckCondition('consistency')]);
+    setConversationCheckConditions(prev => [
+      ...prev,
+      createConversationCheckCondition('consistency'),
+    ]);
   };
 
   const updateConversationCheckCondition = (
@@ -338,7 +383,9 @@ export function CaseDialog({
   ) => {
     setConversationCheckConditions(prev =>
       prev.map(condition =>
-        condition.id === conditionId ? { ...createConversationCheckCondition(type), id: condition.id } : condition
+        condition.id === conditionId
+          ? { ...createConversationCheckCondition(type), id: condition.id }
+          : condition
       )
     );
   };
@@ -448,7 +495,9 @@ export function CaseDialog({
                     <Textarea
                       value={turn.content}
                       onChange={event => updateTurn(turn.id, { content: event.target.value })}
-                      placeholder={mode === 'task' ? t('taskContentPlaceholder') : t('contentPlaceholder')}
+                      placeholder={
+                        mode === 'task' ? t('taskContentPlaceholder') : t('contentPlaceholder')
+                      }
                       className="min-h-24 resize-none bg-white"
                     />
                     {mode === 'conversation' ? (
@@ -457,7 +506,9 @@ export function CaseDialog({
                           <Label>{t('turnExpectationLabel')}</Label>
                           <Textarea
                             value={turn.expectation}
-                            onChange={event => updateTurn(turn.id, { expectation: event.target.value })}
+                            onChange={event =>
+                              updateTurn(turn.id, { expectation: event.target.value })
+                            }
                             placeholder={t('turnExpectationPlaceholder')}
                             className="min-h-16 resize-none bg-white"
                           />
@@ -467,7 +518,9 @@ export function CaseDialog({
                     {supportsAttachments ? (
                       <div className="mt-3 space-y-2">
                         <div className="flex items-center justify-between">
-                          <div className="text-sm font-medium text-slate-700">{t('attachmentsLabel')}</div>
+                          <div className="text-sm font-medium text-slate-700">
+                            {t('attachmentsLabel')}
+                          </div>
                           <Button
                             type="button"
                             variant="outline"
@@ -509,6 +562,7 @@ export function CaseDialog({
                                       attachments: turn.attachments.filter(
                                         item => attachmentKey(item) !== attachmentKey(file)
                                       ),
+                                      inputs: withoutGeneratedAssetMetadata(turn.inputs),
                                     })
                                   }
                                 >
@@ -560,7 +614,9 @@ export function CaseDialog({
                 </Button>
                 {advancedChecksOpen ? (
                   <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                    <p className="text-sm text-slate-500">{t('conversationAdvancedChecksDescription')}</p>
+                    <p className="text-sm text-slate-500">
+                      {t('conversationAdvancedChecksDescription')}
+                    </p>
                     {turns.map((turn, index) => (
                       <ConversationChecksEditor
                         key={turn.id}
@@ -642,7 +698,12 @@ export function CaseDialog({
                         <Label>{t('taskChecksLabel')}</Label>
                         <p className="mt-1 text-sm text-slate-500">{t('taskChecksDescription')}</p>
                       </div>
-                      <Button type="button" variant="outline" size="sm" onClick={() => addCheckCondition()}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => addCheckCondition()}
+                      >
                         <Plus className="mr-1 size-4" />
                         {t('addCheckCondition')}
                       </Button>
@@ -778,10 +839,14 @@ export function CaseDialog({
                 ? {
                     ...turn,
                     selectedFiles: files,
-                    attachments: [
-                      ...turn.attachments.filter(item => !nextKeys.has(attachmentKey(item))),
-                      ...nextAttachments,
-                    ],
+                    inputs: withoutGeneratedAssetMetadata(turn.inputs),
+                    attachments:
+                      turn.inputs[ASSET_SOURCE_KEY] === GENERATED_ASSET_SOURCE
+                        ? nextAttachments
+                        : [
+                            ...turn.attachments.filter(item => !nextKeys.has(attachmentKey(item))),
+                            ...nextAttachments,
+                          ],
                   }
                 : turn
             )
@@ -870,7 +935,10 @@ function GeneratedFixtureSummary({
       <div className="text-sm font-medium text-blue-900">{labels.title}</div>
       <div className="space-y-2">
         {fixtures.map((fixture, index) => (
-          <div key={`${fixture.name || fixture.title || 'fixture'}-${index}`} className="rounded-md bg-white p-3 text-sm">
+          <div
+            key={`${fixture.name || fixture.title || 'fixture'}-${index}`}
+            className="rounded-md bg-white p-3 text-sm"
+          >
             <div className="font-medium text-slate-900">
               {[fixture.name || fixture.title, fixture.format].filter(Boolean).join(' · ')}
             </div>
@@ -969,11 +1037,24 @@ function ConversationCheckConditionEditor({
   onRemove: () => void;
 }) {
   const severityOptions = [
-    { value: 'critical', label: labels.severityCritical, className: 'border-red-200 bg-red-50 text-red-700' },
-    { value: 'normal', label: labels.severityNormal, className: 'border-blue-200 bg-blue-50 text-blue-700' },
-    { value: 'hint', label: labels.severityHint, className: 'border-slate-200 bg-slate-100 text-slate-600' },
+    {
+      value: 'critical',
+      label: labels.severityCritical,
+      className: 'border-red-200 bg-red-50 text-red-700',
+    },
+    {
+      value: 'normal',
+      label: labels.severityNormal,
+      className: 'border-blue-200 bg-blue-50 text-blue-700',
+    },
+    {
+      value: 'hint',
+      label: labels.severityHint,
+      className: 'border-slate-200 bg-slate-100 text-slate-600',
+    },
   ];
-  const selectedSeverity = severityOptions.find(item => item.value === condition.severity) ?? severityOptions[1];
+  const selectedSeverity =
+    severityOptions.find(item => item.value === condition.severity) ?? severityOptions[1];
 
   return (
     <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -992,7 +1073,10 @@ function ConversationCheckConditionEditor({
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <div className="space-y-2">
           <Label>{labels.typeLabel}</Label>
-          <Select value={condition.type} onValueChange={value => onTypeChange(value as ConversationCheckType)}>
+          <Select
+            value={condition.type}
+            onValueChange={value => onTypeChange(value as ConversationCheckType)}
+          >
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
@@ -1027,7 +1111,10 @@ function ConversationCheckConditionEditor({
         </div>
         <div className="space-y-2">
           <Label>{labels.ruleLabel}</Label>
-          <Select value={condition.operator || 'passed'} onValueChange={operator => onChange({ operator })}>
+          <Select
+            value={condition.operator || 'passed'}
+            onValueChange={operator => onChange({ operator })}
+          >
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
@@ -1123,16 +1210,16 @@ function TaskVariablesEditor({
                 <Label>{labels.variableLabel}</Label>
                 {options.length > 0 ? (
                   <Select value={row.key} onValueChange={key => onChange(row.id, { key })}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {mergeVariableOptions(options, row.key).map(option => (
-                      <SelectItem key={option.key} value={option.key}>
-                        {option.label} · {option.type}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {mergeVariableOptions(options, row.key).map(option => (
+                        <SelectItem key={option.key} value={option.key}>
+                          {option.label} · {option.type}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
                   </Select>
                 ) : (
                   <Input
@@ -1209,9 +1296,21 @@ function CheckConditionEditor({
     { value: 'latency', label: labels.typeLatency },
   ];
   const severityOptions = [
-    { value: 'critical', label: labels.severityCritical, className: 'border-red-200 bg-red-50 text-red-700' },
-    { value: 'normal', label: labels.severityNormal, className: 'border-blue-200 bg-blue-50 text-blue-700' },
-    { value: 'hint', label: labels.severityHint, className: 'border-slate-200 bg-slate-100 text-slate-600' },
+    {
+      value: 'critical',
+      label: labels.severityCritical,
+      className: 'border-red-200 bg-red-50 text-red-700',
+    },
+    {
+      value: 'normal',
+      label: labels.severityNormal,
+      className: 'border-blue-200 bg-blue-50 text-blue-700',
+    },
+    {
+      value: 'hint',
+      label: labels.severityHint,
+      className: 'border-slate-200 bg-slate-100 text-slate-600',
+    },
   ];
 
   const nodeSelectOptions = mergeCheckOptions(nodeOptions, condition);
@@ -1224,14 +1323,17 @@ function CheckConditionEditor({
       target_label: option.label,
       target_type: option.type,
       operator:
-        condition.type === 'node' && !nodeRuleOptions(option.type).some(item => item.value === condition.operator)
+        condition.type === 'node' &&
+        !nodeRuleOptions(option.type).some(item => item.value === condition.operator)
           ? defaultNodeOperator(option.type)
           : condition.operator,
     });
   };
 
-  const selectedSeverity = severityOptions.find(item => item.value === condition.severity) ?? severityOptions[1];
-  const showNodeValueAssertion = condition.type === 'node' && isNodeValueOperator(condition.operator);
+  const selectedSeverity =
+    severityOptions.find(item => item.value === condition.severity) ?? severityOptions[1];
+  const showNodeValueAssertion =
+    condition.type === 'node' && isNodeValueOperator(condition.operator);
   const sourceLabel = sourceLabelForCondition(condition.source, labels);
   const valueLabel =
     condition.type === 'node' && condition.operator?.startsWith('input_')
@@ -1261,7 +1363,10 @@ function CheckConditionEditor({
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <div className="space-y-2">
           <Label>{labels.typeLabel}</Label>
-          <Select value={condition.type} onValueChange={value => onTypeChange(value as ExpectedCheckType)}>
+          <Select
+            value={condition.type}
+            onValueChange={value => onTypeChange(value as ExpectedCheckType)}
+          >
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
@@ -1311,7 +1416,9 @@ function CheckConditionEditor({
           {nodeSelectOptions.length > 0 ? (
             <Select
               value={condition.target_id}
-              onValueChange={value => selectTarget(nodeSelectOptions.find(option => option.id === value))}
+              onValueChange={value =>
+                selectTarget(nodeSelectOptions.find(option => option.id === value))
+              }
             >
               <SelectTrigger>
                 <SelectValue />
@@ -1369,7 +1476,9 @@ function CheckConditionEditor({
           {capabilitySelectOptions.length > 0 ? (
             <Select
               value={condition.target_id}
-              onValueChange={value => selectTarget(capabilitySelectOptions.find(option => option.id === value))}
+              onValueChange={value =>
+                selectTarget(capabilitySelectOptions.find(option => option.id === value))
+              }
             >
               <SelectTrigger>
                 <SelectValue />
@@ -1471,7 +1580,10 @@ function RuleSelect({
   }
   if (condition.type === 'capability') {
     return (
-      <Select value={condition.operator || 'called'} onValueChange={operator => onChange({ operator })}>
+      <Select
+        value={condition.operator || 'called'}
+        onValueChange={operator => onChange({ operator })}
+      >
         <SelectTrigger>
           <SelectValue />
         </SelectTrigger>
@@ -1495,7 +1607,10 @@ function RuleSelect({
     );
   }
   return (
-    <Select value={condition.operator || 'contains'} onValueChange={operator => onChange({ operator })}>
+    <Select
+      value={condition.operator || 'contains'}
+      onValueChange={operator => onChange({ operator })}
+    >
       <SelectTrigger>
         <SelectValue />
       </SelectTrigger>
@@ -1600,7 +1715,10 @@ function buildTaskInputs(rows: TaskVariableRow[]): Record<string, unknown> {
   );
 }
 
-function firstAvailableVariableKey(options: WorkflowInputVariableOption[], rows: TaskVariableRow[]) {
+function firstAvailableVariableKey(
+  options: WorkflowInputVariableOption[],
+  rows: TaskVariableRow[]
+) {
   const usedKeys = new Set(rows.map(row => row.key).filter(Boolean));
   const knownKey = options.find(option => !usedKeys.has(option.key))?.key || options[0]?.key;
   if (knownKey) {
@@ -1623,12 +1741,26 @@ function buildTurnInputs(
     taskVariableRows: TaskVariableRow[];
     checkConditions: ExpectedCheckCondition[];
     conversationCheckConditions: ConversationCheckCondition[];
-    workflowCheckOptions: { nodeOptions: WorkflowCheckOption[]; capabilityOptions: WorkflowCheckOption[] };
+    workflowCheckOptions: {
+      nodeOptions: WorkflowCheckOption[];
+      capabilityOptions: WorkflowCheckOption[];
+    };
   }
 ): Record<string, unknown> {
   if (mode === 'task') {
-    const checks = buildExpectedChecksPayload(taskState.checkConditions, taskState.workflowCheckOptions);
+    const checks = buildExpectedChecksPayload(
+      taskState.checkConditions,
+      taskState.workflowCheckOptions
+    );
+    const generatedAssetMetadata =
+      turn.inputs[ASSET_SOURCE_KEY] === GENERATED_ASSET_SOURCE
+        ? {
+            [ASSET_SOURCE_KEY]: GENERATED_ASSET_SOURCE,
+            [FIXTURE_SPEC_KEY]: turn.inputs[FIXTURE_SPEC_KEY],
+          }
+        : {};
     return {
+      ...generatedAssetMetadata,
       ...buildTaskInputs(taskState.taskVariableRows),
       [CASE_MODE_KEY]: 'task',
       [EXPECTED_CHECKS_KEY]: checks,
@@ -1651,9 +1783,18 @@ function buildTurnInputs(
     ...inputs,
     [CASE_MODE_KEY]: 'conversation',
     ...(turn.expectation.trim() ? { [TURN_EXPECTATION_KEY]: turn.expectation.trim() } : {}),
-    ...((turnChecksPayload.conditions?.length ?? 0) > 0 ? { [TURN_CHECKS_KEY]: turnChecksPayload } : {}),
+    ...((turnChecksPayload.conditions?.length ?? 0) > 0
+      ? { [TURN_CHECKS_KEY]: turnChecksPayload }
+      : {}),
     ...((conversationChecksPayload.conditions?.length ?? 0) > 0
       ? { [CONVERSATION_CHECKS_KEY]: conversationChecksPayload }
       : {}),
   };
+}
+
+function withoutGeneratedAssetMetadata(inputs: Record<string, unknown>): Record<string, unknown> {
+  if (inputs[ASSET_SOURCE_KEY] !== GENERATED_ASSET_SOURCE) return inputs;
+  return Object.fromEntries(
+    Object.entries(inputs).filter(([key]) => key !== ASSET_SOURCE_KEY && key !== FIXTURE_SPEC_KEY)
+  );
 }

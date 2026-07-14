@@ -40,6 +40,7 @@ interface GenerateCasesDialogProps {
   onGenerationCreateFailed?: () => void;
   mode?: WorkflowTestMode;
   supportsGeneratedFiles?: boolean;
+  requiresCurrentTurnFiles?: boolean;
 }
 
 const MIN_GENERATED_CASE_COUNT = 1;
@@ -73,6 +74,7 @@ export function GenerateCasesDialog({
   onGenerationCreateFailed,
   mode = 'conversation',
   supportsGeneratedFiles = false,
+  requiresCurrentTurnFiles = false,
 }: GenerateCasesDialogProps) {
   const t = useT('agents.workflowTest.dialogs.generateCases');
   const commonT = useT('agents.workflowTest.common');
@@ -95,6 +97,8 @@ export function GenerateCasesDialog({
   const scenarioSelectionTouchedRef = React.useRef(false);
   const canGenerateFiles = supportsGeneratedFiles;
   const effectiveGenerateFiles = canGenerateFiles && generateFiles;
+  const forceSingleFileTurn =
+    mode === 'conversation' && effectiveGenerateFiles && requiresCurrentTurnFiles;
   const defaultQuestionTypes =
     mode === 'task' ? DEFAULT_TASK_QUESTION_TYPES : DEFAULT_QUESTION_TYPES;
   const titleLabel = effectiveGenerateFiles
@@ -148,6 +152,10 @@ export function GenerateCasesDialog({
       return defaultQuestionTypes;
     });
   }, [defaultQuestionTypes, open]);
+
+  React.useEffect(() => {
+    if (forceSingleFileTurn) setTurnStrategy('single');
+  }, [forceSingleFileTurn]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -372,12 +380,16 @@ export function GenerateCasesDialog({
                     type="button"
                     variant={turnStrategy === item.value ? 'default' : 'outline'}
                     className="h-12"
+                    disabled={forceSingleFileTurn && item.value !== 'single'}
                     onClick={() => setTurnStrategy(item.value)}
                   >
                     {t(item.labelKey)}
                   </Button>
                 ))}
               </div>
+              {forceSingleFileTurn ? (
+                <p className="text-sm text-amber-700">{t('turnStrategyFilesRequired')}</p>
+              ) : null}
             </section>
           ) : null}
 
@@ -539,7 +551,7 @@ export function GenerateCasesDialog({
                 count: safeCount,
                 scenario_ids: scenarioIds,
                 question_types: questionTypes,
-                turn_strategy: mode === 'task' ? 'single' : turnStrategy,
+                turn_strategy: mode === 'task' || forceSingleFileTurn ? 'single' : turnStrategy,
                 case_mode: mode,
                 file_generation: effectiveGenerateFiles
                   ? {

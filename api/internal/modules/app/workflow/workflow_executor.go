@@ -822,6 +822,13 @@ func (e *WorkflowExecutor) createVariablePoolWithVars(inputs map[string]any, env
 	// This is necessary because we changed SystemVariables and ConversationVariables after creation
 	variablePool.VariableDictionary = make(map[string]map[string]entities.Variable)
 	variablePool.Initialize()
+	// sys.files is a runtime-only system value, so it must be registered after
+	// Initialize rebuilds the dictionary from the typed system variables.
+	if files, exists := inputs["sys.files"]; exists && files != nil {
+		variablePool.Add([]string{"sys", "files"}, files)
+	} else if files, exists := inputs["#files#"]; exists && files != nil {
+		variablePool.Add([]string{"sys", "files"}, files)
+	}
 
 	return variablePool
 }

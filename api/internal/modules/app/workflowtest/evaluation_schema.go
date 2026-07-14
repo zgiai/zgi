@@ -45,7 +45,9 @@ type TaskFormatExpectation struct {
 }
 
 func taskEvaluationSchemaFromInput(value interface{}, fallbackExpected string, checks TaskExpectedChecks) TaskEvaluationSchema {
-	schema := normalizeTaskEvaluationSchema(taskEvaluationSchemaValue(value))
+	rawSchema := taskEvaluationSchemaValue(value)
+	hasExplicitSchema := taskEvaluationSchemaHasContent(rawSchema)
+	schema := normalizeTaskEvaluationSchema(rawSchema)
 	if schema.GoalType == "" {
 		schema.GoalType = inferTaskGoalType(fallbackExpected, checks)
 	}
@@ -53,7 +55,11 @@ func taskEvaluationSchemaFromInput(value interface{}, fallbackExpected string, c
 		schema.PrimaryObjective = strings.TrimSpace(fallbackExpected)
 	}
 	if len(schema.Assertions) == 0 {
-		schema.Assertions = assertionsFromTaskChecks(checks)
+		if hasExplicitSchema {
+			schema.Assertions = fallbackTaskEvaluationAssertions(firstNonEmptyString(schema.PrimaryObjective, fallbackExpected))
+		} else {
+			schema.Assertions = fallbackTaskEvaluationAssertions(fallbackExpected)
+		}
 	}
 	if schema.MissingPolicy.Mode == "" {
 		schema.MissingPolicy = defaultTaskMissingPolicy()
@@ -66,6 +72,44 @@ func taskEvaluationSchemaFromInput(value interface{}, fallbackExpected string, c
 	}
 	schema.Assertions = ensureTaskSchemaPolicyAssertions(schema.Assertions, schema)
 	return schema
+}
+
+func taskEvaluationSchemaHasContent(schema TaskEvaluationSchema) bool {
+	return strings.TrimSpace(schema.GoalType) != "" ||
+		strings.TrimSpace(schema.PrimaryObjective) != "" ||
+		len(schema.Assertions) > 0 ||
+		strings.TrimSpace(schema.MissingPolicy.Mode) != "" ||
+		len(schema.MissingPolicy.AcceptMarkers) > 0 ||
+		len(schema.MissingPolicy.ForbidClaims) > 0 ||
+		len(schema.AllowedExtraTypes) > 0 ||
+		strings.TrimSpace(schema.Format.Type) != "" ||
+		len(schema.Format.Fields) > 0 ||
+		strings.TrimSpace(schema.SourceGrounding) != ""
+}
+
+func fallbackTaskEvaluationAssertions(expected string) []TaskEvaluationAssertion {
+	expected = strings.TrimSpace(expected)
+	assertions := []TaskEvaluationAssertion{{
+		ID:          "source_grounding",
+		Type:        "source_grounding",
+		Description: "输出应忠实依据本次输入、变量和文件内容，不编造关键业务事实。",
+		Operator:    "satisfies",
+		Severity:    "critical",
+		MatchMode:   "semantic",
+		Source:      "system_fallback",
+	}}
+	if expected != "" {
+		assertions = append([]TaskEvaluationAssertion{{
+			ID:          "overall_semantic_match",
+			Type:        "semantic_match",
+			Description: expected,
+			Operator:    "satisfies",
+			Severity:    "critical",
+			MatchMode:   "semantic",
+			Source:      "system_fallback",
+		}}, assertions...)
+	}
+	return assertions
 }
 
 func taskEvaluationSchemaValue(value interface{}) TaskEvaluationSchema {
@@ -136,6 +180,9 @@ func normalizeTaskEvaluationAssertion(assertion TaskEvaluationAssertion) []TaskE
 	if assertion.MatchMode == "" {
 		assertion.MatchMode = "semantic"
 	}
+	if !shouldExpandTaskEvaluationAssertion(assertion.Type) {
+		return []TaskEvaluationAssertion{assertion}
+	}
 
 	clauses := taskAssertionClauses(assertion)
 	if len(clauses) == 0 {
@@ -190,6 +237,15 @@ func normalizeTaskEvaluationAssertion(assertion TaskEvaluationAssertion) []TaskE
 		result = append(result, next)
 	}
 	return result
+}
+
+func shouldExpandTaskEvaluationAssertion(assertionType string) bool {
+	switch assertionType {
+	case "must_include", "must_not_include", "fact_present", "missing_field_marked", "state_present":
+		return true
+	default:
+		return false
+	}
 }
 
 func taskEvaluationAssertionKey(assertion TaskEvaluationAssertion) string {

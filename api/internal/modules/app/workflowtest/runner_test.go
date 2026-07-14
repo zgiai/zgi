@@ -14,6 +14,8 @@ type runnerWorkflowServiceStub struct {
 	interfaces.WorkflowService
 	calls                  []*dto.DraftWorkflowRunRequest
 	results                []dto.WorkflowRunResponse
+	rawResults             []interface{}
+	runErrors              []error
 	draft                  interface{}
 	createdConversationIDs []string
 	nodeExecutions         map[string]*dto.WorkflowRunNodeExecutionListResponse
@@ -37,12 +39,22 @@ func (s *runnerWorkflowServiceStub) RunDraftWorkflow(ctx context.Context, worksp
 		}
 		s.calls = append(s.calls, runReq)
 	}
-	if len(s.results) == 0 {
-		return dto.WorkflowRunResponse{TaskID: "task", WorkflowRunID: "run"}, nil
+	var result interface{}
+	if len(s.rawResults) > 0 {
+		result = s.rawResults[0]
+		s.rawResults = s.rawResults[1:]
+	} else if len(s.results) > 0 {
+		result = s.results[0]
+		s.results = s.results[1:]
+	} else {
+		result = dto.WorkflowRunResponse{TaskID: "task", WorkflowRunID: "run"}
 	}
-	result := s.results[0]
-	s.results = s.results[1:]
-	return result, nil
+	var err error
+	if len(s.runErrors) > 0 {
+		err = s.runErrors[0]
+		s.runErrors = s.runErrors[1:]
+	}
+	return result, err
 }
 
 func (s *runnerWorkflowServiceStub) GetWorkflowRunNodeExecutions(ctx context.Context, tenantID, agentID, runID string) (interface{}, error) {
@@ -114,6 +126,38 @@ func TestWorkflowServiceRunnerMapsAttachmentToStartFileVariable(t *testing.T) {
 		"upload_file_id":  "file-1",
 		"name":            "测试文档.docx",
 	}, workflowService.calls[0].Inputs["file"])
+}
+
+func TestWorkflowServiceRunnerSkipsNonUserTurns(t *testing.T) {
+	workflowService := &runnerWorkflowServiceStub{
+		results: []dto.WorkflowRunResponse{
+			{TaskID: "task-1", WorkflowRunID: "run-1"},
+			{TaskID: "task-2", WorkflowRunID: "run-2"},
+		},
+	}
+	runner := &WorkflowServiceRunner{
+		WorkflowService: workflowService,
+		WorkspaceID:     "workspace-1",
+		AccountID:       "account-1",
+	}
+
+	result, err := runner.RunCase(context.Background(), RunCaseRequest{
+		AgentID: "agent-1",
+		CaseSnapshot: CaseSnapshot{
+			Turns: CaseTurns{
+				{Role: "user", Content: "First user input"},
+				{Role: "assistant", Content: "Assistant reply should not be replayed"},
+				{Role: "system", Content: "System note should not be replayed"},
+				{Role: "user", Content: "Follow-up user input"},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, workflowService.calls, 2)
+	require.Equal(t, "First user input", workflowService.calls[0].Inputs["sys.query"])
+	require.Equal(t, "Follow-up user input", workflowService.calls[1].Inputs["sys.query"])
+	require.Equal(t, 2, result.Outputs["turn_count"])
 }
 
 func TestWorkflowServiceRunnerMapsAttachmentsToStartFileListVariable(t *testing.T) {
@@ -318,6 +362,11 @@ func TestWorkflowServiceRunnerFiltersWorkflowTestMetadataInputs(t *testing.T) {
 			Turns: CaseTurns{{
 				Role:    "user",
 				Content: "question",
+				Attachments: []CaseAttachment{{
+					TransferMethod: "local_file",
+					UploadFileID:   "generated-file",
+					Name:           "fixture.docx",
+				}},
 				Inputs: JSONMap{
 					"customer":              "Acme",
 					caseModeInputKey:        "task",
@@ -327,7 +376,10 @@ func TestWorkflowServiceRunnerFiltersWorkflowTestMetadataInputs(t *testing.T) {
 					conversationChecksInputKey: map[string]interface{}{
 						"conditions": []interface{}{},
 					},
-					"__fixture_spec": []interface{}{"fixture"},
+					"__fixture_spec": []interface{}{map[string]interface{}{
+						"upload_file_id": "generated-file",
+						"name":           "fixture.docx",
+					}},
 					"__asset_source": "workflow_test_generated",
 					"__tags":         []interface{}{"tag"},
 				},
@@ -392,6 +444,38 @@ func TestWorkflowServiceRunnerAttachesWorkflowTrace(t *testing.T) {
 	require.Equal(t, map[string]interface{}{"answer": "world"}, nodes[0]["output"])
 }
 
+func TestWorkflowServiceRunnerPromotesAnswerFromTrace(t *testing.T) {
+	workflowService := &runnerWorkflowServiceStub{
+		draft:   dto.WorkflowDetail{},
+		results: []dto.WorkflowRunResponse{{TaskID: "task-1", WorkflowRunID: "run-1"}},
+		nodeExecutions: map[string]*dto.WorkflowRunNodeExecutionListResponse{
+			"run-1": {
+				Data: []dto.WorkflowRunNodeExecutionResponse{{
+					ID:       "exec-1",
+					NodeID:   "answer_node",
+					NodeType: "answer",
+					Title:    "Answer",
+					Status:   "succeeded",
+					Outputs:  json.RawMessage(`{"answer":"hello from agent"}`),
+				}},
+			},
+		},
+	}
+	runner := &WorkflowServiceRunner{
+		WorkflowService: workflowService,
+		WorkspaceID:     "workspace-1",
+		AccountID:       "account-1",
+	}
+
+	result, err := runner.RunCase(context.Background(), RunCaseRequest{
+		AgentID:      "agent-1",
+		CaseSnapshot: CaseSnapshot{Content: "hello"},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "hello from agent", result.Outputs["answer"])
+}
+
 func TestWorkflowServiceRunnerKeepsScalarWorkflowTraceOutput(t *testing.T) {
 	workflowService := &runnerWorkflowServiceStub{
 		draft:   dto.WorkflowDetail{},
@@ -423,6 +507,7 @@ func TestWorkflowServiceRunnerKeepsScalarWorkflowTraceOutput(t *testing.T) {
 	trace := result.Outputs["workflow_trace"].(map[string]interface{})
 	nodes := trace["nodes"].([]map[string]interface{})
 	require.Equal(t, map[string]interface{}{"value": "final answer"}, nodes[0]["output"])
+	require.Equal(t, "final answer", result.Outputs["answer"])
 }
 
 func TestWorkflowServiceRunnerKeepsConversationContextAcrossChatTurns(t *testing.T) {
@@ -475,6 +560,159 @@ func TestWorkflowServiceRunnerKeepsConversationContextAcrossChatTurns(t *testing
 	require.True(t, ok)
 	require.Len(t, turnResults, 2)
 	require.Equal(t, "conversation-1", turnResults[1]["conversation_id"])
+}
+
+func TestWorkflowServiceRunnerPassesAttachmentToSystemFilesForChatDocumentExtractor(t *testing.T) {
+	workflowService := &runnerWorkflowServiceStub{
+		draft: dto.WorkflowDetail{
+			Type: dto.WorkflowTypeChat,
+			Graph: map[string]interface{}{
+				"nodes": []interface{}{
+					map[string]interface{}{
+						"data": map[string]interface{}{
+							"type":              "document-extractor",
+							"variable_selector": []interface{}{"sys", "files"},
+						},
+					},
+				},
+			},
+		},
+		results: []dto.WorkflowRunResponse{{TaskID: "task-1", WorkflowRunID: "run-1"}},
+	}
+	runner := &WorkflowServiceRunner{
+		WorkflowService: workflowService,
+		WorkspaceID:     "workspace-1",
+		AccountID:       "account-1",
+	}
+
+	_, err := runner.RunCase(context.Background(), RunCaseRequest{
+		AgentID: "agent-1",
+		CaseSnapshot: CaseSnapshot{
+			Turns: CaseTurns{{
+				Role:    "user",
+				Content: "请总结附件",
+				Attachments: []CaseAttachment{{
+					Type:           "document",
+					TransferMethod: "local_file",
+					UploadFileID:   "file-1",
+					Name:           "contract.docx",
+				}},
+			}},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, workflowService.calls, 1)
+	require.Equal(t, []interface{}{
+		map[string]interface{}{
+			"type":            "document",
+			"transfer_method": "local_file",
+			"url":             "",
+			"upload_file_id":  "file-1",
+			"name":            "contract.docx",
+		},
+	}, workflowService.calls[0].Inputs["sys.files"])
+}
+
+func TestWorkflowServiceRunnerRejectsLaterChatTurnWithoutRequiredAttachment(t *testing.T) {
+	workflowService := &runnerWorkflowServiceStub{
+		draft: dto.WorkflowDetail{
+			Type: dto.WorkflowTypeChat,
+			Graph: map[string]interface{}{
+				"nodes": []interface{}{
+					map[string]interface{}{
+						"id":   "start",
+						"data": map[string]interface{}{"type": "start"},
+					},
+					map[string]interface{}{
+						"id": "extract",
+						"data": map[string]interface{}{
+							"type":              "document-extractor",
+							"variable_selector": []interface{}{"sys", "files"},
+						},
+					},
+					map[string]interface{}{
+						"id":   "answer",
+						"data": map[string]interface{}{"type": "answer"},
+					},
+				},
+				"edges": []interface{}{
+					map[string]interface{}{"source": "start", "target": "extract"},
+					map[string]interface{}{"source": "extract", "target": "answer"},
+				},
+			},
+		},
+	}
+	runner := &WorkflowServiceRunner{
+		WorkflowService: workflowService,
+		WorkspaceID:     "workspace-1",
+		AccountID:       "account-1",
+	}
+
+	result, err := runner.RunCase(context.Background(), RunCaseRequest{
+		AgentID: "agent-1",
+		CaseSnapshot: CaseSnapshot{
+			Turns: CaseTurns{
+				{
+					Role:    "user",
+					Content: "请总结附件",
+					Attachments: []CaseAttachment{{
+						Type:           "document",
+						TransferMethod: "local_file",
+						UploadFileID:   "file-1",
+						Name:           "contract.docx",
+					}},
+				},
+				{Role: "user", Content: "请把第三点说得更具体"},
+			},
+		},
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "第 2 轮缺少附件")
+	require.Nil(t, result)
+	require.Empty(t, workflowService.calls)
+}
+
+func TestWorkflowServiceRunnerStopsOnFailedWorkflowStatusAndPreservesPartialResult(t *testing.T) {
+	workflowService := &runnerWorkflowServiceStub{
+		rawResults: []interface{}{
+			map[string]interface{}{
+				"workflow_run_id": "run-1",
+				"status":          "failed",
+				"error":           "variable not found: [sys files]",
+			},
+			map[string]interface{}{
+				"workflow_run_id": "run-2",
+				"status":          "succeeded",
+			},
+		},
+	}
+	runner := &WorkflowServiceRunner{
+		WorkflowService: workflowService,
+		WorkspaceID:     "workspace-1",
+		AccountID:       "account-1",
+	}
+
+	result, err := runner.RunCase(context.Background(), RunCaseRequest{
+		AgentID: "agent-1",
+		CaseSnapshot: CaseSnapshot{Turns: CaseTurns{
+			{Role: "user", Content: "first turn"},
+			{Role: "user", Content: "follow up"},
+		}},
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "variable not found: [sys files]")
+	require.Len(t, workflowService.calls, 1)
+	require.NotNil(t, result)
+	require.Equal(t, "run-1", result.WorkflowRunID)
+	require.Equal(t, 1, result.Outputs["turn_count"])
+	require.Equal(t, 2, result.Outputs["planned_turn_count"])
+	turnResults, ok := result.Outputs["turn_results"].([]map[string]interface{})
+	require.True(t, ok)
+	require.Len(t, turnResults, 1)
+	require.Equal(t, "run-1", turnResults[0]["workflow_run_id"])
 }
 
 func TestWorkflowServiceRunnerMapsAttachmentsToMultipleSingleFileVariables(t *testing.T) {

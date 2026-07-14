@@ -7,6 +7,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   Ban,
+  Clock,
   Loader2,
   WandSparkles,
   Plus,
@@ -55,10 +56,12 @@ import {
   useCancelWorkflowTestGenerationTask,
   useCancelWorkflowTestScenarioRecognitionTask,
   useCreateWorkflowTestBatch,
+  useDeleteWorkflowTestGenerationTask,
   useDeleteWorkflowTestCases,
   useExecuteWorkflowTestBatch,
   useLatestWorkflowTestScenarioRecognitionTask,
   useLatestWorkflowTestGenerationTask,
+  useResumeWorkflowTestGenerationTask,
   useRetestWorkflowTestBatch,
   useUpdateWorkflowTestCase,
   useWorkflowTestBatches,
@@ -78,6 +81,7 @@ import type {
 import { QUESTION_TYPE_OPTIONS, formatQuestionTypeLabel } from './question-type';
 import {
   draftAttachmentAcceptExtensions,
+  draftRequiresCurrentTurnFiles,
   draftSupportsFileInputs,
   expectedCheckConditionCount,
   expectedChecks,
@@ -272,11 +276,17 @@ function formatTaskCaseFocus(
   const inputs = visibleInputEntries(item.turns?.[0]);
   const checks = expectedChecks(item);
   const checkCount = expectedCheckConditionCount(checks);
-  const criticalCheckCount = checks.conditions?.filter(condition => condition.severity === 'critical').length ?? 0;
+  const criticalCheckCount =
+    checks.conditions?.filter(condition => condition.severity === 'critical').length ?? 0;
   const fixtureCount = generatedFixtureSpecs(item).length;
   const parts: string[] = [];
   if (inputs.length > 0) {
-    parts.push(`${labels.variables}: ${inputs.slice(0, 2).map(([key]) => key).join(', ')}`);
+    parts.push(
+      `${labels.variables}: ${inputs
+        .slice(0, 2)
+        .map(([key]) => key)
+        .join(', ')}`
+    );
   }
   if (fixtureCount > 0) {
     parts.push(`${labels.files}: ${fixtureCount}`);
@@ -347,6 +357,7 @@ export function BatchTestOverview({
   const { data: workflowDraft } = useWorkflowDraft(agentId);
   const workflowTestMode = workflowDraftMode(workflowDraft);
   const supportsAttachments = draftSupportsFileInputs(workflowDraft);
+  const requiresCurrentTurnFiles = draftRequiresCurrentTurnFiles(workflowDraft);
   const attachmentAcceptExt = React.useMemo(
     () => draftAttachmentAcceptExtensions(workflowDraft),
     [workflowDraft]
@@ -355,6 +366,8 @@ export function BatchTestOverview({
   const executeBatch = useExecuteWorkflowTestBatch(agentId);
   const cancelBatch = useCancelWorkflowTestBatch(agentId);
   const cancelGenerationTask = useCancelWorkflowTestGenerationTask(agentId);
+  const resumeGenerationTask = useResumeWorkflowTestGenerationTask(agentId);
+  const deleteGenerationTask = useDeleteWorkflowTestGenerationTask(agentId);
   const cancelScenarioRecognitionTask = useCancelWorkflowTestScenarioRecognitionTask(agentId);
   const retestBatch = useRetestWorkflowTestBatch(agentId);
   const updateCase = useUpdateWorkflowTestCase(agentId);
@@ -380,7 +393,14 @@ export function BatchTestOverview({
     scenarioRecognitionTask?.id &&
     (scenarioRecognitionTask.status === 'queued' || scenarioRecognitionTask.status === 'running');
   const canCancelGeneration =
-    generationTask?.id && (generationTask.status === 'queued' || generationTask.status === 'running');
+    generationTask?.id &&
+    (generationTask.status === 'queued' || generationTask.status === 'running');
+  const canResumeGeneration =
+    generationTask?.id &&
+    ['failed', 'canceled'].includes(generationTask.status) &&
+    generationTask.created_count < generationTask.requested_count;
+  const canDeleteGenerationTask =
+    generationTask?.id && ['completed', 'failed', 'canceled'].includes(generationTask.status);
   const isGenerationPendingLocally = pendingGenerationCount !== null && !isGenerationActive;
   const displayedGenerationStatus = isGenerationPendingLocally ? 'running' : generationTask?.status;
   const isGenerationCompleted =
@@ -394,7 +414,9 @@ export function BatchTestOverview({
       isScenarioRecognitionCompleted ||
       scenarioRecognitionTask?.status === 'canceled' ||
       scenarioRecognitionTask?.status === 'failed');
-  const scenarioRecognitionProgress = scenarioRecognitionProgressValue(scenarioRecognitionTask?.status);
+  const scenarioRecognitionProgress = scenarioRecognitionProgressValue(
+    scenarioRecognitionTask?.status
+  );
   const scenarioRecognitionTitle = t(
     `scenarios.${scenarioRecognitionTitleKey(scenarioRecognitionTask?.status)}`,
     {
@@ -426,24 +448,37 @@ export function BatchTestOverview({
   const generationBannerCreated = isGenerationPendingLocally
     ? 0
     : (generationTask?.created_count ?? 0);
-  const generationKind = generationKindFromTask(generationTask, workflowTestMode, supportsAttachments);
+  const generationKind = generationKindFromTask(
+    generationTask,
+    workflowTestMode,
+    supportsAttachments
+  );
   const generationProgress = generationProgressValue(
     generationBannerCreated,
     generationBannerRequested,
     displayedGenerationStatus
   );
-  const generationCurrentIndex = nextGenerationIndex(generationBannerCreated, generationBannerRequested);
-  const generationTitle = t(`cases.${generationTitleKey(generationKind, displayedGenerationStatus)}`, {
-    count: generationBannerRequested,
-    created: generationBannerCreated,
-  });
-  const generationStatusText = t(`cases.${generationStatusKey(displayedGenerationStatus, generationBannerCreated)}`, {
-    created: generationBannerCreated,
-    total: generationBannerRequested,
-    current: generationCurrentIndex,
-    percent: generationProgress,
-    error: generationTask?.error || commonT('none'),
-  });
+  const generationCurrentIndex = nextGenerationIndex(
+    generationBannerCreated,
+    generationBannerRequested
+  );
+  const generationTitle = t(
+    `cases.${generationTitleKey(generationKind, displayedGenerationStatus)}`,
+    {
+      count: generationBannerRequested,
+      created: generationBannerCreated,
+    }
+  );
+  const generationStatusText = t(
+    `cases.${generationStatusKey(displayedGenerationStatus, generationBannerCreated)}`,
+    {
+      created: generationBannerCreated,
+      total: generationBannerRequested,
+      current: generationCurrentIndex,
+      percent: generationProgress,
+      error: generationTask?.error || commonT('none'),
+    }
+  );
   const generationProgressText = t('cases.generationProgressText', {
     created: generationBannerCreated,
     total: generationBannerRequested,
@@ -509,13 +544,19 @@ export function BatchTestOverview({
     batchStatusFilter === 'all'
       ? batches
       : batches.filter(item => item.status === batchStatusFilter);
-  const runningBatch = batches.find(item => item.status === 'running') ?? null;
-  const shouldShowRunningBatch =
+  const activeBatches = batches.filter(
+    (item): item is WorkflowTestBatch & { status: 'queued' | 'running' } =>
+      item.status === 'queued' || item.status === 'running'
+  );
+  const activeBatchIds = new Set(activeBatches.map(item => item.id));
+  const shouldShowActiveBatches =
     view === 'batches' &&
-    !!runningBatch &&
-    (batchStatusFilter === 'all' || batchStatusFilter === 'running');
-  const tableBatches = shouldShowRunningBatch
-    ? filteredBatches.filter(item => item.id !== runningBatch.id)
+    activeBatches.length > 0 &&
+    (batchStatusFilter === 'all' ||
+      batchStatusFilter === 'queued' ||
+      batchStatusFilter === 'running');
+  const tableBatches = shouldShowActiveBatches
+    ? filteredBatches.filter(item => !activeBatchIds.has(item.id))
     : filteredBatches;
   const selectedCases = cases.filter(item => selectedCaseIds.includes(item.id));
   const selectedEnabledCases = selectedCases.filter(item => item.status === 'enabled');
@@ -704,7 +745,8 @@ export function BatchTestOverview({
   const pageDescription =
     view === 'batches'
       ? t('batches.description')
-      : agentDescription || (workflowTestMode === 'task' ? t('taskDescriptionFallback') : t('descriptionFallback'));
+      : agentDescription ||
+        (workflowTestMode === 'task' ? t('taskDescriptionFallback') : t('descriptionFallback'));
   const generateCasesLabel =
     workflowTestMode === 'task' && supportsAttachments
       ? t('actions.generateFileCases')
@@ -859,7 +901,9 @@ export function BatchTestOverview({
                       <ScanSearch className="size-4" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className={`text-sm font-semibold ${scenarioRecognitionBannerTone.title}`}>
+                      <div
+                        className={`text-sm font-semibold ${scenarioRecognitionBannerTone.title}`}
+                      >
                         {scenarioRecognitionTitle}
                       </div>
                       <div className="mt-3 space-y-2">
@@ -889,7 +933,9 @@ export function BatchTestOverview({
                         size="sm"
                         variant="outline"
                         disabled={cancelScenarioRecognitionTask.isPending}
-                        onClick={() => cancelScenarioRecognitionTask.mutate(scenarioRecognitionTask.id)}
+                        onClick={() =>
+                          cancelScenarioRecognitionTask.mutate(scenarioRecognitionTask.id)
+                        }
                       >
                         <Ban className="mr-2 size-4" />
                         {t('actions.cancelRecognition')}
@@ -967,7 +1013,9 @@ export function BatchTestOverview({
                     {workflowTestMode === 'task' ? t('cases.taskTitle') : t('cases.title')}
                   </CardTitle>
                   <p className="text-sm text-slate-600">
-                    {workflowTestMode === 'task' ? t('cases.taskDescription') : t('cases.description')}
+                    {workflowTestMode === 'task'
+                      ? t('cases.taskDescription')
+                      : t('cases.description')}
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
@@ -1022,6 +1070,28 @@ export function BatchTestOverview({
                       >
                         <Ban className="mr-2 size-4" />
                         {t('actions.cancelGeneration')}
+                      </Button>
+                    ) : null}
+                    {canResumeGeneration && generationTask ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={resumeGenerationTask.isPending}
+                        onClick={() => resumeGenerationTask.mutate(generationTask.id)}
+                      >
+                        <PlayCircle className="mr-2 size-4" />
+                        {t('actions.resumeGeneration')}
+                      </Button>
+                    ) : null}
+                    {canDeleteGenerationTask && generationTask ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={deleteGenerationTask.isPending}
+                        onClick={() => deleteGenerationTask.mutate(generationTask.id)}
+                      >
+                        <Trash2 className="mr-2 size-4" />
+                        {t('actions.deleteGenerationTask')}
                       </Button>
                     ) : null}
                   </div>
@@ -1137,146 +1207,152 @@ export function BatchTestOverview({
                           const isExpanded = expandedCaseIds.includes(item.id);
 
                           return (
-                          <TableRow key={item.id}>
-                            <TableCell className="py-4">
-                              <Checkbox
-                                checked={selectedCaseIds.includes(item.id)}
-                                onCheckedChange={checked => {
-                                  setSelectedCaseIds(prev =>
-                                    checked
-                                      ? Array.from(new Set([...prev, item.id]))
-                                      : prev.filter(id => id !== item.id)
-                                  );
-                                }}
-                              />
-                            </TableCell>
-                            <TableCell className="min-w-0 whitespace-normal py-4 align-top">
-                              <div className="line-clamp-2 break-words font-medium text-slate-950">
-                                {item.content}
-                              </div>
-                              {hasMultipleTurns ? (
-                                <>
-                                  <div className="mt-1 text-xs text-slate-500">
-                                    {t('cases.turnCount', { count: turns.length })}
-                                    <button
-                                      type="button"
-                                      className="ml-1 font-medium text-blue-600 hover:text-blue-700 hover:underline"
-                                      onClick={() => toggleCaseExpanded(item.id)}
-                                    >
-                                      {isExpanded ? t('cases.collapseTurns') : t('cases.expandTurns')}
-                                    </button>
-                                  </div>
-                                  {isExpanded ? (
-                                    <div className="mt-3 min-w-0 space-y-3 border-l border-slate-200 pl-4 text-sm text-slate-700">
-                                      {turns.slice(1).map((turn, index) => (
-                                        <div
-                                          key={`${item.id}-turn-${index + 2}`}
-                                          className="relative min-w-0"
-                                        >
-                                          <span className="absolute -left-[19px] top-2 h-2 w-2 rounded-full border border-slate-300 bg-white" />
-                                          <div className="flex min-w-0 items-baseline gap-1">
-                                            <span className="shrink-0 whitespace-nowrap font-medium text-slate-600">
-                                              {t('cases.turnTitle', { index: index + 2 })}
-                                            </span>
-                                            <span className="min-w-0 truncate">{turn.content}</span>
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  ) : null}
-                                </>
-                              ) : null}
-                              {item.turns?.some(turn => turn.attachments?.length) ? (
-                                <div className="mt-1 text-xs text-slate-500">
-                                  {hasGeneratedAssets(item)
-                                    ? commonT('generatedAttachmentsIncluded')
-                                    : commonT('attachmentsIncluded')}
+                            <TableRow key={item.id}>
+                              <TableCell className="py-4">
+                                <Checkbox
+                                  checked={selectedCaseIds.includes(item.id)}
+                                  onCheckedChange={checked => {
+                                    setSelectedCaseIds(prev =>
+                                      checked
+                                        ? Array.from(new Set([...prev, item.id]))
+                                        : prev.filter(id => id !== item.id)
+                                    );
+                                  }}
+                                />
+                              </TableCell>
+                              <TableCell className="min-w-0 whitespace-normal py-4 align-top">
+                                <div className="line-clamp-2 break-words font-medium text-slate-950">
+                                  {item.content}
                                 </div>
-                              ) : null}
-                            </TableCell>
-                            <TableCell className="py-4 align-top">
-                              <div className="line-clamp-2 break-words">
-                                {item.scenario_id
-                                  ? scenariosById.get(item.scenario_id) || commonT('none')
-                                  : commonT('none')}
-                              </div>
-                            </TableCell>
-                            <TableCell className="py-4 align-top">
-                              {formatQuestionTypeLabel(item.question_type, typeT)}
-                            </TableCell>
-                            <TableCell className="py-4 align-top">
-                              <Badge
-                                className={
-                                  item.status === 'enabled'
-                                    ? 'bg-emerald-50 text-emerald-700'
-                                    : 'bg-slate-100 text-slate-500'
-                                }
-                              >
-                                {statusLabel(item.status, commonT)}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="py-4 align-top text-xs text-slate-600">
-                              {workflowTestMode === 'task'
-                                ? formatTaskCaseFocus(item, commonT('none'), {
-                                    variables: t('cases.focusVariables'),
-                                    files: t('cases.focusFiles'),
-                                    checks: t('cases.focusChecks'),
-                                    criticalChecks: t('cases.focusCriticalChecks'),
-                                  })
-                                : formatConversationCaseFocus(item, {
-                                    turns: t('cases.focusTurns'),
-                                    expectations: t('cases.focusExpectations'),
-                                  })}
-                            </TableCell>
-                            <TableCell className="py-4 align-top text-xs text-slate-600">
-                              {new Date(item.created_at).toLocaleString()}
-                            </TableCell>
-                            <TableCell className="py-3 text-right align-top">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setEditingCaseId(item.id)}
-                              >
-                                {commonT('edit')}
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                disabled={updateCase.isPending}
-                                onClick={() =>
-                                  updateCase.mutate({
-                                    caseId: item.id,
-                                    data: {
-                                      content: item.content,
-                                      expected_result: item.expected_result,
-                                      scenario_id: item.scenario_id,
-                                      question_type: item.question_type,
-                                      status: item.status === 'enabled' ? 'disabled' : 'enabled',
-                                      turns: item.turns,
-                                    },
-                                  })
-                                }
-                              >
-                                {item.status === 'enabled' ? commonT('disable') : commonT('enable')}
-                              </Button>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                                    <MoreHorizontal className="size-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  <DropdownMenuItem
-                                    className="text-red-600 focus:text-red-600"
-                                    onSelect={() => requestDeleteCases([item.id])}
-                                  >
-                                    <Trash2 className="mr-2 size-4" />
-                                    {commonT('delete')}
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </TableCell>
-                          </TableRow>
+                                {hasMultipleTurns ? (
+                                  <>
+                                    <div className="mt-1 text-xs text-slate-500">
+                                      {t('cases.turnCount', { count: turns.length })}
+                                      <button
+                                        type="button"
+                                        className="ml-1 font-medium text-blue-600 hover:text-blue-700 hover:underline"
+                                        onClick={() => toggleCaseExpanded(item.id)}
+                                      >
+                                        {isExpanded
+                                          ? t('cases.collapseTurns')
+                                          : t('cases.expandTurns')}
+                                      </button>
+                                    </div>
+                                    {isExpanded ? (
+                                      <div className="mt-3 min-w-0 space-y-3 border-l border-slate-200 pl-4 text-sm text-slate-700">
+                                        {turns.slice(1).map((turn, index) => (
+                                          <div
+                                            key={`${item.id}-turn-${index + 2}`}
+                                            className="relative min-w-0"
+                                          >
+                                            <span className="absolute -left-[19px] top-2 h-2 w-2 rounded-full border border-slate-300 bg-white" />
+                                            <div className="flex min-w-0 items-baseline gap-1">
+                                              <span className="shrink-0 whitespace-nowrap font-medium text-slate-600">
+                                                {t('cases.turnTitle', { index: index + 2 })}
+                                              </span>
+                                              <span className="min-w-0 truncate">
+                                                {turn.content}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                  </>
+                                ) : null}
+                                {item.turns?.some(turn => turn.attachments?.length) ? (
+                                  <div className="mt-1 text-xs text-slate-500">
+                                    {hasGeneratedAssets(item)
+                                      ? commonT('generatedAttachmentsIncluded')
+                                      : commonT('attachmentsIncluded')}
+                                  </div>
+                                ) : null}
+                              </TableCell>
+                              <TableCell className="py-4 align-top">
+                                <div className="line-clamp-2 break-words">
+                                  {item.scenario_id
+                                    ? scenariosById.get(item.scenario_id) || commonT('none')
+                                    : commonT('none')}
+                                </div>
+                              </TableCell>
+                              <TableCell className="py-4 align-top">
+                                {formatQuestionTypeLabel(item.question_type, typeT)}
+                              </TableCell>
+                              <TableCell className="py-4 align-top">
+                                <Badge
+                                  className={
+                                    item.status === 'enabled'
+                                      ? 'bg-emerald-50 text-emerald-700'
+                                      : 'bg-slate-100 text-slate-500'
+                                  }
+                                >
+                                  {statusLabel(item.status, commonT)}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="py-4 align-top text-xs text-slate-600">
+                                {workflowTestMode === 'task'
+                                  ? formatTaskCaseFocus(item, commonT('none'), {
+                                      variables: t('cases.focusVariables'),
+                                      files: t('cases.focusFiles'),
+                                      checks: t('cases.focusChecks'),
+                                      criticalChecks: t('cases.focusCriticalChecks'),
+                                    })
+                                  : formatConversationCaseFocus(item, {
+                                      turns: t('cases.focusTurns'),
+                                      expectations: t('cases.focusExpectations'),
+                                    })}
+                              </TableCell>
+                              <TableCell className="py-4 align-top text-xs text-slate-600">
+                                {new Date(item.created_at).toLocaleString()}
+                              </TableCell>
+                              <TableCell className="py-3 text-right align-top">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setEditingCaseId(item.id)}
+                                >
+                                  {commonT('edit')}
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={updateCase.isPending}
+                                  onClick={() =>
+                                    updateCase.mutate({
+                                      caseId: item.id,
+                                      data: {
+                                        content: item.content,
+                                        expected_result: item.expected_result,
+                                        scenario_id: item.scenario_id,
+                                        question_type: item.question_type,
+                                        status: item.status === 'enabled' ? 'disabled' : 'enabled',
+                                        turns: item.turns,
+                                      },
+                                    })
+                                  }
+                                >
+                                  {item.status === 'enabled'
+                                    ? commonT('disable')
+                                    : commonT('enable')}
+                                </Button>
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                      <MoreHorizontal className="size-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem
+                                      className="text-red-600 focus:text-red-600"
+                                      onSelect={() => requestDeleteCases([item.id])}
+                                    >
+                                      <Trash2 className="mr-2 size-4" />
+                                      {commonT('delete')}
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </TableCell>
+                            </TableRow>
                           );
                         })
                       )}
@@ -1377,48 +1453,61 @@ export function BatchTestOverview({
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              {shouldShowRunningBatch && runningBatch ? (
+              {shouldShowActiveBatches ? (
                 <div className="border-t border-slate-200 p-4">
-                  <div className="rounded-xl border border-blue-100 bg-blue-50/50 px-4 py-3">
-                    <div className="flex flex-wrap items-center justify-between gap-4">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-3">
-                          <div className="truncate text-sm font-medium text-slate-950">
-                            {t('batches.activeTitle', { name: runningBatch.name })}
+                  <div className="space-y-2">
+                    {activeBatches.map(activeBatch => (
+                      <div
+                        key={activeBatch.id}
+                        className="rounded-xl border border-blue-100 bg-blue-50/50 px-4 py-3"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-4">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-3">
+                              <div className="truncate text-sm font-medium text-slate-950">
+                                {t('batches.activeTitle', { name: activeBatch.name })}
+                              </div>
+                              <Badge className="bg-blue-100 text-blue-700">
+                                {activeBatch.status === 'running' ? (
+                                  <Loader2 className="mr-1 size-3 animate-spin" />
+                                ) : (
+                                  <Clock className="mr-1 size-3" />
+                                )}
+                                {batchStatusT(activeBatch.status)}
+                              </Badge>
+                              <Progress
+                                value={batchProgressValue(activeBatch)}
+                                className="h-1.5 min-w-[180px] flex-1 bg-white sm:max-w-xl"
+                              />
+                              <span className="shrink-0 text-xs text-slate-500">
+                                {t('batches.activeProgress', {
+                                  done: batchFinishedCount(activeBatch),
+                                  total: activeBatch.case_count,
+                                })}
+                              </span>
+                            </div>
                           </div>
-                          <Badge className="bg-blue-100 text-blue-700">
-                            <Loader2 className="mr-1 size-3 animate-spin" />
-                            {batchStatusT('running')}
-                          </Badge>
-                          <Progress
-                            value={batchProgressValue(runningBatch)}
-                            className="h-1.5 min-w-[180px] flex-1 bg-white sm:max-w-xl"
-                          />
-                          <span className="shrink-0 text-xs text-slate-500">
-                            {t('batches.activeProgress', {
-                              done: batchFinishedCount(runningBatch),
-                              total: runningBatch.case_count,
-                            })}
-                          </span>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <Button variant="outline" size="sm" asChild>
+                              <Link
+                                href={`/console/agents/${agentId}/batch-test/${activeBatch.id}`}
+                              >
+                                {t('batchActions.viewProgress')}
+                              </Link>
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={cancelBatch.isPending}
+                              onClick={() => cancelBatch.mutate(activeBatch.id)}
+                            >
+                              <Ban className="mr-1 size-4" />
+                              {commonT('cancel')}
+                            </Button>
+                          </div>
                         </div>
                       </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <Button variant="outline" size="sm" asChild>
-                          <Link href={`/console/agents/${agentId}/batch-test/${runningBatch.id}`}>
-                            {t('batchActions.viewProgress')}
-                          </Link>
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={cancelBatch.isPending}
-                          onClick={() => cancelBatch.mutate(runningBatch.id)}
-                        >
-                          <Ban className="mr-1 size-4" />
-                          {commonT('cancel')}
-                        </Button>
-                      </div>
-                    </div>
+                    ))}
                   </div>
                 </div>
               ) : null}
@@ -1593,6 +1682,7 @@ export function BatchTestOverview({
         onOpenChange={setGenerateDialogOpen}
         mode={workflowTestMode}
         supportsGeneratedFiles={supportsAttachments}
+        requiresCurrentTurnFiles={requiresCurrentTurnFiles}
         onGenerationStart={setPendingGenerationCount}
         onGenerationCreateFailed={() => setPendingGenerationCount(null)}
       />

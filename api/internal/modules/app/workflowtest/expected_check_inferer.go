@@ -143,7 +143,9 @@ Rules:
 7. Output checks must be concrete business fields or facts that are present in the task input or attached files. For missing input fields, generate checks for explicit missing-field markers such as missing/unknown/to be supplied/placeholders, not checks that require invented dates, parties, amounts, or contacts.
 8. Do not use meta labels as values, such as "product name is provided", "责任划分说明已包含", or "字段已提供". Use the concrete value when it exists, for example "智能手表"; if only the field is known to be absent, use a missing-field check such as "产品名称缺失".
 9. For state conclusions, include the state value and concrete evidence when possible, for example "部分验收", "拒收30件", "剩余50件未交付".
-10. Use severity critical only for core business facts and blocking forbidden claims; use normal for supplemental missing fields, path/capability checks, and non-blocking quality checks; use hint for latency.
+10. Generate a small diagnostic set, usually 3-5 conditions. Do not turn the whole expected_result into many output_contains checks.
+11. Use severity critical only for truly blocking failures: core objective not completed, fabricated key facts, technical parse failure, or a required key node/tool missing. Use normal for supplemental fields and path/capability checks; use hint for formatting, wording, latency, and nice-to-have completeness.
+12. If the overall task direction is likely correct but a detail may be incomplete, prefer normal or hint. The batch scorer should be able to pass a case with only non-blocking detail gaps.
 
 Workflow context:
 %s

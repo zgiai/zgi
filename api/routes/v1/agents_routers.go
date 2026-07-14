@@ -189,6 +189,8 @@ func RegisterAgentsRoutes(v1 *gin.RouterGroup, db *gorm.DB, accountService inter
 	workflowTests.GET("/cases/generation-tasks/latest", workflowTestHandler.GetLatestGenerationTask)
 	workflowTests.GET("/cases/generation-tasks/:task_id", workflowTestHandler.GetGenerationTask)
 	workflowTests.POST("/cases/generation-tasks/:task_id/cancel", workflowTestHandler.CancelGenerationTask)
+	workflowTests.POST("/cases/generation-tasks/:task_id/resume", workflowTestHandler.ResumeGenerationTask)
+	workflowTests.DELETE("/cases/generation-tasks/:task_id", workflowTestHandler.DeleteGenerationTask)
 	workflowTests.POST("/cases/generate", workflowTestHandler.GenerateCases)
 	workflowTests.GET("/batches", workflowTestHandler.ListBatches)
 	workflowTests.POST("/batches", workflowTestHandler.CreateBatch)

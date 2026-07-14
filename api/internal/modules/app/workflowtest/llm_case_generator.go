@@ -67,9 +67,86 @@ func (g *LLMCaseGenerator) GenerateCases(ctx context.Context, req GenerateCasesR
 	if err != nil {
 		return nil, err
 	}
+	if normalizeCaseMode(req.CaseMode) == "conversation" {
+		result = sanitizeConversationGeneratedCases(result)
+		if result == nil || len(result.Cases) == 0 {
+			return nil, fmt.Errorf("conversation case generator returned assistant replies or scripted dialogue instead of user inputs")
+		}
+	}
 	g.enrichConversationGeneratedChecks(req, result)
 	g.enrichTaskGeneratedChecks(timeoutCtx, req, result)
 	return result, nil
+}
+
+func sanitizeConversationGeneratedCases(result *GenerateCasesResult) *GenerateCasesResult {
+	if result == nil {
+		return nil
+	}
+	sanitized := &GenerateCasesResult{Items: result.Items}
+	for _, item := range result.Cases {
+		turns := sanitizeConversationGeneratedTurns(item.Turns)
+		if len(turns) == 0 {
+			content := strings.TrimSpace(item.Content)
+			if content != "" && !looksLikeAssistantGeneratedTurn(content) {
+				turns = []CaseTurn{{Role: "user", Content: content}}
+			}
+		}
+		if len(turns) == 0 {
+			continue
+		}
+		item.Turns = turns
+		item.Content = strings.TrimSpace(turns[0].Content)
+		sanitized.Cases = append(sanitized.Cases, item)
+	}
+	return sanitized
+}
+
+func sanitizeConversationGeneratedTurns(turns []CaseTurn) []CaseTurn {
+	sanitized := make([]CaseTurn, 0, len(turns))
+	for _, turn := range turns {
+		role := strings.ToLower(strings.TrimSpace(turn.Role))
+		if role != "" && role != "user" {
+			continue
+		}
+		content := strings.TrimSpace(turn.Content)
+		if content == "" && len(turn.Attachments) == 0 {
+			continue
+		}
+		if looksLikeAssistantGeneratedTurn(content) {
+			continue
+		}
+		turn.Role = "user"
+		turn.Content = content
+		sanitized = append(sanitized, turn)
+	}
+	return sanitized
+}
+
+func looksLikeAssistantGeneratedTurn(content string) bool {
+	text := strings.TrimSpace(content)
+	if text == "" {
+		return false
+	}
+	lower := strings.ToLower(text)
+	strongPrefixes := []string{
+		"已收到", "我已收到", "我将为", "我会为", "我来为", "正在为", "翻译完成", "处理完成", "以下是", "根据你提供", "根据您提供",
+		"i have received", "i will now", "here is the result", "here are the results",
+	}
+	for _, prefix := range strongPrefixes {
+		if strings.HasPrefix(lower, strings.ToLower(prefix)) {
+			return true
+		}
+	}
+	strongFragments := []string{
+		"请稍候", "收到文件", "收到您上传", "收到你上传", "正在处理", "正在为你", "正在为您", "已为你", "已为您", "为您整理", "为你整理", "翻译如下", "结果如下", "处理结果",
+		"please wait", "processing your", "translated as follows", "translation is complete", "the result is as follows",
+	}
+	for _, fragment := range strongFragments {
+		if strings.Contains(lower, strings.ToLower(fragment)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *LLMCaseGenerator) enrichConversationGeneratedChecks(req GenerateCasesRequest, result *GenerateCasesResult) {
@@ -179,12 +256,12 @@ func buildGeneratedTaskEvaluationSchema(item *GeneratedCase, checks TaskExpected
 			continue
 		}
 		schema.Assertions = append(schema.Assertions, TaskEvaluationAssertion{
-			ID:          makeTaskEvaluationAssertionID(TaskEvaluationAssertion{Type: "must_include"}, len(schema.Assertions)+1),
-			Type:        "must_include",
+			ID:          makeTaskEvaluationAssertionID(TaskEvaluationAssertion{Type: "fact_present"}, len(schema.Assertions)+1),
+			Type:        "fact_present",
 			Description: value,
 			Values:      []string{value},
 			Operator:    "contains",
-			Severity:    "critical",
+			Severity:    "normal",
 			MatchMode:   "semantic",
 			Source:      "file_fixture",
 		})
@@ -208,7 +285,9 @@ For example, if the business scenario is company contract summary:
 - manual should represent failed execution or needs-review result, not transfer to a person.
 
 For incomplete or low-information inputs, expected_result should require faithful extraction of available facts and explicit missing-field markers such as missing/unknown/to be supplied/placeholders; do not require the workflow to infer absent dates, parties, amounts, contacts, or other facts.
-Return a single user turn with inputs.__case_mode="task" and inputs.__expected_checks when useful. When returning inputs.__expected_checks, prefer {"conditions":[{"type":"node","operator":"input_contains|output_contains|visited","target_id":"node id or name","target_label":"node display name","values":["check item"],"match_mode":"semantic","severity":"critical|normal|hint","source":"ai_generated"},{"type":"output_contains","operator":"contains","values":["final output field or missing-field marker"],"match_mode":"semantic","severity":"critical","source":"ai_generated"}]} and keep legacy output_contains only for compatibility. Expected check values must be concrete facts, field values, missing-field markers, or status values. Do not write meta labels such as "产品名称已提供", "字段已提供", or "责任划分说明已包含"; use the concrete product name, field value, or status evidence instead. Start nodes should use input checks; end/answer nodes should use output checks; do not generate checks for note/comment nodes.`
+Expected results should describe the ideal business outcome, not an exhaustive acceptance checklist. Keep hard checks small: only 3-5 core facts or blocking constraints should be critical. Ordinary field coverage, formatting, wording, and extra analysis should be normal or hint level.
+
+Return a single user turn with inputs.__case_mode="task" and inputs.__expected_checks when useful. When returning inputs.__expected_checks, prefer {"conditions":[{"type":"node","operator":"input_contains|output_contains|visited","target_id":"node id or name","target_label":"node display name","values":["check item"],"match_mode":"semantic","severity":"critical|normal|hint","source":"ai_generated"},{"type":"output_contains","operator":"contains","values":["final output field or missing-field marker"],"match_mode":"semantic","severity":"critical|normal|hint","source":"ai_generated"}]} and keep legacy output_contains only for compatibility. Expected check values must be concrete facts, field values, missing-field markers, or status values. Do not write meta labels such as "产品名称已提供", "字段已提供", or "责任划分说明已包含"; use the concrete product name, field value, or status evidence instead. Start nodes should use input checks; end/answer nodes should use output checks; do not generate checks for note/comment nodes.`
 }
 
 func buildGenerateCasesPrompt(req GenerateCasesRequest) string {
@@ -237,24 +316,20 @@ func buildGenerateCasesPrompt(req GenerateCasesRequest) string {
 	if caseMode == "task" {
 		prompt = taskCaseGenerationModePrompt() + "\n" + prompt
 	} else if caseMode == "conversation" {
-		prompt = "Generate conversation-workflow test cases. Prefer realistic single or multi-turn user conversations. Do not generate workflow node checks or task file/sys variable checks. For each turn, include expected_result and turn_checks when useful. For the whole conversation, include conversation_checks when multi-turn context, memory, consistency, safety, or no-hallucination should be checked. Output shape may be {\"cases\":[{\"content\":\"conversation summary or first user message\",\"expected_result\":\"overall expectation\",\"question_type\":\"core\",\"turns\":[{\"role\":\"user\",\"content\":\"user message\",\"expected_result\":\"per-turn expected reply behavior\",\"turn_checks\":{\"conditions\":[{\"type\":\"intent_understanding|clarification|reply_contains|fallback|safety|output_format|task_completion\",\"operator\":\"passed|contains|not_contains\",\"values\":[\"concrete check point\"],\"match_mode\":\"semantic|keyword\",\"severity\":\"critical|normal|hint\",\"source\":\"ai_generated\"}]}}],\"conversation_checks\":{\"conditions\":[{\"type\":\"context_following|memory|consistency|no_hallucination|no_system_leak|tone\",\"operator\":\"passed|contains|not_contains\",\"values\":[\"global conversation check point\"],\"match_mode\":\"semantic\",\"severity\":\"critical|normal|hint\",\"source\":\"ai_generated\"}]}}]}. Store only business-facing expectations; do not mention internal node names unless the user would naturally say them.\n" + prompt
+		prompt = "Generate conversation-workflow test cases. The turns array is not a full chat transcript. It must contain only the end user's sequential inputs that will be sent to the agent during the batch test. Never put assistant replies, system status, narration, intermediate processing messages, or final answers in turns[].content. Do not write turns like \"已收到文件，正在处理\", \"翻译完成\", \"以下是结果\", \"I have received the file\", or \"Here is the translation\". Put expected assistant behavior only in expected_result, turn_checks, or conversation_checks. Multi-turn means the user follows up, clarifies, corrects, adds missing information, changes requirements, or asks a context-dependent question after the previous real agent response. Do not generate workflow node checks or task file/sys variable checks. For each turn, include expected_result and turn_checks when useful. For the whole conversation, include conversation_checks when multi-turn context, memory, consistency, safety, or no-hallucination should be checked. Output shape may be {\"cases\":[{\"content\":\"first user message\",\"expected_result\":\"overall expectation\",\"question_type\":\"core\",\"turns\":[{\"role\":\"user\",\"content\":\"only a user message\",\"expected_result\":\"per-turn expected agent behavior\",\"turn_checks\":{\"conditions\":[{\"type\":\"intent_understanding|clarification|reply_contains|fallback|safety|output_format|task_completion\",\"operator\":\"passed|contains|not_contains\",\"values\":[\"concrete check point\"],\"match_mode\":\"semantic|keyword\",\"severity\":\"critical|normal|hint\",\"source\":\"ai_generated\"}]}}],\"conversation_checks\":{\"conditions\":[{\"type\":\"context_following|memory|consistency|no_hallucination|no_system_leak|tone\",\"operator\":\"passed|contains|not_contains\",\"values\":[\"global conversation check point\"],\"match_mode\":\"semantic\",\"severity\":\"critical|normal|hint\",\"source\":\"ai_generated\"}]}}]}. Store only business-facing expectations; do not mention internal node names unless the user would naturally say them.\n" + prompt
 	}
 	fileGeneration := normalizeFileGenerationConfig(req.FileGeneration)
 	if fileGeneration.Enabled {
 		configJSON, _ := json.Marshal(fileGeneration)
 		if caseMode == "conversation" {
-			prompt = fmt.Sprintf("This conversation workflow supports file attachments. Do not ask the user to upload files in generated content. For each case, include file_fixtures with format, filename, title, concise content, facts, and expected_checks. facts and expected_checks must be arrays of strings, for example [\"customer: Zhang San\", \"document type: contract\"], not objects. Keep fixture.content short and focused, no more than 500 Chinese characters per file. The backend will render these fixtures into upload_files and attach them to the first user turn. Generate per-turn and global conversation checks for how the assistant should use the attached file, but do not generate task workflow node checks. File generation config: %s\n", string(configJSON)) + prompt
+			prompt = fmt.Sprintf("This conversation workflow supports file attachments. Do not ask the user to upload files in generated content. For each case, include file_fixtures with format, filename, title, concise content, facts, and expected_checks. facts and expected_checks must be arrays of user-facing natural-language strings, not objects. Keep fixture.content short and focused, no more than 500 Chinese characters per file. The backend will render these fixtures into upload_files and attach them to the first user turn. The first turn may say the user attached or wants to use the file, but later turns must still be user follow-up inputs, not assistant processing states. Generate per-turn and global conversation checks for how the assistant should use the attached file, but do not generate task workflow node checks. File generation config: %s\n", string(configJSON)) + prompt
 		} else {
 			prompt = fmt.Sprintf("This task workflow requires generated input files. Do not ask the user to upload files. For each case, include file_fixtures with format, filename, title, concise content, facts, and expected_checks. facts and expected_checks must be arrays of user-facing natural-language strings, not objects and not machine labels. Use the same language as the case for every visible fact/check label. For Chinese cases, facts and expected_checks must be fully Chinese except unavoidable IDs, dates, product codes, URLs, or file names. Do not output English label prefixes such as \"complainant:\", \"event timeline includes:\", \"request includes:\", \"evidence includes:\", \"missing info includes:\", \"missing field:\", \"customer:\", \"document type:\", \"related party:\", \"order number:\", or any other English key:value label. Instead write natural Chinese labels such as \"投诉方：王丽\", \"事件时间线包括：2024年5月1日、5月3日\", \"诉求包括：换货、补偿物流费\", \"证据包括：视频链接、订单号\", \"缺失信息包括：发票、客服联系记录\", \"输出应标注订单号和产品名称缺失\". Do not write unverifiable meta labels such as \"产品名称已提供\" or \"责任划分说明已包含\"; use concrete values such as \"产品名称：智能手表\" or concrete state evidence such as \"验收状态：部分验收，30件拒收\". Keep fixture.content short and focused, no more than 500 Chinese characters per file. Put verifiable truth in facts and expected_checks. If a complete readable fixture is generated, do not write a broad expectation like \"must not mention missing information\"; if you mean technical parsing success, write \"不得声称文件无法读取、内容为空、解析失败或要求重新上传\" for Chinese cases. Allow the workflow to list business missing clauses or optional supplemental information such as total amount, acceptance standard, dispute resolution, or contact details when the fixture does not contain them. The backend will render these fixtures into upload_files and attach them to sys.files. File generation config: %s\n", string(configJSON)) + prompt
 		}
 	}
 	questionTypes := strings.Join(normalizeQuestionTypes(req.QuestionTypes), ", ")
 	if questionTypes == "" {
-		if caseMode == "task" {
-			questionTypes = "core, extension, fuzzy"
-		} else {
-			questionTypes = "core, extension, fuzzy, manual"
-		}
+		questionTypes = CaseTypeCore
 	}
 	scenarioID := strings.TrimSpace(req.ScenarioID)
 	if scenarioID == "" && len(req.ScenarioIDs) > 0 {
@@ -271,7 +346,7 @@ func buildGenerateCasesPrompt(req GenerateCasesRequest) string {
 		case "single":
 			prompt = "Turn strategy is STRICTLY single-turn. Each generated case must contain exactly one role=user turn. Do not create follow-up turns.\n" + prompt
 		case "multi":
-			prompt = "Turn strategy is STRICTLY multi-turn. Each generated case must contain at least three role=user turns in turns, preferably 3-5 turns. Later turns must depend on earlier context, for example follow-up clarification, correction, missing information, or changed requirements. Do not return a single-turn or only two-turn case.\n" + prompt
+			prompt = "Turn strategy is STRICTLY multi-turn. Each generated case must contain at least three role=user turns in turns, preferably 3-5 turns. Every turn must be a realistic user input only. Later turns must depend on earlier context, for example user follow-up clarification, correction, missing information, changed requirements, or a context-dependent question. Do not return assistant replies, processing states, a full chat transcript, a single-turn case, or only two-turn case.\n" + prompt
 		default:
 			prompt = "Turn strategy is mixed. Generate according to the requested per-case strategy when present; include both single-turn and multi-turn cases when generating more than one case.\n" + prompt
 		}
@@ -326,7 +401,8 @@ func buildGenerateCasesPrompt(req GenerateCasesRequest) string {
 10. 如果生成数量大于目标业务场景数量，优先保证每个目标业务场景至少 1 条问题；剩余数量在场景和问题类型之间尽量分散。
 11. 避免与已有测试问题重复；允许少量有新测试价值的语义变体，但不能只是简单换词。
 12. 对任务工作流的文件样例，区分“技术性内容缺失/解析失败”和“业务文档未约定的补充信息”。不要把“不得提示内容缺失”写成禁止列出业务缺失信息；若只想验证解析成功，应写“不得声称文件无法读取、内容为空、解析失败或要求重新上传”。
-13. 输出 JSON 对象，格式为：{"cases":[{"scenario_id":"场景ID","content":"问题内容","expected_result":"预期结果","question_type":"core"}]}
+13. 对任务工作流，预期结果描述核心业务目标即可，不要把所有字段、格式、措辞和可选补充都写成硬性验收清单；普通细节应作为可复核或优化项。
+14. 输出 JSON 对象，格式为：{"cases":[{"scenario_id":"场景ID","content":"问题内容","expected_result":"预期结果","question_type":"core"}]}
 
 目标业务场景 ID：
 %s

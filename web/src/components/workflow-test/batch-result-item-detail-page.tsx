@@ -33,9 +33,11 @@ import type {
   WorkflowTestEvaluationSchema,
 } from '@/services/types/workflow-test';
 import { useWorkflowDraft } from '@/hooks/workflow/use-workflow';
+import { useWorkflowRunNodeExecutions } from '@/hooks/workflow/use-workflow-run-node-executions';
 import { NODE_THEMES } from '@/components/workflow/nodes/custom/config';
 import { cn } from '@/lib/utils';
 import MarkdownViewer from '@/components/common/markdown-viewer';
+import type { WorkflowNodeExecution } from '@/services/types/workflow';
 import { formatQuestionTypeLabel } from './question-type';
 
 interface BatchResultItemDetailPageProps {
@@ -210,7 +212,64 @@ function hasExecutionFailure(outputs: Record<string, unknown>) {
   if (nodeErrors && typeof nodeErrors === 'object' && Object.keys(nodeErrors).length > 0) {
     return true;
   }
+  const trace = workflowTestTraceNodes(outputs);
+  if (trace.some(node => node.status === 'failed' || Boolean(node.error))) {
+    return true;
+  }
   return false;
+}
+
+function workflowTestTraceNodes(outputs: Record<string, unknown>): Array<Record<string, unknown>> {
+  const trace = outputs.workflow_trace;
+  if (!isRecord(trace)) {
+    return [];
+  }
+  const nodes = trace.nodes;
+  if (!Array.isArray(nodes)) {
+    return [];
+  }
+  return nodes.filter(isRecord);
+}
+
+interface ExecutionFailureLabels {
+  withReason: (reason: string) => string;
+  noReply: string;
+  nodeFailed: string;
+}
+
+function executionFailureText(
+  outputs: Record<string, unknown>,
+  labels: ExecutionFailureLabels,
+  itemError?: string
+) {
+  if (itemError?.trim()) {
+    return labels.withReason(itemError.trim());
+  }
+  if (typeof outputs.error === 'string' && outputs.error.trim()) {
+    return labels.withReason(outputs.error.trim());
+  }
+  const traceError = workflowTestTraceNodes(outputs)
+    .map(node => {
+      const error = typeof node.error === 'string' ? node.error.trim() : '';
+      if (!error && node.status !== 'failed') return '';
+      const nodeLabel =
+        (typeof node.node_name === 'string' && node.node_name.trim()) ||
+        (typeof node.node_id === 'string' && node.node_id.trim()) ||
+        (typeof node.id === 'string' && node.id.trim()) ||
+        '';
+      if (error && nodeLabel) return `${nodeLabel}: ${error}`;
+      if (error) return error;
+      if (nodeLabel) return `${nodeLabel}: ${labels.nodeFailed}`;
+      return labels.nodeFailed;
+    })
+    .find(Boolean);
+  if (traceError) {
+    return labels.withReason(traceError);
+  }
+  if (outputs.status === 'failed') {
+    return labels.noReply;
+  }
+  return '';
 }
 
 function formatResponseTime(item: WorkflowTestBatchItem, none: string) {
@@ -240,7 +299,7 @@ function normalizeJudgeScore(value: number) {
 
 function deriveJudgeScore(item: WorkflowTestBatchItem, outputs: Record<string, unknown>) {
   if (item.error || hasExecutionFailure(outputs)) {
-    return 0;
+    return null;
   }
   const analysis = workflowTestAnalysis(outputs);
   const summary = analysis?.summary;
@@ -455,6 +514,56 @@ function hasDisplayValue(value: unknown) {
   return true;
 }
 
+interface DiagnosticTraceNode {
+  node_id: string;
+  node_name: string;
+  node_type: string;
+  status: string;
+  duration_ms: number;
+  input: unknown;
+  output: unknown;
+  error: string;
+}
+
+function diagnosticExecutionError(error: WorkflowNodeExecution['error']) {
+  if (typeof error === 'string') return error.trim();
+  if (error && typeof error === 'object') return stringifyJson(error, '');
+  return '';
+}
+
+function buildDiagnosticTraceNodes(
+  records: WorkflowNodeExecution[],
+  fallback: WorkflowTestAnalysis['trace']['nodes']
+): DiagnosticTraceNode[] {
+  const nodes: DiagnosticTraceNode[] =
+    records.length > 0
+      ? records.map(record => ({
+          node_id: record.node_id,
+          node_name: record.title,
+          node_type: record.node_type,
+          status: record.status,
+          duration_ms: record.elapsed_time,
+          input: record.inputs,
+          output: record.outputs,
+          error: diagnosticExecutionError(record.error),
+        }))
+      : fallback.map(node => ({
+          node_id: node.node_id,
+          node_name: node.node_name,
+          node_type: node.node_type,
+          status: node.status,
+          duration_ms: node.duration_ms,
+          input: node.input,
+          output: node.output,
+          error: node.error ?? '',
+        }));
+
+  return nodes.filter(
+    node =>
+      hasDisplayValue(node.input) || hasDisplayValue(node.output) || Boolean(node.error.trim())
+  );
+}
+
 interface ExecutionNodeSnapshot {
   id: string;
   status: string;
@@ -608,8 +717,9 @@ function sortExecutionNodesByWorkflowOrder(
 function fallbackExecutionStepMeta(nodeId: string): WorkflowDraftNodeMeta {
   if (!nodeId) return { id: nodeId, title: nodeId, type: '' };
   if (nodeId.includes('start')) return { id: nodeId, title: '开始节点', type: 'start' };
-  if (nodeId.includes('answer') || nodeId.includes('reply'))
+  if (nodeId.includes('answer') || nodeId.includes('reply')) {
     return { id: nodeId, title: '回复生成', type: 'answer' };
+  }
   if (nodeId.includes('llm')) return { id: nodeId, title: 'LLM', type: 'llm' };
   if (nodeId.includes('branch')) return { id: nodeId, title: '分支节点', type: 'if-else' };
   return { id: nodeId, title: nodeId, type: '' };
@@ -657,9 +767,14 @@ function extractTurnResultSnapshots(outputs: Record<string, unknown>): TurnResul
     .filter((item): item is TurnResultSnapshot => item !== null);
 }
 
-function outputAnswer(outputs: Record<string, unknown>) {
-  if (hasExecutionFailure(outputs)) {
-    return '';
+function outputAnswer(
+  outputs: Record<string, unknown>,
+  labels: ExecutionFailureLabels,
+  itemError?: string
+) {
+  const failureText = executionFailureText(outputs, labels, itemError);
+  if (failureText) {
+    return failureText;
   }
   const direct = stringifyOutput(outputs, '');
   if (direct.trim()) {
@@ -674,36 +789,53 @@ function outputAnswer(outputs: Record<string, unknown>) {
 
 function buildConversationTurnSnapshots(
   outputs: Record<string, unknown>,
-  item: WorkflowTestBatchItem
+  item: WorkflowTestBatchItem,
+  labels: ExecutionFailureLabels
 ): ConversationTurnSnapshot[] {
   const turnResults = extractTurnResultSnapshots(outputs);
+  const plannedTurns = item.case_snapshot.turns?.length
+    ? item.case_snapshot.turns
+    : [
+        {
+          content: item.case_snapshot.content,
+          expected_result: item.case_snapshot.expected_result,
+        },
+      ];
   if (turnResults.length > 0) {
-    return turnResults.map((turn, index) => {
-      const fallbackTurn = item.case_snapshot.turns?.[index];
+    const resultsByIndex = new Map(turnResults.map(turn => [turn.turnIndex, turn]));
+    const lastExecutedTurnIndex = Math.max(...turnResults.map(turn => turn.turnIndex));
+    const turnCount = Math.max(plannedTurns.length, lastExecutedTurnIndex);
+    return Array.from({ length: turnCount }, (_, index) => {
+      const fallbackTurn = plannedTurns[index];
+      const turn = resultsByIndex.get(index + 1);
       return {
-        ...turn,
-        content: turn.content || fallbackTurn?.content || item.case_snapshot.content || '',
-        answer: outputAnswer(turn.outputs),
+        turnIndex: index + 1,
+        content: turn?.content || fallbackTurn?.content || item.case_snapshot.content || '',
+        workflowRunId: turn?.workflowRunId || '',
+        outputs: turn?.outputs || {},
+        answer:
+          turn && turn.turnIndex === lastExecutedTurnIndex
+            ? outputAnswer(turn.outputs, labels, item.error)
+            : turn
+              ? outputAnswer(turn.outputs, labels)
+              : '',
         expected: fallbackTurn?.expected_result || item.case_snapshot.expected_result || '',
       };
     });
   }
 
-  const answer = outputAnswer(outputs);
+  const answer = outputAnswer(outputs, labels, item.error);
   if (!answer.trim()) {
     return [];
   }
-  const firstTurn = item.case_snapshot.turns?.[0];
-  return [
-    {
-      turnIndex: 1,
-      content: firstTurn?.content || item.case_snapshot.content || '',
-      workflowRunId: item.workflow_run_id || '',
-      outputs,
-      answer,
-      expected: firstTurn?.expected_result || item.case_snapshot.expected_result || '',
-    },
-  ];
+  return plannedTurns.map((turn, index) => ({
+    turnIndex: index + 1,
+    content: turn.content || (index === 0 ? item.case_snapshot.content : ''),
+    workflowRunId: index === 0 ? item.workflow_run_id || '' : '',
+    outputs: index === 0 ? outputs : {},
+    answer: index === 0 ? answer : '',
+    expected: turn.expected_result || item.case_snapshot.expected_result || '',
+  }));
 }
 
 function compactText(value: string) {
@@ -756,8 +888,9 @@ function buildRecommendationTexts(
       content.includes('AI 评估') ||
       content.includes('人工复核') ||
       content.includes('检查点判断')
-    )
+    ) {
       return;
+    }
     values.push(target && !isGenericCheckLabel(target) ? `${target}: ${content}` : content);
   });
   relevantChecks(analysis)
@@ -811,6 +944,11 @@ export function BatchResultItemDetailPage({
   const items = itemsData?.data?.items ?? [];
   const itemIndex = items.findIndex(item => item.id === itemId);
   const selectedItem = itemIndex >= 0 ? items[itemIndex] : null;
+  const workflowRunId = selectedItem?.workflow_run_id || null;
+  const { records: workflowNodeExecutions } = useWorkflowRunNodeExecutions(
+    { agentId, runId: workflowRunId },
+    { enabled: Boolean(workflowRunId) }
+  );
   const previousItem = itemIndex > 0 ? items[itemIndex - 1] : null;
   const nextItem = itemIndex >= 0 && itemIndex < items.length - 1 ? items[itemIndex + 1] : null;
   const [rawView, setRawView] = React.useState<RawViewPayload | null>(null);
@@ -886,7 +1024,16 @@ export function BatchResultItemDetailPage({
   }
 
   const outputs = selectedItem.outputs || {};
+  const executionFailureLabels: ExecutionFailureLabels = {
+    withReason: reason => t('executionFailedWithReason', { reason }),
+    noReply: t('executionFailedNoReply'),
+    nodeFailed: t('nodeExecutionFailed'),
+  };
   const analysis = workflowTestAnalysis(outputs);
+  const diagnosticTraceNodes = buildDiagnosticTraceNodes(
+    workflowNodeExecutions,
+    analysis?.trace.nodes ?? []
+  );
   const checks = analysis?.comparisons.checks ?? [];
   const checkCounts = checkCountByStatus(checks);
   const taskEvaluationSchema = analysis?.mode === 'task' ? analysis.evaluation_schema : undefined;
@@ -898,9 +1045,13 @@ export function BatchResultItemDetailPage({
     extractExecutionNodes(outputs),
     draftNodeOrderById
   );
-  const conversationTurns = buildConversationTurnSnapshots(outputs, selectedItem);
+  const conversationTurns = buildConversationTurnSnapshots(
+    outputs,
+    selectedItem,
+    executionFailureLabels
+  );
   const judgeScore = deriveJudgeScore(selectedItem, outputs);
-  const judgeScoreText = formatJudgeScore(judgeScore);
+  const judgeScoreText = judgeScore === null ? t('notScored') : formatJudgeScore(judgeScore);
   const questionSnapshot = selectedItem.case_snapshot.content || commonT('none');
   const expectedResult = selectedItem.case_snapshot.expected_result || commonT('none');
   const primaryReasonText =
@@ -923,17 +1074,6 @@ export function BatchResultItemDetailPage({
       ? 'passed'
       : analysis?.summary.status;
   const failedNodes = failedExecutionNodes(executionNodes);
-  const reasonText = primaryReasonText;
-  const reasonTitle =
-    selectedItem.status === 'passed' && !selectedItem.error
-      ? t('passConclusion')
-      : t('issueReason');
-  const reasonToneClass =
-    selectedItem.status === 'passed' && !selectedItem.error
-      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-      : 'border-red-200 bg-red-50 text-red-800';
-  const reasonTitleClass =
-    selectedItem.status === 'passed' && !selectedItem.error ? 'text-emerald-600' : 'text-red-500';
   const openRawView = (title: string, content: RawViewPayload['content']) =>
     setRawView({ title, content });
 
@@ -1132,7 +1272,10 @@ export function BatchResultItemDetailPage({
                   <div className="rounded-2xl border border-slate-200 bg-white p-4">
                     <div className="mb-2 text-xs font-medium text-slate-500">{t('agentReply')}</div>
                     <div className="max-h-96 overflow-auto text-sm leading-6 text-slate-800">
-                      <WorkflowOutput content={outputAnswer(outputs)} none={commonT('none')} />
+                      <WorkflowOutput
+                        content={outputAnswer(outputs, executionFailureLabels, selectedItem.error)}
+                        none={commonT('none')}
+                      />
                     </div>
                   </div>
                 </div>
@@ -1412,7 +1555,7 @@ export function BatchResultItemDetailPage({
                   </div>
                 ) : null}
 
-                {analysis?.trace.nodes.length ? (
+                {diagnosticTraceNodes.length ? (
                   <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
                     <summary className="cursor-pointer text-sm font-medium text-slate-900">
                       工程排障信息：节点输入输出
@@ -1421,7 +1564,7 @@ export function BatchResultItemDetailPage({
                       仅在运行日志记录了可展示数据时显示。空白不代表节点没有执行，可能是该节点未产出前端可展示字段或日志未保存详细输入输出。
                     </div>
                     <div className="mt-3 space-y-2">
-                      {analysis.trace.nodes.map((node, index) => (
+                      {diagnosticTraceNodes.map((node, index) => (
                         <details
                           key={`${node.node_id}-${index}`}
                           className="rounded-lg border border-slate-200 bg-white p-3"
@@ -1435,34 +1578,24 @@ export function BatchResultItemDetailPage({
                                 : ''}
                             </span>
                           </summary>
-                          {hasDisplayValue(node.input) || hasDisplayValue(node.output) ? (
-                            <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                              {hasDisplayValue(node.input) ? (
-                                <div className="rounded-lg bg-slate-50 p-3">
-                                  <div className="mb-2 text-xs font-medium text-slate-500">
-                                    输入
-                                  </div>
-                                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs text-slate-700">
-                                    {stringifyJson(node.input, commonT('none'))}
-                                  </pre>
-                                </div>
-                              ) : null}
-                              {hasDisplayValue(node.output) ? (
-                                <div className="rounded-lg bg-slate-50 p-3">
-                                  <div className="mb-2 text-xs font-medium text-slate-500">
-                                    输出
-                                  </div>
-                                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs text-slate-700">
-                                    {stringifyJson(node.output, commonT('none'))}
-                                  </pre>
-                                </div>
-                              ) : null}
-                            </div>
-                          ) : (
-                            <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-500">
-                              运行日志未记录该节点的可展示输入/输出。
-                            </div>
-                          )}
+                          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                            {hasDisplayValue(node.input) ? (
+                              <div className="rounded-lg bg-slate-50 p-3">
+                                <div className="mb-2 text-xs font-medium text-slate-500">输入</div>
+                                <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs text-slate-700">
+                                  {stringifyJson(node.input, commonT('none'))}
+                                </pre>
+                              </div>
+                            ) : null}
+                            {hasDisplayValue(node.output) ? (
+                              <div className="rounded-lg bg-slate-50 p-3">
+                                <div className="mb-2 text-xs font-medium text-slate-500">输出</div>
+                                <pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs text-slate-700">
+                                  {stringifyJson(node.output, commonT('none'))}
+                                </pre>
+                              </div>
+                            ) : null}
+                          </div>
                           {node.error ? (
                             <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
                               {node.error}

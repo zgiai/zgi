@@ -25,11 +25,12 @@ type GenerateCasesRequest struct {
 	Prompt         string                `json:"prompt,omitempty"`
 	Model          *Model                `json:"model,omitempty"`
 
-	WorkflowContext string     `json:"-"`
-	Scenarios       []Scenario `json:"-"`
-	ExistingCases   []Case     `json:"-"`
-	WorkspaceID     string     `json:"-"`
-	AccountID       string     `json:"-"`
+	WorkflowContext          string     `json:"-"`
+	RequiresCurrentTurnFiles bool       `json:"-"`
+	Scenarios                []Scenario `json:"-"`
+	ExistingCases            []Case     `json:"-"`
+	WorkspaceID              string     `json:"-"`
+	AccountID                string     `json:"-"`
 }
 
 type CreateGenerationTaskRequest = GenerateCasesRequest

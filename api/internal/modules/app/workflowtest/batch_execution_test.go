@@ -2,6 +2,7 @@ package workflowtest
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"testing"
 	"time"
@@ -15,6 +16,19 @@ type blockingRunner struct{}
 func (blockingRunner) RunCase(ctx context.Context, req RunCaseRequest) (*RunCaseResult, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
+}
+
+type partialFailureRunner struct{}
+
+func (partialFailureRunner) RunCase(ctx context.Context, req RunCaseRequest) (*RunCaseResult, error) {
+	return &RunCaseResult{
+		WorkflowRunID: "run-1",
+		Outputs: map[string]interface{}{
+			"status":             "failed",
+			"turn_count":         1,
+			"planned_turn_count": 2,
+		},
+	}, errors.New("workflow execution failed at document extractor")
 }
 
 type passingJudge struct{}
@@ -80,6 +94,56 @@ func TestExecuteBatchFailsTimedOutItem(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, BatchStatusCompleted, batch.Status)
+	require.Equal(t, 1, batch.FailedCount)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestExecuteBatchPreservesPartialWorkflowResultOnFailure(t *testing.T) {
+	db, mock, cleanup := newWorkflowTestMockDB(t)
+	defer cleanup()
+	service := NewService(NewRepository(db))
+	now := testNow()
+	turns := `[{"role":"user","content":"first"},{"role":"user","content":"second"}]`
+
+	expectGetBatch(mock, "agent-1", "batch-1", batchRows().
+		AddRow("batch-1", "agent-1", "Batch", BatchStatusRunning, 1, 0, 0, 0, "judge", "", "", "draft", nil, "current_draft", "", now, now))
+	expectListBatchItems(mock, "agent-1", "batch-1", batchItemRows().
+		AddRow("item-1", "agent-1", "batch-1", "case-1", `{"id":"case-1","content":"first","expected_result":"answer","question_type":"core","turns":`+turns+`}`, string(BatchItemStatusPending), "", `{}`, "", "", "", 0, now, now))
+	expectGetBatch(mock, "agent-1", "batch-1", batchRows().
+		AddRow("batch-1", "agent-1", "Batch", BatchStatusRunning, 1, 0, 0, 0, "judge", "", "", "draft", nil, "current_draft", "", now, now))
+	expectUpdateBatchItemStatus(mock, "agent-1", "item-1", string(BatchItemStatusPending), string(BatchItemStatusRunning))
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE "workflow_test_batch_items" SET "error"=$1,"judge_confidence"=$2,"judge_reason"=$3,"judge_suggestion"=$4,"outputs"=$5,"status"=$6,"updated_at"=$7,"workflow_run_id"=$8 WHERE agent_id = $9 AND id = $10 AND status = $11`)).
+		WithArgs(
+			"workflow execution failed at document extractor",
+			float64(0),
+			"",
+			"",
+			`{"planned_turn_count":2,"status":"failed","turn_count":1}`,
+			string(BatchItemStatusFailed),
+			sqlmock.AnyArg(),
+			"run-1",
+			"agent-1",
+			"item-1",
+			string(BatchItemStatusRunning),
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	expectTouchBatch(mock, "agent-1", "batch-1")
+	expectUpdateBatchSummary(mock, "agent-1", "batch-1", BatchStatusCompleted, 0, 1, 0, "summary")
+	expectGetBatch(mock, "agent-1", "batch-1", batchRows().
+		AddRow("batch-1", "agent-1", "Batch", BatchStatusCompleted, 1, 0, 1, 0, "judge", "", "", "draft", nil, "current_draft", "summary", now, now))
+
+	batch, err := service.ExecuteStartedBatchWithRunnerJudgeAndSummarizer(
+		context.Background(),
+		"agent-1",
+		"batch-1",
+		partialFailureRunner{},
+		passingJudge{},
+		noopSummarizer{},
+	)
+
+	require.NoError(t, err)
 	require.Equal(t, 1, batch.FailedCount)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
