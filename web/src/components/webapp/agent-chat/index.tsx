@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { LogIn } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useStore } from 'zustand';
@@ -14,6 +14,11 @@ import type { WebAppWorkflowConfig } from '@/services/types/webapp';
 import { useAuthStore } from '@/store/auth-store';
 import { WEBAPP_USER_MIGRATED_EVENT } from '@/hooks/webapp/use-maybe-migrate-user';
 import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
+import {
+  type ConversationRouteHandoff,
+  resolveConversationRouteSync,
+  shouldStartNewConversationForRoute,
+} from './route-handoff';
 
 interface AgentWebappChatProps {
   webAppId: string;
@@ -77,15 +82,21 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
   const uploadScope = useMemo(() => ({ type: 'webapp' as const, webAppId }), [webAppId]);
   const controller = useAIChatController({ transport, requireModel: false });
   const initController = controller.init;
-  const selectConversation = controller.select;
   const startNewConversation = controller.startNew;
   const activeConversationId = useStore(controller.store, state => state.activeConversationId);
   const conversationIdParam = searchParams.get('convId');
+  const initControllerRef = useRef(initController);
+  const startNewConversationRef = useRef(startNewConversation);
+  const lastInitializedConversationIdRef = useRef<string | null | undefined>(undefined);
+  const routeHandoffRef = useRef<ConversationRouteHandoff | undefined>(undefined);
   const modelValue = useMemo(() => ({ provider: '', model: '', params: {} }), []);
 
   const replaceConversationRoute = useCallback(
-    (conversationId: string | null) => {
+    (conversationId: string | null, nullMode: 'new-chat' | 'draft-persistence' = 'new-chat') => {
       const params = new URLSearchParams(searchParams.toString());
+      routeHandoffRef.current = conversationId
+        ? { conversationId, mode: 'selection' }
+        : { conversationId: null, mode: nullMode };
       if (conversationId) {
         params.set('convId', conversationId);
       } else {
@@ -98,19 +109,48 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
   );
 
   useEffect(() => {
-    if (requiresLoginForMemory) return;
-    initController(conversationIdParam);
-  }, [conversationIdParam, initController, requiresLoginForMemory]);
+    initControllerRef.current = initController;
+    startNewConversationRef.current = startNewConversation;
+  }, [initController, startNewConversation]);
 
   useEffect(() => {
+    if (requiresLoginForMemory) return;
+    if (lastInitializedConversationIdRef.current === conversationIdParam) return;
+    lastInitializedConversationIdRef.current = conversationIdParam;
+    routeHandoffRef.current = conversationIdParam
+      ? { conversationId: conversationIdParam, mode: 'selection' }
+      : {
+          conversationId: null,
+          mode: isDraftAIChatConversationId(activeConversationId)
+            ? 'draft-persistence'
+            : 'new-chat',
+        };
+    initControllerRef.current(conversationIdParam);
     if (
-      !activeConversationId ||
-      isDraftAIChatConversationId(activeConversationId) ||
-      activeConversationId === conversationIdParam
+      shouldStartNewConversationForRoute(
+        conversationIdParam,
+        activeConversationId,
+        isDraftAIChatConversationId(activeConversationId)
+      )
     ) {
-      return;
+      startNewConversationRef.current();
     }
-    replaceConversationRoute(activeConversationId);
+  }, [activeConversationId, conversationIdParam, requiresLoginForMemory]);
+
+  useEffect(() => {
+    const decision = resolveConversationRouteSync({
+      activeConversationId,
+      currentConversationId: conversationIdParam,
+      routeHandoff: routeHandoffRef.current,
+      activeConversationIsDraft: isDraftAIChatConversationId(activeConversationId),
+    });
+    routeHandoffRef.current = decision.routeHandoff;
+
+    if (decision.action.type === 'replace') {
+      replaceConversationRoute(decision.action.conversationId);
+    } else if (decision.action.type === 'clear') {
+      replaceConversationRoute(null);
+    }
   }, [activeConversationId, conversationIdParam, replaceConversationRoute]);
 
   useEffect(() => {
@@ -132,16 +172,20 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
 
   const handleSelectConversation = useCallback(
     (conversationId: string) => {
+      if (!conversationId) return;
+      if (conversationId === conversationIdParam) {
+        initControllerRef.current(conversationId);
+        return;
+      }
       replaceConversationRoute(conversationId);
-      void selectConversation(conversationId);
     },
-    [replaceConversationRoute, selectConversation]
+    [conversationIdParam, replaceConversationRoute]
   );
 
   const handleStartNewConversation = useCallback(() => {
-    startNewConversation();
-    replaceConversationRoute(null);
-  }, [replaceConversationRoute, startNewConversation]);
+    startNewConversationRef.current();
+    replaceConversationRoute(null, 'draft-persistence');
+  }, [replaceConversationRoute]);
 
   if (requiresLoginForMemory) {
     return (
