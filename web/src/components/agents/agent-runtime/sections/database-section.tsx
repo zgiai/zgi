@@ -13,10 +13,16 @@ import { useAccountPermissions } from '@/hooks/organization/use-account-permissi
 import { AGENT_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n';
 import agentService from '@/services/agent.service';
-import type { AgentDatabaseBinding, AgentDatabaseBindingCandidate } from '@/services/types/agent';
+import type {
+  AgentBindingHealth,
+  AgentBindingHealthItem,
+  AgentDatabaseBinding,
+  AgentDatabaseBindingCandidate,
+} from '@/services/types/agent';
 import type { DbTable } from '@/services/types/db';
 import { AgentRuntimeDatabaseDialog } from '../database-dialog';
 import { AgentRuntimeDatabaseTableDialog } from '../database-table-dialog';
+import { AgentBindingHealthBadge } from '../binding-health';
 import { planAgentDatabaseSelection } from '../database-binding-draft';
 import { AgentRuntimeResourceCard, AgentRuntimeResourceSection } from '../resource-section';
 import type { AgentConfigSection } from '../types';
@@ -30,6 +36,7 @@ interface AgentRuntimeDatabaseSectionProps {
   agentId: string;
   open: boolean;
   bindings: AgentDatabaseBinding[];
+  bindingHealth?: AgentBindingHealth;
   readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeBindings: (value: AgentDatabaseBinding[]) => void;
@@ -44,6 +51,7 @@ export function AgentRuntimeDatabaseSection({
   agentId,
   open,
   bindings,
+  bindingHealth,
   readOnly = false,
   onToggleSection,
   onChangeBindings,
@@ -138,13 +146,17 @@ export function AgentRuntimeDatabaseSection({
   };
 
   const openTableDialog = (dataSourceID: string) => {
-    if (readOnly || !dbsByID.has(dataSourceID)) return;
+    const database = dbsByID.get(dataSourceID);
+    const databaseHealthItem = bindingHealth?.items.find(
+      item => item.binding_type === 'database' && item.resource_id === dataSourceID
+    );
+    if (readOnly || (!database && databaseHealthItem?.status !== 'active')) return;
     setTableDialogSession({
       databases: [
         {
           id: dataSourceID,
-          name: dbsByID.get(dataSourceID)?.name,
-          tableCount: dbsByID.get(dataSourceID)?.table_count,
+          name: database?.name ?? databaseHealthItem?.display_name,
+          tableCount: database?.table_count,
         },
       ],
       initialBindings: bindings,
@@ -206,8 +218,18 @@ export function AgentRuntimeDatabaseSection({
               dataSourceID={binding.data_source_id}
               dataSourceName={dbsByID.get(binding.data_source_id)?.name}
               isScopedDatabase={dbsByID.has(binding.data_source_id)}
+              candidateLoadFailed={databaseCandidatesQuery.isError}
               tableIDs={binding.table_ids}
               writableTableIDs={binding.writable_table_ids ?? []}
+              databaseHealthItem={bindingHealth?.items.find(
+                item =>
+                  item.binding_type === 'database' && item.resource_id === binding.data_source_id
+              )}
+              tableHealthItems={bindingHealth?.items.filter(
+                item =>
+                  item.binding_type === 'database_table' &&
+                  item.parent_resource_id === binding.data_source_id
+              )}
               readOnly={readOnly}
               canReadBinding={canBindReadableDatabase}
               canEditWritable={canEditWritable}
@@ -250,8 +272,11 @@ function DatabaseBindingCard({
   dataSourceID,
   dataSourceName,
   isScopedDatabase,
+  candidateLoadFailed,
   tableIDs,
   writableTableIDs,
+  databaseHealthItem,
+  tableHealthItems,
   readOnly,
   canReadBinding,
   canEditWritable,
@@ -263,8 +288,11 @@ function DatabaseBindingCard({
   dataSourceID: string;
   dataSourceName?: string;
   isScopedDatabase: boolean;
+  candidateLoadFailed: boolean;
   tableIDs: string[];
   writableTableIDs: string[];
+  databaseHealthItem?: AgentBindingHealthItem;
+  tableHealthItems?: AgentBindingHealthItem[];
   readOnly: boolean;
   canReadBinding: boolean;
   canEditWritable: boolean;
@@ -280,29 +308,39 @@ function DatabaseBindingCard({
     isLoading,
     error,
   } = useDbTables(dataSourceID, {
-    enabled: canReadBinding && isScopedDatabase && tableIDs.length > 0,
+    enabled:
+      canReadBinding &&
+      (isScopedDatabase || databaseHealthItem?.status === 'active') &&
+      tableIDs.length > 0,
   });
   const tables = useMemo(
     () => tablesForDataSource(rawTables, dataSourceID),
     [dataSourceID, rawTables]
   );
   const tablesByID = useMemo(() => new Map(tables.map(table => [table.id, table])), [tables]);
-  const databaseLabel = dataSourceName || t('database.databaseUnavailable');
-  const databaseUnavailable = !isScopedDatabase;
+  const databaseUnavailable = databaseHealthItem
+    ? databaseHealthItem.status === 'unavailable'
+    : !candidateLoadFailed && !isScopedDatabase;
+  const databaseLabel =
+    dataSourceName ||
+    databaseHealthItem?.display_name ||
+    t(databaseUnavailable ? 'database.databaseUnavailable' : 'database.loadFailedTitle');
   const allWritable = tableIDs.length > 0 && tableIDs.every(tableID => writableSet.has(tableID));
   const cannotReadBinding = !canReadBinding;
 
   return (
     <AgentRuntimeResourceCard
       icon={
-        error || databaseUnavailable || cannotReadBinding ? (
+        error || candidateLoadFailed || databaseUnavailable || cannotReadBinding ? (
           <AlertCircle className="size-4" />
         ) : (
           <Database className="size-4" />
         )
       }
       title={databaseLabel}
-      error={Boolean(error) || databaseUnavailable || cannotReadBinding}
+      description={candidateLoadFailed ? t('database.loadFailedDescription') : undefined}
+      healthItem={databaseHealthItem}
+      error={Boolean(error) || candidateLoadFailed || databaseUnavailable || cannotReadBinding}
       action={
         <Tooltip>
           <TooltipTrigger asChild>
@@ -359,6 +397,7 @@ function DatabaseBindingCard({
               ? tableLabel(table, t('database.unnamedTable'))
               : t('database.tableUnavailable');
             const missing = tables.length > 0 && !table;
+            const tableHealthItem = tableHealthItems?.find(item => item.resource_id === tableID);
             return (
               <div
                 key={tableID}
@@ -368,6 +407,7 @@ function DatabaseBindingCard({
                   <div className="flex min-w-0 items-center gap-2">
                     <Table2 className="size-3.5 shrink-0 text-muted-foreground" />
                     <div className="truncate text-xs font-medium">{label}</div>
+                    <AgentBindingHealthBadge item={tableHealthItem} />
                   </div>
                   <div className="mt-1 flex min-w-0 items-center gap-2">
                     {missing ? (

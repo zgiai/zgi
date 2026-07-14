@@ -1594,6 +1594,8 @@ const messages = {
     },
     toasts: {
       saveSuccess: 'Configuration saved',
+      saveSuccessWithBindingWarnings:
+        'Configuration saved with {count} binding issue(s). Review them before publishing.',
       saveFailed: 'Save failed',
       saveFailedDraftKept: 'Save failed. Your changes are kept.',
       noGeneratedSuggestions: 'No usable request examples were generated',
@@ -1603,8 +1605,13 @@ const messages = {
       webAppLinkCopied: 'WebApp link copied',
       webAppLinkCopyFailed: 'Failed to copy WebApp link',
       loadPublishedVersionsFailed: 'Failed to load published versions',
+      loadRollbackPreviewFailed: 'Failed to load rollback impact',
       rollbackSuccess: 'Draft restored from the selected version',
       rollbackFailed: 'Failed to restore the selected version',
+      rollbackImpactChanged:
+        'Resource status changed. Review the latest rollback impact and retry.',
+      bindingRevisionRebased:
+        'Bindings changed elsewhere. Non-binding edits were kept and server bindings were applied: {resources}',
       finishVersionPreviewFirst: 'Confirm or cancel version preview first',
       fixMemorySlotsBeforeSave: 'Fix memory item keys before saving.',
       fixMemorySlotsBeforePublish: 'Fix memory item keys before publishing.',
@@ -1612,6 +1619,9 @@ const messages = {
         'Shorten the system prompt to {limit} characters or less before saving.',
       systemPromptTooLongBeforePublish:
         'Shorten the system prompt to {limit} characters or less before publishing.',
+      abnormalBindingsRemoved: 'All abnormal bindings were removed from the draft. Save to apply.',
+      publishBindingsInvalid:
+        'Publishing is blocked by invalid bindings. Review the highlighted binding issues.',
     },
     leaveGuard: {
       title: 'Save changes before leaving?',
@@ -1810,6 +1820,57 @@ const messages = {
       cancel: 'Cancel',
       idLabel: 'ID: {id}',
       requiresKnowledge: 'Configure knowledge bases first',
+      unavailableName: 'Unavailable Skill',
+      unavailableDescription:
+        'This Skill is no longer in the selectable list. Its original binding is preserved until you remove it.',
+    },
+    bindingHealth: {
+      title: 'Binding issues',
+      summary:
+        '{suspended} suspended and {unavailable} unavailable binding(s). Existing IDs are preserved until you remove them.',
+      removeAll: 'Remove all abnormal bindings',
+      removeAllPending: 'Cleanup pending save',
+      suggestion: 'Suggestion: {suggestion}',
+      resourceId: 'Resource ID: {id}',
+      cancel: 'Cancel',
+      publishing: 'Publishing...',
+      publishAnyway: 'Publish with suspended bindings',
+      publishSuspendedTitle: 'Publish with suspended bindings?',
+      publishSuspendedDescription:
+        '{count} binding(s) are suspended and will remain unavailable at runtime. Confirm to continue publishing.',
+      previewIgnoredTitle: 'Abnormal assets are ignored in this preview',
+      previewIgnoredDescription: '{count} items: {resources}',
+      cleanupConfirmTitle: 'Remove all abnormal bindings?',
+      cleanupConfirmDescription:
+        'All unavailable and suspended bindings will be removed from the draft. Other settings remain unchanged.',
+      status: {
+        active: 'Active',
+        suspended: 'Suspended',
+        unavailable: 'Unavailable',
+      },
+      types: {
+        skill: 'Skill',
+        knowledge_dataset: 'Knowledge base',
+        database: 'Database',
+        database_table: 'Database table',
+        workflow: 'Workflow',
+      },
+      accessModes: {
+        read: 'Read',
+        write: 'Write',
+        execute: 'Execute',
+      },
+      reasons: {
+        organizationSkillSuspended: 'This Skill is disabled by the organization.',
+        resourceDeletedOrMissing: 'The resource was deleted or no longer exists.',
+        resourceMovedWorkspace: 'The resource was moved to another workspace.',
+        authorizationRevoked: 'The binding authorization or required access was revoked.',
+        resolutionFailed: 'The current resource status could not be resolved.',
+      },
+      suggestions: {
+        removeOrReplace: 'Remove this binding or replace it with an available resource.',
+        restoreOrRemove: 'Restore access or remove this binding.',
+      },
     },
     knowledge: {
       empty: 'No knowledge base is available in the current workspace.',
@@ -1955,7 +2016,7 @@ const messages = {
       unnamedWorkflow: 'Unnamed workflow',
       unavailableWorkflow: 'Workflow unavailable',
       unavailableDescription:
-        'This workflow is no longer available. It will be removed after candidates refresh.',
+        'This workflow is no longer available. Its original binding is preserved until you remove it.',
       conversationalWorkflow: 'Chat workflow',
       taskWorkflow: 'Task workflow',
       updatedAt: 'Last published: {time}',
@@ -2129,6 +2190,11 @@ const messages = {
       homeTitle: 'Home title',
       inputPlaceholder: 'Input placeholder',
       suggestedQuestions: 'Request examples',
+      loadingImpact: 'Loading rollback impact...',
+      impactTitle: 'Rollback impact',
+      impactSummary: '{count} abnormal binding(s) will be removed while restoring this version.',
+      confirmCleanup: 'I understand and confirm removing all abnormal bindings.',
+      noBindingsRemoved: 'No abnormal bindings need to be removed.',
     },
   },
 };

@@ -9,6 +9,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useT } from '@/i18n';
 import { RuntimeSection } from './runtime-section';
 import type { AgentConfigSection } from './types';
+import type { AgentBindingHealthItem } from '@/services/types/agent';
+import { AgentBindingHealthBadge } from './binding-health';
 
 interface AgentRuntimeResourceSectionProps {
   title: string;
@@ -33,6 +35,7 @@ interface AgentRuntimeResourceCardProps {
   action?: ReactNode;
   children?: ReactNode;
   error?: boolean;
+  healthItem?: AgentBindingHealthItem;
 }
 
 export function AgentRuntimeResourceSection({
@@ -95,6 +98,7 @@ export function AgentRuntimeResourceCard({
   action,
   children,
   error,
+  healthItem,
 }: AgentRuntimeResourceCardProps) {
   return (
     <div className="rounded-md border bg-background p-3">
@@ -103,7 +107,10 @@ export function AgentRuntimeResourceCard({
           <span className={error ? 'text-destructive' : undefined}>{icon}</span>
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{title}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="min-w-0 truncate text-sm font-medium">{title}</div>
+            <AgentBindingHealthBadge item={healthItem} />
+          </div>
           {description ? (
             <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
               {description}

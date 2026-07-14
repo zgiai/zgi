@@ -2,12 +2,13 @@
 
 import type { AgentRuntimeSaveState } from '../types';
 import type { AgentRuntimeDraftPersistenceSnapshot } from '../use-agent-runtime-draft-persistence';
-import type { UpdateAgentRuntimeConfigRequest } from '@/services/types/agent';
+import type { AgentBindingHealth, UpdateAgentRuntimeConfigRequest } from '@/services/types/agent';
 import type { useT } from '@/i18n';
 
 export interface VersionPreviewBackup {
   payload: UpdateAgentRuntimeConfigRequest;
   persistence: AgentRuntimeDraftPersistenceSnapshot;
+  bindingHealth?: AgentBindingHealth;
 }
 
 export function getAgentRuntimeSaveText(

@@ -116,6 +116,16 @@ assert.equal(
   'The database section must hydrate persisted bindings through the Agent candidate endpoint.'
 );
 assert.equal(
+  sectionSource.includes('candidateLoadFailed={databaseCandidatesQuery.isError}'),
+  true,
+  'A candidate request failure must be distinguished from an unavailable binding.'
+);
+assert.equal(
+  sectionSource.includes('databaseHealthItem?.display_name'),
+  true,
+  'Persisted binding health must provide the database name when candidate discovery fails.'
+);
+assert.equal(
   sectionSource.includes('tableDialogSession'),
   true,
   'Database table configuration must use one batch session.'
