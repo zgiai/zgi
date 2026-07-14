@@ -125,12 +125,13 @@ func (s *service) RunClientActionContinuationStream(
 		return nil, newFinalizedStreamError(err)
 	}
 
-	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	s.streams.Begin(message.ID, cancel)
-	defer func() {
-		cancel()
-		s.streams.Finish(message.ID)
-	}()
+	execution, err := s.beginRuntimeExecution(ctx, message.ID)
+	if err != nil {
+		s.failClientActionContinuation(context.WithoutCancel(ctx), continuation, err, onEvent)
+		return nil, newFinalizedStreamError(err)
+	}
+	defer execution.Finish()
+	runCtx := execution.Context
 	if s.streams.IsStopped(message.ID) {
 		_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, "", nil)
 		return nil, ErrMessageStopped

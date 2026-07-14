@@ -82,12 +82,13 @@ func (s *service) RunConfiguredUserInputContinuationStream(
 		return nil, newFinalizedStreamError(err)
 	}
 
-	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	s.streams.Begin(messageID, cancel)
-	defer func() {
-		cancel()
-		s.streams.Finish(messageID)
-	}()
+	execution, err := s.beginRuntimeExecution(ctx, messageID)
+	if err != nil {
+		s.failUserInputContinuation(context.WithoutCancel(ctx), continuation, err, onEvent)
+		return nil, newFinalizedStreamError(err)
+	}
+	defer execution.Finish()
+	runCtx := execution.Context
 	if s.streams.IsStopped(messageID) {
 		_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, "", nil)
 		return nil, ErrMessageStopped

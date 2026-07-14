@@ -47,3 +47,9 @@ func (r *streamRegistry) IsStopped(messageID uuid.UUID) bool {
 	defer r.mu.Unlock()
 	return r.stopped[messageID]
 }
+
+func (r *streamRegistry) CancelFunc(messageID uuid.UUID) context.CancelFunc {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cancels[messageID]
+}

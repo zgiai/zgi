@@ -40,7 +40,10 @@ const (
 	clientActionContinuationPolicyRecordOnly  = "record_only"
 )
 
-var ErrInvalidInput = errors.New("invalid input")
+var (
+	ErrInvalidInput     = errors.New("invalid input")
+	ErrModelIdleTimeout = errors.New("model idle timeout")
+)
 
 type WorkflowApprovalPendingError struct {
 	Payload map[string]interface{}
@@ -106,6 +109,23 @@ type UserInputPendingError struct {
 	Payload map[string]interface{}
 }
 
+type PlanningTerminationError struct {
+	Reason      string
+	Recoverable bool
+	Streaming   bool
+}
+
+func (e *PlanningTerminationError) Error() string {
+	if e == nil {
+		return "skill planning ended before a complete turn"
+	}
+	kind := "response"
+	if e.Streaming {
+		kind = "stream"
+	}
+	return fmt.Sprintf("skill planning %s ended before a complete turn: finish_reason=%s", kind, e.Reason)
+}
+
 func (e *UserInputPendingError) Error() string {
 	if e == nil {
 		return "user input is pending"
@@ -131,6 +151,7 @@ type Runner struct {
 	OnArtifact        func(map[string]interface{})
 	OnModelInvocation func(ModelInvocationTrace)
 	FallbackDelay     time.Duration
+	ModelIdleTimeout  time.Duration
 }
 
 type RunRequest struct {
@@ -146,6 +167,7 @@ type RunRequest struct {
 	OnTerminalStateGuardDecision   func(TerminalStateGuardDecisionRecord)
 	OnTerminalCompletion           func(TerminalCompletionResult)
 	OnChunk                        func(string) error
+	PlanningOutputTokenLimit       int
 }
 
 type TerminalStateGuardDecisionRecord struct {
@@ -269,6 +291,13 @@ func (r *Runner) fallbackDelay() time.Duration {
 		return r.FallbackDelay
 	}
 	return 800 * time.Millisecond
+}
+
+func (r *Runner) modelIdleTimeout() time.Duration {
+	if r != nil && r.ModelIdleTimeout > 0 {
+		return r.ModelIdleTimeout
+	}
+	return 5 * time.Minute
 }
 
 func backgroundContext(ctx context.Context) context.Context {

@@ -1690,6 +1690,7 @@ func contextControlMetadata(spec ModelSpec, budget *budgetComputation, estimated
 	return map[string]interface{}{
 		"strategy":                contextControlStrategyTokenBudget,
 		"context_window":          spec.ContextWindow,
+		"model_max_output_tokens": spec.MaxOutputTokens,
 		"safe_context_limit":      budget.SafeLimit,
 		"prompt_budget":           budget.PromptBudget,
 		"estimated_prompt_tokens": estimatedPromptTokens,

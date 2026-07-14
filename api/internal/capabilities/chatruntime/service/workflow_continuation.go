@@ -233,12 +233,12 @@ func (s *service) SummarizeWorkflowApprovalContinuation(ctx context.Context, sco
 		Scope:        scope,
 		LLMRequest:   workflowSummaryLLMRequest(message, continuation, req),
 	}
-	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	s.streams.Begin(message.ID, cancel)
-	defer func() {
-		cancel()
-		s.streams.Finish(message.ID)
-	}()
+	execution, err := s.beginRuntimeExecution(ctx, message.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer execution.Finish()
+	runCtx := execution.Context
 	if s.streams.IsStopped(message.ID) {
 		_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, "", nil)
 		return nil, ErrMessageStopped

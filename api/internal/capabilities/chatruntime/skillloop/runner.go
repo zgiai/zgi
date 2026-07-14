@@ -167,7 +167,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		}
 		suppressNaturalProgress := req.SuppressInitialNaturalProgress && round == 0
 		deferTerminalContent := preferExplicitFinalAnswer || !terminalSubmissionAllowed
-		planningResult, err := r.runSkillPlanning(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress)
+		planningResult, err := r.runSkillPlanningWithRetry(ctx, prepared, planningReq, round, req.OnChunk, deferTerminalContent, terminalSubmissionAllowed, suppressNaturalProgress, req.PlanningOutputTokenLimit)
 		usage = mergeUsage(usage, planningResult.usage)
 		if err != nil {
 			var streamedErr *streamedFinalAnswerError
@@ -882,8 +882,14 @@ func (r *Runner) runSkillPlanning(ctx context.Context, prepared *PreparedChat, p
 
 	planningReq.Stream = false
 	startedAt := time.Now()
-	planningResp, err := r.LLMClient.AppChat(ctx, r.AppContext, planningReq)
+	callCtx, cancel := context.WithTimeout(ctx, r.modelIdleTimeout())
+	planningResp, err := r.LLMClient.AppChat(callCtx, r.AppContext, planningReq)
+	callErr := callCtx.Err()
+	cancel()
 	if err != nil {
+		if errors.Is(callErr, context.DeadlineExceeded) {
+			err = ErrModelIdleTimeout
+		}
 		r.recordModelInvocation(ModelInvocationTrace{
 			Phase:      "skill_planning",
 			Round:      round,
@@ -919,6 +925,74 @@ func (r *Runner) runSkillPlanning(ctx context.Context, prepared *PreparedChat, p
 	return planningResult{message: message, usage: usage}, nil
 }
 
+func (r *Runner) runSkillPlanningWithRetry(
+	ctx context.Context,
+	prepared *PreparedChat,
+	planningReq *adapter.ChatRequest,
+	round int,
+	onChunk func(string) error,
+	terminalProtocol bool,
+	terminalStreamingAllowed bool,
+	suppressNaturalProgress bool,
+	outputTokenLimit int,
+) (planningResult, error) {
+	result, err := r.runSkillPlanning(ctx, prepared, planningReq, round, onChunk, terminalProtocol, terminalStreamingAllowed, suppressNaturalProgress)
+	if err == nil {
+		return result, nil
+	}
+	var streamedErr *streamedFinalAnswerError
+	if errors.As(err, &streamedErr) && strings.TrimSpace(streamedErr.answer) != "" {
+		return result, err
+	}
+	var terminationErr *PlanningTerminationError
+	if !errors.As(err, &terminationErr) || terminationErr == nil || !terminationErr.Recoverable {
+		return result, err
+	}
+
+	retryReq := cloneChatRequest(planningReq)
+	retryReq.Messages = append(append([]adapter.Message{}, planningReq.Messages...), adapter.Message{
+		Role:    "system",
+		Content: "The previous planning response was truncated by its output limit. Retry once with exactly one complete protocol tool call or one concise final answer. Do not repeat completed operations or add long process narration.",
+	})
+	retryMaxTokens := planningRetryMaxTokens(planningReq.MaxTokens, outputTokenLimit)
+	retryReq.MaxTokens = &retryMaxTokens
+	logger.WarnContext(ctx, "chat runtime planning length retry",
+		"message_id", prepared.Message.ID.String(),
+		"provider", prepared.parts.Provider,
+		"model", planningReq.Model,
+		"finish_reason", terminationErr.Reason,
+		"retry", 1,
+		"max_tokens", retryMaxTokens,
+	)
+	retryResult, retryErr := r.runSkillPlanning(ctx, prepared, retryReq, round, onChunk, terminalProtocol, terminalStreamingAllowed, true)
+	retryResult.usage = mergeUsage(result.usage, retryResult.usage)
+	if retryErr != nil {
+		var secondTermination *PlanningTerminationError
+		if errors.As(retryErr, &secondTermination) && secondTermination != nil && secondTermination.Recoverable {
+			return retryResult, fmt.Errorf("planning_output_truncated: %w", retryErr)
+		}
+	}
+	return retryResult, retryErr
+}
+
+func planningRetryMaxTokens(current *int, outputTokenLimit int) int {
+	currentValue := 0
+	if current != nil && *current > 0 {
+		currentValue = *current
+	}
+	target := currentValue * 2
+	if target < 8192 {
+		target = 8192
+	}
+	if outputTokenLimit > 0 && target > outputTokenLimit {
+		target = outputTokenLimit
+	}
+	if target <= 0 {
+		return 8192
+	}
+	return target
+}
+
 func planningResponseFinishReason(response *adapter.ChatResponse) string {
 	if response == nil || len(response.Choices) == 0 {
 		return ""
@@ -928,8 +1002,10 @@ func planningResponseFinishReason(response *adapter.ChatResponse) string {
 
 func nonStreamingPlanningTerminationError(finishReason string) error {
 	switch strings.ToLower(strings.TrimSpace(finishReason)) {
-	case "length", "max_tokens", "content_filter":
-		return fmt.Errorf("skill planning response ended before a complete turn: finish_reason=%s", strings.TrimSpace(finishReason))
+	case "length", "max_tokens":
+		return &PlanningTerminationError{Reason: strings.TrimSpace(finishReason), Recoverable: true}
+	case "content_filter":
+		return &PlanningTerminationError{Reason: strings.TrimSpace(finishReason)}
 	default:
 		return nil
 	}

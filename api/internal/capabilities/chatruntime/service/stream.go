@@ -26,13 +26,13 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		return nil, fmt.Errorf("%w: prepared chat is required", ErrInvalidInput)
 	}
 	eventCallback := firstStreamEventCallback(onEvent)
-	persistCtx := context.WithoutCancel(ctx)
-	runCtx, cancel := context.WithCancel(persistCtx)
-	s.streams.Begin(prepared.Message.ID, cancel)
-	defer func() {
-		cancel()
-		s.streams.Finish(prepared.Message.ID)
-	}()
+	execution, err := s.beginRuntimeExecution(ctx, prepared.Message.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer execution.Finish()
+	persistCtx := execution.PersistContext
+	runCtx := execution.Context
 	if s.streams.IsStopped(prepared.Message.ID) {
 		_ = s.persistStoppedAnswer(persistCtx, prepared, "", nil)
 		return nil, ErrMessageStopped
@@ -192,21 +192,20 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 }
 
 func (s *service) CleanupStaleActiveMessages(ctx context.Context) (int64, error) {
-	cutoff := time.Now().Add(-staleActiveMessageTTL)
+	now := time.Now()
+	heartbeatCutoff := now.Add(-runtimeLeaseFailureTTL)
+	legacyCutoff := now.Add(-runtimeLeaseLegacyTTL)
 	var affected int64
 	err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepos := repository.NewRepositories(tx)
-		ids, err := txRepos.Message.ListStaleActiveIDs(ctx, cutoff)
+		ids, err := txRepos.RuntimeLease.MarkExpiredActiveAsError(ctx, heartbeatCutoff, legacyCutoff, staleActiveMessageError)
 		if err != nil {
 			return err
 		}
 		if len(ids) == 0 {
 			return nil
 		}
-		affected, err = txRepos.Message.MarkStaleActiveAsError(ctx, cutoff, staleActiveMessageError)
-		if err != nil {
-			return err
-		}
+		affected = int64(len(ids))
 		return txRepos.Conversation.ClearActiveMessages(ctx, ids)
 	})
 	return affected, err
@@ -339,15 +338,42 @@ func (s *service) openChatStream(ctx context.Context, prepared *PreparedChat) (<
 		_ = s.repos.Message.UpdateError(ctx, prepared.Message.ID, err.Error())
 		return nil, err
 	}
-	stream, err := s.llmClient.AppChatStream(ctx, newBillingAppContext(prepared), prepared.LLMRequest)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		_ = s.repos.Message.UpdateError(ctx, prepared.Message.ID, err.Error())
-		return nil, err
+	type openResult struct {
+		stream <-chan adapter.StreamResponse
+		err    error
 	}
-	return stream, nil
+	resultCh := make(chan openResult, 1)
+	callCtx, cancel := context.WithCancel(ctx)
+	go func() {
+		stream, err := s.llmClient.AppChatStream(callCtx, newBillingAppContext(prepared), prepared.LLMRequest)
+		resultCh <- openResult{stream: stream, err: err}
+	}()
+	timer := time.NewTimer(s.modelIdleTimeoutValue())
+	defer timer.Stop()
+	select {
+	case result := <-resultCh:
+		if result.err != nil {
+			cancel()
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			_ = s.repos.Message.UpdateError(ctx, prepared.Message.ID, result.err.Error())
+			return nil, result.err
+		}
+		return result.stream, nil
+	case <-timer.C:
+		cancel()
+		logger.WarnContext(ctx, "chat runtime model idle timeout",
+			"message_id", prepared.Message.ID.String(),
+			"provider", prepared.parts.Provider,
+			"model", prepared.Message.ModelName,
+			"phase", "stream_open",
+		)
+		return nil, ErrModelIdleTimeout
+	case <-ctx.Done():
+		cancel()
+		return nil, ctx.Err()
+	}
 }
 
 func (s *service) prepareLLMRequestForRun(ctx context.Context, prepared *PreparedChat, onEvent func(StreamEvent) error) error {
@@ -434,8 +460,20 @@ func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *P
 	var usage *adapter.Usage
 	serviceChunkIndex := 0
 	eventBuffer := newStreamMessageEventBuffer(s.events, prepared.Conversation.ID, prepared.Message.ID)
+	idleTimer := time.NewTimer(s.modelIdleTimeoutValue())
+	defer idleTimer.Stop()
 	for {
 		select {
+		case <-idleTimer.C:
+			answer := builder.String()
+			s.flushStreamMessageEventBuffer(context.WithoutCancel(ctx), prepared.Message.ID, eventBuffer, onEvent)
+			logger.WarnContext(ctx, "chat runtime model idle timeout",
+				"message_id", prepared.Message.ID.String(),
+				"provider", prepared.parts.Provider,
+				"model", prepared.Message.ModelName,
+				"phase", "stream_read",
+			)
+			return answer, usage, ErrModelIdleTimeout
 		case <-ctx.Done():
 			answer := builder.String()
 			if s.isStoppedContext(ctx, prepared.Message.ID) {
@@ -446,6 +484,7 @@ func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *P
 			_ = s.repos.Message.UpdateError(context.WithoutCancel(ctx), prepared.Message.ID, ctx.Err().Error())
 			return "", nil, ctx.Err()
 		case chunk, ok := <-stream:
+			resetTimer(idleTimer, s.modelIdleTimeoutValue())
 			serviceChunkIndex++
 			if qwenRuntimeStreamDebugEnabled() {
 				logger.InfoContext(ctx, "aichat runtime stream chunk",
@@ -512,6 +551,26 @@ func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *P
 			}
 		}
 	}
+}
+
+func (s *service) modelIdleTimeoutValue() time.Duration {
+	if s == nil || s.modelIdleTimeout <= 0 {
+		return defaultModelIdleTimeout
+	}
+	return s.modelIdleTimeout
+}
+
+func resetTimer(timer *time.Timer, duration time.Duration) {
+	if timer == nil {
+		return
+	}
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(duration)
 }
 
 func (s *service) flushStreamMessageEventBuffer(ctx context.Context, messageID uuid.UUID, eventBuffer *streamMessageEventBuffer, onEvent func(StreamEvent) error) {
@@ -813,8 +872,10 @@ func BuildStreamErrorPayload(prepared *PreparedChat, err error) map[string]inter
 	}
 	if code, publicMessage, ok := publicAichatErrorCodeAndMessage(err); ok {
 		payload["message"] = publicMessage
-		payload["code"] = code
-		payload["params"] = aichatBillingErrorParams(err)
+		if code > 0 {
+			payload["code"] = code
+			payload["params"] = aichatBillingErrorParams(err)
+		}
 	}
 	return payload
 }
@@ -834,6 +895,9 @@ func streamFallbackErrorMessage(err error) string {
 }
 
 func publicAichatErrorCodeAndMessage(err error) (int, string, bool) {
+	if errors.Is(err, ErrModelIdleTimeout) || errors.Is(err, skillloop.ErrModelIdleTimeout) {
+		return 0, "模型长时间未返回，当前任务已停止，请重试", true
+	}
 	if code, message, ok := aichatBillingErrorCodeAndMessage(err); ok {
 		return code, message, true
 	}

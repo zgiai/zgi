@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/config"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/agentmemoryruntime"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
@@ -27,11 +28,14 @@ const (
 	defaultSearchLimit       = 20
 	maxSearchLimit           = 50
 	searchSnippetRunes       = 120
-	staleActiveMessageTTL    = time.Hour
-	staleActiveMessageError  = "stream interrupted before completion"
+	staleActiveMessageError  = "runtime_lease_expired"
 	streamEventsExpiredError = "stream events expired"
 	titleGenerationTimeout   = 15 * time.Second
 	runtimeContextMaxRunes   = 8000
+	runtimeLeaseHeartbeat    = 15 * time.Second
+	runtimeLeaseFailureTTL   = 90 * time.Second
+	runtimeLeaseLegacyTTL    = time.Hour
+	defaultModelIdleTimeout  = 5 * time.Minute
 
 	streamEventMessageStart         = "message_start"
 	streamEventMessage              = "message"
@@ -237,6 +241,7 @@ type service struct {
 	memoryService      UserMemoryService
 	agentMemoryService AgentMemoryContextService
 	customSkillStorage customSkillStorage
+	modelIdleTimeout   time.Duration
 }
 
 func NewService(repos *repository.Repositories, llmClient llmclient.LLMClient) Service {
@@ -304,7 +309,15 @@ func NewServiceWithSkillRuntime(
 		memoryService:      memoryService,
 		agentMemoryService: agentMemoryService,
 		customSkillStorage: newFilesystemCustomSkillStorage(customSkillStorageRoot),
+		modelIdleTimeout:   configuredModelIdleTimeout(),
 	}
+}
+
+func configuredModelIdleTimeout() time.Duration {
+	if config.GlobalConfig == nil || config.GlobalConfig.ChatRuntime.ModelIdleTimeoutSeconds <= 0 {
+		return defaultModelIdleTimeout
+	}
+	return time.Duration(config.GlobalConfig.ChatRuntime.ModelIdleTimeoutSeconds) * time.Second
 }
 
 type PreparedChat struct {

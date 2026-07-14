@@ -67,14 +67,21 @@ func (s *service) RunToolGovernanceDecisionStream(
 		s.failToolGovernanceContinuation(context.WithoutCancel(ctx), continuation, err, onEvent)
 		return nil, newFinalizedStreamError(err)
 	}
-	s.emitPreparedEvent(ctx, prepared, streamEventMessageStart, messageStartPayload(conversation, message, false), onEvent)
-	s.emitPreparedEvent(ctx, prepared, streamEventToolGovernanceDecision, decision.Event, onEvent)
+	execution, err := s.beginRuntimeExecution(ctx, message.ID)
+	if err != nil {
+		s.failToolGovernanceContinuation(context.WithoutCancel(ctx), continuation, err, onEvent)
+		return nil, newFinalizedStreamError(err)
+	}
+	defer execution.Finish()
+	runCtx := execution.Context
+	s.emitPreparedEvent(runCtx, prepared, streamEventMessageStart, messageStartPayload(conversation, message, false), onEvent)
+	s.emitPreparedEvent(runCtx, prepared, streamEventToolGovernanceDecision, decision.Event, onEvent)
 
 	switch strings.TrimSpace(decision.Action) {
 	case toolGovernanceActionReject:
-		return s.runToolGovernanceRejectionContinuation(ctx, prepared, req, decision.Event, onEvent)
+		return s.runToolGovernanceRejectionContinuation(runCtx, prepared, req, decision.Event, onEvent)
 	case toolGovernanceActionApprove:
-		return s.runToolGovernanceApprovedContinuation(ctx, prepared, decision.Event, onEvent)
+		return s.runToolGovernanceApprovedContinuation(runCtx, prepared, decision.Event, onEvent)
 	default:
 		return nil, fmt.Errorf("%w: action must be approve or reject", ErrInvalidInput)
 	}

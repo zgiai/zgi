@@ -72,7 +72,16 @@ func loadCoreRuntimeConfig(cfg *Config, source *envSource) error {
 		optionalConfigLoader("console", loadConsoleConfig),
 		optionalConfigLoader("platform", loadPlatformConfig),
 		optionalConfigLoader("feature", loadFeatureConfig),
+		optionalConfigLoader("chat runtime", loadChatRuntimeConfig),
 	)
+}
+
+func loadChatRuntimeConfig(cfg *Config, source *envSource) {
+	timeout := mustInt(source.int(300, envChatRuntimeModelIdleTimeoutSeconds))
+	if timeout <= 0 {
+		timeout = 300
+	}
+	cfg.ChatRuntime = ChatRuntimeConfig{ModelIdleTimeoutSeconds: timeout}
 }
 
 func loadInfrastructureConfig(cfg *Config, source *envSource) error {

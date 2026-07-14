@@ -60,15 +60,37 @@ func (r *Runner) runSkillPlanningStream(
 	terminatedBy := ""
 	fallbackTimer := time.NewTimer(r.fallbackDelay())
 	defer fallbackTimer.Stop()
+	idleTimer := time.NewTimer(r.modelIdleTimeout())
+	defer idleTimer.Stop()
 
 	for {
 		select {
+		case <-idleTimer.C:
+			err := ErrModelIdleTimeout
+			r.recordModelInvocation(ModelInvocationTrace{
+				Phase:      "skill_planning",
+				Round:      round,
+				Streaming:  true,
+				StartedAt:  startedAt,
+				DurationMS: time.Since(startedAt).Milliseconds(),
+				Request:    streamReq,
+				Usage:      usage,
+				Error:      err.Error(),
+			})
+			logger.WarnContext(ctx, "chat runtime model idle timeout",
+				"message_id", prepared.Message.ID.String(),
+				"provider", prepared.parts.Provider,
+				"model", streamReq.Model,
+				"phase", "skill_planning_stream",
+			)
+			return planningResult{usage: usage}, true, wrapStreamedFinalAnswerError(err, streamedFinalAnswerFromStates(toolCallsByIndex, toolCallOrder))
 		case <-fallbackTimer.C:
 			if !answerStreamed && !naturalProgressStreamed && !toolPlanningProgressStreamed && !fallbackProgressStreamed {
 				fallbackProgressStreamed = r.emitPlanningFallbackProgress(ctx, prepared, onEvent)
 			}
 			continue
 		case response, ok := <-stream:
+			resetPlanningIdleTimer(idleTimer, r.modelIdleTimeout())
 			if !ok {
 				terminatedBy = "channel_closed"
 				goto streamDone
@@ -217,6 +239,16 @@ streamDone:
 	}, true, nil
 }
 
+func resetPlanningIdleTimer(timer *time.Timer, duration time.Duration) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(duration)
+}
+
 type streamedFinalAnswerError struct {
 	err    error
 	answer string
@@ -249,8 +281,10 @@ func streamedFinalAnswerFromStates(states map[int]*streamingToolCallState, order
 
 func skillPlanningStreamTerminationError(finishReason string, streamDoneReceived bool, terminatedBy string) error {
 	switch strings.ToLower(strings.TrimSpace(finishReason)) {
-	case "length", "max_tokens", "content_filter":
-		return fmt.Errorf("skill planning stream ended before a complete turn: finish_reason=%s", strings.TrimSpace(finishReason))
+	case "length", "max_tokens":
+		return &PlanningTerminationError{Reason: strings.TrimSpace(finishReason), Recoverable: true, Streaming: true}
+	case "content_filter":
+		return &PlanningTerminationError{Reason: strings.TrimSpace(finishReason), Streaming: true}
 	}
 	if streamDoneReceived || strings.TrimSpace(finishReason) != "" {
 		return nil
@@ -270,26 +304,43 @@ func (r *Runner) openSkillPlanningStream(
 	onEvent func(Event) error,
 ) (<-chan adapter.StreamResponse, bool, error) {
 	resultCh := make(chan skillPlanningStreamOpenResult, 1)
+	callCtx, cancel := context.WithCancel(ctx)
 	go func() {
-		stream, err := r.LLMClient.AppChatStream(ctx, r.AppContext, streamReq)
+		stream, err := r.LLMClient.AppChatStream(callCtx, r.AppContext, streamReq)
 		resultCh <- skillPlanningStreamOpenResult{stream: stream, err: err}
 	}()
 
 	timer := time.NewTimer(r.fallbackDelay())
 	defer timer.Stop()
+	idleTimer := time.NewTimer(r.modelIdleTimeout())
+	defer idleTimer.Stop()
 
 	select {
 	case result := <-resultCh:
+		if result.err != nil {
+			cancel()
+		}
 		return result.stream, false, result.err
+	case <-idleTimer.C:
+		cancel()
+		return nil, false, ErrModelIdleTimeout
 	case <-timer.C:
 		fallbackProgressStreamed := r.emitPlanningFallbackProgress(ctx, prepared, onEvent)
 		select {
 		case result := <-resultCh:
+			if result.err != nil {
+				cancel()
+			}
 			return result.stream, fallbackProgressStreamed, result.err
+		case <-idleTimer.C:
+			cancel()
+			return nil, fallbackProgressStreamed, ErrModelIdleTimeout
 		case <-ctx.Done():
+			cancel()
 			return nil, fallbackProgressStreamed, ctx.Err()
 		}
 	case <-ctx.Done():
+		cancel()
 		return nil, false, ctx.Err()
 	}
 }
