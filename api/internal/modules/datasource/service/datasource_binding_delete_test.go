@@ -42,6 +42,7 @@ func TestDeleteTableRejectsStaleImpactBeforeMetadataOrPhysicalDeletion(t *testin
 	)
 	mock.ExpectBegin()
 	expectDatabaseTableBindingLocks(mock, organizationID, "datasource-1", "table-1")
+	lockedWorkspaceID := expectLockedDatabaseTable(mock, organizationID, "datasource-1", "table-1")
 	mock.ExpectQuery(`SELECT \* FROM "agent_resource_bindings".*binding_type.*resource_id.*parent_resource_id.*ORDER BY`).
 		WithArgs(uuid.MustParse(organizationID), agentbindings.BindingTypeDatabaseTable, "table-1", "datasource-1").
 		WillReturnRows(bindingRows)
@@ -62,6 +63,10 @@ func TestDeleteTableRejectsStaleImpactBeforeMetadataOrPhysicalDeletion(t *testin
 	if table, _ := tableRepo.FindByID(context.Background(), "table-1"); table == nil {
 		t.Fatal("table metadata was removed for stale impact token")
 	}
+	authorization := svc.authorizationService.(*fakeAuthorizationService)
+	if len(authorization.workspaceRequests) != 2 || authorization.workspaceRequests[1].WorkspaceID != lockedWorkspaceID {
+		t.Fatalf("workspace permission requests = %#v, want locked workspace %s rechecked", authorization.workspaceRequests, lockedWorkspaceID)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
 	}
@@ -72,6 +77,7 @@ func TestDeleteTableDropFailureKeepsCommittedLogicalDeletionSuccessful(t *testin
 	svc, mock, sqlBase, _, organizationID, accountID := newBindingDeletionTestService(t, dropErr)
 	mock.ExpectBegin()
 	expectDatabaseTableBindingLocks(mock, organizationID, "datasource-1", "table-1")
+	_ = expectLockedDatabaseTable(mock, organizationID, "datasource-1", "table-1")
 	mock.ExpectQuery(`SELECT \* FROM "agent_resource_bindings".*binding_type.*resource_id.*parent_resource_id.*ORDER BY`).
 		WithArgs(uuid.MustParse(organizationID), agentbindings.BindingTypeDatabaseTable, "table-1", "datasource-1").
 		WillReturnRows(agentBindingRows())
@@ -95,6 +101,47 @@ func TestDeleteTableDropFailureKeepsCommittedLogicalDeletionSuccessful(t *testin
 	}
 }
 
+func TestDeleteDataSourceReauthorizesLockedWorkspaceAfterLifecycleLock(t *testing.T) {
+	svc, mock, _, _, organizationID, accountID := newBindingDeletionTestService(t, nil)
+	svc.tableRepo = &fakeTableRepository{items: map[string]*model.Table{}}
+
+	mock.ExpectBegin()
+	lockSQL := regexp.QuoteMeta(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`)
+	mock.ExpectExec(lockSQL).
+		WithArgs("agent-binding-resource:" + organizationID + ":database::datasource-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	lockedWorkspaceID := uuid.NewString()
+	mock.ExpectQuery(`SELECT \* FROM "data_sources" WHERE id = \$1 AND organization_id = \$2 LIMIT \$3 FOR UPDATE`).
+		WithArgs("datasource-1", organizationID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "organization_id", "workspace_id", "name", "created_by", "guard_policy",
+		}).AddRow("datasource-1", organizationID, lockedWorkspaceID, "database", accountID, guard.DefaultPolicyJSON()))
+	mock.ExpectQuery(`SELECT \* FROM "agent_resource_bindings".*binding_type.*resource_id.*ORDER BY`).
+		WithArgs(
+			uuid.MustParse(organizationID),
+			agentbindings.BindingTypeDatabase,
+			"datasource-1",
+			agentbindings.BindingTypeDatabaseTable,
+			"datasource-1",
+		).
+		WillReturnRows(agentBindingRows())
+	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM data_sources WHERE id = $1`)).
+		WithArgs("datasource-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	if err := svc.DeleteDataSourceByID(context.Background(), organizationID, "datasource-1", accountID, "", ""); err != nil {
+		t.Fatalf("DeleteDataSourceByID() error = %v", err)
+	}
+	authorization := svc.authorizationService.(*fakeAuthorizationService)
+	if len(authorization.workspaceRequests) != 2 || authorization.workspaceRequests[1].WorkspaceID != lockedWorkspaceID {
+		t.Fatalf("workspace permission requests = %#v, want locked workspace %s rechecked", authorization.workspaceRequests, lockedWorkspaceID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func expectDatabaseTableBindingLocks(mock sqlmock.Sqlmock, organizationID, dataSourceID, tableID string) {
 	lockSQL := regexp.QuoteMeta(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`)
 	mock.ExpectExec(lockSQL).
@@ -103,6 +150,21 @@ func expectDatabaseTableBindingLocks(mock sqlmock.Sqlmock, organizationID, dataS
 	mock.ExpectExec(lockSQL).
 		WithArgs("agent-binding-resource:" + organizationID + ":database_table:" + dataSourceID + ":" + tableID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+}
+
+func expectLockedDatabaseTable(mock sqlmock.Sqlmock, organizationID, dataSourceID, tableID string) string {
+	workspaceID := uuid.NewString()
+	mock.ExpectQuery(`SELECT \* FROM "data_sources" WHERE id = \$1 AND organization_id = \$2 LIMIT \$3 FOR UPDATE`).
+		WithArgs(dataSourceID, organizationID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "organization_id", "workspace_id", "name", "created_by", "guard_policy",
+		}).AddRow(dataSourceID, organizationID, workspaceID, "database", uuid.NewString(), guard.DefaultPolicyJSON()))
+	mock.ExpectQuery(`SELECT \* FROM "data_source_tables" WHERE id = \$1 AND data_source_id = \$2 AND organization_id = \$3 LIMIT \$4 FOR UPDATE`).
+		WithArgs(tableID, dataSourceID, organizationID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "organization_id", "data_source_id", "name", "table_id", "table_name",
+		}).AddRow(tableID, organizationID, dataSourceID, "orders", 42, "tbl_orders"))
+	return workspaceID
 }
 
 func newBindingDeletionTestService(t *testing.T, deleteErr error) (*dataSourceService, sqlmock.Sqlmock, *bindingDeletionSQLBase, *fakeTableRepository, string, string) {

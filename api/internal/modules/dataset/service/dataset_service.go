@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
@@ -649,23 +650,8 @@ func (s *datasetService) DeleteDataset(ctx context.Context, datasetID, accountID
 		return ErrDatasetAccessDenied
 	}
 
-	// Step 2: Get groupID from dataset.WorkspaceID for quota recording
+	// Step 2: Resolve groupID after the lifecycle lock and authoritative row read.
 	var groupID *uuid.UUID
-	if s.enterpriseService != nil {
-		group, err := s.enterpriseService.GetOrganizationByWorkspaceID(ctx, dataset.WorkspaceID)
-		if err != nil {
-			return fmt.Errorf("failed to get organization by workspace ID: %w", err)
-		}
-		if group == nil {
-			return fmt.Errorf("organization not found for workspace ID: %s", dataset.WorkspaceID)
-		}
-		// Parse groupID string to UUID
-		parsedGroupID, parseErr := uuid.Parse(group.ID)
-		if parseErr != nil {
-			return fmt.Errorf("failed to parse organization ID: %w", parseErr)
-		}
-		groupID = &parsedGroupID
-	}
 	organizationID, err := uuid.Parse(dataset.OrganizationID)
 	if err != nil {
 		return fmt.Errorf("failed to parse dataset organization ID: %w", err)
@@ -684,6 +670,34 @@ func (s *datasetService) DeleteDataset(ctx context.Context, datasetID, accountID
 		if err := txBindingRepo.LockResources(ctx, tx, []agentbindings.ResourceRef{bindingRef}); err != nil {
 			return fmt.Errorf("lock dataset agent binding resource: %w", err)
 		}
+
+		currentDataset, err := s.lockDatasetForDeletionInTx(
+			ctx,
+			tx,
+			datasetID,
+			bindingRef.OrganizationID.String(),
+			accountID,
+		)
+		if err != nil {
+			return err
+		}
+		dataset = currentDataset
+
+		if s.enterpriseService != nil {
+			group, err := s.enterpriseService.GetOrganizationByWorkspaceID(ctx, dataset.WorkspaceID)
+			if err != nil {
+				return fmt.Errorf("failed to get organization by workspace ID: %w", err)
+			}
+			if group == nil {
+				return fmt.Errorf("organization not found for workspace ID: %s", dataset.WorkspaceID)
+			}
+			parsedGroupID, parseErr := uuid.Parse(group.ID)
+			if parseErr != nil {
+				return fmt.Errorf("failed to parse organization ID: %w", parseErr)
+			}
+			groupID = &parsedGroupID
+		}
+
 		impact, err := txBindingRepo.PreviewImpact(ctx, bindingRef, datasetDeleteBindingOperation, actorID, time.Now())
 		if err != nil {
 			return fmt.Errorf("preview dataset agent binding impact: %w", err)
@@ -802,6 +816,39 @@ func (s *datasetService) DeleteDataset(ctx context.Context, datasetID, accountID
 		)
 	}
 	return nil
+}
+
+func (s *datasetService) lockDatasetForDeletionInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	datasetID string,
+	expectedOrganizationID string,
+	accountID string,
+) (*model.Dataset, error) {
+	var dataset model.Dataset
+	if err := tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ?", datasetID).
+		Take(&dataset).Error; err != nil {
+		return nil, fmt.Errorf("lock dataset for deletion: %w", err)
+	}
+	if dataset.OrganizationID != expectedOrganizationID {
+		return nil, ErrDatasetAccessDenied
+	}
+	hasPermission, err := s.checkKnowledgeBaseWorkspacePermission(
+		ctx,
+		dataset.OrganizationID,
+		dataset.WorkspaceID,
+		accountID,
+		workspace_model.WorkspacePermissionKnowledgeBaseDelete,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to recheck permission: %w", err)
+	}
+	if !hasPermission {
+		return nil, ErrDatasetAccessDenied
+	}
+	return &dataset, nil
 }
 
 func (s *datasetService) PreviewDatasetDeleteImpact(ctx context.Context, datasetID, accountID string) (*agentbindings.Impact, error) {

@@ -15,6 +15,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type agentResourceMutationOptions struct {
@@ -817,6 +818,13 @@ func (s *agentsService) authorizeAgentDelete(ctx context.Context, agentID string
 		logger.Error("Failed to get agent by ID: %v", err)
 		return nil, fmt.Errorf("agent not found")
 	}
+	return s.authorizeLoadedAgentDelete(ctx, agent, accountID)
+}
+
+func (s *agentsService) authorizeLoadedAgentDelete(ctx context.Context, agent *Agent, accountID string) (*agentDeleteAuthorization, error) {
+	if agent == nil {
+		return nil, fmt.Errorf("agent not found")
+	}
 	var groupID *uuid.UUID
 	workspaceID := agent.TenantID.String()
 	if s.enterpriseService != nil {
@@ -829,7 +837,7 @@ func (s *agentsService) authorizeAgentDelete(ctx context.Context, agentID string
 			}
 		} else if err != nil {
 			logger.Warn("DeleteAgent: failed to resolve organization for workspace", map[string]interface{}{
-				"agent_id":      agentID,
+				"agent_id":      agent.ID.String(),
 				"workspace_id":  workspaceID,
 				"account_id":    accountID,
 				"error_message": err.Error(),
@@ -843,6 +851,7 @@ func (s *agentsService) authorizeAgentDelete(ctx context.Context, agentID string
 	}
 
 	canDelete := false
+	var err error
 	callerOrganizationID := ""
 	if v := ctx.Value("tenant_id"); v != nil {
 		if id, ok := v.(string); ok {
@@ -859,7 +868,7 @@ func (s *agentsService) authorizeAgentDelete(ctx context.Context, agentID string
 			agentDeletePermissionCodes(agent.AgentsType)...,
 		)
 		if err != nil {
-			logger.Error(fmt.Sprintf("DeleteAgent: failed to check workspace permission for agent %s, account %s", agentID, accountID), err)
+			logger.Error(fmt.Sprintf("DeleteAgent: failed to check workspace permission for agent %s, account %s", agent.ID, accountID), err)
 			return nil, fmt.Errorf("failed to verify permissions")
 		}
 	} else if s.resourcePermissionService != nil {
@@ -872,13 +881,13 @@ func (s *agentsService) authorizeAgentDelete(ctx context.Context, agentID string
 			PermissionCodes: agentDeletePermissionCodes(agent.AgentsType),
 		})
 		if err != nil {
-			logger.Error(fmt.Sprintf("DeleteAgent: failed to check edit permission for agent %s, account %s", agentID, accountID), err)
+			logger.Error(fmt.Sprintf("DeleteAgent: failed to check edit permission for agent %s, account %s", agent.ID, accountID), err)
 			return nil, fmt.Errorf("failed to verify permissions")
 		}
 	}
 	if !canDelete {
 		logger.Info("DeleteAgent: permission denied", map[string]interface{}{
-			"agent_id":     agentID,
+			"agent_id":     agent.ID.String(),
 			"account_id":   accountID,
 			"creator_id":   creatorID,
 			"workspace_id": workspaceID,
@@ -918,35 +927,60 @@ func (s *agentsService) DeleteAgent(ctx context.Context, agentID string) error {
 	workspaceID := authorization.WorkspaceID
 	groupID := authorization.GroupID
 
-	var workflowBindingRef *agentbindings.ResourceRef
+	var lifecycleBindingRef *agentbindings.ResourceRef
 	actorUUID, actorErr := uuid.Parse(accountID)
-	if actorErr == nil && groupID != nil && s.agentBindings != nil && (agent.AgentsType == "WORKFLOW" || agent.AgentsType == "CONVERSATIONAL_WORKFLOW") {
+	if actorErr == nil && groupID != nil && s.agentBindings != nil {
 		ref := agentbindings.ResourceRef{
 			OrganizationID: *groupID,
 			BindingType:    agentbindings.BindingTypeWorkflow,
 			ResourceID:     agent.ID.String(),
 		}
-		impact, impactErr := s.agentBindings.PreviewImpact(ctx, ref, "delete_workflow", actorUUID, time.Now())
-		if impactErr != nil {
-			return impactErr
-		}
-		workflowBindingRef = &ref
-		options := agentResourceMutationOptionsFromContext(ctx)
-		if impact != nil && (options.Action != "unbind" || options.ImpactToken == "") {
-			return &agentbindings.ConflictError{Impact: *impact}
+		lifecycleBindingRef = &ref
+		if agent.AgentsType == "WORKFLOW" || agent.AgentsType == "CONVERSATIONAL_WORKFLOW" {
+			impact, impactErr := s.agentBindings.PreviewImpact(ctx, ref, "delete_workflow", actorUUID, time.Now())
+			if impactErr != nil {
+				return impactErr
+			}
+			options := agentResourceMutationOptionsFromContext(ctx)
+			if impact != nil && (options.Action != "unbind" || options.ImpactToken == "") {
+				return &agentbindings.ConflictError{Impact: *impact}
+			}
 		}
 	}
 
 	var affectedAgentIDs []uuid.UUID
 	// Step 2: Perform soft delete and record usage in transaction
 	err = s.db.Transaction(func(tx *gorm.DB) error {
-		if workflowBindingRef != nil {
-			options := agentResourceMutationOptionsFromContext(ctx)
+		if lifecycleBindingRef != nil {
 			txBindings := s.agentBindings.WithTx(tx)
-			if lockErr := txBindings.LockResources(ctx, tx, []agentbindings.ResourceRef{*workflowBindingRef}); lockErr != nil {
+			if lockErr := txBindings.LockResources(ctx, tx, []agentbindings.ResourceRef{*lifecycleBindingRef}); lockErr != nil {
 				return lockErr
 			}
-			refreshed, refreshErr := txBindings.PreviewImpact(ctx, *workflowBindingRef, "delete_workflow", actorUUID, time.Now())
+		}
+
+		var currentAgent Agent
+		if lockErr := tx.WithContext(ctx).
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND deleted_at IS NULL", agentID).
+			Take(&currentAgent).Error; lockErr != nil {
+			return fmt.Errorf("lock agent for deletion: %w", lockErr)
+		}
+		lockedAuthorization, authErr := s.authorizeLoadedAgentDelete(ctx, &currentAgent, accountID)
+		if authErr != nil {
+			return authErr
+		}
+		if lifecycleBindingRef != nil && (lockedAuthorization.GroupID == nil || *lockedAuthorization.GroupID != lifecycleBindingRef.OrganizationID) {
+			return fmt.Errorf("permission denied")
+		}
+		agent = lockedAuthorization.Agent
+		workspaceID = lockedAuthorization.WorkspaceID
+		groupID = lockedAuthorization.GroupID
+
+		isWorkflow := agent.AgentsType == "WORKFLOW" || agent.AgentsType == "CONVERSATIONAL_WORKFLOW"
+		if lifecycleBindingRef != nil && isWorkflow {
+			options := agentResourceMutationOptionsFromContext(ctx)
+			txBindings := s.agentBindings.WithTx(tx)
+			refreshed, refreshErr := txBindings.PreviewImpact(ctx, *lifecycleBindingRef, "delete_workflow", actorUUID, time.Now())
 			if refreshErr != nil {
 				return refreshErr
 			}
@@ -954,10 +988,10 @@ func (s *agentsService) DeleteAgent(ctx context.Context, agentID string) error {
 				if options.Action != "unbind" || options.ImpactToken == "" {
 					return &agentbindings.ConflictError{Impact: *refreshed}
 				}
-				if verifyErr := txBindings.VerifyImpactToken(ctx, *workflowBindingRef, "delete_workflow", actorUUID, options.ImpactToken, time.Now()); verifyErr != nil {
+				if verifyErr := txBindings.VerifyImpactToken(ctx, *lifecycleBindingRef, "delete_workflow", actorUUID, options.ImpactToken, time.Now()); verifyErr != nil {
 					return &agentbindings.ConflictError{Impact: *refreshed}
 				}
-				affectedAgentIDs, refreshErr = txBindings.RevokeAndPruneDrafts(ctx, tx, *workflowBindingRef, actorUUID)
+				affectedAgentIDs, refreshErr = txBindings.RevokeAndPruneDrafts(ctx, tx, *lifecycleBindingRef, actorUUID)
 				if refreshErr != nil {
 					return refreshErr
 				}
@@ -1011,14 +1045,14 @@ func (s *agentsService) DeleteAgent(ctx context.Context, agentID string) error {
 		logger.Error("Failed to delete agent: %v", err)
 		return fmt.Errorf("failed to delete agent")
 	}
-	if workflowBindingRef != nil && len(affectedAgentIDs) > 0 {
+	if lifecycleBindingRef != nil && len(affectedAgentIDs) > 0 {
 		logger.InfoContext(ctx, "agent resource bindings revoked for workflow deletion",
 			"log_type", "audit",
 			"actor_account_id", accountID,
-			"organization_id", workflowBindingRef.OrganizationID,
+			"organization_id", lifecycleBindingRef.OrganizationID,
 			"workspace_id", workspaceID,
 			"binding_type", agentbindings.BindingTypeWorkflow,
-			"resource_id", workflowBindingRef.ResourceID,
+			"resource_id", lifecycleBindingRef.ResourceID,
 			"affected_agent_ids", affectedAgentIDs,
 			"binding_state_before", "bound",
 			"binding_state_after", "unbound",

@@ -18,6 +18,7 @@ import (
 	"github.com/xuri/excelize/v2"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	"github.com/zgiai/zgi/api/internal/contracts"
@@ -716,7 +717,16 @@ func (s *dataSourceService) DeleteDataSourceByID(ctx context.Context, organizati
 	}
 	var affectedAgentIDs []uuid.UUID
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var err error
+		txBindingRepo := bindingRepo.WithTx(tx)
+		if err := txBindingRepo.LockResources(ctx, tx, []agentbindings.ResourceRef{bindingRef}); err != nil {
+			return fmt.Errorf("lock resource agent binding: %w", err)
+		}
+		lockedDataSource, err := s.lockDataSourceForDeletionInTx(ctx, tx, organizationID, id, accountID, workspace_model.WorkspacePermissionDatabaseDelete)
+		if err != nil {
+			return err
+		}
+		dataSource = lockedDataSource
+
 		affectedAgentIDs, err = s.prepareAgentBindingsForResourceDeletionInTx(ctx, tx, bindingRef, databaseDeleteBindingOperation, actorID, agentBindingAction, impactToken)
 		if err != nil {
 			return err
@@ -786,9 +796,6 @@ func (s *dataSourceService) prepareAgentBindingsForResourceDeletionInTx(
 		return nil, nil
 	}
 	txBindingRepo := s.agentBindings.WithTx(tx)
-	if err := txBindingRepo.LockResources(ctx, tx, []agentbindings.ResourceRef{ref}); err != nil {
-		return nil, fmt.Errorf("lock resource agent binding: %w", err)
-	}
 	impact, err := txBindingRepo.PreviewImpact(ctx, ref, operation, actorID, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("preview resource agent binding impact: %w", err)
@@ -807,6 +814,57 @@ func (s *dataSourceService) prepareAgentBindingsForResourceDeletionInTx(
 		return nil, fmt.Errorf("revoke resource agent bindings: %w", err)
 	}
 	return affectedAgentIDs, nil
+}
+
+func (s *dataSourceService) lockDataSourceForDeletionInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	organizationID string,
+	dataSourceID string,
+	accountID string,
+	permissions ...workspace_model.WorkspacePermissionCode,
+) (*model.DataSource, error) {
+	var dataSource model.DataSource
+	if err := tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ? AND organization_id = ?", dataSourceID, organizationID).
+		Take(&dataSource).Error; err != nil {
+		return nil, fmt.Errorf("lock data source for deletion: %w", err)
+	}
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, &dataSource, permissions...); err != nil {
+		return nil, err
+	}
+	return &dataSource, nil
+}
+
+func (s *dataSourceService) lockTableForDeletionInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	organizationID string,
+	dataSourceID string,
+	tableID string,
+	accountID string,
+) (*model.DataSource, *model.Table, error) {
+	dataSource, err := s.lockDataSourceForDeletionInTx(
+		ctx,
+		tx,
+		organizationID,
+		dataSourceID,
+		accountID,
+		workspace_model.WorkspacePermissionDatabaseSchemaManage,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var table model.Table
+	if err := tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ? AND data_source_id = ? AND organization_id = ?", tableID, dataSourceID, organizationID).
+		Take(&table).Error; err != nil {
+		return nil, nil, fmt.Errorf("lock table for deletion: %w", err)
+	}
+	return dataSource, &table, nil
 }
 
 func (s *dataSourceService) previewResourceDeleteImpact(
@@ -1263,7 +1321,18 @@ func (s *dataSourceService) deleteTable(ctx context.Context, organizationID, dat
 	var affectedAgentIDs []uuid.UUID
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		if !bindingCoveredByDatabaseDelete && bindingRepo != nil {
-			var err error
+			txBindingRepo := bindingRepo.WithTx(tx)
+			if err := txBindingRepo.LockResources(ctx, tx, []agentbindings.ResourceRef{bindingRef}); err != nil {
+				return fmt.Errorf("lock resource agent binding: %w", err)
+			}
+		}
+		lockedDataSource, lockedTable, err := s.lockTableForDeletionInTx(ctx, tx, organizationID, dataSourceID, tableID, accountID)
+		if err != nil {
+			return err
+		}
+		dataSource = lockedDataSource
+		tableMetadata = lockedTable
+		if !bindingCoveredByDatabaseDelete && bindingRepo != nil {
 			affectedAgentIDs, err = s.prepareAgentBindingsForResourceDeletionInTx(ctx, tx, bindingRef, databaseTableDeleteBindingOperation, actorID, agentBindingAction, impactToken)
 			if err != nil {
 				return err
