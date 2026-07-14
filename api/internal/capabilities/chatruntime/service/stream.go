@@ -75,31 +75,46 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		if err != nil {
 			var pendingGovernance *skillloop.ToolGovernancePendingError
 			if errors.As(err, &pendingGovernance) {
-				metadata := s.persistToolGovernanceApprovalPending(persistCtx, prepared, pendingGovernance.Payload, usage)
+				metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
+				if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
+					return nil, ownershipErr
+				}
 				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval))
 				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval, MessageEndEventID: eventID}, nil
 			}
 			var pendingApproval *skillloop.WorkflowApprovalPendingError
 			if errors.As(err, &pendingApproval) {
-				metadata := s.persistWorkflowApprovalPending(persistCtx, prepared, pendingApproval.Payload, usage)
+				metadata, persistErr := s.persistWorkflowApprovalPendingResult(persistCtx, prepared, pendingApproval.Payload, usage)
+				if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
+					return nil, ownershipErr
+				}
 				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval))
 				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval, MessageEndEventID: eventID}, nil
 			}
 			var pendingQuestion *skillloop.WorkflowQuestionPendingError
 			if errors.As(err, &pendingQuestion) {
-				metadata := s.persistWorkflowQuestionPending(persistCtx, prepared, pendingQuestion.Payload, usage)
+				metadata, persistErr := s.persistWorkflowQuestionPendingResult(persistCtx, prepared, pendingQuestion.Payload, usage)
+				if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
+					return nil, ownershipErr
+				}
 				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion))
 				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion, MessageEndEventID: eventID}, nil
 			}
 			var pendingClientAction *skillloop.ClientActionPendingError
 			if errors.As(err, &pendingClientAction) {
-				metadata := s.persistClientActionPending(persistCtx, prepared, pendingClientAction.Payload, usage)
+				metadata, persistErr := s.persistClientActionPendingResult(persistCtx, prepared, pendingClientAction.Payload, usage)
+				if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
+					return nil, ownershipErr
+				}
 				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction))
 				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingClientAction, MessageEndEventID: eventID}, nil
 			}
 			var pendingUserInput *skillloop.UserInputPendingError
 			if errors.As(err, &pendingUserInput) {
-				metadata := s.persistUserInputRequestPending(persistCtx, prepared, pendingUserInput.Payload, usage)
+				metadata, persistErr := s.persistUserInputRequestPendingResult(persistCtx, prepared, pendingUserInput.Payload, usage)
+				if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
+					return nil, ownershipErr
+				}
 				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion))
 				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion, MessageEndEventID: eventID}, nil
 			}
