@@ -306,6 +306,12 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			if userInputPlanRevisionPending(req) && planRevisionRequiredForTool(callSkillID, callToolName) {
 				result = pendingUserInputPlanRevisionStep(call.ID, callSkillID, callToolName, callToolArgs)
 			}
+			if result.trace.Kind == "" && req.AuthorizeSkillStep != nil && strings.TrimSpace(callSkillID) != "" {
+				allowed, policyErr := req.AuthorizeSkillStep(ctx, callSkillID)
+				if policyErr != nil || !allowed {
+					result = unavailableSkillPolicyStep(call.ID, callSkillID, callToolName, callToolArgs, policyErr)
+				}
+			}
 			if result.trace.Kind == "" && failedCallKey != "" {
 				if reason := failedToolCallReasons[failedCallKey]; strings.TrimSpace(reason) != "" {
 					result = repeatedFailedToolCallRecoverableStep(call.ID, callSkillID, callToolName, callToolArgs, reason)
@@ -708,6 +714,21 @@ func pendingUserInputPlanRevisionStep(callID string, skillID string, toolName st
 	trace.Arguments["next_step"] = skills.MetaToolUpdatePlan
 	nextAction := "Revise the pending plan phases from the user's clarification with update_plan, then choose the next business tool from the revised plan. Do not repeat this business call before the plan update succeeds."
 	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, nextAction, skillID, toolName)), false, false)
+}
+
+func unavailableSkillPolicyStep(callID string, skillID string, toolName string, args map[string]interface{}, policyErr error) skillStepResult {
+	message := "skill is no longer enabled by the current organization policy"
+	if policyErr != nil {
+		message = "skill availability could not be verified against the current organization policy"
+	}
+	err := fmt.Errorf("%w: %s", ErrInvalidInput, message)
+	trace := failedSkillTrace("tool_call", toolName, err)
+	trace.SkillID = strings.ToLower(strings.TrimSpace(skillID))
+	trace.Status = "blocked"
+	trace.Arguments = summarizeSkillToolArguments(trace.SkillID, toolName, args)
+	trace.Arguments["reason_code"] = "organization_skill_unavailable"
+	nextAction := "Do not retry this skill in the current turn. Continue with another enabled skill, or answer truthfully that the requested operation was not executed."
+	return recoverableSkillStep(trace, skills.ToolResultMessage(callID, recoverableSkillToolErrorPayload(err, nextAction, trace.SkillID, toolName)), false, false)
 }
 
 func currentMetadataForRun(req RunRequest) map[string]interface{} {

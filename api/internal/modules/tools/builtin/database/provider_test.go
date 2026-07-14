@@ -110,9 +110,13 @@ func TestAgentDatabaseUsesBindingActorAccount(t *testing.T) {
 	}
 }
 
-func TestAgentDatabaseGrantSkipsRuntimePermissionsAndUsesWritableTables(t *testing.T) {
+func TestAgentDatabaseGrantRevalidatesBindingActorPermissionsAndUsesWritableTables(t *testing.T) {
 	dataSources := newDatabaseFakeDataSourceService()
-	provider := NewProvider(dataSources, &databaseFakeOrganizationService{})
+	organization := &databaseFakeOrganizationService{
+		aiQuery:  true,
+		dataEdit: true,
+	}
+	provider := NewProvider(dataSources, organization)
 	tool, err := provider.GetTool(ToolInsertTableRecords)
 	if err != nil {
 		t.Fatalf("GetTool() error = %v", err)
@@ -149,6 +153,83 @@ func TestAgentDatabaseGrantSkipsRuntimePermissionsAndUsesWritableTables(t *testi
 	}
 	if dataSources.addedRecords != 1 {
 		t.Fatalf("addedRecords = %d, want 1", dataSources.addedRecords)
+	}
+	if organization.lastAccountID != "binder-1" {
+		t.Fatalf("permission check account = %q, want binder-1", organization.lastAccountID)
+	}
+}
+
+func TestAgentDatabaseGrantDeniesTableListAfterBindingActorPermissionRevoked(t *testing.T) {
+	dataSources := newDatabaseFakeDataSourceService()
+	organization := &databaseFakeOrganizationService{}
+	provider := NewProvider(dataSources, organization)
+	tool, err := provider.GetTool(ToolListDatabaseTables)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	runtimeTool := tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   "org-1",
+		InvokeFrom: tools.ToolInvokeFromAgent,
+		RuntimeParameters: map[string]interface{}{
+			"organization_id":              "org-1",
+			"database_binding_grant":       true,
+			"database_bound_by_account_id": "binder-1",
+			"database_bindings": []map[string]interface{}{
+				{"data_source_id": "db-1", "table_ids": []string{"table-1"}},
+			},
+		},
+	})
+
+	_, err = runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
+		"data_source_id": "db-1",
+	}, nil, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "database ai query permission is required") {
+		t.Fatalf("Invoke() error = %v, want revoked binding actor permission rejection", err)
+	}
+	if organization.lastAccountID != "binder-1" {
+		t.Fatalf("permission check account = %q, want binder-1", organization.lastAccountID)
+	}
+	if dataSources.listTablesCalls != 0 {
+		t.Fatalf("ListTables calls = %d, want 0 after permission rejection", dataSources.listTablesCalls)
+	}
+}
+
+func TestAgentDatabaseGrantDeniesTableDescriptionAfterBindingActorPermissionRevoked(t *testing.T) {
+	dataSources := newDatabaseFakeDataSourceService()
+	organization := &databaseFakeOrganizationService{aiQuery: true}
+	provider := NewProvider(dataSources, organization)
+	tool, err := provider.GetTool(ToolDescribeDatabaseTable)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	runtimeTool := tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   "org-1",
+		InvokeFrom: tools.ToolInvokeFromAgent,
+		RuntimeParameters: map[string]interface{}{
+			"organization_id":              "org-1",
+			"database_binding_grant":       true,
+			"database_bound_by_account_id": "binder-1",
+			"database_bindings": []map[string]interface{}{
+				{"data_source_id": "db-1", "table_ids": []string{"table-1"}},
+			},
+		},
+	})
+
+	_, err = runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
+		"data_source_id": "db-1",
+		"table_id":       "table-1",
+	}, nil, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "database record view permission is required") {
+		t.Fatalf("Invoke() error = %v, want revoked binding actor permission rejection", err)
+	}
+	if organization.lastAccountID != "binder-1" {
+		t.Fatalf("permission check account = %q, want binder-1", organization.lastAccountID)
+	}
+	if dataSources.getTableCalls != 0 {
+		t.Fatalf("GetTable calls = %d, want 0 after permission rejection", dataSources.getTableCalls)
+	}
+	if dataSources.getTableColumnsCalls != 0 {
+		t.Fatalf("GetTableColumns calls = %d, want 0 after permission rejection", dataSources.getTableColumnsCalls)
 	}
 }
 
@@ -288,10 +369,13 @@ func TestInsertTableRecordsAcceptsStructuredRecordsString(t *testing.T) {
 }
 
 type databaseFakeDataSourceService struct {
-	dataSources        []*dto.DataSourceResponse
-	tables             []*datasourcemodel.Table
-	addedRecords       int
-	lastQueryAccountID string
+	dataSources          []*dto.DataSourceResponse
+	tables               []*datasourcemodel.Table
+	addedRecords         int
+	listTablesCalls      int
+	getTableCalls        int
+	getTableColumnsCalls int
+	lastQueryAccountID   string
 }
 
 func newDatabaseFakeDataSourceService() *databaseFakeDataSourceService {
@@ -327,10 +411,12 @@ func (s *databaseFakeDataSourceService) GetDataSourceByID(_ context.Context, _ s
 }
 
 func (s *databaseFakeDataSourceService) ListTables(context.Context, string, string, string) ([]*datasourcemodel.Table, error) {
+	s.listTablesCalls++
 	return s.tables, nil
 }
 
 func (s *databaseFakeDataSourceService) GetTable(_ context.Context, _ string, dataSourceID, tableID string, _ string) (*datasourcemodel.Table, error) {
+	s.getTableCalls++
 	for _, table := range s.tables {
 		if table.DataSourceID == dataSourceID && table.ID == tableID {
 			return table, nil
@@ -340,6 +426,7 @@ func (s *databaseFakeDataSourceService) GetTable(_ context.Context, _ string, da
 }
 
 func (s *databaseFakeDataSourceService) GetTableColumns(context.Context, string, string, string, bool) (dto.GetTableColumnsResponse, error) {
+	s.getTableColumnsCalls++
 	return dto.GetTableColumnsResponse{Columns: []dto.TableColumn{{Name: "name", Type: "varchar"}}}, nil
 }
 

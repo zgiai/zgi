@@ -117,7 +117,9 @@ func agentDatabasePreauthorization(
 		return preauthorization
 	}
 
-	if tableID != "" {
+	if strings.TrimSpace(toolName) == "list_database_tables" {
+		preauthorization.Resources = agentDatabaseGovernanceResources([]agentDatabaseGovernanceBinding{matchedBinding})
+	} else if tableID != "" {
 		preauthorization.Resources = []toolgovernance.AssetRef{databaseTableAuthorizationResource(dataSourceID, tableID)}
 	} else if dataSourceID != "" {
 		preauthorization.Resources = []toolgovernance.AssetRef{{ID: dataSourceID, Type: "database"}}

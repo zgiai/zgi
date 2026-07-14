@@ -73,6 +73,13 @@ func TestPolicyToolGovernanceAgentDatabaseBindings(t *testing.T) {
 			assertAgentGovernanceDecision(t, decision, tt.want, tt.code)
 		})
 	}
+	listed := decideSystemSkillToolForTest(t, SkillAgentDatabase, "list_database_tables", map[string]interface{}{
+		"data_source_id": "database-1",
+	}, params)
+	assertAgentGovernanceDecision(t, listed, toolgovernance.DecisionStatusAllowed, "")
+	if listed.Preauthorization == nil || len(listed.Preauthorization.Resources) != 2 {
+		t.Fatalf("list preauthorization = %#v, want every currently bound table", listed.Preauthorization)
+	}
 }
 
 func TestPolicyToolGovernanceAgentWorkflowBinding(t *testing.T) {
@@ -98,6 +105,52 @@ func TestPolicyToolGovernanceAgentWorkflowBinding(t *testing.T) {
 		"inputs":     map[string]interface{}{"query": "run"},
 	}, params)
 	assertAgentGovernanceDecision(t, unbound, toolgovernance.DecisionStatusDenied, agentResourceNotBoundCode)
+}
+
+func TestPolicyToolGovernanceRechecksCurrentAgentBindingBeforeInvocation(t *testing.T) {
+	params := agentGovernanceRuntimeParameters(map[string]interface{}{
+		"database_binding_grant":       true,
+		"database_bound_by_account_id": "account-1",
+		"database_bound_at_unix":       int64(1_720_000_000),
+		"database_bindings": []map[string]interface{}{{
+			"data_source_id":     "database-1",
+			"table_ids":          []string{"table-1"},
+			"writable_table_ids": []string{"table-1"},
+		}},
+	})
+	var got AgentBindingCheck
+	params = WithAgentBindingVerifier(params, func(_ context.Context, check AgentBindingCheck) (bool, error) {
+		got = check
+		return false, nil
+	})
+
+	decision := decideSystemSkillToolForTest(t, SkillAgentDatabase, "delete_table_records", map[string]interface{}{
+		"data_source_id": "database-1",
+		"table_id":       "table-1",
+		"record_ids":     []string{"record-1"},
+	}, params)
+	assertAgentGovernanceDecision(t, decision, toolgovernance.DecisionStatusDenied, agentResourceNotBoundCode)
+	if got.BindingType != "database_table" || got.ResourceID != "table-1" ||
+		got.ParentResourceID != "database-1" || got.AccessMode != "write" {
+		t.Fatalf("binding check = %#v", got)
+	}
+}
+
+func TestAgentWorkflowBindingCheckUsesTargetAgentAsParentResource(t *testing.T) {
+	checks := agentBindingChecks(&toolgovernance.Preauthorization{
+		BindingType: "workflow",
+		Resources: []toolgovernance.AssetRef{{
+			ID:   "binding-1",
+			Type: "workflow",
+			Metadata: map[string]interface{}{
+				"agent_id":    "workflow-agent-1",
+				"workflow_id": "workflow-definition-1",
+			},
+		}},
+	}, toolgovernance.Manifest{Effect: toolgovernance.EffectInvoke})
+	if len(checks) != 1 || checks[0].ParentResourceID != "workflow-agent-1" || checks[0].AccessMode != "execute" {
+		t.Fatalf("checks = %#v", checks)
+	}
 }
 
 func TestPolicyToolGovernanceNonBoundAgentToolCannotWaitForApproval(t *testing.T) {

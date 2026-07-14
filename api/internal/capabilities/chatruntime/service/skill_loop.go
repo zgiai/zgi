@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
@@ -127,12 +128,58 @@ func (s *service) runPreparedToolLoop(
 		OnTerminalCompletion:           skillLoopTerminalCompletionResult(prepared),
 		OnChunk:                        onChunk,
 		PlanningOutputTokenLimit:       planningOutputTokenLimit(prepared),
+		AuthorizeSkillStep:             s.currentAgentSkillStepAuthorizer(prepared),
 	})
 	timeline.FlushPendingIntermediateAnswers(err)
 	if err != nil && strings.TrimSpace(answer) != "" {
 		s.persistPartialSkillLoopAnswerBestEffort(persistCtx, prepared, answer, usage)
 	}
 	return answer, usage, err
+}
+
+func (s *service) currentOrganizationSkillStepAuthorizer(organizationID uuid.UUID) func(context.Context, string) (bool, error) {
+	return func(ctx context.Context, skillID string) (bool, error) {
+		catalog, err := s.catalogSkillMetadata(ctx, organizationID)
+		if err != nil {
+			return false, err
+		}
+		enabled, err := s.effectiveOrganizationSkillIDs(ctx, organizationID, catalog)
+		if err != nil {
+			return false, err
+		}
+		return organizationAllowsSkillID(skillID, catalog, enabled), nil
+	}
+}
+
+func (s *service) currentAgentSkillStepAuthorizer(prepared *PreparedChat) func(context.Context, string) (bool, error) {
+	organizationID := uuid.Nil
+	if prepared != nil {
+		organizationID = prepared.Scope.OrganizationID
+	}
+	organizationAuthorizer := s.currentOrganizationSkillStepAuthorizer(organizationID)
+	if prepared == nil || normalizeCallerType(prepared.Caller.Type) != runtimemodel.ConversationCallerAgent {
+		return organizationAuthorizer
+	}
+	bindingVerifier := s.currentAgentBindingVerifier(prepared)
+	return func(ctx context.Context, skillID string) (bool, error) {
+		allowed, err := organizationAuthorizer(ctx, skillID)
+		if err != nil || !allowed {
+			return allowed, err
+		}
+		// Runtime-managed hidden Skills are derived from their concrete resource
+		// bindings and are checked again by Tool Governance before invocation.
+		if skills.SystemSkillExposureProfile(skillID).RuntimeManaged {
+			return true, nil
+		}
+		if bindingVerifier == nil {
+			return false, nil
+		}
+		return bindingVerifier(ctx, skills.AgentBindingCheck{
+			BindingType: "skill",
+			ResourceID:  strings.TrimSpace(skillID),
+			AccessMode:  "execute",
+		})
+	}
 }
 
 func planningOutputTokenLimit(prepared *PreparedChat) int {
@@ -1139,6 +1186,10 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 	if normalizeCallerType(prepared.Caller.Type) == runtimemodel.ConversationCallerAgent {
 		invokeFrom = tools.ToolInvokeFromAgent
 	}
+	runtimeParameters := skillRuntimeParametersForPrepared(prepared)
+	if verifier := s.currentAgentBindingVerifier(prepared); verifier != nil {
+		runtimeParameters = skills.WithAgentBindingVerifier(runtimeParameters, verifier)
+	}
 	return skills.ExecutionContext{
 		OrganizationID:    prepared.Scope.OrganizationID.String(),
 		UserID:            prepared.Scope.AccountID.String(),
@@ -1146,7 +1197,43 @@ func (s *service) skillExecutionContext(prepared *PreparedChat) skills.Execution
 		AppID:             appID,
 		MessageID:         prepared.Message.ID.String(),
 		InvokeFrom:        invokeFrom,
-		RuntimeParameters: skillRuntimeParametersForPrepared(prepared),
+		RuntimeParameters: runtimeParameters,
+	}
+}
+
+func (s *service) currentAgentBindingVerifier(prepared *PreparedChat) skills.AgentBindingVerifier {
+	if s == nil || s.repos == nil || s.repos.DB == nil || prepared == nil ||
+		normalizeCallerType(prepared.Caller.Type) != runtimemodel.ConversationCallerAgent ||
+		prepared.Caller.ID == nil || *prepared.Caller.ID == uuid.Nil {
+		return nil
+	}
+	agentID := *prepared.Caller.ID
+	scope := agentbindings.ScopePublished
+	if normalizeConversationSource(prepared.Caller.Source) == runtimemodel.ConversationSourceConsole {
+		scope = agentbindings.ScopeDraft
+	}
+	repo := agentbindings.NewRepository(s.repos.DB)
+	return func(ctx context.Context, check skills.AgentBindingCheck) (bool, error) {
+		ref := agentbindings.ScopeRef{AgentID: agentID, Scope: scope}
+		if scope == agentbindings.ScopePublished {
+			var versionIDs []uuid.UUID
+			if err := s.repos.DB.WithContext(ctx).Model(&agentbindings.Binding{}).
+				Where("agent_id = ? AND binding_scope = ? AND published_version_uuid IS NOT NULL", agentID, scope).
+				Limit(1).
+				Pluck("published_version_uuid", &versionIDs).Error; err != nil {
+				return false, fmt.Errorf("resolve current Agent published binding version: %w", err)
+			}
+			if len(versionIDs) == 0 || versionIDs[0] == uuid.Nil {
+				return false, nil
+			}
+			ref.PublishedVersionUUID = &versionIDs[0]
+		}
+		return repo.HasBinding(ctx, ref, agentbindings.Match{
+			BindingType:      agentbindings.BindingType(check.BindingType),
+			ResourceID:       check.ResourceID,
+			ParentResourceID: check.ParentResourceID,
+			AccessMode:       check.AccessMode,
+		})
 	}
 }
 

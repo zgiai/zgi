@@ -560,15 +560,15 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 	if err != nil {
 		return err
 	}
+	orgEnabled, err := s.effectiveOrganizationSkillIDs(ctx, scope.OrganizationID, catalog)
+	if err != nil {
+		return err
+	}
 	callerType := normalizeCallerType(caller.Type)
 	var enabled []string
 	if callerType == runtimemodel.ConversationCallerAgent {
-		enabled = effectiveAgentSkillIDs(parts.ConfiguredSkillIDs, catalog, config)
+		enabled = effectiveAgentSkillIDs(parts.ConfiguredSkillIDs, catalog, orgEnabled, config)
 	} else {
-		orgEnabled, err := s.effectiveOrganizationSkillIDs(ctx, scope.OrganizationID, catalog)
-		if err != nil {
-			return err
-		}
 		if parts.ConfiguredSkillIDs == nil {
 			defaultEnabled, _, err := s.effectiveAccountSkillPreferenceIDs(ctx, scope, callerType, catalog, orgEnabled)
 			if err != nil {

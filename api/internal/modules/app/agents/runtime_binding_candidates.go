@@ -322,7 +322,7 @@ func (s *agentsService) ListAgentDatabaseCandidates(ctx context.Context, agentID
 	}
 	if req.IncludeSelected && len(selectedIDs) > 0 {
 		dbQuery = dbQuery.Clauses(clause.OrderBy{Expression: clause.Expr{
-			SQL:                "CASE WHEN ds.id IN ? THEN 0 ELSE 1 END, LOWER(ds.name) ASC, ds.id ASC",
+			SQL:                "CASE WHEN ds.id IN (?) THEN 0 ELSE 1 END, LOWER(ds.name) ASC, ds.id ASC",
 			Vars:               []interface{}{selectedIDs},
 			WithoutParentheses: true,
 		}})

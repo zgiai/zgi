@@ -368,7 +368,7 @@ func TestListAgentDatabaseCandidatesUsesAgentWorkspaceAndFiltersStrays(t *testin
 	mock.ExpectQuery(`SELECT count\(\*\) FROM data_sources AS ds WHERE \(ds.organization_id = \$1 AND ds.workspace_id = \$2\) AND \(\(ds.id IN \(\$3\) OR EXISTS`).
 		WithArgs(agentWorkspaceID.String(), agentWorkspaceID.String(), selectedDatabaseID).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	mock.ExpectQuery(`(?s)SELECT ds.id AS data_source_id.*FROM data_sources AS ds.*ORDER BY CASE WHEN ds.id IN.*LOWER\(ds.name\) ASC, ds.id ASC LIMIT`).
+	mock.ExpectQuery(`(?s)SELECT ds.id AS data_source_id.*FROM data_sources AS ds.*ORDER BY CASE WHEN ds.id IN \(\$4\) THEN 0 ELSE 1 END, LOWER\(ds.name\) ASC, ds.id ASC LIMIT`).
 		WithArgs(
 			agentWorkspaceID.String(),
 			agentWorkspaceID.String(),

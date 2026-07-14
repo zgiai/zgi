@@ -3,15 +3,18 @@ package service
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/gorm"
 )
 
@@ -208,11 +211,130 @@ func (s *service) UpdateSkillConfig(ctx context.Context, scope Scope, req runtim
 	if err != nil {
 		return nil, err
 	}
+	previous, err := s.effectiveOrganizationSkillIDs(ctx, scope.OrganizationID, metadata)
+	if err != nil {
+		return nil, err
+	}
+	disabledSkillIDs := removedOrganizationSkillIDs(previous, normalized)
 	configs := organizationSkillConfigRows(scope.OrganizationID, metadata, normalized)
+	if len(disabledSkillIDs) > 0 && s.repos != nil && s.repos.DB != nil {
+		bindingRepo := agentbindings.NewRepository(s.repos.DB)
+		impactReq := agentbindings.SkillSuspensionImpactRequest{
+			OrganizationID: scope.OrganizationID,
+			SkillIDs:       disabledSkillIDs,
+			ActorID:        scope.AccountID,
+		}
+		impact, previewErr := bindingRepo.PreviewSkillSuspensionImpact(ctx, impactReq, time.Now())
+		if previewErr != nil {
+			return nil, previewErr
+		}
+		if impact != nil && (strings.TrimSpace(req.AgentBindingAction) != "retain_suspended" || strings.TrimSpace(req.ImpactToken) == "") {
+			return nil, &agentbindings.ConflictError{Impact: *impact}
+		}
+		resourceRefs := make([]agentbindings.ResourceRef, 0, len(disabledSkillIDs))
+		for _, skillID := range disabledSkillIDs {
+			resourceRefs = append(resourceRefs, agentbindings.ResourceRef{
+				OrganizationID: scope.OrganizationID,
+				BindingType:    agentbindings.BindingTypeSkill,
+				ResourceID:     skillID,
+			})
+		}
+		var committedImpact *agentbindings.Impact
+		if err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			txBindingRepo := bindingRepo.WithTx(tx)
+			if err := txBindingRepo.LockResources(ctx, tx, resourceRefs); err != nil {
+				return err
+			}
+			lockedImpact, err := txBindingRepo.PreviewSkillSuspensionImpact(ctx, impactReq, time.Now())
+			if err != nil {
+				return err
+			}
+			committedImpact = lockedImpact
+			if lockedImpact != nil {
+				if strings.TrimSpace(req.AgentBindingAction) != "retain_suspended" || strings.TrimSpace(req.ImpactToken) == "" {
+					return &agentbindings.ConflictError{Impact: *lockedImpact}
+				}
+				if verifyErr := txBindingRepo.VerifySkillSuspensionImpactToken(ctx, impactReq, req.ImpactToken, time.Now()); verifyErr != nil {
+					return &agentbindings.ConflictError{Impact: *lockedImpact}
+				}
+			}
+			return repository.NewOrganizationSkillConfigRepository(tx).ReplaceForOrganization(ctx, scope.OrganizationID, configs)
+		}); err != nil {
+			return nil, err
+		}
+		if committedImpact != nil {
+			logger.InfoContext(ctx, "agent binding organization skill policy changed",
+				"log_type", "audit",
+				"organization_id", scope.OrganizationID,
+				"account_id", scope.AccountID,
+				"operation", "retain_suspended",
+				"skill_ids_before", previous,
+				"skill_ids_after", normalized,
+				"affected_agents", committedImpact.Agents,
+				"binding_state_before", "active",
+				"binding_state_after", "suspended",
+			)
+		}
+		return &SkillConfig{EnabledSkillIDs: normalized}, nil
+	}
 	if err := s.repos.SkillConfig.ReplaceForOrganization(ctx, scope.OrganizationID, configs); err != nil {
 		return nil, err
 	}
+	restoredSkillIDs := removedOrganizationSkillIDs(normalized, previous)
+	auditOperation := "update_skill_policy"
+	if len(restoredSkillIDs) > 0 {
+		auditOperation = "restore_suspended"
+	}
+	type restoredSkillBindingAudit struct {
+		AgentID      string              `json:"agent_id"`
+		BindingScope agentbindings.Scope `json:"binding_scope"`
+		ResourceID   string              `json:"resource_id"`
+	}
+	affectedBindings := []restoredSkillBindingAudit{}
+	if len(restoredSkillIDs) > 0 && s.repos != nil && s.repos.DB != nil {
+		if err := s.repos.DB.WithContext(ctx).Model(&agentbindings.Binding{}).
+			Select("agent_id, binding_scope, resource_id").
+			Where("organization_id = ? AND binding_type = ? AND resource_id IN ?", scope.OrganizationID, agentbindings.BindingTypeSkill, restoredSkillIDs).
+			Order("agent_id ASC, binding_scope ASC, resource_id ASC").
+			Find(&affectedBindings).Error; err != nil {
+			logger.WarnContext(ctx, "failed to resolve affected agents for restored organization skills", "organization_id", scope.OrganizationID, "skill_ids", restoredSkillIDs, err)
+		}
+	}
+	logger.InfoContext(ctx, "organization skill policy changed",
+		"log_type", "audit",
+		"organization_id", scope.OrganizationID,
+		"account_id", scope.AccountID,
+		"operation", auditOperation,
+		"skill_ids_before", previous,
+		"skill_ids_after", normalized,
+		"restored_skill_ids", restoredSkillIDs,
+		"affected_bindings", affectedBindings,
+		"binding_state_before", "suspended_or_active",
+		"binding_state_after", "active",
+	)
 	return &SkillConfig{EnabledSkillIDs: normalized}, nil
+}
+
+func removedOrganizationSkillIDs(previous, next []string) []string {
+	nextSet := stringSet(next)
+	seen := map[string]struct{}{}
+	removed := make([]string, 0)
+	for _, raw := range previous {
+		id := strings.ToLower(strings.TrimSpace(raw))
+		if id == "" {
+			continue
+		}
+		if _, ok := nextSet[id]; ok {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		removed = append(removed, id)
+	}
+	sort.Strings(removed)
+	return removed
 }
 
 func (s *service) GetAccountSkillPreference(ctx context.Context, scope Scope, callerType string) (*AccountSkillPreference, error) {

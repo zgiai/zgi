@@ -5,16 +5,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/zgiai/zgi/api/internal/dto"
-	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
-	"github.com/zgiai/zgi/api/internal/modules/skills"
-	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
-	"gorm.io/gorm"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
+	"github.com/zgiai/zgi/api/internal/dto"
+	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/pkg/logger"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var (
@@ -32,6 +36,10 @@ func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID s
 	resp := agentConfigResponse(ag.ID.String(), cfg)
 	resp.WorkflowBindings = s.hydrateAgentWorkflowBindingRuntimeInputs(ctx, ag.TenantID.String(), resp.WorkflowBindings)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
+	_, resp.BindingRevision, resp.BindingHealth, err = s.draftBindingState(ctx, ag, cfg, accountID)
+	if err != nil {
+		return nil, err
+	}
 	return resp, nil
 }
 
@@ -43,6 +51,10 @@ func (s *agentsService) GetAgentDraftRuntimeConfig(ctx context.Context, agentID,
 	resp := agentConfigResponse(ag.ID.String(), cfg)
 	resp.WorkflowBindings = s.hydrateAgentWorkflowBindingRuntimeInputs(ctx, ag.TenantID.String(), resp.WorkflowBindings)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
+	_, resp.BindingRevision, resp.BindingHealth, err = s.draftBindingState(ctx, ag, cfg, accountID)
+	if err != nil {
+		return nil, err
+	}
 	return &dto.AgentDraftRuntimeConfigResponse{
 		AgentID:     ag.ID.String(),
 		WorkspaceID: ag.TenantID.String(),
@@ -57,24 +69,170 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 	}
 	runtimeReq := normalizeAgentConfigRequest(req)
 	runtimeReq.WorkflowBindings = s.hydrateAgentWorkflowBindingTypes(ctx, ag.TenantID.String(), runtimeReq.WorkflowBindings)
-	if err := s.validateAgentEnabledSkillIDs(ctx, ag.TenantID.String(), accountID, runtimeReq.EnabledSkillIDs); err != nil {
+	previous := agentConfigResponse(ag.ID.String(), cfg)
+	previousRows, currentRevision, currentHealth, err := s.draftBindingState(ctx, ag, cfg, accountID)
+	if err != nil {
 		return nil, err
 	}
-	if err := s.validateAgentBindingGrantChanges(ctx, ag, cfg, accountID, runtimeReq); err != nil {
+	if revision := strings.TrimSpace(req.BindingRevision); revision != "" && revision != currentRevision {
+		previous.BindingRevision = currentRevision
+		previous.BindingHealth = currentHealth
+		return nil, &agentBindingAPIError{
+			Code:    agentBindingRevisionConflictCode,
+			Message: "agent binding revision has changed",
+			Data: map[string]interface{}{
+				"current_config":   previous,
+				"binding_revision": currentRevision,
+				"binding_health":   currentHealth,
+			},
+		}
+	}
+	if err := s.validateIncrementalAgentBindingChanges(ctx, ag, accountID, previous, runtimeReq); err != nil {
 		return nil, err
 	}
-	if _, err := applyAgentConfigRequestToDraft(cfg, runtimeReq, accountID); err != nil {
-		return nil, err
-	}
-	if uid, err := uuid.Parse(accountID); err == nil {
-		cfg.UpdatedBy = &uid
-	}
-	if err := s.agentsRepo.UpdateAgentsConfig(ctx, cfg); err != nil {
-		return nil, err
+	var rows []agentbindings.Binding
+	if s.db != nil && s.agentBindings != nil {
+		cfg, rows, err = s.updateAgentConfigCAS(ctx, ag, cfg, currentRevision, runtimeReq, accountID)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		if _, err := applyAgentConfigRequestToDraft(cfg, runtimeReq, accountID); err != nil {
+			return nil, err
+		}
+		if uid, parseErr := uuid.Parse(accountID); parseErr == nil {
+			cfg.UpdatedBy = &uid
+		}
+		resp := agentConfigResponse(ag.ID.String(), cfg)
+		rows, err = s.bindingRowsForConfig(ctx, ag, resp, agentbindings.ScopeDraft, nil, accountID, time.Now())
+		if err != nil {
+			return nil, err
+		}
+		if err := s.persistAgentDraftConfigAndBindings(ctx, cfg, ag.ID, rows); err != nil {
+			return nil, err
+		}
 	}
 	resp := agentConfigResponse(ag.ID.String(), cfg)
+	resp.BindingRevision = agentBindingRevision(rows)
+	resp.BindingHealth = s.resolveAgentBindingHealth(ctx, ag, accountID, resp, rows)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
+	if removedBindings := removedAgentBindingAuditItems(previousRows, rows); len(removedBindings) > 0 {
+		logger.InfoContext(ctx, "agent draft resource bindings removed",
+			"log_type", "audit",
+			"actor_account_id", accountID,
+			"organization_id", s.organizationIDForAgentWorkspace(ctx, ag.TenantID.String()),
+			"workspace_id", ag.TenantID,
+			"agent_id", ag.ID,
+			"removed_bindings", removedBindings,
+			"binding_state_before", "bound",
+			"binding_state_after", "unbound",
+		)
+	}
 	return resp, nil
+}
+
+func removedAgentBindingAuditItems(before, after []agentbindings.Binding) []map[string]string {
+	remaining := make(map[string]struct{}, len(after))
+	for _, row := range after {
+		remaining[agentBindingItemKey(string(row.BindingType), row.ParentResourceID, row.ResourceID, row.AccessMode)] = struct{}{}
+	}
+	removed := make([]map[string]string, 0)
+	for _, row := range before {
+		if _, ok := remaining[agentBindingItemKey(string(row.BindingType), row.ParentResourceID, row.ResourceID, row.AccessMode)]; ok {
+			continue
+		}
+		removed = append(removed, map[string]string{
+			"binding_type":       string(row.BindingType),
+			"resource_id":        row.ResourceID,
+			"parent_resource_id": row.ParentResourceID,
+			"access_mode":        row.AccessMode,
+		})
+	}
+	return removed
+}
+
+func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, stale *AgentsConfig, expectedRevision string, req dto.AgentConfigRequest, accountID string) (*AgentsConfig, []agentbindings.Binding, error) {
+	if stale == nil {
+		return nil, nil, fmt.Errorf("agent draft config is required")
+	}
+	candidate := *stale
+	if _, err := applyAgentConfigRequestToDraft(&candidate, req, accountID); err != nil {
+		return nil, nil, err
+	}
+	candidateRows, err := s.bindingRowsForConfig(ctx, ag, agentConfigResponse(ag.ID.String(), &candidate), agentbindings.ScopeDraft, nil, accountID, time.Now())
+	if err != nil {
+		return nil, nil, err
+	}
+	var saved *AgentsConfig
+	var savedRows []agentbindings.Binding
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		bindingRepo := s.agentBindings.WithTx(tx)
+		if err := bindingRepo.LockResources(ctx, tx, agentBindingResourceRefs(candidateRows)); err != nil {
+			return err
+		}
+		if err := bindingRepo.LockAgents(ctx, tx, []uuid.UUID{ag.ID}); err != nil {
+			return err
+		}
+		if err := ensureAgentWorkspaceUnchanged(ctx, tx, ag); err != nil {
+			return err
+		}
+		var current AgentsConfig
+		query := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("deleted_at IS NULL")
+		if stale != nil && stale.ID != uuid.Nil {
+			query = query.Where("id = ?", stale.ID)
+		} else {
+			query = query.Where("agents_id = ?", ag.ID).Order("updated_at DESC, created_at DESC")
+		}
+		if err := query.First(&current).Error; err != nil {
+			return err
+		}
+		currentConfig := agentConfigResponse(ag.ID.String(), &current)
+		currentRows, err := s.bindingRowsForConfig(ctx, ag, currentConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
+		if err != nil {
+			return err
+		}
+		currentRevision := agentBindingRevision(currentRows)
+		if currentRevision != expectedRevision {
+			currentHealth := s.resolveAgentBindingHealth(ctx, ag, accountID, currentConfig, currentRows)
+			currentConfig.BindingRevision = currentRevision
+			currentConfig.BindingHealth = currentHealth
+			return &agentBindingAPIError{Code: agentBindingRevisionConflictCode, Message: "agent binding revision has changed", Data: map[string]interface{}{
+				"current_config": currentConfig, "binding_revision": currentRevision, "binding_health": currentHealth,
+			}}
+		}
+		txService := *s
+		txService.db = tx
+		txService.agentBindings = bindingRepo
+		if err := txService.validateIncrementalAgentBindingChanges(ctx, ag, accountID, currentConfig, req); err != nil {
+			return err
+		}
+		if _, err := applyAgentConfigRequestToDraft(&current, req, accountID); err != nil {
+			return err
+		}
+		if actorID, parseErr := uuid.Parse(accountID); parseErr == nil {
+			current.UpdatedBy = &actorID
+		}
+		nextConfig := agentConfigResponse(ag.ID.String(), &current)
+		nextRows, err := s.bindingRowsForConfig(ctx, ag, nextConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
+		if err != nil {
+			return err
+		}
+		existing, err := bindingRepo.ListScope(ctx, agentbindings.ScopeRef{AgentID: ag.ID, Scope: agentbindings.ScopeDraft})
+		if err != nil {
+			return err
+		}
+		nextRows = preserveAgentBindingEvidence(nextRows, existing)
+		if err := NewAgentsRepository(tx).UpdateAgentsConfig(ctx, &current); err != nil {
+			return err
+		}
+		if err := bindingRepo.ReplaceScope(ctx, tx, agentbindings.ScopeRef{AgentID: ag.ID, Scope: agentbindings.ScopeDraft}, nextRows); err != nil {
+			return err
+		}
+		saved = &current
+		savedRows = nextRows
+		return nil
+	})
+	return saved, savedRows, err
 }
 
 func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID string, req dto.PublishAgentRequest) (*dto.PublishAgentResponse, error) {
@@ -82,40 +240,48 @@ func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID str
 	if err != nil {
 		return nil, err
 	}
-	snapshot := agentConfigSnapshot(ag.ID.String(), cfg)
-	snapshot["supports_vision"] = s.resolveAgentModelSupportsVision(
-		ctx,
-		s.organizationIDForAgentWorkspace(ctx, ag.TenantID.String()),
-		stringFromSnapshot(snapshot, "model_provider"),
-		stringFromSnapshot(snapshot, "model"),
-	)
-	if err := validateAgentSystemPromptSource(stringFromSnapshot(snapshot, "system_prompt")); err != nil {
+	_, bindingRevision, bindingHealth, err := s.draftBindingState(ctx, ag, cfg, accountID)
+	if err != nil {
 		return nil, err
+	}
+	if revision := strings.TrimSpace(req.BindingRevision); revision != "" && revision != bindingRevision {
+		current := agentConfigResponse(ag.ID.String(), cfg)
+		current.BindingRevision = bindingRevision
+		current.BindingHealth = bindingHealth
+		return nil, &agentBindingAPIError{
+			Code:    agentBindingRevisionConflictCode,
+			Message: "agent binding revision has changed",
+			Data: map[string]interface{}{
+				"current_config":   current,
+				"binding_revision": bindingRevision,
+				"binding_health":   bindingHealth,
+			},
+		}
+	}
+	if bindingHealth.UnavailableCount > 0 {
+		return nil, &agentBindingAPIError{Code: agentBindingsInvalidCode, Message: "agent has unavailable bindings", Data: map[string]interface{}{"binding_health": bindingHealth}}
+	}
+	if bindingHealth.SuspendedCount > 0 && !req.AcknowledgeSuspendedBindings {
+		return nil, &agentBindingAPIError{Code: agentBindingsSuspendedCode, Message: "agent has suspended bindings", Data: map[string]interface{}{"binding_health": bindingHealth}}
 	}
 	currentMemorySlots, err := s.loadAgentMemorySlotsForDraft(ctx, ag.ID)
 	if err != nil {
 		return nil, fmt.Errorf("load agent memory slots for publish: %w", err)
 	}
-	snapshotMemorySlots := []dto.AgentMemorySlotConfig{}
-	if enabled, _ := snapshot["agent_memory_enabled"].(bool); enabled {
-		snapshotMemorySlots = agentMemorySnapshotSlots(enabledAgentMemorySlots(currentMemorySlots))
-	}
-	snapshot["agent_memory_slots"] = snapshotMemorySlots
 	now := time.Now()
 	versionUUID := uuid.New()
 	version := &AgentPublishedVersion{
-		AgentID:        ag.ID,
-		WorkspaceID:    ag.TenantID,
-		Version:        now.Format("20060102150405"),
-		VersionUUID:    versionUUID,
-		ConfigSnapshot: snapshot,
-		Description:    strings.TrimSpace(req.Description),
-		CreatedAt:      now,
+		AgentID:     ag.ID,
+		WorkspaceID: ag.TenantID,
+		Version:     now.Format("20060102150405"),
+		VersionUUID: versionUUID,
+		Description: strings.TrimSpace(req.Description),
+		CreatedAt:   now,
 	}
 	if uid, err := uuid.Parse(accountID); err == nil {
 		version.CreatedBy = &uid
 	}
-	if err := s.createAgentPublishedVersion(ctx, version, ag.ID, currentMemorySlots); err != nil {
+	if err := s.createAgentPublishedVersion(ctx, version, ag, cfg, accountID, bindingRevision, req.AcknowledgeSuspendedBindings, currentMemorySlots); err != nil {
 		return nil, err
 	}
 	return &dto.PublishAgentResponse{
@@ -127,22 +293,172 @@ func (s *agentsService) PublishAgent(ctx context.Context, agentID, accountID str
 	}, nil
 }
 
-func (s *agentsService) createAgentPublishedVersion(ctx context.Context, version *AgentPublishedVersion, agentID uuid.UUID, currentMemorySlots []dto.AgentMemorySlotConfig) error {
+func (s *agentsService) persistAgentDraftConfigAndBindings(ctx context.Context, cfg *AgentsConfig, agentID uuid.UUID, bindings []agentbindings.Binding) error {
+	if cfg == nil {
+		return fmt.Errorf("agent config is required")
+	}
+	if s.db == nil || s.agentBindings == nil {
+		return s.agentsRepo.UpdateAgentsConfig(ctx, cfg)
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := NewAgentsRepository(tx).UpdateAgentsConfig(ctx, cfg); err != nil {
+			return err
+		}
+		return s.agentBindings.ReplaceScope(ctx, tx, agentbindings.ScopeRef{
+			AgentID: agentID,
+			Scope:   agentbindings.ScopeDraft,
+		}, bindings)
+	})
+}
+
+func ensureAgentWorkspaceUnchanged(ctx context.Context, tx *gorm.DB, ag *Agent) error {
+	if tx == nil || ag == nil || ag.ID == uuid.Nil {
+		return fmt.Errorf("agent transaction and id are required")
+	}
+	var current struct {
+		TenantID uuid.UUID
+	}
+	if err := tx.WithContext(ctx).Table("agents").Select("tenant_id").Where("id = ? AND deleted_at IS NULL", ag.ID).Take(&current).Error; err != nil {
+		return fmt.Errorf("reload agent workspace: %w", err)
+	}
+	if current.TenantID != ag.TenantID {
+		return &agentBindingAPIError{
+			Code:    agentBindingRevisionConflictCode,
+			Message: "agent workspace has changed",
+			Data: map[string]interface{}{
+				"agent_id":             ag.ID.String(),
+				"current_workspace_id": current.TenantID.String(),
+			},
+		}
+	}
+	return nil
+}
+
+func (s *agentsService) createAgentPublishedVersion(
+	ctx context.Context,
+	version *AgentPublishedVersion,
+	ag *Agent,
+	staleConfig *AgentsConfig,
+	accountID string,
+	expectedBindingRevision string,
+	acknowledgeSuspended bool,
+	currentMemorySlots []dto.AgentMemorySlotConfig,
+) error {
 	if version == nil {
 		return fmt.Errorf("agent published version is required")
+	}
+	if ag == nil || staleConfig == nil {
+		return fmt.Errorf("agent and draft config are required")
 	}
 	if s.db == nil {
 		return fmt.Errorf("database is required")
 	}
+	candidateRows, err := s.bindingRowsForConfig(ctx, ag, agentConfigResponse(ag.ID.String(), staleConfig), agentbindings.ScopeDraft, nil, accountID, time.Now())
+	if err != nil {
+		return err
+	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		bindingRepo := s.agentBindings
+		if bindingRepo == nil {
+			bindingRepo = agentbindings.NewRepository(tx)
+		} else {
+			bindingRepo = bindingRepo.WithTx(tx)
+		}
+		if err := bindingRepo.LockResources(ctx, tx, agentBindingResourceRefs(candidateRows)); err != nil {
+			return err
+		}
+		if err := bindingRepo.LockAgents(ctx, tx, []uuid.UUID{ag.ID}); err != nil {
+			return err
+		}
+		if err := ensureAgentWorkspaceUnchanged(ctx, tx, ag); err != nil {
+			return err
+		}
+		var current AgentsConfig
+		query := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("deleted_at IS NULL")
+		if staleConfig.ID != uuid.Nil {
+			query = query.Where("id = ?", staleConfig.ID)
+		} else {
+			query = query.Where("agents_id = ?", ag.ID).Order("updated_at DESC, created_at DESC")
+		}
+		if err := query.First(&current).Error; err != nil {
+			return fmt.Errorf("lock agent draft config for publish: %w", err)
+		}
+
+		txService := *s
+		txService.db = tx
+		txService.agentBindings = bindingRepo
+		currentConfig := agentConfigResponse(ag.ID.String(), &current)
+		rows, err := txService.bindingRowsForConfig(ctx, ag, currentConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
+		if err != nil {
+			return err
+		}
+		existing, err := bindingRepo.ListScope(ctx, agentbindings.ScopeRef{AgentID: ag.ID, Scope: agentbindings.ScopeDraft})
+		if err != nil {
+			return err
+		}
+		rows = preserveAgentBindingEvidence(rows, existing)
+		bindingRevision := agentBindingRevision(rows)
+		bindingHealth := txService.resolveAgentBindingHealth(ctx, ag, accountID, currentConfig, rows)
+		if bindingRevision != expectedBindingRevision {
+			currentConfig.BindingRevision = bindingRevision
+			currentConfig.BindingHealth = bindingHealth
+			return &agentBindingAPIError{
+				Code:    agentBindingRevisionConflictCode,
+				Message: "agent binding revision has changed",
+				Data: map[string]interface{}{
+					"current_config":   currentConfig,
+					"binding_revision": bindingRevision,
+					"binding_health":   bindingHealth,
+				},
+			}
+		}
+		if bindingHealth.UnavailableCount > 0 {
+			return &agentBindingAPIError{Code: agentBindingsInvalidCode, Message: "agent has unavailable bindings", Data: map[string]interface{}{"binding_health": bindingHealth}}
+		}
+		if bindingHealth.SuspendedCount > 0 && !acknowledgeSuspended {
+			return &agentBindingAPIError{Code: agentBindingsSuspendedCode, Message: "agent has suspended bindings", Data: map[string]interface{}{"binding_health": bindingHealth}}
+		}
+
+		snapshot := agentConfigSnapshot(ag.ID.String(), &current)
+		snapshot["binding_indexed"] = true
+		snapshot["binding_revision"] = bindingRevision
+		snapshot["supports_vision"] = txService.resolveAgentModelSupportsVision(
+			ctx,
+			txService.organizationIDForAgentWorkspace(ctx, ag.TenantID.String()),
+			stringFromSnapshot(snapshot, "model_provider"),
+			stringFromSnapshot(snapshot, "model"),
+		)
+		if err := validateAgentSystemPromptSource(stringFromSnapshot(snapshot, "system_prompt")); err != nil {
+			return err
+		}
+		snapshotMemorySlots := []dto.AgentMemorySlotConfig{}
+		if enabled, _ := snapshot["agent_memory_enabled"].(bool); enabled {
+			snapshotMemorySlots = agentMemorySnapshotSlots(enabledAgentMemorySlots(currentMemorySlots))
+		}
+		snapshot["agent_memory_slots"] = snapshotMemorySlots
+		version.ConfigSnapshot = snapshot
 		if err := tx.Create(version).Error; err != nil {
 			return fmt.Errorf("failed to create agent published version: %w", err)
+		}
+		// Suspended bindings remain indexed so a later organization-policy re-enable
+		// restores the published capability without requiring a republish.
+		publishedBindings := publishedAgentBindingRows(rows)
+		for idx := range publishedBindings {
+			publishedBindings[idx].BindingScope = agentbindings.ScopePublished
+			publishedBindings[idx].PublishedVersionUUID = &version.VersionUUID
+		}
+		if err := bindingRepo.ReplacePublishedHead(ctx, tx, agentbindings.ScopeRef{
+			AgentID:              ag.ID,
+			Scope:                agentbindings.ScopePublished,
+			PublishedVersionUUID: &version.VersionUUID,
+		}, publishedBindings); err != nil {
+			return err
 		}
 		if s.agentMemoryService == nil {
 			return nil
 		}
 		memoryService := agentmemory.NewService(tx)
-		if err := memoryService.ClearValuesNotInKeys(ctx, agentID, agentMemoryKeys(currentMemorySlots)); err != nil {
+		if err := memoryService.ClearValuesNotInKeys(ctx, ag.ID, agentMemoryKeys(currentMemorySlots)); err != nil {
 			return fmt.Errorf("clear removed agent memory values: %w", err)
 		}
 		return nil
@@ -194,68 +510,233 @@ func (s *agentsService) ListAgentPublishedVersions(ctx context.Context, agentID,
 	}, nil
 }
 
+func (s *agentsService) PreviewAgentPublishedVersionRollback(ctx context.Context, agentID, accountID, versionID string) (*dto.AgentRollbackPreviewResponse, error) {
+	ag, _, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, false, agentPublishPermissionCodes("AGENT")...)
+	if err != nil {
+		return nil, err
+	}
+	version, snapshot, rows, health, err := s.agentRollbackImpact(ctx, ag, accountID, versionID)
+	if err != nil {
+		return nil, err
+	}
+	actorID, err := uuid.Parse(strings.TrimSpace(accountID))
+	if err != nil {
+		return nil, fmt.Errorf("invalid account id")
+	}
+	if s.agentBindings == nil {
+		return nil, fmt.Errorf("agent binding index is not configured")
+	}
+	impactToken, err := s.agentBindings.CreateRollbackImpactToken(actorID, ag.ID, version.ID.String(), agentBindingHealthRevision(health), time.Now())
+	if err != nil {
+		return nil, err
+	}
+	return agentRollbackPreview(version, snapshot, rows, health, impactToken), nil
+}
+
 func (s *agentsService) RollbackAgentPublishedVersion(ctx context.Context, agentID, accountID string, req dto.RollbackAgentPublishedVersionRequest) (*dto.AgentConfigResponse, error) {
 	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true, agentPublishPermissionCodes("AGENT")...)
 	if err != nil {
 		return nil, err
 	}
-	versionID := strings.TrimSpace(req.VersionID)
-	if versionID == "" {
-		return nil, fmt.Errorf("version id is required")
+	if strings.TrimSpace(req.BindingAction) != "remove_all_abnormal" {
+		return nil, fmt.Errorf("binding_action must be remove_all_abnormal")
 	}
-	version, err := s.agentsRepo.GetAgentPublishedVersionByID(ctx, agentID, versionID)
+	_, _, candidateRows, _, err := s.agentRollbackImpact(ctx, ag, accountID, req.VersionID)
 	if err != nil {
 		return nil, err
 	}
-	if version == nil {
-		return nil, fmt.Errorf("published version not found")
+	actorID, err := uuid.Parse(strings.TrimSpace(accountID))
+	if err != nil {
+		return nil, fmt.Errorf("invalid account id")
 	}
-	snapshot := agentConfigResponseFromSnapshot(agentID, version.ConfigSnapshot)
-	applied, err := applyAgentConfigRequestToDraft(cfg, dto.AgentConfigRequest{
-		SystemPrompt:              snapshot.SystemPrompt,
-		ModelProvider:             snapshot.ModelProvider,
-		Model:                     snapshot.Model,
-		ModelParameters:           snapshot.ModelParameters,
-		EnabledSkillIDs:           snapshot.EnabledSkillIDs,
-		UseMemory:                 false,
-		AgentMemoryEnabled:        snapshot.AgentMemoryEnabled,
-		FileUpload:                snapshot.FileUpload,
-		HomeTitle:                 snapshot.HomeTitle,
-		OpeningStatement:          snapshot.OpeningStatement,
-		InputPlaceholder:          snapshot.InputPlaceholder,
-		ThemeColor:                snapshot.ThemeColor,
-		SuggestedQuestions:        snapshot.SuggestedQuestions,
-		KnowledgeDatasetIDs:       snapshot.KnowledgeDatasetIDs,
-		KnowledgeBoundByAccountID: snapshot.KnowledgeBoundByAccountID,
-		KnowledgeBoundAtUnix:      snapshot.KnowledgeBoundAtUnix,
-		KnowledgeRetrievalConfig:  snapshot.KnowledgeRetrievalConfig,
-		DatabaseBindings:          snapshot.DatabaseBindings,
-		DatabaseBoundByAccountID:  snapshot.DatabaseBoundByAccountID,
-		DatabaseBoundAtUnix:       snapshot.DatabaseBoundAtUnix,
-		WorkflowBindings:          snapshot.WorkflowBindings,
-		WorkflowBoundByAccountID:  snapshot.WorkflowBoundByAccountID,
-		WorkflowBoundAtUnix:       snapshot.WorkflowBoundAtUnix,
-	}, accountID)
+	if s.agentBindings == nil {
+		return nil, fmt.Errorf("agent binding index is not configured")
+	}
+	resp, err := s.rollbackAgentPublishedVersionCAS(ctx, ag, cfg, actorID, accountID, req, candidateRows)
 	if err != nil {
 		return nil, err
 	}
-	if uid, err := uuid.Parse(accountID); err == nil {
-		cfg.UpdatedBy = &uid
-	}
-	if err := s.agentsRepo.UpdateAgentsConfig(ctx, cfg); err != nil {
-		return nil, err
-	}
-	if s.agentMemoryService != nil {
-		actorID, _ := uuid.Parse(accountID)
-		_, err = s.agentMemoryService.ReplaceSlots(ctx, ag.ID, actorID, agentMemoryReplaceRequestFromConfig(snapshot.AgentMemorySlots, false))
-		if err != nil {
-			return nil, err
+	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
+	return resp, nil
+}
+
+func agentRollbackPreview(version *AgentPublishedVersion, snapshot *dto.AgentConfigResponse, rows []agentbindings.Binding, health dto.AgentBindingHealth, impactToken string) *dto.AgentRollbackPreviewResponse {
+	snapshotCopy := *snapshot
+	snapshotCopy.BindingRevision = agentBindingRevision(rows)
+	snapshotCopy.BindingHealth = health
+	removed := make([]dto.AgentBindingHealthItem, 0, health.SuspendedCount+health.UnavailableCount)
+	for _, item := range health.Items {
+		if item.Status != agentBindingStatusActive {
+			removed = append(removed, item)
 		}
 	}
-	resp := agentConfigResponse(ag.ID.String(), cfg)
-	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
-	resp.EnabledSkillIDs = applied.EnabledSkillIDs
-	return resp, nil
+	return &dto.AgentRollbackPreviewResponse{
+		VersionID:       version.ID.String(),
+		ConfigSnapshot:  snapshotCopy,
+		BindingHealth:   health,
+		RemovedBindings: removed,
+		ImpactToken:     impactToken,
+	}
+}
+
+func (s *agentsService) rollbackAgentPublishedVersionCAS(
+	ctx context.Context,
+	ag *Agent,
+	staleConfig *AgentsConfig,
+	actorID uuid.UUID,
+	accountID string,
+	req dto.RollbackAgentPublishedVersionRequest,
+	candidateRows []agentbindings.Binding,
+) (*dto.AgentConfigResponse, error) {
+	if s.db == nil || s.agentBindings == nil || staleConfig == nil {
+		return nil, fmt.Errorf("database, binding index, and draft config are required")
+	}
+	var result *dto.AgentConfigResponse
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		bindingRepo := s.agentBindings.WithTx(tx)
+		if err := bindingRepo.LockResources(ctx, tx, agentBindingResourceRefs(candidateRows)); err != nil {
+			return err
+		}
+		if err := bindingRepo.LockAgents(ctx, tx, []uuid.UUID{ag.ID}); err != nil {
+			return err
+		}
+		if err := ensureAgentWorkspaceUnchanged(ctx, tx, ag); err != nil {
+			return err
+		}
+		var current AgentsConfig
+		query := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("deleted_at IS NULL")
+		if staleConfig.ID != uuid.Nil {
+			query = query.Where("id = ?", staleConfig.ID)
+		} else {
+			query = query.Where("agents_id = ?", ag.ID).Order("updated_at DESC, created_at DESC")
+		}
+		if err := query.First(&current).Error; err != nil {
+			return fmt.Errorf("lock agent draft config for rollback: %w", err)
+		}
+
+		txService := *s
+		txService.db = tx
+		txService.agentBindings = bindingRepo
+		versionID := strings.TrimSpace(req.VersionID)
+		if versionID == "" {
+			return fmt.Errorf("version id is required")
+		}
+		version, err := NewAgentsRepository(tx).GetAgentPublishedVersionByID(ctx, ag.ID.String(), versionID)
+		if err != nil {
+			return err
+		}
+		if version == nil {
+			return fmt.Errorf("published version not found")
+		}
+		snapshot := agentConfigResponseFromSnapshot(ag.ID.String(), version.ConfigSnapshot)
+		impactRows, err := txService.bindingRowsForConfig(ctx, ag, snapshot, agentbindings.ScopeDraft, nil, accountID, version.CreatedAt)
+		if err != nil {
+			return err
+		}
+		health := txService.resolveAgentBindingHealth(ctx, ag, accountID, snapshot, impactRows)
+		if err := bindingRepo.VerifyRollbackImpactToken(actorID, ag.ID, version.ID.String(), agentBindingHealthRevision(health), req.ImpactToken, time.Now()); err != nil {
+			freshToken, tokenErr := bindingRepo.CreateRollbackImpactToken(actorID, ag.ID, version.ID.String(), agentBindingHealthRevision(health), time.Now())
+			if tokenErr != nil {
+				return tokenErr
+			}
+			return &agentBindingAPIError{
+				Code:    agentRollbackImpactChangedCode,
+				Message: "agent rollback impact has changed",
+				Data:    agentRollbackPreview(version, snapshot, impactRows, health, freshToken),
+			}
+		}
+		if !staleConfig.UpdatedAt.IsZero() && !current.UpdatedAt.Equal(staleConfig.UpdatedAt) {
+			currentConfig := agentConfigResponse(ag.ID.String(), &current)
+			currentRows, rowErr := txService.bindingRowsForConfig(ctx, ag, currentConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
+			if rowErr != nil {
+				return rowErr
+			}
+			currentConfig.BindingRevision = agentBindingRevision(currentRows)
+			currentConfig.BindingHealth = txService.resolveAgentBindingHealth(ctx, ag, accountID, currentConfig, currentRows)
+			return &agentBindingAPIError{Code: agentBindingRevisionConflictCode, Message: "agent draft config has changed", Data: map[string]interface{}{
+				"current_config": currentConfig, "binding_revision": currentConfig.BindingRevision, "binding_health": currentConfig.BindingHealth,
+			}}
+		}
+
+		snapshot.BindingHealth = health
+		filtered := filterAgentConfigByBindingHealth(*snapshot)
+		applied, err := applyAgentConfigRequestToDraft(&current, agentConfigRequestFromResponse(filtered), accountID)
+		if err != nil {
+			return err
+		}
+		current.UpdatedBy = &actorID
+		currentConfig := agentConfigResponse(ag.ID.String(), &current)
+		rows, err := txService.bindingRowsForConfig(ctx, ag, currentConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
+		if err != nil {
+			return err
+		}
+		if err := NewAgentsRepository(tx).UpdateAgentsConfig(ctx, &current); err != nil {
+			return err
+		}
+		if err := bindingRepo.ReplaceScope(ctx, tx, agentbindings.ScopeRef{AgentID: ag.ID, Scope: agentbindings.ScopeDraft}, rows); err != nil {
+			return err
+		}
+		if s.agentMemoryService != nil {
+			if _, err := agentmemory.NewService(tx).ReplaceSlots(ctx, ag.ID, actorID, agentMemoryReplaceRequestFromConfig(snapshot.AgentMemorySlots, false)); err != nil {
+				return fmt.Errorf("replace agent memory slots during rollback: %w", err)
+			}
+		}
+		result = agentConfigResponse(ag.ID.String(), &current)
+		result.EnabledSkillIDs = applied.EnabledSkillIDs
+		result.BindingRevision = agentBindingRevision(rows)
+		result.BindingHealth = txService.resolveAgentBindingHealth(ctx, ag, accountID, result, rows)
+		return nil
+	})
+	return result, err
+}
+
+func (s *agentsService) agentRollbackImpact(ctx context.Context, ag *Agent, accountID, versionID string) (*AgentPublishedVersion, *dto.AgentConfigResponse, []agentbindings.Binding, dto.AgentBindingHealth, error) {
+	versionID = strings.TrimSpace(versionID)
+	if versionID == "" {
+		return nil, nil, nil, dto.AgentBindingHealth{}, fmt.Errorf("version id is required")
+	}
+	version, err := s.agentsRepo.GetAgentPublishedVersionByID(ctx, ag.ID.String(), versionID)
+	if err != nil {
+		return nil, nil, nil, dto.AgentBindingHealth{}, err
+	}
+	if version == nil {
+		return nil, nil, nil, dto.AgentBindingHealth{}, fmt.Errorf("published version not found")
+	}
+	snapshot := agentConfigResponseFromSnapshot(ag.ID.String(), version.ConfigSnapshot)
+	rows, err := s.bindingRowsForConfig(ctx, ag, snapshot, agentbindings.ScopeDraft, nil, accountID, version.CreatedAt)
+	if err != nil {
+		return nil, nil, nil, dto.AgentBindingHealth{}, err
+	}
+	health := s.resolveAgentBindingHealth(ctx, ag, accountID, snapshot, rows)
+	return version, snapshot, rows, health, nil
+}
+
+func agentConfigRequestFromResponse(config dto.AgentConfigResponse) dto.AgentConfigRequest {
+	return dto.AgentConfigRequest{
+		SystemPrompt:              config.SystemPrompt,
+		ModelProvider:             config.ModelProvider,
+		Model:                     config.Model,
+		ModelParameters:           config.ModelParameters,
+		EnabledSkillIDs:           config.EnabledSkillIDs,
+		UseMemory:                 false,
+		AgentMemoryEnabled:        config.AgentMemoryEnabled,
+		FileUpload:                config.FileUpload,
+		HomeTitle:                 config.HomeTitle,
+		OpeningStatement:          config.OpeningStatement,
+		InputPlaceholder:          config.InputPlaceholder,
+		ThemeColor:                config.ThemeColor,
+		SuggestedQuestions:        config.SuggestedQuestions,
+		KnowledgeDatasetIDs:       config.KnowledgeDatasetIDs,
+		KnowledgeBoundByAccountID: config.KnowledgeBoundByAccountID,
+		KnowledgeBoundAtUnix:      config.KnowledgeBoundAtUnix,
+		KnowledgeRetrievalConfig:  config.KnowledgeRetrievalConfig,
+		DatabaseBindings:          config.DatabaseBindings,
+		DatabaseBoundByAccountID:  config.DatabaseBoundByAccountID,
+		DatabaseBoundAtUnix:       config.DatabaseBoundAtUnix,
+		WorkflowBindings:          config.WorkflowBindings,
+		WorkflowBoundByAccountID:  config.WorkflowBoundByAccountID,
+		WorkflowBoundAtUnix:       config.WorkflowBoundAtUnix,
+	}
 }
 
 func (s *agentsService) loadAuthorizedAgentRuntimeDraft(ctx context.Context, agentID, accountID string, ensureConfig bool, permissionCodes ...model.WorkspacePermissionCode) (*Agent, *AgentsConfig, error) {
@@ -487,6 +968,7 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 	if snapshot == nil {
 		return resp
 	}
+	resp.BindingRevision = strings.TrimSpace(stringFromSnapshot(snapshot, "binding_revision"))
 	resp.SystemPrompt = stringFromSnapshot(snapshot, "system_prompt")
 	resp.ModelProvider = stringFromSnapshot(snapshot, "model_provider")
 	resp.Model = stringFromSnapshot(snapshot, "model")

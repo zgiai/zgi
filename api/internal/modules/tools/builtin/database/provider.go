@@ -250,10 +250,8 @@ func (t *databaseTool) listAccessibleDatabases(ctx context.Context, scope databa
 		if query != "" && !containsFold(item.Name, item.Description, query) {
 			continue
 		}
-		if !scope.BindingGrant {
-			if err := t.authorizeDataSource(ctx, scope, item, false); err != nil {
-				continue
-			}
+		if err := t.authorizeDataSource(ctx, scope, item, false); err != nil {
+			continue
 		}
 		out = append(out, dataSourcePayload(item))
 		if len(out) >= limit {
@@ -390,10 +388,8 @@ func (t *databaseTool) authorizedDataSourceFromParams(ctx context.Context, scope
 	if dataSource == nil || strings.TrimSpace(dataSource.OrganizationID) != strings.TrimSpace(scope.OrganizationID) {
 		return nil, fmt.Errorf("database %s not found", dataSourceID)
 	}
-	if !scope.BindingGrant {
-		if err := t.authorizeDataSource(ctx, scope, dataSource, write, writePermissions...); err != nil {
-			return nil, err
-		}
+	if err := t.authorizeDataSource(ctx, scope, dataSource, write, writePermissions...); err != nil {
+		return nil, err
 	}
 	return dataSource, nil
 }

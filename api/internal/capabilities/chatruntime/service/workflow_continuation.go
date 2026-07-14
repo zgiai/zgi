@@ -29,6 +29,7 @@ type WorkflowApprovalContinuation struct {
 	ConversationID uuid.UUID
 	MessageID      uuid.UUID
 	WorkflowRunID  string
+	AgentID        string
 	AgentType      string
 	BindingID      string
 	OriginalQuery  string
@@ -43,7 +44,7 @@ type WorkflowContinuationSummaryRequest struct {
 	Error         string
 }
 
-func (s *service) BeginWorkflowApprovalContinuation(ctx context.Context, scope Scope, caller Caller, conversationID, messageID uuid.UUID) (*WorkflowApprovalContinuation, error) {
+func (s *service) BeginWorkflowApprovalContinuation(ctx context.Context, scope Scope, caller Caller, config RunConfig, conversationID, messageID uuid.UUID) (*WorkflowApprovalContinuation, error) {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return nil, err
 	}
@@ -69,6 +70,9 @@ func (s *service) BeginWorkflowApprovalContinuation(ctx context.Context, scope S
 	if message.Status == runtimemodel.MessageStatusCompleted {
 		state.Completed = true
 		return state, nil
+	}
+	if err := validateWorkflowContinuationBinding(state, config.WorkflowBindings); err != nil {
+		return nil, err
 	}
 	if message.Status != runtimemodel.MessageStatusWaitingApproval && message.Status != runtimemodel.MessageStatusWaitingQuestion && message.Status != runtimemodel.MessageStatusStreaming {
 		return nil, fmt.Errorf("%w: message is not waiting for workflow continuation", ErrInvalidInput)
@@ -96,6 +100,27 @@ func (s *service) BeginWorkflowApprovalContinuation(ctx context.Context, scope S
 		}
 	}
 	return state, nil
+}
+
+func validateWorkflowContinuationBinding(continuation *WorkflowApprovalContinuation, bindings []AgentWorkflowBinding) error {
+	if continuation == nil {
+		return fmt.Errorf("%w: continuation is missing", ErrWorkflowBindingUnavailable)
+	}
+	bindingID := strings.TrimSpace(continuation.BindingID)
+	if bindingID == "" {
+		return fmt.Errorf("%w: continuation binding id is missing", ErrWorkflowBindingUnavailable)
+	}
+	agentID := strings.TrimSpace(continuation.AgentID)
+	for _, binding := range bindings {
+		if !strings.EqualFold(strings.TrimSpace(binding.BindingID), bindingID) {
+			continue
+		}
+		if agentID != "" && !strings.EqualFold(strings.TrimSpace(binding.AgentID), agentID) {
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("%w: workflow binding %q is not active", ErrWorkflowBindingUnavailable, bindingID)
 }
 
 func (s *service) RecordWorkflowApprovalContinuationEvent(ctx context.Context, continuation *WorkflowApprovalContinuation, eventType string, payload map[string]interface{}) (*StreamEvent, error) {
@@ -329,6 +354,7 @@ func workflowApprovalContinuationFromMetadata(metadata map[string]interface{}) *
 	state := workflowRecordFromAny(metadata["agent_workflow_continuation"])
 	return &WorkflowApprovalContinuation{
 		WorkflowRunID: firstNonEmptyString(state["workflow_run_id"]),
+		AgentID:       firstNonEmptyString(state["agent_id"]),
 		AgentType:     firstNonEmptyString(state["agent_type"]),
 		BindingID:     firstNonEmptyString(state["binding_id"]),
 		OriginalQuery: firstNonEmptyString(state["original_query"]),

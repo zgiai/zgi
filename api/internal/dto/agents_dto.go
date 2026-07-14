@@ -483,6 +483,7 @@ type UpdateAgentMemoryValueRequest struct {
 }
 
 type AgentConfigRequest struct {
+	BindingRevision           string                 `json:"binding_revision,omitempty"`
 	SystemPrompt              string                 `json:"system_prompt"`
 	ModelProvider             string                 `json:"model_provider"`
 	Model                     string                 `json:"model"`
@@ -510,6 +511,8 @@ type AgentConfigRequest struct {
 
 type AgentConfigResponse struct {
 	AgentID                   string                  `json:"agent_id"`
+	BindingRevision           string                  `json:"binding_revision"`
+	BindingHealth             AgentBindingHealth      `json:"binding_health"`
 	SystemPrompt              string                  `json:"system_prompt"`
 	ModelProvider             string                  `json:"model_provider"`
 	Model                     string                  `json:"model"`
@@ -544,6 +547,25 @@ type AgentDraftRuntimeConfigResponse struct {
 	Config      AgentConfigResponse `json:"config"`
 }
 
+type AgentBindingHealth struct {
+	Status           string                   `json:"status"`
+	Items            []AgentBindingHealthItem `json:"items"`
+	ActiveCount      int                      `json:"active_count"`
+	SuspendedCount   int                      `json:"suspended_count"`
+	UnavailableCount int                      `json:"unavailable_count"`
+}
+
+type AgentBindingHealthItem struct {
+	BindingType      string `json:"binding_type"`
+	ResourceID       string `json:"resource_id"`
+	ParentResourceID string `json:"parent_resource_id,omitempty"`
+	DisplayName      string `json:"display_name,omitempty"`
+	Status           string `json:"status"`
+	Reason           string `json:"reason"`
+	AccessMode       string `json:"access_mode,omitempty"`
+	Suggestion       string `json:"suggestion,omitempty"`
+}
+
 type AgentSuggestedQuestionSkillContext struct {
 	ID          string `json:"id,omitempty"`
 	Name        string `json:"name,omitempty"`
@@ -564,7 +586,9 @@ type GenerateAgentSuggestedQuestionsRequest struct {
 }
 
 type PublishAgentRequest struct {
-	Description string `json:"description"`
+	Description                  string `json:"description"`
+	BindingRevision              string `json:"binding_revision,omitempty"`
+	AcknowledgeSuspendedBindings bool   `json:"acknowledge_suspended_bindings,omitempty"`
 }
 
 type PublishAgentResponse struct {
@@ -595,7 +619,17 @@ type AgentPublishedVersionsResponse struct {
 }
 
 type RollbackAgentPublishedVersionRequest struct {
-	VersionID string `json:"version_id" binding:"required"`
+	VersionID     string `json:"version_id" binding:"required"`
+	ImpactToken   string `json:"impact_token" binding:"required"`
+	BindingAction string `json:"binding_action" binding:"required"`
+}
+
+type AgentRollbackPreviewResponse struct {
+	VersionID       string                   `json:"version_id"`
+	ConfigSnapshot  AgentConfigResponse      `json:"config_snapshot"`
+	BindingHealth   AgentBindingHealth       `json:"binding_health"`
+	RemovedBindings []AgentBindingHealthItem `json:"removed_bindings"`
+	ImpactToken     string                   `json:"impact_token"`
 }
 
 type AgentWebAppRuntimeConfigResponse struct {
