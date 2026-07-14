@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, useRef, useState, useMemo, useEffect } from 'react';
-import { BookOpen, Folders, Loader2, Plus, Search, ShieldAlert } from 'lucide-react';
+import { BookOpen, FolderPlus, Folders, Loader2, Plus, Search, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 import { useT } from '@/i18n';
@@ -48,6 +48,7 @@ function DatasetsPageContent() {
   const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const canView = hasAnyPermission(KNOWLEDGE_BASE_VISIBLE_PERMISSION_CODES);
   const canManage = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.create);
+  const canManageFolders = hasAnyPermission(KNOWLEDGE_BASE_PERMISSION_ACTIONS.folderManage);
 
   // Replace local create-only dialog with centralized dialog state
   // const [open, setOpen] = useState(false);
@@ -189,6 +190,13 @@ function DatasetsPageContent() {
     });
   };
 
+  const handleCreateFolder = () => {
+    eventBus.publish<OpenFolderModalPayload>('folder:open-modal', {
+      mode: 'create',
+      parentFolderId: isRootView ? undefined : activeFolderId || undefined,
+    });
+  };
+
   // Breadcrumbs (subfolder view)
   const { data: ancestors = [] } = useFolderAncestors(activeFolderId);
 
@@ -239,6 +247,8 @@ function DatasetsPageContent() {
           searchKeyword={searchKeyword}
           onSearchChange={setSearchKeyword}
           searchPlaceholder={t('datasets.search.placeholder')}
+          createFolderText={t('datasets.createFolder')}
+          onCreateFolder={isRootView && canManageFolders ? handleCreateFolder : undefined}
           createText={t('datasets.create')}
           onCreateDataset={canManage ? handleCreate : undefined}
           onBack={handleBack}
@@ -400,6 +410,12 @@ function DatasetsPageContent() {
                   <Search className="h-12 w-12 text-muted-foreground mb-4" />
                   <h3 className="text-lg font-medium mb-2">{t('datasets.empty.empty')}</h3>
                   <div className="flex gap-2">
+                    {isRootView && canManageFolders && (
+                      <Button variant="outline" onClick={handleCreateFolder}>
+                        <FolderPlus size={16} />
+                        {t('datasets.createFolder')}
+                      </Button>
+                    )}
                     {canManage && (
                       <Button onClick={handleCreate}>
                         <Plus size={16} />
