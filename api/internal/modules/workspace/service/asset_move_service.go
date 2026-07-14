@@ -61,7 +61,7 @@ func (s *WorkspaceAssetMoveService) Move(ctx context.Context, organizationID, ac
 	var response dto.WorkspaceAssetMoveResponse
 	var affectedAgentIDs []uuid.UUID
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.lockMoveAssets(ctx, tx, req.Items); err != nil {
+		if err := s.lockMoveAssets(ctx, tx, organizationID, req.Items); err != nil {
 			return err
 		}
 		preview, err := s.previewWithDB(ctx, tx, organizationID, accountID, req)
@@ -129,9 +129,9 @@ type assetMoveLockTarget struct {
 }
 
 // lockMoveAssets makes the source workspace observed by previewWithDB stable
-// until the move transaction commits. Every move path uses the same ordering
-// so overlapping batch moves do not introduce avoidable row-lock deadlocks.
-func (s *WorkspaceAssetMoveService) lockMoveAssets(ctx context.Context, tx *gorm.DB, items []dto.WorkspaceAssetMoveItem) error {
+// until the move transaction commits. Binding resource advisory locks must be
+// acquired before asset rows to match delete and other lifecycle operations.
+func (s *WorkspaceAssetMoveService) lockMoveAssets(ctx context.Context, tx *gorm.DB, organizationID string, items []dto.WorkspaceAssetMoveItem) error {
 	targets := make([]assetMoveLockTarget, 0, len(items))
 	seen := make(map[string]struct{}, len(items))
 	for _, item := range items {
@@ -154,6 +154,9 @@ func (s *WorkspaceAssetMoveService) lockMoveAssets(ctx context.Context, tx *gorm
 		}
 		return targets[i].assetType < targets[j].assetType
 	})
+	if err := s.lockMoveBindingResources(ctx, tx, organizationID, targets); err != nil {
+		return err
+	}
 
 	for _, target := range targets {
 		var row struct {
@@ -175,6 +178,47 @@ func (s *WorkspaceAssetMoveService) lockMoveAssets(ctx context.Context, tx *gorm
 		if err != nil {
 			return fmt.Errorf("lock %s %s for workspace move: %w", target.assetType, target.id, err)
 		}
+	}
+	return nil
+}
+
+func (s *WorkspaceAssetMoveService) lockMoveBindingResources(ctx context.Context, tx *gorm.DB, organizationID string, targets []assetMoveLockTarget) error {
+	if s.agentBindings == nil {
+		return nil
+	}
+	refs := make([]agentbindings.ResourceRef, 0, len(targets))
+	for _, target := range targets {
+		var bindingType agentbindings.BindingType
+		switch target.assetType {
+		case AssetMoveTypeAgent:
+			// Workflow assets share the Agent row and use the Agent ID as their
+			// binding resource ID. Taking this lock for a regular Agent is safe
+			// and keeps type resolution after the row lock.
+			bindingType = agentbindings.BindingTypeWorkflow
+		case AssetMoveTypeDataset:
+			bindingType = agentbindings.BindingTypeKnowledgeDataset
+		case AssetMoveTypeDatabase:
+			bindingType = agentbindings.BindingTypeDatabase
+		default:
+			continue
+		}
+		refs = append(refs, agentbindings.ResourceRef{
+			BindingType: bindingType,
+			ResourceID:  target.id,
+		})
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	organizationUUID, err := uuid.Parse(strings.TrimSpace(organizationID))
+	if err != nil {
+		return ErrAssetMoveInvalidRequest
+	}
+	for idx := range refs {
+		refs[idx].OrganizationID = organizationUUID
+	}
+	if err := s.agentBindings.WithTx(tx).LockResources(ctx, tx, refs); err != nil {
+		return fmt.Errorf("lock workspace move binding resources: %w", err)
 	}
 	return nil
 }

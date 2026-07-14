@@ -8,6 +8,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	"github.com/zgiai/zgi/api/internal/dto"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	shared_service "github.com/zgiai/zgi/api/internal/modules/shared/service"
@@ -239,27 +240,69 @@ func TestWorkspaceAssetMoveMoveRevalidatesAndBlocksArchivedTarget(t *testing.T) 
 
 func TestWorkspaceAssetMoveLocksAssetBeforeAuthorizingLatestSourceWorkspace(t *testing.T) {
 	db, mock := newAssetMoveMockDB(t)
+	organizationID := uuid.NewString()
+	accountID := uuid.NewString()
+	datasetID := uuid.NewString()
+	sourceWorkspaceID := uuid.NewString()
+	targetWorkspaceID := uuid.NewString()
 	mock.MatchExpectationsInOrder(true)
 	mock.ExpectBegin()
-	expectAssetMoveLock(mock, AssetMoveTypeDataset, "dataset-1")
-	expectWorkspaceLookup(mock, "ws-c", "org-1", "normal")
-	expectDatasetPreview(mock, "dataset-1", "org-1", "ws-b")
-	expectWorkspaceLookup(mock, "ws-b", "org-1", "normal")
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`)).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	expectAssetMoveLock(mock, AssetMoveTypeDataset, datasetID)
+	expectWorkspaceLookup(mock, targetWorkspaceID, organizationID, "normal")
+	expectDatasetPreview(mock, datasetID, organizationID, sourceWorkspaceID)
+	expectWorkspaceLookup(mock, sourceWorkspaceID, organizationID, "normal")
 	mock.ExpectRollback()
 
-	authorization := &stubAssetMoveOrgService{allowed: true, deniedWorkspace: "ws-b"}
-	svc := NewWorkspaceAssetMoveService(db, authorization, nil)
+	authorization := &stubAssetMoveOrgService{allowed: true, deniedWorkspace: sourceWorkspaceID}
+	svc := NewWorkspaceAssetMoveService(db, authorization, agentbindings.NewRepository(db))
 
-	_, err := svc.Move(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
-		TargetWorkspaceID: "ws-c",
-		Items:             []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeDataset, ID: "dataset-1"}},
+	_, err := svc.Move(context.Background(), organizationID, accountID, dto.WorkspaceAssetMoveRequest{
+		TargetWorkspaceID: targetWorkspaceID,
+		Items:             []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeDataset, ID: datasetID}},
 	})
 
 	require.ErrorIs(t, err, ErrAssetMovePermissionDenied)
 	require.Equal(t, []assetMovePermissionCheck{
-		{organizationID: "org-1", workspaceID: "ws-c", accountID: "acct-1", permission: workspace_model.WorkspacePermissionKnowledgeBaseMove},
-		{organizationID: "org-1", workspaceID: "ws-b", accountID: "acct-1", permission: workspace_model.WorkspacePermissionKnowledgeBaseMove},
+		{organizationID: organizationID, workspaceID: targetWorkspaceID, accountID: accountID, permission: workspace_model.WorkspacePermissionKnowledgeBaseMove},
+		{organizationID: organizationID, workspaceID: sourceWorkspaceID, accountID: accountID, permission: workspace_model.WorkspacePermissionKnowledgeBaseMove},
 	}, authorization.checks)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWorkspaceAssetMoveLocksAllLifecycleResourcesBeforeAssetRows(t *testing.T) {
+	db, mock := newAssetMoveMockDB(t)
+	organizationID := uuid.New()
+	agentID := uuid.NewString()
+	databaseID := uuid.NewString()
+	datasetID := uuid.NewString()
+	mock.MatchExpectationsInOrder(true)
+	mock.ExpectBegin()
+	for _, key := range []string{
+		"agent-binding-resource:" + organizationID.String() + ":database::" + databaseID,
+		"agent-binding-resource:" + organizationID.String() + ":knowledge_dataset::" + datasetID,
+		"agent-binding-resource:" + organizationID.String() + ":workflow::" + agentID,
+	} {
+		mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`)).
+			WithArgs(key).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+	}
+	expectAssetMoveLock(mock, AssetMoveTypeAgent, agentID)
+	expectAssetMoveLock(mock, AssetMoveTypeDatabase, databaseID)
+	expectAssetMoveLock(mock, AssetMoveTypeDataset, datasetID)
+	mock.ExpectCommit()
+
+	svc := NewWorkspaceAssetMoveService(db, nil, agentbindings.NewRepository(db))
+	tx := db.Begin()
+	require.NoError(t, tx.Error)
+	require.NoError(t, svc.lockMoveAssets(context.Background(), tx, organizationID.String(), []dto.WorkspaceAssetMoveItem{
+		{Type: AssetMoveTypeDataset, ID: datasetID},
+		{Type: AssetMoveTypeAgent, ID: agentID},
+		{Type: AssetMoveTypeDatabase, ID: databaseID},
+	}))
+	require.NoError(t, tx.Commit().Error)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
