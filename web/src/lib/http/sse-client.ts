@@ -12,7 +12,12 @@ interface SseRequestError extends Error {
   details?: unknown;
 }
 
-function withTerminalStatus(payload: Record<string, unknown>, status: string): Record<string, unknown> {
+const SSE_IDLE_TIMEOUT_MS = 45_000;
+
+function withTerminalStatus(
+  payload: Record<string, unknown>,
+  status: string
+): Record<string, unknown> {
   const nested = payload.data;
   if (nested && typeof nested === 'object') {
     return {
@@ -359,6 +364,25 @@ export class SseClient {
     let incompleteLastEvent = false;
     let decoderFlushed = false;
 
+    const readWithIdleWatchdog = (): Promise<ReadableStreamReadResult<Uint8Array>> =>
+      new Promise((resolve, reject) => {
+        const timer = window.setTimeout(() => {
+          const error = new Error('SSE stream received no bytes before the idle timeout');
+          (error as SseRequestError).code = 'ERR_SSE_IDLE_TIMEOUT';
+          reject(error);
+        }, SSE_IDLE_TIMEOUT_MS);
+        reader.read().then(
+          result => {
+            window.clearTimeout(timer);
+            resolve(result);
+          },
+          error => {
+            window.clearTimeout(timer);
+            reject(error);
+          }
+        );
+      });
+
     const isTerminalMessage = (msg: SseMessage<TOut>): boolean => {
       if (options.isTerminalMessage?.(msg as SseMessage<unknown>)) {
         return true;
@@ -396,12 +420,16 @@ export class SseClient {
     (async () => {
       try {
         for (;;) {
-          const { value, done } = await reader.read();
+          const { value, done } = await readWithIdleWatchdog();
           if (done) {
             flushPendingEvents();
-            if (incompleteLastEvent && !terminalEventReceived) {
+            if (!terminalEventReceived && !controller.signal.aborted) {
               this.handleStreamTransportError(
-                new Error('SSE stream ended with an incomplete JSON event'),
+                new Error(
+                  incompleteLastEvent
+                    ? 'SSE stream ended with an incomplete JSON event'
+                    : 'SSE stream ended before a terminal event'
+                ),
                 options,
                 urlObj,
                 method,
@@ -424,6 +452,7 @@ export class SseClient {
             terminalReceived: terminalEventReceived,
             incompleteLastEvent,
           });
+          controller.abort();
         }
       } finally {
         try {
@@ -514,7 +543,6 @@ export class SseClient {
     };
 
     eventHandlers[evt]?.(payload);
-
   }
 }
 
