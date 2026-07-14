@@ -93,6 +93,44 @@ func TestRuntimeCollectStreamAnswerReasoningResetsIdleTimer(t *testing.T) {
 	}
 }
 
+func TestAppendDirectAnswerGroundingMessageOnlyForDirectAnswers(t *testing.T) {
+	direct := &PreparedChat{
+		LLMRequest: &adapter.ChatRequest{Messages: []adapter.Message{{Role: "user", Content: "delete the file"}}},
+		parts:      &chatRequestParts{},
+	}
+	appendDirectAnswerGroundingMessage(direct)
+	appendDirectAnswerGroundingMessage(direct)
+
+	if len(direct.LLMRequest.Messages) != 2 {
+		t.Fatalf("direct messages = %#v, want one grounding message appended exactly once", direct.LLMRequest.Messages)
+	}
+	grounding := direct.LLMRequest.Messages[len(direct.LLMRequest.Messages)-1]
+	if grounding.Role != "system" || grounding.Content != directAnswerGroundingMessage {
+		t.Fatalf("last direct message = %#v, want direct-answer grounding", grounding)
+	}
+	for _, required := range []string{
+		"user request, intent, authorization",
+		"Do not invent tools",
+		"action was not performed or cannot be verified",
+	} {
+		if !strings.Contains(stringFromAny(grounding.Content), required) {
+			t.Fatalf("grounding message = %q, want %q", grounding.Content, required)
+		}
+	}
+
+	toolLoop := &PreparedChat{
+		LLMRequest: &adapter.ChatRequest{Messages: []adapter.Message{{Role: "user", Content: "calculate 1+1"}}},
+		parts: &chatRequestParts{
+			SkillMode: skillModeAuto,
+			SkillIDs:  []string{"calculator"},
+		},
+	}
+	appendDirectAnswerGroundingMessage(toolLoop)
+	if len(toolLoop.LLMRequest.Messages) != 1 {
+		t.Fatalf("tool-loop messages = %#v, direct-answer grounding must not be appended", toolLoop.LLMRequest.Messages)
+	}
+}
+
 func runtimeStreamTestPreparedChat() *PreparedChat {
 	return &PreparedChat{
 		Conversation: &runtimemodel.Conversation{ID: uuid.New()},
