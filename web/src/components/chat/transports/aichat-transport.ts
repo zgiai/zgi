@@ -82,6 +82,7 @@ export interface AIChatMessageListResult {
 }
 
 export interface AIChatStreamCallbacks {
+  onOpen?: () => void;
   onMessageStart: (payload: AIChatMessageStartEventData, eventId?: string | null) => void;
   onAgentProgress: (payload: AIChatAgentProgressEventData, eventId?: string | null) => void;
   onIntermediateAnswer: (
@@ -534,6 +535,7 @@ export class AIChatTransport implements AIChatRuntimeTransport {
         onEvent: (event, data, eventId) => {
           dispatchAIChatStreamEvent(event, data, eventId, callbacks);
         },
+        onOpen: callbacks.onOpen,
         onError: callbacks.onRequestError,
         onClose: callbacks.onClose,
       },
@@ -554,6 +556,7 @@ export class AIChatTransport implements AIChatRuntimeTransport {
         onEvent: (event, data, eventId) => {
           dispatchAIChatStreamEvent(event, data, eventId, callbacks);
         },
+        onOpen: callbacks.onOpen,
         onError: callbacks.onRequestError,
         onClose: callbacks.onClose,
       },
@@ -577,6 +580,7 @@ export class AIChatTransport implements AIChatRuntimeTransport {
         onEvent: (event, data, eventId) => {
           dispatchAIChatStreamEvent(event, data, eventId, callbacks);
         },
+        onOpen: callbacks.onOpen,
         onError: callbacks.onRequestError,
         onClose: callbacks.onClose,
       },
@@ -601,6 +605,7 @@ export class AIChatTransport implements AIChatRuntimeTransport {
         onEvent: (event, data, eventId) => {
           dispatchAIChatStreamEvent(event, data, eventId, callbacks);
         },
+        onOpen: callbacks.onOpen,
         onError: callbacks.onRequestError,
         onClose: callbacks.onClose,
       },
@@ -625,6 +630,7 @@ export class AIChatTransport implements AIChatRuntimeTransport {
         onEvent: (event, data, eventId) => {
           dispatchAIChatStreamEvent(event, data, eventId, callbacks);
         },
+        onOpen: callbacks.onOpen,
         onError: callbacks.onRequestError,
         onClose: callbacks.onClose,
       },
@@ -649,6 +655,7 @@ export class AIChatTransport implements AIChatRuntimeTransport {
         onEvent: (event, data, eventId) => {
           dispatchAIChatStreamEvent(event, data, eventId, callbacks);
         },
+        onOpen: callbacks.onOpen,
         onError: callbacks.onRequestError,
         onClose: callbacks.onClose,
       },

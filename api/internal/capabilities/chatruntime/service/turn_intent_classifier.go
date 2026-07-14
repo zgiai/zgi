@@ -3,14 +3,17 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
+	"github.com/zgiai/zgi/api/pkg/logger"
 )
 
 const (
@@ -72,7 +75,10 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 	}
 	maxTokens := modelTurnIntentMaxTokens
 	temperature := 0.0
-	resp, err := s.llmClient.AppChat(ctx, newIntentClassifierAppContext(scope, conversation, config), &adapter.ChatRequest{
+	callCtx, cancel := context.WithTimeout(ctx, s.modelIdleTimeoutValue())
+	defer cancel()
+	startedAt := time.Now()
+	resp, err := s.llmClient.AppChat(callCtx, newIntentClassifierAppContext(scope, conversation, config), &adapter.ChatRequest{
 		Provider:       parts.Provider,
 		Model:          parts.ModelName,
 		Temperature:    &temperature,
@@ -114,6 +120,16 @@ func (s *service) classifyContextualAIChatTurnIntent(ctx context.Context, scope 
 		},
 	})
 	if err != nil {
+		if errors.Is(callCtx.Err(), context.DeadlineExceeded) {
+			logger.WarnContext(ctx, "chat runtime model idle timeout",
+				"conversation_id", conversation.ID.String(),
+				"provider", parts.Provider,
+				"model", parts.ModelName,
+				"phase", "turn_intent",
+				"duration_ms", time.Since(startedAt).Milliseconds(),
+			)
+			return nil, ErrModelIdleTimeout
+		}
 		return nil, err
 	}
 	if resp == nil || len(resp.Choices) == 0 {

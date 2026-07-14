@@ -27,7 +27,155 @@ import (
 	builtinconsolenavigation "github.com/zgiai/zgi/api/internal/modules/tools/builtin/consolenavigation"
 	builtinfiles "github.com/zgiai/zgi/api/internal/modules/tools/builtin/files"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"gorm.io/gorm"
 )
+
+func TestRunPreparedStreamPendingOwnershipLossDoesNotEmitMessageEnd(t *testing.T) {
+	svc, prepared, messageRepo, _ := newPendingOwnershipLossTestService(t)
+
+	var events []StreamEvent
+	result, err := svc.RunPreparedStream(t.Context(), prepared, nil, func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
+
+	assertFinalizedOwnershipLossWithoutMessageEnd(t, result, err, events)
+	if !messageRepo.updateWaitingQuestionHadRuntimeRunID {
+		t.Fatal("UpdateWaitingQuestion() context has no runtime run ID")
+	}
+}
+
+func TestRunToolGovernanceApprovedContinuationPendingOwnershipLossDoesNotEmitMessageEnd(t *testing.T) {
+	svc, prepared, messageRepo, _ := newPendingOwnershipLossTestService(t)
+	ctx := repository.WithRuntimeRunID(t.Context(), uuid.New())
+
+	var events []StreamEvent
+	result, err := svc.runToolGovernanceApprovedContinuation(ctx, prepared, map[string]interface{}{}, func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
+
+	assertFinalizedOwnershipLossWithoutMessageEnd(t, result, err, events)
+	if !messageRepo.updateWaitingQuestionHadRuntimeRunID {
+		t.Fatal("UpdateWaitingQuestion() context has no runtime run ID")
+	}
+}
+
+func TestRunToolGovernanceApprovedContinuationCompletionOwnershipLossIsFinalized(t *testing.T) {
+	svc, prepared, messageRepo, llm := newPendingOwnershipLossTestService(t)
+	messageRepo.updateWaitingQuestionErr = nil
+	messageRepo.updateCompletedErr = gorm.ErrRecordNotFound
+	prepared.Message.Metadata["operation_plan"] = map[string]interface{}{"status": "completed"}
+	llm.appChatResponses = []*adapter.ChatResponse{{
+		Choices: []adapter.Choice{{Message: adapter.Message{
+			Role: "assistant",
+			ToolCalls: []adapter.ToolCall{{
+				ID:   "submit-final-answer",
+				Type: "function",
+				Function: adapter.FunctionCall{
+					Name:      skills.MetaToolFinalAnswer,
+					Arguments: `{"answer":"Done."}`,
+				},
+			}},
+		}}},
+	}}
+	ctx := repository.WithRuntimeRunID(t.Context(), uuid.New())
+
+	var events []StreamEvent
+	result, err := svc.runToolGovernanceApprovedContinuation(ctx, prepared, map[string]interface{}{}, func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
+
+	assertFinalizedOwnershipLossWithoutMessageEnd(t, result, err, events)
+	if !messageRepo.updateCompletedHadRuntimeRunID {
+		t.Fatal("UpdateCompleted() context has no runtime run ID")
+	}
+}
+
+func newPendingOwnershipLossTestService(t *testing.T) (*service, *PreparedChat, *toolGovernanceStreamMessageRepo, *toolGovernanceStreamLLM) {
+	t.Helper()
+	organizationID := uuid.New()
+	accountID := uuid.New()
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	provider := "deepseek"
+	now := time.Now().UTC()
+	conversation := &runtimemodel.Conversation{
+		ID:              conversationID,
+		OrganizationID:  organizationID,
+		AccountID:       accountID,
+		CallerType:      runtimemodel.ConversationCallerAIChat,
+		Status:          runtimemodel.ConversationStatusNormal,
+		RuntimeStatus:   runtimemodel.ConversationRuntimeStatusStreaming,
+		ActiveMessageID: &messageID,
+		Metadata:        map[string]interface{}{},
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	message := &runtimemodel.Message{
+		ID:              messageID,
+		ConversationID:  conversationID,
+		Query:           "Continue after approval",
+		Status:          runtimemodel.MessageStatusStreaming,
+		ModelProvider:   &provider,
+		ModelName:       "deepseek-chat",
+		ModelParameters: map[string]interface{}{},
+		Metadata:        map[string]interface{}{},
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	llm := &toolGovernanceStreamLLM{appChatResponses: []*adapter.ChatResponse{{
+		Choices: []adapter.Choice{{Message: adapter.Message{
+			Role: "assistant",
+			ToolCalls: []adapter.ToolCall{{
+				ID:   "request-more-input",
+				Type: "function",
+				Function: adapter.FunctionCall{
+					Name:      skills.MetaToolRequestUserInput,
+					Arguments: `{"message":"Choose the target before continuing.","questions":[{"id":"target","question":"Which target should I use?","options":[{"label":"First"},{"label":"Second"}]}]}`,
+				},
+			}},
+		}}},
+	}}}
+	messageRepo := &toolGovernanceStreamMessageRepo{
+		message:                  message,
+		updateWaitingQuestionErr: gorm.ErrRecordNotFound,
+	}
+	svc := NewService(&repository.Repositories{
+		Conversation: &toolGovernanceStreamConversationRepo{conversation: conversation},
+		Message:      messageRepo,
+	}, llm).(*service)
+	svc.events = newStreamEventStore(nil)
+	prepared := &PreparedChat{
+		Conversation:            conversation,
+		Message:                 message,
+		LLMRequest:              &adapter.ChatRequest{Provider: provider, Model: message.ModelName},
+		UserMemoryPreflightDone: true,
+		parts: &chatRequestParts{
+			Query:                message.Query,
+			Provider:             provider,
+			ProtocolToolsEnabled: true,
+			SkillMode:            skillModeAuto,
+		},
+	}
+	return svc, prepared, messageRepo, llm
+}
+
+func assertFinalizedOwnershipLossWithoutMessageEnd(t *testing.T, result *ChatResult, err error, events []StreamEvent) {
+	t.Helper()
+	if result != nil {
+		t.Fatalf("result = %#v, want nil", result)
+	}
+	if !IsFinalizedStreamError(err) || !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("error = %v, want finalized record not found", err)
+	}
+	for _, event := range events {
+		if event.EventType == streamEventMessageEnd {
+			t.Fatalf("events = %#v, want no message_end after ownership loss", events)
+		}
+	}
+}
 
 func TestRunToolGovernanceDecisionStreamRejectsWithoutTools(t *testing.T) {
 	ctx := context.Background()
@@ -1945,11 +2093,15 @@ func (r *toolGovernanceStreamConversationRepo) FinishContinuationMessage(_ conte
 
 type toolGovernanceStreamMessageRepo struct {
 	repository.MessageRepository
-	message                       *runtimemodel.Message
-	updateMetadataCalled          bool
-	updateMetadataAnyStatusCalled bool
-	updateCompletedCalled         bool
-	updateErrorCalled             bool
+	message                              *runtimemodel.Message
+	updateMetadataCalled                 bool
+	updateMetadataAnyStatusCalled        bool
+	updateCompletedCalled                bool
+	updateErrorCalled                    bool
+	updateWaitingQuestionErr             error
+	updateCompletedErr                   error
+	updateWaitingQuestionHadRuntimeRunID bool
+	updateCompletedHadRuntimeRunID       bool
 }
 
 func (r *toolGovernanceStreamMessageRepo) GetScoped(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*runtimemodel.Message, error) {
@@ -1981,8 +2133,23 @@ func (r *toolGovernanceStreamMessageRepo) UpdateWaitingClientAction(_ context.Co
 	return nil
 }
 
-func (r *toolGovernanceStreamMessageRepo) UpdateCompleted(_ context.Context, _ uuid.UUID, answer string, metadata map[string]interface{}) error {
+func (r *toolGovernanceStreamMessageRepo) UpdateWaitingQuestion(ctx context.Context, _ uuid.UUID, metadata map[string]interface{}) error {
+	_, r.updateWaitingQuestionHadRuntimeRunID = repository.RuntimeRunIDFromContext(ctx)
+	if r.updateWaitingQuestionErr != nil {
+		return r.updateWaitingQuestionErr
+	}
+	r.message.Status = runtimemodel.MessageStatusWaitingQuestion
+	r.message.Metadata = copyStringAnyMap(metadata)
+	r.message.UpdatedAt = time.Now()
+	return nil
+}
+
+func (r *toolGovernanceStreamMessageRepo) UpdateCompleted(ctx context.Context, _ uuid.UUID, answer string, metadata map[string]interface{}) error {
 	r.updateCompletedCalled = true
+	_, r.updateCompletedHadRuntimeRunID = repository.RuntimeRunIDFromContext(ctx)
+	if r.updateCompletedErr != nil {
+		return r.updateCompletedErr
+	}
 	r.message.Answer = answer
 	r.message.Status = runtimemodel.MessageStatusCompleted
 	r.message.Error = nil

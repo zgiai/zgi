@@ -1917,7 +1917,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
               : t('run.inputsTitle')}
         </h2>
       </div>
-      <div className="flex-1 overflow-auto px-5 py-3">
+      <div className="min-h-0 flex-1 overflow-auto px-5 py-3">
         {isApprovalPending ? approvalInputContent : inputFormContent}
       </div>
       {!isCompactLayout ? runActionFooter : null}
@@ -1979,7 +1979,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   );
 
   const outputSection = (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card shadow-sm">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border bg-card shadow-sm">
       <Results
         mode="draft"
         title={t('run.output')}

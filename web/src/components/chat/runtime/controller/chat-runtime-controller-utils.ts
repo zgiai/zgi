@@ -37,6 +37,12 @@ export function isAbortError(error: unknown): boolean {
   return error.name === 'AbortError' || error.message.toLowerCase().includes('abort');
 }
 
+export function isRecoverableStreamTransportError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return true;
+  const status = (error as { status?: unknown }).status;
+  return typeof status !== 'number' || !Number.isFinite(status);
+}
+
 export function isContinuationLikelyStartedError(error: unknown): boolean {
   const message = getErrorMessage(error).toLowerCase();
   return (

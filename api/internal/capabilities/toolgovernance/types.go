@@ -41,6 +41,14 @@ const (
 	ApprovalPolicyNeverAsk             ApprovalPolicy = "never_ask"
 )
 
+// ApprovalMode controls whether governance may pause for interactive approval.
+type ApprovalMode string
+
+const (
+	ApprovalModeInteractive    ApprovalMode = "interactive"
+	ApprovalModeNonInteractive ApprovalMode = "non_interactive"
+)
+
 type DecisionStatus string
 
 const (
@@ -99,6 +107,21 @@ type SessionGrant struct {
 	ExpiresAt             time.Time  `json:"expires_at,omitempty"`
 }
 
+// Preauthorization records persistent authorization evidence or why it is unavailable.
+// Required evidence is evaluated before session grants. It deliberately has no expiry
+// because its lifetime is owned by the backing binding.
+type Preauthorization struct {
+	Required     bool       `json:"required"`
+	Matched      bool       `json:"matched"`
+	Source       string     `json:"source,omitempty"`
+	BindingType  string     `json:"binding_type,omitempty"`
+	AuthorizedBy string     `json:"authorized_by,omitempty"`
+	AuthorizedAt *time.Time `json:"authorized_at,omitempty"`
+	Resources    []AssetRef `json:"resources,omitempty"`
+	Code         string     `json:"code,omitempty"`
+	Reason       string     `json:"reason,omitempty"`
+}
+
 type ApprovalEvent struct {
 	Type               string            `json:"type"`
 	CorrelationID      string            `json:"correlation_id"`
@@ -124,6 +147,7 @@ type Decision struct {
 	CorrelationID           string                 `json:"correlation_id"`
 	ApprovedByCorrelationID string                 `json:"approved_by_correlation_id,omitempty"`
 	MatchedGrant            *SessionGrant          `json:"matched_grant,omitempty"`
+	Preauthorization        *Preauthorization      `json:"preauthorization,omitempty"`
 	Manifest                Manifest               `json:"manifest"`
 	Assets                  []AssetRef             `json:"assets,omitempty"`
 	ExpectedAssets          []AssetRef             `json:"expected_assets,omitempty"`
@@ -134,18 +158,20 @@ type Decision struct {
 }
 
 type Request struct {
-	Manifest       Manifest
-	PermissionTier PermissionTier
-	ConversationID string
-	OrganizationID string
-	UserID         string
-	SkillID        string
-	ProviderType   string
-	ProviderID     string
-	Assets         []AssetRef
-	ExpectedAssets []AssetRef
-	SessionGrants  []SessionGrant
-	CorrelationID  string
+	Manifest         Manifest
+	PermissionTier   PermissionTier
+	ApprovalMode     ApprovalMode
+	Preauthorization *Preauthorization
+	ConversationID   string
+	OrganizationID   string
+	UserID           string
+	SkillID          string
+	ProviderType     string
+	ProviderID       string
+	Assets           []AssetRef
+	ExpectedAssets   []AssetRef
+	SessionGrants    []SessionGrant
+	CorrelationID    string
 }
 
 type Policy struct {

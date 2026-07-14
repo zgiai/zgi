@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useStore } from 'zustand';
-import { ArrowDown, Settings2 } from 'lucide-react';
+import { ArrowDown, RefreshCw, Settings2 } from 'lucide-react';
 import type {
   ModelSelectorModelProps,
   ModelSelectorValue,
@@ -34,6 +34,7 @@ import {
   selectIsRecoveringMessages,
   selectIsLoadingOlderMessages,
   selectIsStopping,
+  shouldTreatConversationAsRunning,
   mergeRuntimeTimelineWithMessageTimeline,
   timelineFromAIChatMessage,
 } from '@/components/chat/controllers/aichat/selectors';
@@ -310,6 +311,9 @@ export function AIChatShell({
   const conversationPagination = useStore(controller.store, state => state.pagination);
   const activeConversationId = useStore(controller.store, state => state.activeConversationId);
   const activeConversation = useStore(controller.store, selectActiveConversation);
+  const activeConversationRunning = useStore(controller.store, state =>
+    shouldTreatConversationAsRunning(state, state.activeConversationId)
+  );
   const activeMessages = useStore(controller.store, selectActiveMessages);
   const activeMessagePagination = useStore(controller.store, selectActiveMessagePagination);
   const isLoadingMessages = useStore(controller.store, state => state.isLoadingMessages);
@@ -1331,6 +1335,30 @@ export function AIChatShell({
             </Button>
           ) : null}
 
+          {controller.connectionState === 'disconnected' && activeConversationRunning ? (
+            <div
+              className="absolute inset-x-4 z-30 flex items-center justify-between gap-3 border-y bg-background/95 px-3 py-2 text-xs text-muted-foreground backdrop-blur"
+              style={{ bottom: Math.max(inputAreaHeight + 8, 86) }}
+            >
+              <span>{t('consoleChat.streamDisconnected')}</span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 shrink-0 px-2"
+                onClick={() => {
+                  if (!activeConversation?.id) return;
+                  void controller.recoverStreamingConversation(activeConversation.id, {
+                    mode: 'active',
+                  });
+                }}
+              >
+                <RefreshCw className="mr-1.5 size-3.5" />
+                {t('consoleChat.reconnectStream')}
+              </Button>
+            </div>
+          ) : null}
+
           <AIChatInputArea
             isEmbedded={isEmbedded}
             isHome={isHome}
@@ -1342,7 +1370,7 @@ export function AIChatShell({
             isModelInitializing={isModelInitializing}
             modelMissing={modelMissing}
             isSending={isSending}
-            canStop={canStopPendingWorkflowInteraction || isSending}
+            canStop={canStopPendingWorkflowInteraction || activeConversationRunning}
             isStopping={isStopping}
             onInputChange={setInput}
             onSend={handleSend}

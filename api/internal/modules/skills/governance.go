@@ -34,19 +34,22 @@ func (g *PolicyToolGovernanceGateway) DecideSkillTool(ctx context.Context, req T
 	params := req.ExecutionContext.RuntimeParameters
 	governance := governanceRuntimeParameters(params)
 	manifest := governanceManifestForArguments(req.Manifest, req.SkillID, req.ToolName, req.Arguments, params)
+	approvalMode, preauthorization := governanceAgentAuthorization(params, governance, req.SkillID, req.ToolName, manifest, req.Arguments)
 	return toolgovernance.Decide(toolgovernance.Request{
-		Manifest:       manifest,
-		PermissionTier: governancePermissionTier(params, governance),
-		ConversationID: req.ExecutionContext.ConversationID,
-		OrganizationID: req.ExecutionContext.OrganizationID,
-		UserID:         req.ExecutionContext.UserID,
-		SkillID:        req.SkillID,
-		ProviderType:   string(req.ProviderType),
-		ProviderID:     req.ProviderID,
-		Assets:         governanceAssets(params, governance, manifest, req.Arguments),
-		ExpectedAssets: governanceExpectedAssets(params, governance, manifest),
-		SessionGrants:  governanceSessionGrants(params, governance),
-		CorrelationID:  governanceString(params, governance, governanceCorrelationIDKey, "correlation_id"),
+		Manifest:         manifest,
+		PermissionTier:   governancePermissionTier(params, governance),
+		ApprovalMode:     approvalMode,
+		Preauthorization: preauthorization,
+		ConversationID:   req.ExecutionContext.ConversationID,
+		OrganizationID:   req.ExecutionContext.OrganizationID,
+		UserID:           req.ExecutionContext.UserID,
+		SkillID:          req.SkillID,
+		ProviderType:     string(req.ProviderType),
+		ProviderID:       req.ProviderID,
+		Assets:           governanceAssets(params, governance, manifest, req.Arguments),
+		ExpectedAssets:   governanceExpectedAssets(params, governance, manifest),
+		SessionGrants:    governanceSessionGrants(params, governance),
+		CorrelationID:    governanceString(params, governance, governanceCorrelationIDKey, "correlation_id"),
 	}, g.policy), nil
 }
 

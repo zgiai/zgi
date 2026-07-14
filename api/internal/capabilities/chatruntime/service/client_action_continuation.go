@@ -35,8 +35,13 @@ type ClientActionContinuation struct {
 }
 
 func (s *service) persistClientActionPending(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
+	metadata, _ := s.persistClientActionPendingResult(ctx, prepared, payload, usage)
+	return metadata
+}
+
+func (s *service) persistClientActionPendingResult(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) (map[string]interface{}, error) {
 	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil {
-		return map[string]interface{}{}
+		return map[string]interface{}{}, nil
 	}
 	pendingPayload := copyStringAnyMap(payload)
 	if pendingPayload == nil {
@@ -67,9 +72,9 @@ func (s *service) persistClientActionPending(ctx context.Context, prepared *Prep
 	prepared.Message.Metadata = metadata
 
 	if s == nil || s.repos == nil || s.repos.Message == nil || s.repos.Conversation == nil {
-		return metadata
+		return metadata, nil
 	}
-	s.persistPendingMessageAndFinishConversationBestEffort(
+	err := s.persistPendingMessageAndFinishConversationBestEffort(
 		ctx,
 		prepared,
 		"client action",
@@ -80,7 +85,7 @@ func (s *service) persistClientActionPending(ctx context.Context, prepared *Prep
 			return repo.FinishContinuationMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
 		},
 	)
-	return metadata
+	return metadata, err
 }
 
 func (s *service) RunClientActionContinuationStream(
@@ -125,73 +130,92 @@ func (s *service) RunClientActionContinuationStream(
 		return nil, newFinalizedStreamError(err)
 	}
 
-	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	s.streams.Begin(message.ID, cancel)
-	defer func() {
-		cancel()
-		s.streams.Finish(message.ID)
-	}()
-	if s.streams.IsStopped(message.ID) {
-		_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, "", nil)
+	execution, err := s.beginRuntimeExecution(ctx, message.ID)
+	if err != nil {
+		s.failClientActionContinuation(context.WithoutCancel(ctx), continuation, err, onEvent)
+		return nil, newFinalizedStreamError(err)
+	}
+	defer execution.Finish()
+	runCtx := execution.Context
+	persistCtx := execution.PersistContext
+	if s.streams.IsStopped(message.ID, execution.runID) {
+		_ = s.persistStoppedAnswer(persistCtx, prepared, "", nil)
 		return nil, ErrMessageStopped
 	}
 
-	s.emitPreparedEvent(ctx, prepared, streamEventMessageStart, messageStartPayload(conversation, message, false), onEvent)
-	s.emitPreparedEvent(ctx, prepared, streamEventClientActionResult, clientActionResultPayload(prepared, continuation.Event, req), onEvent)
+	s.emitPreparedEvent(persistCtx, prepared, streamEventMessageStart, messageStartPayload(conversation, message, false), onEvent)
+	s.emitPreparedEvent(persistCtx, prepared, streamEventClientActionResult, clientActionResultPayload(prepared, continuation.Event, req), onEvent)
 
 	var answer string
 	var usage *adapter.Usage
-	answer, usage, err = s.runPreparedToolStream(runCtx, context.WithoutCancel(ctx), prepared, nil, onEvent)
+	answer, usage, err = s.runPreparedToolStream(runCtx, persistCtx, prepared, nil, onEvent)
 	if err != nil {
 		var pendingGovernance *skillloop.ToolGovernancePendingError
 		if errors.As(err, &pendingGovernance) {
-			metadata := s.persistToolGovernanceApprovalPending(context.WithoutCancel(ctx), prepared, pendingGovernance.Payload, usage)
-			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
+			metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
+			if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
+				return nil, ownershipErr
+			}
+			s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
 			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, nil
 		}
 		var pendingApproval *skillloop.WorkflowApprovalPendingError
 		if errors.As(err, &pendingApproval) {
-			metadata := s.persistWorkflowApprovalPending(context.WithoutCancel(ctx), prepared, pendingApproval.Payload, usage)
-			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
+			metadata, persistErr := s.persistWorkflowApprovalPendingResult(persistCtx, prepared, pendingApproval.Payload, usage)
+			if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
+				return nil, ownershipErr
+			}
+			s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval), onEvent)
 			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval}, nil
 		}
 		var pendingQuestion *skillloop.WorkflowQuestionPendingError
 		if errors.As(err, &pendingQuestion) {
-			metadata := s.persistWorkflowQuestionPending(context.WithoutCancel(ctx), prepared, pendingQuestion.Payload, usage)
-			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
+			metadata, persistErr := s.persistWorkflowQuestionPendingResult(persistCtx, prepared, pendingQuestion.Payload, usage)
+			if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
+				return nil, ownershipErr
+			}
+			s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
 			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion}, nil
 		}
 		var pendingClientAction *skillloop.ClientActionPendingError
 		if errors.As(err, &pendingClientAction) {
-			metadata := s.persistClientActionPending(context.WithoutCancel(ctx), prepared, pendingClientAction.Payload, usage)
-			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction), onEvent)
+			metadata, persistErr := s.persistClientActionPendingResult(persistCtx, prepared, pendingClientAction.Payload, usage)
+			if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
+				return nil, ownershipErr
+			}
+			s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction), onEvent)
 			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingClientAction}, nil
 		}
 		var pendingUserInput *skillloop.UserInputPendingError
 		if errors.As(err, &pendingUserInput) {
-			metadata := s.persistUserInputRequestPending(context.WithoutCancel(ctx), prepared, pendingUserInput.Payload, usage)
-			s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
+			metadata, persistErr := s.persistUserInputRequestPendingResult(persistCtx, prepared, pendingUserInput.Payload, usage)
+			if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
+				return nil, ownershipErr
+			}
+			s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion), onEvent)
 			return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion}, nil
 		}
 		if errors.Is(err, ErrMessageStopped) {
-			_ = s.clearPreparedRuntime(context.WithoutCancel(ctx), prepared)
+			_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
 			return nil, err
 		}
-		s.finalizePreparedError(context.WithoutCancel(ctx), prepared, err, onEvent)
+		if finalizeErr := s.finalizePreparedError(persistCtx, prepared, err, onEvent); finalizeErr != nil {
+			return nil, finalizedRuntimePersistenceError(finalizeErr)
+		}
 		return nil, newFinalizedStreamError(err)
 	}
-	if s.streams.IsStopped(message.ID) {
-		_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, answer, usage)
+	if s.streams.IsStopped(message.ID, execution.runID) {
+		_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
 		return nil, ErrMessageStopped
 	}
 
 	metadata := resolveClientActionContinuationMetadata(prepared.Message.Metadata, actionID, req)
 	metadata = preparedResultMetadata(metadata, usage)
 	prepared.Message.Metadata = metadata
-	if err := s.completePreparedChat(context.WithoutCancel(ctx), prepared, answer, metadata); err != nil {
-		return nil, err
+	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
+		return nil, finalizedRuntimePersistenceError(err)
 	}
-	s.emitPreparedEvent(context.WithoutCancel(ctx), prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
+	s.emitPreparedEvent(persistCtx, prepared, streamEventMessageEnd, messageEndPayload(prepared, metadata), onEvent)
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusCompleted}, nil
 }
 
@@ -315,6 +339,9 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 		OperationContext: req.OperationContext,
 	}, message)
 	if err != nil {
+		return nil, err
+	}
+	if err := applyCanonicalConversationSurface(continuation.Conversation, parts); err != nil {
 		return nil, err
 	}
 	restoreTurnInitialContextFromMetadata(parts, message.Metadata)

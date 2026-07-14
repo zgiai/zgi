@@ -156,6 +156,7 @@ export type AIChatAgenticTimelineItem =
     };
 
 export type AIChatRecoveryMode = 'active' | 'background';
+export type AIChatConnectionState = 'connected' | 'reconnecting' | 'disconnected' | 'idle';
 
 export interface AIChatMessageStartContext {
   query?: string;
@@ -178,6 +179,7 @@ export interface AIChatControllerState {
   streamingByMessageId: Record<string, AIChatStreamingMessageState>;
   recoveringByConversation: Record<string, boolean>;
   stoppingByConversation: Record<string, boolean>;
+  connectionByConversation: Record<string, AIChatConnectionState>;
   isLoadingList: boolean;
   isLoadingMessages: boolean;
   isSending: boolean;
@@ -235,6 +237,7 @@ export interface AIChatController {
   isRecoveringMessages: boolean;
   isStopping: boolean;
   isSending: boolean;
+  connectionState: AIChatConnectionState;
   error: string | null;
   init: (conversationId?: string | null) => void;
   refreshList: (params?: { page?: number; append?: boolean }) => Promise<void>;

@@ -28,6 +28,10 @@ const (
 	// Browser access policy.
 	// envWebAPICORSAllowOrigins sets the allowed CORS origins for the web API. Default: empty list.
 	envWebAPICORSAllowOrigins = "WEB_API_CORS_ALLOW_ORIGINS"
+
+	// envChatRuntimeModelIdleTimeoutSeconds stops one model call after this many
+	// seconds without any upstream response. Default: 300.
+	envChatRuntimeModelIdleTimeoutSeconds = "CHAT_RUNTIME_MODEL_IDLE_TIMEOUT_SECONDS"
 )
 
 // Database and cache keys.

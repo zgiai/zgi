@@ -713,6 +713,14 @@ func governanceInstruction(decision toolgovernance.Decision) string {
 		}
 		return "The tool was not executed. Ask the user to clarify the target asset or resolve the asset reference before retrying."
 	case toolgovernance.DecisionStatusDenied:
+		code, _ := decision.ModelFeedback["authorization_code"].(string)
+		code = strings.TrimSpace(code)
+		if code == agentToolNotPreauthorizedCode {
+			return "The tool was not executed because this action is not preauthorized in the non-interactive Agent runtime. Do not retry with unchanged arguments; choose an already authorized tool or explain that this action is unavailable."
+		}
+		if strings.HasPrefix(code, "agent_") {
+			return "The tool was not executed because the current Agent configuration does not authorize it. Do not retry with unchanged arguments; choose an authorized bound resource or explain which Agent binding must be updated."
+		}
 		return "The tool was not executed. Explain the denial and continue with a safe alternative."
 	case toolgovernance.DecisionStatusBlocked:
 		return "The tool was not executed. Explain why the action is blocked and continue without this tool."

@@ -307,6 +307,8 @@ const messages = {
     send: 'Send',
     stop: 'Stop generating',
     resumeAutoScroll: 'Continue following',
+    streamDisconnected: 'Live updates are disconnected. The task may still be running.',
+    reconnectStream: 'Reconnect',
     toggleSidebar: 'Toggle sidebar',
     editMessage: 'Edit message',
     sendEdited: 'Send edited message',

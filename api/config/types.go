@@ -54,8 +54,13 @@ type Config struct {
 	LLMPolicyPrompt        LLMPolicyPromptConfig
 	Automation             AutomationConfig
 	Tooling                ToolingConfig
+	ChatRuntime            ChatRuntimeConfig
 
 	source *envSource
+}
+
+type ChatRuntimeConfig struct {
+	ModelIdleTimeoutSeconds int `json:"model_idle_timeout_seconds"`
 }
 
 type ServerConfig struct {

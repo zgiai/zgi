@@ -75,6 +75,15 @@ func NormalizeApprovalPolicy(policy ApprovalPolicy) ApprovalPolicy {
 	}
 }
 
+func normalizeApprovalMode(mode ApprovalMode) ApprovalMode {
+	switch ApprovalMode(strings.ToLower(strings.TrimSpace(string(mode)))) {
+	case ApprovalModeNonInteractive:
+		return ApprovalModeNonInteractive
+	default:
+		return ApprovalModeInteractive
+	}
+}
+
 func RiskRank(risk RiskLevel) int {
 	switch NormalizeRiskLevel(risk) {
 	case RiskLevelCritical:
@@ -126,6 +135,34 @@ func normalizeSessionGrant(grant SessionGrant) SessionGrant {
 	grant.RiskLevel = NormalizeRiskLevel(grant.RiskLevel)
 	grant.ApprovalCorrelationID = strings.TrimSpace(grant.ApprovalCorrelationID)
 	return grant
+}
+
+func normalizePreauthorization(preauthorization *Preauthorization) *Preauthorization {
+	if preauthorization == nil {
+		return nil
+	}
+	normalized := *preauthorization
+	normalized.Source = strings.ToLower(strings.TrimSpace(normalized.Source))
+	normalized.BindingType = strings.ToLower(strings.TrimSpace(normalized.BindingType))
+	normalized.AuthorizedBy = strings.TrimSpace(normalized.AuthorizedBy)
+	if normalized.AuthorizedAt != nil {
+		authorizedAt := normalized.AuthorizedAt.UTC()
+		normalized.AuthorizedAt = &authorizedAt
+	}
+	normalized.Resources = normalizeAssets(normalized.Resources)
+	for index := range normalized.Resources {
+		if len(normalized.Resources[index].Metadata) == 0 {
+			continue
+		}
+		metadata := make(map[string]interface{}, len(normalized.Resources[index].Metadata))
+		for key, value := range normalized.Resources[index].Metadata {
+			metadata[key] = value
+		}
+		normalized.Resources[index].Metadata = metadata
+	}
+	normalized.Code = strings.ToLower(strings.TrimSpace(normalized.Code))
+	normalized.Reason = strings.TrimSpace(normalized.Reason)
+	return &normalized
 }
 
 func normalizeAssetType(value string) string {

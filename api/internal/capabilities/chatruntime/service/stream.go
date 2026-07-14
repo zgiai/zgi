@@ -26,14 +26,14 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		return nil, fmt.Errorf("%w: prepared chat is required", ErrInvalidInput)
 	}
 	eventCallback := firstStreamEventCallback(onEvent)
-	persistCtx := context.WithoutCancel(ctx)
-	runCtx, cancel := context.WithCancel(persistCtx)
-	s.streams.Begin(prepared.Message.ID, cancel)
-	defer func() {
-		cancel()
-		s.streams.Finish(prepared.Message.ID)
-	}()
-	if s.streams.IsStopped(prepared.Message.ID) {
+	execution, err := s.beginRuntimeExecution(ctx, prepared.Message.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer execution.Finish()
+	persistCtx := execution.PersistContext
+	runCtx := execution.Context
+	if s.streams.IsStopped(prepared.Message.ID, execution.runID) {
 		_ = s.persistStoppedAnswer(persistCtx, prepared, "", nil)
 		return nil, ErrMessageStopped
 	}
@@ -75,31 +75,46 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		if err != nil {
 			var pendingGovernance *skillloop.ToolGovernancePendingError
 			if errors.As(err, &pendingGovernance) {
-				metadata := s.persistToolGovernanceApprovalPending(persistCtx, prepared, pendingGovernance.Payload, usage)
+				metadata, persistErr := s.persistToolGovernanceApprovalPendingResult(persistCtx, prepared, pendingGovernance.Payload, usage)
+				if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
+					return nil, ownershipErr
+				}
 				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval))
 				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval, MessageEndEventID: eventID}, nil
 			}
 			var pendingApproval *skillloop.WorkflowApprovalPendingError
 			if errors.As(err, &pendingApproval) {
-				metadata := s.persistWorkflowApprovalPending(persistCtx, prepared, pendingApproval.Payload, usage)
+				metadata, persistErr := s.persistWorkflowApprovalPendingResult(persistCtx, prepared, pendingApproval.Payload, usage)
+				if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
+					return nil, ownershipErr
+				}
 				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingApproval))
 				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingApproval, MessageEndEventID: eventID}, nil
 			}
 			var pendingQuestion *skillloop.WorkflowQuestionPendingError
 			if errors.As(err, &pendingQuestion) {
-				metadata := s.persistWorkflowQuestionPending(persistCtx, prepared, pendingQuestion.Payload, usage)
+				metadata, persistErr := s.persistWorkflowQuestionPendingResult(persistCtx, prepared, pendingQuestion.Payload, usage)
+				if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
+					return nil, ownershipErr
+				}
 				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion))
 				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion, MessageEndEventID: eventID}, nil
 			}
 			var pendingClientAction *skillloop.ClientActionPendingError
 			if errors.As(err, &pendingClientAction) {
-				metadata := s.persistClientActionPending(persistCtx, prepared, pendingClientAction.Payload, usage)
+				metadata, persistErr := s.persistClientActionPendingResult(persistCtx, prepared, pendingClientAction.Payload, usage)
+				if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
+					return nil, ownershipErr
+				}
 				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingClientAction))
 				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingClientAction, MessageEndEventID: eventID}, nil
 			}
 			var pendingUserInput *skillloop.UserInputPendingError
 			if errors.As(err, &pendingUserInput) {
-				metadata := s.persistUserInputRequestPending(persistCtx, prepared, pendingUserInput.Payload, usage)
+				metadata, persistErr := s.persistUserInputRequestPendingResult(persistCtx, prepared, pendingUserInput.Payload, usage)
+				if ownershipErr := finalizedRuntimeOwnershipError(persistErr); ownershipErr != nil {
+					return nil, ownershipErr
+				}
 				eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayloadWithStatus(prepared, metadata, runtimemodel.MessageStatusWaitingQuestion))
 				return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, Status: runtimemodel.MessageStatusWaitingQuestion, MessageEndEventID: eventID}, nil
 			}
@@ -114,14 +129,16 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 			s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 			return nil, newFinalizedStreamError(err)
 		}
-		if s.streams.IsStopped(prepared.Message.ID) {
+		if s.streams.IsStopped(prepared.Message.ID, execution.runID) {
 			_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
 			return nil, ErrMessageStopped
 		}
 		metadata := preparedResultMetadata(prepared.Message.Metadata, usage)
 		if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
-			_ = s.clearPreparedRuntime(persistCtx, prepared)
-			return nil, err
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				_ = s.clearPreparedRuntime(persistCtx, prepared)
+			}
+			return nil, finalizedRuntimePersistenceError(err)
 		}
 		eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayload(prepared, metadata))
 		return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, MessageEndEventID: eventID}, nil
@@ -178,35 +195,36 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		Response:   &adapter.Message{Role: "assistant", Content: answer},
 		Usage:      callUsage,
 	})
-	if s.streams.IsStopped(prepared.Message.ID) {
+	if s.streams.IsStopped(prepared.Message.ID, execution.runID) {
 		_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
 		return nil, ErrMessageStopped
 	}
 	metadata := preparedResultMetadata(prepared.Message.Metadata, usage)
 	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
-		_ = s.clearPreparedRuntime(persistCtx, prepared)
-		return nil, err
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			_ = s.clearPreparedRuntime(persistCtx, prepared)
+		}
+		return nil, finalizedRuntimePersistenceError(err)
 	}
 	eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayload(prepared, metadata))
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, MessageEndEventID: eventID}, nil
 }
 
 func (s *service) CleanupStaleActiveMessages(ctx context.Context) (int64, error) {
-	cutoff := time.Now().Add(-staleActiveMessageTTL)
+	now := time.Now()
+	heartbeatCutoff := now.Add(-runtimeLeaseFailureTTL)
+	legacyCutoff := now.Add(-runtimeLeaseLegacyTTL)
 	var affected int64
 	err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepos := repository.NewRepositories(tx)
-		ids, err := txRepos.Message.ListStaleActiveIDs(ctx, cutoff)
+		ids, err := txRepos.RuntimeLease.MarkExpiredActiveAsError(ctx, heartbeatCutoff, legacyCutoff, staleActiveMessageError)
 		if err != nil {
 			return err
 		}
 		if len(ids) == 0 {
 			return nil
 		}
-		affected, err = txRepos.Message.MarkStaleActiveAsError(ctx, cutoff, staleActiveMessageError)
-		if err != nil {
-			return err
-		}
+		affected = int64(len(ids))
 		return txRepos.Conversation.ClearActiveMessages(ctx, ids)
 	})
 	return affected, err
@@ -339,15 +357,48 @@ func (s *service) openChatStream(ctx context.Context, prepared *PreparedChat) (<
 		_ = s.repos.Message.UpdateError(ctx, prepared.Message.ID, err.Error())
 		return nil, err
 	}
-	stream, err := s.llmClient.AppChatStream(ctx, newBillingAppContext(prepared), prepared.LLMRequest)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		_ = s.repos.Message.UpdateError(ctx, prepared.Message.ID, err.Error())
-		return nil, err
+	type openResult struct {
+		stream <-chan adapter.StreamResponse
+		err    error
 	}
-	return stream, nil
+	resultCh := make(chan openResult, 1)
+	callCtx, cancel := context.WithCancel(ctx)
+	cancelOnReturn := true
+	defer func() {
+		if cancelOnReturn {
+			cancel()
+		}
+	}()
+	go func() {
+		stream, err := s.llmClient.AppChatStream(callCtx, newBillingAppContext(prepared), prepared.LLMRequest)
+		resultCh <- openResult{stream: stream, err: err}
+	}()
+	timer := time.NewTimer(s.modelIdleTimeoutValue())
+	defer timer.Stop()
+	select {
+	case result := <-resultCh:
+		if result.err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			_ = s.repos.Message.UpdateError(ctx, prepared.Message.ID, result.err.Error())
+			return nil, result.err
+		}
+		// The returned stream keeps using callCtx. Its parent runtime execution
+		// owns cancellation after this function hands the stream to the caller.
+		cancelOnReturn = false
+		return result.stream, nil
+	case <-timer.C:
+		logger.WarnContext(ctx, "chat runtime model idle timeout",
+			"message_id", prepared.Message.ID.String(),
+			"provider", prepared.parts.Provider,
+			"model", prepared.Message.ModelName,
+			"phase", "stream_open",
+		)
+		return nil, ErrModelIdleTimeout
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (s *service) prepareLLMRequestForRun(ctx context.Context, prepared *PreparedChat, onEvent func(StreamEvent) error) error {
@@ -434,8 +485,20 @@ func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *P
 	var usage *adapter.Usage
 	serviceChunkIndex := 0
 	eventBuffer := newStreamMessageEventBuffer(s.events, prepared.Conversation.ID, prepared.Message.ID)
+	idleTimer := time.NewTimer(s.modelIdleTimeoutValue())
+	defer idleTimer.Stop()
 	for {
 		select {
+		case <-idleTimer.C:
+			answer := builder.String()
+			s.flushStreamMessageEventBuffer(context.WithoutCancel(ctx), prepared.Message.ID, eventBuffer, onEvent)
+			logger.WarnContext(ctx, "chat runtime model idle timeout",
+				"message_id", prepared.Message.ID.String(),
+				"provider", prepared.parts.Provider,
+				"model", prepared.Message.ModelName,
+				"phase", "stream_read",
+			)
+			return answer, usage, ErrModelIdleTimeout
 		case <-ctx.Done():
 			answer := builder.String()
 			if s.isStoppedContext(ctx, prepared.Message.ID) {
@@ -446,6 +509,7 @@ func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *P
 			_ = s.repos.Message.UpdateError(context.WithoutCancel(ctx), prepared.Message.ID, ctx.Err().Error())
 			return "", nil, ctx.Err()
 		case chunk, ok := <-stream:
+			resetTimer(idleTimer, s.modelIdleTimeoutValue())
 			serviceChunkIndex++
 			if qwenRuntimeStreamDebugEnabled() {
 				logger.InfoContext(ctx, "aichat runtime stream chunk",
@@ -462,7 +526,7 @@ func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *P
 			if !ok {
 				answer := builder.String()
 				s.flushStreamMessageEventBuffer(context.WithoutCancel(ctx), prepared.Message.ID, eventBuffer, onEvent)
-				if s.streams.IsStopped(prepared.Message.ID) {
+				if s.isStoppedContext(ctx, prepared.Message.ID) {
 					_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, answer, usage)
 					return answer, usage, ErrMessageStopped
 				}
@@ -471,7 +535,7 @@ func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *P
 			if chunk.Error != nil {
 				answer := builder.String()
 				s.flushStreamMessageEventBuffer(context.WithoutCancel(ctx), prepared.Message.ID, eventBuffer, onEvent)
-				if s.streams.IsStopped(prepared.Message.ID) {
+				if s.isStoppedContext(ctx, prepared.Message.ID) {
 					_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, answer, usage)
 					return answer, usage, ErrMessageStopped
 				}
@@ -512,6 +576,26 @@ func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *P
 			}
 		}
 	}
+}
+
+func (s *service) modelIdleTimeoutValue() time.Duration {
+	if s == nil || s.modelIdleTimeout <= 0 {
+		return defaultModelIdleTimeout
+	}
+	return s.modelIdleTimeout
+}
+
+func resetTimer(timer *time.Timer, duration time.Duration) {
+	if timer == nil {
+		return
+	}
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(duration)
 }
 
 func (s *service) flushStreamMessageEventBuffer(ctx context.Context, messageID uuid.UUID, eventBuffer *streamMessageEventBuffer, onEvent func(StreamEvent) error) {
@@ -560,20 +644,36 @@ func (s *service) completePreparedChat(ctx context.Context, prepared *PreparedCh
 	return nil
 }
 
-func (s *service) finalizePreparedError(ctx context.Context, prepared *PreparedChat, cause error, onEvent ...func(StreamEvent) error) {
+func (s *service) finalizePreparedError(ctx context.Context, prepared *PreparedChat, cause error, onEvent ...func(StreamEvent) error) error {
 	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil || cause == nil {
-		return
+		return nil
 	}
 	eventCallback := firstStreamEventCallback(onEvent)
 	if err := s.completePreparedError(ctx, prepared, publicAichatErrorMessage(cause)); err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			logger.WarnContext(ctx, "failed to finalize aichat message error", "message_id", prepared.Message.ID.String(), err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
 		}
+		logger.WarnContext(ctx, "failed to finalize aichat message error", "message_id", prepared.Message.ID.String(), err)
 		if clearErr := s.clearPreparedRuntime(ctx, prepared); clearErr != nil {
 			logger.WarnContext(ctx, "failed to clear aichat conversation runtime", "conversation_id", prepared.Conversation.ID.String(), clearErr)
 		}
 	}
 	s.emitPreparedEvent(ctx, prepared, streamEventError, BuildStreamErrorPayload(prepared, cause), eventCallback)
+	return nil
+}
+
+func finalizedRuntimePersistenceError(err error) error {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return newFinalizedStreamError(err)
+	}
+	return err
+}
+
+func finalizedRuntimeOwnershipError(err error) error {
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	return newFinalizedStreamError(err)
 }
 
 func (s *service) completePreparedError(ctx context.Context, prepared *PreparedChat, message string) error {
@@ -813,8 +913,10 @@ func BuildStreamErrorPayload(prepared *PreparedChat, err error) map[string]inter
 	}
 	if code, publicMessage, ok := publicAichatErrorCodeAndMessage(err); ok {
 		payload["message"] = publicMessage
-		payload["code"] = code
-		payload["params"] = aichatBillingErrorParams(err)
+		if code > 0 {
+			payload["code"] = code
+			payload["params"] = aichatBillingErrorParams(err)
+		}
 	}
 	return payload
 }
@@ -834,6 +936,9 @@ func streamFallbackErrorMessage(err error) string {
 }
 
 func publicAichatErrorCodeAndMessage(err error) (int, string, bool) {
+	if errors.Is(err, ErrModelIdleTimeout) || errors.Is(err, skillloop.ErrModelIdleTimeout) {
+		return 0, "模型长时间未返回，当前任务已停止，请重试", true
+	}
 	if code, message, ok := aichatBillingErrorCodeAndMessage(err); ok {
 		return code, message, true
 	}
@@ -911,7 +1016,8 @@ func uuidStringValue(value *uuid.UUID) interface{} {
 }
 
 func (s *service) isStoppedContext(ctx context.Context, messageID uuid.UUID) bool {
-	return s.streams.IsStopped(messageID) || (errors.Is(ctx.Err(), context.Canceled) && s.streams.IsStopped(messageID))
+	runID, ok := repository.RuntimeRunIDFromContext(ctx)
+	return ok && s.streams.IsStopped(messageID, runID)
 }
 
 func preparedResultMetadata(source map[string]interface{}, usage *adapter.Usage) map[string]interface{} {

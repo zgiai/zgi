@@ -72,9 +72,10 @@ func (s *service) runPreparedToolLoop(
 
 	timeline := newProcessTimelineRecorder(ctx, persistCtx, s, prepared, onEvent)
 	runner := &skillloop.Runner{
-		LLMClient:    s.llmClient,
-		SkillRuntime: s.skillRuntime,
-		AppContext:   newBillingAppContext(prepared),
+		LLMClient:        s.llmClient,
+		SkillRuntime:     s.skillRuntime,
+		AppContext:       newBillingAppContext(prepared),
+		ModelIdleTimeout: s.modelIdleTimeoutValue(),
 		OnEvent: func(event skillloop.Event) error {
 			if event.Type == skillloop.EventUserInputRequested {
 				s.persistUserInputRequestBestEffort(persistCtx, prepared, event.Payload)
@@ -125,12 +126,31 @@ func (s *service) runPreparedToolLoop(
 		OnTerminalStateGuardDecision:   skillLoopTerminalStateGuardDecision(prepared),
 		OnTerminalCompletion:           skillLoopTerminalCompletionResult(prepared),
 		OnChunk:                        onChunk,
+		PlanningOutputTokenLimit:       planningOutputTokenLimit(prepared),
 	})
 	timeline.FlushPendingIntermediateAnswers(err)
 	if err != nil && strings.TrimSpace(answer) != "" {
 		s.persistPartialSkillLoopAnswerBestEffort(persistCtx, prepared, answer, usage)
 	}
 	return answer, usage, err
+}
+
+func planningOutputTokenLimit(prepared *PreparedChat) int {
+	if prepared == nil || prepared.parts == nil {
+		return 0
+	}
+	control := prepared.parts.ContextControl
+	modelLimit, _ := operationPlanEvidenceIntFromAny(control["model_max_output_tokens"])
+	safeLimit, _ := operationPlanEvidenceIntFromAny(control["safe_context_limit"])
+	promptTokens, _ := operationPlanEvidenceIntFromAny(control["estimated_prompt_tokens"])
+	available := safeLimit - promptTokens
+	if available <= 0 {
+		return modelLimit
+	}
+	if modelLimit > 0 && modelLimit < available {
+		return modelLimit
+	}
+	return available
 }
 
 func (s *service) persistPartialSkillLoopAnswerBestEffort(ctx context.Context, prepared *PreparedChat, answer string, usage *adapter.Usage) {

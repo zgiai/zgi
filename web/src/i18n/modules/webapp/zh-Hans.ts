@@ -289,6 +289,8 @@ const messages: WebappMessages = {
     send: '发送',
     stop: '停止生成',
     resumeAutoScroll: '继续跟随',
+    streamDisconnected: '实时连接已断开，任务可能仍在运行。',
+    reconnectStream: '重新连接',
     toggleSidebar: '切换侧边栏',
     editMessage: '编辑消息',
     sendEdited: '发送修改后的消息',

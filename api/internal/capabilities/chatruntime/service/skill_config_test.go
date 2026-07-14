@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
@@ -1348,6 +1349,56 @@ func TestSkillRuntimeParametersForPreparedIncludesToolGovernanceProfileScope(t *
 	}
 	if governance["runtime_surface"] != aiChatSurfaceExternalPageChat {
 		t.Fatalf("runtime_surface = %#v, want external_page_chat", governance["runtime_surface"])
+	}
+}
+
+func TestAgentBindingPreauthorizationIsConsistentAcrossRuntimeSources(t *testing.T) {
+	manifest, ok := skills.SystemSkillToolGovernanceManifest(skills.SkillAgentDatabase, "delete_table_records")
+	if !ok {
+		t.Fatal("SystemSkillToolGovernanceManifest(agent-database/delete_table_records) = false")
+	}
+	for _, source := range []string{
+		runtimemodel.ConversationSourceConsole,
+		runtimemodel.ConversationSourceWebApp,
+		runtimemodel.ConversationSourceExternalAPI,
+	} {
+		t.Run(source, func(t *testing.T) {
+			prepared := &PreparedChat{
+				Scope:  Scope{OrganizationID: uuid.New()},
+				Caller: Caller{Type: runtimemodel.ConversationCallerAgent, Source: source},
+				RunConfig: RunConfig{
+					BillingAppType:           runtimemodel.ConversationCallerAgent,
+					DatabaseBoundByAccountID: "account-1",
+					DatabaseBoundAtUnix:      1_720_000_000,
+					DatabaseBindings: []AgentDatabaseBinding{{
+						DataSourceID:     "database-1",
+						TableIDs:         []string{"table-1"},
+						WritableTableIDs: []string{"table-1"},
+					}},
+				},
+				parts: &chatRequestParts{Surface: aiChatSurfaceContextualSidebar},
+			}
+			decision, err := skills.NewPolicyToolGovernanceGateway(toolgovernance.DefaultPolicy()).DecideSkillTool(context.Background(), skills.ToolGovernanceRequest{
+				Manifest: manifest,
+				SkillID:  skills.SkillAgentDatabase,
+				ToolName: "delete_table_records",
+				Arguments: map[string]interface{}{
+					"data_source_id": "database-1",
+					"table_id":       "table-1",
+					"records":        []map[string]interface{}{{"id": "record-1"}},
+				},
+				ExecutionContext: skills.ExecutionContext{RuntimeParameters: skillRuntimeParametersForPrepared(prepared)},
+			})
+			if err != nil {
+				t.Fatalf("DecideSkillTool() error = %v", err)
+			}
+			if decision.Status != toolgovernance.DecisionStatusAllowed || decision.RequiresApproval || decision.ApprovalEvent != nil {
+				t.Fatalf("decision = %#v, want direct Agent binding authorization", decision)
+			}
+			if decision.Preauthorization == nil || decision.Preauthorization.Source != "agent_binding" {
+				t.Fatalf("preauthorization = %#v, want Agent binding evidence", decision.Preauthorization)
+			}
+		})
 	}
 }
 

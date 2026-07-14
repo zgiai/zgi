@@ -1,4 +1,4 @@
-import { http } from '@/lib/http';
+import { http, SSE_IDLE_TIMEOUT_MS } from '@/lib/http';
 import type { SseMessage } from '@/lib/http';
 import {
   SENSITIVE_OUTPUT_BLOCKED_FLAG,
@@ -40,6 +40,7 @@ import type {
 } from './types/aichat';
 
 export interface AIChatStreamCallbacks {
+  onOpen?: () => void;
   onEvent: (event: string, data: unknown, eventId?: string | null) => void;
   onError?: (error: Error) => void;
   onClose?: () => void;
@@ -338,7 +339,10 @@ export const aichatService = {
         method: 'POST',
         body: payload,
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+        skipErrorHandling: true,
         isTerminalMessage: isAIChatTerminalMessage,
+        onOpen: callbacks.onOpen,
         onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
         onError: error => callbacks.onError?.(error),
         onClose: callbacks.onClose,
@@ -366,7 +370,10 @@ export const aichatService = {
         method: 'POST',
         body: payload,
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+        skipErrorHandling: true,
         isTerminalMessage: isAIChatTerminalMessage,
+        onOpen: callbacks.onOpen,
         onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
         onError: error => callbacks.onError?.(error),
         onClose: callbacks.onClose,
@@ -394,7 +401,10 @@ export const aichatService = {
         method: 'POST',
         body: payload,
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+        skipErrorHandling: true,
         isTerminalMessage: isAIChatTerminalMessage,
+        onOpen: callbacks.onOpen,
         onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
         onError: error => callbacks.onError?.(error),
         onClose: callbacks.onClose,
@@ -408,12 +418,26 @@ export const aichatService = {
     abortSignal?: AbortSignal
   ) {
     const outputFilter = createAIChatStreamOutputFilter(callbacks);
+    const surface = payload.surface ?? 'work_chat';
+    const endpoint =
+      surface === 'contextual_sidebar'
+        ? `${AICHAT_BASE_PATH}/contextual/chat`
+        : surface === 'work_chat'
+          ? `${AICHAT_BASE_PATH}/work-chat/chat`
+          : `${AICHAT_BASE_PATH}/chat`;
+    const body = { ...payload };
+    if (surface === 'contextual_sidebar' || surface === 'work_chat') {
+      delete body.surface;
+    }
 
-    return http.sse<AIChatSseEnvelope, AIChatChatRequest>(`${AICHAT_BASE_PATH}/chat`, {
+    return http.sse<AIChatSseEnvelope, typeof body>(endpoint, {
       method: 'POST',
-      body: payload,
+      body,
       abortSignal,
+      idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+      skipErrorHandling: true,
       isTerminalMessage: isAIChatTerminalMessage,
+      onOpen: callbacks.onOpen,
       onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
       onError: error => callbacks.onError?.(error),
       onClose: callbacks.onClose,
@@ -434,7 +458,10 @@ export const aichatService = {
         method: 'POST',
         body: payload,
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+        skipErrorHandling: true,
         isTerminalMessage: isAIChatTerminalMessage,
+        onOpen: callbacks.onOpen,
         onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
         onError: error => callbacks.onError?.(error),
         onClose: callbacks.onClose,
@@ -456,7 +483,10 @@ export const aichatService = {
         method: 'GET',
         query: params,
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
+        skipErrorHandling: true,
         isTerminalMessage: isAIChatTerminalMessage,
+        onOpen: callbacks.onOpen,
         onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
         onError: error => callbacks.onError?.(error),
         onClose: callbacks.onClose,

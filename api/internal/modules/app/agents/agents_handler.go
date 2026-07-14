@@ -1151,6 +1151,9 @@ func setupAgentSSE(c *gin.Context) {
 	c.Writer.Header().Set("Transfer-Encoding", "chunked")
 	c.Status(http.StatusOK)
 	c.Writer.Flush()
+	writer := newAgentSSEWriter(c)
+	c.Set(agentSSEWriterContextKey, writer)
+	writer.StartHeartbeat(c.Request.Context())
 }
 
 func writeAgentSSE(c *gin.Context, event string, data interface{}) error {
@@ -1179,6 +1182,15 @@ func writeAgentChatEnd(c *gin.Context, prepared *runtimeservice.PreparedChat, re
 }
 
 func writeAgentSSEEvent(c *gin.Context, id string, event string, data interface{}) error {
+	if value, ok := c.Get(agentSSEWriterContextKey); ok {
+		if writer, writerOK := value.(*agentSSEWriter); writerOK && writer != nil {
+			return writer.WriteEvent(id, event, data)
+		}
+	}
+	return writeAgentSSERaw(c, id, event, data)
+}
+
+func writeAgentSSERaw(c *gin.Context, id string, event string, data interface{}) error {
 	payload := gin.H{"event": event, "data": data}
 	encoded, err := json.Marshal(payload)
 	if err != nil {

@@ -20,7 +20,11 @@ func (s *service) CreateConversation(ctx context.Context, scope Scope, title str
 }
 
 func (s *service) CreateConversationForCaller(ctx context.Context, scope Scope, caller Caller, title string) (*runtimemodel.Conversation, error) {
-	return s.createConversationForCaller(ctx, scope, caller, title, "")
+	surface := aiChatSurfaceWorkChat
+	if normalizeCallerType(caller.Type) == runtimemodel.ConversationCallerAgent {
+		surface = aiChatSurfaceExternalPageChat
+	}
+	return s.createConversationForCaller(ctx, scope, caller, title, surface)
 }
 
 func (s *service) createConversationForCaller(ctx context.Context, scope Scope, caller Caller, title string, surface string) (*runtimemodel.Conversation, error) {
@@ -649,7 +653,7 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 		return message, nil
 	}
 
-	s.streams.Stop(id)
+	s.streams.StopCurrent(id)
 	metadata := workflowContinuationMetadataWithoutUserInputRequest(message.Metadata)
 	if continuation := workflowApprovalContinuationFromMetadata(metadata); continuation.WorkflowRunID != "" {
 		metadata = mergeWorkflowRunMetadata(metadata, "workflow_stopped", map[string]interface{}{

@@ -73,6 +73,31 @@ func applyCallerRuntimeSurfacePolicy(caller Caller, parts *chatRequestParts) {
 	parts.Surface = normalizeRuntimeSurfaceForCaller(caller, parts.Surface)
 }
 
+// applyCanonicalConversationSurface prevents a persisted conversation from
+// switching runtime capabilities between product surfaces. Conversations that
+// predate surface metadata keep their legacy behavior and are not migrated here.
+func applyCanonicalConversationSurface(conversation *runtimemodel.Conversation, parts *chatRequestParts) error {
+	if conversation == nil || parts == nil || conversation.Metadata == nil {
+		return nil
+	}
+	persisted := strings.TrimSpace(stringMetadataValue(conversation.Metadata["surface"]))
+	if persisted == "" {
+		return nil
+	}
+	persisted = normalizeAIChatSurface(persisted)
+	requested := normalizeAIChatSurface(parts.Surface)
+	if requested != persisted {
+		return fmt.Errorf(
+			"%w: conversation surface is %s, request surface is %s",
+			ErrInvalidInput,
+			persisted,
+			requested,
+		)
+	}
+	parts.Surface = persisted
+	return nil
+}
+
 func runConfigAllowsUserMemory(config RunConfig) bool {
 	return config.UseMemory && !strings.EqualFold(strings.TrimSpace(config.BillingAppType), runtimemodel.ConversationCallerAgent)
 }
