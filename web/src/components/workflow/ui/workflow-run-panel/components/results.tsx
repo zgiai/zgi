@@ -500,7 +500,7 @@ const Results: React.FC<ResultsProps> = ({
         </div>
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-auto p-3 scrollbar-thin">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto p-3 scrollbar-thin">
         {mode === 'draft' ? (
           <>
             {hasTranscript ? (

@@ -1917,7 +1917,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
               : t('run.inputsTitle')}
         </h2>
       </div>
-      <div className="flex-1 overflow-auto px-5 py-3">
+      <div className="min-h-0 flex-1 overflow-auto px-5 py-3">
         {isApprovalPending ? approvalInputContent : inputFormContent}
       </div>
       {!isCompactLayout ? runActionFooter : null}
