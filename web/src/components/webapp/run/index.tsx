@@ -1979,7 +1979,7 @@ export const WebappRun: React.FC<WebappRunProps> = ({
   );
 
   const outputSection = (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card shadow-sm">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border bg-card shadow-sm">
       <Results
         mode="draft"
         title={t('run.output')}
