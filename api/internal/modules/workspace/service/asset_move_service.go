@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -59,6 +61,9 @@ func (s *WorkspaceAssetMoveService) Move(ctx context.Context, organizationID, ac
 	var response dto.WorkspaceAssetMoveResponse
 	var affectedAgentIDs []uuid.UUID
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.lockMoveAssets(ctx, tx, req.Items); err != nil {
+			return err
+		}
 		preview, err := s.previewWithDB(ctx, tx, organizationID, accountID, req)
 		if err != nil {
 			return err
@@ -115,6 +120,78 @@ func (s *WorkspaceAssetMoveService) Move(ctx context.Context, organizationID, ac
 		)
 	}
 	return &response, nil
+}
+
+type assetMoveLockTarget struct {
+	assetType string
+	id        string
+	table     string
+}
+
+// lockMoveAssets makes the source workspace observed by previewWithDB stable
+// until the move transaction commits. Every move path uses the same ordering
+// so overlapping batch moves do not introduce avoidable row-lock deadlocks.
+func (s *WorkspaceAssetMoveService) lockMoveAssets(ctx context.Context, tx *gorm.DB, items []dto.WorkspaceAssetMoveItem) error {
+	targets := make([]assetMoveLockTarget, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		assetType := strings.ToLower(strings.TrimSpace(item.Type))
+		id := strings.TrimSpace(item.ID)
+		table := assetMoveTable(assetType)
+		if table == "" || id == "" {
+			continue
+		}
+		key := assetType + ":" + id
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		targets = append(targets, assetMoveLockTarget{assetType: assetType, id: id, table: table})
+	}
+	sort.Slice(targets, func(i, j int) bool {
+		if targets[i].assetType == targets[j].assetType {
+			return targets[i].id < targets[j].id
+		}
+		return targets[i].assetType < targets[j].assetType
+	})
+
+	for _, target := range targets {
+		var row struct {
+			ID string
+		}
+		query := tx.WithContext(ctx).
+			Table(target.table).
+			Select("id").
+			Where("id = ?", target.id)
+		if target.assetType == AssetMoveTypeAgent {
+			query = query.Where("deleted_at IS NULL")
+		}
+		err := query.Clauses(clause.Locking{Strength: "UPDATE"}).Take(&row).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// The authoritative preview below returns the existing structured
+			// not-found blocker. A missing row has nothing to lock.
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("lock %s %s for workspace move: %w", target.assetType, target.id, err)
+		}
+	}
+	return nil
+}
+
+func assetMoveTable(assetType string) string {
+	switch assetType {
+	case AssetMoveTypeAgent:
+		return "agents"
+	case AssetMoveTypeDataset:
+		return "datasets"
+	case AssetMoveTypeFile:
+		return "upload_files"
+	case AssetMoveTypeDatabase:
+		return "data_sources"
+	default:
+		return ""
+	}
 }
 
 func (s *WorkspaceAssetMoveService) previewWithDB(ctx context.Context, db *gorm.DB, organizationID, accountID string, req dto.WorkspaceAssetMoveRequest) (*dto.WorkspaceAssetMovePreviewResponse, error) {

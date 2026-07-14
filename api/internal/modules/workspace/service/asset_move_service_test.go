@@ -221,6 +221,7 @@ func TestWorkspaceAssetMovePreviewIgnoresOnlyMeLegacyPermission(t *testing.T) {
 func TestWorkspaceAssetMoveMoveRevalidatesAndBlocksArchivedTarget(t *testing.T) {
 	db, mock := newAssetMoveMockDB(t)
 	mock.ExpectBegin()
+	expectAssetMoveLock(mock, AssetMoveTypeDataset, "dataset-1")
 	expectWorkspaceLookup(mock, "ws-2", "org-1", "archived")
 	mock.ExpectRollback()
 
@@ -233,6 +234,32 @@ func TestWorkspaceAssetMoveMoveRevalidatesAndBlocksArchivedTarget(t *testing.T) 
 	require.ErrorIs(t, err, ErrAssetMoveBlocked)
 	require.NotNil(t, result)
 	require.False(t, result.Preview.Movable)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWorkspaceAssetMoveLocksAssetBeforeAuthorizingLatestSourceWorkspace(t *testing.T) {
+	db, mock := newAssetMoveMockDB(t)
+	mock.MatchExpectationsInOrder(true)
+	mock.ExpectBegin()
+	expectAssetMoveLock(mock, AssetMoveTypeDataset, "dataset-1")
+	expectWorkspaceLookup(mock, "ws-c", "org-1", "normal")
+	expectDatasetPreview(mock, "dataset-1", "org-1", "ws-b")
+	expectWorkspaceLookup(mock, "ws-b", "org-1", "normal")
+	mock.ExpectRollback()
+
+	authorization := &stubAssetMoveOrgService{allowed: true, deniedWorkspace: "ws-b"}
+	svc := NewWorkspaceAssetMoveService(db, authorization, nil)
+
+	_, err := svc.Move(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
+		TargetWorkspaceID: "ws-c",
+		Items:             []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeDataset, ID: "dataset-1"}},
+	})
+
+	require.ErrorIs(t, err, ErrAssetMovePermissionDenied)
+	require.Equal(t, []assetMovePermissionCheck{
+		{organizationID: "org-1", workspaceID: "ws-c", accountID: "acct-1", permission: workspace_model.WorkspacePermissionKnowledgeBaseMove},
+		{organizationID: "org-1", workspaceID: "ws-b", accountID: "acct-1", permission: workspace_model.WorkspacePermissionKnowledgeBaseMove},
+	}, authorization.checks)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -362,6 +389,7 @@ func TestWorkspaceAssetMovePreviewBlocksSameWorkspaceForAgent(t *testing.T) {
 func TestWorkspaceAssetMoveDatasetMoveBlocksSameWorkspaceWithoutClearingFolderJoin(t *testing.T) {
 	db, mock := newAssetMoveMockDB(t)
 	mock.ExpectBegin()
+	expectAssetMoveLock(mock, AssetMoveTypeDataset, "dataset-1")
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
 	expectDatasetPreview(mock, "dataset-1", "org-1", "ws-1")
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
@@ -383,6 +411,7 @@ func TestWorkspaceAssetMoveDatasetMoveBlocksSameWorkspaceWithoutClearingFolderJo
 func TestWorkspaceAssetMoveFileMoveBlocksSameWorkspaceWithoutClearingFolderJoin(t *testing.T) {
 	db, mock := newAssetMoveMockDB(t)
 	mock.ExpectBegin()
+	expectAssetMoveLock(mock, AssetMoveTypeFile, "file-1")
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
 	expectFilePreview(mock, "file-1", "org-1", "ws-1")
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
@@ -422,6 +451,7 @@ func TestWorkspaceAssetMovePreviewBlocksSameWorkspaceForDatabase(t *testing.T) {
 func TestWorkspaceAssetMoveAgentMoveUpdatesRelatedTablesAndAudit(t *testing.T) {
 	db, mock := newAssetMoveMockDB(t)
 	mock.ExpectBegin()
+	expectAssetMoveLock(mock, AssetMoveTypeAgent, "agent-1")
 	expectWorkspaceLookup(mock, "ws-2", "org-1", "normal")
 	expectAgentPreview(mock, "agent-1", "ws-1", "AGENT")
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
@@ -453,6 +483,7 @@ func TestWorkspaceAssetMoveAgentMoveUpdatesRelatedTablesAndAudit(t *testing.T) {
 func TestWorkspaceAssetMoveDatasetMoveWithTargetFolderUpdatesJoinAndAudit(t *testing.T) {
 	db, mock := newAssetMoveMockDB(t)
 	mock.ExpectBegin()
+	expectAssetMoveLock(mock, AssetMoveTypeDataset, "dataset-1")
 	expectWorkspaceLookup(mock, "ws-2", "org-1", "normal")
 	expectDatasetPreview(mock, "dataset-1", "org-1", "ws-1")
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
@@ -529,4 +560,16 @@ func expectDatabasePreview(mock sqlmock.Sqlmock, databaseID, orgID, workspaceID 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, organization_id, workspace_id FROM "data_sources" WHERE id = $1 ORDER BY "data_sources"."id" LIMIT $2`)).
 		WithArgs(databaseID, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "workspace_id"}).AddRow(databaseID, orgID, workspaceID))
+}
+
+func expectAssetMoveLock(mock sqlmock.Sqlmock, assetType, assetID string) {
+	table := assetMoveTable(assetType)
+	query := `SELECT "id" FROM "` + table + `" WHERE id = \$1`
+	if assetType == AssetMoveTypeAgent {
+		query += ` AND deleted_at IS NULL`
+	}
+	query += ` LIMIT \$2 FOR UPDATE`
+	mock.ExpectQuery(query).
+		WithArgs(assetID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(assetID))
 }
