@@ -210,7 +210,7 @@ const DraftContent: React.FC<DraftContentProps> = ({
     <Tabs
       value={activeTab}
       onValueChange={v => setActiveTab(v as 'inputs' | 'execution' | 'details' | 'results')}
-      className="flex flex-col h-full"
+      className="flex h-full min-h-0 flex-col"
     >
       <div className="px-4 pt-4 shrink-0">
         <TabsList className="w-full">
@@ -228,12 +228,12 @@ const DraftContent: React.FC<DraftContentProps> = ({
           </TabsTrigger>
         </TabsList>
       </div>
-      <div className="h-0 grow">
+      <div className="h-0 min-h-0 grow">
         <TabsContent
           value="execution"
-          className="h-full overflow-y-auto px-4 pb-4 mt-3 outline-none"
+          className="mt-3 h-full min-h-0 overflow-hidden px-4 pb-4 outline-none data-[state=active]:flex data-[state=active]:flex-col"
         >
-          <ExecutionTab items={runItems} />
+          <ExecutionTab items={runItems} className="h-full" />
         </TabsContent>
 
         <TabsContent
@@ -261,7 +261,10 @@ const DraftContent: React.FC<DraftContentProps> = ({
           <DetailsTab runSummary={runSummary} />
         </TabsContent>
 
-        <TabsContent value="results" className="h-full overflow-y-auto px-4 pb-4 mt-3 outline-none">
+        <TabsContent
+          value="results"
+          className="mt-3 h-full min-h-0 overflow-hidden px-4 pb-4 outline-none data-[state=active]:flex data-[state=active]:flex-col"
+        >
           {approvalLoading ? (
             <div className="mb-4 flex min-h-[180px] items-center justify-center rounded-lg border bg-card p-3">
               <Loader2 className="size-5 animate-spin text-muted-foreground" />
@@ -294,7 +297,7 @@ const DraftContent: React.FC<DraftContentProps> = ({
               />
             </div>
           ) : null}
-          <div className="min-h-[240px]">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <Results
               mode="draft"
               streamedText={streamedText}
