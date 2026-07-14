@@ -455,8 +455,9 @@ func TestKnowledgeBaseFileRefServiceListsRefsWithAssetAndFileState(t *testing.T)
 		},
 		documents: []*datasetModel.Document{
 			{
-				ID:      documentID.String(),
-				Enabled: false,
+				ID:           documentID.String(),
+				Enabled:      false,
+				SegmentCount: 17,
 			},
 		},
 	}
@@ -479,13 +480,14 @@ func TestKnowledgeBaseFileRefServiceListsRefsWithAssetAndFileState(t *testing.T)
 		item.DatasetDocumentID == nil ||
 		*item.DatasetDocumentID != documentID ||
 		item.FileName != "handbook.pdf" ||
+		!item.SourceFileAvailable ||
 		item.SyncStatus != datalibModel.KnowledgeBaseAssetRefSyncStatusSynced ||
 		item.SyncedGenerationNo == nil ||
 		*item.SyncedGenerationNo != syncedGeneration ||
 		item.DatasetDocumentEnabled == nil ||
 		*item.DatasetDocumentEnabled ||
 		item.DatasetDocumentSegmentCount == nil ||
-		*item.DatasetDocumentSegmentCount != 24 {
+		*item.DatasetDocumentSegmentCount != 17 {
 		t.Fatalf("item=%+v", item)
 	}
 	if deps.lastRefFilter.SyncStatus != datalibModel.KnowledgeBaseAssetRefSyncStatusSynced {
@@ -754,6 +756,15 @@ func (f *fakeKnowledgeBaseFileRefDeps) GetDocumentsByIDs(ctx context.Context, id
 		}
 	}
 	return result, nil
+}
+
+func (f *fakeKnowledgeBaseFileRefDeps) GetSegmentCounts(ctx context.Context, documentID string) (completed int, total int, err error) {
+	for _, document := range f.documents {
+		if document.ID == documentID {
+			return document.SegmentCount, document.SegmentCount, nil
+		}
+	}
+	return 0, 0, nil
 }
 
 type fakeKnowledgeBaseFileRefStore struct {
