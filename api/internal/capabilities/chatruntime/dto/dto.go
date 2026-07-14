@@ -1,5 +1,11 @@
 package dto
 
+const (
+	RuntimeSurfaceWorkChat          = "work_chat"
+	RuntimeSurfaceContextualSidebar = "contextual_sidebar"
+	RuntimeSurfaceExternalPageChat  = "external_page_chat"
+)
+
 type CreateConversationRequest struct {
 	Title string `json:"title"`
 }

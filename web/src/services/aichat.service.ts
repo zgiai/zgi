@@ -418,10 +418,21 @@ export const aichatService = {
     abortSignal?: AbortSignal
   ) {
     const outputFilter = createAIChatStreamOutputFilter(callbacks);
+    const surface = payload.surface ?? 'work_chat';
+    const endpoint =
+      surface === 'contextual_sidebar'
+        ? `${AICHAT_BASE_PATH}/contextual/chat`
+        : surface === 'work_chat'
+          ? `${AICHAT_BASE_PATH}/work-chat/chat`
+          : `${AICHAT_BASE_PATH}/chat`;
+    const body = { ...payload };
+    if (surface === 'contextual_sidebar' || surface === 'work_chat') {
+      delete body.surface;
+    }
 
-    return http.sse<AIChatSseEnvelope, AIChatChatRequest>(`${AICHAT_BASE_PATH}/chat`, {
+    return http.sse<AIChatSseEnvelope, typeof body>(endpoint, {
       method: 'POST',
-      body: payload,
+      body,
       abortSignal,
       idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
       skipErrorHandling: true,

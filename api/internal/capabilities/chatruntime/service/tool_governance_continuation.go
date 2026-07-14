@@ -190,6 +190,9 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 	if err != nil {
 		return nil, err
 	}
+	if err := applyCanonicalConversationSurface(continuation.Conversation, parts); err != nil {
+		return nil, err
+	}
 	restoreConsoleFilesContextFromMetadata(parts, message.Metadata, continuation.Event)
 	restoreConsoleAgentsContextFromMetadata(parts, message.Metadata, continuation.Event)
 	restoreTurnInitialContextFromMetadata(parts, message.Metadata)

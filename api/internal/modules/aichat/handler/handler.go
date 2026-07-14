@@ -69,6 +69,10 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	group.POST("/conversations/:id/messages/:message_id/tool-governance/:correlation_id/continue", h.ContinueToolGovernanceDecision)
 	group.POST("/conversations/:id/messages/:message_id/client-actions/:action_id/continue", h.ContinueClientAction)
 	group.POST("/conversations/:id/messages/:message_id/user-input/:request_id/continue", h.ContinueUserInput)
+	group.POST("/work-chat/chat", h.WorkChat)
+	group.POST("/contextual/chat", h.ContextualChat)
+	// Keep the original route as a work-chat compatibility alias. Surface is
+	// fixed by the endpoint and is never trusted from the request body.
 	group.POST("/chat", h.Chat)
 }
 
@@ -501,6 +505,18 @@ func (h *Handler) RegenerateMessage(c *gin.Context) {
 }
 
 func (h *Handler) Chat(c *gin.Context) {
+	h.chatForSurface(c, runtimedto.RuntimeSurfaceWorkChat)
+}
+
+func (h *Handler) WorkChat(c *gin.Context) {
+	h.chatForSurface(c, runtimedto.RuntimeSurfaceWorkChat)
+}
+
+func (h *Handler) ContextualChat(c *gin.Context) {
+	h.chatForSurface(c, runtimedto.RuntimeSurfaceContextualSidebar)
+}
+
+func (h *Handler) chatForSurface(c *gin.Context, surface string) {
 	scope, ok := h.scope(c)
 	if !ok {
 		return
@@ -510,6 +526,7 @@ func (h *Handler) Chat(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
+	req.Surface = surface
 
 	prepared, err := h.service.PrepareChat(c.Request.Context(), scope, req)
 	if err != nil {

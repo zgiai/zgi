@@ -75,9 +75,9 @@ var defaultSystemSkillIDs = []string{
 }
 
 const (
-	aiChatSurfaceWorkChat          = "work_chat"
-	aiChatSurfaceContextualSidebar = "contextual_sidebar"
-	aiChatSurfaceExternalPageChat  = "external_page_chat"
+	aiChatSurfaceWorkChat          = runtimedto.RuntimeSurfaceWorkChat
+	aiChatSurfaceContextualSidebar = runtimedto.RuntimeSurfaceContextualSidebar
+	aiChatSurfaceExternalPageChat  = runtimedto.RuntimeSurfaceExternalPageChat
 )
 
 type Scope struct {

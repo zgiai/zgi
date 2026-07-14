@@ -1,11 +1,18 @@
 package handler
 
 import (
+	"bytes"
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/util"
 )
 
 func TestRegisterRoutesDoesNotConflict(t *testing.T) {
@@ -14,6 +21,56 @@ func TestRegisterRoutesDoesNotConflict(t *testing.T) {
 	group := router.Group("/console/api")
 
 	NewHandler(nil).RegisterRoutes(group)
+}
+
+func TestChatEndpointsFixRuntimeSurface(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tt := range []struct {
+		name        string
+		path        string
+		bodySurface string
+		wantSurface string
+	}{
+		{name: "legacy chat is work chat", path: "/console/api/aichat/chat", bodySurface: runtimedto.RuntimeSurfaceContextualSidebar, wantSurface: runtimedto.RuntimeSurfaceWorkChat},
+		{name: "work chat", path: "/console/api/aichat/work-chat/chat", bodySurface: runtimedto.RuntimeSurfaceContextualSidebar, wantSurface: runtimedto.RuntimeSurfaceWorkChat},
+		{name: "contextual sidebar", path: "/console/api/aichat/contextual/chat", bodySurface: runtimedto.RuntimeSurfaceWorkChat, wantSurface: runtimedto.RuntimeSurfaceContextualSidebar},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			capture := &capturingChatSurfaceService{}
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				c.Set("account_id", uuid.NewString())
+				util.SetOrganizationID(c, uuid.NewString())
+				c.Next()
+			})
+			NewHandler(capture).RegisterRoutes(router.Group("/console/api"))
+
+			body := []byte(`{"query":"test","model":"test-model","surface":"` + tt.bodySurface + `"}`)
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, tt.path, bytes.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(recorder, request)
+
+			if !capture.called {
+				t.Fatal("PrepareChat() was not called")
+			}
+			if capture.request.Surface != tt.wantSurface {
+				t.Fatalf("surface = %q, want %q", capture.request.Surface, tt.wantSurface)
+			}
+		})
+	}
+}
+
+type capturingChatSurfaceService struct {
+	runtimeservice.Service
+	called  bool
+	request runtimedto.ChatRequest
+}
+
+func (s *capturingChatSurfaceService) PrepareChat(_ context.Context, _ runtimeservice.Scope, req runtimedto.ChatRequest) (*runtimeservice.PreparedChat, error) {
+	s.called = true
+	s.request = req
+	return nil, runtimeservice.ErrInvalidInput
 }
 
 func TestMessageResponseRedactsModelInvocationMetadata(t *testing.T) {

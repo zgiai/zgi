@@ -132,6 +132,9 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 	}
 	applyRunConfigToParts(config, parts)
 	applyCallerRuntimeSurfacePolicy(caller, parts)
+	if err := applyCanonicalConversationSurface(conversation, parts); err != nil {
+		return nil, err
+	}
 	parts.Attachments = attachmentBundleFromMessageMetadata(message.Metadata)
 	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
 		return nil, err
@@ -266,7 +269,14 @@ func (s *service) resolveChatConversation(ctx context.Context, scope Scope, call
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid conversation_id", ErrInvalidInput)
 	}
-	return s.getConversationByCallerScoped(ctx, scope, caller, conversationID)
+	conversation, err := s.getConversationByCallerScoped(ctx, scope, caller, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	if err := applyCanonicalConversationSurface(conversation, parts); err != nil {
+		return nil, err
+	}
+	return conversation, nil
 }
 
 func (s *service) createConversationForChat(ctx context.Context, scope Scope, caller Caller, parts *chatRequestParts) (*runtimemodel.Conversation, error) {
