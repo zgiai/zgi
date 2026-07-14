@@ -56,12 +56,24 @@ assert.match(
   pageModel,
   /response = await agentService\.updateAgentConfig\(agentId, configPayload\)/
 );
-assert.match(pageModel, /applyServerBindingPayload\(\s*savedPayload,/);
+assert.match(
+  pageModel,
+  /if \(result\.bindingPayloadRebased\) \{\s*applyServerBindingPayload\(result\.savedPayload, result\.bindingHealth\)/
+);
+assert.match(
+  pageModel,
+  /onSaveSuperseded: result => \{\s*applySavedBindingMetadata\(result\.savedPayload, result\.bindingHealth\)/
+);
 assert.doesNotMatch(
   pageModel,
   /applyServerBindingPayload\(configPayload, conflict\?\.bindingHealth\)/
 );
-assert.match(draftPersistence, /currentSignatureRef\.current !== savedSignature/);
+assert.doesNotMatch(pageModel, /if \(wasBindingRevisionRebased\) \{\s*applyServerBindingPayload/);
+assert.match(
+  draftPersistence,
+  /if \(currentSignatureRef\.current !== submittedSignature\) \{\s*onSaveSupersededRef\.current\?\.\(result\);\s*lastSavedSignatureRef\.current = savedSignature;\s*setLastSavedAt\(result\.updatedAt\);\s*setSaveState\('dirty'\);\s*return false;/
+);
+assert.doesNotMatch(draftPersistence, /currentSignatureRef\.current !== savedSignature/);
 assert.doesNotMatch(pageModel, /setBindingHealth\(\{\s*status: 'healthy'/);
 assert.match(pageModel, /setIsAbnormalBindingCleanupPending\(true\)/);
 assert.match(pageModel, /getAgentRollbackImpactChanged\(error\)/);

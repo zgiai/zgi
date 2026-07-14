@@ -2,13 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { WORKFLOW_AUTOSAVE_INTERVAL_MS } from '@/lib/config';
-import type { UpdateAgentRuntimeConfigRequest } from '@/services/types/agent';
+import type { AgentBindingHealth, UpdateAgentRuntimeConfigRequest } from '@/services/types/agent';
 import type { AgentRuntimeSaveState } from './types';
 import { buildAgentRuntimeSignature } from './utils';
 
 interface AgentRuntimeSaveResult {
   savedPayload: UpdateAgentRuntimeConfigRequest;
   updatedAt: number;
+  bindingPayloadRebased?: boolean;
+  bindingHealth?: AgentBindingHealth;
 }
 
 export interface AgentRuntimeDraftPersistenceSnapshot {
@@ -32,6 +34,7 @@ interface UseAgentRuntimeDraftPersistenceOptions {
     options: SaveNowOptions
   ) => Promise<AgentRuntimeSaveResult>;
   onSaveCommitted?: (result: AgentRuntimeSaveResult) => void;
+  onSaveSuperseded?: (result: AgentRuntimeSaveResult) => void;
   onSaveFailed?: (error: unknown, options: SaveNowOptions) => void;
 }
 
@@ -42,6 +45,7 @@ export function useAgentRuntimeDraftPersistence({
   canSave,
   savePayload,
   onSaveCommitted,
+  onSaveSuperseded,
   onSaveFailed,
 }: UseAgentRuntimeDraftPersistenceOptions) {
   const [saveState, setSaveState] = useState<AgentRuntimeSaveState>('idle');
@@ -52,6 +56,7 @@ export function useAgentRuntimeDraftPersistence({
   const canSaveRef = useRef(canSave);
   const savePayloadRef = useRef(savePayload);
   const onSaveCommittedRef = useRef(onSaveCommitted);
+  const onSaveSupersededRef = useRef(onSaveSuperseded);
   const onSaveFailedRef = useRef(onSaveFailed);
   const currentSignature = useMemo(
     () => buildAgentRuntimeSignature(currentPayload),
@@ -71,6 +76,10 @@ export function useAgentRuntimeDraftPersistence({
   useEffect(() => {
     onSaveCommittedRef.current = onSaveCommitted;
   }, [onSaveCommitted]);
+
+  useEffect(() => {
+    onSaveSupersededRef.current = onSaveSuperseded;
+  }, [onSaveSuperseded]);
 
   useEffect(() => {
     onSaveFailedRef.current = onSaveFailed;
@@ -130,10 +139,10 @@ export function useAgentRuntimeDraftPersistence({
         const result = await savePayloadRef.current(submittedPayload, options);
         const savedSignature = buildAgentRuntimeSignature(result.savedPayload);
 
-        if (
-          currentSignatureRef.current !== submittedSignature &&
-          currentSignatureRef.current !== savedSignature
-        ) {
+        if (currentSignatureRef.current !== submittedSignature) {
+          onSaveSupersededRef.current?.(result);
+          lastSavedSignatureRef.current = savedSignature;
+          setLastSavedAt(result.updatedAt);
           setSaveState('dirty');
           return false;
         }

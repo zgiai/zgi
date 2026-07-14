@@ -595,19 +595,26 @@ export function useAgentRuntimePageModel(agentId: string) {
     [defaultHomeTitle, defaultInputPlaceholder]
   );
 
+  const applySavedBindingMetadata = useCallback(
+    (payload: UpdateAgentRuntimeConfigRequest, health?: AgentBindingHealth) => {
+      const nextBindingRevision = payload.binding_revision ?? '';
+      setBindingRevision(nextBindingRevision);
+      bindingRevisionRef.current = nextBindingRevision;
+      setBindingHealth(health);
+      lastSaveBindingHealthRef.current = health;
+    },
+    []
+  );
+
   const applyServerBindingPayload = useCallback(
     (payload: UpdateAgentRuntimeConfigRequest, health?: AgentBindingHealth) => {
       setSelectedSkillIds(payload.enabled_skill_ids);
       setKnowledgeDatasetIds(payload.knowledge_dataset_ids ?? []);
       setDatabaseBindings(normalizeAgentDatabaseBindings(payload.database_bindings ?? []));
       setWorkflowBindings(normalizeAgentWorkflowBindings(payload.workflow_bindings ?? []));
-      const nextBindingRevision = payload.binding_revision ?? '';
-      setBindingRevision(nextBindingRevision);
-      bindingRevisionRef.current = nextBindingRevision;
-      if (health) setBindingHealth(health);
-      setIsAbnormalBindingCleanupPending(false);
+      applySavedBindingMetadata(payload, health);
     },
-    []
+    [applySavedBindingMetadata]
   );
 
   const saveRuntimePayload = useCallback(
@@ -664,13 +671,6 @@ export function useAgentRuntimePageModel(agentId: string) {
           payload.agent_memory_slots,
       };
 
-      if (wasBindingRevisionRebased) {
-        applyServerBindingPayload(
-          savedPayload,
-          response.data.binding_health ?? rebasedBindingHealth
-        );
-      }
-
       queryClient.setQueryData(AGENT_KEYS.config(agentId), {
         ...response,
         data: {
@@ -680,18 +680,15 @@ export function useAgentRuntimePageModel(agentId: string) {
         },
       });
       queryClient.invalidateQueries({ queryKey: AGENT_KEYS.detail(agentId) });
-      setBindingRevision(savedPayload.binding_revision ?? '');
-      bindingRevisionRef.current = savedPayload.binding_revision ?? '';
-      setBindingHealth(response.data.binding_health);
-      lastSaveBindingHealthRef.current = response.data.binding_health;
-      setIsAbnormalBindingCleanupPending(false);
 
       return {
         savedPayload,
         updatedAt,
+        bindingPayloadRebased: wasBindingRevisionRebased,
+        bindingHealth: response.data.binding_health ?? rebasedBindingHealth,
       };
     },
-    [agentId, applyServerBindingPayload, queryClient, t]
+    [agentId, queryClient, t]
   );
 
   const {
@@ -716,7 +713,16 @@ export function useAgentRuntimePageModel(agentId: string) {
       !isSystemPromptTooLong,
     savePayload: saveRuntimePayload,
     onSaveCommitted: result => {
+      if (result.bindingPayloadRebased) {
+        applyServerBindingPayload(result.savedPayload, result.bindingHealth);
+      } else {
+        applySavedBindingMetadata(result.savedPayload, result.bindingHealth);
+      }
+      setIsAbnormalBindingCleanupPending(false);
       setAgentMemorySlots(result.savedPayload.agent_memory_slots ?? []);
+    },
+    onSaveSuperseded: result => {
+      applySavedBindingMetadata(result.savedPayload, result.bindingHealth);
     },
     onSaveFailed: (error, options) => {
       if (!options.silent) {
