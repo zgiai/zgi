@@ -25,7 +25,7 @@ export type {
 export { TokenManager } from './token-manager';
 
 // SSE client
-export { SseClient } from './sse-client';
+export { SSE_IDLE_TIMEOUT_MS, SseClient } from './sse-client';
 
 // HTTP Client
 export { HttpClient, httpClientFactory, http } from './client';

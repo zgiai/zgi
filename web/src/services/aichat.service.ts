@@ -1,4 +1,4 @@
-import { http } from '@/lib/http';
+import { http, SSE_IDLE_TIMEOUT_MS } from '@/lib/http';
 import type { SseMessage } from '@/lib/http';
 import {
   SENSITIVE_OUTPUT_BLOCKED_FLAG,
@@ -339,6 +339,7 @@ export const aichatService = {
         method: 'POST',
         body: payload,
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
         skipErrorHandling: true,
         isTerminalMessage: isAIChatTerminalMessage,
         onOpen: callbacks.onOpen,
@@ -369,6 +370,7 @@ export const aichatService = {
         method: 'POST',
         body: payload,
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
         skipErrorHandling: true,
         isTerminalMessage: isAIChatTerminalMessage,
         onOpen: callbacks.onOpen,
@@ -399,6 +401,7 @@ export const aichatService = {
         method: 'POST',
         body: payload,
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
         skipErrorHandling: true,
         isTerminalMessage: isAIChatTerminalMessage,
         onOpen: callbacks.onOpen,
@@ -420,6 +423,7 @@ export const aichatService = {
       method: 'POST',
       body: payload,
       abortSignal,
+      idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
       skipErrorHandling: true,
       isTerminalMessage: isAIChatTerminalMessage,
       onOpen: callbacks.onOpen,
@@ -443,6 +447,7 @@ export const aichatService = {
         method: 'POST',
         body: payload,
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
         skipErrorHandling: true,
         isTerminalMessage: isAIChatTerminalMessage,
         onOpen: callbacks.onOpen,
@@ -467,6 +472,7 @@ export const aichatService = {
         method: 'GET',
         query: params,
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
         skipErrorHandling: true,
         isTerminalMessage: isAIChatTerminalMessage,
         onOpen: callbacks.onOpen,

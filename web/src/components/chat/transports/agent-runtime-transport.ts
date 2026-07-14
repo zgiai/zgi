@@ -1,4 +1,10 @@
-import { http, webappHttp, type ExtendedRequestConfig, type SseOptions } from '@/lib/http';
+import {
+  http,
+  SSE_IDLE_TIMEOUT_MS,
+  webappHttp,
+  type ExtendedRequestConfig,
+  type SseOptions,
+} from '@/lib/http';
 import type { ApiResponseData } from '@/services/types/common';
 import type {
   AIChatChatRequest,
@@ -208,6 +214,7 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
       method: 'POST',
       body: payload,
       abortSignal,
+      idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
       skipErrorHandling: true,
       isTerminalMessage: runtimeTerminalMessage,
       onOpen: callbacks.onOpen,
@@ -235,6 +242,7 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
         method: 'POST',
         body: payload,
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
         skipErrorHandling: true,
         isTerminalMessage: runtimeTerminalMessage,
         onOpen: callbacks.onOpen,
@@ -266,6 +274,7 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
           after_id: params.afterId,
         },
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
         skipErrorHandling: true,
         isTerminalMessage: runtimeTerminalMessage,
         onOpen: callbacks.onOpen,
@@ -300,6 +309,7 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
         method: 'POST',
         body: payload,
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
         skipErrorHandling: true,
         isTerminalMessage: runtimeTerminalMessage,
         onOpen: callbacks.onOpen,
@@ -345,6 +355,7 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
             }
           : {},
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
         skipErrorHandling: true,
         isTerminalMessage: runtimeTerminalMessage,
         onOpen: callbacks.onOpen,
@@ -380,6 +391,7 @@ export class AgentRuntimeTransport implements AIChatRuntimeTransport {
           inputs: payload.inputs,
         },
         abortSignal,
+        idleTimeoutMs: SSE_IDLE_TIMEOUT_MS,
         skipErrorHandling: true,
         isTerminalMessage: runtimeTerminalMessage,
         onOpen: callbacks.onOpen,

@@ -12,7 +12,7 @@ interface SseRequestError extends Error {
   details?: unknown;
 }
 
-const SSE_IDLE_TIMEOUT_MS = 45_000;
+export const SSE_IDLE_TIMEOUT_MS = 45_000;
 
 function withTerminalStatus(
   payload: Record<string, unknown>,
@@ -363,14 +363,22 @@ export class SseClient {
     let terminalEventReceived = false;
     let incompleteLastEvent = false;
     let decoderFlushed = false;
+    const idleTimeoutMs =
+      typeof options.idleTimeoutMs === 'number' &&
+      Number.isFinite(options.idleTimeoutMs) &&
+      options.idleTimeoutMs > 0
+        ? options.idleTimeoutMs
+        : null;
 
-    const readWithIdleWatchdog = (): Promise<ReadableStreamReadResult<Uint8Array>> =>
-      new Promise((resolve, reject) => {
+    const readWithIdleWatchdog = (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+      if (idleTimeoutMs === null) return reader.read();
+
+      return new Promise((resolve, reject) => {
         const timer = window.setTimeout(() => {
           const error = new Error('SSE stream received no bytes before the idle timeout');
           (error as SseRequestError).code = 'ERR_SSE_IDLE_TIMEOUT';
           reject(error);
-        }, SSE_IDLE_TIMEOUT_MS);
+        }, idleTimeoutMs);
         reader.read().then(
           result => {
             window.clearTimeout(timer);
@@ -382,6 +390,7 @@ export class SseClient {
           }
         );
       });
+    };
 
     const isTerminalMessage = (msg: SseMessage<TOut>): boolean => {
       if (options.isTerminalMessage?.(msg as SseMessage<unknown>)) {

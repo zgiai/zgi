@@ -689,6 +689,9 @@ func setupSSE(c *gin.Context) {
 	c.Writer.Header().Set("Transfer-Encoding", "chunked")
 	c.Status(http.StatusOK)
 	c.Writer.Flush()
+	writer := newRuntimeSSEWriter(c)
+	c.Set(runtimeSSEWriterContextKey, writer)
+	writer.StartHeartbeat(c.Request.Context())
 }
 
 func writeSSE(c *gin.Context, event string, data interface{}) error {
@@ -700,6 +703,15 @@ func writeStreamEvent(c *gin.Context, event runtimeservice.StreamEvent) error {
 }
 
 func writeSSEEvent(c *gin.Context, id string, event string, data interface{}) error {
+	if value, ok := c.Get(runtimeSSEWriterContextKey); ok {
+		if writer, writerOK := value.(*runtimeSSEWriter); writerOK && writer != nil {
+			return writer.WriteEvent(id, event, data)
+		}
+	}
+	return writeSSERaw(c, id, event, data)
+}
+
+func writeSSERaw(c *gin.Context, id string, event string, data interface{}) error {
 	payload := gin.H{"event": event, "data": enrichSSEPayload(id, data)}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
