@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+const ErrorCodePlatformChannelUnavailable = "platform_channel_unavailable"
+
 var (
 	// ErrInvalidConfig configuration error
 	ErrInvalidConfig = errors.New("invalid adapter configuration")
@@ -27,6 +29,9 @@ var (
 
 	// ErrBillingUnavailable indicates that provider billing is not in a spendable state.
 	ErrBillingUnavailable = errors.New("provider billing unavailable")
+
+	// ErrPlatformChannelUnavailable indicates an official platform channel cannot currently serve requests.
+	ErrPlatformChannelUnavailable = errors.New("platform channel unavailable")
 
 	// ErrModelNotFound model not found
 	ErrModelNotFound = errors.New("model not found")

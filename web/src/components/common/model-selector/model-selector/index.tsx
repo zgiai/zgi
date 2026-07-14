@@ -172,6 +172,7 @@ export function ModelSelector({
       moderation: t('models.selector.usecases.moderation'),
       reasoning: t('models.selector.usecases.reasoning'),
       'function-calling': t('models.selector.usecases.function-calling'),
+      agent: t('models.selector.usecases.agent'),
     }),
     [t]
   );

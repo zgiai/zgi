@@ -23,7 +23,7 @@ import (
 const (
 	modelMetaAPIVersion     = "v1"
 	defaultModelMetaAPIBase = "https://models.zgi.ai"
-	priceScale              = 4
+	priceScale              = 6
 )
 
 var errModelMetaAPIURLNotConfigured = errors.New("MODELMETA_API_URL is not configured")
@@ -961,6 +961,7 @@ func publishedModelFromMeta(meta *ModelMetaData) PublishedModel {
 	tools := parsePublishedModelTools(meta.Tools)
 	parameters := parsePublishedModelParameters(meta.Parameters)
 	description := normalizeOptionalString(meta.Description)
+	isActive := meta.Status == llmmodel.ModelStatusActive
 
 	return PublishedModel{
 		Provider:               meta.Provider,
@@ -989,6 +990,8 @@ func publishedModelFromMeta(meta *ModelMetaData) PublishedModel {
 		InputModalities:        normalizeStringValues(meta.InputModalities),
 		OutputModalities:       normalizeStringValues(meta.OutputModalities),
 		KnowledgeCutoff:        strings.TrimSpace(meta.KnowledgeCutoff),
+		IsActive:               isActive,
+		IsSystemEnabled:        isActive,
 		SupportedParameters:    marshalJSONRaw(meta.Parameters),
 		ConfigParameters:       meta.ConfigParameters,
 		Endpoints:              endpoints,

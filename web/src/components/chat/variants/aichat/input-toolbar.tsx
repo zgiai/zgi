@@ -190,7 +190,7 @@ export function AIChatInputToolbar({
               <div className="h-8 rounded-full border border-border/70 bg-muted/50" />
             ) : (
               <ModelSelector
-                modelType="text-chat"
+                modelType="agent"
                 value={modelSelectorValue}
                 onChange={onModelChange}
                 onModelPropsChange={onModelPropsChange}

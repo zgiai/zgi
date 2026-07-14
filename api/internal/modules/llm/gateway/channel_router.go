@@ -510,7 +510,7 @@ func (r *ChannelRouter) filterRoutesForSelection(routes []*channelmodel.LLMRoute
 		}
 
 		strategy := r.strategyFactory.GetStrategy(route)
-		if strategy.SupportsModel(route, modelName, modelProvider) {
+		if strategy.SupportsModel(route, modelName, "") {
 			validRoutes = append(validRoutes, route)
 		}
 	}
@@ -529,6 +529,8 @@ func (r *ChannelRouter) prepareCandidateRoutes(
 	allowAutomaticHalfOpen bool,
 ) ([]*channelmodel.LLMRoute, error) {
 	validRoutes := r.filterRoutesForSelection(routes, modelName, modelProvider, isPrivateCustomModel)
+	modelUseCase, _ := ctx.Value(shared.ContextKeyModelUseCase).(string)
+	validRoutes = filterRoutesForModelScene(validRoutes, modelName, llmModel, modelUseCase)
 	modelCategory, _ := ctx.Value(shared.ContextKeyModelCategory).(string)
 	validRoutes, err := filterRoutesForNativeProtocolOrError(validRoutes, llmModel, modelCategory)
 	if err != nil {
@@ -544,6 +546,44 @@ func (r *ChannelRouter) prepareCandidateRoutes(
 		return nil, fmt.Errorf("%w", llmerrors.DomainErrPrivateChannelUpstreamUnavailable)
 	}
 	return eligibleRoutes, nil
+}
+
+func filterRoutesForModelScene(routes []*channelmodel.LLMRoute, modelName string, llmModel *llmmodel.LLMModel, useCase string) []*channelmodel.LLMRoute {
+	useCase = strings.TrimSpace(useCase)
+	if useCase != string(llmmodel.UseCaseAgent) {
+		return routes
+	}
+	if !modelHasUseCase(llmModel, useCase) {
+		return nil
+	}
+
+	filtered := make([]*channelmodel.LLMRoute, 0, len(routes))
+	for _, route := range routes {
+		if route == nil {
+			continue
+		}
+		channelProvider := route.ChannelProvider
+		if isOfficialRoute(route) {
+			channelProvider = "zgi-cloud"
+		}
+		if !channelprovider.SupportsAgentProtocol(channelProvider) {
+			continue
+		}
+		filtered = append(filtered, route)
+	}
+	return filtered
+}
+
+func modelHasUseCase(modelRecord *llmmodel.LLMModel, useCase string) bool {
+	if modelRecord == nil {
+		return false
+	}
+	for _, candidate := range modelRecord.UseCases {
+		if candidate == useCase {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *ChannelRouter) filterRoutesByUpstreamGuard(

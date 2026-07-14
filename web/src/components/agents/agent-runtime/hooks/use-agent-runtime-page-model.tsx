@@ -258,7 +258,9 @@ export function useAgentRuntimePageModel(agentId: string) {
   const canUpdateAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.update);
   const canConfigureAgentRuntime = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeConfigManage);
   const canPublishAgent = hasAnyPermission(AGENT_PERMISSION_ACTIONS.publish);
-  const canManageAgentRuntimeAccess = hasAnyPermission(AGENT_PERMISSION_ACTIONS.runtimeAccessManage);
+  const canManageAgentRuntimeAccess = hasAnyPermission(
+    AGENT_PERMISSION_ACTIONS.runtimeAccessManage
+  );
   const canManageAgent =
     canUpdateAgent || canConfigureAgentRuntime || canPublishAgent || canManageAgentRuntimeAccess;
   const canOpenAgentRuntimeEditor =
@@ -288,7 +290,11 @@ export function useAgentRuntimePageModel(agentId: string) {
     () => workflowCandidatesResponse?.data.data ?? [],
     [workflowCandidatesResponse?.data.data]
   );
-  const { models: availableChatModels } = useAvailableModels({ use_case: 'text-chat' });
+  const {
+    models: availableChatModels,
+    isLoading: isAgentModelsLoading,
+    error: agentModelsError,
+  } = useAvailableModels({ use_case: 'agent' });
   const agentDetail = agent?.data;
   const agentWorkspaceId = agentDetailWorkspaceID(agentDetail);
   const defaultHomeTitle = agentDetail?.name?.trim() || t('defaultHomeTitle');
@@ -345,6 +351,21 @@ export function useAgentRuntimePageModel(agentId: string) {
   const hydratedAgentIdRef = useRef<string | null>(null);
   const hydratedConfigSignatureRef = useRef<string | null>(null);
   const versionPreviewBackupRef = useRef<VersionPreviewBackup | null>(null);
+
+  const isAgentModelUnavailable = useMemo(() => {
+    if (isAgentModelsLoading || agentModelsError || !modelValue.provider || !modelValue.model) {
+      return false;
+    }
+    return !availableChatModels.some(
+      item => item.provider === modelValue.provider && item.model === modelValue.model
+    );
+  }, [
+    agentModelsError,
+    availableChatModels,
+    isAgentModelsLoading,
+    modelValue.model,
+    modelValue.provider,
+  ]);
 
   const selectableSkills = useMemo(
     () =>
@@ -647,7 +668,11 @@ export function useAgentRuntimePageModel(agentId: string) {
     currentPayload,
     enabled: !isVersionPreviewing,
     canSave: () =>
-      canConfigureAgentRuntime && !hasAgentMemorySlotErrors && !isSystemPromptTooLong,
+      canConfigureAgentRuntime &&
+      Boolean(modelValue.provider && modelValue.model) &&
+      !isAgentModelUnavailable &&
+      !hasAgentMemorySlotErrors &&
+      !isSystemPromptTooLong,
     savePayload: saveRuntimePayload,
     onSaveCommitted: result => {
       setAgentMemorySlots(result.savedPayload.agent_memory_slots ?? []);
@@ -929,6 +954,10 @@ export function useAgentRuntimePageModel(agentId: string) {
       toast.error(t('toasts.fixMemorySlotsBeforeSave'));
       return;
     }
+    if (isAgentModelUnavailable) {
+      toast.error(t('toasts.modelUnavailable'));
+      return;
+    }
     if (isSystemPromptTooLong) {
       toast.error(
         t('toasts.systemPromptTooLongBeforeSave', { limit: AGENT_SYSTEM_PROMPT_MAX_LENGTH })
@@ -942,6 +971,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   }, [
     canConfigureAgentRuntime,
     hasAgentMemorySlotErrors,
+    isAgentModelUnavailable,
     isSystemPromptTooLong,
     saveNow,
     t,
@@ -955,6 +985,10 @@ export function useAgentRuntimePageModel(agentId: string) {
     }
     if (hasAgentMemorySlotErrors) {
       toast.error(t('toasts.fixMemorySlotsBeforePublish'));
+      return;
+    }
+    if (isAgentModelUnavailable) {
+      toast.error(t('toasts.modelUnavailable'));
       return;
     }
     if (isSystemPromptTooLong) {
@@ -977,6 +1011,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     canPublishAgent,
     canConfigureAgentRuntime,
     hasAgentMemorySlotErrors,
+    isAgentModelUnavailable,
     isSystemPromptTooLong,
     publishAgent,
     saveNow,
@@ -993,6 +1028,10 @@ export function useAgentRuntimePageModel(agentId: string) {
       toast.error(t('toasts.fixMemorySlotsBeforeSave'));
       return Promise.resolve(false);
     }
+    if (isAgentModelUnavailable) {
+      toast.error(t('toasts.modelUnavailable'));
+      return Promise.resolve(false);
+    }
     if (isSystemPromptTooLong) {
       toast.error(
         t('toasts.systemPromptTooLongBeforeSave', { limit: AGENT_SYSTEM_PROMPT_MAX_LENGTH })
@@ -1003,6 +1042,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   }, [
     canConfigureAgentRuntime,
     hasAgentMemorySlotErrors,
+    isAgentModelUnavailable,
     isSystemPromptTooLong,
     saveNow,
     t,
@@ -1019,7 +1059,10 @@ export function useAgentRuntimePageModel(agentId: string) {
         setPreviewSheetOpen(true);
         return;
       }
-      if (hasAgentMemorySlotErrors || isSystemPromptTooLong) {
+      if (hasAgentMemorySlotErrors || isAgentModelUnavailable || isSystemPromptTooLong) {
+        if (isAgentModelUnavailable) {
+          toast.error(t('toasts.modelUnavailable'));
+        }
         setPreviewSheetOpen(false);
         return;
       }
@@ -1031,9 +1074,11 @@ export function useAgentRuntimePageModel(agentId: string) {
     [
       canConfigureAgentRuntime,
       hasAgentMemorySlotErrors,
+      isAgentModelUnavailable,
       isSystemPromptTooLong,
       isVersionPreviewing,
       saveNow,
+      t,
     ]
   );
 
@@ -1049,6 +1094,10 @@ export function useAgentRuntimePageModel(agentId: string) {
       toast.error(t('toasts.fixMemorySlotsBeforeSave'));
       return false;
     }
+    if (isAgentModelUnavailable) {
+      toast.error(t('toasts.modelUnavailable'));
+      return false;
+    }
     if (isSystemPromptTooLong) {
       toast.error(
         t('toasts.systemPromptTooLongBeforeSave', { limit: AGENT_SYSTEM_PROMPT_MAX_LENGTH })
@@ -1059,6 +1108,7 @@ export function useAgentRuntimePageModel(agentId: string) {
   }, [
     canConfigureAgentRuntime,
     hasAgentMemorySlotErrors,
+    isAgentModelUnavailable,
     isSystemPromptTooLong,
     isVersionPreviewing,
     saveNow,
@@ -1185,6 +1235,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       agentWorkspaceId,
       openSections,
       modelValue,
+      isAgentModelUnavailable,
       homeTitle,
       openingStatement,
       inputPlaceholder,

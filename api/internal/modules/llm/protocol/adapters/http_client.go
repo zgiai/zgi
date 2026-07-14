@@ -282,6 +282,9 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 		lastStatusCode = resp.StatusCode
 		lastBody = respBody
 		lastHeader = resp.Header.Clone()
+		if isTerminalPlatformChannelResponse(resp.StatusCode, respBody) {
+			return &HTTPResponse{Body: respBody, StatusCode: resp.StatusCode, Header: resp.Header.Clone()}, nil
+		}
 
 		// 5xx server errors, retry
 		if resp.StatusCode >= 500 {
@@ -313,6 +316,21 @@ func (c *HTTPClient) DoRequestDetailed(ctx context.Context, method, url string, 
 		return &HTTPResponse{Body: lastBody, StatusCode: lastStatusCode, Header: lastHeader}, fmt.Errorf("request failed after %d retries: %w", c.maxRetries, lastErr)
 	}
 	return &HTTPResponse{Body: lastBody, StatusCode: lastStatusCode, Header: lastHeader}, fmt.Errorf("request failed after %d retries", c.maxRetries)
+}
+
+func isTerminalPlatformChannelResponse(statusCode int, body []byte) bool {
+	if statusCode < http.StatusInternalServerError {
+		return false
+	}
+	var payload struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return false
+	}
+	return payload.Error.Code == ErrorCodePlatformChannelUnavailable
 }
 
 // DoStreamRequest executes streaming HTTP request

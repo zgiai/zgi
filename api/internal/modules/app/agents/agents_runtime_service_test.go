@@ -12,8 +12,32 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
+	llmmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
+
+type agentModelEligibilityFake struct {
+	models []*llmmodelservice.AvailableModel
+	err    error
+}
+
+func (f agentModelEligibilityFake) ListAvailable(context.Context, uuid.UUID, string, string) ([]*llmmodelservice.AvailableModel, error) {
+	return f.models, f.err
+}
+
+func TestValidateAgentModelEligibilityRequiresExactAvailablePair(t *testing.T) {
+	service := &agentsService{agentModels: agentModelEligibilityFake{models: []*llmmodelservice.AvailableModel{{
+		Provider: "deepseek",
+		Name:     "shared-model",
+	}}}}
+
+	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "deepseek", "shared-model"); err != nil {
+		t.Fatalf("validateAgentModelEligibility() error = %v", err)
+	}
+	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "openai", "shared-model"); err == nil {
+		t.Fatal("validateAgentModelEligibility() error = nil, want provider mismatch error")
+	}
+}
 
 func TestNormalizeAgentEnabledSkillIDsRemovesRuntimeManagedSkills(t *testing.T) {
 	got := normalizeAgentEnabledSkillIDs([]string{

@@ -43,7 +43,7 @@ function toAIChatModelValue(value: DefaultModelValue): AIChatModelValue {
 export function usePersistedAIChatModelSelection({
   accountId,
   scope,
-  useCase = 'text-chat',
+  useCase = 'agent',
 }: {
   accountId?: string | null;
   scope: AiModelScope;
@@ -58,8 +58,12 @@ export function usePersistedAIChatModelSelection({
   const availableModels = useAvailableModels({ use_case: useCase });
   const defaultModel = useDefaultModelByUseCase(useCase);
 
-  const canValidateModels = !availableModels.isLoading;
+  const canValidateModels = !availableModels.isLoading && !availableModels.error;
   const isModelInitializing = !isInitialModelResolved;
+  const isSelectedModelUnavailable =
+    canValidateModels &&
+    Boolean(modelSelectorValue.provider && modelSelectorValue.model) &&
+    !isModelAvailable(modelSelectorValue, availableModels.models);
 
   useEffect(() => {
     if (!accountId) {
@@ -72,13 +76,13 @@ export function usePersistedAIChatModelSelection({
       return;
     }
 
-    if (modelSelectorValue.model && isModelAvailable(modelSelectorValue, availableModels.models)) {
+    if (modelSelectorValue.model) {
       setIsInitialModelResolved(true);
       return;
     }
 
     const saved = getLastSelectedAiModel(accountId, scope);
-    if (saved && isModelAvailable(saved, availableModels.models)) {
+    if (saved?.provider && saved.model) {
       setModelSelectorValue({
         provider: saved.provider,
         model: saved.model,
@@ -140,6 +144,7 @@ export function usePersistedAIChatModelSelection({
       setModelSelectorValue,
       isInitialModelResolved,
       isModelInitializing,
+      isSelectedModelUnavailable,
       handleModelChange,
       availableModels,
       defaultModel,
@@ -150,6 +155,7 @@ export function usePersistedAIChatModelSelection({
       handleModelChange,
       isInitialModelResolved,
       isModelInitializing,
+      isSelectedModelUnavailable,
       modelSelectorValue,
     ]
   );

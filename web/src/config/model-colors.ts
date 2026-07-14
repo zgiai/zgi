@@ -33,6 +33,7 @@ export const USE_CASE_BASE_COLORS: Record<ModelUseCase, string> = {
   moderation: 'red',
   reasoning: 'purple',
   'function-calling': 'orange',
+  agent: 'emerald',
 };
 
 // Selected state colors (filled background) for chips/buttons
@@ -49,6 +50,7 @@ export const USE_CASE_SELECTED_COLORS: Record<ModelUseCase, string> = {
   moderation: 'bg-red-600 text-white border-red-600 hover:bg-red-700',
   reasoning: 'bg-purple-600 text-white border-purple-600 hover:bg-purple-700',
   'function-calling': 'bg-orange-600 text-white border-orange-600 hover:bg-orange-700',
+  agent: 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700',
 };
 
 // Unselected state colors (subtle background) for chips/buttons
@@ -77,6 +79,8 @@ export const USE_CASE_UNSELECTED_COLORS: Record<ModelUseCase, string> = {
     'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100 dark:bg-purple-950/50 dark:text-purple-400 dark:border-purple-800 dark:hover:bg-purple-900/50',
   'function-calling':
     'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100 dark:bg-orange-950/50 dark:text-orange-400 dark:border-orange-800 dark:hover:bg-orange-900/50',
+  agent:
+    'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-900/50',
 };
 
 // Badge colors for table rows (outline style)
@@ -105,6 +109,8 @@ export const USE_CASE_BADGE_COLORS: Record<ModelUseCase, string> = {
     'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-400 dark:border-purple-800',
   'function-calling':
     'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800',
+  agent:
+    'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800',
 };
 
 // Model feature icon colors
@@ -181,4 +187,5 @@ export const USE_CASE_ORDER: ModelUseCase[] = [
   'moderation',
   'reasoning',
   'function-calling',
+  'agent',
 ];

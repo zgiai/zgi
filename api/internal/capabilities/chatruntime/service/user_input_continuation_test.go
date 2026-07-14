@@ -300,7 +300,10 @@ func TestPrepareUserInputContinuationRestoresAgentRunConfig(t *testing.T) {
 		BillingAppType:       runtimemodel.ConversationCallerAgent,
 	}
 	caller := Caller{Type: runtimemodel.ConversationCallerAgent, ID: &agentID, Source: runtimemodel.ConversationSourceConsole}
-	svc := &service{skillRuntime: skills.NewRuntime(nil, nil)}
+	svc := &service{
+		skillRuntime:      skills.NewRuntime(nil, nil),
+		modelSpecResolver: userInputContinuationModelSpecResolver{},
+	}
 
 	prepared, err := svc.prepareUserInputContinuationChat(
 		context.Background(),
@@ -328,8 +331,8 @@ func TestPrepareUserInputContinuationRestoresAgentRunConfig(t *testing.T) {
 	if len(prepared.LLMRequest.Messages) == 0 || !strings.Contains(stringFromAny(prepared.LLMRequest.Messages[0].Content), config.SystemPrompt) {
 		t.Fatalf("system message = %#v, want configured prompt", prepared.LLMRequest.Messages)
 	}
-	if prepared.parts.ProtocolToolsEnabled {
-		t.Fatalf("protocol tools enabled from assumed model capability: parts=%#v", prepared.parts)
+	if !prepared.parts.ProtocolToolsEnabled {
+		t.Fatalf("protocol tools disabled for verified Agent model capability: parts=%#v", prepared.parts)
 	}
 	if !prepared.toolLoopEnabled() {
 		t.Fatalf("configured skill tool loop disabled: parts=%#v", prepared.parts)
@@ -363,7 +366,8 @@ func TestPrepareUserInputContinuationKeepsAIChatMetadataSkills(t *testing.T) {
 		Response:     map[string]interface{}{"request_id": "ask-1", "answers": []interface{}{}},
 	}
 	svc := &service{
-		skillRuntime: skills.NewRuntime(nil, nil),
+		skillRuntime:      skills.NewRuntime(nil, nil),
+		modelSpecResolver: userInputContinuationModelSpecResolver{},
 		repos: &repository.Repositories{
 			SkillConfig: emptyUserInputSkillConfigRepo{},
 		},
@@ -389,6 +393,12 @@ func TestPrepareUserInputContinuationKeepsAIChatMetadataSkills(t *testing.T) {
 	if !prepared.toolLoopEnabled() {
 		t.Fatal("AIChat skill continuation no longer enters the tool loop")
 	}
+}
+
+type userInputContinuationModelSpecResolver struct{}
+
+func (userInputContinuationModelSpecResolver) Resolve(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
+	return ModelSpec{SupportsToolCall: true}, true, nil
 }
 
 func waitingUserInputTestMessage(messageID, conversationID uuid.UUID, requestID string) *runtimemodel.Message {

@@ -458,47 +458,25 @@ func (s *service) applyModelCapabilities(ctx context.Context, scope Scope, parts
 		return nil
 	}
 	if s.modelSpecResolver == nil {
-		assumeModelFunctionCalling(parts, "resolver_unavailable", "")
-		return nil
+		return fmt.Errorf("resolve AI Chat model capabilities: resolver is unavailable")
 	}
 	spec, ok, err := s.modelSpecResolver.Resolve(ctx, scope.OrganizationID, parts.Provider, parts.ModelName)
 	if err != nil {
-		assumeModelFunctionCalling(parts, "resolver_error", err.Error())
-		logger.WarnContext(ctx, "aichat model capabilities assumed because resolver failed",
-			"organization_id", scope.OrganizationID.String(),
-			"provider", parts.Provider,
-			"model", parts.ModelName,
-			"error", err.Error(),
-		)
-		return nil
+		return fmt.Errorf("resolve AI Chat model capabilities: %w", err)
 	}
 	if !ok {
-		assumeModelFunctionCalling(parts, "model_spec_unknown", "")
-		logger.DebugContext(ctx, "aichat model capabilities assumed because model spec is unknown",
-			"organization_id", scope.OrganizationID.String(),
-			"provider", parts.Provider,
-			"model", parts.ModelName,
-		)
-		return nil
+		return fmt.Errorf("resolve AI Chat model capabilities: model %s/%s was not found", parts.Provider, parts.ModelName)
 	}
-	parts.ModelSupportsVision = ok && spec.SupportsVision()
+	if !spec.SupportsFunctionCalling() {
+		return fmt.Errorf("resolve AI Chat model capabilities: model %s/%s does not support function calling", parts.Provider, parts.ModelName)
+	}
+	parts.ModelSupportsVision = spec.SupportsVision()
 	parts.FunctionCallingKnown = true
 	parts.ModelSupportsFunctionCalling = spec.SupportsFunctionCalling()
 	parts.FunctionCallingAssumed = false
 	parts.ModelCapabilityStatus = "resolved"
 	parts.ModelCapabilityError = ""
 	return nil
-}
-
-func assumeModelFunctionCalling(parts *chatRequestParts, status string, errMessage string) {
-	if parts == nil {
-		return
-	}
-	parts.FunctionCallingKnown = true
-	parts.ModelSupportsFunctionCalling = true
-	parts.FunctionCallingAssumed = true
-	parts.ModelCapabilityStatus = strings.TrimSpace(status)
-	parts.ModelCapabilityError = trimRunes(strings.TrimSpace(errMessage), 500)
 }
 
 func applyManagedUserMemoryPolicy(caller Caller, parts *chatRequestParts) {

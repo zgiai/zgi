@@ -112,11 +112,11 @@ type LLMModel struct {
 	CostRate            JSONObject           `gorm:"type:jsonb;default:'{\"input\":1, \"output\":1}'" json:"cost_rate,omitempty"` // Cost multipliers (kept for billing core)
 
 	// Pricing (per million tokens in USD) - OpenAI naming (ModelMeta aligned)
-	InputPrice            decimal.Decimal `gorm:"column:input_price;type:decimal(10,4)" json:"input_price,omitempty"`               // Price per million input tokens
-	OutputPrice           decimal.Decimal `gorm:"column:output_price;type:decimal(10,4)" json:"output_price,omitempty"`             // Price per million output tokens
+	InputPrice            decimal.Decimal `gorm:"column:input_price;type:decimal(10,6)" json:"input_price,omitempty"`               // Price per million input tokens
+	OutputPrice           decimal.Decimal `gorm:"column:output_price;type:decimal(10,6)" json:"output_price,omitempty"`             // Price per million output tokens
 	InputPriceConfigured  bool            `gorm:"column:input_price_configured;default:false" json:"input_price_configured"`        // Whether input_price was explicitly provided
 	OutputPriceConfigured bool            `gorm:"column:output_price_configured;default:false" json:"output_price_configured"`      // Whether output_price was explicitly provided
-	CachedInputPrice      decimal.Decimal `gorm:"column:cached_input_price;type:decimal(10,4)" json:"cached_input_price,omitempty"` // Price per million cached input tokens (ModelMeta aligned)
+	CachedInputPrice      decimal.Decimal `gorm:"column:cached_input_price;type:decimal(10,6)" json:"cached_input_price,omitempty"` // Price per million cached input tokens (ModelMeta aligned)
 	CostCacheRead         decimal.Decimal `gorm:"type:decimal(10,4)" json:"cost_cache_read,omitempty"`                              // Cost per million cached tokens read
 	CostCacheWrite        decimal.Decimal `gorm:"type:decimal(10,4)" json:"cost_cache_write,omitempty"`                             // Cost per million cached tokens write
 	CostContextOver200k   JSONObject      `gorm:"column:cost_context_over_200k;type:jsonb" json:"cost_context_over_200k,omitempty"` // Special pricing for large contexts

@@ -69,6 +69,14 @@ func TestModelMetaDiffDetectsPriceConfiguredStateChange(t *testing.T) {
 	}
 }
 
+func TestNormalizeRemotePricePreservesOfficialSixDecimalPrice(t *testing.T) {
+	got := normalizeRemotePrice(0.003625)
+	want := decimal.RequireFromString("0.003625")
+	if !got.Equal(want) {
+		t.Fatalf("normalizeRemotePrice() = %s, want %s", got, want)
+	}
+}
+
 func hasDiffField(fields []DiffField, name string) bool {
 	for _, field := range fields {
 		if field.Field == name {

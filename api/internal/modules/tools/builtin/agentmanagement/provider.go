@@ -43,7 +43,7 @@ const (
 	defaultAgentListPageSize                 = 20
 	defaultAgentBindingCandidateListPageSize = 20
 	maxAgentBindingCandidateListPageSize     = 100
-	defaultAgentModelListUseCase             = string(llmmodelmodel.UseCaseTextChat)
+	defaultAgentModelListUseCase             = string(llmmodelmodel.UseCaseAgent)
 	defaultAgentModelListPageSize            = 20
 	maxAgentModelListPageSize                = 100
 	defaultAgentTextIconBackground           = "#0847f7"
@@ -447,10 +447,10 @@ func newListAvailableModelsTool(availableModels AvailableModelsService) tools.To
 	return &listAvailableModelsTool{agentToolBase: newAgentToolBase(agentToolEntity(
 		ToolListAvailableModels,
 		"List Available Models",
-		"List models available to the current user organization for Agent configuration. Use this before changing an Agent model. Choose one returned item and pass that item's provider and model together to update_agent_config; do not infer or mix provider/model pairs. Pass a use_case such as text-chat, reasoning, vision, or function-calling when relevant.",
+		"List models available to the current user organization for Agent configuration. Use this before changing an Agent model. Choose one returned item and pass that item's provider and model together to update_agent_config; do not infer or mix provider/model pairs. Agent models are returned by default.",
 		"brain-circuit",
 		[]tools.ToolParameter{
-			stringParameter("use_case", "Use case", "Optional use_case filter. Defaults to text-chat for Agent runtime model replacement. Valid values include text-chat, vision, image-gen, embedding, rerank, speech-to-text, text-to-speech, realtime-audio, video-gen, moderation, reasoning, and function-calling.", false),
+			stringParameter("use_case", "Use case", "Optional use_case filter. Defaults to agent for Agent runtime model replacement.", false),
 			stringParameter("provider", "Provider", "Optional provider slug filter, for example openai, deepseek, or anthropic.", false),
 			stringParameter("query", "Query", "Optional natural-language or partial model query, for example deepseek flash. Matching models are ranked first and include match evidence.", false),
 			numberParameter("limit", "Limit", "Optional maximum number of models to return, capped at 100.", false),
