@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
@@ -32,6 +33,8 @@ const (
 )
 
 const customSkillSystemNameConflictMessage = "This skill name is reserved by a built-in system skill. Please rename your custom skill and try again."
+
+const customSkillDeleteBindingOperation = "delete_custom_skill"
 
 type extractedSkillFile struct {
 	Path string `json:"path"`
@@ -199,9 +202,13 @@ func (s *service) customSkillIDConflictsWithSystem(ctx context.Context, skillID 
 	return s.skillRuntime.SystemSkillExists(skillID)
 }
 
-func (s *service) DeleteSkill(ctx context.Context, scope Scope, skillID string) error {
+func (s *service) DeleteSkill(ctx context.Context, scope Scope, skillID, agentBindingAction, impactToken string) error {
 	if err := s.ensureMember(ctx, scope); err != nil {
 		return err
+	}
+	agentBindingAction = strings.ToLower(strings.TrimSpace(agentBindingAction))
+	if agentBindingAction != "" && agentBindingAction != "unbind" {
+		return fmt.Errorf("%w: invalid agent binding action", ErrInvalidInput)
 	}
 	id := strings.ToLower(strings.TrimSpace(skillID))
 	if id == "" {
@@ -219,7 +226,35 @@ func (s *service) DeleteSkill(ctx context.Context, scope Scope, skillID string) 
 	if err != nil {
 		return mapRepoError(err)
 	}
+	bindingRef := agentbindings.ResourceRef{
+		OrganizationID: scope.OrganizationID,
+		BindingType:    agentbindings.BindingTypeSkill,
+		ResourceID:     id,
+	}
+	bindingRepo := agentbindings.NewRepository(s.repos.DB)
+	var affectedAgentIDs []uuid.UUID
 	if err := s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txBindingRepo := bindingRepo.WithTx(tx)
+		if err := txBindingRepo.LockResources(ctx, tx, []agentbindings.ResourceRef{bindingRef}); err != nil {
+			return fmt.Errorf("lock custom skill agent binding resource: %w", err)
+		}
+		impact, err := txBindingRepo.PreviewImpact(ctx, bindingRef, customSkillDeleteBindingOperation, scope.AccountID, time.Now())
+		if err != nil {
+			return fmt.Errorf("preview custom skill agent binding impact: %w", err)
+		}
+		if impact != nil {
+			if agentBindingAction != "unbind" {
+				return &agentbindings.ConflictError{Impact: *impact}
+			}
+			if err := txBindingRepo.VerifyImpactToken(ctx, bindingRef, customSkillDeleteBindingOperation, scope.AccountID, impactToken, time.Now()); err != nil {
+				return &agentbindings.ConflictError{Impact: *impact}
+			}
+			affectedAgentIDs, err = txBindingRepo.RevokeAndPruneDrafts(ctx, tx, bindingRef, scope.AccountID)
+			if err != nil {
+				return fmt.Errorf("revoke custom skill agent bindings: %w", err)
+			}
+		}
+
 		txRepos := repository.NewRepositories(tx)
 		if err := txRepos.CustomSkill.DeleteBySkillID(ctx, scope.OrganizationID, id); err != nil {
 			return mapRepoError(err)
@@ -231,12 +266,52 @@ func (s *service) DeleteSkill(ctx context.Context, scope Scope, skillID string) 
 	}); err != nil {
 		return err
 	}
+	if len(affectedAgentIDs) > 0 {
+		logger.InfoContext(ctx, "agent resource bindings revoked for custom skill deletion",
+			"log_type", "audit",
+			"actor_account_id", scope.AccountID,
+			"organization_id", scope.OrganizationID,
+			"binding_type", agentbindings.BindingTypeSkill,
+			"resource_id", id,
+			"affected_agent_ids", affectedAgentIDs,
+			"binding_state_before", "bound",
+			"binding_state_after", "unbound",
+			"published_scope_revoked", true,
+			"drafts_pruned", true,
+		)
+	}
 	if strings.TrimSpace(record.StoragePath) != "" {
 		if err := s.customSkillStorage.DeleteSkill(ctx, record.StoragePath); err != nil {
 			logger.WarnContext(ctx, "failed to remove custom skill directory", "skill_id", id, "path", record.StoragePath, err)
 		}
 	}
 	return nil
+}
+
+func (s *service) PreviewSkillDeleteImpact(ctx context.Context, scope Scope, skillID string) (*agentbindings.Impact, error) {
+	if err := s.ensureMember(ctx, scope); err != nil {
+		return nil, err
+	}
+	id := strings.ToLower(strings.TrimSpace(skillID))
+	if id == "" {
+		return nil, fmt.Errorf("%w: skill id is required", ErrInvalidInput)
+	}
+	if s.skillRuntime != nil {
+		if metadata, err := s.skillRuntime.GetSkillMetadata(ctx, id); err == nil && metadata.Source == skills.SkillSourceSystem {
+			return nil, fmt.Errorf("%w: system skill cannot be deleted", ErrInvalidInput)
+		}
+	}
+	if s.repos == nil || s.repos.CustomSkill == nil || s.repos.DB == nil {
+		return nil, fmt.Errorf("custom skill repository is not configured")
+	}
+	if _, err := s.repos.CustomSkill.GetBySkillID(ctx, scope.OrganizationID, id); err != nil {
+		return nil, mapRepoError(err)
+	}
+	return agentbindings.NewRepository(s.repos.DB).PreviewImpact(ctx, agentbindings.ResourceRef{
+		OrganizationID: scope.OrganizationID,
+		BindingType:    agentbindings.BindingTypeSkill,
+		ResourceID:     id,
+	}, customSkillDeleteBindingOperation, scope.AccountID, time.Now())
 }
 
 func readUploadedSkillPackage(fileHeader *multipart.FileHeader) ([]byte, error) {

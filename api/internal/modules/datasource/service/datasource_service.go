@@ -19,6 +19,7 @@ import (
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	"github.com/zgiai/zgi/api/internal/contracts"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/datasource/model"
@@ -40,7 +41,16 @@ import (
 	"github.com/zgiai/zgi/api/pkg/sql_base/guard"
 )
 
-var errDataSourceTableNotFound = errors.New("data source table not found")
+var (
+	errDataSourceTableNotFound   = errors.New("data source table not found")
+	ErrInvalidAgentBindingAction = errors.New("invalid agent binding action")
+)
+
+const (
+	agentBindingActionUnbind            = "unbind"
+	databaseDeleteBindingOperation      = "delete_database"
+	databaseTableDeleteBindingOperation = "delete_database_table"
+)
 
 const (
 	fileIngestStageParse       = "parse"
@@ -103,7 +113,7 @@ type DataSourceService interface {
 	GetDataSourceByName(ctx context.Context, organizationID, name string) (*dto.DataSourceResponse, error)
 	GetDataSourceByID(ctx context.Context, organizationID, id, accountID string) (*dto.DataSourceResponse, error)
 	UpdateDataSource(ctx context.Context, organizationID, id, accountID string, req dto.UpdateDataSourceRequest) (*dto.DataSourceResponse, error)
-	DeleteDataSourceByID(ctx context.Context, organizationID, id string, accountID string) error
+	DeleteDataSourceByID(ctx context.Context, organizationID, id string, accountID, agentBindingAction, impactToken string) error
 	GetGuardPolicy(ctx context.Context, organizationID, dataSourceID string) (guard.Policy, error)
 	UpdateGuardPolicy(ctx context.Context, organizationID, dataSourceID string, policy guard.Policy) (guard.Policy, error)
 	PreviewGuard(ctx context.Context, organizationID, dataSourceID, sql string, policy *guard.Policy) (guard.Result, error)
@@ -112,7 +122,7 @@ type DataSourceService interface {
 	CreateTable(ctx context.Context, organizationID, dataSourceID string, accountID string, req dto.CreateTableRequest) (*model.Table, error)
 	ListTables(ctx context.Context, organizationID, dataSourceID string, accountID string) ([]*model.Table, error)
 	GetTable(ctx context.Context, organizationID, dataSourceID, tableID string, accountID string) (*model.Table, error)
-	DeleteTable(ctx context.Context, organizationID, dataSourceID, tableID string, accountID string) error
+	DeleteTable(ctx context.Context, organizationID, dataSourceID, tableID string, accountID, agentBindingAction, impactToken string) error
 	UpdateTable(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, req dto.UpdateTableRequest) (*model.Table, error)
 	UpdateTableColumns(ctx context.Context, organizationID, dataSourceID, tableID, accountID string, req dto.UpdateTableColumnsRequest) error
 	GetTableColumns(ctx context.Context, organizationID, dataSourceID, tableID string, includeSystemFields bool) (dto.GetTableColumnsResponse, error)
@@ -177,6 +187,7 @@ type dataSourceService struct {
 	defaultModelResolver      defaultmodelsvc.DefaultModelResolver
 	contentParseService       contracts.ContentParseService
 	db                        *gorm.DB
+	agentBindings             *agentbindings.Repository
 }
 
 type DataSourceServiceOption func(*dataSourceService)
@@ -191,6 +202,13 @@ type databaseIngestionTableContext struct {
 	DataSourceID      string
 	LLMOrganizationID string
 	Columns           dto.GetTableColumnsResponse
+}
+
+type physicalTableDropPlan struct {
+	table       *model.Table
+	sql         string
+	guardResult guard.Result
+	guarded     bool
 }
 
 // NewDataSourceService creates a new DataSourceService
@@ -230,6 +248,7 @@ func NewDataSourceService(repo repository.DataSourceRepository, tableRepo reposi
 		llmClient:                 llmClient,
 		defaultModelResolver:      defaultModelResolver,
 		db:                        db,
+		agentBindings:             agentbindings.NewRepository(db),
 	}
 	for _, option := range options {
 		if option != nil {
@@ -630,7 +649,11 @@ func (s *dataSourceService) GetDataSourceByID(ctx context.Context, organizationI
 }
 
 // DeleteDataSourceByID deletes a data source by ID
-func (s *dataSourceService) DeleteDataSourceByID(ctx context.Context, organizationID, id string, accountID string) error {
+func (s *dataSourceService) DeleteDataSourceByID(ctx context.Context, organizationID, id string, accountID, agentBindingAction, impactToken string) error {
+	agentBindingAction = strings.ToLower(strings.TrimSpace(agentBindingAction))
+	if agentBindingAction != "" && agentBindingAction != agentBindingActionUnbind {
+		return ErrInvalidAgentBindingAction
+	}
 	// Find the data source
 	dataSource, err := s.requireDataSourceInOrganization(ctx, organizationID, id)
 	if err != nil {
@@ -639,6 +662,24 @@ func (s *dataSourceService) DeleteDataSourceByID(ctx context.Context, organizati
 	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseDelete); err != nil {
 		return err
 	}
+	var bindingRef agentbindings.ResourceRef
+	var actorID uuid.UUID
+	bindingRepo := s.agentBindings
+	if bindingRepo != nil {
+		organizationUUID, err := uuid.Parse(organizationID)
+		if err != nil {
+			return fmt.Errorf("failed to parse organization ID: %w", err)
+		}
+		actorID, err = uuid.Parse(accountID)
+		if err != nil {
+			return fmt.Errorf("failed to parse account ID: %w", err)
+		}
+		bindingRef = agentbindings.ResourceRef{
+			OrganizationID: organizationUUID,
+			BindingType:    agentbindings.BindingTypeDatabase,
+			ResourceID:     id,
+		}
+	}
 
 	// Find all tables associated with this data source
 	tables, err := s.tableRepo.ListByDataSource(ctx, id)
@@ -646,25 +687,236 @@ func (s *dataSourceService) DeleteDataSourceByID(ctx context.Context, organizati
 		return fmt.Errorf("failed to list tables for data source: %w", err)
 	}
 
-	// Delete all tables associated with this data source
-	for _, table := range tables {
-		// Use DeleteTable method to ensure consistent table deletion including prompts
-		err = s.DeleteTable(ctx, organizationID, id, table.ID, accountID)
-		if err != nil {
-			return fmt.Errorf("failed to delete table '%s': %w", table.PhysicalTableName, err)
-		}
-	}
-
 	// For virtual data sources, we don't delete actual schemas
 	// _, err = s.sqlBase.DeleteSchema(ctx, dataSource.SchemaID, true)
 	// if err != nil {
 	// 	return fmt.Errorf("failed to delete schema: %w", err)
 	// }
-	// Just delete the metadata
-	if err := s.repo.Delete(ctx, dataSource.ID); err != nil {
-		return fmt.Errorf("failed to delete data source metadata: %w", err)
+	if bindingRepo == nil || s.db == nil {
+		for _, table := range tables {
+			if err := s.deleteTable(ctx, organizationID, id, table.ID, accountID, "", "", true); err != nil {
+				return fmt.Errorf("failed to delete table '%s': %w", table.PhysicalTableName, err)
+			}
+		}
+		if err := s.repo.Delete(ctx, dataSource.ID); err != nil {
+			return fmt.Errorf("failed to delete data source metadata: %w", err)
+		}
+		return nil
 	}
 
+	rowCounts := make(map[string]int64, len(tables))
+	dropPlans := make([]physicalTableDropPlan, 0, len(tables))
+	for _, table := range tables {
+		rowCounts[table.ID] = s.countRowsBeforeTableDeletion(ctx, organizationID, dataSource, table, accountID)
+		plan, err := s.preparePhysicalTableDrop(ctx, dataSource, table)
+		if err != nil {
+			return fmt.Errorf("prepare physical table deletion for %s: %w", table.PhysicalTableName, err)
+		}
+		dropPlans = append(dropPlans, plan)
+	}
+	var affectedAgentIDs []uuid.UUID
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var err error
+		affectedAgentIDs, err = s.prepareAgentBindingsForResourceDeletionInTx(ctx, tx, bindingRef, databaseDeleteBindingOperation, actorID, agentBindingAction, impactToken)
+		if err != nil {
+			return err
+		}
+		tableIDs := make([]string, 0, len(tables))
+		for _, table := range tables {
+			tableIDs = append(tableIDs, table.ID)
+		}
+		if len(tableIDs) > 0 {
+			if err := tx.Exec("DELETE FROM data_source_table_prompts WHERE table_id IN ?", tableIDs).Error; err != nil {
+				return fmt.Errorf("failed to delete data source table prompts: %w", err)
+			}
+			if err := tx.Exec("DELETE FROM data_source_tables WHERE data_source_id = ?", dataSource.ID).Error; err != nil {
+				return fmt.Errorf("failed to delete data source table metadata: %w", err)
+			}
+		}
+		if err := tx.Exec("DELETE FROM data_sources WHERE id = ?", dataSource.ID).Error; err != nil {
+			return fmt.Errorf("failed to delete data source metadata: %w", err)
+		}
+		for _, table := range tables {
+			if err := s.recordTableDeletionQuotaInTx(ctx, tx, organizationID, dataSource, table, accountID, rowCounts[table.ID]); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	logAgentResourceUnbind(ctx, accountID, organizationID, dataSource.WorkspaceID, agentbindings.BindingTypeDatabase, id, affectedAgentIDs)
+
+	for _, plan := range dropPlans {
+		if err := s.executePhysicalTableDrop(ctx, organizationID, dataSource, accountID, plan); err != nil {
+			cleanupErr := fmt.Errorf("physical table cleanup failed for %s: %w", plan.table.PhysicalTableName, err)
+			logger.ErrorContext(ctx, "database deletion left an orphan physical table", "data_source_id", id, "table_id", plan.table.ID, "physical_table", plan.table.PhysicalTableName, cleanupErr)
+		}
+	}
+	// The logical resource and its Agent grants are already removed atomically.
+	// A physical cleanup failure must not make clients retry a deletion that has
+	// committed; the orphan is intentionally surfaced through the audit log.
+	return nil
+}
+
+func (s *dataSourceService) PreviewDataSourceDeleteImpact(ctx context.Context, organizationID, id, accountID string) (*agentbindings.Impact, error) {
+	dataSource, err := s.requireDataSourceInOrganization(ctx, organizationID, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseDelete); err != nil {
+		return nil, err
+	}
+	return s.previewResourceDeleteImpact(ctx, organizationID, accountID, agentbindings.ResourceRef{
+		BindingType: agentbindings.BindingTypeDatabase,
+		ResourceID:  id,
+	}, databaseDeleteBindingOperation)
+}
+
+func (s *dataSourceService) prepareAgentBindingsForResourceDeletionInTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	ref agentbindings.ResourceRef,
+	operation string,
+	actorID uuid.UUID,
+	agentBindingAction string,
+	impactToken string,
+) ([]uuid.UUID, error) {
+	if s.agentBindings == nil || tx == nil {
+		return nil, nil
+	}
+	txBindingRepo := s.agentBindings.WithTx(tx)
+	if err := txBindingRepo.LockResources(ctx, tx, []agentbindings.ResourceRef{ref}); err != nil {
+		return nil, fmt.Errorf("lock resource agent binding: %w", err)
+	}
+	impact, err := txBindingRepo.PreviewImpact(ctx, ref, operation, actorID, time.Now())
+	if err != nil {
+		return nil, fmt.Errorf("preview resource agent binding impact: %w", err)
+	}
+	if impact == nil {
+		return nil, nil
+	}
+	if agentBindingAction != agentBindingActionUnbind {
+		return nil, &agentbindings.ConflictError{Impact: *impact}
+	}
+	if err := txBindingRepo.VerifyImpactToken(ctx, ref, operation, actorID, impactToken, time.Now()); err != nil {
+		return nil, &agentbindings.ConflictError{Impact: *impact}
+	}
+	affectedAgentIDs, err := txBindingRepo.RevokeAndPruneDrafts(ctx, tx, ref, actorID)
+	if err != nil {
+		return nil, fmt.Errorf("revoke resource agent bindings: %w", err)
+	}
+	return affectedAgentIDs, nil
+}
+
+func (s *dataSourceService) previewResourceDeleteImpact(
+	ctx context.Context,
+	organizationID string,
+	accountID string,
+	ref agentbindings.ResourceRef,
+	operation string,
+) (*agentbindings.Impact, error) {
+	if s.agentBindings == nil {
+		return nil, nil
+	}
+	organizationUUID, err := uuid.Parse(organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse organization ID: %w", err)
+	}
+	actorID, err := uuid.Parse(accountID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse account ID: %w", err)
+	}
+	ref.OrganizationID = organizationUUID
+	return s.agentBindings.PreviewImpact(ctx, ref, operation, actorID, time.Now())
+}
+
+func (s *dataSourceService) countRowsBeforeTableDeletion(ctx context.Context, organizationID string, dataSource *model.DataSource, table *model.Table, accountID string) int64 {
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(table.PhysicalTableName))
+	countResult, err := s.sqlBase.ExecuteSQL(ctx, countQuery, nil, sqlAuditContext(organizationID, dataSource, table, accountID, string(model.OperationTypeQuery)))
+	if err != nil {
+		logger.WarnContext(ctx, "failed to count rows before table deletion", "table_id", table.ID, "physical_table", table.PhysicalTableName, err)
+		return 0
+	}
+	if len(countResult.Rows) == 0 || len(countResult.Rows[0]) == 0 {
+		return 0
+	}
+	switch value := countResult.Rows[0][0].(type) {
+	case int64:
+		return value
+	case float64:
+		return int64(value)
+	case int:
+		return int64(value)
+	default:
+		return 0
+	}
+}
+
+func (s *dataSourceService) preparePhysicalTableDrop(ctx context.Context, dataSource *model.DataSource, table *model.Table) (physicalTableDropPlan, error) {
+	statement := fmt.Sprintf("DROP TABLE %s CASCADE", quoteIdentifier(table.PhysicalTableName))
+	guardResult, guarded, err := s.evaluateGuardForAuditedSQL(ctx, dataSource.ID, statement)
+	if err != nil {
+		return physicalTableDropPlan{}, err
+	}
+	return physicalTableDropPlan{table: table, sql: statement, guardResult: guardResult, guarded: guarded}, nil
+}
+
+func (s *dataSourceService) executePhysicalTableDrop(ctx context.Context, organizationID string, dataSource *model.DataSource, accountID string, plan physicalTableDropPlan) error {
+	start := time.Now()
+	_, err := s.sqlBase.DeleteTable(ctx, plan.table.TableID, true)
+	end := time.Now()
+	if logErr := s.logSQLOperationWithResult(
+		ctx,
+		organizationID,
+		dataSource.ID,
+		plan.table.ID,
+		dataSource.Name,
+		plan.table.Name,
+		accountID,
+		string(model.OperationTypeDelete),
+		plan.sql,
+		start,
+		end,
+		err,
+		plan.guardResult,
+		plan.guarded,
+	); logErr != nil {
+		logger.ErrorContext(ctx, "failed to audit physical table cleanup", "data_source_id", dataSource.ID, "table_id", plan.table.ID, logErr)
+	}
+	return err
+}
+
+func (s *dataSourceService) recordTableDeletionQuotaInTx(ctx context.Context, tx *gorm.DB, organizationID string, dataSource *model.DataSource, table *model.Table, accountID string, totalRows int64) error {
+	if s.quotaService == nil || dataSource.OrganizationID == "" || totalRows <= 0 {
+		return nil
+	}
+	organizationUUID, _ := uuid.Parse(dataSource.OrganizationID)
+	accountUUID, _ := uuid.Parse(accountID)
+	workspaceUUID, _ := uuid.Parse(organizationID)
+	metadata := quota_model.JSONMap{
+		"datasource_id":   dataSource.ID,
+		"datasource_name": dataSource.Name,
+		"table_id":        table.ID,
+		"table_name":      table.Name,
+		"rows_affected":   totalRows,
+		"operation":       "drop_table",
+	}
+	usageRecord := &quota_model.QuotaUsageHistory{
+		ID:           uuid.NewString(),
+		GroupID:      organizationUUID,
+		AccountID:    accountUUID,
+		TenantID:     &workspaceUUID,
+		ResourceType: quota_model.ResourceTypeDBRows,
+		Delta:        -totalRows,
+		ResourceID:   &table.ID,
+		ResourceName: &table.Name,
+		Metadata:     &metadata,
+		CreatedAt:    time.Now(),
+	}
+	if err := s.quotaService.RecordUsageInTx(ctx, tx, usageRecord); err != nil {
+		return fmt.Errorf("failed to record usage: %w", err)
+	}
 	return nil
 }
 
@@ -939,7 +1191,33 @@ func (s *dataSourceService) GetTable(ctx context.Context, organizationID, dataSo
 }
 
 // DeleteTable deletes a table in a data source
-func (s *dataSourceService) DeleteTable(ctx context.Context, organizationID, dataSourceID, tableID string, accountID string) error {
+func (s *dataSourceService) DeleteTable(ctx context.Context, organizationID, dataSourceID, tableID string, accountID, agentBindingAction, impactToken string) error {
+	return s.deleteTable(ctx, organizationID, dataSourceID, tableID, accountID, agentBindingAction, impactToken, false)
+}
+
+func (s *dataSourceService) PreviewTableDeleteImpact(ctx context.Context, organizationID, dataSourceID, tableID, accountID string) (*agentbindings.Impact, error) {
+	dataSource, err := s.requireDataSourceInOrganization(ctx, organizationID, dataSourceID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseSchemaManage); err != nil {
+		return nil, err
+	}
+	if _, err := s.requireTableInDataSource(ctx, dataSource, tableID); err != nil {
+		return nil, err
+	}
+	return s.previewResourceDeleteImpact(ctx, organizationID, accountID, agentbindings.ResourceRef{
+		BindingType:      agentbindings.BindingTypeDatabaseTable,
+		ResourceID:       tableID,
+		ParentResourceID: dataSourceID,
+	}, databaseTableDeleteBindingOperation)
+}
+
+func (s *dataSourceService) deleteTable(ctx context.Context, organizationID, dataSourceID, tableID string, accountID, agentBindingAction, impactToken string, bindingCoveredByDatabaseDelete bool) error {
+	agentBindingAction = strings.ToLower(strings.TrimSpace(agentBindingAction))
+	if agentBindingAction != "" && agentBindingAction != agentBindingActionUnbind {
+		return ErrInvalidAgentBindingAction
+	}
 	// Find the data source
 	dataSource, err := s.requireDataSourceInOrganization(ctx, organizationID, dataSourceID)
 	if err != nil {
@@ -948,6 +1226,25 @@ func (s *dataSourceService) DeleteTable(ctx context.Context, organizationID, dat
 	if err := s.requireDataSourceWorkspacePermission(ctx, organizationID, accountID, dataSource, workspace_model.WorkspacePermissionDatabaseSchemaManage); err != nil {
 		return err
 	}
+	var bindingRef agentbindings.ResourceRef
+	var actorID uuid.UUID
+	bindingRepo := s.agentBindings
+	if !bindingCoveredByDatabaseDelete && bindingRepo != nil {
+		organizationUUID, err := uuid.Parse(organizationID)
+		if err != nil {
+			return fmt.Errorf("failed to parse organization ID: %w", err)
+		}
+		actorID, err = uuid.Parse(accountID)
+		if err != nil {
+			return fmt.Errorf("failed to parse account ID: %w", err)
+		}
+		bindingRef = agentbindings.ResourceRef{
+			OrganizationID:   organizationUUID,
+			BindingType:      agentbindings.BindingTypeDatabaseTable,
+			ResourceID:       tableID,
+			ParentResourceID: dataSourceID,
+		}
+	}
 
 	// Find the table metadata
 	tableMetadata, err := s.requireTableInDataSource(ctx, dataSource, tableID)
@@ -955,95 +1252,64 @@ func (s *dataSourceService) DeleteTable(ctx context.Context, organizationID, dat
 		return err
 	}
 
-	// Query total row count before deletion
-	var totalRows int64
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(tableMetadata.PhysicalTableName))
-	countResult, err := s.sqlBase.ExecuteSQL(ctx, countQuery, nil, sqlAuditContext(organizationID, dataSource, tableMetadata, accountID, string(model.OperationTypeQuery)))
+	totalRows := s.countRowsBeforeTableDeletion(ctx, organizationID, dataSource, tableMetadata, accountID)
+	dropPlan, err := s.preparePhysicalTableDrop(ctx, dataSource, tableMetadata)
 	if err != nil {
-		// If count fails, log but continue with deletion
-		logger.WarnContext(ctx, "failed to count rows before table deletion", "table_id", tableID, "physical_table", tableMetadata.PhysicalTableName, err)
-		totalRows = 0
-	} else if len(countResult.Rows) > 0 && len(countResult.Rows[0]) > 0 {
-		// Handle different numeric types returned by database drivers
-		switch v := countResult.Rows[0][0].(type) {
-		case int64:
-			totalRows = v
-		case float64:
-			totalRows = int64(v)
-		case int:
-			totalRows = int64(v)
-		default:
-			totalRows = 0
-		}
+		return fmt.Errorf("prepare physical table deletion: %w", err)
 	}
 
-	dropSQL := fmt.Sprintf("DROP TABLE %s CASCADE", quoteIdentifier(tableMetadata.PhysicalTableName))
-	if err := s.auditSQLOperation(ctx, organizationID, dataSourceID, tableID, dataSource.Name, tableMetadata.Name, accountID, string(model.OperationTypeDelete), dropSQL, func() error {
-		_, opErr := s.sqlBase.DeleteTable(ctx, tableMetadata.TableID, true)
-		return opErr
-	}); err != nil {
-		return fmt.Errorf("failed to delete physical table: %w", err)
-	}
-
-	// Delete metadata and record usage in transaction after the physical table is gone.
+	// Hide the resource and revoke its Agent bindings atomically before issuing
+	// irreversible DDL on sqlBase's separate connection.
+	var affectedAgentIDs []uuid.UUID
 	err = s.db.Transaction(func(tx *gorm.DB) error {
-		// Delete associated table prompt if exists
-		err = s.promptRepo.DeleteByTableID(ctx, tableID)
-		if err != nil {
-			// Log the error but continue with table deletion
-			logger.WarnContext(ctx, "failed to delete table prompt", "table_id", tableID, err)
+		if !bindingCoveredByDatabaseDelete && bindingRepo != nil {
+			var err error
+			affectedAgentIDs, err = s.prepareAgentBindingsForResourceDeletionInTx(ctx, tx, bindingRef, databaseTableDeleteBindingOperation, actorID, agentBindingAction, impactToken)
+			if err != nil {
+				return err
+			}
 		}
-
-		// Delete table metadata
-		if err := s.tableRepo.Delete(ctx, tableID); err != nil {
+		if err := tx.WithContext(ctx).Exec("DELETE FROM data_source_table_prompts WHERE table_id = ?", tableID).Error; err != nil {
+			return fmt.Errorf("failed to delete table prompt: %w", err)
+		}
+		if err := tx.WithContext(ctx).Exec("DELETE FROM data_source_tables WHERE id = ?", tableID).Error; err != nil {
 			return fmt.Errorf("failed to delete table metadata: %w", err)
 		}
-
-		// Record usage history if quotaService is available and rows existed
-		if s.quotaService != nil && dataSource.OrganizationID != "" && totalRows > 0 {
-			// Parse IDs
-			organizationUUID, _ := uuid.Parse(dataSource.OrganizationID)
-			accountUUID, _ := uuid.Parse(accountID)
-			workspaceUUID, _ := uuid.Parse(organizationID)
-
-			// Create metadata
-			metadata := quota_model.JSONMap{
-				"datasource_id":   dataSourceID,
-				"datasource_name": dataSource.Name,
-				"table_id":        tableID,
-				"table_name":      tableMetadata.Name,
-				"rows_affected":   totalRows,
-				"operation":       "drop_table",
-			}
-
-			// Create usage history record with negative delta
-			usageRecord := &quota_model.QuotaUsageHistory{
-				ID:           uuid.New().String(),
-				GroupID:      organizationUUID,
-				AccountID:    accountUUID,
-				TenantID:     &workspaceUUID,
-				ResourceType: quota_model.ResourceTypeDBRows,
-				Delta:        -totalRows, // Negative delta for deletion
-				ResourceID:   &tableID,
-				ResourceName: &tableMetadata.Name,
-				Metadata:     &metadata,
-				CreatedAt:    time.Now(),
-			}
-
-			// Record usage in transaction
-			if err := s.quotaService.RecordUsageInTx(ctx, tx, usageRecord); err != nil {
-				return fmt.Errorf("failed to record usage: %w", err)
-			}
-		}
-
-		return nil
+		return s.recordTableDeletionQuotaInTx(ctx, tx, organizationID, dataSource, tableMetadata, accountID, totalRows)
 	})
 
 	if err != nil {
 		return err
 	}
+	logAgentResourceUnbind(ctx, accountID, organizationID, dataSource.WorkspaceID, agentbindings.BindingTypeDatabaseTable, tableID, affectedAgentIDs)
 
+	if err := s.executePhysicalTableDrop(ctx, organizationID, dataSource, accountID, dropPlan); err != nil {
+		cleanupErr := fmt.Errorf("physical table cleanup failed for %s: %w", tableMetadata.PhysicalTableName, err)
+		logger.ErrorContext(ctx, "table deletion left an orphan physical table", "data_source_id", dataSourceID, "table_id", tableID, "physical_table", tableMetadata.PhysicalTableName, cleanupErr)
+		// Metadata and binding revocation already committed. Returning an error
+		// would invite an unsafe retry against a resource that no longer exists.
+		return nil
+	}
 	return nil
+}
+
+func logAgentResourceUnbind(ctx context.Context, accountID, organizationID string, workspaceID *string, bindingType agentbindings.BindingType, resourceID string, affectedAgentIDs []uuid.UUID) {
+	if len(affectedAgentIDs) == 0 {
+		return
+	}
+	logger.InfoContext(ctx, "agent resource bindings revoked for database lifecycle operation",
+		"log_type", "audit",
+		"actor_account_id", accountID,
+		"organization_id", organizationID,
+		"workspace_id", workspaceID,
+		"binding_type", bindingType,
+		"resource_id", resourceID,
+		"affected_agent_ids", affectedAgentIDs,
+		"binding_state_before", "bound",
+		"binding_state_after", "unbound",
+		"published_scope_revoked", true,
+		"drafts_pruned", true,
+	)
 }
 
 // UpdateTable updates a table's metadata (name and/or description)
@@ -3534,7 +3800,7 @@ func (s *dataSourceService) ConfirmExcelImport(ctx context.Context, organization
 	failImport := func(cause error, cleanupTableID *string) (dto.ConfirmExcelImportData, error) {
 		if cleanupTableID != nil && *cleanupTableID != "" {
 			job.TableID = cleanupTableID
-			if cleanupErr := s.DeleteTable(ctx, organizationID, dataSourceID, *cleanupTableID, accountID); cleanupErr != nil {
+			if cleanupErr := s.DeleteTable(ctx, organizationID, dataSourceID, *cleanupTableID, accountID, "", ""); cleanupErr != nil {
 				logger.WarnContext(ctx, "failed to clean up table after excel import failure", "job_id", job.ID, "table_id", *cleanupTableID, cleanupErr)
 			} else {
 				job.TableID = nil

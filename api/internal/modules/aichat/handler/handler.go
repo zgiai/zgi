@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
@@ -51,6 +52,7 @@ func (h *Handler) RegisterRoutes(router *gin.RouterGroup) {
 	skillManagement.POST("/import/confirm", h.ConfirmImportSkill)
 	skillManagement.DELETE("/import/preview/:import_id", h.CancelImportSkillPreview)
 	skillManagement.PUT("/config", h.UpdateSkillConfig)
+	skillManagement.GET("/:id/delete-impact", h.PreviewSkillDeleteImpact)
 	skillManagement.DELETE("/:id", h.DeleteSkill)
 	group.GET("/conversations", h.ListConversations)
 	group.GET("/search", h.Search)
@@ -136,6 +138,9 @@ func (h *Handler) UpdateSkillConfig(c *gin.Context) {
 	}
 	config, err := h.service.UpdateSkillConfig(c.Request.Context(), scope, req)
 	if err != nil {
+		if util.WriteAgentBindingConflict(c, err) {
+			return
+		}
 		h.fail(c, err)
 		return
 	}
@@ -236,11 +241,47 @@ func (h *Handler) DeleteSkill(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	if err := h.service.DeleteSkill(c.Request.Context(), scope, skillID); err != nil {
+	if err := h.service.DeleteSkill(
+		c.Request.Context(),
+		scope,
+		skillID,
+		c.Query("agent_binding_action"),
+		c.Query("impact_token"),
+	); err != nil {
+		if util.WriteAgentBindingConflict(c, err) {
+			return
+		}
 		h.fail(c, err)
 		return
 	}
 	response.Success(c, gin.H{"deleted": true})
+}
+
+type skillDeleteImpactPreviewer interface {
+	PreviewSkillDeleteImpact(ctx context.Context, scope runtimeservice.Scope, skillID string) (*agentbindings.Impact, error)
+}
+
+func (h *Handler) PreviewSkillDeleteImpact(c *gin.Context) {
+	scope, ok := h.scope(c)
+	if !ok {
+		return
+	}
+	skillID := strings.TrimSpace(c.Param("id"))
+	if skillID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	previewer, ok := h.service.(skillDeleteImpactPreviewer)
+	if !ok {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	impact, err := previewer.PreviewSkillDeleteImpact(c.Request.Context(), scope, skillID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	response.Success(c, impact)
 }
 
 func (h *Handler) CreateConversation(c *gin.Context) {

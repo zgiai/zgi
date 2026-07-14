@@ -53,6 +53,7 @@ func RegisterRoutes(engine *gin.Engine, v1 *gin.RouterGroup, serviceContainer *c
 		DB:                               db,
 		AccountService:                   accountService,
 		OrganizationService:              serviceContainer.GetOrganizationService(),
+		AuthorizationService:             serviceContainer.GetAuthorizationService(),
 		WorkspacePermissionFilterService: serviceContainer.GetWorkspacePermissionFilterService(),
 		DepartmentService:                serviceContainer.GetDepartmentService(),
 		ConsoleWebURL:                    config.GlobalConfig.Email.ConsoleWebURL,

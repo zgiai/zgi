@@ -150,11 +150,48 @@ func TestEffectiveAgentSkillIDsAutoAddsHiddenKnowledge(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillCalculator, skills.SkillAgentKnowledge, skills.SkillUserMemory, skills.SkillInternalKnowledge},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{KnowledgeDatasetIDs: []string{"dataset-1"}},
 	)
 	want := []string{skills.SkillAgentKnowledge, skills.SkillCalculator}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("effectiveAgentSkillIDs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestEffectiveAgentSkillIDsFiltersOrganizationDisabledSkills(t *testing.T) {
+	catalog := []skills.SkillDiscoveryMetadata{
+		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
+		{ID: "organization-disabled", Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
+		{ID: skills.SkillAgentKnowledge, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}, RequiredConfig: []string{skills.SkillRequiredConfigAgentKnowledge}},
+	}
+
+	got := effectiveAgentSkillIDs(
+		[]string{skills.SkillCalculator, "organization-disabled"},
+		catalog,
+		[]string{skills.SkillCalculator},
+		&RunConfig{KnowledgeDatasetIDs: []string{"dataset-1"}},
+	)
+	want := []string{skills.SkillAgentKnowledge, skills.SkillCalculator}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("effectiveAgentSkillIDs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestOrganizationAllowsSkillID(t *testing.T) {
+	catalog := []skills.SkillDiscoveryMetadata{
+		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive},
+		{ID: skills.SkillAgentKnowledge, Status: skills.SkillStatusActive},
+	}
+
+	if organizationAllowsSkillID(skills.SkillCalculator, catalog, nil) {
+		t.Fatal("organizationAllowsSkillID() = true for disabled selectable skill, want false")
+	}
+	if !organizationAllowsSkillID(skills.SkillCalculator, catalog, []string{skills.SkillCalculator}) {
+		t.Fatal("organizationAllowsSkillID() = false for enabled selectable skill, want true")
+	}
+	if !organizationAllowsSkillID(skills.SkillAgentKnowledge, catalog, nil) {
+		t.Fatal("organizationAllowsSkillID() = false for runtime-managed skill, want true")
 	}
 }
 
@@ -176,6 +213,7 @@ func TestEffectiveAgentSkillIDsRejectsSidebarManagedAssetSkills(t *testing.T) {
 			skills.SkillAgentKnowledge,
 		},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{KnowledgeDatasetIDs: []string{"dataset-1"}},
 	)
 	want := []string{skills.SkillAgentKnowledge, skills.SkillCalculator}
@@ -193,6 +231,7 @@ func TestEffectiveAgentSkillIDsSkipsKnowledgeWithoutDatasets(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillCalculator, skills.SkillAgentKnowledge},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{},
 	)
 	want := []string{skills.SkillCalculator}
@@ -210,6 +249,7 @@ func TestEffectiveAgentSkillIDsAutoAddsHiddenDatabase(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillCalculator},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{DatabaseBindings: []AgentDatabaseBinding{{DataSourceID: "db-1", TableIDs: []string{"table-1"}}}},
 	)
 	want := []string{skills.SkillAgentDatabase, skills.SkillCalculator}
@@ -227,6 +267,7 @@ func TestEffectiveAgentSkillIDsSkipsDatabaseWithoutBindings(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillCalculator, skills.SkillAgentDatabase},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{},
 	)
 	want := []string{skills.SkillCalculator}
@@ -244,6 +285,7 @@ func TestEffectiveAgentSkillIDsAutoAddsHiddenWorkflow(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillCalculator},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{WorkflowBindings: []AgentWorkflowBinding{{BindingID: "approval-flow", AgentID: "agent-1", WorkflowID: "workflow-1"}}},
 	)
 	want := []string{skills.SkillAgentWorkflow, skills.SkillCalculator}
@@ -261,6 +303,7 @@ func TestEffectiveAgentSkillIDsSkipsWorkflowWithoutBindings(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillCalculator, skills.SkillAgentWorkflow},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{},
 	)
 	want := []string{skills.SkillCalculator}
@@ -278,6 +321,7 @@ func TestEffectiveAgentSkillIDsDoesNotAutoAddHiddenAgentMemory(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillUserMemory},
 		catalog,
+		[]string{},
 		&RunConfig{
 			AgentMemoryEnabled: true,
 			AgentMemorySlots: []AgentMemorySlotConfig{{

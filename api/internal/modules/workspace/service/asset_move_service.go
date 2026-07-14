@@ -10,8 +10,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	"github.com/zgiai/zgi/api/internal/dto"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	shared_service "github.com/zgiai/zgi/api/internal/modules/shared/service"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
+	"github.com/zgiai/zgi/api/pkg/logger"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -29,17 +33,18 @@ var (
 	ErrAssetMoveBlocked          = errors.New("asset move blocked")
 )
 
-type assetMoveOrganizationService interface {
-	CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissionCode workspace_model.WorkspacePermissionCode) (bool, error)
-}
-
 type WorkspaceAssetMoveService struct {
-	db                  *gorm.DB
-	organizationService assetMoveOrganizationService
+	db                   *gorm.DB
+	authorizationService interfaces.AuthorizationService
+	agentBindings        *agentbindings.Repository
 }
 
-func NewWorkspaceAssetMoveService(db *gorm.DB, organizationService assetMoveOrganizationService) *WorkspaceAssetMoveService {
-	return &WorkspaceAssetMoveService{db: db, organizationService: organizationService}
+func NewWorkspaceAssetMoveService(db *gorm.DB, authorizationService interfaces.AuthorizationService, bindingRepositories ...*agentbindings.Repository) *WorkspaceAssetMoveService {
+	bindingRepository := agentbindings.NewRepository(db)
+	if len(bindingRepositories) > 0 {
+		bindingRepository = bindingRepositories[0]
+	}
+	return &WorkspaceAssetMoveService{db: db, authorizationService: authorizationService, agentBindings: bindingRepository}
 }
 
 func (s *WorkspaceAssetMoveService) Preview(ctx context.Context, organizationID, accountID string, req dto.WorkspaceAssetMoveRequest) (*dto.WorkspaceAssetMovePreviewResponse, error) {
@@ -47,7 +52,12 @@ func (s *WorkspaceAssetMoveService) Preview(ctx context.Context, organizationID,
 }
 
 func (s *WorkspaceAssetMoveService) Move(ctx context.Context, organizationID, accountID string, req dto.WorkspaceAssetMoveRequest) (*dto.WorkspaceAssetMoveResponse, error) {
+	req.AgentBindingAction = strings.ToLower(strings.TrimSpace(req.AgentBindingAction))
+	if req.AgentBindingAction != "" && req.AgentBindingAction != "unbind" {
+		return nil, ErrAssetMoveInvalidRequest
+	}
 	var response dto.WorkspaceAssetMoveResponse
+	var affectedAgentIDs []uuid.UUID
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		preview, err := s.previewWithDB(ctx, tx, organizationID, accountID, req)
 		if err != nil {
@@ -56,6 +66,24 @@ func (s *WorkspaceAssetMoveService) Move(ctx context.Context, organizationID, ac
 		response.Preview = *preview
 		if !preview.Movable {
 			return ErrAssetMoveBlocked
+		}
+		if preview.AgentBindingImpact != nil && req.AgentBindingAction != "unbind" {
+			return &agentbindings.ConflictError{Impact: *preview.AgentBindingImpact}
+		}
+		if s.agentBindings != nil {
+			moveImpactReq, ok, err := moveImpactRequestFromPreview(organizationID, accountID, *preview)
+			if err != nil {
+				return err
+			}
+			if ok {
+				affectedAgentIDs, err = s.agentBindings.ApplyMoveImpact(ctx, tx, moveImpactReq, req.ImpactToken, time.Now())
+				if err != nil {
+					if preview.AgentBindingImpact != nil {
+						return &agentbindings.ConflictError{Impact: *preview.AgentBindingImpact}
+					}
+					return err
+				}
+			}
 		}
 
 		for _, item := range preview.Items {
@@ -71,6 +99,20 @@ func (s *WorkspaceAssetMoveService) Move(ctx context.Context, organizationID, ac
 			return &response, err
 		}
 		return nil, err
+	}
+	if len(affectedAgentIDs) > 0 {
+		logger.InfoContext(ctx, "agent resource bindings updated for workspace move",
+			"log_type", "audit",
+			"actor_account_id", accountID,
+			"organization_id", organizationID,
+			"target_workspace_id", req.TargetWorkspaceID,
+			"affected_agent_ids", affectedAgentIDs,
+			"agent_binding_action", req.AgentBindingAction,
+			"binding_state_before", "bound",
+			"binding_state_after", "unbound_or_relocated",
+			"published_scope_revoked", true,
+			"drafts_pruned", true,
+		)
 	}
 	return &response, nil
 }
@@ -157,8 +199,89 @@ func (s *WorkspaceAssetMoveService) previewWithDB(ctx context.Context, db *gorm.
 		}
 		preview.Items = append(preview.Items, item)
 	}
+	if preview.Movable && s.agentBindings != nil {
+		moveImpactReq, ok, err := moveImpactRequestFromPreview(organizationID, accountID, *preview)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			impact, err := s.agentBindings.WithTx(db).PreviewMoveImpact(ctx, moveImpactReq, time.Now())
+			if err != nil {
+				return nil, fmt.Errorf("preview workspace move agent binding impact: %w", err)
+			}
+			preview.AgentBindingImpact = impact
+		}
+	}
 
 	return preview, nil
+}
+
+func moveImpactRequestFromPreview(organizationID, accountID string, preview dto.WorkspaceAssetMovePreviewResponse) (agentbindings.MoveImpactRequest, bool, error) {
+	organizationUUID, err := uuid.Parse(strings.TrimSpace(organizationID))
+	if err != nil {
+		return agentbindings.MoveImpactRequest{}, false, ErrAssetMoveInvalidRequest
+	}
+	actorUUID, err := uuid.Parse(strings.TrimSpace(accountID))
+	if err != nil {
+		return agentbindings.MoveImpactRequest{}, false, ErrAssetMoveInvalidRequest
+	}
+	var targetWorkspaceID string
+	request := agentbindings.MoveImpactRequest{OrganizationID: organizationUUID, ActorID: actorUUID}
+	for _, item := range preview.Items {
+		if !item.Movable {
+			continue
+		}
+		if targetWorkspaceID == "" {
+			targetWorkspaceID = item.TargetWorkspaceID
+		}
+		var sourceWorkspaceID *uuid.UUID
+		if item.FromWorkspaceID != "" {
+			parsed, err := uuid.Parse(item.FromWorkspaceID)
+			if err != nil {
+				return agentbindings.MoveImpactRequest{}, false, ErrAssetMoveInvalidRequest
+			}
+			sourceWorkspaceID = &parsed
+		}
+		switch item.Type {
+		case AssetMoveTypeAgent:
+			agentID, err := uuid.Parse(firstNonEmpty(item.ResolvedAgentID, item.ID))
+			if err != nil {
+				return agentbindings.MoveImpactRequest{}, false, ErrAssetMoveInvalidRequest
+			}
+			request.MovingAgentIDs = append(request.MovingAgentIDs, agentID)
+			if isWorkflowRuntimeAssetType(item.ResolvedAgentType) {
+				request.ResourceRefs = append(request.ResourceRefs, agentbindings.ResourceRef{
+					OrganizationID: organizationUUID,
+					WorkspaceID:    sourceWorkspaceID,
+					BindingType:    agentbindings.BindingTypeWorkflow,
+					ResourceID:     agentID.String(),
+				})
+			}
+		case AssetMoveTypeDataset:
+			request.ResourceRefs = append(request.ResourceRefs, agentbindings.ResourceRef{
+				OrganizationID: organizationUUID,
+				WorkspaceID:    sourceWorkspaceID,
+				BindingType:    agentbindings.BindingTypeKnowledgeDataset,
+				ResourceID:     item.ID,
+			})
+		case AssetMoveTypeDatabase:
+			request.ResourceRefs = append(request.ResourceRefs, agentbindings.ResourceRef{
+				OrganizationID: organizationUUID,
+				WorkspaceID:    sourceWorkspaceID,
+				BindingType:    agentbindings.BindingTypeDatabase,
+				ResourceID:     item.ID,
+			})
+		}
+	}
+	if len(request.ResourceRefs) == 0 && len(request.MovingAgentIDs) == 0 {
+		return agentbindings.MoveImpactRequest{}, false, nil
+	}
+	targetUUID, err := uuid.Parse(targetWorkspaceID)
+	if err != nil {
+		return agentbindings.MoveImpactRequest{}, false, ErrAssetMoveInvalidRequest
+	}
+	request.TargetWorkspaceID = targetUUID
+	return request, true, nil
 }
 
 func assetMovePermissionForType(assetType string) (workspace_model.WorkspacePermissionCode, bool) {
@@ -193,33 +316,47 @@ func isWorkflowRuntimeAssetType(agentType string) bool {
 }
 
 func (s *WorkspaceAssetMoveService) requireAssetMovePermission(ctx context.Context, organizationID, workspaceID, accountID string, permission workspace_model.WorkspacePermissionCode) error {
-	if s.organizationService == nil {
+	if s.authorizationService == nil {
 		return ErrAssetMovePermissionDenied
 	}
-	allowed, err := s.organizationService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, permission)
-	if err != nil {
-		return err
-	}
-	if !allowed {
-		return ErrAssetMovePermissionDenied
-	}
-	return nil
+	_, err := s.authorizationService.RequireWorkspacePermission(ctx, interfaces.WorkspaceScopeRequest{
+		OrganizationID:  organizationID,
+		WorkspaceID:     workspaceID,
+		AccountID:       accountID,
+		PermissionCodes: []workspace_model.WorkspacePermissionCode{permission},
+	})
+	return assetMoveAuthorizationError(err)
 }
 
 func (s *WorkspaceAssetMoveService) requireAnyAssetMovePermission(ctx context.Context, organizationID, workspaceID, accountID string, permissions ...workspace_model.WorkspacePermissionCode) (workspace_model.WorkspacePermissionCode, error) {
-	if s.organizationService == nil {
+	if s.authorizationService == nil {
 		return "", ErrAssetMovePermissionDenied
 	}
 	for _, permission := range permissions {
-		allowed, err := s.organizationService.CheckWorkspacePermission(ctx, organizationID, workspaceID, accountID, permission)
-		if err != nil {
-			return "", err
-		}
-		if allowed {
+		_, err := s.authorizationService.RequireWorkspacePermission(ctx, interfaces.WorkspaceScopeRequest{
+			OrganizationID:  organizationID,
+			WorkspaceID:     workspaceID,
+			AccountID:       accountID,
+			PermissionCodes: []workspace_model.WorkspacePermissionCode{permission},
+		})
+		if err == nil {
 			return permission, nil
+		}
+		if !errors.Is(err, shared_service.ErrAuthorizationDenied) {
+			return "", err
 		}
 	}
 	return "", ErrAssetMovePermissionDenied
+}
+
+func assetMoveAuthorizationError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, shared_service.ErrAuthorizationDenied) {
+		return ErrAssetMovePermissionDenied
+	}
+	return err
 }
 
 func (s *WorkspaceAssetMoveService) loadTargetWorkspace(ctx context.Context, db *gorm.DB, organizationID, workspaceID string) (*workspace_model.Workspace, []string, error) {

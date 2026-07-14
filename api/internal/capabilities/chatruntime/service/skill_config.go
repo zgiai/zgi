@@ -85,6 +85,9 @@ func (s *service) effectiveOrganizationSkillIDs(ctx context.Context, organizatio
 	if len(catalog) == 0 {
 		return []string{}, nil
 	}
+	if s.repos == nil || s.repos.SkillConfig == nil {
+		return defaultEnabledSkillIDs(catalog), nil
+	}
 	configs, err := s.repos.SkillConfig.ListByOrganization(ctx, organizationID)
 	if err != nil {
 		return nil, err
@@ -166,8 +169,9 @@ func validateSkillIDsForCaller(input []string, catalog []skills.SkillDiscoveryMe
 	return out, nil
 }
 
-func effectiveAgentSkillIDs(input []string, catalog []skills.SkillDiscoveryMetadata, runConfig *RunConfig) []string {
+func effectiveAgentSkillIDs(input []string, catalog []skills.SkillDiscoveryMetadata, organizationEnabled []string, runConfig *RunConfig) []string {
 	catalogByID := catalogSkillByID(catalog)
+	orgEnabled := stringSet(organizationEnabled)
 	seen := map[string]struct{}{}
 	out := make([]string, 0, len(input)+1)
 	for _, raw := range input {
@@ -177,6 +181,9 @@ func effectiveAgentSkillIDs(input []string, catalog []skills.SkillDiscoveryMetad
 		}
 		item, ok := catalogByID[id]
 		if !ok || !skillSupportsCaller(item, runtimemodel.ConversationCallerAgent) {
+			continue
+		}
+		if _, ok := orgEnabled[id]; !ok {
 			continue
 		}
 		if validateSkillRequiredConfig(item, runConfig) != nil {
@@ -208,6 +215,19 @@ func effectiveAgentSkillIDs(input []string, catalog []skills.SkillDiscoveryMetad
 	}
 	sort.Strings(out)
 	return out
+}
+
+func organizationAllowsSkillID(skillID string, catalog []skills.SkillDiscoveryMetadata, organizationEnabled []string) bool {
+	id := strings.ToLower(strings.TrimSpace(skillID))
+	metadata, ok := catalogSkillByID(catalog)[id]
+	if !ok {
+		return false
+	}
+	if !organizationSkillConfigManagesMetadata(metadata) {
+		return true
+	}
+	_, ok = stringSet(organizationEnabled)[id]
+	return ok
 }
 
 func filterSkillIDsForCaller(input []string, catalog []skills.SkillDiscoveryMetadata, callerType string) []string {
