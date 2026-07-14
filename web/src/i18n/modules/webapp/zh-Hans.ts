@@ -224,6 +224,7 @@ const messages: WebappMessages = {
     notAvailable: '对话服务不可用',
     modelConfig: '模型',
     modelRequired: '请先选择模型',
+    modelUnavailable: '当前模型已不再支持 AI Chat，请重新选择模型。原配置已保留。',
     homeTitle: '有什么可以帮你？',
     homeDescription: '回答问题、整理信息，并协助完成各类任务。',
     inputPlaceholder: '描述你的问题，或告诉工作台助手要完成什么...',

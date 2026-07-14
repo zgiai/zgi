@@ -324,6 +324,7 @@ const messages = {
       moderation: 'Moderation',
       reasoning: 'Reasoning',
       'function-calling': 'Function Calling',
+      agent: 'Agent',
     },
     types: {
       llm: 'LLM',

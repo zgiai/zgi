@@ -136,4 +136,58 @@ const channelDialogSource = fs.readFileSync(
 assert.match(channelDialogSource, /selectionPolicy="catalog"/);
 assert.doesNotMatch(channelDialogSource, /selectionPolicy=\{mode === 'create' \? 'catalog' : 'available'\}/);
 
+const consoleChatSource = fs.readFileSync(
+  new URL('../src/app/console/work/chat/page.tsx', import.meta.url),
+  'utf8'
+);
+assert.match(consoleChatSource, /useCase: 'agent'/);
+assert.doesNotMatch(consoleChatSource, /useCase: 'text-chat'/);
+
+const contextualAIChatSource = fs.readFileSync(
+  new URL('../src/components/aichat/contextual/contextual-ai-chat-dock.tsx', import.meta.url),
+  'utf8'
+);
+assert.match(contextualAIChatSource, /useCase: 'agent'/);
+assert.doesNotMatch(contextualAIChatSource, /useCase: 'text-chat'/);
+
+const agentRuntimeSource = fs.readFileSync(
+  new URL(
+    '../src/components/agents/agent-runtime/hooks/use-agent-runtime-page-model.tsx',
+    import.meta.url
+  ),
+  'utf8'
+);
+assert.match(agentRuntimeSource, /useAvailableModels\(\{ use_case: 'agent' \}\)/);
+assert.doesNotMatch(agentRuntimeSource, /useAvailableModels\(\{ use_case: 'text-chat' \}\)/);
+
+const aiChatToolbarSource = fs.readFileSync(
+  new URL('../src/components/chat/variants/aichat/input-toolbar.tsx', import.meta.url),
+  'utf8'
+);
+assert.match(aiChatToolbarSource, /modelType="agent"/);
+assert.doesNotMatch(aiChatToolbarSource, /modelType="text-chat"/);
+
+const persistedAIChatModelSource = fs.readFileSync(
+  new URL('../src/hooks/model/use-persisted-ai-chat-model-selection.ts', import.meta.url),
+  'utf8'
+);
+assert.doesNotMatch(persistedAIChatModelSource, /model\.model_name === candidate\.model/);
+
+const aiChatSource = fs.readFileSync(
+  new URL('../src/components/chat/variants/aichat/aichat-chat.tsx', import.meta.url),
+  'utf8'
+);
+const regenerateStart = aiChatSource.indexOf('const handleRegenerate');
+const regenerateEnd = aiChatSource.indexOf('\n  const ', regenerateStart + 1);
+assert.notEqual(regenerateStart, -1);
+assert.notEqual(regenerateEnd, -1);
+assert.match(aiChatSource.slice(regenerateStart, regenerateEnd), /await beforeSend\(\)/);
+
+const agentRuntimeModelSectionSource = fs.readFileSync(
+  new URL('../src/components/agents/agent-runtime/sections/model-section.tsx', import.meta.url),
+  'utf8'
+);
+assert.match(agentRuntimeModelSectionSource, /modelType="agent"/);
+assert.doesNotMatch(agentRuntimeModelSectionSource, /modelType="text-chat"/);
+
 console.log('model selector restriction tests passed');

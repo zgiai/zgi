@@ -30,7 +30,7 @@ const (
 	ReasoningModePrompt ReasoningMode = "prompt"
 )
 
-const AppType = "agent"
+const AppType = "workflow"
 
 // PromptMessage represents a message in the conversation for Gateway
 type PromptMessage struct {

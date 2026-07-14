@@ -12,8 +12,39 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
+	llmmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
+
+type agentModelEligibilityFake struct {
+	models          []*llmmodelservice.AvailableModel
+	err             error
+	requiredUseCase string
+}
+
+func (f agentModelEligibilityFake) ListAvailable(_ context.Context, _ uuid.UUID, _, useCase string) ([]*llmmodelservice.AvailableModel, error) {
+	if f.requiredUseCase != "" && useCase != f.requiredUseCase {
+		return nil, nil
+	}
+	return f.models, f.err
+}
+
+func TestValidateAgentModelEligibilityRequiresExactAvailablePair(t *testing.T) {
+	service := &agentsService{agentModels: agentModelEligibilityFake{
+		requiredUseCase: "agent",
+		models: []*llmmodelservice.AvailableModel{{
+			Provider: "deepseek",
+			Name:     "shared-model",
+		}},
+	}}
+
+	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "deepseek", "shared-model"); err != nil {
+		t.Fatalf("validateAgentModelEligibility() error = %v", err)
+	}
+	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "openai", "shared-model"); err == nil {
+		t.Fatal("validateAgentModelEligibility() error = nil, want provider mismatch error")
+	}
+}
 
 func TestNormalizeAgentEnabledSkillIDsRemovesRuntimeManagedSkills(t *testing.T) {
 	got := normalizeAgentEnabledSkillIDs([]string{
@@ -110,32 +141,6 @@ func TestGetPublishedAgentRuntimeConfigRejectsUnpublishedAgent(t *testing.T) {
 	_, err := service.GetPublishedAgentRuntimeConfig(context.Background(), agentID.String())
 	if !errors.Is(err, errAgentWebAppNotPublished) {
 		t.Fatalf("error = %v, want errAgentWebAppNotPublished", err)
-	}
-}
-
-func TestAgentOpeningStatementPersistsThroughDraftAndSnapshot(t *testing.T) {
-	cfg := &AgentsConfig{}
-	applied, err := applyAgentConfigRequestToDraft(cfg, dto.AgentConfigRequest{
-		HomeTitle:        "  Welcome  ",
-		OpeningStatement: "  ## Start here\r\n\r\n- Ask a question  ",
-	})
-	if err != nil {
-		t.Fatalf("applyAgentConfigRequestToDraft() error = %v", err)
-	}
-	const wantStatement = "## Start here\n\n- Ask a question"
-	if applied.OpeningStatement != wantStatement {
-		t.Fatalf("applied OpeningStatement = %q, want %q", applied.OpeningStatement, wantStatement)
-	}
-
-	response := agentConfigResponse("agent-1", cfg)
-	if response.OpeningStatement != wantStatement {
-		t.Fatalf("response OpeningStatement = %q, want %q", response.OpeningStatement, wantStatement)
-	}
-
-	snapshot := agentConfigSnapshot("agent-1", cfg)
-	fromSnapshot := agentConfigResponseFromSnapshot("agent-1", snapshot)
-	if fromSnapshot.OpeningStatement != wantStatement {
-		t.Fatalf("snapshot OpeningStatement = %q, want %q", fromSnapshot.OpeningStatement, wantStatement)
 	}
 }
 

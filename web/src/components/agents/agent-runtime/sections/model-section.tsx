@@ -11,6 +11,7 @@ import type { AgentConfigSection } from '../types';
 interface AgentRuntimeModelSectionProps {
   open: boolean;
   modelValue: ModelSelectorParameterValue;
+  unavailable?: boolean;
   readOnly?: boolean;
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeModelValue: (value: ModelSelectorParameterValue) => void;
@@ -19,6 +20,7 @@ interface AgentRuntimeModelSectionProps {
 export function AgentRuntimeModelSection({
   open,
   modelValue,
+  unavailable = false,
   readOnly = false,
   onToggleSection,
   onChangeModelValue,
@@ -33,12 +35,18 @@ export function AgentRuntimeModelSection({
       onToggle={onToggleSection}
     >
       <ModelSelectorParameter
-        modelType="text-chat"
+        modelType="agent"
         value={modelValue}
         onChange={onChangeModelValue}
+        hasError={unavailable}
         disabled={readOnly}
         className="w-full"
       />
+      {unavailable ? (
+        <div className="mt-2 rounded-md border border-destructive/20 bg-destructive/5 p-2 text-xs text-destructive">
+          {t('toasts.modelUnavailable')}
+        </div>
+      ) : null}
     </RuntimeSection>
   );
 }

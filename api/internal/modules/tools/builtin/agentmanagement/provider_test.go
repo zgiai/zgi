@@ -2482,8 +2482,8 @@ func TestUpdateAgentConfigValidatesModelPairAgainstAvailableModels(t *testing.T)
 	if err != nil {
 		t.Fatalf("Invoke() error = %v", err)
 	}
-	if available.organizationID != organizationID || available.provider != "openai" || available.useCase != "text-chat" {
-		t.Fatalf("available model lookup = org %s provider %q useCase %q, want %s/openai/text-chat", available.organizationID, available.provider, available.useCase, organizationID)
+	if available.organizationID != organizationID || available.provider != "openai" || available.useCase != "agent" {
+		t.Fatalf("available model lookup = org %s provider %q useCase %q, want %s/openai/agent", available.organizationID, available.provider, available.useCase, organizationID)
 	}
 	if service.updateConfigCalls != 1 {
 		t.Fatalf("UpdateAgentConfig calls = %d, want 1", service.updateConfigCalls)
@@ -2535,8 +2535,8 @@ func TestUpdateAgentConfigRejectsUnavailableModelPair(t *testing.T) {
 	if !strings.Contains(err.Error(), "is not available for provider") {
 		t.Fatalf("Invoke() error = %q, want unavailable model pair error", err.Error())
 	}
-	if available.organizationID != organizationID || available.provider != "openai" || available.useCase != "text-chat" {
-		t.Fatalf("available model lookup = org %s provider %q useCase %q, want %s/openai/text-chat", available.organizationID, available.provider, available.useCase, organizationID)
+	if available.organizationID != organizationID || available.provider != "openai" || available.useCase != "agent" {
+		t.Fatalf("available model lookup = org %s provider %q useCase %q, want %s/openai/agent", available.organizationID, available.provider, available.useCase, organizationID)
 	}
 	if service.updateConfigCalls != 0 {
 		t.Fatalf("UpdateAgentConfig calls = %d, want 0", service.updateConfigCalls)
@@ -3104,9 +3104,9 @@ func TestListAvailableModelsToolRanksQueryMatches(t *testing.T) {
 	}
 }
 
-func TestNormalizeAgentModelUseCaseDefaultsToTextChat(t *testing.T) {
-	if got := normalizeAgentModelUseCase(""); got != "text-chat" {
-		t.Fatalf("normalizeAgentModelUseCase(\"\") = %q, want text-chat", got)
+func TestNormalizeAgentModelUseCaseDefaultsToAgent(t *testing.T) {
+	if got := normalizeAgentModelUseCase(""); got != "agent" {
+		t.Fatalf("normalizeAgentModelUseCase(\"\") = %q, want agent", got)
 	}
 	if got := normalizeAgentModelUseCase("function_calling"); got != "function-calling" {
 		t.Fatalf("normalizeAgentModelUseCase(function_calling) = %q, want function-calling", got)
@@ -3314,6 +3314,18 @@ func (s *fakeAgentManagementService) GetAgentDraftRuntimeConfig(_ context.Contex
 	return s.draftConfig, nil
 }
 
+func (s *fakeAgentManagementService) RequireAgentManageAccess(context.Context, string, string) error {
+	return nil
+}
+
+func (s *fakeAgentManagementService) GetAgentRuntimeSurfaces(context.Context, string, string) (*dto.AgentRuntimeSurfaceAuthorizationResponse, error) {
+	return nil, nil
+}
+
+func (s *fakeAgentManagementService) UpdateAgentRuntimeSurfaces(context.Context, string, string, dto.UpdateAgentRuntimeSurfacesRequest) (*dto.AgentRuntimeSurfaceAuthorizationResponse, error) {
+	return nil, nil
+}
+
 func (s *fakeAgentManagementService) UpdateAgentConfig(_ context.Context, _ string, _ string, req dto.AgentConfigRequest) (*dto.AgentConfigResponse, error) {
 	s.updateConfigCalls++
 	s.lastConfigRequest = req
@@ -3418,6 +3430,14 @@ func (s *fakeAgentManagementService) RollbackAgentPublishedVersion(context.Conte
 }
 
 func (s *fakeAgentManagementService) GetPublishedAgentWebAppConfig(context.Context, string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
+	return nil, nil
+}
+
+func (s *fakeAgentManagementService) GetPublishedAgentRuntimeConfig(context.Context, string) (*dto.AgentWebAppRuntimeConfigResponse, error) {
+	return nil, nil
+}
+
+func (s *fakeAgentManagementService) GetWebAppRuntimeCapability(context.Context, string, string, bool) (*dto.AgentWebAppRuntimeCapabilityResponse, error) {
 	return nil, nil
 }
 

@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -152,6 +153,10 @@ func (a *OpenAIAdapter) ChatCompletionStream(ctx context.Context, request *adapt
 
 	resp, err := a.httpClient.DoStreamRequest(ctx, "POST", url, headers, a.buildChatPayload(request))
 	if err != nil {
+		var statusErr *adapter.HTTPStatusError
+		if errors.As(err, &statusErr) {
+			return nil, a.handleError(statusErr.StatusCode, statusErr.Body)
+		}
 		return nil, fmt.Errorf("stream request failed: %w", err)
 	}
 
@@ -747,6 +752,13 @@ func handleOpenAICompatibleError(statusCode int, body []byte) error {
 
 	if err := json.Unmarshal(body, &errResp); err != nil {
 		return adapter.HandleNonJSONError(statusCode, body)
+	}
+	platformErrorCode := errResp.Error.Code
+	if platformErrorCode == "" && errResp.Error.Type == adapter.ErrorCodePlatformChannelUnavailable {
+		platformErrorCode = errResp.Error.Type
+	}
+	if platformErrorCode == adapter.ErrorCodePlatformChannelUnavailable {
+		return adapter.NewAdapterError(platformErrorCode, errResp.Error.Message, statusCode, adapter.ErrPlatformChannelUnavailable)
 	}
 
 	switch statusCode {

@@ -1486,8 +1486,8 @@ func TestExpectedSkillToolArgumentsForAgentManagementListAvailableModels(t *test
 	if !ok {
 		t.Fatalf("use_case schema missing from %#v", properties)
 	}
-	if !schemaEnumContains(useCase, "text-chat") || !schemaEnumContains(useCase, "function-calling") {
-		t.Fatalf("use_case enum = %#v, want text-chat and function-calling", useCase["enum"])
+	if !schemaEnumContains(useCase, "agent") || !schemaEnumContains(useCase, "workflow") || !schemaEnumContains(useCase, "text-chat") || !schemaEnumContains(useCase, "function-calling") {
+		t.Fatalf("use_case enum = %#v, want agent, workflow, text-chat and function-calling", useCase["enum"])
 	}
 }
 

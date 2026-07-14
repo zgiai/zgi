@@ -837,8 +837,8 @@ func publicAichatErrorCodeAndMessage(err error) (int, string, bool) {
 	if code, message, ok := aichatBillingErrorCodeAndMessage(err); ok {
 		return code, message, true
 	}
-	if isProviderInsufficientBalanceError(err) {
-		return response.ErrWorkflowPrivateChannelBalanceInsufficient.Code, response.ErrWorkflowPrivateChannelBalanceInsufficient.Message, true
+	if errors.Is(err, adapter.ErrPlatformChannelUnavailable) {
+		return response.ErrWorkflowPlatformChannelUnavailable.Code, response.ErrWorkflowPlatformChannelUnavailable.Message, true
 	}
 	return 0, "", false
 }
@@ -863,16 +863,6 @@ func aichatBillingErrorCodeAndMessage(err error) (int, string, bool) {
 	}
 }
 
-func isProviderInsufficientBalanceError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, adapter.ErrInsufficientBalance) {
-		return true
-	}
-	return strings.Contains(strings.ToLower(err.Error()), "insufficient balance")
-}
-
 func hydrateMessagesPublicErrors(messages []*runtimemodel.Message) {
 	for _, message := range messages {
 		hydrateMessagePublicError(message)
@@ -890,9 +880,6 @@ func hydrateMessagePublicError(message *runtimemodel.Message) {
 func publicAichatStoredErrorMessage(message string) string {
 	if strings.TrimSpace(message) == "" {
 		return message
-	}
-	if isProviderInsufficientBalanceError(errors.New(message)) {
-		return response.ErrWorkflowPrivateChannelBalanceInsufficient.Message
 	}
 	return message
 }

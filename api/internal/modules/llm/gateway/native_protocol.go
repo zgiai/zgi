@@ -177,7 +177,7 @@ func (s *llmGatewayServiceImpl) runNativeNonStream(
 	requestID := uuid.New().String()
 	var lastErr error
 	for attemptIdx, providerSelection := range providerSelections {
-		quote, err := s.quoteTokenPricing(ctx, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
+		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to calculate credits: %w", err)
 			continue
@@ -322,7 +322,7 @@ func (s *llmGatewayServiceImpl) runNativeStream(
 	requestID := uuid.New().String()
 	var lastErr error
 	for attemptIdx, providerSelection := range providerSelections {
-		quote, err := s.quoteTokenPricing(ctx, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
+		quote, err := s.quoteTokenPricingForSelection(ctx, providerSelection, pricingModelRefFromSelection(providerSelection), promptTokens, completionTokens)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to calculate credits: %w", err)
 			continue

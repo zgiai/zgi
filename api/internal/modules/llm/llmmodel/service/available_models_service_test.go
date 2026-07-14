@@ -13,6 +13,7 @@ import (
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	llmmodeldto "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/dto"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	"github.com/zgiai/zgi/api/internal/modules/llm/shared/types"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"gorm.io/gorm"
@@ -22,6 +23,7 @@ type availableModelRepoFake struct {
 	models                []*llmmodel.LLMModel
 	listAvailableByNames  int
 	listAvailableFiltered int
+	lastUseCase           string
 }
 
 func (f *availableModelRepoFake) Create(context.Context, *llmmodel.LLMModel) error {
@@ -44,12 +46,14 @@ func (f *availableModelRepoFake) GetByName(context.Context, string) (*llmmodel.L
 func (f *availableModelRepoFake) ListByNames(context.Context, []string) ([]*llmmodel.LLMModel, error) {
 	return nil, errors.New("not implemented")
 }
-func (f *availableModelRepoFake) ListAvailableByNames(context.Context, []string, string, string) ([]*llmmodel.LLMModel, error) {
+func (f *availableModelRepoFake) ListAvailableByNames(_ context.Context, _ []string, _, useCase string) ([]*llmmodel.LLMModel, error) {
 	f.listAvailableByNames++
+	f.lastUseCase = useCase
 	return f.models, nil
 }
-func (f *availableModelRepoFake) ListAvailableFiltered(context.Context, string, string) ([]*llmmodel.LLMModel, error) {
+func (f *availableModelRepoFake) ListAvailableFiltered(_ context.Context, _, useCase string) ([]*llmmodel.LLMModel, error) {
 	f.listAvailableFiltered++
+	f.lastUseCase = useCase
 	return f.models, nil
 }
 func (f *availableModelRepoFake) GetByProviderAndName(context.Context, string, string) (*llmmodel.LLMModel, error) {
@@ -120,12 +124,14 @@ func (f *availableConfigRepoFake) BatchCreate(context.Context, []*llmmodel.Model
 
 type availableCustomRepoFake struct {
 	model     *llmmodel.CustomModel
+	models    []*llmmodel.CustomModel
 	err       error
 	deleted   bool
 	listCalls int
 }
 
-func (f *availableCustomRepoFake) Create(context.Context, *llmmodel.CustomModel) error {
+func (f *availableCustomRepoFake) Create(_ context.Context, customModel *llmmodel.CustomModel) error {
+	f.model = customModel
 	return f.err
 }
 func (f *availableCustomRepoFake) GetByID(context.Context, uuid.UUID, uuid.UUID) (*llmmodel.CustomModel, error) {
@@ -145,7 +151,7 @@ func (f *availableCustomRepoFake) ListByNames(context.Context, uuid.UUID, []stri
 }
 func (f *availableCustomRepoFake) List(context.Context, uuid.UUID, *uuid.UUID, string, string, *bool, int, int) ([]*llmmodel.CustomModel, int64, error) {
 	f.listCalls++
-	return nil, 0, f.err
+	return f.models, int64(len(f.models)), f.err
 }
 func (f *availableCustomRepoFake) Update(context.Context, *llmmodel.CustomModel) error {
 	return f.err
@@ -259,6 +265,159 @@ func TestAvailableModels_ListAvailableDoesNotBootstrapOfficialRoute(t *testing.T
 	}
 }
 
+func TestAvailableModels_AgentRequiresCatalogTagOnPlatformRoute(t *testing.T) {
+	organizationID := uuid.New()
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{
+		{
+			ID:        uuid.New(),
+			Provider:  "openai",
+			Model:     "gpt-agent",
+			ModelName: "GPT Agent",
+			IsActive:  true,
+			UseCases:  types.StringArray{"text-chat", "function-calling", "agent"},
+		},
+		{
+			ID:        uuid.New(),
+			Provider:  "openai",
+			Model:     "gpt-workflow",
+			ModelName: "GPT Workflow",
+			IsActive:  true,
+			UseCases:  types.StringArray{"text-chat"},
+		},
+	}}
+	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
+		Type:       shared.RouteTypeZGICloud,
+		IsOfficial: true,
+		Models:     []string{"gpt-agent", "gpt-workflow"},
+	}}}
+	svc := NewAvailableModelsService(modelRepo, &availableConfigRepoFake{}, &availableCustomRepoFake{}, routeRepo)
+
+	models, err := svc.ListAvailable(context.Background(), organizationID, "", "agent")
+	if err != nil {
+		t.Fatalf("ListAvailable returned error: %v", err)
+	}
+	if len(models) != 1 || models[0].Name != "gpt-agent" {
+		t.Fatalf("agent models = %#v, want only gpt-agent", models)
+	}
+}
+
+func TestAvailableModels_MatchesRouteByCatalogProviderAndExactModelName(t *testing.T) {
+	organizationID := uuid.New()
+	modelName := "shared-model"
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{
+		{ID: uuid.New(), Provider: "openai", Model: modelName, ModelName: "OpenAI Shared", IsActive: true, UseCases: types.StringArray{"text-chat"}},
+		{ID: uuid.New(), Provider: "deepseek", Model: modelName, ModelName: "DeepSeek Shared", IsActive: true, UseCases: types.StringArray{"text-chat"}},
+	}}
+	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
+		Type:            shared.RouteTypePrivate,
+		ChannelProvider: "deepseek",
+		Models:          []string{modelName},
+	}}}
+	svc := NewAvailableModelsService(modelRepo, &availableConfigRepoFake{}, &availableCustomRepoFake{}, routeRepo)
+
+	models, err := svc.ListAvailable(context.Background(), organizationID, "", "text-chat")
+	if err != nil {
+		t.Fatalf("ListAvailable returned error: %v", err)
+	}
+	if len(models) != 1 || models[0].Provider != "deepseek" {
+		t.Fatalf("available models = %#v, want only deepseek/shared-model", models)
+	}
+}
+
+func TestAvailableModels_AgentExcludesUntaggedPrivateModel(t *testing.T) {
+	organizationID := uuid.New()
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
+		ID:        uuid.New(),
+		Provider:  "custom",
+		Model:     "private-model",
+		ModelName: "Private Model",
+		IsActive:  true,
+		UseCases:  types.StringArray{"text-chat"},
+	}}}
+	route := &channelmodel.LLMRoute{
+		Type:            shared.RouteTypePrivate,
+		ChannelProvider: "openai-compatible",
+		Models:          []string{"private-model"},
+	}
+	svc := NewAvailableModelsService(
+		modelRepo,
+		&availableConfigRepoFake{},
+		&availableCustomRepoFake{},
+		&availableRouteRepoFake{routes: []*channelmodel.LLMRoute{route}},
+	)
+
+	models, err := svc.ListAvailable(context.Background(), organizationID, "", "agent")
+	if err != nil {
+		t.Fatalf("ListAvailable returned error: %v", err)
+	}
+	if len(models) != 0 {
+		t.Fatalf("agent models = %#v, want none", models)
+	}
+}
+
+func TestAvailableModels_AgentIncludesTaggedPrivateModelWithoutRouteVerification(t *testing.T) {
+	organizationID := uuid.New()
+	customRepo := &availableCustomRepoFake{models: []*llmmodel.CustomModel{{
+		ID:          uuid.New(),
+		Provider:    "custom-openai",
+		Name:        "private-model",
+		DisplayName: "Private Model",
+		IsActive:    true,
+		UseCases:    types.StringArray{"text-chat", "function-calling", "agent"},
+	}}}
+	route := &channelmodel.LLMRoute{
+		Type:            shared.RouteTypePrivate,
+		ChannelProvider: "openai-compatible",
+		Models:          []string{"private-model"},
+	}
+	svc := NewAvailableModelsService(
+		&availableModelRepoFake{},
+		&availableConfigRepoFake{},
+		customRepo,
+		&availableRouteRepoFake{routes: []*channelmodel.LLMRoute{route}},
+	)
+
+	models, err := svc.ListAvailable(context.Background(), organizationID, "", "agent")
+	if err != nil {
+		t.Fatalf("ListAvailable returned error: %v", err)
+	}
+	if len(models) != 1 || models[0].Name != "private-model" {
+		t.Fatalf("agent models = %#v, want private-model", models)
+	}
+}
+
+func TestAvailableModels_WorkflowUsesTextChatModelsWithoutProjection(t *testing.T) {
+	organizationID := uuid.New()
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{{
+		ID:        uuid.New(),
+		Provider:  "custom",
+		Model:     "private-model",
+		ModelName: "Private Model",
+		IsActive:  true,
+		UseCases:  types.StringArray{"text-chat"},
+	}}}
+	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
+		Type:       shared.RouteTypeZGICloud,
+		IsOfficial: true,
+		Models:     []string{"private-model"},
+	}}}
+	svc := NewAvailableModelsService(modelRepo, &availableConfigRepoFake{}, &availableCustomRepoFake{}, routeRepo)
+
+	models, err := svc.ListAvailable(context.Background(), organizationID, "", "text-chat")
+	if err != nil {
+		t.Fatalf("ListAvailable returned error: %v", err)
+	}
+	if len(models) != 1 || models[0].Name != "private-model" {
+		t.Fatalf("text-chat models = %#v, want private-model", models)
+	}
+	if containsUseCase(types.StringArray(models[0].UseCases), "workflow") {
+		t.Fatalf("private model use_cases = %v, want no workflow projection", models[0].UseCases)
+	}
+	if modelRepo.lastUseCase != "text-chat" {
+		t.Fatalf("repository use_case = %q, want text-chat", modelRepo.lastUseCase)
+	}
+}
+
 func TestAvailableModels_ReturnsCustomModelLoadError(t *testing.T) {
 	wantErr := errors.New("custom repo down")
 	svc := NewAvailableModelsService(
@@ -315,7 +474,8 @@ func TestAvailableModels_ListAvailableCachesResponseAndInvalidatesTenant(t *test
 	configRepo := &availableConfigRepoFake{}
 	customRepo := &availableCustomRepoFake{}
 	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
-		Models: []string{"gpt-test"},
+		ChannelProvider: "openai",
+		Models:          []string{"gpt-test"},
 	}}}
 	svc := NewAvailableModelsService(modelRepo, configRepo, customRepo, routeRepo)
 
@@ -380,7 +540,8 @@ func TestAvailableModels_ListAvailableJSONCachesEncodedResponse(t *testing.T) {
 	configRepo := &availableConfigRepoFake{}
 	customRepo := &availableCustomRepoFake{}
 	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{{
-		Models: []string{"gpt-test"},
+		ChannelProvider: "openai",
+		Models:          []string{"gpt-test"},
 	}}}
 	svc := NewAvailableModelsService(modelRepo, configRepo, customRepo, routeRepo)
 	jsonSvc, ok := svc.(interface {
@@ -520,7 +681,7 @@ func TestCreateCustomInvalidatesAvailableModelsCache(t *testing.T) {
 		availableModels: availableSvc,
 	}
 
-	_, err := svc.CreateCustom(context.Background(), organizationID, &llmmodeldto.CreateCustomModelRequest{
+	created, err := svc.CreateCustom(context.Background(), organizationID, &llmmodeldto.CreateCustomModelRequest{
 		Provider:    "custom-openai",
 		ProviderID:  &providerID,
 		Name:        "custom-model",
@@ -530,8 +691,50 @@ func TestCreateCustomInvalidatesAvailableModelsCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateCustom returned error: %v", err)
 	}
+	if containsUseCase(types.StringArray(created.UseCases), "workflow") {
+		t.Fatalf("private model use_cases = %v, want no workflow projection", created.UseCases)
+	}
 	if len(availableSvc.invalidated) != 1 || availableSvc.invalidated[0] != organizationID {
 		t.Fatalf("invalidated tenants = %v, want [%s]", availableSvc.invalidated, organizationID)
+	}
+}
+
+func TestCreateCustomAgentRejectsIncompleteCapabilities(t *testing.T) {
+	providerID := uuid.New()
+	svc := &modelService{customRepo: &availableCustomRepoFake{}}
+
+	_, err := svc.CreateCustom(context.Background(), uuid.New(), &llmmodeldto.CreateCustomModelRequest{
+		Provider:    "custom-openai",
+		ProviderID:  &providerID,
+		Name:        "custom-agent",
+		DisplayName: "Custom Agent",
+		UseCases:    []string{"text-chat", "function-calling", "agent"},
+		Endpoints:   &llmmodel.ModelEndpoints{ChatCompletions: true},
+		Features:    &llmmodel.ModelFeatures{Streaming: true, SystemPrompt: true},
+	})
+	if err == nil || !strings.Contains(err.Error(), "agent") {
+		t.Fatalf("CreateCustom error = %v, want agent capability error", err)
+	}
+}
+
+func TestCreateCustomAgentAcceptsCompleteCapabilities(t *testing.T) {
+	providerID := uuid.New()
+	svc := &modelService{customRepo: &availableCustomRepoFake{}}
+
+	created, err := svc.CreateCustom(context.Background(), uuid.New(), &llmmodeldto.CreateCustomModelRequest{
+		Provider:    "custom-openai",
+		ProviderID:  &providerID,
+		Name:        "custom-agent",
+		DisplayName: "Custom Agent",
+		UseCases:    []string{"text-chat", "function-calling", "agent"},
+		Endpoints:   &llmmodel.ModelEndpoints{ChatCompletions: true},
+		Features:    &llmmodel.ModelFeatures{Streaming: true, FunctionCalling: true, SystemPrompt: true},
+	})
+	if err != nil {
+		t.Fatalf("CreateCustom returned error: %v", err)
+	}
+	if !containsUseCase(types.StringArray(created.UseCases), "agent") {
+		t.Fatalf("created use_cases = %v, want agent", created.UseCases)
 	}
 }
 

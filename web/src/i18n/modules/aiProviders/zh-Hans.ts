@@ -311,6 +311,7 @@ const messages: AiProvidersMessages = {
       moderation: '内容审核',
       reasoning: '深度推理',
       'function-calling': '函数调用',
+      agent: '智能体',
     },
     types: {
       llm: '大语言模型',

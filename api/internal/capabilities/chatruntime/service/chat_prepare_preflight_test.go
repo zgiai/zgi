@@ -91,65 +91,41 @@ func TestMarkUserMemoryPreflightErrorPreservesContext(t *testing.T) {
 	}
 }
 
-func TestApplyModelCapabilitiesAssumesFunctionCallingWhenSpecUnknown(t *testing.T) {
+func TestApplyModelCapabilitiesRejectsUnknownModelSpec(t *testing.T) {
 	svc := &service{modelSpecResolver: modelSpecResolverFunc(func(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
 		return ModelSpec{}, false, nil
 	})}
 	parts := &chatRequestParts{Provider: "private", ModelName: "new-model"}
 
-	if err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, parts); err != nil {
-		t.Fatalf("applyModelCapabilities() error = %v", err)
-	}
-	if !parts.FunctionCallingKnown || !parts.ModelSupportsFunctionCalling || !parts.FunctionCallingAssumed {
-		t.Fatalf("function calling flags = known %v supported %v assumed %v", parts.FunctionCallingKnown, parts.ModelSupportsFunctionCalling, parts.FunctionCallingAssumed)
-	}
-	if parts.ModelCapabilityStatus != "model_spec_unknown" {
-		t.Fatalf("ModelCapabilityStatus = %q", parts.ModelCapabilityStatus)
-	}
-	applyProtocolToolsPolicy(Caller{Type: runtimemodel.ConversationCallerAgent}, parts)
-	if parts.ProtocolToolsEnabled {
-		t.Fatal("ProtocolToolsEnabled = true for assumed function-calling capability")
-	}
-	metadata := streamingMessageMetadata(parts)
-	capabilities := mapFromOperationContext(metadata["model_capabilities"])
-	if capabilities["function_calling_assumed"] != true || capabilities["status"] != "model_spec_unknown" {
-		t.Fatalf("model_capabilities = %#v", capabilities)
+	if err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, parts); err == nil {
+		t.Fatal("applyModelCapabilities() error = nil, want unknown model error")
 	}
 }
 
-func TestApplyModelCapabilitiesKeepsKnownUnsupportedModelDisabled(t *testing.T) {
+func TestApplyModelCapabilitiesRejectsKnownUnsupportedModel(t *testing.T) {
 	svc := &service{modelSpecResolver: modelSpecResolverFunc(func(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
 		return ModelSpec{SupportsToolCall: false}, true, nil
 	})}
 	parts := &chatRequestParts{Provider: "private", ModelName: "legacy-model"}
 
-	if err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, parts); err != nil {
-		t.Fatalf("applyModelCapabilities() error = %v", err)
-	}
-	if !parts.FunctionCallingKnown || parts.ModelSupportsFunctionCalling || parts.FunctionCallingAssumed {
-		t.Fatalf("function calling flags = known %v supported %v assumed %v", parts.FunctionCallingKnown, parts.ModelSupportsFunctionCalling, parts.FunctionCallingAssumed)
-	}
-	if parts.ModelCapabilityStatus != "resolved" {
-		t.Fatalf("ModelCapabilityStatus = %q", parts.ModelCapabilityStatus)
+	if err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, parts); err == nil {
+		t.Fatal("applyModelCapabilities() error = nil, want function-calling error")
 	}
 }
 
-func TestApplyModelCapabilitiesAssumesFunctionCallingWhenResolverFails(t *testing.T) {
+func TestApplyModelCapabilitiesRejectsResolverFailure(t *testing.T) {
 	svc := &service{modelSpecResolver: modelSpecResolverFunc(func(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
-		return ModelSpec{}, false, errors.New("metadata store unavailable")
+		return ModelSpec{}, false, errModelSpecResolver
 	})}
 	parts := &chatRequestParts{Provider: "private", ModelName: "new-model"}
 
-	if err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, parts); err != nil {
-		t.Fatalf("applyModelCapabilities() error = %v", err)
-	}
-	if !parts.FunctionCallingKnown || !parts.ModelSupportsFunctionCalling || !parts.FunctionCallingAssumed {
-		t.Fatalf("function calling flags = known %v supported %v assumed %v", parts.FunctionCallingKnown, parts.ModelSupportsFunctionCalling, parts.FunctionCallingAssumed)
-	}
-	if parts.ModelCapabilityStatus != "resolver_error" || parts.ModelCapabilityError != "metadata store unavailable" {
-		t.Fatalf("model capability status/error = %q/%q", parts.ModelCapabilityStatus, parts.ModelCapabilityError)
+	err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, parts)
+	if err == nil || !errors.Is(err, errModelSpecResolver) {
+		t.Fatalf("applyModelCapabilities() error = %v, want resolver error", err)
 	}
 }
+
+var errModelSpecResolver = errors.New("metadata store unavailable")
 
 type modelSpecResolverFunc func(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error)
 

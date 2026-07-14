@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	llmcache "github.com/zgiai/zgi/api/internal/modules/llm/cache"
 	"github.com/zgiai/zgi/api/internal/modules/llm/gateway/types"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	"github.com/zgiai/zgi/api/internal/modules/llm/modelmeta"
@@ -332,6 +333,7 @@ func (c *ConfigCache) InvalidateModelCache(ctx context.Context) {
 	if c == nil || c.redis == nil {
 		return
 	}
+	llmcache.InvalidateGlobal(ctx)
 
 	var cursor uint64
 	match := c.prefix + "model:*"
