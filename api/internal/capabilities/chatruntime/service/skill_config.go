@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"github.com/zgiai/zgi/api/pkg/logger"
@@ -82,13 +83,26 @@ func (s *service) customSkillDiscoveryMetadata(ctx context.Context, organization
 }
 
 func (s *service) effectiveOrganizationSkillIDs(ctx context.Context, organizationID uuid.UUID, catalog []skills.SkillDiscoveryMetadata) ([]string, error) {
+	var skillConfigRepository repository.OrganizationSkillConfigRepository
+	if s.repos != nil {
+		skillConfigRepository = s.repos.SkillConfig
+	}
+	return effectiveOrganizationSkillIDsFromRepository(ctx, organizationID, catalog, skillConfigRepository)
+}
+
+func effectiveOrganizationSkillIDsFromRepository(
+	ctx context.Context,
+	organizationID uuid.UUID,
+	catalog []skills.SkillDiscoveryMetadata,
+	skillConfigRepository repository.OrganizationSkillConfigRepository,
+) ([]string, error) {
 	if len(catalog) == 0 {
 		return []string{}, nil
 	}
-	if s.repos == nil || s.repos.SkillConfig == nil {
+	if skillConfigRepository == nil {
 		return defaultEnabledSkillIDs(catalog), nil
 	}
-	configs, err := s.repos.SkillConfig.ListByOrganization(ctx, organizationID)
+	configs, err := skillConfigRepository.ListByOrganization(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
