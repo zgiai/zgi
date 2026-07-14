@@ -63,6 +63,30 @@ func TestRuntimeRunOwnershipPreventsOldCompletion(t *testing.T) {
 	}
 }
 
+func TestRuntimeRunOwnershipPreventsOldError(t *testing.T) {
+	db, mock := newRuntimeLeaseMockDB(t)
+	repo := NewMessageRepository(db)
+	messageID := uuid.New()
+	staleRunID := uuid.New()
+	currentRunID := uuid.New()
+
+	mock.ExpectExec(`(?s)UPDATE "chat_runtime_messages" SET .* WHERE .*id = .*status IN.*runtime_run_id = .*`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	err := repo.UpdateError(WithRuntimeRunID(context.Background(), staleRunID), messageID, "stale failure")
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("stale error update = %v, want record not found", err)
+	}
+
+	mock.ExpectExec(`(?s)UPDATE "chat_runtime_messages" SET .* WHERE .*id = .*status IN.*runtime_run_id = .*`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	if err := repo.UpdateError(WithRuntimeRunID(context.Background(), currentRunID), messageID, "current failure"); err != nil {
+		t.Fatalf("current error update: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
 func newRuntimeLeaseMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 	t.Helper()
 	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))

@@ -1282,7 +1282,7 @@ func (r *messageRepository) UpdateStoppedAnswer(ctx context.Context, id uuid.UUI
 	}
 	query := r.db.WithContext(ctx).Model(&runtimemodel.Message{}).
 		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, append(mutableMessageStatuses(), runtimemodel.MessageStatusStopped))
-	if runID, ok := runtimeRunIDFromContext(ctx); ok {
+	if runID, ok := RuntimeRunIDFromContext(ctx); ok {
 		query = query.Where(
 			"runtime_run_id = ? OR (status = ? AND runtime_run_id IS NULL)",
 			runID,

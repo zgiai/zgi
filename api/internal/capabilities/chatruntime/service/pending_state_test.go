@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/repository"
+	"github.com/zgiai/zgi/api/internal/capabilities/chatruntime/skillloop"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -157,6 +159,93 @@ func TestPersistPendingStateRollsBackWhenConversationFinishFails(t *testing.T) {
 		"href":        "/console/files",
 	}, nil)
 
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestContinuationPendingOwnershipLossDoesNotEmitTerminalEvent(t *testing.T) {
+	db, mock := newPendingStateRepositoryMockDB(t)
+	svc := &service{repos: repository.NewRepositories(db)}
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	runID := uuid.New()
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: conversationID},
+		Message: &runtimemodel.Message{
+			ID:       messageID,
+			Query:    "continue",
+			Metadata: map[string]interface{}{},
+		},
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)UPDATE "chat_runtime_messages" SET .* WHERE .*id = .*status IN.*runtime_run_id = .*`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+
+	emitted := 0
+	result, err := svc.finishUserInputContinuationPendingOrError(
+		repository.WithRuntimeRunID(context.Background(), runID),
+		prepared,
+		"",
+		nil,
+		&skillloop.ClientActionPendingError{Payload: map[string]interface{}{
+			"action_id":   "route:/console/files",
+			"action_type": "route_navigation",
+		}},
+		func(StreamEvent) error {
+			emitted++
+			return nil
+		},
+	)
+	if result != nil {
+		t.Fatalf("result = %#v, want nil", result)
+	}
+	if !IsFinalizedStreamError(err) || !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("error = %v, want finalized record not found", err)
+	}
+	if emitted != 0 {
+		t.Fatalf("emitted events = %d, want 0", emitted)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestFinalizePreparedErrorOwnershipLossDoesNotClearOrEmit(t *testing.T) {
+	db, mock := newPendingStateRepositoryMockDB(t)
+	svc := &service{repos: repository.NewRepositories(db)}
+	conversationID := uuid.New()
+	messageID := uuid.New()
+	runID := uuid.New()
+	prepared := &PreparedChat{
+		Conversation: &runtimemodel.Conversation{ID: conversationID},
+		Message:      &runtimemodel.Message{ID: messageID},
+		Continuation: true,
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)UPDATE "chat_runtime_messages" SET .* WHERE .*id = .*status IN.*runtime_run_id = .*`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+
+	emitted := 0
+	err := svc.finalizePreparedError(
+		repository.WithRuntimeRunID(context.Background(), runID),
+		prepared,
+		errors.New("model failed"),
+		func(StreamEvent) error {
+			emitted++
+			return nil
+		},
+	)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("finalize error = %v, want record not found", err)
+	}
+	if emitted != 0 {
+		t.Fatalf("emitted events = %d, want 0", emitted)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
 	}

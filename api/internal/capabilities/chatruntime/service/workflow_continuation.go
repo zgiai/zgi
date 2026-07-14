@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -239,27 +240,38 @@ func (s *service) SummarizeWorkflowApprovalContinuation(ctx context.Context, sco
 	}
 	defer execution.Finish()
 	runCtx := execution.Context
-	if s.streams.IsStopped(message.ID) {
-		_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, "", nil)
+	persistCtx := execution.PersistContext
+	if s.streams.IsStopped(message.ID, execution.runID) {
+		_ = s.persistStoppedAnswer(persistCtx, prepared, "", nil)
 		return nil, ErrMessageStopped
 	}
 	stream, err := s.openChatStream(runCtx, prepared)
 	if err != nil {
-		return nil, err
+		if finalizeErr := s.finalizePreparedError(persistCtx, prepared, err, onEvent); finalizeErr != nil {
+			return nil, finalizedRuntimePersistenceError(finalizeErr)
+		}
+		return nil, newFinalizedStreamError(err)
 	}
 	answer, usage, err := s.collectStreamAnswerWithEvents(runCtx, prepared, stream, onEvent, nil)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, ErrMessageStopped) {
+			_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
+			return nil, err
+		}
+		if finalizeErr := s.finalizePreparedError(persistCtx, prepared, err, onEvent); finalizeErr != nil {
+			return nil, finalizedRuntimePersistenceError(finalizeErr)
+		}
+		return nil, newFinalizedStreamError(err)
 	}
-	if s.streams.IsStopped(message.ID) {
-		_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, answer, usage)
+	if s.streams.IsStopped(message.ID, execution.runID) {
+		_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
 		return nil, ErrMessageStopped
 	}
 	metadata = preparedResultMetadata(continuation.Metadata, usage)
 	continuation.Metadata = metadata
-	metadata, err = s.CompleteWorkflowApprovalContinuation(context.WithoutCancel(ctx), continuation, answer, workflowContinuationStatusCompleted)
+	metadata, err = s.CompleteWorkflowApprovalContinuation(persistCtx, continuation, answer, workflowContinuationStatusCompleted)
 	if err != nil {
-		return nil, err
+		return nil, finalizedRuntimePersistenceError(err)
 	}
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage}, nil
 }

@@ -649,7 +649,7 @@ func (s *service) StopMessage(ctx context.Context, scope Scope, id uuid.UUID) (*
 		return message, nil
 	}
 
-	s.streams.Stop(id)
+	s.streams.StopCurrent(id)
 	metadata := workflowContinuationMetadataWithoutUserInputRequest(message.Metadata)
 	if continuation := workflowApprovalContinuationFromMetadata(metadata); continuation.WorkflowRunID != "" {
 		metadata = mergeWorkflowRunMetadata(metadata, "workflow_stopped", map[string]interface{}{

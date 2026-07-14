@@ -21,13 +21,14 @@ func WithRuntimeRunID(ctx context.Context, runID uuid.UUID) context.Context {
 	return context.WithValue(ctx, runtimeRunIDContextKey{}, runID)
 }
 
-func runtimeRunIDFromContext(ctx context.Context) (uuid.UUID, bool) {
+// RuntimeRunIDFromContext returns the runtime lease owner attached to ctx.
+func RuntimeRunIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 	runID, ok := ctx.Value(runtimeRunIDContextKey{}).(uuid.UUID)
 	return runID, ok && runID != uuid.Nil
 }
 
 func scopeRuntimeRunOwnership(ctx context.Context, query *gorm.DB) *gorm.DB {
-	runID, ok := runtimeRunIDFromContext(ctx)
+	runID, ok := RuntimeRunIDFromContext(ctx)
 	if !ok {
 		return query
 	}

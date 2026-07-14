@@ -13,6 +13,7 @@ import (
 type runtimeExecution struct {
 	Context        context.Context
 	PersistContext context.Context
+	runID          uuid.UUID
 	finish         func()
 }
 
@@ -35,14 +36,14 @@ func (s *service) beginRuntimeExecution(ctx context.Context, messageID uuid.UUID
 		}
 	}
 
-	s.streams.Begin(messageID, cancel)
+	s.streams.Begin(messageID, runID, cancel)
 	done := make(chan struct{})
 	var finishOnce sync.Once
 	finish := func() {
 		finishOnce.Do(func() {
 			close(done)
 			cancel()
-			s.streams.Finish(messageID)
+			s.streams.Finish(messageID, runID)
 			if s.repos != nil && s.repos.RuntimeLease != nil {
 				if err := s.repos.RuntimeLease.Release(persistCtx, messageID, runID); err != nil {
 					logger.WarnContext(persistCtx, "failed to release chat runtime lease",
@@ -62,12 +63,20 @@ func (s *service) beginRuntimeExecution(ctx context.Context, messageID uuid.UUID
 	return &runtimeExecution{
 		Context:        runCtx,
 		PersistContext: persistCtx,
+		runID:          runID,
 		finish:         finish,
 	}, nil
 }
 
 func (s *service) renewRuntimeLease(ctx context.Context, done <-chan struct{}, messageID, runID uuid.UUID, lastSuccess time.Time) {
-	ticker := time.NewTicker(runtimeLeaseHeartbeat)
+	s.renewRuntimeLeaseAtInterval(ctx, done, messageID, runID, lastSuccess, runtimeLeaseHeartbeat)
+}
+
+func (s *service) renewRuntimeLeaseAtInterval(ctx context.Context, done <-chan struct{}, messageID, runID uuid.UUID, lastSuccess time.Time, interval time.Duration) {
+	if interval <= 0 {
+		interval = runtimeLeaseHeartbeat
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -88,7 +97,7 @@ func (s *service) renewRuntimeLease(ctx context.Context, done <-chan struct{}, m
 					"message_id", messageID.String(),
 					"runtime_run_id", runID.String(),
 				)
-				s.streams.Stop(messageID)
+				s.streams.Stop(messageID, runID)
 				return
 			}
 			logger.WarnContext(ctx, "failed to renew chat runtime lease",
@@ -98,7 +107,7 @@ func (s *service) renewRuntimeLease(ctx context.Context, done <-chan struct{}, m
 				err,
 			)
 			if now.Sub(lastSuccess) >= runtimeLeaseFailureTTL {
-				cancel := s.streams.CancelFunc(messageID)
+				cancel := s.streams.CancelFunc(messageID, runID)
 				if cancel != nil {
 					cancel()
 				}

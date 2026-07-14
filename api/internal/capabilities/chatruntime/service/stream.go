@@ -33,7 +33,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 	defer execution.Finish()
 	persistCtx := execution.PersistContext
 	runCtx := execution.Context
-	if s.streams.IsStopped(prepared.Message.ID) {
+	if s.streams.IsStopped(prepared.Message.ID, execution.runID) {
 		_ = s.persistStoppedAnswer(persistCtx, prepared, "", nil)
 		return nil, ErrMessageStopped
 	}
@@ -114,14 +114,16 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 			s.finalizePreparedError(persistCtx, prepared, err, eventCallback)
 			return nil, newFinalizedStreamError(err)
 		}
-		if s.streams.IsStopped(prepared.Message.ID) {
+		if s.streams.IsStopped(prepared.Message.ID, execution.runID) {
 			_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
 			return nil, ErrMessageStopped
 		}
 		metadata := preparedResultMetadata(prepared.Message.Metadata, usage)
 		if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
-			_ = s.clearPreparedRuntime(persistCtx, prepared)
-			return nil, err
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				_ = s.clearPreparedRuntime(persistCtx, prepared)
+			}
+			return nil, finalizedRuntimePersistenceError(err)
 		}
 		eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayload(prepared, metadata))
 		return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, MessageEndEventID: eventID}, nil
@@ -178,14 +180,16 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		Response:   &adapter.Message{Role: "assistant", Content: answer},
 		Usage:      callUsage,
 	})
-	if s.streams.IsStopped(prepared.Message.ID) {
+	if s.streams.IsStopped(prepared.Message.ID, execution.runID) {
 		_ = s.persistStoppedAnswer(persistCtx, prepared, answer, usage)
 		return nil, ErrMessageStopped
 	}
 	metadata := preparedResultMetadata(prepared.Message.Metadata, usage)
 	if err := s.completePreparedChat(persistCtx, prepared, answer, metadata); err != nil {
-		_ = s.clearPreparedRuntime(persistCtx, prepared)
-		return nil, err
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			_ = s.clearPreparedRuntime(persistCtx, prepared)
+		}
+		return nil, finalizedRuntimePersistenceError(err)
 	}
 	eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayload(prepared, metadata))
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, MessageEndEventID: eventID}, nil
@@ -344,6 +348,12 @@ func (s *service) openChatStream(ctx context.Context, prepared *PreparedChat) (<
 	}
 	resultCh := make(chan openResult, 1)
 	callCtx, cancel := context.WithCancel(ctx)
+	cancelOnReturn := true
+	defer func() {
+		if cancelOnReturn {
+			cancel()
+		}
+	}()
 	go func() {
 		stream, err := s.llmClient.AppChatStream(callCtx, newBillingAppContext(prepared), prepared.LLMRequest)
 		resultCh <- openResult{stream: stream, err: err}
@@ -353,16 +363,17 @@ func (s *service) openChatStream(ctx context.Context, prepared *PreparedChat) (<
 	select {
 	case result := <-resultCh:
 		if result.err != nil {
-			cancel()
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
 			_ = s.repos.Message.UpdateError(ctx, prepared.Message.ID, result.err.Error())
 			return nil, result.err
 		}
+		// The returned stream keeps using callCtx. Its parent runtime execution
+		// owns cancellation after this function hands the stream to the caller.
+		cancelOnReturn = false
 		return result.stream, nil
 	case <-timer.C:
-		cancel()
 		logger.WarnContext(ctx, "chat runtime model idle timeout",
 			"message_id", prepared.Message.ID.String(),
 			"provider", prepared.parts.Provider,
@@ -371,7 +382,6 @@ func (s *service) openChatStream(ctx context.Context, prepared *PreparedChat) (<
 		)
 		return nil, ErrModelIdleTimeout
 	case <-ctx.Done():
-		cancel()
 		return nil, ctx.Err()
 	}
 }
@@ -501,7 +511,7 @@ func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *P
 			if !ok {
 				answer := builder.String()
 				s.flushStreamMessageEventBuffer(context.WithoutCancel(ctx), prepared.Message.ID, eventBuffer, onEvent)
-				if s.streams.IsStopped(prepared.Message.ID) {
+				if s.isStoppedContext(ctx, prepared.Message.ID) {
 					_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, answer, usage)
 					return answer, usage, ErrMessageStopped
 				}
@@ -510,7 +520,7 @@ func (s *service) collectStreamAnswerWithEvents(ctx context.Context, prepared *P
 			if chunk.Error != nil {
 				answer := builder.String()
 				s.flushStreamMessageEventBuffer(context.WithoutCancel(ctx), prepared.Message.ID, eventBuffer, onEvent)
-				if s.streams.IsStopped(prepared.Message.ID) {
+				if s.isStoppedContext(ctx, prepared.Message.ID) {
 					_ = s.persistStoppedAnswer(context.WithoutCancel(ctx), prepared, answer, usage)
 					return answer, usage, ErrMessageStopped
 				}
@@ -619,20 +629,36 @@ func (s *service) completePreparedChat(ctx context.Context, prepared *PreparedCh
 	return nil
 }
 
-func (s *service) finalizePreparedError(ctx context.Context, prepared *PreparedChat, cause error, onEvent ...func(StreamEvent) error) {
+func (s *service) finalizePreparedError(ctx context.Context, prepared *PreparedChat, cause error, onEvent ...func(StreamEvent) error) error {
 	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil || cause == nil {
-		return
+		return nil
 	}
 	eventCallback := firstStreamEventCallback(onEvent)
 	if err := s.completePreparedError(ctx, prepared, publicAichatErrorMessage(cause)); err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			logger.WarnContext(ctx, "failed to finalize aichat message error", "message_id", prepared.Message.ID.String(), err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
 		}
+		logger.WarnContext(ctx, "failed to finalize aichat message error", "message_id", prepared.Message.ID.String(), err)
 		if clearErr := s.clearPreparedRuntime(ctx, prepared); clearErr != nil {
 			logger.WarnContext(ctx, "failed to clear aichat conversation runtime", "conversation_id", prepared.Conversation.ID.String(), clearErr)
 		}
 	}
 	s.emitPreparedEvent(ctx, prepared, streamEventError, BuildStreamErrorPayload(prepared, cause), eventCallback)
+	return nil
+}
+
+func finalizedRuntimePersistenceError(err error) error {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return newFinalizedStreamError(err)
+	}
+	return err
+}
+
+func finalizedRuntimeOwnershipError(err error) error {
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	return newFinalizedStreamError(err)
 }
 
 func (s *service) completePreparedError(ctx context.Context, prepared *PreparedChat, message string) error {
@@ -988,7 +1014,8 @@ func uuidStringValue(value *uuid.UUID) interface{} {
 }
 
 func (s *service) isStoppedContext(ctx context.Context, messageID uuid.UUID) bool {
-	return s.streams.IsStopped(messageID) || (errors.Is(ctx.Err(), context.Canceled) && s.streams.IsStopped(messageID))
+	runID, ok := repository.RuntimeRunIDFromContext(ctx)
+	return ok && s.streams.IsStopped(messageID, runID)
 }
 
 func preparedResultMetadata(source map[string]interface{}, usage *adapter.Usage) map[string]interface{} {

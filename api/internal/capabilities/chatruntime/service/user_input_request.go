@@ -71,8 +71,13 @@ func applyUserInputWaitingState(metadata map[string]interface{}) map[string]inte
 }
 
 func (s *service) persistUserInputRequestPending(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
+	metadata, _ := s.persistUserInputRequestPendingResult(ctx, prepared, payload, usage)
+	return metadata
+}
+
+func (s *service) persistUserInputRequestPendingResult(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) (map[string]interface{}, error) {
 	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil {
-		return map[string]interface{}{}
+		return map[string]interface{}{}, nil
 	}
 	pendingPayload := copyStringAnyMap(payload)
 	if pendingPayload == nil {
@@ -92,9 +97,9 @@ func (s *service) persistUserInputRequestPending(ctx context.Context, prepared *
 	prepared.Message.Metadata = metadata
 
 	if s == nil || s.repos == nil || s.repos.Message == nil || s.repos.Conversation == nil {
-		return metadata
+		return metadata, nil
 	}
-	s.persistPendingMessageAndFinishConversationBestEffort(
+	err := s.persistPendingMessageAndFinishConversationBestEffort(
 		ctx,
 		prepared,
 		"user input request",
@@ -105,5 +110,5 @@ func (s *service) persistUserInputRequestPending(ctx context.Context, prepared *
 			return repo.FinishWaitingApprovalMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
 		},
 	)
-	return metadata
+	return metadata, err
 }

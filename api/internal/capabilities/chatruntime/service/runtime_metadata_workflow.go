@@ -27,8 +27,13 @@ func (s *service) persistWorkflowRunEventBestEffort(ctx context.Context, prepare
 }
 
 func (s *service) persistWorkflowApprovalPending(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
+	metadata, _ := s.persistWorkflowApprovalPendingResult(ctx, prepared, payload, usage)
+	return metadata
+}
+
+func (s *service) persistWorkflowApprovalPendingResult(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) (map[string]interface{}, error) {
 	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil {
-		return map[string]interface{}{}
+		return map[string]interface{}{}, nil
 	}
 	pendingPayload := copyStringAnyMap(payload)
 	if pendingPayload == nil {
@@ -52,9 +57,9 @@ func (s *service) persistWorkflowApprovalPending(ctx context.Context, prepared *
 	})
 	prepared.Message.Metadata = metadata
 	if s == nil || s.repos == nil || s.repos.Message == nil || s.repos.Conversation == nil {
-		return metadata
+		return metadata, nil
 	}
-	s.persistPendingMessageAndFinishConversationBestEffort(
+	err := s.persistPendingMessageAndFinishConversationBestEffort(
 		ctx,
 		prepared,
 		"workflow approval",
@@ -65,12 +70,17 @@ func (s *service) persistWorkflowApprovalPending(ctx context.Context, prepared *
 			return repo.FinishWaitingApprovalMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
 		},
 	)
-	return metadata
+	return metadata, err
 }
 
 func (s *service) persistWorkflowQuestionPending(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) map[string]interface{} {
+	metadata, _ := s.persistWorkflowQuestionPendingResult(ctx, prepared, payload, usage)
+	return metadata
+}
+
+func (s *service) persistWorkflowQuestionPendingResult(ctx context.Context, prepared *PreparedChat, payload map[string]interface{}, usage *adapter.Usage) (map[string]interface{}, error) {
 	if prepared == nil || prepared.Message == nil || prepared.Conversation == nil {
-		return map[string]interface{}{}
+		return map[string]interface{}{}, nil
 	}
 	pendingPayload := copyStringAnyMap(payload)
 	if pendingPayload == nil {
@@ -96,9 +106,9 @@ func (s *service) persistWorkflowQuestionPending(ctx context.Context, prepared *
 	}
 	prepared.Message.Metadata = metadata
 	if s == nil || s.repos == nil || s.repos.Message == nil || s.repos.Conversation == nil {
-		return metadata
+		return metadata, nil
 	}
-	s.persistPendingMessageAndFinishConversationBestEffort(
+	err := s.persistPendingMessageAndFinishConversationBestEffort(
 		ctx,
 		prepared,
 		"workflow question",
@@ -109,7 +119,7 @@ func (s *service) persistWorkflowQuestionPending(ctx context.Context, prepared *
 			return repo.FinishWaitingApprovalMessage(ctx, prepared.Conversation.ID, prepared.Message.ID)
 		},
 	)
-	return metadata
+	return metadata, err
 }
 
 func mergeWorkflowRunMetadata(source map[string]interface{}, eventType string, payload map[string]interface{}) map[string]interface{} {
