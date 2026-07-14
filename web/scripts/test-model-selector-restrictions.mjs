@@ -167,6 +167,22 @@ const aiChatToolbarSource = fs.readFileSync(
 assert.match(aiChatToolbarSource, /modelType="agent"/);
 assert.doesNotMatch(aiChatToolbarSource, /modelType="text-chat"/);
 
+const persistedAIChatModelSource = fs.readFileSync(
+  new URL('../src/hooks/model/use-persisted-ai-chat-model-selection.ts', import.meta.url),
+  'utf8'
+);
+assert.doesNotMatch(persistedAIChatModelSource, /model\.model_name === candidate\.model/);
+
+const aiChatSource = fs.readFileSync(
+  new URL('../src/components/chat/variants/aichat/aichat-chat.tsx', import.meta.url),
+  'utf8'
+);
+const regenerateStart = aiChatSource.indexOf('const handleRegenerate');
+const regenerateEnd = aiChatSource.indexOf('\n  const ', regenerateStart + 1);
+assert.notEqual(regenerateStart, -1);
+assert.notEqual(regenerateEnd, -1);
+assert.match(aiChatSource.slice(regenerateStart, regenerateEnd), /await beforeSend\(\)/);
+
 const agentRuntimeModelSectionSource = fs.readFileSync(
   new URL('../src/components/agents/agent-runtime/sections/model-section.tsx', import.meta.url),
   'utf8'

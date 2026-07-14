@@ -3,6 +3,7 @@ package modelmeta
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -339,6 +340,117 @@ func TestApplyPublishedCatalogDeprecatesAndDisablesMissingProviders(t *testing.T
 	require.False(t, modelStatus.IsSystemEnabled)
 }
 
+func TestApplyPublishedCatalogDeprecatesModelsWhenProviderRemainsWithoutModels(t *testing.T) {
+	db := newCatalogApplyTestDB(t)
+	insertCatalogApplyProvider(t, db, "anthropic", false)
+	insertCatalogApplyModel(t, db, "anthropic", "claude-old", "active", false)
+
+	svc := NewService(db)
+	err := svc.ApplyPublishedCatalog(context.Background(), PublishedCatalog{
+		Version:     1,
+		PublishedAt: time.Now(),
+		Providers: []PublishedProvider{
+			{
+				Provider:        "anthropic",
+				ProviderName:    "Anthropic",
+				Status:          "active",
+				IsActive:        true,
+				IsSystemEnabled: true,
+			},
+			{
+				Provider:        "openai",
+				ProviderName:    "OpenAI",
+				Status:          "active",
+				IsActive:        true,
+				IsSystemEnabled: true,
+			},
+		},
+		Models: []PublishedModel{{
+			Provider:        "openai",
+			Model:           "gpt-5",
+			ModelName:       "GPT 5",
+			Status:          "active",
+			IsActive:        true,
+			IsSystemEnabled: true,
+		}},
+	})
+	require.NoError(t, err)
+
+	var modelStatus struct {
+		Status          string
+		IsActive        bool
+		IsSystemEnabled bool
+	}
+	require.NoError(t, db.Table("llm_models").
+		Select("status, is_active, is_system_enabled").
+		Where("provider = ? AND name = ?", "anthropic", "claude-old").
+		First(&modelStatus).Error)
+	require.Equal(t, "deprecated", modelStatus.Status)
+	require.False(t, modelStatus.IsActive)
+	require.False(t, modelStatus.IsSystemEnabled)
+}
+
+func TestApplyPublishedCatalogStoresStructuredPricing(t *testing.T) {
+	db := newCatalogApplyTestDB(t)
+	pricing := `{"deployment_scope":"global","token_tiers":[{"min_input_tokens":0,"input_price_per_million":5,"output_price_per_million":30}]}`
+
+	svc := NewService(db)
+	err := svc.ApplyPublishedCatalog(context.Background(), PublishedCatalog{
+		Version:     1,
+		PublishedAt: time.Now().UTC(),
+		Providers: []PublishedProvider{{
+			Provider:        "openai",
+			ProviderName:    "OpenAI",
+			Status:          "active",
+			IsActive:        true,
+			IsSystemEnabled: true,
+		}},
+		Models: []PublishedModel{{
+			Provider:        "openai",
+			Model:           "gpt-5.5",
+			ModelName:       "GPT 5.5",
+			Status:          "active",
+			IsActive:        true,
+			IsSystemEnabled: true,
+			Pricing:         json.RawMessage(pricing),
+		}},
+	})
+	require.NoError(t, err)
+
+	var stored string
+	require.NoError(t, db.Table("llm_models").
+		Select("pricing").
+		Where("provider = ? AND name = ?", "openai", "gpt-5.5").
+		Scan(&stored).Error)
+	require.JSONEq(t, pricing, stored)
+}
+
+func TestApplyPublishedCatalogRejectsInvalidStructuredPricing(t *testing.T) {
+	for name, pricing := range map[string]json.RawMessage{
+		"invalid JSON":  json.RawMessage(`{"deployment_scope":`),
+		"not an object": json.RawMessage(`[]`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			db := newCatalogApplyTestDB(t)
+			svc := NewService(db)
+
+			err := svc.ApplyPublishedCatalog(context.Background(), PublishedCatalog{
+				Version:     1,
+				PublishedAt: time.Now().UTC(),
+				Providers: []PublishedProvider{{
+					Provider: "openai",
+				}},
+				Models: []PublishedModel{{
+					Provider: "openai",
+					Model:    "gpt-5.5",
+					Pricing:  pricing,
+				}},
+			})
+			require.ErrorContains(t, err, "invalid pricing")
+		})
+	}
+}
+
 func TestMarkMissingProvidersDeprecatedSupportsProviderTableWithoutStatus(t *testing.T) {
 	db := openCatalogApplyTestDB(t)
 	require.NoError(t, db.Exec(`ALTER TABLE llm_providers ADD COLUMN is_active BOOLEAN DEFAULT true`).Error)
@@ -450,6 +562,7 @@ func newCatalogApplyTestDB(t *testing.T) *gorm.DB {
 			input_price NUMERIC,
 			output_price NUMERIC,
 			cached_input_price NUMERIC,
+			pricing TEXT,
 			is_active BOOLEAN DEFAULT true,
 			is_system_enabled BOOLEAN DEFAULT true,
 			deleted_at DATETIME,

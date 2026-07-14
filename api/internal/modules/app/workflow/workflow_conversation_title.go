@@ -119,7 +119,7 @@ func (s *WorkflowService) generateWebAppConversationTitle(ctx context.Context, p
 		AccountID:      params.AccountID,
 		WorkspaceID:    workspaceUUID,
 		AppID:          strings.TrimSpace(params.AgentID),
-		AppType:        string(InvokeFromWebApp),
+		AppType:        "workflow",
 		SessionID:      params.ConversationID.String(),
 		ConversationID: params.ConversationID.String(),
 		Messages:       titleMessages,

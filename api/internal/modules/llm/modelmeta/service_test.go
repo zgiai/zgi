@@ -6,6 +6,7 @@ import (
 
 	"github.com/shopspring/decimal"
 	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
+	"gorm.io/datatypes"
 )
 
 func TestModelMetaDataPriceConfiguredFromJSON(t *testing.T) {
@@ -74,6 +75,26 @@ func TestNormalizeRemotePricePreservesOfficialSixDecimalPrice(t *testing.T) {
 	want := decimal.RequireFromString("0.003625")
 	if !got.Equal(want) {
 		t.Fatalf("normalizeRemotePrice() = %s, want %s", got, want)
+	}
+}
+
+func TestModelMetaDiffDetectsStructuredPricingChange(t *testing.T) {
+	local := &llmmodel.LLMModel{
+		Pricing:          datatypes.JSON(`{"deployment_scope":"global","price_per_image":0.2}`),
+		InputModalities:  llmmodel.JSONArray{},
+		OutputModalities: llmmodel.JSONArray{},
+		UseCases:         llmmodel.StringArray{string(llmmodel.UseCaseTextChat)},
+	}
+	remote := &ModelMetaData{
+		Pricing: json.RawMessage(`{"deployment_scope":"global","price_per_image":0.25}`),
+	}
+	svc := &Service{}
+
+	if !svc.hasChanges(local, remote) {
+		t.Fatal("hasChanges = false, want true when structured pricing differs")
+	}
+	if fields := svc.computeDiffFields(local, remote); !hasDiffField(fields, "pricing") {
+		t.Fatalf("diff fields = %#v, want pricing", fields)
 	}
 }
 

@@ -117,6 +117,7 @@ type LLMModel struct {
 	InputPriceConfigured  bool            `gorm:"column:input_price_configured;default:false" json:"input_price_configured"`        // Whether input_price was explicitly provided
 	OutputPriceConfigured bool            `gorm:"column:output_price_configured;default:false" json:"output_price_configured"`      // Whether output_price was explicitly provided
 	CachedInputPrice      decimal.Decimal `gorm:"column:cached_input_price;type:decimal(10,6)" json:"cached_input_price,omitempty"` // Price per million cached input tokens (ModelMeta aligned)
+	Pricing               datatypes.JSON  `gorm:"column:pricing;type:jsonb;default:'{}'" json:"pricing,omitempty"`
 	CostCacheRead         decimal.Decimal `gorm:"type:decimal(10,4)" json:"cost_cache_read,omitempty"`                              // Cost per million cached tokens read
 	CostCacheWrite        decimal.Decimal `gorm:"type:decimal(10,4)" json:"cost_cache_write,omitempty"`                             // Cost per million cached tokens write
 	CostContextOver200k   JSONObject      `gorm:"column:cost_context_over_200k;type:jsonb" json:"cost_context_over_200k,omitempty"` // Special pricing for large contexts

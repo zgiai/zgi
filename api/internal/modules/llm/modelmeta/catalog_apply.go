@@ -66,6 +66,7 @@ type PublishedModel struct {
 	InputPrice             float64
 	OutputPrice            float64
 	CachedInputPrice       float64
+	Pricing                json.RawMessage
 	InputPriceConfigured   bool
 	OutputPriceConfigured  bool
 	UseCases               []string
@@ -97,6 +98,7 @@ func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCa
 
 		skippedProviders := make(map[string]bool)
 		providerNames := make([]string, 0, len(catalog.Providers))
+		appliedProviderNames := make([]string, 0, len(catalog.Providers))
 		for _, provider := range catalog.Providers {
 			providerNames = append(providerNames, provider.Provider)
 			skipped, err := txService.upsertPublishedProvider(ctx, provider)
@@ -105,7 +107,9 @@ func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCa
 			}
 			if skipped {
 				skippedProviders[provider.Provider] = true
+				continue
 			}
+			appliedProviderNames = append(appliedProviderNames, provider.Provider)
 		}
 		if _, err := txService.markMissingProvidersDeprecated(ctx, providerNames); err != nil {
 			return err
@@ -124,7 +128,7 @@ func (s *Service) ApplyPublishedCatalog(ctx context.Context, catalog PublishedCa
 				modelKeys = append(modelKeys, catalogModelKey{Provider: model.Provider, Model: model.Model})
 			}
 		}
-		if _, err := txService.markMissingModelsDeprecated(ctx, modelKeys); err != nil {
+		if _, err := txService.markPublishedModelsMissingFromCatalogDeprecated(ctx, appliedProviderNames, modelKeys); err != nil {
 			return err
 		}
 
@@ -175,6 +179,9 @@ func validatePublishedCatalog(catalog PublishedCatalog) error {
 		if _, ok := providers[provider]; !ok {
 			return fmt.Errorf("published catalog model %s/%s references an unknown provider", provider, name)
 		}
+		if !validPublishedPricing(model.Pricing) {
+			return fmt.Errorf("published catalog model %s/%s contains invalid pricing JSON", provider, name)
+		}
 		key := catalogModelKey{Provider: provider, Model: name}
 		if _, ok := models[key]; ok {
 			return fmt.Errorf("published catalog contains duplicate model %s/%s", provider, name)
@@ -183,6 +190,15 @@ func validatePublishedCatalog(catalog PublishedCatalog) error {
 	}
 
 	return nil
+}
+
+func validPublishedPricing(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return true
+	}
+	var object map[string]json.RawMessage
+	return json.Unmarshal(raw, &object) == nil && object != nil
 }
 
 func (s *Service) RecordPublishedCatalogSyncError(ctx context.Context, message string) error {
@@ -377,6 +393,18 @@ func (s *Service) markMissingModelsDeprecated(ctx context.Context, appliedModels
 		providers = append(providers, key.Provider)
 	}
 
+	return s.markPublishedModelsMissingFromCatalogDeprecated(ctx, providers, appliedModels)
+}
+
+func (s *Service) markPublishedModelsMissingFromCatalogDeprecated(
+	ctx context.Context,
+	providers []string,
+	appliedModels []catalogModelKey,
+) (int64, error) {
+	if len(providers) == 0 {
+		return 0, nil
+	}
+
 	query := s.db.WithContext(ctx).
 		Table("llm_models").
 		Where("deleted_at IS NULL").
@@ -387,13 +415,15 @@ func (s *Service) markMissingModelsDeprecated(ctx context.Context, appliedModels
 		query = query.Where("status <> ?", llmmodel.ModelStatusDeprecated)
 	}
 
-	clauses := make([]string, 0, len(appliedModels))
-	args := make([]interface{}, 0, len(appliedModels)*2)
-	for _, key := range appliedModels {
-		clauses = append(clauses, "(provider = ? AND name = ?)")
-		args = append(args, key.Provider, key.Model)
+	if len(appliedModels) > 0 {
+		clauses := make([]string, 0, len(appliedModels))
+		args := make([]interface{}, 0, len(appliedModels)*2)
+		for _, key := range appliedModels {
+			clauses = append(clauses, "(provider = ? AND name = ?)")
+			args = append(args, key.Provider, key.Model)
+		}
+		query = query.Not("("+joinWithOr(clauses)+")", args...)
 	}
-	query = query.Not("("+joinWithOr(clauses)+")", args...)
 
 	updates := map[string]interface{}{
 		"status":     llmmodel.ModelStatusDeprecated,
@@ -603,6 +633,9 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 	if hasColumn(db, "llm_models", "output_price_configured") {
 		values["output_price_configured"] = model.OutputPriceConfigured
 	}
+	if hasColumn(db, "llm_models", "pricing") {
+		values["pricing"] = serializePricing(model.Pricing)
+	}
 	if hasColumn(db, "llm_models", "family_default") {
 		values["family_default"] = model.FamilyDefault
 	}
@@ -641,6 +674,14 @@ func buildPublishedModelColumns(db *gorm.DB, model PublishedModel) map[string]in
 	}
 
 	return values
+}
+
+func serializePricing(raw json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return "{}"
+	}
+	return trimmed
 }
 
 func applyPublishedLifecycleColumns(db *gorm.DB, values map[string]interface{}, model PublishedModel) {

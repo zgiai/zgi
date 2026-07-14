@@ -753,8 +753,12 @@ func handleOpenAICompatibleError(statusCode int, body []byte) error {
 	if err := json.Unmarshal(body, &errResp); err != nil {
 		return adapter.HandleNonJSONError(statusCode, body)
 	}
-	if errResp.Error.Code == adapter.ErrorCodePlatformChannelUnavailable {
-		return adapter.NewAdapterError(errResp.Error.Code, errResp.Error.Message, statusCode, adapter.ErrPlatformChannelUnavailable)
+	platformErrorCode := errResp.Error.Code
+	if platformErrorCode == "" && errResp.Error.Type == adapter.ErrorCodePlatformChannelUnavailable {
+		platformErrorCode = errResp.Error.Type
+	}
+	if platformErrorCode == adapter.ErrorCodePlatformChannelUnavailable {
+		return adapter.NewAdapterError(platformErrorCode, errResp.Error.Message, statusCode, adapter.ErrPlatformChannelUnavailable)
 	}
 
 	switch statusCode {

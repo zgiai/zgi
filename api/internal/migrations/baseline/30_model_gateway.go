@@ -433,6 +433,7 @@ var ModelGatewaySchema = File{
     translation boolean DEFAULT false,
     is_configured boolean DEFAULT false,
     image_prices jsonb DEFAULT '[]'::jsonb,
+    pricing jsonb DEFAULT '{}'::jsonb NOT NULL,
     config_parameters jsonb DEFAULT '[]'::jsonb NOT NULL
 );`,
 		`COMMENT ON COLUMN public.llm_models.reasoning IS 'Has reasoning/thinking capabilities';`,
@@ -443,7 +444,7 @@ var ModelGatewaySchema = File{
 		`COMMENT ON COLUMN public.llm_models.max_output_tokens IS 'Maximum output tokens (OpenAI naming)';`,
 		`COMMENT ON COLUMN public.llm_models.is_system_enabled IS 'System-level control: whether this model is available for tenants to use';`,
 		`COMMENT ON COLUMN public.llm_models.vision IS 'Supports image/vision input';`,
-		`COMMENT ON COLUMN public.llm_models.use_cases IS 'Usage scenarios: text-chat, vision, image-gen, embedding, rerank, speech-to-text, text-to-speech, realtime-audio, video-gen, moderation, reasoning, function-calling';`,
+		`COMMENT ON COLUMN public.llm_models.use_cases IS 'Usage scenarios: text-chat, agent, vision, image-gen, embedding, rerank, speech-to-text, text-to-speech, realtime-audio, video-gen, moderation, reasoning, function-calling';`,
 		`COMMENT ON COLUMN public.llm_models.max_input_tokens IS 'Maximum input tokens (OpenAI naming)';`,
 		`COMMENT ON COLUMN public.llm_models.slug IS 'URL-friendly model identifier';`,
 		`COMMENT ON COLUMN public.llm_models.family IS 'Model family (e.g., GPT-4, Claude)';`,

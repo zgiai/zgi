@@ -325,12 +325,14 @@ func isTerminalPlatformChannelResponse(statusCode int, body []byte) bool {
 	var payload struct {
 		Error struct {
 			Code string `json:"code"`
+			Type string `json:"type"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return false
 	}
-	return payload.Error.Code == ErrorCodePlatformChannelUnavailable
+	return payload.Error.Code == ErrorCodePlatformChannelUnavailable ||
+		payload.Error.Type == ErrorCodePlatformChannelUnavailable
 }
 
 // DoStreamRequest executes streaming HTTP request

@@ -19,10 +19,7 @@ function modelMatches(
   model: ModelItem
 ) {
   if (!candidate?.provider || !candidate.model) return false;
-  return (
-    model.provider === candidate.provider &&
-    (model.model === candidate.model || model.model_name === candidate.model)
-  );
+  return model.provider === candidate.provider && model.model === candidate.model;
 }
 
 function isModelAvailable(
