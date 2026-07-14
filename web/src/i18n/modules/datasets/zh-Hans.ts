@@ -1113,6 +1113,13 @@ const messages: DatasetMessages = {
 
   // Validation messages
   validation: {
+    datasetName: {
+      required: '知识库名称为必填项',
+      tooShort: '名称至少需要1个字符',
+      tooLong: '知识库名称最多40个字符',
+      invalidChars: '仅允许字母、数字、下划线、短横线和空格',
+      onlySpaces: '名称必须包含至少一个非空字符',
+    },
     name: {
       required: '知识库名称为必填项',
       tooShort: '名称至少需要2个字符',

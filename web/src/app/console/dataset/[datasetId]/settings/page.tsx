@@ -34,6 +34,7 @@ import { ICON_BG, ICON_TEXT } from '@/lib/config';
 import { normalizeDatasetSearchMethod } from '@/utils/dataset/retrieval-config';
 import { toast } from 'sonner';
 import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
+import { DATASET_NAME_VALIDATION_OPTIONS } from '@/constants/dataset';
 
 export default function DatasetSettingsPage() {
   const { datasetId } = useParams<{ datasetId: string }>();
@@ -164,7 +165,10 @@ export default function DatasetSettingsPage() {
   );
 
   // Inline validation for name field
-  const nameErrors = useMemo(() => getNameValidationErrors(name, { allowSpace: true }), [name]);
+  const nameErrors = useMemo(
+    () => getNameValidationErrors(name, DATASET_NAME_VALIDATION_OPTIONS),
+    [name]
+  );
   const isNameValid = nameErrors.length === 0;
   const showNameError = (hasSubmitted || nameTouched) && !isNameValid;
 
@@ -328,14 +332,14 @@ export default function DatasetSettingsPage() {
                     {(() => {
                       const code = nameErrors[0];
                       return code === 'required'
-                        ? t('datasets.validation.name.required')
+                        ? t('datasets.validation.datasetName.required')
                         : code === 'tooShort'
-                          ? t('datasets.validation.name.tooShort')
+                          ? t('datasets.validation.datasetName.tooShort')
                           : code === 'tooLong'
-                            ? t('datasets.validation.name.tooLong')
+                            ? t('datasets.validation.datasetName.tooLong')
                             : code === 'invalidChars'
-                              ? t('datasets.validation.name.invalidChars')
-                              : t('datasets.validation.name.onlySpaces');
+                              ? t('datasets.validation.datasetName.invalidChars')
+                              : t('datasets.validation.datasetName.onlySpaces');
                     })()}
                   </div>
                 )}

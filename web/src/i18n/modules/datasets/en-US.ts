@@ -1132,6 +1132,13 @@ const messages = {
 
   // Validation messages
   validation: {
+    datasetName: {
+      required: 'Dataset name is required',
+      tooShort: 'Name must be at least 1 character',
+      tooLong: 'Name must be at most 40 characters',
+      invalidChars: 'Only letters, numbers, underscores, hyphens and spaces are allowed',
+      onlySpaces: 'Name must contain at least one non-space character',
+    },
     name: {
       required: 'Dataset name is required',
       tooShort: 'Name must be at least 2 characters',

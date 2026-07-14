@@ -37,6 +37,7 @@ import {
   type RetrievalConfig,
 } from '@/components/datasets/indexing-config';
 import { normalizeDatasetSearchMethod } from '@/utils/dataset/retrieval-config';
+import { DATASET_NAME_VALIDATION_OPTIONS } from '@/constants/dataset';
 
 interface CreateDatasetDialogProps {
   open: boolean;
@@ -205,15 +206,16 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     setFormData(prev => ({ ...prev, [field]: value }));
   }
 
-  // Validate name: 2-32 Unicode chars; letters, numbers, underscore, hyphen, optional spaces
+  // Keep the client-side limit aligned with the dataset API's Unicode character count.
   const isNameValid = useMemo(
-    () => isValidNameInput(formData.name, { allowSpace: true }),
+    () => isValidNameInput(formData.name, DATASET_NAME_VALIDATION_OPTIONS),
     [formData.name]
   );
   const nameErrors = useMemo(
-    () => getNameValidationErrors(formData.name, { allowSpace: true }),
+    () => getNameValidationErrors(formData.name, DATASET_NAME_VALIDATION_OPTIONS),
     [formData.name]
   );
+  const showNameError = (hasSubmitted || nameErrors.includes('tooLong')) && !isNameValid;
   const isEmbeddingModelValid = useMemo(
     () => isEditMode || Boolean(formData.embedding_model_provider && formData.embedding_model),
     [isEditMode, formData.embedding_model_provider, formData.embedding_model]
@@ -226,7 +228,7 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
     // Check name validation
     if (!isNameValid) {
       const errorKey = nameErrors[0] || 'required';
-      toast.error(t(`datasets.validation.name.${errorKey}`));
+      toast.error(t(`datasets.validation.datasetName.${errorKey}`));
       return false;
     }
 
@@ -379,14 +381,12 @@ function CreateDatasetDialog({ open, onOpenChange, currentFolderId }: CreateData
                   required
                   className={cn(
                     'h-11',
-                    hasSubmitted &&
-                      !isNameValid &&
-                      'border-destructive focus-visible:ring-destructive'
+                    showNameError && 'border-destructive focus-visible:ring-destructive'
                   )}
                 />
-                {hasSubmitted && !isNameValid && (
+                {showNameError && (
                   <p className="text-xs text-destructive font-medium animate-in fade-in slide-in-from-top-1">
-                    {t(`datasets.validation.name.${nameErrors[0] || 'required'}`)}
+                    {t(`datasets.validation.datasetName.${nameErrors[0] || 'required'}`)}
                   </p>
                 )}
               </div>
