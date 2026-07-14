@@ -24,9 +24,7 @@ var (
 	errAgentPromptTooLong         = errors.New("agent system prompt is too long")
 )
 
-// Keep the user-facing Agent selector on the existing text-chat catalog until
-// the first verified Agent batch is non-empty and includes Qwen, GLM, and Kimi.
-const agentModelSelectionUseCase = "text-chat"
+const agentModelSelectionUseCase = "agent"
 
 func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID string) (*dto.AgentConfigResponse, error) {
 	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true, agentRuntimeConfigReadPermissionCodes("AGENT")...)

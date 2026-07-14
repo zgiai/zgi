@@ -387,7 +387,7 @@ func modelUseCaseForAppContext(appCtx *AppContext) string {
 	}
 	switch strings.ToLower(strings.TrimSpace(*appCtx.AppType)) {
 	case "agent", "aichat":
-		return string(llmmodel.UseCaseTextChat)
+		return string(llmmodel.UseCaseAgent)
 	case "workflow":
 		return string(llmmodel.UseCaseTextChat)
 	default:

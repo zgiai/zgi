@@ -17,22 +17,30 @@ import (
 )
 
 type agentModelEligibilityFake struct {
-	models []*llmmodelservice.AvailableModel
-	err    error
+	models  []*llmmodelservice.AvailableModel
+	err     error
+	useCase *string
 }
 
-func (f agentModelEligibilityFake) ListAvailable(context.Context, uuid.UUID, string, string) ([]*llmmodelservice.AvailableModel, error) {
+func (f agentModelEligibilityFake) ListAvailable(_ context.Context, _ uuid.UUID, _, useCase string) ([]*llmmodelservice.AvailableModel, error) {
+	if f.useCase != nil {
+		*f.useCase = useCase
+	}
 	return f.models, f.err
 }
 
 func TestValidateAgentModelEligibilityRequiresExactAvailablePair(t *testing.T) {
+	var useCase string
 	service := &agentsService{agentModels: agentModelEligibilityFake{models: []*llmmodelservice.AvailableModel{{
 		Provider: "deepseek",
 		Name:     "shared-model",
-	}}}}
+	}}, useCase: &useCase}}
 
 	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "deepseek", "shared-model"); err != nil {
 		t.Fatalf("validateAgentModelEligibility() error = %v", err)
+	}
+	if useCase != "agent" {
+		t.Fatalf("validateAgentModelEligibility() use case = %q, want agent", useCase)
 	}
 	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "openai", "shared-model"); err == nil {
 		t.Fatal("validateAgentModelEligibility() error = nil, want provider mismatch error")

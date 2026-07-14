@@ -7,8 +7,8 @@ func TestModelUseCaseForAppContext(t *testing.T) {
 		appType string
 		want    string
 	}{
-		{appType: "agent", want: "text-chat"},
-		{appType: "aichat", want: "text-chat"},
+		{appType: "agent", want: "agent"},
+		{appType: "aichat", want: "agent"},
 		{appType: "workflow", want: "text-chat"},
 		{appType: "dataset", want: ""},
 	}
