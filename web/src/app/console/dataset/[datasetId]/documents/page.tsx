@@ -8,6 +8,7 @@ import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
+import { Pagination } from '@/components/ui/pagination';
 import { DatasetFileAssetDialog } from '@/components/datasets/document/dataset-file-asset-dialog';
 import { DatasetFileRefPanel } from '@/components/datasets/document/dataset-file-ref-panel';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
@@ -24,6 +25,8 @@ import {
   PermissionDeniedState,
   PermissionLoadingState,
 } from '@/components/common/permission-gate-state';
+
+const FILE_REF_PAGE_SIZE = 100;
 
 export default function DatasetDocumentsPage() {
   const t = useT();
@@ -55,16 +58,18 @@ export default function DatasetDocumentsPage() {
   const [fileSelectorOpen, setFileSelectorOpen] = useState(false);
   const [fileRefPollingEnabled, setFileRefPollingEnabled] = useState(false);
   const [keyword, setKeyword] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
   const [refToRemove, setRefToRemove] = useState<DatasetFileRef | null>(null);
   const [togglingRefId, setTogglingRefId] = useState<string>();
 
   const {
     refs: fileRefs,
+    total: fileRefTotal,
     refetch: refetchFileRefs,
     isFetching: isFetchingFileRefs,
   } = useDatasetFileRefs(
     datasetId,
-    { limit: 100 },
+    { page: currentPage, limit: FILE_REF_PAGE_SIZE },
     {
       refetchInterval: fileRefPollingEnabled ? 5000 : false,
       enabled: canViewDocuments,
@@ -74,6 +79,17 @@ export default function DatasetDocumentsPage() {
   const deleteFileRefMutation = useDeleteDatasetFileRef(datasetId);
   const bulkEnableMutation = useBulkEnableDocuments(datasetId);
   const bulkDisableMutation = useBulkDisableDocuments(datasetId);
+  const totalPages = Math.max(1, Math.ceil(fileRefTotal / FILE_REF_PAGE_SIZE));
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [datasetId]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   useEffect(() => {
     const hasSyncInProgress = (fileRefs ?? []).some(ref =>
@@ -91,11 +107,11 @@ export default function DatasetDocumentsPage() {
   const stats = useMemo(() => {
     const synced = fileRefs.filter(ref => ref.sync_status === 'synced');
     return {
-      total: fileRefs.length,
+      total: fileRefTotal,
       enabled: synced.filter(ref => ref.dataset_document_enabled).length,
       ready: fileRefs.filter(ref => ref.processing_status === 'ready').length,
     };
-  }, [fileRefs]);
+  }, [fileRefs, fileRefTotal]);
 
   const handleRefresh = useCallback(async () => {
     await refetchFileRefs();
@@ -211,6 +227,14 @@ export default function DatasetDocumentsPage() {
           onRetry={handleRetryFileRef}
           onRemove={setRefToRemove}
           onToggleEnabled={handleToggleEnabled}
+        />
+        <Pagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          total={fileRefTotal}
+          pageSize={FILE_REF_PAGE_SIZE}
+          onPageChange={setCurrentPage}
+          className="mt-6"
         />
       </div>
 

@@ -67,6 +67,7 @@ type knowledgeBaseFileDatasetReader interface {
 
 type knowledgeBaseFileDocumentReader interface {
 	GetDocumentsByIDs(ctx context.Context, ids []string) ([]*datasetModel.Document, error)
+	GetSegmentCounts(ctx context.Context, documentID string) (completed int, total int, err error)
 }
 
 type knowledgeBaseFileProcessingProgressUpdater interface {
@@ -197,6 +198,7 @@ type KnowledgeBaseFileRefItem struct {
 	AssetID                     uuid.UUID  `json:"asset_id"`
 	FileID                      string     `json:"file_id"`
 	FileName                    string     `json:"file_name"`
+	SourceFileAvailable         bool       `json:"source_file_available"`
 	ProcessingStatus            string     `json:"processing_status"`
 	GenerationNo                int64      `json:"generation_no"`
 	DatasetDocumentID           *uuid.UUID `json:"dataset_document_id,omitempty"`
@@ -410,6 +412,7 @@ func (s *knowledgeBaseFileRefService) ListRefs(ctx context.Context, req Knowledg
 			if document := documentsByID[ref.DatasetDocumentID.String()]; document != nil {
 				enabled := document.Enabled
 				documentEnabled = &enabled
+				documentSegmentCount = document.SegmentCount
 			}
 		}
 		items = append(items, &KnowledgeBaseFileRefItem{
@@ -418,6 +421,7 @@ func (s *knowledgeBaseFileRefService) ListRefs(ctx context.Context, req Knowledg
 			AssetID:                     ref.AssetID,
 			FileID:                      asset.SourceFileID,
 			FileName:                    fileName,
+			SourceFileAvailable:         file != nil,
 			ProcessingStatus:            asset.ProductStatus,
 			GenerationNo:                asset.GenerationNo,
 			DatasetDocumentID:           ref.DatasetDocumentID,
@@ -460,6 +464,11 @@ func (s *knowledgeBaseFileRefService) loadRefDocuments(ctx context.Context, refs
 	}
 	for _, document := range documents {
 		if document != nil {
+			_, total, err := s.documents.GetSegmentCounts(ctx, document.ID)
+			if err != nil {
+				return nil, err
+			}
+			document.SegmentCount = total
 			documentsByID[document.ID] = document
 		}
 	}
