@@ -39,6 +39,13 @@ export function useChatRuntimeViewModel({ store, topologyRef }: UseChatRuntimeVi
   const isRecoveringMessages = useStore(store, selectIsRecoveringMessages);
   const isStopping = useStore(store, selectIsStopping);
   const isSending = useStore(store, state => state.isSending);
+  const connectionState = useStore(
+    store,
+    state =>
+      (state.activeConversationId
+        ? state.connectionByConversation[state.activeConversationId]
+        : undefined) ?? 'idle'
+  );
   const error = useStore(store, state => state.error);
 
   const messageTopologyKey = useMemo(() => buildChatMessageTopologyKey(messages), [messages]);
@@ -85,6 +92,7 @@ export function useChatRuntimeViewModel({ store, topologyRef }: UseChatRuntimeVi
     isRecoveringMessages,
     isStopping,
     isSending,
+    connectionState,
     error,
   };
 }

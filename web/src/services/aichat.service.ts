@@ -40,6 +40,7 @@ import type {
 } from './types/aichat';
 
 export interface AIChatStreamCallbacks {
+  onOpen?: () => void;
   onEvent: (event: string, data: unknown, eventId?: string | null) => void;
   onError?: (error: Error) => void;
   onClose?: () => void;
@@ -338,7 +339,9 @@ export const aichatService = {
         method: 'POST',
         body: payload,
         abortSignal,
+        skipErrorHandling: true,
         isTerminalMessage: isAIChatTerminalMessage,
+        onOpen: callbacks.onOpen,
         onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
         onError: error => callbacks.onError?.(error),
         onClose: callbacks.onClose,
@@ -366,7 +369,9 @@ export const aichatService = {
         method: 'POST',
         body: payload,
         abortSignal,
+        skipErrorHandling: true,
         isTerminalMessage: isAIChatTerminalMessage,
+        onOpen: callbacks.onOpen,
         onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
         onError: error => callbacks.onError?.(error),
         onClose: callbacks.onClose,
@@ -394,7 +399,9 @@ export const aichatService = {
         method: 'POST',
         body: payload,
         abortSignal,
+        skipErrorHandling: true,
         isTerminalMessage: isAIChatTerminalMessage,
+        onOpen: callbacks.onOpen,
         onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
         onError: error => callbacks.onError?.(error),
         onClose: callbacks.onClose,
@@ -413,7 +420,9 @@ export const aichatService = {
       method: 'POST',
       body: payload,
       abortSignal,
+      skipErrorHandling: true,
       isTerminalMessage: isAIChatTerminalMessage,
+      onOpen: callbacks.onOpen,
       onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
       onError: error => callbacks.onError?.(error),
       onClose: callbacks.onClose,
@@ -434,7 +443,9 @@ export const aichatService = {
         method: 'POST',
         body: payload,
         abortSignal,
+        skipErrorHandling: true,
         isTerminalMessage: isAIChatTerminalMessage,
+        onOpen: callbacks.onOpen,
         onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
         onError: error => callbacks.onError?.(error),
         onClose: callbacks.onClose,
@@ -456,7 +467,9 @@ export const aichatService = {
         method: 'GET',
         query: params,
         abortSignal,
+        skipErrorHandling: true,
         isTerminalMessage: isAIChatTerminalMessage,
+        onOpen: callbacks.onOpen,
         onMessage: message => dispatchAIChatSseMessage(message, callbacks, outputFilter),
         onError: error => callbacks.onError?.(error),
         onClose: callbacks.onClose,

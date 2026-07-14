@@ -408,6 +408,10 @@ export function useChatRuntimeConversationActions({
             ...current.recoveringByConversation,
             [conversationId]: false,
           },
+          connectionByConversation: {
+            ...current.connectionByConversation,
+            [conversationId]: 'idle',
+          },
           stoppingByConversation: {
             ...current.stoppingByConversation,
             [conversationId]: false,

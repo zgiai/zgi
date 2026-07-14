@@ -21,6 +21,7 @@ import {
   getErrorMessage,
   isAbortError,
   isContinuationLikelyStartedError,
+  isRecoverableStreamTransportError,
 } from '@/components/chat/runtime/controller/chat-runtime-controller-utils';
 import {
   buildOptimisticUserInputResponse,
@@ -39,6 +40,7 @@ export function useWorkflowContinuationActions({
   refreshConversationSilently,
   refreshMessagesSilently,
   refreshAccountMemoryAfterMemoryMutation,
+  recoverStreamingConversation,
   eventAppliers,
 }: UseChatRuntimeMessageActionsArgs) {
   const {
@@ -166,6 +168,7 @@ export function useWorkflowContinuationActions({
       const sourceConversation: AIChatConversation = conversation;
       let streamStarted = false;
       let streamEnded = false;
+      let recoveryRequested = false;
       let startError: Error | null = null;
       const shouldSyncContinuationOnClose =
         Boolean(toolGovernanceDecision) ||
@@ -205,6 +208,24 @@ export function useWorkflowContinuationActions({
       };
 
       const abortController = new AbortController();
+      const requestStreamRecovery = () => {
+        if (recoveryRequested) return true;
+        if (streamEnded || abortController.signal.aborted) {
+          return false;
+        }
+        recoveryRequested = true;
+        setControllerState(current => ({
+          ...current,
+          error: null,
+          isSending: getNextActiveSendingState(current, conversationId, true),
+          connectionByConversation: {
+            ...current.connectionByConversation,
+            [conversationId]: 'reconnecting',
+          },
+        }));
+        void recoverStreamingConversation(conversationId, { mode: 'active' });
+        return true;
+      };
       streamAbortByConversationRef.current[conversationId]?.abort();
       streamAbortByConversationRef.current[conversationId] = abortController;
       markSelectionTarget(conversationId);
@@ -271,6 +292,16 @@ export function useWorkflowContinuationActions({
 
       try {
         const callbacks: AIChatStreamCallbacks = {
+          onOpen: () => {
+            if (abortController.signal.aborted) return;
+            setControllerState(current => ({
+              ...current,
+              connectionByConversation: {
+                ...current.connectionByConversation,
+                [conversationId]: 'connected',
+              },
+            }));
+          },
           onMessageStart: (payload, eventId) => {
             if (abortController.signal.aborted) return;
             streamStarted = true;
@@ -419,14 +450,30 @@ export function useWorkflowContinuationActions({
             streamStarted = true;
             streamEnded = true;
             applyMessageEnd(payload, eventId);
+            setControllerState(current => ({
+              ...current,
+              connectionByConversation: {
+                ...current.connectionByConversation,
+                [conversationId]: 'idle',
+              },
+            }));
           },
           onErrorEvent: (payload, eventId) => {
             if (abortController.signal.aborted) return;
             streamStarted = true;
+            streamEnded = true;
             applyStreamError(payload, eventId, conversationId);
+            setControllerState(current => ({
+              ...current,
+              connectionByConversation: {
+                ...current.connectionByConversation,
+                [conversationId]: 'idle',
+              },
+            }));
           },
           onRequestError: error => {
             if (isAbortError(error)) return;
+            if (isRecoverableStreamTransportError(error) && requestStreamRecovery()) return;
             if (!streamStarted) {
               const suppressError =
                 (toolGovernanceDecision || clientActionResult || userInputContinuation) &&
@@ -462,6 +509,7 @@ export function useWorkflowContinuationActions({
               streamingMessageRef.current = null;
             }
             if (!abortController.signal.aborted) {
+              if (!streamEnded && requestStreamRecovery()) return;
               if (!streamStarted) {
                 restoreWorkflowApprovalContinuation();
                 syncContinuationState();
@@ -531,6 +579,7 @@ export function useWorkflowContinuationActions({
         }
       } catch (error) {
         if (!isAbortError(error)) {
+          if (isRecoverableStreamTransportError(error) && requestStreamRecovery()) return;
           if (!streamStarted) {
             const errorMessage = getErrorMessage(error);
             const suppressError =
@@ -590,6 +639,7 @@ export function useWorkflowContinuationActions({
       eventAppliers,
       markSelectionTarget,
       refreshAccountMemoryAfterMemoryMutation,
+      recoverStreamingConversation,
       refreshConversationSilently,
       refreshMessagesSilently,
       setControllerState,
