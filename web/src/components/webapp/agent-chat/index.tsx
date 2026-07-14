@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { LogIn } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useStore } from 'zustand';
 import Chat, { createAgentWebAppTransport, useAIChatController } from '@/components/chat';
+import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
 import { IconPreview } from '@/components/common/icon-input/icon-preview';
 import { Button } from '@/components/ui/button';
 import { useT } from '@/i18n';
@@ -75,12 +77,41 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
   const uploadScope = useMemo(() => ({ type: 'webapp' as const, webAppId }), [webAppId]);
   const controller = useAIChatController({ transport, requireModel: false });
   const initController = controller.init;
+  const selectConversation = controller.select;
+  const startNewConversation = controller.startNew;
+  const activeConversationId = useStore(controller.store, state => state.activeConversationId);
+  const conversationIdParam = searchParams.get('convId');
   const modelValue = useMemo(() => ({ provider: '', model: '', params: {} }), []);
+
+  const replaceConversationRoute = useCallback(
+    (conversationId: string | null) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (conversationId) {
+        params.set('convId', conversationId);
+      } else {
+        params.delete('convId');
+      }
+      const query = params.toString();
+      router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    },
+    [pathname, router, searchParams]
+  );
 
   useEffect(() => {
     if (requiresLoginForMemory) return;
-    initController(null);
-  }, [initController, requiresLoginForMemory]);
+    initController(conversationIdParam);
+  }, [conversationIdParam, initController, requiresLoginForMemory]);
+
+  useEffect(() => {
+    if (
+      !activeConversationId ||
+      isDraftAIChatConversationId(activeConversationId) ||
+      activeConversationId === conversationIdParam
+    ) {
+      return;
+    }
+    replaceConversationRoute(activeConversationId);
+  }, [activeConversationId, conversationIdParam, replaceConversationRoute]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -98,6 +129,19 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
     const currentUrl = search ? `${pathname}?${search}` : pathname;
     router.push(`/login?redirect=${encodeURIComponent(currentUrl)}`);
   };
+
+  const handleSelectConversation = useCallback(
+    (conversationId: string) => {
+      replaceConversationRoute(conversationId);
+      void selectConversation(conversationId);
+    },
+    [replaceConversationRoute, selectConversation]
+  );
+
+  const handleStartNewConversation = useCallback(() => {
+    startNewConversation();
+    replaceConversationRoute(null);
+  }, [replaceConversationRoute, startNewConversation]);
 
   if (requiresLoginForMemory) {
     return (
@@ -144,6 +188,8 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
       suggestions={agentConfig?.suggested_questions ?? []}
       inputPlaceholder={inputPlaceholder}
       embeddedConversationMode="drawer"
+      onSelectConversation={handleSelectConversation}
+      onStartNewConversation={handleStartNewConversation}
       showAssistantModelMeta={false}
       surface="agent-webapp"
       openingGuideBrand={openingGuideBrand}

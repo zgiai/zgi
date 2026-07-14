@@ -37,4 +37,26 @@ assert.match(chat, /canStop=\{canStopPendingWorkflowInteraction \|\| activeConve
 assert.match(chat, /controller\.connectionState === 'disconnected'/);
 assert.match(chat, /controller\.recoverStreamingConversation/);
 
+const chatPage = read('src/app/console/work/chat/page.tsx');
+assert.match(
+  chatPage,
+  /!conversationIdParam\s*&&\s*activeConversationId\s*&&\s*!isDraftAIChatConversationId\(activeConversationId\)/,
+  'route synchronization must not reset a newly submitted draft conversation'
+);
+assert.match(
+  chatPage,
+  /routeSelectionTarget === null\s*&&\s*isDraftAIChatConversationId\(active\)/,
+  'the null route handoff must preserve a live draft until message_start assigns its server id'
+);
+
+const agentWebAppChat = read('src/components/webapp/agent-chat/index.tsx');
+assert.match(agentWebAppChat, /initController\(conversationIdParam\)/);
+assert.match(agentWebAppChat, /onSelectConversation=\{handleSelectConversation\}/);
+assert.match(agentWebAppChat, /onStartNewConversation=\{handleStartNewConversation\}/);
+assert.match(
+  agentWebAppChat,
+  /isDraftAIChatConversationId\(activeConversationId\)/,
+  'Agent WebApp must persist only server-backed conversation ids in its route'
+);
+
 console.log('ChatRuntime stream recovery regression checks passed.');

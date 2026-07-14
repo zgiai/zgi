@@ -72,7 +72,11 @@ function ChatPageContent() {
     lastInitializedConversationIdRef.current = conversationIdParam;
     routeSelectionTargetRef.current = conversationIdParam;
     initRef.current(conversationIdParam);
-    if (!conversationIdParam && activeConversationId) {
+    if (
+      !conversationIdParam &&
+      activeConversationId &&
+      !isDraftAIChatConversationId(activeConversationId)
+    ) {
       startNewRef.current();
     }
   }, [activeConversationId, conversationIdParam]);
@@ -87,6 +91,14 @@ function ChatPageContent() {
     // previous active conversation rewrite the URL back to its old convId.
     if (routeSelectionTarget !== undefined) {
       if (active === routeSelectionTarget) {
+        routeSelectionTargetRef.current = undefined;
+      } else if (routeSelectionTarget === null && isDraftAIChatConversationId(active)) {
+        // A message was sent before the new-chat route transition settled. Keep the draft alive;
+        // its message_start event will migrate active to the persisted conversation id.
+        return;
+      } else if (routeSelectionTarget === null && active) {
+        // The draft has migrated to a persisted conversation. The previous null target no longer
+        // describes the intended route, so allow the new conversation id to update the URL.
         routeSelectionTargetRef.current = undefined;
       } else if (current === routeSelectionTarget) {
         return;
