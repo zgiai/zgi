@@ -588,6 +588,116 @@ func TestDecideAlwaysAskBuildsApprovalEventGrant(t *testing.T) {
 	}
 }
 
+func TestDecidePersistentPreauthorizationOverridesApprovalPolicies(t *testing.T) {
+	manifest := fileManifest(EffectDelete, RiskLevelHigh)
+	manifest.DefaultApprovalPolicy = ApprovalPolicyAlwaysAsk
+	authorizedAt := time.Unix(1_720_000_000, 0).UTC()
+
+	decision := Decide(Request{
+		Manifest:       manifest,
+		PermissionTier: PermissionTierBasic,
+		Assets:         []AssetRef{{ID: "table-1", Type: "file"}},
+		Preauthorization: &Preauthorization{
+			Required:     true,
+			Matched:      true,
+			Source:       "agent_binding",
+			BindingType:  "database",
+			AuthorizedBy: "account-1",
+			AuthorizedAt: &authorizedAt,
+			Resources:    []AssetRef{{ID: "table-1", Type: "database_table"}},
+			Reason:       "allowed by the current Agent database binding",
+		},
+	}, DefaultPolicy())
+
+	if decision.Status != DecisionStatusAllowed || decision.RequiresApproval {
+		t.Fatalf("decision = %#v, want persistent authorization to allow", decision)
+	}
+	if decision.ApprovalEvent != nil || decision.MatchedGrant != nil {
+		t.Fatalf("decision = %#v, persistent authorization must not create a session grant", decision)
+	}
+	if decision.ModelFeedback["authorization_source"] != "agent_binding" {
+		t.Fatalf("model feedback = %#v, want agent_binding source", decision.ModelFeedback)
+	}
+	if decision.AssetOperationAudit["authorization_actor_id"] != "account-1" ||
+		decision.AssetOperationAudit["authorization_granted_at"] != authorizedAt {
+		t.Fatalf("audit = %#v, want persistent authorization evidence", decision.AssetOperationAudit)
+	}
+}
+
+func TestDecideMissingPersistentPreauthorizationDeniesBeforeSessionGrant(t *testing.T) {
+	decision := Decide(Request{
+		Manifest:       fileManifest(EffectDelete, RiskLevelHigh),
+		PermissionTier: PermissionTierBasic,
+		ConversationID: "conversation-1",
+		Assets:         []AssetRef{{ID: "file-1", Type: "file"}},
+		Preauthorization: &Preauthorization{
+			Required: true,
+			Source:   "agent_binding",
+			Code:     "agent_resource_not_bound",
+			Reason:   "the requested resource is not bound",
+		},
+		SessionGrants: []SessionGrant{{
+			ConversationID: "conversation-1",
+			ToolID:         "file.delete",
+			Effect:         EffectDelete,
+			AssetType:      "file",
+			Assets:         []AssetRef{{ID: "file-1", Type: "file"}},
+			RiskLevel:      RiskLevelHigh,
+			ExpiresAt:      time.Now().Add(time.Hour),
+		}},
+	}, DefaultPolicy())
+
+	if decision.Status != DecisionStatusDenied || decision.RequiresApproval {
+		t.Fatalf("decision = %#v, want denied without approval", decision)
+	}
+	if decision.ApprovalEvent != nil || decision.MatchedGrant != nil {
+		t.Fatalf("decision = %#v, invalid persistent authorization must not use session approval", decision)
+	}
+	if decision.ModelFeedback["authorization_code"] != "agent_resource_not_bound" {
+		t.Fatalf("model feedback = %#v, want stable authorization code", decision.ModelFeedback)
+	}
+}
+
+func TestDecideNonInteractiveModeConvertsApprovalToDenial(t *testing.T) {
+	decision := Decide(Request{
+		Manifest:       fileManifest(EffectDelete, RiskLevelHigh),
+		PermissionTier: PermissionTierBasic,
+		ApprovalMode:   ApprovalModeNonInteractive,
+		Assets:         []AssetRef{{ID: "file-1", Type: "file"}},
+		Preauthorization: &Preauthorization{
+			Source: "agent_runtime",
+			Code:   "agent_tool_not_preauthorized",
+			Reason: "the current Agent does not have persistent authorization for this tool action",
+		},
+	}, DefaultPolicy())
+
+	if decision.Status != DecisionStatusDenied || decision.RequiresApproval || decision.ApprovalEvent != nil {
+		t.Fatalf("decision = %#v, want non-interactive denial without approval event", decision)
+	}
+	if decision.ModelFeedback["authorization_code"] != "agent_tool_not_preauthorized" {
+		t.Fatalf("model feedback = %#v, want agent_tool_not_preauthorized", decision.ModelFeedback)
+	}
+}
+
+func TestDecideCriticalBlockPrecedesPersistentPreauthorization(t *testing.T) {
+	policy := DefaultPolicy()
+	policy.CriticalRiskBlocked = true
+	decision := Decide(Request{
+		Manifest:       fileManifest(EffectDelete, RiskLevelCritical),
+		PermissionTier: PermissionTierBasic,
+		Assets:         []AssetRef{{ID: "file-1", Type: "file"}},
+		Preauthorization: &Preauthorization{
+			Required: true,
+			Matched:  true,
+			Source:   "agent_binding",
+		},
+	}, policy)
+
+	if decision.Status != DecisionStatusBlocked {
+		t.Fatalf("decision = %#v, want critical policy block", decision)
+	}
+}
+
 func fileManifest(effect Effect, risk RiskLevel) Manifest {
 	return Manifest{
 		ToolID:                  "file." + string(effect),
