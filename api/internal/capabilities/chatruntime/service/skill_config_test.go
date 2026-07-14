@@ -1846,6 +1846,22 @@ func TestEmitUserMemoryMutationEventUsesIndependentMemoryEvent(t *testing.T) {
 	}
 }
 
+func TestEmitUserMemoryMutationEventSkipsPreparePreflightWithoutMessage(t *testing.T) {
+	prepared := preparedTimelineTestChat()
+	prepared.Message = nil
+
+	(&service{}).emitUserMemoryMutationEvent(context.Background(), prepared, skills.SkillTrace{
+		Kind:   "user_memory",
+		Status: "success",
+	}, map[string]interface{}{
+		"action":   "update",
+		"entry_id": "entry-1",
+	}, func(StreamEvent) error {
+		t.Fatal("memory mutation event was emitted without a persisted message")
+		return nil
+	})
+}
+
 func TestProcessTimelineRecorderAggregatesIntermediateAnswerChunks(t *testing.T) {
 	prepared := preparedTimelineTestChat()
 	recorder := newProcessTimelineRecorder(context.Background(), context.Background(), &service{}, prepared, nil)
