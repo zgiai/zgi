@@ -15,6 +15,7 @@ import type {
   AgentKnowledgeBindingCandidatesResponse,
   AgentDatabaseBindingCandidatesResponse,
   AgentDatabaseTableBindingCandidatesResponse,
+  AgentBindingHealth,
   AgentWorkflowBindingCandidatesResponse,
   UpdateAgentRuntimeConfigRequest,
   AgentMemorySlotConfig,
@@ -22,7 +23,9 @@ import type {
   UpdateAgentMemoryValueRequest,
   AgentMemoryValue,
   PublishAgentResponse,
+  PublishAgentRequest,
   AgentPublishedVersionsResponse,
+  AgentPublishedVersionRollbackPreview,
   RollbackAgentPublishedVersionRequest,
   AgentListParams,
   AgentApiKey,
@@ -38,7 +41,11 @@ import type {
   UpdateAgentRuntimeSurfacesRequest,
 } from './types/agent';
 import type { WebAppRunRequest, WebAppRunSseCallbacks } from './types/webapp';
-import type { ApiResponseData } from './types/common';
+import type {
+  AgentBindingMutationConfirmation,
+  AgentResourceBoundImpact,
+  ApiResponseData,
+} from './types/common';
 
 /**
  * AgentService
@@ -137,8 +144,20 @@ class AgentService extends BaseService {
    * Delete agent by ID
    * DELETE /console/api/agents/{agent_id}
    */
-  deleteAgent(agentId: string): Promise<ApiResponseData<Record<string, unknown>>> {
+  deleteAgent(
+    agentId: string,
+    confirmation?: AgentBindingMutationConfirmation
+  ): Promise<ApiResponseData<Record<string, unknown>>> {
     return this.request('delete', `/agents/${agentId}`, undefined, {
+      headers: { 'Content-Type': 'application/json' },
+      params: confirmation,
+    });
+  }
+
+  previewAgentDeleteImpact(
+    agentId: string
+  ): Promise<ApiResponseData<AgentResourceBoundImpact | null>> {
+    return this.request('get', `/agents/${agentId}/delete-impact`, undefined, {
       headers: { 'Content-Type': 'application/json' },
     });
   }
@@ -284,8 +303,11 @@ class AgentService extends BaseService {
     );
   }
 
-  publishAgent(agentId: string): Promise<ApiResponseData<PublishAgentResponse>> {
-    return this.request('post', `/agents/${agentId}/publish`, undefined, {
+  publishAgent(
+    agentId: string,
+    data: PublishAgentRequest = {}
+  ): Promise<ApiResponseData<PublishAgentResponse>> {
+    return this.request('post', `/agents/${agentId}/publish`, data, {
       headers: { 'Content-Type': 'application/json' },
     });
   }
@@ -294,6 +316,18 @@ class AgentService extends BaseService {
     return this.request('get', `/agents/${agentId}/published-versions`, undefined, {
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+
+  getPublishedVersionRollbackPreview(
+    agentId: string,
+    versionId: string
+  ): Promise<ApiResponseData<AgentPublishedVersionRollbackPreview>> {
+    return this.request(
+      'get',
+      `/agents/${agentId}/published-versions/${versionId}/rollback-preview`,
+      undefined,
+      { headers: { 'Content-Type': 'application/json' } }
+    );
   }
 
   rollbackPublishedVersion(
@@ -387,6 +421,89 @@ class AgentService extends BaseService {
       abortSignal: opts?.abortSignal,
     });
   }
+}
+
+export type AgentBindingConflictCode = 'agent_bindings_invalid' | 'agent_bindings_suspended';
+
+export interface AgentBindingConflict {
+  code: AgentBindingConflictCode;
+  bindingHealth?: AgentBindingHealth;
+}
+
+export interface AgentBindingRevisionConflict {
+  code: 'agent_binding_revision_conflict';
+  currentConfig?: Partial<AgentRuntimeConfig>;
+  bindingHealth?: AgentBindingHealth;
+}
+
+function getErrorResponseBody(error: unknown): Record<string, unknown> | null {
+  if (!error || typeof error !== 'object') return null;
+  const responseData = (error as { response?: { data?: unknown } }).response?.data;
+  return responseData && typeof responseData === 'object'
+    ? (responseData as Record<string, unknown>)
+    : null;
+}
+
+export function getAgentBindingConflict(error: unknown): AgentBindingConflict | null {
+  const body = getErrorResponseBody(error);
+  if (!body) return null;
+  const code = body.code;
+  if (code !== 'agent_bindings_invalid' && code !== 'agent_bindings_suspended') return null;
+  const nestedData = body.data && typeof body.data === 'object' ? body.data : undefined;
+  const bindingHealth =
+    (nestedData as { binding_health?: AgentBindingHealth } | undefined)?.binding_health ??
+    (body.binding_health as AgentBindingHealth | undefined);
+  return { code, bindingHealth };
+}
+
+export function getAgentBindingRevisionConflict(
+  error: unknown
+): AgentBindingRevisionConflict | null {
+  const body = getErrorResponseBody(error);
+  if (!body || body.code !== 'agent_binding_revision_conflict') return null;
+  const nestedData =
+    body.data && typeof body.data === 'object' ? (body.data as Record<string, unknown>) : undefined;
+  const rawConfig = nestedData?.current_config ?? nestedData?.config;
+  const unwrappedConfig =
+    rawConfig && typeof rawConfig === 'object' && 'data' in rawConfig
+      ? (rawConfig as { data?: unknown }).data
+      : rawConfig;
+  const currentConfig =
+    unwrappedConfig && typeof unwrappedConfig === 'object'
+      ? (unwrappedConfig as Partial<AgentRuntimeConfig>)
+      : undefined;
+  const bindingRevision = nestedData?.binding_revision;
+  if (currentConfig && typeof bindingRevision === 'string' && !currentConfig.binding_revision) {
+    currentConfig.binding_revision = bindingRevision;
+  }
+  const bindingHealth =
+    (nestedData?.binding_health as AgentBindingHealth | undefined) ??
+    (body.binding_health as AgentBindingHealth | undefined);
+  return {
+    code: 'agent_binding_revision_conflict',
+    currentConfig,
+    bindingHealth,
+  };
+}
+
+export function getAgentRollbackImpactChanged(
+  error: unknown
+): AgentPublishedVersionRollbackPreview | null {
+  const body = getErrorResponseBody(error);
+  if (!body || body.code !== 'agent_rollback_impact_changed') return null;
+  const nestedData = body.data;
+  if (!nestedData || typeof nestedData !== 'object') return null;
+  const preview = nestedData as Partial<AgentPublishedVersionRollbackPreview>;
+  if (
+    typeof preview.version_id !== 'string' ||
+    typeof preview.impact_token !== 'string' ||
+    !preview.config_snapshot ||
+    !preview.binding_health ||
+    !Array.isArray(preview.removed_bindings)
+  ) {
+    return null;
+  }
+  return preview as AgentPublishedVersionRollbackPreview;
 }
 
 export const agentService = new AgentService();

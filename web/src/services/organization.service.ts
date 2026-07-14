@@ -27,6 +27,10 @@ import type {
   UpdateDepartmentRequest,
   CheckMemberNameResponse,
   WorkspaceAssetMovePreviewResponse,
+  WorkspaceAssetMoveEligibleTargetsRequest,
+  WorkspaceAssetMoveEligibleTargetsResponse,
+  WorkspaceAssetMoveDependencyPreviewRequest,
+  WorkspaceAssetMoveDependencyPreviewResponse,
   WorkspaceAssetMoveRequest,
   WorkspaceAssetMoveResponse,
   OrganizationUpdateRequest,
@@ -142,6 +146,22 @@ class OrganizationService extends BaseService {
     return response.data;
   }
 
+  async getWorkspaceAssetMoveEligibleTargets(data: WorkspaceAssetMoveEligibleTargetsRequest) {
+    const response = await this.request<ApiResponseData<WorkspaceAssetMoveEligibleTargetsResponse>>(
+      'post',
+      '/organizations/current/assets/move/eligible-targets',
+      data
+    );
+    return response.data;
+  }
+
+  async previewWorkspaceAssetMoveDependencies(data: WorkspaceAssetMoveDependencyPreviewRequest) {
+    const response = await this.request<
+      ApiResponseData<WorkspaceAssetMoveDependencyPreviewResponse>
+    >('post', '/organizations/current/assets/move/dependencies', data);
+    return response.data;
+  }
+
   async moveWorkspaceAssets(data: WorkspaceAssetMoveRequest) {
     const response = await this.request<ApiResponseData<WorkspaceAssetMoveResponse>>(
       'post',
@@ -225,11 +245,7 @@ class OrganizationService extends BaseService {
   }
 
   // Apply a role template snapshot to explicit workspace-member targets
-  async applyRoleTemplate(
-    organizationId: string,
-    roleId: string,
-    data: ApplyRoleTemplateRequest
-  ) {
+  async applyRoleTemplate(organizationId: string, roleId: string, data: ApplyRoleTemplateRequest) {
     const response = await this.request<ApiResponseData<ApplyRoleTemplateResponse>>(
       'post',
       `/organizations/${organizationId}/roles/${roleId}/apply-template`,

@@ -146,26 +146,66 @@ const messages = {
   assetMove: {
     title: 'Move to Workspace',
     description:
-      'Select a target workspace. The system will check related dependencies and access permissions. After the move, the asset will belong to the target workspace and members of the current workspace may lose access.',
+      'Related asset dependencies have been checked. Select a target workspace and confirm to validate its status and access permissions. Members of the current workspace may lose access after the move.',
     descriptionWithName:
-      'Select where to move "{name}". The system will check related dependencies and access permissions. After the move, the asset will belong to the target workspace and members of the current workspace may lose access.',
+      'Related dependencies for "{name}" have been checked. Select a target workspace and confirm to validate its status and access permissions.',
     locationTitle: 'Move location',
     locationDescription:
       'The asset will move from its current workspace to the selected workspace.',
     currentWorkspace: 'Current workspace',
     targetWorkspace: 'Target workspace',
     targetWorkspacePlaceholder: 'Select target workspace',
-    previewing: 'Checking asset dependencies and access permissions...',
+    preflightChecking: 'Checking related asset dependencies...',
+    dependencyPreflightFailed: 'Could not check related asset dependencies. Please try again.',
+    continueToTargetSelection: 'Continue to workspace selection',
+    bindingPreflightWarningTitle: 'These bindings will be removed by the move',
+    bindingPreflightWarningDescription:
+      'Continue to select a target workspace. Agent bindings are removed only after the final move confirmation; this step does not change any configuration.',
+    targetLoadFailedTitle: 'Could not load available workspaces',
+    targetLoadFailedDescription:
+      'Refresh and try again. Your permissions will be checked again before the asset is moved.',
+    noTargetWorkspaceTitle: 'No other workspace is available',
+    noTargetWorkspaceAdminDescription:
+      'Create another workspace first, then return here to move this asset.',
+    noTargetWorkspaceMemberDescription:
+      'Ask an organization administrator or owner to grant move permission in another workspace.',
+    createWorkspace: 'Create workspace',
+    previewing: 'Checking the target workspace and access permissions...',
     unknownWorkspace: 'Unknown workspace',
     readyTitle: 'Ready to move',
     readyDescription:
       'Asset dependencies and access permissions passed the check. Confirm to move it to the target workspace.',
+    bindingImpactTitle: 'Agent bindings must be removed',
+    bindingImpactDescription:
+      'This resource is used by {count} Agent(s). Confirming the move will first show which Agents will be unbound.',
     blockersTitle: 'Cannot move yet',
     warningsTitle: 'Review before moving',
     confirm: 'Confirm move',
+    unbindAndMove: 'Unbind and move',
     previewFailed: 'Could not check asset dependencies and access permissions',
     moveSuccess: 'Moved successfully',
     moveFailed: 'Failed to move',
+  },
+  agentResourceBound: {
+    title: 'This resource is used by Agents',
+    description: '{count} Agent(s) will be affected by this change.',
+    warningTitle: 'Agent bindings will change',
+    warningDescription:
+      'Continuing will unbind this resource from these Agents, and the related capability will no longer be available.',
+    draft: 'Draft',
+    published: 'Published',
+    bindingCount: '{count} binding(s)',
+    viewDetails: 'View details',
+    unavailableAgent: 'Unavailable Agent',
+    noDescription: 'No description',
+    previewFailed: 'Could not check Agent bindings. Please try again.',
+    confirm: 'Unbind and continue',
+    retainSuspendedDescription:
+      '{count} Agent(s) use the Skill you are disabling. Their bindings will be retained.',
+    retainSuspendedWarningTitle: 'Bindings will be suspended',
+    retainSuspendedWarningDescription:
+      'Affected Agents cannot call this Skill while it is disabled. Re-enabling the Skill automatically restores these bindings.',
+    retainSuspendedConfirm: 'Keep bindings and disable',
   },
   // Error Boundary
   errorBoundary: {

@@ -210,7 +210,37 @@ export interface AgentRuntimeConfig {
   knowledge_retrieval_config?: Record<string, unknown>;
   database_bindings?: AgentDatabaseBinding[];
   workflow_bindings?: AgentWorkflowBinding[];
+  binding_revision?: string;
+  binding_health?: AgentBindingHealth;
   updated_at: number;
+}
+
+export type AgentBindingType =
+  | 'skill'
+  | 'knowledge_dataset'
+  | 'database'
+  | 'database_table'
+  | 'workflow';
+
+export type AgentBindingStatus = 'active' | 'suspended' | 'unavailable';
+
+export interface AgentBindingHealthItem {
+  binding_type: AgentBindingType;
+  resource_id: string;
+  parent_resource_id?: string;
+  display_name?: string;
+  status: AgentBindingStatus;
+  reason: string;
+  access_mode?: 'read' | 'write' | 'execute';
+  suggestion?: string;
+}
+
+export interface AgentBindingHealth {
+  status: 'healthy' | 'warning' | 'blocked';
+  items: AgentBindingHealthItem[];
+  active_count: number;
+  suspended_count: number;
+  unavailable_count: number;
 }
 
 export interface AgentDatabaseBinding {
@@ -393,6 +423,7 @@ export interface UpdateAgentRuntimeConfigRequest {
   knowledge_retrieval_config?: Record<string, unknown>;
   database_bindings?: AgentDatabaseBinding[];
   workflow_bindings?: AgentWorkflowBinding[];
+  binding_revision?: string;
 }
 
 export interface AgentSuggestedQuestionSkillContext {
@@ -467,6 +498,11 @@ export interface PublishAgentResponse {
   published_at: number;
 }
 
+export interface PublishAgentRequest {
+  binding_revision?: string;
+  acknowledge_suspended_bindings?: boolean;
+}
+
 export interface AgentPublishedVersion {
   id: string;
   agent_id: string;
@@ -488,6 +524,25 @@ export interface AgentPublishedVersionsResponse {
 
 export interface RollbackAgentPublishedVersionRequest {
   version_id: string;
+  impact_token: string;
+  binding_action: 'remove_all_abnormal';
+}
+
+export interface AgentRollbackRemovedBinding {
+  binding_type: AgentBindingType;
+  resource_id: string;
+  parent_resource_id?: string;
+  display_name?: string;
+  status?: AgentBindingStatus;
+  reason?: string;
+}
+
+export interface AgentPublishedVersionRollbackPreview {
+  version_id: string;
+  config_snapshot: AgentRuntimeConfig;
+  binding_health: AgentBindingHealth;
+  removed_bindings: AgentRollbackRemovedBinding[];
+  impact_token: string;
 }
 export interface AgentApiKeyCreateResponse {
   id: string;

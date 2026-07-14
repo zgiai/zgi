@@ -8,7 +8,12 @@ import {
   createSensitiveWordStreamSession,
   isSensitiveWordFilterEnabled,
 } from '@/utils/sensitive-word-filter';
-import type { ApiResponseData, SuccessResponse } from './types/common';
+import type {
+  AgentBindingMutationConfirmation,
+  AgentResourceBoundImpact,
+  ApiResponseData,
+  SuccessResponse,
+} from './types/common';
 import type {
   AIChatAssetOperationAuditListResponse,
   AIChatChatRequest,
@@ -236,9 +241,16 @@ export const aichatService = {
     );
   },
 
-  deleteSkill(id: string) {
+  deleteSkill(id: string, confirmation?: AgentBindingMutationConfirmation) {
     return http.delete<AIChatDeleteSkillResponse>(
-      `${AICHAT_BASE_PATH}/skills/${encodeURIComponent(id)}`
+      `${AICHAT_BASE_PATH}/skills/${encodeURIComponent(id)}`,
+      { params: confirmation }
+    );
+  },
+
+  previewSkillDeleteImpact(id: string) {
+    return http.get<ApiResponseData<AgentResourceBoundImpact | null>>(
+      `${AICHAT_BASE_PATH}/skills/${encodeURIComponent(id)}/delete-impact`
     );
   },
 

@@ -33,6 +33,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { AgentResourceBoundDialog } from '@/components/common/agent-resource-bound-dialog';
 import {
   useDeleteAIChatSkill,
   useAIChatSkillConfig,
@@ -52,10 +53,12 @@ import type {
   AIChatSkillRuntimeType,
   AIChatSkillSource,
 } from '@/services/types/aichat';
+import type { AgentResourceBoundImpact } from '@/services/types/common';
+import { getAgentResourceBoundImpact } from '@/utils/agent-resource-bound';
+import { aichatService } from '@/services/aichat.service';
 
 const AUTO_SAVE_DELAY_MS = 450;
-const SKILL_CARD_GRID_CLASS =
-  'grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4';
+const SKILL_CARD_GRID_CLASS = 'grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4';
 const SYSTEM_SKILL_NAME_CONFLICT_ERROR =
   'This skill name is reserved by a built-in system skill. Please rename your custom skill and try again.';
 
@@ -448,6 +451,12 @@ function useAIChatSkillConfigAutosave({
     setEnabledSkillIds,
     saveStatus,
     resetToServerValue: () => setEnabledSkillIds(confirmedSkillIdsRef.current),
+    commitServerValue: (value: string[]) => {
+      const normalized = normalizeSkillIds(value);
+      confirmedSkillIdsRef.current = normalized;
+      setEnabledSkillIds(normalized);
+      setSaveStatus('saved');
+    },
   };
 }
 
@@ -701,6 +710,7 @@ function SkillImportPreviewDialog({
  */
 export function AIChatSkillSettingsSection() {
   const t = useT('dashboard');
+  const tCommon = useT('common');
   const { locale } = useLocale();
   const queryClient = useQueryClient();
   const { data: skills = [], isLoading: isLoadingSkills, isError } = useAIChatSkills();
@@ -716,6 +726,12 @@ export function AIChatSkillSettingsSection() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [activeTab, setActiveTab] = useState<'system' | 'custom'>('system');
   const [skillToDelete, setSkillToDelete] = useState<AIChatSkillMetadata | null>(null);
+  const [bindingImpact, setBindingImpact] = useState<AgentResourceBoundImpact | null>(null);
+  const [isCheckingDeleteImpact, setIsCheckingDeleteImpact] = useState(false);
+  const [skillConfigBindingConflict, setSkillConfigBindingConflict] = useState<{
+    impact: AgentResourceBoundImpact;
+    requestedSkillIds: string[];
+  } | null>(null);
   const [importPreview, setImportPreview] = useState<AIChatImportSkillPreview | null>(null);
   const [isImportPreviewOpen, setIsImportPreviewOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -741,37 +757,48 @@ export function AIChatSkillSettingsSection() {
 
   const isLoading = isLoadingSkills || isLoadingConfig;
   const isImporting = previewImportSkill.isPending || confirmImportSkill.isPending;
-  const isMutating = updateConfig.isPending || isImporting || deleteSkill.isPending;
+  const isMutating =
+    updateConfig.isPending || isImporting || deleteSkill.isPending || isCheckingDeleteImpact;
   const saveSkillConfig = useCallback(
     async (requestedSkillIds: string[]) => {
-      const response = await updateSkillConfig({
-        payload: {
-          enabled_skill_ids: requestedSkillIds,
-        },
-        silent: true,
-      });
-      const savedSkillIds = normalizeSkillIds(response.data?.enabled_skill_ids ?? requestedSkillIds);
-      queryClient.setQueryData(AICHAT_KEYS.skillConfig(), { enabled_skill_ids: savedSkillIds });
-      return savedSkillIds;
+      try {
+        const response = await updateSkillConfig({
+          payload: {
+            enabled_skill_ids: requestedSkillIds,
+          },
+          silent: true,
+        });
+        const savedSkillIds = normalizeSkillIds(
+          response.data?.enabled_skill_ids ?? requestedSkillIds
+        );
+        queryClient.setQueryData(AICHAT_KEYS.skillConfig(), { enabled_skill_ids: savedSkillIds });
+        return savedSkillIds;
+      } catch (error) {
+        const impact = getAgentResourceBoundImpact(error);
+        if (impact) {
+          setSkillConfigBindingConflict({ impact, requestedSkillIds });
+        }
+        throw error;
+      }
     },
     [queryClient, updateSkillConfig]
   );
   const handleAutosaveError = useCallback(
     (error: unknown) => {
+      if (getAgentResourceBoundImpact(error)) return;
       toast.error(
         error instanceof Error ? error.message : t('organization.aichatSkills.messages.saveFailed')
       );
     },
     [t]
   );
-  const { enabledSkillIds, setEnabledSkillIds, saveStatus } = useAIChatSkillConfigAutosave(
-    {
+  const { enabledSkillIds, setEnabledSkillIds, saveStatus, commitServerValue } =
+    useAIChatSkillConfigAutosave({
       initialEnabledSkillIds,
       isLoading,
       save: saveSkillConfig,
       onError: handleAutosaveError,
-    }
-  );
+    });
   const enabledCount = enabledSkillIds.length;
   const systemSkills = useMemo(
     () => manageableSkills.filter(skill => getSkillSource(skill) === 'system'),
@@ -818,6 +845,37 @@ export function AIChatSkillSettingsSection() {
       }
       return normalizeSkillIds(Array.from(next));
     });
+  };
+
+  const handleConfirmRetainSuspended = async () => {
+    if (!skillConfigBindingConflict) return;
+    const { impact, requestedSkillIds } = skillConfigBindingConflict;
+    try {
+      const response = await updateSkillConfig({
+        payload: {
+          enabled_skill_ids: requestedSkillIds,
+          agent_binding_action: 'retain_suspended',
+          impact_token: impact.impact_token,
+        },
+        silent: true,
+      });
+      const savedSkillIds = normalizeSkillIds(
+        response.data?.enabled_skill_ids ?? requestedSkillIds
+      );
+      queryClient.setQueryData(AICHAT_KEYS.skillConfig(), { enabled_skill_ids: savedSkillIds });
+      commitServerValue(savedSkillIds);
+      setSkillConfigBindingConflict(null);
+      toast.success(t('organization.aichatSkills.messages.saved'));
+    } catch (error) {
+      const nextImpact = getAgentResourceBoundImpact(error);
+      if (nextImpact) {
+        setSkillConfigBindingConflict({ impact: nextImpact, requestedSkillIds });
+        return;
+      }
+      toast.error(
+        error instanceof Error ? error.message : t('organization.aichatSkills.messages.saveFailed')
+      );
+    }
   };
 
   const handleImportClick = () => {
@@ -893,13 +951,34 @@ export function AIChatSkillSettingsSection() {
     }
   };
 
-  const handleConfirmDelete = async () => {
+  const handleConfirmDelete = async (impact?: AgentResourceBoundImpact) => {
     if (!skillToDelete) return;
     try {
-      await deleteSkill.mutateAsync(skillToDelete.skill_id);
+      await deleteSkill.mutateAsync({
+        id: skillToDelete.skill_id,
+        confirmation: impact
+          ? { agent_binding_action: 'unbind', impact_token: impact.impact_token }
+          : undefined,
+      });
       setSkillToDelete(null);
+      setBindingImpact(null);
+    } catch (error) {
+      const nextImpact = getAgentResourceBoundImpact(error);
+      if (nextImpact) setBindingImpact(nextImpact);
+    }
+  };
+
+  const handleRequestDelete = async (skill: AIChatSkillMetadata) => {
+    if (isCheckingDeleteImpact) return;
+    setIsCheckingDeleteImpact(true);
+    try {
+      const response = await aichatService.previewSkillDeleteImpact(skill.skill_id);
+      setSkillToDelete(skill);
+      if (response.data) setBindingImpact(response.data);
     } catch {
-      // The mutation hook owns user-facing error feedback.
+      toast.error(tCommon('agentResourceBound.previewFailed'));
+    } finally {
+      setIsCheckingDeleteImpact(false);
     }
   };
 
@@ -1010,7 +1089,7 @@ export function AIChatSkillSettingsSection() {
                       enabled={enabledSkillIds.includes(skill.skill_id)}
                       disabled={isMutating}
                       onToggle={handleToggle}
-                      onDelete={setSkillToDelete}
+                      onDelete={skill => void handleRequestDelete(skill)}
                     />
                   ))}
                 </div>
@@ -1043,7 +1122,7 @@ export function AIChatSkillSettingsSection() {
                       enabled={enabledSkillIds.includes(skill.skill_id)}
                       disabled={isMutating}
                       onToggle={handleToggle}
-                      onDelete={setSkillToDelete}
+                      onDelete={skill => void handleRequestDelete(skill)}
                     />
                   ))}
                 </div>
@@ -1093,7 +1172,7 @@ export function AIChatSkillSettingsSection() {
 
       <ConfirmDialog
         variant="danger"
-        open={Boolean(skillToDelete)}
+        open={Boolean(skillToDelete) && !bindingImpact}
         onOpenChange={open => {
           if (!open) setSkillToDelete(null);
         }}
@@ -1107,8 +1186,39 @@ export function AIChatSkillSettingsSection() {
             : t('organization.aichatSkills.deleteConfirm.confirm')
         }
         cancelText={t('organization.aichatSkills.deleteConfirm.cancel')}
-        onConfirm={handleConfirmDelete}
+        onConfirm={() => void handleConfirmDelete()}
         loading={deleteSkill.isPending}
+      />
+
+      <AgentResourceBoundDialog
+        open={Boolean(skillConfigBindingConflict)}
+        impact={skillConfigBindingConflict?.impact}
+        loading={updateConfig.isPending}
+        description={tCommon('agentResourceBound.retainSuspendedDescription', {
+          count: skillConfigBindingConflict?.impact.agents.length ?? 0,
+        })}
+        warningTitle={tCommon('agentResourceBound.retainSuspendedWarningTitle')}
+        warningDescription={tCommon('agentResourceBound.retainSuspendedWarningDescription')}
+        actionLabel={tCommon('agentResourceBound.retainSuspendedConfirm')}
+        onOpenChange={open => {
+          if (!open) setSkillConfigBindingConflict(null);
+        }}
+        onConfirm={() => void handleConfirmRetainSuspended()}
+      />
+
+      <AgentResourceBoundDialog
+        open={Boolean(bindingImpact)}
+        impact={bindingImpact}
+        loading={deleteSkill.isPending}
+        onOpenChange={open => {
+          if (!open) {
+            setBindingImpact(null);
+            setSkillToDelete(null);
+          }
+        }}
+        onConfirm={() => {
+          if (bindingImpact) void handleConfirmDelete(bindingImpact);
+        }}
       />
 
       <SkillImportPreviewDialog

@@ -101,6 +101,8 @@ export type AIChatSkillDetailResponse = ApiResponseData<AIChatSkillMetadata>;
 
 export interface AIChatSkillOrganizationConfig {
   enabled_skill_ids: string[];
+  agent_binding_action?: 'retain_suspended';
+  impact_token?: string;
 }
 
 export type AIChatSkillConfigResponse = ApiResponseData<AIChatSkillOrganizationConfig>;

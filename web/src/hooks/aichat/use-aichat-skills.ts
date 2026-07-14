@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AICHAT_KEYS } from '@/hooks/query-keys';
+import { AGENT_KEYS, AICHAT_KEYS } from '@/hooks/query-keys';
 import { useT } from '@/i18n/translations';
 import { aichatService } from '@/services/aichat.service';
 import type {
@@ -8,6 +8,8 @@ import type {
   AIChatSkillOrganizationConfig,
   AIChatSkillPreference,
 } from '@/services/types/aichat';
+import type { AgentBindingMutationConfirmation } from '@/services/types/common';
+import { getAgentResourceBoundImpact } from '@/utils/agent-resource-bound';
 
 interface UpdateAIChatSkillConfigVariables {
   payload: AIChatSkillOrganizationConfig;
@@ -89,6 +91,7 @@ export function useUpdateAIChatSkillConfig() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: AICHAT_KEYS.skills() }),
         queryClient.invalidateQueries({ queryKey: AICHAT_KEYS.skillConfig() }),
+        queryClient.invalidateQueries({ queryKey: AGENT_KEYS.all }),
       ]);
       toast.success(t('organization.aichatSkills.messages.saved'));
     },
@@ -207,15 +210,23 @@ export function useDeleteAIChatSkill() {
   const t = useT('dashboard');
 
   return useMutation({
-    mutationFn: (id: string) => aichatService.deleteSkill(id),
+    mutationFn: ({
+      id,
+      confirmation,
+    }: {
+      id: string;
+      confirmation?: AgentBindingMutationConfirmation;
+    }) => aichatService.deleteSkill(id, confirmation),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: AICHAT_KEYS.skills() }),
         queryClient.invalidateQueries({ queryKey: AICHAT_KEYS.skillConfig() }),
+        queryClient.invalidateQueries({ queryKey: AGENT_KEYS.all }),
       ]);
       toast.success(t('organization.aichatSkills.messages.deleted'));
     },
     onError: error => {
+      if (getAgentResourceBoundImpact(error)) return;
       toast.error(
         error instanceof Error
           ? error.message
