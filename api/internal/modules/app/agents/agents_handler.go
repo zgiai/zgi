@@ -1425,6 +1425,13 @@ func (h *AgentsHandler) DeleteAgent(c *gin.Context) {
 		if util.WriteAgentBindingConflict(c, err) {
 			return
 		}
+		if errors.Is(err, errAgentPermissionDenied) {
+			response.SpecialFail(c, gin.H{
+				"code":    "403001",
+				"message": "Permission denied",
+			})
+			return
+		}
 		// Map specific errors to appropriate responses
 		switch err.Error() {
 		case "agent not found":

@@ -18,6 +18,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+var errAgentPermissionDenied = errors.New("permission denied")
+
 type agentResourceMutationOptions struct {
 	Action      string
 	ImpactToken string
@@ -892,7 +894,7 @@ func (s *agentsService) authorizeLoadedAgentDelete(ctx context.Context, agent *A
 			"creator_id":   creatorID,
 			"workspace_id": workspaceID,
 		})
-		return nil, fmt.Errorf("permission denied")
+		return nil, errAgentPermissionDenied
 	}
 	return &agentDeleteAuthorization{Agent: agent, AccountID: accountID, WorkspaceID: workspaceID, GroupID: groupID}, nil
 }
@@ -970,7 +972,7 @@ func (s *agentsService) DeleteAgent(ctx context.Context, agentID string) error {
 			return authErr
 		}
 		if lifecycleBindingRef != nil && (lockedAuthorization.GroupID == nil || *lockedAuthorization.GroupID != lifecycleBindingRef.OrganizationID) {
-			return fmt.Errorf("permission denied")
+			return errAgentPermissionDenied
 		}
 		agent = lockedAuthorization.Agent
 		workspaceID = lockedAuthorization.WorkspaceID
@@ -1040,6 +1042,9 @@ func (s *agentsService) DeleteAgent(ctx context.Context, agentID string) error {
 	if err != nil {
 		var conflict *agentbindings.ConflictError
 		if errors.As(err, &conflict) {
+			return err
+		}
+		if errors.Is(err, errAgentPermissionDenied) {
 			return err
 		}
 		logger.Error("Failed to delete agent: %v", err)

@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"testing"
 
@@ -87,8 +88,9 @@ func TestDeleteAgentReauthorizesLockedWorkspaceAfterLifecycleLock(t *testing.T) 
 
 	ctx := context.WithValue(context.Background(), "account_id", accountID)
 	ctx = context.WithValue(ctx, "tenant_id", organizationID)
-	if err := svc.DeleteAgent(ctx, agentID.String()); err == nil {
-		t.Fatal("DeleteAgent() error = nil, want locked workspace permission denial")
+	err = svc.DeleteAgent(ctx, agentID.String())
+	if !errors.Is(err, errAgentPermissionDenied) {
+		t.Fatalf("DeleteAgent() error = %v, want errAgentPermissionDenied", err)
 	}
 	if len(organization.checkedWorkspaces) != 2 || organization.checkedWorkspaces[1] != lockedWorkspaceID.String() {
 		t.Fatalf("checked workspaces = %#v, want source then locked workspace", organization.checkedWorkspaces)
