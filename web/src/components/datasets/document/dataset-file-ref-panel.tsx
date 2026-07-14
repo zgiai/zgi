@@ -238,7 +238,7 @@ export function DatasetFileRefPanel({
                 </TableCell>
                 <TableCell>
                   <div className="flex justify-end gap-1">
-                    {canOpenSourceFile ? (
+                    {canOpenSourceFile && ref.source_file_available ? (
                       <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs">
                         <Link
                           href={`/console/files/${ref.file_id}?returnTo=${encodeURIComponent(returnTo)}`}
