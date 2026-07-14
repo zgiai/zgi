@@ -26,6 +26,7 @@
     "test:contextual-assistant-brand-neutrality": "node scripts/test-contextual-assistant-brand-neutrality.mjs",
     "test:agent-runtime-user-input-continuation": "node scripts/test-agent-runtime-user-input-continuation.mjs",
     "test:agent-runtime-database-batch-config": "node scripts/test-agent-runtime-database-batch-config.mjs",
+    "test:agent-binding-rebase-merge": "node scripts/test-agent-binding-rebase-merge.mjs",
     "test:user-input-response-history": "node scripts/test-user-input-response-history.mjs",
     "test:chat-runtime-stream-recovery": "node scripts/test-chat-runtime-stream-recovery.mjs",
     "test:reparse-parser-config-confirmation": "node scripts/test-reparse-parser-config-confirmation.mjs",

@@ -60,6 +60,10 @@ import { getAgentRuntimeSaveText, type VersionPreviewBackup } from './page-model
 import { AGENT_SYSTEM_PROMPT_MAX_LENGTH } from '../prompt-limits';
 import { buildAgentRuntimeAIChatContext } from '../aichat-context';
 import { normalizeAgentDatabaseBindings } from '../database-binding-draft';
+import {
+  mergeSupersededAgentRuntimePayload,
+  normalizeAgentWorkflowBindings,
+} from '../binding-rebase-merge';
 
 type AgentKnowledgeDataset = Dataset & { load_error?: boolean };
 
@@ -132,33 +136,6 @@ function createAgentKnowledgeDatasetFallback(
     can_edit: false,
     load_error: loadError,
   };
-}
-
-function normalizeAgentWorkflowBindings(bindings: AgentWorkflowBinding[]): AgentWorkflowBinding[] {
-  const byBindingID = new Map<string, AgentWorkflowBinding>();
-  bindings.forEach(binding => {
-    const bindingId = binding.binding_id.trim();
-    const agentId = binding.agent_id.trim();
-    const workflowId = binding.workflow_id.trim();
-    if (!bindingId || !agentId || !workflowId) return;
-    const versionStrategy = binding.version_strategy || 'latest_published';
-    if (versionStrategy !== 'latest_published' && versionStrategy !== 'pinned') return;
-    byBindingID.set(bindingId, {
-      binding_id: bindingId,
-      label: binding.label.trim(),
-      description: binding.description?.trim() || undefined,
-      agent_id: agentId,
-      workflow_id: workflowId,
-      agent_type: binding.agent_type,
-      version_strategy: versionStrategy,
-      version_uuid:
-        versionStrategy === 'pinned' ? binding.version_uuid?.trim() || undefined : undefined,
-      timeout_seconds: Math.max(0, binding.timeout_seconds ?? 0),
-    });
-  });
-  return Array.from(byBindingID.values()).sort((left, right) =>
-    left.binding_id.localeCompare(right.binding_id)
-  );
 }
 
 function candidateToSkillMetadata(candidate: AgentSkillBindingCandidate): AIChatSkillMetadata {
@@ -721,8 +698,13 @@ export function useAgentRuntimePageModel(agentId: string) {
       setIsAbnormalBindingCleanupPending(false);
       setAgentMemorySlots(result.savedPayload.agent_memory_slots ?? []);
     },
-    onSaveSuperseded: result => {
-      applySavedBindingMetadata(result.savedPayload, result.bindingHealth);
+    onSaveSuperseded: (result, submittedPayload, latestPayload) => {
+      const mergedPayload = mergeSupersededAgentRuntimePayload(
+        submittedPayload,
+        latestPayload,
+        result.savedPayload
+      );
+      applyServerBindingPayload(mergedPayload, result.bindingHealth);
     },
     onSaveFailed: (error, options) => {
       if (!options.silent) {

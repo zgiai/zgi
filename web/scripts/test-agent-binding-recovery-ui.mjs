@@ -22,6 +22,7 @@ const previewPanel = read('src/components/agents/agent-runtime/preview-panel.tsx
 const draftPersistence = read(
   'src/components/agents/agent-runtime/use-agent-runtime-draft-persistence.ts'
 );
+const bindingRebaseMerge = read('src/components/agents/agent-runtime/binding-rebase-merge.ts');
 
 assert.match(types, /binding_revision\?: string/);
 assert.match(types, /binding_health\?: AgentBindingHealth/);
@@ -62,7 +63,7 @@ assert.match(
 );
 assert.match(
   pageModel,
-  /onSaveSuperseded: result => \{\s*applySavedBindingMetadata\(result\.savedPayload, result\.bindingHealth\)/
+  /onSaveSuperseded: \(result, submittedPayload, latestPayload\) => \{\s*const mergedPayload = mergeSupersededAgentRuntimePayload\(\s*submittedPayload,\s*latestPayload,\s*result\.savedPayload\s*\);\s*applyServerBindingPayload\(mergedPayload, result\.bindingHealth\)/
 );
 assert.doesNotMatch(
   pageModel,
@@ -71,9 +72,12 @@ assert.doesNotMatch(
 assert.doesNotMatch(pageModel, /if \(wasBindingRevisionRebased\) \{\s*applyServerBindingPayload/);
 assert.match(
   draftPersistence,
-  /if \(currentSignatureRef\.current !== submittedSignature\) \{\s*onSaveSupersededRef\.current\?\.\(result\);\s*lastSavedSignatureRef\.current = savedSignature;\s*setLastSavedAt\(result\.updatedAt\);\s*setSaveState\('dirty'\);\s*return false;/
+  /if \(currentSignatureRef\.current !== submittedSignature\) \{\s*onSaveSupersededRef\.current\?\.\(result, submittedPayload, currentPayloadRef\.current\);\s*lastSavedSignatureRef\.current = savedSignature;\s*setLastSavedAt\(result\.updatedAt\);\s*setSaveState\('dirty'\);\s*return false;/
 );
 assert.doesNotMatch(draftPersistence, /currentSignatureRef\.current !== savedSignature/);
+assert.match(bindingRebaseMerge, /mergeIDDelta\(/);
+assert.match(bindingRebaseMerge, /mergeDatabaseBindingDelta\(/);
+assert.match(bindingRebaseMerge, /mergeWorkflowBindingDelta\(/);
 assert.doesNotMatch(pageModel, /setBindingHealth\(\{\s*status: 'healthy'/);
 assert.match(pageModel, /setIsAbnormalBindingCleanupPending\(true\)/);
 assert.match(pageModel, /getAgentRollbackImpactChanged\(error\)/);

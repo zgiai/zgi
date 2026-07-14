@@ -34,7 +34,11 @@ interface UseAgentRuntimeDraftPersistenceOptions {
     options: SaveNowOptions
   ) => Promise<AgentRuntimeSaveResult>;
   onSaveCommitted?: (result: AgentRuntimeSaveResult) => void;
-  onSaveSuperseded?: (result: AgentRuntimeSaveResult) => void;
+  onSaveSuperseded?: (
+    result: AgentRuntimeSaveResult,
+    submittedPayload: UpdateAgentRuntimeConfigRequest,
+    currentPayload: UpdateAgentRuntimeConfigRequest
+  ) => void;
   onSaveFailed?: (error: unknown, options: SaveNowOptions) => void;
 }
 
@@ -53,6 +57,7 @@ export function useAgentRuntimeDraftPersistence({
   const [isSaving, setIsSaving] = useState(false);
   const lastSavedSignatureRef = useRef('');
   const currentSignatureRef = useRef('');
+  const currentPayloadRef = useRef(currentPayload);
   const canSaveRef = useRef(canSave);
   const savePayloadRef = useRef(savePayload);
   const onSaveCommittedRef = useRef(onSaveCommitted);
@@ -64,6 +69,7 @@ export function useAgentRuntimeDraftPersistence({
   );
 
   currentSignatureRef.current = currentSignature;
+  currentPayloadRef.current = currentPayload;
 
   useEffect(() => {
     canSaveRef.current = canSave;
@@ -140,7 +146,7 @@ export function useAgentRuntimeDraftPersistence({
         const savedSignature = buildAgentRuntimeSignature(result.savedPayload);
 
         if (currentSignatureRef.current !== submittedSignature) {
-          onSaveSupersededRef.current?.(result);
+          onSaveSupersededRef.current?.(result, submittedPayload, currentPayloadRef.current);
           lastSavedSignatureRef.current = savedSignature;
           setLastSavedAt(result.updatedAt);
           setSaveState('dirty');
