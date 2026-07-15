@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -12,6 +13,7 @@ import (
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
+	"github.com/zgiai/zgi/api/internal/modules/skills"
 	"github.com/zgiai/zgi/api/internal/util"
 )
 
@@ -71,6 +73,24 @@ func (s *capturingChatSurfaceService) PrepareChat(_ context.Context, _ runtimese
 	s.called = true
 	s.request = req
 	return nil, runtimeservice.ErrInvalidInput
+}
+
+func TestSkillResponsePreservesDisplayTaxonomy(t *testing.T) {
+	metadata := skills.SkillDiscoveryMetadata{
+		ID: "taxonomy-test",
+		Display: skills.SkillDisplayMetadata{
+			Category:  "document_processing",
+			Scenarios: []string{"document_handling", "legal_compliance"},
+		},
+	}
+
+	response := skillResponse(metadata)
+	if response.Display.Category != metadata.Display.Category {
+		t.Fatalf("category = %q, want %q", response.Display.Category, metadata.Display.Category)
+	}
+	if !reflect.DeepEqual(response.Display.Scenarios, metadata.Display.Scenarios) {
+		t.Fatalf("scenarios = %#v, want %#v", response.Display.Scenarios, metadata.Display.Scenarios)
+	}
 }
 
 func TestMessageResponseRedactsModelInvocationMetadata(t *testing.T) {

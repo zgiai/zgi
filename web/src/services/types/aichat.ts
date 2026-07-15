@@ -59,6 +59,7 @@ export interface AIChatConversationMetadata {
 export interface AIChatSkillDisplayMetadata {
   icon?: string;
   category?: string;
+  scenarios?: string[];
   label?: Record<string, string>;
   description?: Record<string, string>;
   when_to_use?: Record<string, string>;

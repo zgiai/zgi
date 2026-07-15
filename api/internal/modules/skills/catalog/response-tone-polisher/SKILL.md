@@ -7,13 +7,17 @@ max_calls_per_turn: 5
 timeout_seconds: 5
 display:
   icon: message-circle-heart
-  category: productivity
+  category: office_productivity
+  scenarios:
+    - office_collaboration
+    - customer_service
+    - hr_recruiting
   label:
     en_US: Response Tone Polisher
     zh_Hans: 回复口吻优化
   description:
-    en_US: Makes existing replies more natural, warm, polite, professional, and easy to understand.
-    zh_Hans: 将已有回复改写得更自然、温和、亲切、专业、易懂，减少机械感。
+    en_US: Designed for customer service, workplace, or sensitive replies that sound stiff or unclear; improves warmth, politeness, professionalism, and readability without changing the underlying facts.
+    zh_Hans: 适用于客服、职场或敏感沟通中语气生硬、表达不清的回复，可在不改变事实的前提下提升亲和度、礼貌度、专业度和可读性。
   when_to_use:
     en_US: Use when an existing reply needs tone, wording, warmth, or clarity optimization without changing facts.
     zh_Hans: 当已有回复需要优化语气、表达、亲和度或可读性且不能改变事实时使用。

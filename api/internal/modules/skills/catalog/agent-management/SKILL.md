@@ -330,13 +330,16 @@ tool_governance:
     idempotency_required: false
 display:
   icon: bot
-  category: productivity
+  category: workflow_automation
+  scenarios:
+    - business_operations
+    - technical_development
   label:
     en_US: Agent Manager
     zh_Hans: 智能体管理器
   description:
-    en_US: Performs governed Agent asset operations from the contextual console assistant.
-    zh_Hans: 在控制台操作助手中执行受治理保护的智能体资产操作。
+    en_US: Designed for maintaining Agents from the console; creates, finds, updates, publishes, or deletes Agent assets under permission and confirmation controls.
+    zh_Hans: 适用于在控制台维护智能体，可按明确指令创建、查找、更新、发布或删除智能体资产，并遵循权限与操作确认约束。
   when_to_use:
     en_US: Use when the user explicitly asks to manage Agents in the current console.
     zh_Hans: 当用户明确要求在当前控制台管理智能体时使用。

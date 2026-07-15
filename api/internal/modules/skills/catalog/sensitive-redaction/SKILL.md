@@ -11,13 +11,18 @@ max_calls_per_turn: 5
 timeout_seconds: 10
 display:
   icon: shield-alert
-  category: security
+  category: security_compliance
+  scenarios:
+    - legal_compliance
+    - document_handling
+    - business_operations
+    - customer_service
   label:
     en_US: Sensitive Redaction
     zh_Hans: 敏感信息脱敏
   description:
-    en_US: Detects and hides sensitive text before sharing, archiving, training, or export.
-    zh_Hans: 在分享、归档、训练或导出前识别并隐藏敏感文本。
+    en_US: Designed for content that must be shared, archived, trained on, or exported safely; detects and redacts personal data, business identifiers, credentials, and other sensitive text.
+    zh_Hans: 适用于文本分享、归档、训练或导出前的安全处理，可识别并脱敏个人信息、业务标识、账号密钥和其他敏感内容。
   when_to_use:
     en_US: Use when existing text or parsed document content needs PII, business identifier, or secret redaction.
     zh_Hans: 当已有文本或解析后的文档内容需要个人信息、业务标识或密钥脱敏时使用。

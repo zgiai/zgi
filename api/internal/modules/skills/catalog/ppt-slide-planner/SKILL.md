@@ -7,13 +7,17 @@ max_calls_per_turn: 5
 timeout_seconds: 60
 display:
   icon: presentation
-  category: productivity
+  category: content_creation
+  scenarios:
+    - content_creation
+    - office_collaboration
+    - business_operations
   label:
     en_US: PPT Slide Planner
     zh_Hans: PPT 规划器
   description:
-    en_US: Plans precise slide-by-slide PPT content, layout, style, and placeholders before PPTX generation.
-    zh_Hans: 先规划每页 PPT 的内容、版式、样式和占位，再交给文件生成器输出。
+    en_US: Designed for reports, proposals, training, and presentation decks; plans each slide's purpose, content, layout, visual style, and media placeholders before PPTX generation.
+    zh_Hans: 适用于汇报、方案、培训或演示文稿制作，可在生成 PPTX 前逐页规划目标、内容、版式、视觉风格和媒体占位。
   when_to_use:
     en_US: Use when PPT content must be planned page by page before file generation.
     zh_Hans: 当需要先逐页规划 PPT 内容和排版，再生成文件时使用。

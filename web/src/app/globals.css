@@ -613,6 +613,59 @@
   .theme-interactive-secondary {
     @apply transition-colors hover:bg-secondary-hover;
   }
+
+  .zgi-skill-card-enabled {
+    border-color: var(--primary) !important;
+    background: color-mix(in srgb, var(--primary) 3%, var(--card)) !important;
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--primary) 18%, transparent),
+      0 6px 20px color-mix(in srgb, var(--primary) 18%, transparent),
+      0 0 24px color-mix(in srgb, var(--primary) 12%, transparent) !important;
+  }
+
+  .zgi-skill-card-enable-trace {
+    position: absolute;
+    z-index: 10;
+    inset: -1px;
+    width: calc(100% + 2px);
+    height: calc(100% + 2px);
+    overflow: visible;
+    pointer-events: none;
+  }
+
+  .zgi-skill-card-enable-trace-line {
+    x: 1px;
+    y: 1px;
+    width: calc(100% - 2px);
+    height: calc(100% - 2px);
+    rx: calc(var(--radius) - 2px);
+    ry: calc(var(--radius) - 2px);
+    fill: none;
+    stroke: var(--primary);
+    stroke-width: 2px;
+    stroke-linecap: round;
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    vector-effect: non-scaling-stroke;
+    filter: drop-shadow(0 0 4px color-mix(in srgb, var(--primary) 45%, transparent));
+    animation: zgi-skill-card-enable-trace 850ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  }
+
+  @keyframes zgi-skill-card-enable-trace {
+    from {
+      stroke-dashoffset: 1;
+    }
+
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .zgi-skill-card-enable-trace-line {
+      animation-duration: 1ms;
+    }
+  }
 }
 
 @layer utilities {
