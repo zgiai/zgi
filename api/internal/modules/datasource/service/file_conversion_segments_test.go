@@ -113,22 +113,25 @@ func TestSplitFileConversionContentPreservesHTMLTextAndAllTables(t *testing.T) {
 	}
 }
 
-func TestSplitFileConversionContentRejectsLongPlainText(t *testing.T) {
-	content := strings.Repeat("a", fileConversionMaxTextRunes+1)
+func TestSplitFileConversionContentKeeps12001CharacterPlainTextInOneSegment(t *testing.T) {
+	content := strings.Repeat("a", 12001)
 	segments, tabular, err := splitFileConversionContent(content)
+	if err != nil {
+		t.Fatalf("splitFileConversionContent() error = %v", err)
+	}
 	if tabular {
 		t.Fatal("splitFileConversionContent() tabular = true, want false")
 	}
-	if err == nil || !strings.Contains(err.Error(), "non-table content exceeds") {
-		t.Fatalf("splitFileConversionContent() error = %v, want content limit error", err)
+	if got, want := len(segments), 1; got != want {
+		t.Fatalf("len(segments) = %d, want %d", got, want)
 	}
-	if len(segments) != 0 {
-		t.Fatalf("len(segments) = %d, want 0", len(segments))
+	if got := segments[0].Content; got != content {
+		t.Fatalf("segment content length = %d, want %d", len(got), len(content))
 	}
 }
 
-func TestSplitFileConversionContentKeepsPlainTextInOneSegment(t *testing.T) {
-	content := strings.Repeat("a", fileConversionMaxTextRunes)
+func TestSplitFileConversionContentKeepsMaxSizePlainTextInOneSegment(t *testing.T) {
+	content := strings.Repeat("a", fileConversionMaxContentBytes)
 	segments, tabular, err := splitFileConversionContent(content)
 	if err != nil {
 		t.Fatalf("splitFileConversionContent() error = %v", err)
@@ -141,19 +144,82 @@ func TestSplitFileConversionContentKeepsPlainTextInOneSegment(t *testing.T) {
 	}
 }
 
-func TestSplitFileConversionContentRejectsCombinedMixedDocumentTextOverLimit(t *testing.T) {
-	text := strings.Repeat("a", fileConversionMaxTextRunes/2+1)
-	content := text + "\n\n| name | amount |\n| --- | --- |\n| Alice | 10 |\n\n" + text
+func TestSplitFileConversionContentRejectsContentOverMaxSize(t *testing.T) {
+	content := strings.Repeat("a", fileConversionMaxContentBytes+1)
 	segments, tabular, err := splitFileConversionContent(content)
-	if !tabular {
-		t.Fatal("splitFileConversionContent() tabular = false, want true")
+	if tabular {
+		t.Fatal("splitFileConversionContent() tabular = true, want false")
 	}
-	if err == nil || !strings.Contains(err.Error(), "non-table content exceeds") {
+	if err == nil || !strings.Contains(err.Error(), "content exceeds") {
 		t.Fatalf("splitFileConversionContent() error = %v, want content limit error", err)
 	}
 	if len(segments) != 0 {
 		t.Fatalf("len(segments) = %d, want 0", len(segments))
 	}
+}
+
+func TestSplitFileConversionContentAllows400TableRows(t *testing.T) {
+	content := markdownTableContent(400)
+	segments, tabular, err := splitFileConversionContent(content)
+	if err != nil {
+		t.Fatalf("splitFileConversionContent() error = %v", err)
+	}
+	if !tabular {
+		t.Fatal("splitFileConversionContent() tabular = false, want true")
+	}
+	if got, want := len(segments), fileConversionMaxTableSegments; got != want {
+		t.Fatalf("len(segments) = %d, want %d", got, want)
+	}
+}
+
+func TestSplitFileConversionContentRejects401TableRowsForAllFormats(t *testing.T) {
+	tests := map[string]string{
+		"markdown": markdownTableContent(401),
+		"html":     htmlTableContent(401),
+		"csv":      csvTableContent(401),
+	}
+	for name, content := range tests {
+		t.Run(name, func(t *testing.T) {
+			segments, tabular, err := splitFileConversionContent(content)
+			if !tabular {
+				t.Fatal("splitFileConversionContent() tabular = false, want true")
+			}
+			if err == nil || !strings.Contains(err.Error(), "table segment limit") {
+				t.Fatalf("splitFileConversionContent() error = %v, want table segment limit error", err)
+			}
+			if len(segments) != 0 {
+				t.Fatalf("len(segments) = %d, want 0", len(segments))
+			}
+		})
+	}
+}
+
+func markdownTableContent(rows int) string {
+	var content strings.Builder
+	content.WriteString("| name | amount |\n| --- | --- |\n")
+	for i := 1; i <= rows; i++ {
+		fmt.Fprintf(&content, "| customer-%d | %d |\n", i, i*10)
+	}
+	return content.String()
+}
+
+func htmlTableContent(rows int) string {
+	var content strings.Builder
+	content.WriteString("<table><tr><th>name</th><th>amount</th></tr>")
+	for i := 1; i <= rows; i++ {
+		fmt.Fprintf(&content, "<tr><td>customer-%d</td><td>%d</td></tr>", i, i*10)
+	}
+	content.WriteString("</table>")
+	return content.String()
+}
+
+func csvTableContent(rows int) string {
+	var content strings.Builder
+	content.WriteString("name,amount\n")
+	for i := 1; i <= rows; i++ {
+		fmt.Fprintf(&content, "customer-%d,%d\n", i, i*10)
+	}
+	return content.String()
 }
 
 func TestValidateAndOrderSourceRowsRejectsMissingRow(t *testing.T) {

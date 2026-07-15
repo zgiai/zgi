@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	fileConversionRowsPerSegment = 40
-	fileConversionMaxTextRunes   = 12000
+	fileConversionRowsPerSegment   = 40
+	fileConversionMaxTableSegments = 10
+	fileConversionMaxContentBytes  = 256 * 1024
 )
 
 var markdownTableSeparatorPattern = regexp.MustCompile(`^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$`)
@@ -25,19 +26,32 @@ type fileConversionSegment struct {
 }
 
 func splitFileConversionContent(content string) ([]fileConversionSegment, bool, error) {
+	if size := len(content); size > fileConversionMaxContentBytes {
+		return nil, false, fmt.Errorf("file conversion content exceeds %d byte limit: got %d", fileConversionMaxContentBytes, size)
+	}
 	if segments, ok := markdownContentSegments(content); ok {
-		segments, err := combineTextConversionSegments(segments)
-		return segments, true, err
+		return validateFileConversionSegments(combineTextConversionSegments(segments), true)
 	}
 	if segments, ok := htmlContentSegments(content); ok {
-		segments, err := combineTextConversionSegments(segments)
-		return segments, true, err
+		return validateFileConversionSegments(combineTextConversionSegments(segments), true)
 	}
 	if rows, header := csvTableRows(content); len(rows) > 0 {
-		return tableRowSegments(header, rows), true, nil
+		return validateFileConversionSegments(tableRowSegments(header, rows), true)
 	}
-	segments, err := singleTextConversionSegment(content)
-	return segments, false, err
+	return singleTextConversionSegment(content), false, nil
+}
+
+func validateFileConversionSegments(segments []fileConversionSegment, tabular bool) ([]fileConversionSegment, bool, error) {
+	tableSegments := 0
+	for _, segment := range segments {
+		if segment.Tabular {
+			tableSegments++
+		}
+	}
+	if tableSegments > fileConversionMaxTableSegments {
+		return nil, tabular, fmt.Errorf("file conversion exceeds %d table segment limit: got %d", fileConversionMaxTableSegments, tableSegments)
+	}
+	return segments, tabular, nil
 }
 
 func markdownContentSegments(content string) ([]fileConversionSegment, bool) {
@@ -212,18 +226,15 @@ func tableRowSegments(header string, rows []string) []fileConversionSegment {
 	return segments
 }
 
-func singleTextConversionSegment(content string) ([]fileConversionSegment, error) {
+func singleTextConversionSegment(content string) []fileConversionSegment {
 	content = strings.TrimSpace(content)
 	if content == "" {
-		return nil, nil
+		return nil
 	}
-	if length := len([]rune(content)); length > fileConversionMaxTextRunes {
-		return nil, fmt.Errorf("non-table content exceeds %d character limit: got %d", fileConversionMaxTextRunes, length)
-	}
-	return []fileConversionSegment{{Content: content}}, nil
+	return []fileConversionSegment{{Content: content}}
 }
 
-func combineTextConversionSegments(segments []fileConversionSegment) ([]fileConversionSegment, error) {
+func combineTextConversionSegments(segments []fileConversionSegment) []fileConversionSegment {
 	textParts := make([]string, 0)
 	tableSegments := make([]fileConversionSegment, 0, len(segments))
 	for _, segment := range segments {
@@ -235,11 +246,8 @@ func combineTextConversionSegments(segments []fileConversionSegment) ([]fileConv
 			textParts = append(textParts, content)
 		}
 	}
-	textSegments, err := singleTextConversionSegment(strings.Join(textParts, "\n\n"))
-	if err != nil {
-		return nil, err
-	}
-	return append(textSegments, tableSegments...), nil
+	textSegments := singleTextConversionSegment(strings.Join(textParts, "\n\n"))
+	return append(textSegments, tableSegments...)
 }
 
 func validateAndOrderSourceRows(parsed *fileConversionLLMResponse, expected []int) error {
