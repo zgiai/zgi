@@ -732,12 +732,21 @@ func routeBacksModelForUseCase(routes []*channelmodel.LLMRoute, modelProvider, m
 	requiresAgentProtocol := useCase == string(model.UseCaseAgent) || useCase == AgentRuntimeUseCase
 	trustCustomAgentLabel := customModel && containsUseCase(useCases, string(model.UseCaseAgent))
 	for _, route := range routes {
-		if route == nil || !route.SupportsModel(modelName) {
+		if route == nil {
 			continue
 		}
 		official := route.IsOfficial || route.Type == shared.RouteTypeZGICloud
-		if !customModel && !official && !routeProviderMatchesCatalogProvider(route.ChannelProvider, modelProvider) {
-			continue
+		if official {
+			if !route.SupportsModelForProvider(modelProvider, modelName) {
+				continue
+			}
+		} else {
+			if !route.SupportsModel(modelName) {
+				continue
+			}
+			if !customModel && !routeProviderMatchesCatalogProvider(route.ChannelProvider, modelProvider) {
+				continue
+			}
 		}
 		if !requiresAgentProtocol {
 			return true

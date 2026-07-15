@@ -90,6 +90,34 @@ func TestToggleProviderMissingProviderReturnsProviderNotFound(t *testing.T) {
 	require.ErrorIs(t, err, ErrProviderNotFound)
 }
 
+func TestProviderViewsCountOnlyActiveModels(t *testing.T) {
+	svc, db := newProviderTestService(t)
+	organizationID := uuid.New()
+	require.NoError(t, db.Create(&model.LLMProvider{
+		ID:           uuid.New(),
+		Provider:     "siliconflow",
+		ProviderName: "SiliconFlow",
+		IsActive:     true,
+	}).Error)
+
+	require.NoError(t, db.Exec(`
+INSERT INTO llm_models (provider, status, is_active, deleted_at) VALUES
+	('siliconflow', 'active', true, NULL),
+	('siliconflow', 'deprecated', true, NULL),
+	('siliconflow', 'active', false, NULL),
+	('siliconflow', 'active', true, CURRENT_TIMESTAMP)
+`).Error)
+
+	providers, err := svc.ListTenantProviders(context.Background(), organizationID)
+	require.NoError(t, err)
+	require.Len(t, providers, 1)
+	require.Equal(t, 1, providers[0].ModelCount)
+
+	provider, err := svc.GetTenantProvider(context.Background(), organizationID, "siliconflow")
+	require.NoError(t, err)
+	require.Equal(t, 1, provider.ModelCount)
+}
+
 func newProviderTestService(t *testing.T) (ProviderService, *gorm.DB) {
 	t.Helper()
 
@@ -187,6 +215,7 @@ CREATE TABLE llm_routes (
 	return db.Exec(`
 CREATE TABLE llm_models (
 	provider text,
+	status text,
 	is_active boolean,
 	deleted_at datetime
 )`).Error

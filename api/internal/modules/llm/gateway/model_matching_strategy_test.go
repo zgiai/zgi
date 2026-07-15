@@ -53,6 +53,19 @@ func TestTenantAutonomyStrategy_SupportsModel(t *testing.T) {
 			want:          false,
 		},
 		{
+			name: "official_route_rejects_same_name_under_wrong_provider",
+			route: &channelmodel.LLMRoute{
+				ID:                     uuid.New(),
+				Type:                   shared.RouteTypeZGICloud,
+				IsOfficial:             true,
+				Models:                 []string{"same-name"},
+				OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: "same-name"}},
+			},
+			modelName:     "same-name",
+			modelProvider: "anthropic",
+			want:          false,
+		},
+		{
 			name: "provider_alias_resolves_to_catalog_provider",
 			route: &channelmodel.LLMRoute{
 				ID:              uuid.New(),
