@@ -197,6 +197,7 @@ class DbService extends BaseService {
   ): Promise<ApiResponseData<DbTableColumnsPayload>> {
     return this.request('post', `/data-dbs/analyze-file-for-table`, data, {
       timeout: 300000,
+      skipErrorHandling: true,
     });
   }
 

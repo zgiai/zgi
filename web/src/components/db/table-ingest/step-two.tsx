@@ -60,7 +60,14 @@ export interface IngestStepTwoProps {
   onLeaveGuardChange?: (active: boolean, reason: 'processing' | 'unsaved' | null) => void;
 }
 
-type RecognitionStatus = 'idle' | 'queued' | 'recognizing' | 'success' | 'warning' | 'failed' | 'skipped';
+type RecognitionStatus =
+  | 'idle'
+  | 'queued'
+  | 'recognizing'
+  | 'success'
+  | 'warning'
+  | 'failed'
+  | 'skipped';
 type FileFilter = 'all' | 'needs_action' | 'failed' | 'ready';
 type ContentTab = 'original' | 'text';
 type RecognitionMode = 'auto';
@@ -240,13 +247,16 @@ function normalizeRecognizedValue(
 }
 
 function normalizeRecognizedRecord(record: DbTableRecord, columns: DbTableColumn[]): DbTableRecord {
-  return columns.reduce((acc, col) => {
-    acc[col.name] = normalizeRecognizedValue(
-      record[col.name] as DbTableRecord[keyof DbTableRecord],
-      col.type
-    );
-    return acc;
-  }, { ...record } as DbTableRecord);
+  return columns.reduce(
+    (acc, col) => {
+      acc[col.name] = normalizeRecognizedValue(
+        record[col.name] as DbTableRecord[keyof DbTableRecord],
+        col.type
+      );
+      return acc;
+    },
+    { ...record } as DbTableRecord
+  );
 }
 
 function hasFieldMatchRawValue(match?: FileIngestFieldMatch): boolean {
@@ -356,7 +366,8 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
       }
     : null;
 
-  const activeOriginalPreviewUrl = originalPreview.fileId === activeFile?.id ? originalPreview.url : '';
+  const activeOriginalPreviewUrl =
+    originalPreview.fileId === activeFile?.id ? originalPreview.url : '';
   const activeOriginalPreviewLoading =
     originalPreview.fileId === activeFile?.id ? originalPreview.loading : false;
   const activeOriginalPreviewError =
@@ -403,10 +414,7 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
           fileId: activeFile.id,
           url: '',
           loading: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : 'Failed to load original preview',
+          error: error instanceof Error ? error.message : 'Failed to load original preview',
         });
       });
 
@@ -456,18 +464,21 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     []
   );
 
-  const hasInvalidTimestampValue = useCallback((values: DbTableRecord): boolean => {
-    return columns.some(col => {
-      if (col.type !== Type.Timestamp) return false;
-      const value = values[col.name] as DbTableRecord[keyof DbTableRecord];
-      return (
-        value !== null &&
-        typeof value !== 'undefined' &&
-        String(value).trim().length > 0 &&
-        !isValidTimestampRecordValue(value)
-      );
-    });
-  }, [columns]);
+  const hasInvalidTimestampValue = useCallback(
+    (values: DbTableRecord): boolean => {
+      return columns.some(col => {
+        if (col.type !== Type.Timestamp) return false;
+        const value = values[col.name] as DbTableRecord[keyof DbTableRecord];
+        return (
+          value !== null &&
+          typeof value !== 'undefined' &&
+          String(value).trim().length > 0 &&
+          !isValidTimestampRecordValue(value)
+        );
+      });
+    },
+    [columns]
+  );
 
   const requiredFieldsComplete = useCallback(
     (values: DbTableRecord): boolean =>
@@ -514,9 +525,15 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     async (fileId: string, content?: string, contentHash?: string, reset = false) => {
       if (promptUnavailable) return;
       const currentState = fileStatesRef.current[fileId];
-      const sourceContent = typeof content === 'string' ? content : currentState?.parse.content || currentState?.content || '';
+      const sourceContent =
+        typeof content === 'string'
+          ? content
+          : currentState?.parse.content || currentState?.content || '';
       const sourceContentHash =
-        contentHash || currentState?.parse.extraction?.content_hash || currentState?.extraction?.content_hash || '';
+        contentHash ||
+        currentState?.parse.extraction?.content_hash ||
+        currentState?.extraction?.content_hash ||
+        '';
       if (!sourceContent.trim()) {
         const message = t('tableIngest.stepTwo.noParsedContentForRecognition');
         setFileStates(prev => {
@@ -596,13 +613,18 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
           !error && records.length === 0
             ? result.message || t('tableIngest.stepTwo.noRecordWarning')
             : undefined;
-        const status: RecognitionStatus = error ? 'failed' : records.length > 0 ? 'success' : 'warning';
+        const status: RecognitionStatus = error
+          ? 'failed'
+          : records.length > 0
+            ? 'success'
+            : 'warning';
         const responseHash = result.content_hash || sourceContentHash;
 
         setFileStates(prev => {
           const current = prev[fileId];
           if (!current || current.recognition.requestId !== requestId) return prev;
-          const currentHash = current.parse.extraction?.content_hash || current.extraction?.content_hash || '';
+          const currentHash =
+            current.parse.extraction?.content_hash || current.extraction?.content_hash || '';
           if (currentHash && responseHash && currentHash !== responseHash) return prev;
 
           const attempt: RecognitionAttempt = {
@@ -748,7 +770,8 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
         });
         const content = result.content || '';
         const error =
-          result.error || (!content ? result.message || t('tableIngest.stepTwo.fileErrorFallback') : undefined);
+          result.error ||
+          (!content ? result.message || t('tableIngest.stepTwo.fileErrorFallback') : undefined);
         const status: RecognitionStatus = error ? 'failed' : 'success';
         setFileStates(prev => {
           const current = prev[fileId];
@@ -834,7 +857,9 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
     const states = fileStatesRef.current;
     return fileIds.some(id => {
       const state = states[id];
-      return Boolean(state?.dirty || state?.content || state?.records.length || state?.attempts.length);
+      return Boolean(
+        state?.dirty || state?.content || state?.records.length || state?.attempts.length
+      );
     });
   }, []);
 
@@ -899,12 +924,7 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
   );
 
   useEffect(() => {
-    if (
-      promptLoading ||
-      promptUnavailable ||
-      selectedFileIds.length === 0 ||
-      !fileStatesReady
-    ) {
+    if (promptLoading || promptUnavailable || selectedFileIds.length === 0 || !fileStatesReady) {
       return;
     }
     if (initialRunKeyRef.current === initialRunKey) return;
@@ -943,27 +963,41 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
 
   const retryParseCurrent = useCallback(() => {
     if (!activeFileId) return;
-    runWithOverwriteConfirm([activeFileId], t('tableIngest.stepTwo.confirmOverwriteParseCurrent'), () => {
-      void runParseForFile(activeFileId, true);
-    });
+    runWithOverwriteConfirm(
+      [activeFileId],
+      t('tableIngest.stepTwo.confirmOverwriteParseCurrent'),
+      () => {
+        void runParseForFile(activeFileId, true);
+      }
+    );
   }, [activeFileId, runParseForFile, runWithOverwriteConfirm, t]);
 
   const retryRecognitionCurrent = useCallback(() => {
     if (!activeFileId) return;
-    runWithOverwriteConfirm([activeFileId], t('tableIngest.stepTwo.confirmOverwriteRecognitionCurrent'), () => {
-      void runRecognitionForFile(activeFileId, undefined, undefined, true);
-    });
+    runWithOverwriteConfirm(
+      [activeFileId],
+      t('tableIngest.stepTwo.confirmOverwriteRecognitionCurrent'),
+      () => {
+        void runRecognitionForFile(activeFileId, undefined, undefined, true);
+      }
+    );
   }, [activeFileId, runRecognitionForFile, runWithOverwriteConfirm, t]);
 
   const reprocessCurrent = useCallback(() => {
     if (!activeFileId) return;
-    runWithOverwriteConfirm([activeFileId], t('tableIngest.stepTwo.confirmOverwriteCurrent'), () => {
-      void runParseForFile(activeFileId, true);
-    });
+    runWithOverwriteConfirm(
+      [activeFileId],
+      t('tableIngest.stepTwo.confirmOverwriteCurrent'),
+      () => {
+        void runParseForFile(activeFileId, true);
+      }
+    );
   }, [activeFileId, runParseForFile, runWithOverwriteConfirm, t]);
 
   const retryParseFailedFiles = useCallback(() => {
-    const failedIds = selectedFileIds.filter(id => fileStatesRef.current[id]?.parse.status === 'failed');
+    const failedIds = selectedFileIds.filter(
+      id => fileStatesRef.current[id]?.parse.status === 'failed'
+    );
     if (failedIds.length === 0) {
       toast.info(t('tableIngest.stepTwo.noParseFailedFiles'));
       return;
@@ -1036,23 +1070,23 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
   const activeError = activeParseError || activeRecognitionError || activeState?.error || '';
   const activeWarning = activeState?.recognition.warning || activeState?.warning || '';
   const activeEffectiveStatus = getEffectiveStatus(activeState);
-  const activeRecognizing = activeEffectiveStatus === 'queued' || activeEffectiveStatus === 'recognizing';
+  const activeRecognizing =
+    activeEffectiveStatus === 'queued' || activeEffectiveStatus === 'recognizing';
   const activeProcessingStage = activeState?.activeStage;
   const activeErrorStage: TableIngestStage | undefined = activeParseError
     ? 'parse'
     : activeRecognitionError
       ? 'recognition'
       : activeState?.activeStage;
-  const activeElapsedMs =
-    activeRecognizing
-      ? Math.max(
-          0,
-          now -
-            (activeProcessingStage === 'parse'
-              ? activeState?.parse.startedAt || now
-              : activeState?.recognition.startedAt || now)
-        )
-      : 0;
+  const activeElapsedMs = activeRecognizing
+    ? Math.max(
+        0,
+        now -
+          (activeProcessingStage === 'parse'
+            ? activeState?.parse.startedAt || now
+            : activeState?.recognition.startedAt || now)
+      )
+    : 0;
 
   const extractionMethodLabel = useCallback(
     (extraction?: FileIngestExtractionInfo) => {
@@ -1105,6 +1139,25 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
       : t('tableIngest.stepTwo.recognitionErrorRetryHint');
   const suppressRequiredErrors = Boolean(activeError && !activeState?.dirty);
 
+  const getPendingFieldCount = useCallback(
+    (state?: FileRecognitionState): number => {
+      if (!state) return 0;
+      const values = state.recognition.values || state.values || ({} as DbTableRecord);
+      return columns.reduce((count, col) => {
+        const value = values[col.name] as DbTableRecord[keyof DbTableRecord];
+        const hasValue = hasRequiredValue(value, col.type);
+        const invalidTimestamp =
+          col.type === Type.Timestamp &&
+          value !== null &&
+          typeof value !== 'undefined' &&
+          String(value).trim().length > 0 &&
+          !isValidTimestampRecordValue(value);
+        return count + (col.is_required && !hasValue ? 1 : 0) + (invalidTimestamp ? 1 : 0);
+      }, 0);
+    },
+    [columns, hasRequiredValue]
+  );
+
   const statusLabel = useCallback(
     (status: RecognitionStatus): string => {
       switch (status) {
@@ -1156,10 +1209,10 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
         return t('tableIngest.stepTwo.stageStatus.textRecognitionFailed');
       }
       if (state.recognition.status === 'warning') {
-        return t('tableIngest.stepTwo.stageStatus.textRecognitionNeedsCompletion');
+        return t('tableIngest.stepTwo.stageStatus.needsCompletion');
       }
       if (getEffectiveStatus(state) === 'success') {
-        return t('tableIngest.stepTwo.stageStatus.ready');
+        return t('tableIngest.stepTwo.stageStatus.recognitionComplete');
       }
       if (state.parse.status === 'success') {
         return t('tableIngest.stepTwo.stageStatus.fileParsed');
@@ -1211,16 +1264,17 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
   }, [activeValues]);
 
   const recognizedForColumn = (col: DbTableColumn): boolean => {
-    return hasRequiredValue(activeValues?.[col.name] as DbTableRecord[keyof DbTableRecord], col.type);
+    return hasRequiredValue(
+      activeValues?.[col.name] as DbTableRecord[keyof DbTableRecord],
+      col.type
+    );
   };
 
   const fieldMatchForColumn = (col: DbTableColumn): FileIngestFieldMatch | undefined => {
     const fields = activeState?.fieldExtraction?.records?.[0]?.fields || [];
     return fields.find(
       field =>
-        field.column_id === col.id ||
-        field.column_id === col.name ||
-        field.column_name === col.name
+        field.column_id === col.id || field.column_id === col.name || field.column_name === col.name
     );
   };
 
@@ -1390,7 +1444,9 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
   }, [leaveGuardReason, onLeaveGuardChange]);
 
   const onSave = async () => {
-    const validFiles = selectedFiles.filter(file => getEffectiveStatus(fileStates[file.id]) === 'success');
+    const validFiles = selectedFiles.filter(
+      file => getEffectiveStatus(fileStates[file.id]) === 'success'
+    );
     if (validFiles.length === 0) return;
 
     const buildPayloadForValues = (values: DbTableRecord): Omit<DbTableRecord, 'id'> => {
@@ -1441,7 +1497,9 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
         <span className="mr-1 font-medium text-foreground">
           {t('tableIngest.stepTwo.workspaceTitle')}
         </span>
-        <Badge variant="secondary">{t('tableIngest.stepTwo.stats.processing', { count: stats.processing })}</Badge>
+        <Badge variant="secondary">
+          {t('tableIngest.stepTwo.stats.processing', { count: stats.processing })}
+        </Badge>
         <Badge variant="secondary" className="text-success">
           {t('tableIngest.stepTwo.stats.ready', { count: stats.ready })}
         </Badge>
@@ -1472,7 +1530,13 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
             <RotateCcw className="h-4 w-4" />
             {t('tableIngest.stepTwo.retryRecognitionFailedFiles')}
           </Button>
-          <Button type="button" variant="outline" size="sm" onClick={retryAllFiles} disabled={promptUnavailable || selectedFiles.length === 0}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={retryAllFiles}
+            disabled={promptUnavailable || selectedFiles.length === 0}
+          >
             <RefreshCcw className="h-4 w-4" />
             {t('tableIngest.stepTwo.reRecognizeAll')}
           </Button>
@@ -1521,7 +1585,7 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
         </Alert>
       ) : null}
 
-      <div className="grid h-0 min-h-0 grow grid-cols-[280px_minmax(620px,1fr)_420px] overflow-hidden rounded-md border bg-background">
+      <div className="grid h-0 min-h-0 grow grid-cols-[280px_minmax(620px,1fr)_420px] overflow-x-auto overflow-y-hidden rounded-md border bg-background">
         <div className="min-w-0 flex flex-col border-r overflow-hidden">
           <div className="px-3 py-2 border-b">
             <div className="flex items-center">
@@ -1552,6 +1616,12 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
               const state = fileStates[file.id];
               const status = getEffectiveStatus(state);
               const extractionSource = extractionMethodLabel(state?.extraction);
+              const fileStatusLabel =
+                status === 'warning'
+                  ? t('tableIngest.stepTwo.fileStatus.needsCompletionCount', {
+                      count: getPendingFieldCount(state),
+                    })
+                  : stageStatusLabel(state);
               return (
                 <button
                   key={file.id}
@@ -1569,7 +1639,7 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
                       <span className="text-muted-foreground">{formatFileSize(file.size)}</span>
-                      <span className={statusClass(status)}>{stageStatusLabel(state)}</span>
+                      <span className={statusClass(status)}>{fileStatusLabel}</span>
                       {extractionSource ? (
                         <Badge variant="secondary" className="h-5 px-1.5 text-[11px]">
                           {extractionSource}
@@ -1734,26 +1804,26 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
                     {t('tableIngest.stepTwo.skipCurrentFile')}
                   </TooltipContent>
                 </Tooltip>
-              {onRemoveFile ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      isIcon
-                      aria-label={t('tableIngest.stepTwo.removeCurrentFile')}
-                      onClick={removeCurrentFile}
-                      disabled={!activeFileId}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    {t('tableIngest.stepTwo.removeCurrentFile')}
-                  </TooltipContent>
-                </Tooltip>
-              ) : null}
+                {onRemoveFile ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        isIcon
+                        aria-label={t('tableIngest.stepTwo.removeCurrentFile')}
+                        onClick={removeCurrentFile}
+                        disabled={!activeFileId}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      {t('tableIngest.stepTwo.removeCurrentFile')}
+                    </TooltipContent>
+                  </Tooltip>
+                ) : null}
               </div>
             </div>
           </div>
@@ -1807,7 +1877,9 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
                         ? t('tableIngest.stepTwo.retryFileParse')
                         : t('tableIngest.stepTwo.retryTextRecognition')
                     }
-                    onRetry={activeErrorStage === 'parse' ? retryParseCurrent : retryRecognitionCurrent}
+                    onRetry={
+                      activeErrorStage === 'parse' ? retryParseCurrent : retryRecognitionCurrent
+                    }
                     compact
                   />
                 ) : null}
@@ -1822,8 +1894,10 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
                 ) : null}
                 {columns.map(col => {
                   const fieldStatus = fieldStatusForColumn(col);
-                  const recognized = fieldStatus.status === 'recognized' || fieldStatus.status === 'normalized';
-                  const val = (activeValues?.[col.name] ?? '') as DbTableRecord[keyof DbTableRecord];
+                  const recognized =
+                    fieldStatus.status === 'recognized' || fieldStatus.status === 'normalized';
+                  const val = (activeValues?.[col.name] ??
+                    '') as DbTableRecord[keyof DbTableRecord];
                   const cellKey = `${String(activeFileId || '')}:${col.name}`;
                   const rawValue = fieldStatus.match?.raw_value ?? fieldStatus.match?.value;
                   const normalizedValue =
@@ -1885,7 +1959,9 @@ const StepTwo: React.FC<IngestStepTwoProps> = ({
                           <Switch
                             checked={Boolean(val)}
                             onCheckedChange={checked => updateValue(col, !!checked)}
-                            className={invalidRequired ? 'focus-visible:ring-destructive' : undefined}
+                            className={
+                              invalidRequired ? 'focus-visible:ring-destructive' : undefined
+                            }
                           />
                         </div>
                       ) : col.type === Type.Integer || col.type === Type.Numeric ? (

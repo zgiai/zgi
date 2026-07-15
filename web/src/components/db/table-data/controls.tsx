@@ -93,6 +93,12 @@ const Controls: FC<TableDataControlsProps> = ({
 }) => {
   const t = useT();
   const [reloading, setReloading] = React.useState<boolean>(false);
+  const systemFieldLabels: Readonly<Record<string, string>> = {
+    id: t('dbs.tableData.systemFields.id'),
+    uuid: t('dbs.tableData.systemFields.uuid'),
+    created_time: t('dbs.tableData.systemFields.createdTime'),
+    updated_time: t('dbs.tableData.systemFields.updatedTime'),
+  };
 
   const visibleNameSet = React.useMemo(() => new Set(visibleColumnNames), [visibleColumnNames]);
   const setColumnVisible = React.useCallback(
@@ -176,7 +182,10 @@ const Controls: FC<TableDataControlsProps> = ({
                   <SelectContent>
                     {columns.map(col => (
                       <SelectItem key={col.id} value={col.name} title={col.name}>
-                        {col.source_column_name?.trim() || col.name}
+                        {col.source_column_name?.trim() ||
+                          col.display_name?.trim() ||
+                          systemFieldLabels[col.name] ||
+                          col.name}
                       </SelectItem>
                     ))}
                   </SelectContent>

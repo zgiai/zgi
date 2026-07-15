@@ -177,6 +177,8 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
   }, [defaultModel, selectedModel, user?.id]);
 
   const enabledColumns = useMemo(() => columns.filter(col => col.enabled !== false), [columns]);
+  const allEnabledColumnsRequired =
+    enabledColumns.length > 0 && enabledColumns.every(col => col.is_required);
   const duplicateNames = useMemo(() => getDuplicateDbColumnNames(enabledColumns), [enabledColumns]);
 
   const invalidFieldNames = useMemo(
@@ -585,14 +587,37 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
             </Alert>
           )}
           <div className="rounded-md border overflow-auto">
-            <Table>
-              <TableHeader>
+            <Table containerClassName="overflow-visible">
+              <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-[var(--table-header)]">
                 <TableRow>
                   <TableHead className="w-20">{t('excelImport.schema.enabled')}</TableHead>
                   <TableHead>{t('excelImport.schema.source')}</TableHead>
                   <TableHead>{t('excelImport.schema.name')}</TableHead>
+                  <TableHead className="min-w-64">
+                    {t('excelImport.schema.descriptionColumn')}
+                  </TableHead>
                   <TableHead className="w-44">{t('excelImport.schema.type')}</TableHead>
-                  <TableHead className="w-24">{t('excelImport.schema.required')}</TableHead>
+                  <TableHead className="w-32">
+                    <div className="flex items-center gap-2">
+                      <span>{t('excelImport.schema.required')}</span>
+                      <Switch
+                        checked={allEnabledColumnsRequired}
+                        disabled={enabledColumns.length === 0}
+                        onCheckedChange={checked =>
+                          setColumns(prev =>
+                            prev.map(item =>
+                              item.enabled === false ? item : { ...item, is_required: checked }
+                            )
+                          )
+                        }
+                        aria-label={t(
+                          allEnabledColumnsRequired
+                            ? 'excelImport.schema.clearAllRequired'
+                            : 'excelImport.schema.setAllRequired'
+                        )}
+                      />
+                    </div>
+                  </TableHead>
                   <TableHead>{t('excelImport.schema.samples')}</TableHead>
                 </TableRow>
               </TableHeader>
@@ -654,6 +679,18 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                             </Tooltip>
                           )}
                         </div>
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          value={col.description}
+                          onChange={event =>
+                            setColumns(prev =>
+                              prev.map((item, i) =>
+                                i === index ? { ...item, description: event.target.value } : item
+                              )
+                            )
+                          }
+                        />
                       </TableCell>
                       <TableCell>
                         <Select

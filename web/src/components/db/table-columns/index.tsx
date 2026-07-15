@@ -55,6 +55,7 @@ export default function TableColumns({ dbId, tableId }: TableColumnsProps) {
     includeSystemFields: true,
   });
   const { updateColumns, isPending } = useUpdateDbTableColumns(dbId, tableId);
+  const hasExistingStructure = columns.some(column => !column.is_system_field);
 
   // Always editing mode
   // Initialize with empty array to avoid undefined during first render
@@ -153,7 +154,7 @@ export default function TableColumns({ dbId, tableId }: TableColumnsProps) {
                 </Link>
               </Button>
             )}
-            {canManageSchema && (
+            {canManageSchema && !hasExistingStructure && (
               <Button asChild className="bg-highlight text-white hover:bg-highlight/90">
                 <Link
                   href={`/console/db/${dbId}/table/${tableId}/create`}

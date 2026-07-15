@@ -1795,10 +1795,10 @@ func (s *dataSourceService) AddTableRecords(ctx context.Context, organizationID,
 		return dto.AddRecordResponse{}, err
 	}
 
-	return s.addTableRecordsToTable(ctx, organizationID, dataSource, table, accountID, req)
+	return s.addTableRecordsToTable(ctx, organizationID, dataSource, table, accountID, req, model.OperationTypeCreate)
 }
 
-func (s *dataSourceService) addTableRecordsToTable(ctx context.Context, organizationID string, dataSource *model.DataSource, table *model.Table, accountID string, req dto.AddRecordRequest) (dto.AddRecordResponse, error) {
+func (s *dataSourceService) addTableRecordsToTable(ctx context.Context, organizationID string, dataSource *model.DataSource, table *model.Table, accountID string, req dto.AddRecordRequest, operationType model.OperationType) (dto.AddRecordResponse, error) {
 	// 2. Get table structure for the specific table
 	tableInfo, err := s.sqlBase.GetTable(ctx, table.TableID)
 	if err != nil {
@@ -1848,7 +1848,7 @@ func (s *dataSourceService) addTableRecordsToTable(ctx context.Context, organiza
 	var affectedRows int64
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		// Perform batch insert
-		rows, err := s.batchInsertRecords(ctx, organizationID, auditWorkspaceID(organizationID, dataSource.WorkspaceID), dataSource.ID, table.ID, dataSource.Name, table.Name, accountID, table.PhysicalTableName, validRecords, columnMap)
+		rows, err := s.batchInsertRecords(ctx, organizationID, auditWorkspaceID(organizationID, dataSource.WorkspaceID), dataSource.ID, table.ID, dataSource.Name, table.Name, accountID, table.PhysicalTableName, validRecords, columnMap, operationType)
 		if err != nil {
 			return fmt.Errorf("failed to insert records: %w", err)
 		}
@@ -2004,7 +2004,7 @@ func (s *dataSourceService) validateRecord(record map[string]interface{}, column
 }
 
 // batchInsertRecords performs batch insert operation
-func (s *dataSourceService) batchInsertRecords(ctx context.Context, organizationID, workspaceID, dataSourceID, tableID, dataSourceName, tableName, accountID, actualTableName string, records []map[string]interface{}, columnMap map[string]sql_base.Column) (int64, error) {
+func (s *dataSourceService) batchInsertRecords(ctx context.Context, organizationID, workspaceID, dataSourceID, tableID, dataSourceName, tableName, accountID, actualTableName string, records []map[string]interface{}, columnMap map[string]sql_base.Column, operationType model.OperationType) (int64, error) {
 	if len(records) == 0 {
 		return 0, nil
 	}
@@ -2049,7 +2049,7 @@ func (s *dataSourceService) batchInsertRecords(ctx context.Context, organization
 		TableName:      tableName,
 		ClientType:     audit.ClientTypeAPI,
 		CreatedBy:      accountID,
-		OperationType:  string(model.OperationTypeCreate),
+		OperationType:  string(operationType),
 		GuardPolicy:    guardPolicy,
 	})
 	if err != nil {
@@ -2615,6 +2615,37 @@ func (s *dataSourceService) extractJSONContent(content string) (string, error) {
 
 // convertFileContentToRecords converts file content to table records using LLM
 func (s *dataSourceService) convertFileContentToRecords(ctx context.Context, tenantID, accountID, content string, columns dto.GetTableColumnsResponse, userPrompt *string, modelSpec *dto.ModelSpec) ([]map[string]interface{}, *dto.FileIngestFieldExtraction, error) {
+	segments, tabular := splitFileConversionContent(content)
+	records := make([]map[string]interface{}, 0)
+	extraction := &dto.FileIngestFieldExtraction{Records: make([]dto.FileIngestRecordExtraction, 0)}
+	seen := make(map[string]struct{})
+	for _, segment := range segments {
+		segmentRecords, segmentExtraction, err := s.convertFileContentSegmentToRecords(ctx, tenantID, accountID, segment, columns, userPrompt, modelSpec)
+		if err != nil {
+			return nil, nil, err
+		}
+		for i, record := range segmentRecords {
+			if !tabular {
+				encoded, err := json.Marshal(record)
+				if err != nil {
+					return nil, nil, fmt.Errorf("failed to encode extracted record for deduplication: %w", err)
+				}
+				key := string(encoded)
+				if _, duplicate := seen[key]; duplicate {
+					continue
+				}
+				seen[key] = struct{}{}
+			}
+			records = append(records, record)
+			if segmentExtraction != nil && i < len(segmentExtraction.Records) {
+				extraction.Records = append(extraction.Records, segmentExtraction.Records[i])
+			}
+		}
+	}
+	return records, extraction, nil
+}
+
+func (s *dataSourceService) convertFileContentSegmentToRecords(ctx context.Context, tenantID, accountID string, segment fileConversionSegment, columns dto.GetTableColumnsResponse, userPrompt *string, modelSpec *dto.ModelSpec) ([]map[string]interface{}, *dto.FileIngestFieldExtraction, error) {
 	columnSchema, err := buildFileConversionColumnSchema(columns)
 	if err != nil {
 		return nil, nil, err
@@ -2628,13 +2659,15 @@ func (s *dataSourceService) convertFileContentToRecords(ctx context.Context, ten
 
 	// Prepare template data
 	templateData := struct {
-		Columns string
-		Content string
-		Prompt  *string
+		Columns    string
+		Content    string
+		Prompt     *string
+		SourceRows []int
 	}{
-		Columns: columnSchema,
-		Content: content,
-		Prompt:  userPrompt,
+		Columns:    columnSchema,
+		Content:    segment.Content,
+		Prompt:     userPrompt,
+		SourceRows: segment.SourceRowIndexes,
 	}
 
 	// Render prompt
@@ -2675,6 +2708,21 @@ func (s *dataSourceService) convertFileContentToRecords(ctx context.Context, ten
 	cleanContent, err := s.extractJSONContent(generatedContent)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to extract JSON from LLM response: %w", err)
+	}
+
+	if len(segment.SourceRowIndexes) > 0 {
+		var parsed fileConversionLLMResponse
+		if err := json.Unmarshal([]byte(cleanContent), &parsed); err != nil {
+			return nil, nil, fmt.Errorf("failed to parse field extraction response object: %w", err)
+		}
+		if err := validateAndOrderSourceRows(&parsed, segment.SourceRowIndexes); err != nil {
+			return nil, nil, err
+		}
+		orderedContent, err := json.Marshal(parsed)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to encode ordered field extraction response: %w", err)
+		}
+		cleanContent = string(orderedContent)
 	}
 
 	records, fieldExtraction, err := normalizeFileConversionOutput(cleanContent, columns)
@@ -3674,7 +3722,7 @@ func (s *dataSourceService) importTableRecordsToTable(ctx context.Context, organ
 	}
 
 	// 5. Add records to table
-	result, err := s.addTableRecordsToTable(ctx, organizationID, dataSource, table, accountID, addReq)
+	result, err := s.addTableRecordsToTable(ctx, organizationID, dataSource, table, accountID, addReq, model.OperationTypeImport)
 	if err != nil {
 		return dto.ImportRecordResponse{}, fmt.Errorf("failed to add records: %w", err)
 	}
@@ -3922,7 +3970,7 @@ func (s *dataSourceService) ConfirmExcelImport(ctx context.Context, organization
 		if end > len(validation.Records) {
 			end = len(validation.Records)
 		}
-		result, err := s.addTableRecordsToTable(ctx, organizationID, dataSource, table, accountID, dto.AddRecordRequest{Records: validation.Records[start:end]})
+		result, err := s.addTableRecordsToTable(ctx, organizationID, dataSource, table, accountID, dto.AddRecordRequest{Records: validation.Records[start:end]}, model.OperationTypeImport)
 		if err != nil {
 			return failImport(fmt.Errorf("failed to insert records: %w", err), &table.ID)
 		}

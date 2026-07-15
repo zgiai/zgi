@@ -355,6 +355,7 @@ export enum OperationType {
   Delete = 'delete',
   Query = 'query',
   Update = 'update',
+  Import = 'import',
 }
 
 // Execution status enum as per API contract

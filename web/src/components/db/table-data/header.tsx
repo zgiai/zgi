@@ -35,39 +35,37 @@ const Header: FC<TableDataHeaderProps> = ({
         {columns.map(col => {
           const showRequiredStar = isEditing && !col.is_system_field && !!col.is_required;
           const displayName = getColumnDisplayName(col);
-          const hasAlternativeName = displayName !== col.name;
-          const hasTooltip = hasAlternativeName || Boolean(col.description);
           const sticky = stickyColumnNames.includes(col.name);
           const headClassName = cn(
-            'border-r last:border-r-0 h-8 bg-muted/50',
+            'h-8 min-w-[140px] max-w-[280px] border-r bg-muted/50 last:border-r-0',
             sticky && 'sticky left-0 z-20 min-w-[140px] shadow-[1px_0_0_hsl(var(--border))]'
           );
           const label = (
-            <span className="inline-flex items-center gap-0.5">
-              {displayName}
+            <span className="flex min-w-0 items-center gap-0.5">
+              <span className="truncate">{displayName}</span>
               {showRequiredStar && (
-                <span className="text-destructive" aria-hidden="true" title="Required">
+                <span className="shrink-0 text-destructive" aria-hidden="true" title="Required">
                   *
                 </span>
               )}
             </span>
           );
-          return hasTooltip ? (
+          return (
             <Tooltip key={`head-${col.id}`}>
               <TooltipTrigger asChild>
                 <TableHead className={cn(headClassName, 'cursor-help')}>{label}</TableHead>
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-[320px] break-words">
                 <div className="space-y-1 text-xs">
-                  {hasAlternativeName && <div>{col.name}</div>}
+                  <div>{displayName}</div>
+                  {col.display_name?.trim() && col.display_name.trim() !== displayName && (
+                    <div>{col.display_name.trim()}</div>
+                  )}
+                  {col.name !== displayName && <div>{col.name}</div>}
                   {col.description && <div>{col.description}</div>}
                 </div>
               </TooltipContent>
             </Tooltip>
-          ) : (
-            <TableHead key={`head-${col.id}`} className={headClassName}>
-              {label}
-            </TableHead>
           );
         })}
         {(isEditing || showRowActions) && (

@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
   ChevronDown,
+  FileSpreadsheet,
   Loader2,
   MoreHorizontal,
   Pencil,
@@ -27,6 +28,13 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { WorkspaceMismatchGuard } from '@/components/common/workspace-mismatch-guard';
 import { DbTableFormDialog } from '@/components/db/table-form-dialog';
@@ -62,6 +70,10 @@ export default function DbLayout({ children, params }: LayoutProps) {
   const canView = hasAnyPermission(DATABASE_VISIBLE_PERMISSION_CODES);
   const canUpdateDatabase = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.update);
   const canManageSchema = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.schemaManage);
+  const canImportExcel = hasAnyPermission([
+    ...DATABASE_PERMISSION_ACTIONS.importAnalyze,
+    ...DATABASE_PERMISSION_ACTIONS.importExecute,
+  ]);
   const canOpenRecords = hasAnyPermission([
     ...DATABASE_PERMISSION_ACTIONS.recordView,
     ...DATABASE_PERMISSION_ACTIONS.recordCreate,
@@ -94,6 +106,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
     mode: 'create' | 'edit';
     table?: DbTable;
   } | null>(null);
+  const [createMethodOpen, setCreateMethodOpen] = React.useState(false);
   const [editDbOpen, setEditDbOpen] = React.useState(false);
   const [deleteTarget, setDeleteTarget] = React.useState<{ id: string; name: string } | null>(null);
   const [bindingImpact, setBindingImpact] = React.useState<AgentResourceBoundImpact | null>(null);
@@ -148,7 +161,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
 
   const onOpenCreate = () => {
     if (!canManageSchema) return;
-    setTableDialog({ mode: 'create' });
+    setCreateMethodOpen(true);
   };
 
   const onOpenEdit = (table: DbTable) => {
@@ -218,42 +231,49 @@ export default function DbLayout({ children, params }: LayoutProps) {
           >
             <nav className="flex flex-1 flex-col gap-[3px] px-1 py-2 items-center">
               {canViewTableMetadata && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (isCollapsed) {
-                      setIsCollapsed(false);
-                      setDbMenuOpen(true);
-                    } else {
-                      setDbMenuOpen(prev => !prev);
-                    }
-                  }}
+                <div
                   className={cn(
-                    'flex w-full items-center rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
-                    pathname.startsWith(`/console/db/${dbId}/table`)
+                    'flex w-full items-center rounded-md text-xs font-medium transition-colors',
+                    pathname === `/console/db/${dbId}` ||
+                      pathname.startsWith(`/console/db/${dbId}/table`)
                       ? 'bg-primary/10 text-primary'
                       : 'hover:bg-primary/5 hover:text-primary',
-                    isCollapsed && 'justify-center px-0'
+                    isCollapsed && 'justify-center'
                   )}
                 >
-                  <Table className="h-4 w-4 shrink-0" />
-                  <span
+                  <Link
+                    href={`/console/db/${dbId}`}
                     className={cn(
-                      'truncate ml-1.5 grow text-left transition-all duration-300',
-                      isCollapsed && 'ml-0 w-0 grow-0 overflow-hidden opacity-0'
+                      'flex min-w-0 grow items-center px-2.5 py-1.5',
+                      isCollapsed && 'grow-0 justify-center px-0'
                     )}
                   >
-                    {t('dbs.tables')}
-                  </span>
-                  {!isCollapsed && (
-                    <ChevronDown
+                    <Table className="h-4 w-4 shrink-0" />
+                    <span
                       className={cn(
-                        'h-4 w-4 transition-transform shrink-0',
-                        dbMenuOpen ? 'rotate-0' : 'rotate-90'
+                        'truncate ml-1.5 grow text-left transition-all duration-300',
+                        isCollapsed && 'ml-0 w-0 grow-0 overflow-hidden opacity-0'
                       )}
-                    />
+                    >
+                      {t('dbs.tables')}
+                    </span>
+                  </Link>
+                  {!isCollapsed && (
+                    <button
+                      type="button"
+                      onClick={() => setDbMenuOpen(prev => !prev)}
+                      className="mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded hover:bg-primary/10"
+                      aria-label={dbMenuOpen ? t('navigation.collapse') : t('navigation.expand')}
+                    >
+                      <ChevronDown
+                        className={cn(
+                          'h-4 w-4 transition-transform',
+                          dbMenuOpen ? 'rotate-0' : 'rotate-90'
+                        )}
+                      />
+                    </button>
                   )}
-                </button>
+                </div>
               )}
               {/* Table list */}
               {canViewTableMetadata && dbMenuOpen && !isCollapsed && (
@@ -450,6 +470,47 @@ export default function DbLayout({ children, params }: LayoutProps) {
             <ErrorBoundary key={pathname}>{children}</ErrorBoundary>
           </div>
         </div>
+
+        <Dialog open={createMethodOpen} onOpenChange={setCreateMethodOpen}>
+          <DialogContent size="md">
+            <DialogHeader>
+              <DialogTitle>{t('dbs.createMethod.title')}</DialogTitle>
+              <DialogDescription>{t('dbs.createMethod.description')}</DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-3 px-6 pb-6 sm:grid-cols-2">
+              <button
+                type="button"
+                className="flex min-h-28 flex-col items-start gap-2 rounded-lg border p-4 text-left transition-colors hover:border-primary hover:bg-muted/50"
+                onClick={() => {
+                  setCreateMethodOpen(false);
+                  setTableDialog({ mode: 'create' });
+                }}
+              >
+                <Table className="h-5 w-5 text-primary" />
+                <span className="font-medium">{t('dbs.createMethod.manual')}</span>
+                <span className="text-sm text-muted-foreground">
+                  {t('dbs.createMethod.manualDescription')}
+                </span>
+              </button>
+              {canImportExcel && (
+                <button
+                  type="button"
+                  className="flex min-h-28 flex-col items-start gap-2 rounded-lg border p-4 text-left transition-colors hover:border-primary hover:bg-muted/50"
+                  onClick={() => {
+                    setCreateMethodOpen(false);
+                    router.push(`/console/db/${dbId}/import-excel`);
+                  }}
+                >
+                  <FileSpreadsheet className="h-5 w-5 text-primary" />
+                  <span className="font-medium">{t('dbs.createMethod.excel')}</span>
+                  <span className="text-sm text-muted-foreground">
+                    {t('dbs.createMethod.excelDescription')}
+                  </span>
+                </button>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
 
         <DbTableFormDialog
           dbId={dbId}

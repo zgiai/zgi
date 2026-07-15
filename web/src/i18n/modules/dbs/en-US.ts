@@ -13,6 +13,14 @@ const messages = {
   // Tables & features
   tables: 'Tables',
   createTable: 'Create Table',
+  createMethod: {
+    title: 'Choose How to Create a Table',
+    description: 'Create a table manually or import an Excel file.',
+    manual: 'Create Manually',
+    manualDescription: 'Enter a table name and configure fields manually.',
+    excel: 'Import from Excel',
+    excelDescription: 'Upload an Excel file to generate the table structure.',
+  },
   goToDetail: 'Go to Detail',
   features: {
     dataQuery: 'Data Query',
@@ -137,6 +145,12 @@ const messages = {
     discardConfirmAction: 'Discard changes',
     rowsPerPage: 'Rows per page',
     sortBy: 'Sort by',
+    systemFields: {
+      id: 'ID',
+      uuid: 'Unique identifier',
+      createdTime: 'Created time',
+      updatedTime: 'Updated time',
+    },
     ascending: 'Ascending',
     descending: 'Descending',
     addRow: 'Add Row',
@@ -207,6 +221,7 @@ const messages = {
     fileSelected: 'File selected',
     removeFileAria: 'Remove file',
     noFileSelected: 'No file selected',
+    selectFileFirst: 'Please select a file first',
     chooseFromFileManager: 'Choose from File Manager',
     chooseFromFileManagerDesc: 'Select an uploaded file for intelligent analysis',
     startAnalyze: 'Generate Structure',
@@ -395,8 +410,8 @@ const messages = {
         fileParseFailed: 'File parsing failed',
         textRecognizing: 'File parsed / text recognition running',
         textRecognitionFailed: 'File parsed / text recognition failed',
-        textRecognitionNeedsCompletion: 'File parsed / needs completion',
-        ready: 'File parsed / ready',
+        needsCompletion: 'Fields need completion',
+        recognitionComplete: 'Recognition complete',
       },
       reviewSteps: {
         recognizeTitle: 'AI Recognition',
@@ -416,6 +431,7 @@ const messages = {
         parseFailed: 'Parse failed',
         validationFailed: 'Needs fields',
         needsCompletion: 'Needs completion',
+        needsCompletionCount: '{count} fields need completion',
         skipped: 'Skipped',
       },
       filters: {
@@ -541,6 +557,9 @@ const messages = {
   // Added from zh-Hans
   analyze: {
     success: 'AI analysis complete',
+    failed: 'Table structure recognition failed',
+    networkFailed:
+      'Cannot reach the table structure recognition service. Check the service status or network connection.',
   },
   // SQL operations (record page)
   sqlOps: {
@@ -550,6 +569,7 @@ const messages = {
       update: 'Update',
       delete: 'Delete',
       query: 'Query',
+      import: 'Import',
     },
     status: {
       success: 'Success',
@@ -604,7 +624,8 @@ const messages = {
     skipUnmatchedColumnsDesc:
       'Columns that do not exist in the current table will not be imported. Required fields still need values.',
     errors: {
-      noMatchingColumns: 'No Excel headers match the current table fields. Check the header row and try again.',
+      noMatchingColumns:
+        'No Excel headers match the current table fields. Check the header row and try again.',
       missingRequiredColumns:
         'Excel is missing required fields: {fields}. Add these columns and try again, or make the fields optional first.',
     },
@@ -648,6 +669,8 @@ const messages = {
       name: 'Field name',
       type: 'Type',
       required: 'Required',
+      setAllRequired: 'Mark all imported fields as required',
+      clearAllRequired: 'Clear required for all imported fields',
       requiredYes: 'Yes',
       requiredNo: 'No',
       descriptionColumn: 'Description',
@@ -656,7 +679,7 @@ const messages = {
       tableInfoTitle: 'Table information',
       smartRecognizeTitle: 'Smart recognition',
       smartRecognizeDesc:
-        'Choose a model to suggest the table name, table description, and field names. Apply them only after review.',
+        'Choose a model to suggest the table name, table description, field names, and field descriptions. Apply them only after review.',
       smartRecognizeAction: 'Smart recognize',
       recognitionDialogTitle: 'Review smart recognition result',
       recognitionDialogDesc:
