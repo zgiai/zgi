@@ -554,7 +554,7 @@ func filterRoutesForModelScene(routes []*channelmodel.LLMRoute, modelName string
 		return routes
 	}
 	if !modelHasUseCase(llmModel, useCase) {
-		return nil
+		return routes
 	}
 
 	filtered := make([]*channelmodel.LLMRoute, 0, len(routes))

@@ -871,7 +871,7 @@ func TestFilterRoutesForModelScene_AgentUsesCatalogTagForOfficialAndPrivateRoute
 	}
 }
 
-func TestFilterRoutesForModelScene_AgentRejectsUntaggedOfficialModel(t *testing.T) {
+func TestFilterRoutesForModelScene_AgentAllowsCompatibleUntaggedModel(t *testing.T) {
 	official := &channelmodel.LLMRoute{
 		ID:         uuid.New(),
 		Type:       shared.RouteTypeZGICloud,
@@ -884,8 +884,8 @@ func TestFilterRoutesForModelScene_AgentRejectsUntaggedOfficialModel(t *testing.
 	}
 
 	got := filterRoutesForModelScene([]*channelmodel.LLMRoute{official}, "gpt-workflow", modelRecord, string(llmmodel.UseCaseAgent), false)
-	if len(got) != 0 {
-		t.Fatalf("agent routes = %#v, want none", got)
+	if len(got) != 1 || got[0] != official {
+		t.Fatalf("agent routes = %#v, want compatible official route", got)
 	}
 }
 

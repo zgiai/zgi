@@ -97,7 +97,7 @@ func TestApplyModelCapabilitiesRejectsUnknownModelSpec(t *testing.T) {
 	})}
 	parts := &chatRequestParts{Provider: "private", ModelName: "new-model"}
 
-	if err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, parts); err == nil {
+	if err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, Caller{}, parts); err == nil {
 		t.Fatal("applyModelCapabilities() error = nil, want unknown model error")
 	}
 }
@@ -106,10 +106,50 @@ func TestApplyModelCapabilitiesRejectsKnownUnsupportedModel(t *testing.T) {
 	svc := &service{modelSpecResolver: modelSpecResolverFunc(func(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
 		return ModelSpec{SupportsToolCall: false}, true, nil
 	})}
-	parts := &chatRequestParts{Provider: "private", ModelName: "legacy-model"}
+	parts := &chatRequestParts{Provider: "private", ModelName: "legacy-model", Surface: aiChatSurfaceContextualSidebar}
 
-	if err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, parts); err == nil {
+	if err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, Caller{}, parts); err == nil {
 		t.Fatal("applyModelCapabilities() error = nil, want function-calling error")
+	}
+}
+
+func TestApplyModelCapabilitiesSelectsWorkChatExecutionMode(t *testing.T) {
+	tests := []struct {
+		name string
+		spec ModelSpec
+		want string
+	}{
+		{name: "agent", spec: ModelSpec{UseCases: []string{"text-chat", "agent"}, SupportsToolCall: true}, want: executionModeAgentLoop},
+		{name: "legacy tool chat", spec: ModelSpec{UseCases: []string{"text-chat"}, SupportsToolCall: true}, want: executionModeLegacyToolChat},
+		{name: "direct chat", spec: ModelSpec{UseCases: []string{"text-chat"}}, want: executionModeDirectChat},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &service{modelSpecResolver: modelSpecResolverFunc(func(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
+				return tt.spec, true, nil
+			})}
+			parts := &chatRequestParts{Provider: "private", ModelName: "model", Surface: aiChatSurfaceWorkChat}
+			if err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, Caller{}, parts); err != nil {
+				t.Fatalf("applyModelCapabilities() error = %v", err)
+			}
+			if parts.ExecutionMode != tt.want {
+				t.Fatalf("ExecutionMode = %q, want %q", parts.ExecutionMode, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyModelCapabilitiesKeepsAgentCallerOnAgentLoop(t *testing.T) {
+	svc := &service{modelSpecResolver: modelSpecResolverFunc(func(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
+		return ModelSpec{UseCases: []string{"text-chat"}, SupportsToolCall: true}, true, nil
+	})}
+	parts := &chatRequestParts{Provider: "private", ModelName: "legacy-model", Surface: aiChatSurfaceExternalPageChat}
+	caller := Caller{Type: runtimemodel.ConversationCallerAgent}
+	if err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, caller, parts); err != nil {
+		t.Fatalf("applyModelCapabilities() error = %v", err)
+	}
+	if parts.ExecutionMode != executionModeAgentLoop {
+		t.Fatalf("ExecutionMode = %q, want %q", parts.ExecutionMode, executionModeAgentLoop)
 	}
 }
 
@@ -119,7 +159,7 @@ func TestApplyModelCapabilitiesRejectsResolverFailure(t *testing.T) {
 	})}
 	parts := &chatRequestParts{Provider: "private", ModelName: "new-model"}
 
-	err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, parts)
+	err := svc.applyModelCapabilities(context.Background(), Scope{OrganizationID: uuid.New()}, Caller{}, parts)
 	if err == nil || !errors.Is(err, errModelSpecResolver) {
 		t.Fatalf("applyModelCapabilities() error = %v, want resolver error", err)
 	}

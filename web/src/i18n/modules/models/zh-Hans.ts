@@ -113,6 +113,9 @@ const messages: ModelsMessages = {
       'function-calling': '函数调用',
       agent: '智能体模型',
     },
+    tags: {
+      agent: '智能体',
+    },
     empty: {
       noModelsTitle: '需要先配置模型',
       noResults: '没有符合搜索条件的模型',

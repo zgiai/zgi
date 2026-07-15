@@ -28,7 +28,7 @@ var (
 	errAgentPromptTooLong         = errors.New("agent system prompt is too long")
 )
 
-const agentModelSelectionUseCase = "agent"
+const agentModelSelectionUseCase = "text-chat"
 
 func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID string) (*dto.AgentConfigResponse, error) {
 	ag, cfg, err := s.loadAuthorizedAgentRuntimeDraft(ctx, agentID, accountID, true, agentRuntimeConfigReadPermissionCodes("AGENT")...)

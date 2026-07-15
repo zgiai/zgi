@@ -121,6 +121,7 @@ import type {
   AIChatOperationContext,
   AIChatToolGovernancePermissionTier,
 } from '@/components/aichat/contextual/types';
+import type { ModelUseCase } from '@/services/types/model';
 
 export { AIChatMessageBubble } from '@/components/chat/variants/aichat/message-bubble';
 export type { AIChatModelValue } from '@/components/chat/variants/aichat/types';
@@ -135,6 +136,8 @@ interface AIChatShellProps {
   beforeSend?: () => boolean | Promise<boolean>;
   variant?: 'full' | 'embedded';
   showModelSelector?: boolean;
+  modelUseCase?: ModelUseCase;
+  preferredModelUseCase?: ModelUseCase;
   requireModel?: boolean;
   showMemoryToggle?: boolean;
   forcedUseMemory?: boolean;
@@ -244,6 +247,8 @@ export function AIChatShell({
   beforeSend,
   variant = 'full',
   showModelSelector = true,
+  modelUseCase = 'agent',
+  preferredModelUseCase,
   requireModel = true,
   showMemoryToggle = true,
   forcedUseMemory,
@@ -792,13 +797,7 @@ export function AIChatShell({
           toast.error(t('consoleChat.userInputRequest.continuationUnavailable'));
         });
     },
-    [
-      activeUserInputMessage,
-      controller,
-      isSending,
-      t,
-      toolGovernanceOperationContext,
-    ]
+    [activeUserInputMessage, controller, isSending, t, toolGovernanceOperationContext]
   );
 
   const handleRegenerate = useCallback(
@@ -1379,6 +1378,8 @@ export function AIChatShell({
             onModelChange={onModelChange}
             onHeightChange={setInputAreaHeight}
             showModelSelector={showModelSelector}
+            modelUseCase={modelUseCase}
+            preferredModelUseCase={preferredModelUseCase}
             showMemoryToggle={showMemoryToggle}
             enableUpload={enableUpload}
             uploadScope={uploadScope}

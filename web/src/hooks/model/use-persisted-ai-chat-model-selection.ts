@@ -41,10 +41,12 @@ export function usePersistedAIChatModelSelection({
   accountId,
   scope,
   useCase = 'agent',
+  preferredUseCase,
 }: {
   accountId?: string | null;
   scope: AiModelScope;
   useCase?: DefaultModelUseCase;
+  preferredUseCase?: DefaultModelUseCase;
 }) {
   const [modelSelectorValue, setModelSelectorValue] = useState<AIChatModelValue>(() => {
     if (!accountId) return EMPTY_MODEL_VALUE;
@@ -53,7 +55,15 @@ export function usePersistedAIChatModelSelection({
   });
   const [isInitialModelResolved, setIsInitialModelResolved] = useState(false);
   const availableModels = useAvailableModels({ use_case: useCase });
-  const defaultModel = useDefaultModelByUseCase(useCase);
+  const preferredDefaultModel = useDefaultModelByUseCase(preferredUseCase ?? useCase);
+  const fallbackDefaultModel = useDefaultModelByUseCase(useCase);
+  const defaultModel =
+    preferredDefaultModel.value &&
+    isModelAvailable(preferredDefaultModel.value, availableModels.models)
+      ? preferredDefaultModel
+      : fallbackDefaultModel;
+  const areDefaultModelsResolved =
+    preferredDefaultModel.isResolved && fallbackDefaultModel.isResolved;
 
   const canValidateModels = !availableModels.isLoading && !availableModels.error;
   const isModelInitializing = !isInitialModelResolved;
@@ -89,7 +99,7 @@ export function usePersistedAIChatModelSelection({
       return;
     }
 
-    if (!defaultModel.isResolved) {
+    if (!areDefaultModelsResolved) {
       return;
     }
 
@@ -110,8 +120,8 @@ export function usePersistedAIChatModelSelection({
     accountId,
     availableModels.models,
     canValidateModels,
-    defaultModel.isResolved,
     defaultModel.value,
+    areDefaultModelsResolved,
     modelSelectorValue,
     scope,
   ]);

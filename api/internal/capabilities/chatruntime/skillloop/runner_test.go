@@ -52,6 +52,93 @@ func TestInitialLoadedSkillsForRunRestoresMetadataState(t *testing.T) {
 	}
 }
 
+func TestInitialLoadedSkillsForRunPreloadsLegacyToolChatSkills(t *testing.T) {
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{
+		{Metadata: skills.SkillMetadata{ID: skills.SkillFileManager}},
+		{Metadata: skills.SkillMetadata{ID: skills.SkillCalculator}},
+	}}
+	loaded := initialLoadedSkillsForRun(RunRequest{LegacyToolChat: true}, resolved)
+	for _, skillID := range resolved.SkillIDs() {
+		if _, ok := loaded[skillID]; !ok {
+			t.Fatalf("loaded[%q] missing; got %#v", skillID, loaded)
+		}
+	}
+}
+
+func TestLegacyToolChatToolsExcludeAgentPlanningProtocol(t *testing.T) {
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata: skills.SkillMetadata{ID: skills.SkillFileManager},
+		Tools:    []skills.SkillToolDefinition{{Name: "delete_file"}},
+	}}}
+	loaded := initialLoadedSkillsForRun(RunRequest{LegacyToolChat: true}, resolved)
+	tools := legacyToolChatTools(metaToolsForRun(resolved, loaded, false, false))
+	if !runnerTestHasTool(tools, skills.MetaToolCallSkillTool) {
+		t.Fatalf("tools = %#v, want %s", tools, skills.MetaToolCallSkillTool)
+	}
+	for _, excluded := range []string{
+		skills.MetaToolLoadSkill,
+		skills.MetaToolTurnState,
+		skills.MetaToolUpdatePlan,
+		skills.MetaToolIntermediateAnswer,
+		skills.MetaToolFinalAnswer,
+	} {
+		if runnerTestHasTool(tools, excluded) {
+			t.Fatalf("tools = %#v, legacy tool chat should exclude %s", tools, excluded)
+		}
+	}
+}
+
+func TestRunnerLegacyToolChatUsesSimpleToolContract(t *testing.T) {
+	fakeLLM := &runnerTestLLMClient{appChatResponses: []*adapter.ChatResponse{{
+		Choices: []adapter.Choice{{Message: adapter.Message{Role: "assistant", Content: "plain answer"}}},
+	}}}
+	runner := &Runner{
+		LLMClient:    fakeLLM,
+		SkillRuntime: skills.NewRuntime(nil, nil),
+		AppContext:   &llmclient.AppContext{},
+	}
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata:     skills.SkillMetadata{ID: skills.SkillFileManager},
+		Instructions: "# File Manager\nUse exact file IDs.",
+		Tools:        []skills.SkillToolDefinition{{Name: "delete_file"}},
+	}}}
+	prepared := NewPreparedChat("conv-1", "msg-1", "", "auto", &adapter.ChatRequest{
+		Messages: []adapter.Message{{Role: "user", Content: "hello"}},
+	})
+
+	answer, _, err := runner.Run(context.Background(), RunRequest{
+		Prepared:       prepared,
+		Resolved:       resolved,
+		LegacyToolChat: true,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if answer != "plain answer" {
+		t.Fatalf("answer = %q, want plain answer", answer)
+	}
+	if len(fakeLLM.appChatRequests) != 1 {
+		t.Fatalf("AppChat requests = %d, want 1", len(fakeLLM.appChatRequests))
+	}
+	request := fakeLLM.appChatRequests[0]
+	if !runnerTestHasTool(request.Tools, skills.MetaToolCallSkillTool) {
+		t.Fatalf("tools = %#v, want %s", request.Tools, skills.MetaToolCallSkillTool)
+	}
+	if runnerTestHasTool(request.Tools, skills.MetaToolUpdatePlan) || runnerTestHasTool(request.Tools, skills.MetaToolLoadSkill) {
+		t.Fatalf("tools = %#v, want no Agent planning or dynamic-loading tools", request.Tools)
+	}
+	foundLegacyPrompt := false
+	for _, message := range request.Messages {
+		if strings.Contains(evidenceStringFromAny(message.Content), "Use the already available tools only when they are needed") {
+			foundLegacyPrompt = true
+			break
+		}
+	}
+	if !foundLegacyPrompt {
+		t.Fatalf("messages = %#v, want legacy tool-chat system prompt", request.Messages)
+	}
+}
+
 func TestBuiltInToolSkillRequiresInstructionLoad(t *testing.T) {
 	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
 		Metadata:     skills.SkillMetadata{ID: skills.SkillFileManager, Source: skills.SkillSourceSystem, RuntimeType: skills.SkillRuntimeTypeTool},

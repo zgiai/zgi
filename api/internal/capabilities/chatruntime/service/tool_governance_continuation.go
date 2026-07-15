@@ -191,6 +191,7 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 		return nil, err
 	}
 	applyPersistedConversationSurface(continuation.Conversation, parts)
+	restoreExecutionModeFromMetadata(parts, message.Metadata)
 	restoreConsoleFilesContextFromMetadata(parts, message.Metadata, continuation.Event)
 	restoreConsoleAgentsContextFromMetadata(parts, message.Metadata, continuation.Event)
 	restoreTurnInitialContextFromMetadata(parts, message.Metadata)
@@ -199,7 +200,7 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 	if configured, ok := stringSliceValue(message.Metadata["configured_skill_ids"]); ok && len(configured) > 0 {
 		parts.ConfiguredSkillIDs = configured
 	}
-	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
+	if err := s.applyModelCapabilities(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, parts); err != nil {
 		return nil, err
 	}
 	applyManagedUserMemoryPolicy(Caller{Type: runtimemodel.ConversationCallerAIChat}, parts)
@@ -245,7 +246,7 @@ func (s *service) runToolGovernanceApprovedContinuation(ctx context.Context, pre
 		}
 		return result, nil
 	}
-	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, toolGovernanceApprovalContinuationMessage(event))
+	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, continuationMessageForExecutionMode(toolGovernanceApprovalContinuationMessage(event), prepared.parts.ExecutionMode))
 	answer, usage, err := s.runPreparedToolLoop(ctx, persistCtx, prepared, nil, onEvent)
 	if err != nil {
 		var pendingGovernance *skillloop.ToolGovernancePendingError
@@ -400,7 +401,7 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 		prepared.Message.Metadata = preparedOperationEvidenceMetadata(prepared.Message.Metadata)
 	}
 
-	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, toolGovernanceFrozenExecutionContinuationMessage(prepared.Message, event, invocation, executionErr))
+	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, continuationMessageForExecutionMode(toolGovernanceFrozenExecutionContinuationMessage(prepared.Message, event, invocation, executionErr), prepared.parts.ExecutionMode))
 	answer, usage, err := s.runPreparedToolLoop(ctx, persistCtx, prepared, nil, onEvent)
 	if err != nil {
 		var pendingGovernance *skillloop.ToolGovernancePendingError

@@ -342,6 +342,7 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 		return nil, err
 	}
 	applyPersistedConversationSurface(continuation.Conversation, parts)
+	restoreExecutionModeFromMetadata(parts, message.Metadata)
 	restoreTurnInitialContextFromMetadata(parts, message.Metadata)
 	restoreCurrentPageContextFromMetadata(parts, message.Metadata)
 	if actionID := clientActionID(continuation.Event); actionID != "" {
@@ -352,7 +353,7 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	if configured, ok := stringSliceValue(message.Metadata["configured_skill_ids"]); ok && len(configured) > 0 {
 		parts.ConfiguredSkillIDs = configured
 	}
-	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
+	if err := s.applyModelCapabilities(ctx, scope, Caller{Type: runtimemodel.ConversationCallerAIChat}, parts); err != nil {
 		return nil, err
 	}
 	applyManagedUserMemoryPolicy(Caller{Type: runtimemodel.ConversationCallerAIChat}, parts)
@@ -372,7 +373,7 @@ func (s *service) prepareClientActionContinuationChat(ctx context.Context, scope
 	}
 	parts.ContextControl = contextResult.Metadata
 	llmRequest := newLLMChatRequest(parts, contextResult.Messages)
-	llmRequest.Messages = append(llmRequest.Messages, clientActionContinuationMessage(message, continuation.Event, req))
+	llmRequest.Messages = append(llmRequest.Messages, continuationMessageForExecutionMode(clientActionContinuationMessage(message, continuation.Event, req), parts.ExecutionMode))
 	prepared.LLMRequest = llmRequest
 	return prepared, nil
 }

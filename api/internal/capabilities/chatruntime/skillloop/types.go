@@ -158,6 +158,7 @@ type RunRequest struct {
 	Prepared                       *PreparedChat
 	Resolved                       *skills.ResolvedSkills
 	ProtocolToolsOnly              bool
+	LegacyToolChat                 bool
 	ExecutionContext               skills.ExecutionContext
 	PreferExplicitFinalAnswer      bool
 	SuppressInitialNaturalProgress bool

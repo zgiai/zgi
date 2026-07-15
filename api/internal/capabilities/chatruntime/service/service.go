@@ -61,6 +61,10 @@ const (
 	skillModeAuto     = "auto"
 	skillModeRequired = "required"
 
+	executionModeAgentLoop      = "agent_loop"
+	executionModeLegacyToolChat = "legacy_tool_chat"
+	executionModeDirectChat     = "direct_chat"
+
 	userMemoryContextBudgetChars  = 4000
 	agentMemoryContextBudgetChars = 4000
 )
@@ -425,6 +429,8 @@ type chatRequestParts struct {
 	RecentGeneratedArtifacts     []map[string]interface{}
 	RecentOperationPlans         []map[string]interface{}
 	ModelSupportsVision          bool
+	ModelSupportsAgent           bool
+	ExecutionMode                string
 	FunctionCallingKnown         bool
 	ModelSupportsFunctionCalling bool
 	FunctionCallingAssumed       bool

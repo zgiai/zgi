@@ -114,18 +114,27 @@ func (s *service) runPreparedToolLoop(
 	} else {
 		prepared.Message.Metadata["final_answer_protocol"] = "assistant_content"
 	}
+	runtimeStateSnapshot := skillLoopRuntimeStateSnapshot(prepared)
+	onTerminalStateGuardDecision := skillLoopTerminalStateGuardDecision(prepared)
+	onTerminalCompletion := skillLoopTerminalCompletionResult(prepared)
+	if prepared.parts.ExecutionMode == executionModeLegacyToolChat {
+		runtimeStateSnapshot = nil
+		onTerminalStateGuardDecision = nil
+		onTerminalCompletion = nil
+	}
 	answer, usage, err := runner.Run(ctx, skillloop.RunRequest{
 		Prepared:                       loopPrepared,
 		Resolved:                       resolved,
 		ProtocolToolsOnly:              len(resolved.Skills) == 0,
+		LegacyToolChat:                 prepared.parts.ExecutionMode == executionModeLegacyToolChat,
 		ExecutionContext:               s.skillExecutionContext(prepared),
 		PreferExplicitFinalAnswer:      preferExplicitFinalAnswer,
 		SuppressInitialNaturalProgress: prepared.SuppressInitialNaturalProgress,
 		AdditionalSystemMessages:       skillLoopAdditionalSystemMessagesForResolved(prepared, resolved),
-		RuntimeStateSnapshot:           skillLoopRuntimeStateSnapshot(prepared),
+		RuntimeStateSnapshot:           runtimeStateSnapshot,
 		CurrentMetadata:                skillLoopCurrentMetadata(prepared),
-		OnTerminalStateGuardDecision:   skillLoopTerminalStateGuardDecision(prepared),
-		OnTerminalCompletion:           skillLoopTerminalCompletionResult(prepared),
+		OnTerminalStateGuardDecision:   onTerminalStateGuardDecision,
+		OnTerminalCompletion:           onTerminalCompletion,
 		OnChunk:                        onChunk,
 		PlanningOutputTokenLimit:       planningOutputTokenLimit(prepared),
 		AuthorizeSkillStep:             s.currentAgentSkillStepAuthorizer(prepared),
@@ -263,6 +272,9 @@ func skillLoopHasOperationPlan(prepared *PreparedChat) bool {
 
 func skillLoopPrefersExplicitFinalAnswer(prepared *PreparedChat) bool {
 	if prepared == nil {
+		return false
+	}
+	if prepared.parts != nil && prepared.parts.ExecutionMode == executionModeLegacyToolChat {
 		return false
 	}
 	if normalizeCallerType(prepared.Caller.Type) == runtimemodel.ConversationCallerAgent {
@@ -1999,7 +2011,20 @@ func chatPartsBusinessSkillsEnabled(parts *chatRequestParts) bool {
 }
 
 func chatPartsToolLoopEnabled(parts *chatRequestParts) bool {
-	return parts != nil && (parts.ProtocolToolsEnabled || chatPartsBusinessSkillsEnabled(parts))
+	return parts != nil && parts.ExecutionMode != executionModeDirectChat &&
+		(parts.ProtocolToolsEnabled || chatPartsBusinessSkillsEnabled(parts))
+}
+
+func continuationMessageForExecutionMode(message adapter.Message, mode string) adapter.Message {
+	if normalizeExecutionMode(mode) != executionModeLegacyToolChat {
+		return message
+	}
+	message.Content = strings.TrimSpace(stringFromAny(message.Content)) + "\n" + strings.Join([]string{
+		"Legacy tool-chat override for this continuation:",
+		"The Agent planning and terminal-answer protocol tools are not available. Ignore any instruction above to call update_plan, submit_turn_state, submit_intermediate_answer, or submit_final_answer.",
+		"Call only the tools exposed in this request when more work is needed; otherwise answer the user directly.",
+	}, "\n")
+	return message
 }
 
 func contextualAgentManagementStrategy(parts *chatRequestParts, strategy *AIChatTurnStrategy) *AIChatTurnStrategy {

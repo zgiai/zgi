@@ -17,31 +17,44 @@ import (
 )
 
 type agentModelEligibilityFake struct {
-	models          []*llmmodelservice.AvailableModel
-	err             error
-	requiredUseCase string
+	models   []*llmmodelservice.AvailableModel
+	err      error
+	useCases *[]string
 }
 
 func (f agentModelEligibilityFake) ListAvailable(_ context.Context, _ uuid.UUID, _, useCase string) ([]*llmmodelservice.AvailableModel, error) {
-	if f.requiredUseCase != "" && useCase != f.requiredUseCase {
-		return nil, nil
+	if f.useCases != nil {
+		*f.useCases = append(*f.useCases, useCase)
 	}
 	return f.models, f.err
 }
 
-func TestValidateAgentModelEligibilityRequiresExactAvailablePair(t *testing.T) {
+func TestValidateAgentModelEligibilityAcceptsAvailableTextChatModels(t *testing.T) {
+	var useCases []string
 	service := &agentsService{agentModels: agentModelEligibilityFake{
-		requiredUseCase: "agent",
-		models: []*llmmodelservice.AvailableModel{{
-			Provider: "deepseek",
-			Name:     "shared-model",
-		}},
+		models: []*llmmodelservice.AvailableModel{
+			{Provider: "deepseek", Name: "legacy-model"},
+			{Provider: "deepseek", Name: "agent-model", UseCases: []string{"text-chat", "function-calling", "agent"}},
+		},
+		useCases: &useCases,
 	}}
 
-	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "deepseek", "shared-model"); err != nil {
-		t.Fatalf("validateAgentModelEligibility() error = %v", err)
+	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "deepseek", "legacy-model"); err != nil {
+		t.Fatalf("validateAgentModelEligibility(legacy-model) error = %v", err)
 	}
-	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "openai", "shared-model"); err == nil {
+	if !reflect.DeepEqual(useCases, []string{"text-chat"}) {
+		t.Fatalf("legacy model use cases = %#v, want text-chat compatibility lookup", useCases)
+	}
+
+	useCases = nil
+	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "deepseek", "agent-model"); err != nil {
+		t.Fatalf("validateAgentModelEligibility(agent-model) error = %v", err)
+	}
+	if !reflect.DeepEqual(useCases, []string{"text-chat"}) {
+		t.Fatalf("recommended model use cases = %#v, want text-chat lookup", useCases)
+	}
+
+	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "openai", "legacy-model"); err == nil {
 		t.Fatal("validateAgentModelEligibility() error = nil, want provider mismatch error")
 	}
 }

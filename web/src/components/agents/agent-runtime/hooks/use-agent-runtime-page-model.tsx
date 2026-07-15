@@ -279,7 +279,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     models: availableChatModels,
     isLoading: isAgentModelsLoading,
     error: agentModelsError,
-  } = useAvailableModels({ use_case: 'agent' });
+  } = useAvailableModels({ use_case: 'text-chat' });
   const agentDetail = agent?.data;
   const agentWorkspaceId = agentDetailWorkspaceID(agentDetail);
   const defaultHomeTitle = agentDetail?.name?.trim() || t('defaultHomeTitle');
@@ -350,6 +350,24 @@ export function useAgentRuntimePageModel(agentId: string) {
     }
     return !availableChatModels.some(
       item => item.provider === modelValue.provider && item.model === modelValue.model
+    );
+  }, [
+    agentModelsError,
+    availableChatModels,
+    isAgentModelsLoading,
+    modelValue.model,
+    modelValue.provider,
+  ]);
+
+  const isAgentModelRecommended = useMemo(() => {
+    if (isAgentModelsLoading || agentModelsError || !modelValue.provider || !modelValue.model) {
+      return true;
+    }
+    return availableChatModels.some(
+      item =>
+        item.provider === modelValue.provider &&
+        item.model === modelValue.model &&
+        item.use_cases?.includes('agent')
     );
   }, [
     agentModelsError,
@@ -1407,6 +1425,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       openSections,
       modelValue,
       isAgentModelUnavailable,
+      isAgentModelRecommended,
       homeTitle,
       openingStatement,
       inputPlaceholder,

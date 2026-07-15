@@ -21,7 +21,7 @@ import type {
   FlatRow,
   FeatureLabels,
 } from './types';
-import { serializeValue, deserializeValue } from './utils';
+import { deserializeValue, prioritizeModelsByUseCase, serializeValue } from './utils';
 import {
   LoadingSkeleton,
   EmptyState,
@@ -71,6 +71,8 @@ export interface ModelSelectorProps {
   hasError?: boolean;
   /** Whether to show capabilities icons in the trigger label. Default: true */
   showCapabilities?: boolean;
+  /** Within each provider, place models for this use case first and highlight them. */
+  preferredUseCase?: ModelUseCase;
 }
 
 // Virtualization constants
@@ -108,6 +110,7 @@ export function ModelSelector({
   capabilityFilter,
   hasError = false,
   showCapabilities = true,
+  preferredUseCase,
 }: ModelSelectorProps) {
   const t = useT();
   const { locale } = useLocale();
@@ -215,9 +218,9 @@ export function ModelSelector({
     });
     return Array.from(groupMap.entries()).map(([provider, items]) => ({
       provider,
-      models: items,
+      models: prioritizeModelsByUseCase(items, preferredUseCase),
     }));
-  }, [filteredModelsByCapability]);
+  }, [filteredModelsByCapability, preferredUseCase]);
 
   // Clear search when dropdown closes or component unmounts
   useEffect(() => {
@@ -678,6 +681,16 @@ export function ModelSelector({
                           featureLabels={featureLabels}
                           useCaseLabels={useCaseLabels}
                           locale={locale}
+                          highlighted={Boolean(
+                            preferredUseCase && row.model.use_cases?.includes(preferredUseCase)
+                          )}
+                          highlightedLabel={
+                            preferredUseCase === 'agent'
+                              ? t('models.selector.tags.agent')
+                              : preferredUseCase
+                                ? useCaseLabels[preferredUseCase]
+                                : undefined
+                          }
                         />
                       );
                     })}

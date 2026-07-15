@@ -2482,8 +2482,8 @@ func TestUpdateAgentConfigValidatesModelPairAgainstAvailableModels(t *testing.T)
 	if err != nil {
 		t.Fatalf("Invoke() error = %v", err)
 	}
-	if available.organizationID != organizationID || available.provider != "openai" || available.useCase != "agent" {
-		t.Fatalf("available model lookup = org %s provider %q useCase %q, want %s/openai/agent", available.organizationID, available.provider, available.useCase, organizationID)
+	if available.organizationID != organizationID || available.provider != "openai" || available.useCase != "text-chat" {
+		t.Fatalf("available model lookup = org %s provider %q useCase %q, want %s/openai/text-chat", available.organizationID, available.provider, available.useCase, organizationID)
 	}
 	if service.updateConfigCalls != 1 {
 		t.Fatalf("UpdateAgentConfig calls = %d, want 1", service.updateConfigCalls)

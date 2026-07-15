@@ -1584,6 +1584,10 @@ const messages = {
     defaultModeDescription: 'Autonomous planning mode',
     defaultHomeTitle: 'Agent',
     defaultInputPlaceholder: 'Enter command...',
+    modelSelection: {
+      compatibilityWarning:
+        'This model is not a recommended Agent model. It remains available, but Agent quality may be lower. For better Agent results, consider switching to an Agent model.',
+    },
     saveState: {
       saving: 'Saving...',
       dirty: 'Unsaved changes',
@@ -1598,7 +1602,7 @@ const messages = {
         'Configuration saved with {count} binding issue(s). Review them before publishing.',
       saveFailed: 'Save failed',
       saveFailedDraftKept: 'Save failed. Your changes are kept.',
-      modelUnavailable: 'The previous model is no longer eligible for Agents. Select another model.',
+      modelUnavailable: 'The current model is unavailable. Select another model.',
       noGeneratedSuggestions: 'No usable request examples were generated',
       suggestionsGenerated: 'Request examples generated',
       generateSuggestionsFailed: 'Failed to generate request examples',
