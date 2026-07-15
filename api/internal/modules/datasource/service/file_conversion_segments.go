@@ -24,17 +24,20 @@ type fileConversionSegment struct {
 	Tabular          bool
 }
 
-func splitFileConversionContent(content string) ([]fileConversionSegment, bool) {
+func splitFileConversionContent(content string) ([]fileConversionSegment, bool, error) {
 	if segments, ok := markdownContentSegments(content); ok {
-		return segments, true
+		segments, err := combineTextConversionSegments(segments)
+		return segments, true, err
 	}
 	if segments, ok := htmlContentSegments(content); ok {
-		return segments, true
+		segments, err := combineTextConversionSegments(segments)
+		return segments, true, err
 	}
 	if rows, header := csvTableRows(content); len(rows) > 0 {
-		return tableRowSegments(header, rows), true
+		return tableRowSegments(header, rows), true, nil
 	}
-	return textSegments(content), false
+	segments, err := singleTextConversionSegment(content)
+	return segments, false, err
 }
 
 func markdownContentSegments(content string) ([]fileConversionSegment, bool) {
@@ -158,10 +161,11 @@ func isHTMLBlockElement(name string) bool {
 }
 
 func appendTextConversionSegments(segments []fileConversionSegment, content string) []fileConversionSegment {
-	if strings.TrimSpace(content) == "" {
+	content = strings.TrimSpace(content)
+	if content == "" {
 		return segments
 	}
-	return append(segments, textSegments(content)...)
+	return append(segments, fileConversionSegment{Content: content})
 }
 
 func csvTableRows(content string) ([]string, string) {
@@ -208,41 +212,34 @@ func tableRowSegments(header string, rows []string) []fileConversionSegment {
 	return segments
 }
 
-func textSegments(content string) []fileConversionSegment {
-	paragraphs := regexp.MustCompile(`\n\s*\n`).Split(strings.TrimSpace(content), -1)
-	segments := make([]fileConversionSegment, 0, 1)
-	var builder strings.Builder
-	flush := func() {
-		if builder.Len() == 0 {
-			return
-		}
-		segments = append(segments, fileConversionSegment{Content: strings.TrimSpace(builder.String())})
-		builder.Reset()
+func singleTextConversionSegment(content string) ([]fileConversionSegment, error) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return nil, nil
 	}
-	for _, paragraph := range paragraphs {
-		paragraph = strings.TrimSpace(paragraph)
-		if paragraph == "" {
+	if length := len([]rune(content)); length > fileConversionMaxTextRunes {
+		return nil, fmt.Errorf("non-table content exceeds %d character limit: got %d", fileConversionMaxTextRunes, length)
+	}
+	return []fileConversionSegment{{Content: content}}, nil
+}
+
+func combineTextConversionSegments(segments []fileConversionSegment) ([]fileConversionSegment, error) {
+	textParts := make([]string, 0)
+	tableSegments := make([]fileConversionSegment, 0, len(segments))
+	for _, segment := range segments {
+		if segment.Tabular {
+			tableSegments = append(tableSegments, segment)
 			continue
 		}
-		paragraphRunes := []rune(paragraph)
-		if len(paragraphRunes) > fileConversionMaxTextRunes {
-			flush()
-			for start := 0; start < len(paragraphRunes); start += fileConversionMaxTextRunes {
-				end := min(start+fileConversionMaxTextRunes, len(paragraphRunes))
-				segments = append(segments, fileConversionSegment{Content: string(paragraphRunes[start:end])})
-			}
-			continue
+		if content := strings.TrimSpace(segment.Content); content != "" {
+			textParts = append(textParts, content)
 		}
-		if builder.Len() > 0 && len([]rune(builder.String()))+len([]rune(paragraph)) > fileConversionMaxTextRunes {
-			flush()
-		}
-		if builder.Len() > 0 {
-			builder.WriteString("\n\n")
-		}
-		builder.WriteString(paragraph)
 	}
-	flush()
-	return segments
+	textSegments, err := singleTextConversionSegment(strings.Join(textParts, "\n\n"))
+	if err != nil {
+		return nil, err
+	}
+	return append(textSegments, tableSegments...), nil
 }
 
 func validateAndOrderSourceRows(parsed *fileConversionLLMResponse, expected []int) error {

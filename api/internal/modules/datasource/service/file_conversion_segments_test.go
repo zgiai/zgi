@@ -13,7 +13,10 @@ func TestSplitFileConversionContentBatchesMarkdownTableRows(t *testing.T) {
 		fmt.Fprintf(&content, "| customer-%d | %d |\n", i, i*10)
 	}
 
-	segments, tabular := splitFileConversionContent(content.String())
+	segments, tabular, err := splitFileConversionContent(content.String())
+	if err != nil {
+		t.Fatalf("splitFileConversionContent() error = %v", err)
+	}
 	if !tabular {
 		t.Fatal("splitFileConversionContent() tabular = false, want true")
 	}
@@ -32,7 +35,10 @@ func TestSplitFileConversionContentBatchesMarkdownTableRows(t *testing.T) {
 }
 
 func TestSplitFileConversionContentRecognizesCSVRows(t *testing.T) {
-	segments, tabular := splitFileConversionContent("name,amount\nAlice,10\nBob,20\n")
+	segments, tabular, err := splitFileConversionContent("name,amount\nAlice,10\nBob,20\n")
+	if err != nil {
+		t.Fatalf("splitFileConversionContent() error = %v", err)
+	}
 	if !tabular {
 		t.Fatal("splitFileConversionContent() tabular = false, want true")
 	}
@@ -56,19 +62,20 @@ Between tables
 
 Conclusion`
 
-	segments, _ := splitFileConversionContent(content)
-	if got, want := len(segments), 5; got != want {
+	segments, _, err := splitFileConversionContent(content)
+	if err != nil {
+		t.Fatalf("splitFileConversionContent() error = %v", err)
+	}
+	if got, want := len(segments), 3; got != want {
 		t.Fatalf("len(segments) = %d, want %d", got, want)
 	}
 	wants := []struct {
 		content string
 		tabular bool
 	}{
-		{content: "Introduction", tabular: false},
+		{content: "Introduction\n\nBetween tables\n\nConclusion", tabular: false},
 		{content: "Source table header: | name | amount |", tabular: true},
-		{content: "Between tables", tabular: false},
 		{content: "Source table header: | sku | quantity |", tabular: true},
-		{content: "Conclusion", tabular: false},
 	}
 	for i, want := range wants {
 		if segments[i].Tabular != want.tabular || !strings.Contains(segments[i].Content, want.content) {
@@ -84,19 +91,20 @@ func TestSplitFileConversionContentPreservesHTMLTextAndAllTables(t *testing.T) {
 <table><tr><th>sku</th><th>quantity</th></tr><tr><td>A-1</td><td>2</td></tr></table>
 <p>Conclusion</p>`
 
-	segments, _ := splitFileConversionContent(content)
-	if got, want := len(segments), 5; got != want {
+	segments, _, err := splitFileConversionContent(content)
+	if err != nil {
+		t.Fatalf("splitFileConversionContent() error = %v", err)
+	}
+	if got, want := len(segments), 3; got != want {
 		t.Fatalf("len(segments) = %d, want %d", got, want)
 	}
 	wants := []struct {
 		content string
 		tabular bool
 	}{
-		{content: "Introduction", tabular: false},
+		{content: "Introduction\n\nBetween tables\n\nConclusion", tabular: false},
 		{content: "Source table header: name | amount", tabular: true},
-		{content: "Between tables", tabular: false},
 		{content: "Source table header: sku | quantity", tabular: true},
-		{content: "Conclusion", tabular: false},
 	}
 	for i, want := range wants {
 		if segments[i].Tabular != want.tabular || !strings.Contains(segments[i].Content, want.content) {
@@ -105,17 +113,46 @@ func TestSplitFileConversionContentPreservesHTMLTextAndAllTables(t *testing.T) {
 	}
 }
 
-func TestSplitFileConversionContentSplitsLongPlainText(t *testing.T) {
+func TestSplitFileConversionContentRejectsLongPlainText(t *testing.T) {
 	content := strings.Repeat("a", fileConversionMaxTextRunes+1)
-	segments, tabular := splitFileConversionContent(content)
+	segments, tabular, err := splitFileConversionContent(content)
 	if tabular {
 		t.Fatal("splitFileConversionContent() tabular = true, want false")
 	}
-	if got, want := len(segments), 2; got != want {
+	if err == nil || !strings.Contains(err.Error(), "non-table content exceeds") {
+		t.Fatalf("splitFileConversionContent() error = %v, want content limit error", err)
+	}
+	if len(segments) != 0 {
+		t.Fatalf("len(segments) = %d, want 0", len(segments))
+	}
+}
+
+func TestSplitFileConversionContentKeepsPlainTextInOneSegment(t *testing.T) {
+	content := strings.Repeat("a", fileConversionMaxTextRunes)
+	segments, tabular, err := splitFileConversionContent(content)
+	if err != nil {
+		t.Fatalf("splitFileConversionContent() error = %v", err)
+	}
+	if tabular {
+		t.Fatal("splitFileConversionContent() tabular = true, want false")
+	}
+	if got, want := len(segments), 1; got != want {
 		t.Fatalf("len(segments) = %d, want %d", got, want)
 	}
-	if got, want := len([]rune(segments[0].Content)), fileConversionMaxTextRunes; got != want {
-		t.Fatalf("first segment runes = %d, want %d", got, want)
+}
+
+func TestSplitFileConversionContentRejectsCombinedMixedDocumentTextOverLimit(t *testing.T) {
+	text := strings.Repeat("a", fileConversionMaxTextRunes/2+1)
+	content := text + "\n\n| name | amount |\n| --- | --- |\n| Alice | 10 |\n\n" + text
+	segments, tabular, err := splitFileConversionContent(content)
+	if !tabular {
+		t.Fatal("splitFileConversionContent() tabular = false, want true")
+	}
+	if err == nil || !strings.Contains(err.Error(), "non-table content exceeds") {
+		t.Fatalf("splitFileConversionContent() error = %v, want content limit error", err)
+	}
+	if len(segments) != 0 {
+		t.Fatalf("len(segments) = %d, want 0", len(segments))
 	}
 }
 
