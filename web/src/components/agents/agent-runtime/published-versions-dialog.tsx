@@ -104,6 +104,9 @@ export function AgentRuntimeVersionPopover({
             ) : (
               versions.map((version, index) => {
                 const selected = selectedVersionId === version.id;
+                const publishedAt = formatVersionTime(version.created_at);
+                const displayName =
+                  version.name?.trim() || t('publishedVersions.fallbackName', { time: publishedAt });
                 return (
                   <button
                     key={version.id}
@@ -119,7 +122,9 @@ export function AgentRuntimeVersionPopover({
                       <div className="absolute -left-[13px] top-6 h-[calc(100%+12px)] w-px bg-border" />
                     ) : null}
                     <div className="flex items-center justify-between gap-2">
-                      <div className="truncate text-sm font-medium">{version.version}</div>
+                      <div className="truncate text-sm font-medium" title={displayName}>
+                        {displayName}
+                      </div>
                       <div className="flex shrink-0 items-center gap-1">
                         {version.is_current ? (
                           <Badge variant="subtle" className="gap-1">
@@ -133,10 +138,7 @@ export function AgentRuntimeVersionPopover({
                       </div>
                     </div>
                     <div className="mt-1 text-xs text-muted-foreground">
-                      {formatVersionTime(version.created_at)}
-                    </div>
-                    <div className="mt-2 truncate text-[11px] text-muted-foreground/70">
-                      {version.version_uuid}
+                      {t('publishedVersions.publishedAt', { time: publishedAt })}
                     </div>
                   </button>
                 );
@@ -145,44 +147,57 @@ export function AgentRuntimeVersionPopover({
           </div>
           {selectedVersionId ? (
             <div className="border-t px-4 py-3">
-              {isLoadingPreview ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" />
-                  {t('publishedVersions.loadingImpact')}
-                </div>
-              ) : rollbackPreview ? (
-                <div className="space-y-2">
-                  <div className="text-sm font-medium">{t('publishedVersions.impactTitle')}</div>
-                  <p className="text-xs leading-5 text-muted-foreground">
-                    {t('publishedVersions.impactSummary', { count: removedBindings.length })}
+              {selectedVersion ? (
+                <div>
+                  <div className="text-xs font-medium text-foreground">
+                    {t('publishedVersions.descriptionTitle')}
+                  </div>
+                  <p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-muted-foreground">
+                    {selectedVersion.description?.trim() ||
+                      t('publishedVersions.noDescription')}
                   </p>
-                  {removedBindings.length > 0 ? (
-                    <>
-                      <div className="max-h-28 space-y-1 overflow-y-auto rounded-md border p-2">
-                        {removedBindings.map((item, index) => (
-                          <div
-                            key={`${item.binding_type}:${item.parent_resource_id ?? ''}:${item.resource_id}:${index}`}
-                            className="truncate text-xs text-muted-foreground"
-                          >
-                            {item.display_name || item.resource_id}
-                          </div>
-                        ))}
-                      </div>
-                      <label className="flex cursor-pointer items-start gap-2 text-xs leading-5">
-                        <Checkbox
-                          checked={cleanupConfirmed}
-                          onCheckedChange={checked => setCleanupConfirmed(checked === true)}
-                        />
-                        <span>{t('publishedVersions.confirmCleanup')}</span>
-                      </label>
-                    </>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">
-                      {t('publishedVersions.noBindingsRemoved')}
-                    </p>
-                  )}
                 </div>
               ) : null}
+              <div className="mt-3 border-t pt-3">
+                {isLoadingPreview ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" />
+                    {t('publishedVersions.loadingImpact')}
+                  </div>
+                ) : rollbackPreview ? (
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium">{t('publishedVersions.impactTitle')}</div>
+                    <p className="text-xs leading-5 text-muted-foreground">
+                      {t('publishedVersions.impactSummary', { count: removedBindings.length })}
+                    </p>
+                    {removedBindings.length > 0 ? (
+                      <>
+                        <div className="max-h-28 space-y-1 overflow-y-auto rounded-md border p-2">
+                          {removedBindings.map((item, index) => (
+                            <div
+                              key={`${item.binding_type}:${item.parent_resource_id ?? ''}:${item.resource_id}:${index}`}
+                              className="truncate text-xs text-muted-foreground"
+                            >
+                              {item.display_name || item.resource_id}
+                            </div>
+                          ))}
+                        </div>
+                        <label className="flex cursor-pointer items-start gap-2 text-xs leading-5">
+                          <Checkbox
+                            checked={cleanupConfirmed}
+                            onCheckedChange={checked => setCleanupConfirmed(checked === true)}
+                          />
+                          <span>{t('publishedVersions.confirmCleanup')}</span>
+                        </label>
+                      </>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        {t('publishedVersions.noBindingsRemoved')}
+                      </p>
+                    )}
+                  </div>
+                ) : null}
+              </div>
             </div>
           ) : null}
         </div>

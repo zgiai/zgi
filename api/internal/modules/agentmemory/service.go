@@ -17,6 +17,7 @@ import (
 
 const (
 	defaultSlotMaxChars     = 2000
+	maxSlotNameChars        = 80
 	maxSlotDescriptionChars = 200
 	maxSlotsPerAgent        = 5
 	defaultRenderBudget     = 4000
@@ -137,6 +138,7 @@ func (s *Service) ReplaceSlots(ctx context.Context, agentID, actorID uuid.UUID, 
 			if current := existingByKey[input.key]; current != nil {
 				before := *current
 				updated, err := tx.UpdateSlotScoped(ctx, workspaceID, agentID, current.ID, map[string]interface{}{
+					"name":        input.name,
 					"description": input.description,
 					"max_chars":   input.maxChars,
 					"enabled":     input.enabled,
@@ -157,6 +159,7 @@ func (s *Service) ReplaceSlots(ctx context.Context, agentID, actorID uuid.UUID, 
 				WorkspaceID: workspaceID,
 				AgentID:     agentID,
 				Key:         input.key,
+				Name:        input.name,
 				Description: input.description,
 				MaxChars:    input.maxChars,
 				Enabled:     input.enabled,
@@ -469,6 +472,7 @@ func (s *Service) configuredSlotByKey(ctx context.Context, workspaceID, agentID 
 type normalizedSlotInput struct {
 	id          uuid.UUID
 	key         string
+	name        string
 	description string
 	maxChars    int
 	enabled     bool
@@ -488,6 +492,10 @@ func normalizeSlotInput(req SlotUpsertRequest, index int) (normalizedSlotInput, 
 		}
 		id = parsedID
 	}
+	name := strings.TrimSpace(req.Name)
+	if len([]rune(name)) > maxSlotNameChars {
+		return normalizedSlotInput{}, fmt.Errorf("%w: name is too long for %s", ErrInvalidInput, key)
+	}
 	description := strings.TrimSpace(req.Description)
 	if len([]rune(description)) > maxSlotDescriptionChars {
 		return normalizedSlotInput{}, fmt.Errorf("%w: description is too long for %s", ErrInvalidInput, key)
@@ -504,6 +512,7 @@ func normalizeSlotInput(req SlotUpsertRequest, index int) (normalizedSlotInput, 
 	return normalizedSlotInput{
 		id:          id,
 		key:         key,
+		name:        name,
 		description: description,
 		maxChars:    maxChars,
 		enabled:     enabled,
@@ -595,6 +604,7 @@ func slotResponse(slot *AgentMemorySlot) SlotResponse {
 	return SlotResponse{
 		ID:               slot.ID.String(),
 		Key:              slot.Key,
+		Name:             slot.Name,
 		Description:      slot.Description,
 		MaxChars:         defaultSlotMaxChars,
 		Enabled:          slot.Enabled,
@@ -804,6 +814,7 @@ func slotSnapshot(slot *AgentMemorySlot) datatypes.JSON {
 		"workspace_id": slot.WorkspaceID.String(),
 		"agent_id":     slot.AgentID.String(),
 		"key":          slot.Key,
+		"name":         slot.Name,
 		"description":  slot.Description,
 		"max_chars":    slot.MaxChars,
 		"enabled":      slot.Enabled,

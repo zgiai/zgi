@@ -462,6 +462,7 @@ type AgentWorkflowStartInput struct {
 type AgentMemorySlotConfig struct {
 	ID               string `json:"id,omitempty"`
 	Key              string `json:"key"`
+	Name             string `json:"name,omitempty"`
 	Description      string `json:"description"`
 	MaxChars         int    `json:"max_chars"`
 	Enabled          bool   `json:"enabled"`
@@ -600,7 +601,8 @@ type GenerateAgentSuggestedQuestionsRequest struct {
 }
 
 type PublishAgentRequest struct {
-	Description                  string `json:"description"`
+	Name                         string `json:"name,omitempty" binding:"omitempty,max=80"`
+	Description                  string `json:"description,omitempty" binding:"omitempty,max=500"`
 	BindingRevision              string `json:"binding_revision,omitempty"`
 	AcknowledgeSuspendedBindings bool   `json:"acknowledge_suspended_bindings,omitempty"`
 }
@@ -609,6 +611,8 @@ type PublishAgentResponse struct {
 	AgentID     string `json:"agent_id"`
 	VersionUUID string `json:"version_uuid"`
 	Version     string `json:"version"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 	WebAppID    string `json:"web_app_id"`
 	PublishedAt int64  `json:"published_at"`
 }
@@ -618,6 +622,7 @@ type AgentPublishedVersionResponse struct {
 	AgentID        string              `json:"agent_id"`
 	VersionUUID    string              `json:"version_uuid"`
 	Version        string              `json:"version"`
+	Name           string              `json:"name"`
 	Description    string              `json:"description"`
 	ConfigSnapshot AgentConfigResponse `json:"config_snapshot"`
 	IsCurrent      bool                `json:"is_current"`

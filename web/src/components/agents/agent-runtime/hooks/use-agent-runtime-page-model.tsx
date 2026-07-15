@@ -49,6 +49,7 @@ import type { Dataset } from '@/services/types/dataset';
 import { getErrorMessage } from '@/utils/error-notifications';
 import type {
   AgentConfigSection,
+  AgentPublishVersionDetails,
   AgentPublishedVersionListItem,
   AgentRuntimeSelectedSkillItem,
 } from '../types';
@@ -65,6 +66,11 @@ import {
 } from '../binding-rebase-merge';
 
 type AgentKnowledgeDataset = Dataset & { load_error?: boolean };
+
+const EMPTY_PUBLISH_VERSION_DETAILS: AgentPublishVersionDetails = {
+  name: '',
+  description: '',
+};
 
 function describeBindingChanges(
   local: UpdateAgentRuntimeConfigRequest,
@@ -324,6 +330,10 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [selectedPublishedVersionId, setSelectedPublishedVersionId] = useState('');
   const [isVersionPreviewing, setIsVersionPreviewing] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [publishVersionDialogOpen, setPublishVersionDialogOpen] = useState(false);
+  const [publishVersionDetails, setPublishVersionDetails] = useState<AgentPublishVersionDetails>(
+    EMPTY_PUBLISH_VERSION_DETAILS
+  );
   const [suspendedBindingsDialogOpen, setSuspendedBindingsDialogOpen] = useState(false);
   const [cleanupSkillsDialogOpen, setCleanupSkillsDialogOpen] = useState(false);
   const [openSections, setOpenSections] = useState<Record<AgentConfigSection, boolean>>({
@@ -444,7 +454,8 @@ export function useAgentRuntimePageModel(agentId: string) {
         return {
           skillId,
           label: display.label,
-          description: display.description || metadata.description || skillId,
+          description: display.description || metadata.description || t('skills.noDescription'),
+          icon: display.icon,
           metadata,
         };
       }),
@@ -1116,14 +1127,20 @@ export function useAgentRuntimePageModel(agentId: string) {
   }, []);
 
   const publishCurrentDraft = useCallback(
-    async (acknowledgeSuspendedBindings: boolean) => {
+    async (
+      acknowledgeSuspendedBindings: boolean,
+      versionDetails: AgentPublishVersionDetails
+    ) => {
       if (isPublishing) return;
       setIsPublishing(true);
       try {
         await agentService.publishAgent(agentId, {
+          name: versionDetails.name.trim() || undefined,
+          description: versionDetails.description.trim() || undefined,
           binding_revision: bindingRevisionRef.current || undefined,
           acknowledge_suspended_bindings: acknowledgeSuspendedBindings || undefined,
         });
+        setPublishVersionDialogOpen(false);
         setSuspendedBindingsDialogOpen(false);
         queryClient.invalidateQueries({ queryKey: AGENT_KEYS.detail(agentId) });
         queryClient.invalidateQueries({ queryKey: AGENT_KEYS.lists() });
@@ -1133,8 +1150,10 @@ export function useAgentRuntimePageModel(agentId: string) {
         const conflict = getAgentBindingConflict(error);
         if (conflict?.bindingHealth) setBindingHealth(conflict.bindingHealth);
         if (conflict?.code === 'agent_bindings_suspended' && !acknowledgeSuspendedBindings) {
+          setPublishVersionDialogOpen(false);
           setSuspendedBindingsDialogOpen(true);
         } else if (conflict?.code === 'agent_bindings_invalid') {
+          setPublishVersionDialogOpen(false);
           setSuspendedBindingsDialogOpen(false);
           focusInvalidBindings(conflict.bindingHealth);
           toast.error(t('toasts.publishBindingsInvalid'));
@@ -1167,22 +1186,24 @@ export function useAgentRuntimePageModel(agentId: string) {
       );
       return;
     }
-    const canPublishCurrentDraft =
-      !canConfigureAgentRuntime || (await saveNow({ silent: true, force: true }));
-    if (canPublishCurrentDraft) {
-      await publishCurrentDraft(false);
-    }
+    setPublishVersionDetails(EMPTY_PUBLISH_VERSION_DETAILS);
+    setPublishVersionDialogOpen(true);
   }, [
     canPublishAgent,
-    canConfigureAgentRuntime,
     hasAgentMemorySlotErrors,
     isAgentModelUnavailable,
     isSystemPromptTooLong,
-    publishCurrentDraft,
-    saveNow,
     t,
     tRoot,
   ]);
+
+  const handleConfirmPublishVersion = useCallback(async () => {
+    const canPublishCurrentDraft =
+      !canConfigureAgentRuntime || (await saveNow({ silent: true, force: true }));
+    if (canPublishCurrentDraft) {
+      await publishCurrentDraft(false, publishVersionDetails);
+    }
+  }, [canConfigureAgentRuntime, publishCurrentDraft, publishVersionDetails, saveNow]);
 
   const handleSaveBeforeLeave = useCallback(() => {
     if (!canConfigureAgentRuntime) {
@@ -1562,12 +1583,21 @@ export function useAgentRuntimePageModel(agentId: string) {
         defaultUserId: profile?.id,
         onOpenChange: setMemoryValuesOpen,
       },
+      publishVersion: {
+        open: publishVersionDialogOpen,
+        isUpdate: Boolean(agentDetail?.is_published),
+        isSubmitting: isPublishing || saveState === 'saving',
+        value: publishVersionDetails,
+        onOpenChange: setPublishVersionDialogOpen,
+        onChange: setPublishVersionDetails,
+        onConfirm: () => void handleConfirmPublishVersion(),
+      },
       suspendedBindings: {
         open: suspendedBindingsDialogOpen,
         health: bindingHealth,
         isPublishing,
         onOpenChange: setSuspendedBindingsDialogOpen,
-        onConfirm: () => void publishCurrentDraft(true),
+        onConfirm: () => void publishCurrentDraft(true, publishVersionDetails),
       },
       cleanupSkills: {
         open: cleanupSkillsDialogOpen,

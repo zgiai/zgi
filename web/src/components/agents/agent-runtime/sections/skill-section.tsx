@@ -1,6 +1,7 @@
 'use client';
 
 import { Plus, Trash2 } from 'lucide-react';
+import { AIChatSkillIcon } from '@/components/chat/variants/aichat/skill-icon';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -9,6 +10,7 @@ import { RuntimeSection } from '../runtime-section';
 import type { AgentConfigSection, AgentRuntimeSelectedSkillItem } from '../types';
 import type { AgentBindingHealth } from '@/services/types/agent';
 import { AgentBindingHealthBadge } from '../binding-health';
+import { AgentRuntimeSelectionCardIcon } from '../selection-dialog';
 
 interface AgentRuntimeSkillSectionProps {
   open: boolean;
@@ -116,16 +118,16 @@ export function AgentRuntimeSkillSection({
                 key={skill.skillId}
                 className="flex items-start gap-3 rounded-md border bg-background p-3"
               >
+                <AgentRuntimeSelectionCardIcon>
+                  <AIChatSkillIcon icon={skill.icon} />
+                </AgentRuntimeSelectionCardIcon>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="min-w-0 truncate text-sm font-medium">{skill.label}</div>
                     <AgentBindingHealthBadge item={healthItem} />
                   </div>
                   <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                    {skill.description || skill.skillId}
-                  </div>
-                  <div className="mt-1 truncate text-[11px] text-muted-foreground/70">
-                    {t('skills.idLabel', { id: skill.skillId })}
+                    {skill.description || t('skills.noDescription')}
                   </div>
                 </div>
                 <Button
