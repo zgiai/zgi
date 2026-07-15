@@ -27,6 +27,17 @@ for (const transportPath of [
   );
 }
 
+const channelService = read('src/services/channel.service.ts');
+const channelBatchStream = channelService.slice(
+  channelService.indexOf('batchTestChannelModels('),
+  channelService.indexOf('adjustChannelWallet(')
+);
+assert.match(
+  channelBatchStream,
+  /isTerminalMessage:\s*message\s*=>[\s\S]*?completed\s*===\s*true/,
+  'channel batch tests must recognize completed:true as the terminal SSE message'
+);
+
 const recovery = read('src/components/chat/runtime/controller/use-chat-runtime-stream-recovery.ts');
 assert.match(recovery, /AICHAT_RECOVERY_RETRY_DELAYS/);
 assert.match(recovery, /refreshConversation\(conversationId\)/);
