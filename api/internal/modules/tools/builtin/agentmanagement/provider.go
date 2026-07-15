@@ -961,7 +961,7 @@ func (t *updateAgentConfigTool) validateRequestedModelPair(ctx context.Context, 
 	if err != nil {
 		return fmt.Errorf("invalid organization_id: %w", err)
 	}
-	models, err := t.availableModels.ListAvailable(ctx, organizationID, provider, defaultAgentModelListUseCase)
+	models, err := t.availableModels.ListAvailable(ctx, organizationID, provider, llmmodelservice.AgentRuntimeUseCase)
 	if err != nil {
 		return fmt.Errorf("list available models for agent model validation: %w", err)
 	}
@@ -973,7 +973,7 @@ func (t *updateAgentConfigTool) validateRequestedModelPair(ctx context.Context, 
 			return nil
 		}
 	}
-	return fmt.Errorf("model %q is not available for provider %q with use_case %q; call list_available_models and pass a returned provider/model pair", model, provider, defaultAgentModelListUseCase)
+	return fmt.Errorf("model %q is not available for provider %q; call list_available_models and pass a returned provider/model pair", model, provider)
 }
 
 func availableAgentModelMatchesHint(model *llmmodelservice.AvailableModel, hint string) bool {

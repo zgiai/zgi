@@ -434,6 +434,10 @@ func (c *llmClientImpl) buildGatewayAppContext(appCtx *AppContext) (*gateway.App
 		workspaceID := appCtx.WorkspaceID
 		gatewayCtx.WorkspaceID = &workspaceID
 	}
+	if appCtx.ModelUseCase != "" {
+		modelUseCase := strings.TrimSpace(appCtx.ModelUseCase)
+		gatewayCtx.ModelUseCase = &modelUseCase
+	}
 
 	return gatewayCtx, nil
 }

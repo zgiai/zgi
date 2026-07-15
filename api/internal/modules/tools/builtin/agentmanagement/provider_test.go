@@ -2482,8 +2482,8 @@ func TestUpdateAgentConfigValidatesModelPairAgainstAvailableModels(t *testing.T)
 	if err != nil {
 		t.Fatalf("Invoke() error = %v", err)
 	}
-	if available.organizationID != organizationID || available.provider != "openai" || available.useCase != "agent" {
-		t.Fatalf("available model lookup = org %s provider %q useCase %q, want %s/openai/agent", available.organizationID, available.provider, available.useCase, organizationID)
+	if available.organizationID != organizationID || available.provider != "openai" || available.useCase != llmmodelservice.AgentRuntimeUseCase {
+		t.Fatalf("available model lookup = org %s provider %q useCase %q, want %s/openai/%s", available.organizationID, available.provider, available.useCase, organizationID, llmmodelservice.AgentRuntimeUseCase)
 	}
 	if service.updateConfigCalls != 1 {
 		t.Fatalf("UpdateAgentConfig calls = %d, want 1", service.updateConfigCalls)
@@ -2535,8 +2535,8 @@ func TestUpdateAgentConfigRejectsUnavailableModelPair(t *testing.T) {
 	if !strings.Contains(err.Error(), "is not available for provider") {
 		t.Fatalf("Invoke() error = %q, want unavailable model pair error", err.Error())
 	}
-	if available.organizationID != organizationID || available.provider != "openai" || available.useCase != "agent" {
-		t.Fatalf("available model lookup = org %s provider %q useCase %q, want %s/openai/agent", available.organizationID, available.provider, available.useCase, organizationID)
+	if available.organizationID != organizationID || available.provider != "openai" || available.useCase != llmmodelservice.AgentRuntimeUseCase {
+		t.Fatalf("available model lookup = org %s provider %q useCase %q, want %s/openai/%s", available.organizationID, available.provider, available.useCase, organizationID, llmmodelservice.AgentRuntimeUseCase)
 	}
 	if service.updateConfigCalls != 0 {
 		t.Fatalf("UpdateAgentConfig calls = %d, want 0", service.updateConfigCalls)

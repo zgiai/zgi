@@ -553,16 +553,14 @@ func filterRoutesForModelScene(routes []*channelmodel.LLMRoute, modelName string
 	if useCase != string(llmmodel.UseCaseAgent) {
 		return routes
 	}
-	if !modelHasUseCase(llmModel, useCase) {
-		return nil
-	}
+	trustCustomAgentLabel := isPrivateCustomModel && modelHasUseCase(llmModel, useCase)
 
 	filtered := make([]*channelmodel.LLMRoute, 0, len(routes))
 	for _, route := range routes {
 		if route == nil {
 			continue
 		}
-		if !isPrivateCustomModel {
+		if !trustCustomAgentLabel {
 			channelProvider := route.ChannelProvider
 			if isOfficialRoute(route) {
 				channelProvider = "zgi-cloud"

@@ -382,7 +382,15 @@ func (s *llmGatewayServiceImpl) chatCompletionStreamInternal(
 }
 
 func modelUseCaseForAppContext(appCtx *AppContext) string {
-	if appCtx == nil || appCtx.AppType == nil {
+	if appCtx == nil {
+		return ""
+	}
+	if appCtx.ModelUseCase != nil {
+		if useCase := strings.TrimSpace(*appCtx.ModelUseCase); useCase != "" {
+			return useCase
+		}
+	}
+	if appCtx.AppType == nil {
 		return ""
 	}
 	switch strings.ToLower(strings.TrimSpace(*appCtx.AppType)) {

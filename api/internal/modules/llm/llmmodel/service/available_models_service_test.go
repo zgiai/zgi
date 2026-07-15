@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -298,6 +299,61 @@ func TestAvailableModels_AgentRequiresCatalogTagOnPlatformRoute(t *testing.T) {
 	}
 	if len(models) != 1 || models[0].Name != "gpt-agent" {
 		t.Fatalf("agent models = %#v, want only gpt-agent", models)
+	}
+}
+
+func TestAvailableModels_AgentRuntimeUnionsTaggedAndCompatibleTextChatModels(t *testing.T) {
+	organizationID := uuid.New()
+	modelRepo := &availableModelRepoFake{models: []*llmmodel.LLMModel{
+		{
+			ID: uuid.New(), Provider: "openai", Model: "agent-only", ModelName: "Agent Only",
+			IsActive: true, SupportsToolCall: true, UseCases: types.StringArray{"agent"},
+		},
+		{
+			ID: uuid.New(), Provider: "openai", Model: "legacy-compatible", ModelName: "Legacy Compatible",
+			IsActive: true, SupportsToolCall: true, UseCases: types.StringArray{"text-chat"},
+		},
+		{
+			ID: uuid.New(), Provider: "openai", Model: "plain-chat", ModelName: "Plain Chat",
+			IsActive: true, UseCases: types.StringArray{"text-chat"},
+		},
+		{
+			ID: uuid.New(), Provider: "google", Model: "unsupported-adapter", ModelName: "Unsupported Adapter",
+			IsActive: true, SupportsToolCall: true, UseCases: types.StringArray{"text-chat"},
+		},
+	}}
+	customRepo := &availableCustomRepoFake{models: []*llmmodel.CustomModel{{
+		ID: uuid.New(), OrganizationID: organizationID, Provider: "custom-google", Name: "custom-agent-only",
+		DisplayName: "Custom Agent Only", IsActive: true, SupportsToolCall: true, UseCases: types.StringArray{"agent"},
+	}}}
+	routeRepo := &availableRouteRepoFake{routes: []*channelmodel.LLMRoute{
+		{
+			Type: shared.RouteTypeZGICloud, IsOfficial: true,
+			Models: []string{"agent-only", "legacy-compatible", "plain-chat"},
+		},
+		{
+			Type: shared.RouteTypePrivate, ChannelProvider: "google",
+			Models: []string{"unsupported-adapter", "custom-agent-only"},
+		},
+	}}
+	svc := NewAvailableModelsService(modelRepo, &availableConfigRepoFake{}, customRepo, routeRepo)
+
+	models, err := svc.ListAvailable(t.Context(), organizationID, "", AgentRuntimeUseCase)
+	if err != nil {
+		t.Fatalf("ListAvailable() error = %v", err)
+	}
+	got := make(map[string]bool, len(models))
+	for _, item := range models {
+		got[item.Name] = true
+	}
+	want := map[string]bool{
+		"agent-only": true, "legacy-compatible": true, "custom-agent-only": true,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Agent runtime models = %#v, want %#v", got, want)
+	}
+	if modelRepo.lastUseCase != "" {
+		t.Fatalf("repository use_case = %q, want unfiltered union lookup", modelRepo.lastUseCase)
 	}
 }
 

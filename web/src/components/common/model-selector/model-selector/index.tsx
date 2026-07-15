@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectTrigger, SelectValue } from '@/components/
 
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type { ModelUseCase, ModelItem } from '@/services/types/model';
+import type { AvailableModelUseCase, ModelUseCase, ModelItem } from '@/services/types/model';
 import { ModelIcon } from 'modelicons';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { ModelFeatureIcon } from '@/components/model/model-feature-icon';
@@ -21,7 +21,7 @@ import type {
   FlatRow,
   FeatureLabels,
 } from './types';
-import { serializeValue, deserializeValue } from './utils';
+import { deserializeValue, prioritizeModelsByUseCase, serializeValue } from './utils';
 import {
   LoadingSkeleton,
   EmptyState,
@@ -34,6 +34,8 @@ import {
 export interface ModelSelectorProps {
   /** The model use case to query, e.g. 'text-chat', 'embedding', 'rerank'. */
   modelType: ModelUseCase;
+  /** Optional availability query that is distinct from the model's declared use-case label. */
+  availabilityUseCase?: AvailableModelUseCase;
   /** Current selected value as an object with provider and model. */
   value?: ModelSelectorValue;
   /** Callback triggered when selection changes. */
@@ -71,6 +73,8 @@ export interface ModelSelectorProps {
   hasError?: boolean;
   /** Whether to show capabilities icons in the trigger label. Default: true */
   showCapabilities?: boolean;
+  /** Within each provider, place models for this use case first and highlight them. */
+  preferredUseCase?: ModelUseCase;
 }
 
 // Virtualization constants
@@ -95,6 +99,7 @@ function getModelPropsSignature(props: ModelSelectorModelProps | null): string {
  */
 export function ModelSelector({
   modelType,
+  availabilityUseCase,
   value,
   onChange,
   placeholder,
@@ -108,6 +113,7 @@ export function ModelSelector({
   capabilityFilter,
   hasError = false,
   showCapabilities = true,
+  preferredUseCase,
 }: ModelSelectorProps) {
   const t = useT();
   const { locale } = useLocale();
@@ -179,7 +185,7 @@ export function ModelSelector({
 
   // Fetch available models with use_case filter (non-paginated, non-expiring)
   const { models, isLoading, isFetching, refetch } = useAvailableModels({
-    use_case: modelType as ModelUseCase,
+    use_case: availabilityUseCase ?? modelType,
   });
 
   // Apply capability filtering
@@ -215,9 +221,9 @@ export function ModelSelector({
     });
     return Array.from(groupMap.entries()).map(([provider, items]) => ({
       provider,
-      models: items,
+      models: prioritizeModelsByUseCase(items, preferredUseCase),
     }));
-  }, [filteredModelsByCapability]);
+  }, [filteredModelsByCapability, preferredUseCase]);
 
   // Clear search when dropdown closes or component unmounts
   useEffect(() => {
@@ -678,6 +684,16 @@ export function ModelSelector({
                           featureLabels={featureLabels}
                           useCaseLabels={useCaseLabels}
                           locale={locale}
+                          highlighted={Boolean(
+                            preferredUseCase && row.model.use_cases?.includes(preferredUseCase)
+                          )}
+                          highlightedLabel={
+                            preferredUseCase === 'agent'
+                              ? t('models.selector.tags.agent')
+                              : preferredUseCase
+                                ? useCaseLabels[preferredUseCase]
+                                : undefined
+                          }
                         />
                       );
                     })}

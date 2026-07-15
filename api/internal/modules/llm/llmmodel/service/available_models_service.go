@@ -34,6 +34,10 @@ const (
 	SceneImage     ModelScene = "image"     // For image generation
 )
 
+// AgentRuntimeUseCase selects models that can execute the Agent runtime. It is
+// an availability query mode, not a value stored in a model's use_cases.
+const AgentRuntimeUseCase = "agent-runtime"
+
 // AvailableModel represents a simplified model for business use
 // Aligned with ModelHub structure for consistency
 type AvailableModel struct {
@@ -330,7 +334,7 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 	}
 
 	repositoryUseCase := useCase
-	if useCase == string(model.UseCaseAgent) {
+	if useCase == string(model.UseCaseAgent) || useCase == AgentRuntimeUseCase {
 		repositoryUseCase = ""
 	}
 	globalModels, err := s.listAvailableGlobalModels(ctx, availableModelNames, provider, repositoryUseCase)
@@ -361,6 +365,12 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			continue
 		}
 		effectiveUseCases := effectiveModelUseCasesForRoutes(enabledRoutes, m.Model, m.UseCases)
+		if !modelMatchesAvailableUseCase(effectiveUseCases, useCase) {
+			continue
+		}
+		if useCase == AgentRuntimeUseCase && !m.SupportsToolCall {
+			continue
+		}
 
 		// Filter by tenant routes - only include models available in tenant channels.
 		if !routeBacksModelForUseCase(enabledRoutes, m.Provider, m.Model, useCase, effectiveUseCases, false) {
@@ -375,15 +385,6 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 		// Check if model is enabled for this tenant
 		if cfg, ok := tenantEntry.configs[m.ID]; ok {
 			if !cfg.IsEnabled {
-				continue
-			}
-		}
-
-		// Filter by use_case if specified
-		if useCase != "" && useCase != string(model.UseCaseAgent) {
-			// Strict: use_case must be explicitly present in use_cases.
-			// (type is a legacy field and must not be used as a fallback for capability filtering)
-			if !containsUseCase(effectiveUseCases, useCase) {
 				continue
 			}
 		}
@@ -462,6 +463,12 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 			continue
 		}
 		effectiveUseCases := effectiveModelUseCasesForRoutes(enabledRoutes, m.Name, types.StringArray(m.UseCases))
+		if !modelMatchesAvailableUseCase(effectiveUseCases, useCase) {
+			continue
+		}
+		if useCase == AgentRuntimeUseCase && !m.SupportsToolCall {
+			continue
+		}
 
 		// Filter by tenant routes - only include models available in tenant channels.
 		if !routeBacksModelForUseCase(enabledRoutes, m.Provider, m.Name, useCase, effectiveUseCases, true) {
@@ -475,14 +482,6 @@ func (s *availableModelsService) listAvailableUncached(ctx context.Context, orga
 
 		if !m.IsActive {
 			continue
-		}
-
-		// Filter by use_case if specified
-		if useCase != "" && useCase != string(model.UseCaseAgent) {
-			// Strict: use_case must be explicitly present in use_cases.
-			if !containsUseCase(effectiveUseCases, useCase) {
-				continue
-			}
 		}
 
 		am := &AvailableModel{
@@ -727,6 +726,11 @@ func containsUseCase(useCases types.StringArray, target string) bool {
 }
 
 func routeBacksModelForUseCase(routes []*channelmodel.LLMRoute, modelProvider, modelName, useCase string, useCases types.StringArray, customModel bool) bool {
+	if !modelMatchesAvailableUseCase(useCases, useCase) {
+		return false
+	}
+	requiresAgentProtocol := useCase == string(model.UseCaseAgent) || useCase == AgentRuntimeUseCase
+	trustCustomAgentLabel := customModel && containsUseCase(useCases, string(model.UseCaseAgent))
 	for _, route := range routes {
 		if route == nil || !route.SupportsModel(modelName) {
 			continue
@@ -735,13 +739,10 @@ func routeBacksModelForUseCase(routes []*channelmodel.LLMRoute, modelProvider, m
 		if !customModel && !official && !routeProviderMatchesCatalogProvider(route.ChannelProvider, modelProvider) {
 			continue
 		}
-		if useCase != string(model.UseCaseAgent) {
+		if !requiresAgentProtocol {
 			return true
 		}
-		if !containsUseCase(useCases, string(model.UseCaseAgent)) {
-			continue
-		}
-		if customModel {
+		if trustCustomAgentLabel {
 			return true
 		}
 		channelProvider := route.ChannelProvider
@@ -753,6 +754,18 @@ func routeBacksModelForUseCase(routes []*channelmodel.LLMRoute, modelProvider, m
 		}
 	}
 	return false
+}
+
+func modelMatchesAvailableUseCase(useCases types.StringArray, useCase string) bool {
+	switch useCase {
+	case "":
+		return true
+	case AgentRuntimeUseCase:
+		return containsUseCase(useCases, string(model.UseCaseAgent)) ||
+			containsUseCase(useCases, string(model.UseCaseTextChat))
+	default:
+		return containsUseCase(useCases, useCase)
+	}
 }
 
 func routeProviderMatchesCatalogProvider(routeProvider, catalogProvider string) bool {

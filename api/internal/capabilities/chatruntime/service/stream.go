@@ -492,11 +492,30 @@ func newBillingAppContext(prepared *PreparedChat) *llmclient.AppContext {
 		AccountID:          prepared.Conversation.AccountID.String(),
 		SessionID:          prepared.Conversation.ID.String(),
 		ConversationID:     prepared.Conversation.ID.String(),
+		ModelUseCase:       preparedModelUseCase(prepared),
 	}
 	if prepared.Conversation.WorkspaceID != nil {
 		appCtx.WorkspaceID = prepared.Conversation.WorkspaceID.String()
 	}
 	return appCtx
+}
+
+func preparedModelUseCase(prepared *PreparedChat) string {
+	mode := ""
+	if prepared != nil && prepared.parts != nil {
+		mode = normalizeExecutionMode(prepared.parts.ExecutionMode)
+	}
+	if mode == "" && prepared != nil && prepared.Message != nil {
+		mode = normalizeExecutionMode(stringMetadataValue(prepared.Message.Metadata["execution_mode"]))
+	}
+	switch mode {
+	case executionModeAgentLoop:
+		return "agent"
+	case executionModeLegacyToolChat, executionModeDirectChat:
+		return "text-chat"
+	default:
+		return ""
+	}
 }
 
 func (s *service) collectStreamAnswer(ctx context.Context, prepared *PreparedChat, stream <-chan adapter.StreamResponse, onChunk func(string) error) (string, *adapter.Usage, error) {

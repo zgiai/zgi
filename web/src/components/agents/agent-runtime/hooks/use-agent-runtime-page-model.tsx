@@ -276,10 +276,10 @@ export function useAgentRuntimePageModel(agentId: string) {
     [workflowCandidatesResponse?.data.data]
   );
   const {
-    models: availableChatModels,
+    models: availableAgentRuntimeModels,
     isLoading: isAgentModelsLoading,
     error: agentModelsError,
-  } = useAvailableModels({ use_case: 'agent' });
+  } = useAvailableModels({ use_case: 'agent-runtime' });
   const agentDetail = agent?.data;
   const agentWorkspaceId = agentDetailWorkspaceID(agentDetail);
   const defaultHomeTitle = agentDetail?.name?.trim() || t('defaultHomeTitle');
@@ -348,12 +348,30 @@ export function useAgentRuntimePageModel(agentId: string) {
     if (isAgentModelsLoading || agentModelsError || !modelValue.provider || !modelValue.model) {
       return false;
     }
-    return !availableChatModels.some(
+    return !availableAgentRuntimeModels.some(
       item => item.provider === modelValue.provider && item.model === modelValue.model
     );
   }, [
     agentModelsError,
-    availableChatModels,
+    availableAgentRuntimeModels,
+    isAgentModelsLoading,
+    modelValue.model,
+    modelValue.provider,
+  ]);
+
+  const isAgentModelRecommended = useMemo(() => {
+    if (isAgentModelsLoading || agentModelsError || !modelValue.provider || !modelValue.model) {
+      return true;
+    }
+    return availableAgentRuntimeModels.some(
+      item =>
+        item.provider === modelValue.provider &&
+        item.model === modelValue.model &&
+        item.use_cases?.includes('agent')
+    );
+  }, [
+    agentModelsError,
+    availableAgentRuntimeModels,
     isAgentModelsLoading,
     modelValue.model,
     modelValue.provider,
@@ -454,8 +472,8 @@ export function useAgentRuntimePageModel(agentId: string) {
     [modelValue]
   );
   const selectedModelProps = useMemo<ModelSelectorModelProps | null>(
-    () => findAIChatModelProps(availableChatModels, modelSelectorValue),
-    [availableChatModels, modelSelectorValue]
+    () => findAIChatModelProps(availableAgentRuntimeModels, modelSelectorValue),
+    [availableAgentRuntimeModels, modelSelectorValue]
   );
   const currentPayload = useMemo<UpdateAgentRuntimeConfigRequest>(
     () => ({
@@ -1407,6 +1425,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       openSections,
       modelValue,
       isAgentModelUnavailable,
+      isAgentModelRecommended,
       homeTitle,
       openingStatement,
       inputPlaceholder,

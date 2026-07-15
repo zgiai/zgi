@@ -132,3 +132,12 @@ func (s ModelSpec) SupportsTools() bool {
 func (s ModelSpec) SupportsFunctionCalling() bool {
 	return s.SupportsToolCall
 }
+
+func (s ModelSpec) SupportsAgent() bool {
+	for _, useCase := range s.UseCases {
+		if strings.EqualFold(strings.TrimSpace(useCase), string(llmmodel.UseCaseAgent)) {
+			return true
+		}
+	}
+	return false
+}

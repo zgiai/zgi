@@ -21,3 +21,11 @@ func TestModelUseCaseForAppContext(t *testing.T) {
 		})
 	}
 }
+
+func TestModelUseCaseForAppContextPrefersExplicitUseCase(t *testing.T) {
+	appType := "aichat"
+	useCase := "text-chat"
+	if got := modelUseCaseForAppContext(&AppContext{AppType: &appType, ModelUseCase: &useCase}); got != useCase {
+		t.Fatalf("modelUseCaseForAppContext() = %q, want %q", got, useCase)
+	}
+}

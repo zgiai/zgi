@@ -126,6 +126,8 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 	messages = append(messages, validAdditionalSystemMessages(req.AdditionalSystemMessages)...)
 	if req.ProtocolToolsOnly {
 		messages = append(messages, protocolToolLoopSystemMessage(preferExplicitFinalAnswer))
+	} else if req.LegacyToolChat {
+		messages = append(messages, legacyToolChatSystemMessage())
 	} else {
 		messages = append(messages, agenticSkillLoopSystemMessage(preferExplicitFinalAnswer))
 	}
@@ -157,6 +159,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		planningReq.Messages = messages
 		planningReq.Stream = false
 		planningReq.Tools = metaToolsForRun(resolved, loadedSkills, preferExplicitFinalAnswer, runRequiresFinalPlanSnapshot(req))
+		if req.LegacyToolChat {
+			planningReq.Tools = legacyToolChatTools(planningReq.Tools, len(restoredSkillState.reloadRequired) > 0)
+		}
 		planningReq.ToolChoice = "auto"
 
 		roundRuntimeState := map[string]interface{}{}
@@ -303,7 +308,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			callSkillID, callToolName, callToolArgs, failedCallKey := skillToolCallIdentityForCall(resolved, loadedSkills, call)
 			callEvidence := runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
 			result := skillStepResult{}
-			if userInputPlanRevisionPending(req) && planRevisionRequiredForTool(callSkillID, callToolName) {
+			if userInputPlanRevisionRequiredForTool(req, callSkillID, callToolName) {
 				result = pendingUserInputPlanRevisionStep(call.ID, callSkillID, callToolName, callToolArgs)
 			}
 			if result.trace.Kind == "" && req.AuthorizeSkillStep != nil && strings.TrimSpace(callSkillID) != "" {
@@ -475,6 +480,11 @@ func initialLoadedSkillsForRun(req RunRequest, resolved *skills.ResolvedSkills) 
 			loaded[canonical] = struct{}{}
 		}
 	}
+	if req.LegacyToolChat && resolved != nil {
+		for _, skillID := range resolved.SkillIDs() {
+			add(skillID)
+		}
+	}
 	metadata := currentMetadataForRun(req)
 	for _, skillID := range evidenceStringSliceFromAny(metadata["loaded_skill_ids"]) {
 		add(skillID)
@@ -499,6 +509,24 @@ func initialLoadedSkillsForRun(req RunRequest, resolved *skills.ResolvedSkills) 
 	appendLoadedFromInvocations(evidenceMapsFromAny(ledger["skill_invocations"]))
 	appendLoadedFromInvocations(evidenceMapsFromAny(evidenceMapFromAny(ledger["summary"])["skill_invocations"]))
 	return loaded
+}
+
+func legacyToolChatTools(input []adapter.Tool, allowSkillReload bool) []adapter.Tool {
+	allowed := map[string]struct{}{
+		skills.MetaToolReadSkillReference: {},
+		skills.MetaToolCallSkillTool:      {},
+		skills.MetaToolRequestUserInput:   {},
+	}
+	if allowSkillReload {
+		allowed[skills.MetaToolLoadSkill] = struct{}{}
+	}
+	out := make([]adapter.Tool, 0, len(input))
+	for _, tool := range input {
+		if _, ok := allowed[strings.TrimSpace(tool.Function.Name)]; ok {
+			out = append(out, tool)
+		}
+	}
+	return out
 }
 
 func restoredLoadedSkillInstructionState(resolved *skills.ResolvedSkills, historicalLoadedSkills map[string]struct{}) restoredSkillInstructionState {
@@ -698,6 +726,13 @@ func userInputPlanRevisionPending(req RunRequest) bool {
 	continuation := evidenceMapFromAny(metadata["user_input_continuation"])
 	return strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(continuation["status"])), userInputContinuationAnswered) &&
 		strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(continuation["next_action"])), userInputContinuationReplan)
+}
+
+func userInputPlanRevisionRequiredForTool(req RunRequest, skillID string, toolName string) bool {
+	if req.LegacyToolChat {
+		return false
+	}
+	return userInputPlanRevisionPending(req) && planRevisionRequiredForTool(skillID, toolName)
 }
 
 func planRevisionRequiredForTool(skillID string, toolName string) bool {
@@ -1145,6 +1180,15 @@ func agenticSkillLoopSystemMessage(preferExplicitFinalAnswer bool) adapter.Messa
 		instructions = append(instructions, "When no tool or skill call is needed, provide the complete user-facing reply as ordinary assistant content and end the turn.")
 	}
 	return adapter.Message{Role: "system", Content: strings.Join(instructions, "\n")}
+}
+
+func legacyToolChatSystemMessage() adapter.Message {
+	return adapter.Message{Role: "system", Content: strings.Join([]string{
+		"Use the already available tools only when they are needed to answer the user's request.",
+		"Treat successful tool results as execution evidence. Never claim an external action succeeded without a matching successful result.",
+		"If a tool fails, do not repeat it with unchanged arguments; correct the request or explain the limitation.",
+		"When no further tool call is needed, answer the user directly and end the turn.",
+	}, "\n")}
 }
 
 func protocolToolLoopSystemMessage(preferExplicitFinalAnswer bool) adapter.Message {

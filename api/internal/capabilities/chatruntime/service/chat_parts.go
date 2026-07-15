@@ -327,6 +327,14 @@ func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) 
 		"system_prompt_version": version,
 		"surface":               normalizeAIChatSurface(parts.Surface),
 	}
+	if mode := normalizeExecutionMode(parts.ExecutionMode); mode != "" {
+		metadata["execution_mode"] = mode
+		if mode == executionModeAgentLoop {
+			metadata["model_use_case"] = "agent"
+		} else {
+			metadata["model_use_case"] = "text-chat"
+		}
+	}
 	if parts.ProtocolToolsEnabled {
 		metadata["protocol_tools_enabled"] = true
 	}
@@ -400,6 +408,32 @@ func streamingMessageMetadataWithTaskID(parts *chatRequestParts, taskID string) 
 		metadata["file_count"] = len(parts.Attachments.Files)
 	}
 	return metadata
+}
+
+func normalizeExecutionMode(value string) string {
+	switch strings.TrimSpace(value) {
+	case executionModeAgentLoop:
+		return executionModeAgentLoop
+	case executionModeLegacyToolChat:
+		return executionModeLegacyToolChat
+	case executionModeDirectChat:
+		return executionModeDirectChat
+	default:
+		return ""
+	}
+}
+
+func restoreExecutionModeFromMetadata(parts *chatRequestParts, metadata map[string]interface{}) {
+	if parts == nil {
+		return
+	}
+	parts.ExecutionMode = normalizeExecutionMode(stringMetadataValue(metadata["execution_mode"]))
+	if parts.ExecutionMode == "" {
+		// Messages created before execution mode was persisted already entered the
+		// Agent loop. Keep their continuation semantics instead of switching the
+		// in-flight turn to a different runtime after an upgrade.
+		parts.ExecutionMode = executionModeAgentLoop
+	}
 }
 
 func normalizeAIChatSurface(value string) string {
