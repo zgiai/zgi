@@ -167,7 +167,10 @@ const contextualAIChatSource = fs.readFileSync(
 assert.match(contextualAIChatSource, /useCase: 'agent'/);
 assert.match(contextualAIChatSource, /scope: 'contextualSidebar'/);
 assert.match(contextualAIChatSource, /legacyScope: 'consoleChat'/);
+assert.match(contextualAIChatSource, /repairUnavailableSelection: true/);
 assert.doesNotMatch(contextualAIChatSource, /useCase: 'text-chat'/);
+assert.doesNotMatch(contextualAIChatSource, /consoleChat\.modelUnavailable/);
+assert.doesNotMatch(contextualAIChatSource, /isSelectedModelUnavailable/);
 
 const agentRuntimeSource = fs.readFileSync(
   new URL(
@@ -176,7 +179,8 @@ const agentRuntimeSource = fs.readFileSync(
   ),
   'utf8'
 );
-assert.match(agentRuntimeSource, /useAvailableModels\(\{ use_case: 'text-chat' \}\)/);
+assert.match(agentRuntimeSource, /useAvailableModels\(\{ use_case: 'agent-runtime' \}\)/);
+assert.doesNotMatch(agentRuntimeSource, /useAvailableModels\(\{ use_case: 'text-chat' \}\)/);
 assert.doesNotMatch(agentRuntimeSource, /useAvailableModels\(\{ use_case: 'agent' \}\)/);
 assert.match(agentRuntimeSource, /isAgentModelRecommended/);
 

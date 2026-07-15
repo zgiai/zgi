@@ -37,16 +37,28 @@ function toAIChatModelValue(value: DefaultModelValue): AIChatModelValue {
   };
 }
 
+function firstAvailableAIChatModel(models: ModelItem[]): AIChatModelValue | null {
+  const candidate = models.find(model => model.provider && model.model);
+  if (!candidate) return null;
+  return {
+    provider: candidate.provider,
+    model: candidate.model,
+    params: {},
+  };
+}
+
 export function usePersistedAIChatModelSelection({
   accountId,
   scope,
   legacyScope,
+  repairUnavailableSelection = false,
   useCase = 'agent',
   preferredUseCase,
 }: {
   accountId?: string | null;
   scope: AiModelScope;
   legacyScope?: AiModelScope;
+  repairUnavailableSelection?: boolean;
   useCase?: DefaultModelUseCase;
   preferredUseCase?: DefaultModelUseCase;
 }) {
@@ -86,19 +98,44 @@ export function usePersistedAIChatModelSelection({
     }
 
     if (modelSelectorValue.model) {
+      if (
+        repairUnavailableSelection &&
+        !isModelAvailable(modelSelectorValue, availableModels.models)
+      ) {
+        if (!areDefaultModelsResolved) {
+          return;
+        }
+
+        const replacement =
+          defaultModel.value && isModelAvailable(defaultModel.value, availableModels.models)
+            ? toAIChatModelValue(defaultModel.value)
+            : (firstAvailableAIChatModel(availableModels.models) ?? EMPTY_MODEL_VALUE);
+        if (replacement.provider && replacement.model) {
+          saveLastSelectedAiModel(accountId, scope, {
+            provider: replacement.provider,
+            model: replacement.model,
+          });
+        }
+        setModelSelectorValue(replacement);
+        setIsInitialModelResolved(true);
+        return;
+      }
+
       setIsInitialModelResolved(true);
       return;
     }
 
     const saved = getLastSelectedAiModel(accountId, scope);
     if (saved?.provider && saved.model) {
-      setModelSelectorValue({
-        provider: saved.provider,
-        model: saved.model,
-        params: {},
-      });
-      setIsInitialModelResolved(true);
-      return;
+      if (!repairUnavailableSelection || isModelAvailable(saved, availableModels.models)) {
+        setModelSelectorValue({
+          provider: saved.provider,
+          model: saved.model,
+          params: {},
+        });
+        setIsInitialModelResolved(true);
+        return;
+      }
     }
 
     const legacySaved =
@@ -139,6 +176,19 @@ export function usePersistedAIChatModelSelection({
       return;
     }
 
+    if (repairUnavailableSelection) {
+      const next = firstAvailableAIChatModel(availableModels.models);
+      if (next) {
+        saveLastSelectedAiModel(accountId, scope, {
+          provider: next.provider,
+          model: next.model,
+        });
+        setModelSelectorValue(next);
+        setIsInitialModelResolved(true);
+        return;
+      }
+    }
+
     setModelSelectorValue(EMPTY_MODEL_VALUE);
     setIsInitialModelResolved(true);
   }, [
@@ -149,6 +199,7 @@ export function usePersistedAIChatModelSelection({
     areDefaultModelsResolved,
     legacyScope,
     modelSelectorValue,
+    repairUnavailableSelection,
     scope,
   ]);
 

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -34,6 +35,96 @@ func TestRestoreExecutionModeKeepsLegacyContinuationOnAgentLoop(t *testing.T) {
 	restoreExecutionModeFromMetadata(parts, nil)
 	if parts.ExecutionMode != executionModeAgentLoop {
 		t.Fatalf("ExecutionMode = %q, want %q", parts.ExecutionMode, executionModeAgentLoop)
+	}
+}
+
+func TestApplyRootRegenerationModelCapabilitiesKeepsPersistedModeForSameModel(t *testing.T) {
+	for _, mode := range []string{executionModeLegacyToolChat, executionModeDirectChat} {
+		t.Run(mode, func(t *testing.T) {
+			provider := "private"
+			message := &runtimemodel.Message{
+				ModelProvider: &provider,
+				ModelName:     "model",
+				Metadata: map[string]interface{}{
+					"execution_mode": mode,
+				},
+			}
+			parts := &chatRequestParts{
+				Provider:  provider,
+				ModelName: message.ModelName,
+				Surface:   aiChatSurfaceWorkChat,
+			}
+			svc := &service{modelSpecResolver: modelSpecResolverFunc(func(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
+				return ModelSpec{UseCases: []string{"agent"}, SupportsToolCall: true}, true, nil
+			})}
+
+			if err := svc.applyRootRegenerationModelCapabilities(t.Context(), Scope{OrganizationID: uuid.New()}, Caller{}, message, parts); err != nil {
+				t.Fatalf("applyRootRegenerationModelCapabilities() error = %v", err)
+			}
+			if parts.ExecutionMode != mode {
+				t.Fatalf("ExecutionMode = %q, want %q", parts.ExecutionMode, mode)
+			}
+		})
+	}
+}
+
+func TestApplyRootRegenerationModelCapabilitiesRecomputesModeForChangedModelIdentity(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		provider string
+		model    string
+	}{
+		{name: "provider changed", provider: "other", model: "old-model"},
+		{name: "model changed", provider: "private", model: "new-model"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			persistedProvider := "private"
+			message := &runtimemodel.Message{
+				ModelProvider: &persistedProvider,
+				ModelName:     "old-model",
+				Metadata: map[string]interface{}{
+					"execution_mode": executionModeLegacyToolChat,
+				},
+			}
+			parts := &chatRequestParts{
+				Provider:  tt.provider,
+				ModelName: tt.model,
+				Surface:   aiChatSurfaceWorkChat,
+			}
+			svc := &service{modelSpecResolver: modelSpecResolverFunc(func(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
+				return ModelSpec{UseCases: []string{"text-chat"}}, true, nil
+			})}
+
+			if err := svc.applyRootRegenerationModelCapabilities(t.Context(), Scope{OrganizationID: uuid.New()}, Caller{}, message, parts); err != nil {
+				t.Fatalf("applyRootRegenerationModelCapabilities() error = %v", err)
+			}
+			if parts.ExecutionMode != executionModeDirectChat {
+				t.Fatalf("ExecutionMode = %q, want %q", parts.ExecutionMode, executionModeDirectChat)
+			}
+		})
+	}
+}
+
+func TestApplyRootRegenerationModelCapabilitiesRejectsLostRequiredCapability(t *testing.T) {
+	provider := "private"
+	message := &runtimemodel.Message{
+		ModelProvider: &provider,
+		ModelName:     "model",
+		Metadata: map[string]interface{}{
+			"execution_mode": executionModeAgentLoop,
+		},
+	}
+	parts := &chatRequestParts{
+		Provider:  provider,
+		ModelName: message.ModelName,
+		Surface:   aiChatSurfaceWorkChat,
+	}
+	svc := &service{modelSpecResolver: modelSpecResolverFunc(func(context.Context, uuid.UUID, string, string) (ModelSpec, bool, error) {
+		return ModelSpec{UseCases: []string{"text-chat"}}, true, nil
+	})}
+
+	if err := svc.applyRootRegenerationModelCapabilities(t.Context(), Scope{OrganizationID: uuid.New()}, Caller{}, message, parts); err == nil {
+		t.Fatal("applyRootRegenerationModelCapabilities() error = nil, want function-calling error")
 	}
 }
 

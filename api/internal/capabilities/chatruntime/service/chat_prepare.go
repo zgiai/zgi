@@ -137,7 +137,7 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 	applyCallerRuntimeSurfacePolicy(caller, parts)
 	applyPersistedConversationSurface(conversation, parts)
 	parts.Attachments = attachmentBundleFromMessageMetadata(message.Metadata)
-	if err := s.applyModelCapabilities(ctx, scope, caller, parts); err != nil {
+	if err := s.applyRootRegenerationModelCapabilities(ctx, scope, caller, message, parts); err != nil {
 		return nil, err
 	}
 	applyProtocolToolsPolicy(caller, parts)
@@ -490,6 +490,31 @@ func (s *service) applyModelCapabilities(ctx context.Context, scope Scope, calle
 		return fmt.Errorf("resolve AI Chat model capabilities: model %s/%s does not support function calling", parts.Provider, parts.ModelName)
 	}
 	return nil
+}
+
+func (s *service) applyRootRegenerationModelCapabilities(
+	ctx context.Context,
+	scope Scope,
+	caller Caller,
+	message *runtimemodel.Message,
+	parts *chatRequestParts,
+) error {
+	if regenerationKeepsPersistedModel(message, parts) {
+		restoreExecutionModeFromMetadata(parts, message.Metadata)
+	}
+	return s.applyModelCapabilities(ctx, scope, caller, parts)
+}
+
+func regenerationKeepsPersistedModel(message *runtimemodel.Message, parts *chatRequestParts) bool {
+	if message == nil || parts == nil {
+		return false
+	}
+	persistedProvider := ""
+	if message.ModelProvider != nil {
+		persistedProvider = strings.TrimSpace(*message.ModelProvider)
+	}
+	return strings.TrimSpace(message.ModelName) == strings.TrimSpace(parts.ModelName) &&
+		persistedProvider == strings.TrimSpace(parts.Provider)
 }
 
 func (s *service) applyExistingConversationSurfaceForChat(ctx context.Context, scope Scope, caller Caller, req runtimedto.ChatRequest, parts *chatRequestParts) error {

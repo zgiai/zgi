@@ -276,10 +276,10 @@ export function useAgentRuntimePageModel(agentId: string) {
     [workflowCandidatesResponse?.data.data]
   );
   const {
-    models: availableChatModels,
+    models: availableAgentRuntimeModels,
     isLoading: isAgentModelsLoading,
     error: agentModelsError,
-  } = useAvailableModels({ use_case: 'text-chat' });
+  } = useAvailableModels({ use_case: 'agent-runtime' });
   const agentDetail = agent?.data;
   const agentWorkspaceId = agentDetailWorkspaceID(agentDetail);
   const defaultHomeTitle = agentDetail?.name?.trim() || t('defaultHomeTitle');
@@ -348,12 +348,12 @@ export function useAgentRuntimePageModel(agentId: string) {
     if (isAgentModelsLoading || agentModelsError || !modelValue.provider || !modelValue.model) {
       return false;
     }
-    return !availableChatModels.some(
+    return !availableAgentRuntimeModels.some(
       item => item.provider === modelValue.provider && item.model === modelValue.model
     );
   }, [
     agentModelsError,
-    availableChatModels,
+    availableAgentRuntimeModels,
     isAgentModelsLoading,
     modelValue.model,
     modelValue.provider,
@@ -363,7 +363,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     if (isAgentModelsLoading || agentModelsError || !modelValue.provider || !modelValue.model) {
       return true;
     }
-    return availableChatModels.some(
+    return availableAgentRuntimeModels.some(
       item =>
         item.provider === modelValue.provider &&
         item.model === modelValue.model &&
@@ -371,7 +371,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     );
   }, [
     agentModelsError,
-    availableChatModels,
+    availableAgentRuntimeModels,
     isAgentModelsLoading,
     modelValue.model,
     modelValue.provider,
@@ -472,8 +472,8 @@ export function useAgentRuntimePageModel(agentId: string) {
     [modelValue]
   );
   const selectedModelProps = useMemo<ModelSelectorModelProps | null>(
-    () => findAIChatModelProps(availableChatModels, modelSelectorValue),
-    [availableChatModels, modelSelectorValue]
+    () => findAIChatModelProps(availableAgentRuntimeModels, modelSelectorValue),
+    [availableAgentRuntimeModels, modelSelectorValue]
   );
   const currentPayload = useMemo<UpdateAgentRuntimeConfigRequest>(
     () => ({

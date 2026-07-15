@@ -32,7 +32,6 @@ import { cn } from '@/lib/utils';
 import { useCurrentUser } from '@/store/auth-store';
 import { embeddedControlButtonClassName } from '@/components/chat/variants/aichat/embedded-conversation-controls';
 import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
-import { toast } from 'sonner';
 import {
   createContextualAIChatTransport,
   normalizeZGIConsoleNavigationHref,
@@ -819,7 +818,6 @@ function assetOperationFromClientAction(
 interface ContextualAIChatPanelProps {
   controller: ReturnType<typeof useAIChatController>;
   isModelInitializing: boolean;
-  isSelectedModelUnavailable: boolean;
   items: ReturnType<typeof useContextualAIChat>['items'];
   modelSelectorValue: AIChatModelValue;
   onClose: () => void;
@@ -833,7 +831,6 @@ function ContextualAIChatPanel({
   controller,
   enableToolGovernance,
   isModelInitializing,
-  isSelectedModelUnavailable,
   items,
   modelSelectorValue,
   onClose,
@@ -875,14 +872,6 @@ function ContextualAIChatPanel({
           <div id={controlsPortalId} className="flex shrink-0 items-center" />
         </div>
       </div>
-      {isSelectedModelUnavailable ? (
-        <div
-          role="alert"
-          className="shrink-0 border-b border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive"
-        >
-          {t('consoleChat.modelUnavailable')}
-        </div>
-      ) : null}
       <div className="min-h-0 flex-1">
         <Chat
           mode="aichat"
@@ -890,11 +879,6 @@ function ContextualAIChatPanel({
           modelSelectorValue={modelSelectorValue}
           isModelInitializing={isModelInitializing}
           onModelChange={onModelChange}
-          beforeSend={() => {
-            if (!isSelectedModelUnavailable) return true;
-            toast.error(t('consoleChat.modelUnavailable'));
-            return false;
-          }}
           variant="embedded"
           showMemoryToggle={false}
           runtimeSurface="contextual_sidebar"
@@ -1510,11 +1494,12 @@ export function ContextualAIChatDock() {
     return () => pendingTimers.forEach(timer => window.clearTimeout(timer));
   }, [completePendingClientAction, items, pathname, pendingClientActionVersion]);
 
-  const { modelSelectorValue, isModelInitializing, isSelectedModelUnavailable, handleModelChange } =
+  const { modelSelectorValue, isModelInitializing, handleModelChange } =
     usePersistedAIChatModelSelection({
       accountId: user?.id,
       scope: 'contextualSidebar',
       legacyScope: 'consoleChat',
+      repairUnavailableSelection: true,
       useCase: 'agent',
     });
 
@@ -1619,7 +1604,6 @@ export function ContextualAIChatDock() {
     <ContextualAIChatPanel
       controller={contextualController}
       isModelInitializing={isModelInitializing}
-      isSelectedModelUnavailable={isSelectedModelUnavailable}
       items={items}
       modelSelectorValue={modelSelectorValue}
       onClose={() => setOpen(false)}
