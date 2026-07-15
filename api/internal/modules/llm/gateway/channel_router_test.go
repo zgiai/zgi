@@ -254,7 +254,7 @@ func TestBuildChannelSelection_UsesModelListAsSourceOfTruth(t *testing.T) {
 		IsActive:  true,
 	}
 
-	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, "gpt-4o", false, "chat")
+	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, "gpt-4o", model.Provider, false, "chat")
 	if err != nil {
 		t.Fatalf("buildChannelSelection returned error: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestBuildChannelSelection_UsesRouteChannelProviderForPrivateRoutes(t *testi
 		IsActive:  true,
 	}
 
-	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, false, "chat")
+	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, model.Provider, false, "chat")
 	if err != nil {
 		t.Fatalf("buildChannelSelection returned error: %v", err)
 	}
@@ -329,7 +329,7 @@ func TestBuildChannelSelection_PassthroughModelSource(t *testing.T) {
 		IsEnabled:       true,
 	}
 
-	selection, err := router.buildChannelSelection(context.Background(), route, nil, nil, "custom-model", true, "chat")
+	selection, err := router.buildChannelSelection(context.Background(), route, nil, nil, "custom-model", "", true, "chat")
 	if err != nil {
 		t.Fatalf("buildChannelSelection returned error: %v", err)
 	}
@@ -488,6 +488,128 @@ func TestSelectChannelsForProviderKeepsPassthroughForUnknownModel(t *testing.T) 
 	}
 	if selections[0].ModelSource != channelModelSourcePassthrough {
 		t.Fatalf("ModelSource = %q, want %q", selections[0].ModelSource, channelModelSourcePassthrough)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestSelectChannelsForProviderKeepsExplicitHintForUnknownOfficialModel(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db, mock := openGatewayModelLookupDB(t)
+	organizationID := uuid.New()
+	modelName := "new-official-model"
+	providerHint := "openai"
+	mock.ExpectQuery(`(?s)FROM "llm_models" JOIN llm_providers .*llm_models\.provider.*llm_models\.name`).
+		WithArgs(providerHint, modelName, true, llmmodel.ModelStatusActive, true, 1).
+		WillReturnError(gorm.ErrRecordNotFound)
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "llm_models".*provider.*name`).
+		WithArgs(providerHint, modelName).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	router := &ChannelRouter{
+		db: db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{{
+			ID:                     uuid.New(),
+			OrganizationID:         organizationID,
+			Type:                   shared.RouteTypeZGICloud,
+			ChannelProvider:        "zgi-cloud",
+			Models:                 []string{modelName},
+			OfficialProviderModels: []channelmodel.ProviderModel{{Provider: providerHint, Model: modelName}},
+			IsEnabled:              true,
+			IsOfficial:             true,
+		}}},
+		strategyFactory: NewStrategyFactory(),
+	}
+
+	selections, err := router.SelectChannelsForProvider(context.Background(), organizationID, providerHint, modelName, 1)
+	if err != nil {
+		t.Fatalf("SelectChannelsForProvider returned error: %v", err)
+	}
+	if len(selections) != 1 {
+		t.Fatalf("len(selections) = %d, want 1", len(selections))
+	}
+	if !selections[0].IsOfficial || selections[0].ModelSource != channelModelSourcePassthrough {
+		t.Fatalf("selection = %#v, want official passthrough", selections[0])
+	}
+	if selections[0].Model != nil {
+		t.Fatalf("selection.Model = %#v, want nil for passthrough", selections[0].Model)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestSelectChannelsForProviderRejectsWrongHintForUnknownOfficialModel(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db, mock := openGatewayModelLookupDB(t)
+	organizationID := uuid.New()
+	modelName := "new-official-model"
+	providerHint := "anthropic"
+	mock.ExpectQuery(`(?s)FROM "llm_models" JOIN llm_providers .*llm_models\.provider.*llm_models\.name`).
+		WithArgs(providerHint, modelName, true, llmmodel.ModelStatusActive, true, 1).
+		WillReturnError(gorm.ErrRecordNotFound)
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "llm_models".*provider.*name`).
+		WithArgs(providerHint, modelName).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	router := &ChannelRouter{
+		db: db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{{
+			ID:                     uuid.New(),
+			OrganizationID:         organizationID,
+			Type:                   shared.RouteTypeZGICloud,
+			ChannelProvider:        "zgi-cloud",
+			Models:                 []string{modelName},
+			OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+			IsEnabled:              true,
+			IsOfficial:             true,
+		}}},
+		strategyFactory: NewStrategyFactory(),
+	}
+
+	selections, err := router.SelectChannelsForProvider(context.Background(), organizationID, providerHint, modelName, 1)
+	if err == nil {
+		t.Fatalf("SelectChannelsForProvider returned selections %#v, want wrong-provider error", selections)
+	}
+	if selections != nil {
+		t.Fatalf("selections = %#v, want nil", selections)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestSelectChannelsForProviderRejectsUnknownOfficialModelWithoutProviderHint(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db, mock := openGatewayModelLookupDB(t)
+	organizationID := uuid.New()
+	modelName := "new-official-model"
+	mock.ExpectQuery(`(?s)SELECT DISTINCT llm_models\.provider FROM "llm_models" JOIN llm_providers`).
+		WithArgs(modelName, true, llmmodel.ModelStatusActive, true, 2).
+		WillReturnRows(sqlmock.NewRows([]string{"provider"}))
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "llm_models".*name`).
+		WithArgs(modelName).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	router := &ChannelRouter{
+		db: db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{{
+			ID:                     uuid.New(),
+			OrganizationID:         organizationID,
+			Type:                   shared.RouteTypeZGICloud,
+			ChannelProvider:        "zgi-cloud",
+			Models:                 []string{modelName},
+			OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+			IsEnabled:              true,
+			IsOfficial:             true,
+		}}},
+		strategyFactory: NewStrategyFactory(),
+	}
+
+	selections, err := router.SelectChannelsForProvider(context.Background(), organizationID, "", modelName, 1)
+	if err == nil {
+		t.Fatalf("SelectChannelsForProvider returned selections %#v, want missing-provider error", selections)
+	}
+	if selections != nil {
+		t.Fatalf("selections = %#v, want nil", selections)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("sql expectations: %v", err)
@@ -664,6 +786,40 @@ func TestCandidateRoutesForModel_FiltersNativeProtocolLikeRealSelection(t *testi
 	}
 }
 
+func TestCandidateRoutesForResolvedModelKeepsExplicitHintForOfficialPassthrough(t *testing.T) {
+	organizationID := uuid.New()
+	modelName := "new-official-model"
+	providerHint := "openai"
+	route := &channelmodel.LLMRoute{
+		ID:                     uuid.New(),
+		OrganizationID:         organizationID,
+		Type:                   shared.RouteTypeZGICloud,
+		ChannelProvider:        "zgi-cloud",
+		Models:                 []string{modelName},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: providerHint, Model: modelName}},
+		IsEnabled:              true,
+		IsOfficial:             true,
+	}
+	router := &ChannelRouter{strategyFactory: NewStrategyFactory()}
+
+	routes, err := router.candidateRoutesForResolvedModel(
+		context.Background(),
+		organizationID,
+		modelName,
+		providerHint,
+		1,
+		[]*channelmodel.LLMRoute{route},
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("candidateRoutesForResolvedModel returned error: %v", err)
+	}
+	if len(routes) != 1 || routes[0].ID != route.ID {
+		t.Fatalf("routes = %#v, want official route %s", routes, route.ID)
+	}
+}
+
 func TestCandidateRoutesForModelsLoadsEnabledRoutesOnce(t *testing.T) {
 	orgID := uuid.New()
 	routeRepo := &fakeCandidateRouteRepo{
@@ -763,6 +919,7 @@ func TestPrepareCandidateRoutes_GuardLetsFourthHealthyRouteFillAttemptWindow(t *
 		"deepseek",
 		false,
 		&llmmodel.LLMModel{Provider: "deepseek", Model: modelName},
+		false,
 		true,
 		true,
 	)
@@ -792,6 +949,7 @@ func TestPrepareCandidateRoutes_GuardLetsFourthHealthyRouteFillAttemptWindow(t *
 		"deepseek",
 		false,
 		&llmmodel.LLMModel{Provider: "deepseek", Model: modelName},
+		false,
 		true,
 		true,
 	)
@@ -884,6 +1042,7 @@ func TestUpstreamGenerationReloadsMatchingCredential(t *testing.T) {
 		&llmmodel.LLMModel{Model: "shared-model", Provider: "openrouter"},
 		nil,
 		"shared-model",
+		"openrouter",
 		false,
 		"chat",
 	)
@@ -1296,7 +1455,7 @@ func TestBuildChannelSelection_OfficialRouteUsesRuntimeConsoleAPIURL(t *testing.
 		IsActive:  true,
 	}
 
-	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, false, "chat")
+	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, model.Provider, false, "chat")
 	if err != nil {
 		t.Fatalf("buildChannelSelection returned error: %v", err)
 	}
@@ -1333,7 +1492,7 @@ func TestBuildChannelSelectionRejectsWrongOfficialProviderForSameName(t *testing
 		IsActive:  true,
 	}
 
-	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, modelName, false, "chat")
+	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, modelName, model.Provider, false, "chat")
 	if err == nil || !strings.Contains(err.Error(), "not supported") {
 		t.Fatalf("buildChannelSelection = (%#v, %v), want wrong-provider not supported error", selection, err)
 	}
@@ -1362,7 +1521,7 @@ func TestBuildChannelSelection_OfficialRouteRequiresRuntimeConsoleAPIURL(t *test
 		IsActive:  true,
 	}
 
-	_, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, false, "chat")
+	_, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, model.Provider, false, "chat")
 	if err == nil || !strings.Contains(err.Error(), "console api url") {
 		t.Fatalf("buildChannelSelection error = %v, want console api url error", err)
 	}
@@ -1391,7 +1550,7 @@ func TestBuildChannelSelection_OfficialRouteRejectsInvalidRuntimeConsoleAPIURL(t
 		IsActive:  true,
 	}
 
-	_, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, false, "chat")
+	_, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, model.Provider, false, "chat")
 	if err == nil || !strings.Contains(err.Error(), "invalid console api url") {
 		t.Fatalf("buildChannelSelection error = %v, want invalid console api url error", err)
 	}
@@ -1418,7 +1577,7 @@ func TestBuildChannelSelection_PrivateRouteKeepsRouteAPIBaseURL(t *testing.T) {
 		IsActive:  true,
 	}
 
-	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, false, "chat")
+	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, model.Provider, false, "chat")
 	if err != nil {
 		t.Fatalf("buildChannelSelection returned error: %v", err)
 	}
@@ -1618,7 +1777,7 @@ func TestBuildChannelSelection_NativeProtocolBaseURLOverridesPrivateRouteBaseURL
 		IsActive:  true,
 	}
 
-	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, false, modelCategoryResponses)
+	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, model.Provider, false, modelCategoryResponses)
 	if err != nil {
 		t.Fatalf("buildChannelSelection returned error: %v", err)
 	}

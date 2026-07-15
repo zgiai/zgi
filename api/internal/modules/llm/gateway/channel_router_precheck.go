@@ -48,7 +48,7 @@ func (r *ChannelRouter) CandidateRoutesForProviderModel(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get enabled routes: %w", err)
 	}
-	return r.candidateRoutesForResolvedModel(ctx, organizationID, modelName, maxSelections, routes, llmModel, privateModel)
+	return r.candidateRoutesForResolvedModel(ctx, organizationID, modelName, providerHint, maxSelections, routes, llmModel, privateModel)
 }
 
 func (r *ChannelRouter) resolveCandidateModel(
@@ -110,7 +110,7 @@ func (r *ChannelRouter) CandidateRoutesForModels(
 			result[normalizedModelName] = nil
 			continue
 		}
-		candidates, err := r.candidateRoutesForResolvedModel(ctx, organizationID, normalizedModelName, maxSelections, routes, llmModel, privateModel)
+		candidates, err := r.candidateRoutesForResolvedModel(ctx, organizationID, normalizedModelName, "", maxSelections, routes, llmModel, privateModel)
 		if err != nil {
 			if !errors.Is(err, llmerrors.DomainErrModelNotFound) {
 				return nil, err
@@ -127,6 +127,7 @@ func (r *ChannelRouter) candidateRoutesForResolvedModel(
 	ctx context.Context,
 	organizationID uuid.UUID,
 	modelName string,
+	providerHint string,
 	maxSelections int,
 	routes []*channelmodel.LLMRoute,
 	llmModel *llmmodel.LLMModel,
@@ -134,16 +135,19 @@ func (r *ChannelRouter) candidateRoutesForResolvedModel(
 ) ([]*channelmodel.LLMRoute, error) {
 	modelName = normalizeRequestedModelName(modelName)
 	isPrivateCustomModel := privateModel != nil
+	isPassthroughMode := llmModel == nil && privateModel == nil
 	modelProvider := ""
 	if llmModel != nil {
 		modelProvider = llmModel.Provider
+	} else if isPassthroughMode {
+		modelProvider = strings.TrimSpace(providerHint)
 	}
 
 	if len(routes) == 0 {
 		return nil, fmt.Errorf("no enabled routes found for organizationID %s", organizationID)
 	}
 
-	validRoutes, err := r.prepareCandidateRoutes(ctx, organizationID, routes, modelName, modelProvider, isPrivateCustomModel, llmModel, false, false)
+	validRoutes, err := r.prepareCandidateRoutes(ctx, organizationID, routes, modelName, modelProvider, isPrivateCustomModel, llmModel, isPassthroughMode, false, false)
 	if err != nil {
 		return nil, err
 	}

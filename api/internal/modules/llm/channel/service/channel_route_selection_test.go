@@ -97,3 +97,36 @@ func TestGetRoutesForModelPreservesPrivateNameMatching(t *testing.T) {
 		t.Fatalf("routes = %#v, want private route %s", routes, routeID)
 	}
 }
+
+func TestGetRoutesForModelPreservesPrivateRouteWhenOfficialProviderIsAmbiguous(t *testing.T) {
+	organizationID := uuid.New()
+	modelName := "same-name"
+	privateRouteID := uuid.New()
+	svc := &channelService{tenantRouteRepo: &routeSelectionRepo{routes: []*channelmodel.LLMRoute{
+		{
+			ID:             privateRouteID,
+			OrganizationID: organizationID,
+			Type:           shared.RouteTypePrivate,
+			Models:         []string{modelName},
+		},
+		{
+			ID:             uuid.New(),
+			OrganizationID: organizationID,
+			Type:           shared.RouteTypeZGICloud,
+			Models:         []string{modelName},
+			OfficialProviderModels: []channelmodel.ProviderModel{
+				{Provider: "openai", Model: modelName},
+				{Provider: "anthropic", Model: modelName},
+			},
+			IsOfficial: true,
+		},
+	}}}
+
+	routes, err := svc.GetRoutesForModel(context.Background(), organizationID, modelName)
+	if err != nil {
+		t.Fatalf("GetRoutesForModel() error = %v, want private route", err)
+	}
+	if len(routes) != 1 || routes[0].RouteID != privateRouteID {
+		t.Fatalf("routes = %#v, want only private route %s", routes, privateRouteID)
+	}
+}

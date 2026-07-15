@@ -1151,15 +1151,15 @@ func (s *channelService) GetRoutesForModel(ctx context.Context, organizationID u
 	if err != nil {
 		return nil, fmt.Errorf("failed to get enabled routes: %w", err)
 	}
-	officialProvider, err := uniqueOfficialProviderForModel(routes, modelName)
-	if err != nil {
-		return nil, err
-	}
+	officialProvider, officialProviderErr := uniqueOfficialProviderForModel(routes, modelName)
 
 	// No auto-initialization - tenant must create routes manually
 
 	var result []*model.RouteQueryResult
 	for _, r := range routes {
+		if (r.IsOfficial || r.Type == shared.RouteTypeZGICloud) && officialProviderErr != nil {
+			continue
+		}
 		// Check if route supports the model
 		if !s.routeSupportsModel(r, officialProvider, modelName) {
 			continue
@@ -1193,6 +1193,9 @@ func (s *channelService) GetRoutesForModel(ctx context.Context, organizationID u
 		}
 
 		result = append(result, qr)
+	}
+	if len(result) == 0 && officialProviderErr != nil {
+		return nil, officialProviderErr
 	}
 
 	return result, nil
