@@ -38,3 +38,46 @@ func TestAgentsRoutes_WebAppCapabilityStaysBehindWebAppAuthMiddleware(t *testing
 		t.Fatalf("protected webapp capability route is registered before auth middleware; route index = %d, middleware index = %d", capabilityIndex, authIndex)
 	}
 }
+
+func TestAgentsRoutes_RollbackPreviewUsesVersionScopedGET(t *testing.T) {
+	source, err := os.ReadFile("agents_routers.go")
+	if err != nil {
+		t.Fatalf("read agents_routers.go: %v", err)
+	}
+	want := `appsGroup.GET("/:agent_id/published-versions/:version_id/rollback-preview", appHandler.PreviewAgentPublishedVersionRollback)`
+	if !strings.Contains(string(source), want) {
+		t.Fatalf("rollback preview route missing; want %q", want)
+	}
+}
+
+func TestAgentsRoutes_ResourceCandidatePickersUseAgentScopedGETs(t *testing.T) {
+	source, err := os.ReadFile("agents_routers.go")
+	if err != nil {
+		t.Fatalf("read agents_routers.go: %v", err)
+	}
+
+	text := string(source)
+	wants := []string{
+		`appsGroup.GET("/:agent_id/candidates/skills", appHandler.ListAgentSkillBindingCandidates)`,
+		`appsGroup.GET("/:agent_id/candidates/knowledge", appHandler.ListAgentKnowledgeBindingCandidates)`,
+		`appsGroup.GET("/:agent_id/candidates/workflows", appHandler.ListAgentWorkflowBindingCandidates)`,
+		`appsGroup.GET("/:agent_id/candidates/databases", appHandler.ListAgentDatabaseBindingCandidates)`,
+		`appsGroup.GET("/:agent_id/candidates/databases/:data_source_id/tables", appHandler.ListAgentDatabaseTableBindingCandidates)`,
+	}
+	for _, want := range wants {
+		if !strings.Contains(text, want) {
+			t.Errorf("agent resource candidate route missing; want %q", want)
+		}
+	}
+}
+
+func TestAgentsRoutes_DeleteImpactPreviewUsesAgentScopedGET(t *testing.T) {
+	source, err := os.ReadFile("agents_routers.go")
+	if err != nil {
+		t.Fatalf("read agents_routers.go: %v", err)
+	}
+	want := `appsGroup.GET("/:agent_id/delete-impact", appHandler.PreviewAgentDeleteImpact)`
+	if !strings.Contains(string(source), want) {
+		t.Fatalf("delete impact preview route missing; want %q", want)
+	}
+}

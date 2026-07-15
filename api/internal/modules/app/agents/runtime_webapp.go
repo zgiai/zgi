@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	"github.com/zgiai/zgi/api/internal/dto"
 	"github.com/zgiai/zgi/api/internal/modules/app/runtimeauth"
 	workspacemodel "github.com/zgiai/zgi/api/internal/modules/workspace/model"
@@ -72,6 +73,23 @@ func (s *agentsService) publishedAgentRuntimeConfig(ctx context.Context, ag *Age
 		}
 	}
 	cfg := agentConfigResponseFromSnapshot(ag.ID.String(), version.ConfigSnapshot)
+	if indexed, _ := version.ConfigSnapshot["binding_indexed"].(bool); indexed {
+		if s.agentBindings == nil {
+			return nil, fmt.Errorf("agent binding index is not configured")
+		}
+		rows, err := s.agentBindings.ListScope(ctx, agentbindings.ScopeRef{
+			AgentID:              ag.ID,
+			Scope:                agentbindings.ScopePublished,
+			PublishedVersionUUID: &version.VersionUUID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		applyAgentBindingAuthorizationsFromRows(cfg, rows)
+		cfg.BindingHealth = s.resolveAgentBindingHealth(ctx, ag, "", cfg, rows)
+		cfg.BindingRevision = agentBindingRevision(rows)
+		cfg = configResponsePtr(filterAgentConfigByBindingHealth(*cfg))
+	}
 	cfg.WorkflowBindings = s.hydrateAgentWorkflowBindingRuntimeInputs(ctx, workspaceID, cfg.WorkflowBindings)
 	if _, ok := version.ConfigSnapshot["supports_vision"]; !ok {
 		cfg.SupportsVision = s.resolveAgentModelSupportsVision(ctx, organizationID, cfg.ModelProvider, cfg.Model)
@@ -97,6 +115,10 @@ func (s *agentsService) publishedAgentRuntimeConfig(ctx context.Context, ag *Age
 		VersionUUID:    version.VersionUUID.String(),
 		Config:         *cfg,
 	}, nil
+}
+
+func configResponsePtr(config dto.AgentConfigResponse) *dto.AgentConfigResponse {
+	return &config
 }
 
 func webAppRuntimeSurfaceEnabled(auth *runtimeauth.ResourceAuthorization) bool {

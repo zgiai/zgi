@@ -659,13 +659,11 @@ export function useChatRuntimeMessageActions({
       messageId,
       query,
       model,
-      runtimeSurface,
       operationContext,
     }: {
       messageId: string;
       query?: string;
       model?: AIChatModelSelection;
-      runtimeSurface?: AIChatRuntimeSurface;
       operationContext?: unknown;
     }) => {
       const trimmedQuery = query?.trim();
@@ -804,7 +802,6 @@ export function useChatRuntimeMessageActions({
           messageId,
           {
             query: trimmedQuery || undefined,
-            surface: runtimeSurface,
             operation_context: operationContext,
             model: model?.model,
             provider: model?.provider,
@@ -1094,7 +1091,6 @@ export function useChatRuntimeMessageActions({
         await replaceRootMessage({
           messageId,
           model,
-          runtimeSurface: options?.runtimeSurface,
           operationContext: options?.operationContext,
         });
         return;

@@ -21,6 +21,13 @@ import (
 	"gorm.io/gorm"
 )
 
+const directAnswerGroundingMessage = `Runtime instruction for this direct-answer turn:
+- Base every factual or execution claim only on explicit evidence already present in the current-turn messages.
+- A user request, intent, authorization, or an assumed tool is not evidence that an action occurred.
+- Do not invent tools, page observations, external actions, or successful outcomes.
+- Without explicit successful evidence, say the action was not performed or cannot be verified, then offer non-executing help such as guidance or drafting.
+Do not proactively enumerate unavailable capabilities.`
+
 func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat, onChunk func(string) error, onEvent ...func(StreamEvent) error) (*ChatResult, error) {
 	if prepared == nil || prepared.Message == nil {
 		return nil, fmt.Errorf("%w: prepared chat is required", ErrInvalidInput)
@@ -143,6 +150,7 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 		eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayload(prepared, metadata))
 		return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, MessageEndEventID: eventID}, nil
 	}
+	appendDirectAnswerGroundingMessage(prepared)
 
 	finalCallStartedAt := time.Now()
 	stream, err := s.openChatStream(runCtx, prepared)
@@ -208,6 +216,21 @@ func (s *service) RunPreparedStream(ctx context.Context, prepared *PreparedChat,
 	}
 	eventID := s.appendPreparedMessageEndEvent(persistCtx, prepared, messageEndPayload(prepared, metadata))
 	return &ChatResult{Answer: answer, Metadata: metadata, Usage: usage, MessageEndEventID: eventID}, nil
+}
+
+func appendDirectAnswerGroundingMessage(prepared *PreparedChat) {
+	if prepared == nil || prepared.LLMRequest == nil || prepared.toolLoopEnabled() {
+		return
+	}
+	for _, message := range prepared.LLMRequest.Messages {
+		if message.Role == "system" && stringFromAny(message.Content) == directAnswerGroundingMessage {
+			return
+		}
+	}
+	prepared.LLMRequest.Messages = append(prepared.LLMRequest.Messages, adapter.Message{
+		Role:    "system",
+		Content: directAnswerGroundingMessage,
+	})
 }
 
 func (s *service) CleanupStaleActiveMessages(ctx context.Context) (int64, error) {

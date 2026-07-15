@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -104,7 +102,7 @@ func TestListConversationsBySurfaceNormalizesSurface(t *testing.T) {
 	}
 }
 
-func TestResolveChatConversationRejectsPersistedSurfaceMismatch(t *testing.T) {
+func TestResolveChatConversationUsesPersistedSurface(t *testing.T) {
 	organizationID := uuid.New()
 	accountID := uuid.New()
 	conversationID := uuid.New()
@@ -120,18 +118,37 @@ func TestResolveChatConversationRejectsPersistedSurfaceMismatch(t *testing.T) {
 	}}
 	svc := &service{repos: &repository.Repositories{Conversation: conversationRepo}}
 
-	_, err := svc.resolveChatConversation(
+	parts := &chatRequestParts{Surface: aiChatSurfaceContextualSidebar}
+	conversation, err := svc.resolveChatConversation(
 		context.Background(),
 		Scope{OrganizationID: organizationID, AccountID: accountID},
 		Caller{Type: runtimemodel.ConversationCallerAIChat},
 		runtimedto.ChatRequest{ConversationID: conversationID.String()},
-		&chatRequestParts{Surface: aiChatSurfaceContextualSidebar},
+		parts,
 	)
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("resolveChatConversation() error = %v, want ErrInvalidInput", err)
+	if err != nil {
+		t.Fatalf("resolveChatConversation() error = %v", err)
 	}
-	if !strings.Contains(err.Error(), "conversation surface is work_chat") {
-		t.Fatalf("resolveChatConversation() error = %v, want persisted surface detail", err)
+	if conversation != conversationRepo.conversation {
+		t.Fatalf("conversation = %#v, want persisted conversation", conversation)
+	}
+	if parts.Surface != aiChatSurfaceWorkChat {
+		t.Fatalf("surface = %q, want persisted %q", parts.Surface, aiChatSurfaceWorkChat)
+	}
+}
+
+func TestApplyPersistedConversationSurfaceOverridesRequestHints(t *testing.T) {
+	for _, persisted := range []string{aiChatSurfaceWorkChat, aiChatSurfaceContextualSidebar, aiChatSurfaceExternalPageChat} {
+		t.Run(persisted, func(t *testing.T) {
+			parts := &chatRequestParts{Surface: aiChatSurfaceWorkChat}
+			conversation := &runtimemodel.Conversation{Metadata: map[string]interface{}{"surface": persisted}}
+
+			applyPersistedConversationSurface(conversation, parts)
+
+			if parts.Surface != persisted {
+				t.Fatalf("surface = %q, want persisted %q", parts.Surface, persisted)
+			}
+		})
 	}
 }
 

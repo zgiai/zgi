@@ -150,11 +150,48 @@ func TestEffectiveAgentSkillIDsAutoAddsHiddenKnowledge(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillCalculator, skills.SkillAgentKnowledge, skills.SkillUserMemory, skills.SkillInternalKnowledge},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{KnowledgeDatasetIDs: []string{"dataset-1"}},
 	)
 	want := []string{skills.SkillAgentKnowledge, skills.SkillCalculator}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("effectiveAgentSkillIDs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestEffectiveAgentSkillIDsFiltersOrganizationDisabledSkills(t *testing.T) {
+	catalog := []skills.SkillDiscoveryMetadata{
+		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
+		{ID: "organization-disabled", Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}},
+		{ID: skills.SkillAgentKnowledge, Status: skills.SkillStatusActive, SupportedCallers: []string{skills.SkillCallerAgent}, RequiredConfig: []string{skills.SkillRequiredConfigAgentKnowledge}},
+	}
+
+	got := effectiveAgentSkillIDs(
+		[]string{skills.SkillCalculator, "organization-disabled"},
+		catalog,
+		[]string{skills.SkillCalculator},
+		&RunConfig{KnowledgeDatasetIDs: []string{"dataset-1"}},
+	)
+	want := []string{skills.SkillAgentKnowledge, skills.SkillCalculator}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("effectiveAgentSkillIDs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestOrganizationAllowsSkillID(t *testing.T) {
+	catalog := []skills.SkillDiscoveryMetadata{
+		{ID: skills.SkillCalculator, Status: skills.SkillStatusActive},
+		{ID: skills.SkillAgentKnowledge, Status: skills.SkillStatusActive},
+	}
+
+	if organizationAllowsSkillID(skills.SkillCalculator, catalog, nil) {
+		t.Fatal("organizationAllowsSkillID() = true for disabled selectable skill, want false")
+	}
+	if !organizationAllowsSkillID(skills.SkillCalculator, catalog, []string{skills.SkillCalculator}) {
+		t.Fatal("organizationAllowsSkillID() = false for enabled selectable skill, want true")
+	}
+	if !organizationAllowsSkillID(skills.SkillAgentKnowledge, catalog, nil) {
+		t.Fatal("organizationAllowsSkillID() = false for runtime-managed skill, want true")
 	}
 }
 
@@ -176,6 +213,7 @@ func TestEffectiveAgentSkillIDsRejectsSidebarManagedAssetSkills(t *testing.T) {
 			skills.SkillAgentKnowledge,
 		},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{KnowledgeDatasetIDs: []string{"dataset-1"}},
 	)
 	want := []string{skills.SkillAgentKnowledge, skills.SkillCalculator}
@@ -193,6 +231,7 @@ func TestEffectiveAgentSkillIDsSkipsKnowledgeWithoutDatasets(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillCalculator, skills.SkillAgentKnowledge},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{},
 	)
 	want := []string{skills.SkillCalculator}
@@ -210,6 +249,7 @@ func TestEffectiveAgentSkillIDsAutoAddsHiddenDatabase(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillCalculator},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{DatabaseBindings: []AgentDatabaseBinding{{DataSourceID: "db-1", TableIDs: []string{"table-1"}}}},
 	)
 	want := []string{skills.SkillAgentDatabase, skills.SkillCalculator}
@@ -227,6 +267,7 @@ func TestEffectiveAgentSkillIDsSkipsDatabaseWithoutBindings(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillCalculator, skills.SkillAgentDatabase},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{},
 	)
 	want := []string{skills.SkillCalculator}
@@ -244,6 +285,7 @@ func TestEffectiveAgentSkillIDsAutoAddsHiddenWorkflow(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillCalculator},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{WorkflowBindings: []AgentWorkflowBinding{{BindingID: "approval-flow", AgentID: "agent-1", WorkflowID: "workflow-1"}}},
 	)
 	want := []string{skills.SkillAgentWorkflow, skills.SkillCalculator}
@@ -261,6 +303,7 @@ func TestEffectiveAgentSkillIDsSkipsWorkflowWithoutBindings(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillCalculator, skills.SkillAgentWorkflow},
 		catalog,
+		[]string{skills.SkillCalculator},
 		&RunConfig{},
 	)
 	want := []string{skills.SkillCalculator}
@@ -278,6 +321,7 @@ func TestEffectiveAgentSkillIDsDoesNotAutoAddHiddenAgentMemory(t *testing.T) {
 	got := effectiveAgentSkillIDs(
 		[]string{skills.SkillUserMemory},
 		catalog,
+		[]string{},
 		&RunConfig{
 			AgentMemoryEnabled: true,
 			AgentMemorySlots: []AgentMemorySlotConfig{{
@@ -1070,6 +1114,27 @@ func TestSkillRuntimeParametersUseCapabilityConfig(t *testing.T) {
 	}
 }
 
+func TestSkillRuntimeParametersPreservePerBindingAuthorizationEvidence(t *testing.T) {
+	params := skillRuntimeParameters(Scope{OrganizationID: uuid.New()}, RunConfig{
+		BillingAppType: runtimemodel.ConversationCallerAgent,
+		BindingAuthorizations: []ResourceBindingAuthorization{
+			{BindingType: "knowledge_dataset", ResourceID: "dataset-old", AccessMode: "read", BoundByAccountID: "binder-old", BoundAtUnix: 100},
+			{BindingType: "knowledge_dataset", ResourceID: "dataset-new", AccessMode: "read", BoundByAccountID: "binder-new", BoundAtUnix: 200},
+		},
+	})
+
+	if params["knowledge_binding_grant"] != true {
+		t.Fatalf("knowledge_binding_grant = %#v, want true", params["knowledge_binding_grant"])
+	}
+	authorizations, ok := params["agent_binding_authorizations"].([]ResourceBindingAuthorization)
+	if !ok || len(authorizations) != 2 {
+		t.Fatalf("agent_binding_authorizations = %#v, want two entries", params["agent_binding_authorizations"])
+	}
+	if _, exists := params["knowledge_bound_by_account_id"]; exists {
+		t.Fatalf("mixed per-binding grants must not synthesize one category actor: %#v", params)
+	}
+}
+
 func TestSkillRuntimeParametersForPreparedUsesConversationWorkspaceWhenScopeMissing(t *testing.T) {
 	workspaceID := uuid.New()
 	prepared := &PreparedChat{
@@ -1844,6 +1909,22 @@ func TestEmitUserMemoryMutationEventUsesIndependentMemoryEvent(t *testing.T) {
 	if got.Payload["memory_scope"] != "account" || got.Payload["action"] != "update" || got.Payload["entry_id"] != "entry-1" {
 		t.Fatalf("payload = %#v, want account memory update payload", got.Payload)
 	}
+}
+
+func TestEmitUserMemoryMutationEventSkipsPreparePreflightWithoutMessage(t *testing.T) {
+	prepared := preparedTimelineTestChat()
+	prepared.Message = nil
+
+	(&service{}).emitUserMemoryMutationEvent(context.Background(), prepared, skills.SkillTrace{
+		Kind:   "user_memory",
+		Status: "success",
+	}, map[string]interface{}{
+		"action":   "update",
+		"entry_id": "entry-1",
+	}, func(StreamEvent) error {
+		t.Fatal("memory mutation event was emitted without a persisted message")
+		return nil
+	})
 }
 
 func TestProcessTimelineRecorderAggregatesIntermediateAnswerChunks(t *testing.T) {

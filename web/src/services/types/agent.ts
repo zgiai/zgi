@@ -210,7 +210,37 @@ export interface AgentRuntimeConfig {
   knowledge_retrieval_config?: Record<string, unknown>;
   database_bindings?: AgentDatabaseBinding[];
   workflow_bindings?: AgentWorkflowBinding[];
+  binding_revision?: string;
+  binding_health?: AgentBindingHealth;
   updated_at: number;
+}
+
+export type AgentBindingType =
+  | 'skill'
+  | 'knowledge_dataset'
+  | 'database'
+  | 'database_table'
+  | 'workflow';
+
+export type AgentBindingStatus = 'active' | 'suspended' | 'unavailable';
+
+export interface AgentBindingHealthItem {
+  binding_type: AgentBindingType;
+  resource_id: string;
+  parent_resource_id?: string;
+  display_name?: string;
+  status: AgentBindingStatus;
+  reason: string;
+  access_mode?: 'read' | 'write' | 'execute';
+  suggestion?: string;
+}
+
+export interface AgentBindingHealth {
+  status: 'healthy' | 'warning' | 'blocked';
+  items: AgentBindingHealthItem[];
+  active_count: number;
+  suspended_count: number;
+  unavailable_count: number;
 }
 
 export interface AgentDatabaseBinding {
@@ -239,10 +269,106 @@ export interface AgentWorkflowBindingCandidate extends AgentWorkflowBinding {
   icon_type?: AgentIconType | string;
   icon_url?: string;
   updated_at?: number;
+  selected?: boolean;
 }
 
 export interface AgentWorkflowBindingCandidatesResponse {
   data: AgentWorkflowBindingCandidate[];
+  page: number;
+  limit: number;
+  total: number;
+  has_more: boolean;
+}
+
+export interface AgentSkillBindingCandidate {
+  skill_id: string;
+  name: string;
+  description?: string;
+  when_to_use?: string;
+  source?: 'system' | 'custom' | string;
+  runtime_type?: string;
+  has_tools: boolean;
+  has_references: boolean;
+  has_scripts: boolean;
+  scripts_supported: boolean;
+  required_config?: string[];
+  display?: {
+    icon?: string;
+    category?: string;
+    label?: Record<string, string>;
+    description?: Record<string, string>;
+    when_to_use?: Record<string, string>;
+    tags?: Record<string, string[]>;
+  };
+  selected?: boolean;
+}
+
+export interface AgentCandidatePage<T> {
+  agent_id?: string;
+  workspace_id?: string;
+  query?: string;
+  page: number;
+  limit: number;
+  total: number;
+  has_more: boolean;
+  count?: number;
+  data: T[];
+}
+
+export interface AgentSkillBindingCandidatesResponse
+  extends AgentCandidatePage<AgentSkillBindingCandidate> {
+  source?: string;
+}
+
+export interface AgentKnowledgeBindingCandidate {
+  dataset_id: string;
+  name: string;
+  description?: string;
+  provider?: string;
+  enable_graph_flow: boolean;
+  selected?: boolean;
+}
+
+export type AgentKnowledgeBindingCandidatesResponse =
+  AgentCandidatePage<AgentKnowledgeBindingCandidate>;
+
+export interface AgentDatabaseBindingCandidate {
+  data_source_id: string;
+  name: string;
+  description?: string;
+  status?: string;
+  workspace_id?: string;
+  can_write?: boolean;
+  icon?: string;
+  icon_type?: AgentIconType | string;
+  icon_background?: string;
+  updated_at?: number;
+  table_count: number;
+  selected?: boolean;
+}
+
+export interface AgentDatabaseBindingCandidatesResponse
+  extends AgentCandidatePage<AgentDatabaseBindingCandidate> {
+  available_only: boolean;
+  require_write?: boolean;
+}
+
+export interface AgentDatabaseTableBindingCandidate {
+  table_id: string;
+  data_source_id: string;
+  name: string;
+  description?: string;
+  physical_table_name?: string;
+  updated_at?: number;
+  selected?: boolean;
+  writable?: boolean;
+  columns?: unknown[];
+}
+
+export interface AgentDatabaseTableBindingCandidatesResponse
+  extends AgentCandidatePage<AgentDatabaseTableBindingCandidate> {
+  data_source_id: string;
+  include_columns?: boolean;
 }
 
 export interface AgentMemorySlotConfig {
@@ -296,6 +422,7 @@ export interface UpdateAgentRuntimeConfigRequest {
   knowledge_retrieval_config?: Record<string, unknown>;
   database_bindings?: AgentDatabaseBinding[];
   workflow_bindings?: AgentWorkflowBinding[];
+  binding_revision?: string;
 }
 
 export interface AgentSuggestedQuestionSkillContext {
@@ -370,6 +497,11 @@ export interface PublishAgentResponse {
   published_at: number;
 }
 
+export interface PublishAgentRequest {
+  binding_revision?: string;
+  acknowledge_suspended_bindings?: boolean;
+}
+
 export interface AgentPublishedVersion {
   id: string;
   agent_id: string;
@@ -391,6 +523,25 @@ export interface AgentPublishedVersionsResponse {
 
 export interface RollbackAgentPublishedVersionRequest {
   version_id: string;
+  impact_token: string;
+  binding_action: 'remove_all_abnormal';
+}
+
+export interface AgentRollbackRemovedBinding {
+  binding_type: AgentBindingType;
+  resource_id: string;
+  parent_resource_id?: string;
+  display_name?: string;
+  status?: AgentBindingStatus;
+  reason?: string;
+}
+
+export interface AgentPublishedVersionRollbackPreview {
+  version_id: string;
+  config_snapshot: AgentRuntimeConfig;
+  binding_health: AgentBindingHealth;
+  removed_bindings: AgentRollbackRemovedBinding[];
+  impact_token: string;
 }
 export interface AgentApiKeyCreateResponse {
   id: string;
@@ -421,10 +572,21 @@ export interface AgentApiKeyList {
 }
 
 export type AgentRuntimeSurface =
-  'webapp' | 'api' | 'app_center' | 'builtin_app' | 'internal' | string;
+  | 'webapp'
+  | 'api'
+  | 'app_center'
+  | 'builtin_app'
+  | 'internal'
+  | string;
 
 export type AgentRuntimeGrantSubject =
-  'public' | 'organization' | 'department' | 'workspace' | 'account' | 'internal' | string;
+  | 'public'
+  | 'organization'
+  | 'department'
+  | 'workspace'
+  | 'account'
+  | 'internal'
+  | string;
 
 export interface AgentRuntimeSurfaceGrant {
   subject_type: AgentRuntimeGrantSubject;

@@ -197,26 +197,39 @@ type AgentRuntimeSurfaceGrant struct {
 }
 
 type AgentRuntimeModeConfig struct {
-	EnabledSkillIDs           []string                `json:"enabled_skill_ids"`
-	UseMemory                 bool                    `json:"use_memory"`
-	AgentMemoryEnabled        bool                    `json:"agent_memory_enabled"`
-	AgentMemorySlots          []AgentMemorySlotConfig `json:"agent_memory_slots,omitempty"`
-	FileUploadEnabled         bool                    `json:"file_upload_enabled"`
-	HomeTitle                 string                  `json:"home_title"`
-	OpeningStatement          string                  `json:"opening_statement"`
-	InputPlaceholder          string                  `json:"input_placeholder"`
-	ThemeColor                string                  `json:"theme_color"`
-	SuggestedQuestions        []string                `json:"suggested_questions"`
-	KnowledgeDatasetIDs       []string                `json:"knowledge_dataset_ids"`
-	KnowledgeBoundByAccountID string                  `json:"knowledge_bound_by_account_id,omitempty"`
-	KnowledgeBoundAtUnix      int64                   `json:"knowledge_bound_at_unix,omitempty"`
-	KnowledgeRetrievalConfig  map[string]interface{}  `json:"knowledge_retrieval_config"`
-	DatabaseBindings          []AgentDatabaseBinding  `json:"database_bindings,omitempty"`
-	DatabaseBoundByAccountID  string                  `json:"database_bound_by_account_id,omitempty"`
-	DatabaseBoundAtUnix       int64                   `json:"database_bound_at_unix,omitempty"`
-	WorkflowBindings          []AgentWorkflowBinding  `json:"workflow_bindings,omitempty"`
-	WorkflowBoundByAccountID  string                  `json:"workflow_bound_by_account_id,omitempty"`
-	WorkflowBoundAtUnix       int64                   `json:"workflow_bound_at_unix,omitempty"`
+	EnabledSkillIDs           []string                    `json:"enabled_skill_ids"`
+	UseMemory                 bool                        `json:"use_memory"`
+	AgentMemoryEnabled        bool                        `json:"agent_memory_enabled"`
+	AgentMemorySlots          []AgentMemorySlotConfig     `json:"agent_memory_slots,omitempty"`
+	FileUploadEnabled         bool                        `json:"file_upload_enabled"`
+	HomeTitle                 string                      `json:"home_title"`
+	OpeningStatement          string                      `json:"opening_statement"`
+	InputPlaceholder          string                      `json:"input_placeholder"`
+	ThemeColor                string                      `json:"theme_color"`
+	SuggestedQuestions        []string                    `json:"suggested_questions"`
+	KnowledgeDatasetIDs       []string                    `json:"knowledge_dataset_ids"`
+	KnowledgeBoundByAccountID string                      `json:"knowledge_bound_by_account_id,omitempty"`
+	KnowledgeBoundAtUnix      int64                       `json:"knowledge_bound_at_unix,omitempty"`
+	KnowledgeRetrievalConfig  map[string]interface{}      `json:"knowledge_retrieval_config"`
+	DatabaseBindings          []AgentDatabaseBinding      `json:"database_bindings,omitempty"`
+	DatabaseBoundByAccountID  string                      `json:"database_bound_by_account_id,omitempty"`
+	DatabaseBoundAtUnix       int64                       `json:"database_bound_at_unix,omitempty"`
+	WorkflowBindings          []AgentWorkflowBinding      `json:"workflow_bindings,omitempty"`
+	WorkflowBoundByAccountID  string                      `json:"workflow_bound_by_account_id,omitempty"`
+	WorkflowBoundAtUnix       int64                       `json:"workflow_bound_at_unix,omitempty"`
+	BindingAuthorizations     []AgentBindingAuthorization `json:"binding_authorizations,omitempty"`
+}
+
+// AgentBindingAuthorization preserves the authorization evidence for one
+// concrete Agent resource binding. Category-level grant fields above are kept
+// for backwards compatibility with existing snapshots.
+type AgentBindingAuthorization struct {
+	BindingType      string `json:"binding_type"`
+	ResourceID       string `json:"resource_id"`
+	ParentResourceID string `json:"parent_resource_id,omitempty"`
+	AccessMode       string `json:"access_mode"`
+	BoundByAccountID string `json:"bound_by_account_id"`
+	BoundAtUnix      int64  `json:"bound_at_unix"`
 }
 
 type AgentDatabaseBinding struct {
@@ -266,6 +279,9 @@ type AgentWorkflowBindingCandidatesResponse struct {
 	Query              string                          `json:"query,omitempty"`
 	AgentType          string                          `json:"agent_type,omitempty"`
 	Limit              int                             `json:"limit,omitempty"`
+	Page               int                             `json:"page"`
+	Total              int                             `json:"total"`
+	HasMore            bool                            `json:"has_more"`
 	IncludeSelected    bool                            `json:"include_selected,omitempty"`
 	IncludeStartInputs bool                            `json:"include_start_inputs,omitempty"`
 	Count              int                             `json:"count"`
@@ -273,39 +289,56 @@ type AgentWorkflowBindingCandidatesResponse struct {
 }
 
 type AgentSkillCandidatesRequest struct {
-	Query           string `json:"query,omitempty"`
-	Limit           int    `json:"limit,omitempty"`
+	Query           string `form:"query" json:"query,omitempty" binding:"omitempty,max=200"`
+	Source          string `form:"source" json:"source,omitempty" binding:"omitempty,oneof=system custom"`
+	Page            int    `form:"page" json:"page,omitempty" binding:"omitempty,min=1,max=99999"`
+	Limit           int    `form:"limit" json:"limit,omitempty" binding:"omitempty,min=1,max=100"`
 	IncludeSelected bool   `json:"include_selected,omitempty"`
 }
 
+type AgentSkillDisplayMetadata struct {
+	Icon        string              `json:"icon,omitempty"`
+	Category    string              `json:"category,omitempty"`
+	Label       map[string]string   `json:"label,omitempty"`
+	Description map[string]string   `json:"description,omitempty"`
+	WhenToUse   map[string]string   `json:"when_to_use,omitempty"`
+	Tags        map[string][]string `json:"tags,omitempty"`
+}
+
 type AgentSkillCandidate struct {
-	SkillID          string   `json:"skill_id"`
-	Name             string   `json:"name"`
-	Description      string   `json:"description,omitempty"`
-	WhenToUse        string   `json:"when_to_use,omitempty"`
-	Source           string   `json:"source,omitempty"`
-	RuntimeType      string   `json:"runtime_type,omitempty"`
-	HasTools         bool     `json:"has_tools"`
-	HasReferences    bool     `json:"has_references"`
-	HasScripts       bool     `json:"has_scripts"`
-	ScriptsSupported bool     `json:"scripts_supported"`
-	RequiredConfig   []string `json:"required_config,omitempty"`
-	Selected         bool     `json:"selected,omitempty"`
+	SkillID          string                    `json:"skill_id"`
+	Name             string                    `json:"name"`
+	Description      string                    `json:"description,omitempty"`
+	WhenToUse        string                    `json:"when_to_use,omitempty"`
+	Source           string                    `json:"source,omitempty"`
+	RuntimeType      string                    `json:"runtime_type,omitempty"`
+	HasTools         bool                      `json:"has_tools"`
+	HasReferences    bool                      `json:"has_references"`
+	HasScripts       bool                      `json:"has_scripts"`
+	ScriptsSupported bool                      `json:"scripts_supported"`
+	RequiredConfig   []string                  `json:"required_config,omitempty"`
+	Display          AgentSkillDisplayMetadata `json:"display,omitempty"`
+	Selected         bool                      `json:"selected,omitempty"`
 }
 
 type AgentSkillCandidatesResponse struct {
 	AgentID         string                `json:"agent_id,omitempty"`
 	WorkspaceID     string                `json:"workspace_id,omitempty"`
 	Query           string                `json:"query,omitempty"`
+	Source          string                `json:"source,omitempty"`
+	Page            int                   `json:"page"`
 	Limit           int                   `json:"limit,omitempty"`
+	Total           int                   `json:"total"`
+	HasMore         bool                  `json:"has_more"`
 	IncludeSelected bool                  `json:"include_selected,omitempty"`
 	Count           int                   `json:"count"`
 	Data            []AgentSkillCandidate `json:"data"`
 }
 
 type AgentKnowledgeCandidatesRequest struct {
-	Query           string `json:"query,omitempty"`
-	Limit           int    `json:"limit,omitempty"`
+	Query           string `form:"query" json:"query,omitempty" binding:"omitempty,max=200"`
+	Page            int    `form:"page" json:"page,omitempty" binding:"omitempty,min=1,max=99999"`
+	Limit           int    `form:"limit" json:"limit,omitempty" binding:"omitempty,min=1,max=100"`
 	IncludeSelected bool   `json:"include_selected,omitempty"`
 }
 
@@ -322,7 +355,10 @@ type AgentKnowledgeCandidatesResponse struct {
 	AgentID         string                    `json:"agent_id,omitempty"`
 	WorkspaceID     string                    `json:"workspace_id,omitempty"`
 	Query           string                    `json:"query,omitempty"`
+	Page            int                       `json:"page"`
 	Limit           int                       `json:"limit,omitempty"`
+	Total           int                       `json:"total"`
+	HasMore         bool                      `json:"has_more"`
 	IncludeSelected bool                      `json:"include_selected,omitempty"`
 	Count           int                       `json:"count"`
 	Warnings        []string                  `json:"warnings,omitempty"`
@@ -330,10 +366,12 @@ type AgentKnowledgeCandidatesResponse struct {
 }
 
 type AgentDatabaseCandidatesRequest struct {
-	Query           string `json:"query,omitempty"`
-	Limit           int    `json:"limit,omitempty"`
+	Query           string `form:"query" json:"query,omitempty" binding:"omitempty,max=200"`
+	Page            int    `form:"page" json:"page,omitempty" binding:"omitempty,min=1,max=99999"`
+	Limit           int    `form:"limit" json:"limit,omitempty" binding:"omitempty,min=1,max=100"`
+	AvailableOnly   bool   `form:"available_only" json:"available_only,omitempty"`
 	IncludeSelected bool   `json:"include_selected,omitempty"`
-	RequireWrite    bool   `json:"require_write,omitempty"`
+	RequireWrite    bool   `form:"require_write" json:"require_write,omitempty"`
 }
 
 type AgentDatabaseCandidate struct {
@@ -342,12 +380,12 @@ type AgentDatabaseCandidate struct {
 	Description    string `json:"description,omitempty"`
 	Status         string `json:"status,omitempty"`
 	WorkspaceID    string `json:"workspace_id,omitempty"`
-	CanEdit        bool   `json:"can_edit,omitempty"`
 	CanWrite       bool   `json:"can_write,omitempty"`
 	Icon           string `json:"icon,omitempty"`
 	IconType       string `json:"icon_type,omitempty"`
 	IconBackground string `json:"icon_background,omitempty"`
 	UpdatedAt      int64  `json:"updated_at,omitempty"`
+	TableCount     int64  `json:"table_count"`
 	Selected       bool   `json:"selected,omitempty"`
 }
 
@@ -355,7 +393,11 @@ type AgentDatabaseCandidatesResponse struct {
 	AgentID         string                   `json:"agent_id,omitempty"`
 	WorkspaceID     string                   `json:"workspace_id,omitempty"`
 	Query           string                   `json:"query,omitempty"`
+	Page            int                      `json:"page"`
 	Limit           int                      `json:"limit,omitempty"`
+	Total           int                      `json:"total"`
+	HasMore         bool                     `json:"has_more"`
+	AvailableOnly   bool                     `json:"available_only"`
 	IncludeSelected bool                     `json:"include_selected,omitempty"`
 	RequireWrite    bool                     `json:"require_write,omitempty"`
 	Count           int                      `json:"count"`
@@ -365,9 +407,10 @@ type AgentDatabaseCandidatesResponse struct {
 
 type AgentDatabaseTablesRequest struct {
 	DataSourceID    string `json:"data_source_id"`
-	Query           string `json:"query,omitempty"`
-	Limit           int    `json:"limit,omitempty"`
-	IncludeColumns  bool   `json:"include_columns,omitempty"`
+	Query           string `form:"query" json:"query,omitempty" binding:"omitempty,max=200"`
+	Page            int    `form:"page" json:"page,omitempty" binding:"omitempty,min=1,max=99999"`
+	Limit           int    `form:"limit" json:"limit,omitempty" binding:"omitempty,min=1,max=100"`
+	IncludeColumns  bool   `form:"include_columns" json:"include_columns,omitempty"`
 	IncludeSelected bool   `json:"include_selected,omitempty"`
 }
 
@@ -388,7 +431,10 @@ type AgentDatabaseTablesResponse struct {
 	WorkspaceID     string                        `json:"workspace_id,omitempty"`
 	DataSourceID    string                        `json:"data_source_id"`
 	Query           string                        `json:"query,omitempty"`
+	Page            int                           `json:"page"`
 	Limit           int                           `json:"limit,omitempty"`
+	Total           int                           `json:"total"`
+	HasMore         bool                          `json:"has_more"`
 	IncludeColumns  bool                          `json:"include_columns,omitempty"`
 	IncludeSelected bool                          `json:"include_selected,omitempty"`
 	Count           int                           `json:"count"`
@@ -396,9 +442,10 @@ type AgentDatabaseTablesResponse struct {
 }
 
 type AgentWorkflowBindingCandidatesRequest struct {
-	Query              string `json:"query,omitempty"`
-	AgentType          string `json:"agent_type,omitempty"`
-	Limit              int    `json:"limit,omitempty"`
+	Query              string `form:"query" json:"query,omitempty" binding:"omitempty,max=200"`
+	AgentType          string `form:"agent_type" json:"agent_type,omitempty"`
+	Page               int    `form:"page" json:"page,omitempty" binding:"omitempty,min=1,max=99999"`
+	Limit              int    `form:"limit" json:"limit,omitempty" binding:"omitempty,min=1,max=100"`
 	IncludeStartInputs bool   `json:"include_start_inputs,omitempty"`
 	IncludeSelected    bool   `json:"include_selected,omitempty"`
 }
@@ -448,65 +495,89 @@ type UpdateAgentMemoryValueRequest struct {
 }
 
 type AgentConfigRequest struct {
-	SystemPrompt              string                 `json:"system_prompt"`
-	ModelProvider             string                 `json:"model_provider"`
-	Model                     string                 `json:"model"`
-	ModelParameters           map[string]interface{} `json:"model_parameters"`
-	EnabledSkillIDs           []string               `json:"enabled_skill_ids"`
-	UseMemory                 bool                   `json:"use_memory"`
-	AgentMemoryEnabled        bool                   `json:"agent_memory_enabled"`
-	FileUpload                bool                   `json:"file_upload_enabled"`
-	HomeTitle                 string                 `json:"home_title"`
-	OpeningStatement          string                 `json:"opening_statement"`
-	InputPlaceholder          string                 `json:"input_placeholder"`
-	ThemeColor                string                 `json:"theme_color"`
-	SuggestedQuestions        []string               `json:"suggested_questions"`
-	KnowledgeDatasetIDs       []string               `json:"knowledge_dataset_ids"`
-	KnowledgeBoundByAccountID string                 `json:"-"`
-	KnowledgeBoundAtUnix      int64                  `json:"-"`
-	KnowledgeRetrievalConfig  map[string]interface{} `json:"knowledge_retrieval_config"`
-	DatabaseBindings          []AgentDatabaseBinding `json:"database_bindings"`
-	DatabaseBoundByAccountID  string                 `json:"-"`
-	DatabaseBoundAtUnix       int64                  `json:"-"`
-	WorkflowBindings          []AgentWorkflowBinding `json:"workflow_bindings"`
-	WorkflowBoundByAccountID  string                 `json:"-"`
-	WorkflowBoundAtUnix       int64                  `json:"-"`
+	BindingRevision           string                      `json:"binding_revision,omitempty"`
+	SystemPrompt              string                      `json:"system_prompt"`
+	ModelProvider             string                      `json:"model_provider"`
+	Model                     string                      `json:"model"`
+	ModelParameters           map[string]interface{}      `json:"model_parameters"`
+	EnabledSkillIDs           []string                    `json:"enabled_skill_ids"`
+	UseMemory                 bool                        `json:"use_memory"`
+	AgentMemoryEnabled        bool                        `json:"agent_memory_enabled"`
+	FileUpload                bool                        `json:"file_upload_enabled"`
+	HomeTitle                 string                      `json:"home_title"`
+	OpeningStatement          string                      `json:"opening_statement"`
+	InputPlaceholder          string                      `json:"input_placeholder"`
+	ThemeColor                string                      `json:"theme_color"`
+	SuggestedQuestions        []string                    `json:"suggested_questions"`
+	KnowledgeDatasetIDs       []string                    `json:"knowledge_dataset_ids"`
+	KnowledgeBoundByAccountID string                      `json:"-"`
+	KnowledgeBoundAtUnix      int64                       `json:"-"`
+	KnowledgeRetrievalConfig  map[string]interface{}      `json:"knowledge_retrieval_config"`
+	DatabaseBindings          []AgentDatabaseBinding      `json:"database_bindings"`
+	DatabaseBoundByAccountID  string                      `json:"-"`
+	DatabaseBoundAtUnix       int64                       `json:"-"`
+	WorkflowBindings          []AgentWorkflowBinding      `json:"workflow_bindings"`
+	WorkflowBoundByAccountID  string                      `json:"-"`
+	WorkflowBoundAtUnix       int64                       `json:"-"`
+	BindingAuthorizations     []AgentBindingAuthorization `json:"-"`
 }
 
 type AgentConfigResponse struct {
-	AgentID                   string                  `json:"agent_id"`
-	SystemPrompt              string                  `json:"system_prompt"`
-	ModelProvider             string                  `json:"model_provider"`
-	Model                     string                  `json:"model"`
-	SupportsVision            bool                    `json:"supports_vision"`
-	ModelParameters           map[string]interface{}  `json:"model_parameters"`
-	EnabledSkillIDs           []string                `json:"enabled_skill_ids"`
-	UseMemory                 bool                    `json:"use_memory"`
-	AgentMemoryEnabled        bool                    `json:"agent_memory_enabled"`
-	AgentMemorySlots          []AgentMemorySlotConfig `json:"agent_memory_slots"`
-	FileUpload                bool                    `json:"file_upload_enabled"`
-	HomeTitle                 string                  `json:"home_title"`
-	OpeningStatement          string                  `json:"opening_statement"`
-	InputPlaceholder          string                  `json:"input_placeholder"`
-	ThemeColor                string                  `json:"theme_color"`
-	SuggestedQuestions        []string                `json:"suggested_questions"`
-	UpdatedAt                 int64                   `json:"updated_at"`
-	KnowledgeDatasetIDs       []string                `json:"knowledge_dataset_ids"`
-	KnowledgeBoundByAccountID string                  `json:"-"`
-	KnowledgeBoundAtUnix      int64                   `json:"-"`
-	KnowledgeRetrievalConfig  map[string]interface{}  `json:"knowledge_retrieval_config"`
-	DatabaseBindings          []AgentDatabaseBinding  `json:"database_bindings"`
-	DatabaseBoundByAccountID  string                  `json:"-"`
-	DatabaseBoundAtUnix       int64                   `json:"-"`
-	WorkflowBindings          []AgentWorkflowBinding  `json:"workflow_bindings"`
-	WorkflowBoundByAccountID  string                  `json:"-"`
-	WorkflowBoundAtUnix       int64                   `json:"-"`
+	AgentID                   string                      `json:"agent_id"`
+	BindingRevision           string                      `json:"binding_revision"`
+	BindingHealth             AgentBindingHealth          `json:"binding_health"`
+	SystemPrompt              string                      `json:"system_prompt"`
+	ModelProvider             string                      `json:"model_provider"`
+	Model                     string                      `json:"model"`
+	SupportsVision            bool                        `json:"supports_vision"`
+	ModelParameters           map[string]interface{}      `json:"model_parameters"`
+	EnabledSkillIDs           []string                    `json:"enabled_skill_ids"`
+	UseMemory                 bool                        `json:"use_memory"`
+	AgentMemoryEnabled        bool                        `json:"agent_memory_enabled"`
+	AgentMemorySlots          []AgentMemorySlotConfig     `json:"agent_memory_slots"`
+	FileUpload                bool                        `json:"file_upload_enabled"`
+	HomeTitle                 string                      `json:"home_title"`
+	OpeningStatement          string                      `json:"opening_statement"`
+	InputPlaceholder          string                      `json:"input_placeholder"`
+	ThemeColor                string                      `json:"theme_color"`
+	SuggestedQuestions        []string                    `json:"suggested_questions"`
+	UpdatedAt                 int64                       `json:"updated_at"`
+	KnowledgeDatasetIDs       []string                    `json:"knowledge_dataset_ids"`
+	KnowledgeBoundByAccountID string                      `json:"-"`
+	KnowledgeBoundAtUnix      int64                       `json:"-"`
+	KnowledgeRetrievalConfig  map[string]interface{}      `json:"knowledge_retrieval_config"`
+	DatabaseBindings          []AgentDatabaseBinding      `json:"database_bindings"`
+	DatabaseBoundByAccountID  string                      `json:"-"`
+	DatabaseBoundAtUnix       int64                       `json:"-"`
+	WorkflowBindings          []AgentWorkflowBinding      `json:"workflow_bindings"`
+	WorkflowBoundByAccountID  string                      `json:"-"`
+	WorkflowBoundAtUnix       int64                       `json:"-"`
+	BindingAuthorizations     []AgentBindingAuthorization `json:"-"`
 }
 
 type AgentDraftRuntimeConfigResponse struct {
 	AgentID     string              `json:"agent_id"`
 	WorkspaceID string              `json:"workspace_id"`
 	Config      AgentConfigResponse `json:"config"`
+}
+
+type AgentBindingHealth struct {
+	Status           string                   `json:"status"`
+	Items            []AgentBindingHealthItem `json:"items"`
+	ActiveCount      int                      `json:"active_count"`
+	SuspendedCount   int                      `json:"suspended_count"`
+	UnavailableCount int                      `json:"unavailable_count"`
+}
+
+type AgentBindingHealthItem struct {
+	BindingType      string `json:"binding_type"`
+	ResourceID       string `json:"resource_id"`
+	ParentResourceID string `json:"parent_resource_id,omitempty"`
+	DisplayName      string `json:"display_name,omitempty"`
+	Status           string `json:"status"`
+	Reason           string `json:"reason"`
+	AccessMode       string `json:"access_mode,omitempty"`
+	Suggestion       string `json:"suggestion,omitempty"`
 }
 
 type AgentSuggestedQuestionSkillContext struct {
@@ -529,7 +600,9 @@ type GenerateAgentSuggestedQuestionsRequest struct {
 }
 
 type PublishAgentRequest struct {
-	Description string `json:"description"`
+	Description                  string `json:"description"`
+	BindingRevision              string `json:"binding_revision,omitempty"`
+	AcknowledgeSuspendedBindings bool   `json:"acknowledge_suspended_bindings,omitempty"`
 }
 
 type PublishAgentResponse struct {
@@ -560,7 +633,17 @@ type AgentPublishedVersionsResponse struct {
 }
 
 type RollbackAgentPublishedVersionRequest struct {
-	VersionID string `json:"version_id" binding:"required"`
+	VersionID     string `json:"version_id" binding:"required"`
+	ImpactToken   string `json:"impact_token" binding:"required"`
+	BindingAction string `json:"binding_action" binding:"required"`
+}
+
+type AgentRollbackPreviewResponse struct {
+	VersionID       string                   `json:"version_id"`
+	ConfigSnapshot  AgentConfigResponse      `json:"config_snapshot"`
+	BindingHealth   AgentBindingHealth       `json:"binding_health"`
+	RemovedBindings []AgentBindingHealthItem `json:"removed_bindings"`
+	ImpactToken     string                   `json:"impact_token"`
 }
 
 type AgentWebAppRuntimeConfigResponse struct {

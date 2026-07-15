@@ -9,12 +9,13 @@ import { useT } from '@/i18n';
 import { toast } from 'sonner';
 import { dbService } from '@/services';
 import { useCurrentWorkspace } from '@/store/workspace-store';
-import type { ApiResponseData } from '@/services/types/common';
+import type { AgentBindingMutationConfirmation, ApiResponseData } from '@/services/types/common';
 import type { Db, CreateDbRequest, UpdateDbRequest } from '@/services/types/db';
 import { getErrorMessage } from '@/utils/error-notifications';
 
 import { DB_KEYS } from '@/hooks/query-keys';
 import { workspaceInvalidatePredicate } from '@/hooks/query-utils';
+import { getAgentResourceBoundImpact } from '@/utils/agent-resource-bound';
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -108,9 +109,13 @@ export function useDeleteDb() {
   const t = useT('dbs');
   const currentWorkspaceId = useCurrentWorkspace()?.id;
 
-  return useMutation<ApiResponseData<{ result: 'success' | 'fail' }>, unknown, string>({
-    mutationFn: (dbId: string) => dbService.deleteDb(dbId),
-    onSuccess: (_result, dbId) => {
+  return useMutation<
+    ApiResponseData<{ result: 'success' | 'fail' }>,
+    unknown,
+    { dbId: string; confirmation?: AgentBindingMutationConfirmation }
+  >({
+    mutationFn: ({ dbId, confirmation }) => dbService.deleteDb(dbId, confirmation),
+    onSuccess: (_result, { dbId }) => {
       toast.success(t('deleteSuccess'));
       if (dbId) {
         queryClient.removeQueries({ queryKey: DB_KEYS.detail(dbId) });
@@ -122,6 +127,7 @@ export function useDeleteDb() {
       }
     },
     onError: (error: unknown) => {
+      if (getAgentResourceBoundImpact(error)) return;
       const message = getErrorMessage(error);
       toast.error(message || t('failed'));
     },

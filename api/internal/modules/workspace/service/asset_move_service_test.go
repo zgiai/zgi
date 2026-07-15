@@ -6,19 +6,26 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	"github.com/zgiai/zgi/api/internal/dto"
+	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
+	shared_service "github.com/zgiai/zgi/api/internal/modules/shared/service"
 	workspace_model "github.com/zgiai/zgi/api/internal/modules/workspace/model"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
 type stubAssetMoveOrgService struct {
-	allowed            bool
-	allowedPermissions map[workspace_model.WorkspacePermissionCode]bool
-	err                error
-	deniedWorkspace    string
-	checks             []assetMovePermissionCheck
+	interfaces.AuthorizationService
+	allowed                  bool
+	allowedPermissions       map[workspace_model.WorkspacePermissionCode]bool
+	workspaceIDsByPermission map[workspace_model.WorkspacePermissionCode][]string
+	err                      error
+	deniedWorkspace          string
+	checks                   []assetMovePermissionCheck
+	listChecks               []workspace_model.WorkspacePermissionCode
 }
 
 type assetMovePermissionCheck struct {
@@ -28,30 +35,149 @@ type assetMovePermissionCheck struct {
 	permission     workspace_model.WorkspacePermissionCode
 }
 
-func (s *stubAssetMoveOrgService) CheckWorkspacePermission(ctx context.Context, organizationID, workspaceID, accountID string, permission workspace_model.WorkspacePermissionCode) (bool, error) {
+func (s *stubAssetMoveOrgService) RequireOrganizationMember(ctx context.Context, req interfaces.OrganizationScopeRequest) (*interfaces.OrganizationScope, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &interfaces.OrganizationScope{OrganizationID: req.OrganizationID, AccountID: req.AccountID}, nil
+}
+
+func (s *stubAssetMoveOrgService) RequireWorkspacePermission(ctx context.Context, req interfaces.WorkspaceScopeRequest) (*interfaces.WorkspaceScope, error) {
+	permission := req.PermissionCodes[0]
 	s.checks = append(s.checks, assetMovePermissionCheck{
-		organizationID: organizationID,
-		workspaceID:    workspaceID,
-		accountID:      accountID,
+		organizationID: req.OrganizationID,
+		workspaceID:    req.WorkspaceID,
+		accountID:      req.AccountID,
 		permission:     permission,
 	})
 	if s.err != nil {
-		return false, s.err
+		return nil, s.err
 	}
-	if s.deniedWorkspace != "" && s.deniedWorkspace == workspaceID {
-		return false, nil
+	if s.deniedWorkspace != "" && s.deniedWorkspace == req.WorkspaceID {
+		return nil, shared_service.ErrAuthorizationDenied
 	}
 	if s.allowedPermissions != nil {
-		return s.allowedPermissions[permission], nil
+		if !s.allowedPermissions[permission] {
+			return nil, shared_service.ErrAuthorizationDenied
+		}
+		return &interfaces.WorkspaceScope{WorkspaceID: req.WorkspaceID}, nil
 	}
-	return s.allowed, nil
+	if !s.allowed {
+		return nil, shared_service.ErrAuthorizationDenied
+	}
+	return &interfaces.WorkspaceScope{WorkspaceID: req.WorkspaceID}, nil
+}
+
+func (s *stubAssetMoveOrgService) ListWorkspaceIDsByPermission(ctx context.Context, req interfaces.WorkspaceListPermissionRequest) ([]string, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	s.listChecks = append(s.listChecks, req.PermissionCode)
+	ids := s.workspaceIDsByPermission[req.PermissionCode]
+	return append([]string(nil), ids...), nil
+}
+
+func TestWorkspaceAssetMoveEligibleTargetsUsesResolvedMovePermission(t *testing.T) {
+	db, mock := newAssetMoveMockDB(t)
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT tenant_id, agent_type FROM "agents" WHERE id = $1 AND deleted_at IS NULL LIMIT $2`)).
+		WithArgs("workflow-agent-1", 1).
+		WillReturnRows(sqlmock.NewRows([]string{"tenant_id", "agent_type"}).AddRow("ws-source", "WORKFLOW"))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM "workspaces" WHERE organization_id = \$1 AND status = \$2 AND id IN \(\$3\)`).
+		WithArgs("org-1", workspace_model.WorkspaceStatusNormal, "ws-target").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT id, name FROM "workspaces" WHERE organization_id = \$1 AND status = \$2 AND id IN \(\$3\) ORDER BY LOWER\(name\) ASC,id ASC LIMIT \$4`).
+		WithArgs("org-1", workspace_model.WorkspaceStatusNormal, "ws-target", 100).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow("ws-target", "Target workspace"))
+
+	authorization := &stubAssetMoveOrgService{
+		allowed: true,
+		workspaceIDsByPermission: map[workspace_model.WorkspacePermissionCode][]string{
+			workspace_model.WorkspacePermissionWorkflowMove: {"ws-source", "ws-target"},
+		},
+	}
+	svc := NewWorkspaceAssetMoveService(db, authorization, nil)
+
+	result, err := svc.EligibleTargets(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveEligibleTargetsRequest{
+		Items: []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeAgent, ID: "workflow-agent-1"}},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []dto.WorkspaceAssetMoveWorkspace{{ID: "ws-target", Name: "Target workspace"}}, result.Data)
+	require.Equal(t, int64(1), result.Total)
+	require.False(t, result.HasMore)
+	require.Equal(t, []workspace_model.WorkspacePermissionCode{workspace_model.WorkspacePermissionWorkflowMove}, authorization.listChecks)
+	require.Equal(t, []assetMovePermissionCheck{{
+		organizationID: "org-1",
+		workspaceID:    "ws-source",
+		accountID:      "acct-1",
+		permission:     workspace_model.WorkspacePermissionWorkflowMove,
+	}}, authorization.checks)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWorkspaceAssetMoveDependencyPreflightChecksSourceWithoutTarget(t *testing.T) {
+	db, mock := newAssetMoveMockDB(t)
+	organizationID := uuid.NewString()
+	workspaceID := uuid.NewString()
+	datasetID := uuid.NewString()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT organization_id, workspace_id FROM "datasets" WHERE id = $1 LIMIT $2`)).
+		WithArgs(datasetID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"organization_id", "workspace_id"}).AddRow(organizationID, workspaceID))
+	authorization := &stubAssetMoveOrgService{allowed: true}
+	svc := NewWorkspaceAssetMoveService(db, authorization, nil)
+
+	result, err := svc.PreviewDependencies(context.Background(), organizationID, uuid.NewString(), dto.WorkspaceAssetMoveDependencyPreviewRequest{
+		Items: []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeDataset, ID: datasetID}},
+	})
+
+	require.NoError(t, err)
+	require.Nil(t, result.AgentBindingImpact)
+	require.Len(t, authorization.checks, 1)
+	require.Equal(t, workspaceID, authorization.checks[0].workspaceID)
+	require.Equal(t, workspace_model.WorkspacePermissionKnowledgeBaseMove, authorization.checks[0].permission)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWorkspaceAssetMoveEligibleTargetsIntersectsBatchPermissions(t *testing.T) {
+	db, mock := newAssetMoveMockDB(t)
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT organization_id, workspace_id FROM "datasets" WHERE id = $1 LIMIT $2`)).
+		WithArgs("dataset-1", 1).
+		WillReturnRows(sqlmock.NewRows([]string{"organization_id", "workspace_id"}).AddRow("org-1", "ws-source-1"))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT organization_id, workspace_id FROM "data_sources" WHERE id = $1 LIMIT $2`)).
+		WithArgs("database-1", 1).
+		WillReturnRows(sqlmock.NewRows([]string{"organization_id", "workspace_id"}).AddRow("org-1", "ws-source-2"))
+
+	authorization := &stubAssetMoveOrgService{
+		allowed: true,
+		workspaceIDsByPermission: map[workspace_model.WorkspacePermissionCode][]string{
+			workspace_model.WorkspacePermissionKnowledgeBaseMove: {"ws-target-1"},
+			workspace_model.WorkspacePermissionDatabaseMove:      {"ws-target-2"},
+		},
+	}
+	svc := NewWorkspaceAssetMoveService(db, authorization, nil)
+
+	result, err := svc.EligibleTargets(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveEligibleTargetsRequest{
+		Items: []dto.WorkspaceAssetMoveItem{
+			{Type: AssetMoveTypeDataset, ID: "dataset-1"},
+			{Type: AssetMoveTypeDatabase, ID: "database-1"},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Empty(t, result.Data)
+	require.Zero(t, result.Total)
+	require.ElementsMatch(t, []workspace_model.WorkspacePermissionCode{
+		workspace_model.WorkspacePermissionKnowledgeBaseMove,
+		workspace_model.WorkspacePermissionDatabaseMove,
+	}, authorization.listChecks)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestWorkspaceAssetMovePreviewRequiresTargetMovePermission(t *testing.T) {
 	db, mock := newAssetMoveMockDB(t)
 	expectWorkspaceLookup(mock, "ws-2", "org-1", "normal")
 	orgService := &stubAssetMoveOrgService{allowed: false}
-	svc := NewWorkspaceAssetMoveService(db, orgService)
+	svc := NewWorkspaceAssetMoveService(db, orgService, nil)
 
 	_, err := svc.Preview(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
 		TargetWorkspaceID: "ws-2",
@@ -76,7 +202,7 @@ func TestWorkspaceAssetMovePreviewIgnoresOnlyMeLegacyPermission(t *testing.T) {
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
 
 	orgService := &stubAssetMoveOrgService{allowed: true}
-	svc := NewWorkspaceAssetMoveService(db, orgService)
+	svc := NewWorkspaceAssetMoveService(db, orgService, nil)
 	preview, err := svc.Preview(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
 		TargetWorkspaceID: "ws-2",
 		Items:             []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeDataset, ID: "dataset-1"}},
@@ -96,10 +222,11 @@ func TestWorkspaceAssetMovePreviewIgnoresOnlyMeLegacyPermission(t *testing.T) {
 func TestWorkspaceAssetMoveMoveRevalidatesAndBlocksArchivedTarget(t *testing.T) {
 	db, mock := newAssetMoveMockDB(t)
 	mock.ExpectBegin()
+	expectAssetMoveLock(mock, AssetMoveTypeDataset, "dataset-1")
 	expectWorkspaceLookup(mock, "ws-2", "org-1", "archived")
 	mock.ExpectRollback()
 
-	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true})
+	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true}, nil)
 	result, err := svc.Move(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
 		TargetWorkspaceID: "ws-2",
 		Items:             []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeDataset, ID: "dataset-1"}},
@@ -111,11 +238,79 @@ func TestWorkspaceAssetMoveMoveRevalidatesAndBlocksArchivedTarget(t *testing.T) 
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestWorkspaceAssetMoveLocksAssetBeforeAuthorizingLatestSourceWorkspace(t *testing.T) {
+	db, mock := newAssetMoveMockDB(t)
+	organizationID := uuid.NewString()
+	accountID := uuid.NewString()
+	datasetID := uuid.NewString()
+	sourceWorkspaceID := uuid.NewString()
+	targetWorkspaceID := uuid.NewString()
+	mock.MatchExpectationsInOrder(true)
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`)).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	expectAssetMoveLock(mock, AssetMoveTypeDataset, datasetID)
+	expectWorkspaceLookup(mock, targetWorkspaceID, organizationID, "normal")
+	expectDatasetPreview(mock, datasetID, organizationID, sourceWorkspaceID)
+	expectWorkspaceLookup(mock, sourceWorkspaceID, organizationID, "normal")
+	mock.ExpectRollback()
+
+	authorization := &stubAssetMoveOrgService{allowed: true, deniedWorkspace: sourceWorkspaceID}
+	svc := NewWorkspaceAssetMoveService(db, authorization, agentbindings.NewRepository(db))
+
+	_, err := svc.Move(context.Background(), organizationID, accountID, dto.WorkspaceAssetMoveRequest{
+		TargetWorkspaceID: targetWorkspaceID,
+		Items:             []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeDataset, ID: datasetID}},
+	})
+
+	require.ErrorIs(t, err, ErrAssetMovePermissionDenied)
+	require.Equal(t, []assetMovePermissionCheck{
+		{organizationID: organizationID, workspaceID: targetWorkspaceID, accountID: accountID, permission: workspace_model.WorkspacePermissionKnowledgeBaseMove},
+		{organizationID: organizationID, workspaceID: sourceWorkspaceID, accountID: accountID, permission: workspace_model.WorkspacePermissionKnowledgeBaseMove},
+	}, authorization.checks)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestWorkspaceAssetMoveLocksAllLifecycleResourcesBeforeAssetRows(t *testing.T) {
+	db, mock := newAssetMoveMockDB(t)
+	organizationID := uuid.New()
+	agentID := uuid.NewString()
+	databaseID := uuid.NewString()
+	datasetID := uuid.NewString()
+	mock.MatchExpectationsInOrder(true)
+	mock.ExpectBegin()
+	for _, key := range []string{
+		"agent-binding-resource:" + organizationID.String() + ":database::" + databaseID,
+		"agent-binding-resource:" + organizationID.String() + ":knowledge_dataset::" + datasetID,
+		"agent-binding-resource:" + organizationID.String() + ":workflow::" + agentID,
+	} {
+		mock.ExpectExec(regexp.QuoteMeta(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`)).
+			WithArgs(key).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+	}
+	expectAssetMoveLock(mock, AssetMoveTypeAgent, agentID)
+	expectAssetMoveLock(mock, AssetMoveTypeDatabase, databaseID)
+	expectAssetMoveLock(mock, AssetMoveTypeDataset, datasetID)
+	mock.ExpectCommit()
+
+	svc := NewWorkspaceAssetMoveService(db, nil, agentbindings.NewRepository(db))
+	tx := db.Begin()
+	require.NoError(t, tx.Error)
+	require.NoError(t, svc.lockMoveAssets(context.Background(), tx, organizationID.String(), []dto.WorkspaceAssetMoveItem{
+		{Type: AssetMoveTypeDataset, ID: datasetID},
+		{Type: AssetMoveTypeAgent, ID: agentID},
+		{Type: AssetMoveTypeDatabase, ID: databaseID},
+	}))
+	require.NoError(t, tx.Commit().Error)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestWorkspaceAssetMovePreviewRejectsWorkflowAssetType(t *testing.T) {
 	db, mock := newAssetMoveMockDB(t)
 	expectWorkspaceLookup(mock, "ws-2", "org-1", "normal")
 
-	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true})
+	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true}, nil)
 	preview, err := svc.Preview(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
 		TargetWorkspaceID: "ws-2",
 		Items:             []dto.WorkspaceAssetMoveItem{{Type: "workflow", ID: "workflow-1"}},
@@ -131,7 +326,7 @@ func TestWorkspaceAssetMovePreviewBlocksTargetOutsideOrganization(t *testing.T) 
 	db, mock := newAssetMoveMockDB(t)
 	expectWorkspaceLookup(mock, "ws-2", "org-2", "normal")
 
-	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true})
+	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true}, nil)
 	preview, err := svc.Preview(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
 		TargetWorkspaceID: "ws-2",
 		Items:             []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeDataset, ID: "dataset-1"}},
@@ -150,7 +345,7 @@ func TestWorkspaceAssetMovePreviewBlocksSourceOutsideOrganization(t *testing.T) 
 	expectWorkspaceLookup(mock, "ws-1", "org-2", "normal")
 	expectWorkspaceLookup(mock, "ws-1", "org-2", "normal")
 
-	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true})
+	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true}, nil)
 	preview, err := svc.Preview(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
 		TargetWorkspaceID: "ws-2",
 		Items:             []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeAgent, ID: "agent-1"}},
@@ -178,7 +373,7 @@ func TestWorkspaceAssetMovePreviewWorkflowAgentRequiresWorkflowMovePermission(t 
 			workspace_model.WorkspacePermissionWorkflowMove: false,
 		},
 	}
-	svc := NewWorkspaceAssetMoveService(db, orgService)
+	svc := NewWorkspaceAssetMoveService(db, orgService, nil)
 
 	_, err := svc.Preview(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
 		TargetWorkspaceID: "ws-2",
@@ -202,7 +397,7 @@ func TestWorkspaceAssetMovePreviewBlocksDatasetTargetFolderOutsideTargetWorkspac
 		WithArgs("folder-1", "org-1", "ws-2").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 
-	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true})
+	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true}, nil)
 	preview, err := svc.Preview(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
 		TargetWorkspaceID: "ws-2",
 		TargetFolderID:    "folder-1",
@@ -222,7 +417,7 @@ func TestWorkspaceAssetMovePreviewBlocksSameWorkspaceForAgent(t *testing.T) {
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
 
-	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true})
+	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true}, nil)
 	preview, err := svc.Preview(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
 		TargetWorkspaceID: "ws-1",
 		Items:             []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeAgent, ID: "agent-1"}},
@@ -237,12 +432,13 @@ func TestWorkspaceAssetMovePreviewBlocksSameWorkspaceForAgent(t *testing.T) {
 func TestWorkspaceAssetMoveDatasetMoveBlocksSameWorkspaceWithoutClearingFolderJoin(t *testing.T) {
 	db, mock := newAssetMoveMockDB(t)
 	mock.ExpectBegin()
+	expectAssetMoveLock(mock, AssetMoveTypeDataset, "dataset-1")
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
 	expectDatasetPreview(mock, "dataset-1", "org-1", "ws-1")
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
 	mock.ExpectRollback()
 
-	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true})
+	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true}, nil)
 	result, err := svc.Move(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
 		TargetWorkspaceID: "ws-1",
 		Items:             []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeDataset, ID: "dataset-1"}},
@@ -258,12 +454,13 @@ func TestWorkspaceAssetMoveDatasetMoveBlocksSameWorkspaceWithoutClearingFolderJo
 func TestWorkspaceAssetMoveFileMoveBlocksSameWorkspaceWithoutClearingFolderJoin(t *testing.T) {
 	db, mock := newAssetMoveMockDB(t)
 	mock.ExpectBegin()
+	expectAssetMoveLock(mock, AssetMoveTypeFile, "file-1")
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
 	expectFilePreview(mock, "file-1", "org-1", "ws-1")
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
 	mock.ExpectRollback()
 
-	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true})
+	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true}, nil)
 	result, err := svc.Move(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
 		TargetWorkspaceID: "ws-1",
 		Items:             []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeFile, ID: "file-1"}},
@@ -282,7 +479,7 @@ func TestWorkspaceAssetMovePreviewBlocksSameWorkspaceForDatabase(t *testing.T) {
 	expectDatabasePreview(mock, "database-1", "org-1", "ws-1")
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
 
-	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true})
+	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true}, nil)
 	preview, err := svc.Preview(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
 		TargetWorkspaceID: "ws-1",
 		Items:             []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeDatabase, ID: "database-1"}},
@@ -297,6 +494,7 @@ func TestWorkspaceAssetMovePreviewBlocksSameWorkspaceForDatabase(t *testing.T) {
 func TestWorkspaceAssetMoveAgentMoveUpdatesRelatedTablesAndAudit(t *testing.T) {
 	db, mock := newAssetMoveMockDB(t)
 	mock.ExpectBegin()
+	expectAssetMoveLock(mock, AssetMoveTypeAgent, "agent-1")
 	expectWorkspaceLookup(mock, "ws-2", "org-1", "normal")
 	expectAgentPreview(mock, "agent-1", "ws-1", "AGENT")
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
@@ -314,7 +512,7 @@ func TestWorkspaceAssetMoveAgentMoveUpdatesRelatedTablesAndAudit(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true})
+	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true}, nil)
 	result, err := svc.Move(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
 		TargetWorkspaceID: "ws-2",
 		Items:             []dto.WorkspaceAssetMoveItem{{Type: AssetMoveTypeAgent, ID: "agent-1"}},
@@ -328,6 +526,7 @@ func TestWorkspaceAssetMoveAgentMoveUpdatesRelatedTablesAndAudit(t *testing.T) {
 func TestWorkspaceAssetMoveDatasetMoveWithTargetFolderUpdatesJoinAndAudit(t *testing.T) {
 	db, mock := newAssetMoveMockDB(t)
 	mock.ExpectBegin()
+	expectAssetMoveLock(mock, AssetMoveTypeDataset, "dataset-1")
 	expectWorkspaceLookup(mock, "ws-2", "org-1", "normal")
 	expectDatasetPreview(mock, "dataset-1", "org-1", "ws-1")
 	expectWorkspaceLookup(mock, "ws-1", "org-1", "normal")
@@ -344,7 +543,7 @@ func TestWorkspaceAssetMoveDatasetMoveWithTargetFolderUpdatesJoinAndAudit(t *tes
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true})
+	svc := NewWorkspaceAssetMoveService(db, &stubAssetMoveOrgService{allowed: true}, nil)
 	result, err := svc.Move(context.Background(), "org-1", "acct-1", dto.WorkspaceAssetMoveRequest{
 		TargetWorkspaceID: "ws-2",
 		TargetFolderID:    "folder-1",
@@ -404,4 +603,16 @@ func expectDatabasePreview(mock sqlmock.Sqlmock, databaseID, orgID, workspaceID 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, organization_id, workspace_id FROM "data_sources" WHERE id = $1 ORDER BY "data_sources"."id" LIMIT $2`)).
 		WithArgs(databaseID, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "workspace_id"}).AddRow(databaseID, orgID, workspaceID))
+}
+
+func expectAssetMoveLock(mock sqlmock.Sqlmock, assetType, assetID string) {
+	table := assetMoveTable(assetType)
+	query := `SELECT "id" FROM "` + table + `" WHERE id = \$1`
+	if assetType == AssetMoveTypeAgent {
+		query += ` AND deleted_at IS NULL`
+	}
+	query += ` LIMIT \$2 FOR UPDATE`
+	mock.ExpectQuery(query).
+		WithArgs(assetID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(assetID))
 }

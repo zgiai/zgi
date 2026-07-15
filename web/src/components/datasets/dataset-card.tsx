@@ -17,13 +17,18 @@ import { useT } from '@/i18n';
 import { useDeleteDataset } from '@/hooks/dataset/use-datasets';
 import type { Dataset } from '@/services/types/dataset';
 import { useState } from 'react';
+import { toast } from 'sonner';
 import { IconPreview } from '../common/icon-input/icon-preview';
 import MoveDatasetModal from '@/components/datasets/modal/move-dataset-modal';
 import { Badge } from '../ui/badge';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { ICON_BG } from '@/lib/config';
 import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
+import { AgentResourceBoundDialog } from '@/components/common/agent-resource-bound-dialog';
 import { KNOWLEDGE_BASE_PERMISSION_ACTIONS } from '@/constants/permissions';
+import type { AgentResourceBoundImpact } from '@/services/types/common';
+import { getAgentResourceBoundImpact } from '@/utils/agent-resource-bound';
+import { datasetService } from '@/services/dataset.service';
 
 interface DatasetCardProps {
   dataset: Dataset;
@@ -43,6 +48,8 @@ function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: Dataset
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [workspaceMoveOpen, setWorkspaceMoveOpen] = useState(false);
+  const [bindingImpact, setBindingImpact] = useState<AgentResourceBoundImpact | null>(null);
+  const [isCheckingDeleteImpact, setIsCheckingDeleteImpact] = useState(false);
 
   // Permission checking - use new permission system
   const { hasAnyPermission } = useAccountPermissions();
@@ -69,6 +76,43 @@ function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: Dataset
   const canMoveDatasetToFolder = canMoveDataset && canManageDatasetFolders;
   const canShowActions =
     canUpdateDataset || canDeleteDataset || canMoveDataset || canMoveDatasetToFolder;
+
+  const deleteDataset = async (impact?: AgentResourceBoundImpact) => {
+    if (!canDeleteDataset) return;
+    try {
+      await deleteMutation.mutateAsync({
+        datasetId: dataset.id,
+        confirmation: impact
+          ? { agent_binding_action: 'unbind', impact_token: impact.impact_token }
+          : undefined,
+      });
+      setConfirmOpen(false);
+      setBindingImpact(null);
+      onDeleted?.(dataset.id, pageIndex);
+    } catch (error) {
+      const nextImpact = getAgentResourceBoundImpact(error);
+      if (!nextImpact) return;
+      setConfirmOpen(false);
+      setBindingImpact(nextImpact);
+    }
+  };
+
+  const requestDeleteDataset = async () => {
+    if (!canDeleteDataset || isCheckingDeleteImpact) return;
+    setIsCheckingDeleteImpact(true);
+    try {
+      const response = await datasetService.previewDatasetDeleteImpact(dataset.id);
+      if (response.data) {
+        setBindingImpact(response.data);
+        return;
+      }
+      setConfirmOpen(true);
+    } catch {
+      toast.error(tCommon('agentResourceBound.previewFailed'));
+    } finally {
+      setIsCheckingDeleteImpact(false);
+    }
+  };
 
   const cardContent = (
     <Card
@@ -139,7 +183,7 @@ function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: Dataset
                 <MoreHorizontal className="h-3 w-3 sm:h-4 sm:w-4" />
               </button>
             </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+            <DropdownMenuContent align="end">
               {/* Edit dataset basic info via page-level dialog */}
               {canUpdateDataset && (
                 <DropdownMenuItem
@@ -166,7 +210,12 @@ function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: Dataset
                 </DropdownMenuItem>
               )}
               {canDeleteDataset && (
-                <DropdownMenuItem variant="destructive" inset onSelect={() => setConfirmOpen(true)}>
+                <DropdownMenuItem
+                  variant="destructive"
+                  inset
+                  disabled={isCheckingDeleteImpact}
+                  onSelect={() => void requestDeleteDataset()}
+                >
                   <Trash2 className="h-4 w-4" />
                   {t('actions.delete')}
                 </DropdownMenuItem>
@@ -184,17 +233,19 @@ function DatasetCard({ dataset, onDeleted, pageIndex, currentFolderId }: Dataset
         description={t('deleteConfirmDescription')}
         confirmText={t('confirm')}
         cancelText={t('close')}
-        onConfirm={() =>
-          canDeleteDataset
-            ? deleteMutation.mutate(dataset.id, {
-                onSuccess: () => {
-                  setConfirmOpen(false);
-                  onDeleted?.(dataset.id, pageIndex);
-                },
-              })
-            : undefined
-        }
+        onConfirm={() => void deleteDataset()}
         loading={deleteMutation.status === 'pending'}
+      />
+      <AgentResourceBoundDialog
+        open={Boolean(bindingImpact)}
+        impact={bindingImpact}
+        loading={deleteMutation.isPending}
+        onOpenChange={open => {
+          if (!open) setBindingImpact(null);
+        }}
+        onConfirm={() => {
+          if (bindingImpact) void deleteDataset(bindingImpact);
+        }}
       />
       {/* Move dataset modal */}
       <MoveDatasetModal

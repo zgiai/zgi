@@ -40,10 +40,14 @@ func (s *authorizationServiceImpl) RequireOrganizationMember(ctx context.Context
 		return nil, ErrAuthorizationDenied
 	}
 
-	role, err := s.organizationService.GetUserOrganizationRole(ctx, organizationID, accountID)
+	member, err := s.organizationService.GetOrganizationMemberByAccountID(ctx, organizationID, accountID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get organization role: %w", err)
+		return nil, fmt.Errorf("failed to get organization member: %w", err)
 	}
+	if member == nil || member.Status != string(model.OrganizationMemberStatusActive) {
+		return nil, ErrAuthorizationDenied
+	}
+	role := member.OrganizationRole
 
 	return &interfaces.OrganizationScope{
 		OrganizationID: organizationID,

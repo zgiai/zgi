@@ -38,7 +38,37 @@ assert.match(chat, /canStop=\{canStopPendingWorkflowInteraction \|\| activeConve
 assert.match(chat, /controller\.connectionState === 'disconnected'/);
 assert.match(chat, /controller\.recoverStreamingConversation/);
 
+const messageActions = read(
+  'src/components/chat/runtime/controller/use-chat-runtime-message-actions.ts'
+);
+assert.equal(
+  messageActions.match(/surface: runtimeSurface/g)?.length,
+  1,
+  'only new-message chat requests may send the runtime surface; root regeneration must use the persisted conversation surface'
+);
+
+const contextualTransport = read('src/components/aichat/contextual/context-envelope.ts');
+assert.equal(
+  contextualTransport.match(/surface: 'contextual_sidebar'/g)?.length,
+  3,
+  'contextual surface hints belong only to list, search, and new-chat routing; continuation and regeneration must use the persisted surface'
+);
+const userInputSubmit = chat.slice(
+  chat.indexOf('const handleUserInputRequestSubmit'),
+  chat.indexOf('const handleRegenerate')
+);
+assert.doesNotMatch(
+  userInputSubmit,
+  /surface:/,
+  'user-input continuation must not resend a client-owned surface'
+);
+
 const chatPage = read('src/app/console/work/chat/page.tsx');
+assert.match(
+  chatPage,
+  /isRestoringConversationRoute\s*\?\s*\(\s*<ChatLoading/,
+  'a persisted conversation route must stay in its loading state until the controller selects it'
+);
 assert.match(
   chatPage,
   /!conversationIdParam\s*&&\s*activeConversationId\s*&&\s*!isDraftAIChatConversationId\(activeConversationId\)/,
@@ -50,9 +80,60 @@ assert.match(
   'the null route handoff must preserve a live draft until message_start assigns its server id'
 );
 
+const conversationActions = read(
+  'src/components/chat/runtime/controller/use-chat-runtime-conversation-actions.ts'
+);
+const initializationBlock = conversationActions.slice(
+  conversationActions.indexOf('const init = useCallback'),
+  conversationActions.indexOf('const startNew = useCallback')
+);
+const initialRouteAdoption = initializationBlock.indexOf('activeConversationId: conversationId');
+const initialListRefresh = initializationBlock.indexOf('void refreshList().then');
+assert.ok(
+  initialRouteAdoption >= 0 && initialRouteAdoption < initialListRefresh,
+  'the controller must adopt the initial conversation route before waiting for the list request'
+);
+assert.match(
+  initializationBlock,
+  /isLatestSelection\(selectionSeq, conversationId\)/,
+  'a stale initial-route load must not override a newer conversation selection'
+);
+
+const routeStateSource = read('src/components/chat/runtime/conversation-route-state.ts');
+const routeStateJavaScript = ts.transpileModule(routeStateSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.ESNext,
+    target: ts.ScriptTarget.ES2022,
+  },
+  fileName: 'route-state.ts',
+}).outputText;
+const routeState = await import(
+  `data:text/javascript;base64,${Buffer.from(routeStateJavaScript).toString('base64')}`
+);
+assert.equal(
+  routeState.isConversationRouteRestoring('conversation-a', null),
+  true,
+  'a persisted route must suppress the new-chat home before its conversation is selected'
+);
+assert.equal(
+  routeState.isConversationRouteRestoring('conversation-a', 'conversation-a'),
+  false,
+  'the conversation UI may render once the controller owns the routed conversation'
+);
+assert.equal(
+  routeState.isConversationRouteRestoring(null, 'conversation-a'),
+  false,
+  'an explicit new-chat route must not be treated as conversation restoration'
+);
+
 const agentWebAppChat = read('src/components/webapp/agent-chat/index.tsx');
 assert.match(agentWebAppChat, /onSelectConversation=\{handleSelectConversation\}/);
 assert.match(agentWebAppChat, /onStartNewConversation=\{handleStartNewConversation\}/);
+assert.match(
+  agentWebAppChat,
+  /if \(isRestoringConversationRoute\) \{\s*return \(\s*<div/,
+  'a published Agent route must stay in a loading state until its persisted conversation is selected'
+);
 
 const routeHandoffSource = read('src/components/webapp/agent-chat/route-handoff.ts');
 const routeHandoffJavaScript = ts.transpileModule(routeHandoffSource, {

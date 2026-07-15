@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
 	"github.com/zgiai/zgi/api/internal/modules/agentmemory"
 	datasetservice "github.com/zgiai/zgi/api/internal/modules/dataset/service"
@@ -41,6 +42,7 @@ type agentsService struct {
 	fileService               interfaces.FileService
 	llmClient                 llmclient.LLMClient
 	defaultModelResolver      llmdefaultservice.DefaultModelResolver
+	agentBindings             *agentbindings.Repository
 	agentModels               agentModelEligibility
 	db                        *gorm.DB
 }
@@ -86,6 +88,7 @@ func NewAgentsService(
 		fileService:               fileService,
 		llmClient:                 llmClient,
 		defaultModelResolver:      defaultModelResolver,
+		agentBindings:             agentbindings.NewRepository(db),
 		agentModels:               agentModels,
 		db:                        db,
 	}

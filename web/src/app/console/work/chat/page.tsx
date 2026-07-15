@@ -7,7 +7,17 @@ import { usePersistedAIChatModelSelection } from '@/hooks/model/use-persisted-ai
 import { useT } from '@/i18n/translations';
 import { useCurrentUser } from '@/store/auth-store';
 import { isDraftAIChatConversationId } from '@/components/chat/utils/aichat-message';
+import { isConversationRouteRestoring } from '@/components/chat/runtime/conversation-route-state';
 import { toast } from 'sonner';
+
+function ChatLoading() {
+  const t = useT('webapp');
+  return (
+    <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">
+      {t('consoleChat.loading')}
+    </div>
+  );
+}
 
 function ChatPageContent() {
   const t = useT('webapp');
@@ -27,6 +37,10 @@ function ChatPageContent() {
       scope: 'consoleChat',
       useCase: 'agent',
     });
+  const isRestoringConversationRoute = isConversationRouteRestoring(
+    conversationIdParam,
+    activeConversationId
+  );
 
   const handleBeforeSend = useCallback(() => {
     if (!isSelectedModelUnavailable) return true;
@@ -143,29 +157,27 @@ function ChatPageContent() {
         </div>
       ) : null}
       <div className="min-h-0 flex-1">
-        <React.Suspense
-          fallback={
-            <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">
-              {t('consoleChat.loading')}
-            </div>
-          }
-        >
-          <Chat
-            mode="aichat"
-            controller={controller}
-            runtimeSurface="work_chat"
-            modelSelectorValue={modelSelectorValue}
-            isModelInitializing={isModelInitializing}
-            onModelChange={handleModelChange}
-            beforeSend={handleBeforeSend}
-            showMemoryToggle={false}
-            homeTitle={t('consoleChat.homeTitle')}
-            homeDescription={t('consoleChat.homeDescription')}
-            inputPlaceholder={t('consoleChat.inputPlaceholder')}
-            onSelectConversation={handleSelectConversation}
-            onStartNewConversation={handleStartNewConversation}
-          />
-        </React.Suspense>
+        {isRestoringConversationRoute ? (
+          <ChatLoading />
+        ) : (
+          <React.Suspense fallback={<ChatLoading />}>
+            <Chat
+              mode="aichat"
+              controller={controller}
+              runtimeSurface="work_chat"
+              modelSelectorValue={modelSelectorValue}
+              isModelInitializing={isModelInitializing}
+              onModelChange={handleModelChange}
+              beforeSend={handleBeforeSend}
+              showMemoryToggle={false}
+              homeTitle={t('consoleChat.homeTitle')}
+              homeDescription={t('consoleChat.homeDescription')}
+              inputPlaceholder={t('consoleChat.inputPlaceholder')}
+              onSelectConversation={handleSelectConversation}
+              onStartNewConversation={handleStartNewConversation}
+            />
+          </React.Suspense>
+        )}
       </div>
     </div>
   );

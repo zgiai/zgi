@@ -118,7 +118,9 @@ type SkillConfigResponse struct {
 }
 
 type UpdateSkillConfigRequest struct {
-	EnabledSkillIDs []string `json:"enabled_skill_ids"`
+	EnabledSkillIDs    []string `json:"enabled_skill_ids"`
+	AgentBindingAction string   `json:"agent_binding_action,omitempty"`
+	ImpactToken        string   `json:"impact_token,omitempty"`
 }
 
 type AccountSkillPreferenceResponse struct {

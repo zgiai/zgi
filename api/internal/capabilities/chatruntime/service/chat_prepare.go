@@ -132,9 +132,7 @@ func (s *service) prepareRootRegeneration(ctx context.Context, scope Scope, call
 	}
 	applyRunConfigToParts(config, parts)
 	applyCallerRuntimeSurfacePolicy(caller, parts)
-	if err := applyCanonicalConversationSurface(conversation, parts); err != nil {
-		return nil, err
-	}
+	applyPersistedConversationSurface(conversation, parts)
 	parts.Attachments = attachmentBundleFromMessageMetadata(message.Metadata)
 	if err := s.applyModelCapabilities(ctx, scope, parts); err != nil {
 		return nil, err
@@ -273,9 +271,7 @@ func (s *service) resolveChatConversation(ctx context.Context, scope Scope, call
 	if err != nil {
 		return nil, err
 	}
-	if err := applyCanonicalConversationSurface(conversation, parts); err != nil {
-		return nil, err
-	}
+	applyPersistedConversationSurface(conversation, parts)
 	return conversation, nil
 }
 
@@ -542,15 +538,15 @@ func (s *service) applySkillConfig(ctx context.Context, scope Scope, caller Call
 	if err != nil {
 		return err
 	}
+	orgEnabled, err := s.effectiveOrganizationSkillIDs(ctx, scope.OrganizationID, catalog)
+	if err != nil {
+		return err
+	}
 	callerType := normalizeCallerType(caller.Type)
 	var enabled []string
 	if callerType == runtimemodel.ConversationCallerAgent {
-		enabled = effectiveAgentSkillIDs(parts.ConfiguredSkillIDs, catalog, config)
+		enabled = effectiveAgentSkillIDs(parts.ConfiguredSkillIDs, catalog, orgEnabled, config)
 	} else {
-		orgEnabled, err := s.effectiveOrganizationSkillIDs(ctx, scope.OrganizationID, catalog)
-		if err != nil {
-			return err
-		}
 		if parts.ConfiguredSkillIDs == nil {
 			defaultEnabled, _, err := s.effectiveAccountSkillPreferenceIDs(ctx, scope, callerType, catalog, orgEnabled)
 			if err != nil {

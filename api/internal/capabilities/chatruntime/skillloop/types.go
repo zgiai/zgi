@@ -168,6 +168,7 @@ type RunRequest struct {
 	OnTerminalCompletion           func(TerminalCompletionResult)
 	OnChunk                        func(string) error
 	PlanningOutputTokenLimit       int
+	AuthorizeSkillStep             func(context.Context, string) (bool, error)
 }
 
 type TerminalStateGuardDecisionRecord struct {

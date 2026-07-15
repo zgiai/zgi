@@ -7,12 +7,13 @@ import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@ta
 import { useT } from '@/i18n';
 import { toast } from 'sonner';
 import { dbService } from '@/services';
-import type { ApiResponseData } from '@/services/types/common';
+import type { AgentBindingMutationConfirmation, ApiResponseData } from '@/services/types/common';
 import type { DbTable, CreateDbTableRequest, UpdateDbTableRequest } from '@/services/types/db';
 import { getErrorMessage } from '@/utils/error-notifications';
 import { DB_KEYS } from '@/hooks/query-keys';
 import { workspaceInvalidatePredicate } from '@/hooks/query-utils';
 import { useCurrentWorkspace } from '@/store/workspace-store';
+import { getAgentResourceBoundImpact } from '@/utils/agent-resource-bound';
 
 // Local query-key helpers are now centralized in DB_KEYS
 const getDbTablesKey = (dbId: string) => DB_KEYS.tableList(dbId, {});
@@ -266,12 +267,16 @@ export function useDeleteDbTable(dbId: string | undefined) {
   const t = useT('dbs');
   const currentWorkspaceId = useCurrentWorkspace()?.id;
 
-  return useMutation<ApiResponseData<{ result: 'success' | 'fail' }>, unknown, string>({
-    mutationFn: (id: string) => {
+  return useMutation<
+    ApiResponseData<{ result: 'success' | 'fail' }>,
+    unknown,
+    { id: string; confirmation?: AgentBindingMutationConfirmation }
+  >({
+    mutationFn: ({ id, confirmation }) => {
       if (!dbId) return Promise.reject(new Error('dbId is required'));
-      return dbService.deleteDbTable(dbId, id);
+      return dbService.deleteDbTable(dbId, id, confirmation);
     },
-    onMutate: async id => {
+    onMutate: async ({ id }) => {
       if (!dbId) return;
       await queryClient.cancelQueries({ queryKey: getDbTablesKey(dbId) });
       const previous = queryClient.getQueryData<ApiResponseData<DbTable[]>>(getDbTablesKey(dbId));
@@ -282,7 +287,7 @@ export function useDeleteDbTable(dbId: string | undefined) {
       });
       return { previous };
     },
-    onSuccess: (_res, id) => {
+    onSuccess: (_res, { id }) => {
       if (!dbId) return;
       // Remove detail cache too
       queryClient.removeQueries({ queryKey: DB_KEYS.tableDetail(dbId, id) });
@@ -293,7 +298,16 @@ export function useDeleteDbTable(dbId: string | undefined) {
       });
       toast.success(t('tableDeleteSuccess', { defaultMessage: 'Table deleted' }));
     },
-    onError: (error, _tableId, context) => {
+    onError: (error, _table, context) => {
+      if (getAgentResourceBoundImpact(error)) {
+        if (dbId) {
+          queryClient.setQueryData(
+            getDbTablesKey(dbId),
+            (context as { previous?: ApiResponseData<DbTable[]> })?.previous
+          );
+        }
+        return;
+      }
       const msg = getErrorMessage(error);
       toast.error(msg || t('failed', { defaultMessage: 'Operation failed' }));
       if (!dbId) return;

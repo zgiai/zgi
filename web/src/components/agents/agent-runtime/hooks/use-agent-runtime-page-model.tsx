@@ -6,18 +6,13 @@ import { toast } from 'sonner';
 import { createAgentDraftTransport, useAIChatController } from '@/components/chat';
 import { buildOpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 import { findAIChatModelProps } from '@/components/chat/variants/aichat/model-props';
-import {
-  getAIChatSkillDisplayInfo,
-  isSkillSelectableForCaller,
-} from '@/components/chat/variants/aichat/skill-display';
+import { getAIChatSkillDisplayInfo } from '@/components/chat/variants/aichat/skill-display';
 import type {
   ModelSelectorModelProps,
   ModelSelectorParameterValue,
   ModelSelectorValue,
 } from '@/components/common/model-selector';
-import { useAgent, useAgentConfig, usePublishAgent } from '@/hooks/agent/use-agents';
-import { useAIChatSkills } from '@/hooks/aichat/use-aichat-skills';
-import { useDatasets } from '@/hooks/dataset/use-datasets';
+import { useAgent, useAgentConfig } from '@/hooks/agent/use-agents';
 import { useAvailableModels } from '@/hooks/model/use-model';
 import { useAccountPermissions } from '@/hooks/organization/use-account-permissions';
 import { AGENT_KEYS, DATASET_KEYS } from '@/hooks/query-keys';
@@ -29,31 +24,74 @@ import {
   AGENT_PERMISSION_ACTIONS,
   KNOWLEDGE_BASE_READ_PERMISSION_CODES,
 } from '@/constants/permissions';
-import agentService from '@/services/agent.service';
+import agentService, {
+  getAgentBindingConflict,
+  getAgentBindingRevisionConflict,
+  getAgentRollbackImpactChanged,
+} from '@/services/agent.service';
 import { datasetService } from '@/services';
 import { getTemplateAwareCharacterCount } from '@/components/workflow/common/workflow-value-editor/utils/value-transform';
 import type { OpeningStatementDialogValue } from '@/components/workflow/ui/features-panel/opening-statement-dialog';
 import type {
   AgentDetail,
+  AgentBindingHealth,
+  AgentBindingHealthItem,
   AgentDatabaseBinding,
   AgentMemorySlotConfig,
   AgentRuntimeConfig,
+  AgentSkillBindingCandidate,
   AgentWorkflowBinding,
   AgentWorkflowBindingCandidate,
+  AgentPublishedVersionRollbackPreview,
   UpdateAgentRuntimeConfigRequest,
 } from '@/services/types/agent';
 import type { AIChatSkillMetadata } from '@/services/types/aichat';
 import type { Dataset } from '@/services/types/dataset';
 import { getErrorMessage } from '@/utils/error-notifications';
-import type { AgentConfigSection, AgentPublishedVersionListItem } from '../types';
+import type {
+  AgentConfigSection,
+  AgentPublishedVersionListItem,
+  AgentRuntimeSelectedSkillItem,
+} from '../types';
 import { buildAgentRuntimeSignature, toModelParams, validateAgentMemorySlots } from '../utils';
 import { useAgentRuntimeDraftPersistence } from '../use-agent-runtime-draft-persistence';
 import { useAgentRuntimeLeaveGuard } from '../use-agent-runtime-leave-guard';
 import { getAgentRuntimeSaveText, type VersionPreviewBackup } from './page-model-utils';
 import { AGENT_SYSTEM_PROMPT_MAX_LENGTH } from '../prompt-limits';
 import { buildAgentRuntimeAIChatContext } from '../aichat-context';
+import { normalizeAgentDatabaseBindings } from '../database-binding-draft';
+import {
+  mergeSupersededAgentRuntimePayload,
+  normalizeAgentWorkflowBindings,
+} from '../binding-rebase-merge';
 
 type AgentKnowledgeDataset = Dataset & { load_error?: boolean };
+
+function describeBindingChanges(
+  local: UpdateAgentRuntimeConfigRequest,
+  server: Partial<AgentRuntimeConfig>
+) {
+  const collect = (value: Partial<AgentRuntimeConfig | UpdateAgentRuntimeConfigRequest>) => {
+    const out = new Set<string>();
+    for (const id of value.enabled_skill_ids ?? []) out.add(`Skill:${id}`);
+    for (const id of value.knowledge_dataset_ids ?? []) out.add(`Knowledge:${id}`);
+    for (const binding of value.database_bindings ?? []) {
+      out.add(`Database:${binding.data_source_id}`);
+      for (const id of binding.table_ids ?? []) out.add(`Table:${id}`);
+      for (const id of binding.writable_table_ids ?? []) out.add(`Writable table:${id}`);
+    }
+    for (const binding of value.workflow_bindings ?? []) {
+      out.add(`Workflow:${binding.binding_id}`);
+    }
+    return out;
+  };
+  const localBindings = collect(local);
+  const serverBindings = collect(server);
+  return [...localBindings, ...serverBindings].filter(
+    (value, index, all) =>
+      all.indexOf(value) === index && localBindings.has(value) !== serverBindings.has(value)
+  );
+}
 
 function createAgentKnowledgeDatasetFallback(
   id: string,
@@ -100,78 +138,23 @@ function createAgentKnowledgeDatasetFallback(
   };
 }
 
-function normalizeAgentDatabaseBindings(bindings: AgentDatabaseBinding[]): AgentDatabaseBinding[] {
-  const byDataSource = new Map<string, { readable: Set<string>; writable: Set<string> }>();
-  bindings.forEach(binding => {
-    const dataSourceId = binding.data_source_id.trim();
-    if (!dataSourceId) return;
-    const tableIds = binding.table_ids.map(id => id.trim()).filter(Boolean);
-    if (tableIds.length === 0) return;
-    const existing = byDataSource.get(dataSourceId) ?? {
-      readable: new Set<string>(),
-      writable: new Set<string>(),
-    };
-    tableIds.forEach(id => existing.readable.add(id));
-    (binding.writable_table_ids ?? [])
-      .map(id => id.trim())
-      .filter(Boolean)
-      .forEach(id => {
-        if (tableIds.includes(id)) {
-          existing.writable.add(id);
-        }
-      });
-    byDataSource.set(dataSourceId, existing);
-  });
-  return Array.from(byDataSource.entries())
-    .map(([dataSourceId, tables]) => ({
-      data_source_id: dataSourceId,
-      table_ids: Array.from(tables.readable).sort(),
-      writable_table_ids: Array.from(tables.writable)
-        .filter(id => tables.readable.has(id))
-        .sort(),
-    }))
-    .sort((left, right) => left.data_source_id.localeCompare(right.data_source_id));
-}
-
-function normalizeAgentWorkflowBindings(bindings: AgentWorkflowBinding[]): AgentWorkflowBinding[] {
-  const byBindingID = new Map<string, AgentWorkflowBinding>();
-  bindings.forEach(binding => {
-    const bindingId = binding.binding_id.trim();
-    const agentId = binding.agent_id.trim();
-    const workflowId = binding.workflow_id.trim();
-    if (!bindingId || !agentId || !workflowId) return;
-    const versionStrategy = binding.version_strategy || 'latest_published';
-    if (versionStrategy !== 'latest_published' && versionStrategy !== 'pinned') return;
-    byBindingID.set(bindingId, {
-      binding_id: bindingId,
-      label: binding.label.trim(),
-      description: binding.description?.trim() || undefined,
-      agent_id: agentId,
-      workflow_id: workflowId,
-      agent_type: binding.agent_type,
-      version_strategy: versionStrategy,
-      version_uuid:
-        versionStrategy === 'pinned' ? binding.version_uuid?.trim() || undefined : undefined,
-      timeout_seconds: Math.max(0, binding.timeout_seconds ?? 0),
-    });
-  });
-  return Array.from(byBindingID.values()).sort((left, right) =>
-    left.binding_id.localeCompare(right.binding_id)
-  );
-}
-
-function workflowBindingFromCandidate(
-  candidate: AgentWorkflowBindingCandidate
-): AgentWorkflowBinding {
+function candidateToSkillMetadata(candidate: AgentSkillBindingCandidate): AIChatSkillMetadata {
   return {
-    binding_id: candidate.binding_id,
-    label: candidate.label,
-    description: candidate.description,
-    agent_id: candidate.agent_id,
-    workflow_id: candidate.workflow_id,
-    agent_type: candidate.agent_type,
-    version_strategy: 'latest_published',
-    timeout_seconds: candidate.timeout_seconds ?? 600,
+    skill_id: candidate.skill_id,
+    source: candidate.source === 'custom' ? 'custom' : 'system',
+    name: candidate.name,
+    description: candidate.description ?? '',
+    when_to_use: candidate.when_to_use ?? '',
+    runtime_type: (candidate.runtime_type || 'prompt') as AIChatSkillMetadata['runtime_type'],
+    enabled: true,
+    display: candidate.display,
+    has_tools: candidate.has_tools,
+    has_references: candidate.has_references,
+    has_scripts: candidate.has_scripts,
+    scripts_supported: candidate.scripts_supported,
+    max_calls_per_turn: 0,
+    timeout_seconds: 0,
+    required_config: candidate.required_config,
   };
 }
 
@@ -179,12 +162,6 @@ function compactSuggestedQuestionContextRef(value: string, maxLength = 180): str
   const text = value.replace(/\s+/g, ' ').trim();
   if (text.length <= maxLength) return text;
   return `${text.slice(0, maxLength).trim()}...`;
-}
-
-function isDatasetInWorkspace(dataset: Dataset, workspaceId: string): boolean {
-  if (!workspaceId) return false;
-  const datasetWorkspaceId = dataset.workspace_id || dataset.workspace?.id;
-  return !datasetWorkspaceId || datasetWorkspaceId === workspaceId;
 }
 
 function agentDetailWorkspaceID(agent: AgentDetail | undefined): string {
@@ -277,17 +254,25 @@ export function useAgentRuntimePageModel(agentId: string) {
     agentId,
     canOpenAgentRuntimeEditor
   );
-  const { data: allSkills = [], isLoading: isSkillsLoading } = useAIChatSkills();
+  const {
+    data: skillCandidatesResponse,
+    isLoading: isSkillCandidatesLoading,
+    isFetching: isSkillCandidatesFetching,
+  } = useQuery({
+    queryKey: AGENT_KEYS.skillBindingCandidates(agentId),
+    queryFn: () => agentService.getAgentSkillBindingCandidates(agentId, { page: 1, limit: 100 }),
+    enabled: Boolean(agentId) && canConfigureAgentRuntime,
+    staleTime: 60_000,
+  });
   const { data: workflowCandidatesResponse, isLoading: isWorkflowCandidatesLoading } = useQuery({
     queryKey: AGENT_KEYS.workflowBindingCandidates(agentId),
     queryFn: () => agentService.getAgentWorkflowBindingCandidates(agentId),
     enabled: Boolean(agentId) && canConfigureAgentRuntime,
     staleTime: 60_000,
   });
-  const publishAgent = usePublishAgent();
   const config = configResponse?.data;
-  const workflowCandidates = useMemo(
-    () => workflowCandidatesResponse?.data.data ?? [],
+  const workflowCandidates = useMemo<AgentWorkflowBindingCandidate[]>(
+    () => (workflowCandidatesResponse?.data.data ?? []) as AgentWorkflowBindingCandidate[],
     [workflowCandidatesResponse?.data.data]
   );
   const {
@@ -321,23 +306,27 @@ export function useAgentRuntimePageModel(agentId: string) {
   const [knowledgeDatasetIds, setKnowledgeDatasetIds] = useState<string[]>([]);
   const [databaseBindings, setDatabaseBindings] = useState<AgentDatabaseBinding[]>([]);
   const [workflowBindings, setWorkflowBindings] = useState<AgentWorkflowBinding[]>([]);
+  const [bindingRevision, setBindingRevision] = useState('');
+  const [bindingHealth, setBindingHealth] = useState<AgentBindingHealth>();
+  const [isAbnormalBindingCleanupPending, setIsAbnormalBindingCleanupPending] = useState(false);
   const [skillDialogOpen, setSkillDialogOpen] = useState(false);
   const [knowledgeDialogOpen, setKnowledgeDialogOpen] = useState(false);
   const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
   const [promptOptimizerOpen, setPromptOptimizerOpen] = useState(false);
   const [memoryValuesOpen, setMemoryValuesOpen] = useState(false);
-  const [skillSearch, setSkillSearch] = useState('');
-  const [showSelectedSkillsOnly, setShowSelectedSkillsOnly] = useState(false);
-  const [knowledgeSearch, setKnowledgeSearch] = useState('');
-  const [showSelectedKnowledgeOnly, setShowSelectedKnowledgeOnly] = useState(false);
   const [isGeneratingSuggestions, setIsGeneratingSuggestions] = useState(false);
   const [publishedVersionsOpen, setPublishedVersionsOpen] = useState(false);
   const [previewSheetOpen, setPreviewSheetOpen] = useState(false);
   const [publishedVersions, setPublishedVersions] = useState<AgentPublishedVersionListItem[]>([]);
   const [isLoadingVersions, setIsLoadingVersions] = useState(false);
   const [isRollingBackVersion, setIsRollingBackVersion] = useState(false);
+  const [isLoadingRollbackPreview, setIsLoadingRollbackPreview] = useState(false);
+  const [rollbackPreview, setRollbackPreview] = useState<AgentPublishedVersionRollbackPreview>();
   const [selectedPublishedVersionId, setSelectedPublishedVersionId] = useState('');
   const [isVersionPreviewing, setIsVersionPreviewing] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [suspendedBindingsDialogOpen, setSuspendedBindingsDialogOpen] = useState(false);
+  const [cleanupBindingsDialogOpen, setCleanupBindingsDialogOpen] = useState(false);
   const [openSections, setOpenSections] = useState<Record<AgentConfigSection, boolean>>({
     experience: true,
     model: true,
@@ -351,6 +340,9 @@ export function useAgentRuntimePageModel(agentId: string) {
   const hydratedAgentIdRef = useRef<string | null>(null);
   const hydratedConfigSignatureRef = useRef<string | null>(null);
   const versionPreviewBackupRef = useRef<VersionPreviewBackup | null>(null);
+  const rollbackPreviewRequestRef = useRef(0);
+  const lastSaveBindingHealthRef = useRef<AgentBindingHealth>();
+  const bindingRevisionRef = useRef('');
 
   const isAgentModelUnavailable = useMemo(() => {
     if (isAgentModelsLoading || agentModelsError || !modelValue.provider || !modelValue.model) {
@@ -367,13 +359,9 @@ export function useAgentRuntimePageModel(agentId: string) {
     modelValue.provider,
   ]);
 
-  const selectableSkills = useMemo(
-    () =>
-      allSkills.filter(skill => {
-        return isSkillSelectableForCaller(skill, 'agent');
-      }),
-    [allSkills]
-  );
+  const selectableSkills = useMemo(() => {
+    return (skillCandidatesResponse?.data.data ?? []).map(candidateToSkillMetadata);
+  }, [skillCandidatesResponse?.data.data]);
   const selectedDatasetQueries = useQueries({
     queries: knowledgeDatasetIds.map(datasetId => ({
       queryKey: DATASET_KEYS.detail(datasetId),
@@ -383,20 +371,11 @@ export function useAgentRuntimePageModel(agentId: string) {
       retry: false,
     })),
   });
-  const { pages: knowledgeDialogPages, isLoading: isKnowledgeDialogDatasetsLoading } = useDatasets(
-    { keyword: knowledgeSearch.trim(), limit: 50, workspace_id: agentWorkspaceId },
-    { enabled: knowledgeDialogOpen && canBindKnowledge && Boolean(agentWorkspaceId) }
-  );
   const selectedKnowledgeDatasets = useMemo(() => {
     const byID = new Map<string, AgentKnowledgeDataset>();
     selectedDatasetQueries.forEach(query => {
       const dataset = query.data?.data;
       if (dataset?.id) {
-        byID.set(dataset.id, dataset);
-      }
-    });
-    knowledgeDialogPages.flat().forEach(dataset => {
-      if (knowledgeDatasetIds.includes(dataset.id)) {
         byID.set(dataset.id, dataset);
       }
     });
@@ -416,40 +395,15 @@ export function useAgentRuntimePageModel(agentId: string) {
         hasLoadError
       );
     });
-  }, [canBindKnowledge, knowledgeDatasetIds, knowledgeDialogPages, selectedDatasetQueries, t]);
+  }, [canBindKnowledge, knowledgeDatasetIds, selectedDatasetQueries, t]);
   const isSelectedDatasetsLoading = selectedDatasetQueries.some(query => query.isLoading);
-  const workflowCandidatesByBindingID = useMemo(
+  const workflowCandidatesByBindingID = useMemo<Map<string, AgentWorkflowBindingCandidate>>(
     () => new Map(workflowCandidates.map(candidate => [candidate.binding_id, candidate])),
     [workflowCandidates]
   );
-  const knowledgeDialogDatasets = useMemo(() => {
-    const byID = new Map<string, Dataset>();
-    selectedKnowledgeDatasets.forEach(dataset => byID.set(dataset.id, dataset));
-    knowledgeDialogPages.flat().forEach(dataset => byID.set(dataset.id, dataset));
-    return Array.from(byID.values())
-      .filter(dataset => isDatasetInWorkspace(dataset, agentWorkspaceId))
-      .filter(dataset => !showSelectedKnowledgeOnly || knowledgeDatasetIds.includes(dataset.id))
-      .sort((left, right) => {
-        const leftChecked = knowledgeDatasetIds.includes(left.id);
-        const rightChecked = knowledgeDatasetIds.includes(right.id);
-        if (leftChecked !== rightChecked) return leftChecked ? -1 : 1;
-        return left.name.localeCompare(right.name, locale);
-      });
-  }, [
-    agentWorkspaceId,
-    knowledgeDatasetIds,
-    knowledgeDialogPages,
-    locale,
-    selectedKnowledgeDatasets,
-    showSelectedKnowledgeOnly,
-  ]);
-  const selectableSkillIds = useMemo(
-    () => new Set(selectableSkills.map(skill => skill.skill_id)),
-    [selectableSkills]
-  );
   const normalizedSelectedSkillIds = useMemo(
-    () => selectedSkillIds.filter(id => selectableSkillIds.has(id)),
-    [selectableSkillIds, selectedSkillIds]
+    () => Array.from(new Set(selectedSkillIds.map(id => id.trim()).filter(Boolean))),
+    [selectedSkillIds]
   );
   const selectedSkills = useMemo(
     () =>
@@ -458,27 +412,27 @@ export function useAgentRuntimePageModel(agentId: string) {
         .filter((skill): skill is AIChatSkillMetadata => Boolean(skill)),
     [normalizedSelectedSkillIds, selectableSkills]
   );
-  const dialogSkills = useMemo(() => {
-    const query = skillSearch.trim().toLowerCase();
-    return selectableSkills
-      .filter(skill => {
-        const display = getAIChatSkillDisplayInfo(skill, locale);
-        const checked = normalizedSelectedSkillIds.includes(skill.skill_id);
-        if (showSelectedSkillsOnly && !checked) return false;
-        if (!query) return true;
-        return [skill.skill_id, display.label, display.description, skill.description]
-          .filter(Boolean)
-          .some(value => String(value).toLowerCase().includes(query));
-      })
-      .sort((left, right) => {
-        const leftChecked = normalizedSelectedSkillIds.includes(left.skill_id);
-        const rightChecked = normalizedSelectedSkillIds.includes(right.skill_id);
-        if (leftChecked !== rightChecked) return leftChecked ? -1 : 1;
-        const leftDisplay = getAIChatSkillDisplayInfo(left, locale);
-        const rightDisplay = getAIChatSkillDisplayInfo(right, locale);
-        return leftDisplay.label.localeCompare(rightDisplay.label, locale);
-      });
-  }, [locale, normalizedSelectedSkillIds, selectableSkills, showSelectedSkillsOnly, skillSearch]);
+  const selectedSkillItems = useMemo<AgentRuntimeSelectedSkillItem[]>(
+    () =>
+      normalizedSelectedSkillIds.map(skillId => {
+        const metadata = selectableSkills.find(skill => skill.skill_id === skillId);
+        if (!metadata) {
+          return {
+            skillId,
+            label: t('skills.unavailableName'),
+            description: t('skills.unavailableDescription'),
+          };
+        }
+        const display = getAIChatSkillDisplayInfo(metadata, locale);
+        return {
+          skillId,
+          label: display.label,
+          description: display.description || metadata.description || skillId,
+          metadata,
+        };
+      }),
+    [locale, normalizedSelectedSkillIds, selectableSkills, t]
+  );
   const agentMemorySlotValidationErrors = useMemo(
     () => validateAgentMemorySlots(agentMemorySlots),
     [agentMemorySlots]
@@ -531,6 +485,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       knowledge_retrieval_config: {},
       database_bindings: databaseBindings,
       workflow_bindings: workflowBindings,
+      binding_revision: bindingRevision || undefined,
     }),
     [
       defaultHomeTitle,
@@ -547,6 +502,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       knowledgeDatasetIds,
       databaseBindings,
       workflowBindings,
+      bindingRevision,
       systemPrompt,
     ]
   );
@@ -583,6 +539,9 @@ export function useAgentRuntimePageModel(agentId: string) {
     setKnowledgeDatasetIds(payload.knowledge_dataset_ids ?? []);
     setDatabaseBindings(normalizeAgentDatabaseBindings(payload.database_bindings ?? []));
     setWorkflowBindings(normalizeAgentWorkflowBindings(payload.workflow_bindings ?? []));
+    const nextBindingRevision = payload.binding_revision ?? '';
+    setBindingRevision(nextBindingRevision);
+    bindingRevisionRef.current = nextBindingRevision;
   }, []);
 
   const payloadFromRuntimeConfig = useCallback(
@@ -608,8 +567,31 @@ export function useAgentRuntimePageModel(agentId: string) {
       knowledge_retrieval_config: runtimeConfig.knowledge_retrieval_config ?? {},
       database_bindings: normalizeAgentDatabaseBindings(runtimeConfig.database_bindings ?? []),
       workflow_bindings: normalizeAgentWorkflowBindings(runtimeConfig.workflow_bindings ?? []),
+      binding_revision: runtimeConfig.binding_revision,
     }),
     [defaultHomeTitle, defaultInputPlaceholder]
+  );
+
+  const applySavedBindingMetadata = useCallback(
+    (payload: UpdateAgentRuntimeConfigRequest, health?: AgentBindingHealth) => {
+      const nextBindingRevision = payload.binding_revision ?? '';
+      setBindingRevision(nextBindingRevision);
+      bindingRevisionRef.current = nextBindingRevision;
+      setBindingHealth(health);
+      lastSaveBindingHealthRef.current = health;
+    },
+    []
+  );
+
+  const applyServerBindingPayload = useCallback(
+    (payload: UpdateAgentRuntimeConfigRequest, health?: AgentBindingHealth) => {
+      setSelectedSkillIds(payload.enabled_skill_ids);
+      setKnowledgeDatasetIds(payload.knowledge_dataset_ids ?? []);
+      setDatabaseBindings(normalizeAgentDatabaseBindings(payload.database_bindings ?? []));
+      setWorkflowBindings(normalizeAgentWorkflowBindings(payload.workflow_bindings ?? []));
+      applySavedBindingMetadata(payload, health);
+    },
+    [applySavedBindingMetadata]
   );
 
   const saveRuntimePayload = useCallback(
@@ -625,10 +607,41 @@ export function useAgentRuntimePageModel(agentId: string) {
           payload.agent_memory_slots ?? []
         );
       }
-      const response = await agentService.updateAgentConfig(agentId, payload);
+      let configPayload = payload;
+      let wasBindingRevisionRebased = false;
+      let rebasedBindingHealth: AgentBindingHealth | undefined;
+      let response: Awaited<ReturnType<typeof agentService.updateAgentConfig>>;
+      try {
+        response = await agentService.updateAgentConfig(agentId, configPayload);
+      } catch (error) {
+        const conflict = getAgentBindingRevisionConflict(error);
+        if (conflict?.bindingHealth) setBindingHealth(conflict.bindingHealth);
+        const serverConfig = conflict?.currentConfig;
+        if (!serverConfig?.binding_revision) throw error;
+        const changedBindings = describeBindingChanges(payload, serverConfig);
+        if (changedBindings.length > 0) {
+          toast.warning(
+            t('toasts.bindingRevisionRebased', {
+              resources: changedBindings.slice(0, 6).join(', '),
+            })
+          );
+        }
+        configPayload = {
+          ...payload,
+          enabled_skill_ids: serverConfig.enabled_skill_ids ?? [],
+          knowledge_dataset_ids: serverConfig.knowledge_dataset_ids ?? [],
+          database_bindings: normalizeAgentDatabaseBindings(serverConfig.database_bindings ?? []),
+          workflow_bindings: normalizeAgentWorkflowBindings(serverConfig.workflow_bindings ?? []),
+          binding_revision: serverConfig.binding_revision,
+        };
+        wasBindingRevisionRebased = true;
+        rebasedBindingHealth = conflict?.bindingHealth;
+        response = await agentService.updateAgentConfig(agentId, configPayload);
+      }
       const updatedAt = response.data.updated_at ?? Math.floor(Date.now() / 1000);
       const savedPayload = {
-        ...payload,
+        ...configPayload,
+        binding_revision: response.data.binding_revision ?? configPayload.binding_revision,
         agent_memory_slots:
           slotsResponse?.data.slots ??
           response.data.agent_memory_slots ??
@@ -648,9 +661,11 @@ export function useAgentRuntimePageModel(agentId: string) {
       return {
         savedPayload,
         updatedAt,
+        bindingPayloadRebased: wasBindingRevisionRebased,
+        bindingHealth: response.data.binding_health ?? rebasedBindingHealth,
       };
     },
-    [agentId, queryClient]
+    [agentId, queryClient, t]
   );
 
   const {
@@ -675,7 +690,21 @@ export function useAgentRuntimePageModel(agentId: string) {
       !isSystemPromptTooLong,
     savePayload: saveRuntimePayload,
     onSaveCommitted: result => {
+      if (result.bindingPayloadRebased) {
+        applyServerBindingPayload(result.savedPayload, result.bindingHealth);
+      } else {
+        applySavedBindingMetadata(result.savedPayload, result.bindingHealth);
+      }
+      setIsAbnormalBindingCleanupPending(false);
       setAgentMemorySlots(result.savedPayload.agent_memory_slots ?? []);
+    },
+    onSaveSuperseded: (result, submittedPayload, latestPayload) => {
+      const mergedPayload = mergeSupersededAgentRuntimePayload(
+        submittedPayload,
+        latestPayload,
+        result.savedPayload
+      );
+      applyServerBindingPayload(mergedPayload, result.bindingHealth);
     },
     onSaveFailed: (error, options) => {
       if (!options.silent) {
@@ -697,6 +726,8 @@ export function useAgentRuntimePageModel(agentId: string) {
     if (!canApplyServerConfig) return;
 
     applyRuntimePayload(nextPayload);
+    setBindingHealth(config.binding_health);
+    setIsAbnormalBindingCleanupPending(false);
     hydratedAgentIdRef.current = agentId;
     hydratedConfigSignatureRef.current = nextSignature;
     markHydrated(nextPayload, config.updated_at ?? null);
@@ -711,17 +742,6 @@ export function useAgentRuntimePageModel(agentId: string) {
     payloadFromRuntimeConfig,
     saveState,
   ]);
-
-  useEffect(() => {
-    if (!workflowCandidatesResponse) return;
-    setWorkflowBindings(current => {
-      const pruned = current.filter(binding =>
-        workflowCandidatesByBindingID.has(binding.binding_id)
-      );
-      if (pruned.length === current.length) return current;
-      return pruned;
-    });
-  }, [workflowCandidatesByBindingID, workflowCandidatesResponse]);
 
   const handleModelChange = useCallback((value: ModelSelectorValue) => {
     setModelValue(current => ({
@@ -745,19 +765,65 @@ export function useAgentRuntimePageModel(agentId: string) {
     );
   }, []);
 
-  const handleConfirmWorkflows = useCallback(
-    (bindingIds: string[]) => {
-      const selected = new Set(bindingIds);
-      setWorkflowBindings(
-        normalizeAgentWorkflowBindings(
-          workflowCandidates
-            .filter(candidate => selected.has(candidate.binding_id))
-            .map(workflowBindingFromCandidate)
-        )
+  const handleConfirmSkills = useCallback((skillIds: string[]) => {
+    setSelectedSkillIds(Array.from(new Set(skillIds)));
+  }, []);
+
+  const handleConfirmKnowledgeDatasets = useCallback((datasetIds: string[]) => {
+    setKnowledgeDatasetIds(Array.from(new Set(datasetIds)));
+  }, []);
+
+  const handleConfirmWorkflows = useCallback((bindings: AgentWorkflowBinding[]) => {
+    setWorkflowBindings(normalizeAgentWorkflowBindings(bindings));
+  }, []);
+
+  const handleRemoveAllAbnormalBindings = useCallback(() => {
+    const abnormalItems = bindingHealth?.items.filter(item => item.status !== 'active') ?? [];
+    if (abnormalItems.length === 0) return;
+    const hasAbnormal = (
+      type: AgentBindingHealthItem['binding_type'],
+      resourceId: string,
+      parentResourceId?: string
+    ) =>
+      abnormalItems.some(
+        item =>
+          item.binding_type === type &&
+          item.resource_id === resourceId &&
+          (!parentResourceId ||
+            !item.parent_resource_id ||
+            item.parent_resource_id === parentResourceId)
       );
-    },
-    [workflowCandidates]
-  );
+
+    setSelectedSkillIds(current => current.filter(id => !hasAbnormal('skill', id)));
+    setKnowledgeDatasetIds(current => current.filter(id => !hasAbnormal('knowledge_dataset', id)));
+    setWorkflowBindings(current =>
+      current.filter(
+        binding =>
+          !hasAbnormal('workflow', binding.binding_id) &&
+          !hasAbnormal('workflow', binding.workflow_id)
+      )
+    );
+    setDatabaseBindings(current =>
+      current
+        .filter(binding => !hasAbnormal('database', binding.data_source_id))
+        .map(binding => {
+          const tableIds = binding.table_ids.filter(
+            tableId => !hasAbnormal('database_table', tableId, binding.data_source_id)
+          );
+          return {
+            ...binding,
+            table_ids: tableIds,
+            writable_table_ids: (binding.writable_table_ids ?? []).filter(tableId =>
+              tableIds.includes(tableId)
+            ),
+          };
+        })
+        .filter(binding => binding.table_ids.length > 0)
+    );
+    setIsAbnormalBindingCleanupPending(true);
+    setCleanupBindingsDialogOpen(false);
+    toast.success(t('toasts.abnormalBindingsRemoved'));
+  }, [bindingHealth, t]);
 
   const handleGenerateSuggestedQuestions = useCallback(
     async (value: OpeningStatementDialogValue) => {
@@ -854,12 +920,16 @@ export function useAgentRuntimePageModel(agentId: string) {
   }, [agentId, t]);
 
   const handleCancelVersionPreview = useCallback(() => {
+    rollbackPreviewRequestRef.current += 1;
     const backup = versionPreviewBackupRef.current;
     if (backup) {
       applyRuntimePayload(backup.payload);
       restoreSnapshot(backup.persistence);
+      setBindingHealth(backup.bindingHealth);
     }
     versionPreviewBackupRef.current = null;
+    setRollbackPreview(undefined);
+    setIsLoadingRollbackPreview(false);
     setSelectedPublishedVersionId('');
     setIsVersionPreviewing(false);
   }, [applyRuntimePayload, restoreSnapshot]);
@@ -877,28 +947,52 @@ export function useAgentRuntimePageModel(agentId: string) {
   );
 
   const handleSelectPublishedVersion = useCallback(
-    (versionId: string) => {
+    async (versionId: string) => {
       const version = publishedVersions.find(item => item.id === versionId);
       if (!version) return;
       if (!versionPreviewBackupRef.current) {
         versionPreviewBackupRef.current = {
           payload: currentPayload,
           persistence: getSnapshot(),
+          bindingHealth,
         };
       }
-      const nextPayload = payloadFromRuntimeConfig(version.config_snapshot);
-      applyRuntimePayload(nextPayload);
       setSelectedPublishedVersionId(version.id);
-      setIsVersionPreviewing(true);
-      setPreviewing();
+      setRollbackPreview(undefined);
+      setIsLoadingRollbackPreview(true);
+      const requestId = rollbackPreviewRequestRef.current + 1;
+      rollbackPreviewRequestRef.current = requestId;
+      try {
+        const response = await agentService.getPublishedVersionRollbackPreview(agentId, versionId);
+        if (rollbackPreviewRequestRef.current !== requestId) return;
+        const preview = response.data;
+        const nextPayload = payloadFromRuntimeConfig(preview.config_snapshot);
+        applyRuntimePayload(nextPayload);
+        setBindingHealth(preview.binding_health);
+        setRollbackPreview(preview);
+        setIsVersionPreviewing(true);
+        setPreviewing();
+      } catch (error) {
+        if (rollbackPreviewRequestRef.current !== requestId) return;
+        handleCancelVersionPreview();
+        toast.error(getErrorMessage(error) || t('toasts.loadRollbackPreviewFailed'));
+      } finally {
+        if (rollbackPreviewRequestRef.current === requestId) {
+          setIsLoadingRollbackPreview(false);
+        }
+      }
     },
     [
+      agentId,
       applyRuntimePayload,
+      bindingHealth,
       currentPayload,
       getSnapshot,
+      handleCancelVersionPreview,
       payloadFromRuntimeConfig,
       publishedVersions,
       setPreviewing,
+      t,
     ]
   );
 
@@ -907,22 +1001,36 @@ export function useAgentRuntimePageModel(agentId: string) {
       toast.error(tRoot('common.unauthorizedDescription'));
       return;
     }
-    if (!selectedPublishedVersionId || isRollingBackVersion) return;
+    if (!selectedPublishedVersionId || !rollbackPreview?.impact_token || isRollingBackVersion) {
+      return;
+    }
     setIsRollingBackVersion(true);
     try {
       const response = await agentService.rollbackPublishedVersion(agentId, {
         version_id: selectedPublishedVersionId,
+        impact_token: rollbackPreview.impact_token,
+        binding_action: 'remove_all_abnormal',
       });
       const nextPayload = payloadFromRuntimeConfig(response.data);
       applyRuntimePayload(nextPayload);
       markServerSaved(nextPayload, response.data.updated_at ?? Math.floor(Date.now() / 1000));
+      setBindingHealth(response.data.binding_health);
+      setIsAbnormalBindingCleanupPending(false);
       queryClient.setQueryData(AGENT_KEYS.config(agentId), response);
       versionPreviewBackupRef.current = null;
       setIsVersionPreviewing(false);
       setSelectedPublishedVersionId('');
+      setRollbackPreview(undefined);
       setPublishedVersionsOpen(false);
       toast.success(t('toasts.rollbackSuccess'));
     } catch (error) {
+      const changedPreview = getAgentRollbackImpactChanged(error);
+      if (changedPreview) {
+        setRollbackPreview(changedPreview);
+        setBindingHealth(changedPreview.binding_health);
+        toast.warning(t('toasts.rollbackImpactChanged'));
+        return;
+      }
       toast.error(getErrorMessage(error) || t('toasts.rollbackFailed'));
     } finally {
       setIsRollingBackVersion(false);
@@ -935,6 +1043,7 @@ export function useAgentRuntimePageModel(agentId: string) {
     markServerSaved,
     payloadFromRuntimeConfig,
     queryClient,
+    rollbackPreview,
     selectedPublishedVersionId,
     t,
     tRoot,
@@ -966,7 +1075,14 @@ export function useAgentRuntimePageModel(agentId: string) {
     }
     const saved = await saveNow({ silent: false, force: true });
     if (saved) {
-      toast.success(t('toasts.saveSuccess'));
+      const savedHealth = lastSaveBindingHealthRef.current;
+      const abnormalCount =
+        (savedHealth?.suspended_count ?? 0) + (savedHealth?.unavailable_count ?? 0);
+      if (abnormalCount > 0) {
+        toast.warning(t('toasts.saveSuccessWithBindingWarnings', { count: abnormalCount }));
+      } else {
+        toast.success(t('toasts.saveSuccess'));
+      }
     }
   }, [
     canConfigureAgentRuntime,
@@ -977,6 +1093,64 @@ export function useAgentRuntimePageModel(agentId: string) {
     t,
     tRoot,
   ]);
+
+  const focusInvalidBindings = useCallback((health?: AgentBindingHealth) => {
+    if (health) {
+      setOpenSections(current => {
+        const next = { ...current };
+        health.items
+          .filter(item => item.status !== 'active')
+          .forEach(item => {
+            if (item.binding_type === 'skill') next.skills = true;
+            if (item.binding_type === 'knowledge_dataset') next.knowledge = true;
+            if (item.binding_type === 'database' || item.binding_type === 'database_table') {
+              next.databases = true;
+            }
+            if (item.binding_type === 'workflow') next.workflows = true;
+          });
+        return next;
+      });
+    }
+    window.setTimeout(() => {
+      document.getElementById('agent-binding-health')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    }, 0);
+  }, []);
+
+  const publishCurrentDraft = useCallback(
+    async (acknowledgeSuspendedBindings: boolean) => {
+      if (isPublishing) return;
+      setIsPublishing(true);
+      try {
+        await agentService.publishAgent(agentId, {
+          binding_revision: bindingRevisionRef.current || undefined,
+          acknowledge_suspended_bindings: acknowledgeSuspendedBindings || undefined,
+        });
+        setSuspendedBindingsDialogOpen(false);
+        queryClient.invalidateQueries({ queryKey: AGENT_KEYS.detail(agentId) });
+        queryClient.invalidateQueries({ queryKey: AGENT_KEYS.lists() });
+        queryClient.invalidateQueries({ queryKey: [...AGENT_KEYS.all, 'runnable-webapps'] });
+        toast.success(tRoot('agents.toasts.publishSuccess'));
+      } catch (error) {
+        const conflict = getAgentBindingConflict(error);
+        if (conflict?.bindingHealth) setBindingHealth(conflict.bindingHealth);
+        if (conflict?.code === 'agent_bindings_suspended' && !acknowledgeSuspendedBindings) {
+          setSuspendedBindingsDialogOpen(true);
+        } else if (conflict?.code === 'agent_bindings_invalid') {
+          setSuspendedBindingsDialogOpen(false);
+          focusInvalidBindings(conflict.bindingHealth);
+          toast.error(t('toasts.publishBindingsInvalid'));
+        } else {
+          toast.error(getErrorMessage(error) || tRoot('agents.toasts.publishFailed'));
+        }
+      } finally {
+        setIsPublishing(false);
+      }
+    },
+    [agentId, focusInvalidBindings, isPublishing, queryClient, t, tRoot]
+  );
 
   const handlePublish = useCallback(async () => {
     if (!canPublishAgent) {
@@ -1000,20 +1174,15 @@ export function useAgentRuntimePageModel(agentId: string) {
     const canPublishCurrentDraft =
       !canConfigureAgentRuntime || (await saveNow({ silent: true, force: true }));
     if (canPublishCurrentDraft) {
-      try {
-        await publishAgent.mutateAsync({ agentId, silent: false });
-      } catch {
-        // The mutation hook owns user-facing error feedback.
-      }
+      await publishCurrentDraft(false);
     }
   }, [
-    agentId,
     canPublishAgent,
     canConfigureAgentRuntime,
     hasAgentMemorySlotErrors,
     isAgentModelUnavailable,
     isSystemPromptTooLong,
-    publishAgent,
+    publishCurrentDraft,
     saveNow,
     t,
     tRoot,
@@ -1181,7 +1350,8 @@ export function useAgentRuntimePageModel(agentId: string) {
       saveState,
       saveText: getAgentRuntimeSaveText(t, saveState, lastSavedAt),
       isDirty,
-      isPublishing: publishAgent.isPending,
+      isPublishing,
+      canEditBasicInfo: canUpdateAgent,
       disablePrimaryActions: isVersionPreviewing || !canConfigureAgentRuntime,
       disablePublishActions: isVersionPreviewing || !canPublishAgent,
       disablePublishSettingsActions: isVersionPreviewing || !canManageAgentRuntimeAccess,
@@ -1198,11 +1368,13 @@ export function useAgentRuntimePageModel(agentId: string) {
       open: publishedVersionsOpen,
       isLoading: isLoadingVersions,
       isRollingBack: isRollingBackVersion,
+      isLoadingPreview: isLoadingRollbackPreview,
       isPreviewing: isVersionPreviewing,
       canRollback: canPublishAgent,
       canOpen: canPublishAgent,
       versions: publishedVersions,
       selectedVersionId: selectedPublishedVersionId,
+      rollbackPreview,
       onOpenChange: handlePublishedVersionsOpenChange,
       onSelectVersion: handleSelectPublishedVersion,
       onCancelPreview: () => {
@@ -1231,18 +1403,17 @@ export function useAgentRuntimePageModel(agentId: string) {
     },
     orchestration: {
       readOnly: isRuntimeConfigReadOnly,
-      locale,
-      agentWorkspaceId,
+      agentId,
       openSections,
       modelValue,
       isAgentModelUnavailable,
       homeTitle,
       openingStatement,
       inputPlaceholder,
-      selectedSkills,
+      selectedSkillItems,
       normalizedSelectedSkillIds,
-      selectableSkillsCount: selectableSkills.length,
-      isSkillsLoading,
+      selectableSkillsCount: skillCandidatesResponse?.data.total ?? selectableSkills.length,
+      isSkillsLoading: isSkillCandidatesLoading || isSkillCandidatesFetching,
       isSkillConfigLoading: false,
       isDatasetsLoading: isSelectedDatasetsLoading,
       canBindKnowledge,
@@ -1261,6 +1432,9 @@ export function useAgentRuntimePageModel(agentId: string) {
       defaultHomeTitle,
       defaultInputPlaceholder,
       openingGuideBrand: agentOpeningGuideBrand,
+      bindingHealth,
+      isCleanupPending: isAbnormalBindingCleanupPending,
+      onRemoveAllAbnormalBindings: () => setCleanupBindingsDialogOpen(true),
       onToggleSection: (section: AgentConfigSection) =>
         setOpenSections(current => ({ ...current, [section]: !current[section] })),
       onChangeModelValue: (value: ModelSelectorParameterValue) => {
@@ -1340,6 +1514,7 @@ export function useAgentRuntimePageModel(agentId: string) {
       openingGuideBrand: agentOpeningGuideBrand,
       homeTitle: currentPayload.home_title || defaultHomeTitle,
       openingStatement: currentPayload.opening_statement,
+      bindingHealth,
       beforeSend: handlePreviewBeforeSend,
       onOpenMemoryValues: () => setMemoryValuesOpen(true),
       onModelChange: handleModelChange,
@@ -1364,35 +1539,24 @@ export function useAgentRuntimePageModel(agentId: string) {
         onApplyResult: handleApplyOptimizedPrompt,
       },
       skill: {
+        agentId,
         open: skillDialogOpen,
         locale,
-        selectableSkillsCount: selectableSkills.length,
-        dialogSkills,
         normalizedSelectedSkillIds,
-        skillSearch,
-        showSelectedSkillsOnly,
         onOpenChange: setSkillDialogOpen,
-        onChangeSkillSearch: setSkillSearch,
-        onChangeShowSelectedSkillsOnly: setShowSelectedSkillsOnly,
-        onToggleSkill: handleToggleSkill,
+        onConfirmSkills: handleConfirmSkills,
       },
       knowledge: {
+        agentId,
         open: knowledgeDialogOpen && canBindKnowledge,
-        datasets: knowledgeDialogDatasets,
         selectedDatasetIds: knowledgeDatasetIds,
-        search: knowledgeSearch,
-        showSelectedOnly: showSelectedKnowledgeOnly,
-        isLoading: isKnowledgeDialogDatasetsLoading || isSelectedDatasetsLoading,
         onOpenChange: setKnowledgeDialogOpen,
-        onChangeSearch: setKnowledgeSearch,
-        onChangeShowSelectedOnly: setShowSelectedKnowledgeOnly,
-        onToggleDataset: handleToggleKnowledgeDataset,
+        onConfirmDatasets: handleConfirmKnowledgeDatasets,
       },
       workflow: {
+        agentId,
         open: workflowDialogOpen,
         bindings: workflowBindings,
-        candidates: workflowCandidates,
-        isLoading: isWorkflowCandidatesLoading,
         onOpenChange: setWorkflowDialogOpen,
         onConfirmWorkflows: handleConfirmWorkflows,
       },
@@ -1401,6 +1565,20 @@ export function useAgentRuntimePageModel(agentId: string) {
         open: memoryValuesOpen,
         defaultUserId: profile?.id,
         onOpenChange: setMemoryValuesOpen,
+      },
+      suspendedBindings: {
+        open: suspendedBindingsDialogOpen,
+        health: bindingHealth,
+        isPublishing,
+        onOpenChange: setSuspendedBindingsDialogOpen,
+        onConfirm: () => void publishCurrentDraft(true),
+      },
+      cleanupBindings: {
+        open: cleanupBindingsDialogOpen,
+        onOpenChange: setCleanupBindingsDialogOpen,
+        title: t('bindingHealth.cleanupConfirmTitle'),
+        description: t('bindingHealth.cleanupConfirmDescription'),
+        onConfirm: handleRemoveAllAbnormalBindings,
       },
     },
   };

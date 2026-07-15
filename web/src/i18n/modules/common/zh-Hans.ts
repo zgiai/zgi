@@ -128,8 +128,7 @@ const messages: CommonMessages = {
 
   workspaceRequired: {
     title: '请选择一个工作空间后继续',
-    description:
-      '资产管理和定时任务需要在具体工作空间内使用。请先选择工作空间后继续。',
+    description: '资产管理和定时任务需要在具体工作空间内使用。请先选择工作空间后继续。',
     noWorkspacesTitle: '暂无可用工作空间',
     memberNoWorkspacesDescription: '您已加入组织，但尚未被分配到任何工作空间。',
     adminNoWorkspacesDescription:
@@ -143,18 +142,61 @@ const messages: CommonMessages = {
 
   assetMove: {
     title: '移动到工作空间',
-    description: '选择目标工作空间，并在确认前查看移动检查结果。',
-    descriptionWithName: '将“{name}”移动到其他工作空间，确认前请查看移动检查结果。',
+    description:
+      '系统已检查相关资产依赖。选择目标工作空间并确认后，将校验目标状态和访问权限；移动完成后，原工作空间成员可能无法继续访问。',
+    descriptionWithName:
+      '系统已检查“{name}”的相关资产依赖。选择目标工作空间并确认后，将校验目标状态和访问权限。',
+    locationTitle: '移动位置',
+    locationDescription: '资产将从当前工作空间转移到你选择的目标工作空间。',
+    currentWorkspace: '当前工作空间',
     targetWorkspace: '目标工作空间',
     targetWorkspacePlaceholder: '选择目标工作空间',
-    previewing: '正在检查移动...',
+    preflightChecking: '正在检查该资产的关联依赖...',
+    dependencyPreflightFailed: '无法检查资产关联依赖，请重试',
+    continueToTargetSelection: '继续选择工作空间',
+    bindingPreflightWarningTitle: '移动后将解除这些绑定',
+    bindingPreflightWarningDescription:
+      '继续后请选择目标工作空间。只有在最终确认移动时才会解除这些智能体绑定，此步骤不会立即修改配置。',
+    targetLoadFailedTitle: '无法加载可迁入的工作空间',
+    targetLoadFailedDescription: '请刷新后重试。正式移动前系统仍会再次校验你的权限。',
+    noTargetWorkspaceTitle: '暂无其他可用工作空间',
+    noTargetWorkspaceAdminDescription: '请先创建一个新的工作空间，再返回这里移动资产。',
+    noTargetWorkspaceMemberDescription:
+      '请联系组织管理员或所有者，为你授予其他工作空间的资产移动权限。',
+    createWorkspace: '创建工作空间',
+    previewing: '正在校验目标工作空间和访问权限...',
     unknownWorkspace: '未知工作空间',
-    blockersTitle: '无法移动',
-    warningsTitle: '请确认提示',
-    confirm: '移动',
-    previewFailed: '移动检查失败',
+    readyTitle: '可以移动',
+    readyDescription: '资产依赖和访问权限检查通过，确认后将移动到目标工作空间。',
+    bindingImpactTitle: '需要解除智能体绑定',
+    bindingImpactDescription:
+      '该资源正被 {count} 个智能体使用。确认移动时会先展示需要解绑的智能体。',
+    blockersTitle: '当前无法移动',
+    warningsTitle: '移动前请注意',
+    confirm: '确认移动',
+    unbindAndMove: '解绑并移动',
+    previewFailed: '无法检查资产依赖和访问权限',
     moveSuccess: '移动成功',
     moveFailed: '移动失败',
+  },
+  agentResourceBound: {
+    title: '该资源正在被 Agent 使用',
+    description: '本次操作会影响 {count} 个 Agent。',
+    warningTitle: 'Agent 绑定将发生变化',
+    warningDescription: '继续后将从这些智能体中解绑该资源，相关能力将不再可用。',
+    draft: '草稿',
+    published: '已发布',
+    bindingCount: '{count} 个绑定',
+    viewDetails: '查看详情',
+    unavailableAgent: '不可见的智能体',
+    noDescription: '暂无描述',
+    previewFailed: '无法检查智能体绑定，请重试。',
+    confirm: '解绑并继续',
+    retainSuspendedDescription: '有 {count} 个 Agent 正在使用即将停用的 Skill，相关绑定会被保留。',
+    retainSuspendedWarningTitle: '绑定将被暂停',
+    retainSuspendedWarningDescription:
+      '停用期间，受影响 Agent 无法调用该 Skill；重新启用后，这些绑定会自动恢复。',
+    retainSuspendedConfirm: '保留绑定并停用',
   },
 
   // Error Boundary
@@ -208,7 +250,8 @@ const messages: CommonMessages = {
     datasets: '无可用知识库',
     databases: '无可用数据库',
     files: '无可用文件',
-    description: '在个人工作台中，您可以使用组织级产品入口。如需执行工作空间内操作，请切换到具体工作空间。',
+    description:
+      '在个人工作台中，您可以使用组织级产品入口。如需执行工作空间内操作，请切换到具体工作空间。',
     startCreating: '开始创建',
     selectWorkspaceHint: '请选择一个工作空间后继续',
     overlayHint: '点击高亮区域选择工作空间，或点击其他位置关闭',

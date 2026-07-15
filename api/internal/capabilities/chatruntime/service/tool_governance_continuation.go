@@ -190,9 +190,7 @@ func (s *service) prepareToolGovernanceContinuationChat(ctx context.Context, sco
 	if err != nil {
 		return nil, err
 	}
-	if err := applyCanonicalConversationSurface(continuation.Conversation, parts); err != nil {
-		return nil, err
-	}
+	applyPersistedConversationSurface(continuation.Conversation, parts)
 	restoreConsoleFilesContextFromMetadata(parts, message.Metadata, continuation.Event)
 	restoreConsoleAgentsContextFromMetadata(parts, message.Metadata, continuation.Event)
 	restoreTurnInitialContextFromMetadata(parts, message.Metadata)
@@ -313,6 +311,17 @@ func (s *service) runToolGovernanceApprovedFrozenContinuation(
 	}
 	if prepared.parts == nil {
 		return nil, true, fmt.Errorf("%w: prepared chat parts are required", ErrInvalidInput)
+	}
+	catalog, err := s.catalogSkillMetadata(ctx, prepared.Scope.OrganizationID)
+	if err != nil {
+		return nil, true, err
+	}
+	organizationEnabled, err := s.effectiveOrganizationSkillIDs(ctx, prepared.Scope.OrganizationID, catalog)
+	if err != nil {
+		return nil, true, err
+	}
+	if !organizationAllowsSkillID(frozen.SkillID, catalog, organizationEnabled) {
+		return nil, true, fmt.Errorf("%w: skill %s is not enabled by organization", ErrInvalidInput, frozen.SkillID)
 	}
 	prepared.parts.SkillIDs = ensureFrozenInvocationSkillID(prepared.parts.SkillIDs, frozen.SkillID)
 	if len(prepared.parts.SkillIDs) > 0 {

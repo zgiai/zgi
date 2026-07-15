@@ -14,6 +14,7 @@ import type { WebAppWorkflowConfig } from '@/services/types/webapp';
 import { useAuthStore } from '@/store/auth-store';
 import { WEBAPP_USER_MIGRATED_EVENT } from '@/hooks/webapp/use-maybe-migrate-user';
 import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
+import { isConversationRouteRestoring } from '@/components/chat/runtime/conversation-route-state';
 import {
   type ConversationRouteHandoff,
   resolveConversationRouteSync,
@@ -90,6 +91,10 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
   const lastInitializedConversationIdRef = useRef<string | null | undefined>(undefined);
   const routeHandoffRef = useRef<ConversationRouteHandoff | undefined>(undefined);
   const modelValue = useMemo(() => ({ provider: '', model: '', params: {} }), []);
+  const isRestoringConversationRoute = isConversationRouteRestoring(
+    conversationIdParam,
+    activeConversationId
+  );
 
   const replaceConversationRoute = useCallback(
     (conversationId: string | null, nullMode: 'new-chat' | 'draft-persistence' = 'new-chat') => {
@@ -210,6 +215,14 @@ export default function AgentWebappChat({ webAppId, config }: AgentWebappChatPro
             {t('header.login')}
           </Button>
         </div>
+      </div>
+    );
+  }
+
+  if (isRestoringConversationRoute) {
+    return (
+      <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">
+        {t('consoleChat.loading')}
       </div>
     );
   }

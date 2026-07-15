@@ -77,6 +77,7 @@ func TestBeginWorkflowApprovalContinuationRejectsOtherCallerBeforeMessageLookup(
 		context.Background(),
 		Scope{OrganizationID: organizationID, AccountID: accountID},
 		Caller{Type: runtimemodel.ConversationCallerAgent, ID: &otherAgentID},
+		RunConfig{},
 		conversationID,
 		messageID,
 	)
@@ -89,6 +90,63 @@ func TestBeginWorkflowApprovalContinuationRejectsOtherCallerBeforeMessageLookup(
 	}
 	if messageRepo.getScopedCalled {
 		t.Fatalf("message lookup should not run after caller-scoped conversation denial")
+	}
+}
+
+func TestBeginWorkflowApprovalContinuationRejectsUnavailableBindingBeforeStreaming(t *testing.T) {
+	for _, status := range []string{
+		runtimemodel.MessageStatusWaitingApproval,
+		runtimemodel.MessageStatusWaitingQuestion,
+	} {
+		t.Run(status, func(t *testing.T) {
+			organizationID := uuid.New()
+			accountID := uuid.New()
+			agentID := uuid.New()
+			conversationID := uuid.New()
+			messageID := uuid.New()
+			targetAgentID := uuid.NewString()
+			message := &runtimemodel.Message{
+				ID:             messageID,
+				ConversationID: conversationID,
+				Status:         status,
+				Metadata: map[string]interface{}{
+					"agent_workflow_continuation": map[string]interface{}{
+						"workflow_run_id": "run-1",
+						"binding_id":      "removed-binding",
+						"agent_id":        targetAgentID,
+					},
+				},
+			}
+			messageRepo := &callerScopedStreamMessageRepo{message: message}
+			conversationRepo := &callerScopedStreamConversationRepo{
+				allowedCallerType: runtimemodel.ConversationCallerAgent,
+				allowedCallerID:   agentID,
+			}
+			svc := &service{repos: &repository.Repositories{
+				Access:       callerScopedStreamAccessRepo{},
+				Conversation: conversationRepo,
+				Message:      messageRepo,
+			}}
+
+			_, err := svc.BeginWorkflowApprovalContinuation(
+				context.Background(),
+				Scope{OrganizationID: organizationID, AccountID: accountID},
+				Caller{Type: runtimemodel.ConversationCallerAgent, ID: &agentID},
+				RunConfig{WorkflowBindings: []AgentWorkflowBinding{{
+					BindingID: "another-binding",
+					AgentID:   targetAgentID,
+				}}},
+				conversationID,
+				messageID,
+			)
+
+			if !errors.Is(err, ErrWorkflowBindingUnavailable) {
+				t.Fatalf("BeginWorkflowApprovalContinuation() error = %v, want ErrWorkflowBindingUnavailable", err)
+			}
+			if message.Status != status {
+				t.Fatalf("message status = %q, want waiting status %q unchanged", message.Status, status)
+			}
+		})
 	}
 }
 

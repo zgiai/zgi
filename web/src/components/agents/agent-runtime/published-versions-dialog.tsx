@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { CheckCircle2, History, Loader2, RotateCcw, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -12,20 +13,24 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { AgentPublishedVersionListItem } from './types';
+import type { AgentPublishedVersionRollbackPreview } from '@/services/types/agent';
 
 interface AgentRuntimeVersionPopoverProps {
   open: boolean;
   isLoading: boolean;
   isRollingBack: boolean;
+  isLoadingPreview: boolean;
   isPreviewing: boolean;
   canOpen?: boolean;
   canRollback?: boolean;
   versions: AgentPublishedVersionListItem[];
   selectedVersionId: string;
+  rollbackPreview?: AgentPublishedVersionRollbackPreview;
   onOpenChange: (open: boolean) => void;
   onSelectVersion: (versionId: string) => void;
   onCancelPreview: () => void;
@@ -40,11 +45,13 @@ export function AgentRuntimeVersionPopover({
   open,
   isLoading,
   isRollingBack,
+  isLoadingPreview,
   isPreviewing,
   canOpen = true,
   canRollback = true,
   versions,
   selectedVersionId,
+  rollbackPreview,
   onOpenChange,
   onSelectVersion,
   onCancelPreview,
@@ -52,6 +59,12 @@ export function AgentRuntimeVersionPopover({
 }: AgentRuntimeVersionPopoverProps) {
   const t = useT('agents.agentRuntime');
   const selectedVersion = versions.find(version => version.id === selectedVersionId);
+  const [cleanupConfirmed, setCleanupConfirmed] = useState(false);
+  const removedBindings = rollbackPreview?.removed_bindings ?? [];
+
+  useEffect(() => {
+    setCleanupConfirmed(false);
+  }, [open, selectedVersionId, rollbackPreview?.impact_token]);
 
   return (
     <Popover open={open && canOpen} onOpenChange={nextOpen => canOpen && onOpenChange(nextOpen)}>
@@ -130,6 +143,48 @@ export function AgentRuntimeVersionPopover({
               })
             )}
           </div>
+          {selectedVersionId ? (
+            <div className="border-t px-4 py-3">
+              {isLoadingPreview ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" />
+                  {t('publishedVersions.loadingImpact')}
+                </div>
+              ) : rollbackPreview ? (
+                <div className="space-y-2">
+                  <div className="text-sm font-medium">{t('publishedVersions.impactTitle')}</div>
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    {t('publishedVersions.impactSummary', { count: removedBindings.length })}
+                  </p>
+                  {removedBindings.length > 0 ? (
+                    <>
+                      <div className="max-h-28 space-y-1 overflow-y-auto rounded-md border p-2">
+                        {removedBindings.map((item, index) => (
+                          <div
+                            key={`${item.binding_type}:${item.parent_resource_id ?? ''}:${item.resource_id}:${index}`}
+                            className="truncate text-xs text-muted-foreground"
+                          >
+                            {item.display_name || item.resource_id}
+                          </div>
+                        ))}
+                      </div>
+                      <label className="flex cursor-pointer items-start gap-2 text-xs leading-5">
+                        <Checkbox
+                          checked={cleanupConfirmed}
+                          onCheckedChange={checked => setCleanupConfirmed(checked === true)}
+                        />
+                        <span>{t('publishedVersions.confirmCleanup')}</span>
+                      </label>
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      {t('publishedVersions.noBindingsRemoved')}
+                    </p>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
         <div className="flex items-center justify-between gap-2 border-t p-3">
           <Button
@@ -144,7 +199,15 @@ export function AgentRuntimeVersionPopover({
           <Button
             size="sm"
             onClick={onConfirmRollback}
-            disabled={!canRollback || !selectedVersion || !isPreviewing || isRollingBack}
+            disabled={
+              !canRollback ||
+              !selectedVersion ||
+              !isPreviewing ||
+              !rollbackPreview?.impact_token ||
+              isLoadingPreview ||
+              isRollingBack ||
+              (removedBindings.length > 0 && !cleanupConfirmed)
+            }
           >
             {isRollingBack ? (
               <Loader2 className="mr-1.5 size-4 animate-spin" />

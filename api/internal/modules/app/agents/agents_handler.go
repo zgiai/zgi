@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/zgiai/zgi/api/internal/capabilities/agentbindings"
 	runtimedto "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/dto"
 	runtimemodel "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/model"
 	runtimeservice "github.com/zgiai/zgi/api/internal/capabilities/chatruntime/service"
@@ -481,10 +482,6 @@ func (h *AgentsHandler) UpdateAgentConfig(c *gin.Context) {
 		response.Fail(c, response.ErrInvalidParam)
 		return
 	}
-	if err := h.validateAgentRuntimeSkills(c, req); err != nil {
-		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
-		return
-	}
 	result, err := h.appService.UpdateAgentConfig(ctx, c.Param("agent_id"), accountID, req)
 	if err != nil {
 		h.failRuntime(c, err)
@@ -503,10 +500,144 @@ func (h *AgentsHandler) ListAgentWorkflowBindingCandidates(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := h.appService.ListAgentWorkflowBindingCandidates(ctx, c.Param("agent_id"), accountID, dto.AgentWorkflowBindingCandidatesRequest{
-		IncludeSelected:    true,
-		IncludeStartInputs: true,
-	})
+	var req dto.AgentWorkflowBindingCandidatesRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if req.Limit == 0 {
+		req.Limit = maxAgentBindingCandidateLimit
+	}
+	if req.Page == 0 {
+		req.Page = 1
+	}
+	req.IncludeSelected = true
+	req.IncludeStartInputs = true
+	result, err := h.appService.ListAgentWorkflowBindingCandidates(ctx, c.Param("agent_id"), accountID, req)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) ListAgentSkillBindingCandidates(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx, ok := h.requireAgentManageAccess(c, accountID)
+	if !ok {
+		return
+	}
+	var req dto.AgentSkillCandidatesRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if req.Limit == 0 {
+		req.Limit = maxAgentBindingCandidateLimit
+	}
+	if req.Page == 0 {
+		req.Page = 1
+	}
+	req.IncludeSelected = true
+	result, err := h.appService.ListAgentSkillCandidates(ctx, c.Param("agent_id"), accountID, req)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) ListAgentKnowledgeBindingCandidates(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx, ok := h.requireAgentManageAccess(c, accountID)
+	if !ok {
+		return
+	}
+	var req dto.AgentKnowledgeCandidatesRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if req.Limit == 0 {
+		req.Limit = maxAgentBindingCandidateLimit
+	}
+	if req.Page == 0 {
+		req.Page = 1
+	}
+	req.IncludeSelected = true
+	result, err := h.appService.ListAgentKnowledgeCandidates(ctx, c.Param("agent_id"), accountID, req)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) ListAgentDatabaseBindingCandidates(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx, ok := h.requireAgentManageAccess(c, accountID)
+	if !ok {
+		return
+	}
+	var req dto.AgentDatabaseCandidatesRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if req.Limit == 0 {
+		req.Limit = maxAgentBindingCandidateLimit
+	}
+	if req.Page == 0 {
+		req.Page = 1
+	}
+	if _, provided := c.GetQuery("available_only"); !provided {
+		req.AvailableOnly = true
+	}
+	req.IncludeSelected = true
+	result, err := h.appService.ListAgentDatabaseCandidates(ctx, c.Param("agent_id"), accountID, req)
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *AgentsHandler) ListAgentDatabaseTableBindingCandidates(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx, ok := h.requireAgentManageAccess(c, accountID)
+	if !ok {
+		return
+	}
+	var req dto.AgentDatabaseTablesRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	if req.Limit == 0 {
+		req.Limit = maxAgentBindingCandidateLimit
+	}
+	if req.Page == 0 {
+		req.Page = 1
+	}
+	req.DataSourceID = c.Param("data_source_id")
+	req.IncludeSelected = true
+	result, err := h.appService.ListAgentDatabaseTables(ctx, c.Param("agent_id"), accountID, req)
 	if err != nil {
 		h.failRuntime(c, err)
 		return
@@ -615,19 +746,6 @@ func (h *AgentsHandler) PublishAgent(c *gin.Context) {
 	var req dto.PublishAgentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		req = dto.PublishAgentRequest{}
-	}
-	cfg, err := h.appService.GetAgentConfig(ctx, c.Param("agent_id"), accountID)
-	if err != nil {
-		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
-		return
-	}
-	if err := h.validateAgentRuntimeSkills(c, dto.AgentConfigRequest{
-		EnabledSkillIDs:     cfg.EnabledSkillIDs,
-		KnowledgeDatasetIDs: cfg.KnowledgeDatasetIDs,
-		DatabaseBindings:    cfg.DatabaseBindings,
-	}); err != nil {
-		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
-		return
 	}
 	result, err := h.appService.PublishAgent(ctx, c.Param("agent_id"), accountID, req)
 	if err != nil {
@@ -782,6 +900,24 @@ func (h *AgentsHandler) ListAgentPublishedVersions(c *gin.Context) {
 	response.Success(c, result)
 }
 
+func (h *AgentsHandler) PreviewAgentPublishedVersionRollback(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	ctx, ok := h.requireAgentManageAccess(c, accountID)
+	if !ok {
+		return
+	}
+	result, err := h.appService.PreviewAgentPublishedVersionRollback(ctx, c.Param("agent_id"), accountID, c.Param("version_id"))
+	if err != nil {
+		h.failRuntime(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *AgentsHandler) RollbackAgentPublishedVersion(c *gin.Context) {
 	accountID := c.GetString("account_id")
 	if accountID == "" {
@@ -799,7 +935,7 @@ func (h *AgentsHandler) RollbackAgentPublishedVersion(c *gin.Context) {
 	}
 	result, err := h.appService.RollbackAgentPublishedVersion(ctx, c.Param("agent_id"), accountID, req)
 	if err != nil {
-		response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		h.failRuntime(c, err)
 		return
 	}
 	response.Success(c, result)
@@ -1281,10 +1417,21 @@ func (h *AgentsHandler) DeleteAgent(c *gin.Context) {
 	ctx := c.Request.Context()
 	ctx = context.WithValue(ctx, "account_id", accountID)
 	ctx = context.WithValue(ctx, "tenant_id", callerOrganizationID)
+	ctx = withAgentResourceMutationOptions(ctx, c.Query("agent_binding_action"), c.Query("impact_token"))
 
 	// Call service to delete agent with permission validation
 	err := h.appService.DeleteAgent(ctx, agentID)
 	if err != nil {
+		if util.WriteAgentBindingConflict(c, err) {
+			return
+		}
+		if errors.Is(err, errAgentPermissionDenied) {
+			response.SpecialFail(c, gin.H{
+				"code":    "403001",
+				"message": "Permission denied",
+			})
+			return
+		}
 		// Map specific errors to appropriate responses
 		switch err.Error() {
 		case "agent not found":
@@ -1307,4 +1454,42 @@ func (h *AgentsHandler) DeleteAgent(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{"message": "Agent deleted successfully"})
+}
+
+type agentDeleteImpactPreviewer interface {
+	PreviewAgentDeleteImpact(ctx context.Context, agentID string) (*agentbindings.Impact, error)
+}
+
+func (h *AgentsHandler) PreviewAgentDeleteImpact(c *gin.Context) {
+	accountID := c.GetString("account_id")
+	agentID := c.Param("agent_id")
+	callerOrganizationID := util.GetOrganizationID(c)
+	if accountID == "" {
+		response.Fail(c, response.ErrUnauthorized)
+		return
+	}
+	if agentID == "" || callerOrganizationID == "" {
+		response.Fail(c, response.ErrInvalidParam)
+		return
+	}
+	previewer, ok := h.appService.(agentDeleteImpactPreviewer)
+	if !ok {
+		response.Fail(c, response.ErrSystemError)
+		return
+	}
+	ctx := context.WithValue(c.Request.Context(), "account_id", accountID)
+	ctx = context.WithValue(ctx, "tenant_id", callerOrganizationID)
+	impact, err := previewer.PreviewAgentDeleteImpact(ctx, agentID)
+	if err != nil {
+		switch err.Error() {
+		case "agent not found":
+			response.SpecialFail(c, gin.H{"code": "404001", "message": "Agent not found"})
+		case "permission denied":
+			response.SpecialFail(c, gin.H{"code": "403001", "message": "Permission denied"})
+		default:
+			response.SpecialFail(c, gin.H{"code": "399001", "message": err.Error()})
+		}
+		return
+	}
+	response.Success(c, impact)
 }

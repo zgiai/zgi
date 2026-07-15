@@ -35,6 +35,11 @@ import type { DbTable } from '@/services/types/db';
 import { ResourceSidebar, ResourceSidebarHeader } from '@/components/common/resource-sidebar';
 import { EditDbDialog } from '@/components/db/dialog';
 import { ErrorBoundary } from '@/components/error-boundary';
+import { AgentResourceBoundDialog } from '@/components/common/agent-resource-bound-dialog';
+import type { AgentResourceBoundImpact } from '@/services/types/common';
+import { getAgentResourceBoundImpact } from '@/utils/agent-resource-bound';
+import { dbService } from '@/services/db.service';
+import { toast } from 'sonner';
 import {
   DATABASE_PERMISSION_ACTIONS,
   DATABASE_TABLE_METADATA_PERMISSION_CODES,
@@ -52,10 +57,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
   const { dbId } = React.use(params);
 
   // Permissions
-  const {
-    hasAnyPermission,
-    isLoading: isPermissionsLoading,
-  } = useAccountPermissions();
+  const { hasAnyPermission, isLoading: isPermissionsLoading } = useAccountPermissions();
   const canView = hasAnyPermission(DATABASE_VISIBLE_PERMISSION_CODES);
   const canUpdateDatabase = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.update);
   const canManageSchema = hasAnyPermission(DATABASE_PERMISSION_ACTIONS.schemaManage);
@@ -93,11 +95,49 @@ export default function DbLayout({ children, params }: LayoutProps) {
   } | null>(null);
   const [editDbOpen, setEditDbOpen] = React.useState(false);
   const [deleteTarget, setDeleteTarget] = React.useState<{ id: string; name: string } | null>(null);
+  const [bindingImpact, setBindingImpact] = React.useState<AgentResourceBoundImpact | null>(null);
+  const [isCheckingDeleteImpact, setIsCheckingDeleteImpact] = React.useState(false);
 
   const { tables, isLoading } = useDbTables(dbId, {
     enabled: canViewTableMetadata && !isMismatch,
   });
   const deleteMutation = useDeleteDbTable(dbId);
+
+  const deleteTable = async (impact?: AgentResourceBoundImpact) => {
+    if (!canManageSchema || !deleteTarget) return;
+    const target = deleteTarget;
+    try {
+      await deleteMutation.mutateAsync({
+        id: target.id,
+        confirmation: impact
+          ? { agent_binding_action: 'unbind', impact_token: impact.impact_token }
+          : undefined,
+      });
+      setDeleteTarget(null);
+      setBindingImpact(null);
+      if (pathname.split('/').includes(target.id)) {
+        router.push(`/console/db/${dbId}`);
+      }
+    } catch (error) {
+      const nextImpact = getAgentResourceBoundImpact(error);
+      if (!nextImpact) return;
+      setBindingImpact(nextImpact);
+    }
+  };
+
+  const requestDeleteTable = async (target: { id: string; name: string }) => {
+    if (!canManageSchema || isCheckingDeleteImpact) return;
+    setIsCheckingDeleteImpact(true);
+    try {
+      const response = await dbService.previewDbTableDeleteImpact(dbId, target.id);
+      setDeleteTarget(target);
+      if (response.data) setBindingImpact(response.data);
+    } catch {
+      toast.error(t('common.agentResourceBound.previewFailed'));
+    } finally {
+      setIsCheckingDeleteImpact(false);
+    }
+  };
 
   React.useEffect(() => {
     saveSidebarCollapsed('db', isCollapsed);
@@ -319,8 +359,9 @@ export default function DbLayout({ children, params }: LayoutProps) {
                                 <DropdownMenuItem
                                   variant="destructive"
                                   inset
+                                  disabled={isCheckingDeleteImpact}
                                   onSelect={() =>
-                                    setDeleteTarget({ id: String(table.id), name: label })
+                                    void requestDeleteTable({ id: String(table.id), name: label })
                                   }
                                 >
                                   <Trash2 className="h-4 w-4 text-destructive" />
@@ -406,7 +447,7 @@ export default function DbLayout({ children, params }: LayoutProps) {
         {/* Delete Table Confirmation Dialog */}
         <ConfirmDialog
           variant="danger"
-          open={Boolean(deleteTarget)}
+          open={Boolean(deleteTarget) && !bindingImpact}
           onOpenChange={open => {
             if (!open) setDeleteTarget(null);
           }}
@@ -415,17 +456,20 @@ export default function DbLayout({ children, params }: LayoutProps) {
           confirmText={t('common.confirm')}
           cancelText={t('common.cancel')}
           loading={deleteMutation.isPending}
+          onConfirm={() => void deleteTable()}
+        />
+        <AgentResourceBoundDialog
+          open={Boolean(bindingImpact)}
+          impact={bindingImpact}
+          loading={deleteMutation.isPending}
+          onOpenChange={open => {
+            if (!open) {
+              setBindingImpact(null);
+              setDeleteTarget(null);
+            }
+          }}
           onConfirm={() => {
-            if (!canManageSchema) return;
-            if (!deleteTarget) return;
-            deleteMutation.mutate(deleteTarget.id, {
-              onSuccess: () => {
-                setDeleteTarget(null);
-                if (pathname.split('/').includes(deleteTarget.id)) {
-                  router.push(`/console/db/${dbId}`);
-                }
-              },
-            });
+            if (bindingImpact) void deleteTable(bindingImpact);
           }}
         />
       </>

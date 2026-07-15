@@ -16,7 +16,31 @@ const (
 	governanceAssetsKey            = "tool_governance_assets"
 	governanceSessionGrantsKey     = "tool_governance_session_grants"
 	governanceCorrelationIDKey     = "tool_governance_correlation_id"
+	agentBindingVerifierKey        = "_agent_binding_verifier"
 )
+
+// AgentBindingCheck identifies one persistent Agent resource authorization
+// that must still exist immediately before a governed tool invocation.
+type AgentBindingCheck struct {
+	BindingType      string
+	ResourceID       string
+	ParentResourceID string
+	AccessMode       string
+}
+
+type AgentBindingVerifier func(context.Context, AgentBindingCheck) (bool, error)
+
+// WithAgentBindingVerifier attaches an in-process verifier to a single runtime
+// request. It is intentionally not serializable and never leaves the backend.
+func WithAgentBindingVerifier(params map[string]interface{}, verifier AgentBindingVerifier) map[string]interface{} {
+	if params == nil {
+		params = map[string]interface{}{}
+	}
+	if verifier != nil {
+		params[agentBindingVerifierKey] = verifier
+	}
+	return params
+}
 
 type PolicyToolGovernanceGateway struct {
 	policy toolgovernance.Policy
@@ -35,6 +59,7 @@ func (g *PolicyToolGovernanceGateway) DecideSkillTool(ctx context.Context, req T
 	governance := governanceRuntimeParameters(params)
 	manifest := governanceManifestForArguments(req.Manifest, req.SkillID, req.ToolName, req.Arguments, params)
 	approvalMode, preauthorization := governanceAgentAuthorization(params, governance, req.SkillID, req.ToolName, manifest, req.Arguments)
+	preauthorization = verifyCurrentAgentBindings(ctx, params, manifest, preauthorization)
 	return toolgovernance.Decide(toolgovernance.Request{
 		Manifest:         manifest,
 		PermissionTier:   governancePermissionTier(params, governance),
@@ -51,6 +76,75 @@ func (g *PolicyToolGovernanceGateway) DecideSkillTool(ctx context.Context, req T
 		SessionGrants:    governanceSessionGrants(params, governance),
 		CorrelationID:    governanceString(params, governance, governanceCorrelationIDKey, "correlation_id"),
 	}, g.policy), nil
+}
+
+func verifyCurrentAgentBindings(
+	ctx context.Context,
+	params map[string]interface{},
+	manifest toolgovernance.Manifest,
+	preauthorization *toolgovernance.Preauthorization,
+) *toolgovernance.Preauthorization {
+	if preauthorization == nil || !preauthorization.Required || !preauthorization.Matched ||
+		preauthorization.Source != agentAuthorizationSourceBinding {
+		return preauthorization
+	}
+	verifier, _ := params[agentBindingVerifierKey].(AgentBindingVerifier)
+	if verifier == nil {
+		return preauthorization
+	}
+	checks := agentBindingChecks(preauthorization, manifest)
+	if len(checks) == 0 {
+		return deniedCurrentAgentBinding(preauthorization)
+	}
+	for _, check := range checks {
+		matched, err := verifier(ctx, check)
+		if err != nil || !matched {
+			return deniedCurrentAgentBinding(preauthorization)
+		}
+	}
+	return preauthorization
+}
+
+func deniedCurrentAgentBinding(preauthorization *toolgovernance.Preauthorization) *toolgovernance.Preauthorization {
+	denied := *preauthorization
+	denied.Matched = false
+	denied.Code = agentResourceNotBoundCode
+	denied.Reason = "the requested resource is no longer bound to the current Agent"
+	return &denied
+}
+
+func agentBindingChecks(
+	preauthorization *toolgovernance.Preauthorization,
+	manifest toolgovernance.Manifest,
+) []AgentBindingCheck {
+	accessMode := "read"
+	if manifest.Effect != toolgovernance.EffectRead {
+		accessMode = "write"
+	}
+	out := make([]AgentBindingCheck, 0, len(preauthorization.Resources))
+	for _, resource := range preauthorization.Resources {
+		check := AgentBindingCheck{ResourceID: strings.TrimSpace(resource.ID), AccessMode: accessMode}
+		switch preauthorization.BindingType {
+		case "knowledge":
+			check.BindingType = "knowledge_dataset"
+		case "database":
+			if strings.EqualFold(strings.TrimSpace(resource.Type), "database_table") {
+				check.BindingType = "database_table"
+				check.ParentResourceID = strings.TrimSpace(fmt.Sprint(resource.Metadata["data_source_id"]))
+			} else {
+				check.BindingType = "database"
+			}
+		case "workflow":
+			check.BindingType = "workflow"
+			check.AccessMode = "execute"
+			check.ParentResourceID = stringMapValue(resource.Metadata, "agent_id", "workflow_id")
+		}
+		if check.BindingType == "" || check.ResourceID == "" {
+			continue
+		}
+		out = append(out, check)
+	}
+	return out
 }
 
 func governanceRuntimeParameters(params map[string]interface{}) map[string]interface{} {

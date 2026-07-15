@@ -5,12 +5,12 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
-import type { AIChatSkillMetadata } from '@/services/types/aichat';
 import type { OpeningGuideBrand } from '@/components/chat/utils/opening-guide-brand';
 import type { OpeningStatementDialogValue } from '@/components/workflow/ui/features-panel/opening-statement-dialog';
 import type {
   AgentDatabaseBinding,
   AgentMemorySlotConfig,
+  AgentBindingHealth,
   AgentWorkflowBinding,
   AgentWorkflowBindingCandidate,
 } from '@/services/types/agent';
@@ -23,19 +23,19 @@ import { AgentRuntimeMemorySection } from './sections/memory-section';
 import { AgentRuntimeModelSection } from './sections/model-section';
 import { AgentRuntimeSkillSection } from './sections/skill-section';
 import { AgentRuntimeWorkflowSection } from './sections/workflow-section';
-import type { AgentConfigSection } from './types';
+import type { AgentConfigSection, AgentRuntimeSelectedSkillItem } from './types';
 import type { AgentMemorySlotValidationError } from './utils';
+import { AgentBindingHealthPanel } from './binding-health';
 
 interface AgentRuntimeOrchestrationPanelProps {
-  locale: string;
-  agentWorkspaceId?: string;
+  agentId: string;
   openSections: Record<AgentConfigSection, boolean>;
   modelValue: ModelSelectorParameterValue;
   isAgentModelUnavailable: boolean;
   homeTitle: string;
   openingStatement: string;
   inputPlaceholder: string;
-  selectedSkills: AIChatSkillMetadata[];
+  selectedSkillItems: AgentRuntimeSelectedSkillItem[];
   normalizedSelectedSkillIds: string[];
   selectableSkillsCount: number;
   isSkillsLoading: boolean;
@@ -61,6 +61,9 @@ interface AgentRuntimeOrchestrationPanelProps {
   scrollAreaClassName?: string;
   scrollViewportClassName?: string;
   readOnly?: boolean;
+  bindingHealth?: AgentBindingHealth;
+  isCleanupPending: boolean;
+  onRemoveAllAbnormalBindings: () => void;
   onToggleSection: (section: AgentConfigSection) => void;
   onChangeModelValue: (value: ModelSelectorParameterValue) => void;
   onChangeHomeTitle: (value: string) => void;
@@ -83,15 +86,14 @@ interface AgentRuntimeOrchestrationPanelProps {
 }
 
 export function AgentRuntimeOrchestrationPanel({
-  locale,
-  agentWorkspaceId,
+  agentId,
   openSections,
   modelValue,
   isAgentModelUnavailable,
   homeTitle,
   openingStatement,
   inputPlaceholder,
-  selectedSkills,
+  selectedSkillItems,
   normalizedSelectedSkillIds,
   selectableSkillsCount,
   isSkillsLoading,
@@ -117,6 +119,9 @@ export function AgentRuntimeOrchestrationPanel({
   scrollAreaClassName,
   scrollViewportClassName,
   readOnly = false,
+  bindingHealth,
+  isCleanupPending,
+  onRemoveAllAbnormalBindings,
   onToggleSection,
   onChangeModelValue,
   onChangeHomeTitle,
@@ -152,6 +157,13 @@ export function AgentRuntimeOrchestrationPanel({
         viewportProps={scrollViewportClassName ? { className: scrollViewportClassName } : undefined}
       >
         <div className="space-y-5 px-5 pb-6">
+          <AgentBindingHealthPanel
+            health={bindingHealth}
+            readOnly={readOnly}
+            cleanupPending={isCleanupPending}
+            onRemoveAllAbnormal={onRemoveAllAbnormalBindings}
+          />
+
           <AgentRuntimeModelSection
             open={openSections.model}
             modelValue={modelValue}
@@ -164,13 +176,13 @@ export function AgentRuntimeOrchestrationPanel({
           <Separator className="h-px" />
 
           <AgentRuntimeSkillSection
-            locale={locale}
             open={openSections.skills}
-            selectedSkills={selectedSkills}
+            selectedSkillItems={selectedSkillItems}
             normalizedSelectedSkillIds={normalizedSelectedSkillIds}
             selectableSkillsCount={selectableSkillsCount}
             isSkillsLoading={isSkillsLoading}
             isSkillConfigLoading={isSkillConfigLoading}
+            bindingHealth={bindingHealth}
             readOnly={readOnly}
             onToggleSection={onToggleSection}
             onOpenSkillDialog={onOpenSkillDialog}
@@ -185,6 +197,7 @@ export function AgentRuntimeOrchestrationPanel({
             canBindKnowledge={canBindKnowledge}
             selectedKnowledgeDatasets={selectedKnowledgeDatasets}
             selectedKnowledgeDatasetIds={selectedKnowledgeDatasetIds}
+            bindingHealth={bindingHealth}
             readOnly={readOnly}
             onToggleSection={onToggleSection}
             onOpenKnowledgeDialog={onOpenKnowledgeDialog}
@@ -194,9 +207,10 @@ export function AgentRuntimeOrchestrationPanel({
           <Separator className="h-px" />
 
           <AgentRuntimeDatabaseSection
+            agentId={agentId}
             open={openSections.databases}
-            workspaceId={agentWorkspaceId}
             bindings={databaseBindings}
+            bindingHealth={bindingHealth}
             readOnly={readOnly}
             onToggleSection={onToggleSection}
             onChangeBindings={onChangeDatabaseBindings}
@@ -209,6 +223,7 @@ export function AgentRuntimeOrchestrationPanel({
             bindings={workflowBindings}
             candidatesByBindingID={workflowCandidatesByBindingID}
             isLoading={isWorkflowCandidatesLoading}
+            bindingHealth={bindingHealth}
             readOnly={readOnly}
             onToggleSection={onToggleSection}
             onOpenWorkflowDialog={onOpenWorkflowDialog}

@@ -270,7 +270,6 @@ export interface AIChatController {
     messageId: string;
     query?: string;
     model?: AIChatModelSelection;
-    runtimeSurface?: AIChatRuntimeSurface;
     operationContext?: unknown;
   }) => Promise<void>;
   continueWorkflowApproval?: (

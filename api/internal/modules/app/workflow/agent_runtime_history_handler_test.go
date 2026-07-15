@@ -1486,7 +1486,7 @@ func (s *fakeRuntimeHistoryService) RunClientActionContinuationStream(ctx contex
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (s *fakeRuntimeHistoryService) BeginWorkflowApprovalContinuation(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, conversationID, messageID uuid.UUID) (*runtimeservice.WorkflowApprovalContinuation, error) {
+func (s *fakeRuntimeHistoryService) BeginWorkflowApprovalContinuation(ctx context.Context, scope runtimeservice.Scope, caller runtimeservice.Caller, config runtimeservice.RunConfig, conversationID, messageID uuid.UUID) (*runtimeservice.WorkflowApprovalContinuation, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
@@ -1554,7 +1554,7 @@ func (s *fakeRuntimeHistoryService) CancelCustomSkillImportPreview(ctx context.C
 	return fmt.Errorf("not implemented")
 }
 
-func (s *fakeRuntimeHistoryService) DeleteSkill(ctx context.Context, scope runtimeservice.Scope, skillID string) error {
+func (s *fakeRuntimeHistoryService) DeleteSkill(ctx context.Context, scope runtimeservice.Scope, skillID, agentBindingAction, impactToken string) error {
 	return fmt.Errorf("not implemented")
 }
 

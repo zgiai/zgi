@@ -13,6 +13,7 @@ import {
   Info,
   FileSearch,
   FileUp,
+  MoveRight,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
@@ -60,6 +61,7 @@ import { getFileDetailKey } from '@/hooks/file/use-file-detail';
 import { FILE_PARSE_PREVIEW_QUERY_KEY } from '@/hooks/file/use-file-parse-preview';
 import { FILE_CHUNKS_QUERY_KEY } from '@/hooks/file/use-file-chunks';
 import { FileTypeIcon } from './file-type-icon';
+import { WorkspaceAssetMoveDialog } from '@/components/common/workspace-asset-move-dialog';
 
 function getProcessingStatus(file: FileItem): string {
   return file.processing_status || 'stored_only';
@@ -242,6 +244,7 @@ function FileListBase({
   const [isBatchParsing, setIsBatchParsing] = useState(false);
   const [replacingFileId, setReplacingFileId] = useState<string | null>(null);
   const [reparsingFileId, setReparsingFileId] = useState<string | null>(null);
+  const [workspaceMoveFile, setWorkspaceMoveFile] = useState<FileItem | null>(null);
 
   // Permission checks
   const { hasAnyPermission } = useAccountPermissions();
@@ -249,12 +252,18 @@ function FileListBase({
   const canPreview = hasAnyPermission(FILE_PERMISSION_ACTIONS.preview);
   const canUpdateFile = hasAnyPermission(FILE_PERMISSION_ACTIONS.update);
   const canDeleteFilePermission = hasAnyPermission(FILE_PERMISSION_ACTIONS.delete);
+  const canMoveFile = !selectionMode && hasAnyPermission(FILE_PERMISSION_ACTIONS.move);
   const canUpload = hasAnyPermission(FILE_PERMISSION_ACTIONS.upload);
   const canViewRelatedResources = !selectionMode;
   const canViewDetail = !selectionMode;
   const canRequestProcessing = !selectionMode && canUpdateFile;
   const hasAnyAction =
-    canViewDetail || canRequestProcessing || canDownload || canPreview || canDeleteFilePermission;
+    canViewDetail ||
+    canRequestProcessing ||
+    canDownload ||
+    canPreview ||
+    canMoveFile ||
+    canDeleteFilePermission;
   const emptyDescription = mobileEmptyDescription
     ? mobileEmptyDescription
     : canUpload
@@ -1008,6 +1017,7 @@ function FileListBase({
                 canOpenFileDetail ||
                 canDownload ||
                 canReplaceDocument ||
+                canMoveFile ||
                 canDeleteFile;
 
               return (
@@ -1208,6 +1218,18 @@ function FileListBase({
                                 </DropdownMenuItem>
                               ) : null}
 
+                              {canMoveFile ? (
+                                <DropdownMenuItem
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    setWorkspaceMoveFile(file);
+                                  }}
+                                >
+                                  <MoveRight className="h-4 w-4 mr-2" />
+                                  {common('assetMove.title')}
+                                </DropdownMenuItem>
+                              ) : null}
+
                               {/* TODO: Favorites feature temporarily disabled, may restore later
                       {file.is_favorite ? (
                         <DropdownMenuItem
@@ -1316,6 +1338,15 @@ function FileListBase({
         onConfirm={(file, replacementFile, processingMode) => {
           void handleReplaceDocument(file, replacementFile, processingMode);
         }}
+      />
+      <WorkspaceAssetMoveDialog
+        open={Boolean(workspaceMoveFile)}
+        onOpenChange={open => {
+          if (!open) setWorkspaceMoveFile(null);
+        }}
+        assetType="file"
+        assetId={workspaceMoveFile?.id ?? ''}
+        assetName={workspaceMoveFile?.name}
       />
     </div>
   );

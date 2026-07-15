@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/zgiai/zgi/api/internal/dto"
 	interfaces "github.com/zgiai/zgi/api/internal/modules/shared/interface"
 	"github.com/zgiai/zgi/api/internal/modules/workspace/model"
 )
@@ -34,6 +35,28 @@ func TestAuthorizationServiceDeniesOrganizationFeatureForNonMember(t *testing.T)
 	t.Parallel()
 
 	svc := NewAuthorizationService(newAuthorizationFixture())
+
+	allowed, err := svc.CanUseOrganizationFeature(context.Background(), interfaces.OrganizationFeatureRequest{
+		OrganizationID: "org-1",
+		AccountID:      "acc-1",
+		Feature:        "work.chat",
+	})
+	if err != nil {
+		t.Fatalf("CanUseOrganizationFeature error = %v", err)
+	}
+	if allowed {
+		t.Fatalf("CanUseOrganizationFeature allowed = true, want false")
+	}
+}
+
+func TestAuthorizationServiceDeniesInactiveOrganizationMember(t *testing.T) {
+	t.Parallel()
+
+	org := newAuthorizationFixture()
+	key := "org-1:acc-1"
+	org.members[key] = model.OrganizationRoleAdmin
+	org.inactiveMembers[key] = true
+	svc := NewAuthorizationService(org)
 
 	allowed, err := svc.CanUseOrganizationFeature(context.Background(), interfaces.OrganizationFeatureRequest{
 		OrganizationID: "org-1",
@@ -186,6 +209,7 @@ func TestAuthorizationServiceListsWorkspaceIDsByPermission(t *testing.T) {
 type authorizationFixture struct {
 	interfaces.OrganizationService
 	members              map[string]model.OrganizationRole
+	inactiveMembers      map[string]bool
 	workspaces           map[string][]*model.Workspace
 	workspacePermissions map[string][]model.WorkspacePermissionCode
 	listWorkspaceIDs     []string
@@ -195,6 +219,7 @@ type authorizationFixture struct {
 func newAuthorizationFixture() *authorizationFixture {
 	return &authorizationFixture{
 		members:              map[string]model.OrganizationRole{},
+		inactiveMembers:      map[string]bool{},
 		workspaces:           map[string][]*model.Workspace{},
 		workspacePermissions: map[string][]model.WorkspacePermissionCode{},
 	}
@@ -203,6 +228,23 @@ func newAuthorizationFixture() *authorizationFixture {
 func (f *authorizationFixture) IsOrganizationMember(ctx context.Context, organizationID, accountID string) (bool, error) {
 	_, ok := f.members[organizationID+":"+accountID]
 	return ok, nil
+}
+
+func (f *authorizationFixture) GetOrganizationMemberByAccountID(ctx context.Context, organizationID, accountID string) (*dto.OrganizationMemberWithExtensionResponse, error) {
+	key := organizationID + ":" + accountID
+	role, ok := f.members[key]
+	if !ok {
+		return nil, nil
+	}
+	status := model.OrganizationMemberStatusActive
+	if f.inactiveMembers[key] {
+		status = model.OrganizationMemberStatusInactive
+	}
+	return &dto.OrganizationMemberWithExtensionResponse{
+		ID:               accountID,
+		Status:           string(status),
+		OrganizationRole: role,
+	}, nil
 }
 
 func (f *authorizationFixture) GetUserOrganizationRole(ctx context.Context, organizationID, accountID string) (model.OrganizationRole, error) {
