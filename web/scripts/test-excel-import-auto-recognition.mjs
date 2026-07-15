@@ -13,12 +13,12 @@ const enterSchema = source.match(
 
 assert.ok(enterSchema, 'preview-to-schema handler must exist');
 assert.ok(
-  enterSchema.includes('await recognizeCurrentColumns()'),
-  'preview-to-schema must wait for model recognition'
+  enterSchema.indexOf("setStep('schema')") < enterSchema.indexOf('await recognizeCurrentColumns()'),
+  'preview-to-schema must enter the schema step before model recognition completes'
 );
 assert.ok(
-  enterSchema.indexOf('applyRecognizedColumns') < enterSchema.indexOf("setStep('schema')"),
-  'recognized columns must be applied before entering the schema step'
+  enterSchema.includes('if (!selectedModel?.model || recognizeMutation.isPending) return;'),
+  'missing or busy models must not block the schema step'
 );
 assert.ok(
   source.includes('onClick={handleEnterSchema}'),
@@ -27,6 +27,18 @@ assert.ok(
 assert.ok(
   source.includes('type: suggestion.type || col.type'),
   'recognized field types must replace preview-inferred types'
+);
+const previewNextButton = source.match(
+  /<Button\s+onClick=\{handleEnterSchema\}([\s\S]*?)<\/Button>/
+)?.[1];
+assert.ok(previewNextButton, 'the preview next button must exist');
+assert.ok(
+  !previewNextButton.includes('selectedModel') && !previewNextButton.includes('recognizeMutation'),
+  'the preview next button must not be disabled by model availability'
+);
+assert.ok(
+  source.includes('schemaEditRevisionRef.current !== recognitionStartRevision'),
+  'late recognition results must not overwrite manual schema edits'
 );
 
 console.log('Excel import auto-recognition regression check passed.');

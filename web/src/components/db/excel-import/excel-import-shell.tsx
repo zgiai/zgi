@@ -164,6 +164,7 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
       Boolean(importResult && importResult.failed_rows > 0)
   );
   const analyzeRequestSeq = useRef(0);
+  const schemaEditRevisionRef = useRef(0);
 
   useEffect(() => {
     if (!user?.id || selectedModel) return;
@@ -305,19 +306,33 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
   };
 
   const handleEnterSchema = async () => {
-    if (!isPreviewSheetReady || !selectedModel?.model || recognizeMutation.isPending) return;
+    if (!isPreviewSheetReady || isAnalyzingWorkbook) return;
+    setStep('schema');
+    if (!selectedModel?.model || recognizeMutation.isPending) return;
+    const recognitionStartRevision = schemaEditRevisionRef.current;
     try {
       const recognized = await recognizeCurrentColumns();
       if (!recognized) return;
+      if (schemaEditRevisionRef.current !== recognitionStartRevision) {
+        setRecognitionDraft(recognized);
+        setRecognitionDialogOpen(true);
+        return;
+      }
       setTableName(recognized.table.name);
       setTableDescription(recognized.table.description);
       setColumns(prev => applyRecognizedColumns(prev, recognized.columns));
       setRecognitionDraft(null);
       setRecognitionDialogOpen(false);
-      setStep('schema');
     } catch {
-      // The mutation displays the backend error and keeps the user on the preview step.
+      // The mutation displays the backend error; analyzed columns remain editable on this step.
     }
+  };
+
+  const updateSchemaColumns = (
+    updater: (current: InferredExcelColumn[]) => InferredExcelColumn[]
+  ) => {
+    schemaEditRevisionRef.current += 1;
+    setColumns(updater);
   };
 
   const handleSmartRecognize = async () => {
@@ -492,16 +507,9 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                 />
                 <Button
                   onClick={handleEnterSchema}
-                  disabled={
-                    !isPreviewSheetReady ||
-                    isAnalyzingWorkbook ||
-                    !selectedModel?.model ||
-                    recognizeMutation.isPending
-                  }
+                  disabled={!isPreviewSheetReady || isAnalyzingWorkbook}
                 >
-                  {(isAnalyzingWorkbook || recognizeMutation.isPending) && (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  )}
+                  {isAnalyzingWorkbook && <Loader2 className="h-4 w-4 animate-spin" />}
                   {t('excelImport.actions.next')}
                 </Button>
               </div>
@@ -514,9 +522,9 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                 </div>
               )}
               <Table>
-              <TableHeader>
-                <TableRow>
-                  {analysis.columns.map((col, index) => (
+                <TableHeader>
+                  <TableRow>
+                    {analysis.columns.map((col, index) => (
                       <TableHead key={getExcelColumnKey(col, index)}>{col.display_name}</TableHead>
                     ))}
                   </TableRow>
@@ -590,7 +598,10 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                 </div>
                 <Input
                   value={tableName}
-                  onChange={event => setTableName(event.target.value)}
+                  onChange={event => {
+                    schemaEditRevisionRef.current += 1;
+                    setTableName(event.target.value);
+                  }}
                   placeholder={t('excelImport.schema.tableName')}
                   className={
                     tableNameErrors.length > 0
@@ -613,7 +624,10 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                 </div>
                 <Input
                   value={tableDescription}
-                  onChange={event => setTableDescription(event.target.value)}
+                  onChange={event => {
+                    schemaEditRevisionRef.current += 1;
+                    setTableDescription(event.target.value);
+                  }}
                   placeholder={t('excelImport.schema.description')}
                 />
               </div>
@@ -649,7 +663,7 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                         checked={allEnabledColumnsRequired}
                         disabled={enabledColumns.length === 0}
                         onCheckedChange={checked =>
-                          setColumns(prev =>
+                          updateSchemaColumns(prev =>
                             prev.map(item =>
                               item.enabled === false ? item : { ...item, is_required: checked }
                             )
@@ -686,7 +700,7 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                         <Switch
                           checked={col.enabled !== false}
                           onCheckedChange={checked =>
-                            setColumns(prev =>
+                            updateSchemaColumns(prev =>
                               prev.map((item, i) =>
                                 i === index ? { ...item, enabled: checked } : item
                               )
@@ -706,7 +720,7 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                             )}
                             aria-invalid={hasNameError}
                             onChange={event =>
-                              setColumns(prev =>
+                              updateSchemaColumns(prev =>
                                 prev.map((item, i) =>
                                   i === index ? { ...item, name: event.target.value } : item
                                 )
@@ -729,7 +743,7 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                         <Input
                           value={col.description}
                           onChange={event =>
-                            setColumns(prev =>
+                            updateSchemaColumns(prev =>
                               prev.map((item, i) =>
                                 i === index ? { ...item, description: event.target.value } : item
                               )
@@ -741,7 +755,7 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                         <Select
                           value={col.type}
                           onValueChange={value =>
-                            setColumns(prev =>
+                            updateSchemaColumns(prev =>
                               prev.map((item, i) =>
                                 i === index ? { ...item, type: value as Type } : item
                               )
@@ -764,7 +778,7 @@ export default function ExcelImportShell({ dbId }: ExcelImportShellProps) {
                         <Switch
                           checked={col.is_required}
                           onCheckedChange={checked =>
-                            setColumns(prev =>
+                            updateSchemaColumns(prev =>
                               prev.map((item, i) =>
                                 i === index ? { ...item, is_required: checked } : item
                               )
