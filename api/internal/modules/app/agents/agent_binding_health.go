@@ -96,6 +96,7 @@ func (s *agentsService) bindingRowsForConfig(
 	defaultActorUUID, _ := uuid.Parse(strings.TrimSpace(defaultActor))
 	defaultActorPtr := uuidPtr(defaultActorUUID)
 	defaultAtPtr := timePtr(defaultAuthorizedAt)
+	authorizations := agentBindingAuthorizationMap(normalizeAgentBindingAuthorizations(config.BindingAuthorizations))
 	bindings := make([]agentbindings.Binding, 0)
 	appendBinding := func(binding agentbindings.Binding, actor string, authorizedAtUnix int64) {
 		binding.AgentID = ag.ID
@@ -110,6 +111,14 @@ func (s *agentsService) bindingRowsForConfig(
 		}
 		if authorizedAtUnix > 0 {
 			at := time.Unix(authorizedAtUnix, 0)
+			binding.AuthorizedAt = &at
+		}
+		key := agentBindingItemKey(string(binding.BindingType), binding.ParentResourceID, binding.ResourceID, binding.AccessMode)
+		if authorization, ok := authorizations[key]; ok && validAgentBindingAuthorization(authorization) {
+			if actorUUID, parseErr := uuid.Parse(authorization.BoundByAccountID); parseErr == nil {
+				binding.AuthorizedBy = uuidPtr(actorUUID)
+			}
+			at := time.Unix(authorization.BoundAtUnix, 0)
 			binding.AuthorizedAt = &at
 		}
 		bindings = append(bindings, binding)
@@ -683,6 +692,14 @@ func filterAgentConfigByBindingHealth(config dto.AgentConfigResponse) dto.AgentC
 		}
 	}
 	config.WorkflowBindings = workflows
+	filteredAuthorizations := make([]dto.AgentBindingAuthorization, 0, len(config.BindingAuthorizations))
+	for _, authorization := range normalizeAgentBindingAuthorizations(config.BindingAuthorizations) {
+		if _, ok := active[agentBindingAuthorizationKey(authorization)]; ok {
+			filteredAuthorizations = append(filteredAuthorizations, authorization)
+		}
+	}
+	config.BindingAuthorizations = filteredAuthorizations
+	refreshAgentBindingCategoryGrants(&config)
 	return config
 }
 

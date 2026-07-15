@@ -112,12 +112,24 @@ type RunConfig struct {
 	WorkflowBindings          []AgentWorkflowBinding
 	WorkflowBoundByAccountID  string
 	WorkflowBoundAtUnix       int64
+	BindingAuthorizations     []ResourceBindingAuthorization
 	UseMemory                 bool
 	AgentMemoryEnabled        bool
 	AgentMemorySlots          []AgentMemorySlotConfig
 	AgentMemoryUserScope      string
 	BillingAppID              string
 	BillingAppType            string
+}
+
+// ResourceBindingAuthorization is the runtime authorization evidence for one
+// concrete Agent resource binding.
+type ResourceBindingAuthorization struct {
+	BindingType      string `json:"binding_type"`
+	ResourceID       string `json:"resource_id"`
+	ParentResourceID string `json:"parent_resource_id,omitempty"`
+	AccessMode       string `json:"access_mode"`
+	BoundByAccountID string `json:"bound_by_account_id"`
+	BoundAtUnix      int64  `json:"bound_at_unix"`
 }
 
 type AgentMemorySlotConfig = agentmemoryruntime.Slot

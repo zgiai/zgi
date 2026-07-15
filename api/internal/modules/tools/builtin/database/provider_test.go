@@ -110,6 +110,43 @@ func TestAgentDatabaseUsesBindingActorAccount(t *testing.T) {
 	}
 }
 
+func TestAgentDatabaseUsesTargetTableAuthorizationActor(t *testing.T) {
+	dataSources := newDatabaseFakeDataSourceService()
+	organization := &databaseFakeOrganizationService{aiQuery: true, view: true}
+	provider := NewProvider(dataSources, organization)
+	tool, err := provider.GetTool(ToolQueryTableRecords)
+	if err != nil {
+		t.Fatalf("GetTool() error = %v", err)
+	}
+	runtimeTool := tool.ForkToolRuntime(&tools.ToolRuntime{
+		TenantID:   "org-1",
+		InvokeFrom: tools.ToolInvokeFromAgent,
+		RuntimeParameters: map[string]interface{}{
+			"organization_id":              "org-1",
+			"database_binding_grant":       true,
+			"database_bound_by_account_id": "category-editor",
+			"database_bindings": []map[string]interface{}{
+				{"data_source_id": "db-1", "table_ids": []string{"table-1", "table-2"}},
+			},
+			"agent_binding_authorizations": []map[string]interface{}{
+				{"binding_type": "database_table", "parent_resource_id": "db-1", "resource_id": "table-1", "access_mode": "read", "bound_by_account_id": "binder-old", "bound_at_unix": int64(100)},
+				{"binding_type": "database_table", "parent_resource_id": "db-1", "resource_id": "table-2", "access_mode": "read", "bound_by_account_id": "binder-new", "bound_at_unix": int64(200)},
+			},
+		},
+	})
+
+	_, err = runtimeTool.Invoke(context.Background(), "caller-1", map[string]interface{}{
+		"data_source_id": "db-1",
+		"table_id":       "table-2",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if dataSources.lastQueryAccountID != "binder-new" || organization.lastAccountID != "binder-new" {
+		t.Fatalf("runtime actors = query:%q permission:%q, want binder-new", dataSources.lastQueryAccountID, organization.lastAccountID)
+	}
+}
+
 func TestAgentDatabaseGrantRevalidatesBindingActorPermissionsAndUsesWritableTables(t *testing.T) {
 	dataSources := newDatabaseFakeDataSourceService()
 	organization := &databaseFakeOrganizationService{

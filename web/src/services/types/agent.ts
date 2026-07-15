@@ -338,7 +338,6 @@ export interface AgentDatabaseBindingCandidate {
   description?: string;
   status?: string;
   workspace_id?: string;
-  can_edit?: boolean;
   can_write?: boolean;
   icon?: string;
   icon_type?: AgentIconType | string;

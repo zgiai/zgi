@@ -60,6 +60,18 @@ func (r knowledgeRuntime) applyAgentConfig(req *dataset_service.KnowledgeRetriev
 	}
 	if datasetIDs := stringListValue(r.runtime.RuntimeParameters, "knowledge_dataset_ids"); len(datasetIDs) > 0 {
 		req.DatasetIDs = datasetIDs
+		for _, datasetID := range datasetIDs {
+			if authorization, ok := tools.AgentBindingAuthorizationFor(
+				r.runtime.RuntimeParameters,
+				"knowledge_dataset",
+				"",
+				datasetID,
+				"read",
+			); ok {
+				req.Scope.AccountID = authorization.BoundByAccountID
+				break
+			}
+		}
 	}
 	if config := mapValue(r.runtime.RuntimeParameters, "knowledge_retrieval_config"); len(config) > 0 {
 		req.RetrievalConfig = config

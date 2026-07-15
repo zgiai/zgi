@@ -85,6 +85,7 @@ func (s *agentsService) publishedAgentRuntimeConfig(ctx context.Context, ag *Age
 		if err != nil {
 			return nil, err
 		}
+		applyAgentBindingAuthorizationsFromRows(cfg, rows)
 		cfg.BindingHealth = s.resolveAgentBindingHealth(ctx, ag, "", cfg, rows)
 		cfg.BindingRevision = agentBindingRevision(rows)
 		cfg = configResponsePtr(filterAgentConfigByBindingHealth(*cfg))

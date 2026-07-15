@@ -298,6 +298,7 @@ func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResp
 		WorkflowBindings:          agentWorkflowRuntimeBindings(cfg.WorkflowBindings),
 		WorkflowBoundByAccountID:  cfg.WorkflowBoundByAccountID,
 		WorkflowBoundAtUnix:       cfg.WorkflowBoundAtUnix,
+		BindingAuthorizations:     agentRuntimeBindingAuthorizations(cfg.BindingAuthorizations),
 		UseMemory:                 false,
 		AgentMemoryEnabled:        cfg.AgentMemoryEnabled,
 		AgentMemorySlots:          agentMemoryRuntimeSlots(cfg.AgentMemorySlots),
@@ -305,6 +306,24 @@ func agentRunConfig(agentID, systemPromptVersion string, cfg dto.AgentConfigResp
 		BillingAppID:              agentID,
 		BillingAppType:            runtimemodel.ConversationCallerAgent,
 	}
+}
+
+func agentRuntimeBindingAuthorizations(authorizations []dto.AgentBindingAuthorization) []runtimeservice.ResourceBindingAuthorization {
+	result := make([]runtimeservice.ResourceBindingAuthorization, 0, len(authorizations))
+	for _, authorization := range normalizeAgentBindingAuthorizations(authorizations) {
+		if !validAgentBindingAuthorization(authorization) {
+			continue
+		}
+		result = append(result, runtimeservice.ResourceBindingAuthorization{
+			BindingType:      authorization.BindingType,
+			ResourceID:       authorization.ResourceID,
+			ParentResourceID: authorization.ParentResourceID,
+			AccessMode:       authorization.AccessMode,
+			BoundByAccountID: authorization.BoundByAccountID,
+			BoundAtUnix:      authorization.BoundAtUnix,
+		})
+	}
+	return result
 }
 
 func agentDatabaseRuntimeBindings(bindings []dto.AgentDatabaseBinding) []runtimeservice.AgentDatabaseBinding {

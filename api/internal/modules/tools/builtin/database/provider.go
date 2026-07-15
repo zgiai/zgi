@@ -135,6 +135,7 @@ func (t *databaseTool) Invoke(ctx context.Context, userID string, params map[str
 	if err != nil {
 		return nil, err
 	}
+	scope = t.scopeForOperation(scope, params)
 
 	switch t.kind {
 	case ToolListAccessibleDatabases:
@@ -154,6 +155,59 @@ func (t *databaseTool) Invoke(ctx context.Context, userID string, params map[str
 	default:
 		return nil, fmt.Errorf("unknown database tool %s", t.kind)
 	}
+}
+
+func (t *databaseTool) scopeForOperation(scope databaseScope, params map[string]interface{}) databaseScope {
+	if scope.InvokeFrom != tools.ToolInvokeFromAgent || t.Runtime() == nil {
+		return scope
+	}
+	dataSourceID := stringValue(params, "data_source_id")
+	tableID := stringValue(params, "table_id")
+	bindingType := "database"
+	parentResourceID := ""
+	resourceID := dataSourceID
+	accessMode := "read"
+	switch t.kind {
+	case ToolDescribeDatabaseTable, ToolQueryTableRecords:
+		bindingType = "database_table"
+		parentResourceID = dataSourceID
+		resourceID = tableID
+	case ToolInsertTableRecords, ToolUpdateTableRecords, ToolDeleteTableRecords:
+		bindingType = "database_table"
+		parentResourceID = dataSourceID
+		resourceID = tableID
+		accessMode = "write"
+	case ToolListAccessibleDatabases:
+		return scope
+	}
+	if authorization, ok := tools.AgentBindingAuthorizationFor(
+		t.Runtime().RuntimeParameters,
+		bindingType,
+		parentResourceID,
+		resourceID,
+		accessMode,
+	); ok {
+		scope.AccountID = authorization.BoundByAccountID
+		scope.BindingGrant = true
+	}
+	return scope
+}
+
+func (t *databaseTool) scopeForDataSource(scope databaseScope, dataSourceID string) databaseScope {
+	if scope.InvokeFrom != tools.ToolInvokeFromAgent || t.Runtime() == nil {
+		return scope
+	}
+	if authorization, ok := tools.AgentBindingAuthorizationFor(
+		t.Runtime().RuntimeParameters,
+		"database",
+		"",
+		strings.TrimSpace(dataSourceID),
+		"read",
+	); ok {
+		scope.AccountID = authorization.BoundByAccountID
+		scope.BindingGrant = true
+	}
+	return scope
 }
 
 func (t *databaseTool) ForkToolRuntime(runtime *tools.ToolRuntime) tools.Tool {
@@ -227,7 +281,8 @@ func (t *databaseTool) listAccessibleDatabases(ctx context.Context, scope databa
 	var err error
 	if scope.BindingGrant {
 		for _, dataSourceID := range bindings.dataSourceIDs() {
-			item, loadErr := t.dataSources.GetDataSourceByID(ctx, scope.OrganizationID, dataSourceID, scope.AccountID)
+			itemScope := t.scopeForDataSource(scope, dataSourceID)
+			item, loadErr := t.dataSources.GetDataSourceByID(ctx, itemScope.OrganizationID, dataSourceID, itemScope.AccountID)
 			if loadErr != nil || item == nil {
 				continue
 			}
@@ -250,7 +305,8 @@ func (t *databaseTool) listAccessibleDatabases(ctx context.Context, scope databa
 		if query != "" && !containsFold(item.Name, item.Description, query) {
 			continue
 		}
-		if err := t.authorizeDataSource(ctx, scope, item, false); err != nil {
+		itemScope := t.scopeForDataSource(scope, item.ID)
+		if err := t.authorizeDataSource(ctx, itemScope, item, false); err != nil {
 			continue
 		}
 		out = append(out, dataSourcePayload(item))

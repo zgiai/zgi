@@ -82,6 +82,30 @@ func TestPolicyToolGovernanceAgentDatabaseBindings(t *testing.T) {
 	}
 }
 
+func TestPolicyToolGovernanceUsesTargetBindingAuthorization(t *testing.T) {
+	params := agentGovernanceRuntimeParameters(map[string]interface{}{
+		"database_binding_grant": true,
+		"database_bindings": []map[string]interface{}{{
+			"data_source_id": "database-1",
+			"table_ids":      []string{"table-old", "table-new"},
+		}},
+		"agent_binding_authorizations": []map[string]interface{}{
+			{"binding_type": "database", "resource_id": "database-1", "access_mode": "read", "bound_by_account_id": "binder-old", "bound_at_unix": int64(100)},
+			{"binding_type": "database_table", "parent_resource_id": "database-1", "resource_id": "table-old", "access_mode": "read", "bound_by_account_id": "binder-old", "bound_at_unix": int64(100)},
+			{"binding_type": "database_table", "parent_resource_id": "database-1", "resource_id": "table-new", "access_mode": "read", "bound_by_account_id": "binder-new", "bound_at_unix": int64(200)},
+		},
+	})
+
+	decision := decideSystemSkillToolForTest(t, SkillAgentDatabase, "query_table_records", map[string]interface{}{
+		"data_source_id": "database-1",
+		"table_id":       "table-new",
+	}, params)
+	assertAgentGovernanceDecision(t, decision, toolgovernance.DecisionStatusAllowed, "")
+	if decision.Preauthorization == nil || decision.Preauthorization.AuthorizedBy != "binder-new" {
+		t.Fatalf("preauthorization = %#v, want target table binder", decision.Preauthorization)
+	}
+}
+
 func TestPolicyToolGovernanceAgentWorkflowBinding(t *testing.T) {
 	params := agentGovernanceRuntimeParameters(map[string]interface{}{
 		"workflow_binding_grant":       true,

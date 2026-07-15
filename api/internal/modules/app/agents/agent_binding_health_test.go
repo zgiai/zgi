@@ -17,6 +17,72 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestBindingRowsUsePerResourceAuthorizationEvidence(t *testing.T) {
+	workspaceID := uuid.New()
+	oldBinder := uuid.New()
+	newBinder := uuid.New()
+	agent := &Agent{ID: uuid.New(), TenantID: workspaceID}
+	config := &dto.AgentConfigResponse{
+		KnowledgeDatasetIDs:       []string{"dataset-old", "dataset-new"},
+		KnowledgeBoundByAccountID: newBinder.String(),
+		KnowledgeBoundAtUnix:      300,
+		BindingAuthorizations: []dto.AgentBindingAuthorization{
+			{BindingType: "knowledge_dataset", ResourceID: "dataset-old", AccessMode: "read", BoundByAccountID: oldBinder.String(), BoundAtUnix: 100},
+			{BindingType: "knowledge_dataset", ResourceID: "dataset-new", AccessMode: "read", BoundByAccountID: newBinder.String(), BoundAtUnix: 200},
+		},
+	}
+
+	rows, err := (&agentsService{}).bindingRowsForConfig(
+		context.Background(),
+		agent,
+		config,
+		agentbindings.ScopeDraft,
+		nil,
+		newBinder.String(),
+		time.Unix(300, 0),
+	)
+	if err != nil {
+		t.Fatalf("bindingRowsForConfig() error = %v", err)
+	}
+	actors := make(map[string]uuid.UUID, len(rows))
+	for _, row := range rows {
+		if row.AuthorizedBy != nil {
+			actors[row.ResourceID] = *row.AuthorizedBy
+		}
+	}
+	if actors["dataset-old"] != oldBinder || actors["dataset-new"] != newBinder {
+		t.Fatalf("binding actors = %#v, want old=%s new=%s", actors, oldBinder, newBinder)
+	}
+}
+
+func TestApplyAgentBindingAuthorizationsFromRowsRestoresIndexedEvidence(t *testing.T) {
+	oldBinder := uuid.New()
+	newBinder := uuid.New()
+	oldAuthorizedAt := time.Unix(100, 0)
+	newAuthorizedAt := time.Unix(200, 0)
+	config := &dto.AgentConfigResponse{
+		KnowledgeDatasetIDs:       []string{"dataset-old", "dataset-new"},
+		KnowledgeBoundByAccountID: newBinder.String(),
+		KnowledgeBoundAtUnix:      200,
+	}
+	rows := []agentbindings.Binding{
+		{BindingType: agentbindings.BindingTypeKnowledgeDataset, ResourceID: "dataset-old", AccessMode: "read", AuthorizedBy: &oldBinder, AuthorizedAt: &oldAuthorizedAt},
+		{BindingType: agentbindings.BindingTypeKnowledgeDataset, ResourceID: "dataset-new", AccessMode: "read", AuthorizedBy: &newBinder, AuthorizedAt: &newAuthorizedAt},
+	}
+
+	applyAgentBindingAuthorizationsFromRows(config, rows)
+	if config.KnowledgeBoundByAccountID != "" || config.KnowledgeBoundAtUnix != 0 {
+		t.Fatalf("mixed indexed evidence retained category grant %q/%d", config.KnowledgeBoundByAccountID, config.KnowledgeBoundAtUnix)
+	}
+	authorizations := agentBindingAuthorizationMap(config.BindingAuthorizations)
+	if got := authorizations[agentBindingItemKey("knowledge_dataset", "", "dataset-old", "read")].BoundByAccountID; got != oldBinder.String() {
+		t.Fatalf("old binding actor = %q, want %s", got, oldBinder)
+	}
+	if got := authorizations[agentBindingItemKey("knowledge_dataset", "", "dataset-new", "read")].BoundByAccountID; got != newBinder.String() {
+		t.Fatalf("new binding actor = %q, want %s", got, newBinder)
+	}
+}
+
 func TestPublishedSuspendedBindingRemainsIndexedAndCanRecover(t *testing.T) {
 	row := agentbindings.Binding{
 		AgentID:      uuid.New(),
@@ -454,6 +520,9 @@ func TestUpdateLocksResourceBeforeRevalidatingNewBinding(t *testing.T) {
 		WithArgs(configID, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "agents_id", "agent_mode", "created_at", "updated_at"}).
 			AddRow(configID, agentID, `{}`, now, now))
+	mock.ExpectQuery(`SELECT \* FROM "agent_resource_bindings" WHERE \(agent_id = \$1 AND binding_scope = \$2\).*ORDER BY`).
+		WithArgs(agentID, agentbindings.ScopeDraft).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectRollback()
 
 	service := &agentsService{

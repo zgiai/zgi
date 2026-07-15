@@ -475,11 +475,29 @@ func TestApplyAgentConfigRequestRecordsBindingActor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("third applyAgentConfigRequestToDraft() error = %v", err)
 	}
+	mode = dto.AgentRuntimeModeConfig{}
 	if err := json.Unmarshal([]byte(*cfg.AgentMode), &mode); err != nil {
 		t.Fatalf("unmarshal changed AgentMode error = %v", err)
 	}
-	if mode.KnowledgeBoundByAccountID != "editor-2" || mode.DatabaseBoundByAccountID != "editor-2" {
-		t.Fatalf("binding actors after binding change: knowledge=%q database=%q, want editor-2", mode.KnowledgeBoundByAccountID, mode.DatabaseBoundByAccountID)
+	if mode.KnowledgeBoundByAccountID != "" || mode.DatabaseBoundByAccountID != "" {
+		t.Fatalf("mixed category actors should not expose a category grant: knowledge=%q database=%q", mode.KnowledgeBoundByAccountID, mode.DatabaseBoundByAccountID)
+	}
+	authorizations := agentBindingAuthorizationMap(mode.BindingAuthorizations)
+	assertBindingActor := func(bindingType, parentResourceID, resourceID, accessMode, want string) {
+		t.Helper()
+		got := authorizations[agentBindingItemKey(bindingType, parentResourceID, resourceID, accessMode)].BoundByAccountID
+		if got != want {
+			t.Fatalf("authorization %s/%s actor = %q, want %q; all=%#v", bindingType, resourceID, got, want, mode.BindingAuthorizations)
+		}
+	}
+	assertBindingActor("knowledge_dataset", "", "dataset-1", "read", "binder-1")
+	assertBindingActor("knowledge_dataset", "", "dataset-2", "read", "editor-2")
+	assertBindingActor("database", "", "db-1", "read", "binder-1")
+	assertBindingActor("database_table", "db-1", "table-1", "read", "binder-1")
+	assertBindingActor("database_table", "db-1", "table-2", "read", "editor-2")
+	mixedSnapshot := agentConfigResponseFromSnapshot("agent-1", agentConfigSnapshot("agent-1", cfg))
+	if !reflect.DeepEqual(mixedSnapshot.BindingAuthorizations, mode.BindingAuthorizations) {
+		t.Fatalf("snapshot authorizations = %#v, want %#v", mixedSnapshot.BindingAuthorizations, mode.BindingAuthorizations)
 	}
 }
 

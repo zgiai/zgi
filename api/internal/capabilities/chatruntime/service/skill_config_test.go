@@ -1114,6 +1114,27 @@ func TestSkillRuntimeParametersUseCapabilityConfig(t *testing.T) {
 	}
 }
 
+func TestSkillRuntimeParametersPreservePerBindingAuthorizationEvidence(t *testing.T) {
+	params := skillRuntimeParameters(Scope{OrganizationID: uuid.New()}, RunConfig{
+		BillingAppType: runtimemodel.ConversationCallerAgent,
+		BindingAuthorizations: []ResourceBindingAuthorization{
+			{BindingType: "knowledge_dataset", ResourceID: "dataset-old", AccessMode: "read", BoundByAccountID: "binder-old", BoundAtUnix: 100},
+			{BindingType: "knowledge_dataset", ResourceID: "dataset-new", AccessMode: "read", BoundByAccountID: "binder-new", BoundAtUnix: 200},
+		},
+	})
+
+	if params["knowledge_binding_grant"] != true {
+		t.Fatalf("knowledge_binding_grant = %#v, want true", params["knowledge_binding_grant"])
+	}
+	authorizations, ok := params["agent_binding_authorizations"].([]ResourceBindingAuthorization)
+	if !ok || len(authorizations) != 2 {
+		t.Fatalf("agent_binding_authorizations = %#v, want two entries", params["agent_binding_authorizations"])
+	}
+	if _, exists := params["knowledge_bound_by_account_id"]; exists {
+		t.Fatalf("mixed per-binding grants must not synthesize one category actor: %#v", params)
+	}
+}
+
 func TestSkillRuntimeParametersForPreparedUsesConversationWorkspaceWhenScopeMissing(t *testing.T) {
 	workspaceID := uuid.New()
 	prepared := &PreparedChat{

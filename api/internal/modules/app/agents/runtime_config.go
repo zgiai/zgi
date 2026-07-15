@@ -38,10 +38,13 @@ func (s *agentsService) GetAgentConfig(ctx context.Context, agentID, accountID s
 	resp := agentConfigResponse(ag.ID.String(), cfg)
 	resp.WorkflowBindings = s.hydrateAgentWorkflowBindingRuntimeInputs(ctx, ag.TenantID.String(), resp.WorkflowBindings)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
-	_, resp.BindingRevision, resp.BindingHealth, err = s.draftBindingState(ctx, ag, cfg, accountID)
+	rows, bindingRevision, bindingHealth, err := s.draftBindingState(ctx, ag, cfg, accountID)
 	if err != nil {
 		return nil, err
 	}
+	applyAgentBindingAuthorizationsFromRows(resp, rows)
+	resp.BindingRevision = bindingRevision
+	resp.BindingHealth = bindingHealth
 	return resp, nil
 }
 
@@ -53,10 +56,13 @@ func (s *agentsService) GetAgentDraftRuntimeConfig(ctx context.Context, agentID,
 	resp := agentConfigResponse(ag.ID.String(), cfg)
 	resp.WorkflowBindings = s.hydrateAgentWorkflowBindingRuntimeInputs(ctx, ag.TenantID.String(), resp.WorkflowBindings)
 	resp.AgentMemorySlots = s.agentMemorySlotsForDraft(ctx, ag.ID)
-	_, resp.BindingRevision, resp.BindingHealth, err = s.draftBindingState(ctx, ag, cfg, accountID)
+	rows, bindingRevision, bindingHealth, err := s.draftBindingState(ctx, ag, cfg, accountID)
 	if err != nil {
 		return nil, err
 	}
+	applyAgentBindingAuthorizationsFromRows(resp, rows)
+	resp.BindingRevision = bindingRevision
+	resp.BindingHealth = bindingHealth
 	return &dto.AgentDraftRuntimeConfigResponse{
 		AgentID:     ag.ID.String(),
 		WorkspaceID: ag.TenantID.String(),
@@ -83,6 +89,7 @@ func (s *agentsService) UpdateAgentConfig(ctx context.Context, agentID, accountI
 	if err != nil {
 		return nil, err
 	}
+	applyAgentBindingAuthorizationsFromRows(previous, previousRows)
 	if revision := strings.TrimSpace(req.BindingRevision); revision != "" && revision != currentRevision {
 		previous.BindingRevision = currentRevision
 		previous.BindingHealth = currentHealth
@@ -200,6 +207,12 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 		if err != nil {
 			return err
 		}
+		existing, err := bindingRepo.ListScope(ctx, agentbindings.ScopeRef{AgentID: ag.ID, Scope: agentbindings.ScopeDraft})
+		if err != nil {
+			return err
+		}
+		currentRows = preserveAgentBindingEvidence(currentRows, existing)
+		applyAgentBindingAuthorizationsFromRows(currentConfig, currentRows)
 		currentRevision := agentBindingRevision(currentRows)
 		if currentRevision != expectedRevision {
 			currentHealth := s.resolveAgentBindingHealth(ctx, ag, accountID, currentConfig, currentRows)
@@ -215,6 +228,9 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 		if err := txService.validateIncrementalAgentBindingChanges(ctx, ag, accountID, currentConfig, req); err != nil {
 			return err
 		}
+		if len(req.BindingAuthorizations) == 0 {
+			req.BindingAuthorizations = append([]dto.AgentBindingAuthorization(nil), currentConfig.BindingAuthorizations...)
+		}
 		if _, err := applyAgentConfigRequestToDraft(&current, req, accountID); err != nil {
 			return err
 		}
@@ -223,10 +239,6 @@ func (s *agentsService) updateAgentConfigCAS(ctx context.Context, ag *Agent, sta
 		}
 		nextConfig := agentConfigResponse(ag.ID.String(), &current)
 		nextRows, err := s.bindingRowsForConfig(ctx, ag, nextConfig, agentbindings.ScopeDraft, nil, accountID, time.Now())
-		if err != nil {
-			return err
-		}
-		existing, err := bindingRepo.ListScope(ctx, agentbindings.ScopeRef{AgentID: ag.ID, Scope: agentbindings.ScopeDraft})
 		if err != nil {
 			return err
 		}
@@ -443,6 +455,7 @@ func (s *agentsService) createAgentPublishedVersion(
 			return err
 		}
 		rows = preserveAgentBindingEvidence(rows, existing)
+		applyAgentBindingAuthorizationsFromRows(currentConfig, rows)
 		bindingRevision := agentBindingRevision(rows)
 		bindingHealth := txService.resolveAgentBindingHealth(ctx, ag, accountID, currentConfig, rows)
 		if bindingRevision != expectedBindingRevision {
@@ -466,6 +479,13 @@ func (s *agentsService) createAgentPublishedVersion(
 		}
 
 		snapshot := agentConfigSnapshot(ag.ID.String(), &current)
+		snapshot["binding_authorizations"] = normalizeAgentBindingAuthorizations(currentConfig.BindingAuthorizations)
+		snapshot["knowledge_bound_by_account_id"] = currentConfig.KnowledgeBoundByAccountID
+		snapshot["knowledge_bound_at_unix"] = currentConfig.KnowledgeBoundAtUnix
+		snapshot["database_bound_by_account_id"] = currentConfig.DatabaseBoundByAccountID
+		snapshot["database_bound_at_unix"] = currentConfig.DatabaseBoundAtUnix
+		snapshot["workflow_bound_by_account_id"] = currentConfig.WorkflowBoundByAccountID
+		snapshot["workflow_bound_at_unix"] = currentConfig.WorkflowBoundAtUnix
 		snapshot["binding_indexed"] = true
 		snapshot["binding_revision"] = bindingRevision
 		snapshot["supports_vision"] = txService.resolveAgentModelSupportsVision(
@@ -782,6 +802,7 @@ func agentConfigRequestFromResponse(config dto.AgentConfigResponse) dto.AgentCon
 		WorkflowBindings:          config.WorkflowBindings,
 		WorkflowBoundByAccountID:  config.WorkflowBoundByAccountID,
 		WorkflowBoundAtUnix:       config.WorkflowBoundAtUnix,
+		BindingAuthorizations:     config.BindingAuthorizations,
 	}
 }
 
@@ -880,21 +901,20 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 		actorAccountID = strings.TrimSpace(actorAccountIDs[0])
 	}
 	nowUnix := time.Now().Unix()
-	knowledgeBoundByAccountID, knowledgeBoundAtUnix := bindingGrantForStringIDs(previousMode.KnowledgeDatasetIDs, previousMode.KnowledgeBoundByAccountID, previousMode.KnowledgeBoundAtUnix, runtimeCfg.KnowledgeDatasetIDs, actorAccountID, nowUnix)
-	databaseBoundByAccountID, databaseBoundAtUnix := bindingGrantForDatabaseBindings(previousMode.DatabaseBindings, previousMode.DatabaseBoundByAccountID, previousMode.DatabaseBoundAtUnix, runtimeCfg.DatabaseBindings, actorAccountID, nowUnix)
-	workflowBoundByAccountID, workflowBoundAtUnix := bindingGrantForWorkflowBindings(previousMode.WorkflowBindings, previousMode.WorkflowBoundByAccountID, previousMode.WorkflowBoundAtUnix, runtimeCfg.WorkflowBindings, actorAccountID, nowUnix)
-	if strings.TrimSpace(runtimeCfg.KnowledgeBoundByAccountID) != "" && runtimeCfg.KnowledgeBoundAtUnix > 0 {
-		knowledgeBoundByAccountID = strings.TrimSpace(runtimeCfg.KnowledgeBoundByAccountID)
-		knowledgeBoundAtUnix = runtimeCfg.KnowledgeBoundAtUnix
-	}
-	if strings.TrimSpace(runtimeCfg.DatabaseBoundByAccountID) != "" && runtimeCfg.DatabaseBoundAtUnix > 0 {
-		databaseBoundByAccountID = strings.TrimSpace(runtimeCfg.DatabaseBoundByAccountID)
-		databaseBoundAtUnix = runtimeCfg.DatabaseBoundAtUnix
-	}
-	if strings.TrimSpace(runtimeCfg.WorkflowBoundByAccountID) != "" && runtimeCfg.WorkflowBoundAtUnix > 0 {
-		workflowBoundByAccountID = strings.TrimSpace(runtimeCfg.WorkflowBoundByAccountID)
-		workflowBoundAtUnix = runtimeCfg.WorkflowBoundAtUnix
-	}
+	bindingAuthorizations := resolveAgentBindingAuthorizations(previousMode, runtimeCfg, actorAccountID, nowUnix)
+	knowledgeBoundByAccountID, knowledgeBoundAtUnix := aggregateAgentBindingAuthorization(
+		bindingAuthorizations,
+		agentbindings.BindingTypeKnowledgeDataset,
+	)
+	databaseBoundByAccountID, databaseBoundAtUnix := aggregateAgentBindingAuthorization(
+		bindingAuthorizations,
+		agentbindings.BindingTypeDatabase,
+		agentbindings.BindingTypeDatabaseTable,
+	)
+	workflowBoundByAccountID, workflowBoundAtUnix := aggregateAgentBindingAuthorization(
+		bindingAuthorizations,
+		agentbindings.BindingTypeWorkflow,
+	)
 	cfg.PrePrompt = stringPtr(runtimeCfg.SystemPrompt)
 	cfg.ModelProvider = nullableStringPtr(runtimeCfg.ModelProvider)
 	cfg.ModelVersionID = nullableStringPtr(runtimeCfg.Model)
@@ -924,6 +944,7 @@ func applyAgentConfigRequestToDraft(cfg *AgentsConfig, req dto.AgentConfigReques
 		WorkflowBindings:          runtimeCfg.WorkflowBindings,
 		WorkflowBoundByAccountID:  workflowBoundByAccountID,
 		WorkflowBoundAtUnix:       workflowBoundAtUnix,
+		BindingAuthorizations:     bindingAuthorizations,
 	})
 	if err != nil {
 		return dto.AgentConfigRequest{}, fmt.Errorf("failed to marshal agent mode: %w", err)
@@ -962,6 +983,7 @@ func agentConfigResponse(agentID string, cfg *AgentsConfig) *dto.AgentConfigResp
 		WorkflowBindings:          normalizeAgentWorkflowBindings(mode.WorkflowBindings),
 		WorkflowBoundByAccountID:  strings.TrimSpace(mode.WorkflowBoundByAccountID),
 		WorkflowBoundAtUnix:       mode.WorkflowBoundAtUnix,
+		BindingAuthorizations:     bindingAuthorizationsForRuntimeMode(mode),
 	}
 	if cfg != nil {
 		resp.SystemPrompt = stringPtrValue(cfg.PrePrompt)
@@ -1002,6 +1024,7 @@ func agentConfigSnapshot(agentID string, cfg *AgentsConfig) map[string]interface
 		"workflow_bindings":             normalizeAgentWorkflowBindings(resp.WorkflowBindings),
 		"workflow_bound_by_account_id":  resp.WorkflowBoundByAccountID,
 		"workflow_bound_at_unix":        resp.WorkflowBoundAtUnix,
+		"binding_authorizations":        normalizeAgentBindingAuthorizations(resp.BindingAuthorizations),
 	}
 }
 
@@ -1052,7 +1075,33 @@ func agentConfigResponseFromSnapshot(agentID string, snapshot map[string]interfa
 	resp.WorkflowBindings = agentWorkflowBindingsFromSnapshot(snapshot["workflow_bindings"])
 	resp.WorkflowBoundByAccountID = strings.TrimSpace(stringFromSnapshot(snapshot, "workflow_bound_by_account_id"))
 	resp.WorkflowBoundAtUnix = int64FromSnapshot(snapshot["workflow_bound_at_unix"])
+	resp.BindingAuthorizations = agentBindingAuthorizationsFromSnapshot(snapshot["binding_authorizations"])
+	if len(resp.BindingAuthorizations) == 0 {
+		resp.BindingAuthorizations = bindingAuthorizationsForRuntimeMode(dto.AgentRuntimeModeConfig{
+			KnowledgeDatasetIDs:       resp.KnowledgeDatasetIDs,
+			KnowledgeBoundByAccountID: resp.KnowledgeBoundByAccountID,
+			KnowledgeBoundAtUnix:      resp.KnowledgeBoundAtUnix,
+			DatabaseBindings:          resp.DatabaseBindings,
+			DatabaseBoundByAccountID:  resp.DatabaseBoundByAccountID,
+			DatabaseBoundAtUnix:       resp.DatabaseBoundAtUnix,
+			WorkflowBindings:          resp.WorkflowBindings,
+			WorkflowBoundByAccountID:  resp.WorkflowBoundByAccountID,
+			WorkflowBoundAtUnix:       resp.WorkflowBoundAtUnix,
+		})
+	}
 	return resp
+}
+
+func agentBindingAuthorizationsFromSnapshot(value interface{}) []dto.AgentBindingAuthorization {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	var authorizations []dto.AgentBindingAuthorization
+	if err := json.Unmarshal(payload, &authorizations); err != nil {
+		return nil
+	}
+	return normalizeAgentBindingAuthorizations(authorizations)
 }
 
 func stringFromSnapshot(snapshot map[string]interface{}, key string) string {
