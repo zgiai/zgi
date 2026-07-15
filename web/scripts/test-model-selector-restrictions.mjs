@@ -155,6 +155,8 @@ const consoleChatSource = fs.readFileSync(
 );
 assert.match(consoleChatSource, /useCase: 'text-chat'/);
 assert.match(consoleChatSource, /preferredUseCase: 'agent'/);
+assert.match(consoleChatSource, /scope: 'workChat'/);
+assert.match(consoleChatSource, /legacyScope: 'consoleChat'/);
 assert.match(consoleChatSource, /modelUseCase="text-chat"/);
 assert.match(consoleChatSource, /preferredModelUseCase="agent"/);
 
@@ -163,6 +165,8 @@ const contextualAIChatSource = fs.readFileSync(
   'utf8'
 );
 assert.match(contextualAIChatSource, /useCase: 'agent'/);
+assert.match(contextualAIChatSource, /scope: 'contextualSidebar'/);
+assert.match(contextualAIChatSource, /legacyScope: 'consoleChat'/);
 assert.doesNotMatch(contextualAIChatSource, /useCase: 'text-chat'/);
 
 const agentRuntimeSource = fs.readFileSync(
@@ -188,6 +192,10 @@ const persistedAIChatModelSource = fs.readFileSync(
   'utf8'
 );
 assert.doesNotMatch(persistedAIChatModelSource, /model\.model_name === candidate\.model/);
+assert.match(
+  persistedAIChatModelSource,
+  /isModelAvailable\(legacySaved, availableModels\.models\)/
+);
 
 const aiChatSource = fs.readFileSync(
   new URL('../src/components/chat/variants/aichat/aichat-chat.tsx', import.meta.url),

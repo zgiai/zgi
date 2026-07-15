@@ -51,7 +51,6 @@ import type {
   AIChatContextRefreshHint,
 } from './types';
 
-const LOCAL_STORAGE_KEY = 'consoleChat';
 const DESKTOP_PANEL_MEDIA_QUERY = '(min-width: 1024px)';
 const DESKTOP_PANEL_WIDTH_STORAGE_KEY = 'consoleChat.aiChatDockWidth';
 const DEFAULT_DESKTOP_PANEL_WIDTH_RATIO = 0.28;
@@ -1514,7 +1513,8 @@ export function ContextualAIChatDock() {
   const { modelSelectorValue, isModelInitializing, isSelectedModelUnavailable, handleModelChange } =
     usePersistedAIChatModelSelection({
       accountId: user?.id,
-      scope: LOCAL_STORAGE_KEY,
+      scope: 'contextualSidebar',
+      legacyScope: 'consoleChat',
       useCase: 'agent',
     });
 

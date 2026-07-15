@@ -40,11 +40,13 @@ function toAIChatModelValue(value: DefaultModelValue): AIChatModelValue {
 export function usePersistedAIChatModelSelection({
   accountId,
   scope,
+  legacyScope,
   useCase = 'agent',
   preferredUseCase,
 }: {
   accountId?: string | null;
   scope: AiModelScope;
+  legacyScope?: AiModelScope;
   useCase?: DefaultModelUseCase;
   preferredUseCase?: DefaultModelUseCase;
 }) {
@@ -99,6 +101,29 @@ export function usePersistedAIChatModelSelection({
       return;
     }
 
+    const legacySaved =
+      legacyScope && legacyScope !== scope
+        ? getLastSelectedAiModel(accountId, legacyScope)
+        : null;
+    if (
+      legacySaved?.provider &&
+      legacySaved.model &&
+      isModelAvailable(legacySaved, availableModels.models)
+    ) {
+      const next: AIChatModelValue = {
+        provider: legacySaved.provider,
+        model: legacySaved.model,
+        params: {},
+      };
+      saveLastSelectedAiModel(accountId, scope, {
+        provider: next.provider,
+        model: next.model,
+      });
+      setModelSelectorValue(next);
+      setIsInitialModelResolved(true);
+      return;
+    }
+
     if (!areDefaultModelsResolved) {
       return;
     }
@@ -122,6 +147,7 @@ export function usePersistedAIChatModelSelection({
     canValidateModels,
     defaultModel.value,
     areDefaultModelsResolved,
+    legacyScope,
     modelSelectorValue,
     scope,
   ]);

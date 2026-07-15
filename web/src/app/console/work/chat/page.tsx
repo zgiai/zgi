@@ -34,7 +34,8 @@ function ChatPageContent() {
   const { modelSelectorValue, isModelInitializing, isSelectedModelUnavailable, handleModelChange } =
     usePersistedAIChatModelSelection({
       accountId: user?.id,
-      scope: 'consoleChat',
+      scope: 'workChat',
+      legacyScope: 'consoleChat',
       useCase: 'text-chat',
       preferredUseCase: 'agent',
     });
