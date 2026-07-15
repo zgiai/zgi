@@ -78,9 +78,11 @@ func agentKnowledgePreauthorization(params map[string]interface{}, toolName stri
 		return preauthorization
 	}
 	preauthorization.Matched = true
-	if authorization, ok := firstAgentBindingAuthorization(params, "knowledge_dataset"); ok {
-		applyAgentBindingAuthorization(preauthorization, authorization)
-	}
+	applyCommonAgentBindingAuthorization(
+		preauthorization,
+		agentKnowledgeBindingAuthorizations(params, datasetIDs),
+		len(resources),
+	)
 	preauthorization.Reason = "allowed by the current Agent knowledge binding"
 	return preauthorization
 }
@@ -126,8 +128,11 @@ func agentDatabasePreauthorization(
 		preauthorization.Reason = "the requested database table is bound read-only for the current Agent"
 		return preauthorization
 	}
+	multiResourceTool := strings.TrimSpace(toolName) == "list_accessible_databases" || strings.TrimSpace(toolName) == "list_database_tables"
 	if authorization, ok := databaseAuthorizationForTool(params, toolName, dataSourceID, tableID, manifest); ok {
-		applyAgentBindingAuthorization(preauthorization, authorization)
+		if !multiResourceTool {
+			applyAgentBindingAuthorization(preauthorization, authorization)
+		}
 	} else if !legacyAgentBindingGrantValid(params, "database") {
 		preauthorization.Matched = false
 		preauthorization.Code = agentBindingMissingCode
@@ -135,12 +140,26 @@ func agentDatabasePreauthorization(
 		return preauthorization
 	}
 
-	if strings.TrimSpace(toolName) == "list_database_tables" {
+	switch strings.TrimSpace(toolName) {
+	case "list_accessible_databases":
+		applyCommonAgentBindingAuthorization(
+			preauthorization,
+			agentDatabaseTableBindingAuthorizations(params, bindings),
+			len(preauthorization.Resources),
+		)
+	case "list_database_tables":
 		preauthorization.Resources = agentDatabaseGovernanceResources([]agentDatabaseGovernanceBinding{matchedBinding})
-	} else if tableID != "" {
-		preauthorization.Resources = []toolgovernance.AssetRef{databaseTableAuthorizationResource(dataSourceID, tableID)}
-	} else if dataSourceID != "" {
-		preauthorization.Resources = []toolgovernance.AssetRef{{ID: dataSourceID, Type: "database"}}
+		applyCommonAgentBindingAuthorization(
+			preauthorization,
+			agentDatabaseTableBindingAuthorizations(params, []agentDatabaseGovernanceBinding{matchedBinding}),
+			len(preauthorization.Resources),
+		)
+	default:
+		if tableID != "" {
+			preauthorization.Resources = []toolgovernance.AssetRef{databaseTableAuthorizationResource(dataSourceID, tableID)}
+		} else if dataSourceID != "" {
+			preauthorization.Resources = []toolgovernance.AssetRef{{ID: dataSourceID, Type: "database"}}
+		}
 	}
 	preauthorization.Reason = "allowed by the current Agent database binding"
 	return preauthorization
@@ -164,9 +183,11 @@ func agentWorkflowPreauthorization(params map[string]interface{}, toolName strin
 			return preauthorization
 		}
 		preauthorization.Matched = true
-		if authorization, ok := firstAgentBindingAuthorization(params, "workflow"); ok {
-			applyAgentBindingAuthorization(preauthorization, authorization)
-		}
+		applyCommonAgentBindingAuthorization(
+			preauthorization,
+			agentWorkflowBindingAuthorizations(params, bindings),
+			len(preauthorization.Resources),
+		)
 		preauthorization.Reason = "allowed by the current Agent workflow bindings"
 		return preauthorization
 	case "run_agent_workflow":
@@ -235,24 +256,14 @@ func agentKnowledgeBindingGrantValid(params map[string]interface{}, datasetIDs [
 	if legacyAgentBindingGrantValid(params, "knowledge") {
 		return true
 	}
-	for _, datasetID := range datasetIDs {
-		if _, ok := tools.AgentBindingAuthorizationFor(params, "knowledge_dataset", "", datasetID, "read"); !ok {
-			return false
-		}
-	}
-	return len(datasetIDs) > 0
+	return len(datasetIDs) > 0 && len(agentKnowledgeBindingAuthorizations(params, datasetIDs)) == len(datasetIDs)
 }
 
 func allWorkflowBindingGrantsValid(params map[string]interface{}, bindings []agentWorkflowGovernanceBinding) bool {
 	if len(bindings) == 0 {
 		return false
 	}
-	for _, binding := range bindings {
-		if _, ok := tools.AgentBindingAuthorizationFor(params, "workflow", binding.AgentID, binding.BindingID, "execute"); !ok {
-			return false
-		}
-	}
-	return true
+	return len(agentWorkflowBindingAuthorizations(params, bindings)) == len(bindings)
 }
 
 func databaseAuthorizationForTool(
@@ -264,7 +275,7 @@ func databaseAuthorizationForTool(
 ) (tools.AgentBindingAuthorization, bool) {
 	switch strings.TrimSpace(toolName) {
 	case "list_accessible_databases":
-		return firstAgentBindingAuthorization(params, "database")
+		return tools.AgentBindingAuthorization{}, len(tools.AgentBindingAuthorizationsForType(params, "database")) > 0
 	case "list_database_tables":
 		return tools.AgentBindingAuthorizationFor(params, "database", "", dataSourceID, "read")
 	case "describe_database_table", "query_table_records", "insert_table_records", "update_table_records", "delete_table_records":
@@ -278,12 +289,39 @@ func databaseAuthorizationForTool(
 	}
 }
 
-func firstAgentBindingAuthorization(params map[string]interface{}, bindingType string) (tools.AgentBindingAuthorization, bool) {
-	authorizations := tools.AgentBindingAuthorizationsForType(params, bindingType)
-	if len(authorizations) == 0 {
-		return tools.AgentBindingAuthorization{}, false
+func agentKnowledgeBindingAuthorizations(params map[string]interface{}, datasetIDs []string) []tools.AgentBindingAuthorization {
+	authorizations := make([]tools.AgentBindingAuthorization, 0, len(datasetIDs))
+	for _, datasetID := range datasetIDs {
+		authorization, ok := tools.AgentBindingAuthorizationFor(params, "knowledge_dataset", "", datasetID, "read")
+		if ok {
+			authorizations = append(authorizations, authorization)
+		}
 	}
-	return authorizations[0], true
+	return authorizations
+}
+
+func agentDatabaseTableBindingAuthorizations(params map[string]interface{}, bindings []agentDatabaseGovernanceBinding) []tools.AgentBindingAuthorization {
+	var authorizations []tools.AgentBindingAuthorization
+	for _, binding := range bindings {
+		for _, tableID := range binding.TableIDs {
+			authorization, ok := tools.AgentBindingAuthorizationFor(params, "database_table", binding.DataSourceID, tableID, "read")
+			if ok {
+				authorizations = append(authorizations, authorization)
+			}
+		}
+	}
+	return authorizations
+}
+
+func agentWorkflowBindingAuthorizations(params map[string]interface{}, bindings []agentWorkflowGovernanceBinding) []tools.AgentBindingAuthorization {
+	authorizations := make([]tools.AgentBindingAuthorization, 0, len(bindings))
+	for _, binding := range bindings {
+		authorization, ok := tools.AgentBindingAuthorizationFor(params, "workflow", binding.AgentID, binding.BindingID, "execute")
+		if ok {
+			authorizations = append(authorizations, authorization)
+		}
+	}
+	return authorizations
 }
 
 func agentBindingAuthorizationsForCategory(params map[string]interface{}, bindingType string) []tools.AgentBindingAuthorization {
@@ -311,6 +349,30 @@ func applyAgentBindingAuthorization(preauthorization *toolgovernance.Preauthoriz
 		authorizedAt := time.Unix(authorization.BoundAtUnix, 0).UTC()
 		preauthorization.AuthorizedAt = &authorizedAt
 	}
+}
+
+// applyCommonAgentBindingAuthorization only sets the top-level audit actor when
+// every governed resource has the same persistent authorization evidence.
+func applyCommonAgentBindingAuthorization(
+	preauthorization *toolgovernance.Preauthorization,
+	authorizations []tools.AgentBindingAuthorization,
+	expectedResourceCount int,
+) {
+	if preauthorization == nil || len(authorizations) == 0 {
+		return
+	}
+	preauthorization.AuthorizedBy = ""
+	preauthorization.AuthorizedAt = nil
+	if expectedResourceCount <= 0 || len(authorizations) != expectedResourceCount {
+		return
+	}
+	common := authorizations[0]
+	for _, authorization := range authorizations[1:] {
+		if authorization.BoundByAccountID != common.BoundByAccountID || authorization.BoundAtUnix != common.BoundAtUnix {
+			return
+		}
+	}
+	applyAgentBindingAuthorization(preauthorization, common)
 }
 
 func agentDatabaseGovernanceBindingsFromAny(value interface{}) []agentDatabaseGovernanceBinding {

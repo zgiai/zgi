@@ -106,6 +106,140 @@ func TestPolicyToolGovernanceUsesTargetBindingAuthorization(t *testing.T) {
 	}
 }
 
+func TestPolicyToolGovernanceMultiResourceAuditDoesNotMisattributeMixedBindings(t *testing.T) {
+	tests := []struct {
+		name      string
+		skillID   string
+		toolName  string
+		arguments map[string]interface{}
+		params    map[string]interface{}
+	}{
+		{
+			name:     "knowledge retrieval",
+			skillID:  SkillAgentKnowledge,
+			toolName: "retrieve_agent_knowledge",
+			arguments: map[string]interface{}{
+				"query": "policy",
+			},
+			params: map[string]interface{}{
+				"knowledge_dataset_ids": []string{"dataset-1", "dataset-2"},
+				"agent_binding_authorizations": []map[string]interface{}{
+					{"binding_type": "knowledge_dataset", "resource_id": "dataset-1", "access_mode": "read", "bound_by_account_id": "binder-1", "bound_at_unix": int64(100)},
+					{"binding_type": "knowledge_dataset", "resource_id": "dataset-2", "access_mode": "read", "bound_by_account_id": "binder-1", "bound_at_unix": int64(200)},
+				},
+			},
+		},
+		{
+			name:     "database list",
+			skillID:  SkillAgentDatabase,
+			toolName: "list_accessible_databases",
+			params: map[string]interface{}{
+				"database_bindings": []map[string]interface{}{
+					{"data_source_id": "database-1", "table_ids": []string{"table-1"}},
+					{"data_source_id": "database-2", "table_ids": []string{"table-2"}},
+				},
+				"agent_binding_authorizations": []map[string]interface{}{
+					{"binding_type": "database", "resource_id": "database-1", "access_mode": "read", "bound_by_account_id": "binder-1", "bound_at_unix": int64(100)},
+					{"binding_type": "database", "resource_id": "database-2", "access_mode": "read", "bound_by_account_id": "binder-2", "bound_at_unix": int64(200)},
+					{"binding_type": "database_table", "parent_resource_id": "database-1", "resource_id": "table-1", "access_mode": "read", "bound_by_account_id": "binder-1", "bound_at_unix": int64(100)},
+					{"binding_type": "database_table", "parent_resource_id": "database-2", "resource_id": "table-2", "access_mode": "read", "bound_by_account_id": "binder-2", "bound_at_unix": int64(200)},
+				},
+			},
+		},
+		{
+			name:      "database table list",
+			skillID:   SkillAgentDatabase,
+			toolName:  "list_database_tables",
+			arguments: map[string]interface{}{"data_source_id": "database-1"},
+			params: map[string]interface{}{
+				"database_bindings": []map[string]interface{}{
+					{"data_source_id": "database-1", "table_ids": []string{"table-1", "table-2"}},
+				},
+				"agent_binding_authorizations": []map[string]interface{}{
+					{"binding_type": "database", "resource_id": "database-1", "access_mode": "read", "bound_by_account_id": "binder-1", "bound_at_unix": int64(100)},
+					{"binding_type": "database_table", "parent_resource_id": "database-1", "resource_id": "table-1", "access_mode": "read", "bound_by_account_id": "binder-1", "bound_at_unix": int64(100)},
+					{"binding_type": "database_table", "parent_resource_id": "database-1", "resource_id": "table-2", "access_mode": "read", "bound_by_account_id": "binder-2", "bound_at_unix": int64(200)},
+				},
+			},
+		},
+		{
+			name:     "workflow list",
+			skillID:  SkillAgentWorkflow,
+			toolName: "list_agent_workflows",
+			params: map[string]interface{}{
+				"workflow_bindings": []map[string]interface{}{
+					{"binding_id": "binding-1", "agent_id": "workflow-agent-1", "workflow_id": "workflow-1"},
+					{"binding_id": "binding-2", "agent_id": "workflow-agent-2", "workflow_id": "workflow-2"},
+				},
+				"agent_binding_authorizations": []map[string]interface{}{
+					{"binding_type": "workflow", "parent_resource_id": "workflow-agent-1", "resource_id": "binding-1", "access_mode": "execute", "bound_by_account_id": "binder-1", "bound_at_unix": int64(100)},
+					{"binding_type": "workflow", "parent_resource_id": "workflow-agent-2", "resource_id": "binding-2", "access_mode": "execute", "bound_by_account_id": "binder-1", "bound_at_unix": int64(200)},
+				},
+			},
+		},
+		{
+			name:      "workflow status",
+			skillID:   SkillAgentWorkflow,
+			toolName:  "get_workflow_run_status",
+			arguments: map[string]interface{}{"workflow_run_id": "run-1"},
+			params: map[string]interface{}{
+				"workflow_bindings": []map[string]interface{}{
+					{"binding_id": "binding-1", "agent_id": "workflow-agent-1", "workflow_id": "workflow-1"},
+					{"binding_id": "binding-2", "agent_id": "workflow-agent-2", "workflow_id": "workflow-2"},
+				},
+				"agent_binding_authorizations": []map[string]interface{}{
+					{"binding_type": "workflow", "parent_resource_id": "workflow-agent-1", "resource_id": "binding-1", "access_mode": "execute", "bound_by_account_id": "binder-1", "bound_at_unix": int64(100)},
+					{"binding_type": "workflow", "parent_resource_id": "workflow-agent-2", "resource_id": "binding-2", "access_mode": "execute", "bound_by_account_id": "binder-2", "bound_at_unix": int64(200)},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			decision := decideSystemSkillToolForTest(
+				t,
+				tt.skillID,
+				tt.toolName,
+				tt.arguments,
+				agentGovernanceRuntimeParameters(tt.params),
+			)
+			assertAgentGovernanceDecision(t, decision, toolgovernance.DecisionStatusAllowed, "")
+			if decision.Preauthorization == nil {
+				t.Fatal("preauthorization = nil, want Agent binding evidence")
+			}
+			if decision.Preauthorization.AuthorizedBy != "" || decision.Preauthorization.AuthorizedAt != nil {
+				t.Fatalf("preauthorization = %#v, want no shared actor for mixed binding evidence", decision.Preauthorization)
+			}
+			if _, exists := decision.AssetOperationAudit["authorization_actor_id"]; exists {
+				t.Fatalf("audit = %#v, mixed binding evidence must not claim one actor", decision.AssetOperationAudit)
+			}
+			if _, exists := decision.AssetOperationAudit["authorization_granted_at"]; exists {
+				t.Fatalf("audit = %#v, mixed binding evidence must not claim one grant time", decision.AssetOperationAudit)
+			}
+		})
+	}
+}
+
+func TestPolicyToolGovernanceMultiResourceAuditKeepsUniformBindingActor(t *testing.T) {
+	params := agentGovernanceRuntimeParameters(map[string]interface{}{
+		"knowledge_dataset_ids": []string{"dataset-1", "dataset-2"},
+		"agent_binding_authorizations": []map[string]interface{}{
+			{"binding_type": "knowledge_dataset", "resource_id": "dataset-1", "access_mode": "read", "bound_by_account_id": "binder-1", "bound_at_unix": int64(100)},
+			{"binding_type": "knowledge_dataset", "resource_id": "dataset-2", "access_mode": "read", "bound_by_account_id": "binder-1", "bound_at_unix": int64(100)},
+		},
+	})
+
+	decision := decideSystemSkillToolForTest(t, SkillAgentKnowledge, "retrieve_agent_knowledge", map[string]interface{}{"query": "policy"}, params)
+	assertAgentGovernanceDecision(t, decision, toolgovernance.DecisionStatusAllowed, "")
+	if decision.Preauthorization == nil || decision.Preauthorization.AuthorizedBy != "binder-1" || decision.Preauthorization.AuthorizedAt == nil {
+		t.Fatalf("preauthorization = %#v, want uniform binding actor", decision.Preauthorization)
+	}
+	if decision.AssetOperationAudit["authorization_actor_id"] != "binder-1" {
+		t.Fatalf("audit = %#v, want shared binding actor", decision.AssetOperationAudit)
+	}
+}
+
 func TestPolicyToolGovernanceAgentWorkflowBinding(t *testing.T) {
 	params := agentGovernanceRuntimeParameters(map[string]interface{}{
 		"workflow_binding_grant":       true,
