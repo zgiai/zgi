@@ -71,7 +71,7 @@ func TestLegacyToolChatToolsExcludeAgentPlanningProtocol(t *testing.T) {
 		Tools:    []skills.SkillToolDefinition{{Name: "delete_file"}},
 	}}}
 	loaded := initialLoadedSkillsForRun(RunRequest{LegacyToolChat: true}, resolved)
-	tools := legacyToolChatTools(metaToolsForRun(resolved, loaded, false, false))
+	tools := legacyToolChatTools(metaToolsForRun(resolved, loaded, false, false), false)
 	if !runnerTestHasTool(tools, skills.MetaToolCallSkillTool) {
 		t.Fatalf("tools = %#v, want %s", tools, skills.MetaToolCallSkillTool)
 	}
@@ -85,6 +85,27 @@ func TestLegacyToolChatToolsExcludeAgentPlanningProtocol(t *testing.T) {
 		if runnerTestHasTool(tools, excluded) {
 			t.Fatalf("tools = %#v, legacy tool chat should exclude %s", tools, excluded)
 		}
+	}
+}
+
+func TestLegacyToolChatToolsAllowReloadOnlyWhenRestorationRequiresIt(t *testing.T) {
+	resolved := &skills.ResolvedSkills{Skills: []skills.SkillDocument{{
+		Metadata:     skills.SkillMetadata{ID: skills.SkillFileManager},
+		Instructions: strings.Repeat("instruction ", restoredSkillInstructionsPerSkillBudgetChars),
+		Tools:        []skills.SkillToolDefinition{{Name: "delete_file"}},
+	}}}
+	loaded := initialLoadedSkillsForRun(RunRequest{LegacyToolChat: true}, resolved)
+	state := restoredLoadedSkillInstructionState(resolved, loaded)
+	if len(state.reloadRequired) != 1 {
+		t.Fatalf("reloadRequired = %#v, want one oversized skill", state.reloadRequired)
+	}
+
+	tools := legacyToolChatTools(metaToolsForRun(resolved, state.activeLoaded, false, false), true)
+	if !runnerTestHasTool(tools, skills.MetaToolLoadSkill) {
+		t.Fatalf("tools = %#v, want %s recovery path", tools, skills.MetaToolLoadSkill)
+	}
+	if runnerTestHasTool(legacyToolChatTools(tools, false), skills.MetaToolLoadSkill) {
+		t.Fatalf("tools = %#v, load_skill should remain hidden without a reload requirement", tools)
 	}
 }
 

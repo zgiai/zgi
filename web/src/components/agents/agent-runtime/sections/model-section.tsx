@@ -40,6 +40,7 @@ export function AgentRuntimeModelSection({
       <ModelSelectorParameter
         modelType="text-chat"
         preferredUseCase="agent"
+        capabilityFilter={{ features_tool_call: true }}
         value={modelValue}
         onChange={onChangeModelValue}
         hasError={unavailable}

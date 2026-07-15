@@ -386,6 +386,9 @@ func (s *agentsService) validateAgentModelEligibility(ctx context.Context, organ
 	}
 	for _, candidate := range models {
 		if candidate != nil && candidate.Provider == provider && candidate.Name == modelName {
+			if !candidate.Features.FunctionCalling {
+				return fmt.Errorf("agent model %s/%s does not support function calling", provider, modelName)
+			}
 			return nil
 		}
 	}

@@ -889,6 +889,24 @@ func TestFilterRoutesForModelScene_AgentAllowsCompatibleUntaggedModel(t *testing
 	}
 }
 
+func TestFilterRoutesForModelScene_AgentRejectsUntaggedUnsupportedAdapter(t *testing.T) {
+	google := &channelmodel.LLMRoute{
+		ID:              uuid.New(),
+		Type:            shared.RouteTypePrivate,
+		ChannelProvider: "google",
+		Models:          []string{"legacy-agent-model"},
+	}
+	modelRecord := &llmmodel.LLMModel{
+		Model:    "legacy-agent-model",
+		UseCases: llmmodel.StringArray{"text-chat"},
+	}
+
+	got := filterRoutesForModelScene([]*channelmodel.LLMRoute{google}, "legacy-agent-model", modelRecord, string(llmmodel.UseCaseAgent), false)
+	if len(got) != 0 {
+		t.Fatalf("agent routes = %#v, want no unsupported route for an untagged model", got)
+	}
+}
+
 func TestFilterRoutesForModelScene_AgentRejectsUnsupportedAdapter(t *testing.T) {
 	google := &channelmodel.LLMRoute{
 		ID:              uuid.New(),

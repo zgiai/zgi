@@ -160,7 +160,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 		planningReq.Stream = false
 		planningReq.Tools = metaToolsForRun(resolved, loadedSkills, preferExplicitFinalAnswer, runRequiresFinalPlanSnapshot(req))
 		if req.LegacyToolChat {
-			planningReq.Tools = legacyToolChatTools(planningReq.Tools)
+			planningReq.Tools = legacyToolChatTools(planningReq.Tools, len(restoredSkillState.reloadRequired) > 0)
 		}
 		planningReq.ToolChoice = "auto"
 
@@ -308,7 +308,7 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (string, *adapter.Usag
 			callSkillID, callToolName, callToolArgs, failedCallKey := skillToolCallIdentityForCall(resolved, loadedSkills, call)
 			callEvidence := runtimeStateWithSuccessfulToolCalls(req, successfulToolCalls)
 			result := skillStepResult{}
-			if userInputPlanRevisionPending(req) && planRevisionRequiredForTool(callSkillID, callToolName) {
+			if userInputPlanRevisionRequiredForTool(req, callSkillID, callToolName) {
 				result = pendingUserInputPlanRevisionStep(call.ID, callSkillID, callToolName, callToolArgs)
 			}
 			if result.trace.Kind == "" && req.AuthorizeSkillStep != nil && strings.TrimSpace(callSkillID) != "" {
@@ -511,11 +511,14 @@ func initialLoadedSkillsForRun(req RunRequest, resolved *skills.ResolvedSkills) 
 	return loaded
 }
 
-func legacyToolChatTools(input []adapter.Tool) []adapter.Tool {
+func legacyToolChatTools(input []adapter.Tool, allowSkillReload bool) []adapter.Tool {
 	allowed := map[string]struct{}{
 		skills.MetaToolReadSkillReference: {},
 		skills.MetaToolCallSkillTool:      {},
 		skills.MetaToolRequestUserInput:   {},
+	}
+	if allowSkillReload {
+		allowed[skills.MetaToolLoadSkill] = struct{}{}
 	}
 	out := make([]adapter.Tool, 0, len(input))
 	for _, tool := range input {
@@ -723,6 +726,13 @@ func userInputPlanRevisionPending(req RunRequest) bool {
 	continuation := evidenceMapFromAny(metadata["user_input_continuation"])
 	return strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(continuation["status"])), userInputContinuationAnswered) &&
 		strings.EqualFold(strings.TrimSpace(evidenceStringFromAny(continuation["next_action"])), userInputContinuationReplan)
+}
+
+func userInputPlanRevisionRequiredForTool(req RunRequest, skillID string, toolName string) bool {
+	if req.LegacyToolChat {
+		return false
+	}
+	return userInputPlanRevisionPending(req) && planRevisionRequiredForTool(skillID, toolName)
 }
 
 func planRevisionRequiredForTool(skillID string, toolName string) bool {

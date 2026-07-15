@@ -12,6 +12,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	"github.com/zgiai/zgi/api/internal/dto"
+	llmmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	llmmodelservice "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/service"
 	"github.com/zgiai/zgi/api/internal/modules/skills"
 )
@@ -29,12 +30,13 @@ func (f agentModelEligibilityFake) ListAvailable(_ context.Context, _ uuid.UUID,
 	return f.models, f.err
 }
 
-func TestValidateAgentModelEligibilityAcceptsAvailableTextChatModels(t *testing.T) {
+func TestValidateAgentModelEligibilityAcceptsFunctionCallingTextChatModels(t *testing.T) {
 	var useCases []string
 	service := &agentsService{agentModels: agentModelEligibilityFake{
 		models: []*llmmodelservice.AvailableModel{
-			{Provider: "deepseek", Name: "legacy-model"},
-			{Provider: "deepseek", Name: "agent-model", UseCases: []string{"text-chat", "function-calling", "agent"}},
+			{Provider: "deepseek", Name: "legacy-model", Features: llmmodel.ModelFeatures{FunctionCalling: true}},
+			{Provider: "deepseek", Name: "agent-model", Features: llmmodel.ModelFeatures{FunctionCalling: true}, UseCases: []string{"text-chat", "function-calling", "agent"}},
+			{Provider: "deepseek", Name: "plain-chat-model"},
 		},
 		useCases: &useCases,
 	}}
@@ -56,6 +58,9 @@ func TestValidateAgentModelEligibilityAcceptsAvailableTextChatModels(t *testing.
 
 	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "openai", "legacy-model"); err == nil {
 		t.Fatal("validateAgentModelEligibility() error = nil, want provider mismatch error")
+	}
+	if err := service.validateAgentModelEligibility(context.Background(), uuid.New(), "deepseek", "plain-chat-model"); err == nil || !strings.Contains(err.Error(), "does not support function calling") {
+		t.Fatalf("validateAgentModelEligibility(plain-chat-model) error = %v, want function calling error", err)
 	}
 }
 
