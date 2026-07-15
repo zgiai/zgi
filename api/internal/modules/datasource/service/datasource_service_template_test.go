@@ -10,6 +10,8 @@ import (
 	"github.com/zgiai/zgi/api/internal/modules/datasource/model"
 	"github.com/zgiai/zgi/api/internal/modules/datasource/repository"
 	"github.com/zgiai/zgi/api/pkg/sql_base"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 func TestGenerateTableTemplateExcelOnlyIncludesHeaderRow(t *testing.T) {
@@ -19,9 +21,9 @@ func TestGenerateTableTemplateExcelOnlyIncludesHeaderRow(t *testing.T) {
 		tableID        = "table-1"
 	)
 	workspaceID := "workspace-1"
-	db, mock := newExcelImportMockDB(t)
-	mock.ExpectQuery(`SELECT \* FROM "data_source_import_jobs" WHERE organization_id = \$1 AND data_source_id = \$2 AND table_id = \$3 AND source_type = \$4 AND status = \$5 ORDER BY created_at DESC,"data_source_import_jobs"\."id" LIMIT \$6`).
-		WithArgs(organizationID, dataSourceID, tableID, "schema", "completed", 1).
+	db, mock := newTemplateMockDB(t)
+	mock.ExpectQuery(`SELECT \* FROM "data_source_import_jobs" WHERE table_id = \$1 ORDER BY created_at DESC,"data_source_import_jobs"\."id" LIMIT \$2`).
+		WithArgs(tableID, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 
 	svc := &dataSourceService{
@@ -114,4 +116,23 @@ type templateSQLBase struct {
 
 func (s *templateSQLBase) GetTable(context.Context, int) (*sql_base.Table, error) {
 	return s.table, nil
+}
+
+func newTemplateMockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
+	t.Helper()
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	db, err := gorm.Open(postgres.New(postgres.Config{
+		Conn:                 sqlDB,
+		PreferSimpleProtocol: true,
+	}), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("gorm.Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = sqlDB.Close()
+	})
+	return db, mock
 }
