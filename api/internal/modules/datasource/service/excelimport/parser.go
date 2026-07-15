@@ -32,12 +32,20 @@ func parseXLSX(content []byte) (*ParsedWorkbook, error) {
 		return nil, fmt.Errorf("failed to open workbook: %w", err)
 	}
 	defer f.Close()
+	workbookProps, err := f.GetWorkbookProps()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read workbook properties: %w", err)
+	}
+	use1904Format := workbookProps.Date1904 != nil && *workbookProps.Date1904
 
 	wb := &ParsedWorkbook{SourceType: "excel"}
 	for _, sheetName := range f.GetSheetList() {
 		rows, err := f.GetRows(sheetName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read sheet %s: %w", sheetName, err)
+		}
+		if err := normalizeXLSXDateCells(f, sheetName, rows, use1904Format); err != nil {
+			return nil, fmt.Errorf("failed to normalize dates in sheet %s: %w", sheetName, err)
 		}
 		visible, _ := f.GetSheetVisible(sheetName)
 		sheet := ParsedSheet{
@@ -51,6 +59,76 @@ func parseXLSX(content []byte) (*ParsedWorkbook, error) {
 	}
 	markRecommendedSheet(wb.Sheets)
 	return wb, nil
+}
+
+func normalizeXLSXDateCells(f *excelize.File, sheetName string, rows [][]string, use1904Format bool) error {
+	dateStyles := make(map[int]bool)
+	for rowIndex, row := range rows {
+		for colIndex, value := range row {
+			if strings.TrimSpace(value) == "" {
+				continue
+			}
+			cell, err := excelize.CoordinatesToCellName(colIndex+1, rowIndex+1)
+			if err != nil {
+				return err
+			}
+			styleID, err := f.GetCellStyle(sheetName, cell)
+			if err != nil {
+				return err
+			}
+			isDate, known := dateStyles[styleID]
+			if !known {
+				style, err := f.GetStyle(styleID)
+				if err != nil {
+					return err
+				}
+				isDate = isExcelDateStyle(style)
+				dateStyles[styleID] = isDate
+			}
+			if !isDate {
+				continue
+			}
+			raw, err := f.GetCellValue(sheetName, cell, excelize.Options{RawCellValue: true})
+			if err != nil {
+				return err
+			}
+			serial, err := strconv.ParseFloat(raw, 64)
+			if err != nil {
+				continue
+			}
+			parsed, err := excelize.ExcelDateToTime(serial, use1904Format)
+			if err != nil {
+				return err
+			}
+			rows[rowIndex][colIndex] = parsed.Format("2006-01-02 15:04:05")
+		}
+	}
+	return nil
+}
+
+func isExcelDateStyle(style *excelize.Style) bool {
+	if style == nil {
+		return false
+	}
+	if isExcelBuiltInDateFormat(style.NumFmt) {
+		return true
+	}
+	if style.CustomNumFmt == nil {
+		return false
+	}
+	format := strings.ToLower(*style.CustomNumFmt)
+	return strings.ContainsAny(format, "yd") ||
+		strings.Contains(format, "h:") ||
+		strings.Contains(format, "ss") ||
+		strings.Contains(format, "[h]") ||
+		strings.Contains(format, "[s]")
+}
+
+func isExcelBuiltInDateFormat(numFmt int) bool {
+	return (numFmt >= 14 && numFmt <= 22) ||
+		(numFmt >= 27 && numFmt <= 36) ||
+		(numFmt >= 45 && numFmt <= 47) ||
+		(numFmt >= 50 && numFmt <= 58)
 }
 
 func parseXLS(content []byte) (*ParsedWorkbook, error) {
