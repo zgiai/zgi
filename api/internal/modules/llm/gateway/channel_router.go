@@ -530,7 +530,7 @@ func (r *ChannelRouter) prepareCandidateRoutes(
 ) ([]*channelmodel.LLMRoute, error) {
 	validRoutes := r.filterRoutesForSelection(routes, modelName, modelProvider, isPrivateCustomModel)
 	modelUseCase, _ := ctx.Value(shared.ContextKeyModelUseCase).(string)
-	validRoutes = filterRoutesForModelScene(validRoutes, modelName, llmModel, modelUseCase)
+	validRoutes = filterRoutesForModelScene(validRoutes, modelName, llmModel, modelUseCase, isPrivateCustomModel)
 	modelCategory, _ := ctx.Value(shared.ContextKeyModelCategory).(string)
 	validRoutes, err := filterRoutesForNativeProtocolOrError(validRoutes, llmModel, modelCategory)
 	if err != nil {
@@ -548,7 +548,7 @@ func (r *ChannelRouter) prepareCandidateRoutes(
 	return eligibleRoutes, nil
 }
 
-func filterRoutesForModelScene(routes []*channelmodel.LLMRoute, modelName string, llmModel *llmmodel.LLMModel, useCase string) []*channelmodel.LLMRoute {
+func filterRoutesForModelScene(routes []*channelmodel.LLMRoute, modelName string, llmModel *llmmodel.LLMModel, useCase string, isPrivateCustomModel bool) []*channelmodel.LLMRoute {
 	useCase = strings.TrimSpace(useCase)
 	if useCase != string(llmmodel.UseCaseAgent) {
 		return routes
@@ -562,12 +562,14 @@ func filterRoutesForModelScene(routes []*channelmodel.LLMRoute, modelName string
 		if route == nil {
 			continue
 		}
-		channelProvider := route.ChannelProvider
-		if isOfficialRoute(route) {
-			channelProvider = "zgi-cloud"
-		}
-		if !channelprovider.SupportsAgentProtocol(channelProvider) {
-			continue
+		if !isPrivateCustomModel {
+			channelProvider := route.ChannelProvider
+			if isOfficialRoute(route) {
+				channelProvider = "zgi-cloud"
+			}
+			if !channelprovider.SupportsAgentProtocol(channelProvider) {
+				continue
+			}
 		}
 		filtered = append(filtered, route)
 	}
