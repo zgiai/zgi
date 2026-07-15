@@ -52,8 +52,11 @@ func (s *TenantAutonomyStrategy) SupportsModel(route *channelmodel.LLMRoute, mod
 		return false
 	}
 
+	official := isOfficialRoute(route)
 	supported := route.SupportsModel(modelName)
-	if supported && strings.TrimSpace(modelProvider) != "" && !isOfficialRoute(route) {
+	if official {
+		supported = route.SupportsModelForProvider(modelProvider, modelName)
+	} else if supported && strings.TrimSpace(modelProvider) != "" {
 		supported = routeProviderMatchesCatalogProvider(route.ChannelProvider, modelProvider)
 	}
 	if !supported {

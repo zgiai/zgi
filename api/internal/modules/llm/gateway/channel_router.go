@@ -846,11 +846,15 @@ func (r *ChannelRouter) buildChannelSelection(
 		targetModelName = llmModel.Model
 	}
 
-	if !route.SupportsModel(targetModelName) {
+	isOfficial := route.IsOfficial || route.Type == shared.RouteTypeZGICloud
+	modelProvider := ""
+	if llmModel != nil {
+		modelProvider = llmModel.Provider
+	}
+	if !route.SupportsModelForProvider(modelProvider, targetModelName) {
 		return nil, fmt.Errorf("model %s not supported by route %s (supported: %v)", targetModelName, route.ID, models)
 	}
 
-	isOfficial := route.IsOfficial || route.Type == shared.RouteTypeZGICloud
 	billingLane := UsageBillingLanePrivate
 	if isOfficial {
 		billingLane = UsageBillingLanePlatform

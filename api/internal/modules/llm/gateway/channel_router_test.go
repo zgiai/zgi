@@ -440,6 +440,50 @@ func TestSelectChannelsForProviderKeepsPassthroughForUnknownModel(t *testing.T) 
 	}
 }
 
+func TestSelectChannelsForProviderRejectsWrongOfficialProviderForSameName(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db, mock := openGatewayModelLookupDB(t)
+	organizationID := uuid.New()
+	modelID := uuid.New()
+	modelName := "same-name"
+	providerHint := "anthropic"
+	mock.ExpectQuery(`(?s)FROM "llm_models" JOIN llm_providers .*llm_models\.provider.*llm_models\.name`).
+		WithArgs(providerHint, modelName, true, llmmodel.ModelStatusActive, true, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "provider", "name", "display_name", "status", "is_active"}).
+			AddRow(modelID, providerHint, modelName, "Anthropic Same Name", llmmodel.ModelStatusActive, true))
+	router := &ChannelRouter{
+		db: db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{{
+			ID:                     uuid.New(),
+			OrganizationID:         organizationID,
+			Type:                   shared.RouteTypeZGICloud,
+			ChannelProvider:        "zgi-cloud",
+			Models:                 []string{modelName},
+			OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+			IsEnabled:              true,
+			IsOfficial:             true,
+		}}},
+		strategyFactory: NewStrategyFactory(),
+	}
+
+	selections, err := router.SelectChannelsForProvider(
+		context.Background(),
+		organizationID,
+		providerHint,
+		modelName,
+		1,
+	)
+	if err == nil {
+		t.Fatalf("SelectChannelsForProvider returned selections %#v, want wrong-provider error", selections)
+	}
+	if selections != nil {
+		t.Fatalf("selections = %#v, want nil", selections)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
 func TestCandidateRoutesForModel_FiltersNativeProtocolLikeRealSelection(t *testing.T) {
 	orgID := uuid.New()
 	modelName := "custom-responses-model"
@@ -1104,14 +1148,15 @@ func TestBuildChannelSelection_OfficialRouteUsesRuntimeConsoleAPIURL(t *testing.
 
 	router := &ChannelRouter{}
 	route := &channelmodel.LLMRoute{
-		ID:              uuid.New(),
-		OrganizationID:  uuid.New(),
-		Type:            shared.RouteTypeZGICloud,
-		ChannelProvider: "zgi-cloud",
-		APIBaseURL:      "http://zgi-console-api.zeabur.internal:2625/v1/internal",
-		Models:          []string{"gpt-5"},
-		IsEnabled:       true,
-		IsOfficial:      true,
+		ID:                     uuid.New(),
+		OrganizationID:         uuid.New(),
+		Type:                   shared.RouteTypeZGICloud,
+		ChannelProvider:        "zgi-cloud",
+		APIBaseURL:             "http://zgi-console-api.zeabur.internal:2625/v1/internal",
+		Models:                 []string{"gpt-5"},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: "gpt-5"}},
+		IsEnabled:              true,
+		IsOfficial:             true,
 	}
 	model := &llmmodel.LLMModel{
 		ID:        uuid.New(),
@@ -1136,19 +1181,48 @@ func TestBuildChannelSelection_OfficialRouteUsesRuntimeConsoleAPIURL(t *testing.
 	}
 }
 
+func TestBuildChannelSelectionRejectsWrongOfficialProviderForSameName(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	modelName := "same-name"
+	router := &ChannelRouter{}
+	route := &channelmodel.LLMRoute{
+		ID:                     uuid.New(),
+		OrganizationID:         uuid.New(),
+		Type:                   shared.RouteTypeZGICloud,
+		ChannelProvider:        "zgi-cloud",
+		Models:                 []string{modelName},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+		IsEnabled:              true,
+		IsOfficial:             true,
+	}
+	model := &llmmodel.LLMModel{
+		ID:        uuid.New(),
+		Model:     modelName,
+		ModelName: modelName,
+		Provider:  "anthropic",
+		IsActive:  true,
+	}
+
+	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, modelName, false, "chat")
+	if err == nil || !strings.Contains(err.Error(), "not supported") {
+		t.Fatalf("buildChannelSelection = (%#v, %v), want wrong-provider not supported error", selection, err)
+	}
+}
+
 func TestBuildChannelSelection_OfficialRouteRequiresRuntimeConsoleAPIURL(t *testing.T) {
 	setGatewayConsoleAPIURL(t, "")
 
 	router := &ChannelRouter{}
 	route := &channelmodel.LLMRoute{
-		ID:              uuid.New(),
-		OrganizationID:  uuid.New(),
-		Type:            shared.RouteTypeZGICloud,
-		ChannelProvider: "zgi-cloud",
-		APIBaseURL:      "http://zgi-console-api.zeabur.internal:2625/v1/internal",
-		Models:          []string{"gpt-5"},
-		IsEnabled:       true,
-		IsOfficial:      true,
+		ID:                     uuid.New(),
+		OrganizationID:         uuid.New(),
+		Type:                   shared.RouteTypeZGICloud,
+		ChannelProvider:        "zgi-cloud",
+		APIBaseURL:             "http://zgi-console-api.zeabur.internal:2625/v1/internal",
+		Models:                 []string{"gpt-5"},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: "gpt-5"}},
+		IsEnabled:              true,
+		IsOfficial:             true,
 	}
 	model := &llmmodel.LLMModel{
 		ID:        uuid.New(),
@@ -1169,14 +1243,15 @@ func TestBuildChannelSelection_OfficialRouteRejectsInvalidRuntimeConsoleAPIURL(t
 
 	router := &ChannelRouter{}
 	route := &channelmodel.LLMRoute{
-		ID:              uuid.New(),
-		OrganizationID:  uuid.New(),
-		Type:            shared.RouteTypeZGICloud,
-		ChannelProvider: "zgi-cloud",
-		APIBaseURL:      "http://zgi-console-api.zeabur.internal:2625/v1/internal",
-		Models:          []string{"gpt-5"},
-		IsEnabled:       true,
-		IsOfficial:      true,
+		ID:                     uuid.New(),
+		OrganizationID:         uuid.New(),
+		Type:                   shared.RouteTypeZGICloud,
+		ChannelProvider:        "zgi-cloud",
+		APIBaseURL:             "http://zgi-console-api.zeabur.internal:2625/v1/internal",
+		Models:                 []string{"gpt-5"},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: "gpt-5"}},
+		IsEnabled:              true,
+		IsOfficial:             true,
 	}
 	model := &llmmodel.LLMModel{
 		ID:        uuid.New(),

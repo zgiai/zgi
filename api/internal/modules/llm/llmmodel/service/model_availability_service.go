@@ -101,9 +101,9 @@ func (s *modelAvailabilityService) BatchCheckAvailability(ctx context.Context, o
 		return nil, fmt.Errorf("failed to list models: %w", err)
 	}
 
-	modelMap := make(map[string]*model.LLMModel)
+	modelMap := make(map[string][]*model.LLMModel)
 	for _, m := range allModels {
-		modelMap[m.Model] = m
+		modelMap[m.Model] = append(modelMap[m.Model], m)
 	}
 
 	result := &dto.BatchModelAvailabilityResponse{
@@ -122,7 +122,7 @@ func (s *modelAvailabilityService) BatchCheckAvailability(ctx context.Context, o
 	}
 
 	for _, name := range modelNames {
-		m, exists := modelMap[name]
+		candidates, exists := modelMap[name]
 		if !exists {
 			result.Items[name] = &dto.ModelAvailabilityResponse{
 				Available: false,
@@ -131,9 +131,18 @@ func (s *modelAvailabilityService) BatchCheckAvailability(ctx context.Context, o
 			continue
 		}
 
-		availability, err := s.availabilityForModel(ctx, organizationID, m, routes, visibility)
-		if err != nil {
-			return nil, err
+		var availability *dto.ModelAvailabilityResponse
+		for _, candidate := range candidates {
+			candidateAvailability, err := s.availabilityForModel(ctx, organizationID, candidate, routes, visibility)
+			if err != nil {
+				return nil, err
+			}
+			if availability == nil || candidateAvailability.Available {
+				availability = candidateAvailability
+			}
+			if candidateAvailability.Available {
+				break
+			}
 		}
 		result.Items[name] = availability
 	}
@@ -181,7 +190,7 @@ func (s *modelAvailabilityService) availabilityForModel(
 		}, nil
 	}
 
-	channelCount := countSupportingRoutes(routes, m.Model)
+	channelCount := countSupportingRoutes(routes, m.Provider, m.Model)
 	return &dto.ModelAvailabilityResponse{
 		Available:    channelCount > 0,
 		ChannelCount: channelCount,
@@ -189,10 +198,10 @@ func (s *modelAvailabilityService) availabilityForModel(
 	}, nil
 }
 
-func countSupportingRoutes(routes []*channelmodel.LLMRoute, modelName string) int {
+func countSupportingRoutes(routes []*channelmodel.LLMRoute, provider, modelName string) int {
 	count := 0
 	for _, route := range routes {
-		if route.SupportsModel(modelName) {
+		if route.SupportsModelForProvider(provider, modelName) {
 			count++
 		}
 	}
