@@ -6,11 +6,14 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
+	channelrepo "github.com/zgiai/zgi/api/internal/modules/llm/channel/repository"
 	llmclient "github.com/zgiai/zgi/api/internal/modules/llm/client"
 	defaultmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/model"
 	llmdefaultservice "github.com/zgiai/zgi/api/internal/modules/llm/defaultmodel/service"
 	llmmodelmodel "github.com/zgiai/zgi/api/internal/modules/llm/llmmodel/model"
 	adapter "github.com/zgiai/zgi/api/internal/modules/llm/protocol/adapters"
+	"github.com/zgiai/zgi/api/internal/modules/llm/shared"
 	llmsharedtypes "github.com/zgiai/zgi/api/internal/modules/llm/shared/types"
 	sharedmodel "github.com/zgiai/zgi/api/internal/modules/shared/model"
 )
@@ -600,6 +603,64 @@ func TestGenerateAcceptsConciseTitleWithPunctuation(t *testing.T) {
 	if result.Source != SourceModel || result.Title != "代码审查：环境变量问题" {
 		t.Fatalf("result = %#v, want punctuation title", result)
 	}
+}
+
+func TestTenantRouteModelProviderPreservesOfficialProviderModelPairs(t *testing.T) {
+	provider := NewTenantRouteModelProvider(&titleRouteRepository{routes: []*channelmodel.LLMRoute{
+		{
+			Type:            shared.RouteTypeZGICloud,
+			IsOfficial:      true,
+			ChannelProvider: "zgi-cloud",
+			Models:          []string{"flat-chat-model"},
+			OfficialProviderModels: []channelmodel.ProviderModel{
+				{Provider: "OpenAI", Model: "Case-Sensitive-Chat"},
+			},
+		},
+	}})
+
+	models, err := provider.ListTitleModels(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("ListTitleModels() error = %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("ListTitleModels() = %#v, want one official candidate", models)
+	}
+	if gotProvider, gotModel := models[0].Provider, models[0].Model; gotProvider != "OpenAI" || gotModel != "Case-Sensitive-Chat" {
+		t.Fatalf("official candidate = %q/%q, want %q/%q", gotProvider, gotModel, "OpenAI", "Case-Sensitive-Chat")
+	}
+}
+
+func TestTenantRouteModelProviderRetainsPrivateRouteProviderAndModels(t *testing.T) {
+	provider := NewTenantRouteModelProvider(&titleRouteRepository{routes: []*channelmodel.LLMRoute{
+		{
+			Type:            shared.RouteTypePrivate,
+			ChannelProvider: "Private-Provider",
+			Models:          []string{" Private-Chat ", "Private-Chat"},
+			OfficialProviderModels: []channelmodel.ProviderModel{
+				{Provider: "Ignored-Official-Provider", Model: "Ignored-Official-Model"},
+			},
+		},
+	}})
+
+	models, err := provider.ListTitleModels(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("ListTitleModels() error = %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("ListTitleModels() = %#v, want one private candidate", models)
+	}
+	if gotProvider, gotModel := models[0].Provider, models[0].Model; gotProvider != "Private-Provider" || gotModel != "Private-Chat" {
+		t.Fatalf("private candidate = %q/%q, want %q/%q", gotProvider, gotModel, "Private-Provider", "Private-Chat")
+	}
+}
+
+type titleRouteRepository struct {
+	channelrepo.TenantRouteRepository
+	routes []*channelmodel.LLMRoute
+}
+
+func (r *titleRouteRepository) GetEnabledRoutes(context.Context, uuid.UUID) ([]*channelmodel.LLMRoute, error) {
+	return r.routes, nil
 }
 
 type fakeDefaultModelService struct {
