@@ -420,12 +420,10 @@ func llmModelFromPrivateModel(customModel *llmmodel.CustomModel) *llmmodel.LLMMo
 	}
 }
 
-// getModel retrieves model by name, using cache if available
+// getModel resolves a providerless model name against the current catalog.
+// A name-only cache cannot represent ambiguity across providers, so this path
+// must query the catalog directly and fail closed when the provider is unclear.
 func (r *ChannelRouter) getModel(ctx context.Context, modelName string) (*llmmodel.LLMModel, error) {
-	if r.configCache != nil {
-		return r.configCache.GetModelByName(ctx, modelName)
-	}
-
 	return r.queryActiveModel(ctx, "", modelName)
 }
 
@@ -434,21 +432,41 @@ func (r *ChannelRouter) getModelForProvider(ctx context.Context, provider, model
 }
 
 func (r *ChannelRouter) queryActiveModel(ctx context.Context, provider, modelName string) (*llmmodel.LLMModel, error) {
+	if provider == "" {
+		var providers []string
+		if err := r.activeModelQuery(ctx, "", modelName).
+			Distinct("llm_models.provider").
+			Limit(2).
+			Pluck("llm_models.provider", &providers).Error; err != nil {
+			return nil, err
+		}
+		if len(providers) == 0 {
+			return nil, gorm.ErrRecordNotFound
+		}
+		if len(providers) > 1 {
+			return nil, fmt.Errorf("ambiguous active catalog model %q across providers; provider hint is required", modelName)
+		}
+		provider = providers[0]
+	}
+
 	var m llmmodel.LLMModel
+	err := r.activeModelQuery(ctx, provider, modelName).First(&m).Error
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+func (r *ChannelRouter) activeModelQuery(ctx context.Context, provider, modelName string) *gorm.DB {
 	query := r.db.WithContext(ctx).
 		Model(&llmmodel.LLMModel{}).
 		Joins("JOIN llm_providers ON llm_models.provider = llm_providers.provider")
 	if provider != "" {
 		query = query.Where("llm_models.provider = ?", provider)
 	}
-	err := query.
+	return query.
 		Where("llm_models.name = ? AND llm_models.is_active = ? AND llm_models.status = ? AND llm_models.deleted_at IS NULL", modelName, true, llmmodel.ModelStatusActive).
-		Where("llm_providers.is_active = ? AND llm_providers.deleted_at IS NULL", true).
-		First(&m).Error
-	if err != nil {
-		return nil, err
-	}
-	return &m, nil
+		Where("llm_providers.is_active = ? AND llm_providers.deleted_at IS NULL", true)
 }
 
 func (r *ChannelRouter) globalModelExists(ctx context.Context, provider, modelName string) (bool, error) {

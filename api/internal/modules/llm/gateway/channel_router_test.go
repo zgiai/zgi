@@ -93,6 +93,24 @@ type fakePrivateModelLookup struct {
 	model *llmmodel.CustomModel
 }
 
+type sqliteCatalogProvider struct {
+	providermodel.LLMProvider `gorm:"embedded"`
+	ID                        uuid.UUID `gorm:"type:text;primaryKey"`
+}
+
+func (sqliteCatalogProvider) TableName() string {
+	return "llm_providers"
+}
+
+type sqliteCatalogModel struct {
+	llmmodel.LLMModel `gorm:"embedded"`
+	ID                uuid.UUID `gorm:"type:text;primaryKey"`
+}
+
+func (sqliteCatalogModel) TableName() string {
+	return "llm_models"
+}
+
 func (f *fakePrivateModelLookup) ListActiveModelsByNames(context.Context, uuid.UUID, []string) ([]*llmmodel.CustomModel, error) {
 	return nil, errors.New("not implemented")
 }
@@ -179,6 +197,42 @@ func openGatewayUpstreamGuardDB(t *testing.T) *gorm.DB {
 		t.Fatalf("create upstream state table: %v", err)
 	}
 	return db
+}
+
+func openGatewayCatalogDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&sqliteCatalogProvider{}, &sqliteCatalogModel{}); err != nil {
+		t.Fatalf("migrate catalog tables: %v", err)
+	}
+	return db
+}
+
+func insertGatewayCatalogModel(t *testing.T, db *gorm.DB, id uuid.UUID, provider, modelName string) {
+	t.Helper()
+	if err := db.Exec(
+		"INSERT INTO llm_providers (id, provider, provider_name, is_active) VALUES (?, ?, ?, ?)",
+		uuid.New(),
+		provider,
+		provider,
+		true,
+	).Error; err != nil {
+		t.Fatalf("insert provider %q: %v", provider, err)
+	}
+	if err := db.Exec(
+		"INSERT INTO llm_models (id, provider, name, display_name, status, is_active) VALUES (?, ?, ?, ?, ?, ?)",
+		id,
+		provider,
+		modelName,
+		modelName,
+		llmmodel.ModelStatusActive,
+		true,
+	).Error; err != nil {
+		t.Fatalf("insert model for provider %q: %v", provider, err)
+	}
 }
 
 func TestBuildChannelSelection_UsesModelListAsSourceOfTruth(t *testing.T) {
@@ -288,7 +342,7 @@ func TestChannelRouterGetModelRejectsDeprecatedModel(t *testing.T) {
 	db, mock := openGatewayModelLookupDB(t)
 	modelName := "deprecated-model"
 	mock.ExpectQuery(`(?s)FROM "llm_models" JOIN llm_providers .*llm_models\.status`).
-		WithArgs(modelName, true, llmmodel.ModelStatusActive, true, 1).
+		WithArgs(modelName, true, llmmodel.ModelStatusActive, true, 2).
 		WillReturnError(gorm.ErrRecordNotFound)
 	router := &ChannelRouter{db: db}
 
@@ -404,7 +458,7 @@ func TestSelectChannelsForProviderKeepsPassthroughForUnknownModel(t *testing.T) 
 	orgID := uuid.New()
 	modelName := "tenant-custom-model"
 	mock.ExpectQuery(`(?s)FROM "llm_models" JOIN llm_providers .*llm_models\.status`).
-		WithArgs(modelName, true, llmmodel.ModelStatusActive, true, 1).
+		WithArgs(modelName, true, llmmodel.ModelStatusActive, true, 2).
 		WillReturnError(gorm.ErrRecordNotFound)
 	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "llm_models".*name`).
 		WithArgs(modelName).
@@ -481,6 +535,82 @@ func TestSelectChannelsForProviderRejectsWrongOfficialProviderForSameName(t *tes
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestSelectChannelsForProviderRejectsAmbiguousProviderlessCatalogModel(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db := openGatewayCatalogDB(t)
+	organizationID := uuid.New()
+	modelName := "same-name"
+	insertGatewayCatalogModel(t, db, uuid.MustParse("00000000-0000-0000-0000-000000000001"), "openai", modelName)
+	insertGatewayCatalogModel(t, db, uuid.MustParse("00000000-0000-0000-0000-000000000002"), "anthropic", modelName)
+	router := &ChannelRouter{
+		db: db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{{
+			ID:                     uuid.New(),
+			OrganizationID:         organizationID,
+			Type:                   shared.RouteTypeZGICloud,
+			ChannelProvider:        "zgi-cloud",
+			Models:                 []string{modelName},
+			OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+			IsEnabled:              true,
+			IsOfficial:             true,
+		}}},
+		strategyFactory: NewStrategyFactory(),
+	}
+
+	selections, err := router.SelectChannelsForProvider(
+		context.Background(),
+		organizationID,
+		"",
+		modelName,
+		1,
+	)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("SelectChannelsForProvider = (%#v, %v), want ambiguous provider error", selections, err)
+	}
+	if selections != nil {
+		t.Fatalf("selections = %#v, want nil", selections)
+	}
+}
+
+func TestSelectChannelsForProviderKeepsUnambiguousProviderlessCatalogModel(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db := openGatewayCatalogDB(t)
+	organizationID := uuid.New()
+	modelName := "single-provider-model"
+	insertGatewayCatalogModel(t, db, uuid.New(), "openai", modelName)
+	router := &ChannelRouter{
+		db: db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{{
+			ID:                     uuid.New(),
+			OrganizationID:         organizationID,
+			Type:                   shared.RouteTypeZGICloud,
+			ChannelProvider:        "zgi-cloud",
+			Models:                 []string{modelName},
+			OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+			IsEnabled:              true,
+			IsOfficial:             true,
+		}}},
+		strategyFactory: NewStrategyFactory(),
+	}
+
+	selections, err := router.SelectChannelsForProvider(
+		context.Background(),
+		organizationID,
+		"",
+		modelName,
+		1,
+	)
+	if err != nil {
+		t.Fatalf("SelectChannelsForProvider returned error: %v", err)
+	}
+	if len(selections) != 1 {
+		t.Fatalf("len(selections) = %d, want 1", len(selections))
+	}
+	if selections[0].Model.Provider != "openai" {
+		t.Fatalf("selection provider = %q, want openai", selections[0].Model.Provider)
 	}
 }
 
@@ -1124,7 +1254,7 @@ func TestCandidateRoutesForModelRejectsKnownInactiveGlobalModel(t *testing.T) {
 	db, mock := openGatewayModelLookupDB(t)
 	modelName := "qwen-coder"
 	mock.ExpectQuery(`(?s)FROM "llm_models" JOIN llm_providers .*llm_models\.status`).
-		WithArgs(modelName, true, llmmodel.ModelStatusActive, true, 1).
+		WithArgs(modelName, true, llmmodel.ModelStatusActive, true, 2).
 		WillReturnError(gorm.ErrRecordNotFound)
 	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "llm_models".*name`).
 		WithArgs(modelName).
