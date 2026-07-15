@@ -10,6 +10,16 @@ import (
 	"github.com/zgiai/zgi/api/internal/capabilities/toolgovernance"
 )
 
+type countingAgentBindingAuthorizationPayload struct {
+	marshalCount   int
+	authorizations []map[string]interface{}
+}
+
+func (p *countingAgentBindingAuthorizationPayload) MarshalJSON() ([]byte, error) {
+	p.marshalCount++
+	return json.Marshal(p.authorizations)
+}
+
 func TestPolicyToolGovernanceAgentKnowledgeBinding(t *testing.T) {
 	validParams := agentGovernanceRuntimeParameters(map[string]interface{}{
 		"knowledge_binding_grant":       true,
@@ -237,6 +247,81 @@ func TestPolicyToolGovernanceMultiResourceAuditKeepsUniformBindingActor(t *testi
 	}
 	if decision.AssetOperationAudit["authorization_actor_id"] != "binder-1" {
 		t.Fatalf("audit = %#v, want shared binding actor", decision.AssetOperationAudit)
+	}
+}
+
+func TestPolicyToolGovernanceParsesBindingAuthorizationsOncePerDecision(t *testing.T) {
+	tests := []struct {
+		name           string
+		skillID        string
+		toolName       string
+		arguments      map[string]interface{}
+		params         map[string]interface{}
+		authorizations []map[string]interface{}
+	}{
+		{
+			name:      "knowledge",
+			skillID:   SkillAgentKnowledge,
+			toolName:  "retrieve_agent_knowledge",
+			arguments: map[string]interface{}{"query": "policy"},
+			params: map[string]interface{}{
+				"knowledge_dataset_ids": []string{"dataset-1", "dataset-2"},
+			},
+			authorizations: []map[string]interface{}{
+				{"binding_type": "knowledge_dataset", "resource_id": "dataset-1", "access_mode": "read", "bound_by_account_id": "binder-1", "bound_at_unix": int64(100)},
+				{"binding_type": "knowledge_dataset", "resource_id": "dataset-2", "access_mode": "read", "bound_by_account_id": "binder-1", "bound_at_unix": int64(100)},
+			},
+		},
+		{
+			name:     "database",
+			skillID:  SkillAgentDatabase,
+			toolName: "list_accessible_databases",
+			params: map[string]interface{}{
+				"database_bindings": []map[string]interface{}{
+					{"data_source_id": "database-1", "table_ids": []string{"table-1"}},
+					{"data_source_id": "database-2", "table_ids": []string{"table-2"}, "writable_table_ids": []string{"table-2"}},
+				},
+			},
+			authorizations: []map[string]interface{}{
+				{"binding_type": "database", "resource_id": "database-1", "access_mode": "read", "bound_by_account_id": "binder-1", "bound_at_unix": int64(100)},
+				{"binding_type": "database", "resource_id": "database-2", "access_mode": "read", "bound_by_account_id": "binder-1", "bound_at_unix": int64(100)},
+				{"binding_type": "database_table", "parent_resource_id": "database-1", "resource_id": "table-1", "access_mode": "read", "bound_by_account_id": "binder-1", "bound_at_unix": int64(100)},
+				{"binding_type": "database_table", "parent_resource_id": "database-2", "resource_id": "table-2", "access_mode": "write", "bound_by_account_id": "binder-1", "bound_at_unix": int64(100)},
+			},
+		},
+		{
+			name:     "workflow",
+			skillID:  SkillAgentWorkflow,
+			toolName: "list_agent_workflows",
+			params: map[string]interface{}{
+				"workflow_bindings": []map[string]interface{}{
+					{"binding_id": "binding-1", "agent_id": "workflow-agent-1", "workflow_id": "workflow-1"},
+					{"binding_id": "binding-2", "agent_id": "workflow-agent-2", "workflow_id": "workflow-2"},
+				},
+			},
+			authorizations: []map[string]interface{}{
+				{"binding_type": "workflow", "parent_resource_id": "workflow-agent-1", "resource_id": "binding-1", "access_mode": "execute", "bound_by_account_id": "binder-1", "bound_at_unix": int64(100)},
+				{"binding_type": "workflow", "parent_resource_id": "workflow-agent-2", "resource_id": "binding-2", "access_mode": "execute", "bound_by_account_id": "binder-1", "bound_at_unix": int64(100)},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := &countingAgentBindingAuthorizationPayload{authorizations: tt.authorizations}
+			tt.params["agent_binding_authorizations"] = payload
+			decision := decideSystemSkillToolForTest(
+				t,
+				tt.skillID,
+				tt.toolName,
+				tt.arguments,
+				agentGovernanceRuntimeParameters(tt.params),
+			)
+			assertAgentGovernanceDecision(t, decision, toolgovernance.DecisionStatusAllowed, "")
+			if payload.marshalCount != 1 {
+				t.Fatalf("authorization payload marshal count = %d, want 1", payload.marshalCount)
+			}
+		})
 	}
 }
 
