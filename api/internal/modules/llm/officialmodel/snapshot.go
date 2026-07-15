@@ -10,6 +10,7 @@ import (
 
 	"github.com/zgiai/zgi/api/config"
 	consoleintf "github.com/zgiai/zgi/api/internal/infra/platform/console"
+	llmcache "github.com/zgiai/zgi/api/internal/modules/llm/cache"
 	channelmodel "github.com/zgiai/zgi/api/internal/modules/llm/channel/model"
 	"gorm.io/gorm"
 )
@@ -20,24 +21,26 @@ const (
 	CheckStatusAccepted = "accepted"
 	CheckStatusRejected = "rejected"
 
-	RejectReasonEmptyModels    = "empty_models"
-	RejectReasonAbnormalShrink = "abnormal_shrink"
+	RejectReasonEmptyModels     = "empty_models"
+	RejectReasonAbnormalShrink  = "abnormal_shrink"
+	RejectReasonInvalidProvider = "invalid_provider"
 
 	defaultMinAcceptRatio = 0.7
 )
 
 type Snapshot struct {
-	SourceKey          string     `gorm:"column:source_key;type:varchar(50);primaryKey"`
-	EffectiveModels    []string   `gorm:"column:effective_models;type:jsonb;serializer:json;default:'[]'"`
-	LatestModels       []string   `gorm:"column:latest_models;type:jsonb;serializer:json;default:'[]'"`
-	PreviousModels     []string   `gorm:"column:previous_models;type:jsonb;serializer:json;default:'[]'"`
-	LatestEventVersion int64      `gorm:"column:latest_event_version;not null;default:0"`
-	LatestSyncedAt     *time.Time `gorm:"column:latest_synced_at"`
-	EffectiveUpdatedAt *time.Time `gorm:"column:effective_updated_at"`
-	LastCheckStatus    string     `gorm:"column:last_check_status;type:varchar(20);not null;default:'accepted'"`
-	LastRejectReason   string     `gorm:"column:last_reject_reason;type:text"`
-	CreatedAt          time.Time  `gorm:"column:created_at;not null;default:CURRENT_TIMESTAMP"`
-	UpdatedAt          time.Time  `gorm:"column:updated_at;not null;default:CURRENT_TIMESTAMP"`
+	SourceKey               string                       `gorm:"column:source_key;type:varchar(50);primaryKey"`
+	EffectiveModels         []string                     `gorm:"column:effective_models;type:jsonb;serializer:json;default:'[]'"`
+	EffectiveProviderModels []channelmodel.ProviderModel `gorm:"column:effective_provider_models;type:jsonb;serializer:json;default:'[]'"`
+	LatestModels            []string                     `gorm:"column:latest_models;type:jsonb;serializer:json;default:'[]'"`
+	PreviousModels          []string                     `gorm:"column:previous_models;type:jsonb;serializer:json;default:'[]'"`
+	LatestEventVersion      int64                        `gorm:"column:latest_event_version;not null;default:0"`
+	LatestSyncedAt          *time.Time                   `gorm:"column:latest_synced_at"`
+	EffectiveUpdatedAt      *time.Time                   `gorm:"column:effective_updated_at"`
+	LastCheckStatus         string                       `gorm:"column:last_check_status;type:varchar(20);not null;default:'accepted'"`
+	LastRejectReason        string                       `gorm:"column:last_reject_reason;type:text"`
+	CreatedAt               time.Time                    `gorm:"column:created_at;not null;default:CURRENT_TIMESTAMP"`
+	UpdatedAt               time.Time                    `gorm:"column:updated_at;not null;default:CURRENT_TIMESTAMP"`
 }
 
 func (Snapshot) TableName() string {
@@ -45,8 +48,9 @@ func (Snapshot) TableName() string {
 }
 
 type UpstreamChannel struct {
-	ID     string
-	Models []string
+	ID       string
+	Provider string
+	Models   []string
 }
 
 type SyncMeta struct {
@@ -70,8 +74,9 @@ func SyncFromConsoleProvider(ctx context.Context, db *gorm.DB, provider consolei
 			continue
 		}
 		channels = append(channels, UpstreamChannel{
-			ID:     ch.ID,
-			Models: ch.Models,
+			ID:       ch.ID,
+			Provider: ch.Provider,
+			Models:   ch.Models,
 		})
 	}
 
@@ -86,12 +91,14 @@ func SyncFromChannels(ctx context.Context, db *gorm.DB, channels []UpstreamChann
 	}
 
 	aggregated := aggregateModels(channels)
+	aggregatedProviderModels := aggregateProviderModels(channels)
 	now := meta.SyncedAt.UTC()
 	if meta.SyncedAt.IsZero() {
 		now = time.Now().UTC()
 	}
 
 	var snapshot Snapshot
+	providerModelsChanged := false
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		err := tx.
 			Where("source_key = ?", SourceKeyZGICloud).
@@ -111,9 +118,11 @@ func SyncFromChannels(ctx context.Context, db *gorm.DB, channels []UpstreamChann
 		snapshot.LatestEventVersion = meta.Version
 		snapshot.LatestSyncedAt = &now
 
-		if accepted, reason := shouldAccept(snapshot.EffectiveModels, aggregated); accepted {
+		if accepted, reason := shouldAccept(channels, snapshot.EffectiveModels, aggregated); accepted {
+			providerModelsChanged = !providerModelsEqual(snapshot.EffectiveProviderModels, aggregatedProviderModels)
 			snapshot.PreviousModels = cloneStrings(snapshot.EffectiveModels)
 			snapshot.EffectiveModels = cloneStrings(aggregated)
+			snapshot.EffectiveProviderModels = cloneProviderModels(aggregatedProviderModels)
 			snapshot.LastCheckStatus = CheckStatusAccepted
 			snapshot.LastRejectReason = ""
 			snapshot.EffectiveUpdatedAt = &now
@@ -127,13 +136,21 @@ func SyncFromChannels(ctx context.Context, db *gorm.DB, channels []UpstreamChann
 	if err != nil {
 		return nil, err
 	}
+	if providerModelsChanged {
+		llmcache.InvalidateGlobal(ctx)
+	}
 
 	return &snapshot, nil
 }
 
 func GetEffectiveModels(ctx context.Context, db *gorm.DB) ([]string, error) {
+	models, _, err := getEffectiveState(ctx, db)
+	return models, err
+}
+
+func getEffectiveState(ctx context.Context, db *gorm.DB) ([]string, []channelmodel.ProviderModel, error) {
 	if db == nil {
-		return nil, errors.New("official model snapshot requires a database")
+		return nil, nil, errors.New("official model snapshot requires a database")
 	}
 
 	var snapshot Snapshot
@@ -142,12 +159,12 @@ func GetEffectiveModels(ctx context.Context, db *gorm.DB) ([]string, error) {
 		First(&snapshot).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return []string{}, nil
+			return []string{}, []channelmodel.ProviderModel{}, nil
 		}
-		return nil, err
+		return nil, nil, err
 	}
 
-	return cloneStrings(snapshot.EffectiveModels), nil
+	return cloneStrings(snapshot.EffectiveModels), cloneProviderModels(snapshot.EffectiveProviderModels), nil
 }
 
 func HasEffectiveModels(ctx context.Context, db *gorm.DB) (bool, error) {
@@ -163,11 +180,12 @@ func HydrateRoute(ctx context.Context, db *gorm.DB, route *channelmodel.LLMRoute
 		return nil
 	}
 
-	models, err := GetEffectiveModels(ctx, db)
+	models, providerModels, err := getEffectiveState(ctx, db)
 	if err != nil {
 		return err
 	}
 	route.Models = models
+	route.OfficialProviderModels = providerModels
 	return nil
 }
 
@@ -176,7 +194,7 @@ func HydrateRoutes(ctx context.Context, db *gorm.DB, routes []*channelmodel.LLMR
 		return nil
 	}
 
-	models, err := GetEffectiveModels(ctx, db)
+	models, providerModels, err := getEffectiveState(ctx, db)
 	if err != nil {
 		return err
 	}
@@ -184,6 +202,7 @@ func HydrateRoutes(ctx context.Context, db *gorm.DB, routes []*channelmodel.LLMR
 	for _, route := range routes {
 		if route != nil && route.IsOfficial {
 			route.Models = cloneStrings(models)
+			route.OfficialProviderModels = cloneProviderModels(providerModels)
 		}
 	}
 
@@ -195,7 +214,7 @@ func HydrateRouteValues(ctx context.Context, db *gorm.DB, routes []channelmodel.
 		return nil
 	}
 
-	models, err := GetEffectiveModels(ctx, db)
+	models, providerModels, err := getEffectiveState(ctx, db)
 	if err != nil {
 		return err
 	}
@@ -203,6 +222,7 @@ func HydrateRouteValues(ctx context.Context, db *gorm.DB, routes []channelmodel.
 	for i := range routes {
 		if routes[i].IsOfficial {
 			routes[i].Models = cloneStrings(models)
+			routes[i].OfficialProviderModels = cloneProviderModels(providerModels)
 		}
 	}
 
@@ -245,7 +265,52 @@ func aggregateModels(channels []UpstreamChannel) []string {
 	return aggregated
 }
 
-func shouldAccept(current, latest []string) (bool, string) {
+func aggregateProviderModels(channels []UpstreamChannel) []channelmodel.ProviderModel {
+	seen := make(map[channelmodel.ProviderModel]struct{})
+	aggregated := make([]channelmodel.ProviderModel, 0)
+
+	for _, ch := range channels {
+		provider := strings.TrimSpace(ch.Provider)
+		if provider == "" {
+			continue
+		}
+		for _, modelName := range ch.Models {
+			pair := channelmodel.ProviderModel{
+				Provider: provider,
+				Model:    strings.TrimSpace(modelName),
+			}
+			if pair.Model == "" {
+				continue
+			}
+			if _, ok := seen[pair]; ok {
+				continue
+			}
+			seen[pair] = struct{}{}
+			aggregated = append(aggregated, pair)
+		}
+	}
+
+	sort.Slice(aggregated, func(i, j int) bool {
+		if aggregated[i].Provider != aggregated[j].Provider {
+			return aggregated[i].Provider < aggregated[j].Provider
+		}
+		return aggregated[i].Model < aggregated[j].Model
+	})
+	return aggregated
+}
+
+func shouldAccept(channels []UpstreamChannel, current, latest []string) (bool, string) {
+	for _, ch := range channels {
+		if strings.TrimSpace(ch.Provider) != "" {
+			continue
+		}
+		for _, modelName := range ch.Models {
+			if strings.TrimSpace(modelName) != "" {
+				return false, RejectReasonInvalidProvider
+			}
+		}
+	}
+
 	if !isOfficialModelStrictSyncEnabled() {
 		return true, ""
 	}
@@ -275,4 +340,25 @@ func cloneStrings(in []string) []string {
 	out := make([]string, len(in))
 	copy(out, in)
 	return out
+}
+
+func cloneProviderModels(in []channelmodel.ProviderModel) []channelmodel.ProviderModel {
+	if len(in) == 0 {
+		return []channelmodel.ProviderModel{}
+	}
+	out := make([]channelmodel.ProviderModel, len(in))
+	copy(out, in)
+	return out
+}
+
+func providerModelsEqual(left, right []channelmodel.ProviderModel) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }

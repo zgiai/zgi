@@ -93,6 +93,24 @@ type fakePrivateModelLookup struct {
 	model *llmmodel.CustomModel
 }
 
+type sqliteCatalogProvider struct {
+	providermodel.LLMProvider `gorm:"embedded"`
+	ID                        uuid.UUID `gorm:"type:text;primaryKey"`
+}
+
+func (sqliteCatalogProvider) TableName() string {
+	return "llm_providers"
+}
+
+type sqliteCatalogModel struct {
+	llmmodel.LLMModel `gorm:"embedded"`
+	ID                uuid.UUID `gorm:"type:text;primaryKey"`
+}
+
+func (sqliteCatalogModel) TableName() string {
+	return "llm_models"
+}
+
 func (f *fakePrivateModelLookup) ListActiveModelsByNames(context.Context, uuid.UUID, []string) ([]*llmmodel.CustomModel, error) {
 	return nil, errors.New("not implemented")
 }
@@ -181,6 +199,42 @@ func openGatewayUpstreamGuardDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+func openGatewayCatalogDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&sqliteCatalogProvider{}, &sqliteCatalogModel{}); err != nil {
+		t.Fatalf("migrate catalog tables: %v", err)
+	}
+	return db
+}
+
+func insertGatewayCatalogModel(t *testing.T, db *gorm.DB, id uuid.UUID, provider, modelName string) {
+	t.Helper()
+	if err := db.Exec(
+		"INSERT INTO llm_providers (id, provider, provider_name, is_active) VALUES (?, ?, ?, ?)",
+		uuid.New(),
+		provider,
+		provider,
+		true,
+	).Error; err != nil {
+		t.Fatalf("insert provider %q: %v", provider, err)
+	}
+	if err := db.Exec(
+		"INSERT INTO llm_models (id, provider, name, display_name, status, is_active) VALUES (?, ?, ?, ?, ?, ?)",
+		id,
+		provider,
+		modelName,
+		modelName,
+		llmmodel.ModelStatusActive,
+		true,
+	).Error; err != nil {
+		t.Fatalf("insert model for provider %q: %v", provider, err)
+	}
+}
+
 func TestBuildChannelSelection_UsesModelListAsSourceOfTruth(t *testing.T) {
 	router := &ChannelRouter{}
 	route := &channelmodel.LLMRoute{
@@ -200,7 +254,7 @@ func TestBuildChannelSelection_UsesModelListAsSourceOfTruth(t *testing.T) {
 		IsActive:  true,
 	}
 
-	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, "gpt-4o", false, "chat")
+	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, "gpt-4o", model.Provider, false, "chat")
 	if err != nil {
 		t.Fatalf("buildChannelSelection returned error: %v", err)
 	}
@@ -245,7 +299,7 @@ func TestBuildChannelSelection_UsesRouteChannelProviderForPrivateRoutes(t *testi
 		IsActive:  true,
 	}
 
-	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, false, "chat")
+	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, model.Provider, false, "chat")
 	if err != nil {
 		t.Fatalf("buildChannelSelection returned error: %v", err)
 	}
@@ -275,7 +329,7 @@ func TestBuildChannelSelection_PassthroughModelSource(t *testing.T) {
 		IsEnabled:       true,
 	}
 
-	selection, err := router.buildChannelSelection(context.Background(), route, nil, nil, "custom-model", true, "chat")
+	selection, err := router.buildChannelSelection(context.Background(), route, nil, nil, "custom-model", "", true, "chat")
 	if err != nil {
 		t.Fatalf("buildChannelSelection returned error: %v", err)
 	}
@@ -288,7 +342,7 @@ func TestChannelRouterGetModelRejectsDeprecatedModel(t *testing.T) {
 	db, mock := openGatewayModelLookupDB(t)
 	modelName := "deprecated-model"
 	mock.ExpectQuery(`(?s)FROM "llm_models" JOIN llm_providers .*llm_models\.status`).
-		WithArgs(modelName, true, llmmodel.ModelStatusActive, true, 1).
+		WithArgs(modelName, true, llmmodel.ModelStatusActive, true, 2).
 		WillReturnError(gorm.ErrRecordNotFound)
 	router := &ChannelRouter{db: db}
 
@@ -404,7 +458,7 @@ func TestSelectChannelsForProviderKeepsPassthroughForUnknownModel(t *testing.T) 
 	orgID := uuid.New()
 	modelName := "tenant-custom-model"
 	mock.ExpectQuery(`(?s)FROM "llm_models" JOIN llm_providers .*llm_models\.status`).
-		WithArgs(modelName, true, llmmodel.ModelStatusActive, true, 1).
+		WithArgs(modelName, true, llmmodel.ModelStatusActive, true, 2).
 		WillReturnError(gorm.ErrRecordNotFound)
 	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "llm_models".*name`).
 		WithArgs(modelName).
@@ -437,6 +491,248 @@ func TestSelectChannelsForProviderKeepsPassthroughForUnknownModel(t *testing.T) 
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestSelectChannelsForProviderKeepsExplicitHintForUnknownOfficialModel(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db, mock := openGatewayModelLookupDB(t)
+	organizationID := uuid.New()
+	modelName := "new-official-model"
+	providerHint := "openai"
+	mock.ExpectQuery(`(?s)FROM "llm_models" JOIN llm_providers .*llm_models\.provider.*llm_models\.name`).
+		WithArgs(providerHint, modelName, true, llmmodel.ModelStatusActive, true, 1).
+		WillReturnError(gorm.ErrRecordNotFound)
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "llm_models".*provider.*name`).
+		WithArgs(providerHint, modelName).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	router := &ChannelRouter{
+		db: db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{{
+			ID:                     uuid.New(),
+			OrganizationID:         organizationID,
+			Type:                   shared.RouteTypeZGICloud,
+			ChannelProvider:        "zgi-cloud",
+			Models:                 []string{modelName},
+			OfficialProviderModels: []channelmodel.ProviderModel{{Provider: providerHint, Model: modelName}},
+			IsEnabled:              true,
+			IsOfficial:             true,
+		}}},
+		strategyFactory: NewStrategyFactory(),
+	}
+
+	selections, err := router.SelectChannelsForProvider(context.Background(), organizationID, providerHint, modelName, 1)
+	if err != nil {
+		t.Fatalf("SelectChannelsForProvider returned error: %v", err)
+	}
+	if len(selections) != 1 {
+		t.Fatalf("len(selections) = %d, want 1", len(selections))
+	}
+	if !selections[0].IsOfficial || selections[0].ModelSource != channelModelSourcePassthrough {
+		t.Fatalf("selection = %#v, want official passthrough", selections[0])
+	}
+	if selections[0].Model != nil {
+		t.Fatalf("selection.Model = %#v, want nil for passthrough", selections[0].Model)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestSelectChannelsForProviderRejectsWrongHintForUnknownOfficialModel(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db, mock := openGatewayModelLookupDB(t)
+	organizationID := uuid.New()
+	modelName := "new-official-model"
+	providerHint := "anthropic"
+	mock.ExpectQuery(`(?s)FROM "llm_models" JOIN llm_providers .*llm_models\.provider.*llm_models\.name`).
+		WithArgs(providerHint, modelName, true, llmmodel.ModelStatusActive, true, 1).
+		WillReturnError(gorm.ErrRecordNotFound)
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "llm_models".*provider.*name`).
+		WithArgs(providerHint, modelName).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	router := &ChannelRouter{
+		db: db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{{
+			ID:                     uuid.New(),
+			OrganizationID:         organizationID,
+			Type:                   shared.RouteTypeZGICloud,
+			ChannelProvider:        "zgi-cloud",
+			Models:                 []string{modelName},
+			OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+			IsEnabled:              true,
+			IsOfficial:             true,
+		}}},
+		strategyFactory: NewStrategyFactory(),
+	}
+
+	selections, err := router.SelectChannelsForProvider(context.Background(), organizationID, providerHint, modelName, 1)
+	if err == nil {
+		t.Fatalf("SelectChannelsForProvider returned selections %#v, want wrong-provider error", selections)
+	}
+	if selections != nil {
+		t.Fatalf("selections = %#v, want nil", selections)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestSelectChannelsForProviderRejectsUnknownOfficialModelWithoutProviderHint(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db, mock := openGatewayModelLookupDB(t)
+	organizationID := uuid.New()
+	modelName := "new-official-model"
+	mock.ExpectQuery(`(?s)SELECT DISTINCT llm_models\.provider FROM "llm_models" JOIN llm_providers`).
+		WithArgs(modelName, true, llmmodel.ModelStatusActive, true, 2).
+		WillReturnRows(sqlmock.NewRows([]string{"provider"}))
+	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "llm_models".*name`).
+		WithArgs(modelName).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	router := &ChannelRouter{
+		db: db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{{
+			ID:                     uuid.New(),
+			OrganizationID:         organizationID,
+			Type:                   shared.RouteTypeZGICloud,
+			ChannelProvider:        "zgi-cloud",
+			Models:                 []string{modelName},
+			OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+			IsEnabled:              true,
+			IsOfficial:             true,
+		}}},
+		strategyFactory: NewStrategyFactory(),
+	}
+
+	selections, err := router.SelectChannelsForProvider(context.Background(), organizationID, "", modelName, 1)
+	if err == nil {
+		t.Fatalf("SelectChannelsForProvider returned selections %#v, want missing-provider error", selections)
+	}
+	if selections != nil {
+		t.Fatalf("selections = %#v, want nil", selections)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestSelectChannelsForProviderRejectsWrongOfficialProviderForSameName(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db, mock := openGatewayModelLookupDB(t)
+	organizationID := uuid.New()
+	modelID := uuid.New()
+	modelName := "same-name"
+	providerHint := "anthropic"
+	mock.ExpectQuery(`(?s)FROM "llm_models" JOIN llm_providers .*llm_models\.provider.*llm_models\.name`).
+		WithArgs(providerHint, modelName, true, llmmodel.ModelStatusActive, true, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "provider", "name", "display_name", "status", "is_active"}).
+			AddRow(modelID, providerHint, modelName, "Anthropic Same Name", llmmodel.ModelStatusActive, true))
+	router := &ChannelRouter{
+		db: db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{{
+			ID:                     uuid.New(),
+			OrganizationID:         organizationID,
+			Type:                   shared.RouteTypeZGICloud,
+			ChannelProvider:        "zgi-cloud",
+			Models:                 []string{modelName},
+			OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+			IsEnabled:              true,
+			IsOfficial:             true,
+		}}},
+		strategyFactory: NewStrategyFactory(),
+	}
+
+	selections, err := router.SelectChannelsForProvider(
+		context.Background(),
+		organizationID,
+		providerHint,
+		modelName,
+		1,
+	)
+	if err == nil {
+		t.Fatalf("SelectChannelsForProvider returned selections %#v, want wrong-provider error", selections)
+	}
+	if selections != nil {
+		t.Fatalf("selections = %#v, want nil", selections)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
+func TestSelectChannelsForProviderRejectsAmbiguousProviderlessCatalogModel(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db := openGatewayCatalogDB(t)
+	organizationID := uuid.New()
+	modelName := "same-name"
+	insertGatewayCatalogModel(t, db, uuid.MustParse("00000000-0000-0000-0000-000000000001"), "openai", modelName)
+	insertGatewayCatalogModel(t, db, uuid.MustParse("00000000-0000-0000-0000-000000000002"), "anthropic", modelName)
+	router := &ChannelRouter{
+		db: db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{{
+			ID:                     uuid.New(),
+			OrganizationID:         organizationID,
+			Type:                   shared.RouteTypeZGICloud,
+			ChannelProvider:        "zgi-cloud",
+			Models:                 []string{modelName},
+			OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+			IsEnabled:              true,
+			IsOfficial:             true,
+		}}},
+		strategyFactory: NewStrategyFactory(),
+	}
+
+	selections, err := router.SelectChannelsForProvider(
+		context.Background(),
+		organizationID,
+		"",
+		modelName,
+		1,
+	)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("SelectChannelsForProvider = (%#v, %v), want ambiguous provider error", selections, err)
+	}
+	if selections != nil {
+		t.Fatalf("selections = %#v, want nil", selections)
+	}
+}
+
+func TestSelectChannelsForProviderKeepsUnambiguousProviderlessCatalogModel(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	db := openGatewayCatalogDB(t)
+	organizationID := uuid.New()
+	modelName := "single-provider-model"
+	insertGatewayCatalogModel(t, db, uuid.New(), "openai", modelName)
+	router := &ChannelRouter{
+		db: db,
+		organizationIDRouteRepo: &fakeCandidateRouteRepo{routes: []*channelmodel.LLMRoute{{
+			ID:                     uuid.New(),
+			OrganizationID:         organizationID,
+			Type:                   shared.RouteTypeZGICloud,
+			ChannelProvider:        "zgi-cloud",
+			Models:                 []string{modelName},
+			OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+			IsEnabled:              true,
+			IsOfficial:             true,
+		}}},
+		strategyFactory: NewStrategyFactory(),
+	}
+
+	selections, err := router.SelectChannelsForProvider(
+		context.Background(),
+		organizationID,
+		"",
+		modelName,
+		1,
+	)
+	if err != nil {
+		t.Fatalf("SelectChannelsForProvider returned error: %v", err)
+	}
+	if len(selections) != 1 {
+		t.Fatalf("len(selections) = %d, want 1", len(selections))
+	}
+	if selections[0].Model.Provider != "openai" {
+		t.Fatalf("selection provider = %q, want openai", selections[0].Model.Provider)
 	}
 }
 
@@ -487,6 +783,40 @@ func TestCandidateRoutesForModel_FiltersNativeProtocolLikeRealSelection(t *testi
 	}
 	if routes[0].ChannelProvider != "openai-compatible" {
 		t.Fatalf("route provider = %q, want openai-compatible", routes[0].ChannelProvider)
+	}
+}
+
+func TestCandidateRoutesForResolvedModelKeepsExplicitHintForOfficialPassthrough(t *testing.T) {
+	organizationID := uuid.New()
+	modelName := "new-official-model"
+	providerHint := "openai"
+	route := &channelmodel.LLMRoute{
+		ID:                     uuid.New(),
+		OrganizationID:         organizationID,
+		Type:                   shared.RouteTypeZGICloud,
+		ChannelProvider:        "zgi-cloud",
+		Models:                 []string{modelName},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: providerHint, Model: modelName}},
+		IsEnabled:              true,
+		IsOfficial:             true,
+	}
+	router := &ChannelRouter{strategyFactory: NewStrategyFactory()}
+
+	routes, err := router.candidateRoutesForResolvedModel(
+		context.Background(),
+		organizationID,
+		modelName,
+		providerHint,
+		1,
+		[]*channelmodel.LLMRoute{route},
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("candidateRoutesForResolvedModel returned error: %v", err)
+	}
+	if len(routes) != 1 || routes[0].ID != route.ID {
+		t.Fatalf("routes = %#v, want official route %s", routes, route.ID)
 	}
 }
 
@@ -589,6 +919,7 @@ func TestPrepareCandidateRoutes_GuardLetsFourthHealthyRouteFillAttemptWindow(t *
 		"deepseek",
 		false,
 		&llmmodel.LLMModel{Provider: "deepseek", Model: modelName},
+		false,
 		true,
 		true,
 	)
@@ -618,6 +949,7 @@ func TestPrepareCandidateRoutes_GuardLetsFourthHealthyRouteFillAttemptWindow(t *
 		"deepseek",
 		false,
 		&llmmodel.LLMModel{Provider: "deepseek", Model: modelName},
+		false,
 		true,
 		true,
 	)
@@ -710,6 +1042,7 @@ func TestUpstreamGenerationReloadsMatchingCredential(t *testing.T) {
 		&llmmodel.LLMModel{Model: "shared-model", Provider: "openrouter"},
 		nil,
 		"shared-model",
+		"openrouter",
 		false,
 		"chat",
 	)
@@ -1080,7 +1413,7 @@ func TestCandidateRoutesForModelRejectsKnownInactiveGlobalModel(t *testing.T) {
 	db, mock := openGatewayModelLookupDB(t)
 	modelName := "qwen-coder"
 	mock.ExpectQuery(`(?s)FROM "llm_models" JOIN llm_providers .*llm_models\.status`).
-		WithArgs(modelName, true, llmmodel.ModelStatusActive, true, 1).
+		WithArgs(modelName, true, llmmodel.ModelStatusActive, true, 2).
 		WillReturnError(gorm.ErrRecordNotFound)
 	mock.ExpectQuery(`(?s)SELECT count\(\*\) FROM "llm_models".*name`).
 		WithArgs(modelName).
@@ -1104,14 +1437,15 @@ func TestBuildChannelSelection_OfficialRouteUsesRuntimeConsoleAPIURL(t *testing.
 
 	router := &ChannelRouter{}
 	route := &channelmodel.LLMRoute{
-		ID:              uuid.New(),
-		OrganizationID:  uuid.New(),
-		Type:            shared.RouteTypeZGICloud,
-		ChannelProvider: "zgi-cloud",
-		APIBaseURL:      "http://zgi-console-api.zeabur.internal:2625/v1/internal",
-		Models:          []string{"gpt-5"},
-		IsEnabled:       true,
-		IsOfficial:      true,
+		ID:                     uuid.New(),
+		OrganizationID:         uuid.New(),
+		Type:                   shared.RouteTypeZGICloud,
+		ChannelProvider:        "zgi-cloud",
+		APIBaseURL:             "http://zgi-console-api.zeabur.internal:2625/v1/internal",
+		Models:                 []string{"gpt-5"},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: "gpt-5"}},
+		IsEnabled:              true,
+		IsOfficial:             true,
 	}
 	model := &llmmodel.LLMModel{
 		ID:        uuid.New(),
@@ -1121,7 +1455,7 @@ func TestBuildChannelSelection_OfficialRouteUsesRuntimeConsoleAPIURL(t *testing.
 		IsActive:  true,
 	}
 
-	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, false, "chat")
+	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, model.Provider, false, "chat")
 	if err != nil {
 		t.Fatalf("buildChannelSelection returned error: %v", err)
 	}
@@ -1136,19 +1470,48 @@ func TestBuildChannelSelection_OfficialRouteUsesRuntimeConsoleAPIURL(t *testing.
 	}
 }
 
+func TestBuildChannelSelectionRejectsWrongOfficialProviderForSameName(t *testing.T) {
+	setGatewayConsoleAPIURL(t, "https://console-api.zgi.im")
+	modelName := "same-name"
+	router := &ChannelRouter{}
+	route := &channelmodel.LLMRoute{
+		ID:                     uuid.New(),
+		OrganizationID:         uuid.New(),
+		Type:                   shared.RouteTypeZGICloud,
+		ChannelProvider:        "zgi-cloud",
+		Models:                 []string{modelName},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: modelName}},
+		IsEnabled:              true,
+		IsOfficial:             true,
+	}
+	model := &llmmodel.LLMModel{
+		ID:        uuid.New(),
+		Model:     modelName,
+		ModelName: modelName,
+		Provider:  "anthropic",
+		IsActive:  true,
+	}
+
+	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, modelName, model.Provider, false, "chat")
+	if err == nil || !strings.Contains(err.Error(), "not supported") {
+		t.Fatalf("buildChannelSelection = (%#v, %v), want wrong-provider not supported error", selection, err)
+	}
+}
+
 func TestBuildChannelSelection_OfficialRouteRequiresRuntimeConsoleAPIURL(t *testing.T) {
 	setGatewayConsoleAPIURL(t, "")
 
 	router := &ChannelRouter{}
 	route := &channelmodel.LLMRoute{
-		ID:              uuid.New(),
-		OrganizationID:  uuid.New(),
-		Type:            shared.RouteTypeZGICloud,
-		ChannelProvider: "zgi-cloud",
-		APIBaseURL:      "http://zgi-console-api.zeabur.internal:2625/v1/internal",
-		Models:          []string{"gpt-5"},
-		IsEnabled:       true,
-		IsOfficial:      true,
+		ID:                     uuid.New(),
+		OrganizationID:         uuid.New(),
+		Type:                   shared.RouteTypeZGICloud,
+		ChannelProvider:        "zgi-cloud",
+		APIBaseURL:             "http://zgi-console-api.zeabur.internal:2625/v1/internal",
+		Models:                 []string{"gpt-5"},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: "gpt-5"}},
+		IsEnabled:              true,
+		IsOfficial:             true,
 	}
 	model := &llmmodel.LLMModel{
 		ID:        uuid.New(),
@@ -1158,7 +1521,7 @@ func TestBuildChannelSelection_OfficialRouteRequiresRuntimeConsoleAPIURL(t *test
 		IsActive:  true,
 	}
 
-	_, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, false, "chat")
+	_, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, model.Provider, false, "chat")
 	if err == nil || !strings.Contains(err.Error(), "console api url") {
 		t.Fatalf("buildChannelSelection error = %v, want console api url error", err)
 	}
@@ -1169,14 +1532,15 @@ func TestBuildChannelSelection_OfficialRouteRejectsInvalidRuntimeConsoleAPIURL(t
 
 	router := &ChannelRouter{}
 	route := &channelmodel.LLMRoute{
-		ID:              uuid.New(),
-		OrganizationID:  uuid.New(),
-		Type:            shared.RouteTypeZGICloud,
-		ChannelProvider: "zgi-cloud",
-		APIBaseURL:      "http://zgi-console-api.zeabur.internal:2625/v1/internal",
-		Models:          []string{"gpt-5"},
-		IsEnabled:       true,
-		IsOfficial:      true,
+		ID:                     uuid.New(),
+		OrganizationID:         uuid.New(),
+		Type:                   shared.RouteTypeZGICloud,
+		ChannelProvider:        "zgi-cloud",
+		APIBaseURL:             "http://zgi-console-api.zeabur.internal:2625/v1/internal",
+		Models:                 []string{"gpt-5"},
+		OfficialProviderModels: []channelmodel.ProviderModel{{Provider: "openai", Model: "gpt-5"}},
+		IsEnabled:              true,
+		IsOfficial:             true,
 	}
 	model := &llmmodel.LLMModel{
 		ID:        uuid.New(),
@@ -1186,7 +1550,7 @@ func TestBuildChannelSelection_OfficialRouteRejectsInvalidRuntimeConsoleAPIURL(t
 		IsActive:  true,
 	}
 
-	_, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, false, "chat")
+	_, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, model.Provider, false, "chat")
 	if err == nil || !strings.Contains(err.Error(), "invalid console api url") {
 		t.Fatalf("buildChannelSelection error = %v, want invalid console api url error", err)
 	}
@@ -1213,7 +1577,7 @@ func TestBuildChannelSelection_PrivateRouteKeepsRouteAPIBaseURL(t *testing.T) {
 		IsActive:  true,
 	}
 
-	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, false, "chat")
+	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, model.Provider, false, "chat")
 	if err != nil {
 		t.Fatalf("buildChannelSelection returned error: %v", err)
 	}
@@ -1413,7 +1777,7 @@ func TestBuildChannelSelection_NativeProtocolBaseURLOverridesPrivateRouteBaseURL
 		IsActive:  true,
 	}
 
-	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, false, modelCategoryResponses)
+	selection, err := router.buildChannelSelection(context.Background(), route, model, nil, model.Model, model.Provider, false, modelCategoryResponses)
 	if err != nil {
 		t.Fatalf("buildChannelSelection returned error: %v", err)
 	}
